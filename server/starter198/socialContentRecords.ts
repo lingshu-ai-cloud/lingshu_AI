@@ -1,3 +1,4 @@
+import {readWeeklyReplicationContext} from './weeklyReplicationContext.js';
 import { parseSocialReplicationContext } from './socialContentValidation.js';
 import {
   SOCIAL_ARTIFACT_STATUSES,
@@ -827,7 +828,7 @@ export async function readSocialTaskDetail(input: {
     throw new SocialContentWorkflowError('social_content_task_projection_out_of_sync', 503);
   }
   const activeMaterials = activeSources.filter(source => source.kind === 'material');
-  const materialInventory = await readMaterialLibrary(input.tenantId).catch(() => ({ items: [] as MaterialRecord[] }));
+  const materialInventory = await (input.repository.materialLibrary ?? readMaterialLibrary)(input.tenantId).catch(() => ({ items: [] as MaterialRecord[] }));
   const materialById = new Map(materialInventory.items.map(item => [socialText(item.id), item]));
   const linkedMaterialRows = activeMaterials.flatMap(source => {
     const record = materialById.get(decodeMaterialRef(source.sourceRef));
@@ -999,6 +1000,7 @@ export async function readSocialTaskDetail(input: {
     weeklyPlanId: summary.weeklyPlanId ?? null,
     brief: summary.brief,
     authoritativeContext: weeklyAuthority,
+    replicationContext: input.repository.dataStore && weeklyAuthority?.weeklyPackage.agentPlanning?.dispatch ? await readWeeklyReplicationContext({store:input.repository.dataStore,tenantId:input.tenantId,task,sources:activeSources}) : undefined,
     sources: activeSources,
     factSourceRefs: confirmedFactRefs,
     assetSupplyPlan,

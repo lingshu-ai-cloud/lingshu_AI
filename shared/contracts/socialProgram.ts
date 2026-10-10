@@ -228,7 +228,16 @@ export interface WeeklyMaterialEvidenceRequirements {
   recordHash: string;
 }
 
+/** Actual account and immutable playbook versions explicitly frozen during planning. */
+export interface WeeklyTargetAccountPlaybook {
+  accountId: string;
+  accountRef: VersionedSocialRef;
+  playbookRef: VersionedSocialRef;
+  playbookHash: string;
+}
+
 export interface WeeklyDirectorPlanningAnalysis {
+  targetAccountPlaybooks?: WeeklyTargetAccountPlaybook[];
   contentTemplateEvidence?: Array<{publicationTaskId:string;bindingRef:VersionedSocialRef;structure:ContentTemplateStructureConstraint}>;
   customerFeedbackTopicRefs?: VersionedSocialRef[];
   customerFeedbackTopicEvidence?: Array<{ publicationTaskId: string; confirmationRef: VersionedSocialRef; candidateRef: { id: string; version: number; recordHash: string }; question: string; topicAngle: string }>;
@@ -271,6 +280,7 @@ export interface WeeklyDirectorPlanningAnalysis {
 }
 
 export interface WeeklyDetailedContentScheduleItem {
+  targetAccountPlaybook?: WeeklyTargetAccountPlaybook;
   contentTemplateStructure?: ContentTemplateStructureConstraint;
   scheduleItemId: string;
   slotId: string;

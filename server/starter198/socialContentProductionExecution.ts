@@ -1,3 +1,5 @@
+import {readWeeklyReplicationAuthority} from './socialWeeklyReplicationAuthority.js';
+import {assertAccountPlaybookBaselineCurrent} from './socialAccountProductionConstraints.js';
 import {readWeeklySchedulerMaterialPlan} from './socialWeeklySchedulerMaterialPlan.js';
 import {assertWeeklyProductionMaterialAdmission} from './socialWeeklyProductionMaterialGate.js';
 import { persistSocialProductionWorkspace } from './socialContentProductionWorkspace.js';
@@ -336,6 +338,9 @@ export async function runSocialContentAutoProduction(input: {
   if(admissionAuthority||String(admissionRow.create_idempotency_key??'').startsWith('weekly-production:')){if(!admissionAuthority)throw new SocialContentWorkflowError('weekly_production_start_authority_invalid',409);if(!input.repository.dataStore)throw new SocialContentWorkflowError('weekly_production_planning_missing',409);const pkg=socialObject(admissionAuthority.weeklyPackage) as unknown as import('../../shared/contracts/socialProgram.js').WeeklyOperatingPackage,publication=socialObject(admissionAuthority.publicationTask);if(!pkg||!publication?.publicationTaskId)throw new SocialContentWorkflowError('weekly_production_start_authority_invalid',409);await assertStoredWeeklyProductionCoverage({store:input.repository.dataStore,tenantId:input.tenantId,package:pkg,publicationTaskId:String(publication.publicationTaskId),frozenPlanning:pkg.agentPlanning});}
   const detail = await readSocialTaskDetail(input);
   if (!detail) throw new Error('社媒内容任务不存在');
+  const originalReplication=await readWeeklyReplicationAuthority(input.repository,admissionRow);
+  const replicationContext=originalReplication?.context;
+  if(originalReplication&&detail.agentWorkflow)detail.agentWorkflow.replicationJob=originalReplication.job;
   const frozenSchedulerPlan=await readWeeklySchedulerMaterialPlan(input.repository,admissionRow,detail);
   if(frozenSchedulerPlan)detail.assetSupplyPlan=frozenSchedulerPlan;
   else if(input.repository.dataStore){const originalRun=await input.repository.dataStore.getById<Record<string,unknown>>('workflow_runs',input.runId);if(socialObject(socialObject(socialJson(originalRun?.starter_context))?.weeklyMaterialPlan))throw new SocialContentWorkflowError('weekly_scheduler_material_plan_changed',409);}
@@ -488,6 +493,7 @@ export async function runSocialContentAutoProduction(input: {
   const templateBindingRef=socialObject(weeklyPublication?.contentTemplateBindingRef);
   const contentTemplateStructure=templateBindingRef?await (async()=>{if(!input.repository.dataStore)throw new SocialContentWorkflowError('content_template_storage_unavailable',409);return readWeeklyTemplateStructure(input.repository.dataStore,{tenantId:input.tenantId,programId:String(weeklyPackage?.programId),packageId:String(weeklyPackage?.packageId),packageVersion:Number(weeklyPackage?.version),publicationTaskId:String(weeklyPublication?.publicationTaskId)},templateBindingRef as unknown as import('../../shared/contracts/socialProgram.js').VersionedSocialRef);})():undefined;
   let baseline = parseStoredSocialScriptBaseline(taskRecord.script_baseline);
+  if(baseline)assertAccountPlaybookBaselineCurrent(baseline,replicationContext,detail.brief.callToAction);
   if(baseline?.contentTemplateStructure&&socialRequestHash(baseline.contentTemplateStructure)!==socialRequestHash(contentTemplateStructure))throw new SocialContentWorkflowError('content_template_structure_changed_during_production',409);
 
   let directorFormula: InternalSocialContentFormula | null = null;
@@ -546,6 +552,7 @@ export async function runSocialContentAutoProduction(input: {
         })
       : null;
     baseline = freezeSocialScriptBaseline({
+      replicationContext,
       contentTemplateStructure,
       brief: detail.brief,
       theme: detail.theme ?? null,
@@ -671,6 +678,7 @@ export async function runSocialContentAutoProduction(input: {
     // labels or enterprise facts into claims about what the camera saw.
     if (associationIdentities.size >= 1 && requiresAssociationOnlySafety) {
       activeBaseline = freezeSocialScriptBaseline({
+        replicationContext,
         contentTemplateStructure,
         brief: detail.brief,
         theme: detail.theme ?? null,

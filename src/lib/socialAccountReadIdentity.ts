@@ -1,0 +1,3 @@
+export interface SocialAccountReadIdentity{token:string|null;requestId:number;mounted:boolean}
+export function socialAccountReadCurrent(expected:SocialAccountReadIdentity,current:SocialAccountReadIdentity){return expected.mounted&&current.mounted&&!!expected.token&&expected.token===current.token&&expected.requestId===current.requestId;}
+export async function readCurrentSocialAccounts<T>(expected:SocialAccountReadIdentity,current:()=>SocialAccountReadIdentity,read:()=>Promise<T>,apply:(value:T)=>void){if(!socialAccountReadCurrent(expected,current()))return;const value=await read();if(socialAccountReadCurrent(expected,current()))apply(value);}

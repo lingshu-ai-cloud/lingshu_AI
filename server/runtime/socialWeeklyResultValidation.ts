@@ -167,6 +167,15 @@ export async function validateWeeklyExecutionResults(store: DataStore, task: Wee
       requireResult(verified?.id === ref.id && verified.version === ref.version);
       const { validateWeeklyTemplateProductionOutput } = await import('../socialPrograms/weeklyTemplateStructure.js');
       await validateWeeklyTemplateProductionOutput({ store, task, contentRow: row });
+    } else if(ref.type==='starter_social_owned_product_identity_demand') {
+      requireResult(task.workflowKind==='content'&&task.schedule.stepKind==='material_readiness'&&Boolean(task.publicationTaskId),'weekly_owned_product_identity_consumer_invalid');
+      const row=await unique(store,'starter_social_content_tasks',{tenant_id:task.tenantId,task_id:ref.id});
+      requireResult(row.create_idempotency_key===`weekly-production:${task.packageId}:${task.packageVersion}:${task.publicationTaskId}`&&text(row.run_id)&&!['cancelled','paused','attention','needs_input'].includes(String(row.status)));
+      const {assessWeeklyOwnedProductIdentity}=await import('./weeklyOwnedProductIdentityDemand.js');const {createStarter198Repository}=await import('../starter198/repository.js');
+      const result=await assessWeeklyOwnedProductIdentity(store,{tenantId:task.tenantId,programId:task.programId,packageId:task.packageId,packageVersion:task.packageVersion,publicationTaskId:task.publicationTaskId!,contentTaskId:ref.id},{repository:createStarter198Repository(store)});
+      const frozen=object(row.brief)._weeklyOwnedProductIdentityDemand;
+      requireResult(result.status==='ready'&&result.consumerTaskId===task.taskId&&frozen?.version===ref.version&&result.materials.length>0&&result.materials.every(material=>material.sourceBound),'weekly_owned_product_identity_unverified');
+      const classification=await materialClassification(store,task);requireResult(classification.items.every(item=>item.classification==='generatable_non_evidentiary'),'weekly_required_materials_unverified');
     } else if (ref.type === 'starter_social_content_material_demand' && task.workflowKind === 'content' && task.schedule.stepKind === 'material_readiness') {
       const row = await unique(store, 'starter_social_content_tasks', { tenant_id: task.tenantId, task_id: ref.id });
       requireResult(row.create_idempotency_key === `weekly-production:${task.packageId}:${task.packageVersion}:${task.publicationTaskId}` && text(row.run_id) && !['cancelled', 'paused', 'attention', 'needs_input'].includes(String(row.status)));

@@ -1,0 +1,23 @@
+import test from 'node:test';import assert from 'node:assert/strict';
+test('actual scheduler freezes original replication job across its V to V+1 transition, rejects evidence drift, and never signs legacy input',async t=>{
+ const keys=['SEEDANCE_VIDEO_ENABLED','SEEDANCE_API_KEY','SEEDREAM_API_KEY'] as const;
+ const old=Object.fromEntries(keys.map(key=>[key,process.env[key]]));t.after(()=>{for(const key of keys){if(old[key]===undefined)delete process.env[key];else process.env[key]=old[key];}});
+ process.env.SEEDANCE_VIDEO_ENABLED='true';process.env.SEEDANCE_API_KEY='controlled-transport-no-real-provider';process.env.SEEDREAM_API_KEY='controlled-transport-no-real-provider';
+ const {readWeeklyReplicationAuthority}=await import('./socialWeeklyReplicationAuthority.js');
+ const {prepareWeeklyNonPresenterProductionFixture}=await import('../runtime/weeklyNonPresenterProduction.fixture.js');
+ const {repository,f,created,actual}=await prepareWeeklyNonPresenterProductionFixture(t,{ownedReferenceBytes:true,productInventory:true,primaryStructure:true});
+ assert.ok(created.run_id,JSON.stringify(actual.lastError));
+ const run=f.tables.workflow_runs!.find(row=>row.id===created.run_id);assert.ok(run);const context=run.starter_context as Record<string,unknown>;
+ const original=context.weeklyReplicationAuthority as import('./socialWeeklyReplicationAuthority.js').WeeklyReplicationAuthorityProof;assert.ok(original);
+ assert.equal(String(created.version),String(Number(original.originalTaskVersion)+1));
+ const proof=await readWeeklyReplicationAuthority(repository,created);assert.ok(proof);assert.deepEqual(proof.job,original.job);
+ assert.equal(proof.contextHash,original.contextHash);
+ assert.equal(actual.lastError?.code,'weekly_material_contract_required','scheduler provenance alone does not approve current material readiness');assert.equal(f.tables.content_execution_jobs?.length??0,0);
+ const frozen=JSON.stringify(context),originalAnalysis=structuredClone(created.reference_video_analysis);created.reference_video_analysis={...(originalAnalysis as object),unexpectedSourceEdit:'changed'};
+ await assert.rejects(readWeeklyReplicationAuthority(repository,created),{code:'weekly_replication_authority_unverified'});created.reference_video_analysis=originalAnalysis;
+ const rule=f.tables.social_playbook_versions!.find(row=>row.playbook_id===proof.playbook.playbookRef.id);assert.ok(rule);const originalRule=structuredClone(rule.payload);(rule.payload as Record<string,unknown>).languageRules=['changed'];
+ await assert.rejects(readWeeklyReplicationAuthority(repository,created),{code:'weekly_target_playbook_changed'});rule.payload=originalRule;
+ const recordedVersion=created.version;created.version=Number(created.version)+1;await assert.rejects(readWeeklyReplicationAuthority(repository,created),{code:'weekly_replication_authority_unverified'});created.version=recordedVersion;
+ assert.equal(JSON.stringify(context),frozen,'recovery rejection never rewrites original provenance');assert.equal((await readWeeklyReplicationAuthority(repository,created))?.recordHash,proof.recordHash);
+ assert.equal(f.tables.starter_usage_ledger?.length??0,0,'scheduler provenance does not call a supplier');
+});

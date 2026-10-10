@@ -1,3 +1,5 @@
+import type {SocialReplicationJobContext} from '../../shared/contracts/socialContentReplication.js';
+import {freezeSocialAccountProductionConstraints,assertSocialAccountProductionConstraints,assertAccountProductionConstraintReuse,type SocialAccountProductionConstraints} from './socialAccountProductionConstraints.js';
 import {validContentTemplateStructure,contentTemplateRoleAt,contentTemplateRoleLabel,type ContentTemplateStructureConstraint} from '../../shared/socialContentTemplateStructure.js';
 import type {
   SocialContentTaskBrief,
@@ -58,6 +60,7 @@ export interface SocialInspirationScriptMatch {
 }
 
 export interface StoredSocialScriptBaseline {
+  accountPlaybookConstraints?:SocialAccountProductionConstraints;
   contentTemplateStructure?: ContentTemplateStructureConstraint;
   schemaVersion: typeof SOCIAL_SCRIPT_BASELINE_SCHEMA;
   version: string;
@@ -405,6 +408,7 @@ function groundedNarration(input: {
  * fit shots to this script, but may not silently author a second script.
  */
 export function freezeSocialScriptBaseline(input: {
+  replicationContext?:SocialReplicationJobContext|null;
   contentTemplateStructure?: ContentTemplateStructureConstraint;
   brief: SocialContentTaskBrief;
   theme: SocialContentThemeSelection | null;
@@ -422,6 +426,8 @@ export function freezeSocialScriptBaseline(input: {
   lockedAt: string;
   previous?: StoredSocialScriptBaseline | null;
 }): StoredSocialScriptBaseline {
+  const accountPlaybookConstraints=freezeSocialAccountProductionConstraints(input.replicationContext,input.brief.callToAction);
+  if(input.previous)assertAccountProductionConstraintReuse(input.previous.accountPlaybookConstraints,accountPlaybookConstraints);
   const language = baselineLanguage(input.brief.languages[0]);
   const themeLabels = input.theme?.themeId ? SAFE_THEME_LABELS[input.theme.themeId] : null;
   // `theme.topic`, title and objective are intent inputs. They may contain a
@@ -576,6 +582,7 @@ export function freezeSocialScriptBaseline(input: {
   }
   if(input.contentTemplateStructure){if(!validContentTemplateStructure(input.contentTemplateStructure))throw new SocialContentWorkflowError('content_template_structure_invalid',409);for(let i=0;i<scenes.length;i++)scenes[i]!.shotFunction=contentTemplateRoleLabel(contentTemplateRoleAt(input.contentTemplateStructure,i,scenes.length));}
   return {
+    ...(accountPlaybookConstraints?{accountPlaybookConstraints}:{}),
     ...(input.contentTemplateStructure?{contentTemplateStructure:structuredClone(input.contentTemplateStructure)}:{}),
     schemaVersion: SOCIAL_SCRIPT_BASELINE_SCHEMA,
     version: nextBaselineVersion(input.previous),
@@ -751,9 +758,12 @@ export function parseStoredSocialScriptBaseline(value: unknown): StoredSocialScr
     }
     return parsed;
   });
+  const accountPlaybookConstraints=row.accountPlaybookConstraints as SocialAccountProductionConstraints|undefined;
+  if(accountPlaybookConstraints)assertSocialAccountProductionConstraints(accountPlaybookConstraints);
   const contentTemplateStructure=row.contentTemplateStructure as ContentTemplateStructureConstraint|undefined;
   if(contentTemplateStructure&&(!validContentTemplateStructure(contentTemplateStructure)||scenes.some((scene,i)=>scene.shotFunction!==contentTemplateRoleLabel(contentTemplateRoleAt(contentTemplateStructure,i,scenes.length)))))throw new SocialContentWorkflowError('content_template_structure_invalid',503);
   return {
+    ...(accountPlaybookConstraints?{accountPlaybookConstraints:structuredClone(accountPlaybookConstraints)}:{}),
     ...(contentTemplateStructure?{contentTemplateStructure:structuredClone(contentTemplateStructure)}:{}),
     schemaVersion: SOCIAL_SCRIPT_BASELINE_SCHEMA,
     version: socialText(row.version),

@@ -59,11 +59,12 @@ export async function prepareWeeklyPlanningProductionFixture(t:TestContext,optio
  assert.equal(report.claimed,1);assert.ok(['pending','blocked','succeeded'].includes(actual.status),JSON.stringify(actual.lastError));
  assert.equal(f.tables.starter_usage_ledger?.length??0,0,'planning and prerequisite checks must not pay a supplier');
  assert.equal(f.tables.content_execution_jobs?.length??0,0);
- assert.equal(actual.lastError?.code,options.ownedReferenceBytes?'social_content_execution_director_review_required':'weekly_reference_source_evidence_required',JSON.stringify(actual));
+ assert.equal(actual.lastError?.code,'reference_person_automatic_analysis_required',JSON.stringify(actual));
  assert.equal(f.tables.starter_social_content_tasks.length,1,'actual default create stores exactly one production identity');
  const created=f.tables.starter_social_content_tasks[0]!;assert.equal(created.create_idempotency_key,`weekly-production:${pkg.packageId}:${pkg.version}:pub`);
  assert.ok(!created.run_id,'actual director review blocks original run creation');assert.equal(f.tables.workflow_runs!.length,initialRunCount);assert.ok(!created.orchestrator_item_id);
- const detail=await readSocialTaskDetail({repository:f.repository,tenantId:'t',taskId:String(created.task_id)});assert.ok(detail);assert.equal(detail.sources.filter(s=>s.kind==='reference_link'&&s.status==='active').length,1);assert.equal(detail.sources[0]!.sourceRef,'https://www.tiktok.com/@fixture/video/1');assert.equal(detail.agentWorkflow?.executionPlanReview.approved,false,JSON.stringify(detail.agentWorkflow?.executionPlanReview));assert.equal(detail.agentWorkflow?.executionPlanReview.approved,false);
+ let detail:Awaited<ReturnType<typeof readSocialTaskDetail>>=null;
+ await assert.rejects(readSocialTaskDetail({repository:f.repository,tenantId:'t',taskId:String(created.task_id)}),/^Error: reference_person_automatic_analysis_required:/,'missing independent person evidence must refuse actual asset planning');
  assert.equal((created.brief as {targetAccountRef:{objectType:string}}).targetAccountRef.objectType,'social_owned_account');
  const adapter=createSocialWeeklyProductionAdapter(f.store);await adapter.execute(actual);assert.equal(f.tables.starter_social_content_tasks.length,1);assert.equal(f.tables.content_execution_jobs?.length??0,0,'missing frozen material proof never claims paid execution completion');
  const referenceReviewHandoff=buildSocialReferenceReviewHandoff({record:f.tables.trend_videos!.find(row=>row.id==='decorative-reference')!,verifiedEnterpriseFactRefs:pkg.socialContentPackage.publicationTasks[0]!.factRefs.map(ref=>`${ref.type}:${ref.id}@${ref.version}`)});

@@ -1,3 +1,4 @@
+import {assertSocialAccountProductionConstraints,type SocialAccountProductionConstraints} from './socialAccountProductionConstraints.js';
 import { createHash } from 'node:crypto';
 import { stat } from 'node:fs/promises';
 import { normalizeSceneVisualContract } from '../../shared/sceneVisualContract.js';
@@ -20,6 +21,7 @@ export interface AuthorizedDigitalPresenter {
 }
 
 export interface DigitalPresenterExecutionRequest {
+  accountPlaybookConstraints?:SocialAccountProductionConstraints;
   tenantId: string;
   taskId: string;
   shotId: string;
@@ -123,6 +125,7 @@ function stableKey(input: {
   tenantId: string;
   taskId: string;
   operationId?: string;
+  accountConstraintHash?:string;
   shotId: string;
   presenter: AuthorizedDigitalPresenter;
   script: string;
@@ -132,6 +135,7 @@ function stableKey(input: {
     tenantId: input.tenantId,
     taskId: input.taskId,
     operationId: input.operationId,
+    ...(input.accountConstraintHash?{accountConstraintHash:input.accountConstraintHash}:{}),
     shotId: input.shotId,
     presenterAssetId: input.presenter.presenterAssetId,
     assetVersion: input.presenter.assetVersion,
@@ -282,6 +286,7 @@ export function createSocialDigitalPresenterAdapter(
     adapterId: 'controlled_digital_presenter.v1',
     sourceStrategies: ['authorized_digital_presenter'],
     async execute(context) {
+      if(context.accountPlaybookConstraints)assertSocialAccountProductionConstraints(context.accountPlaybookConstraints);
       const plan = context.shot.digitalHumanPlan;
       if (!plan || !['preview_only', 'ready_for_capability_check'].includes(plan.executionState)) return null;
       const control = visualControl(context);
@@ -318,14 +323,15 @@ export function createSocialDigitalPresenterAdapter(
         || context.baselineScene.script || context.baselineScene.caption || '').trim();
       if (!script) return null;
       const idempotencyKey = stableKey({ tenantId: context.tenantId, taskId: context.taskId,
-        operationId: context.operationId, shotId: context.shot.shotId, presenter, script, visualControl: control });
+        operationId: context.operationId,accountConstraintHash:context.accountPlaybookConstraints?.constraintHash, shotId: context.shot.shotId, presenter, script, visualControl: control });
       const budget = await ports.authorizeBudget({ tenantId: context.tenantId, taskId: context.taskId,
         shotId: context.shot.shotId, idempotencyKey, providerId: presenter.providerId, maximumCostCny });
       if (!budget.allowed) throw new Error(`digital_presenter_budget_denied:${budget.reason}`);
       const execution = await ports.execute({ tenantId: context.tenantId, taskId: context.taskId,
         shotId: context.shot.shotId, idempotencyKey, presenter, script, aspectRatio: '9:16',
         outputDirectory: context.outputDirectory, maximumCostCny, reservationRef: budget.reservationRef,
-        visualControl: control });
+        visualControl: control,
+        ...(context.accountPlaybookConstraints?{accountPlaybookConstraints:structuredClone(context.accountPlaybookConstraints)}:{}) });
       if (execution.status !== 'completed') {
         throw new Error(`digital_presenter_not_completed:${execution.status}:${execution.providerTaskId || 'no_task'}:${execution.error}`);
       }

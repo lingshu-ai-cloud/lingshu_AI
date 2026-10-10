@@ -1,3 +1,4 @@
+import {readWeeklyReplicationAuthority} from './socialWeeklyReplicationAuthority.js';
 import {assertWeeklyProductionMaterialAdmission} from './socialWeeklyProductionMaterialGate.js';
 import { existsSync, statSync } from 'node:fs';
 import fsp from 'node:fs/promises';
@@ -253,6 +254,7 @@ export async function enqueueSocialContentAutoProduction(input: {
   const dataStore = input.repository.dataStore ?? store;
   // Admission gaps precede all execution writes; an unqueued owned run has not failed production.
   await assertWeeklyProductionMaterialAdmission(input);
+  await readWeeklyReplicationAuthority(input.repository,await requireSocialTask(input));
   try {
     const record = await requireSocialTask(input);
     const task = socialTaskSummary(record);

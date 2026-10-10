@@ -1,3 +1,4 @@
+import {assertSocialAccountProductionConstraints,type SocialAccountProductionConstraints} from './socialAccountProductionConstraints.js';
 import type {
   SocialAssetSupplyPlan,
   SocialAssetSupplyShotPlan,
@@ -11,6 +12,7 @@ import type { StoredSocialScriptBaseline } from './socialContentScriptBaseline.j
 export type SocialAssetSupplyRepresentation = 'customer_evidence' | 'non_evidentiary_visual';
 
 export interface SocialAssetSupplyAdapterContext {
+  accountPlaybookConstraints?:SocialAccountProductionConstraints;
   tenantId: string;
   taskId: string;
   /** Stable server-owned repair operation; task identity remains unchanged. */
@@ -349,6 +351,7 @@ export async function executeSocialAssetSupplyPlan(input: {
   }
   const assets: SocialProductionAsset[] = [];
   const shots: SocialAssetSupplyShotExecution[] = [];
+  if(input.baseline.accountPlaybookConstraints)assertSocialAccountProductionConstraints(input.baseline.accountPlaybookConstraints);
   for (const [index, shot] of plan.shots.entries()) {
     const scene = input.baseline.scenes[index];
     if (!scene) throw new Error(`asset_supply_baseline_scene_missing:${shot.shotId}`);
@@ -369,6 +372,7 @@ export async function executeSocialAssetSupplyPlan(input: {
             outputDirectory: input.outputDirectory,
             shot: { ...shot, sourceStrategy: strategy },
             baselineScene: scene,
+            ...(input.baseline.accountPlaybookConstraints?{accountPlaybookConstraints:structuredClone(input.baseline.accountPlaybookConstraints)}:{}),
             availableAssets: input.availableAssets,
           });
           if (!candidate) {

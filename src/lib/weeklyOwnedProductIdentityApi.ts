@@ -1,0 +1,24 @@
+import type {WeeklyOwnedProductIdentityScope,WeeklyOwnedProductIdentityBinding} from '../../shared/contracts/weeklyOwnedProductIdentity';
+import type {WeeklyOwnedProductIdentityRead} from '../../shared/contracts/weeklyOwnedProductIdentityUI';
+import {authHeader} from './auth';
+const obj=(v:unknown):Record<string,unknown>=>{if(!v||typeof v!=='object'||Array.isArray(v))throw Error('产品身份素材回执无效。');return v as Record<string,unknown>;};
+const strings=(v:unknown)=>Array.isArray(v)&&v.every(x=>typeof x==='string'&&!!x);
+const hash=(v:unknown)=>typeof v==='string'&&/^[a-f0-9]{64}$/.test(v);
+export function parseWeeklyOwnedProductIdentityRead(value:unknown,scope:WeeklyOwnedProductIdentityScope,expectedRunId:string|null):WeeklyOwnedProductIdentityRead{
+ const read=obj(value),a=obj(read.assessment),actual=obj(a.scope);
+ if(Object.entries(scope).some(([k,v])=>actual[k]!==v)||read.expectedRunId!==expectedRunId||typeof read.readOnly!=='boolean'||expectedRunId!==null&&read.readOnly!==true||typeof a.required!=='boolean'||!['not_required','blocked','ready'].includes(String(a.status))||typeof a.contentTaskVersion!=='number'||!Number.isSafeInteger(a.contentTaskVersion)||a.contentTaskVersion<1||!hash(a.requirementHash)||!(a.consumerTaskId===null||typeof a.consumerTaskId==='string'&&a.consumerTaskId)||!Array.isArray(a.requirements)||!Array.isArray(a.bindings)||!Array.isArray(a.materials)||!strings(read.candidateGaps)&&!(Array.isArray(read.candidateGaps)&&read.candidateGaps.length===0)||!Array.isArray(read.candidates)||!Array.isArray(a.gaps)||a.gaps.some(v=>typeof v!=='string'))throw Error('产品身份素材所属任务已变化，请返回周任务刷新。');
+ const requirements=a.requirements.map(v=>{const r=obj(v);if(typeof r.requirementId!=='string'||!r.requirementId||typeof r.productRef!=='string'||!r.productRef||typeof r.description!=='string'||!r.description||!strings(r.imageIds)||!strings(r.imageHashes)||!(r.imageHashes as unknown[]).every(hash)||!strings(r.sceneIds))throw Error('实际产品要求缺少镜头或文件版本。');return r;});
+ if(new Set(requirements.map(v=>v.requirementId)).size!==requirements.length)throw Error('产品身份要求重复。');
+ for(const v of a.bindings){const b=obj(v);if(typeof b.requestId!=='string'||!b.requestId||!requirements.some(r=>r.requirementId===b.requirementId))throw Error('素材任务绑定回执无效。');}
+ for(const v of a.materials){const m=obj(v);if(typeof m.recordId!=='string'||!/^[a-z0-9]{15}$/.test(m.recordId)||!hash(m.sha256)||!hash(m.verificationHash)||typeof m.sourceRef!=='string'||!m.sourceRef||typeof m.sourceVersion!=='string'||!m.sourceVersion||typeof m.requestId!=='string'||!m.requestId)throw Error('素材核验凭据不完整。');}
+ if(a.status==='ready'&&(!a.required||a.materials.length===0||a.gaps.length>0))throw Error('产品身份尚无完整核验凭据。');
+ for(const v of read.candidates){const c=obj(v),r=requirements.find(r=>r.requirementId===c.requirementId);if(!r||typeof c.recordId!=='string'||!/^[a-z0-9]{15}$/.test(c.recordId)||!hash(c.sha256)||!(r.imageHashes as string[]).includes(c.sha256 as string)||typeof c.name!=='string'||!c.name||typeof c.sourceRef!=='string'||!c.sourceRef.startsWith('socialmaterial:')||typeof c.sourceVersion!=='string'||!c.sourceVersion||typeof c.alreadyBound!=='boolean'||!(c.previewUrl===null||typeof c.previewUrl==='string'&&(c.previewUrl.startsWith('/')||/^https:\/\//.test(c.previewUrl))))throw Error('素材候选不是当前产品要求的真实文件。');}
+ return read as unknown as WeeklyOwnedProductIdentityRead;
+}
+async function request(scope:WeeklyOwnedProductIdentityScope,expectedRunId:string|null,body?:{expectedTaskVersion:number;expectedRequirementHash:string;bindings:WeeklyOwnedProductIdentityBinding[]}){
+ const path=`/api/overseas/starter-198/social-content/tasks/${encodeURIComponent(scope.contentTaskId)}/weekly-owned-product-identity`;
+ const query=new URLSearchParams({programId:scope.programId,packageId:scope.packageId,packageVersion:String(scope.packageVersion),publicationTaskId:scope.publicationTaskId,expectedRunId:expectedRunId??''});
+ const response=await fetch(body?`${path}/bind`:`${path}?${query}`,{method:body?'POST':'GET',headers:{...authHeader(),...(body?{'Content-Type':'application/json'}:{})},...(body?{body:JSON.stringify({programId:scope.programId,packageId:scope.packageId,packageVersion:scope.packageVersion,publicationTaskId:scope.publicationTaskId,expectedRunId,...body})}:{})});
+ const data=await response.json().catch(()=>null);if(!response.ok)throw Error(data?.message||'产品身份素材服务未完成操作，请查询当前记录。');return parseWeeklyOwnedProductIdentityRead(data?.item,scope,expectedRunId);
+}
+export const weeklyOwnedProductIdentityApi={read:(scope:WeeklyOwnedProductIdentityScope,expectedRunId:string|null)=>request(scope,expectedRunId),bind:(scope:WeeklyOwnedProductIdentityScope,input:{expectedTaskVersion:number;expectedRequirementHash:string;bindings:WeeklyOwnedProductIdentityBinding[]})=>request(scope,null,input)};

@@ -1,3 +1,5 @@
+import {createWeeklyOwnedProductIdentityRouter} from './weeklyOwnedProductIdentityRouter.js';
+import {createWeeklyOwnedProductIdentityUI} from './weeklyOwnedProductIdentityUI.js';
 import {createSocialInstagramDeliveryRouter} from './socialInstagramDeliveryRouter.js';import {createSocialInstagramDeliveryService} from './socialInstagramDeliveryService.js';
 import {createSocialWeeklyG6ReviewRouter} from './socialWeeklyG6ReviewRouter.js';import {createSocialWeeklyG6ReviewService} from './socialWeeklyG6ReviewService.js';
 import {createSocialDirectorG5ReviewRouter} from './socialDirectorG5ReviewRouter.js';
@@ -159,6 +161,7 @@ export function createSocialContentRouter(dependencies: SocialContentRouterDepen
   const socialTaskMaterialPort = dependencies.socialTaskMaterialPort;
 
   router.use(requireAuth);
+  if(repository.dataStore)router.use('/tasks/:taskId/weekly-owned-product-identity',createWeeklyOwnedProductIdentityRouter(createWeeklyOwnedProductIdentityUI(repository.dataStore,{repository,sourceOptions})));
   if(repository.dataStore) router.use('/tasks/:taskId/runs/:runId/artifacts/:artifactId/weekly-quality-recovery',createWeeklyContentQualityRecoveryRouter(createWeeklyContentQualityRecoveryService(repository.dataStore)));
   router.use('/tasks/:taskId/runs/:runId/artifacts/:artifactId/g5-reviews',createSocialDirectorG5ReviewRouter(createSocialDirectorG5ReviewService(repository)));
 router.use('/tasks/:taskId/runs/:runId/artifacts/:artifactId/instagram-delivery',createSocialInstagramDeliveryRouter(createSocialInstagramDeliveryService(repository)));

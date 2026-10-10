@@ -144,7 +144,7 @@ export default function SocialContentWorkspace({
         onLoadMoreTasks={() => void state.loadMoreTasks()}
         onCreate={() => openNewTask()}
         onEdit={() => task && navigateWithTask('smartAssets', task.taskId)}
-        onStart={() => task && navigateWithTask('smartAssets', task.taskId)}
+        onStart={() => { if (task && !state.busy) void state.startTask().catch(() => {}); }}
         onDownload={() => void state.downloadLatest().catch(() => {})}
         onOpenPublication={() => { if (task && socialContentCanRegisterPublication(task)) setPublicationOpen(true); }}
         onOpenMetrics={() => setMetricsOpen(true)}

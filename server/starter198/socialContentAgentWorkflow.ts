@@ -433,7 +433,7 @@ function buildDirectorBrief(
     } : null,
     inspirationHandoffIds: inspirationHandoffs.map(item => item.handoffId ?? item.inspirationId),
     topic: input.brief.title,
-    audience: input.brief.audience,
+    audience: unique([input.brief.audience,...(input.replicationContext?.verifiedAccountPlaybook?.audience??[])]).join('；'),
     platforms: input.brief.platforms,
     accountRefs: input.authoritativeContext ? [input.authoritativeContext.publicationTask.accountId] : [],
     creativeIntent: input.brief.objective,
@@ -445,7 +445,7 @@ function buildDirectorBrief(
     totalDurationSeconds,
     aspectRatio: input.brief.aspectRatio,
     languages: input.brief.languages,
-    brandRequirements: unique([input.brief.brandNotes || '', ...input.brief.restrictions].filter(Boolean)),
+    brandRequirements: unique([input.brief.brandNotes || '', ...input.brief.restrictions, ...(input.replicationContext?.verifiedAccountPlaybook?.evidenceRules??[]), ...(input.replicationContext?.verifiedAccountPlaybook?.visualRules??[]), ...(input.replicationContext?.verifiedAccountPlaybook?.languageRules??[]), ...(input.replicationContext?.verifiedAccountPlaybook?.presenterRules??[]), ...(input.replicationContext?.verifiedAccountPlaybook?.fixedFactors??[]), ...(input.replicationContext?.verifiedAccountPlaybook?.pillars??[]).map(value=>`账号栏目要求：${value}`), ...(input.replicationContext?.verifiedAccountPlaybook?.recurringFormats??[]).map(value=>`账号固定内容形式：${value}`), ...(input.replicationContext?.verifiedAccountPlaybook?[`账号行动引导要求：${input.replicationContext.verifiedAccountPlaybook.conversionRoute.callToAction}`,`账号获客入口：${input.replicationContext.verifiedAccountPlaybook.conversionRoute.entryType} ${input.replicationContext.verifiedAccountPlaybook.conversionRoute.entryRef??''}`]:[])].filter(Boolean)),
     factSourceRefs: input.authoritativeContext
       ? unique(input.authoritativeContext.publicationTask.factRefs.map(ref => `${ref.type}:${ref.id}@${ref.version}`))
       : input.factSourceRefs,

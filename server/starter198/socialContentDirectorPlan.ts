@@ -1,3 +1,4 @@
+import {assertSocialAccountProductionConstraints,type SocialAccountProductionConstraints} from './socialAccountProductionConstraints.js';
 import {validContentTemplateStructure} from '../../shared/socialContentTemplateStructure.js';
 import type {
   SocialContentThemeId,
@@ -52,6 +53,7 @@ export interface SocialDirectorOutputSpec {
 }
 
 export interface StoredSocialDirectorPlan {
+  accountPlaybookConstraints?:SocialAccountProductionConstraints;
   schemaVersion: typeof SOCIAL_DIRECTOR_PLAN_SCHEMA;
   directorPlanId: string;
   version: string;
@@ -133,6 +135,7 @@ export interface StoredSocialDirectorPlan {
     }>;
   }>;
   scenes: Array<{
+    accountPlaybookConstraints?:SocialAccountProductionConstraints;
     sceneId: string;
     order: number;
     /** Safe timing/camera grammar copied from this task's analyzed reference
@@ -381,6 +384,7 @@ export function buildSocialDirectorPlan(input: {
     duration: input.productionPlan.maxDuration,
   });
   if(input.baseline.contentTemplateStructure){const c=input.baseline.contentTemplateStructure;if(!validContentTemplateStructure(c))throw new SocialContentWorkflowError('content_template_structure_invalid',409);direction.pace=c.pace;direction.voiceover.speed=c.voiceSpeed;direction.voiceover.pauseStyle=c.pauseStyle;}
+  if(input.baseline.accountPlaybookConstraints)assertSocialAccountProductionConstraints(input.baseline.accountPlaybookConstraints);
   const baselineById = new Map(input.baseline.scenes.map(scene => [scene.sceneId, scene]));
   const scenes = input.productionPlan.scenes.map((scene, index) => {
     const baselineScene = baselineById.get(scene.sceneId);
@@ -399,6 +403,7 @@ export function buildSocialDirectorPlan(input: {
       throw new SocialContentWorkflowError('social_content_director_plan_script_invalid', 503);
     }
     return {
+      ...(input.baseline.accountPlaybookConstraints?{accountPlaybookConstraints:structuredClone(input.baseline.accountPlaybookConstraints)}:{}),
       sceneId: scene.sceneId,
       order: index + 1,
       ...(baselineScene.referenceStructure ? {
@@ -499,6 +504,7 @@ export function buildSocialDirectorPlan(input: {
     protectedVisual: false,
   })), 2, 198, input.bgmSelection.primary.beatEvidence);
   return withDirectorPlanHash({
+    ...(input.baseline.accountPlaybookConstraints?{accountPlaybookConstraints:structuredClone(input.baseline.accountPlaybookConstraints)}:{}),
     schemaVersion: SOCIAL_DIRECTOR_PLAN_SCHEMA,
     directorPlanId,
     version: nextVersion(input.previous),
@@ -790,6 +796,7 @@ export function parseStoredSocialDirectorPlan(value: unknown): StoredSocialDirec
     throw new SocialContentWorkflowError('social_content_director_plan_record_invalid', 503);
   }
   const plan = row as unknown as StoredSocialDirectorPlan;
+  if(plan.accountPlaybookConstraints)assertSocialAccountProductionConstraints(plan.accountPlaybookConstraints);
   assertDirectorPlanIntegrity(plan);
   return plan;
 }

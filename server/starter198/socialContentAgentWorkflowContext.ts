@@ -436,7 +436,7 @@ export function buildReplicationJob(input: BuildSocialAgentWorkflowInput, contex
       role: handoff.referenceRole,
       primary,
       purpose: handoff.whySelected.join('；') || `作为${handoff.referenceRole}参考`,
-      chain: handoff.analysisId === input.referenceAnalysis?.analysisId ? chain : referenceChain({
+      chain: handoff.analysisId === input.referenceAnalysis?.analysisId || (replicationContext.verifiedPrimaryReference?.sourceAnalysisId===handoff.analysisId && replicationContext.verifiedPrimaryReference.sourceAnalysisVersion===handoff.analysisVersion && replicationContext.verifiedPrimaryReference.runtimeAnalysisId===input.referenceAnalysis?.analysisId && replicationContext.verifiedPrimaryReference.runtimeAnalysisVersion===input.referenceAnalysis?.version && replicationContext.verifiedPrimaryReference.recordId===input.referenceAnalysis?.referenceRecordId) ? chain : referenceChain({
         context: replicationContext,
         analysis: null,
         analysisId: handoff.analysisId,

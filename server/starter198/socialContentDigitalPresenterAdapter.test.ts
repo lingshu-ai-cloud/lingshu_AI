@@ -1,3 +1,4 @@
+import {freezeSocialAccountProductionConstraints} from './socialAccountProductionConstraints.js';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
@@ -197,5 +198,12 @@ const wrongProfileResult = await executeSocialAssetSupplyPlan({ tenantId: 'tenan
 assert.equal(wrongProfileResult.execution.shots[0]?.attempts[0]?.status, 'unavailable');
 assert.equal(wrongProfileResult.execution.shots[0]?.sourceStrategy, 'motion_graphics');
 
+
+const frozenRules={recordHash:'a'.repeat(64),audience:['采购人员'],pillars:['产品证据'],recurringFormats:['实测'],conversionRoute:{routeId:'r',entryType:'whatsapp' as const,entryRef:'actual-contact',callToAction:'咨询',qualificationFields:[],handoffTarget:null,verifiedAt:null},evidenceRules:['真实参数'],visualRules:['原外观'],languageRules:['中文'],presenterRules:['已授权企业人员'],fixedFactors:['调性'],experimentFactors:['开场']};
+const authority={targetAccountRef:{objectType:'owned_social_account',id:'tiktok-account-1',version:'3'},accountPlaybookRef:{objectType:'account_playbook' as const,id:'pb',version:'2',accountRef:'tiktok-account-1'},verifiedAccountPlaybook:frozenRules};
+const paidKeys:string[]=[];
+const actualRuleAdapter=createSocialDigitalPresenterAdapter({...ports,execute:async input=>{paidKeys.push(input.idempotencyKey);assert.equal(input.presenter.providerPresenterId,'avatar-1');assert.equal(input.presenter.providerVoiceId,'voice-1');assert.equal(input.script,baseline.scenes[0]!.narration);assert.equal(input.accountPlaybookConstraints?.reviewStatus,'unverified');assert.deepEqual(input.accountPlaybookConstraints?.rules.presenterRules,['已授权企业人员']);return {status:'completed',providerTaskId:'controlled-only',localPath:output,contentHash:'controlled-hash',duration:3.2};}});
+for(const visualRules of [['原外观'],['另一实际视觉约束']])await executeSocialAssetSupplyPlan({tenantId:'tenant-a',taskId:'task-a',outputDirectory:root,plan,baseline:{...baseline,accountPlaybookConstraints:freezeSocialAccountProductionConstraints({...authority,verifiedAccountPlaybook:{...frozenRules,visualRules}})},availableAssets:[],adapters:[actualRuleAdapter]});
+assert.equal(paidKeys.length,2);assert.notEqual(paidKeys[0],paidKeys[1]);
 fs.rmSync(root, { recursive: true, force: true });
 console.log('social content digital presenter adapter tests passed');

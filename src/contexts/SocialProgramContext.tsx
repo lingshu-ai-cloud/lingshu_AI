@@ -1,3 +1,5 @@
+import {getToken,AUTH_TOKEN_CHANGED_EVENT} from '../lib/auth';
+import {readCurrentSocialAccounts,socialAccountReadCurrent} from '../lib/socialAccountReadIdentity';
 import {
   createContext,
   useCallback,
@@ -51,6 +53,8 @@ export function SocialProgramProvider({ scope, children, enabled = true }: { sco
   const [accountsError, setAccountsError] = useState('');
   const programRequestRef = useRef(0);
   const accountRequestRef = useRef(0);
+  const accountsMounted=useRef(true);
+  useEffect(()=>{accountsMounted.current=true;const changed=()=>{accountRequestRef.current++;setAccounts([]);setAccountsLoading(false);setAccountsError('登录身份已变化，请重新读取账号。');};window.addEventListener(AUTH_TOKEN_CHANGED_EVENT,changed);window.addEventListener('storage',changed);return()=>{accountsMounted.current=false;accountRequestRef.current++;window.removeEventListener(AUTH_TOKEN_CHANGED_EVENT,changed);window.removeEventListener('storage',changed);};},[]);
 
   const preferredProgramId = useCallback(() => {
     try {
@@ -90,7 +94,9 @@ export function SocialProgramProvider({ scope, children, enabled = true }: { sco
 
   const refreshAccountsFor = useCallback(async (programId: string | null) => {
     const requestId = ++accountRequestRef.current;
-    if (!programId) {
+    const expected={token:getToken(),requestId,mounted:accountsMounted.current};
+    const current=()=>({token:getToken(),requestId:accountRequestRef.current,mounted:accountsMounted.current});
+    if (!programId || !expected.token) {
       setAccounts([]);
       setAccountsError('');
       setAccountsLoading(false);
@@ -99,15 +105,14 @@ export function SocialProgramProvider({ scope, children, enabled = true }: { sco
     setAccountsLoading(true);
     setAccountsError('');
     try {
-      const items = await socialProgramApi.listAccounts(programId);
-      if (requestId === accountRequestRef.current) setAccounts(items);
+      await readCurrentSocialAccounts(expected,current,()=>socialProgramApi.listAccounts(programId),setAccounts);
     } catch (requestError) {
-      if (requestId === accountRequestRef.current) {
+      if (socialAccountReadCurrent(expected,current())) {
         setAccounts([]);
         setAccountsError(errorMessage(requestError));
       }
     } finally {
-      if (requestId === accountRequestRef.current) setAccountsLoading(false);
+      if (socialAccountReadCurrent(expected,current())) setAccountsLoading(false);
     }
   }, []);
 

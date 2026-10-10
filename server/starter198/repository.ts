@@ -1,3 +1,4 @@
+import type {readMaterialLibrary} from '../lib/materialLibrary.js';
 import type { DataStore, ListQuery, ListResult } from '../storage/datastore.js';
 import { dataBackend, store } from '../storage/index.js';
 import { pbListStrict } from '../storage/pb.js';
@@ -60,6 +61,8 @@ export interface Starter198Repository {
    * expose the exact store that backs their reads and writes.
    */
   readonly dataStore?: DataStore;
+  /** Trusted server inventory reader; never supplied by content-task JSON. */
+  readonly materialLibrary?: typeof readMaterialLibrary;
   list(
     collection: StarterCollection,
     tenantId: string,
@@ -111,7 +114,7 @@ function assertScopedRecord(record: StarterRecord, tenantId: string): void {
   }
 }
 
-export function createStarter198Repository(dataStore: DataStore = store): Starter198Repository {
+export function createStarter198Repository(dataStore: DataStore = store, ports: {materialLibrary?:typeof readMaterialLibrary} = {}): Starter198Repository {
   async function list(
     collection: StarterCollection,
     tenantId: string,
@@ -211,7 +214,7 @@ export function createStarter198Repository(dataStore: DataStore = store): Starte
     return parsed;
   }
 
-  return { dataStore, list, get, create, update, access };
+  return { materialLibrary: ports.materialLibrary, dataStore, list, get, create, update, access };
 }
 
 export const starter198Repository = createStarter198Repository();

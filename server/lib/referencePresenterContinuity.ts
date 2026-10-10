@@ -4,7 +4,7 @@ import { createHash, randomUUID } from 'node:crypto';
 import { dashscopeApiKey } from '../agents/qwen.js';
 import { benchmarkTimeRange, recordOf } from '../../shared/benchmarkAnalysis.js';
 import type { VideoAiAnalysis } from '../types/index.js';
-import { extractReferenceEvidenceFrames, referenceCriticalFrameSchedule } from './referenceCriticalShotProduction.js';
+import { CRITICAL_SHOT_FRAME_POLICY, extractReferenceEvidenceFrames, referenceCriticalFrameSchedule } from './referenceCriticalShotProduction.js';
 import { withPaidOperationLock } from './paidOperationLock.js';
 import type { ReferenceCriticalFrame } from './referenceCriticalShots.js';
 
@@ -78,13 +78,19 @@ export async function recognizePresenterContinuity(input: Input, options: { fetc
 
 export async function producePresenterContinuity(input: { filePath:string;analysis:VideoAiAnalysis;sourceSha256:string;videoId:string;tenantId?:string;duration:number },
   options:{cacheRoot?:string;recognize?:typeof recognizePresenterContinuity}={}) {
+  const assertOriginalBytes = () => {
+    if (!/^[a-f0-9]{64}$/.test(input.sourceSha256) || createHash('sha256').update(fs.readFileSync(input.filePath)).digest('hex') !== input.sourceSha256)
+      throw new Error('presenter_continuity_source_changed');
+  };
+  assertOriginalBytes();
   const model=process.env.QWEN_CRITICAL_SHOT_MODEL || 'qwen3-vl-flash';
-  const key=createHash('sha256').update(JSON.stringify({version:PRESENTER_CONTINUITY_VERSION,model,tenantId:input.tenantId,
+  const key=createHash('sha256').update(JSON.stringify({version:PRESENTER_CONTINUITY_VERSION,framePolicy:CRITICAL_SHOT_FRAME_POLICY,model,tenantId:input.tenantId,
     videoId:input.videoId,source:input.sourceSha256,duration:input.duration,
     shots:input.analysis.scriptDetails15s?.map(s=>[s.time||s.timestamp]),words:input.analysis.audioTranscript?.words})).digest('hex');
   const root=options.cacheRoot || path.resolve('data/analysis-output/presenter-continuity');fs.mkdirSync(root,{recursive:true});
   const file=path.join(root,`${key}.json`), read=()=>fs.existsSync(file)?JSON.parse(fs.readFileSync(file,'utf8')):null;
   return withPaidOperationLock(path.join(root,'.locks'),key,async()=>{
+    assertOriginalBytes();
     const prior=read();
     if(prior?.evidence) return {...input.analysis,scriptDetails15s:input.analysis.scriptDetails15s?.map((s,i)=>({...s,...prior.evidence[i]})),presenterContinuitySummary:prior.summary};
     if(prior && !prior.providerResponse?.raw) throw new Error('人物识别提交状态未知，不重复付费；等待原任务自动恢复');
@@ -95,6 +101,7 @@ export async function producePresenterContinuity(input: { filePath:string;analys
       if(range && range.end-range.start>3 && i!==0) for(const fraction of [.15,.3,.65,.8]) schedule.push({shotId:`shot-${i+1}`,seconds:Number((range.start+(Math.min(range.end,input.duration)-range.start)*fraction).toFixed(3))});
     }
     const frames=await extractReferenceEvidenceFrames(input.filePath,input.analysis,input.duration,schedule,root);
+    assertOriginalBytes();
     const classificationInput={analysis:input.analysis,frames,sourceSha256:input.sourceSha256,videoId:input.videoId};
     try {
       let supplier=prior;
@@ -103,9 +110,11 @@ export async function producePresenterContinuity(input: { filePath:string;analys
         supplier=await (options.recognize||recognizePresenterContinuity)(classificationInput);
         fs.writeFileSync(file,JSON.stringify({key,status:'received',...supplier}),{mode:0o600});
       }
+      assertOriginalBytes();
       if(supplier.finishReason==='length') throw new Error('人物识别JSON截断，保留原请求不重复付费');
       const details=validatePresenterContinuity(classificationInput,JSON.parse(supplier.providerResponse.raw),model);
       const summary={version:PRESENTER_CONTINUITY_VERSION,provider:'qwen',model,sourceSha256:input.sourceSha256,videoId:input.videoId,
+        framePolicy:CRITICAL_SHOT_FRAME_POLICY,
         cacheKey:key,analyzedAt:new Date().toISOString(),frameCount:frames.length,
         frameEvidence:frames.map(({shotId,seconds,requestedSeconds})=>({shotId,seconds,requestedSeconds})),providerResponse:supplier.providerResponse};
       const evidence=details.map(s=>({presenterContinuityEvidence:s.presenterContinuityEvidence,observedPresenterRole:s.observedPresenterRole,

@@ -1,4 +1,5 @@
 import test from 'node:test';
+import { createHash } from 'node:crypto';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
@@ -6,6 +7,7 @@ import path from 'node:path';
 import { execFileSync } from 'node:child_process';
 import ffmpeg from 'ffmpeg-static';
 import { producePresenterContinuity, validatePresenterContinuity } from './referencePresenterContinuity.js';
+import { CRITICAL_SHOT_FRAME_POLICY } from './referenceCriticalShotProduction.js';
 import type { VideoAiAnalysis } from '../types/index.js';
 const analysis:VideoAiAnalysis={theme:'',hooks:[],sellingPoints:[],mood:'',structure:'',recommendedScriptType:'storyboard',
   scriptDetails15s:[{time:'0–1s',criticalShot:{classification:'non_critical'} as any}]};
@@ -33,10 +35,11 @@ test('real source-frame supplier response caches identity evidence without overw
   let calls=0;
   const recognize:any=async(input:any)=>{calls++;return {finishReason:'stop',providerResponse:{model:'qwen3-vl-flash',usage:{total_tokens:123},
     raw:JSON.stringify({shots:[{...row,visibility:'no_person',personContinuityId:'',evidence:['实际黑色帧无人'],frameSeconds:input.frames.slice(0,2).map((f:any)=>f.seconds)}]})}};};
-  const input={filePath,analysis,videoId:'test',sourceSha256:'hash',duration:1,tenantId:'A'};
+  const input={filePath,analysis,videoId:'test',sourceSha256:createHash('sha256').update(fs.readFileSync(filePath)).digest('hex'),duration:1,tenantId:'A'};
   try{
     const first=await producePresenterContinuity(input,{cacheRoot:path.join(dir,'cache'),recognize});
     assert.equal(calls,1);assert.ok(first.presenterContinuitySummary.frameCount >= 2);
+    assert.equal(first.presenterContinuitySummary.framePolicy,CRITICAL_SHOT_FRAME_POLICY);
     assert.ok(first.presenterContinuitySummary.frameEvidence.every((f:{seconds:number})=>Math.abs(f.seconds*30-Math.round(f.seconds*30))<.001));
     const nextAnalysis={...analysis,scriptDetails15s:[{...analysis.scriptDetails15s![0],criticalShot:{classification:'critical'} as any,dialogue:'later measured speech'}]};
     const next=await producePresenterContinuity({...input,analysis:nextAnalysis},{cacheRoot:path.join(dir,'cache'),recognize});
@@ -49,10 +52,28 @@ test('unknown submission status never creates a second charge',async()=>{
   const dir=fs.mkdtempSync(path.join(os.tmpdir(),'presenter-uncertain-')),filePath=path.join(dir,'source.mp4');
   execFileSync(ffmpeg!,['-hide_banner','-loglevel','error','-f','lavfi','-i','color=black:size=96x96:rate=30:duration=1','-c:v','libx264','-y',filePath]);
   let calls=0;const recognize:any=async()=>{calls++;throw new Error('timeout');};
-  const input={filePath,analysis,videoId:'test',sourceSha256:'hash',duration:1};
+  const input={filePath,analysis,videoId:'test',sourceSha256:createHash('sha256').update(fs.readFileSync(filePath)).digest('hex'),duration:1};
   try{
     await assert.rejects(producePresenterContinuity(input,{cacheRoot:path.join(dir,'cache'),recognize}),/timeout/);
     await assert.rejects(producePresenterContinuity(input,{cacheRoot:path.join(dir,'cache'),recognize}),/不重复付费/);
     assert.equal(calls,1);
   }finally{fs.rmSync(dir,{recursive:true,force:true});}
+});
+
+test('source-byte drift rejects cached evidence and preserves original response without resubmission',async()=>{
+ const dir=fs.mkdtempSync(path.join(os.tmpdir(),'presenter-source-drift-')),filePath=path.join(dir,'source.mp4');
+ execFileSync(ffmpeg!,['-hide_banner','-loglevel','error','-f','lavfi','-i','color=black:size=96x96:rate=30:duration=1','-c:v','libx264','-y',filePath]);
+ const original=fs.readFileSync(filePath),input={filePath,analysis,videoId:'drift',sourceSha256:createHash('sha256').update(original).digest('hex'),duration:1};let calls=0;
+ const recognize:any=async(value:any)=>{calls++;fs.appendFileSync(filePath,'changed');return {finishReason:'stop',providerResponse:{raw:JSON.stringify({shots:[{...row,visibility:'no_person',personContinuityId:'',frameSeconds:value.frames.slice(0,2).map((f:any)=>f.seconds)}]})}};};
+ try{
+  await assert.rejects(producePresenterContinuity(input,{cacheRoot:path.join(dir,'cache'),recognize}),/presenter_continuity_source_changed/);
+  assert.equal(calls,1);
+  await assert.rejects(producePresenterContinuity(input,{cacheRoot:path.join(dir,'cache'),recognize}),/presenter_continuity_source_changed/);
+  assert.equal(calls,1);
+  fs.writeFileSync(filePath,original);
+  const recovered=await producePresenterContinuity(input,{cacheRoot:path.join(dir,'cache'),recognize});
+  assert.equal(calls,1);assert.equal(recovered.scriptDetails15s?.[0].presenterContinuityEvidence?.personPresence,'none');
+  fs.appendFileSync(filePath,'changed-again');
+  await assert.rejects(producePresenterContinuity(input,{cacheRoot:path.join(dir,'cache'),recognize}),/presenter_continuity_source_changed/);assert.equal(calls,1);
+ }finally{fs.rmSync(dir,{recursive:true,force:true});}
 });

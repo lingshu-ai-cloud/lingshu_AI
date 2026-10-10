@@ -1,3 +1,4 @@
+import {assessWeeklyOwnedProductIdentity} from './weeklyOwnedProductIdentityDemand.js';
 import {createExactShotMaterializationService} from '../lib/referenceExactShotMaterialization.js';
 import { weeklyProductionAdmissionMessage } from './weeklyProductionAdmissionMessage.js';
 import {ensureOriginalSocialContentProductionQueued} from '../starter198/socialContentOriginalRunQueueRecovery.js';
@@ -199,9 +200,12 @@ export function createSocialWeeklyProductionAdapter(dataStore: DataStore, ports:
         };
       }
       if(!publication.materialRequirement) {
+        const owned=await assessWeeklyOwnedProductIdentity(dataStore,{tenantId:task.tenantId,programId:task.programId,packageId:task.packageId,packageVersion:task.packageVersion,publicationTaskId:task.publicationTaskId!,contentTaskId:detail.taskId},{repository,sourceOptions});
+        if(owned.required){if(owned.status!=='ready')return blocked(owned.gaps[0]??'weekly_owned_product_identity_verification_required','产品身份素材尚未完成指定消费者的事实、权利与镜头核验，请先关联真实素材任务；未启动生产。');const frozen=socialObject(socialJson(boundRow.brief))?._weeklyOwnedProductIdentityDemand as {version:number};automaticMaterialEvidence={type:'starter_social_owned_product_identity_demand',id:detail.taskId,version:frozen.version};}
+        else {
         const demandScope={taskId:detail.taskId,programId:task.programId,packageId:task.packageId,packageVersion:task.packageVersion,publicationTaskId:task.publicationTaskId,accountId:publication.accountId,factRefs:publication.factRefs};
-        let demand=await readVerifiedNoSharedMaterialDemand(dataStore,boundRow,{...demandScope,tenantId:task.tenantId});
-        if(!demand&&detail.runId){await assertAdmission();demand=await freezeOriginalRunMaterialDemand(dataStore,{...demandScope,tenantId:task.tenantId});}
+        let demand=await readVerifiedNoSharedMaterialDemand(dataStore,boundRow,{...demandScope,tenantId:task.tenantId},{repository});
+        if(!demand&&detail.runId){await assertAdmission();demand=await freezeOriginalRunMaterialDemand(dataStore,{...demandScope,tenantId:task.tenantId},{repository});}
         if(!demand&&!detail.runId) {
           demand=buildNoSharedMaterialDemand(boundRow,detail,demandScope);
           if(demand) {
@@ -216,6 +220,7 @@ export function createSocialWeeklyProductionAdapter(dataStore: DataStore, ports:
           }
         }
         if(demand)automaticMaterialEvidence={type:'starter_social_content_material_demand',id:detail.taskId,version:demand.version};
+        }
       }
       let requiredMaterialAdmission:WeeklyRequiredMaterialAdmission|null=null;
       if(publication.materialRequirement) {
@@ -271,7 +276,7 @@ export function createSocialWeeklyProductionAdapter(dataStore: DataStore, ports:
       }
       if(detail.runId&&!startedHere&&['asset_generation','video_generation','quality_check','rework'].includes(task.schedule.stepKind)&&!await readContentExecutionJob(dataStore,task.tenantId,detail.taskId,detail.runId)){await assertAdmission();await ensureOriginalSocialContentProductionQueued({repository,tenantId:task.tenantId,userId:planning.userConfirmation.confirmedBy,taskId:detail.taskId,runId:detail.runId});}
     } catch (error) {
-      const code = error instanceof Error && /^weekly_/.test(error.message) ? error.message : error && typeof error === 'object' && 'code' in error ? String(error.code) : 'weekly_production_admission_failed';
+      const code = error instanceof Error && /^reference_[a-z_]+(?::|$)/.test(error.message) ? error.message.split(':', 1)[0]! : error instanceof Error && /^weekly_/.test(error.message) ? error.message : error && typeof error === 'object' && 'code' in error ? String(error.code) : 'weekly_production_admission_failed';
       return blocked(code, weeklyProductionAdmissionMessage(code, detail, error instanceof Error ? error.message : '内容生产准入失败。'));
     }
     if (!detail.runId) return blocked('weekly_production_confirmation_required', '内容任务已保留，等待既有生产准入确认。');

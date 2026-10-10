@@ -765,6 +765,8 @@ export interface SocialReplicationReferenceAssignment {
 }
 
 export interface SocialReplicationJobContext {
+  verifiedPrimaryReference?: {recordId:string;sourceVersion:string;sourceSha256:string;analysisRunId:string;runtimeAnalysisId:string;runtimeAnalysisVersion:string;sourceAnalysisId:string;sourceAnalysisVersion:string};
+  verifiedAccountPlaybook?: {recordHash:string;audience:string[];pillars:string[];recurringFormats:string[];conversionRoute:import('./socialProgram.js').AccountPlaybook['conversionRoute'];evidenceRules:string[];visualRules:string[];languageRules:string[];presenterRules:string[];fixedFactors:string[];experimentFactors:string[]};
   programRef?: SocialVersionedObjectRef | null;
   targetAccountRef?: SocialVersionedObjectRef | null;
   accountPlaybookRef?: SocialAccountPlaybookRef | null;
