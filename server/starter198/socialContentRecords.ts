@@ -1086,8 +1086,23 @@ export async function readSocialTaskDetail(input: {
     status: socialText(value.status), attempts: Number(value.attempts) || 0,
     nextAttemptAt: socialText(value.nextAttemptAt) || null, reason: socialText(value.reason) || null,
   });
+  const socialMvpHandoff = await (async () => {
+    const missing = {package:null,clips:[],estimatedCosts:{A:null,B:null,total:null},gaps:['mvp_authoritative_scope_missing']};
+    const scope = socialObject(socialJson(task.mvp_scope));
+    if (!input.repository.dataStore || !scope) return missing;
+    const {SOCIAL_MVP_SCOPE_KEYS} = await import('../../shared/contracts/socialMvpHandoff.js');
+    if (!SOCIAL_MVP_SCOPE_KEYS.every(key => typeof scope[key] === 'string' && String(scope[key]).trim())
+      || scope.tenantId !== input.tenantId || scope.taskId !== input.taskId || scope.runId !== summary.runId
+      || scope.version !== summary.version || scope.accountId !== summary.brief.targetAccountRef?.id
+      || scope.productId !== summary.brief.productId || scope.projectId !== task.project_id) return missing;
+    try {
+      const {readSocialMvpHandoff} = await import('./socialMvpHandoffEvidence.js');
+      return await readSocialMvpHandoff(input.repository.dataStore, scope as unknown as import('../../shared/contracts/socialMvpHandoff.js').SocialMvpScope);
+    } catch { return {...missing,gaps:['mvp_authoritative_storage_unavailable']}; }
+  })();
   return {
     ...summary,
+    socialMvpHandoff,
     ...(referenceRecovery || publishingRecovery ? { managedExecution: {
       ...(referenceRecovery ? { reference: { ...recoveryView(referenceRecovery),
         ...(['producing', 'asset_review', 'packaging', 'delivered', 'awaiting_publish', 'awaiting_metrics', 'reviewed'].includes(summary.status)
