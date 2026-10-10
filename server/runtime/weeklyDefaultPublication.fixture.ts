@@ -19,7 +19,7 @@ import {createSocialWeeklyPublicationAdapter} from './socialWeeklyPublicationAda
 import type {WeeklyExecutionTask} from '../../shared/contracts/socialProgram.js';
 import type {StoredPublicationAssignment} from '../publishing/weeklyLineage.js';
 
-export async function prepareDefaultPublication(t:TestContext,options:{profile?:'b2b_cold_start'|'b2b_existing'}={}){
+export async function prepareDefaultPublication(t:TestContext,options:{profile?:'b2b_cold_start'|'b2b_established'}={}){
  const originalNodeEnv=process.env.NODE_ENV;process.env.NODE_ENV='test';t.after(()=>{if(originalNodeEnv===undefined)delete process.env.NODE_ENV;else process.env.NODE_ENV=originalNodeEnv;});
  t.mock.timers.enable({apis:['Date'],now:new Date('2026-10-02T12:00:00Z')});
  const f=await prepareWeeklyG6Fixture({registeredOwnedMedia:true,...options});t.after(f.cleanup);

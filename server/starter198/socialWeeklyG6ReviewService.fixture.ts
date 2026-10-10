@@ -2,7 +2,7 @@ import {prepareWeeklyQualityAuditFixture} from '../runtime/weeklyContentQualityA
 import {createSocialWeeklyG6ReviewService} from './socialWeeklyG6ReviewService.js';
 import type {SocialWeeklyG6Scope} from '../../shared/contracts/socialWeeklyG6Review.js';
 /** Real local decoded media, G4 human evidence, G5 explicit independent human audit, actual confirmed reception and controlled provider-probe port. No external calls. G6 submission and final approval remain caller actions. */
-export async function prepareWeeklyG6Fixture(options:{registeredOwnedMedia?:boolean;profile?:'b2b_cold_start'|'b2b_existing'}={}){
+export async function prepareWeeklyG6Fixture(options:{registeredOwnedMedia?:boolean;profile?:'b2b_cold_start'|'b2b_established'}={}){
  const f=await prepareWeeklyQualityAuditFixture({width:360,height:640,fps:30,...options});try{
  const {sealAccountCredential}=await import('../lib/accountCredentials.js');const {refreshPlatformCapabilityEvidence}=await import('../publishing/platformCapabilities.js');const {savePublicationReceptionBinding}=await import('../socialPrograms/publicationReceptionService.js');const {g5FixtureScope,passedDirectorChecks}=await import('./socialDirectorG5ReviewService.fixture.js');
  const pub=f.pkg.socialContentPackage.publicationTasks[0]!;pub.publishWindow=f.pkg.weekStart+'T12:00:00+08:00';
