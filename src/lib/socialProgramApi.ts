@@ -1,6 +1,8 @@
 import { getToken } from './auth';
 import type { WeeklyScheduleTargetGraph, WeeklyScheduleCapacityInput, WeeklyScheduleProposal, WeeklyScheduleConfirmation } from '../../shared/contracts/socialWeeklyScheduleRevision';
 import type {WeeklyProductionRepairCase} from '../../shared/contracts/weeklyProductionRepairCase';
+import type {SceneReworkAdmissionPreview} from '../../server/starter198/socialContentSceneReworkAdmission';
+export interface WeeklyTechnicalRepairCapacityPreview{caseRecordHash:string;preview:SceneReworkAdmissionPreview;maximumCaseCostCny:number|null;deadlineAt:string|null;estimatedDurationMinutes:number|null;admission:WeeklyProductionRepairCase['admission']}
 import type { WeeklyRecoveryInput, WeeklyRecoveryAssessment } from '../../server/socialPrograms/weeklyRecoveryAssessment';
 import type { WeeklyBackwardSchedule, WeeklyBackwardScheduleInput } from '../../server/socialPrograms/weeklyBackwardSchedule';
 import type { WeeklyCustomerStep, WeeklyCustomerStepEvidence, readWeeklyCustomerCalendar } from '../../server/runtime/socialWeeklyCustomerBridge';
@@ -157,6 +159,9 @@ export const socialProgramApi = {
   async listRepairCases(programId:string,packageId:string,version:number):Promise<WeeklyProductionRepairCase[]>{
     return (await request<{items:WeeklyProductionRepairCase[]}>(`/${encodeURIComponent(programId)}/operating-packages/${encodeURIComponent(packageId)}/repair-cases?version=${version}`)).items;
   },
+  async previewTechnicalRepairCapacity(programId:string,packageId:string,version:number,caseId:string):Promise<WeeklyTechnicalRepairCapacityPreview>{return(await request<{item:WeeklyTechnicalRepairCapacityPreview}>(`/${encodeURIComponent(programId)}/operating-packages/${encodeURIComponent(packageId)}/repair-cases/${encodeURIComponent(caseId)}/capacity-preview?version=${version}`)).item;},
+  async confirmTechnicalRepairCapacity(programId:string,packageId:string,version:number,caseId:string,input:{expectedCaseRecordHash:string;expectedPreviewHash:string;expectedQuoteHash?:string;authorizedMaximumCostCny:number}):Promise<WeeklyProductionRepairCase>{return(await request<{item:WeeklyProductionRepairCase}>(`/${encodeURIComponent(programId)}/operating-packages/${encodeURIComponent(packageId)}/repair-cases/${encodeURIComponent(caseId)}/confirm-capacity`,{method:'POST',...json({packageVersion:version,...input})})).item;},
+  async startTechnicalRepair(programId:string,packageId:string,version:number,caseId:string,expectedCaseRecordHash:string):Promise<WeeklyProductionRepairCase>{return(await request<{item:WeeklyProductionRepairCase}>(`/${encodeURIComponent(programId)}/operating-packages/${encodeURIComponent(packageId)}/repair-cases/${encodeURIComponent(caseId)}/start`,{method:'POST',...json({packageVersion:version,expectedCaseRecordHash})})).item;},
   async assessRecovery(programId: string, packageId: string, packageVersion: number, input: Pick<WeeklyRecoveryInput, 'changedTaskIds' | 'constraints' | 'resources' | 'remainingBudgetCny'>): Promise<WeeklyRecoveryAssessment> {
     return (await request<{ item: WeeklyRecoveryAssessment }>(`/${encodeURIComponent(programId)}/operating-packages/${encodeURIComponent(packageId)}/recovery-assessment`, { method: 'POST', ...json({ changedTaskIds: input.changedTaskIds, constraints: input.constraints, resources: input.resources, remainingBudgetCny: input.remainingBudgetCny, packageVersion }) })).item;
   },

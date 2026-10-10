@@ -9,6 +9,26 @@ export type WeeklyProductionRepairCaseState =
   | 'resolved'
   | 'cancelled';
 
+export interface WeeklyRepairAdmissionConfirmation {
+  type:'weekly_repair_admission_confirmation';
+  version:1;
+  caseId:string;
+  caseRequestHash:string;
+  previewHash:string;
+  operationId:string;
+  executionRunId:string;
+  sceneCacheHash:string;
+  planHash:string;
+  localOnly:boolean;
+  quoteHash:string|null;
+  costPolicyHash:string|null;
+  authorizedMaximumCostCny:number;
+  capacityWindow:{startsAt:string;finishesAt:string;deadlineAt:string;estimatedDurationMinutes:number;recordHash:string};
+  confirmedBy:string;
+  confirmedAt:string;
+  recordHash:string;
+}
+
 export interface WeeklyProductionRepairCase {
   schemaVersion:'weekly-production-repair-case.v1';
   caseId:string;
@@ -53,6 +73,7 @@ export interface WeeklyProductionRepairCase {
   maximumCostCny:number|null;
   configurationGaps:string[];
   state:WeeklyProductionRepairCaseState;
+  admission:WeeklyRepairAdmissionConfirmation|null;
   execution:{operationId:string;runId:string;jobId:string}|null;
   childArtifactRef:VersionedSocialRef|null;
   createdBy:string;
