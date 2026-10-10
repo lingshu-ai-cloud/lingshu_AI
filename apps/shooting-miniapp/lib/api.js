@@ -102,6 +102,6 @@ module.exports.chat = messages => new Promise((resolve, reject) => {
 
 module.exports.workspaceKind = async () => {
   try { await request('starter-198/workspace'); return 'starter'; }
-  catch (e) { if (e.status === 403 && e.code === 'starter_198_workspace_not_entitled') return 'legacy'; throw e; }
+  catch (e) { if (e.status === 403 && ['starter_198_workspace_not_entitled', 'profile_not_enabled'].includes(e.code)) return 'legacy'; throw e; }
 };
 module.exports.command = body => request('starter-198/commands', 'POST', body);

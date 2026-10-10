@@ -138,13 +138,19 @@ export async function buildMobileWorkbenchOverview(store: DataStore, tenantId: s
   });
 
   const weekPosts = postsRead.items.filter(row => within(row.published_at || row.created_at || row.created, range));
-  const schedule = weekPosts.map(row => ({
+  const schedule = weekPosts.map(row => {
+    const stats = jsonObject<Record<string, unknown>>(row.stats, {});
+    return ({
     id: row.id, title: String(row.title || '未命名内容'), platform: String(row.platform || 'unknown'),
     scheduledAt: String(row.published_at || row.created_at || row.created || ''), status: postStatus(row),
     publishReceipt: hasPublishReceipt(row) ? 'verified' : 'unknown',
     taskId: String(row.task_id || row.workflow_task_id || '') || null,
     contentId: String(row.content_id || row.contentId || '') || null,
-  })).sort((a, b) => millis(a.scheduledAt) - millis(b.scheduledAt));
+    accountLabel: String(stats.accountLabel || '') || null,
+    stage: String(stats.stage || '') || null,
+    agentRole: String(stats.agentRole || '') || null,
+    publishError: String(stats.publishError || '') || null,
+  }); }).sort((a, b) => millis(a.scheduledAt) - millis(b.scheduledAt));
   const published = weekPosts.filter(hasPublishReceipt);
 
   const latestQualification = new Map<string, Record_>();
