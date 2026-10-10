@@ -15,6 +15,7 @@ import {createWeeklyMaterialRequestService,type WeeklyMaterialPorts} from '../so
 import {withExecutionPackageGate,executionPackageFrozen} from '../socialPrograms/weeklyExecutionGate.js';
 import {organizationRoleOrNull} from '../lib/organizationRole.js';
 import {resolveWeeklyCreativeRepairAuthority} from './weeklyCreativeRepairAuthority.js';
+import {createHash} from 'node:crypto';
 export interface WeeklyOwnedProductIdentityPorts {repository:Starter198Repository;materialPorts?:WeeklyMaterialPorts;sourceOptions?:SocialContentSourceOptionsPort;getMaterial?:typeof getOwnedCloudMaterialRecord;startAdmission?:{commandId:string;admissionVersion:string;actorUserId:string}}
 function fail(code:string):never{throw new SocialContentWorkflowError(code,409);}
 const obj=(v:unknown)=>socialObject(socialJson(v));
@@ -80,7 +81,9 @@ export async function assessWeeklyOwnedProductIdentity(store:DataStore,scope:Wee
 }
 export async function bindWeeklyOwnedProductIdentity(store:DataStore,scope:WeeklyOwnedProductIdentityScope,input:{actorUserId:string;expectedTaskVersion:number;expectedRequirementHash:string;bindings:WeeklyOwnedProductIdentityBinding[]},ports:WeeklyOwnedProductIdentityPorts){
  return withExecutionPackageGate(store,{tenantId:scope.tenantId,programId:scope.programId,packageId:scope.packageId,packageVersion:scope.packageVersion},async assert=>withSocialContentSubjectLease({repository:ports.repository,tenantId:scope.tenantId,subjectId:scope.contentTaskId,action:async()=>{
- if(await executionPackageFrozen(store,{tenantId:scope.tenantId,programId:scope.programId,packageId:scope.packageId,packageVersion:scope.packageVersion}))return fail('weekly_execution_package_frozen');
+ const scopedRows=await store.list<Record_>('starter_social_content_tasks',{where:{tenant_id:scope.tenantId,task_id:scope.contentTaskId},perPage:2}),scopedRow=scopedRows.items[0];
+ const creative=scopedRows.totalItems===1&&scopedRows.items.length===1&&scopedRow?await resolveWeeklyCreativeRepairAuthority({store,tenantId:scope.tenantId,task:scopedRow}):null;
+ if(await executionPackageFrozen(store,{tenantId:scope.tenantId,programId:scope.programId,packageId:scope.packageId,packageVersion:scope.packageVersion})&&!creative)return fail('weekly_execution_package_frozen');
  const actor=await store.getById<Record_>('users',input.actorUserId);if(!actor||actor.tenantId!==scope.tenantId||!['super_admin','admin','social_operator'].includes(organizationRoleOrNull(actor.role)??'')||actor.disabled===true||actor.active===false||['disabled','suspended'].includes(String(actor.status)))return fail('weekly_owned_product_identity_actor_invalid');
  const current=await source(store,scope,ports);if(current.detail.runId||!['draft','needs_input','plan_review'].includes(current.detail.status)||Number(current.detail.version)!==input.expectedTaskVersion||current.requirementHash!==input.expectedRequirementHash||!current.consumerTaskId)return fail('weekly_owned_product_identity_binding_changed');
  if(!current.requirements.length||input.bindings.length!==current.requirements.length||new Set(input.bindings.map(b=>b.requirementId)).size!==current.requirements.length||input.bindings.some(b=>!current.requirements.some(r=>r.requirementId===b.requirementId)))return fail('weekly_owned_product_identity_binding_changed');
@@ -94,6 +97,24 @@ export async function bindWeeklyOwnedProductIdentity(store:DataStore,scope:Weekl
  const finalAssessment=await assessWeeklyOwnedProductIdentity(store,scope,ports,finalFrozen);if(finalAssessment.gaps.some(code=>code!=='weekly_owned_product_identity_verification_required'))return fail(finalAssessment.gaps[0]??'weekly_owned_product_identity_verification_required');
  await assert();await assertSocialContentSubjectLease({repository:ports.repository,tenantId:scope.tenantId,subjectId:scope.contentTaskId});const last=await store.getById<Record_>('starter_social_content_tasks',fresh.row.id);if(!last||last.tenant_id!==scope.tenantId||last.task_id!==scope.contentTaskId||last.version!==fresh.row.version||last.run_id!==fresh.row.run_id||socialRequestHash(last.brief)!==socialRequestHash(fresh.row.brief))return fail('weekly_owned_product_identity_binding_changed');if(!await store.update('starter_social_content_tasks',fresh.row.id,{brief:{...obj(fresh.row.brief),_weeklyOwnedProductIdentityDemand:finalFrozen}}))return fail('weekly_owned_product_identity_save_failed');return finalFrozen;
  }}));
+}
+
+/** Reuses only a still-valid, fully verified original material decision. The
+ * child is assessed independently, and bind performs the normal byte, rights,
+ * fact, consumer and source checks again before persisting anything. */
+export async function inheritWeeklyOwnedProductIdentity(store:DataStore,input:{parentScope:WeeklyOwnedProductIdentityScope;childScope:WeeklyOwnedProductIdentityScope;actorUserId:string},ports:WeeklyOwnedProductIdentityPorts){
+ const {parentScope,childScope}=input;
+ if(parentScope.tenantId!==childScope.tenantId||parentScope.programId!==childScope.programId||parentScope.packageId!==childScope.packageId||parentScope.packageVersion!==childScope.packageVersion||parentScope.publicationTaskId!==childScope.publicationTaskId)return fail('weekly_owned_product_identity_scope_invalid');
+ const childRows=await store.list<Record_>('starter_social_content_tasks',{where:{tenant_id:childScope.tenantId,task_id:childScope.contentTaskId},perPage:2}),child=childRows.items[0];
+ if(childRows.totalItems!==1||childRows.items.length!==1||!child)return fail('weekly_owned_product_identity_scope_invalid');
+ const creative=await resolveWeeklyCreativeRepairAuthority({store,tenantId:childScope.tenantId,task:child});
+ if(!creative||creative.proof.parentTaskId!==parentScope.contentTaskId)return fail('weekly_owned_product_identity_scope_invalid');
+ const parent=await assessWeeklyOwnedProductIdentity(store,parentScope,ports);if(!parent.required)return assessWeeklyOwnedProductIdentity(store,childScope,ports);if(parent.status!=='ready')return fail(parent.gaps[0]??'weekly_owned_product_identity_verification_required');
+ const next=await assessWeeklyOwnedProductIdentity(store,childScope,ports);if(!next.required||next.requirementHash!==parent.requirementHash||next.consumerTaskId!==parent.consumerTaskId)return fail('weekly_owned_product_identity_binding_changed');
+ await bindWeeklyOwnedProductIdentity(store,childScope,{actorUserId:input.actorUserId,expectedTaskVersion:next.contentTaskVersion,expectedRequirementHash:next.requirementHash,bindings:parent.bindings},ports);
+ const inherited=await assessWeeklyOwnedProductIdentity(store,childScope,ports);if(inherited.status!=='ready')return fail(inherited.gaps[0]??'weekly_owned_product_identity_verification_required');if(!ports.materialPorts?.materialBytes)return fail('weekly_owned_product_identity_bytes_unavailable');
+ for(const material of inherited.materials){const response=await ports.materialPorts.materialBytes.fetch({tenantId:childScope.tenantId,recordId:material.recordId});if(!response?.ok)return fail('weekly_owned_product_identity_material_changed');const bytes=Buffer.from(await response.arrayBuffer());if(createHash('sha256').update(bytes).digest('hex')!==material.sha256)return fail('weekly_owned_product_identity_material_changed');}
+ return inherited;
 }
 
 export const readWeeklyOwnedProductIdentityAssessment=assessWeeklyOwnedProductIdentity;
