@@ -1,26 +1,31 @@
 import { useCallback, useEffect, useState } from 'react';
 import { Headphones, Loader2 } from 'lucide-react';
 import { authHeader } from '../lib/auth';
+import { getSupportAccessSetting } from '../lib/supportAccessApi';
 
 export default function SupportAccessControl() {
-  const [defaultAuthorized, setDefaultAuthorized] = useState(true);
+  const [defaultAuthorized, setDefaultAuthorized] = useState<boolean | null>(null);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
 
   const load = useCallback(async () => {
-    const response = await fetch('/api/overseas/support-access/settings', { headers: authHeader() }).catch(() => null);
-    if (response?.ok) {
-      const data = await response.json() as { defaultAuthorized?: boolean };
-      setDefaultAuthorized(data.defaultAuthorized !== false);
+    setLoading(true);
+    setError('');
+    try {
+      setDefaultAuthorized(await getSupportAccessSetting());
+    } catch (cause) {
+      setDefaultAuthorized(null);
+      setError(cause instanceof Error ? cause.message : '无法读取技术支持授权状态');
+    } finally {
+      setLoading(false);
     }
-    setLoading(false);
   }, []);
 
   useEffect(() => { void load(); }, [load]);
 
   const updateMode = async (nextDefaultAuthorized: boolean) => {
-    if (saving || nextDefaultAuthorized === defaultAuthorized) return;
+    if (saving || defaultAuthorized === null || nextDefaultAuthorized === defaultAuthorized) return;
     setSaving(true);
     setError('');
     try {
@@ -29,7 +34,8 @@ export default function SupportAccessControl() {
         headers: { 'Content-Type': 'application/json', ...authHeader() },
         body: JSON.stringify({ mode: nextDefaultAuthorized ? 'default' : 'off' }),
       });
-      if (!response.ok) throw new Error('设置保存失败');
+      const data = await response.json().catch(() => ({})) as { error?: string; message?: string };
+      if (!response.ok) throw new Error(data.message || data.error || '设置保存失败');
       setDefaultAuthorized(nextDefaultAuthorized);
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : '设置保存失败');
@@ -53,14 +59,16 @@ export default function SupportAccessControl() {
           </div>
         </div>
         <div className="relative flex h-9 shrink-0 rounded-lg border border-border bg-white p-1" aria-label="技术支持授权模式">
-          {loading ? <span className="flex w-40 items-center justify-center"><Loader2 size={14} className="animate-spin text-text-muted" /></span> : <>
+          {loading ? <span className="flex w-40 items-center justify-center"><Loader2 size={14} className="animate-spin text-text-muted" /><span className="sr-only">正在读取授权状态</span></span> : defaultAuthorized === null ? (
+            <button type="button" onClick={() => void load()} className="min-w-40 rounded-md px-3 text-xs font-bold text-red-600 hover:bg-red-50">状态未知，重试</button>
+          ) : <>
             <button type="button" onClick={() => void updateMode(true)} disabled={saving} className={`min-w-24 rounded-md px-3 text-xs font-bold transition-colors ${defaultAuthorized ? 'bg-slate-950 text-white' : 'text-text-secondary hover:bg-surface-2'} disabled:opacity-60`}>默认授权</button>
             <button type="button" onClick={() => void updateMode(false)} disabled={saving} className={`min-w-24 rounded-md px-3 text-xs font-bold transition-colors ${!defaultAuthorized ? 'bg-slate-950 text-white' : 'text-text-secondary hover:bg-surface-2'} disabled:opacity-60`}>授权关闭</button>
           </>}
           {saving && <Loader2 size={13} className="absolute -left-5 top-2.5 animate-spin text-text-muted" />}
         </div>
       </div>
-      {error && <p className="mt-2 text-right text-xs text-red-600">{error}</p>}
+      {error && <p role="alert" className="mt-2 text-right text-xs text-red-600">授权状态未确认：{error}</p>}
     </section>
   );
 }

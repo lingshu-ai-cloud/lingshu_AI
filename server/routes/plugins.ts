@@ -1,25 +1,23 @@
 import { Router, type Request, type Response } from 'express';
-import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import { testShopify } from '../integrations/shopify.js';
 import { callLLM } from '../agents/llm.js';
+import { requireAuth } from '../middleware/auth.js';
+import { adminUserForHttp, requireInternalAdmin } from '../lib/demoAccounts.js';
+import {
+  mutatePluginRegistry,
+  PluginRegistryUnavailableError,
+  readPluginRegistry,
+  type StoredPlugin,
+} from '../lib/pluginRegistry.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const DATA = path.join(__dirname, '../../data/plugins.json');
+const DATA = process.env.NODE_ENV === 'test' && process.env.PLUGINS_DATA_FILE
+  ? path.resolve(process.env.PLUGINS_DATA_FILE)
+  : path.join(__dirname, '../../data/plugins.json');
 
-export interface Plugin {
-  id: string;
-  pluginKey: string;  // 'shopify' | 'exchangerate' | 'translate' | 'tiktok_ads' | ...
-  name: string;
-  nameZh: string;
-  category: 'ecommerce' | 'social' | 'tool' | 'ai';
-  description: string;
-  icon: string;       // emoji
-  status: 'installed' | 'not_installed' | 'error';
-  config: Record<string, string>;
-  installedAt?: string;
-}
+export type Plugin = StoredPlugin;
 
 const PLUGIN_CATALOG: Omit<Plugin, 'status' | 'config' | 'installedAt'>[] = [
   { id: 'shopify', pluginKey: 'shopify', name: 'Shopify', nameZh: 'Shopify 店铺', category: 'ecommerce', description: '同步 Shopify 订单、商品和客户数据，AI 自动分析店铺经营数据', icon: '🛍️' },
@@ -32,6 +30,8 @@ const PLUGIN_CATALOG: Omit<Plugin, 'status' | 'config' | 'installedAt'>[] = [
   { id: 'facebook', pluginKey: 'facebook', name: 'Facebook', nameZh: 'Facebook', category: 'social', description: '连接 Facebook Page，读取主页视频和评论，并支持将 AI 生成内容发布到主页', icon: '👍' },
 ];
 
+const TENANT_USABLE_PLUGIN_KEYS = new Set(['exchangerate', 'translate']);
+
 async function fetchExchangeRates() {
   const r = await fetch('https://api.exchangerate-api.com/v4/latest/USD');
   if (!r.ok) throw new Error(`exchange rate api ${r.status}`);
@@ -40,66 +40,140 @@ async function fetchExchangeRates() {
   return { ...data, rates: data.rates, source: 'live' as const };
 }
 
-function load(): Plugin[] {
-  try { return JSON.parse(fs.readFileSync(DATA, 'utf8')); } catch { return []; }
-}
-function save(plugins: Plugin[]) {
-  fs.writeFileSync(DATA, JSON.stringify(plugins, null, 2));
+export function pluginToPublic(
+  plugin: Plugin,
+  installed = true,
+  options: { managementAllowed?: boolean; tenantUsable?: boolean } = {},
+) {
+  const managementAllowed = options.managementAllowed === true;
+  return {
+    id: plugin.id,
+    pluginKey: plugin.pluginKey,
+    name: plugin.name,
+    nameZh: plugin.nameZh,
+    category: plugin.category,
+    description: plugin.description,
+    icon: plugin.icon,
+    status: plugin.status,
+    ...(managementAllowed && plugin.installedAt ? { installedAt: plugin.installedAt } : {}),
+    installed,
+    managementAllowed,
+    tenantUsable: options.tenantUsable === true,
+    configuredFields: managementAllowed
+      ? Object.entries(plugin.config)
+        .filter(([, value]) => String(value || '').trim().length > 0)
+        .map(([key]) => key)
+      : [],
+  };
 }
 
-function mergeWithCatalog(installed: Plugin[]): (Plugin & { installed: boolean })[] {
+function mergeWithCatalog(installed: Plugin[], managementAllowed: boolean) {
   return PLUGIN_CATALOG.map(cat => {
+    const tenantUsable = TENANT_USABLE_PLUGIN_KEYS.has(cat.pluginKey);
+    if (!managementAllowed) {
+      return { ...cat, status: tenantUsable ? 'installed' as const : 'not_installed' as const, installed: tenantUsable, managementAllowed: false, tenantUsable, configuredFields: [] as string[] };
+    }
     const inst = installed.find(p => p.pluginKey === cat.pluginKey);
     return inst
-      ? { ...inst, installed: true }
-      : { ...cat, status: 'not_installed' as const, config: {}, installed: false };
+      ? pluginToPublic(inst, true, { managementAllowed, tenantUsable })
+      : { ...cat, status: 'not_installed' as const, installed: false, managementAllowed, tenantUsable, configuredFields: [] as string[] };
   });
 }
 
 export const pluginsRouter = Router();
 
-pluginsRouter.get('/', (_req, res) => res.json(mergeWithCatalog(load())));
+function registryUnavailable(res: Response, error: unknown): void {
+  console.error('[plugin-registry]', {
+    errorType: error instanceof Error ? error.name : 'UnknownError',
+  });
+  res.status(503).json({ error: 'plugin_registry_unavailable' });
+}
 
-pluginsRouter.post('/:key/install', (req: Request, res: Response) => {
-  const plugins = load();
+function configPatch(value: unknown): Record<string, string> | null {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
+  const entries = Object.entries(value);
+  return entries.every(([, item]) => typeof item === 'string') ? Object.fromEntries(entries) : null;
+}
+
+// Every plugin endpoint requires a signed-in tenant. Global plugin
+// configuration remains internal-only; tenant-facing utility calls stay
+// available until they move behind the capability/quota service.
+pluginsRouter.use(requireAuth);
+
+pluginsRouter.get('/', async (req, res) => {
+  const admin = await adminUserForHttp(req, res);
+  if (admin === undefined) return;
+  const managementAllowed = Boolean(admin);
+  try {
+    res.json(mergeWithCatalog(managementAllowed ? readPluginRegistry(DATA) : [], managementAllowed));
+  } catch (error) {
+    registryUnavailable(res, error);
+  }
+});
+
+pluginsRouter.post('/:key/install', requireInternalAdmin, async (req: Request, res: Response) => {
   const cat = PLUGIN_CATALOG.find(p => p.pluginKey === req.params.key);
   if (!cat) { res.status(404).json({ error: 'unknown plugin' }); return; }
-  if (plugins.find(p => p.pluginKey === req.params.key)) { res.status(409).json({ error: 'already installed' }); return; }
-  const plugin: Plugin = { ...cat, status: 'installed', config: {}, installedAt: new Date().toISOString() };
-  plugins.push(plugin);
-  save(plugins);
-  res.json(plugin);
+  try {
+    const plugin = await mutatePluginRegistry(DATA, plugins => {
+      if (plugins.find(p => p.pluginKey === req.params.key)) throw Object.assign(new Error('already installed'), { status: 409 });
+      const created: Plugin = { ...cat, status: 'installed', config: {}, installedAt: new Date().toISOString() };
+      return { plugins: [...plugins, created], result: created };
+    });
+    res.json(pluginToPublic(plugin, true, { managementAllowed: true, tenantUsable: TENANT_USABLE_PLUGIN_KEYS.has(plugin.pluginKey) }));
+  } catch (error) {
+    if ((error as { cause?: { status?: number } })?.cause?.status === 409) res.status(409).json({ error: 'already installed' });
+    else registryUnavailable(res, error);
+  }
 });
 
-pluginsRouter.put('/:key/config', (req: Request, res: Response) => {
-  const plugins = load();
-  const idx = plugins.findIndex(p => p.pluginKey === req.params.key);
-  if (idx === -1) { res.status(404).json({ error: 'not installed' }); return; }
-  plugins[idx].config = { ...plugins[idx].config, ...req.body };
-  save(plugins);
-  res.json(plugins[idx]);
+pluginsRouter.put('/:key/config', requireInternalAdmin, async (req: Request, res: Response) => {
+  const patch = configPatch(req.body);
+  if (!patch) { res.status(400).json({ error: 'invalid_plugin_config' }); return; }
+  try {
+    const plugin = await mutatePluginRegistry(DATA, plugins => {
+      const idx = plugins.findIndex(p => p.pluginKey === req.params.key);
+      if (idx === -1) throw Object.assign(new Error('not installed'), { status: 404 });
+      const updated = { ...plugins[idx], config: { ...plugins[idx].config, ...patch } };
+      return { plugins: plugins.map((item, index) => index === idx ? updated : item), result: updated };
+    });
+    res.json(pluginToPublic(plugin, true, { managementAllowed: true, tenantUsable: TENANT_USABLE_PLUGIN_KEYS.has(plugin.pluginKey) }));
+  } catch (error) {
+    if ((error as { cause?: { status?: number } })?.cause?.status === 404) res.status(404).json({ error: 'not installed' });
+    else registryUnavailable(res, error);
+  }
 });
 
-pluginsRouter.delete('/:key', (req: Request, res: Response) => {
-  save(load().filter(p => p.pluginKey !== req.params.key));
-  res.json({ ok: true });
+pluginsRouter.delete('/:key', requireInternalAdmin, async (req: Request, res: Response) => {
+  try {
+    await mutatePluginRegistry(DATA, plugins => ({ plugins: plugins.filter(p => p.pluginKey !== req.params.key), result: undefined }));
+    res.json({ ok: true });
+  } catch (error) {
+    registryUnavailable(res, error);
+  }
 });
 
-pluginsRouter.post('/:key/test', async (req: Request, res: Response) => {
-  const plugin = load().find(p => p.pluginKey === req.params.key);
-  if (!plugin) { res.status(404).json({ error: 'not installed' }); return; }
+pluginsRouter.post('/:key/test', requireInternalAdmin, async (req: Request, res: Response) => {
+  let plugin: Plugin | undefined;
+  try {
+    plugin = readPluginRegistry(DATA).find(p => p.pluginKey === req.params.key);
+    if (!plugin) { res.status(404).json({ error: 'not installed' }); return; }
+  } catch (error) {
+    registryUnavailable(res, error);
+    return;
+  }
 
   try {
     switch (plugin.pluginKey) {
       case 'shopify': {
         const result = await testShopify(plugin.config as any);
-        updateStatus(plugin.id, result.ok ? 'installed' : 'error');
+        await updateStatus(plugin.id, result.ok ? 'installed' : 'error');
         res.json(result);
         break;
       }
       case 'exchangerate': {
         const data = await fetchExchangeRates();
-        updateStatus(plugin.id, 'installed');
+        await updateStatus(plugin.id, 'installed');
         res.json({
           ok: true,
           source: data.source,
@@ -110,7 +184,7 @@ pluginsRouter.post('/:key/test', async (req: Request, res: Response) => {
       }
       case 'translate':
         await callLLM('Reply with OK only.', { backend: 'qwen', systemPrompt: 'This is a connectivity check.' });
-        updateStatus(plugin.id, 'installed');
+        await updateStatus(plugin.id, 'installed');
         res.json({ ok: true, source: 'qwen', message: '千问翻译引擎连接成功' });
         break;
       case 'google_translate': {
@@ -120,23 +194,27 @@ pluginsRouter.post('/:key/test', async (req: Request, res: Response) => {
           method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ q: 'hello', target: 'zh' }),
         });
         if (!response.ok) throw new Error(`Google Translate API ${response.status}`);
-        updateStatus(plugin.id, 'installed');
+        await updateStatus(plugin.id, 'installed');
         res.json({ ok: true, source: 'google', message: 'Google 翻译连接成功' });
         break;
       }
       default:
         res.json({ ok: false, message: '该插件需要配置 API Key 后测试' });
     }
-  } catch (err: any) {
-    updateStatus(plugin.id, 'error');
-    res.status(500).json({ ok: false, error: err.message });
+  } catch (error) {
+    if (error instanceof PluginRegistryUnavailableError) { registryUnavailable(res, error); return; }
+    try { await updateStatus(plugin.id, 'error'); }
+    catch (registryError) { registryUnavailable(res, registryError); return; }
+    console.error('[plugin-test]', { pluginKey: plugin.pluginKey, errorType: error instanceof Error ? error.name : 'UnknownError' });
+    res.status(502).json({ ok: false, error: 'plugin_test_failed', message: '插件连接测试失败' });
   }
 });
 
-function updateStatus(id: string, status: Plugin['status']) {
-  const plugins = load();
-  const idx = plugins.findIndex(p => p.id === id);
-  if (idx !== -1) { plugins[idx].status = status; save(plugins); }
+async function updateStatus(id: string, status: Plugin['status']) {
+  await mutatePluginRegistry(DATA, plugins => ({
+    plugins: plugins.map(plugin => plugin.id === id ? { ...plugin, status } : plugin),
+    result: undefined,
+  }));
 }
 
 // Exchange rate shortcut
@@ -157,6 +235,7 @@ pluginsRouter.post('/translate/run', async (req, res) => {
     });
     res.json({ ok: true, source: 'qwen', translatedText: translatedText.trim() });
   } catch (error) {
-    res.status(502).json({ error: error instanceof Error ? error.message : '翻译服务不可用' });
+    console.error('[plugin-translate]', { errorType: error instanceof Error ? error.name : 'UnknownError' });
+    res.status(502).json({ error: 'translation_service_unavailable', message: '翻译服务不可用' });
   }
 });

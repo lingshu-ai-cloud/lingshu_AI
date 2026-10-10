@@ -1,0 +1,14 @@
+import assert from 'node:assert/strict';
+import { aggregateAdMetrics } from './metrics.js';
+const empty = aggregateAdMetrics([], '提升有效视频观看');
+assert.equal(empty.spend, null);
+assert.equal(empty.results, null);
+const partial = aggregateAdMetrics([{ spend: '5', impressions: '100', clicks: '20' }], '提升有效视频观看');
+assert.equal(partial.results, null, 'clicks cannot substitute for video views');
+assert.equal(partial.costPerResult, null);
+const video = aggregateAdMetrics([{ spend: '5', impressions: '100', clicks: '20', video_thruplay_watched_actions: [{ action_type: 'video_view', value: '50' }] }], '提升有效视频观看');
+assert.equal(video.results, 50);
+assert.equal(video.costPerResult, 0.1);
+const noConversionMapping = aggregateAdMetrics([{ spend: '5', clicks: '20' }], '获取线索或转化');
+assert.equal(noConversionMapping.results, null);
+console.log('ad metric provenance and missing-data tests passed');

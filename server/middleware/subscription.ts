@@ -1,9 +1,11 @@
 import type { Request, Response, NextFunction, RequestHandler } from 'express';
 import { auth } from '../storage/index.js';
-import { pbGet } from '../storage/pb.js';
+import { pbGetStrict } from '../storage/pb.js';
 import type { AuthLocals } from './auth.js';
 import { readDemoAccountRegistry } from '../lib/demoAccounts.js';
 import { getLocalTenant } from '../lib/localTenants.js';
+import { localFallbacksEnabled } from '../lib/localFallbackPolicy.js';
+import { currentDataAuthority } from '../storage/dataAuthority.js';
 
 /* ──────────────────────────────────────────────────────────────────────────
    订阅收费墙
@@ -42,7 +44,11 @@ export function isSubscriptionEnforced(): boolean {
 
 /** 读取租户当前订阅；记录缺失时返回 none */
 export async function getTenantSubscription(tenantId: string): Promise<Subscription> {
-  if (tenantId.startsWith('local_tenant_')) {
+  // A tenant id prefix is not an authority decision. In particular, a valid
+  // PocketBase account whose id happens to start with `local_tenant_` must not
+  // be allowed to read the local demo registry.
+  if (currentDataAuthority() !== 'pocketbase' && tenantId.startsWith('local_tenant_')) {
+    if (!localFallbacksEnabled()) return { status: 'none', plan: null, expiresAt: null };
     const localTenant = getLocalTenant(tenantId);
     if (localTenant) {
       return {
@@ -73,12 +79,7 @@ export async function getTenantSubscription(tenantId: string): Promise<Subscript
     }
     return { status: 'active', plan: 'local', expiresAt: null };
   }
-  let record: Record<string, unknown> | null = null;
-  try {
-    record = await pbGet(TENANT_COL, tenantId);
-  } catch {
-    return { status: 'none', plan: null, expiresAt: null };
-  }
+  const record = await pbGetStrict(TENANT_COL, tenantId);
   if (!record) return { status: 'none', plan: null, expiresAt: null };
   return {
     status: (record.subscriptionStatus as SubscriptionStatus) ?? 'none',
@@ -108,7 +109,23 @@ export function entitlementGate(): RequestHandler {
 
     const locals = res.locals as SubscriptionLocals;
     const signedAssetTenantId = locals.userId === 'signed-media' ? locals.tenantId : '';
-    const result = signedAssetTenantId ? null : await auth.verifyToken(req.headers.authorization);
+    let result;
+    try {
+      const authenticatedLocals = locals.userId && locals.tenantId && locals.userId !== 'signed-media'
+        ? { userId: locals.userId, tenantId: locals.tenantId }
+        : null;
+      result = signedAssetTenantId ? null : authenticatedLocals || await auth.verifyToken(req.headers.authorization);
+    } catch (error) {
+      console.error('[subscription] identity verification unavailable', {
+        errorType: error instanceof Error ? error.name : 'UnknownError',
+      });
+      res.setHeader('Cache-Control', 'no-store');
+      res.status(503).json({
+        error: 'auth_provider_unavailable',
+        message: '登录验证服务暂时不可用，请稍后重试。',
+      });
+      return;
+    }
     if (!result && !signedAssetTenantId) {
       res.status(401).json({ error: 'Unauthorized' });
       return;
@@ -119,7 +136,20 @@ export function entitlementGate(): RequestHandler {
       locals.tenantId = result.tenantId;
     }
 
-    const sub = await getTenantSubscription(signedAssetTenantId || result!.tenantId);
+    let sub: Subscription;
+    try {
+      sub = await getTenantSubscription(signedAssetTenantId || result!.tenantId);
+    } catch (error) {
+      console.error('[subscription] authority unavailable', {
+        errorType: error instanceof Error ? error.name : 'UnknownError',
+      });
+      res.setHeader('Cache-Control', 'no-store');
+      res.status(503).json({
+        error: 'subscription_authority_unavailable',
+        message: '订阅验证服务暂时不可用，请稍后重试。',
+      });
+      return;
+    }
     if (!isEntitled(sub)) {
       res.status(402).json({
         error: 'subscription_required',

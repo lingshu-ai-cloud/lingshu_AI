@@ -1,0 +1,12 @@
+import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
+const server = readFileSync(new URL('../server/routes/studio.ts', import.meta.url), 'utf8');
+const ui = readFileSync(new URL('../src/components/AiCreateStudio.tsx', import.meta.url), 'utf8');
+assert.match(server, /const providerOpt = 'qwen' as const/);
+assert.match(server, /可用素材的片段观察[\s\S]*?\$\{structuredMaterials\}/);
+assert.match(server, /素材：<已有素材写准确文件名及原素材起止秒/);
+assert.match(server, /qualityStatus: generationMode === 'clone' \? 'needs_review' : 'passed'/);
+assert.match(server, /materialGrounded: generationMode !== 'clone' && groundingIssues.length === 0/);
+assert.match(ui, /filter\(segment => usableEvidenceSegment\(segment, clip.duration\)\)/);
+assert.match(ui, /分镜初稿已生成，尚未通过逐镜画面核验/);
+console.log('clone material evidence contract passed (offline, no model calls)');

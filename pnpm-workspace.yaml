@@ -1,0 +1,22 @@
+packages:
+  - '.'
+
+allowBuilds:
+  # The package declares a no-op preinstall hook; no lifecycle script is needed
+  # for the published runtime files, so keep it explicitly denied.
+  '@google/genai': false
+  # Required native/runtime tooling. Keep this list explicit so pnpm 11 can
+  # reject every unreviewed dependency lifecycle script by default.
+  esbuild: true
+  ffmpeg-static: true
+  # BullMQ's msgpack transport has a pure-JS fallback; do not execute the
+  # optional native extractor build in CI or production images.
+  msgpackr-extract: false
+  protobufjs: true
+  # Pure JavaScript OCR runtime; postinstall only emits sponsorship metadata.
+  tesseract.js: true
+
+# Keep pnpm's local/test graph aligned with npm's production package-lock.
+# Express 4 pins qs to the vulnerable 6.15 line, so both managers must override it.
+overrides:
+  qs: 6.16.0

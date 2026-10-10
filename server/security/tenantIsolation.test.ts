@@ -2,6 +2,8 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
 import { buildMarketingEvents } from '../../src/components/publishing/marketingCalendar.js';
+import { canMoveCalendarPost } from '../../src/lib/calendarModel.js';
+import { resolvePendingDrop } from '../../src/components/publishing/schedulePolicy.js';
 
 const root = process.cwd();
 const read = (file: string) => fs.readFileSync(path.join(root, file), 'utf8');
@@ -30,7 +32,7 @@ const channelStatus = read('server/routes/channels.ts');
 assert.match(channelStatus, /where: \{ tenantId, status: 'connected' \}/, 'connected channel lookups must remain tenant scoped');
 
 const oauth = read('server/routes/whatsappOAuth.ts');
-assert.match(oauth, /if \(supportAccess\) return null/, 'support sessions must not switch to a second tenant');
+assert.match(oauth, /if \(!requestedTenantId \|\| requestedTenantId === tenantId\) return tenantId;\s*return null;/, 'all sessions including support sessions must reject a different tenant');
 
 const oauthUi = read('src/components/YouTubeIntegration.tsx');
 assert.match(oauthUi, /const popup = prepareOAuthPopup\('youtube-oauth'[\s\S]*?await fetch\('\/api\/overseas\/youtube\/oauth\/start'/, 'YouTube must open its OAuth window before awaiting the start request');
@@ -44,12 +46,17 @@ for (const brand of ['youtube', 'tiktok', 'instagram', 'facebook', 'whatsapp']) 
 const assistantUi = read('src/components/GlobalAssistant.tsx');
 assert.match(assistantUi, /ENTERPRISE_GUIDE_MEMORY_ID[\s\S]*?enterpriseGuideSeen/, 'enterprise center must remember its single proactive assistant guide');
 assert.match(assistantUi, /要补资料？点我/, 'enterprise center must leave a concise click-to-open reminder after the proactive guide');
-assert.match(assistantUi, /setAssistantTool\(null\); setPanelView\('chat'\); setMode\('breathing'\)/, 'assistant panels must fully close instead of leaving a hidden intake tool active');
-const diagnosisUi = read('src/components/BusinessDiagnosisModal.tsx');
-assert.match(diagnosisUi, /onClick=\{onClose\}[\s\S]*?关闭接待设置/, 'the reception guide must be closable after it is reopened from the sidebar');
-assert.match(diagnosisUi, /ui-field ui-select[\s\S]*?请选择主营品类[\s\S]*?请选择，可连续添加[\s\S]*?请选择海外平台经验/, 'guided enterprise choices must use consistent dropdown controls');
+assert.match(assistantUi, /const closeAssistant = useCallback\(\(\) => \{[\s\S]*?setAssistantTool\(null\)[\s\S]*?setPanelView\('chat'\)[\s\S]*?setMode\('breathing'\)/, 'assistant panels must fully close instead of leaving a hidden intake tool active');
+assert.match(assistantUi, /data-global-assistant="root"[\s\S]{0,220}fixed right-4 z-\[75\][\s\S]{0,220}bottom-\[calc\(env\(safe-area-inset-bottom\)\+1rem\)\]/, 'the assistant launcher must stay in the bottom-right safe area');
+assert.match(assistantUi, /page === 'conversion' \? 'bottom-\[calc\(env\(safe-area-inset-bottom\)\+8rem\)\]'/, 'the mobile conversation launcher must clear the message composer');
+assert.match(assistantUi, /const handleLauncherClick[\s\S]{0,500}openCurrentPageAgent\(\)/, 'the assistant launcher must open the current-page panel directly');
+assert.match(assistantUi, /openAgent\(currentPageAgent, 'chat'\)/, 'the confirmed unified assistant opens the current-page conversation without an agent selector');
+assert.match(assistantUi, /<AssistantDecisionCenter[\s\S]{0,300}page=\{page\}/, 'the assistant decision feed must be scoped to the current page');
+assert.match(assistantUi, /data-global-assistant="launcher"[\s\S]{0,300}aria-label=\{mode === 'chat' \? '收起灵小枢对话' : '询问灵小枢'\}/, 'the launcher must expose its direct open/close conversation behavior');
+assert.doesNotMatch(assistantUi, /ASSISTANT_AUTO_RETRACT_MS|assistantPosition|launcherRetracted|data-global-assistant="edge-launcher"/, 'the assistant must not restore the obsolete draggable or auto-retract launcher');
+assert.match(assistantUi, /lingshu-assistant-performance/, 'content generation must be able to wake the assistant for a waiting-time performance');
 const enterpriseUi = read('src/components/EnterprisePage.tsx');
-assert.match(enterpriseUi, /function OptionSelector[\s\S]*?<select[\s\S]*?aria-expanded=\{open\}[\s\S]*?type="checkbox"/, 'enterprise selectable fields must use accessible single-select or multi-select dropdown controls');
+assert.match(enterpriseUi, /function OptionSelector[\s\S]*?<Select[\s\S]*?mode=\{multiple \? 'multiple' : undefined\}[\s\S]*?allowClear[\s\S]*?options=/, 'enterprise selectable fields must use the shared accessible Ant single-select or multi-select control');
 assert.doesNotMatch(enterpriseUi.slice(enterpriseUi.indexOf('function OptionSelector'), enterpriseUi.indexOf('function PaginationControls')), /<Chip/, 'enterprise option selectors must not fall back to chip-only selection');
 const globalStyles = read('src/index.css');
 for (const styleClass of ['.ui-field', '.ui-select', '.ui-chart-panel', '.ui-floating-panel']) {
@@ -59,21 +66,45 @@ const publishingUi = read('src/components/TrafficPage.tsx');
 assert.doesNotMatch(publishingUi, /平台发布推荐|publish-recommendations/, 'one-click publishing must not render the removed platform recommendation panel');
 assert.match(publishingUi, /applyContentToAll[\s\S]*?title: activeItem\.title[\s\S]*?description: activeItem\.description[\s\S]*?platformCopy:[\s\S]*?firstComment: activeItem\.firstComment/, 'applying content to all videos must copy the current publishing content');
 assert.match(publishingUi, /发布队列[\s\S]*?平台账号选择[\s\S]*?内容编辑/, 'publishing queue, account selection, and content editing must remain separate sections');
-assert.match(publishingUi, /setDeliveryMode\('now'\)[\s\S]*?立即发布[\s\S]*?setDeliveryMode\('flexible'\)[\s\S]*?时间待定[\s\S]*?setDeliveryMode\('schedule'\)[\s\S]*?定点排期/, 'one-click publishing must expose three unambiguous delivery modes');
+assert.match(publishingUi, /<Segmented[\s\S]{0,200}aria-label="发布方式"[\s\S]{0,200}setDeliveryMode\(value as DeliveryMode\)/, 'publishing delivery mode must use the shared segmented control');
+for (const [value, label] of [['now', '立即发布'], ['flexible', '时间待定'], ['schedule', '定点排期']]) {
+  assert.match(publishingUi, new RegExp(`value: '${value}', label: '${label}'`), 'one-click publishing must expose three unambiguous delivery modes');
+}
 assert.match(publishingUi, /item\.deliveryMode !== 'flexible'/, 'time-undecided content must never be included in direct real publishing');
 const calendarPlannerUi = read('src/components/publishing/CalendarPlanner.tsx');
-assert.match(calendarPlannerUi, /tideMonthDays/, 'publishing tide must cover a complete month');
-assert.match(calendarPlannerUi, /onPointerDown=\{startTideDrag\}/, 'publishing tide must support horizontal pointer dragging');
-assert.match(calendarPlannerUi, /全球电商节庆点/, 'publishing tide must label global ecommerce festivals');
+const calendarUi = read('src/components/ui/LsCalendar.tsx');
+assert.match(calendarPlannerUi, /<LsCalendar[\s\S]*?onDatesSet=\{info => \{ setVisibleRange/, 'publishing uses the shared calendar and its visible range');
+assert.match(calendarPlannerUi, /buildMarketingEvents\(anchor\)[\s\S]*?本月电商节庆[\s\S]*?来源：\{event\.source\}/, 'monthly marketing events must retain their dated source attribution');
 assert.doesNotMatch(calendarPlannerUi, /festivalNoticesByDay|dayFestivalNotices/, 'festival markers must not be rendered inside calendar day cells');
 assert.match(calendarPlannerUi, /pendingTimeSelection[\s\S]*?选择具体发布时间[\s\S]*?确认时间/, 'flexible calendar drops must ask for an explicit publishing time');
-assert.match(calendarPlannerUi, /draggable=\{!item\.platformPostId && !item\.scheduleLocked\}/, 'fixed calendar schedules must not be draggable');
-assert.match(calendarPlannerUi, /kind: 'tide'[\s\S]*?bestHour[\s\S]*?targetHour[\s\S]*?score/, 'publishing tide hover details must include time, target-market time, and score');
-assert.match(calendarPlannerUi, /kind: 'slot'[\s\S]*?startHour[\s\S]*?endHour[\s\S]*?items/, 'calendar schedule slots must expose detailed hover information');
-assert.match(calendarPlannerUi, /fallbackPeakScore[\s\S]*?Math\.sin/, 'publishing tide must retain a useful curve when live score data is temporarily unavailable');
+assert.match(calendarPlannerUi, /editable: canMoveCalendarPost\(post, canEditSchedule && !demoMode\)/, 'event editing must honor the shared status and permission policy');
+assert.match(calendarPlannerUi, /!canMoveCalendarPost\(current, canEditSchedule && !demoMode\)/, 'rescheduling must recheck the policy before calling the API');
+assert.match(calendarUi, /startEditable: Boolean\(event\.editable && onMoveEvent\)/, 'calendar drag editing requires both event permission and a mutation handler');
+assert.match(calendarUi, /if \(!event\.editable \|\| !moveRef\.current\)/, 'keyboard and pointer movement must share the same guard');
+assert.match(calendarPlannerUi, /renderDetails=[\s\S]*?成片时长[\s\S]*?平台回执/, 'event details must expose actual content and platform receipt data');
+assert.match(calendarPlannerUi, /row\.source === 'account_history'\) \? '账号真实数据' : '平台参考'/, 'recommendation labels must distinguish measured account data from platform references');
+assert.match(calendarPlannerUi, /setScores\(\{\}\)/, 'failed recommendations must clear unavailable scores instead of synthesizing values');
+assert.match(calendarPlannerUi, /selectedBestHour === null \? '暂无可用推荐时段'/, 'missing recommendation data must be visibly unavailable');
+assert.match(calendarPlannerUi, /非账号实测/, 'platform references must not masquerade as account measurements');
+assert.doesNotMatch(calendarPlannerUi, /fallbackPeakScore|Math\.sin|Math\.random/, 'calendar recommendations must not invent fallback scores');
+const movablePost = { id: 'post-1', status: 'scheduled' };
+assert.equal(canMoveCalendarPost(movablePost, true), true);
+assert.equal(canMoveCalendarPost(movablePost, false), false, 'read-only users cannot move events');
+for (const status of ['published', 'needs_attention', 'publishing', 'finalize_pending', 'partial', 'awaiting_reapproval']) {
+  assert.equal(canMoveCalendarPost({ ...movablePost, status }, true), false, `${status} posts cannot move`);
+}
+for (const locked of [{ scheduleLocked: true }, { platformPostId: 'remote-post' }, { id: 'demo-calendar-1' }]) {
+  assert.equal(canMoveCalendarPost({ ...movablePost, ...locked }, true), false, 'locked, published and demo posts cannot move');
+}
+const schedulingNow = new Date('2026-10-10T00:00:00Z');
+const droppedDay = new Date('2026-10-12T00:00:00Z');
+assert.equal(resolvePendingDrop({ deliveryMode: 'now' }, droppedDay, '', schedulingNow).kind, 'blocked');
+assert.equal(resolvePendingDrop({ deliveryMode: 'flexible' }, droppedDay, '', schedulingNow).kind, 'needs-time');
+const fixedSchedule = '2026-10-13T08:30:00Z';
+assert.deepEqual(resolvePendingDrop({ deliveryMode: 'schedule', scheduledAt: fixedSchedule }, droppedDay, '', schedulingNow), { kind: 'ready', scheduledAt: new Date(fixedSchedule), locked: true }, 'dropping a fixed event must preserve its confirmed timestamp');
 assert.doesNotMatch(calendarPlannerUi, /setError\(loadError instanceof Error \? loadError\.message : 'load_failed'\)/, 'calendar UI must not expose raw transport errors');
 const strategyUi = read('src/components/StrategyDataBoard.tsx');
-assert.match(strategyUi, /已接入账号 \{exposure\.accountCount\}[\s\S]*?openWorkspaceView\('accountManagement', 'accounts'\)/, 'home connected-account affordance must navigate to the current account management page');
+assert.match(strategyUi, /onClick=\{\(\) => openWorkspaceView\('accountManagement', 'accounts'\)\}[\s\S]{0,450}已接入账号'[\s\S]{0,80}\{exposure\.accountCount\}/, 'home connected-account affordance must navigate to the current account management page');
 const publishingRoutes = read('server/routes/publishing.ts');
 assert.match(publishingRoutes, /scheduleLocked: req\.body\?\.scheduleLocked === true/, 'calendar creation must persist the fixed-time lock');
 assert.match(publishingRoutes, /currentStats\.scheduleLocked === true[\s\S]*?定点排期时间已锁定/, 'calendar API must reject accidental fixed-time changes');
@@ -91,15 +122,15 @@ assert.doesNotMatch(socialSetupGuide, /https:\/\/lingshu\.site\/api\//, 'product
 assert.match(socialSetupGuide, /https:\/\/app\.lingshu\.site\/api\/overseas\/youtube\/oauth\/callback/, 'the canonical YouTube callback must remain documented');
 
 const tenantPlatformApps = read('server/lib/tenantPlatformApps.ts');
-assert.match(tenantPlatformApps, /export type TenantPlatform = 'meta' \| 'google' \| 'tiktok' \| 'wecom'/, 'tenant platform applications must include TikTok');
-assert.match(tenantPlatformApps, /getTenantTikTokOAuthClient[\s\S]*?getTenantPlatformApp\(tenantId, 'tiktok'\)[\s\S]*?getTikTokOAuthClient\(\)/, 'TikTok OAuth must prefer tenant credentials and retain the global fallback');
+assert.match(tenantPlatformApps, /export type TenantPlatform = [^\n]*'tiktok'/, 'tenant platform applications must include TikTok even when additional platforms are supported');
+assert.match(tenantPlatformApps, /getTenantTikTokOAuthClient[\s\S]*?getTenantPlatformAppFrom\(dataStore, tenantId, 'tiktok'\)[\s\S]*?app\?\.tenant_id === tenantId[\s\S]*?return null;[\s\S]*?return getTikTokOAuthClient\(\)/, 'tenant TikTok credentials must remain isolated; only unscoped requests use global credentials');
 const publicPlatformApp = tenantPlatformApps.slice(
   tenantPlatformApps.indexOf('export function publicTenantPlatformApp'),
   tenantPlatformApps.indexOf('export async function upsertTenantPlatformApp'),
 );
 assert.doesNotMatch(publicPlatformApp, /\bappSecret\s*:/, 'customer-facing platform app data must not expose plaintext app secrets');
 const adminRoutes = read('server/routes/admin.ts');
-assert.match(adminRoutes, /function adminTenantPlatformApp[\s\S]*?appSecret:\s*decryptSecret\(app\.app_secret\)/, 'admin delivery responses should expose decrypted app secrets for administrator verification');
+assert.match(adminRoutes, /function adminTenantPlatformApp[\s\S]*?appSecret:\s*''/, 'admin delivery responses must keep app secrets write-only');
 assert.match(adminRoutes, /\['meta', 'google', 'tiktok', 'wecom'\]/, 'admin delivery cards must include TikTok for every tenant');
 assert.match(adminRoutes, /kind === 'tiktok'[\s\S]*?tiktok_test_passed/, 'admin delivery must provide a TikTok credential check');
 for (const route of ["'/oauth-config'", "'/delivery/platform-apps'"]) {
@@ -122,13 +153,13 @@ const platformIntegrationRoutes = read('server/routes/platformIntegrations.ts');
 assert.match(platformIntegrationRoutes, /put\('\/oauth-config', requireAuth[\s\S]*?tenantId[\s\S]*?upsertTenantPlatformApp/, 'customer OAuth credentials must be authenticated and tenant scoped');
 assert.match(platformIntegrationRoutes, /delete\('\/oauth-config\/:platform', requireAuth[\s\S]*?tenantId[\s\S]*?deleteTenantPlatformApp\(tenantId, typedPlatform\)/, 'customer OAuth credential deletion must be authenticated and tenant scoped');
 assert.match(platformIntegrationRoutes, /publicTenantPlatformApp/, 'customer OAuth config responses must use the secret-safe public serializer');
-assert.match(platformIntegrationRoutes, /waConfigId:\s*text\(req\.body\?\.metaWhatsAppConfigId\)/, 'customer OAuth config must save the tenant-owned WhatsApp Embedded Signup configuration');
+assert.match(platformIntegrationRoutes, /webhookVerifyToken:\s*text\(req\.body\?\.metaWebhookVerifyToken\)/, 'customer OAuth config must save the tenant-owned Messenger webhook verification setting');
 const socialAccountCleanup = read('server/lib/socialAccountCleanup.ts');
 assert.match(socialAccountCleanup, /where: \{ tenantId \}/, 'platform account cleanup must only query the authenticated tenant');
 const userSocialCredentials = read('src/components/UserSocialAppCredentials.tsx');
 assert.match(userSocialCredentials, /清除配置[\s\S]*?role="dialog"[\s\S]*?确认清除/, 'integration-center credential cards must expose a confirmed clear action');
 const socialCredentialsUi = read('src/components/UserSocialAppCredentials.tsx');
-assert.match(socialCredentialsUi, /WhatsAppConnectionPanel[\s\S]*?startWhatsAppEmbeddedSignup/, 'customer integrations must expose WhatsApp Embedded Signup');
+assert.doesNotMatch(socialCredentialsUi, /Messenger Webhook Callback URL|Messenger Webhook Verify Token|Instagram Webhook Callback URL|Instagram Webhook Verify Token/, 'first-review customer integrations must not expose messaging webhook configuration');
 const assistLinks = read('server/routes/assistLinks.ts');
 assert.match(assistLinks, /platform === 'meta' \|\| platform === 'google' \|\| platform === 'tiktok'/, 'assist links must accept TikTok');
 assert.match(assistLinks, /getTenantAwareTikTokOAuthClient\(tenantId\)/, 'TikTok assist links must use the tenant application');
@@ -139,6 +170,13 @@ assert.match(read('pb_migrations/1784800000_expand_tiktok_tenant_apps.js'), /\^\
 
 const videos = read('server/routes/videos.ts');
 assert.match(videos, /const \{ tenantId \} = res\.locals as AuthLocals/, 'video routes must resolve tenant from auth locals');
+assert.match(videos, /get\('\/ops\/queue'[\s\S]*?crawlerOpsRecordIdsForTenant\(tenantId\)[\s\S]*?filterCrawlerOpsTasksForRecordIds/, 'crawler ops queue must only expose tasks backed by current-tenant videos');
+assert.match(videos, /get\('\/ops\/stats'[\s\S]*?crawlerOpsRecordIdsForTenant\(tenantId\)[\s\S]*?crawlerOpsStats\(tenantId, visibleRecordIds\)/, 'crawler ops stats must only aggregate current-tenant tasks');
+assert.match(videos, /post\('\/ops\/run-once'[\s\S]*?runCrawlerOpsWorkerOnce\(\{ tenantId \}\)/, 'an HTTP worker tick must be tenant scoped');
+assert.match(videos, /post\('\/ops\/:taskId\/resolve'[\s\S]*?store\.getById<Record<string, unknown>>\(COL, task\.recordId\)[\s\S]*?record\.tenantId[\s\S]*?tenantId/, 'crawler ops resolution must verify the backing video belongs to the authenticated tenant');
+assert.match(videos, /runCrawlerOpsWorkerOnce\(options: \{ recoverInterrupted\?: boolean; tenantId\?: string \}/, 'the worker must accept an optional tenant without removing global background mode');
+assert.match(videos, /enqueueOpsTasksFromRecords\(options\.recoverInterrupted === true, tenantId, maxAttempts\)[\s\S]*?pendingCrawlerOpsTasks\(maxAttempts, visibleRecordIds\)/, 'tenant-scoped worker ticks must constrain both enqueue and candidate selection');
+assert.match(videos, /patch\('\/:id\/reanalyze'[\s\S]*?resetCrawlerOpsTaskForExplicitRetry/, 'an explicit tenant-scoped reanalysis must reset its own exhausted ops task before retrying');
 
 for (const route of ['agentChat', 'strategy', 'draftReply', 'studio']) {
   const source = read(`server/routes/${route}.ts`);
@@ -163,8 +201,12 @@ const materialAssets = read('server/storage/materialAssets.ts');
 assert.match(materialAssets, /MATERIAL_ASSET_PREFIX = 'materials\/tenants'/, 'private COS materials must use a tenant prefix');
 assert.match(materialAssets, /materialAssetTenantKey\(tenantId\)/, 'material object keys must derive their tenant segment from authenticated tenant data');
 const studio = read('server/routes/studio.ts');
-assert.match(studio, /materialAssetObjectKey\(tenantId, file\)/, 'material uploads must use an authenticated tenant COS prefix');
-assert.match(studio, /r2SignedGetUrl\(key, materialSignedUrlTtlSeconds\(\)\)/, 'private COS material reads must use short-lived signed URLs');
+assert.match(studio, /saveMaterialUploadToDatabase\(\{[\s\S]*?tenantId, name, folder/, 'material uploads must pass the authenticated tenant into database persistence');
+const cloudMaterials = read('server/lib/cloudMaterials.ts');
+assert.match(cloudMaterials, /tenantId: input\.tenantId/, 'PocketBase material records must derive tenant ownership from the authenticated upload input');
+assert.match(cloudMaterials, /materialTenantId\(record\) !== input\.tenantId/, 'PocketBase material writes must verify the returned tenant before exposing the record');
+assert.match(studio, /material\.objectKey[\s\S]*?privateStudioAssetUrl\('materials', tenantId/, 'private COS material reads must use the signed application route');
+assert.match(studio, /get\('\/private-assets\/:namespace\/:file'[\s\S]*?objectStorageGetObject\(tenantPrivateObjectKey\(namespace, tenantId, req\.params\.file\)/, 'the private asset route must bind object reads to the authenticated tenant');
 assert.match(studio, /item\.id === req\.params\.id && item\.tenantId === tenantId/, 'material mutations must enforce tenant ownership');
 assert.match(studio, /where: \{ tenant_id: tenantId \}/, 'studio projects must be queried by authenticated tenant');
 assert.match(studio, /existing\.tenant_id !== tenantId/, 'studio project mutations must enforce tenant ownership');
@@ -186,7 +228,10 @@ const compose = read('docker-compose.yml');
 assert.doesNotMatch(compose, /pocketbase:[\s\S]*?ports:\s*\n\s*-\s*["']?8090/m, 'PocketBase must not publish port 8090');
 
 const setup = read('scripts/setup-pb.ts');
-assert.match(setup, /ensureWorkbenchAdmin\(token\)/, 'production setup must provision the workbench administrator');
+assert.doesNotMatch(setup, /WORKBENCH_ADMIN|ensureWorkbenchAdmin/, 'schema repair must not own application-account creation');
+const workbenchBootstrap = read('scripts/bootstrap-workbench-admin.mjs');
+assert.match(workbenchBootstrap, /role:\s*'super_admin'/, 'the one-time record bootstrap must provision the workbench administrator explicitly');
+assert.doesNotMatch(workbenchBootstrap, /\/api\/collections\/(?:\$\{[^}]+\}|[^/`'"?]+)(?:[`'"?]|$)(?!\/records)/, 'the workbench bootstrap must not mutate collection schemas');
 assert.match(read('server/lib/demoAccounts.ts'), /WORKBENCH_ADMIN_EMAIL/, 'workbench administrator must receive dashboard access');
 assert.match(read('Dockerfile.pocketbase'), /TARGETARCH/, 'PocketBase image must follow the server CPU architecture');
 assert.match(read('scripts/backup-production-data.sh'), /docker cp/, 'production backup must read the PocketBase Docker volume');

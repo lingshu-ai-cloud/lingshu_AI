@@ -1,0 +1,90 @@
+{
+  "schemaVersion": 1,
+  "date": "2026-10-10",
+  "auditBase": "73c78766c985871cd925453aeb5f3e937ec8b3f7",
+  "scope": "preparation_docs_placeholders_safety_tools_and_isolated_contract_tests",
+  "validation": {
+    "testFiles": 6,
+    "tests": 39,
+    "pass": 39,
+    "fail": 0,
+    "exitCode": 0,
+    "guard": "scripts/production-gate-next-loopback-guard.mjs",
+    "log": "work/infra-prep-final-tests.log",
+    "typescript": "Not run: no TypeScript implementation changed; standalone Node ESM tools and tests exercised."
+  },
+  "actualPostgresVerified": false,
+  "actualRedisVerified": false,
+  "actualAuthExchangeVerified": false,
+  "backupCreated": false,
+  "restoreExecuted": false,
+  "deploymentExecuted": false,
+  "productionAcceptanceComplete": false,
+  "readOnlyTool": {
+    "defaultDryRun": true,
+    "credentialsRequiredForExecution": true,
+    "readonlyTransaction": true,
+    "ddlOrReportDatabaseWrites": false,
+    "migrationReady": false,
+    "currentDataVerified": false
+  },
+  "backupPrecheck": {
+    "defaultDryRun": true,
+    "realFakeChildTest": true,
+    "streamArtifactHashes": true,
+    "metadataOnly": [
+      "psql SELECT",
+      "redis-cli PING",
+      "redis-cli INFO"
+    ],
+    "restoreEligibility": "preliminary, not authorization"
+  },
+  "baselineSourceSHA256": {
+    "server/storage/postgres.ts": "0c33afcad5f6190067694073677c3c9d259b968bdd376afb60fa5d84c5f94d28",
+    "server/storage/index.ts": "3f4717dfaeb6047dd931175035f5ea184a3644e2d0a0d572686e36a24355f295",
+    "server/storage/pb.ts": "a62c4a2d73da400abd545c59a75bc36c79f3844a6f19dc528d0f5751c01f5994",
+    "server/queues/bullmq.ts": "8ce3df412433f1e9a83d473093184eee2f05a12a300086230301be1b945823a4",
+    "server/runtime/processRole.ts": "704652614990d6545a2082faeff96b8bb42da7d818559e4b224a5852e8d3fbed",
+    "server/runtime/backgroundJobs.ts": "c54873a99014094caf3fce9f1554b0eddea28509262d067dc7b17dcf8e14710a",
+    "server/runtime/readiness.ts": "4e40abdd948dcd910dd46fc96099d37c193a65f2b58f3914bc1f0565bf9c5bda",
+    "server/runtime/workerHeartbeat.ts": "5a7db81bf7af2dc277f6b44a39f6348fe5d962ff405cd36320aae986a9bac8c4",
+    "server/runtime/durableLease.ts": "946cb1b3a7c343aeb870c7471ee8322d664d99eec44899288217ab75559f5f63",
+    "server/runtime/socialOperatingObservability.ts": "a6dac0b64fe1f628d5bcb95983745b9595a7b9f92e51e38af31b7f7faff9533a",
+    "server/middleware/auth.ts": "dcca40aa05d864e02de2b47fc0cec60ef0303c37124dc6baf9564c6c2ccb257b",
+    "server/lib/localFallbackPolicy.ts": "f06859cc01e3b0e131353ce0085231643461d2c998c02e2d9bebf5a1367b86db",
+    "server/publishing/publicationAtomicStore.ts": "fdd459bcc37c5aea26e616afde5a1629177ce8b716c49be219731ed429a5bf2a",
+    "server/publishing/weeklyLineage.ts": "144507e32759ff21cd9e4da4733a3ec632c9b0ecdb3ecce389a882e0e56e6fa3",
+    "server/starter198/socialContentProductionQueue.ts": "bf202c9a3fa58fe477a0ccfea1b3dd544e8e4e1bc8b9f75186b3b694c19397a3",
+    "scripts/migrate-pocketbase-to-postgres.ts": "5cae1974a7d049b19b742f82dd0302071139cc9156a3f2c5e3adf645033dea43",
+    "scripts/apply-postgres-schema.ts": "a232d0e48c9b86a775d35701703bff0208f53dbc3f85579041c04788c67524ca",
+    "scripts/backup-production-data.sh": "62700c4996894239670f298f37c037bbb4c1c0b99032867c76216fd230b0aab1",
+    "scripts/restore-production-data.sh": "a1157286b87a223aed2dcec06c96e8857d8acd715e83f052efa4149d1f4328f1",
+    "deploy/update.sh": "0df02f4318fb2ce0a4f96baa75a0eaff677c4c32438d955e5544210f97e091c3",
+    "deploy/make-production-env.sh": "dbf813460127937c4cef55d7b718fda271c1715d14647c5295bb797f227bf97e",
+    "docker-compose.yml": "7cfd5e1fb9f36df4d259d813141ee8ab333a388a0a811b186cae31bc03143a6e"
+  },
+  "ownedFiles": [
+    "deploy/production-infrastructure.env.example",
+    "deploy/production-backup-manifest.example.json",
+    "docs/acceptance/production-infrastructure-runbook-73c78766.md",
+    "docs/acceptance/infra-prep-storage-73c78766.md",
+    "docs/acceptance/infra-prep-queues-73c78766.md",
+    "docs/acceptance/infra-prep-auth-73c78766.md",
+    "scripts/infra-prep-config-check.mjs",
+    "scripts/infra-prep-config.test.mjs",
+    "scripts/infra-prep-storage.test.mjs",
+    "scripts/infra-prep-postgres-readonly.mjs",
+    "scripts/infra-prep-postgres-readonly.test.mjs",
+    "scripts/infra-prep-queues.test.mjs",
+    "scripts/infra-prep-backup-restore.mjs",
+    "scripts/infra-prep-backup-restore.test.mjs",
+    "scripts/infra-prep-auth.test.mjs",
+    "docs/acceptance/infra-prep-evidence-73c78766.json"
+  ],
+  "limitations": [
+    "No real service connected or installed; no production env loaded.",
+    "Existing migration --verify is not readonly and cannot prove current target data.",
+    "Schema/catalog/manifest metadata checks do not establish full business/file migration or real concurrent lease arbitration.",
+    "After cutover writes or external effects, rollback requires stopped admissions and explicit consistent reconciliation; no automated restore."
+  ]
+}

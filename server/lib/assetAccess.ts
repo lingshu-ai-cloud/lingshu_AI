@@ -3,6 +3,7 @@ import path from 'node:path';
 import { createHmac, timingSafeEqual } from 'node:crypto';
 import { auth } from '../storage/index.js';
 import type { Identity } from '../storage/datastore.js';
+import { materialAssetTenantKey } from '../storage/materialAssets.js';
 
 export const ASSET_SESSION_COOKIE = 'lingshu_asset_session';
 
@@ -108,9 +109,25 @@ export function syncAssetSession(req: Request, res: Response, next: NextFunction
 }
 
 export async function requireScopedAsset(req: Request, res: Response, next: NextFunction): Promise<void> {
-  const identity = await assetIdentity(req);
   const pathname = `${req.baseUrl}${req.path}`;
-  const signed = identity ? null : verifyAssetToken(req.query.assetToken, pathname);
+  const signed = verifyAssetToken(req.query.assetToken, pathname);
+  let identity: Identity | null = null;
+  try {
+    identity = await assetIdentity(req);
+  } catch (error) {
+    if (!signed) {
+      console.error('[asset-auth] identity verification unavailable', {
+        errorType: error instanceof Error ? error.name : 'UnknownError',
+      });
+      res.setHeader('Cache-Control', 'private, no-store');
+      res.status(503).end();
+      return;
+    }
+  }
+  if (identity && signed && identity.tenantId !== signed.tenantId) {
+    res.status(403).end();
+    return;
+  }
   const viewerTenantId = identity?.tenantId || signed?.tenantId;
   if (!viewerTenantId) {
     res.status(401).end();
@@ -122,6 +139,20 @@ export async function requireScopedAsset(req: Request, res: Response, next: Next
   // shared/ or tenants/<tenantId>/ paths.
   if ((identity || signed) && segments.length === 1) {
     next();
+    return;
+  }
+  // Local object storage is served beneath /media. Keep supplier links scoped
+  // to the exact tenant encoded in the object key, including signed requests.
+  if (segments[0] === 'object-storage') {
+    const namespace = segments[1];
+    if (/^[a-z0-9_-]+$/i.test(namespace || '')
+      && ((segments.length >= 4 && segments[2] === 'shared')
+        || (segments.length >= 5 && segments[2] === 'tenants'
+          && [viewerTenantId, materialAssetTenantKey(viewerTenantId)].includes(segments[3] || '')))) {
+      next();
+      return;
+    }
+    res.status(404).end();
     return;
   }
   if (segments[0] === 'shared' || (segments[0] === 'tenants' && segments[1] === viewerTenantId)) {

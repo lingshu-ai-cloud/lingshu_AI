@@ -1,3 +1,4 @@
+import { Button, Drawer } from "antd";
 import { useEffect, useState } from 'react';
 import { BookOpen, X } from 'lucide-react';
 import type { CustomerProfile } from '../../types/customer';
@@ -59,8 +60,9 @@ export function DailyBriefing({ customers, onSelectCustomer, onClose }: Props) {
   const [missClusters, setMissClusters] = useState<KnowledgeMissCluster[]>([]);
   const [nightBriefing, setNightBriefing] = useState<NightModeBriefing | null>(null);
   const [publishingBriefing, setPublishingBriefing] = useState<PublishingBriefing | null>(null);
-  const pending = pendingCustomers(customers);
-  const completed = completedTodoCustomers(customers);
+  const uniqueCustomers = customers.filter((customer, index, list) => list.findIndex(item => item.id === customer.id) === index);
+  const pending = pendingCustomers(uniqueCustomers);
+  const completed = completedTodoCustomers(uniqueCustomers);
   const grouped = [
     { mode: 'human_needed' as const, items: pending.filter(customer => customer.handlingMode === 'human_needed') },
     { mode: 'ai_draft' as const, items: pending.filter(customer => customer.handlingMode === 'ai_draft') },
@@ -102,102 +104,88 @@ export function DailyBriefing({ customers, onSelectCustomer, onClose }: Props) {
     onClose();
   };
 
-  return (
-    <div className="fixed inset-0 z-[90] flex items-center justify-center bg-slate-950/35 px-4">
-      <div className="w-full max-w-[480px] rounded-2xl border border-border bg-white shadow-2xl">
-        <div className="flex items-start justify-between gap-3 border-b border-border px-5 py-4">
-          <div className="flex items-center gap-3">
-            <img src="/brand-logo.png" alt="灵小枢" className="h-8 w-8 object-contain" />
-            <div>
-              <p className="text-sm font-black text-text-primary">{greeting()}，今天有 {pending.length} 件事需要你</p>
-            </div>
-          </div>
-          <button type="button" onClick={onClose} className="rounded-lg p-1.5 text-text-muted hover:bg-surface-2" title="关闭">
-            <X size={15} />
-          </button>
-        </div>
-
-        <div className="max-h-[52vh] overflow-y-auto px-5 py-4">
+  return <Drawer open title={`${greeting()}，今天有 ${pending.length} 件事需要你`} size={560} onClose={onClose} footer={<div className="flex justify-end gap-2"><Button onClick={onClose}>稍后</Button><Button type="primary" onClick={() => first && select(first.id)} disabled={!first}>开始处理</Button></div>}>
+        <div className="py-2">
           <div className="space-y-4">
             {publishingBriefing && (
-              <button
-                type="button"
+              <Button
+                htmlType="button"
                 onClick={openPublishingBriefing}
-                className="flex w-full items-start gap-3 rounded-xl border border-sky-100 bg-sky-50/80 p-3 text-left transition-colors hover:border-sky-200 hover:bg-sky-50"
+                className="!h-auto min-h-9 !whitespace-normal !justify-start flex w-full items-start gap-3 rounded-lg border border-sky-100 bg-sky-50/80 p-3 text-left transition-colors hover:border-sky-200 hover:bg-sky-50"
               >
                 <SourceIcon source={`whatsapp_from_${publishingBriefing.platform}`} size={16} />
                 <div className="min-w-0 flex-1">
-                  <p className="text-xs font-black text-sky-950">
+                  <p className="text-xs font-semibold text-sky-950">
                     你的视频《{publishingBriefing.title}》昨天带来了 {publishingBriefing.inquiries} 条询盘
                   </p>
                   <p className="mt-1 text-[11px] font-semibold text-sky-800">点击查看首页社媒数据</p>
                 </div>
-              </button>
+              </Button>
             )}
             {nightBriefing && (
-              <section className="rounded-xl border border-emerald-100 bg-emerald-50/80 p-3">
-                <p className="text-xs font-black text-emerald-950">
+              <section className="rounded-lg border border-emerald-100 bg-emerald-50/80 p-3">
+                <p className="text-xs font-semibold text-emerald-950">
                   昨夜 AI 接待了 {nightBriefing.customers} 位客户，自动回复 {nightBriefing.autoReplies} 条 ✓
                 </p>
                 <p className="mt-1 text-[11px] font-semibold text-emerald-800">
                   等你确认 {nightBriefing.drafts} 条 | {nightBriefing.calls} 位客户想通话
                 </p>
                 <div className="mt-3 flex flex-wrap gap-2">
-                  <button type="button" onClick={() => nightBriefing.autoCustomerIds[0] && select(nightBriefing.autoCustomerIds[0])} className="rounded-full bg-white px-2.5 py-1 text-[11px] font-black text-emerald-800 shadow-sm">
+                  <Button htmlType="button" onClick={() => nightBriefing.autoCustomerIds[0] && select(nightBriefing.autoCustomerIds[0])} className="!h-auto min-h-9 !whitespace-normal rounded-full bg-white px-2.5 py-1 text-[11px] font-semibold text-emerald-800">
                     看自动接待
-                  </button>
-                  <button type="button" onClick={() => nightBriefing.draftCustomerIds[0] && select(nightBriefing.draftCustomerIds[0])} className="rounded-full bg-white px-2.5 py-1 text-[11px] font-black text-amber-700 shadow-sm">
+                  </Button>
+                  <Button htmlType="button" onClick={() => nightBriefing.draftCustomerIds[0] && select(nightBriefing.draftCustomerIds[0])} className="!h-auto min-h-9 !whitespace-normal rounded-full bg-white px-2.5 py-1 text-[11px] font-semibold text-amber-700">
                     看待确认
-                  </button>
-                  <button type="button" onClick={() => nightBriefing.callCustomerIds[0] && select(nightBriefing.callCustomerIds[0])} className="rounded-full bg-white px-2.5 py-1 text-[11px] font-black text-red-700 shadow-sm">
+                  </Button>
+                  <Button htmlType="button" onClick={() => nightBriefing.callCustomerIds[0] && select(nightBriefing.callCustomerIds[0])} className="!h-auto min-h-9 !whitespace-normal rounded-full bg-white px-2.5 py-1 text-[11px] font-semibold text-red-700">
                     看通话客户
-                  </button>
+                  </Button>
                 </div>
               </section>
             )}
             {missClusters.length > 0 && (
               <section>
-                <p className="mb-2 text-[11px] font-black text-text-muted">知识库缺口</p>
+                <p className="mb-2 text-[11px] font-semibold text-text-muted">知识库缺口</p>
                 <div className="space-y-2">
                   {missClusters.map(cluster => (
-                    <button
+                    <Button
                       key={cluster.topic}
-                      type="button"
+                      htmlType="button"
                       onClick={() => addKnowledge(cluster)}
-                      className="flex w-full items-start gap-3 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2.5 text-left transition-colors hover:border-amber-300 hover:bg-amber-100"
+                      className="!h-auto min-h-9 !whitespace-normal !justify-start flex w-full items-start gap-3 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2.5 text-left transition-colors hover:border-amber-300 hover:bg-amber-100"
                     >
                       <BookOpen size={15} className="mt-0.5 text-amber-700" />
                       <div className="min-w-0 flex-1">
-                        <p className="text-xs font-black text-amber-900">本周 {cluster.count} 位客户问到「{cluster.topic}」，知识库还没有这条 → 补充</p>
+                        <p className="text-xs font-semibold text-amber-900">本周 {cluster.count} 位客户问到「{cluster.topic}」，知识库还没有这条 → 补充</p>
                         <p className="mt-1 line-clamp-2 text-[11px] leading-5 text-amber-800">{cluster.examples.slice(0, 2).join(' / ')}</p>
                       </div>
-                    </button>
+                    </Button>
                   ))}
                 </div>
               </section>
             )}
             {grouped.map(group => (
               <section key={group.mode}>
-                <p className="mb-2 text-[11px] font-black text-text-muted">{groupLabel(group.mode)}</p>
+                <p className="mb-2 text-[11px] font-semibold text-text-muted">{groupLabel(group.mode)}</p>
                 <div className="space-y-2">
                   {group.items.map(customer => {
                     const suggestion = buildPrioritySuggestion(customer);
                     return (
-                      <button
+                      <Button
                         key={customer.id}
-                        type="button"
+                        htmlType="button"
                         onClick={() => select(customer.id)}
-                        className="flex w-full items-start gap-3 rounded-lg border border-border bg-surface-2 px-3 py-2.5 text-left transition-colors hover:border-slate-300 hover:bg-white"
+                        className="!h-auto min-h-9 !whitespace-normal !justify-start flex w-full items-start gap-3 rounded-lg border border-border bg-surface-2 px-3 py-2.5 text-left transition-colors hover:border-slate-300 hover:bg-white"
                       >
                         <SourceIcon source={customer.source} size={15} />
                         <div className="min-w-0 flex-1">
                           <div className="flex items-center gap-2">
-                            <p className="truncate text-xs font-black text-text-primary">{customer.name}</p>
+                            <p className="truncate text-xs font-semibold text-text-primary">{customer.name}</p>
                             <span className={`h-2 w-2 rounded-full ${priorityDot(customer)}`} />
                           </div>
                           <p className="mt-1 line-clamp-2 text-[11px] leading-5 text-text-muted">{suggestion.reason}</p>
                         </div>
-                      </button>
+                      </Button>
                     );
                   })}
                 </div>
@@ -205,24 +193,24 @@ export function DailyBriefing({ customers, onSelectCustomer, onClose }: Props) {
             ))}
             {completed.length > 0 && (
               <section>
-                <p className="mb-2 text-[11px] font-black text-text-muted">已完成</p>
+                <p className="mb-2 text-[11px] font-semibold text-text-muted">已完成</p>
                 <div className="space-y-2">
                   {completed.map(customer => (
-                    <button
+                    <Button
                       key={customer.id}
-                      type="button"
+                      htmlType="button"
                       onClick={() => select(customer.id)}
-                      className="flex w-full items-start gap-3 rounded-lg border border-emerald-100 bg-emerald-50/70 px-3 py-2.5 text-left transition-colors hover:border-emerald-200 hover:bg-emerald-50"
+                      className="!h-auto min-h-9 !whitespace-normal !justify-start flex w-full items-start gap-3 rounded-lg border border-emerald-100 bg-emerald-50/70 px-3 py-2.5 text-left transition-colors hover:border-emerald-200 hover:bg-emerald-50"
                     >
                       <SourceIcon source={customer.source} size={15} />
                       <div className="min-w-0 flex-1">
                         <div className="flex items-center gap-2">
-                          <p className="truncate text-xs font-black text-text-primary">{customer.name}</p>
-                          <span className="rounded-full bg-emerald-100 px-2 py-0.5 text-[10px] font-black text-emerald-700">已完成</span>
+                          <p className="truncate text-xs font-semibold text-text-primary">{customer.name}</p>
+                          <span className="rounded-full bg-emerald-100 px-2 py-0.5 text-[10px] font-semibold text-emerald-700">已完成</span>
                         </div>
                         <p className="mt-1 line-clamp-2 text-[11px] leading-5 text-emerald-700">今天已处理，已放到待办底部。</p>
                       </div>
-                    </button>
+                    </Button>
                   ))}
                 </div>
               </section>
@@ -230,15 +218,5 @@ export function DailyBriefing({ customers, onSelectCustomer, onClose }: Props) {
           </div>
         </div>
 
-        <div className="flex items-center justify-end gap-2 border-t border-border px-5 py-4">
-          <button type="button" onClick={onClose} className="rounded-lg border border-border bg-white px-3 py-2 text-xs font-bold text-text-secondary hover:bg-surface-2">
-            稍后
-          </button>
-          <button type="button" onClick={() => first && select(first.id)} disabled={!first} className="rounded-lg bg-slate-950 px-4 py-2 text-xs font-bold text-white disabled:opacity-40">
-            开始处理
-          </button>
-        </div>
-      </div>
-    </div>
-  );
+  </Drawer>;
 }

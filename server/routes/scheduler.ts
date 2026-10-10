@@ -1,3 +1,6 @@
+import { readSavedDiscoveryScope } from '../lib/socialDiscoveryScope.js';
+import { discoveryKeywords } from '../../shared/socialDiscoveryKeywords.js';
+import { hasLegacyProductTitleQueries } from '../../shared/productDiscovery.js';
 import { Router, type Request, type Response } from 'express';
 import fs from 'fs';
 import os from 'os';
@@ -14,28 +17,14 @@ import { crawlImagePostsForTenant, crawlVideosForTenant, getVideoPipelineStats }
 import { createCrawlWorkerJob } from './crawlWorker.js';
 import type { Platform } from '../types/index.js';
 import { requireAuth, type AuthLocals } from '../middleware/auth.js';
+import { resolveCrawlKeywords, resolveCrawlStrategy } from '../lib/crawlKeywords.js';
 import { normalizeKeywordInput, type KeywordPlatform } from '../../src/lib/keywordInput.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const DATA = path.join(__dirname, '../../data/tasks.json');
 const PDF_SCRIPT = path.join(__dirname, '../../scripts/render-task-report-pdf.py');
-
-export interface ScheduledTask {
-  id: string;
-  name: string;
-  category: 'daily' | 'monitor' | 'report' | 'automation';
-  taskType: 'trend_report' | 'weekly_review' | 'crm_wakeup' | 'exchange_rate' | 'market_intelligence' | 'holiday_push' | 'video_keyword_crawl' | 'image_post_crawl' | 'competitor_account_crawl' | 'custom';
-  cronExpr: string;      // e.g. "0 8 * * *"
-  cronLabel: string;     // e.g. "每天 08:00"
-  enabled: boolean;
-  lastRun?: string;
-  lastResult?: string;
-  nextRun?: string;
-  channelId?: string;    // which channel to send output to
-  config: Record<string, string>;
-  tenantId?: string;
-  createdAt: string;
-}
+import { hydrateScheduledTasks as hydrateTasksFromPocketBase, loadScheduledTasks as load, saveScheduledTasks as save, scheduledExecutionState, type ScheduledExecutionState, type ScheduledRunOutcome, type ScheduledTask } from './schedulerTaskStore.js';
+export type { ScheduledExecutionState, ScheduledRunOutcome, ScheduledTask } from './schedulerTaskStore.js';
+export { scheduledExecutionState } from './schedulerTaskStore.js';
 
 interface HolidayInfo {
   date: string;
@@ -111,98 +100,6 @@ interface BusinessDynamicsSnapshot {
 
 const businessDynamicsCache = new Map<string, { expiresAt: number; value: BusinessDynamicsSnapshot }>();
 const BUSINESS_DYNAMICS_CACHE_MS = 6 * 60 * 60 * 1000;
-
-function load(): ScheduledTask[] {
-  try { return JSON.parse(fs.readFileSync(DATA, 'utf8')); } catch { return []; }
-}
-function save(tasks: ScheduledTask[]) {
-  fs.mkdirSync(path.dirname(DATA), { recursive: true });
-  fs.writeFileSync(DATA, JSON.stringify(tasks, null, 2));
-  void mirrorTasksToPocketBase(tasks).catch(error => {
-    console.error('[scheduler] PocketBase task mirror failed:', error instanceof Error ? error.message : error);
-  });
-}
-
-function taskPayload(task: ScheduledTask): Record<string, unknown> {
-  return {
-    task_id: task.id,
-    tenant_id: task.tenantId || '',
-    name: task.name,
-    category: task.category,
-    task_type: task.taskType,
-    cron_expr: task.cronExpr,
-    cron_label: task.cronLabel,
-    enabled: task.enabled,
-    channel_id: task.channelId || '',
-    config: task.config || {},
-    last_run: task.lastRun || '',
-    last_result: task.lastResult || '',
-    created_at: task.createdAt,
-  };
-}
-
-function taskFromRecord(record: Record<string, any>): ScheduledTask | null {
-  const id = String(record.task_id || '').trim();
-  const tenantId = String(record.tenant_id || '').trim();
-  if (!id || !tenantId) return null;
-  return {
-    id,
-    tenantId,
-    name: String(record.name || id),
-    category: (record.category || 'daily') as ScheduledTask['category'],
-    taskType: (record.task_type || 'custom') as ScheduledTask['taskType'],
-    cronExpr: String(record.cron_expr || '0 8 * * *'),
-    cronLabel: String(record.cron_label || '每天 08:00'),
-    enabled: record.enabled !== false,
-    channelId: String(record.channel_id || '') || undefined,
-    config: record.config && typeof record.config === 'object' ? record.config : {},
-    lastRun: String(record.last_run || '') || undefined,
-    lastResult: String(record.last_result || '') || undefined,
-    createdAt: String(record.created_at || record.created || new Date().toISOString()),
-  };
-}
-
-async function allRemoteTasks(): Promise<Array<Record<string, any>>> {
-  const items: Array<Record<string, any>> = [];
-  let page = 1;
-  while (page <= 50) {
-    const result = await store.list<Record<string, any>>('scheduled_tasks', { page, perPage: 100, sort: 'created_at' });
-    items.push(...result.items);
-    if (page >= result.totalPages || result.items.length < 100) break;
-    page += 1;
-  }
-  return items;
-}
-
-async function mirrorTasksToPocketBase(tasks: ScheduledTask[]): Promise<void> {
-  const remote = await allRemoteTasks();
-  const remoteByTaskId = new Map(remote.map(record => [String(record.task_id || ''), record]));
-  const localIds = new Set(tasks.map(task => task.id));
-  for (const task of tasks) {
-    if (!task.tenantId) continue;
-    const existing = remoteByTaskId.get(task.id);
-    if (existing?.id) await store.update('scheduled_tasks', existing.id, taskPayload(task));
-    else await store.create('scheduled_tasks', taskPayload(task));
-  }
-  for (const record of remote) {
-    if (record.id && record.task_id && !localIds.has(String(record.task_id))) {
-      await store.delete('scheduled_tasks', String(record.id));
-    }
-  }
-}
-
-async function hydrateTasksFromPocketBase(): Promise<ScheduledTask[]> {
-  try {
-    const remote = (await allRemoteTasks()).map(taskFromRecord).filter((task): task is ScheduledTask => Boolean(task));
-    if (!remote.length) return load();
-    fs.mkdirSync(path.dirname(DATA), { recursive: true });
-    fs.writeFileSync(DATA, JSON.stringify(remote, null, 2));
-    return remote;
-  } catch (error) {
-    console.warn('[scheduler] using local task snapshot:', error instanceof Error ? error.message : error);
-    return load();
-  }
-}
 
 function tenantTasks(tenantId: string): ScheduledTask[] {
   return load().filter(task => task.tenantId === tenantId);
@@ -742,6 +639,13 @@ function renderTaskReportPdf(payload: Record<string, unknown>): Promise<Buffer> 
 const activeJobs = new Map<string, CronJob>();
 const runningTaskIds = new Set<string>();
 
+function taskWithExecutionState(task: ScheduledTask): ScheduledTask & { executionState: ScheduledExecutionState } {
+  return {
+    ...task,
+    executionState: scheduledExecutionState(task.lastResult, { running: runningTaskIds.has(task.id) }),
+  };
+}
+
 async function executeTrendReport(task: ScheduledTask): Promise<string> {
   const enterpriseCtx = await getEnterpriseCtx(task);
   const messages = [{ role: 'user' as const, content: '生成今日TikTok跨境电商爆款趋势简报，包括：热门品类、热门话题标签、建议借势策略，控制在300字以内' }];
@@ -953,7 +857,7 @@ function splitConfigList(value: string | undefined, fallback: string[]): string[
 function normalizeCrawlerLimit(value: unknown): string {
   const numeric = Number(value);
   if (!Number.isFinite(numeric)) return '5';
-  return String(Math.max(1, Math.min(10, Math.round(numeric))));
+  return String(Math.max(1, Math.min(50, Math.round(numeric))));
 }
 
 function resolveCrawlerPlatform(raw: unknown, fallback = 'youtube'): string {
@@ -966,27 +870,69 @@ function resolveCrawlerPlatform(raw: unknown, fallback = 'youtube'): string {
 
 function normalizeCrawlerConfig(config: Record<string, string>, fallbackPlatform = 'youtube'): Record<string, string> {
   const platform = resolveCrawlerPlatform(config.platforms, fallbackPlatform);
-  const rawKeywords = String(config.keywords || config.keyword || 'skincare').trim() || 'skincare';
+  const rawKeywords = String(config.keywords || config.keyword || '').trim();
   const normalized = normalizeKeywordInput(rawKeywords, platform as KeywordPlatform);
   return {
     ...config,
     platforms: platform,
-    keywords: normalized.serialized || 'skincare',
+    keywords: normalized.serialized,
+    keywordSource: config.keywordSource || 'business_profile',
     limit: normalizeCrawlerLimit(config.limit),
   };
 }
 
-function normalizedKeywordList(value: string | undefined, platform: Platform, fallback = ['skincare']): string[] {
+function normalizedKeywordList(value: string | undefined, platform: Platform, fallback: string[] = []): string[] {
   const normalized = normalizeKeywordInput(String(value || ''), platform as KeywordPlatform);
   return normalized.items.length > 0 ? normalized.items : fallback;
 }
 
 async function executeVideoKeywordCrawl(task: ScheduledTask): Promise<string> {
   const tenantId = await resolveSchedulerTenantId(task);
+  const requestedKeywords = task.config.keywordSource ? (task.config.keywordInput || '') : (task.config.keywords || task.config.keyword || '');
+  const scopeLinked = task.config.keywordSource === 'discovery_scope' || task.config.managedBy === 'digital_employee' || task.id.startsWith('task_de_');
+  const savedScope = scopeLinked ? await readSavedDiscoveryScope(tenantId) : null;
+  if (savedScope && !savedScope.keywordRecommendation && hasLegacyProductTitleQueries(savedScope.keywordSet.graph.discoverySeeds)) {
+    throw new Error('已保存范围仍是旧版商品全名关键词，请在灵感大屏重新生成通用品类词');
+  }
+  const enterpriseProfile = savedScope ? {} : await readTenantEnterpriseProfile(tenantId);
+  const selection = savedScope ? { keywords: discoveryKeywords(savedScope), source: 'discovery_scope', evidence: [savedScope.keywordSet.name] } : resolveCrawlKeywords(requestedKeywords, enterpriseProfile);
+  const resolvedKeywords = selection.keywords.join(', ');
+  if (!selection.keywords.length) throw new Error('发现范围没有启用的关键词，请在灵感中心调整。');
   const platforms = splitConfigList(task.config.platforms, ['youtube'])
     .filter((platform): platform is Platform => ['youtube', 'tiktok', 'facebook', 'instagram'].includes(platform));
+  const crawlStrategy = savedScope ?? resolveCrawlStrategy({
+    explicit: requestedKeywords,
+    profile: enterpriseProfile,
+    platforms,
+    businessGoal: task.config.businessGoal || task.config.goal,
+  });
+  if (selection.source !== 'explicit' || task.config.crawlStrategyVersion !== crawlStrategy.version) {
+    const tasks = load();
+    const saved = tasks.find(item => item.id === task.id && item.tenantId === tenantId);
+    if (saved) {
+      saved.config = {
+        ...saved.config,
+        keywords: resolvedKeywords,
+        keywordInput: requestedKeywords,
+        keywordSource: selection.source,
+        keywordEvidence: selection.evidence.join('、'),
+        crawlStrategyId: crawlStrategy.crawlStrategyId,
+        crawlStrategyVersion: crawlStrategy.version,
+        crawlStrategy: JSON.stringify(crawlStrategy),
+        keywordSetId: crawlStrategy.keywordSet.keywordSetId,
+        keywordSetVersion: String(crawlStrategy.keywordSet.version),
+        discoveryBriefId: crawlStrategy.discoveryBrief.discoveryBriefId,
+        enabledSceneIds: crawlStrategy.discoveryBrief.trackedSceneIds.join(','),
+        discoveryModes: crawlStrategy.discoveryBrief.discoveryModes.join(','),
+        lookbackDays: String(crawlStrategy.discoveryBrief.lookbackDays),
+        resultLimit: String(crawlStrategy.discoveryBrief.resultLimit),
+        maxRunCost: crawlStrategy.discoveryBrief.budgetLimitCny === null ? '' : String(crawlStrategy.discoveryBrief.budgetLimitCny),
+      };
+      save(tasks);
+    }
+  }
   const displayedKeywords = new Set<string>();
-  const limit = Math.max(1, Math.min(10, Number(task.config.limit || 5) || 5));
+  const limit = Math.max(1, Math.min(50, Number(task.config.limit || 5) || 5));
   const { dateFrom, dateTo } = beijingDateRange(task.config.dateWindowDays);
   const lines: string[] = [];
   let imported = 0;
@@ -998,7 +944,7 @@ async function executeVideoKeywordCrawl(task: ScheduledTask): Promise<string> {
   const workerBatch = `scheduler:${task.id}:run:${randomUUID()}`;
 
   for (const platform of platforms) {
-    const keywords = normalizedKeywordList(task.config.keywords || task.config.keyword, platform);
+    const keywords = normalizedKeywordList(resolvedKeywords, platform, []);
     for (const keyword of keywords) {
       displayedKeywords.add(keyword);
       try {
@@ -1010,6 +956,8 @@ async function executeVideoKeywordCrawl(task: ScheduledTask): Promise<string> {
             mode: 'keyword',
             keyword,
             limit,
+            dateFrom,
+            dateTo,
           });
           if (!job) throw new Error('Mac 本地采集任务创建失败');
           queued += 1;
@@ -1025,9 +973,8 @@ async function executeVideoKeywordCrawl(task: ScheduledTask): Promise<string> {
           dateTo,
           disableBackfill: task.config.smokeTest === '1',
         });
-        if (result.items.length === 0 && result.imported === 0 && /未找到|无可用|失败|blocked|degraded/i.test(result.message)) {
-          throw new Error(result.message);
-        }
+        await createCrawlWorkerJob({ tenantId, requestedBy: workerBatch, platform, mode: 'keyword', keyword, limit,
+          completed: { result: { ...result, items: undefined } } });
         imported += result.imported;
         returned += result.items.length;
         existing += result.returnedExisting;
@@ -1035,6 +982,8 @@ async function executeVideoKeywordCrawl(task: ScheduledTask): Promise<string> {
         lines.push(`${platform} / ${keyword}: 当前可见 ${result.items.length} 条，新增候选 ${result.imported} 条，库内已有 ${result.returnedExisting} 条`);
       } catch (e) {
         failed += 1;
+        await createCrawlWorkerJob({ tenantId, requestedBy: workerBatch, platform, mode: 'keyword', keyword, limit,
+          completed: { error: e instanceof Error ? e.message : String(e) } });
         lines.push(`${platform} / ${keyword}: 执行失败 - ${e instanceof Error ? e.message : String(e)}`);
       }
     }
@@ -1047,7 +996,7 @@ async function executeVideoKeywordCrawl(task: ScheduledTask): Promise<string> {
     `平台：${platforms.join(', ')}；关键词：${[...displayedKeywords].join('、')}；每组数量：${limit}`,
     `汇总：当前可见 ${returned} 条，新增候选 ${imported} 条，库内已有 ${existing} 条`,
     ...lines,
-    ...(queued > 0 ? [`队列批次：${workerBatch}`] : []),
+    `队列批次：${workerBatch}`,
   ].join('\n');
 }
 
@@ -1086,6 +1035,7 @@ async function executeCompetitorAccountCrawl(task: ScheduledTask): Promise<strin
   const tenantId = await resolveSchedulerTenantId(task);
   const platform = resolveCrawlerPlatform(task.config.platforms) as Platform;
   const limit = Math.max(1, Math.min(30, Number(task.config.limit || 10) || 10));
+  const { dateFrom, dateTo } = beijingDateRange(task.config.dateWindowDays);
   const accounts = await store.list<Record<string, unknown>>('competitor_accounts', {
     where: { tenantId, platform }, page: 1, perPage: 200, sort: '-createdAt',
   });
@@ -1109,6 +1059,8 @@ async function executeCompetitorAccountCrawl(task: ScheduledTask): Promise<strin
           accountUrl,
           accountName,
           limit,
+          dateFrom,
+          dateTo,
         });
         if (!job) throw new Error('Mac 本地采集任务创建失败');
         queued += 1;
@@ -1122,18 +1074,21 @@ async function executeCompetitorAccountCrawl(task: ScheduledTask): Promise<strin
         accountUrl,
         accountName,
         limit,
+        dateFrom,
+        dateTo,
         cloudFallback: true,
         disableBackfill: task.config.smokeTest === '1',
       });
-      if (result.items.length === 0 && result.imported === 0 && /未找到|无可用|失败|blocked|degraded/i.test(result.message)) {
-        throw new Error(result.message);
-      }
+      await createCrawlWorkerJob({ tenantId, requestedBy: workerBatch, platform, mode: 'account', accountUrl, accountName, limit, dateFrom, dateTo,
+        completed: { result: { ...result, items: undefined } } });
       imported += result.imported;
       succeeded += 1;
       await store.update('competitor_accounts', String(account.id), { lastCrawledAt: new Date().toISOString(), lastCrawlCount: result.imported });
       lines.push(`${accountName}: 返回 ${result.items.length} 条，新增 ${result.imported} 条`);
     } catch (e) {
       failed += 1;
+      await createCrawlWorkerJob({ tenantId, requestedBy: workerBatch, platform, mode: 'account', accountUrl, accountName, limit, dateFrom, dateTo,
+        completed: { error: e instanceof Error ? e.message : String(e) } });
       lines.push(`${accountName}: 执行失败 - ${e instanceof Error ? e.message : String(e)}`);
     }
   }
@@ -1141,7 +1096,7 @@ async function executeCompetitorAccountCrawl(task: ScheduledTask): Promise<strin
     `【${platform} 对标账号自动采集】账号 ${accounts.items.length} 个；每账号最多 ${limit} 条`,
     `执行状态：${queued > 0 ? `已排队（${queued} 个账号等待 Worker）` : succeeded > 0 ? '执行成功' : '执行失败'}${failed > 0 ? `（另有 ${failed} 个账号提交失败）` : ''}`,
     `本次结论：${queued > 0 ? '采集请求已进入队列，Worker 完成后自动回写最终结果' : succeeded === 0 ? '账号采集请求均未完成，请根据账号错误处理后重试' : imported > 0 ? `已新增 ${imported} 条对标内容` : '已完成账号检索，本次暂无新增内容'}`,
-    `汇总：新增 ${imported} 条`, ...lines, ...(queued > 0 ? [`队列批次：${workerBatch}`] : []),
+    `汇总：新增 ${imported} 条`, ...lines, `队列批次：${workerBatch}`,
   ].join('\n');
 }
 
@@ -1154,30 +1109,7 @@ export async function reconcileScheduledCrawlBatch(requestedBy: string): Promise
     where: { requestedBy }, sort: 'createdAt', page: 1, perPage: 200,
   });
   if (!jobs.items.length) return;
-  const counts = { queued: 0, running: 0, done: 0, failed: 0 };
-  let imported = 0;
-  const details: string[] = [];
-  for (const job of jobs.items) {
-    const status = String(job.status || 'queued') as keyof typeof counts;
-    if (status in counts) counts[status] += 1;
-    let result: Record<string, any> = {};
-    try { result = job.resultJson ? JSON.parse(String(job.resultJson)) : {}; } catch { /* keep empty */ }
-    imported += Number(result.imported || 0);
-    const label = String(job.keyword || job.accountName || job.accountUrl || job.platform || '采集任务');
-    if (status === 'done') details.push(`${label}: 已完成，新增 ${Number(result.imported || 0)} 条${result.message ? `（${result.message}）` : ''}`);
-    else if (status === 'failed') details.push(`${label}: 执行失败 - ${String(job.error || 'worker_failed')}`);
-  }
-  const pending = counts.queued + counts.running;
-  const state = pending > 0
-    ? `处理中（排队 ${counts.queued}，执行中 ${counts.running}，已完成 ${counts.done}，失败 ${counts.failed}）`
-    : counts.done > 0 && counts.failed === 0 ? '执行成功'
-      : counts.done > 0 ? `部分成功（成功 ${counts.done}，失败 ${counts.failed}）` : '执行失败';
-  const resultText = [
-    '【本地 Worker 采集结果】', `执行状态：${state}`,
-    `本次结论：${pending > 0 ? 'Worker 正在处理，完成后会继续自动更新' : counts.done > 0 ? `采集已结束，共新增 ${imported} 条` : '采集任务均执行失败，请检查 Worker 日志后重试'}`,
-    `汇总：新增 ${imported} 条；总任务 ${jobs.items.length} 个`, ...details,
-    `队列批次：${requestedBy}`,
-  ].join('\n');
+  const resultText = scheduledCrawlBatchResult(jobs.items, requestedBy);
   const tasks = load();
   const idx = tasks.findIndex(task => task.id === taskId && task.lastResult?.includes(`队列批次：${requestedBy}`));
   if (idx === -1) return; // A newer run already owns the visible result.
@@ -1185,7 +1117,55 @@ export async function reconcileScheduledCrawlBatch(requestedBy: string): Promise
   save(tasks);
 }
 
+export function scheduledCrawlBatchResult(jobs: Record<string, any>[], requestedBy: string): string {
+  const counts = { queued: 0, running: 0, done: 0, failed: 0, no_data: 0 };
+  let imported = 0;
+  let analysisPending = false;
+  const details: string[] = [];
+  for (const job of jobs) {
+    let status = String(job.status || 'queued') as keyof typeof counts;
+    let result: Record<string, any> = {};
+    try { result = job.resultJson ? JSON.parse(String(job.resultJson)) : {}; } catch { /* keep empty */ }
+    if (status === 'done' && result.outcome === 'no_data') status = 'no_data';
+    if (status === 'done' && /公开采集未找到可入库的真实视频：[\s\S]*(?:search failed|SSL|HTTP [45]\d\d|ECONN|timed out)/i.test(String(result.message || ''))) status = 'failed';
+    if (status in counts) counts[status] += 1;
+    analysisPending ||= status === 'done' && result.analysisPending === true;
+    imported += Number(result.imported || 0);
+    const label = String(job.keyword || job.accountName || job.accountUrl || job.platform || '采集任务');
+    if (status === 'done') details.push(`${label}: 已完成，新增 ${Number(result.imported || 0)} 条${result.message ? `（${result.message}）` : ''}`);
+    else if (status === 'no_data') details.push(`${label}: 暂无符合条件的结果（${result.message || '请调整关键词或日期范围'}）`);
+    else if (status === 'failed') details.push(`${label}: 执行失败 - ${String(job.error || result.message || 'worker_failed')}`);
+  }
+  const pending = counts.queued + counts.running;
+  const state = pending > 0
+    ? `处理中（排队 ${counts.queued}，执行中 ${counts.running}，已完成 ${counts.done}，失败 ${counts.failed}）`
+    : counts.done > 0 && counts.failed === 0 ? (analysisPending ? '已采集，待分析' : '执行成功')
+      : counts.done > 0 ? `部分成功（成功 ${counts.done}，失败 ${counts.failed}）` : counts.failed > 0 ? '执行失败' : '暂无结果';
+  return [
+    '【本地 Worker 采集结果】', `执行状态：${state}`,
+    `本次结论：${pending > 0 ? 'Worker 正在处理，完成后会继续自动更新' : counts.done > 0 ? `采集已结束，共新增 ${imported} 条` : counts.failed > 0 ? '本批次未取得可用结果，请查看各平台失败原因及检索结果' : '检索已完成，暂无符合条件的内容，请调整关键词或日期范围'}`,
+    `汇总：新增 ${imported} 条；总任务 ${jobs.length} 个`, ...details,
+    `队列批次：${requestedBy}`,
+  ].join('\n');
+}
+
 async function executeTask(task: ScheduledTask): Promise<string> {
+  if (task.taskType === 'video_keyword_crawl' &&
+    (task.config.managedBy === 'digital_employee' || task.id.startsWith('task_de_'))) {
+    return '编导旧采集任务已停用，请使用已批准的连续发现采集计划。';
+  }
+  if (task.taskType === 'social_discovery_collection') {
+    const { executeApprovedDiscoveryRun } = await import('../socialDiscovery/service.js');
+    const result = await executeApprovedDiscoveryRun({
+      tenantId: String(task.tenantId || task.config.tenantId || ''),
+      triggerType: 'scheduled',
+      expectedScopeId: task.config.discoveryScopeId,
+      expectedScopeVersion: Number(task.config.discoveryScopeVersion || 0) || undefined,
+    });
+    return result.skipped
+      ? `发现采集未执行：${result.reason || 'no_discovery_mode_due'}`
+      : `发现采集已完成：${result.run?.runId || 'unknown_run'}`;
+  }
   if (task.taskType === 'video_keyword_crawl') return executeVideoKeywordCrawl(task);
   if (task.taskType === 'image_post_crawl') return executeImagePostCrawl(task);
   if (task.taskType === 'competitor_account_crawl') return executeCompetitorAccountCrawl(task);
@@ -1198,6 +1178,84 @@ async function executeTask(task: ScheduledTask): Promise<string> {
     case 'crm_wakeup':   return executeCrmWakeup(task);
     default:              return '任务执行完成';
   }
+}
+
+/** One scheduler per tenant. It only stores an approved scope reference; execution resolves the immutable scope snapshot. */
+export function ensureSocialDiscoveryCollectionTask(input: {
+  tenantId: string;
+  discoveryScopeId: string;
+  discoveryScopeVersion: number;
+}): { task: ScheduledTask; created: boolean; updated: boolean } {
+  const tasks = load();
+  const existing = tasks.find(task => task.tenantId === input.tenantId && task.taskType === 'social_discovery_collection');
+  const config: Record<string, string> = {
+    ...(existing?.config || {}),
+    tenantId: input.tenantId,
+    discoveryScopeId: input.discoveryScopeId,
+    discoveryScopeVersion: String(input.discoveryScopeVersion),
+    managedBy: 'social_discovery_scope',
+  };
+  const task: ScheduledTask = existing ? {
+    ...existing,
+    name: '连续发现采集',
+    cronExpr: '*/15 * * * *',
+    cronLabel: '每15分钟检查到期供给',
+    enabled: existing.enabled,
+    config,
+  } : {
+    id: `task_social_discovery_${randomUUID()}`,
+    tenantId: input.tenantId,
+    name: '连续发现采集',
+    category: 'automation',
+    taskType: 'social_discovery_collection',
+    cronExpr: '*/15 * * * *',
+    cronLabel: '每15分钟检查到期供给',
+    enabled: true,
+    config,
+    createdAt: new Date().toISOString(),
+  };
+  if (existing && JSON.stringify(task) === JSON.stringify(existing)) {
+    return { task: existing, created: false, updated: false };
+  }
+  if (existing) tasks[tasks.indexOf(existing)] = task;
+  else tasks.push(task);
+  save(tasks);
+  scheduleTask(task);
+  return { task, created: !existing, updated: Boolean(existing) };
+}
+
+/** Backfill managed schedules for approved scopes created before scheduler wiring existed. */
+export async function reconcileSocialDiscoveryCollectionTasks(): Promise<number> {
+  const legacyTasks = load();
+  let retiredLegacy = false;
+  for (const task of legacyTasks) {
+    if (task.taskType !== 'video_keyword_crawl' ||
+      !(task.config.managedBy === 'digital_employee' || task.id.startsWith('task_de_')) || !task.enabled) continue;
+    task.enabled = false;
+    activeJobs.get(task.id)?.stop();
+    activeJobs.delete(task.id);
+    retiredLegacy = true;
+  }
+  if (retiredLegacy) save(legacyTasks);
+  let page = 1;
+  let reconciled = 0;
+  while (page <= 50) {
+    const result = await store.list<Record<string, any>>('social_discovery_scopes', {
+      where: { status: 'active' }, sort: 'created_at', page, perPage: 100,
+    });
+    for (const scope of result.items) {
+      const tenantId = String(scope.tenant_id || '').trim();
+      const version = Number(scope.version || 0);
+      const payload = scope.payload && typeof scope.payload === 'object' ? scope.payload as Record<string, any> : {};
+      const approval = payload.approval && typeof payload.approval === 'object' ? payload.approval as Record<string, any> : {};
+      if (!tenantId || !scope.id || !version || approval.status !== 'approved' || Number(approval.scopeVersion || 0) !== version) continue;
+      ensureSocialDiscoveryCollectionTask({ tenantId, discoveryScopeId: String(scope.id), discoveryScopeVersion: version });
+      reconciled += 1;
+    }
+    if (page >= result.totalPages || result.items.length < 100) break;
+    page += 1;
+  }
+  return reconciled;
 }
 
 async function executeAndPersistTask(task: ScheduledTask, trigger: 'cron' | 'catch-up' | 'manual'): Promise<string> {
@@ -1219,6 +1277,26 @@ async function executeAndPersistTask(task: ScheduledTask, trigger: 'cron' | 'cat
   } finally {
     runningTaskIds.delete(task.id);
   }
+}
+
+/**
+ * Public in-process entry point for an approved weekly plan to launch its first
+ * scheduled action immediately. Tenant ownership is checked before execution.
+ */
+export async function runScheduledTaskNow(input: {
+  tenantId: string;
+  taskId: string;
+}): Promise<ScheduledRunOutcome> {
+  const task = findTenantTask(input.taskId, input.tenantId);
+  if (!task) throw new Error('scheduled_task_not_found');
+  const result = await executeAndPersistTask(task, 'manual');
+  const refreshed = findTenantTask(input.taskId, input.tenantId);
+  return {
+    taskId: input.taskId,
+    state: scheduledExecutionState(refreshed?.lastResult || result),
+    result: refreshed?.lastResult || result,
+    lastRun: refreshed?.lastRun,
+  };
 }
 
 function latestMissedRun(task: ScheduledTask, now = new Date()): Date | null {
@@ -1262,9 +1340,74 @@ function scheduleTask(task: ScheduledTask) {
   activeJobs.set(task.id, job);
 }
 
+/** Bind the director workflow to the one approved discovery collector. Never create a second keyword crawl. */
+export async function ensureDigitalEmployeeSocialCollectionTask(input: {
+  tenantId: string;
+  workflowRunId: string;
+  workflowTaskId: string;
+  keywords: string;
+  cronExpr?: string;
+  cronLabel?: string;
+  platforms?: string[];
+  limit?: number;
+  dateWindowDays?: number;
+  dedupeWindowDays?: number;
+}): Promise<{ task: ScheduledTask; created: boolean; updated: boolean; pendingReason?: string } | null> {
+  const tasks = load();
+  let retiredLegacy = false;
+  for (const legacy of tasks) {
+    if (legacy.tenantId !== input.tenantId || legacy.taskType !== 'video_keyword_crawl' ||
+      !(legacy.config.managedBy === 'digital_employee' || legacy.id.startsWith('task_de_')) || !legacy.enabled) continue;
+    legacy.enabled = false;
+    activeJobs.get(legacy.id)?.stop();
+    activeJobs.delete(legacy.id);
+    retiredLegacy = true;
+  }
+  if (retiredLegacy) save(tasks); // Keep the record and last-run history for audit.
+  const result = await store.list<Record<string, any>>('social_discovery_scopes', {
+    where: { tenant_id: input.tenantId, status: 'active' }, sort: '-updated_at', page: 1, perPage: 20,
+  });
+  const scope = result.items.find(item => {
+    const approval = item.payload?.approval;
+    return approval?.status === 'approved' && Number(approval.scopeVersion || 0) === Number(item.version || 0);
+  });
+  if (!scope?.id) return null;
+  const brief = scope.payload?.discoveryBrief || {};
+  const differences: string[] = [];
+  const requestedPlatforms = [...new Set((input.platforms || []).map(value => String(value).toLowerCase()))].sort();
+  const approvedPlatforms = [...new Set((brief.platforms || []).map((value: unknown) => String(value).toLowerCase()))].sort();
+  if (requestedPlatforms.length && approvedPlatforms.length && requestedPlatforms.join(',') !== approvedPlatforms.join(',')) differences.push('采集平台');
+  if (input.dateWindowDays && Number(brief.lookbackDays || 7) !== input.dateWindowDays) differences.push('视频发布时间范围');
+  // The operating agent's per-run request limit and the director's rolling seven-day
+  // qualified-content target have different units. Preserve both for review.
+  const pendingReason = differences.length ? `经营建议与编导已批准范围的${differences.join('、')}不一致，待编导确认` : undefined;
+  const ensured = ensureSocialDiscoveryCollectionTask({
+    tenantId: input.tenantId, discoveryScopeId: String(scope.id), discoveryScopeVersion: Number(scope.version),
+  });
+  const latest = load();
+  const canonical = latest.find(task => task.id === ensured.task.id && task.tenantId === input.tenantId)!;
+  const refs: Array<{ workflowRunId: string; workflowTaskId: string }> = (() => {
+    try { const parsed = JSON.parse(canonical.config.workflowRefs || '[]'); return Array.isArray(parsed) ? parsed : []; }
+    catch { return []; }
+  })();
+  if (!refs.some(ref => ref.workflowTaskId === input.workflowTaskId)) {
+    refs.push({ workflowRunId: input.workflowRunId, workflowTaskId: input.workflowTaskId });
+    canonical.config = { ...canonical.config, workflowRefs: JSON.stringify(refs.slice(-100)) };
+    save(latest);
+  }
+  const restConfig = { ...canonical.config };
+  delete restConfig.directorReviewRequired;
+  canonical.config = { ...restConfig, operatingRequest: JSON.stringify({ platforms: input.platforms, dateWindowDays: input.dateWindowDays, perRunLimit: input.limit, cronExpr: input.cronExpr, keywords: input.keywords }), ...(pendingReason ? { directorReviewRequired: pendingReason } : {}) };
+  save(latest);
+  return { task: canonical, created: ensured.created, updated: ensured.updated, pendingReason };
+}
+
 // Boot: restore active tasks
 export async function initScheduler() {
-  const tasks = (await hydrateTasksFromPocketBase()).filter(t => t.enabled && t.tenantId);
+  await hydrateTasksFromPocketBase();
+  try { await reconcileSocialDiscoveryCollectionTasks(); }
+  catch (error) { console.warn('[scheduler] discovery schedule reconciliation skipped:', error instanceof Error ? error.message : error); }
+  const tasks = load().filter(t => t.enabled && t.tenantId);
   tasks.forEach(scheduleTask);
   for (const task of tasks) {
     const missedAt = latestMissedRun(task);
@@ -1280,7 +1423,7 @@ schedulerRouter.use(requireAuth);
 
 schedulerRouter.get('/', (_req, res) => {
   const { tenantId } = res.locals as AuthLocals;
-  res.json(tenantTasks(tenantId));
+  res.json(tenantTasks(tenantId).map(taskWithExecutionState));
 });
 
 schedulerRouter.get('/video-stats', async (_req, res) => {
@@ -1294,7 +1437,7 @@ schedulerRouter.get('/video-stats', async (_req, res) => {
     stats = { total: 0, byPlatform: {}, byStatus: {}, ops: { workerEnabled: false } };
   }
   res.json({
-    tasks,
+    tasks: tasks.map(taskWithExecutionState),
     stats,
   });
 });
@@ -1345,14 +1488,18 @@ schedulerRouter.get('/:id/export-pdf', async (req: Request, res: Response) => {
   }
 });
 
-schedulerRouter.post('/', (req: Request, res: Response) => {
+schedulerRouter.post('/', async (req: Request, res: Response) => {
   const { tenantId } = res.locals as AuthLocals;
+  if (req.body.taskType === 'social_discovery_collection') {
+    res.status(403).json({ error: 'discovery_schedule_managed_by_scope' });
+    return;
+  }
   const tasks = load();
   const isCrawler = ['video_keyword_crawl', 'image_post_crawl', 'competitor_account_crawl'].includes(req.body.taskType);
   const requestedCronExpr = String(req.body.cronExpr ?? (isCrawler ? '0 1 * * *' : '0 8 * * *'));
   if (!cron.validate(requestedCronExpr)) { res.status(400).json({ error: '无效的任务启动时间' }); return; }
   const crawlerPlatform = resolveCrawlerPlatform(req.body.config?.platforms);
-  if (['video_keyword_crawl', 'image_post_crawl'].includes(req.body.taskType)) {
+  if (['video_keyword_crawl', 'image_post_crawl'].includes(req.body.taskType) && !(req.body.taskType === 'video_keyword_crawl' && await readSavedDiscoveryScope(tenantId))) {
     const keywordReview = normalizeKeywordInput(String(req.body.config?.keywords || req.body.config?.keyword || ''), crawlerPlatform as KeywordPlatform);
     if (!keywordReview.items.length) {
       res.status(400).json({ error: 'invalid_keywords', message: '没有识别到当前平台可用的关键词', rejected: keywordReview.rejected });
@@ -1379,18 +1526,22 @@ schedulerRouter.post('/', (req: Request, res: Response) => {
   res.json(task);
 });
 
-schedulerRouter.put('/:id', (req: Request, res: Response) => {
+schedulerRouter.put('/:id', async (req: Request, res: Response) => {
   const { tenantId } = res.locals as AuthLocals;
   const tasks = load();
   const idx = tasks.findIndex(t => t.id === req.params.id && t.tenantId === tenantId);
   if (idx === -1) { res.status(404).json({ error: 'not found' }); return; }
   const current = tasks[idx];
   const nextTaskType = req.body.taskType ?? current.taskType;
+  if (current.taskType === 'social_discovery_collection' || nextTaskType === 'social_discovery_collection') {
+    res.status(403).json({ error: 'discovery_schedule_managed_by_scope' });
+    return;
+  }
   const requestedCronExpr = String(req.body.cronExpr ?? current.cronExpr);
   if (!cron.validate(requestedCronExpr)) { res.status(400).json({ error: '无效的任务启动时间' }); return; }
   const nextIsCrawler = ['video_keyword_crawl', 'image_post_crawl', 'competitor_account_crawl'].includes(nextTaskType);
   const mergedConfig = { ...current.config, ...(req.body.config ?? {}) };
-  if (['video_keyword_crawl', 'image_post_crawl'].includes(nextTaskType)) {
+  if (['video_keyword_crawl', 'image_post_crawl'].includes(nextTaskType) && !(nextTaskType === 'video_keyword_crawl' && await readSavedDiscoveryScope(tenantId))) {
     const platform = resolveCrawlerPlatform(mergedConfig.platforms, current.config.platforms || 'youtube');
     const keywordReview = normalizeKeywordInput(String(mergedConfig.keywords || mergedConfig.keyword || ''), platform as KeywordPlatform);
     if (!keywordReview.items.length) {
@@ -1418,6 +1569,7 @@ schedulerRouter.delete('/:id', (req: Request, res: Response) => {
   const { tenantId } = res.locals as AuthLocals;
   const task = findTenantTask(req.params.id, tenantId);
   if (!task) { res.status(404).json({ error: 'not found' }); return; }
+  if (task.taskType === 'social_discovery_collection') { res.status(403).json({ error: 'discovery_schedule_managed_by_scope' }); return; }
   activeJobs.get(req.params.id)?.stop();
   activeJobs.delete(req.params.id);
   save(load().filter(t => !(t.id === req.params.id && t.tenantId === tenantId)));
@@ -1427,10 +1579,17 @@ schedulerRouter.delete('/:id', (req: Request, res: Response) => {
 // Run immediately
 schedulerRouter.post('/:id/run', async (req: Request, res: Response) => {
   const { tenantId } = res.locals as AuthLocals;
-  const task = findTenantTask(req.params.id, tenantId);
-  if (!task) { res.status(404).json({ error: 'not found' }); return; }
-  const result = await executeAndPersistTask(task, 'manual');
-  res.json({ ok: true, result });
+  try {
+    const outcome = await runScheduledTaskNow({ tenantId, taskId: req.params.id });
+    res.json({ ok: true, ...outcome });
+  } catch (error) {
+    if (error instanceof Error && error.message === 'scheduled_task_not_found') {
+      res.status(404).json({ error: 'not found' });
+      return;
+    }
+    console.error('[scheduler] immediate task run failed:', error);
+    res.status(500).json({ error: 'task_run_failed', message: '任务启动失败，请稍后重试。' });
+  }
 });
 
 // Toggle enabled

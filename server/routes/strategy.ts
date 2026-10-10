@@ -1,3 +1,4 @@
+import {readAuthorizedWhatsAppCustomers} from '../whatsapp/authorizedCustomerRead.js';
 import { Router } from 'express';
 import { callLLM, callLLMChatStream, type ChatMessage } from '../agents/llm.js';
 import { buildStrategyPrompt, type StrategyParams } from '../prompts/strategyPrompts.js';
@@ -5,11 +6,11 @@ import { enterpriseRouter as _er, buildEnterpriseContext, readTenantEnterprisePr
 import { consumeDemoQuota } from '../lib/demo.js';
 import { requireAuth, type AuthLocals } from '../middleware/auth.js';
 import { getWhatsAppCustomers } from '../whatsapp/historyImport.js';
-
-async function getEnterpriseContext(tenantId: string): Promise<string> {
-  try { return buildEnterpriseContext(await readTenantEnterpriseProfile(tenantId)); }
-  catch { return ''; }
-}
+import { createHash } from 'node:crypto';
+import { requestOrganizationRoleStrict } from '../lib/organizationRole.js';
+import { ASSISTANT_CONTEXT_RULES, ChatInputError, validateChatMessages } from '../assistantContext/chatInput.js';
+import { buildChatGrounding } from '../assistantContext/chatGrounding.js';
+import { DecisionMemoryError, recordDecisionMemory, updateDecisionMemory, revokeDecisionMemory, listDecisionMemories, type DecisionMemory } from '../assistantContext/decisionMemory.js';
 
 function currentTimeRule(): string {
   const now = new Date().toLocaleString('zh-CN', { timeZone: 'Asia/Shanghai', hour12: false });
@@ -19,7 +20,7 @@ function currentTimeRule(): string {
 
 const BUSINESS_FACT_RULE = `\n\n【企业经营事实约束 · 必须遵守】产品、卖点、市场、客户、品牌语气、MOQ、价格、交期、认证、物流、联系方式、脚本语种等细节，只能来自企业中心、用户明确输入或已接入真实数据。语种严格沿用企业中心“主要业务语言/首选输出语言”，不得根据地域自行推断。找不到来源的经营细节直接删除，不得用常识、示例或模型猜测补齐。公开来源名称必须来自真实联网检索并附可点击链接，不得编造报告或平台公告。`;
 
-const ADVISOR_SYSTEM_PROMPT = `你是灵枢AI的顾问Agent（策略编排层），服务于跨境电商、外贸工厂、品牌商、贸易商和海外卖家。
+const ADVISOR_SYSTEM_PROMPT = `你是灵小枢，作为经营主 Agent 服务于跨境电商、外贸工厂、品牌商、贸易商和海外卖家。
 
 核心能力：
 - 分析跨境电商经营数据，给出清晰的策略建议
@@ -33,12 +34,12 @@ const ADVISOR_SYSTEM_PROMPT = `你是灵枢AI的顾问Agent（策略编排层）
 - 给出 2-3 条具体可执行的行动建议，而非泛泛而谈
 - 【能力边界与链接真实性 · 必须遵守】你没有生成文件、提供下载、发送邮件、代下单、代发布的能力。禁止编造任何下载链接、文件地址（.docx/.pdf/.xlsx、云盘、S3 等一律是假的），禁止说"点击下载""已发送""已为你生成文件"。模板、表格、清单、文档类交付物一律直接在回复里给出全文（可直接发送的消息/文案放 copy 块、字段/清单用 Markdown 表格，用户一键复制即可使用）。回复中允许出现的链接只有两类：联网检索真实返回的来源、用户消息里出现过的链接，除此之外不要写任何 URL。邀约用户下一步时，只承诺产品内真实做得到的事：继续在对话里生成/改写内容，或"建议触发 [我的社媒/我的客户] 执行：……"一键派发；不要承诺下载、导出文件、定时提醒、自动发送等做不到的操作。
 - 【数据真实性要求 · 必须遵守】所有经营判断、数字、客户名单、平台表现、转化结论必须来自以下来源之一：用户消息中明确提供的数据、企业中心知识库、已接入的真实社媒/WhatsApp/订单/客户接口、或联网检索到且可引用的公开行业来源。禁止编造示例经营数据、假客户、假转化率、假平台表现。
-- 数据不完整时不要以“当前缺少数据”“无法判断”“无法筛选”等消极表述开头。优先基于已接入数据给出可执行的初步判断和行动方案；必要时仅在结尾中性说明适用范围及可补充字段，不得把假设写成事实。
+- 数据不完整时先回答能够确认的部分；缺口影响结论时直接说明，不隐藏未知情况，不得把假设写成事实。
 - 涉及市场趋势、平台打法、行业规模、竞品变化时，若不是来自企业中心或用户提供的数据，必须标注公开来源或说明“需要联网核验后才能下结论”。
 - 【上下文使用要求 · 必须遵守】用户消息里会带有【当前页面上下文】【当前模块】【企业中心摘要】。回答必须优先结合当前页面正在做的事；涉及主推品、市场、MOQ、交期、品牌语气、禁忌和客户画像时，优先引用企业中心信息；涉及外贸行业趋势、目标市场变化、平台打法、竞品/品类机会时，必须使用联网检索到的公开来源或明确说明需要联网核验；连续对话时承接前文目标、已生成内容和上轮限制，不要每轮重新自我介绍。
 - 【客户地域中立 · 必须遵守】不要默认客户来自义乌、珠三角或任何固定地区。只有用户消息或企业中心明确写出地区时才可引用；引用时必须说“当前企业资料显示……”，禁止把单个演示租户泛化成所有客户。
 - 【渠道闭环认知 · 必须遵守】集成中心不是“WhatsApp+TikTok”双通道链路。默认应理解为四大公域社媒平台 YouTube、TikTok、Instagram、Facebook 与 WhatsApp 私域共同构成“公域获客/内容分发 → 互动线索沉淀 → WhatsApp 私域承接 → 跟进转化/复购 → 反馈内容策略”的闭环；除非用户明确只问单个平台，不要把闭环窄化为两个平台的单向链接。没有真实账号数据或用户明确选择时，不得擅自说“以某两个平台为主阵地/优先平台”，只能说“先完成五个平台接入，再按账号数据决定优先级”。
-- 【关键】每条行动建议结尾，单独一行写明派发指令，格式严格为：建议触发 [我的社媒/我的客户] 执行：[一句话具体任务]
+- 有真实可执行任务建议时，可单独一行写明派发指令，格式严格为：建议触发 [我的社媒/我的客户] 执行：[一句话具体任务]；询问进度、纠错或记忆管理时不强行派发。
   （前端会把这一行渲染成"一键执行"按钮，所以必须用这个格式、专家名三选一）
 
 【输出格式要求 · 必须遵守】
@@ -54,7 +55,7 @@ const ADVISOR_SYSTEM_PROMPT = `你是灵枢AI的顾问Agent（策略编排层）
     \`\`\`
   · 每个语言版本单独一个 copy 块，块前用简短标题说明用途
 - 多语言规则：
-  · 默认根据【当前企业知识库】里的主攻市场、补充知识推断，最多输出 2 种首选语言版本
+  · 默认沿用【当前企业知识库】明确配置的主要业务语言或首选输出语言，最多输出 2 种；未配置时沿用用户明确要求，不从市场地区推断
   · 如果用户要求的语言种类超过 2 种，但没有明确列出具体语言，先用一句话询问"需要哪几种语言版本"，不要直接生成一大串
   · 语言标注用 [EN] [AR] [ES] [FR] 等，不要混在同一个段落里
 - 涉及数字对比、趋势、占比且数据全部真实可溯源时，优先输出图表块（前端会渲染成迷你图表），格式为三反引号 + chart，内容是一个严格 JSON（不要注释、不要多余文字）：
@@ -73,18 +74,7 @@ const ADVISOR_SYSTEM_PROMPT = `你是灵枢AI的顾问Agent（策略编排层）
 - 结尾可以有一句自然的情绪价值，但必须根据用户上一轮语气和本次任务状态临场生成；不要套固定句式，不要复用输出范例里的结尾，不要每次都用"陪你/稳稳/加油"这类固定组合
 - 如果用户是在纠错、质疑或要求判断，先正面承认问题并给出具体修正，不要用安抚话术盖过去；emoji 只在语境自然时使用，默认不用
 
-【输出范例 · 严格照此结构】
-## 行动建议
-
-### 1. 抢占斋月家居装饰需求
-斋月家庭聚会增多，**家居装饰、餐具套装**需求旺盛，建议提前 3 周铺货。
-建议触发 [我的社媒] 执行：按"斋月家居场景"方向产出 5 条阿拉伯语 TikTok 短视频
-
-### 2. 大单询盘优先承接
-礼品类常出现批量采购，**响应速度**直接决定成交。
-建议触发 [我的客户] 执行：为礼品类大单配置阿语自动首响话术
-
-收尾用一句贴合当前任务的自然话，不要照抄这里。`;
+根据本轮真实问题组织回答，不套用预设行业、产品、地区或语种示例。`;
 
 
 export const strategyRouter = Router();
@@ -317,7 +307,7 @@ function shouldRequireSources(messages: ChatMessage[]): boolean {
 strategyRouter.post('/advisor', async (req, res) => {
   const { tenantId } = res.locals as AuthLocals;
   const snapshot = normalizeAdvisorSnapshot(req.body?.snapshot);
-  const customers = getWhatsAppCustomers(tenantId);
+  const customers = await readAuthorizedWhatsAppCustomers(tenantId);
   if (customers.length) {
     const effective = customers.filter((customer: any) => Number(customer.intentScore || 0) >= 70);
     snapshot.inquiries = effective.length;
@@ -345,13 +335,64 @@ strategyRouter.post('/advisor', async (req, res) => {
   });
 });
 
+function publicDecision(row: DecisionMemory) {
+  return { id: row.memory_id, text: row.content, status: row.status, version: row.version, confirmedAt: row.confirmed_at, updatedAt: row.created_at, expiresAt: row.expires_at };
+}
+function decisionSource(text: unknown): string {
+  if (typeof text !== 'string' || !text.trim() || text.length > 2000) throw new DecisionMemoryError('invalid_decision_source');
+  // A reference to explicit user-confirmed text, never a claim that a server-verified chat event exists.
+  return `user-confirmed-text:${createHash('sha256').update(text).digest('hex')}`;
+}
+function decisionError(res: import('express').Response, error: unknown): void {
+  if (error instanceof DecisionMemoryError) {
+    res.status(error.status).json({ error: error.message, message: error.status === 409 ? '记忆版本已变化，请刷新后再试。' : '请提供有效的记忆内容与明确确认。' });
+  } else {
+    res.status(503).json({ error: 'decision_memory_unavailable', message: '经营记忆暂时不可用，请稍后重试；聊天内容仍保留。' });
+  }
+}
+
+strategyRouter.get('/decisions', async (_req, res) => {
+  res.setHeader('Cache-Control', 'private, no-store');
+  try {
+    const items = await listDecisionMemories(res.locals as AuthLocals, { limit: 20 });
+    res.json({ items: items.map(publicDecision), scope: 'current_user_recent_memories', limit: 20 });
+  } catch (error) { decisionError(res, error); }
+});
+strategyRouter.post('/decisions', async (req, res) => {
+  res.setHeader('Cache-Control', 'private, no-store');
+  try {
+    const { text, sourceMessage, confirmed, expiresAt } = req.body ?? {};
+    if (confirmed !== true || typeof text !== 'string' || text !== sourceMessage) throw new DecisionMemoryError('explicit_user_confirmation_required');
+    const item = await recordDecisionMemory(res.locals as AuthLocals, { content: text, sourceMessageId: decisionSource(sourceMessage), explicitlyConfirmed: true, expiresAt });
+    res.status(201).json({ item: publicDecision(item) });
+  } catch (error) { decisionError(res, error); }
+});
+strategyRouter.patch('/decisions/:id', async (req, res) => {
+  res.setHeader('Cache-Control', 'private, no-store');
+  try {
+    const { text, sourceMessage, confirmed, expectedVersion, expiresAt } = req.body ?? {};
+    if (confirmed !== true || typeof text !== 'string' || text !== sourceMessage) throw new DecisionMemoryError('explicit_user_confirmation_required');
+    const item = await updateDecisionMemory(res.locals as AuthLocals, req.params.id, expectedVersion, { content: text, sourceMessageId: decisionSource(sourceMessage), explicitlyConfirmed: true, expiresAt });
+    res.json({ item: publicDecision(item) });
+  } catch (error) { decisionError(res, error); }
+});
+strategyRouter.delete('/decisions/:id', async (req, res) => {
+  res.setHeader('Cache-Control', 'private, no-store');
+  try {
+    const item = await revokeDecisionMemory(res.locals as AuthLocals, req.params.id, req.body?.expectedVersion, 'user-explicit-revoke', undefined);
+    res.json({ item: publicDecision(item) });
+  } catch (error) { decisionError(res, error); }
+});
+
 strategyRouter.post('/chat', async (req, res) => {
-  const { tenantId } = res.locals as AuthLocals;
-  const { messages, deepThinking = false } = req.body as { messages: ChatMessage[]; deepThinking?: boolean };
-  if (!Array.isArray(messages) || messages.length === 0) {
-    res.status(400).json({ error: 'messages required' });
+  const { tenantId, userId } = res.locals as AuthLocals;
+  let messages: ChatMessage[];
+  try { messages = validateChatMessages(req.body?.messages); }
+  catch (error) {
+    res.status(error instanceof ChatInputError ? error.status : 400).json({ error: error instanceof Error ? error.message : 'invalid_chat_messages' });
     return;
   }
+  const deepThinking = req.body?.deepThinking === true;
   if (!await consumeDemoQuota(req, res, 'aiChat')) return;
 
   res.setHeader('Content-Type', 'text/event-stream');
@@ -359,14 +400,14 @@ strategyRouter.post('/chat', async (req, res) => {
   res.setHeader('Connection', 'keep-alive');
   res.flushHeaders();
 
-  const enterpriseCtx = await getEnterpriseContext(tenantId);
   const requireSources = shouldRequireSources(messages);
   const timeRule = currentTimeRule();
-  const systemPrompt = enterpriseCtx
-    ? `${ADVISOR_SYSTEM_PROMPT}${timeRule}${BUSINESS_FACT_RULE}${requireSources ? '\n\n【联网来源硬规则】本轮涉及联网搜索/公开信息核验，必须使用联网检索结果，并通过 sources 事件返回可点击来源；如果无法取得来源，不要给出联网结论，改为说明需要重新检索。' : ''}\n\n【当前企业知识库】\n${enterpriseCtx}`
-    : `${ADVISOR_SYSTEM_PROMPT}${timeRule}${BUSINESS_FACT_RULE}${requireSources ? '\n\n【联网来源硬规则】本轮涉及联网搜索/公开信息核验，必须使用联网检索结果，并通过 sources 事件返回可点击来源；如果无法取得来源，不要给出联网结论，改为说明需要重新检索。' : ''}`;
-
   try {
+    const role = await requestOrganizationRoleStrict(req.headers.authorization, userId).catch(() => null);
+    const question = typeof req.body?.userQuestion === 'string' ? req.body.userQuestion.slice(0, 4000) : messages.at(-1)!.content.slice(-4000);
+    const grounding = await buildChatGrounding({ tenantId, userId }, { role, question });
+    const sourceRule = requireSources ? '\n\n【联网来源硬规则】本轮涉及联网搜索/公开信息核验，必须使用联网检索结果，并通过 sources 事件返回可点击来源；如果无法取得来源，不要给出联网结论，改为说明需要重新检索。' : '';
+    const systemPrompt = `${ADVISOR_SYSTEM_PROMPT}${timeRule}${BUSINESS_FACT_RULE}${sourceRule}\n\n${grounding.text}\n${ASSISTANT_CONTEXT_RULES}`;
     for await (const ev of callLLMChatStream(messages, { systemPrompt, deepThinking, requireSources })) {
       res.write(`data: ${JSON.stringify(ev)}\n\n`);
     }

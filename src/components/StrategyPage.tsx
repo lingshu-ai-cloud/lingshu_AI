@@ -1,11 +1,6 @@
-import { useState } from 'react';
-import { motion, AnimatePresence } from 'motion/react';
-import { Compass, LayoutGrid, BarChart3 } from 'lucide-react';
-import AgentWorkspace from './AgentWorkspace';
 import StrategyDataBoard from './StrategyDataBoard';
+import { PAGE_REGISTRY } from '../pageRegistry';
 import type { AgentAction, ConversationContext, KickoffSignal, Page, RestoreSignal } from '../App';
-
-type ViewMode = 'workspace' | 'board';
 
 interface Props {
   onEnterConversation: (ctx: ConversationContext) => void;
@@ -16,46 +11,22 @@ interface Props {
   onAction?: AgentAction;
   onNavigate?: (page: Page) => void;
   onSessionRefresh?: () => void;
+  includeMockCustomers?: boolean;
+  mockCustomerScope?: string;
+  enterpriseHomepageDemo?: boolean;
 }
 
-export default function StrategyPage({ onAction, onNavigate }: Props) {
-  const [viewMode, setViewMode] = useState<ViewMode>('board');
-
+export default function StrategyPage({ onAction, onNavigate, includeMockCustomers = false, mockCustomerScope = 'admin', enterpriseHomepageDemo = false }: Props) {
   return (
-    <div className="flex flex-col h-full">
-      <div className="h-12 flex items-center justify-between px-5 border-b border-border flex-shrink-0">
-        <div className="flex items-center gap-2.5">
-          <div className="w-6 h-6 rounded-lg flex items-center justify-center" style={{ background: 'rgba(22,163,74,0.1)', color: '#16a34a' }}>
-            <Compass size={13} />
-          </div>
-          <span className="text-sm font-semibold text-text-primary">首页</span>
-        </div>
-        <div className="flex items-center gap-0.5 p-0.5 rounded-lg bg-surface-2 border border-border">
-          {([
-            { mode: 'board' as ViewMode, icon: <BarChart3 size={12} />, label: '数据大屏' },
-            { mode: 'workspace' as ViewMode, icon: <LayoutGrid size={12} />, label: 'AI 智囊团' },
-          ]).map(({ mode, icon, label }) => (
-            <button key={mode} onClick={() => setViewMode(mode)}
-              className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-md text-xs font-semibold transition-all ${viewMode === mode ? 'bg-surface text-text-primary shadow-sm' : 'text-text-muted hover:text-text-secondary'}`}>
-              {icon}<span>{label}</span>
-            </button>
-          ))}
-        </div>
-      </div>
-
-      <div className="flex-1 min-h-0 overflow-hidden">
-        <AnimatePresence mode="wait">
-          {viewMode === 'board' ? (
-            <motion.div key="board" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="h-full">
-              <StrategyDataBoard onAction={onAction} onNavigate={onNavigate} />
-            </motion.div>
-          ) : (
-            <motion.div key="workspace" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="h-full">
-              <AgentWorkspace />
-            </motion.div>
-          )}
-        </AnimatePresence>
-      </div>
+    <div className="home-dashboard h-full min-h-0 overflow-hidden">
+      <h1 className="sr-only">{PAGE_REGISTRY.strategy.canonicalTitle}</h1>
+      <StrategyDataBoard
+        onAction={onAction}
+        onNavigate={onNavigate}
+        includeMockCustomers={includeMockCustomers}
+        mockCustomerScope={mockCustomerScope}
+        enterpriseHomepageDemo={enterpriseHomepageDemo}
+      />
     </div>
   );
 }

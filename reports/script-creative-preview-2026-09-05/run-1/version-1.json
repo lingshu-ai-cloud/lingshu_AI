@@ -1,0 +1,13 @@
+{
+  "version": 1,
+  "httpStatus": 502,
+  "elapsedMs": 27416,
+  "ok": false,
+  "source": "ai_failed",
+  "script": "",
+  "qualityStatus": "failed",
+  "error": "上游模型生成失败，未生成脚本。请补充素材/产品信息后重试。",
+  "validationIssues": [
+    "上游模型生成失败，未生成脚本。请补充素材/产品信息后重试。"
+  ]
+}

@@ -1,0 +1,34 @@
+{
+  "tenants": {
+    "local_tenant_customer_1b2913131e2c46deab66172228c4df0a": {
+      "favoriteNames": [
+        "Timothy",
+        "Heidi",
+        "Sloane",
+        "Alexander",
+        "Pierce",
+        "Zihan",
+        "Meilin",
+        "Rumi"
+      ],
+      "asianNames": [
+        "Pierce",
+        "Zihan",
+        "Meilin",
+        "Rumi"
+      ],
+      "favoriteGroups": [
+        { "name": "Pierce", "groupId": "3289b480d3964b1ab5668f907d1d29da", "asian": true },
+        { "name": "Zihan", "groupId": "e44a4228bd9649f5bdbe18ee5253d5ed", "asian": true },
+        { "name": "Meilin", "groupId": "958a42efa3fa4248baac91baa5bf14cf", "asian": true },
+        { "name": "Rumi", "groupId": "74384d3dd9894ffb83cca47473eb6829", "asian": true },
+        { "name": "Timothy", "groupId": "1727680915" },
+        { "name": "Heidi", "groupId": "ed70027d65df4febb28191a6bbe5713a" },
+        { "name": "Sloane", "groupId": "f55061b5bee748bb99a86196af022a5b" },
+        { "name": "Alexander", "groupId": "ecb46643d82a4e45b5aa58845d3bbbfe" }
+      ],
+      "source": "HeyGen Favorites and official ethnicity filter",
+      "capturedAt": "2026-10-09T11:20:00+08:00"
+    }
+  }
+}

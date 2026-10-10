@@ -1,3 +1,5 @@
+import {readAuthorizedMessengerCustomers} from '../messenger/authorizedCustomerRead.js';
+import { readAuthorizedWhatsAppCustomers } from '../whatsapp/authorizedCustomerRead.js';
 import { Router } from 'express';
 import { callLLM } from '../agents/llm.js';
 import { requireAuth, type AuthLocals } from '../middleware/auth.js';
@@ -6,45 +8,21 @@ import { buildKnowledgePromptBlock } from '../knowledge/promptBlocks.js';
 import { buildStrategyPromptBlock, retrieveResponseStrategies, strategyEvidence } from '../knowledge/strategyRetrieve.js';
 import { aggregateKnowledgeMisses } from '../knowledge/misses.js';
 import { recordStyleMemory } from '../knowledge/styleMemory.js';
-import { confirmCustomerSourceAttribution, getNightModeMorningBriefing, getWhatsAppCustomers, getWhatsAppImportStatus, markWhatsAppHumanReply, patchWhatsAppCustomer } from '../whatsapp/historyImport.js';
-import { sendTenantWhatsAppTemplate, sendTenantWhatsAppText } from '../whatsapp/send.js';
+import { getNightModeMorningBriefing } from '../whatsapp/historyImport.js';
+import { analyzeMessengerCustomerTags, patchMessengerCustomer, sendTenantMessengerText,upsertMessengerMessage } from '../messenger/conversations.js';
+import { analyzeInstagramCustomerTags, getInstagramCustomers, patchInstagramCustomer,upsertInstagramMessage } from '../instagram/conversations.js';
+import { sendTenantInstagramText } from '../instagram/send.js';
+import {createCustomerChannelSendRequestService,resolveCustomerChannelOutboxContext} from '../digitalEmployees/customerChannelSendRequests.js';
+import {store} from '../storage/index.js';
+import {createCustomerManualTakeoverService} from '../customerService/customerManualTakeover.js';
+import {createCustomerManualTakeoverRouter} from './customerManualTakeover.js';
 import { customerServicePolicy, customerServiceStatus, readTenantEnterpriseProfile } from './enterprise.js';
+import { readCustomerMessagingAuthorization } from '../digitalEmployees/customerMessagingPolicy.js';
 
 export const customerSuggestionsRouter = Router();
 customerSuggestionsRouter.use(requireAuth);
 
-const manualActiveUntil = new Map<string, number>();
-
-const MESSAGE_TEMPLATES = [
-  {
-    name: 'greeting_opener',
-    label: '问候开场',
-    status: process.env.WHATSAPP_TEMPLATE_STATUS || 'pending',
-    body: 'Hi {{1}}, this is {{2}}. We can support wholesale supply for {{3}}. May I know your target quantity?',
-  },
-  {
-    name: 'product_update',
-    label: '新品通知',
-    status: process.env.WHATSAPP_TEMPLATE_STATUS || 'pending',
-    body: 'Hi {{1}}, we recently updated {{2}}. I can send you the latest catalog and wholesale offer.',
-  },
-  {
-    name: 'order_followup',
-    label: '订单跟进',
-    status: process.env.WHATSAPP_TEMPLATE_STATUS || 'pending',
-    body: 'Hi {{1}}, following up on your {{2}} order. We can confirm {{3}} for you today.',
-  },
-] as const;
-
-function isTemplateApproved(templateName: string) {
-  return MESSAGE_TEMPLATES.some(template => template.name === templateName && template.status === 'approved');
-}
-
-function renderTemplate(templateName: string, variables: string[]) {
-  const template = MESSAGE_TEMPLATES.find(item => item.name === templateName);
-  if (!template) return '';
-  return template.body.replace(/\{\{(\d+)}}/g, (_, index) => variables[Number(index) - 1] || '');
-}
+const manualTakeoverService=createCustomerManualTakeoverService(store);
 
 async function maybeRecordStyleMemory(req: any, tenantId: string, customerId: string, finalBody: string) {
   const memory = req.body?.styleMemory;
@@ -68,22 +46,40 @@ async function maybeRecordStyleMemory(req: any, tenantId: string, customerId: st
   }).catch(error => console.warn('[style-memory:record-failed]', error));
 }
 
-customerSuggestionsRouter.get('/', requireAuth, (req, res) => {
+customerSuggestionsRouter.get('/', requireAuth, async (req, res) => {
   const { tenantId } = res.locals as AuthLocals;
   const source = String(req.query.source || '');
-  if (source && source !== 'whatsapp') {
+  if (source && source !== 'messenger' && source !== 'instagram') {
     res.json({ items: [], source });
     return;
   }
-  res.json({ items: getWhatsAppCustomers(tenantId), source: 'whatsapp', importStatus: getWhatsAppImportStatus() });
+  const items = source === 'messenger' ? (await readAuthorizedMessengerCustomers(tenantId))
+    : source === 'instagram' ? getInstagramCustomers(tenantId)
+      : [...(await readAuthorizedMessengerCustomers(tenantId)), ...getInstagramCustomers(tenantId)].sort((a, b) => b.lastActiveAt - a.lastActiveAt);
+  res.json({ items, source: source || 'all' });
 });
 
-customerSuggestionsRouter.get('/whatsapp/import-status', (_req, res) => {
-  res.json(getWhatsAppImportStatus());
-});
+async function customerChannel(tenantId: string, id: string): Promise<'instagram' | 'messenger' | null> {
+  if (id.startsWith('instagram_')) return getInstagramCustomers(tenantId).some(item => item.id === id) ? 'instagram' : null;
+  return (await readAuthorizedMessengerCustomers(tenantId)).some(item => item.id === id) ? 'messenger' : null;
+}
 
 customerSuggestionsRouter.get('/templates', (_req, res) => {
-  res.json({ items: MESSAGE_TEMPLATES });
+  res.json({ items: [] });
+});
+
+customerSuggestionsRouter.post('/:id/context-tags', async (req, res) => {
+  const { tenantId } = res.locals as AuthLocals;
+  try {
+    const id = String(req.params.id);
+    const channel = await customerChannel(tenantId, id);
+    const customer = channel === 'instagram' ? await analyzeInstagramCustomerTags(tenantId, id)
+      : channel === 'messenger' ? await analyzeMessengerCustomerTags(tenantId, id) : null;
+    if (!customer) { res.status(404).json({ error: 'customer_not_found' }); return; }
+    res.json({ customer: channel === 'messenger' ? (await readAuthorizedMessengerCustomers(tenantId)).find(item => item.id === id) : customer });
+  } catch (error) {
+    res.status(503).json({ error: 'context_tag_analysis_failed', message: error instanceof Error ? error.message : '标签分析失败，请重试' });
+  }
 });
 
 customerSuggestionsRouter.get('/knowledge-misses/briefing', async (_req, res) => {
@@ -103,31 +99,25 @@ customerSuggestionsRouter.post('/knowledge-misses/recompute', async (_req, res) 
   res.json({ ok: true, items });
 });
 
-customerSuggestionsRouter.post('/:id/manual-active', (req, res) => {
-  const { tenantId } = res.locals as AuthLocals;
-  const customerId = String(req.params.id || '');
-  if (!customerId) {
-    res.status(400).json({ error: 'customer_id_required' });
-    return;
-  }
-  const minutes = Math.max(1, Math.min(30, Number(req.body?.minutes || 10) || 10));
-  const until = Date.now() + minutes * 60_000;
-  manualActiveUntil.set(`${tenantId}:${customerId}`, until);
-  res.json({ ok: true, suspendedUntil: new Date(until).toISOString() });
-});
+async function manualCustomerChannel(tenantId:string,id:string){return (await readAuthorizedWhatsAppCustomers(tenantId)).some(c=>c.id===id)?'whatsapp' as const:customerChannel(tenantId,id);}
+customerSuggestionsRouter.use('/:id/manual-active',createCustomerManualTakeoverRouter({service:manualTakeoverService,resolveChannel:manualCustomerChannel}));
 
-customerSuggestionsRouter.patch('/:id', (req, res) => {
+customerSuggestionsRouter.patch('/:id', async (req, res) => {
   const { tenantId } = res.locals as AuthLocals;
   const customerId = String(req.params.id || '');
   if (!customerId) {
     res.status(400).json({ error: 'customer_id_required' });
     return;
   }
-  const customer = patchWhatsAppCustomer({
-    tenantId,
-    customerId,
-    patch: req.body && typeof req.body === 'object' ? req.body as Record<string, unknown> : {},
-  });
+  if (req.body && Object.prototype.hasOwnProperty.call(req.body, 'orders')) {
+    res.status(422).json({ error: '请通过订单台账登记和更新订单，客户备注不再接受订单状态修改', code: 'use_order_ledger' }); return;
+  }
+  const patch = req.body && typeof req.body === 'object' ? req.body as Record<string, unknown> : {};
+  const channel = await customerChannel(tenantId, customerId);
+  if (!channel) { res.status(404).json({ error: 'customer_not_found' }); return; }
+  const customer = channel === 'instagram'
+    ? patchInstagramCustomer(tenantId, customerId, patch)
+    : patchMessengerCustomer(tenantId, customerId, patch);
   if (!customer) {
     res.status(404).json({ error: 'customer_not_found' });
     return;
@@ -143,7 +133,14 @@ customerSuggestionsRouter.post('/:id/source-attribution', async (req, res) => {
     res.status(400).json({ error: 'customer_id_and_post_id_required' });
     return;
   }
-  const customer = await confirmCustomerSourceAttribution({ tenantId, customerId, postId });
+  const channel = await customerChannel(tenantId, customerId);
+  if (!channel) { res.status(404).json({ error: 'customer_not_found' }); return; }
+  const patch = {
+    sourcePostId: postId,
+    sourcePostPlatform: channel === 'instagram' ? 'instagram' : 'facebook',
+  };
+  const customer = channel === 'instagram' ? patchInstagramCustomer(tenantId, customerId, patch)
+    : patchMessengerCustomer(tenantId, customerId, patch);
   if (!customer) {
     res.status(404).json({ error: 'attribution_candidate_not_found' });
     return;
@@ -151,98 +148,76 @@ customerSuggestionsRouter.post('/:id/source-attribution', async (req, res) => {
   res.json({
     ok: true,
     source: customer.source,
-    sourcePostId: customer.sourcePostId,
-    sourceTrackCode: customer.sourceTrackCode,
-    sourcePostTitle: customer.sourcePostTitle,
-    sourcePostPlatform: customer.sourcePostPlatform,
+    sourcePostId: channel === 'instagram' ? customer.sourcePostId : undefined,
+    sourceTrackCode: channel === 'instagram' ? customer.sourceTrackCode : undefined,
+    sourcePostTitle: channel === 'instagram' ? customer.sourcePostTitle : undefined,
+    sourcePostPlatform: channel === 'instagram' ? customer.sourcePostPlatform : undefined,
   });
 });
 
+customerSuggestionsRouter.get('/:id/outbox/context',requireAuth,async(req,res)=>{
+ const{tenantId,userId}=res.locals as AuthLocals;const customerId=String(req.params.id||'');const channel=await customerChannel(tenantId,customerId);if(!channel){res.status(404).json({error:'customer_not_found'});return;}
+ const customer=channel==='instagram'?getInstagramCustomers(tenantId).find(c=>c.id===customerId):(await readAuthorizedMessengerCustomers(tenantId)).find(c=>c.id===customerId);
+ try{const item=await resolveCustomerChannelOutboxContext(store,{tenantId,actorUserId:userId,customerId,channel,nativeAccountId:String(channel==='instagram'?customer?.instagramAccountId:customer?.pageId)});res.json({item});}catch(error){const code=error instanceof Error?error.message:'channel_send_context_unavailable';res.status(/forbidden$/.test(code)?403:409).json({error:code});}
+});
+
+customerSuggestionsRouter.get('/:id/outbox/:requestId',requireAuth,async(req,res)=>{
+ const {tenantId,userId}=res.locals as AuthLocals;const customerId=String(req.params.id||''),requestId=String(req.params.requestId||'');
+ if(!/^[a-zA-Z0-9_-]{8,120}$/.test(requestId)){res.status(400).json({error:'channel_send_request_id_required'});return;}
+ const channel=await customerChannel(tenantId,customerId);if(!channel){res.status(404).json({error:'customer_not_found'});return;}
+ try{const item=await createCustomerChannelSendRequestService(store).get(tenantId,userId,channel,requestId);if(!item||item.customerId!==customerId){res.status(404).json({error:'channel_send_request_not_found'});return;}res.json({item});}catch(error){const code=error instanceof Error?error.message:'channel_send_request_read_failed';res.status(/forbidden$/.test(code)?403:409).json({error:code});}
+});
+
+customerSuggestionsRouter.post('/:id/outbox/:requestId/reconcile',requireAuth,async(req,res)=>{
+ const{tenantId,userId}=res.locals as AuthLocals;const customerId=String(req.params.id||''),requestId=String(req.params.requestId||'');if(req.body!==undefined&&(!req.body||Array.isArray(req.body)||typeof req.body!=='object'||Object.keys(req.body).length)){res.status(400).json({error:'channel_send_reconcile_body_invalid'});return;}
+ const channel=await customerChannel(tenantId,customerId);if(!channel){res.status(404).json({error:'customer_not_found'});return;}
+ const customer=channel==='instagram'?getInstagramCustomers(tenantId).find(c=>c.id===customerId):(await readAuthorizedMessengerCustomers(tenantId)).find(c=>c.id===customerId);
+ try{const item=await createCustomerChannelSendRequestService(store).repairHistory({tenantId,actorUserId:userId,channel,requestId,customerId,recordHistory:(receipt,body,account)=>{if(channel==='instagram'){if(customer?.instagramAccountId!==account.providerAccountId||customer?.instagramUserId!==receipt.recipientId)throw Error('channel_send_history_customer_drift');upsertInstagramMessage({tenantId,instagramAccountId:String(account.providerAccountId),userId:receipt.recipientId,messageId:receipt.messageId,body,timestamp:Date.parse(receipt.acceptedAt),actor:'seller',sendStatus:'sent'});}else{if(customer?.pageId!==account.providerAccountId||customer?.messengerUserId!==receipt.recipientId)throw Error('channel_send_history_customer_drift');upsertMessengerMessage({tenantId,pageId:String(account.providerAccountId),userId:receipt.recipientId,messageId:receipt.messageId,body,timestamp:Date.parse(receipt.acceptedAt),actor:'seller',sendStatus:'sent'});}}});res.json({item,messagesSent:0});}catch(error){const code=error instanceof Error?error.message:'channel_send_history_writeback_failed';res.status(/forbidden$/.test(code)?403:409).json({error:code,requestId});}
+});
+
 customerSuggestionsRouter.post('/:id/outbox', requireAuth, async (req, res) => {
-  const { tenantId } = res.locals as AuthLocals;
+  const { tenantId,userId } = res.locals as AuthLocals;
   const customerId = String(req.params.id || '');
   const body = String(req.body?.body || '').trim();
-  const mode = String(req.body?.mode || 'free_text');
-  const to = String(req.body?.to || '').trim();
+  const requestId=typeof req.body?.requestId==='string'?req.body.requestId.trim():'';
+  if(!/^[a-zA-Z0-9_-]{8,120}$/.test(requestId)){res.status(400).json({error:'channel_send_request_id_required'});return;}
   if (!customerId || !body) {
     res.status(400).json({ error: 'customer_id_and_body_required' });
     return;
   }
-  if (!to) {
-    res.status(400).json({ error: 'whatsapp_recipient_required', message: 'WhatsApp recipient is missing.' });
-    return;
-  }
+  const channel = await customerChannel(tenantId, customerId);
+  if (!channel) { res.status(404).json({ error: 'customer_not_found' }); return; }
   if (req.body?.auto === true) {
     const status = customerServiceStatus(await readTenantEnterpriseProfile(tenantId));
-    if (!status.autoReplyReady) {
+    const messagingAuthorization = await readCustomerMessagingAuthorization(tenantId, channel);
+    if (!status.autoReplyReady || !messagingAuthorization.inboundAutoSendAllowed) {
       res.status(409).json({ error: 'auto_reply_not_authorized', message: '当前只提供建议回复，不能自动发送。' });
       return;
     }
   }
-  if (mode === 'free_text' && req.body?.outsideWindow) {
-    res.status(409).json({ error: 'whatsapp_template_required', message: '距客户上次消息已超过24小时，请使用模板消息发送。' });
+  if (req.body?.outsideWindow) {
+    res.status(409).json({ error: `${channel}_window_closed`, message: `距客户上次互动已超过 24 小时，当前不能直接发送普通 ${channel === 'instagram' ? 'Instagram 私信' : 'Messenger 消息'}。` });
     return;
   }
-  if (mode === 'template') {
-    const templateName = String(req.body?.templateName || '').trim();
-    const variables = Array.isArray(req.body?.variables) ? req.body.variables.map((item: unknown) => String(item || '')) : [];
-    if (!isTemplateApproved(templateName)) {
-      res.status(409).json({ error: 'template_pending', message: '消息模板审核中，暂时不能发送超窗触达。' });
-      return;
-    }
-    try {
-      await sendTenantWhatsAppTemplate({
-        tenantId,
-        to,
-        templateName,
-        variables,
-        languageCode: String(req.body?.languageCode || 'en_US'),
-      });
-    } catch (error) {
-      res.status(502).json({
-        error: 'whatsapp_send_failed',
-        message: error instanceof Error ? error.message : 'WhatsApp send failed',
-      });
-      return;
-    }
-    const renderedBody = renderTemplate(templateName, variables) || body;
-    markWhatsAppHumanReply({ tenantId, customerId, body: renderedBody, waNumber: to });
-    await maybeRecordStyleMemory(req, tenantId, customerId, renderedBody);
+  try {
+    const send=()=>channel==='instagram'?sendTenantInstagramText({tenantId,customerId,body,requestId,actorUserId:userId}):sendTenantMessengerText({tenantId,customerId,body,requestId,actorUserId:userId});
+    const receipt=req.body?.auto===true?await manualTakeoverService.withAutoSendPermission({tenantId,customerId,channel},send):await manualTakeoverService.withHumanSendPermission({tenantId,customerId,channel,actorUserId:userId},send);
+    await maybeRecordStyleMemory(req, tenantId, customerId, body);
+    const item=await createCustomerChannelSendRequestService(store).get(tenantId,userId,channel,requestId);
     res.json({
+      item,
       ok: true,
-      outboxId: `tpl_${Date.now()}`,
+      outboxId: receipt.messageId,requestId:receipt.requestId,
+      providerMessageIds: [receipt.messageId],
       status: 'sent',
       sentAt: new Date().toISOString(),
-      renderedBody,
     });
-    return;
-  }
-  const suspendedUntil = manualActiveUntil.get(`${tenantId}:${customerId}`) || 0;
-  if (req.body?.auto === true) {
-    if (suspendedUntil > Date.now()) {
-      res.status(409).json({ error: 'manual_active', message: '人工正在回复，AI 自动发送已挂起，只生成草稿。' });
-      return;
-    }
-  }
-  let sentMessages: string[] = [];
-  try {
-    sentMessages = await sendTenantWhatsAppText(tenantId, to, body);
   } catch (error) {
     res.status(502).json({
-      error: 'whatsapp_send_failed',
-      message: error instanceof Error ? error.message : 'WhatsApp send failed',
+      error: error instanceof Error&&/^(provider_identity_gap|provider_response_save_gap|channel_send_request_)/.test(error.message)?error.message:`${channel}_send_failed`,requestId,
+      message: error instanceof Error ? error.message : `${channel} send failed`,
     });
-    return;
   }
-  markWhatsAppHumanReply({ tenantId, customerId, body, messages: sentMessages, waNumber: to });
-  await maybeRecordStyleMemory(req, tenantId, customerId, body);
-  res.json({
-    ok: true,
-    outboxId: `out_${Date.now()}`,
-    status: 'sent',
-    sentAt: new Date().toISOString(),
-    messages: sentMessages,
-  });
 });
 
 interface CustomerHint {
@@ -255,24 +230,26 @@ interface CustomerHint {
 
 const SYSTEM_PROMPT = `你是灵枢 AI「我的客户」里的转化助手。
 请返回 2 到 3 条给中国商家看的主动建议。
-每条建议一句话，动作明确，可以继续转成 WhatsApp 回复草稿。
+每条建议一句话，动作明确，可以继续转成 Messenger 回复草稿。
 不要写完整的客户回复，不要编号、Markdown 或解释。`;
 
 customerSuggestionsRouter.get('/:id/suggestions', async (req, res) => {
   const { tenantId } = res.locals as AuthLocals;
   if (!customerServicePolicy(await readTenantEnterpriseProfile(tenantId)).enabled) {
-    res.status(409).json({ items: [], error: 'customer_service_disabled', message: '请先开启智能客服。' });
+    res.status(409).json({ items: [], error: 'conversation_suggestions_disabled', message: '请先在 Agent 设置中开启会话建议。' });
     return;
   }
   const id = String(req.params.id ?? '');
-  const customer = getWhatsAppCustomers(tenantId).find(item => item.id === id);
+  const customer = id.startsWith('instagram_')
+    ? getInstagramCustomers(tenantId).find(item => item.id === id)
+    : (await readAuthorizedMessengerCustomers(tenantId)).find(item => item.id === id);
   if (!customer) {
     res.status(404).json({ items: [], error: 'customer_not_found' });
     return;
   }
   const customerTimeline = Array.isArray(customer.timeline) ? customer.timeline.slice(-8) : [];
   const hint: CustomerHint = {
-    name: String(customer.name || customer.waNumber || '客户'),
+    name: String(customer.name || ('instagramUserId' in customer ? customer.instagramUserId : customer.messengerUserId) || '客户'),
     stage: String(customer.stage || 'inquiry'),
     intentScore: Number(customer.intentScore || 0),
     product: String(customer.outboundProduct || customer.product || ''),

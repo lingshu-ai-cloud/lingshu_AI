@@ -1,3 +1,4 @@
+import { normalizeMetricValues } from '../socialMetrics/aggregation.js';
 import axios from 'axios';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -26,9 +27,9 @@ export interface YouTubeVideo {
   description: string;
   publishedAt: string;
   thumbnailUrl: string;
-  viewCount: number;
-  likeCount: number;
-  commentCount: number;
+  viewCount?: number;
+  likeCount?: number;
+  commentCount?: number;
   duration: string;
 }
 
@@ -259,6 +260,14 @@ export async function getAccessToken(config: YouTubeConfig): Promise<string> {
   throw new Error('No refresh token or access token provided');
 }
 
+/** Read-only OAuth introspection used before enabling videos.insert. */
+export async function probeYouTubeUploadPermission(config: YouTubeConfig): Promise<{ granted: boolean; scopes: string[] }> {
+  const accessToken = await getAccessToken(config);
+  const response = await axios.get('https://oauth2.googleapis.com/tokeninfo', { params: { access_token: accessToken } });
+  const scopes = String(response.data?.scope || '').split(/\s+/).filter(Boolean);
+  return { granted: scopes.includes('https://www.googleapis.com/auth/youtube.upload'), scopes };
+}
+
 export async function exchangeYouTubeOAuthCode(input: {
   clientId: string;
   clientSecret: string;
@@ -449,9 +458,9 @@ export async function getMyVideos(
     description: item.snippet.description || '',
     publishedAt: item.snippet.publishedAt,
     thumbnailUrl: item.snippet.thumbnails?.medium?.url || item.snippet.thumbnails?.default?.url,
-    viewCount: parseInt(item.statistics.viewCount || '0'),
-    likeCount: parseInt(item.statistics.likeCount || '0'),
-    commentCount: parseInt(item.statistics.commentCount || '0'),
+    viewCount: normalizeMetricValues({ views: item.statistics?.viewCount }).views,
+    likeCount: normalizeMetricValues({ likes: item.statistics?.likeCount }).likes,
+    commentCount: normalizeMetricValues({ comments: item.statistics?.commentCount }).comments,
     duration: item.contentDetails.duration,
   }));
 }

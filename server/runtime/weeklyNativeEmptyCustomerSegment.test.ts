@@ -1,0 +1,21 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import {sendRecoveryFixture} from '../socialPrograms/weeklyCustomerSendRecovery.fixture.js';
+import {bindWeeklyCustomerRun,readWeeklyCustomerStep} from './socialWeeklyCustomerBridge.js';
+import {executeNativeEmptyCustomerSegmentation} from './weeklyNativeEmptyCustomerSegment.fixture.js';
+test('actual native runner emits skipped no_data from a generated empty segment; queued and merely skipped cannot prove it',async()=>{
+ const f=sendRecoveryFixture();
+ f.store.delete=async(collection,id)=>{const rows=f.data[collection]??[];const index=rows.findIndex(row=>row.id===id);if(index<0)return false;rows.splice(index,1);return true;};
+ f.data.customer_segments=[];f.data.customer_segment_members=[];f.data.followup_batches=[];f.data.followup_batch_items=[];f.data.approval_requests=[];f.data.whatsapp_customers=[];f.data.whatsapp_interactions=[];
+ f.data.digital_employee_configs=[{id:'config',tenant_id:'tenant',status:'active',config_version:100,config:{enabledWorkflows:['customer_segmentation','batch_followup'],allowRealCustomerMessages:false}}];
+ for(const task of f.data.workflow_tasks!)Object.assign(task,{status:'queued',execution_mode:'observe',depends_on:[],title:task.task_key,output:{}});
+ await bindWeeklyCustomerRun(f.store,{tenantId:'tenant',programId:'program',packageId:'week',packageVersion:1},'run','owner');
+ const scope={tenantId:'tenant',programId:'program',packageId:'week',packageVersion:1};
+ assert.equal((await readWeeklyCustomerStep(f.store,scope,'run','customer_followup_dispatch')).status,'blocked');
+ const task=f.data.workflow_tasks![0]!;task.status='skipped';task.output={dataStatus:'no_data'};
+ assert.equal((await readWeeklyCustomerStep(f.store,scope,'run','customer_followup_dispatch')).status,'blocked');task.status='queued';
+ const result=await executeNativeEmptyCustomerSegmentation(f.store,{tenantId:'tenant',runId:'run',userId:'owner'});
+ assert.equal(result.task.status,'skipped');assert.equal((await readWeeklyCustomerStep(f.store,scope,'run','customer_followup_dispatch')).status,'no_data');
+ const refs=result.task.business_refs;result.task.business_refs={type:'customer_segment'};assert.equal((await readWeeklyCustomerStep(f.store,scope,'run','customer_followup_dispatch')).status,'blocked');result.task.business_refs=refs;
+ result.task.output={dataStatus:'verified'};assert.equal((await readWeeklyCustomerStep(f.store,scope,'run','customer_followup_dispatch')).status,'blocked');
+});

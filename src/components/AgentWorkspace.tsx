@@ -1,13 +1,13 @@
 import { useEffect, useMemo, useState } from 'react';
-import { motion } from 'motion/react';
 import { Compass, Zap, MessageSquare, TrendingUp, Users, BarChart2, Sparkles, ChevronRight, Activity, CalendarDays } from 'lucide-react';
 import type { AgentType } from '../App';
 import { authHeader } from '../lib/auth';
+import { LsGradientProgress } from './ui/LsExperiencePrimitives';
 
 const AGENTS = [
   { type: 'strategy' as AgentType, name: '首页', desc: '经营总览、策略编排和关键动作拆解', icon: Compass, color: '#4f46e5', bg: 'rgba(79,70,229,0.08)', status: 'active' as const, recentActivity: '等待真实经营数据接入', stats: [{ label: '本周方案', value: '—' }, { label: '协调任务', value: '—' }, { label: '采纳率', value: '—' }] },
   { type: 'traffic' as AgentType, name: '我的社媒', desc: '竞品视频克隆、脚本生成、素材去重矩阵', icon: Zap, color: '#d97706', bg: 'rgba(217,119,6,0.08)', status: 'idle' as const, recentActivity: '等待社媒账号授权', stats: [{ label: '今日脚本', value: '—' }, { label: '覆盖平台', value: '—' }, { label: '去重命中', value: '—' }] },
-  { type: 'conversion' as AgentType, name: '我的客户', desc: '询盘筛选、自动回复、跟单建议和老客唤醒', icon: MessageSquare, color: '#0891b2', bg: 'rgba(8,145,178,0.08)', status: 'idle' as const, recentActivity: '等待 WhatsApp 客户接入', stats: [{ label: '今日询盘', value: '—' }, { label: '高意向', value: '—' }, { label: '待唤醒', value: '—' }] },
+  { type: 'conversion' as AgentType, name: '我的客户', desc: '询盘筛选、回复建议和客户跟进', icon: MessageSquare, color: '#0891b2', bg: 'rgba(8,145,178,0.08)', status: 'idle' as const, recentActivity: '等待 Messenger 客户接入', stats: [{ label: '今日询盘', value: '—' }, { label: '高意向', value: '—' }, { label: '待跟进', value: '—' }] },
 ];
 const SM = { active: { label: '运行中', color: '#16a34a' }, running: { label: '执行中', color: '#d97706' }, idle: { label: '待机', color: '#94a3b8' } };
 
@@ -95,7 +95,7 @@ function taskAction(task: ScheduledTask): string {
   if (task.taskType === 'holiday_push') return '扫描未来节日营销节点，生成推品、内容和客户触达动作。';
   if (task.taskType === 'exchange_rate') return '更新汇率报价提醒，辅助多币种询盘和大额报价有效期设置。';
   if (task.taskType === 'weekly_review') return '复盘本周经营数据，拆解下周流量、转化、留存行动。';
-  if (task.taskType === 'crm_wakeup') return '筛选沉默客户并生成 WhatsApp / 邮件唤醒批次。';
+  if (task.taskType === 'crm_wakeup') return '筛选沉默客户并生成 Messenger / 邮件跟进草稿。';
   return task.name;
 }
 
@@ -189,7 +189,7 @@ export default function AgentWorkspace() {
   return (
     <div className="p-6 h-full overflow-y-auto" data-lingshu-guide="assistant-team">
       <div className="mb-6">
-        <h2 className="text-lg font-bold text-text-primary font-display">你的 AI 智囊团</h2>
+        <h2 className="ls-type-title-large text-text-primary">你的 AI 智囊团</h2>
       </div>
       <section className="mb-6 rounded-2xl border border-border bg-surface overflow-hidden">
         <div className="flex items-center justify-between gap-3 px-4 py-3 border-b border-border">
@@ -198,11 +198,11 @@ export default function AgentWorkspace() {
               <CalendarDays size={16} />
             </div>
             <div>
-              <p className="text-sm font-semibold text-text-primary">工作日历</p>
-              <p className="text-[11px] text-text-muted">北京时间 · {monthPlan.label} · 已同步 {tasks.length} 个定时任务 / 营销节点 / 运营周期</p>
+              <p className="ls-type-title-small text-text-primary">工作日历</p>
+              <p className="ls-type-body-small text-text-muted">北京时间 · {monthPlan.label} · 已同步 {tasks.length} 个定时任务 / 营销节点 / 运营周期</p>
             </div>
           </div>
-          <span className="text-[10px] font-semibold text-accent bg-accent-glow px-2.5 py-1 rounded-full border border-accent/20">本月视图</span>
+          <span className="ls-type-label-medium text-accent bg-accent-glow px-2.5 py-1 rounded-full border border-accent/20">本月视图</span>
         </div>
         <div className="overflow-x-auto">
           <table className="min-w-full text-left text-xs">
@@ -223,7 +223,7 @@ export default function AgentWorkspace() {
                   <td className="px-4 py-2.5 text-text-secondary whitespace-nowrap">{row.owner}</td>
                   <td className="px-4 py-2.5 text-text-secondary leading-relaxed min-w-72">{row.action}</td>
                   <td className="px-4 py-2.5 whitespace-nowrap">
-                    <span className="rounded-full bg-surface-2 border border-border px-2 py-0.5 text-[10px] font-semibold text-text-muted">{row.status}</span>
+                    <span className="ls-type-label-medium rounded-full bg-surface-2 border border-border px-2 py-0.5 text-text-muted">{row.status}</span>
                   </td>
                 </tr>
               ))}
@@ -234,40 +234,39 @@ export default function AgentWorkspace() {
       <div className="card p-3.5 mb-6 flex items-center gap-3">
         <div className="flex items-center gap-1.5 flex-shrink-0"><Activity size={13} className="text-accent" /><span className="text-xs font-semibold text-text-primary">行动建议流水线</span></div>
         <div className="flex-1 flex items-center gap-1">
-          {['社媒检测', '客户筛选', '生成话术', '待推送'].map((s, i) => (<div key={s} className="flex items-center gap-1 flex-1 min-w-0"><span className="text-[10px] text-text-muted truncate">{s}</span>{i < 3 && <ChevronRight size={10} className="text-border-bright flex-shrink-0" />}</div>))}
+          {['社媒检测', '客户筛选', '生成话术', '待推送'].map((s, i) => (<div key={s} className="flex items-center gap-1 flex-1 min-w-0"><span className="ls-type-body-small text-text-muted truncate">{s}</span>{i < 3 && <ChevronRight size={12} className="text-border-bright flex-shrink-0" />}</div>))}
         </div>
-        <span className="text-[10px] font-semibold text-accent bg-accent-glow px-2 py-0.5 rounded-full border border-accent/20 flex-shrink-0">今日触发 2 次</span>
+        <span className="ls-type-label-medium text-accent bg-accent-glow px-2 py-0.5 rounded-full border border-accent/20 flex-shrink-0">今日触发 2 次</span>
       </div>
       <div className="grid grid-cols-2 gap-4">
-        {AGENTS.map((agent, i) => {
+        {AGENTS.map(agent => {
           const sm = SM[agent.status]; const Icon = agent.icon;
           const tokenUsage = agentTokens[agent.type] ?? 0;
-          const tokenPct = Math.max(3, Math.min(100, (tokenUsage / 30_000) * 100));
+          const tokenPct = Math.max(0, Math.min(100, (tokenUsage / 30_000) * 100));
           return (
-            <motion.button key={agent.type} type="button" data-agent-card={agent.type}
-              initial={{ opacity: 0, y: 16 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: i * 0.07 }}
+            <button key={agent.type} type="button" data-agent-card={agent.type}
               className="card p-4 cursor-pointer flex flex-col gap-3 hover:border-border-bright text-left"
               onClick={() => openAssistant(agent)}>
               <div className="flex items-start justify-between">
                 <div className="flex items-center gap-2.5">
                   <div className="w-9 h-9 rounded-xl flex items-center justify-center flex-shrink-0" style={{ background: agent.bg, color: agent.color }}><Icon size={18} /></div>
-                  <div><p className="text-sm font-semibold text-text-primary">{agent.name}</p><div className="flex items-center gap-1 mt-0.5"><span className="w-1.5 h-1.5 rounded-full" style={{ background: sm.color, boxShadow: agent.status !== 'idle' ? `0 0 5px ${sm.color}` : undefined }} /><span className="text-[10px] font-medium" style={{ color: sm.color }}>{sm.label}</span></div></div>
+                  <div><p className="ls-type-title-small text-text-primary">{agent.name}</p><div className="flex items-center gap-1 mt-0.5"><span className="w-1.5 h-1.5 rounded-full" style={{ background: sm.color }} /><span className="ls-type-label-medium" style={{ color: sm.color }}>{sm.label}</span></div></div>
                 </div>
                 <ChevronRight size={14} className="text-text-muted mt-1" />
               </div>
-              <p className="text-[11px] text-text-muted leading-relaxed">{agent.desc}</p>
+              <p className="ls-type-body-small text-text-muted">{agent.desc}</p>
               <div>
-                <div className="flex items-center justify-between mb-1"><span className="text-[10px] text-text-muted uppercase tracking-wider font-semibold">Token 用量</span><Sparkles size={10} style={{ color: agent.color }} /></div>
-                <div className="flex items-center gap-2"><div className="flex-1 h-1.5 rounded-full bg-surface-2 overflow-hidden"><motion.div initial={{ width: 0 }} animate={{ width: `${tokenPct}%` }} transition={{ duration: 0.8, ease: 'easeOut' }} className="h-full rounded-full" style={{ background: agent.color }} /></div><span className="text-[11px] font-mono font-semibold text-text-secondary w-10 text-right">{formatTokens(tokenUsage)}</span></div>
+                <div className="flex items-center justify-between mb-1"><span className="ls-type-label-medium text-text-muted">Token 用量</span><Sparkles size={12} style={{ color: agent.color }} /></div>
+                <div className="flex items-center gap-2"><LsGradientProgress className="min-w-0 flex-1" percent={tokenPct} showInfo={false} size="small" aria-label={`${agent.name} Token 用量 ${formatTokens(tokenUsage)}`} /><span className="ls-type-label-medium font-mono text-text-secondary w-10 text-right">{formatTokens(tokenUsage)}</span></div>
               </div>
-              <div className="grid grid-cols-3 gap-1 pt-2 border-t border-border">{agent.stats.map(s => (<div key={s.label} className="text-center"><p className="text-sm font-bold text-text-primary font-display">{s.value}</p><p className="text-[9px] text-text-muted mt-0.5">{s.label}</p></div>))}</div>
-              <div className="flex items-start gap-1.5 px-2.5 py-1.5 rounded-lg" style={{ background: agent.bg }}><TrendingUp size={10} className="flex-shrink-0 mt-0.5" style={{ color: agent.color }} /><p className="text-[10px] leading-relaxed" style={{ color: agent.color }}>{agent.recentActivity}</p></div>
-            </motion.button>
+              <div className="grid grid-cols-3 gap-1 pt-2 border-t border-border">{agent.stats.map(s => (<div key={s.label} className="text-center"><p className="ls-type-title-small text-text-primary">{s.value}</p><p className="ls-type-body-small text-text-muted mt-0.5">{s.label}</p></div>))}</div>
+              <div className="flex items-start gap-1.5 px-2.5 py-1.5 rounded-lg" style={{ background: agent.bg }}><TrendingUp size={12} className="flex-shrink-0 mt-0.5" style={{ color: agent.color }} /><p className="ls-type-body-small" style={{ color: agent.color }}>{agent.recentActivity}</p></div>
+            </button>
           );
         })}
       </div>
       <div className="mt-6 grid grid-cols-3 gap-3">
-        {[{ icon: Users, label: '今日协作任务', value: '—', color: '#4f46e5' }, { icon: BarChart2, label: '自动化触发', value: String(tasks.filter(task => Boolean(task.lastRun)).length), color: '#d97706' }, { icon: Sparkles, label: '待确认进化建议', value: '—', color: '#16a34a' }].map(stat => { const I = stat.icon; return (<div key={stat.label} className="card p-3 flex items-center gap-2.5"><I size={14} style={{ color: stat.color }} /><div><p className="text-base font-bold text-text-primary font-display leading-none">{stat.value}</p><p className="text-[10px] text-text-muted mt-0.5">{stat.label}</p></div></div>); })}
+        {[{ icon: Users, label: '今日协作任务', value: '—', color: '#4f46e5' }, { icon: BarChart2, label: '自动化触发', value: String(tasks.filter(task => Boolean(task.lastRun)).length), color: '#d97706' }, { icon: Sparkles, label: '待确认进化建议', value: '—', color: '#16a34a' }].map(stat => { const I = stat.icon; return (<div key={stat.label} className="card p-3 flex items-center gap-2.5"><I size={14} style={{ color: stat.color }} /><div><p className="ls-type-title-medium text-text-primary">{stat.value}</p><p className="ls-type-body-small text-text-muted mt-0.5">{stat.label}</p></div></div>); })}
       </div>
     </div>
   );

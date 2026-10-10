@@ -9,6 +9,7 @@ import {
   type TenantPlatformAppRecord,
 } from '../lib/tenantPlatformApps.js';
 import { store } from '../storage/index.js';
+import { refreshExpiringInstagramTokens } from '../instagram/tokenRefresh.js';
 
 let job: ScheduledTask | null = null;
 
@@ -53,6 +54,9 @@ async function refreshMetaUserToken(app: TenantPlatformAppRecord): Promise<void>
 }
 
 export async function checkTenantPlatformTokens(): Promise<void> {
+  await refreshExpiringInstagramTokens().catch(error => {
+    console.error('[instagram-token-refresh] scan failed:', error);
+  });
   const apps = await listTenantPlatformApps();
   for (const app of apps) {
     if (app.platform !== 'meta' || app.token_type !== 'user_60d') continue;

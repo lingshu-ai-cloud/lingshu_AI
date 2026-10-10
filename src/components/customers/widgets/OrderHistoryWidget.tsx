@@ -1,155 +1,79 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Card, CardContent, CardHeader } from '../../ui/card';
-import type { CustomerProfile, OrderRecord } from '../../../types/customer';
+import type { CustomerProfile } from '../../../types/customer';
+import { authHeader } from '../../../lib/auth';
+import { orderTransitions, paidOrder, type OrderStatus } from '../../../../shared/orderLifecycle';
 
-const STATUS_STYLE: Record<OrderRecord['status'], string> = {
-  paid: 'bg-emerald-50 text-emerald-700 border-emerald-100',
-  refunded: 'bg-slate-100 text-slate-600 border-slate-200',
-  cancelled: 'bg-red-50 text-red-700 border-red-100',
-  pending: 'bg-amber-50 text-amber-700 border-amber-100',
-};
+type CustomerOrder = { customerSyncStatus?: string; id: string; orderNo: string; customerId?: string; product: string; quantity: number; amount: number; orderDate: string; status: OrderStatus };
 
-const STATUS_LABEL: Record<OrderRecord['status'], string> = {
-  paid: '已支付',
-  refunded: '已退款',
-  cancelled: '已取消',
-  pending: '待处理',
-};
-
-const emptyDraft = () => ({
-  id: '',
-  total: '',
-  status: 'pending' as OrderRecord['status'],
-  createdAt: new Date().toISOString().slice(0, 10),
-});
-
-function OrderDetail({
-  customer,
-  order,
-  onEdit,
-  onStatus,
-}: {
-  customer: CustomerProfile;
-  order: OrderRecord;
-  onEdit: () => void;
-  onStatus: (status: OrderRecord['status']) => void;
-}) {
-  const cumulative = customer.orders.reduce((sum, item) => sum + Number(item.total.replace(/[^\d.]/g, '') || 0), 0);
-  return (
-    <div className="mt-3 rounded-xl border border-border bg-white p-3 shadow-sm">
-      <div className="flex items-start justify-between gap-3">
-        <div>
-          <p className="text-xs font-black text-text-primary">订单详情</p>
-          <p className="mt-1 text-[11px] text-text-muted">{customer.orders.length} 笔订单 · 累计金额 {cumulative.toLocaleString('en-US', { style: 'currency', currency: 'USD' })}</p>
-        </div>
-        <span className={`rounded-full border px-2 py-0.5 text-[10px] font-bold ${STATUS_STYLE[order.status]}`}>{STATUS_LABEL[order.status]}</span>
-      </div>
-      <div className="mt-3 grid gap-2 rounded-lg bg-surface-2 p-3 text-xs">
-        <div className="flex items-center justify-between gap-3"><span className="text-text-muted">创建时间</span><span className="font-semibold text-text-primary">{order.createdAt}</span></div>
-        <div className="flex items-center justify-between gap-3"><span className="text-text-muted">金额</span><span className="font-black text-text-primary">{order.total}</span></div>
-        {!!order.items?.length && (
-          <div className="border-t border-border pt-2">
-            {order.items.map(item => <div key={`${item.name}-${item.qty}`} className="flex items-center justify-between gap-3"><span className="truncate text-text-secondary">{item.name}</span><span className="font-semibold text-text-muted">×{item.qty}</span></div>)}
-          </div>
-        )}
-      </div>
-      <div className="mt-3 flex flex-wrap gap-2">
-        <button type="button" onClick={onEdit} className="rounded-lg border border-border bg-white px-3 py-1.5 text-[11px] font-bold text-text-secondary hover:bg-surface-2">编辑</button>
-        {order.status !== 'paid' && order.status !== 'refunded' && order.status !== 'cancelled' && <button type="button" onClick={() => onStatus('paid')} className="rounded-lg bg-emerald-600 px-3 py-1.5 text-[11px] font-bold text-white">标记已支付</button>}
-        {order.status === 'paid' && <button type="button" onClick={() => onStatus('refunded')} className="rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-[11px] font-bold text-slate-700">标记退款</button>}
-        {order.status !== 'cancelled' && order.status !== 'refunded' && <button type="button" onClick={() => onStatus('cancelled')} className="rounded-lg border border-red-200 bg-white px-3 py-1.5 text-[11px] font-bold text-red-700">取消订单</button>}
-      </div>
-    </div>
-  );
-}
-
-export function OrderHistoryWidget({ customer, onCustomerPatch }: { customer: CustomerProfile; onCustomerPatch?: (patch: Partial<CustomerProfile>) => void }) {
-  const [expandedId, setExpandedId] = useState<string | null>(null);
+export function OrderHistoryWidget({ customer }: { customer: CustomerProfile; onCustomerPatch?: (patch: Partial<CustomerProfile>) => void }) {
+  const [orders, setOrders] = useState<CustomerOrder[]>([]);
   const [formOpen, setFormOpen] = useState(false);
-  const [editingId, setEditingId] = useState<string | null>(null);
-  const [draftOrder, setDraftOrder] = useState(emptyDraft);
-  const [formError, setFormError] = useState('');
-
-  const openCreate = () => {
-    setEditingId(null);
-    setDraftOrder(emptyDraft());
-    setFormError('');
-    setFormOpen(true);
+  const [error, setError] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [draft, setDraft] = useState({ idempotencyKey: crypto.randomUUID(), orderNo: '', product: '', amount: '', orderDate: new Date().toISOString().slice(0, 10) });
+  useEffect(() => {
+    let active = true;
+    setOrders([]); setError('');
+    fetch('/api/overseas/enterprise/orders', { headers: authHeader() }).then(async response => {
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.error || '读取订单失败');
+      if (active) setOrders((data.items || []).filter((order: CustomerOrder) => order.customerId === customer.id));
+    }).catch(error => { if (active) setError(String(error.message)); });
+    return () => { active = false; };
+  }, [customer.id]);
+  const legacy = customer.orders.filter(order => !orders.some(item => item.orderNo === order.id));
+  const save = async () => {
+    setBusy(true); setError('');
+    try {
+      const response = await fetch('/api/overseas/enterprise/orders', {
+        method: 'POST', headers: { ...authHeader(), 'Content-Type': 'application/json' },
+        body: JSON.stringify({ ...draft, orderNo: draft.orderNo || undefined, amount: Number(draft.amount), buyer: customer.name, customerId: customer.id, sourcePostId: customer.sourcePostId, channel: 'WhatsApp', status: '待付款', quantity: 1 }),
+      });
+      const order = await response.json();
+      if (!response.ok) throw new Error(order.error || '保存失败');
+      setOrders(current => [order, ...current]); setFormOpen(false);
+      setDraft({ idempotencyKey: crypto.randomUUID(), orderNo: '', product: '', amount: '', orderDate: new Date().toISOString().slice(0, 10) });
+    } catch (error) { setError((error as Error).message); } finally { setBusy(false); }
   };
-
-  const openEdit = (order: OrderRecord) => {
-    setEditingId(order.id);
-    setDraftOrder({ id: order.id, total: order.total, status: order.status, createdAt: order.createdAt });
-    setFormError('');
-    setFormOpen(true);
+  const changeStatus = async (order: CustomerOrder, status: OrderStatus) => {
+    const evidence = ['已付款', '退款'].includes(status) ? window.prompt('填写已完成付款或退款的凭证；仅登记，不执行资金交易') : '';
+    if (evidence === null) return;
+    setBusy(true); setError('');
+    try {
+      const response = await fetch(`/api/overseas/enterprise/orders/${encodeURIComponent(order.id)}/status`, {
+        method: 'PATCH', headers: { ...authHeader(), 'Content-Type': 'application/json' }, body: JSON.stringify({ status, evidence }),
+      });
+      const updated = await response.json();
+      if (!response.ok) throw new Error(updated.error || '更新失败');
+      setOrders(current => current.map(item => item.id === order.id ? updated : item));
+    } catch (error) { setError((error as Error).message); } finally { setBusy(false); }
   };
-
-  const saveOrder = () => {
-    const id = draftOrder.id.trim();
-    const total = draftOrder.total.trim();
-    if (!id || !total) { setFormError('请填写订单号和金额'); return; }
-    if (!onCustomerPatch) { setFormError('当前客户不能编辑订单'); return; }
-    if (!editingId && customer.orders.some(order => order.id === id)) { setFormError('订单号已存在'); return; }
-    const nextOrder: OrderRecord = { id, total, status: draftOrder.status, createdAt: draftOrder.createdAt || new Date().toISOString().slice(0, 10) };
-    const orders = editingId
-      ? customer.orders.map(order => order.id === editingId ? { ...order, ...nextOrder } : order)
-      : [...customer.orders, nextOrder];
-    onCustomerPatch({ orders });
-    setExpandedId(id);
-    setDraftOrder(emptyDraft());
-    setEditingId(null);
-    setFormOpen(false);
-    setFormError('');
+  const retrySync = async (order: CustomerOrder) => {
+    setBusy(true); setError('');
+    try {
+      const response = await fetch(`/api/overseas/enterprise/orders/${encodeURIComponent(order.id)}/sync-customer`, { method: 'POST', headers: authHeader() });
+      const updated = await response.json();
+      if (!response.ok) throw new Error(updated.error || '补写失败');
+      setOrders(current => current.map(item => item.id === order.id ? updated : item));
+      if (updated.customerSyncStatus !== 'done') setError('订单已保存，客户摘要补写仍待恢复');
+    } catch (error) { setError((error as Error).message); } finally { setBusy(false); }
   };
-
-  const updateStatus = (orderId: string, status: OrderRecord['status']) => {
-    onCustomerPatch?.({ orders: customer.orders.map(order => order.id === orderId ? { ...order, status } : order) });
-  };
-
-  return (
-    <Card>
-      <CardHeader>
-        <div className="flex items-center justify-between gap-2">
-          <p className="text-xs font-bold text-text-primary">订单历史</p>
-          {customer.isReal && <button type="button" onClick={openCreate} className="rounded-lg border border-border bg-white px-2.5 py-1 text-[11px] font-bold text-text-secondary hover:bg-surface-2">添加订单</button>}
-        </div>
-      </CardHeader>
-      <CardContent>
-        <div className="space-y-2">
-          {customer.orders.length ? customer.orders.map(order => {
-            const expanded = expandedId === order.id;
-            return (
-              <div key={order.id} className="rounded-lg bg-surface-2 px-3 py-2 text-xs transition-colors hover:bg-slate-100">
-                <button type="button" onClick={() => setExpandedId(expanded ? null : order.id)} aria-expanded={expanded} className="flex w-full items-center justify-between gap-2 text-left">
-                  <span className="font-black text-text-primary">{order.id}</span>
-                  <span className={`rounded-full border px-2 py-0.5 text-[10px] font-bold ${STATUS_STYLE[order.status]}`}>{STATUS_LABEL[order.status]}</span>
-                  <span className="ml-auto font-bold text-text-primary">{order.total}</span>
-                </button>
-                {expanded && <OrderDetail customer={customer} order={order} onEdit={() => openEdit(order)} onStatus={status => updateStatus(order.id, status)} />}
-              </div>
-            );
-          }) : <div className="rounded-lg border border-dashed border-border bg-surface-2 px-3 py-3"><p className="text-xs font-bold text-text-primary">还没有订单记录</p><p className="mt-1 text-[11px] text-text-muted">成交后可在这里补录订单，便于客服了解客户价值。</p></div>}
-
-          {formOpen && (
-            <div className="rounded-xl border border-border bg-white p-3 shadow-sm">
-              <p className="mb-2 text-xs font-black text-text-primary">{editingId ? '编辑订单' : '添加订单'}</p>
-              <div className="grid gap-2">
-                <input value={draftOrder.id} onChange={event => setDraftOrder(prev => ({ ...prev, id: event.target.value }))} placeholder="订单号" aria-label="订单号" className="rounded-lg border border-border bg-white px-3 py-2 text-xs outline-none" />
-                <input value={draftOrder.total} onChange={event => setDraftOrder(prev => ({ ...prev, total: event.target.value }))} placeholder="金额，例如 US $120.00" aria-label="订单金额" className="rounded-lg border border-border bg-white px-3 py-2 text-xs outline-none" />
-                <select value={draftOrder.status} onChange={event => setDraftOrder(prev => ({ ...prev, status: event.target.value as OrderRecord['status'] }))} aria-label="订单状态" className="rounded-lg border border-border bg-white px-3 py-2 text-xs outline-none">
-                  <option value="pending">待处理</option><option value="paid">已支付</option><option value="refunded">已退款</option><option value="cancelled">已取消</option>
-                </select>
-                <input type="date" value={draftOrder.createdAt} onChange={event => setDraftOrder(prev => ({ ...prev, createdAt: event.target.value }))} aria-label="订单日期" className="rounded-lg border border-border bg-white px-3 py-2 text-xs outline-none" />
-                {formError && <p className="text-[11px] font-bold text-red-600">{formError}</p>}
-                <div className="flex justify-end gap-2">
-                  <button type="button" onClick={() => { setFormOpen(false); setFormError(''); }} className="rounded-lg border border-border bg-white px-3 py-2 text-xs font-bold text-text-secondary">取消</button>
-                  <button type="button" onClick={saveOrder} className="rounded-lg bg-slate-950 px-3 py-2 text-xs font-bold text-white">保存订单</button>
-                </div>
-              </div>
-            </div>
-          )}
-        </div>
-      </CardContent>
-    </Card>
-  );
+  return <Card>
+    <CardHeader><div className="flex items-center justify-between"><p className="text-xs font-bold">订单历史</p>{customer.isReal && <button onClick={() => setFormOpen(!formOpen)} className="text-xs">添加订单</button>}</div></CardHeader>
+    <CardContent><div className="space-y-3 text-xs">
+      <p className="text-text-muted">订单台账 · 已付款净额 ${orders.filter(paidOrder).reduce((sum, order) => sum + order.amount, 0).toFixed(2)}</p>
+      {orders.map(order => <div key={order.id} className="rounded-lg bg-surface-2 p-3"><p className="font-bold">{order.orderNo} · ${order.amount.toFixed(2)}</p><p>{order.product} · {order.orderDate}</p><select disabled={busy} aria-label={`${order.orderNo} 状态`} value={order.status} onChange={event => void changeStatus(order, event.target.value as OrderStatus)}>{[order.status, ...orderTransitions[order.status]].map(status => <option key={status}>{status}</option>)}</select>{order.customerSyncStatus && order.customerSyncStatus !== 'done' && <button disabled={busy} onClick={() => void retrySync(order)}>订单已保存 · 重试客户摘要补写</button>}</div>)}
+      {legacy.length > 0 && <div className="rounded-lg border p-3"><p className="text-text-muted">历史客户备注（未导入订单台账，不计入经营成交）</p>{legacy.map(order => <p key={order.id}>{order.id} · {order.total} · {order.status}</p>)}</div>}
+      {!orders.length && !legacy.length && <p>暂无订单记录</p>}
+      {formOpen && <div className="grid gap-2">
+        <input aria-label="订单号" placeholder="订单号（留空自动生成）" value={draft.orderNo} onChange={event => setDraft({ ...draft, orderNo: event.target.value })} />
+        <input aria-label="商品名称" placeholder="商品名称" value={draft.product} onChange={event => setDraft({ ...draft, product: event.target.value })} />
+        <input aria-label="订单金额" type="number" min="0.01" step="0.01" placeholder="订单金额 USD" value={draft.amount} onChange={event => setDraft({ ...draft, amount: event.target.value })} />
+        <input aria-label="订单日期" type="date" value={draft.orderDate} onChange={event => setDraft({ ...draft, orderDate: event.target.value })} />
+        <button disabled={busy || !draft.product.trim() || !(Number(draft.amount) > 0)} onClick={() => void save()}>保存待付款订单</button>
+      </div>}
+      {error && <p role="alert" className="text-red-600">{error}</p>}
+    </div></CardContent>
+  </Card>;
 }

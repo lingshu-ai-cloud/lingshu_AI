@@ -1,0 +1,123 @@
+{
+  "schemaVersion": 1,
+  "state": "blocked_before_paid_submission",
+  "paidSubmissionAuthorized": false,
+  "sourceRoot": "/Users/julia1/.codex/.chatgpt-projects/g-p-6ac46f113a0c8191968cd499b8c020f6/local-integrated-flow",
+  "freezeKind": "candidate_snapshot_not_business_approval",
+  "lineage": {
+    "tenantId": "local_tenant_customer_1b2913131e2c46deab66172228c4df0a",
+    "projectId": "studio_projects_b251759707fa43a499a5dc48f070843f",
+    "workflowRunId": "workflow_runs_4f7c1a1b054146b3925ad0aac87b308b",
+    "workflowTaskId": "workflow_tasks_4d563d4969114a51b1cb31aa1a93a953",
+    "accountId": "local-tiktok-local_tenant_customer_1b2913131e2c46deab66172228c4df0a",
+    "accountLabel": "宏昱智能光学照明",
+    "productId": "GUIANFA-RS-001",
+    "zeroFoundationVerified": false
+  },
+  "input": {
+    "script": "How do you actually verify a skincare factory’s R&D, production, and QC capability—before committing to custom work?",
+    "scriptSha256": "a28c150dff6ae7cb29133f595ef9d8ab75dd4ce0d71d0bd98a595ed446d121d1",
+    "sourceField": "$.spec.script first 台词 block",
+    "sourceRangeSeconds": [
+      0,
+      11.33
+    ],
+    "ratio": "9:16",
+    "resolution": "720p",
+    "language": "en",
+    "referenceUse": "analysis_only_not_production",
+    "files": [
+      {
+        "path": "data/acceptance/local-backfill-20261009/project-before-local-fallback.json",
+        "bytes": 347348,
+        "sha256": "e4a998ba625f4c1000c3cf934a9bb8ceffd0c8787361648d8128b15121c60328"
+      },
+      {
+        "path": "data/media/tenants/local_tenant_customer_1b2913131e2c46deab66172228c4df0a/reference-videos/trend_videos_192e76d4b21244c4a2922e60672c95f2.mp4",
+        "bytes": 6412289,
+        "sha256": "501ec2c4d39ce67630448eff7001e2f911561e962533ca1bdb6aa10e6d2388e9"
+      },
+      {
+        "path": "data/heygen-presenter-curation.json",
+        "bytes": 1171,
+        "sha256": "e885f9f175501ac757b5ca074e40b4d81eb5782f6e63dab5486f08fbde9b278c"
+      }
+    ]
+  },
+  "callPlan": {
+    "provider": "heygen",
+    "api": "POST https://api.heygen.com/v3/videos",
+    "route": "production /jobs",
+    "avatarLookId": "fb24c5d371714724bcd105ec2c18e8d4",
+    "voiceId": "bc1ff447710f455586b15507bf49c062",
+    "providerEvidence": {
+      "path": "docs/acceptance/mvp-session-a-provider-preflight.json",
+      "bytes": 2343,
+      "sha256": "6c22d3e80c2aa72e98161fe3be63cd0b48de5bdca47fd974934028aabec9148f"
+    },
+    "candidateGroup": {
+      "name": "Zihan",
+      "groupId": "e44a4228bd9649f5bdbe18ee5253d5ed"
+    },
+    "maxNewGenerations": 1,
+    "estimatedSeconds": [
+      9,
+      12
+    ],
+    "requestId": "mvp-a-d9a9dc001a80ec212c0043589d01b02f",
+    "requestIdStatus": "draft_must_rederive_from_final_plan_and_presenter_version",
+    "actualCostCny": null,
+    "estimatedCostCny": null,
+    "priceVerified": false
+  },
+  "budgetSnapshot": {
+    "source": {
+      "path": "data/studio-paid-budget/ledger.json",
+      "bytes": 888,
+      "sha256": "442ba91212119201ca965056fd021cd7063326fb85d783ad25712b0f182486e6"
+    },
+    "kind": "local_admission_reservations_not_supplier_invoice",
+    "limitCny": 23.48,
+    "openingUsedCny": 0,
+    "reservedCny": 22.92,
+    "remainingCny": 0.56,
+    "entries": 6,
+    "upstreamBalance": null
+  },
+  "blockers": [
+    "confirm_current_mvp_lineage_and_zero_foundation",
+    "resolve_account_product_identity_mismatch",
+    "confirm_script_and_storyboard_change",
+    "verify_exact_completed_portrait_look_and_english_voice",
+    "retain_provider_and_use_scoped_rights_evidence",
+    "verify_current_account_price_and_balance",
+    "reconcile_existing_budget_and_set_explicit_reserve_without_reset",
+    "obtain_specific_paid_call_approval"
+  ],
+  "evidenceRequiredAfterApproval": [
+    "persist_current_plan_and_presenter_version",
+    "persist_request_and_budget_before_POST",
+    "retain_raw_supplier_video_id_and_status",
+    "retain_invoice_or_account_usage_delta",
+    "download_and_hash_actual_MP4",
+    "technical_audio_video_check_and_human_lip_sync_identity_review"
+  ],
+  "recovery": {
+    "knownTaskId": "query original task only; no new POST or reservation",
+    "unknownWithoutTaskId": "stop and reconcile original request with provider; no automatic retry",
+    "acceptedShot": "reuse hash-verified result",
+    "orphanLock": "retain until manual reconciliation"
+  },
+  "acceptance": {
+    "controlledContractPassed": true,
+    "controlledTests": 33,
+    "realMediaGeneratedThisSession": false,
+    "realPaidSupplierCalledThisSession": false,
+    "creativeQualityPassed": false,
+    "realPublication": false,
+    "realPlatformReceipt": false,
+    "realMetricsRecovered": false,
+    "productionReadyTrue": false,
+    "productionReadinessObservedThisSession": false
+  }
+}

@@ -1,12 +1,15 @@
 import { useState, useEffect } from 'react';
+import { Alert, Button, Drawer, Input, Modal, Popconfirm, Select, Tabs, Tag } from 'antd';
+import LsPageHeader from './ui/LsPageHeader';
 import { motion, AnimatePresence } from 'motion/react';
 import {
-  Puzzle, X, CheckCircle, AlertCircle, Settings, Trash2, Plus,
+  Puzzle, CheckCircle, AlertCircle, Settings, Trash2, Plus,
   Star, GitBranch, Copy, Check, ChevronRight, Zap, BookOpen,
   Package, Users, Layers, ExternalLink, Lock, Globe, Brain,
   Wrench, ShieldCheck, FlaskConical,
 } from 'lucide-react';
 import { SocialPlatformIcon, type SocialBrand } from './SocialPlatformIcon';
+import { pluginApiRequest } from '../lib/pluginApi';
 
 // ── Plugin types & data ───────────────────────────────────────────────────────
 interface Plugin {
@@ -18,9 +21,7 @@ interface Plugin {
   description: string;
   icon: string;
   status: 'installed' | 'not_installed' | 'error';
-  config: Record<string, string>;
-  installed: boolean;
-  installedAt?: string;
+  installed: boolean; installedAt?: string; managementAllowed?: boolean; tenantUsable?: boolean;
 }
 
 function pluginSocialBrand(pluginKey: string): SocialBrand | null {
@@ -339,17 +340,22 @@ function PluginDrawer({
   ];
 
   return (
-    <motion.div
-      initial={{ x: '100%' }} animate={{ x: 0 }} exit={{ x: '100%' }}
-      transition={{ type: 'spring', damping: 30, stiffness: 300 }}
-      className="fixed top-0 right-0 h-full w-[460px] bg-white border-l border-gray-200 z-50 flex flex-col shadow-2xl"
-      onClick={e => e.stopPropagation()}
+    <Drawer open onClose={onClose} title={plugin.nameZh} size={560}
+      styles={{ body: { padding: 0, display: 'flex', flexDirection: 'column' } }}
+      footer={(plugin.managementAllowed === true || plugin.tenantUsable === true) && <div className="flex flex-wrap justify-end gap-2">
+        {plugin.managementAllowed === true && !plugin.installed ? (
+          <Button type="primary" onClick={onInstall} loading={installing} icon={<Plus size={16} />}>安装</Button>
+        ) : <>
+          {plugin.managementAllowed === true && fields.length > 0 && <Button onClick={onConfigure} icon={<Settings size={16} />}>配置</Button>}
+          <Button type="primary" onClick={onTest} loading={testing}>{plugin.managementAllowed === true ? '测试连接' : '使用'}</Button>
+          {plugin.managementAllowed === true && <Popconfirm title="卸载此插件？" description="卸载后该插件将不再可用。" onConfirm={onUninstall} okText="卸载" cancelText="取消" okButtonProps={{ danger: true }}><Button danger icon={<Trash2 size={16} />}>卸载</Button></Popconfirm>}
+        </>}
+      </div>}
     >
       <div className="flex items-start gap-3 px-5 py-4 border-b border-gray-100">
-        <div className="text-3xl w-11 h-11 rounded-xl bg-gray-50 flex items-center justify-center flex-shrink-0"><PluginIcon plugin={plugin} /></div>
+        <div className="text-3xl w-11 h-11 rounded-lg bg-gray-50 flex items-center justify-center flex-shrink-0"><PluginIcon plugin={plugin} /></div>
         <div className="flex-1 min-w-0">
           <div className="flex items-center gap-2">
-            <h3 className="text-sm font-semibold text-gray-900">{plugin.nameZh}</h3>
             <span className={`text-[10px] px-1.5 py-0.5 rounded-md font-medium ${
               plugin.status === 'error' ? 'bg-red-50 text-red-600' : plugin.installed ? 'bg-green-50 text-green-700' : 'bg-gray-100 text-gray-500'
             }`}>
@@ -358,9 +364,6 @@ function PluginDrawer({
           </div>
           <p className="text-xs text-gray-500 mt-1 leading-relaxed">{plugin.description}</p>
         </div>
-        <button type="button" onClick={onClose} className="p-1.5 rounded-lg hover:bg-gray-100 text-gray-400 hover:text-gray-600 flex-shrink-0">
-          <X size={16} />
-        </button>
       </div>
 
       <div className="flex-1 overflow-y-auto p-5 space-y-5">
@@ -368,7 +371,7 @@ function PluginDrawer({
           <p className="text-[10px] font-semibold text-gray-400 uppercase tracking-wider mb-3">互动页面</p>
           <div className="grid grid-cols-1 gap-2">
             {actions.map(action => (
-              <div key={action.label} className="rounded-xl border border-gray-200 p-3 bg-white">
+              <div key={action.label} className="rounded-lg border border-gray-200 p-3 bg-white">
                 <p className="text-xs font-semibold text-gray-800">{action.label}</p>
                 <p className="text-[11px] text-gray-500 leading-relaxed mt-1">{action.desc}</p>
               </div>
@@ -378,7 +381,7 @@ function PluginDrawer({
 
         <div>
           <p className="text-[10px] font-semibold text-gray-400 uppercase tracking-wider mb-3">连接能力</p>
-          <div className="rounded-xl bg-gray-50 border border-gray-200 p-3 space-y-2">
+          <div className="rounded-lg bg-gray-50 border border-gray-200 p-3 space-y-2">
             <div className="flex items-center justify-between">
               <span className="text-xs text-gray-500">当前能力</span>
               <span className="text-xs font-medium text-gray-800">数据同步 / 状态检测 / 功能测试</span>
@@ -395,55 +398,11 @@ function PluginDrawer({
         </div>
 
         {testResult && (
-          <div className={`text-xs px-3 py-2 rounded-xl flex items-center gap-1.5 ${testResult.ok ? 'bg-green-50 text-green-700' : 'bg-red-50 text-red-600'}`}>
-            {testResult.ok ? <CheckCircle size={12} /> : <AlertCircle size={12} />}
-            {testResult.msg}
-          </div>
+          <Alert type={testResult.ok ? 'success' : 'error'} showIcon title={testResult.msg} />
         )}
       </div>
 
-      <div className="border-t border-gray-100 p-4 flex gap-2">
-        {!plugin.installed ? (
-          <button
-            type="button"
-            onClick={onInstall}
-            disabled={installing}
-            className="flex-1 flex items-center justify-center gap-1.5 px-3 py-2 rounded-xl text-xs text-white font-medium disabled:opacity-50 transition-colors"
-            style={{ background: '#16a34a' }}
-          >
-            <Plus size={12} /> {installing ? '安装中...' : '安装'}
-          </button>
-        ) : (
-          <>
-            {fields.length > 0 && (
-              <button
-                type="button"
-                onClick={onConfigure}
-                className="flex-1 flex items-center justify-center gap-1.5 px-3 py-2 border border-gray-200 rounded-xl text-xs text-gray-600 hover:bg-gray-50 transition-colors"
-              >
-                <Settings size={12} /> 配置
-              </button>
-            )}
-            <button
-              type="button"
-              onClick={onTest}
-              disabled={testing}
-              className="flex-1 flex items-center justify-center gap-1.5 px-3 py-2 rounded-xl text-xs text-white disabled:opacity-50 transition-colors"
-              style={{ background: '#16a34a' }}
-            >
-              {testing ? '测试中...' : '测试'}
-            </button>
-            <button
-              type="button"
-              onClick={onUninstall}
-              className="px-3 py-2 border border-gray-200 rounded-xl text-gray-400 hover:text-red-400 hover:border-red-200 transition-colors"
-            >
-              <Trash2 size={13} />
-            </button>
-          </>
-        )}
-      </div>
-    </motion.div>
+    </Drawer>
   );
 }
 
@@ -484,20 +443,15 @@ function SkillDrawer({ skill, onClose }: { skill: Skill; onClose: () => void }) 
   ];
 
   return (
-    <motion.div
-      initial={{ x: '100%' }} animate={{ x: 0 }} exit={{ x: '100%' }}
-      transition={{ type: 'spring', damping: 30, stiffness: 300 }}
-      className="fixed top-0 right-0 h-full w-[480px] bg-white border-l border-gray-200 z-50 flex flex-col shadow-2xl"
-    >
+    <Drawer open onClose={onClose} title={skill.nameZh} size={560} styles={{ body: { padding: 0, display: 'flex', flexDirection: 'column' } }}>
       {/* Header */}
       <div className="flex items-start gap-3 px-5 py-4 border-b border-gray-100">
-        <div className="w-10 h-10 rounded-xl flex items-center justify-center flex-shrink-0"
+        <div className="w-10 h-10 rounded-lg flex items-center justify-center flex-shrink-0"
           style={{ background: skill.iconBg, color: skill.iconColor }}>
           {skill.icon}
         </div>
         <div className="flex-1 min-w-0">
           <div className="flex items-center gap-2">
-            <h3 className="text-sm font-semibold text-gray-900">{skill.nameZh}</h3>
             <span className="text-[10px] px-1.5 py-0.5 rounded-md font-medium bg-green-50 text-green-700">已启用</span>
           </div>
           {skill.source && (
@@ -510,22 +464,10 @@ function SkillDrawer({ skill, onClose }: { skill: Skill; onClose: () => void }) 
             </a>
           )}
         </div>
-        <button onClick={onClose} className="p-1.5 rounded-lg hover:bg-gray-100 text-gray-400 hover:text-gray-600 flex-shrink-0">
-          <X size={16} />
-        </button>
       </div>
 
       {/* Tabs */}
-      <div className="flex items-center gap-0.5 px-5 py-2 border-b border-gray-100 flex-shrink-0">
-        {TABS.map(t => (
-          <button key={t.id} onClick={() => setTab(t.id)}
-            className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium transition-all ${
-              tab === t.id ? 'bg-gray-100 text-gray-900' : 'text-gray-500 hover:text-gray-700 hover:bg-gray-50'
-            }`}>
-            {t.icon}{t.label}
-          </button>
-        ))}
-      </div>
+      <Tabs className="shrink-0 px-5" activeKey={tab} onChange={value => setTab(value as DrawerTab)} items={TABS.map(item => ({ key: item.id, label: item.label, icon: item.icon }))} />
 
       <div className="flex-1 overflow-y-auto">
         <AnimatePresence mode="wait">
@@ -534,7 +476,7 @@ function SkillDrawer({ skill, onClose }: { skill: Skill; onClose: () => void }) 
               className="p-5 space-y-5">
               {/* Source card */}
               {skill.source && (
-                <div className="rounded-xl border border-gray-200 p-4 space-y-3">
+                <div className="rounded-lg border border-gray-200 p-4 space-y-3">
                   <p className="text-[10px] font-semibold text-gray-400 uppercase tracking-wider">开源来源</p>
                   <div className="grid grid-cols-2 gap-3">
                     {[
@@ -602,7 +544,7 @@ function SkillDrawer({ skill, onClose }: { skill: Skill; onClose: () => void }) 
                   {copied ? <><Check size={11} className="text-green-500" /><span className="text-green-600">已复制</span></> : <><Copy size={11} />复制</>}
                 </button>
               </div>
-              <div className="rounded-xl border border-gray-200 bg-gray-50 p-4 overflow-x-auto">
+              <div className="rounded-lg border border-gray-200 bg-gray-50 p-4 overflow-x-auto">
                 <PromptCode text={skill.prompt ?? ''} />
               </div>
               <p className="text-[10px] text-gray-400 mt-3 flex items-center gap-1.5">
@@ -635,7 +577,7 @@ function SkillDrawer({ skill, onClose }: { skill: Skill; onClose: () => void }) 
                   </div>
                 ))}
               </div>
-              <div className="mt-4 p-3 rounded-xl bg-blue-50 border border-blue-100">
+              <div className="mt-4 p-3 rounded-lg bg-blue-50 border border-blue-100">
                 <p className="text-[11px] text-blue-700 leading-relaxed">
                   <strong>Stage Analyzer：</strong>每轮对话结束后，LLM 以独立 prompt 分析当前应处于哪个阶段（只输出数字），主 Agent 据此调整后续话术策略。
                 </p>
@@ -649,7 +591,7 @@ function SkillDrawer({ skill, onClose }: { skill: Skill; onClose: () => void }) 
               <p className="text-[10px] font-semibold text-gray-400 uppercase tracking-wider mb-4">工具绑定 — 调用外部系统增强 Skill 能力</p>
               <div className="space-y-3">
                 {(skill.tools ?? []).map(tool => (
-                  <div key={tool.id} className="flex items-start gap-3 p-3 rounded-xl border border-gray-200 bg-white">
+                  <div key={tool.id} className="flex items-start gap-3 p-3 rounded-lg border border-gray-200 bg-white">
                     <div className="w-7 h-7 rounded-lg flex items-center justify-center flex-shrink-0 bg-gray-100 text-gray-500">
                       {tool.icon}
                     </div>
@@ -663,7 +605,7 @@ function SkillDrawer({ skill, onClose }: { skill: Skill; onClose: () => void }) 
                   </div>
                 ))}
               </div>
-              <div className="mt-4 p-3 rounded-xl border border-dashed border-gray-200 text-center">
+              <div className="mt-4 p-3 rounded-lg border border-dashed border-gray-200 text-center">
                 <p className="text-xs text-gray-400">添加更多工具绑定</p>
                 <p className="text-[10px] text-gray-300 mt-0.5">需先在「插件」页完成接入</p>
               </div>
@@ -671,7 +613,7 @@ function SkillDrawer({ skill, onClose }: { skill: Skill; onClose: () => void }) 
           )}
         </AnimatePresence>
       </div>
-    </motion.div>
+    </Drawer>
   );
 }
 
@@ -679,8 +621,8 @@ function SkillDrawer({ skill, onClose }: { skill: Skill; onClose: () => void }) 
 function SkillCard({ skill, onView }: { skill: Skill; onView: () => void }) {
   const isActive = skill.status === 'active';
   return (
-    <div className={`rounded-xl border p-4 flex items-start gap-4 transition-all ${isActive ? 'border-gray-200 bg-white hover:border-gray-300 hover:shadow-sm' : 'border-dashed border-gray-200 bg-gray-50/60'}`}>
-      <div className="w-10 h-10 rounded-xl flex items-center justify-center flex-shrink-0"
+    <div className={`rounded-lg border p-4 flex items-start gap-4 transition-all ${isActive ? 'border-gray-200 bg-white hover:border-gray-300 ' : 'border-dashed border-gray-200 bg-gray-50/60'}`}>
+      <div className="w-10 h-10 rounded-lg flex items-center justify-center flex-shrink-0"
         style={{ background: skill.iconBg, color: skill.iconColor, opacity: isActive ? 1 : 0.5 }}>
         {skill.icon}
       </div>
@@ -721,15 +663,15 @@ function SkillCard({ skill, onView }: { skill: Skill; onView: () => void }) {
           ) : (
             <>
               {skill.category === 'product' ? (
-                <button className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium border border-dashed border-gray-300 text-gray-400 cursor-not-allowed">
+                <button type="button" disabled title="请先在企业知识库上传产品资料" className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium border border-dashed border-gray-300 text-gray-400 cursor-not-allowed">
                   <Plus size={12} />上传产品资料
                 </button>
               ) : (
-                <button className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium border border-dashed border-gray-300 text-gray-400 cursor-not-allowed">
+                <button type="button" disabled title="该能力即将开放" className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium border border-dashed border-gray-300 text-gray-400 cursor-not-allowed">
                   <Lock size={12} />即将开放
                 </button>
               )}
-              <button className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium border border-dashed border-gray-300 text-gray-400 cursor-not-allowed">
+              <button type="button" disabled title="Demo 预览即将开放" className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium border border-dashed border-gray-300 text-gray-400 cursor-not-allowed">
                 <FlaskConical size={12} />预览 Demo
               </button>
             </>
@@ -751,9 +693,9 @@ function SkillsTab() {
 
   return (
     <div className="relative">
-      <div className={`transition-all duration-300 ${selectedSkill ? 'mr-[480px]' : ''}`}>
+      <div>
         {/* Stats row */}
-        <div className="flex items-center gap-6 mb-6">
+        <div className="flex flex-wrap items-center gap-3 mb-6">
           {[
             { label: '已启用 Skill', value: SKILLS.filter(s => s.status === 'active').length, color: 'text-green-600', bg: 'bg-green-50' },
             { label: '待配置', value: SKILLS.filter(s => s.status === 'placeholder').length, color: 'text-gray-500', bg: 'bg-gray-50' },
@@ -786,8 +728,6 @@ function SkillsTab() {
       <AnimatePresence>
         {selectedSkill && (
           <>
-            <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
-              className="fixed inset-0 bg-black/20 z-40" onClick={() => setSelectedSkill(null)} />
             <SkillDrawer skill={selectedSkill} onClose={() => setSelectedSkill(null)} />
           </>
         )}
@@ -803,6 +743,7 @@ export default function PluginsPage() {
   const [activeTab, setActiveTab] = useState<'plugins' | 'skills' | 'auth'>('plugins');
   const [configTarget, setConfigTarget] = useState<Plugin | null>(null);
   const [configValues, setConfigValues] = useState<Record<string, string>>({});
+  const [configSaving, setConfigSaving] = useState(false);
   const [testing, setTesting] = useState<string | null>(null);
   const [testResult, setTestResult] = useState<Record<string, { ok: boolean; msg: string }>>({});
   const [installing, setInstalling] = useState<string | null>(null);
@@ -817,11 +758,9 @@ export default function PluginsPage() {
     setLoading(true);
     setLoadError(null);
     try {
-      const r = await fetch('/api/overseas/plugins');
-      const text = await r.text();
-      if (!r.ok) throw new Error(text || `插件接口错误：${r.status}`);
-      if (!text.trim()) throw new Error('插件接口返回为空，请稍后重试');
-      setPlugins(JSON.parse(text) as Plugin[]);
+      const data = await pluginApiRequest<Plugin[]>('');
+      if (!Array.isArray(data)) throw new Error('插件接口返回格式无效');
+      setPlugins(data);
     } catch (err) {
       setLoadError(err instanceof Error ? err.message : '插件加载失败');
     } finally { setLoading(false); }
@@ -829,27 +768,34 @@ export default function PluginsPage() {
 
   async function install(pluginKey: string) {
     setInstalling(pluginKey);
+    setLoadError(null);
     try {
-      await fetch(`/api/overseas/plugins/${pluginKey}/install`, { method: 'POST' });
+      await pluginApiRequest(`/${encodeURIComponent(pluginKey)}/install`, { method: 'POST' });
       await fetchPlugins();
+    } catch (error) {
+      setLoadError(error instanceof Error ? error.message : '插件安装失败');
     } finally { setInstalling(null); }
   }
-
   async function uninstall(pluginKey: string) {
-    await fetch(`/api/overseas/plugins/${pluginKey}`, { method: 'DELETE' });
-    await fetchPlugins();
+    setLoadError(null);
+    try {
+      await pluginApiRequest(`/${encodeURIComponent(pluginKey)}`, { method: 'DELETE' });
+      await fetchPlugins();
+    } catch (error) { setLoadError(error instanceof Error ? error.message : '插件卸载失败'); }
   }
-
   async function saveConfig(plugin: Plugin) {
-    await fetch(`/api/overseas/plugins/${plugin.pluginKey}/config`, {
-      method: 'PUT',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(configValues),
-    });
-    await fetchPlugins();
-    setConfigTarget(null);
+    if (configSaving) return;
+    setConfigSaving(true);
+    setLoadError(null);
+    try {
+      await pluginApiRequest(`/${encodeURIComponent(plugin.pluginKey)}/config`, {
+        method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(configValues),
+      });
+      await fetchPlugins();
+      setConfigTarget(null);
+    } catch (error) { setLoadError(error instanceof Error ? error.message : '插件配置保存失败'); }
+    finally { setConfigSaving(false); }
   }
-
   async function testPlugin(pluginKey: string) {
     if (pluginKey === 'exchangerate' || pluginKey === 'translate' || pluginKey === 'google_translate') {
       setActiveToolKey(prev => prev === pluginKey ? null : pluginKey);
@@ -861,8 +807,7 @@ export default function PluginsPage() {
 
     setTesting(pluginKey);
     try {
-      const r = await fetch(`/api/overseas/plugins/${pluginKey}/test`, { method: 'POST' });
-      const data = await r.json() as { ok: boolean; shopName?: string; message?: string; error?: string; rates?: Record<string, number>; source?: string };
+      const data = await pluginApiRequest<{ ok: boolean; shopName?: string; message?: string; error?: string; rates?: Record<string, number>; source?: string }>(`/${encodeURIComponent(pluginKey)}/test`, { method: 'POST' });
       setTestResult(prev => ({
         ...prev,
         [pluginKey]: { ok: data.ok, msg: data.ok ? (data.shopName ? `连接成功：${data.shopName}` : (data.message ?? '连接成功')) : (data.error ?? data.message ?? '连接失败') },
@@ -872,11 +817,10 @@ export default function PluginsPage() {
           ? { ...plugin, installed: true, status: 'installed' }
           : plugin
       )));
-    } catch {
-      setTestResult(prev => ({ ...prev, [pluginKey]: { ok: false, msg: '网络错误' } }));
+    } catch (error) {
+      setTestResult(prev => ({ ...prev, [pluginKey]: { ok: false, msg: error instanceof Error ? error.message : '网络错误' } }));
     } finally { setTesting(null); }
   }
-
   async function runExchange() {
     const amount = Number(toolState.amount);
     if (!Number.isFinite(amount)) {
@@ -884,9 +828,8 @@ export default function PluginsPage() {
       return;
     }
     try {
-      const r = await fetch('/api/overseas/plugins/exchangerate/rates');
-      const data = await r.json() as { rates?: Record<string, number>; error?: string };
-      if (!r.ok || !data.rates) throw new Error(data.error || '实时汇率服务不可用');
+      const data = await pluginApiRequest<{ rates?: Record<string, number>; error?: string }>('/exchangerate/rates');
+      if (!data.rates) throw new Error(data.error || '实时汇率服务不可用');
       const rates: Record<string, number> = { USD: 1, ...data.rates };
       const fromRate = rates[toolState.fromCurrency];
       const toRate = rates[toolState.toCurrency];
@@ -903,12 +846,11 @@ export default function PluginsPage() {
     if (!current.text.trim()) return;
     setToolState(prev => ({ ...prev, translatedText: '翻译中…' }));
     try {
-      const r = await fetch('/api/overseas/plugins/translate/run', {
+      const data = await pluginApiRequest<{ translatedText?: string; error?: string }>('/translate/run', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ text: current.text, source: current.sourceLanguage, target: current.targetLanguage }),
       });
-      const data = await r.json() as { translatedText?: string; error?: string };
-      if (!r.ok || !data.translatedText) throw new Error(data.error || '翻译服务不可用');
+      if (!data.translatedText) throw new Error(data.error || '翻译服务不可用');
       setToolState(prev => ({ ...prev, translatedText: data.translatedText || '' }));
     } catch (error) {
       setToolState(prev => ({ ...prev, translatedText: error instanceof Error ? error.message : '翻译服务不可用' }));
@@ -924,36 +866,15 @@ export default function PluginsPage() {
   const selectedPlugin = plugins.find(p => p.pluginKey === selectedPluginKey) ?? null;
 
   return (
-    <div className="flex flex-col h-full bg-white" onClick={() => setSelectedPluginKey(null)}>
+    <div className="flex flex-col h-full bg-ink">
       {/* Header */}
-      <div className="px-8 pt-8 pb-4 border-b border-gray-100">
-        <div className="flex items-center justify-between">
-          <div>
-            <h1 className="text-xl font-semibold text-gray-900">插件市场</h1>
-            <p className="text-sm text-gray-500 mt-0.5">连接电商平台、翻译、汇率和 AI 工具，扩展 AI 智能体能力</p>
-          </div>
-          {installedCount > 0 && (
-            <div className="flex items-center gap-2 px-3 py-1.5 bg-green-50 rounded-lg text-xs text-green-700">
-              <CheckCircle size={12} /> {installedCount} 个已连接
-            </div>
-          )}
-        </div>
+      <LsPageHeader title="插件市场" description="连接电商平台、翻译、汇率和 AI 工具，扩展 AI 智能体能力。" extra={installedCount > 0 ? <Tag>{installedCount} 个已连接</Tag> : undefined}>
+        <Tabs activeKey={activeTab} onChange={value => setActiveTab(value as typeof activeTab)} items={[
+          { key: 'plugins', label: '插件' }, { key: 'skills', label: '技能' }, { key: 'auth', label: '应用授权' },
+        ]} />
+      </LsPageHeader>
 
-        <div className="flex gap-1 mt-5">
-          {(['plugins', 'skills', 'auth'] as const).map(tab => (
-            <button
-              type="button"
-              key={tab}
-              onClick={e => { e.stopPropagation(); setActiveTab(tab); }}
-              className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors ${activeTab === tab ? 'bg-gray-100 text-gray-900' : 'text-gray-500 hover:text-gray-700'}`}
-            >
-              {tab === 'plugins' ? '插件' : tab === 'skills' ? '技能' : '应用授权'}
-            </button>
-          ))}
-        </div>
-      </div>
-
-      <div className="flex-1 overflow-y-auto px-8 py-6">
+      <div className="flex-1 overflow-y-auto p-4 sm:p-6">
         {activeTab === 'skills' && <SkillsTab />}
 
         {activeTab === 'auth' && (
@@ -968,22 +889,13 @@ export default function PluginsPage() {
             {loading && <div className="text-sm text-gray-400 py-12 text-center">加载中...</div>}
 
             {!loading && loadError && (
-              <div className="rounded-xl border border-red-100 bg-red-50 px-4 py-3 text-sm text-red-600 flex items-center justify-between">
-                <span>{loadError}</span>
-                <button
-                  type="button"
-                  onClick={e => { e.stopPropagation(); void fetchPlugins(); }}
-                  className="px-3 py-1.5 rounded-lg bg-white border border-red-100 text-xs text-red-600 hover:bg-red-50"
-                >
-                  重试
-                </button>
-              </div>
+              <Alert className="mb-4" type="error" showIcon title={loadError} action={<Button size="small" onClick={() => void fetchPlugins()}>重试</Button>} />
             )}
 
             {Object.entries(grouped).map(([cat, catPlugins]) => (
               <div key={cat} className="mb-8">
                 <h2 className="text-sm font-semibold text-gray-500 mb-4">{CATEGORY_LABELS[cat] ?? cat}</h2>
-                <div className="grid grid-cols-2 gap-3">
+                <div className="grid grid-cols-1 gap-3 lg:grid-cols-2">
                   {catPlugins.map(plugin => {
                     const tr = testResult[plugin.pluginKey];
                     const fields = PLUGIN_FIELDS[plugin.pluginKey] ?? [];
@@ -994,7 +906,7 @@ export default function PluginsPage() {
                     return (
                       <div
                         key={plugin.pluginKey}
-                        className="border border-gray-200 rounded-xl p-4 flex items-start gap-4 hover:border-gray-300 hover:shadow-sm transition-all"
+                        className="border border-gray-200 rounded-lg p-4 flex items-start gap-4 hover:border-gray-300  transition-all"
                       >
                         <div className="text-3xl flex-shrink-0 mt-0.5"><PluginIcon plugin={plugin} /></div>
                         <div className="flex-1 min-w-0">
@@ -1022,62 +934,22 @@ export default function PluginsPage() {
                             </div>
                           )}
 
-                          <div className="flex gap-2 mt-3">
-                            {!plugin.installed ? (
+                          <div className="flex flex-wrap gap-2 mt-3">
+                            {plugin.managementAllowed === true && !plugin.installed ? (
                               <>
-                                <button
-                                  type="button"
-                                  onClick={e => { e.preventDefault(); e.stopPropagation(); void install(plugin.pluginKey); }}
-                                  disabled={installing === plugin.pluginKey}
-                                  className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs text-white font-medium disabled:opacity-50 transition-colors"
-                                  style={{ background: '#16a34a' }}
-                                >
-                                  <Plus size={12} /> {installing === plugin.pluginKey ? '安装中...' : '安装'}
-                                </button>
+                                <Button size="small" type="primary" onClick={() => void install(plugin.pluginKey)} loading={installing === plugin.pluginKey} icon={<Plus size={14} />}>安装</Button>
                                 {supportsToolPanel && (
-                                  <button
-                                    type="button"
-                                    onClick={e => { e.preventDefault(); e.stopPropagation(); void testPlugin(plugin.pluginKey); }}
-                                    className="flex items-center gap-1.5 px-3 py-1.5 border border-gray-200 rounded-lg text-xs text-gray-600 hover:bg-gray-50 transition-colors"
-                                  >
-                                    测试
-                                  </button>
+                                  <Button size="small" onClick={() => void testPlugin(plugin.pluginKey)}>测试</Button>
                                 )}
                               </>
                             ) : (
                               <>
-                                <button
-                                  type="button"
-                                  onClick={e => { e.preventDefault(); e.stopPropagation(); setSelectedPluginKey(plugin.pluginKey); }}
-                                  className="flex items-center gap-1.5 px-3 py-1.5 border border-gray-200 rounded-lg text-xs text-gray-600 hover:bg-gray-50 transition-colors"
-                                >
-                                  <BookOpen size={12} /> 详情
-                                </button>
-                                {fields.length > 0 && (
-                                  <button
-                                    type="button"
-                                    onClick={e => { e.preventDefault(); e.stopPropagation(); setConfigTarget(plugin); setConfigValues(plugin.config); }}
-                                    className="flex items-center gap-1.5 px-3 py-1.5 border border-gray-200 rounded-lg text-xs text-gray-600 hover:bg-gray-50 transition-colors"
-                                  >
-                                    <Settings size={12} /> 配置
-                                  </button>
+                                <Button size="small" onClick={() => setSelectedPluginKey(plugin.pluginKey)} icon={<BookOpen size={14} />}>详情</Button>
+                                {plugin.managementAllowed === true && fields.length > 0 && (
+                                  <Button size="small" onClick={() => { setLoadError(null); setConfigTarget(plugin); setConfigValues({}); }} icon={<Settings size={14} />}>配置</Button>
                                 )}
-                                <button
-                                  type="button"
-                                  onClick={e => { e.preventDefault(); e.stopPropagation(); void testPlugin(plugin.pluginKey); }}
-                                  disabled={testing === plugin.pluginKey}
-                                  className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs text-white disabled:opacity-50 transition-colors"
-                                  style={{ background: '#16a34a' }}
-                                >
-                                  {testing === plugin.pluginKey ? '测试中...' : '测试'}
-                                </button>
-                                <button
-                                  type="button"
-                                  onClick={e => { e.preventDefault(); e.stopPropagation(); void uninstall(plugin.pluginKey); }}
-                                  className="px-2.5 py-1.5 border border-gray-200 rounded-lg text-gray-400 hover:text-red-400 hover:border-red-200 transition-colors"
-                                >
-                                  <Trash2 size={12} />
-                                </button>
+                                {(plugin.managementAllowed === true || plugin.tenantUsable === true) && <Button size="small" type="primary" onClick={() => void testPlugin(plugin.pluginKey)} loading={testing === plugin.pluginKey}>{plugin.managementAllowed === true ? '测试' : '使用'}</Button>}
+                                {plugin.managementAllowed === true && <Popconfirm title="卸载此插件？" description="卸载后该插件将不再可用。" onConfirm={() => void uninstall(plugin.pluginKey)} okText="卸载" cancelText="取消" okButtonProps={{ danger: true }}><Button size="small" danger icon={<Trash2 size={14} />}>卸载</Button></Popconfirm>}
                               </>
                             )}
                           </div>
@@ -1090,39 +962,30 @@ export default function PluginsPage() {
                                 exit={{ opacity: 0, height: 0, y: -4 }}
                                 className="overflow-hidden"
                               >
-                                <div className="mt-3 rounded-xl border border-green-100 bg-green-50/40 p-3 space-y-3" onClick={e => e.stopPropagation()}>
-                                  <div className="grid grid-cols-3 gap-3">
-                                    <input
+                                <div className="mt-3 rounded-lg border border-green-100 bg-green-50/40 p-3 space-y-3" onClick={e => e.stopPropagation()}>
+                                  <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+                                    <Input
+                                      aria-label="换算金额"
                                       value={toolState.amount}
                                       onChange={e => setToolState(prev => ({ ...prev, amount: e.target.value }))}
-                                      className="w-full h-10 px-3 rounded-lg border border-gray-200 bg-white text-xs outline-none focus:border-green-400"
                                       placeholder="输入金额"
                                     />
-                                    <select
+                                    <Select
+                                      aria-label="原币种"
                                       value={toolState.fromCurrency}
-                                      onChange={e => setToolState(prev => ({ ...prev, fromCurrency: e.target.value }))}
-                                      className="w-full h-10 px-3 rounded-lg border border-gray-200 bg-white text-xs outline-none focus:border-green-400"
-                                    >
-                                      {EXCHANGE_CURRENCIES.map(c => <option key={c} value={c}>{currencyLabel(c)}</option>)}
-                                    </select>
-                                    <select
+                                      onChange={value => setToolState(prev => ({ ...prev, fromCurrency: value }))}
+                                      options={EXCHANGE_CURRENCIES.map(value => ({ value, label: currencyLabel(value) }))}
+                                    />
+                                    <Select
+                                      aria-label="目标币种"
                                       value={toolState.toCurrency}
-                                      onChange={e => setToolState(prev => ({ ...prev, toCurrency: e.target.value }))}
-                                      className="w-full h-10 px-3 rounded-lg border border-gray-200 bg-white text-xs outline-none focus:border-green-400"
-                                    >
-                                      {EXCHANGE_CURRENCIES.map(c => <option key={c} value={c}>{currencyLabel(c)}</option>)}
-                                    </select>
+                                      onChange={value => setToolState(prev => ({ ...prev, toCurrency: value }))}
+                                      options={EXCHANGE_CURRENCIES.map(value => ({ value, label: currencyLabel(value) }))}
+                                    />
                                   </div>
                                   <div className="flex items-center justify-between gap-3">
                                     <p className="text-xs text-gray-600">{toolState.exchangeResult || '选择币种并输入金额，点击换算查看结果'}</p>
-                                    <button
-                                      type="button"
-                                      onClick={e => { e.preventDefault(); e.stopPropagation(); void runExchange(); }}
-                                      className="px-3 py-1.5 rounded-lg text-xs text-white font-medium"
-                                      style={{ background: '#16a34a' }}
-                                    >
-                                      换算
-                                    </button>
+                                    <Button size="small" type="primary" onClick={() => void runExchange()}>换算</Button>
                                   </div>
                                 </div>
                               </motion.div>
@@ -1135,41 +998,33 @@ export default function PluginsPage() {
                                 exit={{ opacity: 0, height: 0, y: -4 }}
                                 className="overflow-hidden"
                               >
-                                <div className="mt-3 rounded-xl border border-blue-100 bg-blue-50/40 p-3 space-y-3" onClick={e => e.stopPropagation()}>
+                                <div className="mt-3 rounded-lg border border-blue-100 bg-blue-50/40 p-3 space-y-3" onClick={e => e.stopPropagation()}>
                                   <div className="grid grid-cols-2 gap-2">
-                                    <select
+                                    <Select
+                                      aria-label="原语言"
                                       value={toolState.sourceLanguage}
-                                      onChange={e => setToolState(prev => ({ ...prev, sourceLanguage: e.target.value }))}
-                                      className="px-2 py-2 rounded-lg border border-gray-200 bg-white text-xs outline-none focus:border-blue-400"
-                                    >
-                                      {LANGUAGE_OPTIONS.map(l => <option key={l.code} value={l.code}>{l.label}</option>)}
-                                    </select>
-                                    <select
+                                      onChange={value => setToolState(prev => ({ ...prev, sourceLanguage: value }))}
+                                      options={LANGUAGE_OPTIONS.map(item => ({ value: item.code, label: item.label }))}
+                                    />
+                                    <Select
+                                      aria-label="目标语言"
                                       value={toolState.targetLanguage}
-                                      onChange={e => setToolState(prev => ({ ...prev, targetLanguage: e.target.value }))}
-                                      className="px-2 py-2 rounded-lg border border-gray-200 bg-white text-xs outline-none focus:border-blue-400"
-                                    >
-                                      {LANGUAGE_OPTIONS.map(l => <option key={l.code} value={l.code}>{l.label}</option>)}
-                                    </select>
+                                      onChange={value => setToolState(prev => ({ ...prev, targetLanguage: value }))}
+                                      options={LANGUAGE_OPTIONS.map(item => ({ value: item.code, label: item.label }))}
+                                    />
                                   </div>
-                                  <textarea
+                                  <Input.TextArea
+                                    aria-label="待翻译内容"
                                     value={toolState.text}
                                     onChange={e => setToolState(prev => ({ ...prev, text: e.target.value }))}
-                                    className="w-full min-h-20 px-3 py-2 rounded-lg border border-gray-200 bg-white text-xs outline-none focus:border-blue-400 resize-none"
+                                    rows={3}
                                     placeholder="输入待翻译内容"
                                   />
                                   <div className="rounded-lg bg-white border border-gray-200 p-2 min-h-12 text-xs text-gray-700 leading-relaxed">
                                     {toolState.translatedText || '翻译结果会显示在这里'}
                                   </div>
                                   <div className="flex justify-end">
-                                    <button
-                                      type="button"
-                                      onClick={e => { e.preventDefault(); e.stopPropagation(); runTranslation(); }}
-                                      className="px-3 py-1.5 rounded-lg text-xs text-white font-medium"
-                                      style={{ background: '#16a34a' }}
-                                    >
-                                      翻译
-                                    </button>
+                                    <Button size="small" type="primary" onClick={() => void runTranslation()}>翻译</Button>
                                   </div>
                                 </div>
                               </motion.div>
@@ -1190,8 +1045,6 @@ export default function PluginsPage() {
       <AnimatePresence>
         {selectedPlugin && (
           <>
-            <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
-              className="fixed inset-0 bg-black/20 z-40" onClick={() => setSelectedPluginKey(null)} />
             <PluginDrawer
               plugin={selectedPlugin}
               testResult={testResult[selectedPlugin.pluginKey]}
@@ -1200,56 +1053,34 @@ export default function PluginsPage() {
               onClose={() => setSelectedPluginKey(null)}
               onInstall={() => void install(selectedPlugin.pluginKey)}
               onUninstall={() => void uninstall(selectedPlugin.pluginKey)}
-              onConfigure={() => { setConfigTarget(selectedPlugin); setConfigValues(selectedPlugin.config); }}
+              onConfigure={() => { setLoadError(null); setConfigTarget(selectedPlugin); setConfigValues({}); }}
               onTest={() => void testPlugin(selectedPlugin.pluginKey)}
             />
           </>
         )}
         {configTarget && (
-          <motion.div
-            initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
-            className="fixed inset-0 bg-black/40 z-50 flex items-center justify-center"
-            onClick={() => setConfigTarget(null)}
+          <Modal open title={`${configTarget.nameZh} 配置`} width={560} onCancel={() => setConfigTarget(null)} mask={{ closable: false }} closable={!configSaving} keyboard={!configSaving}
+            footer={<><Button onClick={() => setConfigTarget(null)} disabled={configSaving}>取消</Button><Button type="primary" onClick={() => void saveConfig(configTarget)} loading={configSaving}>保存</Button></>}
           >
-            <motion.div
-              initial={{ scale: 0.95, opacity: 0 }} animate={{ scale: 1, opacity: 1 }} exit={{ scale: 0.95, opacity: 0 }}
-              className="bg-white rounded-2xl w-[460px] p-6"
-              onClick={e => e.stopPropagation()}
-            >
-              <div className="flex items-center justify-between mb-5">
-                <div className="flex items-center gap-3">
-                  <span className="text-2xl"><PluginIcon plugin={configTarget} size={24} /></span>
-                  <h3 className="font-semibold text-gray-900">{configTarget.nameZh} 配置</h3>
-                </div>
-                <button type="button" onClick={() => setConfigTarget(null)} className="text-gray-400 hover:text-gray-600"><X size={20} /></button>
-              </div>
               <div className="space-y-4">
                 {(PLUGIN_FIELDS[configTarget.pluginKey] ?? []).map(f => (
                   <div key={f.key}>
-                    <label className="block text-xs font-medium text-gray-700 mb-1.5">{f.label}</label>
-                    <input
+                    <label htmlFor={`plugin-config-${f.key}`} className="block text-sm font-medium text-text-secondary mb-1.5">{f.label}</label>
+                    <Input
+                      id={`plugin-config-${f.key}`}
                       type={f.secret ? 'password' : 'text'}
+                      autoComplete={f.secret ? 'new-password' : 'off'}
                       value={configValues[f.key] ?? ''}
                       onChange={e => setConfigValues(prev => ({ ...prev, [f.key]: e.target.value }))}
                       placeholder={f.placeholder}
-                      className="w-full px-3 py-2.5 border border-gray-200 rounded-xl text-sm focus:outline-none focus:border-green-400 font-mono"
+                      disabled={configSaving}
+                      className="w-full font-mono"
                     />
                   </div>
                 ))}
               </div>
-              <div className="flex gap-3 mt-5">
-                <button type="button" onClick={() => setConfigTarget(null)} className="flex-1 py-2.5 border border-gray-200 rounded-xl text-sm text-gray-600">取消</button>
-                <button
-                  type="button"
-                  onClick={() => void saveConfig(configTarget)}
-                  className="flex-1 py-2.5 rounded-xl text-sm text-white font-medium"
-                  style={{ background: '#16a34a' }}
-                >
-                  保存
-                </button>
-              </div>
-            </motion.div>
-          </motion.div>
+              {loadError && <Alert type="error" showIcon className="mt-3" title={loadError} />}
+          </Modal>
         )}
       </AnimatePresence>
     </div>

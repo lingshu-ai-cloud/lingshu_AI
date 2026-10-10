@@ -2,7 +2,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import dotenv from 'dotenv';
 import { materialAssetContentType, sharedObjectKey, tenantPrivateObjectKey } from '../server/storage/materialAssets.js';
-import { objectStorageEnabled, r2Head, r2Upload } from '../server/storage/r2.js';
+import { objectStorageEnabled, objectStorageHead, objectStorageUpload } from '../server/storage/objectStorage.js';
 
 dotenv.config({ path: process.env.ENV_FILE_PATH || '.env.production' });
 const dryRun = process.argv.includes('--dry-run');
@@ -40,9 +40,9 @@ async function main() {
   let migrated = 0;
   for (const entry of files) {
     const size = fs.statSync(entry.file).size;
-    const existing = await r2Head(entry.key);
-    if (!existing || existing.size !== size) await r2Upload({ key: entry.key, body: fs.readFileSync(entry.file), contentType: materialAssetContentType(entry.file) });
-    const verified = await r2Head(entry.key);
+    const existing = await objectStorageHead(entry.key);
+    if (!existing || existing.size !== size) await objectStorageUpload({ key: entry.key, body: fs.readFileSync(entry.file), contentType: materialAssetContentType(entry.file) });
+    const verified = await objectStorageHead(entry.key);
     if (!verified || verified.size !== size) throw new Error(`verification failed: ${entry.key}`);
     migrated += 1;
     console.log(JSON.stringify({ migrated: entry.key, progress: `${migrated}/${files.length}` }));

@@ -1,13 +1,14 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { CheckCircle2, ChevronDown, ChevronRight, ChevronsDown, ChevronsUp, Clipboard, KeyRound, Link2, Loader2, Plus, RefreshCcw, Save, ShieldCheck, X } from 'lucide-react';
+import { Alert, Button, Input, Modal, Segmented } from 'antd';
+import LsPageHeader from './ui/LsPageHeader';
+import { CheckCircle2, ChevronDown, ChevronRight, ChevronsDown, ChevronsUp, Clipboard, KeyRound, Link2, Loader2, Plus, RefreshCcw, Save, ShieldCheck } from 'lucide-react';
 import { authHeader } from '../lib/auth';
+import { clearDeliveryTenantRequestId, deliveryTenantRequestId } from '../lib/adminDeliveryTenantRequest';
 import AdminContentOpsAlerts from './AdminContentOpsAlerts';
 import AdminSocialAccountSetup from './AdminSocialAccountSetup';
+import AdminSocialWorkPackageCenter from './AdminSocialWorkPackageCenter';
 import { SocialPlatformIcon } from './SocialPlatformIcon';
-
-type Platform = 'meta' | 'google' | 'tiktok' | 'wecom';
-type Status = 'pending' | 'configuring' | 'waiting_customer' | 'importing_history' | 'verifying' | 'active' | 'needs_permanent_token' | 'token_expired' | 'error';
-
+type Platform = 'meta' | 'google' | 'tiktok' | 'wecom'; type Status = 'pending' | 'configuring' | 'waiting_customer' | 'importing_history' | 'verifying' | 'active' | 'needs_permanent_token' | 'token_expired' | 'error';
 interface DeliveryApp {
   id: string;
   tenantId: string;
@@ -24,7 +25,7 @@ interface DeliveryApp {
   pageId: string;
   igUserId: string;
   youtubeChannelId: string;
-  webhookVerifyToken: string;
+  webhookVerifyToken: string; webhookVerifyTokenSet?: boolean; webhookVerifyTokenLength?: number;
   wecomEncodingAesKeySet: boolean;
   wecomEncodingAesKeyLength: number;
   webhookUrl: string;
@@ -54,13 +55,9 @@ interface TenantCard {
   apps: DeliveryApp[];
 }
 
-interface GeneratedInvite {
-  companyName: string;
-  inviteCode: string;
-  inviteUrl: string;
-}
+interface GeneratedInvite { companyName: string; inviteCode: string; inviteUrl: string }
 
-type Draft = Record<string, Partial<DeliveryApp> & { appSecret?: string; accessToken?: string; wecomEncodingAesKey?: string }>;
+type Draft = Record<string, Partial<DeliveryApp> & { appSecret?: string; accessToken?: string; webhookVerifyToken?: string; wecomEncodingAesKey?: string }>;
 type TestState = Record<string, Record<string, 'idle' | 'running' | 'ok' | 'error'>>;
 type AssistLinkState = Record<string, { link: string; loading?: boolean }>;
 type ProgressStageKey = 'email_connected' | 'business_verification' | 'permanent_token_replaced';
@@ -141,14 +138,11 @@ async function jsonFetch(url: string, init?: RequestInit) {
   return json;
 }
 
-function CopyLine({ label, value, secret = false }: { label: string; value: string; secret?: boolean }) {
-  const [visible, setVisible] = useState(false);
-  const displayValue = secret && value && !visible ? '••••••••••••' : value;
+function CopyLine({ label, value }: { label: string; value: string }) {
   return (
     <div className="flex items-center gap-2">
       <span className="w-24 shrink-0 text-[11px] font-bold text-text-muted">{label}</span>
-      <code className="min-w-0 flex-1 truncate rounded-lg bg-white px-2 py-1 text-[11px] text-text-secondary">{displayValue || '保存配置后生成'}</code>
-      {secret && value && <button type="button" onClick={() => setVisible(current => !current)} className="rounded-lg border border-border bg-white px-2 py-1 text-[10px] font-bold text-text-muted hover:text-text-primary">{visible ? '隐藏' : '显示'}</button>}
+      <code className="min-w-0 flex-1 truncate rounded-lg bg-white px-2 py-1 text-[11px] text-text-secondary">{value || '保存配置后生成'}</code>
       <button type="button" onClick={() => value && navigator.clipboard?.writeText(value)} className="rounded-lg border border-border bg-white p-1.5 text-text-muted hover:text-text-primary">
         <Clipboard size={12} />
       </button>
@@ -197,7 +191,7 @@ function Field({
           )}
         </span>
       </span>
-      <input
+      <Input
         name={fieldName}
         type={secret ? 'password' : 'text'}
         required={required}
@@ -210,7 +204,7 @@ function Field({
         value={value ?? ''}
         placeholder={placeholder}
         onChange={event => onChange(numericId ? event.target.value.replace(/\D/g, '') : event.target.value)}
-        className="rounded-xl border border-border bg-surface-2 px-3 py-2 text-sm font-normal text-text-primary outline-none focus:border-primary"
+        className="w-full font-normal"
       />
     </label>
   );
@@ -356,13 +350,13 @@ function DeploymentProgressStrip({
   const total = stages.length;
 
   return (
-    <div className="mb-3 rounded-2xl border border-border bg-white px-3 py-3">
+    <div className="mb-3 rounded-lg border border-border bg-white px-3 py-3">
       <div className="mb-2 flex items-center justify-between gap-3">
         <div>
-          <p className="text-xs font-black text-text-primary">部署进度</p>
+          <p className="text-xs font-semibold text-text-primary">部署进度</p>
           <p className="mt-0.5 text-[11px] text-text-muted">按 SOP 阶段交接，自动项会随配置和验收更新。</p>
         </div>
-        <span className="rounded-full bg-surface-2 px-2.5 py-1 text-[11px] font-black text-text-secondary">{doneCount}/{total}</span>
+        <span className="rounded-full bg-surface-2 px-2.5 py-1 text-[11px] font-semibold text-text-secondary">{doneCount}/{total}</span>
       </div>
       <div className="flex flex-wrap gap-2">
         {stages.map(stage => {
@@ -386,14 +380,14 @@ function DeploymentProgressStrip({
                 title={stage.hint}
                 onClick={() => void onToggle(tenant, stage.manual!)}
                 disabled={busyKey === `${tenant.tenantId}:${stage.manual}`}
-                className={`inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1.5 text-[11px] font-black transition-colors disabled:opacity-60 ${tone}`}
+                className={`inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1.5 text-[11px] font-semibold transition-colors disabled:opacity-60 ${tone}`}
               >
                 {content}
               </button>
             );
           }
           return (
-            <span key={stage.key} title={stage.hint} className={`inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1.5 text-[11px] font-black ${tone}`}>
+            <span key={stage.key} title={stage.hint} className={`inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1.5 text-[11px] font-semibold ${tone}`}>
               {content}
             </span>
           );
@@ -457,7 +451,7 @@ function PlatformWizard({
         : 'bg-surface-2 text-text-secondary';
 
   return (
-    <div className="rounded-2xl border border-border bg-white p-4 shadow-sm">
+    <div className="rounded-lg border border-border bg-white p-4 shadow-none">
       <div className="flex items-start justify-between gap-3">
         <div>
           <div className="flex items-center gap-2">
@@ -470,7 +464,7 @@ function PlatformWizard({
               {app.platform === 'google' && <SocialPlatformIcon platform="youtube" size={20} />}
               {app.platform === 'tiktok' && <SocialPlatformIcon platform="tiktok" size={20} />}
             </span>
-            <p className="text-sm font-black text-text-primary">{platformName}</p>
+            <p className="text-sm font-semibold text-text-primary">{platformName}</p>
           </div>
           <p className="mt-1 text-xs text-text-muted">顾问在客户电脑上录入，Secret / Token 加密保存，不经过微信和邮件。</p>
         </div>
@@ -480,7 +474,7 @@ function PlatformWizard({
               type="button"
               onClick={() => void onAssistLink(app)}
               disabled={assistLink?.loading}
-              className="inline-flex items-center gap-1.5 rounded-xl border border-emerald-200 bg-emerald-50 px-3 py-1.5 text-[11px] font-black text-emerald-700 disabled:opacity-60"
+              className="inline-flex items-center gap-1.5 rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-1.5 text-[11px] font-semibold text-emerald-700 disabled:opacity-60"
             >
               {assistLink?.loading ? <Loader2 size={12} className="animate-spin" /> : <Link2 size={12} />}
               生成协助链接
@@ -489,7 +483,7 @@ function PlatformWizard({
           <select
             value={draftStatus}
             onChange={event => update({ status: event.target.value })}
-            className={`rounded-full border border-transparent px-2.5 py-1 text-[11px] font-black outline-none ${statusTone}`}
+            className={`rounded-full border border-transparent px-2.5 py-1 text-[11px] font-semibold outline-none ${statusTone}`}
           >
             {Object.entries(STATUS_LABEL).map(([key, label]) => <option key={key} value={key}>{label}</option>)}
           </select>
@@ -497,8 +491,8 @@ function PlatformWizard({
       </div>
 
       {assistLink?.link && (
-        <div className="mt-3 flex items-center gap-2 rounded-xl border border-emerald-100 bg-emerald-50 px-3 py-2">
-          <span className="shrink-0 text-[11px] font-black text-emerald-800">协助链接</span>
+        <div className="mt-3 flex items-center gap-2 rounded-lg border border-emerald-100 bg-emerald-50 px-3 py-2">
+          <span className="shrink-0 text-[11px] font-semibold text-emerald-800">协助链接</span>
           <code className="min-w-0 flex-1 truncate text-[11px] text-emerald-900">{assistLink.link}</code>
           <button
             type="button"
@@ -518,9 +512,9 @@ function PlatformWizard({
               key={step.id}
               type="button"
               onClick={() => setActiveStep(step.id)}
-              className={`w-full rounded-xl border px-3 py-2 text-left text-xs transition-colors ${activeStep === step.id ? 'border-slate-950 bg-slate-950 text-white' : 'border-border bg-surface-2 text-text-secondary hover:bg-white'}`}
+              className={`w-full rounded-lg border px-3 py-2 text-left text-xs transition-colors ${activeStep === step.id ? 'border-slate-950 bg-slate-950 text-white' : 'border-border bg-surface-2 text-text-secondary hover:bg-white'}`}
             >
-              <span className="font-black">{step.title}</span>
+              <span className="font-semibold">{step.title}</span>
               <span className={`mt-1 block text-[10px] leading-4 ${activeStep === step.id ? 'text-white/70' : 'text-text-muted'}`}>{step.desc}</span>
             </button>
           ))}
@@ -530,7 +524,7 @@ function PlatformWizard({
           {activeStep === 'metaApp' && (
             <div className="grid gap-3">
               <Field required label="App ID" hint="开发者后台首页" value={appValue(drafts, app, 'appId')} onChange={value => update({ appId: value })} />
-              <Field required secret label="App Secret" hint="应用设置 > 基本" value={appValue(drafts, app, 'appSecret')} placeholder="填写 App Secret" onChange={value => update({ appSecret: value })} />
+              <Field required secret completed={app.appSecretSet} label="App Secret" hint={savedSecretHint(app.appSecretLength, '应用设置 > 基本')} value={appValue(drafts, app, 'appSecret')} placeholder={app.appSecretSet ? savedSecretPlaceholder(app.appSecretLength) : '填写 App Secret'} onChange={value => update({ appSecret: value })} />
               <Field label="Business ID" hint="BM 设置里可找到" value={appValue(drafts, app, 'businessId')} onChange={value => update({ businessId: value })} />
               <ChecklistButton app={app} id="privacy_domain_saved" label="隐私政策和域名已填" drafts={drafts} setDrafts={setDrafts} />
             </div>
@@ -538,11 +532,11 @@ function PlatformWizard({
 
           {activeStep === 'webhook' && (
             <div className="space-y-3">
-              <div className="rounded-xl border border-dashed border-border bg-surface-2 p-3">
-                <p className="mb-2 text-xs font-black text-text-primary">复制到 Meta 后台</p>
+              <div className="rounded-lg border border-dashed border-border bg-surface-2 p-3">
+                <p className="mb-2 text-xs font-semibold text-text-primary">复制到 Meta 后台</p>
                 <div className="space-y-2">
                   <CopyLine label="Webhook URL" value={app.webhookUrl} />
-                  <CopyLine secret label="Verify Token" value={app.webhookVerifyToken} />
+                  <Field required secret completed={app.webhookVerifyTokenSet} label="Verify Token（新建/轮换）" hint={app.webhookVerifyTokenSet ? savedSecretHint(app.webhookVerifyTokenLength ?? 0, '已保存') : '请与 Meta 后台填写相同值'} value={appValue(drafts, app, 'webhookVerifyToken')} placeholder={app.webhookVerifyTokenSet ? savedSecretPlaceholder(app.webhookVerifyTokenLength ?? 0) : '填写自定义 Verify Token'} onChange={value => update({ webhookVerifyToken: value })} />
                 </div>
               </div>
               <div className="flex flex-wrap gap-2">
@@ -562,7 +556,7 @@ function PlatformWizard({
               <div className="grid grid-cols-2 gap-2">
                 <label className="grid gap-1 text-xs font-bold text-text-secondary">
                   Token 类型
-                  <select value={appValue(drafts, app, 'tokenType') || 'user_60d'} onChange={event => update({ tokenType: event.target.value })} className="rounded-xl border border-border bg-surface-2 px-3 py-2 text-sm font-normal text-text-primary outline-none">
+                  <select value={appValue(drafts, app, 'tokenType') || 'user_60d'} onChange={event => update({ tokenType: event.target.value })} className="rounded-lg border border-border bg-surface-2 px-3 py-2 text-sm font-normal text-text-primary outline-none">
                     <option value="user_60d">60天用户 token</option>
                     <option value="system_user_permanent">系统用户永久 token</option>
                   </select>
@@ -587,7 +581,7 @@ function PlatformWizard({
           {activeStep === 'wecomApp' && (
             <div className="grid gap-3">
               <Field required label="企业 ID / CorpID" hint="企业微信管理后台 > 我的企业" value={appValue(drafts, app, 'appId')} onChange={value => update({ appId: value })} />
-              <Field required secret label="应用 Secret" hint="自建应用 Secret" value={appValue(drafts, app, 'appSecret')} placeholder="填写应用 Secret" onChange={value => update({ appSecret: value })} />
+              <Field required secret completed={app.appSecretSet} label="应用 Secret" hint={savedSecretHint(app.appSecretLength, '自建应用 Secret')} value={appValue(drafts, app, 'appSecret')} placeholder={app.appSecretSet ? savedSecretPlaceholder(app.appSecretLength) : '填写应用 Secret'} onChange={value => update({ appSecret: value })} />
               <Field required label="AgentId" hint="自建应用详情页" value={appValue(drafts, app, 'businessId')} onChange={value => update({ businessId: value })} />
               <ChecklistButton app={app} id="wecom_app_visible_range_set" label="应用可见范围已包含客户接待人员" drafts={drafts} setDrafts={setDrafts} />
             </div>
@@ -595,11 +589,11 @@ function PlatformWizard({
 
           {activeStep === 'wecomWebhook' && (
             <div className="space-y-3">
-              <div className="rounded-xl border border-dashed border-border bg-surface-2 p-3">
-                <p className="mb-2 text-xs font-black text-text-primary">复制到企业微信后台</p>
+              <div className="rounded-lg border border-dashed border-border bg-surface-2 p-3">
+                <p className="mb-2 text-xs font-semibold text-text-primary">复制到企业微信后台</p>
                 <div className="space-y-2">
                   <CopyLine label="回调 URL" value={app.webhookUrl} />
-                  <CopyLine secret label="Token" value={app.webhookVerifyToken} />
+                  <Field required secret completed={app.webhookVerifyTokenSet} label="Token（新建/轮换）" hint={app.webhookVerifyTokenSet ? savedSecretHint(app.webhookVerifyTokenLength ?? 0, '已保存') : '请与企业微信后台填写相同值'} value={appValue(drafts, app, 'webhookVerifyToken')} placeholder={app.webhookVerifyTokenSet ? savedSecretPlaceholder(app.webhookVerifyTokenLength ?? 0) : '填写自定义 Token'} onChange={value => update({ webhookVerifyToken: value })} />
                 </div>
               </div>
               <Field required completed={app.wecomEncodingAesKeySet} label="EncodingAESKey" hint={app.wecomEncodingAesKeySet ? savedSecretHint(app.wecomEncodingAesKeyLength, '已保存') : '企业微信后台随机生成'} secret placeholder={app.wecomEncodingAesKeySet ? savedSecretPlaceholder(app.wecomEncodingAesKeyLength) : '43 位 EncodingAESKey'} onChange={value => update({ wecomEncodingAesKey: value })} />
@@ -609,7 +603,7 @@ function PlatformWizard({
 
           {activeStep === 'wecomArchive' && (
             <div className="grid gap-3">
-              <div className="rounded-xl border border-amber-100 bg-amber-50 px-3 py-3 text-xs leading-6 text-amber-800">
+              <div className="rounded-lg border border-amber-100 bg-amber-50 px-3 py-3 text-xs leading-6 text-amber-800">
                 企业微信要同步外部联系人聊天到“我的客户”，必须开通“客户联系”和“会话内容存档”。如果只配置自建应用回调，只能收到应用事件，不能完整读取客户聊天内容。
               </div>
               <ChecklistButton app={app} id="wecom_customer_contact_enabled" label="客户联系已开通" drafts={drafts} setDrafts={setDrafts} />
@@ -621,7 +615,7 @@ function PlatformWizard({
           {activeStep === 'googleApp' && (
             <div className="grid gap-3">
               <Field required label="Client ID" hint="Google Cloud OAuth" value={appValue(drafts, app, 'appId')} onChange={value => update({ appId: value })} />
-              <Field required secret label="Client Secret" hint="Google Cloud OAuth" value={appValue(drafts, app, 'appSecret')} placeholder="填写 Client Secret" onChange={value => update({ appSecret: value })} />
+              <Field required secret completed={app.appSecretSet} label="Client Secret" hint={savedSecretHint(app.appSecretLength, 'Google Cloud OAuth')} value={appValue(drafts, app, 'appSecret')} placeholder={app.appSecretSet ? savedSecretPlaceholder(app.appSecretLength) : '填写 Client Secret'} onChange={value => update({ appSecret: value })} />
               <ChecklistButton app={app} id="google_consent_published" label="OAuth 同意屏幕已发布到生产" drafts={drafts} setDrafts={setDrafts} />
             </div>
           )}
@@ -636,14 +630,14 @@ function PlatformWizard({
           {activeStep === 'tiktokApp' && (
             <div className="grid gap-3">
               <Field required label="Client Key" hint="TikTok for Developers > Manage apps" value={appValue(drafts, app, 'appId')} onChange={value => update({ appId: value })} />
-              <Field required secret label="Client Secret" hint="TikTok for Developers > Manage apps" value={appValue(drafts, app, 'appSecret')} placeholder="填写 Client Secret" onChange={value => update({ appSecret: value })} />
+              <Field required secret completed={app.appSecretSet} label="Client Secret" hint={savedSecretHint(app.appSecretLength, 'TikTok for Developers > Manage apps')} value={appValue(drafts, app, 'appSecret')} placeholder={app.appSecretSet ? savedSecretPlaceholder(app.appSecretLength) : '填写 Client Secret'} onChange={value => update({ appSecret: value })} />
             </div>
           )}
 
           {activeStep === 'tiktokCallback' && (
             <div className="space-y-3">
-              <div className="rounded-xl border border-dashed border-border bg-surface-2 p-3">
-                <p className="mb-2 text-xs font-black text-text-primary">复制到 TikTok 开发者后台</p>
+              <div className="rounded-lg border border-dashed border-border bg-surface-2 p-3">
+                <p className="mb-2 text-xs font-semibold text-text-primary">复制到 TikTok 开发者后台</p>
                 <CopyLine label="Redirect URI" value={app.oauthRedirectUri} />
               </div>
               <ChecklistButton app={app} id="tiktok_callback_registered" label="回调地址已添加并保存" drafts={drafts} setDrafts={setDrafts} />
@@ -676,7 +670,7 @@ function PlatformWizard({
               </div>
               <div className="flex flex-wrap gap-2">
                 {testItems.map(([kind, label]) => (
-                  <button key={kind} type="button" onClick={() => void onTest(app, kind)} className="inline-flex items-center gap-1.5 rounded-xl border border-border bg-white px-3 py-2 text-xs font-bold text-text-secondary hover:bg-surface-2">
+                  <button key={kind} type="button" onClick={() => void onTest(app, kind)} className="inline-flex items-center gap-1.5 rounded-lg border border-border bg-white px-3 py-2 text-xs font-bold text-text-secondary hover:bg-surface-2">
                     {test[kind] === 'running' ? <Loader2 size={13} className="animate-spin" /> : test[kind] === 'ok' ? <CheckCircle2 size={13} className="text-emerald-600" /> : <ShieldCheck size={13} />}
                     {label}
                   </button>
@@ -687,19 +681,19 @@ function PlatformWizard({
 
           <label className="grid gap-1 text-xs font-bold text-text-secondary">
             交付备注
-            <textarea value={appValue(drafts, app, 'notes')} onChange={event => update({ notes: event.target.value })} rows={2} placeholder="记录客户选择：共存/新号、测试手机号、异常处理、下次跟进时间。" className="resize-none rounded-xl border border-border bg-surface-2 px-3 py-2 text-sm font-normal text-text-primary outline-none" />
+            <textarea value={appValue(drafts, app, 'notes')} onChange={event => update({ notes: event.target.value })} rows={2} placeholder="记录客户选择：共存/新号、测试手机号、异常处理、下次跟进时间。" className="resize-none rounded-lg border border-border bg-surface-2 px-3 py-2 text-sm font-normal text-text-primary outline-none" />
           </label>
 
           <div className="flex flex-wrap gap-2 border-t border-border pt-3">
-            <button type="button" onClick={() => void onSave(app)} disabled={saving} className="inline-flex items-center gap-1.5 rounded-xl bg-slate-950 px-3 py-2 text-xs font-bold text-white disabled:cursor-wait disabled:opacity-60">
+            <button type="button" onClick={() => void onSave(app)} disabled={saving} className="inline-flex items-center gap-1.5 rounded-lg bg-slate-950 px-3 py-2 text-xs font-bold text-white disabled:cursor-wait disabled:opacity-60">
               {saving ? <Loader2 size={13} className="animate-spin" /> : <Save size={13} />} {saving ? '保存中' : '保存配置'}
             </button>
             {app.platform === 'meta' && app.tokenType === 'user_60d' && (
-              <button type="button" onClick={() => void onSave({ ...app, status: 'needs_permanent_token' })} className="inline-flex items-center gap-1.5 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-xs font-bold text-amber-800">
+              <button type="button" onClick={() => void onSave({ ...app, status: 'needs_permanent_token' })} className="inline-flex items-center gap-1.5 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs font-bold text-amber-800">
                 <KeyRound size={13} /> 标记待换永久 token
               </button>
             )}
-            <button type="button" onClick={() => void onComplete(app)} className="inline-flex items-center gap-1.5 rounded-xl bg-emerald-600 px-3 py-2 text-xs font-bold text-white">
+            <button type="button" onClick={() => void onComplete(app)} className="inline-flex items-center gap-1.5 rounded-lg bg-blue-600 px-3 py-2 text-xs font-bold text-white">
               <CheckCircle2 size={13} /> 交付完成
             </button>
           </div>
@@ -818,7 +812,7 @@ export default function AdminDeliveryPage() {
           waPublicNumber: draft.waPublicNumber ?? app.waPublicNumber,
           pageId: draft.pageId ?? app.pageId,
           igUserId: draft.igUserId ?? app.igUserId,
-          youtubeChannelId: draft.youtubeChannelId ?? app.youtubeChannelId,
+          youtubeChannelId: draft.youtubeChannelId ?? app.youtubeChannelId, webhookVerifyToken: draft.webhookVerifyToken ?? '',
           wecomEncodingAesKey: draft.wecomEncodingAesKey ?? '',
           tokenType: draft.tokenType ?? app.tokenType,
           accessToken: draft.accessToken ?? '',
@@ -900,15 +894,19 @@ export default function AdminDeliveryPage() {
     setCreatingTenant(true);
     setError('');
     try {
+      const requestId = await deliveryTenantRequestId(tenantForm);
       const data = await jsonFetch('/api/overseas/admin/delivery/tenants', {
         method: 'POST',
+        headers: { 'Idempotency-Key': requestId },
         body: JSON.stringify({
+          requestId,
           companyName,
           contactName: tenantForm.contactName.trim(),
           industry: tenantForm.industry.trim(),
           notes: tenantForm.notes.trim(),
         }),
       });
+      clearDeliveryTenantRequestId(requestId);
       if (data.tenant) {
         setTenants(current => [data.tenant, ...current.filter(item => item.tenantId !== data.tenant.tenantId)]);
       }
@@ -1038,28 +1036,18 @@ export default function AdminDeliveryPage() {
   };
 
   return (
-    <div className="flex h-full flex-col bg-white">
-      <div className="flex h-14 shrink-0 items-center justify-between border-b border-border px-5">
-        <div>
-          <p className="text-sm font-black text-text-primary">客户运维</p>
-          <p className="text-[11px] text-text-muted">集中处理客户部署、平台授权、验收进度和内容入库异常。</p>
-        </div>
-        <div className="flex items-center gap-2">
-          <span className="rounded-full bg-surface-2 px-2.5 py-1 text-[11px] font-bold text-text-secondary">平台配置 {summary.total} 项 · 已交付 {summary.active} · 风险 {summary.risky}</span>
+    <div className="flex h-full flex-col bg-ink">
+      <LsPageHeader title="客户运维" description="集中处理客户部署、平台授权、验收进度和内容入库异常。" extra={
+        <div className="flex flex-wrap items-center gap-2">
           {visibleTenants.length > 0 && (
-            <button type="button" onClick={toggleAllTenants} className="inline-flex items-center gap-1.5 rounded-xl border border-border bg-white px-3 py-2 text-xs font-bold text-text-secondary">
-              {anyTenantExpanded ? <ChevronsUp size={13} /> : <ChevronsDown size={13} />}
+            <Button onClick={toggleAllTenants} icon={anyTenantExpanded ? <ChevronsUp size={16} /> : <ChevronsDown size={16} />}>
               {anyTenantExpanded ? '收起全部' : '展开全部'}
-            </button>
+            </Button>
           )}
-          <button type="button" onClick={openInviteDialog} className="inline-flex items-center gap-1.5 rounded-xl bg-slate-950 px-3 py-2 text-xs font-bold text-white">
-            <KeyRound size={13} /> 生成注册邀请码
-          </button>
-          <button data-testid="admin-delivery-refresh" type="button" onClick={() => void load({ background: true })} disabled={refreshing} className="inline-flex items-center gap-1.5 rounded-xl border border-border bg-white px-3 py-2 text-xs font-bold text-text-secondary disabled:cursor-wait disabled:opacity-60">
-            {refreshing ? <Loader2 size={13} className="animate-spin" /> : <RefreshCcw size={13} />} 刷新
-          </button>
+          <Button type="primary" onClick={openInviteDialog} icon={<KeyRound size={16} />}>生成注册邀请码</Button>
+          <Button data-testid="admin-delivery-refresh" onClick={() => void load({ background: true })} loading={refreshing} icon={<RefreshCcw size={16} />}>刷新</Button>
         </div>
-      </div>
+      }><p className="text-xs text-text-secondary">平台配置 {summary.total} 项 · 已交付 {summary.active} · 风险 {summary.risky}</p></LsPageHeader>
 
       <div
         ref={scrollContainerRef}
@@ -1067,51 +1055,38 @@ export default function AdminDeliveryPage() {
         onScroll={event => sessionStorage.setItem('lingshu:admin-delivery:scroll', String(event.currentTarget.scrollTop))}
         className="min-h-0 flex-1 overflow-y-auto p-5"
       >
-        {message && <p className="mb-3 rounded-xl bg-emerald-50 px-3 py-2 text-xs font-bold text-emerald-700">{message}</p>}
-        {error && <p className="mb-3 rounded-xl bg-red-50 px-3 py-2 text-xs font-bold text-red-700">{error}</p>}
+        {message && <Alert className="mb-3" type="success" showIcon title={message} />}
+        {error && <Alert className="mb-3" type="error" showIcon title={error} />}
         <AdminSocialAccountSetup />
         <div id="customer-content-ops" className="mb-4 scroll-mt-5">
           <AdminContentOpsAlerts />
         </div>
-        <section className="mb-3 rounded-2xl border border-border bg-surface-2 px-4 py-3">
+        <AdminSocialWorkPackageCenter />
+        <section className="mb-3 rounded-lg border border-border bg-surface-2 px-4 py-3">
           <div className="flex flex-wrap items-center justify-between gap-3">
             <div>
-              <p className="text-sm font-black text-text-primary">客户租户</p>
+              <p className="text-sm font-semibold text-text-primary">客户租户</p>
               <p className="mt-1 text-xs leading-5 text-text-muted">
                 每张卡片代表一家客户公司的独立工作空间。客户用你生成的邀请码注册后，社媒账号、内容和客户数据都归属这里；管理员自己的账号请使用上方直连区。
               </p>
             </div>
-            <div className="flex items-center rounded-xl border border-border bg-white p-1">
-              <button
-                type="button"
-                onClick={() => setTenantView('customer')}
-                className={`rounded-lg px-3 py-1.5 text-[11px] font-bold ${tenantView === 'customer' ? 'bg-slate-950 text-white' : 'text-text-secondary hover:bg-surface-2'}`}
-              >
-                正式客户 {customerTenants.length}
-              </button>
-              <button
-                type="button"
-                onClick={() => setTenantView('trial')}
-                className={`rounded-lg px-3 py-1.5 text-[11px] font-bold ${tenantView === 'trial' ? 'bg-amber-500 text-white' : 'text-text-secondary hover:bg-surface-2'}`}
-              >
-                试用客户 {trialTenants.length}
-              </button>
-            </div>
+            <Segmented value={tenantView} onChange={value => setTenantView(value as 'customer' | 'trial')} options={[
+              { value: 'customer', label: `正式客户 ${customerTenants.length}` },
+              { value: 'trial', label: `试用客户 ${trialTenants.length}` },
+            ]} />
           </div>
         </section>
         {loading ? (
           <div className="flex h-60 items-center justify-center text-text-muted"><Loader2 className="animate-spin" /></div>
         ) : visibleTenants.length === 0 ? (
-          <div className="rounded-2xl border border-dashed border-border bg-surface p-8 text-center">
-            <p className="text-sm font-black text-text-primary">{tenantView === 'trial' ? '暂无试用客户' : '还没有正式客户'}</p>
+          <div className="rounded-lg border border-dashed border-border bg-surface p-8 text-center">
+            <p className="text-sm font-semibold text-text-primary">{tenantView === 'trial' ? '暂无试用客户' : '还没有正式客户'}</p>
             {tenantView === 'trial' ? (
               <p className="mx-auto mt-2 max-w-md text-xs leading-6 text-text-muted">试用账号会单独显示在这里，不会混入正式交付列表。</p>
             ) : (
               <>
                 <p className="mx-auto mt-2 max-w-md text-xs leading-6 text-text-muted">新客户可以使用邀请码注册；已有试用客户请在账号总控里直接转正。</p>
-                <button type="button" onClick={openInviteDialog} className="mt-4 inline-flex items-center gap-1.5 rounded-xl bg-slate-950 px-4 py-2 text-xs font-black text-white">
-                  <KeyRound size={14} /> 生成注册邀请码
-                </button>
+                <Button type="primary" onClick={openInviteDialog} className="mt-4" icon={<KeyRound size={16} />}>生成注册邀请码</Button>
               </>
             )}
           </div>
@@ -1122,11 +1097,11 @@ export default function AdminDeliveryPage() {
               const activeApps = tenant.apps.filter(app => app.status === 'active').length;
               const riskyApps = tenant.apps.filter(app => app.status === 'token_expired' || app.status === 'needs_permanent_token' || app.status === 'error').length;
               return (
-                <section key={tenant.tenantId} className="rounded-2xl border border-border bg-surface p-4">
+                <section key={tenant.tenantId} className="rounded-lg border border-border bg-surface p-4">
                   <div className={`flex items-center justify-between gap-4 ${expanded ? 'mb-3' : ''}`}>
                     <div>
                       <div className="flex flex-wrap items-center gap-2">
-                        <p className="text-sm font-black text-text-primary">{tenant.name}</p>
+                        <p className="text-sm font-semibold text-text-primary">{tenant.name}</p>
                         {tenant.accountType === 'trial' && (
                           <span className="rounded-full bg-amber-50 px-2 py-0.5 text-[10px] font-bold text-amber-700">
                             试用空间
@@ -1179,7 +1154,7 @@ export default function AdminDeliveryPage() {
                         type="button"
                         onClick={() => toggleTenant(tenant.tenantId)}
                         aria-expanded={expanded}
-                        className="inline-flex min-w-[88px] items-center justify-center gap-1.5 rounded-xl border border-border bg-white px-3 py-2 text-xs font-bold text-text-secondary hover:text-text-primary"
+                        className="inline-flex min-w-[88px] items-center justify-center gap-1.5 rounded-lg border border-border bg-white px-3 py-2 text-xs font-bold text-text-secondary hover:text-text-primary"
                       >
                         {expanded ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
                         {expanded ? '收起资料' : '展开资料'}
@@ -1215,76 +1190,61 @@ export default function AdminDeliveryPage() {
         )}
       </div>
       {saveToast && (
-        <div role="status" className="fixed right-6 top-20 z-[70] inline-flex items-center gap-2 rounded-xl bg-emerald-600 px-4 py-3 text-sm font-black text-white shadow-xl">
+        <div role="status" className="fixed right-6 top-20 z-[70] inline-flex items-center gap-2 rounded-lg bg-emerald-600 px-4 py-3 text-sm font-semibold text-white shadow-none">
           <CheckCircle2 size={17} /> {saveToast}
         </div>
       )}
       {tenantDialogOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/30 px-4">
-          <div className="w-full max-w-md rounded-3xl border border-border bg-white p-5 shadow-xl">
-            <div className="mb-4 flex items-start justify-between gap-3">
-              <div>
-                <p className="text-sm font-black text-text-primary">{generatedInvite ? '一次性注册邀请码' : '生成注册邀请码'}</p>
-                <p className="mt-1 text-xs text-text-muted">
+        <Modal open title={generatedInvite ? '一次性注册邀请码' : '生成注册邀请码'} width={560} onCancel={closeInviteDialog} closable={!creatingTenant} keyboard={!creatingTenant} mask={{ closable: false }}
+          footer={generatedInvite
+            ? <Button onClick={closeInviteDialog}>完成</Button>
+            : <><Button onClick={closeInviteDialog} disabled={creatingTenant}>取消</Button><Button type="primary" onClick={() => void createTenant()} loading={creatingTenant} icon={<KeyRound size={16} />}>生成邀请码</Button></>}
+        >
+                <p className="mb-4 text-sm text-text-secondary">
                   {generatedInvite
                     ? `${generatedInvite.companyName} 注册成功后，该邀请码立即失效。`
                     : '填写客户信息后，系统会生成一次性随机邀请码。'}
                 </p>
-              </div>
-              <button type="button" onClick={closeInviteDialog} className="rounded-xl border border-border p-2 text-text-muted hover:text-text-primary">
-                <X size={14} />
-              </button>
-            </div>
-            {error && <p className="mb-3 rounded-xl bg-red-50 px-3 py-2 text-xs font-bold text-red-700">{error}</p>}
+            {error && <Alert className="mb-3" type="error" showIcon title={error} />}
             {generatedInvite ? (
               <>
                 <div className="border-y border-border py-5 text-center">
                   <p className="text-[11px] font-bold text-text-muted">一次性邀请码</p>
-                  <code className="mt-2 block text-2xl font-black tracking-normal text-text-primary">{generatedInvite.inviteCode || '生成失败'}</code>
+                  <code className="mt-2 block text-2xl font-semibold tracking-normal text-text-primary">{generatedInvite.inviteCode || '生成失败'}</code>
                   <p className="mt-2 text-xs text-text-muted">将邀请码或注册链接发送给客户，客户在注册页面使用。</p>
                 </div>
                 <div className="mt-5 grid grid-cols-2 gap-2">
-                  <button type="button" onClick={() => void copyInvite('code', generatedInvite.inviteCode)} disabled={!generatedInvite.inviteCode} className="inline-flex items-center justify-center gap-1.5 rounded-xl border border-border bg-white px-3 py-2.5 text-xs font-black text-text-secondary disabled:opacity-50">
-                    {copiedInvite === 'code' ? <CheckCircle2 size={14} className="text-emerald-600" /> : <Clipboard size={14} />}
+                  <Button onClick={() => void copyInvite('code', generatedInvite.inviteCode)} disabled={!generatedInvite.inviteCode} icon={copiedInvite === 'code' ? <CheckCircle2 size={16} /> : <Clipboard size={16} />}>
                     {copiedInvite === 'code' ? '邀请码已复制' : '复制邀请码'}
-                  </button>
-                  <button type="button" onClick={() => void copyInvite('url', generatedInvite.inviteUrl)} disabled={!generatedInvite.inviteUrl} className="inline-flex items-center justify-center gap-1.5 rounded-xl bg-slate-950 px-3 py-2.5 text-xs font-black text-white disabled:opacity-50">
-                    {copiedInvite === 'url' ? <CheckCircle2 size={14} /> : <Link2 size={14} />}
+                  </Button>
+                  <Button type="primary" onClick={() => void copyInvite('url', generatedInvite.inviteUrl)} disabled={!generatedInvite.inviteUrl} icon={copiedInvite === 'url' ? <CheckCircle2 size={16} /> : <Link2 size={16} />}>
                     {copiedInvite === 'url' ? '链接已复制' : '复制注册链接'}
-                  </button>
+                  </Button>
                 </div>
-                <button type="button" onClick={closeInviteDialog} className="mt-2 w-full rounded-xl px-4 py-2 text-xs font-bold text-text-muted hover:text-text-primary">完成</button>
               </>
             ) : (
               <>
                 <div className="grid gap-3">
                   <label className="grid gap-1 text-xs font-bold text-text-secondary">
                     <span>公司名称 <span className="text-red">*</span></span>
-                    <input required value={tenantForm.companyName} onChange={event => setTenantForm(current => ({ ...current, companyName: event.target.value }))} className="rounded-xl border border-border bg-surface-2 px-3 py-2 text-sm font-normal text-text-primary outline-none focus:border-primary" placeholder="必填，例如：义乌星河饰品有限公司" />
+                    <Input required value={tenantForm.companyName} onChange={event => setTenantForm(current => ({ ...current, companyName: event.target.value }))} placeholder="必填，例如：义乌星河饰品有限公司" />
                   </label>
                   <label className="grid gap-1 text-xs font-bold text-text-secondary">
                     联系人
-                    <input value={tenantForm.contactName} onChange={event => setTenantForm(current => ({ ...current, contactName: event.target.value }))} className="rounded-xl border border-border bg-surface-2 px-3 py-2 text-sm font-normal text-text-primary outline-none focus:border-primary" placeholder="例如：王总" />
+                    <Input value={tenantForm.contactName} onChange={event => setTenantForm(current => ({ ...current, contactName: event.target.value }))} placeholder="例如：王总" />
                   </label>
                   <label className="grid gap-1 text-xs font-bold text-text-secondary">
                     客户行业
-                    <input value={tenantForm.industry} onChange={event => setTenantForm(current => ({ ...current, industry: event.target.value }))} className="rounded-xl border border-border bg-surface-2 px-3 py-2 text-sm font-normal text-text-primary outline-none focus:border-primary" placeholder="例如：美妆个护 / 护肤彩妆" />
+                    <Input value={tenantForm.industry} onChange={event => setTenantForm(current => ({ ...current, industry: event.target.value }))} placeholder="例如：美妆个护 / 护肤彩妆" />
                   </label>
                   <label className="grid gap-1 text-xs font-bold text-text-secondary">
                     备注
-                    <textarea value={tenantForm.notes} onChange={event => setTenantForm(current => ({ ...current, notes: event.target.value }))} rows={3} className="resize-none rounded-xl border border-border bg-surface-2 px-3 py-2 text-sm font-normal text-text-primary outline-none focus:border-primary" placeholder="记录部署方式、客户账号、待补信息。" />
+                    <Input.TextArea value={tenantForm.notes} onChange={event => setTenantForm(current => ({ ...current, notes: event.target.value }))} rows={3} placeholder="记录部署方式、客户账号、待补信息。" />
                   </label>
-                </div>
-                <div className="mt-5 flex justify-end gap-2">
-                  <button type="button" onClick={closeInviteDialog} className="rounded-xl border border-border bg-white px-4 py-2 text-xs font-bold text-text-secondary">取消</button>
-                  <button type="button" onClick={() => void createTenant()} disabled={creatingTenant} className="inline-flex items-center gap-1.5 rounded-xl bg-slate-950 px-4 py-2 text-xs font-black text-white disabled:opacity-60">
-                    {creatingTenant ? <Loader2 size={13} className="animate-spin" /> : <KeyRound size={13} />} 生成邀请码
-                  </button>
                 </div>
               </>
             )}
-          </div>
-        </div>
+        </Modal>
       )}
     </div>
   );

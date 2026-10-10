@@ -1,13 +1,13 @@
-import { Router } from 'express';
-import crypto from 'node:crypto';
+import { Router, type Response } from 'express';
 import { gunzipSync } from 'node:zlib';
 import { writeAuditLog } from '../lib/auditLog.js';
 import fs from 'node:fs';
 import path from 'node:path';
-import { pbGet, pbListStrict } from '../storage/pb.js';
+import { pbGet, pbListStrict, pbPatch } from '../storage/pb.js';
 import { demoLimits } from '../lib/demo.js';
 import {
   effectiveOAuthConfig,
+  OAuthConfigUnavailableError,
   oauthCallbackUrls,
   getPublicOrigin,
   readOAuthConfig,
@@ -16,9 +16,12 @@ import {
   type StoredOAuthConfig,
 } from '../lib/oauthConfig.js';
 import {
+  demoCredentialPresentation,
   demoUsageForTenant,
   readDemoAccountRegistry,
+  requireInternalAdmin,
   requireAdminUser,
+  type DemoCredentialState,
   upsertDemoAccountRegistry,
 } from '../lib/demoAccounts.js';
 import {
@@ -48,30 +51,26 @@ import {
 import { store } from '../storage/index.js';
 import axios from 'axios';
 import {
-  createLocalInviteTenant,
   getLocalTenant,
   listLocalTenants,
   promoteLocalTrialTenant,
 } from '../lib/localTenants.js';
-import { decryptRegistrationPassword } from '../lib/registrationCredentials.js';
+import {
+  deliveryProvisioningHidden,
+} from '../starter198/deliveryProvisioning.js';
 import { disconnectTenantPlatformAccounts } from '../lib/socialAccountCleanup.js';
+import { localFallbacksEnabled } from '../lib/localFallbackPolicy.js';
+import { createAdminDeliveryStarterRouter } from './adminDeliveryStarter.js';
+import { accountStage, trialDay } from './adminAccountPresentation.js';
+import {
+  contentExecutionDefaults,
+  listContentExecutionLimits,
+  setContentExecutionLimit,
+  type ContentExecutionLimitScope,
+} from '../contentExecution/durableQueue.js';
 
 export const adminRouter = Router();
-
-function trialDay(activatedAt?: string | null): number | null {
-  if (!activatedAt) return null;
-  const start = new Date(activatedAt).getTime();
-  if (!Number.isFinite(start)) return null;
-  return Math.max(1, Math.floor((Date.now() - start) / (24 * 3600 * 1000)) + 1);
-}
-
-function accountStage(entry: { status?: string; activatedAt?: string | null; expiresAt?: string | null; rotatedAt?: string | null }): string {
-  if (entry.status === 'admin') return '长期维护';
-  if (entry.rotatedAt) return '已到期/已轮换密码';
-  if (!entry.activatedAt) return '未激活';
-  if (entry.expiresAt && new Date(entry.expiresAt).getTime() <= Date.now()) return '已到期';
-  return '试用中';
-}
+adminRouter.use(requireInternalAdmin);
 
 type VideoAlertAccountType = 'trial' | 'customer' | 'admin' | 'unknown';
 
@@ -455,10 +454,6 @@ function graphVersion() {
   return process.env.META_GRAPH_VERSION?.trim() || 'v25.0';
 }
 
-function inviteCode(): string {
-  return crypto.randomBytes(8).toString('base64url');
-}
-
 function publicPendingPlatformApp(req: Parameters<typeof publicTenantPlatformApp>[0], tenantId: string, platform: TenantPlatform) {
   return {
     id: '',
@@ -477,6 +472,8 @@ function publicPendingPlatformApp(req: Parameters<typeof publicTenantPlatformApp
     igUserId: '',
     youtubeChannelId: '',
     webhookVerifyToken: '',
+    webhookVerifyTokenSet: false,
+    webhookVerifyTokenLength: 0,
     wecomEncodingAesKeySet: false,
     wecomEncodingAesKeyLength: 0,
     webhookUrl: platform === 'meta' || platform === 'wecom' ? tenantWebhookUrl(req, tenantId, platform) : '',
@@ -495,14 +492,11 @@ function publicPendingPlatformApp(req: Parameters<typeof publicTenantPlatformApp
   };
 }
 
-function adminTenantPlatformApp(
+export function adminTenantPlatformApp(
   req: Parameters<typeof publicTenantPlatformApp>[0],
   app: TenantPlatformAppRecord,
 ) {
-  return {
-    ...publicTenantPlatformApp(req, app),
-    appSecret: decryptSecret(app.app_secret),
-  };
+  return { ...publicTenantPlatformApp(req, app), appSecret: '' };
 }
 
 function publicDeliveryTenant(req: Parameters<typeof publicTenantPlatformApp>[0], tenant: Record<string, any>, apps: Awaited<ReturnType<typeof listTenantPlatformApps>>) {
@@ -546,6 +540,10 @@ function publicDeliveryTenant(req: Parameters<typeof publicTenantPlatformApp>[0]
     }),
   };
 }
+
+adminRouter.use(createAdminDeliveryStarterRouter({
+  presentTenant: (req, tenant) => ({ ...publicDeliveryTenant(req, tenant, []), productProfile: 'starter_198' }),
+}));
 
 const DELIVERY_TEST_MAX_AGE_MS = 7 * 24 * 60 * 60 * 1000;
 
@@ -593,9 +591,9 @@ function missingDeliveryRequirements(platform: TenantPlatform, app: any): string
   return missing;
 }
 
-function publicOAuthConfig(req: Parameters<typeof oauthCallbackUrls>[0], adminEmail: string) {
+export function publicOAuthConfig(req: Parameters<typeof oauthCallbackUrls>[0], adminEmail: string) {
   const stored = readOAuthConfig();
-  const effective = effectiveOAuthConfig();
+  const effective = effectiveOAuthConfig(stored);
   return {
     admin: adminEmail,
     updatedAt: stored.updatedAt ?? null,
@@ -603,10 +601,11 @@ function publicOAuthConfig(req: Parameters<typeof oauthCallbackUrls>[0], adminEm
     callbacks: oauthCallbackUrls(req),
     values: {
       youtubeOAuthClientId: effective.youtubeOAuthClientId,
-      // Secrets are write-only. Never send credential material back to the browser.
       youtubeOAuthClientSecret: '',
       metaSocialAppId: effective.metaSocialAppId,
       metaSocialAppSecret: '',
+      instagramAppId: effective.instagramAppId,
+      instagramAppSecret: '',
       tiktokClientKey: effective.tiktokClientKey,
       tiktokClientSecret: '',
       advancedManualConnectEnabled: effective.advancedManualConnectEnabled,
@@ -614,15 +613,85 @@ function publicOAuthConfig(req: Parameters<typeof oauthCallbackUrls>[0], adminEm
     secretSet: {
       youtubeOAuthClientSecret: Boolean(effective.youtubeOAuthClientSecret),
       metaSocialAppSecret: Boolean(effective.metaSocialAppSecret),
+      instagramAppSecret: Boolean(effective.instagramAppSecret),
       tiktokClientSecret: Boolean(effective.tiktokClientSecret),
     },
     secretLength: {
       youtubeOAuthClientSecret: effective.youtubeOAuthClientSecret.length,
       metaSocialAppSecret: effective.metaSocialAppSecret.length,
+      instagramAppSecret: effective.instagramAppSecret.length,
       tiktokClientSecret: effective.tiktokClientSecret.length,
     },
   };
 }
+function oauthConfigFailure(res: Response, error: unknown): void {
+  const unavailable = error instanceof OAuthConfigUnavailableError;
+  console.error('[oauth-config]', { errorType: error instanceof Error ? error.name : 'UnknownError' });
+  res.status(unavailable ? 503 : 500).json({ error: unavailable ? 'oauth_config_unavailable' : 'oauth_config_failed' });
+}
+
+function adminContentLimitValue(value: unknown): number | null {
+  if (value === null || value === undefined || value === '') return null;
+  const parsed = Number(value);
+  if (!Number.isSafeInteger(parsed) || parsed < 1 || parsed > 100) throw new Error('content_execution_limit_value_invalid');
+  return parsed;
+}
+
+adminRouter.get('/content-execution-limits/:tenantId', async (req, res) => {
+  const admin = await requireAdminUser(req);
+  if (!admin) { res.status(403).json({ error: 'admin_required' }); return; }
+  const tenantId = bodyText(req.params.tenantId);
+  if (!tenantId) { res.status(400).json({ error: 'tenant_id_required' }); return; }
+  try {
+    const limits = await listContentExecutionLimits(store, tenantId);
+    res.setHeader('Cache-Control', 'no-store');
+    res.json({ tenantId, defaults: contentExecutionDefaults(), limits });
+  } catch (error) {
+    console.error('[admin] content execution limits read failed', error instanceof Error ? error.message : error);
+    res.status(503).json({ error: 'content_execution_limits_unavailable' });
+  }
+});
+
+adminRouter.put('/content-execution-limits/:tenantId', async (req, res) => {
+  const admin = await requireAdminUser(req);
+  if (!admin) { res.status(403).json({ error: 'admin_required' }); return; }
+  const tenantId = bodyText(req.params.tenantId);
+  if (!tenantId) { res.status(400).json({ error: 'tenant_id_required' }); return; }
+  const fixed: Array<{ scope: ContentExecutionLimitScope; scopeKey: string; value: unknown }> = [
+    { scope: 'tenant', scopeKey: '*', value: req.body?.tenantMaxRunning },
+    { scope: 'account', scopeKey: '*', value: req.body?.accountDefaultMaxRunning },
+    { scope: 'task_type', scopeKey: 'social_content_weekly', value: req.body?.weeklyMaxRunning },
+    { scope: 'task_type', scopeKey: 'social_content_instant', value: req.body?.instantMaxRunning },
+  ];
+  const overrides = Array.isArray(req.body?.accountOverrides) ? req.body.accountOverrides : [];
+  try {
+    for (const item of [
+      ...fixed,
+      ...overrides.map((item: unknown) => {
+        const row = item && typeof item === 'object' && !Array.isArray(item) ? item as Record<string, unknown> : {};
+        const accountId = bodyText(row.accountId);
+        if (!accountId) throw new Error('content_execution_account_override_invalid');
+        return { scope: 'account' as const, scopeKey: accountId, value: row.maxRunning };
+      }),
+    ]) {
+      await setContentExecutionLimit({
+        dataStore: store, tenantId, scope: item.scope, scopeKey: item.scopeKey,
+        maxRunning: adminContentLimitValue(item.value), updatedBy: admin.userId,
+      });
+    }
+    const limits = await listContentExecutionLimits(store, tenantId);
+    await writeAuditLog({
+      tenantId, actorUserId: admin.userId, actorEmail: admin.email,
+      action: 'content_execution_limits.updated', targetType: 'tenant', targetId: tenantId,
+      metadata: { limits: limits.map(item => ({ scope: item.scope, scopeKey: item.scopeKey, maxRunning: item.maxRunning })) },
+    });
+    res.json({ tenantId, defaults: contentExecutionDefaults(), limits });
+  } catch (error) {
+    const code = error instanceof Error ? error.message : 'content_execution_limits_update_failed';
+    const invalid = code.includes('_invalid');
+    res.status(invalid ? 400 : 503).json({ error: invalid ? code : 'content_execution_limits_update_failed' });
+  }
+});
 
 adminRouter.get('/demo-accounts', async (req, res) => {
   const admin = await requireAdminUser(req);
@@ -631,7 +700,6 @@ adminRouter.get('/demo-accounts', async (req, res) => {
     return;
   }
   res.setHeader('Cache-Control', 'no-store');
-
   const limits = demoLimits();
   const registry = readDemoAccountRegistry();
   const trialAccounts = await Promise.all(Object.values(registry)
@@ -647,7 +715,7 @@ adminRouter.get('/demo-accounts', async (req, res) => {
         email: entry.email,
         tenantId: String(entry.tenantId || ''),
         tenantName: String(tenant?.name || entry.email.split('@')[0] || entry.tenantId || ''),
-        password: '',
+        ...demoCredentialPresentation(entry.credentialState),
         status: accountStage({ ...entry, expiresAt }),
         activatedAt,
         expiresAt,
@@ -662,17 +730,15 @@ adminRouter.get('/demo-accounts', async (req, res) => {
         renderToday: usage.render,
         videoGenerationToday: usage.videoGeneration,
         rotatedAt: entry.rotatedAt ?? null,
-        rotationPassword: null,
       };
     }));
-
   let customerAccounts: Array<{
     tenantId: string;
     companyName: string;
     contactName: string;
     industry: string;
     emails: string[];
-    password: string;
+    credentialState: DemoCredentialState; credentialAction: string;
     inviteCode: string;
     subscriptionPlan: string;
     subscriptionStatus: string;
@@ -686,7 +752,6 @@ adminRouter.get('/demo-accounts', async (req, res) => {
     renderToday: number;
     videoGenerationToday: number;
   }> = [];
-
   try {
     const [tenants, users] = await Promise.all([
       pbListStrict<Record<string, unknown>>('tenants', { perPage: 500, sort: '-createdAt' }),
@@ -718,7 +783,8 @@ adminRouter.get('/demo-accounts', async (req, res) => {
           contactName: String(tenant.contactName || tenant.contact || ''),
           industry: String(tenant.industry || ''),
           emails: Array.from(new Set(emails)),
-          password: '',
+          ...demoCredentialPresentation(promotedTrial?.credentialState
+            ?? (emails.length ? 'active_hash_only' : 'password_reset_required')),
           inviteCode: String(tenant.registrationInviteCode || tenant.inviteCode || ''),
           subscriptionPlan,
           subscriptionStatus,
@@ -739,7 +805,6 @@ adminRouter.get('/demo-accounts', async (req, res) => {
   } catch (error) {
     console.warn('[admin] customer account list unavailable:', error instanceof Error ? error.message : error);
   }
-
   const localCustomerAccounts = listLocalTenants()
     .filter(tenant => tenant.subscriptionStatus === 'active' && tenant.subscriptionPlan === 'customer')
     .map(tenant => {
@@ -756,7 +821,8 @@ adminRouter.get('/demo-accounts', async (req, res) => {
         contactName: tenant.contactName,
         industry: tenant.industry,
         emails,
-        password: '',
+        ...demoCredentialPresentation(promotedTrial?.credentialState
+          ?? (emails.length ? 'active_hash_only' : 'password_reset_required')),
         inviteCode: tenant.registrationInviteCode || tenant.inviteCode,
         subscriptionPlan: tenant.subscriptionPlan,
         subscriptionStatus: tenant.subscriptionStatus,
@@ -804,8 +870,10 @@ adminRouter.post('/trial-accounts/:tenantId/promote', async (req, res) => {
     || tenantId;
   const contactName = bodyText(req.body?.contactName || existingTenant?.contactName || existingTenant?.contact);
   const industry = bodyText(req.body?.industry || existingTenant?.industry);
-  const currentPassword = entry.rotationPassword || entry.password;
   const registeredAt = bodyText(existingTenant?.registeredAt || entry.activatedAt) || new Date().toISOString();
+  const requiresPasswordReset = entry.credentialState === 'expired_locked'
+    || entry.credentialState === 'password_reset_required'
+    || tenantId.startsWith('local_tenant_trial_');
   const patch = {
     name: companyName,
     companyName,
@@ -821,17 +889,16 @@ adminRouter.post('/trial-accounts/:tenantId/promote', async (req, res) => {
 
   let tenant: Record<string, any> | null = null;
   if (existingTenant) {
-    const updated = await store.update('tenants', tenantId, patch);
+    const updated = await pbPatch('tenants', tenantId, patch);
     if (updated) tenant = { ...existingTenant, ...patch };
   }
-  if (!tenant && process.env.NODE_ENV !== 'production') {
+  if (!tenant && localFallbacksEnabled()) {
     tenant = promoteLocalTrialTenant({
       tenantId,
       companyName,
       contactName,
       industry,
       email: entry.email,
-      password: currentPassword,
       registeredAt,
     }) as unknown as Record<string, any>;
   }
@@ -844,10 +911,9 @@ adminRouter.post('/trial-accounts/:tenantId/promote', async (req, res) => {
     status: 'customer',
     tenantId,
     userId: entry.userId,
-    password: currentPassword,
+    credentialState: requiresPasswordReset ? 'password_reset_required' : 'active_hash_only',
     expiresAt: null,
     rotatedAt: null,
-    rotationPassword: null,
   });
   await writeAuditLog({
     tenantId,
@@ -862,7 +928,8 @@ adminRouter.post('/trial-accounts/:tenantId/promote', async (req, res) => {
     tenantId,
     email: entry.email,
     companyName,
-    message: '试用账号已转为正式客户，原客户空间和历史数据保持不变。',
+    credentialState: requiresPasswordReset ? 'password_reset_required' : 'active_hash_only',
+    message: `试用账号已转为正式客户，原客户空间和历史数据保持不变。${requiresPasswordReset ? '请通过受控渠道完成一次性密码重置后再登录。' : ''}`,
   });
 });
 
@@ -885,7 +952,7 @@ adminRouter.post('/support-access/session', async (req, res) => {
   }
 
   const registryEntry = Object.values(readDemoAccountRegistry()).find(entry => entry.tenantId === tenantId);
-  const localTenant = getLocalTenant(tenantId);
+  const localTenant = localFallbacksEnabled() ? getLocalTenant(tenantId) : null;
   const remoteTenant = await safePbGet('tenants', tenantId);
   if (!registryEntry && !localTenant && !remoteTenant) {
     res.status(404).json({ error: 'tenant_not_found' });
@@ -1018,9 +1085,9 @@ adminRouter.get('/oauth-config', async (req, res) => {
     return;
   }
   res.setHeader('Cache-Control', 'no-store');
-  res.json(publicOAuthConfig(req, admin.email));
+  try { res.json(publicOAuthConfig(req, admin.email)); }
+  catch (error) { oauthConfigFailure(res, error); }
 });
-
 adminRouter.put('/oauth-config', async (req, res) => {
   const admin = await requireAdminUser(req);
   if (!admin) {
@@ -1028,31 +1095,35 @@ adminRouter.put('/oauth-config', async (req, res) => {
     return;
   }
   res.setHeader('Cache-Control', 'no-store');
+  try {
+    const body = req.body ?? {}; const stored = readOAuthConfig();
+    const disabledPlatforms = new Set<OAuthPlatform>(stored.disabledPlatforms ?? []);
+    const patch: Partial<StoredOAuthConfig> = {
+      youtubeOAuthClientId: bodyText(body.youtubeOAuthClientId),
+      metaSocialAppId: bodyText(body.metaSocialAppId),
+      instagramAppId: bodyText(body.instagramAppId),
+      tiktokClientKey: bodyText(body.tiktokClientKey),
+      advancedManualConnectEnabled: body.advancedManualConnectEnabled === true,
+    };
 
-  const body = req.body ?? {};
-  const stored = readOAuthConfig();
-  const disabledPlatforms = new Set<OAuthPlatform>(stored.disabledPlatforms ?? []);
-  const patch: Partial<StoredOAuthConfig> = {
-    youtubeOAuthClientId: bodyText(body.youtubeOAuthClientId),
-    metaSocialAppId: bodyText(body.metaSocialAppId),
-    tiktokClientKey: bodyText(body.tiktokClientKey),
-    advancedManualConnectEnabled: body.advancedManualConnectEnabled === true,
-  };
+    const youtubeSecret = bodyText(body.youtubeOAuthClientSecret);
+    const metaSecret = bodyText(body.metaSocialAppSecret);
+    const instagramSecret = bodyText(body.instagramAppSecret);
+    const tiktokSecret = bodyText(body.tiktokClientSecret);
+    if (youtubeSecret) patch.youtubeOAuthClientSecret = youtubeSecret;
+    if (metaSecret) patch.metaSocialAppSecret = metaSecret;
+    if (instagramSecret) patch.instagramAppSecret = instagramSecret;
+    if (tiktokSecret) patch.tiktokClientSecret = tiktokSecret;
 
-  const youtubeSecret = bodyText(body.youtubeOAuthClientSecret);
-  const metaSecret = bodyText(body.metaSocialAppSecret);
-  const tiktokSecret = bodyText(body.tiktokClientSecret);
-  if (youtubeSecret) patch.youtubeOAuthClientSecret = youtubeSecret;
-  if (metaSecret) patch.metaSocialAppSecret = metaSecret;
-  if (tiktokSecret) patch.tiktokClientSecret = tiktokSecret;
+    if (patch.youtubeOAuthClientId && youtubeSecret) disabledPlatforms.delete('youtube');
+    if (patch.metaSocialAppId && metaSecret) disabledPlatforms.delete('meta');
+    if (patch.instagramAppId && instagramSecret) disabledPlatforms.delete('instagram');
+    if (patch.tiktokClientKey && tiktokSecret) disabledPlatforms.delete('tiktok');
+    patch.disabledPlatforms = Array.from(disabledPlatforms);
 
-  if (patch.youtubeOAuthClientId && youtubeSecret) disabledPlatforms.delete('youtube');
-  if (patch.metaSocialAppId && metaSecret) disabledPlatforms.delete('meta');
-  if (patch.tiktokClientKey && tiktokSecret) disabledPlatforms.delete('tiktok');
-  patch.disabledPlatforms = Array.from(disabledPlatforms);
-
-  writeOAuthConfig(patch);
-  res.json(publicOAuthConfig(req, admin.email));
+    await writeOAuthConfig(patch);
+    res.json(publicOAuthConfig(req, admin.email));
+  } catch (error) { oauthConfigFailure(res, error); }
 });
 
 adminRouter.delete('/oauth-config/:platform', async (req, res) => {
@@ -1064,13 +1135,11 @@ adminRouter.delete('/oauth-config/:platform', async (req, res) => {
   res.setHeader('Cache-Control', 'no-store');
 
   const platform = bodyText(req.params.platform) as OAuthPlatform;
-  if (!['youtube', 'meta', 'tiktok'].includes(platform)) {
+  if (!['youtube', 'meta', 'instagram', 'tiktok'].includes(platform)) {
     res.status(400).json({ error: 'invalid_oauth_platform' });
     return;
   }
-
   try {
-    const disconnectedAccounts = await disconnectTenantPlatformAccounts(admin.tenantId, platform);
     const stored = readOAuthConfig();
     const disabledPlatforms = new Set<OAuthPlatform>(stored.disabledPlatforms ?? []);
     disabledPlatforms.add(platform);
@@ -1083,11 +1152,15 @@ adminRouter.delete('/oauth-config/:platform', async (req, res) => {
     } else if (platform === 'meta') {
       patch.metaSocialAppId = '';
       patch.metaSocialAppSecret = '';
+    } else if (platform === 'instagram') {
+      patch.instagramAppId = '';
+      patch.instagramAppSecret = '';
     } else {
       patch.tiktokClientKey = '';
       patch.tiktokClientSecret = '';
     }
-    writeOAuthConfig(patch);
+    const disconnectedAccounts = await disconnectTenantPlatformAccounts(admin.tenantId, platform);
+    await writeOAuthConfig(patch);
     res.json({
       ok: true,
       platform,
@@ -1095,10 +1168,7 @@ adminRouter.delete('/oauth-config/:platform', async (req, res) => {
       config: publicOAuthConfig(req, admin.email),
     });
   } catch (error) {
-    res.status(500).json({
-      error: 'oauth_config_clear_failed',
-      detail: error instanceof Error ? error.message : 'unknown_error',
-    });
+    oauthConfigFailure(res, error);
   }
 });
 
@@ -1118,7 +1188,7 @@ adminRouter.get('/delivery/platform-apps', async (req, res) => {
       pbListStrict<TenantPlatformAppRecord>('tenant_platform_apps', { perPage: 500, sort: 'tenant_id' }).then(result => result.items),
     ]);
   } catch (error) {
-    if (process.env.NODE_ENV !== 'production') {
+    if (localFallbacksEnabled()) {
       tenants = { items: listLocalTenants() as unknown as Record<string, any>[] };
       apps = [];
     } else {
@@ -1140,6 +1210,10 @@ adminRouter.get('/delivery/platform-apps', async (req, res) => {
     admin: admin.email,
     tenants: Array.from(tenantIds)
       .filter(tenantId => tenantId !== admin.tenantId)
+      .filter(tenantId => {
+        const tenant = tenants.items.find(item => item.id === tenantId || item.tenantId === tenantId);
+        return !deliveryProvisioningHidden(tenant);
+      })
       .map(tenantId => {
         const tenant = tenants.items.find(item => item.id === tenantId || item.tenantId === tenantId) || { id: tenantId, name: tenantId };
         return publicDeliveryTenant(req, tenant, apps);
@@ -1154,52 +1228,6 @@ adminRouter.get('/style-adoption-trends', async (req, res) => {
     return;
   }
   res.json({ admin: admin.email, items: await listStyleAdoptionTrends() });
-});
-
-adminRouter.post('/delivery/tenants', async (req, res) => {
-  const admin = await requireAdminUser(req);
-  if (!admin) {
-    res.status(403).json({ error: 'admin_required' });
-    return;
-  }
-
-  const companyName = bodyText(req.body?.companyName) || bodyText(req.body?.name);
-  if (!companyName) {
-    res.status(400).json({ error: 'company_name_required', message: '公司名称必填' });
-    return;
-  }
-  const code = inviteCode();
-  const now = new Date().toISOString();
-  try {
-    let tenant = await store.create<Record<string, any>>('tenants', {
-      name: companyName,
-      companyName,
-      contactName: bodyText(req.body?.contactName) || bodyText(req.body?.contact),
-      contact: bodyText(req.body?.contactName) || bodyText(req.body?.contact),
-      industry: bodyText(req.body?.industry),
-      notes: bodyText(req.body?.notes),
-      inviteCode: code,
-      subscriptionStatus: 'pending_delivery',
-      subscriptionPlan: 'delivery',
-      createdAt: now,
-    });
-    if (!tenant && process.env.NODE_ENV !== 'production') {
-      tenant = createLocalInviteTenant({
-        companyName,
-        contactName: bodyText(req.body?.contactName) || bodyText(req.body?.contact),
-        industry: bodyText(req.body?.industry),
-        notes: bodyText(req.body?.notes),
-        inviteCode: code,
-      });
-    }
-    if (!tenant) throw new Error('tenant_create_failed');
-    res.json({
-      ok: true,
-      tenant: publicDeliveryTenant(req, tenant, []),
-    });
-  } catch (error) {
-    res.status(500).json({ error: 'tenant_create_failed', detail: error instanceof Error ? error.message : 'unknown_error' });
-  }
 });
 
 adminRouter.put('/delivery/platform-apps/:tenantId/:platform', async (req, res) => {
@@ -1228,6 +1256,7 @@ adminRouter.put('/delivery/platform-apps/:tenantId/:platform', async (req, res) 
       pageId: bodyText(req.body?.pageId),
       igUserId: bodyText(req.body?.igUserId),
       youtubeChannelId: bodyText(req.body?.youtubeChannelId),
+      webhookVerifyToken: bodyText(req.body?.webhookVerifyToken),
       wecomEncodingAesKey: bodyText(req.body?.wecomEncodingAesKey),
       tokenType: req.body?.tokenType === 'system_user_permanent' ? 'system_user_permanent' : 'user_60d',
       accessToken: bodyText(req.body?.accessToken),

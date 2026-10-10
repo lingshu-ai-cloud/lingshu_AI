@@ -1,32 +1,52 @@
 import assert from 'node:assert/strict';
 import {
   applySafeStoryboardSpeechFallback,
+  buildSafeCloneStoryboard,
   clearStoryboardSpeech,
   ctaSemanticallySatisfied,
   dedupeStoryboardFieldLines,
   ensureSelectedProductNamesInScript,
+  ensureStoryboardPrimaryCta,
   fitStoryboardSpeech,
   fitSpeechToShot,
   isPackagingOnlyProductInfo,
+  isBeautyProductInfo,
+  isNonBlockingScriptQualityIssue,
+  normalizeCompleteTimestampTranslation,
+  normalizeTimestampTranslationValue,
   normalizeStoryboardFieldLines,
   openingMatchesCooperationRoute,
   productVoicePlanSupportsTheme,
-  requiresMinimumVoiceoverLines,
-  MAX_INTERACTIVE_SCRIPT_REPAIR_ATTEMPTS,
   repairMaterialScript,
   restoreProductStoryboardBoundaries,
+  serializeLockedStoryboard,
+  storyboardReferenceLeakIssues,
+  stripStoryboardHashtags,
+  stripStoryboardReferenceLeaks,
   unsupportedNumericClaims,
   storyboardSpeechIssues,
   syncStoryboardSubtitles,
+  splitVoiceoverLanguageLines,
+  voiceoverLineNeedsLanguageRepair,
 } from './studio.js';
 
-assert.equal(requiresMinimumVoiceoverLines('unselected', 'material'), false);
-assert.equal(requiresMinimumVoiceoverLines('none', 'material'), false);
-assert.equal(requiresMinimumVoiceoverLines('upload', 'product'), false);
-assert.equal(requiresMinimumVoiceoverLines('ai', 'clone'), false);
-assert.equal(requiresMinimumVoiceoverLines('ai', 'material'), true);
-assert.equal(requiresMinimumVoiceoverLines('ai', 'product'), true);
-assert.equal(MAX_INTERACTIVE_SCRIPT_REPAIR_ATTEMPTS, 1);
+assert.equal(isBeautyProductInfo('LX-Press Servo Press-Fit Cell · Industrial Automation'), false);
+assert.equal(isBeautyProductInfo('Hydrating lip balm skincare product'), true);
+
+const targetSizedStoryboard = serializeLockedStoryboard(
+  Array.from({ length: 4 }, (_, index) => ({
+    environment: '待匹配真实素材',
+    shot: '特写',
+    camera: '固定镜头',
+    composition: '主体清晰可见',
+    purpose: index === 0 ? '主题钩子' : index === 3 ? 'CTA' : '产品证据',
+    visual: '只展示资料可验证内容',
+    music: '轻量中性节奏',
+  })),
+  ['自动化经理，如何核实产品实证？', '0–50 kN 伺服压装。', '力-位移闭环监控。', '申请压装工艺评估'],
+  20,
+);
+assert.match(targetSizedStoryboard, /^\[[^\]]+-20s\]\n环境：待匹配真实素材/m, '短口播应保留设置的 20 秒视觉节奏');
 
 const compact = '[0-3s] 素材：瓶身 环境：桌面 景别：特写 运镜：推进 构图：居中 镜头功能：钩子 画面：旋出膏体 配乐：轻快 台词：买家先看膏体。 字幕：旧字幕';
 const normalized = normalizeStoryboardFieldLines(compact);
@@ -129,12 +149,76 @@ const namesPreservedAfterFallback = ensureSelectedProductNamesInScript(
 assert.match(namesPreservedAfterFallback, /^画面：两款空包装并排；展示 Mock Hydra Serum Dropper Bottle；展示 Mock Barrier Cream Airless Jar$/m);
 
 assert.ok(storyboardSpeechIssues(`[0-2s]\n台词：怎么判断这款包装是否适合你的品牌？`).length > 0);
-assert.equal(ctaSemanticallySatisfied('Message us for verified product details.', '引导跳转WhatsApp以触达'), true);
+assert.equal(ctaSemanticallySatisfied('Message us for verified product details.', '引导跳转WhatsApp以触达'), false);
+assert.equal(ctaSemanticallySatisfied('Message us on WhatsApp for verified product details.', '引导跳转WhatsApp以触达'), true);
 assert.equal(ctaSemanticallySatisfied('Read the catalog.', '引导跳转WhatsApp以触达'), false);
+const diagnosticCta = '发送工件、节拍、缺陷样本或现场布局，预约一次 30 分钟英文方案诊断';
+assert.equal(ctaSemanticallySatisfied('发工件和节拍，预约方案诊断。', diagnosticCta), true);
+assert.equal(ctaSemanticallySatisfied('联系我们了解详情。', diagnosticCta), false);
+const ctaInjectedStoryboard = ensureStoryboardPrimaryCta(
+  '[0-2s]\n环境：工厂\n台词：查看现场。\n字幕：查看现场。',
+  diagnosticCta,
+  'zh',
+);
+assert.equal(ctaSemanticallySatisfied(ctaInjectedStoryboard, diagnosticCta), true);
+assert.match(ctaInjectedStoryboard, /^台词：预约(?:方案)?诊断。$/m);
+assert.equal(storyboardSpeechIssues(ctaInjectedStoryboard).length, 0);
+const silentCtaStoryboard = ensureStoryboardPrimaryCta(
+  '[0-2s]\n环境：工厂\n台词：无\n字幕：无',
+  diagnosticCta,
+  'zh',
+  false,
+);
+assert.equal(ctaSemanticallySatisfied(silentCtaStoryboard, diagnosticCta), true);
+assert.match(silentCtaStoryboard, /^台词：无$/m);
+assert.match(silentCtaStoryboard, /^字幕：发工件和节拍，预约方案诊断。$/m);
+
+const safeCloneStoryboard = buildSafeCloneStoryboard(
+  '[0-3s]\n台词：电视屏幕。\n[3-7s]\n台词：Usefulhouse。\n[7-11s]\n台词：无',
+  '产品名称：Vision Inspection System',
+  diagnosticCta,
+  'zh',
+  'none',
+  'Factory Automation Manager',
+);
+assert.equal((safeCloneStoryboard.match(/^\[[^\]]+\]$/gm) || []).length, 3);
+assert.match(safeCloneStoryboard, /^台词：无$/m);
+assert.match(safeCloneStoryboard, /^字幕：发工件和节拍，预约方案诊断。$/m);
+assert.equal(ctaSemanticallySatisfied(safeCloneStoryboard, diagnosticCta), true);
+assert.doesNotMatch(safeCloneStoryboard, /Usefulhouse|电视|屏幕|#\w+/i);
+
+const referenceLeaks = storyboardReferenceLeakIssues(
+  '画面：Usefulhouse 电视屏幕演示 #SmartTV',
+  ['Usefulhouse'],
+  ['电视', '屏幕'],
+);
+assert.equal(referenceLeaks.length, 3);
+assert.doesNotMatch(stripStoryboardHashtags('字幕：#SmartTV\n画面：产品现场'), /#SmartTV/);
+const sanitizedReferenceLeaks = stripStoryboardReferenceLeaks(
+  '画面：Usefulhouse 电视屏幕 #SmartTV\n台词：查看 4K screen。',
+  ['Usefulhouse'],
+  ['电视', '屏幕', '4k', 'screen'],
+);
+assert.equal(storyboardReferenceLeakIssues(
+  sanitizedReferenceLeaks,
+  ['Usefulhouse'],
+  ['电视', '屏幕', '4k', 'screen'],
+).length, 0);
+assert.match(sanitizedReferenceLeaks, /设备|equipment/);
 
 assert.deepEqual(unsupportedNumericClaims('运镜：镜头向前推进1cm\n画面：滴管抬起0.5cm', '产品名称：测试精华'), []);
 assert.deepEqual(unsupportedNumericClaims('构图：产品占画面70%\n运镜：推进至80%\n字幕：提升70%\n画面：瓶身高度10cm', '产品名称：测试精华'), ['70%', '10cm']);
 assert.deepEqual(unsupportedNumericClaims('画面：摆放3个空白标签样稿\n字幕：每箱3个', '产品名称：测试精华'), ['3个']);
+assert.deepEqual(
+  unsupportedNumericClaims('配乐：单音阶上升提示音（第15秒）\n剪辑：画面持续 4 秒后淡出', '产品名称：测试精华'),
+  [],
+  'timeline directions are production parameters rather than product claims',
+);
+assert.deepEqual(
+  unsupportedNumericClaims('台词：15秒即可完成换线。\n字幕：15秒完成换线', '产品名称：测试精华'),
+  ['15秒'],
+  'seconds stated in speech or captions remain subject to the closed-world fact gate',
+);
 const multiProductInfo = `选定产品 1：Mock Hydra Serum Dropper Bottle
 产品名称：Mock Hydra Serum Dropper Bottle
 产品卖点：30ml透明玻璃滴管瓶
@@ -147,6 +231,14 @@ assert.deepEqual(unsupportedNumericClaims(
   multiProductInfo,
 ), []);
 assert.deepEqual(unsupportedNumericClaims('台词：This jar is 60g.\n字幕：This jar is 60g.', multiProductInfo), ['60g']);
+assert.deepEqual(unsupportedNumericClaims(
+  '台词：本产品支持100瓶起订。\n字幕：本产品支持 100 瓶起订。',
+  '产品名称：测试产品\nMOQ：100 瓶起订',
+), [], 'MOQ facts must tolerate optional whitespace between value and unit');
+assert.deepEqual(unsupportedNumericClaims(
+  '台词：本产品支持100瓶起订。',
+  '产品名称：测试产品\nMOQ：１００　瓶起订',
+), [], 'MOQ facts must normalize full-width digits and spaces');
 
 assert.equal(isPackagingOnlyProductInfo('所属类目：美妆个护\n产品卖点：30ml透明玻璃滴管瓶；适合精华液包装展示'), true);
 assert.equal(isPackagingOnlyProductInfo('所属类目：美妆个护\n产品卖点：精华液膏体质地轻盈，适合涂抹'), false);
@@ -235,6 +327,49 @@ assert.equal((noAsrCloneScript.match(/^环境：测试桌面$/gm) || []).length,
 assert.equal((noAsrCloneScript.match(/^景别：特写$/gm) || []).length, 5);
 assert.deepEqual(noAsrCloneScript.match(/^\[[^\]]+\]$/gm), visuallyNamedFiveSceneScript.match(/^\[[^\]]+\]$/gm));
 
+const industrialCloneScript = `[0-4s]
+环境：自动化产线
+景别：中景
+运镜：固定
+构图：工件居中
+镜头功能：钩子
+画面：工件进入视觉检测工位
+配乐：机械环境声
+台词：原始超长口播需要被替换
+字幕：原始超长口播需要被替换
+[4-8s]
+环境：检测工位
+景别：特写
+运镜：推进
+构图：相机与工件同框
+镜头功能：证据
+画面：相机采集工件图像
+配乐：轻节奏
+台词：原始超长口播需要被替换
+字幕：原始超长口播需要被替换
+[8-11s]
+环境：方案沟通桌面
+景别：中景
+运镜：拉远
+构图：资料与工件同框
+镜头功能：CTA
+画面：展示工件和节拍资料
+配乐：收束音
+台词：原始超长口播需要被替换
+字幕：原始超长口播需要被替换`;
+const safeIndustrialClone = applySafeStoryboardSpeechFallback(
+  industrialCloneScript,
+  '产品名称：工业视觉检测工作站\n所属类目：工厂自动化',
+  'buyer_pain',
+  diagnosticCta,
+  'zh',
+);
+assert.doesNotMatch(safeIndustrialClone, /包装/);
+assert.match(safeIndustrialClone, /^台词：采购，这个风险怎么判断？$/m);
+assert.match(safeIndustrialClone, /^台词：发工件和节拍，预约方案诊断。$/m);
+assert.equal(ctaSemanticallySatisfied(safeIndustrialClone, diagnosticCta), true);
+assert.equal(storyboardSpeechIssues(safeIndustrialClone).length, 0);
+
 const materialWithValidTimingButNoBuyer = visuallyNamedChineseScript
   .replace(/^台词：[^\n]+$/gm, '台词：看看包装。')
   .replace(/^字幕：[^\n]+$/gm, '字幕：看看包装。');
@@ -254,4 +389,66 @@ assert.deepEqual(buyerPainFallback.match(/^\[[^\]]+\]$/gm), materialWithValidTim
 assert.equal((buyerPainFallback.match(/^素材：中文素材\d$/gm) || []).length, 5);
 assert.equal((buyerPainFallback.match(/^画面：/gm) || []).length, 5);
 
+assert.equal(isNonBlockingScriptQualityIssue('未使用本条唯一主 CTA：联系管理员'), true);
+assert.equal(isNonBlockingScriptQualityIssue('首段没有执行“买家痛点”主题的钩子公式'), true);
+assert.equal(isNonBlockingScriptQualityIssue('出现产品资料未提供的数字：99%'), false);
+
+const translationSource = '[0-4s] 买家，你怎么判断这个风险？\n[4-8s] 检查可见细节。\n[12-15s] 私信了解详情。';
+assert.equal(
+  normalizeCompleteTimestampTranslation(translationSource, '[0-4s] Buyers, how do you judge this risk?', 'en'),
+  '',
+  'a one-line result must never be accepted for a three-line source',
+);
+assert.equal(
+  normalizeCompleteTimestampTranslation(
+    translationSource,
+    '[0-4s] Buyers, how do you judge this risk?\n[4-8s] Check the visible details.\n[12-15s] Message us for details.',
+    'en',
+  ),
+  '[0-4s] Buyers, how do you judge this risk?\n[4-8s] Check the visible details.\n[12-15s] Message us for details.',
+);
+assert.equal(
+  normalizeCompleteTimestampTranslation(
+    translationSource,
+    '[0-4s] Check this.\n[4-8s] Check this.\n[12-15s] Check this.',
+    'en',
+  ),
+  '',
+  'distinct source cues must not collapse into one repeated sentence',
+);
+assert.equal(
+  normalizeTimestampTranslationValue(
+    translationSource,
+    { lines: ['Buyers, how do you judge this risk?', 'Check the visible details.', 'Message us for details.'] },
+    'en',
+  ),
+  '[0-4s] Buyers, how do you judge this risk?\n[4-8s] Check the visible details.\n[12-15s] Message us for details.',
+  'a valid lines array must be rebuilt with the exact source timestamps',
+);
+assert.equal(
+  normalizeTimestampTranslationValue(
+    translationSource,
+    '1. Buyers, how do you judge this risk?\n2. Check the visible details.\n3. Message us for details.',
+    'en',
+  ),
+  '[0-4s] Buyers, how do you judge this risk?\n[4-8s] Check the visible details.\n[12-15s] Message us for details.',
+  'a numbered line response must not be rejected just because timestamps were omitted',
+);
+
+assert.equal(voiceoverLineNeedsLanguageRepair('Buyers, how do you judge this risk?', 'en'), false);
+assert.equal(voiceoverLineNeedsLanguageRepair('发送工件、节拍或缺陷样本，预约一次英文方案诊断。', 'en'), true);
+assert.equal(voiceoverLineNeedsLanguageRepair('Send the sample and book a 30-minute review.', 'zh'), true);
+assert.equal(voiceoverLineNeedsLanguageRepair('发送 LX-Vision 工件样本。', 'zh'), false);
+assert.deepEqual(
+  splitVoiceoverLanguageLines('Buyers, how do you judge this risk?\n发送工件、节拍或缺陷样本；预约英文方案诊断。'),
+  ['Buyers, how do you judge this risk?', '发送工件、节拍或缺陷样本；', '预约英文方案诊断。'],
+  'language repair must keep sentence order and translate every mismatched sentence independently',
+);
+
 console.log('studio script normalization tests passed');
+
+const presenterIdentityDraft = '[0-4s]\n画面：数字人：面对镜头讲述\n台词：看这些细节。\n[4-8s]\n画面：素材《板件》；源片截取：0-4s；元件特写\n台词：留意元件。';
+const presenterIdentityResult = ensureSelectedProductNamesInScript(presenterIdentityDraft, '产品名称：测试板');
+assert.ok(!presenterIdentityResult.split('[4-8s]')[0].includes('展示 测试板'));
+assert.ok(presenterIdentityResult.split('[4-8s]')[1].includes('展示 测试板'));
+assert.equal(ensureSelectedProductNamesInScript('[0-4s]\n画面：数字人：面对镜头讲述', '产品名称：测试板'), '[0-4s]\n画面：数字人：面对镜头讲述');

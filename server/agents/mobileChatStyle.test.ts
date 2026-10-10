@@ -1,3 +1,4 @@
+import test from 'node:test';
 import assert from 'node:assert/strict';
 import { mobileChatRewritePrompt, normalizeMobileChatFormatting, planMobileChatMessages, shouldReshapeMobileChatDraft, splitMobileChatMessages } from './mobileChatStyle.js';
 
@@ -36,3 +37,11 @@ assert.match(oneQuestion.join(' '), /^Which market are you in\?/);
 assert.match(oneQuestion.join(' '), /I can check the matching option\./);
 
 console.log('mobile chat style policy passed');
+
+
+test('commercial decimal amounts remain intact when splitting chat bubbles', () => {
+  const result = planMobileChatMessages('IMH-ABS-01, 1500 pcs to Germany — got it. Unit price USD 3.8, MOQ 1000 pcs, lead time 30 days, payment 30% deposit + balance before shipment. Which port works for you?');
+  assert.ok(result.messages.some(message => message.includes('USD 3.8')));
+  assert.ok(!result.messages.join(' ').includes('USD 3. 8'));
+  assert.ok(planMobileChatMessages('Unit price USD 12.50. Total USD 18750.00.').messages.join(' ').includes('18750.00'));
+});

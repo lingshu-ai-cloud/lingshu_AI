@@ -1,30 +1,14 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import {
-  CalendarClock,
-  CalendarDays,
-  CheckCircle2,
-  ChevronLeft,
-  ChevronRight,
-  Clock,
-  Flag,
-  Grid2X2,
-  LockKeyhole,
-  Play,
-  Plus,
-  RefreshCw,
-  Waves,
-} from 'lucide-react';
-import { authHeader } from '../../lib/auth';
-import {
-  buildMarketingEvents,
-  MARKET_OPTIONS,
-  timeZoneOffsetHours,
-  type MarketId,
-  type MarketingEvent,
-} from './marketingCalendar';
+import { Alert, App, Button, Drawer, Input, Modal, Select, Tag } from 'antd';
+import { CalendarDays, Plus } from 'lucide-react';
+import { authApi, authHeader } from '../../lib/auth';
+import { buildMarketingEvents, MARKET_OPTIONS, timeZoneOffsetHours, type MarketId } from './marketingCalendar';
 import { ContentQueuePanel, type PendingPlacement } from './ContentQueuePanel';
-import { PlatformBadge } from './PlatformBadge';
-import { localTimeValue, moveScheduleToDay, resolvePendingDrop, type PublishDeliveryMode } from './schedulePolicy';
+import { resolvePendingDrop, type PublishDeliveryMode } from './schedulePolicy';
+import PublishingReceiptRecovery from './PublishingReceiptRecovery';
+import { LsCalendar, type LsCalendarEvent } from '../ui/LsCalendar';
+import { calendarDateTimeValue, calendarDayKey, calendarInstant, calendarPublishStatus, canMoveCalendarPost } from '../../lib/calendarModel';
+import type { CopyAuditRecord } from '../../lib/publishQueueState';
 
 export type CalendarPost = {
   id: string;
@@ -50,6 +34,11 @@ export type CalendarPost = {
   isRecycle?: boolean;
   platformPostId?: string;
   scheduleLocked?: boolean;
+  workflowRunId?: string;
+  workflowTaskId?: string;
+  workflowTaskKey?: string;
+  enterpriseFactVersion?: string;
+  copyAudit?: CopyAuditRecord;
 };
 
 export type PendingPublishContent = {
@@ -64,28 +53,9 @@ export type PendingPublishContent = {
   status?: string;
 };
 
-type ViewMode = 'week' | 'month';
 
-type HoverContentData =
-  | { kind: 'post'; post: CalendarPost }
-  | { kind: 'tide'; day: Date; bestHour: number; targetHour: number; score: number; source: string; events: MarketingEvent[] }
-  | { kind: 'slot'; day: Date; startHour: number; endHour: number; items: CalendarPost[] };
-
-type HoveredContent = HoverContentData & { x: number; y: number };
-
-type BestTimeResponse = {
-  weekday: number;
-  scores: number[];
-  source?: string;
-  confidence?: string;
-  utcOffset?: number | null;
-};
-
-type EnterpriseProfileLite = {
-  company?: { mainMarkets?: string };
-  strategy?: { focusMarkets?: string };
-};
-
+type BestTimeResponse = { weekday: number; scores: number[]; source?: string; confidence?: string; utcOffset?: number | null };
+type EnterpriseProfileLite = { company?: { mainMarkets?: string }; strategy?: { focusMarkets?: string } };
 function marketIdFromEnterprise(value: string): MarketId {
   const candidates = value.split(/[、,，/；;\s]+/).map(item => item.trim()).filter(Boolean);
   for (const candidate of candidates) {
@@ -104,132 +74,26 @@ function marketIdFromEnterprise(value: string): MarketId {
   return 'global';
 }
 
-function startOfWeek(date: Date): Date {
-  const next = new Date(date);
-  const day = next.getDay();
-  next.setDate(next.getDate() - day);
-  next.setHours(0, 0, 0, 0);
-  return next;
-}
 
-function startOfDay(date: Date): Date {
-  return new Date(date.getFullYear(), date.getMonth(), date.getDate());
-}
-
-function addDays(date: Date, days: number): Date {
-  const next = new Date(date);
-  next.setDate(next.getDate() + days);
-  return next;
-}
-
-function iso(date: Date): string {
-  return date.toISOString();
-}
-
-function dateKey(date: Date): string {
-  const year = date.getFullYear();
-  const month = String(date.getMonth() + 1).padStart(2, '0');
-  const day = String(date.getDate()).padStart(2, '0');
-  return `${year}-${month}-${day}`;
-}
-
-function isSameDay(left: Date, right: Date): boolean {
-  return dateKey(left) === dateKey(right);
-}
-
-function statusMeta(item: CalendarPost): { label: string; className: string; Icon: typeof Clock } {
-  if (item.platformPostId || item.status === 'published') {
-    return { label: '已发布', className: 'border-emerald-200 bg-emerald-50 text-emerald-700', Icon: CheckCircle2 };
-  }
-  if (item.status === 'scheduled') {
-    return item.scheduleLocked
-      ? { label: '定点排期', className: 'border-violet-200 bg-violet-50 text-violet-700', Icon: LockKeyhole }
-      : { label: '已排期', className: 'border-sky-200 bg-sky-50 text-sky-700', Icon: CalendarClock };
-  }
-  if (item.status === 'publishing') {
-    return { label: '正在发布', className: 'border-amber-200 bg-amber-50 text-amber-700', Icon: RefreshCw };
-  }
-  if (item.status === 'failed') {
-    return { label: '发布失败', className: 'border-red-200 bg-red-50 text-red-700', Icon: Flag };
-  }
-  if (item.status === 'partial') {
-    return { label: '部分发布', className: 'border-orange-200 bg-orange-50 text-orange-700', Icon: Flag };
-  }
-  return { label: item.status || '草稿', className: 'border-slate-200 bg-slate-50 text-slate-600', Icon: Clock };
-}
-
-function targetHourFromBeijing(hour: number, offset: number): number {
-  return (hour - 8 + offset + 24) % 24;
-}
-
-function hourLabel(value: number): string {
-  const hour = Math.floor(value);
-  const minutes = value % 1 ? '30' : '00';
-  return `${String(hour).padStart(2, '0')}:${minutes}`;
-}
-
-function fallbackPeakScore(day: Date): number {
-  const weekdayBase = [0.68, 0.78, 0.74, 0.81, 0.86, 0.92, 0.84][day.getDay()];
-  const monthlyWave = Math.sin((day.getDate() / 31) * Math.PI * 4) * 0.045;
-  return Math.max(0.55, Math.min(0.96, weekdayBase + monthlyWave));
-}
-
+function startOfDay(date: Date): Date { return calendarInstant(calendarDayKey(date)); }
+function addDays(date: Date, days: number): Date { return new Date(date.getTime() + days * 86_400_000); }
+function iso(date: Date): string { return date.toISOString(); }
 function calendarErrorMessage(error: unknown): string {
   const message = error instanceof Error ? error.message : String(error || '');
-  if (!message || /request_failed|load_failed|failed to fetch|network/i.test(message)) {
-    return '日历数据暂时无法刷新，当前先展示平台参考节奏。';
-  }
-  return message;
+  return !message || /request_failed|load_failed|failed to fetch|network/i.test(message) ? '日历数据暂时无法刷新，已保留当前排期，请重试。' : message;
 }
-
-type ChartPoint = { x: number; y: number };
-
-function smoothChartPath(points: ChartPoint[]): string {
-  if (!points.length) return '';
-  if (points.length === 1) return `M ${points[0].x} ${points[0].y}`;
-  return points.slice(0, -1).reduce((path, point, index) => {
-    const previous = points[index - 1] || point;
-    const next = points[index + 1];
-    const afterNext = points[index + 2] || next;
-    const control1 = {
-      x: point.x + (next.x - previous.x) / 6,
-      y: point.y + (next.y - previous.y) / 6,
-    };
-    const control2 = {
-      x: next.x - (afterNext.x - point.x) / 6,
-      y: next.y - (afterNext.y - point.y) / 6,
-    };
-    return `${path} C ${control1.x.toFixed(2)} ${control1.y.toFixed(2)}, ${control2.x.toFixed(2)} ${control2.y.toFixed(2)}, ${next.x} ${next.y}`;
-  }, `M ${points[0].x} ${points[0].y}`);
+function statusLabel(item: CalendarPost): string {
+  const labels: Record<string, string> = { needs_attention: '结果待核对', finalize_pending: '回执已收 · 待回写', published: '已发布', scheduled: item.scheduleLocked ? '定点排期 · 已锁定' : '已排期', publishing: '正在发布', failed: '发布失败', partial: '部分发布', awaiting_manual_publish: '待人工发布', awaiting_reapproval: '内容变更 · 待重审' };
+  return labels[item.status] || (item.platformPostId ? '已发布' : item.status || '草稿');
 }
-
-function eventTone(event: MarketingEvent): string {
-  if (event.market === 'middle-east') return 'border-violet-200 bg-violet-50 text-violet-700';
-  if (event.market === 'southeast-asia') return 'border-rose-200 bg-rose-50 text-rose-700';
-  if (event.market === 'europe') return 'border-indigo-200 bg-indigo-50 text-indigo-700';
-  if (event.market === 'north-america') return 'border-amber-200 bg-amber-50 text-amber-700';
-  if (event.market === 'south-asia') return 'border-fuchsia-200 bg-fuchsia-50 text-fuchsia-700';
-  if (event.market === 'east-asia') return 'border-red-200 bg-red-50 text-red-700';
-  if (event.market === 'latin-america') return 'border-cyan-200 bg-cyan-50 text-cyan-700';
-  if (event.market === 'oceania') return 'border-blue-200 bg-blue-50 text-blue-700';
-  return 'border-orange-200 bg-orange-50 text-orange-700';
-}
-
 async function api<T>(url: string, init?: RequestInit): Promise<T> {
-  const resp = await fetch(url, { ...init, headers: { ...authHeader(), ...(init?.headers || {}) } });
-  const data = await resp.json().catch(() => ({}));
-  if (!resp.ok) throw new Error(data?.error || 'request_failed');
+  const response = await fetch(url, { ...init, headers: { ...authHeader(), ...(init?.headers || {}) } });
+  const data = await response.json().catch(() => ({}));
+  if (!response.ok) throw new Error(data?.error || 'request_failed');
   return data as T;
 }
 
-export function CalendarPlanner({
-  onCreate,
-  onOpenPost,
-  pendingItems = [],
-  onOpenPending,
-  onSchedulePending,
-  refreshKey = 0,
-}: {
+export function CalendarPlanner({ onCreate, onOpenPost, pendingItems = [], onOpenPending, onSchedulePending, refreshKey = 0 }: {
   onCreate?: (date: Date) => void;
   onOpenPost?: (post: CalendarPost) => void;
   pendingItems?: PendingPublishContent[];
@@ -237,824 +101,240 @@ export function CalendarPlanner({
   onSchedulePending?: (id: string, scheduledAt: Date) => Promise<number>;
   refreshKey?: number;
 }) {
-  const today = startOfDay(new Date());
-  const [mode, setMode] = useState<ViewMode>('week');
+  const { message } = App.useApp();
+  const [demoMode, setDemoMode] = useState(() => import.meta.env.DEV && (new URLSearchParams(window.location.search).get('mockCalendar') === '1' || window.sessionStorage.getItem('lingshu:calendar-demo') === '1'));
+  const [canEditSchedule, setCanEditSchedule] = useState(false);
+  const [mode, setMode] = useState('timeGridWeek');
   const [anchor, setAnchor] = useState(() => new Date());
   const [selectedDate, setSelectedDate] = useState(() => startOfDay(new Date()));
-  const selectedPlatform = 'tiktok';
-  const [selectedMarket, setSelectedMarket] = useState<MarketId>('global');
-  const [enterpriseMarketLabel, setEnterpriseMarketLabel] = useState('综合市场');
+  const [visibleRange, setVisibleRange] = useState(() => ({ from: addDays(startOfDay(new Date()), -7), to: addDays(startOfDay(new Date()), 7) }));
   const [items, setItems] = useState<CalendarPost[]>([]);
   const [scores, setScores] = useState<Record<number, number[]>>({});
-  const [dragId, setDragId] = useState('');
-  const [dragOverDate, setDragOverDate] = useState('');
-  const [isTideDragging, setIsTideDragging] = useState(false);
-  const [hoveredContent, setHoveredContent] = useState<HoveredContent | null>(null);
-  const [interactionMessage, setInteractionMessage] = useState('');
-  const [pendingTimeSelection, setPendingTimeSelection] = useState<{ id: string; title: string; day: Date; time: string } | null>(null);
-  const [pendingTimeSaving, setPendingTimeSaving] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
+  const [interactionMessage, setInteractionMessage] = useState('');
   const [scoreSource, setScoreSource] = useState('平台参考');
-  const calendarTopRef = useRef<HTMLDivElement>(null);
-  const calendarScrollRef = useRef<HTMLDivElement>(null);
-  const tideScrollRef = useRef<HTMLDivElement>(null);
-  const tideDragRef = useRef({ pointerId: -1, startX: 0, scrollLeft: 0, moved: false });
-
+  const selectedPlatform = 'tiktok';
+  const [platformFilter, setPlatformFilter] = useState('all');
+  const [selectedMarket, setSelectedMarket] = useState<MarketId>('global');
+  const [enterpriseMarketLabel, setEnterpriseMarketLabel] = useState('综合市场');
+  const [pendingId, setPendingId] = useState<string>();
+  const [pendingTimeSelection, setPendingTimeSelection] = useState<{ id: string; title: string; day: string; time: string } | null>(null);
+  const [pendingTimeSaving, setPendingTimeSaving] = useState(false);
+  const [recoveryPost, setRecoveryPost] = useState<CalendarPost | null>(null);
+  const calendarRequestRef = useRef<AbortController | null>(null);
   const market = MARKET_OPTIONS.find(option => option.id === selectedMarket) ?? MARKET_OPTIONS[0];
-  const utcOffset = useMemo(
-    () => timeZoneOffsetHours(market.timeZone, selectedDate),
-    [market.timeZone, selectedDate],
-  );
+  const utcOffset = useMemo(() => timeZoneOffsetHours(market.timeZone, selectedDate), [market.timeZone, selectedDate]);
+  const days = useMemo(() => Array.from({ length: Math.max(1, Math.min(371, Math.ceil((visibleRange.to.getTime() - visibleRange.from.getTime()) / 86_400_000))) }, (_, index) => addDays(visibleRange.from, index)), [visibleRange]);
+  const range = useMemo(() => {
+    const queueFrom = startOfDay(new Date()), queueTo = addDays(queueFrom, 35);
+    return { from: visibleRange.from < queueFrom ? visibleRange.from : queueFrom, to: visibleRange.to > queueTo ? visibleRange.to : queueTo };
+  }, [visibleRange]);
 
   useEffect(() => {
     let active = true;
-    api<EnterpriseProfileLite>('/api/overseas/enterprise/profile')
-      .then(profile => {
-        if (!active) return;
-        const configuredMarket = profile.strategy?.focusMarkets?.trim() || profile.company?.mainMarkets?.trim();
-        if (!configuredMarket) return;
-        setEnterpriseMarketLabel(configuredMarket);
-        setSelectedMarket(marketIdFromEnterprise(configuredMarket));
-      })
-      .catch(() => undefined);
-    return () => {
-      active = false;
-    };
+    void authApi.me().then(session => { if (active) setCanEditSchedule(Boolean(session && !session.supportAccess && ['super_admin', 'admin', 'social_operator'].includes(session.user.role))); }).catch(() => undefined);
+    void api<EnterpriseProfileLite>('/api/overseas/enterprise/profile').then(profile => {
+      if (!active) return;
+      const configuredMarket = profile.strategy?.focusMarkets?.trim() || profile.company?.mainMarkets?.trim();
+      if (configuredMarket) { setEnterpriseMarketLabel(configuredMarket); setSelectedMarket(marketIdFromEnterprise(configuredMarket)); }
+    }).catch(() => undefined);
+    return () => { active = false; };
   }, []);
-
-  const days = useMemo(() => {
-    if (mode === 'month') {
-      const first = new Date(anchor.getFullYear(), anchor.getMonth(), 1);
-      const start = startOfWeek(first);
-      return Array.from({ length: 42 }, (_, index) => addDays(start, index));
-    }
-    const start = startOfWeek(anchor);
-    return Array.from({ length: 7 }, (_, index) => addDays(start, index));
-  }, [anchor, mode]);
-
-  const range = useMemo(() => {
-    const queueFrom = startOfDay(new Date());
-    const calendarFrom = days[0];
-    const calendarTo = addDays(days[days.length - 1], 1);
-    const from = calendarFrom.getTime() < queueFrom.getTime() ? calendarFrom : queueFrom;
-    const queueTo = addDays(queueFrom, 35);
-    const to = calendarTo.getTime() > queueTo.getTime() ? calendarTo : queueTo;
-    return { from, to };
-  }, [days]);
-
-  const tideMonthDays = useMemo(() => {
-    const first = new Date(anchor.getFullYear(), anchor.getMonth(), 1);
-    const dayCount = new Date(anchor.getFullYear(), anchor.getMonth() + 1, 0).getDate();
-    return Array.from({ length: dayCount }, (_, index) => addDays(first, index));
-  }, [anchor]);
-
-  const tideEvents = useMemo(() => {
-    const firstKey = dateKey(tideMonthDays[0]);
-    const lastKey = dateKey(tideMonthDays[tideMonthDays.length - 1]);
-    return buildMarketingEvents(anchor).filter(event => event.date >= firstKey && event.date <= lastKey);
-  }, [anchor, tideMonthDays]);
+  useEffect(() => {
+    if (!import.meta.env.DEV) return;
+    window.sessionStorage.setItem('lingshu:calendar-demo', demoMode ? '1' : '0');
+    const url = new URL(window.location.href);
+    if (demoMode) url.searchParams.set('mockCalendar', '1'); else url.searchParams.delete('mockCalendar');
+    window.history.replaceState(window.history.state, '', url);
+  }, [demoMode]);
 
   const load = async (silent = false) => {
+    if (demoMode) {
+      calendarRequestRef.current?.abort();
+      calendarRequestRef.current = null;
+      const titles = ['30 秒认识灵枢数字员工', '从一条灵感到多平台成片', '工厂产品细节与应用展示', '采购常见问题：交付与定制', '客户案例：一周内容运营流程', '幕后揭秘：脚本如何变成视频', '本周精选与下周预告'];
+      const cadence = [
+        { platform: 'tiktok', weekdays: [1, 2, 3, 4, 5], hour: 8, account: '灵枢 · 北美品牌号' },
+        { platform: 'facebook', weekdays: [1, 2, 3, 4, 5], hour: 10, account: '灵枢 · 品牌主页' },
+        { platform: 'youtube', weekdays: [2, 4, 6], hour: 20, account: '灵枢 · 官方频道' },
+        { platform: 'instagram', weekdays: [1, 3, 5], hour: 14, account: '灵枢 · 产品展示号' },
+      ];
+      setItems(days.flatMap((day, index) => cadence.filter(entry => entry.weekdays.includes(new Date(`${calendarDayKey(day)}T12:00:00Z`).getUTCDay())).map(entry => {
+        const date = calendarInstant(`${calendarDayKey(day)}T${String(entry.hour).padStart(2, '0')}:${entry.platform === 'instagram' ? '30' : '00'}`);
+        return { id: `demo-calendar-${index}-${entry.platform}`, title: titles[(index + cadence.indexOf(entry)) % titles.length], platform: entry.platform, publishedAt: date.toISOString(), status: 'scheduled', scheduleLocked: entry.platform === 'youtube', description: '演示内容：展示产品价值、应用场景与明确的咨询入口。此数据仅用于页面预览。', targetAccountLabels: [entry.account], duration: 30 + index * 5, inquiries: 0 };
+      })));
+      setError(''); setLoading(false);
+      return;
+    }
+    if (calendarRequestRef.current) {
+      if (silent) return;
+      calendarRequestRef.current.abort();
+    }
+    const controller = new AbortController();
+    calendarRequestRef.current = controller;
+    let timedOut = false;
+    const isCurrent = () => calendarRequestRef.current === controller;
+    const canCommit = () => isCurrent() && !controller.signal.aborted;
+    const timeout = window.setTimeout(() => {
+      timedOut = true;
+      controller.abort();
+    }, 15_000);
     if (!silent) {
       setLoading(true);
       setError('');
     }
-    try {
-      const weekdays = [0, 1, 2, 3, 4, 5, 6];
-      const [calendar, scoreRows] = await Promise.all([
-        api<{ items: CalendarPost[] }>(`/api/overseas/publishing/calendar?from=${encodeURIComponent(iso(range.from))}&to=${encodeURIComponent(iso(range.to))}`),
-        Promise.all(weekdays.map(weekday =>
-          api<BestTimeResponse>(
-            `/api/overseas/publishing/best-time?platform=${encodeURIComponent(selectedPlatform)}&weekday=${weekday}&utcOffset=${encodeURIComponent(String(utcOffset))}`,
-          ),
-        )),
-      ]);
-      setItems(calendar.items || []);
+    // Recommendations are optional: they must not prevent real posts from loading.
+    const calendarLoad = api<{ items: CalendarPost[] }>(`/api/overseas/publishing/calendar?from=${encodeURIComponent(iso(range.from))}&to=${encodeURIComponent(iso(range.to))}`, { signal: controller.signal })
+      .then(calendar => {
+        if (!canCommit()) return;
+        setItems(calendar.items || []);
+        setError('');
+      })
+      .catch(loadError => {
+        if (!isCurrent() || (controller.signal.aborted && !timedOut)) return;
+        setError(timedOut ? '日历读取超时，请稍后重试' : calendarErrorMessage(loadError));
+      });
+    const scoreLoad = Promise.all([0, 1, 2, 3, 4, 5, 6].map(weekday =>
+      api<BestTimeResponse>(
+        `/api/overseas/publishing/best-time?platform=${encodeURIComponent(selectedPlatform)}&weekday=${weekday}&utcOffset=${encodeURIComponent(String(utcOffset))}`,
+        { signal: controller.signal },
+      ),
+    )).then(scoreRows => {
+      if (!canCommit()) return;
       setScores(Object.fromEntries(scoreRows.map(row => [row.weekday, row.scores])));
       setScoreSource(scoreRows.some(row => row.source === 'account_history') ? '账号真实数据' : '平台参考');
-    } catch (loadError) {
-      if (!silent) setError(calendarErrorMessage(loadError));
+    }).catch(() => {
+      if (!isCurrent() || (controller.signal.aborted && !timedOut)) return;
+      setScores({});
+      setScoreSource('平台参考');
+    });
+    try {
+      await Promise.all([calendarLoad, scoreLoad]);
     } finally {
-      if (!silent) setLoading(false);
+      window.clearTimeout(timeout);
+      if (isCurrent()) {
+        calendarRequestRef.current = null;
+        setLoading(false);
+      }
     }
   };
 
   useEffect(() => {
     void load();
-    const timer = window.setInterval(() => void load(true), 30_000);
-    return () => window.clearInterval(timer);
-  }, [range.from.toISOString(), range.to.toISOString(), mode, selectedPlatform, utcOffset, refreshKey]);
+    const refresh = () => { void load(); };
+    window.addEventListener('lingshu:agent-business-refresh', refresh);
+    const timer = window.setInterval(() => {
+      if (document.visibilityState === 'visible') void load(true);
+    }, 30_000);
+    return () => {
+      window.clearInterval(timer);
+      window.removeEventListener('lingshu:agent-business-refresh', refresh);
+      const controller = calendarRequestRef.current;
+      calendarRequestRef.current = null;
+      controller?.abort();
+    };
+  }, [range.from.toISOString(), range.to.toISOString(), mode, selectedPlatform, utcOffset, refreshKey, demoMode]);
 
   const itemsByDay = useMemo(() => {
     const groups: Record<string, CalendarPost[]> = {};
-    for (const item of items) {
-      const key = dateKey(new Date(item.publishedAt));
-      groups[key] = [...(groups[key] || []), item];
-    }
+    for (const item of items) { const key = calendarDayKey(item.publishedAt); groups[key] = [...(groups[key] || []), item]; }
     return groups;
   }, [items]);
-
-  const tideDayWidth = 106;
-  const tideChartWidth = tideMonthDays.length * tideDayWidth;
-  const tidePeakScores = tideMonthDays.map(day => {
-    const dayScores = scores[day.getDay()] || [];
-    return dayScores.length ? Math.max(...dayScores) : fallbackPeakScore(day);
-  });
-  const tideMinScore = Math.min(...tidePeakScores);
-  const tideMaxScore = Math.max(...tidePeakScores);
-  const tideScoreSpread = tideMaxScore - tideMinScore;
-  const tidePoints = tideMonthDays.map((day, index) => {
-    const peakScore = tidePeakScores[index];
-    const relativeScore = tideScoreSpread >= 0.02
-      ? (peakScore - tideMinScore) / tideScoreSpread
-      : 0.5;
-    return {
-      x: index * tideDayWidth + tideDayWidth / 2,
-      y: 122 - relativeScore * 48,
-    };
-  });
-  const tideLinePath = smoothChartPath(tidePoints);
-  const tideAreaPath = `${tideLinePath} L ${tidePoints[tidePoints.length - 1].x} 132 L ${tidePoints[0].x} 132 Z`;
-  const selectedScores = scores[selectedDate.getDay()] || [];
-  const selectedBestHour = selectedScores.length
-    ? selectedScores.reduce((bestHour, score, hour, all) => score > all[bestHour] ? hour : bestHour, 0)
-    : 20;
-
-  const eventsByDay = useMemo(() => {
-    const grouped: Record<string, MarketingEvent[]> = {};
-    for (const event of tideEvents) grouped[event.date] = [...(grouped[event.date] || []), event];
-    return grouped;
-  }, [tideEvents]);
-
-  const tideHoverForDay = (day: Date, onlyEvent?: MarketingEvent): HoverContentData => {
-    const dayScores = scores[day.getDay()] || [];
-    const bestHour = dayScores.length
-      ? dayScores.reduce((best, score, hour, all) => score > all[best] ? hour : best, 0)
-      : 20;
-    return {
-      kind: 'tide',
-      day,
-      bestHour,
-      targetHour: targetHourFromBeijing(bestHour, utcOffset),
-      score: dayScores[bestHour] || fallbackPeakScore(day),
-      source: scoreSource,
-      events: onlyEvent ? [onlyEvent] : eventsByDay[dateKey(day)] || [],
-    };
+  const selectedKey = calendarDayKey(selectedDate);
+  const selectedScores = scores[new Date(`${selectedKey}T12:00:00Z`).getUTCDay()] || [];
+  const selectedBestHour = selectedScores.length ? selectedScores.reduce((best, score, hour, all) => score > all[best] ? hour : best, 0) : null;
+  const marketingEvents = useMemo(() => buildMarketingEvents(anchor).filter(event => event.date.startsWith(calendarDayKey(anchor).slice(0, 7))), [anchor]);
+  const events: LsCalendarEvent[] = items.filter(item => platformFilter === 'all' || item.platform === platformFilter).map(post => ({
+    id: post.id, title: post.title, start: post.publishedAt, timeZone: 'Asia/Shanghai', eventType: 'publish',
+    status: calendarPublishStatus(post), statusLabel: statusLabel(post), platform: post.platform,
+    accountId: post.targetAccountIds?.[0], accountName: post.targetAccountLabels?.join('、'),
+    thumbnailUrl: post.coverUrl, ownerAgent: '经营 Agent', sourceId: post.contentId, description: post.description,
+    editable: canMoveCalendarPost(post, canEditSchedule && !demoMode), data: post,
+  }));
+  const reschedule = async (event: LsCalendarEvent, scheduledAt: string) => {
+    const current = items.find(item => item.id === event.id);
+    if (!current || !canMoveCalendarPost(current, canEditSchedule && !demoMode)) throw new Error('此内容的排期不可调整。');
+    if (new Date(scheduledAt).getTime() <= Date.now()) throw new Error('新的发布时间必须晚于当前时间。');
+    const data = await api<{ item: CalendarPost }>(`/api/overseas/publishing/calendar/${encodeURIComponent(event.id)}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ scheduledAt }) });
+    setItems(previous => previous.map(item => item.id === event.id ? data.item : item));
+    setInteractionMessage('排期已更新，发布时间以服务器保存结果为准。');
   };
-
   const placePendingContent = async (id: string, scheduledAt: Date) => {
-    if (!onSchedulePending) throw new Error('排期功能暂不可用');
+    if (!canEditSchedule || demoMode || !onSchedulePending) throw new Error('当前无法修改排期。');
     await onSchedulePending(id, scheduledAt);
     setSelectedDate(startOfDay(scheduledAt));
-    setAnchor(new Date(scheduledAt));
   };
-
   const arrangePendingContent = async (placements: PendingPlacement[]) => {
     let completed = 0;
     const failures: string[] = [];
     for (const placement of placements) {
-      try {
-        await placePendingContent(placement.id, placement.scheduledAt);
-        completed += 1;
-      } catch (arrangeError) {
-        failures.push(arrangeError instanceof Error ? arrangeError.message : '排期失败');
-      }
+      try { await placePendingContent(placement.id, placement.scheduledAt); completed += 1; }
+      catch (arrangeError) { failures.push(arrangeError instanceof Error ? arrangeError.message : '排期失败'); }
     }
     await load();
-    setInteractionMessage(failures.length
-      ? `已排入 ${completed} 条，${failures.length} 条需要重新检查。`
-      : `已按当前发布节奏排入 ${completed} 条视频。`);
+    setInteractionMessage(failures.length ? `已排入 ${completed} 条，${failures.length} 条需要重新检查。` : `已按当前发布节奏排入 ${completed} 条视频。`);
     if (failures.length) throw new Error(failures[0]);
   };
-
-  const schedulePendingOnDay = async (id: string, day: Date) => {
+  const schedulePendingOnDay = async (id: string, day: string) => {
+    if (!canEditSchedule || demoMode) return;
     const pending = pendingItems.find(item => item.id === id);
     if (!pending) return;
-    const resolution = resolvePendingDrop(pending, day);
-    if (resolution.kind === 'blocked') {
-      setInteractionMessage(resolution.message);
-      return;
-    }
+    const resolution = resolvePendingDrop(pending, calendarInstant(day));
+    if (resolution.kind === 'blocked') { setInteractionMessage(resolution.message); return; }
     if (resolution.kind === 'needs-time') {
-      const suggested = new Date(day);
-      suggested.setHours(selectedBestHour, 0, 0, 0);
-      if (suggested.getTime() <= Date.now()) {
-        const nextAvailable = new Date(Date.now() + 60 * 60_000);
-        nextAvailable.setMinutes(nextAvailable.getMinutes() < 30 ? 30 : 0, 0, 0);
-        if (nextAvailable.getMinutes() === 0) nextAvailable.setHours(nextAvailable.getHours() + 1);
-        if (!isSameDay(nextAvailable, day)) {
-          setInteractionMessage('今天已经没有合适的未来时间，请拖到明天或之后。');
-          return;
-        }
-        suggested.setHours(nextAvailable.getHours(), nextAvailable.getMinutes(), 0, 0);
-      }
-      setPendingTimeSelection({ id, title: pending.title, day: startOfDay(day), time: localTimeValue(suggested) });
+      setPendingTimeSelection({ id, title: pending.title, day, time: selectedBestHour === null ? '20:00' : `${String(selectedBestHour).padStart(2, '0')}:00` });
       return;
     }
-    try {
-      await placePendingContent(id, resolution.scheduledAt);
-      await load();
-      setInteractionMessage(`“${pending.title}”已按锁定时间安排到 ${resolution.scheduledAt.toLocaleString('zh-CN', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' })}。`);
-    } catch (scheduleError) {
-      setInteractionMessage(scheduleError instanceof Error ? scheduleError.message : '排期失败，请重试');
-    }
+    try { await placePendingContent(id, resolution.scheduledAt); await load(); setInteractionMessage('已按原定点时间安排发布，锁定时间保持不变。'); }
+    catch (scheduleError) { setInteractionMessage(scheduleError instanceof Error ? scheduleError.message : '排期失败，请重试'); }
   };
-
   const confirmPendingTime = async () => {
     if (!pendingTimeSelection) return;
-    const pending = pendingItems.find(item => item.id === pendingTimeSelection.id);
-    if (!pending) {
-      setPendingTimeSelection(null);
-      return;
-    }
-    const resolution = resolvePendingDrop(pending, pendingTimeSelection.day, pendingTimeSelection.time);
-    if (resolution.kind !== 'ready') {
-      setInteractionMessage(resolution.kind === 'blocked' ? resolution.message : '请选择具体发布时间。');
-      return;
-    }
     setPendingTimeSaving(true);
     try {
-      await placePendingContent(pending.id, resolution.scheduledAt);
-      await load();
-      setInteractionMessage(`“${pending.title}”已安排到 ${resolution.scheduledAt.toLocaleString('zh-CN', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' })}。`);
+      const date = calendarInstant(`${pendingTimeSelection.day}T${pendingTimeSelection.time}`);
+      if (date.getTime() <= Date.now()) throw new Error('计划发布时间必须晚于当前时间。');
+      await placePendingContent(pendingTimeSelection.id, date); await load();
+      setInteractionMessage(`已安排到 ${calendarDateTimeValue(date).replace('T', ' ')}（北京时间）。`);
       setPendingTimeSelection(null);
-    } catch (scheduleError) {
-      setInteractionMessage(scheduleError instanceof Error ? scheduleError.message : '排期失败，请重试');
-    } finally {
-      setPendingTimeSaving(false);
-    }
+    } catch (scheduleError) { void message.error(scheduleError instanceof Error ? scheduleError.message : '排期失败，请重试'); }
+    finally { setPendingTimeSaving(false); }
   };
 
-  const reschedule = async (postId: string, day: Date) => {
-    const current = items.find(item => item.id === postId);
-    if (!current) return;
-    if (current.scheduleLocked) {
-      setInteractionMessage('这条内容使用定点排期，时间已经锁定。');
-      return;
-    }
-    const target = moveScheduleToDay(current.publishedAt, day);
-    if (!target || target.getTime() <= Date.now()) {
-      setInteractionMessage('新的发布时间必须晚于当前时间。');
-      return;
-    }
-    const data = await api<{ item: CalendarPost }>(`/api/overseas/publishing/calendar/${postId}`, {
-      method: 'PATCH',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ scheduledAt: target.toISOString() }),
-    });
-    setItems(previous => previous.map(item => item.id === postId ? data.item : item));
-    setInteractionMessage(`已调整到 ${target.toLocaleString('zh-CN', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' })}，原发布时间保持不变。`);
-  };
-
-  const previewAt = (event: React.MouseEvent, content: HoverContentData) => {
-    setHoveredContent({ ...content, x: event.clientX, y: event.clientY } as HoveredContent);
-  };
-
-  const moveRange = (direction: number) => {
-    const next = mode === 'month'
-      ? new Date(anchor.getFullYear(), anchor.getMonth() + direction, 1)
-      : addDays(anchor, 7 * direction);
-    setAnchor(next);
-    setSelectedDate(startOfDay(next));
-  };
-
-  const goToday = () => {
-    const next = new Date();
-    setAnchor(next);
-    setSelectedDate(startOfDay(next));
-  };
-
-  useEffect(() => {
-    const scroller = tideScrollRef.current;
-    if (!scroller) return;
-    const isSelectedInMonth = selectedDate.getFullYear() === anchor.getFullYear()
-      && selectedDate.getMonth() === anchor.getMonth();
-    const targetIndex = isSelectedInMonth ? selectedDate.getDate() - 1 : 0;
-    const targetLeft = Math.max(0, targetIndex * tideDayWidth - scroller.clientWidth / 2 + tideDayWidth / 2);
-    scroller.scrollTo({ left: targetLeft, behavior: 'smooth' });
-  }, [anchor.getFullYear(), anchor.getMonth(), dateKey(selectedDate)]);
-
-  const startTideDrag = (event: React.PointerEvent<HTMLDivElement>) => {
-    if (event.button !== 0) return;
-    tideDragRef.current = {
-      pointerId: event.pointerId,
-      startX: event.clientX,
-      scrollLeft: event.currentTarget.scrollLeft,
-      moved: false,
-    };
-    event.currentTarget.setPointerCapture(event.pointerId);
-    setIsTideDragging(true);
-  };
-
-  const moveTideDrag = (event: React.PointerEvent<HTMLDivElement>) => {
-    if (tideDragRef.current.pointerId !== event.pointerId) return;
-    const distance = event.clientX - tideDragRef.current.startX;
-    if (Math.abs(distance) > 5) tideDragRef.current.moved = true;
-    if (!tideDragRef.current.moved) return;
-    event.preventDefault();
-    event.currentTarget.scrollLeft = tideDragRef.current.scrollLeft - distance;
-  };
-
-  const endTideDrag = (event: React.PointerEvent<HTMLDivElement>) => {
-    if (tideDragRef.current.pointerId !== event.pointerId) return;
-    if (event.currentTarget.hasPointerCapture(event.pointerId)) {
-      event.currentTarget.releasePointerCapture(event.pointerId);
-    }
-    tideDragRef.current.pointerId = -1;
-    setIsTideDragging(false);
-  };
-
-  const selectTideDate = (day: Date) => {
-    if (tideDragRef.current.moved) {
-      tideDragRef.current.moved = false;
-      return;
-    }
-    setSelectedDate(startOfDay(day));
-  };
-
-  return (
-    <div className="space-y-3" data-lingshu-guide="content-planner">
-      <div className="space-y-3">
-        <div className="flex flex-wrap items-center justify-between gap-3">
-          <div className="flex items-center gap-2">
-            <span className="flex h-9 w-9 items-center justify-center rounded-xl bg-emerald-50 text-emerald-700">
-              <CalendarDays size={17} />
-            </span>
-            <h2 className="text-base font-black text-text-primary">内容排产工作台</h2>
-          </div>
-          <div className="flex flex-wrap items-center gap-2">
-            <button type="button" onClick={() => moveRange(-1)} className="rounded-lg border border-border p-2 text-text-muted hover:text-text-primary" aria-label="上一周期">
-              <ChevronLeft size={15} />
-            </button>
-            <button type="button" onClick={goToday} className="rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-xs font-black text-emerald-700">今天</button>
-            <button type="button" onClick={() => moveRange(1)} className="rounded-lg border border-border p-2 text-text-muted hover:text-text-primary" aria-label="下一周期">
-              <ChevronRight size={15} />
-            </button>
-            <div className="ml-1 flex rounded-lg border border-border bg-surface p-1">
-              {[
-                ['week', Grid2X2, '周'],
-                ['month', CalendarDays, '月'],
-              ].map(([value, Icon, label]) => (
-                <button
-                  key={value as string}
-                  type="button"
-                  onClick={() => setMode(value as ViewMode)}
-                  className={`inline-flex items-center gap-1 rounded-md px-2 py-1 text-xs font-bold ${mode === value ? 'bg-white text-text-primary shadow-sm' : 'text-text-muted'}`}
-                >
-                  <Icon size={13} /> {label as string}
-                </button>
-              ))}
-            </div>
-            <button type="button" onClick={() => void load()} className="rounded-lg border border-border p-2 text-text-muted hover:text-text-primary" aria-label="刷新日历">
-              <RefreshCw size={15} className={loading ? 'animate-spin' : ''} />
-            </button>
-          </div>
-        </div>
-
-      </div>
-
-      {error && <div className="rounded-xl border border-red-100 bg-red-50 px-3 py-2 text-xs text-red-600">{error}</div>}
-
-      <div ref={calendarTopRef} data-lingshu-guide="content-calendar" className="scroll-mt-28 rounded-2xl border border-border bg-white p-3 shadow-[0_12px_32px_rgba(15,23,42,0.12)]">
-        <div className="flex flex-wrap items-center gap-3">
-          <div className="flex items-center gap-2">
-            <CalendarDays size={15} className="text-emerald-600" />
-            <h3 className="text-sm font-black text-text-primary">内容日历</h3>
-          </div>
-        </div>
-
-        <div data-lingshu-guide="publishing-tide" className="mt-3 overflow-hidden rounded-xl border border-emerald-100 bg-emerald-50/30 pb-2 pt-3">
-          <div className="flex flex-wrap items-start justify-between gap-2 px-3">
-            <div>
-              <div className="flex items-center gap-2">
-                <Waves size={14} className="text-emerald-600" />
-                <span className="text-xs font-black text-text-primary">
-                  {anchor.getFullYear()} 年 {anchor.getMonth() + 1} 月发布潮汐
-                </span>
-                <span className="rounded-full bg-white px-2 py-0.5 text-[9px] font-black text-emerald-700 shadow-sm">
-                  本月 {tideMonthDays.length} 天
-                </span>
-              </div>
-              <p className="mt-1 text-[9px] font-bold text-text-muted">按住潮汐左右拖动，可查看整月发布节奏与全球重点电商节庆</p>
-            </div>
-            <div className="text-right">
-              <p className="text-[9px] font-bold text-text-muted">
-                目标市场：{enterpriseMarketLabel} · {scoreSource === '账号真实数据' ? scoreSource : `${scoreSource} · 非账号实测`}
-              </p>
-              <p className="mt-1 text-[9px] font-black text-emerald-700">
-                {selectedDate.toLocaleDateString('zh-CN', { month: 'long', day: 'numeric', weekday: 'short' })} · 建议北京时间 {hourLabel(selectedBestHour)}
-                {market.id !== 'global' && `（${market.timeZoneLabel} ${hourLabel(targetHourFromBeijing(selectedBestHour, utcOffset))}）`}
-              </p>
-            </div>
-          </div>
-          <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1 border-y border-emerald-100/80 bg-white/70 px-3 py-1.5 text-[8px] font-bold text-text-muted">
-            <span className="inline-flex items-center gap-1"><span className="h-2 w-2 rounded-full bg-emerald-500" />发布热度</span>
-            <span className="inline-flex items-center gap-1"><Flag size={9} className="text-orange-500" />全球电商节庆点（标注真实日期）</span>
-            <span className="ml-auto">节庆点仅显示在潮汐中</span>
-          </div>
-          <div
-            ref={tideScrollRef}
-            onPointerDown={startTideDrag}
-            onPointerMove={moveTideDrag}
-            onPointerUp={endTideDrag}
-            onPointerCancel={endTideDrag}
-            className={`overflow-x-auto overflow-y-hidden select-none ${isTideDragging ? 'cursor-grabbing' : 'cursor-grab'}`}
-            style={{ touchAction: 'pan-y' }}
-            aria-label={`${anchor.getFullYear()} 年 ${anchor.getMonth() + 1} 月可拖动发布潮汐`}
-          >
-            <div className="relative h-[188px]" style={{ width: tideChartWidth }}>
-              <svg viewBox={`0 0 ${tideChartWidth} 170`} className="absolute inset-x-0 bottom-0 h-[170px]" role="img" aria-label="一个月发布潮汐与全球重点电商节庆图">
-                <defs>
-                  <linearGradient id="publishing-tide-fill" x1="0" x2="0" y1="0" y2="1">
-                    <stop offset="0%" stopColor="#10b981" stopOpacity="0.28" />
-                    <stop offset="100%" stopColor="#10b981" stopOpacity="0.02" />
-                  </linearGradient>
-                  <filter id="publishing-tide-glow" x="-10%" y="-35%" width="120%" height="170%">
-                    <feGaussianBlur stdDeviation="2.2" result="blur" />
-                    <feMerge><feMergeNode in="blur" /><feMergeNode in="SourceGraphic" /></feMerge>
-                  </filter>
-                </defs>
-                {[76, 104, 132].map(y => <line key={y} x1="0" x2={tideChartWidth} y1={y} y2={y} stroke="#d1fae5" strokeDasharray="4 5" />)}
-                {tideMonthDays.map((day, index) => {
-                  const x = index * tideDayWidth;
-                  const isSelected = isSameDay(day, selectedDate);
-                  return (
-                    <g key={dateKey(day)}>
-                      {isSelected && <rect x={x + 4} y="66" width={tideDayWidth - 8} height="96" rx="12" fill="#dbeafe" opacity="0.72" />}
-                      <line x1={x} x2={x} y1="68" y2="146" stroke="#ecfdf5" />
-                    </g>
-                  );
-                })}
-                {tideEvents.map(event => {
-                  const dayIndex = Number(event.date.slice(-2)) - 1;
-                  const point = tidePoints[dayIndex];
-                  return <line key={`${event.id}-guide`} x1={point.x} x2={point.x} y1="54" y2={point.y - 5} stroke="#f59e0b" strokeWidth="1.5" strokeDasharray="3 4" opacity="0.65" />;
-                })}
-                <path d={tideAreaPath} fill="url(#publishing-tide-fill)" />
-                <path d={tideLinePath} fill="none" stroke="#10b981" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round" filter="url(#publishing-tide-glow)" />
-                {tideMonthDays.map((day, index) => {
-                  const dayScores = scores[day.getDay()] || [];
-                  const bestHour = dayScores.length
-                    ? dayScores.reduce((best, score, hour, all) => score > all[best] ? hour : best, 0)
-                    : 20;
-                  const peakScore = dayScores[bestHour] || fallbackPeakScore(day);
-                  const point = tidePoints[index];
-                  const isSelected = isSameDay(day, selectedDate);
-                  return (
-                    <g
-                      key={`${dateKey(day)}-point`}
-                      onClick={() => selectTideDate(day)}
-                      onMouseEnter={event => previewAt(event, tideHoverForDay(day))}
-                      onMouseMove={event => previewAt(event, tideHoverForDay(day))}
-                      onMouseLeave={() => setHoveredContent(null)}
-                      className="cursor-pointer"
-                    >
-                      <circle cx={point.x} cy={point.y} r={isSelected ? 5 : 3.5} fill="#fff" stroke={isSelected ? '#0284c7' : '#059669'} strokeWidth={isSelected ? 3 : 2}>
-                        <title>{`${day.toLocaleDateString('zh-CN')} · 北京 ${hourLabel(bestHour)} · ${market.timeZoneLabel} ${hourLabel(targetHourFromBeijing(bestHour, utcOffset))} · 推荐分 ${Math.round(peakScore * 100)}`}</title>
-                      </circle>
-                      <text x={point.x} y="157" textAnchor="middle" fontSize="8" fontWeight={isSelected ? 800 : 600} fill={isSelected ? '#0369a1' : '#64748b'}>
-                        {`${day.getMonth() + 1}/${day.getDate()} ${day.toLocaleDateString('zh-CN', { weekday: 'short' })}`}
-                      </text>
-                    </g>
-                  );
-                })}
-              </svg>
-              {tideEvents.map(event => {
-                const dayIndex = Number(event.date.slice(-2)) - 1;
-                const sameDayIndex = (eventsByDay[event.date] || []).findIndex(item => item.id === event.id);
-                const marketLabel = MARKET_OPTIONS.find(option => option.id === event.market)?.label || '全球';
-                return (
-                  <button
-                    key={event.id}
-                    type="button"
-                    onClick={() => selectTideDate(tideMonthDays[dayIndex])}
-                    onMouseEnter={mouseEvent => previewAt(mouseEvent, tideHoverForDay(tideMonthDays[dayIndex], event))}
-                    onMouseMove={mouseEvent => previewAt(mouseEvent, tideHoverForDay(tideMonthDays[dayIndex], event))}
-                    onMouseLeave={() => setHoveredContent(null)}
-                    className={`absolute z-10 w-[96px] rounded-lg border px-1.5 py-1 text-left shadow-sm transition hover:-translate-y-0.5 hover:shadow-md ${eventTone(event)}`}
-                    style={{ left: dayIndex * tideDayWidth + 5, top: 4 + sameDayIndex * 38 }}
-                    title={`${event.name} · ${event.date} · ${event.note}（${event.source}）`}
-                  >
-                    <span className="flex items-center gap-1 text-[8px] font-black"><Flag size={8} /><span className="truncate">{event.shortName}</span></span>
-                    <span className="mt-0.5 block truncate text-[7px] font-bold opacity-80">{event.date.slice(5).replace('-', '/')} · {marketLabel}</span>
-                  </button>
-                );
-              })}
-            </div>
-          </div>
-        </div>
-
-        {interactionMessage && (
-          <div className="mt-2 rounded-xl border border-emerald-100 bg-emerald-50 px-3 py-2 text-[11px] font-bold text-emerald-700">
-            {interactionMessage}
-          </div>
-        )}
-        <div ref={calendarScrollRef} className="mt-3 max-h-[420px] overflow-auto pb-2">
-          <div className={`grid min-w-[960px] grid-cols-7 gap-2 ${mode === 'month' ? 'auto-rows-fr' : ''}`}>
-            {days.map(day => {
-              const key = dateKey(day);
-              const dayItems = itemsByDay[key] || [];
-              const isToday = isSameDay(day, today);
-              const isSelected = isSameDay(day, selectedDate);
-              const isDragTarget = dragOverDate === key;
-              const isOutsideMonth = mode === 'month' && day.getMonth() !== anchor.getMonth();
-              return (
-                <div
-                  key={key}
-                  data-calendar-date={key}
-                  onDragOver={event => {
-                    event.preventDefault();
-                    event.dataTransfer.dropEffect = 'move';
-                    setDragOverDate(key);
-                  }}
-                  onDragLeave={event => {
-                    if (!event.currentTarget.contains(event.relatedTarget as Node)) setDragOverDate('');
-                  }}
-                  onDrop={event => {
-                    event.preventDefault();
-                    const pendingId = event.dataTransfer.getData('application/x-lingshu-pending-content');
-                    if (pendingId) {
-                      void schedulePendingOnDay(pendingId, day);
-                      setDragOverDate('');
-                      return;
-                    }
-                    const id = event.dataTransfer.getData('text/post-id') || dragId;
-                    if (id) void reschedule(id, day);
-                    setDragId('');
-                    setDragOverDate('');
-                  }}
-                  className={`relative flex flex-col rounded-2xl border p-2 transition ${
-                    mode === 'month' ? 'min-h-[112px]' : 'min-h-[292px]'
-                  } ${
-                    isDragTarget
-                      ? 'scale-[1.015] border-violet-400 bg-violet-50 ring-4 ring-violet-100 shadow-lg'
-                      : isToday
-                          ? 'border-emerald-400 bg-emerald-50/40 shadow-[0_8px_24px_rgba(16,185,129,0.12)]'
-                          : isSelected
-                            ? 'border-sky-300 bg-sky-50/30 ring-2 ring-sky-100'
-                            : 'border-border bg-white'
-                  } ${isOutsideMonth ? 'opacity-45' : ''}`}
-                >
-                  <button
-                    type="button"
-                    onClick={() => setSelectedDate(startOfDay(day))}
-                    className="mb-2 flex w-full items-center justify-between rounded-xl px-1 py-1 text-left hover:bg-white/80"
-                  >
-                    <span>
-                      <span className={`block text-xs font-black ${isToday ? 'text-emerald-700' : 'text-text-primary'}`}>
-                        {day.toLocaleDateString('zh-CN', { weekday: 'short' })}
-                      </span>
-                      <span className="text-[10px] text-text-muted">{day.getMonth() + 1}/{day.getDate()}</span>
-                    </span>
-                    <span className={`flex h-7 min-w-7 items-center justify-center rounded-full px-1.5 text-xs font-black ${
-                      isToday ? 'bg-emerald-600 text-white shadow-sm' : isSelected ? 'bg-sky-100 text-sky-700' : 'bg-surface-2 text-text-secondary'
-                    }`}>
-                      {day.getDate()}
-                    </span>
-                  </button>
-
-                  {mode === 'week' ? (
-                    <div className="mt-auto overflow-hidden rounded-xl border border-slate-100 bg-slate-50/40">
-                      {[0, 6, 12, 18].map(startHour => {
-                        const bucketItems = dayItems.filter(item => {
-                          const hour = new Date(item.publishedAt).getHours();
-                          return hour >= startHour && hour < startHour + 6;
-                        });
-                        return (
-                          <div
-                            key={startHour}
-                            onMouseEnter={event => previewAt(event, { kind: 'slot', day, startHour, endHour: startHour + 6, items: bucketItems })}
-                            onMouseMove={event => {
-                              const target = event.target;
-                              if (target instanceof Element && target.closest('[data-calendar-post]')) return;
-                              previewAt(event, { kind: 'slot', day, startHour, endHour: startHour + 6, items: bucketItems });
-                            }}
-                            onMouseLeave={() => setHoveredContent(null)}
-                            className="grid min-h-[46px] grid-cols-[25px_minmax(0,1fr)] border-t border-dashed border-slate-200 transition-colors first:border-t-0 hover:bg-emerald-50/50"
-                          >
-                            <span className="border-r border-slate-100 pt-1.5 text-center text-[8px] font-black text-slate-400">{String(startHour).padStart(2, '0')}</span>
-                            <div className="space-y-1 p-1">
-                              {bucketItems.map(item => {
-                                const meta = statusMeta(item);
-                                return (
-                                  <button
-                                    key={item.id}
-                                    type="button"
-                                    data-calendar-post={item.id}
-                                    draggable={!item.platformPostId && !item.scheduleLocked}
-                                    title={item.scheduleLocked ? '定点排期已锁定；点击可编辑发布内容' : '拖动可调整日期，发布时间保持不变'}
-                                    onDragStart={event => {
-                                      setDragId(item.id);
-                                      event.dataTransfer.setData('text/post-id', item.id);
-                                    }}
-                                    onMouseEnter={event => previewAt(event, { kind: 'post', post: item })}
-                                    onMouseMove={event => previewAt(event, { kind: 'post', post: item })}
-                                    onMouseLeave={() => setHoveredContent(null)}
-                                    onClick={() => onOpenPost?.(item)}
-                                    className={`w-full rounded-lg border px-1.5 py-1 text-left shadow-sm transition hover:-translate-y-0.5 ${meta.className}`}
-                                  >
-                                    <span className="flex items-center justify-between gap-1 text-[8px] font-black"><PlatformBadge platform={item.platform} compact /><span className="inline-flex items-center gap-0.5">{item.scheduleLocked && <LockKeyhole size={8} />}{new Date(item.publishedAt).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' })}</span></span>
-                                    <span className="mt-0.5 block truncate text-[9px] font-bold">{item.title}</span>
-                                  </button>
-                                );
-                              })}
-                            </div>
-                          </div>
-                        );
-                      })}
-                    </div>
-                  ) : (
-                    <div className="space-y-1.5">
-                      {dayItems.slice(0, 1).map(item => {
-                        const meta = statusMeta(item);
-                        return (
-                          <button
-                            key={item.id}
-                            type="button"
-                            data-calendar-post={item.id}
-                            onMouseEnter={event => previewAt(event, { kind: 'post', post: item })}
-                            onMouseMove={event => previewAt(event, { kind: 'post', post: item })}
-                            onMouseLeave={() => setHoveredContent(null)}
-                            onClick={() => onOpenPost?.(item)}
-                            className={`w-full rounded-xl border p-1.5 text-left shadow-sm ${meta.className}`}
-                          >
-                            <span className="flex items-center justify-between gap-1 text-[9px] font-black"><PlatformBadge platform={item.platform} compact /><span>{new Date(item.publishedAt).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' })}</span></span>
-                            <span className="mt-1 block truncate text-[10px] font-bold">{item.title}</span>
-                          </button>
-                        );
-                      })}
-                      {dayItems.length > 1 && <p className="text-center text-[9px] font-bold text-text-muted">还有 {dayItems.length - 1} 条</p>}
-                    </div>
-                  )}
-
-                  {mode === 'week' && dayItems.length === 0 && (
-                    <button type="button" onClick={() => onCreate?.(day)} className="mt-1 flex w-full items-center justify-center gap-1 rounded-lg border border-dashed border-sky-200 bg-sky-50/60 px-2 py-1.5 text-[9px] font-bold text-sky-700 hover:bg-sky-50"><Plus size={10} /> 添加内容</button>
-                  )}
-                </div>
-              );
-            })}
-          </div>
-        </div>
-      </div>
-
-      <ContentQueuePanel
-        selectedPlatform={selectedPlatform}
-        selectedMarket={selectedMarket}
-        marketLabel={enterpriseMarketLabel}
-        marketTimeZone={market.timeZone}
-        utcOffset={utcOffset}
-        posts={items}
-        pendingItems={pendingItems}
-        onOpenPending={onOpenPending}
-        onArrangePending={arrangePendingContent}
-      />
-
-      {pendingTimeSelection && (
-        <div className="fixed inset-0 z-[170] flex items-center justify-center bg-slate-950/45 p-4 backdrop-blur-sm" role="dialog" aria-modal="true" aria-labelledby="pending-time-title">
-          <div className="w-full max-w-sm rounded-2xl border border-border bg-white p-5 shadow-2xl">
-            <div className="flex items-start gap-3">
-              <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-sky-50 text-sky-700"><CalendarClock size={18} /></span>
-              <div className="min-w-0">
-                <h3 id="pending-time-title" className="text-sm font-black text-text-primary">选择具体发布时间</h3>
-                <p className="mt-1 truncate text-xs text-text-muted">{pendingTimeSelection.title}</p>
-              </div>
-            </div>
-            <div className="mt-4 grid grid-cols-[1fr_130px] gap-2">
-              <div className="rounded-xl border border-border bg-surface px-3 py-2.5">
-                <span className="block text-[10px] font-bold text-text-muted">发布日期</span>
-                <span className="mt-1 block text-xs font-black text-text-primary">{pendingTimeSelection.day.toLocaleDateString('zh-CN', { year: 'numeric', month: 'long', day: 'numeric', weekday: 'short' })}</span>
-              </div>
-              <label className="block">
-                <span className="mb-1.5 block text-[10px] font-bold text-text-muted">发布时间</span>
-                <input
-                  type="time"
-                  value={pendingTimeSelection.time}
-                  onChange={event => setPendingTimeSelection(previous => previous ? { ...previous, time: event.target.value } : previous)}
-                  className="w-full rounded-xl border border-border bg-white px-3 py-2.5 text-xs font-black outline-none focus:border-sky-400"
-                />
-              </label>
-            </div>
-            <p className="mt-3 text-[10px] leading-4 text-text-muted">这个时间只用于当前视频；以后拖动到其他日期时，时分会保持不变。</p>
-            <div className="mt-5 flex justify-end gap-2">
-              <button type="button" disabled={pendingTimeSaving} onClick={() => setPendingTimeSelection(null)} className="rounded-xl border border-border px-4 py-2.5 text-xs font-black text-text-secondary hover:bg-surface disabled:opacity-50">取消</button>
-              <button type="button" disabled={pendingTimeSaving || !pendingTimeSelection.time} onClick={() => void confirmPendingTime()} className="inline-flex items-center gap-2 rounded-xl bg-sky-600 px-4 py-2.5 text-xs font-black text-white hover:bg-sky-700 disabled:opacity-50">
-                {pendingTimeSaving ? <RefreshCw size={13} className="animate-spin" /> : <CalendarClock size={13} />}
-                {pendingTimeSaving ? '安排中' : '确认时间'}
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {hoveredContent && (
-        <div
-          className="ui-floating-panel pointer-events-none fixed z-[120] w-[292px] overflow-hidden"
-          style={{
-            left: Math.max(12, Math.min(hoveredContent.x + 14, (typeof window === 'undefined' ? 1440 : window.innerWidth) - 304)),
-            top: Math.max(12, Math.min(hoveredContent.y + 14, (typeof window === 'undefined' ? 900 : window.innerHeight) - 286)),
-          }}
-        >
-          {hoveredContent.kind === 'post' ? (() => {
-            const { post } = hoveredContent;
-            const meta = statusMeta(post);
-            return (
-              <>
-                <div className="relative flex aspect-video items-center justify-center overflow-hidden bg-gradient-to-br from-slate-900 via-slate-800 to-emerald-950">
-                  {post.videoPreviewUrl || post.videoUrl ? (
-                    <video src={post.videoPreviewUrl || post.videoUrl} poster={post.coverUrl} autoPlay muted loop playsInline className="h-full w-full object-cover" />
-                  ) : post.coverUrl ? (
-                    <img src={post.coverUrl} alt="" className="h-full w-full object-cover" />
-                  ) : (
-                    <div className="text-center text-white">
-                      <span className="mx-auto flex h-10 w-10 items-center justify-center rounded-full bg-white/15 backdrop-blur">
-                        <Play size={18} fill="currentColor" />
-                      </span>
-                      <p className="mt-2 text-[10px] font-bold text-white/65">视频素材待关联</p>
-                    </div>
-                  )}
-                  <span className="absolute left-2 top-2 flex items-center gap-1.5 rounded-lg bg-black/55 p-1 text-[9px] font-black text-white backdrop-blur">
-                    <PlatformBadge platform={post.platform} />
-                    <span>{post.duration ? `${Math.round(post.duration)}s` : '视频内容'}</span>
-                  </span>
-                </div>
-                <div className="p-3">
-                  <div className="flex items-center justify-between gap-2">
-                    <span className={`rounded-full border px-2 py-0.5 text-[9px] font-black ${meta.className}`}>{meta.label}</span>
-                    <span className="text-[9px] text-text-muted">{new Date(post.publishedAt).toLocaleString('zh-CN')}</span>
-                  </div>
-                  <p className="mt-2 text-xs font-black leading-snug text-text-primary">{post.title}</p>
-                  <div className="mt-2 flex items-center justify-between rounded-lg bg-surface px-2.5 py-2 text-[10px] text-text-secondary">
-                    <span>{post.isRecycle ? '循环发布' : '单次内容'}</span>
-                    <span className="font-black text-emerald-700">{post.inquiries || 0} 条询盘</span>
-                  </div>
-                  {post.publishError && <p className="mt-2 rounded-lg bg-red-50 px-2.5 py-2 text-[9px] leading-relaxed text-red-700">{post.publishError}</p>}
-                  {post.firstComment && <p className="mt-2 line-clamp-2 text-[9px] leading-relaxed text-text-muted">首评：{post.firstComment}</p>}
-                </div>
-              </>
-            );
-          })() : hoveredContent.kind === 'tide' ? (
-            <div className="p-4">
-              <div className="flex items-start justify-between gap-3">
-                <div>
-                  <p className="text-xs font-black text-text-primary">{hoveredContent.day.toLocaleDateString('zh-CN', { month: 'long', day: 'numeric', weekday: 'long' })}</p>
-                  <p className="mt-1 text-[10px] font-bold text-text-muted">{hoveredContent.source} · {enterpriseMarketLabel}</p>
-                </div>
-                <span className="rounded-full bg-emerald-50 px-2 py-1 text-[10px] font-black text-emerald-700">热度 {Math.round(hoveredContent.score * 100)}</span>
-              </div>
-              <div className="mt-3 grid grid-cols-2 gap-2">
-                <div className="rounded-xl bg-surface px-3 py-2">
-                  <p className="text-[9px] font-bold text-text-muted">北京时间</p>
-                  <p className="mt-1 text-sm font-black text-text-primary">{hourLabel(hoveredContent.bestHour)}</p>
-                </div>
-                <div className="rounded-xl bg-surface px-3 py-2">
-                  <p className="text-[9px] font-bold text-text-muted">{market.timeZoneLabel}</p>
-                  <p className="mt-1 text-sm font-black text-text-primary">{hourLabel(hoveredContent.targetHour)}</p>
-                </div>
-              </div>
-              {hoveredContent.events.length > 0 ? (
-                <div className="mt-3 space-y-2">
-                  {hoveredContent.events.map(event => (
-                    <div key={event.id} className="rounded-xl border border-amber-100 bg-amber-50 px-3 py-2">
-                      <p className="flex items-center gap-1 text-[10px] font-black text-amber-900"><Flag size={10} />{event.name}</p>
-                      <p className="mt-1 text-[9px] leading-4 text-amber-800">{event.note}</p>
-                      <p className="mt-1 text-[8px] font-bold text-amber-700">来源：{event.source}</p>
-                    </div>
-                  ))}
-                </div>
-              ) : <p className="mt-3 text-[10px] text-text-muted">当天没有节庆点，建议时段按发布热度计算。</p>}
-            </div>
-          ) : (
-            <div className="p-4">
-              <div className="flex items-start justify-between gap-3">
-                <div>
-                  <p className="text-xs font-black text-text-primary">{hoveredContent.day.toLocaleDateString('zh-CN', { month: 'long', day: 'numeric', weekday: 'long' })}</p>
-                  <p className="mt-1 text-[10px] font-bold text-text-muted">排期时间段</p>
-                </div>
-                <span className="rounded-full bg-sky-50 px-2 py-1 text-[10px] font-black text-sky-700">{hoveredContent.items.length} 条内容</span>
-              </div>
-              <div className="mt-3 flex items-center gap-2 rounded-xl bg-surface px-3 py-2.5">
-                <Clock size={14} className="text-emerald-600" />
-                <span className="text-sm font-black text-text-primary">{hourLabel(hoveredContent.startHour)} – {hourLabel(hoveredContent.endHour)}</span>
-              </div>
-              {hoveredContent.items.length > 0 ? (
-                <div className="mt-3 space-y-2">
-                  {hoveredContent.items.slice(0, 3).map(item => (
-                    <div key={item.id} className="rounded-xl border border-border bg-white px-3 py-2">
-                      <div className="flex items-center justify-between gap-2 text-[9px] font-black">
-                        <PlatformBadge platform={item.platform} compact />
-                        <span className="text-text-muted">{new Date(item.publishedAt).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' })}</span>
-                      </div>
-                      <p className="mt-1 truncate text-[10px] font-bold text-text-primary">{item.title}</p>
-                    </div>
-                  ))}
-                  {hoveredContent.items.length > 3 && <p className="text-[9px] font-bold text-text-muted">另有 {hoveredContent.items.length - 3} 条内容</p>}
-                </div>
-              ) : <p className="mt-3 text-[10px] text-text-muted">这个时间段还没有内容，可点击当天添加或拖入待发布内容。</p>}
-            </div>
-          )}
-        </div>
-      )}
-    </div>
-  );
+  return <div className="space-y-4" data-lingshu-guide="content-planner">
+    <header className="flex flex-wrap items-center justify-between gap-3"><div className="flex flex-wrap items-center gap-2"><h2 className="flex items-center gap-2 text-xl font-semibold text-text-primary"><CalendarDays size={19}/>内容排产工作台</h2><Tag>{enterpriseMarketLabel}</Tag></div>{import.meta.env.DEV && <Button onClick={() => setDemoMode(value => !value)}>{demoMode ? '退出参考预览' : '预览参考排期'}</Button>}</header>
+    {demoMode && <Alert type="info" showIcon title="模拟数据 · 仅供页面预览，不会提交发布" description="TikTok / Facebook 各 5 条/周 · YouTube / Instagram 各 3 条/周"/>}
+    {error && <Alert type="error" showIcon title={error} action={<Button onClick={() => void load()}>重试</Button>}/>}
+    {interactionMessage && <div role="status"><Alert type="info" showIcon closable title={interactionMessage} onClose={() => setInteractionMessage('')}/></div>}
+    <section data-lingshu-guide="content-calendar" className="rounded-lg border border-border bg-white">
+      <LsCalendar label="内容发布日历" events={events} initialView="timeGridWeek" loading={loading} onRefresh={() => void load()} onMoveEvent={canEditSchedule && !demoMode ? reschedule : undefined}
+        primaryAction={onCreate && canEditSchedule && !demoMode ? <Button type="primary" icon={<Plus size={15}/>} onClick={() => onCreate(selectedDate)}>添加内容</Button> : undefined}
+        filters={<Select aria-label="筛选平台" value={platformFilter} onChange={setPlatformFilter} style={{ minWidth: 116 }} options={[{ value: 'all', label: '全部平台' }, ...['tiktok', 'facebook', 'youtube', 'instagram'].map(value => ({ value, label: value === 'youtube' ? 'YouTube' : value === 'tiktok' ? 'TikTok' : value === 'facebook' ? 'Facebook' : 'Instagram' }))]}/>}
+        onDatesSet={info => { setVisibleRange(previous => previous.from.getTime() === info.start.getTime() && previous.to.getTime() === info.end.getTime() ? previous : { from: info.start, to: info.end }); setMode(info.view.type); setAnchor(previous => calendarDayKey(previous) === calendarDayKey(info.view.currentStart) ? previous : new Date(`${calendarDayKey(info.view.currentStart)}T12:00:00`)); }}
+        onDateClick={date => setSelectedDate(calendarInstant(date.slice(0, 10)))}
+        onExternalDrop={canEditSchedule && !demoMode ? (id, day) => void schedulePendingOnDay(id, day) : undefined}
+        renderDetails={(event, closeDetails) => {
+          const post = event.data as CalendarPost;
+          return <div className="space-y-4">
+            {post.id.startsWith('demo-calendar-') && <Alert type="info" title="模拟数据 · 不会实际发布"/>}
+            {post.videoPreviewUrl || post.videoUrl ? <video src={post.videoPreviewUrl || post.videoUrl} poster={post.coverUrl} controls playsInline className="w-full rounded-lg"/> : null}
+            <dl className="ls-calendar-details"><div><dt>成片时长</dt><dd>{post.duration ? `${Math.round(post.duration)} 秒` : '暂无时长'}</dd></div><div><dt>询盘</dt><dd>{post.inquiries || 0} 条</dd></div>{post.firstComment && <div><dt>首评</dt><dd>{post.firstComment}</dd></div>}{post.platformPostId && <div><dt>平台回执</dt><dd>{post.platformPostId}</dd></div>}{post.nextPublishAttemptAt && <div><dt>下次重试</dt><dd>{calendarDateTimeValue(post.nextPublishAttemptAt).replace('T', ' ')} 北京时间</dd></div>}</dl>
+            {post.publishError && <Alert type="error" title="发布异常" description={post.publishError}/>}
+            {!post.id.startsWith('demo-calendar-') && <div className="flex flex-wrap gap-2">{post.status === 'needs_attention' ? <Button type="primary" onClick={() => { closeDetails(); setRecoveryPost(post); }}>核对平台发布回执</Button> : onOpenPost && <Button type="primary" onClick={() => { closeDetails(); onOpenPost(post); }}>打开完整发布详情</Button>}</div>}
+          </div>;
+        }}/>
+    </section>
+    <section data-lingshu-guide="publishing-tide" className="rounded-lg border border-border bg-white p-4">
+      <div className="flex flex-wrap items-start justify-between gap-3"><div><h3 className="text-base font-semibold text-text-primary">发布节奏与节庆</h3><p className="mt-1 text-xs text-text-secondary">{scoreSource} {scoreSource !== '账号真实数据' && '· 非账号实测'} · 目标市场 {market.timeZoneLabel}（{market.timeZone}）</p></div><label className="text-xs text-text-secondary">查看日期<Input className="mt-1" type="date" aria-label="查看发布建议的日期" value={selectedKey} onChange={event => { if (event.target.value) setSelectedDate(calendarInstant(event.target.value)); }}/></label></div>
+      <div className="mt-3 flex flex-wrap items-center gap-3 text-sm"><span>{selectedKey} · {itemsByDay[selectedKey]?.length || 0} 条已排期</span><Tag>{selectedBestHour === null ? '暂无可用推荐时段' : `建议北京时间 ${String(selectedBestHour).padStart(2, '0')}:00`}</Tag></div>
+      <details className="mt-3 border-t border-border pt-3"><summary className="cursor-pointer text-sm text-text-secondary">本月电商节庆 · {marketingEvents.length} 项</summary><ul className="mt-3 space-y-3">{marketingEvents.map(event => <li key={event.id} className="border-b border-border pb-3 text-sm"><div className="flex flex-wrap items-center gap-2"><strong className="font-semibold text-text-primary">{event.name}</strong><span className="text-text-secondary">{event.date}</span></div><p className="mt-1 text-text-secondary">{event.note}</p><p className="mt-1 text-xs text-text-muted">来源：{event.source}</p></li>)}</ul></details>
+    </section>
+    {pendingItems.length > 0 && canEditSchedule && !demoMode && <div className="flex flex-wrap items-end gap-3 rounded-lg border border-border bg-white p-4"><label className="min-w-56 flex-1 text-xs text-text-secondary">为待发布内容选择日期<Select className="mt-1 w-full" aria-label="待排期内容" placeholder="选择内容" value={pendingId} onChange={setPendingId} options={pendingItems.map(item => ({ value: item.id, label: item.title }))}/></label><Input type="date" aria-label="待发布内容的排期日期" style={{ width: 180 }} value={selectedKey} onChange={event => { if (event.target.value) setSelectedDate(calendarInstant(event.target.value)); }}/><Button disabled={!pendingId} onClick={() => pendingId && void schedulePendingOnDay(pendingId, selectedKey)}>安排到所选日期</Button></div>}
+    <ContentQueuePanel selectedPlatform={selectedPlatform} selectedMarket={selectedMarket} marketLabel={enterpriseMarketLabel} marketTimeZone={market.timeZone} utcOffset={utcOffset} posts={demoMode ? [] : items} pendingItems={pendingItems} onOpenPending={onOpenPending} canEdit={canEditSchedule && !demoMode} onArrangePending={canEditSchedule && !demoMode ? arrangePendingContent : undefined}/>
+    <Modal title="选择具体发布时间" open={Boolean(pendingTimeSelection)} onCancel={() => { if (!pendingTimeSaving) setPendingTimeSelection(null); }} onOk={() => void confirmPendingTime()} confirmLoading={pendingTimeSaving} okText="确认时间" cancelText="取消" destroyOnHidden>
+      {pendingTimeSelection && <div className="space-y-4"><p>{pendingTimeSelection.title}</p><p className="text-sm text-text-secondary">{pendingTimeSelection.day} · 北京时间（Asia/Shanghai）</p><label className="block text-sm text-text-secondary">发布时间<Input autoFocus type="time" value={pendingTimeSelection.time} onChange={event => setPendingTimeSelection(previous => previous ? { ...previous, time: event.target.value } : previous)}/></label><p className="text-xs text-text-secondary">定点内容遵循已锁定时间；时间待定内容需要选择未来时间。</p></div>}
+    </Modal>
+    <Drawer title="核对平台发布回执" open={Boolean(recoveryPost)} onClose={() => setRecoveryPost(null)} size={520} destroyOnHidden>{recoveryPost && <div className="space-y-4"><h3 className="text-base font-semibold">{recoveryPost.title}</h3><PublishingReceiptRecovery postId={recoveryPost.id} onRecovered={() => load(true)}/></div>}</Drawer>
+  </div>;
 }

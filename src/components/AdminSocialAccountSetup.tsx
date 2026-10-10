@@ -1,4 +1,5 @@
-import { useEffect, useState } from 'react';
+import { normalizeAdminOAuthConfig, type AdminOAuthConfig, type ClearableOAuthPlatform } from '../lib/adminOAuthConfig';
+import { useEffect, useRef, useState } from 'react';
 import {
   AlertTriangle,
   CheckCircle2,
@@ -13,47 +14,18 @@ import {
   Trash2,
 } from 'lucide-react';
 import { authHeader } from '../lib/auth';
+import { validateOAuthCredentialPairs } from '../lib/socialOAuthCredentialValidation';
 import { SocialPlatformIcon } from './SocialPlatformIcon';
 import { SocialConnectionPanel, YouTubeConnectionPanel } from './YouTubeIntegration';
-
-type ClearableOAuthPlatform = 'youtube' | 'meta' | 'tiktok';
-
-interface AdminOAuthConfig {
-  admin: string;
-  updatedAt: string | null;
-  disabledPlatforms?: ClearableOAuthPlatform[];
-  callbacks: {
-    youtube: string;
-    instagram: string;
-    facebook: string;
-    tiktok: string;
-  };
-  values: {
-    youtubeOAuthClientId: string;
-    youtubeOAuthClientSecret: string;
-    metaSocialAppId: string;
-    metaSocialAppSecret: string;
-    tiktokClientKey: string;
-    tiktokClientSecret: string;
-    advancedManualConnectEnabled: boolean;
-  };
-  secretSet: {
-    youtubeOAuthClientSecret: boolean;
-    metaSocialAppSecret: boolean;
-    tiktokClientSecret: boolean;
-  };
-  secretLength?: {
-    youtubeOAuthClientSecret: number;
-    metaSocialAppSecret: number;
-    tiktokClientSecret: number;
-  };
-}
+import { useModalFocus } from '../hooks/useModalFocus';
 
 interface OAuthForm {
   youtubeOAuthClientId: string;
   youtubeOAuthClientSecret: string;
   metaSocialAppId: string;
   metaSocialAppSecret: string;
+  instagramAppId: string;
+  instagramAppSecret: string;
   tiktokClientKey: string;
   tiktokClientSecret: string;
   advancedManualConnectEnabled: boolean;
@@ -64,6 +36,8 @@ const EMPTY_FORM: OAuthForm = {
   youtubeOAuthClientSecret: '',
   metaSocialAppId: '',
   metaSocialAppSecret: '',
+  instagramAppId: '',
+  instagramAppSecret: '',
   tiktokClientKey: '',
   tiktokClientSecret: '',
   advancedManualConnectEnabled: false,
@@ -72,11 +46,13 @@ const EMPTY_FORM: OAuthForm = {
 function formFromConfig(config: AdminOAuthConfig): OAuthForm {
   return {
     youtubeOAuthClientId: config.values.youtubeOAuthClientId,
-    youtubeOAuthClientSecret: config.values.youtubeOAuthClientSecret,
+    youtubeOAuthClientSecret: '',
     metaSocialAppId: config.values.metaSocialAppId,
-    metaSocialAppSecret: config.values.metaSocialAppSecret,
+    metaSocialAppSecret: '',
+    instagramAppId: config.values.instagramAppId,
+    instagramAppSecret: '',
     tiktokClientKey: config.values.tiktokClientKey,
-    tiktokClientSecret: config.values.tiktokClientSecret,
+    tiktokClientSecret: '',
     advancedManualConnectEnabled: config.values.advancedManualConnectEnabled,
   };
 }
@@ -91,15 +67,15 @@ function CallbackLine({ label, value }: { label: string; value: string }) {
   }
 
   return (
-    <div className="rounded-xl border border-border bg-surface-2 px-3 py-2">
+    <div className="rounded-md border border-border bg-surface-2 px-3 py-2">
       <div className="mb-1 flex items-center justify-between gap-2">
         <span className="text-[10px] font-bold text-text-muted">{label}</span>
         <button
           type="button"
           onClick={() => void copy()}
-          className="inline-flex items-center gap-1 rounded-lg bg-white px-2 py-1 text-[10px] font-bold text-text-secondary"
+          className="inline-flex items-center gap-1 rounded-md border border-border bg-white px-2 py-1 text-[10px] font-bold text-text-secondary hover:border-border-bright"
         >
-          {copied ? <CheckCircle2 size={11} className="text-emerald-600" /> : <Clipboard size={11} />}
+          {copied ? <CheckCircle2 size={11} className="text-accent" /> : <Clipboard size={11} />}
           {copied ? '已复制' : '复制'}
         </button>
       </div>
@@ -113,43 +89,46 @@ function CredentialField({
   label,
   value,
   required,
+  secret,
+  saved,
   onChange,
 }: {
   fieldName: string;
   label: string;
   value: string;
   required?: boolean;
+  secret?: boolean;
+  saved?: boolean;
   onChange: (value: string) => void;
 }) {
-  const isSecret = /secret/i.test(label);
-  const isCompleted = Boolean(value.trim());
+  const isCompleted = Boolean(value.trim()) || saved === true;
 
   return (
     <label className="grid gap-1 text-[11px] font-bold text-text-secondary">
       <span className="flex items-center justify-between gap-2">
         <span>
           {label}
-          {required && <span className="ml-0.5 text-red-500" aria-label="必填">*</span>}
+          {required && <span className="ml-0.5 text-red" aria-label="必填">*</span>}
         </span>
         {isCompleted && (
-          <span className="inline-flex items-center gap-1 whitespace-nowrap text-[10px] text-emerald-600">
+          <span className="inline-flex items-center gap-1 whitespace-nowrap text-[10px] text-accent">
             <CheckCircle2 size={11} /> 填写完成
           </span>
         )}
       </span>
       <input
         name={fieldName}
-        type={isSecret ? 'password' : 'text'}
-        required={required}
-        aria-required={required}
-        autoComplete="off"
+        type={secret ? 'password' : 'text'}
+        required={required && !saved}
+        aria-required={required && !saved}
+        autoComplete={secret ? 'new-password' : 'off'}
         data-1p-ignore
         data-lpignore="true"
         data-form-type="other"
         value={value}
         onChange={event => onChange(event.target.value)}
-        placeholder={isSecret && !value ? '已配置则留空；输入新值可替换' : label}
-        className="rounded-xl border border-border bg-surface-2 px-3 py-2.5 text-sm font-normal text-text-primary outline-none focus:border-emerald-400"
+        placeholder={saved && secret ? '已安全保存；留空表示不修改' : label}
+        className="ui-field !rounded-md !bg-surface-2 font-normal"
       />
     </label>
   );
@@ -170,7 +149,7 @@ function ClearConfigButton({
       onClick={onClick}
       disabled={disabled}
       aria-label={`清除 ${platformLabel} 平台配置`}
-      className="inline-flex shrink-0 items-center gap-1 rounded-lg border border-red-200 bg-red-50 px-2 py-1.5 text-[10px] font-bold text-red-600 transition hover:bg-red-100 disabled:cursor-not-allowed disabled:border-border disabled:bg-surface-2 disabled:text-text-muted"
+      className="inline-flex shrink-0 items-center gap-1 rounded-md border border-red/30 bg-red/5 px-2 py-1.5 text-[10px] font-bold text-red transition hover:bg-red/10 disabled:cursor-not-allowed disabled:border-border disabled:bg-surface-2 disabled:text-text-muted"
     >
       <Trash2 size={11} /> 清除配置
     </button>
@@ -187,6 +166,17 @@ export default function AdminSocialAccountSetup() {
   const [error, setError] = useState('');
   const [clearTarget, setClearTarget] = useState<ClearableOAuthPlatform | null>(null);
   const [clearing, setClearing] = useState(false);
+  const clearRequestInFlight = useRef(false);
+
+  function closeClearDialog() {
+    if (!clearRequestInFlight.current) setClearTarget(null);
+  }
+
+  const clearDialogRef = useModalFocus<HTMLDivElement>({
+    open: Boolean(clearTarget),
+    onClose: closeClearDialog,
+    closeOnEscape: () => !clearRequestInFlight.current,
+  });
 
   async function load() {
     setLoading(true);
@@ -195,8 +185,9 @@ export default function AdminSocialAccountSetup() {
       const response = await fetch('/api/overseas/admin/oauth-config', { headers: authHeader() });
       const data = await response.json().catch(() => ({})) as AdminOAuthConfig & { error?: string };
       if (!response.ok) throw new Error(data.error || '无法读取管理员平台配置');
-      setConfig(data);
-      setForm(formFromConfig(data));
+      const normalized = normalizeAdminOAuthConfig(data);
+      setConfig(normalized);
+      setForm(formFromConfig(normalized));
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : '无法读取管理员平台配置');
     } finally {
@@ -213,6 +204,13 @@ export default function AdminSocialAccountSetup() {
   }
 
   async function save() {
+    const validationError = validateOAuthCredentialPairs([
+      { label: 'YouTube / Google', clientId: form.youtubeOAuthClientId, clientSecret: form.youtubeOAuthClientSecret, savedClientId: config?.values.youtubeOAuthClientId || '', savedSecret: Boolean(config?.secretSet.youtubeOAuthClientSecret) },
+      { label: 'Facebook / Messenger', clientId: form.metaSocialAppId, clientSecret: form.metaSocialAppSecret, savedClientId: config?.values.metaSocialAppId || '', savedSecret: Boolean(config?.secretSet.metaSocialAppSecret) },
+      { label: 'Instagram 私信', clientId: form.instagramAppId, clientSecret: form.instagramAppSecret, savedClientId: config?.values.instagramAppId || '', savedSecret: Boolean(config?.secretSet.instagramAppSecret) },
+      { label: 'TikTok', clientId: form.tiktokClientKey, clientSecret: form.tiktokClientSecret, savedClientId: config?.values.tiktokClientKey || '', savedSecret: Boolean(config?.secretSet.tiktokClientSecret) },
+    ]);
+    if (validationError) { setError(validationError); return; }
     setSaving(true);
     setNotice('');
     setError('');
@@ -224,8 +222,9 @@ export default function AdminSocialAccountSetup() {
       });
       const data = await response.json().catch(() => ({})) as AdminOAuthConfig & { error?: string };
       if (!response.ok) throw new Error(data.error || '保存平台配置失败');
-      setConfig(data);
-      setForm(formFromConfig(data));
+      const normalized = normalizeAdminOAuthConfig(data);
+      setConfig(normalized);
+      setForm(formFromConfig(normalized));
       setNotice('平台凭证已保存。请确认下方回调地址已原样登记到平台后台，再让客户连接账号。');
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : '保存平台配置失败');
@@ -235,12 +234,14 @@ export default function AdminSocialAccountSetup() {
   }
 
   async function clearPlatformConfig() {
-    if (!clearTarget) return;
+    if (!clearTarget || clearRequestInFlight.current) return;
+    const target = clearTarget;
+    clearRequestInFlight.current = true;
     setClearing(true);
     setNotice('');
     setError('');
     try {
-      const response = await fetch(`/api/overseas/admin/oauth-config/${clearTarget}`, {
+      const response = await fetch(`/api/overseas/admin/oauth-config/${target}`, {
         method: 'DELETE',
         headers: authHeader(),
       });
@@ -253,12 +254,15 @@ export default function AdminSocialAccountSetup() {
       if (!response.ok || !data.config) {
         throw new Error(data.detail || data.error || '清除平台配置失败');
       }
-      setConfig(data.config);
-      setForm(formFromConfig(data.config));
-      const label = clearTarget === 'youtube'
+      const normalized = normalizeAdminOAuthConfig(data.config);
+      setConfig(normalized);
+      setForm(formFromConfig(normalized));
+      const label = target === 'youtube'
         ? 'YouTube / Google'
-        : clearTarget === 'meta'
-          ? 'Instagram / Facebook'
+        : target === 'meta'
+          ? 'Facebook / Messenger'
+          : target === 'instagram'
+            ? 'Instagram 私信'
           : 'TikTok';
       const accountCount = data.disconnectedAccounts ?? 0;
       setNotice(`${label} 配置已清除${accountCount > 0 ? `，并已断开 ${accountCount} 个已连接账号` : ''}。`);
@@ -266,46 +270,50 @@ export default function AdminSocialAccountSetup() {
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : '清除平台配置失败');
     } finally {
+      clearRequestInFlight.current = false;
       setClearing(false);
     }
   }
 
   const oauthPanelsKey = config?.updatedAt || 'oauth-not-configured';
-  const youtubeConfigured = Boolean(form.youtubeOAuthClientId.trim() || config?.secretSet.youtubeOAuthClientSecret);
-  const metaConfigured = Boolean(form.metaSocialAppId.trim() || config?.secretSet.metaSocialAppSecret);
-  const tiktokConfigured = Boolean(form.tiktokClientKey.trim() || config?.secretSet.tiktokClientSecret);
+  const youtubeConfigured = Boolean(form.youtubeOAuthClientId.trim() || form.youtubeOAuthClientSecret.trim() || config?.secretSet.youtubeOAuthClientSecret);
+  const metaConfigured = Boolean(form.metaSocialAppId.trim() || form.metaSocialAppSecret.trim() || config?.secretSet.metaSocialAppSecret);
+  const instagramConfigured = Boolean(form.instagramAppId.trim() || form.instagramAppSecret.trim() || config?.secretSet.instagramAppSecret);
+  const tiktokConfigured = Boolean(form.tiktokClientKey.trim() || form.tiktokClientSecret.trim() || config?.secretSet.tiktokClientSecret);
 
   return (
     <>
-    <section className="mb-4 overflow-hidden rounded-2xl border border-emerald-200 bg-emerald-50/40 shadow-sm">
+    <section className="mb-4 overflow-hidden rounded-lg border border-border bg-white">
       <button
         type="button"
         onClick={() => setOpen(current => !current)}
-        className="flex w-full items-center justify-between gap-4 px-5 py-4 text-left"
+        aria-expanded={open}
+        aria-controls="admin-social-account-content"
+        className="flex w-full items-center justify-between gap-4 border-l-2 border-accent px-4 py-4 text-left sm:px-5"
       >
         <div className="flex min-w-0 items-start gap-3">
-          <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-emerald-600 text-white">
+          <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-md bg-accent text-white">
             <ShieldCheck size={18} />
           </span>
           <div>
             <div className="flex flex-wrap items-center gap-2">
-              <h2 className="text-sm font-black text-text-primary">管理员自用账号直连</h2>
-              <span className="rounded-full bg-white px-2 py-0.5 text-[10px] font-bold text-emerald-700">无需创建租户</span>
+              <h2 className="text-sm font-bold text-text-primary">管理员自用账号直连</h2>
+              <span className="rounded-md bg-accent-glow px-2 py-0.5 text-[10px] font-bold text-accent">无需创建租户</span>
             </div>
             <p className="mt-1 text-xs leading-5 text-text-secondary">这里连接的账号只属于当前管理员，可直接在“一键发布”中使用。</p>
           </div>
         </div>
-        <span className="inline-flex shrink-0 items-center gap-1.5 rounded-xl border border-emerald-200 bg-white px-3 py-2 text-xs font-bold text-emerald-700">
+        <span className="inline-flex shrink-0 items-center gap-1.5 rounded-md border border-border bg-white px-3 py-2 text-xs font-bold text-accent">
           {open ? <ChevronUp size={13} /> : <ChevronDown size={13} />}
           {open ? '收起' : '展开配置'}
         </span>
       </button>
 
       {open && (
-        <div className="space-y-5 border-t border-emerald-100 bg-white p-5">
-          {notice && <p className="rounded-xl bg-emerald-50 px-3 py-2 text-xs font-bold text-emerald-700">{notice}</p>}
+        <div id="admin-social-account-content" className="space-y-5 border-t border-border bg-white p-4 sm:p-5">
+          {notice && <p role="status" className="border-l-2 border-accent bg-accent-glow px-3 py-2 text-xs font-bold text-accent">{notice}</p>}
           {error && (
-            <div className="flex items-center justify-between gap-3 rounded-xl bg-red-50 px-3 py-2 text-xs font-bold text-red-700">
+            <div role="alert" className="flex items-center justify-between gap-3 border-l-2 border-red bg-red/5 px-3 py-2 text-xs font-bold text-red">
               <span>{error}</span>
               <button type="button" onClick={() => void load()} className="inline-flex items-center gap-1 rounded-lg bg-white px-2 py-1">
                 <RefreshCw size={11} /> 重试
@@ -321,13 +329,13 @@ export default function AdminSocialAccountSetup() {
             <>
               <div>
                 <div className="mb-3 flex items-center gap-2">
-                  <KeyRound size={15} className="text-emerald-600" />
-                  <h3 className="text-sm font-black text-text-primary">平台应用凭证</h3>
-                  <span className="text-[11px] text-amber-700">保存凭证后，还要把下方回调地址原样登记到平台后台；域名、https 和路径都必须完全一致。</span>
+                  <KeyRound size={15} className="text-accent" />
+                  <h3 className="text-sm font-bold text-text-primary">平台应用凭证</h3>
+                  <span className="border-l-2 border-insight bg-insight-soft px-2 py-1 text-[11px] text-insight-action">保存凭证后，还要把下方回调地址原样登记到平台后台；域名、https 和路径都必须完全一致。</span>
                 </div>
 
                 <div className="grid gap-3 xl:grid-cols-3">
-                  <div className="space-y-3 rounded-2xl border border-border p-4">
+                  <div className="space-y-3 rounded-lg border border-border p-4">
                     <div className="flex items-start justify-between gap-3">
                       <div>
                         <p className="flex items-center gap-2 text-sm font-black text-text-primary">
@@ -338,31 +346,39 @@ export default function AdminSocialAccountSetup() {
                       <ClearConfigButton platformLabel="YouTube / Google" disabled={!youtubeConfigured || clearing} onClick={() => setClearTarget('youtube')} />
                     </div>
                     <CredentialField required fieldName="youtube-oauth-client-id" label="Client ID" value={form.youtubeOAuthClientId} onChange={value => setField('youtubeOAuthClientId', value)} />
-                    <CredentialField required fieldName="youtube-oauth-client-secret" label="Client Secret" value={form.youtubeOAuthClientSecret} onChange={value => setField('youtubeOAuthClientSecret', value)} />
+                    <CredentialField required secret saved={config.secretSet.youtubeOAuthClientSecret} fieldName="youtube-oauth-client-secret" label="Client Secret" value={form.youtubeOAuthClientSecret} onChange={value => setField('youtubeOAuthClientSecret', value)} />
                     <CallbackLine label="Authorized redirect URI" value={config.callbacks.youtube} />
                   </div>
 
-                  <div className="space-y-3 rounded-2xl border border-border p-4">
+                  <div className="space-y-3 rounded-lg border border-border p-4">
                     <div className="flex items-start justify-between gap-3">
                       <div>
                         <p className="flex items-center gap-2 text-sm font-black text-text-primary">
                           <span className="flex items-center gap-1">
-                            <SocialPlatformIcon platform="instagram" size={19} />
                             <SocialPlatformIcon platform="facebook" size={19} />
                           </span>
-                          Instagram / Facebook
+                          Facebook / Messenger
                         </p>
-                        <p className="mt-1 text-[11px] text-text-muted">两个平台共用一套 Meta App</p>
+                        <p className="mt-1 text-[11px] text-text-muted">Facebook 主页与 Messenger 授权</p>
                       </div>
-                      <ClearConfigButton platformLabel="Instagram / Facebook" disabled={!metaConfigured || clearing} onClick={() => setClearTarget('meta')} />
+                      <ClearConfigButton platformLabel="Facebook / Messenger" disabled={!metaConfigured || clearing} onClick={() => setClearTarget('meta')} />
                     </div>
                     <CredentialField required fieldName="meta-social-app-id" label="App ID" value={form.metaSocialAppId} onChange={value => setField('metaSocialAppId', value)} />
-                    <CredentialField required fieldName="meta-social-app-secret" label="App Secret" value={form.metaSocialAppSecret} onChange={value => setField('metaSocialAppSecret', value)} />
-                    <CallbackLine label="Instagram redirect URI" value={config.callbacks.instagram} />
+                    <CredentialField required secret saved={config.secretSet.metaSocialAppSecret} fieldName="meta-social-app-secret" label="App Secret" value={form.metaSocialAppSecret} onChange={value => setField('metaSocialAppSecret', value)} />
                     <CallbackLine label="Facebook redirect URI" value={config.callbacks.facebook} />
                   </div>
 
-                  <div className="space-y-3 rounded-2xl border border-border p-4">
+                  <div className="space-y-3 rounded-lg border border-border p-4">
+                    <div className="flex items-start justify-between gap-3">
+                      <div><p className="flex items-center gap-2 text-sm font-black text-text-primary"><SocialPlatformIcon platform="instagram" size={20} />Instagram 私信</p><p className="mt-1 text-[11px] text-text-muted">Instagram Login · 专业账号消息权限</p></div>
+                      <ClearConfigButton platformLabel="Instagram 私信" disabled={!instagramConfigured || clearing} onClick={() => setClearTarget('instagram')} />
+                    </div>
+                    <CredentialField required fieldName="instagram-app-id" label="Instagram App ID" value={form.instagramAppId} onChange={value => setField('instagramAppId', value)} />
+                    <CredentialField required secret saved={config.secretSet.instagramAppSecret} fieldName="instagram-app-secret" label="Instagram App Secret" value={form.instagramAppSecret} onChange={value => setField('instagramAppSecret', value)} />
+                    <CallbackLine label="Instagram redirect URI" value={config.callbacks.instagram} />
+                  </div>
+
+                  <div className="space-y-3 rounded-lg border border-border p-4">
                     <div className="flex items-start justify-between gap-3">
                       <div>
                         <p className="flex items-center gap-2 text-sm font-black text-text-primary">
@@ -373,7 +389,7 @@ export default function AdminSocialAccountSetup() {
                       <ClearConfigButton platformLabel="TikTok" disabled={!tiktokConfigured || clearing} onClick={() => setClearTarget('tiktok')} />
                     </div>
                     <CredentialField required fieldName="tiktok-client-key" label="Client Key" value={form.tiktokClientKey} onChange={value => setField('tiktokClientKey', value)} />
-                    <CredentialField required fieldName="tiktok-client-secret" label="Client Secret" value={form.tiktokClientSecret} onChange={value => setField('tiktokClientSecret', value)} />
+                    <CredentialField required secret saved={config.secretSet.tiktokClientSecret} fieldName="tiktok-client-secret" label="Client Secret" value={form.tiktokClientSecret} onChange={value => setField('tiktokClientSecret', value)} />
                     <CallbackLine label="Redirect URI" value={config.callbacks.tiktok} />
                   </div>
                 </div>
@@ -383,7 +399,7 @@ export default function AdminSocialAccountSetup() {
                     type="button"
                     onClick={() => void save()}
                     disabled={saving}
-                    className="inline-flex items-center gap-1.5 rounded-xl bg-slate-950 px-4 py-2.5 text-xs font-black text-white disabled:opacity-50"
+                    className="inline-flex items-center gap-1.5 rounded-md bg-accent px-4 py-2.5 text-xs font-bold text-white hover:bg-accent-dim disabled:opacity-50"
                   >
                     {saving ? <Loader2 size={13} className="animate-spin" /> : <Save size={13} />}
                     保存平台凭证
@@ -393,7 +409,7 @@ export default function AdminSocialAccountSetup() {
 
               <div className="border-t border-border pt-5">
                 <div className="mb-3">
-                  <h3 className="text-sm font-black text-text-primary">连接管理员账号</h3>
+                  <h3 className="text-sm font-bold text-text-primary">连接管理员账号</h3>
                   <p className="mt-1 text-[11px] text-text-muted">凭证保存后，点击对应平台的连接按钮并在官方页面完成授权。</p>
                 </div>
                 <div key={oauthPanelsKey} className="grid gap-3 xl:grid-cols-2">
@@ -411,26 +427,30 @@ export default function AdminSocialAccountSetup() {
 
     {clearTarget && (
       <div
-        className="fixed inset-0 z-[100] flex items-center justify-center bg-slate-950/45 p-4"
+        className="fixed inset-0 z-[100] flex items-end justify-center bg-slate-950/45 p-0 sm:items-center sm:p-4"
         role="presentation"
-        onMouseDown={() => !clearing && setClearTarget(null)}
+        onMouseDown={event => { if (event.target === event.currentTarget) closeClearDialog(); }}
       >
         <div
+          ref={clearDialogRef}
+          tabIndex={-1}
           role="dialog"
           aria-modal="true"
+          aria-busy={clearing}
           aria-labelledby="clear-platform-title"
-          className="w-full max-w-md rounded-2xl border border-red-100 bg-white p-5 shadow-2xl"
+          aria-describedby="clear-platform-description"
+          className="w-full max-w-md rounded-t-lg border border-border bg-white p-5 shadow-xl sm:rounded-lg"
           onMouseDown={event => event.stopPropagation()}
         >
           <div className="flex items-start gap-3">
-            <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-red-50 text-red-600">
+            <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-md bg-insight-soft text-insight-action">
               <AlertTriangle size={19} />
             </span>
             <div>
-              <h3 id="clear-platform-title" className="text-base font-black text-text-primary">
-                清除 {clearTarget === 'youtube' ? 'YouTube / Google' : clearTarget === 'meta' ? 'Instagram / Facebook' : 'TikTok'} 配置？
+              <h3 id="clear-platform-title" className="text-base font-bold text-text-primary">
+                清除 {clearTarget === 'youtube' ? 'YouTube / Google' : clearTarget === 'meta' ? 'Facebook / Messenger' : clearTarget === 'instagram' ? 'Instagram 私信' : 'TikTok'} 配置？
               </h3>
-              <p className="mt-2 text-sm leading-6 text-text-secondary">
+              <p id="clear-platform-description" className="mt-2 text-sm leading-6 text-text-secondary">
                 Client ID 和 Secret 会被清空，当前管理员在这个平台下已连接的账号也会同时断开。
               </p>
               <p className="mt-2 text-xs leading-5 text-text-muted">
@@ -441,9 +461,10 @@ export default function AdminSocialAccountSetup() {
           <div className="mt-5 flex justify-end gap-2">
             <button
               type="button"
-              onClick={() => setClearTarget(null)}
+              data-modal-initial-focus
+              onClick={closeClearDialog}
               disabled={clearing}
-              className="rounded-xl border border-border bg-white px-4 py-2.5 text-xs font-bold text-text-secondary disabled:opacity-50"
+              className="rounded-md border border-border bg-white px-4 py-2.5 text-xs font-bold text-text-secondary hover:bg-surface-2 disabled:opacity-50"
             >
               取消
             </button>
@@ -451,7 +472,7 @@ export default function AdminSocialAccountSetup() {
               type="button"
               onClick={() => void clearPlatformConfig()}
               disabled={clearing}
-              className="inline-flex items-center gap-1.5 rounded-xl bg-red-600 px-4 py-2.5 text-xs font-black text-white disabled:opacity-50"
+              className="inline-flex items-center gap-1.5 rounded-md bg-red px-4 py-2.5 text-xs font-bold text-white disabled:opacity-50"
             >
               {clearing ? <Loader2 size={13} className="animate-spin" /> : <Trash2 size={13} />}
               确认清除

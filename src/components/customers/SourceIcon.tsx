@@ -3,6 +3,7 @@ import { SocialPlatformIcon } from '../SocialPlatformIcon';
 
 const SOURCE_LABEL: Record<string, string> = {
   whatsapp: 'WhatsApp',
+  messenger: 'Messenger',
   youtube: 'YouTube',
   facebook: 'Facebook',
   instagram: 'Instagram',
@@ -37,7 +38,7 @@ export function SourceIcon({ source, size = 16 }: { source: CustomerSource; size
     );
   }
 
-  if (normalized === 'whatsapp' || normalized === 'youtube' || normalized === 'tiktok' || normalized === 'instagram' || normalized === 'facebook') {
+  if (normalized === 'messenger' || normalized === 'whatsapp' || normalized === 'youtube' || normalized === 'tiktok' || normalized === 'instagram' || normalized === 'facebook') {
     return (
       <span
         title={label}

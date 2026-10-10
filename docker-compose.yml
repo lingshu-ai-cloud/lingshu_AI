@@ -10,6 +10,8 @@ services:
       NODE_ENV: production
       PORT: 8788
       PB_URL: http://pocketbase:8090
+      PROCESS_ROLE_SPLIT_ENABLED: "true"
+      PROCESS_ROLE: web
       # Historical analysis/backfill stays paused during controlled one-record
       # channel acceptance tests. Manual scheduled-task runs are unaffected.
       CRAWLER_OPS_WORKER_ENABLED: "0"
@@ -21,11 +23,35 @@ services:
         condition: service_healthy
     expose:
       - "8788"
+    ports:
+      # Host-side probes use this loopback binding; Caddy reaches app:8788 on
+      # the private Compose network, so the API is never published directly.
+      - "127.0.0.1:${APP_HOST_PORT:-18788}:8788"
     healthcheck:
-      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:8788/api/overseas/health"]
+      test: ["CMD", "node", "scripts/check-runtime-readiness.mjs", "http://127.0.0.1:8788/api/overseas/ready"]
       interval: 15s
       timeout: 5s
       retries: 10
+
+  worker:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    env_file:
+      - ${ENV_FILE_PATH:-.env.production}
+    environment:
+      NODE_ENV: production
+      PB_URL: http://pocketbase:8090
+      PROCESS_ROLE_SPLIT_ENABLED: "true"
+      PROCESS_ROLE: worker
+      CRAWLER_OPS_WORKER_ENABLED: "1"
+      PB_VIDEO_BACKFILL_ENABLED: "false"
+    volumes:
+      - ./data:/app/data
+    depends_on:
+      pocketbase:
+        condition: service_healthy
 
   pocketbase:
     build:
@@ -69,5 +95,9 @@ services:
 
 volumes:
   pb_data:
+    external: true
+    # No historical preview fallback: deployment entrypoints explicitly create
+    # or validate this installation-specific, labelled volume before Compose.
+    name: ${PB_DATA_VOLUME_NAME:?PB_DATA_VOLUME_NAME must be set in the production env file}
   caddy_data:
   caddy_config:

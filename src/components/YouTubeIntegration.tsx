@@ -11,6 +11,7 @@ import {
   Trash2,
 } from 'lucide-react';
 import { authHeader } from '../lib/auth';
+import { closeOAuthPopup, navigateOAuthPopup, prepareOAuthPopup, readOAuthStartResponse } from '../lib/oauthPopup';
 import { SocialPlatformIcon } from './SocialPlatformIcon';
 
 interface YouTubeAccount {
@@ -53,9 +54,9 @@ interface YouTubeVideo {
   description: string;
   publishedAt: string;
   thumbnailUrl: string;
-  viewCount: number;
-  likeCount: number;
-  commentCount: number;
+  viewCount?: number;
+  likeCount?: number;
+  commentCount?: number;
   duration: string;
 }
 
@@ -133,60 +134,6 @@ function externalAccountUrl(account: { platform: string; providerAccountId: stri
   return '';
 }
 
-function prepareOAuthPopup(name: string, features: string): Window | null {
-  try {
-    const popup = window.open('', `${name}-${Date.now()}`, features);
-    if (!popup) return null;
-    try {
-      popup.document.title = '正在打开授权';
-      if (popup.document.body) {
-        popup.document.body.innerHTML = '<p style="font:14px system-ui;padding:24px;color:#475569">正在打开平台授权，请稍候…</p>';
-      }
-    } catch {
-      // The popup itself is still usable even if its loading view cannot be styled.
-    }
-    return popup;
-  } catch {
-    return null;
-  }
-}
-
-async function readOAuthStartResponse(response: Response, platformLabel: string): Promise<{ url: string }> {
-  const raw = await response.text();
-  let data: { url?: string; error?: string } = {};
-  try {
-    data = raw ? JSON.parse(raw) as { url?: string; error?: string } : {};
-  } catch {
-    // The status code below still gives the user an actionable error.
-  }
-  if (!response.ok) {
-    throw new Error(data.error || `${platformLabel} 授权服务暂时不可用（${response.status}）`);
-  }
-  if (!data.url) throw new Error(`${platformLabel} 授权地址生成失败，请刷新页面后重试。`);
-  return { url: data.url };
-}
-
-function navigateOAuthPopup(popup: Window | null, url: string) {
-  try {
-    if (popup && !popup.closed) {
-      popup.location.replace(url);
-      popup.focus();
-      return;
-    }
-  } catch {
-    // Fall back to the current tab when the browser blocks popup navigation.
-  }
-  window.location.assign(url);
-}
-
-function closeOAuthPopup(popup: Window | null) {
-  try {
-    if (popup && !popup.closed) popup.close();
-  } catch {
-    // The popup may already be cross-origin or closed.
-  }
-}
-
 function statusLabel(status: YouTubeAccount['status']) {
   if (status === 'connected') return '已连接';
   if (status === 'expired') return '授权过期';
@@ -194,9 +141,9 @@ function statusLabel(status: YouTubeAccount['status']) {
 }
 
 function statusClass(status: YouTubeAccount['status']) {
-  if (status === 'connected') return 'text-green-600 bg-green-50';
-  if (status === 'expired') return 'text-amber-700 bg-amber-50';
-  return 'text-red-600 bg-red-50';
+  if (status === 'connected') return 'text-accent bg-accent-glow';
+  if (status === 'expired') return 'text-insight-action bg-insight-soft';
+  return 'text-red bg-red/5';
 }
 
 export function YouTubeConnectionPanel({ compact = false }: { compact?: boolean }) {
@@ -327,15 +274,15 @@ export function YouTubeConnectionPanel({ compact = false }: { compact?: boolean 
   };
 
   return (
-    <section className={`flex h-full min-h-[360px] flex-col rounded-xl border border-gray-200 bg-white ${compact ? 'p-4' : 'p-5'}`}>
+    <section className={`flex h-full min-h-[360px] flex-col rounded-lg border border-border bg-white ${compact ? 'p-4' : 'p-4 sm:p-5'}`}>
       <div className="flex flex-col items-stretch gap-4 sm:flex-row sm:items-start sm:justify-between">
         <div className="flex items-start gap-3 min-w-0">
-          <div className="w-10 h-10 rounded-lg bg-red-50 text-red-600 flex items-center justify-center flex-shrink-0">
+          <div className="flex h-10 w-10 flex-shrink-0 items-center justify-center rounded-md bg-accent-glow text-accent">
             <SocialPlatformIcon platform="youtube" size={24} />
           </div>
           <div className="min-w-0">
-            <h2 className="text-sm font-semibold text-gray-900">YouTube 一键授权</h2>
-            <p className="text-xs text-gray-500 mt-1 leading-relaxed">
+            <h2 className="text-sm font-semibold text-text-primary">YouTube 一键授权</h2>
+            <p className="mt-1 text-xs leading-relaxed text-text-muted">
               登录您的 YouTube 账号并允许授权后，AI 生成的视频即可直接发布到该频道。
             </p>
           </div>
@@ -345,14 +292,15 @@ export function YouTubeConnectionPanel({ compact = false }: { compact?: boolean 
             onClick={() => void loadConnectionState()}
             disabled={loading}
             title="刷新"
-            className="p-2 rounded-lg border border-gray-200 text-gray-500 hover:text-gray-800 hover:border-gray-300 disabled:opacity-50"
+            aria-label="刷新 YouTube 连接状态"
+            className="rounded-md border border-border p-2 text-text-muted hover:border-border-bright hover:bg-surface-2 hover:text-text-primary disabled:opacity-50"
           >
             <RefreshCw size={14} className={loading ? 'animate-spin' : ''} />
           </button>
           <button
             onClick={() => void startOAuth()}
             disabled={connecting || loading}
-            className="inline-flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-semibold text-white bg-red-600 hover:bg-red-700 disabled:opacity-50 disabled:cursor-not-allowed"
+            className="inline-flex flex-1 items-center justify-center gap-2 rounded-md bg-accent px-4 py-2 text-sm font-semibold text-white hover:bg-accent-dim disabled:cursor-not-allowed disabled:opacity-50 sm:flex-none"
           >
             {connecting ? <Loader2 size={15} className="animate-spin" /> : <SocialPlatformIcon platform="youtube" size={17} />}
             {accounts.length > 0 ? '重新连接' : '连接 YouTube'}
@@ -361,42 +309,43 @@ export function YouTubeConnectionPanel({ compact = false }: { compact?: boolean 
       </div>
 
       {notice && (
-        <div className="mt-4 flex items-start gap-2 rounded-lg bg-green-50 px-3 py-2 text-xs text-green-700">
+        <div role="status" className="mt-4 flex items-start gap-2 border-l-2 border-accent bg-accent-glow px-3 py-2 text-xs text-accent">
           <CheckCircle size={14} className="mt-0.5 flex-shrink-0" />
           <span>{notice}</span>
         </div>
       )}
 
       {error && (
-        <div className="mt-4 flex items-start gap-2 rounded-lg bg-red-50 px-3 py-2 text-xs text-red-600">
+        <div role="alert" className="mt-4 flex items-start gap-2 border-l-2 border-red bg-red/5 px-3 py-2 text-xs text-red">
           <AlertCircle size={14} className="mt-0.5 flex-shrink-0" />
           <span>{error}</span>
         </div>
       )}
 
       {oauthStatus?.manualConnectEnabled && (
-      <div className="mt-4 border-t border-gray-100 pt-4">
+      <div className="mt-4 border-t border-border pt-4">
         <button
           onClick={() => setManualOpen(v => !v)}
-          className="text-xs font-semibold text-gray-500 hover:text-gray-900"
+          className="text-xs font-semibold text-text-muted hover:text-text-primary"
+          aria-expanded={manualOpen}
         >
           {manualOpen ? '收起手动接入' : '手动接入'}
         </button>
 
         {manualOpen && (
-          <div className="mt-3 grid gap-3 rounded-xl border border-gray-200 bg-gray-50 p-3">
-            <p className="text-xs leading-relaxed text-gray-500">
+          <div className="mt-3 grid gap-3 border-y border-border bg-surface-2 p-3">
+            <p className="text-xs leading-relaxed text-text-muted">
               适用于已完成授权但需要手动补充频道凭据的场景。请按服务顾问提供的信息填写。
             </p>
             <div className="grid gap-2 md:grid-cols-1">
-              <label className="grid gap-1 text-xs font-semibold text-gray-600">
+              <label className="grid gap-1 text-xs font-semibold text-text-secondary">
                 Refresh Token
                 <input
                   type="password"
                   value={manualValues.refreshToken}
                   onChange={e => setManualValues(v => ({ ...v, refreshToken: e.target.value }))}
                   placeholder="1//..."
-                  className="rounded-lg border border-gray-200 bg-white px-3 py-2 text-xs font-normal text-gray-900 outline-none focus:border-red-300"
+                  className="ui-field !rounded-md !text-xs"
                 />
               </label>
             </div>
@@ -404,7 +353,7 @@ export function YouTubeConnectionPanel({ compact = false }: { compact?: boolean 
               <button
                 onClick={() => void connectManually()}
                 disabled={manualSaving}
-                className="inline-flex items-center gap-2 rounded-lg bg-gray-900 px-3 py-2 text-xs font-semibold text-white disabled:opacity-50"
+                className="inline-flex items-center gap-2 rounded-md bg-accent px-3 py-2 text-xs font-semibold text-white hover:bg-accent-dim disabled:opacity-50"
               >
                 {manualSaving && <Loader2 size={12} className="animate-spin" />}
                 保存并连接
@@ -416,41 +365,41 @@ export function YouTubeConnectionPanel({ compact = false }: { compact?: boolean 
       )}
 
       {loading ? (
-        <div className="mt-auto flex min-h-[104px] items-center gap-2 text-sm text-gray-400">
+        <div className="mt-auto flex min-h-[104px] items-center gap-2 text-sm text-text-muted">
           <Loader2 size={16} className="animate-spin" /> 正在读取 YouTube 连接状态...
         </div>
       ) : accounts.length > 0 ? (
         <div className="mt-auto grid gap-3" style={{ gridTemplateColumns: compact ? '1fr' : 'repeat(auto-fit, minmax(260px, 1fr))' }}>
           {accounts.map(account => (
-            <div key={account.id} className="border border-gray-200 rounded-xl p-4">
+            <div key={account.id} className="rounded-lg border border-border p-4">
               <div className="flex items-start gap-3">
                 {account.thumbnailUrl ? (
                   <img src={account.thumbnailUrl} alt={account.channelTitle} className="w-11 h-11 rounded-lg object-cover flex-shrink-0" />
                 ) : (
-                  <div className="w-11 h-11 rounded-lg bg-red-50 text-red-600 flex items-center justify-center flex-shrink-0">
+                  <div className="flex h-11 w-11 flex-shrink-0 items-center justify-center rounded-md bg-accent-glow text-accent">
                     <SocialPlatformIcon platform="youtube" size={22} />
                   </div>
                 )}
                 <div className="min-w-0 flex-1">
                   <div className="flex items-center gap-2 min-w-0">
-                    <p className="text-sm font-semibold text-gray-900 truncate">{account.channelTitle}</p>
+                    <p className="truncate text-sm font-semibold text-text-primary">{account.channelTitle}</p>
                     <span className={`px-1.5 py-0.5 rounded-md text-[10px] font-semibold flex-shrink-0 ${statusClass(account.status)}`}>
                       {statusLabel(account.status)}
                     </span>
                   </div>
-                  <p className="text-[11px] text-gray-400 truncate mt-0.5">{account.channelId}</p>
+                  <p className="mt-0.5 truncate text-[11px] text-text-muted">{account.channelId}</p>
                   <div className="mt-3 grid grid-cols-3 gap-2 text-center">
-                    <div className="rounded-lg bg-gray-50 px-2 py-1.5">
-                      <p className="text-xs font-semibold text-gray-900">{compactNumber.format(account.subscriberCount || 0)}</p>
-                      <p className="text-[10px] text-gray-400">订阅</p>
+                    <div className="rounded-md bg-surface-2 px-2 py-1.5">
+                      <p className="text-xs font-semibold text-text-primary">{compactNumber.format(account.subscriberCount || 0)}</p>
+                      <p className="text-[10px] text-text-muted">订阅</p>
                     </div>
-                    <div className="rounded-lg bg-gray-50 px-2 py-1.5">
-                      <p className="text-xs font-semibold text-gray-900">{compactNumber.format(account.videoCount || 0)}</p>
-                      <p className="text-[10px] text-gray-400">视频</p>
+                    <div className="rounded-md bg-surface-2 px-2 py-1.5">
+                      <p className="text-xs font-semibold text-text-primary">{compactNumber.format(account.videoCount || 0)}</p>
+                      <p className="text-[10px] text-text-muted">视频</p>
                     </div>
-                    <div className="rounded-lg bg-gray-50 px-2 py-1.5">
-                      <p className="text-xs font-semibold text-gray-900">{compactNumber.format(account.viewCount || 0)}</p>
-                      <p className="text-[10px] text-gray-400">播放</p>
+                    <div className="rounded-md bg-surface-2 px-2 py-1.5">
+                      <p className="text-xs font-semibold text-text-primary">{compactNumber.format(account.viewCount || 0)}</p>
+                      <p className="text-[10px] text-text-muted">播放</p>
                     </div>
                   </div>
                 </div>
@@ -460,14 +409,14 @@ export function YouTubeConnectionPanel({ compact = false }: { compact?: boolean 
                   href={channelUrl(account)}
                   target="_blank"
                   rel="noreferrer"
-                  className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-gray-200 text-xs font-semibold text-gray-600 hover:text-gray-900 hover:border-gray-300"
+                  className="inline-flex items-center gap-1.5 rounded-md border border-border px-3 py-1.5 text-xs font-semibold text-text-secondary hover:border-border-bright hover:text-text-primary"
                 >
                   <ExternalLink size={12} /> 打开频道
                 </a>
                 <button
                   onClick={() => void disconnectAccount(account.id)}
                   disabled={deletingId === account.id}
-                  className="ml-auto inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-gray-200 text-xs font-semibold text-gray-500 hover:text-red-600 hover:border-red-200 disabled:opacity-50"
+                  className="ml-auto inline-flex items-center gap-1.5 rounded-md border border-border px-3 py-1.5 text-xs font-semibold text-text-muted hover:border-red hover:text-red disabled:opacity-50"
                 >
                   {deletingId === account.id ? <Loader2 size={12} className="animate-spin" /> : <Trash2 size={12} />}
                   断开
@@ -477,10 +426,10 @@ export function YouTubeConnectionPanel({ compact = false }: { compact?: boolean 
           ))}
         </div>
       ) : (
-        <div className="mt-auto rounded-xl border border-dashed border-gray-200 px-4 py-5 text-center">
+        <div className="mt-auto rounded-md border border-dashed border-border px-4 py-5 text-center">
           <SocialPlatformIcon platform="youtube" size={32} className="mx-auto mb-2 opacity-35" />
-          <p className="text-sm font-medium text-gray-700">还没有连接 YouTube 频道</p>
-          <p className="text-xs text-gray-400 mt-1">连接后，我的社媒里的 AI 生成视频可以一键发布到 YouTube。</p>
+          <p className="text-sm font-medium text-text-secondary">还没有连接 YouTube 频道</p>
+          <p className="mt-1 text-xs text-text-muted">连接后，我的社媒里的 AI 生成视频可以一键发布到 YouTube。</p>
         </div>
       )}
     </section>
@@ -503,14 +452,14 @@ const SOCIAL_META: Record<SocialPlatform, {
   },
   instagram: {
     label: 'Instagram',
-    description: '连接 Instagram 专业账号后可读取媒体和评论，并发布 Reels。',
-    envHint: 'META_SOCIAL_APP_ID / META_SOCIAL_APP_SECRET',
+    description: '连接 Instagram 专业账号后，可读取账号与媒体基本信息，并由用户确认后发布内容。',
+    envHint: 'INSTAGRAM_APP_ID / INSTAGRAM_APP_SECRET',
     color: '#c13584',
     bg: '#fdf2f8',
   },
   facebook: {
     label: 'Facebook',
-    description: '连接 Facebook Page 后可读取主页视频和评论，并发布视频到主页。',
+    description: '连接 Facebook Page 后可读取主页与内容基本信息，并由用户确认后发布视频。',
     envHint: 'META_SOCIAL_APP_ID / META_SOCIAL_APP_SECRET',
     color: '#1877f2',
     bg: '#eff6ff',
@@ -687,25 +636,24 @@ export function SocialConnectionPanel({ platform }: { platform: SocialPlatform }
   };
 
   return (
-    <section className="flex h-full min-h-[360px] flex-col rounded-xl border border-gray-200 bg-white p-5">
+    <section className="flex h-full min-h-[360px] flex-col rounded-lg border border-border bg-white p-4 sm:p-5">
       <div className="grid grid-cols-1 items-start gap-4 sm:grid-cols-[minmax(0,1fr)_auto]">
         <div className="flex items-start gap-3 min-w-0">
           <div className="w-10 h-10 rounded-lg flex items-center justify-center flex-shrink-0" style={{ background: meta.bg, color: meta.color }}>
             <SocialPlatformIcon platform={platform} size={24} />
           </div>
           <div className="min-w-0">
-            <h2 className="truncate whitespace-nowrap text-sm font-semibold text-gray-900">{meta.label} 授权</h2>
-            <p className="mt-1 text-xs leading-relaxed text-gray-500 sm:min-h-[72px]">{meta.description}</p>
+            <h2 className="truncate whitespace-nowrap text-sm font-semibold text-text-primary">{meta.label} 授权</h2>
+            <p className="mt-1 text-xs leading-relaxed text-text-muted sm:min-h-[72px]">{meta.description}</p>
           </div>
         </div>
         <div className="flex flex-shrink-0 items-center justify-start gap-2 sm:justify-end">
-          <button onClick={() => void loadState()} disabled={loading} title="刷新"
-            className="inline-flex h-10 w-10 items-center justify-center rounded-lg border border-gray-200 text-gray-500 hover:text-gray-800 hover:border-gray-300 disabled:opacity-50">
+          <button type="button" onClick={() => void loadState()} disabled={loading} title="刷新" aria-label={`刷新 ${meta.label} 连接状态`}
+            className="inline-flex h-10 w-10 items-center justify-center rounded-md border border-border text-text-muted hover:border-border-bright hover:bg-surface-2 hover:text-text-primary disabled:opacity-50">
             <RefreshCw size={14} className={loading ? 'animate-spin' : ''} />
           </button>
-          <button onClick={() => void startOAuth()} disabled={connecting || loading}
-            className="inline-flex h-10 w-[156px] items-center justify-center gap-2 rounded-lg px-4 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:opacity-50"
-            style={{ background: meta.color }}>
+          <button type="button" onClick={() => void startOAuth()} disabled={connecting || loading}
+            className="inline-flex h-10 flex-1 items-center justify-center gap-2 rounded-md bg-accent px-4 text-sm font-semibold text-white hover:bg-accent-dim disabled:cursor-not-allowed disabled:opacity-50 sm:w-[156px] sm:flex-none">
             {connecting ? <Loader2 size={15} className="animate-spin" /> : <SocialPlatformIcon platform={platform} size={17} />}
             {accounts.length > 0 ? '重新连接' : `连接 ${meta.label}`}
           </button>
@@ -714,13 +662,13 @@ export function SocialConnectionPanel({ platform }: { platform: SocialPlatform }
 
       <div className="mt-4 min-h-[132px]">
         {notice && (
-          <div className="mb-3 flex items-start gap-2 rounded-lg bg-green-50 px-3 py-2 text-xs text-green-700">
+          <div role="status" className="mb-3 flex items-start gap-2 border-l-2 border-accent bg-accent-glow px-3 py-2 text-xs text-accent">
             <CheckCircle size={14} className="mt-0.5 flex-shrink-0" />
             <span>{notice}</span>
           </div>
         )}
         {error && (
-          <div className="mb-3 flex items-start gap-2 rounded-lg bg-red-50 px-3 py-2 text-xs text-red-600">
+          <div role="alert" className="mb-3 flex items-start gap-2 border-l-2 border-red bg-red/5 px-3 py-2 text-xs text-red">
             <AlertCircle size={14} className="mt-0.5 flex-shrink-0" />
             <span>{error}</span>
           </div>
@@ -728,39 +676,40 @@ export function SocialConnectionPanel({ platform }: { platform: SocialPlatform }
       </div>
 
       {status?.manualConnectEnabled && (
-      <div className="mt-4 border-t border-gray-100 pt-4">
+      <div className="mt-4 border-t border-border pt-4">
         <button
           onClick={() => setManualOpen(v => !v)}
-          className="text-xs font-semibold text-gray-500 hover:text-gray-900"
+          className="text-xs font-semibold text-text-muted hover:text-text-primary"
+          aria-expanded={manualOpen}
         >
           {manualOpen ? '收起手动接入' : '手动接入'}
         </button>
 
         {manualOpen && (
-          <div className="mt-3 grid gap-3 rounded-xl border border-gray-200 bg-gray-50 p-3">
-            <p className="text-xs leading-relaxed text-gray-500">{manualCopy.helper}</p>
+          <div className="mt-3 grid gap-3 border-y border-border bg-surface-2 p-3">
+            <p className="text-xs leading-relaxed text-text-muted">{manualCopy.helper}</p>
             <div className={`grid gap-2 ${manualCopy.pageLabel ? 'md:grid-cols-3' : 'md:grid-cols-2'}`}>
-              <label className="grid gap-1 text-xs font-semibold text-gray-600">
+              <label className="grid gap-1 text-xs font-semibold text-text-secondary">
                 {manualCopy.tokenLabel}
                 <input
                   type="password"
                   value={manualValues.accessToken}
                   onChange={e => setManualValues(v => ({ ...v, accessToken: e.target.value }))}
                   placeholder={manualCopy.tokenPlaceholder}
-                  className="rounded-lg border border-gray-200 bg-white px-3 py-2 text-xs font-normal text-gray-900 outline-none focus:border-gray-400"
+                  className="ui-field !rounded-md !text-xs"
                 />
               </label>
-              <label className="grid gap-1 text-xs font-semibold text-gray-600">
+              <label className="grid gap-1 text-xs font-semibold text-text-secondary">
                 {manualCopy.accountLabel}
                 <input
                   value={manualValues.providerAccountId}
                   onChange={e => setManualValues(v => ({ ...v, providerAccountId: e.target.value }))}
                   placeholder={manualCopy.accountPlaceholder}
-                  className="rounded-lg border border-gray-200 bg-white px-3 py-2 text-xs font-normal text-gray-900 outline-none focus:border-gray-400"
+                  className="ui-field !rounded-md !text-xs"
                 />
               </label>
               {manualCopy.pageLabel && (
-                <label className="grid gap-1 text-xs font-semibold text-gray-600">
+                <label className="grid gap-1 text-xs font-semibold text-text-secondary">
                   {manualCopy.pageLabel}
                   <input
                     type={platform === 'tiktok' ? 'password' : 'text'}
@@ -769,7 +718,7 @@ export function SocialConnectionPanel({ platform }: { platform: SocialPlatform }
                       ? { ...v, refreshToken: e.target.value }
                       : { ...v, parentPageId: e.target.value })}
                     placeholder={manualCopy.pagePlaceholder}
-                    className="rounded-lg border border-gray-200 bg-white px-3 py-2 text-xs font-normal text-gray-900 outline-none focus:border-gray-400"
+                    className="ui-field !rounded-md !text-xs"
                   />
                 </label>
               )}
@@ -778,7 +727,7 @@ export function SocialConnectionPanel({ platform }: { platform: SocialPlatform }
               <button
                 onClick={() => void connectManually()}
                 disabled={manualSaving}
-                className="inline-flex items-center gap-2 rounded-lg bg-gray-900 px-3 py-2 text-xs font-semibold text-white disabled:opacity-50"
+                className="inline-flex items-center gap-2 rounded-md bg-accent px-3 py-2 text-xs font-semibold text-white hover:bg-accent-dim disabled:opacity-50"
               >
                 {manualSaving && <Loader2 size={12} className="animate-spin" />}
                 保存并连接
@@ -790,13 +739,13 @@ export function SocialConnectionPanel({ platform }: { platform: SocialPlatform }
       )}
 
       {loading ? (
-        <div className="mt-auto flex min-h-[104px] items-center gap-2 text-sm text-gray-400">
+        <div className="mt-auto flex min-h-[104px] items-center gap-2 text-sm text-text-muted">
           <Loader2 size={16} className="animate-spin" /> 正在读取 {meta.label} 连接状态...
         </div>
       ) : accounts.length > 0 ? (
         <div className="mt-auto grid gap-3" style={{ gridTemplateColumns: 'repeat(auto-fit, minmax(260px, 1fr))' }}>
           {accounts.map(account => (
-            <div key={account.id} className="border border-gray-200 rounded-xl p-4">
+            <div key={account.id} className="rounded-lg border border-border p-4">
               <div className="flex items-start gap-3">
                 {account.avatarUrl ? (
                   <img src={account.avatarUrl} alt={account.title} className="w-11 h-11 rounded-lg object-cover flex-shrink-0" />
@@ -807,13 +756,13 @@ export function SocialConnectionPanel({ platform }: { platform: SocialPlatform }
                 )}
                 <div className="min-w-0 flex-1">
                   <div className="flex items-center gap-2 min-w-0">
-                    <p className="text-sm font-semibold text-gray-900 truncate">{account.title}</p>
+                    <p className="truncate text-sm font-semibold text-text-primary">{account.title}</p>
                     <span className={`px-1.5 py-0.5 rounded-md text-[10px] font-semibold flex-shrink-0 ${statusClass(account.status)}`}>
                       {statusLabel(account.status)}
                     </span>
                   </div>
-                  <p className="text-[11px] text-gray-400 truncate mt-0.5">{account.handle || account.providerAccountId}</p>
-                  {account.parentPageName && <p className="text-[11px] text-gray-400 truncate mt-0.5">Page: {account.parentPageName}</p>}
+                  <p className="mt-0.5 truncate text-[11px] text-text-muted">{account.handle || account.providerAccountId}</p>
+                  {account.parentPageName && <p className="mt-0.5 truncate text-[11px] text-text-muted">Page: {account.parentPageName}</p>}
                 </div>
               </div>
               <div className="mt-4 flex items-center gap-2">
@@ -822,13 +771,13 @@ export function SocialConnectionPanel({ platform }: { platform: SocialPlatform }
                     href={externalAccountUrl(account)}
                     target="_blank"
                     rel="noreferrer"
-                    className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-gray-200 text-xs font-semibold text-gray-600 hover:text-gray-900 hover:border-gray-300"
+                    className="inline-flex items-center gap-1.5 rounded-md border border-border px-3 py-1.5 text-xs font-semibold text-text-secondary hover:border-border-bright hover:text-text-primary"
                   >
                     <ExternalLink size={12} /> 打开主页
                   </a>
                 )}
                 <button onClick={() => void disconnect(account.id)} disabled={deletingId === account.id}
-                  className="ml-auto inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-gray-200 text-xs font-semibold text-gray-500 hover:text-red-600 hover:border-red-200 disabled:opacity-50">
+                  className="ml-auto inline-flex items-center gap-1.5 rounded-md border border-border px-3 py-1.5 text-xs font-semibold text-text-muted hover:border-red hover:text-red disabled:opacity-50">
                   {deletingId === account.id ? <Loader2 size={12} className="animate-spin" /> : <Trash2 size={12} />}
                   断开
                 </button>
@@ -837,10 +786,10 @@ export function SocialConnectionPanel({ platform }: { platform: SocialPlatform }
           ))}
         </div>
       ) : (
-        <div className="mt-auto rounded-xl border border-dashed border-gray-200 px-4 py-5 text-center">
+        <div className="mt-auto rounded-md border border-dashed border-border px-4 py-5 text-center">
           <SocialPlatformIcon platform={platform} size={32} className="mx-auto mb-2 opacity-35" />
-          <p className="text-sm font-medium text-gray-700">还没有连接 {meta.label} 账号</p>
-          <p className="text-xs text-gray-400 mt-1">连接后会出现在「频道总览」和「一键发布」里。</p>
+          <p className="text-sm font-medium text-text-secondary">还没有连接 {meta.label} 账号</p>
+          <p className="mt-1 text-xs text-text-muted">连接后会出现在「频道总览」和「一键发布」里。</p>
         </div>
       )}
     </section>
@@ -899,6 +848,7 @@ export function ChannelOverview() {
   const selectedVideo = videos.find(v => v.id === selectedVideoId) ?? null;
 
   const currentPlatform = platform as OverviewPlatform;
+  const commentsEnabled = currentPlatform !== 'facebook' && currentPlatform !== 'instagram';
   const accountUrl = (account: OverviewAccount) => externalAccountUrl(account);
   const mapYouTube = (a: YouTubeAccount): OverviewAccount => ({
     id: a.id,
@@ -943,6 +893,10 @@ export function ChannelOverview() {
       if (result.status === 'fulfilled') next[platforms[index]] = result.value.length;
     });
     setCounts(next);
+    if (next[currentPlatform] === 0) {
+      const firstConnected = platforms.find(item => next[item] > 0);
+      if (firstConnected) setPlatform(firstConnected);
+    }
   };
 
   const loadAccounts = async (target: OverviewPlatform = currentPlatform) => {
@@ -1009,6 +963,11 @@ export function ChannelOverview() {
   }, [selectedAccountId, currentPlatform]);
 
   useEffect(() => {
+    if (!commentsEnabled) {
+      setComments([]);
+      setCommentsLoading(false);
+      return;
+    }
     if (!selectedAccountId || !selectedVideoId) {
       setComments([]);
       return;
@@ -1022,7 +981,7 @@ export function ChannelOverview() {
       .then(data => setComments(data.comments ?? []))
       .catch(() => setComments([]))
       .finally(() => setCommentsLoading(false));
-  }, [selectedAccountId, selectedVideoId, currentPlatform]);
+  }, [selectedAccountId, selectedVideoId, currentPlatform, commentsEnabled]);
 
   const platforms = [
     { id: 'youtube' as const, label: 'YouTube', count: counts.youtube },
@@ -1032,60 +991,61 @@ export function ChannelOverview() {
   ];
 
   return (
-    <div className="flex flex-col h-full gap-5">
-      <div className="flex items-center justify-between gap-3">
-        <div className="flex gap-1 rounded-xl bg-gray-100 p-1">
+    <div className="flex h-full flex-col gap-4 sm:gap-5">
+      <div className="flex items-center justify-between gap-3 border-b border-border">
+        <div className="flex min-w-0 gap-5 overflow-x-auto overflow-y-hidden" role="tablist" aria-label="频道平台">
           {platforms.map(p => (
-            <button key={p.id} onClick={() => setPlatform(p.id)}
-              className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold ${platform === p.id ? 'bg-white text-gray-900 shadow-sm' : 'text-gray-500 hover:text-gray-800'}`}>
-              <SocialPlatformIcon platform={p.id} size={15} /> {p.label}{p.count > 0 ? ` ${p.count}` : ''}
+            <button key={p.id} type="button" onClick={() => setPlatform(p.id)} role="tab" aria-selected={platform === p.id}
+              className={`inline-flex shrink-0 items-center gap-1.5 border-b-2 px-1 pb-3 pt-1 text-xs font-semibold transition-colors ${platform === p.id ? 'border-accent text-accent' : 'border-transparent text-text-muted hover:border-border-bright hover:text-text-primary'}`}>
+              <SocialPlatformIcon platform={p.id} size={18} /><span className="sr-only">{p.label}</span>{p.count > 0 ? <span>{p.count}</span> : null}
             </button>
           ))}
         </div>
-        <button onClick={() => { void loadCounts(); void loadAccounts(currentPlatform); }} disabled={accountsLoading}
+        <button type="button" onClick={() => { void loadCounts(); void loadAccounts(currentPlatform); }} disabled={accountsLoading}
           title="刷新频道总览"
-          className="p-2 rounded-lg border border-gray-200 text-gray-500 hover:text-gray-900 disabled:opacity-50">
+          aria-label="刷新频道总览"
+          className="mb-2 rounded-md border border-border bg-white p-2 text-text-muted transition-colors hover:border-border-bright hover:text-text-primary disabled:opacity-50">
           <RefreshCw size={14} className={accountsLoading ? 'animate-spin' : ''} />
         </button>
       </div>
 
       {error && (
-        <div className="flex items-start gap-2 rounded-lg bg-red-50 px-3 py-2 text-xs text-red-600">
+        <div role="alert" className="flex items-start gap-2 rounded-md border border-red/20 bg-red/5 px-3 py-2 text-xs text-red">
           <AlertCircle size={14} className="mt-0.5 flex-shrink-0" />
           <span>{error}</span>
         </div>
       )}
 
       {accountsLoading ? (
-        <div className="flex items-center gap-2 text-sm text-gray-400 py-12 justify-center">
+        <div role="status" className="flex items-center justify-center gap-2 py-12 text-sm text-text-muted">
           <Loader2 size={16} className="animate-spin" /> 正在读取频道账号...
         </div>
       ) : accounts.length === 0 ? (
-        <div className="flex-1 grid place-items-center rounded-xl border border-dashed border-gray-200 bg-gray-50">
-          <div className="text-center">
+        <div className="grid flex-1 place-items-center rounded-lg border border-dashed border-border bg-surface-2 px-5 py-12">
+          <div className="max-w-sm text-center">
             <SocialPlatformIcon platform={currentPlatform} size={38} className="mx-auto mb-2 opacity-35" />
-            <p className="text-sm font-semibold text-gray-800">还没有已授权的 {platforms.find(p => p.id === currentPlatform)?.label} 账号</p>
-            <p className="mt-1 text-xs text-gray-400">请先在「账号配置 - 一键授权」连接账号。</p>
+            <p className="text-sm font-semibold text-text-primary">还没有已授权的 {platforms.find(p => p.id === currentPlatform)?.label} 账号</p>
+            <p className="mt-1 text-xs text-text-muted">请先在「账号配置 - 一键授权」连接账号。</p>
           </div>
         </div>
       ) : (
-        <div className="grid min-h-0 flex-1 gap-5" style={{ gridTemplateColumns: '260px minmax(0, 1fr)' }}>
-          <aside className="min-h-0 overflow-y-auto border border-gray-200 rounded-xl p-3">
-            <p className="px-1 pb-2 text-xs font-semibold text-gray-500">账号</p>
-            <div className="space-y-2">
+        <div className="grid min-h-0 flex-1 gap-4 lg:grid-cols-[240px_minmax(0,1fr)] lg:gap-5">
+          <aside className="min-h-0 overflow-y-auto rounded-lg border border-border bg-white p-3" aria-label="频道账号">
+            <p className="px-1 pb-2 text-xs font-semibold text-text-secondary">账号</p>
+            <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-1">
               {accounts.map(account => (
-                <button key={account.id} onClick={() => setSelectedAccountId(account.id)}
-                  className={`w-full flex items-center gap-3 rounded-lg border px-3 py-2 text-left ${selectedAccountId === account.id ? 'border-red-200 bg-red-50' : 'border-gray-100 hover:border-gray-200'}`}>
+                <button key={account.id} type="button" onClick={() => setSelectedAccountId(account.id)} aria-pressed={selectedAccountId === account.id}
+                  className={`flex w-full items-center gap-3 rounded-md border px-3 py-2 text-left transition-colors ${selectedAccountId === account.id ? 'border-accent/35 bg-accent-glow' : 'border-border bg-white hover:border-border-bright hover:bg-surface-2'}`}>
                   {account.avatarUrl ? (
-                    <img src={account.avatarUrl} alt={account.title} className="w-9 h-9 rounded-lg object-cover flex-shrink-0" />
+                    <img src={account.avatarUrl} alt="" className="h-9 w-9 flex-shrink-0 rounded-md object-cover" />
                   ) : (
-                    <span className="w-9 h-9 rounded-lg flex items-center justify-center flex-shrink-0" style={platformTone(account.platform)}>
+                    <span className="flex h-9 w-9 flex-shrink-0 items-center justify-center rounded-md" style={platformTone(account.platform)} aria-hidden="true">
                       <SocialPlatformIcon platform={account.platform} size={20} />
                     </span>
                   )}
                   <span className="min-w-0 flex-1">
-                    <span className="block truncate text-sm font-semibold text-gray-900">{account.title}</span>
-                    <span className="block truncate text-[11px] text-gray-400">{account.handle || account.providerAccountId}</span>
+                    <span className="block truncate text-sm font-semibold text-text-primary">{account.title}</span>
+                    <span className="block truncate text-[11px] text-text-muted">{account.handle || account.providerAccountId}</span>
                   </span>
                 </button>
               ))}
@@ -1094,58 +1054,58 @@ export function ChannelOverview() {
 
           <main className="min-w-0 min-h-0 flex flex-col gap-4">
             {selectedAccount && (
-              <div className="border border-gray-200 rounded-xl p-4">
-                <div className="flex items-start justify-between gap-4">
+              <div className="rounded-lg border border-border bg-white p-4">
+                <div className="flex flex-col items-start justify-between gap-3 sm:flex-row sm:gap-4">
                   <div className="min-w-0">
-                    <p className="text-sm font-semibold text-gray-900 truncate">{selectedAccount.title}</p>
-                    <p className="mt-1 text-xs text-gray-400 truncate">{selectedAccount.handle || selectedAccount.providerAccountId}</p>
-                    {selectedAccount.parentPageName && <p className="mt-1 text-xs text-gray-400 truncate">Page: {selectedAccount.parentPageName}</p>}
+                    <p className="truncate text-sm font-semibold text-text-primary">{selectedAccount.title}</p>
+                    <p className="mt-1 truncate text-xs text-text-muted">{selectedAccount.handle || selectedAccount.providerAccountId}</p>
+                    {selectedAccount.parentPageName && <p className="mt-1 truncate text-xs text-text-muted">Page: {selectedAccount.parentPageName}</p>}
                   </div>
                   {accountUrl(selectedAccount) && <a href={accountUrl(selectedAccount)} target="_blank" rel="noreferrer"
-                    className="inline-flex items-center gap-1.5 rounded-lg border border-gray-200 px-3 py-1.5 text-xs font-semibold text-gray-600 hover:text-gray-900">
+                    className="inline-flex items-center gap-1.5 rounded-md border border-border px-3 py-1.5 text-xs font-semibold text-text-secondary transition-colors hover:border-border-bright hover:text-text-primary">
                     <ExternalLink size={12} /> {selectedAccount.platform === 'youtube' ? '打开频道' : '打开主页'}
                   </a>}
                 </div>
                 <div className="mt-4 grid grid-cols-3 gap-3">
-                  <div className="rounded-lg bg-gray-50 px-3 py-2">
-                    <p className="text-base font-bold text-gray-900">{compactNumber.format(selectedAccount.followerCount || 0)}</p>
-                    <p className="text-[11px] text-gray-400">{selectedAccount.platform === 'youtube' ? '订阅' : '粉丝'}</p>
+                  <div className="rounded-md border border-border bg-surface-2 px-2 py-2 sm:px-3">
+                    <p className="text-base font-bold text-text-primary">{compactNumber.format(selectedAccount.followerCount || 0)}</p>
+                    <p className="text-[11px] text-text-muted">{selectedAccount.platform === 'youtube' ? '订阅' : '粉丝'}</p>
                   </div>
-                  <div className="rounded-lg bg-gray-50 px-3 py-2">
-                    <p className="text-base font-bold text-gray-900">{compactNumber.format(selectedAccount.videoCount || 0)}</p>
-                    <p className="text-[11px] text-gray-400">视频</p>
+                  <div className="rounded-md border border-border bg-surface-2 px-2 py-2 sm:px-3">
+                    <p className="text-base font-bold text-text-primary">{compactNumber.format(selectedAccount.videoCount || 0)}</p>
+                    <p className="text-[11px] text-text-muted">视频</p>
                   </div>
-                  <div className="rounded-lg bg-gray-50 px-3 py-2">
-                    <p className="text-base font-bold text-gray-900">{compactNumber.format(selectedAccount.viewCount || 0)}</p>
-                    <p className="text-[11px] text-gray-400">播放</p>
+                  <div className="rounded-md border border-border bg-surface-2 px-2 py-2 sm:px-3">
+                    <p className="text-base font-bold text-text-primary">{compactNumber.format(selectedAccount.viewCount || 0)}</p>
+                    <p className="text-[11px] text-text-muted">播放</p>
                   </div>
                 </div>
               </div>
             )}
 
-            <div className="grid min-h-0 flex-1 gap-4" style={{ gridTemplateColumns: 'minmax(0, 1.2fr) minmax(300px, 0.8fr)' }}>
-              <section className="min-h-0 overflow-y-auto border border-gray-200 rounded-xl p-3">
+            <div className={`grid min-h-0 flex-1 gap-4 ${commentsEnabled ? 'xl:grid-cols-[minmax(0,1.2fr)_minmax(300px,0.8fr)]' : ''}`}>
+              <section className="min-h-0 overflow-y-auto rounded-lg border border-border bg-white p-3" aria-labelledby="channel-videos-heading">
                 <div className="flex items-center justify-between px-1 pb-3">
-                  <p className="text-xs font-semibold text-gray-500">视频</p>
-                  {videos.length > 0 && <span className="text-[11px] text-gray-400">最近 {videos.length} 条</span>}
+                  <p id="channel-videos-heading" className="text-xs font-semibold text-text-secondary">视频</p>
+                  {videos.length > 0 && <span className="text-[11px] text-text-muted">最近 {videos.length} 条</span>}
                 </div>
                 {videosLoading ? (
-                  <div className="flex items-center gap-2 text-sm text-gray-400 py-10 justify-center">
+                  <div role="status" className="flex items-center justify-center gap-2 py-10 text-sm text-text-muted">
                     <Loader2 size={16} className="animate-spin" /> 正在读取视频...
                   </div>
                 ) : videos.length === 0 ? (
-                  <div className="py-16 text-center text-sm text-gray-400">暂无视频</div>
+                  <div className="py-16 text-center text-sm text-text-muted">暂无视频</div>
                 ) : (
                   <div className="space-y-2">
                     {videos.map(video => (
-                      <button key={video.id} onClick={() => setSelectedVideoId(video.id)}
-                        className={`w-full flex gap-3 rounded-lg border p-2 text-left ${selectedVideoId === video.id ? 'border-red-200 bg-red-50' : 'border-gray-100 hover:border-gray-200'}`}>
-                        <img src={video.thumbnailUrl} alt={video.title} className="w-24 h-14 rounded-md object-cover bg-gray-100 flex-shrink-0" />
+                      <button key={video.id} type="button" onClick={() => setSelectedVideoId(video.id)} aria-pressed={selectedVideoId === video.id}
+                        className={`flex w-full gap-3 rounded-md border p-2 text-left transition-colors ${selectedVideoId === video.id ? 'border-accent/35 bg-accent-glow' : 'border-border bg-white hover:border-border-bright hover:bg-surface-2'}`}>
+                        <img src={video.thumbnailUrl} alt="" className="h-14 w-20 flex-shrink-0 rounded object-cover bg-surface-2 sm:w-24" />
                         <span className="min-w-0 flex-1">
-                          <span className="block line-clamp-2 text-sm font-semibold text-gray-900">{video.title}</span>
-                          <span className="mt-2 flex items-center gap-3 text-[11px] text-gray-400">
-                            <span className="inline-flex items-center gap-1"><Eye size={11} />{compactNumber.format(video.viewCount || 0)}</span>
-                            <span className="inline-flex items-center gap-1"><MessageSquare size={11} />{compactNumber.format(video.commentCount || 0)}</span>
+                          <span className="block line-clamp-2 text-sm font-semibold text-text-primary">{video.title}</span>
+                          <span className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px] text-text-muted">
+                            <span className="inline-flex items-center gap-1"><Eye size={11} />{typeof video.viewCount === 'number' ? compactNumber.format(video.viewCount) : '暂无数据'}</span>
+                            <span className="inline-flex items-center gap-1"><MessageSquare size={11} />{typeof video.commentCount === 'number' ? compactNumber.format(video.commentCount) : '暂无数据'}</span>
                             <span>{formatDate(video.publishedAt)}</span>
                           </span>
                         </span>
@@ -1155,47 +1115,47 @@ export function ChannelOverview() {
                 )}
               </section>
 
-              <section className="min-h-0 overflow-y-auto border border-gray-200 rounded-xl p-3">
+              {commentsEnabled && <section className="min-h-0 overflow-y-auto rounded-lg border border-border bg-white p-3" aria-labelledby="channel-comments-heading">
                 <div className="px-1 pb-3">
-                  <p className="text-xs font-semibold text-gray-500">评论</p>
-                  {selectedVideo && <p className="mt-1 line-clamp-1 text-[11px] text-gray-400">{selectedVideo.title}</p>}
+                  <p id="channel-comments-heading" className="text-xs font-semibold text-text-secondary">评论</p>
+                  {selectedVideo && <p className="mt-1 line-clamp-1 text-[11px] text-text-muted">{selectedVideo.title}</p>}
                 </div>
                 {commentsLoading ? (
-                  <div className="flex items-center gap-2 text-sm text-gray-400 py-10 justify-center">
+                  <div role="status" className="flex items-center justify-center gap-2 py-10 text-sm text-text-muted">
                     <Loader2 size={16} className="animate-spin" /> 正在读取评论...
                   </div>
                 ) : !selectedVideo ? (
-                  <div className="py-16 text-center text-sm text-gray-400">请选择视频</div>
+                  <div className="py-16 text-center text-sm text-text-muted">请选择视频</div>
                 ) : comments.length === 0 ? (
-                  <div className="py-16 text-center text-sm text-gray-400">暂无评论</div>
+                  <div className="py-16 text-center text-sm text-text-muted">暂无评论</div>
                 ) : (
                   <div className="space-y-3">
                     {comments.map(comment => (
-                      <article key={comment.id} className="rounded-lg border border-gray-100 p-3">
+                      <article key={comment.id} className="rounded-md border border-border bg-surface-2/40 p-3">
                         <div className="flex items-center gap-2 mb-2">
                           {comment.authorProfileImageUrl ? (
-                            <img src={comment.authorProfileImageUrl} alt={comment.authorName} className="w-7 h-7 rounded-full object-cover flex-shrink-0" />
+                            <img src={comment.authorProfileImageUrl} alt="" className="h-7 w-7 flex-shrink-0 rounded-full object-cover" />
                           ) : (
-                            <span className="w-7 h-7 rounded-full bg-gray-100 flex items-center justify-center text-xs font-semibold text-gray-500 flex-shrink-0">
+                            <span className="flex h-7 w-7 flex-shrink-0 items-center justify-center rounded-full bg-accent-glow text-xs font-semibold text-accent" aria-hidden="true">
                               {comment.authorName?.[0] ?? '?'}
                             </span>
                           )}
                           <div className="min-w-0 flex-1">
-                            <p className="truncate text-xs font-semibold text-gray-900">{comment.authorName}</p>
-                            <p className="text-[10px] text-gray-400">{formatDate(comment.publishedAt)}</p>
+                            <p className="truncate text-xs font-semibold text-text-primary">{comment.authorName}</p>
+                            <p className="text-[10px] text-text-muted">{formatDate(comment.publishedAt)}</p>
                           </div>
                           {comment.likeCount > 0 && (
-                            <span className="inline-flex items-center gap-1 text-[10px] text-gray-400">
+                            <span className="inline-flex items-center gap-1 text-[10px] text-text-muted">
                               <ThumbsUp size={10} /> {comment.likeCount}
                             </span>
                           )}
                         </div>
-                        <p className="text-xs leading-relaxed text-gray-700">{comment.textDisplay}</p>
+                        <p className="text-xs leading-relaxed text-text-secondary">{comment.textDisplay}</p>
                       </article>
                     ))}
                   </div>
                 )}
-              </section>
+              </section>}
             </div>
           </main>
         </div>
@@ -1211,12 +1171,12 @@ export function YouTubeContent() {
 // ── Full standalone page ───────────────────────────────────────────────────────
 export default function YouTubeIntegrationPage() {
   return (
-    <div className="flex flex-col h-full bg-white">
-      <div className="px-8 pt-8 pb-4 border-b border-gray-100">
-        <h1 className="text-xl font-semibold text-gray-900">频道总览</h1>
-        <p className="text-sm text-gray-500 mt-0.5">多个平台账号的视频与评论数据</p>
+    <div className="flex h-full flex-col bg-ink">
+      <div className="border-b border-border bg-white px-4 py-4 sm:px-6">
+        <h1 className="text-xl font-semibold text-text-primary">频道总览</h1>
+        <p className="mt-0.5 text-sm text-text-muted">多个平台账号及已授权内容数据</p>
       </div>
-      <div className="flex-1 overflow-y-auto px-8 py-6">
+      <div className="flex-1 overflow-y-auto px-4 py-5 sm:px-6 sm:py-6">
         <ChannelOverview />
       </div>
     </div>

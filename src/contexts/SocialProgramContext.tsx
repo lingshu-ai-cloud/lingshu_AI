@@ -1,0 +1,237 @@
+import {getToken,AUTH_TOKEN_CHANGED_EVENT} from '../lib/auth';
+import {readCurrentSocialAccounts,socialAccountReadCurrent} from '../lib/socialAccountReadIdentity';
+import {
+  createContext,
+  useCallback,
+  useContext,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type ReactNode,
+} from 'react';
+import type {
+  OwnedSocialAccount,
+  SocialMonthlyPlan,
+  SocialProgram,
+} from '../../shared/contracts/socialProgram';
+import { socialProgramApi } from '../lib/socialProgramApi';
+
+interface SocialProgramContextValue {
+  available: boolean;
+  programs: SocialProgram[];
+  activeProgram: SocialProgram | null;
+  activeProgramId: string | null;
+  accounts: OwnedSocialAccount[];
+  loading: boolean;
+  accountsLoading: boolean;
+  mutating: boolean;
+  error: string;
+  accountsError: string;
+  selectProgram: (programId: string) => void;
+  refreshPrograms: () => Promise<void>;
+  refreshAccounts: () => Promise<void>;
+  createProgram: (input: Record<string, unknown>) => Promise<SocialProgram>;
+  updateActiveProgram: (input: Record<string, unknown>) => Promise<SocialProgram>;
+  createAccount: (input: Record<string, unknown>) => Promise<OwnedSocialAccount>;
+  saveMonthlyPlan: (input: Record<string, unknown>) => Promise<SocialMonthlyPlan>;
+}
+
+const SocialProgramContext = createContext<SocialProgramContextValue | null>(null);
+
+const errorMessage = (error: unknown) => error instanceof Error ? error.message : '社媒经营数据请求失败，请稍后重试。';
+
+export function SocialProgramProvider({ scope, children, enabled = true }: { scope: string; children: ReactNode; enabled?: boolean }) {
+  const storageKey = `lingshu:social-program:active:${scope}`;
+  const [programs, setPrograms] = useState<SocialProgram[]>([]);
+  const [activeProgramId, setActiveProgramId] = useState<string | null>(null);
+  const [accounts, setAccounts] = useState<OwnedSocialAccount[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [accountsLoading, setAccountsLoading] = useState(false);
+  const [mutating, setMutating] = useState(false);
+  const [error, setError] = useState('');
+  const [accountsError, setAccountsError] = useState('');
+  const programRequestRef = useRef(0);
+  const accountRequestRef = useRef(0);
+  const accountsMounted=useRef(true);
+  useEffect(()=>{accountsMounted.current=true;const changed=()=>{accountRequestRef.current++;setAccounts([]);setAccountsLoading(false);setAccountsError('登录身份已变化，请重新读取账号。');};window.addEventListener(AUTH_TOKEN_CHANGED_EVENT,changed);window.addEventListener('storage',changed);return()=>{accountsMounted.current=false;accountRequestRef.current++;window.removeEventListener(AUTH_TOKEN_CHANGED_EVENT,changed);window.removeEventListener('storage',changed);};},[]);
+
+  const preferredProgramId = useCallback(() => {
+    try {
+      const query = new URLSearchParams(window.location.search);
+      return query.get('programId') || localStorage.getItem(storageKey);
+    } catch { return null; }
+  }, [storageKey]);
+
+  const persistProgramId = useCallback((programId: string | null) => {
+    try {
+      if (programId) localStorage.setItem(storageKey, programId);
+      else localStorage.removeItem(storageKey);
+    } catch { /* browser storage is optional */ }
+  }, [storageKey]);
+
+  const refreshPrograms = useCallback(async () => {
+    if (!enabled) { setPrograms([]); setActiveProgramId(null); setLoading(false); return; }
+    const requestId = ++programRequestRef.current;
+    setLoading(true);
+    setError('');
+    try {
+      const items = await socialProgramApi.list();
+      if (requestId !== programRequestRef.current) return;
+      setPrograms(items);
+      setActiveProgramId(current => {
+        const preferred = current || preferredProgramId();
+        const next = items.some(item => item.programId === preferred) ? preferred : items[0]?.programId ?? null;
+        persistProgramId(next);
+        return next;
+      });
+    } catch (requestError) {
+      if (requestId === programRequestRef.current) setError(errorMessage(requestError));
+    } finally {
+      if (requestId === programRequestRef.current) setLoading(false);
+    }
+  }, [enabled, persistProgramId, preferredProgramId]);
+
+  const refreshAccountsFor = useCallback(async (programId: string | null) => {
+    const requestId = ++accountRequestRef.current;
+    const expected={token:getToken(),requestId,mounted:accountsMounted.current};
+    const current=()=>({token:getToken(),requestId:accountRequestRef.current,mounted:accountsMounted.current});
+    if (!programId || !expected.token) {
+      setAccounts([]);
+      setAccountsError('');
+      setAccountsLoading(false);
+      return;
+    }
+    setAccountsLoading(true);
+    setAccountsError('');
+    try {
+      await readCurrentSocialAccounts(expected,current,()=>socialProgramApi.listAccounts(programId),setAccounts);
+    } catch (requestError) {
+      if (socialAccountReadCurrent(expected,current())) {
+        setAccounts([]);
+        setAccountsError(errorMessage(requestError));
+      }
+    } finally {
+      if (socialAccountReadCurrent(expected,current())) setAccountsLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    setPrograms([]);
+    setAccounts([]);
+    setActiveProgramId(null);
+    void refreshPrograms();
+  }, [scope, refreshPrograms]);
+
+  useEffect(() => {
+    void refreshAccountsFor(activeProgramId);
+  }, [activeProgramId, refreshAccountsFor]);
+
+  const activeProgram = programs.find(item => item.programId === activeProgramId) ?? null;
+  const selectProgram = useCallback((programId: string) => {
+    if (!programs.some(item => item.programId === programId)) return;
+    setActiveProgramId(programId);
+    persistProgramId(programId);
+  }, [persistProgramId, programs]);
+
+  const createProgram = useCallback(async (input: Record<string, unknown>) => {
+    setMutating(true);
+    setError('');
+    try {
+      const created = await socialProgramApi.create(input);
+      setPrograms(current => [created, ...current.filter(item => item.programId !== created.programId)]);
+      setActiveProgramId(created.programId);
+      persistProgramId(created.programId);
+      return created;
+    } catch (requestError) {
+      setError(errorMessage(requestError));
+      throw requestError;
+    } finally {
+      setMutating(false);
+    }
+  }, [persistProgramId]);
+
+  const updateActiveProgram = useCallback(async (input: Record<string, unknown>) => {
+    if (!activeProgram) throw new Error('请先选择一个社媒经营项目。');
+    setMutating(true);
+    setError('');
+    try {
+      const updated = await socialProgramApi.update(activeProgram.programId, input);
+      setPrograms(current => current.map(item => item.programId === updated.programId ? updated : item));
+      return updated;
+    } catch (requestError) {
+      setError(errorMessage(requestError));
+      throw requestError;
+    } finally {
+      setMutating(false);
+    }
+  }, [activeProgram]);
+
+  const createAccount = useCallback(async (input: Record<string, unknown>) => {
+    if (!activeProgram) throw new Error('请先选择一个社媒经营项目。');
+    setMutating(true);
+    setAccountsError('');
+    try {
+      const created = await socialProgramApi.createAccount(activeProgram.programId, input);
+      setAccounts(current => [...current, created]);
+      return created;
+    } catch (requestError) {
+      setAccountsError(errorMessage(requestError));
+      throw requestError;
+    } finally {
+      setMutating(false);
+    }
+  }, [activeProgram]);
+
+  const saveMonthlyPlan = useCallback(async (input: Record<string, unknown>) => {
+    if (!activeProgram) throw new Error('请先选择一个社媒经营项目。');
+    setMutating(true);
+    setError('');
+    try {
+      const saved = await socialProgramApi.saveMonthlyPlan(activeProgram.programId, input);
+      if (input.activate === true) await refreshPrograms();
+      return saved;
+    } catch (requestError) {
+      setError(errorMessage(requestError));
+      throw requestError;
+    } finally {
+      setMutating(false);
+    }
+  }, [activeProgram, refreshPrograms]);
+
+  const value = useMemo<SocialProgramContextValue>(() => ({
+    available: enabled,
+    programs,
+    activeProgram,
+    activeProgramId,
+    accounts,
+    loading,
+    accountsLoading,
+    mutating,
+    error,
+    accountsError,
+    selectProgram,
+    refreshPrograms,
+    refreshAccounts: () => refreshAccountsFor(activeProgramId),
+    createProgram,
+    updateActiveProgram,
+    createAccount,
+    saveMonthlyPlan,
+  }), [
+    enabled, accounts, accountsError, accountsLoading, activeProgram, activeProgramId, createAccount, createProgram,
+    error, loading, mutating, programs, refreshAccountsFor, refreshPrograms, saveMonthlyPlan, selectProgram,
+    updateActiveProgram,
+  ]);
+
+  return <SocialProgramContext.Provider value={value}>{children}</SocialProgramContext.Provider>;
+}
+
+export function useSocialProgram(): SocialProgramContextValue {
+  const context = useContext(SocialProgramContext);
+  if (!context) throw new Error('useSocialProgram 必须在 SocialProgramProvider 内使用。');
+  return context;
+}
+
+export function useOptionalSocialProgram(): SocialProgramContextValue | null {
+  return useContext(SocialProgramContext);
+}

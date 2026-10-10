@@ -1,5 +1,32 @@
+import { formatDemoQuotaError } from './studioQuotaMessage';
+import { failedAiGeneration } from './studioAiFailure';
 /* 混剪工作台 AI 接口封装 */
 import { authHeader } from './auth';
+import type { DigitalHumanCapabilities, DigitalHumanJob, TransformationAssessment, TransformationAssessmentInput } from './studioDigitalHuman';
+import { fetchMaterialLibrary, type MaterialLibraryPurpose } from './studioDigitalHuman';
+import type { MaterialScriptAnalysis } from '../../shared/materialScriptAnalysis';
+import { type EffectPlanV1 } from '../../shared/contracts/effectPlan';
+import type { EmphasisPlanV1 } from '../../shared/contracts/emphasisTimeline';
+
+export interface HeyGenAvatarOption {
+  id: string;
+  name: string;
+  gender?: string;
+  ownership: 'private' | 'public';
+  avatarType?: string;
+  defaultVoiceId?: string;
+  status?: string;
+}
+
+const VERIFIED_AI_GENERATION_PATHS = new Set([
+  'script',
+  'covers',
+  'caption',
+  'fb-poster',
+  'lead-content-package',
+  'insight',
+  'select',
+]);
 
 async function post<T>(path: string, body: unknown, fallback: T, signal?: AbortSignal): Promise<T & { source?: string }> {
   const retryablePaths = new Set(['script', 'translate', 'translate/batch', 'tts', 'tts/batch']);
@@ -18,7 +45,30 @@ async function post<T>(path: string, body: unknown, fallback: T, signal?: AbortS
         throw new Error(formatDemoQuotaError(j));
       }
       if (!r.ok) {
-        const payload = await r.json().catch(() => ({})) as { error?: string };
+        const payload = await r.json().catch(() => ({})) as Record<string, unknown> & { error?: string; source?: string; code?: string; retryable?: boolean };
+        // Project conflicts carry diagnostics and a server snapshot. Keep them
+        // structured, but never advance the client's revision on a rejected save.
+        if (path === 'projects') return { ...fallback, ...payload, ok: false } as T & { source?: string };
+        // Quality and fact gates are expected structured responses. Keep their
+        // diagnostics, but never merge them with a local/previous draft.
+        if (VERIFIED_AI_GENERATION_PATHS.has(path) && r.status === 422) {
+          if (path === 'script' && typeof payload.script === 'string') {
+            return {
+              ...payload,
+              ok: false,
+              source: payload.source || 'ai_rejected',
+              provenance: 'ai_rejected',
+              publishable: false,
+              qualityStatus: 'rejected',
+            } as unknown as T & { source?: string };
+          }
+          return failedAiGeneration<T>(path, { ...payload, source: payload.source || 'ai_rejected' });
+        }
+        if (payload.retryable === false || /UPSTREAM_(QUOTA|AUTH)/.test(payload.code || '')
+          || /额度不足|额度已|授权暂不可用/.test(payload.error || '')) {
+          if (VERIFIED_AI_GENERATION_PATHS.has(path)) return failedAiGeneration<T>(path, payload);
+          return { ...fallback, ...payload } as T & { source?: string };
+        }
         const message = payload.error || `HTTP ${r.status}`;
         if ([502, 503, 504].includes(r.status) && attempt < maxAttempts) {
           await new Promise(resolve => window.setTimeout(resolve, [0, 2000, 5000, 10000][attempt] || 10000));
@@ -26,7 +76,11 @@ async function post<T>(path: string, body: unknown, fallback: T, signal?: AbortS
         }
         throw new Error(message);
       }
-      return (await r.json()) as T & { source?: string };
+      const payload = await r.json() as T & { source?: string; ok?: boolean; error?: string };
+      if (VERIFIED_AI_GENERATION_PATHS.has(path) && (payload.ok !== true || payload.source !== 'ai')) {
+        return failedAiGeneration<T>(path, payload as Record<string, unknown>, payload.error || '服务端未返回可验证的 AI 生成结果');
+      }
+      return payload;
     } catch (err: any) {
       const message = String(err?.message || '');
       if (message.includes('Demo') || message.includes('试用') || message.includes('额度') || message.includes('到期')) throw err;
@@ -40,16 +94,73 @@ async function post<T>(path: string, body: unknown, fallback: T, signal?: AbortS
       break;
     }
   }
+  if (VERIFIED_AI_GENERATION_PATHS.has(path)) return failedAiGeneration<T>(path, {}, lastError);
   return { ...fallback, source: 'local', error: lastError };
 }
+export type StudioGenerationProvenance = 'ai' | 'ai_rejected' | 'ai_failed' | 'template' | 'manual_draft';
+export type StudioScriptQualityStatus =
+  | 'passed' | 'passed_with_warnings' | 'warning' | 'needs_material'
+  | 'unreviewed' | 'rejected'
+  // Legacy statuses remain readable while old drafts/backends are in flight.
+  | 'repaired' | 'recovered' | 'fallback' | 'failed';
+export interface StudioScriptQualityChecks {
+  materialGrounded?: boolean;
+  timelineGrounded?: boolean;
+  productGrounded?: boolean;
+  dialogueFits?: boolean;
+  structurallyComplete?: boolean;
+  ctaComplete?: boolean;
+  materialCoverage?: number | StudioScriptMaterialCoverage;
+  materialCoveragePercent?: number;
+  [key: string]: boolean | number | string | StudioScriptMaterialCoverage | undefined;
+}
+export interface StudioScriptMaterialCoverage {
+  covered?: number;
+  total?: number;
+  selectedMaterials?: number;
+  storyboardScenes?: number;
+  boundScenes?: number;
+  pendingScenes?: number;
+  coverageRatio?: number;
+  ratio?: number;
+  percent?: number;
+  percentage?: number;
+  missing?: string[];
+  missingShots?: string[];
+}
+export interface StudioScriptResult {
+  ok?: boolean;
+  script: string;
+  source?: 'ai' | 'fallback' | 'local' | 'ai_failed' | 'ai_rejected' | string;
+  provenance?: StudioGenerationProvenance | string;
+  publishable?: boolean;
+  qualityStatus?: StudioScriptQualityStatus;
+  qualityChecks?: StudioScriptQualityChecks;
+  validationWarnings?: string[];
+  validationIssues?: string[];
+  materialCoverage?: number | StudioScriptMaterialCoverage;
+  missingMaterials?: string[];
+  fallbackReason?: string;
+  error?: string;
+  code?: string;
+  /** Enterprise records that ground this generation. */
+  factReferences?: string[];
+  /** Canonical multi-select product IDs accepted by the server. */
+  selectedProductIds?: string[];
+}
+export interface StudioRenderJob {
+  id: string; projectId: string; outputKey: string; inputSignature: string;
+  status: 'queued' | 'processing' | 'completed' | 'failed'; progress: number; attempts: number;
+  outputPath?: string; previewUrl?: string; error?: string; createdAt: string; updatedAt: string;
+}
 
-function formatDemoQuotaError(j: any): string {
-  if (j?.error === 'demo_expired') return '试用已到期，请联系服务顾问开通或延长试用。';
-  if (j?.error === 'demo_token_quota_exceeded') return '今日 Token 额度已用完，请明天再试或联系服务顾问开通更多额度。';
-  if (j?.quota === 'generation') return '今日普通生成额度已用完，脚本/封面/配音等 AI 生成请明天再试或联系服务顾问开通更多额度。';
-  if (j?.quota === 'render') return '今日成片预览额度已用完，请明天再试或联系服务顾问开通更多额度。';
-  if (j?.quota === 'videoGeneration') return '今日视频生成额度已用完，请明天再试或联系服务顾问开通更多额度。';
-  return '今日试用额度已用完，请明天再试或联系服务顾问开通更多额度。';
+export interface StudioManualHandoff {
+  id: string;
+  action: 'team_review' | 'publishing_plan';
+  status: 'pending_review' | 'planned';
+  renderPath: string;
+  createdAt: string;
+  createdBy: string;
 }
 
 async function get<T>(path: string, fallback: T): Promise<T & { source?: string }> {
@@ -104,7 +215,7 @@ export interface TtsAudioResult {
   adjusted?: boolean;
   targetDuration?: number;
   cues?: SubCue[];
-  alignmentSource?: 'audio_ai' | 'proportional' | 'minimax_native';
+  alignmentSource?: 'audio_ai' | 'proportional' | 'minimax_native' | 'synthesized_sentence_audio' | 'pending_alignment';
   customVoiceStatus?: 'activated';
 }
 export interface StudioAudioCapabilities {
@@ -125,26 +236,33 @@ export interface StudioAudioCapabilities {
     automatic: boolean;
     audioTranscription: boolean;
     wordAlignment: boolean;
-    fallback: 'proportional';
+    fallback: 'proportional' | 'provider_native_with_proportional_fallback';
   };
 }
 export interface SubtitleSpec {
   mode: 'off' | 'target' | 'bilingual';
   cues: SubCue[];
-  style: Partial<CoverStyle>;     // 沿用封面样式体系（字体 / 颜色 / 粗细）
+  style: Partial<CoverStyle> & { productNames?: string[]; autoEmphasis?: boolean; fontScale?: number; bottomRatio?: number; outlineColor?: string; outlineWidth?: number; lineWidth?: number };
 }
 
 export interface RenderSpec {
   materials: string[];
   timeline?: {
+    sceneId?: string;
+    clipId?: string;
     name: string;
     url?: string;
+    type?: 'video' | 'image' | 'audio';
+    poster?: string;
     trimStart?: number;
     trimEnd?: number;
     speed?: number;
     targetStart?: number;
     targetEnd?: number;
     targetDuration?: number;
+    cropMode?: 'cover' | 'contain';
+    focusX?: number;
+    focusY?: number;
   }[];
   script: string;
   voice: string;
@@ -160,14 +278,19 @@ export interface RenderSpec {
   voiceoverUrl?: string;
   coverUrl?: string;
   subtitles?: SubtitleSpec;       // 字幕轨（桌面端 ffmpeg 烧录）
+  effectPlan?: EffectPlanV1;      // 版本化白名单特效计划
+  emphasisPlan?: EmphasisPlanV1;  // 可选人工/Agent 校正；服务端缺省时自动生成
 }
 
 export interface RenderManifest {
   jobId: string;
+  requireVisualAssets?: boolean;
   spec: { ratio: string; duration: number; platform: string; language: string; bgmVol: number; voiceVol: number };
   script: string;
   timeline: {
     index: number;
+    sceneId?: string;
+    clipId?: string;
     name: string;
     url: string | null;
     trimStart?: number;
@@ -181,6 +304,8 @@ export interface RenderManifest {
   cover: { id: string | null; title: string; url: string | null };
   bgm: { id: string | null; url: string | null };
   subtitles?: SubtitleSpec;
+  effectPlan?: EffectPlanV1;
+  emphasisPlan?: EmphasisPlanV1;
 }
 
 export interface RenderAuthorization {
@@ -206,48 +331,17 @@ export function getDesktopRender(): DesktopRenderBridge | undefined {
   return typeof window !== 'undefined' ? window.desktopRender : undefined;
 }
 
-/** 离线 / 未授权时的本地兜底 manifest，桥接服务端 buildManifest 的结构 */
-function localManifest(spec: RenderSpec): RenderManifest {
-  const absoluteBrowserAssetUrl = (value?: string | null): string | null => {
-    const raw = String(value || '').trim();
-    if (!raw) return null;
-    if (/^https?:\/\//i.test(raw) || raw.startsWith('data:')) return raw;
-    if (typeof window === 'undefined') return raw;
-    return new URL(raw.startsWith('/') ? raw : `/${raw}`, window.location.origin).toString();
-  };
-  return {
-    jobId: `local-${Date.now()}`,
-    spec: {
-      ratio: spec.ratio || '9:16',
-      duration: spec.duration ?? 20,
-      platform: spec.platform || 'tiktok',
-      language: spec.language || 'en',
-      bgmVol: spec.bgmVol ?? 35,
-      voiceVol: spec.voiceVol ?? 100,
-    },
-    script: spec.script ?? '',
-    timeline: (spec.timeline?.length ? spec.timeline : (spec.materials ?? []).map(name => ({ name })))
-      .map((item, index) => ({
-        index,
-        ...item,
-        url: absoluteBrowserAssetUrl('url' in item && typeof item.url === 'string' ? item.url : null),
-      })),
-    voiceover: { voice: spec.voice ?? null, url: absoluteBrowserAssetUrl(spec.voiceoverUrl) },
-    cover: { id: spec.coverId ?? null, title: spec.coverTitle ?? '', url: absoluteBrowserAssetUrl(spec.coverUrl) },
-    bgm: { id: spec.bgm ?? null, url: null },
-    subtitles: spec.subtitles,
-  };
-}
-
 export interface StudioProject {
   id: string;
   title: string;
-  status: 'draft' | 'published' | 'template';
+  status: 'draft' | 'ready_for_approval' | 'published' | 'template';
   spec: Record<string, unknown>;
   thumbSeed?: string;
   createdAt: string;
   updatedAt: string;
 }
+const studioProjectRevisions = new Map<string, string>();
+const studioProjectSaveQueues = new Map<string, Promise<void>>();
 export interface VariationBatch {
   id: string;
   title: string;
@@ -278,16 +372,46 @@ export interface SeedanceVideoResult {
   version?: VideoGenerationVersion;
   error?: string;
   createdAt?: string;
+  quality?: StoryboardQualityResult;
+  segments?: Array<Record<string, unknown>>;
+  code?: string;
+  segmentIndex?: number;
+}
+
+export interface StoryboardFirstFrameResult {
+  ok: boolean;
+  material?: Material;
+  fingerprint?: string;
+  promptVersion?: string;
+  firstFrameQuality?: StoryboardQualityResult;
+  identityNotice?: string;
+  error?: string;
+}
+
+export interface FreeCreationHookFrameResult {
+  ok: boolean;
+  material?: Material;
+  fingerprint?: string;
+  estimatedCostCny?: number;
+  reused?: boolean;
+  error?: string;
+  code?: string;
 }
 
 export interface StoryboardQualityResult {
-  score: number;
+  score?: number;
   passed: boolean;
-  issues: string[];
-  strengths: string[];
-  recommendation: string;
-  checks: Record<string, number>;
+  issues?: string[];
+  strengths?: string[];
+  recommendation?: string;
+  checks: Record<string, unknown>;
   checkedAt: string;
+  reportId?: string;
+  status?: 'passed' | 'needs_review' | 'retry_first_frame' | 'retry_video' | 'needs_assets';
+  reasonCodes?: string[];
+  findings?: Array<{ key?: string; verdict?: string; note?: string; code: string; severity: 'hard_failure' | 'review'; evidenceFrames?: Array<{ seconds?: number; url?: string } | number | string>; action?: string; message: string }>;
+  requiresHumanReview?: boolean;
+  automatedPassed?: boolean;
 }
 
 export interface FbPosterBrief {
@@ -304,14 +428,17 @@ export interface FbPosterBrief {
 
 export interface FbPosterResult {
   ok: boolean;
-  source?: 'ai' | 'fallback' | 'local';
+  source?: 'ai' | 'ai_rejected' | 'ai_failed';
+  provenance?: StudioGenerationProvenance | string;
+  qualityStatus?: 'passed' | 'needs_confirmation' | 'rejected' | 'failed' | 'unreviewed';
+  publishable?: boolean;
   layoutModules?: {
     module: string;
     referencePattern: string;
     localAssetRole: string;
     replacementInstruction: string;
   }[];
-  poster: FbPosterBrief;
+  poster?: FbPosterBrief;
   caption: string;
   hashtags: string[];
   commentCta: string;
@@ -333,7 +460,10 @@ export interface FbPosterRenderResult {
 
 export interface LeadContentPackageResult {
   ok: boolean;
-  source?: 'ai';
+  source?: 'ai' | 'ai_rejected' | 'ai_failed';
+  provenance?: StudioGenerationProvenance | string;
+  qualityStatus?: 'passed' | 'needs_confirmation' | 'rejected' | 'failed';
+  publishable?: boolean;
   provider?: 'qwen' | 'gemini';
   strategySummary: string;
   referenceModulesUsed: Array<{ module: string; evidence: string; application: string }>;
@@ -352,66 +482,6 @@ export interface LeadContentPackageResult {
   error?: string;
 }
 
-function productCategoryFromInfo(productInfo?: string): string {
-  const text = String(productInfo || '');
-  const match = text.match(/(?:产品类目|所属类目|产品名称|主推产品|category|product)[：:]\s*([^\n]+)/i);
-  return String(match?.[1] || 'Private Label Product').trim().slice(0, 60) || 'Private Label Product';
-}
-
-function localPosterFallback(input: {
-  productInfo?: string;
-  ratio?: string;
-  posterStyle?: string;
-}): FbPosterResult {
-  const category = productCategoryFromInfo(input.productInfo);
-  const poster: FbPosterBrief = {
-    headline: `OEM/ODM ${category}`,
-    subheadline: 'Private label solution for overseas brands',
-    originBadge: 'Global export support',
-    trustBadges: ['GMP', 'ISO', 'FDA-ready'],
-    sellingPoints: ['Custom Formula', 'Premium Packaging', 'Factory Support', 'Global Export'],
-    process: ['Consultation', 'Formula Development', 'Packaging Design', 'Production', 'Quality Control', 'Delivery'],
-    categories: [
-      { name: category, description: 'Customizable product line for brand owners and distributors' },
-      { name: 'Private Label', description: 'Logo, packaging and formula support for market testing' },
-      { name: 'OEM/ODM', description: 'One-stop manufacturing service from sample to bulk order' },
-    ],
-    bottomBar: ['Low MOQ', 'Custom Formula', 'Premium Packaging', 'Fast Turnaround', 'Dedicated Support'],
-    cta: 'Comment "CATALOG" or DM us for sample details',
-  };
-  return {
-    ok: true,
-    source: 'local',
-    layoutModules: [
-      {
-        module: 'headline zone',
-        referencePattern: 'Use a strong OEM/ODM value hook or clone-mode viral opening structure.',
-        localAssetRole: 'none',
-        replacementInstruction: 'Rewrite with verified product category and buyer pain point.',
-      },
-      {
-        module: 'product hero',
-        referencePattern: 'Premium central product display with clean catalog composition.',
-        localAssetRole: 'product photo',
-        replacementInstruction: 'Replace competitor/product placeholder with selected local product images.',
-      },
-      {
-        module: 'proof modules',
-        referencePattern: 'Factory proof, badges, process row, category cards, and CTA bar.',
-        localAssetRole: 'factory image / certificate image / packaging image / scene image',
-        replacementInstruction: 'Map local assets to each proof module and keep commercial claims verified.',
-      },
-    ],
-    poster,
-    caption: `Looking to launch your own ${category} brand?\n\nWe support OEM/ODM, private label packaging, product customization, and export-ready supply for overseas buyers.\n\nComment "CATALOG" or DM us to get product options and sample details.`,
-    hashtags: ['OEM', 'ODM', 'PrivateLabel', 'B2B', 'Wholesale', 'FactoryDirect'],
-    commentCta: 'Comment "CATALOG" to get the product list and sample details.',
-    dmOpening: 'Hi, thanks for your interest. May I know your target market, product type, expected MOQ, and whether you need private label packaging?',
-    fieldsToConfirm: ['MOQ', 'certifications', 'lead time', 'price range', 'export countries', 'factory qualifications'],
-    imagePrompt: `Create a high-end B2B OEM/ODM social media poster for ${category}. Ratio ${String(input.ratio || '1:1')}. Style ${String(input.posterStyle || 'oem-factory')}. Include the exact poster text from the JSON brief, product hero area, factory proof area, trust badges, process row, product category cards, and bottom CTA bar. Premium catalog quality, clean layout, no unreadable tiny text.`,
-  };
-}
-
 async function del(path: string): Promise<{ ok: boolean }> {
   try {
     const r = await fetch(`/api/overseas/studio/${path}`, { method: 'DELETE', headers: authHeader() });
@@ -425,37 +495,31 @@ export const studioApi = {
   script: (b: {
     materials: string[];
     productInfo?: string;
+    selectedProductId?: string;
+    selectedProductIds?: string[];
     language: string;
     platform: string;
     duration: number;
     scriptType?: 'voiceover' | 'storyboard';
     generationMode?: 'material' | 'product' | 'clone';
     cooperationRoute?: string;
-    voiceoverMode?: 'unselected' | 'none' | 'ai' | 'upload';
+    voiceoverMode?: 'none' | 'ai' | 'upload';
     materialInfos?: Array<{ name: string; type: string; folder: string; duration: number; effectiveDuration?: number; role?: string; targetStart?: number; targetEnd?: number; industry?: string; shotFunction?: string; tags?: string; observations?: string[] }>;
     provider?: 'gemini' | 'qwen';
     audience?: string;
     sellingPoints?: string;
     tone?: string;
-    videoTheme?: { id: string; title: string; painPoint: string; conversionGoal: string };
+    videoTheme?: { id: string; title: string; painPoint: string; conversionGoal: string; primaryCta?: string; contentGoal?: 'reach' | 'leads' };
     referenceTitle?: string;
     referenceAnalysis?: string;
     referenceHighlights?: string[];
     existingScripts?: string[];
     variantSeed?: number;
-  }, fb: string, options?: { signal?: AbortSignal }) =>
-    post<{
-      script: string;
-      source?: 'ai' | 'fallback' | 'local' | 'ai_failed' | 'ai_rejected';
-      qualityStatus?: 'passed' | 'repaired' | 'recovered' | 'fallback' | 'failed' | 'rejected';
-      qualityChecks?: { materialGrounded?: boolean; productGrounded?: boolean; dialogueFits?: boolean; structurallyComplete?: boolean };
-      fallbackReason?: string;
-      validationIssues?: string[];
-      error?: string;
-    }>('script', b, { script: '' }, options?.signal),
+  }, _fb: string, options?: { signal?: AbortSignal }) =>
+    post<StudioScriptResult>('script', b, { script: '' }, options?.signal),
 
-  covers: (b: { script?: string; productInfo?: string; language: string; provider?: 'gemini' | 'qwen'; tone?: string }, fb: string[]) =>
-    post<{ covers: string[] }>('covers', b, { covers: fb }),
+  covers: (b: { script?: string; productInfo?: string; language: string; provider?: 'gemini' | 'qwen'; tone?: string }, _fb: string[] = []) =>
+    post<{ ok: boolean; source?: 'ai' | 'ai_rejected' | 'ai_failed'; provenance?: StudioGenerationProvenance | string; publishable?: boolean; covers: string[]; error?: string }>('covers', b, { ok: false, covers: [] }),
 
   caption: (b: {
     script?: string;
@@ -466,8 +530,8 @@ export const studioApi = {
     audience?: string;
     sellingPoints?: string;
     tone?: string;
-  }, fb: { caption: string; hashtags: string[] }) =>
-    post<{ caption: string; hashtags: string[] }>('caption', b, fb),
+  }, _fb: { caption: string; hashtags: string[] } = { caption: '', hashtags: [] }) =>
+    post<{ ok: boolean; source?: 'ai' | 'ai_rejected' | 'ai_failed'; provenance?: StudioGenerationProvenance | string; publishable?: boolean; caption: string; hashtags: string[]; fieldsToConfirm?: string[]; error?: string }>('caption', b, { ok: false, caption: '', hashtags: [] }),
 
   fbPoster: (b: {
     mode: 'material' | 'clone' | 'product';
@@ -480,7 +544,7 @@ export const studioApi = {
     materials?: Array<{ id?: string; name: string; type?: string; folder?: string; role?: string }>;
     referenceNotes?: string;
   }) =>
-    post<FbPosterResult>('fb-poster', b, localPosterFallback(b)),
+    post<FbPosterResult>('fb-poster', b, { ok: false, caption: '', hashtags: [], commentCta: '', dmOpening: '', fieldsToConfirm: [], imagePrompt: '' }),
 
   leadContentPackage: (b: { productInfo: string; platform: string; language: string; ratio: string; referenceTitle: string; referenceEvidence: unknown }) =>
     post<LeadContentPackageResult>('lead-content-package', b, { ok: false, strategySummary: '', referenceModulesUsed: [], items: [], fieldsToConfirm: [], error: '获客内容包生成失败' }),
@@ -494,18 +558,22 @@ export const studioApi = {
   }) =>
     post<FbPosterRenderResult>('fb-poster/render', b, { ok: false }),
 
-  select: (b: SelectInput, fb: string[]) =>
-    post<{ selectedIds: string[]; reason: string }>('select', b, { selectedIds: fb, reason: '本地按视频优先选取' }),
+  select: (b: SelectInput, _fb: string[]) =>
+    post<{ ok: boolean; source?: 'ai' | 'ai_rejected' | 'ai_failed'; provenance?: StudioGenerationProvenance | string; publishable?: boolean; selectedIds: string[]; reason: string; error?: string }>('select', b, { ok: false, selectedIds: [], reason: '' }),
 
+  speechNames: (b: { names: string[]; language: string }) => post<{ ok: boolean; names: Record<string,string>; error?: string }>('speech-names', b, { ok: false, names: {} }),
   // 配音 TTS
-  tts: (b: { script?: string; text?: string; voice: string; language: string; style?: Partial<TtsStyleOptions> }) =>
+  tts: (b: { script?: string; text?: string; sentenceLines?: string[]; measuredSentenceTiming?: boolean; voice: string; language: string; style?: Partial<TtsStyleOptions> }) =>
     post<TtsAudioResult>('tts', b, { ok: false }),
-  ttsBatch: (b: { voice: string; items: { code: string; text: string; language?: string }[]; style?: Partial<TtsStyleOptions> }) =>
+  ttsBatch: (b: { voice: string; items: { code: string; text: string; language?: string; sentenceLines?: string[]; measuredSentenceTiming?: boolean }[]; style?: Partial<TtsStyleOptions> }) =>
     post<{ ok: boolean; audios: Record<string, TtsAudioResult>; error?: string }>('tts/batch', b, { ok: false, audios: {} }),
   alignTts: (b: { text: string; url: string; duration: number }) =>
-    post<{ ok: boolean; cues: SubCue[]; source?: 'audio_ai' | 'proportional'; error?: string }>('tts/align', b, { ok: false, cues: [] }),
+    post<{ ok: boolean; cues: SubCue[]; source?: 'audio_ai' | 'proportional' | 'qwen_asr'; error?: string }>('tts/align', b, { ok: false, cues: [] }),
+  qwenAsr: (b: { text?: string; url: string; duration: number; confirmed?: boolean }) =>
+    post<{ ok: boolean; id?: string; taskId?: string; status?: string; text?: string; cues?: SubCue[]; matches?: boolean; source?: 'qwen_asr'; error?: string }>('tts/asr', b, { ok: false }),
+  transcribeMaterial: (id: string) => post<{ ok: boolean; text?: string; error?: string }>(`materials/${encodeURIComponent(id)}/transcribe`, {}, { ok: false }),
   transcribeVoiceover: (b: { url: string; duration: number; language?: string; transcriptHint?: string }) =>
-    post<{ ok: boolean; text: string; cues: SubCue[]; source?: 'audio_ai' | 'proportional'; error?: string }>('tts/transcribe', b, { ok: false, text: '', cues: [] }),
+    post<{ ok: boolean; text: string; cues: SubCue[]; matches?: boolean; status?: string; source?: 'audio_ai' | 'proportional' | 'qwen_asr'; error?: string }>('tts/transcribe', b, { ok: false, text: '', cues: [] }),
   audioCapabilities: async () => {
     try {
       const r = await fetch('/api/overseas/studio/tts/capabilities', { headers: authHeader() });
@@ -533,19 +601,56 @@ export const studioApi = {
   },
   uploadVoiceover: (b: { name: string; dataBase64: string; mimeType?: string; duration?: number }) =>
     post<{ ok: boolean; url?: string; duration?: number; error?: string }>('voiceover', b, { ok: false }),
+  productDocumentOcr: (b: { dataBase64: string; mimeType: string }) =>
+    post<{ ok: boolean; text?: string; source?: 'local_tesseract'; needsReview?: true; code?: string; error?: string }>('product-document-ocr', b, { ok: false }),
 
   // 封面 SVG
   cover: (b: { title: string; ratio: string; accent: string; bgImageUrl?: string } & Partial<CoverStyle>) =>
     post<{ ok: boolean; url?: string }>('cover', b, { ok: false }),
 
   // 文本翻译（默认译成简体中文，供用户确认外语文案）
-  translate: (b: { text: string; target?: string; source?: string }) =>
-    post<{ ok: boolean; text: string }>('translate', b, { ok: false, text: '' }),
-  translateBatch: (b: { text: string; targets: string[]; source?: string }) =>
-    post<{ ok: boolean; translations: Record<string, string>; error?: string }>('translate/batch', b, { ok: false, translations: {} }),
+  translate: (b: { text: string; target?: string; source?: string }, options?: { signal?: AbortSignal }) =>
+    post<{ ok: boolean; text: string; error?: string }>('translate', b, { ok: false, text: '' }, options?.signal),
+  translateBatch: (b: { text: string; targets: string[]; source?: string }, options?: { signal?: AbortSignal }) =>
+    post<{ ok: boolean; translations: Record<string, string>; error?: string }>('translate/batch', b, { ok: false, translations: {} }, options?.signal),
 
   // Seedance 视频生成
+  freeCreationHookFirstFrame: (b: {
+    projectId: string;
+    requestId: string;
+    productIds: string[];
+    goal: string;
+    audience: string;
+    visualIntent: string;
+    ratio?: '9:16' | '16:9' | '1:1';
+  }) => post<FreeCreationHookFrameResult>('free-creation-hook/first-frame', b, { ok: false }),
+  storyboardFirstFrame: (b: {
+    projectId?: string;
+    requestId: string;
+    keyStates?: Array<{ afterBeat: number; description: string; source: 'confirmed_reference_analysis' | 'confirmed_storyboard' }>;
+    shotId: string;
+    mode: 'replication' | 'free_creation';
+    shotDescription: string;
+    startSeconds?: number;
+    endSeconds?: number;
+    layout?: Record<string, unknown>;
+    action?: { startState?: string; beats?: string[]; endState?: string; cameraMotion?: string; forbiddenChanges?: string[]; evidence?: string };
+    sourceFirstFrameUrl?: string;
+    productId?: string;
+    productIds?: string[];
+    productImageUrl?: string;
+    productName?: string;
+    characterMaterialId?: string;
+    environmentMaterialId?: string;
+    sceneType: 'product' | 'factory' | 'usage' | 'general';
+    ratio?: string;
+  }) => post<StoryboardFirstFrameResult>('storyboard-first-frame', b, { ok: false }),
+  storyboardProductMatch: (b: { projectId: string; shotId: string }) =>
+    post<{ ok: boolean; productIds?: string[]; confidence?: number; reason?: string; source?: string; needsReview?: boolean; error?: string }>('storyboard-product-match', b, { ok: false }),
+  confirmStoryboardFirstFrame: (id: string, b: { fingerprint: string; shotId: string }) =>
+    post<StoryboardFirstFrameResult>(`storyboard-first-frame/${encodeURIComponent(id)}/confirm`, b, { ok: false }),
   seedanceVideo: (b: {
+    requestId?: string;
     script: string;
     productInfo?: string;
     language: string;
@@ -554,11 +659,25 @@ export const studioApi = {
     resolution?: string;
     title?: string;
     referenceImageUrl?: string;
+    firstFrameMaterialId?: string;
+    firstFrameFingerprint?: string;
+    shotId?: string;
     generationGroupKey?: string;
     generationContext?: Record<string, unknown>;
     parentVersionId?: string;
   }) =>
     postSeedanceVideo(b),
+  storyboardActionVideo: (b: {
+    requestId: string;
+    firstFrameMaterialId: string;
+    firstFrameFingerprint: string;
+    shotId: string;
+    ratio?: string;
+    resolution: '480p' | '720p';
+    title?: string;
+    keyStates: Array<{ afterBeat: number; description: string; source: 'confirmed_reference_analysis' | 'confirmed_storyboard' }>;
+    beatDurationsSeconds?: number[];
+  }) => post<SeedanceVideoResult>('storyboard-action-video', b, { ok: false }),
 
   listVideoVersions: async (groupKey: string): Promise<VideoGenerationVersion[]> => {
     try {
@@ -575,10 +694,12 @@ export const studioApi = {
 
   storyboardQualityCheck: (b: { materialId: string; storyboard: string; productInfo?: string; critical?: boolean }) =>
     post<{ ok: boolean; quality?: StoryboardQualityResult; error?: string }>('storyboard-quality-check', b, { ok: false }),
+  reviewStoryboardQuality: (materialId: string, b: { shotId: string; reportId: string; decision: 'accept' | 'reject' }) =>
+    post<{ ok: boolean; quality?: StoryboardQualityResult; error?: string }>(`storyboard-quality-check/${encodeURIComponent(materialId)}/review`, b, { ok: false }),
 
   // 数据看板 AI 结论
   insight: (b: { scope: string; metrics: Record<string, unknown> }) =>
-    post<{ ok: boolean; summary: string; actions: string[] }>('insight', b, { ok: false, summary: '', actions: [] }),
+    post<{ ok: boolean; source?: 'ai' | 'ai_rejected' | 'ai_failed'; provenance?: StudioGenerationProvenance | string; publishable?: boolean; summary: string; actions: string[]; error?: string }>('insight', b, { ok: false, summary: '', actions: [] }),
 
   // ⑥ 渲染授权：服务器下发原料 manifest + 短期令牌，合成交给客户端本机 ffmpeg
   render: async (spec: RenderSpec): Promise<RenderAuthorization & { source?: string }> => {
@@ -595,17 +716,17 @@ export const studioApi = {
       if (!r.ok) throw new Error(String(r.status));
       return (await r.json()) as RenderAuthorization;
     } catch (err: any) {
-      if (String(err?.message || '').includes('Demo')) throw err;
-      return { source: 'local', token: null, expiresAt: null, manifest: localManifest(spec) };
+      throw err instanceof Error ? err : new Error('渲染授权服务不可用，请稍后重试');
     }
   },
 
-  renderLocal: async (manifest: RenderManifest): Promise<{ ok: boolean; outputPath?: string; previewUrl?: string; error?: string }> => {
+  renderLocal: async (manifest: RenderManifest, token: string | null): Promise<{ ok: boolean; outputPath?: string; previewUrl?: string; error?: string }> => {
+    if (!token) return { ok: false, error: '缺少服务端签发的渲染授权，请重试' };
     try {
       const r = await fetch('/api/overseas/studio/render/local', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', ...authHeader() },
-        body: JSON.stringify(manifest),
+        body: JSON.stringify({ manifest, token }),
       });
       const data = await r.json().catch(() => ({}));
       if (!r.ok) throw new Error(data?.error || String(r.status));
@@ -613,6 +734,31 @@ export const studioApi = {
     } catch (err: any) {
       return { ok: false, error: err?.message || '本地 MP4 导出失败' };
     }
+  },
+
+  createRenderJob: async (body: { projectId: string; outputKey: string; inputSignature: string; spec: RenderSpec }): Promise<{ ok: boolean; replayed?: boolean; job?: StudioRenderJob; error?: string }> => {
+    try {
+      const r = await fetch('/api/overseas/studio/render/jobs', { method: 'POST', headers: { 'Content-Type': 'application/json', ...authHeader() }, body: JSON.stringify(body) });
+      const data = await r.json().catch(() => ({}));
+      if (!r.ok) throw new Error(data?.error || String(r.status));
+      return data;
+    } catch (err: any) { return { ok: false, error: err?.message || '渲染任务创建失败' }; }
+  },
+  latestRenderJob: async (projectId: string): Promise<{ ok: boolean; job: StudioRenderJob | null; error?: string }> => {
+    try {
+      const r = await fetch(`/api/overseas/studio/render/jobs/project/${encodeURIComponent(projectId)}/latest`, { headers: authHeader(), cache: 'no-store' });
+      const data = await r.json().catch(() => ({}));
+      if (!r.ok) throw new Error(data?.error || String(r.status));
+      return data;
+    } catch (err: any) { return { ok: false, job: null, error: err?.message || '渲染任务查询失败' }; }
+  },
+  retryRenderJob: async (id: string): Promise<{ ok: boolean; job?: StudioRenderJob; error?: string }> => {
+    try {
+      const r = await fetch(`/api/overseas/studio/render/jobs/${encodeURIComponent(id)}/retry`, { method: 'POST', headers: authHeader() });
+      const data = await r.json().catch(() => ({}));
+      if (!r.ok) throw new Error(data?.error || String(r.status));
+      return data;
+    } catch (err: any) { return { ok: false, error: err?.message || '渲染任务重试失败' }; }
   },
 
   openRenderOutput: async (path: string): Promise<{ ok: boolean; error?: string }> => {
@@ -631,19 +777,57 @@ export const studioApi = {
   },
 
   // 草稿 / 作品
-  listProjects: async (): Promise<StudioProject[]> => {
+  listProjects: async (options?: { throwOnError?: boolean }): Promise<StudioProject[]> => {
     try {
       const r = await fetch('/api/overseas/studio/projects', { headers: authHeader() });
       if (!r.ok) throw new Error(String(r.status));
       const data = await r.json();
-      return Array.isArray(data) ? (data as StudioProject[]) : [];
-    } catch {
+      const projects = Array.isArray(data) ? (data as StudioProject[]) : [];
+      projects.forEach(project => {
+        if (!studioProjectRevisions.has(project.id)) studioProjectRevisions.set(project.id, project.updatedAt);
+      });
+      return projects;
+    } catch (error) {
+      if (options?.throwOnError) throw error;
       return [];
     }
   },
-  saveProject: (b: { id?: string; title: string; status: 'draft' | 'published' | 'template'; spec: Record<string, unknown>; thumbSeed?: string }) =>
-    post<{ ok: boolean; project: StudioProject }>('projects', b, { ok: false, project: null as unknown as StudioProject }),
+  adoptProjectRevision: (project: StudioProject) => {
+    studioProjectRevisions.set(project.id, project.updatedAt);
+  },
+  saveProject: async (b: { id?: string; title: string; status: 'draft' | 'ready_for_approval' | 'published' | 'template'; spec: Record<string, unknown>; thumbSeed?: string; baseUpdatedAt?: string }) => {
+    // Serialize each existing project across all save callers. Read its revision
+    // after the previous write settles; independent projects can save in parallel.
+    const previous = b.id ? studioProjectSaveQueues.get(b.id) : undefined;
+    let release: (() => void) | undefined;
+    const pending = b.id ? new Promise<void>(resolve => { release = resolve; }) : undefined;
+    if (b.id && pending) studioProjectSaveQueues.set(b.id, pending);
+    try {
+      if (previous) await previous;
+      const baseUpdatedAt = b.id ? b.baseUpdatedAt || studioProjectRevisions.get(b.id) : undefined;
+      const result = await post<{ ok: boolean; project: StudioProject; error?: string; code?: string }>(
+        'projects',
+        { ...b, ...(baseUpdatedAt ? { baseUpdatedAt } : {}) },
+        { ok: false, project: null as unknown as StudioProject },
+      );
+      if (result.ok && result.project?.id) studioProjectRevisions.set(result.project.id, result.project.updatedAt);
+      return result;
+    } finally {
+      if (b.id && studioProjectSaveQueues.get(b.id) === pending) studioProjectSaveQueues.delete(b.id);
+      release?.();
+    }
+  },
+  requalityProject: (projectId: string) => post<{
+    ok: boolean; replayed?: boolean; error?: string; issues?: string[];
+    record?: { id: string; inputFingerprint: string; generationProvenance: 'ai'; qualityStatus: 'passed'; publishable: true; createdAt: string; renderPath: string; report: { gateVersion: string; checks: Array<{ id: string; passed: true; detail: string }> } };
+    project?: StudioProject;
+  }>(`projects/${encodeURIComponent(projectId)}/requality`, {}, { ok: false }),
   deleteProject: (id: string) => del(`projects/${id}`),
+  listManualHandoffs: (projectId: string) => get<{ ok: boolean; handoffs: StudioManualHandoff[] }>(
+    `projects/${encodeURIComponent(projectId)}/manual-handoffs`, { ok: false, handoffs: [] }),
+  createManualHandoff: (projectId: string, body: { action: StudioManualHandoff['action']; renderPath: string; reviewed: true }) =>
+    post<{ ok: boolean; replayed?: boolean; handoff?: StudioManualHandoff; error?: string }>(
+      `projects/${encodeURIComponent(projectId)}/manual-handoffs`, body, { ok: false }),
   createVariationBatch: (b: { title: string; templateProjectId?: string; duration: number; maxItems: number; dimensions: Record<string, string[]>; plan?: VariationBatch['plan'] }) =>
     post<{ ok: boolean; batch: VariationBatch }>('variation-batches', b, { ok: false, batch: null as unknown as VariationBatch }),
   listVariationBatches: async (): Promise<VariationBatch[]> => {
@@ -657,18 +841,47 @@ export const studioApi = {
   },
 
   // 素材库
-  listMaterials: async (): Promise<Material[]> => {
-    try {
-      const r = await fetch('/api/overseas/studio/materials', { headers: authHeader(), cache: 'no-store' });
-      if (!r.ok) throw new Error(String(r.status));
-      const data = await r.json();
-      return Array.isArray(data) ? (data as Material[]) : [];
-    } catch {
-      return [];
-    }
-  },
+  listMaterialLibrary: fetchMaterialLibrary,
+  listMaterials: async (purpose: MaterialLibraryPurpose = 'library'): Promise<Material[]> => (await fetchMaterialLibrary(purpose)).items,
   uploadMaterial: (b: { name: string; folder?: string; type: 'video' | 'image' | 'audio'; duration?: number; width?: number; height?: number; dataBase64: string; mimeType?: string; sourceType?: string }) =>
     post<{ ok: boolean; material: Material }>('materials', b, { ok: false, material: null as unknown as Material }),
+  uploadMaterialFile: async (
+    file: File,
+    metadata: { folder?: string; type: 'video' | 'image' | 'audio'; duration?: number; width?: number; height?: number; sourceType?: string },
+  ): Promise<{ ok: boolean; material: Material; error?: string }> => {
+    const maxBytes = 100 * 1024 * 1024;
+    if (!file.size) return { ok: false, material: null as unknown as Material, error: '素材文件为空' };
+    if (file.size > maxBytes) return { ok: false, material: null as unknown as Material, error: '单个素材不能超过 100 MB' };
+    const query = new URLSearchParams({
+      name: file.name,
+      folder: metadata.folder || 'upload',
+      type: metadata.type,
+      duration: String(metadata.duration || 0),
+      width: String(metadata.width || 0),
+      height: String(metadata.height || 0),
+      mimeType: file.type || 'application/octet-stream',
+      sourceType: metadata.sourceType || '',
+    });
+    try {
+      const response = await fetch(`/api/overseas/studio/materials/file?${query.toString()}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/octet-stream', ...authHeader() },
+        body: file,
+      });
+      const payload = await response.json().catch(() => ({})) as { ok?: boolean; material?: Material; error?: string };
+      if (!response.ok || !payload.ok || !payload.material) {
+        return { ok: false, material: null as unknown as Material, error: payload.error || `上传失败（HTTP ${response.status}）` };
+      }
+      return { ok: true, material: payload.material };
+    } catch (error) {
+      return {
+        ok: false,
+        material: null as unknown as Material,
+        error: error instanceof Error ? error.message : '素材上传失败',
+      };
+    }
+  },
+  startMaterialAnalysis: (id: string, retry = false) => post<{ ok: boolean; status?: string; error?: string }>(`materials/${encodeURIComponent(id)}/analysis`, { retry }, { ok: false }),
   analyzeMaterialSegments: (id: string) =>
     post<{ ok: boolean; material?: Material; segments?: MaterialSegment[]; error?: string }>(`materials/${id}/analyze-segments`, {}, { ok: false, error: '片段分析失败' }),
   classifyMaterial: (id: string) =>
@@ -681,7 +894,8 @@ export const studioApi = {
       return await response.json() as { ok: boolean; material?: Material; segment?: MaterialSegment; error?: string };
     } catch { return { ok: false, error: '片段更新失败' }; }
   },
-  updateMaterial: async (id: string, changes: { name: string; tags?: string }): Promise<{ ok: boolean; material?: Material; error?: string }> => {
+  materialProducts: () => get<{items:Array<{id:string;name:string}>}>('material-products', {items:[]}),
+  updateMaterial: async (id: string, changes: { name: string; tags?: string; productId?: string; primaryTheme?: import('../../shared/materialTaxonomy').MaterialTheme }): Promise<{ ok: boolean; material?: Material; error?: string }> => {
     try {
       const response = await fetch(`/api/overseas/studio/materials/${id}`, {
         method: 'PATCH',
@@ -693,7 +907,60 @@ export const studioApi = {
       return { ok: false, error: '素材编辑失败' };
     }
   },
-  deleteMaterial: (id: string) => del(`materials/${id}`),
+  setMaterialPinned: async (id: string, pinned: boolean): Promise<{ ok: boolean; material?: Partial<Material>; error?: string }> => {
+    try {
+      const response = await fetch(`/api/overseas/studio/materials/${encodeURIComponent(id)}/pin`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json', ...authHeader() },
+        body: JSON.stringify({ pinned }),
+      });
+      const payload = await response.json().catch(() => ({})) as { ok?: boolean; material?: Partial<Material>; error?: string };
+      return response.ok && payload.ok ? { ok: true, material: payload.material } : { ok: false, error: payload.error || '收藏状态保存失败' };
+    } catch {
+      return { ok: false, error: '收藏状态保存失败' };
+    }
+  },
+  deleteMaterial: async (id: string): Promise<{ ok: boolean; error?: string }> => {
+    try {
+      const response = await fetch(`/api/overseas/studio/materials/${encodeURIComponent(id)}`, {
+        method: 'DELETE',
+        headers: authHeader(),
+      });
+      const payload = await response.json().catch(() => ({})) as { ok?: boolean; error?: string };
+      return response.ok && payload.ok
+        ? { ok: true }
+        : { ok: false, error: payload.error || `素材删除失败（HTTP ${response.status}）` };
+    } catch (error) {
+      return { ok: false, error: error instanceof Error ? error.message : '素材删除失败' };
+    }
+  },
+
+  digitalHumanAvatars: () => get<{ items: HeyGenAvatarOption[] }>('digital-human/avatars', { items: [] }),
+  approveDigitalHumanJob: (id: string) => post<{ ok: boolean; job?: DigitalHumanJob }>(`digital-human/jobs/${encodeURIComponent(id)}/approve`, { reviewed: true }, { ok: false }),
+  digitalHumanCapabilities: () => get<DigitalHumanCapabilities>('digital-human/capabilities', {
+    available: false, provider: 'unconfigured', modes: [{ id: 'fast', label: '极速模式' }, { id: 'quality', label: '高质量模式' }],
+    output: { ratio: '9:16', container: 'mp4' }, qualityGateRequired: true, maxConcurrentJobs: 2,
+    unavailableReason: '无法连接数字人服务',
+  }),
+  createDigitalHumanJob: (body: { projectId?: string; avatarMaterialId?: string; heygenAvatarId?: string; voiceoverUrl: string; script: string; language: string; mode: 'fast' | 'quality'; consentConfirmed: boolean }) =>
+    post<{ ok: boolean; job?: DigitalHumanJob; error?: string; code?: string }>('digital-human/jobs', body, { ok: false, error: '数字人任务提交失败' }),
+  getDigitalHumanJob: (id: string) =>
+    get<{ ok: boolean; job?: DigitalHumanJob; outputMaterial?: Material; error?: string }>(`digital-human/jobs/${encodeURIComponent(id)}`, { ok: false, error: '数字人任务查询失败' }),
+  listDigitalHumanJobs: async (projectId?: string): Promise<DigitalHumanJob[]> => {
+    try {
+      const query = projectId ? `?projectId=${encodeURIComponent(projectId)}` : '';
+      const response = await fetch(`/api/overseas/studio/digital-human/jobs${query}`, { headers: authHeader(), cache: 'no-store' });
+      if (!response.ok) return [];
+      const payload = await response.json();
+      return Array.isArray(payload) ? payload as DigitalHumanJob[] : [];
+    } catch { return []; }
+  },
+  retryDigitalHumanJob: (id: string) =>
+    post<{ ok: boolean; job?: DigitalHumanJob; error?: string }>(`digital-human/jobs/${encodeURIComponent(id)}/retry`, {}, { ok: false, error: '数字人任务重试失败' }),
+  cancelDigitalHumanJob: (id: string) =>
+    post<{ ok: boolean; job?: DigitalHumanJob; error?: string }>(`digital-human/jobs/${encodeURIComponent(id)}/cancel`, {}, { ok: false, error: '数字人任务取消失败' }),
+  assessTransformation: (body: TransformationAssessmentInput) =>
+    post<{ ok: boolean; assessment?: TransformationAssessment; error?: string }>('transformations/assess', body, { ok: false, error: '替换兼容性评估失败' }),
 
   // BGM 曲库
   listBgm: async (): Promise<BgmTrack[]> => {
@@ -738,6 +1005,10 @@ export interface CoverStyle {
 }
 
 export interface Material {
+  transcript?: string;
+  transcriptCues?: SubCue[];
+  transcriptCuesProvenance?: string;
+  transcriptSourceHash?: string;
   id: string;
   name: string;
   folder: string;
@@ -754,15 +1025,50 @@ export interface Material {
   usage?: 'editable' | 'reference_only';
   canManage?: boolean;
   sourceType?: string;
+  /** Canonical generated-library metadata. Physical folders remain presentation metadata. */
+  generation?: import('../../shared/contracts/generatedMaterial').GeneratedAssetGeneration;
+  lineage?: import('../../shared/contracts/generatedMaterial').GeneratedAssetLineage;
+  quality?: import('../../shared/contracts/generatedMaterial').GeneratedAssetQuality;
+  reuse?: import('../../shared/contracts/generatedMaterial').GeneratedAssetReuse;
+  rightsScope?: string;
+  sourceCategory?: import('../../shared/materialTaxonomy').MaterialSourceCategory;
+  sourceChannel?: string;
+  primaryTheme?: import('../../shared/materialTaxonomy').MaterialTheme;
+  themeTags?: import('../../shared/materialTaxonomy').MaterialTheme[];
+  classificationStatus?: import('../../shared/materialTaxonomy').MaterialClassificationStatus;
+  classificationEvidence?: string[];
+  classificationSource?: 'model' | 'user';
+  providerTaskId?: string;
+  contentSha256?: string;
+  sourceName?: string;
+  sourceProvider?: string;
+  sourceCreator?: string;
   sourceUrl?: string;
+  licenseEvidence?: string;
+  licenseName?: string;
+  licenseUrl?: string;
+  attributionText?: string;
+  licenseEvidenceCapturedAt?: string;
+  licenseEvidenceTextSha256?: string;
+  importBatchId?: string;
+  manifestSha256?: string;
+  importedAt?: string;
+  commercialUseApproved?: boolean;
+  derivativesApproved?: boolean;
+  rawLibraryUseApproved?: boolean;
+  provenance?: Record<string, unknown>;
   pinned?: boolean;
   industry?: string;
   shotFunction?: string;
   applicability?: string;
   tags?: string;
+  productId?: string;
+  productName?: string;
   segmentAnalysisStatus?: 'pending' | 'analyzing' | 'completed' | 'failed';
   segmentAnalysisError?: string;
   segments?: MaterialSegment[];
+  visualObservations?: string[];
+  scriptAnalysis?: MaterialScriptAnalysis;
   createdAt: string;
 }
 
@@ -787,6 +1093,8 @@ export interface VideoGenerationVersion {
 
 export interface MaterialSegment {
   id: string;
+  visualTopic?: string;
+  expressionPurpose?: string;
   start: number;
   end: number;
   duration: number;
@@ -811,3 +1119,6 @@ export interface MaterialSegment {
   needsReview: boolean;
   manualConfirmed?: boolean;
 }
+
+export { ensureMaterialAnalysis, fetchMaterialLibrary, getMaterialLibraryState } from './studioDigitalHuman';
+export type { DigitalHumanCapabilities, DigitalHumanJob, DigitalHumanQualityReport, MaterialLibraryState, TransformationAssessment, TransformationAssessmentInput, TransformationMode } from './studioDigitalHuman';

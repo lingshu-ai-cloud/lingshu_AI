@@ -64,7 +64,9 @@ const PRICE_PROBE_PATTERN = /\b(?:how much|best price|lowest price|cheapest|pric
 const FULL_PRICE_LIST_PATTERN = /\bfull price list\b|\ball (?:your )?products?.{0,10}price\b|complete price list|price list for everything|全部产品.{0,6}价格|完整价格表|所有产品报价/i;
 
 const OWNER_PATTERN = /\b(?:owner|founder|co-founder|ceo|president)\b|老板|店主|创始人|法人|总经理/i;
+const SELF_OWNER_PATTERN = /\bi\s+(?:am|['’]m)\s+(?:(?:the|a|an)\s+)?(?:owner|founder|co-founder|ceo|president)\b|我是(?:老板|店主|创始人|法人|总经理)/i;
 const DIRECT_DECIDER_PATTERN = /\b(?:i decide|i approve|i handle purchasing|i am (?:the )?(?:buyer|purchasing manager|procurement manager|director)|we (?:will|can|are ready to) (?:place|make|confirm) (?:the |an )?order)\b|我决定|我拍板|我负责采购|我是采购|我们会下单|可以下单|准备下单/i;
+const AUTHORITY_DENIAL_PATTERN = /\b(?:i\s+(?:cannot|can't|can not|do not|don't)\s+(?:approve\s+(?:purchases?|orders?)|make\s+(?:the\s+)?purchas(?:e|ing)\s+decisions?)|i\s+am\s+not\s+(?:the\s+)?(?:purchasing\s+)?decision\s*maker)\b|(?:我|本人)(?:没有|无|不能|无法|不具备).{0,8}(?:采购决策权|采购审批权|批准采购|批准订单)/i;
 const NEEDS_APPROVAL_PATTERN = /\b(?:need to (?:ask|check with|confirm with)|my (?:partner|boss|manager) (?:will|needs to)|team approval|management approval)\b|要问.{0,6}(?:合伙人|老板|经理)|需要.{0,6}(?:合伙人|老板|领导|团队).{0,6}(?:确认|审批)/i;
 const FOR_CLIENT_PATTERN = /\b(?:for my client|for a client|my customer asked|helping (?:a|my) client)\b|替客户问|帮客户问|给我的客户|客户让我问/i;
 const COMPANY_INFO_PATTERN = /\b(?:my|our) (?:company|business|shop|store|clinic|salon|brand)\b|\b(?:company name|business email|corporate email)\b|我们公司|我司|我们店|公司名称|企业邮箱/i;
@@ -159,6 +161,38 @@ function mergeDimension(current: BantDimension, previous: BantDimension | undefi
   return { ...previous, evidence };
 }
 
+// Explicit buyer corrections veto individual historical signals without creating
+// positive evidence. A zero-point marker carries that veto across incremental runs.
+function correctRevokedSignals(current: BantDimension, previous: BantDimension | undefined, messages: string[], rules: { key: string; positive: RegExp; negative: RegExp; evidence: RegExp }[]): BantDimension {
+  let result = current;
+  for (const rule of rules) {
+    let denial = -1;
+    let confirmation = -1;
+    messages.forEach((message, index) => {
+      if (rule.negative.test(message)) denial = index;
+      else if (rule.positive.test(message)) confirmation = index;
+    });
+    const marker = `${rule.key}_revoked`;
+    const previouslyRevoked = previous?.signalPoints?.[marker] === 0;
+    if (denial < 0 && !previouslyRevoked) continue;
+    const revoked = denial >= confirmation && denial >= 0 || previouslyRevoked && confirmation < 0;
+    const signalPoints = { ...result.signalPoints };
+    delete signalPoints[marker];
+    if (revoked) {
+      delete signalPoints[rule.key];
+      signalPoints[marker] = 0;
+    }
+    const evidence = revoked ? result.evidence.filter(item => !rule.evidence.test(item)) : result.evidence;
+    const score = Math.min(25, Object.values(signalPoints).reduce((sum, points) => sum + points, 0));
+    result = { score, status: statusForScore(score), signalPoints, evidence };
+  }
+  return result;
+}
+
+const CUSTOMIZATION_REVOCATION = /\b(?:no\s+(?:customi[sz]ation|customi[sz]ed\s+(?:products?|items?)|OEM|ODM|private[- ]label)|(?:do\s+not|don't|no\s+longer)\s+(?:need|want|require)\s+(?:customi[sz]ation|OEM|ODM|private[- ]label|customi[sz]ed\s+(?:products?|items?)))\b|(?:不需要|不要|无需|取消)(?:任何)?(?:定制|OEM|ODM|私标|贴牌)/i;
+const SAMPLE_REVOCATION = /\b(?:no\s+samples?|(?:do\s+not|don't|no\s+longer)\s+(?:need|want|require)\s+(?:any\s+)?samples?)\b|(?:不需要|不要|无需|取消)(?:任何)?(?:样品|试样|打样)/i;
+const DEADLINE_REVOCATION = /\b(?:no\s+(?:fixed\s+)?(?:delivery\s+)?deadline|(?:cancel|withdraw)(?:led)?\s+(?:the\s+)?(?:deadline|delivery deadline)|(?:deadline|delivery deadline)\s+(?:is\s+)?(?:cancelled|canceled|withdrawn)|no\s+longer\s+(?:have|need)\s+(?:a\s+)?deadline)\b|(?:取消|撤销)(?:之前的|原来(?:的)?)?(?:交期|截止日期|到货期限)|(?:没有|无需|不再有)(?:明确|固定)?(?:交期|截止日期|到货期限)/i;
+
 function explicitLocationClaims(messages: string[]): string[] {
   return unique(messages.flatMap(message => {
     const matches = message.matchAll(/\b(?:i am|i'm|we are|our company is) (?:based |located )?in ([a-z][a-z .'-]{2,24}?)(?=[,.!?]|$|\s+(?:and|but)\s+)/gi);
@@ -217,19 +251,36 @@ export function assessBant(input: { turns: QualificationTurn[]; previous?: BantA
     { key: 'full_price_list', points: -5, evidence: '索要全部产品完整价格表 -5', matched: fullPriceList },
   ]), input.previous?.budget, priceOnly || fullPriceList);
 
-  const authority = mergeDimension(dimension([
-    { key: 'owner', points: 22, evidence: '明确是老板、店主或创始人 +22', matched: OWNER_PATTERN.test(text) },
-    { key: 'direct_decider', points: 16, evidence: '明确负责采购或可直接决定下单 +16', matched: DIRECT_DECIDER_PATTERN.test(text) },
-    { key: 'business_operator', points: 16, evidence: '主动说明自己经营、经销或进口业务 +16', matched: BUSINESS_OPERATOR_PATTERN.test(text) },
-    { key: 'needs_approval', points: 9, evidence: '需要与合伙人、老板或团队确认 +9', matched: NEEDS_APPROVAL_PATTERN.test(text) },
-    { key: 'for_client', points: 5, evidence: '表示在替自己的客户询问 +5', matched: FOR_CLIENT_PATTERN.test(text) },
-    { key: 'company_info', points: 6, evidence: '提供公司、业务或企业邮箱信息 +6', matched: COMPANY_INFO_PATTERN.test(text) },
-    { key: 'formal_quote_authority', points: 10, evidence: '要求正式报价单或形式发票 +10', matched: FORMAL_QUOTE_PATTERN.test(text) },
-    { key: 'customization_authority', points: 10, evidence: '提出私标或 OEM，体现采购决策参与度 +10', matched: CUSTOMIZATION_PATTERN.test(text) },
+  let lastAuthorityDenial = -1;
+  let lastAuthorityConfirmation = -1;
+  buyerMessages.forEach((message, index) => {
+    if (AUTHORITY_DENIAL_PATTERN.test(message)) lastAuthorityDenial = index;
+    else if (SELF_OWNER_PATTERN.test(message) || DIRECT_DECIDER_PATTERN.test(message)) lastAuthorityConfirmation = index;
+  });
+  const previousDenied = input.previous?.authority.signalPoints?.authority_denied === 0;
+  const authorityDenied = lastAuthorityDenial >= 0 && lastAuthorityDenial >= lastAuthorityConfirmation
+    || previousDenied && lastAuthorityConfirmation < 0;
+  // Explicit corrections supersede both historical turns and accumulated
+  // scores. Later unrelated messages cannot restore revoked decision rights.
+  const authorityText = lastAuthorityDenial >= 0 ? buyerMessages.slice(lastAuthorityDenial + 1).join(' ') : text;
+  const authorityPrevious = lastAuthorityDenial >= 0 || previousDenied ? undefined : input.previous?.authority;
+  let authority: BantDimension = authorityDenied ? {
+    score: 0, status: 'unknown' as const,
+    evidence: ['客户明确无采购决策权，需重新确认决策链 +0'],
+    signalPoints: { authority_denied: 0 },
+  } : mergeDimension(dimension([
+    { key: 'owner', points: 22, evidence: '明确是老板、店主或创始人 +22', matched: OWNER_PATTERN.test(authorityText) },
+    { key: 'direct_decider', points: 16, evidence: '明确负责采购或可直接决定下单 +16', matched: DIRECT_DECIDER_PATTERN.test(authorityText) },
+    { key: 'business_operator', points: 16, evidence: '主动说明自己经营、经销或进口业务 +16', matched: BUSINESS_OPERATOR_PATTERN.test(authorityText) },
+    { key: 'needs_approval', points: 9, evidence: '需要与合伙人、老板或团队确认 +9', matched: NEEDS_APPROVAL_PATTERN.test(authorityText) },
+    { key: 'for_client', points: 5, evidence: '表示在替自己的客户询问 +5', matched: FOR_CLIENT_PATTERN.test(authorityText) },
+    { key: 'company_info', points: 6, evidence: '提供公司、业务或企业邮箱信息 +6', matched: COMPANY_INFO_PATTERN.test(authorityText) },
+    { key: 'formal_quote_authority', points: 10, evidence: '要求正式报价单或形式发票 +10', matched: FORMAL_QUOTE_PATTERN.test(authorityText) },
+    { key: 'customization_authority', points: 10, evidence: '提出私标或 OEM，体现采购决策参与度 +10', matched: CUSTOMIZATION_PATTERN.test(authorityText) },
     { key: 'identity_refusal', points: -5, evidence: '拒绝说明身份或采购用途 -5', matched: identityRefusal },
-  ]), input.previous?.authority, identityRefusal);
+  ]), authorityPrevious, identityRefusal);
 
-  const need = mergeDimension(dimension([
+  let need = mergeDimension(dimension([
     { key: 'exact_product', points: 15, evidence: '指明具体产品、货号或视频中的款式 +15', matched: EXACT_PRODUCT_PATTERN.test(text) },
     { key: 'specification', points: 20, evidence: '给出成分、容量、材质或包装等规格 +20', matched: SPEC_PATTERN.test(text) },
     { key: 'target_market', points: 10, evidence: '说明目标市场或销售国家 +10', matched: TARGET_MARKET_PATTERN.test(text) },
@@ -239,7 +290,7 @@ export function assessBant(input: { turns: QualificationTurn[]; previous?: BantA
     { key: 'sample', points: 10, evidence: '主动索要样品或试样 +10', matched: SAMPLE_REQUEST_PATTERN.test(text) },
   ]), input.previous?.need, false);
 
-  const timing = mergeDimension(dimension([
+  let timing = mergeDimension(dimension([
     { key: 'deadline', points: 22, evidence: '给出到货、上市或项目截止时间 +22', matched: DEADLINE_PATTERN.test(text) },
     { key: 'urgent', points: 16, evidence: '明确表示紧急或需要尽快处理 +16', matched: URGENT_PATTERN.test(text) },
     { key: 'season', points: 12, evidence: '采购与节庆、旺季或销售季相关 +12', matched: SEASON_PATTERN.test(text) },
@@ -250,6 +301,18 @@ export function assessBant(input: { turns: QualificationTurn[]; previous?: BantA
     { key: 'sample', points: 10, evidence: '推进到索要样品或试样 +10', matched: SAMPLE_REQUEST_PATTERN.test(text) },
     { key: 'purchase_intent', points: 20, evidence: '明确表达购买或继续下单意向 +20', matched: PURCHASE_INTENT_PATTERN.test(text) },
   ]), input.previous?.timing, false);
+
+  authority = correctRevokedSignals(authority, input.previous?.authority, buyerMessages, [
+    { key: 'customization_authority', positive: CUSTOMIZATION_PATTERN, negative: CUSTOMIZATION_REVOCATION, evidence: /提出私标或 OEM/ },
+  ]);
+  need = correctRevokedSignals(need, input.previous?.need, buyerMessages, [
+    { key: 'customization', positive: CUSTOMIZATION_PATTERN, negative: CUSTOMIZATION_REVOCATION, evidence: /提出私标、OEM/ },
+    { key: 'sample', positive: SAMPLE_REQUEST_PATTERN, negative: SAMPLE_REVOCATION, evidence: /主动索要样品/ },
+  ]);
+  timing = correctRevokedSignals(timing, input.previous?.timing, buyerMessages, [
+    { key: 'sample', positive: SAMPLE_REQUEST_PATTERN, negative: SAMPLE_REVOCATION, evidence: /推进到索要样品/ },
+    { key: 'deadline', positive: DEADLINE_PATTERN, negative: DEADLINE_REVOCATION, evidence: /给出到货、上市或项目截止时间/ },
+  ]);
 
   const rawTotal = Math.max(0, budget.score + authority.score + need.score + timing.score);
   const authenticity = assessAuthenticity(buyerMessages, input.previous?.authenticity);

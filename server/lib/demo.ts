@@ -208,7 +208,11 @@ function estimateRequestTokens(req: Request, kind: DemoQuotaKind): number {
 }
 
 export async function consumeDemoQuota(req: Request, res: Response, kind: DemoQuotaKind): Promise<boolean> {
-  const id = await auth.verifyToken(req.headers.authorization);
+  const locals = res.locals as { userId?: unknown; tenantId?: unknown };
+  const id = typeof locals.userId === 'string' && locals.userId
+    && typeof locals.tenantId === 'string' && locals.tenantId
+    ? { userId: locals.userId, tenantId: locals.tenantId }
+    : await auth.verifyToken(req.headers.authorization);
   const sub = id?.tenantId ? await getTenantSubscription(id.tenantId) : null;
   if (isAdminSubscription(sub)) return true;
   const quotaEnforced = isDemoMode() || isTrialSubscription(sub);

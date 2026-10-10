@@ -10,6 +10,8 @@ interface BudgetEntry {
   duration: number;
   resolution: string;
   createdAt: string;
+  status?: 'reserved' | 'settled';
+  reconciledAt?: string;
 }
 
 type BudgetStore = Record<string, Record<string, BudgetEntry[]>>;
@@ -85,6 +87,7 @@ export function reserveSeedanceBudget(input: {
     duration: input.duration,
     resolution: input.resolution,
     createdAt: new Date().toISOString(),
+    status: 'reserved',
   };
   store[input.tenantId] = { ...(store[input.tenantId] || {}), [month]: [...entries, entry] };
   writeStore(store);
@@ -106,4 +109,38 @@ export function releaseSeedanceBudget(tenantId: string, reservationId: string): 
   if (next.length === entries.length) return;
   store[tenantId] = { ...(store[tenantId] || {}), [month]: next };
   writeStore(store);
+}
+
+export function reconcileSeedanceBudget(tenantId: string, reservationId: string, actualCostCny: number): void {
+  if (!Number.isFinite(actualCostCny) || actualCostCny < 0) return;
+  const store = readStore();
+  const month = monthKey();
+  const entries = store[tenantId]?.[month] || [];
+  const target = entries.find(entry => entry.reservationId === reservationId);
+  if (!target) return;
+  target.amountCny = Math.round(actualCostCny * 10_000) / 10_000;
+  target.status = 'settled';
+  target.reconciledAt = new Date().toISOString();
+  writeStore(store);
+}
+
+/**
+ * Returns only supplier-reconciled Seedance spend for the tenant. Legacy
+ * entries predate the status field; a changed reservation amount is durable
+ * evidence that reconcileSeedanceBudget replaced the original estimate.
+ */
+export function settledSeedanceUsageForTenant(tenantId: string): { settledCny: number; entryCount: number; updatedAt: string | null } | null {
+  const months = readStore()[tenantId];
+  if (!months) return null;
+  const entries = Object.values(months).flat().filter(entry => {
+    if (entry.status === 'settled' || entry.reconciledAt) return true;
+    if (entry.status === 'reserved') return false;
+    return Math.abs(Number(entry.amountCny || 0) - estimateSeedanceCostCny(entry.duration, entry.resolution)) > 0.00005;
+  });
+  if (!entries.length) return null;
+  return {
+    settledCny: Math.round(entries.reduce((sum, entry) => sum + Number(entry.amountCny || 0), 0) * 10_000) / 10_000,
+    entryCount: entries.length,
+    updatedAt: entries.map(entry => entry.reconciledAt || entry.createdAt).filter(Boolean).sort().at(-1) || null,
+  };
 }

@@ -1,31 +1,92 @@
+import {readAuthorizedWhatsAppCustomers} from '../whatsapp/authorizedCustomerRead.js';
+import { isBrowserReadToken } from '../digitalEmployees/browserReadSession.js';
+import { patchWhatsAppCustomer } from '../whatsapp/historyImport.js';
+import { orderStatuses, transitionOrder, updateAfterSales, type OrderStatus, type OrderAudit, type AfterSales } from '../../shared/orderLifecycle.js';
 import { Router } from 'express';
 import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
-import { randomBytes, randomUUID } from 'crypto';
+import { createHash, randomBytes, randomUUID } from 'crypto';
+import { enterpriseProductIdentity, mergeEnterpriseProductIdentity } from '../lib/enterpriseProductIdentity.js';
 import type { Request } from 'express';
-import { auth, store } from '../storage/index.js';
+import { store } from '../storage/index.js';
 import type { AutonomyLevel } from '../autonomy/actionRules.js';
 import { callLLM } from '../agents/llm.js';
 import { notifyDeliveryTeam } from '../lib/tenantPlatformApps.js';
 import { requireAuth, type AuthLocals } from '../middleware/auth.js';
-import { objectStorageEnabled, r2GetObject, r2Upload } from '../storage/r2.js';
+import {
+  productApiSecretForKey,
+  productApiSecretForTenant,
+  type ProductApiCredential,
+} from '../lib/productApiCredentials.js';
+import { enterpriseProductApiRouter } from './enterpriseProductApi.js';
+import { objectStorageEnabled, objectStorageGetObject, objectStorageUpload } from '../storage/objectStorage.js';
 import {
   enterpriseAssetContentType,
   enterpriseAssetObjectKey,
   enterpriseAssetTenantKey,
   enterpriseAssetTypeAllowed,
 } from '../storage/enterpriseAssets.js';
+import { readCustomerMessagingAuthorization } from '../digitalEmployees/customerMessagingPolicy.js';
+import {
+  assertLegacyExternalEffectAllowed,
+  Starter198LegacyEffectError,
+  withLegacyExternalEffectAllowed,
+} from '../starter198/legacyEffectGuard.js';
+import { localFallbacksEnabled } from '../lib/localFallbackPolicy.js';
+import { currentDataAuthority } from '../storage/dataAuthority.js';
+import { upsertTenantUploadCloudMaterial } from '../lib/cloudMaterials.js';
+import { normalizeTenantMedia } from '../lib/tenantMediaNormalization.js';
+import os from 'node:os';
+import { downloadAndNormalizeExternalImage, ExternalImageImportError } from '../lib/externalProductImageImport.js';
+import { readLocalMaterials, saveLocalMaterials } from '../lib/materialLibrary.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const DATA_FILE = path.join(__dirname, '../../data/enterprise.json');
 const DATA_DIR = path.join(__dirname, '../../data');
 const ASSETS_DIR = path.join(DATA_DIR, 'enterprise-assets');
 const TENANT_ORDERS_DIR = path.join(DATA_DIR, 'tenant-orders');
-// 生成的 productApi 密钥单独存放，不进 data/enterprise.json（避免和会被提交/覆盖的企业资料文件混在一起）。
-const PRODUCT_API_FILE = path.join(DATA_DIR, 'product-api.json');
 
-type OrderStatus = '待付款' | '已付款' | '生产中' | '已发货' | '已完成' | '退款';
+function upsertLocalEnterpriseMaterial(input: {
+  tenantId: string; title: string; type: 'image' | 'video' | 'audio'; sizeBytes: number;
+  duration?: number; width?: number; height?: number; sha256: string; sourceUrl: string;
+  sourceName: string; productId?: string; provenance: Record<string, unknown>;
+}): Record<string, unknown> {
+  const records = readLocalMaterials();
+  const index = records.findIndex(item => String(item.tenantId || item.tenant_id || '') === input.tenantId
+    && String(item.contentSha256 || item.sha256 || '').toLowerCase() === input.sha256.toLowerCase());
+  const now = new Date().toISOString();
+  const sourceEntries = ['enterprise_knowledge'];
+  if (index >= 0) {
+    const current = records[index]!;
+    const currentProvenance = current.provenance && typeof current.provenance === 'object' ? current.provenance : {};
+    records[index] = {
+      ...current,
+      ...(input.productId ? { productId: input.productId } : {}),
+      sourceUrl: input.sourceUrl,
+      provenance: { ...currentProvenance, ...input.provenance, sourceEntry: 'enterprise_knowledge', sourceEntries },
+      updatedAt: now,
+    };
+    saveLocalMaterials(records);
+    return records[index]!;
+  }
+  const created = {
+    id: `enterprise-${randomUUID()}`, tenantId: input.tenantId, name: input.title, title: input.title,
+    folder: 'enterprise-upload', type: input.type, duration: input.duration || 0,
+    width: input.width, height: input.height, sizeBytes: input.sizeBytes, size: `${input.sizeBytes} B`,
+    contentSha256: input.sha256, sha256: input.sha256, scope: 'own', usage: 'editable',
+    sourceType: 'enterprise_upload', sourceName: input.sourceName, sourceProvider: 'tenant',
+    sourceUrl: input.sourceUrl, url: input.sourceUrl, ...(input.productId ? { productId: input.productId } : {}),
+    sourceEntry: 'enterprise_knowledge', ownership: 'enterprise', visibility: 'tenant', knowledgeEligible: true,
+    provenance: { ...input.provenance, sourceEntry: 'enterprise_knowledge', sourceEntries },
+    createdAt: now, updatedAt: now,
+  };
+  records.push(created);
+  saveLocalMaterials(records);
+  return created;
+}
+
+
 
 type QuoteMode = '' | 'range' | 'human_only';
 type BargainPolicy = '' | 'no' | 'limited' | 'open';
@@ -108,7 +169,18 @@ export interface SalesStyleProfile {
   sample_pairs?: Array<{ trigger: string; final: string; evidence?: string }>;
 }
 
-interface OrderRecord {
+export interface OrderRecord {
+  idempotencyKey?: string;
+  customerSyncStatus?: 'pending' | 'done' | 'failed';
+  customerSyncError?: string;
+  sourcePostId?: string;
+  customerId?: string;
+  paidAt?: string;
+  refundedAt?: string;
+  refundAmount?: number;
+  audit?: OrderAudit[];
+  afterSales?: AfterSales;
+  afterSalesHistory?: AfterSales[];
   id: string;
   orderNo: string;
   buyer: string;
@@ -127,9 +199,27 @@ interface OrderRecord {
   updatedAt: string;
 }
 
-const ORDER_STATUSES: OrderStatus[] = ['待付款', '已付款', '生产中', '已发货', '已完成', '退款'];
+const ORDER_STATUSES: readonly OrderStatus[] = orderStatuses;
 
 export interface EnterpriseProfile {
+  /**
+   * Immutable identity of the currently confirmed enterprise facts. Every
+   * consumer receives this version together with the profile so content,
+   * customer service, quotation, ads and digital employees cannot silently
+   * mix facts from different saves.
+   */
+  factVersion?: {
+    id: string;
+    revision: number;
+    contentHash: string;
+    confirmedAt: string;
+    confirmedBy: string;
+  };
+  digitalEmployeeOnboarding?: {
+    profileConfirmedAt?: string;
+    productSelectionConfirmedAt?: string;
+    continuedWithoutProducts?: boolean;
+  };
   company: {
     name: string;
     industry: string;
@@ -144,14 +234,21 @@ export interface EnterpriseProfile {
     enabledRoutes: Array<'oem_odm' | 'wholesale_distribution' | 'consumer_retail'>;
     routeStrategies: Partial<Record<'oem_odm' | 'wholesale_distribution' | 'consumer_retail', { targetBuyerRoles: string[]; primaryCta: string }>>;
     manuallyEditedFields?: string[];
+    /** Social operating stage selected during application onboarding. */
+    contentStage?: 'b2b_launch' | 'b2b_growth' | 'd2c_brand';
+    /** PRD-aligned generation preset derived from contentStage. */
+    weeklyTaskPackagePreset?: 'b2b_starting' | 'b2b_growing' | 'dtc_sales';
   };
   products: {
     categories: string;
+    searchKeywords?: string;
     priceRange: string;
     moq: string;
     certifications: string;
     highlights: string;
     items?: Array<{
+      id?: string;
+      productId?: string;
       sku?: string;
       name: string;
       category?: string;
@@ -178,6 +275,8 @@ export interface EnterpriseProfile {
     }>;
   };
   brand: {
+    /** Customer-facing brand name; independent from the legal enterprise name. */
+    name: string;
     tone: string;
     style: string;
     taboos: string;
@@ -234,14 +333,6 @@ export interface EnterpriseProfile {
   knowledge: string;
 }
 
-interface ProductApiSecret {
-  tenantId: string;
-  apiKey: string;
-  createdAt: string;
-  lastIngestedAt?: string;
-  lastProductName?: string;
-}
-
 const DEFAULT_BIZ_RULES: BizRules = {
   quoteMode: 'human_only',
   priceRange: '',
@@ -277,34 +368,14 @@ const DEFAULT_HANDOFF_RULES: HandoffRules = {
   negativeSentiment: true,
 };
 
-function readProductApiSecret(): ProductApiSecret | null {
-  try {
-    return JSON.parse(fs.readFileSync(PRODUCT_API_FILE, 'utf8')) as ProductApiSecret;
-  } catch {
-    return null;
-  }
-}
-
-function writeProductApiSecret(secret: ProductApiSecret): void {
-  fs.mkdirSync(DATA_DIR, { recursive: true });
-  fs.writeFileSync(PRODUCT_API_FILE, JSON.stringify(secret, null, 2), 'utf8');
-}
-
-// 兼容旧数据：老版本把 productApi 密钥写进了 data/enterprise.json 的 integrations 字段。
-// 首次读取到这种旧格式时，把密钥迁移到独立文件，并从企业资料里彻底删除，避免它再被写回 enterprise.json。
-function migrateLegacyProductApiSecret(parsed: Record<string, unknown>): void {
-  const legacy = (parsed?.integrations as { productApi?: ProductApiSecret } | undefined)?.productApi;
-  if (legacy?.apiKey && !fs.existsSync(PRODUCT_API_FILE)) {
-    writeProductApiSecret(legacy);
-  }
-  delete parsed.integrations;
-}
-
 function readProfile(): EnterpriseProfile {
   try {
     const raw = fs.readFileSync(DATA_FILE, 'utf8');
     const parsed = JSON.parse(raw);
-    migrateLegacyProductApiSecret(parsed);
+    // Reads are side-effect free. Legacy embedded integration credentials are
+    // ignored here; any historical credential migration must be an explicit,
+    // audited operator command rather than an implicit GET-time write.
+    delete parsed.integrations;
     return normalizeProfile(parsed);
   } catch {
     return normalizeProfile({
@@ -317,7 +388,7 @@ function readProfile(): EnterpriseProfile {
         highlights: '',
         items: [],
       },
-      brand: { tone: '', style: '', taboos: '', usp: '', preferredLanguages: '' },
+      brand: { name: '', tone: '', style: '', taboos: '', usp: '', preferredLanguages: '' },
       strategy: { currentGoal: '', focusProducts: '', focusMarkets: '', excludedMarkets: '', pricingStrategy: '', minMargin: '', agentAutonomy: '', aiAutonomy: 'draft' },
       customers: { targetProfiles: '', highValueSignals: '', lowQualitySignals: '', commonQuestions: '', followupStyle: '' },
       operations: { leadTime: '', customization: '', logistics: '', paymentTerms: '', riskNotes: '' },
@@ -345,15 +416,20 @@ function localTenantOrdersFile(tenantId: string): string {
 function readLocalTenantOrders(tenantId: string): OrderRecord[] {
   try {
     const parsed = JSON.parse(fs.readFileSync(localTenantOrdersFile(tenantId), 'utf8'));
-    return Array.isArray(parsed) ? parsed.map(normalizeOrder).filter(Boolean) as OrderRecord[] : [];
-  } catch {
-    return [];
+    if (!Array.isArray(parsed)) throw new Error('订单台账格式无效');
+    return parsed.map(normalizeOrder).filter(Boolean) as OrderRecord[];
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return [];
+    throw error;
   }
 }
 
 function writeLocalTenantOrders(tenantId: string, orders: OrderRecord[]): void {
   fs.mkdirSync(TENANT_ORDERS_DIR, { recursive: true });
-  fs.writeFileSync(localTenantOrdersFile(tenantId), JSON.stringify(orders, null, 2), 'utf8');
+  const destination = localTenantOrdersFile(tenantId);
+  const temporary = `${destination}.${randomUUID()}.tmp`;
+  fs.writeFileSync(temporary, JSON.stringify(orders, null, 2), 'utf8');
+  fs.renameSync(temporary, destination);
 }
 
 function storedOrder(value: unknown): OrderRecord | null {
@@ -383,15 +459,15 @@ async function listStoredTenantOrders(tenantId: string): Promise<Record<string, 
   return records;
 }
 
-async function readOrders(tenantId: string): Promise<OrderRecord[]> {
-  if (process.env.NODE_ENV !== 'production' && tenantId.startsWith('local_tenant_')) return readLocalTenantOrders(tenantId);
+export async function readOrders(tenantId: string): Promise<OrderRecord[]> {
+  if (usesLocalOrderAuthority(tenantId)) return readLocalTenantOrders(tenantId);
   const records = await listStoredTenantOrders(tenantId);
   const orders = records.map(storedOrder).filter(Boolean) as OrderRecord[];
   return orders;
 }
 
-async function upsertOrder(tenantId: string, order: OrderRecord): Promise<boolean> {
-  if (process.env.NODE_ENV !== 'production' && tenantId.startsWith('local_tenant_')) {
+async function persistOrder(tenantId: string, order: OrderRecord): Promise<boolean> {
+  if (usesLocalOrderAuthority(tenantId)) {
     const orders = readLocalTenantOrders(tenantId);
     writeLocalTenantOrders(tenantId, [order, ...orders.filter(item => item.orderNo !== order.orderNo)]);
     return true;
@@ -406,8 +482,33 @@ async function upsertOrder(tenantId: string, order: OrderRecord): Promise<boolea
   return Boolean(await store.create('tenant_orders', { tenant_id: tenantId, order_no: order.orderNo, order }));
 }
 
+async function upsertOrder(tenantId: string, order: OrderRecord): Promise<boolean> {
+  if (order.customerId) { order.customerSyncStatus = 'pending'; order.customerSyncError = ''; }
+  const stored = await persistOrder(tenantId, order);
+  if (!stored) return false;
+  if (!order.customerId) return true;
+  try {
+    const customer = (await readAuthorizedWhatsAppCustomers(tenantId)).find(item => item.id === order.customerId);
+    if (!customer) throw new Error('客户已不存在');
+    const canonical = (await readOrders(tenantId)).filter(item => item.customerId === order.customerId);
+    const orderNumbers = new Set(canonical.map(item => item.orderNo));
+    const projected = patchWhatsAppCustomer({ tenantId, customerId: order.customerId, patch: { orders: [
+      ...canonical.map(item => ({ id: item.orderNo, status: item.status === '退款' ? 'refunded' : item.status === '已取消' ? 'cancelled' : item.status === '待付款' ? 'pending' : 'paid', total: `$${item.amount}`, createdAt: item.orderDate, items: [{ name: item.product, qty: item.quantity }] })),
+      ...(customer.orders || []).filter((item: { id: string }) => !orderNumbers.has(item.id)),
+    ] } });
+    if (!projected) throw new Error('客户摘要补写失败');
+    order.customerSyncStatus = 'done';
+  } catch (error) {
+    order.customerSyncStatus = 'failed'; order.customerSyncError = (error as Error).message;
+  }
+  // The canonical order already exists. A failed projection must never make a
+  // caller create another order; pending is durable before projection begins.
+  try { await persistOrder(tenantId, order); } catch { /* pending record can be retried idempotently */ }
+  return true;
+}
+
 async function deleteOrder(tenantId: string, orderId: string): Promise<boolean> {
-  if (process.env.NODE_ENV !== 'production' && tenantId.startsWith('local_tenant_')) {
+  if (usesLocalOrderAuthority(tenantId)) {
     const orders = readLocalTenantOrders(tenantId);
     const next = orders.filter(order => order.id !== orderId);
     if (next.length === orders.length) return false;
@@ -419,8 +520,15 @@ async function deleteOrder(tenantId: string, orderId: string): Promise<boolean> 
   return record?.id ? store.delete('tenant_orders', String(record.id)) : false;
 }
 
-async function authenticatedTenantId(req: Request): Promise<string | null> {
-  return (await auth.verifyToken(req.headers.authorization))?.tenantId || null;
+function usesLocalOrderAuthority(tenantId: string): boolean {
+  return localFallbacksEnabled()
+    && currentDataAuthority() !== 'pocketbase'
+    && tenantId.startsWith('local_tenant_');
+}
+
+function authenticatedTenantId(res: { locals: Record<string, unknown> }): string | null {
+  const tenantId = (res.locals as unknown as Partial<AuthLocals>).tenantId;
+  return typeof tenantId === 'string' && tenantId ? tenantId : null;
 }
 
 function parseNumber(value: unknown): number {
@@ -432,9 +540,10 @@ function normalizeStatus(value: unknown): OrderStatus {
   const raw = String(value || '').trim();
   if (ORDER_STATUSES.includes(raw as OrderStatus)) return raw as OrderStatus;
   const lower = raw.toLowerCase();
-  if (/paid|已付款|付款/.test(lower)) return '已付款';
+  if (/^(paid|已付款|付款)$/.test(lower)) return '已付款';
   if (/ship|fulfilled|已发|发货/.test(lower)) return '已发货';
   if (/complete|done|完成/.test(lower)) return '已完成';
+  if (/cancel|取消/.test(lower)) return '已取消';
   if (/refund|退款/.test(lower)) return '退款';
   if (/production|生产/.test(lower)) return '生产中';
   return '待付款';
@@ -472,9 +581,14 @@ function normalizeOrder(input: Partial<OrderRecord>): OrderRecord | null {
     orderDate,
     owner: String(input.owner || '').trim() || '未分配',
     source: String(input.source || '手工录入').trim(),
+    idempotencyKey: String(input.idempotencyKey || '').trim().slice(0, 120), customerSyncStatus: input.customerSyncStatus, customerSyncError: input.customerSyncError,
+    sourcePostId: String(input.sourcePostId || '').trim(),
+    customerId: String(input.customerId || '').trim(),
+    paidAt: input.paidAt, refundedAt: input.refundedAt, refundAmount: input.refundAmount,
+    audit: input.audit, afterSales: input.afterSales, afterSalesHistory: input.afterSalesHistory,
     sourceRef: String(input.sourceRef || '').trim(),
     importedAt: input.importedAt || now,
-    updatedAt: now,
+    updatedAt: input.updatedAt || now,
   };
 }
 
@@ -588,6 +702,7 @@ function safeStoredName(originalName: string): string {
 
 function emptyProduct(index: number): NonNullable<EnterpriseProfile['products']['items']>[number] {
   return {
+    id: randomUUID(),
     name: `产品${index + 1}`,
     images: [],
     videos: [],
@@ -685,8 +800,9 @@ function normalizeProfile(profile: EnterpriseProfile): EnterpriseProfile {
   const products = profile.products ?? { categories: '', priceRange: '', moq: '', certifications: '', highlights: '' };
   const existing = Array.isArray(products.items) ? products.items : [];
   const items = existing.length
-    ? existing.map((item) => ({
+    ? existing.map((item, index) => ({
       ...item,
+      id: enterpriseProductIdentity(item, index),
       // 空名称代表尚在编辑的产品草稿，不能在保存时隐式删除。
       name: typeof item.name === 'string' ? item.name : (item.sku || ''),
       images: Array.isArray(item.images) ? item.images : [],
@@ -714,10 +830,25 @@ function normalizeProfile(profile: EnterpriseProfile): EnterpriseProfile {
   const salesStyleProfile = normalizeSalesStyleProfile(profile.salesStyleProfile);
   const faq = normalizeFaq(profile.faq);
   const strategy = { ...(profile.strategy ?? {}), aiAutonomy: normalizeAutonomy(profile.strategy?.aiAutonomy) };
+  const brandInput = (profile.brand ?? {}) as Partial<EnterpriseProfile['brand']>;
+  const brand = {
+    name: text(brandInput.name),
+    tone: text(brandInput.tone),
+    style: text(brandInput.style),
+    taboos: text(brandInput.taboos),
+    usp: text(brandInput.usp),
+    preferredLanguages: text(brandInput.preferredLanguages),
+  };
   const dataGovernance = {
     aiAccessEnabled: profile.dataGovernance?.aiAccessEnabled !== false,
     lastSavedAt: text(profile.dataGovernance?.lastSavedAt),
     lastSavedSource: profile.dataGovernance?.lastSavedSource,
+  };
+  const onboardingInput = profile.digitalEmployeeOnboarding ?? {};
+  const digitalEmployeeOnboarding = {
+    profileConfirmedAt: text(onboardingInput.profileConfirmedAt),
+    productSelectionConfirmedAt: text(onboardingInput.productSelectionConfirmedAt),
+    continuedWithoutProducts: onboardingInput.continuedWithoutProducts === true,
   };
   const socialInput: NonNullable<EnterpriseProfile['socialStrategy']> = profile.socialStrategy ?? { enabledRoutes: [], routeStrategies: {} };
   const allowedRoutes = ['oem_odm', 'wholesale_distribution', 'consumer_retail'] as const;
@@ -736,15 +867,33 @@ function normalizeProfile(profile: EnterpriseProfile): EnterpriseProfile {
     consumer_retail: ['终端消费者'],
   };
   const routeStrategies = Object.fromEntries(enabledRoutes.map(route => {
-    const source: { targetBuyerRoles: string[]; primaryCta: string } = socialInput.routeStrategies?.[route] ?? { targetBuyerRoles: defaultBuyers[route], primaryCta: '引导跳转WhatsApp以触达' };
-    return [route, { targetBuyerRoles: Array.isArray(source.targetBuyerRoles) && source.targetBuyerRoles.length ? source.targetBuyerRoles.map(text).filter(Boolean) : defaultBuyers[route], primaryCta: text(source.primaryCta) || '引导跳转WhatsApp以触达' }];
+    const source: { targetBuyerRoles: string[]; primaryCta: string } = socialInput.routeStrategies?.[route] ?? { targetBuyerRoles: defaultBuyers[route], primaryCta: '引导通过 Messenger 联系' };
+    return [route, { targetBuyerRoles: Array.isArray(source.targetBuyerRoles) && source.targetBuyerRoles.length ? source.targetBuyerRoles.map(text).filter(Boolean) : defaultBuyers[route], primaryCta: text(source.primaryCta) || '引导通过 Messenger 联系' }];
   }));
+  const allowedContentStages = ['b2b_launch', 'b2b_growth', 'd2c_brand'] as const;
+  const contentStage = allowedContentStages.includes(socialInput.contentStage as typeof allowedContentStages[number])
+    ? socialInput.contentStage as typeof allowedContentStages[number]
+    : undefined;
+  const presetByStage = { b2b_launch: 'b2b_starting', b2b_growth: 'b2b_growing', d2c_brand: 'dtc_sales' } as const;
+  const weeklyTaskPackagePreset = contentStage ? presetByStage[contentStage] : undefined;
+  const factVersionInput = profile.factVersion;
+  const factVersion = factVersionInput && Number.isInteger(Number(factVersionInput.revision))
+    && Number(factVersionInput.revision) > 0 && text(factVersionInput.contentHash)
+    ? {
+      id: text(factVersionInput.id),
+      revision: Number(factVersionInput.revision),
+      contentHash: text(factVersionInput.contentHash),
+      confirmedAt: text(factVersionInput.confirmedAt),
+      confirmedBy: text(factVersionInput.confirmedBy),
+    }
+    : undefined;
   return {
     ...profile,
     company,
+    brand,
     operations,
     strategy,
-    products: { ...products, items },
+    products: { ...products, searchKeywords: text(products.searchKeywords), items },
     bizRules,
     faq,
     notifications,
@@ -752,8 +901,55 @@ function normalizeProfile(profile: EnterpriseProfile): EnterpriseProfile {
     customerService,
     salesStyleProfile,
     dataGovernance,
-    socialStrategy: { enabledRoutes, routeStrategies, manuallyEditedFields: Array.isArray(socialInput.manuallyEditedFields) ? socialInput.manuallyEditedFields.map(text).filter(Boolean) : [] },
+    digitalEmployeeOnboarding,
+    socialStrategy: { enabledRoutes, routeStrategies, manuallyEditedFields: Array.isArray(socialInput.manuallyEditedFields) ? socialInput.manuallyEditedFields.map(text).filter(Boolean) : [], contentStage, weeklyTaskPackagePreset },
+    ...(factVersion ? { factVersion } : {}),
   };
+}
+
+function stableFactJson(value: unknown): string {
+  if (Array.isArray(value)) return `[${value.map(stableFactJson).join(',')}]`;
+  if (value && typeof value === 'object') {
+    return `{${Object.entries(value as Record<string, unknown>)
+      .filter(([key]) => key !== 'factVersion' && key !== 'lastSavedAt' && key !== 'lastSavedSource' && key !== 'lastSavedBy')
+      .sort(([left], [right]) => left.localeCompare(right))
+      .map(([key, child]) => `${JSON.stringify(key)}:${stableFactJson(child)}`).join(',')}}`;
+  }
+  return JSON.stringify(value ?? null);
+}
+
+export function enterpriseFactContentHash(profile: EnterpriseProfile): string {
+  return createHash('sha256').update(stableFactJson(normalizeProfile(profile))).digest('hex');
+}
+
+function confirmedFactVersion(
+  profile: EnterpriseProfile,
+  previous?: EnterpriseProfile | null,
+  confirmedBy = 'system',
+  now = new Date(),
+): NonNullable<EnterpriseProfile['factVersion']> {
+  const contentHash = enterpriseFactContentHash(profile);
+  const prior = previous?.factVersion;
+  if (prior?.contentHash === contentHash && prior.id && prior.revision > 0) return prior;
+  const revision = Math.max(0, Number(prior?.revision || 0)) + 1;
+  return {
+    id: `enterprise-facts-v${revision}-${contentHash.slice(0, 12)}`,
+    revision,
+    contentHash,
+    confirmedAt: now.toISOString(),
+    confirmedBy: text(confirmedBy) || 'system',
+  };
+}
+
+function withConfirmedFactVersion(
+  profile: EnterpriseProfile,
+  previous?: EnterpriseProfile | null,
+  confirmedBy = 'system',
+  now = new Date(),
+): EnterpriseProfile {
+  const normalized = normalizeProfile(profile);
+  normalized.factVersion = confirmedFactVersion(normalized, previous, confirmedBy, now);
+  return normalized;
 }
 
 function mergeEnterpriseProfile(current: EnterpriseProfile, patch: Partial<EnterpriseProfile>): EnterpriseProfile {
@@ -926,12 +1122,49 @@ async function readTenantProfile(tenantId: string): Promise<EnterpriseProfile> {
     where: { tenant_id: tenantId }, page: 1, perPage: 1,
   });
   const profile = storedProfile(result.items[0]?.profile);
-  if (profile) return profile;
-  return process.env.DEMO_MODE === 'true' ? readProfile() : normalizeProfile({} as EnterpriseProfile);
+  if (profile) return withConfirmedFactVersion(
+    profile,
+    profile,
+    profile.factVersion?.confirmedBy || 'legacy_migration',
+    new Date(profile.factVersion?.confirmedAt || profile.dataGovernance?.lastSavedAt || 0),
+  );
+  const fallback = process.env.DEMO_MODE === 'true' ? readProfile() : normalizeProfile({} as EnterpriseProfile);
+  return withConfirmedFactVersion(
+    fallback,
+    fallback,
+    fallback.factVersion?.confirmedBy || 'system',
+    new Date(fallback.factVersion?.confirmedAt || fallback.dataGovernance?.lastSavedAt || 0),
+  );
 }
 
 export async function readTenantEnterpriseProfile(tenantId: string): Promise<EnterpriseProfile> {
   return readTenantProfile(tenantId);
+}
+
+/** Assistant grounding must never substitute a global demo profile for missing tenant facts. */
+export async function readTenantEnterpriseProfileStrict(tenantId: string): Promise<EnterpriseProfile | null> {
+  if (!tenantId.trim()) throw new Error('enterprise_context_tenant_required');
+  const result = await store.list<Record<string, unknown>>('tenant_profiles', {
+    where: { tenant_id: tenantId }, page: 1, perPage: 1,
+  });
+  const row = result.items[0];
+  if (!row) return null;
+  if (row.tenant_id !== tenantId) throw new Error('enterprise_context_tenant_mismatch');
+  const profile = storedProfile(row.profile);
+  if (!profile) return null;
+  return withConfirmedFactVersion(profile, profile, profile.factVersion?.confirmedBy || 'legacy_migration',
+    new Date(profile.factVersion?.confirmedAt || profile.dataGovernance?.lastSavedAt || 0));
+}
+
+export interface ConfirmedEnterpriseFacts {
+  version: NonNullable<EnterpriseProfile['factVersion']>;
+  profile: EnterpriseProfile;
+  context: string;
+}
+
+export async function readTenantEnterpriseFacts(tenantId: string): Promise<ConfirmedEnterpriseFacts> {
+  const profile = await readTenantProfile(tenantId);
+  return { version: profile.factVersion!, profile, context: buildEnterpriseContext(profile) };
 }
 
 export async function updateTenantEnterpriseProfile(
@@ -945,13 +1178,58 @@ export async function updateTenantEnterpriseProfile(
   return next;
 }
 
-async function writeTenantProfile(tenantId: string, profile: EnterpriseProfile, userId: string): Promise<void> {
-  const clean = normalizeProfile(profile) as EnterpriseProfile & { integrations?: unknown };
-  delete clean.integrations;
+class EnterpriseFactVersionConflictError extends Error {
+  constructor(readonly current: NonNullable<EnterpriseProfile['factVersion']>) {
+    super('enterprise_fact_version_conflict');
+  }
+}
+
+const enterpriseProfileWriteQueues = new Map<string, Promise<void>>();
+
+function normalizeExpectedFactVersion(value: string | undefined): string {
+  return String(value || '').trim().replace(/^W\//, '').replace(/^"|"$/g, '');
+}
+
+async function writeTenantProfile(
+  tenantId: string,
+  profile: EnterpriseProfile,
+  userId: string,
+  expectedFactVersion = '',
+): Promise<void> {
+  const previousWrite = enterpriseProfileWriteQueues.get(tenantId) || Promise.resolve();
+  const currentWrite = previousWrite.catch(() => undefined).then(async () => {
+    await writeTenantProfileUnlocked(tenantId, profile, userId, expectedFactVersion);
+  });
+  enterpriseProfileWriteQueues.set(tenantId, currentWrite);
+  try { await currentWrite; }
+  finally { if (enterpriseProfileWriteQueues.get(tenantId) === currentWrite) enterpriseProfileWriteQueues.delete(tenantId); }
+}
+
+async function writeTenantProfileUnlocked(
+  tenantId: string,
+  profile: EnterpriseProfile,
+  userId: string,
+  expectedFactVersion = '',
+): Promise<void> {
   const result = await store.list<Record<string, unknown>>('tenant_profiles', {
     where: { tenant_id: tenantId }, page: 1, perPage: 1,
   });
   const existing = result.items[0];
+  const previous = storedProfile(existing?.profile);
+  if (expectedFactVersion) {
+    const current = withConfirmedFactVersion(
+      previous || ({} as EnterpriseProfile),
+      previous,
+      previous?.factVersion?.confirmedBy || 'system',
+      new Date(previous?.factVersion?.confirmedAt || previous?.dataGovernance?.lastSavedAt || 0),
+    );
+    if (expectedFactVersion !== current.factVersion?.contentHash && expectedFactVersion !== current.factVersion?.id) {
+      throw new EnterpriseFactVersionConflictError(current.factVersion!);
+    }
+  }
+  const clean = withConfirmedFactVersion(profile, previous, userId) as EnterpriseProfile & { integrations?: unknown };
+  delete clean.integrations;
+  profile.factVersion = clean.factVersion;
   const ok = existing?.id
     ? await store.update('tenant_profiles', String(existing.id), { profile: clean, updated_by: userId })
     : Boolean(await store.create('tenant_profiles', { tenant_id: tenantId, profile: clean, updated_by: userId }));
@@ -967,6 +1245,22 @@ export type KnowledgeSectionKey = 'products' | 'materials' | 'bizRules' | 'faq' 
 export interface KnowledgeCompletion {
   completed: number;
   total: 6;
+  profileCompleteness: {
+    percentage: number;
+    completed: number;
+    total: 4;
+    checks: Record<'productImage' | 'price' | 'certificate' | 'market', boolean>;
+  };
+  todos: Array<{
+    id: string;
+    kind: 'product_image' | 'price' | 'certificate' | 'market';
+    label: string;
+    description: string;
+    view: 'products' | 'company';
+    anchor: string;
+    productId?: string;
+    productIndex?: number;
+  }>;
   sections: Record<KnowledgeSectionKey, { completed: boolean; label: string }>;
   notificationsReady: boolean;
   capabilities: {
@@ -993,6 +1287,7 @@ function hasTestedNotificationTarget(profile: EnterpriseProfile): boolean {
 
 export function knowledgeCompletion(profile: EnterpriseProfile): KnowledgeCompletion {
   const normalized = normalizeProfile(profile);
+  const productItems = normalized.products.items ?? [];
   const counts = assetCounts(normalized);
   const totalAssets = counts.images + counts.videos + counts.documents;
   const hasProductVideo = (normalized.products.items ?? []).some(item => (item.videos?.length ?? 0) >= 1);
@@ -1010,9 +1305,47 @@ export function knowledgeCompletion(profile: EnterpriseProfile): KnowledgeComple
     },
     company: { label: '公司介绍', completed: text(normalized.company.description).length >= 50 },
   };
+  const productImageReady = productItems.length > 0 && productItems.every(item => Boolean(
+    text(item.imageUrl) || (item.images?.length ?? 0) > 0,
+  ));
+  const priceReady = Boolean(text(normalized.products.priceRange) || text(normalized.bizRules?.priceRange))
+    || (productItems.length > 0 && productItems.every(item => Boolean(text(item.priceRange) || text(item.retailPrice) || text(item.tagPrice))));
+  const certificateReady = Boolean(text(normalized.products.certifications))
+    || (productItems.length > 0 && productItems.every(item => Boolean(
+      text(item.certifications) || (item.certificateImages?.length ?? 0) > 0 || (item.documents?.length ?? 0) > 0,
+    )));
+  const marketReady = Boolean(text(normalized.company.mainMarkets) && text(normalized.company.primaryLanguages));
+  const checks = { productImage: productImageReady, price: priceReady, certificate: certificateReady, market: marketReady };
+  const incompleteImage = productItems.findIndex(item => !(text(item.imageUrl) || (item.images?.length ?? 0) > 0));
+  const incompletePrice = productItems.findIndex(item => !(text(item.priceRange) || text(item.retailPrice) || text(item.tagPrice)));
+  const incompleteCertificate = productItems.findIndex(item => !(text(item.certifications) || (item.certificateImages?.length ?? 0) > 0 || (item.documents?.length ?? 0) > 0));
+  const todos: KnowledgeCompletion['todos'] = [];
+  if (!productImageReady) todos.push({
+    id: `product-image-${Math.max(0, incompleteImage)}`, kind: 'product_image', label: '补产品图',
+    description: productItems[incompleteImage]?.name ? `${productItems[incompleteImage]!.name} 缺少可用于内容与投放的产品图` : '先添加产品并上传一张产品图',
+    view: 'products', anchor: 'product-image',
+    ...(incompleteImage >= 0 ? { productId: enterpriseProductIdentity(productItems[incompleteImage]!, incompleteImage), productIndex: incompleteImage } : {}),
+  });
+  if (!priceReady) todos.push({
+    id: `price-${Math.max(0, incompletePrice)}`, kind: 'price', label: '补价格',
+    description: productItems[incompletePrice]?.name ? `${productItems[incompletePrice]!.name} 缺少参考价格` : '补充产品或内部参考价格',
+    view: 'products', anchor: 'product-price', ...(incompletePrice >= 0 ? { productId: enterpriseProductIdentity(productItems[incompletePrice]!, incompletePrice), productIndex: incompletePrice } : {}),
+  });
+  if (!certificateReady) todos.push({
+    id: `certificate-${Math.max(0, incompleteCertificate)}`, kind: 'certificate', label: '补证书',
+    description: productItems[incompleteCertificate]?.name ? `${productItems[incompleteCertificate]!.name} 缺少认证或资质凭证` : '补充认证名称或上传资质凭证',
+    view: 'products', anchor: 'product-certificate', ...(incompleteCertificate >= 0 ? { productId: enterpriseProductIdentity(productItems[incompleteCertificate]!, incompleteCertificate), productIndex: incompleteCertificate } : {}),
+  });
+  if (!marketReady) todos.push({
+    id: 'market', kind: 'market', label: '补市场信息', description: '补充目标市场和主要沟通语言',
+    view: 'company', anchor: 'enterprise-language-settings',
+  });
+  const completedChecks = Object.values(checks).filter(Boolean).length;
   return {
     completed: Object.values(sections).filter(section => section.completed).length,
     total: 6,
+    profileCompleteness: { percentage: completedChecks * 25, completed: completedChecks, total: 4, checks },
+    todos,
     sections,
     notificationsReady: hasTestedNotificationTarget(normalized),
     capabilities: {
@@ -1082,68 +1415,32 @@ export function notificationTargetReady(profile: EnterpriseProfile): boolean {
   return hasTestedNotificationTarget(normalizeProfile(profile));
 }
 
-async function resolveTenantId(req: Request): Promise<string> {
-  const id = await auth.verifyToken(req.headers.authorization);
-  return id?.tenantId || String(req.query.tenantId || req.headers['x-tenant-id'] || 'local_tenant_default');
-}
-
-function publicProductApiInfo(secret: ProductApiSecret | null) {
-  return {
-    apiKey: secret?.apiKey || '',
-    tenantId: secret?.tenantId || '',
-    createdAt: secret?.createdAt || '',
-    lastIngestedAt: secret?.lastIngestedAt || '',
-    lastProductName: secret?.lastProductName || '',
-  };
-}
-
-function storedProductApiSecret(record: Record<string, unknown> | undefined): ProductApiSecret | null {
-  if (!record?.api_key || !record.tenant_id) return null;
-  return {
-    tenantId: String(record.tenant_id),
-    apiKey: String(record.api_key),
-    createdAt: String(record.created_at || ''),
-    lastIngestedAt: String(record.last_ingested_at || ''),
-    lastProductName: String(record.last_product_name || ''),
-  };
-}
-
-async function productApiSecretForTenant(tenantId: string): Promise<ProductApiSecret | null> {
-  const result = await store.list<Record<string, unknown>>('tenant_api_keys', {
-    where: { tenant_id: tenantId }, page: 1, perPage: 1,
-  });
-  return storedProductApiSecret(result.items[0]);
-}
-
-async function ensureProductApiKey(tenantId: string): Promise<ProductApiSecret> {
-  const current = await productApiSecretForTenant(tenantId);
-  if (current?.apiKey) return current;
-  const next: ProductApiSecret = {
-    tenantId,
-    apiKey: `ls_prod_${randomBytes(24).toString('base64url')}`,
-    createdAt: new Date().toISOString(),
-  };
-  const created = await store.create('tenant_api_keys', {
-    tenant_id: tenantId, api_key: next.apiKey, created_at: next.createdAt,
-  });
-  if (!created) throw new Error('tenant_api_key_storage_unavailable');
-  return next;
-}
-
 function readApiKey(req: Request) {
   const bearer = String(req.headers.authorization || '').replace(/^Bearer\s+/i, '').trim();
   return String(req.headers['x-api-key'] || bearer || '').trim();
 }
 
-async function verifyProductApiKey(req: Request): Promise<{ profile: EnterpriseProfile; secret: ProductApiSecret } | null> {
+async function verifyProductApiKey(req: Request): Promise<{ profile: EnterpriseProfile; secret: ProductApiCredential } | null> {
   const provided = readApiKey(req);
   if (!provided) return null;
-  const result = await store.list<Record<string, unknown>>('tenant_api_keys', {
-    where: { api_key: provided }, page: 1, perPage: 1,
-  });
-  const secret = storedProductApiSecret(result.items[0]);
+  const secret = await productApiSecretForKey(provided);
   if (!secret) return null;
+  await assertLegacyExternalEffectAllowed(secret.tenantId);
   return { profile: await readTenantProfile(secret.tenantId), secret };
+}
+
+function respondLegacyProductApiFailure(error: unknown, res: import('express').Response): void {
+  if (error instanceof Starter198LegacyEffectError) {
+    if (error.code === 'starter_198_orchestrator_only') {
+      // This public endpoint is authenticated only by the supplied key. Do not
+      // reveal that a historical starter key still exists or remains valid.
+      res.status(401).json({ error: 'Invalid API Key' });
+      return;
+    }
+    res.status(error.status).json({ error: error.code });
+    return;
+  }
+  res.status(503).json({ error: 'product_api_unavailable' });
 }
 
 type ApiProductInput = {
@@ -1171,6 +1468,7 @@ function normalizeApiProduct(input: ApiProductInput): NonNullable<EnterpriseProf
   if (!name) return null;
   const imageUrl = text(input.imageUrl);
   return {
+    id: randomUUID(),
     sku,
     name,
     color: text(input.color),
@@ -1201,7 +1499,7 @@ function upsertProductItems(existing: NonNullable<EnterpriseProfile['products'][
     const index = sku
       ? next.findIndex(item => item.sku?.trim() === sku)
       : next.findIndex(item => item.name?.trim() === product.name?.trim());
-    if (index >= 0) next[index] = { ...next[index], ...product };
+    if (index >= 0) next[index] = mergeEnterpriseProductIdentity(next[index], product, index);
     else next.push(product);
   }
   return next;
@@ -1210,6 +1508,7 @@ function upsertProductItems(existing: NonNullable<EnterpriseProfile['products'][
 export function buildEnterpriseContext(profile: EnterpriseProfile): string {
   if (profile.dataGovernance?.aiAccessEnabled === false) return '';
   const parts: string[] = [];
+  if (profile.factVersion) parts.push(`企业事实版本：${profile.factVersion.id}`);
   if (profile.company.name) parts.push(`公司名称：${profile.company.name}`);
   if (profile.company.industry) parts.push(`行业类目：${profile.company.industry}`);
   if (profile.company.companyType) parts.push(`企业类型：${profile.company.companyType}`);
@@ -1257,6 +1556,7 @@ export function buildEnterpriseContext(profile: EnterpriseProfile): string {
   if (profile.handoffRules) {
     parts.push(`Handoff rules: keywords=${profile.handoffRules.keywords.join('/')}; missStreakToDraft=${profile.handoffRules.missStreakToDraft}; negativeSentiment=${profile.handoffRules.negativeSentiment}`);
   }
+  if (profile.brand?.name) parts.push(`品牌名称：${profile.brand.name}`);
   if (profile.brand?.usp) parts.push(`核心卖点：${profile.brand.usp}`);
   if (profile.brand?.tone) parts.push(`品牌调性：${profile.brand.tone}`);
   if (profile.brand?.preferredLanguages) parts.push(`首选输出语言：${profile.brand.preferredLanguages}`);
@@ -1420,15 +1720,40 @@ function allPackPreviews(profile: EnterpriseProfile) {
 export const enterpriseRouter = Router();
 enterpriseRouter.use(requireAuth);
 
+async function customerServiceRuntimeStatus(tenantId: string, profile: EnterpriseProfile) {
+  const status = customerServiceStatus(profile);
+  const messagingAuthorization = await readCustomerMessagingAuthorization(tenantId);
+  const messengerAuthorization = await readCustomerMessagingAuthorization(tenantId, 'messenger');
+  const instagramAuthorization = await readCustomerMessagingAuthorization(tenantId, 'instagram');
+  return {
+    ...status,
+    autoReplyReady: status.autoReplyReady && messagingAuthorization.inboundAutoSendAllowed,
+    messagingAuthorization,
+    messengerAuthorization,
+    instagramAuthorization,
+  };
+}
+
 enterpriseRouter.get('/profile', async (_req, res) => {
   const { tenantId } = res.locals as AuthLocals;
-  res.json(await readTenantProfile(tenantId));
+  const profile = await readTenantProfile(tenantId);
+  res.setHeader('ETag', `"${profile.factVersion!.contentHash}"`);
+  res.json(profile);
+});
+
+enterpriseRouter.get('/facts', async (_req, res) => {
+  const { tenantId } = res.locals as AuthLocals;
+  const facts = await readTenantEnterpriseFacts(tenantId);
+  res.setHeader('Cache-Control', 'private, no-store');
+  res.setHeader('ETag', `"${facts.version.contentHash}"`);
+  res.json(facts);
 });
 
 enterpriseRouter.get('/customer-service/status', async (_req, res) => {
   const { tenantId } = res.locals as AuthLocals;
   res.setHeader('Cache-Control', 'no-store');
-  res.json(customerServiceStatus(await readTenantProfile(tenantId)));
+  const profile = await readTenantProfile(tenantId);
+  res.json(await customerServiceRuntimeStatus(tenantId, profile));
 });
 
 enterpriseRouter.patch('/customer-service/status', async (req, res) => {
@@ -1491,7 +1816,7 @@ enterpriseRouter.patch('/customer-service/status', async (req, res) => {
     }), 'enterprise_center');
     await writeTenantProfile(tenantId, profile, userId);
     res.setHeader('Cache-Control', 'no-store');
-    res.json({ ok: true, status: customerServiceStatus(profile), profile });
+    res.json({ ok: true, status: await customerServiceRuntimeStatus(tenantId, profile), profile });
   } catch (error) {
     console.error('[enterprise] customer service status update failed', error);
     res.status(503).json({ error: 'tenant_profile_storage_unavailable', message: '智能客服设置暂时无法保存，请稍后重试。' });
@@ -1815,57 +2140,131 @@ enterpriseRouter.post('/notifications/test', async (req, res) => {
   res.json({ ok: true, lastTestAt: notifications.lastTestAt, notifications });
 });
 
+const orderMutations = new Map<string, Promise<void>>();
+enterpriseRouter.use('/orders', async (req, res, next) => {
+  if (req.method === 'GET') { next(); return; }
+  if (isBrowserReadToken(req.headers.authorization)) { res.status(403).json({ error: 'agent_browser_read_only' }); return; }
+  const tenantId = authenticatedTenantId(res);
+  if (!tenantId) { res.status(401).json({ error: 'Unauthorized' }); return; }
+  const previous = orderMutations.get(tenantId) || Promise.resolve();
+  let release!: () => void;
+  const current = new Promise<void>(resolve => { release = resolve; });
+  orderMutations.set(tenantId, current);
+  await previous;
+  const finish = () => { release(); if (orderMutations.get(tenantId) === current) orderMutations.delete(tenantId); };
+  res.once('finish', finish); res.once('close', finish);
+  next();
+});
+
 enterpriseRouter.get('/orders', async (req, res) => {
-  const tenantId = await authenticatedTenantId(req);
+  try {
+  const tenantId = authenticatedTenantId(res);
   if (!tenantId) { res.status(401).json({ error: 'Unauthorized' }); return; }
   res.json({ items: await readOrders(tenantId) });
+  } catch (error) { res.status(503).json({ error: '订单存储暂不可用，请使用相同请求重试' }); }
 });
 
 enterpriseRouter.post('/orders', async (req, res) => {
-  const tenantId = await authenticatedTenantId(req);
+  try {
+  const tenantId = authenticatedTenantId(res);
   if (!tenantId) { res.status(401).json({ error: 'Unauthorized' }); return; }
-  const order = normalizeOrder({ ...(req.body || {}), source: req.body?.source || '手工录入' });
+  const order = normalizeOrder({ ...(req.body || {}), id: undefined, audit: [], afterSales: undefined, afterSalesHistory: [], paidAt: undefined, refundedAt: undefined, refundAmount: undefined, source: req.body?.source || '手工录入' });
   if (!order) {
     res.status(400).json({ error: 'invalid order payload' });
     return;
   }
+  const existingOrders = await readOrders(tenantId);
+  const repeated = order.idempotencyKey && existingOrders.find(item => item.idempotencyKey === order.idempotencyKey);
+  if (repeated) {
+    if (repeated.buyer !== order.buyer || repeated.product !== order.product || repeated.amount !== order.amount || repeated.customerId !== order.customerId) { res.status(409).json({ error: '相同请求标识对应不同订单内容，请重新发起录入' }); return; }
+    if (repeated.customerSyncStatus !== 'done') await upsertOrder(tenantId, repeated);
+    res.json(repeated); return;
+  }
+  if (order.customerId) {
+    const customer = (await readAuthorizedWhatsAppCustomers(tenantId)).find(item => item.id === order.customerId);
+    if (!customer) { res.status(422).json({ error: '客户不存在或不属于当前租户' }); return; }
+    if (!order.sourcePostId) order.sourcePostId = customer.sourcePostId || '';
+  }
+  if (req.body?.status && !ORDER_STATUSES.includes(req.body.status)) { res.status(422).json({ error: '无效订单状态' }); return; }
+  if (!['待付款', '已取消'].includes(order.status)) {
+    const evidence = String(req.body?.evidence || order.sourceRef || '').trim();
+    if (!evidence) { res.status(422).json({ error: '已付款/退款等历史状态需提供来源凭证' }); return; }
+    order.audit = [{ at: order.importedAt, from: '导入', to: order.status, evidence, source: 'manual_record' }];
+  }
+  if (existingOrders.some(item => item.orderNo === order.orderNo)) { res.status(409).json({ error: '订单号已存在' }); return; }
   if (!await upsertOrder(tenantId, order)) {
     res.status(503).json({ error: 'order storage unavailable' });
     return;
   }
   res.status(201).json(order);
+  } catch (error) { res.status(503).json({ error: '订单存储暂不可用，请使用相同请求重试' }); }
 });
 
 enterpriseRouter.patch('/orders/:id/status', async (req, res) => {
-  const tenantId = await authenticatedTenantId(req);
+  try {
+  const tenantId = authenticatedTenantId(res);
   if (!tenantId) { res.status(401).json({ error: 'Unauthorized' }); return; }
-  const status = normalizeStatus(req.body?.status);
+  const status = req.body?.status;
   const orders = await readOrders(tenantId);
   const index = orders.findIndex(order => order.id === req.params.id);
   if (index < 0) {
     res.status(404).json({ error: 'order not found' });
     return;
   }
-  orders[index] = { ...orders[index], status, updatedAt: new Date().toISOString() };
+  try { orders[index] = transitionOrder(orders[index], status, String(req.body?.evidence || '')); }
+  catch (error) { res.status(422).json({ error: (error as Error).message }); return; }
   if (!await upsertOrder(tenantId, orders[index])) {
     res.status(503).json({ error: 'order storage unavailable' });
     return;
   }
   res.json(orders[index]);
+  } catch (error) { res.status(503).json({ error: '订单存储暂不可用，请使用相同请求重试' }); }
+});
+
+enterpriseRouter.post('/orders/:id/sync-customer', async (req, res) => {
+  try {
+  const tenantId = authenticatedTenantId(res);
+  if (!tenantId) { res.status(401).json({ error: 'Unauthorized' }); return; }
+  const order = (await readOrders(tenantId)).find(item => item.id === req.params.id);
+  if (!order) { res.status(404).json({ error: 'order not found' }); return; }
+  if (!await upsertOrder(tenantId, order)) { res.status(503).json({ error: 'order storage unavailable' }); return; }
+  res.json(order);
+  } catch (error) { res.status(503).json({ error: '订单存储暂不可用，请使用相同请求重试' }); }
+});
+
+enterpriseRouter.patch('/orders/:id/aftersales', async (req, res) => {
+  try {
+  const tenantId = authenticatedTenantId(res);
+  if (!tenantId) { res.status(401).json({ error: 'Unauthorized' }); return; }
+  const order = (await readOrders(tenantId)).find(item => item.id === req.params.id);
+  if (!order) { res.status(404).json({ error: 'order not found' }); return; }
+  try {
+    const updated = updateAfterSales(order, req.body?.status, String(req.body?.text || ''));
+    if (!await upsertOrder(tenantId, updated)) { res.status(503).json({ error: 'order storage unavailable' }); return; }
+    res.json(updated);
+  } catch (error) { res.status(422).json({ error: (error as Error).message }); }
+  } catch (error) { res.status(503).json({ error: '订单存储暂不可用，请使用相同请求重试' }); }
 });
 
 enterpriseRouter.delete('/orders/:id', async (req, res) => {
-  const tenantId = await authenticatedTenantId(req);
+  try {
+  const tenantId = authenticatedTenantId(res);
   if (!tenantId) { res.status(401).json({ error: 'Unauthorized' }); return; }
+  const target = (await readOrders(tenantId)).find(item => item.id === req.params.id);
+  if (target && (target.status !== '待付款' || target.audit?.length || target.customerId)) {
+    res.status(422).json({ error: '已关联客户或已有交易记录的订单请保留审计记录，通过取消/退款维护状态' }); return;
+  }
   if (!await deleteOrder(tenantId, req.params.id)) {
     res.status(404).json({ error: 'order not found' });
     return;
   }
   res.status(204).end();
+  } catch (error) { res.status(503).json({ error: '订单存储暂不可用，请使用相同请求重试' }); }
 });
 
 enterpriseRouter.post('/orders/import', async (req, res) => {
-  const tenantId = await authenticatedTenantId(req);
+  try {
+  const tenantId = authenticatedTenantId(res);
   if (!tenantId) { res.status(401).json({ error: 'Unauthorized' }); return; }
   const { csv } = req.body as { csv?: string };
   if (!csv?.trim()) {
@@ -1875,51 +2274,38 @@ enterpriseRouter.post('/orders/import', async (req, res) => {
   const result = importOrdersFromCsv(csv);
   const existing = await readOrders(tenantId);
   const merged = new Map<string, OrderRecord>();
-  [...existing, ...result.imported].forEach(order => merged.set(order.orderNo, order));
+  existing.forEach(order => merged.set(order.orderNo, order));
+  const additions = result.imported.filter(order => !merged.has(order.orderNo) && Boolean(merged.set(order.orderNo, order)));
   const items = [...merged.values()].sort((a, b) => b.orderDate.localeCompare(a.orderDate));
-  for (const order of result.imported) {
+  for (const order of additions) {
     if (!await upsertOrder(tenantId, order)) {
       res.status(503).json({ error: 'order storage unavailable' });
       return;
     }
   }
-  res.json({ ok: true, imported: result.imported.length, skipped: result.skipped, total: items.length });
+  res.json({ ok: true, imported: additions.length, skipped: result.skipped + result.imported.length - additions.length, total: items.length });
+  } catch (error) { res.status(503).json({ error: '订单存储暂不可用，请使用相同请求重试' }); }
 });
 
-enterpriseRouter.get('/product-api', async (req, res) => {
-  const tenantId = await resolveTenantId(req);
-  const secret = await ensureProductApiKey(tenantId);
-  res.json(publicProductApiInfo(secret));
-});
-
-enterpriseRouter.post('/product-api/rotate', async (req, res) => {
-  const tenantId = await resolveTenantId(req);
-  const next: ProductApiSecret = {
-    tenantId,
-    apiKey: `ls_prod_${randomBytes(24).toString('base64url')}`,
-    createdAt: new Date().toISOString(),
-  };
-  const existing = await store.list<Record<string, unknown>>('tenant_api_keys', {
-    where: { tenant_id: tenantId }, page: 1, perPage: 1,
-  });
-  const payload = { tenant_id: tenantId, api_key: next.apiKey, created_at: next.createdAt, last_ingested_at: '', last_product_name: '' };
-  const ok = existing.items[0]?.id
-    ? await store.update('tenant_api_keys', String(existing.items[0].id), payload)
-    : Boolean(await store.create('tenant_api_keys', payload));
-  if (!ok) { res.status(503).json({ error: 'tenant_api_key_storage_unavailable' }); return; }
-  res.json(publicProductApiInfo(next));
-});
+enterpriseRouter.use('/product-api', enterpriseProductApiRouter);
 
 enterpriseRouter.get('/product-api/status', async (_req, res) => {
-  const { tenantId } = res.locals as AuthLocals;
-  const profile = await readTenantProfile(tenantId);
-  const items = profile.products.items ?? [];
-  const secret = await productApiSecretForTenant(tenantId);
-  res.json({
-    count: items.length,
-    lastIngestedAt: secret?.lastIngestedAt || '',
-    lastProductName: secret?.lastProductName || items.at(-1)?.name || '',
-  });
+  try {
+    const { tenantId } = res.locals as AuthLocals;
+    const result = await withLegacyExternalEffectAllowed(tenantId, async () => {
+      const profile = await readTenantProfile(tenantId);
+      const items = profile.products.items ?? [];
+      const secret = await productApiSecretForTenant(tenantId);
+      return {
+        count: items.length,
+        lastIngestedAt: secret?.lastIngestedAt || '',
+        lastProductName: secret?.lastProductName || items.at(-1)?.name || '',
+      };
+    });
+    res.json(result);
+  } catch (error) {
+    respondLegacyProductApiFailure(error, res);
+  }
 });
 
 enterpriseRouter.post('/assets', async (req, res) => {
@@ -1930,9 +2316,9 @@ enterpriseRouter.post('/assets', async (req, res) => {
     res.status(400).json({ error: 'invalid asset payload' });
     return;
   }
-  const storedName = safeStoredName(name);
-  const buffer = Buffer.from(match[2], 'base64');
-  const contentType = enterpriseAssetContentType(name, type || match[1]);
+  let storedName = safeStoredName(name);
+  let buffer = Buffer.from(match[2], 'base64');
+  let contentType = enterpriseAssetContentType(name, type || match[1]);
   if (!enterpriseAssetTypeAllowed(contentType)) {
     res.status(415).json({ error: 'only image, video and PDF enterprise assets are supported' });
     return;
@@ -1942,9 +2328,22 @@ enterpriseRouter.post('/assets', async (req, res) => {
     return;
   }
 
+  let material: Record<string, unknown> | undefined;
+  let normalized: Awaited<ReturnType<typeof normalizeTenantMedia>> | undefined;
+  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'lingshu-enterprise-upload-'));
   try {
+    if (contentType.startsWith('image/') || contentType.startsWith('video/') || contentType.startsWith('audio/')) {
+      normalized = await normalizeTenantMedia({
+        buffer, originalName: name, declaredMimeType: contentType,
+        kind: contentType.startsWith('image/') ? 'image' : contentType.startsWith('audio/') ? 'audio' : 'video',
+        temporaryDirectory: tempDir,
+      });
+      buffer = normalized.buffer;
+      storedName = safeStoredName(normalized.filename);
+      contentType = normalized.mimeType;
+    }
     if (objectStorageEnabled()) {
-      await r2Upload({
+      await objectStorageUpload({
         key: enterpriseAssetObjectKey(tenantId, storedName),
         body: buffer,
         contentType,
@@ -1955,10 +2354,55 @@ enterpriseRouter.post('/assets', async (req, res) => {
       fs.mkdirSync(tenantDir, { recursive: true });
       fs.writeFileSync(path.join(tenantDir, storedName), buffer);
     }
+    if (contentType.startsWith('image/') || contentType.startsWith('video/') || contentType.startsWith('audio/')) {
+      const materialInput: Parameters<typeof upsertTenantUploadCloudMaterial>[0] = {
+        tenantId,
+        title: name,
+        folder: 'enterprise-upload',
+        type: contentType.startsWith('image/') ? 'image' : contentType.startsWith('audio/') ? 'audio' : 'video',
+        sizeBytes: buffer.length,
+        duration: normalized?.duration,
+        width: normalized?.width,
+        height: normalized?.height,
+        sha256: normalized?.sha256 || createHash('sha256').update(buffer).digest('hex'),
+        scope: 'own',
+        usage: 'editable',
+        sourceType: 'enterprise_upload',
+        sourceName: name,
+        sourceProvider: 'tenant',
+        sourceUrl: `/api/overseas/enterprise/assets/${storedName}`,
+        sourceEntry: 'enterprise_knowledge',
+        provenance: {
+          uploadMethod: 'enterprise_knowledge',
+          sourceEntry: 'enterprise_knowledge',
+          originalName: name,
+          mimeType: contentType,
+          receivedAt: new Date().toISOString(),
+          knowledgeEligible: true,
+          normalization: normalized?.normalization,
+        },
+        media: { name: storedName, buf: buffer, contentType },
+        ...(normalized?.poster ? { poster: { name: normalized.poster.filename, buf: normalized.poster.buffer, contentType: normalized.poster.mimeType } } : {}),
+      };
+      material = currentDataAuthority() === 'local'
+        ? upsertLocalEnterpriseMaterial({
+          tenantId, title: name, type: materialInput.type, sizeBytes: buffer.length,
+          duration: normalized?.duration, width: normalized?.width, height: normalized?.height,
+          sha256: materialInput.sha256, sourceUrl: String(materialInput.sourceUrl || ''), sourceName: name,
+          provenance: materialInput.provenance || {},
+        })
+        : await upsertTenantUploadCloudMaterial(materialInput);
+      const materialId = String(material.id || '');
+      if (materialId) void import('../lib/materialLibraryAnalysis.js')
+        .then(module => module.requestMaterialAnalysis(tenantId, materialId))
+        .catch(error => console.warn('[enterprise-assets] material analysis start failed', error instanceof Error ? error.message : error));
+    }
   } catch (error) {
     console.error('[enterprise-assets] upload failed', error instanceof Error ? error.message : error);
     res.status(503).json({ error: 'enterprise asset storage unavailable' });
     return;
+  } finally {
+    fs.rmSync(tempDir, { recursive: true, force: true });
   }
 
   res.json({
@@ -1967,7 +2411,57 @@ enterpriseRouter.post('/assets', async (req, res) => {
     size: buffer.length,
     updatedAt: new Date().toISOString(),
     url: `/api/overseas/enterprise/assets/${storedName}`,
+    material,
   });
+});
+
+enterpriseRouter.post('/assets/import-url', async (req, res) => {
+  const { tenantId } = res.locals as AuthLocals;
+  const sourceUrl = String(req.body?.url || '').trim();
+  const requestedName = String(req.body?.name || '').trim().slice(0, 160);
+  const productId = String(req.body?.productId || '').trim().slice(0, 160);
+  if (!sourceUrl) { res.status(400).json({ error: 'url is required' }); return; }
+  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'lingshu-product-image-import-'));
+  try {
+    const normalized = await downloadAndNormalizeExternalImage({ url: sourceUrl, temporaryDirectory: tempDir });
+    const storedName = safeStoredName(normalized.filename);
+    if (objectStorageEnabled()) {
+      await objectStorageUpload({ key: enterpriseAssetObjectKey(tenantId, storedName), body: normalized.buffer, contentType: normalized.mimeType });
+    } else {
+      ensureAssetsDir();
+      const tenantDir = path.join(ASSETS_DIR, enterpriseAssetTenantKey(tenantId));
+      fs.mkdirSync(tenantDir, { recursive: true });
+      fs.writeFileSync(path.join(tenantDir, storedName), normalized.buffer, { mode: 0o600 });
+    }
+    const enterpriseUrl = `/api/overseas/enterprise/assets/${storedName}`;
+    const materialInput: Parameters<typeof upsertTenantUploadCloudMaterial>[0] = {
+      tenantId, title: requestedName || path.basename(normalized.filename), folder: 'enterprise-upload', type: 'image',
+      width: normalized.width, height: normalized.height, sizeBytes: normalized.buffer.length, sha256: normalized.sha256,
+      scope: 'own', usage: 'editable', sourceType: 'enterprise_product_image_import', sourceName: requestedName || normalized.filename,
+      sourceProvider: 'tenant', sourceUrl: normalized.sourceUrl, sourceEntry: 'enterprise_knowledge', productId: productId || undefined,
+      provenance: { uploadMethod: 'enterprise_external_url', sourceEntry: 'enterprise_knowledge', originalUrl: normalized.sourceUrl,
+        enterpriseAssetUrl: enterpriseUrl, normalization: normalized.normalization, knowledgeEligible: true, receivedAt: new Date().toISOString() },
+      media: { name: storedName, buf: normalized.buffer, contentType: normalized.mimeType },
+      ...(normalized.poster ? { poster: { name: normalized.poster.filename, buf: normalized.poster.buffer, contentType: normalized.poster.mimeType } } : {}),
+    };
+    const material = currentDataAuthority() === 'local'
+      ? upsertLocalEnterpriseMaterial({
+        tenantId, title: materialInput.title, type: 'image', sizeBytes: normalized.buffer.length,
+        width: normalized.width, height: normalized.height, sha256: normalized.sha256,
+        sourceUrl: enterpriseUrl, sourceName: String(materialInput.sourceName || materialInput.title), productId: productId || undefined,
+        provenance: materialInput.provenance || {},
+      })
+      : await upsertTenantUploadCloudMaterial(materialInput);
+    void import('../lib/materialLibraryAnalysis.js').then(module => module.requestMaterialAnalysis(tenantId, String(material.id || ''))).catch(() => {});
+    res.status(201).json({ name: requestedName || normalized.filename, type: normalized.mimeType, size: normalized.buffer.length,
+      width: normalized.width, height: normalized.height, sha256: normalized.sha256, sourceUrl: normalized.sourceUrl,
+      url: enterpriseUrl, material });
+  } catch (error) {
+    const known = error instanceof ExternalImageImportError;
+    res.status(known ? 422 : 503).json({ error: error instanceof Error ? error.message : 'external image import failed', ...(known ? { code: error.code } : {}) });
+  } finally {
+    fs.rmSync(tempDir, { recursive: true, force: true });
+  }
 });
 
 enterpriseRouter.get('/assets/:file', async (req, res) => {
@@ -1978,7 +2472,7 @@ enterpriseRouter.get('/assets/:file', async (req, res) => {
       const requestedRange = /^bytes=\d*-\d*$/.test(String(req.headers.range || ''))
         ? String(req.headers.range)
         : undefined;
-      const object = await r2GetObject(enterpriseAssetObjectKey(tenantId, file), requestedRange);
+      const object = await objectStorageGetObject(enterpriseAssetObjectKey(tenantId, file), requestedRange);
       if (object) {
         res.setHeader('Content-Type', object.contentType);
         res.setHeader('Cache-Control', 'private, max-age=300');
@@ -2011,17 +2505,34 @@ enterpriseRouter.get('/assets/:file', async (req, res) => {
   res.sendFile(filePath);
 });
 
+function enterpriseFactVersionMatchesRequest(req: Request, current: EnterpriseProfile): boolean {
+  const expected = normalizeExpectedFactVersion(req.header('if-match'));
+  return !expected || expected === current.factVersion?.contentHash || expected === current.factVersion?.id;
+}
+
 enterpriseRouter.post('/profile', async (req, res) => {
   const { tenantId, userId } = res.locals as AuthLocals;
   try {
     const current = await readTenantProfile(tenantId);
+    if (!enterpriseFactVersionMatchesRequest(req, current)) {
+      res.status(409).json({
+        error: 'enterprise_fact_version_conflict',
+        message: '企业资料已由其他页面更新，请刷新后再保存。',
+        factVersion: current.factVersion,
+      });
+      return;
+    }
     const profile = markProfileSaved(normalizeProfile({
       ...(req.body as EnterpriseProfile),
       customerService: current.customerService,
     }), 'enterprise_center');
-    await writeTenantProfile(tenantId, profile, userId);
+    await writeTenantProfile(tenantId, profile, userId, normalizeExpectedFactVersion(req.header('if-match')));
     res.json({ ok: true, profile });
   } catch (error) {
+    if (error instanceof EnterpriseFactVersionConflictError) {
+      res.status(409).json({ error: error.message, message: '企业资料已由其他页面更新，请刷新后再保存。', factVersion: error.current });
+      return;
+    }
     console.error('[enterprise] profile save failed', error);
     res.status(503).json({ error: 'tenant_profile_storage_unavailable', message: '企业资料暂时无法保存，请稍后重试' });
   }
@@ -2032,13 +2543,25 @@ enterpriseRouter.patch('/profile', async (req, res) => {
   const source = req.header('x-enterprise-save-source') === 'diagnosis' ? 'diagnosis' : 'enterprise_center';
   try {
     const current = await readTenantProfile(tenantId);
+    if (!enterpriseFactVersionMatchesRequest(req, current)) {
+      res.status(409).json({
+        error: 'enterprise_fact_version_conflict',
+        message: '企业资料已由其他页面更新，请刷新后再保存。',
+        factVersion: current.factVersion,
+      });
+      return;
+    }
     const profile = markProfileSaved(normalizeProfile({
       ...mergeEnterpriseProfile(current, req.body as Partial<EnterpriseProfile>),
       customerService: current.customerService,
     }), source);
-    await writeTenantProfile(tenantId, profile, userId);
+    await writeTenantProfile(tenantId, profile, userId, normalizeExpectedFactVersion(req.header('if-match')));
     res.json({ ok: true, profile });
   } catch (error) {
+    if (error instanceof EnterpriseFactVersionConflictError) {
+      res.status(409).json({ error: error.message, message: '企业资料已由其他页面更新，请刷新后再保存。', factVersion: error.current });
+      return;
+    }
     console.error('[enterprise] profile patch failed', error);
     res.status(503).json({ error: 'tenant_profile_storage_unavailable', message: '企业资料暂时无法保存，请稍后重试' });
   }
@@ -2046,61 +2569,85 @@ enterpriseRouter.patch('/profile', async (req, res) => {
 
 enterpriseRouter.get('/context', async (_req, res) => {
   const { tenantId } = res.locals as AuthLocals;
-  const profile = await readTenantProfile(tenantId);
-  res.json({ context: buildEnterpriseContext(profile) });
+  const facts = await readTenantEnterpriseFacts(tenantId);
+  res.json({ context: facts.context, factVersion: facts.version });
 });
 
 export const productApiRouter = Router();
 
 productApiRouter.post('/bulk', async (req, res) => {
-  const verified = await verifyProductApiKey(req);
-  if (!verified) {
-    res.status(401).json({ error: 'Invalid API Key' });
-    return;
+  try {
+    const verified = await verifyProductApiKey(req);
+    if (!verified) {
+      res.status(401).json({ error: 'Invalid API Key' });
+      return;
+    }
+    const { secret } = verified;
+    const payload = Array.isArray(req.body) ? req.body : req.body?.products;
+    if (!Array.isArray(payload)) {
+      res.status(400).json({ error: 'Body should be { products: [...] } or an array.' });
+      return;
+    }
+    const products = payload.map(item => normalizeApiProduct(item)).filter(Boolean) as NonNullable<EnterpriseProfile['products']['items']>;
+    const total = await withLegacyExternalEffectAllowed(secret.tenantId, async guard => {
+      const profile = await readTenantProfile(secret.tenantId);
+      const nextItems = upsertProductItems(profile.products.items ?? [], products);
+      const last = products.at(-1);
+      await guard.beforeEffect();
+      await writeTenantProfile(secret.tenantId, { ...profile, products: { ...profile.products, items: nextItems } }, 'product-api');
+      const keyRecord = await store.list<Record<string, unknown>>('tenant_api_keys', { where: { tenant_id: secret.tenantId }, page: 1, perPage: 1 });
+      if (keyRecord.items[0]?.id) {
+        await guard.beforeEffect();
+        await store.update('tenant_api_keys', String(keyRecord.items[0].id), { last_ingested_at: new Date().toISOString(), last_product_name: last?.name || '' });
+      }
+      return nextItems.length;
+    });
+    res.json({ ok: true, received: payload.length, upserted: products.length, total });
+  } catch (error) {
+    respondLegacyProductApiFailure(error, res);
   }
-  const { profile, secret } = verified;
-  const payload = Array.isArray(req.body) ? req.body : req.body?.products;
-  if (!Array.isArray(payload)) {
-    res.status(400).json({ error: 'Body should be { products: [...] } or an array.' });
-    return;
-  }
-  const products = payload.map(item => normalizeApiProduct(item)).filter(Boolean) as NonNullable<EnterpriseProfile['products']['items']>;
-  const existing = profile.products.items ?? [];
-  const nextItems = upsertProductItems(existing, products);
-  const last = products.at(-1);
-  await writeTenantProfile(secret.tenantId, { ...profile, products: { ...profile.products, items: nextItems } }, 'product-api');
-  const keyRecord = await store.list<Record<string, unknown>>('tenant_api_keys', { where: { tenant_id: secret.tenantId }, page: 1, perPage: 1 });
-  if (keyRecord.items[0]?.id) await store.update('tenant_api_keys', String(keyRecord.items[0].id), { last_ingested_at: new Date().toISOString(), last_product_name: last?.name || '' });
-  res.json({ ok: true, received: payload.length, upserted: products.length, total: nextItems.length });
 });
 
 productApiRouter.get('/', async (req, res) => {
-  const verified = await verifyProductApiKey(req);
-  if (!verified) {
-    res.status(401).json({ error: 'Invalid API Key' });
-    return;
+  try {
+    const verified = await verifyProductApiKey(req);
+    if (!verified) {
+      res.status(401).json({ error: 'Invalid API Key' });
+      return;
+    }
+    const { profile } = verified;
+    const sku = text(req.query.sku);
+    const limit = Math.min(500, Math.max(1, Number(req.query.limit || 100)));
+    const items = (profile.products.items ?? []).filter(item => !sku || item.sku === sku).slice(0, limit);
+    res.json({ total: items.length, items });
+  } catch (error) {
+    respondLegacyProductApiFailure(error, res);
   }
-  const { profile } = verified;
-  const sku = text(req.query.sku);
-  const limit = Math.min(500, Math.max(1, Number(req.query.limit || 100)));
-  const items = (profile.products.items ?? []).filter(item => !sku || item.sku === sku).slice(0, limit);
-  res.json({ total: items.length, items });
 });
 
 productApiRouter.delete('/:sku?', async (req, res) => {
-  const verified = await verifyProductApiKey(req);
-  if (!verified) {
-    res.status(401).json({ error: 'Invalid API Key' });
-    return;
+  try {
+    const verified = await verifyProductApiKey(req);
+    if (!verified) {
+      res.status(401).json({ error: 'Invalid API Key' });
+      return;
+    }
+    const { secret } = verified;
+    const sku = text(req.params.sku || req.query.sku || req.body?.sku);
+    if (!sku) {
+      res.status(400).json({ error: 'Missing sku' });
+      return;
+    }
+    const result = await withLegacyExternalEffectAllowed(secret.tenantId, async guard => {
+      const profile = await readTenantProfile(secret.tenantId);
+      const before = profile.products.items ?? [];
+      const after = before.filter(item => item.sku !== sku);
+      await guard.beforeEffect();
+      await writeTenantProfile(secret.tenantId, { ...profile, products: { ...profile.products, items: after } }, 'product-api');
+      return { deleted: before.length - after.length, total: after.length };
+    });
+    res.json({ ok: true, ...result });
+  } catch (error) {
+    respondLegacyProductApiFailure(error, res);
   }
-  const { profile, secret } = verified;
-  const sku = text(req.params.sku || req.query.sku || req.body?.sku);
-  if (!sku) {
-    res.status(400).json({ error: 'Missing sku' });
-    return;
-  }
-  const before = profile.products.items ?? [];
-  const after = before.filter(item => item.sku !== sku);
-  await writeTenantProfile(secret.tenantId, { ...profile, products: { ...profile.products, items: after } }, 'product-api');
-  res.json({ ok: true, deleted: before.length - after.length, total: after.length });
 });

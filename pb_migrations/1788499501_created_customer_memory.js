@@ -1,0 +1,278 @@
+/// <reference path="../pb_data/types.d.ts" />
+migrate((app) => {
+  const collection = new Collection({
+    "createRule": null,
+    "deleteRule": null,
+    "fields": [
+      {
+        "autogeneratePattern": "[a-z0-9]{15}",
+        "help": "",
+        "hidden": false,
+        "id": "text3208210256",
+        "max": 15,
+        "min": 15,
+        "name": "id",
+        "pattern": "^[a-z0-9]+$",
+        "presentable": false,
+        "primaryKey": true,
+        "required": true,
+        "system": true,
+        "type": "text"
+      },
+      {
+        "autogeneratePattern": "",
+        "help": "",
+        "hidden": false,
+        "id": "text2419269930",
+        "max": 0,
+        "min": 0,
+        "name": "tenant_id",
+        "pattern": "",
+        "presentable": false,
+        "primaryKey": false,
+        "required": true,
+        "system": false,
+        "type": "text"
+      },
+      {
+        "autogeneratePattern": "",
+        "help": "",
+        "hidden": false,
+        "id": "text2476065779",
+        "max": 0,
+        "min": 0,
+        "name": "customer_id",
+        "pattern": "",
+        "presentable": false,
+        "primaryKey": false,
+        "required": true,
+        "system": false,
+        "type": "text"
+      },
+      {
+        "autogeneratePattern": "",
+        "help": "",
+        "hidden": false,
+        "id": "text3017861376",
+        "max": 0,
+        "min": 0,
+        "name": "memory_key",
+        "pattern": "",
+        "presentable": false,
+        "primaryKey": false,
+        "required": true,
+        "system": false,
+        "type": "text"
+      },
+      {
+        "autogeneratePattern": "",
+        "help": "",
+        "hidden": false,
+        "id": "text4200613464",
+        "max": 0,
+        "min": 0,
+        "name": "memory_value",
+        "pattern": "",
+        "presentable": false,
+        "primaryKey": false,
+        "required": true,
+        "system": false,
+        "type": "text"
+      },
+      {
+        "autogeneratePattern": "",
+        "help": "",
+        "hidden": false,
+        "id": "text207705872",
+        "max": 0,
+        "min": 0,
+        "name": "evidence",
+        "pattern": "",
+        "presentable": false,
+        "primaryKey": false,
+        "required": false,
+        "system": false,
+        "type": "text"
+      },
+      {
+        "help": "",
+        "hidden": false,
+        "id": "select2063623452",
+        "maxSelect": 0,
+        "name": "status",
+        "presentable": false,
+        "required": false,
+        "system": false,
+        "type": "select",
+        "values": [
+          "pending",
+          "confirmed",
+          "paused",
+          "superseded",
+          "conflict"
+        ]
+      },
+      {
+        "help": "",
+        "hidden": false,
+        "id": "select978205146",
+        "maxSelect": 0,
+        "name": "source_kind",
+        "presentable": false,
+        "required": false,
+        "system": false,
+        "type": "select",
+        "values": [
+          "human",
+          "ai_inferred"
+        ]
+      },
+      {
+        "help": "",
+        "hidden": false,
+        "id": "number158830993",
+        "max": null,
+        "min": null,
+        "name": "confidence",
+        "onlyInt": false,
+        "presentable": false,
+        "required": false,
+        "system": false,
+        "type": "number"
+      },
+      {
+        "help": "",
+        "hidden": false,
+        "id": "date261981154",
+        "max": "",
+        "min": "",
+        "name": "expires_at",
+        "presentable": false,
+        "required": false,
+        "system": false,
+        "type": "date"
+      },
+      {
+        "autogeneratePattern": "",
+        "help": "",
+        "hidden": false,
+        "id": "text1683587045",
+        "max": 0,
+        "min": 0,
+        "name": "conflict_with",
+        "pattern": "",
+        "presentable": false,
+        "primaryKey": false,
+        "required": false,
+        "system": false,
+        "type": "text"
+      },
+      {
+        "autogeneratePattern": "",
+        "help": "",
+        "hidden": false,
+        "id": "text927621020",
+        "max": 0,
+        "min": 0,
+        "name": "superseded_by",
+        "pattern": "",
+        "presentable": false,
+        "primaryKey": false,
+        "required": false,
+        "system": false,
+        "type": "text"
+      },
+      {
+        "autogeneratePattern": "",
+        "help": "",
+        "hidden": false,
+        "id": "text3725765462",
+        "max": 0,
+        "min": 0,
+        "name": "created_by",
+        "pattern": "",
+        "presentable": false,
+        "primaryKey": false,
+        "required": false,
+        "system": false,
+        "type": "text"
+      },
+      {
+        "autogeneratePattern": "",
+        "help": "",
+        "hidden": false,
+        "id": "text4215243211",
+        "max": 0,
+        "min": 0,
+        "name": "confirmed_by",
+        "pattern": "",
+        "presentable": false,
+        "primaryKey": false,
+        "required": false,
+        "system": false,
+        "type": "text"
+      },
+      {
+        "help": "",
+        "hidden": false,
+        "id": "date2929962677",
+        "max": "",
+        "min": "",
+        "name": "confirmed_at",
+        "presentable": false,
+        "required": false,
+        "system": false,
+        "type": "date"
+      },
+      {
+        "autogeneratePattern": "",
+        "help": "",
+        "hidden": false,
+        "id": "text385774305",
+        "max": 0,
+        "min": 0,
+        "name": "updated_by",
+        "pattern": "",
+        "presentable": false,
+        "primaryKey": false,
+        "required": false,
+        "system": false,
+        "type": "text"
+      },
+      {
+        "hidden": false,
+        "id": "autodate2990389176",
+        "name": "created",
+        "onCreate": true,
+        "onUpdate": false,
+        "presentable": false,
+        "system": false,
+        "type": "autodate"
+      },
+      {
+        "hidden": false,
+        "id": "autodate3332085495",
+        "name": "updated",
+        "onCreate": true,
+        "onUpdate": true,
+        "presentable": false,
+        "system": false,
+        "type": "autodate"
+      }
+    ],
+    "id": "pbc_904136182",
+    "indexes": [],
+    "listRule": null,
+    "name": "customer_memory",
+    "system": false,
+    "type": "base",
+    "updateRule": null,
+    "viewRule": null
+  });
+
+  return app.save(collection);
+}, (app) => {
+  const collection = app.findCollectionByNameOrId("pbc_904136182");
+
+  return app.delete(collection);
+})

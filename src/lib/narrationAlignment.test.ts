@@ -1,0 +1,18 @@
+import assert from 'node:assert/strict';
+import { mapNarrationCues, validateSpeechCues, narrationFromDetail } from './narrationAlignment.js';
+const cues = [{ text: '看两段护理展示画面。', start: 0.2, end: 2.32 }, { text: '透明液体滴向手部。', start: 2.5, end: 4.41 }];
+const lines = [cues[0].text, '无', cues[1].text, ''];
+const result = mapNarrationCues(lines, cues, 4.5, 'manual_confirmed');
+assert.equal(result[1], null); assert.equal(result[3], null);
+assert.equal(result[2]?.start, 2.5);
+assert.throws(() => mapNarrationCues(lines, cues, 4.5, 'proportional'), /估算/);
+assert.throws(() => mapNarrationCues(lines, cues, 4.5, 'manual_pending'), /估算/);
+assert.equal(validateSpeechCues([{ ...cues[0], end: 9 }], cues[0].text, 4.5), false);
+assert.equal(validateSpeechCues([{ ...cues[0], start: NaN }], cues[0].text, 4.5), false);
+assert.equal(validateSpeechCues([cues[0], { ...cues[1], start: 1 }], lines.join(''), 4.5), false);
+assert.throws(() => mapNarrationCues(['看两段', '护理展示画面。透明液体滴向手部。'], cues, 4.5, 'audio_ai'), /跨越/);
+assert.equal(narrationFromDetail('画面：手部 台词：无 字幕：护理展示'), '');
+assert.equal(narrationFromDetail('台词：“你好。” 素材：待生成'), '你好。');
+const repeat = mapNarrationCues(['你好', '你好'], [{ text: '你好', start: 0, end: 1 }, { text: '你好', start: 2, end: 3 }], 3, 'audio_ai');
+assert.equal(repeat[1]?.start, 2);
+console.log('narration alignment: timestamps, gaps, repeated speech and fail-closed checks passed');

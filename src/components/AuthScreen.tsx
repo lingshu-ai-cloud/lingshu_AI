@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { motion } from 'motion/react';
-import { Building2, Eye, EyeOff, Loader2, Lock, Mail, Ticket } from 'lucide-react';
+import { ArrowRight, Building2, Eye, EyeOff, Loader2, Lock, Mail, Ticket } from 'lucide-react';
 import { authApi, setToken, type AuthSession } from '../lib/auth';
 
 const initialInviteCode = () => new URLSearchParams(window.location.search).get('invite')?.trim() || '';
@@ -13,12 +13,14 @@ export default function AuthScreen({ onAuthed }: { onAuthed: (s: AuthSession) =>
   const [loginEmail, setLoginEmail] = useState('');
   const [loginPassword, setLoginPassword] = useState('');
   const [showLoginPassword, setShowLoginPassword] = useState(false);
+  const [loginConsent, setLoginConsent] = useState(false);
   const [registrationCompany, setRegistrationCompany] = useState(linkedCompanyName);
   const [registrationCompanyLocked, setRegistrationCompanyLocked] = useState(Boolean(linkedCompanyName));
   const [registrationEmail, setRegistrationEmail] = useState('');
   const [registrationPassword, setRegistrationPassword] = useState('');
   const [showRegistrationPassword, setShowRegistrationPassword] = useState(false);
   const [registrationFieldsUnlocked, setRegistrationFieldsUnlocked] = useState(false);
+  const [registrationConsent, setRegistrationConsent] = useState(false);
   const [inviteCode, setInviteCode] = useState(initialInviteCode);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -60,7 +62,9 @@ export default function AuthScreen({ onAuthed }: { onAuthed: (s: AuthSession) =>
     if (mode === 'login' && password !== loginPassword) setLoginPassword(password);
     if (!email || !password) { setError('请填写邮箱和密码'); return; }
     if (password.length < 8) { setError('密码至少 8 位'); return; }
+    if (mode === 'login' && !loginConsent) { setError('请先阅读并同意《用户协议》和《隐私政策》'); return; }
     if (mode === 'register' && !inviteCode.trim()) { setError('请输入管理员提供的邀请码'); return; }
+    if (mode === 'register' && !registrationConsent) { setError('请先阅读并同意《用户协议》和《隐私政策》'); return; }
     setLoading(true);
     try {
       const r = mode === 'register'
@@ -78,28 +82,50 @@ export default function AuthScreen({ onAuthed }: { onAuthed: (s: AuthSession) =>
   const switchMode = (nextMode: 'login' | 'register') => {
     setMode(nextMode);
     setError(null);
+    if (nextMode === 'login') setLoginConsent(false);
     if (nextMode === 'register') {
       setRegistrationCompany(linkedCompanyName);
       setRegistrationCompanyLocked(Boolean(linkedCompanyName));
       setRegistrationEmail('');
       setRegistrationPassword('');
       setRegistrationFieldsUnlocked(false);
+      setRegistrationConsent(false);
     }
   };
 
-  const inputCls = 'w-full pl-9 pr-3 py-2.5 rounded-xl border border-border bg-surface text-sm text-text-primary placeholder:text-text-muted outline-none focus:border-accent transition-colors';
+  const inputCls = 'auth-field w-full pl-11 pr-4 py-3 text-sm text-text-primary placeholder:text-text-muted outline-none transition-[border-color,box-shadow] focus:border-accent focus:ring-[3px] focus:ring-accent/10';
 
   return (
-    <div className="min-h-screen flex items-center justify-center px-4">
-      <motion.div initial={{ opacity: 0, y: 16 }} animate={{ opacity: 1, y: 0 }} className="w-full max-w-sm">
-        {/* Logo */}
-        <div className="flex items-center justify-center gap-2.5 mb-6">
-          <img src="/brand-logo.png" alt="灵枢 AI" className="w-9 h-9 object-contain" />
-          <span className="text-lg font-bold text-text-primary font-display">灵枢 AI 工作台</span>
+    <main className="auth-shell">
+      <section className="auth-visual flex flex-col p-7 text-white sm:p-10 lg:p-12" aria-label="灵枢品牌介绍">
+        <div className="flex items-center gap-3 self-start rounded-2xl border border-white/45 bg-white/85 px-3 py-2 text-text-primary shadow-[0_12px_32px_rgba(23,61,49,.08)] backdrop-blur-sm">
+          <span className="brand-logo-frame h-9 w-9 border-white/60 bg-white/90">
+            <img src="/brand-logo.png?v=20260921" alt="" className="h-7 w-7 object-contain" />
+          </span>
+          <span className="pr-1 text-[15px] font-bold tracking-[-.02em]">灵枢 AI</span>
         </div>
 
-        <div className="card !rounded-2xl p-6">
-          <div className="mb-6 grid grid-cols-2 rounded-xl bg-surface-2 p-1">
+      </section>
+
+      <section className="auth-panel">
+        <motion.div
+          initial={{ opacity: 0 }}
+          animate={{ opacity: 1 }}
+          className="auth-form-card"
+        >
+          <div className="auth-intro mb-8">
+            <p className="mb-2 text-xs font-semibold uppercase tracking-[.18em] text-accent">Lingshu workspace</p>
+            <h1 aria-live="polite" className="ls-type-headline text-text-primary">
+              {mode === 'register' ? '创建你的工作账号' : '欢迎回来'}
+            </h1>
+            <p className="mt-2 text-sm leading-6 text-text-secondary">
+              {mode === 'register'
+                ? '使用管理员提供的邀请码，加入企业工作空间。'
+                : '登录后继续处理今天的内容、客户与增长任务。'}
+            </p>
+          </div>
+
+          <div role="group" aria-label="认证方式" className="mb-7 grid grid-cols-2 rounded-xl border border-border bg-surface-2 p-1">
             {[
               { id: 'login' as const, label: '账号登录' },
               { id: 'register' as const, label: '注册账号' },
@@ -107,10 +133,11 @@ export default function AuthScreen({ onAuthed }: { onAuthed: (s: AuthSession) =>
               <button
                 key={item.id}
                 type="button"
+                aria-pressed={mode === item.id}
                 onClick={() => switchMode(item.id)}
-                className={`rounded-lg px-3 py-2 text-xs font-semibold transition-colors ${
+                className={`min-h-10 rounded-lg px-3 py-2 text-sm font-semibold outline-none transition-all focus-visible:ring-2 focus-visible:ring-accent/25 ${
                   mode === item.id
-                    ? 'bg-white text-text-primary shadow-sm'
+                    ? 'bg-white text-text-primary shadow-[0_2px_8px_rgba(23,61,49,.07)]'
                     : 'text-text-muted hover:text-text-secondary'
                 }`}
               >
@@ -118,13 +145,6 @@ export default function AuthScreen({ onAuthed }: { onAuthed: (s: AuthSession) =>
               </button>
             ))}
           </div>
-
-          <h1 className="text-base font-bold text-text-primary mb-1">{mode === 'register' ? '注册' : '登录'}</h1>
-          <p className="text-xs text-text-muted mb-5">
-            {mode === 'register'
-              ? '使用管理员提供的邀请码注册正式客户账号'
-              : '正式客户账号与管理员提供的试用账号均可直接登录'}
-          </p>
 
           {mode === 'register' ? (
             <form
@@ -135,9 +155,11 @@ export default function AuthScreen({ onAuthed }: { onAuthed: (s: AuthSession) =>
                 void submit();
               }}
             >
-              <div className="space-y-3">
-                <div className="relative">
-                  <Building2 size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-text-muted" />
+              <div className="space-y-4">
+                <label className="block">
+                  <span className="mb-2 block text-xs font-semibold text-text-secondary">企业名称</span>
+                  <span className="relative block">
+                  <Building2 size={17} className="absolute left-3.5 top-1/2 -translate-y-1/2 text-text-muted" />
                   <input
                     name="customer-registration-company"
                     autoComplete="off"
@@ -146,9 +168,12 @@ export default function AuthScreen({ onAuthed }: { onAuthed: (s: AuthSession) =>
                     placeholder="公司名称由管理员填写"
                     className={`${inputCls} ${registrationCompanyLocked ? 'cursor-default' : ''}`}
                   />
-                </div>
-                <div className="relative">
-                  <Mail size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-text-muted" />
+                  </span>
+                </label>
+                <label className="block">
+                  <span className="mb-2 block text-xs font-semibold text-text-secondary">注册邮箱</span>
+                  <span className="relative block">
+                  <Mail size={17} className="absolute left-3.5 top-1/2 -translate-y-1/2 text-text-muted" />
                   <input
                     type="email"
                     name="customer-registration-email"
@@ -162,9 +187,12 @@ export default function AuthScreen({ onAuthed }: { onAuthed: (s: AuthSession) =>
                     placeholder="请客户填写注册邮箱"
                     className={inputCls}
                   />
-                </div>
-                <div className="relative">
-                  <Lock size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-text-muted" />
+                  </span>
+                </label>
+                <label className="block">
+                  <span className="mb-2 block text-xs font-semibold text-text-secondary">设置密码</span>
+                  <span className="relative block">
+                  <Lock size={17} className="absolute left-3.5 top-1/2 -translate-y-1/2 text-text-muted" />
                   <input
                     type={showRegistrationPassword ? 'text' : 'password'}
                     name="customer-registration-new-password"
@@ -178,12 +206,15 @@ export default function AuthScreen({ onAuthed }: { onAuthed: (s: AuthSession) =>
                     placeholder="请客户设置登录密码（至少 8 位）"
                     className={`${inputCls} !pr-10`}
                   />
-                  <button type="button" onClick={() => setShowRegistrationPassword(value => !value)} aria-label={showRegistrationPassword ? '隐藏密码' : '显示密码'} className="absolute right-3 top-1/2 -translate-y-1/2 text-text-muted hover:text-text-primary">
+                  <button type="button" onClick={() => setShowRegistrationPassword(value => !value)} aria-label={showRegistrationPassword ? '隐藏密码' : '显示密码'} className="absolute right-3 top-1/2 flex h-9 w-9 -translate-y-1/2 items-center justify-center rounded-lg text-text-muted hover:bg-surface-2 hover:text-text-primary">
                     {showRegistrationPassword ? <EyeOff size={16} /> : <Eye size={16} />}
                   </button>
-                </div>
-                <div className="relative">
-                  <Ticket size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-text-muted" />
+                  </span>
+                </label>
+                <label className="block">
+                  <span className="mb-2 block text-xs font-semibold text-text-secondary">管理员邀请码</span>
+                  <span className="relative block">
+                  <Ticket size={17} className="absolute left-3.5 top-1/2 -translate-y-1/2 text-text-muted" />
                   <input
                     name="customer-registration-invite"
                     autoComplete="off"
@@ -192,13 +223,32 @@ export default function AuthScreen({ onAuthed }: { onAuthed: (s: AuthSession) =>
                     placeholder="管理员邀请码"
                     className={inputCls}
                   />
-                </div>
+                  </span>
+                </label>
               </div>
-              {error && <p className="text-xs text-red mt-3">{error}</p>}
-              <button type="submit" disabled={loading}
-                className="btn-primary w-full mt-5 flex items-center justify-center gap-2 disabled:opacity-60">
+              <label className="mt-4 flex items-start gap-2.5 text-xs leading-5 text-text-secondary">
+                <input
+                  type="checkbox"
+                  name="legal-consent"
+                  checked={registrationConsent}
+                  onChange={event => setRegistrationConsent(event.target.checked)}
+                  className="mt-1 h-4 w-4 shrink-0 accent-[var(--color-accent)]"
+                  required
+                />
+                <span>
+                  我已阅读并同意
+                  <a href="/terms" target="_blank" rel="noreferrer" className="mx-1 font-semibold text-accent hover:underline">《用户协议》</a>
+                  和
+                  <a href="/privacy" target="_blank" rel="noreferrer" className="mx-1 font-semibold text-accent hover:underline">《隐私政策》</a>
+                  ，并确认我有权代表所属企业创建和使用本账号。
+                </span>
+              </label>
+              {error && <p role="alert" className="mt-4 rounded-xl border border-red-200 bg-red-50 px-3.5 py-3 text-xs font-medium text-red">{error}</p>}
+              <button type="submit" disabled={loading || !registrationConsent}
+                className="btn-primary mt-6 flex min-h-12 w-full items-center justify-center gap-2 disabled:opacity-60">
                 {loading ? <Loader2 size={15} className="animate-spin" /> : null}
-                注册并进入工作台
+                <span>注册并进入工作台</span>
+                {!loading && <ArrowRight size={16} />}
               </button>
             </form>
           ) : (
@@ -210,9 +260,11 @@ export default function AuthScreen({ onAuthed }: { onAuthed: (s: AuthSession) =>
                 void submit();
               }}
             >
-              <div className="space-y-3">
-                <div className="relative">
-                  <Mail size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-text-muted" />
+              <div className="space-y-4">
+                <label className="block">
+                  <span className="mb-2 block text-xs font-semibold text-text-secondary">邮箱</span>
+                  <span className="relative block">
+                  <Mail size={17} className="absolute left-3.5 top-1/2 -translate-y-1/2 text-text-muted" />
                   <input
                     type="email"
                     name="email"
@@ -222,9 +274,12 @@ export default function AuthScreen({ onAuthed }: { onAuthed: (s: AuthSession) =>
                     placeholder="邮箱"
                     className={inputCls}
                   />
-                </div>
-                <div className="relative">
-                  <Lock size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-text-muted" />
+                  </span>
+                </label>
+                <label className="block">
+                  <span className="mb-2 block text-xs font-semibold text-text-secondary">密码</span>
+                  <span className="relative block">
+                  <Lock size={17} className="absolute left-3.5 top-1/2 -translate-y-1/2 text-text-muted" />
                   <input
                     type={showLoginPassword ? 'text' : 'password'}
                     name="password"
@@ -234,25 +289,48 @@ export default function AuthScreen({ onAuthed }: { onAuthed: (s: AuthSession) =>
                     placeholder="密码"
                     className={`${inputCls} !pr-10`}
                   />
-                  <button type="button" onClick={() => setShowLoginPassword(value => !value)} aria-label={showLoginPassword ? '隐藏密码' : '显示密码'} className="absolute right-3 top-1/2 -translate-y-1/2 text-text-muted hover:text-text-primary">
+                  <button type="button" onClick={() => setShowLoginPassword(value => !value)} aria-label={showLoginPassword ? '隐藏密码' : '显示密码'} className="absolute right-3 top-1/2 flex h-9 w-9 -translate-y-1/2 items-center justify-center rounded-lg text-text-muted hover:bg-surface-2 hover:text-text-primary">
                     {showLoginPassword ? <EyeOff size={16} /> : <Eye size={16} />}
                   </button>
-                </div>
+                  </span>
+                </label>
               </div>
-              {error && <p className="text-xs text-red mt-3">{error}</p>}
-              <button type="submit" disabled={loading}
-                className="btn-primary w-full mt-5 flex items-center justify-center gap-2 disabled:opacity-60">
+              <label className="mt-4 flex items-start gap-2.5 text-xs leading-5 text-text-secondary">
+                <input
+                  type="checkbox"
+                  name="login-legal-consent"
+                  checked={loginConsent}
+                  onChange={event => setLoginConsent(event.target.checked)}
+                  className="mt-1 h-4 w-4 shrink-0 accent-[var(--color-accent)]"
+                  required
+                />
+                <span>
+                  我已阅读并同意
+                  <a href="/terms" target="_blank" rel="noreferrer" className="mx-1 font-semibold text-accent hover:underline">《用户协议》</a>
+                  和
+                  <a href="/privacy" target="_blank" rel="noreferrer" className="mx-1 font-semibold text-accent hover:underline">《隐私政策》</a>
+                </span>
+              </label>
+              {error && <p role="alert" className="mt-4 rounded-xl border border-red-200 bg-red-50 px-3.5 py-3 text-xs font-medium text-red">{error}</p>}
+              <button type="submit" disabled={loading || !loginConsent}
+                className="btn-primary mt-6 flex min-h-12 w-full items-center justify-center gap-2 disabled:opacity-60">
                 {loading ? <Loader2 size={15} className="animate-spin" /> : null}
-                登录工作台
+                <span>登录工作台</span>
+                {!loading && <ArrowRight size={16} />}
               </button>
             </form>
           )}
 
-          <div className="mt-4 flex items-center justify-center border-t border-border pt-4 text-[11px] font-semibold text-text-muted">
-            <a href="/privacy" className="transition-colors hover:text-accent">隐私政策</a>
+          <div className="mt-7 flex flex-wrap items-center justify-between gap-3 border-t border-border pt-5 text-[11px] text-text-muted">
+            <span>© 2026 灵小枢（杭州）科技有限公司</span>
+            <span className="flex flex-wrap items-center gap-3">
+              <a href="/privacy" target="_blank" rel="noreferrer" className="font-semibold transition-colors hover:text-accent">隐私政策</a>
+              <a href="/terms" target="_blank" rel="noreferrer" className="font-semibold transition-colors hover:text-accent">用户协议</a>
+              <a href="/data-deletion" target="_blank" rel="noreferrer" className="font-semibold transition-colors hover:text-accent">数据删除</a>
+            </span>
           </div>
-        </div>
-      </motion.div>
-    </div>
+        </motion.div>
+      </section>
+    </main>
   );
 }

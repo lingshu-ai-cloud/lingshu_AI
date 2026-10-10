@@ -99,7 +99,7 @@ function hardSplit(value: string): string[] {
 export function planMobileChatMessages(value: unknown): { messages: string[]; truncated: boolean } {
   const normalized = normalizeMobileChatFormatting(value);
   if (!normalized) return { messages: [], truncated: false };
-  const sentences = normalized.match(/[^.!?。！？؟]+[.!?。！？؟]?/gu)?.map(item => item.trim()).filter(Boolean) ?? [normalized];
+  const sentences = normalized.match(/(?:[^.!?。！？؟]|(?<=\d)\.(?=\d))+[.!?。！？؟]?/gu)?.map(item => item.trim()).filter(Boolean) ?? [normalized];
   let keptQuestion = false;
   // 保留原始口语顺序，只去掉第二个及之后的问题。强行把问题移到末尾会让
   // “That helps me check it” 之类的承接句跑到问题前面，听起来像机器拼句。

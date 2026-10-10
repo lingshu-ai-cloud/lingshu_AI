@@ -1,0 +1,75 @@
+import assert from 'node:assert/strict';
+import express from 'express';
+process.env.NODE_ENV = 'test';
+process.env.ENABLE_LOCAL_DEV_FALLBACK = 'true';
+process.env.PLATFORM_ADS_RELEASE_MODE = 'full';
+const { starter198Repository, Starter198RepositoryError } = await import('../starter198/repository.js');
+const originalAccess = starter198Repository.access;
+starter198Repository.access = async () => { throw new Starter198RepositoryError('starter_198_not_provisioned'); };
+const { store } = await import('../storage/index.js');
+const { preflightAdAction } = await import('./preflight.js');
+const { readTenantEnterpriseFacts } = await import('../routes/enterprise.js');
+const { platformAdPreflightRouter } = await import('../routes/platformAdPreflight.js');
+const { issueLocalIdentityTokenForTest } = await import('../auth/localIdentity.js');
+const originals = { get: store.getById, list: store.list, create: store.create, update: store.update, fetch: globalThis.fetch };
+let task: any = { id: 'task', tenant_id: 'a', name: 'Test', version: 1, creationSource: 'manual', managementMode: 'manual', budget: 100, currency: 'USD', goal: '提升网站访问', channels: ['Facebook'], configuration: { startsAt: '', endsAt: '' } };
+let connection: any = { id: 'account', tenant_id: 'a', provider: 'meta', accountId: '123', currency: 'USD', status: 'connected', tokenCipher: 'deliberately-not-decryptable' };
+let receipts: any[] = [];
+let binding: any = { id: 'creative', tenant_id: 'a', taskId: 'task', taskVersion: 1, connectionId: 'account', provider: 'meta', status: 'ready', platformVideoId: '9', sha256: 'hash', uploadReceipt: { videoId: '9', sha256: 'hash', accountId: '123', status: 'ready' } };
+(store.getById as any) = async (collection: string, id: string) => collection === 'platform_ad_tasks' && id === 'task' ? structuredClone(task) : collection === 'platform_ad_connections' && id === 'account' ? structuredClone(connection) : collection === 'platform_ad_creatives' && id === 'creative' ? structuredClone(binding) : null;
+(store.list as any) = async () => ({ items: structuredClone(receipts), totalPages: 1 });
+(store.create as any) = (store.update as any) = async () => { throw new Error('Forbidden write'); };
+globalThis.fetch = async () => { throw new Error('Forbidden network'); };
+const input = { connectionId: 'account', expectedVersion: 1, action: 'create', meta: { pageId: '1', videoId: '2', imageUrl: 'https://example.com/a.jpg', linkUrl: 'https://example.com', countries: ['US'], dailyBudget: 10 } };
+const blocked = async (id: string, patch: Record<string, unknown> = {}) => assert.equal((await preflightAdAction('a', 'task', { ...input, ...patch })).checks.find(c => c.id === id)?.status, 'blocked');
+try {
+  const result = await preflightAdAction('a', 'task', input);
+  assert.equal(result.canSubmit, true); assert.equal(result.scope, 'local');
+  assert.equal(result.checks.find(c => c.id === 'local_only')?.status, 'warning');
+  assert.ok(!JSON.stringify(result).includes(connection.tokenCipher));
+  const canonicalFacts = await readTenantEnterpriseFacts('a');
+  task.proposal = { enterpriseFactVersion: 'enterprise-facts-stale' };
+  await blocked('enterprise_fact_version');
+  await blocked('enterprise_fact_version', { action: 'adjust_budget', dailyBudget: 5, expectedDailyBudget: 5, resourceId: '123' });
+  assert.equal((await preflightAdAction('a', 'task', { ...input, action: 'pause', resourceId: '123' })).checks.some(c => c.id === 'enterprise_fact_version'), false, 'pause remains available as a safety action when proposal facts are stale');
+  task.proposal = { enterpriseFactVersion: canonicalFacts.version.id };
+  assert.equal((await preflightAdAction('a', 'task', input)).checks.find(c => c.id === 'enterprise_fact_version')?.status, 'pass');
+  task.proposal = null;
+  await assert.rejects(preflightAdAction('b', 'task', input), { code: 'NOT_FOUND' });
+  connection.tenant_id = 'b'; await assert.rejects(preflightAdAction('a', 'task', input), { code: 'NOT_FOUND' }); connection.tenant_id = 'a';
+  assert.equal((await preflightAdAction('a', 'task', { ...input, creativeId: 'creative', meta: { ...input.meta, videoId: '' } })).canSubmit, true);
+  await blocked('creative', { creativeId: 'creative' }); // conflicting form video ID
+  binding.uploadReceipt.status = 'processing'; await blocked('creative', { creativeId: 'creative', meta: { ...input.meta, videoId: '' } }); binding.uploadReceipt.status = 'ready';
+  binding.uploadReceipt.sha256 = 'other'; await blocked('creative', { creativeId: 'creative', meta: { ...input.meta, videoId: '' } }); binding.uploadReceipt.sha256 = 'hash';
+  binding.status = 'unknown'; await blocked('creative', { creativeId: 'creative' }); binding.status = 'ready';
+  binding.taskVersion = 0; await blocked('creative', { creativeId: 'creative' }); binding.taskVersion = 1;
+  await blocked('version', { expectedVersion: 0 }); await blocked('creative', { meta: {} });
+  task.creationSource = 'platform_import'; await blocked('source'); task.creationSource = 'manual';
+  task.managementMode = 'managed'; await blocked('management'); await blocked('authorization'); task.managementMode = 'manual';
+  receipts = [{ action: 'create', status: 'UNKNOWN' }]; await blocked('reconciliation'); await blocked('duplicate'); receipts = [];
+  task.channels = ['Facebook', 'TikTok']; await blocked('objective'); task.channels = ['Facebook'];
+  task.configuration = { startsAt: '2000-01-01T00:00:00Z', endsAt: '' }; await blocked('schedule'); task.configuration = { startsAt: '', endsAt: '' };
+  process.env.PLATFORM_ADS_RELEASE_MODE = 'disabled'; await blocked('release'); process.env.PLATFORM_ADS_RELEASE_MODE = 'full';
+  connection.provider = 'tiktok'; await blocked('objective'); await blocked('schedule'); await blocked('provider', { action: 'adjust_budget' });
+  task.channels = ['TikTok']; task.goal = '提升有效视频观看'; task.configuration = { startsAt: '2099-01-01T00:00:00Z', endsAt: '2099-01-02T00:00:00Z' };
+  assert.equal((await preflightAdAction('a', 'task', { ...input, tiktok: { identityId: '4', tiktokItemId: '5', locationIds: ['6'] } })).canSubmit, true);
+  connection.provider = 'google'; connection.accountId = '1234567890';
+  const googleResource = 'customers/1234567890/campaigns/99';
+  receipts = [{ tenant_id: 'a', taskId: 'task', action: 'create', connectionId: 'account', resourceId: googleResource, status: 'VERIFIED', result: { campaignId: googleResource, adgroupId: 'customers/1234567890/adGroups/100', adId: 'customers/1234567890/adGroupAds/100~101' } }];
+  assert.equal((await preflightAdAction('a', 'task', { ...input, action: 'pause', resourceId: googleResource })).canSubmit, true, 'Google verified full resource names remain supported');
+  await blocked('resource', { action: 'pause', resourceId: 'customers/9999999999/campaigns/99' });
+  receipts = []; connection.provider = 'meta'; connection.accountId = '123';
+  // Local HTTP only; outbound network remains forbidden.
+  globalThis.fetch = (async (url: any, init: any) => { if (!String(url).startsWith('http://127.0.0.1:')) throw new Error('Forbidden outbound network'); return originals.fetch(url, init); }) as typeof fetch;
+  const app = express(); app.use(express.json()); app.use(platformAdPreflightRouter);
+  const server = app.listen(0, '127.0.0.1'); await new Promise<void>(r => server.once('listening', r));
+  try {
+    const url = `http://127.0.0.1:${(server.address() as any).port}/tasks/task/preflight`;
+    const request = (tenantId: string, role: string) => fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${issueLocalIdentityTokenForTest({ userId: 'test', tenantId, role })}` }, body: JSON.stringify(input) });
+    assert.equal((await request('a', 'customer_service')).status, 403);
+    assert.equal((await request('b', 'admin')).status, 404);
+    assert.equal((await request('a', 'admin')).status, 200);
+    assert.equal((await fetch(url, { method: 'POST' })).status, 401);
+  } finally { await new Promise<void>((resolve, reject) => server.close(e => e ? reject(e) : resolve())); }
+  console.log('local ad preflight tests passed');
+} finally { starter198Repository.access = originalAccess; store.getById = originals.get; store.list = originals.list; store.create = originals.create; store.update = originals.update; globalThis.fetch = originals.fetch; }

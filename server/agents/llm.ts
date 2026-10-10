@@ -3,6 +3,8 @@ import OpenAI from 'openai';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { createLinkedAbort } from '../lib/abort.js';
+import { AbortableSemaphore } from '../lib/abortableSemaphore.js';
 
 export type LLMBackend = 'gemini' | 'qwen' | 'claude';
 
@@ -12,11 +14,20 @@ export interface LLMCallOptions {
   systemPrompt?: string;
   deepThinking?: boolean;
   requireSources?: boolean;
+  /** Cancels the upstream provider request when the HTTP caller disconnects. */
+  signal?: AbortSignal;
+  /** Hard per-provider deadline. Defaults to LLM_REQUEST_TIMEOUT_MS or 90s. */
+  timeoutMs?: number;
 }
 
 function resolveBackend(opts: LLMCallOptions): LLMBackend {
-  return opts.backend ?? (process.env.OVERSEAS_LLM_BACKEND as LLMBackend) ?? 'gemini';
+  return opts.backend ?? (process.env.OVERSEAS_LLM_BACKEND as LLMBackend) ?? 'qwen';
 }
+
+const configuredConcurrency = Number(process.env.LLM_MAX_CONCURRENT_REQUESTS || 6);
+const llmSemaphore = new AbortableSemaphore(
+  Number.isFinite(configuredConcurrency) ? Math.max(1, Math.min(32, Math.floor(configuredConcurrency))) : 6,
+);
 
 async function callGemini(prompt: string, opts: LLMCallOptions): Promise<string> {
   const apiKey = process.env.GEMINI_API_KEY;
@@ -28,9 +39,11 @@ async function callGemini(prompt: string, opts: LLMCallOptions): Promise<string>
   const response = await ai.models.generateContent({
     model,
     contents: prompt,
-    ...(opts.systemPrompt ? {
-      config: { systemInstruction: { parts: [{ text: opts.systemPrompt }] } },
-    } : {}),
+    config: {
+      ...(opts.systemPrompt ? { systemInstruction: { parts: [{ text: opts.systemPrompt }] } } : {}),
+      ...(opts.signal ? { abortSignal: opts.signal } : {}),
+      ...(opts.timeoutMs ? { httpOptions: { timeout: opts.timeoutMs } } : {}),
+    },
   });
   return response.text ?? '';
 }
@@ -45,10 +58,30 @@ async function callQwen(prompt: string, opts: LLMCallOptions): Promise<string> {
 
 export async function callLLM(prompt: string, opts: LLMCallOptions = {}): Promise<string> {
   const backend = resolveBackend(opts);
-  switch (backend) {
-    case 'gemini': return callGemini(prompt, opts);
-    case 'qwen':   return callQwen(prompt, opts);
-    default:       throw new Error(`Unsupported backend: ${backend}`);
+  const configuredTimeout = Number(opts.timeoutMs ?? process.env.LLM_REQUEST_TIMEOUT_MS ?? 90_000);
+  const timeoutMs = Number.isFinite(configuredTimeout)
+    ? Math.max(1_000, Math.min(10 * 60_000, configuredTimeout))
+    : 90_000;
+  const deadline = createLinkedAbort({ timeoutMs, parentSignal: opts.signal, label: `${backend} LLM request` });
+  const callOpts = { ...opts, signal: deadline.signal, timeoutMs };
+  let release: (() => void) | undefined;
+  try {
+    release = await llmSemaphore.acquire(deadline.signal);
+    switch (backend) {
+      case 'gemini': return await callGemini(prompt, callOpts);
+      case 'qwen':   return await callQwen(prompt, callOpts);
+      default:       throw new Error(`Unsupported backend: ${backend}`);
+    }
+  } catch (error) {
+    if (deadline.timedOut) throw new Error(`${backend} LLM request timed out after ${Math.round(timeoutMs / 1000)}s`);
+    if (opts.signal?.aborted) {
+      const reason = opts.signal.reason;
+      throw reason instanceof Error ? reason : new Error(`${backend} LLM request cancelled`);
+    }
+    throw error;
+  } finally {
+    release?.();
+    deadline.cleanup();
   }
 }
 
@@ -241,6 +274,10 @@ function createQwenClient(): OpenAI {
   return new OpenAI({
     apiKey,
     baseURL: process.env.DASHSCOPE_BASE_URL ?? 'https://dashscope.aliyuncs.com/compatible-mode/v1',
+    timeout: Math.max(1_000, Number(process.env.QWEN_TEXT_REQUEST_TIMEOUT_MS || process.env.LLM_REQUEST_TIMEOUT_MS || 90_000)),
+    // Retrying at this layer hides latency from callers. Routes decide whether
+    // and when to fall back to another provider within their own total budget.
+    maxRetries: 0,
   });
 }
 
@@ -267,7 +304,10 @@ async function* streamQwenMessages(
     } : {}),
   };
   // DashScope's Node-compatible endpoint accepts web-search fields at the top level.
-  const stream = await client.chat.completions.create(request as OpenAI.Chat.ChatCompletionCreateParamsStreaming);
+  const stream = await client.chat.completions.create(request as OpenAI.Chat.ChatCompletionCreateParamsStreaming, {
+    ...(opts.signal ? { signal: opts.signal } : {}),
+    ...(opts.timeoutMs ? { timeout: opts.timeoutMs } : {}),
+  });
   let finishReason: string | null = null;
   for await (const chunk of stream) {
     const text = chunk.choices[0]?.delta?.content;
@@ -292,7 +332,10 @@ async function completeQwenMessages(
       search_options: { forced_search: true, search_strategy: 'turbo' },
     } : {}),
   };
-  const completion = await client.chat.completions.create(request as OpenAI.Chat.ChatCompletionCreateParamsNonStreaming);
+  const completion = await client.chat.completions.create(request as OpenAI.Chat.ChatCompletionCreateParamsNonStreaming, {
+    ...(opts.signal ? { signal: opts.signal } : {}),
+    ...(opts.timeoutMs ? { timeout: opts.timeoutMs } : {}),
+  });
   return completion.choices[0]?.message?.content ?? '';
 }
 

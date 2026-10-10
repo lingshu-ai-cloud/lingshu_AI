@@ -1,0 +1,10 @@
+# Preserved, inactive candidate dependency list. Not installed by this merge.
+# Verify package availability, compatibility and licenses before enabling.
+# GPU worker only. Install SAM 2 itself from Meta's official repository at a
+# reviewed revision, then download an official SAM 2.1 checkpoint separately.
+numpy==2.3.5
+opencv-contrib-python==4.10.0.84
+paddleocr==3.7.0
+paddlepaddle==3.3.1
+torch==2.14.0
+torchvision==0.29.0

@@ -1,72 +1,65 @@
 import { Router } from 'express';
-import fs from 'node:fs';
-import path from 'node:path';
 import { randomBytes, scryptSync, timingSafeEqual } from 'node:crypto';
-import { fileURLToPath } from 'node:url';
-import { getPbUrl, getPbAdminToken, pbCreate, pbDelete, pbGet, pbList, pbListStrict, pbPatch } from '../storage/pb.js';
+import {
+  createPbRequestSignal,
+  getPbUrl,
+  getPbAdminToken,
+  invalidatePbIdentityCache,
+  pbCreate,
+  pbDelete,
+  pbGet,
+  pbGetStrict,
+  pbList,
+  pbPatch,
+} from '../storage/pb.js';
 import { auth } from '../storage/index.js';
 import { getTenantSubscription } from '../middleware/subscription.js';
 import { buildDemoStatus, isExpired } from '../lib/demo.js';
 import {
   accountGuideState,
   activateTrialAccount,
+  adminUserForHttp,
   consumeDemoGuide,
   isAdminEmail,
   isTrialAccount,
-  readDemoAccountRegistry,
   rotateExpiredTrialPassword,
   trialExpiresAt,
   upsertDemoAccountRegistry,
 } from '../lib/demoAccounts.js';
 import {
   activateLocalTenantInvite,
+  clearLocalTenantRegisteredCredential,
   findLocalTenantByInvite,
   findLocalTenantByRegistrationInvite,
   getLocalTenant,
-  updateLocalTenantRegisteredPassword,
+  ensureLocalIdentityTenant,
   type LocalTenantRecord,
 } from '../lib/localTenants.js';
-import { encryptRegistrationPassword } from '../lib/registrationCredentials.js';
 import { clearAssetSessionCookie } from '../lib/assetAccess.js';
-
-/* ──────────────────────────────────────────────────────────────────────────
-   账号 / 登录（基于 PocketBase）
-   - 注册：建租户（按公司订阅，默认 14 天试用）→ 建用户 → 登录拿 token
-   - 登录：PB auth-with-password → 返回 token + 用户 + 租户订阅
-   - me：用 token 取当前身份 + 订阅状态
-   token 由前端存起来，后续请求带 Authorization: Bearer <token>。
-─────────────────────────────────────────────────────────────────────────── */
+import {
+  normalizeOrganizationRole as normalizedRole,
+  organizationRoleOrNull,
+  requestOrganizationRoleStrict,
+  type OrganizationRole,
+} from '../lib/organizationRole.js';
+import { syncPasswordChangeCredentialStateBestEffort } from '../lib/passwordChangeCredentialState.js';
+import { isBrowserReadToken } from '../digitalEmployees/browserReadSession.js';
+import { isLocalAccountStoreError, localAccountRecordsFile, readLocalAccountRecords, writeLocalAccountRecords, type LocalStoredAccount } from '../lib/localAccountStore.js';
+import { assertStarter198MemberCapacity, Starter198MemberQuotaError } from '../starter198/memberQuota.js';
+import { requireAuth, type AuthLocals } from '../middleware/auth.js';
+import { localFallbacksEnabled } from '../lib/localFallbackPolicy.js';
+import {
+  pocketBaseTenantByInvite,
+  publicInviteRegistrationError,
+  registerPocketBaseInviteOwner,
+} from '../auth/inviteRegistration.js';
+import { issueVerifiedLocalIdentityToken, verifyLocalIdentity, type VerifiedLocalIdentity } from '../auth/localIdentity.js';
+import { bindDataAuthority, currentDataAuthority } from '../storage/dataAuthority.js';
+import { resolveServerProductProfile } from '../starter198/productProfile.js';
 
 export const authRouter = Router();
-
-export type OrganizationRole = 'super_admin' | 'admin' | 'social_operator' | 'customer_service';
 interface PbUser { id: string; email?: string; name?: string; tenantId?: string; role?: OrganizationRole }
-
-const LOCAL_AUTH_PREFIX = 'local-demo.';
-const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const LOCAL_ACCOUNTS_FILE = path.join(__dirname, '../../data/local-auth-accounts.json');
-
-interface LocalIdentity {
-  userId: string;
-  tenantId: string;
-  email?: string;
-  name?: string;
-  accountType?: 'customer' | 'trial' | 'admin';
-  role?: OrganizationRole;
-}
-
-interface LocalAccount extends LocalIdentity {
-  email: string;
-  name: string;
-  accountType: 'customer';
-  salt: string;
-  passwordHash: string;
-  createdAt: string;
-}
-
-const ORGANIZATION_ROLES = new Set<OrganizationRole>(['super_admin', 'admin', 'social_operator', 'customer_service']);
-const normalizedRole = (value: unknown): OrganizationRole => ORGANIZATION_ROLES.has(value as OrganizationRole) ? value as OrganizationRole : 'super_admin';
-
+type LocalAccount = LocalStoredAccount;
 interface LocalLoginResult {
   token: string;
   record: PbUser;
@@ -74,8 +67,26 @@ interface LocalLoginResult {
   expiresAt?: string | null;
 }
 
-function isLocalDevFallbackEnabled(): boolean {
-  return process.env.NODE_ENV !== 'production' && process.env.DISABLE_LOCAL_AUTH_FALLBACK !== 'true';
+const LOCAL_PREVIEW_ORIGINS = new Set([
+  'http://127.0.0.1:5177',
+  'http://localhost:5177',
+  'http://[::1]:5177',
+]);
+
+export function isLocalPreviewLoopbackAddress(address: string | undefined): boolean {
+  const normalized = String(address || '').trim().toLowerCase();
+  return normalized === '127.0.0.1'
+    || normalized === '::1'
+    || normalized === '::ffff:127.0.0.1';
+}
+
+export function localPreviewRequestRejection(
+  origin: string | undefined,
+  remoteAddress: string | undefined,
+): 'local_preview_origin_required' | 'local_preview_loopback_required' | null {
+  if (!LOCAL_PREVIEW_ORIGINS.has(String(origin || ''))) return 'local_preview_origin_required';
+  if (!isLocalPreviewLoopbackAddress(remoteAddress)) return 'local_preview_loopback_required';
+  return null;
 }
 
 function localId(value: string): string {
@@ -94,17 +105,15 @@ function localUser(email: string, companyName = ''): PbUser {
 }
 
 function readLocalAccounts(): LocalAccount[] {
-  try {
-    const parsed = JSON.parse(fs.readFileSync(LOCAL_ACCOUNTS_FILE, 'utf8'));
-    return Array.isArray(parsed) ? parsed : [];
-  } catch {
-    return [];
-  }
+  return readLocalAccountRecords(localAccountRecordsFile());
 }
 
 function writeLocalAccounts(accounts: LocalAccount[]): void {
-  fs.mkdirSync(path.dirname(LOCAL_ACCOUNTS_FILE), { recursive: true });
-  fs.writeFileSync(LOCAL_ACCOUNTS_FILE, JSON.stringify(accounts, null, 2), 'utf8');
+  writeLocalAccountRecords(localAccountRecordsFile(), accounts);
+}
+
+function localStoreUnavailable(res: { status(code: number): { json(body: unknown): unknown } }): void {
+  res.status(503).json({ error: 'local_auth_store_unavailable', message: '本地认证数据暂时不可用，请联系管理员修复后重试。' });
 }
 
 function passwordHash(password: string, salt: string): Buffer {
@@ -121,35 +130,8 @@ function localPasswordMatches(account: LocalAccount, password: string): boolean 
   }
 }
 
-function createLocalToken(user: PbUser, accountType: LocalLoginResult['accountType'] = 'customer'): string {
-  const payload = Buffer.from(JSON.stringify({
-    userId: user.id,
-    tenantId: user.tenantId,
-    email: user.email,
-    name: user.name,
-    accountType,
-    role: normalizedRole(user.role),
-  }), 'utf8').toString('base64url');
-  return `${LOCAL_AUTH_PREFIX}${payload}`;
-}
-
-function parseLocalToken(authHeader: string | undefined): LocalIdentity | null {
-  if (!isLocalDevFallbackEnabled()) return null;
-  const token = authHeader?.replace(/^Bearer\s+/i, '').trim();
-  if (!token?.startsWith(LOCAL_AUTH_PREFIX)) return null;
-  try {
-    const data = JSON.parse(Buffer.from(token.slice(LOCAL_AUTH_PREFIX.length), 'base64url').toString('utf8')) as Partial<LocalIdentity>;
-    return data.userId && data.tenantId ? {
-      userId: data.userId,
-      tenantId: data.tenantId,
-      email: data.email,
-      name: data.name,
-      accountType: data.accountType,
-      role: data.role,
-    } : null;
-  } catch {
-    return null;
-  }
+function parseLocalToken(authHeader: string | undefined): VerifiedLocalIdentity | null {
+  return verifyLocalIdentity(authHeader);
 }
 
 async function resolveLoginIdentity(identity: string): Promise<string> {
@@ -164,6 +146,7 @@ async function resolveLoginIdentity(identity: string): Promise<string> {
   try {
     const res = await fetch(`${getPbUrl()}/api/collections/users/records?perPage=1&filter=${encodeURIComponent(filter)}`, {
       headers: { Authorization: adminToken },
+      signal: createPbRequestSignal(),
     });
     if (!res.ok) return raw;
     const json = (await res.json()) as { items?: PbUser[] };
@@ -180,6 +163,7 @@ async function pbLogin(identity: string, password: string): Promise<{ token: str
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ identity: loginIdentity, password }),
+      signal: createPbRequestSignal(),
     });
     if (!res.ok) return null;
     return (await res.json()) as { token: string; record: PbUser };
@@ -189,11 +173,13 @@ async function pbLogin(identity: string, password: string): Promise<{ token: str
 }
 
 function localLogin(email: string, password: string): LocalLoginResult | null {
-  if (!isLocalDevFallbackEnabled()) return null;
+  if (!localFallbacksEnabled()) return null;
   const normalizedEmail = String(email).trim().toLowerCase();
   const account = readLocalAccounts().find(item => item.email === normalizedEmail);
-  if (account) {
+  if (account?.accountType === 'customer') {
     if (!localPasswordMatches(account, password)) return null;
+    if (!getLocalTenant(account.tenantId)) return null;
+    clearLocalTenantRegisteredCredential(account.tenantId, account.email);
     const record: PbUser = {
       id: account.userId,
       email: account.email,
@@ -201,87 +187,113 @@ function localLogin(email: string, password: string): LocalLoginResult | null {
       tenantId: account.tenantId,
       role: normalizedRole(account.role),
     };
-    return { token: createLocalToken(record, 'customer'), record, accountType: 'customer' };
+    return { token: issueVerifiedLocalIdentityToken({ userId: record.id, tenantId: record.tenantId! }), record, accountType: 'customer' };
   }
 
   const configuredAdminEmail = String(process.env.LOCAL_ADMIN_EMAIL ?? '').trim().toLowerCase();
   const configuredAdminPassword = process.env.LOCAL_ADMIN_PASSWORD;
-  if (
+  const explicitAdmin = Boolean(
     configuredAdminEmail &&
     configuredAdminPassword &&
     normalizedEmail === configuredAdminEmail &&
     password === configuredAdminPassword
-  ) {
-    const record: PbUser = {
-      id: `local_user_admin_${localId(normalizedEmail)}`,
-      email: normalizedEmail,
-      name: normalizedEmail.split('@')[0],
-      tenantId: `local_tenant_admin_${localId(normalizedEmail)}`,
-    };
-    return { token: createLocalToken(record, 'admin'), record, accountType: 'admin', expiresAt: null };
-  }
-
-  const registryEntry = readDemoAccountRegistry()[normalizedEmail];
-  if (registryEntry?.password && registryEntry.password === password && registryEntry.status !== 'expired') {
-    const accountType = registryEntry.status === 'admin'
-      ? 'admin'
-      : registryEntry.status === 'customer'
-        ? 'customer'
-        : 'trial';
-    const tenantId = registryEntry.tenantId || `local_tenant_${accountType}_${localId(normalizedEmail)}`;
-    const record: PbUser = {
-      id: registryEntry.userId || `local_user_${accountType}_${localId(normalizedEmail)}`,
-      email: normalizedEmail,
-      name: normalizedEmail.split('@')[0],
-      tenantId,
-    };
-    if (accountType === 'admin' || accountType === 'customer') {
-      return { token: createLocalToken(record, accountType), record, accountType, expiresAt: null };
-    }
-    const expiresAt = registryEntry.expiresAt || trialExpiresAt();
-    upsertDemoAccountRegistry(normalizedEmail, {
-      userId: record.id,
-      tenantId,
-      activatedAt: registryEntry.activatedAt || new Date().toISOString(),
-      expiresAt,
-      status: 'trialing',
-    });
-    return { token: createLocalToken(record, accountType), record, accountType, expiresAt };
-  }
+  );
 
   const allowedEmails = String(process.env.LOCAL_AUTH_EMAILS ?? '')
     .split(/[\s,;]+/)
     .map(value => value.trim().toLowerCase())
     .filter(Boolean);
   const configuredPassword = process.env.LOCAL_AUTH_PASSWORD;
-  if (!configuredPassword || !allowedEmails.includes(normalizedEmail) || password !== configuredPassword) return null;
-  const accountType = isAdminEmail(normalizedEmail) ? 'admin' : 'trial';
+  const sharedCredential = Boolean(configuredPassword && allowedEmails.includes(normalizedEmail) && password === configuredPassword);
+  if (!explicitAdmin && !sharedCredential) return null;
+  const accountType = explicitAdmin || isAdminEmail(normalizedEmail) ? 'admin' : 'trial';
+  const role: OrganizationRole = accountType === 'admin' ? 'super_admin' : 'customer_service';
   const record: PbUser = {
     id: `local_user_${accountType}_${localId(normalizedEmail)}`,
     email: normalizedEmail,
     name: normalizedEmail.split('@')[0],
     tenantId: `local_tenant_${accountType}_${localId(normalizedEmail)}`,
+    role,
   };
-  if (accountType === 'admin') {
-    return { token: createLocalToken(record, accountType), record, accountType, expiresAt: null };
-  }
-  const expiresAt = trialExpiresAt();
-  upsertDemoAccountRegistry(normalizedEmail, {
-    password: configuredPassword,
-    userId: record.id,
-    tenantId: record.tenantId,
-    activatedAt: new Date().toISOString(),
+  const expiresAt = accountType === 'trial' ? trialExpiresAt() : null;
+  ensureLocalIdentityTenant({
+    tenantId: record.tenantId!,
+    name: record.name!,
+    accountType,
+    email: normalizedEmail,
     expiresAt,
-    status: 'trialing',
   });
-  return { token: createLocalToken(record, accountType), record, accountType, expiresAt };
+  const accounts = readLocalAccounts();
+  const existingIndex = accounts.findIndex(item => item.userId === record.id && item.tenantId === record.tenantId);
+  const salt = randomBytes(16).toString('hex');
+  const stored: LocalAccount = {
+    userId: record.id,
+    tenantId: record.tenantId!,
+    email: normalizedEmail,
+    name: record.name!,
+    accountType,
+    role,
+    salt,
+    passwordHash: passwordHash(password, salt).toString('hex'),
+    createdAt: existingIndex >= 0 ? accounts[existingIndex].createdAt : new Date().toISOString(),
+  };
+  if (existingIndex >= 0) accounts[existingIndex] = stored;
+  else accounts.push(stored);
+  writeLocalAccounts(accounts);
+  if (accountType === 'trial') {
+    upsertDemoAccountRegistry(normalizedEmail, {
+      userId: record.id,
+      tenantId: record.tenantId,
+      activatedAt: new Date().toISOString(),
+      expiresAt,
+      status: 'trialing',
+      credentialState: 'external_secret',
+    });
+  }
+  return { token: issueVerifiedLocalIdentityToken({ userId: record.id, tenantId: record.tenantId! }), record, accountType, expiresAt };
+}
+
+function localPreviewIdentity(): LocalAccount {
+  const email = String(process.env.LINGSHU_PREVIEW_AUTH_EMAIL || '').trim().toLowerCase();
+  if (!/^[a-z0-9._%+-]+@local\.test$/.test(email)) {
+    throw new Error('local_preview_identity_not_configured');
+  }
+  const accounts = readLocalAccounts();
+  const existing = accounts.find(account => account.email === email);
+  if (existing) {
+    if (!getLocalTenant(existing.tenantId)) throw new Error('local_preview_tenant_missing');
+    return existing;
+  }
+
+  const suffix = localId(email);
+  const tenantId = `local_tenant_preview_${suffix}`;
+  const userId = `local_user_preview_${suffix}`;
+  const name = '灵枢本地预览';
+  ensureLocalIdentityTenant({ tenantId, name, accountType: 'customer', email });
+  const salt = randomBytes(16).toString('hex');
+  const account: LocalAccount = {
+    userId,
+    tenantId,
+    email,
+    name,
+    accountType: 'customer',
+    role: 'admin',
+    salt,
+    // No usable preview password is generated or exposed. This opaque random
+    // verifier only satisfies the fail-closed local account record schema.
+    passwordHash: passwordHash(randomBytes(48).toString('base64url'), salt).toString('hex'),
+    createdAt: new Date().toISOString(),
+  };
+  accounts.push(account);
+  writeLocalAccounts(accounts);
+  return account;
 }
 
 function localRegister(email: string, password: string, tenant: LocalTenantRecord):
   | { ok: true; token: string; record: PbUser }
   | { ok: false; error: string }
   | null {
-  if (!isLocalDevFallbackEnabled()) return null;
+  if (!localFallbacksEnabled()) return null;
   const normalizedEmail = String(email).trim().toLowerCase();
   const accounts = readLocalAccounts();
   if (accounts.some(item => item.email === normalizedEmail)) {
@@ -292,6 +304,9 @@ function localRegister(email: string, password: string, tenant: LocalTenantRecor
     email: normalizedEmail,
     name: tenant.companyName || tenant.name || normalizedEmail.split('@')[0],
     tenantId: tenant.id,
+    // This is the first account created from a one-use tenant invite, so it is
+    // the tenant Owner. All other missing/invalid roles normalize downward.
+    role: 'super_admin',
   };
   const salt = randomBytes(16).toString('hex');
   accounts.push({
@@ -306,58 +321,19 @@ function localRegister(email: string, password: string, tenant: LocalTenantRecor
     createdAt: new Date().toISOString(),
   });
   writeLocalAccounts(accounts);
-  return { ok: true, token: createLocalToken(record, 'customer'), record };
+  return { ok: true, token: issueVerifiedLocalIdentityToken({ userId: record.id, tenantId: record.tenantId! }), record };
+}
+
+function deleteLocalRegisteredAccount(userId: string): boolean {
+  const accounts = readLocalAccounts();
+  const next = accounts.filter(account => account.userId !== userId);
+  if (next.length === accounts.length) return true;
+  writeLocalAccounts(next);
+  return true;
 }
 
 function publicUser(r: PbUser) {
   return { id: r.id, email: r.email ?? '', name: r.name ?? '', tenantId: r.tenantId ?? '', role: normalizedRole(r.role) };
-}
-
-export async function requestOrganizationRole(authorization: string | undefined, userId: string): Promise<OrganizationRole> {
-  const local = parseLocalToken(authorization);
-  if (local) return normalizedRole(local.role);
-  const user = await pbGet('users', userId) as PbUser | null;
-  return normalizedRole(user?.role);
-}
-
-/** Least-privilege role lookup for security-sensitive enterprise governance writes. */
-export async function requestOrganizationRoleStrict(authorization: string | undefined, userId: string): Promise<OrganizationRole | null> {
-  const local = parseLocalToken(authorization);
-  if (local) return ORGANIZATION_ROLES.has(local.role as OrganizationRole) ? local.role as OrganizationRole : null;
-  const user = await pbGet('users', userId) as PbUser | null;
-  return ORGANIZATION_ROLES.has(user?.role as OrganizationRole) ? user!.role as OrganizationRole : null;
-}
-
-function pbFilterValue(value: string): string {
-  return `"${value.replace(/\\/g, '\\\\').replace(/"/g, '\\"')}"`;
-}
-
-async function tenantByInviteCode(code: string): Promise<Record<string, unknown> | null> {
-  const invite = String(code || '').trim();
-  if (!invite) return null;
-  try {
-    const result = await pbListStrict<Record<string, unknown>>('tenants', {
-      perPage: 1,
-      filter: `inviteCode = ${pbFilterValue(invite)}`,
-    });
-    return result.items[0] ?? null;
-  } catch {
-    return null;
-  }
-}
-
-async function tenantByUsedInviteCode(code: string): Promise<Record<string, unknown> | null> {
-  const invite = String(code || '').trim();
-  if (!invite) return null;
-  try {
-    const result = await pbListStrict<Record<string, unknown>>('tenants', {
-      perPage: 1,
-      filter: `registrationInviteCode = ${pbFilterValue(invite)}`,
-    });
-    return result.items[0] ?? null;
-  } catch {
-    return null;
-  }
 }
 
 function publicTenant(t: Record<string, unknown> | null) {
@@ -379,17 +355,37 @@ authRouter.get('/invite/:code', async (req, res) => {
     res.status(400).json({ error: 'invite_code_required' });
     return;
   }
-  const invitedTenant = await tenantByInviteCode(code);
-  const localInvitedTenant = invitedTenant ? null : findLocalTenantByInvite(code);
-  const tenant = invitedTenant || localInvitedTenant;
-  if (tenant) {
+  let invitedTenant: Record<string, unknown> | LocalTenantRecord | null;
+  let authority: 'pocketbase' | 'local';
+  try {
+    invitedTenant = await pocketBaseTenantByInvite(code);
+    authority = 'pocketbase';
+    bindDataAuthority(authority);
+  } catch {
+    if (!localFallbacksEnabled()) {
+      res.status(503).json({ valid: false, error: 'invite_lookup_unavailable' });
+      return;
+    }
+    authority = 'local';
+    bindDataAuthority(authority);
+    invitedTenant = findLocalTenantByInvite(code);
+  }
+  if (invitedTenant) {
     res.json({
       valid: true,
-      companyName: String(tenant.companyName || tenant.name || ''),
+      companyName: String(invitedTenant.companyName || invitedTenant.name || ''),
     });
     return;
   }
-  const usedTenant = await tenantByUsedInviteCode(code) || findLocalTenantByRegistrationInvite(code);
+  let usedTenant: Record<string, unknown> | LocalTenantRecord | null;
+  try {
+    usedTenant = authority === 'local'
+      ? findLocalTenantByRegistrationInvite(code)
+      : await pocketBaseTenantByInvite(code, true);
+  } catch {
+    res.status(503).json({ valid: false, error: 'invite_lookup_unavailable' });
+    return;
+  }
   if (!usedTenant) {
     res.status(404).json({ valid: false, error: '邀请码无效或已使用' });
     return;
@@ -409,22 +405,48 @@ authRouter.post('/register', async (req, res) => {
   const code = String(inviteCode || '').trim();
   if (!code) { res.status(400).json({ error: '请输入管理员提供的邀请码' }); return; }
 
-  const invitedTenant = await tenantByInviteCode(code);
-  const localInvitedTenant = invitedTenant ? null : findLocalTenantByInvite(code);
-  if (!invitedTenant && !localInvitedTenant) {
+  let invitedTenant: Record<string, unknown> | LocalTenantRecord | null;
+  let authority: 'pocketbase' | 'local';
+  try {
+    invitedTenant = await pocketBaseTenantByInvite(code);
+    authority = 'pocketbase';
+    bindDataAuthority(authority);
+  } catch {
+    if (!localFallbacksEnabled()) {
+      res.status(503).json({ error: 'invite_lookup_unavailable' });
+      return;
+    }
+    authority = 'local';
+    bindDataAuthority(authority);
+    invitedTenant = findLocalTenantByInvite(code);
+  }
+  if (!invitedTenant) {
     res.status(403).json({ error: '邀请码无效或已使用，请联系管理员重新生成' });
     return;
   }
 
-  if (localInvitedTenant) {
-    const fallback = localRegister(String(email), String(password), localInvitedTenant);
+  if (authority === 'local') {
+    let fallback: ReturnType<typeof localRegister>;
+    try {
+      fallback = localRegister(String(email), String(password), invitedTenant as LocalTenantRecord);
+    } catch (error) {
+      if (isLocalAccountStoreError(error)) { localStoreUnavailable(res); return; }
+      throw error;
+    }
     if (fallback?.ok) {
-      const tenant = activateLocalTenantInvite({
-        inviteCode: code,
-        email: String(email),
-        password: String(password),
-      });
+      let tenant: LocalTenantRecord | null = null;
+      try {
+        tenant = activateLocalTenantInvite({
+          inviteCode: code,
+          email: String(email),
+        });
+      } catch {
+        try { deleteLocalRegisteredAccount(String(fallback.record.id)); } catch { /* report uncertain rollback below */ }
+        res.status(503).json({ error: 'local_invite_activation_unavailable' });
+        return;
+      }
       if (!tenant) {
+        try { deleteLocalRegisteredAccount(String(fallback.record.id)); } catch { /* fail closed below */ }
         res.status(409).json({ error: '邀请码已被使用，请联系管理员重新生成' });
         return;
       }
@@ -442,46 +464,27 @@ authRouter.post('/register', async (req, res) => {
     res.status(500).json({ error: '创建账号失败' }); return;
   }
 
-  const invitedCompanyName = String(invitedTenant!.companyName || invitedTenant!.name || '').trim();
-  let user: Record<string, unknown> | null = null;
   try {
-    user = await pbCreate('users', {
-      email, password, passwordConfirm: password,
-      name: invitedCompanyName, tenantId: invitedTenant!.id, role: 'super_admin', emailVisibility: true,
+    const registration = await registerPocketBaseInviteOwner({
+      invitedTenant: invitedTenant as Record<string, unknown> & { id: string },
+      inviteCode: code,
+      email: String(email),
+      password: String(password),
+      readInvitedTenant: async () => {
+        const current = await pocketBaseTenantByInvite(code);
+        return current?.id ? current as Record<string, unknown> & { id: string } : null;
+      },
+      loginOwner: () => pbLogin(String(email), String(password)),
     });
-  } catch {
-    user = null;
+    res.json({
+      token: registration.login.token,
+      user: publicUser(registration.login.record),
+      tenant: publicTenant(registration.tenant),
+    });
+  } catch (error) {
+    const failure = publicInviteRegistrationError(error);
+    res.status(failure.status).json(failure.body);
   }
-  if (!user) {
-    res.status(400).json({ error: '创建用户失败（邮箱可能已被注册）' }); return;
-  }
-
-  const login = await pbLogin(email, password);
-  if (!login) { res.status(500).json({ error: '注册后自动登录失败' }); return; }
-  await pbPatch('tenants', String(invitedTenant!.id), {
-    name: invitedCompanyName || String(email).split('@')[0],
-    companyName: invitedCompanyName,
-    inviteCode: '',
-    registrationInviteCode: code,
-    registeredEmail: String(email).trim().toLowerCase(),
-    registeredPasswordCipher: encryptRegistrationPassword(String(password)),
-    registeredAt: new Date().toISOString(),
-    subscriptionStatus: 'active',
-    subscriptionPlan: 'customer',
-    subscriptionExpiresAt: null,
-  });
-  const tenant = await pbGet('tenants', String(invitedTenant!.id)) || {
-    ...invitedTenant,
-    inviteCode: '',
-    subscriptionStatus: 'active',
-    subscriptionPlan: 'customer',
-    subscriptionExpiresAt: null,
-  };
-  res.json({
-    token: login.token,
-    user: publicUser(login.record),
-    tenant: publicTenant(tenant),
-  });
 });
 
 // POST /auth/login  { email, password }
@@ -490,8 +493,15 @@ authRouter.post('/login', async (req, res) => {
   if (!email || !password) { res.status(400).json({ error: '邮箱和密码必填' }); return; }
   const login = await pbLogin(email, password);
   if (!login) {
-    const fallback = localLogin(email, password);
+    let fallback: LocalLoginResult | null;
+    try {
+      fallback = localLogin(email, password);
+    } catch (error) {
+      if (isLocalAccountStoreError(error)) { localStoreUnavailable(res); return; }
+      throw error;
+    }
     if (!fallback) { res.status(401).json({ error: '邮箱或密码错误' }); return; }
+    bindDataAuthority('local');
     const subscription = await getTenantSubscription(String(fallback.record.tenantId || ''));
     const fallbackEmail = String(fallback.record.email ?? email).trim().toLowerCase();
     const fallbackGuide = accountGuideState(
@@ -521,29 +531,10 @@ authRouter.post('/login', async (req, res) => {
     });
     return;
   }
+  bindDataAuthority('pocketbase');
   let tenant = login.record.tenantId ? await pbGet('tenants', login.record.tenantId) : null;
   let subscription = login.record.tenantId ? await getTenantSubscription(login.record.tenantId) : null;
   const loginEmail = String(login.record.email ?? email).trim().toLowerCase();
-  if (
-    tenant
-    && String(tenant.subscriptionPlan || '').toLowerCase() === 'customer'
-    && String(tenant.registeredEmail || '').trim().toLowerCase() === loginEmail
-  ) {
-    void (async () => {
-      try {
-        const synced = await pbPatch('tenants', String(login.record.tenantId), {
-          registeredPasswordCipher: encryptRegistrationPassword(String(password)),
-        });
-        if (!synced) console.warn(`[auth] failed to sync verified customer credential for tenant ${login.record.tenantId}`);
-        const registryEntry = Object.values(readDemoAccountRegistry()).find(entry => (
-          entry.userId === login.record.id || entry.email === loginEmail
-        ));
-        if (registryEntry) upsertDemoAccountRegistry(registryEntry.email, { password: String(password) });
-      } catch (error) {
-        console.warn('[auth] verified customer credential sync failed:', error instanceof Error ? error.message : error);
-      }
-    })();
-  }
   if (isTrialAccount(subscription) && login.record.tenantId && !subscription?.expiresAt) {
     const activated = await activateTrialAccount(login.record.email ?? email, login.record.id, login.record.tenantId);
     tenant = await pbGet('tenants', login.record.tenantId);
@@ -584,96 +575,160 @@ authRouter.post('/login', async (req, res) => {
   });
 });
 
+// The supervised loopback preview must not depend on a developer knowing a
+// local account password. Production, ordinary dev servers, and non-loopback
+// browser origins cannot reach this token issuer.
+authRouter.post('/local-preview-session', (req, res) => {
+  res.setHeader('Cache-Control', 'no-store');
+  if (
+    process.env.NODE_ENV === 'production'
+    || process.env.LINGSHU_LOCAL_PREVIEW !== '1'
+    || !localFallbacksEnabled()
+  ) {
+    res.status(404).json({ error: 'not_found' });
+    return;
+  }
+  const requestRejection = localPreviewRequestRejection(req.headers.origin, req.socket.remoteAddress);
+  if (requestRejection) {
+    res.status(403).json({ error: requestRejection });
+    return;
+  }
+  try {
+    const account = localPreviewIdentity();
+    bindDataAuthority('local');
+    res.json({ token: issueVerifiedLocalIdentityToken(account) });
+  } catch (error) {
+    if (isLocalAccountStoreError(error)) { localStoreUnavailable(res); return; }
+    console.error('[auth/local-preview-session] local preview identity unavailable', {
+      errorType: error instanceof Error ? error.message : 'UnknownError',
+    });
+    res.status(503).json({ error: 'local_preview_auth_unavailable' });
+  }
+});
+
+authRouter.post('/logout', (_req, res) => {
+  clearAssetSessionCookie(res);
+  res.json({ ok: true });
+});
+
+// All routes below are authenticated; starter_198 permits only the explicit
+// auth paths in its boundary registry, so a future endpoint is denied by default.
+authRouter.use(requireAuth);
+
 // GET /auth/me  (Authorization: Bearer <token>)
 authRouter.get('/me', async (req, res) => {
-  const local = parseLocalToken(req.headers.authorization);
-  if (local) {
-    const name = local.name || local.email?.split('@')[0] || '本地账号';
-    const subscription = await getTenantSubscription(local.tenantId);
-    if (subscription.expiresAt && isExpired(subscription.expiresAt)) {
-      res.status(402).json({ error: '试用账号已到期，请联系管理员获取其他备用账号。' });
+  const id = res.locals as AuthLocals;
+  try {
+    if (isBrowserReadToken(req.headers.authorization)) {
+      const tenant = id.dataAuthority === 'local'
+        ? getLocalTenant(id.tenantId)
+        : await pbGetStrict('tenants', id.tenantId);
+      res.setHeader('Cache-Control', 'no-store');
+      res.json({ user: { id: id.userId, email: '', name: 'Agent 生产会话', tenantId: id.tenantId, role: id.browserReadRole }, tenant: publicTenant(tenant as Record<string, unknown> | null), productProfile: 'advanced_customer' });
       return;
     }
-    const localGuide = accountGuideState(
-      local.email || '',
-      subscription.expiresAt ? `${local.userId}:${subscription.expiresAt}` : local.userId,
+    const local = (id.dataAuthority ?? currentDataAuthority()) === 'local'
+      ? parseLocalToken(req.headers.authorization)
+      : null;
+    if (local) {
+      const name = local.name || local.email?.split('@')[0] || '本地账号';
+      const subscription = await getTenantSubscription(id.tenantId);
+      if (subscription.expiresAt && isExpired(subscription.expiresAt)) {
+        res.status(402).json({ error: '试用账号已到期，请联系管理员获取其他备用账号。' });
+        return;
+      }
+      const localGuide = accountGuideState(
+        local.email || '',
+        subscription.expiresAt ? `${id.userId}:${subscription.expiresAt}` : id.userId,
+      );
+      const demoStatus = subscription.status === 'trialing' || subscription.plan === 'trial' || localGuide.pending
+        ? await buildDemoStatus(req, id.tenantId, subscription.expiresAt, id.userId)
+        : undefined;
+      const demo = demoStatus ? {
+        ...demoStatus,
+        guideTrigger: localGuide.pending,
+        guideScope: localGuide.scope,
+      } : undefined;
+      const storedTenant = getLocalTenant(id.tenantId);
+      const admin = await adminUserForHttp(req, res);
+      if (admin === undefined) return;
+      const productProfile = await resolveServerProductProfile(id.tenantId);
+      res.json({
+        user: { id: id.userId, email: local.email || '', name, tenantId: id.tenantId, role: normalizedRole(local.role) },
+        tenant: publicTenant({
+          id: id.tenantId,
+          name: storedTenant?.name || name,
+          subscriptionStatus: subscription.status,
+          subscriptionPlan: subscription.plan,
+          subscriptionExpiresAt: subscription.expiresAt,
+        }),
+        subscription,
+        demo,
+        platformAdmin: Boolean(admin),
+        productProfile,
+      });
+      return;
+    }
+    const [user, tenant] = await Promise.all([
+      pbGetStrict('users', id.userId),
+      pbGetStrict('tenants', id.tenantId),
+    ]);
+    const subscription = await getTenantSubscription(id.tenantId);
+    if (id.supportAccess) {
+      res.setHeader('Cache-Control', 'no-store');
+      res.json({
+        user: user
+          ? { ...publicUser(user as unknown as PbUser), tenantId: id.tenantId }
+          : { id: id.userId, email: id.supportAccess.adminEmail, name: '灵枢技术支持', tenantId: id.tenantId, role: 'super_admin' },
+        tenant: publicTenant(tenant || {
+          id: id.tenantId,
+          name: id.supportAccess.tenantName,
+          subscriptionStatus: subscription.status,
+          subscriptionPlan: subscription.plan,
+          subscriptionExpiresAt: subscription.expiresAt,
+        }),
+        subscription,
+        supportAccess: id.supportAccess,
+        productProfile: 'advanced_customer',
+      });
+      return;
+    }
+    if (subscription.expiresAt && isExpired(subscription.expiresAt)) {
+      await rotateExpiredTrialPassword(user as unknown as PbUser | null, 'session_trial_expired');
+      res.status(402).json({ error: '试用账号已到期，请重新登录或联系服务顾问开通。' });
+      return;
+    }
+    const demo = await buildDemoStatus(req, id.tenantId, subscription.expiresAt, id.userId);
+    const userEmail = String(user?.email ?? '').trim().toLowerCase();
+    const guide = accountGuideState(
+      userEmail,
+      subscription.expiresAt ? `${id.userId}:${subscription.expiresAt}` : id.userId,
     );
-    const demoStatus = subscription.status === 'trialing' || subscription.plan === 'trial' || localGuide.pending
-      ? await buildDemoStatus(req, local.tenantId, subscription.expiresAt, local.userId)
-      : undefined;
-    const demo = demoStatus ? {
-      ...demoStatus,
-      guideTrigger: localGuide.pending,
-      guideScope: localGuide.scope,
-    } : undefined;
-    const storedTenant = getLocalTenant(local.tenantId);
+    const admin = await adminUserForHttp(req, res);
+    if (admin === undefined) return;
+    const productProfile = await resolveServerProductProfile(id.tenantId);
     res.json({
-      user: { id: local.userId, email: local.email || '', name, tenantId: local.tenantId, role: normalizedRole(local.role) },
-      tenant: publicTenant({
-        id: local.tenantId,
-        name: storedTenant?.name || name,
-        subscriptionStatus: subscription.status,
-        subscriptionPlan: subscription.plan,
-        subscriptionExpiresAt: subscription.expiresAt,
-      }),
+      user: user ? publicUser(user as unknown as PbUser) : { id: id.userId, email: '', name: '', tenantId: id.tenantId },
+      tenant: publicTenant(tenant),
       subscription,
-      demo,
+      platformAdmin: Boolean(admin),
+      productProfile,
+      demo: {
+        ...demo,
+        guideTrigger: guide.pending,
+        guideScope: guide.scope,
+      },
     });
-    return;
-  }
-  const id = await auth.verifyToken(req.headers.authorization);
-  if (!id) { res.status(401).json({ error: 'Unauthorized' }); return; }
-  const [user, remoteTenant] = await Promise.all([
-    pbGet('users', id.userId).catch(() => null),
-    pbGet('tenants', id.tenantId).catch(() => null),
-  ]);
-  const localTenant = getLocalTenant(id.tenantId);
-  const tenant = remoteTenant || (localTenant as unknown as Record<string, unknown> | null);
-  const subscription = await getTenantSubscription(id.tenantId);
-  if (id.supportAccess) {
+  } catch (error) {
+    console.error('[auth/me] authority unavailable', { errorType: error instanceof Error ? error.name : 'UnknownError' });
     res.setHeader('Cache-Control', 'no-store');
-    res.json({
-      user: user
-        ? { ...publicUser(user as unknown as PbUser), tenantId: id.tenantId }
-        : { id: id.userId, email: id.supportAccess.adminEmail, name: '灵枢技术支持', tenantId: id.tenantId, role: 'super_admin' },
-      tenant: publicTenant(tenant || {
-        id: id.tenantId,
-        name: id.supportAccess.tenantName,
-        subscriptionStatus: subscription.status,
-        subscriptionPlan: subscription.plan,
-        subscriptionExpiresAt: subscription.expiresAt,
-      }),
-      subscription,
-      supportAccess: id.supportAccess,
-    });
-    return;
+    res.status(503).json({ error: 'auth_provider_unavailable', message: '账号数据暂时不可用，请稍后重试。' });
   }
-  if (subscription?.expiresAt && isExpired(subscription.expiresAt)) {
-    await rotateExpiredTrialPassword(user as unknown as PbUser | null, 'session_trial_expired');
-    res.status(402).json({ error: '试用账号已到期，请重新登录或联系服务顾问开通。' });
-    return;
-  }
-  const demo = await buildDemoStatus(req, id.tenantId, subscription.expiresAt, id.userId);
-  const userEmail = String(user?.email ?? '').trim().toLowerCase();
-  const guide = accountGuideState(
-    userEmail,
-    subscription.expiresAt ? `${id.userId}:${subscription.expiresAt}` : id.userId,
-  );
-  res.json({
-    user: user ? publicUser(user as unknown as PbUser) : { id: id.userId, email: '', name: '', tenantId: id.tenantId },
-    tenant: publicTenant(tenant),
-    subscription,
-    demo: {
-      ...demo,
-      guideTrigger: guide.pending,
-      guideScope: guide.scope,
-    },
-  });
 });
 
 authRouter.post('/change-password', async (req, res) => {
-  const identity = await auth.verifyToken(req.headers.authorization);
-  if (!identity || identity.supportAccess) { res.status(401).json({ error: '登录已失效，请重新登录' }); return; }
+  const identity = res.locals as AuthLocals;
+  if (identity.supportAccess) { res.status(401).json({ error: '登录已失效，请重新登录' }); return; }
   const { currentPassword, newPassword, passwordConfirm } = req.body ?? {};
   if (!currentPassword || !newPassword || !passwordConfirm) { res.status(400).json({ error: '请完整填写当前密码和新密码' }); return; }
   if (String(newPassword).length < 8) { res.status(400).json({ error: '新密码至少需要 8 位' }); return; }
@@ -682,17 +737,24 @@ authRouter.post('/change-password', async (req, res) => {
 
   const local = parseLocalToken(req.headers.authorization);
   if (local) {
-    const accounts = readLocalAccounts();
-    const index = accounts.findIndex(account => account.userId === local.userId && account.tenantId === local.tenantId);
-    if (index < 0 || !localPasswordMatches(accounts[index], String(currentPassword))) { res.status(400).json({ error: '当前密码不正确' }); return; }
-    const salt = randomBytes(16).toString('hex');
-    accounts[index] = { ...accounts[index], salt, passwordHash: passwordHash(String(newPassword), salt).toString('hex') };
-    writeLocalAccounts(accounts);
-    updateLocalTenantRegisteredPassword(local.tenantId, accounts[index].email, String(newPassword));
-    const registryEntry = Object.values(readDemoAccountRegistry()).find(entry => (
-      entry.userId === local.userId || entry.email === accounts[index].email
-    ));
-    if (registryEntry) upsertDemoAccountRegistry(registryEntry.email, { password: String(newPassword) });
+    let account: LocalAccount;
+    try {
+      const accounts = readLocalAccounts();
+      const index = accounts.findIndex(item => item.userId === local.userId && item.tenantId === local.tenantId);
+      if (index < 0 || !localPasswordMatches(accounts[index], String(currentPassword))) { res.status(400).json({ error: '当前密码不正确' }); return; }
+      const salt = randomBytes(16).toString('hex');
+      accounts[index] = { ...accounts[index], salt, passwordHash: passwordHash(String(newPassword), salt).toString('hex') };
+      writeLocalAccounts(accounts);
+      account = accounts[index];
+    } catch (error) {
+      if (isLocalAccountStoreError(error)) { localStoreUnavailable(res); return; }
+      throw error;
+    }
+    syncPasswordChangeCredentialStateBestEffort(account.email, {
+      branch: 'local',
+      tenantId: local.tenantId,
+      userId: local.userId,
+    });
     res.json({ ok: true });
     return;
   }
@@ -703,57 +765,70 @@ authRouter.post('/change-password', async (req, res) => {
   if (!verified || verified.record.id !== identity.userId) { res.status(400).json({ error: '当前密码不正确' }); return; }
   const updated = await pbPatch('users', identity.userId, { password: String(newPassword), passwordConfirm: String(passwordConfirm) });
   if (!updated) { res.status(500).json({ error: '密码更新失败，请稍后重试' }); return; }
-  const tenant = await pbGet('tenants', identity.tenantId);
-  if (
-    tenant
-    && String(tenant.registeredEmail || '').trim().toLowerCase() === user.email.trim().toLowerCase()
-  ) {
-    const synced = await pbPatch('tenants', identity.tenantId, {
-      registeredPasswordCipher: encryptRegistrationPassword(String(newPassword)),
-    });
-    if (!synced) {
-      res.status(500).json({ error: '登录密码已更新，但账号总控同步失败，请联系管理员' });
-      return;
-    }
-  }
-  const registryEntry = Object.values(readDemoAccountRegistry()).find(entry => (
-    entry.userId === identity.userId || entry.email === user.email!.trim().toLowerCase()
-  ));
-  if (registryEntry) upsertDemoAccountRegistry(registryEntry.email, { password: String(newPassword) });
+  invalidatePbIdentityCache();
+  syncPasswordChangeCredentialStateBestEffort(user.email, {
+    branch: 'provider',
+    tenantId: identity.tenantId,
+    userId: identity.userId,
+  });
   res.json({ ok: true });
 });
 
-authRouter.get('/employees', async (req, res) => {
-  const identity = await auth.verifyToken(req.headers.authorization);
-  if (!identity || identity.supportAccess) { res.status(401).json({ error: '登录已失效，请重新登录' }); return; }
-  const local = parseLocalToken(req.headers.authorization);
+export async function listTenantEmployees(identity: AuthLocals, authorization: string | undefined) {
+  if (identity.supportAccess) throw new Error('登录已失效，请重新登录');
+  const local = identity.dataAuthority === 'local' || currentDataAuthority() === 'local'
+    ? parseLocalToken(authorization)
+    : null;
   if (local) {
     const employees = readLocalAccounts().filter(account => account.tenantId === identity.tenantId).map(account => ({ id: account.userId, email: account.email, name: account.name, role: normalizedRole(account.role), isCurrent: account.userId === identity.userId, created: account.createdAt }));
     if (!employees.some(employee => employee.id === identity.userId)) employees.unshift({ id: identity.userId, email: local.email || '', name: local.name || local.email?.split('@')[0] || '企业管理员', role: normalizedRole(local.role), isCurrent: true, created: '' });
-    res.json({ employees }); return;
+    return employees;
   }
-  const result = await pbList<PbUser & Record<string, unknown>>('users', { filter: `tenantId = "${identity.tenantId.replace(/\\/g, '\\\\').replace(/"/g, '\\"')}"`, sort: 'created', perPage: 100 });
-  res.json({ employees: result.items.map(item => ({ id: item.id, email: item.email ?? '', name: item.name ?? '', role: normalizedRole(item.role), isCurrent: item.id === identity.userId, created: String(item.created ?? '') })) });
+  const result = await pbList<PbUser & Record<string, unknown>>('users', { filter: 'tenantId = ' + JSON.stringify(identity.tenantId), sort: 'created', perPage: 100 });
+  return result.items.map(item => ({ id: item.id, email: item.email ?? '', name: item.name ?? '', role: normalizedRole(item.role), isCurrent: item.id === identity.userId, created: String(item.created ?? '') }));
+}
+
+authRouter.get('/employees', async (req, res) => {
+  try { res.json({ employees: await listTenantEmployees(res.locals as AuthLocals, req.headers.authorization) }); }
+  catch (error) {
+    if (isLocalAccountStoreError(error)) { localStoreUnavailable(res); return; }
+    res.status(401).json({ error: '登录已失效，请重新登录' });
+  }
 });
 
 authRouter.post('/employees', async (req, res) => {
-  const identity = await auth.verifyToken(req.headers.authorization);
-  if (!identity || identity.supportAccess) { res.status(401).json({ error: '登录已失效，请重新登录' }); return; }
-  if (await requestOrganizationRole(req.headers.authorization, identity.userId) !== 'super_admin') { res.status(403).json({ error: '只有超级管理员可以添加成员' }); return; }
+  const identity = res.locals as AuthLocals;
+  if (identity.supportAccess) { res.status(401).json({ error: '登录已失效，请重新登录' }); return; }
+  if (await requestOrganizationRoleStrict(req.headers.authorization, identity.userId) !== 'super_admin') { res.status(403).json({ error: '只有超级管理员可以添加成员' }); return; }
   const email = String(req.body?.email ?? '').trim().toLowerCase();
   const name = String(req.body?.name ?? '').trim();
   const password = String(req.body?.password ?? '');
-  const role = normalizedRole(req.body?.role);
+  const role = organizationRoleOrNull(req.body?.role);
+  if (!role) { res.status(400).json({ error: '无效的员工角色' }); return; }
   if (role === 'super_admin') { res.status(403).json({ error: '不能添加第二个超级管理员' }); return; }
   if (!email || !email.includes('@')) { res.status(400).json({ error: '请输入有效的员工邮箱' }); return; }
   if (password.length < 8) { res.status(400).json({ error: '初始密码至少需要 8 位' }); return; }
+  try {
+    await assertStarter198MemberCapacity({
+      tenantId: identity.tenantId,
+      countMembers: async () => (await listTenantEmployees(identity, req.headers.authorization)).length,
+    });
+  } catch (error) {
+    if (error instanceof Starter198MemberQuotaError) { res.status(error.status).json({ error: error.code }); return; }
+    throw error;
+  }
   if (parseLocalToken(req.headers.authorization)) {
-    const accounts = readLocalAccounts();
-    if (accounts.some(account => account.email === email)) { res.status(400).json({ error: '该邮箱已被使用' }); return; }
-    const salt = randomBytes(16).toString('hex');
-    const employee: LocalAccount = { userId: `local_user_${localId(email)}`, tenantId: identity.tenantId, email, name: name || email.split('@')[0], role, accountType: 'customer', salt, passwordHash: passwordHash(password, salt).toString('hex'), createdAt: new Date().toISOString() };
-    accounts.push(employee); writeLocalAccounts(accounts);
-    res.status(201).json({ employee: { id: employee.userId, email, name: employee.name, role, isCurrent: false, created: employee.createdAt } }); return;
+    try {
+      const accounts = readLocalAccounts();
+      if (accounts.some(account => account.email === email)) { res.status(400).json({ error: '该邮箱已被使用' }); return; }
+      const salt = randomBytes(16).toString('hex');
+      const employee: LocalAccount = { userId: `local_user_${localId(email)}`, tenantId: identity.tenantId, email, name: name || email.split('@')[0], role, accountType: 'customer', salt, passwordHash: passwordHash(password, salt).toString('hex'), createdAt: new Date().toISOString() };
+      accounts.push(employee); writeLocalAccounts(accounts);
+      res.status(201).json({ employee: { id: employee.userId, email, name: employee.name, role, isCurrent: false, created: employee.createdAt } }); return;
+    } catch (error) {
+      if (isLocalAccountStoreError(error)) { localStoreUnavailable(res); return; }
+      throw error;
+    }
   }
   const created = await pbCreate('users', { email, name, password, passwordConfirm: password, tenantId: identity.tenantId, role, emailVisibility: true });
   if (!created) { res.status(400).json({ error: '员工添加失败，邮箱可能已被使用' }); return; }
@@ -761,52 +836,60 @@ authRouter.post('/employees', async (req, res) => {
 });
 
 authRouter.patch('/employees/:employeeId/role', async (req, res) => {
-  const identity = await auth.verifyToken(req.headers.authorization);
-  if (!identity || identity.supportAccess) { res.status(401).json({ error: '登录已失效，请重新登录' }); return; }
-  if (await requestOrganizationRole(req.headers.authorization, identity.userId) !== 'super_admin') { res.status(403).json({ error: '只有超级管理员可以调整角色' }); return; }
+  const identity = res.locals as AuthLocals;
+  if (identity.supportAccess) { res.status(401).json({ error: '登录已失效，请重新登录' }); return; }
+  if (await requestOrganizationRoleStrict(req.headers.authorization, identity.userId) !== 'super_admin') { res.status(403).json({ error: '只有超级管理员可以调整角色' }); return; }
   if (req.params.employeeId === identity.userId) { res.status(400).json({ error: '不能修改当前超级管理员的角色' }); return; }
-  const role = normalizedRole(req.body?.role);
+  const role = organizationRoleOrNull(req.body?.role);
+  if (!role) { res.status(400).json({ error: '无效的员工角色' }); return; }
   if (role === 'super_admin') { res.status(403).json({ error: '不能分配超级管理员角色' }); return; }
   if (parseLocalToken(req.headers.authorization)) {
-    const accounts = readLocalAccounts();
-    const target = accounts.find(account => account.userId === req.params.employeeId && account.tenantId === identity.tenantId);
-    if (!target) { res.status(404).json({ error: '未找到该员工' }); return; }
-    target.role = role; writeLocalAccounts(accounts); res.json({ ok: true, role }); return;
+    try {
+      const accounts = readLocalAccounts();
+      const target = accounts.find(account => account.userId === req.params.employeeId && account.tenantId === identity.tenantId);
+      if (!target) { res.status(404).json({ error: '未找到该员工' }); return; }
+      target.role = role; writeLocalAccounts(accounts); res.json({ ok: true, role }); return;
+    } catch (error) {
+      if (isLocalAccountStoreError(error)) { localStoreUnavailable(res); return; }
+      throw error;
+    }
   }
   const employee = await pbGet('users', req.params.employeeId);
   if (!employee || employee.tenantId !== identity.tenantId) { res.status(404).json({ error: '未找到该员工' }); return; }
   if (!await pbPatch('users', req.params.employeeId, { role })) { res.status(500).json({ error: '角色更新失败' }); return; }
+  invalidatePbIdentityCache();
   res.json({ ok: true, role });
 });
 
 authRouter.delete('/employees/:employeeId', async (req, res) => {
-  const identity = await auth.verifyToken(req.headers.authorization);
-  if (!identity || identity.supportAccess) { res.status(401).json({ error: '登录已失效，请重新登录' }); return; }
-  if (await requestOrganizationRole(req.headers.authorization, identity.userId) !== 'super_admin') { res.status(403).json({ error: '只有超级管理员可以移除成员' }); return; }
+  const identity = res.locals as AuthLocals;
+  if (identity.supportAccess) { res.status(401).json({ error: '登录已失效，请重新登录' }); return; }
+  if (await requestOrganizationRoleStrict(req.headers.authorization, identity.userId) !== 'super_admin') { res.status(403).json({ error: '只有超级管理员可以移除成员' }); return; }
   if (req.params.employeeId === identity.userId) { res.status(400).json({ error: '不能删除当前登录账号' }); return; }
   if (parseLocalToken(req.headers.authorization)) {
-    const accounts = readLocalAccounts();
-    const target = accounts.find(account => account.userId === req.params.employeeId && account.tenantId === identity.tenantId);
-    if (!target) { res.status(404).json({ error: '未找到该员工' }); return; }
-    writeLocalAccounts(accounts.filter(account => account !== target)); res.json({ ok: true }); return;
+    try {
+      const accounts = readLocalAccounts();
+      const target = accounts.find(account => account.userId === req.params.employeeId && account.tenantId === identity.tenantId);
+      if (!target) { res.status(404).json({ error: '未找到该员工' }); return; }
+      writeLocalAccounts(accounts.filter(account => account !== target)); res.json({ ok: true }); return;
+    } catch (error) {
+      if (isLocalAccountStoreError(error)) { localStoreUnavailable(res); return; }
+      throw error;
+    }
   }
   const employee = await pbGet('users', req.params.employeeId);
   if (!employee || employee.tenantId !== identity.tenantId) { res.status(404).json({ error: '未找到该员工' }); return; }
   if (!await pbDelete('users', req.params.employeeId)) { res.status(500).json({ error: '删除员工失败' }); return; }
+  invalidatePbIdentityCache();
   res.json({ ok: true });
 });
 
 authRouter.post('/guide-seen', async (req, res) => {
-  const id = await auth.verifyToken(req.headers.authorization);
-  if (!id) { res.status(401).json({ error: 'Unauthorized' }); return; }
+  const id = res.locals as AuthLocals;
+  if (id.supportAccess) { res.status(403).json({ error: 'support_access_read_only' }); return; }
   const local = parseLocalToken(req.headers.authorization);
   const user = local ? null : await pbGet('users', id.userId);
   const email = String(local?.email ?? user?.email ?? '').trim().toLowerCase();
   if (email) consumeDemoGuide(email);
-  res.json({ ok: true });
-});
-
-authRouter.post('/logout', (_req, res) => {
-  clearAssetSessionCookie(res);
   res.json({ ok: true });
 });

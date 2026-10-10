@@ -5,8 +5,36 @@ import { getFacebookComments, getFacebookVideos, getInstagramComments, getInstag
 import { getMyVideoComments, replyToYouTubeComment, type YouTubeConfig } from '../integrations/youtube.js';
 import { requireAuth, type AuthLocals } from '../middleware/auth.js';
 import { store } from '../storage/index.js';
+import { socialAccessToken, youtubeCredentials } from '../lib/accountCredentials.js';
+import { requestOrganizationRoleStrict } from '../lib/organizationRole.js';
+import { confirmSalesQualification, createCreativeLearning, listCreativeLearnings, listInteractionWritebacks, writebackInteraction } from '../socialEngagement/writeback.js';
+import { declaredEngagementCapabilities } from '../socialEngagement/ingestion.js';
+import { listTenantCapabilityEvidence } from '../publishing/platformCapabilities.js';
+import { createWebFormSource, ingestSignedWebForm, listWebFormSources, revokeWebFormSource } from '../socialEngagement/webForm.js';
 
 export const socialEngagementRouter = Router();
+
+// Public provider callback. Tenant authority comes exclusively from the
+// server-owned source id after signature verification, never from the payload.
+socialEngagementRouter.post('/webhooks/web-form/:sourceId', async (req, res) => {
+  try {
+    const rawBody = (req as typeof req & { rawBody?: Buffer }).rawBody;
+    if (!(rawBody instanceof Buffer)) { res.status(503).json({ error: 'web_form_raw_body_unavailable' }); return; }
+    const result = await ingestSignedWebForm({
+      sourceId: String(req.params.sourceId || ''), rawBody,
+      signature: req.headers['x-lingshu-signature-256'], body: req.body,
+    });
+    res.status(result.repeated ? 200 : 202).json({ ok: true, repeated: result.repeated, interactionId: result.item.id });
+  } catch (error) {
+    const code = error instanceof Error ? error.message : 'web_form_ingestion_failed';
+    const status = code === 'web_form_source_not_found' ? 404
+      : code === 'web_form_signature_invalid' ? 403
+        : code === 'web_form_rate_limit_exceeded' ? 429
+          : code === 'web_form_event_invalid' || code === 'web_form_event_conflict' ? 400 : 503;
+    res.status(status).json({ error: code });
+  }
+});
+
 socialEngagementRouter.use(requireAuth);
 
 type Platform = 'youtube' | 'instagram' | 'facebook' | 'tiktok';
@@ -94,12 +122,13 @@ socialEngagementRouter.get('/comments', async (_req, res) => {
   accounts.push(...ytAccounts.map((account: any) => ({ id: account.id, platform: 'youtube' as const, title: account.channelTitle || 'YouTube', handle: account.customUrl, status: account.status })));
   for (const account of ytAccounts.filter((item: any) => item.status === 'connected')) {
     try {
-      const config: YouTubeConfig = { clientId: account.clientId, clientSecret: account.clientSecret, refreshToken: account.refreshToken, accessToken: account.accessToken };
+      const config: YouTubeConfig = youtubeCredentials(account as Record<string, unknown>);
       const comments = await getMyVideoComments(config, 100, account.channelId);
       for (const comment of comments) {
         const stateKey = key('youtube', account.id, comment.id); const state = savedByKey.get(stateKey);
         const translation = stateTranslation(state);
-        items.push({ ...comment, platform: 'youtube', accountId: account.id, accountTitle: account.channelTitle, contentTitle: `YouTube video ${comment.videoId || ''}`, status: state?.status || 'pending', analysis: state?.analysis, translation: translation?.sourceText === comment.textDisplay ? translation : undefined, stateKey });
+        await writebackInteraction(tenantId, { kind: 'comment', platform: 'youtube', providerEventId: comment.id, accountId: account.id, contentId: comment.videoId, body: comment.textDisplay, occurredAt: comment.publishedAt, actorRef: comment.authorName, raw: comment });
+        items.push({ ...comment, platform: 'youtube', accountId: account.id, accountTitle: account.channelTitle, contentTitle: `YouTube video ${comment.videoId || ''}`, originalUrl: comment.videoId ? `https://www.youtube.com/watch?v=${encodeURIComponent(comment.videoId)}&lc=${encodeURIComponent(comment.id)}` : '', status: state?.status || 'pending', analysis: state?.analysis, translation: translation?.sourceText === comment.textDisplay ? translation : undefined, stateKey });
       }
     } catch (error) { unavailable.push({ platform: 'youtube', reason: error instanceof Error ? error.message : '评论同步失败' }); }
   }
@@ -108,17 +137,19 @@ socialEngagementRouter.get('/comments', async (_req, res) => {
   for (const account of socialAccounts.filter((item: any) => item.status === 'connected')) {
     if (account.platform === 'tiktok') { unavailable.push({ platform: 'tiktok', reason: 'TikTok 评论 API 权限尚未开放' }); continue; }
     try {
+      const accessToken = socialAccessToken(account as Record<string, unknown>);
       const content = account.platform === 'facebook'
-        ? await getFacebookVideos(account.providerAccountId, account.accessToken, graphVersion(), 12)
-        : await getInstagramMedia(account.providerAccountId, account.accessToken, graphVersion(), 12);
+        ? await getFacebookVideos(account.providerAccountId, accessToken, graphVersion(), 12)
+        : await getInstagramMedia(account.providerAccountId, accessToken, graphVersion(), 12);
       for (const post of content) {
         const comments = account.platform === 'facebook'
-          ? await getFacebookComments(post.id, account.accessToken, graphVersion(), 30)
-          : await getInstagramComments(post.id, account.accessToken, graphVersion(), 30);
+          ? await getFacebookComments(post.id, accessToken, graphVersion(), 30)
+          : await getInstagramComments(post.id, accessToken, graphVersion(), 30);
         for (const comment of comments) {
           const stateKey = key(account.platform, account.id, comment.id); const state = savedByKey.get(stateKey);
           const translation = stateTranslation(state);
-          items.push({ ...comment, platform: account.platform, accountId: account.id, accountTitle: account.title, contentTitle: post.title || post.description || `${account.platform} content`, status: state?.status || 'pending', analysis: state?.analysis, translation: translation?.sourceText === comment.textDisplay ? translation : undefined, stateKey });
+          await writebackInteraction(tenantId, { kind: 'comment', platform: account.platform, providerEventId: comment.id, accountId: account.id, contentId: post.id, body: comment.textDisplay, occurredAt: comment.publishedAt, actorRef: comment.authorName, raw: comment });
+          items.push({ ...comment, platform: account.platform, accountId: account.id, accountTitle: account.title, contentTitle: post.title || post.description || `${account.platform} content`, originalUrl: post.permalinkUrl || '', status: state?.status || 'pending', analysis: state?.analysis, translation: translation?.sourceText === comment.textDisplay ? translation : undefined, stateKey });
         }
       }
     } catch (error) { unavailable.push({ platform: account.platform, reason: error instanceof Error ? error.message : '评论同步失败' }); }
@@ -205,13 +236,14 @@ socialEngagementRouter.post('/comments/reply', async (req, res) => {
     if (platform === 'youtube') {
     const account = await store.getById<any>('youtube_accounts', accountId);
     if (!account || account.tenantId !== tenantId) { res.status(404).json({ error: 'account_not_found' }); return; }
-    result = await replyToYouTubeComment({ clientId: account.clientId, clientSecret: account.clientSecret, refreshToken: account.refreshToken, accessToken: account.accessToken }, commentId, message);
+    result = await replyToYouTubeComment(youtubeCredentials(account as Record<string, unknown>), commentId, message);
     } else if (platform === 'facebook' || platform === 'instagram') {
     const account = await store.getById<any>('social_accounts', accountId);
     if (!account || account.tenantId !== tenantId || account.platform !== platform) { res.status(404).json({ error: 'account_not_found' }); return; }
+    const accessToken = socialAccessToken(account as Record<string, unknown>);
     result = platform === 'facebook'
-      ? await replyToFacebookComment(commentId, account.accessToken, graphVersion(), message)
-      : await replyToInstagramComment(commentId, account.accessToken, graphVersion(), message);
+      ? await replyToFacebookComment(commentId, accessToken, graphVersion(), message)
+      : await replyToInstagramComment(commentId, accessToken, graphVersion(), message);
     } else { res.status(501).json({ error: 'platform_reply_unavailable', message: 'TikTok 评论回复需额外平台权限。' }); return; }
     const stateKey = key(platform, accountId, commentId);
     await saveState(tenantId, stateKey, { status: 'replied', repliedAt: new Date().toISOString(), replyId: result.id });
@@ -233,4 +265,100 @@ socialEngagementRouter.post('/comments/convert', async (req, res) => {
     error: 'whatsapp_contact_required',
     message: '评论用户添加 WhatsApp 并发送真实消息后，才会自动进入「我的客户」。',
   });
+});
+
+socialEngagementRouter.get('/interactions', async (req, res) => {
+  const { tenantId, userId } = res.locals as AuthLocals;
+  const role = await requestOrganizationRoleStrict(req.headers.authorization, userId);
+  if (!role || !['super_admin', 'admin', 'customer_service'].includes(role)) { res.status(403).json({ error: 'interaction_read_forbidden' }); return; }
+  const kind = String(req.query.kind || '').trim();
+  if (kind && !['comment', 'direct_message', 'form', 'inquiry'].includes(kind)) { res.status(400).json({ error: 'invalid_interaction_kind' }); return; }
+  const items = await listInteractionWritebacks(tenantId, kind);
+  res.json({ items, total: items.length });
+});
+
+socialEngagementRouter.get('/ingestion-capabilities', async (_req, res) => {
+  const { tenantId } = res.locals as AuthLocals;
+  const [evidence, sources] = await Promise.all([listTenantCapabilityEvidence(tenantId), listWebFormSources(tenantId)]);
+  res.json({ items: declaredEngagementCapabilities({ evidence, webFormConfigured: sources.some(item => item.status === 'active') }) });
+});
+
+socialEngagementRouter.get('/sources/web-form', async (req, res) => {
+  const { tenantId, userId } = res.locals as AuthLocals;
+  const role = await requestOrganizationRoleStrict(req.headers.authorization, userId);
+  if (!role || !['super_admin', 'admin', 'social_operator'].includes(role)) { res.status(403).json({ error: 'web_form_source_read_forbidden' }); return; }
+  const items = await listWebFormSources(tenantId);
+  res.json({ items, total: items.length });
+});
+
+socialEngagementRouter.post('/sources/web-form', async (req, res) => {
+  const { tenantId, userId } = res.locals as AuthLocals;
+  try {
+    const role = await requestOrganizationRoleStrict(req.headers.authorization, userId);
+    if (!role || !['super_admin', 'admin', 'social_operator'].includes(role)) { res.status(403).json({ error: 'web_form_source_write_forbidden' }); return; }
+    const result = await createWebFormSource({ tenantId, userId, accountId: req.body?.accountId, label: req.body?.label, sourceId: req.body?.sourceId });
+    res.status(201).json(result);
+  } catch (error) {
+    const code = error instanceof Error ? error.message : 'web_form_source_create_failed';
+    res.status(code.includes('required') || code.includes('invalid') ? 400 : code.includes('conflict') ? 409 : 503).json({ error: code });
+  }
+});
+
+socialEngagementRouter.delete('/sources/web-form/:sourceId', async (req, res) => {
+  const { tenantId, userId } = res.locals as AuthLocals;
+  const role = await requestOrganizationRoleStrict(req.headers.authorization, userId);
+  if (!role || !['super_admin', 'admin', 'social_operator'].includes(role)) { res.status(403).json({ error: 'web_form_source_write_forbidden' }); return; }
+  const revoked = await revokeWebFormSource({ tenantId, sourceId: String(req.params.sourceId || '') });
+  if (!revoked) { res.status(404).json({ error: 'web_form_source_not_found' }); return; }
+  res.json({ ok: true });
+});
+
+socialEngagementRouter.get('/creative-learnings', async (_req, res) => {
+  const { tenantId } = res.locals as AuthLocals;
+  const items = await listCreativeLearnings(tenantId);
+  res.json({ items, total: items.length });
+});
+
+socialEngagementRouter.post('/interactions/writeback', async (req, res) => {
+  const { tenantId, userId } = res.locals as AuthLocals;
+  try {
+    const role = await requestOrganizationRoleStrict(req.headers.authorization, userId);
+    if (!role || !['super_admin', 'admin', 'social_operator', 'customer_service'].includes(role)) { res.status(403).json({ error: 'interaction_writeback_forbidden' }); return; }
+    const result = await writebackInteraction(tenantId, req.body);
+    res.status(result.repeated ? 200 : 201).json(result);
+  } catch (error) {
+    const code = error instanceof Error ? error.message : 'interaction_writeback_failed';
+    res.status(code === 'comment_content_required' || code === 'comment_account_required' || code === 'interaction_fields_required' || code === 'invalid_interaction_kind' ? 400 : 503).json({ error: code });
+  }
+});
+
+socialEngagementRouter.post('/inquiries/:interactionId/qualification', async (req, res) => {
+  const { tenantId, userId } = res.locals as AuthLocals;
+  try {
+    const role = await requestOrganizationRoleStrict(req.headers.authorization, userId);
+    if (!role || !['super_admin', 'admin', 'customer_service'].includes(role)) { res.status(403).json({ error: 'sales_qualification_forbidden' }); return; }
+    if (req.body?.authority === 'crm') { res.status(403).json({ error: 'trusted_crm_integration_required' }); return; }
+    const item = await confirmSalesQualification({
+      tenantId, interactionId: req.params.interactionId,
+      status: req.body?.status, authority: 'sales',
+      actorId: userId, reason: req.body?.reason, bant: req.body?.bant,
+    });
+    res.json({ ok: true, item });
+  } catch (error) {
+    const code = error instanceof Error ? error.message : 'qualification_writeback_failed';
+    res.status(code === 'inquiry_not_found' ? 404 : code.includes('required') ? 400 : 503).json({ error: code });
+  }
+});
+
+socialEngagementRouter.post('/creative-learnings', async (req, res) => {
+  const { tenantId, userId } = res.locals as AuthLocals;
+  try {
+    const role = await requestOrganizationRoleStrict(req.headers.authorization, userId);
+    if (!role || !['super_admin', 'admin', 'social_operator'].includes(role)) { res.status(403).json({ error: 'creative_learning_write_forbidden' }); return; }
+    res.status(201).json({ item: await createCreativeLearning(tenantId, userId, req.body) });
+  }
+  catch (error) {
+    const code = error instanceof Error ? error.message : 'creative_learning_writeback_failed';
+    res.status(code.startsWith('creative_learning_') && code !== 'creative_learning_writeback_unavailable' ? 400 : 503).json({ error: code });
+  }
 });

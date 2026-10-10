@@ -53,6 +53,12 @@ const MARKDOWN_RE = /(^|\n)\s*(?:#{1,6}\s+|>\s+|[-*+]\s+|\d+[.)]\s+)|\*\*|__|```
 const FORMAL_SERVICE_RE = /\b(?:thank you for your inquiry|we would be delighted|please be advised|kindly (?:provide|note|confirm)|happy to assist|feel free to contact us|at your earliest convenience|valued customer)\b/i;
 const INTERNAL_LANGUAGE_RE = /\b(?:system prompt|intent instruction|conversation phase|knowledgeReady|knowledge miss|internal_request_context|dialogue strategies|reply plan|speech acts)\b|统一知识检索上下文|内部参考数据|硬规则/i;
 const GREETING_RE = /^(?:hi|hello|hey|hi again|hello again|hola|buenas|dear\b|您好|你好)/i;
+const QUESTION_RE = /[?？]|\b(?:what|which|why|how|can|could|do|does|did|is|are|will|would|when|where)\b|什么|哪些|怎么|为什么|为何|是否|能否|可以吗|吗(?:\s|$)/i;
+const FOCUS_STOP_WORDS = new Set([
+  'about', 'after', 'again', 'also', 'been', 'before', 'could', 'does', 'doing', 'from', 'have', 'here', 'into',
+  'just', 'many', 'more', 'normally', 'only', 'please', 'should', 'that', 'their', 'them', 'then', 'there', 'these',
+  'they', 'this', 'those', 'want', 'what', 'when', 'where', 'which', 'with', 'would', 'your', 'ours', 'review',
+]);
 
 function cleanText(value: unknown, max = 500): string {
   return String(value ?? '').replace(/\s+/g, ' ').trim().slice(0, max);
@@ -297,6 +303,36 @@ function anchorMatches(candidate: string, latestMessage: string): number {
   return Array.from(new Set(anchors.map(anchor => anchor.toLowerCase()))).filter(anchor => lower.includes(anchor)).length;
 }
 
+function latestQuestionFocusTerms(message: string): string[] {
+  const normalized = message.normalize('NFKC').toLowerCase();
+  const english = normalized
+    .split(/[^a-z0-9]+/i)
+    .filter(token => token.length >= 4 && !FOCUS_STOP_WORDS.has(token));
+  const cjkPhrases = Array.from(normalized.matchAll(/[\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}\p{Script=Hangul}]{2,8}/gu))
+    .map(match => match[0]);
+  return Array.from(new Set([...english, ...cjkPhrases])).slice(0, 12);
+}
+
+export function latestQuestionFocus(candidate: string, latestMessage: string): {
+  isQuestion: boolean;
+  terms: string[];
+  matches: number;
+  addressed: boolean;
+} {
+  const isQuestion = QUESTION_RE.test(latestMessage);
+  const terms = latestQuestionFocusTerms(latestMessage);
+  if (!isQuestion || !terms.length) return { isQuestion, terms, matches: 0, addressed: true };
+  const normalizedCandidate = candidate.normalize('NFKC').toLowerCase();
+  const matches = terms.filter(term => normalizedCandidate.includes(term)).length;
+  const requiredMatches = terms.length >= 3 ? 2 : 1;
+  return {
+    isQuestion,
+    terms,
+    matches,
+    addressed: matches >= requiredMatches || semanticTextSimilarity(candidate, latestMessage) >= 0.12,
+  };
+}
+
 export function rankReplyCandidates(candidates: ReplyCandidate[], input: {
   latestMessage: string;
   timeline?: ReplyPlanInput['timeline'];
@@ -328,6 +364,14 @@ export function rankReplyCandidates(candidates: ReplyCandidate[], input: {
     }
     const anchors = anchorMatches(candidate.text, input.latestMessage);
     if (anchors) { score += Math.min(12, anchors * 4); reasons.push('uses_buyer_detail'); }
+    const questionFocus = latestQuestionFocus(candidate.text, input.latestMessage);
+    if (questionFocus.isQuestion && questionFocus.addressed) {
+      score += Math.min(24, questionFocus.matches * 8);
+      reasons.push('addresses_latest_question');
+    } else if (questionFocus.isQuestion) {
+      score -= 60;
+      reasons.push('misses_latest_question');
+    }
     const emojiCount = (candidate.text.match(/\p{Extended_Pictographic}/gu) ?? []).length;
     if (emojiCount > 1 || (input.plan.emoji === 'none' && emojiCount > 0)) { score -= 18; reasons.push('emoji_mismatch'); }
     if (candidate.style === 'direct' && (input.plan.buyerState === 'urgent' || input.plan.buyerState === 'price_sensitive')) score += 4;

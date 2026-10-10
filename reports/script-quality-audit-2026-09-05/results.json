@@ -1,0 +1,80 @@
+{
+  "englishLipBalm": {
+    "status": 200,
+    "qualityStatus": "warning",
+    "source": "ai",
+    "modelCalls": 0,
+    "spokenLines": [
+      "台词：乌兹别克斯坦消费者，随身补涂时你会先看哪一步？",
+      "台词：旋出膏体，再旋回，动作一眼能看清。",
+      "台词：手背单次试涂后，放进化妆包就能带走。",
+      "台词：Message us for details."
+    ],
+    "checks": {
+      "materialGrounded": true,
+      "timelineGrounded": true,
+      "productGrounded": true,
+      "dialogueFits": true,
+      "structurallyComplete": true
+    },
+    "warnings": [
+      "首段没有执行“买家痛点”主题的钩子公式"
+    ]
+  },
+  "variants": {
+    "sameScript": true,
+    "secondModelCalls": 0
+  },
+  "duration10": {
+    "status": 200,
+    "timeline": [
+      "[0-5.6s]",
+      "[5.6-9.7s]",
+      "[9.7-14.2s]",
+      "[14.2-16.9s]"
+    ],
+    "dialogueFits": true
+  },
+  "wrongSpec40": {
+    "status": 422,
+    "wrong45gPresent": true,
+    "issues": [
+      "出现产品资料未提供的数字：4.5g"
+    ]
+  },
+  "germanFallback": {
+    "status": 200,
+    "qualityStatus": "warning",
+    "spokenLines": [
+      "台词：Buyers, how do you judge this risk?",
+      "台词：铝合金结构",
+      "台词：触摸屏操作",
+      "台词：Message us for details."
+    ],
+    "modelCalls": 1
+  },
+  "numericMeaning": [],
+  "mixedTiming": {
+    "ranges": [
+      "[0-5.2s]",
+      "[5.2-10.4s]",
+      "[10.4-15.6s]",
+      "[15.6-20.8s]"
+    ],
+    "issues": [
+      "[0-5.2s] 口播预计7.8秒，超过镜头5.2秒",
+      "[5.2-10.4s] 口播预计7.8秒，超过镜头5.2秒",
+      "[10.4-15.6s] 口播预计7.8秒，超过镜头5.2秒",
+      "[15.6-20.8s] 口播预计7.8秒，超过镜头5.2秒"
+    ]
+  },
+  "savedAcceptanceSample": {
+    "stage": "render",
+    "speechIssues": [
+      "[0-4s] 口播预计4.4秒，超过镜头4.0秒",
+      "[4-8s] 口播预计5.3秒，超过镜头4.0秒",
+      "[8-12s] 口播预计4.8秒，超过镜头4.0秒",
+      "[12-16s] 口播预计5.3秒，超过镜头4.0秒"
+    ]
+  }
+}

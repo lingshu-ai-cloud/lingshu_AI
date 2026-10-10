@@ -1,0 +1,90 @@
+import assert from 'node:assert/strict';
+import { agentBrowserSessions } from './browserSessions.js';
+import { store } from '../storage/index.js';
+import { buildWeeklyPlan, normalizeDigitalEmployeeConfig, normalizeWeeklyGoal } from './domain.js';
+import { configurationSnapshot, resolveDigitalEmployeeConfiguration } from './configuration.js';
+import { withExecutionAdapters } from './executionAdapters.js';
+import { reconcileDigitalEmployeeRun } from '../routes/digitalEmployees.js';
+
+const tenant = 'isolated-full-chain-mock';
+const config = normalizeDigitalEmployeeConfig({companyName:'MOCK company',industry:'Clothing',primaryBusiness:'MOCK shirts',targetMarkets:'US',focusProducts:'MOCK cotton shirt',autonomyMode:'managed',approvalOwner:'fixture-reviewer',enabledWorkflows:['scheduled_social','viral_clone','product_content','material_content','content_publish','customer_segmentation','batch_followup'],publishingTargets:[{platform:'facebook',accountId:'mock-account',accountLabel:'MOCK page'}],allowRealPublishing:false,allowRealCustomerMessages:false,approvalPolicy:{contentPublish:true,batchFollowup:true,commercialCommitment:true}});
+const goalInput = normalizeWeeklyGoal({title:'MOCK 16 node plan',objective:'Isolated simulation',businessLine:'full_funnel',metric:'published_posts',target:1,startsAt:'2026-09-01',endsAt:'2026-09-30',contentPlatforms:['facebook']},config);
+const factProfile = { factVersion: { id: 'enterprise-facts-v1-frozen', revision: 1, contentHash: 'frozen-hash' }, company: { name: 'MOCK company', industry: 'Clothing' }, products: { items: [{ name: 'MOCK cotton shirt', sku: 'mock-sku', material: 'cotton' }] } };
+const resolved = resolveDigitalEmployeeConfiguration({ config, enterpriseProfile: factProfile });
+const plan = { ...buildWeeklyPlan(goalInput,config), ...configurationSnapshot(resolved) };
+assert.equal(plan.tasks.length,16);
+const run:any={id:'mock-run',tenant_id:tenant,goal_id:'mock-goal',plan_id:'mock-plan',status:'running',started_at:'2026-09-01T00:00:00.000Z'};
+const tasks:any[]=plan.tasks.map(p=>({id:`mock-${p.key}`,tenant_id:tenant,run_id:run.id,task_key:p.key,title:p.title,status:'pending',depends_on:p.dependsOn,sequence:p.sequence,kind:p.kind,agent_role:p.agentRole,execution_mode:p.executionMode,external_effect:p.externalEffect,automatic_execution_allowed:p.automaticExecutionAllowed,requires_approval:p.requiresApproval,task_version:1,output:{},business_refs:[]}));
+const records:Record<string,any[]>={workflow_runs:[run],workflow_tasks:tasks,weekly_goals:[{id:run.goal_id,tenant_id:tenant,title:goalInput.title,objective:goalInput.objective,metric:goalInput.metric,scope:{},content_platforms:['facebook'],starts_at:goalInput.startsAt,ends_at:goalInput.endsAt}],weekly_plans:[{id:run.plan_id,tenant_id:tenant,plan}],digital_employee_configs:[{id:'mock-config',tenant_id:tenant,config}],tenant_profiles:[{id:'mock-profile',tenant_id:tenant,profile:{company:{name:'MOCK company',industry:'Clothing'},products:{items:[{name:'MOCK cotton shirt',sku:'mock-sku',material:'cotton'}]}}}],social_accounts:[{id:'mock-account',tenantId:tenant,status:'connected',platform:'facebook',title:'MOCK page'}],content_batch_plans:[{id:'mock-orders',tenant_id:tenant,run_id:run.id,task_id:'mock-content_mode_routing',status:'planned',orders:[{id:'mock-order',route:'product',platform:'facebook',productId:'mock-product'}],routing:{eligibleRoutes:['product'],disabledRoutes:[]}}]};
+const original = { ...store }; const originalFetch=globalThis.fetch;
+let networkCalls=0; let serial=0;
+const statusHistory:any[]=[];
+const materials:Array<{id:string;tenantId:string;productId:string;url:string;synthetic?:boolean}>=[];
+Object.assign(store,{
+ list:async(collection:string,query:any={})=>{let items=(records[collection]||[]).filter(r=>Object.entries(query.where||{}).every(([k,v])=>r[k]===v));if(query.sort){const key=query.sort.replace(/^-/,'');items=[...items].sort((a,b)=>(a[key]>b[key]?1:a[key]<b[key]?-1:0)*(query.sort.startsWith('-')?-1:1));}const page=query.page||1,perPage=query.perPage||100;return {items:structuredClone(items.slice((page-1)*perPage,page*perPage)),totalItems:items.length,totalPages:Math.ceil(items.length/perPage),page,perPage};},
+ getById:async(c:string,id:string)=>structuredClone((records[c]||[]).find(r=>r.id===id)||null),
+ create:async(c:string,body:any)=>{const r={id:`mock-created-${++serial}`,...body};(records[c]||=[]).push(r);return structuredClone(r);},
+ update:async(c:string,id:string,patch:any)=>{const r=(records[c]||[]).find(r=>r.id===id);if(!r)return false;if(c==='workflow_tasks'&&patch.status&&r.status!==patch.status)statusHistory.push({key:r.task_key,from:r.status,to:patch.status});Object.assign(r,structuredClone(patch));return true;},
+ delete:async(c:string,id:string)=>{records[c]=(records[c]||[]).filter(r=>r.id!==id);return true;},
+});
+globalThis.fetch=(async()=>{networkCalls++;throw Error('NETWORK_FORBIDDEN_IN_MOCK');}) as typeof fetch;
+
+const routing = tasks.find(t => t.task_key === 'content_mode_routing')!;
+for (const task of tasks) task.status = 'succeeded';
+routing.status = 'pending';
+const downstream = tasks.find(t => t.task_key === 'content_production')!;
+downstream.status = 'pending'; downstream.depends_on = ['never-ready'];
+records.content_batch_plans = [];
+records.tenant_profiles[0].profile.products.items = [];
+const priorBrowser = process.env.DIGITAL_EMPLOYEE_BROWSER_EXECUTION;
+const priorDirectorFallback = process.env.DIRECTOR_SCRIPT_OFFLINE_FALLBACK;
+process.env.DIGITAL_EMPLOYEE_BROWSER_EXECUTION = 'true';
+process.env.DIRECTOR_SCRIPT_OFFLINE_FALLBACK = 'true';
+const originalPerform = agentBrowserSessions.perform;
+let clicks = 0;
+agentBrowserSessions.perform = async (_scope, _read, _label, execute) => { clicks++; return execute(); };
+try {
+  await withExecutionAdapters({materials: requestedTenant => {
+    assert.equal(requestedTenant,tenant,'material injection must remain tenant scoped');
+    return structuredClone(materials);
+  }},async()=>{
+    for (let i = 0; i < 4; i++) await reconcileDigitalEmployeeRun(tenant, run.id);
+    assert.equal(clicks, 0, 'blocked polling must never click the generation button');
+    assert.equal(records.content_batch_plans.length, 0, 'readiness checks must not create blocked orders');
+    assert.equal(routing.output.routingCheck.count, 4);
+    const waitingEvents = () => Object.values(records).flat().filter(e => e.type === 'task.routing_waiting');
+    assert.equal(waitingEvents().length, 1, 'unchanged blocker emits one event');
+    records.tenant_profiles[0].profile.products.items = [{name:'LIVE PROFILE REPLACEMENT',sku:'new-live-sku',material:'plastic'}];
+    await reconcileDigitalEmployeeRun(tenant, run.id);
+    assert.equal(clicks, 0, 'a live-profile change cannot alter an active run');
+    assert.equal(waitingEvents().length, 1, 'the frozen product snapshot keeps the blocker stable despite live-profile edits');
+    materials.push({ id: 'synthetic-material', tenantId: tenant, productId: 'mock-sku', url: 'https://assets.example.com/synthetic-shirt.jpg', synthetic: true });
+    await reconcileDigitalEmployeeRun(tenant, run.id);
+    assert.equal(clicks, 0, 'synthetic material must not satisfy production routing');
+    materials.push({ id: 'other-tenant-material', tenantId: 'other-tenant', productId: 'mock-sku', url: 'https://assets.example.com/other-shirt.jpg' });
+    await reconcileDigitalEmployeeRun(tenant, run.id);
+    assert.equal(clicks, 0, 'another tenant material must not satisfy production routing');
+    materials.push({ id: 'material-1', tenantId: tenant, productId: 'mock-sku', url: 'https://assets.example.com/shirt.jpg' });
+    await reconcileDigitalEmployeeRun(tenant, run.id);
+    assert.equal(clicks, 1, 'newly satisfied conditions execute once');
+    assert.equal(routing.status, 'succeeded');
+    assert.equal(records.content_batch_plans.length, 1);
+    assert.equal(records.content_batch_plans[0].facts_version, 'enterprise-facts-v1-frozen', 'the content order keeps the canonical version paired with its frozen facts');
+    assert.ok(records.content_batch_plans[0].orders.every((order: any) => order.productName === 'MOCK cotton shirt'), 'live product replacements must not enter orders carrying the older fact label');
+    await reconcileDigitalEmployeeRun(tenant, run.id);
+    assert.equal(clicks, 1, 'completed routing is not replayed');
+    routing.status = 'pending';
+    await reconcileDigitalEmployeeRun(tenant, run.id);
+    assert.equal(clicks, 1, 'existing planned batch is reused without a browser action');
+    assert.equal(records.content_batch_plans.length, 1);
+    assert.ok(networkCalls <= 1, 'offline routing may probe one optional external source but must finish without relying on it');
+  });
+  console.log('Content routing polling regression passed');
+} finally {
+  Object.assign(store, original); globalThis.fetch = originalFetch;
+  agentBrowserSessions.perform = originalPerform;
+  if (priorBrowser === undefined) delete process.env.DIGITAL_EMPLOYEE_BROWSER_EXECUTION;
+  else process.env.DIGITAL_EMPLOYEE_BROWSER_EXECUTION = priorBrowser;
+  if (priorDirectorFallback === undefined) delete process.env.DIRECTOR_SCRIPT_OFFLINE_FALLBACK;
+  else process.env.DIRECTOR_SCRIPT_OFFLINE_FALLBACK = priorDirectorFallback;
+}

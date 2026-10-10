@@ -3,13 +3,16 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import type { Request } from 'express';
+import type { DataStore } from '../storage/datastore.js';
 import { store } from '../storage/index.js';
-import { getPublicOrigin, getMetaOAuthClient, getTikTokOAuthClient, getYouTubeOAuthClient } from './oauthConfig.js';
+import { withLegacyExternalEffectAllowed } from '../starter198/legacyEffectGuard.js';
+import { createStarter198Repository } from '../starter198/repository.js';
+import { getPublicOrigin, getInstagramOAuthClient, getMetaOAuthClient, getTikTokOAuthClient, getYouTubeOAuthClient } from './oauthConfig.js';
 import { sendDingTalkMarkdown, sendDingTalkText } from '../integrations/dingtalk.js';
 import { sendFeishuCard, sendFeishuText } from '../integrations/feishu.js';
 import { sendWeComMarkdown } from '../integrations/wecom.js';
 
-export type TenantPlatform = 'meta' | 'google' | 'tiktok' | 'wecom';
+export type TenantPlatform = 'meta' | 'instagram' | 'google' | 'tiktok' | 'wecom';
 export type TenantTokenType = 'user_60d' | 'system_user_permanent';
 export type TenantPlatformStatus =
   | 'pending'
@@ -62,6 +65,8 @@ export interface PublicTenantPlatformApp {
   igUserId: string;
   youtubeChannelId: string;
   webhookVerifyToken: string;
+  webhookVerifyTokenSet: boolean;
+  webhookVerifyTokenLength: number;
   wecomEncodingAesKeySet: boolean;
   wecomEncodingAesKeyLength: number;
   webhookUrl: string;
@@ -132,16 +137,42 @@ export function decryptSecret(value?: string): string {
   }
 }
 
+/** Validate an OAuth app ID and secret together before any tenant app writes. */
+export function validateTenantOAuthCredentialPair(input: {
+  appId: string;
+  appSecret: string;
+  existing: TenantPlatformAppRecord | null;
+}): 'oauth_app_id_clear_requires_delete' | 'oauth_app_id_required' | 'oauth_app_secret_required' | null {
+  const appId = text(input.appId);
+  const appSecret = text(input.appSecret);
+  const existingId = text(input.existing?.app_id);
+  if (existingId && !appId) return 'oauth_app_id_clear_requires_delete';
+  if (appSecret && !appId) return 'oauth_app_id_required';
+  if (appId && (!decryptSecret(input.existing?.app_secret) || appId !== existingId) && !appSecret) {
+    return 'oauth_app_secret_required';
+  }
+  return null;
+}
+
 function randomToken(): string {
   return crypto.randomBytes(24).toString('base64url');
 }
 
-export async function getTenantPlatformApp(tenantId: string, platform: TenantPlatform): Promise<TenantPlatformAppRecord | null> {
-  const result = await store.list<TenantPlatformAppRecord>(COL, {
+async function getTenantPlatformAppFrom(
+  dataStore: DataStore,
+  tenantId: string,
+  platform: TenantPlatform,
+): Promise<TenantPlatformAppRecord | null> {
+  const result = await dataStore.list<TenantPlatformAppRecord>(COL, {
     where: { tenant_id: tenantId, platform },
-    perPage: 1,
+    perPage: 2,
   });
-  return result.items[0] ?? null;
+  const app = result.items[0];
+  return result.totalItems === 1 && result.items.length === 1 && app?.tenant_id === tenantId && app.platform === platform ? app : null;
+}
+
+export async function getTenantPlatformApp(tenantId: string, platform: TenantPlatform): Promise<TenantPlatformAppRecord | null> {
+  return getTenantPlatformAppFrom(store, tenantId, platform);
 }
 
 export async function listTenantPlatformApps(): Promise<TenantPlatformAppRecord[]> {
@@ -156,7 +187,7 @@ export async function deleteTenantPlatformApp(tenantId: string, platform: Tenant
 }
 
 export function tenantWebhookUrl(req: Request, tenantId: string, platform: TenantPlatform = 'meta'): string {
-  const path = platform === 'wecom' ? 'wecom' : 'meta';
+  const path = platform === 'wecom' ? 'wecom' : platform === 'instagram' ? 'instagram' : 'meta';
   return `${getPublicOrigin(req)}/api/webhooks/${path}/${encodeURIComponent(tenantId)}`;
 }
 
@@ -188,12 +219,16 @@ export function publicTenantPlatformApp(req: Request, app: TenantPlatformAppReco
     pageId: numericAssetId(app.page_id),
     igUserId: numericAssetId(app.ig_user_id),
     youtubeChannelId: text(app.youtube_channel_id),
-    webhookVerifyToken: text(app.webhook_verify_token),
+    webhookVerifyToken: '',
+    webhookVerifyTokenSet: Boolean(text(app.webhook_verify_token)),
+    webhookVerifyTokenLength: text(app.webhook_verify_token).length,
     wecomEncodingAesKeySet: Boolean(wecomEncodingAesKey),
     wecomEncodingAesKeyLength: wecomEncodingAesKey.length,
-    webhookUrl: app.platform === 'meta' || app.platform === 'wecom' ? tenantWebhookUrl(req, app.tenant_id, app.platform) : '',
+    webhookUrl: app.platform === 'meta' || app.platform === 'instagram' || app.platform === 'wecom' ? tenantWebhookUrl(req, app.tenant_id, app.platform) : '',
     oauthRedirectUri: app.platform === 'google'
       ? `${getPublicOrigin(req)}/api/overseas/youtube/oauth/callback`
+      : app.platform === 'instagram'
+        ? `${getPublicOrigin(req)}/api/overseas/social/oauth/instagram/callback`
       : app.platform === 'tiktok'
         ? `${getPublicOrigin(req)}/api/overseas/social/oauth/tiktok/callback`
         : '',
@@ -210,6 +245,7 @@ export function publicTenantPlatformApp(req: Request, app: TenantPlatformAppReco
 export async function upsertTenantPlatformApp(input: {
   tenantId: string;
   platform: TenantPlatform;
+  dataStore?: DataStore;
   appId?: string;
   appSecret?: string;
   waConfigId?: string;
@@ -220,6 +256,7 @@ export async function upsertTenantPlatformApp(input: {
   pageId?: string;
   igUserId?: string;
   youtubeChannelId?: string;
+  webhookVerifyToken?: string;
   wecomEncodingAesKey?: string;
   tokenType?: TenantTokenType;
   accessToken?: string;
@@ -228,37 +265,41 @@ export async function upsertTenantPlatformApp(input: {
   checklist?: Record<string, boolean>;
   notes?: string;
 }): Promise<TenantPlatformAppRecord> {
-  const existing = await getTenantPlatformApp(input.tenantId, input.platform);
-  const patch: Record<string, unknown> = {
-    tenant_id: input.tenantId,
-    platform: input.platform,
-    webhook_verify_token: existing?.webhook_verify_token || randomToken(),
-    token_type: input.tokenType || existing?.token_type || 'user_60d',
-    status: input.status || existing?.status || 'pending',
-  };
-  if (input.appId !== undefined) patch.app_id = input.appId;
-  if (input.appSecret) patch.app_secret = encryptSecret(input.appSecret);
-  if (input.waConfigId !== undefined) patch.wa_config_id = input.waConfigId;
-  if (input.businessId !== undefined) patch.business_id = input.businessId;
-  if (input.wabaId !== undefined) patch.waba_id = input.wabaId;
-  if (input.phoneNumberId !== undefined) patch.phone_number_id = input.phoneNumberId;
-  if (input.waPublicNumber !== undefined) patch.wa_public_number = input.waPublicNumber;
-  if (input.pageId !== undefined) patch.page_id = input.pageId;
-  if (input.igUserId !== undefined) patch.ig_user_id = input.igUserId;
-  if (input.youtubeChannelId !== undefined) patch.youtube_channel_id = input.youtubeChannelId;
-  if (input.wecomEncodingAesKey) patch.wecom_encoding_aes_key = encryptSecret(input.wecomEncodingAesKey);
-  if (input.accessToken) patch.access_token = encryptSecret(input.accessToken);
-  if (input.tokenExpiresAt !== undefined) patch.token_expires_at = input.tokenExpiresAt;
-  if (input.checklist !== undefined) patch.last_checklist = JSON.stringify(input.checklist);
-  if (input.notes !== undefined) patch.notes = input.notes;
+  const dataStore = input.dataStore ?? store;
+  return withLegacyExternalEffectAllowed(input.tenantId, async transitionGuard => {
+    const existing = await getTenantPlatformAppFrom(dataStore, input.tenantId, input.platform);
+    const patch: Record<string, unknown> = {
+      tenant_id: input.tenantId,
+      platform: input.platform,
+      webhook_verify_token: input.webhookVerifyToken || existing?.webhook_verify_token || randomToken(),
+      token_type: input.tokenType || existing?.token_type || 'user_60d',
+      status: input.status || existing?.status || 'pending',
+    };
+    if (input.appId !== undefined) patch.app_id = input.appId;
+    if (input.appSecret) patch.app_secret = encryptSecret(input.appSecret);
+    if (input.waConfigId !== undefined) patch.wa_config_id = input.waConfigId;
+    if (input.businessId !== undefined) patch.business_id = input.businessId;
+    if (input.wabaId !== undefined) patch.waba_id = input.wabaId;
+    if (input.phoneNumberId !== undefined) patch.phone_number_id = input.phoneNumberId;
+    if (input.waPublicNumber !== undefined) patch.wa_public_number = input.waPublicNumber;
+    if (input.pageId !== undefined) patch.page_id = input.pageId;
+    if (input.igUserId !== undefined) patch.ig_user_id = input.igUserId;
+    if (input.youtubeChannelId !== undefined) patch.youtube_channel_id = input.youtubeChannelId;
+    if (input.wecomEncodingAesKey) patch.wecom_encoding_aes_key = encryptSecret(input.wecomEncodingAesKey);
+    if (input.accessToken) patch.access_token = encryptSecret(input.accessToken);
+    if (input.tokenExpiresAt !== undefined) patch.token_expires_at = input.tokenExpiresAt;
+    if (input.checklist !== undefined) patch.last_checklist = JSON.stringify(input.checklist);
+    if (input.notes !== undefined) patch.notes = input.notes;
 
-  if (existing) {
-    await store.update(COL, existing.id, patch);
-    return { ...existing, ...patch } as TenantPlatformAppRecord;
-  }
-  const created = await store.create<TenantPlatformAppRecord>(COL, patch);
-  if (!created) throw new Error('tenant_platform_app_create_failed');
-  return created;
+    await transitionGuard.beforeEffect();
+    if (existing) {
+      if (!await dataStore.update(COL, existing.id, patch)) throw new Error('tenant_platform_app_update_failed');
+      return { ...existing, ...patch } as TenantPlatformAppRecord;
+    }
+    const created = await dataStore.create<TenantPlatformAppRecord>(COL, patch);
+    if (!created) throw new Error('tenant_platform_app_create_failed');
+    return created;
+  }, createStarter198Repository(dataStore), dataStore);
 }
 
 export async function markTenantPlatformStatus(id: string, status: TenantPlatformStatus, notes?: string): Promise<void> {
@@ -268,32 +309,46 @@ export async function markTenantPlatformStatus(id: string, status: TenantPlatfor
   });
 }
 
-export async function getTenantMetaOAuthClient(tenantId?: string): Promise<{ appId: string; appSecret: string } | null> {
+export async function getTenantMetaOAuthClient(tenantId?: string, dataStore: DataStore = store): Promise<{ appId: string; appSecret: string } | null> {
   if (tenantId) {
-    const app = await getTenantPlatformApp(tenantId, 'meta');
+    const app = await getTenantPlatformAppFrom(dataStore, tenantId, 'meta');
     const appId = text(app?.app_id);
     const appSecret = decryptSecret(app?.app_secret);
-    if (appId && appSecret) return { appId, appSecret };
+    if (app?.tenant_id === tenantId && appId && appSecret) return { appId, appSecret };
+    return null;
   }
   return getMetaOAuthClient();
 }
 
-export async function getTenantGoogleOAuthClient(tenantId?: string): Promise<{ clientId: string; clientSecret: string } | null> {
+export async function getTenantInstagramOAuthClient(tenantId?: string, dataStore: DataStore = store): Promise<{ appId: string; appSecret: string } | null> {
   if (tenantId) {
-    const app = await getTenantPlatformApp(tenantId, 'google');
+    const app = await getTenantPlatformAppFrom(dataStore, tenantId, 'instagram');
+    const appId = text(app?.app_id);
+    const appSecret = decryptSecret(app?.app_secret);
+    if (app?.tenant_id === tenantId && appId && appSecret) return { appId, appSecret };
+    return null;
+  }
+  return getInstagramOAuthClient();
+}
+
+export async function getTenantGoogleOAuthClient(tenantId?: string, dataStore: DataStore = store): Promise<{ clientId: string; clientSecret: string } | null> {
+  if (tenantId) {
+    const app = await getTenantPlatformAppFrom(dataStore, tenantId, 'google');
     const clientId = text(app?.app_id);
     const clientSecret = decryptSecret(app?.app_secret);
-    if (clientId && clientSecret) return { clientId, clientSecret };
+    if (app?.tenant_id === tenantId && clientId && clientSecret) return { clientId, clientSecret };
+    return null;
   }
   return getYouTubeOAuthClient();
 }
 
-export async function getTenantTikTokOAuthClient(tenantId?: string): Promise<{ clientKey: string; clientSecret: string } | null> {
+export async function getTenantTikTokOAuthClient(tenantId?: string, dataStore: DataStore = store): Promise<{ clientKey: string; clientSecret: string } | null> {
   if (tenantId) {
-    const app = await getTenantPlatformApp(tenantId, 'tiktok');
+    const app = await getTenantPlatformAppFrom(dataStore, tenantId, 'tiktok');
     const clientKey = text(app?.app_id);
     const clientSecret = decryptSecret(app?.app_secret);
-    if (clientKey && clientSecret) return { clientKey, clientSecret };
+    if (app?.tenant_id === tenantId && clientKey && clientSecret) return { clientKey, clientSecret };
+    return null;
   }
   return getTikTokOAuthClient();
 }
@@ -303,6 +358,8 @@ export function signOAuthState(input: {
   userId: string;
   platform: string;
   returnTo: string;
+  purpose?: 'messenger';
+  redirectUri?: string;
   nonce?: string;
   expiresAt?: number;
 }): string {
@@ -311,6 +368,8 @@ export function signOAuthState(input: {
     userId: input.userId,
     platform: input.platform,
     returnTo: input.returnTo,
+    ...(input.purpose ? { purpose: input.purpose } : {}),
+    ...(input.redirectUri ? { redirectUri: input.redirectUri } : {}),
     nonce: input.nonce || crypto.randomBytes(12).toString('base64url'),
     expiresAt: input.expiresAt || Date.now() + STATE_TTL_MS,
   };
@@ -324,11 +383,16 @@ export function parseOAuthState(state: string): null | {
   userId: string;
   platform: string;
   returnTo: string;
+  purpose?: 'messenger';
+  redirectUri?: string;
   expiresAt: number;
 } {
-  const [body, sig] = text(state).split('.');
+  const parts = text(state).split('.');
+  if (parts.length !== 2) return null;
+  const [body, sig] = parts;
   if (!body || !sig) return null;
   const expected = crypto.createHmac('sha256', secretKey()).update(body).digest('base64url');
+  if (Buffer.byteLength(sig) !== Buffer.byteLength(expected)) return null;
   if (!crypto.timingSafeEqual(Buffer.from(sig), Buffer.from(expected))) return null;
   try {
     const payload = JSON.parse(Buffer.from(body, 'base64url').toString('utf8')) as {
@@ -336,15 +400,20 @@ export function parseOAuthState(state: string): null | {
       userId?: string;
       platform?: string;
       returnTo?: string;
+      purpose?: string;
+      redirectUri?: string;
       expiresAt?: number;
     };
-    if (!payload.tenantId || !payload.userId || !payload.platform || !payload.expiresAt) return null;
-    if (payload.expiresAt <= Date.now()) return null;
+    if (typeof payload.tenantId !== 'string' || !payload.tenantId || typeof payload.userId !== 'string' || !payload.userId || typeof payload.platform !== 'string' || !payload.platform || !Number.isFinite(payload.expiresAt)) return null;
+    if (typeof payload.returnTo !== 'string' || !payload.returnTo.startsWith('/') || payload.returnTo.startsWith('//') || /[\\\r\n]/.test(payload.returnTo)) return null;
+    if (typeof payload.expiresAt !== 'number' || payload.expiresAt <= Date.now() || payload.expiresAt > Date.now() + STATE_TTL_MS) return null;
     return {
       tenantId: payload.tenantId,
       userId: payload.userId,
       platform: payload.platform,
       returnTo: payload.returnTo || '/',
+      ...(typeof payload.redirectUri === 'string' ? { redirectUri: payload.redirectUri } : {}),
+      ...(payload.purpose === 'messenger' ? { purpose: 'messenger' as const } : {}),
       expiresAt: payload.expiresAt,
     };
   } catch {

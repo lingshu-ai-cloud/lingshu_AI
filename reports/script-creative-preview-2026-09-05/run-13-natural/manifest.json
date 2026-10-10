@@ -1,0 +1,66 @@
+{
+  "generatedAt": "2026-09-04T22:33:16.069Z",
+  "source": "real_studio_route_qwen",
+  "inputHash": "897618a93aca9c8b3644819534b534bcb8274c85dba5fddfd2c9ccd8928ad7e7",
+  "modelCalls": 9,
+  "versions": [
+    {
+      "version": 1,
+      "inputCase": {
+        "duration": 20
+      },
+      "httpStatus": 422,
+      "elapsedMs": 13993,
+      "ok": false,
+      "source": "ai_rejected",
+      "code": "SCRIPT_DURATION_EXCEEDED",
+      "qualityStatus": "rejected",
+      "error": "口播仍超过目标时长，请增加时长或减少本条要讲的内容",
+      "validationIssues": [
+        "口播缩写后仍不满足目标时长"
+      ],
+      "validationWarnings": []
+    },
+    {
+      "version": 2,
+      "inputCase": {
+        "duration": 30
+      },
+      "httpStatus": 422,
+      "elapsedMs": 13904,
+      "ok": false,
+      "source": "ai_rejected",
+      "code": "SCRIPT_DURATION_EXCEEDED",
+      "qualityStatus": "rejected",
+      "error": "口播仍超过目标时长，请增加时长或减少本条要讲的内容",
+      "validationIssues": [
+        "口播缩写后仍不满足目标时长"
+      ],
+      "validationWarnings": []
+    },
+    {
+      "version": 3,
+      "inputCase": {
+        "duration": 30,
+        "videoTheme": {
+          "id": "product_proof",
+          "title": "产品实证",
+          "contentGoal": "reach",
+          "primaryCta": "",
+          "conversionGoal": ""
+        }
+      },
+      "httpStatus": 422,
+      "elapsedMs": 12010,
+      "ok": false,
+      "source": "ai_rejected",
+      "code": "SCRIPT_DURATION_EXCEEDED",
+      "qualityStatus": "rejected",
+      "error": "口播仍超过目标时长，请增加时长或减少本条要讲的内容",
+      "validationIssues": [
+        "口播缩写后仍不满足目标时长"
+      ],
+      "validationWarnings": []
+    }
+  ]
+}

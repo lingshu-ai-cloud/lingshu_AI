@@ -1,0 +1,28 @@
+import assert from 'node:assert/strict';
+import { visualCoverageIssues, invalidateProductionArtifacts, productionFailureState } from './productionPreflight';
+import { buildContentBatchPlan, contentPlanCoverage } from './contentBatchPlan';
+import { normalizeDigitalEmployeeConfig, normalizeWeeklyGoal } from './domain';
+import { normalizeVideoPlan } from '../../src/lib/videoCreationPlan';
+const picture = { id: 'poster', type: 'image' as const, duration: 0 };
+assert.match(visualCoverageIssues({ scenes: [0,1,2].map(() => ({ assetId: 'poster', duration: 10 })), assets: [picture], minimumDistinct: 3 }).join(), /只有 1 组/);
+const video = { id: 'demo', type: 'video' as const, duration: 30 };
+assert.deepEqual(visualCoverageIssues({ scenes: [0,10,20].map(trimStart => ({ assetId: 'demo', duration: 10, trimStart })), assets: [video], minimumDistinct: 3 }), [], 'one real video can provide three non-overlapping clips');
+assert.match(visualCoverageIssues({ scenes: [0,0,0].map(trimStart => ({ assetId: 'demo', duration: 10, trimStart })), assets: [video], minimumDistinct: 3 }).join(), /只有 1 组/);
+assert.match(visualCoverageIssues({ scenes: [{ assetId: 'demo', duration: 10, trimStart: 25 }], assets: [video], minimumDistinct: 1 }).join(), /超出真实素材时长/);
+assert.deepEqual(visualCoverageIssues({ scenes: ['a','b','c'].map(assetId => ({assetId,duration:10})),assets:['a','b','c'].map(id=>({...picture,id})),minimumDistinct:3}),[]);
+assert.equal(productionFailureState(new Error('production_input_required: 请补充产品事实')).kind, 'input');
+assert.equal(productionFailureState(new Error('production_input_required: 请补充产品事实')).reason, '请补充产品事实');
+assert.equal(productionFailureState(new Error('browser closed')).status,'failed');
+const previous = { script: 'old', renderOutputPath: '/old.mp4', voiceoverUrl: '/old.wav', alignedCuesByLang:{en:[1]}, automation:{stage:'completed',quality:{passed:true},contentVersion:1,renderOutputPath:'/old.mp4'} };
+const reset = invalidateProductionArtifacts(previous);
+assert.equal(reset.renderOutputPath,''); assert.equal(reset.voiceoverUrl,'');assert.deepEqual(reset.automation.quality,{});assert.equal(reset.invalidatedRenders[0].path,'/old.mp4');assert.equal(previous.renderOutputPath,'/old.mp4','does not mutate history');
+const config = normalizeDigitalEmployeeConfig({ companyName:'企业',enabledWorkflows:['product_content'],socialCadence:'每周生成 5 条发布草稿',focusProducts:'产品 A' });
+const goal = normalizeWeeklyGoal({metric:'published_posts',target:5,contentPlatforms:['facebook'],videoPlans:[normalizeVideoPlan({route:'product',productName:'产品 A',theme:'介绍产品',language:'en',duration:30,platform:'facebook',presenter:'material'})]},config);
+const draft=buildContentBatchPlan({goalId:'goal',goal,config,evidence:{products:[{id:'product',name:'产品 A',materialIds:['poster']}],exactAnalysisIds:[],materialIds:['poster']},versions:{configVersion:1,policyVersion:'1',factsVersion:'1'}});
+assert.equal(draft.orders.length,1,'never copy an explicitly requested order to fill a quota');assert.equal(draft.coverage?.missing,4);assert.match(draft.coverage!.message,/1\/5/);
+assert.equal(contentPlanCoverage({...config,socialCadence:''},goal,1).missing,0,'published posts are not automatically treated as unique videos');
+console.log('Production preflight regression tests passed');
+
+const directed = { ...previous, scenePlanOrigin: 'director', contentOrder: { videoPlan: { scenePlan: [{ source: 'material', materialId: 'a' }] } } };
+assert.equal(invalidateProductionArtifacts(directed).contentOrder.videoPlan.scenePlan,undefined,'new script must not inherit director scene count/bindings');
+assert.deepEqual(invalidateProductionArtifacts({...directed,scenePlanOrigin:'user'}).contentOrder.videoPlan.scenePlan,directed.contentOrder.videoPlan.scenePlan,'preserve explicitly fixed user scenes');

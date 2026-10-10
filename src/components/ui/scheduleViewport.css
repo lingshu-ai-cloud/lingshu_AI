@@ -1,0 +1,35 @@
+.ls-bounded-schedule-viewport {
+  max-block-size: clamp(320px, calc(100dvh - 280px), 720px);
+  min-inline-size: 0;
+  overflow: auto;
+  overscroll-behavior: contain;
+  scrollbar-gutter: stable;
+}
+
+.ls-schedule-sticky-header {
+  position: sticky;
+  z-index: 20;
+  inset-block-start: 0;
+}
+
+.ls-schedule-reveal {
+  opacity: 0;
+  transform: translateY(8px);
+  transition: opacity var(--ls-motion-enter) var(--ls-ease-enter), transform var(--ls-motion-enter) var(--ls-ease-enter);
+}
+
+.ls-schedule-reveal.is-revealed,
+.ls-schedule-reveal:focus-visible,
+.ls-schedule-reveal:focus-within {
+  opacity: 1;
+  transform: translateY(0);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .ls-schedule-reveal {
+    opacity: 1 !important;
+    transform: none !important;
+    transition: none !important;
+  }
+}
+

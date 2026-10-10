@@ -1,0 +1,25 @@
+{
+  "version": 3,
+  "inputCase": {
+    "duration": 30,
+    "videoTheme": {
+      "id": "product_proof",
+      "title": "产品实证",
+      "contentGoal": "reach",
+      "primaryCta": "",
+      "conversionGoal": ""
+    }
+  },
+  "httpStatus": 422,
+  "elapsedMs": 7026,
+  "ok": false,
+  "source": "ai_rejected",
+  "script": "",
+  "code": "SCRIPT_DURATION_EXCEEDED",
+  "qualityStatus": "rejected",
+  "error": "口播仍超过目标时长，请增加时长或减少本条要讲的内容",
+  "validationIssues": [
+    "口播缩写后仍不满足目标时长"
+  ],
+  "validationWarnings": []
+}

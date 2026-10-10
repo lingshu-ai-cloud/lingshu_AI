@@ -1,0 +1,32 @@
+import assert from 'node:assert/strict';
+import { store } from '../storage/index.js';
+import { configureFollowupItemTemplate, followupItemContentHash } from './customerWorkflow.js';
+import { supportedFollowupTemplate } from '../whatsapp/templates.js';
+const template = supportedFollowupTemplate({ id:'official', name:'hello', language:'en_US', status:'APPROVED', components:[{type:'BODY',text:'Hello {{1}}, your order {{2}} is ready.'}] })!;
+assert.equal(template.variableCount, 2);
+assert.equal(supportedFollowupTemplate({...template, status:'PENDING'}), null);
+assert.equal(supportedFollowupTemplate({id:'x',name:'x',language:'en',status:'APPROVED',components:[{type:'BODY',text:'Hello {{name}}'}]}), null);
+assert.equal(supportedFollowupTemplate({id:'x',name:'x',language:'en',status:'APPROVED',components:[{type:'BODY',text:'Hello'},{type:'HEADER',format:'IMAGE'}]}), null);
+const batch:any = {id:'batch',tenant_id:'tenant',run_id:'run',status:'approved',version:3,approved_version:3,approval_id:'old'};
+const item:any = {id:'item',tenant_id:'tenant',batch_id:'batch',status:'blocked',exclusion_reason:'whatsapp_template_required',draft_body:'old unapproved text',draft_version:1,provider_receipt:{},provider_message_id:'',sent_at:''};
+const sibling:any = {id:'sibling',tenant_id:'tenant',batch_id:'batch',status:'approved'};
+const originals = {getById:store.getById,list:store.list,update:store.update};
+store.getById = (async (_c:string,id:string) => id === batch.id ? batch : id === item.id ? item : null) as typeof store.getById;
+store.list = (async ()=>({items:[item,sibling],page:1,totalPages:1,totalItems:2,perPage:100})) as typeof store.list;
+store.update = (async (_c:string,id:string,patch:any)=>{Object.assign(id===batch.id?batch:id===item.id?item:sibling,patch);return true;}) as typeof store.update;
+const input = {tenantId:'tenant',batchId:'batch',itemId:'item',templateName:'hello',language:'en_US',variables:['Maya','42']};
+try {
+  await assert.rejects(()=>configureFollowupItemTemplate({...input,tenantId:'other'},async()=>template),/not_found/);
+  await assert.rejects(()=>configureFollowupItemTemplate(input,async()=>null),/approved_whatsapp_template_required/);
+  await assert.rejects(()=>configureFollowupItemTemplate({...input,variables:['missing']},async()=>template),/variables_invalid/);
+  assert.equal(batch.approved_version,3,'invalid input does not alter approval');
+  await configureFollowupItemTemplate(input,async()=>template);
+  assert.equal(item.draft_body,'Hello Maya, your order 42 is ready.');
+  assert.equal(item.status,'draft'); assert.equal(sibling.status,'draft');
+  assert.equal(batch.version,4); assert.equal(batch.approved_version,0); assert.equal(batch.approval_id,'');
+  assert.equal(item.content_hash,followupItemContentHash(item));
+  assert.notEqual(item.content_hash,followupItemContentHash({...item,template_variables:['Other','42']}),'template parameters are included in approval hash');
+  item.provider_receipt={claimToken:'maybe_sent'};
+  await assert.rejects(()=>configureFollowupItemTemplate(input,async()=>template),/has_send_attempt/);
+} finally { Object.assign(store,originals); }
+console.log('Follow-up approved-template validation, tenant isolation, payload fingerprint and approval invalidation passed');

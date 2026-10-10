@@ -41,3 +41,66 @@ assert.equal(hasInternalPromptLeak('Intent instruction: return one directly-send
 assert.equal(hasInternalPromptLeak('Tell me the quantity you need and I’ll check it.'), false);
 
 console.log('draft factual safety policy passed');
+
+assert.ok(unsupportedHighRiskClaims('CE certification is available for IMH-ABS-01.', '{"products":[{"sku":"IMH-ABS-01"}]}').includes('CE certification availability is not grounded'));
+assert.deepEqual(unsupportedHighRiskClaims('I will check whether CE certification is available.', '{}'), []);
+assert.deepEqual(unsupportedHighRiskClaims('CE certification is not confirmed yet.', '{}'), []);
+assert.deepEqual(unsupportedHighRiskClaims('CE certification is available.', '{"certifications":"CE"}'), []);
+
+for (const name of ['CE', 'FCC', 'RoHS', 'ISO 9001', 'UL', 'REACH', 'GMP']) {
+  assert.ok(unsupportedHighRiskClaims(`${name} certification is available.`, '{}').length > 0);
+  assert.deepEqual(unsupportedHighRiskClaims(`Is ${name} certification available?`, '{}'), []);
+  assert.deepEqual(unsupportedHighRiskClaims(`We will verify whether ${name} certification is available.`, '{}'), []);
+  assert.deepEqual(unsupportedHighRiskClaims(`${name} certification is pending confirmation.`, '{}'), []);
+  assert.deepEqual(unsupportedHighRiskClaims(`${name} certification is not available.`, '{}'), []);
+  for (const evidence of [`${name} certification is not available`, `${name} pending verification`, `没有${name}认证`]) {
+    assert.ok(unsupportedHighRiskClaims(`${name} certification is available.`, JSON.stringify({ company: evidence })).length > 0);
+  }
+  assert.deepEqual(unsupportedHighRiskClaims(`${name} certification is available.`, JSON.stringify({ certifications: name })), []);
+  assert.deepEqual(unsupportedHighRiskClaims(`${name} certification is available.`, JSON.stringify({ company: `${name} certification is valid.` })), []);
+}
+assert.ok(unsupportedHighRiskClaims('Our product is FCC certified.', '{}').length > 0);
+assert.ok(unsupportedHighRiskClaims('产品已获RoHS认证。', '{}').length > 0);
+assert.deepEqual(unsupportedHighRiskClaims('产品尚未获得RoHS认证，需要核实。', '{}'), []);
+assert.ok(unsupportedHighRiskClaims('ISO 14001 certification is available.', '{"certifications":"ISO 9001"}').length > 0);
+assert.ok(unsupportedHighRiskClaims('CE certification is available.', '{"certifications":"CE","company":"CE certification is expired"}').length > 0);
+assert.ok(unsupportedHighRiskClaims('CE certification is not confirmed; FCC certification is available.', '{}').some(value => value.startsWith('FCC')));
+
+const differentSkuEvidence = JSON.stringify({ products: [{ sku: 'A-01', certifications: 'CE' }, { sku: 'B-02', material: 'ABS' }] });
+assert.ok(unsupportedHighRiskClaims('CE certification is available for B-02.', differentSkuEvidence).length > 0);
+assert.deepEqual(unsupportedHighRiskClaims('CE certification is available for A-01.', differentSkuEvidence), []);
+
+assert.ok(unsupportedHighRiskClaims('Our product is CE certified.', differentSkuEvidence).length > 0);
+
+assert.ok(unsupportedHighRiskClaims('We have CE certification, please confirm quantity.', '{}').length > 0);
+assert.ok(unsupportedHighRiskClaims('CE certification is available and no samples are needed.', '{}').length > 0);
+assert.ok(unsupportedHighRiskClaims('CE certification is available for SKUUNKNOWN.', '{"products":[{"sku":"A-01","certifications":"CE"}]}').length > 0);
+assert.ok(unsupportedHighRiskClaims('CE certification is available for UNKNOWN-02.', '{"products":[{"sku":"A-01","certifications":"CE"}]}').length > 0);
+
+assert.ok(unsupportedHighRiskClaims('CE认证可用。', '{}').length > 0);
+
+const certificatePromise = 'CE certification for IMH-ABS-01 isn’t confirmed in our files yet — I’ll pull the exact certificate and match it to this ABS housing right away.';
+assert.ok(unsupportedHighRiskClaims(certificatePromise, '{}').includes('quality document promise is not grounded'));
+for (const verb of ['pull', 'get', 'retrieve', 'provide']) {
+  assert.ok(unsupportedHighRiskClaims(`I’ll ${verb} the exact certificate.`, '{}').includes('quality document promise is not grounded'));
+  assert.ok(unsupportedHighRiskClaims(`I’ll ${verb} the exact certificate.`, '{"certifications":"CE"}').includes('quality document promise is not grounded'));
+}
+assert.deepEqual(unsupportedHighRiskClaims('I’ll check whether the certificate exists.', '{}'), []);
+assert.deepEqual(unsupportedHighRiskClaims('I’ll check our files for a certificate.', '{}'), []);
+assert.ok(unsupportedHighRiskClaims('I’ll retrieve the certificate.', '{"company":"Certificate is not available"}').includes('quality document promise is not grounded'));
+assert.deepEqual(unsupportedHighRiskClaims('I’ll retrieve the certificate.', '{"company":"We have the certificate on file."}'), []);
+assert.deepEqual(unsupportedHighRiskClaims('I’ll retrieve the certificate.', '{"certificateDocument":"https://example.test/files/certificate.pdf"}'), []);
+
+assert.ok(unsupportedHighRiskClaims('I’ll pull the exact certificate and verify it.', '{}').includes('quality document promise is not grounded'));
+
+assert.ok(unsupportedHighRiskClaims('I’ll retrieve the CE certificate.', '{"company":"We have FCC certificate on file."}').includes('quality document promise is not grounded'));
+assert.ok(unsupportedHighRiskClaims('I’ll retrieve the certificate for B-02.', '{"products":[{"sku":"A-01","certificate":"Certificate is on file"}]}').includes('quality document promise is not grounded'));
+
+assert.ok(unsupportedHighRiskClaims('I’ll pull the CE certificate.', '{"company":"CE lab report is on file."}').includes('quality document promise is not grounded'));
+for (const verb of ['pull', 'get', 'retrieve', 'send']) {
+  assert.ok(unsupportedHighRiskClaims(`Let me ${verb} the exact certificate.`, '{}').includes('quality document promise is not grounded'));
+}
+assert.deepEqual(unsupportedHighRiskClaims('Let me check whether the certificate exists.', '{}'), []);
+
+assert.deepEqual(unsupportedHighRiskClaims('CE certification isn’t available.', '{}'), []);
+assert.ok(unsupportedHighRiskClaims('CE certification is available.', '{"company":"CE certification isn’t available."}').length > 0);

@@ -65,38 +65,38 @@ export default function AssistLinkPage() {
   const complete = done || Boolean(status?.usedAt);
 
   return (
-    <div className="min-h-screen bg-slate-50 px-6 py-10 text-slate-950">
-      <main className="mx-auto flex min-h-[calc(100vh-80px)] w-full max-w-md items-center justify-center">
-        <section className="w-full rounded-3xl border border-slate-200 bg-white p-7 text-center shadow-sm">
-          <div className="mx-auto mb-5 flex h-14 w-14 items-center justify-center rounded-2xl bg-emerald-50 text-emerald-700">
+    <div className="min-h-screen bg-ink px-4 py-8 text-text-primary sm:px-6 sm:py-10">
+      <main className="mx-auto flex min-h-[calc(100dvh-64px)] w-full max-w-md items-center justify-center sm:min-h-[calc(100dvh-80px)]">
+        <section className="w-full rounded-lg border border-border bg-white p-6 text-center sm:p-7">
+          <div className={`mx-auto mb-5 flex h-14 w-14 items-center justify-center rounded-md ${invalid ? 'bg-insight-soft text-insight-action' : 'bg-accent-glow text-accent'}`}>
             {complete ? <CheckCircle2 size={28} /> : invalid ? <AlertCircle size={28} /> : <ShieldCheck size={28} />}
           </div>
 
-          <p className="text-lg font-black">灵枢 AI</p>
+          <p className="text-[11px] font-bold uppercase tracking-[0.18em] text-accent">LINGSHU AI</p>
 
           {loading ? (
-            <div className="mt-8 flex items-center justify-center gap-2 text-sm text-slate-500">
+            <div role="status" className="mt-8 flex items-center justify-center gap-2 text-sm text-text-muted">
               <Loader2 size={16} className="animate-spin" />
               正在检查链接...
             </div>
           ) : complete ? (
             <>
-              <h1 className="mt-6 text-2xl font-black">完成 ✓</h1>
-              <p className="mt-3 text-sm leading-6 text-slate-500">账号授权已经完成，可以关闭此页面。</p>
+              <h1 className="mt-6 text-2xl font-bold">授权完成</h1>
+              <p className="mt-3 text-sm leading-6 text-text-muted">账号授权已经完成，可以关闭此页面。</p>
             </>
           ) : invalid ? (
             <>
-              <h1 className="mt-6 text-2xl font-black">链接已失效</h1>
-              <p className="mt-3 text-sm leading-6 text-slate-500">请联系你的顾问重新发送协助链接。</p>
+              <h1 className="mt-6 text-2xl font-bold">链接已失效</h1>
+              <p className="mt-3 text-sm leading-6 text-text-muted">请联系你的顾问重新发送协助链接。</p>
             </>
           ) : status ? (
             <>
-              <h1 className="mt-6 text-2xl font-black">授权连接你的 {status.platformName}</h1>
-              <p className="mt-3 text-sm leading-6 text-slate-500">
+              <h1 className="mt-6 text-2xl font-bold">授权连接你的 {status.platformName}</h1>
+              <p className="mt-3 text-sm leading-6 text-text-muted">
                 这是灵枢顾问为你生成的一次性协助链接。点击下方按钮后，按平台提示确认授权即可。
               </p>
               {error === 'start_failed' && (
-                <p className="mt-4 rounded-xl bg-rose-50 px-3 py-2 text-sm font-semibold text-rose-700">
+                <p role="alert" className="mt-4 border-l-2 border-insight bg-insight-soft px-3 py-2 text-left text-sm font-semibold text-insight-action">
                   暂时无法发起授权，请联系你的顾问检查平台应用配置。
                 </p>
               )}
@@ -104,12 +104,12 @@ export default function AssistLinkPage() {
                 type="button"
                 onClick={() => void start()}
                 disabled={starting}
-                className="mt-7 inline-flex w-full items-center justify-center gap-2 rounded-2xl bg-slate-950 px-5 py-3.5 text-sm font-black text-white shadow-sm hover:bg-slate-800 disabled:opacity-60"
+                className="mt-7 inline-flex w-full items-center justify-center gap-2 rounded-md bg-accent px-5 py-3.5 text-sm font-bold text-white shadow-sm hover:bg-accent-dim disabled:opacity-60"
               >
                 {starting && <Loader2 size={16} className="animate-spin" />}
                 授权连接你的 {status.platformName}
               </button>
-              <p className="mt-4 text-xs text-slate-400">
+              <p className="mt-4 text-xs text-text-muted">
                 链接 24 小时内有效，授权完成后会自动失效。
               </p>
             </>

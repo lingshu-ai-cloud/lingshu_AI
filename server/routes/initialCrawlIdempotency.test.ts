@@ -1,0 +1,5 @@
+import { test } from 'node:test';
+import assert from 'node:assert/strict';
+import { store } from '../storage/index';
+import { createCrawlWorkerJob } from './crawlWorker';
+test('real crawl queue deduplicates same initial request and rejects a changed source',async()=>{const original={getById:store.getById,create:store.create};const records=new Map<string,any>();let created=0;try{store.getById=(async(_c:string,id:string)=>structuredClone(records.get(id)||null)) as typeof store.getById;store.create=(async(_c:string,row:any)=>{created++;records.set(row.id,structuredClone(row));return structuredClone(row);}) as typeof store.create;const input={tenantId:'tenant',requestedBy:'owner',platform:'youtube' as const,mode:'keyword' as const,keyword:'真实产品',idempotencyKey:'same-initial-source'};const first=await createCrawlWorkerJob(input),second=await createCrawlWorkerJob(input);assert.equal(first?.id,second?.id);assert.equal(created,1);await assert.rejects(createCrawlWorkerJob({...input,keyword:'changed'}),/scope_changed/);assert.equal(created,1);}finally{Object.assign(store,original);}});

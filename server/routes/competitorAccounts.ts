@@ -135,6 +135,9 @@ competitorAccountsRouter.post('/:id/crawl', async (req, res) => {
     return;
   }
   const limit = Math.min(30, Math.max(1, Number((req.body as { limit?: number })?.limit) || 3));
+  const lookbackDays = Math.min(30, Math.max(1, Number((req.body as { lookbackDays?: number })?.lookbackDays) || 7));
+  const dateTo = new Date().toISOString().slice(0, 10);
+  const dateFrom = new Date(Date.now() - lookbackDays * 86_400_000).toISOString().slice(0, 10);
 
   try {
     if (record.platform === 'youtube' || record.platform === 'tiktok') {
@@ -146,6 +149,8 @@ competitorAccountsRouter.post('/:id/crawl', async (req, res) => {
         accountUrl: record.accountUrl,
         accountName: record.accountName || accountLabelFromUrl(record.accountUrl),
         limit,
+        dateFrom,
+        dateTo,
       });
       if (!job) {
         res.status(500).json({ error: '本地采集任务创建失败' });
@@ -176,6 +181,8 @@ competitorAccountsRouter.post('/:id/crawl', async (req, res) => {
       accountUrl: record.accountUrl,
       accountName: record.accountName || accountLabelFromUrl(record.accountUrl),
       limit,
+      dateFrom,
+      dateTo,
     });
     await store.update(COL, record.id, {
       lastCrawledAt: new Date().toISOString(),

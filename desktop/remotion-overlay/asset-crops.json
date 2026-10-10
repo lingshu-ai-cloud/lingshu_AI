@@ -1,0 +1,70 @@
+{
+  "schemaVersion": "emphasis-asset-crops.v1",
+  "assets": {
+    "burst-rays-yellow-static.png": {
+      "sourceWidth": 2000,
+      "sourceHeight": 2000,
+      "frames": 1,
+      "left": 132,
+      "top": 265,
+      "right": 1713,
+      "bottom": 1048,
+      "x": 0.066,
+      "y": 0.1325,
+      "width": 0.7905,
+      "height": 0.3915
+    },
+    "burst-rays-yellow.gif": {
+      "sourceWidth": 2000,
+      "sourceHeight": 2000,
+      "frames": 42,
+      "left": 132,
+      "top": 177,
+      "right": 1715,
+      "bottom": 1093,
+      "x": 0.066,
+      "y": 0.0885,
+      "width": 0.7915,
+      "height": 0.458
+    },
+    "emphasis-rays-yellow.gif": {
+      "sourceWidth": 2000,
+      "sourceHeight": 2000,
+      "frames": 16,
+      "left": 465,
+      "top": 176,
+      "right": 1736,
+      "bottom": 1679,
+      "x": 0.2325,
+      "y": 0.088,
+      "width": 0.6355,
+      "height": 0.7515
+    },
+    "lightning-orange.gif": {
+      "sourceWidth": 2000,
+      "sourceHeight": 2000,
+      "frames": 11,
+      "left": 744,
+      "top": 138,
+      "right": 1742,
+      "bottom": 1589,
+      "x": 0.372,
+      "y": 0.069,
+      "width": 0.499,
+      "height": 0.7255
+    },
+    "megaphone-blue-yellow.gif": {
+      "sourceWidth": 640,
+      "sourceHeight": 640,
+      "frames": 26,
+      "left": 43,
+      "top": 41,
+      "right": 564,
+      "bottom": 601,
+      "x": 0.067187,
+      "y": 0.064062,
+      "width": 0.814063,
+      "height": 0.875
+    }
+  }
+}

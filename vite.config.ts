@@ -2,6 +2,18 @@ import tailwindcss from '@tailwindcss/vite';
 import react from '@vitejs/plugin-react';
 import path from 'path';
 import { defineConfig, loadEnv, type ServerOptions } from 'vite';
+import { execFileSync } from 'node:child_process';
+
+function resolveBuildSha() {
+  const configured = String(process.env.VITE_APP_BUILD_SHA || process.env.APP_BUILD_SHA || '').trim();
+  if (/^[a-f0-9]{7,64}$/i.test(configured)) return configured.toLowerCase();
+  try {
+    const value = execFileSync('git', ['rev-parse', 'HEAD'], { encoding: 'utf8', timeout: 2_000, stdio: ['ignore', 'pipe', 'ignore'] }).trim();
+    return /^[a-f0-9]{7,64}$/i.test(value) ? value.toLowerCase() : 'unknown';
+  } catch {
+    return 'unknown';
+  }
+}
 
 function resolveHmr(): ServerOptions['hmr'] {
   if (process.env.DISABLE_HMR === 'true') return false;
@@ -17,11 +29,20 @@ function resolveHmr(): ServerOptions['hmr'] {
 export default defineConfig(({ mode }) => {
   const env = loadEnv(mode, process.cwd(), '');
   const devApiTarget = process.env.DEV_API_TARGET ?? env.DEV_API_TARGET ?? 'http://127.0.0.1:8790';
+  const buildSha = resolveBuildSha();
 
   return {
     plugins: [react(), tailwindcss()],
+    define: { __APP_BUILD_SHA__: JSON.stringify(buildSha) },
+    // xlsx is installed from the vendored tarball. Vite 8 can invalidate its
+    // optimized hash after the initial page graph has already been served,
+    // making the default DigitalEmployeePage lazy import fail with a 504 and
+    // leaving Safari on a white screen. Serve this ESM dependency directly.
+    optimizeDeps: {
+      exclude: ['xlsx'],
+    },
     resolve: {
-      alias: { '@': path.resolve(__dirname, 'src') },
+      alias: { '@': path.resolve(import.meta.dirname, 'src') },
     },
     server: {
     // 合并版使用独立端口，避免和 overseas / 新手引导两个工作区互相抢占。
@@ -32,7 +53,7 @@ export default defineConfig(({ mode }) => {
     watch: {
       // 后端会在 data/ 下写入账号状态、token 用量、任务等运行时数据。
       // 这些文件变化不应触发前端整页 reload，否则新手任务会被反复卸载/挂载。
-      ignored: ['**/data/**'],
+      ignored: ['**/data/**', '**/server/**', '**/dist*/**'],
     },
     proxy: {
       // 8788 被 Cursor 的 lingqi-ai 扩展占用；当前本地 watch 后端稳定监听 8790。

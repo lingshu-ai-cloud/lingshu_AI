@@ -1,14 +1,22 @@
+import { normalizeMetricValues } from '../socialMetrics/aggregation.js';
+import {refreshMessengerCapability} from '../messenger/capabilityRefresh.js';
+import {createMessengerCapabilityScope} from '../messenger/capabilityAuthority.js';
+import { readTikTokCreatorConsent } from '../publishing/tiktokCreatorConsent.js';
+import { assertExactOAuthRedirectUri } from '../lib/oauthConfig.js';
+import { consumeOAuthNonce, issueOAuthNonce, oauthClientIdentityHash } from '../lib/oauthNonceStore.js';
 import { Router, type Request } from 'express';
 import { requireAuth, type AuthLocals } from '../middleware/auth.js';
 import { store } from '../storage/index.js';
 import {
   exchangeMetaCode,
+  exchangeInstagramLoginCode,
   exchangeTikTokCode,
   getFacebookComments,
   getFacebookPage,
   getFacebookPageInsights,
   getFacebookVideos,
   getInstagramAccount,
+  getInstagramLoginAccount,
   getInstagramAccountFromPage,
   getInstagramComments,
   getInstagramMedia,
@@ -24,31 +32,23 @@ import {
   advancedManualConnectEnabled as readAdvancedManualConnectEnabled,
   getTenantAwareMetaOAuthClient,
   getTenantAwareTikTokOAuthClient,
+  getTenantAwareInstagramOAuthClient,
 } from '../lib/oauthConfig.js';
 import { parseOAuthState, signOAuthState } from '../lib/tenantPlatformApps.js';
-import { publishVideoToAccount } from '../publishing/platformPublisher.js';
+import { publishVideoToAccount, type PublishToAccountInput } from '../publishing/platformPublisher.js';
+import { socialUploadHttpResponse } from '../publishing/directPublishHttp.js';
+export { socialUploadHttpResponse } from '../publishing/directPublishHttp.js';
 import { saveSocialMetricSnapshot } from '../socialMetrics/store.js';
+import { sealedSocialCredentialPatch, socialAccessToken } from '../lib/accountCredentials.js';
+import { instagramLoginOAuthScopes, metaOAuthScopes, tikTokOAuthScopes } from '../lib/socialOAuthScopes.js';
+import { connectMessengerPageCapability } from '../integrations/messenger.js';
+import { subscribeInstagramAccount } from '../integrations/instagramWebhook.js';
 
 const COL = 'social_accounts';
-const OAUTH_STATE_TTL_MS = 10 * 60 * 1000;
 
 const TIKTOK_AUTH_URL = 'https://www.tiktok.com/v2/auth/authorize/';
 const META_AUTH_URL = 'https://www.facebook.com';
-
-const TIKTOK_SCOPES = ['user.info.basic', 'user.info.profile', 'user.info.stats', 'video.list', 'video.publish'];
-const META_SCOPES = [
-  'pages_show_list',
-  'pages_manage_metadata',
-  'pages_read_engagement',
-  'pages_manage_posts',
-  'pages_read_user_content',
-  'business_management',
-  'instagram_basic',
-  'instagram_content_publish',
-  'instagram_manage_comments',
-  'instagram_manage_insights',
-  'read_insights',
-];
+const INSTAGRAM_AUTH_URL = 'https://www.instagram.com/oauth/authorize';
 
 export const socialRouter = Router();
 
@@ -58,6 +58,9 @@ interface PendingOAuthState {
   platform: SocialPlatform;
   returnTo: string;
   expiresAt: number;
+  purpose?: 'messenger';
+  clientHash?: string;
+  redirectUri?: string;
 }
 
 interface SocialAccountRecord {
@@ -73,6 +76,7 @@ interface SocialAccountRecord {
   refreshToken?: string;
   tokenExpiresAt?: string;
   scope?: string;
+  oauthProvider?: 'instagram_login' | 'facebook_login';
   parentPageId?: string;
   parentPageName?: string;
   followerCount: number;
@@ -82,9 +86,12 @@ interface SocialAccountRecord {
   connectedAt: string;
   lastSyncAt?: string;
   status: 'connected' | 'error' | 'expired';
+  messengerSubscribed?: boolean;
+  messengerSubscriptionError?: string;
+  instagramWebhookSubscribed?: boolean;
+  instagramWebhookSubscriptionError?: string;
 }
 
-const pendingOAuthStates = new Map<string, PendingOAuthState>();
 
 function graphVersion() {
   return process.env.META_GRAPH_VERSION?.trim() || 'v25.0';
@@ -96,6 +103,10 @@ async function getTikTokClient(tenantId?: string) {
 
 async function getMetaClient(tenantId?: string) {
   return getTenantAwareMetaOAuthClient(tenantId);
+}
+
+async function getInstagramClient(tenantId?: string) {
+  return getTenantAwareInstagramOAuthClient(tenantId);
 }
 
 function advancedManualConnectEnabled() {
@@ -125,12 +136,6 @@ function normalizeReturnTo(value: unknown) {
   return trimmed.slice(0, 300);
 }
 
-function cleanupOAuthStates() {
-  const now = Date.now();
-  for (const [state, pending] of pendingOAuthStates) {
-    if (pending.expiresAt <= now) pendingOAuthStates.delete(state);
-  }
-}
 
 function htmlEscape(value: unknown) {
   return String(value ?? '')
@@ -235,7 +240,7 @@ async function upsertSocialAccount(data: Omit<SocialAccountRecord, 'id' | 'conne
   });
   const now = new Date().toISOString();
   const payload = {
-    ...data,
+    ...data, ...sealedSocialCredentialPatch({ accessToken: data.accessToken, refreshToken: data.refreshToken }),
     connectedAt: existing.items[0]?.connectedAt || now,
     lastSyncAt: now,
     status: 'connected' as const,
@@ -250,6 +255,12 @@ async function upsertSocialAccount(data: Omit<SocialAccountRecord, 'id' | 'conne
 }
 
 function publicSocialAccount(a: SocialAccountRecord) {
+  const instagramMessagingReady = a.platform === 'instagram'
+    && a.status === 'connected'
+    && a.oauthProvider === 'instagram_login'
+    && String(a.scope || '').split(',').includes('instagram_business_manage_messages')
+    && Date.parse(a.tokenExpiresAt || '') > Date.now()
+    && a.instagramWebhookSubscribed === true;
   return {
     id: a.id,
     platform: a.platform,
@@ -266,6 +277,14 @@ function publicSocialAccount(a: SocialAccountRecord) {
     connectedAt: a.connectedAt,
     lastSyncAt: a.lastSyncAt,
     status: a.status,
+    oauthProvider: a.oauthProvider || (a.platform === 'instagram' ? 'facebook_login' : undefined),
+    messengerSubscribed: a.messengerSubscribed === true,
+    messengerSubscriptionError: a.messengerSubscriptionError || '',
+    instagramMessagingReady,
+    instagramApiMode: a.platform === 'instagram' ? (a.oauthProvider || 'facebook_login') : undefined,
+    instagramLegacyContentReady: a.platform === 'instagram' && a.oauthProvider !== 'instagram_login',
+    instagramWebhookSubscribed: a.instagramWebhookSubscribed === true,
+    instagramWebhookSubscriptionError: a.instagramWebhookSubscriptionError || '',
   };
 }
 
@@ -288,12 +307,38 @@ async function getAvailableMetaPages(accessToken: string) {
   });
 }
 
+async function assertTenantMessengerPageOwnership(tenantId:string,pageId:string) {
+  let count=0;
+  for(let page=1;page<=1000;page++) {
+    const owners=await store.list<SocialAccountRecord>(COL,{where:{platform:'facebook',providerAccountId:pageId},page,perPage:250});
+    if(owners.items.some(owner=>owner.tenantId!==tenantId)) throw Error('messenger_native_page_owned_by_foreign_tenant');
+    count+=owners.items.length;if(count===owners.totalItems)break;
+    if(!owners.items.length||count>owners.totalItems||page===1000)throw Error('messenger_native_page_ownership_incomplete');
+  }
+}
+async function admitTenantMessengerPage(tenantId:string,pageId:string,pageAccessToken:string) {
+  await assertTenantMessengerPageOwnership(tenantId,pageId);
+  const client=await getTenantAwareMetaOAuthClient(tenantId);
+  if(!client)throw Error('messenger_tenant_app_missing');
+  const capability=await connectMessengerPageCapability({pageId,pageAccessToken,...client});
+  const currentClient=await getTenantAwareMetaOAuthClient(tenantId);
+  if(!currentClient||currentClient.appId!==client.appId||currentClient.appSecret!==client.appSecret)throw Error('messenger_tenant_app_changed');
+  return capability;
+}
+
+async function assertMessengerAccountVersion(account:SocialAccountRecord,pageId:string,pageAccessToken:string) {
+  const current=await store.getById<SocialAccountRecord>(COL,account.id);
+  if(!current||current.tenantId!==account.tenantId||current.platform!=='facebook'||current.status!=='connected'||current.providerAccountId!==pageId||socialAccessToken({accessToken:current.accessToken})!==pageAccessToken)throw Error('messenger_account_changed');
+}
+
 async function saveFacebookPageFromMeta(input: {
   tenantId: string;
   userId: string;
   page: Awaited<ReturnType<typeof getMetaPages>>[number];
+  purpose?: 'messenger';
 }) {
-  return upsertSocialAccount({
+  await assertTenantMessengerPageOwnership(input.tenantId,input.page.id);
+  const account = await upsertSocialAccount({
     tenantId: input.tenantId,
     userId: input.userId,
     platform: 'facebook',
@@ -304,7 +349,8 @@ async function saveFacebookPageFromMeta(input: {
     accessToken: input.page.accessToken,
     refreshToken: '',
     tokenExpiresAt: '',
-    scope: META_SCOPES.join(','),
+    scope: metaOAuthScopes(input.purpose || 'facebook').filter(scope => !['pages_messaging','pages_manage_metadata'].includes(scope)).join(','),
+    messengerSubscribed: false,
     parentPageId: input.page.id,
     parentPageName: input.page.name,
     followerCount: input.page.fanCount || 0,
@@ -312,6 +358,17 @@ async function saveFacebookPageFromMeta(input: {
     viewCount: 0,
     likeCount: 0,
   });
+  try {
+    const capability=await admitTenantMessengerPage(input.tenantId,input.page.id,input.page.accessToken);
+    await assertMessengerAccountVersion(account,input.page.id,input.page.accessToken);
+    const capabilityScope=createMessengerCapabilityScope({tenantId:input.tenantId,accountId:account.id,pageId:input.page.id,appId:capability.appId,accessToken:input.page.accessToken,grantedScopes:capability.grantedScopes,validUntil:capability.validUntil});
+    if(!await store.update(COL, account.id, { messengerSubscribed: true, messengerSubscriptionError: '', scope: capabilityScope })) throw Error('messenger_capability_persist_failed');
+    return { ...account, messengerSubscribed: true, messengerSubscriptionError: '', scope: capabilityScope };
+  } catch (error) {
+    const message = error instanceof Error ? error.message : 'Messenger webhook subscription failed';
+    await store.update(COL, account.id, { messengerSubscribed: false, messengerSubscriptionError: message });
+    return { ...account, messengerSubscribed: false, messengerSubscriptionError: message };
+  }
 }
 
 async function saveInstagramFromMeta(input: {
@@ -331,7 +388,10 @@ async function saveInstagramFromMeta(input: {
     accessToken: input.page.accessToken,
     refreshToken: '',
     tokenExpiresAt: '',
-    scope: META_SCOPES.join(','),
+    scope: metaOAuthScopes('instagram').join(','),
+    oauthProvider: 'facebook_login',
+    instagramWebhookSubscribed: false,
+    instagramWebhookSubscriptionError: '',
     parentPageId: input.page.id,
     parentPageName: input.page.name,
     followerCount: input.page.instagram.followersCount || 0,
@@ -343,6 +403,7 @@ async function saveInstagramFromMeta(input: {
 
 async function connectTikTok(pending: PendingOAuthState, code: string, req: Request) {
   const client = await getTikTokClient(pending.tenantId);
+  if (!client || oauthClientIdentityHash(client) !== pending.clientHash) throw new Error('oauth_tenant_client_changed');
   if (!client) throw new Error('TikTok 一键授权暂未开启，请联系服务顾问配置平台应用和回调地址。');
   const tokens = await exchangeTikTokCode({ ...client, code, redirectUri: redirectUri(req, 'tiktok') });
   const user = await getTikTokUser(tokens.accessToken);
@@ -367,8 +428,55 @@ async function connectTikTok(pending: PendingOAuthState, code: string, req: Requ
   });
 }
 
+async function connectInstagramLogin(pending: PendingOAuthState, code: string, req: Request) {
+  const client = await getInstagramClient(pending.tenantId);
+  if (!client || oauthClientIdentityHash(client) !== pending.clientHash) throw new Error('oauth_tenant_client_changed');
+  if (!client) throw new Error('Instagram 一键授权尚未配置 Instagram App ID 和 App Secret。');
+  const tokens = await exchangeInstagramLoginCode({
+    ...client,
+    code,
+    redirectUri: redirectUri(req, 'instagram'),
+  });
+  if (!tokens.permissions.includes('instagram_business_manage_messages')) {
+    throw new Error('Instagram 未授予私信权限，请重新授权并允许消息访问。');
+  }
+  const account = await getInstagramLoginAccount(tokens.accessToken, graphVersion());
+  // /me resolves the account represented by the exchanged access token. Its
+  // Graph ID can differ from the user_id returned by Instagram's OAuth endpoint.
+  const saved = await upsertSocialAccount({
+    tenantId: pending.tenantId,
+    userId: pending.userId,
+    platform: 'instagram',
+    providerAccountId: account.id,
+    title: account.username,
+    handle: `@${account.username}`,
+    avatarUrl: account.profilePictureUrl || '',
+    accessToken: tokens.accessToken,
+    refreshToken: '',
+    tokenExpiresAt: new Date(Date.now() + tokens.expiresIn * 1000).toISOString(),
+    scope: tokens.permissions.join(','),
+    oauthProvider: 'instagram_login',
+    instagramWebhookSubscribed: false,
+    instagramWebhookSubscriptionError: '',
+    parentPageId: '',
+    parentPageName: '',
+    followerCount: account.followersCount || 0,
+    videoCount: account.mediaCount || 0,
+    viewCount: 0,
+    likeCount: 0,
+  });
+  try {
+    await subscribeInstagramAccount({ accountId: account.id, accessToken: tokens.accessToken });
+    await store.update(COL, saved.id, { instagramWebhookSubscribed: true, instagramWebhookSubscriptionError: '' });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : 'Instagram webhook subscription failed';
+    await store.update(COL, saved.id, { instagramWebhookSubscribed: false, instagramWebhookSubscriptionError: message });
+  }
+}
+
 async function connectMeta(pending: PendingOAuthState, code: string, req: Request) {
   const client = await getMetaClient(pending.tenantId);
+  if (!client || oauthClientIdentityHash(client) !== pending.clientHash) throw new Error('oauth_tenant_client_changed');
   if (!client) throw new Error('Meta 一键授权暂未开启，请联系服务顾问配置平台应用和回调地址。');
   const userToken = await exchangeMetaCode({
     appId: client.appId,
@@ -381,25 +489,7 @@ async function connectMeta(pending: PendingOAuthState, code: string, req: Reques
   let saved = 0;
   for (const page of pages) {
     if (pending.platform === 'facebook') {
-      await upsertSocialAccount({
-        tenantId: pending.tenantId,
-        userId: pending.userId,
-        platform: 'facebook',
-        providerAccountId: page.id,
-        title: page.name,
-        handle: page.name,
-        avatarUrl: page.pictureUrl || '',
-        accessToken: page.accessToken,
-        refreshToken: '',
-        tokenExpiresAt: '',
-        scope: META_SCOPES.join(','),
-        parentPageId: page.id,
-        parentPageName: page.name,
-        followerCount: page.fanCount || 0,
-        videoCount: 0,
-        viewCount: 0,
-        likeCount: 0,
-      });
+      await saveFacebookPageFromMeta({ tenantId: pending.tenantId, userId: pending.userId, page, purpose: pending.purpose });
       saved += 1;
     }
     if (pending.platform === 'instagram' && page.instagram) {
@@ -414,7 +504,10 @@ async function connectMeta(pending: PendingOAuthState, code: string, req: Reques
         accessToken: page.accessToken,
         refreshToken: '',
         tokenExpiresAt: '',
-        scope: META_SCOPES.join(','),
+        scope: metaOAuthScopes('instagram').join(','),
+        oauthProvider: 'facebook_login',
+        instagramWebhookSubscribed: false,
+        instagramWebhookSubscriptionError: '',
         parentPageId: page.id,
         parentPageName: page.name,
         followerCount: page.instagram.followersCount || 0,
@@ -444,26 +537,23 @@ socialRouter.get('/oauth/:platform/callback', async (req, res) => {
     res.status(404).send('Unknown platform');
     return;
   }
-  cleanupOAuthStates();
   const state = String(req.query.state || '');
   const code = typeof req.query.code === 'string' ? req.query.code : '';
   const signedState = parseOAuthState(state);
-  const pending = pendingOAuthStates.get(state) || (signedState && signedState.platform === platform ? {
-    userId: signedState.userId,
-    tenantId: signedState.tenantId,
-    platform,
-    returnTo: signedState.returnTo,
-    expiresAt: signedState.expiresAt,
-  } : undefined);
+  const pending: PendingOAuthState | undefined = signedState && signedState.platform === platform ? { ...signedState, platform } : undefined;
   const returnTo = pending?.returnTo || '/';
   if (!pending || pending.platform !== platform) {
     res.status(400).type('html').send(callbackHtml({ ok: false, title: '授权已失效', message: '请回到系统重新连接账号。', returnTo, platform }));
     return;
   }
-  pendingOAuthStates.delete(state);
   try {
+    assertExactOAuthRedirectUri(pending.redirectUri, redirectUri(req, platform));
+    const client = platform === 'tiktok' ? await getTikTokClient(pending.tenantId) : platform === 'instagram' ? await getInstagramClient(pending.tenantId) : await getMetaClient(pending.tenantId);
+    if (!client || !await consumeOAuthNonce(state, { ...pending, clientHash: oauthClientIdentityHash(client) })) throw new Error('oauth_state_consumed_or_invalid');
+    pending.clientHash = oauthClientIdentityHash(client);
     if (!code) throw new Error(String(req.query.error_description || req.query.error || '缺少授权码'));
     if (platform === 'tiktok') await connectTikTok(pending, code, req);
+    else if (platform === 'instagram') await connectInstagramLogin(pending, code, req);
     else await connectMeta(pending, code, req);
     res.type('html').send(callbackHtml({ ok: true, title: '账号已连接', message: '授权完成，可以关闭这个窗口。', returnTo, platform }));
   } catch (error: any) {
@@ -481,11 +571,12 @@ socialRouter.get('/oauth/:platform/status', async (req, res) => {
     return;
   }
   const { tenantId } = res.locals as AuthLocals;
-  const configured = platform === 'tiktok' ? Boolean(await getTikTokClient(tenantId)) : Boolean(await getMetaClient(tenantId));
+  const configured = platform === 'tiktok' ? Boolean(await getTikTokClient(tenantId)) : platform === 'instagram' ? Boolean(await getInstagramClient(tenantId)) : Boolean(await getMetaClient(tenantId));
+  const scopes = platform === 'tiktok' ? tikTokOAuthScopes() : platform === 'instagram' ? instagramLoginOAuthScopes() : metaOAuthScopes(platform);
   res.json({
     configured,
     redirectUri: redirectUri(req, platform),
-    scopes: platform === 'tiktok' ? TIKTOK_SCOPES : META_SCOPES,
+    scopes,
     manualConnectEnabled: advancedManualConnectEnabled(),
   });
 });
@@ -498,46 +589,62 @@ socialRouter.post('/oauth/:platform/start', async (req, res) => {
   }
   const { userId, tenantId } = res.locals as AuthLocals;
   const tiktokClient = platform === 'tiktok' ? await getTikTokClient(tenantId) : null;
-  const metaClient = platform === 'tiktok' ? null : await getMetaClient(tenantId);
-  if (platform === 'tiktok' ? !tiktokClient : !metaClient) {
+  const metaClient = platform === 'facebook' ? await getMetaClient(tenantId) : null;
+  const instagramClient = platform === 'instagram' ? await getInstagramClient(tenantId) : null;
+  if (platform === 'tiktok' ? !tiktokClient : platform === 'instagram' ? !instagramClient : !metaClient) {
     res.status(503).json({ error: `${platform} 一键授权暂未开启，请联系服务顾问配置平台应用和回调地址。` });
     return;
   }
-  cleanupOAuthStates();
+  const purpose = platform === 'facebook' && req.body?.purpose === 'messenger' ? 'messenger' as const : undefined;
   const state = signOAuthState({
     userId,
     tenantId,
     platform,
     returnTo: normalizeReturnTo(req.body?.returnTo),
+    redirectUri: redirectUri(req, platform),
+    purpose,
   });
-  pendingOAuthStates.set(state, {
-    userId,
-    tenantId,
-    platform,
-    returnTo: normalizeReturnTo(req.body?.returnTo),
-    expiresAt: Date.now() + OAUTH_STATE_TTL_MS,
-  });
+  const parsedState = parseOAuthState(state);
+  if (!parsedState) { res.status(503).json({ error: 'oauth_state_invalid' }); return; }
+  try {
+    await issueOAuthNonce(state, { ...parsedState, clientHash: oauthClientIdentityHash(tiktokClient || instagramClient || metaClient) });
+  } catch { res.status(503).json({ error: 'oauth_state_storage_unavailable' }); return; }
+
 
   if (platform === 'tiktok') {
+    const scopes = tikTokOAuthScopes();
     const url = new URL(TIKTOK_AUTH_URL);
     url.searchParams.set('client_key', tiktokClient!.clientKey);
     url.searchParams.set('response_type', 'code');
-    url.searchParams.set('scope', TIKTOK_SCOPES.join(','));
+    url.searchParams.set('scope', scopes.join(','));
     url.searchParams.set('redirect_uri', redirectUri(req, platform));
     url.searchParams.set('state', state);
-    res.json({ url: url.toString(), redirectUri: redirectUri(req, platform), scopes: TIKTOK_SCOPES });
+    res.json({ url: url.toString(), redirectUri: redirectUri(req, platform), scopes });
     return;
   }
 
+  if (platform === 'instagram') {
+    const scopes = instagramLoginOAuthScopes();
+    const url = new URL(INSTAGRAM_AUTH_URL);
+    url.searchParams.set('client_id', instagramClient!.appId);
+    url.searchParams.set('redirect_uri', redirectUri(req, platform));
+    url.searchParams.set('response_type', 'code');
+    url.searchParams.set('scope', scopes.join(','));
+    url.searchParams.set('state', state);
+    res.json({ url: url.toString(), redirectUri: redirectUri(req, platform), scopes });
+    return;
+  }
+
+  const scopes = metaOAuthScopes(purpose || platform);
   const url = new URL(`${META_AUTH_URL}/${graphVersion()}/dialog/oauth`);
   url.searchParams.set('client_id', metaClient!.appId);
   url.searchParams.set('redirect_uri', redirectUri(req, platform));
   url.searchParams.set('response_type', 'code');
-  url.searchParams.set('scope', META_SCOPES.join(','));
+  url.searchParams.set('scope', scopes.join(','));
   url.searchParams.set('state', state);
   url.searchParams.set('auth_type', 'rerequest');
   url.searchParams.set('return_scopes', 'true');
-  res.json({ url: url.toString(), redirectUri: redirectUri(req, platform), scopes: META_SCOPES });
+  res.json({ url: url.toString(), redirectUri: redirectUri(req, platform), scopes });
 });
 
 socialRouter.post('/connect/manual', async (req, res) => {
@@ -583,7 +690,7 @@ socialRouter.post('/connect/manual', async (req, res) => {
         accessToken,
         refreshToken,
         tokenExpiresAt: '',
-        scope: TIKTOK_SCOPES.join(','),
+        scope: tikTokOAuthScopes().join(','),
         parentPageId: '',
         parentPageName: '',
         followerCount: user.followerCount || 0,
@@ -613,6 +720,7 @@ socialRouter.post('/connect/manual', async (req, res) => {
         account = saved[0];
       } else {
         const page = await getFacebookPage(accessToken, graphVersion(), requestedId);
+        await assertTenantMessengerPageOwnership(tenantId,page.id);
         account = await upsertSocialAccount({
           tenantId,
           userId,
@@ -624,7 +732,8 @@ socialRouter.post('/connect/manual', async (req, res) => {
           accessToken: page.accessToken,
           refreshToken: '',
           tokenExpiresAt: '',
-          scope: META_SCOPES.join(','),
+          scope: metaOAuthScopes('facebook').filter(scope => !['pages_messaging','pages_manage_metadata'].includes(scope)).join(','),
+          messengerSubscribed: false,
           parentPageId: page.id,
           parentPageName: page.name,
           followerCount: page.fanCount || 0,
@@ -632,6 +741,17 @@ socialRouter.post('/connect/manual', async (req, res) => {
           viewCount: 0,
           likeCount: 0,
         });
+        try {
+          const capability=await admitTenantMessengerPage(tenantId,page.id,page.accessToken);
+          await assertMessengerAccountVersion(account,page.id,page.accessToken);
+          const capabilityScope=createMessengerCapabilityScope({tenantId,accountId:account.id,pageId:page.id,appId:capability.appId,accessToken:page.accessToken,grantedScopes:capability.grantedScopes,validUntil:capability.validUntil});
+          if(!await store.update(COL, account.id, { messengerSubscribed: true, messengerSubscriptionError: '', scope: capabilityScope })) throw Error('messenger_capability_persist_failed');
+          account = { ...account, messengerSubscribed: true, messengerSubscriptionError: '', scope: capabilityScope };
+        } catch (subscriptionError) {
+          const message = subscriptionError instanceof Error ? subscriptionError.message : 'Messenger webhook subscription failed';
+          await store.update(COL, account.id, { messengerSubscribed: false, messengerSubscriptionError: message });
+          account = { ...account, messengerSubscribed: false, messengerSubscriptionError: message };
+        }
       }
     }
 
@@ -679,7 +799,10 @@ socialRouter.post('/connect/manual', async (req, res) => {
           accessToken,
           refreshToken: '',
           tokenExpiresAt: '',
-          scope: META_SCOPES.join(','),
+          scope: metaOAuthScopes('instagram').join(','),
+          oauthProvider: 'facebook_login',
+          instagramWebhookSubscribed: false,
+          instagramWebhookSubscriptionError: '',
           parentPageId: linked.page.id || '',
           parentPageName: linked.page.name || '',
           followerCount: linked.instagram.followersCount || 0,
@@ -696,6 +819,18 @@ socialRouter.post('/connect/manual', async (req, res) => {
     console.error(`${platform} manual connect error:`, error?.response?.data ?? error?.message ?? error);
     res.status(error?.response?.status || 500).json({ ok: false, error: readableSocialError(error) });
   }
+});
+
+socialRouter.get('/accounts/:id/tiktok/creator-info', async (req, res) => {
+  const { tenantId } = res.locals as AuthLocals;
+  try { res.json(await readTikTokCreatorConsent({ tenantId, accountId: String(req.params.id) })); }
+  catch (error) { res.status(409).json({ error: error instanceof Error ? error.message : 'tiktok_creator_query_failed' }); }
+});
+
+socialRouter.post('/accounts/:id/messenger/capability-refresh', async (req,res) => {
+  const {tenantId}=res.locals as AuthLocals;
+  try {res.json(await refreshMessengerCapability(store,tenantId,req.params.id));}
+  catch {res.status(409).json({error:'messenger_capability_refresh_failed'});}
 });
 
 socialRouter.get('/accounts', async (req, res) => {
@@ -762,8 +897,8 @@ socialRouter.get('/accounts/:id/insights', async (req, res) => {
   }
   try {
     const points = account.platform === 'facebook'
-      ? await getFacebookPageInsights(account.providerAccountId, account.accessToken, graphVersion(), range)
-      : await getInstagramAccountInsights(account.providerAccountId, account.accessToken, graphVersion(), range);
+      ? await getFacebookPageInsights(account.providerAccountId, socialAccessToken(account as unknown as Record<string, unknown>), graphVersion(), range)
+      : await getInstagramAccountInsights(account.providerAccountId, socialAccessToken(account as unknown as Record<string, unknown>), graphVersion(), range);
     const metricKeys: Record<string, 'views' | 'reach' | 'likes' | 'comments' | 'shares' | 'saves' | 'followers' | 'profileViews' | 'watchTimeMinutes'> = {
       page_impressions_unique: 'reach',
       page_video_views: 'views',
@@ -819,19 +954,41 @@ socialRouter.get('/accounts/:id/videos', async (req, res) => {
   }
   const maxResults = Number(req.query.maxResults ?? 25);
   try {
-    let videos: unknown[] = [];
-    if (account.platform === 'tiktok') videos = await getTikTokVideos(account.accessToken, maxResults);
-    if (account.platform === 'facebook') videos = await getFacebookVideos(account.providerAccountId, account.accessToken, graphVersion(), maxResults);
-    if (account.platform === 'instagram') videos = await getInstagramMedia(account.providerAccountId, account.accessToken, graphVersion(), maxResults);
+    let videos: unknown[] = []; const accessToken = socialAccessToken(account as unknown as Record<string, unknown>);
+    let profilePatch: Partial<SocialAccountRecord> = {};
+    if (account.platform === 'tiktok') {
+      const [profile, items] = await Promise.all([getTikTokUser(accessToken), getTikTokVideos(accessToken, maxResults)]);
+      videos = items;
+      profilePatch = { title: profile.displayName, handle: profile.displayName, avatarUrl: profile.avatarUrl || account.avatarUrl,
+        followerCount: profile.followerCount, videoCount: profile.videoCount, likeCount: profile.likeCount };
+    }
+    if (account.platform === 'facebook') {
+      const [profile, items] = await Promise.all([
+        getFacebookPage(accessToken, graphVersion(), account.providerAccountId),
+        getFacebookVideos(account.providerAccountId, accessToken, graphVersion(), maxResults),
+      ]);
+      videos = items;
+      profilePatch = { title: profile.name, handle: profile.name, avatarUrl: profile.pictureUrl || account.avatarUrl, followerCount: profile.fanCount || 0 };
+    }
+    if (account.platform === 'instagram') {
+      const [profile, items] = await Promise.all([
+        getInstagramAccount(account.providerAccountId, accessToken, graphVersion()),
+        getInstagramMedia(account.providerAccountId, accessToken, graphVersion(), maxResults),
+      ]);
+      videos = items;
+      profilePatch = { title: profile.username, handle: `@${profile.username}`, avatarUrl: profile.profilePictureUrl || account.avatarUrl,
+        followerCount: profile.followersCount, videoCount: profile.mediaCount };
+    }
+    const capturedAt = new Date().toISOString();
     await Promise.all((videos as Array<Record<string, unknown>>).map(video => {
-      const metrics: Record<string, number> = {
-        likes: Number(video.likeCount || 0),
-        comments: Number(video.commentCount || 0),
-      };
+      const metrics = normalizeMetricValues({
+        likes: video.likeCount,
+        comments: video.commentCount,
+        ...(account.platform !== 'instagram' ? { views: video.viewCount } : {}),
+        ...(account.platform === 'tiktok' ? { shares: video.shareCount } : {}),
+      });
       // Instagram media listing does not return plays, and Facebook listing does
       // not return shares. Omit unavailable metrics instead of writing fake zeroes.
-      if (account.platform !== 'instagram') metrics.views = Number(video.viewCount || 0);
-      if (account.platform === 'tiktok') metrics.shares = Number(video.shareCount || 0);
       return saveSocialMetricSnapshot({
         tenantId,
         platform: account.platform,
@@ -842,9 +999,21 @@ socialRouter.get('/accounts/:id/videos', async (req, res) => {
         rawMetrics: { source: 'platform_video_list' },
       });
     }));
+    const knownViews = (videos as Array<Record<string, unknown>>).reduce((sum, video) => sum + (typeof video.viewCount === 'number' ? video.viewCount : 0), 0);
+    const knownLikes = (videos as Array<Record<string, unknown>>).reduce((sum, video) => sum + (typeof video.likeCount === 'number' ? video.likeCount : 0), 0);
+    await store.update(COL, account.id, {
+      ...profilePatch,
+      videoCount: Math.max(Number(profilePatch.videoCount ?? account.videoCount ?? 0), videos.length),
+      viewCount: Math.max(Number(account.viewCount || 0), knownViews),
+      likeCount: Math.max(Number(profilePatch.likeCount ?? account.likeCount ?? 0), knownLikes),
+      lastSyncAt: capturedAt,
+      status: 'connected',
+    });
     res.json({ videos });
   } catch (error: any) {
     console.error(`${account.platform} videos error:`, error?.response?.data ?? error?.message ?? error);
+    if ([401, 403].includes(Number(error?.response?.status))) await store.update(COL, account.id, { status: 'expired' });
+    else await store.update(COL, account.id, { status: 'error' });
     res.status(error?.response?.status || 500).json({ error: readableSocialError(error) });
   }
 });
@@ -857,13 +1026,13 @@ socialRouter.get('/accounts/:id/video/:videoId/comments', async (req, res) => {
   }
   const maxResults = Number(req.query.maxResults ?? 50);
   try {
-    let comments: unknown[] = [];
+    let comments: unknown[] = []; const accessToken = socialAccessToken(account as unknown as Record<string, unknown>);
     if (account.platform === 'tiktok') {
       res.status(501).json({ error: 'TikTok 评论读取需要额外 API 权限，当前暂未开放' });
       return;
     }
-    if (account.platform === 'facebook') comments = await getFacebookComments(req.params.videoId, account.accessToken, graphVersion(), maxResults);
-    if (account.platform === 'instagram') comments = await getInstagramComments(req.params.videoId, account.accessToken, graphVersion(), maxResults);
+    if (account.platform === 'facebook') comments = await getFacebookComments(req.params.videoId, accessToken, graphVersion(), maxResults);
+    if (account.platform === 'instagram') comments = await getInstagramComments(req.params.videoId, accessToken, graphVersion(), maxResults);
     res.json({ comments, total: comments.length });
   } catch (error: any) {
     console.error(`${account.platform} comments error:`, error?.response?.data ?? error?.message ?? error);
@@ -881,7 +1050,7 @@ socialRouter.post('/accounts/:id/upload', async (req, res) => {
     res.status(400).json({ error: 'Account is not connected' });
     return;
   }
-  const body = req.body as SocialUploadInput & { videoPath?: string; projectId?: string; generationVersionId?: string; ratio?: string; contentId?: string; language?: string; trackWaLink?: boolean };
+  const body = req.body as SocialUploadInput & { videoPath?: string; projectId?: string; generationVersionId?: string; ratio?: string; contentId?: string; language?: string; trackWaLink?: boolean; generationKind?: 'script' | 'poster'; generationProvenance?: string; qualityStatus?: string; publishable?: boolean; generationRecordId?: string; sourceKind?: 'project' | 'manual_upload'; sourceVideoPath?: string; enterpriseFactVersion?: string; copyAudit?: PublishToAccountInput['copyAudit'] };
   if (!body.title || (!body.videoPath && !body.videoUrl)) {
     res.status(400).json({ error: 'title and videoPath/videoUrl are required' });
     return;
@@ -902,8 +1071,13 @@ socialRouter.post('/accounts/:id/upload', async (req, res) => {
       contentId: body.contentId,
       language: body.language,
       trackWaLink: body.trackWaLink,
+      generationKind: body.generationKind, generationProvenance: body.generationProvenance,
+      qualityStatus: body.qualityStatus, publishable: body.publishable, generationRecordId: body.generationRecordId,
+      sourceKind: body.sourceKind, sourceVideoPath: body.sourceVideoPath,
+      enterpriseFactVersion: body.enterpriseFactVersion, copyAudit: body.copyAudit,
     });
-    res.status(201).json({ ok: true, video: result.video, tracking: result.tracking, publishRecord: result.publishRecord });
+    const response = socialUploadHttpResponse(result);
+    res.status(response.statusCode).json(response.body);
   } catch (error: any) {
     console.error(`${account.platform} upload error:`, error?.response?.data ?? error?.message ?? error);
     const status = error?.statusCode || error?.response?.status || 500;

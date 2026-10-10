@@ -1,0 +1,249 @@
+import express, { type NextFunction, type Request, type Response } from 'express';
+import fs from 'node:fs';
+import path from 'node:path';
+import { createHash, randomUUID } from 'node:crypto';
+import { fileURLToPath } from 'node:url';
+import { spawn, type ChildProcess } from 'node:child_process';
+import ffmpegStatic from 'ffmpeg-static';
+import dotenv from 'dotenv';
+
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
+const rootDir = path.resolve(__dirname, '..');
+dotenv.config({ path: path.join(rootDir, '.env') });
+dotenv.config({ path: path.join(rootDir, '.env.local'), override: true });
+
+type WorkerStatus = 'queued' | 'processing' | 'quality_check' | 'completed' | 'failed' | 'cancelled';
+interface WorkerJob {
+  id: string;
+  externalJobId: string;
+  status: WorkerStatus;
+  stage: string;
+  progress: number;
+  outputUrl?: string;
+  quality?: {
+    passed: boolean;
+    lipSyncScore?: number;
+    avOffsetFrames?: number;
+    freezeSegments?: number;
+    durationSeconds?: number;
+    notes: string[];
+  };
+  errorCode?: string;
+  error?: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+const port = Math.max(1024, Number(process.env.DIGITAL_HUMAN_WORKER_PORT || 8792));
+const host = String(process.env.DIGITAL_HUMAN_WORKER_HOST || '127.0.0.1');
+const apiKey = String(process.env.DIGITAL_HUMAN_API_KEY || '').trim();
+const runnerSetting = String(process.env.DIGITAL_HUMAN_LOCAL_RUNNER || '').trim();
+const runner = runnerSetting ? path.resolve(runnerSetting) : '';
+const workRoot = path.resolve(process.env.DIGITAL_HUMAN_WORKER_DATA_DIR || path.join(rootDir, 'data', 'digital-human-worker'));
+const jobsFile = path.join(workRoot, 'jobs.json');
+const maxInputBytes = 110 * 1024 * 1024;
+const allowedInputHosts = new Set(
+  String(process.env.DIGITAL_HUMAN_WORKER_INPUT_HOSTS || '127.0.0.1,localhost')
+    .split(',').map(value => value.trim().toLowerCase()).filter(Boolean),
+);
+const running = new Map<string, ChildProcess>();
+fs.mkdirSync(workRoot, { recursive: true });
+
+function loadJobs(): WorkerJob[] {
+  try {
+    const parsed = JSON.parse(fs.readFileSync(jobsFile, 'utf8')) as WorkerJob[];
+    return parsed.map(job => ['queued', 'processing', 'quality_check'].includes(job.status)
+      ? { ...job, status: 'failed', stage: 'worker_restart', errorCode: 'WORKER_RESTARTED', error: '本地数字人 Worker 已重启，请重新提交任务。' }
+      : job);
+  } catch {
+    return [];
+  }
+}
+
+let jobs = loadJobs();
+persistJobs();
+
+function persistJobs(): void {
+  const temporary = `${jobsFile}.${process.pid}.tmp`;
+  fs.writeFileSync(temporary, JSON.stringify(jobs, null, 2), 'utf8');
+  fs.renameSync(temporary, jobsFile);
+}
+
+function updateJob(id: string, patch: Partial<WorkerJob>): WorkerJob {
+  const index = jobs.findIndex(job => job.id === id);
+  if (index < 0) throw new Error('worker job not found');
+  jobs[index] = { ...jobs[index]!, ...patch, updatedAt: new Date().toISOString() };
+  persistJobs();
+  return jobs[index]!;
+}
+
+function authorized(req: Request, res: Response, next: NextFunction): void {
+  if (!apiKey) { next(); return; }
+  if (req.headers.authorization !== `Bearer ${apiKey}`) {
+    res.status(401).json({ error: 'unauthorized' });
+    return;
+  }
+  next();
+}
+
+function safeInputUrl(value: unknown): URL {
+  const parsed = new URL(String(value || ''));
+  if (!['http:', 'https:'].includes(parsed.protocol) || !allowedInputHosts.has(parsed.hostname.toLowerCase())) {
+    throw new Error(`input host is not allowed: ${parsed.hostname}`);
+  }
+  return parsed;
+}
+
+async function download(url: URL, destination: string): Promise<void> {
+  const response = await fetch(url, { signal: AbortSignal.timeout(60_000) });
+  if (!response.ok) throw new Error(`input download failed (${response.status})`);
+  const declared = Number(response.headers.get('content-length') || 0);
+  if (declared > maxInputBytes) throw new Error('input exceeds 110 MB');
+  const bytes = Buffer.from(await response.arrayBuffer());
+  if (!bytes.length || bytes.length > maxInputBytes) throw new Error('input size is invalid');
+  fs.writeFileSync(destination, bytes);
+}
+
+function sha256(file: string): string {
+  return createHash('sha256').update(fs.readFileSync(file)).digest('hex');
+}
+
+function runProcess(file: string, args: string[], jobId?: string): Promise<void> {
+  return new Promise((resolve, reject) => {
+    const child = spawn(file, args, { cwd: rootDir, windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'] });
+    if (jobId) running.set(jobId, child);
+    let stderr = '';
+    child.stderr?.on('data', chunk => { stderr = `${stderr}${String(chunk)}`.slice(-8000); });
+    child.on('error', reject);
+    child.on('close', code => {
+      if (jobId) running.delete(jobId);
+      if (code === 0) resolve();
+      else reject(new Error(stderr.trim() || `${path.basename(file)} exited with code ${code}`));
+    });
+  });
+}
+
+function readQualityReport(file: string): Record<string, unknown> {
+  if (!fs.existsSync(file)) throw new Error(`缺少质量检测报告: ${path.basename(file)}`);
+  const report = JSON.parse(fs.readFileSync(file, 'utf8')) as Record<string, unknown>;
+  if (report.passed !== true) throw new Error(`质量检测未通过: ${JSON.stringify(report.failures || [])}`);
+  return report;
+}
+
+async function validateOutput(avatarPath: string, outputPath: string): Promise<NonNullable<WorkerJob['quality']>> {
+  if (!fs.existsSync(outputPath) || fs.statSync(outputPath).size < 1024) throw new Error('数字人输出为空');
+  if (sha256(avatarPath) === sha256(outputPath)) throw new Error('数字人服务返回了原人物视频，已拒绝回流');
+  if (!ffmpegStatic) throw new Error('ffmpeg unavailable for output validation');
+  await runProcess(ffmpegStatic, ['-hide_banner', '-loglevel', 'error', '-i', outputPath, '-frames:v', '1', '-f', 'null', '-']);
+  await runProcess(ffmpegStatic, ['-hide_banner', '-loglevel', 'error', '-i', outputPath, '-map', '0:a:0', '-t', '1', '-f', 'null', '-']);
+  const validationDir = path.join(path.dirname(outputPath), 'validation');
+  fs.mkdirSync(validationDir, { recursive: true });
+  const earlyFrame = path.join(validationDir, 'early.png');
+  const lateFrame = path.join(validationDir, 'late.png');
+  await runProcess(ffmpegStatic, ['-y', '-hide_banner', '-loglevel', 'error', '-ss', '0.5', '-i', outputPath, '-frames:v', '1', earlyFrame]);
+  await runProcess(ffmpegStatic, ['-y', '-hide_banner', '-loglevel', 'error', '-ss', '4.5', '-i', outputPath, '-frames:v', '1', lateFrame]);
+  if (!fs.existsSync(earlyFrame) || !fs.existsSync(lateFrame) || sha256(earlyFrame) === sha256(lateFrame)) {
+    throw new Error('表情数字人成片缺少可检测的人脸动作，已拒绝回流');
+  }
+  fs.rmSync(validationDir, { recursive: true, force: true });
+  const visual = readQualityReport(`${outputPath}.visual-quality.json`);
+  const syncnet = readQualityReport(`${outputPath}.syncnet-quality.json`);
+  return {
+    passed: true,
+    lipSyncScore: Number(syncnet.syncnet_confidence),
+    avOffsetFrames: Number(syncnet.av_offset_frames),
+    freezeSegments: 0,
+    durationSeconds: Number(visual.duration_seconds),
+    faceDetectionRate: Number(visual.face_detection_rate),
+    mouthJumpP95: Number(visual.mouth_jump_p95),
+    notes: [
+      'MuseTalk 1.5 + MediaPipe 动态嘴部裁剪推理成功',
+      `SyncNet 通过：置信度 ${Number(syncnet.syncnet_confidence).toFixed(3)}，音画偏移 ${Number(syncnet.av_offset_frames)} 帧`,
+      `嘴部时序稳定性通过：P95 跳变 ${Number(visual.mouth_jump_p95).toFixed(4)}，人脸跟踪 ${(Number(visual.face_detection_rate) * 100).toFixed(1)}%`,
+      '头部、颈部与肩部运动沿用真人源视频，输出音轨和编码均已验证',
+    ],
+  };
+}
+
+async function executeJob(id: string, input: { avatarVideoUrl: string; audioUrl: string }): Promise<void> {
+  const jobDir = path.join(workRoot, id);
+  fs.mkdirSync(jobDir, { recursive: true });
+  const avatarPath = path.join(jobDir, 'avatar.mp4');
+  const audioPath = path.join(jobDir, 'voice.wav');
+  const outputPath = path.join(jobDir, 'result.mp4');
+  try {
+    updateJob(id, { status: 'processing', stage: 'download_inputs', progress: 8 });
+    await Promise.all([
+      download(safeInputUrl(input.avatarVideoUrl), avatarPath),
+      download(safeInputUrl(input.audioUrl), audioPath),
+    ]);
+    if (!runner || !fs.existsSync(runner)) throw new Error('DIGITAL_HUMAN_LOCAL_RUNNER 未配置或文件不存在');
+    updateJob(id, { stage: 'video_preserving_lip_sync', progress: 30 });
+    await runProcess('pwsh.exe', ['-NoProfile', '-File', runner, '-Video', avatarPath, '-Audio', audioPath, '-Output', outputPath], id);
+    updateJob(id, { status: 'quality_check', stage: 'output_validation', progress: 88 });
+    const quality = await validateOutput(avatarPath, outputPath);
+    updateJob(id, {
+      status: 'completed', stage: 'completed', progress: 100,
+      outputUrl: `http://${host}:${port}/outputs/${encodeURIComponent(id)}.mp4`,
+      quality, error: undefined, errorCode: undefined,
+    });
+  } catch (error) {
+    const cancelled = jobs.find(job => job.id === id)?.status === 'cancelled';
+    if (!cancelled) updateJob(id, {
+      status: 'failed', stage: 'failed', progress: Math.min(99, jobs.find(job => job.id === id)?.progress || 0),
+      errorCode: 'LOCAL_RUNNER_FAILED', error: error instanceof Error ? error.message : String(error),
+    });
+  }
+}
+
+const app = express();
+app.use(express.json({ limit: '1mb' }));
+app.use(authorized);
+
+app.get('/health', (_req, res) => res.json({ ok: true, provider: 'musetalk-v1.5-local', features: ['lip_sync', 'source_motion', 'neck_shoulder_preservation'], runnerConfigured: Boolean(runner && fs.existsSync(runner)) }));
+
+app.post('/v1/jobs', (req, res) => {
+  let avatarVideoUrl: URL;
+  let audioUrl: URL;
+  try {
+    avatarVideoUrl = safeInputUrl(req.body?.avatarVideoUrl);
+    audioUrl = safeInputUrl(req.body?.audioUrl);
+  } catch (error) {
+    res.status(400).json({ error: error instanceof Error ? error.message : 'invalid input URL' });
+    return;
+  }
+  const now = new Date().toISOString();
+  const job: WorkerJob = {
+    id: randomUUID(), externalJobId: String(req.body?.externalJobId || ''),
+    status: 'queued', stage: 'queued', progress: 0, createdAt: now, updatedAt: now,
+  };
+  jobs.push(job);
+  persistJobs();
+  void executeJob(job.id, { avatarVideoUrl: avatarVideoUrl.toString(), audioUrl: audioUrl.toString() });
+  res.status(202).json(job);
+});
+
+app.get('/v1/jobs/:id', (req, res) => {
+  const job = jobs.find(item => item.id === req.params.id);
+  if (!job) { res.status(404).json({ error: 'job not found' }); return; }
+  res.json(job);
+});
+
+app.post('/v1/jobs/:id/cancel', (req, res) => {
+  const job = jobs.find(item => item.id === req.params.id);
+  if (!job) { res.status(404).json({ error: 'job not found' }); return; }
+  running.get(job.id)?.kill();
+  res.json(updateJob(job.id, { status: 'cancelled', stage: 'cancelled', error: undefined, errorCode: undefined }));
+});
+
+app.get('/outputs/:file', (req, res) => {
+  const match = /^([0-9a-f-]{36})\.mp4$/i.exec(req.params.file);
+  if (!match) { res.status(404).end(); return; }
+  const outputPath = path.join(workRoot, match[1]!, 'result.mp4');
+  if (!fs.existsSync(outputPath)) { res.status(404).end(); return; }
+  res.type('video/mp4').sendFile(outputPath);
+});
+
+app.listen(port, host, () => {
+  console.log(`[video-preserving-avatar-worker] http://${host}:${port} runner=${runner || 'unconfigured'}`);
+});

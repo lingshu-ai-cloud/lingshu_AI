@@ -1,0 +1,38 @@
+{
+  "sampleSource": "项目演示配置 data/external-customer-service-demo-profile.json；非真实客户产品资质证明",
+  "generationMode": "product",
+  "scriptType": "storyboard",
+  "voiceoverMode": "ai",
+  "language": "zh",
+  "platform": "tiktok",
+  "duration": 20,
+  "cooperationRoute": "oem_odm",
+  "audience": "工厂自动化负责人、工艺经理",
+  "productInfo": "产品名称：LX-Press 伺服压装检测单元\n所属类目：精密装配\n产品卖点：压力—位移双闭环、曲线判定、配方管理和数据追溯\n产品规格：1—100 kN 可选；支持条码绑定、曲线存档和 MES 上传；可配置快换工装与防错识别",
+  "materials": [],
+  "materialInfos": [],
+  "tone": "专业但自然，给制造业买家有用的判断，适合短视频观看",
+  "videoTheme": {
+    "id": "product_proof",
+    "title": "产品实证",
+    "primaryCta": "私信了解压装方案"
+  },
+  "previewCases": [
+    {
+      "duration": 20
+    },
+    {
+      "duration": 30
+    },
+    {
+      "duration": 30,
+      "videoTheme": {
+        "id": "product_proof",
+        "title": "产品实证",
+        "contentGoal": "reach",
+        "primaryCta": "",
+        "conversionGoal": ""
+      }
+    }
+  ]
+}

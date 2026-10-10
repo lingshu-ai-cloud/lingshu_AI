@@ -1,0 +1,73 @@
+{
+  "schemaVersion": 1,
+  "provider": "heygen",
+  "evidenceKind": "real_read_only_provider_preflight",
+  "recordedAtUtc": "2026-10-10T15:18:10.506147+00:00",
+  "collectedAtUtc": null,
+  "collectionTimeNote": "GET calls occurred during this session immediately before recording. Exact request UTC timestamps were not captured; do not treat recordedAtUtc as an exact request timestamp.",
+  "transport": "Python urllib reproducing HeyGenPresenterClient GET routes; shell node unavailable",
+  "paidActionsPerformed": false,
+  "requests": [
+    {
+      "method": "GET",
+      "route": "/v3/avatars/looks?group_id=e44a4228bd9649f5bdbe18ee5253d5ed&limit=50",
+      "httpStatus": 200
+    },
+    {
+      "method": "GET",
+      "route": "/v3/voices?type=public&limit=100&language=en",
+      "httpStatus": 200
+    },
+    {
+      "method": "GET",
+      "route": "/v3/avatars/looks/fb24c5d371714724bcd105ec2c18e8d4",
+      "httpStatus": 200
+    },
+    {
+      "method": "GET",
+      "route": "/v3/voices/2eca0d3dd5ec4a1ea6efa6194b19eb78",
+      "httpStatus": 200
+    },
+    {
+      "method": "GET",
+      "route": "/v3/voices/bc1ff447710f455586b15507bf49c062",
+      "httpStatus": 200
+    }
+  ],
+  "selectedLook": {
+    "id": "fb24c5d371714724bcd105ec2c18e8d4",
+    "status": "completed",
+    "width": 1080,
+    "height": 1920,
+    "name": "zihan",
+    "groupId": "e44a4228bd9649f5bdbe18ee5253d5ed"
+  },
+  "selectedVoice": {
+    "id": "bc1ff447710f455586b15507bf49c062",
+    "name": "zihan",
+    "language": "English"
+  },
+  "publicAlternativeVoice": {
+    "id": "2eca0d3dd5ec4a1ea6efa6194b19eb78",
+    "name": "Ray",
+    "language": "en",
+    "publicCatalogVerified": true
+  },
+  "configurationPresent": {
+    "HEYGEN_API_KEY": true,
+    "HEYGEN_GENERATION_ENABLED": true,
+    "HEYGEN_PRIVATE_ASSET_TENANT_ID": false,
+    "SOCIAL_CONTENT_HEYGEN_ENABLED": false,
+    "STUDIO_PAID_BUDGET_CNY": false,
+    "STUDIO_PAID_OPENING_USED_CNY": false,
+    "STUDIO_HEYGEN_RESERVE_CNY": false,
+    "HEYGEN_ESTIMATED_CNY_PER_SECOND": false
+  },
+  "limitations": [
+    "Exact collection UTC timestamps not captured",
+    "No generation or paid submission performed",
+    "Current price and account balance not verified",
+    "Commercial rights and human quality not verified",
+    "Selected default voice ownership was not returned by the precise voice endpoint"
+  ]
+}

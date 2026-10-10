@@ -1,4 +1,10 @@
+import { socialDiscoveryApi } from '../lib/socialDiscoveryApi';
+import { discoveryKeywords } from '../../shared/socialDiscoveryKeywords';
+import type { SocialCrawlStrategy } from '../../shared/contracts/socialContentWorkflow';
+import { useAgentProductionAction } from '../lib/agentProductionSession';
 import { useState, useEffect, useRef } from 'react';
+import { Button, Drawer, Modal, Segmented } from 'antd';
+import LsPageHeader from './ui/LsPageHeader';
 import { motion, AnimatePresence } from 'motion/react';
 import { Activity, AlertTriangle, BarChart3, Building2, ChevronDown, CircleDollarSign, Clock, Download, DownloadCloud, ExternalLink, Globe2, Loader, Play, Plus, RefreshCw, Search, Trash2, TrendingUp, X, CheckCircle } from 'lucide-react';
 import type { AgentAction, AgentType } from '../App';
@@ -11,6 +17,76 @@ import {
   type ScheduleActionPrefill,
 } from '../lib/contentActionNavigation';
 import { normalizeKeywordInput, type KeywordPlatform } from '../lib/keywordInput';
+export type ScheduledTaskExecutionState = 'idle' | 'queued' | 'running' | 'succeeded' | 'failed' | 'worker_offline' | 'no_data' | 'collected' | 'partial';
+
+export type ScheduledWorkflowHandoff = {
+  runId: string;
+  taskId: string;
+  taskKey: 'scheduled_source_collection';
+  preview?: boolean;
+  entityId?: string;
+};
+
+const SCHEDULED_WORKFLOW_HANDOFF_TTL = 15 * 60 * 1000;
+
+export function parseScheduledWorkflowHandoff(
+  raw: string,
+  now = Date.now(),
+): ScheduledWorkflowHandoff | null {
+  try {
+    const parsed = JSON.parse(raw) as {
+      page?: string;
+      runId?: string;
+      taskId?: string;
+      issuedAt?: number;
+      businessRef?: { taskKey?: string; preview?: boolean; entityId?: string };
+    };
+    const issuedAt = Number(parsed.issuedAt);
+    const age = now - issuedAt;
+    const runId = String(parsed.runId || '').trim();
+    const taskId = String(parsed.taskId || '').trim();
+    const preview = parsed.businessRef?.preview === true;
+    if (
+      parsed.page !== 'scheduled'
+      || parsed.businessRef?.taskKey !== 'scheduled_source_collection'
+      || (!preview && (!runId || !taskId))
+      || !Number.isFinite(issuedAt)
+      || age < 0
+      || age > SCHEDULED_WORKFLOW_HANDOFF_TTL
+    ) return null;
+    return {
+      runId,
+      taskId,
+      taskKey: 'scheduled_source_collection',
+      ...(parsed.businessRef?.entityId ? { entityId: parsed.businessRef.entityId } : {}),
+      ...(preview ? { preview: true } : {}),
+    };
+  } catch {
+    return null;
+  }
+}
+
+function peekScheduledWorkflowHandoff(): ScheduledWorkflowHandoff | null {
+  try {
+    const raw = window.sessionStorage.getItem('digitalEmployee.businessDeepLink');
+    return raw ? parseScheduledWorkflowHandoff(raw) : null;
+  } catch {
+    return null;
+  }
+}
+
+function consumeScheduledWorkflowHandoff(): ScheduledWorkflowHandoff | null {
+  try {
+    const raw = window.sessionStorage.getItem('digitalEmployee.businessDeepLink');
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as { page?: string };
+    if (parsed.page !== 'scheduled') return null;
+    window.sessionStorage.removeItem('digitalEmployee.businessDeepLink');
+    return parseScheduledWorkflowHandoff(raw);
+  } catch {
+    return null;
+  }
+}
 
 interface ScheduledTask {
   id: string;
@@ -22,6 +98,7 @@ interface ScheduledTask {
   enabled: boolean;
   lastRun?: string;
   lastResult?: string;
+  executionState?: ScheduledTaskExecutionState;
   channelId?: string;
   config: Record<string, string>;
   createdAt: string;
@@ -33,10 +110,15 @@ interface VideoAnalysisItem {
   platform: string;
   thumbnailUrl?: string;
   duration?: number;
-  status: 'analyzing' | 'analyzed' | 'failed' | 'paused';
+  status: 'analyzing' | 'analyzed' | 'failed' | 'paused' | 'cancelled';
   analysisMode?: string;
   updatedAt?: string;
   error?: string;
+  statusReason?: string;
+  recoveryAction?: string;
+  failureCode?: 'gemini_missing' | 'qwen_timeout' | 'candidate_hidden' | 'source_unavailable' | 'analysis_failed' | 'none';
+  provider?: 'Gemini' | 'Qwen' | 'AI';
+  visibility?: 'visible' | 'hidden';
 }
 
 interface VideoStatsPayload {
@@ -65,6 +147,11 @@ interface VideoStatsPayload {
       pendingRecords?: number;
       analyzedRecords?: number;
       failedRecords?: number;
+      hiddenRecords?: number;
+      providerStatus?: {
+        gemini?: { configured?: boolean; reason?: string; recoveryAction?: string };
+        qwen?: { configured?: boolean; reason?: string; recoveryAction?: string };
+      };
       items?: VideoAnalysisItem[];
       refinementItems?: Array<{
         id: string;
@@ -81,6 +168,38 @@ interface VideoStatsPayload {
     };
   };
 }
+
+export function scheduledTaskExecutionState(
+  task: Pick<ScheduledTask, 'lastResult' | 'executionState'>,
+  options: { running?: boolean; workerOnline?: boolean } = {},
+): ScheduledTaskExecutionState {
+  if (options.running) return 'running';
+  const text = String(task.lastResult || '').trim();
+  const serverState = task.executionState;
+  const queued = serverState === 'queued' || /\u6267\u884c\u72b6\u6001\uff1a\u5df2\u6392\u961f|\u6267\u884c\u72b6\u6001\uff1a\u5904\u7406\u4e2d|\u7b49\u5f85\s*(?:Mac\s*)?(?:\u672c\u5730\s*)?Worker/.test(text);
+  if (queued && options.workerOnline === false) return 'worker_offline';
+  if (serverState) return serverState;
+  if (queued) return 'queued';
+  if (/执行状态：部分成功/.test(text)) return 'partial';
+  if (/执行状态：已采集，待分析/.test(text)) return 'collected';
+  if (/执行状态：暂无结果/.test(text)) return 'no_data';
+  if (/执行状态：执行失败/.test(text)) return 'failed';
+  if (/\u6267\u884c\u72b6\u6001\uff1a(?:\u6267\u884c\u6210\u529f|\u90e8\u5206\u6210\u529f)|\u4efb\u52a1\u6267\u884c\u5b8c\u6210|\u91c7\u96c6\u5df2\u7ed3\u675f/.test(text)) return 'succeeded';
+  if (/\u6267\u884c\u72b6\u6001\uff1a\u6267\u884c\u5931\u8d25|\u6267\u884c\u5931\u8d25[:\uff1a]|\u4efb\u52a1\u5747\u6267\u884c\u5931\u8d25/.test(text)) return 'failed';
+  return 'idle';
+}
+
+const TASK_EXECUTION_META: Record<ScheduledTaskExecutionState, { label: string; style: string }> = {
+  idle: { label: '待执行', style: 'bg-gray-100 text-gray-600' },
+  queued: { label: '已入队', style: 'bg-amber-50 text-amber-700' },
+  running: { label: '执行中', style: 'bg-blue-50 text-blue-700' },
+  partial: { label: '部分成功', style: 'bg-amber-50 text-amber-700' },
+  collected: { label: '已采集，待分析', style: 'bg-blue-50 text-blue-700' },
+  no_data: { label: '暂无结果', style: 'bg-gray-100 text-gray-600' },
+  succeeded: { label: '成功', style: 'bg-green-50 text-green-700' },
+  failed: { label: '失败', style: 'bg-red-50 text-red-700' },
+  worker_offline: { label: 'Worker 离线', style: 'bg-red-50 text-red-700' },
+};
 
 function safeAnalysisActionMessage(message: unknown, fallback: string): string {
   const text = String(message || '').trim();
@@ -140,9 +259,15 @@ const AGENT_GROUPS: { id: AgentTaskGroup; label: string; desc: string }[] = [
 ];
 
 function taskAgentGroup(taskType: string): AgentTaskGroup {
-  if (['video_keyword_crawl', 'image_post_crawl', 'competitor_account_crawl', 'trend_report', 'holiday_push'].includes(taskType)) return 'social';
+  if (['social_discovery_collection', 'video_keyword_crawl', 'image_post_crawl', 'competitor_account_crawl', 'trend_report', 'holiday_push'].includes(taskType)) return 'social';
   if (['crm_wakeup'].includes(taskType)) return 'customer';
   return 'conversion';
+}
+
+function nextDirectorCheckLabel(now = Date.now()): string {
+  const interval = 15 * 60 * 1000;
+  const next = new Date((Math.floor(now / interval) + 1) * interval);
+  return next.toLocaleString('zh-CN', { timeZone: 'Asia/Shanghai', month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' });
 }
 
 const TASK_TEMPLATES = [
@@ -155,17 +280,17 @@ const TASK_TEMPLATES = [
     cronLabel: '每天 01:00（北京时间）',
     icon: '📸',
     desc: '定时采集 Instagram 关键词视频，并进入素材分析管线',
-    config: { platforms: 'instagram', keywords: 'skincare', limit: '5', dateWindowDays: '7' },
+    config: { platforms: 'instagram', keywords: '', keywordSource: 'business_profile', limit: '5', dateWindowDays: '7' },
   },
   {
     templateId: 'instagram_image_post_crawl', taskType: 'image_post_crawl', name: 'Instagram 图文采集', category: 'daily' as const,
     cronExpr: '0 2 * * *', cronLabel: '每天 02:00（北京时间）', icon: '🖼️', desc: '定时采集 Instagram 关键词图片帖与图文内容',
-    config: { platforms: 'instagram', keywords: 'skincare', limit: '5' },
+    config: { platforms: 'instagram', keywords: '', keywordSource: 'business_profile', limit: '5' },
   },
   {
     templateId: 'facebook_image_post_crawl', taskType: 'image_post_crawl', name: 'Facebook 图文采集', category: 'daily' as const,
     cronExpr: '0 3 * * *', cronLabel: '每天 03:00（北京时间）', icon: '📘', desc: '定时采集 Facebook 关键词图片帖与图文内容',
-    config: { platforms: 'facebook', keywords: 'skincare', limit: '5' },
+    config: { platforms: 'facebook', keywords: '', keywordSource: 'business_profile', limit: '5' },
   },
   ...(['youtube', 'tiktok', 'facebook', 'instagram'] as const).map((platform, index) => ({
     templateId: `${platform}_competitor_account_crawl`,
@@ -187,7 +312,7 @@ const TASK_TEMPLATES = [
     cronLabel: '每天 01:00（北京时间）',
     icon: <SocialPlatformIcon platform="youtube" size={24} />,
     desc: '每天凌晨自动采集 YouTube 热点关键词视频，并排队获取真实视频 / Gemini 分析',
-    config: { platforms: 'youtube', keywords: 'skincare', limit: '5', dateWindowDays: '7' },
+    config: { platforms: 'youtube', keywords: '', keywordSource: 'business_profile', limit: '5', dateWindowDays: '7' },
   },
   {
     templateId: 'tiktok_video_keyword_crawl',
@@ -198,7 +323,7 @@ const TASK_TEMPLATES = [
     cronLabel: '每天 01:00（北京时间）',
     icon: <SocialPlatformIcon platform="tiktok" size={24} />,
     desc: '每天凌晨自动采集 TikTok 热点关键词视频，并排队获取真实视频 / Gemini 分析',
-    config: { platforms: 'tiktok', keywords: 'skincare', limit: '5', dateWindowDays: '7' },
+    config: { platforms: 'tiktok', keywords: '', keywordSource: 'business_profile', limit: '5', dateWindowDays: '7' },
   },
   {
     templateId: 'facebook_video_keyword_crawl',
@@ -209,7 +334,7 @@ const TASK_TEMPLATES = [
     cronLabel: '每天 01:00（北京时间）',
     icon: <SocialPlatformIcon platform="facebook" size={24} />,
     desc: '每天凌晨自动采集 Facebook 热点关键词视频，并排队获取真实视频 / AI 分析',
-    config: { platforms: 'facebook', keywords: 'skincare', limit: '5', dateWindowDays: '7' },
+    config: { platforms: 'facebook', keywords: '', keywordSource: 'business_profile', limit: '5', dateWindowDays: '7' },
   },
   { templateId: 'trend_report', taskType: 'trend_report', name: 'TikTok 爆款日报', category: 'daily' as const, cronExpr: '0 8 * * *', cronLabel: '每天 08:00', icon: <SocialPlatformIcon platform="tiktok" size={24} />, desc: '每日生成 TikTok 跨境电商热门趋势简报' },
   { templateId: 'exchange_rate', taskType: 'exchange_rate', name: '汇率与报价日报', category: 'daily' as const, cronExpr: '0 9 * * *', cronLabel: '每天 09:00', icon: '💱', desc: '按企业主要市场刷新汇率，并结合价格区间、MOQ 和毛利规则给出报价提醒' },
@@ -237,7 +362,7 @@ const CRON_PRESETS = [
 ];
 const CRAWLER_CRON_PRESET = CRON_PRESETS[0];
 const CRAWLER_LIMIT_MIN = 1;
-const CRAWLER_LIMIT_MAX = 10;
+const CRAWLER_LIMIT_MAX = 50;
 const WEEKDAYS = [
   { value: '1', label: '周一' }, { value: '2', label: '周二' }, { value: '3', label: '周三' },
   { value: '4', label: '周四' }, { value: '5', label: '周五' }, { value: '6', label: '周六' }, { value: '0', label: '周日' },
@@ -269,14 +394,25 @@ function normalizeCrawlerLimit(value: string): string {
 }
 
 export default function ScheduledPage({ onAction }: { onAction?: AgentAction }) {
+  const [discoveryScope, setDiscoveryScope] = useState<SocialCrawlStrategy | null>(null);
+  useEffect(() => {
+    const refresh = () => { void socialDiscoveryApi.getScope().then(result => setDiscoveryScope(result.persisted ? result.scope : null)).catch(() => setDiscoveryScope(null)); };
+    refresh();
+    window.addEventListener('focus', refresh);
+    return () => window.removeEventListener('focus', refresh);
+  }, []);
   const [tasks, setTasks] = useState<ScheduledTask[]>([]);
   const [loading, setLoading] = useState(true);
+  const agentProduction = useAgentProductionAction('scheduler');
   const [activeGroup, setActiveGroup] = useState<AgentTaskGroup>(() => {
+    if (window.__agentProductionTarget || peekScheduledWorkflowHandoff()) return 'social';
     const saved = window.sessionStorage.getItem('scheduled.activeGroup');
     return saved === 'social' || saved === 'customer' || saved === 'conversion' ? saved : 'conversion';
   });
   const [socialTaskTab, setSocialTaskTab] = useState<SocialTaskTab>(() => (
-    window.sessionStorage.getItem('scheduled.socialTaskTab') === 'analysis' ? 'analysis' : 'crawler'
+    peekScheduledWorkflowHandoff()
+      ? 'crawler'
+      : window.sessionStorage.getItem('scheduled.socialTaskTab') === 'analysis' ? 'analysis' : 'crawler'
   ));
   const [showAdd, setShowAdd] = useState(false);
   const [selectedTemplateIds, setSelectedTemplateIds] = useState<string[]>([]);
@@ -298,6 +434,8 @@ export default function ScheduledPage({ onAction }: { onAction?: AgentAction }) 
   const [runningId, setRunningId] = useState<string | null>(null);
   const [runNotice, setRunNotice] = useState<{ taskId: string; message: string; error: boolean } | null>(null);
   const [videoStats, setVideoStats] = useState<VideoStatsPayload | null>(null);
+  const [videoStatsLoading, setVideoStatsLoading] = useState(true);
+  const [videoStatsError, setVideoStatsError] = useState('');
   const [analysisQueueOpen, setAnalysisQueueOpen] = useState(() => window.sessionStorage.getItem('scheduled.analysisQueueOpen') === 'true');
   const [analysisActionId, setAnalysisActionId] = useState<string | null>(null);
   const [analysisActionError, setAnalysisActionError] = useState('');
@@ -305,6 +443,8 @@ export default function ScheduledPage({ onAction }: { onAction?: AgentAction }) 
   const [businessDynamicsLoading, setBusinessDynamicsLoading] = useState(true);
   const [businessDynamicsError, setBusinessDynamicsError] = useState('');
   const didAutoOpenDemoTask = useRef(false);
+  const tasksRequestRef = useRef<AbortController | null>(null);
+  const videoStatsRequestRef = useRef<AbortController | null>(null);
 
   useEffect(() => {
     const prefill = consumeSessionPrefill<ScheduleActionPrefill>(CONTENT_ACTION_STORAGE.schedule);
@@ -327,6 +467,49 @@ export default function ScheduledPage({ onAction }: { onAction?: AgentAction }) 
     setShowAdd(true);
   }, []);
 
+  useEffect(() => {
+    const focusSourceCollection = (entityId?: string) => {
+      if (entityId) { setResultTaskId(entityId); setExpandedId(entityId); }
+      setActiveGroup('social');
+      setSocialTaskTab('crawler');
+      setShowAdd(false);
+      setWorkspaceMessage('已进入编导 Agent 的定时采集工作区。');
+    };
+    const handoff = consumeScheduledWorkflowHandoff();
+    if (handoff) focusSourceCollection(handoff.entityId);
+
+    const onNavigate = (event: Event) => {
+      const detail = (event as CustomEvent<{
+        page?: string;
+        runId?: string;
+        taskId?: string;
+        businessRef?: { taskKey?: string; preview?: boolean; entityId?: string };
+      }>).detail;
+      if (
+        detail?.page !== 'scheduled'
+        || detail.businessRef?.taskKey !== 'scheduled_source_collection'
+        || (!detail.businessRef?.preview && (!detail.runId || !detail.taskId))
+      ) return;
+      try { window.sessionStorage.removeItem('digitalEmployee.businessDeepLink'); } catch { /* optional handoff cache */ }
+      focusSourceCollection(detail.businessRef?.entityId);
+    };
+    window.addEventListener('lingshu:navigate', onNavigate);
+    return () => window.removeEventListener('lingshu:navigate', onNavigate);
+  }, []);
+
+  useEffect(() => {
+    if (!agentProduction.active) return;
+    const refresh = () => {
+      void fetchTasks(false);
+      const id = window.__agentProductionTarget?.link.businessRef.entityId;
+      if (id) setExpandedId(id);
+    };
+    const id = window.__agentProductionTarget?.link.businessRef.entityId;
+    if (id) setExpandedId(id);
+    window.addEventListener('lingshu:agent-business-refresh', refresh);
+    return () => window.removeEventListener('lingshu:agent-business-refresh', refresh);
+  }, [agentProduction.active]);
+
   const closeResultPanel = () => {
     // 用户主动关闭后，本次页面生命周期内不再由演示引导自动拉起任务侧栏。
     didAutoOpenDemoTask.current = true;
@@ -334,15 +517,25 @@ export default function ScheduledPage({ onAction }: { onAction?: AgentAction }) 
     setWorkspaceMessage('');
   };
 
+
   useEffect(() => {
     void fetchTasks();
-    void fetchVideoStats();
+    void fetchVideoStats(true);
     void fetchBusinessDynamics();
     const timer = window.setInterval(() => {
+      if (document.visibilityState !== 'visible') return;
       void fetchTasks(false);
-      void fetchVideoStats();
+      void fetchVideoStats(false);
     }, 5000);
-    return () => window.clearInterval(timer);
+    return () => {
+      window.clearInterval(timer);
+      const tasksController = tasksRequestRef.current;
+      tasksRequestRef.current = null;
+      tasksController?.abort();
+      const videoStatsController = videoStatsRequestRef.current;
+      videoStatsRequestRef.current = null;
+      videoStatsController?.abort();
+    };
   }, []);
 
   useEffect(() => {
@@ -352,6 +545,7 @@ export default function ScheduledPage({ onAction }: { onAction?: AgentAction }) 
   }, [activeGroup, socialTaskTab, analysisQueueOpen]);
 
   useEffect(() => {
+    if (resultTaskId) { didAutoOpenDemoTask.current = true; return; }
     if (didAutoOpenDemoTask.current) return;
     const progress = readDemoProgress();
     if (!progress.scheduler || progress.automation_workflow || resultTaskId || tasks.length === 0) return;
@@ -360,55 +554,79 @@ export default function ScheduledPage({ onAction }: { onAction?: AgentAction }) 
     if (taskInCurrentGroup) setResultTaskId(taskInCurrentGroup.id);
   }, [activeGroup, resultTaskId, tasks]);
 
-  useEffect(() => {
-    if (!resultTaskId) return;
-    const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') closeResultPanel();
-    };
-    window.addEventListener('keydown', onKeyDown);
-    return () => window.removeEventListener('keydown', onKeyDown);
-  }, [resultTaskId]);
-
   async function fetchTasks(showLoading = true) {
+    if (tasksRequestRef.current) return;
+    const controller = new AbortController();
+    tasksRequestRef.current = controller;
+    const timeout = window.setTimeout(() => controller.abort(), 12_000);
     if (showLoading) setLoading(true);
     try {
-      const r = await fetch('/api/overseas/scheduler', { headers: authHeader() });
+      const r = await fetch('/api/overseas/scheduler', { headers: authHeader(), signal: controller.signal });
       if (!r.ok) {
         setTasks([]);
         return;
       }
       setTasks(await r.json());
-    } finally { if (showLoading) setLoading(false); }
-  }
-
-  async function fetchVideoStats() {
-    try {
-      const r = await fetch('/api/overseas/scheduler/video-stats', { headers: authHeader() });
-      if (!r.ok) return;
-      setVideoStats(await r.json());
     } catch {
-      // Keep the previous snapshot visible during backend hot reloads.
+      // 保留最近一次成功结果；超时后下一轮仍可恢复。
+    } finally {
+      window.clearTimeout(timeout);
+      if (tasksRequestRef.current === controller) {
+        tasksRequestRef.current = null;
+        if (showLoading) setLoading(false);
+      }
     }
   }
 
-  async function updateVideoAnalysis(item: VideoAnalysisItem, action: 'pause' | 'reanalyze') {
+  async function fetchVideoStats(showLoading = false) {
+    if (videoStatsRequestRef.current) return;
+    const controller = new AbortController();
+    videoStatsRequestRef.current = controller;
+    const timeout = window.setTimeout(() => controller.abort(), 12_000);
+    if (showLoading) setVideoStatsLoading(true);
+    setVideoStatsError('');
+    try {
+      const r = await fetch('/api/overseas/scheduler/video-stats', { headers: authHeader(), signal: controller.signal });
+      if (!r.ok) throw new Error(`生产状态加载失败（${r.status}）`);
+      setVideoStats(await r.json());
+    } catch (error) {
+      // StrictMode and navigation deliberately abort stale requests; only real
+      // transport failures should surface as a production-status warning.
+      if (error instanceof Error && error.name === 'AbortError') return;
+      // Keep the previous snapshot visible during backend hot reloads.
+      setVideoStatsError(error instanceof Error ? error.message : '生产状态暂时不可用，将自动重试。');
+    } finally {
+      window.clearTimeout(timeout);
+      if (videoStatsRequestRef.current === controller) {
+        videoStatsRequestRef.current = null;
+        if (showLoading) setVideoStatsLoading(false);
+      }
+    }
+  }
+
+  async function updateVideoAnalysis(item: VideoAnalysisItem, action: 'pause' | 'cancel' | 'resume' | 'reanalyze') {
     setAnalysisActionId(item.id);
     setAnalysisActionError('');
     try {
+      const endpoint = action === 'reanalyze'
+        ? `/api/overseas/videos/${item.id}/reanalyze`
+        : `/api/overseas/videos/${item.id}/analysis-${action}`;
       const response = await fetch(
-        action === 'pause'
-          ? `/api/overseas/videos/${item.id}/analysis-pause`
-          : `/api/overseas/videos/${item.id}/reanalyze`,
+        endpoint,
         {
-          method: action === 'pause' ? 'POST' : 'PATCH',
+          method: action === 'reanalyze' ? 'PATCH' : 'POST',
           headers: { 'Content-Type': 'application/json', ...authHeader() },
-          body: action === 'reanalyze'
+          body: action === 'reanalyze' || action === 'resume'
             ? JSON.stringify({ analysisMode: item.analysisMode === 'exact' ? 'exact' : 'strategy' })
             : JSON.stringify({}),
         },
       );
       const payload = await response.json().catch(() => ({})) as { error?: string };
-      if (!response.ok) throw new Error(safeAnalysisActionMessage(payload.error, action === 'pause' ? '暂停分析失败，请稍后重试。' : '重新分析失败，请稍后重试。'));
+      const fallback = action === 'pause' ? '暂停分析失败，请稍后重试。'
+        : action === 'cancel' ? '取消分析失败，请稍后重试。'
+          : action === 'resume' ? '恢复分析失败，请稍后重试。'
+            : '重新分析失败，请稍后重试。';
+      if (!response.ok) throw new Error(safeAnalysisActionMessage(payload.error, fallback));
       await fetchVideoStats();
     } catch (error) {
       setAnalysisActionError(error instanceof Error ? error.message : '操作失败');
@@ -436,7 +654,7 @@ export default function ScheduledPage({ onAction }: { onAction?: AgentAction }) 
   async function createTask() {
     const selectedTemplates = TASK_TEMPLATES.filter(template => selectedTemplateIds.includes(template.templateId));
     if (!selectedTemplates.length || creatingTasks) return;
-    const keywordTemplates = selectedTemplates.filter(template => ['video_keyword_crawl', 'image_post_crawl'].includes(template.taskType));
+    const keywordTemplates = selectedTemplates.filter(template => template.taskType === 'image_post_crawl' || (template.taskType === 'video_keyword_crawl' && !discoveryScope));
     const reviews = keywordTemplates.map(template => {
       const platform = String(('config' in template ? template.config?.platforms : '') || 'youtube') as KeywordPlatform;
       return { template, platform, review: normalizeKeywordInput(taskKeywords, platform) };
@@ -463,7 +681,7 @@ export default function ScheduledPage({ onAction }: { onAction?: AgentAction }) 
           scheduleLabel(scheduleTime, scheduleDays),
           false,
           ['video_keyword_crawl', 'image_post_crawl'].includes(template.taskType)
-            ? { ...templateConfig, keywords: cleanedKeywords }
+            ? template.taskType === 'video_keyword_crawl' && discoveryScope ? { ...templateConfig, keywords: '', keywordSource: 'discovery_scope' } : { ...templateConfig, keywords: cleanedKeywords }
             : templateConfig,
         );
         created.push(saved);
@@ -525,6 +743,7 @@ export default function ScheduledPage({ onAction }: { onAction?: AgentAction }) 
   }
 
   async function runTaskNow(id: string) {
+    if (agentProduction.active) { await agentProduction.execute(); return; }
     setRunningId(id);
     setRunNotice({ taskId: id, message: '任务已提交，正在执行…', error: false });
     try {
@@ -533,15 +752,35 @@ export default function ScheduledPage({ onAction }: { onAction?: AgentAction }) 
         const body = await response.json().catch(() => null) as { error?: string } | null;
         throw new Error(body?.error || `执行失败（${response.status}）`);
       }
-      const body = await response.json() as { result?: string };
-      const completedAt = new Date().toISOString();
+      const body = await response.json() as { result?: string; state?: ScheduledTaskExecutionState; lastRun?: string };
+      const completedAt = body.lastRun || new Date().toISOString();
+      const returnedState = body.state || scheduledTaskExecutionState({ lastResult: body.result });
+      const workerOnline = videoStats ? Boolean(videoStats.stats?.fetchQueue?.ops?.workerActive) : undefined;
+      const visibleState = returnedState === 'queued' && workerOnline === false ? 'worker_offline' : returnedState;
       setTasks(current => current.map(task => task.id === id ? {
         ...task,
         lastRun: completedAt,
         lastResult: body.result || task.lastResult || '任务执行完成',
+        executionState: returnedState,
       } : task));
       await fetchVideoStats();
-      setRunNotice({ taskId: id, message: `执行完成（${new Date(completedAt).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit', second: '2-digit' })}），结果已刷新。`, error: false });
+      const time = new Date(completedAt).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+      const message = visibleState === 'queued'
+        ? `已入队（${time}），Worker 处理后将自动刷新。`
+        : visibleState === 'worker_offline'
+          ? `已入队，但 Worker 离线。请启动 Worker，队列会自动继续。`
+          : visibleState === 'running'
+            ? `执行中（${time}），页面每 5 秒自动刷新。`
+            : visibleState === 'failed'
+              ? `执行失败（${time}），请展开结果查看原因后重试。`
+              : visibleState === 'no_data'
+                ? `暂无符合条件的结果（${time}），请展开查看检索范围。`
+                : visibleState === 'collected'
+                  ? `已采集，视频分析在后台继续（${time}）。`
+                  : visibleState === 'partial'
+                    ? `部分成功（${time}），请展开查看未完成的平台和原因。`
+                    : `执行成功（${time}），结果已刷新。`;
+      setRunNotice({ taskId: id, message, error: visibleState === 'failed' || visibleState === 'worker_offline' });
       window.setTimeout(() => { void fetchTasks(false); }, 800);
     } catch (error) {
       setRunNotice({ taskId: id, message: error instanceof Error ? error.message : '任务执行失败，请稍后重试。', error: true });
@@ -552,10 +791,14 @@ export default function ScheduledPage({ onAction }: { onAction?: AgentAction }) 
 
   async function updateCrawlerConfig(task: ScheduledTask, patch: Record<string, string>) {
     if (task.taskType !== 'video_keyword_crawl') return;
+    const keywordPatchProvided = Object.prototype.hasOwnProperty.call(patch, 'keywords');
     const nextConfig = {
       ...task.config,
       ...patch,
-      keywords: (patch.keywords ?? task.config.keywords ?? task.config.keyword ?? 'skincare').trim() || 'skincare',
+      keywords: (patch.keywords ?? task.config.keywords ?? task.config.keyword ?? '').trim(),
+      keywordSource: keywordPatchProvided
+        ? (String(patch.keywords || '').trim() ? 'explicit' : 'business_profile')
+        : (task.config.keywordSource || 'business_profile'),
       limit: normalizeCrawlerLimit(patch.limit ?? task.config.limit ?? '5'),
     };
     setTasks(prev => prev.map(item => item.id === task.id ? { ...item, config: nextConfig } : item));
@@ -613,7 +856,7 @@ export default function ScheduledPage({ onAction }: { onAction?: AgentAction }) 
   const visibleTemplates = TASK_TEMPLATES.filter(t => taskAgentGroup(t.taskType) === activeGroup);
   const selectedTemplates = TASK_TEMPLATES.filter(template => selectedTemplateIds.includes(template.templateId));
   const selectedTemplate = selectedTemplates[0] ?? null;
-  const keywordTemplates = selectedTemplates.filter(template => ['video_keyword_crawl', 'image_post_crawl'].includes(template.taskType));
+  const keywordTemplates = selectedTemplates.filter(template => template.taskType === 'image_post_crawl' || (template.taskType === 'video_keyword_crawl' && !discoveryScope));
   const keywordReviews = [...new Set(keywordTemplates.map(template => String(('config' in template ? template.config?.platforms : '') || 'youtube') as KeywordPlatform))]
     .map(platform => ({ platform, review: normalizeKeywordInput(taskKeywords, platform) }));
   const keywordSignature = keywordReviews.map(({ platform, review }) => `${platform}:${review.serialized}`).join('|');
@@ -627,13 +870,16 @@ export default function ScheduledPage({ onAction }: { onAction?: AgentAction }) 
   const fetchQueue = stats?.fetchQueue ?? {};
   const analysisQueue = stats?.analysisQueue ?? {};
   const analysisStatusRows = [
-    { label: 'Gemini 队列', value: analysisQueue.queued ?? 0, desc: '等待/处理中' },
+    { label: 'AI 分析队列', value: analysisQueue.queued ?? 0, desc: '已入队 / 执行中' },
     { label: '待处理素材', value: analysisQueue.pendingRecords ?? 0, desc: '已入库但未完成分析' },
     { label: '已分析素材', value: analysisQueue.analyzedRecords ?? 0, desc: '可进入灵感大屏/素材库' },
     { label: '失败素材', value: analysisQueue.failedRecords ?? 0, desc: '需要重试或排查源文件' },
   ];
   const analysisStatusEntries = Object.entries(analysisQueue.byStatus ?? {});
   const analysisItems = analysisQueue.items ?? [];
+  const providerWarnings = Object.entries(analysisQueue.providerStatus ?? {})
+    .filter(([, status]) => status?.configured === false)
+    .map(([providerName, status]) => ({ providerName, ...status }));
   const refinementItems = analysisQueue.refinementItems ?? [];
   const crawlTasks = (videoStats?.tasks ?? tasks).filter(t => ['video_keyword_crawl', 'image_post_crawl', 'competitor_account_crawl'].includes(t.taskType));
   const showTaskList = activeGroup !== 'social' || socialTaskTab === 'crawler';
@@ -648,6 +894,10 @@ export default function ScheduledPage({ onAction }: { onAction?: AgentAction }) 
     return ('config' in t ? t.config?.platforms : '') === task.config.platforms;
   }) ?? null;
   const resultTemplate = resultTask ? templateForTask(resultTask) : null;
+
+  const openDiscoveryScope = () => {
+    window.dispatchEvent(new CustomEvent('lingshu:navigate', { detail: { page: 'socialInspiration' } }));
+  };
 
   const exportPdf = async (task: ScheduledTask) => {
     setExportingId(task.id);
@@ -876,7 +1126,7 @@ export default function ScheduledPage({ onAction }: { onAction?: AgentAction }) 
           title: '视频采集工作台',
           cards: [
             { label: '采集平台', value: task.config.platforms || 'youtube', desc: '按平台拉取关键词视频' },
-            { label: '关键词', value: task.config.keywords || task.config.keyword || 'skincare', desc: '用于社媒内容采集' },
+            { label: '发现范围', value: task.config.keywordEvidence || task.config.keywords || task.config.keyword || '根据企业产品、市场和场景自动生成', desc: '关键词只是发现范围的执行投影' },
             { label: '时间窗口', value: `${task.config.dateWindowDays || '7'} 天`, desc: '只采集近期内容' },
           ],
           actions: ['刷新采集看板', '查看排队状态', '生成脚本方向'],
@@ -979,7 +1229,7 @@ export default function ScheduledPage({ onAction }: { onAction?: AgentAction }) 
                   type="button"
                   onClick={event => { event.preventDefault(); event.stopPropagation(); if (!exists) void createTaskFromTemplate(template); }}
                   disabled={exists}
-                  className={`rounded-lg px-3 py-1.5 text-xs font-medium ${exists ? 'cursor-default bg-green-50 text-green-700' : 'bg-green-600 text-white hover:bg-green-700'}`}
+                  className={`rounded-lg px-3 py-1.5 text-xs font-medium ${exists ? 'cursor-default bg-green-50 text-green-700' : 'bg-blue-600 text-white hover:bg-blue-700'}`}
                 >
                   {exists ? '已创建' : '创建'}
                 </button>
@@ -1038,7 +1288,7 @@ export default function ScheduledPage({ onAction }: { onAction?: AgentAction }) 
                 type="button"
                 onClick={() => void fetchBusinessDynamics(true)}
                 disabled={businessDynamicsLoading}
-                className="flex items-center gap-1.5 rounded-lg bg-green-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-green-700 disabled:opacity-60"
+                className="flex items-center gap-1.5 rounded-lg bg-blue-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-blue-700 disabled:opacity-60"
               >
                 <RefreshCw size={14} className={businessDynamicsLoading ? 'animate-spin' : ''} /> 刷新动态
               </button>
@@ -1069,7 +1319,7 @@ export default function ScheduledPage({ onAction }: { onAction?: AgentAction }) 
           )}
         </section>
 
-        <div className="grid grid-cols-4 gap-3">
+        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
           {summaryCards.map(card => {
             const Icon = card.icon;
             return (
@@ -1082,7 +1332,7 @@ export default function ScheduledPage({ onAction }: { onAction?: AgentAction }) 
           })}
         </div>
 
-        <div className="grid grid-cols-[0.9fr_1.4fr] gap-3">
+        <div className="grid grid-cols-1 gap-3 lg:grid-cols-[0.9fr_1.4fr]">
           <section className="rounded-lg border border-gray-200 bg-white p-4">
             <div className="mb-3 flex items-center justify-between">
               <div>
@@ -1095,14 +1345,14 @@ export default function ScheduledPage({ onAction }: { onAction?: AgentAction }) 
               <div className="flex h-24 items-center justify-center text-xs text-gray-400"><Loader size={16} className="mr-2 animate-spin" />正在读取汇率和报价规则</div>
             ) : (
               <>
-                <div className="grid grid-cols-2 gap-2">
+                <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
                   {rates.map(rate => (
                     <div key={rate.code} className="rounded-lg bg-gray-50 px-3 py-2">
                       <p className="text-[11px] text-gray-400">{rate.market}</p>
                       <p className="mt-1 text-sm font-semibold text-gray-900">{rate.code} {rate.rate >= 1000 ? rate.rate.toFixed(0) : rate.rate.toFixed(4)}</p>
                     </div>
                   ))}
-                  {rates.length === 0 && <p className="col-span-2 py-4 text-center text-xs text-gray-400">实时汇率暂不可用</p>}
+                  {rates.length === 0 && <p className="py-4 text-center text-xs text-gray-400 sm:col-span-2">实时汇率暂不可用</p>}
                 </div>
                 <div className="mt-3 space-y-2 border-t border-gray-100 pt-3 text-xs">
                   <div className="flex justify-between gap-3"><span className="text-gray-500">价格区间</span><span className="text-right font-medium text-gray-800">{quote?.productPriceRange || '未配置'}</span></div>
@@ -1162,7 +1412,7 @@ export default function ScheduledPage({ onAction }: { onAction?: AgentAction }) 
           </section>
         </div>
 
-        <div className="grid grid-cols-[1fr_1.05fr] gap-3">
+        <div className="grid grid-cols-1 gap-3 lg:grid-cols-[1fr_1.05fr]">
           {renderAutomationTemplates('conversion')}
           <section className="rounded-lg border border-gray-200 bg-white p-4">
             <p className="text-sm font-semibold text-gray-900">经营动态生成链路</p>
@@ -1194,7 +1444,7 @@ export default function ScheduledPage({ onAction }: { onAction?: AgentAction }) 
     ];
     return (
       <div className="mb-6 space-y-4">
-        <div className="grid grid-cols-3 gap-3">
+        <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
           {cards.map(card => (
             <div key={card.label} className="rounded-lg border border-gray-200 bg-white p-4">
               <p className="text-xs text-gray-500">{card.label}</p>
@@ -1203,7 +1453,7 @@ export default function ScheduledPage({ onAction }: { onAction?: AgentAction }) 
             </div>
           ))}
         </div>
-        <div className="grid grid-cols-[1fr_1.1fr] gap-3">
+        <div className="grid grid-cols-1 gap-3 lg:grid-cols-[1fr_1.1fr]">
           {renderAutomationTemplates(group)}
           <section className="rounded-lg border border-gray-200 bg-white p-4">
             <p className="text-sm font-semibold text-gray-900">工作流预览</p>
@@ -1223,25 +1473,20 @@ export default function ScheduledPage({ onAction }: { onAction?: AgentAction }) 
 
   return (
     <div className="flex h-full flex-col bg-white" data-lingshu-guide="scheduled-tasks">
-      <div className="h-12 flex items-center justify-between px-5 border-b border-border flex-shrink-0">
-        <div className="flex items-center gap-2.5">
-          <div className="w-6 h-6 rounded-lg flex items-center justify-center" style={{ background: 'rgba(22,163,74,0.1)', color: '#16a34a' }}>
-            <Clock size={13} />
-          </div>
-          <span className="text-sm font-semibold text-text-primary">定时任务</span>
-        </div>
-      </div>
-
-      <div className="flex min-h-0 flex-1">
+      <div className="flex min-h-0 min-w-0 flex-1 flex-col md:flex-row">
       {/* Left sidebar */}
-      <div className="w-64 border-r border-gray-100 flex flex-col py-6 px-3">
-        <p className="text-xs font-medium text-gray-400 px-3 mb-3">Agent 任务板块</p>
+      <div
+        role="navigation"
+        aria-label="Agent 任务板块"
+        className="flex w-full shrink-0 overflow-x-auto border-b border-gray-100 px-3 py-2 md:w-64 md:flex-col md:overflow-x-visible md:border-b-0 md:border-r md:py-6"
+      >
+        <p className="mb-3 hidden px-3 text-xs font-medium text-gray-400 md:block">Agent 任务板块</p>
         {AGENT_GROUPS.map(group => (
           <button
             key={group.id}
             type="button"
             onClick={() => selectGroup(group.id)}
-            className={`text-left px-3 py-3 rounded-lg text-sm mb-1 transition-colors ${activeGroup === group.id ? 'bg-gray-100 text-gray-900 font-medium' : 'text-gray-500 hover:text-gray-700'}`}
+            className={`mr-1 min-w-40 shrink-0 rounded-lg px-3 py-2 text-left text-sm transition-colors md:mr-0 md:mb-1 md:min-w-0 md:py-3 ${activeGroup === group.id ? 'bg-gray-100 text-gray-900 font-medium' : 'text-gray-500 hover:text-gray-700'}`}
           >
             <span className="block">{group.label}</span>
             <span className="block text-xs text-gray-400 mt-1">
@@ -1252,59 +1497,49 @@ export default function ScheduledPage({ onAction }: { onAction?: AgentAction }) 
       </div>
 
       {/* Main content */}
-      <div className="flex-1 flex flex-col overflow-hidden">
-        <div className="px-8 py-5 border-b border-gray-100">
-          <div className="flex items-center justify-between">
-            <h1 className="text-base font-semibold text-gray-900">{activeGroupMeta.label}</h1>
-            <button
-              type="button"
-              data-demo-target={!showAdd && activeGroup === 'social' ? 'scheduled_run' : undefined}
-              onClick={openAddModal}
-              className="flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium text-white"
-              style={{ background: '#16a34a' }}
-            >
-              <Plus size={16} /> 新建任务
-            </button>
-          </div>
+      <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
+        <div className="border-b border-gray-100 px-4 py-4 sm:px-6 md:px-8 md:py-5">
+          <LsPageHeader title="定时任务" description={activeGroupMeta.label} className="!mb-0 !border-0 !pb-0" extra={<Button type="primary" icon={<Plus size={16} />} data-demo-target={!showAdd && activeGroup === 'social' ? 'scheduled_run' : undefined} onClick={openAddModal}>新建任务</Button>} />
         </div>
 
-        <div className="flex-1 overflow-y-auto px-8 py-6">
+        <div className="min-w-0 flex-1 overflow-y-auto px-4 py-4 sm:px-6 sm:py-5 md:px-8 md:py-6">
           {activeGroup === 'social' && (
           <div className="mb-6 space-y-4">
-            <div className="flex items-center justify-between gap-4">
-              <div>
-                <div className="inline-flex rounded-xl border border-gray-200 bg-gray-50 p-1">
-                  {[
-                    { id: 'crawler' as const, label: '社媒爬虫定时任务' },
-                    { id: 'analysis' as const, label: '视频分析' },
-                  ].map(tab => (
-                    <button
-                      key={tab.id}
-                      type="button"
-                      onClick={() => setSocialTaskTab(tab.id)}
-                      className={`h-8 rounded-lg px-3 text-xs font-medium transition-colors ${socialTaskTab === tab.id ? 'bg-white text-green-700 shadow-sm' : 'text-gray-500 hover:text-gray-700'}`}
-                    >
-                      {tab.label}
-                    </button>
-                  ))}
-                </div>
+            <div className="flex flex-col items-stretch gap-3 sm:flex-row sm:items-center sm:justify-between sm:gap-4">
+              <div className="min-w-0">
+                <Segmented value={socialTaskTab} onChange={setSocialTaskTab} options={[{ value: 'crawler', label: '社媒爬虫定时任务' }, { value: 'analysis', label: '视频分析' }]} />
                 <p className="text-xs text-gray-500 mt-2">
                   {socialTaskTab === 'crawler'
-                    ? `${crawlTasks.length > 0 ? `${crawlTasks.map(task => task.name).join(' / ')} · ${CRAWLER_CRON_PRESET.label}` : '自动采集任务未创建'} · 更新时间 ${formatTime(stats?.updatedAt)}`
+                    ? `${crawlTasks.length > 0 ? crawlTasks.map(task => `${task.name} · ${task.cronLabel}`).join(' / ') : '自动采集任务未创建'} · 更新时间 ${formatTime(stats?.updatedAt)}`
                     : `视频下载入库后的 Gemini 分析进度 · 更新时间 ${formatTime(stats?.updatedAt)}`}
                 </p>
               </div>
-              <button
-                type="button"
-                onClick={() => { void fetchTasks(); void fetchVideoStats(); }}
-                className="px-3 py-1.5 rounded-lg border border-gray-200 text-xs text-gray-600 hover:bg-gray-50"
+              <Button
+                onClick={() => { void fetchTasks(); void fetchVideoStats(true); }}
+                loading={videoStatsLoading}
+                icon={<RefreshCw size={14} />}
               >
                 刷新
-              </button>
+              </Button>
             </div>
 
-            {socialTaskTab === 'crawler' ? (
-              <div className="grid grid-cols-2 gap-3">
+            {videoStatsError && videoStats && (
+              <p role="status" className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-700">
+                {videoStatsError}当前展示上一次成功快照，页面会继续自动刷新。
+              </p>
+            )}
+
+            {videoStatsLoading && !videoStats ? (
+              <div role="status" className="flex min-h-40 items-center justify-center gap-2 rounded-xl border border-gray-200 bg-white text-sm text-gray-500">
+                <Loader size={16} className="animate-spin" /> 正在加载生产状态…
+              </div>
+            ) : videoStatsError && !videoStats ? (
+              <div role="alert" className="rounded-xl border border-red-200 bg-red-50 p-5 text-sm text-red-700">
+                <p className="font-medium">生产状态暂时无法加载</p>
+                <p className="mt-1 text-xs">{videoStatsError}页面会每 5 秒自动重试，也可手动点击刷新。</p>
+              </div>
+            ) : socialTaskTab === 'crawler' ? (
+              <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
                 <div className="rounded-xl border border-gray-200 p-4 bg-white">
                   <div className="flex items-center gap-2 text-xs text-gray-500">
                     <BarChart3 size={14} className="text-orange-500" />
@@ -1325,13 +1560,28 @@ export default function ScheduledPage({ onAction }: { onAction?: AgentAction }) 
                   </div>
                   <div className="mt-3 flex items-end gap-3">
                     <span className="text-2xl font-semibold text-gray-900">{fetchQueue.queued ?? 0}</span>
-                    <span className="text-xs text-gray-500 pb-1">等待/处理中</span>
+                    <span className="text-xs text-gray-500 pb-1">已入队 / 执行中</span>
                   </div>
-                  <p className="text-xs text-gray-500 mt-2">Ops 队列 {fetchQueue.ops?.total ?? 0} · Worker {fetchQueue.ops?.workerActive ? '运行中' : fetchQueue.ops?.workerEnabled ? '待命' : '关闭'}</p>
+                  <p className="text-xs text-gray-500 mt-2">
+                    Ops 队列 {fetchQueue.ops?.total ?? 0} · {fetchQueue.ops?.workerActive
+                      ? 'Worker 执行中'
+                      : (fetchQueue.queued ?? 0) > 0
+                        ? 'Worker 离线'
+                        : fetchQueue.ops?.workerEnabled ? 'Worker 待命' : 'Worker 离线'}
+                  </p>
+                  {(fetchQueue.queued ?? 0) > 0 && !fetchQueue.ops?.workerActive && (
+                    <p className="mt-2 text-[11px] text-red-600">请启动本地 Worker 或检查云端兜底；已入队任务不会丢失。</p>
+                  )}
                 </div>
               </div>
             ) : (
               <div className="space-y-3">
+                {providerWarnings.map(warning => (
+                  <div key={warning.providerName} role="status" className="rounded-xl border border-amber-200 bg-amber-50 p-3 text-xs text-amber-800">
+                    <p className="font-semibold">{warning.reason || `${warning.providerName} 未配置`}</p>
+                    {warning.recoveryAction && <p className="mt-1 text-[11px] leading-5 text-amber-700">人工恢复：{warning.recoveryAction}</p>}
+                  </div>
+                ))}
                 <div className="rounded-xl border border-gray-200 p-4 bg-white">
                   <div className="flex items-center gap-2 text-xs text-gray-500">
                     <Activity size={14} className="text-green-500" />
@@ -1339,9 +1589,9 @@ export default function ScheduledPage({ onAction }: { onAction?: AgentAction }) 
                   </div>
                   <div className="mt-3 flex items-end gap-3">
                     <span className="text-2xl font-semibold text-gray-900">{analysisQueue.queued ?? 0}</span>
-                    <span className="text-xs text-gray-500 pb-1">Gemini 队列</span>
+                    <span className="text-xs text-gray-500 pb-1">AI 分析队列</span>
                   </div>
-                  <p className="text-xs text-gray-500 mt-2">已分析 {analysisQueue.analyzedRecords ?? 0} · 待处理 {analysisQueue.pendingRecords ?? 0} · 失败 {analysisQueue.failedRecords ?? 0}</p>
+                  <p className="text-xs text-gray-500 mt-2">已分析 {analysisQueue.analyzedRecords ?? 0} · 待处理 {analysisQueue.pendingRecords ?? 0} · 失败 {analysisQueue.failedRecords ?? 0} · 候选隐藏 {analysisQueue.hiddenRecords ?? 0}</p>
                 </div>
 
                 <section className="rounded-xl border border-gray-200 bg-white p-4">
@@ -1361,7 +1611,7 @@ export default function ScheduledPage({ onAction }: { onAction?: AgentAction }) 
                       <ChevronDown size={16} className={`transition-transform ${analysisQueueOpen ? 'rotate-180' : ''}`} />
                     </span>
                   </button>
-                  <div className="grid grid-cols-4 gap-3">
+                  <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
                     {analysisStatusRows.map(row => (
                       <div key={row.label} className="rounded-xl border border-gray-100 bg-gray-50/70 p-3">
                         <p className="text-xs text-gray-500">{row.label}</p>
@@ -1408,7 +1658,9 @@ export default function ScheduledPage({ onAction }: { onAction?: AgentAction }) 
                                 ? { label: '已分析', style: 'bg-green-50 text-green-700' }
                                 : item.status === 'failed'
                                   ? { label: '分析失败', style: 'bg-red-50 text-red-700' }
-                                  : { label: '已暂停', style: 'bg-amber-50 text-amber-700' };
+                                  : item.status === 'cancelled'
+                                    ? { label: '已取消', style: 'bg-gray-100 text-gray-600' }
+                                    : { label: '已暂停', style: 'bg-amber-50 text-amber-700' };
                             const actionPending = analysisActionId === item.id;
                             return (
                               <article key={item.id} data-testid={`video-analysis-row-${item.id}`} className="flex items-center gap-3 rounded-xl border border-gray-100 bg-gray-50/60 p-3">
@@ -1420,22 +1672,63 @@ export default function ScheduledPage({ onAction }: { onAction?: AgentAction }) 
                                 <div className="min-w-0 flex-1">
                                   <p className="truncate text-xs font-semibold text-gray-900" title={item.title}>{item.title}</p>
                                   <p className="mt-1 text-[11px] text-gray-500">{item.platform.toUpperCase()} · {item.analysisMode === 'exact' ? '精确分析' : '策略分析'} · {item.duration ? `${Math.round(item.duration)} 秒` : '时长未知'}</p>
-                                  {item.error && <p className="mt-1 truncate text-[11px] text-red-500" title={item.error}>{item.error}</p>}
+                                  <div className="mt-1 flex flex-wrap items-center gap-1.5 text-[10px]">
+                                    {item.provider && <span className="rounded bg-white px-1.5 py-0.5 text-gray-500">{item.provider}</span>}
+                                    <span className={`rounded px-1.5 py-0.5 ${item.visibility === 'hidden' ? 'bg-amber-50 text-amber-700' : 'bg-green-50 text-green-700'}`}>
+                                      {item.visibility === 'hidden' ? '候选暂未展示' : '可见'}
+                                    </span>
+                                  </div>
+                                  {item.error && <p className="mt-1 text-[11px] leading-4 text-red-500">{item.error}</p>}
+                                  {item.statusReason && <p className="mt-1 text-[11px] leading-4 text-amber-700">状态原因：{item.statusReason}</p>}
+                                  {item.recoveryAction && <p className="mt-1 text-[11px] leading-4 text-gray-500">人工恢复：{item.recoveryAction}</p>}
                                 </div>
                                 <span className={`flex-shrink-0 rounded-full px-2.5 py-1 text-[11px] font-medium ${statusMeta.style}`}>{statusMeta.label}</span>
                                 <div className="flex flex-shrink-0 items-center gap-2">
                                   {item.status === 'analyzing' && (
+                                    <>
+                                      <button
+                                        type="button"
+                                        aria-label={`暂停分析 ${item.title}`}
+                                        disabled={actionPending}
+                                        onClick={() => void updateVideoAnalysis(item, 'pause')}
+                                        className="rounded-lg border border-gray-200 bg-white px-2.5 py-1.5 text-[11px] text-gray-600 hover:bg-gray-50 disabled:opacity-50"
+                                      >
+                                        {actionPending ? '处理中…' : '暂停'}
+                                      </button>
+                                      <button
+                                        type="button"
+                                        aria-label={`取消分析 ${item.title}`}
+                                        disabled={actionPending}
+                                        onClick={() => void updateVideoAnalysis(item, 'cancel')}
+                                        className="rounded-lg border border-red-100 bg-white px-2.5 py-1.5 text-[11px] text-red-600 hover:bg-red-50 disabled:opacity-50"
+                                      >
+                                        取消
+                                      </button>
+                                    </>
+                                  )}
+                                  {(item.status === 'paused' || item.status === 'failed' || item.status === 'cancelled') && (
                                     <button
                                       type="button"
-                                      aria-label={`暂停分析 ${item.title}`}
+                                      aria-label={`恢复分析 ${item.title}`}
                                       disabled={actionPending}
-                                      onClick={() => void updateVideoAnalysis(item, 'pause')}
-                                      className="rounded-lg border border-gray-200 bg-white px-2.5 py-1.5 text-[11px] text-gray-600 hover:bg-gray-50 disabled:opacity-50"
+                                      onClick={() => void updateVideoAnalysis(item, 'resume')}
+                                      className="rounded-lg border border-green-200 bg-white px-2.5 py-1.5 text-[11px] text-green-700 hover:bg-green-50 disabled:opacity-50"
                                     >
-                                      {actionPending ? '处理中…' : '暂停分析'}
+                                      {actionPending ? '提交中…' : item.status === 'failed' ? '重试' : '恢复'}
                                     </button>
                                   )}
-                                  {item.status !== 'analyzing' && (
+                                  {item.status === 'paused' && (
+                                    <button
+                                      type="button"
+                                      aria-label={`取消分析 ${item.title}`}
+                                      disabled={actionPending}
+                                      onClick={() => void updateVideoAnalysis(item, 'cancel')}
+                                      className="rounded-lg border border-red-100 bg-white px-2.5 py-1.5 text-[11px] text-red-600 hover:bg-red-50 disabled:opacity-50"
+                                    >
+                                      取消
+                                    </button>
+                                  )}
+                                  {item.status === 'analyzed' && (
                                     <button
                                       type="button"
                                       aria-label={`重新分析 ${item.title}`}
@@ -1508,20 +1801,33 @@ export default function ScheduledPage({ onAction }: { onAction?: AgentAction }) 
           {!loading && showTaskList && filtered.length > 0 && (
             <div className="mb-8">
               <h2 className="text-sm font-semibold text-gray-500 mb-3">{activeGroupMeta.label}</h2>
-              <div className="grid grid-cols-3 gap-3 items-stretch">
+              <div className="grid grid-cols-1 items-stretch gap-3 sm:grid-cols-2 lg:grid-cols-3">
                 {filtered.map(task => {
                   const tmpl = templateForTask(task);
+                  const isDirectorTask = task.taskType === 'social_discovery_collection';
+                  const taskScope = isDirectorTask && discoveryScope && String(discoveryScope.approval?.scopeVersion) === task.config.discoveryScopeVersion
+                    ? discoveryScope : null;
                   const result = runResult[task.id];
                   const isExpanded = expandedId === task.id;
+                  const crawlerTask = ['video_keyword_crawl', 'image_post_crawl', 'competitor_account_crawl'].includes(task.taskType);
+                  const executionState = scheduledTaskExecutionState(task, {
+                    running: runningId === task.id,
+                    workerOnline: crawlerTask && task.executionState === 'queued' && videoStats
+                      ? Boolean(fetchQueue.ops?.workerActive)
+                      : undefined,
+                  });
+                  const executionMeta = TASK_EXECUTION_META[executionState];
                   return (
                     <div key={task.id} className={`border rounded-xl p-4 min-h-[148px] h-full flex flex-col transition-all ${task.enabled ? 'border-gray-200' : 'border-gray-100 opacity-60'}`}>
                       <div className="flex items-start gap-3">
-                        <div className="text-2xl">{tmpl?.icon ?? '⚙️'}</div>
+                        <div className="text-2xl">{isDirectorTask ? '🎬' : tmpl?.icon ?? '⚙️'}</div>
                         <div className="flex-1 min-w-0">
                           <div className="flex items-center justify-between">
                             <p className="text-sm font-medium text-gray-900 truncate">{task.name}</p>
                             <button
                               type="button"
+                              aria-label={`${task.enabled ? '停用' : '启用'}任务 ${task.name}`}
+                              aria-pressed={task.enabled}
                               onClick={() => toggleTask(task.id)}
                               className={`w-10 h-5 rounded-full transition-colors relative flex-shrink-0 ml-2 ${task.enabled ? 'bg-green-500' : 'bg-gray-200'}`}
                             >
@@ -1531,6 +1837,11 @@ export default function ScheduledPage({ onAction }: { onAction?: AgentAction }) 
                           <p className="text-xs text-gray-500 mt-0.5 flex items-center gap-1.5">
                             <Clock size={10} /> {task.cronLabel}
                           </p>
+                          {isDirectorTask && <p className="mt-1 text-[11px] font-semibold text-emerald-700">编导 Agent 主采集 · 计划 v{task.config.discoveryScopeVersion || '待确认'}</p>}
+                          {!isDirectorTask && crawlerTask && <p className="mt-1 text-[11px] text-gray-500">{task.config.keywordSource === 'discovery_scope' ? '独立专项任务 · 借用编导关键词，单独计数' : '独立专项采集 · 单独执行'}</p>}
+                          <span className={`mt-1.5 inline-flex rounded-full px-2 py-0.5 text-[10px] font-medium ${executionMeta.style}`}>
+                            {executionMeta.label}
+                          </span>
                           {task.lastRun && (
                             <p className="text-xs text-gray-400 mt-0.5">
                               上次执行：{new Date(task.lastRun).toLocaleString('zh-CN', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' })}
@@ -1539,17 +1850,28 @@ export default function ScheduledPage({ onAction }: { onAction?: AgentAction }) 
                         </div>
                       </div>
 
+                      {isDirectorTask && (
+                        <div className="mt-3 rounded-lg border border-emerald-100 bg-emerald-50/60 p-2.5 text-[11px] text-gray-700">
+                          <p>下次检查：{!task.enabled ? '已暂停' : task.cronExpr === '*/15 * * * *' ? `${nextDirectorCheckLabel()}（北京时间）` : task.cronLabel}；仅在编导计划到期时采集</p>
+                          {taskScope ? <p className="mt-1">采集范围：近 {taskScope.discoveryBrief.lookbackDays} 天发布 · 滚动 7 天目标 {taskScope.discoveryBrief.resultLimit} 条合格视频 · {discoveryKeywords(taskScope).length} 个关键词</p> : <p className="mt-1">计划详情暂未加载；任务执行时读取已批准的范围。</p>}
+                          {task.config.directorReviewRequired && <p className="mt-1 font-semibold text-amber-700">{task.config.directorReviewRequired}。当前任务仍按上一版已批准范围执行。</p>}
+                          <button type="button" onClick={openDiscoveryScope} className="mt-1.5 font-semibold text-emerald-700 hover:underline">前往灵感大屏调整采集范围</button>
+                        </div>
+                      )}
+
                       {task.taskType === 'video_keyword_crawl' && (
                         <div className="mt-3">
                           <div className="grid grid-cols-[minmax(0,1fr)_5.75rem] gap-2">
                             <label className="block min-w-0">
-                              <span className="block text-[10px] text-gray-400 mb-1">检索关键词</span>
+                              <span className="block text-[10px] text-gray-400 mb-1">{discoveryScope ? `发现范围 · v${discoveryScope.keywordSet.version}` : '进阶覆盖词（可选）'}</span>
                               <input
-                                defaultValue={task.config.keywords || task.config.keyword || 'skincare'}
-                                onBlur={e => { void updateCrawlerConfig(task, { keywords: e.currentTarget.value }); }}
+                                key={discoveryScope?.version || 'legacy'}
+                                readOnly={Boolean(discoveryScope)}
+                                defaultValue={discoveryScope ? discoveryKeywords(discoveryScope).join('、') : task.config.keywords || task.config.keyword || ''}
+                                onBlur={e => { if (!discoveryScope) void updateCrawlerConfig(task, { keywords: e.currentTarget.value }); }}
                                 onKeyDown={e => { if (e.key === 'Enter') e.currentTarget.blur(); }}
                                 className="h-9 w-full rounded-lg border border-gray-200 px-2.5 text-xs text-gray-700 focus:outline-none focus:border-green-400"
-                                placeholder="skincare"
+                                placeholder="留空则使用当前发现范围"
                               />
                             </label>
                             <label className="block">
@@ -1569,7 +1891,7 @@ export default function ScheduledPage({ onAction }: { onAction?: AgentAction }) 
                               />
                             </label>
                           </div>
-                          <p className="mt-1.5 text-[10px] text-gray-400">单条任务最多爬取 10 条视频</p>
+                          <p className="mt-1.5 text-[10px] text-gray-400">单条任务最多爬取 {CRAWLER_LIMIT_MAX} 条视频</p>
                         </div>
                       )}
 
@@ -1584,10 +1906,11 @@ export default function ScheduledPage({ onAction }: { onAction?: AgentAction }) 
                         <button
                           type="button"
                           onClick={e => { e.preventDefault(); e.stopPropagation(); void runTaskNow(task.id); }}
-                          disabled={runningId === task.id}
+                          data-agent-action={window.__agentProductionTarget?.link.businessRef.entityId === task.id ? 'scheduler-primary' : undefined}
+                          disabled={agentProduction.active ? !agentProduction.action || agentProduction.busy : runningId === task.id}
                           className="h-9 px-3 rounded-lg bg-green-50 text-xs text-green-700 hover:bg-green-100 disabled:opacity-50 whitespace-nowrap"
                         >
-                          {runningId === task.id ? '执行中…' : '立即执行'}
+                          {runningId === task.id ? '执行中…' : isDirectorTask && executionState === 'failed' ? '重试执行' : '立即执行'}
                         </button>
                         <button
                           type="button"
@@ -1602,9 +1925,9 @@ export default function ScheduledPage({ onAction }: { onAction?: AgentAction }) 
                         >
                           进入页面
                         </button>
-                        <button type="button" onClick={e => { e.preventDefault(); e.stopPropagation(); void deleteTask(task.id); }} className="w-9 h-9 flex items-center justify-center border border-gray-200 rounded-lg text-gray-400 hover:text-red-400 hover:border-red-200 transition-colors flex-shrink-0">
+                        {!isDirectorTask && <button type="button" aria-label={`删除任务 ${task.name}`} onClick={e => { e.preventDefault(); e.stopPropagation(); void deleteTask(task.id); }} className="w-9 h-9 flex items-center justify-center border border-gray-200 rounded-lg text-gray-400 hover:text-red-400 hover:border-red-200 transition-colors flex-shrink-0">
                           <Trash2 size={12} />
-                        </button>
+                        </button>}
                       </div>
                       {runNotice?.taskId === task.id && (
                         <p role="status" className={`mt-2 text-[11px] ${runNotice.error ? 'text-red-600' : 'text-green-700'}`}>{runNotice.message}</p>
@@ -1627,26 +1950,8 @@ export default function ScheduledPage({ onAction }: { onAction?: AgentAction }) 
       {/* Add Task Modal */}
       <AnimatePresence>
         {showAdd && (
-          <motion.div
-            role="dialog"
-            aria-modal="true"
-            aria-label="新建定时任务"
-            initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
-            className="fixed inset-0 bg-black/40 z-50 flex items-center justify-center"
-            onClick={closeAddModal}
-          >
-            <motion.div
-              initial={{ scale: 0.95, opacity: 0 }} animate={{ scale: 1, opacity: 1 }} exit={{ scale: 0.95, opacity: 0 }}
-              className="bg-white rounded-2xl w-[560px] max-h-[85vh] overflow-y-auto p-6"
-              onClick={e => e.stopPropagation()}
-            >
-              <div className="flex items-center justify-between mb-5">
-                <div>
-                  <h3 className="font-semibold text-gray-900">新建定时任务</h3>
-                  <p className="text-xs text-gray-400 mt-0.5">{activeGroupMeta.label}</p>
-                </div>
-                <button type="button" onClick={closeAddModal} className="text-gray-400 hover:text-gray-600"><X size={20} /></button>
-              </div>
+          <Modal open title="新建定时任务" width={640} onCancel={closeAddModal} footer={null} mask={{ closable: false }} closable={!creatingTasks} keyboard={!creatingTasks} styles={{ body: { maxHeight: '70dvh', overflowY: 'auto' } }}>
+              <p className="mb-4 text-sm text-text-muted">{activeGroupMeta.label}</p>
 
               <p className="text-xs text-gray-500 mb-3 font-medium">选择任务模板</p>
               <div className="space-y-5 mb-5">
@@ -1716,7 +2021,8 @@ export default function ScheduledPage({ onAction }: { onAction?: AgentAction }) 
                       <button type="button" onClick={() => setSelectedTemplateIds([])} className="text-[11px] text-green-700 hover:text-green-900">清空</button>
                     </div>
                   )}
-                  {selectedTemplates.some(template => ['video_keyword_crawl', 'image_post_crawl'].includes(template.taskType)) && (
+                  {discoveryScope && selectedTemplates.some(template => template.taskType === 'video_keyword_crawl') && <div className="mb-4 rounded-xl bg-green-50 p-3 text-xs text-green-900"><p>发现范围：{discoveryScope.keywordSet.name} · v{discoveryScope.keywordSet.version}</p><p className="mt-2">{discoveryKeywords(discoveryScope).join('、')}</p><p className="mt-2">这是独立专项任务：每次读取灵感中心最新关键词，但平台、时间和数量按本任务单独执行、单独计数。</p></div>}
+                  {keywordTemplates.length > 0 && (
                     <div className="mb-4">
                       <label className="block text-xs font-medium text-gray-700 mb-1.5">采集关键词</label>
                       <textarea
@@ -1862,14 +2168,13 @@ export default function ScheduledPage({ onAction }: { onAction?: AgentAction }) 
 
               {createError && <p className="mb-3 flex items-start gap-1.5 text-xs text-red-600"><AlertTriangle size={14} className="mt-0.5 flex-shrink-0" />{createError}</p>}
               <div className="flex gap-3">
-                <button type="button" onClick={closeAddModal} className="flex-1 py-2.5 border border-gray-200 rounded-xl text-sm text-gray-600">取消</button>
-                <button
-                  type="button"
+                <Button onClick={closeAddModal} disabled={creatingTasks} className="flex-1">取消</Button>
+                <Button
+                  type="primary"
                   data-demo-target={showAdd && selectedTemplates.length > 0 ? 'scheduled_run' : undefined}
                   onClick={createTask}
                   disabled={selectedTemplates.length === 0 || creatingTasks || !keywordReviewConfirmed}
-                  className="flex-1 py-2.5 rounded-xl text-sm text-white font-medium disabled:opacity-40"
-                  style={{ background: '#16a34a' }}
+                  className="flex-1" loading={creatingTasks}
                 >
                   {creatingTasks
                     ? (runAfterCreate ? '正在创建并执行…' : '正在创建…')
@@ -1878,31 +2183,19 @@ export default function ScheduledPage({ onAction }: { onAction?: AgentAction }) 
                       : runAfterCreate && ['video_keyword_crawl', 'image_post_crawl', 'competitor_account_crawl'].includes(selectedTemplate?.taskType || '')
                         ? '创建并执行任务'
                         : '创建任务'}
-                </button>
+                </Button>
               </div>
-            </motion.div>
-          </motion.div>
+          </Modal>
         )}
         {resultTask && (
-          <>
-            <motion.div
-              initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
-              className="fixed inset-0 bg-black/20 z-40"
-              onClick={closeResultPanel}
-            />
-            <motion.div
-              initial={{ x: '100%' }} animate={{ x: 0 }} exit={{ x: '100%' }}
-              transition={{ type: 'spring', damping: 30, stiffness: 300 }}
-              className="fixed top-0 right-0 h-full w-[520px] bg-white border-l border-gray-200 z-50 flex flex-col shadow-2xl"
-              onClick={e => e.stopPropagation()}
-            >
+          <Drawer open title={resultWorkspace?.title ?? resultTask.name} onClose={closeResultPanel} size={640} styles={{ body: { padding: 0, display: 'flex', flexDirection: 'column' } }}>
               <div className="px-5 py-4 border-b border-gray-100 flex items-start gap-3">
                 <div className="text-3xl w-11 h-11 rounded-xl bg-gray-50 flex items-center justify-center flex-shrink-0">
                   {resultTemplate?.icon ?? '⚙️'}
                 </div>
                 <div className="flex-1 min-w-0">
                   <div className="flex items-center gap-2">
-                    <h3 className="text-sm font-semibold text-gray-900 truncate">{resultWorkspace?.title ?? resultTask.name}</h3>
+                    <h3 id="scheduled-result-dialog-title" className="text-sm font-semibold text-gray-900 truncate">{resultWorkspace?.title ?? resultTask.name}</h3>
                     <span className="text-[10px] px-1.5 py-0.5 rounded-md bg-green-50 text-green-700 font-medium">任务页面</span>
                   </div>
                   <p className="text-xs text-gray-700 mt-1 truncate">{resultTask.name}</p>
@@ -1920,7 +2213,7 @@ export default function ScheduledPage({ onAction }: { onAction?: AgentAction }) 
                   {exportingId === resultTask.id ? <Loader size={12} className="animate-spin" /> : <Download size={12} />}
                   导出 PDF
                 </button>
-                <button type="button" aria-label="关闭任务详情" onClick={closeResultPanel} className="p-1.5 rounded-lg hover:bg-gray-100 text-gray-400 hover:text-gray-600">
+                <button type="button" data-modal-initial-focus aria-label="关闭任务详情" onClick={closeResultPanel} className="p-1.5 rounded-lg hover:bg-gray-100 text-gray-400 hover:text-gray-600">
                   <X size={16} />
                 </button>
               </div>
@@ -1940,7 +2233,7 @@ export default function ScheduledPage({ onAction }: { onAction?: AgentAction }) 
                 {resultWorkspace && (
                   <section className="rounded-xl border border-gray-200 bg-white p-4">
                     <p className="text-xs font-semibold text-gray-800 mb-3">交互页面</p>
-                    <div className="grid grid-cols-3 gap-2">
+                    <div className="grid grid-cols-1 gap-2 sm:grid-cols-3">
                       {resultWorkspace.cards.map(card => (
                         <div key={card.label} className="min-h-[98px] rounded-lg bg-gray-50 border border-gray-100 px-3 py-2.5">
                           <p className="text-[11px] text-gray-400">{card.label}</p>
@@ -1949,7 +2242,7 @@ export default function ScheduledPage({ onAction }: { onAction?: AgentAction }) 
                         </div>
                       ))}
                     </div>
-                    <div className="grid grid-cols-3 gap-2 mt-3">
+                    <div className="mt-3 grid grid-cols-1 gap-2 sm:grid-cols-3">
                       {resultWorkspace.actions.map(action => (
                         <button
                           key={action}
@@ -2017,8 +2310,7 @@ export default function ScheduledPage({ onAction }: { onAction?: AgentAction }) 
                   关闭
                 </button>
               </div>
-            </motion.div>
-          </>
+          </Drawer>
         )}
       </AnimatePresence>
     </div>

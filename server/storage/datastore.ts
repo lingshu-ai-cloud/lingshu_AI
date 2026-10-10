@@ -13,6 +13,9 @@ export type Record_ = { id: string } & Record<string, unknown>;
 /** Equality conditions, all AND-ed together. The only query shape the app uses. */
 export type Where = Record<string, string | number | boolean>;
 
+/** Exact field values used by an atomic compare-and-swap operation. */
+export type CompareExpected = Record<string, unknown>;
+
 export interface ListQuery {
   /** Equality filter; every entry is AND-ed. e.g. { tenantId, status } */
   where?: Where;
@@ -35,9 +38,23 @@ export interface ListResult<T = Record_> {
 
 /** CRUD surface every backend must implement. Collection = table name. */
 export interface DataStore {
+  /** Database-arbitrated unique tenant/scope/subject lease support. */
+  supportsAtomicOperationLease?(): boolean | Promise<boolean>;
   getById<T = Record_>(collection: string, id: string): Promise<T | null>;
   create<T = Record_>(collection: string, data: Record<string, unknown>): Promise<T | null>;
   update(collection: string, id: string, data: Record<string, unknown>): Promise<boolean>;
+  /**
+   * Atomically update a record only when all expected fields still match.
+   * Backends that cannot provide a native compare-and-swap may omit this.
+   * Callers must fail closed; a process-local read/update lock is not safe in a
+   * multi-instance deployment.
+   */
+  compareAndSwap?(
+    collection: string,
+    id: string,
+    expected: CompareExpected,
+    data: Record<string, unknown>,
+  ): Promise<boolean>;
   delete(collection: string, id: string): Promise<boolean>;
   list<T = Record_>(collection: string, query?: ListQuery): Promise<ListResult<T>>;
 }
@@ -46,6 +63,8 @@ export interface DataStore {
 export interface Identity {
   userId: string;
   tenantId: string;
+  /** Data source selected by verified authentication; never supplied by clients. */
+  dataAuthority?: 'pocketbase' | 'local';
   supportAccess?: {
     requestId: string;
     adminEmail: string;

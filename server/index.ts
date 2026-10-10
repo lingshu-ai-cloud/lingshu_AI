@@ -1,17 +1,19 @@
+import { mountWhatsAppOAuthRoutes } from './routes/whatsappParentMount.js';
+import { mobileWorkbenchRouter } from './routes/mobileWorkbench.js';
+import './loadEnvironment.js';
+import { startMessengerContextTagRecovery } from './messenger/conversations.js';
 import path from 'path';
-import os from 'os';
 import { fileURLToPath } from 'url';
-import { execFileSync, spawn } from 'child_process';
-import dotenv from 'dotenv';
+import { spawn } from 'child_process';
 import express from 'express';
 import compression from 'compression';
-import { EnvHttpProxyAgent, setGlobalDispatcher } from 'undici';
+import { configureNetworkProxy } from './lib/networkEnvironment.js';
 import { copywritingRouter } from './routes/copywriting.js';
 import { translationRouter } from './routes/translation.js';
 import { competitorRouter } from './routes/competitor.js';
 import { competitorAccountsRouter } from './routes/competitorAccounts.js';
 import { strategyRouter } from './routes/strategy.js';
-import { initCrawlerOpsWorker, initPocketBaseVideoBackfill, videosRouter } from './routes/videos.js';
+import { videosRouter } from './routes/videos.js';
 import { scriptsRouter } from './routes/scripts.js';
 import { trendsRouter } from './routes/trends.js';
 import { assetsRouter } from './routes/assets.js';
@@ -20,50 +22,103 @@ import { agentChatRouter } from './routes/agentChat.js';
 import { draftReplyRouter } from './routes/draftReply.js';
 import { customerSuggestionsRouter } from './routes/customerSuggestions.js';
 import { channelsRouter } from './routes/channels.js';
-import { schedulerRouter, initScheduler } from './routes/scheduler.js';
+import { schedulerRouter } from './routes/scheduler.js';
 import { pluginsRouter } from './routes/plugins.js';
 import { studioRouter } from './routes/studio.js';
+import { productDocumentOcrRouter } from './routes/productDocumentOcr.js';
 import { authRouter } from './routes/auth.js';
 import { youtubeRouter } from './routes/youtube.js';
 import { socialRouter } from './routes/social.js';
 import { socialEngagementRouter } from './routes/socialEngagement.js';
+import { socialDiscoveryRouter } from './routes/socialDiscovery.js';
+import { socialProgramsRouter } from './routes/socialPrograms.js';
+import { createCustomerRelationshipEvidenceRouter } from './routes/customerRelationshipEvidence.js';
+import { store as customerRelationshipStore } from './storage/index.js';
+import { socialChannelsRouter } from './socialChannels/router.js';
 import { platformIntegrationsRouter } from './routes/platformIntegrations.js';
 import { adminRouter } from './routes/admin.js';
 import { assistantThreadsRouter } from './routes/assistantThreads.js';
 import { webhookRouter } from './routes/webhooks.js';
 import { isDemoMode, demoLimits } from './lib/demo.js';
-import { initTenantPlatformTokenMonitor } from './routes/tenantPlatformTokenMonitor.js';
 import { assistLinksRouter } from './routes/assistLinks.js';
-import { initWhatsAppCustomerMaintenance } from './whatsapp/historyImport.js';
-import { whatsappOAuthRouter } from './routes/whatsappOAuth.js';
+import { publishingRecoveryRouter } from './routes/publishingRecovery.js';
 import { publishingRouter } from './routes/publishing.js';
-import { initScheduledPublisher } from './publishing/scheduledPublisher.js';
 import { backfillTrendVideoContentFormat, ensureDeliveryCollections, ensureTrendVideoAnalysisCapacity } from './storage/ensureDeliveryCollections.js';
 import { supportAccessRouter } from './routes/supportAccess.js';
-import { crawlWorkerRouter, initCrawlWorkerCloudFallback } from './routes/crawlWorker.js';
+import { crawlWorkerRouter } from './routes/crawlWorker.js';
 import { requireScopedAsset, syncAssetSession } from './lib/assetAccess.js';
 import { cloudMaterialMediaRouter } from './routes/cloudMaterialMedia.js';
 import { agentMemoryRouter } from './routes/agentMemory.js';
 import { socialMetricsRouter } from './routes/socialMetrics.js';
+import { followupTemplatesRouter } from './routes/followupTemplates.js';
+import { digitalEmployeesRouter } from './routes/digitalEmployees.js';
+import { startBackgroundJobs } from './runtime/backgroundJobs.js';
+import { parseProcessRole, processRoleStartsBackgroundJobs, processRoleStartsHttp } from './runtime/processRole.js';
+import { starter198Router } from './routes/starter198Mobile.js';
+import { requireAuth, enforceSupportSessionReadOnly } from './middleware/auth.js';
+import { quoteSkillRouter } from './routes/quoteSkill.js';
+import { platformAdsRouter } from './routes/platformAds.js';
+import { platformAdHandoffRouter } from './routes/platformAdHandoff.js';
+import { platformAdConnectionsRouter } from './routes/platformAdConnections.js';
+import { platformAdExecutionRouter } from './routes/platformAdExecution.js';
+import { platformAdMetricsRouter } from './routes/platformAdMetrics.js';
+import { platformAdImportsRouter } from './routes/platformAdImports.js';
+import { platformAdCreativesRouter } from './routes/platformAdCreatives.js';
+import { platformAdMetricHistoryRouter } from './routes/platformAdMetricHistory.js';
+import { platformAdAutomationStatusRouter } from './routes/platformAdAutomationStatus.js';
+import { platformAdPreflightRouter } from './routes/platformAdPreflight.js';
+import { accountHubRouter } from './routes/accountHub.js';
+import { agentNotificationsRouter } from './routes/agentNotifications.js';
+import { startupHubRouter } from './routes/startupHub.js';
+import {
+  apiRateLimitConfig,
+  configureHttpServer,
+  createRateLimiter,
+  jsonBodyLimits,
+  requestSafetyHeaders,
+} from './runtime/httpSafety.js';
+import { createRuntimeReadinessProbe, runtimeCapabilities } from './runtime/readiness.js';
+import { dataAuthorityRequestScope } from './storage/dataAuthority.js';
+import { objectStorageConfigurationIssues, objectStorageDriver, objectStorageLocalRoot } from './storage/objectStorage.js';
+import { runtimeBuildInfo } from './runtime/buildInfo.js';
+import { createGracefulShutdown } from './runtime/gracefulShutdown.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
-dotenv.config({ path: path.join(__dirname, '..', '.env') });
-// 跨版本共用的本机密钥配置。项目文件优先，统一配置只补齐缺失项。
-dotenv.config({ path: path.join(os.homedir(), '.config', 'lingshu-ai', '.env') });
-dotenv.config({ path: path.join(os.homedir(), '.config', 'lingshu-ai', '.env.local') });
-dotenv.config({ path: path.join(__dirname, '..', '.env.local'), override: true });
+const processRole = parseProcessRole(process.env.PROCESS_ROLE);
+console.log(`[runtime] role=${processRole} http=${processRoleStartsHttp(processRole)} backgroundJobs=${processRoleStartsBackgroundJobs(processRole)}`);
 await ensureLocalPocketBase();
 configureNetworkProxy();
-try {
-  await ensureDeliveryCollections();
-  await ensureTrendVideoAnalysisCapacity();
-  await backfillTrendVideoContentFormat();
-} catch (error) {
-  console.error('[pb-init] failed to ensure tenants / tenant_platform_apps collections:', error instanceof Error ? error.message : error);
+const startupReadinessIssues: string[] = [];
+const storageConfigurationIssues = objectStorageConfigurationIssues();
+if (storageConfigurationIssues.length) {
+  startupReadinessIssues.push(`object_storage_config_invalid:${storageConfigurationIssues.join(',')}`);
+  console.error(`[storage] invalid configuration: ${storageConfigurationIssues.join(', ')}`);
+}
+const runtimeSchemaRepairRequested = process.env.RUNTIME_SCHEMA_REPAIR_ENABLED === 'true';
+if (runtimeSchemaRepairRequested && process.env.NODE_ENV === 'production') {
+  // Production schema has one authority: versioned PocketBase migrations.
+  // Keeping runtime repair code available in non-production makes local
+  // recovery possible without allowing application replicas to race writes.
+  startupReadinessIssues.push('runtime_schema_repair_forbidden_in_production');
+  console.error('[pb-init] RUNTIME_SCHEMA_REPAIR_ENABLED is forbidden in production; run versioned migrations instead');
+} else if (runtimeSchemaRepairRequested) {
+  try {
+    await ensureDeliveryCollections();
+    await ensureTrendVideoAnalysisCapacity();
+    await backfillTrendVideoContentFormat();
+  } catch (error) {
+    startupReadinessIssues.push('runtime_schema_repair_failed');
+    console.error('[pb-init] runtime schema repair failed:', error instanceof Error ? error.message : error);
+  }
 }
 
-const PORT = Number(process.env.PORT ?? 8788);
+const PORT = Number(process.env.LINGSHU_LOCAL_PORT ?? process.env.PORT ?? 8788);
 const app = express();
+const limits = jsonBodyLimits();
+const trustProxyHops = Number(process.env.TRUST_PROXY_HOPS || 0);
+if (Number.isSafeInteger(trustProxyHops) && trustProxyHops > 0 && trustProxyHops <= 10) {
+  app.set('trust proxy', trustProxyHops);
+}
 
 async function ensureLocalPocketBase(): Promise<void> {
   if (process.env.NODE_ENV === 'production' || process.env.PB_AUTO_START !== 'true') return;
@@ -73,6 +128,7 @@ async function ensureLocalPocketBase(): Promise<void> {
   const dataDir = process.env.PB_DATA_DIR || '';
   if (!bin || !dataDir) { console.warn('[pb] auto-start skipped: PB_BIN/PB_DATA_DIR missing'); return; }
   const parsed = new URL(url);
+  if (!['localhost', '127.0.0.1', '::1', '[::1]'].includes(parsed.hostname)) { console.warn('[pb] auto-start requires a loopback database URL'); return; }
   const child = spawn(bin, ['serve', `--http=${parsed.hostname}:${parsed.port || '8090'}`, `--dir=${dataDir}`], { cwd: path.dirname(bin), stdio: 'ignore', detached: true });
   child.unref();
   for (let attempt = 0; attempt < 20; attempt += 1) {
@@ -82,76 +138,41 @@ async function ensureLocalPocketBase(): Promise<void> {
   console.error(`[pb] auto-start failed at ${url}`);
 }
 
-function configureNetworkProxy(): void {
-  const configured = process.env.GEMINI_PROXY || process.env.HTTPS_PROXY || process.env.https_proxy || process.env.CRAWLER_PROXY;
-  // Prefer a healthy direct connection. A listening local port is not enough to
-  // prove that it is an HTTP proxy (other apps commonly occupy these ports).
-  // Gemini and YouTube can have different reachability on the same network.
-  // Only stay on the direct route when both services are reachable.
-  const proxy = configured || (canReachGoogleDirectly() && canReachYouTubeDirectly() ? '' : detectLocalProxy());
-  if (!proxy) return;
-  process.env.HTTPS_PROXY ||= proxy;
-  process.env.HTTP_PROXY ||= proxy;
-  process.env.https_proxy ||= proxy;
-  process.env.http_proxy ||= proxy;
-  process.env.CRAWLER_PROXY ||= proxy;
-  process.env.NODE_USE_ENV_PROXY ||= '1';
-  // ProxyAgent 涓嶈 NO_PROXY锛屼細鎶婂彂寰€ localhost锛圥ocketBase 绛夛級鐨勮姹備篃濉炶繘浠ｇ悊瀵艰嚧闈欓粯澶辫触锛?
-  // EnvHttpProxyAgent 鎸?NO_PROXY 缁曡鏈湴鍜?PB 涓绘満銆?
-  const pbHost = (() => { try { return new URL(process.env.PB_URL || 'http://localhost:8090').hostname; } catch { return ''; } })();
-  const noProxy = ['localhost', '127.0.0.1', '::1', pbHost].filter(Boolean).join(',');
-  process.env.NO_PROXY = process.env.NO_PROXY ? `${process.env.NO_PROXY},${noProxy}` : noProxy;
-  process.env.no_proxy = process.env.NO_PROXY;
-  setGlobalDispatcher(new EnvHttpProxyAgent());
-  console.log(`[network] using proxy ${proxy} (NO_PROXY=${process.env.NO_PROXY})`);
-}
+app.use(requestSafetyHeaders);
+app.use(dataAuthorityRequestScope);
+const readinessProbe = createRuntimeReadinessProbe({ role: processRole, startupIssues: startupReadinessIssues });
 
-function curlCanReach(args: string[]): boolean {
-  try {
-    const status = execFileSync('curl', [
-      '-sS', '-o', '/dev/null', '-w', '%{http_code}',
-      '--connect-timeout', '2', '--max-time', '6', ...args,
-      'https://generativelanguage.googleapis.com/',
-    ], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'], timeout: 7000 }).trim();
-    return status !== '' && status !== '000';
-  } catch {
-    return false;
+// Liveness and dependency-aware readiness are operational probes, not product
+// traffic. Register them before the general API limiter and cache readiness
+// briefly so load balancers cannot amplify PocketBase load.
+app.get('/api/overseas/health', (_req, res) => {
+  res.json({
+    status: startupReadinessIssues.length ? 'degraded' : 'ok',
+    service: 'overseas-marketing-agent',
+    build: runtimeBuildInfo(),
+    port: PORT,
+    role: processRole,
+    demoMode: isDemoMode(),
+    demoLimits: demoLimits(),
+    capabilities: runtimeCapabilities(processRole),
+    startupIssues: startupReadinessIssues,
+  });
+});
+
+app.get('/api/overseas/ready', async (_req, res) => {
+  res.setHeader('Cache-Control', 'no-store');
+  const report = await readinessProbe();
+  if (report.status !== 'ready') {
+    res.status(503).json(report);
+    return;
   }
-}
+  res.json(report);
+});
 
-function canReachGoogleDirectly(): boolean {
-  return curlCanReach(['--noproxy', '*']);
-}
+app.use('/api', createRateLimiter(apiRateLimitConfig()));
 
-function canReachYouTubeDirectly(): boolean {
-  try {
-    const status = execFileSync('curl', [
-      '-sS', '-o', '/dev/null', '-w', '%{http_code}',
-      '--connect-timeout', '2', '--max-time', '6', '--noproxy', '*',
-      'https://www.youtube.com/',
-    ], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'], timeout: 7000 }).trim();
-    return status !== '' && status !== '000';
-  } catch {
-    return false;
-  }
-}
-
-function detectLocalProxy(): string {
-  if (process.env.NODE_ENV === 'production') return '';
-  // Clash Verge defaults to 7897 for its mixed proxy. Prefer it over 7890,
-  // which may belong to another local proxy process that accepts connections
-  // but cannot establish a valid TLS tunnel to YouTube.
-  for (const port of [7897, 7890, 1087, 1080, 20171]) {
-    try {
-      execFileSync('nc', ['-z', '127.0.0.1', String(port)], { stdio: 'ignore', timeout: 600 });
-      const proxy = `http://127.0.0.1:${port}`;
-      if (curlCanReach(['--proxy', proxy])) return proxy;
-    } catch { /* try next */ }
-  }
-  return '';
-}
-
-// 璺宠繃 SSE 娴佸紡鍝嶅簲锛坱ext/event-stream锛夛紝鍚﹀垯 gzip 缂撳啿浼氭嫋鎱㈤瀛?
+// Skip compression for SSE and long TTS responses so intermediary buffering
+// cannot delay the first byte or strand a completed synthesis response.
 app.use(compression({
   filter: (req, res) => {
     if (res.getHeader('Content-Type') === 'text/event-stream') return false;
@@ -162,28 +183,24 @@ app.use(compression({
     return compression.filter(req, res);
   },
 }));
-// Supports base64-encoded admin/manual video uploads (鈮?0MB raw video).
-app.use(express.json({
-  limit: '120mb',
-  verify: (req, _res, buf) => {
-    (req as any).rawBody = Buffer.from(buf);
-  },
-}));
-app.use(syncAssetSession);
+const captureRawJsonBody: NonNullable<Parameters<typeof express.json>[0]>['verify'] = (req, _res, buf) => {
+  (req as express.Request & { rawBody?: Buffer }).rawBody = Buffer.from(buf);
+};
+const jsonBody = (limit: string) => express.json({ limit, verify: captureRawJsonBody });
 
-app.get('/api/overseas/health', (_req, res) => {
-  res.json({
-    status: 'ok',
-    service: 'overseas-marketing-agent',
-    port: PORT,
-    demoMode: isDemoMode(),
-    demoLimits: demoLimits(),
-    featureLocks: {
-      geminiVideo: process.env.GEMINI_VIDEO_ENABLED !== 'true',
-      seedanceVideo: process.env.SEEDANCE_VIDEO_ENABLED !== 'true',
-    },
-  });
-});
+// Large JSON bodies are legacy base64 upload compatibility paths only. Authenticate
+// before buffering them and keep the rest of the API at a small default limit.
+// New clients should use the streamed `/studio/materials/file` endpoint.
+app.use('/api/overseas/studio/materials', requireAuth, jsonBody(`${limits.legacyUpload}mb`));
+app.use('/api/overseas/enterprise/assets', requireAuth, jsonBody(`${limits.legacyUpload}mb`));
+app.use('/api/overseas/studio/voice-samples', requireAuth, jsonBody(`${limits.voiceUpload}mb`));
+app.use('/api/overseas/studio/voiceover', requireAuth, jsonBody(`${limits.voiceUpload}mb`));
+app.use('/api/overseas/studio/bgm', requireAuth, jsonBody(`${limits.voiceUpload}mb`));
+app.use('/api/overseas/studio/product-document-ocr', requireAuth, jsonBody('9mb'));
+app.use('/api/overseas/mobile-workbench', mobileWorkbenchRouter);
+app.use('/api/overseas/starter-198/mobile/transcribe', requireAuth, jsonBody('3mb'));
+app.use(jsonBody(`${limits.default}mb`));
+app.use(syncAssetSession);
 
 // Legacy routes (stub 鈫?to be implemented separately)
 app.use('/api/overseas/copywriting', copywritingRouter);
@@ -193,6 +210,7 @@ app.use('/api/overseas/competitor-accounts', competitorAccountsRouter);
 app.use('/api/overseas/strategy', strategyRouter);
 
 // Core routes
+app.use('/api/overseas/starter-198', starter198Router);
 app.use('/api/overseas/videos', videosRouter);
 app.use('/api/overseas/scripts', scriptsRouter);
 app.use('/api/overseas/trends', trendsRouter);
@@ -203,33 +221,51 @@ app.use('/api/overseas/agents', draftReplyRouter);
 app.use('/api/overseas/customers', customerSuggestionsRouter);
 app.use('/api/overseas/channels', channelsRouter);
 app.use('/api/channels', channelsRouter);
-app.use('/api/oauth/whatsapp', whatsappOAuthRouter);
+app.use('/api/overseas/publishing', publishingRecoveryRouter);
 app.use('/api/overseas/publishing', publishingRouter);
 app.use('/api', assistLinksRouter);
 app.use('/api/overseas/youtube', youtubeRouter);
 app.use('/api/overseas/social', socialRouter);
 app.use('/api/overseas/social-engagement', socialEngagementRouter);
+app.use('/api/overseas/social-discovery', socialDiscoveryRouter);
+app.use('/api/overseas/social-programs', socialProgramsRouter);
+app.use('/api/overseas/customer-relationships', requireAuth, enforceSupportSessionReadOnly, createCustomerRelationshipEvidenceRouter(customerRelationshipStore));
+app.use('/api/overseas/social-channels', socialChannelsRouter);
 app.use('/api/overseas/scheduler', schedulerRouter);
 app.use('/api/overseas/plugins', pluginsRouter);
 app.use('/api/overseas/auth', authRouter);
 app.use('/api/overseas/admin', adminRouter);
+app.use('/api/overseas/account-hub', accountHubRouter);
+app.use('/api/overseas/agent-notifications', agentNotificationsRouter);
+app.use('/api/overseas/startup-hub', startupHubRouter);
 app.use('/api/overseas/support-access', supportAccessRouter);
 app.use('/api/overseas/crawl-worker', crawlWorkerRouter);
+app.use('/api/overseas/studio/product-document-ocr', productDocumentOcrRouter);
 app.use('/api/overseas/studio', studioRouter);
 app.use('/api/overseas/platform-integrations', platformIntegrationsRouter);
 app.use('/api/overseas/assistant-threads', assistantThreadsRouter);
 app.use('/api/overseas/agent-memory', agentMemoryRouter);
 app.use('/api/overseas/social-metrics', socialMetricsRouter);
+app.use('/api/overseas/digital-employees/followup', followupTemplatesRouter);
+app.use('/api/overseas/digital-employees', digitalEmployeesRouter);
+app.use('/api/overseas/quote-skill', quoteSkillRouter);
+app.use('/api/overseas/platform-ads', platformAdConnectionsRouter);
+app.use('/api/overseas/platform-ads', platformAdsRouter);
+app.use('/api/overseas/platform-ads', platformAdHandoffRouter);
+app.use('/api/overseas/platform-ads', platformAdExecutionRouter);
+app.use('/api/overseas/platform-ads', platformAdMetricsRouter);
+app.use('/api/overseas/platform-ads', platformAdImportsRouter);
+app.use('/api/overseas/platform-ads', platformAdCreativesRouter);
+app.use('/api/overseas/platform-ads', platformAdPreflightRouter);
+app.use('/api/overseas/platform-ads', platformAdMetricHistoryRouter);
+app.use('/api/overseas/platform-ads', platformAdAutomationStatusRouter);
 app.use('/api/v1/products', productApiRouter);
 app.use('/api/webhooks', webhookRouter);
+mountWhatsAppOAuthRoutes(app);
 
-await initScheduler();
-initScheduledPublisher();
-initCrawlerOpsWorker();
-initPocketBaseVideoBackfill();
-initCrawlWorkerCloudFallback();
-initTenantPlatformTokenMonitor();
-await initWhatsAppCustomerMaintenance();
+const stopBackgroundJobs = processRoleStartsBackgroundJobs(processRole)
+  ? await startBackgroundJobs(processRole)
+  : () => undefined;
 
 // 绱犳潗搴撴湰鍦版枃浠舵墭绠★紙POST /studio/materials 涓婁紶鍒?data/media/锛?
 const mediaDir = path.join(__dirname, '..', 'data', 'media');
@@ -240,9 +276,12 @@ const privateAssetHeaders = (res: express.Response) => {
 app.use('/cloud-files', cloudMaterialMediaRouter);
 // Neutral alias for browsers/extensions that block paths containing "cloud-files".
 app.use('/studio-media', cloudMaterialMediaRouter);
-app.use('/media', requireScopedAsset, express.static(mediaDir, {
-  setHeaders: privateAssetHeaders,
-}));
+const mediaRouter = express.Router();
+if (objectStorageDriver() === 'local') {
+  mediaRouter.use('/object-storage', express.static(objectStorageLocalRoot(), { setHeaders: privateAssetHeaders }));
+}
+mediaRouter.use(express.static(mediaDir, { setHeaders: privateAssetHeaders }));
+app.use('/media', requireScopedAsset, mediaRouter);
 
 // BGM 鏇插簱鏈湴鏂囦欢鎵樼锛圥OST /studio/bgm 涓婁紶锛?
 const bgmDir = path.join(__dirname, '..', 'data', 'bgm');
@@ -276,6 +315,18 @@ app.get('*', (_req, res) => {
   res.sendFile(path.join(distDir, 'index.html'));
 });
 
-app.listen(PORT, '0.0.0.0', () => {
-  console.log(`[overseas-agent] http://0.0.0.0:${PORT}`);
-});
+if (processRoleStartsHttp(processRole)) {
+  const stopMessengerContextTagRecovery = startMessengerContextTagRecovery();
+  const server = app.listen(PORT, '0.0.0.0', () => {
+    console.log(`[overseas-agent] http://0.0.0.0:${PORT}`);
+  });
+  configureHttpServer(server);
+  const shutdown = createGracefulShutdown({
+    server,
+    stop: [stopBackgroundJobs, stopMessengerContextTagRecovery],
+  });
+  process.once('SIGTERM', () => shutdown('SIGTERM'));
+  process.once('SIGINT', () => shutdown('SIGINT'));
+} else {
+  console.log('[overseas-agent] HTTP listener disabled for worker role');
+}

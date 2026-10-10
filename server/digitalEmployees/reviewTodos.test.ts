@@ -1,0 +1,71 @@
+import assert from 'node:assert/strict';
+import { ReviewTodoService, REVIEW_TODO_COLLECTION } from './reviewTodos.js';
+import { applyReviewTodoPlan } from './reviewTodoPlan.js';
+import { nextReviewWeek, type ReviewTodo } from '../../src/lib/reviewTodos.js';
+import { normalizeVideoPlan } from '../../src/lib/videoCreationPlan.js';
+import { compilePackage, normalizePackage, recommendPackage } from './weeklyPackage.js';
+import { normalizeDigitalEmployeeConfig, normalizeWeeklyGoal } from './domain.js';
+import { contentAcceptanceHash } from './contentAcceptance.js';
+import type { DataStore } from '../storage/datastore.js';
+const rows = new Map<string, any[]>(); let failWrite = false; let seq = 0;
+const db: DataStore = {
+  async getById(c,id) { return rows.get(c)?.find(r=>r.id===id) || null; },
+  async list(c,q) {const matches=(rows.get(c)||[]).filter(r=>Object.entries(q?.where||{}).every(([k,v])=>r[k]===v));return {items:structuredClone(matches),page:1,perPage:100,totalPages:1,totalItems:matches.length};},
+  async create(c,raw) {const item={...structuredClone(raw),id:`row-${++seq}`};rows.set(c,[...(rows.get(c)||[]),item]);return item as any;},
+  async update(c,id,raw) {if(failWrite){failWrite=false;return false;}const item=rows.get(c)?.find(r=>r.id===id);if(!item)return false;Object.assign(item,structuredClone(raw));return true;},
+  async delete(){return false;},
+};
+rows.set('weekly_goals',[{id:'source',tenant_id:'a'},{id:'foreign',tenant_id:'b'}]);
+const service = new ReviewTodoService(db);
+const week='2099-01-05';
+assert.equal(nextReviewWeek(new Date('2026-09-06T15:59:59Z')),'2026-09-07');
+assert.equal(nextReviewWeek(new Date('2026-09-06T16:00:00Z')),'2026-09-14');
+const todo: ReviewTodo = {id:'t1',sourceIds:['insight'],sourceTitle:'效果对比有效',title:'3条视频复用开场',kind:'video',requirements:'第1镜展示前后对比，换3种场景',materials:'问题画面与解决后画面',reference:'视频A 0–3秒',acceptance:'首镜0–3秒包含问题与效果两段画面，人工确认',quantity:3,videoIndexes:[],status:'pending',reason:''};
+let board=await service.get('a',week);
+await assert.rejects(service.save('a',{...board,sourceGoalId:'foreign',items:[todo]}), /当前企业/);
+board=await service.save('a',{...board,sourceGoalId:'source',items:[todo],autoAssign:true},'actor');
+await assert.rejects(service.save('a',{...board,revision:0}),/已更新/);
+assert.equal((await new ReviewTodoService(db).get('a',week)).items.length,1,'board survives service restart');
+assert.equal((await service.get('b',week)).items.length,0,'tenant isolation');
+let allocations=0;
+const allocate=async()=>{allocations++;return 'next-goal';};
+await service.runDue(allocate,new Date('2099-01-05T00:59:59Z'));
+assert.equal(allocations,0);
+await Promise.all([service.dispatch('a','actor',week,allocate),service.runDue(allocate,new Date('2099-01-05T01:00:00Z'))]);
+assert.equal(allocations,1,'manual and scheduler cannot double allocate');
+board=await service.get('a',week);
+assert.equal(board.items[0].status,'assigned');
+assert.equal(board.autoAssign,false);
+await assert.rejects(service.save('a',{...board,items:[]}),/不能删除/);
+const forged={...todo,status:'assigned' as const};
+let next=await service.get('a','2099-01-12');
+next=await service.save('a',{...next,sourceGoalId:'source',items:[forged]});
+assert.equal(next.items[0].status,'pending','clients cannot forge assigned status');
+next=await service.dispatch('a','actor',next.week,async()=>{throw Error('当前目标尚未结束');});
+assert.equal(next.items[0].status,'needs_input');
+assert.equal(next.autoAssign,false);
+failWrite=true;
+await assert.rejects(service.save('a',next),/保存失败/);
+const config=normalizeDigitalEmployeeConfig({focusProducts:'产品A',enabledWorkflows:['product_content'],operatingMaturity:'growing'});
+const goal=normalizeWeeklyGoal({startsAt:week,endsAt:'2099-01-11'},config);
+const pack=recommendPackage(goal,config);
+const production=pack.tasks.find(t=>t.templateId==='production')!;
+production.videoPlans=Array.from({length:6},()=>normalizeVideoPlan({productName:'产品A',theme:'场景演示'}));
+const applied=applyReviewTodoPlan(pack,[todo]);
+const plans=applied.tasks.find(t=>t.templateId==='production')!.videoPlans!;
+assert.equal(plans.length,6,'reuse consumes existing capacity');
+assert.equal(plans.filter(p=>p.reviewRequirements?.length).length,3);
+assert.equal(production.videoPlans.filter(p=>p.reviewRequirements?.length).length,0,'original is immutable');
+assert.throws(()=>applyReviewTodoPlan(pack,[{...todo,quantity:7}]),/足够/);
+assert.throws(()=>applyReviewTodoPlan(pack,[todo,{...todo,id:'t2',videoIndexes:[0,1,2]}]),/已有钩子/);
+const retry=applyReviewTodoPlan(applied,[{...todo,requirements:'更新后的要求'}]);
+assert.equal(retry.reviewTodos!.length,1);
+assert.equal(retry.tasks.find(t=>t.templateId==='production')!.videoPlans![0].reviewRequirements![0].requirements,'更新后的要求','retry must honor edited requirements');
+const normalized=normalizePackage(applied);
+assert.equal(normalized.tasks.find(t=>t.templateId==='production')!.videoPlans![0].reviewRequirements![0].endsAt,3);
+const withKnowledge=applyReviewTodoPlan(applied,[{...todo,id:'knowledge',kind:'knowledge',requirements:'补充安装条件答案'}]);
+const compiled=compilePackage(withKnowledge,goal,config);
+assert.ok(compiled.tasks.some(t=>t.key==='review_todo_knowledge' && t.description.includes('补充安装条件答案') && !t.automaticExecutionAllowed));
+const spec={contentOrder:{videoPlan:plans[0]}};
+assert.notEqual(contentAcceptanceHash(spec),contentAcceptanceHash({contentOrder:{videoPlan:{...plans[0],reviewRequirements:[]}}}),'requirements belong to content acceptance hash');
+console.log('Review todo persistence, tenancy, scheduling, deduplication, recovery, capacity and plan-binding tests passed');

@@ -1,0 +1,2398 @@
+{
+  "manifestVersion": 1,
+  "batchId": "beauty-b2b-commons-seed-30-v1",
+  "tenantId": "",
+  "scope": "shared",
+  "usage": "editable",
+  "capacity": {
+    "maxRecords": 50,
+    "maxTotalBytes": 524288000
+  },
+  "normalization": {
+    "maxWidth": 1080,
+    "crf": 23
+  },
+  "assets": [
+    {
+      "id": "beauty-b2b-01-pamasol-0s",
+      "enabled": false,
+      "title": "气雾罐进入自动灌装线",
+      "folder": "美妆B2B授权候选",
+      "source": {
+        "provider": "Wikimedia Commons",
+        "creator": "Work With Sounds; sound recordist Maasa Järvinen; video recordist Kimmo Kestinen",
+        "pageUrl": "https://commons.wikimedia.org/wiki/File:Pamasol_aerosol_filling_machine.webm",
+        "downloadUrl": "https://commons.wikimedia.org/wiki/Special:Redirect/file/Pamasol_aerosol_filling_machine.webm",
+        "approvedDownloadHosts": [
+          "commons.wikimedia.org",
+          "upload.wikimedia.org"
+        ]
+      },
+      "license": {
+        "name": "CC BY 3.0 Unported",
+        "url": "https://creativecommons.org/licenses/by/3.0/",
+        "evidence": "Wikimedia Commons file page states CC BY 3.0 and records a license review by Rodrigolopes on 2016-07-19. Page and original file were re-checked on 2026-09-20.",
+        "capturedAt": "2026-09-20T15:00:00.000Z",
+        "attributionText": "“Pamasol aerosol filling machine” by Work With Sounds / Maasa Järvinen / Kimmo Kestinen, CC BY 3.0. Cropped/transcoded by 灵枢. Source: https://commons.wikimedia.org/wiki/File:Pamasol_aerosol_filling_machine.webm"
+      },
+      "approval": {
+        "approvedBy": "pending-human-rights-review",
+        "approvedAt": "2026-09-20T15:00:00.000Z",
+        "reference": "RIGHTS-REVIEW-01",
+        "rationale": "Commons 文件页所示许可允许商业使用和改编；原始发布渠道、人物、商标、场地及 SaaS 用途尚未经人类审核，故保持关闭。",
+        "rights": {
+          "commercialUse": true,
+          "derivatives": true,
+          "rawFileStorage": true,
+          "saasMaterialLibrary": true
+        }
+      },
+      "expectedSourceSha256": "9c209891e123bed2a27d4dee6436fc003b8296976281512b8b9c9709fec61e6a",
+      "clip": {
+        "startSeconds": 0,
+        "durationSeconds": 6
+      },
+      "industry": "美妆制造",
+      "shotFunction": "建立工厂规模",
+      "applicability": "仅作为“建立工厂规模”的通用行业示意，不得宣称为客户自有工厂、产品或检测结果。发布时必须保留归因信息并标明裁切、转码等修改。",
+      "tags": [
+        "气雾罐",
+        "灌装线",
+        "工厂",
+        "美妆B2B",
+        "授权候选"
+      ],
+      "visualReview": {
+        "reviewedBy": "codex-direct-frame-review",
+        "reviewedAt": "2026-09-20T15:00:00.000Z",
+        "reference": "FRAME-REVIEW-01-0-6",
+        "rationale": "已对下载原文件对应区间的接触图和关键帧做直接视觉核对并记录可见事实；这不是人类全运动复核，启用前必须由受信人类复核员观看完整片段并替换审核人信息。",
+        "visualObservations": [
+          "白色气雾罐在不锈钢设备旁排队进入生产区域。",
+          "多排白色气雾罐在输送路径上排列",
+          "画面可见大型不锈钢设备与防护结构"
+        ],
+        "segment": {
+          "start": 0,
+          "end": 6,
+          "subject": [
+            "白色气雾罐",
+            "不锈钢灌装设备"
+          ],
+          "action": "罐体沿输送路径进入设备",
+          "shot": "全景",
+          "camera": "固定机位",
+          "environment": "工业生产车间",
+          "observedFacts": [
+            "多排白色气雾罐在输送路径上排列",
+            "画面可见大型不锈钢设备与防护结构"
+          ],
+          "confidence": 0.9,
+          "needsReview": false
+        }
+      }
+    },
+    {
+      "id": "beauty-b2b-02-pamasol-8s",
+      "enabled": false,
+      "title": "气雾罐输送至封闭设备",
+      "folder": "美妆B2B授权候选",
+      "source": {
+        "provider": "Wikimedia Commons",
+        "creator": "Work With Sounds; sound recordist Maasa Järvinen; video recordist Kimmo Kestinen",
+        "pageUrl": "https://commons.wikimedia.org/wiki/File:Pamasol_aerosol_filling_machine.webm",
+        "downloadUrl": "https://commons.wikimedia.org/wiki/Special:Redirect/file/Pamasol_aerosol_filling_machine.webm",
+        "approvedDownloadHosts": [
+          "commons.wikimedia.org",
+          "upload.wikimedia.org"
+        ]
+      },
+      "license": {
+        "name": "CC BY 3.0 Unported",
+        "url": "https://creativecommons.org/licenses/by/3.0/",
+        "evidence": "Wikimedia Commons file page states CC BY 3.0 and records a license review by Rodrigolopes on 2016-07-19. Page and original file were re-checked on 2026-09-20.",
+        "capturedAt": "2026-09-20T15:00:00.000Z",
+        "attributionText": "“Pamasol aerosol filling machine” by Work With Sounds / Maasa Järvinen / Kimmo Kestinen, CC BY 3.0. Cropped/transcoded by 灵枢. Source: https://commons.wikimedia.org/wiki/File:Pamasol_aerosol_filling_machine.webm"
+      },
+      "approval": {
+        "approvedBy": "pending-human-rights-review",
+        "approvedAt": "2026-09-20T15:00:00.000Z",
+        "reference": "RIGHTS-REVIEW-02",
+        "rationale": "Commons 文件页所示许可允许商业使用和改编；原始发布渠道、人物、商标、场地及 SaaS 用途尚未经人类审核，故保持关闭。",
+        "rights": {
+          "commercialUse": true,
+          "derivatives": true,
+          "rawFileStorage": true,
+          "saasMaterialLibrary": true
+        }
+      },
+      "expectedSourceSha256": "9c209891e123bed2a27d4dee6436fc003b8296976281512b8b9c9709fec61e6a",
+      "clip": {
+        "startSeconds": 8,
+        "durationSeconds": 6
+      },
+      "industry": "美妆制造",
+      "shotFunction": "展示自动化输送",
+      "applicability": "仅作为“展示自动化输送”的通用行业示意，不得宣称为客户自有工厂、产品或检测结果。发布时必须保留归因信息并标明裁切、转码等修改。",
+      "tags": [
+        "自动化",
+        "输送",
+        "气雾罐",
+        "美妆B2B",
+        "授权候选"
+      ],
+      "visualReview": {
+        "reviewedBy": "codex-direct-frame-review",
+        "reviewedAt": "2026-09-20T15:00:00.000Z",
+        "reference": "FRAME-REVIEW-02-8-14",
+        "rationale": "已对下载原文件对应区间的接触图和关键帧做直接视觉核对并记录可见事实；这不是人类全运动复核，启用前必须由受信人类复核员观看完整片段并替换审核人信息。",
+        "visualObservations": [
+          "白色罐体成排移动到透明防护罩内的设备。",
+          "罐体保持整齐间距",
+          "设备由透明防护罩包围"
+        ],
+        "segment": {
+          "start": 0,
+          "end": 6,
+          "subject": [
+            "白色气雾罐",
+            "透明防护罩",
+            "输送线"
+          ],
+          "action": "罐体成排进入封闭加工区域",
+          "shot": "中全景",
+          "camera": "固定机位",
+          "environment": "工业生产车间",
+          "observedFacts": [
+            "罐体保持整齐间距",
+            "设备由透明防护罩包围"
+          ],
+          "confidence": 0.9,
+          "needsReview": false
+        }
+      }
+    },
+    {
+      "id": "beauty-b2b-03-pamasol-20s",
+      "enabled": false,
+      "title": "防护罩内罐体连续运行",
+      "folder": "美妆B2B授权候选",
+      "source": {
+        "provider": "Wikimedia Commons",
+        "creator": "Work With Sounds; sound recordist Maasa Järvinen; video recordist Kimmo Kestinen",
+        "pageUrl": "https://commons.wikimedia.org/wiki/File:Pamasol_aerosol_filling_machine.webm",
+        "downloadUrl": "https://commons.wikimedia.org/wiki/Special:Redirect/file/Pamasol_aerosol_filling_machine.webm",
+        "approvedDownloadHosts": [
+          "commons.wikimedia.org",
+          "upload.wikimedia.org"
+        ]
+      },
+      "license": {
+        "name": "CC BY 3.0 Unported",
+        "url": "https://creativecommons.org/licenses/by/3.0/",
+        "evidence": "Wikimedia Commons file page states CC BY 3.0 and records a license review by Rodrigolopes on 2016-07-19. Page and original file were re-checked on 2026-09-20.",
+        "capturedAt": "2026-09-20T15:00:00.000Z",
+        "attributionText": "“Pamasol aerosol filling machine” by Work With Sounds / Maasa Järvinen / Kimmo Kestinen, CC BY 3.0. Cropped/transcoded by 灵枢. Source: https://commons.wikimedia.org/wiki/File:Pamasol_aerosol_filling_machine.webm"
+      },
+      "approval": {
+        "approvedBy": "pending-human-rights-review",
+        "approvedAt": "2026-09-20T15:00:00.000Z",
+        "reference": "RIGHTS-REVIEW-03",
+        "rationale": "Commons 文件页所示许可允许商业使用和改编；原始发布渠道、人物、商标、场地及 SaaS 用途尚未经人类审核，故保持关闭。",
+        "rights": {
+          "commercialUse": true,
+          "derivatives": true,
+          "rawFileStorage": true,
+          "saasMaterialLibrary": true
+        }
+      },
+      "expectedSourceSha256": "9c209891e123bed2a27d4dee6436fc003b8296976281512b8b9c9709fec61e6a",
+      "clip": {
+        "startSeconds": 20,
+        "durationSeconds": 6
+      },
+      "industry": "美妆制造",
+      "shotFunction": "证明连续生产",
+      "applicability": "仅作为“证明连续生产”的通用行业示意，不得宣称为客户自有工厂、产品或检测结果。发布时必须保留归因信息并标明裁切、转码等修改。",
+      "tags": [
+        "连续生产",
+        "设备",
+        "气雾罐",
+        "美妆B2B",
+        "授权候选"
+      ],
+      "visualReview": {
+        "reviewedBy": "codex-direct-frame-review",
+        "reviewedAt": "2026-09-20T15:00:00.000Z",
+        "reference": "FRAME-REVIEW-03-20-26",
+        "rationale": "已对下载原文件对应区间的接触图和关键帧做直接视觉核对并记录可见事实；这不是人类全运动复核，启用前必须由受信人类复核员观看完整片段并替换审核人信息。",
+        "visualObservations": [
+          "透明防护罩内的白色罐体沿环形路径持续通过。",
+          "多只白色罐体同时位于环形设备内",
+          "前景可见设备控制面板"
+        ],
+        "segment": {
+          "start": 0,
+          "end": 6,
+          "subject": [
+            "白色气雾罐",
+            "环形设备"
+          ],
+          "action": "罐体沿环形加工路径移动",
+          "shot": "中景",
+          "camera": "固定机位",
+          "environment": "封闭式生产设备",
+          "observedFacts": [
+            "多只白色罐体同时位于环形设备内",
+            "前景可见设备控制面板"
+          ],
+          "confidence": 0.9,
+          "needsReview": false
+        }
+      }
+    },
+    {
+      "id": "beauty-b2b-04-pamasol-32s",
+      "enabled": false,
+      "title": "自动灌装设备运行细节",
+      "folder": "美妆B2B授权候选",
+      "source": {
+        "provider": "Wikimedia Commons",
+        "creator": "Work With Sounds; sound recordist Maasa Järvinen; video recordist Kimmo Kestinen",
+        "pageUrl": "https://commons.wikimedia.org/wiki/File:Pamasol_aerosol_filling_machine.webm",
+        "downloadUrl": "https://commons.wikimedia.org/wiki/Special:Redirect/file/Pamasol_aerosol_filling_machine.webm",
+        "approvedDownloadHosts": [
+          "commons.wikimedia.org",
+          "upload.wikimedia.org"
+        ]
+      },
+      "license": {
+        "name": "CC BY 3.0 Unported",
+        "url": "https://creativecommons.org/licenses/by/3.0/",
+        "evidence": "Wikimedia Commons file page states CC BY 3.0 and records a license review by Rodrigolopes on 2016-07-19. Page and original file were re-checked on 2026-09-20.",
+        "capturedAt": "2026-09-20T15:00:00.000Z",
+        "attributionText": "“Pamasol aerosol filling machine” by Work With Sounds / Maasa Järvinen / Kimmo Kestinen, CC BY 3.0. Cropped/transcoded by 灵枢. Source: https://commons.wikimedia.org/wiki/File:Pamasol_aerosol_filling_machine.webm"
+      },
+      "approval": {
+        "approvedBy": "pending-human-rights-review",
+        "approvedAt": "2026-09-20T15:00:00.000Z",
+        "reference": "RIGHTS-REVIEW-04",
+        "rationale": "Commons 文件页所示许可允许商业使用和改编；原始发布渠道、人物、商标、场地及 SaaS 用途尚未经人类审核，故保持关闭。",
+        "rights": {
+          "commercialUse": true,
+          "derivatives": true,
+          "rawFileStorage": true,
+          "saasMaterialLibrary": true
+        }
+      },
+      "expectedSourceSha256": "9c209891e123bed2a27d4dee6436fc003b8296976281512b8b9c9709fec61e6a",
+      "clip": {
+        "startSeconds": 32,
+        "durationSeconds": 6
+      },
+      "industry": "美妆制造",
+      "shotFunction": "展示设备能力",
+      "applicability": "仅作为“展示设备能力”的通用行业示意，不得宣称为客户自有工厂、产品或检测结果。发布时必须保留归因信息并标明裁切、转码等修改。",
+      "tags": [
+        "设备细节",
+        "灌装",
+        "自动化",
+        "美妆B2B",
+        "授权候选"
+      ],
+      "visualReview": {
+        "reviewedBy": "codex-direct-frame-review",
+        "reviewedAt": "2026-09-20T15:00:00.000Z",
+        "reference": "FRAME-REVIEW-04-32-38",
+        "rationale": "已对下载原文件对应区间的接触图和关键帧做直接视觉核对并记录可见事实；这不是人类全运动复核，启用前必须由受信人类复核员观看完整片段并替换审核人信息。",
+        "visualObservations": [
+          "镜头持续展示防护罩内转盘、管线和成排罐体。",
+          "红色与金属管线位于罐体上方",
+          "罐体按固定节距排列"
+        ],
+        "segment": {
+          "start": 0,
+          "end": 6,
+          "subject": [
+            "转盘设备",
+            "管线",
+            "白色气雾罐"
+          ],
+          "action": "设备带动罐体依次通过加工位",
+          "shot": "中景",
+          "camera": "固定机位",
+          "environment": "封闭式灌装区域",
+          "observedFacts": [
+            "红色与金属管线位于罐体上方",
+            "罐体按固定节距排列"
+          ],
+          "confidence": 0.9,
+          "needsReview": false
+        }
+      }
+    },
+    {
+      "id": "beauty-b2b-05-pamasol-44s",
+      "enabled": false,
+      "title": "灌装头与罐体近景",
+      "folder": "美妆B2B授权候选",
+      "source": {
+        "provider": "Wikimedia Commons",
+        "creator": "Work With Sounds; sound recordist Maasa Järvinen; video recordist Kimmo Kestinen",
+        "pageUrl": "https://commons.wikimedia.org/wiki/File:Pamasol_aerosol_filling_machine.webm",
+        "downloadUrl": "https://commons.wikimedia.org/wiki/Special:Redirect/file/Pamasol_aerosol_filling_machine.webm",
+        "approvedDownloadHosts": [
+          "commons.wikimedia.org",
+          "upload.wikimedia.org"
+        ]
+      },
+      "license": {
+        "name": "CC BY 3.0 Unported",
+        "url": "https://creativecommons.org/licenses/by/3.0/",
+        "evidence": "Wikimedia Commons file page states CC BY 3.0 and records a license review by Rodrigolopes on 2016-07-19. Page and original file were re-checked on 2026-09-20.",
+        "capturedAt": "2026-09-20T15:00:00.000Z",
+        "attributionText": "“Pamasol aerosol filling machine” by Work With Sounds / Maasa Järvinen / Kimmo Kestinen, CC BY 3.0. Cropped/transcoded by 灵枢. Source: https://commons.wikimedia.org/wiki/File:Pamasol_aerosol_filling_machine.webm"
+      },
+      "approval": {
+        "approvedBy": "pending-human-rights-review",
+        "approvedAt": "2026-09-20T15:00:00.000Z",
+        "reference": "RIGHTS-REVIEW-05",
+        "rationale": "Commons 文件页所示许可允许商业使用和改编；原始发布渠道、人物、商标、场地及 SaaS 用途尚未经人类审核，故保持关闭。",
+        "rights": {
+          "commercialUse": true,
+          "derivatives": true,
+          "rawFileStorage": true,
+          "saasMaterialLibrary": true
+        }
+      },
+      "expectedSourceSha256": "9c209891e123bed2a27d4dee6436fc003b8296976281512b8b9c9709fec61e6a",
+      "clip": {
+        "startSeconds": 44,
+        "durationSeconds": 6
+      },
+      "industry": "美妆制造",
+      "shotFunction": "突出灌装工艺",
+      "applicability": "仅作为“突出灌装工艺”的通用行业示意，不得宣称为客户自有工厂、产品或检测结果。发布时必须保留归因信息并标明裁切、转码等修改。",
+      "tags": [
+        "灌装头",
+        "工艺细节",
+        "转盘",
+        "美妆B2B",
+        "授权候选"
+      ],
+      "visualReview": {
+        "reviewedBy": "codex-direct-frame-review",
+        "reviewedAt": "2026-09-20T15:00:00.000Z",
+        "reference": "FRAME-REVIEW-05-44-50",
+        "rationale": "已对下载原文件对应区间的接触图和关键帧做直接视觉核对并记录可见事实；这不是人类全运动复核，启用前必须由受信人类复核员观看完整片段并替换审核人信息。",
+        "visualObservations": [
+          "金属加工头位于一圈白色罐体上方，转盘逐步推进。",
+          "白色罐体围绕圆形转盘排列",
+          "多个金属加工头位于罐体正上方"
+        ],
+        "segment": {
+          "start": 0,
+          "end": 6,
+          "subject": [
+            "金属加工头",
+            "白色气雾罐",
+            "转盘"
+          ],
+          "action": "转盘带动罐体经过上方加工头",
+          "shot": "近景",
+          "camera": "固定机位",
+          "environment": "自动灌装设备内部",
+          "observedFacts": [
+            "白色罐体围绕圆形转盘排列",
+            "多个金属加工头位于罐体正上方"
+          ],
+          "confidence": 0.9,
+          "needsReview": false
+        }
+      }
+    },
+    {
+      "id": "beauty-b2b-06-pamasol-56s",
+      "enabled": false,
+      "title": "罐体通过多工位加工",
+      "folder": "美妆B2B授权候选",
+      "source": {
+        "provider": "Wikimedia Commons",
+        "creator": "Work With Sounds; sound recordist Maasa Järvinen; video recordist Kimmo Kestinen",
+        "pageUrl": "https://commons.wikimedia.org/wiki/File:Pamasol_aerosol_filling_machine.webm",
+        "downloadUrl": "https://commons.wikimedia.org/wiki/Special:Redirect/file/Pamasol_aerosol_filling_machine.webm",
+        "approvedDownloadHosts": [
+          "commons.wikimedia.org",
+          "upload.wikimedia.org"
+        ]
+      },
+      "license": {
+        "name": "CC BY 3.0 Unported",
+        "url": "https://creativecommons.org/licenses/by/3.0/",
+        "evidence": "Wikimedia Commons file page states CC BY 3.0 and records a license review by Rodrigolopes on 2016-07-19. Page and original file were re-checked on 2026-09-20.",
+        "capturedAt": "2026-09-20T15:00:00.000Z",
+        "attributionText": "“Pamasol aerosol filling machine” by Work With Sounds / Maasa Järvinen / Kimmo Kestinen, CC BY 3.0. Cropped/transcoded by 灵枢. Source: https://commons.wikimedia.org/wiki/File:Pamasol_aerosol_filling_machine.webm"
+      },
+      "approval": {
+        "approvedBy": "pending-human-rights-review",
+        "approvedAt": "2026-09-20T15:00:00.000Z",
+        "reference": "RIGHTS-REVIEW-06",
+        "rationale": "Commons 文件页所示许可允许商业使用和改编；原始发布渠道、人物、商标、场地及 SaaS 用途尚未经人类审核，故保持关闭。",
+        "rights": {
+          "commercialUse": true,
+          "derivatives": true,
+          "rawFileStorage": true,
+          "saasMaterialLibrary": true
+        }
+      },
+      "expectedSourceSha256": "9c209891e123bed2a27d4dee6436fc003b8296976281512b8b9c9709fec61e6a",
+      "clip": {
+        "startSeconds": 56,
+        "durationSeconds": 6
+      },
+      "industry": "美妆制造",
+      "shotFunction": "展示标准化流程",
+      "applicability": "仅作为“展示标准化流程”的通用行业示意，不得宣称为客户自有工厂、产品或检测结果。发布时必须保留归因信息并标明裁切、转码等修改。",
+      "tags": [
+        "标准化",
+        "多工位",
+        "气雾罐",
+        "美妆B2B",
+        "授权候选"
+      ],
+      "visualReview": {
+        "reviewedBy": "codex-direct-frame-review",
+        "reviewedAt": "2026-09-20T15:00:00.000Z",
+        "reference": "FRAME-REVIEW-06-56-62",
+        "rationale": "已对下载原文件对应区间的接触图和关键帧做直接视觉核对并记录可见事实；这不是人类全运动复核，启用前必须由受信人类复核员观看完整片段并替换审核人信息。",
+        "visualObservations": [
+          "一圈相同罐体在金属机构下依次经过多个位置。",
+          "罐体外观与间距一致",
+          "上方机构包含多个重复工位"
+        ],
+        "segment": {
+          "start": 0,
+          "end": 6,
+          "subject": [
+            "白色气雾罐",
+            "多工位金属机构"
+          ],
+          "action": "罐体随转盘连续经过加工位",
+          "shot": "近景",
+          "camera": "固定机位",
+          "environment": "自动灌装设备内部",
+          "observedFacts": [
+            "罐体外观与间距一致",
+            "上方机构包含多个重复工位"
+          ],
+          "confidence": 0.9,
+          "needsReview": false
+        }
+      }
+    },
+    {
+      "id": "beauty-b2b-07-pamasol-68s",
+      "enabled": false,
+      "title": "自动线重复加工循环",
+      "folder": "美妆B2B授权候选",
+      "source": {
+        "provider": "Wikimedia Commons",
+        "creator": "Work With Sounds; sound recordist Maasa Järvinen; video recordist Kimmo Kestinen",
+        "pageUrl": "https://commons.wikimedia.org/wiki/File:Pamasol_aerosol_filling_machine.webm",
+        "downloadUrl": "https://commons.wikimedia.org/wiki/Special:Redirect/file/Pamasol_aerosol_filling_machine.webm",
+        "approvedDownloadHosts": [
+          "commons.wikimedia.org",
+          "upload.wikimedia.org"
+        ]
+      },
+      "license": {
+        "name": "CC BY 3.0 Unported",
+        "url": "https://creativecommons.org/licenses/by/3.0/",
+        "evidence": "Wikimedia Commons file page states CC BY 3.0 and records a license review by Rodrigolopes on 2016-07-19. Page and original file were re-checked on 2026-09-20.",
+        "capturedAt": "2026-09-20T15:00:00.000Z",
+        "attributionText": "“Pamasol aerosol filling machine” by Work With Sounds / Maasa Järvinen / Kimmo Kestinen, CC BY 3.0. Cropped/transcoded by 灵枢. Source: https://commons.wikimedia.org/wiki/File:Pamasol_aerosol_filling_machine.webm"
+      },
+      "approval": {
+        "approvedBy": "pending-human-rights-review",
+        "approvedAt": "2026-09-20T15:00:00.000Z",
+        "reference": "RIGHTS-REVIEW-07",
+        "rationale": "Commons 文件页所示许可允许商业使用和改编；原始发布渠道、人物、商标、场地及 SaaS 用途尚未经人类审核，故保持关闭。",
+        "rights": {
+          "commercialUse": true,
+          "derivatives": true,
+          "rawFileStorage": true,
+          "saasMaterialLibrary": true
+        }
+      },
+      "expectedSourceSha256": "9c209891e123bed2a27d4dee6436fc003b8296976281512b8b9c9709fec61e6a",
+      "clip": {
+        "startSeconds": 68,
+        "durationSeconds": 6
+      },
+      "industry": "美妆制造",
+      "shotFunction": "表现稳定产能",
+      "applicability": "仅作为“表现稳定产能”的通用行业示意，不得宣称为客户自有工厂、产品或检测结果。发布时必须保留归因信息并标明裁切、转码等修改。",
+      "tags": [
+        "产能",
+        "自动循环",
+        "灌装线",
+        "美妆B2B",
+        "授权候选"
+      ],
+      "visualReview": {
+        "reviewedBy": "codex-direct-frame-review",
+        "reviewedAt": "2026-09-20T15:00:00.000Z",
+        "reference": "FRAME-REVIEW-07-68-74",
+        "rationale": "已对下载原文件对应区间的接触图和关键帧做直接视觉核对并记录可见事实；这不是人类全运动复核，启用前必须由受信人类复核员观看完整片段并替换审核人信息。",
+        "visualObservations": [
+          "转盘上的罐体持续通过同一组金属加工机构。",
+          "转盘上同时可见多只罐体",
+          "镜头内没有人工直接接触罐体"
+        ],
+        "segment": {
+          "start": 0,
+          "end": 6,
+          "subject": [
+            "白色气雾罐",
+            "转盘",
+            "金属机构"
+          ],
+          "action": "设备重复执行罐体加工循环",
+          "shot": "近景",
+          "camera": "固定机位",
+          "environment": "自动灌装设备内部",
+          "observedFacts": [
+            "转盘上同时可见多只罐体",
+            "镜头内没有人工直接接触罐体"
+          ],
+          "confidence": 0.9,
+          "needsReview": false
+        }
+      }
+    },
+    {
+      "id": "beauty-b2b-08-pamasol-88s",
+      "enabled": false,
+      "title": "气雾罐灌装线收尾镜头",
+      "folder": "美妆B2B授权候选",
+      "source": {
+        "provider": "Wikimedia Commons",
+        "creator": "Work With Sounds; sound recordist Maasa Järvinen; video recordist Kimmo Kestinen",
+        "pageUrl": "https://commons.wikimedia.org/wiki/File:Pamasol_aerosol_filling_machine.webm",
+        "downloadUrl": "https://commons.wikimedia.org/wiki/Special:Redirect/file/Pamasol_aerosol_filling_machine.webm",
+        "approvedDownloadHosts": [
+          "commons.wikimedia.org",
+          "upload.wikimedia.org"
+        ]
+      },
+      "license": {
+        "name": "CC BY 3.0 Unported",
+        "url": "https://creativecommons.org/licenses/by/3.0/",
+        "evidence": "Wikimedia Commons file page states CC BY 3.0 and records a license review by Rodrigolopes on 2016-07-19. Page and original file were re-checked on 2026-09-20.",
+        "capturedAt": "2026-09-20T15:00:00.000Z",
+        "attributionText": "“Pamasol aerosol filling machine” by Work With Sounds / Maasa Järvinen / Kimmo Kestinen, CC BY 3.0. Cropped/transcoded by 灵枢. Source: https://commons.wikimedia.org/wiki/File:Pamasol_aerosol_filling_machine.webm"
+      },
+      "approval": {
+        "approvedBy": "pending-human-rights-review",
+        "approvedAt": "2026-09-20T15:00:00.000Z",
+        "reference": "RIGHTS-REVIEW-08",
+        "rationale": "Commons 文件页所示许可允许商业使用和改编；原始发布渠道、人物、商标、场地及 SaaS 用途尚未经人类审核，故保持关闭。",
+        "rights": {
+          "commercialUse": true,
+          "derivatives": true,
+          "rawFileStorage": true,
+          "saasMaterialLibrary": true
+        }
+      },
+      "expectedSourceSha256": "9c209891e123bed2a27d4dee6436fc003b8296976281512b8b9c9709fec61e6a",
+      "clip": {
+        "startSeconds": 88,
+        "durationSeconds": 6
+      },
+      "industry": "美妆制造",
+      "shotFunction": "补充生产线细节",
+      "applicability": "仅作为“补充生产线细节”的通用行业示意，不得宣称为客户自有工厂、产品或检测结果。发布时必须保留归因信息并标明裁切、转码等修改。",
+      "tags": [
+        "气雾罐",
+        "生产细节",
+        "设备",
+        "美妆B2B",
+        "授权候选"
+      ],
+      "visualReview": {
+        "reviewedBy": "codex-direct-frame-review",
+        "reviewedAt": "2026-09-20T15:00:00.000Z",
+        "reference": "FRAME-REVIEW-08-88-94",
+        "rationale": "已对下载原文件对应区间的接触图和关键帧做直接视觉核对并记录可见事实；这不是人类全运动复核，启用前必须由受信人类复核员观看完整片段并替换审核人信息。",
+        "visualObservations": [
+          "近距离展示罐体与上方加工头持续配合运行。",
+          "罐体围绕圆形轨道排列",
+          "设备持续运行且构图集中在加工区域"
+        ],
+        "segment": {
+          "start": 0,
+          "end": 6,
+          "subject": [
+            "白色气雾罐",
+            "加工头"
+          ],
+          "action": "罐体依次经过加工头",
+          "shot": "近景",
+          "camera": "固定机位",
+          "environment": "自动灌装设备内部",
+          "observedFacts": [
+            "罐体围绕圆形轨道排列",
+            "设备持续运行且构图集中在加工区域"
+          ],
+          "confidence": 0.9,
+          "needsReview": false
+        }
+      }
+    },
+    {
+      "id": "beauty-b2b-09-capping-0s",
+      "enabled": false,
+      "title": "透明瓶自动旋盖起始",
+      "folder": "美妆B2B授权候选",
+      "source": {
+        "provider": "Wikimedia Commons",
+        "creator": "Work With Sounds / La Fonderie",
+        "pageUrl": "https://commons.wikimedia.org/wiki/File:Capping_machine_in_action.webm",
+        "downloadUrl": "https://commons.wikimedia.org/wiki/Special:Redirect/file/Capping_machine_in_action.webm",
+        "approvedDownloadHosts": [
+          "commons.wikimedia.org",
+          "upload.wikimedia.org"
+        ]
+      },
+      "license": {
+        "name": "CC BY 3.0 Unported",
+        "url": "https://creativecommons.org/licenses/by/3.0/",
+        "evidence": "Wikimedia Commons file page states CC BY 3.0 and records human license review by Rodrigolopes on 2016-07-17. Page and original file were re-checked on 2026-09-20.",
+        "capturedAt": "2026-09-20T15:00:00.000Z",
+        "attributionText": "“Capping machine in action” by Work With Sounds / La Fonderie, CC BY 3.0. Cropped/transcoded by 灵枢. Source: https://commons.wikimedia.org/wiki/File:Capping_machine_in_action.webm"
+      },
+      "approval": {
+        "approvedBy": "pending-human-rights-review",
+        "approvedAt": "2026-09-20T15:00:00.000Z",
+        "reference": "RIGHTS-REVIEW-09",
+        "rationale": "Commons 文件页所示许可允许商业使用和改编；原始发布渠道、人物、商标、场地及 SaaS 用途尚未经人类审核，故保持关闭。",
+        "rights": {
+          "commercialUse": true,
+          "derivatives": true,
+          "rawFileStorage": true,
+          "saasMaterialLibrary": true
+        }
+      },
+      "expectedSourceSha256": "eb8fc5e99ef515dfbceef74e59d533b696a4d735607c32295519a567b9ab2088",
+      "clip": {
+        "startSeconds": 0,
+        "durationSeconds": 6
+      },
+      "industry": "美妆制造",
+      "shotFunction": "展示包装自动化",
+      "applicability": "仅作为“展示包装自动化”的通用行业示意，不得宣称为客户自有工厂、产品或检测结果。发布时必须保留归因信息并标明裁切、转码等修改。",
+      "tags": [
+        "旋盖",
+        "透明瓶",
+        "包装线",
+        "美妆B2B",
+        "授权候选"
+      ],
+      "visualReview": {
+        "reviewedBy": "codex-direct-frame-review",
+        "reviewedAt": "2026-09-20T15:00:00.000Z",
+        "reference": "FRAME-REVIEW-09-0-6",
+        "rationale": "已对下载原文件对应区间的接触图和关键帧做直接视觉核对并记录可见事实；这不是人类全运动复核，启用前必须由受信人类复核员观看完整片段并替换审核人信息。",
+        "visualObservations": [
+          "透明瓶由星轮定位并接近金属旋盖机构。",
+          "多个透明瓶沿星轮间隔排列",
+          "金属机构位于瓶口上方"
+        ],
+        "segment": {
+          "start": 0,
+          "end": 6,
+          "subject": [
+            "透明瓶",
+            "星轮",
+            "金属旋盖机构"
+          ],
+          "action": "瓶体被星轮带入旋盖工位",
+          "shot": "近景",
+          "camera": "固定机位",
+          "environment": "瓶装生产线",
+          "observedFacts": [
+            "多个透明瓶沿星轮间隔排列",
+            "金属机构位于瓶口上方"
+          ],
+          "confidence": 0.9,
+          "needsReview": false
+        }
+      }
+    },
+    {
+      "id": "beauty-b2b-10-capping-7s",
+      "enabled": false,
+      "title": "旋盖机构连续工作",
+      "folder": "美妆B2B授权候选",
+      "source": {
+        "provider": "Wikimedia Commons",
+        "creator": "Work With Sounds / La Fonderie",
+        "pageUrl": "https://commons.wikimedia.org/wiki/File:Capping_machine_in_action.webm",
+        "downloadUrl": "https://commons.wikimedia.org/wiki/Special:Redirect/file/Capping_machine_in_action.webm",
+        "approvedDownloadHosts": [
+          "commons.wikimedia.org",
+          "upload.wikimedia.org"
+        ]
+      },
+      "license": {
+        "name": "CC BY 3.0 Unported",
+        "url": "https://creativecommons.org/licenses/by/3.0/",
+        "evidence": "Wikimedia Commons file page states CC BY 3.0 and records human license review by Rodrigolopes on 2016-07-17. Page and original file were re-checked on 2026-09-20.",
+        "capturedAt": "2026-09-20T15:00:00.000Z",
+        "attributionText": "“Capping machine in action” by Work With Sounds / La Fonderie, CC BY 3.0. Cropped/transcoded by 灵枢. Source: https://commons.wikimedia.org/wiki/File:Capping_machine_in_action.webm"
+      },
+      "approval": {
+        "approvedBy": "pending-human-rights-review",
+        "approvedAt": "2026-09-20T15:00:00.000Z",
+        "reference": "RIGHTS-REVIEW-10",
+        "rationale": "Commons 文件页所示许可允许商业使用和改编；原始发布渠道、人物、商标、场地及 SaaS 用途尚未经人类审核，故保持关闭。",
+        "rights": {
+          "commercialUse": true,
+          "derivatives": true,
+          "rawFileStorage": true,
+          "saasMaterialLibrary": true
+        }
+      },
+      "expectedSourceSha256": "eb8fc5e99ef515dfbceef74e59d533b696a4d735607c32295519a567b9ab2088",
+      "clip": {
+        "startSeconds": 7,
+        "durationSeconds": 6
+      },
+      "industry": "美妆制造",
+      "shotFunction": "证明连续旋盖",
+      "applicability": "仅作为“证明连续旋盖”的通用行业示意，不得宣称为客户自有工厂、产品或检测结果。发布时必须保留归因信息并标明裁切、转码等修改。",
+      "tags": [
+        "旋盖",
+        "连续生产",
+        "瓶盖",
+        "美妆B2B",
+        "授权候选"
+      ],
+      "visualReview": {
+        "reviewedBy": "codex-direct-frame-review",
+        "reviewedAt": "2026-09-20T15:00:00.000Z",
+        "reference": "FRAME-REVIEW-10-7-13",
+        "rationale": "已对下载原文件对应区间的接触图和关键帧做直接视觉核对并记录可见事实；这不是人类全运动复核，启用前必须由受信人类复核员观看完整片段并替换审核人信息。",
+        "visualObservations": [
+          "瓶体逐只经过旋转机构，红色瓶盖可见。",
+          "至少一只瓶体顶部可见红色瓶盖",
+          "相邻瓶体沿同一轨迹移动"
+        ],
+        "segment": {
+          "start": 0,
+          "end": 6,
+          "subject": [
+            "透明瓶",
+            "红色瓶盖",
+            "旋盖机构"
+          ],
+          "action": "瓶体连续通过旋盖机构",
+          "shot": "近景",
+          "camera": "固定机位",
+          "environment": "瓶装生产线",
+          "observedFacts": [
+            "至少一只瓶体顶部可见红色瓶盖",
+            "相邻瓶体沿同一轨迹移动"
+          ],
+          "confidence": 0.9,
+          "needsReview": false
+        }
+      }
+    },
+    {
+      "id": "beauty-b2b-11-capping-14s",
+      "enabled": false,
+      "title": "成排瓶体通过旋盖位",
+      "folder": "美妆B2B授权候选",
+      "source": {
+        "provider": "Wikimedia Commons",
+        "creator": "Work With Sounds / La Fonderie",
+        "pageUrl": "https://commons.wikimedia.org/wiki/File:Capping_machine_in_action.webm",
+        "downloadUrl": "https://commons.wikimedia.org/wiki/Special:Redirect/file/Capping_machine_in_action.webm",
+        "approvedDownloadHosts": [
+          "commons.wikimedia.org",
+          "upload.wikimedia.org"
+        ]
+      },
+      "license": {
+        "name": "CC BY 3.0 Unported",
+        "url": "https://creativecommons.org/licenses/by/3.0/",
+        "evidence": "Wikimedia Commons file page states CC BY 3.0 and records human license review by Rodrigolopes on 2016-07-17. Page and original file were re-checked on 2026-09-20.",
+        "capturedAt": "2026-09-20T15:00:00.000Z",
+        "attributionText": "“Capping machine in action” by Work With Sounds / La Fonderie, CC BY 3.0. Cropped/transcoded by 灵枢. Source: https://commons.wikimedia.org/wiki/File:Capping_machine_in_action.webm"
+      },
+      "approval": {
+        "approvedBy": "pending-human-rights-review",
+        "approvedAt": "2026-09-20T15:00:00.000Z",
+        "reference": "RIGHTS-REVIEW-11",
+        "rationale": "Commons 文件页所示许可允许商业使用和改编；原始发布渠道、人物、商标、场地及 SaaS 用途尚未经人类审核，故保持关闭。",
+        "rights": {
+          "commercialUse": true,
+          "derivatives": true,
+          "rawFileStorage": true,
+          "saasMaterialLibrary": true
+        }
+      },
+      "expectedSourceSha256": "eb8fc5e99ef515dfbceef74e59d533b696a4d735607c32295519a567b9ab2088",
+      "clip": {
+        "startSeconds": 14,
+        "durationSeconds": 6
+      },
+      "industry": "美妆制造",
+      "shotFunction": "突出标准化包装",
+      "applicability": "仅作为“突出标准化包装”的通用行业示意，不得宣称为客户自有工厂、产品或检测结果。发布时必须保留归因信息并标明裁切、转码等修改。",
+      "tags": [
+        "标准化",
+        "旋盖设备",
+        "包装",
+        "美妆B2B",
+        "授权候选"
+      ],
+      "visualReview": {
+        "reviewedBy": "codex-direct-frame-review",
+        "reviewedAt": "2026-09-20T15:00:00.000Z",
+        "reference": "FRAME-REVIEW-11-14-20",
+        "rationale": "已对下载原文件对应区间的接触图和关键帧做直接视觉核对并记录可见事实；这不是人类全运动复核，启用前必须由受信人类复核员观看完整片段并替换审核人信息。",
+        "visualObservations": [
+          "相同透明瓶按固定节距通过金属设备。",
+          "瓶体形状一致且保持间距",
+          "设备结构占据画面中央"
+        ],
+        "segment": {
+          "start": 0,
+          "end": 6,
+          "subject": [
+            "透明瓶",
+            "金属设备"
+          ],
+          "action": "成排瓶体依次通过设备",
+          "shot": "近景",
+          "camera": "固定机位",
+          "environment": "瓶装生产线",
+          "observedFacts": [
+            "瓶体形状一致且保持间距",
+            "设备结构占据画面中央"
+          ],
+          "confidence": 0.9,
+          "needsReview": false
+        }
+      }
+    },
+    {
+      "id": "beauty-b2b-12-packaging-2s",
+      "enabled": false,
+      "title": "成品托盘进入包装位",
+      "folder": "美妆B2B授权候选",
+      "source": {
+        "provider": "Wikimedia Commons",
+        "creator": "Sounds of Changes; video Barbara Rezar Grilc; sound Dušan Oblak; photo Irena Marušič",
+        "pageUrl": "https://commons.wikimedia.org/wiki/File:Packaging_-_manual_and_machine.webm",
+        "downloadUrl": "https://commons.wikimedia.org/wiki/Special:Redirect/file/Packaging_-_manual_and_machine.webm",
+        "approvedDownloadHosts": [
+          "commons.wikimedia.org",
+          "upload.wikimedia.org"
+        ]
+      },
+      "license": {
+        "name": "CC BY 3.0 Unported",
+        "url": "https://creativecommons.org/licenses/by/3.0/",
+        "evidence": "Wikimedia Commons file page states CC BY 3.0, attributes Sounds of Changes, and records license verification on 2020-02-13. Page and original file were re-checked on 2026-09-20.",
+        "capturedAt": "2026-09-20T15:00:00.000Z",
+        "attributionText": "“Packaging - manual and machine” by Sounds of Changes / Barbara Rezar Grilc / Dušan Oblak / Irena Marušič, CC BY 3.0. Cropped/transcoded by 灵枢. Source: https://commons.wikimedia.org/wiki/File:Packaging_-_manual_and_machine.webm"
+      },
+      "approval": {
+        "approvedBy": "pending-human-rights-review",
+        "approvedAt": "2026-09-20T15:00:00.000Z",
+        "reference": "RIGHTS-REVIEW-12",
+        "rationale": "Commons 文件页所示许可允许商业使用和改编，但页面提示仍需人工检查衍生作品、全景自由等问题；人物、商标、场地和 SaaS 用途也未审核，故保持关闭。",
+        "rights": {
+          "commercialUse": true,
+          "derivatives": true,
+          "rawFileStorage": true,
+          "saasMaterialLibrary": true
+        }
+      },
+      "expectedSourceSha256": "622a35ca8251e73c5850fb78ea84717bc71315ea311ae9bf68c3e742ac300e9a",
+      "clip": {
+        "startSeconds": 2,
+        "durationSeconds": 6
+      },
+      "industry": "美妆制造",
+      "shotFunction": "展示出货准备",
+      "applicability": "仅作为“展示出货准备”的通用行业示意，不得宣称为客户自有工厂、产品或检测结果。发布时必须保留归因信息并标明裁切、转码等修改。",
+      "tags": [
+        "托盘",
+        "包装",
+        "出货",
+        "美妆B2B",
+        "授权候选"
+      ],
+      "visualReview": {
+        "reviewedBy": "codex-direct-frame-review",
+        "reviewedAt": "2026-09-20T15:00:00.000Z",
+        "reference": "FRAME-REVIEW-12-2-8",
+        "rationale": "已对下载原文件对应区间的接触图和关键帧做直接视觉核对并记录可见事实；这不是人类全运动复核，启用前必须由受信人类复核员观看完整片段并替换审核人信息。",
+        "visualObservations": [
+          "白色成品托盘位于蓝色平台和包装设备之间。",
+          "托盘四周已有白色包覆材料",
+          "地面可见蓝色旋转平台"
+        ],
+        "segment": {
+          "start": 0,
+          "end": 6,
+          "subject": [
+            "白色成品托盘",
+            "蓝色平台",
+            "包装设备"
+          ],
+          "action": "托盘停留在包装工位",
+          "shot": "中全景",
+          "camera": "固定机位",
+          "environment": "工厂包装区域",
+          "observedFacts": [
+            "托盘四周已有白色包覆材料",
+            "地面可见蓝色旋转平台"
+          ],
+          "confidence": 0.9,
+          "needsReview": false
+        }
+      }
+    },
+    {
+      "id": "beauty-b2b-13-packaging-8s",
+      "enabled": false,
+      "title": "托盘缠绕包装过程",
+      "folder": "美妆B2B授权候选",
+      "source": {
+        "provider": "Wikimedia Commons",
+        "creator": "Sounds of Changes; video Barbara Rezar Grilc; sound Dušan Oblak; photo Irena Marušič",
+        "pageUrl": "https://commons.wikimedia.org/wiki/File:Packaging_-_manual_and_machine.webm",
+        "downloadUrl": "https://commons.wikimedia.org/wiki/Special:Redirect/file/Packaging_-_manual_and_machine.webm",
+        "approvedDownloadHosts": [
+          "commons.wikimedia.org",
+          "upload.wikimedia.org"
+        ]
+      },
+      "license": {
+        "name": "CC BY 3.0 Unported",
+        "url": "https://creativecommons.org/licenses/by/3.0/",
+        "evidence": "Wikimedia Commons file page states CC BY 3.0, attributes Sounds of Changes, and records license verification on 2020-02-13. Page and original file were re-checked on 2026-09-20.",
+        "capturedAt": "2026-09-20T15:00:00.000Z",
+        "attributionText": "“Packaging - manual and machine” by Sounds of Changes / Barbara Rezar Grilc / Dušan Oblak / Irena Marušič, CC BY 3.0. Cropped/transcoded by 灵枢. Source: https://commons.wikimedia.org/wiki/File:Packaging_-_manual_and_machine.webm"
+      },
+      "approval": {
+        "approvedBy": "pending-human-rights-review",
+        "approvedAt": "2026-09-20T15:00:00.000Z",
+        "reference": "RIGHTS-REVIEW-13",
+        "rationale": "Commons 文件页所示许可允许商业使用和改编，但页面提示仍需人工检查衍生作品、全景自由等问题；人物、商标、场地和 SaaS 用途也未审核，故保持关闭。",
+        "rights": {
+          "commercialUse": true,
+          "derivatives": true,
+          "rawFileStorage": true,
+          "saasMaterialLibrary": true
+        }
+      },
+      "expectedSourceSha256": "622a35ca8251e73c5850fb78ea84717bc71315ea311ae9bf68c3e742ac300e9a",
+      "clip": {
+        "startSeconds": 8,
+        "durationSeconds": 6
+      },
+      "industry": "美妆制造",
+      "shotFunction": "展示整托包装",
+      "applicability": "仅作为“展示整托包装”的通用行业示意，不得宣称为客户自有工厂、产品或检测结果。发布时必须保留归因信息并标明裁切、转码等修改。",
+      "tags": [
+        "缠绕包装",
+        "托盘",
+        "自动化",
+        "美妆B2B",
+        "授权候选"
+      ],
+      "visualReview": {
+        "reviewedBy": "codex-direct-frame-review",
+        "reviewedAt": "2026-09-20T15:00:00.000Z",
+        "reference": "FRAME-REVIEW-13-8-14",
+        "rationale": "已对下载原文件对应区间的接触图和关键帧做直接视觉核对并记录可见事实；这不是人类全运动复核，启用前必须由受信人类复核员观看完整片段并替换审核人信息。",
+        "visualObservations": [
+          "白色托盘在设备平台上改变朝向，包覆材料保持完整。",
+          "托盘相对背景的朝向发生变化",
+          "包覆材料覆盖托盘四周"
+        ],
+        "segment": {
+          "start": 0,
+          "end": 6,
+          "subject": [
+            "白色成品托盘",
+            "缠绕包装设备"
+          ],
+          "action": "托盘在包装平台上旋转",
+          "shot": "中全景",
+          "camera": "固定机位",
+          "environment": "工厂包装区域",
+          "observedFacts": [
+            "托盘相对背景的朝向发生变化",
+            "包覆材料覆盖托盘四周"
+          ],
+          "confidence": 0.9,
+          "needsReview": false
+        }
+      }
+    },
+    {
+      "id": "beauty-b2b-14-packaging-14s",
+      "enabled": false,
+      "title": "操作员转运已包装托盘",
+      "folder": "美妆B2B授权候选",
+      "source": {
+        "provider": "Wikimedia Commons",
+        "creator": "Sounds of Changes; video Barbara Rezar Grilc; sound Dušan Oblak; photo Irena Marušič",
+        "pageUrl": "https://commons.wikimedia.org/wiki/File:Packaging_-_manual_and_machine.webm",
+        "downloadUrl": "https://commons.wikimedia.org/wiki/Special:Redirect/file/Packaging_-_manual_and_machine.webm",
+        "approvedDownloadHosts": [
+          "commons.wikimedia.org",
+          "upload.wikimedia.org"
+        ]
+      },
+      "license": {
+        "name": "CC BY 3.0 Unported",
+        "url": "https://creativecommons.org/licenses/by/3.0/",
+        "evidence": "Wikimedia Commons file page states CC BY 3.0, attributes Sounds of Changes, and records license verification on 2020-02-13. Page and original file were re-checked on 2026-09-20.",
+        "capturedAt": "2026-09-20T15:00:00.000Z",
+        "attributionText": "“Packaging - manual and machine” by Sounds of Changes / Barbara Rezar Grilc / Dušan Oblak / Irena Marušič, CC BY 3.0. Cropped/transcoded by 灵枢. Source: https://commons.wikimedia.org/wiki/File:Packaging_-_manual_and_machine.webm"
+      },
+      "approval": {
+        "approvedBy": "pending-human-rights-review",
+        "approvedAt": "2026-09-20T15:00:00.000Z",
+        "reference": "RIGHTS-REVIEW-14",
+        "rationale": "Commons 文件页所示许可允许商业使用和改编，但页面提示仍需人工检查衍生作品、全景自由等问题；人物、商标、场地和 SaaS 用途也未审核，故保持关闭。",
+        "rights": {
+          "commercialUse": true,
+          "derivatives": true,
+          "rawFileStorage": true,
+          "saasMaterialLibrary": true
+        }
+      },
+      "expectedSourceSha256": "622a35ca8251e73c5850fb78ea84717bc71315ea311ae9bf68c3e742ac300e9a",
+      "clip": {
+        "startSeconds": 14,
+        "durationSeconds": 6
+      },
+      "industry": "美妆制造",
+      "shotFunction": "表现人机协作",
+      "applicability": "仅作为“表现人机协作”的通用行业示意，不得宣称为客户自有工厂、产品或检测结果。发布时必须保留归因信息并标明裁切、转码等修改。",
+      "tags": [
+        "转运",
+        "人机协作",
+        "包装",
+        "美妆B2B",
+        "授权候选"
+      ],
+      "visualReview": {
+        "reviewedBy": "codex-direct-frame-review",
+        "reviewedAt": "2026-09-20T15:00:00.000Z",
+        "reference": "FRAME-REVIEW-14-14-20",
+        "rationale": "已对下载原文件对应区间的接触图和关键帧做直接视觉核对并记录可见事实；这不是人类全运动复核，启用前必须由受信人类复核员观看完整片段并替换审核人信息。",
+        "visualObservations": [
+          "操作员使用红色搬运设备接近包覆完成的托盘。",
+          "画面中出现一名操作员",
+          "红色搬运设备位于托盘旁"
+        ],
+        "segment": {
+          "start": 0,
+          "end": 6,
+          "subject": [
+            "操作员",
+            "红色搬运设备",
+            "白色托盘"
+          ],
+          "action": "操作员靠近并准备转运托盘",
+          "shot": "中景",
+          "camera": "固定机位",
+          "environment": "工厂包装区域",
+          "observedFacts": [
+            "画面中出现一名操作员",
+            "红色搬运设备位于托盘旁"
+          ],
+          "confidence": 0.9,
+          "needsReview": false
+        }
+      }
+    },
+    {
+      "id": "beauty-b2b-15-packaging-20s",
+      "enabled": false,
+      "title": "人工整理包装材料",
+      "folder": "美妆B2B授权候选",
+      "source": {
+        "provider": "Wikimedia Commons",
+        "creator": "Sounds of Changes; video Barbara Rezar Grilc; sound Dušan Oblak; photo Irena Marušič",
+        "pageUrl": "https://commons.wikimedia.org/wiki/File:Packaging_-_manual_and_machine.webm",
+        "downloadUrl": "https://commons.wikimedia.org/wiki/Special:Redirect/file/Packaging_-_manual_and_machine.webm",
+        "approvedDownloadHosts": [
+          "commons.wikimedia.org",
+          "upload.wikimedia.org"
+        ]
+      },
+      "license": {
+        "name": "CC BY 3.0 Unported",
+        "url": "https://creativecommons.org/licenses/by/3.0/",
+        "evidence": "Wikimedia Commons file page states CC BY 3.0, attributes Sounds of Changes, and records license verification on 2020-02-13. Page and original file were re-checked on 2026-09-20.",
+        "capturedAt": "2026-09-20T15:00:00.000Z",
+        "attributionText": "“Packaging - manual and machine” by Sounds of Changes / Barbara Rezar Grilc / Dušan Oblak / Irena Marušič, CC BY 3.0. Cropped/transcoded by 灵枢. Source: https://commons.wikimedia.org/wiki/File:Packaging_-_manual_and_machine.webm"
+      },
+      "approval": {
+        "approvedBy": "pending-human-rights-review",
+        "approvedAt": "2026-09-20T15:00:00.000Z",
+        "reference": "RIGHTS-REVIEW-15",
+        "rationale": "Commons 文件页所示许可允许商业使用和改编，但页面提示仍需人工检查衍生作品、全景自由等问题；人物、商标、场地和 SaaS 用途也未审核，故保持关闭。",
+        "rights": {
+          "commercialUse": true,
+          "derivatives": true,
+          "rawFileStorage": true,
+          "saasMaterialLibrary": true
+        }
+      },
+      "expectedSourceSha256": "622a35ca8251e73c5850fb78ea84717bc71315ea311ae9bf68c3e742ac300e9a",
+      "clip": {
+        "startSeconds": 20,
+        "durationSeconds": 6
+      },
+      "industry": "美妆制造",
+      "shotFunction": "展示包装收尾",
+      "applicability": "仅作为“展示包装收尾”的通用行业示意，不得宣称为客户自有工厂、产品或检测结果。发布时必须保留归因信息并标明裁切、转码等修改。",
+      "tags": [
+        "人工检查",
+        "包装收尾",
+        "托盘",
+        "美妆B2B",
+        "授权候选"
+      ],
+      "visualReview": {
+        "reviewedBy": "codex-direct-frame-review",
+        "reviewedAt": "2026-09-20T15:00:00.000Z",
+        "reference": "FRAME-REVIEW-15-20-26",
+        "rationale": "已对下载原文件对应区间的接触图和关键帧做直接视觉核对并记录可见事实；这不是人类全运动复核，启用前必须由受信人类复核员观看完整片段并替换审核人信息。",
+        "visualObservations": [
+          "操作员在托盘边缘整理白色包覆材料。",
+          "操作员双手靠近托盘上沿",
+          "托盘主体已被白色材料包覆"
+        ],
+        "segment": {
+          "start": 0,
+          "end": 6,
+          "subject": [
+            "操作员",
+            "白色托盘",
+            "包覆材料"
+          ],
+          "action": "操作员手动整理托盘包装",
+          "shot": "中景",
+          "camera": "固定机位",
+          "environment": "工厂包装区域",
+          "observedFacts": [
+            "操作员双手靠近托盘上沿",
+            "托盘主体已被白色材料包覆"
+          ],
+          "confidence": 0.9,
+          "needsReview": false
+        }
+      }
+    },
+    {
+      "id": "beauty-b2b-16-packaging-28s",
+      "enabled": false,
+      "title": "整托成品离开包装区",
+      "folder": "美妆B2B授权候选",
+      "source": {
+        "provider": "Wikimedia Commons",
+        "creator": "Sounds of Changes; video Barbara Rezar Grilc; sound Dušan Oblak; photo Irena Marušič",
+        "pageUrl": "https://commons.wikimedia.org/wiki/File:Packaging_-_manual_and_machine.webm",
+        "downloadUrl": "https://commons.wikimedia.org/wiki/Special:Redirect/file/Packaging_-_manual_and_machine.webm",
+        "approvedDownloadHosts": [
+          "commons.wikimedia.org",
+          "upload.wikimedia.org"
+        ]
+      },
+      "license": {
+        "name": "CC BY 3.0 Unported",
+        "url": "https://creativecommons.org/licenses/by/3.0/",
+        "evidence": "Wikimedia Commons file page states CC BY 3.0, attributes Sounds of Changes, and records license verification on 2020-02-13. Page and original file were re-checked on 2026-09-20.",
+        "capturedAt": "2026-09-20T15:00:00.000Z",
+        "attributionText": "“Packaging - manual and machine” by Sounds of Changes / Barbara Rezar Grilc / Dušan Oblak / Irena Marušič, CC BY 3.0. Cropped/transcoded by 灵枢. Source: https://commons.wikimedia.org/wiki/File:Packaging_-_manual_and_machine.webm"
+      },
+      "approval": {
+        "approvedBy": "pending-human-rights-review",
+        "approvedAt": "2026-09-20T15:00:00.000Z",
+        "reference": "RIGHTS-REVIEW-16",
+        "rationale": "Commons 文件页所示许可允许商业使用和改编，但页面提示仍需人工检查衍生作品、全景自由等问题；人物、商标、场地和 SaaS 用途也未审核，故保持关闭。",
+        "rights": {
+          "commercialUse": true,
+          "derivatives": true,
+          "rawFileStorage": true,
+          "saasMaterialLibrary": true
+        }
+      },
+      "expectedSourceSha256": "622a35ca8251e73c5850fb78ea84717bc71315ea311ae9bf68c3e742ac300e9a",
+      "clip": {
+        "startSeconds": 28,
+        "durationSeconds": 6
+      },
+      "industry": "美妆制造",
+      "shotFunction": "表达可交付状态",
+      "applicability": "仅作为“表达可交付状态”的通用行业示意，不得宣称为客户自有工厂、产品或检测结果。发布时必须保留归因信息并标明裁切、转码等修改。",
+      "tags": [
+        "成品出库",
+        "交付",
+        "托盘",
+        "美妆B2B",
+        "授权候选"
+      ],
+      "visualReview": {
+        "reviewedBy": "codex-direct-frame-review",
+        "reviewedAt": "2026-09-20T15:00:00.000Z",
+        "reference": "FRAME-REVIEW-16-28-34",
+        "rationale": "已对下载原文件对应区间的接触图和关键帧做直接视觉核对并记录可见事实；这不是人类全运动复核，启用前必须由受信人类复核员观看完整片段并替换审核人信息。",
+        "visualObservations": [
+          "完成包覆的白色托盘从包装平台附近移出。",
+          "托盘外层包覆完整",
+          "托盘位置相对平台持续变化"
+        ],
+        "segment": {
+          "start": 0,
+          "end": 6,
+          "subject": [
+            "已包装托盘",
+            "包装平台"
+          ],
+          "action": "托盘向画面一侧移动离开工位",
+          "shot": "中全景",
+          "camera": "固定机位",
+          "environment": "工厂包装区域",
+          "observedFacts": [
+            "托盘外层包覆完整",
+            "托盘位置相对平台持续变化"
+          ],
+          "confidence": 0.9,
+          "needsReview": false
+        }
+      }
+    },
+    {
+      "id": "beauty-b2b-17-stockLab-0s",
+      "enabled": false,
+      "title": "实验室双人操作台",
+      "folder": "美妆B2B授权候选",
+      "source": {
+        "provider": "Wikimedia Commons",
+        "creator": "Centers for Disease Control and Prevention (CDC)",
+        "pageUrl": "https://commons.wikimedia.org/wiki/File:Stock_lab_footage.webm",
+        "downloadUrl": "https://upload.wikimedia.org/wikipedia/commons/a/a0/Stock_lab_footage.webm",
+        "approvedDownloadHosts": [
+          "upload.wikimedia.org"
+        ]
+      },
+      "license": {
+        "name": "Public domain — United States federal government work",
+        "url": "https://commons.wikimedia.org/wiki/Template:PD-USGov-HHS-CDC",
+        "evidence": "Wikimedia Commons file page identifies this CDC work as public domain under the United States federal government work rule. Page and original file were re-checked on 2026-09-20.",
+        "capturedAt": "2026-09-20T15:00:00.000Z",
+        "attributionText": "CDC stock laboratory footage, public-domain U.S. federal government work. Cropped/transcoded by 灵枢. Source: https://commons.wikimedia.org/wiki/File:Stock_lab_footage.webm"
+      },
+      "approval": {
+        "approvedBy": "pending-human-rights-review",
+        "approvedAt": "2026-09-20T15:00:00.000Z",
+        "reference": "RIGHTS-REVIEW-17",
+        "rationale": "文件页标注为美国联邦政府作品、公有领域；人物肖像、医疗场景误导和客户用途仍未由人类审核，故保持关闭。",
+        "rights": {
+          "commercialUse": true,
+          "derivatives": true,
+          "rawFileStorage": true,
+          "saasMaterialLibrary": true
+        }
+      },
+      "expectedSourceSha256": "ac3abde6f06b7195f68b03807c30d357030a25e8c5dd532bcb9e69c5ca1f8f3f",
+      "clip": {
+        "startSeconds": 0,
+        "durationSeconds": 6
+      },
+      "industry": "美妆制造",
+      "shotFunction": "建立研发质检场景",
+      "applicability": "仅作为“建立研发质检场景”的通用行业示意，不得宣称为客户自有工厂、产品或检测结果。发布时必须保留归因信息并标明裁切、转码等修改。",
+      "tags": [
+        "实验室",
+        "研发",
+        "质检",
+        "美妆B2B",
+        "授权候选"
+      ],
+      "visualReview": {
+        "reviewedBy": "codex-direct-frame-review",
+        "reviewedAt": "2026-09-20T15:00:00.000Z",
+        "reference": "FRAME-REVIEW-17-0-6",
+        "rationale": "已对下载原文件对应区间的接触图和关键帧做直接视觉核对并记录可见事实；这不是人类全运动复核，启用前必须由受信人类复核员观看完整片段并替换审核人信息。",
+        "visualObservations": [
+          "两名穿白色实验服的人员分别在实验台前操作。",
+          "两名人员均穿白色实验服",
+          "台面放有多种容器和实验用品"
+        ],
+        "segment": {
+          "start": 0,
+          "end": 6,
+          "subject": [
+            "实验室人员",
+            "实验台",
+            "容器"
+          ],
+          "action": "两人在相邻工作位处理实验用品",
+          "shot": "中全景",
+          "camera": "手持轻微移动",
+          "environment": "现代实验室",
+          "observedFacts": [
+            "两名人员均穿白色实验服",
+            "台面放有多种容器和实验用品"
+          ],
+          "confidence": 0.9,
+          "needsReview": false
+        }
+      }
+    },
+    {
+      "id": "beauty-b2b-18-stockLab-6s",
+      "enabled": false,
+      "title": "实验人员处理样本",
+      "folder": "美妆B2B授权候选",
+      "source": {
+        "provider": "Wikimedia Commons",
+        "creator": "Centers for Disease Control and Prevention (CDC)",
+        "pageUrl": "https://commons.wikimedia.org/wiki/File:Stock_lab_footage.webm",
+        "downloadUrl": "https://upload.wikimedia.org/wikipedia/commons/a/a0/Stock_lab_footage.webm",
+        "approvedDownloadHosts": [
+          "upload.wikimedia.org"
+        ]
+      },
+      "license": {
+        "name": "Public domain — United States federal government work",
+        "url": "https://commons.wikimedia.org/wiki/Template:PD-USGov-HHS-CDC",
+        "evidence": "Wikimedia Commons file page identifies this CDC work as public domain under the United States federal government work rule. Page and original file were re-checked on 2026-09-20.",
+        "capturedAt": "2026-09-20T15:00:00.000Z",
+        "attributionText": "CDC stock laboratory footage, public-domain U.S. federal government work. Cropped/transcoded by 灵枢. Source: https://commons.wikimedia.org/wiki/File:Stock_lab_footage.webm"
+      },
+      "approval": {
+        "approvedBy": "pending-human-rights-review",
+        "approvedAt": "2026-09-20T15:00:00.000Z",
+        "reference": "RIGHTS-REVIEW-18",
+        "rationale": "文件页标注为美国联邦政府作品、公有领域；人物肖像、医疗场景误导和客户用途仍未由人类审核，故保持关闭。",
+        "rights": {
+          "commercialUse": true,
+          "derivatives": true,
+          "rawFileStorage": true,
+          "saasMaterialLibrary": true
+        }
+      },
+      "expectedSourceSha256": "ac3abde6f06b7195f68b03807c30d357030a25e8c5dd532bcb9e69c5ca1f8f3f",
+      "clip": {
+        "startSeconds": 6,
+        "durationSeconds": 6
+      },
+      "industry": "美妆制造",
+      "shotFunction": "展示规范操作",
+      "applicability": "仅作为“展示规范操作”的通用行业示意，不得宣称为客户自有工厂、产品或检测结果。发布时必须保留归因信息并标明裁切、转码等修改。",
+      "tags": [
+        "样本",
+        "实验操作",
+        "手套",
+        "美妆B2B",
+        "授权候选"
+      ],
+      "visualReview": {
+        "reviewedBy": "codex-direct-frame-review",
+        "reviewedAt": "2026-09-20T15:00:00.000Z",
+        "reference": "FRAME-REVIEW-18-6-12",
+        "rationale": "已对下载原文件对应区间的接触图和关键帧做直接视觉核对并记录可见事实；这不是人类全运动复核，启用前必须由受信人类复核员观看完整片段并替换审核人信息。",
+        "visualObservations": [
+          "一名戴手套的实验人员在台面容器间进行操作。",
+          "人员佩戴绿色手套",
+          "台面可见成组样本容器"
+        ],
+        "segment": {
+          "start": 0,
+          "end": 6,
+          "subject": [
+            "戴手套的实验人员",
+            "样本容器"
+          ],
+          "action": "人员在多个容器之间处理样本",
+          "shot": "中景",
+          "camera": "缓慢横移",
+          "environment": "现代实验室",
+          "observedFacts": [
+            "人员佩戴绿色手套",
+            "台面可见成组样本容器"
+          ],
+          "confidence": 0.9,
+          "needsReview": false
+        }
+      }
+    },
+    {
+      "id": "beauty-b2b-19-stockLab-12s",
+      "enabled": false,
+      "title": "生物安全柜内操作",
+      "folder": "美妆B2B授权候选",
+      "source": {
+        "provider": "Wikimedia Commons",
+        "creator": "Centers for Disease Control and Prevention (CDC)",
+        "pageUrl": "https://commons.wikimedia.org/wiki/File:Stock_lab_footage.webm",
+        "downloadUrl": "https://upload.wikimedia.org/wikipedia/commons/a/a0/Stock_lab_footage.webm",
+        "approvedDownloadHosts": [
+          "upload.wikimedia.org"
+        ]
+      },
+      "license": {
+        "name": "Public domain — United States federal government work",
+        "url": "https://commons.wikimedia.org/wiki/Template:PD-USGov-HHS-CDC",
+        "evidence": "Wikimedia Commons file page identifies this CDC work as public domain under the United States federal government work rule. Page and original file were re-checked on 2026-09-20.",
+        "capturedAt": "2026-09-20T15:00:00.000Z",
+        "attributionText": "CDC stock laboratory footage, public-domain U.S. federal government work. Cropped/transcoded by 灵枢. Source: https://commons.wikimedia.org/wiki/File:Stock_lab_footage.webm"
+      },
+      "approval": {
+        "approvedBy": "pending-human-rights-review",
+        "approvedAt": "2026-09-20T15:00:00.000Z",
+        "reference": "RIGHTS-REVIEW-19",
+        "rationale": "文件页标注为美国联邦政府作品、公有领域；人物肖像、医疗场景误导和客户用途仍未由人类审核，故保持关闭。",
+        "rights": {
+          "commercialUse": true,
+          "derivatives": true,
+          "rawFileStorage": true,
+          "saasMaterialLibrary": true
+        }
+      },
+      "expectedSourceSha256": "ac3abde6f06b7195f68b03807c30d357030a25e8c5dd532bcb9e69c5ca1f8f3f",
+      "clip": {
+        "startSeconds": 12,
+        "durationSeconds": 6
+      },
+      "industry": "美妆制造",
+      "shotFunction": "突出受控环境",
+      "applicability": "仅作为“突出受控环境”的通用行业示意，不得宣称为客户自有工厂、产品或检测结果。发布时必须保留归因信息并标明裁切、转码等修改。",
+      "tags": [
+        "安全柜",
+        "质检",
+        "受控环境",
+        "美妆B2B",
+        "授权候选"
+      ],
+      "visualReview": {
+        "reviewedBy": "codex-direct-frame-review",
+        "reviewedAt": "2026-09-20T15:00:00.000Z",
+        "reference": "FRAME-REVIEW-19-12-18",
+        "rationale": "已对下载原文件对应区间的接触图和关键帧做直接视觉核对并记录可见事实；这不是人类全运动复核，启用前必须由受信人类复核员观看完整片段并替换审核人信息。",
+        "visualObservations": [
+          "穿实验服的人员在有玻璃挡板和照明的工作柜内操作。",
+          "工作区有透明挡板和内部照明",
+          "人员双手位于柜内操作区域"
+        ],
+        "segment": {
+          "start": 0,
+          "end": 6,
+          "subject": [
+            "实验室人员",
+            "安全工作柜",
+            "实验容器"
+          ],
+          "action": "人员在工作柜内处理容器",
+          "shot": "中景",
+          "camera": "缓慢横移",
+          "environment": "实验室安全工作柜区域",
+          "observedFacts": [
+            "工作区有透明挡板和内部照明",
+            "人员双手位于柜内操作区域"
+          ],
+          "confidence": 0.9,
+          "needsReview": false
+        }
+      }
+    },
+    {
+      "id": "beauty-b2b-20-fanuc-0s",
+      "enabled": false,
+      "title": "工业机器人分拣起始",
+      "folder": "美妆B2B授权候选",
+      "source": {
+        "provider": "Wikimedia Commons",
+        "creator": "Marc Auledas Noguera (Auledas)",
+        "pageUrl": "https://commons.wikimedia.org/wiki/File:Fanuc_robot_sorting_in_BRS2_Amazon_fulfilment_centre_in_Swindon_02.webm",
+        "downloadUrl": "https://upload.wikimedia.org/wikipedia/commons/7/7a/Fanuc_robot_sorting_in_BRS2_Amazon_fulfilment_centre_in_Swindon_02.webm",
+        "approvedDownloadHosts": [
+          "upload.wikimedia.org"
+        ]
+      },
+      "license": {
+        "name": "CC BY 4.0 International",
+        "url": "https://creativecommons.org/licenses/by/4.0/",
+        "evidence": "Wikimedia Commons file page states the uploader's own work is licensed CC BY 4.0. Page and original file were re-checked on 2026-09-20.",
+        "capturedAt": "2026-09-20T15:00:00.000Z",
+        "attributionText": "“Fanuc robot sorting in BRS2 Amazon fulfilment centre in Swindon 02” by Marc Auledas Noguera (Auledas), CC BY 4.0. Cropped/transcoded by 灵枢. Source: https://commons.wikimedia.org/wiki/File:Fanuc_robot_sorting_in_BRS2_Amazon_fulfilment_centre_in_Swindon_02.webm"
+      },
+      "approval": {
+        "approvedBy": "pending-human-rights-review",
+        "approvedAt": "2026-09-20T15:00:00.000Z",
+        "reference": "RIGHTS-REVIEW-20",
+        "rationale": "作者自制并以 CC BY 4.0 发布；FANUC、Amazon 等商标、场地权利和 SaaS 用途仍未由人类审核，故保持关闭。",
+        "rights": {
+          "commercialUse": true,
+          "derivatives": true,
+          "rawFileStorage": true,
+          "saasMaterialLibrary": true
+        }
+      },
+      "expectedSourceSha256": "33fcb9e83f49cd92d9efe13ad7cc587fdd18947ee98ca0600e0403cdfac63ae9",
+      "clip": {
+        "startSeconds": 0,
+        "durationSeconds": 6
+      },
+      "industry": "美妆制造",
+      "shotFunction": "展示自动分拣能力",
+      "applicability": "仅作为“展示自动分拣能力”的通用行业示意，不得宣称为客户自有工厂、产品或检测结果。发布时必须保留归因信息并标明裁切、转码等修改。",
+      "tags": [
+        "机器人",
+        "分拣",
+        "自动化",
+        "美妆B2B",
+        "授权候选"
+      ],
+      "visualReview": {
+        "reviewedBy": "codex-direct-frame-review",
+        "reviewedAt": "2026-09-20T15:00:00.000Z",
+        "reference": "FRAME-REVIEW-20-0-6",
+        "rationale": "已对下载原文件对应区间的接触图和关键帧做直接视觉核对并记录可见事实；这不是人类全运动复核，启用前必须由受信人类复核员观看完整片段并替换审核人信息。",
+        "visualObservations": [
+          "黄色工业机械臂在输送线旁移动多吸盘末端。",
+          "机械臂末端装有多组吸盘",
+          "周围设有安全围栏"
+        ],
+        "segment": {
+          "start": 0,
+          "end": 6,
+          "subject": [
+            "黄色工业机械臂",
+            "多吸盘末端",
+            "输送线"
+          ],
+          "action": "机械臂在输送线与工作位之间摆动",
+          "shot": "中景",
+          "camera": "固定竖屏机位",
+          "environment": "自动化物流车间",
+          "observedFacts": [
+            "机械臂末端装有多组吸盘",
+            "周围设有安全围栏"
+          ],
+          "confidence": 0.9,
+          "needsReview": false
+        }
+      }
+    },
+    {
+      "id": "beauty-b2b-21-fanuc-8s",
+      "enabled": false,
+      "title": "机器人执行抓取动作",
+      "folder": "美妆B2B授权候选",
+      "source": {
+        "provider": "Wikimedia Commons",
+        "creator": "Marc Auledas Noguera (Auledas)",
+        "pageUrl": "https://commons.wikimedia.org/wiki/File:Fanuc_robot_sorting_in_BRS2_Amazon_fulfilment_centre_in_Swindon_02.webm",
+        "downloadUrl": "https://upload.wikimedia.org/wikipedia/commons/7/7a/Fanuc_robot_sorting_in_BRS2_Amazon_fulfilment_centre_in_Swindon_02.webm",
+        "approvedDownloadHosts": [
+          "upload.wikimedia.org"
+        ]
+      },
+      "license": {
+        "name": "CC BY 4.0 International",
+        "url": "https://creativecommons.org/licenses/by/4.0/",
+        "evidence": "Wikimedia Commons file page states the uploader's own work is licensed CC BY 4.0. Page and original file were re-checked on 2026-09-20.",
+        "capturedAt": "2026-09-20T15:00:00.000Z",
+        "attributionText": "“Fanuc robot sorting in BRS2 Amazon fulfilment centre in Swindon 02” by Marc Auledas Noguera (Auledas), CC BY 4.0. Cropped/transcoded by 灵枢. Source: https://commons.wikimedia.org/wiki/File:Fanuc_robot_sorting_in_BRS2_Amazon_fulfilment_centre_in_Swindon_02.webm"
+      },
+      "approval": {
+        "approvedBy": "pending-human-rights-review",
+        "approvedAt": "2026-09-20T15:00:00.000Z",
+        "reference": "RIGHTS-REVIEW-21",
+        "rationale": "作者自制并以 CC BY 4.0 发布；FANUC、Amazon 等商标、场地权利和 SaaS 用途仍未由人类审核，故保持关闭。",
+        "rights": {
+          "commercialUse": true,
+          "derivatives": true,
+          "rawFileStorage": true,
+          "saasMaterialLibrary": true
+        }
+      },
+      "expectedSourceSha256": "33fcb9e83f49cd92d9efe13ad7cc587fdd18947ee98ca0600e0403cdfac63ae9",
+      "clip": {
+        "startSeconds": 8,
+        "durationSeconds": 6
+      },
+      "industry": "美妆制造",
+      "shotFunction": "表现柔性自动化",
+      "applicability": "仅作为“表现柔性自动化”的通用行业示意，不得宣称为客户自有工厂、产品或检测结果。发布时必须保留归因信息并标明裁切、转码等修改。",
+      "tags": [
+        "抓取",
+        "机器人",
+        "物流",
+        "美妆B2B",
+        "授权候选"
+      ],
+      "visualReview": {
+        "reviewedBy": "codex-direct-frame-review",
+        "reviewedAt": "2026-09-20T15:00:00.000Z",
+        "reference": "FRAME-REVIEW-21-8-14",
+        "rationale": "已对下载原文件对应区间的接触图和关键帧做直接视觉核对并记录可见事实；这不是人类全运动复核，启用前必须由受信人类复核员观看完整片段并替换审核人信息。",
+        "visualObservations": [
+          "机械臂调整角度，将吸盘末端靠近输送区域。",
+          "黄色机械臂关节改变角度",
+          "末端工具朝向下方工作区域"
+        ],
+        "segment": {
+          "start": 0,
+          "end": 6,
+          "subject": [
+            "工业机械臂",
+            "吸盘夹具"
+          ],
+          "action": "机械臂转动并降低末端工具",
+          "shot": "中景",
+          "camera": "固定竖屏机位",
+          "environment": "自动化物流车间",
+          "observedFacts": [
+            "黄色机械臂关节改变角度",
+            "末端工具朝向下方工作区域"
+          ],
+          "confidence": 0.9,
+          "needsReview": false
+        }
+      }
+    },
+    {
+      "id": "beauty-b2b-22-fanuc-16s",
+      "enabled": false,
+      "title": "机器人往返分拣",
+      "folder": "美妆B2B授权候选",
+      "source": {
+        "provider": "Wikimedia Commons",
+        "creator": "Marc Auledas Noguera (Auledas)",
+        "pageUrl": "https://commons.wikimedia.org/wiki/File:Fanuc_robot_sorting_in_BRS2_Amazon_fulfilment_centre_in_Swindon_02.webm",
+        "downloadUrl": "https://upload.wikimedia.org/wikipedia/commons/7/7a/Fanuc_robot_sorting_in_BRS2_Amazon_fulfilment_centre_in_Swindon_02.webm",
+        "approvedDownloadHosts": [
+          "upload.wikimedia.org"
+        ]
+      },
+      "license": {
+        "name": "CC BY 4.0 International",
+        "url": "https://creativecommons.org/licenses/by/4.0/",
+        "evidence": "Wikimedia Commons file page states the uploader's own work is licensed CC BY 4.0. Page and original file were re-checked on 2026-09-20.",
+        "capturedAt": "2026-09-20T15:00:00.000Z",
+        "attributionText": "“Fanuc robot sorting in BRS2 Amazon fulfilment centre in Swindon 02” by Marc Auledas Noguera (Auledas), CC BY 4.0. Cropped/transcoded by 灵枢. Source: https://commons.wikimedia.org/wiki/File:Fanuc_robot_sorting_in_BRS2_Amazon_fulfilment_centre_in_Swindon_02.webm"
+      },
+      "approval": {
+        "approvedBy": "pending-human-rights-review",
+        "approvedAt": "2026-09-20T15:00:00.000Z",
+        "reference": "RIGHTS-REVIEW-22",
+        "rationale": "作者自制并以 CC BY 4.0 发布；FANUC、Amazon 等商标、场地权利和 SaaS 用途仍未由人类审核，故保持关闭。",
+        "rights": {
+          "commercialUse": true,
+          "derivatives": true,
+          "rawFileStorage": true,
+          "saasMaterialLibrary": true
+        }
+      },
+      "expectedSourceSha256": "33fcb9e83f49cd92d9efe13ad7cc587fdd18947ee98ca0600e0403cdfac63ae9",
+      "clip": {
+        "startSeconds": 16,
+        "durationSeconds": 6
+      },
+      "industry": "美妆制造",
+      "shotFunction": "展示稳定节拍",
+      "applicability": "仅作为“展示稳定节拍”的通用行业示意，不得宣称为客户自有工厂、产品或检测结果。发布时必须保留归因信息并标明裁切、转码等修改。",
+      "tags": [
+        "节拍",
+        "自动分拣",
+        "工业设备",
+        "美妆B2B",
+        "授权候选"
+      ],
+      "visualReview": {
+        "reviewedBy": "codex-direct-frame-review",
+        "reviewedAt": "2026-09-20T15:00:00.000Z",
+        "reference": "FRAME-REVIEW-22-16-22",
+        "rationale": "已对下载原文件对应区间的接触图和关键帧做直接视觉核对并记录可见事实；这不是人类全运动复核，启用前必须由受信人类复核员观看完整片段并替换审核人信息。",
+        "visualObservations": [
+          "机械臂在两个位置间重复移动，背景输送设备持续运行。",
+          "机械臂多次改变方向",
+          "背景可见金属输送设施"
+        ],
+        "segment": {
+          "start": 0,
+          "end": 6,
+          "subject": [
+            "工业机械臂",
+            "输送设备"
+          ],
+          "action": "机械臂往返于取放位置",
+          "shot": "中景",
+          "camera": "固定竖屏机位",
+          "environment": "自动化物流车间",
+          "observedFacts": [
+            "机械臂多次改变方向",
+            "背景可见金属输送设施"
+          ],
+          "confidence": 0.9,
+          "needsReview": false
+        }
+      }
+    },
+    {
+      "id": "beauty-b2b-23-fanuc-24s",
+      "enabled": false,
+      "title": "机器人分拣线细节",
+      "folder": "美妆B2B授权候选",
+      "source": {
+        "provider": "Wikimedia Commons",
+        "creator": "Marc Auledas Noguera (Auledas)",
+        "pageUrl": "https://commons.wikimedia.org/wiki/File:Fanuc_robot_sorting_in_BRS2_Amazon_fulfilment_centre_in_Swindon_02.webm",
+        "downloadUrl": "https://upload.wikimedia.org/wikipedia/commons/7/7a/Fanuc_robot_sorting_in_BRS2_Amazon_fulfilment_centre_in_Swindon_02.webm",
+        "approvedDownloadHosts": [
+          "upload.wikimedia.org"
+        ]
+      },
+      "license": {
+        "name": "CC BY 4.0 International",
+        "url": "https://creativecommons.org/licenses/by/4.0/",
+        "evidence": "Wikimedia Commons file page states the uploader's own work is licensed CC BY 4.0. Page and original file were re-checked on 2026-09-20.",
+        "capturedAt": "2026-09-20T15:00:00.000Z",
+        "attributionText": "“Fanuc robot sorting in BRS2 Amazon fulfilment centre in Swindon 02” by Marc Auledas Noguera (Auledas), CC BY 4.0. Cropped/transcoded by 灵枢. Source: https://commons.wikimedia.org/wiki/File:Fanuc_robot_sorting_in_BRS2_Amazon_fulfilment_centre_in_Swindon_02.webm"
+      },
+      "approval": {
+        "approvedBy": "pending-human-rights-review",
+        "approvedAt": "2026-09-20T15:00:00.000Z",
+        "reference": "RIGHTS-REVIEW-23",
+        "rationale": "作者自制并以 CC BY 4.0 发布；FANUC、Amazon 等商标、场地权利和 SaaS 用途仍未由人类审核，故保持关闭。",
+        "rights": {
+          "commercialUse": true,
+          "derivatives": true,
+          "rawFileStorage": true,
+          "saasMaterialLibrary": true
+        }
+      },
+      "expectedSourceSha256": "33fcb9e83f49cd92d9efe13ad7cc587fdd18947ee98ca0600e0403cdfac63ae9",
+      "clip": {
+        "startSeconds": 24,
+        "durationSeconds": 6
+      },
+      "industry": "美妆制造",
+      "shotFunction": "强调设备投资",
+      "applicability": "仅作为“强调设备投资”的通用行业示意，不得宣称为客户自有工厂、产品或检测结果。发布时必须保留归因信息并标明裁切、转码等修改。",
+      "tags": [
+        "设备实力",
+        "机器人",
+        "智能工厂",
+        "美妆B2B",
+        "授权候选"
+      ],
+      "visualReview": {
+        "reviewedBy": "codex-direct-frame-review",
+        "reviewedAt": "2026-09-20T15:00:00.000Z",
+        "reference": "FRAME-REVIEW-23-24-30",
+        "rationale": "已对下载原文件对应区间的接触图和关键帧做直接视觉核对并记录可见事实；这不是人类全运动复核，启用前必须由受信人类复核员观看完整片段并替换审核人信息。",
+        "visualObservations": [
+          "黄色机械臂和多吸盘组件占据画面主体并持续运行。",
+          "机械臂主体为黄色",
+          "末端有环形分布的多个吸盘"
+        ],
+        "segment": {
+          "start": 0,
+          "end": 6,
+          "subject": [
+            "黄色机械臂",
+            "多吸盘组件"
+          ],
+          "action": "机械臂旋转并抬升末端组件",
+          "shot": "中景",
+          "camera": "固定竖屏机位",
+          "environment": "自动化物流车间",
+          "observedFacts": [
+            "机械臂主体为黄色",
+            "末端有环形分布的多个吸盘"
+          ],
+          "confidence": 0.9,
+          "needsReview": false
+        }
+      }
+    },
+    {
+      "id": "beauty-b2b-24-bottling-0s",
+      "enabled": false,
+      "title": "人工调整瓶装设备",
+      "folder": "美妆B2B授权候选",
+      "source": {
+        "provider": "Wikimedia Commons",
+        "creator": "Olivier Lemoine",
+        "pageUrl": "https://commons.wikimedia.org/wiki/File:Cha%C3%AEne_embouteillage_effervescent.ogv",
+        "downloadUrl": "https://upload.wikimedia.org/wikipedia/commons/3/36/Cha%C3%AEne_embouteillage_effervescent.ogv",
+        "approvedDownloadHosts": [
+          "upload.wikimedia.org"
+        ]
+      },
+      "license": {
+        "name": "CC BY-SA 4.0 International",
+        "url": "https://creativecommons.org/licenses/by-sa/4.0/",
+        "evidence": "Wikimedia Commons file page states the uploader's own work is licensed CC BY-SA 4.0. Page and original file were re-checked on 2026-09-20.",
+        "capturedAt": "2026-09-20T15:00:00.000Z",
+        "attributionText": "“Chaîne embouteillage effervescent” by Olivier Lemoine, CC BY-SA 4.0. Cropped/transcoded by 灵枢; derivatives require a compatible license. Source: https://commons.wikimedia.org/wiki/File:Cha%C3%AEne_embouteillage_effervescent.ogv"
+      },
+      "approval": {
+        "approvedBy": "pending-human-rights-review",
+        "approvedAt": "2026-09-20T15:00:00.000Z",
+        "reference": "RIGHTS-REVIEW-24",
+        "rationale": "作者自制并以 CC BY-SA 4.0 发布；衍生成品须采用兼容许可，且人物、商标、场地及 SaaS 用途尚未经人类审核，故保持关闭。",
+        "rights": {
+          "commercialUse": true,
+          "derivatives": true,
+          "rawFileStorage": true,
+          "saasMaterialLibrary": true
+        }
+      },
+      "expectedSourceSha256": "563bc3f91bb595d17405a03b553dc09ccd5099e27ffcb0ff367f90ac142d63cd",
+      "clip": {
+        "startSeconds": 0,
+        "durationSeconds": 6
+      },
+      "industry": "美妆制造",
+      "shotFunction": "展示生产准备",
+      "applicability": "仅作为“展示生产准备”的通用行业示意，不得宣称为客户自有工厂、产品或检测结果。本片段为 CC BY-SA；衍生成品发布前必须确认相同方式共享和兼容许可要求。",
+      "tags": [
+        "瓶装线",
+        "设备调整",
+        "人机协作",
+        "美妆B2B",
+        "授权候选",
+        "相同方式共享"
+      ],
+      "visualReview": {
+        "reviewedBy": "codex-direct-frame-review",
+        "reviewedAt": "2026-09-20T15:00:00.000Z",
+        "reference": "FRAME-REVIEW-24-0-6",
+        "rationale": "已对下载原文件对应区间的接触图和关键帧做直接视觉核对并记录可见事实；这不是人类全运动复核，启用前必须由受信人类复核员观看完整片段并替换审核人信息。",
+        "visualObservations": [
+          "操作员在一排深色玻璃瓶上方调整金属机构。",
+          "前景有成排深色玻璃瓶",
+          "操作员双手接触上方设备"
+        ],
+        "segment": {
+          "start": 0,
+          "end": 6,
+          "subject": [
+            "操作员",
+            "深色玻璃瓶",
+            "金属机构"
+          ],
+          "action": "操作员手动调整瓶装设备",
+          "shot": "中景",
+          "camera": "手持竖屏机位",
+          "environment": "瓶装生产区域",
+          "observedFacts": [
+            "前景有成排深色玻璃瓶",
+            "操作员双手接触上方设备"
+          ],
+          "confidence": 0.9,
+          "needsReview": false
+        }
+      }
+    },
+    {
+      "id": "beauty-b2b-25-bottling-16s",
+      "enabled": false,
+      "title": "蓝盖瓶通过旋转机构",
+      "folder": "美妆B2B授权候选",
+      "source": {
+        "provider": "Wikimedia Commons",
+        "creator": "Olivier Lemoine",
+        "pageUrl": "https://commons.wikimedia.org/wiki/File:Cha%C3%AEne_embouteillage_effervescent.ogv",
+        "downloadUrl": "https://upload.wikimedia.org/wikipedia/commons/3/36/Cha%C3%AEne_embouteillage_effervescent.ogv",
+        "approvedDownloadHosts": [
+          "upload.wikimedia.org"
+        ]
+      },
+      "license": {
+        "name": "CC BY-SA 4.0 International",
+        "url": "https://creativecommons.org/licenses/by-sa/4.0/",
+        "evidence": "Wikimedia Commons file page states the uploader's own work is licensed CC BY-SA 4.0. Page and original file were re-checked on 2026-09-20.",
+        "capturedAt": "2026-09-20T15:00:00.000Z",
+        "attributionText": "“Chaîne embouteillage effervescent” by Olivier Lemoine, CC BY-SA 4.0. Cropped/transcoded by 灵枢; derivatives require a compatible license. Source: https://commons.wikimedia.org/wiki/File:Cha%C3%AEne_embouteillage_effervescent.ogv"
+      },
+      "approval": {
+        "approvedBy": "pending-human-rights-review",
+        "approvedAt": "2026-09-20T15:00:00.000Z",
+        "reference": "RIGHTS-REVIEW-25",
+        "rationale": "作者自制并以 CC BY-SA 4.0 发布；衍生成品须采用兼容许可，且人物、商标、场地及 SaaS 用途尚未经人类审核，故保持关闭。",
+        "rights": {
+          "commercialUse": true,
+          "derivatives": true,
+          "rawFileStorage": true,
+          "saasMaterialLibrary": true
+        }
+      },
+      "expectedSourceSha256": "563bc3f91bb595d17405a03b553dc09ccd5099e27ffcb0ff367f90ac142d63cd",
+      "clip": {
+        "startSeconds": 16,
+        "durationSeconds": 6
+      },
+      "industry": "美妆制造",
+      "shotFunction": "展示瓶体定位",
+      "applicability": "仅作为“展示瓶体定位”的通用行业示意，不得宣称为客户自有工厂、产品或检测结果。本片段为 CC BY-SA；衍生成品发布前必须确认相同方式共享和兼容许可要求。",
+      "tags": [
+        "瓶体定位",
+        "旋转机构",
+        "包装",
+        "美妆B2B",
+        "授权候选",
+        "相同方式共享"
+      ],
+      "visualReview": {
+        "reviewedBy": "codex-direct-frame-review",
+        "reviewedAt": "2026-09-20T15:00:00.000Z",
+        "reference": "FRAME-REVIEW-25-16-22",
+        "rationale": "已对下载原文件对应区间的接触图和关键帧做直接视觉核对并记录可见事实；这不是人类全运动复核，启用前必须由受信人类复核员观看完整片段并替换审核人信息。",
+        "visualObservations": [
+          "蓝色瓶盖的深色瓶体被旋转机构逐只导向下一工位。",
+          "多个瓶体顶部可见蓝色瓶盖",
+          "白色导向机构围绕瓶体运行"
+        ],
+        "segment": {
+          "start": 0,
+          "end": 6,
+          "subject": [
+            "蓝盖深色瓶",
+            "旋转机构"
+          ],
+          "action": "瓶体沿旋转导向机构移动",
+          "shot": "近景",
+          "camera": "手持竖屏机位",
+          "environment": "瓶装生产线",
+          "observedFacts": [
+            "多个瓶体顶部可见蓝色瓶盖",
+            "白色导向机构围绕瓶体运行"
+          ],
+          "confidence": 0.9,
+          "needsReview": false
+        }
+      }
+    },
+    {
+      "id": "beauty-b2b-26-bottling-32s",
+      "enabled": false,
+      "title": "多头设备处理瓶体",
+      "folder": "美妆B2B授权候选",
+      "source": {
+        "provider": "Wikimedia Commons",
+        "creator": "Olivier Lemoine",
+        "pageUrl": "https://commons.wikimedia.org/wiki/File:Cha%C3%AEne_embouteillage_effervescent.ogv",
+        "downloadUrl": "https://upload.wikimedia.org/wikipedia/commons/3/36/Cha%C3%AEne_embouteillage_effervescent.ogv",
+        "approvedDownloadHosts": [
+          "upload.wikimedia.org"
+        ]
+      },
+      "license": {
+        "name": "CC BY-SA 4.0 International",
+        "url": "https://creativecommons.org/licenses/by-sa/4.0/",
+        "evidence": "Wikimedia Commons file page states the uploader's own work is licensed CC BY-SA 4.0. Page and original file were re-checked on 2026-09-20.",
+        "capturedAt": "2026-09-20T15:00:00.000Z",
+        "attributionText": "“Chaîne embouteillage effervescent” by Olivier Lemoine, CC BY-SA 4.0. Cropped/transcoded by 灵枢; derivatives require a compatible license. Source: https://commons.wikimedia.org/wiki/File:Cha%C3%AEne_embouteillage_effervescent.ogv"
+      },
+      "approval": {
+        "approvedBy": "pending-human-rights-review",
+        "approvedAt": "2026-09-20T15:00:00.000Z",
+        "reference": "RIGHTS-REVIEW-26",
+        "rationale": "作者自制并以 CC BY-SA 4.0 发布；衍生成品须采用兼容许可，且人物、商标、场地及 SaaS 用途尚未经人类审核，故保持关闭。",
+        "rights": {
+          "commercialUse": true,
+          "derivatives": true,
+          "rawFileStorage": true,
+          "saasMaterialLibrary": true
+        }
+      },
+      "expectedSourceSha256": "563bc3f91bb595d17405a03b553dc09ccd5099e27ffcb0ff367f90ac142d63cd",
+      "clip": {
+        "startSeconds": 32,
+        "durationSeconds": 6
+      },
+      "industry": "美妆制造",
+      "shotFunction": "表现批量加工",
+      "applicability": "仅作为“表现批量加工”的通用行业示意，不得宣称为客户自有工厂、产品或检测结果。本片段为 CC BY-SA；衍生成品发布前必须确认相同方式共享和兼容许可要求。",
+      "tags": [
+        "多头设备",
+        "灌装线",
+        "批量生产",
+        "美妆B2B",
+        "授权候选",
+        "相同方式共享"
+      ],
+      "visualReview": {
+        "reviewedBy": "codex-direct-frame-review",
+        "reviewedAt": "2026-09-20T15:00:00.000Z",
+        "reference": "FRAME-REVIEW-26-32-38",
+        "rationale": "已对下载原文件对应区间的接触图和关键帧做直接视觉核对并记录可见事实；这不是人类全运动复核，启用前必须由受信人类复核员观看完整片段并替换审核人信息。",
+        "visualObservations": [
+          "多个白色管路和金属头位于成排深色瓶上方。",
+          "多个管路分别对应下方瓶位",
+          "瓶体按固定间距排列"
+        ],
+        "segment": {
+          "start": 0,
+          "end": 6,
+          "subject": [
+            "深色玻璃瓶",
+            "白色管路",
+            "金属加工头"
+          ],
+          "action": "成排瓶体通过多头加工位置",
+          "shot": "近景",
+          "camera": "手持竖屏机位",
+          "environment": "瓶装生产线",
+          "observedFacts": [
+            "多个管路分别对应下方瓶位",
+            "瓶体按固定间距排列"
+          ],
+          "confidence": 0.9,
+          "needsReview": false
+        }
+      }
+    },
+    {
+      "id": "beauty-b2b-27-bottling-48s",
+      "enabled": false,
+      "title": "瓶装设备内部近景",
+      "folder": "美妆B2B授权候选",
+      "source": {
+        "provider": "Wikimedia Commons",
+        "creator": "Olivier Lemoine",
+        "pageUrl": "https://commons.wikimedia.org/wiki/File:Cha%C3%AEne_embouteillage_effervescent.ogv",
+        "downloadUrl": "https://upload.wikimedia.org/wikipedia/commons/3/36/Cha%C3%AEne_embouteillage_effervescent.ogv",
+        "approvedDownloadHosts": [
+          "upload.wikimedia.org"
+        ]
+      },
+      "license": {
+        "name": "CC BY-SA 4.0 International",
+        "url": "https://creativecommons.org/licenses/by-sa/4.0/",
+        "evidence": "Wikimedia Commons file page states the uploader's own work is licensed CC BY-SA 4.0. Page and original file were re-checked on 2026-09-20.",
+        "capturedAt": "2026-09-20T15:00:00.000Z",
+        "attributionText": "“Chaîne embouteillage effervescent” by Olivier Lemoine, CC BY-SA 4.0. Cropped/transcoded by 灵枢; derivatives require a compatible license. Source: https://commons.wikimedia.org/wiki/File:Cha%C3%AEne_embouteillage_effervescent.ogv"
+      },
+      "approval": {
+        "approvedBy": "pending-human-rights-review",
+        "approvedAt": "2026-09-20T15:00:00.000Z",
+        "reference": "RIGHTS-REVIEW-27",
+        "rationale": "作者自制并以 CC BY-SA 4.0 发布；衍生成品须采用兼容许可，且人物、商标、场地及 SaaS 用途尚未经人类审核，故保持关闭。",
+        "rights": {
+          "commercialUse": true,
+          "derivatives": true,
+          "rawFileStorage": true,
+          "saasMaterialLibrary": true
+        }
+      },
+      "expectedSourceSha256": "563bc3f91bb595d17405a03b553dc09ccd5099e27ffcb0ff367f90ac142d63cd",
+      "clip": {
+        "startSeconds": 48,
+        "durationSeconds": 6
+      },
+      "industry": "美妆制造",
+      "shotFunction": "补充工艺细节",
+      "applicability": "仅作为“补充工艺细节”的通用行业示意，不得宣称为客户自有工厂、产品或检测结果。本片段为 CC BY-SA；衍生成品发布前必须确认相同方式共享和兼容许可要求。",
+      "tags": [
+        "设备内部",
+        "工艺",
+        "瓶装",
+        "美妆B2B",
+        "授权候选",
+        "相同方式共享"
+      ],
+      "visualReview": {
+        "reviewedBy": "codex-direct-frame-review",
+        "reviewedAt": "2026-09-20T15:00:00.000Z",
+        "reference": "FRAME-REVIEW-27-48-54",
+        "rationale": "已对下载原文件对应区间的接触图和关键帧做直接视觉核对并记录可见事实；这不是人类全运动复核，启用前必须由受信人类复核员观看完整片段并替换审核人信息。",
+        "visualObservations": [
+          "镜头近距离扫过金属转盘、管路和瓶体加工位置。",
+          "圆形金属结构占据画面中央",
+          "瓶体从设备边缘进入加工位置"
+        ],
+        "segment": {
+          "start": 0,
+          "end": 6,
+          "subject": [
+            "金属转盘",
+            "管路",
+            "瓶体"
+          ],
+          "action": "设备带动瓶体经过内部工位",
+          "shot": "近景",
+          "camera": "手持移动",
+          "environment": "瓶装生产线",
+          "observedFacts": [
+            "圆形金属结构占据画面中央",
+            "瓶体从设备边缘进入加工位置"
+          ],
+          "confidence": 0.9,
+          "needsReview": false
+        }
+      }
+    },
+    {
+      "id": "beauty-b2b-28-lab-0s",
+      "enabled": false,
+      "title": "多人围台实验演示",
+      "folder": "美妆B2B授权候选",
+      "source": {
+        "provider": "Wikimedia Commons",
+        "creator": "Experienciausuario",
+        "pageUrl": "https://commons.wikimedia.org/wiki/File:Video_laboratorio.webm",
+        "downloadUrl": "https://commons.wikimedia.org/wiki/Special:Redirect/file/Video_laboratorio.webm",
+        "approvedDownloadHosts": [
+          "commons.wikimedia.org",
+          "upload.wikimedia.org"
+        ]
+      },
+      "license": {
+        "name": "CC0 1.0 Universal",
+        "url": "https://creativecommons.org/publicdomain/zero/1.0/",
+        "evidence": "Wikimedia Commons file page states this uploader-created work is dedicated under CC0 1.0. Page and original file were re-checked on 2026-09-20.",
+        "capturedAt": "2026-09-20T15:00:00.000Z",
+        "attributionText": "“Video laboratorio” by Experienciausuario, CC0 1.0. Cropped/transcoded by 灵枢. Source: https://commons.wikimedia.org/wiki/File:Video_laboratorio.webm"
+      },
+      "approval": {
+        "approvedBy": "pending-human-rights-review",
+        "approvedAt": "2026-09-20T15:00:00.000Z",
+        "reference": "RIGHTS-REVIEW-28",
+        "rationale": "作者自制并以 CC0 发布；清晰人物、场地和把教学场景用于商业宣传的误导风险尚未由人类审核，故保持关闭。",
+        "rights": {
+          "commercialUse": true,
+          "derivatives": true,
+          "rawFileStorage": true,
+          "saasMaterialLibrary": true
+        }
+      },
+      "expectedSourceSha256": "3c1bfb97616cc6b65c793aa2b1fda567eb53238fd1664c2360d7832ecf719e9d",
+      "clip": {
+        "startSeconds": 0,
+        "durationSeconds": 6
+      },
+      "industry": "美妆制造",
+      "shotFunction": "展示团队研发氛围",
+      "applicability": "仅作为“展示团队研发氛围”的通用行业示意，不得宣称为客户自有工厂、产品或检测结果。发布时必须保留归因信息并标明裁切、转码等修改。",
+      "tags": [
+        "团队",
+        "实验演示",
+        "研发氛围",
+        "美妆B2B",
+        "授权候选"
+      ],
+      "visualReview": {
+        "reviewedBy": "codex-direct-frame-review",
+        "reviewedAt": "2026-09-20T15:00:00.000Z",
+        "reference": "FRAME-REVIEW-28-0-6",
+        "rationale": "已对下载原文件对应区间的接触图和关键帧做直接视觉核对并记录可见事实；这不是人类全运动复核，启用前必须由受信人类复核员观看完整片段并替换审核人信息。",
+        "visualObservations": [
+          "多名穿白色实验服的人员围绕摆有彩色容器的桌面交流操作。",
+          "画面中有多名穿白色实验服的人",
+          "桌面摆有黄色和红色等容器"
+        ],
+        "segment": {
+          "start": 0,
+          "end": 6,
+          "subject": [
+            "多名实验人员",
+            "彩色容器",
+            "桌面"
+          ],
+          "action": "人员围绕桌面观察并处理材料",
+          "shot": "中景",
+          "camera": "固定机位",
+          "environment": "教学或演示实验室",
+          "observedFacts": [
+            "画面中有多名穿白色实验服的人",
+            "桌面摆有黄色和红色等容器"
+          ],
+          "confidence": 0.9,
+          "needsReview": false
+        }
+      }
+    },
+    {
+      "id": "beauty-b2b-29-bottleGripper-0s",
+      "enabled": false,
+      "title": "人工使用整排瓶夹",
+      "folder": "美妆B2B授权候选",
+      "source": {
+        "provider": "Wikimedia Commons",
+        "creator": "Olivier Lemoine",
+        "pageUrl": "https://commons.wikimedia.org/wiki/File:Pince_%C3%A0_bouteilles.ogv",
+        "downloadUrl": "https://upload.wikimedia.org/wikipedia/commons/f/fa/Pince_%C3%A0_bouteilles.ogv",
+        "approvedDownloadHosts": [
+          "upload.wikimedia.org"
+        ]
+      },
+      "license": {
+        "name": "CC BY-SA 4.0 International",
+        "url": "https://creativecommons.org/licenses/by-sa/4.0/",
+        "evidence": "Wikimedia Commons file page states the uploader's own work is licensed CC BY-SA 4.0. Page and original file were re-checked on 2026-09-20.",
+        "capturedAt": "2026-09-20T15:00:00.000Z",
+        "attributionText": "“Pince à bouteilles” by Olivier Lemoine, CC BY-SA 4.0. Cropped/transcoded by 灵枢; derivatives require a compatible license. Source: https://commons.wikimedia.org/wiki/File:Pince_%C3%A0_bouteilles.ogv"
+      },
+      "approval": {
+        "approvedBy": "pending-human-rights-review",
+        "approvedAt": "2026-09-20T15:00:00.000Z",
+        "reference": "RIGHTS-REVIEW-29",
+        "rationale": "作者自制并以 CC BY-SA 4.0 发布；衍生成品须采用兼容许可，且人物、商标、场地及 SaaS 用途尚未经人类审核，故保持关闭。",
+        "rights": {
+          "commercialUse": true,
+          "derivatives": true,
+          "rawFileStorage": true,
+          "saasMaterialLibrary": true
+        }
+      },
+      "expectedSourceSha256": "207a33e3fd6417ecb18781bb370c5b2b34447abb7abab4148a7b98a5103d58ed",
+      "clip": {
+        "startSeconds": 0,
+        "durationSeconds": 3
+      },
+      "industry": "美妆制造",
+      "shotFunction": "展示批量搬运工具",
+      "applicability": "仅作为“展示批量搬运工具”的通用行业示意，不得宣称为客户自有工厂、产品或检测结果。本片段为 CC BY-SA；衍生成品发布前必须确认相同方式共享和兼容许可要求。",
+      "tags": [
+        "瓶夹",
+        "批量搬运",
+        "包装线",
+        "美妆B2B",
+        "授权候选",
+        "相同方式共享"
+      ],
+      "visualReview": {
+        "reviewedBy": "codex-direct-frame-review",
+        "reviewedAt": "2026-09-20T15:00:00.000Z",
+        "reference": "FRAME-REVIEW-29-0-3",
+        "rationale": "已对下载原文件对应区间的接触图和关键帧做直接视觉核对并记录可见事实；这不是人类全运动复核，启用前必须由受信人类复核员观看完整片段并替换审核人信息。",
+        "visualObservations": [
+          "操作员抬起横跨一排深色瓶的金属夹持装置。",
+          "瓶夹横跨一排瓶体",
+          "操作员双手握住装置手柄"
+        ],
+        "segment": {
+          "start": 0,
+          "end": 3,
+          "subject": [
+            "操作员",
+            "金属瓶夹",
+            "深色玻璃瓶"
+          ],
+          "action": "操作员提起整排瓶夹装置",
+          "shot": "中景",
+          "camera": "固定竖屏机位",
+          "environment": "瓶装生产区域",
+          "observedFacts": [
+            "瓶夹横跨一排瓶体",
+            "操作员双手握住装置手柄"
+          ],
+          "confidence": 0.9,
+          "needsReview": false
+        }
+      }
+    },
+    {
+      "id": "beauty-b2b-30-vetiver-0s",
+      "enabled": false,
+      "title": "香根草原料近景",
+      "folder": "美妆B2B授权候选",
+      "source": {
+        "provider": "Wikimedia Commons",
+        "creator": "Abbie David",
+        "pageUrl": "https://commons.wikimedia.org/wiki/File:Vetiveria_zizanioides_Grass.webm",
+        "downloadUrl": "https://upload.wikimedia.org/wikipedia/commons/3/37/Vetiveria_zizanioides_Grass.webm",
+        "approvedDownloadHosts": [
+          "upload.wikimedia.org"
+        ]
+      },
+      "license": {
+        "name": "CC BY-SA 4.0 International",
+        "url": "https://creativecommons.org/licenses/by-sa/4.0/",
+        "evidence": "Wikimedia Commons file page states the uploader's own work is licensed CC BY-SA 4.0 and describes vetiver roots as used in cosmetics. Page and original file were re-checked on 2026-09-20.",
+        "capturedAt": "2026-09-20T15:00:00.000Z",
+        "attributionText": "“Vetiveria zizanioides Grass” by Abbie David, CC BY-SA 4.0. Cropped/transcoded by 灵枢; derivatives require a compatible license. Source: https://commons.wikimedia.org/wiki/File:Vetiveria_zizanioides_Grass.webm"
+      },
+      "approval": {
+        "approvedBy": "pending-human-rights-review",
+        "approvedAt": "2026-09-20T15:00:00.000Z",
+        "reference": "RIGHTS-REVIEW-30",
+        "rationale": "作者自制并以 CC BY-SA 4.0 发布；衍生成品须采用兼容许可，物种、地点和功效表达也尚未经人类审核，故保持关闭。",
+        "rights": {
+          "commercialUse": true,
+          "derivatives": true,
+          "rawFileStorage": true,
+          "saasMaterialLibrary": true
+        }
+      },
+      "expectedSourceSha256": "c6403ba8c5067c50678bf22320029678208280eaac50dfb24ad69316e9430fc9",
+      "clip": {
+        "startSeconds": 0,
+        "durationSeconds": 6
+      },
+      "industry": "美妆制造",
+      "shotFunction": "建立植物原料场景",
+      "applicability": "仅作为“建立植物原料场景”的通用行业示意，不得宣称为客户自有工厂、产品或检测结果。本片段为 CC BY-SA；衍生成品发布前必须确认相同方式共享和兼容许可要求。",
+      "tags": [
+        "香根草",
+        "植物原料",
+        "天然成分",
+        "美妆B2B",
+        "授权候选",
+        "相同方式共享"
+      ],
+      "visualReview": {
+        "reviewedBy": "codex-direct-frame-review",
+        "reviewedAt": "2026-09-20T15:00:00.000Z",
+        "reference": "FRAME-REVIEW-30-0-6",
+        "rationale": "已对下载原文件对应区间的接触图和关键帧做直接视觉核对并记录可见事实；这不是人类全运动复核，启用前必须由受信人类复核员观看完整片段并替换审核人信息。",
+        "visualObservations": [
+          "镜头贴近一丛细长绿色叶片和根部周边土壤。",
+          "植株具有密集细长叶片",
+          "根部周边可见裸露土壤"
+        ],
+        "segment": {
+          "start": 0,
+          "end": 6,
+          "subject": [
+            "香根草植株",
+            "细长叶片",
+            "土壤"
+          ],
+          "action": "植株随环境和相机轻微晃动",
+          "shot": "近景",
+          "camera": "手持轻微移动",
+          "environment": "户外植物生长环境",
+          "observedFacts": [
+            "植株具有密集细长叶片",
+            "根部周边可见裸露土壤"
+          ],
+          "confidence": 0.9,
+          "needsReview": false
+        }
+      }
+    }
+  ]
+}

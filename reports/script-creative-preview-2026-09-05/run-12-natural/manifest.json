@@ -1,0 +1,23 @@
+{
+  "generatedAt": "2026-09-04T22:31:49.016Z",
+  "source": "real_studio_route_qwen",
+  "inputHash": "897618a93aca9c8b3644819534b534bcb8274c85dba5fddfd2c9ccd8928ad7e7",
+  "modelCalls": 3,
+  "versions": [
+    {
+      "version": 1,
+      "inputCase": {
+        "duration": 20
+      },
+      "httpStatus": 502,
+      "elapsedMs": 12983,
+      "ok": false,
+      "source": "ai_failed",
+      "qualityStatus": "failed",
+      "error": "上游模型生成失败，未生成脚本。请补充素材/产品信息后重试。",
+      "validationIssues": [
+        "上游模型生成失败，未生成脚本。请补充素材/产品信息后重试。"
+      ]
+    }
+  ]
+}

@@ -1,0 +1,468 @@
+{
+  "schemaVersion": 1,
+  "tenantId": "local_tenant_customer_aurelia_beauty",
+  "exportedAt": "2026-10-08T00:50:16.721Z",
+  "counts": {
+    "tenant_profiles": 1,
+    "competitor_accounts": 5,
+    "crawl_jobs": 4,
+    "trend_videos": 63,
+    "digital_employee_config_versions": 5,
+    "digital_employee_configs": 1,
+    "social_discovery_scopes": 8,
+    "social_programs": 1,
+    "weekly_goals": 42,
+    "weekly_plans": 42,
+    "workflow_runs": 41,
+    "workflow_tasks": 41,
+    "starter_social_content_tasks": 14,
+    "starter_social_content_files": 14,
+    "starter_social_content_operations": 196,
+    "starter_social_content_artifacts": 5,
+    "starter_social_director_plan_versions": 18,
+    "starter_social_task_sources": 37,
+    "studio_projects": 2,
+    "studio_digital_human_plans": 65,
+    "studio_shooting_tasks": 2,
+    "scheduled_tasks": 1,
+    "materials": 27,
+    "mediaFiles": 84
+  },
+  "files": [
+    {
+      "path": "README.md",
+      "bytes": 1569,
+      "sha256": "d977d89a472f6a4c893c9d5035528c86d05e113b422e78efdcda5ea77445b757"
+    },
+    {
+      "path": "account-data.json",
+      "bytes": 6916950,
+      "sha256": "d8a5f0d3d93b2d4c3d94ae0d32d6066d60a3b5b22f410c7fb169c3d9ae525e0c"
+    },
+    {
+      "path": "media/tenants/local_tenant_customer_aurelia_beauty/fa98415f-264f-4edf-a98e-79f97c429b40.mp4",
+      "bytes": 758668,
+      "sha256": "db2183c9d1aee296a6943525d64e730dc3de91ccbb50fba07ee18cef31f08c04"
+    },
+    {
+      "path": "media/tenants/local_tenant_customer_aurelia_beauty/fa98415f-264f-4edf-a98e-79f97c429b40.poster.jpg",
+      "bytes": 20145,
+      "sha256": "3f431b53ca9c0813c3eef9d55d877172c364e3c8367558331daa08121639aafa"
+    },
+    {
+      "path": "media/tenants/local_tenant_customer_aurelia_beauty/open-beauty-cucumber-mask.jpg",
+      "bytes": 173190,
+      "sha256": "398b59ba79f7b15eb791f7afe421ca842e47f32de6fa55cbb89f92d7abdf9a2d"
+    },
+    {
+      "path": "media/tenants/local_tenant_customer_aurelia_beauty/open-beauty-holding-skincare-jar.jpg",
+      "bytes": 100222,
+      "sha256": "c3d905c325fdc1b476ce0949e01d37d34018b9879473f019fee7d8b0d44436ba"
+    },
+    {
+      "path": "media/tenants/local_tenant_customer_aurelia_beauty/open-beauty-korean-cosmetics.jpg",
+      "bytes": 166316,
+      "sha256": "03b954a30287cf949bc82457c2e74ff079ea0e35403d9db141ffa5f281ecd5c9"
+    },
+    {
+      "path": "media/tenants/local_tenant_customer_aurelia_beauty/open-beauty-makeup-brushes.jpg",
+      "bytes": 110586,
+      "sha256": "e98f4c25fe259e84a5ba839e6f159501b0dcb8f477a2736c2f9a9e1dfb8440e2"
+    },
+    {
+      "path": "media/tenants/local_tenant_customer_aurelia_beauty/open-beauty-pink-cosmetic-jar.jpg",
+      "bytes": 172501,
+      "sha256": "d9918d5ccb1b139699f0bd791313e8498c2232d50b62829cfc0430ada74035c2"
+    },
+    {
+      "path": "media/tenants/local_tenant_customer_aurelia_beauty/real-crawl-30/b2b-clips/beauty-b2b-01-pamasol-0s.mp4",
+      "bytes": 285267,
+      "sha256": "8260b2f7b85b59bfba9df54be05fc2048f85c5d5d0f50542a6574f516438d9f9"
+    },
+    {
+      "path": "media/tenants/local_tenant_customer_aurelia_beauty/real-crawl-30/b2b-clips/beauty-b2b-02-pamasol-8s.mp4",
+      "bytes": 357171,
+      "sha256": "96888dfa77a16beb6273d98cf98c4ce76e3f24c957a0155ba61f233e4cf2423f"
+    },
+    {
+      "path": "media/tenants/local_tenant_customer_aurelia_beauty/real-crawl-30/b2b-clips/beauty-b2b-03-pamasol-20s.mp4",
+      "bytes": 193068,
+      "sha256": "29abe072f109d7d8f7dd6a69213496abd20f3c157b1845da0e6ad4874f054c24"
+    },
+    {
+      "path": "media/tenants/local_tenant_customer_aurelia_beauty/real-crawl-30/b2b-clips/beauty-b2b-04-pamasol-32s.mp4",
+      "bytes": 191971,
+      "sha256": "7d24ed83ae94c61107a37dc0ef5c90d4c5e176cb4746a488e9bcf62b3bff79d4"
+    },
+    {
+      "path": "media/tenants/local_tenant_customer_aurelia_beauty/real-crawl-30/b2b-clips/beauty-b2b-05-pamasol-44s.mp4",
+      "bytes": 323057,
+      "sha256": "97225c692b22c53e231ae7fd1214ea4ec7f40a967b27182bf36e9706a470e28a"
+    },
+    {
+      "path": "media/tenants/local_tenant_customer_aurelia_beauty/real-crawl-30/b2b-clips/beauty-b2b-06-pamasol-56s.mp4",
+      "bytes": 244210,
+      "sha256": "8d7dbb9861acd70fcc477a9103a4f32e2568f718905cd98deb963f8918ea67c8"
+    },
+    {
+      "path": "media/tenants/local_tenant_customer_aurelia_beauty/real-crawl-30/b2b-clips/beauty-b2b-07-pamasol-68s.mp4",
+      "bytes": 238629,
+      "sha256": "63c737deb1c91444654a2dd36b9cc42b6b533a8e34834de2b4a6682c310973c3"
+    },
+    {
+      "path": "media/tenants/local_tenant_customer_aurelia_beauty/real-crawl-30/b2b-clips/beauty-b2b-08-pamasol-88s.mp4",
+      "bytes": 242152,
+      "sha256": "44909fde9432c0b7ee45c701bd526b93f9248a68c931951069d03e8c322f21f3"
+    },
+    {
+      "path": "media/tenants/local_tenant_customer_aurelia_beauty/real-crawl-30/b2b-clips/beauty-b2b-09-capping-0s.mp4",
+      "bytes": 418960,
+      "sha256": "e1c46ae0c7dc2eb4ae5a11503df3cef4688702a38061d4c91916e6b4a8ba0029"
+    },
+    {
+      "path": "media/tenants/local_tenant_customer_aurelia_beauty/real-crawl-30/b2b-clips/beauty-b2b-10-capping-7s.mp4",
+      "bytes": 502731,
+      "sha256": "153ebf87f7ef66662c6e44c532e0b113286337cde7fd1060c66cc90d2ab0294d"
+    },
+    {
+      "path": "media/tenants/local_tenant_customer_aurelia_beauty/real-crawl-30/b2b-clips/beauty-b2b-11-capping-14s.mp4",
+      "bytes": 408817,
+      "sha256": "3182002a03e49b2b2a24f7d42ebeddb33ed4f6b52fe46648f0f231dbfac4acca"
+    },
+    {
+      "path": "media/tenants/local_tenant_customer_aurelia_beauty/real-crawl-30/b2b-clips/beauty-b2b-12-packaging-2s.mp4",
+      "bytes": 331269,
+      "sha256": "30d26879f4cb4bb6c4b3403a7427260306fb6a4b5871a766839da6df156fb7c4"
+    },
+    {
+      "path": "media/tenants/local_tenant_customer_aurelia_beauty/real-crawl-30/b2b-clips/beauty-b2b-13-packaging-8s.mp4",
+      "bytes": 460244,
+      "sha256": "a8088b160990ef5ebea5ba59dc029bd1db6b340a525200a6470017b5064a7c48"
+    },
+    {
+      "path": "media/tenants/local_tenant_customer_aurelia_beauty/real-crawl-30/b2b-clips/beauty-b2b-14-packaging-14s.mp4",
+      "bytes": 408136,
+      "sha256": "b0396fac3f672e0a717dce3fcc9fdb21dba5e87a5728f9ecb045f7b383e674b0"
+    },
+    {
+      "path": "media/tenants/local_tenant_customer_aurelia_beauty/real-crawl-30/b2b-clips/beauty-b2b-15-packaging-20s.mp4",
+      "bytes": 318484,
+      "sha256": "0187d18bd5ed00fbea0096da129554d3a096bf5b07bfca656ac022cda8c2e68c"
+    },
+    {
+      "path": "media/tenants/local_tenant_customer_aurelia_beauty/real-crawl-30/b2b-clips/beauty-b2b-16-packaging-28s.mp4",
+      "bytes": 267364,
+      "sha256": "0344310f0f0c7ccdae0138ba468b2ee2f771618d947953a08a310444d5c95570"
+    },
+    {
+      "path": "media/tenants/local_tenant_customer_aurelia_beauty/real-crawl-30/b2b-clips/beauty-b2b-17-stockLab-0s.mp4",
+      "bytes": 279854,
+      "sha256": "a532a997f20ac584aff29c9f782bc15191dca9b790fb2466018588fce7256674"
+    },
+    {
+      "path": "media/tenants/local_tenant_customer_aurelia_beauty/real-crawl-30/b2b-clips/beauty-b2b-18-stockLab-6s.mp4",
+      "bytes": 256180,
+      "sha256": "f8c96a1c044e5a96910e289a6142b0760d76b16e47b6ff3fbd68b49c9e8fc1a0"
+    },
+    {
+      "path": "media/tenants/local_tenant_customer_aurelia_beauty/real-crawl-30/b2b-clips/beauty-b2b-19-stockLab-12s.mp4",
+      "bytes": 226745,
+      "sha256": "7769b6166d73368bc9ad923a880beb9c642702d15daa74375490a6a1e2c5a686"
+    },
+    {
+      "path": "media/tenants/local_tenant_customer_aurelia_beauty/real-crawl-30/b2b-clips/beauty-b2b-20-fanuc-0s.mp4",
+      "bytes": 2333768,
+      "sha256": "416ff3cf52d1f82846e9e488c3b336bae0ff7879d5da3ddc1079a1ab6e815ad2"
+    },
+    {
+      "path": "media/tenants/local_tenant_customer_aurelia_beauty/real-crawl-30/b2b-clips/beauty-b2b-21-fanuc-8s.mp4",
+      "bytes": 2527437,
+      "sha256": "bfea35cf54b078e59c8cc0910ca2daae4a5beda55946319c14f1356b95f844f7"
+    },
+    {
+      "path": "media/tenants/local_tenant_customer_aurelia_beauty/real-crawl-30/b2c-images/eyeshadow-palette.jpg",
+      "bytes": 11514113,
+      "sha256": "72076c8498cce90988cb9f64e12cb7b2d5e2e21122ed1cc9dd3d74445031c42b"
+    },
+    {
+      "path": "media/tenants/local_tenant_customer_aurelia_beauty/real-crawl-30/b2c-images/lipstick-application.jpg",
+      "bytes": 1053742,
+      "sha256": "da00fdbcf2b7054eb36d3d353df76c5dc4801497e187209c9036a7f6aa75c419"
+    },
+    {
+      "path": "media/tenants/local_tenant_customer_aurelia_beauty/real-crawl-30/b2c-images/nail-polish-bottles.jpg",
+      "bytes": 4728556,
+      "sha256": "9735da68ae6d549db47c6889e048fe7aafe40524c62ef3fbc43f891bec004348"
+    },
+    {
+      "path": "media/tenants/local_tenant_customer_aurelia_beauty/real-crawl-30/b2c-images/perfume-bottle.jpg",
+      "bytes": 109295,
+      "sha256": "66acc30e2be14d7a02c5a01c9ea086aadc687776edcd09abda0449a96e4f5a7a"
+    },
+    {
+      "path": "media/tenants/local_tenant_customer_aurelia_beauty/reference-videos/trend_videos_000394b649c74265a02d37d9125892e3.mp4",
+      "bytes": 3867145,
+      "sha256": "26ce49869458df4325e6b2125a0f00f451f80fdf7ebaf9e70b51e105db998761"
+    },
+    {
+      "path": "media/tenants/local_tenant_customer_aurelia_beauty/reference-videos/trend_videos_abb247c15cd74f14af94817c6b52b357.mp4",
+      "bytes": 6412289,
+      "sha256": "501ec2c4d39ce67630448eff7001e2f911561e962533ca1bdb6aa10e6d2388e9"
+    },
+    {
+      "path": "media/tenants/local_tenant_customer_aurelia_beauty/rongshang-product-01.png",
+      "bytes": 158396,
+      "sha256": "c9673dc0eb6fc0be4dff188ae7a23c520dcfc07054e71f483d666a7608178548"
+    },
+    {
+      "path": "media/tenants/local_tenant_customer_aurelia_beauty/rongshang-product-02.png",
+      "bytes": 194445,
+      "sha256": "bde9ca886bbded51cf0fb46c0dfdc302a1cade01b2638f636c1150ceb5bf1351"
+    },
+    {
+      "path": "media/tenants/local_tenant_customer_aurelia_beauty/rongshang-product-03.png",
+      "bytes": 219838,
+      "sha256": "8ab415e0215e3ea646a19e5067d83e39d082f7554d0c42c65539f3fdff09dcfa"
+    },
+    {
+      "path": "media/tenants/local_tenant_customer_aurelia_beauty/rongshang-product-04.png",
+      "bytes": 275930,
+      "sha256": "4d3217745ef540d8f79694f81b686d97d8494867d97fb0474705bd2d2170a4e3"
+    },
+    {
+      "path": "media/tenants/local_tenant_customer_aurelia_beauty/rongshang-product-05.png",
+      "bytes": 171058,
+      "sha256": "2ef7afc188b88381b68aee25c2210a78a7f7c4652ea66a37319ff568ddb71789"
+    },
+    {
+      "path": "media/tenants/local_tenant_customer_aurelia_beauty/rongshang-product-06.png",
+      "bytes": 160940,
+      "sha256": "4a0af2d6b9201161d80b3a96c5900256fd7fa0cf85df997f8ed65eeef0dae2c0"
+    },
+    {
+      "path": "media/tenants/local_tenant_customer_aurelia_beauty/rongshang-product-07.png",
+      "bytes": 239251,
+      "sha256": "624719b3b216538fbb7797d6562be0a95439781490e3494d87c91787f4490f38"
+    },
+    {
+      "path": "media/tenants/local_tenant_customer_aurelia_beauty/rongshang-product-08.png",
+      "bytes": 176920,
+      "sha256": "646b3005c4211eb742a07ce10071acc3973b4f0d751dbcd98f676da3646fa508"
+    },
+    {
+      "path": "media/tenants/local_tenant_customer_aurelia_beauty/rongshang-product-09.png",
+      "bytes": 198053,
+      "sha256": "0455a113ceabbc3fc386590443b8c49b916ff6c66b0479eea1bbf8cea8296a3f"
+    },
+    {
+      "path": "media/tenants/local_tenant_customer_aurelia_beauty/rongshang-product-10.png",
+      "bytes": 202719,
+      "sha256": "97df161fe8e8ba951e627c37c6c83d109d5e78af2a64d555d6a37bd3e01e075e"
+    },
+    {
+      "path": "media/tenants/local_tenant_customer_aurelia_beauty/rongshang-product-11.png",
+      "bytes": 209362,
+      "sha256": "c98e5e1b361b83ba6cbdf3ffafc2e7e51e947ef44f573febcc3ff7ba54dc63eb"
+    },
+    {
+      "path": "media/tenants/local_tenant_customer_aurelia_beauty/rongshang-product-12.png",
+      "bytes": 195423,
+      "sha256": "d9cbe65521d2db35eca7771ff9677c5e64c1dd042877f41e01645c02fa42d48e"
+    },
+    {
+      "path": "media/tenants/local_tenant_customer_aurelia_beauty/rongshang-product-13.png",
+      "bytes": 254990,
+      "sha256": "9cfb14bd356553dd21e1de86fcb1e69810d40009cb982fa656e6360d624c4434"
+    },
+    {
+      "path": "media/tenants/local_tenant_customer_aurelia_beauty/rongshang-product-14.png",
+      "bytes": 197236,
+      "sha256": "0b3e4d539b9370009827bcfec64a03b61b8802a5ee9d7b0b719a47c2c4ccfc2c"
+    },
+    {
+      "path": "media/tenants/local_tenant_customer_aurelia_beauty/rongshang-product-15.png",
+      "bytes": 222874,
+      "sha256": "a4218d9a28e4570c43905ade906b05051e2fb090854dc6dd42082d0b0f88726c"
+    },
+    {
+      "path": "media/tenants/local_tenant_customer_aurelia_beauty/rongshang-product-16.png",
+      "bytes": 175897,
+      "sha256": "96fac48a057d54a4f93ac2ca84bfc55f9bdfe5677024cf8270cdd25834fbe79b"
+    },
+    {
+      "path": "media/tenants/local_tenant_customer_aurelia_beauty/rongshang-product-17.png",
+      "bytes": 62407,
+      "sha256": "c36bbf7bfe54630b2e9a07a6538623ecc388bdd4540408fb68b91814988704d6"
+    },
+    {
+      "path": "media/tenants/local_tenant_customer_aurelia_beauty/rongshang-product-18.png",
+      "bytes": 49080,
+      "sha256": "63bd37eabcc6d650f5ec9e61dd7d6ff23e6a713e981de28165b32580b9e7d283"
+    },
+    {
+      "path": "media/tenants/local_tenant_customer_aurelia_beauty/rongshang-product-19.png",
+      "bytes": 193190,
+      "sha256": "dd4ec10a48e824ef338d7dd72fb92306004d37cb4abf1af9a1c2ca80b5e6b231"
+    },
+    {
+      "path": "media/tenants/local_tenant_customer_aurelia_beauty/rongshang-product-20.png",
+      "bytes": 186007,
+      "sha256": "013b801bb1d0718c4c9491cc511200f9d0e1fc6354a7e090fb162fe9fa4f3cf5"
+    },
+    {
+      "path": "media/tenants/local_tenant_customer_aurelia_beauty/rongshang-product-21.png",
+      "bytes": 148463,
+      "sha256": "be51fba7f0cccfdec99dbd6e803bd098ccf8ab1b60a9b7df8aea9ff41602b1e4"
+    },
+    {
+      "path": "media/tenants/local_tenant_customer_aurelia_beauty/rongshang-product-22.png",
+      "bytes": 203571,
+      "sha256": "35293fa0b636b8ba0c8bb769fe1f5339baef3b0f85862229f1d307340bad713b"
+    },
+    {
+      "path": "media/tenants/local_tenant_customer_aurelia_beauty/rongshang-product-23.png",
+      "bytes": 201495,
+      "sha256": "5aa92e82fc88985a87075780a0747d811535694e35f2ef4026be4fd0688a7448"
+    },
+    {
+      "path": "media/tenants/local_tenant_customer_aurelia_beauty/rongshang-product-24.png",
+      "bytes": 252462,
+      "sha256": "ba1635c56b5f07f0f4f463cdc18b347780febb5f12f9b717bc8a12f2c268eb67"
+    },
+    {
+      "path": "media/tenants/local_tenant_customer_aurelia_beauty/rongshang-product-25.png",
+      "bytes": 188514,
+      "sha256": "8a9c7db2ca18cd8bfe965dd1bdbcf4c81686b9939def3ee1d690f9a0058eb801"
+    },
+    {
+      "path": "media/tenants/local_tenant_customer_aurelia_beauty/rongshang-product-26.png",
+      "bytes": 210263,
+      "sha256": "1fb0437fcad6b55692073945ad0c4f06560e0aa78f26c90b8081e67ac73b2798"
+    },
+    {
+      "path": "media/tenants/local_tenant_customer_aurelia_beauty/rongshang-product-27.png",
+      "bytes": 400270,
+      "sha256": "0a2e487d2c5c90cb12463bc66645088d5ecec57f4dc9ff5ac3dfc925af2564ea"
+    },
+    {
+      "path": "media/tenants/local_tenant_customer_aurelia_beauty/rongshang-product-28.png",
+      "bytes": 221423,
+      "sha256": "c640c73824745cd65a5026376e15322da8db731307da26c4ba58ee76853bd759"
+    },
+    {
+      "path": "media/tenants/local_tenant_customer_aurelia_beauty/rongshang-product-29.png",
+      "bytes": 61002,
+      "sha256": "45849d27aafa8b9d51ecee26224aac70cbf2b42eda637fb4ebea023a80d8665d"
+    },
+    {
+      "path": "media/tenants/local_tenant_customer_aurelia_beauty/rongshang-product-30.png",
+      "bytes": 46243,
+      "sha256": "19bfb2bc0876e9c52bc5cf635a0c3c5cd1759412d74cd0cb096e540be9ee24f0"
+    },
+    {
+      "path": "media/tenants/local_tenant_customer_aurelia_beauty/rongshang-product-31.png",
+      "bytes": 164975,
+      "sha256": "ea2b4c47e3f993193811de2b224839656fb8227c8ba40204f5370d1ca9994660"
+    },
+    {
+      "path": "media/tenants/local_tenant_customer_aurelia_beauty/rongshang-product-32.png",
+      "bytes": 164093,
+      "sha256": "10c8ac994bd9188b9abcda5d4ca1828ca24109c4aceeed23224874fadefcc489"
+    },
+    {
+      "path": "media/tenants/local_tenant_customer_aurelia_beauty/rongshang-product-33.png",
+      "bytes": 31640,
+      "sha256": "70dcf08a084511aab4c195e20ee35422cff80be565a458be5ddc60bad170b278"
+    },
+    {
+      "path": "media/tenants/local_tenant_customer_aurelia_beauty/rongshang-product-34.png",
+      "bytes": 39673,
+      "sha256": "dfa0f31df74641547454faeb898c075c1a70404a2fd1df8c11191b28c1cbb77a"
+    },
+    {
+      "path": "media/tenants/local_tenant_customer_aurelia_beauty/rongshang-product-35.png",
+      "bytes": 155496,
+      "sha256": "9af9556ef56562b6a28cfe9992c27c0bf8b2f93d826ae3060a1501dc9e23a2a0"
+    },
+    {
+      "path": "media/tenants/local_tenant_customer_aurelia_beauty/rongshang-product-36.png",
+      "bytes": 143761,
+      "sha256": "f578677f76b7570059ecf4ad2bc801bd59d9840df611d3926d6af8004c2601ba"
+    },
+    {
+      "path": "media/tenants/local_tenant_customer_aurelia_beauty/rongshang-product-37.png",
+      "bytes": 316898,
+      "sha256": "3d52ccdf50bc7144b4d3ba3375ad8ac2c65d8e9300f01b28b91160845326f973"
+    },
+    {
+      "path": "media/tenants/local_tenant_customer_aurelia_beauty/rongshang-product-39.png",
+      "bytes": 72084,
+      "sha256": "5f806806daf5eb9052c147ade3aec5e596d5a2176aed4d06d779ee095d41c80a"
+    },
+    {
+      "path": "media/tenants/local_tenant_customer_aurelia_beauty/rongshang-product-40.png",
+      "bytes": 94674,
+      "sha256": "4ed4a0875d266fb6583a1b2c19b235b3178a3d5d9cb4ff4c7324e3b6df5ae7c3"
+    },
+    {
+      "path": "media/tenants/local_tenant_customer_aurelia_beauty/rongshang-product-41.png",
+      "bytes": 119314,
+      "sha256": "683f80512ab480e0bbd6c2c947bb2626e61c915fed6969e2a4694a7c2308a87a"
+    },
+    {
+      "path": "media/tenants/local_tenant_customer_aurelia_beauty/tiktok-reference-1.jpg",
+      "bytes": 98134,
+      "sha256": "ac0c352d43edf08129e51f230be7d07f0021c6bb0e2666b1a6ca69f12746884f"
+    },
+    {
+      "path": "media/tenants/local_tenant_customer_aurelia_beauty/tiktok-reference-1.mp4",
+      "bytes": 1262411,
+      "sha256": "1dfaf308e98acd82e088da1fb7c2983fa6a1d6753f9d00d2399dc45f1bd82a42"
+    },
+    {
+      "path": "media/tenants/local_tenant_customer_aurelia_beauty/tiktok-reference-2.jpg",
+      "bytes": 111039,
+      "sha256": "f0f5f9173dc710461be8b5f575f014914aa1be96cf905ba6beac92058735ed50"
+    },
+    {
+      "path": "media/tenants/local_tenant_customer_aurelia_beauty/tiktok-reference-2.mp4",
+      "bytes": 999001,
+      "sha256": "2f09721ad3980d37717899cb00d5091dd4b8ddbb11d8bfd8973ab2c8abdbecc1"
+    },
+    {
+      "path": "media/tenants/local_tenant_customer_aurelia_beauty/tiktok-reference-3.jpg",
+      "bytes": 157704,
+      "sha256": "73b65402b004f010c15e02e4d47205e678f0dc43f1e3f7e54308fb0e778e7344"
+    },
+    {
+      "path": "media/tenants/local_tenant_customer_aurelia_beauty/tiktok-reference-3.mp4",
+      "bytes": 4602740,
+      "sha256": "5366ca8243685b5ca74bc4de09631b12768fcedd7f5344181e3d049536315f79"
+    },
+    {
+      "path": "media/tenants/local_tenant_customer_aurelia_beauty/tiktok-reference-4.jpg",
+      "bytes": 313460,
+      "sha256": "e034339616517a78f1556f544ffa71a60d3218ca760d06850d375b4509600f29"
+    },
+    {
+      "path": "media/tenants/local_tenant_customer_aurelia_beauty/tiktok-reference-4.mp4",
+      "bytes": 13503097,
+      "sha256": "db9af2594d21c84e9a4d5b908c6a5c905588620e64373dbe762dba43936c2516"
+    },
+    {
+      "path": "media/tenants/local_tenant_customer_aurelia_beauty/tiktok-reference-5.jpg",
+      "bytes": 130631,
+      "sha256": "7e987ae46ace1ec11614be9a3b52158607886df00fd02ba2c2d19cd0e1c10c4f"
+    },
+    {
+      "path": "media/tenants/local_tenant_customer_aurelia_beauty/tiktok-reference-5.mp4",
+      "bytes": 350259,
+      "sha256": "4e706fbde2e8cc78d21cae1cf42014c4e60790af8bb742adb8c09c763eb4ee13"
+    },
+    {
+      "path": "product-catalog.json",
+      "bytes": 34648,
+      "sha256": "afb21fd9805f4f4c32b5206362ec953a7b7f0cd0ac462cd957a1b8d5c4080954"
+    }
+  ]
+}

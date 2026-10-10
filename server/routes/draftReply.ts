@@ -24,6 +24,7 @@ import {
   buildReplyCandidatesPrompt,
   buildReplyPlanPrompt,
   fallbackReplyPlan,
+  latestQuestionFocus,
   parseReplyCandidates,
   parseReplyPlan,
   rankReplyCandidates,
@@ -36,6 +37,7 @@ import { buildStyleMemoryPromptBlock, observeStyleMemoryOutcomes, retrieveStyleM
 import { buildCustomerMemoryPromptBlock, retrieveCustomerMemories } from '../knowledge/customerMemory.js';
 import { recordMemoryAudit, touchStrategyUsage } from '../knowledge/memoryAudit.js';
 import { matchSalesActions, shouldEscalateSalesAction } from '../sales/actionLibrary.js';
+import { evaluateHandoff } from '../sales/handoff.js';
 import { buildHandoffSummary } from '../agents/handoffSummary.js';
 import { faithfullyPolishSellerDraft } from '../agents/polishDraft.js';
 import { fastProductInquiryReply, isFastProductInquiry } from '../agents/fastProductInquiry.js';
@@ -47,6 +49,8 @@ import {
 } from '../knowledge/strategyRetrieve.js';
 import { customerServicePolicy, readTenantEnterpriseProfile, type BizRules, type SalesStyleProfile } from './enterprise.js';
 import { requireAuth, type AuthLocals } from '../middleware/auth.js';
+import { knowledgeGapCustomerServiceDecision } from '../customerService/decision.js';
+import { directConversationPayload } from '../customerService/directConversationPayload.js';
 
 export const draftReplyRouter = Router();
 draftReplyRouter.use(requireAuth);
@@ -148,6 +152,7 @@ function knowledgeGapPayload(
   const messages = splitMobileChatMessages(plan.draft);
   const translatedMessages = splitMobileChatMessages(plan.draftZh);
   return {
+    enterpriseFactVersion: context.enterpriseFactVersion,
     draft: messages.join('\n\n'),
     messages,
     translatedDraft: translatedMessages.join('\n\n'),
@@ -189,21 +194,11 @@ function knowledgeGapPayload(
           : '未回答无依据事实；先用自然追问澄清，不制造人工已接管的假象',
       ],
     },
-  };
-}
-
-function directConversationPayload(pair: { draft: string; draftZh: string }, category: string) {
-  const messages = splitMobileChatMessages(pair.draft);
-  const translatedMessages = splitMobileChatMessages(pair.draftZh);
-  return {
-    draft: messages.join('\n\n'),
-    messages,
-    translatedDraft: translatedMessages.join('\n\n'),
-    translatedMessages,
-    handoffRequired: false,
-    knowledgeMiss: false,
-    category,
-    verification: { status: 'verified', issues: [] },
+    decision: knowledgeGapCustomerServiceDecision({
+      handoffRequired, handlingReason: plan.handlingReason, safeBridgeAllowed: plan.safeToSendBeforeHandoff,
+      knowledgeReady: context.knowledgeReady, fallbackCount, strategyIds: strategies.map(match => match.strategy.id),
+      blockingIssues, evidence: context.evidence,
+    }),
   };
 }
 
@@ -213,7 +208,10 @@ draftReplyRouter.post('/conversion/draft', async (req, res) => {
   const timeline = Array.isArray(body.timeline) ? body.timeline.slice(-20) : [];
   const intent = normalizeIntent(body.intent || body.mode);
   const enterpriseProfile = await readTenantEnterpriseProfile(tenantId);
-  if (!customerServicePolicy(enterpriseProfile).enabled) {
+  if (enterpriseProfile.factVersion?.id) res.setHeader('X-Enterprise-Fact-Version', enterpriseProfile.factVersion.id);
+  const customerServiceEnabled = customerServicePolicy(enterpriseProfile).enabled;
+  const manualRequest = body.manualRequest === true;
+  if (!customerServiceEnabled && !manualRequest) {
     res.status(409).json({
       error: 'customer_service_disabled',
       message: '智能客服尚未开启。开启后，AI 只生成建议回复并等待你确认。',
@@ -316,7 +314,7 @@ draftReplyRouter.post('/conversion/draft', async (req, res) => {
     stage: String(body.stage ?? ''),
     product: String(body.product ?? ''),
     internalProduct: String(body.internalProduct ?? ''),
-  }, latestMessage, { conversation });
+  }, latestMessage, { conversation, enterpriseProfile });
   const gapPlan = resolveKnowledgeGapPlan({ message: latestMessage, language, timeline });
   const enterpriseEvidenceSource = JSON.stringify({
     company: context.companyIntro,
@@ -338,7 +336,18 @@ draftReplyRouter.post('/conversion/draft', async (req, res) => {
   };
   const matchedSalesActions = matchSalesActions(salesActionInput);
   const forcedHandoffActions = matchedSalesActions.filter(action => shouldEscalateSalesAction(action, latestMessage));
-  const forceHandoff = forcedHandoffActions.length > 0;
+  const buyerConversation = timeline
+    .filter((event: any) => String(event?.actor || '').toLowerCase() === 'buyer' || String(event?.type || '').includes('msg_in'))
+    .map((event: any) => String(event?.body || ''))
+    .filter(Boolean)
+    .join('\n');
+  const opportunityHandoff = evaluateHandoff({
+    message: buyerConversation || latestMessage,
+    bantTotal: Number(body.bant?.total ?? body.bant?.rawTotal ?? 0),
+    salesActions: matchedSalesActions,
+  });
+  const highValueHandoff = opportunityHandoff.lines.includes('business_value');
+  const forceHandoff = forcedHandoffActions.length > 0 || highValueHandoff;
   const productDiscoveryNames = groundedProductNames(
     context.products.map(product => product.name).filter(Boolean),
     body.product,
@@ -348,6 +357,7 @@ draftReplyRouter.post('/conversion/draft', async (req, res) => {
     const buyerLanguageNames = await translateProductNamesForBuyer(sourceNames, language);
     const pair = groundedProductDiscoveryReply(buyerLanguageNames, language, sourceNames);
     res.json({
+      enterpriseFactVersion: context.enterpriseFactVersion,
       ...directConversationPayload(pair, '产品咨询'),
       evidence: [...context.evidence, '产品浏览回复仅使用产品表或当前客户已绑定的真实产品名称'],
       products: context.products,
@@ -361,6 +371,7 @@ draftReplyRouter.post('/conversion/draft', async (req, res) => {
     const messages = splitMobileChatMessages(clarification.draft);
     const translatedMessages = splitMobileChatMessages(clarification.draftZh);
     res.json({
+      enterpriseFactVersion: context.enterpriseFactVersion,
       draft: messages.join('\n\n'),
       messages,
       translatedDraft: translatedMessages.join('\n\n'),
@@ -380,7 +391,10 @@ draftReplyRouter.post('/conversion/draft', async (req, res) => {
   const knowledgeGapHandoffRequired = knowledgeGapActive
     ? forceHandoff || !clarifyBeforeHandoff || Number(nextFallbackCount) >= 2
     : false;
-  const actionIssues = forcedHandoffActions.map(action => `销售动作 ${action.id} 要求人工接管：${action.scenario}`);
+  const actionIssues = [
+    ...forcedHandoffActions.map(action => `销售动作 ${action.id} 要求人工接管：${action.scenario}`),
+    ...(highValueHandoff ? opportunityHandoff.reasons.map(reason => `高价值商机要求人工接管：${reason}`) : []),
+  ];
   const strategies = await retrieveResponseStrategies(tenantId, {
     latestMessage,
     conversation,
@@ -420,7 +434,10 @@ draftReplyRouter.post('/conversion/draft', async (req, res) => {
   const enterpriseKnowledge = buildKnowledgePromptBlock(context);
   const dialogueStrategy = [buildStrategyPromptBlock(strategies), followUpGuidance].filter(Boolean).join('\n');
   const sellerStyle = [buildCustomerMemoryPromptBlock(customerMemories), buildSalesStyleProfilePromptBlock(salesStyleProfile), buildStyleMemoryPromptBlock(styleMemories)].filter(Boolean).join('\n');
-  const preferredGoal = followUpGuidance
+  const latestMessageIsQuestion = /[?？]|\b(?:what|which|why|how|can|could|do|does|did|is|are|will|would|when|where)\b|什么|哪些|怎么|为什么|是否|能否|吗(?:\s|$)/i.test(latestMessage);
+  const preferredGoal = latestMessageIsQuestion
+    ? `先正面回应客户刚问的“${latestMessage.slice(0, 220)}”。能根据已核实资料回答就直接回答；资料不足就自然说明需要核实哪一点。只有完成这一步后，才可顺带推进一个最自然的下一步。`
+    : followUpGuidance
     || strategies[0]?.strategy.goal
     || strategies[0]?.strategy.intent
     || (knowledgeGapActive ? gapPlan.handlingReason : '直接回应客户并推进一个最自然的下一步');
@@ -476,6 +493,7 @@ draftReplyRouter.post('/conversion/draft', async (req, res) => {
       language,
       intentInstruction: [
         intentInstruction(intent),
+        latestMessageIsQuestion ? '客户本轮提出了明确问题：第一句必须正面承接这个问题。SPIN、BANT 和策略推进只能放在回答之后，不能用另一个资格问题替代答案。' : '',
         conversationToneGuidance(timeline, latestMessage),
         publicInfoOnly ? '只使用已验证的公开企业事实，不透露价格、产能、地址或其他客户信息。' : '',
         suppressPrice ? '不要给出或承诺任何价格。' : '',
@@ -499,6 +517,10 @@ draftReplyRouter.post('/conversion/draft', async (req, res) => {
     const candidateIssues: string[] = [...actionIssues];
     for (const ranked of rankedCandidates.slice(0, 4)) {
       const candidateDraft = normalizeMobileChatFormatting(ranked.text);
+      if (latestMessageIsQuestion && !latestQuestionFocus(candidateDraft, latestMessage).addressed) {
+        candidateIssues.push('候选回复没有正面承接客户本轮问题');
+        continue;
+      }
       const deliveryPlan = planMobileChatMessages(candidateDraft);
       const deterministicIssues = unsupportedHighRiskClaims(candidateDraft, enterpriseEvidenceSource);
       if (deliveryPlan.truncated || deterministicIssues.length || hasInternalPromptLeak(candidateDraft)) {
@@ -525,6 +547,10 @@ draftReplyRouter.post('/conversion/draft', async (req, res) => {
         continue;
       }
       const safeDraft = sanitizeDraft(normalizeMobileChatFormatting(verification.draft), body, intent, suppressPrice, hardNoPriceDigits);
+      if (latestMessageIsQuestion && !latestQuestionFocus(safeDraft, latestMessage).addressed) {
+        candidateIssues.push('事实校验后的回复偏离客户本轮问题');
+        continue;
+      }
       const verifiedBlockingIssues = unsupportedHighRiskClaims(safeDraft, enterpriseEvidenceSource);
       if (verifiedBlockingIssues.length || hasInternalPromptLeak(safeDraft) || planMobileChatMessages(safeDraft).truncated) {
         candidateIssues.push(
@@ -579,7 +605,7 @@ draftReplyRouter.post('/conversion/draft', async (req, res) => {
       memoryIds: [...styleMemories.map(item => item.id), ...customerMemories.map(item => item.id)],
       strategyIds: strategies.map(item => item.strategy.id),
       modelVersion: process.env.REPLY_MODEL || process.env.QWEN_TEXT_MODEL || 'qwen-plus',
-      knowledgeVersion: String(body.knowledgeVersion || ''),
+      knowledgeVersion: context.enterpriseFactVersion || '',
       metadata: {
         intent,
         handlingMode: knowledgeGapHandoffRequired ? 'human_needed' : 'ai_draft',
@@ -590,6 +616,7 @@ draftReplyRouter.post('/conversion/draft', async (req, res) => {
     });
     await touchStrategyUsage(tenantId, strategies.map(item => item.strategy.id));
     res.json({
+      enterpriseFactVersion: context.enterpriseFactVersion,
       draft: responseDraft,
       messages,
       translatedDraft,
@@ -630,7 +657,13 @@ draftReplyRouter.post('/conversion/draft', async (req, res) => {
       : knowledgeGapActive ? gapPlan.draft : fallbackDraft(body, intent, suppressPrice);
     const sanitizedSafeDraft = sanitizeDraft(safeDraft, body, intent, suppressPrice, hardNoPriceDigits);
     const messages = intent === 'handoff_summary' ? [sanitizedSafeDraft] : splitMobileChatMessages(sanitizedSafeDraft);
-    const generatedTranslation = intent === 'handoff_summary' ? '' : await translateDraftToChinese(messages.join('\n\n'), language);
+    // The reply itself must remain available even when the translation provider is
+    // temporarily unreachable.  This catch block is the last safety net for the
+    // customer-service endpoint, so a secondary translation failure must never
+    // abort the HTTP response.
+    const generatedTranslation = intent === 'handoff_summary'
+      ? ''
+      : await translateDraftToChinese(messages.join('\n\n'), language).catch(() => '');
     const translatedDraft = generatedTranslation || (!usesGreetingFallback && knowledgeGapActive ? gapPlan.draftZh : '');
     await recordMemoryAudit({
       tenantId,
@@ -642,10 +675,12 @@ draftReplyRouter.post('/conversion/draft', async (req, res) => {
       memoryIds: [...styleMemories.map(item => item.id), ...customerMemories.map(item => item.id)],
       strategyIds: strategies.map(item => item.strategy.id),
       modelVersion: process.env.REPLY_MODEL || process.env.QWEN_TEXT_MODEL || 'qwen-plus',
+      knowledgeVersion: context.enterpriseFactVersion || '',
       metadata: { intent, handlingMode: knowledgeGapHandoffRequired ? 'human_needed' : 'safe_fallback', progressionGoal: preferredGoal, error: error instanceof Error ? error.message : String(error) },
     });
     await touchStrategyUsage(tenantId, strategies.map(item => item.strategy.id));
     res.json({
+      enterpriseFactVersion: context.enterpriseFactVersion,
       draft: messages.join('\n\n'),
       messages,
       translatedDraft,

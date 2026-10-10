@@ -1,32 +1,253 @@
+import InspirationVideoAnalysisTabs from './inspiration/InspirationVideoAnalysisTabs';
+import VideoAnalysisProgressPanel, { analysisProgressIsActive } from './inspiration/VideoAnalysisProgressPanel';
+import { Alert, Button, Drawer, Input, Modal, Pagination, Segmented, Select, Tabs, Upload as AntUpload } from 'antd';
+import LsPageHeader from './ui/LsPageHeader';
+import { LsLoadingState, LsMasonryGallery, LsProgressiveMedia } from './ui/LsExperiencePrimitives';
+import { canExplicitlySubmitReferenceAsr, referenceAsrAvailabilityLabel, canRefreshExistingReferenceAsr, existingReferenceAsrRefreshBody } from '../lib/referenceAsrSubmission';
+import { hasExactReferenceReview, parseExactReferenceReview, loadExactReferenceReview, exactReferenceReviewErrorMessage } from '../lib/exactReferenceReview';
+import BenchmarkAnalysisSections from './inspiration/BenchmarkAnalysisSections';
+import ReferenceSpeechAlignmentPanel from './inspiration/ReferenceSpeechAlignmentPanel';
+import { buildBenchmarkAnalysis } from '../../shared/benchmarkAnalysis';
+import MaterialLibraryStatus from './studio/MaterialLibraryStatus';
 import { useState, useEffect, useMemo, useRef } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
+import { lsMotion } from '../lib/designTokens';
+import { usePrefersReducedMotion } from '../lib/usePrefersReducedMotion';
 import {
   Search, Play, Sparkles, FileText, Layout as LayoutIcon,
   TrendingUp, Clock, Globe, ChevronDown, X, Loader2,
   Check, Copy, ArrowRight, Zap, LayoutGrid, List,
-  Lightbulb, Flame, BarChart2, ChevronRight, Film, Download, Plus,
-  Bookmark, Maximize2, Minimize2, Lock, Upload, Users, Images, Pencil, Trash2,
+  Lightbulb, Flame, BarChart2, ChevronRight, Film,
+  Bookmark, Maximize2, Minimize2, Lock, Upload, Users, Images, Pencil, Trash2, Music2,
+  SlidersHorizontal, Package, ScanFace, Star, Eye,
 } from 'lucide-react';
 import { studioApi, type Material, type MaterialSegment, type VideoGenerationVersion } from '../lib/studioApi';
-import { authHeader } from '../lib/auth';
+import type { MaterialLibraryFacets } from '../lib/studioDigitalHuman';
+import { authHeader, getToken, AUTH_TOKEN_CHANGED_EVENT } from '../lib/auth';
+import { readWeeklyReferenceReviewNavigation } from '../lib/weeklyReferenceReviewNavigationApi';
 import CompetitorAccountsModal from './CompetitorAccountsModal';
 import type { Page } from '../App';
 import { completeDemoStep, readDemoProgress } from '../lib/demoProgress';
 import { SocialPlatformIcon } from './SocialPlatformIcon';
 import { useDismissibleLayer } from '../hooks/useDismissibleLayer';
-import { readScriptGapTasks, updateScriptGapTask, SCRIPT_GAP_QUEUE_EVENT, type ScriptGapTask } from '../lib/scriptGapQueue';
+import { useModalFocus } from '../hooks/useModalFocus';
+import { updateScriptGapTask, type ScriptGapTask } from '../lib/scriptGapQueue';
+import { canProcessVideo, displayDuration, resultEmptyState, trendFromEvidence } from '../lib/inspirationDataQuality';
+export { canProcessVideo, displayDuration, resultEmptyState, trendFromEvidence } from '../lib/inspirationDataQuality';
+import { useScriptGapTasks } from '../hooks/useScriptGapTasks';
+import InspirationEmptyState from './InspirationEmptyState';
+import { scoreSocialInspirationCandidate } from '../../shared/socialInspirationStrategy';
+import { resumeOrCreateInspirationTask, soleInspirationCreationAccount } from '../lib/socialInspirationTask';
+import { useSocialProgram } from '../contexts/SocialProgramContext';
+import { VideoCard, VideoListItem } from './InspirationVideoCards';
+import { showActionFeedback, showActionSuccess } from '../lib/actionFeedback';
+import { resolveInspirationPlaybackUrl } from '../lib/inspirationVideoPlayback';
+import type { AccountSpecialRecommendation, ContentFormat, FirstTenSecondInsight, FrameMaterialMatch, GeminiVideoAnalysis, Platform, ScriptAnalysis, ScriptDetail15s, ScriptResultProvenance, ScriptSummary15s, ShootingNeed, StructureStep, TrendVideo, VideoAnalysisPayload } from '../lib/inspirationTypes';
+import { socialDiscoveryApi } from '../lib/socialDiscoveryApi';
+import { openScriptLibrary } from '../lib/contentActionNavigation';
+import type { SocialBusinessModel, SocialDiscoveryScoreDecision, SocialDiscoverySupplyItem } from '../../shared/contracts/socialContentWorkflow';
+import { MATERIAL_SOURCE_LABELS, MATERIAL_THEME_LABELS, materialPrimaryThemeOf, materialSourceCategoryOf, materialThemeTagsOf } from '../../shared/materialTaxonomy';
+import MaterialTaxonomyFilters, { type MaterialSourceFilter, type MaterialThemeFilter } from './material-library/MaterialTaxonomyFilters';
 
 // ── Types ─────────────────────────────────────────────────────────────────────
-type Platform = 'all' | 'tiktok' | 'instagram' | 'youtube' | 'facebook';
 type ScriptType = 'voiceover' | 'storyboard';
 type SortMode = 'heat' | 'crawlTime';
-type InspirationInnerView = 'inspiration' | 'library' | 'shooting';
-type ContentFormat = 'video' | 'image';
+type InspirationInnerView = 'inspiration' | 'accounts' | 'library' | 'shooting';
 type CrawlTimeRange = 'all' | 'today' | '7d' | '30d';
 type MaterialIndustryFilter = 'all' | 'beauty_skincare' | 'universal_manufacturing' | 'apparel_textile' | 'metalworking';
 type MaterialApplicabilityFilter = 'all' | 'universal' | 'cross_industry' | 'industry_specific';
 type MaterialOrientationFilter = 'all' | 'vertical' | 'horizontal';
-type MaterialSourceFilter = 'all' | 'local_upload' | 'seedance' | 'gemini' | 'official_import';
+type MaterialTypeFilter = 'all' | 'video' | 'image' | 'audio';
+type FavoriteFilter = 'all' | 'favorite';
+export type MaterialAssetTab = 'enterprise' | 'ai' | 'cloud';
+type DiscoveryDecisionFilter = 'all' | SocialDiscoveryScoreDecision;
+type BusinessModelFilter = 'all' | SocialBusinessModel;
+
+// The inspiration inventory is intentionally fetched in one tenant-scoped page.
+// A smaller page made the tab count look like missing content after client-side
+// quality checks removed non-video records from that page.
+const INSPIRATION_PAGE_SIZE = 100;
+const MATERIAL_LIBRARY_PAGE_SIZE = 20;
+
+const MATERIAL_PRODUCT_ALL = '__all_products__';
+const MATERIAL_PRODUCT_COMMON = '__enterprise_common__';
+const MATERIAL_PRODUCT_LINKED_REF = '__linked_product_ref__';
+const ENTERPRISE_COMMON_MATERIAL_TAG = 'enterprise_common';
+
+export type MaterialLibraryEntryContext = {
+  openLibrary: boolean;
+  productId: string;
+  productRef: string;
+};
+
+type InspirationReferenceTarget = {
+  referenceId: string;
+  sourceUrl: string;
+  title: string;
+  platform: string;
+  thumbnailUrl: string;
+  duration: number;
+  benchmarkAnalysis?: VideoAnalysisPayload['benchmarkAnalysis'];
+};
+
+function normalizedReferenceText(value: string) {
+  return value
+    .normalize('NFKC')
+    .toLowerCase()
+    .replace(/https?:\/\/\S+/g, '')
+    .replace(/[^\p{L}\p{N}]+/gu, ' ')
+    .trim();
+}
+
+function normalizedReferenceUrl(value: string) {
+  try {
+    const url = new URL(value);
+    return `${url.hostname.replace(/^www\./, '')}${url.pathname}`.replace(/\/$/, '').toLowerCase();
+  } catch {
+    return value.trim().replace(/^https?:\/\/(?:www\.)?/i, '').replace(/[?#].*$/, '').replace(/\/$/, '').toLowerCase();
+  }
+}
+
+function videoMatchesReference(video: TrendVideo, target: InspirationReferenceTarget) {
+  const normalizedId = target.referenceId.replace(/^crawl-/, '');
+  const targetUrl = normalizedReferenceUrl(target.sourceUrl);
+  const videoUrl = normalizedReferenceUrl(video.sourceUrl || '');
+  const targetTitle = normalizedReferenceText(target.title);
+  const videoTitle = normalizedReferenceText(video.title);
+  return video.id === target.referenceId
+    || video.recordId === normalizedId
+    || Boolean(targetUrl && videoUrl && targetUrl === videoUrl)
+    || Boolean(targetTitle && videoTitle && (targetTitle === videoTitle || targetTitle.includes(videoTitle) || videoTitle.includes(targetTitle)));
+}
+
+function parseInspirationReferenceTarget(input: unknown): InspirationReferenceTarget | null {
+  if (!input || typeof input !== 'object') return null;
+  const detail = input as Record<string, unknown>;
+  if (hasExactReferenceReview(detail)) return null;
+  const reference = detail.inspirationReference && typeof detail.inspirationReference === 'object'
+    ? detail.inspirationReference as Record<string, unknown>
+    : {};
+  const businessRef = detail.businessRef && typeof detail.businessRef === 'object'
+    ? detail.businessRef as Record<string, unknown>
+    : {};
+  const referenceId = String(reference.referenceId || businessRef.referenceId || '').trim();
+  const sourceUrl = String(reference.sourceUrl || '').trim();
+  const title = String(reference.title || '').trim();
+  const platform = String(reference.platform || '').trim().toLowerCase();
+  const thumbnailUrl = String(reference.thumbnailUrl || '').trim();
+  const duration = Math.max(0, Number(reference.duration || 0));
+  const benchmarkAnalysis = reference.benchmarkAnalysis && typeof reference.benchmarkAnalysis === 'object'
+    ? reference.benchmarkAnalysis as VideoAnalysisPayload['benchmarkAnalysis']
+    : undefined;
+  return referenceId || sourceUrl || title
+    ? { referenceId, sourceUrl, title, platform, thumbnailUrl, duration, benchmarkAnalysis }
+    : null;
+}
+
+function initialInspirationReferenceTarget(): InspirationReferenceTarget | null {
+  if (typeof window === 'undefined') return null;
+  return parseInspirationReferenceTarget(window.history.state?.productionDetail);
+}
+
+export function parseMaterialLibraryEntry(search: string): MaterialLibraryEntryContext {
+  const params = new URLSearchParams(search);
+  return {
+    openLibrary: params.get('view') === 'library',
+    productId: String(params.get('productId') || '').trim(),
+    productRef: String(params.get('productRef') || '').trim(),
+  };
+}
+
+function initialMaterialLibraryEntry(): MaterialLibraryEntryContext {
+  return typeof window === 'undefined'
+    ? { openLibrary: false, productId: '', productRef: '' }
+    : parseMaterialLibraryEntry(window.location.search);
+}
+
+function initialMaterialTaxonomyFilters(): { source: MaterialSourceFilter; theme: MaterialThemeFilter } {
+  if (typeof window === 'undefined') return { source: 'all', theme: 'all' };
+  const params = new URLSearchParams(window.location.search);
+  const source = params.get('source') || 'all';
+  const theme = params.get('theme') || 'all';
+  return {
+    source: source === 'all' || Object.hasOwn(MATERIAL_SOURCE_LABELS, source) ? source as MaterialSourceFilter : 'all',
+    theme: theme === 'all' || Object.hasOwn(MATERIAL_THEME_LABELS, theme) ? theme as MaterialThemeFilter : 'all',
+  };
+}
+
+export function isEnterpriseCommonMaterial(material: Pick<Material, 'tags'>): boolean {
+  return String(material.tags || '').split(/[,，]/).map(tag => tag.trim()).includes(ENTERPRISE_COMMON_MATERIAL_TAG);
+}
+
+export function materialOwnershipTags(tags: string | undefined, productId: string): string {
+  const values = String(tags || '').split(/[,，]/).map(tag => tag.trim()).filter(Boolean)
+    .filter(tag => tag !== ENTERPRISE_COMMON_MATERIAL_TAG);
+  if (!productId) values.push(ENTERPRISE_COMMON_MATERIAL_TAG);
+  return Array.from(new Set(values)).join(', ');
+}
+
+export function visibleMaterialTags(tags: string | undefined): string {
+  return String(tags || '').split(/[,，]/).map(tag => tag.trim()).filter(Boolean)
+    .filter(tag => tag !== ENTERPRISE_COMMON_MATERIAL_TAG).join(', ');
+}
+
+export function resolveLinkedFavoriteMaterialId(
+  video: Pick<TrendVideo, 'sourceUrl' | 'aiAnalysis'>,
+  materials: Array<Pick<Material, 'id' | 'sourceUrl'>>,
+): string {
+  const analyzedMaterialId = String(video.aiAnalysis?.materialId || '').trim();
+  const linkedById = analyzedMaterialId && materials.find(material => material.id === analyzedMaterialId);
+  if (linkedById) return linkedById.id;
+  const sourceUrl = String(video.sourceUrl || '').trim();
+  return sourceUrl
+    ? materials.find(material => String(material.sourceUrl || '').trim() === sourceUrl)?.id || ''
+    : '';
+}
+
+type MaterialSemanticSource = Pick<Material, 'productName' | 'tags' | 'visualObservations' | 'scriptAnalysis'>;
+
+const HIDDEN_MATERIAL_KEYWORDS = new Set([
+  'vertical', 'horizontal', '9:16', '16:9', 'image', 'video', 'audio',
+  'hook', 'proof', 'support', 'transition', 'closing', 'explanation', 'demonstration',
+  'local_upload', 'official_import', 'licensed_stock', 'seedance', 'gemini',
+]);
+
+function compactMaterialKeyword(value: unknown): string {
+  const normalized = String(value || '').trim().replace(/[_-]+/g, ' ').replace(/\s+/g, ' ');
+  if (!normalized || HIDDEN_MATERIAL_KEYWORDS.has(normalized.toLowerCase())) return '';
+  return normalized.replace(/[。；;，,].*$/, '').slice(0, 24).trim();
+}
+
+/** One user-facing semantic line for a My Materials card; never exposes IDs or analysis state. */
+export function materialSemanticLabel(material: MaterialSemanticSource): string {
+  const productName = String(material.productName || '').trim();
+  if (productName) return `产品：${productName}`;
+
+  const manualKeywords = visibleMaterialTags(material.tags).split(/[,，]/)
+    .map(compactMaterialKeyword).filter(Boolean);
+  const analysis = material.scriptAnalysis;
+  const analyzedKeywords = [
+    ...(analysis?.directorIndex?.subjects || []),
+    ...(analysis?.directorIndex?.actions || []),
+    ...(analysis?.directorIndex?.environments || []),
+    ...(material.visualObservations || []),
+  ].map(compactMaterialKeyword).filter(Boolean);
+  const keywords = [...new Set(manualKeywords.length ? manualKeywords : analyzedKeywords)].slice(0, 3);
+  return keywords.length ? `内容：${keywords.join(' · ')}` : '内容：待补充说明';
+}
+
+export function materialMatchesProductFilter(
+  material: Pick<Material, 'productId' | 'productName' | 'tags'>,
+  filter: { enabled: boolean; productId: string; productRef: string },
+): boolean {
+  if (!filter.enabled) return true;
+  if (filter.productId) {
+    return material.productId === filter.productId
+      || (!material.productId && Boolean(filter.productRef) && material.productName === filter.productRef);
+  }
+  if (filter.productRef) return material.productName === filter.productRef;
+  return !material.productId && isEnterpriseCommonMaterial(material);
+}
 
 const MATERIAL_INDUSTRY_LABELS: Record<string, string> = {
   all: '全部行业', beauty_skincare: '美妆护肤', universal_manufacturing: '通用制造',
@@ -42,17 +263,23 @@ const MATERIAL_FUNCTION_LABELS: Record<string, string> = {
 const MATERIAL_APPLICABILITY_LABELS: Record<string, string> = {
   all: '全部适用范围', universal: '通用素材', cross_industry: '跨行业素材', industry_specific: '行业专属',
 };
-const MATERIAL_SOURCE_LABELS: Record<MaterialSourceFilter, string> = {
-  all: '全部来源', local_upload: '本地上传', seedance: 'Seedance 生成',
-  gemini: 'Gemini 生成', official_import: '官方爆款导入',
-};
-
-function materialSourceOf(material: Material): Exclude<MaterialSourceFilter, 'all'> {
+/** Product-facing ownership groups. Upload entry only affects traceability, never ownership. */
+export function materialAssetTabOf(material: Pick<Material, 'sourceType' | 'folder' | 'scope'>): MaterialAssetTab {
   const source = String(material.sourceType || '').toLowerCase();
-  if (source.includes('seedance')) return 'seedance';
-  if (source.includes('gemini')) return 'gemini';
-  if (source.includes('official') || source.includes('viral') || material.folder === 'hot' || material.scope === 'shared') return 'official_import';
-  return 'local_upload';
+  if (material.scope === 'shared' || material.folder === 'hot' || /official|viral|licensed[-_ ]?stock|cloud/.test(source)) return 'cloud';
+  if (/seedance|seedream|gemini|qwen|ai[-_ ]?generated|aigc/.test(source)) return 'ai';
+  return 'enterprise';
+}
+
+export function materialAssetBadge(material: Pick<Material, 'sourceType' | 'folder' | 'scope'>): { label: string; className: string } {
+  const category = materialSourceCategoryOf(material);
+  if (category === 'official_import') return { label: '官方导入', className: 'bg-orange-50 text-orange-700' };
+  if (category === 'user_generated') return { label: '用户生成', className: 'bg-violet-50 text-violet-700' };
+  return { label: '本地上传', className: 'bg-sky-50 text-sky-700' };
+}
+
+function isFavoriteMaterial(material: Material): boolean {
+  return material.pinned === true;
 }
 
 const isDemoTrafficStep = () => {
@@ -60,211 +287,6 @@ const isDemoTrafficStep = () => {
   return Boolean(progress.strategy && !progress.traffic);
 };
 
-interface TrendVideo {
-  id: string;
-  recordId?: string;
-  platform: Exclude<Platform, 'all'>;
-  title: string;
-  thumbnail: string;
-  duration: number;
-  tags: string[];
-  views: string;
-  trend: 'hot' | 'rising' | 'stable';
-  videoUrl?: string;  // 真实视频（有则卡片直接播放）
-  sourceUrl?: string; // 外部平台原始链接（如 YouTube watch URL）
-  status?: 'pending' | 'analyzed' | 'failed';
-  aiAnalysis?: VideoAnalysisPayload;
-  crawledAt?: string;
-  contentFormat: ContentFormat;
-  canManage?: boolean;
-}
-
-interface GeminiVideoAnalysis {
-  theme?: string;
-  hooks?: string[];
-  sellingPoints?: string[];
-  mood?: string;
-  structure?: string;
-  baseRequirements?: string;
-  globalSettings?: { visualStyle?: string; aspectRatio?: string; lighting?: string; subtitlePolicy?: string; audioPolicy?: string; identityConsistency?: string; productConsistency?: string; negativeConstraints?: string[] };
-  spatialContinuity?: { scene?: string; subjectAnchors?: Array<{ subject?: string; position?: string; facing?: string; gazeTarget?: string; orientation?: string }>; background?: string; backgroundPriority?: 'low' | 'medium' | 'high'; depthOfField?: 'shallow' | 'moderate' | 'deep' };
-  firstTenSeconds?: {
-    atmosphere?: string;
-    audioVisual?: string;
-    camera?: string;
-    visuals?: string;
-    voiceMusic?: string;
-  };
-  coarseStructure?: Array<{
-    time?: string;
-    frame?: string;
-    label?: string;
-    description?: string;
-    desc?: string;
-  }>;
-  scriptSummary15s?: {
-    visualStyle?: string;
-    coreEmotion?: string;
-    competitors?: string[];
-  };
-  scriptDetails15s?: Array<{
-    time?: string;
-    timestamp?: string;
-    environment?: string;
-    shot?: string;
-    camera?: string;
-    angle?: string;
-    composition?: string;
-    visual?: string;
-    subtitle?: string;
-    audio?: string;
-    note?: string;
-    purpose?: string; dialogue?: string; onScreenText?: string; ambientSound?: string; bgm?: string;
-    soundEffects?: string[]; beats?: Array<{ time?: string; action?: string; dialogue?: string; onScreenText?: string }>;
-    persistentState?: string; startState?: string; endState?: string; transitionToNext?: string;
-    backgroundPriority?: 'low' | 'medium' | 'high'; depthOfField?: 'shallow' | 'moderate' | 'deep';
-    authenticity?: string; estimatedSpeechDuration?: number; dialogueFits?: boolean; confidence?: number; needsReview?: boolean;
-    viralPotential?: { score?: number; mechanisms?: string[]; whyEffective?: string };
-  }>;
-  recommendedScriptType?: 'voiceover' | 'storyboard';
-}
-
-interface VideoAnalysisPayload {
-  source?: string;
-  contentFormat?: ContentFormat;
-  views?: string;
-  keyword?: string;
-  crawlRule?: string;
-  sourceAccount?: string;
-  sourceAccountName?: string;
-  followerCount?: number;
-  accountBaselineLevel?: 'low' | 'medium' | 'high';
-  relativeViewMultiple?: number;
-  dateFrom?: string;
-  dateTo?: string;
-  materialUrl?: string;
-  materialPoster?: string;
-  materialId?: string;
-  downloadStatus?: string;
-  videoFetchStatus?: string;
-  geminiStatus?: string;
-  downloadError?: string;
-  analysisSource?: string;
-  analysisQuality?: string;
-  analysisMode?: 'strategy' | 'exact';
-  requestedAnalysisMode?: 'strategy' | 'exact';
-  analysisError?: string;
-  videoLevelFailureStatus?: string;
-  manualRequiredReason?: string;
-  videoStorage?: string;
-  analyzedAt?: string;
-  caption?: string;
-  imageUrls?: string[];
-  imageCount?: number;
-  imageEvidence?: {
-    version: 2;
-    status: 'analyzed';
-    observedFacts: Array<{ imageIndex: number; subjects: string[]; scene: string; composition: string; colors: string[]; visibleText: string[]; confidence: number }>;
-    carouselFlow: Array<{ imageIndex: number; role: 'attention' | 'product' | 'detail' | 'proof' | 'process' | 'cta' | 'unknown'; evidence: string; confidence: number }>;
-    copyEvidence: { hooks: Array<{ text: string; source: 'caption' | 'ocr'; evidence: string }>; sellingPoints: Array<{ text: string; source: 'caption' | 'ocr'; evidence: string }>; cta: string[] };
-    reusableModules: Array<{ module: string; evidence: string; preserve: string; replace: string; confidence: number }>;
-    uncertainties: string[];
-  };
-  imageAnalysisStatus?: 'analyzed' | 'failed';
-  imageAnalysisError?: string;
-  publicMetrics?: { likes?: string; comments?: string; shares?: string; plays?: string; followers?: number; observedAt?: string };
-  publicBaseline?: { sampleSize: number; medianWeightedEngagement: number | null; currentWeightedEngagement: number | null; relativeMultiple: number | null; status: 'usable' | 'insufficient_sample'; method: string };
-  publicAdSignals?: { isAd?: boolean; isPaidPartnership?: boolean };
-  author?: string;
-  crawlerOpsTaskId?: string;
-  crawlerOpsStatus?: string;
-  crawlerOpsReason?: string;
-  crawlerOpsLastError?: string;
-  gemini?: GeminiVideoAnalysis;
-}
-
-interface AccountSpecialRecommendation {
-  level: '极高' | '高' | '较高';
-  baseline: '低基线账号' | '中基线账号' | '高基线账号';
-  multiple: number;
-  message: string;
-}
-
-interface StructureStep { time: string; label: string; desc: string }
-interface FirstTenSecondInsight { dimension: string; detail: string }
-interface ScriptDetail15s { time: string; environment: string; shot: string; camera: string; angle?: string; composition?: string; visual: string; subtitle: string; audio: string; note?: string; purpose?: string; dialogue?: string; onScreenText?: string; ambientSound?: string; bgm?: string; soundEffects?: string[]; beats?: Array<{ time?: string; action?: string; dialogue?: string; onScreenText?: string }>; persistentState?: string; startState?: string; endState?: string; transitionToNext?: string; backgroundPriority?: 'low' | 'medium' | 'high'; depthOfField?: 'shallow' | 'moderate' | 'deep'; authenticity?: string; estimatedSpeechDuration?: number; dialogueFits?: boolean; confidence?: number; needsReview?: boolean; viralPotential?: { score?: number; mechanisms?: string[]; whyEffective?: string } }
-interface ScriptSummary15s { visualStyle: string; coreEmotion: string; competitors: string[] }
-interface ScriptAnalysis {
-  videoType: string;
-  structure: StructureStep[];
-  firstTenSeconds: FirstTenSecondInsight[];
-  scriptSummary15s: ScriptSummary15s;
-  scriptDetails15s: ScriptDetail15s[];
-  baseRequirements: string;
-  referenceHighlights: string[];
-  adaptTip: string;
-  emotion: string;
-  infoSpeed: string;
-}
-
-interface FrameMaterialMatch {
-  detail: ScriptDetail15s;
-  material?: Material;
-  segment?: MaterialSegment;
-  score: number;
-  scores?: {
-    function: number;
-    action: number;
-    subject: number;
-    composition: number;
-    camera: number;
-    duration: number;
-    quality: number;
-    enterpriseFit: number;
-  };
-  trim?: {
-    start: number;
-    end: number;
-    label: string;
-  };
-  reason: string;
-  risks: string[];
-  suggestion: string;
-  status: 'high' | 'review' | 'adapt' | 'missing' | 'pending_analysis';
-  viralDna: {
-    purpose: string;
-    mustPreserve: string[];
-    replaceable: string[];
-    authenticityRequired: boolean;
-  };
-  viralPotential: {
-    score: number;
-    whyEffective: string;
-    mechanisms: string[];
-  };
-  replicability: {
-    score: number;
-    localCoverage: number;
-    aiFeasibility: 'high' | 'medium' | 'low';
-    recommendedExecution: 'local' | 'local_plus_ai' | 'local_plus_reshoot' | 'ai' | 'reshoot' | 'drop';
-    blockers: string[];
-  };
-  decision: 'copy_now' | 'prioritize_reshoot' | 'ai_generate' | 'supporting_only' | 'drop';
-}
-
-interface ShootingNeed {
-  id: string;
-  priority: '高' | '中' | '低';
-  title: string;
-  suggestion: string;
-  count: number;
-  sourceVideos: string[];
-  platform: Exclude<Platform, 'all'>;
-  ratio: '9:16' | '16:9';
-  example?: ScriptDetail15s;
-}
-
-// ── Platform meta ─────────────────────────────────────────────────────────────
 const PLATFORM_META: Record<Exclude<Platform, 'all'>, { label: string; color: string; bg: string }> = {
   tiktok:    { label: 'TikTok',    color: '#fff', bg: '#010101' },
   instagram: { label: 'Instagram', color: '#fff', bg: '#c13584' },
@@ -272,7 +294,7 @@ const PLATFORM_META: Record<Exclude<Platform, 'all'>, { label: string; color: st
   facebook:  { label: 'Facebook',  color: '#fff', bg: '#1877f2' },
 };
 const PLATFORM_FALLBACK = { label: 'Unknown', color: '#fff', bg: '#64748b' };
-const getPlatformMeta = (p: string) => PLATFORM_META[p as Exclude<Platform, 'all'>] ?? PLATFORM_FALLBACK;
+export const getPlatformMeta = (p: string) => PLATFORM_META[p as Exclude<Platform, 'all'>] ?? PLATFORM_FALLBACK;
 
 const PLATFORM_FILTERS: { id: Platform; label: string }[] = [
   { id: 'all',       label: '全部平台' },
@@ -350,32 +372,81 @@ interface AnalysisQualityGate {
   actualFrames: number;
 }
 
+export function directorReviewAction(reason: string): { gap: string; next: string } {
+  if (/^repeated_full_dialogue_/.test(reason)) return { gap: '多段分镜重复了整段口播', next: '按原片逐句校时；只将有时间码证据的句子放入对应分镜。' };
+  if (/^repeated_visual_description_/.test(reason)) return { gap: '多段分镜的画面描述重复', next: '对照每段切片与首帧，重写该镜头实际人物、动作、场景和目的。' };
+  if (/^sub_200ms_shots_/.test(reason)) return { gap: '存在不足 0.2 秒的闪帧', next: '保留闪帧作证据；按 0–1 秒连续动作核对快速靠近与敲门手势，动作允许跨视觉切点。' };
+  if (/^opening_hook_no_substantive_shot$/.test(reason)) return { gap: '开场截流动作尚未定位', next: '复核 0–1 秒连续动作，排除不足 0.2 秒的闪帧后标记快速靠近与敲门手势。' };
+  if (/^opening_hook_(insufficient_temporal_observations|motion_incomplete|observation_uncertainty)$/.test(reason)) return { gap: '钩子的连续动作证据不足', next: '逐帧复核首帧、手势、人物距离与动作先后，再写复刻脚本。' };
+  if (reason === 'hook_action_unverified') return { gap: '钩子动作尚未逐帧确认', next: '核对 0–1 秒快速靠近、敲门手势和转入口播的时间点。' };
+  if (reason === 'hook_script_incomplete') return { gap: '钩子八项脚本未完成', next: '逐项核对运镜、画面、出镜主体、配乐、配音、音效、主体话术和主体动作；确实没有的填写“无”。' };
+  if (/^opening_frame_/.test(reason)) return { gap: '首帧场景与分镜描述冲突', next: '对照原片首帧和切片，确认场景与人物后更正镜头说明。' };
+  if (/^uncovered_scene_cuts_/.test(reason)) return { gap: '原片切点没有被分镜边界覆盖', next: '按真实画面切点调整分镜起止时间，并核对整片无缺口。' };
+  if (/^unverified_shots_/.test(reason)) return { gap: '多段镜头仍未核实', next: '逐镜核对画面、口播、首帧及素材用途；有产品宣称的镜头还需核实企业事实。' };
+  if (/^missing_exact_shots$/.test(reason)) return { gap: '没有可用的精确分镜', next: '重新提取分镜切片、首帧和全片时间线后再分析。' };
+  if (/presenter|identity|authorization|rights/i.test(reason)) return { gap: '人物资产或使用权待核验', next: '核对当前企业已录入的销售人物资产、发布状态、授权范围和版本。' };
+  return { gap: '存在尚未归类的分析缺口', next: `编导复核原始诊断 ${reason}，补齐对应视频证据后重新验收。` };
+}
+
 function exactAnalysisQuality(video: TrendVideo): AnalysisQualityGate {
   const payload = video.aiAnalysis;
   const details = payload?.gemini?.scriptDetails15s || [];
   const duration = Math.max(0, Number(video.duration || 0));
-  const requiredFrames = duration > 0 ? Math.max(2, Math.ceil(duration / 5)) : 2;
+  const requiredFrames = 1;
   const parsed = details.map(item => {
     const values = String(item.time || item.timestamp || '').match(/\d+(?:\.\d+)?/g)?.map(Number) || [];
     return { item, start: values[0], end: values[1] };
   });
   const valid = parsed.filter(item => Number.isFinite(item.start) && Number.isFinite(item.end) && item.end! > item.start!);
+  const progress = payload?.analysisProgress;
 
-  if (payload?.requestedAnalysisMode === 'exact') return { ready: false, reason: '全片精确分析正在排队或生成中', requiredFrames, actualFrames: valid.length };
-  if (payload?.analysisMode !== 'exact') return { ready: false, reason: '当前仅有策略级分析，需先完成全片精确分析', requiredFrames, actualFrames: valid.length };
-  if (payload.videoLevelFailureStatus || payload.analysisError) return { ready: false, reason: '精确分析未完成或已失败，请重试', requiredFrames, actualFrames: valid.length };
-  if (valid.length < requiredFrames) return { ready: false, reason: `分镜密度不足：需至少 ${requiredFrames} 段，当前 ${valid.length} 段`, requiredFrames, actualFrames: valid.length };
-  if (valid.some(({ item }) => isUnusableAnalysisText(item.visual))) return { ready: false, reason: '存在不可用分镜，请重试精确分析', requiredFrames, actualFrames: valid.length };
-  const ordered = [...valid].sort((a, b) => a.start! - b.start!);
-  if (ordered.some(item => item.end! - item.start! > 5.5)) return { ready: false, reason: '存在超过 5.5 秒的粗分镜，无法可靠按时间戳匹配', requiredFrames, actualFrames: valid.length };
-  if (ordered[0]!.start! > 0.75 || ordered.some((item, index) => index > 0 && Math.abs(item.start! - ordered[index - 1]!.end!) > 0.75)) {
-    return { ready: false, reason: '分镜时间线存在空档或重叠，请重试精确分析', requiredFrames, actualFrames: valid.length };
+  if (progress?.stage === 'failed') return { ready: false, reason: `精确分析失败：${progress.currentStep || '后台未提供失败原因'}`, requiredFrames, actualFrames: valid.length };
+  if (progress?.stage === 'paused') return { ready: false, reason: `精确分析已暂停：${progress.currentStep || '进度已保留'}`, requiredFrames, actualFrames: valid.length };
+  if (progress?.stage === 'cancelled') return { ready: false, reason: '精确分析已取消，可重新提交', requiredFrames, actualFrames: valid.length };
+  if (analysisProgressIsActive(progress)) return { ready: false, reason: progress?.currentStep || '全片精确分析正在进行中', requiredFrames, actualFrames: valid.length };
+  if (payload?.geminiStatus === 'needs_review' || payload?.analysisQuality === 'video_review_required' || payload?.analysisReviewReasons?.length) {
+    const reviewCount = payload?.analysisReviewReasons?.length || 1;
+    return { ready: false, reason: `编导交接待复核：${reviewCount} 项镜头证据尚未通过质量校验`, requiredFrames, actualFrames: valid.length };
   }
-  if (duration > 0 && ordered[ordered.length - 1]!.end! + 0.75 < duration) return { ready: false, reason: '分镜尚未覆盖视频结尾，请重试精确分析', requiredFrames, actualFrames: valid.length };
-  return { ready: true, reason: '精确分析已通过分镜密度与时间线校验', requiredFrames, actualFrames: valid.length };
+  if (payload?.videoLevelFailureStatus || payload?.analysisError || ['failed', 'video_failed', 'analysis_retryable', 'paused', 'cancelled'].includes(String(payload?.geminiStatus || ''))) return { ready: false, reason: '精确分析未完成或已失败，请重试', requiredFrames, actualFrames: valid.length };
+  if (payload?.requestedAnalysisMode === 'exact' && payload?.geminiStatus !== 'analyzed') return { ready: false, reason: '全片精确分析正在排队或生成中', requiredFrames, actualFrames: valid.length };
+  if (payload?.analysisMode !== 'exact') return { ready: false, reason: '当前仅有策略级分析，需先完成全片精确分析', requiredFrames, actualFrames: valid.length };
+  if (valid.length < requiredFrames) return { ready: false, reason: '缺少可用的实际画面分镜', requiredFrames, actualFrames: valid.length };
+  if (valid.some(({ item }) => isUnusableAnalysisText(item.visual))) return { ready: false, reason: '存在不可用分镜，请重试精确分析', requiredFrames, actualFrames: valid.length };
+  if (!Number.isFinite(video.duration) || video.duration <= 0) return { ready: false, reason: '原片时长尚未确认，无法核对分镜是否覆盖整片', requiredFrames, actualFrames: valid.length };
+  const benchmark = buildBenchmarkAnalysis({ analysis: payload, videoId: video.recordId || video.id, duration });
+  if (benchmark.totalShots === null || benchmark.shots.some(shot => shot.granularity !== 'shot')) return { ready: false, reason: '当前只有观察片段，尚无可用于创作的导演级逐镜切点', requiredFrames, actualFrames: valid.length };
+  if (!benchmark.timelineComplete || benchmark.shots.some(shot => shot.start === null || shot.end === null)) return { ready: false, reason: '导演级分镜的时间线未完整覆盖原片，需重新分析切点', requiredFrames, actualFrames: valid.length };
+  if (benchmark.shots.some(shot => isUnusableAnalysisText(shot.visual))) return { ready: false, reason: '导演级分镜仍有不可用画面描述，需重新分析', requiredFrames, actualFrames: valid.length };
+  return { ready: true, reason: '精确分析已通过实际画面时间线校验', requiredFrames, actualFrames: valid.length };
 }
 
-function isDisplayableVideoAnalysis(analysis?: VideoAnalysisPayload, status?: TrendVideo['status']): boolean {
+export function inspirationCreationShotPreflight(video: TrendVideo): { ready: boolean; reason: string } {
+  if (video.contentFormat === 'image') return { ready: true, reason: '' };
+  const quality = exactAnalysisQuality(video);
+  return { ready: quality.ready, reason: quality.ready ? '' : quality.reason };
+}
+
+export function inspirationCreationAvailability(video: TrendVideo): { ready: boolean; reason: string } {
+  if (video.id.startsWith('material-')) return { ready: true, reason: '' };
+  if (video.contentFormat === 'image') {
+    const evidence = video.aiAnalysis?.imageEvidence;
+    const ready = evidence?.status === 'analyzed' && Boolean(evidence.observedFacts?.length);
+    return ready
+      ? { ready: true, reason: '' }
+      : { ready: false, reason: video.aiAnalysis?.imageAnalysisStatus === 'failed' || video.status === 'failed' ? '图文分析失败，请重新分析后再开始创作。' : '图文证据尚未完成，请等待或重新分析后再开始创作。' };
+  }
+  return inspirationCreationShotPreflight(video);
+}
+
+export function isDisplayableVideoAnalysis(analysis?: VideoAnalysisPayload, status?: TrendVideo['status']): boolean {
+  // A manually uploaded benchmark remains part of the user's library even
+  // when exact analysis fails. Hiding it made a deduplicated re-upload look
+  // lost and also removed the only UI from which the Director run could be
+  // inspected or retried.
+  if (analysis?.usage === 'reference_only'
+    && Boolean(analysis.contentSha256)
+    && analysis.userVisible !== false) return true;
   if (status === 'failed') return false;
   // Collection results are useful before full-video analysis completes. The
   // card can already show verified platform metadata and a processing state.
@@ -399,7 +470,9 @@ function isDisplayableForFormat(video: TrendVideo, contentFormat: ContentFormat)
     && Boolean(sourceUrl)
     && !/\/(?:search|explore\/tags)\b/i.test(sourceUrl)
     && (video.platform !== 'instagram' || /\/p\//i.test(sourceUrl));
-  const hasRealSource = /^https?:\/\//i.test(sourceUrl) || video.id.startsWith('material-');
+  const hasRealSource = /^https?:\/\//i.test(sourceUrl)
+    || Boolean(video.videoUrl)
+    || video.id.startsWith('material-');
   return video.contentFormat === 'video'
     && hasRealSource
     && isDisplayableVideoAnalysis(video.aiAnalysis, video.status);
@@ -493,6 +566,8 @@ function buildScriptDetails15s(gemini: GeminiVideoAnalysis, video: TrendVideo, s
       backgroundPriority: item.backgroundPriority, depthOfField: item.depthOfField, authenticity: cleanAnalysisText(item.authenticity),
       estimatedSpeechDuration: typeof item.estimatedSpeechDuration === 'number' ? item.estimatedSpeechDuration : undefined, dialogueFits: item.dialogueFits,
       confidence: typeof item.confidence === 'number' ? item.confidence : undefined, needsReview: Boolean(item.needsReview),
+      materialType: item.materialType, narrativeRole: item.narrativeRole, classificationEvidence: item.classificationEvidence,
+      materialEvidence: item.materialEvidence,
       viralPotential: item.viralPotential && typeof item.viralPotential === 'object' ? {
         score: typeof item.viralPotential.score === 'number' ? item.viralPotential.score : undefined,
         mechanisms: Array.isArray(item.viralPotential.mechanisms) ? item.viralPotential.mechanisms.map(String).filter(Boolean) : [],
@@ -607,23 +682,10 @@ function getPrimaryProductLabel(productInfo: string): string {
   return productInfo.trim().split('\n')[0]?.replace(/^[-*\s]+/, '').trim() || '当前主推品';
 }
 
-function getProductField(productInfo: string, label: string): string {
-  const escaped = label.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-  const match = productInfo.match(new RegExp(`${escaped}[:：]\\s*([^\\n]+)`));
-  return match?.[1]?.trim() || '';
-}
-
 function shortenText(text: string, max = 72): string {
   const clean = text.replace(/\s+/g, ' ').trim();
   return clean.length > max ? `${clean.slice(0, max)}...` : clean;
 }
-
-const fileToDataUrl = (file: File) => new Promise<string>((resolve, reject) => {
-  const reader = new FileReader();
-  reader.onload = () => resolve(String(reader.result));
-  reader.onerror = reject;
-  reader.readAsDataURL(file);
-});
 
 function tokenizeForMatch(...values: string[]): string[] {
   const stop = new Set(['the', 'and', 'with', 'this', 'that', 'for', 'you', 'your', 'our', '字幕', '画面', '镜头', '固定', '中近景', '特写']);
@@ -749,17 +811,21 @@ function replicabilityForFrame(detail: ScriptDetail15s, dna: FrameMaterialMatch[
   return { score: Math.max(0, Math.min(100, score)), localCoverage, aiFeasibility, recommendedExecution, blockers: uniqueBlockers.slice(0, 4) };
 }
 
-function normalizedOverlap(left: string, right: string): number {
-  const tokens = tokenizeForMatch(left);
+function normalizedOverlap(left: unknown, right: unknown): number {
+  const tokens = tokenizeForMatch(String(left ?? ''));
   if (!tokens.length) return 0;
-  const haystack = right.toLowerCase();
+  const haystack = String(right ?? '').toLowerCase();
   return Math.min(100, Math.round(tokens.filter(token => haystack.includes(token)).length / tokens.length * 100));
 }
 
 function scoreSegmentForFrame(material: Material, segment: MaterialSegment, detail: ScriptDetail15s, used: Set<string>) {
   const dna = viralDnaForFrame(detail);
+  // Older saved segment analyses may predate these array fields. Treat missing
+  // evidence as empty instead of crashing the entire inspiration dashboard.
+  const functions = Array.isArray(segment.recommendedFunctions) ? segment.recommendedFunctions : [];
+  const subjects = Array.isArray(segment.subject) ? segment.subject : [];
+  const logoText = Array.isArray(segment.logoText) ? segment.logoText : [];
   const frameText = `${detail.purpose} ${detail.visual} ${detail.beats?.map(item => item.action).join(' ')} ${detail.shot} ${detail.angle} ${detail.composition} ${detail.camera}`;
-  const segmentText = `${segment.recommendedFunctions.join(' ')} ${segment.subject.join(' ')} ${segment.action} ${segment.shot} ${segment.angle} ${segment.composition} ${segment.camera} ${segment.environment}`;
   const needsProduct = /产品|包装|瓶|罐|质地|product|package|bottle|texture/i.test(frameText);
   const needsPerson = /人物|真人|男性|女性|脸|眼|皮肤|手|person|face|eye|skin|hand/i.test(frameText);
   const risks: string[] = [];
@@ -767,11 +833,11 @@ function scoreSegmentForFrame(material: Material, segment: MaterialSegment, deta
   if (needsProduct && /完整|正面|清晰|特写|reveal/i.test(frameText) && segment.productClarity !== 'high') risks.push('硬条件不满足：产品揭晓需要清晰完整产品');
   if (needsPerson && !segment.hasPerson) risks.push('硬条件不满足：分镜要求真人/手部动作');
   if (dna.authenticityRequired && segment.needsReview && !segment.manualConfirmed) risks.push('真实性镜头尚未人工确认');
-  if (segment.hasLogo && segment.logoText.length) risks.push(`检测到文字/品牌：${segment.logoText.join('、')}`);
+  if (segment.hasLogo && logoText.length) risks.push(`检测到文字/品牌：${logoText.join('、')}`);
 
-  const functionScore = normalizedOverlap(detail.purpose || '', segment.recommendedFunctions.join(' '));
+  const functionScore = normalizedOverlap(detail.purpose || '', functions.join(' '));
   const action = normalizedOverlap(`${detail.visual} ${detail.beats?.map(item => item.action).join(' ')}`, segment.action);
-  const subject = normalizedOverlap(detail.visual, `${segment.subject.join(' ')} ${segment.action}`);
+  const subject = normalizedOverlap(detail.visual, `${subjects.join(' ')} ${segment.action}`);
   const composition = normalizedOverlap(`${detail.shot} ${detail.angle} ${detail.composition}`, `${segment.shot} ${segment.angle} ${segment.composition}`);
   const camera = normalizedOverlap(detail.camera, segment.camera);
   const frameDuration = parseFrameTimeRange(detail.time).duration;
@@ -862,12 +928,14 @@ function buildShootingNeeds(videos: TrendVideo[], materials: Material[]): Shooti
       const sourceTitle = shortenText(video.title, 42);
       if (existing) {
         existing.count += 1;
+        if (video.crawledAt && (!existing.createdAt || Date.parse(video.crawledAt) < Date.parse(existing.createdAt))) existing.createdAt = video.crawledAt;
         if (!existing.sourceVideos.includes(sourceTitle)) existing.sourceVideos.push(sourceTitle);
         if (frameStartsEarly(match.detail.time)) existing.priority = '高';
         continue;
       }
       grouped.set(key, {
         id: key,
+        createdAt: video.crawledAt,
         priority: frameStartsEarly(match.detail.time) ? '高' : '中',
         title,
         suggestion: match.suggestion,
@@ -881,11 +949,13 @@ function buildShootingNeeds(videos: TrendVideo[], materials: Material[]): Shooti
   }
   return Array.from(grouped.values())
     .map((item): ShootingNeed => ({ ...item, priority: item.priority === '高' || item.count >= 3 ? '高' : item.count >= 2 ? '中' : '低' }))
-    .sort((a, b) => {
-      const rank = { '高': 3, '中': 2, '低': 1 };
-      return rank[b.priority] - rank[a.priority] || b.count - a.count;
-    })
+    .sort((a, b) => (Date.parse(b.createdAt || '') || 0) - (Date.parse(a.createdAt || '') || 0))
     .slice(0, 30);
+}
+
+function shootingCreationDate(value?: string): string {
+  const timestamp = Date.parse(value || '');
+  return Number.isFinite(timestamp) ? new Date(timestamp).toLocaleDateString('zh-CN', { year: 'numeric', month: '2-digit', day: '2-digit' }) : '待补录';
 }
 
 function conciseLines(text: string, maxLines = 6, maxChars = 34): string[] {
@@ -903,121 +973,6 @@ function conciseLines(text: string, maxLines = 6, maxChars = 34): string[] {
     if (lines.length >= maxLines) break;
   }
   return lines.slice(0, maxLines);
-}
-
-function productScriptContext(productInfo: string): {
-  label: string;
-  category: string;
-  advantage: string;
-  market: string;
-  proof: string;
-} {
-  const label = getPrimaryProductLabel(productInfo);
-  const category = getProductField(productInfo, '产品类目') || label;
-  const advantage = getProductField(productInfo, '核心优势') || getProductField(productInfo, '品牌 USP') || '可做私标定制、快速打样和合规资料支持';
-  const market = getProductField(productInfo, '目标市场') || '海外美妆买家';
-  const proof = getProductField(productInfo, '认证资质') || getProductField(productInfo, '起订量') || '小批量测试和私标包装支持';
-  return { label, category, advantage, market, proof };
-}
-
-function productLabelForLang(product: ReturnType<typeof productScriptContext>, langCode = 'zh'): string {
-  if (langCode === 'zh') return product.label;
-  if (langCode === 'id') return 'produk unggulan';
-  return 'featured product bundle';
-}
-
-function advantageForLang(product: ReturnType<typeof productScriptContext>, langCode = 'zh'): string {
-  if (langCode === 'zh') return shortenText(product.advantage, 34);
-  if (langCode === 'id') return 'sampel cepat, kemasan private-label, dan dukungan dokumen kepatuhan';
-  return 'fast sampling, private-label packaging, and compliance documentation support';
-}
-
-function voiceLine(line: string, langCode = 'zh'): string {
-  return langCode === 'zh' ? `人物说：“${line}”` : `Voiceover: "${line}"`;
-}
-
-function scriptTitle(product: ReturnType<typeof productScriptContext>, languageLabel?: string, langCode = 'zh'): string {
-  if (langCode === 'zh') return `口播脚本｜${product.label}｜${languageLabel || '中文'}`;
-  if (langCode === 'id') return `Naskah Voiceover | Produk Unggulan | ${languageLabel || 'Bahasa Indonesia'}`;
-  return `Voiceover Script | Featured Product Bundle | ${languageLabel || 'English'}`;
-}
-
-function inferShotAction(detail: ScriptDetail15s, index: number, product: ReturnType<typeof productScriptContext>, langCode = 'zh'): string {
-  const label = productLabelForLang(product, langCode);
-  if (langCode !== 'zh') {
-    const actions = langCode === 'id' ? [
-      `Show ${label} close to the camera with clean packaging and a clear product texture shot`,
-      `Cut to a simple usage moment, keeping the reference video's quick product-first rhythm`,
-      `Show the bundle, shade range, and private-label packaging options in one clean frame`,
-      `Use a close-up result shot to make the texture and finish easy to understand`,
-      `End with the full product set and a clear message prompt for samples or a quote`,
-    ] : [
-      `Show ${label} close to the camera with clean packaging and a clear product texture shot`,
-      `Cut to a simple usage moment, keeping the reference video's quick product-first rhythm`,
-      `Show the bundle, shade range, and private-label packaging options in one clean frame`,
-      `Use a close-up result shot to make the texture and finish easy to understand`,
-      `End with the full product set and a clear message prompt for samples or a quote`,
-    ];
-    return actions[index % actions.length]!;
-  }
-  const lower = `${detail.visual} ${detail.subtitle}`.toLowerCase();
-  if (/hand|手|hold|举起|展示|管|瓶|spatula|applicator|swatch|涂|抹|唇|shade|色/.test(lower)) {
-    return `模特手持「${product.label}」靠近镜头，展示管身、刷头和上唇/手背试色效果；画面保留对标视频的手部特写和产品质感节奏`;
-  }
-  if (/face|脸|skin|肤|look|mirror|镜头|smile|微笑/.test(lower)) {
-    return `模特对镜展示「${product.label}」上唇后的妆效，表情从观察到惊喜，突出颜色贴肤、光泽和日常通勤适配`;
-  }
-  if (/brand|logo|设备|device|包装|box|name|字样/.test(lower)) {
-    return `镜头切到「${product.label}」套装包装、色号排列和私标 Logo 位，手指轻点关键卖点区域`;
-  }
-  if (/result|before|after|效果|证明|评论|热度/.test(lower)) {
-    return `画面用上唇前后对比和多色号并排展示证明「${product.label}」的显色、成膜和套装组合价值`;
-  }
-  const actions = [
-    `开场直接给「${product.label}」上唇结果，保留对标视频先给效果再解释的节奏`,
-    `模特边试色边把「${product.label}」放到镜头前，形成产品和妆效同框`,
-    `切到套装多色号平铺，突出私标包装质感和可组合销售`,
-    `用手背/唇部近景展示颜色、光泽和成膜后的不黏腻感`,
-    `收束到套装全貌和询盘引导，强调低 MOQ、打样快、适合 ${product.market}`,
-  ];
-  return actions[index % actions.length]!;
-}
-
-function localizedVoiceLine(index: number, product: ReturnType<typeof productScriptContext>, langCode = 'zh'): string {
-  const label = productLabelForLang(product, langCode);
-  const advantage = advantageForLang(product, langCode);
-  const zh = [
-    `这款${label}不是只好看，上脸质感也很稳。`,
-    `如果你想做一款容易出单的组合，这套可以直接当主推。`,
-    `它的优势是${advantage}，适合先小批量测市场。`,
-    `近看细节和包装质感都在线，做私标也很容易出效果。`,
-    `想要样品、色号表或报价，可以直接留言给我们。`,
-  ];
-  const en = [
-    `This ${label} is not just pretty. The texture looks reliable from the first look.`,
-    `If you need an easy product bundle to test, this can be your lead item.`,
-    `Its key edge is ${advantage}, so it works for small-batch market testing.`,
-    `The details and packaging look clean on camera, which is friendly for private label orders.`,
-    `Message us for samples, shade options, packaging details, or a quick quote.`,
-  ];
-  const id = [
-    `${label} bukan cuma terlihat cantik. Teksturnya juga terlihat meyakinkan.`,
-    `Kalau kamu ingin coba produk bundle yang mudah dijual, ini bisa jadi produk utama.`,
-    `Keunggulannya adalah ${advantage}, cocok untuk tes pasar kecil.`,
-    `Detail dan kemasannya terlihat rapi di kamera, cocok untuk private label.`,
-    `Kirim pesan untuk sampel, pilihan warna, kemasan, atau penawaran harga.`,
-  ];
-  const source = langCode === 'id' ? id : langCode === 'zh' ? zh : en;
-  return source[index % source.length]!;
-}
-
-function rewriteSubtitle(detail: ScriptDetail15s, index: number, product: ReturnType<typeof productScriptContext>, langCode = 'zh'): string {
-  const original = cleanAnalysisText(detail.subtitle);
-  const line = localizedVoiceLine(index, product, langCode);
-  if (original && !/待 Gemini|视频下载|显示真实|基础资料/.test(original)) {
-    return `${line}（参考原节奏：${shortenText(original, 42)}）`;
-  }
-  return line;
 }
 
 function referenceAnalysisText(video: TrendVideo, analysis: ScriptAnalysis | null): string {
@@ -1059,105 +1014,49 @@ function referenceHighlights(video: TrendVideo, analysis: ScriptAnalysis | null)
   ].filter(Boolean).slice(0, 8);
 }
 
-function adaptedFrameLine(detail: ScriptDetail15s, index: number, product: ReturnType<typeof productScriptContext>, langCode = 'zh'): string {
-  const visual = inferShotAction(detail, index, product, langCode);
-  const subtitle = rewriteSubtitle(detail, index, product, langCode);
-  const audio = detail.audio && !/待真实视频|待 Gemini|待视频/.test(detail.audio)
-    ? detail.audio
-    : 'BGM 保持轻快种草节奏，口播短句跟随字幕切点。';
-  const note = detail.note ? `（注：保留对标视频节奏备注：${detail.note}）` : '';
-  if (langCode !== 'zh') {
-    return `[${detail.time}] Environment: ${detail.environment}; Shot: close-up or medium shot; Camera: simple handheld movement; Audio: upbeat social commerce music; ${voiceLine(subtitle, langCode)}; Visual: ${visual}; Captions match the voiceover.`;
-  }
-  return `[${detail.time}] 环境：${detail.environment}；景别：${detail.shot}；运镜：${detail.camera}；${detail.angle ? `视角：${detail.angle}；` : ''}${detail.composition ? `构图：${detail.composition}；` : ''}配乐：${audio}；台词：人物说“${subtitle}”；画面：${visual}${detail.startState ? `；初始状态：${detail.startState}` : ''}${detail.endState ? `；结束状态：${detail.endState}` : ''}${detail.transitionToNext ? `；衔接：${detail.transitionToNext}` : ''}${note}`;
-}
-
-function makeVoiceoverDraft(_video: TrendVideo, analysis: ScriptAnalysis, productInfo: string, languageLabel?: string, langCode = 'zh'): string {
-  const product = productScriptContext(productInfo);
-  const useCase = shortenText(product.market, 28);
-  const proof = shortenText(product.proof, 34);
-  if (langCode !== 'zh') {
-    const label = productLabelForLang(product, langCode);
-    return `${scriptTitle(product, languageLabel, langCode)}
-
-[Hook · 0-3s]
-Voiceover: "If your buyers ask to see ${label} before ordering, show them this first."
-
-[Body · 3-12s]
-Voiceover: "Film the texture, packaging, and options clearly, then show why it fits ${useCase}."
-Voiceover: "The key proof point is ${proof}, so buyers can check samples before bulk orders."
-
-[CTA · 12-15s]
-Voiceover: "Message us for the sample list, packaging options, and MOQ quote."`;
-  }
-  return `${scriptTitle(product, languageLabel, langCode)}
-
-[Hook · 0-3s]
-人物说：“客户问这款${product.label}能不能先看样品，就先给他看这三个细节。”
-
-[Body · 3-12s]
-人物说：“第一，看实拍质地和包装，不要只发渲染图。”
-人物说：“第二，把${proof}直接放到字幕里，让买家知道能不能试单。”
-人物说：“第三，说明适合${useCase}，客户才知道怎么上架或采购。”
-
-[CTA · 12-15s]
-人物说：“要样品、包装方案和 MOQ 报价，直接留言给我们。”`;
-}
-
-function makeFallbackScript(video: TrendVideo, analysis: ScriptAnalysis | null, productInfo: string, languageLabel?: string, langCode = 'zh', type: ScriptType = 'voiceover'): string {
-  if (analysis) return type === 'voiceover'
-    ? makeVoiceoverDraft(video, analysis, productInfo, languageLabel, langCode)
-    : makeStoryboardDraft(video, analysis, productInfo, languageLabel, langCode);
-
-  const product = productScriptContext(productInfo);
+function makeFallbackScript(_video: TrendVideo, _analysis: ScriptAnalysis | null, productInfo: string, languageLabel?: string, langCode = 'zh', type: ScriptType = 'voiceover'): string {
+  const product = getPrimaryProductLabel(productInfo) || '【待从企业中心选择产品】';
+  const label = languageLabel || (langCode === 'zh' ? '中文' : langCode);
   if (type === 'storyboard') {
-    return `【分镜脚本｜${product.label}｜${languageLabel || '中文'}】
+    return `【本地草稿模板｜未调用 AI｜未经质量校验｜不可发布】
+【分镜脚本｜${product}｜${label}】
 
 Scene 1 (0-3s)
 Shot: close-up | Camera: static
-Visual: 手把「${product.label}」放到镜头前，先展示最能看懂的质地、颜色、尺寸或包装细节。
-Voiceover: 客户问样品前，先给他看真实细节。
-Subtitle: 先看真实样品
+Visual: 待人工匹配企业自有素材；只描述素材中能直接观察到的画面。
+Voiceover: 【待根据企业中心已确认事实填写】
+Subtitle: 【待确认】
 
 Scene 2 (3-8s)
 Shot: medium | Camera: push
-Visual: 拆开包装或演示一个使用场景，画面同时露出产品和手部动作。
-Voiceover: 这段要让买家知道里面有什么、怎么用、适合什么渠道。
-Subtitle: 产品和场景同框
+Visual: 待人工填写；不得补造产品功能、使用效果或商业能力。
+Voiceover: 【待根据企业中心已确认事实填写】
+Subtitle: 【待确认】
 
 Scene 3 (8-12s)
 Shot: close-up | Camera: pan
-Visual: 用字幕标出 MOQ、样品、私标包装、认证或交期信息。
-Voiceover: 采购最关心的是样品、包装和报价能不能快速确认。
-Subtitle: 样品 / 包装 / 报价
+Visual: 待人工填写可验证证据；没有资料的字段保持空白。
+Voiceover: 【待根据企业中心已确认事实填写】
+Subtitle: 【待确认】
 
 Scene 4 (12-15s)
 Shot: wide | Camera: static
-Visual: 全套产品平铺，画面出现“索取色号表 / 包装方案 / MOQ 报价”。
-Voiceover: 要目录和 MOQ 报价，直接留言给我们。
-Subtitle: 留言拿报价`;
+Visual: 待人工填写中性收束画面；行动提示须由用户确认。
+Voiceover: 【待确认行动提示】
+Subtitle: 【待确认】`;
   }
-  return makeVoiceoverDraft(video, {
-    videoType: '基础资料拆解',
-    structure: [],
-    firstTenSeconds: [],
-    scriptSummary15s: { visualStyle: '真实产品实拍', coreEmotion: '可信、清楚、可询盘', competitors: [] },
-    scriptDetails15s: [],
-    baseRequirements: '情绪氛围：可信、清楚、可询盘；光影：明亮干净；全片主要场景：产品实拍、包装展示、使用演示和 CTA；质感：真实产品实拍，突出产品细节；基础要求：强反转开头，真人口播，卡点剪辑，特效拉满，产品质感突出。',
-    referenceHighlights: [],
-    adaptTip: '',
-    emotion: '',
-    infoSpeed: '',
-  }, productInfo, languageLabel, langCode);
-}
+  return `【本地草稿模板｜未调用 AI｜未经质量校验｜不可发布】
+【口播脚本｜${product}｜${label}】
 
-function makeStoryboardDraft(_video: TrendVideo, analysis: ScriptAnalysis, productInfo: string, languageLabel?: string, langCode = 'zh'): string {
-  const product = productScriptContext(productInfo);
-  const frames = analysis.scriptDetails15s.map((detail, index) => adaptedFrameLine(detail, index, product, langCode)).join('\n\n');
-  if (langCode !== 'zh') {
-    return frames;
-  }
-  return frames;
+[Hook · 0-3s]
+【待根据企业中心已确认的产品事实填写开场】
+
+[Body · 3-12s]
+【待填写可由企业资料或自有素材证明的产品信息】
+【不得填写未确认的认证、价格、起订量、交期、出口或履约承诺】
+
+[CTA · 12-15s]
+【待用户确认行动提示】`;
 }
 
 function scriptTypeLabel(type: ScriptType): string {
@@ -1233,7 +1132,7 @@ function summarizePipelineError(raw?: string): string {
   return text.length > 180 ? `${text.slice(0, 180)}...` : text;
 }
 
-function pipelineState(video: TrendVideo): { title: string; desc: string; spinning: boolean; failed: boolean } {
+export function pipelineState(video: TrendVideo): { title: string; desc: string; spinning: boolean; failed: boolean } {
   const analysis = video.aiAnalysis || {};
   const quotaError = /429|RESOURCE_EXHAUSTED|quota|prepayment credits|额度|余额/i.test(String(analysis.analysisError || analysis.downloadError || analysis.crawlerOpsLastError || ''));
   if (quotaError) {
@@ -1242,7 +1141,11 @@ function pipelineState(video: TrendVideo): { title: string; desc: string; spinni
   if (analysis.downloadStatus === 'ops_queued') {
     return { title: '后台增强分析中', desc: '已先生成基础分析；视频获取失败后已进入后台增强队列，成功后会升级为视频级分析。', spinning: true, failed: false };
   }
-  if (analysis.gemini && analysis.analysisQuality === 'video') {
+  if (analysis.gemini && (analysis.geminiStatus === 'needs_review' || analysis.analysisQuality === 'video_review_required')) {
+    const reviewCount = analysis.analysisReviewReasons?.length || 1;
+    return { title: '全片分析已完成，待人工复核', desc: `真实视频的全片结构和逐镜证据已经生成；还有 ${reviewCount} 项质量校验需要编导确认，不会继续显示为“生成中”。`, spinning: false, failed: false };
+  }
+  if (analysis.gemini && (analysis.geminiStatus === 'analyzed' || analysis.analysisQuality === 'video')) {
     return { title: 'AI 策略分析完成', desc: '已基于真实视频提取全片结构、前 10 秒五维拆解和可复用爆点。', spinning: false, failed: false };
   }
   if (analysis.analysisError) {
@@ -1284,23 +1187,20 @@ function needsVideoEnhancement(video: TrendVideo): boolean {
 }
 
 // ── Fallback thumbnail ────────────────────────────────────────────────────────
-function VideoThumbnail({ platform, title }: { platform: Exclude<Platform, 'all'>; title: string }) {
-  const meta = getPlatformMeta(platform);
+export function VideoThumbnail({ platform, title }: { platform: Exclude<Platform, 'all'>; title: string }) {
   const shortTitle = title.length > 86 ? `${title.slice(0, 83)}...` : title;
   return (
-    <div className="w-full h-full flex flex-col justify-between relative overflow-hidden p-4"
-      style={{ background: `linear-gradient(135deg, ${meta.bg} 0%, #111827 58%, #334155 100%)` }}>
-      <div className="absolute inset-0 opacity-10"
-        style={{ backgroundImage: 'linear-gradient(135deg, rgba(255,255,255,.35) 0, transparent 46%), repeating-linear-gradient(45deg, rgba(255,255,255,.3) 0, rgba(255,255,255,.3) 1px, transparent 1px, transparent 11px)' }} />
+    <div className="relative flex h-full w-full flex-col justify-between overflow-hidden bg-text-primary p-4">
+      <div className="absolute inset-x-0 bottom-0 h-px bg-white/20" />
       <div className="relative">
-        <SocialPlatformIcon platform={platform} size={38} className="mb-3 drop-shadow-sm" />
-        <p className="line-clamp-3 text-sm font-semibold leading-snug text-white/90 drop-shadow-sm">{shortTitle}</p>
+        <SocialPlatformIcon platform={platform} size={38} className="mb-3 drop-shadow-none" />
+        <p className="line-clamp-3 text-sm font-semibold leading-snug text-white/90 drop-shadow-none">{shortTitle}</p>
       </div>
     </div>
   );
 }
 
-function ThumbnailImage({
+export function ThumbnailImage({
   src,
   platform,
   title,
@@ -1339,8 +1239,8 @@ function ThumbnailImage({
     };
   }, [src, isDirectUrl]);
   if (failed || !src) return null;
-  if (isDirectUrl) return <img src={src} alt="" className={className} draggable={false} loading="lazy" decoding="async" onError={() => setFailed(true)} />;
-  return blobUrl ? <img src={blobUrl} alt="" className={className} draggable={false} /> : null;
+  if (isDirectUrl) return <LsProgressiveMedia src={src} alt={`${title} · ${platform} 缩略图`} className={className} draggable={false} loading="lazy" preview={false} onError={() => setFailed(true)} />;
+  return blobUrl ? <img src={blobUrl} alt={`${title} · ${platform} 缩略图`} className={className} draggable={false} loading="lazy" decoding="async" onError={() => setFailed(true)} /> : null;
 }
 
 function AuthenticatedImage({ src, alt, className }: { src: string; alt: string; className: string }) {
@@ -1375,27 +1275,102 @@ function AuthenticatedImage({ src, alt, className }: { src: string; alt: string;
     : <div className={`${className} animate-pulse bg-slate-200`} aria-label={alt} />;
 }
 
-function AuthenticatedVideo({ apiUrl, poster, className, controls = false, autoPlay = false, hoverPlay = false, onReady, onError }: { apiUrl: string; poster?: string; className: string; controls?: boolean; autoPlay?: boolean; hoverPlay?: boolean; onReady?: () => void; onError?: () => void }) {
+export function AuthenticatedVideo({ apiUrl, poster, className, controls = false, autoPlay = false, loadOnMount = autoPlay, hoverPlay = false, previewFrame = false, preload = previewFrame ? 'auto' : 'metadata', onReady, onError, onLoadingChange }: { apiUrl: string; poster?: string; className: string; controls?: boolean; autoPlay?: boolean; loadOnMount?: boolean; hoverPlay?: boolean; previewFrame?: boolean; preload?: 'none' | 'metadata' | 'auto'; onReady?: () => void; onError?: (message?: string) => void; onLoadingChange?: (loading: boolean) => void }) {
   const [playbackUrl, setPlaybackUrl] = useState('');
-  const [loading, setLoading] = useState(false);
   const videoRef = useRef<HTMLVideoElement>(null);
-  const load = async () => {
-    if (playbackUrl || loading) return playbackUrl;
-    setLoading(true);
-    try {
-      const response = await fetch(apiUrl, { headers: authHeader() });
-      if (!response.ok) throw new Error(String(response.status));
-      const next = String(((await response.json()) as { url?: string }).url || '');
-      setPlaybackUrl(next);
-      return next;
-    } catch { return ''; } finally { setLoading(false); }
+  const requestRef = useRef<Promise<string> | null>(null);
+  const controllerRef = useRef<AbortController | null>(null);
+  const generationRef = useRef(0);
+  const mediaRetryRef = useRef(0);
+  const mediaReadyTimerRef = useRef<number | null>(null);
+
+  const clearMediaReadyTimer = () => {
+    if (mediaReadyTimerRef.current === null) return;
+    window.clearTimeout(mediaReadyTimerRef.current);
+    mediaReadyTimerRef.current = null;
   };
-  useEffect(() => { setPlaybackUrl(''); if (autoPlay) void load(); }, [apiUrl, autoPlay]);
+
+  const load = async (force = false) => {
+    if (playbackUrl && !force) return playbackUrl;
+    if (requestRef.current && !force) return requestRef.current;
+    if (force) controllerRef.current?.abort();
+    const generation = ++generationRef.current;
+    const controller = new AbortController();
+    controllerRef.current = controller;
+    onLoadingChange?.(true);
+    let resolverTimedOut = false;
+    const resolverTimer = window.setTimeout(() => {
+      resolverTimedOut = true;
+      controller.abort();
+    }, 15_000);
+    const request = resolveInspirationPlaybackUrl(apiUrl, { signal: controller.signal, headers: authHeader() })
+      .then(next => {
+        if (generation === generationRef.current) {
+          setPlaybackUrl(next);
+          clearMediaReadyTimer();
+          mediaReadyTimerRef.current = window.setTimeout(() => {
+            if (generation !== generationRef.current || (videoRef.current?.readyState || 0) >= HTMLMediaElement.HAVE_CURRENT_DATA) return;
+            onLoadingChange?.(false);
+            onError?.('视频加载超时，请重新获取播放地址');
+          }, 20_000);
+        }
+        return next;
+      })
+      .catch(error => {
+        if ((!resolverTimedOut && controller.signal.aborted) || generation !== generationRef.current) return '';
+        const message = resolverTimedOut ? '视频地址获取超时' : error instanceof Error ? error.message : '视频地址获取失败';
+        onLoadingChange?.(false);
+        onError?.(message);
+        return '';
+      })
+      .finally(() => {
+        window.clearTimeout(resolverTimer);
+        if (generation !== generationRef.current) return;
+        requestRef.current = null;
+      });
+    requestRef.current = request;
+    return request;
+  };
+  useEffect(() => {
+    generationRef.current += 1;
+    controllerRef.current?.abort();
+    controllerRef.current = null;
+    requestRef.current = null;
+    mediaRetryRef.current = 0;
+    clearMediaReadyTimer();
+    setPlaybackUrl('');
+    onLoadingChange?.(false);
+    if (loadOnMount) void load(true);
+    return () => {
+      generationRef.current += 1;
+      controllerRef.current?.abort();
+      controllerRef.current = null;
+      requestRef.current = null;
+      clearMediaReadyTimer();
+    };
+  }, [apiUrl, loadOnMount]); // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => { if (autoPlay && playbackUrl) void videoRef.current?.play().catch(() => {}); }, [autoPlay, playbackUrl]);
-  return <video ref={videoRef} src={playbackUrl || undefined} poster={poster} controls={controls} autoPlay={autoPlay} muted={!controls} playsInline loop={hoverPlay} preload="metadata" className={className}
-    onLoadedData={onReady}
-    onCanPlay={onReady}
-    onError={onError}
+  return <video ref={videoRef} src={playbackUrl || undefined} poster={poster} controls={controls} autoPlay={autoPlay} muted={!controls} playsInline loop={hoverPlay} preload={preload} className={className}
+    onLoadedMetadata={() => {
+      const video = videoRef.current;
+      if (!previewFrame || !video || !Number.isFinite(video.duration) || video.duration <= 0) return;
+      // A tiny seek paints a reliable first frame for uploaded MP4s whose frame
+      // at 0s is transparent/black and which do not yet have a poster asset.
+      video.currentTime = Math.min(0.12, Math.max(0.01, video.duration / 20));
+    }}
+    onLoadedData={() => { clearMediaReadyTimer(); mediaRetryRef.current = 0; if (previewFrame) videoRef.current?.pause(); onReady?.(); }}
+    onCanPlay={() => { clearMediaReadyTimer(); onReady?.(); }}
+    onError={() => {
+      if (!playbackUrl) return;
+      clearMediaReadyTimer();
+      if (mediaRetryRef.current < 1) {
+        mediaRetryRef.current += 1;
+        setPlaybackUrl('');
+        void load(true);
+        return;
+      }
+      onError?.('视频文件加载或解码失败');
+    }}
     onMouseEnter={async () => { if (!hoverPlay) return; await load(); setTimeout(() => void videoRef.current?.play().catch(() => {}), 0); }}
     onMouseLeave={() => { if (!hoverPlay || !videoRef.current) return; videoRef.current.pause(); videoRef.current.currentTime = 0; }} />;
 }
@@ -1412,59 +1387,59 @@ function ImageBreakdownContent({ video, activeTab }: { video: TrendVideo; analys
   const roleLabel: Record<string, string> = { attention: '首图停留', product: '产品展示', detail: '细节说明', proof: '信任证明', process: '流程解释', cta: '行动引导', unknown: '未确定' };
 
   const EmptyEvidence = ({ title, desc }: { title: string; desc: string }) => (
-    <div className="rounded-2xl border border-dashed border-border bg-surface-2 px-5 py-8 text-center">
+    <div className="rounded-lg border border-dashed border-border bg-surface-2 px-5 py-8 text-center">
       <Images size={22} className="mx-auto text-text-muted" />
-      <p className="mt-3 text-xs font-black text-text-primary">{title}</p>
+      <p className="mt-3 text-xs font-semibold text-text-primary">{title}</p>
       <p className="mx-auto mt-1.5 max-w-[280px] text-[10px] leading-relaxed text-text-muted">{desc}</p>
     </div>
   );
 
   const EvidenceCard = ({ label, value }: { label: string; value: string }) => (
-    <div className="rounded-xl border border-border bg-white p-3">
-      <div className="flex items-center justify-between gap-2"><p className="text-[10px] font-black text-text-primary">{label}</p><span className="rounded-full bg-surface-2 px-2 py-0.5 text-[9px] text-text-muted">来自 AI 原始结果</span></div>
+    <div className="rounded-md border border-border bg-surface p-3">
+      <div className="flex items-center justify-between gap-2"><p className="text-[10px] font-semibold text-text-primary">{label}</p><span className="rounded-full bg-surface-2 px-2 py-0.5 text-[9px] text-text-muted">来自 AI 原始结果</span></div>
       <p className="mt-1.5 text-[10px] leading-relaxed text-text-secondary">{value}</p>
     </div>
   );
 
   if (activeTab === 'overview') return (
     <div className="space-y-4">
-      <section className="rounded-2xl border border-border bg-white p-3.5">
-        <div className="flex items-center justify-between"><div><p className="text-xs font-black text-text-primary">公开表现</p><p className="mt-1 text-[9px] text-text-muted">无公开值就留空，不把播放当曝光、不估算收藏与点击</p></div>{baseline?.status === 'usable' && baseline.relativeMultiple != null && <span className="rounded-full bg-emerald-50 px-2.5 py-1 text-xs font-black text-emerald-700">账号基线 {baseline.relativeMultiple}×</span>}</div>
-        <div className="mt-3 grid grid-cols-4 gap-1.5">{[['点赞', metrics?.likes || '—'], ['评论', metrics?.comments || '—'], ['分享', metrics?.shares || '—'], ['播放', metrics?.plays || '—']].map(([label, value]) => <div key={label} className="rounded-lg bg-surface-2 px-1.5 py-2 text-center"><p className="text-sm font-black text-text-primary">{value}</p><p className="text-[9px] text-text-muted">{label}</p></div>)}</div>
+      <section className="rounded-lg border border-border bg-surface p-3.5">
+        <div className="flex items-center justify-between"><div><p className="text-xs font-semibold text-text-primary">公开表现</p><p className="mt-1 text-[9px] text-text-muted">无公开值就留空，不把播放当曝光、不估算收藏与点击</p></div>{baseline?.status === 'usable' && baseline.relativeMultiple != null && <span className="rounded-full bg-emerald-50 px-2.5 py-1 text-xs font-semibold text-emerald-700">账号基线 {baseline.relativeMultiple}×</span>}</div>
+        <div className="mt-3 grid grid-cols-4 gap-1.5">{[['点赞', metrics?.likes || '—'], ['评论', metrics?.comments || '—'], ['分享', metrics?.shares || '—'], ['播放', metrics?.plays || '—']].map(([label, value]) => <div key={label} className="rounded-lg bg-surface-2 px-1.5 py-2 text-center"><p className="text-sm font-semibold text-text-primary">{value}</p><p className="text-[9px] text-text-muted">{label}</p></div>)}</div>
         <div className="mt-2 rounded-lg bg-surface-2 p-2 text-[9px] leading-relaxed text-text-secondary">
-          <p>账号：{video.aiAnalysis?.author || '未抓取'} · 粉丝：{metrics?.followers ? metrics.followers.toLocaleString() : '未公开/未抓取'}</p>
+          <p>账号：{video.aiAnalysis?.author || video.aiAnalysis?.sourceAccountName || '未抓取'} · 粉丝：{metrics?.followers ? metrics.followers.toLocaleString() : '未公开/未抓取'}</p>
           <p className="mt-1">投流信号：{adSignals?.isAd || adSignals?.isPaidPartnership ? '平台公开标记为广告/付费合作' : '未抓到公开标记（不代表未投流）'}</p>
         </div>
         <p className="mt-2 text-[9px] leading-relaxed text-text-muted">{baseline?.status === 'usable' ? `${baseline.sampleSize} 条同账号样本；${baseline.method}` : `同账号样本 ${baseline?.sampleSize || 0} 条，暂不足以确认相对爆款。`}</p>
       </section>
-      {!isAnalyzed ? <EmptyEvidence title="图片证据尚未提取" desc={video.aiAnalysis?.imageAnalysisError || '重新分析后，系统会逐图提取可见事实、OCR、轮播角色和可复用模块。'}/> : <section><div className="mb-2 flex items-center justify-between"><p className="text-[11px] font-black text-text-primary">可复用模块</p><span className="text-[9px] text-text-muted">{evidence!.observedFacts.length} 张图片 · 仅基于可见证据</span></div><div className="space-y-2">{evidence!.reusableModules.map((item, index) => <div key={`${item.module}-${index}`} className="rounded-xl border border-border bg-white p-3"><div className="flex items-center justify-between"><p className="text-[11px] font-black text-text-primary">{item.module}</p><span className="text-[9px] text-text-muted">置信度 {Math.round(item.confidence * 100)}%</span></div><p className="mt-1 text-[10px] text-text-secondary">证据：{item.evidence}</p><div className="mt-2 grid grid-cols-2 gap-2 text-[9px]"><p className="rounded-lg bg-emerald-50 p-2 text-emerald-800">保留结构：{item.preserve}</p><p className="rounded-lg bg-amber-50 p-2 text-amber-800">替换内容：{item.replace}</p></div></div>)}</div></section>}
+      {!isAnalyzed ? <EmptyEvidence title="图片证据尚未提取" desc={video.aiAnalysis?.imageAnalysisError || '重新分析后，系统会逐图提取可见事实、OCR、轮播角色和可复用模块。'}/> : <section><div className="mb-2 flex items-center justify-between"><p className="text-[11px] font-semibold text-text-primary">可复用模块</p><span className="text-[9px] text-text-muted">{evidence!.observedFacts.length} 张图片 · 仅基于可见证据</span></div><div className="space-y-2">{evidence!.reusableModules.map((item, index) => <div key={`${item.module}-${index}`} className="rounded-lg border border-border bg-white p-3"><div className="flex items-center justify-between"><p className="text-[11px] font-semibold text-text-primary">{item.module}</p><span className="text-[9px] text-text-muted">置信度 {Math.round(item.confidence * 100)}%</span></div><p className="mt-1 text-[10px] text-text-secondary">证据：{item.evidence}</p><div className="mt-2 grid grid-cols-2 gap-2 text-[9px]"><p className="rounded-lg bg-blue-50 p-2 text-blue-800">保留结构：{item.preserve}</p><p className="rounded-lg bg-amber-50 p-2 text-amber-800">替换内容：{item.replace}</p></div></div>)}</div></section>}
     </div>
   );
 
   if (activeTab === 'visual') return (
     <div className="space-y-3">
-      <div><p className="text-[11px] font-black text-text-primary">逐图视觉事实</p><p className="mt-1 text-[10px] text-text-muted">主体、场景、构图、颜色和实际可读文字</p></div>
-      {!isAnalyzed ? <EmptyEvidence title="尚未返回逐图拆解" desc="当前没有可验证的图片视觉结果。"/> : evidence!.observedFacts.map(fact => { const flow = evidence!.carouselFlow.find(item => item.imageIndex === fact.imageIndex); return <div key={fact.imageIndex} className="rounded-xl border border-border bg-white p-3"><div className="flex items-center justify-between"><p className="text-[11px] font-black text-text-primary">第 {fact.imageIndex} 张</p><span className="rounded-full bg-emerald-50 px-2 py-0.5 text-[9px] font-bold text-emerald-700">{roleLabel[flow?.role || 'unknown']}</span></div><p className="mt-2 text-[10px] text-text-secondary">主体：{fact.subjects.join('、') || '未确认'}</p><p className="mt-1 text-[10px] text-text-secondary">场景：{fact.scene || '未确认'}</p><p className="mt-1 text-[10px] text-text-secondary">构图：{fact.composition || '未确认'}</p><p className="mt-1 text-[10px] text-text-secondary">颜色：{fact.colors.join('、') || '未确认'}</p>{fact.visibleText.length > 0 && <p className="mt-1 rounded-lg bg-surface-2 p-2 text-[10px] text-text-secondary">OCR：{fact.visibleText.join(' / ')}</p>}{flow?.evidence && <p className="mt-2 text-[9px] text-text-muted">轮播作用依据：{flow.evidence}</p>}</div>; })}
+      <div><p className="text-[11px] font-semibold text-text-primary">逐图视觉事实</p><p className="mt-1 text-[10px] text-text-muted">主体、场景、构图、颜色和实际可读文字</p></div>
+      {!isAnalyzed ? <EmptyEvidence title="尚未返回逐图拆解" desc="当前没有可验证的图片视觉结果。"/> : evidence!.observedFacts.map(fact => { const flow = evidence!.carouselFlow.find(item => item.imageIndex === fact.imageIndex); return <div key={fact.imageIndex} className="rounded-lg border border-border bg-white p-3"><div className="flex items-center justify-between"><p className="text-[11px] font-semibold text-text-primary">第 {fact.imageIndex} 张</p><span className="rounded-full bg-violet-50 px-2 py-0.5 text-[9px] font-bold text-violet-700">{roleLabel[flow?.role || 'unknown']}</span></div><p className="mt-2 text-[10px] text-text-secondary">主体：{fact.subjects.join('、') || '未确认'}</p><p className="mt-1 text-[10px] text-text-secondary">场景：{fact.scene || '未确认'}</p><p className="mt-1 text-[10px] text-text-secondary">构图：{fact.composition || '未确认'}</p><p className="mt-1 text-[10px] text-text-secondary">颜色：{fact.colors.join('、') || '未确认'}</p>{fact.visibleText.length > 0 && <p className="mt-1 rounded-lg bg-surface-2 p-2 text-[10px] text-text-secondary">OCR：{fact.visibleText.join(' / ')}</p>}{flow?.evidence && <p className="mt-2 text-[9px] text-text-muted">轮播作用依据：{flow.evidence}</p>}</div>; })}
     </div>
   );
 
   if (activeTab === 'copy') return (
     <div className="space-y-3">
-      <section className="rounded-xl border border-border bg-white p-3"><div className="flex items-center justify-between"><p className="text-[10px] font-bold text-text-muted">原始帖文</p><span className="rounded-full bg-surface-2 px-2 py-0.5 text-[9px] text-text-muted">抓取原文</span></div><p className="mt-2 text-[11px] font-bold leading-relaxed text-text-primary">{rawCaption || '未抓取到原始帖文'}</p></section>
+      <section className="rounded-lg border border-border bg-white p-3"><div className="flex items-center justify-between"><p className="text-[10px] font-bold text-text-muted">原始帖文</p><span className="rounded-full bg-surface-2 px-2 py-0.5 text-[9px] text-text-muted">抓取原文</span></div><p className="mt-2 text-[11px] font-bold leading-relaxed text-text-primary">{rawCaption || '未抓取到原始帖文'}</p></section>
       {!evidence?.copyEvidence.hooks.length && !evidence?.copyEvidence.sellingPoints.length ? <EmptyEvidence title="没有可确认的文案模块" desc="仅展示原始帖文，不推断未出现的人群、痛点或承诺。"/> : <>{evidence?.copyEvidence.hooks.map((item, index) => <EvidenceCard key={`copy-hook-${index}`} label={`钩子 ${index + 1} · ${item.source}`} value={`${item.text}｜证据：${item.evidence}`}/>)}{evidence?.copyEvidence.sellingPoints.map((item, index) => <EvidenceCard key={`copy-point-${index}`} label={`卖点 ${index + 1} · ${item.source}`} value={`${item.text}｜证据：${item.evidence}`}/>)}</>}
     </div>
   );
 
   return (
     <div className="space-y-3">
-      <div><p className="text-[11px] font-black text-text-primary">套用到企业获客内容</p><p className="mt-1 text-[10px] text-text-muted">生成“吸引—解释—信任”三条连续内容，而不是三张相似测试图。</p></div>
-      {!isAnalyzed ? <EmptyEvidence title="暂不能生成内容包" desc="需要先完成逐图证据提取，才能安全复用布局和信息模块。"/> : <div className="space-y-2">{[['吸引目标买家', '复用首图停留结构，替换为企业产品和买家问题。'], ['解释合作能力', '复用产品、细节和流程模块，映射企业 MOQ、定制与交付资料。'], ['建立供应商信任', '复用证明模块，只使用企业真实工厂、认证和案例。']].map(([title, desc], index) => <div key={title} className="flex gap-3 rounded-xl border border-border bg-white p-3"><span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-emerald-50 text-[10px] font-black text-emerald-700">{index + 1}</span><div><p className="text-[11px] font-black text-text-primary">{title}</p><p className="mt-1 text-[10px] text-text-secondary">{desc}</p></div></div>)}{evidence!.uncertainties.length > 0 && <div className="rounded-xl bg-amber-50 p-3"><p className="text-[10px] font-black text-amber-800">生成前需确认</p>{evidence!.uncertainties.map(item => <p key={item} className="mt-1 text-[9px] text-amber-700">· {item}</p>)}</div>}</div>}
+      <div><p className="text-[11px] font-semibold text-text-primary">套用到企业获客内容</p><p className="mt-1 text-[10px] text-text-muted">生成“吸引—解释—信任”三条连续内容，而不是三张相似测试图。</p></div>
+      {!isAnalyzed ? <EmptyEvidence title="暂不能生成内容包" desc="需要先完成逐图证据提取，才能安全复用布局和信息模块。"/> : <div className="space-y-2">{[['吸引目标买家', '复用首图停留结构，替换为企业产品和买家问题。'], ['解释合作能力', '复用产品、细节和流程模块，映射企业 MOQ、定制与交付资料。'], ['建立供应商信任', '复用证明模块，只使用企业真实工厂、认证和案例。']].map(([title, desc], index) => <div key={title} className="flex gap-3 rounded-lg border border-border bg-white p-3"><span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-blue-50 text-[10px] font-semibold text-blue-700">{index + 1}</span><div><p className="text-[11px] font-semibold text-text-primary">{title}</p><p className="mt-1 text-[10px] text-text-secondary">{desc}</p></div></div>)}{evidence!.uncertainties.length > 0 && <div className="rounded-lg bg-amber-50 p-3"><p className="text-[10px] font-semibold text-amber-800">生成前需确认</p>{evidence!.uncertainties.map(item => <p key={item} className="mt-1 text-[9px] text-amber-700">· {item}</p>)}</div>}</div>}
     </div>
   );
 }
 
 // ── Analysis Panel ────────────────────────────────────────────────────────────
-function AnalysisPanel({ video, onGenerateScript, onRetry, onExactAnalysis, actionNotice, specialRecommendation }: { video: TrendVideo; onGenerateScript: (analysis?: ScriptAnalysis) => void; onRetry?: () => void; onExactAnalysis?: () => void; actionNotice?: string; specialRecommendation?: AccountSpecialRecommendation | null }) {
+function AnalysisPanel({ video, onGenerateScript, onPersonReplace, onRetry, onExactAnalysis, actionNotice, specialRecommendation }: { video: TrendVideo; onGenerateScript: (analysis?: ScriptAnalysis) => void; onPersonReplace: (analysis?: ScriptAnalysis) => void; onRetry?: () => void; onExactAnalysis?: () => void; actionNotice?: string; specialRecommendation?: AccountSpecialRecommendation | null }) {
   const [loaded, setLoaded] = useState(false);
   const [analysis, setAnalysis] = useState<ScriptAnalysis | null>(null);
   const [activeBookmark, setActiveBookmark] = useState<'reason' | 'frames' | 'script' | 'adapt' | ImageInsightTab>(video.contentFormat === 'image' ? 'overview' : 'reason');
@@ -1538,18 +1513,13 @@ function AnalysisPanel({ video, onGenerateScript, onRetry, onExactAnalysis, acti
   if (!loaded) {
     return (
       <div className="flex-1 flex flex-col items-center justify-center gap-4 px-6">
-        <div className="w-10 h-10 rounded-xl flex items-center justify-center"
+        <div className="w-10 h-10 rounded-lg flex items-center justify-center"
           style={{ background: 'rgba(22,163,74,0.1)' }}>
           <Loader2 size={18} className="text-accent animate-spin" />
         </div>
         <div className="text-center space-y-1">
           <p className="text-sm font-semibold text-text-primary">{video.contentFormat === 'image' ? 'AI 正在提取图片爆点…' : 'AI 正在分析脚本结构…'}</p>
           <p className="text-xs text-text-muted">{video.contentFormat === 'image' ? '视觉焦点 · 文案钩子 · 迭代变量' : '前 10 秒五维拆解 · 粗略 3 秒结构 · 提取复用爆点'}</p>
-        </div>
-        <div className="w-48 h-1.5 rounded-full bg-surface-2 overflow-hidden">
-          <motion.div className="h-full rounded-full bg-accent"
-            initial={{ width: '5%' }} animate={{ width: '90%' }}
-            transition={{ duration: 1.4, ease: 'easeInOut' }} />
         </div>
       </div>
     );
@@ -1559,7 +1529,7 @@ function AnalysisPanel({ video, onGenerateScript, onRetry, onExactAnalysis, acti
     const state = pipelineState(video);
     return (
       <div className="flex-1 flex flex-col items-center justify-center gap-4 px-6 text-center">
-        <div className="w-10 h-10 rounded-xl flex items-center justify-center bg-surface-2 border border-border">
+        <div className="w-10 h-10 rounded-lg flex items-center justify-center bg-surface-2 border border-border">
           {state.spinning ? <Loader2 size={18} className="text-accent animate-spin" /> : <X size={18} className={state.failed ? 'text-accent' : 'text-text-muted'} />}
         </div>
         <div className="space-y-1 max-w-xs">
@@ -1620,23 +1590,23 @@ function AnalysisPanel({ video, onGenerateScript, onRetry, onExactAnalysis, acti
     <div className="flex min-h-0 flex-1 flex-col" data-lingshu-guide="analysis-evidence">
       <div className="flex-shrink-0 border-b border-border bg-surface px-4 py-3">
         <div className="mb-3 flex flex-wrap items-center gap-2 text-[10px] text-text-muted">
-          <span className="inline-flex items-center gap-1 rounded-md border border-border bg-surface-2 px-2 py-1 font-semibold text-text-secondary">{video.contentFormat === 'image' && <SocialPlatformIcon platform={video.platform} size={12} />}{video.contentFormat === 'image' ? `${getPlatformMeta(video.platform).label} 图文` : analysis.videoType}</span>
+          <span className="inline-flex items-center gap-1 rounded-md border border-border bg-surface-2 px-2 py-1 font-semibold text-text-secondary">{video.contentFormat === 'image' && <><SocialPlatformIcon platform={video.platform} size={12} /><span className="sr-only">{getPlatformMeta(video.platform).label}</span></>}{video.contentFormat === 'image' ? '图文' : analysis.videoType}</span>
           {video.contentFormat === 'image' ? <><span className="flex items-center gap-1"><BarChart2 size={9} className="text-accent" />{hasTrustedImageAnalysis ? `已提取 ${imageEvidenceCount} 条证据` : '图片分析待完成'}</span><span className="flex items-center gap-1"><Images size={9} />{video.aiAnalysis?.imageCount || video.aiAnalysis?.imageUrls?.length || 1} 张图片</span></> : <><span className="flex items-center gap-1"><BarChart2 size={9} className="text-accent" />信息速度 {analysis.infoSpeed}</span><span className="flex items-center gap-1"><TrendingUp size={9} />{video.views} 播放</span><span>{analysis.emotion}</span></>}
         </div>
         {showStrategyProgress && <div role="status" aria-live="polite" className="mb-3 flex items-start gap-2 rounded-lg border border-accent/20 bg-accent/5 px-3 py-2 text-[10px] leading-relaxed text-text-secondary">
           <Loader2 size={12} className="mt-0.5 shrink-0 animate-spin text-accent" />
           <span><strong className="text-text-primary">{strategyPipelineState.title}</strong>：{strategyPipelineState.desc}</span>
         </div>}
-        <div className="grid grid-cols-4 gap-1 rounded-xl border border-border bg-surface-2 p-1">
+        <div className="grid grid-cols-4 border-b border-border">
           {bookmarkTabs.map(tab => (
             <button
               key={tab.id}
               type="button"
               onClick={() => setActiveBookmark(tab.id)}
-              className={`flex min-h-9 items-center justify-center gap-1 rounded-lg px-1.5 text-[11px] font-bold transition-all ${
+              className={`flex min-h-9 items-center justify-center gap-1 border-b-2 px-1.5 text-[11px] font-bold transition-colors ${
                 activeBookmark === tab.id
-                  ? 'bg-white text-accent shadow-sm'
-                  : 'text-text-muted hover:text-text-secondary'
+                  ? 'border-accent text-accent'
+                  : 'border-transparent text-text-muted hover:text-text-secondary'
               }`}
             >
               {tab.icon}
@@ -1657,8 +1627,8 @@ function AnalysisPanel({ video, onGenerateScript, onRetry, onExactAnalysis, acti
             <motion.div key="reason" initial={{ opacity: 0, y: 6 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -4 }}
               className="space-y-3">
               {specialRecommendation && (
-                <div className="rounded-xl border border-red-200 bg-red-50 px-3 py-2.5 shadow-sm">
-                  <div className="flex items-center gap-1.5"><Flame size={13} className="text-red-600" /><p className="text-[11px] font-black text-red-700">特别推荐 · 借鉴价值{specialRecommendation.level}</p></div>
+                <div className="rounded-lg border border-red-200 bg-red-50 px-3 py-2.5 shadow-none">
+                  <div className="flex items-center gap-1.5"><Flame size={13} className="text-red-600" /><p className="text-[11px] font-semibold text-red-700">特别推荐 · 借鉴价值{specialRecommendation.level}</p></div>
                   <p className="mt-1 text-[10px] leading-relaxed text-red-700">{specialRecommendation.message}</p>
                 </div>
               )}
@@ -1704,41 +1674,41 @@ function AnalysisPanel({ video, onGenerateScript, onRetry, onExactAnalysis, acti
                   const key = `${match.detail.time}-${i}`;
                   const hasMaterial = Boolean(match.material);
                   return (
-                    <div key={key} className={`rounded-xl border p-3 ${match.decision === 'copy_now' ? 'border-green-200 bg-green-50/60' : match.decision === 'drop' ? 'border-border bg-surface-2/60' : 'border-accent-100 bg-accent-50/40'}`}>
+                    <div key={key} className={`rounded-md border p-3 ${match.decision === 'copy_now' ? 'border-accent/25 bg-accent-glow' : match.decision === 'drop' ? 'border-border bg-surface-2/60' : 'border-amber/25 bg-amber-dim'}`}>
                       <div className="flex items-start justify-between gap-2">
                         <div className="min-w-0">
                           <div className="flex flex-wrap items-center gap-1.5">
                             <span className="rounded bg-neutral-800 px-1.5 py-0.5 font-mono text-[9px] font-bold text-white">{match.detail.time}</span>
-                            <span className="text-[11px] font-black text-text-primary">{match.viralDna.purpose}</span>
+                            <span className="text-[11px] font-semibold text-text-primary">{match.viralDna.purpose}</span>
                           </div>
                           <p className="mt-1 text-[10px] text-text-muted">{match.detail.shot} · {match.detail.camera}</p>
                         </div>
                       </div>
 
                       <div className="mt-2 grid grid-cols-2 gap-2">
-                        <div className="rounded-lg border border-orange-100 bg-white px-2.5 py-2">
-                          <div className="flex items-center justify-between"><span className="text-[9px] font-bold text-orange-700">爆款潜力</span><span className="text-sm font-black text-orange-600">{frameScoreGrade(match.viralPotential.score)}</span></div>
-                          <div className="mt-1 h-1 overflow-hidden rounded-full bg-orange-100"><div className="h-full rounded-full bg-orange-500" style={{ width: `${match.viralPotential.score}%` }} /></div>
+                        <div className="rounded-md border border-amber/20 bg-surface px-2.5 py-2">
+                          <div className="flex items-center justify-between"><span className="text-[9px] font-bold text-amber">爆款潜力</span><span className="text-sm font-bold text-amber">{frameScoreGrade(match.viralPotential.score)}</span></div>
+                          <div className="mt-1 h-1 overflow-hidden rounded-full bg-amber-dim"><div className="h-full rounded-full bg-amber" style={{ width: `${match.viralPotential.score}%` }} /></div>
                         </div>
-                        <div className="rounded-lg border border-green-100 bg-white px-2.5 py-2">
-                          <div className="flex items-center justify-between"><span className="text-[9px] font-bold text-green-700">可复制性</span><span className="text-sm font-black text-green-600">{frameScoreGrade(match.replicability.score)}</span></div>
-                          <div className="mt-1 h-1 overflow-hidden rounded-full bg-green-100"><div className="h-full rounded-full bg-green-500" style={{ width: `${match.replicability.score}%` }} /></div>
+                        <div className="rounded-md border border-accent/20 bg-surface px-2.5 py-2">
+                          <div className="flex items-center justify-between"><span className="text-[9px] font-bold text-accent">可复制性</span><span className="text-sm font-bold text-accent">{frameScoreGrade(match.replicability.score)}</span></div>
+                          <div className="mt-1 h-1 overflow-hidden rounded-full bg-accent-glow"><div className="h-full rounded-full bg-accent" style={{ width: `${match.replicability.score}%` }} /></div>
                         </div>
                       </div>
 
                       <div className="mt-2 rounded-lg border border-border bg-white/90 px-2.5 py-2">
-                        <p className="text-[9px] font-black text-text-primary">为什么有效</p>
+                        <p className="text-[9px] font-semibold text-text-primary">为什么有效</p>
                         <p className="mt-1 text-[10px] leading-relaxed text-text-secondary">{match.viralPotential.whyEffective}</p>
-                        <div className="mt-1.5 flex flex-wrap gap-1">{match.viralPotential.mechanisms.map(item => <span key={item} className="rounded bg-orange-50 px-1.5 py-0.5 text-[9px] font-bold text-orange-700">{item}</span>)}</div>
+                        <div className="mt-1.5 flex flex-wrap gap-1">{match.viralPotential.mechanisms.map(item => <span key={item} className="rounded bg-amber-dim px-1.5 py-0.5 text-[9px] font-bold text-amber">{item}</span>)}</div>
                       </div>
 
                       <div className="mt-2 rounded-lg border border-border bg-white/90 px-2.5 py-2">
-                        <p className="text-[9px] font-black text-text-primary">必须保留</p>
+                        <p className="text-[9px] font-semibold text-text-primary">必须保留</p>
                         <div className="mt-1 space-y-0.5">{match.viralDna.mustPreserve.slice(0, 4).map(item => <p key={item} className="text-[10px] leading-relaxed text-text-secondary">✓ {item}</p>)}</div>
                       </div>
 
-                      <div className="mt-2 rounded-lg border border-green-100 bg-green-50/70 px-2.5 py-2">
-                        <p className="text-[9px] font-black text-green-800">企业替换与执行</p>
+                      <div className="mt-2 rounded-md border border-accent/20 bg-accent-glow px-2.5 py-2">
+                        <p className="text-[9px] font-bold text-accent">企业替换与执行</p>
                         <p className="mt-1 text-[10px] leading-relaxed text-text-secondary">{match.viralDna.replaceable.join('；')}</p>
                         <div className="mt-1.5 flex flex-wrap gap-1.5 text-[9px] font-bold">
                           <span className="rounded bg-white px-1.5 py-0.5 text-text-secondary">真实素材覆盖 {match.replicability.localCoverage}%</span>
@@ -1762,7 +1732,7 @@ function AnalysisPanel({ video, onGenerateScript, onRetry, onExactAnalysis, acti
                             {match.scores && <div className="grid grid-cols-4 gap-1 text-center text-[9px] font-semibold text-text-muted">
                               <span className="rounded bg-surface-2 px-1 py-0.5">功能 {match.scores.function}</span><span className="rounded bg-surface-2 px-1 py-0.5">动作 {match.scores.action}</span><span className="rounded bg-surface-2 px-1 py-0.5">主体 {match.scores.subject}</span><span className="rounded bg-surface-2 px-1 py-0.5">构图 {match.scores.composition}</span><span className="rounded bg-surface-2 px-1 py-0.5">运镜 {match.scores.camera}</span><span className="rounded bg-surface-2 px-1 py-0.5">时长 {match.scores.duration}</span><span className="rounded bg-surface-2 px-1 py-0.5">质量 {match.scores.quality}</span><span className="rounded bg-surface-2 px-1 py-0.5">企业适配 {match.scores.enterpriseFit}</span>
                             </div>}
-                            {match.segment && !match.segment.manualConfirmed && <button type="button" onClick={() => void confirmMatchedSegment(match)} className="inline-flex items-center gap-1 rounded-md border border-green-200 bg-green-50 px-2 py-1 text-[10px] font-bold text-green-700"><Check size={10} />人工确认片段</button>}
+                            {match.segment && !match.segment.manualConfirmed && <button type="button" onClick={() => void confirmMatchedSegment(match)} className="inline-flex items-center gap-1 rounded-md border border-blue-200 bg-blue-50 px-2 py-1 text-[10px] font-bold text-blue-700"><Check size={10} />人工确认片段</button>}
                           </> : <p className="text-[10px] leading-relaxed text-accent-800">{match.suggestion}</p>}
                         </div>
                       </details>
@@ -1785,7 +1755,7 @@ function AnalysisPanel({ video, onGenerateScript, onRetry, onExactAnalysis, acti
                   {editingAnalysis ? <><button onClick={() => setEditingAnalysis(false)} className="text-[10px] font-bold text-text-muted">取消</button><button onClick={() => void saveAnalysisCorrections()} disabled={savingAnalysis} className="rounded-lg bg-accent px-2.5 py-1 text-[10px] font-bold text-white disabled:opacity-50">{savingAnalysis ? '保存中…' : '保存修正'}</button></> : <button onClick={() => setEditingAnalysis(true)} className="rounded-lg border border-border bg-white px-2.5 py-1 text-[10px] font-bold text-text-secondary">编辑校对</button>}
                 </div>
               </div>
-              <div className="overflow-hidden rounded-xl border border-border">
+              <div className="overflow-hidden rounded-lg border border-border">
                 <div className="space-y-1 border-b border-border bg-surface-2 px-3 py-2.5">
                   <p className="text-[11px] leading-relaxed text-text-secondary"><span className="font-semibold text-text-primary">基础要求：</span>{analysis.baseRequirements}</p>
                   <p className="text-[11px] text-text-secondary"><span className="font-semibold text-text-primary">指定画风：</span>{analysis.scriptSummary15s.visualStyle}</p>
@@ -1824,12 +1794,12 @@ function AnalysisPanel({ video, onGenerateScript, onRetry, onExactAnalysis, acti
           {activeBookmark === 'adapt' && (
             <motion.div key="adapt" initial={{ opacity: 0, y: 6 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -4 }}
               className="space-y-3">
-              <div className="rounded-xl border border-dashed p-3"
+              <div className="rounded-lg border border-dashed p-3"
                 style={{ borderColor: 'rgba(22,163,74,0.3)', background: 'rgba(22,163,74,0.04)' }}>
                 <p className="mb-1.5 text-[10px] font-semibold text-accent">改编建议</p>
                 <p className="text-[11px] leading-relaxed text-text-secondary">{analysis.adaptTip}</p>
               </div>
-              <div className="rounded-xl border border-border bg-surface-2 p-3">
+              <div className="rounded-lg border border-border bg-surface-2 p-3">
                 <p className="mb-2 text-[10px] font-semibold uppercase tracking-wider text-text-muted">可复用爆点</p>
                 <div className="flex flex-wrap gap-1.5">
                   {referenceHighlights(video, analysis).slice(0, 6).map((item, index) => (
@@ -1845,23 +1815,25 @@ function AnalysisPanel({ video, onGenerateScript, onRetry, onExactAnalysis, acti
       </div>
 
       <div className="flex-shrink-0 border-t border-border bg-surface p-4 shadow-[0_-10px_24px_rgba(15,23,42,0.04)]">
-        {video.contentFormat !== 'image' && <div className="mb-3 rounded-xl border border-accent/20 bg-accent/5 p-3">
+        {video.contentFormat !== 'image' && <div className="mb-3 rounded-lg border border-accent/20 bg-accent/5 p-3">
           <div className="flex items-center justify-between gap-3">
-            <p className="text-[11px] font-black text-text-primary">{analysisQuality.ready ? '全片精确分析版 · 质量校验通过' : video.aiAnalysis?.requestedAnalysisMode === 'exact' ? '全片精确分析排队中' : video.aiAnalysis?.analysisMode === 'exact' ? '全片精确分析未通过校验' : showStrategyProgress ? '自动策略分析处理中' : '全片策略分析版'}</p>
-            {!analysisQuality.ready && <button type="button" onClick={onExactAnalysis} disabled={video.aiAnalysis?.requestedAnalysisMode === 'exact'} className="shrink-0 rounded-lg border border-accent bg-white px-2.5 py-1.5 text-[10px] font-black text-accent hover:bg-accent/5 disabled:cursor-wait disabled:opacity-50">{video.aiAnalysis?.requestedAnalysisMode === 'exact' ? '精确分析生成中…' : video.aiAnalysis?.analysisMode === 'exact' ? '重试全片精确分析' : '生成全片精确分析'}</button>}
+            <p className="text-[11px] font-semibold text-text-primary">{analysisQuality.ready ? '全片精确分析版 · 质量校验通过' : video.aiAnalysis?.requestedAnalysisMode === 'exact' ? '全片精确分析排队中' : video.aiAnalysis?.analysisMode === 'exact' ? '全片精确分析未通过校验' : showStrategyProgress ? '自动策略分析处理中' : '全片策略分析版'}</p>
+            {!analysisQuality.ready && <button type="button" onClick={onExactAnalysis} disabled={video.aiAnalysis?.requestedAnalysisMode === 'exact'} className="shrink-0 rounded-lg border border-accent bg-white px-2.5 py-1.5 text-[10px] font-semibold text-accent hover:bg-accent/5 disabled:cursor-wait disabled:opacity-50">{video.aiAnalysis?.requestedAnalysisMode === 'exact' ? '精确分析生成中…' : video.aiAnalysis?.analysisMode === 'exact' ? '重试全片精确分析' : '生成全片精确分析'}</button>}
           </div>
           {actionNotice && <p role="status" aria-live="polite" className="mt-2 rounded-lg border border-accent/20 bg-white px-2.5 py-2 text-[10px] font-semibold leading-relaxed text-text-secondary">{actionNotice}</p>}
           {video.aiAnalysis?.videoLevelFailureStatus && !video.aiAnalysis?.requestedAnalysisMode && <p role="status" aria-live="polite" className="mt-2 rounded-lg border border-amber-200 bg-amber-50 px-2.5 py-2 text-[10px] font-semibold leading-relaxed text-amber-700">全片精确分析未完成，已保留原分析。可稍后重试，或换用可直接下载的公开素材。</p>}
         </div>}
-        {video.contentFormat === 'image' && !hasTrustedImageAnalysis && <button type="button" onClick={() => void reanalyzeImage()} disabled={reanalyzingImage} className="mb-2 flex w-full items-center justify-center gap-2 rounded-xl border border-emerald-200 bg-emerald-50 py-2 text-xs font-black text-emerald-700 disabled:opacity-50">{reanalyzingImage ? <Loader2 size={13} className="animate-spin"/> : <Images size={13}/>}重新分析完整轮播</button>}
+        {video.contentFormat === 'image' && !hasTrustedImageAnalysis && <button type="button" onClick={() => void reanalyzeImage()} disabled={reanalyzingImage} className="mb-2 flex w-full items-center justify-center gap-2 rounded-lg border border-blue-200 bg-blue-50 py-2 text-xs font-semibold text-blue-700 disabled:opacity-50">{reanalyzingImage ? <Loader2 size={13} className="animate-spin"/> : <Images size={13}/>}重新分析完整轮播</button>}
         {analysisSaveNotice && video.contentFormat === 'image' && <p className="mb-2 text-center text-[10px] text-red-500">{analysisSaveNotice}</p>}
         <button onClick={() => onGenerateScript(analysis || undefined)} disabled={(video.contentFormat === 'image' && !hasTrustedImageAnalysis) || videoGenerationBlocked}
-          className="flex w-full items-center justify-center gap-2 rounded-2xl py-3 text-sm font-black text-white transition-all enabled:hover:scale-[1.01] enabled:active:scale-[0.99] disabled:cursor-not-allowed disabled:opacity-50"
-          style={{ background: 'linear-gradient(135deg, #16a34a, #059669)', boxShadow: '0 10px 24px rgba(22,163,74,0.26)' }}>
+          className="flex w-full items-center justify-center gap-2 rounded-md bg-accent py-3 text-sm font-bold text-white transition-colors enabled:hover:bg-accent-dim disabled:cursor-not-allowed disabled:opacity-50">
           <Sparkles size={16} />
           {video.contentFormat === 'image' ? (hasTrustedImageAnalysis ? '套用企业资料生成获客内容包' : '先完成图片分析') : videoGenerationBlocked ? '先完成合格的全片精确分析' : 'AI一键爆款迭代'}
           <ChevronRight size={15} />
         </button>
+        {video.contentFormat !== 'image' && <button type="button" onClick={() => onPersonReplace(analysis || undefined)} disabled={videoGenerationBlocked} className="mt-2 flex w-full items-center justify-center gap-2 rounded-md border border-violet-300 bg-white py-3 text-sm font-bold text-violet-700 transition-colors enabled:hover:bg-violet-50 disabled:cursor-not-allowed disabled:opacity-50">
+          <ScanFace size={16}/>爆款分镜人物替换<ChevronRight size={15}/>
+        </button>}
       </div>
     </div>
   );
@@ -1910,6 +1882,8 @@ interface GeneratedVideo {
 }
 
 function ScriptPanel({ video, activePanelTab, onClose, onRetry, onExactAnalysis, actionNotice, onFavorite, favoriting, specialRecommendation, onNavigate, onEnterWorkflow }: ScriptPanelProps) {
+  const reducedMotion = usePrefersReducedMotion();
+  const panelRef = useModalFocus<HTMLDivElement>({ open: true, onClose });
   const [activeTab, setActiveTab] = useState<'analysis' | 'generate'>(activePanelTab);
   const [scriptType, setScriptType] = useState<ScriptType>('voiceover');
   const [language, setLanguage] = useState('zh');
@@ -1918,6 +1892,9 @@ function ScriptPanel({ video, activePanelTab, onClose, onRetry, onExactAnalysis,
   const [selectedProductId, setSelectedProductId] = useState('');
   const [generating, setGenerating] = useState(false);
   const [result, setResult] = useState<string | null>(null);
+  const [resultProvenance, setResultProvenance] = useState<ScriptResultProvenance | null>(null);
+  const [resultQualityStatus, setResultQualityStatus] = useState<string>('');
+  const [resultNotice, setResultNotice] = useState('');
   const [copied, setCopied] = useState(false);
   const [showLangDropdown, setShowLangDropdown] = useState(false);
   const languageDropdownRef = useRef<HTMLDivElement>(null);
@@ -1967,6 +1944,9 @@ function ScriptPanel({ video, activePanelTab, onClose, onRetry, onExactAnalysis,
 
   useEffect(() => {
     setResult(null);
+    setResultProvenance(null);
+    setResultQualityStatus('');
+    setResultNotice('');
     setCopied(false);
     setShowLangDropdown(false);
     setVideoResult(null);
@@ -1998,6 +1978,9 @@ function ScriptPanel({ video, activePanelTab, onClose, onRetry, onExactAnalysis,
     const shouldAdvanceDemo = isDemoTrafficStep();
     setGenerating(true);
     setResult(null);
+    setResultProvenance(null);
+    setResultQualityStatus('');
+    setResultNotice('');
     setVideoResult(null);
     setVideoError('');
     const realAnalysis = getAnalysis(video);
@@ -2029,17 +2012,37 @@ function ScriptPanel({ video, activePanelTab, onClose, onRetry, onExactAnalysis,
         },
         fallbackScript,
       );
-      setResult(response.script || fallbackScript);
+      const responseScript = String(response.script || '').trim();
+      const rejectedDraft = response.source === 'ai_rejected' && responseScript;
+      if (rejectedDraft) {
+        setResult(responseScript);
+        setResultProvenance('ai_rejected');
+        setResultQualityStatus('rejected');
+        setResultNotice(response.error || response.validationIssues?.join('；') || 'AI 草稿未通过事实或质量校验，仅供修改，不可进入视频生成或交付。');
+        return;
+      }
+      if (response.ok === false || response.source !== 'ai' || !responseScript) {
+        setResult(fallbackScript);
+        setResultProvenance('template');
+        setResultQualityStatus('fallback');
+        setResultNotice(response.error || 'AI 生成失败。以下仅为本地空白草稿模板，未调用模型、未经质检，不可进入视频生成或交付。');
+        return;
+      }
+      setResult(responseScript);
+      setResultProvenance('ai');
+      setResultQualityStatus(response.qualityStatus || 'warning');
+      setResultNotice(response.qualityStatus === 'passed'
+        ? 'AI 脚本已通过当前质量校验。'
+        : 'AI 脚本已生成，但尚未获得“质量通过”结论；请先人工复核。');
       if (shouldAdvanceDemo) {
         completeDemoStep('traffic');
         window.setTimeout(() => onNavigate?.('conversion'), 700);
       }
-    } catch {
+    } catch (error) {
       setResult(fallbackScript);
-      if (shouldAdvanceDemo) {
-        completeDemoStep('traffic');
-        window.setTimeout(() => onNavigate?.('conversion'), 700);
-      }
+      setResultProvenance('template');
+      setResultQualityStatus('fallback');
+      setResultNotice(`${error instanceof Error ? error.message : 'AI 生成失败'}。以下仅为本地空白草稿模板，未调用模型、未经质检，不可进入视频生成或交付。`);
     } finally {
       setGenerating(false);
     }
@@ -2051,6 +2054,10 @@ function ScriptPanel({ video, activePanelTab, onClose, onRetry, onExactAnalysis,
 
   const generateSeedanceVideo = async () => {
     if (!result) return;
+    if (resultProvenance !== 'ai' || ['rejected', 'failed', 'fallback'].includes(resultQualityStatus)) {
+      setVideoError('当前内容是本地模板或未通过校验的草稿，不能进入视频生成。请先成功生成并通过 AI 质量检查。');
+      return;
+    }
     if (seedanceVideoLocked) return;
     setVideoGenerating(true);
     setVideoError('');
@@ -2091,7 +2098,7 @@ function ScriptPanel({ video, activePanelTab, onClose, onRetry, onExactAnalysis,
   };
 
   const enterWorkflow = () => {
-    if (!result || !videoResult) return;
+    if (!result || !videoResult || resultProvenance !== 'ai' || ['rejected', 'failed', 'fallback'].includes(resultQualityStatus)) return;
     onEnterWorkflow?.({ source: 'seedance_video', script: result, video, scriptType, language, productInfo, generatedVideo: videoResult });
   };
 
@@ -2127,20 +2134,46 @@ function ScriptPanel({ video, activePanelTab, onClose, onRetry, onExactAnalysis,
           const payload = await response.json().catch(() => ({})) as { error?: string };
           if (!response.ok) throw new Error(payload.error || '精修视频同步失败');
         } catch (error) {
-          console.warn('精修视频同步失败，已继续进入智能素材。', error);
+          console.warn('精修视频同步失败，已继续进入内容创作。', error);
         }
       })();
     }
+  };
+
+  const enterPersonReplacement = (confirmedAnalysis?: ScriptAnalysis) => {
+    const realAnalysis = confirmedAnalysis || getAnalysis(video);
+    onEnterWorkflow?.({
+      source: 'inspiration_person_replace',
+      video,
+      scriptType: 'storyboard',
+      language,
+      productInfo,
+      referenceAnalysis: realAnalysis ? {
+        title: video.title,
+        visualStyle: realAnalysis.scriptSummary15s.visualStyle,
+        coreEmotion: realAnalysis.scriptSummary15s.coreEmotion,
+        details: realAnalysis.scriptDetails15s,
+      } : undefined,
+    });
+    onClose();
   };
 
   const selectedLang = LANGUAGES.find(l => l.code === language);
 
   return (
     <motion.div
+      ref={panelRef}
+      tabIndex={-1}
+      role="dialog"
+      aria-modal="true"
+      aria-label={video.contentFormat === 'image' ? '竞品图文拆解' : '爆款视频拆解'}
       initial={{ opacity: 0, x: 32 }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0, x: 32 }}
-      transition={{ type: 'spring', damping: 28, stiffness: 300 }}
-      className={`fixed top-0 h-full flex flex-col border-l border-border z-50 bg-surface ${
-        expanded ? 'left-0 right-0 w-auto shadow-2xl' : 'right-0 w-[420px]'
+      transition={reducedMotion ? { duration: 0 } : {
+        ...lsMotion.spring.standard,
+        opacity: { duration: lsMotion.duration.enter / 1000, ease: lsMotion.ease.enter },
+      }}
+      className={`fixed top-0 z-50 flex h-full max-w-full flex-col border-l border-border bg-surface ${
+        expanded ? 'left-0 right-0 w-auto shadow-xl' : 'right-0 w-[420px] shadow-lg'
       }`}>
 
       {/* Header */}
@@ -2162,7 +2195,7 @@ function ScriptPanel({ video, activePanelTab, onClose, onRetry, onExactAnalysis,
             title={expanded ? '还原侧栏' : '放大为主操作界面'}>
             {expanded ? <Minimize2 size={15} /> : <Maximize2 size={15} />}
           </button>
-          <button type="button" onClick={onClose} aria-label="关闭爆款详情" title="关闭" className="p-1.5 rounded-lg hover:bg-surface-2 text-text-muted hover:text-text-primary transition-colors">
+          <button type="button" data-modal-initial-focus onClick={onClose} aria-label="关闭爆款详情" title="关闭" className="rounded-md p-1.5 text-text-muted transition-colors hover:bg-surface-2 hover:text-text-primary">
             <X size={15} />
           </button>
         </div>
@@ -2174,8 +2207,8 @@ function ScriptPanel({ video, activePanelTab, onClose, onRetry, onExactAnalysis,
           { id: 'analysis' as const, icon: <BarChart2 size={12} />, label: video.contentFormat === 'image' ? '竞品图文拆解' : '脚本分析' },
         ]).map(tab => (
           <button key={tab.id} onClick={() => setActiveTab(tab.id)}
-            className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold transition-all ${
-              activeTab === tab.id ? 'bg-accent text-white shadow-sm' : 'text-text-muted hover:text-text-secondary hover:bg-surface-2'
+            className={`flex items-center gap-1.5 border-b-2 px-3 py-2 text-xs font-semibold transition-colors ${
+              activeTab === tab.id ? 'border-accent text-accent' : 'border-transparent text-text-muted hover:text-text-secondary'
             }`}>
             {tab.icon}{tab.label}
           </button>
@@ -2186,7 +2219,7 @@ function ScriptPanel({ video, activePanelTab, onClose, onRetry, onExactAnalysis,
         {activeTab === 'analysis' ? (
           <motion.div key="analysis" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
             className="flex flex-col flex-1 min-h-0 overflow-hidden">
-            <AnalysisPanel key={video.id} video={video} onGenerateScript={enterQuickCutFromAnalysis} onRetry={onRetry} onExactAnalysis={onExactAnalysis} actionNotice={refinementSyncError || actionNotice} specialRecommendation={specialRecommendation} />
+            <AnalysisPanel key={video.id} video={video} onGenerateScript={enterQuickCutFromAnalysis} onPersonReplace={enterPersonReplacement} onRetry={onRetry} onExactAnalysis={onExactAnalysis} actionNotice={refinementSyncError || actionNotice} specialRecommendation={specialRecommendation} />
           </motion.div>
         ) : (
           <motion.div key="generate" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
@@ -2203,7 +2236,7 @@ function ScriptPanel({ video, activePanelTab, onClose, onRetry, onExactAnalysis,
                   ] as const).map(({ type, icon, label }) => (
                     <button key={type} onClick={() => setScriptType(type)}
                       className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-semibold transition-all ${
-                        scriptType === type ? 'bg-surface text-text-primary shadow-sm' : 'text-text-muted hover:text-text-secondary'
+                        scriptType === type ? 'bg-surface text-text-primary shadow-none' : 'text-text-muted hover:text-text-secondary'
                       }`}>
                       {icon}<span>{label}</span>
                     </button>
@@ -2219,7 +2252,7 @@ function ScriptPanel({ video, activePanelTab, onClose, onRetry, onExactAnalysis,
                   <AnimatePresence>
                     {showLangDropdown && (
                       <motion.div initial={{ opacity: 0, y: 4 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: 4 }}
-                        className="absolute top-full left-0 right-0 mt-1 rounded-xl border border-border bg-surface z-10 overflow-hidden shadow-lg">
+                        className="absolute top-full left-0 right-0 mt-1 rounded-lg border border-border bg-surface z-10 overflow-hidden shadow-lg">
                         <div className="p-1 max-h-44 overflow-y-auto">
                           {LANGUAGES.map(lang => (
                             <button key={lang.code} onClick={() => { setLanguage(lang.code); setShowLangDropdown(false); }}
@@ -2236,7 +2269,7 @@ function ScriptPanel({ video, activePanelTab, onClose, onRetry, onExactAnalysis,
               </div>
               <label className="flex items-start gap-2 text-xs text-text-secondary leading-relaxed cursor-pointer">
                 <input type="checkbox" checked={voiceLanguageConfirmed} onChange={e => setVoiceLanguageConfirmed(e.target.checked)}
-                  className="mt-0.5 accent-green-600" />
+                  className="mt-0.5 accent-blue-600" />
                 <span>
                   确认口播台词以<span className="font-semibold text-accent"> {selectedLang?.label || '所选语言'} </span>输出
                 </span>
@@ -2245,7 +2278,7 @@ function ScriptPanel({ video, activePanelTab, onClose, onRetry, onExactAnalysis,
 
             {/* Product selection */}
             <div className="px-4 py-3 border-b border-border flex-shrink-0 bg-surface-2/40">
-              <div className="rounded-2xl border border-border bg-surface overflow-hidden transition-colors focus-within:border-border-bright">
+              <div className="overflow-hidden rounded-lg border border-border bg-surface transition-colors focus-within:border-accent">
                 <div className="px-3 pt-3 pb-2 border-b border-border/70">
                   <div className="flex items-center justify-between gap-2 mb-2">
                     <div className="min-w-0">
@@ -2270,11 +2303,12 @@ function ScriptPanel({ video, activePanelTab, onClose, onRetry, onExactAnalysis,
                 <AnimatePresence initial={false}>
                   {productInfoOpen && (
                     <motion.div initial={{ height: 0, opacity: 0 }} animate={{ height: 'auto', opacity: 1 }} exit={{ height: 0, opacity: 0 }}
-                      transition={{ duration: 0.18 }} className="overflow-hidden">
-                      <textarea value={productInfo} onChange={e => setProductInfo(e.target.value)}
-                        placeholder="主推品信息：名称、核心功能、目标人群、价格区间..."
+                      className="overflow-hidden">
+                      <textarea value={productInfo} readOnly
+                        placeholder="请先在企业中心维护并确认产品资料"
                         rows={4}
-                        className="w-full px-4 py-3 bg-transparent text-sm text-text-primary placeholder:text-text-muted resize-none outline-none" />
+                        className="w-full resize-none bg-transparent px-4 py-3 text-sm text-text-primary outline-none placeholder:text-text-muted" />
+                      <p className="px-4 pb-3 text-[10px] leading-relaxed text-text-muted">此处只读，商业事实仅来自企业中心。需要修改时请先回企业中心更新资料。</p>
                     </motion.div>
                   )}
                 </AnimatePresence>
@@ -2291,16 +2325,15 @@ function ScriptPanel({ video, activePanelTab, onClose, onRetry, onExactAnalysis,
                 <button
                   data-demo-target="traffic_script_generate"
                   onClick={() => void handleGenerate()}
-                  disabled={generating || !voiceLanguageConfirmed}
-                  title={voiceLanguageConfirmed ? '生成脚本' : '请先确认口播输出语言'}
-                  className="h-8 px-3 rounded-xl flex items-center gap-1.5 text-xs font-semibold text-white transition-all disabled:opacity-50"
-                  style={{ background: 'var(--color-accent)', boxShadow: '0 2px 8px rgba(22,163,74,0.2)' }}>
+                  disabled={generating || !voiceLanguageConfirmed || !selectedProductId || !productInfo.trim()}
+                  title={!selectedProductId || !productInfo.trim() ? '请先在企业中心维护并选择产品' : voiceLanguageConfirmed ? '生成脚本' : '请先确认口播输出语言'}
+                  className="flex h-8 items-center gap-1.5 rounded-md bg-accent px-3 text-xs font-semibold text-white transition-colors hover:bg-accent-dim disabled:opacity-50">
                   {generating ? <Loader2 size={13} className="animate-spin" /> : <Sparkles size={13} />}
                   生成脚本
                 </button>
               </div>
               {!result && !generating && (
-                <div className="flex flex-col items-center justify-center min-h-[260px] text-center gap-3 rounded-2xl border border-dashed border-border bg-surface-2/50">
+                <div className="flex min-h-[260px] flex-col items-center justify-center gap-3 rounded-lg border border-dashed border-border bg-surface-2/50 text-center">
                   <div className="w-10 h-10 rounded-full flex items-center justify-center bg-surface-2 border border-border">
                     <Sparkles size={18} className="text-text-muted" />
                   </div>
@@ -2315,28 +2348,31 @@ function ScriptPanel({ video, activePanelTab, onClose, onRetry, onExactAnalysis,
                   <div className="w-7 h-7 rounded-full flex items-center justify-center flex-shrink-0 mt-0.5 bg-accent">
                     <Loader2 size={12} className="text-white animate-spin" />
                   </div>
-                  <div className="rounded-2xl rounded-tl-sm bg-surface-2 border border-border px-4 py-3">
-                    <div className="flex items-center gap-1.5">
-                      {[0, 150, 300].map(d => <span key={d} className="w-1.5 h-1.5 rounded-full bg-text-muted animate-bounce" style={{ animationDelay: `${d}ms` }} />)}
-                    </div>
+                  <div className="rounded-lg rounded-tl-sm border border-border bg-surface-2 px-4 py-3">
+                    <span role="status" className="ls-type-body-small text-text-secondary">正在生成脚本…</span>
                   </div>
                 </div>
               )}
               {result && (
                 <motion.div initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} className="flex gap-3">
-                  <div className="w-7 h-7 rounded-full flex items-center justify-center flex-shrink-0 mt-0.5"
-                    style={{ background: 'linear-gradient(135deg, #4ade80, #16a34a)' }}>
+                  <div className={`mt-0.5 flex h-7 w-7 flex-shrink-0 items-center justify-center rounded-full ${resultProvenance === 'ai' ? 'bg-accent' : 'bg-amber-500'}`}>
                     <Sparkles size={12} className="text-white" />
                   </div>
                   <div className="flex-1 min-w-0">
-                    <div className="rounded-2xl rounded-tl-sm bg-surface-2 border border-border px-4 py-3">
+                    <div className={`mb-2 rounded-lg border px-3 py-2 text-[10px] font-semibold leading-relaxed ${resultProvenance === 'ai' && resultQualityStatus === 'passed' ? 'border-emerald-200 bg-emerald-50 text-emerald-800' : resultProvenance === 'ai' ? 'border-sky-200 bg-sky-50 text-sky-800' : 'border-amber-200 bg-amber-50 text-amber-800'}`}>
+                      <p className="font-semibold">{resultProvenance === 'ai'
+                        ? resultQualityStatus === 'passed' ? 'AI 生成 · 质量校验通过' : 'AI 草稿 · 待人工复核'
+                        : resultProvenance === 'ai_rejected' ? 'AI 草稿 · 质量校验未通过' : '本地草稿模板 · 未调用 AI'}</p>
+                      {resultNotice && <p className="mt-1">{resultNotice}</p>}
+                    </div>
+                    <div className="rounded-lg rounded-tl-sm border border-border bg-surface-2 px-4 py-3">
                       <p className="text-xs text-text-secondary leading-relaxed whitespace-pre-line font-mono">{result}</p>
                     </div>
                     <div className="flex items-center gap-4 mt-1.5 px-1">
                       <button onClick={handleCopy} className="flex items-center gap-1 text-xs text-text-muted hover:text-text-primary transition-colors">
                         {copied ? <><Check size={11} className="text-green" /><span className="text-green">已复制</span></> : <><Copy size={11} /><span>复制</span></>}
                       </button>
-                      <button className="flex items-center gap-1 text-xs text-text-muted hover:text-text-primary transition-colors">
+                      <button type="button" onClick={() => openScriptLibrary({ tab: 'inspiration', contentId: video.id, query: video.title || '', openDetail: true })} className="flex items-center gap-1 text-xs text-text-muted hover:text-text-primary transition-colors">
                         <ArrowRight size={11} /><span>保存到脚本库</span>
                       </button>
                     </div>
@@ -2346,9 +2382,9 @@ function ScriptPanel({ video, activePanelTab, onClose, onRetry, onExactAnalysis,
                         {!videoResult ? (
                           <>
                             {seedanceVideoLocked ? (
-                              <div className="rounded-2xl border border-border bg-surface overflow-hidden">
+                              <div className="overflow-hidden rounded-lg border border-border bg-surface">
                                 <div className="flex gap-3 p-3">
-                                  <div className="w-9 h-9 rounded-xl flex items-center justify-center flex-shrink-0 bg-surface-2 border border-border">
+                                  <div className="w-9 h-9 rounded-lg flex items-center justify-center flex-shrink-0 bg-surface-2 border border-border">
                                     <Lock size={15} className="text-text-muted" />
                                   </div>
                                   <div className="min-w-0 flex-1">
@@ -2360,7 +2396,7 @@ function ScriptPanel({ video, activePanelTab, onClose, onRetry, onExactAnalysis,
                                 </div>
                               </div>
                             ) : (
-                              <button onClick={() => void generateSeedanceVideo()} disabled={videoGenerating}
+                              <button onClick={() => void generateSeedanceVideo()} disabled={videoGenerating || resultProvenance !== 'ai' || ['rejected', 'failed', 'fallback'].includes(resultQualityStatus)}
                                 className="flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-semibold text-white transition-all active:scale-95 disabled:opacity-70"
                                 style={{ background: 'var(--color-accent)' }}>
                                 {videoGenerating ? <Loader2 size={13} className="animate-spin" /> : <Film size={13} />}
@@ -2372,9 +2408,9 @@ function ScriptPanel({ video, activePanelTab, onClose, onRetry, onExactAnalysis,
                             )}
                           </>
                         ) : (
-                          <div className="rounded-2xl border border-border bg-surface overflow-hidden">
+                          <div className="overflow-hidden rounded-lg border border-border bg-surface">
                             <div className="flex gap-3 p-3">
-                              <div className="relative w-24 aspect-[9/16] flex-shrink-0 overflow-hidden rounded-xl bg-black">
+                              <div className="relative w-24 aspect-[9/16] flex-shrink-0 overflow-hidden rounded-lg bg-black">
                                 {videoResult.url ? (
                                   <video src={videoResult.url} poster={videoResult.poster} controls playsInline className="absolute inset-0 h-full w-full object-cover" />
                                 ) : (
@@ -2392,11 +2428,11 @@ function ScriptPanel({ video, activePanelTab, onClose, onRetry, onExactAnalysis,
                                   }} className={`rounded-md border px-2 py-1 text-[10px] font-bold ${item.isSelected ? 'border-accent bg-accent/10 text-accent' : 'border-border text-text-muted'}`}>V{item.versionNumber}</button>)}
                                 </div>}
                                 <div className="mt-3 flex flex-wrap gap-2">
-                                  <button onClick={() => void generateSeedanceVideo()} disabled={videoGenerating}
+                                  <button onClick={() => void generateSeedanceVideo()} disabled={videoGenerating || resultProvenance !== 'ai' || ['rejected', 'failed', 'fallback'].includes(resultQualityStatus)}
                                     className="flex items-center gap-1 px-2.5 py-1.5 rounded-lg border border-border text-[11px] font-semibold text-text-secondary hover:text-text-primary disabled:opacity-60">
                                     {videoGenerating ? <Loader2 size={11} className="animate-spin" /> : <Sparkles size={11} />} 重新生成
                                   </button>
-                                  <button onClick={enterWorkflow}
+                                  <button onClick={enterWorkflow} disabled={resultProvenance !== 'ai' || ['rejected', 'failed', 'fallback'].includes(resultQualityStatus)}
                                     className="flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-[11px] font-semibold text-white"
                                     style={{ background: 'var(--color-accent)' }}>
                                     <ArrowRight size={11} /> 进入剪辑流程
@@ -2420,184 +2456,6 @@ function ScriptPanel({ video, activePanelTab, onClose, onRetry, onExactAnalysis,
 }
 
 // ── Video Card (grid) ─────────────────────────────────────────────────────────
-interface VideoCardProps {
-  video: TrendVideo;
-  index: number;
-  isSelected: boolean;
-  onSelect: () => void;
-  onWatch: () => void;
-  onAnalyzeVideo?: () => void;
-  onFavoriteMaterial?: () => void;
-  analyzingVideo?: boolean;
-  favoritingMaterial?: boolean;
-}
-
-function VideoCard({ video, index, isSelected, onSelect, onWatch, onAnalyzeVideo, onFavoriteMaterial, analyzingVideo, favoritingMaterial }: VideoCardProps) {
-  const meta = getPlatformMeta(video.platform);
-  const crawlRule = video.aiAnalysis?.crawlRule || '关键词检索';
-  const isImagePost = video.contentFormat === 'image';
-  const [mediaReady, setMediaReady] = useState(false);
-  useEffect(() => setMediaReady(false), [video.id, video.thumbnail, video.videoUrl]);
-  const imageAnalyzed = video.aiAnalysis?.imageEvidence?.status === 'analyzed' && Boolean(video.aiAnalysis.imageEvidence.observedFacts?.length);
-  const imageFailed = video.aiAnalysis?.imageAnalysisStatus === 'failed' || video.status === 'failed';
-  const trendLabel = isImagePost
-    ? (imageAnalyzed ? '✓ 已完成拆解' : imageFailed ? '! 分析失败' : '… 待分析')
-    : video.trend === 'hot' ? '🔥 热门' : video.trend === 'rising' ? '↑ 上升' : '— 平稳';
-  const trendColor = isImagePost
-    ? (imageAnalyzed ? 'text-green' : imageFailed ? 'text-red-500' : 'text-text-muted')
-    : video.trend === 'hot' ? 'text-accent' : video.trend === 'rising' ? 'text-green' : 'text-text-muted';
-  const crawledDate = video.crawledAt ? new Date(video.crawledAt) : null;
-  const crawledLabel = crawledDate && !Number.isNaN(crawledDate.getTime())
-    ? `${String(crawledDate.getMonth() + 1).padStart(2, '0')}-${String(crawledDate.getDate()).padStart(2, '0')} 入库`
-    : '';
-
-  return (
-    <motion.div initial={{ opacity: 0, y: 16 }} animate={{ opacity: 1, y: 0 }}
-      transition={{ delay: index * 0.02, duration: 0.25 }}
-      className={`card overflow-hidden group ${isSelected ? 'border-accent ring-1 ring-accent/20' : ''}`}>
-      <div role="button" tabIndex={0} onClick={onWatch}
-        onKeyDown={e => {
-          if (e.key === 'Enter' || e.key === ' ') {
-            e.preventDefault();
-            onWatch();
-          }
-        }}
-        className="relative overflow-hidden w-full aspect-[9/16] text-left block"
-        style={{ background: 'var(--color-surface-2)' }}>
-        <VideoThumbnail platform={video.platform} title={video.title} />
-        {video.thumbnail && (
-          <ThumbnailImage src={video.thumbnail} platform={video.platform} title={video.title} className="absolute inset-0 w-full h-full object-cover" />
-        )}
-        {video.videoUrl ? (
-          <AuthenticatedVideo
-            apiUrl={video.videoUrl}
-            poster={/^https?:\/\//i.test(video.thumbnail) ? video.thumbnail : undefined}
-            hoverPlay
-            className={`absolute inset-0 w-full h-full object-cover transition-opacity ${mediaReady ? 'opacity-100' : 'opacity-0'}`}
-            onReady={() => setMediaReady(true)}
-            onError={() => setMediaReady(false)}
-          />
-        ) : null}
-        <div className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center gap-2">
-          <span className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold bg-white text-neutral-900">
-            {isImagePost ? <Images size={11} /> : <Play size={11} fill="currentColor" />}{isImagePost ? '查看' : video.videoUrl || sourceEmbedUrl(video) ? '观看' : '原站'}
-          </span>
-          {isImagePost && <button onClick={e => { e.stopPropagation(); onSelect(); }}
-            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold"
-            style={{ background: meta.bg, color: meta.color }}>
-            <Sparkles size={11} />拆解图文
-          </button>}
-          {!isImagePost && <button onClick={e => { e.stopPropagation(); if (onAnalyzeVideo) onAnalyzeVideo(); else onSelect(); }}
-            disabled={analyzingVideo}
-            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold"
-            style={{ background: meta.bg, color: meta.color }}>
-            {analyzingVideo ? <Loader2 size={11} className="animate-spin" /> : <BarChart2 size={11} />}分析脚本
-          </button>}
-          {video.sourceUrl && !isImagePost && (
-            <button onClick={e => { e.stopPropagation(); onFavoriteMaterial?.(); }}
-              disabled={favoritingMaterial}
-              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold bg-white/90 text-neutral-900 disabled:opacity-70">
-              {favoritingMaterial ? <Loader2 size={11} className="animate-spin" /> : <Bookmark size={11} />}收藏
-            </button>
-          )}
-        </div>
-        <div className="absolute bottom-2 left-2 px-1.5 py-0.5 rounded-md text-[10px] font-mono font-bold text-white bg-black/50 backdrop-blur-sm">
-          {isImagePost ? '图文' : `${Math.floor(video.duration / 60)}:${String(video.duration % 60).padStart(2, '0')}`}
-        </div>
-        <div className="absolute bottom-2 right-2 max-w-[60%] truncate px-1.5 py-0.5 rounded-md text-[10px] font-bold text-white bg-black/55 backdrop-blur-sm">
-          {crawlRule}
-        </div>
-        <div className="absolute top-2 left-2">
-          <span className="platform-badge inline-flex items-center gap-1 text-[10px]" style={{ background: 'rgba(255,255,255,.94)', color: '#0f172a' }}><SocialPlatformIcon platform={video.platform} size={13} />{meta.label}</span>
-          {video.id.startsWith('material-') && (
-            <span className="mt-1 block rounded-md bg-green-600 px-1.5 py-0.5 text-[9px] font-black text-white shadow-sm">置顶 · 片段已分析</span>
-          )}
-        </div>
-        {crawledLabel && (
-          <div className="absolute top-2 right-2 max-w-[48%] truncate px-1.5 py-0.5 rounded-md text-[10px] font-mono font-bold text-white bg-black/50 backdrop-blur-sm"
-            title={`爬取入库时间：${crawledDate!.toLocaleString()}`}>
-            {crawledLabel}
-          </div>
-        )}
-      </div>
-      <div className="p-3">
-        <p className="text-xs font-semibold text-text-primary leading-snug line-clamp-2 mb-2">{video.title}</p>
-        <div className="flex items-center justify-between mb-2">
-          <span className={`text-[10px] font-mono font-bold ${trendColor}`}>{trendLabel}</span>
-          <span className="flex items-center gap-1 text-[10px] text-text-muted">{isImagePost ? <Images size={9} /> : <Clock size={9} />}{isImagePost ? `${video.aiAnalysis?.imageCount || video.aiAnalysis?.imageUrls?.length || 1} 张` : `${video.views} views`}</span>
-        </div>
-        <div className="flex flex-wrap gap-1">
-          {video.tags.slice(0, 2).map(tag => <span key={tag} className="tag text-[10px]">#{tag}</span>)}
-        </div>
-      </div>
-    </motion.div>
-  );
-}
-
-// ── Video List Item ───────────────────────────────────────────────────────────
-function VideoListItem({ video, isSelected, onSelect, onWatch, onAnalyzeVideo, onFavoriteMaterial, analyzingVideo, favoritingMaterial }: {
-  video: TrendVideo;
-  isSelected: boolean;
-  onSelect: () => void;
-  onWatch: () => void;
-  onAnalyzeVideo?: () => void;
-  onFavoriteMaterial?: () => void;
-  analyzingVideo?: boolean;
-  favoritingMaterial?: boolean;
-}) {
-  const meta = getPlatformMeta(video.platform);
-  const trendColor = video.trend === 'hot' ? 'text-accent' : video.trend === 'rising' ? 'text-green' : 'text-text-muted';
-  const trendLabel = video.trend === 'hot' ? '热门' : video.trend === 'rising' ? '上升' : '平稳';
-  const crawlRule = video.aiAnalysis?.crawlRule || '关键词检索';
-  const isImagePost = video.contentFormat === 'image';
-  return (
-    <div className={`flex items-center gap-4 px-4 py-3 cursor-pointer transition-all group ${isSelected ? 'bg-accent-glow' : 'hover:bg-surface-2'}`} onClick={onSelect}>
-      <button type="button" onClick={e => { e.stopPropagation(); onWatch(); }}
-        className="w-16 h-10 rounded-lg overflow-hidden flex-shrink-0 border border-border bg-surface-2 relative group/thumb">
-        <VideoThumbnail platform={video.platform} title={video.title} />
-        {video.thumbnail && <ThumbnailImage src={video.thumbnail} platform={video.platform} title={video.title} className="absolute inset-0 w-full h-full object-cover" />}
-        <span className="absolute inset-0 bg-black/35 opacity-0 group-hover/thumb:opacity-100 transition-opacity flex items-center justify-center text-white">
-          {isImagePost ? <Images size={13} /> : <Play size={13} fill="currentColor" />}
-        </span>
-      </button>
-      <div className="flex-1 min-w-0">
-        <div className="flex items-center gap-2 mb-0.5">
-          <span className="platform-badge inline-flex items-center gap-1 text-[9px]" style={{ background: '#fff', color: '#0f172a' }}><SocialPlatformIcon platform={video.platform} size={12} />{meta.label}</span>
-          {video.id.startsWith('material-') && <span className="rounded bg-green-100 px-1.5 py-0.5 text-[9px] font-bold text-green-700">置顶 · 片段已分析</span>}
-          <span className={`text-[10px] font-semibold ${trendColor}`}>{trendLabel}</span>
-        </div>
-        <p className="text-sm text-text-primary font-medium truncate">{video.title}</p>
-      </div>
-      <div className="hidden lg:flex items-center gap-1 flex-shrink-0">
-        {video.tags.slice(0, 2).map(tag => <span key={tag} className="tag text-[10px]">#{tag}</span>)}
-      </div>
-      <span className="hidden xl:inline-flex flex-shrink-0 px-2 py-1 rounded-md text-[10px] font-semibold bg-surface-2 border border-border text-text-muted">
-        {crawlRule}
-      </span>
-      <div className="flex-shrink-0 text-right min-w-[52px]">
-        <p className="text-xs font-mono text-text-secondary">{isImagePost ? '图文' : `${Math.floor(video.duration / 60)}:${String(video.duration % 60).padStart(2, '0')}`}</p>
-        <p className="text-[10px] text-text-muted">{video.views}</p>
-      </div>
-      {isImagePost && <button onClick={e => { e.stopPropagation(); onSelect(); }}
-        className="flex-shrink-0 flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold border transition-all opacity-0 group-hover:opacity-100"
-        style={{ color: 'var(--color-accent)', borderColor: 'rgba(22,163,74,0.25)', background: 'var(--color-accent-glow)' }}>
-        <Sparkles size={11} /><span>拆解图文</span>
-      </button>}
-      {!isImagePost && <button onClick={e => { e.stopPropagation(); if (onAnalyzeVideo) onAnalyzeVideo(); else onSelect(); }}
-        disabled={analyzingVideo}
-        className="flex-shrink-0 flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold border transition-all opacity-0 group-hover:opacity-100"
-        style={{ color: 'var(--color-accent)', borderColor: 'rgba(22,163,74,0.25)', background: 'var(--color-accent-glow)' }}>
-        {analyzingVideo ? <Loader2 size={11} className="animate-spin" /> : <BarChart2 size={11} />}<span>分析脚本</span>
-      </button>}
-      {video.sourceUrl && !isImagePost && (
-        <button onClick={e => { e.stopPropagation(); onFavoriteMaterial?.(); }} disabled={favoritingMaterial}
-          className="flex-shrink-0 flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold border border-border hover:border-border-bright disabled:opacity-60">
-          {favoritingMaterial ? <Loader2 size={11} className="animate-spin" /> : <Bookmark size={11} />} 收藏
-        </button>
-      )}
-    </div>
-  );
-}
 
 interface CrawlerRecord {
   id: string;
@@ -2642,13 +2500,13 @@ function recordsToVideos(records: CrawlerRecord[]): TrendVideo[] {
   return records
     .filter((r): r is CrawlerRecord & { id: string; platform: Exclude<Platform, 'all'> } => Boolean(r.id && r.platform))
     .map(record => {
-      let views = 'New';
+      let views = '—';
       let analysis: VideoAnalysisPayload = {};
       try {
         analysis = JSON.parse(record.aiAnalysis || '{}') as VideoAnalysisPayload;
         if (analysis.views) views = analysis.views;
       } catch {}
-      const trend: TrendVideo['trend'] = record.status === 'analyzed' ? 'hot' : record.status === 'failed' ? 'stable' : 'rising';
+      const trend = trendFromEvidence(analysis);
       const title = record.title || 'Untitled crawled video';
       const tags = parseRecordTags(record.tags);
       const recordThumbnail = record.thumbnailUrl || (record.videoFileId ? `/api/overseas/videos/${record.id}/thumbnail` : '');
@@ -2684,6 +2542,30 @@ function recordsToVideos(records: CrawlerRecord[]): TrendVideo[] {
     // 同一 sourceUrl 只保留一条（demo 数据/多次采集可能带来 id 不同的重复视频）
     .filter((video, index, all) => !video.sourceUrl || all.findIndex(v => v.sourceUrl === video.sourceUrl) === index)
     .sort((a, b) => heatValue(b.views) - heatValue(a.views));
+}
+
+function supplyItemsToVideos(items: SocialDiscoverySupplyItem[]): TrendVideo[] {
+  const records = items.flatMap(item => {
+    if (!ACTIVE_PLATFORMS.includes(item.platform as Exclude<Platform, 'all'>)) return [];
+    const raw = item.raw || {};
+    let analysis: Record<string, unknown> = {};
+    if (typeof raw.aiAnalysis === 'string') {
+      try { analysis = JSON.parse(raw.aiAnalysis) as Record<string, unknown>; } catch { analysis = {}; }
+    } else if (raw.aiAnalysis && typeof raw.aiAnalysis === 'object' && !Array.isArray(raw.aiAnalysis)) {
+      analysis = raw.aiAnalysis as Record<string, unknown>;
+    }
+    return [{
+      ...raw,
+      id: item.candidateId,
+      platform: item.platform as Exclude<Platform, 'all'>,
+      title: item.title,
+      sourceUrl: item.sourceUrl,
+      thumbnailUrl: item.thumbnailUrl || String(raw.thumbnailUrl || ''),
+      aiAnalysis: JSON.stringify({ ...analysis, author: item.author || analysis.author, discoveryScore: item.score, discoveryBusinessModel: item.businessModel }),
+      crawledAt: String(raw.crawledAt || item.publishedAt || item.score.scoredAt),
+    } satisfies CrawlerRecord];
+  });
+  return recordsToVideos(records);
 }
 
 function metadataFallbackAnalysis(
@@ -2748,6 +2630,62 @@ function reliablePublicViews(value: string): number {
   return heatValue(value);
 }
 
+export function inspirationScoresForVideo(video: TrendVideo) {
+  const analysis = video.aiAnalysis;
+  if (analysis?.discoveryScore) return {
+    sourcePriority: analysis.discoveryScore.dimensions.platformPriority,
+    contentOpportunityScore: analysis.discoveryScore.overall,
+    relativePerformance: null,
+    reasons: analysis.discoveryScore.reasons,
+  };
+  const relative = analysis?.publicBaseline?.relativeMultiple ?? analysis?.relativeViewMultiple ?? null;
+  const ageDays = Math.max(0, (Date.now() - timeValue(video.crawledAt)) / 86_400_000);
+  const freshness = ageDays <= 3 ? 1 : ageDays <= 7 ? 0.8 : ageDays <= 30 ? 0.5 : 0.2;
+  const baselineTypeWeight = analysis?.accountBaselineLevel === 'low' ? 1
+    : analysis?.accountBaselineLevel === 'medium' ? 0.8
+      : analysis?.accountBaselineLevel === 'high' ? 0.65 : 0.5;
+  const exactAnalysis = analysis?.analysisQuality === 'video' || analysis?.imageEvidence?.status === 'analyzed';
+  return scoreSocialInspirationCandidate({
+    platformWeight: 0.8,
+    accountWeight: analysis?.sourceAccount ? 0.8 : 0.4,
+    accountTypeWeight: baselineTypeWeight,
+    industryRelevance: video.tags.length > 0 ? 0.7 : 0.4,
+    strategyMatch: analysis?.keyword || analysis?.crawlRule ? 0.8 : 0.5,
+    currentPerformance: relative,
+    accountPlatformBaseline: relative === null ? null : 1,
+    engagementQuality: analysis?.publicBaseline?.status === 'usable' ? 0.75 : 0.45,
+    freshness,
+    weeklyGoalRelevance: 0.5,
+    structuralTransferability: exactAnalysis ? 0.9 : 0.4,
+    evidenceQuality: exactAnalysis ? 0.85 : 0.3,
+  });
+}
+
+export function candidateDimensionLabels(video: TrendVideo): { relevance: string; momentum: string; transferability: string } {
+  const evidence = video.aiAnalysis?.candidateEvidence;
+  const relevance = evidence?.relevance?.level === 'high' ? '强相关'
+    : evidence?.relevance?.level === 'medium' ? '需核对' : evidence?.relevance?.level === 'low' ? '弱相关' : '相关性待确认';
+  const momentum = evidence?.momentum?.level === 'rising' ? '正在起量'
+    : evidence?.momentum?.level === 'high_performance' ? '高表现' : '趋势未知';
+  const transferability = evidence?.transferability?.level === 'high' ? '易迁移'
+    : evidence?.transferability?.level === 'medium' ? '可迁移' : evidence?.transferability?.level === 'low' ? '难迁移' : '迁移性待确认';
+  return { relevance, momentum, transferability };
+}
+
+export function latestDiscoveryOrigin(video: TrendVideo) {
+  return video.aiAnalysis?.discoveryOrigins?.at(-1);
+}
+
+export function discoverySupplyLabel(video: TrendVideo): string {
+  const mode = latestDiscoveryOrigin(video)?.mode;
+  return mode === 'momentum' ? '行业起量' : mode === 'account' ? '确认对标' : mode === 'innovation' ? '创新参考' : '来源待归类';
+}
+
+export function discoveryOriginTitle(video: TrendVideo): string {
+  const origin = latestDiscoveryOrigin(video);
+  return origin ? `范围 v${origin.scopeVersion} · 运行 ${origin.runId} · 依据 ${origin.queryRef}` : '历史素材尚无发现运行溯源';
+}
+
 function specialRecommendationForVideo(video: TrendVideo, accountVideos: TrendVideo[], accountMedians: number[]): AccountSpecialRecommendation | null {
   const analysis = video.aiAnalysis;
   if (!analysis?.sourceAccount) return null;
@@ -2802,33 +2740,59 @@ function sourceEmbedUrl(video: TrendVideo): string {
 
 function WatchModal({ video, onClose }: { video: TrendVideo; onClose: () => void }) {
   const embedUrl = sourceEmbedUrl(video);
+  const [previewAttempt, setPreviewAttempt] = useState(0);
+  const [previewLoading, setPreviewLoading] = useState(Boolean(video.videoUrl));
+  const [previewError, setPreviewError] = useState('');
+  const [useEmbedPlayer, setUseEmbedPlayer] = useState(false);
+  const retryPreview = () => {
+    setPreviewError('');
+    setPreviewLoading(Boolean(video.videoUrl));
+    setUseEmbedPlayer(false);
+    setPreviewAttempt(value => value + 1);
+  };
   return (
-    <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
-      className="fixed inset-0 z-[80] bg-black/70 backdrop-blur-sm flex items-center justify-center px-5 py-6"
-      onClick={onClose}>
-      <motion.div initial={{ opacity: 0, scale: 0.96, y: 12 }} animate={{ opacity: 1, scale: 1, y: 0 }} exit={{ opacity: 0, scale: 0.96, y: 12 }}
-        className="w-full max-w-4xl rounded-2xl overflow-hidden border border-border bg-surface shadow-2xl"
-        onClick={e => e.stopPropagation()}>
-        <div className="flex items-start justify-between gap-4 px-4 py-3 border-b border-border">
-          <div className="min-w-0">
-            <p className="text-[10px] font-mono uppercase tracking-widest text-text-muted">{PLATFORM_META[video.platform]?.label ?? video.platform} 预览</p>
-            <h3 className="text-sm font-semibold text-text-primary truncate mt-0.5">{video.title}</h3>
-          </div>
-          <div className="flex items-center gap-2 flex-shrink-0">
-            {video.sourceUrl && (
-              <button onClick={() => window.open(video.sourceUrl, '_blank', 'noopener,noreferrer')}
-                className="px-3 py-1.5 rounded-lg border border-border bg-surface-2 text-xs font-semibold text-text-secondary hover:text-text-primary transition-colors">
-                原站打开
-              </button>
-            )}
-            <button onClick={onClose} className="p-1.5 rounded-lg hover:bg-surface-2 text-text-muted hover:text-text-primary transition-colors">
-              <X size={15} />
-            </button>
-          </div>
-        </div>
+    <Modal open title={video.title} width={840} zIndex={2200} onCancel={onClose}
+      footer={<div className="flex justify-end gap-2">{video.sourceUrl && <Button onClick={() => window.open(video.sourceUrl, '_blank', 'noopener,noreferrer')}>原站打开</Button>}<Button onClick={onClose}>关闭</Button></div>}>
+      <p className="mb-3 flex items-center gap-2 text-xs text-text-secondary"><SocialPlatformIcon platform={video.platform} size={14}/>{PLATFORM_META[video.platform]?.label ?? video.platform} · 视频预览</p>
         <div className="bg-black">
-          {video.videoUrl ? (
-            <AuthenticatedVideo apiUrl={video.videoUrl} poster={video.thumbnail} controls autoPlay className="w-full max-h-[72vh] bg-black" />
+          {video.videoUrl && !useEmbedPlayer ? (
+            <div className="relative flex min-h-64 items-center justify-center bg-black">
+              <AuthenticatedVideo
+                key={`${video.id}:${previewAttempt}`}
+                apiUrl={video.videoUrl}
+                poster={video.thumbnail}
+                controls
+                autoPlay
+                className="max-h-[72vh] w-full bg-black"
+                onReady={() => { setPreviewLoading(false); setPreviewError(''); }}
+                onLoadingChange={setPreviewLoading}
+                onError={message => {
+                  setPreviewLoading(false);
+                  if (embedUrl) {
+                    setPreviewError('');
+                    setUseEmbedPlayer(true);
+                    return;
+                  }
+                  setPreviewError(message || '视频预览失败');
+                }}
+              />
+              {previewLoading && !previewError && (
+                <div className="pointer-events-none absolute inset-0 flex items-center justify-center bg-black/45 text-white">
+                  <span className="inline-flex items-center gap-2 rounded-lg bg-black/65 px-3 py-2 text-xs font-semibold"><Loader2 size={14} className="animate-spin" />正在准备视频…</span>
+                </div>
+              )}
+              {previewError && (
+                <div className="absolute inset-0 flex flex-col items-center justify-center bg-black/80 px-6 text-center text-white">
+                  <Play size={28} className="opacity-70" />
+                  <p className="mt-3 text-sm font-semibold">视频预览暂时失败</p>
+                  <p className="mt-1 max-w-md text-xs leading-relaxed text-white/65">{previewError}</p>
+                  <div className="mt-4 flex flex-wrap items-center justify-center gap-2">
+                    <button type="button" onClick={retryPreview} className="rounded-lg bg-white px-3 py-2 text-xs font-bold text-neutral-900">重新获取播放地址</button>
+                    {embedUrl && <button type="button" onClick={() => { setPreviewError(''); setUseEmbedPlayer(true); }} className="rounded-lg border border-white/25 bg-white/10 px-3 py-2 text-xs font-bold text-white">使用原站播放器</button>}
+                  </div>
+                </div>
+              )}
+            </div>
           ) : embedUrl ? (
             <iframe
               src={embedUrl}
@@ -2845,8 +2809,414 @@ function WatchModal({ video, onClose }: { video: TrendVideo; onClose: () => void
             </div>
           )}
         </div>
-      </motion.div>
-    </motion.div>
+    </Modal>
+  );
+}
+
+interface DirectorReviewHandoff {
+  status: 'review_only' | 'production_ready';
+  directorHandoffReady?: boolean;
+  selectedHookShotId?: string | null;
+  shots: Array<{ shotId: string; startSeconds: number; endSeconds: number; content: string; purpose: string; issues: string[]; evidence: { clipRef?: string | null; firstFrameRef?: string | null; extractionStatus?: string } }>;
+  issues: Array<{ code: string; shotId?: string | null; evidenceRefs?: string[]; action: string }>;
+  productionExecutionAllowed: boolean;
+}
+
+const hookScriptLabels = { camera: '运镜', visual: '画面', subject: '出镜主体', music: '配乐', voiceover: '配音', soundEffects: '音效', spokenWords: '主体话术', subjectAction: '主体动作' } as const;
+type HookScriptKey = keyof typeof hookScriptLabels;
+const hookScriptKeys = Object.keys(hookScriptLabels) as HookScriptKey[];
+
+interface DirectorShotReview {
+  referenceRecordId: string;
+  sourceAnalysisRunId: string | null;
+  version: string;
+  sections: Array<{ sectionId: string; title: string; start: number; end: number; purpose: string; confirmed: boolean }>;
+  shots: Array<{ shotId: string; start: number; end: number; content: string; purpose: string; sourceShotIds: string[]; reviewStatus: 'candidate' | 'confirmed' | 'discarded'; mixedScene: boolean; labels: string[]; evidenceRefs: string[]; hookAction: string; hookMotionConfirmed: boolean; hookScript?: Record<HookScriptKey, string>; hookScriptConfirmed?: boolean }>;
+  selectedHookShotId: string | null;
+  reviewComplete: boolean;
+  productionExecutionAllowed: false;
+}
+
+interface DirectorVerifiedSpeech {
+  analysisRunId: string | null;
+  sourceSha256: string | null;
+  duration: number;
+  status: string;
+  coverageConfirmed: boolean;
+  lines: Array<{ text: string; start: number; end: number; visibility: 'on_camera' | 'voiceover' | 'unknown'; speakerId?: string | null }>;
+}
+
+interface DirectorPhraseAsrJob {
+  ok: boolean;
+  status: 'not_found' | 'unavailable' | 'needs_confirmation' | 'PENDING' | 'RUNNING' | 'SUCCEEDED' | 'FAILED' | 'uncertain' | 'submitting';
+  taskId?: string;
+  existingTaskId?: string | null;
+  enabled: boolean;
+  canSubmit?: boolean;
+  submissionGap?: string | null;
+  budgetReason?: string;
+  reservationCny?: number | null;
+  remainingCny?: number | null;
+  candidateLines: Array<{ text: string; start: number; end: number; precision: 'phrase'; provenance: string; visibility: 'unknown' }>;
+}
+
+interface DirectorSpeechTimeline {
+  lines: Array<{ speechId: string; text: string; start: number; end: number; sectionIds: string[]; shotIds: string[]; visibility: string; timingPrecision: 'coarse' | 'phrase'; needsReview: boolean }>;
+  coarseWindows: Array<{ speechId: string; text: string; start: number; end: number; sectionIds: string[] }>;
+  sections: Array<{ sectionId: string; speechIds: string[]; coarseEvidenceIds: string[] }>;
+  reviewQuestions: string[];
+  productionReady: boolean;
+}
+
+const reviewSeconds = (value: number) => `${Number.isFinite(value) ? value.toFixed(2) : '—'}s`;
+
+export function splitDirectorReviewedShot(review: DirectorShotReview, shotId: string, cut: number): DirectorShotReview {
+  const current = review.shots.find(item => item.shotId === shotId);
+  if (!current || !Number.isFinite(cut) || cut - current.start < 0.15 || current.end - cut < 0.15) throw new Error('invalid_review_cut');
+  const left = { ...current, end: cut, reviewStatus: 'candidate' as const, mixedScene: false, evidenceRefs: [], hookMotionConfirmed: false, hookScriptConfirmed: false };
+  const right = { ...current, shotId: `review-${Date.now()}`, start: cut, reviewStatus: 'candidate' as const, mixedScene: false, evidenceRefs: [], hookAction: '', hookMotionConfirmed: false, hookScript: undefined, hookScriptConfirmed: false };
+  return { ...review, shots: review.shots.flatMap(item => item.shotId === shotId ? [left, right] : [item]), selectedHookShotId: review.selectedHookShotId === shotId ? null : review.selectedHookShotId };
+}
+
+export function reviseDirectorHookAction(review: DirectorShotReview, shotId: string, hookAction: string): DirectorShotReview {
+  return { ...review, shots: review.shots.map(item => item.shotId === shotId ? { ...item, hookAction, hookMotionConfirmed: false } : item) };
+}
+
+export function asrCandidatesToReviewDraft(speech: DirectorVerifiedSpeech, candidates: DirectorPhraseAsrJob['candidateLines']): DirectorVerifiedSpeech {
+  return { ...speech, coverageConfirmed: false, status: 'partial_review', lines: candidates.map(line => ({ text: line.text, start: line.start, end: line.end, visibility: 'unknown' })) };
+}
+
+function DirectorReviewWorkspace({ recordId, onPreview, handoff }: { recordId: string; onPreview: () => void; handoff: DirectorReviewHandoff | null }) {
+  const [review, setReview] = useState<DirectorShotReview | null>(null);
+  const [speech, setSpeech] = useState<DirectorVerifiedSpeech | null>(null);
+  const [timeline, setTimeline] = useState<DirectorSpeechTimeline | null>(null);
+  const [savedReview, setSavedReview] = useState('');
+  const [previewShotId, setPreviewShotId] = useState<string | null>(null);
+  const [asrJob, setAsrJob] = useState<DirectorPhraseAsrJob | null>(null);
+  const [asrConsent, setAsrConsent] = useState(false);
+  const [asrBusy, setAsrBusy] = useState(false);
+  const [asrPolling, setAsrPolling] = useState(false);
+  const [activeSection, setActiveSection] = useState(0);
+  const [showCandidates, setShowCandidates] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [message, setMessage] = useState('');
+
+  const identity = useRef({recordId,token:getToken(),active:true});
+  useEffect(()=>{const session={recordId,token:getToken(),active:true};identity.current=session;const changed=()=>{session.active=false;setReview(null);setSpeech(null);setAsrPolling(false);setMessage('登录身份已变化，请从原周任务重新打开审核。');};window.addEventListener(AUTH_TOKEN_CHANGED_EVENT,changed);window.addEventListener('storage',changed);return()=>{session.active=false;window.removeEventListener(AUTH_TOKEN_CHANGED_EVENT,changed);window.removeEventListener('storage',changed);};},[recordId]);
+  const current=()=>identity.current.active&&identity.current.recordId===recordId&&!!identity.current.token&&getToken()===identity.current.token;
+  const checkedFetch=async(url:string,init?:RequestInit)=>{const session=identity.current;if(!current())throw Error('reference_review_login_changed');const response=await fetch(url,{...init,headers:{...init?.headers,Authorization:`Bearer ${session.token}`}});if(identity.current!==session||!current())throw Error('reference_review_login_changed');return response;};
+  const refresh = async () => {
+    const [reviewResponse, speechResponse] = await Promise.all([
+      checkedFetch(`/api/overseas/videos/${encodeURIComponent(recordId)}/shot-review`, { headers: authHeader() }),
+      checkedFetch(`/api/overseas/videos/${encodeURIComponent(recordId)}/verified-speech`, { headers: authHeader() }),
+    ]);
+    if (!reviewResponse.ok) throw new Error('镜头审核记录读取失败');
+    if (!speechResponse.ok) throw new Error('逐句口播记录读取失败');
+    const nextReview = await reviewResponse.json() as DirectorShotReview;
+    const nextSpeech = await speechResponse.json() as DirectorVerifiedSpeech;
+    if(!current()||nextReview.referenceRecordId!==recordId)throw Error('原参考身份变化');
+    setReview(nextReview);
+    setSavedReview(JSON.stringify([nextReview.sections, nextReview.shots, nextReview.selectedHookShotId]));
+    setSpeech(nextSpeech);
+    return { nextReview, nextSpeech };
+  };
+  const loadTimeline = async (nextReview: DirectorShotReview) => {
+    const response = await checkedFetch(`/api/overseas/videos/${encodeURIComponent(recordId)}/speech-timeline`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json', ...authHeader() },
+      body: JSON.stringify({ sections: nextReview.sections.map(section => ({ sectionId: section.sectionId, title: section.title, start: section.start, end: section.end, purpose: section.purpose })) }),
+    });
+    if (!response.ok) throw new Error('口播与六段结构映射失败');
+    const next=await response.json() as DirectorSpeechTimeline;if(current())setTimeline(next);
+  };
+  const readPhraseAsr = async (confirmed: boolean, refreshExisting = false) => {
+    if(!current() || (confirmed && !canExplicitlySubmitReferenceAsr(asrJob,asrConsent,asrBusy)))return;
+    if(refreshExisting && !canRefreshExistingReferenceAsr(asrJob,asrBusy))return;
+    setAsrBusy(true);
+    try {
+      const response = await checkedFetch(`/api/overseas/videos/${encodeURIComponent(recordId)}/phrase-asr`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json', ...authHeader() },
+        body: JSON.stringify(refreshExisting && asrJob ? existingReferenceAsrRefreshBody(asrJob) : { confirmed }),
+      });
+      const result = await response.json() as DirectorPhraseAsrJob & { error?: string };
+      if(!current())return;
+      if (!response.ok) throw new Error(result.error || `句级 ASR 请求失败（HTTP ${response.status}）`);
+      setAsrJob(result);
+      setAsrPolling(result.status === 'PENDING' || result.status === 'RUNNING' || result.status === 'submitting');
+      if (result.status === 'SUCCEEDED') setMessage('句级 ASR 候选已返回；请听原片逐句校对，并确认画内或画外音。');
+      else if (result.status === 'FAILED' || result.status === 'uncertain') setMessage('句级 ASR 任务需要人工排查，不会自动重复付费提交。');
+    } catch (error) { if(!current())return;setAsrPolling(false); setMessage(error instanceof Error ? error.message : '句级 ASR 请求失败'); }
+    finally { if(current())setAsrBusy(false); }
+  };
+  useEffect(() => {
+    let active = true;
+    void refresh().then(({ nextReview }) => { if (active && current()) void loadTimeline(nextReview).catch(error => setMessage(String(error))); })
+      .catch(error => { if (active && current()) setMessage(error instanceof Error ? error.message : '复核记录读取失败'); });
+    // No automatic ASR or polling; false must remain a server-side read only command.
+    return () => { active = false; };
+  }, [recordId]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const saveReview = async () => {
+    if (!review) return;
+    setBusy(true); setMessage('');
+    try {
+      const response = await checkedFetch(`/api/overseas/videos/${encodeURIComponent(recordId)}/shot-review`, {
+        method: 'PUT', headers: { 'Content-Type': 'application/json', ...authHeader() },
+        body: JSON.stringify({ expectedVersion: review.version, sections: review.sections, shots: review.shots, selectedHookShotId: review.selectedHookShotId }),
+      });
+      const result = await response.json();
+      if(!current())return;
+      if (!response.ok) throw new Error(result.error || '保存镜头审核失败');
+      setReview(result as DirectorShotReview);
+      setSavedReview(JSON.stringify([(result as DirectorShotReview).sections, (result as DirectorShotReview).shots, (result as DirectorShotReview).selectedHookShotId]));
+      await loadTimeline(result as DirectorShotReview);
+      setMessage('六段结构与镜头审核已保存；仍需完成所有质量门槛才可交接制作。');
+    } catch (error) { if(!current())return;setMessage(error instanceof Error ? error.message : '保存失败'); }
+    finally { if(current())setBusy(false); }
+  };
+  const saveSpeech = async () => {
+    if (!speech || !review) return;
+    if (speech.lines.some(line => line.visibility === 'unknown')) { setMessage('请逐句确认画内口播或画外音，再保存人工校时。'); return; }
+    setBusy(true); setMessage('');
+    try {
+      const response = await checkedFetch(`/api/overseas/videos/${encodeURIComponent(recordId)}/verified-speech`, {
+        method: 'PUT', headers: { 'Content-Type': 'application/json', ...authHeader() },
+        body: JSON.stringify({ analysisRunId: speech.analysisRunId, sourceSha256: speech.sourceSha256, lines: speech.lines, coverageConfirmed: speech.coverageConfirmed }),
+      });
+      const result = await response.json();
+      if(!current())return;
+      if (!response.ok) throw new Error(result.error || '保存逐句口播失败');
+      setSpeech(result as DirectorVerifiedSpeech);
+      await loadTimeline(review);
+      setMessage('逐句口播已保存，请核对六段归属与画内／画外音。');
+    } catch (error) { if(!current())return;setMessage(error instanceof Error ? error.message : '保存失败'); }
+    finally { if(current())setBusy(false); }
+  };
+  if (!review || !speech) return <section className="mb-4 rounded-lg border border-border bg-white p-4 text-xs text-text-muted" aria-label="六段结构编导复核">{message || '正在读取六段结构、镜头和口播证据…'}</section>;
+  const changeSectionBoundary = (index: number, edge: 'start' | 'end', value: number) => {
+    setReview({ ...review, sections: review.sections.map((item, position) => {
+      if (position === index) return { ...item, [edge]: value, confirmed: false };
+      if (edge === 'start' && position === index - 1) return { ...item, end: value, confirmed: false };
+      if (edge === 'end' && position === index + 1) return { ...item, start: value, confirmed: false };
+      return item;
+    }) });
+  };
+  const splitShot = (shotId: string) => {
+    const current = review.shots.find(item => item.shotId === shotId);
+    if (!current || current.end - current.start < 0.30) { setMessage('镜头短于 0.30 秒，无法拆成两个至少 0.15 秒的镜头。'); return; }
+    const proposed = window.prompt(`在 ${reviewSeconds(current.start)}–${reviewSeconds(current.end)} 之间输入切点秒数`, String(Number(((current.start + current.end) / 2).toFixed(2))));
+    if (proposed === null) return;
+    const cut = Number(proposed);
+    if (!Number.isFinite(cut) || cut - current.start < 0.15 || current.end - cut < 0.15) { setMessage('切点无效；切分后每段至少 0.15 秒。'); return; }
+    setReview(splitDirectorReviewedShot(review, shotId, cut));
+    setMessage('已拆成两个候选镜头；请重新核对内容、目的、首帧和钩子。');
+  };
+  const materializeShot = async (shotId: string) => {
+    if (JSON.stringify([review.sections, review.shots, review.selectedHookShotId]) !== savedReview) { setMessage('请先保存镜头范围，再重新抽取切片和首帧。'); return; }
+    setBusy(true); setMessage('正在从原片重新抽取分镜切片和首帧…');
+    try {
+      const response = await checkedFetch(`/api/overseas/videos/${encodeURIComponent(recordId)}/shot-review/${encodeURIComponent(shotId)}/materialize`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json', ...authHeader() },
+        body: JSON.stringify({ expectedVersion: review.version }),
+      });
+      const result = await response.json();
+      if(!current())return;
+      if (!response.ok) throw new Error(result.error || '重新抽取镜头素材失败');
+      const next = result as DirectorShotReview;
+      setReview(next);
+      setSavedReview(JSON.stringify([next.sections, next.shots, next.selectedHookShotId]));
+      setMessage(`${shotId} 的切片与真实首帧已按复核后的时间范围重新抽取。`);
+    } catch (error) { if(!current())return;setMessage(error instanceof Error ? error.message : '重新抽取失败'); }
+    finally { if(current())setBusy(false); }
+  };
+  const section = review.sections[activeSection] || review.sections[0];
+  const sectionShots = section ? review.shots.filter(shot => shot.reviewStatus !== 'discarded' && shot.start < section.end && shot.end > section.start) : [];
+  const sectionLines = section ? (timeline?.lines || []).filter(line => line.sectionIds.includes(section.sectionId)) : [];
+  const sectionCoarse = section ? (timeline?.coarseWindows || []).filter(line => line.sectionIds.includes(section.sectionId)) : [];
+  return <section aria-label="六段结构编导复核" className="mb-4 rounded-lg border border-border bg-white p-4 text-xs">
+    <div className="flex flex-wrap items-center justify-between gap-2"><div><h3 className="font-semibold text-text-primary">六段内容结构与逐句口播</h3><p className="mt-1 text-text-muted">先确认叙事段，再复核分镜和原声逐句时间码。粗 ASR 可提供逐句大致时间码，界面会明确标记为估计；可按需人工修正。</p></div><span className={`rounded px-2 py-1 font-bold ${review.reviewComplete && timeline?.productionReady ? 'bg-emerald-50 text-emerald-700' : 'bg-amber-50 text-amber-800'}`}>{review.reviewComplete && timeline?.productionReady ? '待最终交接门槛' : '编导复核中'}</span></div>
+    <div className="mt-3 rounded-lg bg-amber-50 px-3 py-2 leading-5 text-amber-900"><strong>内容 Agent 制作门槛</strong><p>年限、功效、交期等经营事实暂不作为交接门槛；原片宣称保留待核验标记。逐镜、口播、开场动作和企业“销售”人物资产仍须满足制作证据要求。</p><ul className="mt-1 list-inside list-disc">{['hook_action_unverified', 'presenter_asset_unlocked'].filter(code => handoff?.issues.some(issue => issue.code === code)).map(code => <li key={code}>{directorReviewAction(code).gap}：{directorReviewAction(code).next}</li>)}</ul><p className="mt-1 font-semibold">当前制作状态：{handoff?.productionExecutionAllowed ? '已通过后端交接门槛' : '待补齐制作证据'}</p></div>
+    <div className="mt-3 grid grid-cols-2 gap-2 sm:grid-cols-3">{review.sections.map((item, index) => <button key={item.sectionId} type="button" onClick={() => setActiveSection(index)} className={`rounded-lg border px-2 py-2 text-left ${activeSection === index ? 'border-accent bg-accent-glow text-accent' : 'border-border text-text-secondary'}`}><strong className="block">{index + 1}. {item.title}</strong><span className="mt-1 block text-[10px]">{reviewSeconds(item.start)}–{reviewSeconds(item.end)} · {item.confirmed ? '已确认' : '待确认'}</span></button>)}</div>
+    {section && <div className="mt-4 rounded-lg border border-border p-3"><div className="grid gap-2 sm:grid-cols-[1fr_80px_80px]"><label className="font-semibold">结构段名称<input aria-label="结构段名称" className="mt-1 w-full rounded border border-border px-2 py-1" value={section.title} onChange={event => setReview({ ...review, sections: review.sections.map((item, index) => index === activeSection ? { ...item, title: event.target.value, confirmed: false } : item) })} /></label><label>开始秒<input aria-label="结构段开始秒" disabled={activeSection === 0} type="number" step="0.01" className="mt-1 w-full rounded border border-border px-2 py-1" value={section.start} onChange={event => changeSectionBoundary(activeSection, 'start', Number(event.target.value))} /></label><label>结束秒<input aria-label="结构段结束秒" disabled={activeSection === review.sections.length - 1} type="number" step="0.01" className="mt-1 w-full rounded border border-border px-2 py-1" value={section.end} onChange={event => changeSectionBoundary(activeSection, 'end', Number(event.target.value))} /></label></div><label className="mt-2 block">表达目的<input aria-label="结构段表达目的" className="mt-1 w-full rounded border border-border px-2 py-1" value={section.purpose} onChange={event => setReview({ ...review, sections: review.sections.map((item, index) => index === activeSection ? { ...item, purpose: event.target.value, confirmed: false } : item) })} /></label><label className="mt-2 inline-flex items-center gap-2 font-semibold"><input type="checkbox" checked={section.confirmed} onChange={event => setReview({ ...review, sections: review.sections.map((item, index) => index === activeSection ? { ...item, confirmed: event.target.checked } : item) })} />已对照原片确认本段边界与内容</label></div>}
+    <div className="mt-4"><div className="flex items-center justify-between"><h4 className="font-black">本段分镜</h4><button type="button" onClick={() => setShowCandidates(!showCandidates)} className="text-accent underline">{showCandidates ? '收起候选切点' : `展开 ${sectionShots.length} 个候选切点`}</button></div>{showCandidates && <div className="mt-2 max-h-72 space-y-2 overflow-y-auto">{sectionShots.map(shot => <div key={shot.shotId} className="rounded-lg border border-border p-2"><div className="flex flex-wrap items-center gap-2"><strong>{shot.shotId} · {reviewSeconds(shot.start)}–{reviewSeconds(shot.end)}</strong><select aria-label={`${shot.shotId} 复核状态`} value={shot.reviewStatus} onChange={event => setReview({ ...review, shots: review.shots.map(item => item.shotId === shot.shotId ? { ...item, reviewStatus: event.target.value as typeof item.reviewStatus } : item) })} className="ml-auto rounded border border-border px-1 py-0.5"><option value="candidate">待复核</option><option value="confirmed">已确认</option><option value="discarded">废弃</option></select></div><div className="mt-2 grid gap-2 sm:grid-cols-[72px_72px_1fr]"><input aria-label={`${shot.shotId} 开始秒`} type="number" step="0.01" value={shot.start} onChange={event => setReview({ ...review, shots: review.shots.map(item => item.shotId === shot.shotId ? { ...item, start: Number(event.target.value), hookMotionConfirmed: false, evidenceRefs: [] } : item) })} className="w-full rounded border border-border px-1 py-1" /><input aria-label={`${shot.shotId} 结束秒`} type="number" step="0.01" value={shot.end} onChange={event => setReview({ ...review, shots: review.shots.map(item => item.shotId === shot.shotId ? { ...item, end: Number(event.target.value), hookMotionConfirmed: false, evidenceRefs: [] } : item) })} className="w-full rounded border border-border px-1 py-1" /><input aria-label={`${shot.shotId} 内容`} value={shot.content} onChange={event => setReview({ ...review, shots: review.shots.map(item => item.shotId === shot.shotId ? { ...item, content: event.target.value } : item) })} className="w-full rounded border border-border px-2 py-1" /></div><input aria-label={`${shot.shotId} 表达目的`} value={shot.purpose} onChange={event => setReview({ ...review, shots: review.shots.map(item => item.shotId === shot.shotId ? { ...item, purpose: event.target.value } : item) })} className="mt-2 w-full rounded border border-border px-2 py-1" /><input aria-label={`${shot.shotId} 素材类型标签`} placeholder="素材类型标签，逗号分隔，如真人口播、工厂实拍" value={shot.labels.join(",")} onChange={event => setReview({ ...review, shots: review.shots.map(item => item.shotId === shot.shotId ? { ...item, labels: event.target.value.split(/[,，]/).map(label => label.trim()).filter(Boolean) } : item) })} className="mt-2 w-full rounded border border-border px-2 py-1" /><div className="mt-2 flex flex-wrap gap-2 text-[10px]"><label><input type="checkbox" checked={shot.mixedScene} onChange={event => setReview({ ...review, shots: review.shots.map(item => item.shotId === shot.shotId ? { ...item, mixedScene: event.target.checked } : item) })} /> 混镜待拆</label><button type="button" onClick={() => splitShot(shot.shotId)} className="text-accent underline">按秒数拆分</button><label><input type="radio" name="selectedHookShotId" disabled={shot.start >= 1 || shot.end <= 0 || shot.end - shot.start < 0.2} checked={review.selectedHookShotId === shot.shotId} onChange={() => setReview({ ...review, selectedHookShotId: shot.shotId, shots: review.shots.map(item => ({ ...item, hookMotionConfirmed: false })) })} /> 开场钩子</label><button type="button" disabled={busy || JSON.stringify([review.sections, review.shots, review.selectedHookShotId]) !== savedReview} onClick={() => void materializeShot(shot.shotId)} className="text-accent underline disabled:opacity-40">重新抽取切片和首帧</button>{shot.evidenceRefs.length > 0 && <button type="button" onClick={() => setPreviewShotId(previewShotId === shot.shotId ? null : shot.shotId)} className="text-accent underline">{previewShotId === shot.shotId ? '收起证据' : '查看证据'}</button>}</div>{review.selectedHookShotId === shot.shotId && <div className="mt-2 rounded bg-sky-50 p-2"><label className="block font-semibold">开场钩子动作脚本（至少 20 字）<textarea aria-label="开场钩子动作脚本" className="mt-1 w-full rounded border border-border px-2 py-1" rows={3} value={shot.hookAction} onChange={event => setReview(reviseDirectorHookAction(review, shot.shotId, event.target.value))} placeholder="按首帧、第一秒、动作峰值、手势轨迹、声音进入点、转场描述" /></label><label className="mt-1 inline-flex items-center gap-1"><input type="checkbox" checked={shot.hookMotionConfirmed} disabled={shot.hookAction.trim().length < 20} onChange={event => setReview({ ...review, shots: review.shots.map(item => item.shotId === shot.shotId ? { ...item, hookMotionConfirmed: event.target.checked } : item) })} />已逐帧核对钩子动作与原片一致</label><div className="mt-2 grid gap-2 sm:grid-cols-2">{hookScriptKeys.map(key => <label key={key} className="text-xs">{hookScriptLabels[key]}<input aria-label={`开场钩子${hookScriptLabels[key]}`} value={shot.hookScript?.[key] || ''} placeholder="请按原片填写；确实没有填“无”" onChange={event => setReview({ ...review, shots: review.shots.map(item => item.shotId === shot.shotId ? { ...item, hookScript: { camera: '', visual: '', subject: '', music: '', voiceover: '', soundEffects: '', spokenWords: '', subjectAction: '', ...item.hookScript, [key]: event.target.value }, hookScriptConfirmed: false } : item) })} className="mt-1 w-full rounded border border-border px-2 py-1" /></label>)}</div><label className="mt-2 inline-flex items-center gap-1 text-xs"><input type="checkbox" checked={shot.hookScriptConfirmed === true} disabled={hookScriptKeys.some(key => !shot.hookScript?.[key]?.trim())} onChange={event => setReview({ ...review, shots: review.shots.map(item => item.shotId === shot.shotId ? { ...item, hookScriptConfirmed: event.target.checked } : item) })} />已逐项对照原片确认八项钩子脚本</label></div>}{previewShotId === shot.shotId && <div className="mt-2 grid gap-2 sm:grid-cols-2">{shot.evidenceRefs.filter(ref => ref.includes('/clip')).map(ref => <AuthenticatedVideo key={ref} apiUrl={ref} controls className="max-h-48 w-full rounded bg-black" />)}{shot.evidenceRefs.filter(ref => ref.includes('first-frame')).map(ref => <AuthenticatedImage key={ref} src={ref} alt={`${shot.shotId} 原片首帧`} className="max-h-48 w-full rounded object-contain" />)}</div>}</div>)}</div>}</div>
+    <div className="mt-4 border-t border-border pt-3"><h4 className="font-black">本段口播 · {sectionLines.length} 句已定位</h4>{sectionLines.length ? <ul className="mt-2 space-y-1">{sectionLines.map(line => <li key={line.speechId} className="rounded bg-emerald-50 px-2 py-1">{reviewSeconds(line.start)}–{reviewSeconds(line.end)} · {line.text} <span className="text-text-muted">{line.timingPrecision === 'coarse' ? '估计时间码' : '人工校时'} · {line.visibility === 'voiceover' ? '画外音' : line.visibility === 'on_camera' ? '画内口播' : '声音来源待判'} · {line.shotIds.join('、')}</span></li>)}</ul> : <p className="mt-1 text-amber-800">尚无可用的逐句口播。</p>}{sectionCoarse.length > 0 && <details className="mt-2 rounded bg-amber-50 p-2"><summary className="cursor-pointer font-semibold">{sectionCoarse.length} 条粗 ASR 估计口播时间窗</summary><ul className="mt-2 space-y-1">{sectionCoarse.map(item => <li key={item.speechId}>{reviewSeconds(item.start)}–{reviewSeconds(item.end)} · {item.text}</li>)}</ul></details>}</div>
+    <div className="mt-4 rounded-lg border border-sky-200 bg-sky-50 p-3"><h4 className="font-black">获取句级时间码候选</h4><p className="mt-1 leading-5 text-text-secondary">该操作调用千问句级 ASR，可能产生供应商费用。候选仍须逐句听原片、核对起止秒数及画内／画外音；不会自动确认为编导交接物。</p><p className="mt-1 text-text-muted">服务状态：{referenceAsrAvailabilityLabel(asrJob)}{asrJob?.budgetReason ? ` · ${asrJob.budgetReason}` : ''} · 预留：{asrJob?.reservationCny == null ? '未知' : `¥${asrJob.reservationCny}`} · 剩余预算：{asrJob?.remainingCny == null ? '未知' : `¥${asrJob.remainingCny}`}</p><label className="mt-2 flex items-center gap-2"><input type="checkbox" checked={asrConsent} onChange={event => setAsrConsent(event.target.checked)} disabled={asrJob?.canSubmit!==true || asrBusy} />我确认启动可能计费的句级 ASR 分析</label><div className="mt-2 flex gap-2"><button type="button" disabled={!canExplicitlySubmitReferenceAsr(asrJob,asrConsent,asrBusy)} onClick={() => void readPhraseAsr(true)} className="rounded bg-accent px-2 py-1 font-bold text-white disabled:opacity-40">{asrBusy ? '处理中…' : '获取句级时间码'}</button><button type="button" disabled={asrBusy} onClick={() => void readPhraseAsr(false)} className="rounded border border-border px-2 py-1">查询已有候选（只读）</button>{canRefreshExistingReferenceAsr(asrJob,false) && <button type="button" disabled={!canRefreshExistingReferenceAsr(asrJob,asrBusy)} onClick={()=>void readPhraseAsr(false,true)} className="rounded border border-border px-2 py-1">查询原识别任务</button>}{asrJob && (asrJob.status==='uncertain'||(['PENDING','RUNNING','submitting'].includes(asrJob.status)&&!asrJob.existingTaskId)) && <span>供应商状态不确定，请人工核对原回执；不会重新提交。</span>}</div>{asrJob?.candidateLines?.length ? <div className="mt-3"><p className="font-semibold">{asrJob.candidateLines.length} 条机器候选（未核对）</p><div className="mt-2 max-h-48 space-y-1 overflow-y-auto">{asrJob.candidateLines.map((line, index) => <p key={`${line.start}-${index}`} className="rounded bg-white px-2 py-1">{reviewSeconds(line.start)}–{reviewSeconds(line.end)} · {line.text}</p>)}</div><button type="button" onClick={() => setSpeech(asrCandidatesToReviewDraft(speech, asrJob.candidateLines))} className="mt-2 text-accent underline">载入人工校对草稿（不会保存或确认）</button></div> : null}</div>
+    <div className="mt-4 border-t border-border pt-3"><h4 className="font-black">可选：逐句口播人工修正</h4><p className="mt-1 text-text-muted">粗 ASR 的大致时间码已可用于交接；如发现错字、漏句或错位，可听原片修正并保存。</p><button type="button" onClick={onPreview} className="mt-1 text-accent underline">播放原片核对</button><div className="mt-2 max-h-64 space-y-2 overflow-y-auto">{speech.lines.map((line, index) => <div key={index} className="grid gap-1 sm:grid-cols-[70px_70px_1fr_90px_24px]"><input aria-label={`第 ${index + 1} 句开始秒`} type="number" step="0.01" value={line.start} onChange={event => setSpeech({ ...speech, coverageConfirmed: false, lines: speech.lines.map((item, i) => i === index ? { ...item, start: Number(event.target.value) } : item) })} className="rounded border border-border px-1" /><input aria-label={`第 ${index + 1} 句结束秒`} type="number" step="0.01" value={line.end} onChange={event => setSpeech({ ...speech, coverageConfirmed: false, lines: speech.lines.map((item, i) => i === index ? { ...item, end: Number(event.target.value) } : item) })} className="rounded border border-border px-1" /><input aria-label={`第 ${index + 1} 句原文`} value={line.text} onChange={event => setSpeech({ ...speech, coverageConfirmed: false, lines: speech.lines.map((item, i) => i === index ? { ...item, text: event.target.value } : item) })} className="rounded border border-border px-2" /><select aria-label={`第 ${index + 1} 句画内或画外`} value={line.visibility} onChange={event => setSpeech({ ...speech, coverageConfirmed: false, lines: speech.lines.map((item, i) => i === index ? { ...item, visibility: event.target.value as typeof item.visibility } : item) })} className="rounded border border-border px-1"><option value="unknown">待判断</option><option value="on_camera">画内</option><option value="voiceover">画外</option></select><button type="button" aria-label={`删除第 ${index + 1} 句`} onClick={() => setSpeech({ ...speech, coverageConfirmed: false, lines: speech.lines.filter((_, i) => i !== index) })}>×</button></div>)}</div><div className="mt-2 flex flex-wrap gap-2"><button type="button" onClick={() => setSpeech({ ...speech, coverageConfirmed: false, lines: [...speech.lines, { text: '', start: 0, end: 0, visibility: 'unknown' }] })} className="rounded border border-border px-2 py-1">添加一句</button><label className="inline-flex items-center gap-1"><input type="checkbox" checked={speech.coverageConfirmed} onChange={event => setSpeech({ ...speech, coverageConfirmed: event.target.checked })} />已听完整片并确认无漏句</label><button type="button" disabled={busy} onClick={() => void saveSpeech()} className="rounded bg-accent px-2 py-1 font-bold text-white disabled:opacity-50">保存逐句校时</button></div></div>
+    <div className="mt-3 flex flex-wrap items-center gap-2"><button type="button" disabled={busy} onClick={() => void saveReview()} className="rounded bg-accent px-3 py-2 font-bold text-white disabled:opacity-50">保存六段与镜头复核</button><span className="text-text-muted">{review.shots.filter(shot => shot.reviewStatus === 'candidate').length} 个候选镜头待复核 · {timeline?.coarseWindows.length || 0} 个粗 ASR 窗口</span></div>{message && <p role="status" className="mt-2 text-amber-800">{message}</p>}{timeline?.reviewQuestions.length ? <details className="mt-3"><summary className="cursor-pointer font-semibold">交接前还需处理 {timeline.reviewQuestions.length} 项</summary><ul className="mt-1 list-inside list-disc space-y-1 text-amber-800">{timeline.reviewQuestions.map((item, index) => <li key={index}>{item}</li>)}</ul></details> : null}
+  </section>;
+}
+export function DirectorVideoDetailPanel({
+  video,
+  onClose,
+  onPreview,
+  onCreate,
+  onRetry,
+  onReanalyzeImage,
+  onExactAnalysis,
+  onReanalyze,
+  onCancelAnalysis,
+  analyzing,
+  notice,
+  onFavorite,
+  favoriting,
+  isFavorite,
+}: {
+  video: TrendVideo;
+  onClose: () => void;
+  onPreview: () => void;
+  onCreate: () => void;
+  onRetry: () => void;
+  onReanalyzeImage: () => void;
+  onExactAnalysis: () => void;
+  onReanalyze?: () => void;
+  onCancelAnalysis: () => void;
+  analyzing: boolean;
+  notice?: string;
+  onFavorite: () => void;
+  favoriting?: boolean;
+  isFavorite?: boolean;
+}) {
+  const analysis = getAnalysis(video);
+  const exactQuality = exactAnalysisQuality(video);
+  const payload = video.aiAnalysis;
+  const imageEvidence = payload?.imageEvidence;
+  const isImagePost = video.contentFormat === 'image';
+  const imageAnalysisReady = imageEvidence?.status === 'analyzed' && Boolean(imageEvidence.observedFacts?.length);
+  const progressStage = payload?.analysisProgress?.stage;
+  const hasServerProgress = Boolean(payload?.analysisProgress);
+  const terminalAnalysisState = Boolean(payload?.analysisError)
+    || ['completed', 'failed', 'paused', 'cancelled'].includes(String(progressStage || ''))
+    || ['paused', 'cancelled', 'video_failed', 'failed', 'needs_review', 'analysis_retryable', 'analyzed'].includes(String(payload?.geminiStatus || ''));
+  const activeServerAnalysis = analysisProgressIsActive(payload?.analysisProgress);
+  const pending = analyzing
+    || (hasServerProgress
+      ? activeServerAnalysis
+      : (payload?.requestedAnalysisMode === 'exact' && !terminalAnalysisState)
+        || (video.status === 'pending' && !terminalAnalysisState));
+  const reviewHandoffRequestKey = [video.recordId || '', payload?.analyzedAt || '', payload?.geminiStatus || '', payload?.requestedAnalysisMode || '', payload?.analysisProgress?.runId || '', payload?.analysisProgress?.stage || ''].join(':');
+  const [reviewHandoffState, setReviewHandoffState] = useState<{ key: string; value: DirectorReviewHandoff } | null>(null);
+  const reviewHandoff = reviewHandoffState?.key === reviewHandoffRequestKey ? reviewHandoffState.value : null;
+  useEffect(() => {
+    const recordId = video.recordId;
+    if (activeServerAnalysis || !recordId || !['analyzed', 'needs_review'].includes(String(payload?.geminiStatus || ''))) { setReviewHandoffState(null); return; }
+    let active = true;
+    void fetch(`/api/overseas/videos/${encodeURIComponent(recordId)}/review-handoff`, { headers: authHeader() })
+      .then(async response => response.ok ? await response.json() as DirectorReviewHandoff : null)
+      .then(result => { if (active) setReviewHandoffState(result ? { key: reviewHandoffRequestKey, value: result } : null); })
+      .catch(() => { if (active) setReviewHandoffState(null); });
+    return () => { active = false; };
+  }, [video.recordId, payload?.geminiStatus, activeServerAnalysis, reviewHandoffRequestKey]);
+  const benchmark = payload?.benchmarkAnalysis || buildBenchmarkAnalysis({ analysis: payload, videoId: video.recordId || video.id, duration: video.duration });
+  const handoffReady = !pending && reviewHandoff?.status === 'production_ready' && reviewHandoff.productionExecutionAllowed === true;
+  const draftReady = !pending && reviewHandoff?.directorHandoffReady === true;
+  // A missing review-handoff response must not hide an otherwise valid
+  // replication action. The task-creation endpoint owns handoff recovery; the
+  // UI only needs verified exact evidence and a non-running analysis.
+  const detailCreationReady = video.id.startsWith('material-') ? true : isImagePost ? imageAnalysisReady : exactQuality.ready && !pending;
+  const isReadOnlySnapshot = payload?.analysisSource === 'weekly-plan-snapshot' || video.id.startsWith('weekly-reference-');
+  const canRunExactAnalysis = !isReadOnlySnapshot && Boolean(video.recordId || video.id.startsWith('material-'));
+  const canRunDetailAnalysis = isImagePost ? Boolean(video.recordId) : canRunExactAnalysis;
+  const needsDirectorReview = !isImagePost && (payload?.geminiStatus === 'needs_review' || payload?.analysisQuality === 'video_review_required');
+  const detailedAnalysisReason = isReadOnlySnapshot
+    ? '原爆款已删除，仅可查看周计划保存的历史分析快照。'
+    : exactQuality.ready
+      ? '精确分析已通过实际画面时间线校验'
+      : exactQuality.reason;
+  const showAnalysisProgress = !isImagePost && progressStage !== 'completed'
+    && (pending || ['failed', 'paused', 'cancelled'].includes(String(progressStage || '')));
+  const analysisInterrupted = ['paused', 'cancelled'].includes(String(progressStage || '')) || payload?.geminiStatus === 'paused';
+  const statusLabel = payload?.analysisProgress && (analysisProgressIsActive(payload.analysisProgress)
+    || ['failed', 'paused', 'cancelled'].includes(payload.analysisProgress.stage))
+    ? payload.analysisProgress.stageLabel
+    : pending
+      ? '编导 Agent 分析中'
+    : isImagePost && imageAnalysisReady
+      ? '图文证据分析已完成'
+      : exactQuality.ready
+      ? '全片精确分析已完成'
+      : payload?.geminiStatus === 'needs_review'
+        ? '逐镜分析待复核'
+      : analysis
+        ? '策略分析已完成'
+        : payload?.analysisError || video.status === 'failed'
+          ? '分析需要重试'
+          : '等待编导 Agent 分析';
+
+  return (
+    <Drawer open title={video.title} size={800} onClose={onClose}
+      extra={<Button onClick={onFavorite} loading={favoriting} aria-label={isFavorite ? `取消收藏 ${video.title}` : `收藏 ${video.title}`} icon={<Star size={16} fill={isFavorite ? 'currentColor' : 'none'} />}>{isFavorite ? '已收藏' : '收藏'}</Button>}
+      footer={<div className="flex flex-wrap items-center gap-2">
+        {!isImagePost && canRunExactAnalysis && (pending
+          ? <Button onClick={onCancelAnalysis} icon={<X size={13} />}>停止分析</Button>
+          : <Button onClick={analysisInterrupted ? (onReanalyze || onExactAnalysis) : exactQuality.ready ? (onReanalyze || onExactAnalysis) : onExactAnalysis} icon={<BarChart2 size={13} />}>{analysisInterrupted ? '继续详细分析' : exactQuality.ready ? '重新详细分析' : '详细分析'}</Button>)}
+        {!isImagePost && !analysisInterrupted && (payload?.analysisError || video.status === 'failed') && <Button onClick={onRetry} loading={analyzing}>重新分析</Button>}
+        {isImagePost && !imageAnalysisReady && <Button onClick={onReanalyzeImage} loading={analyzing} icon={<Images size={13} />}>重新分析图文</Button>}
+        <Button onClick={onPreview}>预览原内容</Button>
+        <Button type="primary" onClick={detailCreationReady ? onCreate : isImagePost ? onReanalyzeImage : onExactAnalysis} disabled={!detailCreationReady && !canRunDetailAnalysis} className="ml-auto">{isImagePost || video.id.startsWith('material-') ? '开始创作' : '爆款复刻'}</Button>
+        {!detailCreationReady && <p className="w-full text-xs text-text-secondary">{isImagePost ? '点击“开始创作”会先完成图文证据分析。' : pending ? '详细分析完成后会开放复刻，当前任务不会重复提交。' : needsDirectorReview ? '逐镜分析已经完成；需先确认待复核的镜头证据，再进入制作。' : canRunExactAnalysis ? '点击“爆款复刻”会先完成详细分析，再进入制作。' : detailedAnalysisReason}</p>}
+      </div>}
+      styles={{ body: { padding: 0 } }}>
+      <div className="border-b border-border px-5 py-3">
+        <p className="text-sm font-medium text-text-primary">编导 Agent · {statusLabel}</p>
+        <p className="mt-1 flex items-center gap-2 text-xs text-text-secondary"><SocialPlatformIcon platform={video.platform} size={14}/>{PLATFORM_META[video.platform]?.label || video.platform} · {displayDuration(video.duration)} · {payload?.analysisSource || '待确认分析来源'}</p>
+        {video.tags.length > 0 && <div className="mt-3 flex flex-wrap items-center gap-1.5" aria-label="内容标签">
+          <span className="mr-1 text-xs font-semibold text-text-secondary">内容标签</span>
+          {video.tags.map(tag => <span key={tag} className="rounded-md border border-border bg-accent-glow px-2 py-1 text-xs font-semibold text-accent">#{tag}</span>)}
+        </div>}
+      </div>
+        <div className="min-h-0 flex-1 overflow-y-auto px-5 py-5">
+          {isImagePost && notice && <p role="status" className="mb-4 border-l-2 border-accent bg-accent-glow px-3 py-2 text-xs font-semibold text-accent">{notice}</p>}
+          {isImagePost && imageAnalysisReady && imageEvidence ? (
+            <div className="mt-4 space-y-4">
+              <section className="rounded-lg border border-border bg-white p-4">
+                <h3 className="text-sm font-semibold text-text-primary">图文证据与轮播节奏</h3>
+                <div className="mt-3 space-y-2">
+                  {imageEvidence.carouselFlow.map(item => <div key={`${item.imageIndex}-${item.role}`} className="rounded-lg bg-surface-2 px-3 py-2 text-xs leading-5"><strong className="text-text-primary">第 {item.imageIndex + 1} 张 · {item.role}</strong><p className="text-text-secondary">{item.evidence}</p></div>)}
+                </div>
+              </section>
+              <section className="rounded-lg border border-border bg-white p-4">
+                <h3 className="text-sm font-semibold text-text-primary">可复用模块</h3>
+                <div className="mt-3 grid gap-2 sm:grid-cols-2">{imageEvidence.reusableModules.map(item => <div key={item.module} className="rounded-lg border border-border p-3 text-xs"><strong>{item.module}</strong><p className="mt-1 leading-5 text-text-secondary">保留：{item.preserve}</p><p className="leading-5 text-text-muted">替换：{item.replace}</p></div>)}</div>
+              </section>
+            </div>
+          ) : isImagePost ? (
+            <section className="mt-4 rounded-lg border border-dashed border-border bg-white px-6 py-12 text-center">
+              {pending ? <Loader2 size={24} className="mx-auto animate-spin text-accent" /> : <BarChart2 size={24} className="mx-auto text-text-muted" />}
+              <p className="mt-3 text-sm font-semibold text-text-primary">{statusLabel}</p>
+              <p className="mx-auto mt-1 max-w-md text-xs leading-5 text-text-muted">{pending ? '可以先关闭此页；完成时间与失败状态以后台返回为准。' : '完成后会展示图文证据与轮播节奏。'}</p>
+            </section>
+          ) : (
+            <InspirationVideoAnalysisTabs
+              benchmark={benchmark}
+              gemini={payload?.gemini}
+              duration={video.duration}
+              pending={pending}
+              detailedReady={exactQuality.ready}
+              detailedReason={detailedAnalysisReason}
+              onAnalyze={onExactAnalysis}
+              onReanalyze={onReanalyze || onExactAnalysis}
+              analysisActionAvailable={canRunExactAnalysis}
+              renderClip={url => <AuthenticatedVideo apiUrl={url} controls className="max-h-64 w-full rounded-lg bg-black" />}
+              adaptTip={analysis?.adaptTip}
+              baseRequirements={analysis?.baseRequirements}
+              storyboardStatus={<>
+                {showAnalysisProgress && <VideoAnalysisProgressPanel
+                  progress={payload?.analysisProgress}
+                  pending={pending}
+                  onRetry={onReanalyze || onExactAnalysis}
+                  retryDisabled={analyzing}
+                />}
+                {notice && <p role="status" className="border-l-2 border-accent bg-accent-glow px-3 py-2 text-xs font-semibold text-accent">{notice}</p>}
+                <section aria-label="编导到内容 Agent 交接状态" className="rounded-lg border border-border bg-white p-4">
+                  <div className="flex flex-wrap items-center gap-2 text-xs font-semibold"><span className="rounded bg-surface-2 px-2 py-1 text-green">原片入库</span><ChevronRight size={13} className="text-text-muted" /><span className={`rounded px-2 py-1 ${pending || !draftReady ? 'bg-amber-dim text-amber' : 'bg-surface-2 text-green'}`}>{pending ? '编导分析中' : draftReady ? '可交接内容起稿' : '编导证据不足'}</span><ChevronRight size={13} className="text-text-muted" /><span className={`rounded px-2 py-1 ${draftReady ? 'bg-surface-2 text-green' : 'bg-surface-2 text-text-muted'}`}>{handoffReady ? '可制作成片' : draftReady ? '可生成口播草稿' : '内容起稿未开放'}</span></div>
+                  {!handoffReady && !pending && <p className="mt-2 text-[11px] leading-5 text-amber">系统将使用带估计时间码的原片口播，并继续检查镜头切片、钩子动作和企业“销售”人物资产。如需继续，编导 Agent 会按清单补证，无需人工逐句校时或逐镜勾选。</p>}
+                </section>
+              </>}
+              speechAlignment={<ReferenceSpeechAlignmentPanel details={payload?.gemini?.scriptDetails15s} transcript={payload?.gemini?.audioTranscript} />}
+            />
+          )}
+        </div>
+
+    </Drawer>
   );
 }
 
@@ -2874,63 +3244,224 @@ interface InspirationDashboardProps {
 }
 
 export default function InspirationDashboard({ onScriptPanelOpen, onScriptPanelClose, onNavigate, onEnterWorkflow }: InspirationDashboardProps) {
-  const [innerView, setInnerView] = useState<InspirationInnerView>('inspiration');
+  const { activeProgram, accounts } = useSocialProgram();
+  const [creationAccountId, setCreationAccountId] = useState('');
+  useEffect(() => {
+    setCreationAccountId(soleInspirationCreationAccount(accounts, activeProgram?.programId));
+  }, [activeProgram?.programId, accounts]);
+  const inspirationLaunches = useRef(new Set<string>());
+  const [replicationTasks, setReplicationTasks] = useState<Record<string, string>>({});
+  const [launchingReferences, setLaunchingReferences] = useState<string[]>([]);
+  const [materialEntry] = useState(initialMaterialLibraryEntry);
+  const [innerView, setInnerView] = useState<InspirationInnerView>(() => typeof window !== 'undefined' && new URLSearchParams(window.location.search).get('view') === 'shooting' ? 'shooting' : materialEntry.openLibrary ? 'library' : 'inspiration');
+  const [shootingFilter, setShootingFilter] = useState<'all' | 'storyboard' | 'common'>('all');
   const [platform, setPlatform] = useState<Platform>('all');
-  const [search, setSearch] = useState('');
+  const [search, setSearch] = useState(() => typeof window === 'undefined'
+    ? ''
+    : String(new URLSearchParams(window.location.search).get('search') || '').trim());
   // 搜索改为服务端执行：此前只在已加载的那一页做前端过滤，翻页之外的记录搜不到。
   const searchRef = useRef('');
   searchRef.current = search;
   const [selectedVideo, setSelectedVideo] = useState<TrendVideo | null>(null);
-  const [scriptPanelTab, setScriptPanelTab] = useState<'analysis' | 'generate'>('analysis');
+  const [exactReferenceDetail, setExactReferenceDetail] = useState<unknown>(() => typeof window === 'undefined' ? null : window.history.state?.productionDetail);
+  const [exactReview, setExactReview] = useState<{recordId:string;handoff:DirectorReviewHandoff;video:TrendVideo}|null>(null);
+  const [exactReviewError, setExactReviewError] = useState('');
+  const [exactReviewToken,setExactReviewToken] = useState(()=>getToken());
+  useEffect(()=>{const changed=()=>{setExactReview(null);setSelectedVideo(null);setExactReviewToken(getToken());};window.addEventListener(AUTH_TOKEN_CHANGED_EVENT,changed);window.addEventListener('storage',changed);return()=>{window.removeEventListener(AUTH_TOKEN_CHANGED_EVENT,changed);window.removeEventListener('storage',changed);};},[]);
+  useEffect(()=>{let active=true;setExactReview(null);setExactReviewError('');const target=parseExactReferenceReview(exactReferenceDetail);if(!target)return;
+    void loadExactReferenceReview(target,{token:getToken,verify:t=>readWeeklyReferenceReviewNavigation({tenantId:t.tenantId,programId:t.programId,packageId:t.packageId,packageVersion:t.packageVersion,executionTaskId:t.executionTaskId},t.recordId,t.contentTaskId),fetch:window.fetch.bind(window)}).then(({record,handoff})=>{const video=recordsToVideos([record as unknown as CrawlerRecord])[0];if(!video||video.recordId!==target.recordId)throw Error('原参考记录无法打开审核');if(active)setExactReview({recordId:target.recordId,handoff:handoff as unknown as DirectorReviewHandoff,video});}).catch(error=>{if(active)setExactReviewError(exactReferenceReviewErrorMessage(error));});return()=>{active=false;};
+  },[exactReferenceDetail,exactReviewToken]);
+  const [requestedReference, setRequestedReference] = useState<InspirationReferenceTarget | null>(initialInspirationReferenceTarget);
+  const openedReferenceTargetRef = useRef('');
   const [watchVideo, setWatchVideo] = useState<TrendVideo | null>(null);
   const [viewMode, setViewMode] = useState<'grid' | 'list'>('grid');
   const [sortMode, setSortMode] = useState<SortMode>('crawlTime');
   const [contentFormat, setContentFormat] = useState<ContentFormat>('video');
+  const [inspirationFavoriteFilter, setInspirationFavoriteFilter] = useState<FavoriteFilter>('all');
   const [crawlTimeRange, setCrawlTimeRange] = useState<CrawlTimeRange>('all');
+  const [discoveryDecision, setDiscoveryDecision] = useState<DiscoveryDecisionFilter>('all');
+  const [businessModelFilter, setBusinessModelFilter] = useState<BusinessModelFilter>('all');
+  const [minimumDiscoveryScore, setMinimumDiscoveryScore] = useState(0);
+  const [discoverySupplyItems, setDiscoverySupplyItems] = useState<SocialDiscoverySupplyItem[]>([]);
+  const [discoverySupplyLoading, setDiscoverySupplyLoading] = useState(false);
+  const [discoverySupplyError, setDiscoverySupplyError] = useState('');
+  const [inspirationFiltersOpen, setInspirationFiltersOpen] = useState(false);
   const [crawledVideos, setCrawledVideos] = useState<TrendVideo[]>([]);
   const [videoPage, setVideoPage] = useState(1);
   const [videoTotalPages, setVideoTotalPages] = useState(1);
-  const [tenantVideoTotalItems, setTenantVideoTotalItems] = useState(0);
+  const [tenantVideoTotalItems, setTenantVideoTotalItems] = useState<number | null>(null);
+  const [competitorAccountCount, setCompetitorAccountCount] = useState<number | null>(null);
   const [videosLoading, setVideosLoading] = useState(false);
+  const [videosLoaded, setVideosLoaded] = useState(false);
+  const [videosError, setVideosError] = useState('');
   const [lastCrawlVideoIds, setLastCrawlVideoIds] = useState<string[]>([]);
   const [analyzingVideoIds, setAnalyzingVideoIds] = useState<string[]>([]);
   const [favoritingMaterialIds, setFavoritingMaterialIds] = useState<string[]>([]);
+  const [favoritedVideoIds, setFavoritedVideoIds] = useState<string[]>([]);
   const [materialMessage, setMaterialMessage] = useState('');
   const [localMaterials, setLocalMaterials] = useState<Material[]>([]);
   const [manageTarget, setManageTarget] = useState<(({ kind: 'video'; item: TrendVideo } | { kind: 'material'; item: Material }) & { action: 'edit' | 'delete' }) | null>(null);
   const [manageName, setManageName] = useState('');
   const [manageTags, setManageTags] = useState('');
+  const [manageProductId, setManageProductId] = useState('');
+  const [materialProducts, setMaterialProducts] = useState<Array<{id:string;name:string}>>([]);
+  const [materialProductFilterEnabled, setMaterialProductFilterEnabled] = useState(() => Boolean(materialEntry.productId || materialEntry.productRef));
+  const [materialProductId, setMaterialProductId] = useState(materialEntry.productId);
+  const [materialProductRef, setMaterialProductRef] = useState(materialEntry.productRef);
+  const [uploadProductId, setUploadProductId] = useState(() => materialEntry.productId || '');
   const [manageBusy, setManageBusy] = useState(false);
   const [previewMaterial, setPreviewMaterial] = useState<Material | null>(null);
+  const [previewMaterialAttempt, setPreviewMaterialAttempt] = useState(0);
+  const [previewMaterialLoading, setPreviewMaterialLoading] = useState(false);
+  const [previewMaterialError, setPreviewMaterialError] = useState('');
+  const previewMaterialAutoRetryRef = useRef(0);
+  const [detailMaterial, setDetailMaterial] = useState<Material | null>(null);
+  const [updatingMaterialTheme, setUpdatingMaterialTheme] = useState(false);
+  const detailMaterialDialogRef = useModalFocus<HTMLDivElement>({
+    open: Boolean(detailMaterial),
+    onClose: () => setDetailMaterial(null),
+  });
+  const updateDetailMaterialTheme = async (theme: keyof typeof MATERIAL_THEME_LABELS) => {
+    if (!detailMaterial || updatingMaterialTheme) return;
+    setUpdatingMaterialTheme(true);
+    try {
+      const result = await studioApi.updateMaterial(detailMaterial.id, { name: detailMaterial.name, primaryTheme: theme });
+      if (!result.ok || !result.material) throw new Error(result.error || '主题标签保存失败');
+      setDetailMaterial(result.material);
+      setLocalMaterials(items => items.map(item => item.id === result.material!.id ? result.material! : item));
+    } catch (error) { setMaterialMessage(error instanceof Error ? error.message : '主题标签保存失败'); }
+    finally { setUpdatingMaterialTheme(false); }
+  };
+  const manageDialogRef = useModalFocus<HTMLDivElement>({
+    open: Boolean(manageTarget),
+    onClose: () => { if (!manageBusy) setManageTarget(null); },
+    closeOnEscape: () => !manageBusy,
+  });
   const [materialSearch, setMaterialSearch] = useState('');
+  const [materialAssetTab, setMaterialAssetTab] = useState<MaterialAssetTab>('enterprise');
   const [materialIndustry, setMaterialIndustry] = useState<MaterialIndustryFilter>('all');
   const [materialFunction, setMaterialFunction] = useState('all');
   const [materialApplicability, setMaterialApplicability] = useState<MaterialApplicabilityFilter>('all');
   const [materialOrientation, setMaterialOrientation] = useState<MaterialOrientationFilter>('all');
-  const [materialSource, setMaterialSource] = useState<MaterialSourceFilter>('all');
+  const [initialTaxonomyFilters] = useState(initialMaterialTaxonomyFilters);
+  const [materialSource, setMaterialSource] = useState<MaterialSourceFilter>(initialTaxonomyFilters.source);
+  const [materialTheme, setMaterialTheme] = useState<MaterialThemeFilter>(initialTaxonomyFilters.theme);
+  const [materialType, setMaterialType] = useState<MaterialTypeFilter>('all');
+  const [materialFavoriteFilter, setMaterialFavoriteFilter] = useState<FavoriteFilter>('all');
+  const [materialFiltersOpen, setMaterialFiltersOpen] = useState(false);
   const [materialsLoading, setMaterialsLoading] = useState(false);
+  const [materialTotal, setMaterialTotal] = useState(0);
+  const [materialPage, setMaterialPage] = useState(1);
+  const [materialFacets, setMaterialFacets] = useState<MaterialLibraryFacets | null>(null);
   const [uploadingMaterial, setUploadingMaterial] = useState(false);
+  const [materialUploadDialogOpen, setMaterialUploadDialogOpen] = useState(false);
+  const [importingReference, setImportingReference] = useState(false);
+  const referenceUploadInputRef = useRef<HTMLInputElement | null>(null);
   const [generatingNeedId, setGeneratingNeedId] = useState('');
-  const [scriptGapTasks, setScriptGapTasks] = useState<ScriptGapTask[]>(() => readScriptGapTasks());
+  const { scriptGapTasks, shootingTaskError: _shootingTaskError } = useScriptGapTasks();
   const [uploadingScriptGapId, setUploadingScriptGapId] = useState('');
-  const [classifyingMaterialId, setClassifyingMaterialId] = useState('');
-  const [showAccountsModal, setShowAccountsModal] = useState(false);
   const uploadInputRef = useRef<HTMLInputElement | null>(null);
+  useEffect(() => {
+    const taskId = new URLSearchParams(window.location.search).get('task');
+    if (taskId) document.getElementById(`shooting-task-${taskId}`)?.scrollIntoView({ block: 'center' });
+  }, [scriptGapTasks]);
+  useEffect(() => {
+    if (innerView !== 'library') return;
+    const url = new URL(window.location.href);
+    materialSource === 'all' ? url.searchParams.delete('source') : url.searchParams.set('source', materialSource);
+    materialTheme === 'all' ? url.searchParams.delete('theme') : url.searchParams.set('theme', materialTheme);
+    window.history.replaceState(window.history.state, '', url);
+  }, [innerView, materialSource, materialTheme]);
+  const shootingCameraInputRef = useRef<HTMLInputElement | null>(null);
   const videoRequestRef = useRef(0);
+  const inventoryRequestRef = useRef(0);
   const platformLabel = PLATFORM_FILTERS.find(f => f.id === platform)?.label ?? '全部平台';
-  const sortLabel = sortMode === 'crawlTime' ? '按爬取时间' : '按热度';
+  const sortLabel = sortMode === 'crawlTime' ? '按爬取时间' : '按内容机会';
   const contentFormatLabel = contentFormat === 'video' ? '视频' : '图文';
   useEffect(() => {
-    const refresh = () => setScriptGapTasks(readScriptGapTasks());
-    window.addEventListener(SCRIPT_GAP_QUEUE_EVENT, refresh);
-    return () => window.removeEventListener(SCRIPT_GAP_QUEUE_EVENT, refresh);
+    const receiveReference = (event: Event) => {
+      const detail = (event as CustomEvent<Record<string, unknown>>).detail;
+      if (detail?.page !== 'socialInspiration') return;
+      setExactReferenceDetail(detail);
+      if (hasExactReferenceReview(detail)) { setRequestedReference(null); setSelectedVideo(null); return; }
+      const next = parseInspirationReferenceTarget(detail);
+      if (!next) return;
+      openedReferenceTargetRef.current = '';
+      setRequestedReference(next);
+    };
+    window.addEventListener('lingshu:navigate', receiveReference);
+    return () => window.removeEventListener('lingshu:navigate', receiveReference);
   }, []);
-
-  const openMaterialSmartGeneration = () => {
-    window.dispatchEvent(new CustomEvent('lingshu:navigate', { detail: { page: 'smartAssets', view: 'create' } }));
-    onNavigate?.('smartAssets');
-  };
-
+  useEffect(() => {
+    if (hasExactReferenceReview(exactReferenceDetail) || !requestedReference || !videosLoaded) return;
+    const requestKey = [requestedReference.referenceId, requestedReference.sourceUrl, requestedReference.title].join('|');
+    if (!requestKey || openedReferenceTargetRef.current === requestKey) return;
+    openedReferenceTargetRef.current = requestKey;
+    let cancelled = false;
+    const openRequestedReference = async () => {
+      setInnerView('inspiration');
+      const normalizedId = requestedReference.referenceId.replace(/^crawl-/, '');
+      let match = crawledVideos.find(video => videoMatchesReference(video, requestedReference));
+      if (!match && normalizedId) {
+        try {
+          const response = await fetch(`/api/overseas/videos/${encodeURIComponent(normalizedId)}`, { headers: authHeader() });
+          if (response.ok) {
+            const record = await response.json() as CrawlerRecord;
+            match = recordsToVideos([record])[0];
+          }
+        } catch {
+          // The loaded inventory is still searched by source URL and title below.
+        }
+      }
+      if (!match && requestedReference.title) {
+        try {
+          const searchTitle = normalizedReferenceText(requestedReference.title).split(' ').slice(0, 10).join(' ');
+          const response = await fetch(`/api/overseas/videos?page=1&perPage=100&contentFormat=video&crawlRange=all&search=${encodeURIComponent(searchTitle)}`, { headers: authHeader() });
+          if (response.ok) {
+            const payload = await response.json() as { items?: CrawlerRecord[] };
+            const candidates = recordsToVideos(payload.items || []);
+            match = candidates.find(video => videoMatchesReference(video, requestedReference));
+          }
+        } catch {
+          // The reference may have been removed after the weekly plan was created.
+        }
+      }
+      if (cancelled) return;
+      if (!match) {
+        const platform = ACTIVE_PLATFORMS.includes(requestedReference.platform as Exclude<Platform, 'all'>)
+          ? requestedReference.platform as Exclude<Platform, 'all'>
+          : 'tiktok';
+        const snapshot: TrendVideo = {
+          id: `weekly-reference-${requestedReference.referenceId || normalizedReferenceText(requestedReference.title)}`,
+          platform,
+          title: requestedReference.title || '周计划爆款参考',
+          thumbnail: requestedReference.thumbnailUrl,
+          duration: requestedReference.duration,
+          tags: [],
+          views: '—',
+          trend: 'stable',
+          sourceUrl: requestedReference.sourceUrl || undefined,
+          status: 'analyzed',
+          contentFormat: 'video',
+          aiAnalysis: {
+            benchmarkAnalysis: requestedReference.benchmarkAnalysis,
+            analysisSource: 'weekly-plan-snapshot',
+            analysisQuality: 'snapshot',
+            geminiStatus: 'analyzed',
+            gemini: { theme: requestedReference.title || '周计划爆款参考' },
+          },
+        };
+        setMaterialMessage('原爆款已从灵感库删除，当前打开的是周计划保存的分析快照。');
+        setSelectedVideo(snapshot);
+        return;
+      }
+      setCrawledVideos(items => [match!, ...items.filter(item => item.id !== match!.id)]);
+      setMaterialMessage('');
+      setSelectedVideo(match);
+    };
+    void openRequestedReference();
+    return () => { cancelled = true; };
+  }, [requestedReference, videosLoaded, exactReferenceDetail]); // crawledVideos is intentionally read from the request-triggered render
   useEffect(() => {
     if (selectedVideo) { onScriptPanelOpen?.(); }
     else { onScriptPanelClose?.(); }
@@ -2939,27 +3470,110 @@ export default function InspirationDashboard({ onScriptPanelOpen, onScriptPanelC
   // Clean up on unmount
   useEffect(() => () => { onScriptPanelClose?.(); }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
-  const refreshMaterials = async () => {
-    setMaterialsLoading(true);
+  const refreshMaterials = async (page = materialPage): Promise<Material[]> => {
+    if (!localMaterials.length) setMaterialsLoading(true);
     try {
-      setLocalMaterials(await studioApi.listMaterials());
+      const inventory = await studioApi.listMaterialLibrary('all', {
+        ...(materialSource !== 'all' ? { sourceCategory: materialSource } : {}),
+        ...(materialTheme !== 'all' ? { theme: materialTheme } : {}),
+        ...(materialSearch.trim() ? { query: materialSearch.trim() } : {}),
+        page, pageSize: MATERIAL_LIBRARY_PAGE_SIZE,
+      });
+      setLocalMaterials(inventory.items);
+      setMaterialTotal(inventory.total ?? inventory.items.length);
+      setMaterialFacets(inventory.facets || null);
+      setMaterialPage(page);
+      return inventory.items;
+    } catch {
+      // Keep last successful items; callers can still decide whether the stale
+      // signed media URL is usable.
+      return localMaterials;
     } finally {
       setMaterialsLoading(false);
     }
   };
 
-  useEffect(() => { void refreshMaterials(); }, []);
+  useEffect(() => { void refreshMaterials(1); }, []); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => {
+    if (innerView !== 'library') return;
+    const timer = window.setTimeout(() => void refreshMaterials(1), 250);
+    return () => window.clearTimeout(timer);
+  }, [innerView, materialSource, materialTheme, materialSearch]); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => {
+    previewMaterialAutoRetryRef.current = 0;
+    setPreviewMaterialAttempt(0);
+    setPreviewMaterialError('');
+    setPreviewMaterialLoading(Boolean(previewMaterial));
+  }, [previewMaterial?.id]);
 
-  const refreshVideos = async (nextPage = 1, append = false, quiet = false) => {
-    const requestId = ++videoRequestRef.current;
-    if (!quiet) setVideosLoading(true);
+  const refreshMaterialPreviewUrl = async () => {
+    const current = previewMaterial;
+    if (!current) return;
+    setPreviewMaterialLoading(true);
+    setPreviewMaterialError('');
+    const items = await refreshMaterials();
+    const fresh = items.find(item => item.id === current.id);
+    if (!fresh?.url) {
+      setPreviewMaterialLoading(false);
+      setPreviewMaterialError('素材文件暂时不可用，请稍后重试。');
+      return;
+    }
+    setPreviewMaterial(fresh);
+    setPreviewMaterialAttempt(value => value + 1);
+  };
+
+  const handleMaterialPreviewError = (message?: string) => {
+    if (previewMaterialAutoRetryRef.current < 1) {
+      previewMaterialAutoRetryRef.current += 1;
+      void refreshMaterialPreviewUrl();
+      return;
+    }
+    setPreviewMaterialLoading(false);
+    setPreviewMaterialError(message || '视频文件加载或解码失败，请重新获取播放地址。');
+  };
+
+  useEffect(() => {
+    let active = true;
+    void studioApi.materialProducts().then(result => {
+      if (!active) return;
+      setMaterialProducts(result.items);
+      if (!materialEntry.productRef) return;
+      const matched = materialEntry.productId
+        ? result.items.find(item => item.id === materialEntry.productId)
+        : result.items.find(item => item.name === materialEntry.productRef);
+      if (!matched) return;
+      setMaterialProductFilterEnabled(true);
+      setMaterialProductId(matched.id);
+      setMaterialProductRef(matched.name);
+      setUploadProductId(current => current ?? matched.id);
+    }).catch(() => undefined);
+    return () => { active = false; };
+  }, [materialEntry.productId, materialEntry.productRef]);
+
+  const refreshInventory = async () => {
+    const requestId = ++inventoryRequestRef.current;
     try {
-      // Keep the first paint small. Media cards are expensive and the previous 100-item
-      // response also forced the admin endpoint to finish a full cross-tenant scan first.
-      const perPage = 20;
+      const response = await fetch(`/api/overseas/videos/inventory-summary?contentFormat=${contentFormat}`, { headers: authHeader() });
+      const data = await response.json().catch(() => ({})) as { totalItems?: number; visibleItems?: number };
+      if (!response.ok) throw new Error('库存统计加载失败');
+      if (requestId === inventoryRequestRef.current) setTenantVideoTotalItems(Math.max(0, Number(data.visibleItems ?? data.totalItems ?? 0)));
+    } catch {
+      // Keep the last successful inventory value. The list response carries
+      // the same authoritative total and can repair this value later.
+    }
+  };
+
+  const refreshVideos = async (nextPage = 1, quiet = false) => {
+    const requestId = ++videoRequestRef.current;
+    if (!quiet) {
+      setVideosLoading(true);
+      setVideosError('');
+    }
+    try {
       const keyword = searchRef.current.trim();
-      const query = `page=${nextPage}&perPage=${perPage}&contentFormat=${contentFormat}`
+      const query = `page=${nextPage}&perPage=${INSPIRATION_PAGE_SIZE}&contentFormat=${contentFormat}`
         + `&crawlRange=${crawlTimeRange}`
+        + (platform !== 'all' ? `&platform=${platform}` : '')
         + (keyword ? `&search=${encodeURIComponent(keyword)}` : '');
       const r = await fetch(`/api/overseas/videos?${query}`, { headers: authHeader() });
       let data = await r.json().catch(() => ({})) as {
@@ -2970,22 +3584,15 @@ export default function InspirationDashboard({ onScriptPanelOpen, onScriptPanelC
         inventoryTotalItems?: number;
       };
       if (!r.ok) data = {};
-      // This KPI is the tenant's complete crawled inventory, not the current
-      // page (or a temporary search result). Only refresh it from an unfiltered
-      // tenant list response; admin aggregation must not overwrite it.
-      if (requestId === videoRequestRef.current && r.ok && !keyword) {
-        setTenantVideoTotalItems(Math.max(0, Number(data.inventoryTotalItems ?? data.totalItems ?? data.items?.length ?? 0)));
-      }
-
       const applyResult = (result: typeof data) => {
         if (requestId !== videoRequestRef.current) return;
+        setVideosError('');
         const videos = recordsToVideos(result.items || []);
+        if (!keyword && platform === 'all' && crawlTimeRange === 'all') setTenantVideoTotalItems(Math.max(0, Number(result.totalItems ?? 0)));
         setVideoPage(Number(result.page || nextPage));
         setVideoTotalPages(Math.max(1, Number(result.totalPages || nextPage)));
         setCrawledVideos(prev => {
-          const next = append
-            ? [...prev, ...videos.filter(v => !prev.some(old => old.id === v.id || (!!v.sourceUrl && old.sourceUrl === v.sourceUrl)))]
-            : videos;
+          const next = videos;
           const unchanged = prev.length === next.length && prev.every((item, index) => {
             const candidate = next[index];
             return candidate
@@ -3004,32 +3611,142 @@ export default function InspirationDashboard({ onScriptPanelOpen, onScriptPanelC
       // with an empty array), producing an impossible "179 total / 0 cards" UI.
       if (data.items) {
         applyResult(data);
+        setVideosLoaded(true);
       } else {
         throw new Error('视频列表加载失败');
       }
     } catch {
-      if (requestId === videoRequestRef.current && !append && !quiet) setCrawledVideos([]);
+      if (requestId === videoRequestRef.current && !quiet) {
+        setVideosError(crawledVideos.length > 0 ? '刷新失败，已保留上次成功加载的内容。' : '灵感库存暂时无法读取，请重试。');
+        setVideosLoaded(true);
+      }
     } finally {
       if (requestId === videoRequestRef.current && !quiet) setVideosLoading(false);
     }
   };
 
-  useEffect(() => { void refreshVideos(); }, [contentFormat, crawlTimeRange]); // eslint-disable-line react-hooks/exhaustive-deps
+  const importReferenceVideo = async (file: File | undefined) => {
+    if (!file) return;
+    if (file.type !== 'video/mp4' && !/\.mp4$/i.test(file.name)) {
+      setMaterialMessage('对标视频请使用 MP4 文件');
+      return;
+    }
+    if (file.size > 32 * 1024 * 1024) {
+      setMaterialMessage('对标视频不能超过 32 MB');
+      return;
+    }
+    setImportingReference(true);
+    setMaterialMessage(`正在导入对标视频：${file.name}`);
+    try {
+      const params = new URLSearchParams({ title: file.name.replace(/\.mp4$/i, ''), platform: 'tiktok' });
+      const response = await fetch(`/api/overseas/videos/import-reference-file?${params}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'video/mp4', ...authHeader() },
+        body: file,
+      });
+      const result = await response.json().catch(() => ({})) as { id?: string; error?: string; deduplicated?: boolean; analysisQueued?: boolean };
+      if (!response.ok || !result.id) throw new Error(result.error || `导入失败（HTTP ${response.status}）`);
+      const recordId = result.id;
+      const readRecord = async (open = false) => {
+        const latestResponse = await fetch(`/api/overseas/videos/${encodeURIComponent(recordId)}`, { headers: authHeader() });
+        if (!latestResponse.ok) throw new Error('对标视频记录读取失败');
+        const record = await latestResponse.json() as CrawlerRecord;
+        const video = recordsToVideos([record])[0];
+        if (!video) throw new Error('对标视频记录格式异常');
+        setCrawledVideos(items => [video, ...items.filter(item => item.id !== video.id)]);
+        setSelectedVideo(current => open || current?.id === video.id ? video : current);
+        return video;
+      };
+      await readRecord(true);
+      setMaterialMessage(result.deduplicated
+        ? result.analysisQueued
+          ? '已找到相同对标视频，并已重新提交全片逐镜分析。'
+          : '已找到相同对标视频，正在打开分析记录。'
+        : '对标视频已入库，正在进行全片逐镜分析。');
+      void refreshInventory();
+      void (async () => {
+        for (let attempt = 0; attempt < 120; attempt += 1) {
+          await new Promise(resolve => window.setTimeout(resolve, 3000));
+          try {
+            const latest = await readRecord();
+            const status = latest.aiAnalysis?.geminiStatus;
+            if (status === 'analyzed' || status === 'needs_review' || status === 'analysis_retryable' || status === 'video_failed' || latest.status === 'failed') {
+              setMaterialMessage(status === 'analyzed' ? '逐镜分析完成，请检查编导交接结果。' : '逐镜分析需要复核，请查看记录中的具体原因。');
+              void refreshVideos(1, true);
+              return;
+            }
+          } catch {
+            // A brief backend reload must not discard a queued import.
+          }
+        }
+        setMaterialMessage('分析仍在后台运行，请稍后刷新灵感大屏查看结果。');
+      })();
+    } catch (error) {
+      setMaterialMessage(error instanceof Error ? error.message : '对标视频导入失败');
+    } finally {
+      setImportingReference(false);
+      if (referenceUploadInputRef.current) referenceUploadInputRef.current.value = '';
+    }
+  };
+
+  useEffect(() => {
+    setVideosLoaded(false);
+    setVideoPage(1);
+    void refreshInventory();
+    void refreshVideos(1);
+  }, [contentFormat, crawlTimeRange, platform]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  useEffect(() => {
+    setTenantVideoTotalItems(null);
+  }, [contentFormat]);
 
   // 输入过程中不逐字请求，停顿 400ms 后再查。
   const searchDebounceRef = useRef(false);
   useEffect(() => {
     if (!searchDebounceRef.current) { searchDebounceRef.current = true; return; }
-    const timer = window.setTimeout(() => { void refreshVideos(1, false, true); }, 400);
+    const timer = window.setTimeout(() => {
+      setVideosLoaded(false);
+      setVideoPage(1);
+      void refreshVideos(1);
+    }, 400);
     return () => window.clearTimeout(timer);
   }, [search]); // eslint-disable-line react-hooks/exhaustive-deps
 
+  useEffect(() => {
+    if (innerView !== 'inspiration') return;
+    let active = true;
+    const timer = window.setTimeout(() => {
+      setDiscoverySupplyLoading(true);
+      setDiscoverySupplyError('');
+      void socialDiscoveryApi.listSupply({
+        candidateType: 'video',
+        platform: platform === 'all' ? undefined : platform,
+        businessModel: businessModelFilter === 'all' ? undefined : businessModelFilter,
+        decision: discoveryDecision === 'all' ? undefined : discoveryDecision,
+        minScore: minimumDiscoveryScore || undefined,
+        search: search.trim() || undefined,
+        sort: sortMode === 'heat' ? 'score' : 'latest',
+        page: 1,
+        perPage: 100,
+      }).then(result => {
+        if (active) setDiscoverySupplyItems(result.items);
+      }).catch(error => {
+        if (active) setDiscoverySupplyError(error instanceof Error ? error.message : '服务端评分暂时无法读取');
+      }).finally(() => {
+        if (active) setDiscoverySupplyLoading(false);
+      });
+    }, 250);
+    return () => { active = false; window.clearTimeout(timer); };
+  }, [innerView, platform, businessModelFilter, discoveryDecision, minimumDiscoveryScore, search, sortMode]);
+
   const hasPendingVideos = crawledVideos.some(v =>
-    v.status === 'pending' ||
-    v.aiAnalysis?.downloadStatus === 'queued' ||
-    v.aiAnalysis?.downloadStatus === 'downloading' ||
-    v.aiAnalysis?.downloadStatus === 'analyzing' ||
-    v.aiAnalysis?.downloadStatus === 'ops_queued'
+    v.aiAnalysis?.analysisProgress
+      ? analysisProgressIsActive(v.aiAnalysis.analysisProgress)
+      : v.status === 'pending' ||
+        v.aiAnalysis?.downloadStatus === 'queued' ||
+        v.aiAnalysis?.downloadStatus === 'downloading' ||
+        v.aiAnalysis?.downloadStatus === 'analyzing' ||
+        v.aiAnalysis?.downloadStatus === 'ops_queued'
   );
 
   useEffect(() => {
@@ -3037,7 +3754,7 @@ export default function InspirationDashboard({ onScriptPanelOpen, onScriptPanelC
     let cancelled = false;
     let timer = 0;
     const poll = async () => {
-      if (document.visibilityState === 'visible') await refreshVideos(1, false, true);
+      if (document.visibilityState === 'visible') await refreshVideos(videoPage, true);
       if (!cancelled) timer = window.setTimeout(() => void poll(), 8000);
     };
     timer = window.setTimeout(() => void poll(), 8000);
@@ -3045,7 +3762,7 @@ export default function InspirationDashboard({ onScriptPanelOpen, onScriptPanelC
       cancelled = true;
       window.clearTimeout(timer);
     };
-  }, [hasPendingVideos, contentFormat]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [hasPendingVideos, contentFormat, videoPage]); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
     if (!selectedVideo) return;
@@ -3060,77 +3777,39 @@ export default function InspirationDashboard({ onScriptPanelOpen, onScriptPanelC
     if (latest && latest !== selectedVideo) setSelectedVideo(latest);
   }, [crawledVideos, selectedVideo]);
 
-  const pinnedMaterialVideos = useMemo<TrendVideo[]>(() => localMaterials
-    .filter(material => material.pinned && material.type === 'video' && material.segmentAnalysisStatus === 'completed' && material.segments?.length)
-    .map(material => {
-      const persistedAnalysis = crawledVideos.find(video => video.aiAnalysis?.materialId === material.id);
-      const platform: TrendVideo['platform'] = /facebook/i.test(material.name) ? 'facebook'
-        : /youtube/i.test(material.name) ? 'youtube' : /instagram/i.test(material.name) ? 'instagram' : 'tiktok';
-      const title = material.name.replace(/^爆款[·・][^·・]+[·・]/, '').replace(/\.[a-z0-9]+$/i, '');
-      return {
-        id: `material-${material.id}`,
-        recordId: persistedAnalysis?.recordId,
-        platform,
-        title,
-        thumbnail: material.poster || material.segments?.[0]?.poster || '',
-        duration: material.duration,
-        tags: ['片段已分析', '置顶素材'],
-        views: '本地素材',
-        trend: 'hot',
-        videoUrl: material.url,
-        status: persistedAnalysis?.status || 'analyzed',
-        crawledAt: material.createdAt,
-        contentFormat: 'video',
-        aiAnalysis: persistedAnalysis?.aiAnalysis || {
-          source: 'material_segment_analysis',
-          materialUrl: material.url,
-          materialPoster: material.poster,
-          geminiStatus: 'completed',
-          analysisQuality: 'segment_grounded',
-          analyzedAt: material.createdAt,
-          gemini: {
-            theme: title,
-            structure: material.segments!.map(segment => segment.recommendedFunctions.join('、')).filter(Boolean).join(' → '),
-            hooks: material.segments!.slice(0, 2).flatMap(segment => segment.recommendedFunctions),
-            mood: '素材片段级分析',
-            scriptSummary15s: { visualStyle: '真实本地视频素材', coreEmotion: '待人工校验', competitors: [] },
-            scriptDetails15s: material.segments!.map(segment => ({
-              time: `${segment.start}-${segment.end}s`,
-              environment: segment.environment,
-              shot: segment.shot,
-              camera: segment.camera,
-              angle: segment.angle,
-              composition: segment.composition,
-              visual: segment.action,
-              subtitle: segment.ocrText,
-              onScreenText: segment.ocrText,
-              purpose: segment.recommendedFunctions.join('、'),
-              authenticity: segment.authenticity,
-              confidence: segment.confidence,
-              needsReview: segment.needsReview,
-            })),
-            recommendedScriptType: 'storyboard',
-          },
-        },
-      };
-    }), [localMaterials, crawledVideos]);
   const enterMaterialSmartGeneration = (material: Material) => {
+    const usableUrl = String(material.url || material.poster || '').trim();
+    const invalidVideo = material.type === 'video' && !canProcessVideo({ contentFormat: 'video', duration: material.duration });
+    if (material.type === 'audio' || invalidVideo || !usableUrl) {
+      showActionFeedback({
+        title: '当前素材无法直接创作',
+        description: material.type === 'audio'
+          ? '请选择视频或图片素材。'
+          : invalidVideo
+            ? '视频时长尚未识别完成，请等待素材分析后重试。'
+            : '素材文件尚未准备好，请稍后重试。',
+        tone: 'warning',
+      });
+      return;
+    }
     const platform: TrendVideo['platform'] = /facebook/i.test(material.name) ? 'facebook'
       : /youtube/i.test(material.name) ? 'youtube' : /instagram/i.test(material.name) ? 'instagram' : 'tiktok';
     const title = material.name.replace(/\.[a-z0-9]+$/i, '');
+    const isImageMaterial = material.type === 'image';
     const video: TrendVideo = {
       id: `material-${material.id}`,
       platform,
       title,
       thumbnail: material.poster || material.segments?.[0]?.poster || '',
-      duration: material.duration,
-      tags: ['本地素材'],
+      duration: isImageMaterial ? 1 : Math.max(1, Number(material.duration) || 0),
+      tags: Array.from(new Set(['本地素材', ...visibleMaterialTags(material.tags).split(/[,，]/).map(tag => tag.trim()).filter(Boolean)])),
       views: '本地素材',
       trend: 'stable',
-      videoUrl: material.url,
+      videoUrl: material.type === 'video' ? usableUrl : undefined,
+      sourceUrl: material.sourceUrl || usableUrl,
       status: 'analyzed',
       crawledAt: material.createdAt,
-      contentFormat: 'video',
+      contentFormat: isImageMaterial ? 'image' : 'video',
     };
     onEnterWorkflow?.({
       source: 'material_library',
@@ -3139,17 +3818,30 @@ export default function InspirationDashboard({ onScriptPanelOpen, onScriptPanelC
       generatedVideo: {
         id: material.id,
         title: material.name,
-        url: material.url,
+        url: usableUrl,
         poster: material.poster,
-        duration: material.duration,
+        duration: isImageMaterial ? 1 : Math.max(1, Number(material.duration) || 0),
         createdAt: material.createdAt,
         source: 'material_library',
         material,
       },
     });
+    showActionSuccess('已带入自由创作', `正在打开“${material.name}”的制作页面。`);
   };
-  const pinnedTitles = new Set(pinnedMaterialVideos.map(video => video.title.trim().toLowerCase()));
-  const allVideos = [...pinnedMaterialVideos, ...crawledVideos.filter(video => !pinnedTitles.has(video.title.trim().toLowerCase()))];
+  // 爆款页只展示灵感采集结果；已入库素材统一留在“我的素材”，
+  // 避免把本地片段伪装成爆款视频并混用两套交互。
+  const serverDiscoveryFilterActive = discoveryDecision !== 'all'
+    || businessModelFilter !== 'all'
+    || minimumDiscoveryScore > 0
+    || sortMode === 'heat';
+  const scoredSupplyVideos = useMemo(() => supplyItemsToVideos(discoverySupplyItems), [discoverySupplyItems]);
+  const scoredSupplyByRecordId = useMemo(() => new Map(scoredSupplyVideos.map(video => [video.recordId, video])), [scoredSupplyVideos]);
+  const allVideos = useMemo(() => serverDiscoveryFilterActive
+    ? scoredSupplyVideos
+    : crawledVideos.map(video => {
+      const scored = scoredSupplyByRecordId.get(video.recordId);
+      return scored ? { ...video, aiAnalysis: { ...video.aiAnalysis, discoveryScore: scored.aiAnalysis?.discoveryScore, discoveryBusinessModel: scored.aiAnalysis?.discoveryBusinessModel } } : video;
+    }), [serverDiscoveryFilterActive, scoredSupplyVideos, crawledVideos, scoredSupplyByRecordId]);
   const accountRecommendationByVideoId = useMemo(() => {
     const groups = new Map<string, TrendVideo[]>();
     for (const item of crawledVideos) {
@@ -3173,22 +3865,19 @@ export default function InspirationDashboard({ onScriptPanelOpen, onScriptPanelC
     ACTIVE_PLATFORMS.includes(v.platform)
     && isDisplayableForFormat(v, contentFormat)
   );
+  const favoriteSourceUrls = useMemo(() => new Set(localMaterials
+    .filter(isFavoriteMaterial)
+    .map(material => String(material.sourceUrl || '').trim())
+    .filter(Boolean)), [localMaterials]);
   const filtered = useMemo(() => {
-    const lastCrawlIds = new Set(lastCrawlVideoIds);
-    const limitToLastCrawl = lastCrawlIds.size >= 10;
     const q = search.trim().toLowerCase();
     return visibleVideos
       .filter(v =>
-        (v.id.startsWith('material-') || !limitToLastCrawl || lastCrawlIds.has(v.id)) &&
         (platform === 'all' || v.platform === platform) &&
+        (inspirationFavoriteFilter === 'all' || favoritedVideoIds.includes(v.id) || favoriteSourceUrls.has(String(v.sourceUrl || '').trim())) &&
         (!q || v.title.toLowerCase().includes(q) || v.tags.some(t => t.toLowerCase().includes(q)))
       )
       .sort((a, b) => {
-        const pinnedRank = Number(b.id.startsWith('material-')) - Number(a.id.startsWith('material-'));
-        if (pinnedRank) return pinnedRank;
-        if (a.id.startsWith('material-') && b.id.startsWith('material-')) {
-          return pinnedMaterialVideos.findIndex(item => item.id === a.id) - pinnedMaterialVideos.findIndex(item => item.id === b.id);
-        }
         if (contentFormat === 'image') {
           const analyzedRank = Number(b.aiAnalysis?.imageEvidence?.status === 'analyzed') - Number(a.aiAnalysis?.imageEvidence?.status === 'analyzed');
           if (analyzedRank) return analyzedRank;
@@ -3196,17 +3885,23 @@ export default function InspirationDashboard({ onScriptPanelOpen, onScriptPanelC
         if (sortMode === 'crawlTime') {
           return timeValue(b.crawledAt) - timeValue(a.crawledAt) || heatValue(b.views) - heatValue(a.views);
         }
-        return heatValue(b.views) - heatValue(a.views) || timeValue(b.crawledAt) - timeValue(a.crawledAt);
+        const scoreA = inspirationScoresForVideo(a);
+        const scoreB = inspirationScoresForVideo(b);
+        return scoreB.contentOpportunityScore - scoreA.contentOpportunityScore
+          || scoreB.sourcePriority - scoreA.sourcePriority
+          || timeValue(b.crawledAt) - timeValue(a.crawledAt);
       });
-  }, [visibleVideos, lastCrawlVideoIds, platform, search, sortMode, pinnedMaterialVideos, contentFormat]);
-
-  useEffect(() => {
-    if (innerView !== 'inspiration' || viewMode !== 'grid') return;
-    if (videosLoading || filtered.length === 0 || filtered.length >= 10 || videoPage >= videoTotalPages) return;
-    void refreshVideos(videoPage + 1, true);
-  }, [filtered.length, innerView, videoPage, videoTotalPages, videosLoading, viewMode]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [visibleVideos, platform, inspirationFavoriteFilter, favoritedVideoIds, favoriteSourceUrls, search, sortMode, contentFormat]);
 
   const shootingNeeds = useMemo(() => buildShootingNeeds(visibleVideos, localMaterials), [visibleVideos, localMaterials]);
+  const shootingCards = useMemo(() => [
+    ...scriptGapTasks.map(task => ({ id: task.id, kind: 'storyboard' as const, createdAt: task.createdAt, task })),
+    ...shootingNeeds.map(need => ({ id: need.id, kind: 'common' as const, createdAt: need.createdAt, need })),
+  ].sort((a, b) => (Date.parse(b.createdAt || '') || 0) - (Date.parse(a.createdAt || '') || 0) || a.id.localeCompare(b.id)), [scriptGapTasks, shootingNeeds]);
+  const latestShootingCardIds = useMemo(() => new Set(shootingCards.slice(0, 3).map(card => card.id)), [shootingCards]);
+  const visibleShootingCards = shootingCards.filter(card => shootingFilter === 'all'
+    || (shootingFilter === 'storyboard' && card.kind === 'storyboard')
+    || (shootingFilter === 'common' && card.kind === 'common'));
   const materialFunctionOptions = useMemo(() => {
     const values = new Set<string>();
     localMaterials.forEach(material => String(material.shotFunction || '').split(',').map(item => item.trim()).filter(Boolean).forEach(item => values.add(item)));
@@ -3216,26 +3911,41 @@ export default function InspirationDashboard({ onScriptPanelOpen, onScriptPanelC
     const q = materialSearch.trim().toLowerCase();
     return localMaterials.filter(material => {
       const functions = String(material.shotFunction || '').split(',').map(item => item.trim());
-      const searchable = [material.name, material.folder, material.industry, material.shotFunction, material.applicability, material.tags].filter(Boolean).join(' ').toLowerCase();
+      const searchable = [material.name, material.folder, material.industry, material.shotFunction, material.applicability, material.tags, material.productName, material.scriptAnalysis?.searchableText, materialSemanticLabel(material)].filter(Boolean).join(' ').toLowerCase();
       const orientationMatches = materialOrientation === 'all'
         || (materialOrientation === 'vertical' && /竖屏|vertical/i.test(String(material.tags || '')))
         || (materialOrientation === 'horizontal' && /横屏|horizontal/i.test(String(material.tags || '')));
+      const productMatches = materialMatchesProductFilter(material, {
+        enabled: materialProductFilterEnabled,
+        productId: materialProductId,
+        productRef: materialProductRef,
+      });
       return (!q || searchable.includes(q))
+        && materialAssetTabOf(material) === materialAssetTab
+        && (materialTheme === 'all' || materialThemeTagsOf(material).includes(materialTheme))
+        && (materialType === 'all' || material.type === materialType)
         && (materialIndustry === 'all' || material.industry === materialIndustry)
         && (materialFunction === 'all' || functions.includes(materialFunction))
         && (materialApplicability === 'all' || material.applicability === materialApplicability)
-        && (materialSource === 'all' || materialSource === materialSourceOf(material))
+        && (materialSource === 'all' || materialSource === materialSourceCategoryOf(material))
+        && (materialFavoriteFilter === 'all' || isFavoriteMaterial(material))
+        && productMatches
         && orientationMatches;
     }).sort((a, b) => {
       // User uploads are the primary working set. Seed/demo library records may
       // have a later migration timestamp, which must not push fresh uploads down.
-      const sourcePriority = Number(materialSourceOf(b) === 'local_upload') - Number(materialSourceOf(a) === 'local_upload');
+      const sourcePriority = Number(materialSourceCategoryOf(b) === 'local_upload') - Number(materialSourceCategoryOf(a) === 'local_upload');
       return sourcePriority || (Date.parse(String(b.createdAt || '')) || 0) - (Date.parse(String(a.createdAt || '')) || 0);
     });
-  }, [localMaterials, materialSearch, materialIndustry, materialFunction, materialApplicability, materialOrientation, materialSource]);
+  }, [localMaterials, materialSearch, materialAssetTab, materialType, materialIndustry, materialFunction, materialApplicability, materialOrientation, materialSource, materialTheme, materialFavoriteFilter, materialProductFilterEnabled, materialProductId, materialProductRef]);
 
   const handleUploadMaterials = async (files: FileList | null) => {
     if (!files?.length) return;
+    if (!uploadProductId) {
+      setMaterialMessage('请先选择素材对应的产品；产品素材必须与产品表中的产品一一绑定。');
+      if (uploadInputRef.current) uploadInputRef.current.value = '';
+      return;
+    }
     setUploadingMaterial(true);
     setMaterialMessage('');
     try {
@@ -3243,29 +3953,28 @@ export default function InspirationDashboard({ onScriptPanelOpen, onScriptPanelC
       const uploadedIds: string[] = [];
       for (const file of Array.from(files)) {
         const type = file.type.startsWith('video') ? 'video' : file.type.startsWith('audio') ? 'audio' : 'image';
-        const dataBase64 = await fileToDataUrl(file);
-        const result = await studioApi.uploadMaterial({
-          name: file.name,
+        const result = await studioApi.uploadMaterialFile(file, {
           folder: 'social',
           type,
           duration: 0,
-          dataBase64,
-          mimeType: file.type,
           sourceType: 'local-upload',
         });
-        if (!result.ok || !result.material?.id) throw new Error(`「${file.name}」上传失败，请检查素材服务后重试`);
+        if (!result.ok || !result.material?.id) throw new Error(result.error || `「${file.name}」上传失败，请检查素材服务后重试`);
+        const linked = await studioApi.updateMaterial(result.material.id, {
+          name: result.material.name || file.name,
+          tags: materialOwnershipTags(result.material.tags, uploadProductId),
+          productId: uploadProductId,
+        });
+        if (!linked.ok) throw new Error(`「${file.name}」已上传，但产品归属保存失败，请在素材卡片中编辑后重试`);
         uploadedIds.push(result.material.id);
         if (type === 'video' && result.material?.id) uploadedVideos.push(result.material);
       }
       setMaterialMessage(uploadedVideos.length ? `已上传，正在分析 ${uploadedVideos.length} 个视频的可用片段…` : `已上传 ${files.length} 个素材到社媒素材库`);
-      const analysisResults = await Promise.allSettled(uploadedVideos.map(material => studioApi.analyzeMaterialSegments(material.id)));
       await refreshMaterials();
       window.dispatchEvent(new Event('lingshu:materials-updated'));
-      if (uploadingScriptGapId && uploadedIds.length) updateScriptGapTask(uploadingScriptGapId, { uploadedMaterialIds: uploadedIds });
-      const analyzedCount = analysisResults.filter(result => result.status === 'fulfilled' && result.value.ok).length;
-      const failedCount = uploadedVideos.length - analyzedCount;
+      if (uploadingScriptGapId && uploadedIds.length) await updateScriptGapTask(uploadingScriptGapId, { uploadedMaterialIds: uploadedIds });
       setMaterialMessage(uploadedVideos.length
-        ? `已上传 ${files.length} 个素材，${analyzedCount} 个视频已完成分镜分析${failedCount ? `，${failedCount} 个分析失败可稍后重试` : ''}`
+        ? `已上传 ${files.length} 个素材，视频已进入分析队列，可在素材卡片查看进度`
         : `已上传 ${files.length} 个素材到社媒素材库`);
       setTimeout(() => setMaterialMessage(''), 2800);
     } catch (e) {
@@ -3277,39 +3986,32 @@ export default function InspirationDashboard({ onScriptPanelOpen, onScriptPanelC
     }
   };
 
-  const classifyMaterial = async (material: Material) => {
-    if (classifyingMaterialId || material.type !== 'video') return;
-    setClassifyingMaterialId(material.id);
-    setMaterialMessage(`正在用千问识别「${material.name}」的行业、镜头功能和适用范围…`);
-    try {
-      const result = await studioApi.classifyMaterial(material.id);
-      if (!result.ok) throw new Error(result.error || '智能分类失败');
-      await refreshMaterials();
-      setMaterialMessage(`已完成智能分类：${material.name}`);
-    } catch (error) {
-      setMaterialMessage(error instanceof Error ? error.message : '智能分类失败');
-    } finally {
-      setClassifyingMaterialId('');
-      window.setTimeout(() => setMaterialMessage(''), 3500);
-    }
+  const requestMaterialUpload = (scriptGapId = '') => {
+    setInnerView('library');
+    setUploadingScriptGapId(scriptGapId);
+    setMaterialUploadDialogOpen(true);
   };
 
-  const generateNeedMaterial = async (need: ShootingNeed) => {
-    setGeneratingNeedId(need.id);
-    setMaterialMessage(`正在生成“${need.title}”，通常需要几分钟；可以留在本页等待结果。`);
+  const generateNeedMaterial = async (item: ShootingNeed | ScriptGapTask) => {
+    const title = item.title;
+    const ratio = item.ratio || '9:16';
+    setGeneratingNeedId(item.id);
+    setMaterialMessage(`正在生成“${title}”，通常需要几分钟；可以留在本页等待结果。`);
     try {
       const output = await studioApi.seedanceVideo({
-        script: `${need.title}\n${need.suggestion}\n参考分镜：${need.example?.visual || ''}\n输出 ${need.ratio} 社媒短视频素材。`,
-        productInfo: need.suggestion,
+        script: 'origin' in item
+          ? `${item.title}\n拍摄要求：${item.shotBrief}\n产品：${item.productLabel}\n主题：${item.themeTitle}\n输出 ${ratio} 视频素材。`
+          : `${item.title}\n${item.suggestion}\n参考分镜：${item.example?.visual || ''}\n输出 ${ratio} 社媒短视频素材。`,
+        productInfo: 'origin' in item ? item.productLabel : item.suggestion,
         language: 'zh',
-        ratio: need.ratio,
+        ratio,
         duration: 5,
         resolution: '720p',
-        title: `Seedance 2.0 待拍素材 · ${need.title}`,
+        title: `Seedance 2.0 待拍素材 · ${title}`,
       });
       if (!output.ok) throw new Error(output.error || 'Seedance 2.0 生成失败');
       await refreshMaterials();
-      setMaterialMessage(`Seedance 2.0 已生成素材：${need.title}`);
+      setMaterialMessage(`Seedance 2.0 已生成素材：${title}`);
       setTimeout(() => setMaterialMessage(''), 2800);
     } catch (e) {
       setMaterialMessage(e instanceof Error ? e.message : 'Seedance 2.0 生成失败');
@@ -3329,6 +4031,17 @@ export default function InspirationDashboard({ onScriptPanelOpen, onScriptPanelC
     setContentFormat(nextFormat);
   };
 
+  const resetInspirationFilters = () => {
+    setLastCrawlVideoIds([]);
+    setSearch('');
+    setPlatform('all');
+    setInspirationFavoriteFilter('all');
+    setCrawlTimeRange('all');
+    setDiscoveryDecision('all');
+    setBusinessModelFilter('all');
+    setMinimumDiscoveryScore(0);
+  };
+
   const handleWatch = (video: TrendVideo) => {
     if (video.videoUrl || sourceEmbedUrl(video)) {
       setWatchVideo(video);
@@ -3341,16 +4054,9 @@ export default function InspirationDashboard({ onScriptPanelOpen, onScriptPanelC
     setWatchVideo(video);
   };
 
-  const toggleScriptPanel = (video: TrendVideo) => {
-    setScriptPanelTab('analysis');
-    setSelectedVideo(current => current?.id === video.id ? null : video);
-  };
-
-  const openScriptAnalysis = (video: TrendVideo) => {
+  const openDirectorAnalysis = (video: TrendVideo) => {
     setMaterialMessage('');
-    if (needsVideoEnhancement(video)) void analyzeVideoOnly(video);
-    setScriptPanelTab('analysis');
-    setSelectedVideo(video);
+    setSelectedVideo(current => current?.id === video.id ? null : video);
   };
 
   const analyzeVideoOnly = async (video: TrendVideo, quiet = false) => {
@@ -3403,17 +4109,125 @@ export default function InspirationDashboard({ onScriptPanelOpen, onScriptPanelC
     }
   };
 
+  const enterInspirationWorkflow = async (video: TrendVideo) => {
+    const availability = inspirationCreationAvailability(video);
+    if (!availability.ready) {
+      setMaterialMessage(availability.reason);
+      showActionFeedback({ title: '当前内容还不能开始创作', description: availability.reason, tone: 'warning' });
+      return;
+    }
+    if (video.contentFormat === 'image' || video.id.startsWith('material-')) {
+      const analysis = getAnalysis(video);
+      onEnterWorkflow?.({
+        source: video.contentFormat === 'image' ? 'inspiration_image_post' : 'inspiration_analysis',
+        video, scriptType: 'storyboard',
+        referenceAnalysis: analysis ? { title: video.title, visualStyle: analysis.scriptSummary15s.visualStyle,
+          coreEmotion: analysis.scriptSummary15s.coreEmotion, details: analysis.scriptDetails15s } : undefined,
+      });
+      return;
+    }
+    if (inspirationLaunches.current.has(video.id)) return;
+    const openTask = (taskId: string) => {
+      window.dispatchEvent(new CustomEvent('lingshu:navigate', { detail: {
+        page: 'smartAssets', view: 'create',
+        directStudio: false,
+        socialContentTaskId: taskId,
+        socialContentPage: 'smartAssets',
+        contentCreationRequest: {
+          requestId: Date.now(),
+          themeId: 'product_value',
+          mode: 'instant',
+          creationPath: 'viral_replication',
+          materialInput: video.videoUrl ? 'ready' : 'limited',
+          managedMode: 'one_click_managed',
+          continueTaskId: taskId,
+          prefill: {
+            title: `${video.title || '灵感视频'} · 爆款裂变`,
+            topic: video.title || '',
+            referenceLinks: [video.sourceUrl || video.videoUrl || ''].filter(Boolean),
+            platforms: video.platform ? [video.platform] : undefined,
+          },
+          sourceContext: {
+            originLabel: '来自灵感中心',
+            referenceTitle: video.title || '已选参考视频',
+            referenceThumbnail: video.thumbnail,
+            referenceMediaUrl: video.videoUrl || undefined,
+            referenceContentType: 'video',
+            referenceShots: getAnalysis(video)?.scriptDetails15s.map(detail => ({ time: detail.time, dialogue: detail.dialogue, subtitle: detail.subtitle, visual: detail.visual, firstFrameRef: detail.materialEvidence?.firstFrameRef || undefined, firstFrameSeconds: detail.materialEvidence?.firstFrameSeconds })) || [],
+          },
+        },
+      } }));
+    };
+    const candidateKey = `${video.id}:${creationAccountId}`;
+    const existing = replicationTasks[candidateKey];
+    if (existing) { openTask(existing); return; }
+    inspirationLaunches.current.add(video.id);
+    setLaunchingReferences(ids => [...ids, video.id]);
+    setMaterialMessage('正在关联参考与经营背景，交给编导 Agent 和内容 Agent 执行…');
+    try {
+      const program = activeProgram?.status === 'active' ? activeProgram : undefined;
+      const creationAccount = accounts.find(account => account.accountId === creationAccountId && account.status === 'active');
+      const result = await resumeOrCreateInspirationTask({
+        id: video.recordId || video.id, title: video.title,
+        sourceUrl: video.sourceUrl || (video.recordId ? `local://${video.recordId}` : undefined), crawledAt: video.crawledAt,
+        ...(creationAccount ? { context: {
+          targetAccountRef: { objectType: 'social_owned_account', id: creationAccount.accountId, version: String(creationAccount.version) },
+          platforms: [creationAccount.platform],
+        } } : {}),
+      }, program);
+      setReplicationTasks(tasks => ({ ...tasks, [candidateKey]: result.task.taskId }));
+      if (result.warning) {
+        setMaterialMessage(`${result.warning} 已保留原任务，点击“继续制作”查看和恢复。`);
+      }
+      openTask(result.task.taskId);
+    } catch (error) {
+      setMaterialMessage(error instanceof Error ? error.message : '复刻任务暂时无法创建，请重试。');
+    } finally {
+      inspirationLaunches.current.delete(video.id);
+      setLaunchingReferences(ids => ids.filter(id => id !== video.id));
+    }
+  };
+
   const favoriteMaterial = async (video: TrendVideo, quiet = false) => {
-    if (!video.sourceUrl || favoritingMaterialIds.includes(video.id)) return;
+    if (favoritingMaterialIds.includes(video.id)) return;
+    const linkedMaterialId = resolveLinkedFavoriteMaterialId(video, localMaterials);
+    const linkedMaterial = localMaterials.find(material => material.id === linkedMaterialId);
+    const currentlyFavorite = favoritedVideoIds.includes(video.id) || Boolean(linkedMaterial?.pinned);
     setFavoritingMaterialIds(ids => [...ids, video.id]);
     if (!quiet) setMaterialMessage('');
     try {
+      if (currentlyFavorite) {
+        if (!linkedMaterial) {
+          setMaterialMessage('收藏正在保存，请稍后再取消。');
+          return;
+        }
+        const result = await studioApi.setMaterialPinned(linkedMaterial.id, false);
+        if (!result.ok) throw new Error(result.error || '取消收藏失败');
+        setLocalMaterials(items => items.map(item => item.id === linkedMaterial.id ? { ...item, pinned: false } : item));
+        setFavoritedVideoIds(ids => ids.filter(id => id !== video.id));
+        setMaterialMessage(`已取消收藏：${video.title}`);
+        showActionSuccess('已取消收藏', video.title);
+        setTimeout(() => setMaterialMessage(''), 3500);
+        return;
+      }
+      if (linkedMaterialId) {
+        const result = await studioApi.setMaterialPinned(linkedMaterialId, true);
+        if (!result.ok) throw new Error(result.error || '收藏失败');
+        setLocalMaterials(items => items.map(item => item.id === linkedMaterialId ? { ...item, pinned: true } : item));
+        setFavoritedVideoIds(ids => ids.includes(video.id) ? ids : [...ids, video.id]);
+        setMaterialMessage(`已收藏到我的素材：${video.title}`);
+        showActionSuccess('收藏成功', '已加入“我的素材”，可以通过收藏筛选快速找到。');
+        setTimeout(() => setMaterialMessage(''), 3500);
+        return;
+      }
+      const sourceUrl = String(video.sourceUrl || video.videoUrl || '').trim();
+      if (!sourceUrl && !video.recordId) throw new Error('当前视频尚未准备好可收藏的文件');
       const r = await fetch('/api/overseas/videos/download-material', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', ...authHeader() },
         body: JSON.stringify({
           id: video.recordId,
-          sourceUrl: video.sourceUrl,
+          sourceUrl,
           title: video.title,
           platform: video.platform,
           async: true,
@@ -3425,9 +4239,12 @@ export default function InspirationDashboard({ onScriptPanelOpen, onScriptPanelC
       };
       if (!r.ok) throw new Error(data.error || '收藏失败');
       if (r.status === 202) {
+        setFavoritedVideoIds(ids => ids.includes(video.id) ? ids : [...ids, video.id]);
         setMaterialMessage(`已加入爆款素材收藏队列：${video.title}`);
+        showActionFeedback({ title: '正在收藏', description: '视频获取完成后会自动出现在“我的素材”。', tone: 'info' });
         setTimeout(() => setMaterialMessage(''), 3500);
         void refreshVideos();
+        window.setTimeout(() => void refreshMaterials(), 5000);
         return;
       }
       const updated: TrendVideo = {
@@ -3439,12 +4256,43 @@ export default function InspirationDashboard({ onScriptPanelOpen, onScriptPanelC
       setCrawledVideos(prev => prev.map(v => v.id === video.id ? updated : v));
       setSelectedVideo(v => v?.id === video.id ? updated : v);
       setWatchVideo(v => v?.id === video.id ? updated : v);
+      setFavoritedVideoIds(ids => ids.includes(video.id) ? ids : [...ids, video.id]);
+      void refreshMaterials();
       setMaterialMessage(`已收藏到爆款素材：${data.material?.name || video.title}`);
+      showActionSuccess('收藏成功', '已加入“我的素材”，可以通过收藏筛选快速找到。');
       setTimeout(() => setMaterialMessage(''), 3500);
     } catch (e) {
-      if (!quiet) setMaterialMessage(e instanceof Error ? e.message : '收藏失败');
+      const message = e instanceof Error ? e.message : '收藏失败';
+      if (!quiet) setMaterialMessage(message);
+      showActionFeedback({ title: '收藏失败', description: message, tone: 'error' });
     } finally {
       setFavoritingMaterialIds(ids => ids.filter(id => id !== video.id));
+    }
+  };
+
+  const toggleMaterialFavorite = async (material: Material) => {
+    if (favoritingMaterialIds.includes(material.id)) return;
+    if (!material.canManage) {
+      showActionFeedback({ title: '共享素材暂不能收藏', description: '请先复制到企业素材库后再收藏。', tone: 'warning' });
+      return;
+    }
+    const nextPinned = !isFavoriteMaterial(material);
+    setFavoritingMaterialIds(ids => [...ids, material.id]);
+    setMaterialMessage('');
+    try {
+      const result = await studioApi.setMaterialPinned(material.id, nextPinned);
+      if (!result.ok) throw new Error(result.error || '收藏状态保存失败');
+      setLocalMaterials(items => items.map(item => item.id === material.id ? { ...item, pinned: nextPinned } : item));
+      setMaterialMessage(nextPinned ? `已收藏素材：${material.name}` : `已取消收藏：${material.name}`);
+      showActionSuccess(nextPinned ? '收藏成功' : '已取消收藏', nextPinned ? '可通过“仅看收藏”快速筛选。' : material.name);
+      setTimeout(() => setMaterialMessage(''), 3500);
+      window.dispatchEvent(new Event('lingshu:materials-updated'));
+    } catch (error) {
+      const message = error instanceof Error ? error.message : '收藏状态保存失败';
+      setMaterialMessage(message);
+      showActionFeedback({ title: '操作失败', description: message, tone: 'error' });
+    } finally {
+      setFavoritingMaterialIds(ids => ids.filter(id => id !== material.id));
     }
   };
 
@@ -3468,7 +4316,50 @@ export default function InspirationDashboard({ onScriptPanelOpen, onScriptPanelC
     await analyzeVideoOnly(video);
   };
 
-  const requestExactFullAnalysis = async (video: TrendVideo) => {
+  const reanalyzeImagePost = async (video: TrendVideo) => {
+    const recordId = video.recordId || video.id.replace(/^crawl-/, '');
+    if (!recordId || analyzingVideoIds.includes(video.id)) return;
+    setAnalyzingVideoIds(ids => [...ids, video.id]);
+    setMaterialMessage(`正在重新分析图文证据：${video.title}`);
+    try {
+      const response = await fetch(`/api/overseas/videos/${encodeURIComponent(recordId)}/reanalyze-image`, {
+        method: 'POST',
+        headers: authHeader(),
+      });
+      const data = await response.json().catch(() => ({})) as {
+        error?: string;
+        analysis?: NonNullable<VideoAnalysisPayload['imageEvidence']>;
+      };
+      if (!response.ok || !data.analysis) throw new Error(data.error || '图文证据分析失败');
+      const markAnalyzed = (item: TrendVideo): TrendVideo => item.id !== video.id ? item : {
+        ...item,
+        status: 'analyzed',
+        aiAnalysis: {
+          ...(item.aiAnalysis || {}),
+          imageEvidence: data.analysis,
+          imageAnalysisStatus: 'analyzed',
+          imageAnalysisError: undefined,
+          analysisError: undefined,
+          analyzedAt: new Date().toISOString(),
+        },
+      };
+      setCrawledVideos(items => items.map(markAnalyzed));
+      setSelectedVideo(item => item ? markAnalyzed(item) : item);
+      setWatchVideo(item => item ? markAnalyzed(item) : item);
+      setMaterialMessage('图文证据分析已完成，可以开始创作。');
+      await refreshVideos(videoPage, true);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : '图文证据分析失败';
+      setMaterialMessage(message);
+      showActionFeedback({ title: '图文分析失败', description: message, tone: 'error' });
+      await refreshVideos(videoPage, true);
+    } finally {
+      setAnalyzingVideoIds(ids => ids.filter(id => id !== video.id));
+      window.setTimeout(() => setMaterialMessage(''), 3500);
+    }
+  };
+
+  const requestExactFullAnalysis = async (video: TrendVideo, force = false) => {
     if (analyzingVideoIds.includes(video.id)) return;
     const materialId = video.id.startsWith('material-') ? video.id.slice('material-'.length) : '';
     if (!video.recordId && !materialId) {
@@ -3476,7 +4367,7 @@ export default function InspirationDashboard({ onScriptPanelOpen, onScriptPanelC
       return;
     }
     setAnalyzingVideoIds(ids => [...ids, video.id]);
-    setMaterialMessage(`已提交全片精确分析：${video.title}`);
+    setMaterialMessage(`正在提交全片精确分析：${video.title}`);
     try {
       const response = await fetch(video.recordId
         ? `/api/overseas/videos/${video.recordId}/reanalyze`
@@ -3484,7 +4375,7 @@ export default function InspirationDashboard({ onScriptPanelOpen, onScriptPanelC
         method: video.recordId ? 'PATCH' : 'POST',
         headers: { 'Content-Type': 'application/json', ...authHeader() },
         body: JSON.stringify(video.recordId
-          ? { analysisMode: 'exact' }
+          ? { analysisMode: 'exact', ...(force ? { force: true } : {}) }
           : { materialId, title: video.title, platform: video.platform, duration: video.duration }),
       });
       const data = parseExactAnalysisResponse(await response.text(), response.status);
@@ -3506,6 +4397,7 @@ export default function InspirationDashboard({ onScriptPanelOpen, onScriptPanelC
         status: 'pending',
         aiAnalysis: {
           ...(item.aiAnalysis || {}),
+          analysisProgress: undefined,
           requestedAnalysisMode: 'exact',
           geminiStatus: 'queued',
           analysisError: undefined,
@@ -3517,6 +4409,7 @@ export default function InspirationDashboard({ onScriptPanelOpen, onScriptPanelC
       const recordId = data.id || video.recordId;
       if (recordId) {
         void (async () => {
+          let completed = false;
           for (let attempt = 0; attempt < 90; attempt += 1) {
             await new Promise(resolve => window.setTimeout(resolve, 2000));
             try {
@@ -3533,9 +4426,12 @@ export default function InspirationDashboard({ onScriptPanelOpen, onScriptPanelC
               };
               setCrawledVideos(items => items.map(applyLatest));
               setSelectedVideo(item => item ? applyLatest(item) : item);
-              if (!latestAnalysis.requestedAnalysisMode) {
-                setMaterialMessage(latestAnalysis.analysisError
-                  ? `全片精确分析失败：${latestAnalysis.analysisError}`
+              const progressFinished = Boolean(latestAnalysis.analysisProgress)
+                && !analysisProgressIsActive(latestAnalysis.analysisProgress);
+              if (!latestAnalysis.requestedAnalysisMode || progressFinished) {
+                completed = true;
+                setMaterialMessage(latestAnalysis.analysisError || latestAnalysis.analysisProgress?.stage === 'failed'
+                  ? `全片精确分析未完成，可重新尝试。`
                   : '全片精确分析已完成。');
                 window.setTimeout(() => setMaterialMessage(''), 3500);
                 break;
@@ -3543,6 +4439,9 @@ export default function InspirationDashboard({ onScriptPanelOpen, onScriptPanelC
             } catch {
               // A transient backend reload should not lose the visible queued state.
             }
+          }
+          if (!completed) {
+            setMaterialMessage('暂未收到分析终态；请以详情中的后台进度凭证、当前步骤和预计完成时间为准。');
           }
         })();
       }
@@ -3562,12 +4461,51 @@ export default function InspirationDashboard({ onScriptPanelOpen, onScriptPanelC
     }
   };
 
+  const cancelExactFullAnalysis = async (video: TrendVideo) => {
+    if (!video.recordId) return;
+    setMaterialMessage('正在停止本次精确分析…');
+    try {
+      const response = await fetch(`/api/overseas/videos/${video.recordId}/analysis-pause`, {
+        method: 'POST',
+        headers: authHeader(),
+      });
+      const data = await response.json().catch(() => ({})) as { error?: string };
+      if (!response.ok) throw new Error(data.error || '停止分析失败');
+      const markPaused = (item: TrendVideo): TrendVideo => item.id !== video.id ? item : {
+        ...item,
+        status: item.aiAnalysis?.gemini || item.aiAnalysis?.analysisQuality ? 'analyzed' : 'failed',
+        aiAnalysis: { ...(item.aiAnalysis || {}), analysisProgress: undefined, requestedAnalysisMode: undefined, geminiStatus: 'paused' },
+      };
+      setCrawledVideos(items => items.map(markPaused));
+      setSelectedVideo(item => item ? markPaused(item) : item);
+      setMaterialMessage('已停止。本次未产生的结果不会进入后续制作，可以重新分析。');
+      window.setTimeout(() => setMaterialMessage(''), 3500);
+    } catch (error) {
+      setMaterialMessage(error instanceof Error ? error.message : '停止分析失败');
+    }
+  };
+
+  const startInspirationCreation = (video: TrendVideo) => {
+    const availability = inspirationCreationAvailability(video);
+    if (!availability.ready && video.contentFormat === 'video') {
+      setSelectedVideo(video);
+      setMaterialMessage('正在先补齐详细分析；分析完成后即可继续爆款复刻。');
+      void requestExactFullAnalysis(video, ['paused', 'cancelled'].includes(String(video.aiAnalysis?.analysisProgress?.stage || '')) || video.aiAnalysis?.geminiStatus === 'paused');
+      return;
+    }
+    void enterInspirationWorkflow(video);
+  };
+
 
   const openManageDialog = (target: ({ kind: 'video'; item: TrendVideo } | { kind: 'material'; item: Material }) & { action?: 'edit' | 'delete' }) => {
     if (!target.item.canManage) return;
     setManageTarget({ ...target, action: target.action || 'edit' });
+    setManageProductId(target.kind === 'material'
+      ? target.item.productId || ''
+      : '');
+    if (target.kind === 'material') void studioApi.materialProducts().then(result => setMaterialProducts(result.items));
     setManageName(target.kind === 'video' ? target.item.title : target.item.name);
-    setManageTags(target.kind === 'video' ? target.item.tags.join(', ') : String(target.item.tags || ''));
+    setManageTags(target.kind === 'video' ? target.item.tags.join(', ') : visibleMaterialTags(target.item.tags));
   };
 
   const saveManagedItem = async () => {
@@ -3588,7 +4526,11 @@ export default function InspirationDashboard({ onScriptPanelOpen, onScriptPanelC
           ? { ...item, title: manageName.trim(), tags: manageTags.split(/[,，]/).map(tag => tag.trim()).filter(Boolean) }
           : item));
       } else {
-        const result = await studioApi.updateMaterial(manageTarget.item.id, { name: manageName.trim(), tags: manageTags.trim() });
+        const result = await studioApi.updateMaterial(manageTarget.item.id, {
+          name: manageName.trim(),
+          tags: materialOwnershipTags(manageTags.trim(), manageProductId),
+          productId: manageProductId,
+        });
         if (!result.ok) throw new Error(result.error || '编辑失败');
         await refreshMaterials();
       }
@@ -3615,10 +4557,13 @@ export default function InspirationDashboard({ onScriptPanelOpen, onScriptPanelC
         const data = await response.json().catch(() => ({}));
         if (!response.ok) throw new Error(data.error || '删除失败');
         setCrawledVideos(items => items.filter(item => item.id !== manageTarget.item.id));
-        setTenantVideoTotalItems(value => Math.max(0, value - 1));
+        setTenantVideoTotalItems(value => value === null ? null : Math.max(0, value - 1));
+        // Re-read the authoritative tenant list so a deleted record cannot
+        // linger in another page/count cache.
+        await refreshVideos(1, true);
       } else {
         const result = await studioApi.deleteMaterial(manageTarget.item.id);
-        if (!result.ok) throw new Error('删除失败');
+        if (!result.ok) throw new Error(result.error || '删除失败');
         setLocalMaterials(items => items.filter(item => item.id !== manageTarget.item.id));
       }
       setMaterialMessage('已删除');
@@ -3630,235 +4575,250 @@ export default function InspirationDashboard({ onScriptPanelOpen, onScriptPanelC
     }
   };
 
+  const clearInspirationFilters = () => {
+    setLastCrawlVideoIds([]);
+    setSearch('');
+    setPlatform('all');
+    setContentFormat('video');
+    setInspirationFavoriteFilter('all');
+    setCrawlTimeRange('all');
+    setDiscoveryDecision('all');
+    setBusinessModelFilter('all');
+    setMinimumDiscoveryScore(0);
+    setSortMode('crawlTime');
+    setViewMode('grid');
+  };
+
+  const setMaterialProductSelection = (value: string) => {
+    const url = new URL(window.location.href);
+    if (value === MATERIAL_PRODUCT_ALL) {
+      setMaterialProductFilterEnabled(false);
+      setMaterialProductId('');
+      setMaterialProductRef('');
+      url.searchParams.delete('productId');
+      url.searchParams.delete('productRef');
+    } else if (value === MATERIAL_PRODUCT_COMMON) {
+      setMaterialProductFilterEnabled(true);
+      setMaterialProductId('');
+      setMaterialProductRef('');
+      url.searchParams.set('productId', '');
+      url.searchParams.set('productRef', '');
+    } else if (value === MATERIAL_PRODUCT_LINKED_REF) {
+      setMaterialProductFilterEnabled(true);
+      setMaterialProductId('');
+      url.searchParams.set('productId', '');
+      url.searchParams.set('productRef', materialProductRef);
+    } else {
+      const product = materialProducts.find(item => item.id === value);
+      setMaterialProductFilterEnabled(true);
+      setMaterialProductId(value);
+      setMaterialProductRef(product?.name || materialProductRef);
+      url.searchParams.set('productId', value);
+      url.searchParams.set('productRef', product?.name || materialProductRef);
+    }
+    const productId = String(url.searchParams.get('productId') || '');
+    const productRef = String(url.searchParams.get('productRef') || '');
+    window.history.replaceState({
+      ...window.history.state,
+      productionDetail: {
+        ...(window.history.state?.productionDetail || {}),
+        page: 'socialInspiration',
+        view: 'library',
+        productId,
+        productRef,
+      },
+    }, '', url);
+  };
+
+  const materialProductFilterValue = !materialProductFilterEnabled
+    ? MATERIAL_PRODUCT_ALL
+    : materialProductId || (materialProductRef ? MATERIAL_PRODUCT_LINKED_REF : MATERIAL_PRODUCT_COMMON);
+
+  const clearMaterialFilters = () => {
+    setMaterialSearch('');
+    setMaterialSource('all');
+    setMaterialTheme('all');
+    setMaterialType('all');
+    setMaterialFavoriteFilter('all');
+    setMaterialIndustry('all');
+    setMaterialFunction('all');
+    setMaterialApplicability('all');
+    setMaterialOrientation('all');
+    setMaterialProductSelection(MATERIAL_PRODUCT_ALL);
+  };
+
+  const inspirationFilterCount = Number(search.trim().length > 0)
+    + Number(platform !== 'all')
+    + Number(contentFormat !== 'video')
+    + Number(inspirationFavoriteFilter !== 'all')
+    + Number(crawlTimeRange !== 'all')
+    + Number(discoveryDecision !== 'all')
+    + Number(businessModelFilter !== 'all')
+    + Number(minimumDiscoveryScore > 0)
+    + Number(sortMode !== 'crawlTime')
+    + Number(viewMode !== 'grid');
+  const inspirationAdvancedFilterCount = Number(crawlTimeRange !== 'all')
+    + Number(discoveryDecision !== 'all')
+    + Number(businessModelFilter !== 'all')
+    + Number(minimumDiscoveryScore > 0)
+    + Number(sortMode !== 'crawlTime')
+    + Number(viewMode !== 'grid');
+  const materialFilterCount = Number(materialSearch.trim().length > 0)
+    + Number(materialTheme !== 'all')
+    + Number(materialSource !== 'all')
+    + Number(materialType !== 'all')
+    + Number(materialFavoriteFilter !== 'all')
+    + Number(materialIndustry !== 'all')
+    + Number(materialFunction !== 'all')
+    + Number(materialApplicability !== 'all')
+    + Number(materialOrientation !== 'all')
+    + Number(materialProductFilterEnabled);
+  const materialAdvancedFilterCount = Number(materialIndustry !== 'all')
+    + Number(materialFavoriteFilter !== 'all')
+    + Number(materialFunction !== 'all')
+    + Number(materialApplicability !== 'all')
+    + Number(materialOrientation !== 'all')
+    + Number(materialProductFilterEnabled);
+
+  useEffect(() => {
+    let cancelled = false;
+    void fetch('/api/overseas/competitor-accounts', { headers: authHeader() })
+      .then(async response => {
+        if (!response.ok) return;
+        const data = await response.json().catch(() => ({})) as { items?: unknown[] };
+        if (!cancelled) setCompetitorAccountCount(Array.isArray(data.items) ? data.items.length : 0);
+      })
+      .catch(() => undefined);
+    return () => { cancelled = true; };
+  }, []);
 
   return (
-    <div className="relative">
+    <main className="relative min-h-full bg-ink text-text-primary">
+      {hasExactReferenceReview(exactReferenceDetail) && !exactReview && <p role="alert" className="m-4 rounded border p-3">{exactReviewError} {parseExactReferenceReview(exactReferenceDetail) ? '精确参考审核目标已收到，须核验原周来源回执后才能打开审核。' : '精确参考审核目标无效，请返回原周任务重新打开。'} 不会按标题、链接或快照打开其他参考。</p>}
+      {exactReview && <section className="m-4 rounded border p-4"><h2>原参考逐镜审核 · {exactReview.recordId}</h2><DirectorReviewWorkspace key={`${exactReview.recordId}:${exactReviewToken}`} recordId={exactReview.recordId} handoff={exactReview.handoff} onPreview={()=>handleWatch(exactReview.video)} /></section>}
       <div className="transition-all duration-300">
-        <div className="pointer-events-none absolute left-0 top-48 z-30 flex flex-col gap-2">
-          {([
-            { id: 'inspiration' as const, label: '爆款灵感', short: '爆款', count: visibleVideos.length, icon: <Flame size={18} /> },
-            { id: 'library' as const, label: '社媒素材库', short: '素材', count: localMaterials.length, icon: <Film size={18} /> },
-            { id: 'shooting' as const, label: '待拍摄素材', short: '待拍', count: shootingNeeds.length, icon: <Lightbulb size={18} /> },
-          ]).map(item => {
-            const active = innerView === item.id;
-            return (
-              <button
-                key={item.id}
-                type="button"
-                title={`${item.label} · ${item.count}`}
-                onClick={() => setInnerView(item.id)}
-                className={`pointer-events-auto flex h-28 w-14 flex-col items-center justify-center gap-1.5 rounded-r-2xl border border-l-0 text-[14px] font-black shadow-md transition-all ${
-                  active
-                    ? 'border-accent/30 bg-accent text-white'
-                    : 'border-border bg-white/95 text-slate-500 hover:bg-accent-glow hover:text-accent'
-                }`}
-              >
-                {item.icon}
-                <span className="[writing-mode:vertical-rl] tracking-[0.16em] leading-none">{item.short}</span>
-              </button>
-            );
-          })}
-        </div>
+        <div className="px-4 py-5 sm:px-6 lg:py-6">
+          <LsPageHeader title="灵感中心" description="查看外部参考、管理产品素材，并将内容证据交接到制作流程。" />
+          <div className="mb-4 flex min-w-0 items-start gap-3 border-b border-border">
+            <Tabs className="min-w-0 flex-1" activeKey={innerView} onChange={key => setInnerView(key as InspirationInnerView)} aria-label="灵感中心分类"
+              items={[
+                { key: 'inspiration', label: `灵感发现 · ${tenantVideoTotalItems ?? '…'}`, icon: <Flame size={16} /> },
+                { key: 'library', label: `我的素材 · ${localMaterials.length}`, icon: <Film size={16} /> },
+                { key: 'accounts', label: `对标账号 · ${competitorAccountCount ?? '…'}`, icon: <Users size={16} /> },
+                { key: 'shooting', label: `拍摄任务 · ${shootingNeeds.length + scriptGapTasks.length}`, icon: <Lightbulb size={16} /> },
+              ]} />
+            {innerView === 'inspiration' && <AntUpload className="shrink-0 pt-1" accept="video/mp4,.mp4" showUploadList={false} disabled={importingReference} beforeUpload={file => { void importReferenceVideo(file); return false; }}>
+              <Button type="primary" loading={importingReference} icon={<Upload size={15} />}>导入 MP4 并分析</Button>
+            </AntUpload>}
+            {innerView === 'library' && <Button className="shrink-0" type="primary" loading={uploadingMaterial} icon={<Upload size={15} />} onClick={() => setMaterialUploadDialogOpen(true)}>上传素材</Button>}
+          </div>
 
-        <div className="px-6 py-5 pl-[74px]">
+
             {materialMessage && (
-              <div role="status" aria-live="polite" className="mb-3 rounded-xl border border-accent/20 bg-accent-glow px-4 py-2.5 text-sm font-semibold text-accent">
+              <div role="status" aria-live="polite" className="mb-3 border-l-2 border-accent bg-accent-glow px-4 py-2.5 text-sm font-semibold text-accent">
                 {materialMessage}
               </div>
             )}
-            {innerView === 'inspiration' && <div className="mb-4 space-y-2.5">
-              <div className="flex items-center gap-2.5">
-                <div className="relative min-w-0 flex-1">
-                  <Search size={13} className="absolute left-3 top-1/2 -translate-y-1/2 text-text-muted pointer-events-none" />
-                  <input type="text" value={search} onChange={e => { setLastCrawlVideoIds([]); setSearch(e.target.value); }}
-                    placeholder="搜索视频标题或标签..."
-                    className="h-11 w-full pl-9 pr-4 rounded-xl border border-border bg-surface text-sm text-text-primary placeholder:text-text-muted outline-none focus:border-accent transition-colors" />
+            {innerView === 'accounts' && <CompetitorAccountsModal
+              embedded
+              open
+              onClose={() => setInnerView('inspiration')}
+              onCountChange={setCompetitorAccountCount}
+              onCrawled={() => {
+                setSortMode('crawlTime');
+                setPlatform('all');
+                setSearch('');
+                void refreshVideos(1, false);
+              }}
+            />}
+            {innerView === 'inspiration' && <div className="mb-4 space-y-4 rounded-lg border border-border bg-surface p-4">
+              <div className="overflow-x-auto pb-1">
+              <div className="grid min-w-[940px] grid-cols-[160px_minmax(240px,2fr)_minmax(130px,1fr)_minmax(170px,1fr)_160px] gap-3">
+                <Select value={platform} onChange={value => handlePlatformFilter(value as Platform)} aria-label="社媒平台" options={PLATFORM_FILTERS.map(item => ({ value: item.id, label: item.label }))} />
+                <Input allowClear prefix={<Search size={15} />} value={search}
+                  onChange={event => { setLastCrawlVideoIds([]); setSearch(event.target.value); }}
+                  aria-label="搜索爆款灵感" placeholder="搜索标题或标签" />
+                <Select value={contentFormat} onChange={value => handleContentFormatFilter(value as ContentFormat)} aria-label="内容形式"
+                  options={[{ value: 'video', label: '视频' }, { value: 'image', label: '图文' }]} />
+                <Select value={inspirationFavoriteFilter} onChange={value => setInspirationFavoriteFilter(value as FavoriteFilter)} aria-label="爆款收藏状态"
+                  options={[{ value: 'all', label: '全部收藏状态' }, { value: 'favorite', label: '仅看收藏' }]} />
+                <Button loading={discoverySupplyLoading || videosLoading} onClick={() => setInspirationFiltersOpen(value => !value)} icon={<SlidersHorizontal size={15} />} aria-expanded={inspirationFiltersOpen} aria-controls="inspiration-more-filters">
+                  更多筛选{inspirationAdvancedFilterCount > 0 ? ` · ${inspirationAdvancedFilterCount}` : ''}
+                </Button>
+              </div>
+              </div>
+              {inspirationFiltersOpen && <div id="inspiration-more-filters" className="space-y-3 border-t border-border pt-4">
+                <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
+                  <label className="space-y-1 text-xs text-text-secondary"><span>入库时间</span><Select className="w-full" value={crawlTimeRange} onChange={value => { setLastCrawlVideoIds([]); setCrawlTimeRange(value as CrawlTimeRange); }} aria-label="视频抓取入库时间" options={[{ value: 'all', label: '全部时间' }, { value: 'today', label: '今天入库' }, { value: '7d', label: '近 7 天' }, { value: '30d', label: '近 30 天' }]} /></label>
+                  <label className="space-y-1 text-xs text-text-secondary"><span>排序方法</span><Select className="w-full" value={sortMode} onChange={value => { setLastCrawlVideoIds([]); setSortMode(value as SortMode); }} aria-label="排序方法" options={[{ value: 'crawlTime', label: '按爬取时间' }, { value: 'heat', label: '按内容机会' }]} /></label>
+                  <label className="space-y-1 text-xs text-text-secondary"><span>筛选结论</span><Select className="w-full" value={discoveryDecision} onChange={value => setDiscoveryDecision(value as DiscoveryDecisionFilter)} aria-label="服务端筛选结论" options={[{ value: 'all', label: '全部评分结果' }, { value: 'accepted', label: '已入选' }, { value: 'review', label: '待复核' }, { value: 'rejected', label: '已淘汰' }]} /></label>
+                  <label className="space-y-1 text-xs text-text-secondary"><span>业务类型</span><Select className="w-full" value={businessModelFilter} onChange={value => setBusinessModelFilter(value as BusinessModelFilter)} aria-label="业务类型" options={[{ value: 'all', label: '全部业务类型' }, { value: 'b2b', label: 'B2B 对标' }, { value: 'mixed', label: '混合业务' }, { value: 'd2c', label: 'DTC 卖货' }, { value: 'unknown', label: '待识别' }]} /></label>
+                  <label className="space-y-1 text-xs text-text-secondary"><span>最低综合评分</span><Select className="w-full" value={minimumDiscoveryScore} onChange={setMinimumDiscoveryScore} aria-label="最低综合评分" options={[{ value: 0, label: '不限分数' }, { value: 50, label: '50 分以上' }, { value: 70, label: '70 分以上' }, { value: 85, label: '85 分以上' }]} /></label>
+                  <div className="space-y-1 text-xs text-text-secondary"><span>展示方式</span><Segmented block value={viewMode} onChange={value => setViewMode(value as 'grid' | 'list')} aria-label="大屏视图" options={[{ value: 'grid', label: '卡片', icon: <LayoutGrid size={14}/> }, { value: 'list', label: '列表', icon: <List size={14}/> }]} /></div>
                 </div>
-                <button
-                  type="button"
-                  onClick={() => { setSelectedVideo(null); setShowAccountsModal(true); }}
-                  aria-haspopup="dialog"
-                  className="flex h-11 shrink-0 items-center gap-1.5 rounded-xl border border-accent/30 bg-accent-glow px-3.5 text-sm font-bold text-accent transition-colors hover:bg-accent hover:text-white"
-                  title="爬取对标账号主页最新视频"
-                >
-                  <Users size={15} />
-                  <span className="hidden sm:inline">对标账号</span>
-                </button>
-              </div>
-              <div className="grid grid-cols-1 gap-3 md:grid-cols-5">
-              <div className="relative h-14 rounded-2xl border border-border bg-surface shadow-sm transition-colors hover:border-border-bright focus-within:border-accent">
-                {platform === 'all'
-                  ? <Globe size={16} className="absolute left-4 top-1/2 -translate-y-1/2 text-text-muted pointer-events-none" />
-                  : <SocialPlatformIcon platform={platform} size={17} className="pointer-events-none absolute left-4 top-1/2 -translate-y-1/2" />}
-                <span className="absolute left-11 top-2 text-[11px] font-semibold text-text-muted pointer-events-none">社媒平台</span>
-                <select
-                  value={platform}
-                  onChange={e => handlePlatformFilter(e.target.value as Platform)}
-                  aria-label="社媒平台"
-                  className="h-full w-full cursor-pointer appearance-none rounded-2xl bg-transparent pl-11 pr-10 pt-4 text-base font-black text-text-primary outline-none"
-                >
-                  {PLATFORM_FILTERS.map(f => (
-                    <option key={f.id} value={f.id}>
-                      {f.label}
-                    </option>
-                  ))}
-                </select>
-                <ChevronDown size={16} className="absolute right-4 top-1/2 -translate-y-1/2 text-text-muted pointer-events-none" />
-                <span className="sr-only">{platformLabel}</span>
-              </div>
-              <div className="relative h-14 rounded-2xl border border-border bg-surface shadow-sm transition-colors hover:border-border-bright focus-within:border-accent">
-                {contentFormat === 'video'
-                  ? <Film size={16} className="absolute left-4 top-1/2 -translate-y-1/2 text-text-muted pointer-events-none" />
-                  : <Images size={16} className="absolute left-4 top-1/2 -translate-y-1/2 text-text-muted pointer-events-none" />}
-                <span className="absolute left-11 top-2 text-[11px] font-semibold text-text-muted pointer-events-none">内容形式</span>
-                <select
-                  value={contentFormat}
-                  onChange={e => handleContentFormatFilter(e.target.value as ContentFormat)}
-                  aria-label="内容形式"
-                  className="h-full w-full cursor-pointer appearance-none rounded-2xl bg-transparent pl-11 pr-10 pt-4 text-base font-black text-text-primary outline-none"
-                >
-                  <option value="video">视频</option>
-                  <option value="image">图文</option>
-                </select>
-                <ChevronDown size={16} className="absolute right-4 top-1/2 -translate-y-1/2 text-text-muted pointer-events-none" />
-                <span className="sr-only">{contentFormatLabel}</span>
-              </div>
-              <div className="relative h-14 rounded-2xl border border-border bg-surface shadow-sm transition-colors hover:border-border-bright focus-within:border-accent">
-                <Clock size={16} className="absolute left-4 top-1/2 -translate-y-1/2 text-text-muted pointer-events-none" />
-                <span className="absolute left-11 top-2 text-[11px] font-semibold text-text-muted pointer-events-none">入库时间</span>
-                <select
-                  value={crawlTimeRange}
-                  onChange={event => { setLastCrawlVideoIds([]); setCrawlTimeRange(event.target.value as CrawlTimeRange); }}
-                  aria-label="视频抓取入库时间"
-                  className="h-full w-full cursor-pointer appearance-none rounded-2xl bg-transparent pl-11 pr-10 pt-4 text-base font-black text-text-primary outline-none"
-                >
-                  <option value="all">全部时间</option>
-                  <option value="today">今天入库</option>
-                  <option value="7d">近 7 天</option>
-                  <option value="30d">近 30 天</option>
-                </select>
-                <ChevronDown size={16} className="absolute right-4 top-1/2 -translate-y-1/2 text-text-muted pointer-events-none" />
-              </div>
-              <div className="relative h-14 rounded-2xl border border-border bg-surface shadow-sm transition-colors hover:border-border-bright focus-within:border-accent">
-                {sortMode === 'heat'
-                  ? <Flame size={16} className="absolute left-4 top-1/2 -translate-y-1/2 text-text-muted pointer-events-none" />
-                  : <Clock size={16} className="absolute left-4 top-1/2 -translate-y-1/2 text-text-muted pointer-events-none" />}
-                <span className="absolute left-11 top-2 text-[11px] font-semibold text-text-muted pointer-events-none">排序方法</span>
-                <select
-                  value={sortMode}
-                  onChange={e => { setLastCrawlVideoIds([]); setSortMode(e.target.value as SortMode); }}
-                  aria-label="排序方法"
-                  className="h-full w-full cursor-pointer appearance-none rounded-2xl bg-transparent pl-11 pr-10 pt-4 text-base font-black text-text-primary outline-none"
-                >
-                  <option value="crawlTime">按爬取时间</option>
-                  <option value="heat">按热度</option>
-                </select>
-                <ChevronDown size={16} className="absolute right-4 top-1/2 -translate-y-1/2 text-text-muted pointer-events-none" />
-                <span className="sr-only">{sortLabel}</span>
-              </div>
-              <div className="relative h-14 rounded-2xl border border-border bg-surface shadow-sm transition-colors hover:border-border-bright focus-within:border-accent">
-                {viewMode === 'grid'
-                  ? <LayoutGrid size={16} className="absolute left-4 top-1/2 -translate-y-1/2 text-text-muted pointer-events-none" />
-                  : <List size={16} className="absolute left-4 top-1/2 -translate-y-1/2 text-text-muted pointer-events-none" />}
-                <span className="absolute left-11 top-2 text-[11px] font-semibold text-text-muted pointer-events-none">大屏视图</span>
-                <select
-                  value={viewMode}
-                  onChange={e => setViewMode(e.target.value as 'grid' | 'list')}
-                  aria-label="大屏视图"
-                  className="h-full w-full cursor-pointer appearance-none rounded-2xl bg-transparent pl-11 pr-10 pt-4 text-base font-black text-text-primary outline-none"
-                >
-                  <option value="grid">卡片视图</option>
-                  <option value="list">列表视图</option>
-                </select>
-                <ChevronDown size={16} className="absolute right-4 top-1/2 -translate-y-1/2 text-text-muted pointer-events-none" />
-              </div>
-            </div>
-          </div>}
+                <div className="flex justify-end"><Button type="text" onClick={clearInspirationFilters} disabled={inspirationFilterCount === 0} icon={<X size={13} />}>清除全部筛选</Button></div>
+              </div>}
+            </div>}
 
-        {innerView === 'inspiration' && <div className="mb-4 grid grid-cols-3 gap-3 max-w-xl">
-          {[
-            { icon: <Zap size={13} />,       label: contentFormat === 'image' ? '全部图文' : '全部视频', value: `${tenantVideoTotalItems}`,    color: 'text-accent' },
-            { icon: <TrendingUp size={13} />, label: contentFormat === 'image' ? '已完成拆解' : '上升趋势', value: `${contentFormat === 'image' ? visibleVideos.filter(video => video.aiAnalysis?.imageEvidence?.status === 'analyzed').length : visibleVideos.filter(video => video.trend === 'rising').length}`, color: 'text-green' },
-            { icon: <Globe size={13} />,      label: '覆盖平台', value: `${new Set(visibleVideos.map(v => v.platform)).size}`,       color: 'text-accent' },
-          ].map(stat => (
-            <div key={stat.label} className="card p-3 flex items-center gap-2.5">
-              <span className={stat.color}>{stat.icon}</span>
-              <div>
-                <p className="text-base font-bold text-text-primary font-display leading-none">{stat.value}</p>
-                <p className="text-[10px] text-text-muted mt-0.5">{stat.label}</p>
-              </div>
-            </div>
-          ))}
-        </div>}
+
+        {innerView === 'inspiration' && videosError && <div role="alert" className="mb-3 flex flex-wrap items-center justify-between gap-2 rounded-lg border border-amber-200 bg-amber-50 px-3.5 py-2.5 text-xs font-semibold text-amber-900"><span>{videosError}</span><button type="button" onClick={() => void refreshVideos(videoPage)} className="rounded-md bg-white px-2.5 py-1 font-semibold text-amber-950">重试</button></div>}
+        {innerView === 'inspiration' && discoverySupplyError && <Alert className="mb-3" type="warning" showIcon title={discoverySupplyError} />}
 
         <div>
           {innerView === 'inspiration' && (
             <>
-              {filtered.length === 0 ? (
-                <div className="min-h-72 rounded-xl border border-dashed border-border bg-surface flex flex-col items-center justify-center gap-3 text-center px-6">
-                  <div className="w-11 h-11 rounded-xl bg-surface-2 border border-border flex items-center justify-center text-text-muted">
-                    <Download size={18} />
-                  </div>
-                  <div>
-                    <p className="text-sm font-semibold text-text-primary">暂无真实{contentFormat === 'image' ? '图文' : '视频'}数据</p>
-                    <p className="text-xs text-text-muted mt-1">请通过「定时任务」采集公开{contentFormat === 'image' ? '图文' : '视频'}，或从对标账号导入真实内容。</p>
-                  </div>
-                  {localMaterials.length > 0 && (
-                    <button
-                      type="button"
-                      onClick={() => setInnerView('library')}
-                      className="inline-flex items-center gap-2 rounded-xl bg-accent px-4 py-2.5 text-sm font-bold text-white"
-                    >
-                      <Film size={15} />
-                      查看 {localMaterials.length} 条素材
-                    </button>
-                  )}
-                </div>
+              {!videosLoaded && videosLoading ? (
+                <LsLoadingState loading mode="spin" label="正在读取真实视频库存" description="正在同步全部可展示灵感" className="min-h-[360px] rounded-lg border border-border bg-surface">
+                  <span />
+                </LsLoadingState>
+              ) : filtered.length === 0 ? (
+                <InspirationEmptyState state={resultEmptyState(visibleVideos.length, search, platform !== 'all' || crawlTimeRange !== 'all')} contentFormat={contentFormat} search={search} localMaterialCount={localMaterials.length} onReset={resetInspirationFilters} onOpenLibrary={() => setInnerView('library')} />
               ) : viewMode === 'grid' ? (
-                <div className="grid grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-3 items-start">
-                  {filtered.map((video, i) => (
-                    <div key={video.id} className="relative">
-                      <VideoCard video={video} index={i} isSelected={selectedVideo?.id === video.id}
-                        onSelect={() => toggleScriptPanel(video)}
+                <LsMasonryGallery layout="grid" items={filtered.map((video, i) => ({ id: video.id, content:
+                    <div className="relative h-full">
+                      <VideoCard video={video} index={i} isSelected={false}
+                        onSelect={() => openDirectorAnalysis(video)}
+                        onCreate={() => startInspirationCreation(video)}
+                        createLabel={launchingReferences.includes(video.id) ? '正在启动…' : replicationTasks[`${video.id}:${creationAccountId}`] ? '继续制作' : video.contentFormat === 'image' || video.id.startsWith('material-') ? '开始创作' : '爆款复刻'}
+                        creating={launchingReferences.includes(video.id)}
+                        createDisabled={video.contentFormat === 'image' && !inspirationCreationAvailability(video).ready}
+                        createDisabledReason={inspirationCreationAvailability(video).reason}
                         onWatch={() => handleWatch(video)}
-                        onAnalyzeVideo={() => openScriptAnalysis(video)}
                         onFavoriteMaterial={() => void favoriteMaterial(video)}
-                        analyzingVideo={analyzingVideoIds.includes(video.id)}
-                        favoritingMaterial={favoritingMaterialIds.includes(video.id)} />
+                        favoritingMaterial={favoritingMaterialIds.includes(video.id)}
+                        isFavoriteMaterial={favoritedVideoIds.includes(video.id) || favoriteSourceUrls.has(String(video.sourceUrl || '').trim())} />
               {video.canManage && (
-                <div className="absolute right-2 top-9 z-20 flex gap-1">
-                  <button type="button" title="编辑素材" aria-label="编辑素材" onClick={() => openManageDialog({ kind: 'video', item: video, action: 'edit' })} className="rounded-md bg-white/95 p-1.5 text-text-secondary shadow backdrop-blur-sm hover:text-accent"><Pencil size={14} /></button>
-                  <button type="button" title="删除素材" aria-label="删除素材" onClick={() => openManageDialog({ kind: 'video', item: video, action: 'delete' })} className="rounded-md bg-white/95 p-1.5 text-text-secondary shadow backdrop-blur-sm hover:text-red-600"><Trash2 size={14} /></button>
+                <div className="absolute right-12 top-2 z-30 flex gap-1">
+                  <button type="button" title="编辑素材" aria-label="编辑素材" onClick={() => openManageDialog({ kind: 'video', item: video, action: 'edit' })} className="inline-flex h-8 w-8 items-center justify-center rounded-lg bg-white/95 text-text-secondary shadow transition hover:text-accent"><Pencil size={14} /></button>
+                  <button type="button" title="删除素材" aria-label="删除素材" onClick={() => openManageDialog({ kind: 'video', item: video, action: 'delete' })} className="inline-flex h-8 w-8 items-center justify-center rounded-lg bg-white/95 text-text-secondary shadow transition hover:text-red-600"><Trash2 size={14} /></button>
                 </div>
               )}
 
                     </div>
-                  ))}
-                </div>
+                }))} />
               ) : (
                 <div className="card overflow-hidden divide-y divide-border">
                   {filtered.map(video => (
-                    <VideoListItem key={video.id} video={video} isSelected={selectedVideo?.id === video.id}
-                      onSelect={() => toggleScriptPanel(video)}
+                    <VideoListItem key={video.id} video={video} isSelected={false}
+                      onSelect={() => openDirectorAnalysis(video)}
+                      onCreate={() => startInspirationCreation(video)}
+                        createLabel={launchingReferences.includes(video.id) ? '正在启动…' : replicationTasks[`${video.id}:${creationAccountId}`] ? '继续制作' : video.contentFormat === 'image' || video.id.startsWith('material-') ? '开始创作' : '爆款复刻'}
+                        creating={launchingReferences.includes(video.id)}
+                      createDisabled={video.contentFormat === 'image' && !inspirationCreationAvailability(video).ready}
+                      createDisabledReason={inspirationCreationAvailability(video).reason}
                       onWatch={() => handleWatch(video)}
-                      onAnalyzeVideo={() => openScriptAnalysis(video)}
                       onFavoriteMaterial={() => void favoriteMaterial(video)}
-                      analyzingVideo={analyzingVideoIds.includes(video.id)}
-                      favoritingMaterial={favoritingMaterialIds.includes(video.id)} />
+                      favoritingMaterial={favoritingMaterialIds.includes(video.id)}
+                      isFavoriteMaterial={favoritedVideoIds.includes(video.id) || favoriteSourceUrls.has(String(video.sourceUrl || '').trim())} />
                   ))}
                 </div>
               )}
-              {filtered.length > 0 && videoPage < videoTotalPages && (
-                <div className="flex justify-center pt-2 pb-4">
-                  <button
-                    onClick={() => void refreshVideos(videoPage + 1, true)}
-                    disabled={videosLoading}
-                    className="btn-ghost !px-4 !py-2 flex items-center gap-2 disabled:opacity-60"
-                  >
-                    {videosLoading ? <Loader2 size={14} className="animate-spin" /> : <Plus size={14} />}
-                    加载更多
-                  </button>
-                </div>
+              {videosLoaded && !serverDiscoveryFilterActive && videoTotalPages > 1 && (
+                <nav className="flex justify-center py-4" aria-label="灵感发现分页">
+                  <Pagination current={videoPage} total={videoTotalPages * INSPIRATION_PAGE_SIZE} pageSize={INSPIRATION_PAGE_SIZE}
+                    showSizeChanger={false} disabled={videosLoading} onChange={page => void refreshVideos(page)}
+                    showTotal={() => `第 ${videoPage} / ${videoTotalPages} 页`} />
+                </nav>
               )}
             </>
           )}
@@ -3869,220 +4829,230 @@ export default function InspirationDashboard({ onScriptPanelOpen, onScriptPanelC
                 ref={uploadInputRef}
                 type="file"
                 multiple
-                accept="video/*,image/*"
+                accept="video/*,image/*,audio/*"
                 className="hidden"
                 onChange={e => void handleUploadMaterials(e.currentTarget.files)}
               />
-              <div className="flex items-center justify-between gap-4 rounded-2xl border border-border bg-surface p-5">
-                <div>
-                  <h3 className="text-base font-bold text-text-primary">社媒素材库</h3>
-                  <p className="mt-1 text-sm text-text-muted">本地拍摄、Seedance 2.0 生成、Gemini 生成、官方爆款导入的素材统一保存在这里。</p>
-                </div>
-                <div className="flex shrink-0 items-center gap-2">
-                  <button
-                    type="button"
-                    onClick={() => uploadInputRef.current?.click()}
-                    disabled={uploadingMaterial}
-                    className="inline-flex items-center gap-2 rounded-xl border border-border bg-white px-4 py-2.5 text-sm font-bold text-text-secondary transition hover:border-accent hover:text-accent disabled:opacity-60"
-                  >
-                    {uploadingMaterial ? <Loader2 size={15} className="animate-spin" /> : <Upload size={15} />}
-                    上传本地素材
-                  </button>
-                  <button
-                    type="button"
-                    onClick={openMaterialSmartGeneration}
-                    className="inline-flex items-center gap-2 rounded-xl bg-accent px-4 py-2.5 text-sm font-bold text-white shadow-sm transition hover:brightness-95 active:scale-[0.98]"
-                  >
-                    <Sparkles size={15} />
-                    用素材智能生成
-                    <ArrowRight size={14} />
-                  </button>
-                </div>
-              </div>
 
-              <div className="space-y-3 rounded-2xl border border-border bg-surface p-4 shadow-sm">
-                <div className="flex items-center gap-2.5">
-                  <div className="relative min-w-0 flex-1">
-                    <Search size={14} className="pointer-events-none absolute left-3.5 top-1/2 -translate-y-1/2 text-text-muted" />
-                    <input
-                      type="text"
-                      value={materialSearch}
-                      onChange={e => setMaterialSearch(e.target.value)}
-                      placeholder="搜索素材名称、行业、场景或标签..."
-                      className="h-11 w-full rounded-xl border border-border bg-surface pl-10 pr-4 text-sm text-text-primary outline-none transition-colors placeholder:text-text-muted focus:border-accent"
-                    />
+              {materialProductFilterEnabled && (
+                <div className="flex flex-col gap-2 rounded-lg border border-blue-100 bg-white px-4 py-3 sm:flex-row sm:items-center sm:justify-between">
+                  <div>
+                    <p className="text-sm font-semibold text-zinc-900">正在查看：{materialProductRef || (materialProductId ? '指定产品' : '企业通用素材')}</p>
+                    <p className="mt-1 text-xs text-zinc-500">从企业知识库进入时，系统会自动带上产品筛选；上传前仍需确认本次素材归属。</p>
                   </div>
-                  <span className="shrink-0 text-xs font-semibold text-text-muted">{filteredMaterials.length}/{localMaterials.length} 条素材</span>
-                  {(materialSearch || materialIndustry !== 'all' || materialFunction !== 'all' || materialApplicability !== 'all' || materialOrientation !== 'all' || materialSource !== 'all') && (
-                    <button type="button" onClick={() => { setMaterialSearch(''); setMaterialIndustry('all'); setMaterialFunction('all'); setMaterialApplicability('all'); setMaterialOrientation('all'); setMaterialSource('all'); }}
-                      className="h-11 shrink-0 rounded-xl border border-border px-3 text-xs font-bold text-text-secondary transition-colors hover:border-accent hover:text-accent">
-                      清空筛选
-                    </button>
-                  )}
+                  <button type="button" onClick={() => setMaterialProductSelection(MATERIAL_PRODUCT_ALL)} className="shrink-0 text-xs font-semibold text-blue-600 hover:text-blue-700">查看全部素材</button>
                 </div>
-                <div className="grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-5">
-                  {[
-                    { label: '素材来源', value: materialSource, onChange: (value: string) => setMaterialSource(value as MaterialSourceFilter), options: Object.entries(MATERIAL_SOURCE_LABELS) },
-                    { label: '所属行业', value: materialIndustry, onChange: (value: string) => setMaterialIndustry(value as MaterialIndustryFilter), options: Object.entries(MATERIAL_INDUSTRY_LABELS) },
-                    { label: '镜头功能', value: materialFunction, onChange: setMaterialFunction, options: [['all', MATERIAL_FUNCTION_LABELS.all], ...materialFunctionOptions.map(value => [value, MATERIAL_FUNCTION_LABELS[value] || value])] },
-                    { label: '适用范围', value: materialApplicability, onChange: (value: string) => setMaterialApplicability(value as MaterialApplicabilityFilter), options: Object.entries(MATERIAL_APPLICABILITY_LABELS) },
-                    { label: '画面方向', value: materialOrientation, onChange: (value: string) => setMaterialOrientation(value as MaterialOrientationFilter), options: [['all', '全部方向'], ['vertical', '竖屏 9:16'], ['horizontal', '横屏 16:9']] },
-                  ].map(filter => (
-                    <div key={filter.label} className="relative h-14 rounded-2xl border border-border bg-surface transition-colors hover:border-border-bright focus-within:border-accent">
-                      <Film size={15} className="pointer-events-none absolute left-4 top-1/2 -translate-y-1/2 text-text-muted" />
-                      <span className="pointer-events-none absolute left-11 top-2 text-[11px] font-semibold text-text-muted">{filter.label}</span>
-                      <select value={filter.value} onChange={e => filter.onChange(e.target.value)} aria-label={filter.label}
-                        className="h-full w-full cursor-pointer appearance-none rounded-2xl bg-transparent pl-11 pr-9 pt-4 text-sm font-black text-text-primary outline-none">
-                        {filter.options.map(([value, label]) => <option key={value} value={value}>{label}</option>)}
-                      </select>
-                      <ChevronDown size={15} className="pointer-events-none absolute right-3.5 top-1/2 -translate-y-1/2 text-text-muted" />
-                    </div>
-                  ))}
-                </div>
-              </div>
+              )}
 
-              <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
-                {materialsLoading ? (
-                  <div className="col-span-full flex items-center justify-center gap-2 py-16 text-sm text-text-muted">
+              <div className="space-y-3 rounded-lg border border-border bg-surface p-3 sm:p-4">
+                <div className="flex flex-nowrap items-center gap-2 overflow-x-auto pb-1" aria-label="我的素材筛选">
+                  <Select className="w-32 shrink-0" aria-label="素材分类" value={materialAssetTab} onChange={setMaterialAssetTab} options={[{value:"enterprise",label:"产品素材"},{value:"ai",label:"AI 素材"},{value:"cloud",label:"云素材"}]} />
+                  <Input allowClear prefix={<Search size={15} />} value={materialSearch} onChange={event => setMaterialSearch(event.target.value)}
+                    aria-label="搜索我的素材" placeholder="搜索素材名称、产品或主要内容" className="min-w-60 flex-1" />
+                  <MaterialTaxonomyFilters source={materialSource} theme={materialTheme} total={materialSource === 'all' && materialTheme === 'all' ? materialTotal : Object.values(materialFacets?.sources || {}).reduce((sum, count) => sum + count, 0)}
+                    sourceCounts={materialFacets?.sources || { local_upload: 0, official_import: 0, user_generated: 0 }}
+                    onSourceChange={setMaterialSource} onThemeChange={setMaterialTheme} />
+                  <Select className="w-32 shrink-0" value={materialType} onChange={value => setMaterialType(value as MaterialTypeFilter)} aria-label="内容形式"
+                    options={[{ value: 'all', label: '全部类型' }, { value: 'video', label: '视频' }, { value: 'image', label: '图片' }, { value: 'audio', label: '音频' }]} />
+                  <Button className="shrink-0" onClick={() => setMaterialFiltersOpen(value => !value)} aria-expanded={materialFiltersOpen} aria-controls="material-more-filters" icon={<SlidersHorizontal size={15} />}>
+                    更多筛选{materialAdvancedFilterCount > 0 ? ` · ${materialAdvancedFilterCount}` : ''}
+                  </Button>
+                </div>
+                <AnimatePresence initial={false}>
+                  {materialFiltersOpen && <motion.div id="material-more-filters" initial={{ height: 0, opacity: 0 }} animate={{ height: 'auto', opacity: 1 }} exit={{ height: 0, opacity: 0 }} className="overflow-hidden">
+                    <div className="grid grid-cols-1 gap-3 border-t border-border pt-3 md:grid-cols-2 xl:grid-cols-3">
+                      <label className="space-y-1 text-xs text-text-secondary"><span>收藏状态</span><Select className="w-full" value={materialFavoriteFilter} onChange={value => setMaterialFavoriteFilter(value as FavoriteFilter)} aria-label="素材收藏状态"
+                        options={[{ value: 'all', label: '全部收藏状态' }, { value: 'favorite', label: '仅看收藏' }]} /></label>
+                      <label className="relative block h-14 rounded-lg border border-border bg-surface-2 transition-colors focus-within:border-accent">
+                        <Package size={15} className="pointer-events-none absolute left-3.5 top-1/2 -translate-y-1/2 text-text-muted" />
+                        <span className="pointer-events-none absolute left-10 top-1.5 text-[10px] font-semibold text-text-muted">关联产品</span>
+                        <select value={materialProductFilterValue} onChange={event => setMaterialProductSelection(event.target.value)} aria-label="按产品筛选素材"
+                          className="h-full w-full cursor-pointer appearance-none rounded-lg bg-transparent pl-10 pr-9 pt-3 text-sm font-bold text-text-primary outline-none">
+                          <option value={MATERIAL_PRODUCT_ALL}>全部产品素材</option>
+                          <option value={MATERIAL_PRODUCT_COMMON}>企业通用素材</option>
+                          {materialProductRef && !materialProductId && <option value={MATERIAL_PRODUCT_LINKED_REF}>{materialProductRef}</option>}
+                          {materialProductId && materialProductRef && !materialProducts.some(item => item.id === materialProductId) && <option value={materialProductId}>{materialProductRef}</option>}
+                          {materialProducts.map(item => <option key={item.id} value={item.id}>{item.name}</option>)}
+                        </select>
+                        <ChevronDown size={15} className="pointer-events-none absolute right-3.5 top-1/2 -translate-y-1/2 text-text-muted" />
+                      </label>
+                      {[
+                        { label: '所属行业', value: materialIndustry, onChange: (value: string) => setMaterialIndustry(value as MaterialIndustryFilter), options: Object.entries(MATERIAL_INDUSTRY_LABELS) },
+                        { label: '镜头功能', value: materialFunction, onChange: setMaterialFunction, options: [['all', MATERIAL_FUNCTION_LABELS.all], ...materialFunctionOptions.map(value => [value, MATERIAL_FUNCTION_LABELS[value] || value])] },
+                        { label: '适用范围', value: materialApplicability, onChange: (value: string) => setMaterialApplicability(value as MaterialApplicabilityFilter), options: Object.entries(MATERIAL_APPLICABILITY_LABELS) },
+                        { label: '画面方向', value: materialOrientation, onChange: (value: string) => setMaterialOrientation(value as MaterialOrientationFilter), options: [['all', '全部方向'], ['vertical', '竖屏 9:16'], ['horizontal', '横屏 16:9']] },
+                      ].map(filter => (
+                        <label key={filter.label} className="relative block h-14 rounded-lg border border-border bg-surface-2 transition-colors focus-within:border-accent">
+                          <Film size={15} className="pointer-events-none absolute left-3.5 top-1/2 -translate-y-1/2 text-text-muted" />
+                          <span className="pointer-events-none absolute left-10 top-1.5 text-[10px] font-semibold text-text-muted">{filter.label}</span>
+                          <select value={filter.value} onChange={e => filter.onChange(e.target.value)} aria-label={filter.label}
+                            className="h-full w-full cursor-pointer appearance-none rounded-lg bg-transparent pl-10 pr-9 pt-3 text-sm font-bold text-text-primary outline-none">
+                            {filter.options.map(([value, label]) => <option key={value} value={value}>{label}</option>)}
+                          </select>
+                          <ChevronDown size={15} className="pointer-events-none absolute right-3.5 top-1/2 -translate-y-1/2 text-text-muted" />
+                        </label>
+                      ))}
+                    </div>
+                    <div className="mt-2 flex justify-end">
+                      <button type="button" onClick={clearMaterialFilters} disabled={materialFilterCount === 0}
+                        className="inline-flex min-h-8 items-center gap-1.5 rounded-lg px-2.5 text-xs font-bold text-text-muted transition hover:bg-surface-2 hover:text-accent disabled:cursor-not-allowed disabled:opacity-40">
+                        <X size={13} />清除全部筛选
+                      </button>
+                    </div>
+                  </motion.div>}
+                </AnimatePresence>
+              </div>
+              <MaterialLibraryStatus onRetry={refreshMaterials} />
+              {materialsLoading ? (
+                  <div className="flex items-center justify-center gap-2 py-16 text-sm text-text-muted">
                     <Loader2 size={16} className="animate-spin" /> 正在读取素材库...
                   </div>
                 ) : localMaterials.length === 0 ? (
-                  <div className="col-span-full rounded-2xl border border-dashed border-border bg-surface px-6 py-16 text-center">
+                  <div className="rounded-lg border border-dashed border-border bg-surface px-6 py-16 text-center">
                     <Film size={30} className="mx-auto mb-3 text-text-muted opacity-50" />
                     <p className="text-sm font-bold text-text-primary">还没有本地社媒素材</p>
                     <p className="mt-1 text-xs text-text-muted">拍摄完成后上传，或从待拍摄素材池用 Seedance 2.0 生成。</p>
                   </div>
                 ) : filteredMaterials.length === 0 ? (
-                  <div className="col-span-full rounded-2xl border border-dashed border-border bg-surface px-6 py-16 text-center">
+                  <div className="rounded-lg border border-dashed border-border bg-surface px-6 py-16 text-center">
                     <Search size={30} className="mx-auto mb-3 text-text-muted opacity-50" />
                     <p className="text-sm font-bold text-text-primary">没有符合当前标签的素材</p>
-                    <button type="button" onClick={() => { setMaterialSearch(''); setMaterialIndustry('all'); setMaterialFunction('all'); setMaterialApplicability('all'); setMaterialOrientation('all'); setMaterialSource('all'); }} className="mt-2 text-xs font-bold text-accent">清空筛选条件</button>
+                    <button type="button" onClick={clearMaterialFilters} className="mt-2 text-xs font-bold text-accent">清空筛选条件</button>
                   </div>
-                ) : filteredMaterials.map(material => (
-                  <article key={material.id} className="group overflow-hidden rounded-2xl border border-border bg-surface">
+                ) : <LsMasonryGallery layout="grid" items={filteredMaterials.map(material => ({ id: material.id, content:
+                  <article className="group flex h-full flex-col overflow-hidden rounded-lg border border-border bg-surface shadow-none transition hover:border-border-bright">
                     <div className="relative aspect-[9/16] bg-surface-2">
+                      <div className="absolute right-2 top-2 z-30 flex gap-1">
+                        {material.canManage && <button type="button" aria-label={`编辑 ${material.name}`} title="编辑" onClick={() => openManageDialog({ kind: 'material', item: material, action: 'edit' })} className="inline-flex h-8 w-8 items-center justify-center rounded-lg border border-white/70 bg-white/95 text-text-secondary shadow transition hover:text-accent"><Pencil size={14} /></button>}
+                        {material.canManage && <button type="button" aria-label={`删除 ${material.name}`} title="删除" onClick={() => openManageDialog({ kind: 'material', item: material, action: 'delete' })} className="inline-flex h-8 w-8 items-center justify-center rounded-lg border border-white/70 bg-white/95 text-text-secondary shadow transition hover:text-red-600"><Trash2 size={14} /></button>}
+                        <button type="button" aria-label={`${isFavoriteMaterial(material) ? '取消收藏' : '收藏'} ${material.name}`} title={isFavoriteMaterial(material) ? '取消收藏' : '收藏'} onClick={() => void toggleMaterialFavorite(material)} disabled={favoritingMaterialIds.includes(material.id)}
+                          className={`inline-flex h-8 w-8 items-center justify-center rounded-lg border shadow transition disabled:cursor-wait disabled:opacity-60 ${isFavoriteMaterial(material) ? 'border-amber-300 bg-amber-50 text-amber-500' : 'border-white/70 bg-white/95 text-text-secondary hover:text-amber-500'}`}>
+                          {favoritingMaterialIds.includes(material.id) ? <Loader2 size={14} className="animate-spin" /> : <Star size={14} fill={isFavoriteMaterial(material) ? 'currentColor' : 'none'} />}
+                        </button>
+                      </div>
                       {material.type === 'video' ? (
                         <>
                           {material.poster
-                            // Fetch card posters immediately. These cards can stay mounted
-                            // below the fold; lazy loading used to defer the request until
-                            // after the short-lived signed URL had expired.
                             ? <AuthenticatedImage src={material.poster} alt={material.name} className="h-full w-full object-cover" />
-                            : <video src={`${material.url}#t=0.1`} muted playsInline preload="metadata" className="h-full w-full object-cover" />}
+                            : material.url
+                              ? <AuthenticatedVideo apiUrl={material.url} loadOnMount previewFrame preload="auto" className="pointer-events-none h-full w-full bg-slate-950 object-cover" />
+                              : <div className="flex h-full flex-col items-center justify-center gap-2 bg-slate-950 text-white/65"><Film size={26} /><span className="text-[11px] font-semibold">预览待生成</span></div>}
                           <button
                             type="button"
                             aria-label={`播放 ${material.name}`}
-                            onClick={() => setPreviewMaterial(material)}
-                            className="absolute inset-0 flex items-center justify-center bg-black/0 transition focus:bg-black/20"
+                            onClick={event => { event.stopPropagation(); setPreviewMaterial(material); }}
+                            className="absolute left-1/2 top-1/2 z-20 flex h-11 w-11 -translate-x-1/2 -translate-y-1/2 items-center justify-center rounded-full bg-black/65 text-white shadow-lg transition hover:scale-105 focus:outline-none focus:ring-2 focus:ring-white"
                           >
-                            <span className="flex h-11 w-11 items-center justify-center rounded-full bg-black/65 text-white shadow-lg transition-opacity group-hover:opacity-0">
-                              <Play size={19} fill="currentColor" />
-                            </span>
+                            <Play size={19} fill="currentColor" />
                           </button>
-                          <div className="pointer-events-none absolute inset-0 flex items-center justify-center gap-2 bg-black/40 opacity-0 transition-opacity group-hover:opacity-100 group-focus-within:opacity-100">
-                            <button
-                              type="button"
-                              onClick={() => setPreviewMaterial(material)}
-                              className="pointer-events-auto rounded-lg bg-white px-3 py-2 text-xs font-bold text-slate-800 shadow-sm transition hover:bg-slate-100"
-                            >
-                              播放
-                            </button>
-                            <button
-                              type="button"
-                              onClick={() => enterMaterialSmartGeneration(material)}
-                              className="pointer-events-auto inline-flex items-center gap-1.5 rounded-lg bg-accent px-3 py-2 text-xs font-bold text-white shadow-sm transition hover:brightness-110"
-                            >
-                              <Sparkles size={14} /> 用此素材生成
-                            </button>
-                          </div>
                         </>
-                      ) : material.poster || material.url ? (
+                      ) : material.type === 'image' && (material.poster || material.url) ? (
                         <img src={material.poster || material.url} alt={material.name} className="h-full w-full object-cover" />
+                      ) : material.type === 'audio' ? (
+                        <div className="flex h-full flex-col items-center justify-center gap-2 bg-surface-2 text-text-muted"><Music2 size={28} /><span className="text-xs font-bold">音频素材</span></div>
                       ) : (
                         <div className="flex h-full items-center justify-center text-text-muted"><Film size={22} /></div>
                       )}
-                      <span className="absolute left-2 top-2 rounded bg-black/60 px-2 py-0.5 text-[10px] font-bold text-white">{material.type === 'video' ? '视频' : '图片'}</span>
                     </div>
-                    <div className="p-3">
-                      <p className="truncate text-sm font-bold text-text-primary">{material.name}</p>
-                  {material.canManage && (
-                    <div className="mt-2 flex gap-2 border-t border-border pt-2">
-                      <button type="button" onClick={() => openManageDialog({ kind: 'material', item: material, action: 'edit' })} className="inline-flex items-center gap-1 text-[11px] font-semibold text-text-muted hover:text-accent"><Pencil size={12} />编辑</button>
-                      <button type="button" onClick={() => openManageDialog({ kind: 'material', item: material, action: 'delete' })} className="inline-flex items-center gap-1 text-[11px] font-semibold text-text-muted hover:text-red-600"><Trash2 size={12} />删除</button>
-                    </div>
-                  )}
-
-                      <p className="mt-1 text-xs text-text-muted">{MATERIAL_SOURCE_LABELS[materialSourceOf(material)]} · {material.size || `${material.duration}s`}</p>
-                      <div className="mt-2 flex flex-wrap gap-1">
-                        {[
-                          MATERIAL_SOURCE_LABELS[materialSourceOf(material)],
-                          material.industry ? MATERIAL_INDUSTRY_LABELS[material.industry] || material.industry : '',
-                          material.applicability ? MATERIAL_APPLICABILITY_LABELS[material.applicability] || material.applicability : '',
-                          ...String(material.shotFunction || '').split(',').slice(0, 2).map(value => MATERIAL_FUNCTION_LABELS[value] || value),
-                        ].filter(Boolean).map(label => <span key={label} className="rounded-md bg-accent-glow px-1.5 py-0.5 text-[10px] font-semibold text-accent">{label}</span>)}
-                        {!material.industry && !material.applicability && !material.shotFunction && material.type === 'video' && (
-                          <button type="button" disabled={Boolean(classifyingMaterialId)} onClick={() => void classifyMaterial(material)}
-                            className="rounded-md bg-slate-100 px-1.5 py-0.5 text-[10px] font-semibold text-text-muted hover:bg-accent-glow hover:text-accent disabled:opacity-60">
-                            {classifyingMaterialId === material.id ? '分类中…' : '点击智能分类'}
-                          </button>
-                        )}
+                    <div className="flex min-h-52 flex-1 flex-col p-3">
+                      <p className="line-clamp-2 text-sm font-bold leading-snug text-text-primary">{material.name}</p>
+                      <p className="mt-1 line-clamp-1 text-xs font-semibold leading-5 text-text-muted" title={materialSemanticLabel(material)}>{materialSemanticLabel(material)}</p>
+                      <div className="mt-3 grid grid-cols-2 gap-2">
+                        <button
+                          type="button"
+                          onClick={() => setDetailMaterial(material)}
+                          className="inline-flex h-9 min-w-0 flex-nowrap items-center justify-center gap-0.5 rounded-lg border border-border bg-white px-1.5 text-[11px] font-bold text-text-secondary transition hover:border-accent hover:text-accent"
+                        >
+                          <Eye size={12} className="shrink-0" /><span className="whitespace-nowrap">查看详情</span>
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => enterMaterialSmartGeneration(material)}
+                          disabled={material.type === 'audio' || (material.type === 'video' && !canProcessVideo({ contentFormat: 'video', duration: material.duration })) || !String(material.url || material.poster || '').trim()}
+                          title={material.type === 'audio' ? '音频素材不能单独进入画面创作' : material.type === 'video' && !canProcessVideo({ contentFormat: 'video', duration: material.duration }) ? '视频时长尚未识别完成' : '带入内容制作的自由创作'}
+                          className="inline-flex h-9 min-w-0 flex-nowrap items-center justify-center gap-0.5 rounded-lg bg-accent px-1.5 text-[11px] font-bold text-white transition hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-45"
+                        >
+                          <Sparkles size={12} className="shrink-0" /><span className="whitespace-nowrap">自由创作</span>
+                        </button>
                       </div>
                     </div>
                   </article>
-                ))}
-              </div>
+                }))} />}
+              {materialTotal > MATERIAL_LIBRARY_PAGE_SIZE && (
+                <nav className="flex justify-center border-t border-border pt-5" aria-label="我的素材分页">
+                  <Pagination
+                    current={materialPage}
+                    total={materialTotal}
+                    pageSize={MATERIAL_LIBRARY_PAGE_SIZE}
+                    showSizeChanger={false}
+                    responsive
+                    disabled={materialsLoading}
+                    onChange={page => void refreshMaterials(page)}
+                    showTotal={(total, range) => `${range[0]}–${range[1]} / ${total} 条素材`}
+                  />
+                </nav>
+              )}
             </div>
           )}
 
           {previewMaterial?.type === 'video' && previewMaterial.url && (
-            <div
-              className="fixed inset-0 z-[90] flex items-center justify-center bg-black/75 p-6"
-              role="dialog"
-              aria-modal="true"
-              aria-label="素材视频预览"
-              onClick={() => setPreviewMaterial(null)}
-            >
-              <div className="w-full max-w-4xl overflow-hidden rounded-2xl bg-black shadow-2xl" onClick={event => event.stopPropagation()}>
-                <div className="flex items-center justify-between gap-4 bg-surface px-4 py-3">
-                  <div className="min-w-0">
-                    <p className="truncate text-sm font-bold text-text-primary">{previewMaterial.name}</p>
-                    <p className="text-[11px] text-text-muted">{previewMaterial.folder} · {previewMaterial.size || `${previewMaterial.duration}s`}</p>
-                  </div>
-                  <button type="button" aria-label="关闭视频预览" onClick={() => setPreviewMaterial(null)} className="rounded-lg p-2 text-text-muted hover:bg-surface-2 hover:text-text-primary">
-                    <X size={18} />
-                  </button>
+            <Modal open title={previewMaterial.name} width={840} footer={null} onCancel={() => setPreviewMaterial(null)}>
+                <div className="relative flex min-h-64 items-center justify-center bg-black">
+                  <AuthenticatedVideo
+                    key={`${previewMaterial.id}:${previewMaterial.url}:${previewMaterialAttempt}`}
+                    apiUrl={previewMaterial.url}
+                    poster={previewMaterial.poster}
+                    controls
+                    loadOnMount
+                    onReady={() => { setPreviewMaterialLoading(false); setPreviewMaterialError(''); }}
+                    onLoadingChange={setPreviewMaterialLoading}
+                    onError={handleMaterialPreviewError}
+                    className="max-h-[75vh] w-full bg-black object-contain"
+                  />
+                  {previewMaterialLoading && !previewMaterialError && <div className="pointer-events-none absolute inset-0 flex items-center justify-center bg-black/40"><span className="inline-flex items-center gap-2 rounded-lg bg-black/65 px-3 py-2 text-xs font-semibold text-white"><Loader2 size={14} className="animate-spin" />正在准备视频…</span></div>}
+                  {previewMaterialError && <div className="absolute inset-0 flex flex-col items-center justify-center bg-black/80 px-6 text-center text-white"><Play size={26} className="opacity-70" /><p className="mt-3 text-sm font-semibold">素材预览暂时失败</p><p className="mt-1 text-xs text-white/65">{previewMaterialError}</p><button type="button" onClick={() => { previewMaterialAutoRetryRef.current = 0; void refreshMaterialPreviewUrl(); }} className="mt-4 rounded-lg bg-white px-3 py-2 text-xs font-bold text-neutral-900">重新获取播放地址</button></div>}
                 </div>
-                <video
-                  key={previewMaterial.id}
-                  src={previewMaterial.url}
-                  poster={previewMaterial.poster}
-                  controls
-                  autoPlay
-                  playsInline
-                  preload="metadata"
-                  className="max-h-[75vh] w-full bg-black object-contain"
-                >
-                  当前浏览器不支持视频播放。
-                </video>
-              </div>
-            </div>
+            </Modal>
+          )}
+
+          {detailMaterial && (
+            <Drawer open title={detailMaterial.name} size={800} onClose={() => setDetailMaterial(null)} styles={{ body: { padding: 0 } }}>
+                <section className="border-b border-border bg-surface-2 px-5 py-4" aria-label="素材标签">
+                  <p className="text-xs font-semibold text-text-primary">素材标签</p>
+                  <div className="mt-2 flex flex-wrap gap-1.5">
+                    {(() => { const badge = materialAssetBadge(detailMaterial); return <span className="rounded-md border border-border bg-white px-2 py-1 text-xs font-semibold text-text-secondary">{badge.label}</span>; })()}
+                    <span className={`rounded-md border border-border px-2 py-1 text-xs font-semibold ${materialPrimaryThemeOf(detailMaterial) ? 'bg-accent-glow text-accent' : 'bg-white text-text-secondary'}`}>{materialPrimaryThemeOf(detailMaterial) ? MATERIAL_THEME_LABELS[materialPrimaryThemeOf(detailMaterial)!] : '主题待识别'}</span>
+                    {visibleMaterialTags(detailMaterial.tags).split(/[,，]/).map(tag => tag.trim()).filter(Boolean).map(tag => <span key={`detail-tag-${tag}`} className="rounded-md border border-border bg-white px-2 py-1 text-xs font-semibold text-text-secondary">{tag}</span>)}
+                  </div>
+                </section>
+                <div className="grid gap-5 p-5 md:grid-cols-[minmax(0,1.2fr)_minmax(240px,0.8fr)]">
+                  <div className="overflow-hidden rounded-lg border border-border bg-black">
+                    {detailMaterial.type === 'video' ? <video src={detailMaterial.url} poster={detailMaterial.poster} controls playsInline preload="metadata" className="aspect-video h-full max-h-[54vh] w-full object-contain" />
+                      : detailMaterial.type === 'image' ? <img src={detailMaterial.poster || detailMaterial.url} alt={detailMaterial.name} className="max-h-[54vh] w-full object-contain" />
+                      : <div className="flex min-h-44 flex-col items-center justify-center gap-4 bg-surface-2 p-6"><Music2 size={28} className="text-text-muted" /><audio src={detailMaterial.url} controls className="w-full" /></div>}
+                  </div>
+                  <div className="space-y-3 text-xs">
+                    <div className="rounded-xl border border-border bg-surface px-3 py-2.5"><p className="text-[10px] font-bold text-text-muted">主题标签</p><div className="mt-2 flex flex-wrap gap-1.5">{Object.entries(MATERIAL_THEME_LABELS).map(([id,label]) => <button type="button" key={id} disabled={updatingMaterialTheme} onClick={() => void updateDetailMaterialTheme(id as keyof typeof MATERIAL_THEME_LABELS)} className={`rounded-full px-2.5 py-1 text-[11px] font-bold disabled:opacity-50 ${materialPrimaryThemeOf(detailMaterial) === id ? 'bg-accent text-white' : 'bg-surface-2 text-text-secondary'}`}>{label}</button>)}</div></div>
+                    {[
+                      ['素材类型', detailMaterial.type === 'video' ? '视频' : detailMaterial.type === 'image' ? '图片' : '音频'],
+                      ['关联产品', detailMaterial.productName || '企业通用素材'],
+                      ['主要内容', materialSemanticLabel(detailMaterial)],
+                      ['素材来源', detailMaterial.sourceName || detailMaterial.sourceProvider || (detailMaterial.scope === 'shared' ? '共享素材' : '我的素材')],
+                      ['时长', detailMaterial.type === 'video' || detailMaterial.type === 'audio' ? displayDuration(detailMaterial.duration) : '—'],
+                      ['入库时间', detailMaterial.createdAt ? new Date(detailMaterial.createdAt).toLocaleString('zh-CN') : '—'],
+                    ].map(([label, value]) => <div key={label} className="rounded-lg border border-border bg-surface px-3 py-2.5"><p className="text-[10px] font-bold text-text-muted">{label}</p><p className="mt-1 break-words font-bold leading-5 text-text-primary">{value}</p></div>)}
+                    <Button type="primary" block onClick={() => { const material = detailMaterial; setDetailMaterial(null); enterMaterialSmartGeneration(material); }} disabled={detailMaterial.type === 'audio' || (detailMaterial.type === 'video' && !canProcessVideo({ contentFormat: 'video', duration: detailMaterial.duration })) || !String(detailMaterial.url || detailMaterial.poster || '').trim()}>自由创作</Button>
+                  </div>
+                </div>
+            </Drawer>
           )}
 
           {innerView === 'shooting' && (
             <div className="space-y-4">
-              {scriptGapTasks.length > 0 && <div className="space-y-3">
-                <p className="text-xs font-black text-text-secondary">脚本缺口</p>
-                {scriptGapTasks.map(task => <article key={task.id} className="rounded-2xl border border-amber-200 bg-amber-50/50 p-4">
-                  <div className="flex flex-wrap items-start justify-between gap-3">
-                    <div><span className="rounded-full bg-amber-100 px-2 py-0.5 text-[10px] font-black text-amber-800">脚本缺口</span><h3 className="mt-2 text-sm font-bold text-text-primary">{task.title}</h3><p className="mt-1 text-xs text-text-secondary">{task.shotBrief}</p><p className="mt-2 text-[11px] text-text-muted">{task.productLabel} · {task.themeTitle} · 建议 {task.suggestedDurationSec} 秒</p></div>
-                    <div className="flex gap-2"><button type="button" onClick={() => { setUploadingScriptGapId(task.id); setInnerView('library'); setTimeout(() => uploadInputRef.current?.click(), 50); }} className="rounded-lg border border-amber-300 bg-white px-3 py-2 text-xs font-bold text-amber-800">上传补拍素材</button>{task.uploadedMaterialIds.length > 0 && <button type="button" onClick={() => window.dispatchEvent(new CustomEvent('lingshu:script-gap-refill', { detail: task }))} className="rounded-lg bg-amber-600 px-3 py-2 text-xs font-bold text-white">一键回填</button>}</div>
-                  </div>
-                </article>)}
-              </div>}
               <div className="grid gap-3 md:grid-cols-3">
                 {[
-                  { label: '待拍摄缺口', value: shootingNeeds.length, color: 'text-accent' },
-                  { label: '高优先级', value: shootingNeeds.filter(item => item.priority === '高').length, color: 'text-red-500' },
+                  { label: '待拍摄缺口', value: shootingNeeds.length + scriptGapTasks.length, color: 'text-accent' },
+                  { label: '高频需求', value: shootingNeeds.length, color: 'text-accent' },
                   { label: '已入库素材', value: localMaterials.length, color: 'text-accent' },
                 ].map(item => (
                   <div key={item.label} className="card p-4">
@@ -4091,51 +5061,56 @@ export default function InspirationDashboard({ onScriptPanelOpen, onScriptPanelC
                   </div>
                 ))}
               </div>
-
-              {shootingNeeds.length === 0 ? (
-                <div className="rounded-2xl border border-dashed border-border bg-surface px-6 py-16 text-center">
+              <div className="grid grid-cols-3 gap-2" role="group" aria-label="筛选待拍清单">
+                {([
+                  ['all', '全部', shootingNeeds.length + scriptGapTasks.length],
+                  ['storyboard', '分镜补拍', scriptGapTasks.length],
+                  ['common', '高频需求', shootingNeeds.length],
+                ] as const).map(([key, label, count]) => (
+                  <button key={key} type="button" aria-pressed={shootingFilter === key} onClick={() => setShootingFilter(key)}
+                    className={`min-w-0 rounded-lg border px-2 py-2.5 text-xs font-bold transition-colors sm:text-sm ${shootingFilter === key ? 'border-accent bg-accent text-white' : 'border-border bg-surface text-text-secondary hover:border-accent hover:text-accent'}`}>
+                    <span className="truncate">{label}</span><span className="ml-1 opacity-70">{count}</span>
+                  </button>
+                ))}
+              </div>
+              <input ref={shootingCameraInputRef} aria-label="拍摄待拍任务素材" type="file" accept="video/*" capture="environment" className="hidden" onChange={event => { void handleUploadMaterials(event.currentTarget.files); event.currentTarget.value = ''; }}/>
+              {visibleShootingCards.length === 0 ? (
+                <div className="rounded-lg border border-dashed border-border bg-surface px-6 py-16 text-center">
                   <Check size={30} className="mx-auto mb-3 text-accent" />
-                  <p className="text-sm font-bold text-text-primary">当前没有明显待拍摄缺口</p>
-                  <p className="mt-1 text-xs text-text-muted">素材库已能覆盖当前抓取视频的主要分镜。</p>
+                  <p className="text-sm font-bold text-text-primary">当前筛选下没有待拍摄缺口</p>
+                  <p className="mt-1 text-xs text-text-muted">可以切换上方筛选查看其他需求。</p>
                 </div>
               ) : (
                 <div className="space-y-3">
-                  {shootingNeeds.map(need => (
-                    <article key={need.id} className="rounded-2xl border border-border bg-surface p-4">
+                  {visibleShootingCards.map(card => {
+                    const task = card.kind === 'storyboard' ? card.task : null;
+                    const need = card.kind === 'common' ? card.need : null;
+                    const focused = task && typeof window !== 'undefined' && new URLSearchParams(window.location.search).get('task') === task.id;
+                    return <article key={card.id} id={task ? `shooting-task-${task.id}` : undefined} className={`rounded-lg border border-border bg-white p-4 ${focused ? 'ring-2 ring-amber-400' : ''}`}>
                       <div className="flex flex-wrap items-start justify-between gap-3">
                         <div className="min-w-0 flex-1">
                           <div className="flex flex-wrap items-center gap-2">
-                            <span className={`rounded-full px-2 py-0.5 text-[10px] font-bold ${
-                              need.priority === '高' ? 'bg-red-50 text-red-600' : need.priority === '中' ? 'bg-accent-50 text-accent-700' : 'bg-slate-100 text-text-muted'
-                            }`}>{need.priority}优先级</span>
-                            <span className="rounded-full bg-surface-2 px-2 py-0.5 text-[10px] font-bold text-text-secondary">{need.ratio}</span>
-                            <span className="inline-flex items-center gap-1 rounded-full bg-surface-2 px-2 py-0.5 text-[10px] font-bold text-text-secondary"><SocialPlatformIcon platform={need.platform} size={12} />{getPlatformMeta(need.platform).label}</span>
+                            <span className="rounded-full bg-accent/10 px-2 py-0.5 text-[10px] font-bold text-accent">{task ? '分镜补拍' : '高频需求'}</span>
+                            <span className="rounded-full bg-surface-2 px-2 py-0.5 text-[10px] font-bold text-text-secondary">{need?.ratio || task?.ratio || '9:16'}</span>
+                            <span className="inline-flex items-center gap-1 rounded-full bg-surface-2 px-2 py-0.5 text-[10px] font-bold text-text-secondary">{need ? <><SocialPlatformIcon platform={need.platform} size={12} />{getPlatformMeta(need.platform).label}</> : '内容制作'}</span>
                           </div>
-                          <h3 className="mt-2 text-sm font-bold text-text-primary">{need.title}</h3>
-                          <p className="mt-1 text-xs leading-relaxed text-text-secondary">{need.suggestion}</p>
-                          <p className="mt-2 text-[11px] text-text-muted">出现 {need.count} 次 · 来源：{need.sourceVideos.slice(0, 3).join(' / ')}</p>
+                          <h3 className="mt-2 text-sm font-bold text-text-primary">{task?.title || need?.title}</h3>
+                          <p className="mt-1 text-xs leading-relaxed text-text-secondary">{task?.shotBrief || need?.suggestion}</p>
+                          <p className="mt-2 text-[11px] text-text-muted">{task ? `${task.productLabel} · ${task.themeTitle} · 建议 ${task.suggestedDurationSec} 秒` : `出现 ${need?.count} 次 · 来源：${need?.sourceVideos.slice(0, 3).join(' / ')}`}</p>
+                          <p className="mt-1 text-[11px] text-text-muted">创建日期：{shootingCreationDate(card.createdAt)}</p>
                         </div>
-                        <div className="flex flex-shrink-0 gap-2">
-                          <button
-                            type="button"
-                            onClick={() => { setInnerView('library'); setTimeout(() => uploadInputRef.current?.click(), 50); }}
-                            className="rounded-lg border border-border px-3 py-2 text-xs font-bold text-text-secondary hover:text-text-primary"
-                          >
-                            上传已拍素材
-                          </button>
-                          <button
-                            type="button"
-                            onClick={() => void generateNeedMaterial(need)}
-                            disabled={generatingNeedId === need.id}
-                            className="inline-flex items-center gap-1.5 rounded-lg bg-accent px-3 py-2 text-xs font-bold text-white disabled:opacity-60"
-                          >
-                            {generatingNeedId === need.id ? <Loader2 size={12} className="animate-spin" /> : <Sparkles size={12} />}
-                            {generatingNeedId === need.id ? '生成中，请勿关闭' : 'AI生成素材'}
-                          </button>
+                        <div className="flex shrink-0 flex-col items-end gap-2">
+                          {latestShootingCardIds.has(card.id) && <span role="img" aria-label="最新待拍任务" title="最新待拍任务" className="text-sm leading-none">❗</span>}
+                          <div className="flex flex-wrap justify-end gap-2">
+                            <button type="button" disabled={uploadingMaterial} onClick={() => { setUploadingScriptGapId(task?.id || ''); shootingCameraInputRef.current?.click(); }} className="rounded-lg bg-accent px-3 py-2 text-xs font-bold text-white disabled:opacity-50">去拍摄</button>
+                            <button type="button" onClick={() => requestMaterialUpload(task?.id || '')} className="rounded-lg border border-border bg-white px-3 py-2 text-xs font-bold text-text-secondary hover:text-text-primary">去上传</button>
+                            <button type="button" onClick={() => void generateNeedMaterial(task || need!)} disabled={generatingNeedId === card.id} className="inline-flex items-center gap-1 rounded-lg border border-accent/30 bg-white px-3 py-2 text-xs font-bold text-accent disabled:opacity-50">{generatingNeedId === card.id ? <Loader2 size={12} className="animate-spin" /> : <Sparkles size={12} />}{generatingNeedId === card.id ? '生成中' : 'AI生成素材'}</button>
+                            {task && task.uploadedMaterialIds.length > 0 && task.sourceProjectId && <a href={`?page=smartAssets&project=${encodeURIComponent(task.sourceProjectId)}`} className="rounded-lg border border-border bg-white px-3 py-2 text-xs font-bold text-text-secondary">返回分镜</a>}
+                          </div>
                         </div>
                       </div>
-                    </article>
-                  ))}
+                    </article>;
+                  })}
                 </div>
               )}
             </div>
@@ -4146,60 +5121,81 @@ export default function InspirationDashboard({ onScriptPanelOpen, onScriptPanelC
 
       <AnimatePresence>
         {selectedVideo && (
-          <ScriptPanel
+          <DirectorVideoDetailPanel
             key={selectedVideo.id}
             video={selectedVideo}
-            activePanelTab={scriptPanelTab}
             onClose={() => setSelectedVideo(null)}
+            onPreview={() => handleWatch(selectedVideo)}
+            onCreate={() => {
+              enterInspirationWorkflow(selectedVideo);
+              setSelectedVideo(null);
+            }}
             onRetry={() => void retryVideoPipeline(selectedVideo)}
+            onReanalyzeImage={() => void reanalyzeImagePost(selectedVideo)}
             onExactAnalysis={() => void requestExactFullAnalysis(selectedVideo)}
-            actionNotice={materialMessage}
+            onReanalyze={() => void requestExactFullAnalysis(selectedVideo, true)}
+            onCancelAnalysis={() => void cancelExactFullAnalysis(selectedVideo)}
+            analyzing={analyzingVideoIds.includes(selectedVideo.id)}
+            notice={materialMessage}
             onFavorite={() => void favoriteMaterial(selectedVideo)}
             favoriting={favoritingMaterialIds.includes(selectedVideo.id)}
-            specialRecommendation={accountRecommendationByVideoId.get(selectedVideo.id)}
-            onNavigate={onNavigate}
-            onEnterWorkflow={onEnterWorkflow}
+            isFavorite={favoritedVideoIds.includes(selectedVideo.id) || favoriteSourceUrls.has(String(selectedVideo.sourceUrl || '').trim())}
           />
         )}
       </AnimatePresence>
       <AnimatePresence>
         {watchVideo && <WatchModal key={watchVideo.id} video={watchVideo} onClose={() => setWatchVideo(null)} />}
       </AnimatePresence>
-      <CompetitorAccountsModal
-        open={showAccountsModal}
-        onClose={() => setShowAccountsModal(false)}
-        onCrawled={() => {
-          setInnerView('inspiration');
-          setSortMode('crawlTime');
-          setPlatform('all');
-          setSearch('');
-          void refreshVideos(1, false);
+      <Modal
+        open={materialUploadDialogOpen}
+        title="上传素材"
+        width={480}
+        okText="选择文件"
+        cancelText="取消"
+        okButtonProps={{ disabled: !uploadProductId }}
+        onCancel={() => setMaterialUploadDialogOpen(false)}
+        onOk={() => {
+          if (!uploadProductId) return;
+          setMaterialUploadDialogOpen(false);
+          uploadInputRef.current?.click();
         }}
-      />
+      >
+        <label className="block text-xs font-semibold text-text-secondary">
+          关联产品<span className="sr-only">本次上传必须关联产品</span>
+          <Select
+            aria-label="本次上传素材归属"
+            className="mt-2 w-full"
+            value={uploadProductId || undefined}
+            placeholder="选择关联产品（必选）"
+            onChange={setUploadProductId}
+            options={[
+              ...(materialProductId && materialProductRef && !materialProducts.some(item => item.id === materialProductId)
+                ? [{ value: materialProductId, label: materialProductRef }]
+                : []),
+              ...materialProducts.map(item => ({ value: item.id, label: item.name })),
+            ]}
+          />
+        </label>
+      </Modal>
       {manageTarget && (
-        <div className="fixed inset-0 z-[120] flex items-center justify-center bg-black/50 px-4" role="dialog" aria-modal="true" aria-label={manageTarget.action === 'delete' ? '删除素材' : '编辑素材'}>
-          <div className="w-full max-w-md rounded-lg bg-white p-5 shadow-2xl">
-            <div className="flex items-center justify-between">
-              <h3 className="text-base font-black text-text-primary">{manageTarget.action === 'delete' ? '删除' : '编辑'}{manageTarget.kind === 'video' ? '爆款视频' : '素材'}</h3>
-              <button type="button" title="关闭" aria-label="关闭" onClick={() => setManageTarget(null)} disabled={manageBusy} className="rounded-md p-1.5 text-text-muted hover:bg-surface-2 hover:text-text-primary"><X size={18} /></button>
-            </div>
+        <Modal open title={`${manageTarget.action === 'delete' ? '删除' : '编辑'}${manageTarget.kind === 'video' ? '爆款视频' : '素材'}`}
+          width={480} onCancel={() => setManageTarget(null)} mask={{ closable: false }} keyboard={!manageBusy} closable={!manageBusy}
+          confirmLoading={manageBusy} okText={manageTarget.action === 'delete' ? '确认删除' : '保存'} cancelText="取消"
+          okButtonProps={{ danger: manageTarget.action === 'delete', disabled: manageTarget.action === 'edit' && !manageName.trim() }}
+          cancelButtonProps={{ disabled: manageBusy }} onOk={() => void (manageTarget.action === 'delete' ? deleteManagedItem() : saveManagedItem())}>
             {manageTarget.action === 'edit' ? <>
               <label className="mt-4 block text-xs font-bold text-text-secondary">名称</label>
-              <input value={manageName} onChange={event => setManageName(event.target.value)} maxLength={160} className="mt-1 w-full rounded-md border border-border px-3 py-2 text-sm outline-none focus:border-accent" />
+              <Input value={manageName} onChange={event => setManageName(event.target.value)} maxLength={160} className="mt-1 w-full rounded-md border border-border px-3 py-2 text-sm outline-none focus:border-accent" />
               <label className="mt-3 block text-xs font-bold text-text-secondary">标签</label>
-              <input value={manageTags} onChange={event => setManageTags(event.target.value)} placeholder="用逗号分隔" className="mt-1 w-full rounded-md border border-border px-3 py-2 text-sm outline-none focus:border-accent" />
+              <Input value={manageTags} onChange={event => setManageTags(event.target.value)} placeholder="用逗号分隔" className="mt-1 w-full rounded-md border border-border px-3 py-2 text-sm outline-none focus:border-accent" />
+              {manageTarget.kind === 'material' && <label className="mt-3 block text-xs font-bold text-text-secondary">关联产品
+                <Select aria-label="素材关联产品" value={manageProductId || MATERIAL_PRODUCT_COMMON} onChange={value => setManageProductId(value === MATERIAL_PRODUCT_COMMON ? '' : value)} className="mt-1 w-full" options={[{ value: MATERIAL_PRODUCT_COMMON, label: '不指定（系统自动匹配）' }, ...materialProducts.map(item => ({ value: item.id, label: item.name }))]} /><span className="mt-1 block font-normal text-text-muted">可选。未指定时系统会按口播与画面语义自动匹配，也可作为企业通用素材使用。</span>
+              </label>}
               <p className="mt-3 text-xs text-text-muted">仅当前租户自己采集或本地上传的素材可修改；共享素材保持只读。</p>
-            </> : <p className="mt-4 rounded-md bg-red-50 p-3 text-sm text-red-700">确认删除“{manageName}”？删除后无法恢复。</p>}
-            <div className="mt-5 flex items-center justify-end gap-2">
-              <button type="button" onClick={() => setManageTarget(null)} disabled={manageBusy} className="rounded-md border border-border px-3 py-2 text-sm font-bold text-text-secondary hover:bg-surface-2">取消</button>
-              {manageTarget.action === 'delete'
-                ? <button type="button" onClick={() => void deleteManagedItem()} disabled={manageBusy} className="inline-flex items-center gap-1.5 rounded-md bg-red-600 px-4 py-2 text-sm font-bold text-white hover:bg-red-700 disabled:opacity-50"><Trash2 size={15} />{manageBusy ? '删除中...' : '确认删除'}</button>
-                : <button type="button" onClick={() => void saveManagedItem()} disabled={manageBusy || !manageName.trim()} className="rounded-md bg-accent px-4 py-2 text-sm font-bold text-white hover:brightness-110 disabled:opacity-50">{manageBusy ? '处理中...' : '保存'}</button>}
-            </div>
-          </div>
-        </div>
+            </> : <p className="mt-4 border-l-2 border-red bg-red/5 p-3 text-sm text-red">确认删除“{manageName}”？删除后无法恢复。</p>}
+        </Modal>
       )}
 
-    </div>
+    </main>
   );
 }

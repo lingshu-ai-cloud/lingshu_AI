@@ -1,5 +1,4 @@
 import { Component, type ErrorInfo, type ReactNode } from 'react';
-import { PlugZap } from 'lucide-react';
 import ChannelsPage from './ChannelsPage';
 
 class IntegrationTabBoundary extends Component<
@@ -41,15 +40,6 @@ class IntegrationTabBoundary extends Component<
 export default function IntegrationsPage() {
   return (
     <div className="flex flex-col h-full bg-white">
-      <div className="h-12 flex items-center justify-between px-5 border-b border-border flex-shrink-0">
-        <div className="flex items-center gap-2.5">
-          <div className="w-6 h-6 rounded-lg flex items-center justify-center" style={{ background: 'rgba(22,163,74,0.1)', color: '#16a34a' }}>
-            <PlugZap size={13} />
-          </div>
-          <span className="text-sm font-semibold text-text-primary">集成中心</span>
-        </div>
-      </div>
-
       <div className="min-h-0 flex-1">
         <IntegrationTabBoundary>
           <ChannelsPage />

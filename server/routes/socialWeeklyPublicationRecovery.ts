@@ -1,0 +1,59 @@
+import { Router, type RequestHandler, type ErrorRequestHandler } from 'express';
+import type { AuthLocals } from '../middleware/auth.js';
+export interface WeeklyPublicationRecoveryAuthority { tenantId: string; programId: string; packageId: string; packageVersion: number }
+import { SocialProgramError } from '../socialPrograms/service.js';
+
+export interface WeeklyPublicationRecoveryPort {
+  detail(authority: WeeklyPublicationRecoveryAuthority, taskId: string, actor: string): Promise<unknown>;
+  list(authority: WeeklyPublicationRecoveryAuthority, actor: string): Promise<unknown>;
+  sources(authority: WeeklyPublicationRecoveryAuthority, actor: string): Promise<unknown>;
+  get(authority: WeeklyPublicationRecoveryAuthority, id: string, actor: string): Promise<unknown>;
+  create(authority: WeeklyPublicationRecoveryAuthority, actor: string, input: {
+    taskId: string; ownerUserId: string; deadlineAt: string; reason: string;
+  }): Promise<unknown>;
+  resolve(authority: WeeklyPublicationRecoveryAuthority, id: string, actor: string, input: { expectedVersion: number }): Promise<unknown>;
+}
+const invalid = (): never => { throw new SocialProgramError('weekly_publication_recovery_input_invalid', 400, '请提供明确的周包版本与原发送异常处理信息。'); };
+const text = (v: unknown): string => typeof v === 'string' && v.trim() && v.length <= 2000 && !/[\u0000-\u001f\u007f]/.test(v) ? v.trim() : invalid();
+const version = (v: unknown): number => {
+  const n = typeof v === 'string' && /^\d+$/.test(v) ? Number(v) : v;
+  return typeof n === 'number' && Number.isSafeInteger(n) && n > 0 ? n : invalid();
+};
+const body = (v: unknown, keys: string[]): Record<string, unknown> => {
+  if (!v || typeof v !== 'object' || Array.isArray(v) || Object.keys(v).some(k => !keys.includes(k))) return invalid();
+  return v as Record<string, unknown>;
+};
+const route = (f: RequestHandler): RequestHandler => (req, res, next) => Promise.resolve(f(req, res, next)).catch(next);
+
+/** Reconciles the original publication only; accepts no caller provider result or replacement attempt. */
+export function createSocialWeeklyPublicationRecoveryRouter(service: WeeklyPublicationRecoveryPort) {
+  const router = Router({ mergeParams: true });
+  const scope = (req: Parameters<RequestHandler>[0], res: Parameters<RequestHandler>[1], v: unknown) => {
+    const auth = res.locals as AuthLocals;
+    if (!auth.tenantId || !auth.userId) throw new SocialProgramError('weekly_publication_recovery_auth_required', 401, '请先登录。');
+    return { authority: { tenantId: auth.tenantId, programId: text(req.params.programId), packageId: text(req.params.packageId), packageVersion: version(v) }, actor: auth.userId };
+  };
+  router.get('/', route(async (req, res) => { const a = scope(req, res, req.query.version); res.json({ items: await service.list(a.authority, a.actor) }); }));
+  router.get('/execution/:taskId', route(async (req, res) => { const a = scope(req, res, req.query.version); res.json({ item: await service.detail(a.authority, text(req.params.taskId), a.actor) }); }));
+  router.get('/sources', route(async (req, res) => { const a = scope(req, res, req.query.version); res.json(await service.sources(a.authority, a.actor)); }));
+  router.get('/:id', route(async (req, res) => { const a = scope(req, res, req.query.version); res.json({ item: await service.get(a.authority, text(req.params.id), a.actor) }); }));
+  router.post('/', route(async (req, res) => {
+    const b = body(req.body, ['packageVersion', 'taskId', 'ownerUserId', 'deadlineAt', 'reason']);
+    const a = scope(req, res, b.packageVersion), deadlineAt = text(b.deadlineAt);
+    if (!/(?:Z|[+-]\d{2}:\d{2})$/.test(deadlineAt) || !Number.isFinite(Date.parse(deadlineAt))) return invalid();
+    res.status(201).json({ item: await service.create(a.authority, a.actor, {
+      taskId: text(b.taskId), ownerUserId: text(b.ownerUserId), deadlineAt, reason: text(b.reason),
+    }) });
+  }));
+  router.post('/:id/resolve', route(async (req, res) => {
+    const b = body(req.body, ['packageVersion', 'expectedVersion']), a = scope(req, res, b.packageVersion);
+    res.json(await service.resolve(a.authority, text(req.params.id), a.actor, { expectedVersion: version(b.expectedVersion) }));
+  }));
+  const errors: ErrorRequestHandler = (error, _req, res, next) => {
+    if (error instanceof SocialProgramError) { res.status(error.status).json({ error: error.message, code: error.code }); return; }
+    if (error instanceof Error && /^weekly_publication_recovery_[a-z0-9_]+$/.test(error.message)) { res.status(error.message.includes('forbidden') || error.message.includes('owner_required') ? 403 : 409).json({ code: error.message, error: '原发布任务、平台回执或处理权限尚未核验。' }); return; }
+    next(error);
+  };
+  router.use(errors);
+  return router;
+}

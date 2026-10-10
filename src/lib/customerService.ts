@@ -3,6 +3,8 @@ import { authHeader } from './auth';
 export type PartialAutoReplyDecision = 'pending' | 'enabled' | 'declined';
 
 export interface CustomerServiceStatus {
+  messengerAuthorization?: CustomerServiceStatus['messagingAuthorization'];
+  instagramAuthorization?: CustomerServiceStatus['messagingAuthorization'];
   enabled: boolean;
   enabledAt: string;
   observationDay: number;
@@ -14,6 +16,16 @@ export interface CustomerServiceStatus {
   canAutoSend: boolean;
   approvedFaqCount: number;
   autoReplyReady: boolean;
+  messagingAuthorization?: {
+    configVersion: number;
+    configActive: boolean;
+    customerAgentEnabled: boolean;
+    tenantAuthorized: boolean;
+    providerReady: boolean;
+    inboundAutoSendAllowed: boolean;
+    scheduledFollowupSendAllowed: boolean;
+    reasons: string[];
+  };
 }
 
 async function parseStatusResponse(response: Response): Promise<CustomerServiceStatus> {

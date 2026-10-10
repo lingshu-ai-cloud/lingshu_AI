@@ -126,11 +126,11 @@ export const DEFAULT_ROUTE_BUYER_ROLES: Record<CooperationRoute, string[]> = {
   consumer_retail: ['终端消费者'],
 };
 
-/** Applied only when WhatsApp has been configured and verified for the enterprise. */
+/** Applied only when Messenger has been configured and verified for the enterprise. */
 export const DEFAULT_ROUTE_PRIMARY_CTA: Record<CooperationRoute, string> = {
-  oem_odm: '引导跳转WhatsApp以触达',
-  wholesale_distribution: '引导跳转WhatsApp以触达',
-  consumer_retail: '引导跳转WhatsApp以触达',
+  oem_odm: '引导通过 Messenger 联系',
+  wholesale_distribution: '引导通过 Messenger 联系',
+  consumer_retail: '引导通过 Messenger 联系',
 };
 
 export type CooperationRouteResolution =
@@ -309,8 +309,8 @@ export function buildScriptContentPlan(brief: ScriptStrategyBrief): ScriptConten
   };
   const buyerQuestion = brief.buyerQuestions[0] || questionByTheme[theme];
   const hookFormulaByTheme: Record<ContentTheme, string> = {
-    buyer_pain: `直接点名${targetBuyer}的一个具体决策阻力；首个动作呈现“问题/选择”，不是产品自我介绍。`,
-    product_proof: '用一个目录图无法判断的细节或演示动作开场，再说明为什么它影响购买判断。',
+    buyer_pain: `围绕${targetBuyer}的一个具体决策阻力开场；可以用动作、细节或观点体现，不必点名职业。`,
+    product_proof: '从资料支持的具体细节、操作或选型判断切入，再说明它对购买决定的意义。',
     use_case: '先给具体渠道或使用场景中的一个动作，再说明适配判断。',
     supplier_capability: '先提出一个供应风险，再让一个真实生产、质检或履约节点回应它。',
     customization: '先展示一个已确认的包装、样品或规格触点，再提出品牌适配问题。',
@@ -355,6 +355,6 @@ export function renderScriptContentPlan(plan: ScriptContentPlan): string {
     `- 前3秒钩子：${plan.hookFormula}`,
     `- 证明顺序：${plan.proofOrder.join(' → ')}`,
     `- 模式证据边界：${plan.modeEvidenceRule}`,
-    '- 分镜功能顺序：' + plan.beats.map(item => `${item.function}（${item.instruction}）`).join(' → '),
+    '- 叙事要素（可合并到实际分镜，不要求逐项各占一段）：' + plan.beats.map(item => `${item.function}（${item.instruction}）`).join(' → '),
   ].join('\n');
 }

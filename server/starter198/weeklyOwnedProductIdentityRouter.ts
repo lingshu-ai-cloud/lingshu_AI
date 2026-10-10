@@ -1,0 +1,21 @@
+import {Router,type Request,type Response,type RequestHandler,type ErrorRequestHandler} from 'express';
+import {enforceSupportSessionReadOnly,type AuthLocals} from '../middleware/auth.js';
+import type {createWeeklyOwnedProductIdentityUI} from './weeklyOwnedProductIdentityUI.js';
+export function createWeeklyOwnedProductIdentityRouter(service:ReturnType<typeof createWeeklyOwnedProductIdentityUI>,authorize:(req:Request,res:Response,level:'read'|'write')=>Promise<{tenantId:string;userId:string}>){
+ const router=Router({mergeParams:true});
+ function invalid():never{throw Object.assign(new Error('weekly_owned_product_identity_input_invalid'),{status:400});}
+ const text=(v:unknown)=>{if(typeof v!=='string'||!v||v.trim()!==v||v.length>200)return invalid();return v;};
+ const integer=(v:unknown)=>{if(typeof v!=='number'||!Number.isSafeInteger(v)||v<1)return invalid();return v;};
+ const object=(v:unknown,keys:string[])=>{if(!v||typeof v!=='object'||Array.isArray(v)||Object.keys(v).some(key=>!keys.includes(key)))return invalid();return v as Record<string,unknown>;};
+ const auth=(res:Parameters<RequestHandler>[1])=>{const a=res.locals as AuthLocals;if(typeof a.tenantId!=='string'||!a.tenantId||typeof a.userId!=='string'||!a.userId)throw Object.assign(new Error('weekly_owned_product_identity_auth_required'),{status:401});return {tenantId:a.tenantId,actor:a.userId};};
+ const route=(f:RequestHandler):RequestHandler=>(req,res,next)=>Promise.resolve(f(req,res,next)).catch(next);
+ router.use((_req,res,next)=>{res.setHeader('Cache-Control','private, no-store');next();});router.use(enforceSupportSessionReadOnly);
+ router.get('/',route(async(req,res)=>{await authorize(req,res,'read');const q=object(req.query,['programId','packageId','packageVersion','publicationTaskId','expectedRunId']),a=auth(res);const raw=text(q.packageVersion);if(!/^[1-9]\d*$/.test(raw))return invalid();const expectedRunId=q.expectedRunId===''?null:text(q.expectedRunId);
+  res.json({item:await service.read({tenantId:a.tenantId,contentTaskId:text(req.params.taskId),programId:text(q.programId),packageId:text(q.packageId),packageVersion:integer(Number(raw)),publicationTaskId:text(q.publicationTaskId)},a.actor,expectedRunId)});
+ }));
+ router.post('/recheck-preparation',route(async(req,res)=>{await authorize(req,res,'write');if(Object.keys(req.query).length)return invalid();const b=object(req.body,['programId','packageId','packageVersion','publicationTaskId','expectedRunId','preparationTaskId']),a=auth(res);if(b.expectedRunId!==null)return invalid();res.json({item:await service.recheckPreparation({tenantId:a.tenantId,contentTaskId:text(req.params.taskId),programId:text(b.programId),packageId:text(b.packageId),packageVersion:integer(b.packageVersion),publicationTaskId:text(b.publicationTaskId)},a.actor,text(b.preparationTaskId))});}));
+ router.post('/bind',route(async(req,res)=>{await authorize(req,res,'write');if(Object.keys(req.query).length)return invalid();const b=object(req.body,['programId','packageId','packageVersion','publicationTaskId','expectedRunId','expectedTaskVersion','expectedRequirementHash','bindings']),a=auth(res);if(b.expectedRunId!==null||typeof b.expectedRequirementHash!=='string'||!/^[a-f0-9]{64}$/.test(b.expectedRequirementHash)||!Array.isArray(b.bindings)||!b.bindings.length)return invalid();const bindings=b.bindings.map(v=>{const binding=object(v,['requirementId','requestId']);return {requirementId:text(binding.requirementId),requestId:text(binding.requestId)};});
+  res.json({item:await service.bind({tenantId:a.tenantId,contentTaskId:text(req.params.taskId),programId:text(b.programId),packageId:text(b.packageId),packageVersion:integer(b.packageVersion),publicationTaskId:text(b.publicationTaskId)},a.actor,{expectedTaskVersion:integer(b.expectedTaskVersion),expectedRequirementHash:b.expectedRequirementHash,bindings})});
+ }));
+ const error:ErrorRequestHandler=(err,_req,res,_next)=>{const code=typeof err?.code==='string'?err.code:err?.message;res.status(Number.isInteger(err?.status)&&err.status>=400&&err.status<=503?err.status:409).json({error:typeof code==='string'&&/^weekly_[a-z_]+$/.test(code)?code:'weekly_owned_product_identity_unavailable'});};router.use(error);return router;
+}

@@ -2,6 +2,8 @@ import { GoogleGenAI, type Content } from '@google/genai';
 import type { VideoAiAnalysis, VoiceoverContent, StoryboardContent, ScriptType, Language } from '../types/index.js';
 import type { ImagePostEvidenceAnalysis } from './qwen.js';
 import { GEMINI_ANALYSIS_DIRECTOR_CONTRACT, GEMINI_STORYBOARD_DIRECTOR_CONTRACT } from '../prompts/geminiVideoScriptDirector.js';
+import { untrustedPromptData } from '../lib/untrustedPromptData.js';
+import { benchmarkMaterialType, benchmarkShotRole } from '../../shared/benchmarkAnalysis.js';
 
 const MODEL = () => (process.env.GEMINI_MODEL ?? 'gemini-2.5-flash').trim();
 
@@ -114,13 +116,16 @@ export async function analyzeImagePostEvidenceWithGemini(opts: {
   tags?: string[];
 }): Promise<ImagePostEvidenceAnalysis> {
   if (!opts.images.length) throw new Error('Gemini image evidence analysis requires at least one image');
+  const metadataEvidence = untrustedPromptData('image_post_metadata', JSON.stringify({
+    title: opts.title || '',
+    caption: opts.caption || '',
+    platform: opts.platform || '',
+    tags: opts.tags || [],
+  }), 12_000);
   const prompt = `你是外贸 B2B 社媒竞品图文的证据提取器。图片按轮播顺序提供。
 只写图片中实际可见或原 caption 明确出现的内容；不得推断爆款原因、目标人群、效果、认证、价格、MOQ、工厂资质或互动结果。无法确认就放入 uncertainties。所有字符串用简体中文，只输出合法 JSON。
 
-标题：${opts.title || ''}
-平台：${opts.platform || ''}
-原始 caption：${opts.caption || ''}
-标签：${(opts.tags || []).join(', ')}
+${metadataEvidence}
 
 Schema:
 {"version":2,"status":"analyzed","observedFacts":[{"imageIndex":1,"subjects":[],"scene":"","composition":"","colors":[],"visibleText":[],"confidence":0}],"carouselFlow":[{"imageIndex":1,"role":"attention|product|detail|proof|process|cta|unknown","evidence":"","confidence":0}],"copyEvidence":{"hooks":[{"text":"","source":"caption|ocr","evidence":""}],"sellingPoints":[{"text":"","source":"caption|ocr","evidence":""}],"cta":[]},"reusableModules":[{"module":"","evidence":"","preserve":"","replace":"","confidence":0}],"uncertainties":[]}`;
@@ -250,17 +255,23 @@ function parseScriptDetails15s(value: unknown): VideoAiAnalysis['scriptDetails15
     if (!visual && !subtitle) return null;
     return {
       time: normalizeAnalysisTime(item.time ?? item.timestamp),
+      materialType: benchmarkMaterialType(item.materialType),
+      narrativeRole: benchmarkShotRole(item.narrativeRole),
+      classificationEvidence: String(item.classificationEvidence ?? '').trim(),
       environment: String(item.environment ?? '').trim(),
       shot: String(item.shot ?? '').trim(),
       camera: String(item.camera ?? '').trim(),
       angle: String(item.angle ?? '').trim(),
       composition: String(item.composition ?? '').trim(),
       visual,
+      personContinuityId: String(item.personContinuityId ?? '').trim(),
+      observedPresenterRole: (['sales_presenter', 'presenter_action', 'background', 'none', 'unknown'].includes(String(item.observedPresenterRole)) ? item.observedPresenterRole : undefined) as NonNullable<VideoAiAnalysis['scriptDetails15s']>[number]['observedPresenterRole'],
       subtitle,
       audio: String(item.audio ?? '').trim(),
       note: String(item.note ?? '').trim(),
       purpose: String(item.purpose ?? '').trim(),
       dialogue: String(item.dialogue ?? '').trim(),
+      voiceover: typeof item.voiceover === 'string' ? item.voiceover.trim() : '',
       onScreenText: String(item.onScreenText ?? '').trim(),
       ambientSound: String(item.ambientSound ?? '').trim(),
       bgm: String(item.bgm ?? '').trim(),
@@ -291,6 +302,15 @@ function parseScriptDetails15s(value: unknown): VideoAiAnalysis['scriptDetails15
 export function normalizeVideoAnalysis(parsed: Partial<VideoAiAnalysis>): VideoAiAnalysis {
   return {
     theme: String(parsed.theme ?? ''),
+    identityEntities: Array.isArray(parsed.identityEntities) ? parsed.identityEntities.flatMap(entity => {
+      if (!entity || !['company', 'brand', 'product'].includes(String(entity.type)) || !String(entity.text || '').trim()) return [];
+      return [{
+        type: entity.type,
+        text: String(entity.text).trim(),
+        evidence: String(entity.evidence || '').trim(),
+        confidence: Math.max(0, Math.min(1, Number(entity.confidence ?? 0) || 0)),
+      }];
+    }) : [],
     hooks: Array.isArray(parsed.hooks) ? parsed.hooks.map(String) : [],
     sellingPoints: Array.isArray(parsed.sellingPoints) ? parsed.sellingPoints.map(String) : [],
     mood: String(parsed.mood ?? ''),
@@ -319,12 +339,13 @@ export async function analyzeVideo(opts: {
     : '当前为默认全片策略分析：必须从 0 秒覆盖到结尾，镜头密度跟随真实内容变化；重复或稳定画面应合并为区间并用 beats 记录变化，禁止无意义逐秒拆分。';
   const systemInstruction = `你是一个面向出海电商营销的短视频内容分析专家。
 ${modeInstruction}
-请分析提供的视频，并提取结构化信息。除 recommendedScriptType 字段外，所有字符串内容必须使用简体中文输出。
+请分析提供的视频，并提取结构化信息。除合同枚举值、字段键和人物ID外，所有说明字符串内容必须使用简体中文输出。
 只输出合法 JSON，不要 markdown，不要代码块，不要前后解释。
 ${GEMINI_ANALYSIS_DIRECTOR_CONTRACT}
 
 必需 JSON 字段：
 - theme: string，用一句中文概括视频核心主题/产品/场景
+- identityEntities: array，仅提取口播、字幕或画面中明确出现的企业名、品牌名和产品名；每项包含 type("company"|"brand"|"product")、text、evidence、confidence，不确定时不输出
 - hooks: string[], 2–4 个中文开头钩子或吸引注意力的方法
 - sellingPoints: string[], 3–6 个中文卖点、利益点或画面展示点
 - mood: string，中文情绪/风格描述，例如“高能评测”“种草感”“教程感”“幽默反差”
@@ -344,8 +365,11 @@ ${GEMINI_ANALYSIS_DIRECTOR_CONTRACT}
   - shot: string，景别，例如“特写”“中景”“近景”
   - camera: string，运镜，例如“固定镜头”“微推近”“手持晃动”“旋转运镜”
   - visual: string，具体画面人物/产品/动作/场景
+  - observedPresenterRole: sales_presenter（已确认贯穿视频的固定销售主讲者对镜说话，须绑定稳定人物 ID；单独的动作演员、路人、D to C 插镜人物不属于此类）、presenter_action（同一主讲者动作展示但未确认说话）、background（工人/路人/会议背景人物）、none（无人）、unknown（证据不足）。必须依赖可见口型、面向镜头及讲话证据；画外音不算真人口播；工厂背景或手持产品不能排除前景销售。与 personContinuityId 联合记录，身份或角色不确定时 needsReview=true。
+  - personContinuityId: string，同一个可确认出镜人物跨镜头使用同一个稳定 ID（如 person_1）；无人出镜或无法确认是否同一人时留空，不得仅凭性别推断
   - purpose: string，镜头营销功能，如“反常识钩子”“效果证明”“价格反差”“CTA”
-  - dialogue: string，只填写可确认的人物口播/旁白原文，听不清留空
+  - dialogue: string，只填写可确认的画内人物口播原文，听不清或画内/画外不能确认时留空
+  - voiceover: string，只填写实际听到且确认是画外旁白的原文；未知留空，不复制 dialogue，不用“无”代替缺证据
   - onScreenText: string，只填写画面真实可见字幕，不得与口播混写
   - ambientSound: string，环境声；bgm: string，配乐；soundEffects: string[]，明确音效
   - beats: array，镜头内节拍；长镜头中动作、台词重点或字幕变化时记录 time、action、dialogue、onScreenText
@@ -385,7 +409,7 @@ export async function analyzeYouTubeUrl(opts: {
   url: string;
 }): Promise<VideoAiAnalysis> {
   const systemInstruction = `你是一个面向出海电商营销的短视频内容分析专家。
-请分析提供的 YouTube 视频，并提取结构化信息。除 recommendedScriptType 字段外，所有字符串内容必须使用简体中文输出。
+请分析提供的 YouTube 视频，并提取结构化信息。除合同枚举值、字段键和人物ID外，所有说明字符串内容必须使用简体中文输出。
 只输出合法 JSON，不要 markdown，不要代码块，不要前后解释。
 ${GEMINI_ANALYSIS_DIRECTOR_CONTRACT}
 
@@ -410,7 +434,10 @@ ${GEMINI_ANALYSIS_DIRECTOR_CONTRACT}
   - shot: string，景别，例如“特写”“中景”“近景”
   - camera: string，运镜，例如“固定镜头”“微推近”“手持晃动”“旋转运镜”
   - visual: string，具体画面人物/产品/动作/场景
+  - observedPresenterRole: sales_presenter（已确认贯穿视频的固定销售主讲者对镜说话，须绑定稳定人物 ID；单独的动作演员、路人、D to C 插镜人物不属于此类）、presenter_action（同一主讲者动作展示但未确认说话）、background（工人/路人/会议背景人物）、none（无人）、unknown（证据不足）。必须依赖可见口型、面向镜头及讲话证据；画外音不算真人口播；工厂背景或手持产品不能排除前景销售。与 personContinuityId 联合记录，身份或角色不确定时 needsReview=true。
+  - personContinuityId: string，同一个可确认出镜人物跨镜头使用同一个稳定 ID（如 person_1）；无人出镜或无法确认是否同一人时留空，不得仅凭性别推断
   - subtitle: string，只填写画面中清晰可见的字幕或可确认的口播原句；看不清/听不清则填空字符串，禁止写“待补全”或猜测台词
+  - voiceover: string，只填写实际听到且确认是画外旁白的原文；未知留空，不复制画内 dialogue，不用“无”代替缺证据
   - audio: string，只填写可确认的配音、BGM、音效；无法确认则填空字符串，禁止写“可能有……”或猜测台词
   - note: string，可选，只记录确定可见的信息；禁止编造品牌、@账号、原台词或无法确认的提示
 每一个分镜的内容要能被前端按“时间戳 + 段落”展示；段落信息必须覆盖环境、景别、运镜、配乐、台词、画面，字段之间语义上可用分号连接。
@@ -679,3 +706,8 @@ Write a Stable Diffusion / Imagen prompt (≤100 words) that would produce a com
 
   return withRetry(() => generateText({ contents: userPrompt, systemInstruction }));
 }
+
+export async function proofreadReferenceNarrationWithGemini(transcript: string): Promise<string> {
+  return generateText({ contents: transcript, jsonMode: true, systemInstruction: REFERENCE_NARRATION_PROOFREAD_PROMPT });
+}
+import { REFERENCE_NARRATION_PROOFREAD_PROMPT } from '../prompts/referenceNarrationProofread.js';

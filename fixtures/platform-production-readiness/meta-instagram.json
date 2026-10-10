@@ -1,0 +1,321 @@
+{
+  "schemaVersion": "platform-production-readiness.v1",
+  "providerGroup": "meta-instagram",
+  "checkedAt": "2026-10-10",
+  "templateOnly": true,
+  "overallStatus": "livevalidationmissing",
+  "productionApproved": false,
+  "secretsIncluded": false,
+  "scope": {
+    "runtimeChanged": false,
+    "realOAuthStarted": false,
+    "realPublishSubmitted": false,
+    "paidProviderCalled": false,
+    "migrationExecuted": false
+  },
+  "tenant": {
+    "tenantId": null,
+    "ownerUserId": null,
+    "appEvidenceRef": null,
+    "accountEvidenceRef": null
+  },
+  "environment": [
+    {
+      "name": "PUBLIC_BASE_URL",
+      "secret": false,
+      "configured": null,
+      "evidenceRef": null
+    },
+    {
+      "name": "TENANT_PLATFORM_APP_KEY",
+      "secret": true,
+      "configured": null,
+      "evidenceRef": null
+    },
+    {
+      "name": "META_GRAPH_VERSION",
+      "secret": false,
+      "configured": null,
+      "evidenceRef": null
+    },
+    {
+      "name": "META_SOCIAL_APP_ID",
+      "secret": false,
+      "configured": null,
+      "evidenceRef": null
+    },
+    {
+      "name": "META_SOCIAL_APP_SECRET",
+      "secret": true,
+      "configured": null,
+      "evidenceRef": null
+    },
+    {
+      "name": "INSTAGRAM_APP_ID",
+      "secret": false,
+      "configured": null,
+      "evidenceRef": null
+    },
+    {
+      "name": "INSTAGRAM_APP_SECRET",
+      "secret": true,
+      "configured": null,
+      "evidenceRef": null
+    },
+    {
+      "name": "INSTAGRAM_CONTENT_PUBLISH_ENABLED",
+      "secret": false,
+      "configured": null,
+      "evidenceRef": null
+    },
+    {
+      "name": "SOCIAL_WEEKLY_REAL_PUBLISHING_ENABLED",
+      "secret": false,
+      "configured": null,
+      "evidenceRef": null
+    },
+    {
+      "name": "R2_PUBLIC_URL",
+      "secret": false,
+      "configured": null,
+      "evidenceRef": null
+    },
+    {
+      "name": "OBJECT_STORAGE_DRIVER",
+      "secret": false,
+      "configured": null,
+      "evidenceRef": null
+    },
+    {
+      "name": "COS_REGION",
+      "secret": false,
+      "configured": null,
+      "evidenceRef": null
+    },
+    {
+      "name": "COS_BUCKET",
+      "secret": false,
+      "configured": null,
+      "evidenceRef": null
+    },
+    {
+      "name": "COS_SECRET_ID",
+      "secret": true,
+      "configured": null,
+      "evidenceRef": null
+    },
+    {
+      "name": "COS_SECRET_KEY",
+      "secret": true,
+      "configured": null,
+      "evidenceRef": null
+    },
+    {
+      "name": "COS_PUBLIC_URL",
+      "secret": false,
+      "configured": null,
+      "evidenceRef": null
+    }
+  ],
+  "tenantAppSchema": {
+    "collection": "tenant_platform_apps",
+    "uniqueFields": [
+      "tenant_id",
+      "platform"
+    ],
+    "platforms": [
+      "meta",
+      "instagram"
+    ],
+    "requiredOAuthFields": [
+      "app_id",
+      "app_secret"
+    ],
+    "encryptedFields": [
+      "app_secret",
+      "access_token"
+    ],
+    "optionalRelatedFields": [
+      "webhook_verify_token",
+      "page_id",
+      "ig_user_id",
+      "token_expires_at",
+      "token_type",
+      "status"
+    ],
+    "deployedSchemaVerified": null,
+    "globalFallbackPolicyApproved": null,
+    "migrationEvidenceRef": null
+  },
+  "oauth": {
+    "status": "implemented",
+    "callbackPaths": {
+      "facebook": "/api/overseas/social/oauth/facebook/callback",
+      "instagram": "/api/overseas/social/oauth/instagram/callback"
+    },
+    "startPaths": {
+      "facebook": "/api/overseas/social/oauth/facebook/start",
+      "instagram": "/api/overseas/social/oauth/instagram/start"
+    },
+    "callbackAllowlistVerified": null,
+    "state": {
+      "signature": "HMAC-SHA256",
+      "ttlSeconds": 600,
+      "binds": [
+        "tenantId",
+        "userId",
+        "platform",
+        "returnTo",
+        "nonce",
+        "expiresAt",
+        "redirectUri",
+        "clientCredentialHash"
+      ],
+      "durableNonceConsumptionImplemented": true,
+      "replayValidationEvidenceRef": null,
+      "productionRequiresAtomicStorage": true,
+      "controlledTests": "server/lib/oauthNonceStore.test.ts"
+    },
+    "realGrantEvidenceRef": null
+  },
+  "contracts": [
+    {
+      "oauthProvider": "facebook_login",
+      "undefinedProviderUsesLegacy": true,
+      "graphHost": "https://graph.facebook.com",
+      "tokenKind": "facebook_page",
+      "accountIdentitySource": "Page-linked Instagram professional Graph id",
+      "oauthRequestedScopes": [
+        "pages_show_list",
+        "pages_read_engagement",
+        "instagram_basic",
+        "instagram_content_publish"
+      ],
+      "runtimePublishRequiredScopes": [
+        "instagram_content_publish"
+      ],
+      "status": "implemented",
+      "liveValidationEvidenceRef": null
+    },
+    {
+      "oauthProvider": "instagram_login",
+      "graphHost": "https://graph.instagram.com",
+      "tokenKind": "instagram_user",
+      "accountIdentitySource": "Graph /me.id (not OAuth user_id)",
+      "oauthBaseScopes": [
+        "instagram_business_basic",
+        "instagram_business_manage_messages"
+      ],
+      "oauthPublishScopeFeatureFlag": "INSTAGRAM_CONTENT_PUBLISH_ENABLED",
+      "runtimePublishRequiredScopes": [
+        "instagram_business_basic",
+        "instagram_business_content_publish"
+      ],
+      "receiptReadRequiredScopes": [
+        "instagram_business_basic"
+      ],
+      "status": "implemented",
+      "liveValidationEvidenceRef": null
+    }
+  ],
+  "capability": {
+    "status": "implemented",
+    "nativeReadEndpoints": [
+      "/{version}/me",
+      "/{version}/{ig_id}/content_publishing_limit"
+    ],
+    "nativeLegacyFallbackAllowed": false,
+    "redirectsAllowed": false,
+    "storedScopeAloneAuthorizesPublish": false,
+    "accountHashBinds": [
+      "oauthProvider",
+      "nativeId",
+      "scope",
+      "status",
+      "encryptedCredentials"
+    ],
+    "actualQuotaEvidenceRef": null,
+    "realIdentityEvidenceRef": null
+  },
+  "durableReceipt": {
+    "status": "implemented",
+    "containerReceiptFormat": "ig-container:{container_id}",
+    "containerPersistedBeforePublish": true,
+    "mediaIdPersistedAfterProviderResponse": true,
+    "recoverableAttemptIdentity": [
+      "tenant",
+      "assignment",
+      "package",
+      "provider",
+      "attempt",
+      "containerReceipt",
+      "mediaId"
+    ],
+    "unknownOutcomeRecreatesContainer": false,
+    "recoveryCanPublish": false,
+    "publishedContainerWithoutOriginalMediaId": "unknown",
+    "scheduledUnknownIncrementsAttempt": false,
+    "failureRecoveryLiveEvidenceRef": null
+  },
+  "livevalidationmissing": [
+    "deployed schema and unique indexes",
+    "correct tenant app selection and approved global fallback",
+    "real callback allowlist and TLS/proxy origin",
+    "state replay/restart/multi-instance behavior",
+    "actual returned grants and native /me.id",
+    "token refresh/expiry/revocation",
+    "actual publishing permission/quota",
+    "public media availability and exact bytes/hash",
+    "real original container/media receipt and read-only failure recovery"
+  ],
+  "productionapproval": [
+    "actual Meta app mode/access level/review/business verification as applicable",
+    "privacy policy and data deletion settings",
+    "customer ownership and authorization",
+    "final user approval and real G4/G5/G6/Instagram packaged reviews",
+    "bounded tenant publishing authorization and window",
+    "separate explicit authorization for real OAuth/publish/production switches"
+  ],
+  "knownPreparationGaps": [
+    {
+      "code": "oauth_nonce_production_storage_live_validation",
+      "category": "livevalidationmissing",
+      "evidence": "durable consumption implemented; live atomic backend verification remains required"
+    },
+    {
+      "code": "tenant_app_strict_selection",
+      "category": "implemented",
+      "evidence": "tenant-specific config fails closed without global fallback"
+    },
+    {
+      "code": "native_oauth_callback_requires_messaging_grant",
+      "category": "implemented",
+      "evidence": "current connection flow requires instagram_business_manage_messages even when publishing is desired"
+    }
+  ],
+  "primaryReferences": [
+    "https://www.postman.com/meta/instagram/folder/6raa77c/instagram-api-with-instagram-login",
+    "https://www.postman.com/meta/instagram/documentation/6yqw8pt/instagram-api?entity=request-23987686-15c537cd-a773-4b40-a87c-27829e49a439",
+    "https://developers.facebook.com/docs/instagram-platform/instagram-api-with-instagram-login/content-publishing/",
+    "https://developers.facebook.com/docs/facebook-login/guides/advanced/manual-flow/",
+    "https://developers.facebook.com/docs/permissions/"
+  ],
+  "referenceVerification": {
+    "officialMetaPostmanSearchVerified": true,
+    "developerDocsFetch": "unavailable_or_429",
+    "actualDashboardApprovalVerified": false
+  },
+  "suggestedControlledTests": [
+    "server/lib/socialOAuthScopes.test.ts",
+    "server/lib/tenantPlatformApps.oauthCredentials.test.ts",
+    "server/security/oauthConfigPersistence.test.ts",
+    "server/integrations/instagramLogin.test.ts",
+    "server/publishing/instagramPublishingContract.test.ts",
+    "server/publishing/platformCapabilities.test.ts",
+    "server/publishing/instagramContainerPersistence.test.ts",
+    "server/publishing/instagramNativePublishing.test.ts",
+    "server/publishing/instagramWeeklyReceiptIsolation.integration.test.ts",
+    "server/publishing/scheduledPublisher.test.ts",
+    "server/publishing/weeklyProviderRecoveryAcceptance.test.ts"
+  ]
+}

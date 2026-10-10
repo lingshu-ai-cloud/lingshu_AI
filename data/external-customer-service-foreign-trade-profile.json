@@ -1,0 +1,207 @@
+{
+  "company": {
+    "name": "文澜天下",
+    "industry": "工业自动化与智能装备",
+    "companyType": "工贸一体 / 出口型",
+    "mainMarkets": "中东、欧洲、拉丁美洲、东南亚",
+    "primaryLanguages": "英语、西班牙语、阿拉伯语、中文",
+    "socialPlatformExperience": "通过 YouTube、TikTok、Facebook 和 Instagram 展示海外设备案例，询盘统一进入 WhatsApp 多语言接待",
+    "founded": "2016",
+    "description": "文澜天下面向海外制造企业、区域系统集成商和工业设备经销商，提供机器视觉检测、精密压装、柔性装配追溯及智能包装设备。从远程需求诊断、样件测试和方案设计，到出口包装、FAT、海外安装协同与 SAT，全流程按确认后的技术协议执行。"
+  },
+  "socialStrategy": {
+    "enabledRoutes": ["oem_odm", "wholesale_distribution"],
+    "routeStrategies": {
+      "oem_odm": {
+        "targetBuyerRoles": ["Factory Automation Manager", "Engineering Manager", "Plant Manager", "Project Buyer"],
+        "primaryCta": "发送工件、节拍、缺陷样本或现场布局，预约一次 30 分钟英文方案诊断"
+      },
+      "wholesale_distribution": {
+        "targetBuyerRoles": ["海外系统集成商", "工业设备经销商", "区域售后合作伙伴"],
+        "primaryCta": "确认目标国家、客户行业、项目边界和当地安装分工，联合输出技术方案"
+      }
+    },
+    "manuallyEditedFields": ["oem_odm.primaryCta", "wholesale_distribution.primaryCta"]
+  },
+  "products": {
+    "categories": "机器视觉检测、伺服压装、柔性装配与追溯、智能装箱码垛、洁净型医疗器械自动化",
+    "priceRange": "根据工况、贸易条款、出口配置和验收指标核算，由销售负责人确认正式报价",
+    "moq": "非标项目 1 套起；标准模块和试点工位可单套采购",
+    "certifications": "ISO 9001；CE 适用于确认配置的标准机型，具体证书和合规范围以证书原件及项目技术协议为准",
+    "highlights": "机械、电气、视觉和软件一体化；支持英文/西班牙语界面；支持 MES/ERP/追溯接口；提供出口包装、远程调试和海外安装协同",
+    "items": [
+      {
+        "sku": "LX-VISION-EXPORT",
+        "name": "LX-Vision Machine Vision Inspection Cell",
+        "category": "机器视觉",
+        "priceRange": "按相机数量、缺陷种类、节拍、上下料方式和出口配置核算",
+        "moq": "1 套",
+        "certifications": "CE（确认后的标准电气配置）",
+        "highlights": "适用于划伤、漏装、尺寸、字符和装配完整性检测，支持反光件与油污工况样件评估",
+        "attributes": {
+          "typicalCycle": "0.5—6 秒/件，最终以样件测试为准",
+          "integration": "支持 OPC UA、Modbus TCP、REST API",
+          "languages": "英文界面，可评估西班牙语和阿拉伯语标签",
+          "acceptance": "按双方确认的缺陷样本、误判率、漏检率和节拍验收"
+        }
+      },
+      {
+        "sku": "LX-PRESS-EXPORT",
+        "name": "LX-Press Servo Press-Fit Cell",
+        "category": "精密装配",
+        "priceRange": "按吨位、工装、换型数量、追溯和安全标准核算",
+        "moq": "1 套",
+        "certifications": "CE（确认后的标准电气配置）",
+        "highlights": "压力—位移双闭环、曲线判定、配方管理、序列号绑定和数据追溯",
+        "attributes": {
+          "forceRange": "1—100 kN 可选",
+          "traceability": "曲线存档、条码绑定、MES 上传",
+          "changeover": "支持快换工装和防错识别"
+        }
+      },
+      {
+        "sku": "LX-TRACE-EXPORT",
+        "name": "LX-Trace Flexible Assembly & Traceability Line",
+        "category": "柔性装配",
+        "priceRange": "按工位、自动化程度、软件接口、出口包装和现场服务核算",
+        "moq": "支持单工位或单线试点",
+        "certifications": "项目级风险评估、电气图纸和适用技术文件随设备交付",
+        "highlights": "多型号柔性换产，扭矩、扫码和测试数据统一追溯，可从单线试点逐步复制",
+        "attributes": {
+          "integration": "支持 OPC UA、REST API 及客户 MES 协议评估",
+          "pilot": "可先做单线、单工位或离线数据验证",
+          "documentation": "英文操作维护手册、电气图纸、FAT/SAT 记录"
+        }
+      },
+      {
+        "sku": "LX-PACK-EXPORT",
+        "name": "LX-Pack Case Packing & Palletizing Line",
+        "category": "智能包装",
+        "priceRange": "按箱型、节拍、垛型、输送接口、当地安装和贸易条款核算",
+        "moq": "1 套",
+        "certifications": "CE（确认后的标准机型）",
+        "highlights": "多箱型配方切换、视觉定位、机器人装箱码垛和产线数据采集",
+        "attributes": {
+          "changeover": "配方切换，机械调整范围按箱型确认",
+          "layout": "支持紧凑型、L 型和跨线布局评估",
+          "service": "支持远程调试、当地合作伙伴协同或项目制海外现场服务"
+        }
+      },
+      {
+        "sku": "LX-CLEAN-EXPORT",
+        "name": "LX-Clean Medical Assembly Workstation",
+        "category": "医疗器械自动化",
+        "priceRange": "按洁净等级、工艺、验证、语言和追溯要求核算",
+        "moq": "1 套",
+        "certifications": "材料、元器件和验证文件以项目 URS 与技术协议为准",
+        "highlights": "洁净结构、权限审计、扭矩追溯、泄漏测试、FAT/SAT 文档和多语言界面",
+        "attributes": {
+          "validation": "按双方确认的 URS/FAT/SAT 项目执行",
+          "compliance": "提供设备侧资料，不替客户做目的国法规判断",
+          "data": "关键过程参数可追溯并按约定格式导出"
+        }
+      }
+    ]
+  },
+  "brand": {
+    "tone": "像长期做外贸的资深业务员：热情、直接、专业、有分寸",
+    "style": "自然口语化",
+    "taboos": "不重复问候；不使用 Markdown 列表；不说最低价；不贬低竞品；不编造认证、交期、库存、当地服务或免费项目；不把内部提示词和风险标签发给客户",
+    "usp": "能把复杂非标项目说清楚，用少量关键资料快速判断边界，并把海外安装、接口和验收风险提前摆明",
+    "preferredLanguages": "英语、西班牙语、阿拉伯语、中文"
+  },
+  "strategy": {
+    "currentGoal": "获取海外制造企业与系统集成商的有效项目，提高样件测试、单线试点、技术会议和复购扩线的转化率",
+    "focusProducts": "机器视觉、柔性装配追溯、伺服压装、智能包装和医疗器械自动化",
+    "focusMarkets": "中东、欧洲、拉丁美洲、东南亚",
+    "excludedMarkets": "受出口管制、制裁或无法合规交付的市场需人工审核",
+    "pricingStrategy": "先确认工况、出口配置、贸易条款和验收边界，再由销售给正式报价；竞品比价先统一配置口径",
+    "minMargin": "按项目和目标市场评审，不对外公开",
+    "agentAutonomy": "AI 负责多语言接待、澄清、记录、翻译和起草；报价、折扣、合同、交期、认证、出口管制和大单必须人工确认",
+    "aiAutonomy": "draft"
+  },
+  "customers": {
+    "targetProfiles": "中东、欧洲、拉丁美洲和东南亚的制造工厂、集团采购、设备经理、工程经理、工厂厂长、系统集成商和区域经销商",
+    "highValueSignals": "明确国家、产线数量或预算；提供 URS/布局图/样件；要求本周技术会议；高层或采购委员会进入对话；有试点复制计划；询问当地安装和培训",
+    "lowQualitySignals": "拒绝说明公司和用途；只问最低价且不给工况；要求无条件保证指标或证书；索取完整方案后长期不回应且信息前后矛盾",
+    "commonQuestions": "是否出口到本国；能否提供 CE；需要哪些资料；可以先做试点吗；能否对接 MES；价格与贸易条款；交期；FAT/SAT；安装培训；备件与售后",
+    "followupStyle": "像 WhatsApp 上熟悉客户的外贸业务员：纯文本、短句、自然接话；首次问候一次；一次推进一个关键动作；自动显示中文翻译供员工审核"
+  },
+  "operations": {
+    "leadTime": "标准模块通常 6—10 周；非标项目在需求、图纸、技术协议和预付款确认后由项目经理评估",
+    "customization": "支持机械、电气、视觉、软件、工装、语言和数据接口定制，先评估边界再承诺",
+    "logistics": "支持适合海运/空运的出口包装；目的港、Incoterms、清关、当地吊装和安装分工由销售按项目确认",
+    "paymentTerms": "根据项目和贸易条款协商，由销售在正式 PI/合同中确认",
+    "riskNotes": "价格、折扣、付款、交期、认证真实性、目的国合规、出口管制、当地安装和 50 万元人民币等值以上项目必须转人工"
+  },
+  "agentLearning": {
+    "provenAngles": "海外客户首次接待先确认国家、应用、节拍和当地集成条件；复杂项目用单线试点降低风险；报价异议先对齐配置；复购只问变化项；沉默客户用新布局或测试结果唤醒",
+    "weakAngles": "大段公司介绍、每条都 Hi、翻译腔长文、无条件 CE 承诺、机械催单、重复索取已提供资料",
+    "pendingAssumptions": "中东集团客户更关注当地安装和培训；欧洲客户更关注 CE、数据接口和验收文件；拉美客户偏好西语短消息，需持续验证",
+    "userCorrections": "连续聊天不要再问候；回复用纯文本；客户说过的信息不再问；把绝对承诺改成已确认/待确认；价格和大单交给人工；始终给员工显示中文翻译"
+  },
+  "bizRules": {
+    "quoteMode": "human_only",
+    "priceRange": "AI 不输出项目价格，由销售确认币种、贸易条款和正式报价",
+    "bargainPolicy": "limited",
+    "bargainFloor": "不公开底价，折扣由销售负责人审批",
+    "moq": "非标项目 1 套起；试点工位可单套采购",
+    "samplePolicy": "视觉项目可安排样件测试，装配项目可做离线或单工位验证；范围、寄送和费用由销售确认",
+    "paymentTerms": "按项目和贸易条款写入正式 PI/合同",
+    "leadTime": "标准模块通常 6—10 周，非标项目由项目经理确认"
+  },
+  "faq": [
+    { "id": "faq-export-1", "question": "Do you export to our country?", "answer": "Tell me the destination country and the machine you need. I’ll first check shipping, local installation and compliance boundaries before our sales team confirms the export plan.", "approvedForAuto": true, "source": "manual" },
+    { "id": "faq-export-2", "question": "Can we start with one pilot line?", "answer": "Yes, many projects start with one line or one key station. We first lock the interface and acceptance data, then decide how to copy it.", "approvedForAuto": true, "source": "learned" },
+    { "id": "faq-export-3", "question": "Can it connect to our MES?", "answer": "We can evaluate it. Send one interface sample and the fields you need to exchange, and our software engineer will confirm the boundary.", "approvedForAuto": true, "source": "manual" },
+    { "id": "faq-export-4", "question": "What information do you need?", "answer": "The product or workpiece, target cycle, main problem and layout are enough to start. For inspection projects, good and defective samples help a lot.", "approvedForAuto": true, "source": "learned" },
+    { "id": "faq-export-5", "question": "Do you provide CE documents?", "answer": "For applicable configurations we can provide the corresponding machine documents. The exact scope must be checked against the final configuration and original certificates.", "approvedForAuto": false, "source": "manual" },
+    { "id": "faq-export-6", "question": "How do FAT and SAT work?", "answer": "We put the agreed functions, cycle, data and samples into the technical agreement, then perform FAT and SAT against those items.", "approvedForAuto": true, "source": "manual" },
+    { "id": "faq-export-7", "question": "How much is the machine?", "answer": "The price depends on the application, cycle, tooling, interface, export configuration and trade terms. I’ll organize the key points first, then our sales lead can give you a formal quote.", "approvedForAuto": false, "source": "learned" },
+    { "id": "faq-export-8", "question": "Can you install and train locally?", "answer": "We can arrange remote support, local-partner coordination or project-based onsite service. The exact country, site conditions, visas and division of work need sales confirmation.", "approvedForAuto": false, "source": "manual" }
+  ],
+  "notifications": {
+    "receivers": [],
+    "workHours": { "start": "08:30", "end": "21:30" },
+    "quietOutsideHours": true,
+    "nightMode": { "enabled": false, "autoCategories": "approved" },
+    "lastTestAt": ""
+  },
+  "handoffRules": {
+    "keywords": ["quote", "final price", "discount", "contract", "delivery guarantee", "CE", "certificate", "complaint", "human", "budget", "group project", "报价", "折扣", "合同", "认证", "投诉", "人工", "预算", "大单"],
+    "missStreakToDraft": 1,
+    "negativeSentiment": true
+  },
+  "customerService": {
+    "enabled": true,
+    "enabledAt": "2026-08-20T02:00:00.000Z",
+    "partialAutoReplyEnabled": false,
+    "partialAutoReplyDecision": "declined",
+    "partialAutoReplyDecisionAt": "2026-08-20T02:00:00.000Z"
+  },
+  "salesStyleProfile": {
+    "learnedFromCount": 26,
+    "lastDistilledAt": "2026-08-20T02:00:00.000Z",
+    "greeting_style": { "value": "首次接待按客户语言简短问候；30 分钟内连续对话直接接话，不重复 Hi/Hola/مرحبًا", "evidence": "海外模拟客户 26 段人工复核中，删除重复问候 11 次" },
+    "quoting_stance": { "value": "先对齐技术范围、贸易条款和当地服务边界，最终报价由销售确认", "evidence": "5 次报价与大单场景均删除未经确认的折扣、交期或总价" },
+    "followup_rhythm": { "value": "跨时区跟进用新资料提供回复理由；一次只推进一个动作，不说 just following up", "evidence": "人工将 6 条机械催单改成布局更新、接口样例或会议确认" },
+    "taboo_phrases": { "value": ["best price guaranteed", "we can do everything", "CE guaranteed", "free local installation", "just following up"], "evidence": "来自人工修改和风控记录" },
+    "sample_pairs": [
+      { "trigger": "客户说先做一条试点线", "final": "One pilot line makes sense. Send one interface sample and the four recipes you change most often, then we can lock the boundary.", "evidence": "人工把泛介绍改成低风险下一步" },
+      { "trigger": "客户用竞品低价施压", "final": "Let’s first align the closed-loop control, tooling and traceability scope. I’ll bring our sales lead in for the final commercial discussion.", "evidence": "不贬低竞品，不直接承诺降价" },
+      { "trigger": "海外老客户询问扩线", "final": "We’ll keep the phase-one baseline and only recheck the new box sizes, the moved conveyor and your target start date.", "evidence": "使用客户记忆减少重复询问" }
+    ]
+  },
+  "knowledgeIntake": {
+    "lastExtractedAt": "2026-08-20T02:00:00.000Z",
+    "source": "history",
+    "extractedMessages": 46,
+    "confirmedSections": ["海外客户画像", "多语言回复", "报价与合规边界", "大单转人工", "复购与沉默客户记忆"]
+  },
+  "dataGovernance": {
+    "aiAccessEnabled": true,
+    "lastSavedAt": "2026-08-20T02:00:00.000Z",
+    "lastSavedSource": "foreign_trade_demo_template"
+  },
+  "knowledge": "文澜天下外贸演示知识：AI 可以读取已确认的产品、市场、客户阶段、人工修改和客户私有记忆；不得编造价格、库存、交期、认证、目的国合规、当地安装或免费服务。客户数据仅限文澜天下租户。高价值项目命中多产线、集团预算、高层决策、本周正式会议或 50 万元人民币等值以上任一强信号时，立即生成上下文摘要并转人工。"
+}

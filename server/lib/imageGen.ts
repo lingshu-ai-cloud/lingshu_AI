@@ -1,4 +1,8 @@
-import { GoogleGenAI } from '@google/genai';
+import { createHash } from 'node:crypto';
+import {
+  currentContentProviderReceipt,
+  recordCurrentContentProviderReceipt,
+} from '../contentExecution/context.js';
 
 export interface ReferenceImage {
   mimeType: string;
@@ -8,8 +12,13 @@ export interface ReferenceImage {
 export interface GeneratedImage {
   bytes: Buffer;
   mimeType: string;
-  source: 'gemini' | 'seedream';
+  source: 'qwen';
   model: string;
+}
+
+/** A definitive client-side provider rejection: no image task was accepted. */
+export class ImageProviderRejectedError extends Error {
+  constructor(public readonly statusCode: number, message: string) { super(message); }
 }
 
 function normalizeMime(mimeType?: string): string {
@@ -29,109 +38,93 @@ export function imageExt(mimeType: string): string {
   return extFromMime(mimeType);
 }
 
-function extractInlineImage(resp: any): { data: string; mimeType: string } | null {
-  const outputs = Array.isArray(resp?.outputs) ? resp.outputs : [];
-  for (const output of outputs) {
-    if (output?.type === 'image' && output?.data) return { data: String(output.data), mimeType: normalizeMime(output.mime_type || output.mimeType) };
-  }
-  const outputImage = resp?.output_image || resp?.outputImage;
-  if (outputImage?.data) return { data: String(outputImage.data), mimeType: normalizeMime(outputImage.mime_type || outputImage.mimeType) };
-
-  const parts = resp?.candidates?.flatMap((candidate: any) => candidate?.content?.parts || []) || [];
-  for (const part of parts) {
-    const inline = part?.inlineData;
-    if (inline?.data) return { data: String(inline.data), mimeType: normalizeMime(inline.mimeType) };
-  }
-  return null;
+function qwenImageEndpoint(): string {
+  const configured = String(process.env.DASHSCOPE_IMAGE_BASE_URL || process.env.DASHSCOPE_BASE_URL || '').trim();
+  const base = (configured || 'https://dashscope.aliyuncs.com/compatible-mode/v1').replace(/\/+$/, '');
+  if (!/\/compatible-mode\/v1$/i.test(base)) throw new Error('DASHSCOPE_IMAGE_BASE_URL 必须是百炼 OpenAI 兼容端点（…/compatible-mode/v1）');
+  return `${base}/images/generations`;
 }
 
-async function generateGeminiImage(input: {
+function qwenSizeFor(ratio: string): string {
+  const normalized = String(ratio || '').trim();
+  if (normalized === '9:16' || normalized === '720:1280') return '1024*1792';
+  if (normalized === '16:9' || normalized === '1280:720') return '1792*1024';
+  return '1024*1024';
+}
+
+function qwenImageUrl(payload: any): string {
+  const item = Array.isArray(payload?.data) ? payload.data[0] : undefined;
+  const url = String(item?.url || payload?.output?.choices?.[0]?.message?.content?.[0]?.image || '').trim();
+  if (!/^https:\/\//i.test(url)) throw new Error('Qwen Image 返回结果缺少 HTTPS 图片地址');
+  return url;
+}
+
+async function generateQwenImage(input: {
   prompt: string;
   ratio: string;
   references?: ReferenceImage[];
+  idempotencyKey?: string;
+  recoveryOnly?: boolean;
 }): Promise<GeneratedImage> {
-  const apiKey = (process.env.GEMINI_API_KEY || '').trim();
-  if (!apiKey) throw new Error('GEMINI_API_KEY is not configured');
-  const ai = new GoogleGenAI({ apiKey });
-  const model = (process.env.GEMINI_IMAGE_MODEL || 'gemini-3-pro-image-preview').trim();
-  const refs = (input.references || []).slice(0, 4);
-
-  // Nano Banana image models use the Interactions API in @google/genai >= 2.0.
-  if ((process.env.GEMINI_DISABLE_INTERACTIONS_IMAGE || '').trim() !== 'true') {
+  const apiKey = (process.env.DASHSCOPE_API_KEY || '').trim();
+  if (!apiKey) throw new Error('DASHSCOPE_API_KEY is not configured');
+  const model = (process.env.QWEN_IMAGE_MODEL || 'qwen-image-3.0').trim();
+  const requestId = createHash('sha256').update(input.idempotencyKey ? JSON.stringify({operationKey:input.idempotencyKey,model,ratio:input.ratio,prompt:input.prompt,references:(input.references||[]).slice(0,3).map(ref=>({mimeType:normalizeMime(ref.mimeType),sha256:createHash('sha256').update(Buffer.from(ref.base64,'base64')).digest('hex')}))}) : `${model}\0${input.ratio}\0${input.prompt}`).digest('hex');
+  const prior = currentContentProviderReceipt({ provider: 'qwen_image', requestId });
+  if (prior && ['submitting', 'unknown'].includes(prior.state)) {
+    throw new Error('provider_submission_unknown:qwen_image:requires_manual_reconciliation');
+  }
+  if(prior&&['accepted','completed'].includes(prior.state)&&!/^https:\/\//i.test(String(prior.metadata.outputUrl||'')))throw new Error('provider_submission_unknown:qwen_image:accepted_output_reference_missing');
+  // Qwen Image accepts at most three ordered reference images.
+  const refs = (input.references || []).slice(0, 3);
+  let url = String(prior?.metadata.outputUrl || '');
+  if (!/^https:\/\//i.test(url)) {
+    if(input.recoveryOnly)throw new Error('provider_submission_unknown:qwen_image:recovery_requires_existing_output');
+    await recordCurrentContentProviderReceipt({
+      provider: 'qwen_image', requestId, state: 'submitting', metadata: { model },
+    });
+    let response: Response;
     try {
-      const interactionInput = refs.length
-        ? [
-            { type: 'text', text: `${input.prompt}\n\nCanvas aspect ratio: ${input.ratio}. Return one polished final poster image.` },
-            ...refs.map(ref => ({ type: 'image', data: ref.base64, mime_type: ref.mimeType })),
-          ]
-        : `${input.prompt}\n\nCanvas aspect ratio: ${input.ratio}. Return one polished final poster image.`;
-      const interaction = await (ai as any).interactions.create({
-        model,
-        input: interactionInput,
-        response_modalities: ['image'],
+      response = await fetch(qwenImageEndpoint(), {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${apiKey}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ model, prompt: input.prompt, ...(refs.length ? { image: refs.map(ref => `data:${normalizeMime(ref.mimeType)};base64,${ref.base64}`) } : {}), n: 1, size: qwenSizeFor(input.ratio) }),
+        signal: AbortSignal.timeout(90_000),
       });
-      const image = extractInlineImage(interaction);
-      if (image?.data) {
-        return { bytes: Buffer.from(image.data, 'base64'), mimeType: image.mimeType, source: 'gemini', model };
-      }
-    } catch (err) {
-      if (process.env.DEBUG_IMAGE_GEN === 'true') console.warn('[imageGen] interactions image failed:', err);
+    } catch (error) {
+      await recordCurrentContentProviderReceipt({ provider: 'qwen_image', requestId, state: 'unknown', metadata: { model } });
+      throw new Error('provider_submission_unknown:qwen_image:transport_outcome_uncertain');
     }
-  }
-
-  try {
-    const parts: any[] = [
-      { text: `${input.prompt}\n\nCanvas aspect ratio: ${input.ratio}. Return one polished final poster image.` },
-      ...refs.map(ref => ({ inlineData: { data: ref.base64, mimeType: ref.mimeType } })),
-    ];
-    const resp = await ai.models.generateContent({
-      model,
-      contents: [{ role: 'user', parts }] as any,
-      config: { responseModalities: ['TEXT', 'IMAGE'] } as any,
-    } as any);
-    const image = extractInlineImage(resp);
-    if (image?.data) {
-      return { bytes: Buffer.from(image.data, 'base64'), mimeType: image.mimeType, source: 'gemini', model };
+    const payload = await response.json().catch(() => ({}));
+    if (!response.ok) {
+      const definitive=[400,401,403,404,422].includes(response.status);
+      await recordCurrentContentProviderReceipt({ provider: 'qwen_image', requestId, state: definitive?'failed':'unknown', metadata: { model, statusCode: response.status } });
+      const message = `Qwen Image ${response.status}: ${String(payload?.message || payload?.error?.message || response.statusText).slice(0, 500)}`;
+      if ([400, 401, 403, 404, 422].includes(response.status)) throw new ImageProviderRejectedError(response.status, message);
+      throw new Error('provider_submission_unknown:qwen_image:response_outcome_uncertain');
     }
-  } catch (err) {
-    if (process.env.DEBUG_IMAGE_GEN === 'true') console.warn('[imageGen] generateContent image failed:', err);
+    try{url=qwenImageUrl(payload);}catch{await recordCurrentContentProviderReceipt({provider:'qwen_image',requestId,state:'unknown',metadata:{model}});throw new Error('provider_submission_unknown:qwen_image:output_reference_missing');}
+    await recordCurrentContentProviderReceipt({
+      provider: 'qwen_image', requestId, state: 'accepted', metadata: { model, outputUrl: url },
+    });
   }
-
-  const imageModel = (process.env.GEMINI_IMAGEN_MODEL || '').trim();
-  if (!imageModel) throw new Error(`Gemini image model ${model} returned no image bytes`);
-  const resp = await ai.models.generateImages({
-    model: imageModel,
-    prompt: input.prompt,
-    config: { numberOfImages: 1, aspectRatio: input.ratio } as any,
+  const image = await fetch(url, { signal: AbortSignal.timeout(90_000) });
+  if (!image.ok) throw new Error(`Qwen Image 产物下载失败：HTTP ${image.status}`);
+  const result = { bytes: Buffer.from(await image.arrayBuffer()), mimeType: normalizeMime(image.headers.get('content-type') || 'image/png'), source: 'qwen' as const, model };
+  await recordCurrentContentProviderReceipt({
+    provider: 'qwen_image', requestId, state: 'completed', metadata: { model, outputUrl: url, mimeType: result.mimeType },
   });
-  const data = (resp as any).generatedImages?.[0]?.image?.imageBytes;
-  if (!data) throw new Error('Gemini image generation returned no image bytes');
-  return { bytes: Buffer.from(String(data), 'base64'), mimeType: 'image/png', source: 'gemini', model: imageModel };
-}
-
-async function generateSeedreamImage(_input: {
-  prompt: string;
-  ratio: string;
-  references?: ReferenceImage[];
-}): Promise<GeneratedImage> {
-  throw new Error('Seedream image fallback is not configured yet');
+  return result;
 }
 
 export async function generatePosterImage(input: {
   prompt: string;
   ratio: string;
   references?: ReferenceImage[];
+  idempotencyKey?: string;
+  recoveryOnly?: boolean;
 }): Promise<GeneratedImage> {
-  try {
-    return await generateGeminiImage(input);
-  } catch (geminiErr: any) {
-    if ((process.env.SEEDREAM_IMAGE_ENABLED || '').trim() === 'true') {
-      try {
-        return await generateSeedreamImage(input);
-      } catch (seedreamErr: any) {
-        throw new Error(`Gemini image failed: ${geminiErr?.message || geminiErr}; Seedream failed: ${seedreamErr?.message || seedreamErr}`);
-      }
-    }
-    throw geminiErr;
-  }
+  // Provider choice is explicit at the product route. A failed paid request must
+  // never fan out to another supplier and create an unreviewed second charge.
+  return generateQwenImage(input);
 }

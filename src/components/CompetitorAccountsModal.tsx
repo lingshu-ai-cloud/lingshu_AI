@@ -1,6 +1,6 @@
+import { Button, Input, Modal, Popconfirm, Select } from 'antd';
 import { useState, useEffect, useCallback } from 'react';
-import { motion, AnimatePresence } from 'motion/react';
-import { X, Plus, Loader2, Trash2, Download, Users, ExternalLink, AlertCircle } from 'lucide-react';
+import { Plus, Loader2, Trash2, Download, Users, ExternalLink, AlertCircle } from 'lucide-react';
 import { authHeader } from '../lib/auth';
 import { SocialPlatformIcon } from './SocialPlatformIcon';
 
@@ -51,10 +51,14 @@ export default function CompetitorAccountsModal({
   open,
   onClose,
   onCrawled,
+  onCountChange,
+  embedded = false,
 }: {
   open: boolean;
   onClose: () => void;
   onCrawled: (importedCount: number) => void;
+  onCountChange?: (count: number) => void;
+  embedded?: boolean;
 }) {
   const [accounts, setAccounts] = useState<CompetitorAccount[]>([]);
   const [loading, setLoading] = useState(false);
@@ -71,13 +75,15 @@ export default function CompetitorAccountsModal({
     try {
       const r = await fetch('/api/overseas/competitor-accounts', { headers: authHeader() });
       const data = await r.json().catch(() => ({})) as { items?: CompetitorAccount[] };
-      setAccounts(data.items || []);
+      const items = data.items || [];
+      setAccounts(items);
+      onCountChange?.(items.length);
     } catch {
       setAccounts([]);
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [onCountChange]);
 
   useEffect(() => {
     if (open) {
@@ -141,91 +147,46 @@ export default function CompetitorAccountsModal({
         method: 'DELETE',
         headers: authHeader(),
       });
-      if (r.ok) setAccounts(prev => prev.filter(a => a.id !== account.id));
+      if (r.ok) setAccounts(prev => {
+        const next = prev.filter(a => a.id !== account.id);
+        onCountChange?.(next.length);
+        return next;
+      });
     } finally {
       setDeletingId('');
     }
   };
 
-  return (
-    <AnimatePresence>
-      {open && (
-        <motion.div
-          initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
-          onClick={onClose}
-          className="fixed inset-0 z-[80] flex items-center justify-center bg-slate-950/40 px-5 py-6 backdrop-blur-sm"
-        >
-          <motion.div
-            initial={{ opacity: 0, y: 16, scale: 0.98 }}
-            animate={{ opacity: 1, y: 0, scale: 1 }}
-            exit={{ opacity: 0, y: 16, scale: 0.98 }}
-            onClick={e => e.stopPropagation()}
-            className="flex max-h-[86vh] w-full max-w-2xl flex-col overflow-hidden rounded-2xl border border-border bg-white shadow-2xl"
-          >
-            {/* Header */}
-            <div className="flex items-center justify-between border-b border-border px-6 py-4">
-              <div className="flex items-center gap-2.5">
-                <span className="flex h-9 w-9 items-center justify-center rounded-xl bg-accent-glow text-accent">
-                  <Users size={18} />
-                </span>
-                <div>
-                  <h2 className="text-base font-black text-text-primary">对标账号库</h2>
-                  <p className="text-xs text-text-muted">粘贴对标账号主页，一键采集其最新视频进入爆款灵感</p>
-                </div>
-              </div>
-              <button type="button" onClick={onClose} aria-label="关闭对标账号库"
-                className="flex h-8 w-8 items-center justify-center rounded-lg border border-border text-text-muted hover:bg-surface-2" title="关闭">
-                <X size={16} />
-              </button>
-            </div>
-
+  const panel = open ? (
+          <section aria-label="对标账号" className="flex min-h-[480px] w-full flex-col overflow-hidden rounded-lg border border-border bg-surface">
             {/* Add form */}
-            <div className="border-b border-border bg-surface px-6 py-4">
+            <div className="border-b border-border bg-surface-2 px-4 py-4 sm:px-6">
               <div className="flex flex-col gap-2 sm:flex-row">
-                <div className="relative shrink-0">
-                  <SocialPlatformIcon platform={platform} size={18} className="pointer-events-none absolute left-3 top-1/2 z-10 -translate-y-1/2" />
-                  <select
-                    value={platform}
-                    onChange={e => setPlatform(e.target.value as AccountPlatform)}
-                    aria-label="平台"
-                    className="h-11 cursor-pointer rounded-xl border border-border bg-white pl-9 pr-3 text-sm font-bold text-text-primary outline-none focus:border-accent"
-                  >
-                    <option value="youtube">YouTube</option>
-                    <option value="tiktok">TikTok</option>
-                    <option value="instagram">Instagram</option>
-                    <option value="facebook">Facebook</option>
-                  </select>
-                </div>
-                <input
+                <Select<AccountPlatform> value={platform} onChange={setPlatform} aria-label="平台" className="min-w-36"
+                  options={Object.entries(PLATFORM_META).map(([value, meta]) => ({ value: value as AccountPlatform, label: <span className="inline-flex items-center gap-2"><SocialPlatformIcon platform={value as AccountPlatform} size={16}/>{meta.label}</span> }))} />
+                <Input
                   type="text"
                   value={url}
                   onChange={e => setUrl(e.target.value)}
                   onKeyDown={e => { if (e.key === 'Enter' && !adding) void addAccount(); }}
                   placeholder={accountPlaceholder(platform)}
-                  className="h-11 w-full rounded-xl border border-border bg-white px-3.5 text-sm text-text-primary placeholder:text-text-muted outline-none focus:border-accent"
+                  aria-label="对标账号主页链接"
+                  className="flex-1"
                 />
-                <button
-                  type="button"
-                  onClick={() => void addAccount()}
-                  disabled={adding}
-                  className="flex h-11 shrink-0 items-center justify-center gap-1.5 rounded-xl bg-accent px-4 text-sm font-bold text-white transition-opacity hover:opacity-90 disabled:opacity-60"
-                >
-                  {adding ? <Loader2 size={15} className="animate-spin" /> : <Plus size={15} />}
-                  添加
-                </button>
+                <Button type="primary" onClick={() => void addAccount()} loading={adding} icon={<Plus size={15} />}>添加账号</Button>
               </div>
               {error && (
-                <p className="mt-2 flex items-center gap-1.5 text-xs font-semibold text-red-600">
+                <p role="alert" className="mt-2 flex items-center gap-1.5 border-l-2 border-red bg-red/5 px-2 py-1.5 text-xs font-semibold text-red">
                   <AlertCircle size={13} /> {error}
                 </p>
               )}
               {!error && notice && (
-                <p className="mt-2 text-xs font-semibold text-accent">{notice}</p>
+                <p role="status" className="mt-2 border-l-2 border-accent bg-accent-glow px-2 py-1.5 text-xs font-semibold text-accent">{notice}</p>
               )}
             </div>
 
             {/* Accounts list */}
-            <div className="min-h-[220px] flex-1 overflow-y-auto px-6 py-4">
+            <div className="min-h-[220px] flex-1 overflow-y-auto px-4 py-4 sm:px-6">
               {loading ? (
                 <div className="flex h-40 items-center justify-center text-text-muted">
                   <Loader2 size={20} className="animate-spin" />
@@ -237,14 +198,14 @@ export default function CompetitorAccountsModal({
                   <p className="text-xs text-text-muted">在上方粘贴一个 YouTube / TikTok / Instagram / Facebook 主页链接开始</p>
                 </div>
               ) : (
-                <ul className="space-y-2.5">
+                <ul className="divide-y divide-border border-y border-border">
                   {accounts.map(account => {
                     const meta = PLATFORM_META[account.platform];
                     const crawling = crawlingId === account.id;
                     return (
                       <li key={account.id}
-                        className="flex items-center gap-3 rounded-xl border border-border bg-white px-3.5 py-3">
-                        <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-surface-2">
+                        className="flex flex-wrap items-center gap-3 px-1 py-3 sm:flex-nowrap sm:px-3">
+                        <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-md bg-surface-2">
                           <SocialPlatformIcon platform={account.platform} size={23} />
                         </span>
                         <div className="min-w-0 flex-1">
@@ -262,25 +223,10 @@ export default function CompetitorAccountsModal({
                               : ' · 尚未采集'}
                           </p>
                         </div>
-                        <button
-                          type="button"
-                          onClick={() => void crawlAccount(account)}
-                          disabled={crawling || Boolean(crawlingId)}
-                          className="flex h-9 shrink-0 items-center gap-1.5 rounded-lg bg-accent px-3 text-xs font-bold text-white transition-opacity hover:opacity-90 disabled:opacity-60"
-                          title={`采集最新 ${CRAWL_COUNT} 条`}
-                        >
-                          {crawling ? <Loader2 size={13} className="animate-spin" /> : <Download size={13} />}
-                          {crawling ? '采集中' : '采集最新'}
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => void deleteAccount(account)}
-                          disabled={deletingId === account.id}
-                          className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border border-border text-text-muted hover:border-red-300 hover:text-red-600 disabled:opacity-60"
-                          title="移除"
-                        >
-                          {deletingId === account.id ? <Loader2 size={13} className="animate-spin" /> : <Trash2 size={13} />}
-                        </button>
+                        <div className="flex w-full items-center gap-2 pl-12 sm:w-auto sm:pl-0">
+                        <Button onClick={() => void crawlAccount(account)} loading={crawling} disabled={Boolean(crawlingId) && !crawling} icon={<Download size={13} />} title={`采集最新 ${CRAWL_COUNT} 条`}>采集最新</Button>
+                        <Popconfirm title="移除这个对标账号？" description="已采集的灵感内容会保留。" onConfirm={() => deleteAccount(account)} okText="移除" cancelText="取消"><Button danger loading={deletingId === account.id} icon={<Trash2 size={13} />} aria-label={`移除对标账号 ${account.accountName}`} /></Popconfirm>
+                        </div>
                       </li>
                     );
                   })}
@@ -288,12 +234,17 @@ export default function CompetitorAccountsModal({
               )}
             </div>
 
-            <div className="border-t border-border bg-surface px-6 py-3 text-xs text-text-muted">
-              采集到的视频会进入「爆款灵感」，并自动排队做视频级 AI 分析；标注来源为对标账号主页。
-            </div>
-          </motion.div>
-        </motion.div>
-      )}
-    </AnimatePresence>
+          </section>
+  ) : null;
+
+  if (embedded) return panel;
+
+  return (
+    <Modal open={open} title="对标账号管理" width={720} onCancel={onClose}
+      closable={!adding && !crawlingId && !deletingId} keyboard={!adding && !crawlingId && !deletingId}
+      mask={{ closable: false }} footer={<Button onClick={onClose} disabled={adding || Boolean(crawlingId) || Boolean(deletingId)}>完成</Button>}
+      styles={{ body: { maxHeight: '70vh', overflowY: 'auto' } }}>
+      {panel}
+    </Modal>
   );
 }

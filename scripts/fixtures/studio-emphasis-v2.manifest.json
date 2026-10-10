@@ -1,0 +1,39 @@
+{
+  "jobId": "emphasis-v2-acceptance",
+  "spec": { "ratio": "9:16", "duration": 21, "bgmVol": 0, "voiceVol": 0 },
+  "timeline": [
+    { "name": "面部护理", "url": "data/media/tenants/local_tenant_free_studio_smoke_20260929/c1850abc-ada9-461e-97b5-5f9439dece2d.mp4", "targetStart": 0, "targetEnd": 6.5, "targetDuration": 6.5 },
+    { "name": "面部护理", "url": "data/media/tenants/local_tenant_free_studio_smoke_20260929/c1850abc-ada9-461e-97b5-5f9439dece2d.mp4", "targetStart": 6.5, "targetEnd": 13, "targetDuration": 6.5 },
+    { "name": "产品使用", "url": "data/media/tenants/local_tenant_free_studio_smoke_20260929/3e821505-5b9c-4b2f-9cd1-892d3fa2ea77.mp4", "targetStart": 13, "targetEnd": 17.1, "targetDuration": 4.1 },
+    { "name": "产品使用", "url": "data/media/tenants/local_tenant_free_studio_smoke_20260929/3e821505-5b9c-4b2f-9cd1-892d3fa2ea77.mp4", "targetStart": 17.1, "targetEnd": 21, "targetDuration": 3.9 }
+  ],
+  "subtitles": {
+    "mode": "target",
+    "style": { "font": "sans", "fontScale": 1, "lineWidth": 18, "bottomRatio": 0.2, "outlineWidth": 3 },
+    "cues": [
+      { "start": 0, "end": 5.5, "text": "这支测试保湿精华液，可以用于日常护肤。" },
+      { "start": 6.5, "end": 12, "text": "搭配测试保湿面膜，按包装说明安排护理步骤。" },
+      { "start": 13, "end": 16.7, "text": "面膜采用独立包装，使用前先查看包装信息。" },
+      { "start": 17.1, "end": 20.7, "text": "想了解产品，请查看详细介绍。" }
+    ]
+  },
+  "voiceover": { "url": null },
+  "bgm": { "url": null },
+  "cover": { "url": null },
+  "emphasisPlan": {
+    "schemaVersion": 1,
+    "profile": "product_showcase",
+    "captions": [
+      { "id": "caption-1", "startMs": 0, "endMs": 5500, "text": "这支测试保湿精华液，可以用于日常护肤。" },
+      { "id": "caption-2", "startMs": 6500, "endMs": 12000, "text": "搭配测试保湿面膜，按包装说明安排护理步骤。" },
+      { "id": "caption-3", "startMs": 13000, "endMs": 16700, "text": "面膜采用独立包装，使用前先查看包装信息。" },
+      { "id": "caption-4", "startMs": 17100, "endMs": 20700, "text": "想了解产品，请查看详细介绍。" }
+    ],
+    "events": [
+      { "id": "auto-hook", "type": "hook", "startMs": 0, "endMs": 2400, "text": "这支测试保湿精华液，可以用于日常护肤。", "importance": 3, "confidence": 0.86, "source": "transcript", "visualIntent": "attention", "assetIntent": "attention_marker" },
+      { "id": "auto-fact-3", "type": "key_fact", "startMs": 13000, "endMs": 14800, "text": "独立包装", "importance": 2, "confidence": 0.8, "source": "transcript", "visualIntent": "focus_product", "assetIntent": "product_marker" },
+      { "id": "auto-cta-4", "type": "cta", "startMs": 17100, "endMs": 19100, "text": "查看详细介绍", "importance": 2, "confidence": 0.82, "source": "transcript", "visualIntent": "cta", "assetIntent": "cta_marker" }
+    ],
+    "maxEvents": 8
+  }
+}

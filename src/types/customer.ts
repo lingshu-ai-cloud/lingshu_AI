@@ -1,5 +1,6 @@
 export type CustomerSource =
   | 'whatsapp'
+  | 'messenger'
   | 'facebook'
   | 'instagram'
   | 'tiktok'
@@ -11,7 +12,7 @@ export type CustomerSource =
   | string;
 export type CustomerStage = 'lead' | 'inquiry' | 'quoted' | 'won' | 'silent30' | 'silent60';
 export type HandlingMode = 'ai_auto' | 'ai_draft' | 'human_needed';
-export type TimelineType = 'whatsapp' | 'call' | 'note' | 'quote' | 'task' | 'system';
+export type TimelineType = 'whatsapp' | 'messenger' | 'instagram' | 'call' | 'note' | 'quote' | 'task' | 'system';
 export type AutonomyLevel = 'remind' | 'draft' | 'auto';
 
 export type AuthenticityBand = 'verified' | 'reduced' | 'suspected_scraping';
@@ -75,7 +76,8 @@ export interface TimelineEvent {
   time: string;
   timestamp?: number;
   autoSent?: boolean;
-  sendStatus?: 'draft' | 'queued' | 'sent' | 'delivered' | 'failed';
+  sendStatus?: 'draft' | 'queued' | 'sent' | 'delivered' | 'failed' | 'unknown';
+  sendRequestId?: string;
   sendMode?: 'free_text' | 'template';
   confirmedByHuman?: boolean;
   audit?: {
@@ -86,6 +88,24 @@ export interface TimelineEvent {
     knowledgeMiss?: boolean;
     buyerMessage?: string;
     evidence?: string[];
+    editedByHuman?: boolean;
+    originalDraft?: string;
+    memoryApplied?: string[];
+    providerMessageId?: string;
+    providerRecipientId?: string;
+  };
+}
+
+export interface CustomerSimulationScenario {
+  checkpoint: string;
+  goal: string;
+  expectedBehavior: string;
+  humanEditCount?: number;
+  memoryApplied?: string[];
+  editable?: boolean;
+  warning?: {
+    title: string;
+    reason: string;
   };
 }
 
@@ -98,8 +118,12 @@ export interface OrderRecord {
 }
 
 export interface CustomerProfile {
+  contextTagEvidence?: Array<{ tag: string; messageId: string; excerpt: string }>;
+  contextTagsUpdatedAt?: string;
   id: string;
   name: string;
+  /** Public profile name supplied by WhatsApp. Never use the internal display name as customer-facing copy. */
+  whatsappProfileName?: string;
   avatar: string;
   countryName: string;
   email?: string;
@@ -129,7 +153,12 @@ export interface CustomerProfile {
   hasUnread?: boolean;
   isReal?: boolean;
   isMock?: boolean;
+  simulation?: CustomerSimulationScenario;
   waNumber?: string;
+  messengerUserId?: string;
+  pageId?: string;
+  instagramUserId?: string;
+  instagramAccountId?: string;
   newProductMatch?: boolean;
   blockedAutoReplyReason?: string;
   pendingDraft?: string;

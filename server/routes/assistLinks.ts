@@ -8,6 +8,7 @@ import {
 } from '../lib/oauthConfig.js';
 import { signOAuthState, type TenantPlatform } from '../lib/tenantPlatformApps.js';
 import { store } from '../storage/index.js';
+import { metaOAuthScopes, tikTokOAuthScopes, youtubeOAuthScopes } from '../lib/socialOAuthScopes.js';
 
 export const assistLinksRouter = Router();
 
@@ -27,32 +28,6 @@ const META_AUTH_URL = 'https://www.facebook.com';
 const TIKTOK_AUTH_URL = 'https://www.tiktok.com/v2/auth/authorize/';
 const ASSIST_TTL_MS = 24 * 60 * 60 * 1000;
 const OAUTH_STATE_TTL_MS = 10 * 60 * 1000;
-const YOUTUBE_OAUTH_SCOPES = [
-  'https://www.googleapis.com/auth/youtube.upload',
-  'https://www.googleapis.com/auth/youtube.readonly',
-  'https://www.googleapis.com/auth/yt-analytics.readonly',
-];
-const META_SCOPES = [
-  'pages_show_list',
-  'pages_manage_metadata',
-  'pages_read_engagement',
-  'pages_manage_posts',
-  'pages_read_user_content',
-  'business_management',
-  'instagram_basic',
-  'instagram_content_publish',
-  'instagram_manage_comments',
-  'instagram_manage_insights',
-  'read_insights',
-];
-const TIKTOK_SCOPES = [
-  'user.info.basic',
-  'user.info.profile',
-  'user.info.stats',
-  'video.list',
-  'video.publish',
-];
-
 function bodyText(value: unknown): string {
   return typeof value === 'string' ? value.trim() : '';
 }
@@ -182,7 +157,7 @@ assistLinksRouter.post('/assist-links/:token/start', async (req, res) => {
     url.searchParams.set('client_id', client.clientId);
     url.searchParams.set('redirect_uri', redirectUri);
     url.searchParams.set('response_type', 'code');
-    url.searchParams.set('scope', YOUTUBE_OAUTH_SCOPES.join(' '));
+    url.searchParams.set('scope', youtubeOAuthScopes().join(' '));
     url.searchParams.set('access_type', 'offline');
     url.searchParams.set('include_granted_scopes', 'true');
     url.searchParams.set('prompt', 'consent');
@@ -202,7 +177,7 @@ assistLinksRouter.post('/assist-links/:token/start', async (req, res) => {
     url.searchParams.set('client_key', client.clientKey);
     url.searchParams.set('redirect_uri', redirectUri);
     url.searchParams.set('response_type', 'code');
-    url.searchParams.set('scope', TIKTOK_SCOPES.join(','));
+    url.searchParams.set('scope', tikTokOAuthScopes().join(','));
     url.searchParams.set('state', oauthState);
     res.json({ url: url.toString(), platform: record.platform, platformName: platformName(record.platform) });
     return;
@@ -218,7 +193,7 @@ assistLinksRouter.post('/assist-links/:token/start', async (req, res) => {
   url.searchParams.set('client_id', client.appId);
   url.searchParams.set('redirect_uri', redirectUri);
   url.searchParams.set('response_type', 'code');
-  url.searchParams.set('scope', META_SCOPES.join(','));
+  url.searchParams.set('scope', metaOAuthScopes('combined').join(','));
   url.searchParams.set('state', oauthState);
   url.searchParams.set('auth_type', 'rerequest');
   url.searchParams.set('return_scopes', 'true');

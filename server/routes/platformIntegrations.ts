@@ -5,19 +5,21 @@ import {
   getTenantPlatformApp,
   publicTenantPlatformApp,
   upsertTenantPlatformApp,
+  validateTenantOAuthCredentialPair,
 } from '../lib/tenantPlatformApps.js';
 import { getPublicOrigin } from '../lib/oauthConfig.js';
 import { disconnectTenantPlatformAccounts } from '../lib/socialAccountCleanup.js';
 
 export const platformIntegrationsRouter = Router();
 
-const SUPPORTED = ['shopify', 'tiktok', 'instagram', 'facebook', 'youtube', 'whatsapp'] as const;
+const SUPPORTED = ['shopify', 'tiktok', 'instagram', 'facebook', 'youtube', 'messenger'] as const;
 
 platformIntegrationsRouter.get('/oauth-config', requireAuth, async (req, res) => {
   const { tenantId } = res.locals as AuthLocals;
-  const [google, meta, tiktok] = await Promise.all([
+  const [google, meta, instagram, tiktok] = await Promise.all([
     getTenantPlatformApp(tenantId, 'google'),
     getTenantPlatformApp(tenantId, 'meta'),
+    getTenantPlatformApp(tenantId, 'instagram'),
     getTenantPlatformApp(tenantId, 'tiktok'),
   ]);
   const origin = getPublicOrigin(req);
@@ -27,13 +29,16 @@ platformIntegrationsRouter.get('/oauth-config', requireAuth, async (req, res) =>
     callbacks: {
       youtube: `${origin}/api/overseas/youtube/oauth/callback`,
       instagram: `${origin}/api/overseas/social/oauth/instagram/callback`,
+      instagramWebhook: `${origin}/api/webhooks/instagram/${tenantId}`,
       facebook: `${origin}/api/overseas/social/oauth/facebook/callback`,
+      messenger: `${origin}/api/webhooks/meta/${tenantId}`,
       tiktok: `${origin}/api/overseas/social/oauth/tiktok/callback`,
     },
     metaWebhookUrl: publicMeta?.webhookUrl || '',
     apps: {
       google: google ? publicTenantPlatformApp(req, google) : null,
       meta: publicMeta,
+      instagram: instagram ? publicTenantPlatformApp(req, instagram) : null,
       tiktok: tiktok ? publicTenantPlatformApp(req, tiktok) : null,
     },
   });
@@ -42,22 +47,38 @@ platformIntegrationsRouter.get('/oauth-config', requireAuth, async (req, res) =>
 platformIntegrationsRouter.put('/oauth-config', requireAuth, async (req, res) => {
   const { tenantId } = res.locals as AuthLocals;
   const text = (value: unknown) => typeof value === 'string' ? value.trim() : '';
+  if (text(req.body?.metaWebhookVerifyToken).length > 64 || text(req.body?.instagramWebhookVerifyToken).length > 64) {
+    res.status(400).json({ error: 'Webhook 验证口令最多允许 64 个字符。' });
+    return;
+  }
   const existing = await Promise.all([
     getTenantPlatformApp(tenantId, 'google'),
     getTenantPlatformApp(tenantId, 'meta'),
+    getTenantPlatformApp(tenantId, 'instagram'),
     getTenantPlatformApp(tenantId, 'tiktok'),
   ]);
+  const appId = (value: unknown, current: string | undefined) => value === undefined ? text(current) : text(value);
   const entries = [
-    { platform: 'google' as const, appId: text(req.body?.youtubeOAuthClientId), appSecret: text(req.body?.youtubeOAuthClientSecret) },
+    { platform: 'google' as const, appId: appId(req.body?.youtubeOAuthClientId, existing[0]?.app_id), appSecret: text(req.body?.youtubeOAuthClientSecret) },
     {
       platform: 'meta' as const,
-      appId: text(req.body?.metaSocialAppId),
+      appId: appId(req.body?.metaSocialAppId, existing[1]?.app_id),
       appSecret: text(req.body?.metaSocialAppSecret),
-      waConfigId: text(req.body?.metaWhatsAppConfigId),
+      webhookVerifyToken: text(req.body?.metaWebhookVerifyToken),
     },
-    { platform: 'tiktok' as const, appId: text(req.body?.tiktokClientKey), appSecret: text(req.body?.tiktokClientSecret) },
+    { platform: 'instagram' as const, appId: appId(req.body?.instagramAppId, existing[2]?.app_id), appSecret: text(req.body?.instagramAppSecret), webhookVerifyToken: text(req.body?.instagramWebhookVerifyToken) },
+    { platform: 'tiktok' as const, appId: appId(req.body?.tiktokClientKey, existing[3]?.app_id), appSecret: text(req.body?.tiktokClientSecret) },
   ];
-  await Promise.all(entries.filter((entry, index) => existing[index] || entry.appId || entry.appSecret || ('waConfigId' in entry && entry.waConfigId)).map(entry => upsertTenantPlatformApp({
+  // Validate every pair before starting any write so one invalid application
+  // cannot leave the other two partially updated.
+  for (const [index, entry] of entries.entries()) {
+    const error = validateTenantOAuthCredentialPair({ appId: entry.appId, appSecret: entry.appSecret, existing: existing[index] });
+    if (error) {
+      res.status(400).json({ error, platform: entry.platform });
+      return;
+    }
+  }
+  await Promise.all(entries.filter((entry, index) => existing[index] || entry.appId || entry.appSecret || ('webhookVerifyToken' in entry && entry.webhookVerifyToken)).map(entry => upsertTenantPlatformApp({
     tenantId,
     ...entry,
   })));
@@ -68,13 +89,13 @@ platformIntegrationsRouter.put('/oauth-config', requireAuth, async (req, res) =>
 platformIntegrationsRouter.delete('/oauth-config/:platform', requireAuth, async (req, res) => {
   const { tenantId } = res.locals as AuthLocals;
   const platform = req.params.platform;
-  if (!['google', 'meta', 'tiktok'].includes(platform)) {
+  if (!['google', 'meta', 'instagram', 'tiktok'].includes(platform)) {
     res.status(400).json({ error: 'invalid_oauth_platform' });
     return;
   }
 
   try {
-    const typedPlatform = platform as 'google' | 'meta' | 'tiktok';
+    const typedPlatform = platform as 'google' | 'meta' | 'instagram' | 'tiktok';
     const disconnectedAccounts = await disconnectTenantPlatformAccounts(tenantId, typedPlatform);
     const existing = await getTenantPlatformApp(tenantId, typedPlatform);
     const configDeleted = await deleteTenantPlatformApp(tenantId, typedPlatform);
@@ -93,9 +114,9 @@ platformIntegrationsRouter.get('/providers', (_req, res) => {
   res.json({
     providers: SUPPORTED.map(id => ({
       id,
-      oauth: ['shopify', 'tiktok', 'instagram', 'facebook', 'youtube'].includes(id),
-      messaging: ['whatsapp'].includes(id),
-      implemented: false,
+      oauth: ['shopify', 'tiktok', 'instagram', 'facebook', 'youtube', 'messenger'].includes(id),
+      messaging: id === 'messenger',
+      implemented: id === 'messenger',
       owner: 'platform-integrations',
     })),
   });
@@ -111,7 +132,7 @@ platformIntegrationsRouter.get('/:provider/status', requireAuth, async (req, res
   const { provider } = req.params;
   if (!SUPPORTED.includes(provider as any)) { res.status(404).json({ error: 'unsupported_provider' }); return; }
   const { tenantId } = res.locals as AuthLocals;
-  const appPlatform = ['whatsapp', 'facebook', 'instagram'].includes(provider)
+  const appPlatform = ['messenger', 'facebook', 'instagram'].includes(provider)
     ? 'meta'
     : provider === 'youtube'
       ? 'google'

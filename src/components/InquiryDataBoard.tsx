@@ -22,16 +22,17 @@ function latestWhatsApp(customer: CustomerProfile) {
 }
 
 function isWhatsAppInquiry(customer: CustomerProfile) {
-  return customer.source === 'whatsapp';
+  return String(customer.source).startsWith('whatsapp');
 }
 
-export default function InquiryDataBoard(_props: { windowDays?: number }) {
+export default function InquiryDataBoard({ includeMockCustomers = false, mockCustomerScope = 'admin', demoCustomers }: { windowDays?: number; includeMockCustomers?: boolean; mockCustomerScope?: string; demoCustomers?: CustomerProfile[] }) {
   const [refreshKey, setRefreshKey] = useState(0);
-  const { customers, loading } = useCustomers(refreshKey);
+  const { customers, loading } = useCustomers(refreshKey, includeMockCustomers, mockCustomerScope);
+  const effectiveCustomers = demoCustomers ?? customers;
 
-  const inquiries = useMemo(() => [...customers]
+  const inquiries = useMemo(() => [...effectiveCustomers]
     .filter(isWhatsAppInquiry)
-    .sort((a, b) => b.priority - a.priority || b.intentScore - a.intentScore), [customers]);
+    .sort((a, b) => b.priority - a.priority || b.intentScore - a.intentScore), [effectiveCustomers]);
 
   const summary = useMemo(() => {
     const highIntent = inquiries.filter(item => item.intentScore >= 80).length;
@@ -42,31 +43,33 @@ export default function InquiryDataBoard(_props: { windowDays?: number }) {
   }, [inquiries]);
 
   return (
-    <div className="h-full overflow-y-auto px-6 py-5">
+    <div className="secondary-data-board h-full overflow-y-auto px-4 py-6 sm:px-6">
       <div className="mb-4 flex items-center justify-between">
         <div>
-          <p className="text-sm font-bold text-text-primary">询盘真实数据</p>
-          <p className="mt-1 text-xs text-text-muted">数据来自「我的客户」tab 中的 WhatsApp 客户会话。</p>
+          <p className="text-sm font-bold text-text-primary">询盘经营数据</p>
+          <p className="mt-1 text-xs text-text-muted">与「我的会话」使用同一套 WhatsApp 客户记录。</p>
         </div>
         <button type="button" onClick={() => setRefreshKey(v => v + 1)} className="inline-flex items-center gap-1.5 rounded-lg border border-border px-3 py-1.5 text-xs font-semibold text-text-secondary hover:text-text-primary">
           <RefreshCw size={12} />刷新
         </button>
       </div>
 
-      {loading ? (
-        <div className="rounded-xl border border-dashed border-border bg-surface p-6 text-sm text-text-muted">正在读取 WhatsApp 客户会话...</div>
+      {demoCustomers && <div className="mb-4 border-l-4 border-amber-400 bg-amber-50 px-4 py-3 text-xs text-amber-950"><strong>参考预览：</strong>客户、消息、阶段与商机估值均为模拟，不代表真实询盘。</div>}
+
+      {loading && !demoCustomers ? (
+        <div className="secondary-empty border-l-2 border-border bg-surface p-5 text-sm text-text-muted">正在读取 WhatsApp 客户会话...</div>
       ) : inquiries.length === 0 ? (
         <EmptyState text="暂无 WhatsApp 客户会话。" />
       ) : (
         <>
-          <div className="mb-4 grid gap-3 md:grid-cols-4">
+          <div className="secondary-stat-strip mb-5">
             <StatCard label="WhatsApp询盘" value={String(inquiries.length)} icon={<SocialPlatformIcon platform="whatsapp" size={15} />} />
             <StatCard label="高意向客户" value={String(summary.highIntent)} icon={<TrendingUp size={14} />} />
             <StatCard label="需人工跟进" value={String(summary.needsHuman)} icon={<UserCheck size={14} />} />
             <StatCard label="预估金额" value={`$${summary.estimated.toLocaleString('en-US')}`} icon={<Info size={14} />} />
           </div>
 
-          <section className="rounded-xl border border-border bg-white">
+          <section className="secondary-panel border border-border bg-white">
             <div className="border-b border-border px-4 py-3">
               <p className="text-sm font-bold text-text-primary">WhatsApp 询盘明细</p>
             </div>
@@ -124,7 +127,7 @@ export default function InquiryDataBoard(_props: { windowDays?: number }) {
 
 function StatCard({ label, value, icon }: { label: string; value: string; icon: React.ReactNode }) {
   return (
-    <div className="rounded-xl border border-border bg-white p-3">
+    <div className="secondary-stat-item bg-transparent p-4">
       <div className="flex items-center gap-2 text-green-700">{icon}<span className="text-xs font-semibold text-text-secondary">{label}</span></div>
       <p className="mt-2 text-2xl font-bold leading-none text-text-primary">{value}</p>
     </div>
@@ -133,7 +136,7 @@ function StatCard({ label, value, icon }: { label: string; value: string; icon: 
 
 function EmptyState({ text }: { text: string }) {
   return (
-    <div className="rounded-xl border border-dashed border-border bg-surface p-6 text-sm text-text-muted">
+    <div className="secondary-empty border-l-2 border-border bg-surface p-5 text-sm text-text-muted">
       <div className="flex items-start gap-2"><AlertCircle size={16} className="mt-0.5 text-text-muted" /><p>{text}</p></div>
     </div>
   );
