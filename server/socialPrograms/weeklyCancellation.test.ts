@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import type { DataStore, Record_, ListQuery } from '../storage/datastore.js';
 import { reconcileWeeklyCancellation, WEEKLY_CANCELLATIONS } from './weeklyCancellation.js';
+import { socialRequestHash } from '../starter198/socialContentValidation.js';
 type Row = Record_ & Record<string, any>;
 function memoryStore() {
   const rows = new Map<string, Row[]>();
@@ -54,6 +55,24 @@ test('weekly compensation does not touch cross-tenant or other-version bindings 
   await reconcileWeeklyCancellation({ dataStore, tenantId: 'tenant', programId: 'program', packageId: 'package', packageVersion: 1, reason: 'cancel', now: '2026-10-07T00:00:00Z', cancelPending: async () => {} });
   assert.equal(rows.get('starter_social_content_tasks')![1]!.status, 'generating');
   assert.equal(rows.get('starter_social_content_tasks')![2]!.status, 'generating');
+});
+
+test('weekly compensation follows creative repair child mapping and preserves unknown provider evidence', async () => {
+  const { rows, dataStore } = memoryStore();
+  rows.set('social_weekly_production_repair_cases', [{ id: 'case-row', tenant_id: 'tenant', package_id: 'package', package_version: 1, case_id: 'creative-case', payload: { kind: 'creative_revision', requestHash: 'case-request-hash' } }]);
+  const mappingBody = { schemaVersion: 'weekly-creative-repair-child-execution.v1', version: 1, tenantId: 'tenant', caseId: 'creative-case', caseRequestHash: 'case-request-hash', childTaskId: 'creative-child', runId: 'creative-run', jobId: 'creative-job' }, mapping = { ...mappingBody, recordHash: socialRequestHash(mappingBody) };
+  rows.set('social_weekly_creative_repair_child_executions', [{ id: 'mapping', tenant_id: 'tenant', case_id: 'creative-case', content_hash: socialRequestHash(mapping), payload: mapping }]);
+  rows.get('starter_social_content_tasks')!.push({ id: 'creative-binding', tenant_id: 'tenant', task_id: 'creative-child', run_id: 'creative-run', weekly_plan_id: null, create_idempotency_key: 'weekly-creative-repair:creative-case:configuration-hash', status: 'generating' });
+  rows.get('workflow_runs')!.push({ id: 'creative-run', tenant_id: 'tenant', status: 'running', goal_id: 'creative-goal' });
+  rows.get('weekly_goals')!.push({ id: 'creative-goal', tenant_id: 'tenant', status: 'active' });
+  rows.get('workflow_tasks')!.push({ id: 'creative-run-task', tenant_id: 'tenant', run_id: 'creative-run', status: 'running' });
+  rows.get('content_execution_jobs')!.push({ id: 'creative-job', tenant_id: 'tenant', job_key: 'creative-key', task_id: 'creative-child', run_id: 'creative-run', user_id: 'owner', account_id: 'account', task_type: 'social-content', status: 'running', provider_receipts: [{ provider: 'actual', requestId: 'creative-request', state: 'accepted', providerTaskId: 'paid-creative-task', metadata: {}, firstRecordedAt: '2026-10-07T00:00:00Z', updatedAt: '2026-10-07T00:00:00Z' }] });
+  const completed = await reconcileWeeklyCancellation({ dataStore, tenantId: 'tenant', programId: 'program', packageId: 'package', packageVersion: 1, reason: 'cancel', now: '2026-10-07T00:00:00Z', cancelPending: async () => {} });
+  assert.equal(rows.get('content_execution_jobs')!.find(row => row.id === 'creative-job')!.status, 'cancelled');
+  assert.equal(rows.get('workflow_runs')!.find(row => row.id === 'creative-run')!.status, 'cancelled');
+  assert.equal(rows.get('starter_social_content_tasks')!.find(row => row.id === 'creative-binding')!.status, 'paused');
+  assert.ok(completed.effects.some(effect => effect.resourceId === 'creative-job' && effect.outcome === 'unknown_requires_reconciliation' && effect.receiptRefs.includes('paid-creative-task')));
+  assert.equal((await reconcileWeeklyCancellation({ dataStore, tenantId: 'tenant', programId: 'program', packageId: 'package', packageVersion: 1, reason: 'cancel', now: '2026-10-07T00:00:00Z', cancelPending: async () => {} })).effects.filter(effect => effect.resourceId === 'creative-job').length, 1);
 });
 
 test('shared admission fence prevents late production and exposes truthful scoped cancellation summary', async () => {
