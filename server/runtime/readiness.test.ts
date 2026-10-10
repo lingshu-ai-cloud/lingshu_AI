@@ -14,11 +14,15 @@ import {
 } from './readiness.js';
 
 const previous = { ...process.env };
+const credentialRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'readiness-credential-'));
+const credentialFile = path.join(credentialRoot, 'key');
+fs.writeFileSync(credentialFile, 'isolated-test-key', { mode: 0o600 });
 try {
   process.env.NODE_ENV = 'production';
   process.env.OVERSEAS_LLM_BACKEND = 'qwen';
   delete process.env.GEMINI_API_KEY;
   delete process.env.DASHSCOPE_API_KEY;
+  process.env.DASHSCOPE_API_KEY_FILE = path.join(credentialRoot, 'missing');
   process.env.REQUIRED_CAPABILITIES = 'text_generation,quote,unknown';
   const unavailable = runtimeCapabilities('web');
   assert.equal(unavailable.text_generation.ready, false);
@@ -59,7 +63,7 @@ try {
   });
   assert.deepEqual(semanticBlocked.missing, ['DASHSCOPE_API_KEY 或 DASHSCOPE_API_KEY_FILE（独立语义质检）', 'QWEN_DIGITAL_HUMAN_QA_MODEL']);
   assert.deepEqual(sentenceReplicationReadiness({
-    SEEDANCE_SENTENCE_ENABLED: 'true', SEEDANCE_API_KEY: 'configured-for-test', SEEDANCE_MODEL: 'seedance-test', DIGITAL_HUMAN_SEMANTIC_QA_ENABLED: 'true', DASHSCOPE_API_KEY_FILE: '/secret/key', QWEN_DIGITAL_HUMAN_QA_MODEL: 'qwen-test',
+    SEEDANCE_SENTENCE_ENABLED: 'true', SEEDANCE_API_KEY: 'configured-for-test', SEEDANCE_MODEL: 'seedance-test', DIGITAL_HUMAN_SEMANTIC_QA_ENABLED: 'true', DASHSCOPE_API_KEY_FILE: credentialFile, QWEN_DIGITAL_HUMAN_QA_MODEL: 'qwen-test',
     OBJECT_STORAGE_DRIVER: 'cos',
     OBJECT_STORAGE_ENDPOINT: 'https://object.example.test', OBJECT_STORAGE_ACCESS_KEY_ID: 'configured-for-test', OBJECT_STORAGE_SECRET_ACCESS_KEY: 'configured-for-test', OBJECT_STORAGE_BUCKET_NAME: 'assets',
   }), { ready: true, missing: [] });
@@ -214,6 +218,7 @@ try {
   assert.equal(qualityChecks, 1, 'immutable QA runtime self-check must run only once per process');
   console.log('runtime readiness contract passed');
 } finally {
+  fs.rmSync(credentialRoot, { recursive: true, force: true });
   for (const key of Object.keys(process.env)) if (!(key in previous)) delete process.env[key];
   Object.assign(process.env, previous);
 }

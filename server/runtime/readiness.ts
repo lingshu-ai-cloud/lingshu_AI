@@ -1,6 +1,7 @@
 import {weeklyExecutionObservation} from './weeklyExecutionObservation.js';
 import fs from 'node:fs';
 import path from 'node:path';
+import os from 'node:os';
 import { execFile } from 'node:child_process';
 import { getPbUrl, pbListStrict } from '../storage/pb.js';
 import { processRoleStartsBackgroundJobs, type ProcessRole } from './processRole.js';
@@ -65,6 +66,14 @@ const present = (name: string) => Boolean(String(process.env[name] || '').trim()
 
 const envEnabled = (env: NodeJS.ProcessEnv, name: string) => String(env[name] || '').trim().toLowerCase() === 'true';
 const envPresent = (env: NodeJS.ProcessEnv, name: string) => Boolean(String(env[name] || '').trim());
+/** Match the provider's environment/key-file fallback without exposing its value. */
+function dashscopeCredentialConfigured(env: NodeJS.ProcessEnv): boolean {
+  if (envPresent(env, 'DASHSCOPE_API_KEY')) return true;
+  const file = String(env.DASHSCOPE_API_KEY_FILE || (env === process.env ? path.join(os.homedir(), '.config/lingshu/dashscope.key') : '')).trim();
+  if (!file) return false;
+  try { return fs.statSync(file).isFile() && Boolean(fs.readFileSync(file, 'utf8').trim()); }
+  catch { return false; }
+}
 const positiveFinite = (env: NodeJS.ProcessEnv, name: string) => {
   const value = Number(String(env[name] || '').trim());
   return Number.isFinite(value) && value > 0;
@@ -138,7 +147,7 @@ export function sentenceReplicationReadiness(env: NodeJS.ProcessEnv = process.en
     videoProvider === 'seedance' && !configured('SEEDANCE_API_KEY') && 'SEEDANCE_API_KEY',
     videoProvider === 'seedance' && !configured('SEEDANCE_MODEL') && 'SEEDANCE_MODEL',
     !(configured('SEEDREAM_API_KEY') || configured('SEEDANCE_API_KEY')) && 'SEEDREAM_API_KEY 或 SEEDANCE_API_KEY（Seedream 目标人物首帧生成）',
-    switchedOn('DIGITAL_HUMAN_SEMANTIC_QA_ENABLED') && !(configured('DASHSCOPE_API_KEY') || configured('DASHSCOPE_API_KEY_FILE')) && 'DASHSCOPE_API_KEY 或 DASHSCOPE_API_KEY_FILE（独立语义质检）',
+    switchedOn('DIGITAL_HUMAN_SEMANTIC_QA_ENABLED') && !dashscopeCredentialConfigured(env) && 'DASHSCOPE_API_KEY 或 DASHSCOPE_API_KEY_FILE（独立语义质检）',
     switchedOn('DIGITAL_HUMAN_SEMANTIC_QA_ENABLED') && !configured('QWEN_DIGITAL_HUMAN_QA_MODEL') && 'QWEN_DIGITAL_HUMAN_QA_MODEL',
     cloudStorage && !objectEndpoint && '对象存储 endpoint/account',
     cloudStorage && !objectAccessKey && '对象存储 access key',
@@ -166,7 +175,7 @@ function digitalHumanQualityConfig(env: NodeJS.ProcessEnv): DigitalHumanQualityR
     ? { ready: true }
     : { ready: false, reason: 'visual_qa_python_missing' };
   const semanticReady = envEnabled(env, 'DIGITAL_HUMAN_SEMANTIC_QA_ENABLED')
-    && (envPresent(env, 'DASHSCOPE_API_KEY') || envPresent(env, 'DASHSCOPE_API_KEY_FILE'))
+    && dashscopeCredentialConfigured(env)
     && envPresent(env, 'QWEN_DIGITAL_HUMAN_QA_MODEL');
   const semantic: CapabilityState = semanticReady ? { ready: true } : { ready: false, reason: 'semantic_qa_disabled_or_unconfigured' };
   const lipSyncReady = envEnabled(env, 'DIGITAL_HUMAN_SYNCNET_QA_ENABLED')
@@ -248,7 +257,7 @@ function textGenerationCapability(): CapabilityState {
     return { ready, reason: ready ? undefined : 'selected_text_model_key_missing:gemini' };
   }
   if (backend === 'qwen') {
-    const ready = present('DASHSCOPE_API_KEY');
+    const ready = dashscopeCredentialConfigured(process.env);
     return { ready, reason: ready ? undefined : 'selected_text_model_key_missing:qwen' };
   }
   return { ready: false, reason: `unsupported_text_model_backend:${backend || 'empty'}` };
@@ -257,7 +266,7 @@ function textGenerationCapability(): CapabilityState {
 export function runtimeCapabilities(role: ProcessRole): Record<RuntimeCapability, CapabilityState> {
   const background = processRoleStartsBackgroundJobs(role);
   const textGeneration = textGenerationCapability();
-  const qwenReady = present('DASHSCOPE_API_KEY');
+  const qwenReady = dashscopeCredentialConfigured(process.env);
   const ttsReady = present('MINIMAX_API_KEY') || present('PIPER_BIN') || present('XTTS_BIN');
   const videoReady = (enabled('SEEDANCE_VIDEO_ENABLED') && present('SEEDANCE_API_KEY'))
     || (enabled('GEMINI_VIDEO_ENABLED') && present('GEMINI_API_KEY'));
