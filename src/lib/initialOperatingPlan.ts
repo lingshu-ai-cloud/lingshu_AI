@@ -2,13 +2,13 @@ import type { DigitalEmployeeConfig, PublishingTarget } from './digitalEmployees
 import type { SocialContentStageId } from './socialContentStage';
 import { buildPresetMatrixVideoPlans, weeklyTaskPackagePreset } from './weeklyTaskPackagePresets';
 import { defaultMatrixPlan, linkMatrixVersionsToMasters } from './weeklyMatrix';
-export type InitialOperatingPlan = { stage: SocialContentStageId; products: string[]; market: string; language: string; platforms: PublishingTarget['platform'][]; count: number; budgetCapCny: number; deliveryDate: string };
+export type InitialOperatingPlan = { stage: SocialContentStageId; products: string[]; market: string; language: string; platforms: PublishingTarget['platform'][]; accountIds?: Partial<Record<PublishingTarget["platform"], string>>; count: number; budgetCapCny: number; deliveryDate: string };
 export function recommendFocusProducts(products: Array<Record<string, any>>): string[] {
   return products.map((p,index)=>({name:String(p.name||p.title||p.productName||'').trim(),index,score:Number(!!p.description)+Number(!!p.highlights)+Number(!!p.sku)+Number(Array.isArray(p.images)&&p.images.length>0)*2})).filter(p=>p.name).sort((a,b)=>b.score-a.score||a.index-b.index).slice(0,2).map(p=>p.name);
 }
 export function initialPlanMatrixRows(plan:InitialOperatingPlan, config:DigitalEmployeeConfig){
  const rows=defaultMatrixPlan({...config,focusProducts:plan.products.join("、"),videoDefaults:{...config.videoDefaults,language:plan.language}},plan.platforms,"完成首次经营内容交付");
- return plan.platforms.flatMap(platform=>{const row=rows.find(r=>r.platform===platform);return row?[{...row,weeklyCount:plan.count}]:[];});
+ return plan.platforms.flatMap(platform=>{const row=rows.find(r=>r.platform===platform&&(!plan.accountIds?.[platform]||r.accountId===plan.accountIds[platform]));return row?[{...row,weeklyCount:plan.count}]:[];});
 }
 export function initialPlanVideoPlans(plan:InitialOperatingPlan, config:DigitalEmployeeConfig){
   const preset=weeklyTaskPackagePreset(plan.stage==='b2b_launch'?'b2b_starting':plan.stage==='b2b_growth'?'b2b_growing':'dtc_sales');
