@@ -3,6 +3,8 @@ import type {WeeklyExecutionTask,VersionedSocialRef} from './socialProgram.js';
 export interface WeeklyContentQualityRecoveryReceipt extends SocialDirectorG5Scope {
  requestId:string;executionTaskId:string;programId:string;packageId:string;packageVersion:number;publicationTaskId:string;
  expectedContextHash:string;sourceHash:string;artifactRef:VersionedSocialRef;g5ReceiptId:string;g5ReviewId:string;auditSourceHash:string;g5ReceiptHash:string;g5ReviewHash:string;
+ clearedBlocker?:'weekly_production_quality_review_required'|'weekly_quality_audit_actual_repair_required';
+ repairParentArtifactRef?:VersionedSocialRef|null;
  recoveredBy:string;recoveredAt:string;recordHash:string;
 }
 export interface WeeklyContentQualityRecoveryConsumer {

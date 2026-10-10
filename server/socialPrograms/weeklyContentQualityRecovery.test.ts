@@ -59,3 +59,24 @@ for(const failure of ['aggregate_update','aggregate_lease'] as const)test(`persi
  assert.deepEqual((await restart.resume(f.scope,'owner',body)).item,read.item);assert.equal(f.current().qualityRecoveries!.length,1);
  assert.equal(f.tables.starter_social_content_tasks!.length,1);assert.equal(f.tables.content_execution_jobs?.length??0,0);assert.equal(f.tables.social_publication_attempts?.length??0,0);
 });
+
+
+test('hard-failed original artifact cannot be recovered by adding real audits to the same artifact',async t=>{
+ const f=await prepareWeeklyQualityRecoveryFixture({hardFailure:true});t.after(f.cleanup);
+ await f.completeG5();
+ const context=await f.service.context(f.scope,'owner'),consumer=context.consumers.find(c=>c.executionTaskId===f.task.taskId);
+ assert.ok(consumer);assert.equal(consumer.resumeAvailable,false);
+ const body={executionTaskId:f.task.taskId,requestId:'hard-failure-original-artifact-0001',expectedContextHash:consumer.contextHash};
+ for(let attempt=0;attempt<2;attempt++)await assert.rejects(f.service.resume(f.scope,'owner',body));
+ assert.equal(f.current().status,'blocked');assert.deepEqual(f.current().ownBlockingReasons,['weekly_quality_audit_actual_repair_required']);
+ assert.equal(f.current().qualityRecoveries?.length??0,0);assert.deepEqual(f.current().resultRefs,[]);
+ assert.equal(f.tables.starter_social_content_artifacts!.length,1);assert.equal(f.tables.content_execution_jobs?.length??0,0);
+});
+
+test('hard failure context must identify that a verified descendant repair artifact is required (contract red)',async t=>{
+ const f=await prepareWeeklyQualityRecoveryFixture({hardFailure:true});t.after(f.cleanup);await f.completeG5();
+ const context=await f.service.context(f.scope,'owner'),consumer=context.consumers.find(c=>c.executionTaskId===f.task.taskId);assert.ok(consumer);
+ // A passing audit of the original output is deliberately insufficient. The service
+ // must expose the repair-parent requirement, rather than treating this as an unrelated blocker.
+ assert.equal(consumer.gap?.code,'weekly_quality_recovery_repair_artifact_required');
+});
