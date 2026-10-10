@@ -387,3 +387,27 @@ test('an execution stopped after durable pause cannot project a blocked failure'
  const worker=new DurableContentExecutionWorker({dataStore:store,env,async execute(){await controlContentExecutionJob({dataStore:store,tenantId:'tenant-a',jobId:job.id,action:'pause'});throw Error('content_execution_stopped');},async onSucceeded(){success++;},async onBlocked(){block++;},async onRetry(){retry++;}});
  await worker.drain();for(let n=0;n<30&&worker.isLocallyActive('tenant-a','stopped-task');n++)await new Promise<void>(resolve=>setImmediate(resolve));worker.stop();assert.equal((await readContentExecutionJob(store,'tenant-a','stopped-task','stopped-run'))?.status,'paused');assert.equal(success+block+retry,0);
 });
+
+test('resume cannot erase an unsettled paused worker or let its late completion settle resumed production',async()=>{
+ const store=new MemoryStore();const admission={dataStore:store,tenantId:'tenant-a',userId:'user-a',taskId:'unsettled-phase-task',runId:'unsettled-phase-run',accountId:'account-a',taskType:'social_content_weekly'};
+ const original=await admitContentExecutionJob(admission);let executions=0,success=0;
+ let release!:()=>void,entered!:()=>void;const gate=new Promise<void>(resolve=>{release=resolve;}),started=new Promise<void>(resolve=>{entered=resolve;});
+ const worker=new DurableContentExecutionWorker({dataStore:store,env,async execute(){executions++;if(executions===1){entered();await gate;}},async onSucceeded(){success++;}});
+ try{
+  await worker.drain();await started;
+  const paused=await controlContentExecutionJob({dataStore:store,tenantId:'tenant-a',jobId:original.id,action:'pause'});
+  assert.ok(paused.workerId);assert.ok(paused.leaseExpiresAt);
+  const repeated=await admitContentExecutionJob(admission);assert.equal(repeated.id,original.id);assert.equal(repeated.status,'paused');
+  await assert.rejects(controlContentExecutionJob({dataStore:store,tenantId:'tenant-a',jobId:original.id,action:'resume'}),/content_execution_original_worker_not_settled/);
+  // Expiration alone does not prove that the original external call stopped.
+  await store.update(CONTENT_EXECUTION_JOB_COLLECTION,original.id,{lease_expires_at:'2000-01-01T00:00:00.000Z'});
+  await assert.rejects(controlContentExecutionJob({dataStore:store,tenantId:'tenant-a',jobId:original.id,action:'resume'}),/content_execution_original_worker_not_settled/);
+  release();for(let n=0;n<60&&worker.isLocallyActive('tenant-a','unsettled-phase-task');n++)await new Promise<void>(resolve=>setImmediate(resolve));
+  assert.equal(worker.isLocallyActive('tenant-a','unsettled-phase-task'),false);
+  const settled=await readContentExecutionJob(store,'tenant-a','unsettled-phase-task','unsettled-phase-run');assert.equal(settled?.status,'paused');assert.equal(settled?.workerId,null);assert.equal(settled?.leaseExpiresAt,null);assert.equal(success,0);
+  const resumed=await controlContentExecutionJob({dataStore:store,tenantId:'tenant-a',jobId:original.id,action:'resume'});assert.equal(resumed.id,original.id);assert.equal(resumed.runId,original.runId);assert.equal(resumed.status,'queued');
+  await worker.drain();for(let n=0;n<60&&worker.isLocallyActive('tenant-a','unsettled-phase-task');n++)await new Promise<void>(resolve=>setImmediate(resolve));
+  assert.equal((await readContentExecutionJob(store,'tenant-a','unsettled-phase-task','unsettled-phase-run'))?.status,'succeeded');assert.equal(executions,2);assert.equal(success,1);
+  assert.equal((await store.list(CONTENT_EXECUTION_JOB_COLLECTION)).totalItems,1);
+ }finally{release();worker.stop();}
+});

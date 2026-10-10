@@ -608,6 +608,9 @@ export async function controlContentExecutionJob(input: {
     patch = { status: 'cancelled', next_attempt_at: '', completed_at: now, updated_at: now };
   } else if (input.action === 'resume') {
     if (!['paused', 'cancelled'].includes(current.status)) throw new Error('content_execution_job_not_resumable');
+    // A pause stops later stages; the original external call must settle first.
+    // An expired lease cannot prove that an in-flight provider call has stopped.
+    if (current.workerId !== null || current.leaseExpiresAt !== null) throw new Error('content_execution_original_worker_not_settled');
     const reconcile = hasProviderWork(current);
     patch = {
       status: reconcile ? 'reconciling' : 'queued',
