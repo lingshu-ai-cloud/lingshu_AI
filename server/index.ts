@@ -53,7 +53,7 @@ import { followupTemplatesRouter } from './routes/followupTemplates.js';
 import { digitalEmployeesRouter } from './routes/digitalEmployees.js';
 import { startBackgroundJobs } from './runtime/backgroundJobs.js';
 import { parseProcessRole, processRoleStartsBackgroundJobs, processRoleStartsHttp } from './runtime/processRole.js';
-import { starter198Router } from './starter198/router.js';
+import { starter198Router } from './routes/starter198Mobile.js';
 import { requireAuth, enforceSupportSessionReadOnly } from './middleware/auth.js';
 import { quoteSkillRouter } from './routes/quoteSkill.js';
 import { platformAdsRouter } from './routes/platformAds.js';

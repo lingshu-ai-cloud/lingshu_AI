@@ -1,6 +1,3 @@
-import { transcribeMobileVoice } from '../routes/mobileWorkbench.js';
-import { createMobileWorkbenchQueueRouter } from '../routes/mobileWorkbenchQueue.js';
-import { store } from '../storage/index.js';
 import { json, Router, type Request } from 'express';
 import { requestOrganizationRoleStrict } from '../lib/organizationRole.js';
 import { enforceSupportSessionReadOnly, requireAuth, type AuthLocals } from '../middleware/auth.js';
@@ -29,6 +26,10 @@ import {
 import { createSocialContentRouter } from './socialContentRouter.js';
 
 export interface Starter198RouterDependencies extends Starter198CommandDependencies {
+  mobileWorkbench?: {
+    queueRouter: (workspace: (req: Request, res: import('express').Response) => ReturnType<typeof buildStarter198Workspace>) => Router;
+    transcribe: (req: Request, res: import('express').Response) => Promise<void>;
+  };
   repository?: Starter198Repository;
   resolveRole?: (request: Request, userId: string) => Promise<unknown>;
   readProductionModel?: (tenantId: string) => Promise<StarterProductionReadModel>;
@@ -84,10 +85,10 @@ export function createStarter198Router(dependencies: Starter198RouterDependencie
       quoteEvidenceAvailable: Boolean(dependencies.quoteEvidence), quoteSelfServiceAvailable: Boolean(dependencies.quoteSelfService),
       setupAvailable: Boolean(dependencies.initialSetup), loadProductionReadModel: dependencies.readProductionModel });
   };
-  router.use('/mobile', createMobileWorkbenchQueueRouter(store, mobileWorkspace));
+  if (dependencies.mobileWorkbench) router.use('/mobile', dependencies.mobileWorkbench.queueRouter(mobileWorkspace));
 
-  router.post('/mobile/transcribe', json({limit:'3mb'}), enforceSupportSessionReadOnly, async (req, res) => {
-    try { await mobileWorkspace(req, res); await transcribeMobileVoice(req, res); } catch (error) { sendFailure(res, error); }
+  if (dependencies.mobileWorkbench) router.post('/mobile/transcribe', json({limit:'3mb'}), enforceSupportSessionReadOnly, async (req, res) => {
+    try { await mobileWorkspace(req, res); await dependencies.mobileWorkbench!.transcribe(req, res); } catch (error) { sendFailure(res, error); }
   });
 
   router.get('/workspace', async (req, res) => {
@@ -203,7 +204,9 @@ export function createStarter198Router(dependencies: Starter198RouterDependencie
   return router;
 }
 
-export const starter198Router = createStarter198Router({
+export function createDefaultStarter198Router(mobileWorkbench?: Starter198RouterDependencies['mobileWorkbench']) {
+  return createStarter198Router({
+  mobileWorkbench,
   initialSetup: createStarter198InitialSetupPort(),
   orchestratorQueue: createStarter198OrchestratorQueue(),
   approvalDecision: createStarter198ApprovalDecisionPort(),
@@ -212,3 +215,6 @@ export const starter198Router = createStarter198Router({
   quoteSelfService: createStarter198QuoteSelfServicePort(),
   readProductionModel: readStarterProductionModel,
 });
+}
+
+export const starter198Router = createDefaultStarter198Router();

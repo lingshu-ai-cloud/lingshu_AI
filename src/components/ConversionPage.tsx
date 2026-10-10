@@ -574,6 +574,7 @@ function CompactCustomerList({
               <div className="min-w-0">
                 <p className="truncate text-[13px] font-semibold leading-5 text-text-primary" title={customer.name}>{customer.name}</p>
                 <div className="mt-1 flex flex-wrap items-center gap-1.5">
+                  <Tag className="!m-0 !text-[9px]">{customer.isMock ? '模拟客户' : '真实客户'}</Tag>
                   {customer.simulation?.warning && <span className="rounded bg-red-600 px-1.5 py-0.5 text-[9px] font-semibold text-white">大单预警</span>}
                   <SourceIcon source={customer.source} size={11} />
                 </div>
@@ -856,6 +857,7 @@ function ChatThread({
           <div className="min-w-0">
           <div className="flex min-w-0 items-center gap-2">
             <p className="truncate text-base font-semibold text-text-primary">{customer.name}</p>
+            <Tag className="!m-0 !text-[10px]">{customer.isMock ? '模拟客户 · 不对外发送' : channelReady ? '真实客户 · 通道已连接' : '真实客户 · 通道未连接'}</Tag>
           </div>
           <div className="mt-0.5 flex items-center gap-1.5 text-[11px] text-text-muted">
             <span>{STAGE_LABEL[customer.stage]}</span>

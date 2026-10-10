@@ -24,6 +24,7 @@ type Props = {
   label: string;
   initialDate?: string;
   initialView?: LsCalendarView;
+  view?: LsCalendarView;
   firstDay?: number;
   eventCardMode?: 'compact' | 'media';
   date?: string;
@@ -113,7 +114,7 @@ function CalendarThumbnail({ src, title, large = false, card = false }: { src?: 
 }
 
 /** Standard plugins only: all calendar pages share the same events, timezone and accessible detail path. */
-export function LsCalendar({ events, label, initialDate, initialView = 'dayGridMonth', firstDay = 1, eventCardMode = 'compact', date, timeZone = 'Asia/Shanghai', loading, timeGridHeight = 'clamp(320px, 65dvh, 720px)', fixedHeight, primaryAction, filters, onRefresh, onDatesSet, onDateClick, onExternalDrop, onMoveEvent, renderDetails }: Props) {
+export function LsCalendar({ events, label, initialDate, initialView = 'dayGridMonth', view: controlledView, firstDay = 1, eventCardMode = 'compact', date, timeZone = 'Asia/Shanghai', loading, timeGridHeight = 'clamp(320px, 65dvh, 720px)', fixedHeight, primaryAction, filters, onRefresh, onDatesSet, onDateClick, onExternalDrop, onMoveEvent, renderDetails }: Props) {
   const calendarRef = useRef<CalendarRef>(null);
   const hostRef = useRef<HTMLDivElement>(null);
   const eventsRef = useRef(events);
@@ -132,6 +133,9 @@ export function LsCalendar({ events, label, initialDate, initialView = 'dayGridM
   const moveRef = useRef(onMoveEvent);
   moveRef.current = onMoveEvent;
 
+  useEffect(() => {
+    if (controlledView) { setView(controlledView); const api=calendarRef.current?.getApi(); if(api&&api.view.type!==controlledView)api.changeView(controlledView); }
+  }, [controlledView]);
   useEffect(() => {
     if (date) calendarRef.current?.getApi().gotoDate(date);
   }, [date]);

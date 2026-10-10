@@ -36,6 +36,7 @@ import { loadConnectedSocialPerformance, type ConnectedSocialPerformance } from 
 import { starterWorkspaceApi, type StarterAgentRole } from "../lib/starterWorkspace";
 import { authHeader } from "../lib/auth";
 import ProductionTaskScene from "./ProductionTaskScene";
+import MatrixPublicationSchedule from "./smartBusiness/MatrixPublicationSchedule";
 import MatrixWorkSchedule from "./smartBusiness/MatrixWorkSchedule";
 import NextRoundRecommendationsSection from "./NextRoundRecommendationsSection";
 import AccountActivity from "./AccountActivity";
@@ -735,7 +736,9 @@ const matrixScheduleStages = [
 ] as const;
 
 
-function MatrixView({ data, onRefresh, onNavigate, onGeneratePlan, selectedAccountId = "", onOpenContent, onOpenProductionProgress, onRetryTask }: {
+function MatrixView({ calendarTasks, calendarDemo, data, onRefresh, onNavigate, onGeneratePlan, selectedAccountId = "", onOpenContent, onOpenProductionProgress, onRetryTask }: {
+  calendarTasks?: AgentCalendarTask[];
+  calendarDemo?: boolean;
   data: DigitalEmployeeOverview;
   onRefresh?: () => void;
   onNavigate?: (page: Page) => void;
@@ -896,6 +899,7 @@ function MatrixView({ data, onRefresh, onNavigate, onGeneratePlan, selectedAccou
   };
 
   return <div className="space-y-5">
+    <MatrixPublicationSchedule calendarTasks={calendarTasks} calendarDemo={calendarDemo} taskItems={data.contentQueue?.items} onOpenTask={onOpenProductionProgress} onOpenContent={onOpenContent} startsAt={goal?.startsAt} endsAt={goal?.endsAt} accounts={accountRows} plans={productionPlans} selectedAccountId={selectedAccountId} onOpenPublishing={() => onNavigate?.("traffic")}/>
     <AccountHealthPanel accounts={selectedAccounts.map(row => ({ accountId: row.accountId, accountLabel: row.accountLabel, platform: row.platform, weeklyCount: row.weeklyCount, connected: row.connected, audience: row.audience, productName: row.productName, contentDirection: row.contentDirection, formats: row.formats, cta: row.cta }))} startsAt={goal?.startsAt || ""} endsAt={goal?.endsAt || ""} channelsLoaded={connectionStatus.loaded} whatsappConnected={connectionStatus.whatsapp} messengerPages={connectionStatus.messengerPages} inquiryEvidence={data.businessSnapshot?.interactionReview?.breakdown || []}/>
     <section aria-label="本周账号更新完成度" className="flex items-center justify-between gap-5 rounded-lg border border-border bg-white px-5 py-4">
       <div><h2 className="text-sm font-semibold text-text-primary">本周账号更新完成度</h2><p className="mt-1 text-xs text-text-secondary">{weeklyCompletedCount}/{weeklyTargetCount} 条计划视频已完成</p></div>
@@ -1448,7 +1452,7 @@ function ReviewView({ data, selectedAccountId = "", onNavigate }: { data: Digita
 }
 
 export default function SmartBusinessDashboard({ calendarTasks, calendarDemo, data, view, selectedAccountId, selectedContentItemId, onRefresh, onNavigate, onGeneratePlan, onGenerateDetails, onOpenContent, onOpenProductionProgress, onBackToQueue, onRetryTask, onControlJob }: { calendarTasks?: AgentCalendarTask[]; calendarDemo?: boolean; data: DigitalEmployeeOverview; view: SmartBusinessView; selectedAccountId?: string; selectedContentItemId?: string; onRefresh?: () => void; onNavigate?: (page: Page) => void; onGeneratePlan?: () => void; onGenerateDetails?: () => void; onOpenContent?: (taskId?: string, socialContentTaskId?: string) => void; onOpenProductionProgress?: (taskId: string, contentItemId: string) => void; onBackToQueue?: () => void; onRetryTask?: (taskId: string) => Promise<boolean>; onControlJob?: (jobId: string, action: ExecutionControlAction) => Promise<boolean> }) {
-  if (view === "matrix") return <MatrixView data={data} selectedAccountId={selectedAccountId} onRefresh={onRefresh} onNavigate={onNavigate} onGeneratePlan={onGeneratePlan} onOpenContent={onOpenContent} onOpenProductionProgress={onOpenProductionProgress} onRetryTask={onRetryTask}/>;
+  if (view === "matrix") return <MatrixView calendarTasks={calendarTasks} calendarDemo={calendarDemo} data={data} selectedAccountId={selectedAccountId} onRefresh={onRefresh} onNavigate={onNavigate} onGeneratePlan={onGeneratePlan} onOpenContent={onOpenContent} onOpenProductionProgress={onOpenProductionProgress} onRetryTask={onRetryTask}/>;
   if (view === "queue") return <QueueView data={data} selectedAccountId={selectedAccountId} onRefresh={onRefresh} onNavigate={onNavigate} onGenerateDetails={onGenerateDetails} onOpenContent={onOpenContent} onOpenProductionProgress={onOpenProductionProgress} onControlJob={onControlJob} onRetryTask={onRetryTask}/>;
   if (view === "production") return <ProductionDetailView data={data} contentItemId={selectedContentItemId} onBack={onBackToQueue} onNavigate={onNavigate} onOpenContent={onOpenContent} onRetryTask={onRetryTask}/>;
   if (view === "review") return <ReviewView data={data} selectedAccountId={selectedAccountId} onNavigate={onNavigate}/>;

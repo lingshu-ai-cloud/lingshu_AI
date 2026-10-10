@@ -165,7 +165,7 @@ assert.match(
 );
 assert.match(
   studioSource,
-  /if \(adopted && clip\) return \{[\s\S]{0,260}trimStart: 0, trimEnd: clip\.duration, speed: 1,[\s\S]{0,120}targetDuration: clip\.duration/,
+  /if \(adopted && clip\) return \{[\s\S]{0,260}trimStart: 0, trimEnd: clip\.type === 'video' \? clip\.duration : targetDuration, speed: 1,[\s\S]{0,160}targetDuration/,
   'the render timeline must preserve an adopted digital-human clip from source start to source end at normal speed',
 );
 

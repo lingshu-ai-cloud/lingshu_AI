@@ -1,3 +1,4 @@
+export {productionQueueItemForPlan} from './MatrixPublicationSchedule';
 import AgentWeeklyCalendar, { type AgentCalendarTask } from './AgentWeeklyCalendar';
 import { projectAccountBindingCalendar } from './accountBindingCalendar';
 import ConnectedAgentCalendar from './ConnectedAgentCalendar';

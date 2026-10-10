@@ -8,7 +8,6 @@ import {
 import { authApi, type EmployeeAccount } from '../../lib/auth';
 import { weeklySalesHandoffApi } from '../../lib/weeklySalesHandoffApi';
 import {salesNavigationTarget,salesActionPanelId} from './weeklySalesNavigation';
-import SalesConversationEvidenceSelector from './SalesConversationEvidenceSelector';
 import RelationshipEvidencePanel from './RelationshipEvidencePanel';
 import SalesConversationEvidenceSelector from './SalesConversationEvidenceSelector';
 
