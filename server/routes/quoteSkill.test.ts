@@ -95,6 +95,10 @@ test('切换目录产品不能沿用旧产品交期，客户目标日期不能�
 test('报价 API：租户隔离、并发控制、人工确认、安全回复与审计', async () => {
   const { dataStore, records } = memoryStore();
   const sentImages: Array<{ to: string; caption: string; bytes: Buffer }> = [];
+  let activeFactVersion = { id: 'enterprise-facts-v3-quote', revision: 3, contentHash: 'quote-facts-hash' };
+  let customerChannel: string | undefined;
+  let customerSource: string | undefined;
+  let customerTimeline: Array<{ actor: string; type?: string; timestamp: number }> | undefined;
   const app = express();
   app.use(express.json({ limit: '100kb' }));
   const auth = (req: express.Request, res: express.Response, next: express.NextFunction) => {
@@ -109,6 +113,7 @@ test('报价 API：租户隔离、并发控制、人工确认、安全回复与�
     authMiddleware: auth,
     canConfirm: async req => req.headers['x-test-confirm'] !== 'deny',
     readEnterpriseProfile: async () => ({
+      factVersion: activeFactVersion,
       products: { items: [
         { sku: 'IMH-ABS-01', name: 'Injection molded electronics housing', material: 'ABS', moq: '1000', attributes: { unit: 'pcs', unitPrice: 3.8, currency: 'USD', leadTime: '30 days' } },
         { sku: 'COVER-NP-01', name: 'Unpriced custom cover', material: 'ABS', moq: '25', attributes: { unit: 'pcs', currency: 'USD', leadTime: '20 days' } },
@@ -117,7 +122,7 @@ test('报价 API：租户隔离、并发控制、人工确认、安全回复与�
     } as any),
     renderCard: async () => Buffer.from('png-card'),
     messagingReady: async () => true,
-    findCustomer: (_tenantId, customerId) => ({ id: customerId, waNumber: '15550001111', whatsappProfileName: 'Emily WA', timeline: [{ actor: 'buyer', timestamp: Date.now() }] }),
+    findCustomer: (_tenantId, customerId) => ({ id: customerId, source: customerSource, messagingChannel: customerChannel, waNumber: '15550001111', whatsappProfileName: 'Emily WA', timeline: customerTimeline || [{ actor: 'buyer', timestamp: Date.now() }] }),
     sendImage: async input => {
       sentImages.push({ to: input.to, caption: input.caption, bytes: input.bytes });
       return { messageId: 'wamid.quote-1', recipientId: input.to, raw: {} };
@@ -150,6 +155,7 @@ test('报价 API：租户隔离、并发控制、人工确认、安全回复与�
     const created = (await createdResponse.json()).draft;
     assert.equal(created.revision, 1);
     assert.equal(created.version, 1);
+    assert.equal(created.enterpriseFactVersion.id, 'enterprise-facts-v3-quote');
     assert.equal(created.productName, 'aluminum brackets');
     assert.equal(created.customerName, 'Emily WA');
     assert.equal(created.customerNameSource, 'whatsapp_profile');
@@ -188,6 +194,11 @@ test('报价 API：租户隔离、并发控制、人工确认、安全回复与�
     });
     assert.equal(deniedConfirmation.status, 403);
 
+    activeFactVersion = { id: 'enterprise-facts-v4-quote', revision: 4, contentHash: 'quote-facts-hash-v4' };
+    const staleFactsConfirmation = await call(`/drafts/${created.id}/confirm`, 'POST', { expectedRevision: 2 });
+    assert.equal(staleFactsConfirmation.status, 409);
+    assert.equal((await staleFactsConfirmation.json()).error, 'enterprise_fact_version_conflict');
+    activeFactVersion = { id: 'enterprise-facts-v3-quote', revision: 3, contentHash: 'quote-facts-hash' };
     const confirmedResponse = await call(`/drafts/${created.id}/confirm`, 'POST', { expectedRevision: 2 });
     assert.equal(confirmedResponse.status, 200);
     const confirmed = (await confirmedResponse.json()).draft;
@@ -204,6 +215,24 @@ test('报价 API：租户隔离、并发控制、人工确认、安全回复与�
     assert.equal(cardResponse.status, 200);
     assert.equal(cardResponse.headers.get('content-type'), 'image/png');
     assert.deepEqual(Buffer.from(await cardResponse.arrayBuffer()), Buffer.from('png-card'));
+    for (const channel of ['messenger', 'instagram']) {
+      customerSource = channel;
+      const mismatch = await call(`/drafts/${created.id}/send-card`, 'POST');
+      assert.equal(mismatch.status, 409);
+      assert.equal((await mismatch.json()).error, 'quote_delivery_channel_mismatch', 'an attached WhatsApp number must not reroute another channel conversation');
+    }
+    customerChannel = 'whatsapp';
+    customerSource = 'instagram';
+    customerTimeline = [{ actor: 'buyer', type: 'whatsapp', timestamp: Date.now() - 25 * 60 * 60 * 1000 }, { actor: 'buyer', type: 'messenger', timestamp: Date.now() }, { actor: 'buyer', type: 'instagram', timestamp: Date.now() }];
+    const wrongChannelWindow = await call(`/drafts/${created.id}/send-card`, 'POST');
+    assert.equal(wrongChannelWindow.status, 409);
+    assert.equal((await wrongChannelWindow.json()).error, 'whatsapp_template_required', 'a recent message from another channel must not extend the WhatsApp window');
+    assert.equal(sentImages.length, 0, 'rejected channel/window requests must not send externally');
+    customerTimeline = [{ actor: 'buyer', type: 'whatsapp', timestamp: Date.now() + 60 * 60 * 1000 }];
+    const futureWindow = await call(`/drafts/${created.id}/send-card`, 'POST');
+    assert.equal(futureWindow.status, 409, 'a future timestamp must not authorize sending');
+    assert.equal((await futureWindow.json()).error, 'whatsapp_template_required');
+    customerTimeline = [{ actor: 'buyer', type: 'whatsapp', timestamp: Date.now() }];
     const sentResponse = await call(`/drafts/${created.id}/send-card`, 'POST');
     assert.equal(sentResponse.status, 200);
     const sent = await sentResponse.json();
@@ -237,6 +266,14 @@ test('报价 API：租户隔离、并发控制、人工确认、安全回复与�
     assert.equal(catalogSelected.matchedProduct.priceSource, '企业产品目录 unitPrice');
     assert.match(catalogSelected.pricingExplanation.join('\n'), /价格来源：企业产品目录 unitPrice/);
 
+    const storedCatalogDraft = records.get(`quote_skill_drafts/${catalogDraft.id}`)!;
+    const catalogPayloadWithoutVersion = structuredClone(storedCatalogDraft.payload as Record<string, unknown>);
+    delete catalogPayloadWithoutVersion.enterpriseFactVersion;
+    storedCatalogDraft.payload = catalogPayloadWithoutVersion;
+    const unversionedCatalogConfirmation = await call(`/drafts/${catalogDraft.id}/confirm`, 'POST', { expectedRevision: 2 });
+    assert.equal(unversionedCatalogConfirmation.status, 409);
+    assert.equal((await unversionedCatalogConfirmation.json()).error, 'enterprise_fact_version_required');
+    storedCatalogDraft.payload = { ...catalogPayloadWithoutVersion, enterpriseFactVersion: activeFactVersion };
     const confirmedCatalogResponse = await call(`/drafts/${catalogDraft.id}/confirm`, 'POST', { expectedRevision: 2 });
     assert.equal(confirmedCatalogResponse.status, 200);
     const confirmedCatalog = (await confirmedCatalogResponse.json()).draft;
@@ -382,6 +419,7 @@ test('报价卡发送先持久化 claim，并在结果未知或回写失败后�
     authMiddleware: (_req, res, next) => { res.locals.tenantId = 'A'; res.locals.userId = 'user-A'; next(); },
     canConfirm: async () => true,
     readEnterpriseProfile: async () => ({
+      factVersion: { id: 'enterprise-facts-v1-send', revision: 1, contentHash: 'send-facts-hash' },
       products: { items: [{ sku: 'WIDGET-01', name: 'Widget', material: 'ABS', moq: '10', attributes: { unit: 'pcs', unitPrice: 10, currency: 'USD', leadTime: '20 days' } }] },
       bizRules: { paymentTerms: '100% before shipment' },
     } as any),

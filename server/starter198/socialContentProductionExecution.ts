@@ -1,3 +1,10 @@
+import {
+  assertCurrentContentExecutionActive,
+  currentContentProviderReceipt,
+  readCurrentContentExecutionCheckpoint,
+  recordCurrentContentExecutionCheckpoint,
+  recordCurrentContentProviderReceipt,
+} from '../contentExecution/context.js';
 import {readWeeklyReplicationAuthority} from './socialWeeklyReplicationAuthority.js';
 import {assertAccountPlaybookBaselineCurrent} from './socialAccountProductionConstraints.js';
 import {readWeeklySchedulerMaterialPlan} from './socialWeeklySchedulerMaterialPlan.js';
@@ -9,7 +16,6 @@ import {buildSocialProductionHandoff} from './socialContentProductionHandoff.js'
 import {assertStoredWeeklyProductionCoverage} from '../runtime/weeklyProductionCoverageAdmission.js';
 import {readWeeklyTemplateStructure} from '../socialPrograms/weeklyTemplateStructure.js';
 import {contentTemplateOutputMatches} from '../../shared/socialContentTemplateStructure.js';
-import { assertCurrentContentExecutionActive } from '../contentExecution/context.js';
 import { createHash } from 'node:crypto';
 import { existsSync, statSync } from 'node:fs';
 import fsp from 'node:fs/promises';
@@ -69,6 +75,14 @@ import type { InternalSocialContentFormula } from './socialContentThemes.js';
 import { socialProductionCollaborationFailures, socialProductionCollaborationTrace, socialProductionExecutionSceneForFinal } from './socialContentProductionCollaboration.js';
 import { socialContentReviewAdmissionAllowed } from './socialContentTestBypass.js';
 import { voiceLearningReadiness } from '../videoProduction/voiceQualityLearning.js';
+import {
+  analyzeSocialProductionAssetsWithCheckpoint,
+  narrationReceiptRequiresRecovery,
+  readNarrationAudioCheckpoint,
+  recordNarrationAudioCheckpoint,
+  restoreSocialAssetSupplyCheckpointAssets,
+  socialAssetSupplyCheckpointInputHash,
+} from './socialContentProductionCheckpoints.js';
 import { generatedAssetArchive } from '../lib/generatedAssetArchive.js';
 const require = createRequire(import.meta.url);
 const { composite } = require('../../desktop/render.cjs') as { composite: (manifest: unknown, onProgress?: (progress: number) => void, outputDir?: string) => Promise<{ ok: boolean; outputPath?: string; error?: string }> };
@@ -500,7 +514,7 @@ export async function runSocialContentAutoProduction(input: {
   const contentTemplateStructure=templateBindingRef?await (async()=>{if(!input.repository.dataStore)throw new SocialContentWorkflowError('content_template_storage_unavailable',409);return readWeeklyTemplateStructure(input.repository.dataStore,{tenantId:input.tenantId,programId:String(weeklyPackage?.programId),packageId:String(weeklyPackage?.packageId),packageVersion:Number(weeklyPackage?.version),publicationTaskId:String(weeklyPublication?.publicationTaskId)},templateBindingRef as unknown as import('../../shared/contracts/socialProgram.js').VersionedSocialRef);})():undefined;
   // A resumed weekly run must execute the baseline already sealed into its
   // pre-supply handoff. Re-grounding after the asset card is claimed changes
-  // the very evidence that authorized continuation of the original job.
+  // the evidence that authorized continuation of the original job.
   const weeklyExecutionGraphVersion=Number(weeklyPackage?.executionGraphVersion??1);
   const existingWeeklyPreSupply = weeklyExecutionGraphVersion>=2
     ? await readWeeklyPreSupplyHandoff(input.repository,input.tenantId,input.taskId)
@@ -518,9 +532,23 @@ export async function runSocialContentAutoProduction(input: {
     const prior=Number(baseline.version);if(!Number.isSafeInteger(prior)||prior<1)throw new SocialContentWorkflowError('account_playbook_baseline_revision_required',409);
     initialAuthorityBaselineVersion=prior+1;baseline=null;
   }
+  const factVersionKey = (value: { id: string; revision: number; contentHash: string } | null | undefined): string => (
+    value ? `${value.id}\0${value.revision}\0${value.contentHash}` : ''
+  );
+  let executionVerifiedContext = verifiedContext;
+  if (baseline?.verifiedContextSnapshot) {
+    // A durable retry is the same production run. Keep the admitted enterprise
+    // facts even if the user saved a newer profile while a provider was busy.
+    executionVerifiedContext = structuredClone(baseline.verifiedContextSnapshot);
+  } else if (baseline
+    && factVersionKey(baseline.enterpriseFactVersion) !== factVersionKey(verifiedContext.factVersion)) {
+    // Historic baselines without a value snapshot cannot be truthfully
+    // replayed against a different fact generation. Require a new plan instead
+    // of silently relabelling the old script with current enterprise facts.
+    throw new SocialContentWorkflowError('social_content_enterprise_fact_replan_required', 409);
+  }
   if(baseline)assertAccountPlaybookBaselineCurrent(baseline,replicationContext,detail.brief.callToAction);
   if(baseline?.contentTemplateStructure&&socialRequestHash(baseline.contentTemplateStructure)!==socialRequestHash(contentTemplateStructure))throw new SocialContentWorkflowError('content_template_structure_changed_during_production',409);
-
   let directorFormula: InternalSocialContentFormula | null = null;
   let staleFormulaReference = false;
   if (baseline?.formulaReference) {
@@ -555,7 +583,10 @@ export async function runSocialContentAutoProduction(input: {
         socialText(baseline?.scenes[index]?.voiceover) !== socialText(shot.spokenText || shot.captionText)
         || socialText(baseline?.scenes[index]?.caption) !== socialText(shot.captionText || shot.spokenText)
       ))));
-  if (!baseline || contentTemplateStructure&&!baseline.contentTemplateStructure || baseline.groundingVersion !== SOCIAL_SCRIPT_GROUNDING_VERSION || replicationBaselineOutdated) {
+  if (!baseline
+    || Boolean(contentTemplateStructure && !baseline.contentTemplateStructure)
+    || baseline.groundingVersion !== SOCIAL_SCRIPT_GROUNDING_VERSION
+    || replicationBaselineOutdated) {
     // Compatibility path for older tasks: discard any baseline that directly
     // interpolated title/objective/product free text and re-freeze it from
     // governed formula/inspiration structure plus verified enterprise facts.
@@ -578,12 +609,12 @@ export async function runSocialContentAutoProduction(input: {
           if(!analysis)throw new SocialContentWorkflowError('weekly_production_planning_missing',409);
           const {readWeeklyReferenceSources,weeklyReferenceResolver}=await import('../runtime/socialWeeklyReferenceSource.js');
           const references=await readWeeklyReferenceSources(input.repository.dataStore,input.tenantId,authority,analysis);
-          const resolved=await weeklyReferenceResolver(references)({tenantId:input.tenantId,themeId,verifiedContext,referenceSources:detail.sources.filter(source=>source.status==='active'&&source.kind==='reference_link')});
+          const resolved=await weeklyReferenceResolver(references)({tenantId:input.tenantId,themeId,verifiedContext:executionVerifiedContext,referenceSources:detail.sources.filter(source=>source.status==='active'&&source.kind==='reference_link')});
           if(!resolved)throw new SocialContentWorkflowError('weekly_reference_source_missing',409);return resolved.match;
         })():await resolveSocialInspirationScript({
           tenantId: input.tenantId,
           themeId,
-          verifiedContext,
+          verifiedContext: executionVerifiedContext,
         })
       : null;
     baseline = freezeSocialScriptBaseline({
@@ -594,7 +625,7 @@ export async function runSocialContentAutoProduction(input: {
       formula: directorFormula,
       inspiration,
       replicationScript: detail.replicationScript ?? null,
-      verifiedContext,
+      verifiedContext: executionVerifiedContext,
       lockedAt: new Date().toISOString(),
       previous: baseline,
     });
@@ -637,67 +668,123 @@ export async function runSocialContentAutoProduction(input: {
 	    if (zeroAssetRoute) return [];
 	    throw error;
 	  });
-	  const analyzed = await analyzeProductionAssets({ tenantId: input.tenantId, assets: rawAssets });
+	  const analyzed = await analyzeSocialProductionAssetsWithCheckpoint({
+      tenantId: input.tenantId,
+      assets: rawAssets,
+      analyze: analyzeProductionAssets,
+    });
 	  let assets = analyzed.assets;
 	  let assetSupplyExecution: SocialAssetSupplyExecution | null = null;
       let executedSupplyPlan:SocialAssetSupplyPlan|null=null;
 	  if (detail.assetSupplyPlan) {
-	    const environmentPresenter = paidVisualProvidersAllowed && input.repository.dataStore
-	      ? createEnvironmentSocialHeyGenBridge(input.repository.dataStore)
-	      : null;
-	    const existingAdapters = existingAssetSupplyAdapters().filter(adapter => (
-	      paidVisualProvidersAllowed
-	        || adapter.adapterId === 'existing_customer_asset.v1'
-	        || (productionApproach === 'material_polish' && adapter.adapterId === 'system_safe_motion_graphics.v1')
-	    ));
-	    await assertWeeklyProductionMaterialAdmission(input,input.materialEvidencePorts?.materialPorts,input.materialEvidencePorts);
-	    const supplied = await executeSocialAssetSupplyPlan({
-	      tenantId: input.tenantId,
-	      taskId: input.taskId,
-	      outputDirectory: outputDir,
-        plan: (() => {
-          const selected = assetSupplyPlanWithExecutionSelections(detail.assetSupplyPlan, agentWorkflow);
-          const heygenScenes = new Set(presenterExecutions.filter(item => item.providerId === 'heygen').map(item => item.sceneId));
-          return { ...selected, shots: selected.shots.map(shot => heygenScenes.has(shot.shotId)
-            ? { ...shot, sourceStrategy: 'authorized_digital_presenter' as const, fallbackSourceStrategy: null }
-            : shot) };
-        })(),
-	      baseline: activeBaseline,
-	      availableAssets: assets,
-	      adapters: paidVisualProvidersAllowed ? [
-	        ...(input.assetSupplyAdapters ?? []).filter(adapter => !presenterExecutions.length
-            || !adapter.sourceStrategies.includes('authorized_digital_presenter')),
-	        createSocialProductSceneAdapter(createEnvironmentSeedanceProductScenePorts()),
-	        ...(environmentPresenter?.ports ? [createSocialDigitalPresenterAdapter(environmentPresenter.ports)] : []),
-	        createConfiguredSocialAiVisualAdapter(),
-	        ...existingAdapters,
-	      ] : existingAdapters,
-	    });
-	    // Only assets selected by the Director's per-shot router enter the edit.
-	    assets = supplied.assets;
-	    assetSupplyExecution = supplied.execution;
-      executedSupplyPlan=supplied.plan;
-	    await archiveSocialGeneratedShots({
-	      tenantId: input.tenantId,
-	      taskId: input.taskId,
-	      assets,
-	      execution: assetSupplyExecution,
-	      now: input.now,
-	    });
-	    for (const selection of presenterExecutions) {
+      const assetSupplyInputHash = socialAssetSupplyCheckpointInputHash({
+        materialAnalysisInputHash: analyzed.inputHash,
+        baselineVersion: activeBaseline.version,
+        assetSupplyPlan: detail.assetSupplyPlan,
+        executionPlanId: agentWorkflow.executionPlan.executionPlanId,
+        executionPlanVersion: agentWorkflow.executionPlan.version,
+      });
+      const supplyCheckpoint = readCurrentContentExecutionCheckpoint<{
+        assetSupplyExecution: SocialAssetSupplyExecution;
+        executedSupplyPlan?: SocialAssetSupplyPlan;
+        selectedAssets: Array<{
+          assetId: string;
+          sourceId: string;
+          contentHash: string | null;
+          asset?: ProductionAsset;
+        }>;
+      }>({ stage: 'social.asset_supply', version: '1', inputHash: assetSupplyInputHash });
+      const restoredAssets = supplyCheckpoint ? restoreSocialAssetSupplyCheckpointAssets({
+        availableAssets: assets,
+        selectedAssets: supplyCheckpoint.selectedAssets,
+      }) : null;
+      const assetSupplyCheckpointReused = Boolean(supplyCheckpoint && restoredAssets);
+      if (assetSupplyCheckpointReused && supplyCheckpoint) {
+        assets = restoredAssets as ProductionAsset[];
+        assetSupplyExecution = structuredClone(supplyCheckpoint.assetSupplyExecution);
+        executedSupplyPlan = supplyCheckpoint.executedSupplyPlan
+          ? structuredClone(supplyCheckpoint.executedSupplyPlan)
+          : null;
+      } else {
+        await assertWeeklyProductionMaterialAdmission(input,input.materialEvidencePorts?.materialPorts,input.materialEvidencePorts);
+        const environmentPresenter = paidVisualProvidersAllowed && input.repository.dataStore
+          ? createEnvironmentSocialHeyGenBridge(input.repository.dataStore)
+          : null;
+        const existingAdapters = existingAssetSupplyAdapters().filter(adapter => (
+          paidVisualProvidersAllowed
+            || adapter.adapterId === 'existing_customer_asset.v1'
+            || (productionApproach === 'material_polish' && adapter.adapterId === 'system_safe_motion_graphics.v1')
+        ));
+        const supplied = await executeSocialAssetSupplyPlan({
+          tenantId: input.tenantId,
+          taskId: input.taskId,
+          outputDirectory: outputDir,
+          plan: (() => {
+            const selected = assetSupplyPlanWithExecutionSelections(detail.assetSupplyPlan, agentWorkflow);
+            const heygenScenes = new Set(presenterExecutions.filter(item => item.providerId === 'heygen').map(item => item.sceneId));
+            return { ...selected, shots: selected.shots.map(shot => heygenScenes.has(shot.shotId)
+              ? { ...shot, sourceStrategy: 'authorized_digital_presenter' as const, fallbackSourceStrategy: null }
+              : shot) };
+          })(),
+          baseline: activeBaseline,
+          availableAssets: assets,
+          adapters: paidVisualProvidersAllowed ? [
+            ...(input.assetSupplyAdapters ?? []).filter(adapter => !presenterExecutions.length
+              || !adapter.sourceStrategies.includes('authorized_digital_presenter')),
+            createSocialProductSceneAdapter(createEnvironmentSeedanceProductScenePorts()),
+            ...(environmentPresenter?.ports ? [createSocialDigitalPresenterAdapter(environmentPresenter.ports)] : []),
+            createConfiguredSocialAiVisualAdapter(),
+            ...existingAdapters,
+          ] : existingAdapters,
+        });
+        // Only assets selected by the Director's per-shot router enter the edit.
+        assets = supplied.assets;
+        assetSupplyExecution = supplied.execution;
+        executedSupplyPlan = supplied.plan;
+        await archiveSocialGeneratedShots({
+          tenantId: input.tenantId,
+          taskId: input.taskId,
+          assets,
+          execution: assetSupplyExecution,
+          now: input.now,
+        });
+      }
+      for (const selection of presenterExecutions) {
         const receipt = assetSupplyExecution.shots.find(shot => shot.sceneId === selection.sceneId);
         if (selection.providerId === 'heygen' && (!receipt || receipt.providerId !== 'heygen'
           || receipt.sourceStrategy !== 'authorized_digital_presenter' || receipt.fallbackApplied)) {
           throw new Error(`presenter_provider_receipt_mismatch:${selection.sceneId}`);
         }
       }
+      await recordCurrentContentExecutionCheckpoint({
+        stage: 'social.asset_supply',
+        version: '1',
+        inputHash: assetSupplyInputHash,
+        payload: {
+          assetSupplyExecution,
+          ...(executedSupplyPlan ? { executedSupplyPlan } : {}),
+          presenterExecutions: presenterExecutions.map(selection => ({
+            ...selection,
+            receipt: assetSupplyExecution?.shots.find(shot => shot.sceneId === selection.sceneId) ?? null,
+          })),
+          selectedAssets: assets.map(asset => ({
+            assetId: asset.id,
+            sourceId: asset.sourceId,
+            contentHash: asset.contentHash ?? null,
+            asset: structuredClone(asset),
+            providerId: asset.providerId ?? null,
+            providerTaskId: asset.providerTaskId ?? null,
+            idempotencyKey: asset.idempotencyKey ?? null,
+          })),
+        },
+      });
 	    await writeExecutionStage({
 	      ...input,
 	      stage: 'asset_supply_completed',
 	      message: paidVisualProvidersAllowed
 	        ? '内容 Agent 已逐镜完成素材库与高质量生成能力路由。'
 	        : '内容 Agent 已按逐句口播完成“我的素材”片段路由，未调用 Seedance 或数字人。',
-	      extra: { assetSupplyExecution, presenterExecutions: presenterExecutions.map(selection => ({
+	      extra: { materialAnalysisCheckpointReused: analyzed.checkpointReused, assetSupplyCheckpointReused, assetSupplyExecution, presenterExecutions: presenterExecutions.map(selection => ({
           ...selection,
           receipt: assetSupplyExecution?.shots.find(shot => shot.sceneId === selection.sceneId) ?? null,
         })) },
@@ -723,7 +810,7 @@ export async function runSocialContentAutoProduction(input: {
         theme: detail.theme ?? null,
         formula: null,
         inspiration: null,
-        verifiedContext,
+        verifiedContext: executionVerifiedContext,
         // This is confidence in the exact tenant-authored linkage only. Visual
         // confidence remains 0 on every association-only production clip.
         userProductAssociation: { basis: 'tenant_task_upload', confidence: 0.45 },
@@ -778,13 +865,34 @@ export async function runSocialContentAutoProduction(input: {
   if (assetSupplyExecution) plan = applyZeroAssetTruthSafeNarration(plan);
   if (reviewDirective) plan = applySocialReviewRevision(plan, reviewDirective);
   const adaptation = productionAdaptation(plan, assets.length);
+  const directorCheckpointInputHash = socialRequestHash({
+    taskId: input.taskId,
+    taskVersion: detail.version,
+    baselineVersion: activeBaseline.version,
+    baselineLockedAt: activeBaseline.lockedAt,
+    enterpriseFactVersion: activeBaseline.enterpriseFactVersion ?? null,
+    executionPlanId: agentWorkflow.executionPlan.executionPlanId,
+    executionPlanVersion: agentWorkflow.executionPlan.version,
+    productionPlan: plan,
+    assets: assets.map(asset => ({
+      id: asset.id,
+      sourceId: asset.sourceId,
+      contentHash: asset.contentHash ?? null,
+      providerTaskId: asset.providerTaskId ?? null,
+    })),
+    sourceVersions: Object.fromEntries(detail.sources.map(source => [source.sourceId, source.sourceVersion ?? ''])),
+  });
+  const directorCheckpoint = readCurrentContentExecutionCheckpoint<{
+    directorPlan: unknown;
+  }>({ stage: 'social.director_storyboard', version: '1', inputHash: directorCheckpointInputHash });
+  const checkpointDirectorPlan = parseStoredSocialDirectorPlan(directorCheckpoint?.directorPlan);
   const taskDirectorPlan = parseStoredSocialDirectorPlan(taskRecord.director_plan);
-  const recoveredDirectorVersion = taskDirectorPlan ? null : await latestSocialDirectorPlanVersion({
+  const recoveredDirectorVersion = taskDirectorPlan || checkpointDirectorPlan ? null : await latestSocialDirectorPlanVersion({
     repository: input.repository,
     tenantId: input.tenantId,
     taskId: input.taskId,
   });
-  const previousDirectorPlan = taskDirectorPlan ?? recoveredDirectorVersion?.plan ?? null;
+  const previousDirectorPlan = taskDirectorPlan ?? checkpointDirectorPlan ?? recoveredDirectorVersion?.plan ?? null;
   if (previousDirectorPlan) {
     // One-time compatibility backfill for tasks created before the immutable
     // version collection existed. A mismatched historic baseline is recorded
@@ -801,36 +909,39 @@ export async function runSocialContentAutoProduction(input: {
     : detail.theme?.themeId === 'customer_case'
       ? '温暖、克制、可信'
       : '清晰、轻快、专业';
-	  const bgmSelection = await (input.runtime?.selectDirectorBgm ?? selectDirectorBgm)({
-    tenantId: input.tenantId,
-    themeId: detail.theme?.themeId ?? null,
-    directorMood: reviewDirective?.musicMood
-      || socialText(directorFormula?.direction?.music?.mood)
-      || defaultDirectorMood,
-    volume: Number(directorFormula?.direction?.music?.volume ?? 18),
-  });
-  let directorPlan = buildSocialDirectorPlan({
-    taskId: input.taskId,
-    baseline: activeBaseline,
-    productionPlan: plan,
-    productionAssets: assets,
-    sourceVersions: Object.fromEntries(detail.sources.map(source => [source.sourceId, source.sourceVersion ?? ''])),
-    outputSpec: {
-      aspectRatio: detail.brief.aspectRatio,
-      resolution: '720p',
-      platform: detail.brief.platforms[0] ?? 'douyin',
-    },
-    bgmSelection,
-    formula: directorFormula,
-    createdAt: new Date().toISOString(),
-    previous: previousDirectorPlan,
-    collaboration: {
-      schemaVersion: 'social-agent-collaboration.v1',
-      directorBrief: { id: agentWorkflow.directorBrief.directorBriefId, version: agentWorkflow.directorBrief.version },
-      contentExecutionPlan: { id: agentWorkflow.executionPlan.executionPlanId, version: agentWorkflow.executionPlan.version, selectedBy: 'content_agent' },
-      directorReview: { id: agentWorkflow.executionPlanReview.reviewId, version: agentWorkflow.executionPlanReview.version, approvedBy: 'director_agent' },
-    },
-  });
+	  let directorPlan = checkpointDirectorPlan;
+  if (!directorPlan) {
+    const bgmSelection = await (input.runtime?.selectDirectorBgm ?? selectDirectorBgm)({
+      tenantId: input.tenantId,
+      themeId: detail.theme?.themeId ?? null,
+      directorMood: reviewDirective?.musicMood
+        || socialText(directorFormula?.direction?.music?.mood)
+        || defaultDirectorMood,
+      volume: Number(directorFormula?.direction?.music?.volume ?? 18),
+    });
+    directorPlan = buildSocialDirectorPlan({
+      taskId: input.taskId,
+      baseline: activeBaseline,
+      productionPlan: plan,
+      productionAssets: assets,
+      sourceVersions: Object.fromEntries(detail.sources.map(source => [source.sourceId, source.sourceVersion ?? ''])),
+      outputSpec: {
+        aspectRatio: detail.brief.aspectRatio,
+        resolution: '720p',
+        platform: detail.brief.platforms[0] ?? 'douyin',
+      },
+      bgmSelection,
+      formula: directorFormula,
+      createdAt: new Date().toISOString(),
+      previous: previousDirectorPlan,
+      collaboration: {
+        schemaVersion: 'social-agent-collaboration.v1',
+        directorBrief: { id: agentWorkflow.directorBrief.directorBriefId, version: agentWorkflow.directorBrief.version },
+        contentExecutionPlan: { id: agentWorkflow.executionPlan.executionPlanId, version: agentWorkflow.executionPlan.version, selectedBy: 'content_agent' },
+        directorReview: { id: agentWorkflow.executionPlanReview.reviewId, version: agentWorkflow.executionPlanReview.version, approvedBy: 'director_agent' },
+      },
+    });
+  }
   if(contentTemplateStructure&&!contentTemplateOutputMatches(contentTemplateStructure,activeBaseline,directorPlan))throw new SocialContentWorkflowError('content_template_output_mismatch',409);
   let persistedDirectorPlan = await persistSocialDirectorPlanVersion({
     repository: input.repository,
@@ -838,7 +949,7 @@ export async function runSocialContentAutoProduction(input: {
     taskId: input.taskId,
     plan: directorPlan,
     baseline: activeBaseline,
-    verifiedContext,
+    verifiedContext: executionVerifiedContext,
   });
   let directorSummary = publicSocialDirectorPlanSummary(directorPlan)!;
   await input.repository.update(STARTER_COLLECTIONS.socialContentTasks, input.tenantId, taskRecord.id, {
@@ -846,6 +957,22 @@ export async function runSocialContentAutoProduction(input: {
     updated_at: directorPlan.createdAt,
   });
   let contentHandoff = socialDirectorContentHandoff(directorPlan);
+  await recordCurrentContentExecutionCheckpoint({
+    stage: 'social.director_storyboard',
+    version: '1',
+    inputHash: directorCheckpointInputHash,
+    payload: {
+      directorPlan,
+      directorPlanReference: persistedDirectorPlan.reference,
+      narration: contentHandoff.narration,
+      scenes: contentHandoff.scenes.map(scene => ({
+        sceneId: scene.sceneId,
+        source: structuredClone(scene.source),
+        voiceover: scene.voiceover,
+        caption: scene.caption,
+      })),
+    },
+  });
   await writeExecutionStage({
     ...input,
     stage: 'content_production',
@@ -859,6 +986,7 @@ export async function runSocialContentAutoProduction(input: {
       selectedAssetCount: plan.selectedAssetIds.length,
       unusedAssetCount: plan.unusedAssets.length,
       sourceClipSeconds: plan.sourceClipSeconds,
+	  directorCheckpointReused: Boolean(checkpointDirectorPlan),
 	  ...(assetSupplyExecution ? { assetSupplyExecution } : {}),
       ...(revisionParent && reviewDirective ? {
         reviewRevision: {
@@ -870,25 +998,76 @@ export async function runSocialContentAutoProduction(input: {
     },
   });
     let transientVoicePath = '';
+    let retainVoiceForRecovery = false;
     try {
       let voice: Awaited<ReturnType<typeof synthesizeStudioVoiceForAutomation>> | null = null;
       let duration = 0;
+      let narrationCheckpointInputHash = '';
+      let narrationCheckpointReused = false;
       for (let revisionAttempt = 0; revisionAttempt <= 2; revisionAttempt += 1) {
-        await assertCurrentContentExecutionActive();
-        voice = await (input.runtime?.synthesizeVoice ?? synthesizeStudioVoiceForAutomation)({
-          tenantId: input.tenantId,
-          text: contentHandoff.narration,
+        narrationCheckpointInputHash = socialRequestHash({
+          directorPlanHash: directorPlan.lineageHash,
+          narration: contentHandoff.narration,
           language: contentHandoff.outputSpec.language,
           voice: contentHandoff.direction.voiceover.voice,
           targetDuration: contentHandoff.outputSpec.targetDurationSeconds,
-          style: {
-            preset: contentHandoff.direction.voiceover.preset,
-            speed: contentHandoff.direction.voiceover.speed,
-            pauseStyle: contentHandoff.direction.voiceover.pauseStyle,
-          },
+          preset: contentHandoff.direction.voiceover.preset,
+          speed: contentHandoff.direction.voiceover.speed,
+          pauseStyle: contentHandoff.direction.voiceover.pauseStyle,
         });
+        const recoveredVoice = await readNarrationAudioCheckpoint({
+          inputHash: narrationCheckpointInputHash,
+          narration: contentHandoff.narration,
+        });
+        narrationCheckpointReused = Boolean(recoveredVoice);
+        if (recoveredVoice) {
+          voice = recoveredVoice;
+          retainVoiceForRecovery = true;
+        } else {
+          await assertCurrentContentExecutionActive();
+          const ttsRequestId = `social-tts:${narrationCheckpointInputHash}`;
+          const priorTtsReceipt = currentContentProviderReceipt({
+            provider: 'studio_tts', requestId: ttsRequestId,
+          });
+          if (narrationReceiptRequiresRecovery(priorTtsReceipt?.state)) {
+            // The provider has no task-status API. Failing closed is safer than
+            // silently charging a second TTS request after a crash between the
+            // response and the audio checkpoint.
+            throw new Error('provider_submission_unknown:studio_tts');
+          }
+          await recordCurrentContentProviderReceipt({
+            provider: 'studio_tts', requestId: ttsRequestId, state: 'submitting',
+            metadata: { narrationCheckpointInputHash },
+          });
+          try {
+            voice = await (input.runtime?.synthesizeVoice ?? synthesizeStudioVoiceForAutomation)({
+              tenantId: input.tenantId,
+              text: contentHandoff.narration,
+              language: contentHandoff.outputSpec.language,
+              voice: contentHandoff.direction.voiceover.voice,
+              targetDuration: contentHandoff.outputSpec.targetDurationSeconds,
+              style: {
+                preset: contentHandoff.direction.voiceover.preset,
+                speed: contentHandoff.direction.voiceover.speed,
+                pauseStyle: contentHandoff.direction.voiceover.pauseStyle,
+              },
+            });
+          } catch (error) {
+            await recordCurrentContentProviderReceipt({
+              provider: 'studio_tts', requestId: ttsRequestId, state: 'unknown',
+              metadata: { narrationCheckpointInputHash },
+            });
+            throw error;
+          }
+        }
         transientVoicePath = voice.localPath || '';
         if (!voice.ok || !voice.localPath || !existsSync(voice.localPath) || !voice.cues?.length) {
+          if (!voice.ok) {
+            await recordCurrentContentProviderReceipt({
+              provider: 'studio_tts', requestId: `social-tts:${narrationCheckpointInputHash}`,
+              state: 'failed', metadata: { narrationCheckpointInputHash },
+            });
+          }
           throw new Error(voice.error || '口播服务未返回可用音频和字幕时间轴');
         }
         if (socialText(voice.text) !== contentHandoff.narration) {
@@ -896,6 +1075,25 @@ export async function runSocialContentAutoProduction(input: {
         }
         duration = Math.max(1, Number(voice.duration || voice.cues.at(-1)?.end
           || contentHandoff.outputSpec.targetDurationSeconds));
+        retainVoiceForRecovery = await recordNarrationAudioCheckpoint({
+          inputHash: narrationCheckpointInputHash,
+          narration: contentHandoff.narration,
+          voice: {
+            ok: true,
+            source: voice.source,
+            localPath: voice.localPath,
+            duration,
+            text: voice.text || contentHandoff.narration,
+            cues: voice.cues,
+            alignmentSource: voice.alignmentSource,
+            qualityReport: voice.qualityReport,
+          },
+        }) || retainVoiceForRecovery;
+        await recordCurrentContentProviderReceipt({
+          provider: 'studio_tts', requestId: `social-tts:${narrationCheckpointInputHash}`,
+          state: 'completed',
+          metadata: { narrationCheckpointInputHash, duration },
+        });
         if (duration <= contentHandoff.outputSpec.maximumDurationSeconds + 0.25) break;
         if (revisionAttempt >= 2) {
           throw new Error(`director_revision_required:口播经过 2 次编导内部压缩仍为 ${duration.toFixed(1)} 秒，超过锁定素材 ${contentHandoff.outputSpec.maximumDurationSeconds.toFixed(1)} 秒`);
@@ -917,6 +1115,7 @@ export async function runSocialContentAutoProduction(input: {
           fsp.rm(`${transientVoicePath}.alignment.json`, { force: true }),
         ]).catch(() => undefined);
         transientVoicePath = '';
+        retainVoiceForRecovery = false;
         directorPlan = reviseSocialDirectorPlanForVoiceoverFit({
           previous: directorPlan,
           measuredDurationSeconds: duration,
@@ -928,7 +1127,7 @@ export async function runSocialContentAutoProduction(input: {
           taskId: input.taskId,
           plan: directorPlan,
           baseline: activeBaseline,
-          verifiedContext,
+          verifiedContext: executionVerifiedContext,
         });
         directorSummary = publicSocialDirectorPlanSummary(directorPlan)!;
         await input.repository.update(STARTER_COLLECTIONS.socialContentTasks, input.tenantId, taskRecord.id, {
@@ -936,6 +1135,22 @@ export async function runSocialContentAutoProduction(input: {
           updated_at: directorPlan.createdAt,
         });
         contentHandoff = socialDirectorContentHandoff(directorPlan);
+        await recordCurrentContentExecutionCheckpoint({
+          stage: 'social.director_storyboard',
+          version: '1',
+          inputHash: directorCheckpointInputHash,
+          payload: {
+            directorPlan,
+            directorPlanReference: persistedDirectorPlan.reference,
+            narration: contentHandoff.narration,
+            scenes: contentHandoff.scenes.map(scene => ({
+              sceneId: scene.sceneId,
+              source: structuredClone(scene.source),
+              voiceover: scene.voiceover,
+              caption: scene.caption,
+            })),
+          },
+        });
         await writeExecutionStage({
           ...input,
           stage: 'content_production',
@@ -952,12 +1167,29 @@ export async function runSocialContentAutoProduction(input: {
   const adaptedScript = socialDirectorScriptText(contentHandoff, duration);
   const bgm = await (input.runtime?.resolveBgm ?? resolveLockedBgm)(input.tenantId, contentHandoff);
   const captionCues = socialDirectorVoiceAlignedCaptionCues(contentHandoff, voice.cues, duration);
-  const timeline = socialDirectorRenderTimeline(contentHandoff, duration, captionCues).map((clip,index)=>({...clip,sceneId:contentHandoff.scenes[index]!.sceneId}));
+  const timeline = socialDirectorRenderTimeline(contentHandoff, duration, captionCues)
+    .map((clip,index)=>({...clip,sceneId:contentHandoff.scenes[index]!.sceneId}));
+  retainVoiceForRecovery = await recordNarrationAudioCheckpoint({
+    inputHash: narrationCheckpointInputHash,
+    narration: contentHandoff.narration,
+    voice: {
+      ok: true,
+      source: voice.source,
+      localPath: voice.localPath,
+      duration,
+      text: voice.text || contentHandoff.narration,
+      cues: voice.cues,
+      alignmentSource: voice.alignmentSource,
+      qualityReport: voice.qualityReport,
+    },
+    captionCues,
+    renderTimeline: timeline,
+  }) || retainVoiceForRecovery;
   await writeExecutionStage({
     ...input,
     stage: 'rendering',
     message: '内容 Agent 正在自动剪辑、混音并烧录字幕。',
-    extra: { duration, sceneCount: timeline.length, voiceQuality: voice.qualityReport ?? null },
+    extra: { duration, sceneCount: timeline.length, voiceQuality: voice.qualityReport ?? null, narrationCheckpointReused },
   });
   const compositeManifest = {
     jobId: `social-${input.taskId}-${createHash('sha256').update(input.runId).digest('hex').slice(0, 12)}`,
@@ -981,7 +1213,7 @@ export async function runSocialContentAutoProduction(input: {
       style: {
         fontScale: contentHandoff.direction.subtitles.fontScale,
         bottomRatio: contentHandoff.direction.subtitles.bottomRatio,
-        productNames: verifiedContext.productName ? [verifiedContext.productName] : [],
+        productNames: executionVerifiedContext.productName ? [executionVerifiedContext.productName] : [],
       },
     },
   };
@@ -1017,6 +1249,7 @@ export async function runSocialContentAutoProduction(input: {
     outputDirectory: outputDir,
     timestamp: socialDirectorCoverTimestamp(contentHandoff, duration, captionCues),
   });
+  await assertCurrentContentExecutionActive();
   const stored = await storeTransientSocialContentFile({
     filePath: result.outputPath,
     tenantId: input.tenantId,
@@ -1211,7 +1444,8 @@ export async function runSocialContentAutoProduction(input: {
   };
   let initialSceneSourceEvidence:Awaited<ReturnType<typeof initialSceneSourceHashes>>|null=null;
   if(assetSupplyExecution){try{initialSceneSourceEvidence=await initialSceneSourceHashes({assets,execution:assetSupplyExecution,voicePath:voice.localPath,bgmUrl:bgm.url||null});}catch{/* Actual output remains reviewable; missing source bytes cannot create a cache. */}}
-    const artifactResult = await createSocialContentArtifact({
+  await assertCurrentContentExecutionActive();
+  const artifactResult = await createSocialContentArtifact({
     repository: input.repository,
     tenantId: input.tenantId,
     userId: input.userId,
@@ -1351,7 +1585,7 @@ export async function runSocialContentAutoProduction(input: {
   try { await persistSocialProductionWorkspace({repository:input.repository,tenantId:input.tenantId,userId:input.userId,taskId:input.taskId,runId:input.runId,artifactId:artifactResult.artifact.artifactId,baseline:activeBaseline,manifest:compositeManifest as unknown as Record<string,unknown>,backendFilePort:input.runtime?.backendFilePort}); } catch(error) { await writeExecutionStage({...input,stage:'production_workspace_pending',message:'真实成片已保留；逐镜制作工作台快照尚未通过媒体或身份核验，不能推断项目关联。',extra:{reason:error instanceof Error&&/^(?:social_workspace_|social_content_)[a-z_]+$/.test(error.message)?error.message:'social_workspace_unavailable'}}); }
   await finishExecution({ ...input, backendFilePort: input.runtime?.backendFilePort, artifactId: artifactResult.artifact.artifactId });
     } finally {
-      if (transientVoicePath) {
+      if (transientVoicePath && !retainVoiceForRecovery) {
         await Promise.all([
           fsp.rm(transientVoicePath, { force: true }),
           fsp.rm(`${transientVoicePath}.alignment.json`, { force: true }),

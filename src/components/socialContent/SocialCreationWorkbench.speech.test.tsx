@@ -9,9 +9,11 @@ const html = renderToStaticMarkup(<SocialCreationWorkbench
   seed={{ referenceTitle: '参考视频', referenceShots: [{ time: '0–1s', dialogue: 'Hello, boss!', visual: '产品展示' }] }}
   onOpenChooser={() => {}} onShowCreations={() => {}} onGenerate={() => {}}
 />);
-assert.ok(html.includes('1 口播替换与确认'));
-assert.ok(html.includes('2 分镜匹配与制作'));
-assert.ok(html.includes('3 成片渲染和导出'));
+assert.ok(html.includes('aria-label="内容制作步骤"'));
+assert.ok(html.includes('ant-steps'), 'three-step navigation uses the shared Ant Steps interaction');
+assert.ok(html.includes('口播替换与确认'));
+assert.ok(html.includes('分镜匹配与制作'));
+assert.ok(html.includes('成片渲染和导出'));
 assert.ok(html.includes('生成口播'));
 assert.ok(!html.includes('第 1 句新口播'), '生成前不应提前展示可编辑的替换结果');
 assert.ok(!html.includes('试听新口播'));
@@ -40,12 +42,13 @@ const freeHtml = renderToStaticMarkup(<SocialCreationWorkbench
 />);
 assert.ok(freeHtml.includes('创意与口播确认'));
 assert.ok(freeHtml.includes('主推产品 · 多选'));
-assert.ok(freeHtml.includes('暂不指定'));
-assert.ok(freeHtml.includes('上传素材'));
-assert.ok(freeHtml.includes('素材库'));
-assert.ok(freeHtml.includes('AI 生成'));
 const workbenchSource = fs.readFileSync(new URL('./SocialCreationWorkbench.tsx', import.meta.url), 'utf8');
-assert.match(workbenchSource, /在第一页生成 AI 钩子/);
+assert.match(workbenchSource, /选择开场方式/);
+assert.match(workbenchSource, /'暂不指定'/);
+assert.match(workbenchSource, /'上传素材'/);
+assert.match(workbenchSource, /'素材库'/);
+assert.match(workbenchSource, /'AI 生成'/);
+assert.match(workbenchSource, /生成 AI 开场画面/);
 assert.match(workbenchSource, /确认费用并生成/);
 assert.match(workbenchSource, /Seedream 首帧/);
 assert.match(workbenchSource, /Seedance 4 秒 480p/);

@@ -2,7 +2,7 @@ export const BENCHMARK_ANALYSIS_CONTRACT = `
 - 开场钩子就是第一个分镜，详细分析写入该分镜已有字段，不另建钩子对象或重复章节；第一个分镜 narrativeRole=hook。
 对标分析结构化合同（新增字段的键与枚举使用以下英文，其余说明用中文）：
 - 每个 scriptDetails15s 或 shots 项追加 materialType、narrativeRole、classificationEvidence。
-  materialType 仅取 talking_head（有画内讲话证据的真人口播）、factory（工厂生产过程）、product（产品展示）、consumer_demo（消费者使用产品或效果演示）。证据缺失才用 unknown，不将 unknown 作为第五种素材类别。
+  materialType 仅取五种可生产镜头类型：talking_head（有画内讲话证据的真人口播）、factory（工厂生产过程实拍）、product（产品实拍）、consumer_demo（消费者使用产品或效果演示，前端标注 D2C）、general（不属于前四类、但有明确可见证据的其他通用素材，如环境、道具、图形或转场）。只有证据不足、无法判断时才用 unknown；unknown 不是第六种素材类别。
   consumer_demo 只描述镜头，不表示整片 B2C/DTC；工厂背景中的前景真人口播属于 talking_head，不因环境改成 factory；画外音不能证明画内人在讲话。
   narrativeRole 仅取 hook、pain_point、capability_proof、product_intro、effect_proof、cta、transition、unknown，独立于素材类型。classificationEvidence 写本镜头分类的具体可见/可听依据；无法判断用 unknown，禁止填模板。
 - 镜头按真实视觉/动作边界记录，不按台词句数凑镜头。口播段可能覆盖多个镜头，不能重复整段原话制造逐镜台词。

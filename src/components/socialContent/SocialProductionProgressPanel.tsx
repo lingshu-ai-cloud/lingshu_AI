@@ -157,9 +157,9 @@ function milestoneStateLabel(state: ContentProgressNodeState): string {
 function TaskMilestoneRail({ task }: { task: TaskListItem }) {
   const milestones = contentProgressNodes(task);
   return (
-    <span className="mt-3 block rounded-xl border border-slate-100 bg-slate-50/70 px-3 py-3" data-content-milestone-rail>
+    <span className="mt-3 block rounded-lg border border-slate-100 bg-slate-50/70 px-3 py-3" data-content-milestone-rail>
       <span className="mb-3 flex items-center justify-between gap-3">
-        <span className="text-[9px] font-black tracking-[0.08em] text-slate-500">任务进度 · 自动保存</span>
+        <span className="text-[9px] font-semibold tracking-[0.08em] text-slate-500">任务进度 · 自动保存</span>
         <span className="text-[9px] font-bold text-slate-400">共 7 个节点</span>
       </span>
       <span className="block">
@@ -178,8 +178,8 @@ function TaskMilestoneRail({ task }: { task: TaskListItem }) {
               </span>
               <span className="min-w-0 flex-1 pb-3">
                 <span className="flex items-start justify-between gap-2">
-                  <span className={`text-[10px] font-black ${milestoneTextTone(milestone.state)}`}>{milestone.label}</span>
-                  <span className={`shrink-0 text-[9px] font-black ${milestoneTextTone(milestone.state)}`}>{milestoneStateLabel(milestone.state)}</span>
+                  <span className={`text-[10px] font-semibold ${milestoneTextTone(milestone.state)}`}>{milestone.label}</span>
+                  <span className={`shrink-0 text-[9px] font-semibold ${milestoneTextTone(milestone.state)}`}>{milestoneStateLabel(milestone.state)}</span>
                 </span>
                 <span className={`mt-0.5 block text-[9px] leading-4 ${milestone.state === 'pending' ? 'text-slate-400' : 'text-slate-600'}`}>{milestone.result}</span>
               </span>
@@ -268,33 +268,33 @@ function DirectorAgentHandoff({ task }: { task: TaskListItem }) {
 
   return (
     <div className="border-t border-slate-100 px-4 pb-4 pt-3">
-      <p className="text-[9px] font-black tracking-[0.08em] text-slate-500">自动制作接力</p>
+      <p className="text-[9px] font-semibold tracking-[0.08em] text-slate-500">自动制作接力</p>
       <div className="mt-2 grid gap-2">
-        <div className={`rounded-xl border px-3 py-2.5 ${agentStepTone(directorState)}`}>
+        <div className={`rounded-lg border px-3 py-2.5 ${agentStepTone(directorState)}`}>
           <div className="flex items-center justify-between gap-3">
-            <span className="flex items-center gap-2 text-xs font-black"><Clapperboard size={14} />编导 Agent</span>
-            <span className="text-[9px] font-black">{agentStepLabel(directorState)}</span>
+            <span className="flex items-center gap-2 text-xs font-semibold"><Clapperboard size={14} />编导 Agent</span>
+            <span className="text-[9px] font-semibold">{agentStepLabel(directorState)}</span>
           </div>
           <p className="mt-1 text-[10px] leading-4 opacity-80">定义钩子、叙事、逐镜视觉目标、事实边界和验收标准，不预选模型或供应商</p>
         </div>
-        <div className={`rounded-xl border px-3 py-2.5 ${agentStepTone(contentState)}`}>
+        <div className={`rounded-lg border px-3 py-2.5 ${agentStepTone(contentState)}`}>
           <div className="flex items-center justify-between gap-3">
-            <span className="flex items-center gap-2 text-xs font-black"><Bot size={14} />内容 Agent</span>
-            <span className="text-[9px] font-black">{agentStepLabel(contentState)}</span>
+            <span className="flex items-center gap-2 text-xs font-semibold"><Bot size={14} />内容 Agent</span>
+            <span className="text-[9px] font-semibold">{agentStepLabel(contentState)}</span>
           </div>
           <p className="mt-1 text-[10px] leading-4 opacity-80">检索候选素材与能力，比较成本、耗时、成功率和权利风险；编导审核通过后执行</p>
         </div>
       </div>
 
       {plan?.status === 'ready' && (
-        <details className="mt-2 overflow-hidden rounded-xl border border-slate-200 bg-white">
-          <summary className="flex cursor-pointer list-none items-center justify-between gap-3 px-3 py-2.5 text-[11px] font-black text-slate-800">
+        <details className="mt-2 overflow-hidden rounded-lg border border-slate-200 bg-white">
+          <summary className="flex cursor-pointer list-none items-center justify-between gap-3 px-3 py-2.5 text-[11px] font-semibold text-slate-800">
             <span>查看导演方案摘要</span>
             <span className="shrink-0 text-[9px] font-bold text-slate-500">{plan.sceneCount} 个镜头 · {plan.language === 'zh' ? '中文' : '英文'}</span>
           </summary>
           <div className="space-y-2 border-t border-slate-100 bg-slate-50/70 p-3">
             <p className="text-[10px] leading-4 text-slate-500">方案依据：{directorSourceLabel(plan.scriptSource)}。导演方案会直接交给内容 Agent，不需要你逐项填写。</p>
-            {summaryRows.map(row => <div key={row.label} className="rounded-lg bg-white px-3 py-2 shadow-sm"><p className="flex items-center gap-1.5 text-[9px] font-black text-emerald-700"><row.icon size={11} />{row.label}</p><p className="mt-1 text-[10px] leading-4 text-slate-700">{row.value}</p></div>)}
+            {summaryRows.map(row => <div key={row.label} className="rounded-lg bg-white px-3 py-2 shadow-none"><p className="flex items-center gap-1.5 text-[9px] font-semibold text-emerald-700"><row.icon size={11} />{row.label}</p><p className="mt-1 text-[10px] leading-4 text-slate-700">{row.value}</p></div>)}
           </div>
         </details>
       )}
@@ -440,16 +440,16 @@ export default function SocialProductionProgressPanel({
         onClick={() => setOpen(true)}
         aria-haspopup="dialog"
         aria-expanded={open}
-        className="group flex max-w-[calc(100vw-2rem)] items-center gap-2.5 rounded-2xl border border-emerald-200 bg-white px-3 py-2.5 text-left shadow-[0_10px_30px_rgba(15,23,42,0.16)] transition hover:border-emerald-300 hover:shadow-[0_14px_34px_rgba(16,185,129,0.18)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500 sm:max-w-[19rem]"
+        className="group flex max-w-[calc(100vw-2rem)] items-center gap-2.5 rounded-lg border border-emerald-200 bg-white px-3 py-2.5 text-left  transition hover:border-emerald-300  focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500 sm:max-w-[19rem]"
       >
         <span className={counts.pendingReview > 0 ? 'text-amber-700' : 'text-emerald-700'}>
           <StatusGraphic task={task} />
         </span>
         <span className="min-w-0 flex-1">
-          <span className="block text-[10px] font-black tracking-[0.08em] text-emerald-700">
+          <span className="block text-[10px] font-semibold tracking-[0.08em] text-emerald-700">
             {active ? activeAgentLabel(task) : socialContentStatusLabel(task.status)}
           </span>
-          <span role="status" aria-live="polite" className="mt-0.5 block truncate text-xs font-black leading-5 text-slate-900">
+          <span role="status" aria-live="polite" className="mt-0.5 block truncate text-xs font-semibold leading-5 text-slate-900">
             {compactHeadline(task)}
           </span>
           <span className="mt-0.5 block truncate text-[10px] font-semibold text-slate-500">查看制作任务</span>
@@ -462,7 +462,7 @@ export default function SocialProductionProgressPanel({
           <button
             type="button"
             aria-label="关闭制作任务详情"
-            className="absolute inset-0 bg-slate-950/35 backdrop-blur-[1px]"
+            className="absolute inset-0 bg-slate-950/35 -[1px]"
             onClick={() => setOpen(false)}
           />
           <aside
@@ -470,17 +470,17 @@ export default function SocialProductionProgressPanel({
             role="dialog"
             aria-modal="true"
             aria-labelledby={drawerTitleId}
-            className="absolute inset-y-0 right-0 flex w-full max-w-md flex-col bg-[#f7f9f7] shadow-[-20px_0_60px_rgba(15,23,42,0.18)]"
+            className="absolute inset-y-0 right-0 flex w-full max-w-md flex-col bg-white "
           >
             <header className="flex items-center justify-between gap-3 border-b border-slate-200 bg-white px-5 py-4 sm:px-6">
               <div>
-                <p className="text-[10px] font-black tracking-[0.1em] text-emerald-700">AI 制作团队</p>
-                <h2 id={drawerTitleId} className="mt-0.5 text-lg font-black text-slate-950">制作任务</h2>
+                <p className="text-[10px] font-semibold tracking-[0.1em] text-emerald-700">AI 制作团队</p>
+                <h2 id={drawerTitleId} className="mt-0.5 text-lg font-semibold text-slate-950">制作任务</h2>
                 <p className="mt-1 text-xs text-slate-500">编导 Agent 定方案，内容 Agent 生成视频</p>
               </div>
               <div className="flex items-center gap-1.5">
-                <button type="button" disabled={busy} onClick={onRefresh} aria-label="刷新制作任务" className="flex h-9 w-9 items-center justify-center rounded-xl text-slate-500 hover:bg-slate-100 disabled:opacity-50"><RefreshCcw size={16} /></button>
-                <button ref={closeButtonRef} type="button" onClick={() => setOpen(false)} aria-label="关闭制作任务" className="flex h-9 w-9 items-center justify-center rounded-xl text-slate-500 hover:bg-slate-100"><X size={18} /></button>
+                <button type="button" disabled={busy} onClick={onRefresh} aria-label="刷新制作任务" className="flex h-9 w-9 items-center justify-center rounded-lg text-slate-500 hover:bg-slate-100 disabled:opacity-50"><RefreshCcw size={16} /></button>
+                <button ref={closeButtonRef} type="button" onClick={() => setOpen(false)} aria-label="关闭制作任务" className="flex h-9 w-9 items-center justify-center rounded-lg text-slate-500 hover:bg-slate-100"><X size={18} /></button>
               </div>
             </header>
 
@@ -491,7 +491,7 @@ export default function SocialProductionProgressPanel({
                   const itemCounts = taskCounts(item);
                   const itemActive = ACTIVE_STATUSES.has(item.status);
                   return (
-                    <article key={item.taskId} className={`overflow-hidden rounded-2xl border bg-white transition ${selected ? 'border-emerald-300 shadow-[0_8px_24px_rgba(16,185,129,0.10)]' : 'border-slate-200'}`}>
+                    <article key={item.taskId} className={`overflow-hidden rounded-lg border bg-white transition ${selected ? 'border-emerald-300 ' : 'border-slate-200'}`}>
                       <button
                         type="button"
                         onClick={() => selectTask(item.taskId)}
@@ -500,19 +500,19 @@ export default function SocialProductionProgressPanel({
                       >
                         <span className="flex items-start justify-between gap-3">
                           <span className="min-w-0">
-                            <span className="block truncate text-sm font-black text-slate-950">{item.brief.title}</span>
+                            <span className="block truncate text-sm font-semibold text-slate-950">{item.brief.title}</span>
                             <span className="mt-1 block text-[10px] font-semibold text-slate-500">更新于 {new Date(item.updatedAt).toLocaleString('zh-CN', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' })}</span>
                           </span>
-                          <span className={`shrink-0 rounded-full px-2.5 py-1 text-[10px] font-black ${statusTone(item.status)}`}>{itemActive ? activeAgentLabel(item) : socialContentStatusLabel(item.status)}</span>
+                          <span className={`shrink-0 rounded-full px-2.5 py-1 text-[10px] font-semibold ${statusTone(item.status)}`}>{itemActive ? activeAgentLabel(item) : socialContentStatusLabel(item.status)}</span>
                         </span>
 
-                        <span className="mt-4 flex items-start gap-2.5 rounded-xl bg-slate-50 px-3 py-3">
-                          <span className="relative mt-0.5 flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-white text-emerald-700 shadow-sm">
+                        <span className="mt-4 flex items-start gap-2.5 rounded-lg bg-slate-50 px-3 py-3">
+                          <span className="relative mt-0.5 flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-white text-emerald-700 shadow-none">
                             {itemActive && <span className="absolute inset-0 animate-spin rounded-full border border-transparent border-t-emerald-600 motion-reduce:animate-none" aria-hidden />}
                             <Bot size={14} aria-hidden />
                           </span>
                           <span className="min-w-0">
-                            <span className="block text-[9px] font-black tracking-[0.06em] text-slate-500">当前自动步骤</span>
+                            <span className="block text-[9px] font-semibold tracking-[0.06em] text-slate-500">当前自动步骤</span>
                             <span className="mt-0.5 block text-xs font-bold leading-5 text-slate-800">{automaticStep(item)}</span>
                           </span>
                         </span>
@@ -520,11 +520,11 @@ export default function SocialProductionProgressPanel({
                         <TaskMilestoneRail task={item} />
 
                         <span className="mt-3 grid grid-cols-2 gap-2">
-                          <span className="rounded-xl border border-slate-100 px-3 py-2.5">
+                          <span className="rounded-lg border border-slate-100 px-3 py-2.5">
                             <span className="flex items-center gap-1 text-[9px] font-bold text-slate-500"><Clock3 size={11} />提交时间</span>
                             <strong className="mt-1 block text-[10px] text-slate-900">{new Date(item.createdAt).toLocaleString('zh-CN', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' })}</strong>
                           </span>
-                          <span className="rounded-xl border border-slate-100 px-3 py-2.5">
+                          <span className="rounded-lg border border-slate-100 px-3 py-2.5">
                             <span className="flex items-center gap-1 text-[9px] font-bold text-slate-500"><FileCheck2 size={11} />结果与预计</span>
                             <strong className={`mt-1 block text-[10px] ${itemCounts.pendingReview > 0 ? 'text-amber-700' : 'text-slate-900'}`}>
                               {isTaskDetail(item) && item.productionProgress?.estimatedRemainingSeconds != null
@@ -546,7 +546,7 @@ export default function SocialProductionProgressPanel({
                               setOpen(false);
                               currentAction.action();
                             }}
-                            className="inline-flex w-full items-center justify-center gap-2 rounded-xl bg-emerald-600 px-4 py-2.5 text-xs font-black text-white transition hover:bg-emerald-700 disabled:opacity-50"
+                            className="inline-flex w-full items-center justify-center gap-2 rounded-lg bg-blue-600 px-4 py-2.5 text-xs font-semibold text-white transition hover:bg-blue-700 disabled:opacity-50"
                           >
                             {busy ? <Loader2 size={14} className="animate-spin" /> : currentAction.icon}
                             {currentAction.label}
@@ -563,7 +563,7 @@ export default function SocialProductionProgressPanel({
                   type="button"
                   disabled={busy || loadingMoreTasks}
                   onClick={onLoadMoreTasks}
-                  className="mt-4 inline-flex w-full items-center justify-center gap-2 rounded-xl border border-slate-200 bg-white px-4 py-3 text-xs font-black text-slate-700 hover:bg-slate-50 disabled:opacity-50"
+                  className="mt-4 inline-flex w-full items-center justify-center gap-2 rounded-lg border border-slate-200 bg-white px-4 py-3 text-xs font-semibold text-slate-700 hover:bg-slate-50 disabled:opacity-50"
                 >
                   {loadingMoreTasks && <Loader2 size={14} className="animate-spin" />}
                   {loadingMoreTasks ? '正在加载任务' : `加载更多任务${remainingTaskCount > 0 ? `（${remainingTaskCount}）` : ''}`}

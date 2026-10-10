@@ -3,6 +3,8 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import fs from 'node:fs';
 import { execFileSync } from 'node:child_process';
+import os from 'node:os';
+import { randomBytes } from 'node:crypto';
 
 const repositoryRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const runtimeRoot = path.resolve(process.env.LINGSHU_PREVIEW_ROOT || repositoryRoot);
@@ -11,12 +13,49 @@ const shuttingDown = { value: false };
 let monitoring = false;
 let backendRestartTimer;
 let repositoryRevision = '';
+const startupGraceMs = Number(process.env.LINGSHU_PREVIEW_STARTUP_GRACE_MS || 120_000);
+const healthCheckTimeoutMs = Number(process.env.LINGSHU_PREVIEW_HEALTH_TIMEOUT_MS || 20_000);
+const maxConsecutiveHealthFailures = Number(process.env.LINGSHU_PREVIEW_HEALTH_FAILURE_LIMIT || 5);
+const forceOptimizeDependencies = process.env.LINGSHU_PREVIEW_FORCE_OPTIMIZE === '1';
+const localPreviewAuthEmail = String(
+  process.env.LINGSHU_PREVIEW_AUTH_EMAIL || 'beauty-showcase@local.test',
+).trim().toLowerCase();
+
+function stableLocalAuthSecret() {
+  const configured = String(process.env.LOCAL_DEMO_TOKEN_SECRET || '').trim();
+  if (configured) return configured;
+  const secretFile = path.resolve(
+    process.env.LINGSHU_PREVIEW_AUTH_SECRET_FILE
+      || path.join(os.homedir(), '.lingshu-ai', 'local-preview-auth-secret'),
+  );
+  try {
+    const existing = fs.readFileSync(secretFile, 'utf8').trim();
+    if (existing.length >= 32) return existing;
+  } catch (error) {
+    if (!(error && typeof error === 'object' && 'code' in error && error.code === 'ENOENT')) throw error;
+  }
+  const secret = randomBytes(48).toString('base64url');
+  fs.mkdirSync(path.dirname(secretFile), { recursive: true, mode: 0o700 });
+  const descriptor = fs.openSync(secretFile, 'wx', 0o600);
+  try {
+    fs.writeFileSync(descriptor, `${secret}\n`, 'utf8');
+    fs.fsyncSync(descriptor);
+  } finally {
+    fs.closeSync(descriptor);
+  }
+  return secret;
+}
+
+const localAuthSecret = stableLocalAuthSecret();
 
 function currentRevision() {
   try {
-    return execFileSync('git', ['rev-parse', 'HEAD'], { cwd: runtimeRoot, encoding: 'utf8', timeout: 2_000, stdio: ['ignore', 'pipe', 'ignore'] }).trim();
+    const revision = execFileSync('git', ['rev-parse', 'HEAD'], { cwd: runtimeRoot, encoding: 'utf8', timeout: 5_000, stdio: ['ignore', 'pipe', 'ignore'] }).trim();
+    return /^[0-9a-f]{40}$/i.test(revision) ? revision : null;
   } catch {
-    return 'unknown';
+    // A busy working tree can make git briefly exceed the timeout. Absence of a
+    // trustworthy SHA is not a revision change and must never restart services.
+    return null;
   }
 }
 
@@ -51,6 +90,14 @@ const services = [
       // queue/scheduler migration makes a split local worker safe.
       PROCESS_ROLE: 'all',
       ENABLE_LOCAL_DEV_FALLBACK: 'true',
+      // Local preview sessions must survive backend hot restarts. The server's
+      // secure default is intentionally process-ephemeral, so the supervisor
+      // supplies a private, machine-local secret only for this dev service.
+      LOCAL_DEMO_TOKEN_SECRET: localAuthSecret,
+      LOCAL_DEMO_TOKEN_TTL_SECONDS: '86400',
+      // This is a local-record selector, never a credential. The auth route
+      // accepts it only in the supervised, non-production preview process.
+      LINGSHU_PREVIEW_AUTH_EMAIL: localPreviewAuthEmail,
     },
     // Health monitoring must stay cheap and independent of business data.
     // Business queries can be temporarily slow while background jobs are busy;
@@ -62,13 +109,16 @@ const services = [
     args: [
       path.join(runtimeRoot, 'node_modules/vite/bin/vite.js'),
       '--host',
-      '0.0.0.0',
+      '127.0.0.1',
       '--port',
       '5177',
       '--strictPort',
-      '--force',
+      ...(forceOptimizeDependencies ? ['--force'] : []),
     ],
-    env: { DEV_API_TARGET: 'http://127.0.0.1:8790' },
+    env: {
+      DEV_API_TARGET: 'http://127.0.0.1:8790',
+      VITE_LINGSHU_LOCAL_PREVIEW: '1',
+    },
     // Serve source in the local workspace. A dist preview can keep an old HTML
     // document while a build removes its hashed chunks, which Safari presents
     // as an intermittent white screen.
@@ -85,7 +135,7 @@ const services = [
       '--port',
       '5178',
       '--strictPort',
-      '--force',
+      ...(forceOptimizeDependencies ? ['--force'] : []),
     ],
     env: {
       DEV_API_TARGET: 'http://127.0.0.1:8790',
@@ -102,9 +152,11 @@ function log(message) {
 function start(service) {
   if (shuttingDown.value) return;
   service.failures = 0;
+  service.startedAt = Date.now();
+  const revision = currentRevision() || repositoryRevision;
   const child = spawn(nodeExecutable, service.args, {
     cwd: runtimeRoot,
-    env: localNetworkEnvironment({ ...service.env, APP_BUILD_SHA: currentRevision(), VITE_APP_BUILD_SHA: currentRevision() }),
+    env: localNetworkEnvironment({ ...service.env, APP_BUILD_SHA: revision, VITE_APP_BUILD_SHA: revision }),
     stdio: 'inherit',
     detached: true,
   });
@@ -143,10 +195,14 @@ for (const directory of ['server', 'shared']) {
   }
 }
 
-repositoryRevision = currentRevision();
+repositoryRevision = currentRevision() || '';
 setInterval(() => {
   const next = currentRevision();
-  if (next === repositoryRevision) return;
+  if (!next || next === repositoryRevision) return;
+  if (!repositoryRevision) {
+    repositoryRevision = next;
+    return;
+  }
   repositoryRevision = next;
   log(`repository revision changed to ${next.slice(0, 8)}; restarting preview services`);
   for (const service of services) terminate(service);
@@ -165,7 +221,7 @@ function terminate(service) {
 
 async function healthy(service) {
   const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), 5_000);
+  const timer = setTimeout(() => controller.abort(), healthCheckTimeoutMs);
   try {
     const response = await fetch(service.probe.url, {
       headers: service.probe.headers,
@@ -206,14 +262,15 @@ async function monitor() {
   try {
     await Promise.all(services.map(async service => {
       if (!service.child) return;
+      if (Date.now() - (service.startedAt || 0) < startupGraceMs) return;
       if (await healthy(service)) {
         service.failures = 0;
         return;
       }
       service.failures = (service.failures || 0) + 1;
-      log(`${service.name} health check failed (${service.failures}/3)`);
-      if (service.failures >= 3) {
-        log(`${service.name} failed three health checks; restarting`);
+      log(`${service.name} health check failed (${service.failures}/${maxConsecutiveHealthFailures})`);
+      if (service.failures >= maxConsecutiveHealthFailures) {
+        log(`${service.name} failed ${maxConsecutiveHealthFailures} consecutive health checks; restarting`);
         service.failures = 0;
         terminate(service);
       }
@@ -238,23 +295,10 @@ process.on('SIGINT', stop);
 process.on('SIGTERM', stop);
 process.on('SIGHUP', stop);
 
-const [backend, ...frontends] = services;
-start(backend);
-
-async function startFrontendsAfterBackend() {
-  let attempt = 0;
-  while (!shuttingDown.value && !(await healthy(backend))) {
-    attempt += 1;
-    if (attempt === 30 || attempt % 60 === 0) {
-      log(`backend is not ready after ${attempt} seconds; keeping frontends offline to avoid a broken preview`);
-    }
-    await new Promise(resolve => setTimeout(resolve, 1_000));
-  }
-  if (shuttingDown.value) return;
-  for (const frontend of frontends) start(frontend);
-}
-
-void startFrontendsAfterBackend();
+// Serve the application shell immediately. Backend startup can be expensive on
+// a cold TypeScript cache; keeping Vite offline during that work presents a
+// blank/unreachable page even though the frontend itself is healthy.
+for (const service of services) start(service);
 setTimeout(() => {
   void monitor();
   setInterval(() => void monitor(), 15_000);

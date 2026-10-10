@@ -54,7 +54,7 @@ export default function InquiryDataBoard({ includeMockCustomers = false, mockCus
         </button>
       </div>
 
-      {demoCustomers && <div className="mb-4 border-l-4 border-amber-400 bg-amber-50 px-4 py-3 text-xs text-amber-950"><strong>演示数据：</strong>客户、消息、阶段与商机估值均为模拟，不代表真实询盘。</div>}
+      {demoCustomers && <div className="mb-4 border-l-4 border-amber-400 bg-amber-50 px-4 py-3 text-xs text-amber-950"><strong>参考预览：</strong>客户、消息、阶段与商机估值均为模拟，不代表真实询盘。</div>}
 
       {loading && !demoCustomers ? (
         <div className="secondary-empty border-l-2 border-border bg-surface p-5 text-sm text-text-muted">正在读取 WhatsApp 客户会话...</div>

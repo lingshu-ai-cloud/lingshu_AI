@@ -1,6 +1,6 @@
 import { randomBytes } from 'node:crypto';
 import pg from 'pg';
-import type { DataStore, ListQuery, ListResult, Record_ } from './datastore.js';
+import type { CompareExpected, DataStore, ListQuery, ListResult, Record_ } from './datastore.js';
 
 const { Pool } = pg;
 
@@ -118,6 +118,9 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_lingshu_content_execution_task_run
 CREATE UNIQUE INDEX IF NOT EXISTS idx_lingshu_content_execution_limit_scope
   ON lingshu_records ((data ->> 'tenant_id'), (data ->> 'limit_scope'), (data ->> 'scope_key'))
   WHERE collection = 'content_execution_limits';
+CREATE UNIQUE INDEX IF NOT EXISTS idx_lingshu_assistant_thread_owner
+  ON lingshu_records ((data ->> 'tenantId'), (data ->> 'userId'), (data ->> 'agentId'))
+  WHERE collection = 'assistant_threads' AND COALESCE(data ->> 'userId', '') <> '';
 CREATE UNIQUE INDEX IF NOT EXISTS idx_lingshu_social_presenter_job_request
   ON lingshu_records ((data ->> 'tenant_id'), (data ->> 'request_id'))
   WHERE collection = 'studio_social_presenter_jobs';
@@ -254,6 +257,30 @@ export class PostgresStore implements DataStore {
           updated_at = $5::timestamptz
       WHERE collection = $1 AND id = $2
     `, [collection, id, JSON.stringify(patch), tenantIdOf(patch), updated]);
+    return (result.rowCount ?? 0) === 1;
+  }
+
+  async compareAndSwap(
+    collection: string,
+    id: string,
+    expected: CompareExpected,
+    data: Record<string, unknown>,
+  ): Promise<boolean> {
+    assertCollection(collection);
+    const updated = new Date().toISOString();
+    const patch = { ...data, id, updated };
+    const result = await this.db().query(`
+      UPDATE lingshu_records
+      SET data = data || $4::jsonb,
+          tenant_id = COALESCE($5, tenant_id),
+          updated_at = $6::timestamptz
+      WHERE collection = $1 AND id = $2
+        AND NOT EXISTS (
+          SELECT 1
+          FROM jsonb_each($3::jsonb) AS guard(key, value)
+          WHERE data -> guard.key IS DISTINCT FROM guard.value
+        )
+    `, [collection, id, JSON.stringify(expected), JSON.stringify(patch), tenantIdOf(patch), updated]);
     return (result.rowCount ?? 0) === 1;
   }
 

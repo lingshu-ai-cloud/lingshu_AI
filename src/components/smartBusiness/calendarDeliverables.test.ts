@@ -7,6 +7,7 @@ test('one deliverable retains final deadline, real navigation identity and inter
  const nodes=[card('script','script'),{...card('video','video_generation'),productionTaskId:'actual-content',productionExecutionTaskId:'video'},card('quality','quality_check')];
  const result=projectCalendarDeliverables(nodes);
  assert.equal(result.length,1);assert.equal(result[0].id,'quality');assert.equal(result[0].time,'15:00');assert.equal(result[0].productionTaskId,'actual-content');assert.equal(result[0].productionExecutionTaskId,'video');assert.equal(result[0].internalNodes?.length,3);
+ assert.equal(result[0].title,'完成视频成片');
 });
 test('another tenant, publication and human exception never collapse into this video',()=>{
  const human={...card('upload','material_readiness'),agent:'human' as const};

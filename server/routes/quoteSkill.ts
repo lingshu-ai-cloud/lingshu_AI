@@ -40,7 +40,7 @@ type QuoteSkillDeps = {
   canConfirm?: (req: Request, userId: string) => Promise<boolean>;
   renderCard?: typeof renderQuoteCard;
   sendImage?: typeof sendTenantWhatsAppImageWithReceipt;
-  findCustomer?: (tenantId: string, customerId: string) => { id?: string; waNumber?: string; whatsappProfileName?: string; timeline?: Array<{ actor?: string; timestamp?: number }> } | undefined | Promise<{ id?: string; waNumber?: string; whatsappProfileName?: string; timeline?: Array<{ actor?: string; timestamp?: number }> } | undefined>;
+  findCustomer?: (tenantId: string, customerId: string) => { id?: string; source?: string; messagingChannel?: string; waNumber?: string; whatsappProfileName?: string; timeline?: Array<{ actor?: string; type?: string; timestamp?: number }> } | undefined | Promise<{ id?: string; source?: string; messagingChannel?: string; waNumber?: string; whatsappProfileName?: string; timeline?: Array<{ actor?: string; type?: string; timestamp?: number }> } | undefined>;
   messagingReady?: (tenantId: string) => Promise<boolean>;
   recordOutbound?: typeof markWhatsAppHumanReply;
 };
@@ -119,6 +119,31 @@ function draftPayload(record: StoredDraft | null): QuoteSkillDraft | null {
 
 function boundedText(value: unknown, max: number): string {
   return String(value ?? '').trim().slice(0, max);
+}
+
+function quoteEnterpriseFactVersion(profile: Awaited<ReturnType<typeof readTenantEnterpriseProfile>>): QuoteSkillDraft['enterpriseFactVersion'] {
+  const version = profile.factVersion;
+  const id = boundedText(version?.id, 160);
+  const contentHash = boundedText(version?.contentHash, 128);
+  const revision = Math.max(0, Math.trunc(Number(version?.revision) || 0));
+  return id && contentHash && revision > 0 ? { id, revision, contentHash } : undefined;
+}
+
+export function quoteDraftUsesEnterpriseFacts(draft: Pick<QuoteSkillDraft, 'sellerName' | 'matchedProduct' | 'unitPriceSource' | 'evidence'>): boolean {
+  return Boolean(draft.sellerName.trim())
+    || Boolean(draft.matchedProduct)
+    || draft.unitPriceSource === 'product_catalog'
+    || draft.evidence.some(item => item.source === 'product_catalog' || item.source === 'enterprise_rule');
+}
+
+function sameQuoteEnterpriseFactVersion(
+  left: QuoteSkillDraft['enterpriseFactVersion'],
+  right: QuoteSkillDraft['enterpriseFactVersion'],
+): boolean {
+  return Boolean(left && right
+    && left.id === right.id
+    && left.revision === right.revision
+    && left.contentHash === right.contentHash);
 }
 
 function expectedRevision(body: unknown): number | null {
@@ -213,7 +238,16 @@ export function createQuoteSkillRouter(deps: QuoteSkillDeps = {}): Router {
   const withDraftLock = createKeyedLock();
   const renderCard = deps.renderCard || renderQuoteCard;
   const sendImage = deps.sendImage || sendTenantWhatsAppImageWithReceipt;
-  const findCustomer = deps.findCustomer || (async (tenantId: string, customerId: string) => (await readAuthorizedWhatsAppCustomers(tenantId, dataStore)).find(item => item.id === customerId) || (await readAuthorizedMessengerCustomers(tenantId, dataStore)).find(item => item.id === customerId) || getInstagramCustomers(tenantId).find(item => item.id === customerId));
+  const findCustomer = deps.findCustomer || (async (tenantId: string, customerId: string) => {
+    // Acquisition source can be Instagram even for a WhatsApp customer.
+    // Route delivery by the actual conversation store, not that attribution.
+    const whatsapp = (await readAuthorizedWhatsAppCustomers(tenantId, dataStore)).find(item => item.id === customerId);
+    if (whatsapp) return { ...whatsapp, messagingChannel: 'whatsapp' };
+    const messenger = (await readAuthorizedMessengerCustomers(tenantId, dataStore)).find(item => item.id === customerId);
+    if (messenger) return { ...messenger, messagingChannel: 'messenger' };
+    const instagram = getInstagramCustomers(tenantId).find(item => item.id === customerId);
+    return instagram ? { ...instagram, messagingChannel: 'instagram' } : undefined;
+  });
   const messagingReady = deps.messagingReady || (async (tenantId: string) => (await readCustomerMessagingAuthorization(tenantId)).providerReady);
   const recordOutbound = deps.recordOutbound || markWhatsAppHumanReply;
   const customerVisibleDraft = async (tenantId: string, draft: QuoteSkillDraft): Promise<QuoteSkillDraft> => {
@@ -242,7 +276,10 @@ export function createQuoteSkillRouter(deps: QuoteSkillDeps = {}): Router {
     const { tenantId } = res.locals as AuthLocals;
     const profile = await profileReader(tenantId);
     res.setHeader('Cache-Control', 'private, no-store');
-    res.json({ items: catalogProductsFromEnterprise((profile.products?.items || []) as Array<Record<string, unknown>>) });
+    res.json({
+      items: catalogProductsFromEnterprise((profile.products?.items || []) as Array<Record<string, unknown>>),
+      enterpriseFactVersion: quoteEnterpriseFactVersion(profile),
+    });
   }));
 
   router.get('/customers/:customerId/latest', asyncRoute(async (req, res) => {
@@ -285,6 +322,7 @@ export function createQuoteSkillRouter(deps: QuoteSkillDeps = {}): Router {
       products: catalogProductsFromEnterprise((profile.products?.items || []) as Array<Record<string, unknown>>),
       rules: profile.bizRules || {},
     });
+    draft.enterpriseFactVersion = quoteEnterpriseFactVersion(profile);
     if (previous?.status === 'confirmed' && req.body?.clonePrevious === true) {
       draft = applyQuoteDraftPatch(draft, {
         productName: previous.productName,
@@ -342,9 +380,11 @@ export function createQuoteSkillRouter(deps: QuoteSkillDeps = {}): Router {
       res.status(400).json({ error: 'invalid_catalog_price_mode', message: '目录价格模式无效。' }); return;
     }
     let patch = validated.patch;
+    let selectedCatalogFactVersion: QuoteSkillDraft['enterpriseFactVersion'];
     let patchSource: 'human' | 'product_catalog' = 'human';
     if (catalogProductRef) {
       const profile = await profileReader(tenantId);
+      selectedCatalogFactVersion = quoteEnterpriseFactVersion(profile);
       const products = catalogProductsFromEnterprise((profile.products?.items || []) as Array<Record<string, unknown>>);
       const product = products.find(item => (item.sku || item.name) === catalogProductRef);
       if (!product) { res.status(409).json({ error: 'catalog_product_changed', message: '该产品已从企业知识库中移除或变更，请重新选择。' }); return; }
@@ -367,6 +407,7 @@ export function createQuoteSkillRouter(deps: QuoteSkillDeps = {}): Router {
     const changedFields = [...Object.keys(validated.patch), ...(catalogProductRef ? ['catalogProduct'] : [])];
     if (!changedFields.length) { res.status(400).json({ error: 'empty_quote_patch' }); return; }
     const draft = applyQuoteDraftPatch(owned.draft, patch, patchSource);
+    if (selectedCatalogFactVersion) draft.enterpriseFactVersion = selectedCatalogFactVersion;
     draft.revision = owned.draft.revision + 1;
     const ok = await dataStore.update(DRAFT_COLLECTION, owned.record.id, { status: draft.status, payload: draft, updated_at: draft.updatedAt });
     if (!ok) { res.status(503).json({ error: 'quote_storage_unavailable' }); return; }
@@ -390,6 +431,26 @@ export function createQuoteSkillRouter(deps: QuoteSkillDeps = {}): Router {
     const revision = expectedRevision(req.body);
     if (revision == null) { res.status(400).json({ error: 'expected_revision_required', message: '缺少报价版本，请刷新后重试。' }); return; }
     if (revision !== owned.draft.revision) { res.status(409).json({ error: 'quote_version_conflict', message: '报价已被其他成员更新，请刷新后重试。', draft: owned.draft }); return; }
+    const currentEnterpriseFactVersion = quoteEnterpriseFactVersion(await profileReader(tenantId));
+    if (quoteDraftUsesEnterpriseFacts(owned.draft) && !owned.draft.enterpriseFactVersion) {
+      res.status(409).json({
+        error: 'enterprise_fact_version_required',
+        message: '该历史报价使用了企业或产品目录事实，但没有保存事实版本。请重新创建报价或按最新目录重新选择产品。',
+        draft: owned.draft,
+        enterpriseFactVersion: currentEnterpriseFactVersion,
+      });
+      return;
+    }
+    if (owned.draft.enterpriseFactVersion
+      && !sameQuoteEnterpriseFactVersion(owned.draft.enterpriseFactVersion, currentEnterpriseFactVersion)) {
+      res.status(409).json({
+        error: 'enterprise_fact_version_conflict',
+        message: '企业资料已更新，请按最新产品与报价口径重新生成报价。',
+        draft: owned.draft,
+        enterpriseFactVersion: currentEnterpriseFactVersion,
+      });
+      return;
+    }
     if (owned.draft.missingFields.length || owned.draft.blockers.length || owned.draft.unitPrice == null || owned.draft.unitPrice <= 0 || owned.draft.quantity == null || owned.draft.quantity <= 0) {
       res.status(409).json({ error: 'quote_not_ready', message: '请先补齐报价信息并处理风险项。', draft: owned.draft }); return;
     }
@@ -444,11 +505,14 @@ export function createQuoteSkillRouter(deps: QuoteSkillDeps = {}): Router {
       if (!await canConfirm(req, userId)) { res.status(403).json({ error: 'quote_send_forbidden', message: '当前角色无权发送正式报价。' }); return; }
       if (!await messagingReady(tenantId)) { res.status(409).json({ error: 'whatsapp_not_ready', message: 'WhatsApp 通道尚未连接。' }); return; }
       const customer = await findCustomer(tenantId, owned.draft.customerId);
+      const channel = customer?.messagingChannel || (['messenger', 'instagram'].includes(customer?.source || '') ? customer?.source : 'whatsapp');
+      if (channel !== 'whatsapp') { res.status(409).json({ error: 'quote_delivery_channel_mismatch', message: '该客户会话不是 WhatsApp，不能通过 WhatsApp 发送报价卡。请插入报价回复到当前会话。' }); return; }
       const to = boundedText(customer?.waNumber, 80);
       if (!customer || !to) { res.status(409).json({ error: 'whatsapp_recipient_required', message: '客户缺少可用的 WhatsApp 收件号码。' }); return; }
-      const timeline = Array.isArray(customer.timeline) ? customer.timeline as Array<{ actor?: string; timestamp?: number }> : [];
-      const latestBuyerAt = Math.max(0, ...timeline.filter(item => item.actor === 'buyer').map(item => Number(item.timestamp || 0)));
-      if (!latestBuyerAt || Date.now() - latestBuyerAt > 24 * 60 * 60 * 1000) {
+      const timeline: Array<{ actor?: string; type?: string; timestamp?: number }> = Array.isArray(customer.timeline) ? customer.timeline : [];
+      const windowNow = Date.now();
+      const latestBuyerAt = Math.max(0, ...timeline.filter(item => item.actor === 'buyer' && (!item.type || item.type === 'whatsapp')).map(item => Number(item.timestamp || 0)).filter(timestamp => Number.isFinite(timestamp) && timestamp <= windowNow));
+      if (!latestBuyerAt || windowNow - latestBuyerAt > 24 * 60 * 60 * 1000) {
         res.status(409).json({ error: 'whatsapp_template_required', message: '距客户上次消息已超过 24 小时，图片报价需通过已审核的 WhatsApp 模板发送。' }); return;
       }
       const bytes = await renderCard(await customerVisibleDraft(tenantId, owned.draft));

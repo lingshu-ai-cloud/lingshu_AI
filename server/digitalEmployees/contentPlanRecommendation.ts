@@ -73,8 +73,12 @@ export function publicationCopyForPlan(input: {
 }): NonNullable<VideoCreationPlan['publication']> {
   const productName = text(input.productName || input.plan.productName || '本周主推产品', 80);
   const subject = text(input.reference?.hook || input.theme || input.plan.theme || '买家最关心的问题', 160);
-  const title = text(`${productName}｜${subject}`, 300);
-  const caption = text(`${subject}。本条视频将结合 ${productName} 的真实产品画面与可核验信息，帮助目标买家快速判断是否匹配需求。${input.plan.matrix?.cta ? ` ${input.plan.matrix.cta}` : ''}`, 2_000);
+  const platformEmoji: Partial<Record<VideoCreationPlan['platform'], string>> = {
+    tiktok: '⚡', instagram: '✨', facebook: '💡', youtube: '🎯',
+  };
+  const emoji = platformEmoji[input.plan.platform] || '✨';
+  const title = text(`${emoji} ${subject}｜${productName}`, 300);
+  const caption = text(`${emoji} ${subject}\n用 ${productName} 的真实画面与可核验信息，帮助目标买家快速判断是否匹配需求。${input.plan.matrix?.cta ? ` ${input.plan.matrix.cta}` : ''}`, 2_000);
   const normalizedProduct = productName.replace(/[^\p{L}\p{N}]+/gu, '');
   return {
     title,
@@ -93,13 +97,25 @@ export function bindDefaultProductsToPackage(
   products: Array<{ id: string; name: string; materialIds: string[] }>,
 ): WeeklyPackage {
   const fallback = products[0];
+  const productionPlans = pack.tasks.find(task => task.templateId === 'production')?.videoPlans || [];
+  const selectedNames = new Set(productionPlans.map(source => normalizeVideoPlan(source).productName).filter(Boolean));
+  const diversifyFamilies = products.length > 1 && selectedNames.size <= 1;
+  const familyProducts = new Map<string, (typeof products)[number]>();
+  let nextProductIndex = 0;
   return {
     ...pack,
     tasks: pack.tasks.map(task => task.templateId !== 'production' ? task : {
       ...task,
       videoPlans: (task.videoPlans || []).map(source => {
         const current = normalizeVideoPlan(source);
-        const selected = products.find(product => product.name === current.productName || product.id === current.productName) || fallback;
+        const familyId = current.contentFamilyId || current.masterContentId || current.contentId;
+        if (diversifyFamilies && familyId && !familyProducts.has(familyId)) {
+          familyProducts.set(familyId, products[nextProductIndex % products.length]);
+          nextProductIndex += 1;
+        }
+        const selected = diversifyFamilies && familyId
+          ? familyProducts.get(familyId)
+          : products.find(product => product.name === current.productName || product.id === current.productName) || fallback;
         return normalizeVideoPlan({
           ...current,
           productId: selected?.id || '',

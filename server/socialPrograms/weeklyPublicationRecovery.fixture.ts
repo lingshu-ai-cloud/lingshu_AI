@@ -32,7 +32,6 @@ function memoryStore(): DataStore & { rows: Map<string, Row[]> } {
     async delete(collection: string, id: string) { const current = rows.get(collection) || []; const next = current.filter(item => item.id !== id); rows.set(collection, next); return next.length !== current.length; },
   };
 }
-
 const task = { publicationTaskId: 'weekly-item-1', motherContentId: 'mother-1', adaptationOfPublicationTaskId: null, platform: 'youtube' as const, accountId: 'account-1', accountPositioning: 'proof', businessProposition: 'verified fact', cta: 'contact us', factRefs: [{ type: 'enterprise_fact', id: 'fact-1', version: 3 }], metricTargets: ['inquiries'], publishWindow: '2026-09-22T10:00:00Z', status: 'ready' as const };
 const weekly = {
   packageId: 'weekly-package-1', programId: 'program-1', version: 2, status: 'active', weekStart: '2026-09-22', weekEnd: '2026-09-28', objective: 'test',
@@ -75,4 +74,3 @@ export async function publicationRecoveryFixture(context: TestContext) {
   await markPublicationAssignmentPackageReady('tenant-a', assignment.assignmentId, dataStore);
   return { dataStore, tasks, publicationTask, assignment };
 }
-

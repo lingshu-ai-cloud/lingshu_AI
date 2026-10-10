@@ -10,8 +10,10 @@ import {
 } from '../runtime/durableLease.js';
 import {
   CONTENT_EXECUTION_JOB_COLLECTION,
+  parseContentExecutionCheckpoints,
   parseContentProviderReceipts,
   runWithContentExecutionContext,
+  type ContentExecutionCheckpoints,
   type ContentProviderReceipt,
 } from './context.js';
 import { classifyContentExecutionFailure, type ContentExecutionRetryDecision } from './retryPolicy.js';
@@ -50,6 +52,7 @@ export interface ContentExecutionJob {
   lastError: string | null;
   providerState: string;
   providerReceipts: ContentProviderReceipt[];
+  checkpoints: ContentExecutionCheckpoints;
   createdAt: string;
   updatedAt: string;
   lastStartedAt: string | null;
@@ -122,6 +125,7 @@ function jobFromRow(row: JobRow): ContentExecutionJob {
     lastError: text(row.last_error, 2000) || null,
     providerState: text(row.provider_state, 40) || 'none',
     providerReceipts: parseContentProviderReceipts(row.provider_receipts),
+    checkpoints: parseContentExecutionCheckpoints(row.checkpoints),
     createdAt: dateText(row.created_at) ?? new Date(0).toISOString(),
     updatedAt: dateText(row.updated_at) ?? new Date(0).toISOString(),
     lastStartedAt: dateText(row.last_started_at),
@@ -267,6 +271,7 @@ export async function admitContentExecutionJob(input: {
     account_id: accountId, task_type: taskType, status: 'queued', attempt: 0,
     reconciliation_attempt: 0, next_attempt_at: now, worker_id: '', lease_expires_at: '',
     retry_class: '', last_error: '', provider_state: 'none', provider_receipts: [],
+    checkpoints: {},
     created_at: now, updated_at: now, last_started_at: '', completed_at: '',
   });
   if (!created) {
@@ -388,9 +393,14 @@ async function claimNextJob(input: {
   }
 }
 
+function sameClaim(current: ContentExecutionJob, claimed: ContentExecutionJob): boolean {
+  return current.workerId === claimed.workerId && current.attempt === claimed.attempt;
+}
+
 async function finishSucceeded(dataStore: DataStore, job: ContentExecutionJob, now: Date): Promise<boolean> {
   const currentRow = await dataStore.getById<JobRow>(CONTENT_EXECUTION_JOB_COLLECTION, job.id);
   const current = currentRow ? jobFromRow(currentRow) : job;
+  if (!sameClaim(current, job)) return false;
   if (current.status === 'paused' || current.status === 'cancelled') {
     if (!await dataStore.update(CONTENT_EXECUTION_JOB_COLLECTION, job.id, {
       worker_id: '', lease_expires_at: '', updated_at: now.toISOString(),
@@ -410,14 +420,27 @@ async function finishFailed(input: {
   error: unknown;
   now: Date;
   env: NodeJS.ProcessEnv;
-}): Promise<ContentExecutionRetryDecision | null> {
+}): Promise<{ decision: ContentExecutionRetryDecision; settled: boolean }> {
   const currentRow = await input.dataStore.getById<JobRow>(CONTENT_EXECUTION_JOB_COLLECTION, input.job.id);
   const current = currentRow ? jobFromRow(currentRow) : input.job;
+  if (!sameClaim(current, input.job)) {
+    return {
+      decision: classifyContentExecutionFailure(input.error, {
+        attempt: input.job.attempt,
+        hasUnsettledProviderReceipt: hasProviderWork(input.job),
+        env: input.env,
+      }),
+      settled: false,
+    };
+  }
   if (current.status === 'paused' || current.status === 'cancelled') {
     await input.dataStore.update(CONTENT_EXECUTION_JOB_COLLECTION, current.id, {
       worker_id: '', lease_expires_at: '', updated_at: input.now.toISOString(),
     });
-    return null;
+    return { settled: false, decision: {
+      failureClass: 'system_fault', disposition: 'block', retryDelayMs: null,
+      maxAttempts: 1, publicReason: current.status === 'paused' ? '任务已暂停' : '任务已取消',
+    } };
   }
   const providerPending = hasProviderWork(current);
   const reconcileAttempt = Math.max(1, current.reconciliationAttempt);
@@ -434,7 +457,7 @@ async function finishFailed(input: {
     reconciliation_attempt: providerPending ? reconcileAttempt : current.reconciliationAttempt,
     worker_id: '', lease_expires_at: '', last_error: errorText, updated_at: input.now.toISOString(),
   })) throw new Error('content_execution_job_failure_persist_failed');
-  return decision;
+  return { decision, settled: true };
 }
 
 export interface DurableContentExecutionWorkerOptions {
@@ -514,18 +537,22 @@ export class DurableContentExecutionWorker {
   private async runClaimed(job: ContentExecutionJob, initialLease: DurableOperationLease): Promise<void> {
     const defaults = contentExecutionDefaults(this.env);
     let lease = initialLease;
+    let leaseOwned = true;
     const renewEveryMs = Math.max(30_000, Math.floor(defaults.leaseDurationMs / 3));
     const renewal = setInterval(() => {
       void renewDurableOperationLease({
         dataStore: this.options.dataStore, lease, leaseDurationMs: defaults.leaseDurationMs,
       }).then(async renewed => {
         lease = renewed;
-        await this.options.dataStore.update(CONTENT_EXECUTION_JOB_COLLECTION, job.id, {
+        if (!await this.options.dataStore.update(CONTENT_EXECUTION_JOB_COLLECTION, job.id, {
           lease_expires_at: renewed.expiresAt, updated_at: new Date().toISOString(),
+        })) throw new Error('content_execution_job_lease_update_failed');
+      }).catch(error => {
+        leaseOwned = false;
+        console.error('[content-execution] lease renewal failed; fenced worker will stop at the next boundary', {
+          jobId: job.id, error: error instanceof Error ? error.message : String(error),
         });
-      }).catch(error => console.error('[content-execution] lease renewal failed', {
-        jobId: job.id, error: error instanceof Error ? error.message : String(error),
-      }));
+      });
     }, renewEveryMs);
     renewal.unref?.();
     try {
@@ -533,29 +560,37 @@ export class DurableContentExecutionWorker {
         dataStore: this.options.dataStore,
         jobId: job.id,
         providerReceipts: job.providerReceipts,
+        checkpoints: job.checkpoints,
+        expectedWorkerId: job.workerId ?? undefined,
+        expectedAttempt: job.attempt,
+        executionStillOwned: () => leaseOwned,
         action: () => this.options.execute(job),
       });
-      const completed = await finishSucceeded(this.options.dataStore, job, this.options.now?.() ?? new Date());
-      if (!completed) return;
+      if (!leaseOwned) throw new Error('content_execution_worker_lease_lost');
+      const settled = await finishSucceeded(this.options.dataStore, job, this.options.now?.() ?? new Date());
       // Execution is already durably successful. A completion projection or
       // notification failure must not put paid production back in the queue.
       // Domain recovery reconciles its saved output without executing again.
-      try {
-        await this.options.onSucceeded?.(job);
-      } catch (error) {
-        console.error('[content-execution] success callback requires reconciliation', {
-          jobId: job.id, error: error instanceof Error ? error.message : String(error),
-        });
+      if (settled) {
+        try {
+          await this.options.onSucceeded?.(job);
+        } catch (error) {
+          console.error('[content-execution] success callback requires reconciliation', {
+            jobId: job.id, error: error instanceof Error ? error.message : String(error),
+          });
+        }
       }
     } catch (error) {
-      const decision = await finishFailed({
+      const failed = await finishFailed({
         dataStore: this.options.dataStore, job, error,
         now: this.options.now?.() ?? new Date(), env: this.env,
       });
-      if (!decision) return;
-      if (decision.disposition === 'block') await this.options.onBlocked?.(job, error, decision);
-      else await this.options.onRetry?.(job, error, decision);
+      if (failed.settled) {
+        if (failed.decision.disposition === 'block') await this.options.onBlocked?.(job, error, failed.decision);
+        else await this.options.onRetry?.(job, error, failed.decision);
+      }
     } finally {
+      leaseOwned = false;
       clearInterval(renewal);
       await releaseDurableOperationLease({ dataStore: this.options.dataStore, lease }).catch(() => undefined);
     }
@@ -607,6 +642,10 @@ export async function controlContentExecutionJob(input: {
     if (current.status === 'cancelled') return current;
     patch = { status: 'cancelled', next_attempt_at: '', completed_at: now, updated_at: now };
   } else if (input.action === 'resume') {
+    // Browser double-clicks and retried HTTP responses are expected. If the
+    // first request already moved this exact durable job back into an active
+    // state, the replay is a successful no-op rather than a second execution.
+    if (['queued', 'running', 'retry_wait', 'reconciling'].includes(current.status)) return current;
     if (!['paused', 'cancelled'].includes(current.status)) throw new Error('content_execution_job_not_resumable');
     // A pause stops later stages; the original external call must settle first.
     // An expired lease cannot prove that an in-flight provider call has stopped.
@@ -618,6 +657,7 @@ export async function controlContentExecutionJob(input: {
       next_attempt_at: now, worker_id: '', lease_expires_at: '', completed_at: '', updated_at: now,
     };
   } else {
+    if (['queued', 'running', 'retry_wait', 'reconciling'].includes(current.status)) return current;
     if (!['blocked', 'dead_letter'].includes(current.status)) throw new Error('content_execution_job_not_retryable');
     const reconcile = hasProviderWork(current);
     patch = {

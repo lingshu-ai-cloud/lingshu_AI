@@ -26,6 +26,8 @@ export interface AuthTenant {
 export interface AuthSession {
   user: AuthUser;
   tenant: AuthTenant | null;
+  /** Server-authoritative product boundary; subscription labels do not grant access. */
+  productProfile?: 'starter_198' | 'advanced_customer';
   /** Server-verified platform operator identity; subscription names are never authority. */
   platformAdmin?: boolean;
   subscription?: { status: string; plan: string | null; expiresAt: string | null };
@@ -55,6 +57,98 @@ export class AuthSessionUnavailableError extends Error {
   constructor(readonly status?: number) {
     super('session_refresh_unavailable');
     this.name = 'AuthSessionUnavailableError';
+  }
+}
+
+export const INITIAL_AUTH_RETRY_DELAYS_MS = [
+  500,
+  1_000,
+  2_000,
+  4_000,
+  8_000,
+  15_000,
+  30_000,
+  30_000,
+  30_000,
+] as const;
+
+export function startInitialAuthSessionRefresh<TTimer>(ports: {
+  refresh: () => Promise<AuthSession | null>;
+  getToken: () => string | null;
+  schedule: (callback: () => void, delayMs: number) => TTimer;
+  cancel: (timer: TTimer) => void;
+  onSuccess: (session: AuthSession | null) => void;
+  onRetry?: (error: unknown, delayMs: number) => void;
+  onFailure: (error: unknown) => void;
+}): () => void {
+  let disposed = false;
+  let timer: TTimer | undefined;
+  let retryIndex = 0;
+
+  const run = () => {
+    void Promise.resolve().then(async () => {
+      // React StrictMode immediately disposes its first effect instance. Do not
+      // let that intentionally discarded instance issue a second token.
+      if (disposed) return;
+      try {
+        const session = await ports.refresh();
+        if (!disposed) ports.onSuccess(session);
+      } catch (error) {
+        if (disposed) return;
+        const delay = ports.getToken() ? undefined : INITIAL_AUTH_RETRY_DELAYS_MS[retryIndex];
+        if (delay !== undefined) {
+          retryIndex += 1;
+          ports.onRetry?.(error, delay);
+          timer = ports.schedule(run, delay);
+          return;
+        }
+        ports.onFailure(error);
+      }
+    });
+  };
+
+  run();
+  return () => {
+    disposed = true;
+    if (timer !== undefined) ports.cancel(timer);
+  };
+}
+
+function localPreviewBootstrapEnabled(): boolean {
+  const env = import.meta.env;
+  if (!env?.DEV || env.VITE_LINGSHU_LOCAL_PREVIEW !== '1' || typeof window === 'undefined') return false;
+  return window.location.port === '5177'
+    && ['127.0.0.1', 'localhost', '[::1]', '::1'].includes(window.location.hostname);
+}
+
+async function bootstrapLocalPreviewSession(fetchImpl: typeof fetch, enabled: boolean): Promise<AuthSession | null> {
+  if (!enabled) return null;
+  const browserTokenBeforeBootstrap = getToken();
+  try {
+    const issued = await fetchImpl('/api/overseas/auth/local-preview-session', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      cache: 'no-store',
+    });
+    const body = await issued.json().catch(() => ({})) as { token?: unknown };
+    if (!issued.ok || typeof body.token !== 'string' || !body.token.startsWith('local-demo.v1.')) {
+      throw new AuthSessionUnavailableError(issued.ok ? 502 : issued.status);
+    }
+    const previewToken = body.token;
+    const verified = await fetchImpl('/api/overseas/auth/me', {
+      headers: { Authorization: `Bearer ${previewToken}`, ...socialContentTaskRequestHeaders() },
+      cache: 'no-store',
+    });
+    if (!verified.ok) {
+      throw new AuthSessionUnavailableError(verified.status);
+    }
+    const session = normalizeSessionIdentity((await verified.json()) as AuthSession);
+    if (getToken() !== browserTokenBeforeBootstrap) throw new AuthSessionUnavailableError(409);
+    setToken(previewToken);
+    return session;
+  } catch (error) {
+    if (error instanceof AuthSessionUnavailableError) throw error;
+    throw new AuthSessionUnavailableError();
   }
 }
 
@@ -124,8 +218,17 @@ async function call(path: string, body: unknown): Promise<{ token: string; user:
   return normalizeSessionIdentity(j);
 }
 
-export async function refreshAuthSession(fetchImpl: typeof fetch = fetch): Promise<AuthSession | null> {
-  if (!getToken()) return null;
+export interface AuthSessionRefreshOptions {
+  /** Deterministic test seam; normal callers use the Vite + loopback runtime gate. */
+  localPreviewBootstrap?: boolean;
+}
+
+export async function refreshAuthSession(
+  fetchImpl: typeof fetch = fetch,
+  options: AuthSessionRefreshOptions = {},
+): Promise<AuthSession | null> {
+  const localPreviewBootstrap = options.localPreviewBootstrap ?? localPreviewBootstrapEnabled();
+  if (!getToken()) return bootstrapLocalPreviewSession(fetchImpl, localPreviewBootstrap);
   try {
     const r = await fetchImpl('/api/overseas/auth/me', { headers: authHeader() });
     if (!r.ok) {
@@ -144,7 +247,7 @@ export async function refreshAuthSession(fetchImpl: typeof fetch = fetch): Promi
         if (restored.status === 401 || restored.status === 402) {
           clearToken();
           localStorage.removeItem(SUPPORT_ORIGINAL_TOKEN_KEY);
-          return null;
+          return bootstrapLocalPreviewSession(fetchImpl, localPreviewBootstrap);
         }
         // Do not switch tokens until the original session is verified. This
         // keeps the retained UI session and bearer credential consistent.
@@ -152,7 +255,7 @@ export async function refreshAuthSession(fetchImpl: typeof fetch = fetch): Promi
       }
       if (r.status === 401 || r.status === 402) {
         clearToken();
-        return null;
+        return bootstrapLocalPreviewSession(fetchImpl, localPreviewBootstrap);
       }
       throw new AuthSessionUnavailableError(r.status);
     }

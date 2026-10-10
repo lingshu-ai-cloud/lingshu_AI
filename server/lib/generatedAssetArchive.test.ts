@@ -6,6 +6,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { createGeneratedAssetArchiveService } from './generatedAssetArchive.js';
 import type { GeneratedAssetArchiveInput } from '../../shared/contracts/generatedMaterial.js';
+import type { WeeklyAssetRequirement } from '../../shared/weeklyAutomaticMaterial.js';
 
 const quality = { state: 'accepted' as const, checks: [{ key: 'decode', status: 'passed' as const, evidence: 'decoded' }],
   checkedAt: '2026-10-09T00:00:00.000Z', policyVersion: 'quality.v1' };
@@ -14,6 +15,21 @@ function input(file: string, digest: string): GeneratedAssetArchiveInput {
     generation: { pipelineId: 'non_person_generation', assetGenerationKind: 'concept_visual', pipelineVersion: 'v1', executionId: 'exec-1',
       provider: 'seedance', model: 'model', idempotencyKey: 'idem', inputFingerprint: 'fingerprint', promptOrSpecHash: 'spec', inputMaterialIds: [] },
     lineage: { sourceProjectId: 'project-1', sourceShotId: 'shot-1' }, quality, rightsScope: 'tenant_private' };
+}
+
+function withAutomaticEvidence(
+  value: GeneratedAssetArchiveInput,
+  requirement: WeeklyAssetRequirement,
+): GeneratedAssetArchiveInput {
+  return {
+    ...value,
+    automaticMaterial: {
+      requirement,
+      independentVisualCheckRef: 'vision-check:accepted',
+      rightsEvidenceRef: 'tenant-rights:accepted',
+      authorizationScopes: ['tenant_private'],
+    },
+  };
 }
 
 test('archives verified media and deduplicates by tenant plus content hash', async () => {
@@ -31,6 +47,51 @@ test('archives verified media and deduplicates by tenant plus content hash', asy
   assert.equal(first.id, second.id); assert.equal(records.length, 1); assert.equal(uploads, 1);
   assert.equal(second.folder, 'generated'); assert.equal(second.reuse.eligible, true); assert.equal(second.generation.executionId, 'exec-2');
   fs.rmSync(dir, { recursive: true, force: true });
+});
+
+test('keeps automatic evidence without a new receipt and accumulates it by requirement', async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'generated-archive-evidence-'));
+  const file = path.join(dir, 'clip.mp4');
+  const bytes = Buffer.from('generated-video-with-evidence');
+  fs.writeFileSync(file, bytes);
+  const digest = createHash('sha256').update(bytes).digest('hex');
+  let records: any[] = [];
+  const objects = new Map<string, Buffer>();
+  const service = createGeneratedAssetArchiveService({
+    readMaterials: () => structuredClone(records),
+    saveMaterials: next => { records = structuredClone(next); },
+    downloadObject: async key => objects.has(key) ? { buf: objects.get(key)!, contentType: 'video/mp4' } : null,
+    uploadObject: async ({ key, body }) => { objects.set(key, body); return key; },
+    headObject: async key => objects.has(key) ? { size: objects.get(key)!.length, contentType: 'video/mp4', etag: 'v1' } : null,
+    now: () => new Date('2026-10-09T01:00:00.000Z'),
+  });
+  const heroRequirement = {
+    subjectRef: 'product:hero', action: 'rotate', scene: 'studio', evidenceRequirement: 'non_evidentiary_visual',
+    aspectRatio: '16:9', minimumDurationSeconds: 3, authorizationScope: 'tenant_private',
+  };
+  const detailRequirement = {
+    ...heroRequirement, action: 'show-detail', scene: 'workbench', minimumDurationSeconds: 2,
+  };
+  try {
+    await service.archiveNewMedia(withAutomaticEvidence(input(file, digest), heroRequirement));
+    const withoutNewEvidence = await service.archiveNewMedia({
+      ...input(file, digest), generation: { ...input(file, digest).generation, executionId: 'exec-without-evidence' },
+    });
+    assert.equal(withoutNewEvidence.provenance.weeklyAutomaticMaterialEvidence.length, 1);
+    const accumulated = await service.archiveNewMedia(withAutomaticEvidence({
+      ...input(file, digest), generation: { ...input(file, digest).generation, executionId: 'exec-detail' },
+    }, detailRequirement));
+    assert.equal(accumulated.provenance.weeklyAutomaticMaterialEvidence.length, 2);
+    const replaced = await service.archiveNewMedia(withAutomaticEvidence({
+      ...input(file, digest),
+      generation: { ...input(file, digest).generation, executionId: 'exec-hero-v2', model: 'model-v2' },
+    }, heroRequirement));
+    assert.equal(replaced.provenance.weeklyAutomaticMaterialEvidence.length, 2);
+    assert.equal(replaced.provenance.weeklyAutomaticMaterialEvidence
+      .find((entry: any) => entry.action === 'rotate')?.model, 'model-v2');
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
 });
 
 test('rejects hash mismatch and cross-tenant attachment', async () => {

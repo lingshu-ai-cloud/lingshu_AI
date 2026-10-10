@@ -3,6 +3,7 @@ import { readFileSync } from 'node:fs';
 
 const app = readFileSync(new URL('../App.tsx', import.meta.url), 'utf8');
 const layout = readFileSync(new URL('./Layout.tsx', import.meta.url), 'utf8');
+const pageTransition = readFileSync(new URL('./ui/LsPageTransition.tsx', import.meta.url), 'utf8');
 const traffic = readFileSync(new URL('./TrafficPage.tsx', import.meta.url), 'utf8');
 const starter = readFileSync(new URL('./starter/StarterWorkspacePage.tsx', import.meta.url), 'utf8');
 const starterContext = readFileSync(new URL('./starter/StarterWorkflowContextBar.tsx', import.meta.url), 'utf8');
@@ -11,12 +12,13 @@ const canonicalPageSources = {
   digitalEmployees: readFileSync(new URL('./DigitalEmployeePage.tsx', import.meta.url), 'utf8'),
   conversion: readFileSync(new URL('./ConversionPage.tsx', import.meta.url), 'utf8'),
   orders: readFileSync(new URL('./OrderManagementPage.tsx', import.meta.url), 'utf8'),
-  enterprise: readFileSync(new URL('./EnterprisePage.tsx', import.meta.url), 'utf8'),
-  scheduled: readFileSync(new URL('./ScheduledPage.tsx', import.meta.url), 'utf8'),
 };
+const sharedHeader = readFileSync(new URL('./ui/LsPageHeader.tsx', import.meta.url), 'utf8');
 
 assert.match(layout, /h-\[100dvh\]/, 'the application shell must use the dynamic viewport height');
-assert.match(layout, /data-app-content-stack[^>]+flex[^>]+min-h-0[^>]+flex-col[^>]+overflow-hidden/,
+assert.match(layout, /<LsPageTransition page=\{page\}>\{children\}<\/LsPageTransition>/,
+  'the shared transition must keep the cached page tree mounted');
+assert.match(pageTransition, /data-app-content-stack[^>]+flex[^>]+min-h-0[^>]+flex-col[^>]+overflow-hidden/,
   'layout children must share a bounded vertical flex stack');
 assert.match(app, /data-app-page-slot[^>]+min-h-0[^>]+flex-1[^>]+overflow-hidden/,
   'context bars must leave one bounded page slot for the active page');
@@ -36,6 +38,12 @@ for (const internalName of ['灵小图', '灵小量', '灵小售']) {
 for (const [page, source] of Object.entries(canonicalPageSources)) {
   assert.match(source, new RegExp(`<h1[^>]*>[\\s\\S]{0,100}PAGE_REGISTRY\\.${page}\\.canonicalTitle`),
     `${page} must render its canonical registry title as H1`);
+}
+assert.match(sharedHeader, /Typography.Title level=\{1\} className="sr-only"/,
+  'shared action-only headers must retain an accessible H1 without a visible page title');
+for (const [file, title] of [['EnterprisePage.tsx', '企业知识库'], ['ScheduledPage.tsx', '定时任务']]) {
+  const source = readFileSync(new URL(`./${file}`, import.meta.url), 'utf8');
+  assert.ok(source.includes(`<LsPageHeader title="${title}"`), `${file} must use its accessible shared header`);
 }
 
 console.log('Application shell contract tests passed');

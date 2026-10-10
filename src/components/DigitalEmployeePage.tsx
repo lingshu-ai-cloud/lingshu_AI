@@ -1,10 +1,12 @@
+import { getScrollBehavior } from "../lib/usePrefersReducedMotion";
+import { PAGE_REGISTRY, type Page } from "../pageRegistry";
 import { readAgentCalendarReturnContext, registerAgentCalendarReturnState } from '../lib/agentCalendarReturnContext';
 import InitialPreparationStatusPanel from './InitialPreparationStatusPanel';
-import { productionApi } from '../lib/productionApi';
 import InitialOperatingPlanDialog from './InitialOperatingPlanDialog';
-import { recommendFocusProducts, initialPlanVideoPlans, initialPlanMatrixRows, type InitialOperatingPlan } from '../lib/initialOperatingPlan';
+import { initialOperatingPlanFingerprint, recommendFocusProducts, initialPlanVideoPlans, initialPlanMatrixRows, type InitialOperatingPlan } from '../lib/initialOperatingPlan';
 import EnterprisePresenters from "./enterprise/EnterprisePresenters";
 import ManagedPublishingGrantEditor from './ManagedPublishingGrantEditor';
+import { Alert, Button, Modal, Tabs } from 'antd';
 import { managedPublishingGrantErrors } from '../../shared/contracts/managedPublishingGrant';
 import KnowledgeIntakePanel from "./enterprise/KnowledgeIntakePanel";
 import { normalizeContinuationPolicy, recommendedContinuationPolicy } from '../lib/continuationPolicy';
@@ -34,6 +36,8 @@ import SmartBusinessDashboard, { WeeklyCommandCenter } from "./SmartBusinessDash
 import SmartOperationsAccountRail, { type SmartOperationsAccount } from "./SmartOperationsAccountRail";
 import WeeklyPlanCalendar from "./smartBusiness/WeeklyPlanCalendar";
 import PlanHistoryDialog from "./PlanHistoryDialog";
+import SocialContentStageOnboarding from "./socialContent/SocialContentStageOnboarding";
+import { LsBrandAction, LsFlowDialog } from "./ui/LsExperiencePrimitives";
 import {
   saveSocialContentStage,
   socialContentStageProfile,
@@ -521,7 +525,7 @@ function Field({
 }
 
 const inputClass =
-  "w-full rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-sm text-slate-900 outline-none transition focus:border-emerald-400 focus:ring-2 focus:ring-emerald-100";
+  "w-full rounded-lg border border-slate-200 bg-white px-3 py-2.5 text-sm text-slate-900 outline-none transition focus:border-emerald-400 focus:ring-2 focus:ring-emerald-100";
 
 const publishingPlatforms = ["youtube", "tiktok", "instagram", "facebook"] as const;
 
@@ -610,6 +614,102 @@ function configErrors(form: DigitalEmployeeConfig): Record<string, string> {
   return errors;
 }
 
+const applicationGuideSteps = [
+  { index: 1, label: "企业与品牌" },
+  { index: 2, label: "产品表" },
+  { index: 3, label: "社媒经营阶段" },
+  { index: 4, label: "人物与声音" },
+] as const;
+
+function OnboardingStepVisual({ step }: { step: 1 | 2 | 3 | 4 }) {
+  const visuals = {
+    1: { icon: Settings2, label: "企业与品牌关系图", nodes: ["企业主体", "品牌名称"] },
+    2: { icon: FileSpreadsheet, label: "产品资料入库流程图", nodes: ["产品表", "企业知识库"] },
+    3: { icon: TrendingUp, label: "社媒经营阶段选择图", nodes: ["起步验证", "增长进阶", "品牌增长"] },
+    4: { icon: Users, label: "人物与声音配置图", nodes: ["出镜人物", "声音资产"] },
+  } as const;
+  const visual = visuals[step];
+  const Icon = visual.icon;
+  return (
+    <div role="img" aria-label={visual.label} className="flex min-h-48 flex-col justify-center rounded-lg border border-border bg-surface-2 p-5">
+      <span className="mx-auto flex h-12 w-12 items-center justify-center rounded-lg bg-accent-glow text-accent">
+        <Icon size={22} />
+      </span>
+      <div className="mt-5 flex flex-wrap items-center justify-center gap-2">
+        {visual.nodes.map((node, index) => (
+          <div key={node} className="contents">
+            {index > 0 && <ArrowRight size={14} className="text-text-muted" aria-hidden="true" />}
+            <span className="rounded-md border border-border bg-white px-3 py-2 text-xs font-semibold text-text-primary">{node}</span>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function OnboardingGuideFrame({
+  step,
+  title,
+  children,
+  busy = false,
+  dismissible = false,
+  onClose,
+  onBack,
+  onSkip,
+  skipLabel = "跳过",
+  primaryLabel,
+  primaryId,
+  primaryDisabled = false,
+  onPrimary,
+}: {
+  step: 1 | 2 | 3 | 4;
+  title: string;
+  children: ReactNode;
+  busy?: boolean;
+  dismissible?: boolean;
+  onClose?: () => void;
+  onBack?: () => void;
+  onSkip?: () => void;
+  skipLabel?: string;
+  primaryLabel: string;
+  primaryId?: string;
+  primaryDisabled?: boolean;
+  onPrimary: () => void;
+}) {
+  return (
+    <LsFlowDialog
+      open
+      title="新手引导"
+      width={880}
+      centered
+      current={step - 1}
+      steps={applicationGuideSteps.map((item) => ({
+        title: item.label,
+        status: item.index < step ? "finish" : item.index === step ? "process" : "wait",
+      }))}
+      closable={dismissible && !busy}
+      keyboard={dismissible && !busy}
+      maskClosable={false}
+      onCancel={() => dismissible && !busy && onClose?.()}
+      styles={{ body: { maxHeight: "min(68vh, 680px)", overflowY: "auto" } }}
+      footer={[
+        onBack ? <Button key="back" disabled={busy} onClick={onBack}>返回上一步</Button> : null,
+        onSkip ? <Button key="skip" type="text" disabled={busy} onClick={onSkip}>{skipLabel}</Button> : null,
+        <LsBrandAction key="primary" id={primaryId} loading={busy} disabled={primaryDisabled} onClick={onPrimary}>{primaryLabel}</LsBrandAction>,
+      ].filter(Boolean)}
+    >
+      <div className="grid gap-6 md:grid-cols-[220px_minmax(0,1fr)] md:items-start">
+        <OnboardingStepVisual step={step} />
+        <section aria-labelledby={`onboarding-step-${step}-title`}>
+          <p className="ls-type-body-small font-semibold text-accent">第 {step} 步，共 4 步</p>
+          <h2 id={`onboarding-step-${step}-title`} className="ls-type-title-large mt-2 text-text-primary">{title}</h2>
+          <div className="mt-5">{children}</div>
+        </section>
+      </div>
+    </LsFlowDialog>
+  );
+}
+
 function OnboardingPanel({
   initial,
   readiness,
@@ -617,6 +717,9 @@ function OnboardingPanel({
   mode = "first",
   activeRun = false,
   restartFromBeginning = false,
+  dismissible = false,
+  allowInitialPlan = true,
+  onClose,
   onSave,
   onOpenReadiness,
   onNavigate,
@@ -627,6 +730,9 @@ function OnboardingPanel({
   mode?: "first" | "rules";
   activeRun?: boolean;
   restartFromBeginning?: boolean;
+  dismissible?: boolean;
+  allowInitialPlan?: boolean;
+  onClose?: () => void;
   onSave: (config: DigitalEmployeeConfig & { minimalOnboarding?: true; brandName?: string; initialPlan?: InitialOperatingPlan }) => void | boolean | Promise<void | boolean>;
   onOpenReadiness: (item: BusinessReadinessItem) => void;
   onNavigate?: (page: BusinessDestination) => void;
@@ -675,10 +781,12 @@ function OnboardingPanel({
   const [productImporting, setProductImporting] = useState(false);
   const [productImportMessage, setProductImportMessage] = useState("");
   const [contentStage, setContentStage] = useState<SocialContentStageId>();
+  const [stageConfirmed, setStageConfirmed] = useState(mode !== "first");
   const [stageSaving, setStageSaving] = useState(false);
   const [stageError, setStageError] = useState("");
-  const [recommendedPlanOpen,setRecommendedPlanOpen]=useState(false);
-  const [focusSelection,setFocusSelection]=useState<string[]>([]);
+  const [recommendedPlanOpen, setRecommendedPlanOpen] = useState(false);
+  const recommendedPlanTriggerId = "onboarding-generate-recommended-plan";
+  const [recommendedProducts, setRecommendedProducts] = useState<string[]>([]);
   const themeContentEnabled = form.enabledWorkflows.some((item) =>
     contentCreationWorkflows.includes(item),
   );
@@ -784,11 +892,13 @@ function OnboardingPanel({
         setBrandName(loadedProfile.brandName);
         const loadedProducts = Array.isArray(profile.products?.items) ? profile.products.items : [];
         setKnowledgeProducts(loadedProducts);
-        const savedFocus=String(profile.strategy?.focusProducts||"").split(/[、，,]/).filter(Boolean);
-        setFocusSelection(savedFocus.length?savedFocus:recommendFocusProducts(loadedProducts));
-        if(savedFocus.length)setForm(current=>({...current,focusProducts:savedFocus.join("、")}));
+        const savedFocusProducts = String(profile.strategy?.focusProducts || "").split(/[、，,]/).map((item: string) => item.trim()).filter(Boolean);
+        setRecommendedProducts(savedFocusProducts.length ? savedFocusProducts : recommendFocusProducts(loadedProducts));
         const loadedStage = socialContentStageProfile(profile.socialStrategy?.contentStage);
-        if (loadedStage) setContentStage(loadedStage.id);
+        if (loadedStage) {
+          setContentStage(loadedStage.id);
+          if (!restartFromBeginning) setStageConfirmed(true);
+        }
         setCollectionLanguage(primaryEnterpriseLanguage(profile.company?.primaryLanguages));
         // Progress is persisted with the tenant profile so a refresh, HMR remount,
         // or a late overview response cannot throw the user back to step one.
@@ -840,12 +950,12 @@ function OnboardingPanel({
     if (profileKeys.includes(firstKey)) {
       setProfileConfirmed(false);
       setSubmitted(false);
-      window.setTimeout(() => document.getElementById("onboarding-enterprise-profile")?.scrollIntoView({ behavior: "smooth", block: "start" }), 50);
+      window.setTimeout(() => document.getElementById("onboarding-enterprise-profile")?.scrollIntoView({ behavior: getScrollBehavior(), block: "start" }), 50);
       return;
     }
     if (firstKey === "focusProducts") {
       setSubmitted(false);
-      window.setTimeout(() => document.getElementById("onboarding-focus-products")?.scrollIntoView({ behavior: "smooth", block: "start" }), 50);
+      window.setTimeout(() => document.getElementById("onboarding-focus-products")?.scrollIntoView({ behavior: getScrollBehavior(), block: "start" }), 50);
       return;
     }
     const targetAgent = ["contentPublish", "publishingTargets", "managedPublishingGrant", "approvalOwner"].includes(firstKey) ? "business" : ["batchFollowup", "followupCadence"].includes(firstKey) ? "customer" : firstKey === "socialCadence" ? "director" : "business";
@@ -853,7 +963,7 @@ function OnboardingPanel({
     window.setTimeout(() => {
       const selector = firstKey === "approvalOwner" ? 'input[placeholder="姓名或岗位"]' : `[aria-invalid="true"]`;
       const target = document.querySelector<HTMLElement>(selector);
-      target?.scrollIntoView({ behavior: "smooth", block: "center" });
+      target?.scrollIntoView({ behavior: getScrollBehavior(), block: "center" });
       target?.focus();
     }, 50);
   };
@@ -1018,39 +1128,87 @@ function OnboardingPanel({
       const result = await response.json().catch(() => ({}));
       if (!response.ok) throw new Error(result.message || "产品资料写入企业知识库失败");
       setKnowledgeProducts(next);
-      setFocusSelection(recommendFocusProducts(next));
+      setRecommendedProducts(recommendFocusProducts(next));
       setProductImportMessage(`已从“${file.name}”识别并写入 ${decoded.length} 个产品，可以直接确认产品表。`);
     } catch (error) { setProductError(error instanceof Error ? error.message : "产品文件解析失败"); }
     finally { setProductImporting(false); }
   };
   const confirmProductTable = async () => {
-    if (!knowledgeProducts.length || !focusSelection.length || productSaving) return;
+    if (!knowledgeProducts.length || productSaving) return;
     setProductSaving(true); setProductError("");
     try {
-      const response = await fetch("/api/overseas/enterprise/profile", { method: "PATCH", headers: { "Content-Type": "application/json", "x-enterprise-save-source": "diagnosis", ...authHeader() }, body: JSON.stringify({ strategy: { focusProducts: focusSelection.join("、") }, digitalEmployeeOnboarding: { productSelectionConfirmedAt: new Date().toISOString(), continuedWithoutProducts: false } }) });
+      const response = await fetch("/api/overseas/enterprise/profile", { method: "PATCH", headers: { "Content-Type": "application/json", "x-enterprise-save-source": "diagnosis", ...authHeader() }, body: JSON.stringify({ digitalEmployeeOnboarding: { productSelectionConfirmedAt: new Date().toISOString(), continuedWithoutProducts: false } }) });
       const result = await response.json().catch(() => ({}));
       if (!response.ok) throw new Error(result.message || "产品表确认失败");
-      set("focusProducts",focusSelection.join("、"));
       setProductConfirmed(true);
     } catch (error) { setProductError(error instanceof Error ? error.message : "产品表确认失败"); }
     finally { setProductSaving(false); }
   };
-  const completeMinimalOnboarding = async (plan: InitialOperatingPlan) => {
-    const stageId=plan.stage;
+  const confirmSocialStage = async (stageId: SocialContentStageId) => {
     if (stageSaving) return;
     setStageSaving(true);
     setStageError("");
     try {
       const savedStage = await saveSocialContentStage(stageId);
-      setContentStage(savedStage.profile.id);
       if (!savedStage.synced) throw new Error("社媒经营阶段保存失败，请稍后重试");
-      const completed = await onSave({ ...form, companyName: form.companyName.trim(), focusProducts: plan.products.join("、"), targetMarkets:plan.market, videoLanguages:[plan.language], allowGeneratedVisuals:true, operatingMaturity:stageId==="b2b_launch"?"starting":"growing", minimalOnboarding: true, brandName: brandName.trim(), initialPlan:plan });
+      setContentStage(savedStage.profile.id);
+      setStageConfirmed(true);
+    } catch (error) {
+      setStageError(error instanceof Error ? error.message : "社媒经营阶段保存失败，请稍后重试");
+    } finally {
+      setStageSaving(false);
+    }
+  };
+  const completeMinimalOnboarding = async (plan?: InitialOperatingPlan) => {
+    if (stageSaving || !stageConfirmed || !contentStage) return;
+    setStageSaving(true);
+    setStageError("");
+    try {
+      let confirmedStage = contentStage;
+      if (plan && plan.stage !== contentStage) {
+        const savedStage = await saveSocialContentStage(plan.stage);
+        if (!savedStage.synced) throw new Error("社媒经营阶段保存失败，请稍后重试");
+        confirmedStage = savedStage.profile.id;
+        setContentStage(confirmedStage);
+      }
+      const completed = await onSave(plan ? {
+        ...form,
+        companyName: form.companyName.trim(),
+        focusProducts: plan.products.join("、"),
+        targetMarkets: plan.market,
+        videoLanguages: [plan.language],
+        allowGeneratedVisuals: true,
+        operatingMaturity: confirmedStage === "b2b_launch" ? "starting" : "growing",
+        minimalOnboarding: true,
+        brandName: brandName.trim(),
+        initialPlan: { ...plan, stage: confirmedStage },
+      } : {
+        ...form,
+        companyName: form.companyName.trim(),
+        focusProducts: "",
+        minimalOnboarding: true,
+        brandName: brandName.trim(),
+      });
       if (completed === false) throw new Error("新手引导暂未完成，请稍后重试");
     } catch (error) {
       setStageError(error instanceof Error ? error.message : "新手引导暂未完成，请稍后重试");
     } finally {
       setStageSaving(false);
     }
+  };
+  const openRecommendedPlan = async () => {
+    if (!allowInitialPlan) {
+      await completeMinimalOnboarding();
+      return;
+    }
+    setStageError("");
+    setRecommendedPlanOpen(true);
+  };
+  const closeRecommendedPlan = () => {
+    setRecommendedPlanOpen(false);
+    window.requestAnimationFrame(() => {
+      document.getElementById(recommendedPlanTriggerId)?.focus();
+    });
   };
   const submit = () => {
     setSubmitted(true);
@@ -1084,73 +1242,147 @@ function OnboardingPanel({
     }
     submit();
   };
+  if (mode === "first" && recommendedPlanOpen && contentStage) return (
+    <InitialOperatingPlanDialog
+      config={form}
+      initial={{
+        stage: contentStage,
+        products: recommendedProducts.length ? recommendedProducts : recommendFocusProducts(knowledgeProducts),
+        market: form.targetMarkets && !form.targetMarkets.includes("待") ? form.targetMarkets : "北美",
+        language: collectionLanguage || "英语",
+        platforms: connectedPublishingAccounts.length ? [...new Set(connectedPublishingAccounts.map(account => account.platform))] : ["youtube", "tiktok"],
+        accountIds: Object.fromEntries(connectedPublishingAccounts.map(account => [account.platform, account.accountId])),
+        count: 5,
+        budgetCapCny: 500,
+        deliveryDate: isoDay(6),
+      }}
+      busy={stageSaving || busy}
+      error={stageError}
+      onBack={closeRecommendedPlan}
+      onConfirm={plan => void completeMinimalOnboarding(plan)}
+    />
+  );
   if (mode === "first" && !profileConfirmed) return (
-    <section id="onboarding-enterprise-profile" className="scroll-mt-24 rounded-3xl border border-slate-200 bg-white p-4 shadow-sm sm:p-5">
-      <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
-        <div className="flex min-w-0 items-start gap-3"><div className="shrink-0 rounded-2xl bg-emerald-50 p-3 text-emerald-700"><Settings2 size={22} /></div><div className="min-w-0"><p className="text-xs font-bold uppercase tracking-[0.18em] text-emerald-700">第一步 · 企业与品牌</p><h2 className="mt-1 text-xl font-bold text-slate-950">先告诉系统企业和品牌叫什么</h2><p className="mt-1 text-sm text-slate-500">其他经营信息在实际任务需要时再确认。</p></div></div>
-      </div>
-      {profileLoading ? <div role="status" className="mt-6 flex items-center gap-2 rounded-2xl bg-slate-50 p-5 text-sm text-slate-500"><Loader2 size={16} className="animate-spin" />正在读取企业知识库已有档案…</div> : <>
-        <div className="mt-5 grid gap-4 md:grid-cols-2">
-          <Field label="企业名称" required><input className={inputClass} value={form.companyName} onChange={e=>set("companyName",e.target.value)} placeholder="例如：灵枢科技" /></Field>
-          <Field label="品牌名称" required><input className={inputClass} value={brandName} onChange={e=>setBrandName(e.target.value)} placeholder="例如：Aurelia" /></Field>
-        </div>
-        {profileError && <p role="alert" className="mt-4 rounded-xl bg-red-50 px-4 py-3 text-xs text-red-700">{profileError}</p>}
-        <div className="mt-6 flex flex-wrap items-center justify-between gap-3"><p role="status" className="text-xs text-amber-700">{missingProfileFields.length ? `还需填写：${missingProfileFields.join("、")}` : "企业基础资料已完整，可以保存。"}</p><button type="button" disabled={Boolean(missingProfileFields.length) || profileSaving} onClick={()=>void saveEnterpriseProfile()} className="inline-flex items-center gap-2 rounded-xl bg-slate-950 px-5 py-2.5 text-sm font-bold text-white disabled:cursor-not-allowed disabled:bg-slate-300">{profileSaving ? <Loader2 size={16} className="animate-spin" /> : <ArrowRight size={16} />}保存企业档案</button></div>
-      </>}
-    </section>
+    <OnboardingGuideFrame
+      step={1}
+      title="填写企业与品牌"
+      busy={profileSaving || busy}
+      dismissible={dismissible}
+      onClose={onClose}
+      onSkip={dismissible ? onClose : undefined}
+      skipLabel="稍后继续"
+      primaryLabel="保存企业档案"
+      primaryDisabled={Boolean(missingProfileFields.length)}
+      onPrimary={() => void saveEnterpriseProfile()}
+    >
+      <section id="onboarding-enterprise-profile" className="scroll-mt-24 rounded-lg border border-slate-200 bg-white p-5">
+        {profileLoading ? <div role="status" className="flex items-center gap-2 rounded-lg bg-slate-50 p-5 text-sm text-slate-500"><Loader2 size={16} className="animate-spin" />正在读取企业知识库已有档案…</div> : <>
+          <div className="grid gap-4 md:grid-cols-2">
+            <Field label="企业名称" required><input className={inputClass} value={form.companyName} onChange={e=>set("companyName",e.target.value)} placeholder="例如：灵枢科技" /></Field>
+            <Field label="品牌名称" required><input className={inputClass} value={brandName} onChange={e=>setBrandName(e.target.value)} placeholder="例如：Aurelia" /></Field>
+          </div>
+          {profileError && <p role="alert" className="mt-4 rounded-lg bg-red-50 px-4 py-3 text-xs text-red-700">{profileError}</p>}
+          <p role="status" className="mt-5 text-xs text-amber-700">{missingProfileFields.length ? `还需填写：${missingProfileFields.join("、")}` : "企业基础资料已完整，可以保存。"}</p>
+        </>}
+      </section>
+    </OnboardingGuideFrame>
   );
   if (mode === "first" && profileConfirmed && !productConfirmed) return (
-    <section id="onboarding-focus-products" className="scroll-mt-24 rounded-3xl border border-slate-200 bg-white p-6 shadow-sm">
-      <div className="flex flex-wrap items-start justify-between gap-4"><div className="flex items-start gap-3"><div className="rounded-2xl bg-blue-50 p-3 text-blue-700"><Target size={22} /></div><div><p className="text-xs font-bold uppercase tracking-[0.18em] text-blue-700">第二步 · 产品信息</p><h2 className="mt-1 text-xl font-bold text-slate-950">识别产品并确认本期主推</h2><p className="mt-1 text-sm text-slate-500">识别后推荐 2 个主推产品，您可确认或修改。缺少信息后续可在「灵小枢 / 企业信息」补充。</p></div></div><span className="rounded-full bg-emerald-50 px-3 py-1.5 text-[10px] font-bold text-emerald-700">企业与品牌已保存</span></div>
-      {productsLoading ? <div role="status" className="mt-6 flex items-center gap-2 rounded-2xl bg-slate-50 p-5 text-sm text-slate-500"><Loader2 size={16} className="animate-spin" />正在读取企业知识库产品…</div> : <>
-        <div className="mt-6 flex flex-wrap items-center justify-between gap-3"><div><p className="text-sm font-bold text-slate-900">企业知识库产品表</p><p className="mt-1 text-xs text-slate-500">识别到 {knowledgeProducts.length} 个产品，推荐这 {Math.min(2,knowledgeProducts.length)} 个作为主推。可点击产品修改选择。</p></div><label className={`inline-flex items-center gap-2 rounded-xl border border-slate-200 px-4 py-2 text-xs font-bold text-slate-700 ${productImporting?"cursor-wait opacity-60":"cursor-pointer hover:bg-slate-50"}`}>{productImporting?<Loader2 size={14} className="animate-spin"/>:<FileSpreadsheet size={14}/>}上传产品表<input type="file" accept=".xlsx,.xls,.csv" className="hidden" disabled={productImporting} onChange={e=>{void importProductFile(e.currentTarget.files?.[0]??null);e.currentTarget.value="";}} /></label></div>
+    <OnboardingGuideFrame
+      step={2}
+      title="导入或确认产品表"
+      busy={productSaving || productImporting || busy}
+      dismissible={dismissible}
+      onClose={onClose}
+      onBack={() => setProfileConfirmed(false)}
+      primaryLabel="确认产品表，下一步"
+      primaryDisabled={!knowledgeProducts.length}
+      onPrimary={() => void confirmProductTable()}
+    >
+    <section id="onboarding-focus-products" className="scroll-mt-24 rounded-lg border border-slate-200 bg-white p-6">
+      {productsLoading ? <div role="status" className="mt-6 flex items-center gap-2 rounded-lg bg-slate-50 p-5 text-sm text-slate-500"><Loader2 size={16} className="animate-spin" />正在读取企业知识库产品…</div> : <>
+        <div className="flex flex-wrap items-center justify-between gap-3"><p className="text-sm font-semibold text-slate-900">企业知识库产品表</p><label className={`inline-flex items-center gap-2 rounded-lg border border-slate-200 px-4 py-2 text-xs font-bold text-slate-700 ${productImporting?"cursor-wait opacity-60":"cursor-pointer hover:bg-slate-50"}`}>{productImporting?<Loader2 size={14} className="animate-spin"/>:<FileSpreadsheet size={14}/>}上传产品表<input type="file" accept=".xlsx,.xls,.csv" className="hidden" disabled={productImporting} onChange={e=>{void importProductFile(e.currentTarget.files?.[0]??null);e.currentTarget.value="";}} /></label></div>
         <p className="mt-2 text-[11px] text-slate-500">支持 Excel（.xlsx/.xls）和 CSV。系统自动识别产品名称、SKU、规格、价格、MOQ、材质、图片链接和卖点，并直接写入企业知识库。</p>
-        {productImportMessage&&<p role="status" className="mt-3 rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-xs font-semibold text-emerald-800">{productImportMessage}</p>}
-        {!knowledgeProducts.length ? <div className="mt-4 rounded-2xl border border-dashed border-slate-300 p-8 text-center"><p className="font-bold text-slate-800">企业知识库尚未录入产品</p><p className="mt-2 text-xs text-slate-500">请上传产品表后继续。</p></div> : <div className="mt-4 grid gap-3 md:grid-cols-2 lg:grid-cols-3">{knowledgeProducts.map((product,index)=>{const name=productName(product);const details=[product.category,product.sku || product.attributes?.model].filter(Boolean).join(" · ");return <button type="button" aria-pressed={focusSelection.includes(name)} onClick={()=>setFocusSelection(current=>current.includes(name)?current.filter(x=>x!==name):[...current,name])} key={String(product.id||`${name}-${index}`)} className={`rounded-2xl border p-4 text-left ${focusSelection.includes(name)?"border-emerald-500 bg-emerald-50":"border-slate-200"}`}><div className="flex items-start justify-between gap-2"><p className="font-bold text-slate-900">{name}</p><CheckCircle2 size={17} className="shrink-0 text-emerald-600" /></div><p className="mt-1 text-xs text-slate-500">{details||"暂无型号与类别"}</p><p className="mt-3 line-clamp-2 text-[11px] leading-relaxed text-slate-500">{product.description||product.highlights||"详细资料可稍后在灵小枢 > 企业信息完善"}</p></button>})}</div>}
-        {productError&&<p role="alert" className="mt-4 rounded-xl bg-red-50 px-4 py-3 text-xs text-red-700">{productError}</p>}
-        <div className="mt-6 flex flex-wrap items-center justify-between gap-3"><p role="status" className="text-xs text-slate-500">{knowledgeProducts.length?`产品表已有 ${knowledgeProducts.length} 个产品，可以继续。`:"导入至少一个产品后即可继续。"}</p><button type="button" disabled={!knowledgeProducts.length||!focusSelection.length||productSaving} onClick={()=>void confirmProductTable()} className="inline-flex items-center gap-2 rounded-xl bg-slate-950 px-5 py-2.5 text-sm font-bold text-white disabled:cursor-not-allowed disabled:bg-slate-300">{productSaving?<Loader2 size={16} className="animate-spin"/>:<ArrowRight size={16}/>}确认主推产品，下一步</button></div>
+        {productImportMessage&&<p role="status" className="mt-3 rounded-lg border border-emerald-200 bg-emerald-50 px-4 py-3 text-xs font-semibold text-emerald-800">{productImportMessage}</p>}
+        {!knowledgeProducts.length ? <div className="mt-4 rounded-lg border border-dashed border-slate-300 p-8 text-center"><p className="font-bold text-slate-800">企业知识库尚未录入产品</p><p className="mt-2 text-xs text-slate-500">请上传产品表后继续。</p></div> : <div className="mt-4 grid gap-3 md:grid-cols-2 lg:grid-cols-3">{knowledgeProducts.map((product,index)=>{const name=productName(product);const details=[product.category,product.sku || product.attributes?.model].filter(Boolean).join(" · ");return <div key={String(product.id||`${name}-${index}`)} className="rounded-lg border border-slate-200 p-4 text-left"><div className="flex items-start justify-between gap-2"><p className="font-bold text-slate-900">{name}</p><CheckCircle2 size={17} className="shrink-0 text-emerald-600" /></div><p className="mt-1 text-xs text-slate-500">{details||"暂无型号与类别"}</p><p className="mt-3 line-clamp-2 text-[11px] leading-relaxed text-slate-500">{product.description||product.highlights||"详细资料可稍后在企业中心完善"}</p></div>})}</div>}
+        {productError&&<p role="alert" className="mt-4 rounded-lg bg-red-50 px-4 py-3 text-xs text-red-700">{productError}</p>}
+        <p role="status" className="mt-5 text-xs text-text-muted">{knowledgeProducts.length?`产品表已有 ${knowledgeProducts.length} 个产品，可以继续。`:"导入至少一个产品后即可继续。"}</p>
       </>}
     </section>
+    </OnboardingGuideFrame>
   );
-  if (mode === "first" && profileConfirmed && productConfirmed) return (
-    <div className="space-y-5">
-      <section className="rounded-3xl border border-slate-200 bg-white p-5 shadow-sm" aria-label="初始配置数字人形象">
-        <p className="text-xs font-bold text-emerald-700">第三步 · 数字人形象</p>
-        <h2 className="mt-1 text-xl font-bold text-slate-950">选择默认数字人形象</h2>
-        <EnterprisePresenters initialConfiguration onInitialSelection={()=>setRecommendedPlanOpen(true)} />
-        <button type="button" disabled={busy||stageSaving} onClick={()=>void productionApi.defaults().then(defaults=>{if(!defaults.defaultPresenterId)throw Error("请先选择默认数字人形象");setStageError("");setRecommendedPlanOpen(true);}).catch(error=>setStageError(error.message))} className="mt-4 rounded-xl bg-emerald-700 px-5 py-3 text-white font-bold">生成推荐计划</button>{stageError&&<p role="alert" className="mt-2 text-red-700">{stageError}</p>}
+  if (mode === "first" && profileConfirmed && productConfirmed && !stageConfirmed) return (
+    <OnboardingGuideFrame
+      step={3}
+      title="选择社媒经营阶段"
+      busy={stageSaving || busy}
+      dismissible={dismissible}
+      onClose={onClose}
+      onBack={() => setProductConfirmed(false)}
+      primaryLabel="确认阶段，下一步"
+      primaryDisabled={!contentStage}
+      onPrimary={() => contentStage && void confirmSocialStage(contentStage)}
+    >
+      <SocialContentStageOnboarding
+        embedded
+        hideHeader
+        hideActions
+        eyebrow="第三步 · 社媒经营阶段"
+        initialValue={contentStage}
+        busy={stageSaving || busy}
+        error={stageError}
+        onChange={setContentStage}
+        onConfirm={(stageId) => void confirmSocialStage(stageId)}
+      />
+    </OnboardingGuideFrame>
+  );
+  if (mode === "first" && profileConfirmed && productConfirmed && stageConfirmed) return (
+    <OnboardingGuideFrame
+      step={4}
+      title="选择出镜人物和声音（可选）"
+      busy={stageSaving || busy}
+      dismissible={dismissible}
+      onClose={onClose}
+      onBack={() => setStageConfirmed(false)}
+      onSkip={() => void completeMinimalOnboarding()}
+      skipLabel="稍后设置人物与声音"
+      primaryLabel={allowInitialPlan ? "生成推荐计划" : "完成引导并保存"}
+      primaryId={allowInitialPlan ? recommendedPlanTriggerId : undefined}
+      onPrimary={() => void openRecommendedPlan()}
+    >
+      <section className="rounded-lg border border-slate-200 bg-white p-5" aria-label="初始配置人物授权与声音">
+        <EnterprisePresenters initialConfiguration onInitialSelection={() => { if (allowInitialPlan) void openRecommendedPlan(); }} />
+        {stageError && <p role="alert" className="mt-4 rounded-lg bg-red-50 px-4 py-3 text-xs font-semibold text-red-700">{stageError}</p>}
       </section>
-      {recommendedPlanOpen&&<InitialOperatingPlanDialog config={form} initial={{stage:contentStage|| (connectedPublishingAccounts.length?'b2b_growth':'b2b_launch'),products:focusSelection.length?focusSelection:recommendFocusProducts(knowledgeProducts),market:form.targetMarkets&& !form.targetMarkets.includes('待')?form.targetMarkets:'北美',language:collectionLanguage||'英语',platforms:connectedPublishingAccounts.length?[...new Set(connectedPublishingAccounts.map(a=>a.platform))]:['youtube','tiktok'],count:5,budgetCapCny:500,deliveryDate:isoDay(6)}} busy={stageSaving||busy} error={stageError} onBack={()=>setRecommendedPlanOpen(false)} onConfirm={plan=>void completeMinimalOnboarding(plan)}/>}
-    </div>
+    </OnboardingGuideFrame>
   );
   return (
     <>
-      <section className="rounded-3xl border border-slate-200 bg-white p-5 shadow-sm">
+      <section className="rounded-lg border border-slate-200 bg-white p-5">
         <div className="flex flex-wrap items-start justify-between gap-4">
           <div className="flex min-w-0 items-start gap-3">
-            <div className="rounded-2xl bg-emerald-50 p-3 text-emerald-700"><Settings2 size={22} /></div>
+            <div className="rounded-lg bg-emerald-50 p-3 text-emerald-700"><Settings2 size={22} /></div>
             <div><p className="text-xs font-bold uppercase tracking-[0.18em] text-emerald-700">Agent 设置</p><h2 className="mt-1 text-xl font-bold text-slate-950">系统已准备一套安全默认方案</h2><p className="mt-1 text-sm text-slate-500">无需逐项填写。确认后即可使用；以后随时可以打开修改。</p></div>
           </div>
-          <span className="rounded-full bg-emerald-50 px-3 py-1.5 text-[10px] font-black text-emerald-700">推荐设置已就绪</span>
+          <span className="rounded-full bg-emerald-50 px-3 py-1.5 text-[10px] font-semibold text-emerald-700">推荐设置已就绪</span>
         </div>
         <div className="mt-5 grid gap-3 sm:grid-cols-2 xl:grid-cols-5">
           {agentRoleGroups.filter(agent => agent.id !== "orchestrator").map(agent => {
             const Icon = agent.id === "business" ? BarChart3 : agent.id === "director" ? Search : agent.id === "content" ? Sparkles : MessageSquare;
             const detail = agent.id === "business" ? "统筹发布、数据与复盘" : agent.id === "director" ? "采集灵感并完成编导方案" : agent.id === "content" ? "按方案制作并检查成片" : "整理客户并生成跟进草稿";
-            return <div key={agent.id} className="rounded-2xl border border-slate-200 bg-slate-50/70 p-4"><span className="flex h-9 w-9 items-center justify-center rounded-xl bg-white text-emerald-700 shadow-sm"><Icon size={17} /></span><p className="mt-3 text-sm font-black text-slate-900">{agent.label}</p><p className="mt-1 text-[11px] leading-5 text-slate-500">{detail}</p></div>;
+            return <div key={agent.id} className="rounded-lg border border-slate-200 bg-slate-50/70 p-4"><span className="flex h-9 w-9 items-center justify-center rounded-lg bg-white text-emerald-700"><Icon size={17} /></span><p className="mt-3 text-sm font-semibold text-slate-900">{agent.label}</p><p className="mt-1 text-[11px] leading-5 text-slate-500">{detail}</p></div>;
           })}
         </div>
-        {activeRun && <p className="mt-4 rounded-xl bg-amber-50 px-4 py-3 text-xs text-amber-800">当前运行继续沿用已批准计划；本次保存从下一轮生效。</p>}
+        {activeRun && <p className="mt-4 rounded-lg bg-amber-50 px-4 py-3 text-xs text-amber-800">当前运行继续沿用已批准计划；本次保存从下一轮生效。</p>}
         <div className="mt-5 flex flex-wrap justify-end gap-2">
-          <button type="button" onClick={() => setSettingsEditorOpen(true)} className="rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-sm font-bold text-slate-700 hover:bg-slate-50">查看并修改设置</button>
-          <button type="button" disabled={busy} onClick={confirmRecommendedSettings} className="inline-flex items-center gap-2 rounded-xl bg-slate-950 px-5 py-2.5 text-sm font-bold text-white disabled:opacity-50">{busy ? <Loader2 size={16} className="animate-spin" /> : <Check size={16} />}确认并保存设置</button>
+          <Button htmlType="button" onClick={() => setSettingsEditorOpen(true)} className="!h-auto min-h-9 !whitespace-normal rounded-lg border border-slate-200 bg-white px-4 py-2.5 text-sm font-bold text-slate-700 hover:bg-slate-50">查看并修改设置</Button>
+          <Button type="primary" htmlType="button" disabled={busy} onClick={confirmRecommendedSettings} className="!h-auto min-h-9 !whitespace-normal inline-flex items-center gap-2 rounded-lg px-5 py-2.5 text-sm font-bold">{busy ? <Loader2 size={16} className="animate-spin" /> : <Check size={16} />}确认并保存设置</Button>
         </div>
       </section>
-      {settingsEditorOpen && <div className="fixed inset-0 z-[170] flex items-center justify-center bg-slate-950/45 p-4 backdrop-blur-sm" onMouseDown={event => { if (event.target === event.currentTarget && !busy) setSettingsEditorOpen(false); }}>
-    <section role="dialog" aria-modal="true" aria-label="Agent 设置" className="ui-modal-frame ui-modal-frame--wide relative overflow-y-auto p-5">
-      <button type="button" aria-label="关闭 Agent 设置" disabled={busy} onClick={() => setSettingsEditorOpen(false)} className="sticky top-0 z-10 float-right rounded-xl border border-slate-200 bg-white p-2 text-slate-500 shadow-sm hover:bg-slate-50"><X size={18} /></button>
+      {settingsEditorOpen && <section aria-label="Agent 设置" className="rounded-lg border border-border bg-white p-5">
+      <Button htmlType="button" aria-label="关闭 Agent 设置" disabled={busy} onClick={() => setSettingsEditorOpen(false)} className="!h-auto min-h-9 !whitespace-normal sticky top-0 z-10 float-right rounded-lg border border-slate-200 bg-white p-2 text-slate-500 hover:bg-slate-50"><X size={18} /></Button>
       <div className="flex items-start gap-3">
-        <div className="rounded-2xl bg-emerald-50 p-3 text-emerald-700">
+        <div className="rounded-lg bg-emerald-50 p-3 text-emerald-700">
           <Settings2 size={22} />
         </div>
         <div>
@@ -1165,33 +1397,33 @@ function OnboardingPanel({
           </p>
         </div>
       </div>
-      <div className="mt-4 grid gap-1.5 rounded-xl border border-slate-200 bg-slate-50 p-1.5 sm:grid-cols-4">
+      <div className="mt-4 grid gap-1.5 rounded-lg border border-slate-200 bg-slate-50 p-1.5 sm:grid-cols-4">
         {([
           { id: "business" as const, label: "经营 Agent", icon: BarChart3 },
           { id: "director" as const, label: "编导 Agent", icon: Search },
           { id: "content" as const, label: "内容 Agent", icon: Sparkles },
           { id: "customer" as const, label: "客服 Agent", icon: MessageSquare },
-        ]).map((agent)=>{const active=activeRuleAgent===agent.id;const Icon=agent.icon;return <button key={agent.id} type="button" aria-pressed={active} onClick={()=>setActiveRuleAgent(agent.id)} className={`flex items-center justify-center gap-2 rounded-lg px-3 py-2.5 text-center transition ${active?"bg-slate-950 text-white shadow-sm":"bg-white text-slate-600 hover:bg-slate-100"}`}><Icon size={15}/><span className="text-xs font-black">{agent.label}</span></button>})}
+        ]).map((agent)=>{const active=activeRuleAgent===agent.id;const Icon=agent.icon;return <Button key={agent.id} htmlType="button" aria-pressed={active} onClick={()=>setActiveRuleAgent(agent.id)} className={`!h-auto min-h-9 !whitespace-normal flex items-center justify-center gap-2 rounded-lg px-3 py-2.5 text-center transition ${active?"bg-slate-950 text-white":"bg-white text-slate-600 hover:bg-slate-100"}`}><Icon size={15}/><span className="text-xs font-semibold">{agent.label}</span></Button>})}
       </div>
       <div className="mt-4 grid gap-4">
-        {activeRuleAgent === "director" && <div className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-emerald-200 bg-emerald-50 p-4">
+        {activeRuleAgent === "director" && <div className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-emerald-200 bg-emerald-50 p-4">
           <div><p className="text-sm font-bold text-emerald-950">AI 推荐经营需求</p><p className="mt-1 text-xs text-emerald-700">根据行业、业务、重点产品和目标市场生成给编导的采集建议；实际搜索范围以已批准的灵感范围为准。</p></div>
-          <div className="text-right"><button type="button" disabled={!canGenerateRecommendation} onClick={applyAiRecommendation} className="inline-flex items-center gap-2 rounded-xl bg-emerald-700 px-4 py-2 text-xs font-bold text-white disabled:cursor-not-allowed disabled:bg-slate-300"><Sparkles size={14} />{recommendationApplied ? "已生成，可继续调整" : "填入基础关键词"}</button>{!canGenerateRecommendation&&<p role="status" className="mt-1 text-[10px] text-amber-700">请先补齐：{missingRecommendationFields.join("、")}</p>}</div>
+          <div className="text-right"><Button htmlType="button" disabled={!canGenerateRecommendation} onClick={applyAiRecommendation} className="!h-auto min-h-9 !whitespace-normal inline-flex items-center gap-2 rounded-lg px-4 py-2 text-xs font-bold"><Sparkles size={14} />{recommendationApplied ? "已生成，可继续调整" : "填入基础关键词"}</Button>{!canGenerateRecommendation&&<p role="status" className="mt-1 text-[10px] text-amber-700">请先补齐：{missingRecommendationFields.join("、")}</p>}</div>
         </div>}
-        {activeRuleAgent === "director" && <section className="rounded-2xl border border-slate-200 p-4">
+        {activeRuleAgent === "director" && <section className="rounded-lg border border-slate-200 p-4">
           <p className="text-sm font-bold text-slate-900">编导采集需求与导演规则</p>
           <p className="mt-1 text-xs text-slate-500">这里记录经营 Agent 对编导的目标和建议。保存后不会直接覆盖正在执行的采集范围；编导采集以灵感大屏已批准的范围为准。</p>
-          <div className="mt-3 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-emerald-200 bg-emerald-50 p-3">
+          <div className="mt-3 flex flex-wrap items-center justify-between gap-3 rounded-lg border border-emerald-200 bg-emerald-50 p-3">
             <p className="text-xs font-semibold text-emerald-900">{approvedDiscoveryScope ? `当前生效：编导采集范围 v${approvedDiscoveryScope.approval?.scopeVersion ?? approvedDiscoveryScope.version} · ${approvedDiscoveryScope.discoveryBrief.lookbackDays} 天 · 滚动 7 天目标 ${approvedDiscoveryScope.discoveryBrief.resultLimit} 条` : discoveryScopeNotice || '正在读取当前编导采集范围…'}</p>
-            <button type="button" onClick={() => onNavigate?.('socialInspiration')} disabled={!onNavigate} className="rounded-lg bg-emerald-700 px-3 py-2 text-xs font-bold text-white disabled:opacity-50">到灵感大屏确认或调整</button>
+            <Button htmlType="button" onClick={() => onNavigate?.('socialInspiration')} disabled={!onNavigate} className="!h-auto min-h-9 !whitespace-normal rounded-lg px-3 py-2 text-xs font-bold">到灵感大屏确认或调整</Button>
           </div>
           <div className="mt-4 space-y-4">
-            <div><p className="mb-2 text-[10px] font-black uppercase tracking-wider text-slate-400">1 · 建议采集范围</p><div className="space-y-3"><Field label="建议平台"><input className={inputClass} value={collectionPlatforms} onChange={e=>setCollectionPlatforms(e.target.value)} /></Field><Field label="建议来源"><input className={inputClass} value={collectionSources} onChange={e=>setCollectionSources(e.target.value)} /></Field><Field label="建议关键词"><input className={inputClass} value={collectionKeywords} onChange={e=>setCollectionKeywords(e.target.value)} placeholder="仅作为经营需求，实际词在灵感大屏确认" /></Field></div></div>
-            <div><p className="mb-2 text-[10px] font-black uppercase tracking-wider text-slate-400">2 · 建议执行节奏</p><div className="grid gap-3 md:grid-cols-3"><Field label="建议采集时间"><input className={inputClass} value={collectionTime} onChange={e=>setCollectionTime(e.target.value)} /></Field><Field label="建议回看天数"><input className={inputClass} type="number" min={1} value={collectionLookback} onChange={e=>setCollectionLookback(Number(e.target.value))} /></Field><Field label="建议单次上限"><input className={inputClass} type="number" min={1} value={collectionLimit} onChange={e=>setCollectionLimit(Number(e.target.value))} /></Field></div></div>
+            <div><p className="mb-2 text-[10px] font-semibold uppercase tracking-wider text-slate-400">1 · 建议采集范围</p><div className="space-y-3"><Field label="建议平台"><input className={inputClass} value={collectionPlatforms} onChange={e=>setCollectionPlatforms(e.target.value)} /></Field><Field label="建议来源"><input className={inputClass} value={collectionSources} onChange={e=>setCollectionSources(e.target.value)} /></Field><Field label="建议关键词"><input className={inputClass} value={collectionKeywords} onChange={e=>setCollectionKeywords(e.target.value)} placeholder="仅作为经营需求，实际词在灵感大屏确认" /></Field></div></div>
+            <div><p className="mb-2 text-[10px] font-semibold uppercase tracking-wider text-slate-400">2 · 建议执行节奏</p><div className="grid gap-3 md:grid-cols-3"><Field label="建议采集时间"><input className={inputClass} value={collectionTime} onChange={e=>setCollectionTime(e.target.value)} /></Field><Field label="建议回看天数"><input className={inputClass} type="number" min={1} value={collectionLookback} onChange={e=>setCollectionLookback(Number(e.target.value))} /></Field><Field label="建议单次上限"><input className={inputClass} type="number" min={1} value={collectionLimit} onChange={e=>setCollectionLimit(Number(e.target.value))} /></Field></div></div>
           </div>
-          <p className="mt-3 rounded-xl bg-slate-50 p-3 text-xs text-slate-600">经营建议：近 {collectionLookback} 天 · 单次最多 {collectionLimit} 条。编导确认后才会成为采集参数。</p>
+          <p className="mt-3 rounded-lg bg-slate-50 p-3 text-xs text-slate-600">经营建议：近 {collectionLookback} 天 · 单次最多 {collectionLimit} 条。编导确认后才会成为采集参数。</p>
         </section>}
-        {activeRuleAgent === "content" && <section className="rounded-2xl border border-slate-200 p-4">
+        {activeRuleAgent === "content" && <section className="rounded-lg border border-slate-200 p-4">
           <p className="text-sm font-bold text-slate-900">输出内容语言</p>
           <p className="mt-1 text-xs text-slate-500">内容 Agent 只按这里确认的语言交付内容。</p>
           <div className="mt-4 grid gap-4 md:grid-cols-2">
@@ -1199,30 +1431,30 @@ function OnboardingPanel({
             <div><p className="text-xs font-semibold text-slate-600">需要输出的语言</p><div className="mt-2 flex flex-wrap gap-2">{[{code:'en',label:'英语'},{code:'zh',label:'中文'},{code:'es',label:'西班牙语'},{code:'fr',label:'法语'},{code:'de',label:'德语'}].map(item=>{const selected=(form.videoLanguages || [form.videoDefaults?.language || 'en']).includes(item.code);const primary=(form.videoDefaults?.language || 'en')===item.code;return <label key={item.code} className={`flex items-center gap-2 rounded-lg border px-3 py-2 text-xs ${selected?'border-blue-300 bg-blue-50':'border-slate-200 bg-white'}`}><input type="checkbox" checked={selected} disabled={primary} onChange={()=>set('videoLanguages',selected?(form.videoLanguages || []).filter(code=>code!==item.code):[...(form.videoLanguages || [form.videoDefaults?.language || 'en']),item.code])}/>{item.label}{primary?' · 主语言':''}</label>})}</div></div>
           </div>
         </section>}
-        {activeRuleAgent === "business" && <section className="rounded-2xl border border-slate-200 p-4">
-          <div className="flex flex-wrap items-start justify-between gap-3"><div><p className="text-sm font-bold text-slate-900">周草稿、发布平台与具体账号</p><p className="mt-1 text-xs text-slate-500">默认向所有已连接账号和平台发布，具体节奏沿用视频矩阵。</p></div><div className="flex flex-wrap items-center gap-3"><button type="button" onClick={()=>{setSelectedPublishPlatforms([]);set("publishingTargets",[]);set("allowRealPublishing",false);}} className="text-xs font-bold text-slate-600 hover:text-slate-950">本周暂不发布，仅生成内容</button><button type="button" onClick={()=>onOpenReadiness({key:"social_accounts",label:"社媒账号",status:"empty",count:connectedPublishingAccounts.length,page:"accountManagement",note:"管理发布账号"})} className="inline-flex items-center gap-1 text-xs font-bold text-blue-700">管理账号 <ExternalLink size={12}/></button></div></div>
+        {activeRuleAgent === "business" && <section className="rounded-lg border border-slate-200 p-4">
+          <div className="flex flex-wrap items-start justify-between gap-3"><div><p className="text-sm font-bold text-slate-900">周草稿、发布平台与具体账号</p><p className="mt-1 text-xs text-slate-500">默认向所有已连接账号和平台发布，具体节奏沿用视频矩阵。</p></div><div className="flex flex-wrap items-center gap-3"><Button htmlType="button" onClick={()=>{setSelectedPublishPlatforms([]);set("publishingTargets",[]);set("allowRealPublishing",false);}} className="!h-auto min-h-9 !whitespace-normal text-xs font-bold text-slate-600 hover:text-slate-950">本周暂不发布，仅生成内容</Button><Button htmlType="button" onClick={()=>onOpenReadiness({key:"social_accounts",label:"社媒账号",status:"empty",count:connectedPublishingAccounts.length,page:"accountManagement",note:"管理发布账号"})} className="!h-auto min-h-9 !whitespace-normal inline-flex items-center gap-1 text-xs font-bold text-blue-700">管理账号 <ExternalLink size={12}/></Button></div></div>
           <div className="mt-4"><Field label="每周生成的草稿条数"><input className={inputClass} type="number" min={0} value={publishCount} onChange={event=>setPublishCount(Number(event.target.value))} /><p className="mt-1 text-[10px] text-slate-500">当前值从旧站发布条数恢复，用户可以直接修改。</p></Field></div>
-          <div className="mt-4 space-y-3">{publishingPlatforms.map(platform => { const selected=selectedPublishPlatforms.includes(platform); const accounts=connectedPublishingAccounts.filter(account=>account.platform===platform); return <div key={platform} className={`rounded-xl border p-3 ${selected?'border-violet-200 bg-violet-50/35':'border-slate-200 bg-slate-50'}`}><div className="flex flex-wrap items-center gap-3"><label className="flex min-w-36 items-center gap-2 text-xs font-black text-slate-900"><input type="checkbox" checked={selected} onChange={event=>setSelectedPublishPlatforms(current=>event.target.checked?[...new Set([...current,platform])]:current.filter(item=>item!==platform))}/>{contentPlatformLabel[platform]}</label><label className="ml-auto flex items-center gap-2 text-[11px] font-bold text-slate-600">每周发布<input type="number" min={0} disabled={!selected} value={platformPublishCounts[platform]} onChange={event=>setPlatformPublishCounts(current=>({...current,[platform]:Number(event.target.value)}))} className="w-20 rounded-lg border border-slate-200 bg-white px-2 py-1.5 text-right text-xs" />条</label></div><div className="mt-2 flex flex-wrap gap-2">{publishingAccountsLoading?<span className="text-[10px] text-slate-400">正在读取账号…</span>:accounts.length?accounts.map(account=>{const checked=form.publishingTargets.some(target=>target.accountId===account.accountId);return <label key={account.accountId} className={`flex items-center gap-1.5 rounded-lg border px-2.5 py-1.5 text-[10px] font-bold ${checked&&selected?'border-violet-200 bg-white text-violet-800':'border-slate-200 bg-white text-slate-400'}`}><input type="checkbox" disabled={!selected} checked={checked&&selected} onChange={()=>set('publishingTargets',checked?form.publishingTargets.filter(target=>target.accountId!==account.accountId):[...form.publishingTargets,account])}/>{account.accountLabel}</label>}):<span className="text-[10px] text-amber-700">尚未连接该平台账号</span>}</div></div>; })}</div>
+          <div className="mt-4 space-y-3">{publishingPlatforms.map(platform => { const selected=selectedPublishPlatforms.includes(platform); const accounts=connectedPublishingAccounts.filter(account=>account.platform===platform); return <div key={platform} className={`rounded-lg border p-3 ${selected?'border-violet-200 bg-violet-50/35':'border-slate-200 bg-slate-50'}`}><div className="flex flex-wrap items-center gap-3"><label className="flex min-w-36 items-center gap-2 text-xs font-semibold text-slate-900"><input type="checkbox" checked={selected} onChange={event=>setSelectedPublishPlatforms(current=>event.target.checked?[...new Set([...current,platform])]:current.filter(item=>item!==platform))}/>{contentPlatformLabel[platform]}</label><label className="ml-auto flex items-center gap-2 text-[11px] font-bold text-slate-600">每周发布<input type="number" min={0} disabled={!selected} value={platformPublishCounts[platform]} onChange={event=>setPlatformPublishCounts(current=>({...current,[platform]:Number(event.target.value)}))} className="w-20 rounded-lg border border-slate-200 bg-white px-2 py-1.5 text-right text-xs" />条</label></div><div className="mt-2 flex flex-wrap gap-2">{publishingAccountsLoading?<span className="text-[10px] text-slate-400">正在读取账号…</span>:accounts.length?accounts.map(account=>{const checked=form.publishingTargets.some(target=>target.accountId===account.accountId);return <label key={account.accountId} className={`flex items-center gap-1.5 rounded-lg border px-2.5 py-1.5 text-[10px] font-bold ${checked&&selected?'border-violet-200 bg-white text-violet-800':'border-slate-200 bg-white text-slate-400'}`}><input type="checkbox" disabled={!selected} checked={checked&&selected} onChange={()=>set('publishingTargets',checked?form.publishingTargets.filter(target=>target.accountId!==account.accountId):[...form.publishingTargets,account])}/>{account.accountLabel}</label>}):<span className="text-[10px] text-amber-700">尚未连接该平台账号</span>}</div></div>; })}</div>
           {publishingAccountsError&&<p className="mt-3 text-[10px] text-red-600">{publishingAccountsError}</p>}
-          <label className="mt-4 flex items-start gap-3 rounded-xl border border-slate-200 bg-white p-3"><input type="checkbox" className="mt-0.5" checked={form.allowRealPublishing} onChange={event=>set("allowRealPublishing",event.target.checked)}/><span><span className="block text-xs font-black text-slate-900">审批通过后允许真实发布</span><span className="mt-0.5 block text-[10px] leading-5 text-slate-500">关闭时只生成发布草稿和排期，不会发送到社媒平台。</span></span></label>
-          <p className="mt-4 rounded-xl bg-slate-50 p-3 text-xs leading-5 text-slate-600">已选平台 {selectedPublishPlatforms.length} 个；发布时按各平台条数和所选账号进入视频矩阵排期。</p>
+          <label className="mt-4 flex items-start gap-3 rounded-lg border border-slate-200 bg-white p-3"><input type="checkbox" className="mt-0.5" checked={form.allowRealPublishing} onChange={event=>set("allowRealPublishing",event.target.checked)}/><span><span className="block text-xs font-semibold text-slate-900">审批通过后允许真实发布</span><span className="mt-0.5 block text-[10px] leading-5 text-slate-500">关闭时只生成发布草稿和排期，不会发送到社媒平台。</span></span></label>
+          <p className="mt-4 rounded-lg bg-slate-50 p-3 text-xs leading-5 text-slate-600">已选平台 {selectedPublishPlatforms.length} 个；发布时按各平台条数和所选账号进入视频矩阵排期。</p>
         </section>}
-        {activeRuleAgent === "customer" && <details className="rounded-2xl border border-emerald-100 bg-emerald-50/45 p-4">
+        {activeRuleAgent === "customer" && <details className="rounded-lg border border-emerald-100 bg-emerald-50/45 p-4">
           <summary className="cursor-pointer text-sm font-bold text-emerald-950">客服知识与接待信息（按需展开）</summary>
           <p className="mt-2 text-xs text-emerald-800">企业和产品资料全系统共用；这里只补充客服专用的接待规则和通知方式。</p>
           <div className="mt-4"><KnowledgeIntakePanel /></div>
         </details>}
-        {activeRuleAgent === "customer" && <div className="md:col-span-2 rounded-2xl border border-slate-200 p-4"><p className="text-sm font-bold text-slate-900">客户跟进规则</p><div className="mt-3 grid gap-3 md:grid-cols-2"><Field label="草稿生成时间"><input className={inputClass} value={followupGenerateAt} onChange={e=>setFollowupGenerateAt(e.target.value)} /></Field><Field label="审批截止"><input className={inputClass} value={followupApproveBy} onChange={e=>setFollowupApproveBy(e.target.value)} /></Field><Field label="允许发送时段"><input className={inputClass} value={followupWindow} onChange={e=>setFollowupWindow(e.target.value)} /></Field><Field label="客户触达频控"><input className={inputClass} value={followupFrequency} onChange={e=>setFollowupFrequency(e.target.value)} /></Field></div><label className="mt-3 flex items-start gap-3 rounded-xl border border-slate-200 bg-white p-3"><input type="checkbox" className="mt-0.5" checked={form.allowRealCustomerMessages} onChange={e=>set("allowRealCustomerMessages",e.target.checked)}/><span><span className="block text-xs font-black text-slate-900">审批通过后允许真实发送客服消息</span><span className="mt-0.5 block text-[10px] text-slate-500">未开启时只生成和审批草稿，不调用真实消息渠道；商业承诺仍需逐条人工审批。</span></span></label><p className="mt-3 rounded-xl bg-slate-50 p-3 text-xs text-slate-600">先生成逐客草稿并等待审批，仅在客户当地工作时间发送。</p></div>}
+        {activeRuleAgent === "customer" && <div className="md:col-span-2 rounded-lg border border-slate-200 p-4"><p className="text-sm font-bold text-slate-900">客户跟进规则</p><div className="mt-3 grid gap-3 md:grid-cols-2"><Field label="草稿生成时间"><input className={inputClass} value={followupGenerateAt} onChange={e=>setFollowupGenerateAt(e.target.value)} /></Field><Field label="审批截止"><input className={inputClass} value={followupApproveBy} onChange={e=>setFollowupApproveBy(e.target.value)} /></Field><Field label="允许发送时段"><input className={inputClass} value={followupWindow} onChange={e=>setFollowupWindow(e.target.value)} /></Field><Field label="客户触达频控"><input className={inputClass} value={followupFrequency} onChange={e=>setFollowupFrequency(e.target.value)} /></Field></div><label className="mt-3 flex items-start gap-3 rounded-lg border border-slate-200 bg-white p-3"><input type="checkbox" className="mt-0.5" checked={form.allowRealCustomerMessages} onChange={e=>set("allowRealCustomerMessages",e.target.checked)}/><span><span className="block text-xs font-semibold text-slate-900">审批通过后允许真实发送客服消息</span><span className="mt-0.5 block text-[10px] text-slate-500">未开启时只生成和审批草稿，不调用真实消息渠道；商业承诺仍需逐条人工审批。</span></span></label><p className="mt-3 rounded-lg bg-slate-50 p-3 text-xs text-slate-600">先生成逐客草稿并等待审批，仅在客户当地工作时间发送。</p></div>}
       </div>
       <div className="mt-4 flex flex-col items-end gap-2">
         {submitted && Object.keys(errors).length > 0 && (
-          <div role="alert" className="flex flex-wrap items-center justify-end gap-2 text-xs font-semibold text-red-600"><span>还需填写：{missingConfigLabels.join("、")}。</span><button type="button" onClick={goToFirstMissingConfig} className="rounded-lg border border-red-200 bg-red-50 px-3 py-1.5 text-[11px] font-bold text-red-700">去补齐</button></div>
+          <div role="alert" className="flex flex-wrap items-center justify-end gap-2 text-xs font-semibold text-red-600"><span>还需填写：{missingConfigLabels.join("、")}。</span><Button htmlType="button" onClick={goToFirstMissingConfig} className="!h-auto min-h-9 !whitespace-normal rounded-lg border border-red-200 bg-red-50 px-3 py-1.5 text-[11px] font-bold text-red-700">去补齐</Button></div>
         )}
-        <button
-          type="button"
+        <Button type="primary"
+          htmlType="button"
           disabled={busy || (submitted && Object.keys(errors).length > 0)}
           onClick={submit}
-          className="inline-flex items-center gap-2 rounded-xl bg-slate-950 px-5 py-2.5 text-sm font-bold text-white transition hover:bg-slate-800 disabled:opacity-50"
+          className="!h-auto min-h-9 !whitespace-normal inline-flex items-center gap-2 rounded-lg px-5 py-2.5 text-sm font-bold transition"
         >
           {busy ? (
             <Loader2 size={16} className="animate-spin" />
@@ -1234,10 +1466,9 @@ function OnboardingPanel({
             : activeRun
               ? "保存为后续运行规则"
               : "保存运行规则"}
-        </button>
+        </Button>
       </div>
-    </section>
-      </div>}
+    </section>}
     </>
   );
 }
@@ -1372,42 +1603,41 @@ function GoalPanel({
   };
   return (
     <>
-      <section className="rounded-2xl border border-border bg-white p-4 shadow-sm sm:p-5">
-        <div className="flex flex-wrap items-start justify-between gap-4"><div className="flex items-start gap-3"><div className="rounded-xl bg-emerald-50 p-3 text-emerald-700"><Target size={22} /></div><div><p className="text-xs font-bold uppercase tracking-[0.16em] text-emerald-700">本周任务确认</p><h2 className="mt-1 text-lg font-black text-slate-950">灵小枢已生成本周默认方案</h2><p className="mt-1 text-xs leading-5 text-slate-500">产量由账号矩阵的逐平台周配额相加，确认后不会再从其他口径扩出不同数量。</p></div></div><span className={`rounded-full px-3 py-1.5 text-[10px] font-black ${hasErrors ? 'bg-amber-50 text-amber-700' : 'bg-emerald-50 text-emerald-700'}`}>{hasErrors ? `需补 ${missingGoalFields.length + videoPlanIssues.length} 项` : '可直接确认'}</span></div>
+      <section className="rounded-lg border border-border bg-white p-4 sm:p-5">
+        <div className="flex flex-wrap items-start justify-between gap-4"><div className="flex items-start gap-3"><div className="rounded-lg bg-emerald-50 p-3 text-emerald-700"><Target size={22} /></div><div><p className="text-xs font-bold uppercase tracking-[0.16em] text-emerald-700">本周任务确认</p><h2 className="mt-1 text-lg font-semibold text-slate-950">灵小枢已生成本周默认方案</h2><p className="mt-1 text-xs leading-5 text-slate-500">产量由账号矩阵的逐平台周配额相加，确认后不会再从其他口径扩出不同数量。</p></div></div><span className={`rounded-full px-3 py-1.5 text-[10px] font-semibold ${hasErrors ? 'bg-amber-50 text-amber-700' : 'bg-emerald-50 text-emerald-700'}`}>{hasErrors ? `需补 ${missingGoalFields.length + videoPlanIssues.length} 项` : '可直接确认'}</span></div>
         <div className="mt-5 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-          <div className="rounded-xl bg-slate-50 p-4"><p className="text-[10px] font-bold text-slate-400">任务方案</p><p className="mt-1 text-sm font-black text-slate-900">{businessLine === 'customer_conversion' ? '客户转化任务' : weeklyTaskPackagePreset(selectedPresetId).label}</p></div>
-          <div className="rounded-xl bg-slate-50 p-4"><p className="text-[10px] font-bold text-slate-400">本周实际视频任务</p><p className="mt-1 text-sm font-black text-slate-900">{form.videoPlans?.length || 0} 条</p><p className="mt-1 text-[9px] text-slate-400">等于下方各平台任务数之和</p></div>
-          <div className="rounded-xl bg-slate-50 p-4"><p className="text-[10px] font-bold text-slate-400">平台分配</p><p className="mt-1 text-sm font-black text-slate-900">{platformPlanCounts.map(item => `${contentPlatformLabel[item.platform]} ${item.count}`).join(' · ') || '待确认'}</p><p className="mt-1 text-[9px] text-slate-400">覆盖 {platformPlanCounts.filter(item => item.count > 0).length}/{form.contentPlatforms.length} 个目标平台</p></div>
-          <div className="rounded-xl bg-slate-50 p-4"><p className="text-[10px] font-bold text-slate-400">业务范围</p><p className="mt-1 truncate text-sm font-black text-slate-900">{form.scope || '按企业默认市场'}</p></div>
-          <div className="rounded-xl bg-slate-50 p-4"><p className="text-[10px] font-bold text-slate-400">预计成本</p><p className="mt-1 text-sm font-black text-slate-900">{estimatedPlanCost > 0 ? `¥${estimatedPlanCost.toFixed(2)}` : '待真实核算'}</p><p className="mt-1 text-[9px] text-slate-400">实际以服务费用回执为准</p></div>
+          <div className="rounded-lg bg-slate-50 p-4"><p className="text-[10px] font-bold text-slate-400">任务方案</p><p className="mt-1 text-sm font-semibold text-slate-900">{businessLine === 'customer_conversion' ? '客户转化任务' : weeklyTaskPackagePreset(selectedPresetId).label}</p></div>
+          <div className="rounded-lg bg-slate-50 p-4"><p className="text-[10px] font-bold text-slate-400">本周实际视频任务</p><p className="mt-1 text-sm font-semibold text-slate-900">{form.videoPlans?.length || 0} 条</p><p className="mt-1 text-[9px] text-slate-400">等于下方各平台任务数之和</p></div>
+          <div className="rounded-lg bg-slate-50 p-4"><p className="text-[10px] font-bold text-slate-400">平台分配</p><p className="mt-1 text-sm font-semibold text-slate-900">{platformPlanCounts.map(item => `${contentPlatformLabel[item.platform]} ${item.count}`).join(' · ') || '待确认'}</p><p className="mt-1 text-[9px] text-slate-400">覆盖 {platformPlanCounts.filter(item => item.count > 0).length}/{form.contentPlatforms.length} 个目标平台</p></div>
+          <div className="rounded-lg bg-slate-50 p-4"><p className="text-[10px] font-bold text-slate-400">业务范围</p><p className="mt-1 truncate text-sm font-semibold text-slate-900">{form.scope || '按企业默认市场'}</p></div>
+          <div className="rounded-lg bg-slate-50 p-4"><p className="text-[10px] font-bold text-slate-400">预计成本</p><p className="mt-1 text-sm font-semibold text-slate-900">{estimatedPlanCost > 0 ? `¥${estimatedPlanCost.toFixed(2)}` : '待真实核算'}</p><p className="mt-1 text-[9px] text-slate-400">实际以服务费用回执为准</p></div>
         </div>
-        <div className="mt-4 rounded-xl border border-emerald-100 bg-emerald-50/55 px-4 py-3"><p className="text-xs font-black text-emerald-950">本周重点结果</p><p className="mt-1 text-xs leading-5 text-emerald-800">{form.objective}</p></div>
-        {businessLine !== 'customer_conversion' && Boolean(form.videoPlans?.length) && <section aria-label="社媒视频矩阵" className="mt-4 rounded-xl border border-slate-200 bg-slate-50/60 p-4">
+        <div className="mt-4 rounded-lg border border-emerald-100 bg-emerald-50/55 px-4 py-3"><p className="text-xs font-semibold text-emerald-950">本周重点结果</p><p className="mt-1 text-xs leading-5 text-emerald-800">{form.objective}</p></div>
+        {businessLine !== 'customer_conversion' && Boolean(form.videoPlans?.length) && <section aria-label="社媒视频矩阵" className="mt-4 rounded-lg border border-slate-200 bg-slate-50/60 p-4">
           <div className="flex flex-wrap items-start justify-between gap-3">
-            <div><p className="text-sm font-black text-slate-900">社媒视频矩阵</p><p className="mt-1 text-xs text-slate-500">已按平台拆成 {form.videoPlans?.length || 0} 条视频任务，确认前仍可逐条调整。</p></div>
-            <button type="button" onClick={() => setGoalEditorOpen(true)} className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs font-bold text-slate-700 hover:border-emerald-300">编辑完整矩阵</button>
+            <div><p className="text-sm font-semibold text-slate-900">社媒视频矩阵</p><p className="mt-1 text-xs text-slate-500">已按平台拆成 {form.videoPlans?.length || 0} 条视频任务，确认前仍可逐条调整。</p></div>
+            <Button htmlType="button" onClick={() => setGoalEditorOpen(true)} className="!h-auto min-h-9 !whitespace-normal rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs font-bold text-slate-700 hover:border-emerald-300">编辑完整矩阵</Button>
           </div>
           <div className="mt-3 grid gap-2 md:grid-cols-2 xl:grid-cols-3">
             {form.videoPlans?.slice(0, 8).map((plan, index) => <div key={`${plan.platform}-${index}`} className="rounded-lg border border-slate-200 bg-white p-3">
-              <div className="flex items-center justify-between gap-2"><span className="text-[10px] font-black uppercase tracking-[0.12em] text-emerald-700">{contentPlatformLabel[plan.platform]}</span><span className="text-[10px] font-semibold text-slate-400">{plan.duration} 秒 · {plan.language}</span></div>
-              <p className="mt-2 truncate text-xs font-black text-slate-900">{plan.productName || '待选择产品'}</p>
+              <div className="flex items-center justify-between gap-2"><span className="text-[10px] font-semibold uppercase tracking-[0.12em] text-emerald-700">{contentPlatformLabel[plan.platform]}</span><span className="text-[10px] font-semibold text-slate-400">{plan.duration} 秒 · {plan.language}</span></div>
+              <p className="mt-2 truncate text-xs font-semibold text-slate-900">{plan.productName || '待选择产品'}</p>
               <p className="mt-1 line-clamp-2 text-[11px] leading-5 text-slate-500">{plan.theme || '待补充视频主题'}</p>
             </div>)}
           </div>
           {(form.videoPlans?.length || 0) > 8 && <p className="mt-3 text-[10px] font-bold text-slate-500">当前先展示 8 条，另有 {(form.videoPlans?.length || 0) - 8} 条可在“编辑完整矩阵”中查看。</p>}
         </section>}
-        {submitted && hasErrors && <div role="alert" className="mt-4 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-xs text-amber-900"><p className="font-black">暂时不能确认，具体缺少：</p><ul className="mt-2 list-disc space-y-1 pl-4">{[...missingGoalFields, ...videoPlanIssues.slice(0, 3)].map(item => <li key={item}>{item}</li>)}</ul>{errors.product && onOpenSettings && <button type="button" onClick={onOpenSettings} className="mt-3 rounded-lg bg-amber-900 px-3 py-2 text-[11px] font-black text-white">去 Agent 设置选择重点产品</button>}</div>}
-        <div className="mt-5 flex flex-wrap justify-end gap-2"><button type="button" onClick={() => setGoalEditorOpen(true)} className="rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-sm font-bold text-slate-700 hover:bg-slate-50">调整本周设置</button><button type="button" disabled={busy} onClick={submit} className="inline-flex items-center gap-2 rounded-xl bg-emerald-700 px-5 py-2.5 text-sm font-black text-white hover:bg-emerald-800 disabled:opacity-50">{busy ? <Loader2 size={16} className="animate-spin" /> : <Check size={16} />}确认周计划</button></div>
+        {submitted && hasErrors && <div role="alert" className="mt-4 rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-xs text-amber-900"><p className="font-semibold">暂时不能确认，具体缺少：</p><ul className="mt-2 list-disc space-y-1 pl-4">{[...missingGoalFields, ...videoPlanIssues.slice(0, 3)].map(item => <li key={item}>{item}</li>)}</ul>{errors.product && onOpenSettings && <Button htmlType="button" onClick={onOpenSettings} className="!h-auto min-h-9 !whitespace-normal mt-3 rounded-lg bg-amber-900 px-3 py-2 text-[11px] font-semibold text-white">去 Agent 设置选择重点产品</Button>}</div>}
+        <div className="mt-5 flex flex-wrap justify-end gap-2"><Button htmlType="button" onClick={() => setGoalEditorOpen(true)} className="!h-auto min-h-9 !whitespace-normal rounded-lg border border-slate-200 bg-white px-4 py-2.5 text-sm font-bold text-slate-700 hover:bg-slate-50">调整本周设置</Button><Button type="primary" htmlType="button" disabled={busy} onClick={submit} className="!h-auto min-h-9 !whitespace-normal inline-flex items-center gap-2 rounded-lg px-5 py-2.5 text-sm font-semibold">{busy ? <Loader2 size={16} className="animate-spin" /> : <Check size={16} />}确认周计划</Button></div>
       </section>
-      {goalEditorOpen && <div className="fixed inset-0 z-[170] flex items-center justify-center bg-slate-950/45 p-4 backdrop-blur-sm" onMouseDown={event => { if (event.target === event.currentTarget && !busy) setGoalEditorOpen(false); }}>
-    <section role="dialog" aria-modal="true" aria-label="调整本周设置" className="ui-modal-frame ui-modal-frame--wide relative overflow-y-auto p-4 sm:p-5">
-      <button type="button" aria-label="关闭本周设置" disabled={busy} onClick={() => setGoalEditorOpen(false)} className="sticky top-0 z-10 float-right rounded-xl border border-slate-200 bg-white p-2 text-slate-500 shadow-sm hover:bg-slate-50"><X size={18} /></button>
+      {goalEditorOpen && <section aria-label="调整本周设置" className="rounded-lg border border-border bg-white p-4 sm:p-5">
+      <Button htmlType="button" aria-label="关闭本周设置" disabled={busy} onClick={() => setGoalEditorOpen(false)} className="!h-auto min-h-9 !whitespace-normal sticky top-0 z-10 float-right rounded-lg border border-slate-200 bg-white p-2 text-slate-500 hover:bg-slate-50"><X size={18} /></Button>
       <div className="flex items-start gap-3">
-        <div className="rounded-xl bg-emerald-50 p-3 text-emerald-700">
+        <div className="rounded-lg bg-emerald-50 p-3 text-emerald-700">
           <Target size={22} />
         </div>
         <div>
-          <h2 className="text-lg font-black text-slate-950">
+          <h2 className="text-lg font-semibold text-slate-950">
             选一个周任务包，告诉灵小枢本周重点
           </h2>
           <p className="mt-1 text-xs leading-5 text-slate-500">
@@ -1415,39 +1645,39 @@ function GoalPanel({
           </p>
         </div>
       </div>
-      {submitted && hasErrors && <div role="alert" className="mt-4 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-xs text-amber-900"><p className="font-black">请先补齐以下信息：</p><ul className="mt-2 list-disc space-y-1 pl-4">{[...missingGoalFields, ...videoPlanIssues.slice(0, 3)].map(item => <li key={item}>{item}</li>)}</ul>{errors.product && onOpenSettings && <button type="button" onClick={onOpenSettings} className="mt-3 rounded-lg bg-amber-900 px-3 py-2 text-[11px] font-black text-white">去 Agent 设置选择重点产品</button>}</div>}
+      {submitted && hasErrors && <div role="alert" className="mt-4 rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-xs text-amber-900"><p className="font-semibold">请先补齐以下信息：</p><ul className="mt-2 list-disc space-y-1 pl-4">{[...missingGoalFields, ...videoPlanIssues.slice(0, 3)].map(item => <li key={item}>{item}</li>)}</ul>{errors.product && onOpenSettings && <Button htmlType="button" onClick={onOpenSettings} className="!h-auto min-h-9 !whitespace-normal mt-3 rounded-lg bg-amber-900 px-3 py-2 text-[11px] font-semibold text-white">去 Agent 设置选择重点产品</Button>}</div>}
       <div className="mt-5 grid gap-4 md:grid-cols-2">
         {businessLine !== 'customer_conversion' && <>
-          <details className="md:col-span-2 rounded-xl border border-slate-200 bg-slate-50/60 px-4 py-3">
-            <summary className="cursor-pointer text-xs font-black text-slate-700">更换周任务方案（当前：{weeklyTaskPackagePreset(selectedPresetId).label}）</summary>
+          <details className="md:col-span-2 rounded-lg border border-slate-200 bg-slate-50/60 px-4 py-3">
+            <summary className="cursor-pointer text-xs font-semibold text-slate-700">更换周任务方案（当前：{weeklyTaskPackagePreset(selectedPresetId).label}）</summary>
             <div className="mt-3 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
               {WEEKLY_TASK_PACKAGE_PRESETS.map(preset => {
                 const selected = selectedPresetId === preset.id;
-                return <button key={preset.id} type="button" aria-pressed={selected} onClick={() => choosePreset(preset.id)} className={`rounded-xl border p-3 text-left transition ${selected ? 'border-emerald-500 bg-emerald-50 shadow-[0_0_0_1px_rgba(16,185,129,0.15)]' : 'border-slate-200 bg-white hover:border-slate-300'}`}>
+                return <Button key={preset.id} htmlType="button" aria-pressed={selected} onClick={() => choosePreset(preset.id)} className={`!h-auto min-h-9 !whitespace-normal rounded-lg border p-3 text-left transition ${selected ? 'border-emerald-500 bg-emerald-50 shadow-[0_0_0_1px_rgba(16,185,129,0.15)]' : 'border-slate-200 bg-white hover:border-slate-300'}`}>
                   <span className="flex items-start justify-between gap-2"><strong className="text-sm text-slate-950">{preset.label}</strong>{selected && <CheckCircle2 size={16} className="shrink-0 text-emerald-700" />}</span>
                   <span className="mt-1.5 block text-[11px] leading-5 text-slate-500">{preset.description}</span>
                   <span className="mt-3 block text-[10px] font-bold text-emerald-700">主平台：{contentPlatformLabel[preset.primaryPlatform]} · {preset.weeklyOutput} 个选题方向</span>
-                </button>;
+                </Button>;
               })}
             </div>
           </details>
-          <label className="md:col-span-2 text-xs font-black text-slate-700">本周最想解决什么？
+          <label className="md:col-span-2 text-xs font-semibold text-slate-700">本周最想解决什么？
             <input className={`${inputClass} mt-2`} value={weeklyFocus} onChange={event => updateWeeklyFocus(event.target.value)} placeholder="例如：验证东南亚采购商最关心的选型问题" />
           </label>
           {submitted && errors.product && <p role="alert" className="md:col-span-2 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs font-bold text-amber-800">{errors.product}</p>}
-          <details className="md:col-span-2 rounded-xl border border-emerald-100 bg-emerald-50/60 px-4 py-3 text-xs">
-            <summary className="cursor-pointer font-black text-emerald-950">查看执行安排</summary>
+          <details className="md:col-span-2 rounded-lg border border-emerald-100 bg-emerald-50/60 px-4 py-3 text-xs">
+            <summary className="cursor-pointer font-semibold text-emerald-950">查看执行安排</summary>
             <div className="mt-3 grid gap-3 sm:grid-cols-3">
-            <div><p className="font-black text-emerald-950">发布节奏</p><p className="mt-1 leading-5 text-emerald-800">{weeklyTaskPackagePreset(selectedPresetId).frequency}</p></div>
-            <div><p className="font-black text-emerald-950">账号安排</p><p className="mt-1 leading-5 text-emerald-800">{weeklyTaskPackagePreset(selectedPresetId).accountRoles}</p></div>
-            <div><p className="font-black text-emerald-950">由谁完成</p><p className="mt-1 leading-5 text-emerald-800">灵小枢安排各数字员工完成，并在需要你决定时提醒。</p></div>
+            <div><p className="font-semibold text-emerald-950">发布节奏</p><p className="mt-1 leading-5 text-emerald-800">{weeklyTaskPackagePreset(selectedPresetId).frequency}</p></div>
+            <div><p className="font-semibold text-emerald-950">账号安排</p><p className="mt-1 leading-5 text-emerald-800">{weeklyTaskPackagePreset(selectedPresetId).accountRoles}</p></div>
+            <div><p className="font-semibold text-emerald-950">由谁完成</p><p className="mt-1 leading-5 text-emerald-800">灵小枢安排各数字员工完成，并在需要你决定时提醒。</p></div>
             </div>
           </details>
         </>}
-        {businessLine !== "customer_conversion" && <div className="md:col-span-2 rounded-2xl border border-blue-100 bg-blue-50/50 p-4"><div className="flex flex-wrap items-start justify-between gap-2"><div><p className="text-sm font-black text-slate-900">确认本期制作平台</p><p className="mt-1 text-xs text-slate-500">选择平台会立即重算该平台账号的周配额和实际内容任务数。</p></div><span className="rounded-full bg-white px-3 py-1 text-[10px] font-bold text-blue-700">{!config.enabledWorkflows.includes("content_publish")?"仅制作内容，不发布":config.allowRealPublishing?"获批后允许真实发布":"获批后停在人工待发布"}</span></div><div className="mt-3 flex flex-wrap gap-2">{configuredPlatforms.map(platform=>{const selected=form.contentPlatforms.includes(platform);const accounts=config.publishingTargets.filter(target=>target.platform===platform);const count=(form.videoPlans||[]).filter(plan=>plan.platform===platform).length;return <button key={platform} type="button" aria-pressed={selected} onClick={()=>updateContentPlatforms(platform)} className={`rounded-xl border px-3 py-2 text-left ${selected?"border-blue-400 bg-white text-blue-800":"border-slate-200 bg-slate-50 text-slate-500"}`}><span className="block text-xs font-black">{contentPlatformLabel[platform]}{selected?` · ${count} 条`:''}</span><span className="mt-0.5 block text-[9px]">{accounts.map(account=>account.accountLabel).join("、")||"待连接账号"}</span></button>})}</div>{submitted&&errors.contentPlatforms&&<p className="mt-2 text-[10px] font-semibold text-red-600">{errors.contentPlatforms}</p>}</div>}
-        {businessLine !== 'customer_conversion' && <details className="md:col-span-2 rounded-xl border border-slate-200 bg-white px-4 py-3"><summary className="cursor-pointer text-xs font-black text-slate-700">查看并调整具体视频计划（可选）</summary><div className="mt-4"><VideoPlanEditor plans={form.videoPlans || []} config={config} platforms={form.contentPlatforms} themeWorkflow onChange={videoPlans => setForm(current => ({ ...current, videoPlans, target: ['approved_content_packages', 'published_posts'].includes(current.metric) ? videoPlans.length : current.target }))} /></div></details>}
-        <details className="md:col-span-2 rounded-xl border border-slate-200 bg-slate-50/60 px-4 py-3">
-          <summary className="cursor-pointer text-xs font-black text-slate-700">系统生成的目标设置（需要时可修改）</summary>
+        {businessLine !== "customer_conversion" && <div className="md:col-span-2 rounded-lg border border-blue-100 bg-blue-50/50 p-4"><div className="flex flex-wrap items-start justify-between gap-2"><div><p className="text-sm font-semibold text-slate-900">确认本期制作平台</p><p className="mt-1 text-xs text-slate-500">选择平台会立即重算该平台账号的周配额和实际内容任务数。</p></div><span className="rounded-full bg-white px-3 py-1 text-[10px] font-bold text-blue-700">{!config.enabledWorkflows.includes("content_publish")?"仅制作内容，不发布":config.allowRealPublishing?"获批后允许真实发布":"获批后停在人工待发布"}</span></div><div className="mt-3 flex flex-wrap gap-2">{configuredPlatforms.map(platform=>{const selected=form.contentPlatforms.includes(platform);const accounts=config.publishingTargets.filter(target=>target.platform===platform);const count=(form.videoPlans||[]).filter(plan=>plan.platform===platform).length;return <Button key={platform} htmlType="button" aria-pressed={selected} onClick={()=>updateContentPlatforms(platform)} className={`!h-auto min-h-9 !whitespace-normal rounded-lg border px-3 py-2 text-left ${selected?"border-blue-400 bg-white text-blue-800":"border-slate-200 bg-slate-50 text-slate-500"}`}><span className="block text-xs font-semibold">{contentPlatformLabel[platform]}{selected?` · ${count} 条`:''}</span><span className="mt-0.5 block text-[9px]">{accounts.map(account=>account.accountLabel).join("、")||"待连接账号"}</span></Button>})}</div>{submitted&&errors.contentPlatforms&&<p className="mt-2 text-[10px] font-semibold text-red-600">{errors.contentPlatforms}</p>}</div>}
+        {businessLine !== 'customer_conversion' && <details className="md:col-span-2 rounded-lg border border-slate-200 bg-white px-4 py-3"><summary className="cursor-pointer text-xs font-semibold text-slate-700">查看并调整具体视频计划（可选）</summary><div className="mt-4"><VideoPlanEditor plans={form.videoPlans || []} config={config} platforms={form.contentPlatforms} themeWorkflow onChange={videoPlans => setForm(current => ({ ...current, videoPlans, target: ['approved_content_packages', 'published_posts'].includes(current.metric) ? videoPlans.length : current.target }))} /></div></details>}
+        <details className="md:col-span-2 rounded-lg border border-slate-200 bg-slate-50/60 px-4 py-3">
+          <summary className="cursor-pointer text-xs font-semibold text-slate-700">系统生成的目标设置（需要时可修改）</summary>
           <div className="mt-4 grid gap-4 md:grid-cols-2">
         <Field
           label="目标名称"
@@ -1555,11 +1785,11 @@ function GoalPanel({
         </details>
       </div>
       <div className="mt-6 flex justify-end">
-        <button
-          type="button"
+        <Button type="primary"
+          htmlType="button"
           disabled={busy || (submitted && hasErrors)}
           onClick={submit}
-          className="inline-flex items-center gap-2 rounded-xl bg-blue-700 px-5 py-2.5 text-sm font-bold text-white transition hover:bg-blue-800 disabled:opacity-50"
+          className="!h-auto min-h-9 !whitespace-normal inline-flex items-center gap-2 rounded-lg px-5 py-2.5 text-sm font-bold transition"
         >
           {busy ? (
             <Loader2 size={16} className="animate-spin" />
@@ -1567,10 +1797,9 @@ function GoalPanel({
             <Check size={16} />
           )}{" "}
           保存设置并确认周计划
-        </button>
+        </Button>
       </div>
-    </section>
-      </div>}
+    </section>}
     </>
   );
 }
@@ -1624,14 +1853,14 @@ function EventTimeline({
   return (
     <div className="space-y-4">
       {events.length === 0 && (
-        <p className="rounded-2xl border border-dashed border-slate-200 px-4 py-8 text-center text-sm text-slate-400">
+        <p className="rounded-lg border border-dashed border-slate-200 px-4 py-8 text-center text-sm text-slate-400">
           目标批准后，这里会展示服务端真实运行事件。
         </p>
       )}
       {[...events].reverse().map((event) => (
         <div
           key={event.id}
-          className={`relative flex gap-3 rounded-xl p-2 pl-2 transition ${activeTaskId && event.task_id === activeTaskId ? "bg-blue-50 ring-1 ring-blue-100" : ""}`}
+          className={`relative flex gap-3 rounded-lg p-2 pl-2 transition ${activeTaskId && event.task_id === activeTaskId ? "bg-blue-50 ring-1 ring-blue-100" : ""}`}
         >
           <div
             className={`mt-1.5 h-2.5 w-2.5 shrink-0 rounded-full ${event.level === "success" ? "bg-emerald-500" : event.level === "warning" ? "bg-amber-500" : event.level === "error" ? "bg-red-500" : "bg-blue-500"}`}
@@ -1654,13 +1883,13 @@ function EventTimeline({
               第 {event.sequence} 条 ·{" "}
               {eventTypeLabel[event.type] || "工作状态已更新"}
             </p>
-            {event.id === actionEventId && actionLabel && onAction && <button
-              type="button"
+            {event.id === actionEventId && actionLabel && onAction && <Button
+              htmlType="button"
               onClick={onAction}
-              className="mt-3 inline-flex items-center gap-1.5 rounded-lg bg-emerald-700 px-3 py-2 text-xs font-bold text-white hover:bg-emerald-800"
+              className="!h-auto min-h-9 !whitespace-normal mt-3 inline-flex items-center gap-1.5 rounded-lg bg-blue-600 px-3 py-2 text-xs font-bold text-white hover:bg-blue-700"
             >
               {actionLabel} <ArrowRight size={13} />
-            </button>}
+            </Button>}
           </div>
         </div>
       ))}
@@ -1715,9 +1944,9 @@ function BusinessLineNav({ value, platform, onChange, onPlatformChange }: { valu
   return <section aria-label="经营视角切换" className="border-b border-slate-200 bg-transparent">
     <div className="flex flex-wrap items-center gap-5">
       <span className="flex items-center gap-1.5 py-3 text-[10px] font-bold text-slate-400"><Layers3 size={13}/>经营视角</span>
-      {lines.map(([id,label,caption])=><button key={id} type="button" title={caption} aria-pressed={value===id} onClick={()=>onChange(id)} className={`border-b-2 px-1 py-3 text-[11px] font-semibold transition-colors ${value===id?"border-accent text-text-primary":"border-transparent text-slate-500 hover:text-slate-900"}`}>{label}</button>)}
+      {lines.map(([id,label,caption])=><Button key={id} htmlType="button" title={caption} aria-pressed={value===id} onClick={()=>onChange(id)} className={`!h-auto min-h-9 !whitespace-normal border-b-2 px-1 py-3 text-[11px] font-semibold transition-colors ${value===id?"border-accent text-text-primary":"border-transparent text-slate-500 hover:text-slate-900"}`}>{label}</Button>)}
     </div>
-    {value==="content_growth"&&<div className="flex flex-wrap items-center gap-4 border-t border-slate-100 py-2"><span className="text-[10px] font-bold text-slate-400">平台</span>{platforms.map(([id,label])=><button key={id} type="button" aria-pressed={platform===id} onClick={()=>onPlatformChange(id)} className={`border-b px-0.5 py-1 text-[10px] font-semibold ${platform===id?"border-accent text-accent":"border-transparent text-slate-500 hover:text-slate-900"}`}>{label}</button>)}</div>}
+    {value==="content_growth"&&<div className="flex flex-wrap items-center gap-4 border-t border-slate-100 py-2"><span className="text-[10px] font-bold text-slate-400">平台</span>{platforms.map(([id,label])=><Button key={id} htmlType="button" aria-pressed={platform===id} onClick={()=>onPlatformChange(id)} className={`!h-auto min-h-9 !whitespace-normal border-b px-0.5 py-1 text-[10px] font-semibold ${platform===id?"border-accent text-accent":"border-transparent text-slate-500 hover:text-slate-900"}`}>{label}</Button>)}</div>}
   </section>;
 }
 
@@ -1808,13 +2037,13 @@ function TodayNextAction({
         <h2 className="text-xl font-bold leading-snug tracking-tight text-slate-950 md:text-2xl">{next.title}</h2>
         <p className="mt-2 text-sm leading-relaxed text-slate-500">{next.detail}</p>
       </div>
-      <button
-        type="button"
+      <Button type="primary"
+        htmlType="button"
         onClick={next.action}
-        className="inline-flex shrink-0 items-center justify-center gap-2 self-start whitespace-nowrap rounded-lg bg-emerald-600 px-4 py-2.5 text-sm font-semibold text-white transition hover:bg-emerald-700 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-emerald-600 sm:self-auto"
+        className="!h-auto min-h-9 !whitespace-normal inline-flex shrink-0 items-center justify-center gap-2 self-start whitespace-nowrap rounded-lg px-4 py-2.5 text-sm font-semibold transition focus-visible:outline-2 focus-visible:outline-offset-2 sm:self-auto"
       >
         {next.label} <ArrowRight size={14} />
-      </button>
+      </Button>
     </div>
   );
 }
@@ -1864,10 +2093,10 @@ function TodayFocusPanel({ data, onOpenExecution, onReviewPlan }: {
 
   return (
     <div className="space-y-5">
-      <section className="rounded-3xl border border-slate-200 bg-white p-5 shadow-sm">
+      <section className="rounded-lg border border-slate-200 bg-white p-5">
         <div className="flex flex-wrap items-start justify-between gap-3">
           <div>
-            <h2 className="font-black text-slate-950">本周进度</h2>
+            <h2 className="font-semibold text-slate-950">本周进度</h2>
             <p className="mt-1 text-xs text-slate-500">
               {data.goal
                 ? `${data.goal.title} · ${data.goal.startsAt} 至 ${data.goal.endsAt}`
@@ -1875,19 +2104,19 @@ function TodayFocusPanel({ data, onOpenExecution, onReviewPlan }: {
             </p>
           </div>
           {data.run && (
-            <button
-              type="button"
+            <Button
+              htmlType="button"
               onClick={() => onOpenExecution()}
-              className="text-xs font-bold text-slate-600 hover:text-slate-950"
+              className="!h-auto min-h-9 !whitespace-normal text-xs font-bold text-slate-600 hover:text-slate-950"
             >
               查看任务执行 →
-            </button>
+            </Button>
           )}
         </div>
         <div className="mt-4 grid gap-3 sm:grid-cols-3">
-          <div className="rounded-2xl bg-slate-50 p-4">
+          <div className="rounded-lg bg-slate-50 p-4">
             <p className="text-[11px] font-bold text-slate-500">计划状态</p>
-            <p className="mt-2 text-lg font-black text-slate-950">
+            <p className="mt-2 text-lg font-semibold text-slate-950">
               {isDraft
                 ? data.plan ? "待确认" : "计划生成中"
                 : data.run
@@ -1895,46 +2124,46 @@ function TodayFocusPanel({ data, onOpenExecution, onReviewPlan }: {
                   : "尚未制定"}
             </p>
           </div>
-          <div className="rounded-2xl bg-slate-50 p-4">
+          <div className="rounded-lg bg-slate-50 p-4">
             <p className="text-[11px] font-bold text-slate-500">{isDraft ? "计划任务" : "已完成任务"}</p>
-            <p className="mt-2 text-lg font-black text-slate-950">
+            <p className="mt-2 text-lg font-semibold text-slate-950">
               {isDraft ? (data.plan ? `${(data.plan.businessPackage?.tasks.length ?? data.plan.tasks.length)} 项` : "生成中") : `${completed} / ${data.tasks.length}`}
             </p>
           </div>
-          <div className="rounded-2xl bg-slate-50 p-4">
+          <div className="rounded-lg bg-slate-50 p-4">
             <p className="text-[11px] font-bold text-slate-500">{isDraft ? "执行状态" : "当前完成度"}</p>
-            <p className="mt-2 text-lg font-black text-slate-950">{isDraft ? "尚未启动" : data.tasks.length ? `${progress}%` : "—"}</p>
+            <p className="mt-2 text-lg font-semibold text-slate-950">{isDraft ? "尚未启动" : data.tasks.length ? `${progress}%` : "—"}</p>
           </div>
         </div>
       </section>
 
-      <section className="rounded-3xl border border-slate-200 bg-white p-5 shadow-sm">
+      <section className="rounded-lg border border-slate-200 bg-white p-5">
         <div className="flex items-center justify-between gap-3">
           <div>
-            <h2 className="font-black text-slate-950">需要你处理</h2>
+            <h2 className="font-semibold text-slate-950">需要你处理</h2>
             <p className="mt-1 text-xs text-slate-500">只显示会阻塞计划或需要你确认的事项。</p>
           </div>
-          {attentionItems.length > 0 && <span className="rounded-full bg-amber-50 px-2.5 py-1 text-xs font-black text-amber-800">{attentionItems.length} 项</span>}
+          {attentionItems.length > 0 && <span className="rounded-full bg-amber-50 px-2.5 py-1 text-xs font-semibold text-amber-800">{attentionItems.length} 项</span>}
         </div>
         {attentionItems.length ? (
           <div className="mt-4 space-y-2">
             {visibleAttentionItems.map((item) => (
-              <button
+              <Button
                 key={item.title}
-                type="button"
+                htmlType="button"
                 onClick={item.action}
-                className={`flex w-full items-center justify-between gap-4 rounded-2xl px-4 py-3 text-left ${item.tone}`}
+                className={`!h-auto min-h-9 !whitespace-normal flex w-full items-center justify-between gap-4 rounded-lg px-4 py-3 text-left ${item.tone}`}
               >
                 <span className="min-w-0">
                   <span className="block truncate text-sm font-bold">{item.title}</span>
                   <span className="mt-1 block truncate text-xs opacity-70">{item.detail}</span>
                 </span>
                 <ChevronRight size={17} className="shrink-0" />
-              </button>
+              </Button>
             ))}
           </div>
         ) : (
-          <div className="mt-4 rounded-2xl bg-emerald-50 px-4 py-5 text-sm font-semibold text-emerald-800">
+          <div className="mt-4 rounded-lg bg-emerald-50 px-4 py-5 text-sm font-semibold text-emerald-800">
             暂时没有需要你处理的事项。
           </div>
         )}
@@ -1995,17 +2224,17 @@ type OpenBusinessLink = (
 
 function BusinessLoopMap({ onOpen }: { onOpen: OpenBusinessLink }) {
   return (
-    <section className="rounded-3xl border border-slate-200 bg-white p-5 shadow-sm">
+    <section className="rounded-lg border border-slate-200 bg-white p-5">
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div className="flex items-start gap-3">
-          <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-2xl bg-slate-950 text-white">
+          <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-slate-950 text-white">
             <Layers3 size={18} />
           </span>
           <div>
             <p className="text-[10px] font-bold uppercase tracking-[0.18em] text-slate-400">
               经营任务闭环
             </p>
-            <h2 className="mt-1 font-black text-slate-950">
+            <h2 className="mt-1 font-semibold text-slate-950">
               数字员工任务流转图
             </h2>
             <p className="mt-1 text-xs text-slate-500">
@@ -2020,8 +2249,8 @@ function BusinessLoopMap({ onOpen }: { onOpen: OpenBusinessLink }) {
       <div className="mt-5 grid gap-2 lg:grid-cols-[1fr_auto_1fr_auto_1fr_auto_1fr_auto_1fr] lg:items-stretch">
         {businessLoopStages.map((stage, index) => (
           <div key={stage.title} className="contents">
-            <button
-              type="button"
+            <Button
+              htmlType="button"
               onClick={() =>
                 onOpen(
                   stage.page,
@@ -2029,11 +2258,11 @@ function BusinessLoopMap({ onOpen }: { onOpen: OpenBusinessLink }) {
                   { source: "business_loop", stage: stage.title },
                 )
               }
-              className={`rounded-2xl border p-3.5 text-left transition hover:-translate-y-0.5 hover:shadow-sm ${stage.tone}`}
+              className={`!h-auto min-h-9 !whitespace-normal rounded-lg border p-3.5 text-left transition ${stage.tone}`}
             >
               <div className="flex items-start justify-between gap-2">
                 <div>
-                  <p className="text-sm font-black">
+                  <p className="text-sm font-semibold">
                     {index + 1}. {stage.title}
                   </p>
                   <p className="mt-0.5 text-[10px] opacity-70">
@@ -2052,7 +2281,7 @@ function BusinessLoopMap({ onOpen }: { onOpen: OpenBusinessLink }) {
                   </p>
                 ))}
               </div>
-            </button>
+            </Button>
             {index < businessLoopStages.length - 1 && (
               <div className="hidden items-center justify-center text-slate-300 lg:flex">
                 <ChevronRight size={18} />
@@ -2146,36 +2375,36 @@ function CorrectionPanel({
     }
   };
   return (
-    <div className="mt-5 rounded-2xl border border-violet-200 bg-violet-50/60 p-4">
+    <div className="mt-5 rounded-lg border border-violet-200 bg-violet-50/60 p-4">
       <div className="flex items-center gap-2 text-violet-800">
         <RotateCcw size={15} />
-        <p className="text-xs font-black">纠偏当前任务</p>
+        <p className="text-xs font-semibold">纠偏当前任务</p>
       </div>
       <textarea
         value={instruction}
         onChange={(event) => setInstruction(event.target.value)}
-        className="mt-3 min-h-20 w-full resize-y rounded-xl border border-violet-200 bg-white px-3 py-2 text-xs text-slate-800 outline-none focus:border-violet-400"
+        className="mt-3 min-h-20 w-full resize-y rounded-lg border border-violet-200 bg-white px-3 py-2 text-xs text-slate-800 outline-none focus:border-violet-400"
         placeholder="说明哪里不对，以及希望 Agent 如何调整。"
       />
       <div className="mt-3 grid grid-cols-2 gap-2">
-        <button
-          type="button"
+        <Button
+          htmlType="button"
           onClick={() => setScope("one_off")}
-          className={`rounded-xl border px-3 py-2 text-left ${scope === "one_off" ? "border-violet-400 bg-white text-violet-800 ring-1 ring-violet-100" : "border-violet-100 text-slate-500"}`}
+          className={`!h-auto min-h-9 !whitespace-normal rounded-lg border px-3 py-2 text-left ${scope === "one_off" ? "border-violet-400 bg-white text-violet-800 ring-1 ring-violet-100" : "border-violet-100 text-slate-500"}`}
         >
           <span className="block text-xs font-bold">仅本次</span>
           <span className="mt-0.5 block text-[10px]">只修正当前运行</span>
-        </button>
-        <button
-          type="button"
+        </Button>
+        <Button
+          htmlType="button"
           onClick={() => setScope("rule_candidate")}
-          className={`rounded-xl border px-3 py-2 text-left ${scope === "rule_candidate" ? "border-violet-400 bg-white text-violet-800 ring-1 ring-violet-100" : "border-violet-100 text-slate-500"}`}
+          className={`!h-auto min-h-9 !whitespace-normal rounded-lg border px-3 py-2 text-left ${scope === "rule_candidate" ? "border-violet-400 bg-white text-violet-800 ring-1 ring-violet-100" : "border-violet-100 text-slate-500"}`}
         >
           <span className="block text-xs font-bold">长期规则候选</span>
           <span className="mt-0.5 block text-[10px]">
             先进入候选，不直接改规则
           </span>
-        </button>
+        </Button>
       </div>
       <label className="mt-3 flex cursor-pointer items-start gap-2 text-[11px] text-slate-600">
         <input
@@ -2190,11 +2419,11 @@ function CorrectionPanel({
           从此节点之后重新计算，不重复已经确认的外部动作。
         </span>
       </label>
-      <button
-        type="button"
+      <Button
+        htmlType="button"
         disabled={busy || !instruction.trim()}
         onClick={() => void submit()}
-        className="mt-3 inline-flex w-full items-center justify-center gap-2 rounded-xl bg-violet-700 px-3 py-2.5 text-xs font-bold text-white hover:bg-violet-800 disabled:opacity-50"
+        className="!h-auto min-h-9 !whitespace-normal mt-3 inline-flex w-full items-center justify-center gap-2 rounded-lg bg-violet-700 px-3 py-2.5 text-xs font-bold text-white hover:bg-violet-800 disabled:opacity-50"
       >
         {busy ? (
           <Loader2 size={14} className="animate-spin" />
@@ -2202,7 +2431,7 @@ function CorrectionPanel({
           <RotateCcw size={14} />
         )}{" "}
         提交纠偏
-      </button>
+      </Button>
       {feedback && (
         <p
           role="status"
@@ -2280,36 +2509,36 @@ function BlockedTaskActions({
     } else setFeedback("操作没有生效，请查看页面上方提示。");
   };
   return (
-    <div className="mt-4 rounded-2xl border border-red-200 bg-red-50/70 p-4">
+    <div className="mt-4 rounded-lg border border-red-200 bg-red-50/70 p-4">
       <div className="flex items-center gap-2 text-red-800">
         <AlertTriangle size={15} />
-        <p className="text-xs font-black">任务受阻，需要处理</p>
+        <p className="text-xs font-semibold">任务受阻，需要处理</p>
       </div>
       <p className="mt-1 text-[11px] leading-relaxed text-red-700">
         {task.blocked_reason ||
           "真实业务状态未能推进，请选择恢复方式。所有操作都会写入审计记录。"}
       </p>
       <div className="mt-3 grid grid-cols-3 gap-2">
-        <button
-          type="button"
+        <Button
+          htmlType="button"
           disabled={busy}
           onClick={() => void retry()}
-          className="rounded-xl bg-red-700 px-2 py-2.5 text-[11px] font-bold text-white disabled:opacity-50"
+          className="!h-auto min-h-9 !whitespace-normal rounded-lg bg-red-700 px-2 py-2.5 text-[11px] font-bold text-white disabled:opacity-50"
         >
           重试任务
-        </button>
-        <button
-          type="button"
+        </Button>
+        <Button
+          htmlType="button"
           disabled={busy}
           onClick={() =>
             setMode((current) => (current === "skip" ? "" : "skip"))
           }
-          className={`rounded-xl border px-2 py-2.5 text-[11px] font-bold ${mode === "skip" ? "border-amber-400 bg-amber-50 text-amber-800" : "border-red-200 bg-white text-red-700"}`}
+          className={`!h-auto min-h-9 !whitespace-normal rounded-lg border px-2 py-2.5 text-[11px] font-bold ${mode === "skip" ? "border-amber-400 bg-amber-50 text-amber-800" : "border-red-200 bg-white text-red-700"}`}
         >
           跳过并继续
-        </button>
-        <button
-          type="button"
+        </Button>
+        <Button
+          htmlType="button"
           disabled={busy || !manualCompletionAllowed}
           onClick={() =>
             setMode((current) => (current === "complete" ? "" : "complete"))
@@ -2319,10 +2548,10 @@ function BlockedTaskActions({
               ? "登记人工完成结果"
               : "真实发布或发送必须取得渠道回执，不能手工标记完成"
           }
-          className={`rounded-xl border px-2 py-2.5 text-[11px] font-bold ${mode === "complete" ? "border-violet-400 bg-violet-50 text-violet-800" : "border-red-200 bg-white text-red-700"}`}
+          className={`!h-auto min-h-9 !whitespace-normal rounded-lg border px-2 py-2.5 text-[11px] font-bold ${mode === "complete" ? "border-violet-400 bg-violet-50 text-violet-800" : "border-red-200 bg-white text-red-700"}`}
         >
           登记人工完成
-        </button>
+        </Button>
       </div>
       {!manualCompletionAllowed && (
         <p className="mt-2 text-[10px] font-semibold text-red-700">
@@ -2330,7 +2559,7 @@ function BlockedTaskActions({
         </p>
       )}
       {mode && (
-        <div className="mt-3 rounded-xl border border-red-100 bg-white p-3">
+        <div className="mt-3 rounded-lg border border-red-100 bg-white p-3">
           <p className="text-[10px] font-bold text-slate-600">
             {mode === "skip"
               ? "说明为什么可以跳过（必填）"
@@ -2342,14 +2571,14 @@ function BlockedTaskActions({
             className="mt-2 min-h-16 w-full resize-y rounded-lg border border-slate-200 px-2.5 py-2 text-xs"
             placeholder="这段说明会进入任务审计记录"
           />
-          <button
-            type="button"
+          <Button
+            htmlType="button"
             disabled={busy || !note.trim()}
             onClick={() => void confirm()}
-            className="mt-2 w-full rounded-lg bg-slate-950 px-3 py-2 text-[11px] font-bold text-white disabled:opacity-50"
+            className="!h-auto min-h-9 !whitespace-normal mt-2 w-full rounded-lg bg-slate-950 px-3 py-2 text-[11px] font-bold text-white disabled:opacity-50"
           >
             确认{mode === "skip" ? "跳过" : "登记人工完成"}
-          </button>
+          </Button>
           <p className="mt-2 text-[10px] leading-relaxed text-slate-400">
             涉及真实发布或发送的任务不能仅凭页面操作伪造完成，服务端会再次校验。
           </p>
@@ -2452,10 +2681,10 @@ function ProductionScene({
       ).filter((item) => item[1] !== undefined && item[1] !== "")
     : [];
   return (
-    <section className="overflow-hidden rounded-3xl border border-slate-200 bg-white shadow-sm">
+    <section className="overflow-hidden rounded-lg border border-slate-200 bg-white">
       <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-100 px-5 py-4">
         <div className="flex items-center gap-3">
-          <span className="relative flex h-10 w-10 items-center justify-center rounded-2xl bg-slate-950 text-white">
+          <span className="relative flex h-10 w-10 items-center justify-center rounded-lg bg-slate-950 text-white">
             <Radio size={18} />
             <span className="absolute -right-0.5 -top-0.5 h-2.5 w-2.5 animate-pulse rounded-full border-2 border-white bg-emerald-400" />
           </span>
@@ -2486,7 +2715,7 @@ function ProductionScene({
             <div className="mt-3 flex items-start gap-3">
               <TaskIcon status={task.status} />
               <div>
-                <p className="text-sm font-black text-slate-900">
+                <p className="text-sm font-semibold text-slate-900">
                   {task.title}
                 </p>
                 <p className="mt-1 text-xs leading-relaxed text-slate-500">
@@ -2495,13 +2724,13 @@ function ProductionScene({
               </div>
             </div>
             <div className="mt-5 grid grid-cols-2 gap-2 text-[11px]">
-              <div className="rounded-xl bg-slate-50 p-3">
+              <div className="rounded-lg bg-slate-50 p-3">
                 <p className="text-slate-400">执行角色</p>
                 <p className="mt-1 font-bold text-slate-700">
                   {agentLabel[task.agent_role] || "业务 Agent"}
                 </p>
               </div>
-              <div className="rounded-xl bg-slate-50 p-3">
+              <div className="rounded-lg bg-slate-50 p-3">
                 <p className="text-slate-400">业务节点</p>
                 <p className="mt-1 font-bold text-slate-700">
                   {task.kind === "production"
@@ -2514,10 +2743,10 @@ function ProductionScene({
                 </p>
               </div>
             </div>
-            {!isQualityReview && <div className="mt-5 rounded-2xl border border-blue-100 bg-blue-50/60 p-4">
+            {!isQualityReview && <div className="mt-5 rounded-lg border border-blue-100 bg-blue-50/60 p-4">
               <div className="flex items-center gap-2 text-blue-800">
                 <BrainCircuit size={15} />
-                <p className="text-xs font-black">执行依据</p>
+                <p className="text-xs font-semibold">执行依据</p>
               </div>
               {evidence.length ? (
                 <dl className="mt-3 space-y-2">
@@ -2548,7 +2777,7 @@ function ProductionScene({
                     .map(([key, value], index) => (
                       <div
                         key={key}
-                        className="rounded-xl border border-slate-100 p-3"
+                        className="rounded-lg border border-slate-100 p-3"
                       >
                         <p className="text-[10px] font-semibold text-slate-400">
                           {technicalKeyLabel[key] || `业务产出 ${index + 1}`}
@@ -2558,24 +2787,24 @@ function ProductionScene({
                     ))}
                 </div>
               ) : (
-                <div className="mt-2 rounded-xl border border-dashed border-slate-200 px-3 py-6 text-center text-[11px] text-slate-400">
+                <div className="mt-2 rounded-lg border border-dashed border-slate-200 px-3 py-6 text-center text-[11px] text-slate-400">
                   Agent 产出会在执行过程中持续写入
                 </div>
               )}
             </div>}
-            {isQualityReview && <div className="mt-5 rounded-2xl border border-amber-200 bg-amber-50 p-4">
-              <p className="text-xs font-black text-amber-900">需要你观看成片并做判断</p>
+            {isQualityReview && <div className="mt-5 rounded-lg border border-amber-200 bg-amber-50 p-4">
+              <p className="text-xs font-semibold text-amber-900">需要你观看成片并做判断</p>
               <p className="mt-2 text-xs leading-5 text-amber-800">{task.blocked_reason || '请确认当前成片是否可以进入发布；如果不通过，可直接修改配乐、配音、分镜素材、字幕、封面或导出规格。'}</p>
             </div>}
             {link && (
               <div className="mt-4">
-                <button
-                  type="button"
+                <Button
+                  htmlType="button"
                   onClick={() => onOpenTask(link)}
-                  className="inline-flex w-full items-center justify-center gap-1.5 rounded-xl bg-slate-950 px-3 py-3 text-xs font-bold text-white hover:bg-slate-800"
+                  className="!h-auto min-h-9 !whitespace-normal inline-flex w-full items-center justify-center gap-1.5 rounded-lg bg-slate-950 px-3 py-3 text-xs font-bold text-white hover:bg-slate-800"
                 >
                   {taskBusinessAction(link)} <ExternalLink size={12} />
-                </button>
+                </Button>
                 <p className="mt-1.5 text-center text-[10px] text-slate-400">
                   已保留本次运行与任务位置；完成业务操作后返回“数字员工”即可继续。
                 </p>
@@ -2599,7 +2828,7 @@ function ProductionScene({
                 onSubmit={onCorrect}
               />
             ) : (
-              <p className="mt-4 rounded-xl bg-slate-50 px-3 py-2 text-[11px] text-slate-500">
+              <p className="mt-4 rounded-lg bg-slate-50 px-3 py-2 text-[11px] text-slate-500">
                 正在查看历史运行；可查看业务证据，但不会对历史任务执行纠偏或恢复操作。
               </p>
             ))}
@@ -2656,13 +2885,13 @@ function BusinessMetricCard({
 }) {
   const status = metric?.status || "unavailable";
   return (
-    <div className="rounded-2xl border border-slate-200 bg-white p-4">
+    <div className="rounded-lg border border-slate-200 bg-white p-4">
       <div className="flex items-start justify-between gap-2">
         <p className="text-xs font-semibold text-slate-500">{label}</p>
         <AvailabilityBadge status={status} />
       </div>
       <p
-        className={`mt-2 text-2xl font-black ${status === "available" ? "text-slate-950" : "text-slate-400"}`}
+        className={`mt-2 text-2xl font-semibold ${status === "available" ? "text-slate-950" : "text-slate-400"}`}
       >
         {status === "available" &&
         metric?.value !== null &&
@@ -2767,12 +2996,12 @@ function LegacyTodaySnapshotPanel({
     },
   ] as const;
   return (
-    <section className="rounded-3xl border border-slate-200 bg-white p-5 shadow-sm">
+    <section className="rounded-lg border border-slate-200 bg-white p-5">
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div>
           <div className="flex items-center gap-2">
             <Activity size={19} className="text-emerald-600" />
-            <h2 className="font-black text-slate-950">今日经营快照</h2>
+            <h2 className="font-semibold text-slate-950">今日经营快照</h2>
           </div>
           <p className="mt-1 text-[11px] text-slate-400">
             只展示持久化工作流和真实业务快照；没有数据时明确等待，不补零。
@@ -2788,7 +3017,7 @@ function LegacyTodaySnapshotPanel({
         {cards.map((card) => (
           <div
             key={card.label}
-            className="rounded-2xl border border-slate-100 bg-slate-50/70 p-4"
+            className="rounded-lg border border-slate-100 bg-slate-50/70 p-4"
           >
             <div className="flex items-center justify-between">
               <span className="text-xs font-semibold text-slate-500">
@@ -2796,7 +3025,7 @@ function LegacyTodaySnapshotPanel({
               </span>
               {card.icon}
             </div>
-            <p className="mt-2 text-2xl font-black text-slate-950">
+            <p className="mt-2 text-2xl font-semibold text-slate-950">
               {card.value === null ? "待接入" : card.value}
             </p>
             <p className="mt-1 text-[10px] text-slate-400">
@@ -2806,7 +3035,7 @@ function LegacyTodaySnapshotPanel({
         ))}
       </div>
       <div className="mt-4 grid gap-4 lg:grid-cols-2">
-        <div className="rounded-2xl border border-slate-100 p-4">
+        <div className="rounded-lg border border-slate-100 p-4">
           <div className="flex items-center justify-between">
             <p className="text-xs font-bold text-slate-700">接下来 24 小时</p>
             <span className="text-[10px] text-slate-400">
@@ -2816,8 +3045,8 @@ function LegacyTodaySnapshotPanel({
           {snapshot?.next24Hours.length ? (
             <div className="mt-3 space-y-2">
               {snapshot.next24Hours.slice(0, 5).map((item) => (
-                <button
-                  type="button"
+                <Button
+                  htmlType="button"
                   key={`${item.kind}-${item.id}`}
                   onClick={() =>
                     onOpen(
@@ -2830,7 +3059,7 @@ function LegacyTodaySnapshotPanel({
                       },
                     )
                   }
-                  className="flex w-full items-center justify-between gap-3 rounded-xl bg-slate-50 px-3 py-2.5 text-left hover:bg-slate-100"
+                  className="!h-auto min-h-9 !whitespace-normal flex w-full items-center justify-between gap-3 rounded-lg bg-slate-50 px-3 py-2.5 text-left hover:bg-slate-100"
                 >
                   <span className="min-w-0">
                     <span className="block truncate text-xs font-bold text-slate-800">
@@ -2848,16 +3077,16 @@ function LegacyTodaySnapshotPanel({
                       minute: "2-digit",
                     })}
                   </span>
-                </button>
+                </Button>
               ))}
             </div>
           ) : (
-            <p className="mt-3 rounded-xl border border-dashed border-slate-200 px-3 py-6 text-center text-xs text-slate-400">
+            <p className="mt-3 rounded-lg border border-dashed border-slate-200 px-3 py-6 text-center text-xs text-slate-400">
               {snapshot ? "未来 24 小时没有已登记动作" : "排期快照尚未返回"}
             </p>
           )}
         </div>
-        <div className="rounded-2xl border border-slate-100 p-4">
+        <div className="rounded-lg border border-slate-100 p-4">
           <div className="flex items-center justify-between">
             <p className="text-xs font-bold text-slate-700">数据缺口</p>
             <span
@@ -2872,7 +3101,7 @@ function LegacyTodaySnapshotPanel({
                 {snapshot.dataGaps.map((gap) => (
                   <li
                     key={gap}
-                    className="flex gap-2 rounded-xl bg-amber-50/60 px-3 py-2.5 text-[11px] text-amber-900"
+                    className="flex gap-2 rounded-lg bg-amber-50/60 px-3 py-2.5 text-[11px] text-amber-900"
                   >
                     <AlertTriangle size={13} className="mt-0.5 shrink-0" />
                     {gap}
@@ -2880,12 +3109,12 @@ function LegacyTodaySnapshotPanel({
                 ))}
               </ul>
             ) : (
-              <p className="mt-3 rounded-xl bg-emerald-50 px-3 py-5 text-center text-xs text-emerald-700">
+              <p className="mt-3 rounded-lg bg-emerald-50 px-3 py-5 text-center text-xs text-emerald-700">
                 本次快照没有发现数据缺口
               </p>
             )
           ) : (
-            <p className="mt-3 rounded-xl border border-dashed border-slate-200 px-3 py-6 text-center text-xs text-slate-400">
+            <p className="mt-3 rounded-lg border border-dashed border-slate-200 px-3 py-6 text-center text-xs text-slate-400">
               快照缺失，不能判定为零缺口
             </p>
           )}
@@ -2925,7 +3154,7 @@ function DataMetricCard({ label, metric, icon, note }: { label: string; metric?:
   const available = metric?.status === "available" && metric.value !== null;
   return <div className="digital-metric p-3.5" title={note || metric?.note || metric?.source}>
     <div className="flex items-center justify-between gap-2"><p className="text-[11px] font-bold text-slate-500">{label}</p><span className="text-slate-400">{icon}</span></div>
-    <p className={`mt-2 text-xl font-black ${available ? "text-slate-950" : "text-slate-400"}`}>{available ? metricText(metric) : "—"}</p>
+    <p className={`mt-2 text-xl font-semibold ${available ? "text-slate-950" : "text-slate-400"}`}>{available ? metricText(metric) : "—"}</p>
     {!available && <p className="mt-1 truncate text-[11px] text-slate-400">{metric?.note || "等待数据源回流"}</p>}
   </div>;
 }
@@ -2937,12 +3166,12 @@ function ConversionFunnelChart({ stages, onConnect }: { stages: Array<[string, B
   return (
     <div className="mt-5">
       {availableCount < stages.length && (
-        <div className="mb-5 flex flex-wrap items-center justify-between gap-4 rounded-xl bg-slate-50 px-4 py-3">
+        <div className="mb-5 flex flex-wrap items-center justify-between gap-4 rounded-lg bg-slate-50 px-4 py-3">
           <div className="flex items-center gap-3">
             <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border border-slate-200 bg-white text-emerald-700"><BarChart3 size={18}/></span>
             <div><p className="text-sm font-semibold text-slate-800">{availableCount === 0 ? "连接数据，开始追踪获客表现" : `${availableCount} / ${stages.length} 个阶段已有数据`}</p><p className="mt-1 text-xs leading-5 text-slate-500">连接社媒账号，并在客户管理中完善询盘、报价与成交记录。</p></div>
           </div>
-          <button type="button" onClick={onConnect} className="inline-flex shrink-0 items-center gap-2 rounded-lg border border-emerald-200 bg-white px-3 py-2 text-xs font-semibold text-emerald-700 transition hover:bg-emerald-50 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-emerald-600">连接社媒账号<ArrowRight size={14}/></button>
+          <Button htmlType="button" onClick={onConnect} className="!h-auto min-h-9 !whitespace-normal inline-flex shrink-0 items-center gap-2 rounded-lg border border-emerald-200 bg-white px-3 py-2 text-xs font-semibold text-emerald-700 transition hover:bg-emerald-50 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-emerald-600">连接社媒账号<ArrowRight size={14}/></Button>
         </div>
       )}
       <div className="grid grid-cols-[minmax(0,1fr)_80px_80px] gap-3 border-b border-slate-100 pb-3 text-xs text-slate-500 sm:grid-cols-[150px_minmax(0,1fr)_100px_100px]">
@@ -3021,7 +3250,7 @@ function ResourcePreflightPanel({
   const ready = !snapshotMissing && blockers.length === 0;
   return (
     <section
-      className={`rounded-3xl border p-5 ${ready ? "border-emerald-200 bg-emerald-50/60" : "border-amber-200 bg-amber-50/70"}`}
+      className={`rounded-lg border p-5 ${ready ? "border-emerald-200 bg-emerald-50/60" : "border-amber-200 bg-amber-50/70"}`}
     >
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div className="flex items-start gap-3">
@@ -3031,7 +3260,7 @@ function ResourcePreflightPanel({
             <AlertTriangle size={20} className="mt-0.5 text-amber-700" />
           )}
           <div>
-            <h2 className="text-sm font-black text-slate-950">
+            <h2 className="text-sm font-semibold text-slate-950">
               启动前业务资产预检
             </h2>
             <p className="mt-1 text-xs text-slate-600">
@@ -3052,14 +3281,14 @@ function ResourcePreflightPanel({
       {blockers.length > 0 && (
         <div className="mt-3 flex flex-wrap gap-2">
           {blockers.map((item) => (
-            <button
+            <Button
               key={item.key}
-              type="button"
+              htmlType="button"
               onClick={() => onOpen(item)}
-              className="inline-flex items-center gap-1.5 rounded-xl border border-amber-200 bg-white px-3 py-2 text-xs font-bold text-amber-800"
+              className="!h-auto min-h-9 !whitespace-normal inline-flex items-center gap-1.5 rounded-lg border border-amber-200 bg-white px-3 py-2 text-xs font-bold text-amber-800"
             >
               补齐{item.label} <ExternalLink size={11} />
-            </button>
+            </Button>
           ))}
         </div>
       )}
@@ -3155,22 +3384,22 @@ function NextActionBanner({
     >
       <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
         <div>
-          <p className="text-[10px] font-black uppercase tracking-[0.18em] text-white/65">
+          <p className="text-[10px] font-semibold uppercase tracking-[0.18em] text-white/65">
             {state.eyebrow}
           </p>
-          <h2 className="mt-1 text-lg font-black">{state.title}</h2>
+          <h2 className="mt-1 text-lg font-semibold">{state.title}</h2>
           <p className="mt-1 max-w-3xl text-xs leading-relaxed text-white/75">
             {state.detail}
           </p>
         </div>
-        <button
-          type="button"
+        <Button
+          htmlType="button"
           disabled={data.goal?.status === "draft" && !data.plan}
           onClick={state.action}
-          className="inline-flex shrink-0 items-center justify-center gap-2 rounded-lg bg-white px-4 py-2.5 text-xs font-black text-slate-900 disabled:opacity-50"
+          className="!h-auto min-h-9 !whitespace-normal inline-flex shrink-0 items-center justify-center gap-2 rounded-lg bg-white px-4 py-2.5 text-xs font-semibold text-slate-900 disabled:opacity-50"
         >
           {state.label} <ArrowRight size={14} />
-        </button>
+        </Button>
       </div>
     </section>
   );
@@ -3185,16 +3414,16 @@ function DraftPlanPreview({
 }) {
   if (!plan) return null;
   return (
-    <section className="rounded-3xl border border-blue-200 bg-white p-5 shadow-sm">
+    <section className="rounded-lg border border-blue-200 bg-white p-5">
       <div className="flex items-start gap-3">
-        <span className="flex h-10 w-10 items-center justify-center rounded-2xl bg-blue-50 text-blue-700">
+        <span className="flex h-10 w-10 items-center justify-center rounded-lg bg-blue-50 text-blue-700">
           <Layers3 size={18} />
         </span>
         <div>
           <p className="text-xs font-bold uppercase tracking-[0.16em] text-blue-700">
             批准前预览
           </p>
-          <h2 className="mt-1 font-black text-slate-950">
+          <h2 className="mt-1 font-semibold text-slate-950">
             本周任务计划
           </h2>
           <p className="mt-1 text-xs text-slate-500">
@@ -3204,9 +3433,9 @@ function DraftPlanPreview({
       </div>
       <div className="mt-4 grid gap-2 md:grid-cols-2">
         {plan.tasks.map((task) => (
-          <button
+          <Button
             key={task.key}
-            type="button"
+            htmlType="button"
             onClick={() =>
               task.destination &&
               onOpen(task.destination, task.destinationView, {
@@ -3216,11 +3445,11 @@ function DraftPlanPreview({
                 preview: true,
               })
             }
-            className="rounded-2xl border border-slate-200 p-3 text-left hover:border-blue-300"
+            className="!h-auto min-h-9 !whitespace-normal rounded-lg border border-slate-200 p-3 text-left hover:border-blue-300"
           >
             <div className="flex items-start justify-between gap-2">
               <div>
-                <p className="text-xs font-black text-slate-800">
+                <p className="text-xs font-semibold text-slate-800">
                   {task.sequence}. {task.title}
                 </p>
                 <p className="mt-1 text-[10px] text-slate-500">
@@ -3244,7 +3473,7 @@ function DraftPlanPreview({
                 ? statusSourceLabel[task.statusSource] || "对应业务工作台的持久化记录"
                 : "等待业务系统接入"}
             </p>
-          </button>
+          </Button>
         ))}
       </div>
     </section>
@@ -3327,31 +3556,31 @@ function BatchFollowupTruthPanel({
         <div>
           <div className="flex items-center gap-2 text-text-primary">
             <MessageSquare size={18} />
-            <h2 className="font-black">批量跟进执行边界</h2>
+            <h2 className="font-semibold">批量跟进执行边界</h2>
           </div>
           <p className="mt-1 text-xs text-slate-500">
             批准的是逐客草稿批次，不等于消息已经发出。
           </p>
         </div>
         <div className="flex flex-wrap gap-2">
-          <button
-            type="button"
+          <Button
+            htmlType="button"
             onClick={() =>
               onOpen("conversion", undefined, {
                 capabilityKey: "customer.followup_drafts",
                 stage: "batch_followup",
               })
             }
-            className="inline-flex items-center gap-1.5 rounded-lg border border-border bg-white px-3 py-2 text-xs font-bold text-accent-dim"
+            className="!h-auto min-h-9 !whitespace-normal inline-flex items-center gap-1.5 rounded-lg border border-border bg-white px-3 py-2 text-xs font-bold text-accent-dim"
           >
             进入客户工作台 <ExternalLink size={12} />
-          </button>
+          </Button>
           {onDispatch &&
             batchId &&
             approval?.status === "succeeded" &&
             dispatch?.status !== "succeeded" && (
-              <button
-                type="button"
+              <Button
+                htmlType="button"
                 disabled={!manualSendAllowed || busy}
                 onClick={() => onDispatch(batchId)}
                 title={
@@ -3359,7 +3588,7 @@ function BatchFollowupTruthPanel({
                     ? "发送当前已到期且通过预检的客户"
                     : dispatchBlockedReason || "租户真实发送授权或 Messenger 渠道尚未就绪"
                 }
-                className="inline-flex items-center gap-1.5 rounded-xl bg-violet-700 px-3 py-2 text-xs font-bold text-white disabled:opacity-50"
+                className="!h-auto min-h-9 !whitespace-normal inline-flex items-center gap-1.5 rounded-lg bg-violet-700 px-3 py-2 text-xs font-bold text-white disabled:opacity-50"
               >
                 {busy ? (
                   <Loader2 size={12} className="animate-spin" />
@@ -3367,7 +3596,7 @@ function BatchFollowupTruthPanel({
                   <Send size={12} />
                 )}
                 {manualSendAllowed ? "发送已到期客户" : "真实发送未就绪"}
-              </button>
+              </Button>
             )}
         </div>
       </div>
@@ -3375,10 +3604,10 @@ function BatchFollowupTruthPanel({
         {steps.map((step) => (
           <div
             key={step.title}
-            className="rounded-2xl border border-white bg-white/80 p-4"
+            className="rounded-lg border border-white bg-white/80 p-4"
           >
             <div className="flex items-center justify-between gap-2">
-              <p className="text-xs font-black text-slate-800">{step.title}</p>
+              <p className="text-xs font-semibold text-slate-800">{step.title}</p>
               <AvailabilityBadge status={step.status} />
             </div>
             <p className="mt-2 text-[11px] leading-relaxed text-slate-500">
@@ -3398,56 +3627,27 @@ function AgentOperationFeed({ task, events }: { task?: WorkflowTask; events: Run
   const cursor = agentCursorPercent(cursorAction);
   const viewportAction = [...actions].reverse().find((item) => item.viewportWidth && item.viewportHeight);
   const viewportRatio = viewportAction?.viewportWidth && viewportAction.viewportHeight ? Math.max(0.75, Math.min(2.4, viewportAction.viewportWidth / viewportAction.viewportHeight)) : 16 / 9;
-  return <section className="overflow-hidden rounded-2xl border border-slate-200 bg-slate-950 text-white"><div className="flex items-center justify-between border-b border-slate-800 px-4 py-3"><div className="flex items-center gap-2"><MonitorPlay size={15} className="text-emerald-400"/><p className="text-xs font-black">Agent 操作现场</p></div><span className="rounded-full bg-slate-800 px-2 py-1 text-[9px] font-bold text-slate-300">真实事件流</span></div>{latestScreenshot ? <div className="relative bg-black" style={{aspectRatio:viewportRatio}}><img src={latestScreenshot.screenshotUrl} alt="Agent Worker 上报的操作截图" className="absolute inset-0 h-full w-full object-contain"/>{cursor && <div className="pointer-events-none absolute z-10 transition-all duration-300" style={{left:`${cursor.left}%`,top:`${cursor.top}%`}}><MousePointer2 size={22} className="fill-white text-slate-950 drop-shadow"/>{cursorAction?.kind === "click" && <i className="absolute -left-2 -top-2 h-8 w-8 animate-ping rounded-full border-2 border-emerald-400"/>}</div>}<div className="absolute bottom-3 left-3 rounded-lg bg-black/70 px-2 py-1 text-[9px]">{latestScreenshot.label}</div></div> : actions.length ? <div className="relative p-4">{cursor && <div className="pointer-events-none absolute z-10 transition-all duration-300" style={{left:`${cursor.left}%`,top:`${cursor.top}%`}}><MousePointer2 size={20} className="fill-white text-slate-950 drop-shadow"/></div>}<div className="space-y-2">{actions.slice(-6).map((action,index)=><div key={`${action.kind}-${index}`} className="flex items-center gap-3 rounded-xl border border-slate-800 bg-slate-900 px-3 py-2"><MousePointer2 size={13} className="text-emerald-400"/><div><p className="text-[10px] font-bold text-slate-200">{action.label}</p><p className="text-[9px] text-slate-500">{action.kind}{action.page ? ` · ${action.page}` : ""}</p></div></div>)}</div></div> : <div className="px-5 py-10 text-center"><MonitorPlay size={24} className="mx-auto text-slate-600"/><p className="mt-3 text-xs font-black text-slate-300">现场画面流尚未接入</p><p className="mx-auto mt-2 max-w-md text-[10px] leading-5 text-slate-500">当前只展示真实任务状态、产物和事件。Agent Worker 上报带坐标的 navigation、click、input、screenshot 后，这里才会移动真实鼠标，不生成假鼠标动画。</p>{task && <p className="mt-3 text-[9px] text-slate-600">当前任务：{task.title}</p>}</div>}</section>;
+  return <section className="overflow-hidden rounded-lg border border-slate-200 bg-slate-950 text-white"><div className="flex items-center justify-between border-b border-slate-800 px-4 py-3"><div className="flex items-center gap-2"><MonitorPlay size={15} className="text-emerald-400"/><p className="text-xs font-semibold">Agent 操作现场</p></div><span className="rounded-full bg-slate-800 px-2 py-1 text-[9px] font-bold text-slate-300">真实事件流</span></div>{latestScreenshot ? <div className="relative bg-black" style={{aspectRatio:viewportRatio}}><img src={latestScreenshot.screenshotUrl} alt="Agent Worker 上报的操作截图" className="absolute inset-0 h-full w-full object-contain"/>{cursor && <div className="pointer-events-none absolute z-10 transition-all duration-300" style={{left:`${cursor.left}%`,top:`${cursor.top}%`}}><MousePointer2 size={22} className="fill-white text-slate-950 drop-shadow"/>{cursorAction?.kind === "click" && <i className="absolute -left-2 -top-2 h-8 w-8 animate-ping rounded-full border-2 border-emerald-400"/>}</div>}<div className="absolute bottom-3 left-3 rounded-lg bg-black/70 px-2 py-1 text-[9px]">{latestScreenshot.label}</div></div> : actions.length ? <div className="relative p-4">{cursor && <div className="pointer-events-none absolute z-10 transition-all duration-300" style={{left:`${cursor.left}%`,top:`${cursor.top}%`}}><MousePointer2 size={20} className="fill-white text-slate-950 drop-shadow"/></div>}<div className="space-y-2">{actions.slice(-6).map((action,index)=><div key={`${action.kind}-${index}`} className="flex items-center gap-3 rounded-lg border border-slate-800 bg-slate-900 px-3 py-2"><MousePointer2 size={13} className="text-emerald-400"/><div><p className="text-[10px] font-bold text-slate-200">{action.label}</p><p className="text-[9px] text-slate-500">{action.kind}{action.page ? ` · ${action.page}` : ""}</p></div></div>)}</div></div> : <div className="px-5 py-10 text-center"><MonitorPlay size={24} className="mx-auto text-slate-600"/><p className="mt-3 text-xs font-semibold text-slate-300">现场画面流尚未接入</p><p className="mx-auto mt-2 max-w-md text-[10px] leading-5 text-slate-500">当前只展示真实任务状态、产物和事件。Agent Worker 上报带坐标的 navigation、click、input、screenshot 后，这里才会移动真实鼠标，不生成假鼠标动画。</p>{task && <p className="mt-3 text-[9px] text-slate-600">当前任务：{task.title}</p>}</div>}</section>;
 }
 
 const ONBOARDING_CONFETTI_COLORS = ['#117f51', '#65c99c', '#f4b860', '#e76f51', '#6c8ae4', '#f2d45c'];
 
 function OnboardingWelcome({ onClose }: { onClose: () => void }) {
-  const confetti = useMemo(() => Array.from({ length: 60 }, (_, index) => ({
-    id: index,
-    left: `${(index * 37) % 100}%`,
-    delay: `${(index % 12) * 0.08}s`,
-    duration: `${4.2 + (index % 7) * 0.28}s`,
-    color: ONBOARDING_CONFETTI_COLORS[index % ONBOARDING_CONFETTI_COLORS.length],
-    size: 6 + (index % 4) * 2,
-    drift: ((index * 29) % 180) - 90,
-  })), []);
-
-  return (
-    <div className="fixed inset-0 z-[230] overflow-hidden bg-[#15392f]/35 backdrop-blur-[2px]" aria-live="polite">
-      <div className="pointer-events-none absolute inset-0 overflow-hidden" aria-hidden="true">
-        {confetti.map((piece) => <span key={piece.id} className="absolute -top-10 rounded-[2px]" style={{
-          left: piece.left,
-          width: piece.size,
-          height: piece.size * 1.8,
-          background: piece.color,
-          animation: `onboarding-confetti-fall ${piece.duration} ${piece.delay} cubic-bezier(.18,.72,.28,.98) forwards`,
-          '--confetti-drift': `${piece.drift}px`,
-        } as CSSProperties} />)}
-      </div>
-      <div className="relative flex h-full items-center justify-center p-5">
-        <section role="dialog" aria-modal="true" aria-label="灵小枢欢迎你" className="w-full max-w-md rounded-3xl border border-white/80 bg-white/95 p-7 text-center shadow-2xl sm:p-9">
-          <img src="/brand-logo.png?v=20260921" alt="灵小枢" className="mx-auto h-20 w-20 object-contain" />
-          <p className="mt-4 text-xs font-black uppercase tracking-[0.18em] text-emerald-700">灵小枢</p>
-          <h2 className="mt-2 text-2xl font-black tracking-tight text-slate-950">欢迎加入，准备工作已经完成！</h2>
-          <p className="mt-3 text-sm leading-7 text-slate-600">企业资料、产品表和社媒经营阶段都已保存。接下来，我会和四位数字员工一起陪你把内容与经营计划真正跑起来。</p>
-          <button type="button" onClick={onClose} className="mt-6 inline-flex items-center gap-2 rounded-xl bg-[#173d31] px-6 py-3 text-sm font-black text-white shadow-sm hover:bg-[#245644]"><Sparkles size={16} />开始使用灵枢</button>
-        </section>
-      </div>
-      <style>{`@keyframes onboarding-confetti-fall { 0% { transform: translate3d(0,-12vh,0) rotate(0deg); opacity: 0; } 8% { opacity: 1; } 100% { transform: translate3d(var(--confetti-drift,0),112vh,0) rotate(720deg); opacity: .95; } }`}</style>
-    </div>
-  );
+  return <Modal open title="准备工作已经完成" onCancel={onClose} width={480} footer={<Button type="primary" onClick={onClose}>开始使用灵枢</Button>}>
+    <p className="py-4 text-sm leading-7 text-text-secondary">企业资料、产品表和社媒经营阶段都已保存。接下来可制定周计划，查看四位数字员工的执行进度与交付结果。</p>
+  </Modal>;
 }
 
 export default function DigitalEmployeePage({
   onNavigate,
   onOpenMonitor,
   onViewResults,
+  weeklyPlanNavigation,
 }: {
-  onNavigate?: (page: BusinessDestination) => void;
+  onNavigate?: (page: Page) => void;
   onOpenMonitor?: () => void;
   onViewResults?: () => void;
+  weeklyPlanNavigation?: { goalId: string; planId: string; requestId: number } | null;
 }) {
   const [data, setData] = useState<DigitalEmployeeOverview | null>(null);
   const [loading, setLoading] = useState(true);
@@ -3491,6 +3691,7 @@ export default function DigitalEmployeePage({
   const productionRangeRef = useRef<ReturnType<typeof overviewRange> | undefined>(undefined);
   const presentedData = data;
   const initialLoadRef = useRef<Promise<DigitalEmployeeOverview | undefined> | null>(null);
+  const handledWeeklyPlanNavigation = useRef<number | null>(null);
 
   useEffect(() => {
     const openGuide = () => setApplicationGuideOpen(true);
@@ -3564,6 +3765,44 @@ export default function DigitalEmployeePage({
     });
     return () => { active = false; };
   }, []);
+  useEffect(() => {
+    if (!weeklyPlanNavigation || handledWeeklyPlanNavigation.current === weeklyPlanNavigation.requestId) return;
+    const target = weeklyPlanNavigation;
+    const authorization = authHeader().Authorization;
+    const requestVersion = ++overviewRequestVersionRef.current;
+    let active = true;
+    setWeeklyPlanOpen(false);
+    setLoading(true);
+    setError("");
+    void (async () => {
+      try {
+        if (!target.goalId || !target.planId) throw new Error("周计划定位信息不完整，请重新加载灵小枢待办。");
+        // Only open the signed current plan. A changed goal or plan must not
+        // silently fall back to another editable plan or a cached history view.
+        const next = await digitalEmployeeApi.overview();
+        if (!active || requestVersion !== overviewRequestVersionRef.current || authorization !== authHeader().Authorization) return;
+        if (next.goal?.id !== target.goalId || next.plan?.id !== target.planId) {
+          throw new Error("目标周计划已更新或不再是当前计划，请重新加载灵小枢待办后再调整。");
+        }
+        setData(next);
+        setViewGoalId("");
+        setNewGoal(false);
+        setPlanHistoryOpen(false);
+        setShowHistory(false);
+        setSelectedContentItemId("");
+        setWorkspaceView("today");
+        setWeeklyPlanOpen(true);
+        handledWeeklyPlanNavigation.current = target.requestId;
+      } catch (reason) {
+        if (!active || requestVersion !== overviewRequestVersionRef.current || authorization !== authHeader().Authorization) return;
+        setError(reason instanceof Error ? reason.message : "无法定位该周计划，请重新加载待办。");
+        handledWeeklyPlanNavigation.current = target.requestId;
+      } finally {
+        if (active && requestVersion === overviewRequestVersionRef.current && authorization === authHeader().Authorization) setLoading(false);
+      }
+    })();
+    return () => { active = false; };
+  }, [weeklyPlanNavigation]);
   useEffect(() => {
     const run = data?.run;
     if (
@@ -3756,9 +3995,8 @@ export default function DigitalEmployeePage({
     if (activeRun && newGoal) setNewGoal(false);
   }, [activeRun, newGoal]);
 
-  const changeOverviewPeriod = (period: OverviewPeriod) => {
+  const requestOverviewRange = (nextRange: ReturnType<typeof overviewRange>, period?: OverviewPeriod) => {
     const version = ++overviewRequestVersionRef.current;
-    const nextRange = overviewRange(period);
     productionRangeLoadingRef.current = true;
     setBusy("overview-range");
     setError("");
@@ -3766,22 +4004,29 @@ export default function DigitalEmployeePage({
       .then(next => {
         if (version !== overviewRequestVersionRef.current) return;
         productionRangeRef.current = nextRange;
-        setProductionPeriod(period);
+        if (period) setProductionPeriod(period);
         setData(next);
       })
       .catch(rangeError => {
         if (version === overviewRequestVersionRef.current) setError(rangeError instanceof Error ? rangeError.message : "经营数据加载失败");
       })
       .finally(() => {
+        if (version !== overviewRequestVersionRef.current) return;
         productionRangeLoadingRef.current = false;
         setBusy("");
       });
   };
 
+  const changeOverviewPeriod = (period: OverviewPeriod) => requestOverviewRange(overviewRange(period), period);
+  const changeOverviewDateRange = (range: { startsAt: string; endsAt: string }) => {
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(range.startsAt) || !/^\d{4}-\d{2}-\d{2}$/.test(range.endsAt) || range.startsAt > range.endsAt) return;
+    requestOverviewRange(range);
+  };
+
   const scrollTo = (target: React.RefObject<HTMLDivElement | null>) => {
     window.setTimeout(
       () =>
-        target.current?.scrollIntoView({ behavior: "smooth", block: "start" }),
+        target.current?.scrollIntoView({ behavior: getScrollBehavior(), block: "start" }),
       50,
     );
   };
@@ -3830,36 +4075,97 @@ export default function DigitalEmployeePage({
 
   const saveConfig = async (config: DigitalEmployeeConfig & { minimalOnboarding?: true; brandName?: string; initialPlan?: InitialOperatingPlan }) => {
     const firstLogin = !data?.config;
-    const next = await act("config", () =>
-      digitalEmployeeApi.completeOnboarding(config),
-    );
-    if (next && config.initialPlan) {
-      const plan=config.initialPlan;
-      try {
-        const created=await digitalEmployeeApi.createGoal({...EMPTY_GOAL,businessLine:'content_growth',title:'首次推荐经营计划',objective:`为 ${plan.products.join('、')} 制作 ${plan.count} 条面向 ${plan.market} 的视频`,contentPlatforms:plan.platforms,target:plan.count,unit:'条',scope:plan.market,endsAt:plan.deliveryDate,constraints:[`制作预算上限：${plan.budgetCapCny} 元`,'真实发布前绑定账号并取得授权'],videoPlans:initialPlanVideoPlans(plan,next.config!)});
-        if(!created.goal)throw Error('推荐计划创建失败');
-        setData(created);setNewGoal(false);setWeeklyPlanOpen(true);setOnboardingWelcomeOpen(false);
-        const draftPack=created.plan?.businessPackage;
-        if(!draftPack?.directorPlan)throw Error('推荐计划缺少可执行任务包或编导预算');
-        const saved=await digitalEmployeeApi.savePackage(created.goal.id,{...draftPack,matrixPlan:initialPlanMatrixRows(plan,next.config!),tasks:draftPack.tasks.map(task=>task.templateId==="production"?{...task,videoPlans:initialPlanVideoPlans(plan,next.config!)}:task),directorPlan:{...draftPack.directorPlan,originalTarget:plan.count,platformVersionTarget:plan.count*plan.platforms.length,publishTarget:plan.count*plan.platforms.length,productionBudget:plan.budgetCapCny,productionBudgetMax:plan.budgetCapCny,productionBudgetMin:Math.min(draftPack.directorPlan.productionBudgetMin||0,plan.budgetCapCny)}});
-        const savedRevision=saved.plan?.businessPackage?.revision;
-        if(!savedRevision)throw Error('已确认计划版本未保存');
-        await digitalEmployeeApi.startInitialPreparation(created.goal.id,savedRevision,plan,crypto.randomUUID());
-        setData(await digitalEmployeeApi.overview(created.goal.id));setError('');
+    const createInitialPlan = Boolean(config.initialPlan && firstLogin && !data?.goal && !activeRun);
+    setBusy(createInitialPlan ? "initial-plan" : "config");
+    setError("");
+    overviewRequestVersionRef.current += 1;
+    try {
+      const next = await digitalEmployeeApi.completeOnboarding(config);
+      if (createInitialPlan && config.initialPlan) {
+        const plan = config.initialPlan;
+        const planFingerprint = initialOperatingPlanFingerprint(plan);
+        const fingerprintConstraint = `首次计划校验：${planFingerprint}`;
+        if (!next.config) throw new Error("新手引导配置尚未保存，无法创建首次计划");
+        if (next.goal) {
+          if (!next.goal.constraints.includes(fingerprintConstraint)) {
+            throw new Error("已存在另一版首次计划，不能用当前修改覆盖。请恢复原计划后重试，或在经营页面新建计划。");
+          }
+          const existingPreparation = await digitalEmployeeApi.initialPreparation(next.goal.id);
+          if (existingPreparation.preparation) {
+            const resumed = await digitalEmployeeApi.overview(next.goal.id);
+            overviewRequestVersionRef.current += 1;
+            setData(resumed);
+            setWorkspaceView("today");
+            setNewGoal(false);
+            setWeeklyPlanOpen(true);
+            setOnboardingWelcomeOpen(false);
+            return true;
+          }
+        }
+        const videoPlans = initialPlanVideoPlans(plan, next.config);
+        const created = next.goal ? next : await digitalEmployeeApi.createGoal({
+            ...EMPTY_GOAL,
+            businessLine: "content_growth",
+            title: "首次推荐经营计划",
+            objective: `为 ${plan.products.join("、")} 制作 ${plan.count} 条面向 ${plan.market} 的视频`,
+            contentPlatforms: plan.platforms,
+            target: plan.count,
+            unit: "条",
+            scope: plan.market,
+            endsAt: plan.deliveryDate,
+            constraints: [`制作预算上限：${plan.budgetCapCny} 元`, "真实发布前绑定账号并取得授权", fingerprintConstraint],
+            videoPlans,
+          });
+        if (!created.goal) throw new Error("推荐计划创建失败");
+        const draftPackage = created.plan?.businessPackage;
+        if (!draftPackage?.directorPlan) throw new Error("推荐计划缺少可执行任务包或编导预算");
+        const saved = await digitalEmployeeApi.savePackage(created.goal.id, {
+          ...draftPackage,
+          matrixPlan: initialPlanMatrixRows(plan, next.config),
+          tasks: draftPackage.tasks.map(task => task.templateId === "production" ? { ...task, videoPlans } : task),
+          directorPlan: {
+            ...draftPackage.directorPlan,
+            originalTarget: plan.count,
+            platformVersionTarget: plan.count * plan.platforms.length,
+            publishTarget: plan.count * plan.platforms.length,
+            productionBudget: plan.budgetCapCny,
+            productionBudgetMax: plan.budgetCapCny,
+            productionBudgetMin: Math.min(draftPackage.directorPlan.productionBudgetMin || 0, plan.budgetCapCny),
+          },
+        });
+        const savedRevision = saved.plan?.businessPackage?.revision;
+        if (!savedRevision) throw new Error("已确认计划版本未保存");
+        const initialRequestId = `initial-${created.goal.id.replace(/[^a-zA-Z0-9-]/g, '-').slice(0, 80)}`;
+        await digitalEmployeeApi.startInitialPreparation(created.goal.id, savedRevision, plan, initialRequestId);
+        const refreshed = await digitalEmployeeApi.overview(created.goal.id);
+        overviewRequestVersionRef.current += 1;
+        setData(refreshed);
+        setWorkspaceView("today");
+        setNewGoal(false);
+        setWeeklyPlanOpen(true);
+        setOnboardingWelcomeOpen(false);
         return true;
-      }catch(error){setError(error instanceof Error?error.message:'推荐计划制作准备失败');return false;}
+      }
+      overviewRequestVersionRef.current += 1;
+      setData(next);
+      if (firstLogin) {
+        setWorkspaceView("today");
+        setNewGoal(!next.goal);
+        setOnboardingWelcomeOpen(true);
+        window.setTimeout(() => window.dispatchEvent(new CustomEvent('lingshu-assistant-say', {
+          detail: { message: '欢迎加入灵枢！准备工作已经完成，接下来我会陪你和四位数字员工一起开始经营。', durationMs: 10_000 },
+        })), 350);
+        scrollTo(goalPanelRef);
+      } else {
+        showActionSuccess("设置已保存", "新的经营设置会从下一轮计划开始生效。");
+      }
+      return true;
+    } catch (configError) {
+      setError(configError instanceof Error ? configError.message : createInitialPlan ? "推荐计划制作准备失败" : "设置保存失败");
+      return false;
+    } finally {
+      setBusy("");
     }
-    if (next && firstLogin) {
-      setWorkspaceView("today");
-      setNewGoal(!next.goal);
-      setOnboardingWelcomeOpen(true);
-      window.setTimeout(() => window.dispatchEvent(new CustomEvent('lingshu-assistant-say', {
-        detail: { message: '欢迎加入灵枢！准备工作已经完成，接下来我会陪你和四位数字员工一起开始经营。', durationMs: 10_000 },
-      })), 350);
-      scrollTo(goalPanelRef);
-    }
-    if (next && !firstLogin) showActionSuccess("设置已保存", "新的经营设置会从下一轮计划开始生效。");
-    return Boolean(next);
   };
 
   const saveGoal = async (goalInput: GoalDraft) => {
@@ -4053,8 +4359,8 @@ export default function DigitalEmployeePage({
 
   if (loading)
     return (
-      <div className="flex h-full items-center justify-center bg-slate-50">
-        <Loader2 size={24} className="animate-spin text-emerald-600" />
+      <div className="flex h-full items-center justify-center bg-white">
+        <Loader2 size={24} className="animate-spin text-accent" />
       </div>
     );
 
@@ -4063,15 +4369,14 @@ export default function DigitalEmployeePage({
     const dashboardView = workspaceView === "matrix"
       ? "matrix"
       : workspaceView === "overview"
-        ? "queue"
+        ? "review"
         : workspaceView === "live"
-          ? selectedContentItemId ? "production" : "queue"
+          ? selectedContentItemId ? "production" : "review"
           : workspaceView === "review" ? "review" : "home";
-    const views: Array<{ id: "today" | "matrix" | "overview" | "review"; label: string; caption: string }> = [
-      { id: "today", label: "经营总览", caption: "业绩与 Agent 实况" },
+    const views: Array<{ id: "today" | "matrix" | "review"; label: string; caption: string }> = [
+      { id: "today", label: "经营总览", caption: "资产健康度与下一轮建议" },
       { id: "matrix", label: "账号矩阵", caption: "职责、策略与连接" },
-      { id: "overview", label: "内容队列", caption: "视频数据、平台与热度" },
-      { id: "review", label: "数据复盘", caption: "热度排行与下周待办" },
+      { id: "review", label: "数据复盘", caption: "账号、询盘与投流明细" },
     ];
     const currentVideoPlans = data.plan?.businessPackage?.tasks.find(task => task.templateId === "production")?.videoPlans || goal?.videoPlans || [];
     const currentMasterPlans = currentVideoPlans.filter(plan => plan.productionRole !== "platform_adaptation");
@@ -4188,65 +4493,84 @@ export default function DigitalEmployeePage({
       if (taskId) setSelectedTaskId(taskId);
       setSelectedContentItemId(contentItemId);
       setWorkspaceView("live");
-      window.setTimeout(() => document.querySelector('[data-testid="production-task-scene"]')?.scrollIntoView({ behavior: "smooth", block: "start" }), 50);
+      window.setTimeout(() => document.querySelector('[data-testid="production-task-scene"]')?.scrollIntoView({ behavior: getScrollBehavior(), block: "start" }), 50);
     };
     const weeklyPlanControls = <>
-      <button type="button" onClick={()=>{ setNewGoal(false); setWeeklyPlanOpen(true); }} className="inline-flex min-h-10 items-center gap-2 rounded-xl border border-emerald-200 bg-white px-3 py-2 text-xs font-black text-emerald-800 hover:bg-emerald-50"><CalendarRange size={14}/>查看本周计划</button>
-      <button type="button" onClick={()=>setWorkspaceView("rules")} className={`inline-flex min-h-10 items-center gap-2 rounded-xl border px-3 py-2 text-xs font-black ${workspaceView==="rules"?"border-slate-950 bg-slate-950 text-white":"border-slate-200 bg-white text-slate-700 hover:border-emerald-300"}`}><Settings2 size={14}/>Agent 设置</button>
-      <button type="button" onClick={()=>setPlanHistoryOpen(true)} className="inline-flex min-h-10 items-center gap-2 rounded-xl border border-emerald-200 bg-white px-3 py-2 text-xs font-black text-emerald-800 hover:bg-emerald-50"><History size={14}/>历史计划</button>
-      <button type="button" disabled={Boolean(busy)} onClick={()=>void controlWeeklyWork()} className={`inline-flex min-h-10 items-center gap-2 rounded-xl px-4 py-2 text-xs font-black shadow-sm transition disabled:cursor-not-allowed disabled:opacity-45 ${activeRun && data.run?.status !== "paused" ? "border border-amber-200 bg-amber-50 text-amber-800 hover:bg-amber-100" : "bg-emerald-700 text-white hover:bg-emerald-800"}`}>{busy ? <Loader2 size={14} className="animate-spin"/> : activeRun && data.run?.status !== "paused" ? <Pause size={14}/> : <Play size={14} fill="currentColor"/>}{weeklyControlLabel}</button>
+      <Button onClick={()=>setWorkspaceView("rules")} icon={<Settings2 size={15}/>}>Agent 设置</Button>
+      <Button onClick={()=>setPlanHistoryOpen(true)} icon={<History size={15}/>}>历史计划</Button>
+      <Button type="primary" loading={Boolean(busy)} onClick={()=>void controlWeeklyWork()} icon={activeRun && data.run?.status !== "paused" ? <Pause size={15}/> : <Play size={15}/>}>{weeklyControlLabel}</Button>
     </>;
     return (
       <>
-      <div className="h-full overflow-y-auto bg-[#f7f8f6]">
-        <div className="mx-auto w-full max-w-[1500px] px-4 py-5 sm:px-6 lg:px-8">
+      {!weeklyPlanOpen && <div className="h-full overflow-y-auto bg-white">
+        <div className="mx-auto w-full px-2 py-3 sm:px-3">
+          <h1 className="sr-only">{PAGE_REGISTRY.digitalEmployees.canonicalTitle}</h1>
           <div aria-label="当前周计划">
             {goal ? <WeeklyCommandCenter
               data={data}
               statusLabel={currentPlanStatusLabel}
               actions={weeklyPlanControls}
-              notice={<>
-                {!activeRun && !viewGoalId && (!planDetailsReady || approvalBlocked) && <p className="mr-auto text-[10px] font-bold text-amber-700">{approvalBlocked ? `开始前需补齐：${firstMissingReadiness?.label || "经营基础信息"}` : missingReferenceMasters.length ? `爆款库还缺 ${missingReferenceMasters.length} 条母版所需的已分析视频` : missingProductMasters.length ? `还有 ${missingProductMasters.length} 条原创母版未绑定产品` : detailGeneration?.status === "blocked" ? `开始前需处理 ${detailGeneration.blockedCount} 条母版任务卡点` : "请确认周计划并开始工作"}</p>}
-              </>}
-            /> : <section className="overflow-hidden rounded-2xl border border-emerald-200 bg-gradient-to-r from-emerald-50 via-white to-cyan-50 shadow-sm"><div className="flex flex-wrap items-start justify-between gap-4 px-5 py-4"><div><p className="text-xs font-black text-emerald-800">周经营计划</p><p className="mt-1 text-sm font-bold text-slate-800">本周还没有可执行计划</p><p className="mt-1 text-xs text-slate-500">点击“开始周任务”确定平台、账号、视频产量和预算，再选择产品并确认工作排期。</p></div><div aria-label="智能经营控制" className="flex max-w-full flex-wrap items-center justify-end gap-2">{weeklyPlanControls}</div></div></section>}
+              notice={!activeRun && !viewGoalId && (approvalBlocked || missingReferenceMasters.length > 0 || missingProductMasters.length > 0 || detailGeneration?.status === "blocked")
+                ? <p className="mr-auto text-[10px] font-bold text-amber-700">{approvalBlocked ? `开始前需补齐：${firstMissingReadiness?.label || "经营基础信息"}` : missingReferenceMasters.length ? `爆款库还缺 ${missingReferenceMasters.length} 条母版所需的已分析视频` : missingProductMasters.length ? `还有 ${missingProductMasters.length} 条原创母版未绑定产品` : `开始前需处理 ${detailGeneration?.blockedCount || 0} 条母版任务卡点`}</p>
+                : undefined}
+            /> : <section className="overflow-hidden rounded-lg border border-border bg-white"><div className="flex flex-wrap items-start justify-between gap-4 px-5 py-4"><div><p className="text-xs font-semibold text-accent">周经营计划</p><p className="mt-1 text-sm font-bold text-slate-800">本周还没有可执行计划</p><p className="mt-1 text-xs text-slate-500">点击“开始周任务”确定平台、账号、视频产量和预算，再选择产品并确认工作排期。</p></div><div aria-label="智能经营控制" className="flex max-w-full flex-wrap items-center justify-end gap-2">{weeklyPlanControls}</div></div></section>}
           </div>
-          <nav aria-label="智能经营视图" className="mt-6 flex gap-7 overflow-x-auto border-b border-slate-200">
-            {views.map((view)=>{const active=workspaceView===view.id||(view.id==="overview"&&workspaceView==="live");return <button type="button" key={view.id} onClick={()=>{setWorkspaceView(view.id);if(view.id!=="overview")setSelectedContentItemId("");}} aria-current={active?"page":undefined} className={`shrink-0 border-b-2 pb-3 text-left ${active?"border-emerald-700":"border-transparent"}`}><span className={`block text-sm font-black ${active?"text-emerald-800":"text-slate-500"}`}>{view.label}</span><span className="mt-0.5 block text-[10px] text-slate-400">{view.caption}</span></button>;})}
-          </nav>
-          {error&&<div role="alert" className="mt-5 flex items-center justify-between gap-4 rounded-2xl border border-red-200 bg-red-50 px-4 py-3 text-xs font-bold text-red-700"><span>{error}</span><button type="button" aria-label="关闭错误提示" onClick={()=>setError("")}><X size={15}/></button></div>}
-          <div className="grid grid-cols-1 gap-4 py-6">
+          <Tabs className="mt-3" aria-label="智能经营视图" activeKey={workspaceView === "live" || workspaceView === "overview" ? "review" : workspaceView} onChange={key => {setWorkspaceView(key as WorkspaceView); setSelectedContentItemId("");}} items={views.map(view => ({key: view.id, label: view.label}))}/>
+          {error && <Alert className="mt-5" type="error" showIcon title={error} closable onClose={()=>setError("")}/>}
+          <div className="grid grid-cols-1 gap-4 pb-6 pt-2">
             {workspaceView === "matrix" && <SmartOperationsAccountRail targets={smartOperationsAccounts} selectedAccountId={selectedAccountId} taskCounts={accountTaskCounts} onSelect={setSelectedAccountId} onManage={() => onNavigate?.('plugins')}/>}
             <main className="min-w-0">
             {workspaceView === "rules"
               ? <OnboardingPanel initial={data.config} readiness={data.businessSnapshot?.readiness || []} busy={Boolean(busy)} mode="rules" activeRun={activeRun} onOpenReadiness={openReadiness} onSave={(config) => void saveConfig(config)} />
-              : <SmartBusinessDashboard data={data} view={dashboardView} selectedAccountId={selectedAccountId} selectedContentItemId={selectedContentItemId} onRefresh={() => void load()} onGenerateDetails={() => void generateCurrentPlanDetails()} onOpenContent={openContentProduction} onOpenProductionProgress={openProductionProgress} onBackToQueue={()=>{setSelectedContentItemId("");setWorkspaceView("overview");}} onRetryTask={async taskId => Boolean(await act(`retry:${taskId}`, () => digitalEmployeeApi.retryTask(taskId)))} onControlJob={async (jobId, action) => Boolean(await act(`execution:${jobId}:${action}`, () => digitalEmployeeApi.controlExecutionJob(jobId, action)))} onGeneratePlan={() => { if (!goal || canCreateNextGoal) setNewGoal(true); setWeeklyPlanOpen(true); }} onNavigate={page => {
+              : <SmartBusinessDashboard data={data} view={dashboardView} selectedAccountId={selectedAccountId} selectedContentItemId={selectedContentItemId} overviewRangeBusy={busy === "overview-range"} onOverviewRangeChange={changeOverviewDateRange} onRefresh={() => void load()} onGenerateDetails={() => void generateCurrentPlanDetails()} onOpenContent={openContentProduction} onOpenProductionProgress={openProductionProgress} onBackToQueue={()=>{setSelectedContentItemId("");setWorkspaceView("overview");}} onRetryTask={async taskId => Boolean(await act(`retry:${taskId}`, () => digitalEmployeeApi.retryTask(taskId)))} onControlJob={async (jobId, action) => Boolean(await act(`execution:${jobId}:${action}`, () => digitalEmployeeApi.controlExecutionJob(jobId, action)))} onGeneratePlan={() => { if (!goal || canCreateNextGoal) setNewGoal(true); setWeeklyPlanOpen(true); }} onNavigate={page => {
                   if (page === "socialPlanning") {
                     if (!goal || canCreateNextGoal) setNewGoal(true);
                     setWeeklyPlanOpen(true);
                     return;
                   }
-                  if (["enterprise", "accountManagement", "plugins", "scheduled", "socialInspiration", "scriptLibrary", "smartAssets", "conversion", "digitalEmployees"].includes(page)) onNavigate?.(page as BusinessDestination);
+                  if (page === "socialAccounts") {
+                    setWorkspaceView("matrix");
+                    return;
+                  }
+                  onNavigate?.(page);
                 }} />}
             </main>
           </div>
         </div>
-      </div>
-      {applicationGuideOpen && <div className="fixed inset-0 z-[190] flex items-center justify-center bg-slate-950/45 p-4 backdrop-blur-sm" onMouseDown={(event) => { if (event.target === event.currentTarget && !busy) setApplicationGuideOpen(false); }}>
-        <section role="dialog" aria-modal="true" aria-label="新手引导" className="ui-modal-frame relative overflow-y-auto p-4 sm:p-6">
-          <button type="button" aria-label="关闭新手引导" onClick={()=>setApplicationGuideOpen(false)} className="absolute right-4 top-4 z-10 rounded-xl border border-slate-200 bg-white p-2 text-slate-500 shadow-sm hover:bg-slate-50"><X size={18}/></button>
-          <OnboardingPanel initial={data.config} readiness={data.businessSnapshot?.readiness || []} busy={Boolean(busy)} restartFromBeginning onOpenReadiness={openReadiness} onSave={async config => { const saved=await saveConfig(config);if(saved)setApplicationGuideOpen(false);return saved; }} />
-        </section>
       </div>}
-      {weeklyPlanOpen && <div className="fixed inset-0 z-[200] flex items-center justify-center bg-slate-950/45 p-4 backdrop-blur-sm" onMouseDown={event => { if (event.target === event.currentTarget && !busy) setWeeklyPlanOpen(false); }}>
-        <section role="dialog" aria-modal="true" aria-label={goal && !newGoal ? "本周计划详情" : "周计划生成"} className="ui-modal-frame ui-modal-frame--wide overflow-hidden bg-white">
-          <header className="flex items-start justify-between gap-4 border-b border-slate-100 px-5 py-5 sm:px-7"><div><p className="text-xs font-black uppercase tracking-[0.16em] text-emerald-700">Weekly Plan</p><h2 className="mt-1 text-xl font-black text-slate-950">{goal && !newGoal ? activeRun ? "数字员工工作排期" : "确认本周视频计划" : "制定本周目标"}</h2><p className="mt-1 text-xs text-slate-500">{goal && !newGoal ? activeRun ? "按发布时间查看本周内容，并继续查看 Agent 执行节点。" : "按发布时间查看全部内容；点击卡片打开对应爆款详情。" : "确定每个平台账号的产量、总产量和预计成本。"}</p></div><button type="button" aria-label={goal && !newGoal ? "关闭本周计划详情" : "关闭周计划生成"} disabled={Boolean(busy)} onClick={()=>setWeeklyPlanOpen(false)} className="rounded-full border border-slate-200 p-2 text-slate-500 hover:bg-slate-50 disabled:opacity-40"><X size={18}/></button></header>
-          <div className="ui-modal-body px-5 py-5 sm:px-7">
-            {goal&&<InitialPreparationStatusPanel goalId={goal.id} onRunning={()=>void load()} />}
+      {applicationGuideOpen && (
+        <OnboardingPanel
+          initial={data.config}
+          readiness={data.businessSnapshot?.readiness || []}
+          busy={Boolean(busy)}
+          allowInitialPlan={false}
+          restartFromBeginning
+          dismissible
+          onClose={() => setApplicationGuideOpen(false)}
+          onOpenReadiness={openReadiness}
+          onSave={async config => {
+            const saved = await saveConfig(config);
+            if (saved) setApplicationGuideOpen(false);
+            return saved;
+          }}
+        />
+      )}
+      {weeklyPlanOpen && <div className="h-full overflow-y-auto bg-white">
+        <section aria-label={goal && !newGoal ? "本周计划详情" : "周计划生成"} className="mx-auto w-full max-w-[1440px] p-4 sm:p-6">
+          <header className="mb-5 flex flex-wrap items-start justify-between gap-4 border-b border-border pb-5">
+            <h1 className="text-[28px] font-semibold">{goal && !newGoal ? activeRun ? "数字员工工作排期" : "确认本周视频计划" : "制定本周目标"}</h1>
+            <Button disabled={Boolean(busy)} onClick={() => setWeeklyPlanOpen(false)} icon={<ChevronLeft size={15}/>}>返回智能经营</Button>
+          </header>
+          {error && (
+            <Alert className="mb-4" type="error" showIcon title={error}/>
+          )}
+          <div className="py-5">
+            {goal && !newGoal && <InitialPreparationStatusPanel goalId={goal.id} onRunning={() => void load(goal.id)} />}
             {(!goal || newGoal) && !activeRun ? <GoalPanel config={data.config} busy={Boolean(busy)} businessLine={businessLine} contentPlatform={contentPlatform} onOpenSettings={()=>{setWeeklyPlanOpen(false);setWorkspaceView("rules");}} onSave={goalInput => void createWeeklyOutline(goalInput)}/>
               : goal ? <div className="space-y-4">
-                <section className="flex flex-wrap items-center justify-between gap-4 rounded-2xl border border-slate-200 px-4 py-3">
-                  <div className="min-w-0"><div className="flex items-center gap-2"><h3 className="truncate text-sm font-black text-slate-950">{goal.title}</h3><span className={`shrink-0 rounded-full px-2.5 py-1 text-[9px] font-black ${activeRun?"bg-emerald-50 text-emerald-700":"bg-amber-50 text-amber-700"}`}>{activeRun?"执行中":"待确认"}</span></div><p className="mt-1 text-[10px] text-slate-500">{goal.startsAt} 至 {goal.endsAt}</p></div>
-                  <div className="grid grid-cols-4 gap-4 text-right"><div><p className="text-[9px] font-bold text-slate-400">发布内容</p><p className="mt-0.5 text-sm font-black text-slate-900">{currentVideoPlans.length} 条</p></div><div><p className="text-[9px] font-bold text-slate-400">原创母版</p><p className="mt-0.5 text-sm font-black text-slate-900">{currentMasterPlans.length} 条</p></div><div><p className="text-[9px] font-bold text-slate-400">母版时长</p><p className="mt-0.5 text-sm font-black text-slate-900">{plannedDurationSeconds>0?`${plannedDurationSeconds} 秒`:"待确认"}</p></div><div><p className="text-[9px] font-bold text-slate-400">预计成本</p><p className="mt-0.5 text-sm font-black text-slate-900">{currentCostMax>0?`¥${currentCostMin.toFixed(0)}–${currentCostMax.toFixed(0)}`:currentEstimatedCost>0?`约 ¥${currentEstimatedCost.toFixed(0)}`:"待核算"}</p></div></div>
+                <section className="flex flex-wrap items-center justify-between gap-4 rounded-lg border border-slate-200 px-4 py-3">
+                  <div className="min-w-0"><div className="flex items-center gap-2"><h3 className="truncate text-sm font-semibold text-slate-950">{goal.title}</h3><span className={`shrink-0 rounded-full px-2.5 py-1 text-[9px] font-semibold ${activeRun?"bg-emerald-50 text-emerald-700":"bg-amber-50 text-amber-700"}`}>{activeRun?"执行中":"待确认"}</span></div><p className="mt-1 text-[10px] text-slate-500">{goal.startsAt} 至 {goal.endsAt}</p></div>
+                  <div className="grid grid-cols-4 gap-4 text-right"><div><p className="text-[9px] font-bold text-slate-400">发布内容</p><p className="mt-0.5 text-sm font-semibold text-slate-900">{currentVideoPlans.length} 条</p></div><div><p className="text-[9px] font-bold text-slate-400">原创母版</p><p className="mt-0.5 text-sm font-semibold text-slate-900">{currentMasterPlans.length} 条</p></div><div><p className="text-[9px] font-bold text-slate-400">母版时长</p><p className="mt-0.5 text-sm font-semibold text-slate-900">{plannedDurationSeconds>0?`${plannedDurationSeconds} 秒`:"待确认"}</p></div><div><p className="text-[9px] font-bold text-slate-400">预计成本</p><p className="mt-0.5 text-sm font-semibold text-slate-900">{currentCostMax>0?`¥${currentCostMin.toFixed(0)}–${currentCostMax.toFixed(0)}`:currentEstimatedCost>0?`约 ¥${currentEstimatedCost.toFixed(0)}`:"待核算"}</p></div></div>
                 </section>
                 <WeeklyPlanCalendar
                   startsAt={goal.startsAt}
@@ -4280,9 +4604,9 @@ export default function DigitalEmployeePage({
                     } }));
                   }}
                 />
-                {!activeRun && <div className="flex flex-wrap items-center justify-between gap-4"><p className={`text-xs ${approvalBlocked||missingProductMasters.length||missingReferenceMasters.length?'font-bold text-amber-700':'text-slate-500'}`}>{approvalBlocked?`开始前需补齐：${firstMissingReadiness?.label||'企业资料或社媒账号'}`:missingReferenceMasters.length?`爆款库还缺 ${missingReferenceMasters.length} 条母版所需的已分析视频`:missingProductMasters.length?`还有 ${missingProductMasters.length} 条原创母版未选择产品`:'确认后系统只生产 5 条母版，并生成各平台标题、文案、Tag 与轻适配版本。'}</p><button type="button" disabled={Boolean(busy)||approvalBlocked||Boolean(missingProductMasters.length)||Boolean(missingReferenceMasters.length)} onClick={()=>void confirmWeeklyPlan()} className="shrink-0 rounded-xl bg-emerald-700 px-5 py-2.5 text-sm font-black text-white disabled:cursor-not-allowed disabled:opacity-40">{busy==='confirm-weekly-plan'?<span className="inline-flex items-center gap-2"><Loader2 size={14} className="animate-spin"/>正在编排并启动…</span>:"确认周计划并开始工作"}</button></div>}
-                {activeRun&&<section aria-label="Agent To Do List" className="overflow-hidden rounded-2xl border border-slate-200"><div className="border-b border-slate-100 bg-slate-950 px-5 py-4 text-white"><p className="text-[10px] font-black uppercase tracking-[0.16em] text-emerald-300">Agent To Do List</p><h3 className="mt-1 text-lg font-black">数字员工工作排期</h3><p className="mt-1 text-[10px] text-slate-300">每一步都标明负责 Agent、预计用时、输出和下一节点。</p></div><div className="divide-y divide-slate-100">{(data.plan?.tasks||[]).map((task,index)=>{const runtime=data.tasks.find(item=>item.task_key===task.key);return <article key={task.key} className="grid gap-3 px-5 py-4 sm:grid-cols-[40px_150px_minmax(0,1fr)_100px]"><span className={`flex h-8 w-8 items-center justify-center rounded-full text-xs font-black ${runtime?.status==='succeeded'?'bg-emerald-100 text-emerald-700':runtime?.status==='running'?'bg-blue-100 text-blue-700':'bg-slate-100 text-slate-500'}`}>{index+1}</span><div><p className="text-xs font-black text-slate-900">{agentLabel[task.agentRole]||task.agentRole}</p><p className="mt-1 text-[10px] text-slate-500">预计 {task.expectedMinutes} 分钟</p></div><div><p className="text-sm font-black text-slate-950">{task.title}</p><p className="mt-1 text-[10px] leading-5 text-slate-500">{task.description}</p><p className="mt-1 text-[10px] font-bold text-emerald-700">结果：{runtime?outputSummary(runtime)||'完成后自动保存到对应业务页面':task.statusSource||'完成后持久化'} · 下一步：{data.plan?.tasks[index+1]?.title||'进入周复盘'}</p></div><span className={`h-fit rounded-full border px-2 py-1 text-center text-[9px] font-black ${statusTone[runtime?.status||'']||'border-slate-200 bg-slate-50 text-slate-500'}`}>{runtime?.status==='running'?'进行中':runtime?.status==='succeeded'?'已完成':runtime?.status==='failed'?'需处理':'待执行'}</span></article>})}</div></section>}
-                {activeRun&&<div className="flex justify-end"><button type="button" onClick={()=>{setWeeklyPlanOpen(false);setWorkspaceView("matrix");}} className="rounded-xl bg-slate-950 px-5 py-2.5 text-sm font-black text-white">查看账号排期甘特图</button></div>}
+                {!activeRun && <div className="flex flex-wrap items-center justify-between gap-4"><p className={`text-xs ${approvalBlocked||missingProductMasters.length||missingReferenceMasters.length?'font-bold text-amber-700':'text-slate-500'}`}>{approvalBlocked?`开始前需补齐：${firstMissingReadiness?.label||'企业资料或社媒账号'}`:missingReferenceMasters.length?`爆款库还缺 ${missingReferenceMasters.length} 条母版所需的已分析视频`:missingProductMasters.length?`还有 ${missingProductMasters.length} 条原创母版未选择产品`:'确认后系统只生产 5 条母版，并生成各平台标题、文案、Tag 与轻适配版本。'}</p><Button type="primary" htmlType="button" disabled={Boolean(busy)||approvalBlocked||Boolean(missingProductMasters.length)||Boolean(missingReferenceMasters.length)} onClick={()=>void confirmWeeklyPlan()} className="!h-auto min-h-9 !whitespace-normal shrink-0 rounded-lg px-5 py-2.5 text-sm font-semibold">{busy==='confirm-weekly-plan'?<span className="inline-flex items-center gap-2"><Loader2 size={14} className="animate-spin"/>正在编排并启动…</span>:"确认周计划并开始工作"}</Button></div>}
+                {activeRun&&<section aria-label="Agent To Do List" className="overflow-hidden rounded-lg border border-slate-200"><div className="border-b border-slate-100 bg-slate-950 px-5 py-4 text-white"><p className="text-[10px] font-semibold uppercase tracking-[0.16em] text-emerald-300">Agent 工作清单</p><h3 className="mt-1 text-lg font-semibold">数字员工工作排期</h3><p className="mt-1 text-[10px] text-slate-300">每一步都标明负责 Agent、预计用时、输出和下一节点。</p></div><div className="divide-y divide-slate-100">{(data.plan?.tasks||[]).map((task,index)=>{const runtime=data.tasks.find(item=>item.task_key===task.key);return <article key={task.key} className="grid gap-3 px-5 py-4 sm:grid-cols-[40px_150px_minmax(0,1fr)_100px]"><span className={`flex h-8 w-8 items-center justify-center rounded-full text-xs font-semibold ${runtime?.status==='succeeded'?'bg-emerald-100 text-emerald-700':runtime?.status==='running'?'bg-blue-100 text-blue-700':'bg-slate-100 text-slate-500'}`}>{index+1}</span><div><p className="text-xs font-semibold text-slate-900">{agentLabel[task.agentRole]||task.agentRole}</p><p className="mt-1 text-[10px] text-slate-500">预计 {task.expectedMinutes} 分钟</p></div><div><p className="text-sm font-semibold text-slate-950">{task.title}</p><p className="mt-1 text-[10px] leading-5 text-slate-500">{task.description}</p><p className="mt-1 text-[10px] font-bold text-emerald-700">结果：{runtime?outputSummary(runtime)||'完成后自动保存到对应业务页面':task.statusSource||'完成后持久化'} · 下一步：{data.plan?.tasks[index+1]?.title||'进入周复盘'}</p></div><span className={`h-fit rounded-full border px-2 py-1 text-center text-[9px] font-semibold ${statusTone[runtime?.status||'']||'border-slate-200 bg-slate-50 text-slate-500'}`}>{runtime?.status==='running'?'进行中':runtime?.status==='succeeded'?'已完成':runtime?.status==='failed'?'需处理':'待执行'}</span></article>})}</div></section>}
+                {activeRun&&<div className="flex justify-end"><Button htmlType="button" onClick={()=>{setWeeklyPlanOpen(false);setWorkspaceView("matrix");}} className="!h-auto min-h-9 !whitespace-normal rounded-lg bg-slate-950 px-5 py-2.5 text-sm font-semibold text-white">查看账号排期甘特图</Button></div>}
               </div> : null}
           </div>
         </section>
@@ -4305,26 +4629,26 @@ export default function DigitalEmployeePage({
               <div className="flex flex-wrap items-stretch gap-2 text-xs text-text-secondary">
                 <div className="min-w-52 rounded-lg border border-accent/25 bg-accent-glow px-3 py-2">
                   <p className="text-[10px] font-bold uppercase tracking-[0.12em] text-accent">当前工作模式</p>
-                  <p className="mt-1 font-black text-text-primary">{autonomyLabel[data.config.autonomyMode]}模式 · {operatingState}</p>
+                  <p className="mt-1 font-semibold text-text-primary">{autonomyLabel[data.config.autonomyMode]}模式 · {operatingState}</p>
                   <p className="mt-0.5 text-[10px] text-text-muted">{cycleLabel}</p>
                 </div>
-                <button
-                  type="button"
+                <Button
+                  htmlType="button"
                   onClick={() => setWorkspaceView("rules")}
-                  className={`inline-flex min-h-12 items-center gap-1.5 rounded-lg border px-4 py-2 font-bold shadow-sm transition ${workspaceView === "rules" ? "border-accent bg-accent text-white" : "border-accent bg-accent text-white hover:brightness-95"}`}
+                  className={`!h-auto min-h-9 !whitespace-normal inline-flex min-h-12 items-center gap-1.5 rounded-lg border px-4 py-2 font-bold transition ${workspaceView === "rules" ? "border-accent bg-accent text-white" : "border-accent bg-accent text-white hover:brightness-95"}`}
                 >
                   <Settings2 size={13} /> Agent 设置
-                </button>
-                <button
-                  type="button"
+                </Button>
+                <Button
+                  htmlType="button"
                   onClick={() => {
                     setWorkspaceView("today");
                     setShowHistory((value) => !value);
                   }}
-                  className="inline-flex min-h-12 items-center gap-1.5 rounded-lg border border-accent/35 bg-white px-4 py-2 font-bold text-accent shadow-sm transition hover:border-accent hover:bg-accent-glow"
+                  className="!h-auto min-h-9 !whitespace-normal inline-flex min-h-12 items-center gap-1.5 rounded-lg border border-accent/35 bg-white px-4 py-2 font-bold text-accent transition hover:border-accent hover:bg-accent-glow"
                 >
                   <History size={13} /> 历史记录
-                </button>
+                </Button>
               </div>
             )}
           </div>
@@ -4338,71 +4662,69 @@ export default function DigitalEmployeePage({
           {workspaceViews.map((view) => {
             const pendingCount = data.approvals.filter((item) => item.status === "pending").length;
             const caption = view.id === "live" && pendingCount ? `${pendingCount} 项待处理 · 任务与纠偏` : view.id === "review" && !data.review ? "数据积累中" : view.caption;
-            return <button
+            return <Button
               key={view.id}
-              type="button"
+              htmlType="button"
               onClick={() => setWorkspaceView(view.id)}
               aria-current={workspaceView === view.id ? "page" : undefined}
-              className="workspace-tab min-w-[150px] px-1 py-2"
+              className="!h-auto min-h-9 !whitespace-normal workspace-tab min-w-[150px] px-1 py-2"
             >
-              <span className="block text-xs font-black">{view.label}</span>
+              <span className="block text-xs font-semibold">{view.label}</span>
               <span
                 className="mt-0.5 block text-[10px] text-slate-400"
               >
                 {caption}
               </span>
-            </button>;
+            </Button>;
           })}
         </nav>}
         {data?.config && workspaceView === "overview" && <BusinessLineNav value={businessLine} platform={contentPlatform} onChange={setBusinessLine} onPlatformChange={setContentPlatform}/>}
         {navigationNotice && (
           <div
             role="status"
-            className="mt-4 flex items-center justify-between gap-3 rounded-2xl border border-blue-200 bg-blue-50 px-4 py-3 text-xs font-semibold text-blue-800"
+            className="mt-4 flex items-center justify-between gap-3 rounded-lg border border-blue-200 bg-blue-50 px-4 py-3 text-xs font-semibold text-blue-800"
           >
             <span className="flex items-center gap-2">
               <ChevronLeft size={15} />
               {navigationNotice}
             </span>
-            <button
-              type="button"
+            <Button className="!h-auto min-h-9 !whitespace-normal"
+              htmlType="button"
               onClick={() => setNavigationNotice("")}
               aria-label="关闭返回提示"
             >
               <XCircle size={16} />
-            </button>
+            </Button>
           </div>
         )}
         {error && (
-          <div className="mt-4 flex items-center justify-between gap-3 rounded-2xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
+          <div className="mt-4 flex items-center justify-between gap-3 rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
             <span className="flex items-center gap-2">
               <AlertTriangle size={16} />
               {error}
             </span>
-            <button onClick={() => setError("")}>
+            <Button className="!h-auto min-h-9 !whitespace-normal" onClick={() => setError("")}>
               <XCircle size={17} />
-            </button>
+            </Button>
           </div>
         )}
 
         {!data?.config && (
-          <div className="mt-5">
-            <OnboardingPanel
-              initial={EMPTY_CONFIG}
-              readiness={data?.businessSnapshot?.readiness || []}
-              busy={Boolean(busy)}
-              onOpenReadiness={openReadiness}
-              onNavigate={(page) => openBusiness(page)}
-              onSave={saveConfig}
-            />
-          </div>
+          <OnboardingPanel
+            initial={EMPTY_CONFIG}
+            readiness={data?.businessSnapshot?.readiness || []}
+            busy={Boolean(busy)}
+            onOpenReadiness={openReadiness}
+            onNavigate={(page) => openBusiness(page)}
+            onSave={saveConfig}
+          />
         )}
 
         {data?.config && workspaceView === "today" && (
           <div className="mt-5 space-y-5">
             {viewGoalId && (
-              <section className="rounded-3xl border border-violet-200 bg-violet-50 p-5">
-                <p className="text-sm font-black text-violet-900">
+              <section className="rounded-lg border border-violet-200 bg-violet-50 p-5">
+                <p className="text-sm font-semibold text-violet-900">
                   正在只读查看历史运行
                 </p>
                 <p className="mt-1 text-xs text-violet-700">
@@ -4416,12 +4738,12 @@ export default function DigitalEmployeePage({
               onReviewPlan={() => goLive()}
             />}
             {showHistory && (
-              <section className="overflow-hidden rounded-3xl border border-slate-200 bg-white shadow-sm">
+              <section className="overflow-hidden rounded-lg border border-slate-200 bg-white">
                 <div className="flex items-center justify-between border-b border-slate-100 px-5 py-4">
                   <div className="flex items-center gap-2">
                     <History size={18} className="text-violet-600" />
                     <div>
-                      <h2 className="text-sm font-black text-slate-950">
+                      <h2 className="text-sm font-semibold text-slate-950">
                         历史工作
                       </h2>
                       <p className="text-[11px] text-slate-400">
@@ -4429,20 +4751,20 @@ export default function DigitalEmployeePage({
                       </p>
                     </div>
                   </div>
-                  <button
+                  <Button
                     onClick={() => setShowHistory(false)}
-                    className="rounded-lg p-2 text-slate-400 hover:bg-slate-50"
+                    className="!h-auto min-h-9 !whitespace-normal rounded-lg p-2 text-slate-400 hover:bg-slate-50"
                   >
                     <XCircle size={17} />
-                  </button>
+                  </Button>
                 </div>
                 <div className="grid gap-3 p-4 md:grid-cols-2 xl:grid-cols-3">
                   {data.goals.map((historyGoal, index) => (
-                    <button
+                    <Button
                       key={historyGoal.id}
-                      type="button"
+                      htmlType="button"
                       onClick={() => void openGoal(historyGoal.id)}
-                      className={`rounded-2xl border p-4 text-left transition hover:border-violet-300 ${data.goal?.id === historyGoal.id ? "border-violet-300 bg-violet-50/50" : "border-slate-200"}`}
+                      className={`!h-auto min-h-9 !whitespace-normal rounded-lg border p-4 text-left transition hover:border-violet-300 ${data.goal?.id === historyGoal.id ? "border-violet-300 bg-violet-50/50" : "border-slate-200"}`}
                     >
                       <div className="flex items-start justify-between gap-2">
                         <div>
@@ -4460,20 +4782,20 @@ export default function DigitalEmployeePage({
                       <p className="mt-3 text-[11px] text-slate-500">
                         {historyGoal.startsAt} 至 {historyGoal.endsAt}
                       </p>
-                    </button>
+                    </Button>
                   ))}
                 </div>
               </section>
             )}
             {viewGoalId && (
-              <button
-                type="button"
+              <Button
+                htmlType="button"
                 onClick={() => void returnToLatest()}
-                className="inline-flex items-center gap-1.5 text-xs font-bold text-slate-600"
+                className="!h-auto min-h-9 !whitespace-normal inline-flex items-center gap-1.5 text-xs font-bold text-slate-600"
               >
                 <ChevronLeft size={14} />
                 返回最近一轮工作
-              </button>
+              </Button>
             )}
             {!viewGoalId && newGoal && !activeRun && (
               <div ref={goalPanelRef} className="scroll-mt-24">
@@ -4490,18 +4812,18 @@ export default function DigitalEmployeePage({
             {!viewGoalId && goal && goal.status !== "draft" && (
               <div className="flex flex-col items-end gap-2">
                 {canCreateNextGoal ? (
-                  <button
+                  <Button
                     onClick={() => {
                       setNewGoal(true);
                       scrollTo(goalPanelRef);
                     }}
-                    className="inline-flex items-center gap-2 rounded-xl bg-slate-950 px-4 py-2.5 text-xs font-bold text-white"
+                    className="!h-auto min-h-9 !whitespace-normal inline-flex items-center gap-2 rounded-lg bg-slate-950 px-4 py-2.5 text-xs font-bold text-white"
                   >
                     <Target size={14} />
                     制定下一周目标
-                  </button>
+                  </Button>
                 ) : (
-                  <p className="rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-xs text-slate-500">
+                  <p className="rounded-lg border border-slate-200 bg-white px-4 py-2.5 text-xs text-slate-500">
                     本轮目标仍在执行；完成或取消当前运行后才能制定下一周目标。
                   </p>
                 )}
@@ -4553,7 +4875,7 @@ export default function DigitalEmployeePage({
 
         {data?.config && workspaceView === "live" && (
           <div className="mt-5 space-y-5">
-            {viewGoalId && <p className="rounded-2xl bg-violet-50 p-4 text-xs text-violet-800">正在只读查看历史计划与执行情况。</p>}
+            {viewGoalId && <p className="rounded-lg bg-violet-50 p-4 text-xs text-violet-800">正在只读查看历史计划与执行情况。</p>}
             {data.plan?.businessPackage && !data.run && <WeeklyPackagePanel
               data={data} readOnly={Boolean(viewGoalId)} busy={Boolean(busy)} onOpen={openBusiness}
               onOpenNode={link => {
@@ -4561,17 +4883,17 @@ export default function DigitalEmployeePage({
                 if (link.businessRef.taskKey === "weekly_review") { setWorkspaceView("review"); return; }
                 if (link.taskId) {
                   setSelectedTaskId(link.taskId);
-                  window.setTimeout(() => document.getElementById("task-production-scene")?.scrollIntoView({ behavior: "smooth", block: "start" }), 50);
+                  window.setTimeout(() => document.getElementById("task-production-scene")?.scrollIntoView({ behavior: getScrollBehavior(), block: "start" }), 50);
                 } else {
-                  document.getElementById("weekly-plan-preview")?.scrollIntoView({ behavior: "smooth", block: "start" });
+                  document.getElementById("weekly-plan-preview")?.scrollIntoView({ behavior: getScrollBehavior(), block: "start" });
                 }
               }}
               onLinkProject={async (taskId, projectId) => { if (!await act("link-project", () => digitalEmployeeApi.linkTaskProject(data.run!.id, taskId, projectId), true)) throw new Error("关联失败，请重试。"); }}
-              onTask={taskId => { setSelectedTaskId(taskId); window.setTimeout(() => document.getElementById("task-production-scene")?.scrollIntoView({ behavior: "smooth", block: "start" }), 50); }}
+              onTask={taskId => { setSelectedTaskId(taskId); window.setTimeout(() => document.getElementById("task-production-scene")?.scrollIntoView({ behavior: getScrollBehavior(), block: "start" }), 50); }}
               onSave={async pack => { const result = await act("save-package", () => digitalEmployeeApi.savePackage(goal!.id, pack), true); if (!result) throw new Error("经营包未保存，请检查页面提示后重试。"); return true; }}
               onApprove={async revision => { const result = await act("approve-goal", () => digitalEmployeeApi.approveGoal(goal!.id, revision), true); if (!result) throw new Error("未能启动，请检查账号、资料和授权范围后重试。"); }}
             />}
-            {!data.run && data.plan && <section id="weekly-plan-preview" className="scroll-mt-6 rounded-3xl border border-slate-200 bg-white p-6">
+            {!data.run && data.plan && <section id="weekly-plan-preview" className="scroll-mt-6 rounded-lg border border-slate-200 bg-white p-6">
               <h2 className="text-lg font-bold">本周目标与执行计划</h2>
               <p className="mt-3 font-semibold">{goal?.title}</p>
               <p className="mt-2 text-sm text-slate-600">{goal?.objective}</p>
@@ -4579,29 +4901,29 @@ export default function DigitalEmployeePage({
               <ul className="mt-3 list-inside list-disc space-y-1 text-sm text-slate-600">{(data.plan.successCriteria || []).map(item => <li key={item}>{item}</li>)}</ul>
             </section>}
             {!data.run && !data.plan && (
-              <section className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-dashed border-blue-200 bg-blue-50/50 px-5 py-4">
+              <section className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-dashed border-blue-200 bg-blue-50/50 px-5 py-4">
                 <div><p className="text-sm font-bold text-blue-900">{goal ? "计划正在生成" : "还没有本周计划"}</p><p className="mt-1 text-xs text-blue-700">{goal ? "计划生成后，可在这里查看任务安排并确认启动。" : "先制定本周目标，系统会生成可确认的任务计划。"}</p></div>
-                {!goal && !viewGoalId && <button
+                {!goal && !viewGoalId && <Button
                   onClick={() => { setWorkspaceView("today"); setNewGoal(true); scrollTo(goalPanelRef); }}
-                  className="rounded-xl bg-blue-700 px-4 py-2 text-xs font-bold text-white"
-                >制定本周目标</button>}
+                  className="!h-auto min-h-9 !whitespace-normal rounded-lg bg-blue-700 px-4 py-2 text-xs font-bold text-white"
+                >制定本周目标</Button>}
               </section>
             )}
             {data.plan && data.run && (
               <>
-              <section className="rounded-2xl border border-slate-200 bg-white p-3 shadow-sm">
-                <div className="mb-3 flex items-center justify-between gap-3 px-1"><div><h2 className="text-sm font-bold text-slate-950">本轮 Agent</h2><p className="mt-1 text-[11px] text-slate-500">按执行顺序排列，点击查看对应生产进度</p></div><button onClick={() => void load()} title="刷新生产现场" className="rounded-lg border border-slate-200 bg-white p-2 text-slate-500"><RefreshCcw size={15} /></button></div>
+              <section className="rounded-lg border border-slate-200 bg-white p-3">
+                <div className="mb-3 flex items-center justify-between gap-3 px-1"><div><h2 className="text-sm font-bold text-slate-950">本轮 Agent</h2><p className="mt-1 text-[11px] text-slate-500">按执行顺序排列，点击查看对应生产进度</p></div><Button onClick={() => void load()} title="刷新生产现场" className="!h-auto min-h-9 !whitespace-normal rounded-lg border border-slate-200 bg-white p-2 text-slate-500"><RefreshCcw size={15} /></Button></div>
                 <div className="flex gap-2 overflow-x-auto pb-1">
-                  {[...visibleTasks].sort((left, right) => left.sequence - right.sequence).map((item, index) => <button key={item.id} type="button" aria-pressed={selectedTask?.id === item.id} onClick={() => setSelectedTaskId(item.id)} className={`flex shrink-0 items-center gap-2 rounded-xl border px-3 py-2 text-left ${selectedTask?.id === item.id ? "border-emerald-300 bg-emerald-50" : "border-slate-200 bg-white hover:bg-slate-50"}`}><span className="flex h-6 w-6 items-center justify-center rounded-full bg-white text-[10px] font-black text-slate-500">{index + 1}</span><span><span className="block text-xs font-bold text-slate-800">{agentLabel[item.agent_role] || "业务 Agent"}</span><span className="block max-w-44 truncate text-[10px] text-slate-400">{item.title}</span></span><Badge status={item.status} /></button>)}
+                  {[...visibleTasks].sort((left, right) => left.sequence - right.sequence).map((item, index) => <Button key={item.id} htmlType="button" aria-pressed={selectedTask?.id === item.id} onClick={() => setSelectedTaskId(item.id)} className={`!h-auto min-h-9 !whitespace-normal flex shrink-0 items-center gap-2 rounded-lg border px-3 py-2 text-left ${selectedTask?.id === item.id ? "border-emerald-300 bg-emerald-50" : "border-slate-200 bg-white hover:bg-slate-50"}`}><span className="flex h-6 w-6 items-center justify-center rounded-full bg-white text-[10px] font-semibold text-slate-500">{index + 1}</span><span><span className="block text-xs font-bold text-slate-800">{agentLabel[item.agent_role] || "业务 Agent"}</span><span className="block max-w-44 truncate text-[10px] text-slate-400">{item.title}</span></span><Badge status={item.status} /></Button>)}
                 </div>
               </section>
               <div className="grid gap-5">
                 <div className="space-y-5">
                   <div id="task-production-scene" className="relative scroll-mt-6">
                     {selectedTask ? <div className="space-y-3">
-                      <section className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm" aria-label="数字员工任务轨迹"><div className="flex flex-wrap items-start justify-between gap-3"><div><p className="text-[10px] font-black tracking-[.14em] text-emerald-700">任务轨迹</p><h3 className="mt-1 text-sm font-black text-slate-950">{selectedTask.title}</h3></div><button type="button" onClick={() => dispatchDigitalEmployeeDeepLink(buildTaskDeepLink(selectedTask, selectedPlanTask, data.run!.id))} className="inline-flex items-center gap-1.5 rounded-lg bg-slate-950 px-3 py-2 text-[10px] font-black text-white">下钻业务页面 <ArrowRight size={12}/></button></div><dl className="mt-4 grid gap-2 sm:grid-cols-2 xl:grid-cols-4">{[{label:"当前节点",value:humanizeValue(selectedTask.status)},{label:"来源",value:selectedTaskSource},{label:"结果",value:selectedTaskResult},{label:"下一步",value:selectedTaskNext}].map(item=><div key={item.label} className="rounded-xl bg-slate-50 px-3 py-3"><dt className="text-[9px] font-bold text-slate-400">{item.label}</dt><dd className="mt-1 line-clamp-2 text-[11px] font-bold leading-5 text-slate-800">{item.value}</dd></div>)}</dl></section>
+                      <section className="rounded-lg border border-slate-200 bg-white p-4" aria-label="数字员工任务轨迹"><div className="flex flex-wrap items-start justify-between gap-3"><div><p className="text-[10px] font-semibold tracking-[.14em] text-emerald-700">任务轨迹</p><h3 className="mt-1 text-sm font-semibold text-slate-950">{selectedTask.title}</h3></div><Button htmlType="button" onClick={() => dispatchDigitalEmployeeDeepLink(buildTaskDeepLink(selectedTask, selectedPlanTask, data.run!.id))} className="!h-auto min-h-9 !whitespace-normal inline-flex items-center gap-1.5 rounded-lg bg-slate-950 px-3 py-2 text-[10px] font-semibold text-white">下钻业务页面 <ArrowRight size={12}/></Button></div><dl className="mt-4 grid gap-2 sm:grid-cols-2 xl:grid-cols-4">{[{label:"当前节点",value:humanizeValue(selectedTask.status)},{label:"来源",value:selectedTaskSource},{label:"结果",value:selectedTaskResult},{label:"下一步",value:selectedTaskNext}].map(item=><div key={item.label} className="rounded-lg bg-slate-50 px-3 py-3"><dt className="text-[9px] font-bold text-slate-400">{item.label}</dt><dd className="mt-1 line-clamp-2 text-[11px] font-bold leading-5 text-slate-800">{item.value}</dd></div>)}</dl></section>
                       <ProductionTaskScene runId={data.run.id} taskId={selectedTask.id} embedded />
-                    </div> : <div className="rounded-2xl border border-dashed border-slate-200 bg-white p-12 text-center text-sm text-slate-400">请选择上方 Agent 查看生产进度</div>}
+                    </div> : <div className="rounded-lg border border-dashed border-slate-200 bg-white p-12 text-center text-sm text-slate-400">请选择上方 Agent 查看生产进度</div>}
                   </div>
                 </div>
                 <aside className="space-y-5">
@@ -4626,13 +4948,13 @@ export default function DigitalEmployeePage({
                         secondary={{ label: "退回修改", disabled: Boolean(busy), onClick: () => void act("reject", () => digitalEmployeeApi.decideApproval(pendingApproval.id, "rejected", approvalNote)) }}
                         tertiary={{ label: "人工完整接管", disabled: Boolean(busy), onClick: () => void act("handoff", () => digitalEmployeeApi.handoffTask(approvalTask.id)) }}
                       >
-                      {approvalTask.task_key === "followup_batch_approval" && <div className="mt-3 max-h-80 space-y-2 overflow-auto rounded-xl border border-amber-200 bg-white p-3"><p className="text-xs font-bold text-amber-900">本次审批覆盖整个批次，请核对以下逐客草稿</p>{(data.deliveries || []).filter(card => card.kind === "客服草稿" && card.taskIds.includes(approvalTask.id)).map(card => <details key={card.id} className="rounded-lg bg-slate-50 p-3"><summary className="cursor-pointer text-xs font-bold text-slate-800">{card.subject} · {card.stage}</summary><p className="mt-2 whitespace-pre-wrap text-xs leading-6 text-slate-600">{card.artifacts.find(artifact => artifact.id === "draft")?.text || "草稿尚未就绪"}</p>{card.reason && <p className="mt-2 text-xs text-amber-700">{card.reason}</p>}</details>)}</div>}
-                      {pendingPublishingPackage && Array.isArray(pendingPublishingPackage.items) && <div className="mt-3 max-h-72 space-y-2 overflow-auto rounded-xl border border-amber-200 bg-white p-2">{(pendingPublishingPackage.items as Array<Record<string, unknown>>).map((item,index)=><div key={`${String(item.sourceProjectId)}-${String(item.platform)}-${index}`} className="rounded-lg bg-slate-50 p-3"><div className="flex items-center justify-between gap-2"><p className="text-xs font-black text-slate-900">{String(item.title||`发布项 ${index+1}`)}</p><span className="rounded-md bg-blue-50 px-2 py-1 text-[9px] font-bold text-blue-700">{contentPlatformLabel[String(item.platform) as ContentPlatform]||String(item.platform)}</span></div><dl className="mt-2 grid gap-1 text-[10px] text-slate-600"><div><dt className="inline font-bold">账号：</dt><dd className="inline">{Array.isArray(item.accountLabels)?item.accountLabels.map(String).join("、"):"未绑定"}</dd></div><div><dt className="inline font-bold">文案：</dt><dd className="inline line-clamp-2">{String(item.description||"暂无文案")}</dd></div><div><dt className="inline font-bold">成片：</dt><dd className="inline break-all">{String(item.videoPath||"缺失")}</dd></div><div><dt className="inline font-bold">时间：</dt><dd className="inline">{String(item.scheduledAt||"")}</dd></div></dl></div>)}</div>}
+                      {approvalTask.task_key === "followup_batch_approval" && <div className="mt-3 max-h-80 space-y-2 overflow-auto rounded-lg border border-amber-200 bg-white p-3"><p className="text-xs font-bold text-amber-900">本次审批覆盖整个批次，请核对以下逐客草稿</p>{(data.deliveries || []).filter(card => card.kind === "客服草稿" && card.taskIds.includes(approvalTask.id)).map(card => <details key={card.id} className="rounded-lg bg-slate-50 p-3"><summary className="cursor-pointer text-xs font-bold text-slate-800">{card.subject} · {card.stage}</summary><p className="mt-2 whitespace-pre-wrap text-xs leading-6 text-slate-600">{card.artifacts.find(artifact => artifact.id === "draft")?.text || "草稿尚未就绪"}</p>{card.reason && <p className="mt-2 text-xs text-amber-700">{card.reason}</p>}</details>)}</div>}
+                      {pendingPublishingPackage && Array.isArray(pendingPublishingPackage.items) && <div className="mt-3 max-h-72 space-y-2 overflow-auto rounded-lg border border-amber-200 bg-white p-2">{(pendingPublishingPackage.items as Array<Record<string, unknown>>).map((item,index)=><div key={`${String(item.sourceProjectId)}-${String(item.platform)}-${index}`} className="rounded-lg bg-slate-50 p-3"><div className="flex items-center justify-between gap-2"><p className="text-xs font-semibold text-slate-900">{String(item.title||`发布项 ${index+1}`)}</p><span className="rounded-md bg-blue-50 px-2 py-1 text-[9px] font-bold text-blue-700">{contentPlatformLabel[String(item.platform) as ContentPlatform]||String(item.platform)}</span></div><dl className="mt-2 grid gap-1 text-[10px] text-slate-600"><div><dt className="inline font-bold">账号：</dt><dd className="inline">{Array.isArray(item.accountLabels)?item.accountLabels.map(String).join("、"):"未绑定"}</dd></div><div><dt className="inline font-bold">文案：</dt><dd className="inline line-clamp-2">{String(item.description||"暂无文案")}</dd></div><div><dt className="inline font-bold">成片：</dt><dd className="inline break-all">{String(item.videoPath||"缺失")}</dd></div><div><dt className="inline font-bold">时间：</dt><dd className="inline">{String(item.scheduledAt||"")}</dd></div></dl></div>)}</div>}
                       </AgentDecisionCard>
                     </section>
                   )}
                   {!viewGoalId && activeHandoff && activeHandoffTask && (
-                    <section className="rounded-3xl border border-violet-200 bg-violet-50 p-5">
+                    <section className="rounded-lg border border-violet-200 bg-violet-50 p-5">
                       <div className="flex items-center gap-2 text-violet-800">
                         <Hand size={19} />
                         <h2 className="font-bold">人工接管中</h2>
@@ -4640,7 +4962,7 @@ export default function DigitalEmployeePage({
                       <p className="mt-3 text-sm font-bold">
                         {activeHandoffTask.title}
                       </p>
-                      <button
+                      <Button
                         disabled={Boolean(busy)}
                         onClick={() =>
                           void act("return", () =>
@@ -4650,52 +4972,52 @@ export default function DigitalEmployeePage({
                             ),
                           )
                         }
-                        className="mt-4 w-full rounded-xl bg-violet-700 px-3 py-2.5 text-xs font-bold text-white"
+                        className="!h-auto min-h-9 !whitespace-normal mt-4 w-full rounded-lg bg-violet-700 px-3 py-2.5 text-xs font-bold text-white"
                       >
                         交还数字员工
-                      </button>
+                      </Button>
                     </section>
                   )}
                   {data.run && !terminal && !viewGoalId && (
-                    <section className="rounded-3xl border border-slate-200 bg-white p-5">
+                    <section className="rounded-lg border border-slate-200 bg-white p-5">
                       <div className="flex items-center gap-2">
                         <Clock3 size={18} />
                         <h2 className="font-bold">运行控制</h2>
                       </div>
                       <div className="mt-4 grid grid-cols-2 gap-2">
                         {data.run.status === "paused" ? (
-                          <button
+                          <Button
                             onClick={() =>
                               void act("resume", () =>
                                 digitalEmployeeApi.resumeRun(data.run!.id),
                               )
                             }
-                            className="rounded-xl bg-blue-700 px-3 py-2.5 text-xs font-bold text-white"
+                            className="!h-auto min-h-9 !whitespace-normal rounded-lg bg-blue-700 px-3 py-2.5 text-xs font-bold text-white"
                           >
                             恢复
-                          </button>
+                          </Button>
                         ) : (
-                          <button
+                          <Button
                             onClick={() =>
                               void act("pause", () =>
                                 digitalEmployeeApi.pauseRun(data.run!.id),
                               )
                             }
-                            className="rounded-xl border border-slate-200 px-3 py-2.5 text-xs font-bold"
+                            className="!h-auto min-h-9 !whitespace-normal rounded-lg border border-slate-200 px-3 py-2.5 text-xs font-bold"
                           >
                             暂停
-                          </button>
+                          </Button>
                         )}
-                        <button
+                        <Button
                           onClick={() =>
                             void act("cancel", () =>
                               digitalEmployeeApi.cancelRun(data.run!.id),
                             )
                           }
-                          className="rounded-xl border border-red-200 px-3 py-2.5 text-xs font-bold text-red-700"
+                          className="!h-auto min-h-9 !whitespace-normal rounded-lg border border-red-200 px-3 py-2.5 text-xs font-bold text-red-700"
                         >
                           取消
-                        </button>
+                        </Button>
                       </div>
                     </section>
                   )}
@@ -4746,19 +5068,19 @@ export default function DigitalEmployeePage({
               onNavigate={(page) => openBusiness(page)}
               onSave={(config) => void saveConfig(config)}
             />
-            <section className="rounded-3xl border border-slate-200 bg-white p-5">
+            <section className="rounded-lg border border-slate-200 bg-white p-5">
               <div className="flex items-center gap-2">
                 <ShieldCheck size={19} className="text-amber-600" />
-                <h2 className="font-black text-slate-950">规则生效说明</h2>
+                <h2 className="font-semibold text-slate-950">规则生效说明</h2>
               </div>
               <div className="mt-4 grid gap-3 md:grid-cols-3">
-                <div className="rounded-2xl bg-slate-50 p-4">
+                <div className="rounded-lg bg-slate-50 p-4">
                   <p className="text-xs font-bold text-slate-800">仅本次纠偏</p>
                   <p className="mt-1 text-[11px] text-slate-500">
                     只影响当前运行，可选择重跑下游。
                   </p>
                 </div>
-                <div className="rounded-2xl bg-violet-50 p-4">
+                <div className="rounded-lg bg-violet-50 p-4">
                   <p className="text-xs font-bold text-violet-800">
                     长期规则候选
                   </p>
@@ -4766,7 +5088,7 @@ export default function DigitalEmployeePage({
                     先记录候选，审核通过前不会改变自动化规则。
                   </p>
                 </div>
-                <div className="rounded-2xl bg-amber-50 p-4">
+                <div className="rounded-lg bg-amber-50 p-4">
                   <p className="text-xs font-bold text-amber-800">
                     外部动作红线
                   </p>

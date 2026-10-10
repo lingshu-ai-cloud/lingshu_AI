@@ -337,6 +337,6 @@ test('social program routes expose the weekly operating package lifecycle', asyn
   assert.deepEqual(sanitized.item.effects, [{ resourceType: 'production_job', resourceId: 'job-trace', outcome: 'unknown_requires_reconciliation', receiptCount: 1 }]);
   assert.equal(sanitized.item.lastError, '部分清理未完成，请重试撤回以继续补偿。');
   assert.ok(!JSON.stringify(sanitized).includes('secret-provider'), 'summary excludes raw receipts, reasons and provider error secrets');
-  assert.deepEqual(Object.keys(sanitized.item).sort(), ['boundary', 'effects', 'lastError', 'status', 'updatedAt']);
+  assert.deepEqual(Object.keys(sanitized.item).sort(), ['boundary', 'currentSettlements', 'effects', 'lastError', 'status', 'updatedAt']);
 
 });

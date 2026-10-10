@@ -51,6 +51,8 @@ assert.match(plans[0]?.planningEvidence?.referenceThumbnailUrl || '', /viral-1\.
 assert.deepEqual(plans[0]?.benchmarkAnalysis?.structure.map(step => step.materialType), ['talking_head', 'product'], 'normalized benchmark structure must be frozen into the weekly plan');
 assert.match(plans[0]?.benchmarkAnalysis?.shots[0]?.firstFrameRef || '', /shot\/1\/first-frame/, 'weekly preview must retain the normalized first-frame route');
 assert.ok(plans.every(plan => plan.publication?.title && plan.publication.caption && plan.publication.tags.length), 'each planned video must carry future title, caption and tags into production');
+assert.ok(plans.every(plan => /[⚡✨💡🎯]/u.test(plan.publication?.title || '')), 'publication titles must start with a platform-appropriate visual hook');
+assert.ok(plans.every(plan => (plan.publication?.caption || '').includes('\n')), 'publication copy must separate the hook from the supporting message');
 assert.ok(plans.every(plan => Number(plan.estimatedCost) > 0), 'each video must carry the production stack highest-tier estimate');
 assert.equal(enriched.directorPlan?.productionBudget, plans.reduce((sum, plan) => sum + Number(plan.estimatedCost || 0), 0), 'weekly budget must equal the sum of per-video estimates');
 assert.equal(enriched.operatingContext?.budget.productionCny, enriched.directorPlan?.productionBudget, 'weekly goal and account allocation must read the same production budget');
@@ -70,6 +72,19 @@ const blankProductPack = recommendPackage(goal, normalizeDigitalEmployeeConfig({
 const productBound = bindDefaultProductsToPackage(blankProductPack, [{ id: 'product-1', name: '默认检测设备', materialIds: ['asset-1'] }]);
 const productBoundPlans = productBound.tasks.find(task => task.templateId === 'production')?.videoPlans || [];
 assert.ok(productBoundPlans.length && productBoundPlans.every(plan => plan.productId === 'product-1' && plan.productName === '默认检测设备' && plan.materialIds[0] === 'asset-1'), 'backend must freeze the first confirmed product ID instead of silently blocking a blank selector');
+
+const diversifiedPack = bindDefaultProductsToPackage(recommendPackage(goal, config), [
+  { id: 'product-1', name: '检测设备 A', materialIds: ['asset-a'] },
+  { id: 'product-2', name: '检测设备 B', materialIds: ['asset-b'] },
+]);
+const diversifiedPlans = diversifiedPack.tasks.find(task => task.templateId === 'production')?.videoPlans || [];
+const familyProducts = new Map<string, string>();
+for (const plan of diversifiedPlans) {
+  const familyId = plan.contentFamilyId || plan.masterContentId || plan.contentId;
+  if (familyId && familyProducts.has(familyId)) assert.equal(plan.productName, familyProducts.get(familyId), 'platform versions of the same content family must keep one product');
+  else if (familyId) familyProducts.set(familyId, plan.productName);
+}
+assert.ok(new Set(familyProducts.values()).size > 1, 'separate content families must rotate through confirmed enterprise products instead of all using the first item');
 
 const fourPlatformConfig = normalizeDigitalEmployeeConfig({
   ...config,

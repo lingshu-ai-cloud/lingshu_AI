@@ -197,6 +197,25 @@ try {
   )));
   assert.equal(missingBlob.status, 'blocked');
 
+  // Matching bytes alone are insufficient: an isolated repository without the
+  // pinned introduction commit must not inherit the reviewed correction.
+  const queueFixture = createFixture();
+  const queueName = '1791072008_create_content_execution_queue.js';
+  const queueBytes = fs.readFileSync(new URL('../../pb_migrations/' + queueName, import.meta.url));
+  const queueHash = createHash('sha256').update(queueBytes).digest('hex');
+  assert.equal(queueHash, '2aed450a4c83a5f6133817f47eef9c1f08ecde5e65f22427aa7480c2c96f67f8');
+  fs.writeFileSync(migrationPath(queueFixture, queueName), queueBytes);
+  writeManifest(queueFixture, { [queueName]: '17082ecdb5a6228182507d1d2a01f55c6aac48922cd376c489fecce8c8fb2f07' });
+  const queueBaseline = commit(queueFixture, 'Historical incorrect checksum metadata');
+  writeManifest(queueFixture, { [queueName]: queueHash });
+  assert.ok(checkDigitalEmployeeMigrations(queueFixture, { baselineRef: queueBaseline }).blockers.some(item => (
+    item.code === 'immutable_manifest_conflict' && item.path === `pb_migrations/${queueName}`
+  )));
+  fs.appendFileSync(migrationPath(queueFixture, queueName), '\n// unexpected schema edit\n');
+  assert.ok(checkDigitalEmployeeMigrations(queueFixture, { baselineRef: queueBaseline }).blockers.some(item => item.code === 'checksum_mismatch'));
+  writeManifest(queueFixture, { [queueName]: checksum(fs.readFileSync(migrationPath(queueFixture, queueName), 'utf8')) });
+  assert.ok(checkDigitalEmployeeMigrations(queueFixture, { baselineRef: queueBaseline }).blockers.some(item => item.code === 'immutable_manifest_conflict'));
+
   console.log('PocketBase migration checksum guard tests passed (isolated Git fixtures; not PocketBase upgrade tests)');
 } finally {
   for (const fixture of fixtures) fs.rmSync(fixture, { recursive: true, force: true });

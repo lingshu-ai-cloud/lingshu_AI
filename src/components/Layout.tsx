@@ -1,4 +1,5 @@
 import { type ReactNode, useEffect, useRef, useState } from 'react';
+import { Menu } from 'antd';
 import { motion, AnimatePresence } from 'motion/react';
 import {
   ChevronRight, LogOut, Loader2, RefreshCcw, X, ShieldCheck, ListTree, PanelLeftClose, PanelLeftOpen, Coins, Settings,
@@ -10,11 +11,13 @@ import { authApi, exitSupportSession, type AuthSession, type OrganizationRole } 
 import RightPanel from './RightPanel';
 import DemoGuide from './DemoGuide';
 import AccountSettingsModal from './AccountSettingsModal';
-import AgentNotificationBell from './AgentNotificationBell';
 import { useDismissibleLayer } from '../hooks/useDismissibleLayer';
 import { useModalFocus } from '../hooks/useModalFocus';
 import ActionFeedbackHost from './ui/ActionFeedbackHost';
 import DuotoneGlyph from './ui/DuotoneGlyph';
+import LsPageTransition from './ui/LsPageTransition';
+import { lsMotion } from '../lib/designTokens';
+import { getScrollBehavior, usePrefersReducedMotion } from '../lib/usePrefersReducedMotion';
 import { PLATFORM_ADS_SURFACE_ENABLED } from '../config/productSurfaceFlags';
 
 interface NavSection {
@@ -139,27 +142,21 @@ function NavItem({
   collapsed?: boolean;
 }) {
   return (
-    <button
-      type="button"
-      onClick={onClick}
-      onPointerEnter={onPrefetch}
-      onFocus={onPrefetch}
-      title={collapsed ? item.label : undefined}
-      aria-label={collapsed ? item.label : undefined}
-      aria-current={active ? 'page' : undefined}
-      data-demo-target={item.id}
-      className={`relative flex w-full items-center border-l-2 py-1 text-sm font-medium transition-colors ${collapsed ? 'justify-center px-2' : 'gap-2.5 px-3'} ${active ? 'border-accent bg-[#edf4ef]' : 'border-transparent text-text-secondary hover:bg-[#f1f5f2] hover:text-text-primary'}`}
-      style={
-        active
-          ? { color: 'var(--color-text-primary)' }
-          : undefined
-      }
-    >
-      <span aria-hidden="true" className="relative flex-shrink-0" style={{ color: active ? 'var(--color-accent)' : undefined }}>
-        {item.icon}
-      </span>
-      {!collapsed && <span className="relative flex-1 text-left">{item.label}</span>}
-    </button>
+    <div onPointerEnter={onPrefetch} onFocus={onPrefetch}>
+      <Menu
+        className="ls-nav-menu"
+        mode="inline"
+        inlineCollapsed={collapsed}
+        selectedKeys={active ? [item.id] : []}
+        onClick={onClick}
+        items={[{
+          key: item.id,
+          icon: <span className="inline-flex items-center justify-center">{item.icon}</span>,
+          title: collapsed ? item.label : '',
+          label: <span data-demo-target={item.id} aria-current={active ? 'page' : undefined}>{item.label}</span>,
+        }]}
+      />
+    </div>
   );
 }
 
@@ -196,7 +193,7 @@ function AdminPageGuide({ page }: { page: Page }) {
   if (!items?.length) return null;
 
   const jumpTo = (target: string) => {
-    document.getElementById(target)?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    document.getElementById(target)?.scrollIntoView({ behavior: getScrollBehavior(), block: 'start' });
   };
 
   return (
@@ -223,6 +220,11 @@ function AdminPageGuide({ page }: { page: Page }) {
 }
 
 export default function Layout({ page, onNavigate, onPrefetchPage, conversation, children, session, onLogout, suppressRightPanel, onAction, onSessionUpdate, demoGuideActive, onDemoGuideShown, starterMode = false }: LayoutProps) {
+  const reducedMotion = usePrefersReducedMotion();
+  const spatialTransition = reducedMotion ? { duration: 0 } : {
+    ...lsMotion.spring.standard,
+    opacity: { duration: lsMotion.duration.enter / 1000, ease: lsMotion.ease.enter },
+  };
   const isInConversation = conversation !== null && !suppressRightPanel;
   const [quotaOpen, setQuotaOpen] = useState(false);
   const quotaAreaRef = useRef<HTMLDivElement>(null);
@@ -241,10 +243,11 @@ export default function Layout({ page, onNavigate, onPrefetchPage, conversation,
     try { return localStorage.getItem('lingshu:sidebar-collapsed') === 'true'; } catch { return false; }
   });
   const [mobileViewport, setMobileViewport] = useState(() => (
-    typeof window !== 'undefined' && window.matchMedia('(max-width: 760px)').matches
+    typeof window !== 'undefined' && window.matchMedia('(max-width: 767px)').matches
   ));
   const [mobileSidebarExpanded, setMobileSidebarExpanded] = useState(false);
   const sidebarCollapsed = mobileViewport ? !mobileSidebarExpanded : desktopSidebarCollapsed;
+  const sidebarWidth = sidebarCollapsed ? (mobileViewport ? 56 : 60) : 176;
   const sessionScope = session?.demo?.guideScope || session?.demo?.expiresAt || null;
   const liveSessionScope = liveSession?.demo?.guideScope || liveSession?.demo?.expiresAt || null;
   const sessionIdentityScope = `${session?.user?.id || ''}:${session?.tenant?.id || ''}:${session?.supportAccess?.requestId || ''}:${sessionScope || ''}`;
@@ -280,7 +283,7 @@ export default function Layout({ page, onNavigate, onPrefetchPage, conversation,
     if (!isInConversation) setMobileRightPanelOpen(false);
   }, [isInConversation]);
   useEffect(() => {
-    const media = window.matchMedia('(max-width: 760px)');
+    const media = window.matchMedia('(max-width: 767px)');
     const syncViewport = () => {
       setMobileViewport(media.matches);
       setMobileSidebarExpanded(false);
@@ -368,23 +371,23 @@ export default function Layout({ page, onNavigate, onPrefetchPage, conversation,
   };
 
   return (
-    <div className="app-shell flex h-[100dvh] min-h-0 overflow-hidden">
+    <div className="app-shell flex h-[100dvh] min-h-0 min-w-0 overflow-hidden">
 
       <ActionFeedbackHost />
 
       {/* ── Left sidebar ─────────────────────────────── */}
       {page !== 'agentMonitor' && <motion.aside
         initial={false}
-        animate={{ width: sidebarCollapsed ? 64 : 220 }}
-        transition={{ type: 'spring', damping: 30, stiffness: 320 }}
+        animate={{ width: sidebarWidth, minWidth: sidebarWidth, maxWidth: sidebarWidth }}
+        transition={spatialTransition}
         className="app-sidebar relative z-40 flex flex-shrink-0 flex-col overflow-visible border-r border-border"
       >
         {/* Logo */}
-        <div className={`relative h-14 flex items-center flex-shrink-0 ${sidebarCollapsed ? 'justify-center px-2' : 'px-4 gap-2.5'}`}>
+        <div className={`relative h-12 flex items-center flex-shrink-0 ${sidebarCollapsed ? 'justify-center px-2' : 'px-3 gap-2'}`}>
           {!sidebarCollapsed && (starterMode
             ? <span aria-hidden="true" className="flex h-7 w-7 flex-shrink-0 items-center justify-center rounded-lg bg-accent text-xs font-bold text-white">{initial}</span>
             : <img src="/brand-logo.png?v=20260921" alt="灵枢 AI" className="w-7 h-7 object-contain flex-shrink-0" />)}
-          {!sidebarCollapsed && <span className="min-w-0 flex-1 truncate text-sm font-bold text-text-primary font-display">{starterMode ? tenantName : '灵枢 AI'}</span>}
+          {!sidebarCollapsed && <span className="min-w-0 flex-1 truncate text-[15px] font-bold text-text-primary font-display">{starterMode ? tenantName : '灵枢 AI'}</span>}
           <button
             type="button"
             onClick={toggleSidebar}
@@ -396,7 +399,7 @@ export default function Layout({ page, onNavigate, onPrefetchPage, conversation,
           </button>
         </div>
 
-        {showDemoGuide && !sidebarCollapsed && (
+        {showDemoGuide && (
           <DemoGuide
             key={guideScope}
             page={page}
@@ -407,7 +410,7 @@ export default function Layout({ page, onNavigate, onPrefetchPage, conversation,
         )}
 
         {/* Home nav */}
-        <nav aria-label="主导航" className="px-3 pb-1">
+        <nav aria-label="主导航" className={`${sidebarCollapsed ? 'px-2' : 'px-3'} pb-1`}>
           <NavItem
             item={homeNavItem}
             active={page === homeNavItem.id}
@@ -421,8 +424,8 @@ export default function Layout({ page, onNavigate, onPrefetchPage, conversation,
           {navSections.map((section, index) => (
             <div key={section.label}>
               {index > 0 && <div className={`mx-4 border-t border-border ${sidebarCollapsed ? 'my-1' : 'my-1.5'}`} />}
-              <nav aria-label={section.label} className="px-3">
-                {!sidebarCollapsed && <p className="px-3 pb-1 pt-0.5 text-[10px] font-semibold text-text-muted uppercase tracking-wider">{section.label}</p>}
+              <nav aria-label={section.label} className={sidebarCollapsed ? 'px-2' : 'px-3'}>
+                {!sidebarCollapsed && <p className="px-3 pb-1 pt-0.5 ls-type-body-small font-semibold text-text-muted uppercase tracking-wider">{section.label}</p>}
                 {section.items.map(item => (
                   <NavItem
                     key={item.id}
@@ -445,10 +448,9 @@ export default function Layout({ page, onNavigate, onPrefetchPage, conversation,
           <AnimatePresence>
             {quotaOpen && (
               <motion.div
-                initial={{ opacity: 0, y: 8, scale: 0.98 }}
-                animate={{ opacity: 1, y: 0, scale: 1 }}
-                exit={{ opacity: 0, y: 8, scale: 0.98 }}
-                transition={{ duration: 0.16 }}
+                initial={{ opacity: 0 }}
+                animate={{ opacity: 1 }}
+                exit={{ opacity: 0 }}
                 role="dialog"
                 aria-label="Token 使用"
                 className="absolute left-3 bottom-[68px] z-50 max-h-[calc(100dvh-96px)] w-[min(324px,calc(100vw-88px))] overflow-y-auto rounded-2xl border border-border bg-white p-3 shadow-xl"
@@ -456,7 +458,7 @@ export default function Layout({ page, onNavigate, onPrefetchPage, conversation,
                 <div className="flex items-start justify-between gap-2 mb-3">
                   <div>
                     <p className="text-xs font-bold text-text-primary">Token 使用</p>
-                    <p className="text-[10px] text-text-muted mt-0.5">
+                    <p className="ls-type-body-small text-text-muted mt-0.5">
                       {quotaUpdatedAt ? `${relTime(quotaUpdatedAt)}刷新` : '打开时自动刷新'}
                     </p>
                   </div>
@@ -475,8 +477,8 @@ export default function Layout({ page, onNavigate, onPrefetchPage, conversation,
                 {quotaError ? (
                   <div className="rounded-xl border border-red-200 bg-red-50 px-3 py-3">
                     <p className="text-xs font-semibold text-red-700">额度读取失败</p>
-                    <p className="mt-1 text-[10px] leading-relaxed text-red-600">{quotaError}</p>
-                    <button type="button" onClick={() => void refreshQuota()} disabled={quotaLoading} className="mt-2 text-[10px] font-bold text-red-700 underline disabled:opacity-60">重新读取</button>
+                    <p className="mt-1 ls-type-body-small leading-relaxed text-red-600">{quotaError}</p>
+                    <button type="button" onClick={() => void refreshQuota()} disabled={quotaLoading} className="mt-2 ls-type-body-small font-bold text-red-700 underline disabled:opacity-60">重新读取</button>
                   </div>
                 ) : demo && isTrialAccount ? (
                   <div className="space-y-3">
@@ -491,7 +493,7 @@ export default function Layout({ page, onNavigate, onPrefetchPage, conversation,
                           style={{ width: `${pct(demo.usage.tokens, demo.limits.tokenDaily)}%` }}
                         />
                       </div>
-                      <div className="mt-2 grid grid-cols-2 gap-2 text-[10px]">
+                      <div className="mt-2 grid grid-cols-2 gap-2 ls-type-body-small">
                         <div>
                           <p className="text-text-muted">今日已用</p>
                           <p className="font-bold text-text-primary">{formatTokens(demo.usage.tokens)} / {formatTokens(demo.limits.tokenDaily)}</p>
@@ -505,7 +507,7 @@ export default function Layout({ page, onNavigate, onPrefetchPage, conversation,
 
                     <div className="rounded-xl bg-white border border-border px-3 py-2.5">
                       <p className="text-[11px] font-bold text-text-primary mb-2">建议可用量</p>
-                      <div className="space-y-1.5 text-[10px] text-text-secondary">
+                      <div className="space-y-1.5 ls-type-body-small text-text-secondary">
                         <div className="flex items-center justify-between gap-3">
                           <span>顾问对话</span>
                           <span className="font-bold text-text-primary">约 {suggestedChats} 轮</span>
@@ -544,15 +546,15 @@ export default function Layout({ page, onNavigate, onPrefetchPage, conversation,
                         ['视频生成', demo.totalRemaining?.videoGeneration ?? demo.remaining.videoGeneration ?? 0, demo.limits.videoGenerationDaily],
                       ].map(([label, left, limit]) => (
                         <div key={String(label)} className="rounded-xl border border-border bg-white px-2.5 py-2">
-                          <p className="text-[10px] text-text-muted">{label}</p>
-                          <p className="mt-0.5 text-sm font-bold text-text-primary">{left}<span className="text-[10px] font-medium text-text-muted"> / {limit}</span></p>
+                          <p className="ls-type-body-small text-text-muted">{label}</p>
+                          <p className="mt-0.5 text-sm font-bold text-text-primary">{left}<span className="ls-type-body-small font-medium text-text-muted"> / {limit}</span></p>
                         </div>
                       ))}
                     </div>
 
                     <div className="flex items-center justify-between rounded-xl bg-accent-glow px-3 py-2">
-                      <span className="text-[10px] font-semibold text-text-secondary">试用状态</span>
-                      <span className={`text-[10px] font-bold ${demo.expired ? 'text-red-600' : 'text-accent'}`}>
+                      <span className="ls-type-body-small font-semibold text-text-secondary">试用状态</span>
+                      <span className={`ls-type-body-small font-bold ${demo.expired ? 'text-red-600' : 'text-accent'}`}>
                         {demo.expired ? '已到期' : `剩余 ${demo.daysRemaining ?? '-'} 天`}
                       </span>
                     </div>
@@ -560,7 +562,7 @@ export default function Layout({ page, onNavigate, onPrefetchPage, conversation,
                 ) : (
                   <div className="rounded-xl bg-surface-2 border border-border px-3 py-3">
                     <p className="text-xs font-semibold text-text-primary">当前账号无试用 Token 配额</p>
-                    <p className="text-[10px] text-text-muted mt-1">正式订阅账号不展示测试版额度；如需核对用量，请联系管理员。</p>
+                    <p className="ls-type-body-small text-text-muted mt-1">正式订阅账号不展示测试版额度；如需核对用量，请联系管理员。</p>
                   </div>
                 )}
               </motion.div>
@@ -568,17 +570,17 @@ export default function Layout({ page, onNavigate, onPrefetchPage, conversation,
           </AnimatePresence>
           <AnimatePresence>
             {accountMenuOpen && (
-              <motion.div initial={{ opacity: 0, y: 8, scale: .98 }} animate={{ opacity: 1, y: 0, scale: 1 }} exit={{ opacity: 0, y: 8, scale: .98 }} className="absolute bottom-[68px] left-3 z-50 w-[260px] rounded-2xl border border-border bg-white p-3 shadow-xl">
+              <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="absolute bottom-[68px] left-3 z-50 w-[260px] rounded-2xl border border-border bg-white p-3 shadow-xl">
                 <div className="flex items-center gap-3 border-b border-border px-2 pb-3">
                   <span className={`flex h-10 w-10 items-center justify-center rounded-full text-sm font-bold ${isJiangZheTestAccount ? 'border border-border bg-surface-2 text-transparent' : 'bg-accent text-white'}`}>{isJiangZheTestAccount ? '' : initial}</span>
-                  <div className="min-w-0"><p className="truncate text-sm font-bold text-text-primary">{accountDisplayName}</p><p className="truncate text-[10px] text-text-muted">{activeSession?.user?.email}</p></div>
+                  <div className="min-w-0"><p className="truncate text-sm font-bold text-text-primary">{accountDisplayName}</p><p className="truncate ls-type-body-small text-text-muted">{activeSession?.user?.email}</p></div>
                 </div>
                 <div className="pt-2">
                   {!starterMode && <button onClick={openQuota} className="flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-sm font-semibold text-text-secondary hover:bg-surface-2"><Coins size={17} /><span className="flex-1 text-left">积分管理</span><ChevronRight size={14} className="text-text-muted" /></button>}
                   <button onClick={openDigitalEmployeeGuide} className="flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-sm font-semibold text-text-secondary hover:bg-surface-2"><Sparkles size={17} /><span className="flex-1 text-left">新手引导</span><ChevronRight size={14} className="text-text-muted" /></button>
-                  <button onClick={() => { setAccountMenuOpen(false); setAccountSettingsOpen(true); }} className="flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-sm font-semibold text-text-secondary hover:bg-surface-2"><Settings size={17} /><span className="flex-1 text-left">账号设置</span><ChevronRight size={14} className="text-text-muted" /></button>
+                  <button onClick={() => { setAccountMenuOpen(false); setMobileRightPanelOpen(false); setAccountSettingsOpen(true); }} className="flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-sm font-semibold text-text-secondary hover:bg-surface-2"><Settings size={17} /><span className="flex-1 text-left">账号设置</span><ChevronRight size={14} className="text-text-muted" /></button>
                   {onLogout && <button onClick={onLogout} className="flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-sm font-semibold text-text-secondary hover:bg-red-50 hover:text-red-600"><LogOut size={17} /><span className="flex-1 text-left">退出登录</span></button>}
-                  <div className="mt-2 flex flex-wrap gap-x-3 gap-y-1 border-t border-border px-3 pt-2 text-[10px] font-semibold text-text-muted">
+                  <div className="mt-2 flex flex-wrap gap-x-3 gap-y-1 border-t border-border px-3 pt-2 ls-type-body-small font-semibold text-text-muted">
                     <a href="/privacy" target="_blank" rel="noreferrer" className="hover:text-accent">隐私政策</a>
                     <a href="/terms" target="_blank" rel="noreferrer" className="hover:text-accent">用户协议</a>
                     <a href="/data-deletion" target="_blank" rel="noreferrer" className="hover:text-accent">数据删除</a>
@@ -600,7 +602,7 @@ export default function Layout({ page, onNavigate, onPrefetchPage, conversation,
             </button>
             {!sidebarCollapsed && <button onClick={() => { setQuotaOpen(false); setAccountMenuOpen(value => !value); }} aria-expanded={accountMenuOpen} aria-haspopup="menu" className="flex-1 min-w-0 text-left rounded-lg -my-1 py-1 hover:bg-black/5 transition-colors">
               <p className="text-xs font-semibold text-text-primary truncate">{tenantName}</p>
-              <p className="text-[10px] text-text-muted truncate">
+              <p className="ls-type-body-small text-text-muted truncate">
                 {starterMode ? '198 标准工作区' : demo && isTrialAccount ? `Token 剩余 ${tokenLabel}` : (SUB_LABEL[subStatus] ?? subStatus)}
               </p>
             </button>}
@@ -617,27 +619,21 @@ export default function Layout({ page, onNavigate, onPrefetchPage, conversation,
       />
 
       {/* ── Main content ─────────────────────────────── */}
-      <main className="app-main relative flex min-w-0 flex-1 flex-col overflow-hidden">
+      <main className="app-main relative flex min-w-0 flex-1 basis-0 flex-col overflow-hidden">
         {supportAccess && (
-          <div className="flex h-10 shrink-0 items-center justify-between gap-4 border-b border-emerald-200 bg-emerald-50 px-4 text-xs">
-            <div className="flex min-w-0 items-center gap-2 text-emerald-950">
-              <ShieldCheck size={14} className="shrink-0" />
+          <div className="flex h-10 shrink-0 items-center justify-between gap-4 border-b border-border bg-white px-4 text-xs">
+            <div className="flex min-w-0 items-center gap-2 text-text-primary">
+              <ShieldCheck size={14} className="shrink-0 text-accent" />
               <span className="truncate font-semibold">正在协助：{supportAccess.tenantName}</span>
-              <span className="hidden text-emerald-700 sm:inline">持续协助，直至手动退出</span>
+              <span className="hidden text-text-secondary sm:inline">持续协助，直至手动退出</span>
             </div>
-            <button type="button" onClick={leaveSupportSession} className="inline-flex shrink-0 items-center gap-1.5 font-semibold text-emerald-800 hover:text-emerald-950">
+            <button type="button" onClick={leaveSupportSession} className="inline-flex shrink-0 items-center gap-1.5 font-semibold text-accent hover:text-accent-dim">
               <LogOut size={13} />退出协助
             </button>
           </div>
         )}
-        <div data-app-content-stack className="flex min-h-0 flex-1 flex-col overflow-hidden">{children}</div>
+        <LsPageTransition page={page}>{children}</LsPageTransition>
       </main>
-
-      {activeSession && (
-        <aside aria-label="全局消息" className="relative z-50 flex w-12 shrink-0 items-start justify-center border-l border-border bg-white pt-2">
-          <AgentNotificationBell key={`${activeSession.user.tenantId}:${activeSession.user.id}`} onNavigate={navigateFromSidebar} />
-        </aside>
-      )}
 
       {/* ── Right panel (only in conversation mode) ── */}
       {isInConversation && !mobileRightPanelOpen && (
@@ -663,9 +659,9 @@ export default function Layout({ page, onNavigate, onPrefetchPage, conversation,
             initial={{ x: '100%', opacity: 0 }}
             animate={{ x: 0, opacity: 1 }}
             exit={{ x: '100%', opacity: 0 }}
-            transition={{ type: 'spring', damping: 30, stiffness: 300 }}
+            transition={spatialTransition}
             className="fixed inset-y-0 right-0 z-50 flex flex-col overflow-hidden bg-white md:hidden"
-            style={{ left: page === 'agentMonitor' ? 0 : sidebarCollapsed ? 64 : 220 }}
+            style={{ left: page === 'agentMonitor' ? 0 : sidebarWidth }}
             role="dialog"
             aria-modal="true"
             aria-labelledby="conversation-context-panel-mobile-title"
@@ -695,7 +691,7 @@ export default function Layout({ page, onNavigate, onPrefetchPage, conversation,
             initial={{ width: 0, opacity: 0 }}
             animate={{ width: 272, opacity: 1 }}
             exit={{ width: 0, opacity: 0 }}
-            transition={{ type: 'spring', damping: 30, stiffness: 300 }}
+            transition={spatialTransition}
             className="hidden flex-shrink-0 flex-col overflow-hidden bg-white md:flex"
             style={{ boxShadow: '-6px 0 24px rgba(0,0,0,0.06)' }}
           >

@@ -8,6 +8,7 @@ import CrmDataBoard from './CrmDataBoard';
 import type { AgentAction, Page } from '../App';
 import { authHeader } from '../lib/auth';
 import { CHART_CURSOR_STYLE, CHART_TOOLTIP_STYLE } from '../lib/uiStyles';
+import { chartPalette } from './ui/LsDataChart';
 import { useCustomers } from '../hooks/useCustomers';
 import {
   createEnterpriseHomepageDemo,
@@ -439,7 +440,7 @@ export default function StrategyDataBoard({
           <section className="home-board home-overview-panel mx-auto max-w-[1440px]">
             {enterpriseDemo && (
               <div data-testid="enterprise-homepage-demo-notice" className="mb-4 border-l-4 border-amber-400 bg-amber-50 px-4 py-3 text-xs text-amber-950">
-                <p className="font-bold">企业资料演示数据 · {enterpriseDemo.companyName}</p>
+                <p className="font-bold">企业资料参考预览 · {enterpriseDemo.companyName}</p>
                 <p className="mt-1 leading-5">{enterpriseDemo.notice}</p>
                 {enterpriseDemo.warnings.map(warning => <p key={warning} className="mt-1 font-semibold leading-5">资料提醒：{warning}</p>)}
               </div>
@@ -450,7 +451,7 @@ export default function StrategyDataBoard({
                 <button type="button" onClick={() => { saveBusinessPageContext('production', tab); onNavigate?.('digitalEmployees'); }} className="mt-2 inline-flex items-center border-b border-accent/30 pb-0.5 text-xs font-semibold text-accent transition-colors hover:border-accent hover:text-accent-dim">{tab === 'traffic' ? '查看内容生产与发布' : '查看客户跟进执行'} →</button>
                 <p className="mt-1 text-[11px] text-text-muted">从内容曝光到成交推进，先看趋势，再看渠道和待办。</p>
               </div>
-              <button type="button" onClick={() => openWorkspaceView('accountManagement', 'accounts')} className="rounded-md border border-[#bdd8c7] bg-[#eff7f1] px-3 py-2 text-[11px] font-semibold text-accent transition hover:border-[#9fc8af] hover:bg-[#e6f2e9]" title="前往社媒运营 · 账号管理">
+              <button type="button" onClick={() => openWorkspaceView('accountManagement', 'accounts')} className="rounded-md border border-blue-200 bg-blue-50 px-3 py-2 text-[11px] font-semibold text-accent transition hover:border-blue-300 hover:bg-blue-100" title="前往社媒运营 · 账号管理">
                 {enterpriseDemo ? '演示账号' : '已接入账号'} {exposure.accountCount} · 查看动态 →
               </button>
             </div>
@@ -464,7 +465,7 @@ export default function StrategyDataBoard({
                   onClick={() => openMetric(item.id)}
                   title={item.id === 'exposure' ? '前往我的社媒 · 账号动态' : '前往我的客户查看明细'}
                   data-active={active}
-                  className="home-metric p-4 text-left transition-colors hover:bg-[#f7faf7] focus:outline-none focus:ring-2 focus:ring-inset focus:ring-accent/20"
+                  className="home-metric p-4 text-left transition-colors hover:bg-zinc-50 focus:outline-none focus:ring-2 focus:ring-inset focus:ring-accent/20"
                 >
                   <div className="flex items-center gap-2">
                     {item.icon}
@@ -490,12 +491,12 @@ export default function StrategyDataBoard({
                   <div className="h-[220px] w-full">
                     <ResponsiveContainer width="100%" height="100%">
                       <AreaChart data={acquisitionTrend} margin={{ top: 8, right: 8, left: 0, bottom: 0 }}>
-                        <defs><linearGradient id="homeExposureFill" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stopColor="#169b62" stopOpacity={0.22}/><stop offset="100%" stopColor="#169b62" stopOpacity={0.02}/></linearGradient></defs>
-                        <CartesianGrid strokeDasharray="3 3" stroke="#e5e7eb" vertical={false}/>
-                        <XAxis dataKey="day" tick={{ fontSize: 10, fill: '#94a3b8' }} axisLine={false} tickLine={false}/>
-                        <YAxis tick={{ fontSize: 10, fill: '#94a3b8' }} axisLine={false} tickLine={false} tickFormatter={value => `${Math.round(Number(value) / 1000)}k`}/>
+                        <defs><linearGradient id="homeExposureFill" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stopColor={chartPalette[0]} stopOpacity={0.22}/><stop offset="100%" stopColor={chartPalette[0]} stopOpacity={0.02}/></linearGradient></defs>
+                        <CartesianGrid strokeDasharray="3 3" stroke="#e4e4e7" vertical={false}/>
+                        <XAxis dataKey="day" tick={{ fontSize: 10, fill: '#71717a' }} axisLine={false} tickLine={false}/>
+                        <YAxis tick={{ fontSize: 10, fill: '#71717a' }} axisLine={false} tickLine={false} tickFormatter={value => `${Math.round(Number(value) / 1000)}k`}/>
                         <Tooltip contentStyle={CHART_TOOLTIP_STYLE} cursor={CHART_CURSOR_STYLE}/>
-                        <Area type="monotone" dataKey="exposure" name="内容曝光" stroke="#169b62" strokeWidth={2.5} fill="url(#homeExposureFill)"/>
+                        <Area type="monotone" dataKey="exposure" name="内容曝光" stroke={chartPalette[0]} strokeWidth={2} fill="url(#homeExposureFill)"/>
                       </AreaChart>
                     </ResponsiveContainer>
                   </div>
@@ -509,12 +510,12 @@ export default function StrategyDataBoard({
                 <div className="h-[220px] w-full">
                   <ResponsiveContainer width="100%" height="100%">
                     <BarChart data={channelData} layout="vertical" margin={{ top: 0, right: 8, left: 8, bottom: 0 }}>
-                      <CartesianGrid strokeDasharray="3 3" stroke="#e5e7eb" horizontal={false}/>
-                      <XAxis type="number" tick={{ fontSize: 10, fill: '#94a3b8' }} axisLine={false} tickLine={false}/>
-                      <YAxis type="category" dataKey="channel" width={62} tick={{ fontSize: 10, fill: '#64748b' }} axisLine={false} tickLine={false}/>
+                      <CartesianGrid strokeDasharray="3 3" stroke="#e4e4e7" horizontal={false}/>
+                      <XAxis type="number" tick={{ fontSize: 10, fill: '#71717a' }} axisLine={false} tickLine={false}/>
+                      <YAxis type="category" dataKey="channel" width={62} tick={{ fontSize: 10, fill: '#71717a' }} axisLine={false} tickLine={false}/>
                       <Tooltip contentStyle={CHART_TOOLTIP_STYLE} cursor={CHART_CURSOR_STYLE}/>
-                      <Bar dataKey="inquiries" name="询盘" fill="#9bc8ad" radius={[0, 3, 3, 0]} barSize={12}/>
-                      <Bar dataKey="converted" name="已转化" fill="#177a51" radius={[0, 3, 3, 0]} barSize={12}/>
+                      <Bar dataKey="inquiries" name="询盘" fill={chartPalette[0]} radius={[0, 3, 3, 0]} barSize={12}/>
+                      <Bar dataKey="converted" name="已转化" fill={chartPalette[1]} radius={[0, 3, 3, 0]} barSize={12}/>
                     </BarChart>
                   </ResponsiveContainer>
                 </div>

@@ -4,6 +4,13 @@ import { createAssistantDecisionRequestGuard } from './assistantDecisionRequestG
 
 export interface AssistantDecisionMemoryItem { id: string; text: string; status: string; version: number }
 
+export const ASSISTANT_DECISION_MEMORY_MAX_CHARACTERS = 2000;
+
+export function assistantDecisionSaveUnavailableReason(text: string): string {
+  if (text.length <= ASSISTANT_DECISION_MEMORY_MAX_CHARACTERS) return '';
+  return `这条消息超过 ${ASSISTANT_DECISION_MEMORY_MAX_CHARACTERS} 字上限，请精简后再保存为经营决策。`;
+}
+
 export function useAssistantDecisionMemory(authScope: string, responseErrorMessage: (response: Response) => Promise<string>) {
   const [panelOpen, setPanelOpen] = useState(false);
   const [items, setItems] = useState<AssistantDecisionMemoryItem[]>([]);
@@ -25,6 +32,11 @@ export function useAssistantDecisionMemory(authScope: string, responseErrorMessa
 
   const request = async (operation: 'list' | 'save' | 'revoke', text = '', item?: Pick<AssistantDecisionMemoryItem, 'id' | 'version'>) => {
     if (authScope !== scopeRef.current) return;
+    const unavailableReason = operation === 'save' ? assistantDecisionSaveUnavailableReason(text) : '';
+    if (unavailableReason) {
+      setFeedback(unavailableReason);
+      return;
+    }
     const pending = guardRef.current.begin();
     if (!pending) return;
     setBusy(true);

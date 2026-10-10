@@ -47,7 +47,7 @@ export default function ArkPresenterEnrollmentPanel(props: {
     } catch (cause) { setError(cause instanceof Error ? cause.message : '人物认证提交失败'); }
     finally { setBusy(false); }
   };
-  return <section aria-label="人物认证与方舟图片入库" className="space-y-2 rounded-xl border border-amber-200 bg-amber-50 p-3 text-xs">
+  return <section aria-label="人物认证与方舟图片入库" className="space-y-2 rounded-lg border border-amber-200 bg-amber-50 p-3 text-xs">
     <p className="font-bold">人物照片认证 · {enrollment?.state === 'ready' ? '可用于 Seedance' : enrollment?.state === 'processing' ? '方舟审核中' : enrollment?.state === 'needs_verification' ? '等待本人验证' : '待提交'}</p>
     <p>首次使用请上传本人视频和清晰正面照片，确认授权后在灵枢打开一次本人验证。方舟图片资产由系统自动创建和绑定；已有素材可直接选择。</p>
     {capability && !capability.ready && <p role="status" className="rounded bg-white p-2 text-amber-800">当前暂不能开始认证：{capability.reason}</p>}

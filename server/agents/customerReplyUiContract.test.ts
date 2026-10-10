@@ -13,7 +13,7 @@ assert.match(source, /aria-label=\{previewOpen \? '隐藏目标语言译文' : '
 assert.match(source, /aria-label="添加表情"/, 'the composer must expose an emoji picker button');
 assert.match(source, /<EmojiPicker[\s\S]{0,500}onEmojiClick=\{\(emojiData: EmojiClickData\) => insertEmoji\(emojiData\.emoji\)\}/, 'the full emoji picker must insert into the reply input');
 assert.doesNotMatch(source, /const REPLY_EMOJIS\s*=/, 'the emoji picker must not be limited to a short hard-coded list');
-assert.match(source, /data-customer-reply-input[\s\S]{0,500}border-0[\s\S]{0,500}focus:shadow-none/, 'the reply textarea must not show the global green focus frame');
+assert.match(source, /<Input\.TextArea[\s\S]{0,250}data-customer-reply-input[\s\S]{0,500}variant="borderless"/, 'the reply textarea must use the shared borderless input inside the focusable composer');
 assert.match(source, /const openCustomer = \(id: string\)[\s\S]{0,220}customer\?\.hasUnread[\s\S]{0,120}persistCustomerPatch\(id, \{ hasUnread: false \}\)/, 'opening a conversation must clear and persist its unread indicator');
 assert.match(
   source,
@@ -37,7 +37,7 @@ assert.match(
 );
 assert.match(
   source,
-  /const body = templatePlan\?\.rendered \|\| translatedInput\.trim\(\) \|\| await translateReplyToCustomerLanguage\(selected, input\)/,
+  /const body = translatedInput\.trim\(\) \|\| await translateReplyToCustomerLanguage\(selected, input\)/,
   'sending a Chinese manual reply must use the same target-language translation path',
 );
 assert.match(

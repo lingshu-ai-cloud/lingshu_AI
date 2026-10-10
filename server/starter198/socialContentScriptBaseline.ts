@@ -16,6 +16,12 @@ import { enterpriseProductIdentity } from '../lib/enterpriseProductIdentity.js';
 export const SOCIAL_SCRIPT_BASELINE_SCHEMA = 'social-content-script-baseline.v1';
 export const SOCIAL_SCRIPT_GROUNDING_VERSION = 'social-script-grounding.v5';
 
+export interface SocialEnterpriseFactVersion {
+  id: string;
+  revision: number;
+  contentHash: string;
+}
+
 export interface VerifiedSocialScriptContext {
   enterpriseName?: string | null;
   brandName?: string | null;
@@ -23,6 +29,10 @@ export interface VerifiedSocialScriptContext {
   facts: Array<{ key: string; label: string; value: string }>;
   source: 'enterprise_product' | 'enterprise_profile' | 'none';
   confidence: number;
+  /** Canonical enterprise-fact generation used to derive this context. The
+   * value is frozen into the script baseline so retries never drift to a newer
+   * save halfway through one production run. */
+  factVersion?: SocialEnterpriseFactVersion | null;
 }
 
 type SocialScriptGroundingSource = VerifiedSocialScriptContext['source'] | 'user_product_association';
@@ -70,6 +80,12 @@ export interface StoredSocialScriptBaseline {
   language: 'zh' | 'en';
   lockedAt: string;
   createdBeforeMaterialAdaptation: true;
+  /** Enterprise facts are versioned independently from the task. Historic
+   * baselines may omit this field and are re-grounded before execution. */
+  enterpriseFactVersion?: SocialEnterpriseFactVersion | null;
+  /** Immutable values used for this baseline. Retries read this snapshot
+   * instead of silently switching to a newly saved enterprise profile. */
+  verifiedContextSnapshot?: VerifiedSocialScriptContext | null;
   groundingVersion?: typeof SOCIAL_SCRIPT_GROUNDING_VERSION;
   match?: {
     strategy: 'formula_inspiration' | 'formula' | 'inspiration' | 'knowledge_fallback' | 'system_theme_baseline' | 'legacy';
@@ -266,15 +282,32 @@ function compactFactValue(value: unknown, maximum = 72): string {
   return socialText(value).replace(/[\u0000-\u001f]+/g, ' ').replace(/\s+/g, ' ').slice(0, maximum);
 }
 
+function factVersionIdentity(value: SocialEnterpriseFactVersion | null | undefined): string {
+  return value ? `${value.id}\0${value.revision}\0${value.contentHash}` : '';
+}
+
 /** Resolve only facts already persisted in Enterprise Knowledge. Free-form task
  * text is deliberately never promoted to a product fact. */
 export function verifiedSocialScriptContext(
   profile: EnterpriseProfile | null,
   productRef: string | null,
 ): VerifiedSocialScriptContext {
+  const profileFactVersion = profile?.factVersion;
+  const factVersion = profileFactVersion
+    && compactFactValue(profileFactVersion.id, 160)
+    && Number.isSafeInteger(profileFactVersion.revision)
+    && profileFactVersion.revision > 0
+    && compactFactValue(profileFactVersion.contentHash, 240)
+    ? {
+        id: compactFactValue(profileFactVersion.id, 160),
+        revision: profileFactVersion.revision,
+        contentHash: compactFactValue(profileFactVersion.contentHash, 240),
+      }
+    : null;
   const identityContext = {
     enterpriseName: compactFactValue(profile?.company.name, 80) || null,
     brandName: compactFactValue(profile?.brand?.name, 80) || null,
+    factVersion,
   };
   const reference = socialText(productRef).toLocaleLowerCase();
   const products = profile?.products.items ?? [];
@@ -433,7 +466,13 @@ export function freezeSocialScriptBaseline(input: {
   // `theme.topic`, title and objective are intent inputs. They may contain a
   // whole user prompt, so they never enter narration verbatim.
   const topic = themeLabels?.[language] ?? (language === 'en' ? 'the selected content theme' : '选定内容主题');
-  const verified = input.verifiedContext ?? { productName: null, facts: [], source: 'none', confidence: 0 };
+  const verified = input.verifiedContext ?? {
+    productName: null,
+    facts: [],
+    source: 'none',
+    confidence: 0,
+    factVersion: null,
+  };
   const userProductAssociation = input.userProductAssociation ?? null;
   const categoryHint = verified.source === 'enterprise_product'
     ? [input.brief.productRef, ...verified.facts.map(item => item.value)].map(socialText).filter(Boolean).join(' ')
@@ -592,6 +631,16 @@ export function freezeSocialScriptBaseline(input: {
     language,
     lockedAt: input.lockedAt,
     createdBeforeMaterialAdaptation: true,
+    enterpriseFactVersion: verified.factVersion ? { ...verified.factVersion } : null,
+    verifiedContextSnapshot: {
+      enterpriseName: verified.enterpriseName ?? null,
+      brandName: verified.brandName ?? null,
+      productName: verified.productName,
+      facts: verified.facts.map(fact => ({ ...fact })),
+      source: verified.source,
+      confidence: verified.confidence,
+      factVersion: verified.factVersion ? { ...verified.factVersion } : null,
+    },
     groundingVersion: SOCIAL_SCRIPT_GROUNDING_VERSION,
     match: {
       strategy: matchedFormula && input.inspiration
@@ -639,6 +688,10 @@ export function parseStoredSocialScriptBaseline(value: unknown): StoredSocialScr
   const source = socialText(row?.source);
   const themeId = socialText(row?.themeId) || null;
   const groundingVersion = socialText(row?.groundingVersion);
+  const hasEnterpriseFactVersion = Object.prototype.hasOwnProperty.call(row ?? {}, 'enterpriseFactVersion');
+  const enterpriseFactVersionRow = socialObject(row?.enterpriseFactVersion);
+  const hasVerifiedContextSnapshot = Object.prototype.hasOwnProperty.call(row ?? {}, 'verifiedContextSnapshot');
+  const verifiedContextSnapshotRow = socialObject(row?.verifiedContextSnapshot);
   const match = socialObject(row?.match);
   const matchKnowledgeSource = socialText(match?.verifiedKnowledgeSource);
   const matchAssociation = socialObject(match?.userProductAssociation);
@@ -660,6 +713,60 @@ export function parseStoredSocialScriptBaseline(value: unknown): StoredSocialScr
     : null;
   if ((source === 'formula' && (!formulaReference?.formulaId || !formulaReference.version))
     || (source !== 'formula' && formulaReference)) {
+    throw new SocialContentWorkflowError('social_content_script_baseline_record_invalid', 503);
+  }
+  const enterpriseFactVersion = enterpriseFactVersionRow ? {
+    id: socialText(enterpriseFactVersionRow.id),
+    revision: Number(enterpriseFactVersionRow.revision),
+    contentHash: socialText(enterpriseFactVersionRow.contentHash),
+  } : null;
+  if (hasEnterpriseFactVersion
+    && row?.enterpriseFactVersion !== null
+    && (!enterpriseFactVersion
+      || !enterpriseFactVersion.id
+      || !Number.isSafeInteger(enterpriseFactVersion.revision)
+      || enterpriseFactVersion.revision < 1
+      || !enterpriseFactVersion.contentHash)) {
+    throw new SocialContentWorkflowError('social_content_script_baseline_record_invalid', 503);
+  }
+  const snapshotFactsValue = socialJson(verifiedContextSnapshotRow?.facts);
+  const snapshotFactVersionRow = socialObject(verifiedContextSnapshotRow?.factVersion);
+  const verifiedContextSnapshot = verifiedContextSnapshotRow ? {
+    enterpriseName: socialText(verifiedContextSnapshotRow.enterpriseName) || null,
+    brandName: socialText(verifiedContextSnapshotRow.brandName) || null,
+    productName: socialText(verifiedContextSnapshotRow.productName) || null,
+    facts: Array.isArray(snapshotFactsValue) ? snapshotFactsValue.map(value => {
+      const fact = socialObject(value);
+      return {
+        key: socialText(fact?.key),
+        label: socialText(fact?.label),
+        value: socialText(fact?.value),
+      };
+    }) : [],
+    source: socialText(verifiedContextSnapshotRow.source),
+    confidence: Number(verifiedContextSnapshotRow.confidence),
+    factVersion: snapshotFactVersionRow ? {
+      id: socialText(snapshotFactVersionRow.id),
+      revision: Number(snapshotFactVersionRow.revision),
+      contentHash: socialText(snapshotFactVersionRow.contentHash),
+    } : null,
+  } : null;
+  if (hasVerifiedContextSnapshot && row?.verifiedContextSnapshot !== null && (
+    !verifiedContextSnapshot
+    || !['enterprise_product', 'enterprise_profile', 'none'].includes(verifiedContextSnapshot.source)
+    || !Number.isFinite(verifiedContextSnapshot.confidence)
+    || verifiedContextSnapshot.confidence < 0
+    || verifiedContextSnapshot.confidence > 1
+    || !Array.isArray(snapshotFactsValue)
+    || verifiedContextSnapshot.facts.some(fact => !fact.key || !fact.label || !fact.value)
+    || (verifiedContextSnapshot.factVersion !== null && (
+      !verifiedContextSnapshot.factVersion.id
+      || !Number.isSafeInteger(verifiedContextSnapshot.factVersion.revision)
+      || verifiedContextSnapshot.factVersion.revision < 1
+      || !verifiedContextSnapshot.factVersion.contentHash
+    ))
+    || factVersionIdentity(verifiedContextSnapshot.factVersion) !== factVersionIdentity(enterpriseFactVersion)
+  )) {
     throw new SocialContentWorkflowError('social_content_script_baseline_record_invalid', 503);
   }
   if (groundingVersion === SOCIAL_SCRIPT_GROUNDING_VERSION
@@ -773,6 +880,13 @@ export function parseStoredSocialScriptBaseline(value: unknown): StoredSocialScr
     language: language as StoredSocialScriptBaseline['language'],
     lockedAt: socialText(row.lockedAt),
     createdBeforeMaterialAdaptation: true,
+    ...(hasEnterpriseFactVersion ? { enterpriseFactVersion } : {}),
+    ...(hasVerifiedContextSnapshot ? {
+      verifiedContextSnapshot: verifiedContextSnapshot ? {
+        ...verifiedContextSnapshot,
+        source: verifiedContextSnapshot.source as VerifiedSocialScriptContext['source'],
+      } : null,
+    } : {}),
     ...(groundingVersion === SOCIAL_SCRIPT_GROUNDING_VERSION ? {
       groundingVersion: SOCIAL_SCRIPT_GROUNDING_VERSION,
       match: {

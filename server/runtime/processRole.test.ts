@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 import {
   parseProcessRole,
   processRoleStartsBackgroundJobs,
@@ -49,5 +50,15 @@ for (const [role, expected] of Object.entries(expectations) as Array<[ProcessRol
   assert.equal(processRoleStartsHttp(role), expected.http, `${role} HTTP startup decision`);
   assert.equal(processRoleStartsBackgroundJobs(role), expected.backgroundJobs, `${role} background job startup decision`);
 }
+
+const serverEntrySource = readFileSync(new URL('../index.ts', import.meta.url), 'utf8');
+const backgroundJobsSource = readFileSync(new URL('./backgroundJobs.ts', import.meta.url), 'utf8');
+assert.doesNotMatch(serverEntrySource, /initInitialPreparationWorker/, 'HTTP route registration must not start the preparation worker');
+assert.match(
+  backgroundJobsSource,
+  /if \(role === 'web'\) throw[\s\S]*initialPreparationWorkerStarted = initInitialPreparationWorker\(\)/,
+  'the preparation worker must start only after the background-role guard',
+);
+assert.match(backgroundJobsSource, /stopInitialPreparationWorker\(\)/, 'background lifecycle must stop its preparation worker');
 
 console.log('process role tests passed');

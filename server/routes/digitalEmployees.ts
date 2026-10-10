@@ -1,10 +1,10 @@
-import { advanceInitialPreparation, initialPreparationSources, initialPreparationJobKey, type InitialPreparation } from '../digitalEmployees/initialPreparation.js';
+import { advanceInitialPreparation, initialPreparationSources, initialPreparationSourcesFromPersisted, initialPreparationJobKey, persistInitialPreparationState, replaceInitialPreparationPlan, type InitialPreparation } from '../digitalEmployees/initialPreparation.js';
 import { createCrawlWorkerJob } from './crawlWorker.js';
 import {createCustomerTaskNavigationRouter} from './customerTaskNavigation.js';
 import { requiresContentHumanAcceptance } from '../digitalEmployees/contentProductionAcceptancePolicy.js';
 import { nextManagedCycleWindow, prepareManagedCyclePackage } from '../digitalEmployees/managedOperatingCycle.js';
 import { acquireDurableOperationLease, assertDurableOperationLease, releaseDurableOperationLease } from '../runtime/durableLease.js';
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { managedPublishingGrantErrors } from '../../shared/contracts/managedPublishingGrant.js';
 import { applyManagedPublishingGrant, managedPublishingGrantCovers } from '../digitalEmployees/managedPublishingGrant.js';
 import { productionQualitySummary } from '../digitalEmployees/productionQualitySummary.js';
@@ -47,7 +47,7 @@ import { readAuthorizedWhatsAppCustomers as defaultGetWhatsAppCustomers } from '
 import { currentExecutionAdapters, readExecutionMaterialLibrary } from '../digitalEmployees/executionAdapters.js';
 const getWhatsAppCustomers = async (tenantId: string) => currentExecutionAdapters()?.customers?.(tenantId) ?? defaultGetWhatsAppCustomers(tenantId);
 import { ensureDigitalEmployeeSocialCollectionTask, runScheduledTaskNow } from './scheduler.js';
-import { readTenantEnterpriseProfile, updateTenantEnterpriseProfile } from './enterprise.js';
+import { readTenantEnterpriseProfile, updateTenantEnterpriseProfile, type EnterpriseProfile } from './enterprise.js';
 import { buildBusinessSnapshot as defaultBuildBusinessSnapshot, type BusinessSnapshot } from '../digitalEmployees/businessSnapshot.js';
 const buildBusinessSnapshot: typeof defaultBuildBusinessSnapshot = (tenantId, range) => currentExecutionAdapters()?.snapshot?.(tenantId, range) ?? defaultBuildBusinessSnapshot(tenantId, range);
 import { freezeStoryboardNarration, CONTENT_SCRIPT_QUALITY_RULE_VERSION, advanceAutomatedContentProduction, collectProductionAssets, generateDirectorScriptContracts, productIdentity, resolveEnterpriseAssetLocation, resumeContentProjectForTaskControl } from '../digitalEmployees/contentProduction.js';
@@ -60,12 +60,15 @@ import { summarizeContentFeedback, traceableIndustryTrends } from '../digitalEmp
 import { summarizeWeeklyMatrix } from '../digitalEmployees/weeklyMatrixReview.js';
 import {
   configurationSnapshot,
+  enterpriseProfileFromKnowledgeBinding,
+  resolveKnowledgeBinding,
   resolveDigitalEmployeeConfiguration,
   type ResolvedDigitalEmployeeConfiguration,
 } from '../digitalEmployees/configuration.js';
 import { dispatchFollowupBatch, recoverStaleFollowupSending, followupDispatchPreflightBlockedReason, getTenantFollowupDispatchStatus, onFollowupWorkerEvent, preflightFollowupBatchDispatch } from '../digitalEmployees/followupDispatchWorker.js';
 import { bindPublishingTargets, listConnectedPublishingAccounts, localPublishingAccountMocksEnabled, publishingTargetPlatforms } from '../digitalEmployees/publishingTargets.js';
 import { digitalEmployeeOperatingGoals, isDigitalEmployeeOperatingGoal } from '../digitalEmployees/overviewGoalScope.js';
+import { directorAnalysisReferenceIds, liveDirectorAnalysisTasks, projectDirectorAnalysisStatus } from '../digitalEmployees/liveDirectorAnalyses.js';
 import {
   VISIBLE_DIGITAL_EMPLOYEE_AGENT_ROLES as VISIBLE_AGENT_ROLES,
   visibleDigitalEmployeeAgentRole as visibleAgentRole,
@@ -75,6 +78,9 @@ import { buildPublishingApprovalPackage, createPublishingCalendarEntries, type P
 import { beijingDate, followupScheduleFromCadence, latestDueReviewSlot, socialScheduleFromCadence } from '../digitalEmployees/runtimeSchedule.js';
 import { withDigitalEmployeeRunLock } from '../digitalEmployees/runControl.js';
 import { cancelDigitalEmployeeRun as cancelDigitalEmployeeRunApplication } from '../digitalEmployees/runCancellation.js';
+import { buildAssistantDecisionFeed, AssistantDecisionValidationError, executeAssistantDecisionCommand, mergeAssistantDecisionFeeds, starterDecisionCards, approvalDecisionVersion, weeklyPlanDecisionVersion, workflowTaskDecisionVersion } from '../digitalEmployees/assistantDecisionCenter.js';
+import { normalizeAssistantDecisionPage, type AssistantDecisionActionId, type AssistantDecisionFeed, type AssistantDecisionPage, type AssistantDecisionCard } from '../../shared/contracts/assistantDecisionCenter.js';
+import { customerApprovalRequestHash } from '../digitalEmployees/customerTaskApprovalNavigation.js';
 import {
   createDigitalEmployeeApprovalDecisionApplication,
   decideDigitalEmployeeApproval as decideDigitalEmployeeApprovalUseCase,
@@ -82,6 +88,13 @@ import {
   registerDigitalEmployeeApprovalDecisionApplication,
 } from '../digitalEmployees/approvalDecision.js';
 import { enqueueApprovedContentPublicationPackageTask } from '../starter198/agentTasks.js';
+import { buildStarter198Workspace } from '../starter198/workspace.js';
+import { starter198Repository } from '../starter198/repository.js';
+import { starter198OrgRole } from '../starter198/profile.js';
+import { requestOrganizationRoleStrict } from '../lib/organizationRole.js';
+import { runStarter198Command, Starter198CommandError } from '../starter198/commands.js';
+import { createStarter198ApprovalDecisionPort } from '../starter198/approvalDecision.js';
+import { createStarter198QuoteDecisionPort } from '../starter198/quoteDecision.js';
 import {
   DEFAULT_FOLLOWUP_SEGMENT_CRITERIA,
   eligibleFollowupCustomerIds,
@@ -205,6 +218,40 @@ function executionConfigForPlan(plan: PlanRecord | null, fallback: DigitalEmploy
   return body.businessPackage ? packageConfig(body.businessPackage as WeeklyPackage, config) : config;
 }
 
+function frozenEnterpriseProfileForPlan(plan: PlanRecord | null, allowLegacy = true): EnterpriseProfile | null {
+  if (!plan) return null;
+  const body = jsonObject<Record<string, unknown>>(plan.plan, {});
+  const profile = enterpriseProfileFromKnowledgeBinding(body.knowledgeBinding, { allowLegacy });
+  return profile as EnterpriseProfile | null;
+}
+
+/**
+ * Migration bridge for runs created before enterprise snapshots were stored.
+ * A plan that already has a fact label may only use facts recoverable from its
+ * old binding. A plan with no label is bound once, before execution continues.
+ */
+async function ensureFrozenEnterpriseProfileForRun(
+  tenantId: string,
+  plan: PlanRecord | null,
+  fallbackConfig: DigitalEmployeeConfig,
+  boundAt: string,
+): Promise<EnterpriseProfile> {
+  if (!plan) throw new Error('run_fact_snapshot_missing');
+  const body = jsonObject<Record<string, unknown>>(plan.plan, {});
+  const binding = jsonObject<Record<string, unknown>>(body.knowledgeBinding, {});
+  const existing = frozenEnterpriseProfileForPlan(plan, true);
+  if (existing) return existing;
+  if (String(binding.factsVersion || '').trim()) throw new Error('run_fact_snapshot_mismatch');
+  const current = await readTenantEnterpriseProfile(tenantId);
+  const knowledgeBinding = resolveKnowledgeBinding(current, fallbackConfig, boundAt);
+  const nextBody = { ...body, knowledgeBinding };
+  if (!await store.update(COLLECTION.plans, plan.id, { plan: nextBody })) throw new Error('run_fact_snapshot_storage_unavailable');
+  plan.plan = nextBody;
+  const frozen = enterpriseProfileFromKnowledgeBinding(knowledgeBinding);
+  if (!frozen) throw new Error('run_fact_snapshot_missing');
+  return frozen as EnterpriseProfile;
+}
+
 function publicGoal(record: GoalRecord): WeeklyGoalInput & { id: string; status: string; version: number; createdAt: string; updatedAt: string } {
   return {
     id: record.id,
@@ -307,9 +354,9 @@ function enterpriseMaterialIds(tenantId: string, products: Array<Record<string, 
   return ids;
 }
 
-async function contentRoutingEvidence(tenantId: string, config: DigitalEmployeeConfig) {
+async function contentRoutingEvidence(tenantId: string, config: DigitalEmployeeConfig, frozenProfile?: EnterpriseProfile) {
   const [profile, analyses, materials] = await Promise.all([
-    readTenantEnterpriseProfile(tenantId),
+    frozenProfile ? Promise.resolve(structuredClone(frozenProfile)) : readTenantEnterpriseProfile(tenantId),
     store.list<StoredRecord>('trend_videos', { where: { tenantId }, perPage: 500 }),
     readExecutionMaterialLibrary(tenantId),
   ]);
@@ -358,13 +405,14 @@ async function recommendPackageWithTenantEvidence(
   config: DigitalEmployeeConfig,
   ownerId = '',
   ownerName = '',
+  frozenProfile?: EnterpriseProfile,
 ): Promise<WeeklyPackage> {
   const pack = recommendPackage(goal, config, ownerId, ownerName);
   const [videos, benchmarks, enterpriseProfile, routingEvidence] = await Promise.all([
     store.list<StoredRecord>('trend_videos', { where: { tenantId }, sort: '-updatedAt', perPage: 500 }).catch(() => ({ items: [] })),
     store.list<StoredRecord>('competitor_accounts', { where: { tenantId }, sort: '-createdAt', perPage: 200 }).catch(() => ({ items: [] })),
-    readTenantEnterpriseProfile(tenantId),
-    contentRoutingEvidence(tenantId, config),
+    frozenProfile ? Promise.resolve(structuredClone(frozenProfile)) : readTenantEnterpriseProfile(tenantId),
+    contentRoutingEvidence(tenantId, config, frozenProfile),
   ]);
   const enabledRoutes = enterpriseProfile.socialStrategy?.enabledRoutes || [];
   const enterprisePrimaryCta = enabledRoutes
@@ -438,14 +486,21 @@ async function generateWeeklyTaskPreviews(input: {
   const masterPlans = plans.filter(plan => plan.productionRole !== 'platform_adaptation');
   if (!production || !plans.length) throw new Error('周视频计划中还没有内容任务');
   const generatedAt = new Date().toISOString();
+  const frozenProfile = await ensureFrozenEnterpriseProfileForRun(
+    input.tenantId,
+    input.plan,
+    input.config,
+    String(input.plan.created_at || generatedAt),
+  );
+  const frozenPlanBody = jsonObject<Record<string, unknown>>(input.plan.plan, input.planBody);
   const versions = {
-    configVersion: Number(input.planBody.configVersion || 1),
-    policyVersion: String(input.planBody.policyVersion || 'unknown'),
-    factsVersion: String(jsonObject<Record<string, unknown>>(input.planBody.knowledgeBinding, {}).factsVersion || 'unknown'),
+    configVersion: Number(frozenPlanBody.configVersion || 1),
+    policyVersion: String(frozenPlanBody.policyVersion || 'unknown'),
+    factsVersion: String(jsonObject<Record<string, unknown>>(frozenPlanBody.knowledgeBinding, {}).factsVersion || 'unknown'),
   };
   const [evidence, profile, references, shootingRows] = await Promise.all([
-    contentRoutingEvidence(input.tenantId, input.config),
-    readTenantEnterpriseProfile(input.tenantId),
+    contentRoutingEvidence(input.tenantId, input.config, frozenProfile),
+    Promise.resolve(structuredClone(frozenProfile)),
     store.list<StoredRecord>('trend_videos', { where: { tenantId: input.tenantId }, sort: '-updatedAt', perPage: 500 }),
     store.list<StoredRecord>('studio_shooting_tasks', { where: { tenant_id: input.tenantId }, sort: '-created_at', perPage: 500 }).catch(() => ({ items: [] })),
   ]);
@@ -532,7 +587,7 @@ async function generateWeeklyTaskPreviews(input: {
   });
   const readyOrders = preflight.filter(item => !item.blockers.length).map(item => item.order);
   const directedOrders = readyOrders.length
-    ? await generateDirectorScriptContracts({ tenantId: input.tenantId, config: input.config, goal, orders: readyOrders, now: generatedAt })
+    ? await generateDirectorScriptContracts({ tenantId: input.tenantId, config: input.config, goal, orders: readyOrders, now: generatedAt, enterpriseProfile: profile })
     : [];
   const directedById = new Map(directedOrders.map(order => [order.id, order]));
   const nextMasterPlans = preflight.map(item => {
@@ -560,12 +615,14 @@ async function generateWeeklyTaskPreviews(input: {
       // Required shots must never fall back to an incompatible asset. For
       // example, a product image cannot make a dynamic usage shot look ready.
       if (readinessDecision?.required) return undefined;
+      if (materialType === 'unknown') return undefined;
       const keywords: Record<keyof typeof MATERIAL_TYPE_LABELS, RegExp> = {
         talking_head: /真人|口播|主播|人物|presenter|talking/i,
         factory: /工厂|生产|车间|设备|流水线|factory|production/i,
         product: /产品|商品|包装|展示|product|packaging/i,
         consumer_demo: /消费者|用户|使用|效果|试用|consumer|demo|before|after/i,
-        unknown: /./,
+        general: /环境|道具|办公|生活|户外|街景|会议|展会|图形|动画|转场|environment|prop|office|lifestyle|outdoor|street|meeting|exhibition|graphic|animation|transition/i,
+        unknown: /(?!)/,
       };
       const matchIndex = unusedAssets.findIndex(asset => keywords[materialType].test([asset.name, ...asset.tags, ...asset.visualObservations].join(' ')));
       const selectedIndex = matchIndex >= 0 ? matchIndex : unusedAssets.length ? 0 : -1;
@@ -656,6 +713,12 @@ async function generateWeeklyTaskPreviews(input: {
 }
 
 async function prepareContentBatchPlan(input: { tenantId: string; goal: GoalRecord; run: RunRecord; task: TaskRecord; plan: PlanRecord | null; config: DigitalEmployeeConfig }) {
+  const enterpriseProfile = await ensureFrozenEnterpriseProfileForRun(
+    input.tenantId,
+    input.plan,
+    input.config,
+    input.run.started_at,
+  );
   const existing = await first<ContentBatchPlanRecord>(COLLECTION.contentBatchPlans, { tenant_id: input.tenantId, task_id: input.task.id });
   if (existing?.status === 'planned') {
     const routing = jsonObject<{ blocker?: string; eligibleRoutes?: ContentBatchPlanDraft['eligibleRoutes']; disabledRoutes?: ContentBatchPlanDraft['disabledRoutes'] }>(existing.routing, {});
@@ -667,7 +730,7 @@ async function prepareContentBatchPlan(input: { tenantId: string; goal: GoalReco
       eligibleRoutes: routing.eligibleRoutes || [],
       disabledRoutes: routing.disabledRoutes || [],
     };
-    return { existing, draft, planBody: jsonObject<Record<string, unknown>>(input.plan?.plan, {}) };
+    return { existing, draft, planBody: jsonObject<Record<string, unknown>>(input.plan?.plan, {}), enterpriseProfile };
   }
   const planBody = jsonObject<Record<string, unknown>>(input.plan?.plan, {});
   const knowledgeBinding = jsonObject<Record<string, unknown>>(planBody.knowledgeBinding, {});
@@ -677,7 +740,7 @@ async function prepareContentBatchPlan(input: { tenantId: string; goal: GoalReco
     goalId: input.goal.id,
     goal: goalInput(input.goal),
     config: input.config,
-    evidence: await contentRoutingEvidence(input.tenantId, input.config),
+    evidence: await contentRoutingEvidence(input.tenantId, input.config, enterpriseProfile),
     versions: {
       configVersion: Number(planBody.configVersion || 1),
       policyVersion: String(planBody.policyVersion || 'unknown'),
@@ -691,7 +754,7 @@ async function prepareContentBatchPlan(input: { tenantId: string; goal: GoalReco
       industryTrends: jsonObject(priorRoutingEvidence.industryTrends, {}),
     },
   });
-  return { existing, draft, planBody };
+  return { existing, draft, planBody, enterpriseProfile };
 }
 
 async function ensureContentBatchPlan(input: { tenantId: string; goal: GoalRecord; run: RunRecord; task: TaskRecord; plan: PlanRecord | null; config: DigitalEmployeeConfig }, prepared: Awaited<ReturnType<typeof prepareContentBatchPlan>>) {
@@ -708,7 +771,7 @@ async function ensureContentBatchPlan(input: { tenantId: string; goal: GoalRecor
     constraints: [...new Set([...(order.constraints || []), ...(director?.qualityStandard ? [`编导确认的脚本与审片标准：${director.qualityStandard}`] : [])])],
     ...(director ? { operatingContext: { productionBudget: director.productionBudget, productionSpent: director.productionSpent, productionReserved: estimatedTotal, estimatedContentCost: Number(order.videoPlan?.estimatedCost || 0), originalTarget: director.originalTarget, platformVersionTarget: director.platformVersionTarget, publishTarget: director.publishTarget, qualityStandard: director.qualityStandard, packageRevision: Number(pack?.revision || 0) } } : {}),
   }));
-  const effectiveDraft = draft.status === 'planned' ? { ...draft, orders: await generateDirectorScriptContracts({ tenantId: input.tenantId, config: input.config, goal: goalInput(input.goal), orders: constrainedOrders, now }) } : draft;
+  const effectiveDraft = draft.status === 'planned' ? { ...draft, orders: await generateDirectorScriptContracts({ tenantId: input.tenantId, config: input.config, goal: goalInput(input.goal), orders: constrainedOrders, now, enterpriseProfile: prepared.enterpriseProfile }) } : draft;
   if (director && input.plan && director.productionReserved !== estimatedTotal) {
     const nextPack = { ...pack!, directorPlan: { ...director, productionReserved: estimatedTotal } };
     await store.update(COLLECTION.plans, input.plan.id, { plan: { ...planBody, businessPackage: nextPack } });
@@ -960,7 +1023,7 @@ async function buildOverview(tenantId: string, requestedGoalId = '', requestedRa
     : operatingGoals.find(item => ['active', 'paused'].includes(item.status)) ?? operatingGoals[0] ?? null;
   const resolvedConfiguration = await resolveCurrentConfiguration(tenantId, configRecord);
   if (!goal) {
-    const [businessSnapshot, contentQueue, executionRuntime, industryTrends] = await Promise.all([
+    const [businessSnapshot, contentQueue, executionRuntime, industryTrends, directorAnalyses] = await Promise.all([
       buildBusinessSnapshot(tenantId, requestedRange),
       buildContentQueueProjection({
         tenantId, runId: '', planBody: {}, tasks: [],
@@ -973,8 +1036,9 @@ async function buildOverview(tenantId: string, requestedGoalId = '', requestedRa
       store.list<StoredRecord>('trend_videos', { where: { tenantId }, sort: '-updatedAt', perPage: 100 })
         .then(result => traceableIndustryTrends(result.items))
         .catch(() => traceableIndustryTrends([])),
+      liveDirectorAnalysisTasks(store, tenantId, { includeUnscoped: !requestedGoalId }).catch(() => []),
     ]);
-    return { config: resolvedConfiguration?.config || null, configuration: publicConfigurationMetadata(resolvedConfiguration), goals: [], goal: null, plan: null, run: null, tasks: [], contentQueue, executionRuntime, industryTrends, events: [], approvals: [], handoffs: [], review: null, liveReview: null, agents: publicAgentStatuses([]), businessSnapshot };
+    return { config: resolvedConfiguration?.config || null, configuration: publicConfigurationMetadata(resolvedConfiguration), goals: [], goal: null, plan: null, run: null, tasks: [], contentQueue, executionRuntime, industryTrends, events: [], approvals: [], handoffs: [], review: null, liveReview: null, agents: projectDirectorAnalysisStatus(publicAgentStatuses([]), directorAnalyses), businessSnapshot };
   }
   const [plan, run, businessSnapshot] = await Promise.all([
     first<PlanRecord>(COLLECTION.plans, { tenant_id: tenantId, goal_id: goal.id }),
@@ -991,10 +1055,9 @@ async function buildOverview(tenantId: string, requestedGoalId = '', requestedRa
   ]) : [null, null, null, null, null] as const;
   const taskItems = tasks?.items || [];
   const normalizedTasks = taskItems.map(task => ({ ...task, agent_role: visibleAgentRole(task.agent_role, task.task_key) }));
-  const agents = publicAgentStatuses(normalizedTasks);
   const publicTasks = normalizedTasks.map(task => ({ ...task, business_refs: jsonObject(task.business_refs, []), depends_on: jsonObject(task.depends_on, []), output: jsonObject(task.output, {}) })) as WorkflowTask[];
   const planBody = plan ? jsonObject<Record<string, unknown>>(plan.plan, {}) : {};
-  const [deliveryData, contentQueue, executionRuntime, industryTrends] = await Promise.all([
+  const [deliveryData, contentQueue, executionRuntime, industryTrends, directorAnalyses] = await Promise.all([
     buildDeliveryResources(tenantId, publicTasks, goal.title)
       .then(deliveries => ({ deliveries, deliveryNotice: '' }))
       .catch(() => ({ deliveries: undefined, deliveryNotice: '业务产物暂时无法读取，当前展示任务记录。请刷新重试。' })),
@@ -1015,6 +1078,10 @@ async function buildOverview(tenantId: string, requestedGoalId = '', requestedRa
     store.list<StoredRecord>('trend_videos', { where: { tenantId }, sort: '-updatedAt', perPage: 100 })
       .then(result => traceableIndustryTrends(result.items))
       .catch(() => traceableIndustryTrends([])),
+    liveDirectorAnalysisTasks(store, tenantId, {
+      goalId: goal.id, runId, includeUnscoped: !requestedGoalId,
+      referenceVideoIds: directorAnalysisReferenceIds(planBody, publicTasks),
+    }).catch(() => []),
   ]);
   return {
     config: resolvedConfiguration?.config || null,
@@ -1059,7 +1126,7 @@ async function buildOverview(tenantId: string, requestedGoalId = '', requestedRa
     handoffs: handoffs?.items.map(handoff => ({ ...handoff, snapshot: jsonObject(handoff.snapshot, {}) })) || [],
     review: review ? { ...review, summary: jsonObject(review.summary, {}) } : null,
     liveReview: run ? runReviewSummary(run, taskItems, businessSnapshot) : null,
-    agents,
+    agents: projectDirectorAnalysisStatus(publicAgentStatuses(normalizedTasks), directorAnalyses),
     businessSnapshot,
   };
 }
@@ -1689,6 +1756,13 @@ async function prepareObserveBusinessResourceDirect(input: {
 }): Promise<boolean> {
   const { tenantId, goal, run, task, config, snapshot } = input;
   const actorId = goal.owner_id || 'digital_employee_agent';
+  let runEnterpriseProfile: EnterpriseProfile | null = null;
+  const frozenRunFacts = async () => {
+    if (runEnterpriseProfile) return runEnterpriseProfile;
+    const plan = await tenantRecord<PlanRecord>(COLLECTION.plans, run.plan_id, tenantId);
+    runEnterpriseProfile = await ensureFrozenEnterpriseProfileForRun(tenantId, plan, config, run.started_at);
+    return runEnterpriseProfile;
+  };
   if (task.task_key === 'scheduled_source_collection') {
     const collectionSchedule = socialScheduleFromCadence(config.socialCadence);
     const ensured = await ensureDigitalEmployeeSocialCollectionTask({
@@ -1748,6 +1822,7 @@ async function prepareObserveBusinessResourceDirect(input: {
       taskId: task.id,
       config,
       goal: goalInput(goal),
+      enterpriseProfile: await frozenRunFacts(),
       ...(batchPlan ? { batchPlanId: batchPlan.id, contentOrders: jsonObject(batchPlan.orders, []) } : {}),
     });
     const refs: Array<Record<string, unknown>> = [...result.projectRefs, ...result.knowledgeGaps];
@@ -1817,6 +1892,7 @@ async function prepareObserveBusinessResourceDirect(input: {
         contactWindowDays: followupSchedule.contactWindowDays,
         maxContactsPerWindow: followupSchedule.maxContactsPerWindow,
       },
+      enterpriseProfile: await frozenRunFacts(),
     });
     const refs = [{ type: 'followup_batch', id: result.batch.id, version: result.batch.version, contentHash: result.batch.content_hash, itemCount: result.items.length }];
     await store.update(COLLECTION.tasks, task.id, { business_refs: refs, updated_at: new Date().toISOString() });
@@ -2393,6 +2469,131 @@ async function supersedeAffectedBusinessState(tenantId: string, run: RunRecord, 
   }
 }
 
+const starterAssistantApprovalDecision = createStarter198ApprovalDecisionPort();
+const starterAssistantQuoteDecision = createStarter198QuoteDecisionPort();
+
+async function buildDigitalEmployeeAssistantFeed(
+  tenantId: string,
+  page: AssistantDecisionPage,
+  requestedGoalId = '',
+  limit = 3,
+): Promise<AssistantDecisionFeed> {
+  const goalResult = await store.list<GoalRecord>(COLLECTION.goals, {
+    where: { tenant_id: tenantId }, sort: '-created_at', page: 1, perPage: 500,
+  });
+  const goals = digitalEmployeeOperatingGoals(goalResult.items);
+  const goal = requestedGoalId
+    ? goals.find(item => item.id === requestedGoalId) ?? null
+    : goals.find(item => ['draft', 'pending_approval', 'active', 'paused'].includes(item.status)) ?? goals[0] ?? null;
+  if (!goal) {
+    return buildAssistantDecisionFeed({ page, goal: null, plan: null, run: null, tasks: [], approvals: [], limit });
+  }
+  const [plan, run] = await Promise.all([
+    first<PlanRecord>(COLLECTION.plans, { tenant_id: tenantId, goal_id: goal.id }),
+    first<RunRecord>(COLLECTION.runs, { tenant_id: tenantId, goal_id: goal.id }, '-started_at'),
+  ]);
+  const taskResult = run
+    ? await store.list<TaskRecord>(COLLECTION.tasks, { where: { tenant_id: tenantId, run_id: run.id }, sort: 'sequence', perPage: 100 })
+    : { items: [] as TaskRecord[] };
+  const approvalResult = run
+    ? await store.list<ApprovalRecord>(COLLECTION.approvals, { where: { tenant_id: tenantId, run_id: run.id, status: 'pending' }, sort: '-created_at', perPage: 100 })
+    : { items: [] as ApprovalRecord[] };
+  return buildAssistantDecisionFeed({ page, goal, plan, run, tasks: taskResult.items, approvals: approvalResult.items, limit });
+}
+
+async function buildStarterAssistantCards(req: Request, tenantId: string, userId: string) {
+  try {
+    const role = starter198OrgRole(await requestOrganizationRoleStrict(req.headers.authorization, userId));
+    if (!role) return [];
+    const workspace = await buildStarter198Workspace({
+      tenantId,
+      role,
+      repository: starter198Repository,
+      decisionAvailable: true,
+      quoteDecisionAvailable: true,
+    });
+    return starterDecisionCards(workspace.decisions);
+  } catch (error) {
+    const code = error instanceof Error ? error.message : '';
+    if (['starter_198_workspace_not_entitled', 'starter_198_not_provisioned'].includes(code)) return [];
+    throw error;
+  }
+}
+
+async function assistantDecisionFeedForRequest(
+  req: Request,
+  identity: AuthLocals,
+  page: AssistantDecisionPage,
+  requestedGoalId = '',
+  limit = 3,
+): Promise<AssistantDecisionFeed> {
+  const [base, starterCards] = await Promise.all([
+    buildDigitalEmployeeAssistantFeed(identity.tenantId, page, requestedGoalId, limit),
+    buildStarterAssistantCards(req, identity.tenantId, identity.userId),
+  ]);
+  return mergeAssistantDecisionFeeds(base, starterCards, limit);
+}
+
+class AssistantDecisionCommandError extends Error {
+  constructor(readonly code: string, readonly status: number, readonly details: Record<string, unknown> = {}) {
+    super(code);
+    this.name = 'AssistantDecisionCommandError';
+  }
+}
+
+function assertAssistantDecisionVersion(decision: AssistantDecisionCard, currentVersion: string): void {
+  if (decision.subject.version !== currentVersion) {
+    throw new AssistantDecisionValidationError('assistant_decision_changed', 409, { currentVersion });
+  }
+}
+
+async function takeOverWorkflowTask(input: { tenantId: string; userId: string; taskId: string; decision: AssistantDecisionCard }): Promise<void> {
+  const initialTask = await tenantRecord<TaskRecord>(COLLECTION.tasks, input.taskId, input.tenantId);
+  if (!initialTask) throw new AssistantDecisionCommandError('task_not_found', 404);
+  await withDigitalEmployeeRunLock(input.tenantId, initialTask.run_id, async () => {
+    const task = await tenantRecord<TaskRecord>(COLLECTION.tasks, input.taskId, input.tenantId);
+    if (!task) throw new AssistantDecisionCommandError('task_not_found', 404);
+    if (input.decision.subject.type === 'approval_request') {
+      const approval = await tenantRecord<ApprovalRecord>(COLLECTION.approvals, input.decision.subject.id, input.tenantId);
+      if (!approval || approval.task_id !== task.id || approval.status !== 'pending') throw new AssistantDecisionCommandError('assistant_decision_not_pending', 409);
+      assertAssistantDecisionVersion(input.decision, approvalDecisionVersion(approval));
+    } else {
+      assertAssistantDecisionVersion(input.decision, workflowTaskDecisionVersion(task));
+    }
+    if (task.status === 'handed_off' && task.owner_id === input.userId) return;
+    const run = await tenantRecord<RunRecord>(COLLECTION.runs, task.run_id, input.tenantId);
+    if (!run || !['waiting_external', 'waiting_approval', 'running'].includes(run.status)) {
+      throw new AssistantDecisionCommandError('run_not_handoff_ready', 409);
+    }
+    if (!['waiting_external', 'waiting_approval', 'running', 'failed', 'pending'].includes(task.status)) {
+      throw new AssistantDecisionCommandError('task_not_handoff_ready', 409);
+    }
+    const now = new Date().toISOString();
+    const session = await requiredCreate<HandoffRecord>(COLLECTION.handoffs, {
+      tenant_id: input.tenantId,
+      run_id: run.id,
+      task_id: task.id,
+      status: 'active',
+      taken_by: input.userId,
+      snapshot: {
+        taskStatus: task.status,
+        taskOutput: jsonObject(task.output, {}),
+        blockedReason: task.blocked_reason,
+        externalActionsPerformed: false,
+        constraints: ['接管期间 Agent 停止外部写入与费用消耗'],
+      },
+      started_at: now,
+      returned_at: '',
+    });
+    await Promise.all([
+      store.update(COLLECTION.tasks, task.id, { status: 'handed_off', owner_id: input.userId, blocked_reason: '人工完整接管', updated_at: now }),
+      store.update(COLLECTION.runs, run.id, { status: 'waiting_human', current_controller: input.userId, pause_reason: '人工完整接管' }),
+    ]);
+    await appendEvent({ tenantId: input.tenantId, runId: run.id, taskId: task.id, type: 'handoff.started', level: 'warning', summary: `${task.title} 已由人工完整接管`, payload: { handoffId: session.id } });
+    await appendAudit({ tenantId: input.tenantId, userId: input.userId, action: 'handoff.started', targetType: 'workflow_task', targetId: task.id, metadata: { runId: run.id, handoffId: session.id } });
+  });
+}
+
 digitalEmployeesRouter.get('/overview', async (req, res) => {
   const { tenantId } = res.locals as AuthLocals;
   const goalId = String(req.query.goalId || '').trim();
@@ -2415,14 +2616,14 @@ async function resumeInitialPreparationPlan(tenantId:string,goalId:string,allowB
  try{
  const plan=await first<PlanRecord>(COLLECTION.plans,{tenant_id:tenantId,goal_id:goalId});const goal=await tenantRecord<GoalRecord>(COLLECTION.goals,goalId,tenantId);if(!plan||!goal)return;
  const body=jsonObject<Record<string,unknown>>(plan.plan,{});const state=body.initialPreparation as InitialPreparation|undefined;if(!state||state.status==='running'||state.status==='blocked'&&!allowBlocked)return;
- const existingRun=await first<RunRecord>(COLLECTION.runs,{tenant_id:tenantId,goal_id:goalId});if(existingRun&&existingRun.plan_id===plan.id){if(!await store.update(COLLECTION.plans,plan.id,{plan:{...body,initialPreparation:{...state,status:'running',runId:existingRun.id,reason:''}}}))throw Error('运行恢复状态保存失败');return;}
+ const existingRun=await first<RunRecord>(COLLECTION.runs,{tenant_id:tenantId,goal_id:goalId});if(existingRun&&existingRun.plan_id===plan.id){await persistInitialPreparationState({dataStore:store,collection:COLLECTION.plans,planId:plan.id,tenantId,state:{...state,status:'running',runId:existingRun.id,reason:''}});return;}
  const resolved=await resolveCurrentConfiguration(tenantId,await configForTenant(tenantId));if(!resolved)throw Error('初始化配置不存在');const config=executionConfigForPlan(plan,resolved.config);if(config.allowRealPublishing||config.allowRealCustomerMessages)throw Error('初始化制作准备不接受真实发布或客户发送授权');
  await advanceInitialPreparation(state,{
- save:async value=>{await assertDurableOperationLease({dataStore:store,lease,minimumRemainingMs:1000});const latest=await tenantRecord<PlanRecord>(COLLECTION.plans,plan.id,tenantId);if(!latest||!await store.update(COLLECTION.plans,plan.id,{plan:{...jsonObject<Record<string,unknown>>(latest.plan,{}),initialPreparation:value}}))throw Error('初始化进度保存失败');},
+ save:async value=>{await assertDurableOperationLease({dataStore:store,lease,minimumRemainingMs:1000});await persistInitialPreparationState({dataStore:store,collection:COLLECTION.plans,planId:plan.id,tenantId,state:value});},
  enqueue:async source=>{const job=await createCrawlWorkerJob({tenantId,requestedBy:state.confirmedBy,platform:source.platform,mode:source.mode,keyword:source.mode==='keyword'?source.value:'',accountUrl:source.mode==='account'?source.value:'',accountName:config.companyName,limit:30,idempotencyKey:initialPreparationJobKey(tenantId,state,source)});if(!job)throw Error('真实采集任务创建失败');return job.id;},
  observe:async id=>{const job=await store.getById<StoredRecord>('crawl_jobs',id);if(!job||job.tenantId!==tenantId)throw Error('原采集任务不存在');const result=jsonObject<{candidateIds?:string[]}>(job.resultJson,{});return {status:String(job.status),candidateIds:result.candidateIds||[],error:String(job.error||'')};},
  analyzed:async ids=>{const rows=await Promise.all(ids.map(id=>store.getById<StoredRecord>('trend_videos',id)));if(rows.some(row=>!row||row.tenantId!==tenantId))throw Error('原采集候选已失效');const exact=rows.filter(row=>row&&exactVideoAnalysis(row));if(exact.length>=Math.max(1,Number(goal.target)||1))return true;if(rows.every(row=>['analyzed','failed'].includes(String(row!.status))))throw Error('真实全片分析合格参考不足，请调整范围或修复分析后继续');return false;},
- prepare:async ids=>{const latest=await tenantRecord<PlanRecord>(COLLECTION.plans,plan.id,tenantId);if(!latest)throw Error('原计划不存在');const currentBody=jsonObject<Record<string,unknown>>(latest.plan,{});const pack=currentBody.businessPackage as WeeklyPackage;if(pack.revision!==state.revision)throw Error('计划版本已修改，请重新确认');const videos=await Promise.all(ids.map(id=>store.getById<StoredRecord>('trend_videos',id)));const enriched=enrichPackageWithContentSignals({pack,goal:goalInput(goal),config,videos:videos.filter((v):v is StoredRecord=>!!v),benchmarks:[]});const detailed=await generateWeeklyTaskPreviews({tenantId,goal,plan:latest,pack:enriched,config,planBody:currentBody});const compiled=compilePackage(detailed,goalInput(goal),config);if(!await store.update(COLLECTION.plans,plan.id,{plan:{...currentBody,...compiled}}))throw Error('制作准备保存失败');return {ready:detailed.detailGeneration?.status==='ready',reason:detailed.detailGeneration?.blockers.join('；'),revision:detailed.revision};},
+ prepare:async ids=>{const latest=await tenantRecord<PlanRecord>(COLLECTION.plans,plan.id,tenantId);if(!latest)throw Error('原计划不存在');const currentBody=jsonObject<Record<string,unknown>>(latest.plan,{});const pack=currentBody.businessPackage as WeeklyPackage;if(pack.revision!==state.revision)throw Error('计划版本已修改，请重新确认');const videos=await Promise.all(ids.map(id=>store.getById<StoredRecord>('trend_videos',id)));const enriched=enrichPackageWithContentSignals({pack,goal:goalInput(goal),config,videos:videos.filter((v):v is StoredRecord=>!!v),benchmarks:[]});const detailed=await generateWeeklyTaskPreviews({tenantId,goal,plan:latest,pack:enriched,config,planBody:currentBody});const compiled=compilePackage(detailed,goalInput(goal),config);await replaceInitialPreparationPlan({dataStore:store,collection:COLLECTION.plans,expected:latest,tenantId,nextPlan:{...currentBody,...compiled},conflictMessage:'计划版本已修改，请重新确认'});return {ready:detailed.detailGeneration?.status==='ready',reason:detailed.detailGeneration?.blockers.join('；'),revision:detailed.revision};},
  activate:async revision=>{const result=await approveGoalForReview(tenantId,state.confirmedBy,goalId,revision,[]);if(result.status!==200)throw Error((result.body as {message?:string;error?:string}).message||(result.body as {error?:string}).error||'制作启动失败');const run=await first<RunRecord>(COLLECTION.runs,{tenant_id:tenantId,goal_id:goalId});if(!run)throw Error('实际制作运行未创建');return run.id;},
  });
  }finally{await releaseDurableOperationLease({dataStore:store,lease});}
@@ -2433,7 +2634,8 @@ export async function resumeConfirmedInitialPlans(){
  if(page>=rows.totalPages||rows.items.length<200)break;}
 }
 let initialPreparationTimer:ReturnType<typeof setInterval>|undefined;
-export function initInitialPreparationWorker(){if(initialPreparationTimer)return;initialPreparationTimer=setInterval(()=>{void resumeConfirmedInitialPlans().catch(error=>console.warn('[initial-preparation]',String(error)));},30_000);initialPreparationTimer.unref?.();}
+export function initInitialPreparationWorker():boolean{if(initialPreparationTimer)return false;initialPreparationTimer=setInterval(()=>{void resumeConfirmedInitialPlans().catch(error=>console.warn('[initial-preparation]',String(error)));},30_000);initialPreparationTimer.unref?.();return true;}
+export function stopInitialPreparationWorker(){if(!initialPreparationTimer)return;clearInterval(initialPreparationTimer);initialPreparationTimer=undefined;}
 digitalEmployeesRouter.post('/onboarding/history-collection',async(req,res)=>{
  const {tenantId,userId}=res.locals as AuthLocals;
  try{const requestId=String(req.body?.requestId||'');if(!/^[a-zA-Z0-9-]{8,100}$/.test(requestId))throw Error('请求身份缺失');const source=initialPreparationSources({platforms:[req.body.platform],products:['企业产品'],stage:'b2b_growth',historyAccounts:[req.body.accountUrl],historyCollectionRequestId:requestId}).find(s=>s.origin==='owned')!;const state={requestId,goalId:'history'} as InitialPreparation;const job=await createCrawlWorkerJob({tenantId,requestedBy:userId,platform:source.platform,mode:'account',accountUrl:source.value,limit:30,idempotencyKey:initialPreparationJobKey(tenantId,state,source)});if(!job)throw Error('采集任务创建失败');res.status(202).json({jobId:job.id,status:job.status});}catch(error){res.status(400).json({error:'history_collection_failed',message:error instanceof Error?error.message:'历史采集失败'});}
@@ -2444,17 +2646,135 @@ digitalEmployeesRouter.post('/goals/:goalId/initial-preparation',async(req,res)=
  const confirmationLease=await acquireDurableOperationLease({dataStore:store,tenantId,scope:'initial_operating_confirmation',subjectId:goalId,ownerId:`confirm-${randomUUID()}`,leaseDurationMs:30*60_000});if(!confirmationLease){res.status(409).json({error:'initial_confirmation_in_progress',message:'原确认正在处理，请查询原计划进度'});return;}
  try{await withLocalQueue(goalApprovalQueues,`${tenantId}:initial-confirm:${goalId}`,async()=>{
  const goal=await tenantRecord<GoalRecord>(COLLECTION.goals,goalId,tenantId);const plan=await first<PlanRecord>(COLLECTION.plans,{tenant_id:tenantId,goal_id:goalId});if(!goal||!plan)throw Error('原计划不存在');
- const body=jsonObject<Record<string,unknown>>(plan.plan,{});const existing=body.initialPreparation as InitialPreparation|undefined;
+ const body=jsonObject<Record<string,unknown>>(plan.plan,{});const existing=body.initialPreparation as InitialPreparation|undefined;const pack=body.businessPackage as WeeklyPackage;
  if(req.body?.resume&&existing){await resumeInitialPreparationPlan(tenantId,goalId,true);return;}
- if(existing){if(existing.requestId!==String(req.body?.requestId))throw Error('已确认原计划，请查询或恢复原请求');if(JSON.stringify(existing.sources.map(({jobId,...source})=>source))!==JSON.stringify(initialPreparationSources(req.body)))throw Error('确认范围变化，请修订计划');return;}
+ const sourceScope=()=>initialPreparationSourcesFromPersisted({goalPlatforms:jsonObject(goal.content_platforms,[]),businessPackage:pack,config:body.configSnapshot,profile:frozenEnterpriseProfileForPlan(plan,false)},{historyAccounts:req.body?.historyAccounts,historyCollectionRequestId:req.body?.historyCollectionRequestId});
+ if(existing){if(existing.requestId!==String(req.body?.requestId))throw Error('已确认原计划，请查询或恢复原请求');if(JSON.stringify(existing.sources.map(({jobId,...source})=>source))!==JSON.stringify(sourceScope()))throw Error('确认范围变化，请修订计划');return;}
  if(goal.status!=='draft')throw Error('原计划已执行，不接受新的初始化确认');
  const requestId=String(req.body?.requestId||'');if(!/^[a-zA-Z0-9-]{8,100}$/.test(requestId))throw Error('请求身份缺失');
- const pack=body.businessPackage as WeeklyPackage;if(!pack||pack.revision!==Number(req.body?.revision))throw Error('计划版本已变化');
- const state:InitialPreparation={requestId,goalId,revision:pack.revision,confirmedBy:userId,confirmedAt:new Date().toISOString(),status:'collecting',sources:initialPreparationSources(req.body),candidateIds:[],reason:''};
- if(!await store.update(COLLECTION.plans,plan.id,{plan:{...body,initialPreparation:state}}))throw Error('已确认计划保存失败');
+ if(!pack||pack.revision!==Number(req.body?.revision))throw Error('计划版本已变化');
+ const state:InitialPreparation={requestId,goalId,revision:pack.revision,confirmedBy:userId,confirmedAt:new Date().toISOString(),status:'collecting',sources:sourceScope(),candidateIds:[],reason:''};
+ await replaceInitialPreparationPlan({dataStore:store,collection:COLLECTION.plans,expected:plan,tenantId,nextPlan:{...body,initialPreparation:state},conflictMessage:'计划版本已变化，请重新确认'});
  await resumeInitialPreparationPlan(tenantId,goalId);
  });const latest=await first<PlanRecord>(COLLECTION.plans,{tenant_id:tenantId,goal_id:goalId});res.status(202).json({preparation:jsonObject<{initialPreparation?:InitialPreparation}>(latest?.plan,{}).initialPreparation});
  }catch(error){res.status(409).json({error:'initial_preparation_failed',message:error instanceof Error?error.message:'初始化准备失败'});}finally{await releaseDurableOperationLease({dataStore:store,lease:confirmationLease});}
+});
+
+digitalEmployeesRouter.get('/assistant/decision-center', async (req, res) => {
+  res.setHeader('Cache-Control', 'private, no-store');
+  const identity = res.locals as AuthLocals;
+  const page = normalizeAssistantDecisionPage(req.query.page);
+  const goalId = String(req.query.goalId || '').trim();
+  if (goalId) {
+    const goal = await tenantRecord<GoalRecord>(COLLECTION.goals, goalId, identity.tenantId);
+    if (!goal || !isDigitalEmployeeOperatingGoal(goal)) {
+      res.status(404).json({ error: 'goal_not_found' });
+      return;
+    }
+  }
+  res.json(await assistantDecisionFeedForRequest(req, identity, page, goalId));
+});
+
+digitalEmployeesRouter.post('/assistant/decision-center/:decisionId/actions', async (req, res) => {
+  res.setHeader('Cache-Control', 'private, no-store');
+  const identity = res.locals as AuthLocals;
+  const page = normalizeAssistantDecisionPage(req.query.page ?? req.body?.page);
+  const goalId = String(req.query.goalId || req.body?.goalId || '').trim();
+  const decisionId = String(req.params.decisionId || '').trim();
+  const actionId = String(req.body?.actionId || '').trim() as AssistantDecisionActionId;
+  const expectedVersion = String(req.body?.expectedVersion || '').trim();
+  const note = String(req.body?.note || '').trim().slice(0, 1000);
+  if (!decisionId || !actionId || !expectedVersion) {
+    res.status(400).json({ error: 'assistant_decision_command_invalid' });
+    return;
+  }
+  try {
+    if (goalId) {
+      const goal = await tenantRecord<GoalRecord>(COLLECTION.goals, goalId, identity.tenantId);
+      if (!goal || !isDigitalEmployeeOperatingGoal(goal)) throw new AssistantDecisionCommandError('goal_not_found', 404);
+    }
+    const fullFeed = await assistantDecisionFeedForRequest(req, identity, page, goalId, 100);
+    const card = fullFeed.items.find(item => item.id === decisionId);
+    if (!card) throw new AssistantDecisionCommandError('assistant_decision_not_pending', 409);
+    const outcome = await executeAssistantDecisionCommand({
+      card, actionId, expectedVersion, note,
+      handlers: {
+        decideStarter: async (selected, decision, decisionNote) => {
+          const role = starter198OrgRole(await requestOrganizationRoleStrict(req.headers.authorization, identity.userId));
+          if (!role) throw new AssistantDecisionCommandError('starter_198_role_required', 403);
+          const suppliedKey = String(req.body?.idempotencyKey || '').trim();
+          const idempotencyKey = suppliedKey || `assistant_${createHash('sha256').update(`${identity.tenantId}|${decisionId}|${actionId}|${expectedVersion}|${decisionNote}`).digest('hex').slice(0, 40)}`;
+          await runStarter198Command({
+            tenantId: identity.tenantId,
+            userId: identity.userId,
+            role,
+            request: {
+              command: 'resolve_decision', idempotencyKey, targetId: selected.subject.id, expectedVersion,
+              payload: { decision, note: decisionNote },
+            },
+            dependencies: {
+              repository: starter198Repository, dataStore: store,
+              approvalDecision: starterAssistantApprovalDecision, quoteDecision: starterAssistantQuoteDecision,
+            },
+          });
+        },
+        approveAndStart: async selected => {
+          const goal = await tenantRecord<GoalRecord>(COLLECTION.goals, selected.subject.id, identity.tenantId);
+          const plan = goal ? await first<PlanRecord>(COLLECTION.plans, { tenant_id: identity.tenantId, goal_id: goal.id }) : null;
+          if (!goal || !plan) throw new AssistantDecisionCommandError('assistant_decision_context_missing', 409);
+          assertAssistantDecisionVersion(selected, weeklyPlanDecisionVersion(goal, plan));
+          const pack = jsonObject<Record<string, unknown>>(plan.plan, {}).businessPackage as WeeklyPackage | undefined;
+          const members = await listTenantEmployees(identity, req.headers.authorization);
+          const result = await approveGoalForReview(identity.tenantId, identity.userId, goal.id, Number(pack?.revision || 0), members);
+          if (result.status !== 200) {
+            const body = result.body as Record<string, unknown>;
+            throw new AssistantDecisionCommandError(String(body.error || 'plan_start_failed'), result.status, body);
+          }
+        },
+        decideApproval: async (selected, decision, decisionNote) => {
+          const approval = await tenantRecord<ApprovalRecord>(COLLECTION.approvals, selected.subject.id, identity.tenantId);
+          if (!approval) throw new AssistantDecisionCommandError('approval_not_found', 404);
+          assertAssistantDecisionVersion(selected, approvalDecisionVersion(approval));
+          await decideDigitalEmployeeApprovalUseCase({
+            tenantId: identity.tenantId, userId: identity.userId, approvalId: approval.id,
+            decision, note: decisionNote, expectedSubjectVersion: String(approval.subject_version ?? '').trim(),
+            expectedRequestHash: customerApprovalRequestHash({ ...approval }),
+            ...(/^[a-f0-9]{64}$/.test(String(approval.content_hash || '')) ? { expectedContentHash: String(approval.content_hash) } : {}),
+          });
+        },
+        takeOver: async selected => {
+          let taskId = selected.subject.id;
+          if (selected.subject.type === 'approval_request') {
+            const approval = await tenantRecord<ApprovalRecord>(COLLECTION.approvals, selected.subject.id, identity.tenantId);
+            if (!approval) throw new AssistantDecisionCommandError('approval_not_found', 404);
+            taskId = approval.task_id;
+          }
+          await takeOverWorkflowTask({ tenantId: identity.tenantId, userId: identity.userId, taskId, decision: selected });
+        },
+      },
+    });
+
+    const feed = await assistantDecisionFeedForRequest(req, identity, page, goalId);
+    res.json({ ok: true, outcome, ...feed });
+  } catch (error) {
+    if (error instanceof AssistantDecisionCommandError) {
+      res.status(error.status).json({ error: error.code, ...error.details });
+      return;
+    }
+    if (error instanceof AssistantDecisionValidationError) {
+      res.status(error.status).json({ error: error.code, ...error.details });
+      return;
+    }
+    if (error instanceof DigitalEmployeeApprovalDecisionError) {
+      res.status(error.status).json({ error: error.code, ...error.details });
+      return;
+    }
+    if (error instanceof Starter198CommandError) {
+      res.status(error.status).json({ error: error.code, message: error.message });
+      return;
+    }
+    throw error;
+  }
 });
 
 digitalEmployeesRouter.post('/onboarding/complete', async (req, res) => {
@@ -2789,9 +3109,18 @@ digitalEmployeesRouter.post('/goals/:goalId/package/recommend', async (req, res)
     ? { ...snapshot, companyName: resolved.config.companyName, publishingTargets: resolved.config.publishingTargets }
     : snapshot;
   const currentPackage = plan ? jsonObject<{ businessPackage?: WeeklyPackage }>(plan.plan, {}).businessPackage : undefined;
+  const planBody = plan ? jsonObject<Record<string, unknown>>(plan.plan, {}) : {};
+  const savedFactsVersion = String(jsonObject<Record<string, unknown>>(planBody.knowledgeBinding, {}).factsVersion || '').trim();
+  if (savedFactsVersion && resolved && savedFactsVersion !== resolved.knowledgeBinding.factsVersion) {
+    res.status(409).json({ error: 'enterprise_facts_changed', message: '企业事实已更新，请基于最新事实新建周目标。', factVersion: resolved.knowledgeBinding.factsVersion });
+    return;
+  }
+  const enterpriseProfile = frozenEnterpriseProfileForPlan(plan, false)
+    || (resolved ? enterpriseProfileFromKnowledgeBinding(resolved.knowledgeBinding) as EnterpriseProfile | null : null);
+  if (!enterpriseProfile) { res.status(409).json({ error: 'enterprise_fact_snapshot_missing' }); return; }
   const members = await listTenantEmployees(res.locals as AuthLocals, req.headers.authorization);
   const member = members.find(m => m.id === userId);
-  const proposal = await recommendPackageWithTenantEvidence(tenantId, goalInput(goal), { ...config, operatingMaturity: currentPackage?.maturity || config.operatingMaturity, operatingAssessment: currentPackage?.operatingAssessment || config.operatingAssessment, defaultParticipation: currentPackage?.participation || config.defaultParticipation }, userId, member?.name);
+  const proposal = await recommendPackageWithTenantEvidence(tenantId, goalInput(goal), { ...config, operatingMaturity: currentPackage?.maturity || config.operatingMaturity, operatingAssessment: currentPackage?.operatingAssessment || config.operatingAssessment, defaultParticipation: currentPackage?.participation || config.defaultParticipation }, userId, member?.name, enterpriseProfile);
   proposal.revision = currentPackage?.revision || 0;
   res.json(proposal);
 });
@@ -2818,6 +3147,15 @@ digitalEmployeesRouter.post('/goals/:goalId/package/details', async (req, res) =
     const currentConfig = publicConfig(configRecord);
     if (!currentConfig) { res.status(409).json({ error: 'onboarding_required' }); return; }
     const resolvedConfiguration = await resolveCurrentConfiguration(tenantId, configRecord);
+    const savedFactsVersion = String(jsonObject<Record<string, unknown>>(planBody.knowledgeBinding, {}).factsVersion || '').trim();
+    if (savedFactsVersion && resolvedConfiguration && savedFactsVersion !== resolvedConfiguration.knowledgeBinding.factsVersion) {
+      res.status(409).json({ error: 'enterprise_facts_changed', message: '企业事实已更新，请基于最新事实新建周目标。', factVersion: resolvedConfiguration.knowledgeBinding.factsVersion });
+      return;
+    }
+    if (resolvedConfiguration && !frozenEnterpriseProfileForPlan(plan, false)) {
+      planBody.knowledgeBinding = resolvedConfiguration.knowledgeBinding;
+      plan.plan = planBody;
+    }
     const config = localPublishingAccountMocksEnabled() && resolvedConfiguration
       ? resolvedConfiguration.config
       : configSnapshotForPlan(plan, currentConfig);
@@ -2913,6 +3251,11 @@ digitalEmployeesRouter.put('/goals/:goalId/package', async (req, res) => {
     const currentConfig = publicConfig(configRecord);
     if (!currentConfig) { res.status(409).json({ error: 'onboarding_required' }); return; }
     const resolvedConfiguration = await resolveCurrentConfiguration(tenantId, configRecord);
+    const savedFactsVersion = String(jsonObject<Record<string, unknown>>(body.knowledgeBinding, {}).factsVersion || '').trim();
+    if (savedFactsVersion && resolvedConfiguration && savedFactsVersion !== resolvedConfiguration.knowledgeBinding.factsVersion) {
+      res.status(409).json({ error: 'enterprise_facts_changed', message: '企业事实已更新，请基于最新事实新建周目标。', factVersion: resolvedConfiguration.knowledgeBinding.factsVersion });
+      return;
+    }
     const config = localPublishingAccountMocksEnabled() && resolvedConfiguration
       ? resolvedConfiguration.config
       : configSnapshotForPlan(plan, currentConfig);
@@ -2943,8 +3286,13 @@ digitalEmployeesRouter.put('/goals/:goalId/package', async (req, res) => {
     }
     pack.revision = (old?.revision || 0) + 1;
     const compiled = compilePackage(pack, goalInput(goal), config);
-    const localConfigurationSnapshot = localPublishingAccountMocksEnabled() && resolvedConfiguration
-      ? configurationSnapshot(resolvedConfiguration)
+    const needsFactSnapshot = !savedFactsVersion || !frozenEnterpriseProfileForPlan(plan, false);
+    const localConfigurationSnapshot = resolvedConfiguration
+      ? localPublishingAccountMocksEnabled()
+        ? configurationSnapshot(resolvedConfiguration)
+        : needsFactSnapshot
+          ? { knowledgeBinding: resolvedConfiguration.knowledgeBinding }
+          : {}
       : {};
     if (!await store.update(COLLECTION.plans, plan.id, { plan: { ...body, ...localConfigurationSnapshot, ...compiled } })) { res.status(503).json({ error: 'weekly_plan_storage_unavailable' }); return; }
     await appendAudit({ tenantId, userId, action: 'weekly_package.updated', targetType: 'weekly_plan', targetId: plan.id, metadata: { revision: pack.revision, tasks: pack.tasks } });
@@ -2958,6 +3306,8 @@ digitalEmployeesRouter.post('/goals', async (req, res) => {
   const resolvedConfiguration = await resolveCurrentConfiguration(tenantId, configRecord);
   const config = resolvedConfiguration?.config || null;
   if (!config || !resolvedConfiguration) { res.status(409).json({ error: 'onboarding_required' }); return; }
+  const enterpriseProfile = enterpriseProfileFromKnowledgeBinding(resolvedConfiguration.knowledgeBinding) as EnterpriseProfile | null;
+  if (!enterpriseProfile) { res.status(409).json({ error: 'enterprise_fact_snapshot_missing' }); return; }
   if (config.smartOperationsEnabled === false) {
     res.status(409).json({ error: 'smart_operations_disabled', message: '智能经营已关闭；历史任务仍可查看，开启后才能制定新的周目标。' });
     return;
@@ -2987,7 +3337,7 @@ digitalEmployeesRouter.post('/goals', async (req, res) => {
     updated_at: now,
   });
   const planDraft = buildWeeklyPlan(goal, config);
-  const recommendedPackage = await recommendPackageWithTenantEvidence(tenantId, goal, config, userId);
+  const recommendedPackage = await recommendPackageWithTenantEvidence(tenantId, goal, config, userId, '', enterpriseProfile);
   const plan = await requiredCreate<PlanRecord>(COLLECTION.plans, {
     tenant_id: tenantId,
     goal_id: created.id,
@@ -3087,12 +3437,23 @@ export async function approveGoalForReview(tenantId: string, userId: string, goa
   const resolvedConfiguration = await resolveCurrentConfiguration(tenantId, configRecord);
   const currentConfig = resolvedConfiguration?.config || null;
   if (!currentConfig || !resolvedConfiguration) { return { status: 409, body: { error: 'onboarding_required' } }; }
+  const savedBody = existingPlan ? jsonObject<Record<string, unknown>>(existingPlan.plan, {}) : {};
+  const savedFactsVersion = String(jsonObject<Record<string, unknown>>(savedBody.knowledgeBinding, {}).factsVersion || '').trim();
+  const canonicalFactsVersion = resolvedConfiguration.knowledgeBinding.factsVersion;
+  if (savedFactsVersion && savedFactsVersion !== canonicalFactsVersion) {
+    return { status: 409, body: {
+      error: 'enterprise_facts_changed',
+      message: '企业事实已更新；当前草稿仍引用旧事实，请基于最新事实新建周目标后再启动。',
+      expectedFactVersion: savedFactsVersion,
+      factVersion: canonicalFactsVersion,
+    } };
+  }
+  const needsFrozenFactSnapshot = !existingPlan || !frozenEnterpriseProfileForPlan(existingPlan, false);
   // A draft goal owns the configuration snapshot captured when it was created.
   // Later Agent-setting edits apply only to a newly created goal.
   const config = executionConfigForPlan(existingPlan, currentConfig);
   // Account and delivery readiness are checked by the affected task at runtime.
   // Do not clear the content production platforms when no publishing account exists.
-  const savedBody = existingPlan ? jsonObject<Record<string, unknown>>(existingPlan.plan, {}) : {};
   let pack = savedBody.businessPackage as WeeklyPackage | undefined;
   let managedPublishingGrantId = String(savedBody.managedPublishingGrantId || '');
   if (pack && !managedPublishingGrantId) {
@@ -3116,7 +3477,7 @@ export async function approveGoalForReview(tenantId: string, userId: string, goa
   if (productionTask?.videoPlans) goal.scope = { ...jsonObject<Record<string, unknown>>(goal.scope, {}), description: goalInput(goal).scope, videoPlans: productionTask.videoPlans };
   await store.update(COLLECTION.goals, goal.id, { status: 'active', updated_at: now, ...(pack ? { scope: goal.scope, content_platforms: goal.content_platforms } : {}) });
   const frozenPlanMetadata = existingPlan
-    ? jsonObject<Record<string, unknown>>(existingPlan.plan, {})
+    ? { ...savedBody, ...(needsFrozenFactSnapshot ? { knowledgeBinding: resolvedConfiguration.knowledgeBinding } : {}) }
     : configurationSnapshot(resolvedConfiguration);
   const approvedPlanBody = { ...frozenPlanMetadata, ...planDraft, ...(managedPublishingGrantId ? { managedPublishingGrantId } : {}), ...(pack ? { packageApprovedBy: userId, packageApprovedAt: now } : {}) };
   let plan: PlanRecord;
@@ -3373,6 +3734,18 @@ digitalEmployeesRouter.post('/customer-segments/:segmentId/followup-batches', as
     const task = tasks.items.find(item => item.task_key === 'followup_batch_draft');
     if (!run || !goal || !task) { res.status(409).json({ error: 'followup_batch_context_missing' }); return; }
     if (['succeeded', 'cancelled'].includes(run.status)) { res.status(409).json({ error: '历史运行只可查看，请新建目标' }); return; }
+    const [plan, configRecord] = await Promise.all([
+      tenantRecord<PlanRecord>(COLLECTION.plans, run.plan_id, tenantId),
+      configForTenant(tenantId),
+    ]);
+    const currentConfig = publicConfig(configRecord);
+    if (!currentConfig) { res.status(409).json({ error: 'onboarding_required' }); return; }
+    const enterpriseProfile = await ensureFrozenEnterpriseProfileForRun(
+      tenantId,
+      plan,
+      executionConfigForPlan(plan, currentConfig),
+      run.started_at,
+    );
     const result = await createFollowupBatch({
       tenantId,
       goalId: goal.id,
@@ -3382,6 +3755,7 @@ digitalEmployeesRouter.post('/customer-segments/:segmentId/followup-batches', as
       userId,
       name: String(req.body?.name || '').trim().slice(0, 200),
       idempotent: false,
+      enterpriseProfile,
     });
     const refs = [{ type: 'followup_batch', id: result.batch.id, version: result.batch.version, contentHash: result.batch.content_hash, itemCount: result.items.length }];
     await store.update(COLLECTION.tasks, task.id, { business_refs: refs, updated_at: new Date().toISOString() });
@@ -3426,8 +3800,20 @@ digitalEmployeesRouter.post('/followup-batches/:batchId/revise', async (req, res
       }
     }
     try {
+      const [plan, configRecord] = await Promise.all([
+        tenantRecord<PlanRecord>(COLLECTION.plans, run.plan_id, tenantId),
+        configForTenant(tenantId),
+      ]);
+      const currentConfig = publicConfig(configRecord);
+      if (!currentConfig) { res.status(409).json({ error: 'onboarding_required' }); return; }
+      const enterpriseProfile = await ensureFrozenEnterpriseProfileForRun(
+        tenantId,
+        plan,
+        executionConfigForPlan(plan, currentConfig),
+        run.started_at,
+      );
       const result = await createFollowupBatch({ tenantId, goalId: batch.goal_id, runId: batch.run_id, taskId: batch.task_id, segmentId: batch.segment_id, userId,
-        idempotent: false, revisionNote: String(req.body?.note || '').slice(0, 1500), draftOverrides: req.body?.regenerate === true ? undefined : overrides, deliveryPolicy: jsonObject(batch.delivery_policy, {}) });
+        idempotent: false, revisionNote: String(req.body?.note || '').slice(0, 1500), draftOverrides: req.body?.regenerate === true ? undefined : overrides, deliveryPolicy: jsonObject(batch.delivery_policy, {}), enterpriseProfile });
       const tasks = await store.list<TaskRecord>(COLLECTION.tasks, { where: { tenant_id: tenantId, run_id: run.id }, perPage: 100 });
       for (const task of tasks.items.filter(task => ['followup_batch_draft', 'followup_batch_approval', 'followup_dispatch', 'weekly_review'].includes(task.task_key))) {
         await store.update(COLLECTION.tasks, task.id, { status: 'pending', blocked_reason: '', output: {}, business_refs: task.task_key === 'followup_batch_draft' ? [{ type: 'followup_batch', id: result.batch.id }] : [], updated_at: new Date().toISOString() });
@@ -3752,12 +4138,17 @@ async function applyTaskControl(input: {
   output?: Record<string, unknown>;
   businessRefs?: Array<Record<string, unknown>>;
   enabledWorkflows?: DigitalEmployeeConfig['enabledWorkflows'];
+  expectedTaskVersion?: string;
 }): Promise<{ runId: string; goalId: string }> {
   const initialTask = await tenantRecord<TaskRecord>(COLLECTION.tasks, input.taskId, input.tenantId);
   if (!initialTask) throw new TaskControlError(404, 'task_not_found');
   return withDigitalEmployeeRunLock(input.tenantId, initialTask.run_id, async () => {
     const task = await tenantRecord<TaskRecord>(COLLECTION.tasks, input.taskId, input.tenantId);
     if (!task) throw new TaskControlError(404, 'task_not_found');
+    if (input.expectedTaskVersion !== undefined
+      && String(task.task_version ?? task.updated_at ?? '').trim() !== input.expectedTaskVersion) {
+      throw new TaskControlError(409, 'task_version_conflict');
+    }
     const [run, goal, plan, configRecord, allTasks] = await Promise.all([
       tenantRecord<RunRecord>(COLLECTION.runs, task.run_id, input.tenantId),
       tenantRecord<GoalRecord>(COLLECTION.goals, task.goal_id, input.tenantId),
@@ -3959,6 +4350,29 @@ async function applyTaskControl(input: {
     await appendAudit({ tenantId: input.tenantId, userId: input.userId, action: `workflow_task.${input.action}`, targetType: 'workflow_task', targetId: task.id, metadata: { correctionId: correction.id, runId: run.id, version, scope: input.scope, rerunDownstream: input.rerunDownstream, affectedTaskIds: affected.map(item => item.id) } });
     return { runId: run.id, goalId: run.goal_id };
   });
+}
+
+/** Shared retry authority for alternate authenticated surfaces such as the mobile workbench. */
+export async function retryDigitalEmployeeTask(input: {
+  tenantId: string;
+  userId: string;
+  taskId: string;
+  expectedTaskVersion: string;
+  instruction?: string;
+  rerunDownstream?: boolean;
+}): Promise<{ runId: string; goalId: string }> {
+  const result = await applyTaskControl({
+    tenantId: input.tenantId,
+    userId: input.userId,
+    taskId: input.taskId,
+    expectedTaskVersion: input.expectedTaskVersion,
+    action: 'retry',
+    scope: 'one_off',
+    instruction: String(input.instruction || '').trim().slice(0, 5000) || '重试当前任务并重置下游',
+    rerunDownstream: input.rerunDownstream !== false,
+  });
+  await advanceRun(input.tenantId, result.runId);
+  return result;
 }
 
 async function handleTaskControl(req: Request, res: Response, forcedAction?: TaskControlAction): Promise<void> {

@@ -25,12 +25,13 @@ export function projectCalendarDeliverables(tasks: AgentCalendarTask[]): AgentCa
     for (const node of nodes) if (node.id !== anchor.id) hidden.add(node.id);
     const blocked = nodes.find(n=>n.status==='failed'||n.status==='blocked');
     const active = nodes.some(n=>n.status==='active');
+    const videoNode = ordered.find(n=>n.executionStep==='video_generation');
     const productionNode = ordered.filter(n=>n.productionExecutionTaskId&&n.productionTaskId&&n.executionStep==='quality_check').at(-1)
       || ordered.filter(n=>n.productionExecutionTaskId&&n.productionTaskId&&n.executionStep==='video_generation').at(-1)
       || ordered.find(n=>n.productionExecutionTaskId&&n.productionTaskId);
     replacements.set(anchor.id, {...anchor, agent:'content',
-      title: ordered.find(n=>n.executionStep==='video_generation')?.title.replace(/^(生成|制作|复刻.*并生成)/,'完成') || `完成视频成片 · ${anchor.title}`,
-      output: ordered.find(n=>n.executionStep==='video_generation')?.output || anchor.output,
+      title: videoNode?.title.startsWith('完成视频') ? videoNode.title : '完成视频成片',
+      output: videoNode?.output || anchor.output,
       status: anchor.status==='completed' ? 'completed' : blocked?.status || (active?'active':anchor.status),
       reason: blocked?.reason || anchor.reason,
       minutes: nodes.some(n=>n.minutes===null)?null:nodes.reduce((sum,n)=>sum+(n.minutes||0),0),

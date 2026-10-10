@@ -199,7 +199,12 @@ export function buildContentBatchPlan(input: {
     });
     // A user-selected clone must retain its reference requirement; never
     // silently replace it with another enabled content route.
-    errors.push(...referenceErrors);
+    // Missing clone evidence blocks that master, not unrelated product orders.
+    // Keep its frozen reference and surface the disabled route; the production
+    // preflight still refuses to generate it until the analysis is available.
+    const allOrdersMissingReference = orders.length > 0 && orders.every(order =>
+      order.route === 'clone' && !input.evidence.exactAnalysisIds.includes(order.videoPlan?.referenceId || ''));
+    if (allOrdersMissingReference) errors.push(...referenceErrors);
     return { coverage: contentPlanCoverage(input.config, input.goal, errors.length ? 0 : orders.length), status: errors.length ? 'blocked' : 'planned', orders: errors.length ? [] : orders, blocker: errors.join('；'), eligibleRoutes: [...new Set(orders.map(order => order.route))], disabledRoutes: [...disabledRoutes, ...referenceErrors.map(reason => ({ route: 'clone' as const, reason }))] };
   }
   const missingProducts = input.evidence.products.filter(product => !product.materialIds.length);

@@ -1,4 +1,5 @@
 import { mountWhatsAppOAuthRoutes } from './routes/whatsappParentMount.js';
+import { mobileWorkbenchRouter } from './routes/mobileWorkbench.js';
 import './loadEnvironment.js';
 import { startMessengerContextTagRecovery } from './messenger/conversations.js';
 import path from 'path';
@@ -50,10 +51,10 @@ import { cloudMaterialMediaRouter } from './routes/cloudMaterialMedia.js';
 import { agentMemoryRouter } from './routes/agentMemory.js';
 import { socialMetricsRouter } from './routes/socialMetrics.js';
 import { followupTemplatesRouter } from './routes/followupTemplates.js';
-import { digitalEmployeesRouter, initInitialPreparationWorker } from './routes/digitalEmployees.js';
+import { digitalEmployeesRouter } from './routes/digitalEmployees.js';
 import { startBackgroundJobs } from './runtime/backgroundJobs.js';
 import { parseProcessRole, processRoleStartsBackgroundJobs, processRoleStartsHttp } from './runtime/processRole.js';
-import { starter198Router } from './starter198/router.js';
+import { starter198Router } from './routes/starter198Mobile.js';
 import { requireAuth, enforceSupportSessionReadOnly } from './middleware/auth.js';
 import { quoteSkillRouter } from './routes/quoteSkill.js';
 import { platformAdsRouter } from './routes/platformAds.js';
@@ -195,6 +196,8 @@ app.use('/api/overseas/studio/voice-samples', requireAuth, jsonBody(`${limits.vo
 app.use('/api/overseas/studio/voiceover', requireAuth, jsonBody(`${limits.voiceUpload}mb`));
 app.use('/api/overseas/studio/bgm', requireAuth, jsonBody(`${limits.voiceUpload}mb`));
 app.use('/api/overseas/studio/product-document-ocr', requireAuth, jsonBody('9mb'));
+app.use('/api/overseas/mobile-workbench', mobileWorkbenchRouter);
+app.use('/api/overseas/starter-198/mobile/transcribe', requireAuth, jsonBody('3mb'));
 app.use(jsonBody(`${limits.default}mb`));
 app.use(syncAssetSession);
 
@@ -244,7 +247,6 @@ app.use('/api/overseas/agent-memory', agentMemoryRouter);
 app.use('/api/overseas/social-metrics', socialMetricsRouter);
 app.use('/api/overseas/digital-employees/followup', followupTemplatesRouter);
 app.use('/api/overseas/digital-employees', digitalEmployeesRouter);
-initInitialPreparationWorker();
 app.use('/api/overseas/quote-skill', quoteSkillRouter);
 app.use('/api/overseas/platform-ads', platformAdConnectionsRouter);
 app.use('/api/overseas/platform-ads', platformAdsRouter);
@@ -260,7 +262,9 @@ app.use('/api/v1/products', productApiRouter);
 app.use('/api/webhooks', webhookRouter);
 mountWhatsAppOAuthRoutes(app);
 
-if (processRoleStartsBackgroundJobs(processRole)) await startBackgroundJobs(processRole);
+const stopBackgroundJobs = processRoleStartsBackgroundJobs(processRole)
+  ? await startBackgroundJobs(processRole)
+  : () => undefined;
 
 // 绱犳潗搴撴湰鍦版枃浠舵墭绠★紙POST /studio/materials 涓婁紶鍒?data/media/锛?
 const mediaDir = path.join(__dirname, '..', 'data', 'media');
@@ -320,6 +324,7 @@ if (processRoleStartsHttp(processRole)) {
   const shutdown = (signal: string) => {
     if (shuttingDown) return;
     shuttingDown = true;
+    stopBackgroundJobs();
     stopMessengerContextTagRecovery();
     console.log(`[runtime] ${signal} received; draining HTTP connections`);
     server.close(error => {

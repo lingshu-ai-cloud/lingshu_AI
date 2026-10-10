@@ -7,5 +7,5 @@ export function Field({ label, children }: { label: string; children: ReactNode 
   return <div><p className="text-xs font-semibold text-text-secondary mb-2">{label}</p>{children}</div>;
 }
 export function Pill({ active, onClick, children }: { active: boolean; onClick: () => void; children: ReactNode }) {
-  return <button onClick={onClick} className="px-3 py-1.5 rounded-lg text-xs font-semibold transition-all border" style={active ? { background: '#117f51', color: '#fff', borderColor: '#117f51' } : { background: 'var(--color-surface)', color: 'var(--color-text-secondary)', borderColor: 'var(--color-border)' }}>{children}</button>;
+  return <button onClick={onClick} className="px-3 py-1.5 rounded-lg text-xs font-semibold transition-all border" style={active ? { background: 'var(--color-accent)', color: '#fff', borderColor: 'var(--color-accent)' } : { background: 'var(--color-surface)', color: 'var(--color-text-secondary)', borderColor: 'var(--color-border)' }}>{children}</button>;
 }

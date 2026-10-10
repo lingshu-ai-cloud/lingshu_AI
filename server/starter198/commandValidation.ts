@@ -77,11 +77,11 @@ export function assertStarter198CommandPayload(
   payload: Record<string, unknown>,
 ): void {
   const allowed: Record<Starter198Command, readonly string[]> = {
-    confirm_initial_setup: ['companyName', 'industry', 'primaryBusiness', 'focusProducts', 'targetMarkets', 'customerProfile', 'primaryPlatform', 'primaryLanguage', 'constraints'],
+    confirm_initial_setup: ['companyName', 'industry', 'primaryBusiness', 'focusProducts', 'targetMarkets', 'customerProfile', 'primaryPlatform', 'primaryLanguage', 'constraints', 'operatingPlan'],
     confirm_quote_rule: ['sku', 'currency', 'unitPrice', 'unitCost', 'moq', 'incoterm', 'shippingFlatFee', 'taxRateBps', 'paymentTerm', 'leadTimeDays', 'validDays', 'minMarginBps', 'sourceReference'],
     submit_quote_inquiry: ['sourceChannel', 'sourceReference', 'quantity', 'destinationCountry'],
     submit_orchestrator_input: ['input'],
-    resolve_decision: ['decision', 'note'],
+    resolve_decision: ['decision', 'note', 'selection'],
     pause_run: ['reason'],
     resume_run: [],
     cancel_run: ['reason'],
@@ -92,12 +92,37 @@ export function assertStarter198CommandPayload(
   if (!exactKeys(payload, allowed[command])) throw new Starter198CommandError('starter_198_command_payload_invalid', 400);
   if (command === 'confirm_initial_setup') {
     const required = ['companyName', 'industry', 'primaryBusiness', 'focusProducts', 'targetMarkets', 'customerProfile', 'primaryPlatform', 'primaryLanguage'];
+    const operatingPlan = payload.operatingPlan === undefined ? null : object(payload.operatingPlan);
+    const plannedAccounts = Array.isArray(operatingPlan?.plannedAccounts) ? operatingPlan.plannedAccounts : [];
+    const cost = object(operatingPlan?.estimatedCostCny);
+    const operatingPlanInvalid = payload.operatingPlan !== undefined && (
+      !operatingPlan
+      || !exactKeys(operatingPlan, ['brandName', 'presenter', 'plannedAccounts', 'weeklyMasterCount', 'weeklyVariantCount', 'estimatedCostCny', 'deliveryDays'])
+      || !text(operatingPlan.brandName)
+      || !['brand_spokesperson', 'product_expert', 'none'].includes(text(operatingPlan.presenter))
+      || plannedAccounts.length < 1 || plannedAccounts.length > 4
+      || plannedAccounts.some(item => {
+        const account = object(item);
+        return !account
+          || !exactKeys(account, ['platform', 'accountName', 'weeklyOutput'])
+          || !['facebook', 'instagram', 'tiktok', 'youtube'].includes(text(account.platform).toLowerCase())
+          || !text(account.accountName)
+          || !Number.isSafeInteger(account.weeklyOutput) || Number(account.weeklyOutput) < 1;
+      })
+      || !Number.isSafeInteger(operatingPlan.weeklyMasterCount) || Number(operatingPlan.weeklyMasterCount) < 1
+      || !Number.isSafeInteger(operatingPlan.weeklyVariantCount) || Number(operatingPlan.weeklyVariantCount) < 1
+      || !cost || !exactKeys(cost, ['min', 'max'])
+      || !Number.isSafeInteger(cost.min) || Number(cost.min) < 0
+      || !Number.isSafeInteger(cost.max) || Number(cost.max) < Number(cost.min)
+      || !Number.isSafeInteger(operatingPlan.deliveryDays) || Number(operatingPlan.deliveryDays) < 1
+    );
     if (required.some(key => !text(payload[key]))
       || !['facebook', 'instagram', 'tiktok', 'youtube'].includes(text(payload.primaryPlatform).toLowerCase())
       || !/^[a-z]{2}(?:-[A-Z]{2})?$/.test(text(payload.primaryLanguage))
       || !Array.isArray(payload.constraints)
       || payload.constraints.length > 10
-      || payload.constraints.some(item => typeof item !== 'string' || !item.trim() || item.trim().length > 240)) {
+      || payload.constraints.some(item => typeof item !== 'string' || !item.trim() || item.trim().length > 240)
+      || operatingPlanInvalid) {
       throw new Starter198CommandError('starter_198_initial_setup_invalid', 400);
     }
   }
@@ -119,7 +144,30 @@ export function assertStarter198CommandPayload(
     }
   }
   if (command === 'resolve_decision') {
-    if (!['approved', 'rejected'].includes(text(payload.decision)) || text(payload.note).length > 2_000) {
+    const selection = payload.selection === undefined ? null : object(payload.selection);
+    const parameters = selection ? object(selection.parameters) : null;
+    const option = text(selection?.option);
+    const value = text(selection?.value);
+    const pairs: Record<string, { value: string; decision: string }> = {
+      approve: { value: 'approved', decision: 'approved' },
+      accept_result: { value: 'accepted', decision: 'approved' },
+      request_revision: { value: 'revision_requested', decision: 'rejected' },
+    };
+    const selectionInvalid = payload.selection !== undefined && (
+      !selection
+      || !exactKeys(selection, ['option', 'value', 'parameters'])
+      || !parameters
+      || !exactKeys(parameters, ['note'])
+      || !pairs[option]
+      || pairs[option].value !== value
+      || pairs[option].decision !== text(payload.decision)
+      || text(parameters.note).length > 2_000
+      || (parameters.note !== undefined && !text(parameters.note))
+      || (parameters.note !== undefined && text(parameters.note) !== text(payload.note))
+    );
+    if (!['approved', 'rejected'].includes(text(payload.decision))
+      || text(payload.note).length > 2_000
+      || selectionInvalid) {
       throw new Starter198CommandError('starter_198_decision_invalid', 400);
     }
   }

@@ -4,6 +4,23 @@ export type AssistantGuide = {
   agent: 'strategy' | 'traffic' | 'conversion' | 'retention';
 };
 
+/**
+ * 灵小枢默认回答契约。长清单、完整日历和批量结果应留在工作区，
+ * 对话窗口只负责给结论、必要依据和下一步选择。
+ */
+export const ASSISTANT_RESPONSE_CONTRACT = [
+  '先给 1 个明确结论，不复述用户问题。',
+  '结论后最多补充 3 条完成当前决定所必需的细节。',
+  '如需用户操作，只给 1 个主操作和最多 2 个次操作；完整结果引导到工作区查看。',
+  '同一任务的后续进度更新原任务，不重复创建新任务或新提醒。',
+  '暂停、继续、确认、修改、删除、发布等写操作只能通过当前任务卡的已签名动作执行；无法唯一绑定时必须明确说明未执行，禁止用对话文本声称成功。',
+].join('\n');
+
+export const ASSISTANT_NOTIFICATION_POLICY = [
+  '常规执行、排队和进度变化保持静默。',
+  '仅在缺少必填信息、需要用户审批或执行失败时主动提醒。',
+].join('\n');
+
 export const ASSISTANT_GUIDES: Record<string, AssistantGuide> = {
   'strategy-dashboard': {
     title: '看经营数据',

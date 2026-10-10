@@ -1,4 +1,6 @@
 import { ArrowRight, Loader2 } from 'lucide-react';
+import { LsBrandAction, LsGradientProgress } from '../ui/LsExperiencePrimitives';
+import { contentShotProgress } from '../../lib/contentProductionExperience';
 import type { SocialContentTaskDetail } from '../../../shared/contracts/socialContentWorkflow';
 
 function estimatedTime(task: SocialContentTaskDetail): string {
@@ -43,6 +45,8 @@ export function isLiveSocialProduction(task: SocialContentTaskDetail): boolean {
 
 export default function SocialTaskRunStatusPanel({ task, onOpenWorkbench }: { task: SocialContentTaskDetail; onOpenWorkbench?: () => void }) {
   if (!isLiveSocialProduction(task)) return null;
+  const shots = contentShotProgress(task);
+  const completedShots = shots.filter(shot => shot.state === 'completed').length;
   const rows = [
     ['预计生成耗时', estimatedTime(task)],
     ['当前步骤', currentStep(task)],
@@ -50,24 +54,22 @@ export default function SocialTaskRunStatusPanel({ task, onOpenWorkbench }: { ta
   ] as const;
 
   return (
-    <section className="mx-auto w-full max-w-2xl rounded-2xl border border-emerald-200 bg-white px-5 py-8 shadow-sm sm:px-8" aria-labelledby="social-task-running-title">
+    <section className="mx-auto w-full max-w-2xl rounded-lg border border-emerald-200 bg-white px-5 py-8 shadow-none sm:px-8" aria-labelledby="social-task-running-title">
       <div className="text-center">
-        <span className="relative mx-auto flex h-20 w-20 items-center justify-center rounded-full bg-emerald-50 text-emerald-700" aria-hidden>
-          <Loader2 size={42} className="animate-spin motion-reduce:animate-none" />
-        </span>
-        <p className="mt-5 text-sm font-black text-emerald-700">正在制作</p>
-        <h2 id="social-task-running-title" className="mt-2 text-xl font-black text-text-primary sm:text-2xl">{task.brief.title}</h2>
+        <p className="text-sm font-medium text-accent">内容 Agent · {currentStep(task)}</p>
+        <h2 id="social-task-running-title" className="mt-2 text-xl font-semibold text-text-primary sm:text-2xl">{task.brief.title}</h2>
+        {shots.length > 0 && <LsGradientProgress className="mt-4" percent={Math.round(completedShots / shots.length * 100)} format={() => `${completedShots}/${shots.length} 镜`} />}
       </div>
 
-      <dl className="mt-7 divide-y divide-border overflow-hidden rounded-xl border border-border bg-surface-2" aria-live="polite">
+      <dl className="mt-7 divide-y divide-border overflow-hidden rounded-lg border border-border bg-surface-2" aria-live="polite">
         {rows.map(([label, value]) => (
           <div key={label} className="grid gap-1 px-4 py-3.5 sm:grid-cols-[8rem_minmax(0,1fr)] sm:items-start sm:gap-4">
             <dt className="text-sm font-bold text-text-muted">{label}</dt>
-            <dd className="text-sm font-black leading-6 text-text-primary">{value}</dd>
+            <dd className="text-sm font-semibold leading-6 text-text-primary">{value}</dd>
           </div>
         ))}
       </dl>
-      {onOpenWorkbench && <button type="button" onClick={onOpenWorkbench} className="mx-auto mt-5 flex items-center justify-center gap-2 rounded-xl bg-[#10244a] px-5 py-3 text-sm font-black text-white shadow-[0_5px_0_#8b7cf6] transition hover:-translate-y-0.5">进入三栏制作台 <ArrowRight size={15}/></button>}
+      {onOpenWorkbench && <div className="mt-5 text-center"><LsBrandAction onClick={onOpenWorkbench} icon={<ArrowRight size={15}/>}>进入制作台</LsBrandAction></div>}
     </section>
   );
 }

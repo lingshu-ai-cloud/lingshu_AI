@@ -12,14 +12,17 @@ import {
   pbPatchStrict,
   pbDeleteStrict,
   pbListStrict,
+  pbRequestTimeoutMs,
   getTenantIdFromToken,
 } from './pb.js';
 import fs from 'node:fs';
 import path from 'node:path';
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
+import { isDeepStrictEqual } from 'node:util';
 import { fileURLToPath } from 'node:url';
 import type {
   AuthProvider,
+  CompareExpected,
   DataStore,
   Identity,
   ListQuery,
@@ -121,6 +124,249 @@ function localUpdate(collection: string, id: string, data: Record<string, unknow
   return true;
 }
 
+function localCompareAndSwap(
+  collection: string,
+  id: string,
+  expected: CompareExpected,
+  data: Record<string, unknown>,
+): boolean {
+  if (!localFallbacksEnabled()) return false;
+  const records = readLocalCollection<Record_>(collection);
+  const index = records.findIndex(record => record.id === id);
+  if (index < 0) return false;
+  const current = records[index];
+  if (!Object.entries(expected).every(([key, value]) => isDeepStrictEqual(current[key], value))) return false;
+  records[index] = { ...current, ...data, updated: new Date().toISOString() };
+  writeLocalCollection(collection, records);
+  return true;
+}
+
+const compareAndSwapTails = new Map<string, Promise<void>>();
+const CAS_CLAIM_COLLECTION = 'datastore_cas_claims';
+// A claim may cover create/read/ownership-check/PATCH/verification requests.
+// Each PocketBase request is independently bounded by pbRequestTimeoutMs().
+// Five complete request windows plus a margin keeps a claimant alive longer
+// than any target write it could still issue. Recovery is deliberately limited
+// to an exact operation replay; a different operation never steals by clock.
+const CAS_CLAIM_LEASE_MS = Math.max(120_000, (pbRequestTimeoutMs() * 5) + 30_000);
+
+function canonicalJson(value: unknown): string {
+  if (Array.isArray(value)) return `[${value.map(canonicalJson).join(',')}]`;
+  if (value && typeof value === 'object') {
+    return `{${Object.entries(value as Record<string, unknown>)
+      .filter(([, child]) => child !== undefined)
+      .sort(([left], [right]) => left.localeCompare(right))
+      .map(([key, child]) => `${JSON.stringify(key)}:${canonicalJson(child)}`)
+      .join(',')}}`;
+  }
+  return JSON.stringify(value) ?? 'null';
+}
+
+function recordMatches(record: Record<string, unknown>, expected: Record<string, unknown>): boolean {
+  return Object.entries(expected).every(([key, value]) => canonicalJson(record[key]) === canonicalJson(value));
+}
+
+function casFingerprint(value: unknown): string {
+  return createHash('sha256').update(canonicalJson(value)).digest('hex');
+}
+
+function newCasClaimId(): string {
+  // PocketBase record ids are exactly 15 lower-case alphanumeric characters.
+  // A unique target_key index elects the winner. Per-owner ids prevent an old
+  // owner from deleting a replacement claim after its lease expired.
+  return randomUUID().replaceAll('-', '').slice(0, 15);
+}
+
+type TargetClaim = {
+  claimId: string;
+  operationFingerprint: string;
+  ownerToken: string;
+  ownsClaim: boolean;
+  existingClaim: Record<string, unknown> | null;
+};
+
+function claimTargetKey(collection: string, id: string): string {
+  return `${collection}:${id}`;
+}
+
+function claimLeaseExpired(claim: Record<string, unknown>, nowMs = Date.now()): boolean {
+  const explicitExpiry = Date.parse(String(claim.lease_expires_at || ''));
+  if (Number.isFinite(explicitExpiry)) return explicitExpiry <= nowMs;
+  const created = Date.parse(String(claim.created || claim.created_at || ''));
+  return Number.isFinite(created) && created + CAS_CLAIM_LEASE_MS <= nowMs;
+}
+
+async function currentPocketBaseTargetClaim(
+  collection: string,
+  id: string,
+): Promise<Record<string, unknown> | null> {
+  const targetKey = claimTargetKey(collection, id);
+  const result = await pbListStrict<Record<string, unknown>>(CAS_CLAIM_COLLECTION, {
+    filter: `target_key = ${pbValue(targetKey)}`,
+    perPage: 1,
+  });
+  return result.items[0] ?? null;
+}
+
+async function createPocketBaseTargetClaim(
+  collection: string,
+  id: string,
+  operationFingerprint: string,
+  expectedFingerprint: string,
+  ownerToken: string,
+): Promise<TargetClaim | null> {
+  const claimId = newCasClaimId();
+  const now = Date.now();
+  const created = await pbCreateStrict(CAS_CLAIM_COLLECTION, {
+    id: claimId,
+    target_key: claimTargetKey(collection, id),
+    expected_fingerprint: expectedFingerprint,
+    operation_fingerprint: operationFingerprint,
+    owner_token: ownerToken,
+    created_at: new Date(now).toISOString(),
+    lease_expires_at: new Date(now + CAS_CLAIM_LEASE_MS).toISOString(),
+  });
+  return created
+    ? { claimId, operationFingerprint, ownerToken, ownsClaim: true, existingClaim: null }
+    : null;
+}
+
+async function acquirePocketBaseTargetClaim(
+  collection: string,
+  id: string,
+  operation: Record<string, unknown>,
+): Promise<TargetClaim> {
+  const operationFingerprint = casFingerprint(operation);
+  const expectedFingerprint = casFingerprint(operation.expected ?? null);
+  const ownerToken = randomUUID();
+  try {
+    const created = await createPocketBaseTargetClaim(
+      collection,
+      id,
+      operationFingerprint,
+      expectedFingerprint,
+      ownerToken,
+    );
+    if (created) return created;
+    throw new Error('PocketBase target claim was not created');
+  } catch (claimError) {
+    // Only a readable existing claim proves contention. A missing claim is a
+    // lock-service outage and must be propagated rather than downgraded.
+    const existingClaim = await currentPocketBaseTargetClaim(collection, id);
+    if (!existingClaim) throw claimError;
+    const existingClaimId = String(existingClaim.id || '');
+    const existingOwnerToken = String(existingClaim.owner_token || '');
+    const exactReplay = existingClaim.operation_fingerprint === operationFingerprint;
+    if (exactReplay && existingOwnerToken === ownerToken && existingClaimId) {
+      // The create response may have been lost after PocketBase committed it.
+      // The unguessable owner token proves this request is the actual owner.
+      return {
+        claimId: existingClaimId,
+        operationFingerprint,
+        ownerToken,
+        ownsClaim: true,
+        existingClaim,
+      };
+    }
+    if (!exactReplay || !claimLeaseExpired(existingClaim) || !existingClaimId || !existingOwnerToken) {
+      return {
+        claimId: existingClaimId,
+        operationFingerprint,
+        ownerToken,
+        ownsClaim: false,
+        existingClaim,
+      };
+    }
+
+    // Recovery is only for the exact same operation. Re-read the old owner's
+    // row before deleting it. The owner-specific record id makes cleanup ABA
+    // safe, while the unique target_key index elects at most one replacement.
+    const reread = await pbGetStrict(CAS_CLAIM_COLLECTION, existingClaimId);
+    if (
+      !reread
+      || reread.owner_token !== existingOwnerToken
+      || reread.operation_fingerprint !== operationFingerprint
+      || !claimLeaseExpired(reread)
+    ) {
+      const current = await currentPocketBaseTargetClaim(collection, id);
+      return {
+        claimId: String(current?.id || existingClaimId),
+        operationFingerprint,
+        ownerToken,
+        ownsClaim: false,
+        existingClaim: current,
+      };
+    }
+    const removed = await pbDeleteStrict(CAS_CLAIM_COLLECTION, existingClaimId);
+    if (!removed) {
+      const current = await currentPocketBaseTargetClaim(collection, id);
+      return {
+        claimId: String(current?.id || existingClaimId),
+        operationFingerprint,
+        ownerToken,
+        ownsClaim: false,
+        existingClaim: current,
+      };
+    }
+    try {
+      const replacement = await createPocketBaseTargetClaim(
+        collection,
+        id,
+        operationFingerprint,
+        expectedFingerprint,
+        ownerToken,
+      );
+      if (replacement) return replacement;
+    } catch {
+      // A peer may have won the target_key race after the expired row was
+      // removed. Read that winner below and fail closed.
+    }
+    const current = await currentPocketBaseTargetClaim(collection, id);
+    if (!current) throw claimError;
+    return {
+      claimId: String(current.id || ''),
+      operationFingerprint,
+      ownerToken,
+      ownsClaim: false,
+      existingClaim: current,
+    };
+  }
+}
+
+async function stillOwnPocketBaseTargetClaim(claim: TargetClaim): Promise<boolean> {
+  if (!claim.ownsClaim || !claim.claimId || !claim.ownerToken) return false;
+  const current = await pbGetStrict(CAS_CLAIM_COLLECTION, claim.claimId);
+  return Boolean(
+    current
+    && current.owner_token === claim.ownerToken
+    && current.operation_fingerprint === claim.operationFingerprint,
+  );
+}
+
+async function releasePocketBaseTargetClaim(claim: TargetClaim): Promise<void> {
+  if (!claim.ownsClaim) return;
+  // Never delete a replacement owner's row. Cleanup failure is safe: the exact
+  // operation can recover after the conservative lease; different operations
+  // continue to fail closed.
+  if (!await stillOwnPocketBaseTargetClaim(claim).catch(() => false)) return;
+  await pbDeleteStrict(CAS_CLAIM_COLLECTION, claim.claimId).catch(() => false);
+}
+
+async function serializeCompareAndSwap<T>(key: string, work: () => Promise<T>): Promise<T> {
+  const previous = compareAndSwapTails.get(key) ?? Promise.resolve();
+  let release!: () => void;
+  const tail = new Promise<void>(resolve => { release = resolve; });
+  const queued = previous.then(() => tail);
+  compareAndSwapTails.set(key, queued);
+  await previous;
+  try {
+    return await work();
+  } finally {
+    release();
+    if (compareAndSwapTails.get(key) === queued) compareAndSwapTails.delete(key);
+  }
+}
+
 function localDelete(collection: string, id: string): boolean {
   if (!localFallbacksEnabled()) return false;
   if (collection === 'tenants') return deleteLocalInviteTenant(id);
@@ -197,10 +443,93 @@ export const pbStore: DataStore = {
     const authority = currentDataAuthority();
     if (authority === 'local') return localUpdate(collection, id, data);
     try {
-      const remote = await pbPatchStrict(collection, id, data);
-      return remote;
+      const claim = await acquirePocketBaseTargetClaim(collection, id, { kind: 'update', data });
+      if (!claim.ownsClaim) {
+        const current = await pbGetStrict(collection, id) as Record<string, unknown> | null;
+        return Boolean(
+          claim.existingClaim?.operation_fingerprint === claim.operationFingerprint
+          && current
+          && recordMatches(current, data)
+        );
+      }
+      let releaseClaim = false;
+      try {
+        if (!await stillOwnPocketBaseTargetClaim(claim)) return false;
+        const patched = await pbPatchStrict(collection, id, data);
+        if (!patched) {
+          releaseClaim = true;
+          return false;
+        }
+        const verified = await pbGetStrict(collection, id) as Record<string, unknown> | null;
+        if (!verified || !recordMatches(verified, data)) return false;
+        releaseClaim = true;
+        return true;
+      } finally {
+        if (releaseClaim) await releasePocketBaseTargetClaim(claim);
+      }
     } catch (error) {
       if (!authority && localFallbacksEnabled()) return localUpdate(collection, id, data);
+      throw error;
+    }
+  },
+
+  async compareAndSwap(collection, id, expected, data) {
+    const authority = currentDataAuthority();
+    if (authority === 'local') {
+      return serializeCompareAndSwap(`local:${collection}:${id}`, async () => (
+        localCompareAndSwap(collection, id, expected, data)
+      ));
+    }
+    try {
+      const claim = await acquirePocketBaseTargetClaim(collection, id, {
+        kind: 'compare_and_swap',
+        expected,
+        data,
+      });
+      if (!claim.ownsClaim) {
+        const current = await pbGetStrict(collection, id) as Record<string, unknown> | null;
+        if (
+          claim.existingClaim?.operation_fingerprint === claim.operationFingerprint
+          && current
+          && !recordMatches(current, expected)
+          && recordMatches(current, data)
+        ) {
+          // Exact replay after a winner committed but its response was lost.
+          return true;
+        }
+        return false;
+      }
+
+      let releaseClaim = false;
+      try {
+        const current = await pbGetStrict(collection, id) as Record<string, unknown> | null;
+        if (!current || !recordMatches(current, expected)) {
+          releaseClaim = true;
+          return Boolean(current && recordMatches(current, data));
+        }
+        if (!await stillOwnPocketBaseTargetClaim(claim)) return false;
+        const patched = await pbPatchStrict(collection, id, data);
+        if (!patched) {
+          releaseClaim = true;
+          return false;
+        }
+        const verified = await pbGetStrict(collection, id) as Record<string, unknown> | null;
+        if (!verified || !recordMatches(verified, data)) {
+          // PATCH outcome is uncertain. Keep the claim: availability may be
+          // reduced, but no peer can silently overwrite from the stale state.
+          return false;
+        }
+        releaseClaim = true;
+        return true;
+      } finally {
+        if (releaseClaim) await releasePocketBaseTargetClaim(claim);
+      }
+    } catch (error) {
+      if (!authority && localFallbacksEnabled()) {
+        return serializeCompareAndSwap(`local:${collection}:${id}`, async () => (
+          localCompareAndSwap(collection, id, expected, data)
+        ));
+      }
       throw error;
     }
   },

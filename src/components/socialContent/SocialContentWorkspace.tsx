@@ -1,3 +1,4 @@
+import { getScrollBehavior } from "../../lib/usePrefersReducedMotion";
 import {SocialDirectorG5ReviewPanel} from './SocialDirectorG5ReviewPanel';
 import {SocialSceneG4ReviewPanel} from './SocialSceneG4ReviewPanel';
 import { useCallback, useEffect, useState } from 'react';
@@ -72,7 +73,7 @@ export default function SocialContentWorkspace({
 
   const openDirectorReview = useCallback(() => {
     const panel = document.querySelector<HTMLElement>('[data-social-agent-workflow]');
-    panel?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    panel?.scrollIntoView({ behavior: getScrollBehavior(), block: 'start' });
     panel?.querySelector<HTMLDetailsElement>('details')?.setAttribute('open', '');
   }, []);
 
@@ -102,7 +103,7 @@ export default function SocialContentWorkspace({
 
   if (state.loading && !state.workspace) {
     return (
-      <section className="rounded-2xl border border-border bg-white p-8 shadow-sm" aria-label="社媒内容任务">
+      <section className="rounded-lg border border-border bg-white p-8 shadow-none" aria-label="社媒内容任务">
         <div className="flex items-center justify-center gap-2 text-sm font-semibold text-text-muted"><Loader2 size={18} className="animate-spin text-emerald-600" />正在读取内容任务</div>
       </section>
     );
@@ -110,8 +111,8 @@ export default function SocialContentWorkspace({
 
   if (!state.workspace) {
     return (
-      <section className="rounded-2xl border border-border bg-white p-6 shadow-sm" aria-label="社媒内容任务">
-        <div className="flex flex-wrap items-center justify-between gap-4"><div className="flex items-start gap-3"><span className="flex h-10 w-10 items-center justify-center rounded-xl bg-amber-50 text-amber-700"><AlertCircle size={19} /></span><div><h2 className="text-sm font-black text-text-primary">内容任务暂时无法读取</h2><p className="mt-1 text-xs text-text-muted">请稍后重新加载。</p></div></div><button type="button" onClick={() => void state.refresh()} className="inline-flex items-center gap-1.5 rounded-xl border border-border px-3 py-2 text-xs font-bold text-text-secondary hover:bg-surface-2"><RefreshCcw size={14} />重新加载</button></div>
+      <section className="rounded-lg border border-border bg-white p-6 shadow-none" aria-label="社媒内容任务">
+        <div className="flex flex-wrap items-center justify-between gap-4"><div className="flex items-start gap-3"><span className="flex h-10 w-10 items-center justify-center rounded-lg bg-amber-50 text-amber-700"><AlertCircle size={19} /></span><div><h2 className="text-sm font-semibold text-text-primary">内容任务暂时无法读取</h2><p className="mt-1 text-xs text-text-muted">请稍后重新加载。</p></div></div><button type="button" onClick={() => void state.refresh()} className="inline-flex items-center gap-1.5 rounded-lg border border-border px-3 py-2 text-xs font-bold text-text-secondary hover:bg-surface-2"><RefreshCcw size={14} />重新加载</button></div>
       </section>
     );
   }
@@ -127,7 +128,7 @@ export default function SocialContentWorkspace({
 
   return (
     <section aria-labelledby="social-content-workspace-title">
-      {(state.error || state.notice) && <div role={state.error ? 'alert' : 'status'} className={`mb-4 flex flex-wrap items-center justify-between gap-3 rounded-xl border px-4 py-3 text-xs font-semibold ${state.error ? 'border-rose-200 bg-rose-50 text-rose-800' : 'border-emerald-200 bg-emerald-50 text-emerald-800'}`}><span className="flex items-center gap-2">{state.error ? <AlertCircle size={14} /> : <CheckCircle2 size={14} />}{state.error || state.notice}</span><span className="flex items-center gap-2">{reviewBlocked && <button type="button" onClick={openDirectorReview} className="rounded-lg border border-amber-300 bg-white px-3 py-1.5 text-[10px] font-black text-amber-900">查看编导待修改项</button>}{factsBlocked && <button type="button" onClick={() => onNavigate('enterprise')} className="rounded-lg border border-amber-300 bg-white px-3 py-1.5 text-[10px] font-black text-amber-900">补充企业与产品事实</button>}{state.notice && <button type="button" onClick={state.dismissNotice} className="text-[10px] font-bold">关闭</button>}</span></div>}
+      {(state.error || state.notice) && <div role={state.error ? 'alert' : 'status'} className={`mb-4 flex flex-wrap items-center justify-between gap-3 rounded-lg border px-4 py-3 text-xs font-semibold ${state.error ? 'border-rose-200 bg-rose-50 text-rose-800' : 'border-emerald-200 bg-emerald-50 text-emerald-800'}`}><span className="flex items-center gap-2">{state.error ? <AlertCircle size={14} /> : <CheckCircle2 size={14} />}{state.error || state.notice}</span><span className="flex items-center gap-2">{reviewBlocked && <button type="button" onClick={openDirectorReview} className="rounded-lg border border-amber-300 bg-white px-3 py-1.5 text-[10px] font-semibold text-amber-900">查看编导待修改项</button>}{factsBlocked && <button type="button" onClick={() => onNavigate('enterprise')} className="rounded-lg border border-amber-300 bg-white px-3 py-1.5 text-[10px] font-semibold text-amber-900">补充企业与产品事实</button>}{state.notice && <button type="button" onClick={state.dismissNotice} className="text-[10px] font-bold">关闭</button>}</span></div>}
 
       <h1 id="social-content-workspace-title" className="mb-4 text-lg font-bold text-text-primary">{task?.brief.title || '社媒内容任务'}</h1>
 

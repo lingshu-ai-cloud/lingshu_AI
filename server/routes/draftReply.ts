@@ -152,6 +152,7 @@ function knowledgeGapPayload(
   const messages = splitMobileChatMessages(plan.draft);
   const translatedMessages = splitMobileChatMessages(plan.draftZh);
   return {
+    enterpriseFactVersion: context.enterpriseFactVersion,
     draft: messages.join('\n\n'),
     messages,
     translatedDraft: translatedMessages.join('\n\n'),
@@ -207,6 +208,7 @@ draftReplyRouter.post('/conversion/draft', async (req, res) => {
   const timeline = Array.isArray(body.timeline) ? body.timeline.slice(-20) : [];
   const intent = normalizeIntent(body.intent || body.mode);
   const enterpriseProfile = await readTenantEnterpriseProfile(tenantId);
+  if (enterpriseProfile.factVersion?.id) res.setHeader('X-Enterprise-Fact-Version', enterpriseProfile.factVersion.id);
   const customerServiceEnabled = customerServicePolicy(enterpriseProfile).enabled;
   const manualRequest = body.manualRequest === true;
   if (!customerServiceEnabled && !manualRequest) {
@@ -312,7 +314,7 @@ draftReplyRouter.post('/conversion/draft', async (req, res) => {
     stage: String(body.stage ?? ''),
     product: String(body.product ?? ''),
     internalProduct: String(body.internalProduct ?? ''),
-  }, latestMessage, { conversation });
+  }, latestMessage, { conversation, enterpriseProfile });
   const gapPlan = resolveKnowledgeGapPlan({ message: latestMessage, language, timeline });
   const enterpriseEvidenceSource = JSON.stringify({
     company: context.companyIntro,
@@ -355,6 +357,7 @@ draftReplyRouter.post('/conversion/draft', async (req, res) => {
     const buyerLanguageNames = await translateProductNamesForBuyer(sourceNames, language);
     const pair = groundedProductDiscoveryReply(buyerLanguageNames, language, sourceNames);
     res.json({
+      enterpriseFactVersion: context.enterpriseFactVersion,
       ...directConversationPayload(pair, '产品咨询'),
       evidence: [...context.evidence, '产品浏览回复仅使用产品表或当前客户已绑定的真实产品名称'],
       products: context.products,
@@ -368,6 +371,7 @@ draftReplyRouter.post('/conversion/draft', async (req, res) => {
     const messages = splitMobileChatMessages(clarification.draft);
     const translatedMessages = splitMobileChatMessages(clarification.draftZh);
     res.json({
+      enterpriseFactVersion: context.enterpriseFactVersion,
       draft: messages.join('\n\n'),
       messages,
       translatedDraft: translatedMessages.join('\n\n'),
@@ -601,7 +605,7 @@ draftReplyRouter.post('/conversion/draft', async (req, res) => {
       memoryIds: [...styleMemories.map(item => item.id), ...customerMemories.map(item => item.id)],
       strategyIds: strategies.map(item => item.strategy.id),
       modelVersion: process.env.REPLY_MODEL || process.env.QWEN_TEXT_MODEL || 'qwen-plus',
-      knowledgeVersion: String(body.knowledgeVersion || ''),
+      knowledgeVersion: context.enterpriseFactVersion || '',
       metadata: {
         intent,
         handlingMode: knowledgeGapHandoffRequired ? 'human_needed' : 'ai_draft',
@@ -612,6 +616,7 @@ draftReplyRouter.post('/conversion/draft', async (req, res) => {
     });
     await touchStrategyUsage(tenantId, strategies.map(item => item.strategy.id));
     res.json({
+      enterpriseFactVersion: context.enterpriseFactVersion,
       draft: responseDraft,
       messages,
       translatedDraft,
@@ -670,10 +675,12 @@ draftReplyRouter.post('/conversion/draft', async (req, res) => {
       memoryIds: [...styleMemories.map(item => item.id), ...customerMemories.map(item => item.id)],
       strategyIds: strategies.map(item => item.strategy.id),
       modelVersion: process.env.REPLY_MODEL || process.env.QWEN_TEXT_MODEL || 'qwen-plus',
+      knowledgeVersion: context.enterpriseFactVersion || '',
       metadata: { intent, handlingMode: knowledgeGapHandoffRequired ? 'human_needed' : 'safe_fallback', progressionGoal: preferredGoal, error: error instanceof Error ? error.message : String(error) },
     });
     await touchStrategyUsage(tenantId, strategies.map(item => item.strategy.id));
     res.json({
+      enterpriseFactVersion: context.enterpriseFactVersion,
       draft: messages.join('\n\n'),
       messages,
       translatedDraft,

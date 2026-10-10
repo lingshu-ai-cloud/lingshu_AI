@@ -45,3 +45,19 @@ test('regeneration writes all shot and beat speech fields through the same produ
   assert.ok(regeneration.includes('reference-after.json'));
   assert.ok(regeneration.includes('shot.speechAlignment'), 'verify the persisted per-shot evidence');
 });
+
+test('regeneration has no customer defaults and gates paid ASR behind explicit authorization', () => {
+  const regeneration = source('../../scripts/regenerate-current-narration.ts');
+  assert.ok(regeneration.includes("requiredArgument('--id')"));
+  assert.ok(regeneration.includes("requiredArgument('--tenant-id')"));
+  assert.ok(regeneration.includes("process.argv.includes('--execute-paid')"));
+  assert.ok(regeneration.includes("argument('--authorization-evidence')"));
+  assert.ok(regeneration.includes('os.tmpdir()'), 'default evidence output must stay outside the repository');
+  assert.equal(regeneration.includes('local_tenant_customer_'), false);
+  assert.equal(regeneration.includes("'data/acceptance/"), false);
+  const preflightGate = regeneration.indexOf('if (!executePaid)');
+  const authorizationGate = regeneration.indexOf('if (!authorizationEvidence)');
+  const paidCall = regeneration.indexOf('await prepareReferenceNarration(media, duration, { tenantId })');
+  assert.ok(preflightGate >= 0 && preflightGate < authorizationGate && authorizationGate < paidCall,
+    'preflight and explicit authorization must both precede the paid provider call');
+});

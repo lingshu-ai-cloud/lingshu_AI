@@ -2,10 +2,11 @@ import { restoreAgentCalendarReturnContext } from './lib/agentCalendarReturnCont
 import { pushProductionLocation, requestProductionBack, stampProductionHistoryState, canRestoreProductionHistoryState, restorableProductionDetail, productionNavigationIdentity } from './lib/productionNavigation';
 import { isAgentProductionSession } from './lib/agentProductionSession';
 import { Activity, lazy, Suspense, useCallback, useEffect, useRef, useState } from 'react';
+import { Button, Result } from 'antd';
 import { Loader2 } from 'lucide-react';
 import Layout from './components/Layout';
 import AuthScreen from './components/AuthScreen';
-import { authApi, getToken, AUTH_TOKEN_CHANGED_EVENT, type AuthSession } from './lib/auth';
+import { authApi, getToken, AUTH_TOKEN_CHANGED_EVENT, startInitialAuthSessionRefresh, type AuthSession } from './lib/auth';
 import { isEnterpriseHomepageDemoAccount } from './mocks/enterpriseHomepageDemo';
 import { isLocalForeignTradeMockEnabled } from './mocks/foreignTradeOperations';
 import { completeDemoStep, setDemoProgressScope } from './lib/demoProgress';
@@ -186,6 +187,9 @@ export default function App() {
   const isRegistrationEntry = window.location.pathname === '/register' &&
     Boolean(new URLSearchParams(window.location.search).get('invite')?.trim());
   const [page, setPage] = useState<Page>(() => availableProductPage(loadPage()));
+  const [weeklyPlanNavigation, setWeeklyPlanNavigation] = useState<{
+    goalId: string; planId: string; requestId: number; identity: string;
+  } | null>(null);
   const pageRef = useRef(page);
   pageRef.current = page;
   const [mountedPages, setMountedPages] = useState<Set<Page>>(() => new Set<Page>(['digitalEmployees', loadPage()]));
@@ -365,13 +369,26 @@ export default function App() {
       setAuthLoading(false);
       return;
     }
-    authApi.me().then(s => {
-      setDemoProgressScope(progressScopeFor(s));
-      setSession(s);
-      setSessionRefreshError('');
-    }).catch(() => {
-      setSessionRefreshError('暂时无法连接服务，登录状态未被清除。');
-    }).finally(() => setAuthLoading(false));
+    setAuthLoading(true);
+    return startInitialAuthSessionRefresh({
+      refresh: () => authApi.me(),
+      getToken,
+      schedule: (callback, delayMs) => window.setTimeout(callback, delayMs),
+      cancel: timer => window.clearTimeout(timer),
+      onSuccess: s => {
+        setDemoProgressScope(progressScopeFor(s));
+        setSession(s);
+        setSessionRefreshError('');
+        setAuthLoading(false);
+      },
+      onRetry: () => {
+        setSessionRefreshError('本地服务正在启动，正在恢复预览会话。');
+      },
+      onFailure: () => {
+        setSessionRefreshError('暂时无法连接服务，登录状态未被清除。');
+        setAuthLoading(false);
+      },
+    });
   }, [isRegistrationEntry]);
   useEffect(() => {
     if (!session) return;
@@ -488,13 +505,12 @@ export default function App() {
     if (AGENT_PAGES.includes(page)) setRestore({ agent: page as AgentType, messages: [], key: `new:${Date.now()}` });
   };
 
-  // 一键执行：策略专家把任务交给某个专家，跳转过去并自动发起任务
-  const startAgentTask = (agent: AgentType, text: string) => {
-    const pageAgent = customerUnifiedAgent(agent);
+  // 历史回复中的执行建议统一回到灵小枢。专业 Agent 只在内部路由，
+  // 不再作为平级入口跳走当前页面或创建另一段可见会话。
+  const startAgentTask = (_agent: AgentType, text: string) => {
     activeIdRef.current = null; setActiveConvId(null);
     setRestore(null); setConversation(null);
-    setKickoff({ agent: pageAgent, text, key: `k${Date.now()}` });
-    if (!AGENT_PAGES.includes(page)) setPage(pageAgent);
+    setKickoff({ agent: 'strategy', text, key: `k${Date.now()}` });
   };
 
   const handleNavigate = useCallback((p: Page) => {
@@ -566,7 +582,7 @@ export default function App() {
         socialContentView?: 'managed';
         studioEntry?: boolean;
         directStudio?: boolean;
-        businessRef?: { taskKey?: string; preview?: boolean; entityId?: string; contentId?: string; referenceId?: string };
+        businessRef?: { taskKey?: string; preview?: boolean; entityId?: string; contentId?: string; referenceId?: string; goalId?: string; planId?: string };
         contentCreationRequest?: SocialContentCreateRequest;
       }>).detail;
       const nextPage = resolveNavigationPage(incomingDetail?.page, incomingDetail?.view);
@@ -575,6 +591,14 @@ export default function App() {
       const detail = nextPage === incomingDetail.page
         ? incomingDetail
         : { ...incomingDetail, page: nextPage };
+      if (nextPage === 'digitalEmployees' && (detail.businessRef?.goalId || detail.businessRef?.planId)) {
+        setWeeklyPlanNavigation(previous => ({
+          goalId: String(detail.businessRef?.goalId || '').trim(),
+          planId: String(detail.businessRef?.planId || '').trim(),
+          requestId: (previous?.requestId || 0) + 1,
+          identity: productionNavigationIdentity(),
+        }));
+      }
       if (!detail.restoreHistory) {
         if (nextPage === pageRef.current && detail.workflowTaskId) pushProductionLocation(nextPage);
         handleNavigate(incomingDetail.page === 'socialSetup' || incomingDetail.page === 'socialAccounts' || incomingDetail.page === 'accountManagement' ? incomingDetail.page : nextPage);
@@ -757,14 +781,22 @@ export default function App() {
       </div>
     );
   }
-  if (!session && sessionRefreshError && getToken()) {
+  if (!session && sessionRefreshError) {
+    const retainedSessionToken = Boolean(getToken());
     return (
-      <div className="flex min-h-screen items-center justify-center bg-slate-50 p-6">
-        <div className="max-w-md rounded-2xl border border-amber-200 bg-white p-6 text-center shadow-sm">
-          <p className="text-base font-semibold text-slate-900">服务连接暂时中断</p>
-          <p className="mt-2 text-sm text-slate-600">{sessionRefreshError} 请重试；不会因为一次服务抖动清除登录凭据。</p>
-          <button type="button" onClick={() => { setAuthLoading(true); void refreshSession().finally(() => setAuthLoading(false)); }} className="mt-5 rounded-lg bg-slate-900 px-4 py-2 text-sm font-semibold text-white">重新连接</button>
-        </div>
+      <div role="alert" className="flex min-h-[100dvh] items-center justify-center bg-white p-6">
+        <Result
+          status="warning"
+          title="服务连接暂时中断"
+          subTitle={retainedSessionToken
+            ? `${sessionRefreshError} 登录凭据已保留，请重新连接。`
+            : `${sessionRefreshError} 本地预览会话尚未恢复，请重新连接。`}
+          extra={(
+            <Button type="primary" onClick={() => { setAuthLoading(true); void refreshSession().finally(() => setAuthLoading(false)); }}>
+              重新连接
+            </Button>
+          )}
+        />
       </div>
     );
   }
@@ -834,15 +866,22 @@ export default function App() {
       conversations={conversations} activeConvId={activeConvId} onOpenConversation={openConversation} onNewConversation={newConversation}
       suppressRightPanel={starterMode || scriptPanelOpen} onAction={startAgentTask}>
       <Suspense fallback={null}>
-        {!starterMode && !isAgentProductionSession() && <GlobalAssistant
-          authScope={`${pagePreferenceScope(session)}:${session.supportAccess?.requestId || 'customer'}`} page={page}
+        <GlobalAssistant
+          primaryEntry
+          key={`assistant:${session.tenant?.id || session.user.tenantId}:${session.user.id}`}
+          page={page}
+          persistenceScope={{
+            tenantId: session.tenant?.id || session.user.tenantId,
+            userId: session.user.id,
+          }}
           restore={restore}
           kickoff={kickoff}
-          suppressForRightSidebar={scriptPanelOpen || conversation !== null || page === 'agentMonitor'}
+          compactMode={starterMode || isAgentProductionSession()}
+          suppressForRightSidebar={page !== 'digitalEmployees' && (conversation !== null || page === 'agentMonitor')}
           onKickoffConsumed={() => setKickoff(null)}
           onAction={startAgentTask}
           onSessionRefresh={() => void refreshSession()}
-        />}
+        />
       </Suspense>
       <RuntimeVersionBanner />
       {sessionRefreshError && <div role="status" className="shrink-0 border-b border-amber-200 bg-amber-50 px-5 py-2 text-sm text-amber-900">{sessionRefreshError} <button type="button" className="ml-2 font-semibold underline" onClick={() => void refreshSession()}>立即重试</button></div>}
@@ -866,7 +905,7 @@ export default function App() {
           <Activity key={pagePreferenceScope(session)} mode={page === 'digitalEmployees' ? 'visible' : 'hidden'}>
             {starterMode
               ? <StarterWorkspacePage onNavigate={handleNavigate} onNavigateWithTask={handleSocialContentNavigate} />
-              : <DigitalEmployeePage onViewResults={() => handleNavigate('strategy')} onNavigate={handleNavigate} onOpenMonitor={() => handleNavigate('agentMonitor')} />}
+              : <DigitalEmployeePage weeklyPlanNavigation={weeklyPlanNavigation?.identity === productionNavigationIdentity() ? weeklyPlanNavigation : null} onViewResults={() => handleNavigate('strategy')} onNavigate={handleNavigate} onOpenMonitor={() => handleNavigate('agentMonitor')} />}
           </Activity>
           {(page === 'agentMonitor' || mountedPages.has('agentMonitor')) && <Activity key={`monitor-${pagePreferenceScope(session)}`} mode={page === 'agentMonitor' ? 'visible' : 'hidden'}><AgentMonitorPage onBack={requestProductionBack} /></Activity>}
           {(page === 'strategy' || mountedPages.has('strategy')) && (

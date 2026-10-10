@@ -60,6 +60,10 @@ function digest(value: string): string {
   return createHash('sha256').update(value).digest('hex');
 }
 
+function enterpriseFactVersionFromContext(context: string): string | null {
+  return context.match(/(?:^|\n)企业事实版本：([^\n]+)/)?.[1]?.trim() || null;
+}
+
 function rejected(code: string, message: string, fieldsToConfirm: string[] = []): AuditedCopyAdaptationResult {
   return {
     status: 422,
@@ -107,6 +111,7 @@ export async function generateAuditedPlatformCopies(
   }
   const enterpriseFactsHash = digest(confirmedContext);
   const auditBase = {
+    enterpriseFactVersion: enterpriseFactVersionFromContext(confirmedContext),
     enterpriseFactsHash,
     sourceHash: digest(sourceText),
     projectId: input.projectId || null,

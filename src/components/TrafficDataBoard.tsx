@@ -156,7 +156,7 @@ export default function TrafficDataBoard({ onOpenAccounts, demo }: { windowDays?
         </button>
       </div>
 
-      {demo && <div className="mb-4 border-l-4 border-amber-400 bg-amber-50 px-4 py-3 text-xs text-amber-950"><strong>演示数据：</strong>账号、视频与互动指标均为模拟，产品与市场来自企业中心。</div>}
+      {demo && <div className="mb-4 border-l-4 border-amber-400 bg-amber-50 px-4 py-3 text-xs text-amber-950"><strong>参考预览：</strong>账号、视频与互动指标均为模拟，产品与市场来自企业中心。</div>}
 
       {loading ? (
         <div className="flex h-48 items-center justify-center gap-2 text-sm text-text-muted"><Loader2 size={16} className="animate-spin" />读取真实社媒数据...</div>
@@ -228,7 +228,7 @@ export default function TrafficDataBoard({ onOpenAccounts, demo }: { windowDays?
 }
 
 function StatCard({ label, value, icon, onClick, hint }: { label: string; value: string; icon: React.ReactNode; onClick?: () => void; hint?: string }) {
-  const className = `secondary-stat-item w-full bg-transparent p-4 text-left transition-colors ${onClick ? 'cursor-pointer hover:bg-[#f5f8f6] focus:outline-none focus:ring-2 focus:ring-inset focus:ring-green-200' : ''}`;
+  const className = `secondary-stat-item w-full bg-transparent p-4 text-left transition-colors ${onClick ? 'cursor-pointer hover:bg-zinc-50 focus:outline-none focus:ring-2 focus:ring-inset focus:ring-green-200' : ''}`;
   if (onClick) {
     return (
       <button type="button" onClick={onClick} className={className} title={hint}>

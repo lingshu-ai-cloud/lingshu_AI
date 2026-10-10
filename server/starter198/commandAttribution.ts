@@ -78,6 +78,7 @@ type MutationEvidenceInput = {
   expectedVersion?: string;
   actorUserId: string;
   resultingStatus: string;
+  selection?: Record<string, unknown>;
 };
 
 function structured(value: unknown): unknown {
@@ -106,6 +107,7 @@ function mutationEvidence(input: MutationEvidenceInput) {
     expectedVersion: input.expectedVersion ?? '',
     actorUserId: input.actorUserId,
     resultingStatus: input.resultingStatus,
+    ...(input.selection ? { selection: input.selection } : {}),
   };
   return { ...subject, evidenceHash: stableHash(subject) };
 }
@@ -171,6 +173,7 @@ export async function persistStarterApprovalMutationEvidence(input: {
   requestHash: string;
   expectedVersion: string;
   actorUserId: string;
+  selection?: Record<string, unknown>;
 }): Promise<void> {
   const approval = await input.repository.get(STARTER_COLLECTIONS.approvals, input.tenantId, input.approvalId);
   if (!approval || text(approval.status) !== input.decision
@@ -187,6 +190,7 @@ export async function persistStarterApprovalMutationEvidence(input: {
     expectedVersion: input.expectedVersion,
     actorUserId: input.actorUserId,
     resultingStatus: input.decision,
+    ...(input.selection ? { selection: input.selection } : {}),
   };
   const sameIdentity = evidence.filter(item => item.schemaVersion === EVIDENCE_SCHEMA
     && (text(item.commandId) === input.commandId || text(item.idempotencyKey) === input.idempotencyKey));

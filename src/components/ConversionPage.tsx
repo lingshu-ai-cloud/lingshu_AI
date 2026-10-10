@@ -1,3 +1,6 @@
+import { getScrollBehavior } from "../lib/usePrefersReducedMotion";
+import { Alert, App, Avatar, Tag, Button, Checkbox, Collapse, Empty, Input, Modal, Popover, Select, Switch, Tabs, Tooltip } from "antd";
+import { PAGE_REGISTRY } from "../pageRegistry";
 import {readCustomerItemNavigation,matchCustomerItemNavigation} from '../lib/weeklyCustomerProductionLink';
 import { sortCustomersByLatestMessage } from '../lib/customerRecency';
 import { useAgentProductionAction } from '../lib/agentProductionSession';
@@ -6,13 +9,19 @@ import { useDeliveryHandoff } from "../hooks/useDeliveryHandoff";
 import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   AlertTriangle,
+  Bell,
+  BellOff,
   Bot,
   BrainCircuit,
   Check,
   ChevronDown,
   Filter,
+  Info,
   Languages,
+  List,
   MessageSquare,
+  Search,
+  Share2,
   Power,
   RefreshCw,
   Send,
@@ -21,13 +30,12 @@ import {
   UserRound,
   X,
 } from 'lucide-react';
+import { LsAvatarGroup, LsBrandAction, LsCompactFieldGroup, LsGradientProgress } from './ui/LsExperiencePrimitives';
 import type { EmojiClickData, PickerProps } from 'emoji-picker-react';
 import { authHeader, AUTH_TOKEN_CHANGED_EVENT } from '../lib/auth';
 import {customerManualTakeoverApi,type CustomerManualTakeoverView} from '../lib/customerManualTakeoverApi';
 import {assertSendScope,readCustomerSendScope,readCustomerSendRequest,readSendIntent,recoverSendIntent,sendIntentStorageKey,type CustomerSendIntent} from '../lib/customerSendIntent';
 import type { AgentAction, ConversationContext, KickoffSignal, RestoreSignal } from '../App';
-import { BasicInfoWidget } from './customers/widgets/BasicInfoWidget';
-import { TagsWidget } from './customers/widgets/TagsWidget';
 import { SourceIcon, sourceLabel } from './customers/SourceIcon';
 import { LiveLocalTime } from './customers/LiveLocalTime';
 import { DailyBriefing } from './customers/DailyBriefing';
@@ -35,8 +43,6 @@ import { SalesDecisionEvidence, type SalesDecisionMeta } from './customers/Sales
 import { QuoteSkillCard } from './customers/QuoteSkillCard';
 import { isOutsideWhatsAppWindow, lastBuyerEvent, sceneChips, timelineEventAgeHours, type ConversationDraftIntent } from './customers/conversationTiming';
 import { useCustomers } from '../hooks/useCustomers';
-import { useDismissibleLayer } from '../hooks/useDismissibleLayer';
-import { useModalFocus } from '../hooks/useModalFocus';
 import { isPredominantlyChineseText } from '../lib/messageLanguage';
 import { buildPrioritySuggestion, dailyTodoCustomers, isTodoCompleted, pendingCount, sortCustomersByPriority, type PrioritySuggestion } from '../lib/customerPriority';
 import type { AutonomyLevel, CustomerProfile, CustomerStage, HandlingMode, TimelineEvent } from '../types/customer';
@@ -493,10 +499,7 @@ function FilterSelect({ label, value, onChange, options, renderLabel }: {
 }) {
   return <label className="block">
     <span className="text-[10px] font-bold text-text-muted">{label}</span>
-    <select aria-label={label} value={value} onChange={event => onChange(event.target.value)} className="ui-field ui-select mt-1 w-full !min-h-9 !rounded-md !px-2.5 !py-2 !text-xs">
-      <option value="all">全部</option>
-      {options.map(item => <option key={item} value={item}>{renderLabel ? renderLabel(item) : item}</option>)}
-    </select>
+    <Select aria-label={label} value={value} onChange={onChange} className="mt-1 w-full" options={[{ value: 'all', label: '全部' }, ...options.map(value => ({ value, label: renderLabel ? renderLabel(value) : value }))]}/>
   </label>;
 }
 
@@ -504,7 +507,6 @@ function CompactCustomerList({
   view,
   selectedId,
   customers,
-  showSimulationBadge,
   onOpen,
   onViewChange,
   onVisibleSelectionChange,
@@ -512,17 +514,23 @@ function CompactCustomerList({
   view: CustomerView;
   selectedId: string | null;
   customers: CustomerProfile[];
-  showSimulationBadge: boolean;
   onOpen: (id: string) => void;
   onViewChange: (view: CustomerView) => void;
   onVisibleSelectionChange: (id: string | null, filteredEmpty: boolean) => void;
 }) {
   const [filterOpen, setFilterOpen] = useState(false);
-  const filterMenuRef = useRef<HTMLDivElement>(null);
-  useDismissibleLayer(filterOpen, filterMenuRef, () => setFilterOpen(false));
+  const [query, setQuery] = useState('');
   const [filters, setFilters] = useState<CustomerListFilters>(EMPTY_CUSTOMER_FILTERS);
-  const baseList = filterCustomers(view, customers);
-  const list = applyCustomerListFilters(baseList, filters);
+  const baseList = filterCustomers(view, customers).filter((customer, index, list) => list.findIndex(item => item.id === customer.id) === index);
+  const normalizedQuery = query.trim().toLocaleLowerCase();
+  const list = applyCustomerListFilters(baseList, filters).filter(customer => !normalizedQuery || [
+    customer.name,
+    customer.summary,
+    customer.product,
+    customer.outboundProduct,
+    customer.countryName,
+    customer.timeline.at(-1)?.body,
+  ].some(value => String(value || '').toLocaleLowerCase().includes(normalizedQuery)));
   const activeFilterCount = [
     filters.source !== 'all',
     filters.country !== 'all',
@@ -552,139 +560,58 @@ function CompactCustomerList({
       <button
         key={customer.id}
         type="button"
+        data-layout-check="customer-row"
         onClick={() => onOpen(customer.id)}
-        className={`w-full border-b border-border px-3 py-2.5 text-left transition-colors hover:bg-surface-2 ${customer.id === selectedId ? 'border-l-2 border-l-accent bg-accent-glow' : 'border-l-2 border-l-transparent bg-surface'}`}
+        aria-current={customer.id === selectedId ? 'true' : undefined}
+        className={`ls-customer-list-row ${customer.id === selectedId ? 'is-selected' : ''}`}
       >
         <div className="flex items-start gap-2.5">
-          <div className="relative flex h-8 w-8 shrink-0 items-center justify-center rounded-full border border-border bg-surface-2 text-xs font-black text-text-secondary">
+          <div className="relative flex h-8 w-8 shrink-0 items-center justify-center rounded-full border border-border bg-surface-2 text-xs font-semibold text-text-secondary">
             <span className="absolute -left-0.5 -top-0.5 h-2.5 w-2.5 rounded-full ring-2 ring-white transition-opacity" style={{ backgroundColor: hasUnread ? '#dc2626' : statusColor, opacity: hasUnread ? 1 : 0 }} />
             {customer.avatar}
           </div>
           <div className="min-w-0 flex-1">
             <div className="flex items-start justify-between gap-3">
               <div className="min-w-0">
-                <p className="truncate text-xs font-bold leading-5 text-text-primary" title={customer.name}>{customer.name}</p>
+                <p className="truncate text-[13px] font-semibold leading-5 text-text-primary" title={customer.name}>{customer.name}</p>
                 <div className="mt-1 flex flex-wrap items-center gap-1.5">
-                  <span className={`border-l-2 px-1.5 py-0.5 text-[9px] font-bold ${customer.isMock ? 'border-amber bg-amber-dim text-amber' : 'border-accent bg-accent-glow text-accent'}`}>
-                    {customer.isMock ? '模拟客户' : '真实客户'}
-                  </span>
-                  {customer.simulation?.warning && <span className="rounded bg-red-600 px-1.5 py-0.5 text-[9px] font-black text-white">大单预警</span>}
+                  <Tag className="!m-0 !text-[9px]">{customer.isMock ? '模拟客户' : '真实客户'}</Tag>
+                  {customer.simulation?.warning && <span className="rounded bg-red-600 px-1.5 py-0.5 text-[9px] font-semibold text-white">大单预警</span>}
                   <SourceIcon source={customer.source} size={11} />
                 </div>
               </div>
               <span className="shrink-0 text-[11px] font-medium text-text-muted">{lastMessage?.time || customer.lastActive}</span>
             </div>
-            <p className="mt-0.5 truncate text-[11px] leading-5 text-text-muted">{lastMessage?.body || customer.summary}</p>
           </div>
         </div>
       </button>
     );
   };
-  return (
-    <aside data-testid="conversation-list" className="flex h-full w-full lg:w-52 shrink-0 flex-col border-r border-border bg-white xl:w-56 2xl:w-60">
-      <div className="relative z-20 border-b border-border px-3 py-3">
-        <div ref={filterMenuRef} className="relative flex items-center justify-between gap-3">
-          <div className="flex min-w-0 items-center gap-1.5">
-            <p className="truncate text-[11px] text-text-muted">{list.length} 个待处理 · 按最近动态排序</p>
-            {showSimulationBadge && (
-              <span title="客服演示沙盘" className="shrink-0 border-l-2 border-amber bg-amber-dim px-1.5 py-0.5 text-[9px] font-bold text-amber">演示</span>
-            )}
+  return <aside data-testid="conversation-list" className="flex h-full w-full shrink-0 flex-col bg-white lg:w-52 xl:w-56 2xl:w-60">
+    <div className="border-b border-border px-3 pt-2">
+      <div className="flex items-center gap-2">
+        <Input className="min-w-0 flex-1" allowClear value={query} onChange={event => setQuery(event.target.value)} prefix={<Search size={15}/>} placeholder="搜索客户或消息" aria-label="搜索客户或消息" />
+        <Popover trigger="click" placement="bottomLeft" open={filterOpen} onOpenChange={setFilterOpen} title="筛选客户" content={<div className="w-72 max-w-[calc(100vw-48px)]">
+          <p className="mb-3 text-xs text-text-secondary">当前命中 {list.length}/{baseList.length}</p>
+          <div className="grid grid-cols-2 gap-3">
+            <FilterSelect label="来源渠道" value={filters.source} onChange={value => setFilterValue('source', value)} options={sourceOptions} renderLabel={sourceLabel}/>
+            <FilterSelect label="国家/地区" value={filters.country} onChange={value => setFilterValue('country', value)} options={countryOptions}/>
+            <FilterSelect label="语言" value={filters.language} onChange={value => setFilterValue('language', value)} options={languageOptions}/>
+            <FilterSelect label="客户阶段" value={filters.stage} onChange={value => setFilterValue('stage', value)} options={Object.keys(STAGE_LABEL)} renderLabel={item => STAGE_LABEL[item as CustomerStage] || item}/>
+            <FilterSelect label="处理方式" value={filters.handling} onChange={value => setFilterValue('handling', value)} options={['human_needed', 'ai_draft', 'ai_auto']} renderLabel={item => item === 'human_needed' ? '需要你处理' : item === 'ai_draft' ? '等你确认' : 'AI 接待中'}/>
+            <FilterSelect label="客户标签" value={filters.tag} onChange={value => setFilterValue('tag', value)} options={tagOptions}/>
           </div>
-          <button
-            type="button"
-            onClick={() => setFilterOpen(open => !open)}
-            className={`relative flex h-8 items-center justify-center gap-1 rounded-md border px-2 transition-colors ${activeFilterCount ? 'border-accent bg-accent-glow text-accent' : 'w-8 border-transparent text-text-muted hover:border-border hover:bg-surface-2'}`}
-            title={activeFilterCount ? `已启用 ${activeFilterCount} 项筛选` : '筛选客户'}
-            aria-label={activeFilterCount ? `已启用 ${activeFilterCount} 项筛选` : '筛选客户'}
-          >
-            <Filter size={14} />
-            {activeFilterCount > 0 && (
-              <span className="text-[10px] font-black">{activeFilterCount} 项</span>
-            )}
-          </button>
-          {filterOpen && (
-            <div className="absolute right-0 top-9 z-30 w-72 max-w-[calc(100vw-24px)] rounded-lg border border-border bg-surface p-3 shadow-lg">
-              <div className="mb-3 flex items-center justify-between gap-2">
-                <div>
-                  <p className="text-xs font-black text-text-primary">筛选客户</p>
-                  <p className="mt-0.5 text-[10px] text-text-muted">当前命中 {list.length}/{baseList.length}</p>
-                </div>
-                <button type="button" onClick={() => setFilterOpen(false)} aria-label="关闭筛选" className="rounded-lg p-1.5 text-text-muted hover:bg-surface-2">
-                  <X size={13} />
-                </button>
-              </div>
-              <div className="grid grid-cols-2 gap-2">
-                <FilterSelect label="来源渠道" value={filters.source} onChange={value => setFilterValue('source', value)} options={sourceOptions} renderLabel={item => sourceLabel(item)} />
-                <FilterSelect label="国家/地区" value={filters.country} onChange={value => setFilterValue('country', value)} options={countryOptions} />
-                <FilterSelect label="语言" value={filters.language} onChange={value => setFilterValue('language', value)} options={languageOptions} />
-                <FilterSelect label="客户阶段" value={filters.stage} onChange={value => setFilterValue('stage', value)} options={Object.keys(STAGE_LABEL)} renderLabel={item => STAGE_LABEL[item as CustomerStage] || item} />
-                <FilterSelect label="处理方式" value={filters.handling} onChange={value => setFilterValue('handling', value)} options={['human_needed', 'ai_draft', 'ai_auto']} renderLabel={item => item === 'human_needed' ? '需要你处理' : item === 'ai_draft' ? '等你确认' : 'AI 接待中'} />
-                <FilterSelect label="客户标签" value={filters.tag} onChange={value => setFilterValue('tag', value)} options={tagOptions} />
-              </div>
-              <div className="mt-3 grid grid-cols-2 gap-2">
-                {[
-                  { key: 'unreadOnly' as const, label: '只看未读' },
-                  { key: 'highIntentOnly' as const, label: '高意向 80+' },
-                ].map(item => {
-                  const active = filters[item.key];
-                  return (
-                    <button
-                      key={item.key}
-                      type="button"
-                      onClick={() => setFilters(current => ({ ...current, [item.key]: !current[item.key] }))}
-                      className={`flex items-center justify-center gap-1.5 rounded-md border px-2.5 py-2 text-xs font-bold transition-colors ${active ? 'border-accent bg-accent-glow text-accent' : 'border-border text-text-muted hover:text-text-primary'}`}
-                    >
-                      {active && <Check size={12} />}
-                      {item.label}
-                    </button>
-                  );
-                })}
-              </div>
-              <div className="mt-3 flex items-center justify-between gap-2">
-                <button type="button" onClick={() => setFilters(EMPTY_CUSTOMER_FILTERS)} className="text-xs font-bold text-text-muted hover:text-text-primary">
-                  清空筛选
-                </button>
-                <button type="button" onClick={() => setFilterOpen(false)} className="rounded-md bg-accent px-3 py-2 text-xs font-bold text-white hover:bg-accent-dim">
-                  应用
-                </button>
-              </div>
-            </div>
-          )}
-        </div>
-        <div className="-mb-3 mt-3 flex gap-4 overflow-x-auto" role="tablist" aria-label="客户视图">
-          {(Object.entries(VIEW_META) as [CustomerView, typeof VIEW_META[CustomerView]][]).map(([key, item]) => (
-            <button
-              key={key}
-              type="button"
-              role="tab"
-              aria-selected={view === key}
-              onClick={() => onViewChange(key)}
-              className={`shrink-0 border-b-2 px-0.5 pb-2.5 text-[11px] font-bold transition-colors ${view === key ? 'border-accent text-accent' : 'border-transparent text-text-muted hover:text-text-primary'}`}
-            >
-              {item.label}
-            </button>
-          ))}
-        </div>
+          <div className="my-4 flex flex-wrap gap-3"><Checkbox checked={filters.unreadOnly} onChange={event => setFilters(current => ({ ...current, unreadOnly: event.target.checked }))}>只看未读</Checkbox><Checkbox checked={filters.highIntentOnly} onChange={event => setFilters(current => ({ ...current, highIntentOnly: event.target.checked }))}>高意向 80+</Checkbox></div>
+          <div className="flex justify-between"><Button type="text" onClick={() => setFilters(EMPTY_CUSTOMER_FILTERS)}>清空筛选</Button><Button type="primary" onClick={() => setFilterOpen(false)}>完成</Button></div>
+        </div>}><Button className="shrink-0 whitespace-nowrap" aria-label={activeFilterCount ? `已启用 ${activeFilterCount} 项筛选` : '筛选客户'} icon={<Filter size={15}/>}>{activeFilterCount || null}</Button></Popover>
       </div>
-      <div className="min-h-0 flex-1 overflow-y-auto">
-        {list.map(renderCustomer)}
-        {list.length === 0 && (
-          <div className="px-5 py-10 text-center">
-            <p className="text-xs font-bold text-text-secondary">没有符合当前条件的客户</p>
-            {activeFilterCount > 0 && (
-              <button type="button" onClick={() => setFilters(EMPTY_CUSTOMER_FILTERS)} className="mt-3 text-xs font-bold text-accent hover:underline">
-                清空筛选
-              </button>
-            )}
-          </div>
-        )}
-      </div>
-    </aside>
-  );
+      <Tabs className="ls-customer-view-tabs" aria-label="客户视图" size="small" activeKey={view} onChange={key => onViewChange(key as CustomerView)} items={(Object.entries(VIEW_META) as [CustomerView, typeof VIEW_META[CustomerView]][]).map(([key, item]) => ({ key, label: item.label }))}/>
+    </div>
+    <div className="ls-customer-list-scroll min-h-0 flex-1 overflow-y-auto">{list.map(renderCustomer)}{!list.length && <div className="px-4 py-10"><Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="没有符合当前条件的客户"/>{activeFilterCount > 0 && <Button block onClick={() => setFilters(EMPTY_CUSTOMER_FILTERS)}>清空筛选</Button>}</div>}</div>
+  </aside>;
 }
 
 function DraftSuggestionBar({
-  customer,
   draft,
   isTemplate,
   templatePlan,
@@ -695,12 +622,10 @@ function DraftSuggestionBar({
   onSave,
   savingDraft,
   channelReady,
-  onEdit,
   onChangeDraft,
   onDismiss,
   onRegenerate,
 }: {
-  customer: CustomerProfile;
   draft: string;
   isTemplate: boolean;
   templatePlan: TemplatePlan | null;
@@ -711,7 +636,6 @@ function DraftSuggestionBar({
   onSave: () => void;
   savingDraft: boolean;
   channelReady?: boolean;
-  onEdit: () => void;
   onChangeDraft: (value: string) => void;
   onDismiss: () => void;
   onRegenerate: () => void;
@@ -723,18 +647,12 @@ function DraftSuggestionBar({
     next[index] = value;
     onChangeDraft(next.filter(Boolean).join('\n\n'));
   };
-  const deleteMessage = (index: number) => {
-    onChangeDraft(draftMessages.filter((_, itemIndex) => itemIndex !== index).join('\n\n'));
-  };
   return (
-    <div data-draft-suggestion className="relative ml-auto max-w-[90%] rounded-lg rounded-tr-sm border border-dashed border-accent/35 bg-accent-glow px-4 py-3 sm:max-w-[74%]">
-      <button type="button" onClick={onDismiss} aria-label="关闭 AI 建议" className="absolute right-2 top-2 rounded-full p-1 text-text-muted hover:bg-white/70">
-        <X size={12} />
-      </button>
-      <div className="pr-6">
-        <div className="flex shrink-0 items-center gap-1.5 text-xs font-bold text-accent">
-          <Bot size={14} />
-          {bridgeOnly ? 'AI 承接回复' : 'AI 建议回复'}
+    <section data-draft-suggestion className="ml-auto w-fit min-w-[260px] max-w-[90%] rounded-2xl rounded-br-md border border-accent/25 bg-white shadow-sm sm:max-w-[78%]">
+      <header className="flex items-center justify-between gap-2 px-3 py-2">
+        <div className="flex min-w-0 flex-wrap items-center gap-1.5 text-xs font-semibold text-text-primary">
+          <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-accent-glow text-accent"><Bot size={14} /></span>
+          <span className="whitespace-nowrap">{bridgeOnly ? 'AI 承接回复' : 'AI 建议回复'}</span>
           {isTemplate && (
             <span className={`border-l-2 px-1.5 py-0.5 text-[10px] font-bold ${templateApproved ? 'border-accent bg-surface text-accent' : 'border-amber bg-amber-dim text-amber'}`}>
               {templateApproved ? '\u6a21\u677f\u53ef\u53d1' : '\u6a21\u677f\u5ba1\u6838\u4e2d'}
@@ -743,52 +661,50 @@ function DraftSuggestionBar({
           {knowledgeMiss && (
             <span className="border-l-2 border-amber bg-amber-dim px-1.5 py-0.5 text-[10px] font-bold text-amber">{bridgeOnly ? '已转人工确认' : '知识库未覆盖'}</span>
           )}
-          <button type="button" onClick={onRegenerate} className="ml-1 rounded-md p-1 text-accent hover:bg-surface" title="换一版">
-            <RefreshCw size={12} />
-          </button>
         </div>
-        <div className="mt-2 space-y-2">
+        <div className="flex shrink-0 items-center gap-0.5">
+          <Button type="text" size="small" htmlType="button" onClick={onRegenerate} aria-label="换一版" icon={<RefreshCw size={13} />} />
+          <Button type="text" size="small" htmlType="button" onClick={onDismiss} aria-label="关闭 AI 建议" icon={<X size={13} />} />
+        </div>
+      </header>
+      <div className="space-y-2 px-3 pb-3">
+        <div className="grid gap-2">
           {draftMessages.map((message, index) => (
-            <div key={`${index}-${message.slice(0, 12)}`} className="group relative rounded-md rounded-tr-sm border border-accent/20 bg-surface px-3 py-2 pr-8">
-              <textarea
+            <div key={`${index}-${message.slice(0, 12)}`} className="rounded-2xl rounded-br-md bg-accent-glow px-3 py-2">
+              {draftMessages.length > 1 && <span className="mb-0.5 block text-[9px] font-semibold text-text-muted">{index + 1}/{draftMessages.length}</span>}
+              <Input.TextArea
                 value={message}
-                rows={Math.min(4, Math.max(1, message.split(/\n/).length))}
+                autoSize={{ minRows: 1, maxRows: 6 }}
                 onChange={event => updateMessage(index, event.target.value)}
                 aria-label={`编辑第 ${index + 1} 条短消息`}
-                className="w-full resize-none bg-transparent text-sm leading-relaxed text-text-primary outline-none"
+                variant="borderless"
+                className="w-full !bg-transparent !p-0 text-sm leading-5 text-text-primary"
               />
-              <button type="button" onClick={() => deleteMessage(index)} aria-label={`删除第 ${index + 1} 条短消息`} className="absolute right-2 top-2 rounded-full p-1 text-text-muted opacity-70 hover:bg-red-50 hover:text-red-600 group-hover:opacity-100">
-                <X size={11} />
-              </button>
             </div>
           ))}
-          <p className="text-[10px] font-semibold text-text-muted">将按顺序发送，共 {draftMessages.length}/3 条；每条都可直接修改或删除。</p>
+          {draftMessages.length > 1 && <p className="text-[10px] text-text-muted">按顺序发送 · {draftMessages.length}/3 条</p>}
         </div>
         {isTemplate && templatePlan && (
           <div className="mt-2 border-l-2 border-amber bg-amber-dim px-3 py-2 text-xs leading-relaxed text-amber">
-            <p className="font-black">{'AI \u5df2\u9009\u62e9\u6a21\u677f\uff1a'}{templatePlan.template.label}</p>
+            <p className="font-semibold">{'AI \u5df2\u9009\u62e9\u6a21\u677f\uff1a'}{templatePlan.template.label}</p>
             <p className="mt-1">{'\u53d8\u91cf\uff1a'}{templatePlan.variables.map((item, index) => `{{${index + 1}}}=${item}`).join(' / ')}</p>
             <p className="mt-1 whitespace-pre-line">{'\u6700\u7ec8\u53d1\u9001\u6548\u679c\uff1a'}{templatePlan.rendered}</p>
           </div>
         )}
         {!priceRulesReady && (
-          <button
-            type="button"
-            onClick={() => { localStorage.setItem('lingshu:enterprise:highlight-biz-rules', 'true'); window.dispatchEvent(new CustomEvent('lingshu:navigate', { detail: { page: 'enterprise' } })); }}
-            className="mt-2 rounded-md border border-accent/20 bg-surface px-3 py-2 text-left text-xs font-bold text-accent hover:bg-surface-2"
-          >
-            完善报价规则后，AI 才能帮你答价格 → 去完善
-          </button>
+          <div className="flex flex-wrap items-center justify-between gap-2 rounded-lg bg-amber-dim px-3 py-2 text-xs text-amber">
+            <span>报价知识尚未完善，价格相关内容需人工确认。</span>
+            <Button htmlType="button" size="small" onClick={() => { localStorage.setItem('lingshu:enterprise:highlight-biz-rules', 'true'); window.dispatchEvent(new CustomEvent('lingshu:navigate', { detail: { page: 'enterprise' } })); }} className="whitespace-nowrap font-semibold">去完善规则</Button>
+          </div>
         )}
-        <div className="mt-3 flex justify-end gap-1.5">
-          <button type="button" onClick={onSave} disabled={savingDraft || !draft.trim()} className="rounded-lg border border-border bg-white px-3 py-1.5 text-xs font-bold disabled:opacity-40">{savingDraft ? '保存中…' : '保存修改'}</button>
-          <button type="button" onClick={onSend} disabled={!templateApproved || !channelReady} className="rounded-md bg-accent px-3 py-1.5 text-xs font-bold text-white hover:bg-accent-dim disabled:cursor-not-allowed disabled:bg-amber-dim disabled:text-amber">
+        <footer className="flex flex-wrap items-center justify-end gap-1.5 border-t border-border pt-2">
+          <Button size="small" htmlType="button" onClick={onSave} disabled={savingDraft || !draft.trim()} className="whitespace-nowrap font-semibold">{savingDraft ? '保存中…' : '保存修改'}</Button>
+          <Button size="small" type="primary" htmlType="button" onClick={onSend} disabled={!templateApproved || !channelReady} className="whitespace-nowrap font-semibold">
             {!templateApproved ? '\u6d88\u606f\u6a21\u677f\u5ba1\u6838\u4e2d' : isTemplate ? '\u53d1\u9001\u6a21\u677f' : '\u76f4\u63a5\u53d1\u9001'}
-          </button>
-          <button type="button" onClick={onEdit} className="rounded-lg border border-border bg-white px-3 py-1.5 text-xs font-bold text-text-secondary">{'\u4fee\u6539'}</button>
-        </div>
+          </Button>
+        </footer>
       </div>
-    </div>
+    </section>
   );
 }
 
@@ -828,7 +744,6 @@ function ChatThread({
   onSend,
   onSaveDraft,
   savingDraft,
-  onEditDraft,
   onSendDraft,
   onDismissDraft,
   onRegenerateDraft,
@@ -855,7 +770,6 @@ function ChatThread({
   onSend: () => void;
   onSaveDraft: (value: string) => void;
   savingDraft: boolean;
-  onEditDraft: () => void;
   onSendDraft: () => void;
   onDismissDraft: () => void;
   onRegenerateDraft: () => void;
@@ -873,7 +787,6 @@ function ChatThread({
   channelReady?: boolean;
 }) {
   const inputRef = useRef<HTMLTextAreaElement>(null);
-  const emojiMenuRef = useRef<HTMLDivElement>(null);
   const [previewOpen, setPreviewOpen] = useState(false);
   const [translationLoading, setTranslationLoading] = useState(false);
   const [emojiOpen, setEmojiOpen] = useState(false);
@@ -882,7 +795,10 @@ function ChatThread({
   const isOutsideWindow = customer ? timelineEventAgeHours(lastBuyerEvent(customer)) > 24 : false;
   const templatePlan = null;
   const chips = customer && composerState === 'idle' ? sceneChips(customer) : [];
-  useDismissibleLayer(emojiOpen, emojiMenuRef, () => setEmojiOpen(false));
+  const conversationPeople = customer ? [
+    { id: customer.id, name: customer.name, color: '#E8C7EC' },
+    { id: 'lingshu-customer-agent', name: '客服 Agent', icon: <Bot size={15}/>, color: '#EAF6F2' },
+  ] : [];
 
   const refreshTranslationPreview = useCallback(async () => {
     if (!input.trim()) return;
@@ -917,17 +833,17 @@ function ChatThread({
   useEffect(() => {
     if (!draftSuggestion) return;
     const timer = window.setTimeout(() => {
-      document.querySelector<HTMLElement>('[data-draft-suggestion]')?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      document.querySelector<HTMLElement>('[data-draft-suggestion]')?.scrollIntoView({ behavior: getScrollBehavior(), block: 'center' });
     }, 50);
     return () => window.clearTimeout(timer);
   }, [customer?.id, Boolean(draftSuggestion)]);
 
   if (!customer) {
     return (
-      <section data-testid="conversation-chat-thread" className="flex min-w-0 flex-1 items-center justify-center bg-surface">
+      <section data-testid="conversation-chat-thread" className="flex h-full min-h-0 min-w-0 flex-1 items-center justify-center overflow-hidden bg-surface">
         <div className="text-center">
           <MessageSquare size={26} className="mx-auto text-text-muted" />
-          <p className="mt-3 text-sm font-black text-text-primary">{'\u9009\u62e9\u5de6\u4fa7\u4e00\u4e2a\u5ba2\u6237\u5f00\u59cb'}</p>
+          <p className="mt-3 text-sm font-semibold text-text-primary">{'\u9009\u62e9\u5de6\u4fa7\u4e00\u4e2a\u5ba2\u6237\u5f00\u59cb'}</p>
           <p className="mt-1 text-xs text-text-muted">{'\u67e5\u770b\u5bf9\u8bdd\u3001\u7f16\u8f91 AI \u8349\u7a3f\u5e76\u53d1\u9001\u56de\u590d'}</p>
         </div>
       </section>
@@ -935,19 +851,14 @@ function ChatThread({
   }
 
   return (
-    <section data-testid="conversation-chat-thread" className="flex min-w-0 flex-1 flex-col bg-surface">
-      <header className="flex h-14 shrink-0 items-center justify-between border-b border-border px-5">
-        <div className="min-w-0">
+    <section data-testid="conversation-chat-thread" className="flex h-full min-h-0 min-w-0 flex-1 flex-col overflow-hidden bg-surface">
+      <header className="flex min-h-16 shrink-0 items-center justify-between gap-3 border-b border-border px-4 py-2.5 sm:px-5">
+        <div className="flex min-w-0 items-center gap-3">
+          <Avatar size={40} className="shrink-0" style={{ background: '#E8C7EC', color: '#6F3E7A', minWidth: 40 }}>{customer.avatar || customer.name.slice(0, 1)}</Avatar>
+          <div className="min-w-0">
           <div className="flex min-w-0 items-center gap-2">
-            <p className="truncate text-sm font-black text-text-primary">{customer.name}</p>
-            <span className={`shrink-0 border-l-2 px-2 py-0.5 text-[10px] font-bold ${customer.isMock ? 'border-amber bg-amber-dim text-amber' : channelReady ? 'border-accent bg-accent-glow text-accent' : 'border-amber bg-amber-dim text-amber'}`}>
-              {customer.isMock ? '模拟客户 · 不对外发送' : channelReady ? '真实客户 · 通道已连接' : '真实客户 · 通道未连接'}
-            </span>
-            {customer.simulation?.checkpoint && (
-              <span className="max-w-52 truncate border-l-2 border-accent bg-accent-glow px-2 py-0.5 text-[10px] font-bold text-accent" title={customer.simulation.checkpoint}>
-                {customer.simulation.checkpoint}
-              </span>
-            )}
+            <p className="truncate text-base font-semibold text-text-primary">{customer.name}</p>
+            <Tag className="!m-0 !text-[10px]">{customer.isMock ? '模拟客户 · 不对外发送' : channelReady ? '真实客户 · 通道已连接' : '真实客户 · 通道未连接'}</Tag>
           </div>
           <div className="mt-0.5 flex items-center gap-1.5 text-[11px] text-text-muted">
             <span>{STAGE_LABEL[customer.stage]}</span>
@@ -956,8 +867,15 @@ function ChatThread({
             <span>·</span>
             <span>{customer.lastActive}</span>
           </div>
+          </div>
         </div>
-        <div className="border-l border-border pl-3 text-xs font-bold text-text-secondary">{'\u5f53\u5730\u65f6\u95f4'} <LiveLocalTime timeZone={customer.timeZone} /></div>
+        <div className="flex shrink-0 items-center gap-2">
+          <div className="hidden items-center gap-2 xl:flex">
+            <LsAvatarGroup people={conversationPeople} max={3} size={30}/>
+            <span className="border-l border-border pl-3 text-xs font-semibold text-text-secondary">当地时间 <LiveLocalTime timeZone={customer.timeZone} /></span>
+          </div>
+          <Tooltip title="客户与会话详情"><Button shape="circle" aria-label="客户与会话详情" icon={<Info size={16}/>} /></Tooltip>
+        </div>
       </header>
       <div className="min-h-0 flex-1 overflow-y-auto bg-ink px-3 py-5 sm:px-6">
         <div className="mx-auto max-w-3xl space-y-4">
@@ -967,7 +885,7 @@ function ChatThread({
               <p className="mt-1 text-[11px] text-text-secondary">输入客户接下来会说的话，只在演示沙盘里推进，不会发送到真实平台。</p>
               <div className="mt-3 flex gap-2">
                 <input value={mockInput} onChange={event => setMockInput(event.target.value)} placeholder={customer.simulation?.editable ? '例如：我们想改造一条装配线，怎么开始？' : '输入下一条客户消息…'} className="ui-field min-w-0 flex-1 !rounded-md px-3 py-2 text-sm" />
-                <button type="submit" disabled={!mockInput.trim()} className="rounded-md bg-accent px-4 py-2 text-xs font-bold text-white hover:bg-accent-dim disabled:opacity-40">模拟发送</button>
+                <Button type="primary" htmlType="submit" disabled={!mockInput.trim()} className="!h-auto min-h-9 !whitespace-normal rounded-md bg-accent px-4 py-2 text-xs font-bold text-white hover:bg-accent-dim disabled:opacity-40">模拟发送</Button>
               </div>
             </form>
           )}
@@ -976,7 +894,7 @@ function ChatThread({
               return (
                 <div key={event.id} className="flex justify-center">
                   <div className="max-w-[90%] rounded-md border border-border bg-surface px-3 py-2 text-center sm:max-w-[82%]">
-                    <p className="text-[11px] font-black text-text-primary">{event.title}</p>
+                    <p className="text-[11px] font-semibold text-text-primary">{event.title}</p>
                     <p className="mt-1 text-xs leading-5 text-text-muted">{event.body}</p>
                     <p className="mt-1 text-[10px] text-text-muted">{event.time}</p>
                   </div>
@@ -991,10 +909,10 @@ function ChatThread({
             const translation = event.translatedBody || chineseMessageTranslation(event.body, customer) || null;
             return (
               <div key={event.id} className={`flex ${isBuyer ? 'justify-start' : 'justify-end'}`}>
-                <div className={`relative max-w-[90%] rounded-lg px-4 py-3 sm:max-w-[74%] ${isBuyer ? 'rounded-tl-sm border border-border bg-surface text-text-primary' : 'rounded-tr-sm bg-accent text-white'}`}>
+                <div className={`ls-messenger-bubble relative ${isBuyer ? 'ls-messenger-bubble--inbound' : 'ls-messenger-bubble--outbound'}`}>
                   {isAi && <span className="absolute -top-2 right-3 rounded-md border border-border bg-surface px-1.5 py-0.5 text-[9px] font-bold text-accent">AI</span>}
-                  <div className="flex items-center justify-between gap-4">
-                    <p className={`text-xs font-bold ${isBuyer ? 'text-text-primary' : 'text-white'}`}>{event.title}</p>
+                  <div className={`flex items-center gap-4 ${isBuyer ? 'justify-end' : 'justify-between'}`}>
+                    {!isBuyer && <p className="text-xs font-bold text-white">{event.title}</p>}
                     <span className={`text-[10px] ${isBuyer ? 'text-text-muted' : 'text-white/75'}`}>{event.time}</span>
                   </div>
                   <p className={`mt-1 whitespace-pre-line text-sm leading-relaxed ${isBuyer ? 'text-text-secondary' : 'text-white'}`}>{event.body}</p>
@@ -1028,46 +946,34 @@ function ChatThread({
           {draftSuggestion && (
             <>
               <SalesDecisionEvidence meta={draftMeta} />
-              <DraftSuggestionBar customer={customer} draft={draftSuggestion} isTemplate={false} templatePlan={templatePlan} priceRulesReady={priceRulesReady} knowledgeMiss={knowledgeMiss} bridgeOnly={bridgeOnly} onSend={onSendDraft} onSave={() => onSaveDraft(draftSuggestion)} savingDraft={savingDraft} channelReady={channelReady && !isOutsideWindow} onEdit={onEditDraft} onChangeDraft={onDraftChange} onDismiss={onDismissDraft} onRegenerate={onRegenerateDraft} />
+              <DraftSuggestionBar draft={draftSuggestion} isTemplate={false} templatePlan={templatePlan} priceRulesReady={priceRulesReady} knowledgeMiss={knowledgeMiss} bridgeOnly={bridgeOnly} onSend={onSendDraft} onSave={() => onSaveDraft(draftSuggestion)} savingDraft={savingDraft} channelReady={channelReady && !isOutsideWindow} onChangeDraft={onDraftChange} onDismiss={onDismissDraft} onRegenerate={onRegenerateDraft} />
             </>
           )}
         </div>
       </div>
       <div className="shrink-0 space-y-2 border-t border-border bg-surface p-3">
         <div className="mx-auto max-w-3xl space-y-2">
-          {isOutsideWindow && <div className="rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-xs font-bold text-amber-800">距客户上次互动已超过 24 小时，当前不能直接发送普通 {customer.source === 'instagram' ? 'Instagram' : 'Messenger'} 消息。</div>}
+          {isOutsideWindow && <div className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs font-bold text-amber-800">距客户上次互动已超过 24 小时，当前不能直接发送普通 {customer.source === 'instagram' ? 'Instagram' : 'Messenger'} 消息。</div>}
           {composerState === 'idle' && chips.length > 0 && (
             <div className="flex flex-wrap gap-2">
-              {chips.map(chip => <button key={chip.intent} type="button" onClick={() => onSceneDraft(chip.intent)} className="inline-flex items-center gap-1.5 rounded-md border border-border bg-surface px-3 py-1.5 text-xs font-bold text-text-secondary hover:border-accent/30 hover:bg-accent-glow hover:text-accent"><Sparkles size={13} /> {chip.label}</button>)}
+              {chips.map(chip => <Button key={chip.intent} htmlType="button" onClick={() => onSceneDraft(chip.intent)} className="!h-auto min-h-9 !whitespace-normal inline-flex items-center gap-1.5 rounded-md border border-border bg-surface px-3 py-1.5 text-xs font-bold text-text-secondary hover:border-accent/30 hover:bg-accent-glow hover:text-accent"><Sparkles size={13} /> {chip.label}</Button>)}
             </div>
           )}
           <div data-testid="conversation-composer" className="relative rounded-lg border border-border bg-surface-2 px-3 py-2.5 focus-within:border-accent">
             {previewOpen && (
-              <div className="mb-3 rounded-xl border border-border bg-white px-3 py-2 text-xs leading-relaxed text-text-secondary">
-                <span className="font-black text-text-primary">目标语言译文（{customer.language}）：</span>
+              <div className="mb-3 rounded-lg border border-border bg-white px-3 py-2 text-xs leading-relaxed text-text-secondary">
+                <span className="font-semibold text-text-primary">目标语言译文（{customer.language}）：</span>
                 {translationLoading ? '翻译中…' : translatedInput || '请输入中文内容后查看译文'}
               </div>
             )}
-            <textarea ref={inputRef} data-customer-reply-input rows={2} value={input} onFocus={onManualActive} onChange={event => { onManualActive(); onInputChange(event.target.value); }} placeholder="输入中文回复…" className="max-h-24 w-full resize-none border-0 bg-transparent text-sm leading-relaxed text-text-primary outline-none shadow-none placeholder:text-text-muted focus:border-0 focus:shadow-none" />
+            <Input.TextArea ref={node => { inputRef.current = node?.resizableTextArea?.textArea || null; }} data-customer-reply-input aria-label="客户回复" rows={2} value={input} onFocus={onManualActive} onChange={event => { onManualActive(); onInputChange(event.target.value); }} placeholder="输入中文回复…" variant="borderless" className="max-h-24 w-full resize-none" />
             <div className="mt-2 flex items-center justify-between gap-2">
-              <div ref={emojiMenuRef} className="relative flex items-center gap-1.5">
-                <button type="button" aria-expanded={emojiOpen} aria-label="添加表情" onClick={() => setEmojiOpen(open => !open)} className="flex h-8 w-8 items-center justify-center rounded-lg text-text-muted hover:bg-white hover:text-text-primary" title="添加表情"><Smile size={15} /></button>
-                {emojiOpen && (
-                  <div role="dialog" aria-label="选择表情" className="absolute bottom-10 left-0 z-30 overflow-hidden rounded-xl border border-border bg-white shadow-xl">
-                    <Suspense fallback={<div className="flex h-[360px] w-80 items-center justify-center text-xs font-bold text-text-muted">正在加载表情…</div>}>
-                      <EmojiPicker
-                        width={320}
-                        height={360}
-                        lazyLoadEmojis
-                        searchPlaceHolder="搜索表情"
-                        previewConfig={{ showPreview: false }}
-                        onEmojiClick={(emojiData: EmojiClickData) => insertEmoji(emojiData.emoji)}
-                      />
-                    </Suspense>
-                  </div>
-                )}
-                <button
-                  type="button"
+              <div className="relative flex items-center gap-1.5">
+                <Popover trigger="click" placement="topLeft" open={emojiOpen} onOpenChange={setEmojiOpen} title="选择表情" content={emojiOpen ? <Suspense fallback={<div className="flex h-[360px] w-80 items-center justify-center text-xs text-text-secondary">正在加载表情…</div>}>
+                  <EmojiPicker width={320} height={360} lazyLoadEmojis searchPlaceHolder="搜索表情" previewConfig={{ showPreview: false }} onEmojiClick={(emojiData: EmojiClickData) => insertEmoji(emojiData.emoji)}/>
+                </Suspense> : null}><Button aria-expanded={emojiOpen} aria-label="添加表情" icon={<Smile size={15}/>}/></Popover>
+                <Button
+                  htmlType="button"
                   onClick={() => {
                     const shouldOpen = !previewOpen;
                     setPreviewOpen(shouldOpen);
@@ -1075,15 +981,17 @@ function ChatThread({
                   }}
                   disabled={!input.trim()}
                   aria-label={previewOpen ? '隐藏目标语言译文' : '显示目标语言译文'}
-                  className="flex h-8 items-center gap-1.5 rounded-lg px-2 text-xs font-bold text-text-muted hover:bg-white hover:text-text-primary disabled:cursor-not-allowed disabled:opacity-40"
+                  className="!h-auto min-h-9 !whitespace-normal flex h-8 items-center gap-1.5 rounded-lg px-2 text-xs font-bold text-text-muted hover:bg-white hover:text-text-primary disabled:cursor-not-allowed disabled:opacity-40"
                   title={previewOpen ? '隐藏目标语言译文' : '显示目标语言译文'}
                 >
                   <Languages size={15} />
                   {previewOpen ? '隐藏译文' : '显示译文'}
-                </button>
+                </Button>
               </div>
-               <button type="button" onClick={() => onSaveDraft(input)} disabled={savingDraft || !input.trim()} className="shrink-0 rounded-lg border border-border px-2 py-2 text-xs font-bold disabled:opacity-40">{savingDraft ? '保存中…' : '保存草稿'}</button>
-               <button type="button" onClick={onSend} disabled={sending || !channelReady || !input.trim() || isOutsideWindow} className="flex items-center gap-1.5 rounded-md bg-accent px-4 py-2 text-xs font-bold text-white hover:bg-accent-dim disabled:cursor-not-allowed disabled:opacity-40"><Send size={13} /> {sending ? '发送中…' : !channelReady ? '通道未连接' : isOutsideWindow ? '已超出回复时间' : '发送'}</button>
+               <LsCompactFieldGroup className="!w-auto shrink-0">
+                 <Button htmlType="button" onClick={() => onSaveDraft(input)} disabled={savingDraft || !input.trim()} className="!h-auto min-h-9 !whitespace-normal px-2 py-2 text-xs font-bold disabled:opacity-40">{savingDraft ? '保存中…' : '保存草稿'}</Button>
+                 <LsBrandAction htmlType="button" onClick={onSend} loading={sending} disabled={sending || !channelReady || !input.trim() || isOutsideWindow} className="!h-auto min-h-9 !whitespace-normal flex items-center gap-1.5 px-4 py-2 text-xs"><Send size={13} /> {!channelReady ? '通道未连接' : isOutsideWindow ? '已超出回复时间' : '发送'}</LsBrandAction>
+               </LsCompactFieldGroup>
             </div>
           </div>
         </div>
@@ -1309,21 +1217,21 @@ function CustomerIntentActionPanel({
       )}
       {(suggestion.suggestionType !== 'none' || agentProduction.action) && (
         <div className="mt-2.5 flex flex-wrap gap-2">
-          <button type="button" data-agent-action={window.__agentProductionTarget?.customerId === customer.id && !['customer_segmentation', 'followup_batch_draft'].includes(window.__agentProductionTarget?.link.businessRef.taskKey || '') ? 'customer-primary' : undefined} onClick={() => void (agentProduction.active ? agentProduction.execute().catch(error => onToast(error.message)) : primaryAction())} disabled={agentProduction.active ? !agentProduction.action || agentProduction.busy : isPrimaryLoading} className="rounded-md bg-accent px-3 py-1.5 text-[11px] font-bold text-white hover:bg-accent-dim disabled:cursor-wait disabled:opacity-70">
+          <Button type="primary" htmlType="button" data-agent-action={window.__agentProductionTarget?.customerId === customer.id && !['customer_segmentation', 'followup_batch_draft'].includes(window.__agentProductionTarget?.link.businessRef.taskKey || '') ? 'customer-primary' : undefined} onClick={() => void (agentProduction.active ? agentProduction.execute().catch(error => onToast(error.message)) : primaryAction())} disabled={agentProduction.active ? !agentProduction.action || agentProduction.busy : isPrimaryLoading} className="!h-auto min-h-9 !whitespace-normal rounded-md bg-accent px-3 py-1.5 text-[11px] font-bold text-white hover:bg-accent-dim disabled:cursor-wait disabled:opacity-70">
             {agentProduction.busy || isPrimaryLoading ? '草稿生成中…' : agentProduction.action?.label || primaryLabel[suggestion.suggestionType]}
-          </button>
+          </Button>
           {secondaryLabel[suggestion.suggestionType] && (
-            <button type="button" onClick={secondaryAction} className="rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-[11px] font-bold text-slate-600 hover:bg-slate-50">
+            <Button htmlType="button" onClick={secondaryAction} className="!h-auto min-h-9 !whitespace-normal rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-[11px] font-bold text-slate-600 hover:bg-slate-50">
               {secondaryLabel[suggestion.suggestionType]}
-            </button>
+            </Button>
           )}
         </div>
       )}
       {!!evidenceItems.length && (
-        <button type="button" onClick={() => setEvidenceOpen(open => !open)} className="mt-2.5 flex w-full items-center justify-between border-t border-border pt-2.5 text-left text-[11px] font-bold text-text-secondary">
+        <Button htmlType="button" onClick={() => setEvidenceOpen(open => !open)} className="!h-auto min-h-9 !whitespace-normal !justify-start mt-2.5 flex w-full items-center justify-between border-t border-border pt-2.5 text-left text-[11px] font-bold text-text-secondary">
           查看 AI 判断依据
           <ChevronDown size={14} className={`transition-transform ${evidenceOpen ? 'rotate-180' : ''}`} />
-        </button>
+        </Button>
       )}
       {evidenceOpen && (
         <div className="mt-2 border-l-2 border-border-bright bg-surface-2 px-3 py-3 text-[11px] leading-5">
@@ -1340,9 +1248,9 @@ function CustomerIntentActionPanel({
         </div>
       )}
       {customer.handlingMode === 'ai_auto' && suggestion.suggestionType === 'none' && (
-        <button type="button" onClick={() => switchMode('human_needed', '已转为你亲自接手')} className="mt-3 rounded-lg border border-slate-200 bg-white px-3 py-2 text-[11px] font-bold text-slate-700 hover:bg-slate-50">
+        <Button htmlType="button" onClick={() => switchMode('human_needed', '已转为你亲自接手')} className="!h-auto min-h-9 !whitespace-normal mt-3 rounded-lg border border-slate-200 bg-white px-3 py-2 text-[11px] font-bold text-slate-700 hover:bg-slate-50">
           转我接手
-        </button>
+        </Button>
       )}
       </div>
     </section>
@@ -1369,10 +1277,10 @@ function RulesDisclosure({
   const [open, setOpen] = useState(false);
   return (
     <div className="rounded-lg border border-border bg-surface">
-      <button type="button" onClick={() => setOpen(v => !v)} className="flex w-full items-center justify-between px-3.5 py-3 text-left text-xs font-bold text-text-primary">
+      <Button htmlType="button" onClick={() => setOpen(v => !v)} className="!h-auto min-h-9 !whitespace-normal !justify-start flex w-full items-center justify-between px-3.5 py-3 text-left text-xs font-bold text-text-primary">
         分工规则
         <ChevronDown size={14} className={`text-text-muted transition-transform ${open ? 'rotate-180' : ''}`} />
-      </button>
+      </Button>
       {open && (
         <div className="space-y-2 border-t border-border px-3.5 py-3 text-[11px] leading-5 text-text-secondary">
           <div className="mb-3 border-y border-border bg-surface-2 p-3">
@@ -1381,54 +1289,41 @@ function RulesDisclosure({
                 <p className="text-[11px] font-bold text-text-primary">智能客服接待</p>
                 <p className="text-[10px] text-text-muted">{customerServiceLabel}</p>
               </div>
-              <button
-                type="button"
-                role="switch"
-                aria-checked={Boolean(customerServiceStatus?.enabled)}
-                aria-label="智能客服总开关"
-                title={customerServiceStatus?.enabled ? '关闭智能客服' : '开启智能客服'}
-                disabled={customerServiceSaving}
-                onClick={() => onToggleCustomerService(!customerServiceStatus?.enabled)}
-                className={`relative h-6 w-10 shrink-0 rounded-full transition-colors disabled:cursor-wait disabled:opacity-50 ${customerServiceStatus?.enabled ? 'bg-accent' : 'bg-border-bright'}`}
-              >
-                <span className={`absolute top-1 flex h-4 w-4 items-center justify-center rounded-full bg-white shadow-sm transition-transform ${customerServiceStatus?.enabled ? 'translate-x-5' : 'translate-x-1'}`}>
-                  <Power size={9} className={customerServiceStatus?.enabled ? 'text-accent' : 'text-text-muted'} />
-                </span>
-              </button>
+              <Switch aria-label="智能客服总开关" checked={Boolean(customerServiceStatus?.enabled)} loading={customerServiceSaving} onChange={onToggleCustomerService}/>
             </div>
             <p className="mt-2 text-[10px] leading-4 text-text-muted">{customerServiceSummary}</p>
             {customerServiceStatus?.enabled && customerServiceStatus.eligibleForPartialAutoReply && customerServiceStatus.partialAutoReplyDecision === 'declined' && (
-              <button type="button" disabled={customerServiceSaving} onClick={onEnablePartialAutoReply} className="mt-2 text-[10px] font-bold text-accent hover:underline disabled:opacity-50">
+              <Button htmlType="button" disabled={customerServiceSaving} onClick={onEnablePartialAutoReply} className="!h-auto min-h-9 !whitespace-normal mt-2 text-[10px] font-bold text-accent hover:underline disabled:opacity-50">
                 开放部分直回
-              </button>
+              </Button>
             )}
           </div>
           {!notificationReady && (
-            <button
-              type="button"
+            <Button
+              htmlType="button"
               onClick={() => {
                 localStorage.setItem('lingshu:enterprise:highlight-notifications', 'true');
                 window.dispatchEvent(new CustomEvent('lingshu:navigate', { detail: { page: 'enterprise' } }));
               }}
-              className="mb-2 w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-left text-[10px] font-semibold leading-4 text-slate-600 hover:bg-slate-50"
+              className="!h-auto min-h-9 !whitespace-normal !justify-start mb-2 w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-left text-[10px] font-semibold leading-4 text-slate-600 hover:bg-slate-50"
             >
               设置重要消息提醒接收方式
-            </button>
+            </Button>
           )}
           <p>开启后的前 3 天：AI 只给建议，你确认后再发。</p>
           <p>出现采购数量、样品或收货信息：AI 写草稿，你确认后发送。</p>
           <p>满 3 天并由你授权后：仅已审批的简单问答可直接回复。</p>
           <p>讨价还价、订单条款、大单或高价值客户：提醒你亲自接手。</p>
-          <button
-            type="button"
+          <Button
+            htmlType="button"
             onClick={() => {
               localStorage.setItem('lingshu:enterprise:highlight-autonomy', 'auto');
               window.dispatchEvent(new CustomEvent('lingshu:navigate', { detail: { page: 'enterprise' } }));
             }}
-            className="mt-1 text-[11px] font-bold text-accent hover:underline"
+            className="!h-auto min-h-9 !whitespace-normal mt-1 text-[11px] font-bold text-accent hover:underline"
           >
             在企业中心调整规则
-          </button>
+          </Button>
         </div>
       )}
     </div>
@@ -1454,65 +1349,46 @@ function CustomerInsightDisclosure({ customer }: { customer: CustomerProfile }) 
 
   return (
     <section data-testid="customer-insight-disclosure" className="rounded-lg border border-border bg-surface">
-      <button
-        type="button"
+      <Button
+        htmlType="button"
         aria-expanded={open}
         onClick={() => setOpen(value => !value)}
-        className="flex w-full items-center gap-2 px-3.5 py-3 text-left"
+        className="!h-auto min-h-10 !justify-start flex w-full items-center gap-2 px-3 py-2 text-left"
       >
         <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md bg-accent-glow text-accent">
           <BrainCircuit size={14} />
         </span>
-        <span className="min-w-0 flex-1">
-          <span className="block text-xs font-bold text-text-primary">客户判断摘要</span>
-          <span className="mt-1.5 flex flex-wrap gap-1.5">
-            {scenario?.warning && (
-              <span
-                data-testid="large-order-warning-tag"
-                aria-label={`${scenario.warning.title}：${scenario.warning.reason}`}
-                title={`${scenario.warning.title}：${scenario.warning.reason}`}
-                className="inline-flex items-center gap-1 rounded-full border border-red-200 bg-red-50 px-2 py-0.5 text-[10px] font-bold text-red-700"
-              >
-                <AlertTriangle size={10} />大单预警
-              </span>
-            )}
-            <span className="border-l border-border-bright px-2 py-0.5 text-[10px] font-semibold text-text-secondary">{STAGE_LABEL[customer.stage]}</span>
-            <span className="border-l border-border-bright px-2 py-0.5 text-[10px] font-semibold text-text-secondary">意向 {customer.intentScore}</span>
-          </span>
-        </span>
+        <span className="min-w-0 flex-1 whitespace-nowrap text-xs font-semibold text-text-primary">AI 判断</span>
+        {scenario?.warning && <span data-testid="large-order-warning-tag" aria-label={`${scenario.warning.title}：${scenario.warning.reason}`} title={scenario.warning.reason} className="inline-flex shrink-0 items-center gap-1 rounded-full bg-red-50 px-2 py-0.5 text-[10px] font-semibold text-red-700"><AlertTriangle size={11} />大单预警</span>}
+        <span className="shrink-0 text-xs font-semibold text-accent">意向 {customer.intentScore}</span>
         <ChevronDown size={14} className={`shrink-0 text-text-muted transition-transform ${open ? 'rotate-180' : ''}`} />
-      </button>
+      </Button>
 
       {open && (
-        <div className="space-y-3 border-t border-border px-3.5 py-3">
-          {scenario?.warning && (
-            <p className="border-l-2 border-red bg-red/5 px-3 py-2 text-[11px] leading-5 text-red">{scenario.warning.reason}</p>
-          )}
+        <div className="space-y-3 border-t border-border p-3">
           <div>
-            <p className="text-[10px] font-bold uppercase tracking-wide text-text-muted">AI 对客户意向的判断</p>
-            <p className="mt-1 text-[11px] font-semibold text-text-primary">{intentLevelLabel(customer)}</p>
-            <p className="mt-1 text-[11px] leading-5 text-text-secondary">{customer.summary}</p>
+            <div className="mb-1.5 flex items-center justify-between text-[10px]"><span className="font-semibold text-text-secondary">成交意向</span><span className="font-semibold text-accent">{customer.intentScore}%</span></div>
+            <LsGradientProgress percent={customer.intentScore} showInfo={false} size="small" />
           </div>
-          <div className="border-t border-border pt-3">
-            <p className="text-[10px] font-bold uppercase tracking-wide text-text-muted">销售节点进度</p>
-            <p className="mt-1 text-[11px] font-semibold text-text-primary">{scenario?.checkpoint || STAGE_LABEL[customer.stage]}</p>
-            <p className="mt-1 text-[11px] leading-5 text-text-secondary">{scenario?.goal || customer.nextStep}</p>
-          </div>
-          <div className="border-t border-border pt-3">
-            <p className="text-[10px] font-bold uppercase tracking-wide text-text-muted">AI 处理记录</p>
-            <div className="mt-2 flex flex-wrap gap-1.5">
-              <span className="rounded-md bg-surface-2 px-2 py-1 text-[10px] font-semibold text-text-secondary">AI 参与 {aiHandledCount} 次</span>
-              <span className="rounded-md bg-surface-2 px-2 py-1 text-[10px] font-semibold text-text-secondary">人工优化 {humanEditCount} 次</span>
-              <span className="rounded-md bg-surface-2 px-2 py-1 text-[10px] font-semibold text-text-secondary">学习记录 {memoryRecords.length} 条</span>
+          {scenario?.warning && <div className="flex items-start gap-2 rounded-lg bg-red-50 px-3 py-2 text-[11px] leading-5 text-red-700"><AlertTriangle size={14} className="mt-0.5 shrink-0" /><span className="line-clamp-2">{scenario.warning.reason}</span></div>}
+          <div className="grid gap-2 sm:grid-cols-2">
+            <div className="rounded-lg bg-surface-2 p-3">
+              <p className="text-[10px] font-semibold text-text-muted">商机重点</p>
+              <p className="mt-1 text-xs font-semibold text-text-primary">{intentLevelLabel(customer)}</p>
+              <p className="mt-1 line-clamp-3 text-[11px] leading-5 text-text-secondary">{customer.summary}</p>
             </div>
-            {!!memoryRecords.length && (
-              <div className="mt-2 flex flex-wrap gap-1.5">
-                {memoryRecords.slice(0, 6).map(item => (
-                  <span key={item} className="rounded-md border border-border bg-surface px-2 py-1 text-[10px] text-text-secondary">{item}</span>
-                ))}
-              </div>
-            )}
+            <div className="rounded-lg bg-surface-2 p-3">
+              <p className="text-[10px] font-semibold text-text-muted">下一步</p>
+              <p className="mt-1 line-clamp-2 text-xs font-semibold text-text-primary">{scenario?.checkpoint || STAGE_LABEL[customer.stage]}</p>
+              <p className="mt-1 line-clamp-2 text-[11px] leading-5 text-text-secondary">{scenario?.goal || customer.nextStep}</p>
+            </div>
           </div>
+          <div className="grid grid-cols-3 divide-x divide-border rounded-lg border border-border bg-white py-2 text-center">
+            <span><strong className="block text-sm text-text-primary">{aiHandledCount}</strong><small className="text-[9px] text-text-muted">AI 参与</small></span>
+            <span><strong className="block text-sm text-text-primary">{humanEditCount}</strong><small className="text-[9px] text-text-muted">人工优化</small></span>
+            <span><strong className="block text-sm text-text-primary">{memoryRecords.length}</strong><small className="text-[9px] text-text-muted">学习记录</small></span>
+          </div>
+          {!!memoryRecords.length && <details className="text-[10px] text-text-secondary"><summary className="cursor-pointer font-semibold">查看学习要点</summary><div className="mt-2 flex flex-wrap gap-1.5">{memoryRecords.slice(0, 6).map(item => <span key={item} className="rounded-md border border-border px-2 py-1">{item}</span>)}</div></details>}
         </div>
       )}
     </section>
@@ -1528,7 +1404,6 @@ function CustomerInfoRail({
   notificationReady,
   onGenerateDraft,
   onHandlingModeChange,
-  onCustomerPatch,
   onToast,
   onFocusReply,
   onViewDraft,
@@ -1549,7 +1424,6 @@ function CustomerInfoRail({
   notificationReady: boolean;
   onGenerateDraft: (instruction: string, intent?: DraftIntent) => Promise<void> | void;
   onHandlingModeChange: (mode: HandlingMode) => void;
-  onCustomerPatch: (patch: Partial<CustomerProfile>) => void;
   onToast: (message: string) => void;
   onFocusReply: () => void;
   onViewDraft: () => void;
@@ -1562,6 +1436,17 @@ function CustomerInfoRail({
   onInsertQuoteReply: (text: string) => void;
   onQuoteCardSent: (summary: string, providerMessageId?: string) => void;
 }) {
+  const [quickPanel, setQuickPanel] = useState<'share' | 'profile' | 'notifications' | 'search' | null>(null);
+  const [messageSearch, setMessageSearch] = useState('');
+  const [notificationsMuted, setNotificationsMuted] = useState(false);
+
+  useEffect(() => {
+    setQuickPanel(null);
+    setMessageSearch('');
+    if (!customer) { setNotificationsMuted(false); return; }
+    setNotificationsMuted(localStorage.getItem(`lingshu:customer:notifications-muted:${customer.id}`) === 'true');
+  }, [customer?.id]);
+
   if (!customer) {
     return (
       <aside className="flex h-full w-full lg:w-64 shrink-0 items-center justify-center border-l border-border bg-slate-50 px-6 text-center xl:w-[272px] 2xl:w-72">
@@ -1570,42 +1455,75 @@ function CustomerInfoRail({
     );
   }
 
+  const searchResults = messageSearch.trim()
+    ? customer.timeline.filter(event => `${event.title} ${event.body}`.toLowerCase().includes(messageSearch.trim().toLowerCase())).slice(-6).reverse()
+    : [];
+  const openQuickPanel = (panel: NonNullable<typeof quickPanel>) => setQuickPanel(current => current === panel ? null : panel);
+  const quickActions = [
+    { id: 'share' as const, label: '分享', icon: Share2 },
+    { id: 'profile' as const, label: '客户主页', icon: UserRound },
+    { id: 'notifications' as const, label: notificationsMuted ? '恢复通知' : '关闭通知', icon: notificationsMuted ? Bell : BellOff },
+    { id: 'search' as const, label: '搜索', icon: Search },
+  ];
+
   return (
-    <aside data-testid="customer-info-rail" className="min-h-0 w-full lg:w-64 shrink-0 self-stretch overflow-y-auto overscroll-contain border-l border-border bg-slate-50 px-3 py-3 [scrollbar-gutter:stable] xl:w-[272px] 2xl:w-72">
-      <div className="grid gap-2.5">
-        <CustomerInsightDisclosure customer={customer} />
-        <CustomerIntentActionPanel
-          customer={customer}
-          onModeChange={onHandlingModeChange}
-          onToast={onToast}
-          onGenerateDraft={onGenerateDraft}
-          onFocusReply={onFocusReply}
-          onViewDraft={onViewDraft}
-          onCompleteTodo={onCompleteTodo}
-          customerServiceEnabled={customerServiceEnabled}
-          autoReplyReady={autoReplyReady}
-          hasReplyReady={hasReplyReady}
-        />
-        <QuoteSkillCard
-          key={`quote:${customer.id}`}
-          customer={customer}
-          onInsertReply={onInsertQuoteReply}
-          onToast={onToast}
-          channelReady={Boolean((customer.source === 'messenger' ? customerServiceStatus?.messengerAuthorization : customer.source === 'instagram' ? customerServiceStatus?.instagramAuthorization : customerServiceStatus?.messagingAuthorization)?.providerReady)}
-          onCardSent={onQuoteCardSent}
-        />
-        <BasicInfoWidget customer={customer} onCustomerPatch={onCustomerPatch} />
-        <TagsWidget key={`tags:${customer.id}`} customer={customer} onCustomerPatch={onCustomerPatch} onToast={onToast} />
-        <RulesDisclosure
-          customerServiceStatus={customerServiceStatus}
-          customerServiceSaving={customerServiceSaving}
-          customerServiceLabel={customerServiceLabel}
-          customerServiceSummary={customerServiceSummary}
-          notificationReady={notificationReady}
-          onToggleCustomerService={onToggleCustomerService}
-          onEnablePartialAutoReply={onEnablePartialAutoReply}
-        />
+    <aside data-testid="customer-info-rail" className="min-h-0 w-full shrink-0 self-stretch overflow-y-auto overscroll-contain border-l border-border bg-surface-2 [scrollbar-gutter:stable] lg:w-72 xl:w-[320px] 2xl:w-[336px]">
+      <div className="border-b border-border p-3">
+        <div className="rounded-2xl bg-white px-3 py-5 shadow-sm">
+          <div className="flex flex-col items-center text-center">
+            <Avatar size={72} style={{ background: '#E8C7EC', color: '#6F3E7A', fontSize: 28 }}>{customer.avatar || customer.name.slice(0, 1)}</Avatar>
+            <h2 className="mt-3 line-clamp-2 text-lg font-semibold leading-6 text-text-primary" title={customer.name}>{customer.name}</h2>
+            <div className="mt-1 flex min-w-0 flex-wrap items-center justify-center gap-x-1.5 gap-y-1 text-[11px] text-text-secondary">
+              <span className="max-w-full truncate" title={customer.countryName}>{customer.countryName || '—'}</span>
+              <span className="text-border-bright">·</span>
+              <span>{customer.language || '—'}</span>
+              <span className="text-border-bright">·</span>
+              <span><LiveLocalTime timeZone={customer.timeZone}/></span>
+            </div>
+          </div>
+          <div className="mt-5 grid grid-cols-4 gap-1" aria-label="客户快捷操作">
+            {quickActions.map(action => {
+              const Icon = action.icon;
+              const active = quickPanel === action.id;
+              return <button key={action.id} type="button" aria-pressed={active} onClick={() => openQuickPanel(action.id)} className={`group flex min-w-0 flex-col items-center gap-1.5 rounded-lg px-1 py-1.5 text-[10px] font-medium transition ${active ? 'bg-accent-glow text-accent' : 'text-text-secondary hover:bg-surface-2 hover:text-text-primary'}`}>
+                <span className={`flex h-9 w-9 items-center justify-center rounded-full ${active ? 'bg-white text-accent' : 'bg-surface-2 text-text-primary group-hover:bg-white'}`}><Icon size={17}/></span>
+                <span className="w-full truncate">{action.label}</span>
+              </button>;
+            })}
+          </div>
+          {quickPanel && <div role="region" aria-label="客户快捷详情" className="mt-3 rounded-lg border border-border bg-surface-2 p-3 text-[11px] leading-5 text-text-secondary">
+            {quickPanel === 'share' && <div><p className="font-semibold text-text-primary">分享客户摘要</p><p className="mt-1">{customer.name} · {customer.product || '产品待确认'} · {STAGE_LABEL[customer.stage]} · 意向 {customer.intentScore}</p><Button size="small" className="mt-2" onClick={() => void navigator.clipboard.writeText(`${customer.name}\n${customer.countryName} · ${customer.language}\n${customer.product}\n${customer.summary}`).then(() => onToast('客户摘要已复制')).catch(() => onToast('复制失败，请稍后重试'))}>复制摘要</Button></div>}
+            {quickPanel === 'profile' && <dl className="grid grid-cols-[72px_minmax(0,1fr)] gap-x-2 gap-y-1"><dt>来源</dt><dd className="flex items-center gap-1 font-medium text-text-primary"><SourceIcon source={customer.source} size={12}/>{sourceLabel(customer.source)}</dd><dt>产品</dt><dd className="font-medium text-text-primary">{customer.product || '待确认'}</dd><dt>阶段</dt><dd className="font-medium text-text-primary">{STAGE_LABEL[customer.stage]}</dd><dt>预计价值</dt><dd className="font-medium text-text-primary">{customer.estimatedValue || '待评估'}</dd><dt>下一步</dt><dd className="font-medium text-text-primary">{customer.nextStep || '待安排'}</dd></dl>}
+            {quickPanel === 'notifications' && <div className="flex items-center justify-between gap-3"><div><p className="font-semibold text-text-primary">会话通知</p><p className="mt-1">{notificationsMuted ? '当前客户已静音，仍会保留未读记录。' : '当前客户的重要消息会正常提醒。'}</p></div><Switch size="small" checked={!notificationsMuted} onChange={enabled => { const muted = !enabled; setNotificationsMuted(muted); localStorage.setItem(`lingshu:customer:notifications-muted:${customer.id}`, String(muted)); onToast(muted ? '已关闭当前客户通知' : '已恢复当前客户通知'); }}/></div>}
+            {quickPanel === 'search' && <div><Input allowClear size="small" value={messageSearch} onChange={event => setMessageSearch(event.target.value)} placeholder="搜索当前会话" prefix={<Search size={13}/>} />{messageSearch.trim() ? <div className="mt-2 space-y-1.5">{searchResults.length ? searchResults.map(event => <div key={event.id} className="rounded-md bg-white px-2 py-1.5"><p className="font-semibold text-text-primary">{event.title} · {event.time}</p><p className="line-clamp-2">{event.body}</p></div>) : <p className="py-2 text-center text-text-muted">没有匹配消息</p>}</div> : <p className="mt-2 text-text-muted">输入关键词查看当前客户的消息记录。</p>}</div>}
+          </div>}
+        </div>
+        <div className="mt-3"><CustomerInsightDisclosure customer={customer} /></div>
       </div>
+      <Collapse
+        ghost
+        defaultActiveKey={['business']}
+        items={[
+          {
+            key: 'media',
+            label: '影音内容、文件和链接',
+            children: <div className="rounded-lg bg-surface-2 p-3 text-xs leading-5 text-text-secondary"><p>当前会话共 {customer.timeline.filter(event => event.type === 'messenger' || event.type === 'whatsapp').length} 条消息。</p><p className="mt-1">收到的媒体和链接会在这里按时间归档；没有内容时不展示伪造缩略图。</p></div>,
+          },
+          {
+            key: 'business',
+            label: '客户与销售工作台',
+            children: <div className="grid gap-2.5">
+              <CustomerIntentActionPanel customer={customer} onModeChange={onHandlingModeChange} onToast={onToast} onGenerateDraft={onGenerateDraft} onFocusReply={onFocusReply} onViewDraft={onViewDraft} onCompleteTodo={onCompleteTodo} customerServiceEnabled={customerServiceEnabled} autoReplyReady={autoReplyReady} hasReplyReady={hasReplyReady} />
+              <QuoteSkillCard key={customer.id} customer={customer} onInsertReply={onInsertQuoteReply} onToast={onToast} channelReady={Boolean((customer.source === 'messenger' ? customerServiceStatus?.messengerAuthorization : customer.source === 'instagram' ? customerServiceStatus?.instagramAuthorization : customerServiceStatus?.messagingAuthorization)?.providerReady)} onCardSent={onQuoteCardSent} />
+            </div>,
+          },
+          {
+            key: 'privacy',
+            label: '隐私设置与支持',
+            children: <RulesDisclosure customerServiceStatus={customerServiceStatus} customerServiceSaving={customerServiceSaving} customerServiceLabel={customerServiceLabel} customerServiceSummary={customerServiceSummary} notificationReady={notificationReady} onToggleCustomerService={onToggleCustomerService} onEnablePartialAutoReply={onEnablePartialAutoReply} />,
+          },
+        ]}
+      />
     </aside>
   );
 }
@@ -1645,6 +1563,7 @@ async function sendCustomerOutbox(customer: CustomerProfile, requestId: string, 
 }
 
 export default function ConversionPage({ onLeaveConversation: _onLeaveConversation, isDemo = false, includeMockCustomers = false, mockCustomerScope = 'admin' }: Props) {
+  const { modal } = App.useApp();
   const agentProduction = useAgentProductionAction('customer');
   const [view, setView] = useState<CustomerView>(() => {
     try {
@@ -1722,18 +1641,6 @@ export default function ConversionPage({ onLeaveConversation: _onLeaveConversati
   const [templates, setTemplates] = useState<MessageTemplate[]>([]);
   const [priceRulesReady, setPriceRulesReady] = useState(true);
   const [notificationReady, setNotificationReady] = useState(true);
-  const partialAutoReplyDialogRef = useModalFocus<HTMLDivElement>({
-    open: Boolean(customerServiceStatus?.shouldAskPartialAutoReply),
-    onClose: () => {},
-    closeOnEscape: false,
-  });
-  const knowledgeDialogRef = useModalFocus<HTMLDivElement>({
-    open: Boolean(learnCandidate && learnDialogOpen),
-    onClose: () => {
-      setLearnCandidate(null);
-      setLearnDialogOpen(false);
-    },
-  });
   const [lastDraftKey, setLastDraftKey] = useState('');
   const deepLinkConsumedRef = useRef(false);
   const filterEmptySelectionRef = useRef(false);
@@ -2022,7 +1929,7 @@ export default function ConversionPage({ onLeaveConversation: _onLeaveConversati
   const changeCustomerServiceEnabled = async (enabled: boolean) => {
     if (customerServiceSaving) return;
     if (!enabled && customerServiceStatus?.enabled) {
-      const confirmed = window.confirm('关闭后，新客户消息只进入收件箱，灵小枢不再生成建议，也不会自动发送。确定关闭吗？');
+      const confirmed = await modal.confirm({ title: '关闭智能客服？', content: '关闭后，新客户消息只进入收件箱，灵小枢不再生成建议，也不会自动发送。', okText: '确认关闭', cancelText: '继续使用', icon: <AlertTriangle size={20}/> });
       if (!confirmed) return;
     }
     setCustomerServiceSaving(true);
@@ -2465,40 +2372,23 @@ export default function ConversionPage({ onLeaveConversation: _onLeaveConversati
     return () => window.removeEventListener('lingshu:select-customer', handler);
   }, [customers]);
 
-  const editDraft = () => {
-    if (!selected || !draftSuggestion) return;
-    setInput(draftSuggestion);
-    translationRequestRef.current += 1;
-    setTranslatedInput('');
-    setDraftSuggestion(null);
-    updateCustomer(selected.id, { pendingDraft: draftSuggestion });
-    window.setTimeout(() => {
-      const inputEl = document.querySelector<HTMLTextAreaElement>('[data-customer-reply-input]');
-      inputEl?.focus();
-      if (inputEl) {
-        inputEl.selectionStart = inputEl.value.length;
-        inputEl.selectionEnd = inputEl.value.length;
-      }
-    }, 0);
-  };
-
   const focusReplyInput = () => {
     setMobilePanel('chat');
     const inputEl = document.querySelector<HTMLTextAreaElement>('[data-customer-reply-input]');
     inputEl?.focus();
-    inputEl?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    inputEl?.scrollIntoView({ behavior: getScrollBehavior(), block: 'center' });
   };
 
   const viewDraftSuggestion = () => {
     setMobilePanel('chat');
     const draftEl = document.querySelector<HTMLElement>('[data-draft-suggestion]');
     if (draftEl) {
-      draftEl.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      draftEl.scrollIntoView({ behavior: getScrollBehavior(), block: 'center' });
       return;
     }
     if (selected?.pendingDraft?.trim() && !input.trim()) {
       setDraftSuggestion(selected.pendingDraft.trim());
-      window.setTimeout(() => document.querySelector<HTMLElement>('[data-draft-suggestion]')?.scrollIntoView({ behavior: 'smooth', block: 'center' }), 0);
+      window.setTimeout(() => document.querySelector<HTMLElement>('[data-draft-suggestion]')?.scrollIntoView({ behavior: getScrollBehavior(), block: 'center' }), 0);
       return;
     }
     focusReplyInput();
@@ -2528,6 +2418,7 @@ export default function ConversionPage({ onLeaveConversation: _onLeaveConversati
 
   return (
     <div className="flex h-full min-h-0 min-w-0 flex-col overflow-hidden">
+    <h1 className="sr-only">{PAGE_REGISTRY.conversion.canonicalTitle}</h1>
     {includeMockCustomers && <div className="shrink-0 border-b border-emerald-200 bg-emerald-50 px-4 py-2 text-xs text-emerald-900"><strong>本地模拟 · 外贸客户全流程</strong>　收件箱、潜客、成交客户和沉默客户均已加入多语言工厂采购场景。</div>}
     {deliveryHandoff?.runId&&deliveryError&&<p role="alert" className="mx-4 mt-3 text-sm text-red-700">{deliveryError}</p>}
     {deliveryHandoff?.runId && <div className="max-h-[35%] shrink-0 overflow-y-auto"><CustomerWorkflowPanel handoff={deliveryHandoff} customers={customers} /></div>}
@@ -2538,17 +2429,33 @@ export default function ConversionPage({ onLeaveConversation: _onLeaveConversati
         <p className="mt-2 text-[11px] text-slate-500">此处展示所属批次的草稿。批次审核请返回交付看板；会话中的回复操作独立处理。</p>
       </> : <p className="mt-2 text-xs text-slate-500">没有对应的草稿记录，请返回交付看板选择具体客户任务。</p>}
     </section>}
-    <div className="flex min-h-0 min-w-0 flex-1 flex-col bg-ink" data-lingshu-guide="customer-workbench">
-      <nav aria-label="客服工作区" className="flex shrink-0 gap-4 border-b border-border bg-surface px-3 lg:hidden" role="tablist">
-        {([['list', '客户列表'], ['chat', '会话'], ['profile', '客户资料']] as const).map(([panel, label]) => <button key={panel} type="button" role="tab" aria-selected={mobilePanel === panel} onClick={() => setMobilePanel(panel)} className={`flex-1 border-b-2 px-2 py-3 text-sm font-bold ${mobilePanel === panel ? 'border-accent text-accent' : 'border-transparent text-text-secondary'}`}>{label}</button>)}
+    <div className="flex min-h-0 min-w-0 flex-1 flex-col bg-ink p-0 lg:p-3" data-lingshu-guide="customer-workbench">
+      <nav aria-label="移动端会话导航" className="grid h-12 shrink-0 grid-cols-3 border-b border-border bg-white md:hidden">
+        {([
+          { id: 'list' as const, label: '会话列表', icon: List },
+          { id: 'chat' as const, label: '当前对话', icon: MessageSquare },
+          { id: 'profile' as const, label: '客户资料', icon: UserRound },
+        ]).map(item => {
+          const Icon = item.icon;
+          const active = mobilePanel === item.id;
+          return <button
+            key={item.id}
+            type="button"
+            aria-current={active ? 'page' : undefined}
+            onClick={() => setMobilePanel(item.id)}
+            className={`flex min-w-0 items-center justify-center gap-1.5 border-b-2 px-2 text-xs font-semibold transition-colors ${active ? 'border-accent text-accent' : 'border-transparent text-text-secondary hover:bg-surface-2 hover:text-text-primary'}`}
+          >
+            <Icon size={15} aria-hidden="true" />
+            <span className="truncate">{item.label}</span>
+          </button>;
+        })}
       </nav>
-      <div data-testid="conversation-workspace-main" className="flex min-h-0 flex-1">
-        <div className={mobilePanel === 'list' ? 'flex min-h-0 min-w-0 flex-1 lg:contents' : 'hidden lg:contents'}>
+      <div data-testid="conversation-workspace-main" className="ls-conversation-workspace min-h-0 flex-1">
+        <div className={mobilePanel === 'list' ? 'ls-conversation-workspace__pane flex min-h-0 min-w-0 flex-1 md:contents' : 'hidden md:contents'}>
         <CompactCustomerList
           view={view}
           selectedId={selectedId}
           customers={customers}
-          showSimulationBadge={includeMockCustomers}
           onOpen={openCustomer}
           onViewChange={(nextView) => { filterEmptySelectionRef.current = false; setView(nextView); }}
           onVisibleSelectionChange={(id, filteredEmpty) => {
@@ -2557,7 +2464,7 @@ export default function ConversionPage({ onLeaveConversation: _onLeaveConversati
           }}
         />
         </div>
-        <div className={mobilePanel === 'chat' ? 'flex min-h-0 min-w-0 flex-1 flex-col' : 'hidden min-h-0 min-w-0 lg:flex lg:flex-1 lg:flex-col'}>
+        <div className={mobilePanel === 'chat' ? 'ls-conversation-workspace__pane flex min-h-0 min-w-0 flex-1 md:contents' : 'hidden md:contents'}>
         {pendingSendIntent&&pendingSendIntent.scope.customerId===selected?.id&&pendingSendIntent.state!=='accepted'&&<div className="border border-amber-200 bg-amber-50 p-3 text-xs">原发送结果未确认；不会自动重发。{pendingSendIntent.state==='prepared'&&<button type="button" className="ml-2 underline" onClick={()=>{if(undoSend?.eventId===pendingSendIntent.eventId){undoQueuedSend();return;}localStorage.removeItem(sendIntentStorageKey(pendingSendIntent.scope));removeTimelineEvent(pendingSendIntent.scope.customerId,pendingSendIntent.eventId);setPendingSendIntent(null);}}>取消尚未发起的请求</button>}<button type="button" className="ml-2 underline" onClick={()=>{const captured=manualHoldIdentity;void readCustomerSendRequest(pendingSendIntent).then(item=>{if(actualManualIdentity.current!==captured)return;const next=recoverSendIntent(pendingSendIntent,item);saveSendIntent(next);updateTimelineEvent(next.scope.customerId,next.eventId,{sendStatus:next.state==='accepted'?'sent':'unknown',audit:{providerMessageId:item.providerMessageId||undefined}});showToast(next.state==='accepted'?'已读取真实平台发送回执':'平台结果仍未知，请勿重复发送');}).catch(error=>{if(actualManualIdentity.current===captured)showToast(error instanceof Error?error.message:'无法读取发送状态');});}}>读取原发送状态</button></div>}
         {selected&&!selected.isMock&&<div className="border border-slate-200 bg-slate-50 p-3 text-xs"><strong>真人接管</strong>{manualHold?.identity===manualHoldIdentity&&<span className="ml-2">{manualHold.view.active?`负责人 ${manualHold.view.item?.ownerUserId} · 截止 ${manualHold.view.item?.expiresAt}`:'当前没有有效临时接管'}{manualHold.view.humanHandling?'；客户仍处于持久人工处理状态，到期或释放临时接管不会自动切换 AI。':''}</span>}<button type="button" className="ml-2 underline" onClick={reportManualActive} disabled={manualHoldUnknown===manualHoldIdentity}>明确接管十分钟</button><button type="button" className="ml-2 underline" onClick={()=>void refreshManualHold()}>只读刷新状态</button>{manualHold?.identity===manualHoldIdentity&&manualHold.view.active&&manualHold.view.canRelease&&<button type="button" className="ml-2 underline" disabled={manualHoldUnknown===manualHoldIdentity} onClick={()=>void releaseManualHold()}>明确释放临时接管</button>}{manualHoldError?.identity===manualHoldIdentity&&<p role="alert" className="mt-1 text-amber-800">{manualHoldError.message}</p>}{manualHoldUnknown===manualHoldIdentity&&<p className="mt-1 text-amber-800">操作结果未恢复，禁止重复操作；请先只读刷新实际持久状态。</p>}</div>}
         <ChatThread
@@ -2591,7 +2498,6 @@ export default function ConversionPage({ onLeaveConversation: _onLeaveConversati
             })();
           }}
           onSend={sendReply}
-          onEditDraft={editDraft}
           onSendDraft={sendDraftDirectly}
           onDismissDraft={() => { setDraftSuggestion(null); setDraftMeta(null); if (selected) savePendingDraft(selected); }}
           onRegenerateDraft={regenerateDraft}
@@ -2609,7 +2515,7 @@ export default function ConversionPage({ onLeaveConversation: _onLeaveConversati
           onToast={showToast}
         />
         </div>
-        <div className={mobilePanel === 'profile' ? 'flex min-h-0 min-w-0 flex-1 lg:contents' : 'hidden lg:contents'}>
+        <div className={mobilePanel === 'profile' ? 'ls-conversation-workspace__pane flex min-h-0 min-w-0 flex-1 md:contents' : 'hidden md:contents'}>
         <CustomerInfoRail
           key={selected?.id || 'no-customer'}
           customer={selected}
@@ -2620,9 +2526,6 @@ export default function ConversionPage({ onLeaveConversation: _onLeaveConversati
           notificationReady={notificationReady}
           onGenerateDraft={generateManualDraft}
           onHandlingModeChange={updateHandlingMode}
-          onCustomerPatch={(patch) => {
-            if (selected) persistCustomerPatch(selected.id, patch);
-          }}
           onToast={showToast}
           onFocusReply={focusReplyInput}
           onViewDraft={viewDraftSuggestion}
@@ -2656,70 +2559,34 @@ export default function ConversionPage({ onLeaveConversation: _onLeaveConversati
         />
         </div>
       </div>
-      {customerServiceStatus?.shouldAskPartialAutoReply && (
-        <div className="fixed inset-0 z-[95] flex items-center justify-center bg-slate-950/35 px-4">
-          <div ref={partialAutoReplyDialogRef} tabIndex={-1} role="dialog" aria-modal="true" aria-labelledby="partial-auto-reply-title" className="w-full max-w-lg rounded-lg border border-border bg-surface p-6 shadow-xl">
-            <div className="flex h-11 w-11 items-center justify-center rounded-md bg-accent-glow text-accent">
-              <Bot size={21} />
-            </div>
-            <h2 id="partial-auto-reply-title" className="mt-4 text-lg font-black text-text-primary">建议模式已经用了 3 天</h2>
-            <p className="mt-2 text-sm leading-6 text-text-secondary">
-              要不要把一小部分简单问题交给灵小枢直接回？只有高置信命中你已审批的常见问答才会发送，报价、折扣、付款、交期和风险问题仍然交给你。
-            </p>
-            {customerServiceStatus.approvedFaqCount < 5 && (
-              <p className="mt-3 border-l-2 border-amber bg-amber-dim px-3 py-2 text-xs font-semibold leading-5 text-amber">
-                目前已审批 {customerServiceStatus.approvedFaqCount} 条问答。你可以先开放权限，达到 5 条前系统仍只给建议。
-              </p>
-            )}
-            <div className="mt-6 flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
-              <button type="button" data-modal-initial-focus disabled={customerServiceSaving} onClick={() => void decidePartialAutoReply('declined')} className="rounded-md border border-border bg-surface px-4 py-2.5 text-sm font-bold text-text-secondary hover:bg-surface-2 disabled:opacity-50">
-                继续只看建议
-              </button>
-              <button type="button" disabled={customerServiceSaving} onClick={() => void decidePartialAutoReply('enabled')} className="rounded-md bg-accent px-4 py-2.5 text-sm font-bold text-white hover:bg-accent-dim disabled:opacity-50">
-                开放部分直接回复
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
+      <Modal open={Boolean(customerServiceStatus?.shouldAskPartialAutoReply)} title="建议模式已经用了 3 天" width={560} closable={false} keyboard={false} mask={{ closable: false }} footer={<div className="flex flex-wrap justify-end gap-2">
+        <Button disabled={customerServiceSaving} onClick={() => void decidePartialAutoReply('declined')}>继续只看建议</Button>
+        <Button type="primary" loading={customerServiceSaving} onClick={() => void decidePartialAutoReply('enabled')}>开放部分直接回复</Button>
+      </div>}>
+        <p className="py-3 text-sm leading-6 text-text-secondary">要不要把一小部分简单问题交给灵小枢直接回？只有高置信命中你已审批的常见问答才会发送，报价、折扣、付款、交期和风险问题仍然交给你。</p>
+        {customerServiceStatus && customerServiceStatus.approvedFaqCount < 5 && <Alert type="warning" title={`目前已审批 ${customerServiceStatus.approvedFaqCount} 条问答`} description="你可以先开放权限，达到 5 条前系统仍只给建议。"/>}
+      </Modal>
       {dailyBriefingOpen && (
         <DailyBriefing customers={customers} onSelectCustomer={openCustomer} onClose={() => setDailyBriefingOpen(false)} />
       )}
       {toast && (
-        <div role="status" className="fixed bottom-24 left-1/2 z-[70] flex max-w-[calc(100vw-32px)] -translate-x-1/2 items-center gap-3 rounded-md bg-text-primary px-4 py-2 text-xs font-bold text-white shadow-lg">
+        <div role="status" className="fixed bottom-24 left-1/2 z-[70] flex max-w-[calc(100vw-32px)] -translate-x-1/2 items-center gap-3 rounded-md bg-text-primary px-4 py-2 text-xs font-bold text-white">
           {toast}
           {learnCandidate && (
-            <button type="button" onClick={() => { setToast(null); setLearnDialogOpen(true); }} className="rounded-full bg-white px-2.5 py-1 text-xs font-black text-slate-950">存进知识库</button>
+            <Button htmlType="button" onClick={() => { setToast(null); setLearnDialogOpen(true); }} className="!h-auto min-h-9 !whitespace-normal rounded-full bg-white px-2.5 py-1 text-xs font-semibold text-slate-950">存进知识库</Button>
           )}
         </div>
       )}
-      {learnCandidate && learnDialogOpen && (
-        <div className="fixed inset-0 z-[90] flex items-center justify-center bg-slate-950/30 px-4">
-          <div ref={knowledgeDialogRef} tabIndex={-1} role="dialog" aria-modal="true" aria-labelledby="knowledge-save-title" data-lingshu-guide="customer-knowledge-save" className="w-full max-w-lg rounded-lg border border-border bg-surface p-5 shadow-xl">
-            <div className="mb-4">
-              <h2 id="knowledge-save-title" className="text-sm font-bold text-text-primary">存进知识库</h2>
-            </div>
-            <label className="grid gap-1 text-xs font-bold text-text-secondary">
-              Q：客户常问问题
-              <input value={learnCandidate.question} onChange={event => setLearnCandidate(current => current ? { ...current, question: event.target.value } : current)} className="ui-field !rounded-md bg-surface-2 px-3 py-2 text-sm font-normal" />
-            </label>
-            <label className="mt-3 grid gap-1 text-xs font-bold text-text-secondary">
-              A：标准答案
-              <textarea value={learnCandidate.answer} onChange={event => setLearnCandidate(current => current ? { ...current, answer: event.target.value } : current)} rows={4} className="ui-field !rounded-md bg-surface-2 px-3 py-2 text-sm font-normal" />
-            </label>
-            <div className="mt-5 flex justify-end gap-2">
-              <button type="button" data-modal-initial-focus onClick={() => { setLearnCandidate(null); setLearnDialogOpen(false); }} className="rounded-md border border-border bg-surface px-4 py-2 text-xs font-bold text-text-secondary hover:bg-surface-2">取消</button>
-              <button type="button" onClick={() => void saveLearnedFaq()} disabled={learnCandidate.saving || !learnCandidate.question.trim() || !learnCandidate.answer.trim()} className="rounded-md bg-accent px-4 py-2 text-xs font-bold text-white hover:bg-accent-dim disabled:opacity-60">
-                {learnCandidate.saving ? '保存中...' : '确认入库'}
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
+      <Modal open={Boolean(learnCandidate && learnDialogOpen)} title="存进知识库" width={560} mask={{ closable: false }} onCancel={() => { if (!learnCandidate?.saving) { setLearnCandidate(null); setLearnDialogOpen(false); } }} footer={<div className="flex justify-end gap-2">
+        <Button disabled={learnCandidate?.saving} onClick={() => { setLearnCandidate(null); setLearnDialogOpen(false); }}>取消</Button>
+        <Button type="primary" loading={learnCandidate?.saving} onClick={() => void saveLearnedFaq()} disabled={!learnCandidate?.question.trim() || !learnCandidate?.answer.trim()}>确认入库</Button>
+      </div>}>
+        {learnCandidate && <div data-lingshu-guide="customer-knowledge-save" className="space-y-4 py-3"><label className="grid gap-2 text-sm">客户常问问题<Input aria-label="客户常问问题" value={learnCandidate.question} onChange={event => setLearnCandidate(current => current ? { ...current, question: event.target.value } : current)}/></label><label className="grid gap-2 text-sm">标准答案<Input.TextArea aria-label="标准答案" value={learnCandidate.answer} onChange={event => setLearnCandidate(current => current ? { ...current, answer: event.target.value } : current)} rows={4}/></label></div>}
+      </Modal>
       {undoSend && (
-        <div role="status" className="fixed bottom-24 left-1/2 z-[80] flex max-w-[calc(100vw-32px)] -translate-x-1/2 items-center gap-3 rounded-md bg-text-primary px-4 py-2 text-xs font-bold text-white shadow-lg">
+        <div role="status" className="fixed bottom-24 left-1/2 z-[80] flex max-w-[calc(100vw-32px)] -translate-x-1/2 items-center gap-3 rounded-md bg-text-primary px-4 py-2 text-xs font-bold text-white">
           <span>{'\u5df2\u53d1\u9001\uff0c4 \u79d2\u5185\u53ef\u64a4\u56de'}</span>
-          <button type="button" onClick={undoQueuedSend} className="rounded-full bg-white px-2.5 py-1 text-xs font-black text-slate-950">{'\u64a4\u56de'}</button>
+          <Button htmlType="button" onClick={undoQueuedSend} className="!h-auto min-h-9 !whitespace-normal rounded-full bg-white px-2.5 py-1 text-xs font-semibold text-slate-950">{'\u64a4\u56de'}</Button>
         </div>
       )}
     </div>

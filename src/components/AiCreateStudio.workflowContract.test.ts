@@ -158,6 +158,16 @@ assert.match(studioSource, /setStoryboardAssignments\(current => \(\{ \.\.\.curr
   'a generated non-presenter clip must immediately replace the active storyboard assignment');
 assert.match(studioSource, /新AI画面已回填当前分镜，并已保存到 AI 素材库/,
   'the Studio must explain immediate storyboard backfill and durable AI-library storage');
+assert.match(
+  studioSource,
+  /setClipEdits\(current => \(\{ \.\.\.current, \[slotClipEditKey\(slot\.id, clip\.id\)\]: candidate\.source === 'avatar'[\s\S]{0,260}trimStart: 0, trimEnd: clip\.duration, speed: 1, targetDuration: clip\.duration, targetDurationEdited: true/,
+  'adopting a generated digital-human clip must make the shot duration follow the source material at normal speed',
+);
+assert.match(
+  studioSource,
+  /if \(adopted && clip\) return \{[\s\S]{0,260}trimStart: 0, trimEnd: clip\.type === 'video' \? clip\.duration : targetDuration, speed: 1,[\s\S]{0,160}targetDuration/,
+  'the render timeline must preserve an adopted digital-human clip from source start to source end at normal speed',
+);
 
 const trafficSource = readFileSync(new URL('./TrafficPage.tsx', import.meta.url), 'utf8');
 assert.match(trafficSource, /digitalEmployee\.businessDeepLink/, 'the content workspace must consume the persisted Digital Employee handoff');

@@ -44,7 +44,7 @@ export function buildReplicationWorkbenchSpec(input: ReplicationWorkbenchInput):
     ...analysis, gemini: { ...gemini, scriptDetails15s: rawDetails },
   } });
   if (!normalized.timelineComplete) throw Error('复刻逐镜时间线不完整，不能生成完整成片');
-  if (normalized.shots.some(shot => shot.granularity !== 'shot' || !shot.visual.trim())) throw Error('复刻镜头类型或物理镜头边界不完整');
+  if (normalized.shots.some(shot => shot.materialType === 'unknown' || shot.granularity !== 'shot' || !shot.visual.trim())) throw Error('复刻镜头类型或物理镜头边界不完整');
   const revision = hash(normalized.shots);
   const prior = recordOf(input.spec.automatedReplicationPlan);
   if (prior.version === 1) {
@@ -103,7 +103,10 @@ export function buildReplicationWorkbenchSpec(input: ReplicationWorkbenchInput):
     slots.push({ id: shotId, slotId, detail, duration: end - start, requirements: JSON.stringify({ detail, start, end, ratio, productIds }),
       observedPresenterRole: person ? 'sales_presenter' : 'none', salesPresenterConfirmed: false });
     productions[`${assemblyId}:${shotId}`] = production;
-    const sceneType = shot.materialType === 'product' ? 'product' : shot.materialType === 'factory' ? 'factory' : shot.materialType === 'consumer_demo' ? 'usage' : 'general';
+    const sceneType = shot.materialType === 'product' ? 'product'
+      : shot.materialType === 'factory' ? 'factory'
+      : shot.materialType === 'consumer_demo' ? 'usage'
+      : 'general';
     sourcePlans[slotId] = { mode: person ? 'digital_human' : 'ai', sceneType, productIds,
       confirmed: false, decided: true, videoResolution: '480p', videoResolutionPinned: true };
     const sourceFirstFrameUrl = `/api/overseas/videos/${encodeURIComponent(referenceId)}/shot/${shot.index}/first-frame`;

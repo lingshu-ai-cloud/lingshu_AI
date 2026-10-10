@@ -1,3 +1,5 @@
+import {getScrollBehavior} from '../../lib/usePrefersReducedMotion';
+
 export const materialPanelId=(programId:string,packageId:string,version:number)=>`weekly-material-panel:${programId}:${packageId}:${version}`;
 export const materialRequestPanelId=(programId:string,packageId:string,version:number,requestId:string)=>`weekly-material-request:${programId}:${packageId}:${version}:${requestId}`;
 export const materialActionPanelId=(programId:string,packageId:string,version:number,requestId:string,action:'upload'|'verification')=>`${materialRequestPanelId(programId,packageId,version,requestId)}:${action}`;

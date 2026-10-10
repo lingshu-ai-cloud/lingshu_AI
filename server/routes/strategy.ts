@@ -5,6 +5,7 @@ import { buildStrategyPrompt, type StrategyParams } from '../prompts/strategyPro
 import { enterpriseRouter as _er, buildEnterpriseContext, readTenantEnterpriseProfile } from './enterprise.js';
 import { consumeDemoQuota } from '../lib/demo.js';
 import { requireAuth, type AuthLocals } from '../middleware/auth.js';
+import { getWhatsAppCustomers } from '../whatsapp/historyImport.js';
 import { createHash } from 'node:crypto';
 import { requestOrganizationRoleStrict } from '../lib/organizationRole.js';
 import { ASSISTANT_CONTEXT_RULES, ChatInputError, validateChatMessages } from '../assistantContext/chatInput.js';

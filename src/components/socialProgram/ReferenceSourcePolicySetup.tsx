@@ -39,7 +39,7 @@ export default function ReferenceSourcePolicySetup({ pkg, route, onRevision }: {
         <option value="20">自有 20% / 外部 80% · 历史素材不足，播放和赞转评表现较弱</option>
       </select></label>
       <p className="text-stone-500">保留自有账号调性，同时探索外部创作方向。保存后生成新草稿，重新确认本周参考、素材消费者和发布承接。</p>
-      <button type="button" disabled={busy || !selection} onClick={() => void save()} className="rounded-lg bg-emerald-900 px-3 py-2 text-white disabled:opacity-40">{busy ? '正在保存新版本…' : '确认配额并修订周包'}</button>
+      <button type="button" disabled={busy || !selection} onClick={() => void save()} className="btn-primary disabled:opacity-40">{busy ? '正在保存新版本…' : '确认配额并修订周包'}</button>
     </> : <p className="text-amber-700">请先确认经营项目的用户画像。</p>}
     {error && <p role="alert" className="text-red-700">{error}</p>}
   </div>;

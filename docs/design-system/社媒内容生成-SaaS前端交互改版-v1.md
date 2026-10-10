@@ -210,7 +210,7 @@ flowchart LR
 
 ### 5.2 页面密度
 
-- 复用 `docs/design-system/lingshu-visual-system.md` 的颜色、间距、圆角和阴影。
+- 颜色、间距、圆角、阴影与组件行为统一遵循 `docs/product/PRD-灵枢AI全系统UI设计规范-v2-2026-10-09.md`。
 - 常规圆角使用 6–8px；避免全页 `rounded-2xl` 和卡片套卡片。
 - 常规面板不使用阴影；只有抽屉、弹层和悬浮操作使用低对比阴影。
 - 正文不小于 12px；重要业务信息不使用 9–10px。
@@ -943,7 +943,7 @@ flowchart TB
 ## 17. 依据与关联文件
 
 - `docs/product/PRD-社媒内容制作工作流-v1.md`，v1.6；
-- `docs/design-system/lingshu-visual-system.md`；
+- `docs/product/PRD-灵枢AI全系统UI设计规范-v2-2026-10-09.md`；
 - `src/components/starter/StarterWorkspacePage.tsx`；
 - `src/components/socialContent/SocialContentPlanningPage.tsx`；
 - `src/components/socialContent/SocialTaskEditorDialog.tsx`；

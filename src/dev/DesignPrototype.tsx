@@ -552,7 +552,7 @@ export default function DesignPrototype() {
         <header className="dp-topbar">
           <button ref={menuButtonRef} type="button" className="dp-mobile-menu" aria-label="打开导航" aria-expanded={mobileNavOpen} onClick={() => setMobileNavOpen(true)}><Menu size={20} /></button>
           <div className="dp-crumb"><span>灵枢 AI</span><ChevronRight size={14} /><strong>{navItems.find((item) => item.id === screen)?.label}</strong></div>
-          <div className="dp-top-actions"><span className="dp-prototype-badge"><Info size={13} /> 演示数据</span><span className="dp-healthy"><Activity size={14} /> 系统运行正常</span><IconButton label="通知"><Bell size={18} /></IconButton><IconButton label="设置"><Settings2 size={18} /></IconButton></div>
+          <div className="dp-top-actions"><span className="dp-prototype-badge"><Info size={13} /> 参考预览</span><span className="dp-healthy"><Activity size={14} /> 系统运行正常</span><IconButton label="通知"><Bell size={18} /></IconButton><IconButton label="设置"><Settings2 size={18} /></IconButton></div>
         </header>
         <main ref={mainRef} id="prototype-main" className="dp-main" tabIndex={-1}>
           {renderScreen()}

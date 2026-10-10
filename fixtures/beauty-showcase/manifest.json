@@ -1,23 +1,53 @@
 {
   "schemaVersion": 1,
   "tenantId": "local_tenant_customer_aurelia_beauty",
-  "exportedAt": "2026-09-27T19:06:43.310635Z",
+  "exportedAt": "2026-10-08T00:50:16.721Z",
   "counts": {
-    "trendVideos": 30,
-    "competitorAccounts": 27,
-    "materials": 30,
-    "mediaFiles": 80
+    "tenant_profiles": 1,
+    "competitor_accounts": 5,
+    "crawl_jobs": 4,
+    "trend_videos": 63,
+    "digital_employee_config_versions": 5,
+    "digital_employee_configs": 1,
+    "social_discovery_scopes": 8,
+    "social_programs": 1,
+    "weekly_goals": 42,
+    "weekly_plans": 42,
+    "workflow_runs": 41,
+    "workflow_tasks": 41,
+    "starter_social_content_tasks": 14,
+    "starter_social_content_files": 14,
+    "starter_social_content_operations": 196,
+    "starter_social_content_artifacts": 5,
+    "starter_social_director_plan_versions": 18,
+    "starter_social_task_sources": 37,
+    "studio_projects": 2,
+    "studio_digital_human_plans": 65,
+    "studio_shooting_tasks": 2,
+    "scheduled_tasks": 1,
+    "materials": 27,
+    "mediaFiles": 84
   },
   "files": [
     {
       "path": "README.md",
-      "bytes": 1449,
-      "sha256": "f95db567d97fe8412fb7381e812f5b72e3bea73e29ba7a8f6552106b3c0a4192"
+      "bytes": 1569,
+      "sha256": "d977d89a472f6a4c893c9d5035528c86d05e113b422e78efdcda5ea77445b757"
     },
     {
       "path": "account-data.json",
-      "bytes": 512230,
-      "sha256": "c1def54b75dcca46ee8f66e5a5757f0828de5679fe1e9afc3be2ca26d0ed0d31"
+      "bytes": 6916950,
+      "sha256": "d8a5f0d3d93b2d4c3d94ae0d32d6066d60a3b5b22f410c7fb169c3d9ae525e0c"
+    },
+    {
+      "path": "media/tenants/local_tenant_customer_aurelia_beauty/fa98415f-264f-4edf-a98e-79f97c429b40.mp4",
+      "bytes": 758668,
+      "sha256": "db2183c9d1aee296a6943525d64e730dc3de91ccbb50fba07ee18cef31f08c04"
+    },
+    {
+      "path": "media/tenants/local_tenant_customer_aurelia_beauty/fa98415f-264f-4edf-a98e-79f97c429b40.poster.jpg",
+      "bytes": 20145,
+      "sha256": "3f431b53ca9c0813c3eef9d55d877172c364e3c8367558331daa08121639aafa"
     },
     {
       "path": "media/tenants/local_tenant_customer_aurelia_beauty/open-beauty-cucumber-mask.jpg",
@@ -168,6 +198,16 @@
       "path": "media/tenants/local_tenant_customer_aurelia_beauty/real-crawl-30/b2c-images/perfume-bottle.jpg",
       "bytes": 109295,
       "sha256": "66acc30e2be14d7a02c5a01c9ea086aadc687776edcd09abda0449a96e4f5a7a"
+    },
+    {
+      "path": "media/tenants/local_tenant_customer_aurelia_beauty/reference-videos/trend_videos_000394b649c74265a02d37d9125892e3.mp4",
+      "bytes": 3867145,
+      "sha256": "26ce49869458df4325e6b2125a0f00f451f80fdf7ebaf9e70b51e105db998761"
+    },
+    {
+      "path": "media/tenants/local_tenant_customer_aurelia_beauty/reference-videos/trend_videos_abb247c15cd74f14af94817c6b52b357.mp4",
+      "bytes": 6412289,
+      "sha256": "501ec2c4d39ce67630448eff7001e2f911561e962533ca1bdb6aa10e6d2388e9"
     },
     {
       "path": "media/tenants/local_tenant_customer_aurelia_beauty/rongshang-product-01.png",

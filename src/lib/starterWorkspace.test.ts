@@ -240,6 +240,7 @@ assert.equal(shouldBypassStarter198Probe({
 }), true, 'an explicit read-only support session keeps its internal observation surface');
 
 const appSource = fs.readFileSync('src/App.tsx', 'utf8');
+const assistantSource = fs.readFileSync('src/components/GlobalAssistant.tsx', 'utf8');
 const appSessionSource = fs.readFileSync('src/appSession.ts', 'utf8');
 const authRouteSource = fs.readFileSync('server/routes/auth.ts', 'utf8');
 const layoutSource = fs.readFileSync('src/components/Layout.tsx', 'utf8');
@@ -260,7 +261,11 @@ for (const [page, component] of [
 assert.match(appSource, /\{\(page === 'smartAssets' \|\| mountedPages\.has\('smartAssets'\) \|\| smartAssetsMounted\) && \(/, 'starter mode must keep the original content studio');
 assert.doesNotMatch(appSource, /StarterProductionSitePage/, 'starter pages must no longer replace the original product UI with a simplified projection');
 assert.match(appSource, /starterMode && page !== 'digitalEmployees'[\s\S]*?<StarterWorkflowContextBar/, 'restored pages must explain their position in the AI workflow');
-assert.match(appSource, /!starterMode && !isAgentProductionSession\(\) && <GlobalAssistant/, 'starter mode must remove the parallel chat launcher');
+assert.match(appSource, /<GlobalAssistant[\s\S]{0,650}compactMode=\{starterMode \|\| isAgentProductionSession\(\)\}/, 'starter and production sessions keep a compact decision-first assistant');
+assert.match(assistantSource, /<AssistantDecisionCenter[\s\S]{0,300}page=\{page\}/, 'the compact assistant keeps page-scoped approvals');
+assert.equal(appSource.match(/<GlobalAssistant\b/g)?.length, 1, 'the app must expose exactly one visible Lingxiaoshu entry');
+assert.match(appSource, /<GlobalAssistant[\s\S]{0,180}\bprimaryEntry\b/, 'the single Lingxiaoshu instance must be the primary entry');
+assert.doesNotMatch(starterPageSource, /GlobalAssistant/, 'the starter workspace must not embed a second Lingxiaoshu entry');
 assert.match(appSource, /shouldBypassStarter198Probe\(session\)/, 'the app must use the tested authoritative-probe policy');
 assert.doesNotMatch(appSource, /session\.supportAccess \|\| isAdminSession\(session\)/,
   'a subscription-plan presentation label must not bypass the authoritative starter access probe');
@@ -311,7 +316,24 @@ assert.doesNotMatch(clientSource, /interface StarterAgentUsage/, 'the frontend m
 assert.match(clientSource, /fetch\('\/api\/overseas\/starter-198\/commands'/, 'all starter writes must use the orchestrator command endpoint');
 assert.doesNotMatch(`${starterPageSource}\n${productionSiteSource}`, /fetch\(/, 'starter components must not bypass the single API client');
 assert.doesNotMatch(starterPageSource, /<StarterWorkflowOverview/, 'the customer workspace must not render the internal agent workflow map');
+assert.doesNotMatch(starterPageSource, /SocialContentWorkspace/, 'the starter workspace must not embed the legacy social-content workspace');
 assert.doesNotMatch(starterPageSource, /我会统筹今天的经营任务|系统会主动推进|socialTaskHeadline/, 'the customer workspace must open directly on task progress without a verbose hero');
+assert.match(
+  starterPageSource,
+  /当前成果记录没有可验证的媒体预览，界面不会生成占位画面。请进入对应工作区查看内容与后续状态。/,
+  'a result without verified media must say so instead of rendering a fake preview',
+);
+assert.match(starterPageSource, /const destination = RESULT_WORKSPACE\[artifact\.agentRole\]/, 'each result must resolve its corresponding workspace from the producing role');
+assert.match(starterPageSource, /onClick=\{\(\) => onNavigate\(destination\.page\)\}/, 'each result must offer navigation to its corresponding workspace');
+assert.match(starterPageSource, /进入\{destination\.label\}/, 'the result link must name its destination workspace');
+for (const [role, page] of [
+  ['orchestrator', 'strategy'],
+  ['content', 'smartAssets'],
+  ['traffic', 'traffic'],
+  ['sales', 'conversion'],
+] as const) {
+  assert.match(starterPageSource, new RegExp(`${role}: \\{ page: '${page}', label:`), `results from ${role} must link to the ${page} workspace`);
+}
 for (const workflowSurface of ['灵小枢统筹', '灵小图生产', '你只做确认', '灵小量发布', '灵小售报价', '灵小枢汇总', '当前节点', '下一步']) {
   assert.match(workflowOverviewSource, new RegExp(workflowSurface), `the overview must explain ${workflowSurface}`);
 }

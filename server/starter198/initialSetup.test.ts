@@ -1,7 +1,8 @@
 import assert from 'node:assert/strict';
+import { createHash } from 'node:crypto';
 import { STARTER_198_CAPABILITIES } from '../../shared/contracts/starter198.js';
 import type { DataStore, ListQuery } from '../storage/datastore.js';
-import { createStarter198InitialSetupPort } from './initialSetup.js';
+import { createStarter198InitialSetupPort, starter198InitialSetupFingerprint } from './initialSetup.js';
 import { createStarter198Repository, STARTER_COLLECTIONS } from './repository.js';
 import { Starter198RuntimePortError } from './runtimePorts.js';
 
@@ -83,12 +84,36 @@ const setup = {
   primaryPlatform: 'tiktok' as const,
   primaryLanguage: 'en',
   constraints: ['不得编造材质参数'],
+  operatingPlan: {
+    brandName: '青山杯',
+    presenter: 'product_expert' as const,
+    plannedAccounts: [{ platform: 'tiktok' as const, accountName: '青山制造', weeklyOutput: 1 }],
+    weeklyMasterCount: 1,
+    weeklyVariantCount: 1,
+    estimatedCostCny: { min: 10, max: 15 },
+    deliveryDays: 7,
+  },
 };
+const legacySetup = { ...setup, operatingPlan: undefined };
+const stableStringify = (value: unknown): string => {
+  if (Array.isArray(value)) return `[${value.map(stableStringify).join(',')}]`;
+  if (value && typeof value === 'object') {
+    const record = value as Record<string, unknown>;
+    return `{${Object.keys(record).filter(key => record[key] !== undefined).sort().map(key => `${JSON.stringify(key)}:${stableStringify(record[key])}`).join(',')}}`;
+  }
+  return JSON.stringify(value);
+};
+assert.equal(
+  starter198InitialSetupFingerprint(legacySetup),
+  createHash('sha256').update(stableStringify(legacySetup)).digest('hex'),
+  'legacy payloads must retain their pre-operating-plan fingerprint for replay recovery',
+);
 const first = await port.configure({ tenantId, userId: 'owner-setup', idempotencyKey: 'initial-setup-001', setup });
 assert.equal(first.repeated, false);
 assert.equal(first.configVersion, 1);
 const profile = rows.get('tenant_profiles')?.[0].profile as Record<string, any>;
 assert.equal(profile.company.name, setup.companyName);
+assert.equal(profile.brand.name, '青山杯');
 assert.equal(profile.products.items[0].name, setup.focusProducts);
 const config = rows.get('digital_employee_configs')?.[0].config as Record<string, any>;
 assert.deepEqual(config.publishingTargets, []);
@@ -97,7 +122,53 @@ assert.equal(config.allowRealCustomerMessages, false);
 assert.equal(config.allowGeneratedVisuals, false);
 assert.deepEqual(config.enabledWorkflows, ['product_content', 'content_publish', 'customer_segmentation']);
 assert.equal(config.approvalOwner, 'owner-setup');
+assert.deepEqual(config.confirmedOperatingPlan, setup.operatingPlan);
 assert.equal(rows.get('digital_employee_config_versions')?.length, 1);
+
+await assert.rejects(
+  () => port.configure({
+    tenantId,
+    userId: 'owner-setup',
+    idempotencyKey: 'initial-setup-over-limit',
+    setup: {
+      ...setup,
+      operatingPlan: {
+        ...setup.operatingPlan,
+        plannedAccounts: [
+          ...setup.operatingPlan.plannedAccounts,
+          { platform: 'instagram' as const, accountName: '青山制造', weeklyOutput: 1 },
+        ],
+        weeklyVariantCount: 2,
+      },
+    },
+  }),
+  (error: unknown) => error instanceof Starter198RuntimePortError
+    && error.code === 'starter_198_initial_setup_plan_exceeds_entitlement',
+  'the server must reject a structured plan that exceeds the confirmed platform entitlement',
+);
+
+await assert.rejects(
+  () => port.configure({
+    tenantId,
+    userId: 'owner-setup',
+    idempotencyKey: 'initial-setup-bad-window',
+    setup: { ...setup, operatingPlan: { ...setup.operatingPlan, deliveryDays: 6 } },
+  }),
+  (error: unknown) => error instanceof Starter198RuntimePortError
+    && error.code === 'starter_198_initial_setup_plan_invalid',
+  'the confirmed delivery window must match the executable seven-day run',
+);
+
+const accessRow = rows.get(STARTER_COLLECTIONS.access)?.[0] as Record<string, any>;
+const contentBudget = accessRow.resource_limits.agentBudgetCny.content;
+accessRow.resource_limits.agentBudgetCny.content = 0;
+await assert.rejects(
+  () => port.configure({ tenantId, userId: 'owner-setup', idempotencyKey: 'initial-setup-zero-budget', setup }),
+  (error: unknown) => error instanceof Starter198RuntimePortError
+    && error.code === 'starter_198_initial_setup_plan_exceeds_entitlement',
+  'a zero content budget is a hard stop, not an absent setting',
+);
+accessRow.resource_limits.agentBudgetCny.content = contentBudget;
 
 const replay = await port.configure({ tenantId, userId: 'owner-setup', idempotencyKey: 'initial-setup-001', setup });
 assert.equal(replay.repeated, true);

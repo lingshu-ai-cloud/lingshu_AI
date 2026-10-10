@@ -5,6 +5,7 @@ import { frozenSceneSlotId, verifiedProductionSlots, verifyProductionSnapshotHas
 import { SocialSceneReworkPanel } from './socialContent/SocialSceneReworkPanel';
 import type { SocialContentTaskDetail } from '../../shared/contracts/socialContentWorkflow';
 import { localFlowRenderRecovery, localFlowRenderInputIdentity } from '../lib/localFlowRenderRecovery';
+import { App as AntApp, Button, Modal } from 'antd';
 import { canOpenWorkbenchRenderSettings, workbenchExportBlockReason } from '../lib/replicationWorkbenchNavigation';
 import { digitalHumanQualityState } from '../lib/digitalHumanQuality';
 import StudioReviewIssueActions from './studio/StudioReviewIssueActions';
@@ -95,7 +96,7 @@ import { Field, Pill, SectionTitle } from './StudioFormPrimitives';
 import { GENERATED_MATERIAL_KIND_FILTERS, generatedMaterialKindLabel, matchesGeneratedMaterialKind, type GeneratedMaterialKindFilter } from '../lib/generatedMaterial';
 export { StudioRequestTimeoutError, waitForStudioMediaReady, withStudioTimeout } from './studio/studioAuthenticatedMedia';
 // AI 生成内容工作台：创作设置 → 脚本与声音 → 成片制作。
-const TRAFFIC_GREEN = '#117f51';
+const STUDIO_ACCENT = 'var(--color-accent)';
 const CANVA_VIDEO_COVER_URL = 'https://www.canva.cn/create/video-covers/';
 const CANVA_COVER_RETURN_KEY = 'ow_canva_cover_return';
 const CANVA_COVER_RETURN_TTL = 6 * 60 * 60 * 1000;
@@ -2006,9 +2007,9 @@ function productOptionCategory(option: ProductOption): string {
 
 function ProductInfoPreview({ products }: { products: ProductOption[] }) {
   return (
-    <aside className="sticky top-0 overflow-hidden rounded-2xl border border-border bg-surface shadow-sm">
+    <aside className="sticky top-0 overflow-hidden rounded-lg border border-border bg-surface shadow-none">
       <div className="border-b border-border px-4 py-3">
-        <p className="text-sm font-black text-text-primary">产品信息</p>
+        <p className="text-sm font-semibold text-text-primary">产品信息</p>
         <p className="mt-0.5 text-[10px] text-text-muted">已选产品 · 生成内容将以此为准</p>
       </div>
       {products.length ? (
@@ -2017,7 +2018,7 @@ function ProductInfoPreview({ products }: { products: ProductOption[] }) {
             const rows = productInfoRows(product.info);
             const images = product.imageUrls || [];
             return (
-              <div key={product.id} className="overflow-hidden rounded-xl border border-border bg-surface-2">
+              <div key={product.id} className="overflow-hidden rounded-lg border border-border bg-surface-2">
                 <div className="relative aspect-[4/3] overflow-hidden bg-surface">
                   {images[0] ? (
                     <img src={images[0]} alt={product.label} className="h-full w-full object-cover" />
@@ -2030,7 +2031,7 @@ function ProductInfoPreview({ products }: { products: ProductOption[] }) {
                   <span className="absolute left-3 top-3 rounded-md bg-black/60 px-2 py-1 text-[9px] font-bold text-white backdrop-blur">企业产品</span>
                 </div>
                 <div className="p-4">
-                  <p className="text-sm font-black leading-snug text-text-primary">{product.label}</p>
+                  <p className="text-sm font-semibold leading-snug text-text-primary">{product.label}</p>
                   <div className="mt-3 space-y-2.5">
                     {rows.map(row => (
                       <div key={row.label} className="grid grid-cols-[58px_1fr] gap-2 text-[11px] leading-relaxed">
@@ -2171,16 +2172,16 @@ function referenceAnalysisEnd(kickoff: VideoKickoff | null): number {
   }, 0);
 }
 
-function hasIncompleteReferenceAnalysis(kickoff: VideoKickoff | null): boolean {
+export function hasIncompleteReferenceAnalysis(kickoff: VideoKickoff | null): boolean {
   const sourceDuration = Number(kickoff?.video?.duration || 0);
   const analyzedUntil = referenceAnalysisEnd(kickoff);
   const details = kickoff?.referenceAnalysis?.details || [];
-  if (!details.length) return true;
+  if (!details.length || !Number.isFinite(sourceDuration) || sourceDuration <= 0) return true;
   const ranges = details
     .map(item => parseCueRange(item.time))
     .filter((item): item is { start: number; end: number } => Boolean(item))
     .sort((a, b) => a.start - b.start || a.end - b.end);
-  if (!ranges.length || ranges[0]!.start > 0.75) return true;
+  if (ranges.length !== details.length || ranges[0]!.start > 0.75) return true;
   if (sourceDuration > 0 && analyzedUntil + 1 < sourceDuration) return true;
   return ranges.some((range, index) => {
     const next = ranges[index + 1];
@@ -2877,6 +2878,7 @@ async function runVoiceTranslationWithTimeout<T>(
 
 /* ── 缩略图与不可预览状态 ──────────────────────────────────────────────── */
 export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onLaunchContentStudio, onReturnToContentPlanning, onGoPublish, openProjectsSignal = 0, workflowContext, publishStorageScope, socialContentTaskId: incomingSocialTaskId, studioCreateRequest: incomingCreateRequest }: { onNavigate?: (p: Page) => void; onOpenCreationHome?: (openChooser?: boolean) => void; onLaunchContentStudio?: (request: SocialContentCreateRequest) => void; onReturnToContentPlanning?: (request: SocialContentCreateRequest) => void; onGoPublish?: (payload: StudioPublishPayload) => void; openProjectsSignal?: number; workflowContext?: StudioWorkflowContext; publishStorageScope?: string; socialContentTaskId?: string | null; studioCreateRequest?: SocialContentCreateRequest | null } = {}) {
+  const { message, notification } = AntApp.useApp();
   const rawSceneTarget = window.history.state?.productionDetail?.sceneTarget;
   const sceneTarget = parseScopedSceneTarget(rawSceneTarget);
   const sceneTargetKey = JSON.stringify(rawSceneTarget || null);
@@ -2890,6 +2892,16 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onLaunc
   const [restoredSocialTaskId, setRestoredSocialTaskId] = useState<string | null>(null);
   const [restoredCreateRequest, setRestoredCreateRequest] = useState<SocialContentCreateRequest | null>(null);
   const socialContentTaskId = incomingSocialTaskId || restoredSocialTaskId;
+  const announcedSocialTaskRef = useRef('');
+  useEffect(() => {
+    if (!socialContentTaskId || rawSceneTarget || announcedSocialTaskRef.current === socialContentTaskId) return;
+    announcedSocialTaskRef.current = socialContentTaskId;
+    message.info({
+      key: 'studio-social-task-context',
+      content: '任务资料已带入统一制作工作台，可直接继续当前任务。',
+      duration: 3,
+    });
+  }, [message, rawSceneTarget, socialContentTaskId]);
   const [sceneReworkTask, setSceneReworkTask] = useState<SocialContentTaskDetail | null>(null);
   const [sceneReworkReadVersion, setSceneReworkReadVersion] = useState(0);
   useEffect(() => {
@@ -3312,6 +3324,43 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onLaunc
   const [replicationConfirmationError, setReplicationConfirmationError] = useState('');
   const [materialSelectLoading, setMaterialSelectLoading] = useState(false);
   const [modeNotice, setModeNotice] = useState('');
+  useEffect(() => {
+    if (!modeNotice) return;
+    const requiresEnterpriseConfiguration = /企业中心/.test(modeNotice);
+    const requiresInspirationReview = /灵感中心|参考视频|参考分析|对标视频/.test(modeNotice);
+    if (requiresEnterpriseConfiguration || requiresInspirationReview) {
+      notification.warning({
+        key: 'studio-mode-notice',
+        message: '制作工作台提示',
+        description: modeNotice,
+        placement: 'top',
+        duration: 6,
+        btn: (
+          <Button
+            size="small"
+            onClick={() => {
+              notification.destroy('studio-mode-notice');
+              if (requiresEnterpriseConfiguration) {
+                window.sessionStorage.setItem('lingshu:enterprise-focus', 'language-settings');
+                onNavigate?.('enterprise');
+              } else {
+                onNavigate?.('socialInspiration');
+              }
+            }}
+          >
+            {requiresEnterpriseConfiguration ? '前往企业中心配置' : '返回灵感中心补全分析'}
+          </Button>
+        ),
+      });
+      return;
+    }
+    message.open({
+      key: 'studio-mode-notice',
+      type: /失败|无法|中断|错误/.test(modeNotice) ? 'warning' : /已|完成|成功/.test(modeNotice) ? 'success' : 'info',
+      content: modeNotice,
+      duration: 3,
+    });
+  }, [message, modeNotice, notification, onNavigate]);
   const [evidenceGaps, setEvidenceGaps] = useState<Array<{ shotId: string; slotId: string; index: number; code: string; message: string; canShoot: boolean }> | null>(null);
   const [evidenceBusy, setEvidenceBusy] = useState(false);
   const [modeScripts, setModeScripts] = useState<ModeScriptOutput[]>([]);
@@ -3723,11 +3772,6 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onLaunc
   }, [socialContentTaskId, studioCreateRequest]);
   const [sourceDraftCheckPending, setSourceDraftCheckPending] = useState(true);
   const [existingSourceDraftPrompt, setExistingSourceDraftPrompt] = useState<ExistingSourceDraftPrompt | null>(null);
-  const existingSourceDraftDialogRef = useModalFocus<HTMLDivElement>({
-    open: Boolean(existingSourceDraftPrompt),
-    onClose: () => undefined,
-    closeOnEscape: false,
-  });
   const referenceVoice = useMemo(() => referenceVoiceProfile(videoKickoff), [videoKickoff]);
 
   useEffect(() => {
@@ -4713,9 +4757,9 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onLaunc
     if (!socialContentTaskId || !referenceProducts.length) return;
     setReferenceProductAssignments(current => {
       const next: Record<string, string> = {};
-      referenceProducts.forEach((slot, index) => {
+      referenceProducts.forEach(slot => {
         const inherited = Object.entries(current).find(([id, product]) => selectedProductIds.includes(product) && slot.sourceLabel.toLocaleLowerCase().endsWith(id.replace(/^spoken-product-/, '').replace(/-/g, ' ').toLocaleLowerCase()))?.[1];
-        next[slot.shotId] = selectedProductIds.includes(current[slot.shotId] || '') ? current[slot.shotId]! : inherited || '';
+        next[slot.shotId] = selectedProductIds.includes(current[slot.shotId] || '') ? current[slot.shotId]! : inherited || selectedProductIds[0] || '';
       });
       return JSON.stringify(next) === JSON.stringify(current) ? current : next;
     });
@@ -4734,7 +4778,7 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onLaunc
       : (identity.selectedProductIds || []).map((id, index) => ({ id, name: identity.selectedProductNames?.[index] || '' }));
     const selected = requestedProducts.map(requested => productOptions.find(option => option.id === requested.id || option.label === requested.name)?.id || '').filter(Boolean);
     if (selected.length !== requestedProducts.length) return;
-    setSelectedProductIds(selected);
+    setSelectedProductIds([...new Set(selected)]);
     setReferenceProductAssignments(Object.fromEntries(referenceProducts.map(slot => {
       const mapping = identity.products.find(item => slot.sourceLabel.toLocaleLowerCase().endsWith(item.sourceTerm.toLocaleLowerCase()));
       return [slot.shotId, productOptions.find(option => option.id === mapping?.productId || option.label === mapping?.productName)?.id || ''];
@@ -7350,7 +7394,7 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onLaunc
       let nextCoverUrl = coverUrl;
       const canGenerateCoverSvg = Boolean(coverFrameUrl && (capturedCoverFrameUrl || coverClip?.poster || coverClip?.type === 'image'));
       if (!nextCoverUrl && canGenerateCoverSvg) {
-        const cv = await studioApi.cover({ title: coverTitle, ratio, accent: TRAFFIC_GREEN, bgImageUrl: coverFrameUrl, ...coverStyle });
+        const cv = await studioApi.cover({ title: coverTitle, ratio, accent: '#117f51', bgImageUrl: coverFrameUrl, ...coverStyle });
         if (cv.url) {
           nextCoverUrl = cv.url;
           setCoverUrl(cv.url);
@@ -10183,7 +10227,7 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onLaunc
           <div className="w-full min-w-0 overflow-x-hidden">
             <input ref={fileInputRef} type="file" multiple accept="video/*,image/*" className="hidden" onChange={event => { void handleUpload(event.target.files); event.target.value = ''; }} />
             <div className="mb-4">
-              <p className="mb-2 text-[10px] font-black uppercase tracking-[0.12em] text-text-muted">内容类型</p>
+              <p className="mb-2 text-[10px] font-semibold uppercase tracking-[0.12em] text-text-muted">内容类型</p>
               {socialContentTaskId ? (
                 <div className="rounded-lg border border-border bg-surface-2 px-3 py-2 text-xs font-bold text-text-primary">
                   {contentMode === 'video' ? '视频内容' : '图文内容'} · 已从任务带入
@@ -10211,7 +10255,7 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onLaunc
                         setRatio('9:16');
                       }
                     }}
-                    className={`rounded-md px-3 py-2 text-[11px] font-bold transition ${contentMode === value ? 'bg-surface text-text-primary shadow-sm' : 'text-text-muted hover:text-text-secondary'}`}
+                    className={`rounded-md px-3 py-2 text-[11px] font-bold transition ${contentMode === value ? 'bg-surface text-text-primary shadow-none' : 'text-text-muted hover:text-text-secondary'}`}
                   >
                     {label}
                   </button>
@@ -10219,11 +10263,11 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onLaunc
               </div>
               )}
             </div>
-            <p className="mb-2 text-[10px] font-black uppercase tracking-[0.12em] text-text-muted">内容信息</p>
+            <p className="mb-2 text-[10px] font-semibold uppercase tracking-[0.12em] text-text-muted">内容信息</p>
             <div className="space-y-4">
               {socialContentTaskId ? (
-                <div className="rounded-xl border border-border bg-surface-2 p-3">
-                  <p className="text-[10px] font-black uppercase tracking-[0.12em] text-text-muted">任务产品</p>
+                <div className="rounded-lg border border-border bg-surface-2 p-3">
+                  <p className="text-[10px] font-semibold uppercase tracking-[0.12em] text-text-muted">任务产品</p>
                   <p className="mt-1 text-xs font-bold text-text-primary">{selectedProductOptions.map(option => option.label).join('、') || productInfo || '任务暂未绑定产品'}</p>
                   <p className="mt-2 text-[10px] leading-4 text-text-muted">产品绑定沿用已确认任务；我的素材仍可在下一生产节点逐镜查看和匹配。</p>
                 </div>
@@ -10247,7 +10291,7 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onLaunc
                       <ChevronDown size={15} className={`shrink-0 text-text-muted transition ${productSelectorOpen ? 'rotate-180' : ''}`} />
                     </button>
                     {productSelectorOpen && (
-                    <div className="mt-2 w-full overflow-hidden rounded-lg border border-border bg-surface shadow-sm">
+                    <div className="mt-2 w-full overflow-hidden rounded-lg border border-border bg-surface shadow-none">
                       <div className="space-y-2 border-b border-border bg-surface p-2.5">
                         <div className="relative">
                           <Search size={14} className="pointer-events-none absolute left-2.5 top-1/2 -translate-y-1/2 text-text-muted" />
@@ -10310,7 +10354,7 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onLaunc
                           >
                             <span
                               className="mt-0.5 flex h-4 w-4 shrink-0 items-center justify-center rounded border"
-                              style={active ? { borderColor: TRAFFIC_GREEN, background: TRAFFIC_GREEN, color: '#fff' } : { borderColor: 'var(--color-border)' }}
+                              style={active ? { borderColor: STUDIO_ACCENT, background: STUDIO_ACCENT, color: '#fff' } : { borderColor: 'var(--color-border)' }}
                             >
                               {active && <Check size={11} />}
                             </span>
@@ -10336,27 +10380,27 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onLaunc
                 </div>
               </div>
               )}
-              {socialViralTask && (referenceProducts.length > 0 || referenceBrandLabel) && <section aria-label="原片产品位映射" className="rounded-xl border border-border bg-surface p-3">
-                <p className="text-xs font-black text-text-primary">原片产品位映射 · {referenceProducts.length} 个</p>
-                <p className="mt-1 text-[11px] text-text-muted">按原口播首次出现顺序选择同样数量的企业产品；相同产品词再次出现时沿用同一替换。</p>
+              {socialViralTask && referenceProducts.length > 0 && <section aria-label="原片产品位映射" className="rounded-lg border border-border bg-surface p-3">
+                <p className="text-xs font-semibold text-text-primary">原片产品位映射 · {referenceProducts.length} 个</p>
+                <p className="mt-1 text-[11px] text-text-muted">默认全部使用同一款企业产品；需要区别替换时，再逐项调整。</p>
                 <div className="mt-3 rounded-lg border border-border bg-white p-2.5 text-[10px] text-text-secondary"><p className="font-bold">企业品牌 · 自动读取</p><p className="mt-1">{referenceBrandLabel || '企业知识库尚未填写品牌名称'}</p></div>
-                {selectedProductOptions.length !== referenceProducts.length && <p role="status" className="mt-2 text-[11px] font-bold text-amber-700">已选 {selectedProductOptions.length} 款，还需选满 {referenceProducts.length} 款后逐项映射。</p>}
+                {!selectedProductOptions.length && <p role="status" className="mt-2 text-[11px] font-bold text-amber-700">请选择一款企业产品，系统将默认用于所有产品位。</p>}
                 <div className="mt-3 space-y-2">{referenceProducts.map((slot, index) => <div key={slot.shotId} className="grid gap-2 rounded-lg border border-border bg-white p-2.5 sm:grid-cols-[minmax(0,1fr)_minmax(0,1fr)]">
                   <div><p className="text-[11px] font-bold text-text-primary">{index + 1}. {slot.time} · {slot.sourceLabel}</p><label className="mt-1 block text-[10px] text-text-muted">原口播中的产品词<input aria-label={`原片产品 ${index + 1} 的口播词`} value={referenceProductTerms[slot.shotId] ?? slot.sourceLabel} onChange={event => { invalidateShotsForReferenceProduct(referenceProductTerms[slot.shotId] || slot.sourceLabel, referenceProductAssignments[slot.shotId]); setReferenceProductTerms(current => ({ ...current, [slot.shotId]: event.target.value })); }} className="mt-1 h-8 w-full rounded-md border border-border px-2 text-xs text-text-primary" /></label></div>
                   <label className="block text-[10px] text-text-muted">替换为企业产品<select aria-label={`原片产品 ${index + 1} 对应企业产品`} value={referenceProductAssignments[slot.shotId] || ''} onChange={event => { invalidateShotsForReferenceProduct(referenceProductTerms[slot.shotId] || slot.sourceLabel, referenceProductAssignments[slot.shotId]); setReferenceProductAssignments(current => ({ ...current, [slot.shotId]: event.target.value })); }} className="mt-1 h-8 w-full rounded-md border border-border bg-white px-2 text-xs text-text-primary"><option value="">请选择</option>{selectedProductOptions.map(option => <option key={option.id} value={option.id}>{option.label}</option>)}</select></label>
                 </div>)}</div>
               </section>}
               {socialViralTask && (
-                <section aria-label="爆款口播方案" className="rounded-xl border border-emerald-200 bg-emerald-50/50 p-3">
+                <section aria-label="爆款口播方案" className="rounded-lg border border-emerald-200 bg-emerald-50/50 p-3">
                   <div className="flex items-center justify-between gap-2">
-                    <div><p className="text-xs font-black text-emerald-950">原片逐句口播</p><p className="mt-1 text-[10px] text-emerald-800">只替换交接物已识别的品牌、产品等关键词；分镜按原片画面切点生成。</p></div>
-                    <span className="shrink-0 rounded-full bg-white px-2 py-1 text-[10px] font-black text-emerald-800">{referenceSpeechPlan.lines.length} 句</span>
+                    <div><p className="text-xs font-semibold text-emerald-950">原片逐句口播</p><p className="mt-1 text-[10px] text-emerald-800">只替换交接物已识别的品牌、产品等关键词；分镜按原片画面切点生成。</p></div>
+                    <span className="shrink-0 rounded-full bg-white px-2 py-1 text-[10px] font-semibold text-emerald-800">{referenceSpeechPlan.lines.length} 句</span>
                   </div>
                   {referenceSpeechPlan.error && <p role="status" className="mt-3 rounded-lg bg-white p-3 text-[11px] text-amber-800">{referenceSpeechPlan.error}</p>}
                   {referenceSpeechPlan.lines.length > 0 && (
                     <ol className="mt-3 max-h-72 space-y-2 overflow-y-auto pr-1">
                       {referenceSpeechPlan.lines.map((line, index) => <li key={line.id} className="rounded-lg border border-emerald-100 bg-white p-2.5 text-[11px] leading-5">
-                        <p className="font-black text-emerald-900">{String(index + 1).padStart(2, '0')} · {line.time}</p>
+                        <p className="font-semibold text-emerald-900">{String(index + 1).padStart(2, '0')} · {line.time}</p>
                         <p className="mt-1 text-text-muted">原句：{line.source}</p>
                         <p className="text-text-primary">新口播：{line.draft}</p>
                         {line.visuals.length > 0 && <p className="mt-1 text-[10px] text-emerald-800">对应原片分镜：{line.visuals.map(item => `${item.time} ${item.label}`).join('；')}</p>}
@@ -10368,7 +10412,7 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onLaunc
               {contentMode === 'video' && (
                 <section className="border-t border-border pt-4">
                   <div className="mb-3">
-                    <p className="text-xs font-black text-text-primary">创作主题</p>
+                    <p className="text-xs font-semibold text-text-primary">创作主题</p>
                     <p className="mt-0.5 text-[10px] text-text-muted">项目基础设置只在这里编辑，后续分镜与成片步骤直接复用。</p>
                   </div>
                   <div className="grid gap-3">
@@ -10463,13 +10507,13 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onLaunc
                               if (option.id !== 'material') setActiveFolder('presenter');
                               if (script.trim()) setModeNotice(`出镜方式已切换为“${option.label}”，请重新确认分镜与人物素材。`);
                             }}
-                            className={`flex min-w-0 items-center gap-2.5 rounded-xl border px-3 py-2.5 text-left outline-none transition focus-visible:ring-2 focus-visible:ring-accent/30 ${selectedMode ? 'border-accent bg-accent-glow shadow-[0_0_0_1px_var(--color-accent)]' : 'border-border bg-surface-2 hover:border-accent/50'}`}
+                            className={`flex min-w-0 items-center gap-2.5 rounded-lg border px-3 py-2.5 text-left outline-none transition focus-visible:ring-2 focus-visible:ring-accent/30 ${selectedMode ? 'border-accent bg-accent-glow shadow-[0_0_0_1px_var(--color-accent)]' : 'border-border bg-surface-2 hover:border-accent/50'}`}
                           >
                             <span className={`flex h-4 w-4 shrink-0 items-center justify-center rounded-full border ${selectedMode ? 'border-accent' : 'border-border-bright'}`}>
                               {selectedMode && <span className="h-2 w-2 rounded-full bg-accent" />}
                             </span>
                             <span className="min-w-0">
-                              <span className="block text-xs font-black text-text-primary">{option.label}</span>
+                              <span className="block text-xs font-semibold text-text-primary">{option.label}</span>
                               <span className="mt-0.5 block truncate text-[10px] text-text-muted">{option.description}</span>
                             </span>
                           </button>
@@ -10483,7 +10527,7 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onLaunc
               <section className="border-t border-border pt-4">
                 <div className="flex flex-wrap items-start justify-between gap-3">
                   <div>
-                    <p className="text-xs font-black text-text-primary">本次创作素材</p>
+                    <p className="text-xs font-semibold text-text-primary">本次创作素材</p>
                     <p className="mt-0.5 text-[10px] text-text-muted">优先选择已有素材可让脚本更贴合真实画面；不要求上传新素材，参考爆款和产品模式也可稍后补充。</p>
                   </div>
                   <span className={`rounded-full px-2.5 py-1 text-[10px] font-bold ${selectedVisualClips.length ? 'bg-emerald-50 text-emerald-700' : 'bg-surface-2 text-text-muted'}`}>
@@ -10500,7 +10544,7 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onLaunc
                   ].map(([label, value]) => (
                     <div key={label} className="rounded-lg bg-surface-2 px-2.5 py-2">
                       <p className="text-[9px] font-bold text-text-muted">{label}</p>
-                      <p className="mt-0.5 text-xs font-black text-text-primary">{value}</p>
+                      <p className="mt-0.5 text-xs font-semibold text-text-primary">{value}</p>
                     </div>
                   ))}
                 </div>
@@ -10524,8 +10568,8 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onLaunc
                   </span>
                 </div>
                 {mode === 'material' && selectedVisualClips.length > 0 && (
-                  <div className="mt-3 rounded-xl border border-border bg-surface-2 p-3">
-                    <p className="text-[10px] font-black text-text-secondary">这批素材怎么用</p>
+                  <div className="mt-3 rounded-lg border border-border bg-surface-2 p-3">
+                    <p className="text-[10px] font-semibold text-text-secondary">这批素材怎么用</p>
                     <div className="mt-2 grid grid-cols-2 gap-1.5">
                       <button type="button" onClick={() => setHookMaterialId('')} className={`rounded-lg border px-2 py-2 text-[10px] font-bold ${!hookMaterialId ? 'border-emerald-400 bg-white text-emerald-700' : 'border-border bg-white text-text-muted'}`}>
                         整段规划
@@ -10553,7 +10597,7 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onLaunc
                         >
                           {clip.poster || clip.type === 'image' ? <img src={clip.poster || clip.url} alt={clip.name} className="h-full w-full object-cover" /> : <Film size={16} className="absolute inset-0 m-auto text-text-muted" />}
                           {isHook
-                            ? <span className="absolute bottom-0 left-0 right-0 bg-emerald-600/95 py-0.5 text-center text-[8px] font-black text-white">开场钩子</span>
+                            ? <span className="absolute bottom-0 left-0 right-0 bg-emerald-600/95 py-0.5 text-center text-[8px] font-semibold text-white">开场钩子</span>
                             : hookMaterialId && <span className="absolute inset-0 hidden items-center justify-center bg-black/55 text-[9px] font-bold text-white group-hover:flex">设为钩子</span>}
                         </button>
                         <button type="button" title={`移除${clip.name}`} aria-label={`移除${clip.name}`} onClick={() => removeSelectedVisualClip(clip.id)} className="absolute right-0.5 top-0.5 flex h-4 w-4 items-center justify-center rounded-full bg-black/65 text-white"><X size={10} /></button>
@@ -10564,9 +10608,9 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onLaunc
               </section>
               {showSetupMaterialPicker && (
                 <div className="fixed inset-0 z-[140] flex items-center justify-center bg-slate-950/45 p-4" onClick={() => setShowSetupMaterialPicker(false)}>
-                  <div role="dialog" aria-modal="true" aria-label="选择本次创作素材" className="flex max-h-[82vh] w-full max-w-4xl flex-col overflow-hidden rounded-2xl border border-border bg-white shadow-2xl" onClick={event => event.stopPropagation()}>
+                  <div role="dialog" aria-modal="true" aria-label="选择本次创作素材" className="flex max-h-[82vh] w-full max-w-4xl flex-col overflow-hidden rounded-lg border border-border bg-white shadow-2xl" onClick={event => event.stopPropagation()}>
                     <header className="flex items-center justify-between gap-3 border-b border-border px-5 py-4">
-                      <div><p className="text-sm font-black text-text-primary">选择本次创作素材</p><p className="mt-1 text-[11px] text-text-muted">选择即时生效；只有你明确勾选的素材会用于脚本和后续分镜。</p></div>
+                      <div><p className="text-sm font-semibold text-text-primary">选择本次创作素材</p><p className="mt-1 text-[11px] text-text-muted">选择即时生效；只有你明确勾选的素材会用于脚本和后续分镜。</p></div>
                       <button type="button" onClick={() => setShowSetupMaterialPicker(false)} className="rounded-lg p-2 text-text-muted hover:bg-surface-2"><X size={18} /></button>
                     </header>
                     <div className="flex items-center gap-2 border-b border-border px-5 py-3">
@@ -10579,23 +10623,23 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onLaunc
                           {materials.filter(item => item.type !== 'audio' && (!search.trim() || item.name.toLowerCase().includes(search.trim().toLowerCase()))).map(clip => {
                             const checked = selected.includes(clip.id);
                             const isHook = hookMaterialId === clip.id;
-                            return <div key={clip.id} className={`relative overflow-hidden rounded-xl border text-left transition ${isHook ? 'border-emerald-500 ring-2 ring-emerald-500/20' : checked ? 'border-accent ring-2 ring-accent/15' : 'border-border hover:border-accent/40'}`}>
+                            return <div key={clip.id} className={`relative overflow-hidden rounded-lg border text-left transition ${isHook ? 'border-emerald-500 ring-2 ring-emerald-500/20' : checked ? 'border-accent ring-2 ring-accent/15' : 'border-border hover:border-accent/40'}`}>
                               <button type="button" onClick={() => checked ? removeSelectedVisualClip(clip.id) : setSelected(current => [...current, clip.id])} className="block w-full text-left">
                                 <span className="relative block aspect-video bg-slate-900">{clip.poster || clip.type === 'image' ? <img src={clip.poster || clip.url} alt="" className="h-full w-full object-cover" /> : <Film size={20} className="absolute inset-0 m-auto text-white/55" />}{checked && <span className="absolute right-2 top-2 flex h-6 w-6 items-center justify-center rounded-full bg-accent text-white"><Check size={14} /></span>}</span>
                                 <span className="block truncate px-3 py-2 text-[11px] font-bold text-text-primary">{clip.name}</span>
                               </button>
-                              {checked && hookMaterialId && <button type="button" onClick={() => setHookMaterialId(clip.id)} className={`absolute left-2 top-2 rounded-full px-2 py-1 text-[9px] font-black shadow-sm ${isHook ? 'bg-emerald-600 text-white' : 'bg-white/90 text-emerald-700 hover:bg-white'}`}>{isHook ? '开场钩子' : '设为钩子'}</button>}
+                              {checked && hookMaterialId && <button type="button" onClick={() => setHookMaterialId(clip.id)} className={`absolute left-2 top-2 rounded-full px-2 py-1 text-[9px] font-semibold shadow-none ${isHook ? 'bg-blue-600 text-white' : 'bg-white/90 text-emerald-700 hover:bg-white'}`}>{isHook ? '开场钩子' : '设为钩子'}</button>}
                             </div>;
                           })}
                         </div>
                       ) : <div className="py-16 text-center text-xs text-text-muted">暂无可用素材，请先上传视频或图片。</div>}
                     </div>
-                    <footer className="flex items-center justify-between gap-3 border-t border-border px-5 py-4"><p className="text-xs font-bold text-text-secondary">已选择 {selectedVisualClips.length} 项 · 已即时保存</p><button type="button" onClick={() => setShowSetupMaterialPicker(false)} disabled={mode === 'material' && !selectedVisualClips.length} className="rounded-xl bg-accent px-5 py-2.5 text-xs font-black text-white disabled:opacity-40">{selectedVisualClips.length ? '完成选择' : '暂不选择'}</button></footer>
+                    <footer className="flex items-center justify-between gap-3 border-t border-border px-5 py-4"><p className="text-xs font-bold text-text-secondary">已选择 {selectedVisualClips.length} 项 · 已即时保存</p><button type="button" onClick={() => setShowSetupMaterialPicker(false)} disabled={mode === 'material' && !selectedVisualClips.length} className="rounded-lg bg-accent px-5 py-2.5 text-xs font-semibold text-white disabled:opacity-40">{selectedVisualClips.length ? '完成选择' : '暂不选择'}</button></footer>
                   </div>
                 </div>
               )}
               <section aria-label="输出语言与配乐说明" className="space-y-2 border-t border-border px-4 py-3">
-                <p className="text-xs font-black text-text-primary">输出语言与配乐</p>
+                <p className="text-xs font-semibold text-text-primary">输出语言与配乐</p>
                 <label className="block text-[11px] font-bold text-text-secondary">原文语言
                   <select aria-label="原文语言" value={socialViralTask && referenceSourceLanguage ? referenceSourceLanguage : voiceLangs[0] || lang} disabled={Boolean(script.trim()) || Boolean(socialViralTask && referenceSourceLanguage)} onChange={event => { const code = event.target.value; setVoiceLangs(current => [code, ...current.slice(1).filter(item => item !== code)]); setLang(code); setActiveVoiceLang(code); }} className="mt-1 w-full rounded-lg border border-border bg-white p-2 text-xs disabled:opacity-60">
                     {LANGS.map(item => <option key={item.code} value={item.code}>{item.label}</option>)}
@@ -10612,7 +10656,7 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onLaunc
                   className="flex w-full items-center justify-between gap-3 px-4 py-3 text-left transition hover:bg-surface-2/60"
                 >
                   <span>
-                    <span className="block text-xs font-black text-text-primary">高级设置</span>
+                    <span className="block text-xs font-semibold text-text-primary">高级设置</span>
                     <span className="mt-0.5 block text-[10px] text-text-muted">{ratio} · {duration}s · {provider === 'qwen' ? '千问' : 'Gemini'}</span>
                   </span>
                   <ChevronDown size={15} className={`text-text-muted transition ${showAdvancedSetup ? 'rotate-180' : ''}`} />
@@ -10639,24 +10683,24 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onLaunc
                 )}
               </div>
               {false && contentMode === 'video' && mode === 'clone' && (
-                <div className="rounded-2xl border border-emerald-200 bg-emerald-50/60 p-4">
+                <div className="rounded-lg border border-emerald-200 bg-emerald-50/60 p-4">
                   <div className="flex flex-wrap items-start justify-between gap-3">
                     <div className="min-w-0">
                       <div className="flex items-center gap-2">
                         <Sparkles size={14} className="text-accent" />
-                        <p className="text-sm font-black text-text-primary">AI 推荐迁移方案：{migrationRecommendation.label}</p>
+                        <p className="text-sm font-semibold text-text-primary">AI 推荐迁移方案：{migrationRecommendation.label}</p>
                         <span className="rounded-full bg-white px-2 py-0.5 text-[9px] font-bold text-emerald-700">已采用</span>
                       </div>
                       <p className="mt-1 text-xs leading-relaxed text-text-secondary">{migrationRecommendation.reason}</p>
                     </div>
                   </div>
                   <div className="mt-3 grid gap-2 md:grid-cols-2">
-                    <div className="rounded-xl border border-emerald-100 bg-white/80 p-3">
-                      <p className="text-[10px] font-black text-emerald-700">保留的爆点机制</p>
+                    <div className="rounded-lg border border-emerald-100 bg-white/80 p-3">
+                      <p className="text-[10px] font-semibold text-emerald-700">保留的爆点机制</p>
                       {migrationRecommendation.preserve.map(item => <p key={item} className="mt-1 text-[11px] leading-relaxed text-text-secondary">• {item}</p>)}
                     </div>
-                    <div className="rounded-xl border border-amber-100 bg-white/80 p-3">
-                      <p className="text-[10px] font-black text-amber-700">按企业产品重建</p>
+                    <div className="rounded-lg border border-amber-100 bg-white/80 p-3">
+                      <p className="text-[10px] font-semibold text-amber-700">按企业产品重建</p>
                       {migrationRecommendation.rebuild.map(item => <p key={item} className="mt-1 text-[11px] leading-relaxed text-text-secondary">• {item}</p>)}
                     </div>
                   </div>
@@ -10700,18 +10744,13 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onLaunc
           <div className="max-w-4xl">
             <SectionTitle title="生成图文" />
             <div className="grid gap-4">
-              <div className="rounded-2xl border border-border bg-surface p-4">
+              <div className="rounded-lg border border-border bg-surface p-4">
                 <div className="flex items-center justify-between gap-3">
                   <p className="text-sm font-bold text-text-primary">图文内容</p>
-                  <span className={`rounded-full px-2.5 py-1 text-[10px] font-black ${posterLoading ? 'bg-amber-50 text-amber-700' : posterGenerationIsVerified ? 'bg-emerald-50 text-emerald-700' : posterJsonText ? 'bg-amber-50 text-amber-800' : 'bg-surface-2 text-text-muted'}`}>
+                  <span className={`rounded-full px-2.5 py-1 text-[10px] font-semibold ${posterLoading ? 'bg-amber-50 text-amber-700' : posterGenerationIsVerified ? 'bg-emerald-50 text-emerald-700' : posterJsonText ? 'bg-amber-50 text-amber-800' : 'bg-surface-2 text-text-muted'}`}>
                     {posterLoading ? '生成中' : posterGenerationIsVerified ? 'AI 生成 · 已校验' : posterDraft?.provenance === 'manual_draft' ? '手动草稿 · 待复核' : posterJsonText ? '草稿 · 待确认' : '待生成'}
                   </span>
                 </div>
-                {modeNotice && (
-                  <div className="mt-3 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-xs leading-relaxed text-amber-800">
-                    {modeNotice}
-                  </div>
-                )}
                 <textarea
                   value={posterJsonText}
                   onChange={event => markPosterJsonAsManualDraft(event.target.value)}
@@ -10719,10 +10758,10 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onLaunc
                   placeholder={videoKickoff?.video?.contentFormat === 'image'
                     ? '生成后这里会出现三组内容 JSON：买家注意、合作能力、供应商信任，以及每组轮播结构、配文、CTA 和私信开场。'
                     : '生成后这里会出现海报文案 JSON：标题、副标题、认证徽章、流程六步、产品分类卡、底部卖点和 CTA。'}
-                  className="mt-3 w-full rounded-xl border border-border bg-surface-2 p-3 font-mono text-xs leading-relaxed text-text-secondary outline-none focus:border-accent"
+                  className="mt-3 w-full rounded-lg border border-border bg-surface-2 p-3 font-mono text-xs leading-relaxed text-text-secondary outline-none focus:border-accent"
                 />
                 {posterJsonText && !posterGenerationIsVerified && (
-                  <div className="mt-3 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-xs leading-relaxed text-amber-800">
+                  <div className="mt-3 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs leading-relaxed text-amber-800">
                     当前图文不是“已核实可提交”成品。{posterDraft?.fieldsToConfirm?.length
                       ? `仍需确认：${posterDraft.fieldsToConfirm.join('、')}。`
                       : '需重新生成并通过企业资料事实校验。'}系统不会自动提交或交付此草稿。
@@ -10732,12 +10771,12 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onLaunc
                 {posterDraft && !leadContentPackage && (
                   <div className="mt-3 grid gap-3 md:grid-cols-2">
                     {posterImageUrl && (
-                      <div className="md:col-span-2 overflow-hidden rounded-xl border border-border bg-surface-2">
+                      <div className="md:col-span-2 overflow-hidden rounded-lg border border-border bg-surface-2">
                         <img src={posterImageUrl} alt="AI 图文海报" className="max-h-[520px] w-full object-contain bg-white" />
                       </div>
                     )}
                     {mode === 'clone' && posterDraft.layoutModules?.length ? (
-                      <div className="md:col-span-2 rounded-xl border border-border bg-surface-2 p-3">
+                      <div className="md:col-span-2 rounded-lg border border-border bg-surface-2 p-3">
                         <p className="text-xs font-bold text-text-primary">爆款模块拆解与本地素材替换</p>
                         <div className="mt-2 grid gap-2 md:grid-cols-2">
                           {posterDraft.layoutModules.slice(0, 6).map((item, index) => (
@@ -10751,19 +10790,19 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onLaunc
                         </div>
                       </div>
                     ) : null}
-                    <div className="rounded-xl border border-border bg-surface-2 p-3">
+                    <div className="rounded-lg border border-border bg-surface-2 p-3">
                       <div className="mb-2 flex items-center justify-between gap-2">
                         <p className="text-xs font-bold text-text-primary">发布配文</p>
                         <button type="button" onClick={() => navigator.clipboard?.writeText(caption)} className="text-xs font-bold text-accent">复制</button>
                       </div>
                       <p className="whitespace-pre-line text-xs leading-relaxed text-text-secondary">{caption}</p>
                     </div>
-                    <div className="rounded-xl border border-border bg-surface-2 p-3">
+                    <div className="rounded-lg border border-border bg-surface-2 p-3">
                       <p className="text-xs font-bold text-text-primary">承接话术</p>
                       <p className="mt-2 text-xs leading-relaxed text-text-secondary">评论 CTA：{posterDraft.commentCta || '待生成'}</p>
                       <p className="mt-2 text-xs leading-relaxed text-text-secondary">私信开场：{posterDraft.dmOpening || '待生成'}</p>
                     </div>
-                    <div className="md:col-span-2 rounded-xl border border-border bg-surface-2 p-3">
+                    <div className="md:col-span-2 rounded-lg border border-border bg-surface-2 p-3">
                       <div className="mb-2 flex items-center justify-between gap-2">
                         <p className="text-xs font-bold text-text-primary">图片模型 Prompt</p>
                         <button type="button" onClick={() => navigator.clipboard?.writeText(posterDraft.imagePrompt || '')} className="text-xs font-bold text-accent">复制</button>
@@ -10774,7 +10813,7 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onLaunc
                 )}
               </div>
               <div className="space-y-3">
-                <div className="rounded-2xl border border-border bg-surface p-4">
+                <div className="rounded-lg border border-border bg-surface p-4">
                   <p className="text-xs font-bold text-text-primary">当前配置</p>
                   <div className="mt-3 space-y-2 text-xs leading-relaxed text-text-secondary">
                     <p>平台：{platform === 'instagram' ? 'Instagram' : 'Facebook'}</p>
@@ -10784,7 +10823,7 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onLaunc
                     <p>参考素材：{selectedClips.filter(item => item.type !== 'audio').length} 个</p>
                   </div>
                 </div>
-                <div className="rounded-2xl border border-amber-200 bg-amber-50 p-4">
+                <div className="rounded-lg border border-amber-200 bg-amber-50 p-4">
                   <p className="text-xs font-bold text-amber-900">生成前确认</p>
                   <p className="mt-2 text-xs leading-relaxed text-amber-800">
                     MOQ、认证、交期、价格、出口国家、工厂资质等商业承诺必须来自企业中心或用户确认，AI 只优化表达，不编造承诺。
@@ -10907,7 +10946,7 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onLaunc
                     type="button"
                     onClick={smartSelectPosterMaterials}
                     disabled={posterMaterials.length === 0}
-                    className="ml-auto inline-flex items-center gap-1.5 rounded-xl border border-border bg-white px-3 py-1.5 text-xs font-bold text-text-secondary transition hover:bg-surface-2 disabled:opacity-50"
+                    className="ml-auto inline-flex items-center gap-1.5 rounded-lg border border-border bg-white px-3 py-1.5 text-xs font-bold text-text-secondary transition hover:bg-surface-2 disabled:opacity-50"
                   >
                     <Sparkles size={12} />
                     智能推荐参考图
@@ -10933,13 +10972,13 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onLaunc
                 )}
 
                 <div className="flex-1 overflow-y-auto p-5">
-                  <div className={`mb-4 rounded-xl border px-4 py-3 text-xs leading-relaxed ${activeProductLabel ? 'border-accent/20 bg-accent-glow text-text-secondary' : 'border-amber-200 bg-amber-50 text-amber-800'}`}>
+                  <div className={`mb-4 rounded-lg border px-4 py-3 text-xs leading-relaxed ${activeProductLabel ? 'border-accent/20 bg-accent-glow text-text-secondary' : 'border-amber-200 bg-amber-50 text-amber-800'}`}>
                     <span className="font-bold text-text-primary">当前产品：</span>
                     {activeProductLabel || '尚未选择。产品信息生成模式需要先在第一步选择企业中心产品，再补充/选择图文素材。'}
                     {activeProductLabel && mode === 'product' ? '。请继续选择产品图、工厂图、包装图、证书图或场景图作为海报参考。' : ''}
                   </div>
                   {mode === 'clone' && (
-                    <div className="mb-4 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-xs leading-relaxed text-amber-800">
+                    <div className="mb-4 rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-xs leading-relaxed text-amber-800">
                       参考爆款创作需要先从「灵感中心 - 拍摄任务 - 图文」选择已采集的图文素材。系统会把对标图文拆成标题区、产品主视觉、背景氛围、信息栏、认证徽章、流程图、CTA 等模块，再用本地素材逐模块替换。
                     </div>
                   )}
@@ -10950,15 +10989,15 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onLaunc
                       return (
                         <button key={c.id}
                           onClick={() => setSelected(s => on ? s.filter(x => x !== c.id) : [...s, c.id])}
-                          className="card !rounded-xl overflow-hidden text-left relative group"
-                          style={on ? { borderColor: TRAFFIC_GREEN, boxShadow: `0 0 0 1px ${TRAFFIC_GREEN}` } : undefined}>
+                          className="card !rounded-lg overflow-hidden text-left relative group"
+                          style={on ? { borderColor: STUDIO_ACCENT, boxShadow: `0 0 0 1px ${STUDIO_ACCENT}` } : undefined}>
                           <div className="relative">
                             {c.url
                               ? <RealThumb clip={c} onSourceError={() => { void refreshMaterialSource(c.id); }} />
                               : <Thumb seed={c.id} src={c.poster} label={c.type === 'image' ? 'IMG' : fmtDur(c.duration)} />}
                             {on && (
                               <span className="absolute top-1.5 left-1.5 w-5 h-5 rounded-full flex items-center justify-center text-[10px] font-bold text-white z-10"
-                                style={{ background: TRAFFIC_GREEN }}>{idx + 1}</span>
+                                style={{ background: STUDIO_ACCENT }}>{idx + 1}</span>
                             )}
                             {c.folder === 'hot' && (
                               <span className="absolute top-1.5 right-1.5 px-1.5 py-0.5 rounded text-[8px] font-bold text-white bg-black/45 z-10">
@@ -10983,7 +11022,7 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onLaunc
                         {search.trim() ? '没有匹配的图文素材' : posterActiveFolder === 'hot' ? '暂无爆款图文参考，请从灵感中心采集或选择拍摄任务中的图文' : '这个分类还没有图片素材'}
                       </p>
                       {posterActiveFolder !== 'hot' && !search.trim() && (
-                        <button onClick={() => fileInputRef.current?.click()} className="mt-2 text-xs font-semibold" style={{ color: TRAFFIC_GREEN }}>
+                        <button onClick={() => fileInputRef.current?.click()} className="mt-2 text-xs font-semibold" style={{ color: STUDIO_ACCENT }}>
                           上传到{posterFolderName(posterActiveFolder)}
                         </button>
                       )}
@@ -10992,12 +11031,12 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onLaunc
                 </div>
               </div>
 
-              <aside className="flex w-full flex-col rounded-2xl border border-border bg-surface/40">
+              <aside className="flex w-full flex-col rounded-lg border border-border bg-surface/40">
                 <div className="border-b border-border bg-white px-4 py-3">
                   <div className="mb-2 flex items-center justify-between gap-2">
                     <div>
                       <p className="text-[10px] font-semibold uppercase tracking-wider text-text-muted">海报参考素材</p>
-                      <p className="mt-0.5 text-sm font-black text-text-primary">
+                      <p className="mt-0.5 text-sm font-semibold text-text-primary">
                         {mode === 'clone' ? '爆款拆解 + 本地素材回填' : '按文案推荐素材'}
                       </p>
                     </div>
@@ -11020,7 +11059,7 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onLaunc
                     const groupClips = clipsForFolders(group.folders);
                     if (group.id === 'hot' && mode !== 'clone') return null;
                     return (
-                      <div key={group.id} className={`rounded-xl border p-3 ${groupClips.length ? 'border-green-200 bg-green-50/60' : 'border-dashed border-border bg-white'}`}>
+                      <div key={group.id} className={`rounded-lg border p-3 ${groupClips.length ? 'border-green-200 bg-green-50/60' : 'border-dashed border-border bg-white'}`}>
                         <div className="mb-2 flex items-start justify-between gap-2">
                           <div>
                             <p className="text-xs font-bold text-text-primary">{group.title}</p>
@@ -11031,7 +11070,7 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onLaunc
                         {groupClips.length ? (
                           <div className="space-y-2">
                             {groupClips.map(clip => (
-                              <div key={clip.id} className="flex items-center gap-2 rounded-lg bg-white p-2 shadow-sm">
+                              <div key={clip.id} className="flex items-center gap-2 rounded-lg bg-white p-2 shadow-none">
                                 <div className="h-12 w-16 flex-shrink-0 overflow-hidden rounded-md bg-surface-2">
                                   {clip.url
                                     ? <RealThumb clip={clip} onSourceError={() => { void refreshMaterialSource(clip.id); }} />
@@ -11347,7 +11386,7 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onLaunc
         return (
           <div className="flex min-h-full flex-col gap-4">
             {/* 文件夹栏（含内容搜索） */}
-            <div className="w-full flex-shrink-0 rounded-2xl border border-border p-2.5">
+            <div className="w-full flex-shrink-0 rounded-lg border border-border p-2.5">
               {/* 内容相关性搜索 */}
               <div className="relative mb-3">
                 <Search size={13} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-text-muted" />
@@ -11384,7 +11423,7 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onLaunc
 	              {mode === 'clone' && (
 	                <div className="flex flex-shrink-0 items-center justify-between gap-4 border-b border-border bg-surface px-5 py-3">
 	                  <div>
-	                    <p className="text-sm font-black text-text-primary">逐镜放入素材</p>
+	                    <p className="text-sm font-semibold text-text-primary">逐镜放入素材</p>
 	                    <p className="mt-0.5 text-[10px] text-text-muted">拖入已有视频，或直接 AI 生成；素材来源由系统自动识别，无需确认。</p>
 	                  </div>
 	                  <div className="flex items-center gap-2 text-[10px] font-bold">
@@ -11420,15 +11459,15 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onLaunc
 
 	              <div className="flex-1 overflow-y-auto p-5">
 	                {activeFolder === 'presenter' && digitalHumanNotice && (
-	                  <div className="mb-4 rounded-xl border border-accent/20 bg-accent-glow px-4 py-3 text-xs font-semibold text-accent">
+	                  <div className="mb-4 rounded-lg border border-accent/20 bg-accent-glow px-4 py-3 text-xs font-semibold text-accent">
 	                    {digitalHumanNotice}
 	                  </div>
 	                )}
 	                {activeFolder === 'presenter' && presenterMode === 'digital' && (
-	                  <div className="mb-4 rounded-2xl border border-border bg-surface p-4">
+	                  <div className="mb-4 rounded-lg border border-border bg-surface p-4">
 	                    <div className="flex flex-wrap items-start justify-between gap-3">
 	                      <div className="min-w-0">
-	                        <p className="text-sm font-black text-text-primary">HeyGen 数字人口播生成</p><label className="block text-xs">HeyGen 人物<select value={heygenAvatarId} onChange={event => {
+	                        <p className="text-sm font-semibold text-text-primary">HeyGen 数字人口播生成</p><label className="block text-xs">HeyGen 人物<select value={heygenAvatarId} onChange={event => {
                           const id = event.target.value; setHeygenAvatarId(id); setDigitalHumanConsent(false);
                           const gender = heygenAvatars.find(item => item.id === id)?.gender;
                           const nextVoice = gender === 'male' ? 'v2' : gender === 'female' ? 'v1' : '';
@@ -11451,7 +11490,7 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onLaunc
 	                      <button
 	                        onClick={() => void generateDigitalHumanPresenter()}
 	                        disabled={digitalHumanLoading || !heygenAvatarId || digitalHumanCapabilities?.available === false}
-	                        className="inline-flex items-center gap-1.5 rounded-xl bg-accent px-3 py-2 text-xs font-bold text-white disabled:opacity-50"
+	                        className="inline-flex items-center gap-1.5 rounded-lg bg-accent px-3 py-2 text-xs font-bold text-white disabled:opacity-50"
 	                      >
 	                        {digitalHumanLoading ? <Loader2 size={12} className="animate-spin" /> : <Sparkles size={12} />}
 	                        {digitalHumanLoading ? '正在生成…' : '生成表情数字人'}
@@ -11466,7 +11505,7 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onLaunc
 	                    )}
 	                    {digitalHumanJob?.status === 'review' && <div className="my-3 space-y-2">{digitalHumanJob.outputUrl && <video src={digitalHumanJob.outputUrl} controls className="max-h-80 w-full" />}<button type="button" className="rounded border p-2 text-xs" onClick={async () => { const result = await studioApi.approveDigitalHumanJob(digitalHumanJob.id); if (result.job) { setDigitalHumanJob(result.job); await refreshMaterials(); setDigitalHumanNotice('已确认数字人成片，可继续合成'); } }}>已预览，确认人物、口型和声音</button></div>}
                     {digitalHumanJob && (
-	                      <div className="mt-3 rounded-xl bg-surface-2 p-3">
+	                      <div className="mt-3 rounded-lg bg-surface-2 p-3">
 	                        <div className="flex items-center justify-between text-[11px] font-semibold"><span>{digitalHumanJob.stage}</span><span>{digitalHumanJob.progress}% · V{digitalHumanJob.versionNumber}</span></div>
 	                        <div className="mt-2 h-1.5 overflow-hidden rounded-full bg-border"><div className="h-full rounded-full bg-accent transition-all" style={{ width: `${digitalHumanJob.progress}%` }} /></div>
 	                        {digitalHumanJob.qualityReport && (
@@ -11513,8 +11552,8 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onLaunc
                             setSelected(s => on ? s.filter(x => x !== c.id) : [...s, c.id]);
                           }
                         }}
-                        className="card !rounded-xl overflow-hidden text-left relative group"
-                        style={on ? { borderColor: TRAFFIC_GREEN, boxShadow: `0 0 0 1px ${TRAFFIC_GREEN}` } : undefined}>
+                        className="card !rounded-lg overflow-hidden text-left relative group"
+                        style={on ? { borderColor: STUDIO_ACCENT, boxShadow: `0 0 0 1px ${STUDIO_ACCENT}` } : undefined}>
                         <div className="relative">
 	                          {/* 真实素材显示实际预览；来源不可访问时明确显示不可预览。 */}
                           {c.url
@@ -11522,7 +11561,7 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onLaunc
                             : <Thumb seed={c.id} src={c.poster} label={c.type === 'image' ? 'IMG' : `0:${String(c.duration).padStart(2, '0')}`} />}
                           {on && (
                             <span className="absolute top-1.5 left-1.5 w-5 h-5 rounded-full flex items-center justify-center text-[10px] font-bold text-white z-10"
-                              style={{ background: TRAFFIC_GREEN }}>{idx + 1}</span>
+                              style={{ background: STUDIO_ACCENT }}>{idx + 1}</span>
                           )}
                           {c.scope === 'shared' && !on && (
                             <span className="absolute top-1.5 left-1.5 px-1.5 py-0.5 rounded text-[8px] font-bold text-white z-10" style={{ background: '#0891b2' }}>在线</span>
@@ -11582,7 +11621,7 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onLaunc
 		                    </p>
 		                    {activeFolder !== 'hot' && activeFolder !== 'recommend' && !search.trim() && (
 	                      <div className="mt-2 space-y-2">
-	                        <button onClick={() => fileInputRef.current?.click()} className="text-xs font-semibold" style={{ color: TRAFFIC_GREEN }}>
+	                        <button onClick={() => fileInputRef.current?.click()} className="text-xs font-semibold" style={{ color: STUDIO_ACCENT }}>
 	                          {activeFolder === 'presenter' ? '上传真人实拍视频' : '点此上传'}
 	                        </button>
 	                        {activeFolder === 'presenter' && (
@@ -11603,7 +11642,7 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onLaunc
                 aria-label="素材视频预览"
                 onClick={() => setPreviewClip(null)}
               >
-                <div className="w-full max-w-4xl overflow-hidden rounded-2xl bg-black shadow-2xl" onClick={event => event.stopPropagation()}>
+                <div className="w-full max-w-4xl overflow-hidden rounded-lg bg-black shadow-2xl" onClick={event => event.stopPropagation()}>
                   <div className="flex items-center justify-between gap-4 bg-surface px-4 py-3">
                     <div className="min-w-0">
                       <p className="truncate text-sm font-bold text-text-primary">{previewClip.name}</p>
@@ -11636,9 +11675,9 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onLaunc
               </div>
             )}
 
-            <aside className="flex w-full flex-shrink-0 flex-col rounded-2xl border border-border bg-surface/40">
+            <aside className="flex w-full flex-shrink-0 flex-col rounded-lg border border-border bg-surface/40">
               <div className="border-b border-border bg-white px-4 py-3">
-                <div className={`mb-3 rounded-xl border px-3 py-2.5 ${remainingStoryboardCount || materialQualityIssueCount ? 'border-amber-200 bg-amber-50' : materialQualityCheckingCount ? 'border-blue-200 bg-blue-50' : 'border-emerald-200 bg-emerald-50'}`}>
+                <div className={`mb-3 rounded-lg border px-3 py-2.5 ${remainingStoryboardCount || materialQualityIssueCount ? 'border-amber-200 bg-amber-50' : materialQualityCheckingCount ? 'border-blue-200 bg-blue-50' : 'border-emerald-200 bg-emerald-50'}`}>
                   <div className="flex items-start gap-2">
                     {remainingStoryboardCount || materialQualityIssueCount
                       ? <Clock size={14} className="mt-0.5 shrink-0 text-amber-600" />
@@ -11646,7 +11685,7 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onLaunc
                         ? <Loader2 size={14} className="mt-0.5 shrink-0 animate-spin text-blue-600" />
                         : <Check size={14} className="mt-0.5 shrink-0 text-emerald-600" />}
                     <div className="min-w-0">
-                      <p className="text-xs font-black text-text-primary">
+                      <p className="text-xs font-semibold text-text-primary">
                         {remainingStoryboardCount || materialQualityIssueCount
                           ? `优先处理 ${remainingStoryboardCount + materialQualityIssueCount} 项异常`
                           : materialQualityCheckingCount ? `AI 正在检查 ${materialQualityCheckingCount} 个分镜` : 'AI 已完成素材匹配与质量检查'}
@@ -11668,7 +11707,7 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onLaunc
                       + 空白版本
                     </button>
                     <button type="button" onClick={createMatchedAssembly} disabled={!storyboardSlots.length || !materials.some(item => item.type !== 'audio')}
-                      className="inline-flex items-center gap-1 rounded-lg bg-accent px-2.5 py-1.5 text-[11px] font-black text-white transition hover:brightness-95 disabled:cursor-not-allowed disabled:opacity-40">
+                      className="inline-flex items-center gap-1 rounded-lg bg-accent px-2.5 py-1.5 text-[11px] font-semibold text-white transition hover:brightness-95 disabled:cursor-not-allowed disabled:opacity-40">
                       <Sparkles size={11} />生成新组合
                     </button>
                   </div>
@@ -11686,9 +11725,9 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onLaunc
                         key={item.id}
                         type="button"
                         onClick={() => switchAssembly(item.id)}
-                        className={`flex flex-shrink-0 items-center gap-2 rounded-lg border px-3 py-2 text-left transition ${active ? 'border-accent bg-accent/5 text-accent shadow-sm' : 'border-border bg-white text-text-secondary hover:border-accent/40'}`}
+                        className={`flex flex-shrink-0 items-center gap-2 rounded-lg border px-3 py-2 text-left transition ${active ? 'border-accent bg-accent/5 text-accent shadow-none' : 'border-border bg-white text-text-secondary hover:border-accent/40'}`}
                       >
-                        <span className="text-xs font-black">{active ? assemblyName : item.name}</span>
+                        <span className="text-xs font-semibold">{active ? assemblyName : item.name}</span>
                         <span className={`rounded-full px-1.5 py-0.5 text-[9px] font-bold ${active ? 'bg-accent/10 text-accent' : 'bg-surface-2 text-text-muted'}`}>{storyboardSlots.length ? `${matched}/${storyboardSlots.length}` : '暂无'}</span>
                         <span className="text-[9px] font-semibold text-text-muted">{itemIndex === 0 ? '基准' : `${differentSlots} 镜不同`}</span>
                       </button>
@@ -11704,7 +11743,7 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onLaunc
                     <div className="h-full rounded-full bg-accent transition-all" style={{ width: `${(assignedCount / storyboardSlots.length) * 100}%` }} />
                   </div>
                 )}
-                {storyboardSlots.length > 0 && <div className="mt-3 rounded-xl border p-3">
+                {storyboardSlots.length > 0 && <div className="mt-3 rounded-lg border p-3">
                   <button type="button" disabled={evidenceBusy || savingProj} className="text-xs font-bold" onClick={async () => {
                     if (!projectId) { setModeNotice('请先保存草稿，再检查素材依据。'); return; }
                     setEvidenceBusy(true);
@@ -11724,18 +11763,18 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onLaunc
                   </div>)}
                 </div>}
                 {remainingStoryboardCount > 0 && storyboardSlots.length > 0 && (
-                  <div data-lingshu-guide="ai-storyboard" className="mt-3 rounded-xl border border-amber-200 bg-amber-50 p-3">
+                  <div data-lingshu-guide="ai-storyboard" className="mt-3 rounded-lg border border-amber-200 bg-amber-50 p-3">
                     <div className="flex items-start gap-2">
-                      <span className="flex h-6 w-6 flex-shrink-0 items-center justify-center rounded-full bg-amber-500 text-xs font-black text-white">!</span>
+                      <span className="flex h-6 w-6 flex-shrink-0 items-center justify-center rounded-full bg-amber-500 text-xs font-semibold text-white">!</span>
                       <div className="min-w-0 flex-1">
-                        <p className="text-xs font-black text-amber-950">还剩 {remainingStoryboardCount} 个分镜没有视频</p>
+                        <p className="text-xs font-semibold text-amber-950">还剩 {remainingStoryboardCount} 个分镜没有视频</p>
                       </div>
                     </div>
                     <button
                       type="button"
                       onClick={() => void smartSelectMaterialsFast()}
                       disabled={materialSelectLoading || !materials.some(item => item.type !== 'audio')}
-                      className="mt-3 flex w-full items-center justify-center gap-1.5 rounded-lg bg-amber-500 px-3 py-2 text-xs font-black text-white transition hover:bg-amber-600"
+                      className="mt-3 flex w-full items-center justify-center gap-1.5 rounded-lg bg-amber-500 px-3 py-2 text-xs font-semibold text-white transition hover:bg-amber-600"
                       title="根据分镜语义、素材标签和有效时长在本地即时匹配，不调用大模型"
                     >
                       {materialSelectLoading ? <Loader2 size={13} className="animate-spin" /> : <Sparkles size={13} />}
@@ -11744,16 +11783,16 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onLaunc
                   </div>
                 )}
                 {mode === 'clone' && storyboardReviewComplete && storyboardSlots.length > 0 && (
-                  <div className="mt-3 flex items-center gap-2 rounded-xl border border-green-200 bg-green-50 px-3 py-2.5 text-xs font-black text-green-700">
+                  <div className="mt-3 flex items-center gap-2 rounded-lg border border-green-200 bg-green-50 px-3 py-2.5 text-xs font-semibold text-green-700">
                     <Check size={14} /> 所有分镜已放入视频；素材依据、声音与画质仍需核验
                   </div>
                 )}
               </div>
               <div className="min-h-0 flex-1 overflow-y-auto p-3 space-y-2">
 	                {storyboardSlots.length === 0 && (
-	                  <div className="flex min-h-[240px] flex-col items-center justify-center rounded-xl border border-dashed border-border bg-white px-6 text-center">
+	                  <div className="flex min-h-[240px] flex-col items-center justify-center rounded-lg border border-dashed border-border bg-white px-6 text-center">
 	                    <Film size={28} className="text-text-muted opacity-35" />
-	                    <p className="mt-3 text-sm font-black text-text-primary">暂无分镜</p>
+	                    <p className="mt-3 text-sm font-semibold text-text-primary">暂无分镜</p>
 	                  </div>
 	                )}
 	                {storyboardSlots.map((slot, index) => {
@@ -11788,7 +11827,7 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onLaunc
                           || event.dataTransfer.getData('text/plain');
                         if (clipId) assignClipToSlot(slot.id, clipId);
                       }}
-                      className={`rounded-xl border p-3 transition-all ${activeStoryboardSlot?.id === slot.id ? 'border-accent bg-accent/5 shadow-[0_0_0_1px_rgba(22,163,74,.16)]' : clip ? 'border-green-200 bg-green-50/60' : 'border-dashed border-border bg-white hover:border-accent/50'}`}
+                      className={`rounded-lg border p-3 transition-all ${activeStoryboardSlot?.id === slot.id ? 'border-accent bg-accent/5 shadow-[0_0_0_1px_rgba(22,163,74,.16)]' : clip ? 'border-green-200 bg-green-50/60' : 'border-dashed border-border bg-white hover:border-accent/50'}`}
                     >
                       <div className="flex items-start gap-3">
                         <div className="relative h-16 w-20 shrink-0 overflow-hidden rounded-lg bg-surface-2">
@@ -11884,7 +11923,7 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onLaunc
                                   { key: 'width' as const, label: '产品宽度', value: sourcePlanFor(slot).placementOverride!.productBox.width, max: 1 - sourcePlanFor(slot).placementOverride!.productBox.x },
                                   { key: 'height' as const, label: '产品高度', value: sourcePlanFor(slot).placementOverride!.productBox.height, max: sourcePlanFor(slot).placementOverride!.contactSurfaceY },
                                   { key: 'contactSurfaceY' as const, label: placementScene === 'conveyor' ? '传送带接触线' : '桌面接触线', value: sourcePlanFor(slot).placementOverride!.contactSurfaceY, max: 1 },
-                                ]).map(field => <label key={field.key} className="flex items-center gap-2 text-[9px] text-text-secondary"><span className="w-20 shrink-0">{field.label}</span><input aria-label={`分镜${index + 1}${field.label}`} type="range" disabled={productionFor(slot).locked} min={field.key === 'x' ? 0 : field.key === 'contactSurfaceY' ? sourcePlanFor(slot).placementOverride!.productBox.height : .1} max={field.max} step="0.01" value={field.value} onChange={event => updateStoryboardPlacement(slot, adjustProductPlacement(sourcePlanFor(slot).placementOverride!, field.key, Number(event.target.value)), 'custom')} className="min-w-0 flex-1 accent-emerald-700" /><span className="w-7 text-right tabular-nums">{field.value.toFixed(2)}</span></label>)}
+                                ]).map(field => <label key={field.key} className="flex items-center gap-2 text-[9px] text-text-secondary"><span className="w-20 shrink-0">{field.label}</span><input aria-label={`分镜${index + 1}${field.label}`} type="range" disabled={productionFor(slot).locked} min={field.key === 'x' ? 0 : field.key === 'contactSurfaceY' ? sourcePlanFor(slot).placementOverride!.productBox.height : .1} max={field.max} step="0.01" value={field.value} onChange={event => updateStoryboardPlacement(slot, adjustProductPlacement(sourcePlanFor(slot).placementOverride!, field.key, Number(event.target.value)), 'custom')} className="min-w-0 flex-1 accent-blue-600" /><span className="w-7 text-right tabular-nums">{field.value.toFixed(2)}</span></label>)}
                               </div>}
                             </details>
                           )}
@@ -11899,7 +11938,7 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onLaunc
                             </div>
                           )}
                       {clip ? (
-                        <div className="space-y-2"><div className="flex items-center gap-2 rounded-lg bg-white p-2 shadow-sm">
+                        <div className="space-y-2"><div className="flex items-center gap-2 rounded-lg bg-white p-2 shadow-none">
                           <div className="h-12 w-16 flex-shrink-0 overflow-hidden rounded-md bg-surface-2">
                             {clip.url
                               ? <RealThumb clip={clip} onSourceError={() => { void refreshMaterialSource(clip.id); }} />
@@ -11984,7 +12023,7 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onLaunc
                             type="button"
                             onClick={() => void generateStoryboardShot(slot, { ...sourcePlanFor(slot), mode: 'ai', decided: true, confirmed: false })}
                             disabled={shotGenerating}
-                            className="flex w-full items-center justify-center gap-1 rounded-lg bg-slate-950 px-2 py-1.5 text-[10px] font-black text-white disabled:opacity-50"
+                            className="flex w-full items-center justify-center gap-1 rounded-lg bg-slate-950 px-2 py-1.5 text-[10px] font-semibold text-white disabled:opacity-50"
                           >
                             {shotGenerating ? <Loader2 size={11} className="animate-spin" /> : <Wand2 size={11} />}
                             {shotGenerating ? '首帧生成中…' : '智能生成首帧'}
@@ -12013,7 +12052,7 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onLaunc
                           <p className="font-bold text-text-primary">视频候选质检 · {storyboardQualityChecking[slot.id] ? '检查中' : sourcePlanFor(slot).quality?.passed ? '已通过' : sourcePlanFor(slot).quality?.status === 'needs_review' ? '待人工复核' : sourcePlanFor(slot).quality?.status === 'retry_first_frame' ? '请重做首帧' : sourcePlanFor(slot).quality?.status === 'retry_video' ? '请重做视频' : sourcePlanFor(slot).quality?.status === 'needs_assets' ? '请补充资产' : '待检查'}</p>
                           {sourcePlanFor(slot).quality?.findings?.map((finding, findingIndex) => <p key={`${finding.code}-${findingIndex}`} className="mt-1">{finding.message}{finding.evidenceFrames?.length ? ` · 证据帧 ${finding.evidenceFrames.map(frame => typeof frame === 'number' ? `${frame}s` : typeof frame === 'string' ? frame : frame.seconds != null ? `${frame.seconds}s` : '已记录').join('、')}` : ''}</p>)}
                           {sourcePlanFor(slot).quality?.recommendation && <p className="mt-1">建议：{sourcePlanFor(slot).quality?.recommendation}</p>}
-                          {sourcePlanFor(slot).quality?.status === 'needs_review' && sourcePlanFor(slot).quality?.reportId && <div className="mt-2 flex gap-2"><button type="button" disabled={storyboardQualityChecking[slot.id]} onClick={() => void reviewStoryboardQuality(slot, 'accept')} className="rounded bg-emerald-700 px-2 py-1 font-bold text-white disabled:opacity-50">人工核对通过</button><button type="button" disabled={storyboardQualityChecking[slot.id]} onClick={() => void reviewStoryboardQuality(slot, 'reject')} className="rounded border border-border px-2 py-1 font-bold disabled:opacity-50">拒绝并重做</button></div>}
+                          {sourcePlanFor(slot).quality?.status === 'needs_review' && sourcePlanFor(slot).quality?.reportId && <div className="mt-2 flex gap-2"><button type="button" disabled={storyboardQualityChecking[slot.id]} onClick={() => void reviewStoryboardQuality(slot, 'accept')} className="rounded bg-blue-600 px-2 py-1 font-bold text-white disabled:opacity-50">人工核对通过</button><button type="button" disabled={storyboardQualityChecking[slot.id]} onClick={() => void reviewStoryboardQuality(slot, 'reject')} className="rounded border border-border px-2 py-1 font-bold disabled:opacity-50">拒绝并重做</button></div>}
                         </div>}
                         {sourcePlanFor(slot).error && <p role="alert" className="text-[10px] text-red-600">{sourcePlanFor(slot).error}</p>}
                         {sourcePlanFor(slot).qualityError && <p role="alert" className="text-[10px] text-red-600">{sourcePlanFor(slot).qualityError}</p>}
@@ -12056,7 +12095,6 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onLaunc
         };
         const activeBooleanQualityChecks = Object.entries(activeQualityScript?.qualityChecks || {})
           .filter((entry): entry is [string, boolean] => typeof entry[1] === 'boolean');
-        const referenceAnalysisIncomplete = mode === 'clone' && hasIncompleteReferenceAnalysis(videoKickoff);
         const referenceSpeechLines = groupReferenceSpeechLines((videoKickoff?.referenceAnalysis?.details || []).flatMap(detail => {
           const shotRange = parseCueRange(detail.time);
           const visual = detail.visual || detail.shot || '画面待分析';
@@ -12077,8 +12115,6 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onLaunc
         const measuredVoiceCues = measuredVoiceAlignment
           ? (alignedCuesByLang[activeVoiceLang] || voiceoverAudios[activeVoiceLang]?.cues || [])
           : [];
-        const languageConfigurationRequired = !enterpriseScriptLanguage
-          && modeNotice.includes('企业中心尚未配置首选输出语言或主要业务语言');
         const detectedVoiceLang = detectScriptLanguageCode(voiceoverLines || extractVoiceoverText(script));
         const updatePrimaryScriptContent = (value: string) => {
           const spoken = extractVoiceoverText(value);
@@ -12163,17 +12199,17 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onLaunc
             </div>
 
             {mode === 'clone' && (
-              <section aria-label="爆款复刻口播生产链路" className="mb-4 rounded-2xl border border-border bg-surface p-4">
+              <section aria-label="爆款复刻口播生产链路" className="mb-4 rounded-lg border border-border bg-surface p-4">
                 <div className="mb-3 flex flex-wrap items-start justify-between gap-2">
                   <div>
-                    <p className="text-sm font-black text-text-primary">爆款复刻口播生产链路</p>
+                    <p className="text-sm font-semibold text-text-primary">爆款复刻口播生产链路</p>
                     <p className="mt-1 text-xs text-text-muted">原片粗时间码用于提取话术；新草稿替换品牌、产品等关键词；AI 配音的实测时间码用于成片分镜。</p>
                   </div>
                   <span className="rounded-full bg-surface-2 px-2.5 py-1 text-[10px] font-bold text-text-secondary">{referenceSpeechLines.length} 段原片口播</span>
                 </div>
                 <div className="grid gap-2 lg:grid-cols-3">
-                  <div className="min-w-0 rounded-xl border border-border bg-surface-2 p-3">
-                    <p className="text-xs font-black text-text-primary">1 · 原片口播 · 粗时间码</p>
+                  <div className="min-w-0 rounded-lg border border-border bg-surface-2 p-3">
+                    <p className="text-xs font-semibold text-text-primary">1 · 原片口播 · 粗时间码</p>
                     <div className="mt-2 max-h-52 space-y-2 overflow-y-auto">
                       {referenceSpeechLines.length ? referenceSpeechLines.map((line, index) => (
                         <div key={`${line.time}-${index}`} className="rounded-lg bg-white p-2 text-[11px] leading-5 text-text-secondary">
@@ -12183,8 +12219,8 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onLaunc
                       )) : <p className="text-[11px] text-text-muted">等待编导自动提取原片口播。</p>}
                     </div>
                   </div>
-                  <div className="min-w-0 rounded-xl border border-border bg-surface-2 p-3">
-                    <p className="text-xs font-black text-text-primary">2 · 新创作草稿 · 关键词替换</p>
+                  <div className="min-w-0 rounded-lg border border-border bg-surface-2 p-3">
+                    <p className="text-xs font-semibold text-text-primary">2 · 新创作草稿 · 关键词替换</p>
                     <div className="mt-2 max-h-52 space-y-2 overflow-y-auto">
                       {draftSpeechLines.length ? draftSpeechLines.map((line, index) => (
                         <p key={`${line.time}-${index}`} className="text-[11px] leading-5 text-text-secondary"><span className="font-mono font-bold text-text-muted">{line.time}</span> {line.text}</p>
@@ -12193,8 +12229,8 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onLaunc
                       )) : <p className="text-[11px] text-text-muted">生成分镜脚本后，系统沿用原片口播并替换企业关键词。</p>}
                     </div>
                   </div>
-                  <div className="min-w-0 rounded-xl border border-border bg-surface-2 p-3">
-                    <p className="text-xs font-black text-text-primary">3 · AI 配音 · 实测时间码与分镜</p>
+                  <div className="min-w-0 rounded-lg border border-border bg-surface-2 p-3">
+                    <p className="text-xs font-semibold text-text-primary">3 · AI 配音 · 实测时间码与分镜</p>
                     <p className="mt-1 text-[10px] text-text-muted">{measuredVoiceCues.length ? `已取得 ${measuredVoiceCues.length} 条实测口播时间码` : voiceoverAudios[activeVoiceLang]?.url ? '配音已生成，句级实测对齐待完成' : '等待 AI 配音；原片粗时间码不会冒充成片时间码'}</p>
                     <div className="mt-2 max-h-44 space-y-2 overflow-y-auto">
                       {measuredVoiceCues.map((cue, index) => {
@@ -12207,7 +12243,7 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onLaunc
               </section>
             )}
 
-            <div className={`mb-4 flex flex-wrap items-center justify-between gap-3 rounded-2xl border px-4 py-3 ${activeQualityStatus === 'rejected' || activeQualityStatus === 'failed' ? 'border-red-200 bg-red-50' : activeQualityWarnings.length || activeQualityIssues.length ? 'border-amber-200 bg-amber-50' : 'border-emerald-200 bg-emerald-50'}`}>
+            <div className={`mb-4 flex flex-wrap items-center justify-between gap-3 rounded-lg border px-4 py-3 ${activeQualityStatus === 'rejected' || activeQualityStatus === 'failed' ? 'border-red-200 bg-red-50' : activeQualityWarnings.length || activeQualityIssues.length ? 'border-amber-200 bg-amber-50' : 'border-emerald-200 bg-emerald-50'}`}>
               <div className="flex items-center gap-2">
                 {activeQualityStatus === 'rejected' || activeQualityStatus === 'failed'
                   ? <X size={15} className="text-red-600" />
@@ -12215,7 +12251,7 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onLaunc
                     ? <Clock size={15} className="text-amber-600" />
                     : <Check size={15} className="text-emerald-600" />}
                 <div>
-                  <p className="text-xs font-black text-text-primary">
+                  <p className="text-xs font-semibold text-text-primary">
                     {activeQualityStatus === 'rejected' || activeQualityStatus === 'failed'
                       ? '分镜质量未通过，请先处理异常'
                       : activeQualityWarnings.length || activeQualityIssues.length
@@ -12224,7 +12260,7 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onLaunc
                   </p>
                 </div>
               </div>
-              {typeof activeCoveragePercent === 'number' && <span className="rounded-full bg-white px-2.5 py-1 text-[10px] font-black text-text-secondary">素材覆盖 {Math.round(activeCoveragePercent)}%</span>}
+              {typeof activeCoveragePercent === 'number' && <span className="rounded-full bg-white px-2.5 py-1 text-[10px] font-semibold text-text-secondary">素材覆盖 {Math.round(activeCoveragePercent)}%</span>}
             </div>
 
             <div className="mb-4 grid gap-2 md:grid-cols-3">
@@ -12234,21 +12270,21 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onLaunc
               { id: 'audio' as const, number: 3, title: '声音', done: voiceoverMode === 'none' || hasAnyVoiceover || (voiceoverMode === 'upload' && Boolean(voiceoverUrl)) },
             ]).filter(item => scriptStageTab !== 'theme' || item.id === 'theme').map(item => (
                 <button type="button" key={item.number} onClick={() => setScriptStageTab(item.id)}
-                  className={`rounded-xl border px-3 py-3 text-left transition ${scriptStageTab === item.id ? 'border-accent bg-accent/5 shadow-sm' : item.done ? 'border-accent/20 bg-surface hover:border-accent/40' : 'border-border bg-surface-2 hover:border-border-bright'}`}>
+                  className={`rounded-lg border px-3 py-3 text-left transition ${scriptStageTab === item.id ? 'border-accent bg-accent/5 shadow-none' : item.done ? 'border-accent/20 bg-surface hover:border-accent/40' : 'border-border bg-surface-2 hover:border-border-bright'}`}>
                   <div className="flex items-center gap-2">
-                    <span className={`flex h-6 w-6 items-center justify-center rounded-full text-[10px] font-black ${item.done ? 'bg-accent text-white' : scriptStageTab === item.id ? 'border border-accent text-accent' : 'bg-white text-text-muted'}`}>
+                    <span className={`flex h-6 w-6 items-center justify-center rounded-full text-[10px] font-semibold ${item.done ? 'bg-accent text-white' : scriptStageTab === item.id ? 'border border-accent text-accent' : 'bg-white text-text-muted'}`}>
                       {item.done ? <Check size={12} /> : item.number}
                     </span>
-                    <p className="text-xs font-black text-text-primary">{item.title}</p>
+                    <p className="text-xs font-semibold text-text-primary">{item.title}</p>
                   </div>
                 </button>
               ))}
             </div>
             {scriptStageTab === 'theme' && (
-              <div className="mb-4 rounded-2xl border border-border bg-surface p-4">
+              <div className="mb-4 rounded-lg border border-border bg-surface p-4">
                 <div className="flex flex-wrap items-end justify-between gap-3">
                   <label className="min-w-[220px] flex-1">
-                    <span className="mb-1.5 block text-xs font-black text-text-primary">创作方案</span>
+                    <span className="mb-1.5 block text-xs font-semibold text-text-primary">创作方案</span>
                     <span className="relative block">
                       <select
                         value={videoThemeId}
@@ -12259,27 +12295,27 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onLaunc
                           setThemeConversionGoal(DEFAULT_VIDEO_CONVERSION_GOAL);
                           if (script.trim()) setModeNotice(`主题已切换为“${nextTheme.title}”，请重新生成分镜。`);
                         }}
-                        className="h-10 w-full appearance-none rounded-xl border border-border bg-surface-2 px-3 pr-9 text-sm font-semibold text-text-primary outline-none focus:border-accent"
+                        className="h-10 w-full appearance-none rounded-lg border border-border bg-surface-2 px-3 pr-9 text-sm font-semibold text-text-primary outline-none focus:border-accent"
                       >
                         {VIDEO_THEMES.map(theme => <option key={theme.id} value={theme.id}>{theme.title}</option>)}
                       </select>
                       <ChevronDown size={15} className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-text-muted" />
                     </span>
                   </label>
-                  <span className="rounded-full bg-accent/10 px-2.5 py-1.5 text-[10px] font-black text-accent">AI 策略已匹配</span>
+                  <span className="rounded-full bg-accent/10 px-2.5 py-1.5 text-[10px] font-semibold text-accent">AI 策略已匹配</span>
                 </div>
                 {themeUnavailableReason(activeVideoTheme) && (
-                  <div className="mt-4 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-amber-200 bg-amber-50 px-3 py-3">
+                  <div className="mt-4 flex flex-wrap items-center justify-between gap-3 rounded-lg border border-amber-200 bg-amber-50 px-3 py-3">
                     <div>
-                      <p className="text-xs font-black text-amber-900">缺少：{themeUnavailableReason(activeVideoTheme)}</p>
+                      <p className="text-xs font-semibold text-amber-900">缺少：{themeUnavailableReason(activeVideoTheme)}</p>
                       <p className="mt-1 text-[11px] text-amber-700">当前可先生成：产品识别 + 钩子结构</p>
                     </div>
                     <div className="flex gap-2">
-                      <button type="button" onClick={() => setStepIdx(STEPS.findIndex(item => item.id === 'material'))} className="rounded-lg border border-amber-300 bg-white px-3 py-2 text-[11px] font-black text-amber-800">选择其他素材</button>
+                      <button type="button" onClick={() => setStepIdx(STEPS.findIndex(item => item.id === 'material'))} className="rounded-lg border border-amber-300 bg-white px-3 py-2 text-[11px] font-semibold text-amber-800">选择其他素材</button>
                       <button type="button" onClick={() => {
                         createScriptGapTask({ title: themeUnavailableReason(activeVideoTheme), productLabel: activeProductLabel || '当前产品', themeTitle: activeVideoTheme.title, shotBrief: `补拍可用于“${activeVideoTheme.title}”的${themeUnavailableReason(activeVideoTheme)}镜头`, suggestedDurationSec: 3, sourceProjectId: projectId || undefined, sourceStoryboardSlotId: activeStoryboardSlotId || undefined });
                         setModeNotice('已创建建议补拍任务，可在灵感中心 → 拍摄任务查看。');
-                      }} className="rounded-lg bg-amber-600 px-3 py-2 text-[11px] font-black text-white">创建建议补拍</button>
+                      }} className="rounded-lg bg-amber-600 px-3 py-2 text-[11px] font-semibold text-white">创建建议补拍</button>
                     </div>
                   </div>
                 )}
@@ -12289,19 +12325,19 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onLaunc
             {(scriptStageTab === 'theme' || scriptStageTab === 'script') && (
             <>
             {videoKickoff?.source === 'inspiration_person_replace' && (
-              <div className="mb-4 rounded-xl border border-violet-200 bg-violet-50 p-4 text-xs">
+              <div className="mb-4 rounded-lg border border-violet-200 bg-violet-50 p-4 text-xs">
                 <p className="font-bold">爆款复刻 · 分镜人物制作</p>
                 <p className="mt-2">原片分析已带入。请在具体分镜的「选择数字人」中核对原句、人物、动作与场景，再确认制作要求。</p>
                 <p className="mt-1 text-text-muted">参考人物制作当前仅支持方案预览；人物口播沿用已接通的生成能力。</p>
               </div>
             )}
-            <div className="mb-4 rounded-2xl border border-border bg-surface p-4">
+            <div className="mb-4 rounded-lg border border-border bg-surface p-4">
               <div className="flex flex-wrap items-center justify-between gap-3">
                 <div>
-                  <p className="text-sm font-black text-text-primary">分镜内容</p>
+                  <p className="text-sm font-semibold text-text-primary">分镜内容</p>
                   <p className="mt-1 text-xs text-text-muted">{script.trim() ? '已生成，可直接检查和修改' : '确认后由 AI 生成首版分镜'}</p>
                 </div>
-                <span className={`rounded-full px-2.5 py-1 text-[10px] font-black ${modeActionLoading ? 'bg-amber-50 text-amber-700' : script.trim() ? 'bg-emerald-50 text-emerald-700' : 'bg-surface-2 text-text-muted'}`}>
+                <span className={`rounded-full px-2.5 py-1 text-[10px] font-semibold ${modeActionLoading ? 'bg-amber-50 text-amber-700' : script.trim() ? 'bg-emerald-50 text-emerald-700' : 'bg-surface-2 text-text-muted'}`}>
                   {modeActionLoading ? (modeActionStatus || '生成中') : script.trim() ? '已生成' : '待生成'}
                 </span>
               </div>
@@ -12310,38 +12346,8 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onLaunc
                   当前为旧版草稿，未保存对标逐镜分析；请返回灵感中心完成全片精确分析后再生成脚本。
                 </p>
               )}
-              {modeNotice && (
-                <div
-                  role="status"
-                  aria-live="polite"
-                  className="mt-3 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-[11px] font-semibold leading-relaxed text-amber-800"
-                >
-                  <span className="min-w-0 flex-1">{modeNotice}</span>
-                  {referenceAnalysisIncomplete && (
-                    <button
-                      type="button"
-                      onClick={() => onNavigate?.('socialInspiration')}
-                      className="shrink-0 rounded-lg border border-amber-300 bg-white px-3 py-1.5 text-[10px] font-black text-amber-800 hover:bg-amber-100"
-                    >
-                      返回灵感中心补全分析
-                    </button>
-                  )}
-                  {languageConfigurationRequired && (
-                    <button
-                      type="button"
-                      onClick={() => {
-                        window.sessionStorage.setItem('lingshu:enterprise-focus', 'language-settings');
-                        onNavigate?.('enterprise');
-                      }}
-                      className="shrink-0 rounded-lg border border-amber-300 bg-white px-3 py-1.5 text-[10px] font-black text-amber-800 hover:bg-amber-100"
-                    >
-                      前往企业中心配置
-                    </button>
-                  )}
-                </div>
-              )}
               {activeQualityScript && (activeQualityStatus || activeQualityWarnings.length > 0 || activeCoveragePercent !== undefined) && (
-                <div className={`mt-3 rounded-xl border px-3 py-3 ${
+                <div className={`mt-3 rounded-lg border px-3 py-3 ${
                   activeQualityStatus === 'rejected' || activeQualityStatus === 'failed'
                     ? 'border-rose-200 bg-rose-50'
                     : activeQualityStatus === 'needs_material'
@@ -12351,7 +12357,7 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onLaunc
                       : 'border-emerald-200 bg-emerald-50'
                 }`}>
                   <div className="flex flex-wrap items-center justify-between gap-2">
-                    <p className={`text-xs font-black ${activeQualityStatus === 'rejected' || activeQualityStatus === 'failed' ? 'text-rose-900' : activeQualityStatus === 'needs_material' ? 'text-amber-900' : activeQualityStatus === 'passed_with_warnings' || activeQualityStatus === 'warning' || activeQualityWarnings.length ? 'text-sky-900' : 'text-emerald-900'}`}>
+                    <p className={`text-xs font-semibold ${activeQualityStatus === 'rejected' || activeQualityStatus === 'failed' ? 'text-rose-900' : activeQualityStatus === 'needs_material' ? 'text-amber-900' : activeQualityStatus === 'passed_with_warnings' || activeQualityStatus === 'warning' || activeQualityWarnings.length ? 'text-sky-900' : 'text-emerald-900'}`}>
                       {activeQualityStatus === 'rejected' || activeQualityStatus === 'failed'
                         ? '草稿已生成待人工审核'
                         : activeQualityStatus === 'needs_material'
@@ -12361,7 +12367,7 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onLaunc
                           : '脚本质量检查通过'}
                     </p>
                     {activeCoveragePercent !== undefined && (
-                      <span className="rounded-lg bg-white px-2 py-1 text-[10px] font-black text-amber-800 shadow-sm">
+                      <span className="rounded-lg bg-white px-2 py-1 text-[10px] font-semibold text-amber-800 shadow-none">
                         素材覆盖 {Math.round(activeCoveragePercent)}%
                       </span>
                     )}
@@ -12422,10 +12428,10 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onLaunc
             )}
 
             {scriptStageTab === 'voiceover' && (
-            <div className="mb-5 rounded-2xl border border-border bg-surface p-4">
+            <div className="mb-5 rounded-lg border border-border bg-surface p-4">
               <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
                 <div>
-                  <p className="text-sm font-black text-text-primary">提取口播与多语种字幕</p>
+                  <p className="text-sm font-semibold text-text-primary">提取口播与多语种字幕</p>
                   <p className="mt-1 text-xs text-text-muted">从时间戳脚本里提取口播台词，保留时间段，再生成不同语种版本。</p>
                 </div>
                 <div className="flex items-center gap-2">
@@ -12433,7 +12439,7 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onLaunc
                     type="button"
                     onClick={() => void generateVoiceDrafts()}
                     disabled={voiceDraftLoading || !hasTimestampScript || !voiceLangs.length}
-                    className="inline-flex items-center gap-1.5 rounded-xl bg-accent px-3 py-2 text-xs font-bold text-white disabled:opacity-60"
+                    className="inline-flex items-center gap-1.5 rounded-lg bg-accent px-3 py-2 text-xs font-bold text-white disabled:opacity-60"
                   >
                     {voiceDraftLoading ? <Loader2 size={12} className="animate-spin" /> : <Sparkles size={12} />}
                     {voiceDraftLoading ? `翻译中 ${voiceLangs.length - voiceDraftPendingLangs.length}/${voiceLangs.length}` : '提取口播并翻译'}
@@ -12442,15 +12448,15 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onLaunc
                     <button
                       type="button"
                       onClick={cancelVoiceDraftGeneration}
-                      className="inline-flex items-center gap-1 rounded-xl border border-border bg-white px-3 py-2 text-xs font-bold text-text-secondary hover:border-red-200 hover:text-red-600"
+                      className="inline-flex items-center gap-1 rounded-lg border border-border bg-white px-3 py-2 text-xs font-bold text-text-secondary hover:border-red-200 hover:text-red-600"
                     >
                       <X size={12} /> 取消
                     </button>
                   )}
                 </div>
               </div>
-              <div className="flex flex-wrap items-center gap-2 rounded-xl border border-accent/20 bg-accent-glow px-3 py-2">
-                <span className="text-[10px] font-black text-accent">企业中心语种</span>
+              <div className="flex flex-wrap items-center gap-2 rounded-lg border border-accent/20 bg-accent-glow px-3 py-2">
+                <span className="text-[10px] font-semibold text-accent">企业中心语种</span>
                 {voiceLangs.length ? voiceLangs.map(code => (
                   <button
                     key={code}
@@ -12469,7 +12475,7 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onLaunc
                 )}
               </div>
               {voiceDraftNotice && (
-                <div className={`mt-3 rounded-xl border px-3 py-2 text-xs font-semibold ${
+                <div className={`mt-3 rounded-lg border px-3 py-2 text-xs font-semibold ${
                   voiceDraftNotice.includes('失败') || voiceDraftNotice.includes('没有可提取')
                     ? 'border-red-100 bg-red-50 text-red-600'
                     : voiceDraftNotice.includes('取消') || voiceDraftNotice.includes('超时')
@@ -12519,7 +12525,7 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onLaunc
                     }}
                     rows={6}
                     dir={activeVoiceLang === 'ar' ? 'rtl' : 'ltr'}
-                    className="w-full rounded-xl border border-border bg-surface-2 p-3 font-mono text-sm leading-7 text-text-secondary outline-none focus:border-accent resize-none"
+                    className="w-full rounded-lg border border-border bg-surface-2 p-3 font-mono text-sm leading-7 text-text-secondary outline-none focus:border-accent resize-none"
                   />
                   {voiceDraftStaleLangs.includes(activeVoiceLang) && (
                     <p className="text-xs font-semibold text-amber-700">主脚本已更新，此语言版本尚未同步。点击上方“提取口播并翻译”会重新本地化。</p>
@@ -12535,7 +12541,7 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onLaunc
                 onChange={e => { void handleVoiceoverUpload(e.target.files); e.target.value = ''; }} />
               <input ref={voiceSampleInputRef} type="file" accept=".mp3,.wav,.m4a,audio/mpeg,audio/wav,audio/x-wav,audio/mp4" className="hidden"
                 onChange={e => { void handleVoiceSampleUpload(e.target.files); e.target.value = ''; }} />
-              <div className="inline-flex max-w-full flex-wrap gap-1 rounded-xl border border-border bg-surface-2 p-1">
+              <div className="inline-flex max-w-full flex-wrap gap-1 rounded-lg border border-border bg-surface-2 p-1">
                 {[
                   { id: 'none' as const, icon: <X size={15} />, title: '不配音', desc: '仅保留画面与字幕' },
                   { id: 'ai' as const, icon: <Mic size={15} />, title: 'AI 配音', desc: '按当前语种生成口播' },
@@ -12549,10 +12555,10 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onLaunc
                       if (option.id === 'ai') setVoiceoverMode('ai');
                       if (option.id === 'upload') voiceoverInputRef.current?.click();
                     }}
-                    className={`flex items-center gap-2 rounded-lg px-3 py-2 text-left transition-all ${voiceoverMode === option.id ? 'bg-white text-text-primary shadow-sm' : 'text-text-muted hover:text-text-secondary'}`}
+                    className={`flex items-center gap-2 rounded-lg px-3 py-2 text-left transition-all ${voiceoverMode === option.id ? 'bg-white text-text-primary shadow-none' : 'text-text-muted hover:text-text-secondary'}`}
                   >
                     <div className="flex h-6 w-6 items-center justify-center rounded-md"
-                      style={{ background: voiceoverMode === option.id ? TRAFFIC_GREEN : 'transparent', color: voiceoverMode === option.id ? '#fff' : 'var(--color-text-muted)' }}>
+                      style={{ background: voiceoverMode === option.id ? STUDIO_ACCENT : 'transparent', color: voiceoverMode === option.id ? '#fff' : 'var(--color-text-muted)' }}>
                       {option.icon}
                     </div>
                     <span>
@@ -12581,21 +12587,21 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onLaunc
                             setCustomVoiceId(stored?.voiceId || ''); setCustomVoiceName(stored?.name || ''); setCustomVoiceUrl(stored?.url || '');
                             pickVoice(nextActive);
                           }
-                        }} className={`rounded-xl border px-3 py-2 text-left text-xs transition ${activeCandidate ? 'border-accent bg-accent/10 text-accent' : selectedCandidate ? 'border-accent/40 bg-white text-text-primary' : 'border-border bg-white text-text-muted'}`}>
+                        }} className={`rounded-lg border px-3 py-2 text-left text-xs transition ${activeCandidate ? 'border-accent bg-accent/10 text-accent' : selectedCandidate ? 'border-accent/40 bg-white text-text-primary' : 'border-border bg-white text-text-muted'}`}>
                           <span className="block font-bold">{item.name}</span><span className="mt-0.5 block text-[9px] opacity-70">{item.tag}{activeCandidate ? ' · 当前试听' : ''}</span>
                         </button>;
                       })}
                     </div>
                   </div>
                   <button type="button" onClick={openVoiceSamplePicker}
-                    className="inline-flex h-10 items-center gap-1.5 rounded-xl border border-border bg-white px-3 text-xs font-bold text-text-secondary hover:border-accent hover:text-accent">
+                    className="inline-flex h-10 items-center gap-1.5 rounded-lg border border-border bg-white px-3 text-xs font-bold text-text-secondary hover:border-accent hover:text-accent">
                     <Plus size={13} />增加新音色
                   </button>
                 </div>
               )}
 
               {voiceoverMode === 'ai' && (
-                <details data-lingshu-guide="ai-voice" className="group mt-3 max-w-2xl rounded-xl border border-border bg-surface-2">
+                <details data-lingshu-guide="ai-voice" className="group mt-3 max-w-2xl rounded-lg border border-border bg-surface-2">
                   <summary className="flex cursor-pointer list-none items-center justify-between px-4 py-3 text-xs font-bold text-text-secondary [&::-webkit-details-marker]:hidden">
                     <span>高级配音设置</span>
                     <span className="flex items-center gap-2 text-[10px] font-medium text-text-muted">
@@ -12606,7 +12612,7 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onLaunc
                   <div className="border-t border-border p-4">
                   <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
                     <div>
-                      <p className="text-xs font-black text-text-primary">表达方式与目标时长</p>
+                      <p className="text-xs font-semibold text-text-primary">表达方式与目标时长</p>
                       <p className="mt-0.5 text-[10px] font-bold text-text-muted">当前：{LANGS.find(item => item.code === activeVoiceLang)?.label || activeVoiceLang} · 约 {duration}s</p>
                     </div>
                     <select value={ttsPreset} onChange={e => applyTtsPreset(e.target.value as TtsStyleOptions['preset'])}
@@ -12615,7 +12621,7 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onLaunc
                     </select>
                   </div>
                   {mode === 'clone' && referenceVoice.available && (
-                    <div className="mb-3 flex flex-wrap items-center gap-2 rounded-xl border border-accent/20 bg-accent/5 px-3 py-2">
+                    <div className="mb-3 flex flex-wrap items-center gap-2 rounded-lg border border-accent/20 bg-accent/5 px-3 py-2">
                       <span className="text-[10px] font-bold text-text-primary">爆款复刻专属</span>
                       <button type="button" onClick={toggleReferenceVoiceStyle}
                         className={`rounded-lg px-2.5 py-1 text-[10px] font-bold ${useReferenceVoiceStyle ? 'bg-accent text-white' : 'border border-border bg-white text-text-muted'}`}>
@@ -12633,12 +12639,12 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onLaunc
                     <label className="block">
                       <span className="mb-1 flex justify-between text-[10px] font-bold text-text-muted"><span>情绪强度</span><span>{ttsEmotionIntensity}%</span></span>
                       <input type="range" min={0} max={100} value={ttsEmotionIntensity}
-                        onChange={e => { setTtsEmotionIntensity(+e.target.value); setVoiceoverUrl(null); }} className="w-full accent-[#16a34a]" />
+                        onChange={e => { setTtsEmotionIntensity(+e.target.value); setVoiceoverUrl(null); }} className="w-full accent-blue-600" />
                     </label>
                     <label className="block">
                       <span className="mb-1 flex justify-between text-[10px] font-bold text-text-muted"><span>语速</span><span>{ttsSpeed.toFixed(2)}x</span></span>
                       <input type="range" min={75} max={135} value={Math.round(ttsSpeed * 100)}
-                        onChange={e => { setTtsSpeed(+e.target.value / 100); setVoiceoverUrl(null); }} className="w-full accent-[#16a34a]" />
+                        onChange={e => { setTtsSpeed(+e.target.value / 100); setVoiceoverUrl(null); }} className="w-full accent-blue-600" />
                     </label>
                   </div>
                   <div className="mt-3 grid gap-3 md:grid-cols-2">
@@ -12659,7 +12665,7 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onLaunc
                       <span className="mt-1 block text-[10px] leading-relaxed text-text-muted">逐字母读用空格分开；连读就写近似音节，例如 GUIANFA=gui-an-fa。重新生成配音后生效。</span>
                     </label>
                   </div>
-                  <div className={`mt-3 rounded-xl border px-3 py-2 text-[10px] leading-relaxed ${audioCapabilities?.customVoice.synthesis ? 'border-accent/20 bg-accent/5 text-accent' : 'border-amber-200 bg-amber-50 text-amber-700'}`}>
+                  <div className={`mt-3 rounded-lg border px-3 py-2 text-[10px] leading-relaxed ${audioCapabilities?.customVoice.synthesis ? 'border-accent/20 bg-accent/5 text-accent' : 'border-amber-200 bg-amber-50 text-amber-700'}`}>
                     <div className="flex flex-wrap items-center justify-between gap-2">
                       <span>{audioCapabilities?.customVoice.message || '正在检测品牌音色引擎…'}</span>
                       <button type="button" onClick={() => void diagnoseMinimax()} disabled={minimaxDiagnosing || !audioCapabilities?.minimax?.configured}
@@ -12675,8 +12681,8 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onLaunc
 
               <div className="mt-3 flex flex-wrap items-center gap-2 max-w-xl">
                 {voiceoverMode === 'ai' && voiceLangs.length > 1 && Object.keys(voiceDrafts).length > 0 && (
-                  <div className="basis-full mb-1 flex flex-wrap items-center gap-2 rounded-xl border border-border bg-surface-2 p-2">
-                    <span className="px-1 text-[10px] font-black text-text-muted">试听语种</span>
+                  <div className="basis-full mb-1 flex flex-wrap items-center gap-2 rounded-lg border border-border bg-surface-2 p-2">
+                    <span className="px-1 text-[10px] font-semibold text-text-muted">试听语种</span>
                     <div className="flex flex-wrap gap-1">
                       {voiceLangs.map(code => {
                         const hasAudio = Boolean(voiceoverAudios[code]?.url);
@@ -12710,7 +12716,7 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onLaunc
 	                    onClick={() => void genTts()}
 	                    disabled={ttsLoading || !hasRequestedVoiceDrafts || (voice.startsWith('custom:') && audioCapabilities?.customVoice.synthesis === false)}
 	                    aria-busy={batchTtsLoading}
-	                    className="inline-flex min-w-[214px] items-center justify-center gap-1.5 rounded-xl bg-accent px-3 py-2 text-xs font-bold text-white disabled:opacity-60"
+	                    className="inline-flex min-w-[214px] items-center justify-center gap-1.5 rounded-lg bg-accent px-3 py-2 text-xs font-bold text-white disabled:opacity-60"
 	                  >
 	                    {batchTtsLoading ? <Loader2 size={12} className="animate-spin" /> : <Mic size={13} />}
 	                    {batchTtsLoading ? `正在生成 ${voiceLangs.length || 1} 个语种试听配音…` : `生成 ${voiceLangs.length || 1} 个语种试听配音`}
@@ -12720,7 +12726,7 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onLaunc
                   <button type="button" onClick={() => void genTts(activeVoiceLang)}
                     disabled={ttsLoading || !voiceDrafts[activeVoiceLang]?.trim() || (voice.startsWith('custom:') && audioCapabilities?.customVoice.synthesis === false)}
                     aria-busy={singleTtsLoading}
-                    className={`inline-flex min-w-[154px] items-center justify-center gap-1.5 rounded-xl border px-3 py-2 text-xs font-bold transition disabled:opacity-50 ${singleTtsLoading ? 'border-accent bg-accent text-white' : 'border-accent text-accent'}`}>
+                    className={`inline-flex min-w-[154px] items-center justify-center gap-1.5 rounded-lg border px-3 py-2 text-xs font-bold transition disabled:opacity-50 ${singleTtsLoading ? 'border-accent bg-accent text-white' : 'border-accent text-accent'}`}>
                     {singleTtsLoading ? <Loader2 size={12} className="animate-spin" /> : <Languages size={13} />}
                     {singleTtsLoading ? '正在生成当前语言…' : '只生成当前语言'}
                   </button>
@@ -12732,14 +12738,14 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onLaunc
 	                  <button
 	                    onClick={() => voiceoverInputRef.current?.click()}
                     disabled={ttsLoading}
-                    className="inline-flex items-center gap-1.5 rounded-xl bg-accent px-3 py-2 text-xs font-bold text-white disabled:opacity-60"
+                    className="inline-flex items-center gap-1.5 rounded-lg bg-accent px-3 py-2 text-xs font-bold text-white disabled:opacity-60"
                   >
                     {ttsLoading ? <Loader2 size={12} className="animate-spin" /> : <Upload size={13} />}
 	                    {uploadedVoiceName ? '重新上传音频' : '上传本地音频'}
 	                  </button>
 	                )}
                 {voiceoverMode === 'ai' && voice.startsWith('custom:') && customVoiceName && (
-                  <div className="basis-full rounded-xl border border-accent/20 bg-accent-glow px-3 py-2 text-xs font-semibold text-accent">
+                  <div className="basis-full rounded-lg border border-accent/20 bg-accent-glow px-3 py-2 text-xs font-semibold text-accent">
                     当前使用真人音色：{customVoiceName}{customVoiceUrl ? '。' : '。'} 跨语言可保持品牌声线，但与录音语言不同的版本可能带原语言口音，建议逐语种试听确认。
                   </div>
                 )}
@@ -12747,7 +12753,7 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onLaunc
                   <button
                     type="button"
                     onClick={toggleTts}
-                    className="inline-flex items-center gap-1.5 rounded-xl border border-border px-3 py-2 text-xs font-bold text-text-secondary hover:text-text-primary"
+                    className="inline-flex items-center gap-1.5 rounded-lg border border-border px-3 py-2 text-xs font-bold text-text-secondary hover:text-text-primary"
                   >
                     {ttsPlaying ? <Pause size={12} /> : <Play size={12} />}
                     {ttsPlaying ? '暂停音频' : '只听配音'}
@@ -12765,17 +12771,17 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onLaunc
               <audio ref={ttsAudioRef} onEnded={() => setTtsPlaying(false)} className="hidden" />
             </Field>
             {voiceoverUrl && (
-              <div id="subtitle-effect-preview" className="mt-5 scroll-mt-5 rounded-2xl border border-border bg-surface p-4">
+              <div id="subtitle-effect-preview" className="mt-5 scroll-mt-5 rounded-lg border border-border bg-surface p-4">
                 <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
                   <div>
-                    <p className="text-sm font-black text-text-primary">分镜画面 + AI 口播同步确认</p>
+                    <p className="text-sm font-semibold text-text-primary">分镜画面 + AI 口播同步确认</p>
                     <p className="mt-1 text-xs text-text-muted">
                       当前 {langZh(activeVoiceLang) || activeVoiceLang} · 录音 {voiceoverDur || 0}s · 字幕 {cues.length} 条 · 素材 {selectedClips.length} 段
                     </p>
                   </div>
                   <div className="flex flex-wrap justify-end gap-2">
                     {voiceoverMode === 'ai' && voiceLangs.length > 1 && (
-                      <div className="flex flex-wrap gap-1 rounded-xl bg-surface-2 p-1">
+                      <div className="flex flex-wrap gap-1 rounded-lg bg-surface-2 p-1">
                         {voiceLangs.map(code => {
                           const hasAudio = Boolean(voiceoverAudios[code]?.url);
                           return (
@@ -12792,25 +12798,25 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onLaunc
                         })}
                       </div>
                     )}
-                    {productionAudioUrl && <button type="button" disabled={ttsLoading} onClick={() => void refreshQwenAsr()} className="rounded-xl border px-3 py-2 text-xs font-bold disabled:opacity-50">千问转写/刷新（已有结果免费复用）</button>}
+                    {productionAudioUrl && <button type="button" disabled={ttsLoading} onClick={() => void refreshQwenAsr()} className="rounded-lg border px-3 py-2 text-xs font-bold disabled:opacity-50">千问转写/刷新（已有结果免费复用）</button>}
                     <button onClick={() => downloadSubtitleFile(cues, 'srt', activeVoiceLang)}
-                      className="inline-flex items-center gap-1.5 rounded-xl border border-border px-3 py-2 text-xs font-bold text-text-secondary">
+                      className="inline-flex items-center gap-1.5 rounded-lg border border-border px-3 py-2 text-xs font-bold text-text-secondary">
                       <Download size={12} /> SRT
                     </button>
                     <button onClick={() => downloadSubtitleFile(cues, 'vtt', activeVoiceLang)}
-                      className="inline-flex items-center gap-1.5 rounded-xl border border-border px-3 py-2 text-xs font-bold text-text-secondary">
+                      className="inline-flex items-center gap-1.5 rounded-lg border border-border px-3 py-2 text-xs font-bold text-text-secondary">
                       <Download size={12} /> VTT
                     </button>
                     <button
                       onClick={startVoiceAssemblyPreview}
-                      className="inline-flex items-center gap-1.5 rounded-xl bg-accent px-3 py-2 text-xs font-bold text-white"
+                      className="inline-flex items-center gap-1.5 rounded-lg bg-accent px-3 py-2 text-xs font-bold text-white"
                     >
                       <Play size={12} /> 播放预览
                     </button>
                     {voicePreviewIdx !== null && (
                       <button
                         onClick={stopVoiceAssemblyPreview}
-                        className="inline-flex items-center gap-1.5 rounded-xl border border-border px-3 py-2 text-xs font-bold text-text-secondary"
+                        className="inline-flex items-center gap-1.5 rounded-lg border border-border px-3 py-2 text-xs font-bold text-text-secondary"
                       >
                         <X size={12} /> 停止
                       </button>
@@ -12818,7 +12824,7 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onLaunc
                   </div>
                 </div>
                 <div className="grid min-w-0 grid-cols-1 gap-4">
-                  <div className="relative overflow-hidden rounded-2xl border border-border bg-black" style={{ aspectRatio: '9 / 16' }}>
+                  <div className="relative overflow-hidden rounded-lg border border-border bg-black" style={{ aspectRatio: '9 / 16' }}>
                     {voicePreviewIdx !== null && previewable[voicePreviewIdx] ? (
                       <video
                         src={previewable[voicePreviewIdx].url}
@@ -12846,7 +12852,7 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onLaunc
                     )}
                   </div>
                   <div className="min-w-0">
-                    <div className="mb-3 rounded-xl border border-accent/20 bg-accent-glow px-3 py-2 text-xs leading-5 text-accent">
+                    <div className="mb-3 rounded-lg border border-accent/20 bg-accent-glow px-3 py-2 text-xs leading-5 text-accent">
                       下方展示<strong>新口播音轨的句级时间</strong>，与原片粗时间码分开保存。配音成功后以实测时间码匹配分镜；尚未实测对齐的时间只供预览，不作为成片生产依据。
                     </div>
                     <div className="max-h-64 space-y-1 overflow-y-auto pr-1">
@@ -12887,11 +12893,11 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onLaunc
             )}
             </>)}
           </div>
-          <aside className="sticky top-0 min-w-0 overflow-hidden rounded-2xl border border-border bg-surface shadow-sm">
+          <aside className="sticky top-0 min-w-0 overflow-hidden rounded-lg border border-border bg-surface shadow-none">
             <div className="border-b border-border px-4 py-3">
               <div className="flex flex-wrap items-start justify-between gap-3">
                 <div>
-                  <p className="text-sm font-black text-text-primary">生成内容</p>
+                  <p className="text-sm font-semibold text-text-primary">生成内容</p>
                   <p className="mt-0.5 text-[10px] text-text-muted">脚本、口播与多语言版本</p>
                 </div>
                 <div className="flex max-w-full flex-wrap justify-end gap-1">
@@ -12917,7 +12923,7 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onLaunc
             </div>
             <div className="min-h-[520px] p-4">
               <div className="mb-3 flex items-center justify-between gap-2">
-                <span className="rounded-md bg-accent-glow px-2 py-1 text-[10px] font-black text-accent">{activeScriptPreview.label}</span>
+                <span className="rounded-md bg-accent-glow px-2 py-1 text-[10px] font-semibold text-accent">{activeScriptPreview.label}</span>
                 <div className="flex items-center gap-2">
                   {activeScriptPreview.content && (
                     <button type="button" onClick={() => void navigator.clipboard?.writeText(activeScriptPreview.content)} className="inline-flex items-center gap-1 text-[10px] font-bold text-text-muted hover:text-accent">
@@ -12930,7 +12936,7 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onLaunc
                       alert(error instanceof Error ? error.message : '草稿保存失败，请稍后重试。');
                     })}
                     disabled={savingProj || voiceDraftLoading || ttsLoading}
-                    className="inline-flex items-center gap-1 rounded-lg bg-accent px-2.5 py-1.5 text-[10px] font-black text-white disabled:opacity-50"
+                    className="inline-flex items-center gap-1 rounded-lg bg-accent px-2.5 py-1.5 text-[10px] font-semibold text-white disabled:opacity-50"
                   >
                     {savingProj ? <Loader2 size={11} className="animate-spin" /> : <Save size={11} />}
                     {savedTick ? '已保存' : '保存'}
@@ -12943,15 +12949,15 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onLaunc
                 placeholder={activeScriptPreview.placeholder}
                 dir={activeScriptPreview.dir}
                 spellCheck={false}
-                className="min-h-[430px] max-h-[620px] w-full resize-y overflow-y-auto rounded-xl border border-border bg-white p-4 font-sans text-xs leading-6 text-text-secondary outline-none focus:border-accent focus:bg-white"
+                className="min-h-[430px] max-h-[620px] w-full resize-y overflow-y-auto rounded-lg border border-border bg-white p-4 font-sans text-xs leading-6 text-text-secondary outline-none focus:border-accent focus:bg-white"
               />
               {pendingClaimLocations(activeScriptPreview.content, activeProductInfo).length > 0 && (
                 <div className="mt-3 space-y-2">
-                  {pendingClaimLocations(activeScriptPreview.content, activeProductInfo).map((line, index) => <div key={`${line}-${index}`} className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-[11px] leading-5 text-amber-800"><span className="mr-1 font-black">待确认：</span>{line}</div>)}
+                  {pendingClaimLocations(activeScriptPreview.content, activeProductInfo).map((line, index) => <div key={`${line}-${index}`} className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-[11px] leading-5 text-amber-800"><span className="mr-1 font-semibold">待确认：</span>{line}</div>)}
                 </div>
               )}
               {!activeScriptPreview.content && (
-                <div className="mt-3 flex min-h-[120px] flex-col items-center justify-center rounded-xl border border-dashed border-border bg-surface-2 px-8 text-center">
+                <div className="mt-3 flex min-h-[120px] flex-col items-center justify-center rounded-lg border border-dashed border-border bg-surface-2 px-8 text-center">
                   <FileText size={28} className="text-text-muted opacity-35" />
                   <p className="mt-3 text-xs font-bold text-text-secondary">{activeScriptPreview.id === 'script' ? '尚未生成脚本，也可以直接手动填写' : '尚未生成此版本，也可以直接手动填写'}</p>
                   <p className="mt-1 text-[10px] leading-relaxed text-text-muted">输入后点击“保存”，后续配音、素材匹配和成片会使用这里的最新内容。</p>
@@ -13015,15 +13021,15 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onLaunc
             <SectionTitle title="可选优化 · 背景音乐" desc="系统已保留无配乐成片能力；可直接继续，也可展开乐库为不同版本匹配音乐" noMargin />
           </div>
           <div className="min-w-0">
-            <div ref={bgmLibraryRef} className="relative z-30 mb-4 rounded-2xl border border-border bg-surface shadow-sm">
+            <div ref={bgmLibraryRef} className="relative z-30 mb-4 rounded-lg border border-border bg-surface shadow-none">
               <button type="button" onClick={() => setBgmLibraryOpen(open => !open)} className="flex w-full items-center justify-between gap-3 px-4 py-3.5 text-left hover:bg-surface-2/60">
                 <span className="min-w-0">
-                  <span className="block text-sm font-black text-text-primary">配乐库</span>
+                  <span className="block text-sm font-semibold text-text-primary">配乐库</span>
                   <span className="mt-0.5 block truncate text-[11px] text-text-muted">{selectedBgmTrack ? `当前：${selectedBgmTrack.name}` : `${bgms.length} 首音乐 · 点击展开选择`}</span>
                 </span>
                 <span className="flex shrink-0 items-center gap-2 text-[11px] font-bold text-accent">{bgmLibraryOpen ? '收起乐库' : '展开乐库'}<ChevronDown size={15} className={`transition ${bgmLibraryOpen ? 'rotate-180' : ''}`} /></span>
               </button>
-              {bgmLibraryOpen && <div className="absolute inset-x-0 top-full z-40 mt-2 max-h-[min(540px,calc(100vh-220px))] overflow-y-auto overscroll-contain rounded-2xl border border-border bg-surface p-4 shadow-2xl">
+              {bgmLibraryOpen && <div className="absolute inset-x-0 top-full z-40 mt-2 max-h-[min(540px,calc(100vh-220px))] overflow-y-auto overscroll-contain rounded-lg border border-border bg-surface p-4 shadow-2xl">
             <div className="flex items-center justify-between mb-4">
               <SectionTitle title="选择配乐" desc="试听后可应用到当前素材版本，也可加入批量候选" noMargin />
               <input ref={bgmInputRef} type="file" accept="audio/*" className="hidden"
@@ -13044,7 +13050,7 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onLaunc
                 </button>
               </div>
             </div>
-            <div className="mb-4 inline-flex rounded-xl border border-border bg-surface-2 p-1">
+            <div className="mb-4 inline-flex rounded-lg border border-border bg-surface-2 p-1">
               {[
                 { id: 'library', label: '配乐曲库' },
                 { id: 'favorites', label: `我的收藏 ${favoriteBgms.length}` },
@@ -13054,8 +13060,8 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onLaunc
                   <button
                     key={tab.id}
                     onClick={() => setBgmTab(tab.id as 'library' | 'favorites')}
-                    className={`rounded-lg px-4 py-2 text-xs font-semibold transition ${on ? 'bg-white text-text-primary shadow-sm' : 'text-text-muted hover:text-text-secondary'}`}
-                    style={on ? { color: TRAFFIC_GREEN } : undefined}
+                    className={`rounded-lg px-4 py-2 text-xs font-semibold transition ${on ? 'bg-white text-text-primary shadow-none' : 'text-text-muted hover:text-text-secondary'}`}
+                    style={on ? { color: STUDIO_ACCENT } : undefined}
                   >
                     {tab.label}
                   </button>
@@ -13063,28 +13069,28 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onLaunc
               })}
             </div>
             {bgms.length === 0 && (
-              <div className="card !rounded-xl border-dashed text-center py-10 mb-7">
+              <div className="card !rounded-lg border-dashed text-center py-10 mb-7">
                 <Music size={24} className="mx-auto text-text-muted opacity-40 mb-2" />
                 <p className="text-sm text-text-muted">暂无背景音乐</p>
-                <button onClick={() => bgmInputRef.current?.click()} className="text-xs font-semibold mt-2" style={{ color: TRAFFIC_GREEN }}>上传一首</button>
+                <button onClick={() => bgmInputRef.current?.click()} className="text-xs font-semibold mt-2" style={{ color: STUDIO_ACCENT }}>上传一首</button>
               </div>
             )}
             <div className="space-y-2 pr-1">
               <button onClick={() => { assignBgm(''); setBgmCandidates([]); if (audioRef.current) audioRef.current.pause(); setPlayingBgm(null); }}
-                className="card !rounded-xl w-full p-3 flex items-center gap-3 text-left"
-                style={!bgm ? { borderColor: TRAFFIC_GREEN, boxShadow: `0 0 0 1px ${TRAFFIC_GREEN}` } : undefined}>
+                className="card !rounded-lg w-full p-3 flex items-center gap-3 text-left"
+                style={!bgm ? { borderColor: STUDIO_ACCENT, boxShadow: `0 0 0 1px ${STUDIO_ACCENT}` } : undefined}>
                 <span className="w-9 h-9 rounded-lg flex items-center justify-center flex-shrink-0"
-                  style={{ background: !bgm ? TRAFFIC_GREEN : 'var(--color-surface-2)', color: !bgm ? '#fff' : 'var(--color-text-muted)' }}>
+                  style={{ background: !bgm ? STUDIO_ACCENT : 'var(--color-surface-2)', color: !bgm ? '#fff' : 'var(--color-text-muted)' }}>
                   <X size={15} />
                 </span>
                 <div className="flex-1 min-w-0">
                   <p className="text-sm font-semibold text-text-primary truncate">不配乐</p>
                   <p className="text-xs text-text-muted mt-0.5">只保留原素材声音和口播配音</p>
                 </div>
-                {!bgm && <Check size={16} style={{ color: TRAFFIC_GREEN }} />}
+                {!bgm && <Check size={16} style={{ color: STUDIO_ACCENT }} />}
               </button>
               {bgmTab === 'favorites' && visibleBgms.length === 0 && (
-                <div className="card !rounded-xl border-dashed p-8 text-center">
+                <div className="card !rounded-lg border-dashed p-8 text-center">
                   <Heart size={22} className="mx-auto mb-2 text-text-muted opacity-50" />
                   <p className="text-sm font-semibold text-text-primary">还没有收藏的配乐</p>
                   <p className="mt-1 text-xs text-text-muted">在配乐曲库里点心形即可加入收藏。</p>
@@ -13107,21 +13113,21 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onLaunc
                     }
                     setPreviewBgmOn(true);
                   }}
-                    className="card !rounded-xl w-full p-3 flex items-center gap-3 text-left"
-                    style={on ? { borderColor: TRAFFIC_GREEN, boxShadow: `0 0 0 1px ${TRAFFIC_GREEN}` } : undefined}>
+                    className="card !rounded-lg w-full p-3 flex items-center gap-3 text-left"
+                    style={on ? { borderColor: STUDIO_ACCENT, boxShadow: `0 0 0 1px ${STUDIO_ACCENT}` } : undefined}>
                     {/* 试听播放/暂停 */}
                     <span onClick={e => { e.stopPropagation(); togglePlay(b); }}
                       className="w-9 h-9 rounded-lg flex items-center justify-center flex-shrink-0 transition-colors"
-                      style={{ background: playing ? TRAFFIC_GREEN : activePreview ? 'var(--color-accent-glow)' : 'var(--color-surface-2)', color: playing ? '#fff' : activePreview ? TRAFFIC_GREEN : 'var(--color-text-muted)' }}>
+                      style={{ background: playing ? STUDIO_ACCENT : activePreview ? 'var(--color-accent-glow)' : 'var(--color-surface-2)', color: playing ? '#fff' : activePreview ? STUDIO_ACCENT : 'var(--color-text-muted)' }}>
                       {playing ? <Pause size={15} /> : <Play size={15} />}
                     </span>
                     <div className="flex-1 min-w-0">
                       <div className="flex items-center gap-2">
                         <p className="text-sm font-semibold text-text-primary truncate">{b.name}</p>
                         {b.recommended && (
-                          <span className="text-[9px] font-bold px-1.5 py-0.5 rounded" style={{ background: TRAFFIC_GREEN, color: '#fff' }}>AI 推荐</span>
+                          <span className="text-[9px] font-bold px-1.5 py-0.5 rounded" style={{ background: STUDIO_ACCENT, color: '#fff' }}>AI 推荐</span>
                         )}
-                        {playing && <span className="text-[10px] font-medium" style={{ color: TRAFFIC_GREEN }}>♪ 试听中</span>}
+                        {playing && <span className="text-[10px] font-medium" style={{ color: STUDIO_ACCENT }}>♪ 试听中</span>}
                       </div>
                       <p className="text-xs text-text-muted mt-0.5">{b.mood}</p>
                       <p className="mt-0.5 text-[10px] font-semibold text-text-muted">
@@ -13141,27 +13147,27 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onLaunc
                         }
                       }}
                       className="w-8 h-8 rounded-lg flex items-center justify-center text-text-muted hover:bg-surface-2 transition-colors"
-                      style={favored ? { color: TRAFFIC_GREEN } : undefined}
+                      style={favored ? { color: STUDIO_ACCENT } : undefined}
                     >
                       <Heart size={15} fill={favored ? 'currentColor' : 'none'} />
                     </span>
                     <span className="text-xs font-mono text-text-muted">{fmtDur(b.duration)}</span>
-                    {on ? <Check size={16} style={{ color: TRAFFIC_GREEN }} /> : <Volume2 size={15} className="text-text-muted opacity-0" />}
+                    {on ? <Check size={16} style={{ color: STUDIO_ACCENT }} /> : <Volume2 size={15} className="text-text-muted opacity-0" />}
                   </button>
                 );
               })}
             </div>
               </div>}
             </div>
-            <section className="mb-5 rounded-2xl border border-border bg-surface p-4 shadow-sm">
+            <section className="mb-5 rounded-lg border border-border bg-surface p-4 shadow-none">
               <div className="flex flex-wrap items-start justify-between gap-3">
                 <div>
-                  <p className="text-sm font-black text-text-primary">素材版本管理</p>
+                  <p className="text-sm font-semibold text-text-primary">素材版本管理</p>
                   <p className="mt-1 text-[11px] text-text-muted">每个版本由生成语言、分镜素材组合和对应脚本共同确定；发布平台不参与版本划分。</p>
                 </div>
                 <div className="flex items-center gap-2">
-                  <span className="rounded-md bg-accent-glow px-2 py-1 text-[10px] font-black text-accent">{materialVersions.filter(item => materialVersionBgms[item.key]).length}/{materialVersions.length} 已配乐</span>
-                  <button type="button" onClick={batchAssignBgms} className="inline-flex items-center gap-1.5 rounded-lg border border-border bg-white px-3 py-2 text-[11px] font-black text-text-secondary hover:bg-surface-2">
+                  <span className="rounded-md bg-accent-glow px-2 py-1 text-[10px] font-semibold text-accent">{materialVersions.filter(item => materialVersionBgms[item.key]).length}/{materialVersions.length} 已配乐</span>
+                  <button type="button" onClick={batchAssignBgms} className="inline-flex items-center gap-1.5 rounded-lg border border-border bg-white px-3 py-2 text-[11px] font-semibold text-text-secondary hover:bg-surface-2">
                     <Sparkles size={12} />一键批量配乐
                   </button>
                 </div>
@@ -13177,14 +13183,14 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onLaunc
                   const firstClipId = storyboardSlots.map(slot => itemAssignments[slot.id]).find(Boolean) || itemSelected[0];
                   const firstClip = firstClipId ? materialById.get(firstClipId) : undefined;
                   return (
-                    <div key={item.key} className={`rounded-xl border p-3 transition ${active ? 'border-accent bg-accent/5 shadow-[0_0_0_1px_var(--color-accent)]' : 'border-border bg-white hover:border-border-bright'}`}>
+                    <div key={item.key} className={`rounded-lg border p-3 transition ${active ? 'border-accent bg-accent/5 shadow-[0_0_0_1px_var(--color-accent)]' : 'border-border bg-white hover:border-border-bright'}`}>
                       <button type="button" onClick={() => switchMaterialVersion(item)} className="flex w-full items-center gap-3 text-left">
                         <span className="relative flex h-12 w-16 shrink-0 items-center justify-center overflow-hidden rounded-lg bg-surface-2">
                           {firstClip?.poster ? <img src={firstClip.poster} alt="" className="h-full w-full object-cover" /> : <Film size={17} className="text-text-muted" />}
                           <span className="absolute bottom-1 right-1 rounded bg-black/55 px-1 text-[8px] font-bold text-white">{index + 1}</span>
                         </span>
                         <span className="min-w-0 flex-1">
-                          <span className="flex items-center gap-2"><span className="text-xs font-black text-text-primary">{item.name}</span><span className="text-[9px] font-bold text-text-muted">{matched}/{storyboardSlots.length} 分镜</span></span>
+                          <span className="flex items-center gap-2"><span className="text-xs font-semibold text-text-primary">{item.name}</span><span className="text-[9px] font-bold text-text-muted">{matched}/{storyboardSlots.length} 分镜</span></span>
                           <span className="mt-1 block truncate text-[10px] text-text-muted">{!item.hasScript
                             ? '脚本待生成'
                             : !item.hasAudio
@@ -13193,7 +13199,7 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onLaunc
                                 ? `当前配乐：${track.name}`
                                 : voiceoverMode === 'none' ? '脚本已就绪 · 不配音 · 尚未配乐' : '脚本与配音已生成 · 尚未配乐'}</span>
                         </span>
-                        {active && <span className="rounded-md bg-accent px-2 py-1 text-[9px] font-black text-white">预览中</span>}
+                        {active && <span className="rounded-md bg-accent px-2 py-1 text-[9px] font-semibold text-white">预览中</span>}
                       </button>
                       <div className="mt-3 flex items-center gap-2 border-t border-border/70 pt-3">
                         <Music size={13} className="shrink-0 text-text-muted" />
@@ -13205,17 +13211,17 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onLaunc
                           <option value="">不配乐</option>
                           {bgms.map(trackItem => <option key={trackItem.id} value={trackItem.id}>{trackItem.name} · {trackItem.mood}</option>)}
                         </select>
-                        <button type="button" onClick={() => { switchMaterialVersion(item); setBgmLibraryOpen(true); }} className="rounded-lg border border-border px-2.5 py-2 text-[10px] font-black text-accent hover:border-accent">打开乐库</button>
+                        <button type="button" onClick={() => { switchMaterialVersion(item); setBgmLibraryOpen(true); }} className="rounded-lg border border-border px-2.5 py-2 text-[10px] font-semibold text-accent hover:border-accent">打开乐库</button>
                       </div>
                     </div>
                   );
                 })}
               </div>
             </section>
-            <div data-lingshu-guide="ai-audio-mix" className="rounded-2xl border border-border bg-surface p-4">
+            <div data-lingshu-guide="ai-audio-mix" className="rounded-lg border border-border bg-surface p-4">
               <div className="mb-3 flex items-center justify-between gap-3">
                 <div>
-                  <p className="text-sm font-black text-text-primary">音量调节</p>
+                  <p className="text-sm font-semibold text-text-primary">音量调节</p>
                 </div>
                 <span className="rounded-lg bg-accent-glow px-2.5 py-1 text-[11px] font-bold text-accent">ducking</span>
               </div>
@@ -13226,7 +13232,7 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onLaunc
                     <span className={bgm ? 'text-text-primary' : 'text-text-muted'}>{bgm ? `${bgmVol}%` : '关闭'}</span>
                   </div>
                   <input type="range" min={0} max={100} value={bgmVol}
-                    onChange={e => setBgmVol(+e.target.value)} disabled={!bgm} className="w-full accent-[#16a34a] disabled:opacity-40" />
+                    onChange={e => setBgmVol(+e.target.value)} disabled={!bgm} className="w-full accent-blue-600 disabled:opacity-40" />
                 </label>
                 <label className="block">
                   <div className="mb-1.5 flex items-center justify-between text-xs font-semibold">
@@ -13234,22 +13240,22 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onLaunc
                     <span className={voiceoverMode === 'none' ? 'text-text-muted' : 'text-text-primary'}>{voiceoverMode === 'none' ? '关闭' : `${voiceVol}%`}</span>
                   </div>
                   <input type="range" min={0} max={150} value={voiceVol}
-                    onChange={e => setVoiceVol(+e.target.value)} disabled={voiceoverMode === 'none'} className="w-full accent-[#16a34a] disabled:opacity-40" />
+                    onChange={e => setVoiceVol(+e.target.value)} disabled={voiceoverMode === 'none'} className="w-full accent-blue-600 disabled:opacity-40" />
                 </label>
               </div>
             </div>
           </div>
-          <aside className="sticky top-4 rounded-2xl border border-border bg-surface p-4 shadow-sm">
+          <aside className="sticky top-4 rounded-lg border border-border bg-surface p-4 shadow-none">
             <div className="mb-3 flex items-start justify-between gap-3">
               <div>
-                <p className="text-sm font-black text-text-primary">实时混剪预览 · {assemblyName}</p>
+                <p className="text-sm font-semibold text-text-primary">实时混剪预览 · {assemblyName}</p>
                 <p className="mt-0.5 text-[11px] leading-relaxed text-text-muted">切换左侧素材版本或配乐后立即同步试听，不生成正式文件</p>
               </div>
-              <span className="shrink-0 rounded-md bg-accent-glow px-2 py-1 text-[10px] font-black text-accent">草稿</span>
+              <span className="shrink-0 rounded-md bg-accent-glow px-2 py-1 text-[10px] font-semibold text-accent">草稿</span>
             </div>
 
             <div className="mx-auto w-full max-w-[250px]">
-              <div className="relative overflow-hidden rounded-2xl border border-white/10 bg-black shadow-xl">
+              <div className="relative overflow-hidden rounded-lg border border-white/10 bg-black shadow-xl">
                 <div className="relative aspect-[9/16]">
                   {activeBgmPreviewItem ? (
                     activeBgmPreviewItem.clip.type === 'image' ? (
@@ -13310,7 +13316,7 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onLaunc
                   )}
                   {previewIdx !== null && activePreviewCue && subtitlesOn && (
                     <div className="pointer-events-none absolute inset-x-0 z-20 px-3 text-center" style={{ bottom: `${subtitleStyle.bottomRatio * 100}%` }}>
-                      <p className="inline-block px-2 py-1 font-black leading-tight break-words" style={{ ...subtitlePreviewStyle, maxWidth: `${Math.min(100, subtitleStyle.lineWidth * 5)}%` }}>
+                      <p className="inline-block px-2 py-1 font-semibold leading-tight break-words" style={{ ...subtitlePreviewStyle, maxWidth: `${Math.min(100, subtitleStyle.lineWidth * 5)}%` }}>
                         {activePreviewCue.text}
                       </p>
                     </div>
@@ -13348,7 +13354,7 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onLaunc
                       onClick={() => jumpToPreviewClip(index)}
                       title={`${index + 1}. ${item.name}`}
                       className="relative min-w-0 overflow-hidden rounded-md border-r border-white/70 px-1 text-[9px] font-bold transition"
-                      style={{ width, background: active ? TRAFFIC_GREEN : '#e8eef5', color: active ? '#fff' : '#64748b' }}
+                      style={{ width, background: active ? STUDIO_ACCENT : '#e8eef5', color: active ? '#fff' : '#64748b' }}
                     >
                       <span className="block truncate">{index + 1}</span>
                     </button>
@@ -13368,17 +13374,17 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onLaunc
                   key={item.label}
                   onClick={item.toggle}
                   disabled={item.disabled}
-                  className="rounded-xl border px-2 py-2 text-[11px] font-bold transition disabled:opacity-35"
-                  style={item.on ? { borderColor: TRAFFIC_GREEN, background: 'var(--color-accent-glow)', color: TRAFFIC_GREEN } : { borderColor: 'var(--color-border)', color: 'var(--color-text-muted)' }}
+                  className="rounded-lg border px-2 py-2 text-[11px] font-bold transition disabled:opacity-35"
+                  style={item.on ? { borderColor: STUDIO_ACCENT, background: 'var(--color-accent-glow)', color: STUDIO_ACCENT } : { borderColor: 'var(--color-border)', color: 'var(--color-text-muted)' }}
                 >
                   <Volume2 size={13} className="mx-auto mb-1" />{item.label}
                 </button>
               ))}
             </div>
 
-            <div className="mt-4 rounded-xl border border-border bg-white p-3">
+            <div className="mt-4 rounded-lg border border-border bg-white p-3">
               <div className="flex items-start justify-between gap-2">
-                <div><p className="text-xs font-black text-text-primary">视频特效</p><p className="mt-0.5 text-[10px] text-text-muted">白名单运镜、调色、转场与装饰层</p></div>
+                <div><p className="text-xs font-semibold text-text-primary">视频特效</p><p className="mt-0.5 text-[10px] text-text-muted">白名单运镜、调色、转场与装饰层</p></div>
                 <span className="rounded-full bg-surface-2 px-2 py-1 text-[9px] font-bold text-text-muted">EffectPlan v1</span>
               </div>
               <div className="mt-3 grid grid-cols-4 gap-1">
@@ -13398,7 +13404,7 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onLaunc
               </div>}
             </div>
 
-            <div className="mt-4 rounded-xl bg-surface-2 px-3 py-2.5">
+            <div className="mt-4 rounded-lg bg-surface-2 px-3 py-2.5">
               <p className="truncate text-xs font-bold text-text-primary">{selectedBgmTrack?.name || '当前未选择配乐'}</p>
               <p className="mt-1 text-[10px] text-text-muted">
                 {bgm ? `配乐最终混音音量 ${bgmVol}%` : '选择一首音乐即可试听混剪效果'}
@@ -13412,7 +13418,7 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onLaunc
 
       /* ⑤ 封面 —— 用所选视频的真实帧画面，便于辨认内容 */
       case 'cover': {
-        const SEG = (active: boolean) => `px-2.5 py-1 rounded-md text-xs font-semibold transition-all ${active ? 'bg-surface text-text-primary shadow-sm' : 'text-text-muted hover:text-text-secondary'}`;
+        const SEG = (active: boolean) => `px-2.5 py-1 rounded-md text-xs font-semibold transition-all ${active ? 'bg-surface text-text-primary shadow-none' : 'text-text-muted hover:text-text-secondary'}`;
         const SWATCHES = ['#ffffff', '#111827', '#16a34a', '#14b8a6', '#ef4444', '#3b82f6'];
         const ART_PRESETS: Array<{ id: NonNullable<CoverStyle['artPreset']>; label: string; sample: string; patch: Partial<CoverStyle> }> = [
           { id: 'clean', label: '简洁标题', sample: 'Clean', patch: { font: 'sans', color: '#ffffff', weight: 'bold' } },
@@ -13499,7 +13505,7 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onLaunc
               <SectionTitle title="可选优化 · 封面与标题" desc="封面不会阻塞成片生成；可沿用首帧，也可在此统一优化标题与视觉样式" noMargin />
             </div>
             <div className="min-w-0 space-y-4">
-              <section className="rounded-2xl border border-border bg-surface p-4 shadow-sm">
+              <section className="rounded-lg border border-border bg-surface p-4 shadow-none">
                 <SectionTitle title="封面参数选择" desc="标题、艺术字和手动编辑会应用到当前选中的素材版本" noMargin />
                 <div className="mt-4">
                   <p className="mb-1.5 text-xs font-semibold text-text-secondary">封面标题</p>
@@ -13544,10 +13550,10 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onLaunc
                             setCoverUrl(null);
                             setCoverStyle(current => ({ ...current, ...preset.patch, artPreset: preset.id }));
                           }}
-                          className={`overflow-hidden rounded-xl border p-2 text-left transition ${active ? 'border-accent bg-accent/5 shadow-[0_0_0_1px_rgba(22,163,74,.18)]' : 'border-border bg-surface-2 hover:border-accent/40'}`}
+                          className={`overflow-hidden rounded-lg border p-2 text-left transition ${active ? 'border-accent bg-accent/5 shadow-[0_0_0_1px_rgba(22,163,74,.18)]' : 'border-border bg-surface-2 hover:border-accent/40'}`}
                         >
                           <span className="flex h-12 items-center justify-center overflow-hidden rounded-lg bg-slate-800 px-1">
-                            <span className="text-sm font-black leading-none" style={{ fontFamily: fontCss(preset.patch.font ?? coverStyle.font), ...previewStyle }}>{preset.sample}</span>
+                            <span className="text-sm font-semibold leading-none" style={{ fontFamily: fontCss(preset.patch.font ?? coverStyle.font), ...previewStyle }}>{preset.sample}</span>
                           </span>
                           <span className="mt-1.5 block truncate text-center text-[10px] font-bold text-text-secondary">{preset.label}</span>
                         </button>
@@ -13562,7 +13568,7 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onLaunc
                     {SWATCHES.map(c => (
                       <button key={c} onClick={() => setCoverStyle(s => ({ ...s, color: c }))}
                         className="h-5 w-5 rounded-full border transition-all"
-                        style={{ background: c, borderColor: coverStyle.color === c ? TRAFFIC_GREEN : 'var(--color-border)', boxShadow: coverStyle.color === c ? `0 0 0 2px ${TRAFFIC_GREEN}` : undefined }} />
+                        style={{ background: c, borderColor: coverStyle.color === c ? STUDIO_ACCENT : 'var(--color-border)', boxShadow: coverStyle.color === c ? `0 0 0 2px ${STUDIO_ACCENT}` : undefined }} />
                     ))}
                   </div>
                   <div className="flex items-center gap-2">
@@ -13606,18 +13612,18 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onLaunc
                 </div>
               </section>
 
-              <section className="rounded-2xl border border-border bg-surface p-4 shadow-sm">
+              <section className="rounded-lg border border-border bg-surface p-4 shadow-none">
                 <div className="flex flex-wrap items-start justify-between gap-3">
                   <div>
-                    <p className="text-sm font-black text-text-primary">素材版本管理</p>
+                    <p className="text-sm font-semibold text-text-primary">素材版本管理</p>
                     <p className="mt-1 text-[11px] text-text-muted">每个版本可独立选择封面底图；标题和艺术字可单独改，也可批量同步。</p>
                   </div>
                   <div className="flex flex-wrap items-center gap-2">
-                    <span className="rounded-md bg-accent-glow px-2 py-1 text-[10px] font-black text-accent">{coverMaterialVersions.filter(item => Boolean(materialVersionCovers[item.key])).length}/{coverMaterialVersions.length} 已配置</span>
-                    <button type="button" onClick={batchApplyCoverStyle} className="inline-flex items-center gap-1.5 rounded-lg border border-border bg-white px-3 py-2 text-[11px] font-black text-text-secondary hover:bg-surface-2">
+                    <span className="rounded-md bg-accent-glow px-2 py-1 text-[10px] font-semibold text-accent">{coverMaterialVersions.filter(item => Boolean(materialVersionCovers[item.key])).length}/{coverMaterialVersions.length} 已配置</span>
+                    <button type="button" onClick={batchApplyCoverStyle} className="inline-flex items-center gap-1.5 rounded-lg border border-border bg-white px-3 py-2 text-[11px] font-semibold text-text-secondary hover:bg-surface-2">
                       <Sparkles size={12} />批量同步参数
                     </button>
-                    <button type="button" onClick={batchUseFirstFrames} className="inline-flex items-center gap-1.5 rounded-lg border border-border px-3 py-2 text-[11px] font-black text-text-secondary hover:border-accent hover:text-accent">
+                    <button type="button" onClick={batchUseFirstFrames} className="inline-flex items-center gap-1.5 rounded-lg border border-border px-3 py-2 text-[11px] font-semibold text-text-secondary hover:border-accent hover:text-accent">
                       <ImageIcon size={12} />批量首帧
                     </button>
                   </div>
@@ -13630,7 +13636,7 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onLaunc
                     const coverId = active ? cover : (saved?.coverId || candidates[0]?.id || '');
                     const coverClipForVersion = candidates.find(candidate => candidate.id === coverId) || candidates[0];
                     return (
-                      <div key={item.key} className={`rounded-xl border p-3 transition ${active ? 'border-accent bg-accent/5 shadow-[0_0_0_1px_var(--color-accent)]' : 'border-border bg-white hover:border-border-bright'}`}>
+                      <div key={item.key} className={`rounded-lg border p-3 transition ${active ? 'border-accent bg-accent/5 shadow-[0_0_0_1px_var(--color-accent)]' : 'border-border bg-white hover:border-border-bright'}`}>
                         <button type="button" onClick={() => switchCoverMaterialVersion(item)} className="flex w-full items-center gap-3 text-left">
                           <span className="relative flex h-14 w-10 shrink-0 items-center justify-center overflow-hidden rounded-lg bg-surface-2">
                             {coverClipForVersion?.poster || coverClipForVersion?.url ? (
@@ -13640,12 +13646,12 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onLaunc
                           </span>
                           <span className="min-w-0 flex-1">
                             <span className="flex items-center gap-2">
-                              <span className="truncate text-xs font-black text-text-primary">{item.name}</span>
+                              <span className="truncate text-xs font-semibold text-text-primary">{item.name}</span>
                               <span className="shrink-0 text-[9px] font-bold text-text-muted">{item.materialCount} 段素材</span>
                             </span>
                             <span className="mt-1 block truncate text-[10px] text-text-muted">{saved?.title || (active ? coverTitle : '沿用当前封面标题')}</span>
                           </span>
-                          {active && <span className="rounded-md bg-accent px-2 py-1 text-[9px] font-black text-white">编辑中</span>}
+                          {active && <span className="rounded-md bg-accent px-2 py-1 text-[9px] font-semibold text-white">编辑中</span>}
                         </button>
                         <div className="mt-3 flex items-center gap-2 border-t border-border/70 pt-3">
                           <ImageIcon size={13} className="shrink-0 text-text-muted" />
@@ -13671,7 +13677,7 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onLaunc
                     );
                   })}
                   {coverMaterialVersions.length === 0 && (
-                    <div className="rounded-xl border border-dashed border-border bg-surface-2 px-4 py-8 text-center text-xs text-text-muted">
+                    <div className="rounded-lg border border-dashed border-border bg-surface-2 px-4 py-8 text-center text-xs text-text-muted">
                       暂无素材版本。请先完成分镜、配音和素材选择。
                     </div>
                   )}
@@ -13679,16 +13685,16 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onLaunc
               </section>
             </div>
 
-            <aside className="sticky top-4 rounded-2xl border border-border bg-surface p-4 shadow-sm">
+            <aside className="sticky top-4 rounded-lg border border-border bg-surface p-4 shadow-none">
               <div className="mb-3 flex items-start justify-between gap-3">
                 <div className="min-w-0">
-                  <p className="text-sm font-black text-text-primary">实时封面预览</p>
+                  <p className="text-sm font-semibold text-text-primary">实时封面预览</p>
                   <p className="mt-0.5 truncate text-[11px] text-text-muted">{activeCoverVersion?.name || '当前素材版本'}</p>
                 </div>
-                <span className="shrink-0 rounded-md bg-accent-glow px-2 py-1 text-[10px] font-black text-accent">草稿</span>
+                <span className="shrink-0 rounded-md bg-accent-glow px-2 py-1 text-[10px] font-semibold text-accent">草稿</span>
               </div>
               <div className="mx-auto w-full max-w-[260px]">
-                <div className="relative overflow-hidden rounded-2xl border border-white/10 bg-black shadow-xl">
+                <div className="relative overflow-hidden rounded-lg border border-white/10 bg-black shadow-xl">
                   <div className="relative aspect-[9/16]">
                     {coverFrameUrl ? (
                       <CoverFace
@@ -13716,16 +13722,16 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onLaunc
                   </div>
                 </div>
               </div>
-              <div className="mt-4 rounded-xl bg-surface-2 px-3 py-2.5">
+              <div className="mt-4 rounded-lg bg-surface-2 px-3 py-2.5">
                 <p className="truncate text-xs font-bold text-text-primary">{coverClip?.name || '未选择封面底图'}</p>
                 <p className="mt-1 text-[10px] leading-relaxed text-text-muted">在右侧预览里可直接编辑选中版本标题位置；使用“批量同步参数”可同步到全部版本。</p>
               </div>
               <div className="mt-3 grid grid-cols-2 gap-2">
-                <button type="button" onClick={batchApplyCoverStyle} className="rounded-xl border border-accent bg-accent-glow px-3 py-2 text-[11px] font-black text-accent">
+                <button type="button" onClick={batchApplyCoverStyle} className="rounded-lg border border-accent bg-accent-glow px-3 py-2 text-[11px] font-semibold text-accent">
                   批量封面编辑
                 </button>
                 <button type="button" onClick={() => void openCanvaCoverEditor()} disabled={coverCanvaOpening}
-                  className="rounded-xl border border-border px-3 py-2 text-[11px] font-black text-text-secondary hover:border-accent hover:text-accent disabled:opacity-50">
+                  className="rounded-lg border border-border px-3 py-2 text-[11px] font-semibold text-text-secondary hover:border-accent hover:text-accent disabled:opacity-50">
                   编辑当前版本
                 </button>
               </div>
@@ -13778,7 +13784,7 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onLaunc
           <div className="flex min-w-0 flex-col items-stretch gap-5">
             {/* 播放器 */}
             <div className="flex-shrink-0">
-              <div className="relative rounded-2xl overflow-hidden border border-border bg-black" style={{ width: 260 }}>
+              <div className="relative rounded-lg overflow-hidden border border-border bg-black" style={{ width: 260 }}>
                 <div className="relative aspect-[9/16]">
                   {formalPreviewUrl ? (
                     <RenderedVideoPlayer key={formalPreviewUrl} src={formalPreviewUrl} onActivate={stopPreview} />
@@ -13816,7 +13822,7 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onLaunc
                   )}
                 </div>
                 {activeFormalPreviewUrl ? (
-                  <div className="pointer-events-none absolute left-2 top-2 z-10 rounded-md bg-accent px-2 py-1 text-[10px] font-black text-white">
+                  <div className="pointer-events-none absolute left-2 top-2 z-10 rounded-md bg-accent px-2 py-1 text-[10px] font-semibold text-white">
                     正式成片 · 连续 MP4
                   </div>
                 ) : activePreviewItem && (
@@ -13826,7 +13832,7 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onLaunc
                 )}
                 {!formalPreviewUrl && previewIdx !== null && activePreviewCue && (
                   <div className="pointer-events-none absolute inset-x-0 bottom-[7%] z-20 px-4 text-center">
-                    <p className="inline-block max-w-full rounded-md bg-black/35 px-2 py-1 text-[17px] font-black leading-tight text-white"
+                    <p className="inline-block max-w-full rounded-md bg-black/35 px-2 py-1 text-[17px] font-semibold leading-tight text-white"
                       style={{ textShadow: '0 2px 4px rgba(0,0,0,0.9)' }}>
                       {activePreviewCue.text}
                     </p>
@@ -13868,11 +13874,11 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onLaunc
 
             <div className="flex-1 min-w-0">
               <SectionTitle title="预览与发布" desc="确认成片后下载留档，或直接带入账号发布页" />
-              <div className="rounded-2xl border border-border bg-surface p-5 shadow-sm">
-                <div className="rounded-2xl border border-border bg-surface-2 p-4">
+              <div className="rounded-lg border border-border bg-surface p-5 shadow-none">
+                <div className="rounded-lg border border-border bg-surface-2 p-4">
                   <div className="flex flex-wrap items-center justify-between gap-3">
                     <div>
-                      <p className="text-sm font-black text-text-primary">视频版本</p>
+                      <p className="text-sm font-semibold text-text-primary">视频版本</p>
                       <p className="mt-0.5 text-xs text-text-muted">每种已生成的语言对应独立成片。请核对语言与配乐；未选音乐的版本将无背景配乐。</p>
                     </div>
                     <span className="rounded-full bg-white px-2.5 py-1 text-[10px] font-bold text-text-muted">
@@ -13884,12 +13890,12 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onLaunc
                       const item = version.output;
                       const active = activeOutputVersion?.id === version.id;
                       return (
-                        <div key={version.id} className={`rounded-xl border bg-white px-3 py-2.5 transition ${active ? 'border-accent shadow-[0_0_0_1px_var(--color-accent)]' : 'border-border'}`}>
+                        <div key={version.id} className={`rounded-lg border bg-white px-3 py-2.5 transition ${active ? 'border-accent shadow-[0_0_0_1px_var(--color-accent)]' : 'border-border'}`}>
                           <button type="button" onClick={() => selectOutputVersion(version)}
                             className="w-full text-left"
                             title="点击在左侧预览该视频版本">
                           <div className="flex items-center justify-between gap-2">
-                            <span className="text-xs font-black text-text-primary">{version.name}</span>
+                            <span className="text-xs font-semibold text-text-primary">{version.name}</span>
                             <span className={`text-[10px] font-bold ${
                               active ? 'text-accent'
                               : item?.status === 'done' ? 'text-accent'
@@ -13939,14 +13945,14 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onLaunc
                     })}
                   </div>
                   {outputVersions.length === 0 && (
-                    <div className="mt-3 rounded-xl border border-dashed border-border bg-white px-4 py-8 text-center text-xs text-text-muted">
+                    <div className="mt-3 rounded-lg border border-dashed border-border bg-white px-4 py-8 text-center text-xs text-text-muted">
                       暂无符合生成条件的视频版本，请先完成有效脚本和全部分镜素材匹配。
                     </div>
                   )}
                   {activeOutputVersion && (
-                    <div className="mt-3 rounded-xl border border-border bg-white p-3">
+                    <div className="mt-3 rounded-lg border border-border bg-white p-3">
                       <div className="flex items-center justify-between gap-3">
-                        <p className="text-xs font-black text-text-primary">{activeOutputVersion.name} 配置</p>
+                        <p className="text-xs font-semibold text-text-primary">{activeOutputVersion.name} 配置</p>
                         <span className="text-[10px] font-bold text-accent">正在预览</span>
                       </div>
                       <div className="mt-2 grid gap-2 sm:grid-cols-2">
@@ -13961,13 +13967,13 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onLaunc
                 <button
                   onClick={() => void downloadMp4(activeOutputVersion?.output?.status === 'done' ? activeOutputVersion.output.path || null : null)}
                   disabled={rendering}
-                  className="mt-5 flex w-full items-center justify-center gap-2 rounded-2xl border border-border bg-white px-5 py-3.5 text-sm font-black text-text-primary shadow-sm transition hover:border-accent/50 hover:bg-surface-2 disabled:opacity-50 active:scale-[0.99]"
+                  className="mt-5 flex w-full items-center justify-center gap-2 rounded-lg border border-border bg-white px-5 py-3.5 text-sm font-semibold text-text-primary shadow-none transition hover:border-accent/50 hover:bg-surface-2 disabled:opacity-50 active:scale-[0.99]"
                 >
                   {rendering ? <Loader2 size={18} className="animate-spin" /> : <Download size={18} />}
                   {rendering ? (renderPct >= 90 ? `正在写入 MP4 ${renderPct}%` : `正在生成本地成片 ${renderPct}%`) : renderOutputPath ? '下载成片' : '生成并下载成片'}
                 </button>
                 {renderDownloadMessage && (
-                  <div className="mt-3 rounded-xl border border-border bg-surface-2 px-3 py-2 text-xs leading-relaxed text-text-secondary">
+                  <div className="mt-3 rounded-lg border border-border bg-surface-2 px-3 py-2 text-xs leading-relaxed text-text-secondary">
                     {renderOutputPath && renderDownloadMessage.includes(renderOutputPath) ? (
                       <>
                         <span>成片已保存到本地：</span>
@@ -13983,7 +13989,7 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onLaunc
                     ) : renderDownloadMessage}
                   </div>
                 )}
-                <div className="mt-3 rounded-xl border border-border bg-surface-2 px-3 py-2.5 text-xs leading-relaxed text-text-muted">
+                <div className="mt-3 rounded-lg border border-border bg-surface-2 px-3 py-2.5 text-xs leading-relaxed text-text-muted">
                   {hasFormalVideo
                     ? '成片已就绪。使用底部唯一主按钮进入内容发布，将自动带入作品标题、文案和成片信息。'
                     : '选定视频版本后，使用底部唯一主按钮生成成片。'}
@@ -14590,10 +14596,10 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onLaunc
   const renderStoryboardSpeechGroups = (groups: Array<{ line: { id: string; time: string; draft: string }; items: StudioStoryboardItem[] }>) => (
     <ol className="space-y-2 px-2 pb-3" aria-label="口播与分镜列表">
       {groups.map(({ line, items }, index) => <li key={`${step}:${line.id}`}>
-        <details className="group rounded-xl border border-border bg-white open:border-emerald-200">
+        <details className="group rounded-lg border border-border bg-white open:border-emerald-200">
           <summary className="flex cursor-pointer list-none items-start justify-between gap-2 p-3 marker:hidden [&::-webkit-details-marker]:hidden">
             <span className="min-w-0">
-              <span className="block text-[11px] font-black text-text-primary">口播 {index + 1} · {line.time}</span>
+              <span className="block text-[11px] font-semibold text-text-primary">口播 {index + 1} · {line.time}</span>
               <span className="mt-1 block text-[10px] leading-4 text-text-secondary">{line.draft}</span>
               <span className="mt-1 block text-[10px] font-bold text-emerald-700">覆盖 {items.length} 个分镜</span>
             </span>
@@ -14741,14 +14747,16 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onLaunc
         setReplicationConfirmationError(message);
         setModeNotice(message);
       };
+      if (hasIncompleteReferenceAnalysis(videoKickoff)) {
+        reportConfirmationError('参考视频尚未完成覆盖全片的逐镜分析。请先到灵感中心查看编导分析状态，并完成或重新分析。');
+        return;
+      }
       if (referenceProducts.length && (!selectedProductOptions.length || !activeProductLabel)) {
         reportConfirmationError('请在右侧选择本次复刻的企业产品。');
         return;
       }
-      if (referenceProducts.length && (selectedProductOptions.length !== referenceProducts.length
-        || referenceProductMappings.some(mapping => !mapping.productId || !mapping.sourceTerm.trim())
-        || new Set(referenceProductMappings.map(mapping => mapping.productId)).size !== referenceProducts.length)) {
-        reportConfirmationError(`原片有 ${referenceProducts.length} 个产品位，当前已选择 ${selectedProductOptions.length} 个企业产品，已完成 ${referenceProductMappings.filter(mapping => mapping.productId && mapping.sourceTerm.trim()).length} 个映射。请在右侧补齐产品映射后再确认口播。`);
+      if (referenceProducts.length && referenceProductMappings.some(mapping => !mapping.productId || !mapping.sourceTerm.trim())) {
+        reportConfirmationError(`原片有 ${referenceProducts.length} 个产品位，请在右侧确认产品映射后再继续；所有产品位可以使用同一款企业产品。`);
         return;
       }
       const plan = buildReferenceSpeechPlan(videoKickoff, referenceProductMappings,
@@ -14779,7 +14787,9 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onLaunc
         setVoiceoverDur(0);
         setModeActionStatus('正在保存口播方案…');
         const task = await socialContentApi.getTask(socialContentTaskId!);
-        const selectedProductLabel = selectedProductOptions.map(item => item.label).join('、') || activeProductLabel || task.brief.productRef || '本地测试产品';
+        const selectedProductLabel = referenceProducts.length
+          ? selectedProductOptions.map(item => item.label).join('、') || activeProductLabel || task.brief.productRef || ''
+          : '';
         // Task briefs hold one canonical primary product. The full replacement
         // mapping remains in the studio draft; never resolve a joined label as one product.
         const primaryProduct = selectedProductOptions[0];
@@ -15533,7 +15543,7 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onLaunc
         </button>
       </div>
       {showLanguagePicker && (
-        <div className="max-h-48 overflow-y-auto rounded-xl border border-border bg-surface-2 p-2">
+        <div className="max-h-48 overflow-y-auto rounded-lg border border-border bg-surface-2 p-2">
           <div className="flex items-start justify-between gap-2 px-1 pb-2">
             <p className="text-[10px] leading-4 text-text-muted">可多选，也可以不选择；原文语言会始终保留。</p>
             <button type="button" onClick={() => setShowLanguagePicker(false)} className="shrink-0 rounded-md px-2 py-1 text-[9px] font-bold text-text-secondary hover:bg-white">收起</button>
@@ -15541,7 +15551,7 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onLaunc
           <div className="grid grid-cols-2 gap-1">
             {LANGS.filter(item => item.code !== workflowSourceLanguage).map(item => {
               const checked = voiceLangs.includes(item.code);
-              return <label key={item.code} className={`flex cursor-pointer items-center gap-2 rounded-lg px-2 py-2 text-[10px] font-bold ${checked ? 'bg-white text-text-primary shadow-sm' : 'text-text-muted hover:bg-white/70'}`}><input type="checkbox" checked={checked} onChange={() => toggleTranslationLanguage(item.code)} className="accent-emerald-600" />{item.label}</label>;
+              return <label key={item.code} className={`flex cursor-pointer items-center gap-2 rounded-lg px-2 py-2 text-[10px] font-bold ${checked ? 'bg-white text-text-primary shadow-none' : 'text-text-muted hover:bg-white/70'}`}><input type="checkbox" checked={checked} onChange={() => toggleTranslationLanguage(item.code)} className="accent-emerald-600" />{item.label}</label>;
             })}
           </div>
         </div>
@@ -15563,26 +15573,26 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onLaunc
   const workbenchProductionPanel = ((threeStepWorkflow && step === 'preview') || step === 'bgm' || (step === 'script' && scriptStageTab === 'bgm')) ? (
     <section ref={bgmLibraryRef} className="space-y-3">
       <input ref={bgmInputRef} type="file" accept="audio/*" className="hidden" onChange={event => { void handleBgmUpload(event.target.files); event.target.value = ''; }} />
-      <div className="rounded-xl border border-border bg-surface-2 p-3">
+      <div className="rounded-lg border border-border bg-surface-2 p-3">
         <div className="flex items-start justify-between gap-3">
-          <div className="min-w-0"><p className="text-xs font-black text-text-primary">当前配乐</p><p className="mt-1 truncate text-[10px] text-text-muted">{selectedBgmTrack?.name || '不配乐，仅保留素材原声和口播'}</p></div>
+          <div className="min-w-0"><p className="text-xs font-semibold text-text-primary">当前配乐</p><p className="mt-1 truncate text-[10px] text-text-muted">{selectedBgmTrack?.name || '不配乐，仅保留素材原声和口播'}</p></div>
           {selectedBgmTrack && <button type="button" onClick={() => togglePlay(selectedBgmTrack)} className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg border border-border bg-white text-text-secondary">{playingBgm === selectedBgmTrack.id ? <Pause size={13} /> : <Play size={13} />}</button>}
         </div>
         <label className="mt-3 block text-[10px] font-bold text-text-secondary">配乐音量 · {bgmVol}%<input type="range" min="0" max="100" value={bgmVol} disabled={!bgm} onChange={event => { setBgmVol(Number(event.target.value)); invalidateMusicRender(); }} className="mt-2 w-full accent-emerald-600 disabled:opacity-35" /></label>
       </div>
-      <button type="button" onClick={() => setBgmLibraryOpen(value => !value)} className="flex w-full items-center justify-between rounded-xl border border-border bg-white px-3 py-3 text-left">
-        <span><span className="block text-xs font-black text-text-primary">选择配乐</span><span className="mt-0.5 block text-[10px] text-text-muted">{bgms.length} 首音乐，可试听后选择</span></span>
+      <button type="button" onClick={() => setBgmLibraryOpen(value => !value)} className="flex w-full items-center justify-between rounded-lg border border-border bg-white px-3 py-3 text-left">
+        <span><span className="block text-xs font-semibold text-text-primary">选择配乐</span><span className="mt-0.5 block text-[10px] text-text-muted">{bgms.length} 首音乐，可试听后选择</span></span>
         <ChevronDown size={14} className={`text-text-muted transition ${bgmLibraryOpen ? 'rotate-180' : ''}`} />
       </button>
       {bgmLibraryOpen && (
-        <div className="space-y-2 rounded-xl border border-border bg-surface-2 p-2">
+        <div className="space-y-2 rounded-lg border border-border bg-surface-2 p-2">
           <div className="flex items-center justify-between gap-2 px-1 pb-1"><p className="text-[10px] font-bold text-text-muted">曲库</p><button type="button" onClick={() => bgmInputRef.current?.click()} disabled={bgmUploading} className="rounded-md border border-border bg-white px-2 py-1 text-[9px] font-bold text-text-secondary">{bgmUploading ? '上传中…' : '上传音乐'}</button></div>
           <div className="max-h-72 space-y-1.5 overflow-y-auto pr-1">
-            <button type="button" onClick={() => { applyWorkbenchBgm(''); audioRef.current?.pause(); setPlayingBgm(null); }} className={`flex w-full items-center gap-2 rounded-lg border p-2 text-left ${!bgm ? 'border-emerald-300 bg-emerald-50' : 'border-border bg-white'}`}><span className="flex h-8 w-8 items-center justify-center rounded-md bg-surface-2"><X size={12} /></span><span className="min-w-0 flex-1 text-[10px] font-black text-text-primary">不配乐</span>{!bgm && <Check size={12} className="text-emerald-600" />}</button>
+            <button type="button" onClick={() => { applyWorkbenchBgm(''); audioRef.current?.pause(); setPlayingBgm(null); }} className={`flex w-full items-center gap-2 rounded-lg border p-2 text-left ${!bgm ? 'border-emerald-300 bg-emerald-50' : 'border-border bg-white'}`}><span className="flex h-8 w-8 items-center justify-center rounded-md bg-surface-2"><X size={12} /></span><span className="min-w-0 flex-1 text-[10px] font-semibold text-text-primary">不配乐</span>{!bgm && <Check size={12} className="text-emerald-600" />}</button>
             {bgms.map(track => (
               <div key={track.id} className={`flex items-center gap-2 rounded-lg border p-2 ${bgm === track.id ? 'border-emerald-300 bg-emerald-50' : 'border-border bg-white'}`}>
                 <button type="button" onClick={() => togglePlay(track)} className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md bg-surface-2 text-text-secondary">{playingBgm === track.id ? <Pause size={12} /> : <Play size={12} />}</button>
-                <button type="button" onClick={() => applyWorkbenchBgm(track.id)} className="min-w-0 flex-1 text-left"><span className="block truncate text-[10px] font-black text-text-primary">{track.name}</span><span className="mt-0.5 block truncate text-[9px] text-text-muted">{track.mood || '背景音乐'} · {fmtDur(track.duration)}</span></button>
+                <button type="button" onClick={() => applyWorkbenchBgm(track.id)} className="min-w-0 flex-1 text-left"><span className="block truncate text-[10px] font-semibold text-text-primary">{track.name}</span><span className="mt-0.5 block truncate text-[9px] text-text-muted">{track.mood || '背景音乐'} · {fmtDur(track.duration)}</span></button>
                 <button type="button" onClick={() => toggleFavoriteBgm(track.id)} className="flex h-7 w-7 shrink-0 items-center justify-center text-text-muted"><Heart size={12} fill={favoriteBgms.includes(track.id) ? 'currentColor' : 'none'} /></button>
               </div>
             ))}
@@ -15595,15 +15605,15 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onLaunc
     </section>
   ) : step === 'cover' ? (
     <section className="space-y-3">
-      <div><p className="text-xs font-black text-text-primary">封面与标题</p><p className="mt-1 text-[10px] leading-4 text-text-muted">中间区域实时显示封面，这里只保留必要参数。</p></div>
+      <div><p className="text-xs font-semibold text-text-primary">封面与标题</p><p className="mt-1 text-[10px] leading-4 text-text-muted">中间区域实时显示封面，这里只保留必要参数。</p></div>
       <label className="block text-[10px] font-bold text-text-secondary">封面底图<select value={cover} onChange={event => { setCover(event.target.value); setCapturedCoverFrameUrl(''); setCoverTimelineCaptureMode(false); setCoverUrl(null); }} className="mt-1 h-9 w-full rounded-lg border border-border bg-white px-2 text-[10px]">{frameCandidates.length ? frameCandidates.map(item => <option key={item.id} value={item.id}>{item.name}</option>) : <option value="">暂无可用素材</option>}</select></label>
-      <div className="rounded-xl border border-border bg-surface-2 p-3">
-        <div className="flex items-center justify-between gap-2"><div><p className="text-[10px] font-black text-text-primary">从素材截取封面</p><p className="mt-0.5 text-[9px] text-text-muted">拖动底部整片时间轴定位画面，再截取当前帧。</p></div><button type="button" onClick={() => { setCoverTimelineCaptureMode(true); setCanvasView('creation'); }} className="shrink-0 rounded-lg border border-border bg-white px-2.5 py-1.5 text-[9px] font-bold text-text-secondary">选择画面</button></div>
-        {coverTimelineCaptureMode && <button type="button" onClick={captureWorkbenchCoverFrame} className="mt-2 w-full rounded-lg bg-slate-900 px-3 py-2 text-[10px] font-black text-white">截取当前帧</button>}
+      <div className="rounded-lg border border-border bg-surface-2 p-3">
+        <div className="flex items-center justify-between gap-2"><div><p className="text-[10px] font-semibold text-text-primary">从素材截取封面</p><p className="mt-0.5 text-[9px] text-text-muted">拖动底部整片时间轴定位画面，再截取当前帧。</p></div><button type="button" onClick={() => { setCoverTimelineCaptureMode(true); setCanvasView('creation'); }} className="shrink-0 rounded-lg border border-border bg-white px-2.5 py-1.5 text-[9px] font-bold text-text-secondary">选择画面</button></div>
+        {coverTimelineCaptureMode && <button type="button" onClick={captureWorkbenchCoverFrame} className="mt-2 w-full rounded-lg bg-slate-900 px-3 py-2 text-[10px] font-semibold text-white">截取当前帧</button>}
         {coverCaptureNotice && <p className={`mt-2 text-[9px] leading-4 ${/不允许|无法|尚未/.test(coverCaptureNotice) ? 'text-red-600' : 'text-emerald-700'}`}>{coverCaptureNotice}</p>}
       </div>
       <div>
-        <div className="mb-2 flex items-center justify-between"><p className="text-[10px] font-black text-text-primary">推荐封面</p><span className="text-[9px] text-text-muted">从真实素材中推荐 3 张</span></div>
+        <div className="mb-2 flex items-center justify-between"><p className="text-[10px] font-semibold text-text-primary">推荐封面</p><span className="text-[9px] text-text-muted">从真实素材中推荐 3 张</span></div>
         <div className="grid grid-cols-3 gap-2">
           {coverRecommendationClips.map((item, index) => <button key={item.id} type="button" onClick={() => { setCover(item.id); setCapturedCoverFrameUrl(''); setCoverTimelineCaptureMode(false); setCoverUrl(null); setCoverCaptureNotice(`已选择推荐封面 ${index + 1}`); }} className={`overflow-hidden rounded-lg border text-left ${cover === item.id && !capturedCoverFrameUrl ? 'border-emerald-400 ring-1 ring-emerald-200' : 'border-border'}`}><div className="aspect-[4/3] bg-slate-950">{item.poster || item.type === 'image' ? <img src={item.poster || item.url} alt="" className="h-full w-full object-cover" /> : <video src={item.url} muted preload="metadata" className="h-full w-full object-cover" />}</div><p className="truncate bg-white px-1.5 py-1 text-[8px] font-bold text-text-secondary">推荐 {index + 1}</p></button>)}
         </div>
@@ -15613,43 +15623,43 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onLaunc
         <button type="button" onClick={regenCovers} disabled={coverLoading} className="rounded-lg border border-border bg-white px-3 py-2 text-[10px] font-bold text-text-secondary">{coverLoading ? '生成中…' : 'AI 重写标题'}</button>
         <button type="button" onClick={() => void openCanvaCoverEditor()} disabled={coverCanvaOpening} className="rounded-lg border border-border bg-white px-3 py-2 text-[10px] font-bold text-text-secondary">{coverCanvaOpening ? '打开中…' : '精细编辑封面'}</button>
       </div>
-      <div className="rounded-xl border border-border bg-surface-2 p-3">
+      <div className="rounded-lg border border-border bg-surface-2 p-3">
         <div className="grid grid-cols-2 gap-2">
           <label className="text-[10px] font-bold text-text-secondary">字体<select value={coverStyle.font} onChange={event => setCoverStyle(current => ({ ...current, font: event.target.value as CoverStyle['font'] }))} className="mt-1 h-8 w-full rounded-lg border border-border bg-white px-2 text-[10px]">{COVER_FONTS.map(item => <option key={item.id} value={item.id}>{item.label}</option>)}</select></label>
           <label className="text-[10px] font-bold text-text-secondary">字号<select value={coverStyle.size} onChange={event => setCoverStyle(current => ({ ...current, size: event.target.value as CoverStyle['size'] }))} className="mt-1 h-8 w-full rounded-lg border border-border bg-white px-2 text-[10px]"><option value="S">小</option><option value="M">中</option><option value="L">大</option></select></label>
         </div>
-        <div className="mt-3 flex flex-wrap items-center gap-2">{['#ffffff', '#111827', '#16a34a', '#14b8a6', '#ef4444', '#3b82f6'].map(color => <button key={color} type="button" onClick={() => setCoverStyle(current => ({ ...current, color }))} className="h-6 w-6 rounded-full border" style={{ background: color, borderColor: coverStyle.color === color ? TRAFFIC_GREEN : 'var(--color-border)', boxShadow: coverStyle.color === color ? `0 0 0 2px ${TRAFFIC_GREEN}` : undefined }} />)}</div>
+        <div className="mt-3 flex flex-wrap items-center gap-2">{['#ffffff', '#111827', '#16a34a', '#14b8a6', '#ef4444', '#3b82f6'].map(color => <button key={color} type="button" onClick={() => setCoverStyle(current => ({ ...current, color }))} className="h-6 w-6 rounded-full border" style={{ background: color, borderColor: coverStyle.color === color ? STUDIO_ACCENT : 'var(--color-border)', boxShadow: coverStyle.color === color ? `0 0 0 2px ${STUDIO_ACCENT}` : undefined }} />)}</div>
       </div>
     </section>
   ) : step === 'preview' ? (
     <section className="space-y-3">
-      {threeStepWorkflow && selectedOutputStale && <p role="status" className="rounded-xl border border-amber-300 bg-amber-50 p-3 text-xs text-amber-950">现有成片对应旧脚本、旧素材或未记录版本校验，请重新渲染当前版本后再预览、确认或导出。</p>}
-      {threeStepWorkflow && subtitleSourceBlockReason && <p role="status" className="rounded-xl border border-amber-300 bg-amber-50 p-3 text-xs text-amber-950">{subtitleSourceBlockReason}</p>}
-      {threeStepWorkflow && voiceoverAlignmentBlockReason && <p role="status" className="rounded-xl border border-amber-300 bg-amber-50 p-3 text-xs text-amber-950">{voiceoverAlignmentBlockReason}</p>}
-      {threeStepWorkflow && !renderReadiness.ready && <div className="rounded-xl border border-amber-300 bg-amber-50 p-3" role="status">
-        <p className="text-xs font-black text-amber-950">成片前还需处理 {renderReadiness.issues.length} 项</p>
+      {threeStepWorkflow && selectedOutputStale && <p role="status" className="rounded-lg border border-amber-300 bg-amber-50 p-3 text-xs text-amber-950">现有成片对应旧脚本、旧素材或未记录版本校验，请重新渲染当前版本后再预览、确认或导出。</p>}
+      {threeStepWorkflow && subtitleSourceBlockReason && <p role="status" className="rounded-lg border border-amber-300 bg-amber-50 p-3 text-xs text-amber-950">{subtitleSourceBlockReason}</p>}
+      {threeStepWorkflow && voiceoverAlignmentBlockReason && <p role="status" className="rounded-lg border border-amber-300 bg-amber-50 p-3 text-xs text-amber-950">{voiceoverAlignmentBlockReason}</p>}
+      {threeStepWorkflow && !renderReadiness.ready && <div className="rounded-lg border border-amber-300 bg-amber-50 p-3" role="status">
+        <p className="text-xs font-semibold text-amber-950">成片前还需处理 {renderReadiness.issues.length} 项</p>
         <p className="mt-1 text-[10px] text-amber-900">已就绪 {renderReadiness.readyCount}/{renderReadiness.totalCount} 镜。点击问题返回对应分镜。</p>
         <div className="mt-2 max-h-44 space-y-1 overflow-y-auto">{renderReadiness.issues.map((issue, index) => <button key={`${issue.code}-${issue.slotId || 'global'}-${index}`} type="button" onClick={() => { if (issue.slotId) setActiveStoryboardSlotId(issue.slotId); setStepIdx(activeSteps.findIndex(item => item.id === (issue.code === 'script_missing' ? 'mode' : 'material'))); setCanvasView('creation'); }} className="block w-full rounded-lg bg-white px-2 py-1.5 text-left text-[10px] text-amber-950 hover:bg-amber-100">{issue.message} →</button>)}</div>
       </div>}
-      {threeStepWorkflow && renderReadiness.ready && !replicationNeedsVoiceover && workbenchRenderableVersionCount === 0 && <p role="status" className="rounded-xl border border-amber-300 bg-amber-50 p-3 text-xs text-amber-950">当前没有可渲染的视频版本。请检查脚本及每个分镜的素材链接。</p>}
-      {threeStepWorkflow && replicationTimingBlocked && <p role="status" className="rounded-xl border border-amber-300 bg-amber-50 p-3 text-xs text-amber-950">{replicationPreparationError || '内容准备尚未完成，请稍候。'}</p>}
-      <div className={`rounded-xl border p-3 ${workbenchHasFormalVideo ? 'border-emerald-200 bg-emerald-50' : 'border-border bg-surface-2'}`}><p className="text-xs font-black text-text-primary">{workbenchHasFormalVideo ? '成片已生成' : '等待渲染成片'}</p><p className="mt-1 text-[10px] leading-4 text-text-muted">{workbenchHasFormalVideo ? '可在中间播放器检查成片；修改设置后可重新渲染。' : replicationNeedsVoiceover ? '点击底部按钮，系统会先生成本语言配音，再渲染成片。' : '确认配乐和字幕后，点击底部“渲染成片”。'}</p></div>
-      <div className="space-y-2 rounded-xl border border-border bg-white p-3 text-[10px]">
+      {threeStepWorkflow && renderReadiness.ready && !replicationNeedsVoiceover && workbenchRenderableVersionCount === 0 && <p role="status" className="rounded-lg border border-amber-300 bg-amber-50 p-3 text-xs text-amber-950">当前没有可渲染的视频版本。请检查脚本及每个分镜的素材链接。</p>}
+      {threeStepWorkflow && replicationTimingBlocked && <p role="status" className="rounded-lg border border-amber-300 bg-amber-50 p-3 text-xs text-amber-950">{replicationPreparationError || '内容准备尚未完成，请稍候。'}</p>}
+      <div className={`rounded-lg border p-3 ${workbenchHasFormalVideo ? 'border-emerald-200 bg-emerald-50' : 'border-border bg-surface-2'}`}><p className="text-xs font-semibold text-text-primary">{workbenchHasFormalVideo ? '成片已生成' : '等待渲染成片'}</p><p className="mt-1 text-[10px] leading-4 text-text-muted">{workbenchHasFormalVideo ? '可在中间播放器检查成片；修改设置后可重新渲染。' : replicationNeedsVoiceover ? '点击底部按钮，系统会先生成本语言配音，再渲染成片。' : '确认配乐和字幕后，点击底部“渲染成片”。'}</p></div>
+      <div className="space-y-2 rounded-lg border border-border bg-white p-3 text-[10px]">
         <div className="flex justify-between gap-3"><span className="text-text-muted">内容版本</span><span className="truncate font-bold text-text-primary">{assemblyName}</span></div>
         <div className="flex justify-between gap-3"><span className="text-text-muted">语言</span><span className="truncate font-bold text-text-primary">{activeLanguageLabel}</span></div>
         <div className="flex justify-between gap-3"><span className="text-text-muted">配乐</span><span className="truncate font-bold text-text-primary">{selectedBgmTrack?.name || '不配乐'}</span></div>
         <div className="flex justify-between gap-3"><span className="text-text-muted">封面</span><span className="truncate font-bold text-text-primary">{coverClip?.name || '沿用首帧'}</span></div>
       </div>
       {threeStepWorkflow && mode !== 'clone' && workbenchHasFormalVideo && <label className="flex items-start gap-2 rounded-lg border border-emerald-200 bg-emerald-50 p-3 text-[11px] leading-5 text-emerald-950"><input type="checkbox" className="mt-1" checked={currentRenderReviewed} onChange={event => void updateRenderAcceptance(event.target.checked)} /><span>我已检查中间播放器中的画面、口播、字幕、配乐和结尾，同意导出当前版本。验收结果会保存到“我的创作”的历史素材。</span></label>}
-      {threeStepWorkflow && mode !== 'clone' && currentRenderReviewed && <div className={`rounded-xl border p-3 text-[11px] ${currentProjectQualityRecord ? 'border-emerald-200 bg-emerald-50' : 'border-amber-300 bg-amber-50'}`} aria-label="成片重新质检">
-        <p className="font-black text-text-primary">{currentProjectQualityRecord ? '当前版本质检已签发' : '当前版本等待重新质检'}</p>
+      {threeStepWorkflow && mode !== 'clone' && currentRenderReviewed && <div className={`rounded-lg border p-3 text-[11px] ${currentProjectQualityRecord ? 'border-emerald-200 bg-emerald-50' : 'border-amber-300 bg-amber-50'}`} aria-label="成片重新质检">
+        <p className="font-semibold text-text-primary">{currentProjectQualityRecord ? '当前版本质检已签发' : '当前版本等待重新质检'}</p>
         <p className="mt-1 leading-5 text-text-muted">脚本、分镜、素材、字幕、配音或成片变化后，旧记录会自动失效。导出、团队审核和发布前必须为当前输入重新签发。</p>
         {currentProjectQualityRecord && <p className="mt-1 font-mono text-[9px] text-emerald-800">记录 {currentProjectQualityRecord.id} · 指纹 {currentProjectQualityRecord.inputFingerprint.slice(0, 12)}</p>}
-        <button type="button" disabled={projectQualityBusy} onClick={() => void requalityCurrentProject()} className="mt-2 rounded-lg bg-emerald-700 px-3 py-2 font-black text-white disabled:opacity-45">{projectQualityBusy ? '正在质检…' : currentProjectQualityRecord ? '再次核验当前版本' : '重新质检并签发'}</button>
+        <button type="button" disabled={projectQualityBusy} onClick={() => void requalityCurrentProject()} className="mt-2 rounded-lg bg-blue-600 px-3 py-2 font-semibold text-white disabled:opacity-45">{projectQualityBusy ? '正在质检…' : currentProjectQualityRecord ? '再次核验当前版本' : '重新质检并签发'}</button>
         {projectQualityNotice && <p role="status" className="mt-2 leading-5 text-text-secondary">{projectQualityNotice}</p>}
       </div>}
-      {freeThreeStep && workbenchHasFormalVideo && <div className="rounded-xl border border-border bg-white p-3 text-[11px]" aria-label="人工协作交付">
-        <p className="font-black text-text-primary">后续协作（主动发起）</p>
+      {freeThreeStep && workbenchHasFormalVideo && <div className="rounded-lg border border-border bg-white p-3 text-[11px]" aria-label="人工协作交付">
+        <p className="font-semibold text-text-primary">后续协作（主动发起）</p>
         <p className="mt-1 leading-5 text-text-muted">保存和导出不会自动创建数字员工任务。验收当前成片后，可单独发起以下团队协作。</p>
         <div className="mt-3 grid grid-cols-2 gap-2">
           <button type="button" disabled={!currentRenderReviewed || !currentProjectQualityRecord || Boolean(manualHandoffBusy)} onClick={() => void submitManualHandoff('team_review')} className="rounded-lg border border-emerald-300 px-3 py-2 font-bold text-emerald-800 disabled:opacity-45">{manualHandoffBusy === 'team_review' ? '正在提交…' : '提交团队审核'}</button>
@@ -15680,9 +15690,102 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onLaunc
         ? projectWorkflowContext
         : null
     : null;
+  const retryReferenceActionRef = useRef(retryReference);
+  retryReferenceActionRef.current = retryReference;
+
+  useEffect(() => {
+    if (sceneNavigationError) {
+      message.destroy('studio-scene-navigation');
+      notification.error({
+        key: 'studio-scene-navigation-error',
+        message: '无法打开指定分镜',
+        description: sceneNavigationError,
+        placement: 'top',
+        duration: 6,
+        btn: <Button size="small" onClick={() => {
+          notification.destroy('studio-scene-navigation-error');
+          onNavigate?.('socialWorkspace');
+        }}>返回原周任务核对上游</Button>,
+      });
+      return;
+    }
+    if (sceneNavigationReceipt) {
+      message.success({ key: 'studio-scene-navigation', content: sceneNavigationReceipt, duration: 3 });
+      return;
+    }
+    if (rawSceneTarget) {
+      message.loading({ key: 'studio-scene-navigation', content: '正在核对原周任务、视频与失败分镜凭据…', duration: 3 });
+    }
+  }, [message, notification, onNavigate, rawSceneTarget, sceneNavigationError, sceneNavigationReceipt]);
+
+  useEffect(() => {
+    if (!localGateBypass || socialViralTask) return;
+    message.info({
+      key: 'studio-local-demo-mode',
+      content: '本地演示模式：内容制作门禁已放行，内容 Agent 会优先使用最近上传的素材补齐分镜。',
+      duration: 3,
+    });
+  }, [localGateBypass, message, socialViralTask]);
+
+  useEffect(() => {
+    if (!referenceRecoveryMessage) return;
+    notification.warning({
+      key: 'studio-reference-recovery',
+      message: '参考分析需要处理',
+      description: referenceRecoveryMessage,
+      placement: 'top',
+      duration: 6,
+      btn: (
+        <div className="flex items-center gap-2">
+          {!referenceNeedsDirectorReview && <Button size="small" onClick={() => {
+            notification.destroy('studio-reference-recovery');
+            void retryReferenceActionRef.current();
+          }}>重试参考分析</Button>}
+          <Button size="small" type={referenceNeedsDirectorReview ? 'primary' : 'default'} onClick={() => {
+            notification.destroy('studio-reference-recovery');
+            onNavigate?.('socialInspiration');
+          }}>{referenceNeedsDirectorReview ? '前往编导复核' : '更换参考视频'}</Button>
+        </div>
+      ),
+    });
+  }, [notification, onNavigate, referenceNeedsDirectorReview, referenceRecoveryMessage]);
+
+  useEffect(() => {
+    if (socialContentTaskId || socialViralTask || agentProduction.active || workflowContext?.runId || projectWorkflowContext?.runId || !projectId) return;
+    notification.info({
+      key: 'studio-manual-project',
+      message: '手动创作工作台',
+      description: '当前作品未关联智能员工任务。',
+      placement: 'top',
+      duration: 6,
+      btn: <Button size="small" onClick={() => {
+        notification.destroy('studio-manual-project');
+        onNavigate?.('agentMonitor');
+      }}>前往员工监控查看真实任务</Button>,
+    });
+  }, [agentProduction.active, notification, onNavigate, projectId, projectWorkflowContext?.runId, socialContentTaskId, socialViralTask, workflowContext?.runId]);
+
+  useEffect(() => {
+    if (linkedProductionContext || !managedProductionProjectRef.current) return;
+    notification.info({
+      key: 'studio-managed-production',
+      message: '自动生产项目',
+      description: '请使用“生产现场：修改配置并继续原任务”保存配音、素材、字幕等修改。',
+      placement: 'top',
+      duration: 6,
+      btn: <Button size="small" onClick={() => {
+        notification.destroy('studio-managed-production');
+        requestProductionBack();
+      }}>返回上一页</Button>,
+    });
+  }, [linkedProductionContext, notification, projectId]);
 
   const navigateReplicationStep = async (index: number) => {
     if (modeActionLoading || ttsLoading || savingProj || batchShotBusy) return;
+    if (index > 0 && socialViralTask && hasIncompleteReferenceAnalysis(videoKickoff)) {
+      setModeNotice('这条爆款视频还没有通过完整逐镜分析，暂不能进入分镜制作。请先在灵感中心查看编导分析状态，并完成或重新分析。');
+      return;
+    }
     if (index === 2 && !canEnterStoryboardRenderStep(storyboardSlots)) {
       setModeNotice('请先完成分镜，再进入成片设置。');
       const materialIndex = activeSteps.findIndex(item => item.id === 'material');
@@ -15756,17 +15859,17 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onLaunc
     } }));
   };
 
-  if (freeThreeStep && step === 'mode') return <div className="flex h-full min-h-0 flex-col bg-[#f2f7f4]">
+  if (freeThreeStep && step === 'mode') return <div className="flex h-full min-h-0 flex-col bg-white">
     <ReplicationWorkbenchHeader activeStep={0} stepLabels={['创意与口播确认', '分镜匹配与制作', '成片渲染和导出']} title={projectTitle} onStepChange={index => { if (index > 0) void navigateReplicationStep(index); }} />
     <div className="grid min-h-0 flex-1 grid-cols-1 lg:grid-cols-[minmax(0,1fr)_minmax(0,1.5fr)_minmax(0,1fr)]">
-      <aside className="min-h-0 overflow-y-auto border-r border-border bg-white p-5"><h2 className="text-sm font-black text-text-primary">Gemini 逐句口播与分镜</h2><pre className="mt-4 whitespace-pre-wrap text-xs leading-6 text-text-secondary">{script}</pre></aside>
+      <aside className="min-h-0 overflow-y-auto border-r border-border bg-white p-5"><h2 className="text-sm font-semibold text-text-primary">Gemini 逐句口播与分镜</h2><pre className="mt-4 whitespace-pre-wrap text-xs leading-6 text-text-secondary">{script}</pre></aside>
       <main className="min-h-0 bg-slate-950 p-5"><p className="mb-3 text-xs font-bold text-white">指定开场钩子</p>{videoKickoff?.generatedVideo?.url ? <video src={videoKickoff.generatedVideo.url} controls playsInline className="h-[min(65vh,620px)] w-full object-contain" /> : <p className="text-xs text-white">开场视频暂不可预览</p>}</main>
-      <aside className="border-l border-border bg-white p-5"><h2 className="text-sm font-black text-text-primary">本次创作</h2><p className="mt-3 text-xs text-text-secondary">企业产品：{activeProductLabel || videoKickoff?.productInfo || '待确认'}</p><p className="mt-2 text-xs text-text-secondary">开场钩子：{videoKickoff?.generatedVideo?.title || '已上传'}</p><p className="mt-4 text-xs leading-5 text-text-muted">口播由 Gemini 依据企业产品与钩子画面生成。请检查内容后进入逐镜制作。</p></aside>
+      <aside className="border-l border-border bg-white p-5"><h2 className="text-sm font-semibold text-text-primary">本次创作</h2><p className="mt-3 text-xs text-text-secondary">企业产品：{activeProductLabel || videoKickoff?.productInfo || '待确认'}</p><p className="mt-2 text-xs text-text-secondary">开场钩子：{videoKickoff?.generatedVideo?.title || '已上传'}</p><p className="mt-4 text-xs leading-5 text-text-muted">口播由 Gemini 依据企业产品与钩子画面生成。请检查内容后进入逐镜制作。</p></aside>
     </div>
-    <footer className="flex min-h-[76px] items-center justify-end border-t border-border bg-white px-5"><button type="button" onClick={() => { void saveProject('draft').then(saved => { if (saved) setStepIdx(activeSteps.findIndex(item => item.id === 'material')); }); }} className="rounded-xl bg-emerald-700 px-5 py-3 text-sm font-black text-white">确认口播，进入分镜制作</button></footer>
+    <footer className="flex min-h-[76px] items-center justify-end border-t border-border bg-white px-5"><button type="button" onClick={() => { void saveProject('draft').then(saved => { if (saved) setStepIdx(activeSteps.findIndex(item => item.id === 'material')); }); }} className="rounded-lg bg-blue-600 px-5 py-3 text-sm font-semibold text-white">确认口播，进入分镜制作</button></footer>
   </div>;
 
-  if (socialViralTask && step === 'mode') return <div className="flex h-full flex-col bg-[#f2f7f4]">
+  if (socialViralTask && step === 'mode') return <div className="flex h-full flex-col bg-white">
     <ReplicationWorkbenchHeader activeStep={0} title={projectTitle} navigationDisabled />
     <div className="flex flex-1 flex-col items-center justify-center gap-4 p-6 text-center">
       <p role={replicationConfirmationError ? 'alert' : 'status'} className="max-w-xl text-sm text-text-secondary">{replicationConfirmationError || referenceSpeechPlan.error || modeActionStatus || (studioCreateRequest?.confirmedSpeech?.length ? '正在载入已确认的口播并建立分镜…' : '请在第一页完成口播替换、手动修改与确认。')}</p>
@@ -15775,12 +15878,7 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onLaunc
   </div>;
 
   return (
-    <div className="flex flex-col h-full relative" onPointerDownCapture={() => { studioSettingsEditedRef.current = true; }}>
-      {sceneNavigationError && <div role="alert" className="p-3 text-amber-900">{sceneNavigationError}<button type="button" onClick={() => onNavigate?.('socialWorkspace')}>返回原周任务核对上游</button></div>}
-      {sceneNavigationReceipt && <div role="status" className="p-3">{sceneNavigationReceipt}</div>}
-      {socialContentTaskId && !rawSceneTarget && <div role="status" className="shrink-0 border-b border-emerald-200 bg-emerald-50 px-4 py-2 text-xs text-emerald-950">
-        任务资料已带入统一制作工作台，继续当前任务即可，不再选择旧制作路线。
-      </div>}
+    <div className="relative flex h-full min-h-0 flex-col overflow-hidden" onPointerDownCapture={() => { studioSettingsEditedRef.current = true; }}>
       {sceneReworkTask?.taskId === socialContentTaskId && sceneReworkTask && (!rawSceneTarget || !!sceneNavigationReceipt) && <details open={rawSceneTarget ? true : undefined} className="mx-4 mt-3 max-h-80 shrink-0 overflow-y-auto rounded border bg-white p-3">
         <summary className="cursor-pointer font-bold">原成片失败镜头 · 局部返工</summary>
         <SocialSceneReworkPanel key={`${sceneReworkTask.taskId}:${sceneReworkTask.runId}`} task={sceneReworkTask} focusedSceneId={sceneNavigationReceipt ? sceneTarget?.sceneId : undefined} initialParentArtifactId={sceneNavigationReceipt ? sceneTarget?.parentArtifactId : undefined} expectedTenantId={sceneNavigationReceipt ? sceneTarget?.tenantId : undefined}
@@ -15797,23 +15895,13 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onLaunc
         <summary className="cursor-pointer font-bold">关联任务进度 · 点击查看制作状态</summary>
         <div className="mt-2 max-h-80 overflow-y-auto"><ProductionTaskScene key={`${linkedProductionContext.runId}:${linkedProductionContext.taskId}`} runId={linkedProductionContext.runId!} taskId={linkedProductionContext.taskId!} directorContext={linkedProductionContext} embedded /></div>
       </details>}
-      {localGateBypass && !socialViralTask && <div role="status" className="shrink-0 border-b border-sky-200 bg-sky-50 px-4 py-2 text-xs font-semibold text-sky-900">本地演示模式：内容制作门禁已放行；内容 Agent 会优先考虑最近上传素材，并从本地素材库选择不同素材补齐分镜。</div>}
-      {referenceRecoveryMessage && <div role="alert" className="shrink-0 border-b border-amber-200 bg-amber-50 px-4 py-3 text-xs text-amber-900"><span>{referenceRecoveryMessage}</span>{!referenceNeedsDirectorReview && <button type="button" disabled={retryingReference} onClick={() => void retryReference()} className="ml-3 font-bold underline disabled:opacity-50">{retryingReference ? '正在重试…' : '重试参考分析'}</button>}<button type="button" onClick={() => onNavigate?.('socialInspiration')} className="ml-3 font-bold underline">{referenceNeedsDirectorReview ? '前往编导复核' : '更换参考视频'}</button></div>}
       {!socialContentTaskId && !agentProduction.active && <DirectorTaskContext page="smartAssets" runtimeContext={workflowContext || projectWorkflowContext || undefined} />}
-      {!socialContentTaskId && !socialViralTask && !agentProduction.active && !workflowContext?.runId && !projectWorkflowContext?.runId && projectId && <div className="shrink-0 border-b border-slate-200 bg-slate-50 px-4 py-3 text-xs text-slate-700">当前作品未关联智能员工任务，这是手动创作工作台。<button type="button" onClick={() => onNavigate?.('agentMonitor')} className="ml-3 font-semibold text-emerald-700">前往员工监控查看真实任务 →</button></div>}
-
-      {modeNotice && <div role="status" className="flex shrink-0 items-start gap-3 border-b border-amber-200 bg-amber-50 px-4 py-2 text-xs leading-5 text-amber-950"><span className="min-w-0 flex-1">{modeNotice}</span><button type="button" aria-label="关闭创作提示" onClick={() => setModeNotice('')} className="shrink-0 underline">关闭</button></div>}
-      {!linkedProductionContext && managedProductionProjectRef.current && <div role="status" className="flex shrink-0 items-center justify-between gap-3 border-b border-blue-200 bg-blue-50 px-4 py-2 text-xs text-blue-900">
-        <span>自动生产项目 · 请使用“生产现场：修改配置并继续原任务”保存配音、素材、字幕等修改。</span>
-        <button type="button" className="shrink-0 font-semibold underline" onClick={requestProductionBack}>返回上一页</button>
-      </div>}
       {managedProductionProjectRef.current && projectId && ((workflowContext?.taskKey || projectWorkflowContext?.taskKey) === 'content_quality_gate'
         ? <section className="mx-4 mt-3 shrink-0 rounded border bg-white p-3"><h3 className="font-bold">生产现场：修改配置并继续原任务</h3><ProductionRevisionPanel projectId={projectId}/></section>
         : <details className="mx-4 mt-3 shrink-0 rounded border bg-white p-3"><summary className="cursor-pointer font-bold">生产现场：修改配置并继续原任务</summary><ProductionRevisionPanel projectId={projectId}/></details>)}
       {/* BGM 试听用的隐藏音频元素 */}
       <audio ref={audioRef} onEnded={() => setPlayingBgm(null)} className="hidden" />
 
-      {rawSceneTarget && !sceneNavigationReceipt && !sceneNavigationError && <p role="status" className="p-3">正在核对原周任务、视频与失败分镜凭据…</p>}
       <div className={showProjects || (rawSceneTarget && !sceneNavigationReceipt) ? 'hidden' : 'flex min-h-0 flex-1 flex-col'}>
       <StudioWorkbenchFrame
         className="h-full min-h-0 rounded-none border-0 shadow-none lg:h-full lg:min-h-0"
@@ -15832,11 +15920,15 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onLaunc
         projectTitle={projectTitle}
         projectSubtitle={`${contentMode === 'video' ? '视频' : '图文'} · ${platform} · ${ratio}`}
         headerActions={(
+          <>
+          {managedProductionProjectRef.current && <button type="button" onClick={requestProductionBack} className="inline-flex h-8 shrink-0 items-center rounded-md border border-blue-200 bg-blue-50 px-2.5 text-[10px] font-bold text-blue-800 xl:hidden">返回生产现场</button>}
           <div className="hidden items-center gap-1.5 xl:flex">
+            {managedProductionProjectRef.current && <button type="button" onClick={requestProductionBack} className="inline-flex h-8 items-center rounded-md border border-blue-200 bg-blue-50 px-2.5 text-[10px] font-bold text-blue-800">返回生产现场</button>}
             <button type="button" onClick={() => openCreationHome(false)} className="inline-flex h-8 items-center gap-1 rounded-md border border-border bg-white px-2.5 text-[10px] font-bold text-text-secondary hover:bg-surface-2"><ChevronLeft size={13} />返回创作列表</button>
             <button type="button" onClick={() => void openProjects().catch(error => setModeNotice(error.message))} className="inline-flex h-8 items-center gap-1 rounded-md border border-border bg-white px-2.5 text-[10px] font-bold text-text-secondary hover:bg-surface-2"><FolderOpen size={13} />查看其他制作</button>
-            <button type="button" onClick={() => openCreationHome(true)} className="inline-flex h-8 items-center gap-1 rounded-md bg-accent px-2.5 text-[10px] font-black text-white hover:bg-accent-dim"><Plus size={13} />新建任务</button>
+            <button type="button" onClick={() => openCreationHome(true)} className="inline-flex h-8 items-center gap-1 rounded-md bg-accent px-2.5 text-[10px] font-semibold text-white hover:bg-accent-dim"><Plus size={13} />新建任务</button>
           </div>
+          </>
         )}
         onProjectTitleChange={title => { setProjectTitle(title); setAutosaveStatus('idle'); }}
         saveStatus={{
@@ -15886,8 +15978,8 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onLaunc
         canvasTitle={threeStepWorkflow && step === 'preview' ? '成片预览' : '画面预览'}
         canvasToolbar={mode === 'clone' && videoKickoff && step !== 'preview' ? (
           <div className="flex rounded-lg border border-border bg-surface-2 p-0.5">
-            <button type="button" aria-pressed={canvasView === 'reference'} onClick={() => setCanvasView('reference')} className={`rounded-md px-2 py-1 text-[10px] font-bold ${canvasView === 'reference' ? 'bg-white text-text-primary shadow-sm' : 'text-text-muted'}`}>爆款视频预览</button>
-            <button type="button" aria-pressed={canvasView === 'creation'} onClick={() => setCanvasView('creation')} className={`rounded-md px-2 py-1 text-[10px] font-bold ${canvasView === 'creation' ? 'bg-white text-text-primary shadow-sm' : 'text-text-muted'}`}>新建视频预览</button>
+            <button type="button" aria-pressed={canvasView === 'reference'} onClick={() => setCanvasView('reference')} className={`rounded-md px-2 py-1 text-[10px] font-bold ${canvasView === 'reference' ? 'bg-white text-text-primary shadow-none' : 'text-text-muted'}`}>爆款视频预览</button>
+            <button type="button" aria-pressed={canvasView === 'creation'} onClick={() => setCanvasView('creation')} className={`rounded-md px-2 py-1 text-[10px] font-bold ${canvasView === 'creation' ? 'bg-white text-text-primary shadow-none' : 'text-text-muted'}`}>新建视频预览</button>
           </div>
         ) : undefined}
         propertyTitle={threeStepWorkflow && step === 'preview' ? '成片渲染与导出' : workbenchPropertyTitle}
@@ -15908,38 +16000,38 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onLaunc
         propertyPanel={(
           threeStepWorkflow && step === 'preview' ? (
             <section className="space-y-3" aria-label="成片操作">
-              {subtitleSourceBlockReason && <div role="alert" className="rounded-xl border border-amber-200 bg-amber-50 p-3 text-xs leading-5">
+              {subtitleSourceBlockReason && <div role="alert" className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-xs leading-5">
                 <p>{subtitleSourceBlockReason}</p>
                 <button type="button" disabled={avatarCaptionBusy || !projectId} onClick={() => void refreshAvatarSourceCaptions()} className="mt-2 w-full rounded-lg border border-amber-400 bg-white px-3 py-2 font-bold disabled:opacity-50">{avatarCaptionBusy ? '正在补取原声字幕…' : '补取原声字幕'}</button>
                 <p className="mt-1 text-[10px] text-text-muted">优先读取已有字幕；需要付费转写时会单独确认。</p>
               </div>}
               {subtitleNotice && <p role="status" className="text-xs leading-5 text-text-secondary">{subtitleNotice}</p>}
-              <div className="rounded-xl border border-emerald-200 bg-emerald-50/60 p-4">
-                <p className="text-sm font-black text-text-primary">生成成片</p>
+              <div className="rounded-lg border border-emerald-200 bg-emerald-50/60 p-4">
+                <p className="text-sm font-semibold text-text-primary">生成成片</p>
                 <p className="mt-1 text-[11px] text-text-muted">生成镜头使用口播脚本字幕，按镜头时长显示；已有实测字幕时沿用实测时间码。</p>
                 <p className="mt-1 text-[11px] leading-5 text-text-secondary">{workbenchHasFormalVideo ? '效果调整后，可在这里重新生成。' : replicationNeedsVoiceover ? '点击后自动生成配音并渲染成片。' : '点击后开始渲染成片。'}</p>
-                <button type="button" onClick={startReplicationRender} disabled={rendering || batchRenderingLangs || ttsLoading || Boolean(subtitleSourceBlockReason) && !freeCanGenerateVoiceover || Boolean(voiceoverAlignmentBlockReason) && !replicationNeedsVoiceover || replicationTimingBlocked} className="mt-3 inline-flex w-full items-center justify-center gap-2 rounded-lg bg-emerald-700 px-4 py-3 text-xs font-black text-white shadow-sm hover:bg-emerald-800 disabled:cursor-not-allowed disabled:opacity-50">
+                <button type="button" onClick={startReplicationRender} disabled={rendering || batchRenderingLangs || ttsLoading || Boolean(subtitleSourceBlockReason) && !freeCanGenerateVoiceover || Boolean(voiceoverAlignmentBlockReason) && !replicationNeedsVoiceover || replicationTimingBlocked} className="mt-3 inline-flex w-full items-center justify-center gap-2 rounded-lg bg-blue-600 px-4 py-3 text-xs font-semibold text-white shadow-none hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-50">
                   {(rendering || batchRenderingLangs || ttsLoading) && <Loader2 size={15} className="animate-spin" />}
                   {rendering || batchRenderingLangs ? `正在生成 ${renderPct}%` : ttsLoading ? '正在生成配音…' : workbenchHasFormalVideo ? '重新生成成片' : replicationNeedsVoiceover ? '生成配音并渲染成片' : '生成成片'}
                 </button>
               </div>
 
-              <details className="rounded-xl border border-border bg-white p-3" aria-label="调整效果">
-                <summary className="cursor-pointer text-xs font-black text-text-primary">调整效果</summary>
+              <details className="rounded-lg border border-border bg-white p-3" aria-label="调整效果">
+                <summary className="cursor-pointer text-xs font-semibold text-text-primary">调整效果</summary>
                 <div className="mt-4 space-y-4 border-t border-border pt-4">
                   <section aria-label="配音设置">
-                    <p className="text-[11px] font-black text-text-primary">配音</p>
+                    <p className="text-[11px] font-semibold text-text-primary">配音</p>
                     <label className="mt-2 block text-[10px] font-bold text-text-secondary">音色<select aria-label="配音音色" value={voice} onChange={event => { setVoice(event.target.value); setTtsLanguageSettings(current => ({ ...current, [activeVoiceLang]: { ...(current[activeVoiceLang] || DEFAULT_TTS_SETTINGS), voiceId: event.target.value } })); setVoiceoverStaleLangs(current => [...new Set([...current, activeVoiceLang])]); invalidateMusicRender(); }} className="mt-1 w-full rounded-lg border border-border bg-white p-2 text-xs">{[...VOICES, ...customVoices.map(item => ({ id: item.voiceId, name: item.name }))].map(item => <option key={item.id} value={item.id}>{item.name}</option>)}</select></label>
-                    <label className="mt-2 block text-[10px] font-bold text-text-secondary">语速 · {replicationSpeechSpeed.toFixed(2)} 倍<input aria-label="配音语速" type="range" min="0.85" max="1.30" step="0.05" value={replicationSpeechSpeed} onChange={event => { const speed = Number(event.target.value); setReplicationSpeechSpeed(speed); setTtsLanguageSettings(current => ({ ...current, [activeVoiceLang]: { ...(current[activeVoiceLang] || DEFAULT_TTS_SETTINGS), speed } })); setVoiceoverStaleLangs(current => [...new Set([...current, activeVoiceLang])]); invalidateMusicRender(); }} className="mt-2 w-full accent-emerald-700" /></label>
+                    <label className="mt-2 block text-[10px] font-bold text-text-secondary">语速 · {replicationSpeechSpeed.toFixed(2)} 倍<input aria-label="配音语速" type="range" min="0.85" max="1.30" step="0.05" value={replicationSpeechSpeed} onChange={event => { const speed = Number(event.target.value); setReplicationSpeechSpeed(speed); setTtsLanguageSettings(current => ({ ...current, [activeVoiceLang]: { ...(current[activeVoiceLang] || DEFAULT_TTS_SETTINGS), speed } })); setVoiceoverStaleLangs(current => [...new Set([...current, activeVoiceLang])]); invalidateMusicRender(); }} className="mt-2 w-full accent-blue-600" /></label>
                     {activeVoiceoverUrl && <audio src={activeVoiceoverUrl} controls aria-label="成片配音试听" className="mt-2 w-full" />}
                   </section>
-                  <section className="border-t border-border pt-3" aria-label="配乐设置"><p className="mb-2 text-[11px] font-black text-text-primary">配乐</p>{workbenchProductionPanel}</section>
+                  <section className="border-t border-border pt-3" aria-label="配乐设置"><p className="mb-2 text-[11px] font-semibold text-text-primary">配乐</p>{workbenchProductionPanel}</section>
                   <section className="border-t border-border pt-3" aria-label="字幕设置">
-                    <p className="text-[11px] font-black text-text-primary">字幕</p>
+                    <p className="text-[11px] font-semibold text-text-primary">字幕</p>
                     <label className="mt-2 flex items-center gap-2 text-xs"><input type="checkbox" checked={subtitlesOn} onChange={event => { setSubtitlesOn(event.target.checked); invalidateMusicRender(); }} />显示字幕</label>
                   </section>
                   <section className="border-t border-border pt-3" aria-label="动效设置">
-                    <p className="text-[11px] font-black text-text-primary">画面动效</p>
+                    <p className="text-[11px] font-semibold text-text-primary">画面动效</p>
                     <select aria-label="动效风格" value={effectPreset} onChange={event => { setEffectPreset(event.target.value as EffectPresetId); invalidateMusicRender(); }} className="mt-2 w-full rounded border border-border p-2 text-xs"><option value="natural">自然</option><option value="dynamic">动感</option><option value="tech">科技</option><option value="cinematic">电影</option></select>
                     <select aria-label="动效强度" value={effectIntensity} onChange={event => { setEffectIntensity(Number(event.target.value) as EffectIntensity); invalidateMusicRender(); }} className="mt-2 w-full rounded border border-border p-2 text-xs"><option value={0}>关闭</option><option value={1}>弱</option><option value={2}>中</option><option value={3}>强</option></select>
                     <label className="mt-3 flex items-center gap-2 text-xs"><input type="checkbox" checked={effectSoundsOn} onChange={event => { setEffectSoundsOn(event.target.checked); invalidateMusicRender(); }} />跟随动效添加音效</label>
@@ -15954,11 +16046,11 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onLaunc
         {replicationPreparationError && <><button type="button" onClick={() => void generateSetupScriptAndContinue(replicationConfirmedLinesRef.current)} className="shrink-0 font-bold underline">重试口播准备</button><button type="button" onClick={() => void navigateReplicationStep(0)} className="shrink-0 underline">返回修改口播</button></>}
       </div>}
             {socialViralTask && step === 'material' && aigcBudgetPreview && aigcBudgetPreview.aigcShots > 0 && (
-              <div className="rounded-xl border border-sky-200 bg-sky-50 p-3 text-[10px] leading-5 text-sky-950">
-                <p className="font-bold">智能生成预算预估 · {aigcBudgetPreview.aigcShots}/{aigcBudgetPreview.totalShots} 镜（{Math.round(aigcBudgetPreview.aigcShotRatio * 100)}%）</p>
-                <p>按每镜 4 秒预估：480p 约 ¥{aigcBudgetPreview.estimate480pCny.toFixed(2)}，720p 约 ¥{aigcBudgetPreview.estimate720pCny.toFixed(2)}；当前预算 ¥{aigcBudgetPreview.batchBudgetCny.toFixed(2)}，建议 {aigcBudgetPreview.recommendedResolution}。更长镜头在确认时按实际时长计费。</p>
-                {!aigcBudgetPreview.budgetEnoughFor480p && <p className="font-bold text-amber-800">预算不足以覆盖全部智能生成镜头，请逐镜选择或调整预算。</p>}
-              </div>
+              <details className="rounded-lg border border-sky-200 bg-sky-50 p-3 text-[10px] leading-5 text-sky-950" aria-label="智能生成成本测算">
+                <summary className="cursor-pointer font-bold">智能生成成本测算 · {aigcBudgetPreview.aigcShots} 镜</summary>
+                <p className="mt-2">本批计划上限 ¥{aigcBudgetPreview.batchBudgetCny.toFixed(2)}，并非账户余额。按每镜 4 秒估算：480p 约 ¥{aigcBudgetPreview.estimate480pCny.toFixed(2)}，720p 约 ¥{aigcBudgetPreview.estimate720pCny.toFixed(2)}；实际以确认的镜头时长和生成规格结算。</p>
+                <p className="mt-1">超过计划上限的镜头不会自动提交，也不会因此产生生成费用。可逐镜改用已有企业素材，或调整本批任务预算。</p>
+              </details>
             )}
             {socialViralTask && step === 'material' && activeWorkbenchSlot && (() => {
               const slot = activeWorkbenchSlot;
@@ -15978,55 +16070,55 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onLaunc
               const selectedMode = isPresenter && plan.userSource !== 'material' && plan.userSource !== 'shoot'
                 ? shot.digitalHuman?.presenterMode || 'video_twin'
                 : plan.userSource === 'shoot' ? 'shoot' : plan.mode === 'ai' || plan.mode === 'hybrid' ? 'smart' : 'local';
-              return <section aria-label={isPresenter ? '数字人分镜制作' : '非数字人分镜制作'} className="space-y-3 rounded-xl border border-emerald-200 bg-emerald-50/50 p-3">
-                <div><p className="text-xs font-black text-text-primary">{isPresenter ? '数字人分镜' : '非数字人分镜'} · 制作模式</p><p className="mt-1 text-[10px] text-text-muted">先确认当前分镜的路线，再选择素材或打开制作设置。</p></div>
+              return <section aria-label={isPresenter ? '数字人分镜制作' : '非数字人分镜制作'} className="space-y-3 rounded-lg border border-emerald-200 bg-emerald-50/50 p-3">
+                <div><p className="text-xs font-semibold text-text-primary">{isPresenter ? '数字人分镜' : '非数字人分镜'} · 制作模式</p><p className="mt-1 text-[10px] text-text-muted">先确认当前分镜的路线，再选择素材或打开制作设置。</p></div>
                 {storyboardTopicFor(slot) === 'presenter' && !isPresenter && <p role="status" className="text-[10px] text-amber-700">人物口播推荐数字人制作；请先确认画面中的销售主讲人物，确认前可使用企业素材或列入待拍。</p>}
-                <div className={`grid gap-2 ${isPresenter ? 'grid-cols-2' : 'grid-cols-3'}`}>{options.map(option => <button key={option.id} type="button" aria-pressed={selectedMode === option.id} disabled={shot.locked} onClick={() => chooseReplicationShotMode(slot, option.id)} className={`min-w-0 rounded-lg border p-2 text-left disabled:opacity-50 ${selectedMode === option.id ? 'border-emerald-600 bg-white text-emerald-900 shadow-sm' : 'border-border bg-white/70 text-text-secondary'}`}><span className="block text-[11px] font-black">{option.title}</span><span className="mt-1 block text-[9px] leading-4">{option.detail}</span></button>)}</div>
+                <div className={`grid gap-2 ${isPresenter ? 'grid-cols-2' : 'grid-cols-3'}`}>{options.map(option => <button key={option.id} type="button" aria-pressed={selectedMode === option.id} disabled={shot.locked} onClick={() => chooseReplicationShotMode(slot, option.id)} className={`min-w-0 rounded-lg border p-2 text-left disabled:opacity-50 ${selectedMode === option.id ? 'border-emerald-600 bg-white text-emerald-900 shadow-none' : 'border-border bg-white/70 text-text-secondary'}`}><span className="block text-[11px] font-semibold">{option.title}</span><span className="mt-1 block text-[9px] leading-4">{option.detail}</span></button>)}</div>
                 {!isPresenter && selectedMode === 'smart' && <p className="text-[10px] leading-4 text-text-secondary">{[storyboardAssignments[slot.id], plan.referenceClipId].some(id => { const clip = id ? materialById.get(id) : undefined; return clip && isAutomaticViralMaterialCandidate(clip, videoKickoff); }) ? '已关联本地素材，生成时自动作为参考。' : '暂无关联本地素材，生成时直接使用 AIGC。'}</p>}
                 {activeWorkbenchClip && <div className="rounded-lg border border-border bg-white p-2 text-[10px]"><p className="font-bold text-text-primary">当前素材：{activeWorkbenchClip.name}</p><p className="mt-1 text-text-muted">{editForSlot(activeWorkbenchClip, slot).trimStart.toFixed(1)}–{editForSlot(activeWorkbenchClip, slot).trimEnd.toFixed(1)}s · {plan.matchReason || activeMaterialAssessment?.reason || '手动选择'}</p><div className="mt-2 flex gap-2"><button type="button" onClick={() => { setCanvasView('creation'); setPreviewClip(activeWorkbenchClip); }} className="font-bold text-emerald-700">预览</button><button type="button" onClick={() => { setShotLibraryError(''); setShotLibrarySlotId(slot.id); }} className="font-bold text-emerald-700">更换</button><button type="button" onClick={() => clearWorkbenchMaterial(slot.id)} className="font-bold text-red-700">移除</button></div></div>}
-                {isPresenter ? <><button type="button" onClick={() => openProduction(slot)} className="w-full rounded-lg bg-emerald-700 px-3 py-2 text-xs font-bold text-white">配置数字人分镜</button><div className="grid grid-cols-2 gap-2"><button type="button" onClick={() => { chooseReplicationShotMode(slot, 'local'); setShotLibraryError(''); setShotLibrarySlotId(slot.id); }} className="rounded-lg border border-border bg-white px-2 py-2 text-[10px] font-bold">改用企业素材</button><button type="button" onClick={() => { chooseReplicationShotMode(slot, 'shoot'); void createBoundShootingTask(storyboardSlotScript(slot.detail).visual || slot.title, slot.id); }} className="rounded-lg border border-border bg-white px-2 py-2 text-[10px] font-bold">列入待拍</button></div></>
-                  : selectedMode === 'local' ? <div className="grid grid-cols-2 gap-2"><button type="button" onClick={() => { setShotLibraryError(''); setShotLibrarySlotId(slot.id); }} className="rounded-lg bg-emerald-700 px-3 py-2 text-xs font-bold text-white">选择企业素材</button><button type="button" disabled={materialSelectLoading} onClick={() => void smartSelectMaterialsFast()} className="rounded-lg border border-emerald-300 bg-white px-3 py-2 text-xs font-bold text-emerald-800 disabled:opacity-50">一键分析匹配</button></div>
-                  : selectedMode === 'shoot' ? <button type="button" disabled={shootingBusy} onClick={() => void createBoundShootingTask(storyboardSlotScript(slot.detail).visual || slot.title, slot.id)} className="w-full rounded-lg bg-emerald-700 px-3 py-2 text-xs font-bold text-white disabled:opacity-50">创建待拍任务</button>
+                {isPresenter ? <><button type="button" onClick={() => openProduction(slot)} className="w-full rounded-lg bg-blue-600 px-3 py-2 text-xs font-bold text-white">配置数字人分镜</button><div className="grid grid-cols-2 gap-2"><button type="button" onClick={() => { chooseReplicationShotMode(slot, 'local'); setShotLibraryError(''); setShotLibrarySlotId(slot.id); }} className="rounded-lg border border-border bg-white px-2 py-2 text-[10px] font-bold">改用企业素材</button><button type="button" onClick={() => { chooseReplicationShotMode(slot, 'shoot'); void createBoundShootingTask(storyboardSlotScript(slot.detail).visual || slot.title, slot.id); }} className="rounded-lg border border-border bg-white px-2 py-2 text-[10px] font-bold">列入待拍</button></div></>
+                  : selectedMode === 'local' ? <div className="grid grid-cols-2 gap-2"><button type="button" onClick={() => { setShotLibraryError(''); setShotLibrarySlotId(slot.id); }} className="rounded-lg bg-blue-600 px-3 py-2 text-xs font-bold text-white">选择企业素材</button><button type="button" disabled={materialSelectLoading} onClick={() => void smartSelectMaterialsFast()} className="rounded-lg border border-emerald-300 bg-white px-3 py-2 text-xs font-bold text-emerald-800 disabled:opacity-50">一键分析匹配</button></div>
+                  : selectedMode === 'shoot' ? <button type="button" disabled={shootingBusy} onClick={() => void createBoundShootingTask(storyboardSlotScript(slot.detail).visual || slot.title, slot.id)} className="w-full rounded-lg bg-blue-600 px-3 py-2 text-xs font-bold text-white disabled:opacity-50">创建待拍任务</button>
                   : <div className="space-y-2">
-                      <button type="button" disabled={shot.locked || Boolean(storyboardGenerating[slot.id])} onClick={() => void generateStoryboardShot(slot, { ...plan, mode: plan.mode === 'hybrid' ? 'hybrid' : 'ai', decided: true, confirmed: false })} className="w-full rounded-lg bg-emerald-700 px-3 py-2 text-xs font-bold text-white disabled:opacity-50">{storyboardGenerating[slot.id] ? '正在生成首帧…' : '生成首帧并预览'}</button>
+                      <button type="button" disabled={shot.locked || Boolean(storyboardGenerating[slot.id])} onClick={() => void generateStoryboardShot(slot, { ...plan, mode: plan.mode === 'hybrid' ? 'hybrid' : 'ai', decided: true, confirmed: false })} className="w-full rounded-lg bg-blue-600 px-3 py-2 text-xs font-bold text-white disabled:opacity-50">{storyboardGenerating[slot.id] ? '正在生成首帧…' : '生成首帧并预览'}</button>
                       {plan.error && <p role="alert" className="text-[10px] leading-4 text-red-700">{plan.error}</p>}
                     </div>}
               </section>;
             })()}
             {threeStepWorkflow && step === 'material' && (batchShotSummary || batchShotResults.length > 0) && (
-              <div className="rounded-xl border border-emerald-200 bg-emerald-50/70 p-3">
+              <div className="rounded-lg border border-emerald-200 bg-emerald-50/70 p-3">
                 {batchShotSummary && <p role="status" className="mt-2 text-[10px] leading-4 text-emerald-950">已提交 {batchShotSummary.submitted} · 复用素材 {batchShotSummary.matched} · 待补素材 {batchShotSummary.needsMaterial} · 阻塞 {batchShotSummary.blocked}。已提交的数字人任务需等待候选生成和验收。</p>}
                 {batchShotResults.length > 0 && <ol aria-label="逐镜批量制作结果" className="mt-2 max-h-56 space-y-1.5 overflow-y-auto pr-1">
                   {batchShotResults.map((item, index) => <li key={`${item.shotId}-${index}`} className="rounded-lg border border-emerald-100 bg-white px-2.5 py-2 text-[10px] leading-4">
                     <button type="button" onClick={() => focusWorkbenchStoryboardSlot(item.slotId)} className="w-full text-left">
-                      <span className="font-black text-text-primary">分镜 {storyboardSlots.findIndex(slot => slot.id === item.slotId) + 1 || index + 1}</span>
-                      <span className={`ml-2 font-black ${item.state === 'blocked' ? 'text-red-700' : item.state === 'needs_material' ? 'text-amber-700' : 'text-emerald-700'}`}>{item.state === 'submitted' ? '已提交数字人' : item.state === 'matched' ? '已关联本地素材' : item.state === 'needs_material' ? '待补素材' : '阻塞'}</span>
+                      <span className="font-semibold text-text-primary">分镜 {storyboardSlots.findIndex(slot => slot.id === item.slotId) + 1 || index + 1}</span>
+                      <span className={`ml-2 font-semibold ${item.state === 'blocked' ? 'text-red-700' : item.state === 'needs_material' ? 'text-amber-700' : 'text-emerald-700'}`}>{item.state === 'submitted' ? '已提交数字人' : item.state === 'matched' ? '已关联本地素材' : item.state === 'needs_material' ? '待补素材' : '阻塞'}</span>
                       <span className="mt-1 block break-words text-text-secondary">{item.reason || '未提供原因'}</span>
                     </button>
                   </li>)}
                 </ol>}
               </div>
             )}
-            <section aria-label="本次创作信息" className="rounded-xl border border-sky-100 bg-sky-50/60 p-3">
-              <p className="text-[10px] font-black uppercase tracking-[0.1em] text-sky-700">本次创作信息</p>
+            <section aria-label="本次创作信息" className="rounded-lg border border-sky-100 bg-sky-50/60 p-3">
+              <p className="text-[10px] font-semibold uppercase tracking-[0.1em] text-sky-700">本次创作信息</p>
               <dl className="mt-2 space-y-1.5 text-[10px] leading-4">
                 <div className="flex gap-2"><dt className="shrink-0 text-text-muted">创作方式</dt><dd className="min-w-0 break-words font-bold text-text-primary">{agentSourceContext}</dd></div>
                 <div className="flex gap-2"><dt className="shrink-0 text-text-muted">焦点产品</dt><dd className="min-w-0 break-words font-bold text-text-primary">{focusProductContext}</dd></div>
               </dl>
             </section>
             {contentMode === 'video' && step === 'mode' && (
-              <section className={`rounded-xl border p-3 ${setupReadiness.status === 'ready' ? 'border-emerald-200 bg-emerald-50/60' : setupReadiness.status === 'adjustable' ? 'border-amber-200 bg-amber-50/60' : 'border-red-200 bg-red-50/60'}`}>
+              <section className={`rounded-lg border p-3 ${setupReadiness.status === 'ready' ? 'border-emerald-200 bg-emerald-50/60' : setupReadiness.status === 'adjustable' ? 'border-amber-200 bg-amber-50/60' : 'border-red-200 bg-red-50/60'}`}>
                 <div className="flex items-start justify-between gap-2">
                   <div>
-                    <p className="text-[10px] font-black text-text-primary">当前模式的创作依据</p>
-                    <p className="mt-1 text-xs font-black text-text-primary">{setupReadiness.title}</p>
+                    <p className="text-[10px] font-semibold text-text-primary">当前模式的创作依据</p>
+                    <p className="mt-1 text-xs font-semibold text-text-primary">{setupReadiness.title}</p>
                   </div>
-                  <span className={`shrink-0 rounded-full px-2 py-1 text-[9px] font-black ${setupReadiness.status === 'ready' ? 'bg-emerald-100 text-emerald-700' : setupReadiness.status === 'adjustable' ? 'bg-amber-100 text-amber-700' : 'bg-red-100 text-red-700'}`}>
+                  <span className={`shrink-0 rounded-full px-2 py-1 text-[9px] font-semibold ${setupReadiness.status === 'ready' ? 'bg-emerald-100 text-emerald-700' : setupReadiness.status === 'adjustable' ? 'bg-amber-100 text-amber-700' : 'bg-red-100 text-red-700'}`}>
                     {setupReadiness.status === 'ready' ? '可执行' : setupReadiness.status === 'adjustable' ? '可先继续' : '需补充'}
                   </span>
                 </div>
                 <p className="mt-2 text-[10px] leading-4 text-text-secondary">{setupReadiness.detail}</p>
-                {mode === 'clone' && setupReadiness.status === 'blocked' && <button type="button" onClick={() => onNavigate?.('socialInspiration')} className="mt-2 text-[10px] font-black text-amber-800 underline">前往灵感中心复核原片 →</button>}
+                {mode === 'clone' && setupReadiness.status === 'blocked' && <button type="button" onClick={() => onNavigate?.('socialInspiration')} className="mt-2 text-[10px] font-semibold text-amber-800 underline">前往灵感中心复核原片 →</button>}
               </section>
             )}
             {contentMode === 'video' && stageIdx === 2 && !socialViralTask && (
@@ -16046,7 +16138,7 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onLaunc
                         key={task.id}
                         type="button"
                         onClick={() => { if (taskIndex >= 0) setStepIdx(taskIndex); }}
-                        className={`flex min-w-0 items-center justify-between gap-2 rounded-lg border px-2.5 py-2 text-left text-[11px] font-bold transition ${active ? 'border-slate-400 bg-white text-text-primary shadow-sm' : 'border-transparent text-text-secondary hover:border-border hover:bg-white'}`}
+                        className={`flex min-w-0 items-center justify-between gap-2 rounded-lg border px-2.5 py-2 text-left text-[11px] font-bold transition ${active ? 'border-slate-400 bg-white text-text-primary shadow-none' : 'border-transparent text-text-secondary hover:border-border hover:bg-white'}`}
                       >
                         <span className="truncate">{task.label}</span>
                         {task.done && <Check size={12} className="shrink-0 text-emerald-600" aria-label="已完成" />}
@@ -16057,7 +16149,7 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onLaunc
               </section>
             )}
             {step === 'script' && (
-              <nav className="grid grid-cols-5 gap-1 rounded-xl bg-surface-2 p-1" aria-label="脚本与声音阶段">
+              <nav className="grid grid-cols-5 gap-1 rounded-lg bg-surface-2 p-1" aria-label="脚本与声音阶段">
                 {([
                   { id: 'theme' as const, label: '分镜脚本' },
                   { id: 'voiceover' as const, label: '口播与翻译' },
@@ -16070,7 +16162,7 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onLaunc
                     || (item.id === 'subtitle' && (!hasRequestedVoiceDrafts || !hasReadyVoiceStrategy))
                     || (item.id === 'bgm' && (!hasRequestedVoiceDrafts || !hasRequestedSubtitles)));
                   return (
-                  <button key={item.id} type="button" disabled={unavailable} title={unavailable ? '请按顺序完成前面的步骤' : undefined} onClick={() => setScriptStageTab(item.id)} className={`min-w-0 whitespace-nowrap rounded-lg px-0.5 py-2 text-[9px] font-black transition disabled:cursor-not-allowed disabled:opacity-35 ${scriptStageTab === item.id ? 'bg-white text-text-primary shadow-sm' : 'text-text-muted hover:text-text-secondary'}`}>
+                  <button key={item.id} type="button" disabled={unavailable} title={unavailable ? '请按顺序完成前面的步骤' : undefined} onClick={() => setScriptStageTab(item.id)} className={`min-w-0 whitespace-nowrap rounded-lg px-0.5 py-2 text-[9px] font-semibold transition disabled:cursor-not-allowed disabled:opacity-35 ${scriptStageTab === item.id ? 'bg-white text-text-primary shadow-none' : 'text-text-muted hover:text-text-secondary'}`}>
                     {item.label}
                   </button>
                   );
@@ -16082,7 +16174,7 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onLaunc
                 {activeWorkbenchSlot ? (
                   <>
                     <div className="flex items-center justify-between gap-2">
-                      <div><p className="text-xs font-black text-text-primary">分镜 {storyboardSlots.findIndex(item => item.id === activeWorkbenchSlot.id) + 1}</p><p className="mt-0.5 text-[10px] text-text-muted">{activeSlotTime} · 修改后会同步更新完整脚本</p></div>
+                      <div><p className="text-xs font-semibold text-text-primary">分镜 {storyboardSlots.findIndex(item => item.id === activeWorkbenchSlot.id) + 1}</p><p className="mt-0.5 text-[10px] text-text-muted">{activeSlotTime} · 修改后会同步更新完整脚本</p></div>
                       <button type="button" onClick={() => setShowFullScriptEditor(value => !value)} className="rounded-lg border border-border px-2.5 py-1.5 text-[10px] font-bold text-text-secondary hover:bg-surface-2">{showFullScriptEditor ? '收起整稿' : '编辑完整脚本'}</button>
                     </div>
                     {presentationMode === 'heygen' && <label className="block text-xs font-bold">本镜画面来源<select className="mt-1 w-full rounded border p-2" value={presentationSources[activeWorkbenchSlot.id] || (storyboardSlots.indexOf(activeWorkbenchSlot) === 0 || storyboardSlots.indexOf(activeWorkbenchSlot) === storyboardSlots.length - 1 ? 'avatar' : 'material')} onChange={event => { setPresentationSources(prev => ({ ...prev, [activeWorkbenchSlot.id]: event.target.value as 'avatar' | 'material' })); setRendered(false); setRenderOutputPath(null); setRenderOutputPreviewUrl(null); }}><option value="avatar">数字人</option><option value="material">指定素材（在素材匹配中选择）</option></select></label>}
@@ -16090,21 +16182,21 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onLaunc
                       <textarea value={activeWorkbenchSlot.detail} rows={8} onChange={event => updateWorkbenchStoryboardSlot(activeWorkbenchSlot.id, event.target.value)} className="mt-1.5 w-full resize-y rounded-lg border border-border bg-surface-2 p-3 text-xs leading-6 text-text-secondary outline-none focus:border-accent" />
                     </label>
                     {showFullScriptEditor && <label className="block border-t border-border pt-3 text-[10px] font-bold text-text-secondary">完整时间轴脚本<textarea value={script} rows={12} onChange={event => applyTimestampScript(event.target.value)} className="mt-1.5 w-full resize-y rounded-lg border border-border bg-white p-3 font-mono text-[11px] leading-5 text-text-secondary outline-none focus:border-accent" /></label>}
-                    <div className={`rounded-xl border p-3 ${storyboardFeasibility.status === 'ready' ? 'border-emerald-200 bg-emerald-50/60' : storyboardFeasibility.status === 'adjustable' ? 'border-amber-200 bg-amber-50/60' : 'border-slate-200 bg-surface-2'}`}>
+                    <div className={`rounded-lg border p-3 ${storyboardFeasibility.status === 'ready' ? 'border-emerald-200 bg-emerald-50/60' : storyboardFeasibility.status === 'adjustable' ? 'border-amber-200 bg-amber-50/60' : 'border-slate-200 bg-surface-2'}`}>
                       <div className="flex items-start justify-between gap-2">
-                        <div><p className="text-[10px] font-black text-text-primary">制作可行性摘要</p><p className="mt-1 text-[10px] leading-4 text-text-secondary">脚本完成不代表画面已经齐全；这里按镜头功能检查，不按文件数量判断。</p></div>
-                        <span className={`shrink-0 rounded-full px-2 py-1 text-[9px] font-black ${storyboardFeasibility.status === 'ready' ? 'bg-emerald-100 text-emerald-700' : storyboardFeasibility.status === 'adjustable' ? 'bg-amber-100 text-amber-700' : 'bg-white text-text-muted'}`}>{storyboardFeasibility.status === 'ready' ? '可直接制作' : storyboardFeasibility.status === 'adjustable' ? '建议确认' : '存在素材缺口'}</span>
+                        <div><p className="text-[10px] font-semibold text-text-primary">制作可行性摘要</p><p className="mt-1 text-[10px] leading-4 text-text-secondary">脚本完成不代表画面已经齐全；这里按镜头功能检查，不按文件数量判断。</p></div>
+                        <span className={`shrink-0 rounded-full px-2 py-1 text-[9px] font-semibold ${storyboardFeasibility.status === 'ready' ? 'bg-emerald-100 text-emerald-700' : storyboardFeasibility.status === 'adjustable' ? 'bg-amber-100 text-amber-700' : 'bg-white text-text-muted'}`}>{storyboardFeasibility.status === 'ready' ? '可直接制作' : storyboardFeasibility.status === 'adjustable' ? '建议确认' : '存在素材缺口'}</span>
                       </div>
                       <div className="mt-3 grid grid-cols-3 gap-1.5">
-                        <div className="rounded-lg bg-white px-2 py-2"><p className="text-[9px] text-text-muted">直接匹配</p><p className="mt-0.5 text-sm font-black text-emerald-700">{storyboardFeasibility.direct}</p></div>
-                        <div className="rounded-lg bg-white px-2 py-2"><p className="text-[9px] text-text-muted">需确认</p><p className="mt-0.5 text-sm font-black text-amber-700">{storyboardFeasibility.review}</p></div>
-                        <div className="rounded-lg bg-white px-2 py-2"><p className="text-[9px] text-text-muted">缺口</p><p className="mt-0.5 text-sm font-black text-red-600">{storyboardFeasibility.missing.length}</p></div>
+                        <div className="rounded-lg bg-white px-2 py-2"><p className="text-[9px] text-text-muted">直接匹配</p><p className="mt-0.5 text-sm font-semibold text-emerald-700">{storyboardFeasibility.direct}</p></div>
+                        <div className="rounded-lg bg-white px-2 py-2"><p className="text-[9px] text-text-muted">需确认</p><p className="mt-0.5 text-sm font-semibold text-amber-700">{storyboardFeasibility.review}</p></div>
+                        <div className="rounded-lg bg-white px-2 py-2"><p className="text-[9px] text-text-muted">缺口</p><p className="mt-0.5 text-sm font-semibold text-red-600">{storyboardFeasibility.missing.length}</p></div>
                       </div>
                       {storyboardFeasibility.missing.length > 0 && <p className="mt-2 text-[10px] leading-4 text-text-secondary">缺少：{storyboardFeasibility.missing.slice(0, 3).map(item => item.slot.title || item.slot.time).join('、')}{storyboardFeasibility.missing.length > 3 ? ` 等 ${storyboardFeasibility.missing.length} 个镜头` : ''}。优先补真实素材；事实证明镜头不会用无关画面自动顶替。</p>}
                       <button type="button" onClick={() => { const materialIndex = activeSteps.findIndex(item => item.id === 'material'); if (materialIndex >= 0) setStepIdx(materialIndex); }} className="mt-3 w-full rounded-lg border border-border bg-white px-3 py-2 text-[10px] font-bold text-text-secondary hover:bg-surface-2">查看并处理素材方案</button>
                     </div>
                   </>
-                ) : <div className="rounded-xl border border-dashed border-border bg-surface-2 px-4 py-8 text-center text-xs text-text-muted">{referenceRecoveryMessage || '尚未生成分镜。参考分析完成后，可在当前工作台继续生成脚本与口播。'}</div>}
+                ) : <div className="rounded-lg border border-dashed border-border bg-surface-2 px-4 py-8 text-center text-xs text-text-muted">{referenceRecoveryMessage || '尚未生成分镜。参考分析完成后，可在当前工作台继续生成脚本与口播。'}</div>}
               </section>
             )}
             {step === 'script' && scriptStageTab !== 'theme' && (
@@ -16112,7 +16204,7 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onLaunc
                 {scriptStageTab === 'voiceover' && <section className="space-y-3 pt-1">
                   {languageSwitcher}
                   {activeVoiceDuration > 0 && <p className={`rounded-lg border px-3 py-2 text-[10px] ${activeVoiceDuration > totalDur + .2 ? 'border-amber-300 bg-amber-50 text-amber-900' : 'border-emerald-200 bg-emerald-50 text-emerald-800'}`}>实测口播 {activeVoiceDuration.toFixed(1)} 秒 · 当前分镜 {totalDur.toFixed(1)} 秒{activeVoiceDuration > totalDur + .2 ? '。口播超出分镜时长，请调整文案或延长分镜。' : '，时长可容纳。'}</p>}
-                  <div><p className="text-xs font-black text-text-primary">当前语言文案</p><p className="mt-0.5 text-[10px] text-text-muted">先选择需要的翻译语种，再用底部按钮一次生成全部文案。</p></div>
+                  <div><p className="text-xs font-semibold text-text-primary">当前语言文案</p><p className="mt-0.5 text-[10px] text-text-muted">先选择需要的翻译语种，再用底部按钮一次生成全部文案。</p></div>
                   <textarea
                     value={voiceDrafts[activeVoiceLang] || ((activeVoiceLang === enterpriseScriptLanguage || (!enterpriseScriptLanguage && activeVoiceLang === detectScriptLanguageCode(script))) ? (voiceoverLines || extractVoiceoverText(script)) : '')}
                     onChange={event => {
@@ -16138,7 +16230,7 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onLaunc
                 {scriptStageTab === 'audio' && <section className="space-y-3 pt-1">
                   {languageSwitcher}
                   <input ref={voiceoverInputRef} type="file" accept="audio/*" className="hidden" onChange={event => { void handleVoiceoverUpload(event.target.files); event.target.value = ''; }} />
-                  <div><p className="text-xs font-black text-text-primary">声音策略</p><p className="mt-0.5 text-[10px] text-text-muted">先选策略，再用底部按钮一次生成所选语言口播。</p></div>
+                  <div><p className="text-xs font-semibold text-text-primary">声音策略</p><p className="mt-0.5 text-[10px] text-text-muted">先选策略，再用底部按钮一次生成所选语言口播。</p></div>
                   <div className="grid grid-cols-3 gap-1.5">
                     {([
                       { id: 'ai' as const, label: 'AI 配音', icon: <Mic size={13} /> },
@@ -16166,8 +16258,8 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onLaunc
                     </div>
                   )}
                   {voiceoverMode === 'ai' && <div className="border-t border-border pt-3">
-                    <button type="button" onClick={() => setShowVoiceAdvanced(value => !value)} className="flex w-full items-center justify-between rounded-lg px-1 py-1.5 text-left text-[10px] font-black text-text-secondary"><span>高级设置 · 当前语言</span><ChevronDown size={13} className={`transition ${showVoiceAdvanced ? 'rotate-180' : ''}`} /></button>
-                    {showVoiceAdvanced && <div className="mt-2 space-y-3 rounded-xl border border-border bg-surface-2 p-3">
+                    <button type="button" onClick={() => setShowVoiceAdvanced(value => !value)} className="flex w-full items-center justify-between rounded-lg px-1 py-1.5 text-left text-[10px] font-semibold text-text-secondary"><span>高级设置 · 当前语言</span><ChevronDown size={13} className={`transition ${showVoiceAdvanced ? 'rotate-180' : ''}`} /></button>
+                    {showVoiceAdvanced && <div className="mt-2 space-y-3 rounded-lg border border-border bg-surface-2 p-3">
                       <div className="grid grid-cols-2 gap-2">
                         <label className="text-[10px] font-bold text-text-secondary">音色<select value={activeTtsSettings.voiceId || voice} onChange={event => { patchActiveTtsSettings({ voiceId: event.target.value }); if (voiceoverAudios[activeVoiceLang]?.url) setVoiceoverStaleLangs(current => [...new Set([...current, activeVoiceLang])]); }} className="mt-1 h-9 w-full rounded-lg border border-border bg-white px-2 text-[10px]">{voiceCandidates.map(item => <option key={item} value={item}>{VOICES.find(option => option.id === item)?.name || item}</option>)}</select></label>
                         <label className="text-[10px] font-bold text-text-secondary">风格<select value={ttsPreset} onChange={event => { setTtsPreset(event.target.value as TtsStyleOptions['preset']); if (voiceoverAudios[activeVoiceLang]?.url) setVoiceoverStaleLangs(current => [...new Set([...current, activeVoiceLang])]); }} className="mt-1 h-9 w-full rounded-lg border border-border bg-white px-2 text-[10px]">{TTS_PRESETS.map(item => <option key={item.id} value={item.id}>{item.label}</option>)}</select></label>
@@ -16186,16 +16278,16 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onLaunc
                     {(coverFrameUrl || selectedClips[0]?.poster) ? <img src={coverFrameUrl || selectedClips[0]?.poster} alt="当前素材预览帧" className="h-full w-full object-cover" /> : selectedClips[0]?.type === 'video' ? <video src={selectedClips[0].url} muted playsInline preload="metadata" className="h-full w-full object-cover" /> : selectedClips[0]?.url && <img src={selectedClips[0].url} alt="当前素材预览帧" className="h-full w-full object-cover" />}
                     <div className="absolute inset-x-2 text-center" style={{ bottom: `${subtitleStyle.bottomRatio * 100}%` }}><span className="inline-block font-bold leading-tight whitespace-normal break-words" style={{ ...subtitlePreviewStyle, maxWidth: `${Math.min(100, subtitleStyle.lineWidth * 5)}%` }}>{(alignedCuesByLang[activeVoiceLang] || cues)[0]?.text || '字幕效果预览'}</span></div>
                   </div>
-                  <div className="flex items-start justify-between gap-2"><div><p className="text-xs font-black text-text-primary">字幕文案</p><p className="mt-0.5 text-[10px] text-text-muted">按已生成的文案和真实口播时长生成字幕。</p></div>{hasRequestedSubtitles && <button type="button" onClick={() => void generateSubtitleDrafts()} disabled={subtitleGenerating} className="rounded-lg border border-border px-2.5 py-1.5 text-[10px] font-bold text-text-secondary">重新生成</button>}</div>
+                  <div className="flex items-start justify-between gap-2"><div><p className="text-xs font-semibold text-text-primary">字幕文案</p><p className="mt-0.5 text-[10px] text-text-muted">按已生成的文案和真实口播时长生成字幕。</p></div>{hasRequestedSubtitles && <button type="button" onClick={() => void generateSubtitleDrafts()} disabled={subtitleGenerating} className="rounded-lg border border-border px-2.5 py-1.5 text-[10px] font-bold text-text-secondary">重新生成</button>}</div>
                   {subtitleNotice && <p className="rounded-lg border border-border bg-surface-2 px-3 py-2 text-[10px] leading-4 text-text-muted">{subtitleNotice}</p>}
-                  <div className="rounded-xl border border-border bg-surface-2 px-3 py-3"><p className="text-[10px] font-bold text-text-secondary">{activeLanguageLabel}</p><p className="mt-1 text-xs font-black text-text-primary">{alignedCuesByLang[activeVoiceLang]?.length || 0} 条字幕</p></div>
+                  <div className="rounded-lg border border-border bg-surface-2 px-3 py-3"><p className="text-[10px] font-bold text-text-secondary">{activeLanguageLabel}</p><p className="mt-1 text-xs font-semibold text-text-primary">{alignedCuesByLang[activeVoiceLang]?.length || 0} 条字幕</p></div>
                   <div>
-                    <div className="mb-2 flex items-center justify-between"><p className="text-[10px] font-black text-text-primary">逐条调整</p><span className="text-[9px] text-text-muted">修改后自动保存到当前草稿</span></div>
+                    <div className="mb-2 flex items-center justify-between"><p className="text-[10px] font-semibold text-text-primary">逐条调整</p><span className="text-[9px] text-text-muted">修改后自动保存到当前草稿</span></div>
                     <div className="max-h-80 space-y-2 overflow-y-auto pr-1">{(alignedCuesByLang[activeVoiceLang] || []).length ? (alignedCuesByLang[activeVoiceLang] || []).map((cue, index) => <div key={`${cue.start}-${index}`} className="rounded-lg border border-border bg-white p-2"><p className="text-[9px] font-bold text-text-muted">{cue.start.toFixed(1)}s – {cue.end.toFixed(1)}s</p><textarea value={cue.text} rows={2} onChange={event => setAlignedCuesByLang(current => ({ ...current, [activeVoiceLang]: (current[activeVoiceLang] || []).map((item, itemIndex) => itemIndex === index ? { ...item, text: event.target.value } : item) }))} className="mt-1 w-full resize-y rounded-md border border-border px-2 py-1.5 text-[10px] leading-4 text-text-secondary outline-none focus:border-accent" /></div>) : <p className="rounded-lg border border-dashed border-border bg-surface-2 px-3 py-6 text-center text-[10px] text-text-muted">请先一键生成字幕文案。</p>}</div>
                   </div>
                   <div className="border-t border-border pt-3">
-                    <button type="button" onClick={() => setShowSubtitleAdvanced(value => !value)} className="flex w-full items-center justify-between rounded-lg px-1 py-1.5 text-left text-[10px] font-black text-text-secondary"><span>高级设置 · 字幕样式</span><ChevronDown size={13} className={`transition ${showSubtitleAdvanced ? 'rotate-180' : ''}`} /></button>
-                    {showSubtitleAdvanced && <div className="mt-2 space-y-3 rounded-xl border border-border bg-surface-2 p-3">
+                    <button type="button" onClick={() => setShowSubtitleAdvanced(value => !value)} className="flex w-full items-center justify-between rounded-lg px-1 py-1.5 text-left text-[10px] font-semibold text-text-secondary"><span>高级设置 · 字幕样式</span><ChevronDown size={13} className={`transition ${showSubtitleAdvanced ? 'rotate-180' : ''}`} /></button>
+                    {showSubtitleAdvanced && <div className="mt-2 space-y-3 rounded-lg border border-border bg-surface-2 p-3">
                       <div className="flex flex-wrap items-center justify-between gap-2"><label className="inline-flex items-center gap-2 text-[10px] font-bold text-text-secondary"><input type="checkbox" checked={subtitlesOn} onChange={event => setSubtitlesOn(event.target.checked)} className="accent-emerald-600" />烧录字幕</label><select value={subMode} onChange={event => setSubMode(event.target.value as 'target' | 'bilingual')} className="h-8 rounded-lg border border-border bg-white px-2 text-[10px] font-bold text-text-secondary"><option value="target">单语字幕</option><option value="bilingual">双语字幕</option></select></div>
                       <div className="grid grid-cols-2 gap-2"><label className="text-[10px] font-bold text-text-secondary">字体<select value={subtitleStyle.font} onChange={event => setSubtitleStyle(current => ({ ...current, font: event.target.value as CoverStyle['font'] }))} className="mt-1 h-8 w-full rounded-lg border border-border bg-white px-2 text-[10px]">{SUBTITLE_FONTS.map(item => <option key={item.id} value={item.id}>{item.label}</option>)}</select></label><label className="text-[10px] font-bold text-text-secondary">字号比例<input aria-label="字幕字号比例" type="number" min="0.7" max="1.4" step="0.05" value={subtitleStyle.fontScale} onChange={event => setSubtitleStyle(current => ({ ...current, fontScale: Math.max(.7, Math.min(1.4, Number(event.target.value) || 1)) }))} className="mt-1 h-8 w-full rounded-lg border border-border bg-white px-2 text-[10px]" /></label></div>
                       <div className="grid grid-cols-2 gap-2"><label className="text-[10px] font-bold text-text-secondary">字幕颜色<input aria-label="字幕颜色" type="color" value={subtitleStyle.color} onChange={event => setSubtitleStyle(current => ({ ...current, color: event.target.value }))} className="mt-1 h-8 w-full" /></label><label className="text-[10px] font-bold text-text-secondary">描边颜色<input aria-label="字幕描边颜色" type="color" value={subtitleStyle.outlineColor} onChange={event => setSubtitleStyle(current => ({ ...current, outlineColor: event.target.value }))} className="mt-1 h-8 w-full" /></label></div>
@@ -16243,7 +16335,7 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onLaunc
               <label className="mt-2 block text-[10px] font-bold text-text-secondary">选择人物<select aria-label="HeyGen 账号人物" value={heygenAvatarId} onChange={event => { setHeygenAvatarId(event.target.value); setDigitalHumanConsent(false); }} className="mt-1 w-full rounded border border-border bg-white p-2"><option value="">请选择</option>{heygenAvatars.map(avatar => <option key={avatar.id} value={avatar.id}>{avatar.name}</option>)}</select></label>
               <label className="mt-2 block text-[10px] font-bold text-text-secondary">素材原生画幅<select aria-label="HeyGen 人物画幅" value={heygenAvatarOrientation} onChange={event => setHeygenAvatarOrientation(event.target.value as 'unknown' | 'portrait' | 'landscape' | 'square')} className="mt-1 w-full rounded border border-border bg-white p-2"><option value="unknown">待确认</option><option value="portrait">竖屏</option><option value="landscape">横屏</option><option value="square">方形</option></select></label>
               <label className="mt-2 flex gap-2 text-[10px] leading-4 text-text-secondary"><input type="checkbox" checked={digitalHumanConsent} onChange={event => setDigitalHumanConsent(event.target.checked)} />我确认人物、声音和商业使用授权</label>
-              <button type="button" disabled={heygenAvatarBinding || !heygenAvatarId || !digitalHumanConsent} onClick={() => void bindHeygenAvatarToShot(activeWorkbenchSlot)} className="mt-2 w-full rounded bg-emerald-700 px-2 py-1.5 text-[10px] font-bold text-white disabled:opacity-50">{heygenAvatarBinding ? '绑定中…' : '绑定当前分镜'}</button>
+              <button type="button" disabled={heygenAvatarBinding || !heygenAvatarId || !digitalHumanConsent} onClick={() => void bindHeygenAvatarToShot(activeWorkbenchSlot)} className="mt-2 w-full rounded bg-blue-600 px-2 py-1.5 text-[10px] font-bold text-white disabled:opacity-50">{heygenAvatarBinding ? '绑定中…' : '绑定当前分镜'}</button>
             </details>}
       {!socialViralTask && <DigitalHumanProductionOverview
         shots={storyboardSlots.flatMap((slot, index) => {
@@ -16258,7 +16350,7 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onLaunc
       />}
             {threeStepWorkflow && step === 'preview' ? <section className="space-y-2" aria-label="成片渲染与导出">
       <div className="rounded-lg border border-border bg-white p-3 text-xs" aria-label="成片制作检查清单">
-        <p className="font-black text-text-primary">成片制作检查清单</p>
+        <p className="font-semibold text-text-primary">成片制作检查清单</p>
         <p className="mt-1 text-[10px] leading-4 text-text-muted">配置就绪后仍需实际渲染；爆款复刻可直接导出当前成片。</p>
         <ul className="mt-2 space-y-2 text-[11px] leading-5">
           <li>草稿保存 · {savingProj || autosaveStatus === 'saving' ? '保存中' : autosaveStatus === 'error' ? `失败：${autosaveError || '保存失败，请重试'}` : autosaveStatus === 'saved' ? '已保存' : '待保存'}{autosaveStatus === 'error' && <button type="button" disabled={savingProj} onClick={() => void saveProject('draft').catch(error => setModeNotice(error.message))} className="ml-2 font-bold text-emerald-700 underline disabled:opacity-50">重试保存</button>}</li>
@@ -16283,7 +16375,7 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onLaunc
       </div>
 
       <div id="preview-narration-arrangement" className="rounded-lg border border-border bg-white p-3 text-xs" aria-label="口播段落与镜头编排">
-        <p className="font-black text-text-primary">口播段落与镜头编排</p>
+        <p className="font-semibold text-text-primary">口播段落与镜头编排</p>
         {missingAvatarSourceCues.length > 0 && <div className="mt-2 rounded border border-amber-200 bg-amber-50 px-2 py-2 text-amber-900">
           <p>数字人分镜 {missingAvatarSourceCues.map(item => item.index + 1).join('、')} 缺少当前源片的实测字幕时间码。开启字幕导出前请补取；不会借用另一次 AI 配音的时间码。</p>
           <button type="button" disabled={avatarCaptionBusy || !projectId} onClick={() => void refreshAvatarSourceCaptions()} className="mt-1 rounded border border-amber-400 px-2 py-1 font-bold disabled:opacity-50">{avatarCaptionBusy ? '正在提取源片字幕…' : '补取原字幕（无原字幕时需确认付费 ASR）'}</button>
@@ -16329,14 +16421,14 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onLaunc
           {narrationArrangementPreview.result!.warnings.map((warning, index) => <p key={index} className="mt-1 text-amber-700">{warning}</p>)}
         </>}
       </div>
-      {threeStepWorkflow && <div id="preview-voiceover-settings" className="rounded-xl border border-border bg-white p-3">
-        <p className="text-xs font-black text-text-primary">成片配音口播</p>
+      {threeStepWorkflow && <div id="preview-voiceover-settings" className="rounded-lg border border-border bg-white p-3">
+        <p className="text-xs font-semibold text-text-primary">成片配音口播</p>
         <p className="mt-1 text-[10px] leading-4 text-text-muted">已生成的数字人镜头保留原声；这里只为其他分镜生成口播。点击底部渲染按钮会自动补齐缺少的配音，也可先生成并试听。</p>
         <p role="status" className="mt-2 text-[10px] leading-4 text-text-secondary">{voiceoverStaleLangs.includes(activeVoiceLang)
           ? '口播文本或音色已变化，请重新生成配音后渲染。'
           : activeVoiceoverUrl ? '成片配音已生成，可试听并渲染。' : '成片配音尚未生成，渲染时会自动生成。'}</p>
         <label className="mt-3 block text-[10px] font-bold text-text-secondary">配音音色<select aria-label="配音音色" value={voice} onChange={event => { setVoice(event.target.value); setTtsLanguageSettings(current => ({ ...current, [activeVoiceLang]: { ...(current[activeVoiceLang] || DEFAULT_TTS_SETTINGS), voiceId: event.target.value } })); setVoiceoverStaleLangs(current => [...new Set([...current, activeVoiceLang])]); invalidateMusicRender(); }} className="mt-1 w-full rounded-lg border border-border bg-white p-2 text-xs">{[...VOICES, ...customVoices.map(item => ({ id: item.voiceId, name: item.name }))].map(item => <option key={item.id} value={item.id}>{item.name}</option>)}</select></label>
-        <label className="mt-3 block text-[10px] font-bold text-text-secondary">配音语速 · {replicationSpeechSpeed.toFixed(2)} 倍<input aria-label="配音语速" type="range" min="0.85" max="1.30" step="0.05" value={replicationSpeechSpeed} onChange={event => { const speed = Number(event.target.value); setReplicationSpeechSpeed(speed); setTtsLanguageSettings(current => ({ ...current, [activeVoiceLang]: { ...(current[activeVoiceLang] || DEFAULT_TTS_SETTINGS), speed } })); setVoiceoverStaleLangs(current => [...new Set([...current, activeVoiceLang])]); invalidateMusicRender(); }} className="mt-2 w-full accent-emerald-700" /></label>
+        <label className="mt-3 block text-[10px] font-bold text-text-secondary">配音语速 · {replicationSpeechSpeed.toFixed(2)} 倍<input aria-label="配音语速" type="range" min="0.85" max="1.30" step="0.05" value={replicationSpeechSpeed} onChange={event => { const speed = Number(event.target.value); setReplicationSpeechSpeed(speed); setTtsLanguageSettings(current => ({ ...current, [activeVoiceLang]: { ...(current[activeVoiceLang] || DEFAULT_TTS_SETTINGS), speed } })); setVoiceoverStaleLangs(current => [...new Set([...current, activeVoiceLang])]); invalidateMusicRender(); }} className="mt-2 w-full accent-blue-600" /></label>
         <label className="mt-3 block text-[10px] font-bold text-text-secondary">上传个人声音样本<input aria-label="上传个人声音样本" type="file" accept=".mp3,.wav,.m4a,audio/mpeg,audio/wav,audio/mp4" onChange={event => { void handleVoiceSampleUpload(event.target.files); event.target.value = ''; }} className="mt-1 block w-full text-[10px]" /></label>
         <button type="button" disabled={ttsLoading || !storyboardSlots.length} onClick={() => void genTts(activeVoiceLang)} className="mt-3 w-full rounded-lg border border-emerald-500 bg-emerald-50 px-3 py-2 text-xs font-bold text-emerald-800 disabled:opacity-50">{ttsLoading ? '正在生成配音…' : activeVoiceoverUrl ? '重新生成成片配音' : '生成成片配音'}</button>
         {activeVoiceoverUrl && <audio src={activeVoiceoverUrl} controls aria-label="成片配音试听" className="mt-3 w-full" />}
@@ -16360,7 +16452,7 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onLaunc
             </section> : workbenchProductionPanel}
             {step !== 'script' && step !== 'material' && step !== 'bgm' && step !== 'cover' && step !== 'preview' && (
               <AnimatePresence mode="wait">
-                <motion.div key={`${step}-${scriptStageTab}`} initial={{ opacity: 0, y: 5 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -5 }} transition={{ duration: 0.16 }}>
+                <motion.div key={`${step}-${scriptStageTab}`} initial={{ opacity: 0, y: 5 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -5 }}>
                   {renderStep()}
                 </motion.div>
               </AnimatePresence>
@@ -16370,12 +16462,12 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onLaunc
         timelineTitle={canvasView === 'reference' && mode === 'clone' ? '爆款视频时间轴' : '新建视频时间轴'}
         timelineDescription={canvasView === 'reference' && mode === 'clone' ? `${referenceStoryboardItems.length} 个原片分镜 · 可点击定位原片` : storyboardSlots.length ? `${storyboardSlots.length} 个新片分镜 · 可拖动定位画面` : undefined}
         timelineToolbar={canvasView === 'reference' && mode === 'clone'
-          ? <span className="text-[10px] font-black tabular-nums text-text-secondary">{referenceTimelineTime.toFixed(1)}s / {referenceTimelineDuration.toFixed(1)}s</span>
-          : storyboardSlots.length ? <div className="flex items-center gap-2"><span className="text-[10px] font-black tabular-nums text-text-secondary">{workbenchTimelineTime.toFixed(1)}s / {workbenchTimelineDuration.toFixed(1)}s</span>{step === 'cover' && <button type="button" onClick={captureWorkbenchCoverFrame} className="rounded-md border border-border bg-white px-2 py-1 text-[9px] font-bold text-text-secondary">截取为封面</button>}</div> : undefined}
+          ? <span className="text-[10px] font-semibold tabular-nums text-text-secondary">{referenceTimelineTime.toFixed(1)}s / {referenceTimelineDuration.toFixed(1)}s</span>
+          : storyboardSlots.length ? <div className="flex items-center gap-2"><span className="text-[10px] font-semibold tabular-nums text-text-secondary">{workbenchTimelineTime.toFixed(1)}s / {workbenchTimelineDuration.toFixed(1)}s</span>{step === 'cover' && <button type="button" onClick={captureWorkbenchCoverFrame} className="rounded-md border border-border bg-white px-2 py-1 text-[9px] font-bold text-text-secondary">截取为封面</button>}</div> : undefined}
         timelinePanel={canvasView === 'reference' && mode === 'clone' ? referenceStoryboardItems.length ? (
           <div className="relative h-full min-w-[560px]">
             <div className="flex h-11 overflow-hidden rounded-lg border border-border bg-surface-2">
-              {referenceStoryboardItems.map(item => <button key={item.id} type="button" onClick={() => focusReferenceStoryboardShot(item.id)} style={{ width: `${Math.max(4, ((item.end - item.start) / referenceTimelineDuration) * 100)}%` }} className={`relative min-w-[42px] border-r border-white/70 bg-slate-700 px-1.5 text-left text-[9px] font-black text-white last:border-r-0 ${selectedReferenceShot?.id === item.id ? 'ring-2 ring-inset ring-emerald-500' : ''}`}>{item.index}</button>)}
+              {referenceStoryboardItems.map(item => <button key={item.id} type="button" onClick={() => focusReferenceStoryboardShot(item.id)} style={{ width: `${Math.max(4, ((item.end - item.start) / referenceTimelineDuration) * 100)}%` }} className={`relative min-w-[42px] border-r border-white/70 bg-slate-700 px-1.5 text-left text-[9px] font-semibold text-white last:border-r-0 ${selectedReferenceShot?.id === item.id ? 'ring-2 ring-inset ring-emerald-500' : ''}`}>{item.index}</button>)}
             </div>
             <input aria-label="爆款视频时间轴" type="range" min="0" max={referenceTimelineDuration} step="0.05" value={Math.min(referenceTimelineTime, referenceTimelineDuration)} onChange={event => seekReferenceTimeline(Number(event.target.value))} className="mt-2 h-2 w-full cursor-ew-resize accent-emerald-600" />
           </div>
@@ -16387,7 +16479,7 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onLaunc
                 const width = Math.max(4, ((slot.end - slot.start) / workbenchTimelineDuration) * 100);
                 return <button key={slot.id} type="button" onClick={() => seekWorkbenchTimeline(slot.start)} style={{ width: `${width}%` }} className={`relative min-w-[42px] overflow-hidden border-r border-white/70 text-left last:border-r-0 ${activeWorkbenchSlot?.id === slot.id ? 'ring-2 ring-inset ring-emerald-500' : ''}`}>
                   {clip?.poster || clip?.type === 'image' ? <img src={clip.poster || clip.url} alt="" className="absolute inset-0 h-full w-full object-cover opacity-55" /> : <span className="absolute inset-0 bg-slate-700" />}
-                  <span className="relative z-10 flex h-full items-end bg-gradient-to-t from-slate-950/80 to-transparent px-1.5 pb-1 text-[8px] font-black text-white">{index + 1}</span>
+                  <span className="relative z-10 flex h-full items-end bg-gradient-to-t from-slate-950/80 to-transparent px-1.5 pb-1 text-[8px] font-semibold text-white">{index + 1}</span>
                 </button>;
               })}
             </div>
@@ -16421,7 +16513,7 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onLaunc
           icon: primarySubmitsSocialArtifact || step === 'preview' && workbenchHasFormalVideo && !primaryGeneratesVideo ? <Send size={15} /> : <ChevronRight size={15} />,
         }}
       >
-        <div className={`relative flex h-full min-h-0 w-full items-center justify-center overflow-hidden ${canvasView === 'reference' && mode === 'clone' && videoKickoff ? 'bg-black' : 'rounded-xl border border-border bg-[#e7ece9]'}`}>
+        <div className={`relative flex h-full min-h-0 w-full items-center justify-center overflow-hidden ${canvasView === 'reference' && mode === 'clone' && videoKickoff ? 'bg-black' : 'rounded-lg border border-border bg-zinc-100'}`}>
           {canvasView !== 'reference' && step !== 'preview' && storyboardSlots.length > 0 && workbenchPlaybackError && <span role="alert" className="absolute right-4 top-4 z-30 max-w-56 rounded-md bg-rose-950/90 px-2 py-1 text-[10px] text-white">{workbenchPlaybackError}</span>}
           {canvasView === 'reference' && mode === 'clone' && videoKickoff && step !== 'preview' ? (
             <BenchmarkVideoPreview kickoff={videoKickoff} embedded seekRequest={referenceSeekRequest} onTimeUpdate={setReferenceTimelineTime} />
@@ -16511,7 +16603,7 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onLaunc
           ) : activeWorkbenchSlot ? (
             <div className="flex max-w-sm flex-col items-center text-center text-text-muted">
               <div className="flex h-12 w-12 items-center justify-center rounded-full bg-slate-900 text-white/70"><Film size={20} /></div>
-              <p className="mt-3 text-sm font-black text-text-primary">分镜 {storyboardSlots.findIndex(item => item.id === activeWorkbenchSlot.id) + 1} 暂无画面</p>
+              <p className="mt-3 text-sm font-semibold text-text-primary">分镜 {storyboardSlots.findIndex(item => item.id === activeWorkbenchSlot.id) + 1} 暂无画面</p>
               <p className="mt-1 max-w-xs truncate text-[11px]">{activeWorkbenchSlot.title}</p>
               {!socialViralTask && <button
                 type="button"
@@ -16521,8 +16613,8 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onLaunc
             </div>
           ) : (
             <div className="flex max-w-sm flex-col items-center text-center text-text-muted">
-              <div className="flex h-12 w-12 items-center justify-center rounded-full bg-white shadow-sm"><Film size={20} /></div>
-              <p className="mt-3 text-sm font-black text-text-primary">暂无预览</p>
+              <div className="flex h-12 w-12 items-center justify-center rounded-full bg-white shadow-none"><Film size={20} /></div>
+              <p className="mt-3 text-sm font-semibold text-text-primary">暂无预览</p>
               <div className="mt-4 flex justify-center gap-2">
                 <button type="button" onClick={() => { const materialIndex = activeSteps.findIndex(item => item.id === 'material'); if (materialIndex >= 0) setStepIdx(materialIndex); }} className="rounded-md border border-border bg-white px-3 py-2 text-[11px] font-bold text-text-secondary hover:bg-surface-2">选择素材</button>
                 <button type="button" onClick={() => fileInputRef.current?.click()} className="rounded-md bg-slate-900 px-3 py-2 text-[11px] font-bold text-white hover:bg-slate-800">上传素材</button>
@@ -16821,27 +16913,13 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onLaunc
       {/* ── 我的作品 / 草稿 列表浮层 ─────────────────────── */}
       <AnimatePresence>
         {existingSourceDraftPrompt && (
-          <motion.div
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            exit={{ opacity: 0 }}
-            className="fixed inset-0 z-[100] flex items-center justify-center bg-black/45 p-4"
-          >
-            <motion.div
-              ref={existingSourceDraftDialogRef}
-              initial={{ opacity: 0, y: 8, scale: 0.98 }}
-              animate={{ opacity: 1, y: 0, scale: 1 }}
-              exit={{ opacity: 0, y: 8, scale: 0.98 }}
-              role="dialog"
-              aria-modal="true"
-              aria-labelledby="existing-source-draft-title"
-              className="grid w-full max-w-[720px] grid-cols-1 overflow-hidden rounded-lg border border-border bg-white shadow-2xl sm:grid-cols-[minmax(0,1fr)_220px]"
-            >
+          <Modal open title="发现已有草稿" width={640} footer={null} mask={{ closable: false }} closable={false} keyboard={false}>
+            <div className="grid gap-4 sm:grid-cols-[minmax(0,1fr)_180px]">
               <div className="flex min-w-0 flex-col justify-center p-6">
                 <div className="mb-4 flex h-10 w-10 items-center justify-center rounded-lg bg-accent-glow text-accent">
                   <FolderOpen size={20} />
                 </div>
-                <h2 id="existing-source-draft-title" className="text-base font-black text-text-primary">
+                <h2 id="existing-source-draft-title" className="text-base font-semibold text-text-primary">
                   基于本素材已经生成过草稿了，是否要新建作品集？
                 </h2>
                 <p className="mt-2 line-clamp-2 text-xs leading-relaxed text-text-muted">{existingSourceDraftPrompt.title}</p>
@@ -16851,8 +16929,8 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onLaunc
                     : '可以继续最近的草稿，也可以从当前素材重新创建。'}
                 </p>
                 <div className="mt-6 flex flex-wrap gap-2">
-                  <button
-                    type="button"
+                  <Button
+                    type="primary"
                     data-modal-initial-focus
                     onClick={() => {
                       const project = existingSourceDraftPrompt.project;
@@ -16860,21 +16938,21 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onLaunc
                       setSourceDraftCheckPending(false);
                       loadProject(project);
                     }}
-                    className="inline-flex items-center gap-1.5 rounded-lg bg-accent px-4 py-2.5 text-xs font-black text-white hover:bg-accent/90"
+
                   >
                     <FolderOpen size={14} />继续编辑已有草稿
-                  </button>
-                  <button
-                    type="button"
+                  </Button>
+                  <Button
+                    type="default"
                     onClick={() => {
                       setProjectId(null);
                       setExistingSourceDraftPrompt(null);
                       setSourceDraftCheckPending(false);
                     }}
-                    className="inline-flex items-center gap-1.5 rounded-lg border border-border bg-white px-4 py-2.5 text-xs font-black text-text-secondary hover:border-accent/40 hover:bg-surface-2"
+
                   >
                     <Plus size={14} />新建作品集
-                  </button>
+                  </Button>
                 </div>
               </div>
               <div className="min-h-[180px] border-t border-border bg-surface-2 sm:min-h-[300px] sm:border-l sm:border-t-0">
@@ -16886,8 +16964,8 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onLaunc
                   </div>
                 )}
               </div>
-            </motion.div>
-          </motion.div>
+            </div>
+          </Modal>
         )}
         {showProjects && (
           <ProjectsOverlay
@@ -16939,8 +17017,8 @@ function ProjectsOverlay({ projects, batches, materials, currentId, workflowCont
         <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
           {items.map(p => (
             <div key={p.id}
-              className="card !rounded-xl overflow-hidden group cursor-pointer relative"
-              style={p.id === currentId ? { borderColor: TRAFFIC_GREEN, boxShadow: `0 0 0 1px ${TRAFFIC_GREEN}` } : undefined}
+              className="card !rounded-lg overflow-hidden group cursor-pointer relative"
+              style={p.id === currentId ? { borderColor: STUDIO_ACCENT, boxShadow: `0 0 0 1px ${STUDIO_ACCENT}` } : undefined}
               onClick={() => onLoad(p)}>
               <div className="relative">
                 <ProjectFirstFrameThumb project={p} materials={materials} />
@@ -16950,7 +17028,7 @@ function ProjectsOverlay({ projects, batches, materials, currentId, workflowCont
                     event.stopPropagation();
                     void onReuseProject(p);
                   }}
-                  className="absolute bottom-1.5 right-1.5 inline-flex items-center gap-1 rounded-lg bg-accent px-2 py-1 text-[10px] font-black text-white shadow-sm hover:brightness-95"
+                  className="absolute bottom-1.5 right-1.5 inline-flex items-center gap-1 rounded-lg bg-accent px-2 py-1 text-[10px] font-semibold text-white shadow-none hover:brightness-95"
                   title="复制为新草稿并进入编辑"
                 >
                   <Copy size={10} /> 一键复用
@@ -16986,13 +17064,12 @@ function ProjectsOverlay({ projects, batches, materials, currentId, workflowCont
       initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
       className="absolute inset-0 z-50 flex bg-surface">
       <motion.div
-        initial={{ scale: 0.96, y: 10 }} animate={{ scale: 1, y: 0 }} exit={{ scale: 0.96, y: 10 }}
-        transition={{ type: 'spring', damping: 26, stiffness: 320 }}
+        initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
         className="h-full w-full flex flex-col bg-surface overflow-hidden"
         onClick={e => e.stopPropagation()}>
         <div className="flex items-center justify-between px-5 py-3.5 border-b border-border flex-shrink-0">
           <div className="flex items-center gap-2">
-            <FolderOpen size={15} style={{ color: TRAFFIC_GREEN }} />
+            <FolderOpen size={15} style={{ color: STUDIO_ACCENT }} />
             <div>
               <span id="projects-overlay-title" className="text-sm font-bold text-text-primary">{workflowContext ? '当前任务的内容项目' : '我的创作'}</span>
               {workflowContext && <p className="mt-0.5 text-[10px] text-text-muted">仅显示本次运行与任务关联的项目</p>}
@@ -17022,7 +17099,7 @@ function ProjectsOverlay({ projects, batches, materials, currentId, workflowCont
                   <p className="mb-2 text-xs font-semibold text-text-secondary">裂变批次 · {batches.length}</p>
                   <div className="space-y-2">
                     {batches.map(batch => (
-                      <div key={batch.id} className="rounded-xl border border-border bg-surface-2 p-3">
+                      <div key={batch.id} className="rounded-lg border border-border bg-surface-2 p-3">
                         <div className="flex items-center justify-between gap-2">
                           <div><p className="text-xs font-bold text-text-primary">{batch.title}</p><p className="mt-0.5 text-[10px] text-text-muted">{batch.items.length} 条 · 预计生成成本 ¥{batch.estimatedCostCny} · {batch.status}</p></div>
                           <div className="flex shrink-0 items-center gap-1.5">

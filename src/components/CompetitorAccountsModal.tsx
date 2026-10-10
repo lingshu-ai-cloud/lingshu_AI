@@ -1,9 +1,8 @@
+import { Button, Input, Modal, Popconfirm, Select } from 'antd';
 import { useState, useEffect, useCallback } from 'react';
-import { motion, AnimatePresence } from 'motion/react';
-import { X, Plus, Loader2, Trash2, Download, Users, ExternalLink, AlertCircle } from 'lucide-react';
+import { Plus, Loader2, Trash2, Download, Users, ExternalLink, AlertCircle } from 'lucide-react';
 import { authHeader } from '../lib/auth';
 import { SocialPlatformIcon } from './SocialPlatformIcon';
-import { useModalFocus } from '../hooks/useModalFocus';
 
 type AccountPlatform = 'youtube' | 'tiktok' | 'instagram' | 'facebook';
 
@@ -52,11 +51,13 @@ export default function CompetitorAccountsModal({
   open,
   onClose,
   onCrawled,
+  onCountChange,
   embedded = false,
 }: {
   open: boolean;
   onClose: () => void;
   onCrawled: (importedCount: number) => void;
+  onCountChange?: (count: number) => void;
   embedded?: boolean;
 }) {
   const [accounts, setAccounts] = useState<CompetitorAccount[]>([]);
@@ -68,24 +69,21 @@ export default function CompetitorAccountsModal({
   const [deletingId, setDeletingId] = useState('');
   const [error, setError] = useState('');
   const [notice, setNotice] = useState('');
-  const dialogRef = useModalFocus<HTMLDivElement>({
-    open: open && !embedded,
-    onClose,
-    closeOnEscape: () => !adding && !crawlingId && !deletingId,
-  });
 
   const loadAccounts = useCallback(async () => {
     setLoading(true);
     try {
       const r = await fetch('/api/overseas/competitor-accounts', { headers: authHeader() });
       const data = await r.json().catch(() => ({})) as { items?: CompetitorAccount[] };
-      setAccounts(data.items || []);
+      const items = data.items || [];
+      setAccounts(items);
+      onCountChange?.(items.length);
     } catch {
       setAccounts([]);
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [onCountChange]);
 
   useEffect(() => {
     if (open) {
@@ -149,79 +147,33 @@ export default function CompetitorAccountsModal({
         method: 'DELETE',
         headers: authHeader(),
       });
-      if (r.ok) setAccounts(prev => prev.filter(a => a.id !== account.id));
+      if (r.ok) setAccounts(prev => {
+        const next = prev.filter(a => a.id !== account.id);
+        onCountChange?.(next.length);
+        return next;
+      });
     } finally {
       setDeletingId('');
     }
   };
 
   const panel = open ? (
-          <motion.div
-            ref={dialogRef}
-            tabIndex={embedded ? undefined : -1}
-            role={embedded ? 'region' : 'dialog'}
-            aria-modal={embedded ? undefined : true}
-            aria-labelledby="competitor-accounts-title"
-            initial={embedded ? false : { opacity: 0, y: 16, scale: 0.98 }}
-            animate={{ opacity: 1, y: 0, scale: 1 }}
-            exit={embedded ? undefined : { opacity: 0, y: 16, scale: 0.98 }}
-            onClick={e => e.stopPropagation()}
-            className={embedded
-              ? 'flex min-h-[560px] w-full flex-col overflow-hidden rounded-lg border border-border bg-white shadow-sm'
-              : 'flex max-h-[92dvh] w-full max-w-2xl flex-col overflow-hidden rounded-t-lg border border-border bg-white shadow-xl sm:max-h-[86vh] sm:rounded-lg'}
-          >
-            {/* Header */}
-            <div className="flex items-start justify-between gap-4 border-b border-border px-4 py-4 sm:items-center sm:px-6">
-              <div className="flex items-center gap-2.5">
-                <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-md bg-accent-glow text-accent">
-                  <Users size={18} />
-                </span>
-                <div>
-                  <h2 id="competitor-accounts-title" className="text-base font-bold text-text-primary">对标账号</h2>
-                  <p className="text-xs text-text-muted">集中查看已采集账号，并把最新内容送入灵感发现</p>
-                </div>
-              </div>
-              {!embedded && <button type="button" data-modal-initial-focus onClick={onClose} aria-label="关闭对标账号库"
-                className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md border border-border text-text-muted hover:bg-surface-2" title="关闭">
-                <X size={16} />
-              </button>}
-            </div>
-
+          <section aria-label="对标账号" className="flex min-h-[480px] w-full flex-col overflow-hidden rounded-lg border border-border bg-surface">
             {/* Add form */}
             <div className="border-b border-border bg-surface-2 px-4 py-4 sm:px-6">
               <div className="flex flex-col gap-2 sm:flex-row">
-                <div className="relative shrink-0">
-                  <SocialPlatformIcon platform={platform} size={18} className="pointer-events-none absolute left-3 top-1/2 z-10 -translate-y-1/2" />
-                  <select
-                    value={platform}
-                    onChange={e => setPlatform(e.target.value as AccountPlatform)}
-                    aria-label="平台"
-                    className="ui-field ui-select h-11 cursor-pointer !w-auto !rounded-md !pl-9 text-sm font-bold"
-                  >
-                    <option value="youtube">YouTube</option>
-                    <option value="tiktok">TikTok</option>
-                    <option value="instagram">Instagram</option>
-                    <option value="facebook">Facebook</option>
-                  </select>
-                </div>
-                <input
+                <Select<AccountPlatform> value={platform} onChange={setPlatform} aria-label="平台" className="min-w-36"
+                  options={Object.entries(PLATFORM_META).map(([value, meta]) => ({ value: value as AccountPlatform, label: <span className="inline-flex items-center gap-2"><SocialPlatformIcon platform={value as AccountPlatform} size={16}/>{meta.label}</span> }))} />
+                <Input
                   type="text"
                   value={url}
                   onChange={e => setUrl(e.target.value)}
                   onKeyDown={e => { if (e.key === 'Enter' && !adding) void addAccount(); }}
                   placeholder={accountPlaceholder(platform)}
                   aria-label="对标账号主页链接"
-                  className="ui-field h-11 !rounded-md"
+                  className="flex-1"
                 />
-                <button
-                  type="button"
-                  onClick={() => void addAccount()}
-                  disabled={adding}
-                  className="flex h-11 shrink-0 items-center justify-center gap-1.5 rounded-md bg-accent px-4 text-sm font-bold text-white transition-colors hover:bg-accent-dim disabled:opacity-60"
-                >
-                  {adding ? <Loader2 size={15} className="animate-spin" /> : <Plus size={15} />}
-                  添加
-                </button>
+                <Button type="primary" onClick={() => void addAccount()} loading={adding} icon={<Plus size={15} />}>添加账号</Button>
               </div>
               {error && (
                 <p role="alert" className="mt-2 flex items-center gap-1.5 border-l-2 border-red bg-red/5 px-2 py-1.5 text-xs font-semibold text-red">
@@ -272,26 +224,8 @@ export default function CompetitorAccountsModal({
                           </p>
                         </div>
                         <div className="flex w-full items-center gap-2 pl-12 sm:w-auto sm:pl-0">
-                        <button
-                          type="button"
-                          onClick={() => void crawlAccount(account)}
-                          disabled={crawling || Boolean(crawlingId)}
-                          className="flex h-9 flex-1 items-center justify-center gap-1.5 rounded-md bg-accent px-3 text-xs font-bold text-white transition-colors hover:bg-accent-dim disabled:opacity-60 sm:flex-none"
-                          title={`采集最新 ${CRAWL_COUNT} 条`}
-                        >
-                          {crawling ? <Loader2 size={13} className="animate-spin" /> : <Download size={13} />}
-                          {crawling ? '采集中' : '采集最新'}
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => void deleteAccount(account)}
-                          disabled={deletingId === account.id}
-                          className="flex h-9 w-9 shrink-0 items-center justify-center rounded-md border border-border text-text-muted hover:border-red hover:bg-red/5 hover:text-red disabled:opacity-60"
-                          title="移除"
-                          aria-label={`移除对标账号 ${account.accountName}`}
-                        >
-                          {deletingId === account.id ? <Loader2 size={13} className="animate-spin" /> : <Trash2 size={13} />}
-                        </button>
+                        <Button onClick={() => void crawlAccount(account)} loading={crawling} disabled={Boolean(crawlingId) && !crawling} icon={<Download size={13} />} title={`采集最新 ${CRAWL_COUNT} 条`}>采集最新</Button>
+                        <Popconfirm title="移除这个对标账号？" description="已采集的灵感内容会保留。" onConfirm={() => deleteAccount(account)} okText="移除" cancelText="取消"><Button danger loading={deletingId === account.id} icon={<Trash2 size={13} />} aria-label={`移除对标账号 ${account.accountName}`} /></Popconfirm>
                         </div>
                       </li>
                     );
@@ -300,26 +234,17 @@ export default function CompetitorAccountsModal({
               )}
             </div>
 
-            <div className="border-t border-border bg-insight-soft px-4 py-3 text-xs text-insight-action sm:px-6">
-              采集到的视频会进入「灵感发现」，并由编导 Agent 验收定时采集结果。
-            </div>
-          </motion.div>
+          </section>
   ) : null;
 
   if (embedded) return panel;
 
   return (
-    <AnimatePresence>
-      {open && (
-        <motion.div
-          initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
-          role="presentation"
-          onMouseDown={event => { if (event.target === event.currentTarget && !adding && !crawlingId && !deletingId) onClose(); }}
-          className="fixed inset-0 z-[80] flex items-end justify-center bg-slate-950/40 p-0 sm:items-center sm:px-5 sm:py-6"
-        >
-          {panel}
-        </motion.div>
-      )}
-    </AnimatePresence>
+    <Modal open={open} title="对标账号管理" width={720} onCancel={onClose}
+      closable={!adding && !crawlingId && !deletingId} keyboard={!adding && !crawlingId && !deletingId}
+      mask={{ closable: false }} footer={<Button onClick={onClose} disabled={adding || Boolean(crawlingId) || Boolean(deletingId)}>完成</Button>}
+      styles={{ body: { maxHeight: '70vh', overflowY: 'auto' } }}>
+      {panel}
+    </Modal>
   );
 }

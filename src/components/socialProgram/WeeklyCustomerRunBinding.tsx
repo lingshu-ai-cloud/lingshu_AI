@@ -20,7 +20,7 @@ export default function WeeklyCustomerRunBinding({ programId, packageId, package
     try {const bound=await weeklyCustomerRunApi.bind(programId,packageId,packageVersion,chosen.runId);if(activeIdentity.current!==identity)return;setSnapshot(current=>current?.identity===identity?{...current,boundRunId:bound.item.run_id}:current);window.dispatchEvent(new Event('lingshu:agent-business-refresh'));onBound?.();}
     catch(error){if(activeIdentity.current===identity)setError({identity,message:error instanceof Error?error.message:'绑定失败'});}finally{if(activeIdentity.current===identity)setBusy(false);}
   };
-  return <section className="mx-5 my-4 space-y-3 rounded-xl border border-orange-200 bg-orange-50/40 p-4">
+  return <section className="mx-5 my-4 space-y-3 rounded-lg border border-orange-200 bg-white p-4">
     <div className="flex items-center justify-between gap-3"><h4 className="text-sm font-bold text-slate-900">绑定本周客服生产运行</h4><button type="button" disabled={busy} onClick={()=>setRevision(value=>value+1)} className="text-xs font-bold text-orange-700 disabled:opacity-40">刷新真实运行</button></div>
     <p className="text-xs leading-5 text-slate-600">{profile==='b2b_cold_start'?'零基础用户应选择本周真实新询盘客群；没有新询盘时保留无数据。':'有基础用户应分别核对老客跟进和本周新询盘的范围及历史上下文。'} 当前运行尚无可核验的项目来源分类，请核对客群后明确选择。</p>
     {message&&<p role="alert" className="text-xs text-rose-700">{message}</p>}

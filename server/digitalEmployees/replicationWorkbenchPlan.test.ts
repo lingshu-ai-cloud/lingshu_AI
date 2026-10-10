@@ -49,3 +49,11 @@ test('last reference overrun uses verified scene cuts plus media duration, witho
   Object.assign(r.aiAnalysis.gemini,{detectedSceneCuts:[5]});
   assert.throws(()=>buildReplicationWorkbenchSpec({...input,reference:r}),/时间线不完整/);
 });
+test('general is an explicit production scene while unknown remains blocked for evidence review',()=>{
+  const general=structuredClone(reference);general.aiAnalysis.gemini.scriptDetails15s[1]!.materialType='general';
+  general.aiAnalysis.gemini.scriptDetails15s[1]!.visual='办公室桌面与品牌图形转场';
+  const result=buildReplicationWorkbenchSpec({...input,reference:general}) as any;
+  assert.equal(result.storyboardSourcePlans['slot-2'].sceneType,'general');
+  const unresolved=structuredClone(general);unresolved.aiAnalysis.gemini.scriptDetails15s[1]!.materialType='unknown';
+  assert.throws(()=>buildReplicationWorkbenchSpec({...input,reference:unresolved}),/镜头类型/);
+});

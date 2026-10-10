@@ -66,7 +66,7 @@ export default function AgentDecisionCard({
     <div className="flex flex-wrap items-center justify-end gap-2 border-t border-slate-100 bg-slate-50/60 px-4 py-3 sm:px-5">
       {tertiary&&<button type="button" disabled={tertiary.disabled} onClick={tertiary.onClick} className="mr-auto rounded-lg border border-violet-200 bg-white px-3 py-2 text-[11px] font-bold text-violet-700 disabled:opacity-40">{tertiary.label}</button>}
       {secondary&&<button type="button" disabled={secondary.disabled} onClick={secondary.onClick} className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-[11px] font-bold text-slate-700 disabled:opacity-40">{secondary.label}</button>}
-      <button type="button" disabled={primary.disabled} onClick={primary.onClick} className="inline-flex items-center gap-1.5 rounded-lg bg-emerald-700 px-3 py-2 text-[11px] font-black text-white disabled:opacity-40"><Check size={12}/>{primary.label}</button>
+      <button type="button" disabled={primary.disabled} onClick={primary.onClick} className="inline-flex items-center gap-1.5 rounded-lg bg-blue-600 px-3 py-2 text-[11px] font-black text-white disabled:opacity-40"><Check size={12}/>{primary.label}</button>
     </div>
   </div>;
 }

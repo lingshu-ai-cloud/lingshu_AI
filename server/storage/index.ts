@@ -18,6 +18,9 @@ const postgresCutoverStore: DataStore = {
   getById: (collection, id) => collection === 'users' ? pbStore.getById(collection, id) : postgresStore.getById(collection, id),
   create: (collection, data) => collection === 'users' ? pbStore.create(collection, data) : postgresStore.create(collection, data),
   update: (collection, id, data) => collection === 'users' ? pbStore.update(collection, id, data) : postgresStore.update(collection, id, data),
+  compareAndSwap: (collection, id, expected, data) => collection === 'users'
+    ? (pbStore.compareAndSwap?.(collection, id, expected, data) ?? Promise.resolve(false))
+    : (postgresStore.compareAndSwap?.(collection, id, expected, data) ?? Promise.resolve(false)),
   delete: (collection, id) => collection === 'users' ? pbStore.delete(collection, id) : postgresStore.delete(collection, id),
   list: (collection, query) => collection === 'users' ? pbStore.list(collection, query) : postgresStore.list(collection, query),
 };

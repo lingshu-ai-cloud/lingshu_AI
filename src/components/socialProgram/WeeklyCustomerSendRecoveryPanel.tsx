@@ -50,7 +50,7 @@ export default function WeeklyCustomerSendRecoveryPanel({tenantId,programId,pack
   }catch(e){if(fresh(captured,credential)){setUnknown(true);setError(e instanceof Error?e.message:'提交结果未知');}}
   finally{if(fresh(captured,credential)){mutation.current=false;setBusy(false);}}
  }
- return <section id={customerSendRecoveryPanelId(scope)} tabIndex={-1} data-recovery-tenant={tenantId} data-recovery-program={programId} data-recovery-package={packageId} data-recovery-version={packageVersion} data-tenant={tenantId} data-program={programId} data-package={packageId} data-version={packageVersion} className="scroll-mt-6 rounded-xl border p-4">
+ return <section id={customerSendRecoveryPanelId(scope)} tabIndex={-1} data-recovery-tenant={tenantId} data-recovery-program={programId} data-recovery-package={packageId} data-recovery-version={packageVersion} data-tenant={tenantId} data-program={programId} data-package={packageId} data-version={packageVersion} className="scroll-mt-6 rounded-lg border border-border bg-white p-4">
   <h3 className="font-bold">WhatsApp 原发送异常 · 人工补救</h3><p className="mt-2 text-xs">读取当前周包真实发送来源。核验仅检查后端签名发送凭据，不发送消息、不推进运行。</p>
   <button type="button" disabled={busy} onClick={()=>void read()} className="my-2 underline disabled:opacity-40">{busy?'正在核验…':'刷新真实来源与处理记录'}</button>
   {error&&<p role="alert" className="text-sm text-red-800">{error}</p>}{unknown&&<p role="alert" className="text-red-800">写入结果未知，已停止重复提交。请刷新并核对原处理记录；未核实前不能重提。</p>}

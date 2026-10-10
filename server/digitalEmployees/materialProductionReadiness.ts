@@ -76,7 +76,7 @@ export function resolveMaterialProductAssociation(
   return { productId: product.id, productName: product.name, source: 'material_metadata' };
 }
 
-export type StoryboardMaterialRequirement = 'optional' | 'static_product' | 'dynamic_product' | 'factory_evidence';
+export type StoryboardMaterialRequirement = 'optional' | 'unresolved' | 'static_product' | 'dynamic_product' | 'factory_evidence';
 
 export interface StoryboardMaterialDecision {
   structureIndex: number;
@@ -106,6 +106,7 @@ function requirementForStep(
   step: BenchmarkAnalysis['structure'][number],
 ): StoryboardMaterialRequirement {
   const description = stepText(analysis, step.shotIds);
+  if (step.materialType === 'unknown') return 'unresolved';
   if (step.materialType === 'factory' || step.narrativeRole === 'capability_proof') return 'factory_evidence';
   if (step.materialType === 'consumer_demo' || step.narrativeRole === 'effect_proof') return 'dynamic_product';
   if (step.materialType === 'product') return DYNAMIC_PRODUCT.test(description) ? 'dynamic_product' : 'static_product';
@@ -113,6 +114,7 @@ function requirementForStep(
 }
 
 function candidateForRequirement(requirement: StoryboardMaterialRequirement, assets: AssetCandidate[]): AssetCandidate | undefined {
+  if (requirement === 'unresolved') return undefined;
   if (requirement === 'factory_evidence') {
     return assets.find(asset => asset.type === 'video' && FACTORY_EVIDENCE.test(assetText(asset)));
   }
@@ -122,6 +124,7 @@ function candidateForRequirement(requirement: StoryboardMaterialRequirement, ass
 }
 
 function missingMessage(requirement: StoryboardMaterialRequirement, index: number): string {
+  if (requirement === 'unresolved') return `第 ${index + 1} 段镜头素材类型待判断，需完成证据复核`;
   if (requirement === 'dynamic_product') return `第 ${index + 1} 段需要真实动态产品视频；已有产品图可继续用于其他静态镜头`;
   if (requirement === 'factory_evidence') return `第 ${index + 1} 段需要与产品相关的真实工厂/生产过程视频`;
   if (requirement === 'static_product') return `第 ${index + 1} 段需要该产品的图片或视频`;
@@ -140,7 +143,9 @@ export function assessStoryboardMaterialReadiness(input: {
 }): { decisions: StoryboardMaterialDecision[]; blockers: string[] } {
   const structure = input.analysis?.structure || [];
   const decisions = structure.map((step, structureIndex): StoryboardMaterialDecision => {
-    const requirement = input.presenter === 'avatar' ? 'optional' : requirementForStep(input.analysis!, step);
+    const requirement = step.materialType === 'unknown'
+      ? 'unresolved'
+      : input.presenter === 'avatar' ? 'optional' : requirementForStep(input.analysis!, step);
     const candidate = candidateForRequirement(requirement, input.assets);
     const required = requirement !== 'optional';
     return {

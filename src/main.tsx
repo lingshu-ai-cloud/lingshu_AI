@@ -2,7 +2,9 @@ import { StrictMode } from 'react';
 import { createRoot } from 'react-dom/client';
 import App from './App';
 import { AppCrashBoundary } from './components/AppPageBoundary';
+import LingshuProvider from './components/ui/LingshuProvider';
 import './index.css';
+import './styles/design-system.css';
 
 const PRELOAD_RECOVERY_KEY = 'lingshu:vite-preload-recovery';
 window.addEventListener('vite:preloadError', event => {
@@ -24,7 +26,7 @@ window.addEventListener('vite:preloadError', event => {
 createRoot(document.getElementById('root')!).render(
   <StrictMode>
     <AppCrashBoundary>
-      <App />
+      <LingshuProvider><App /></LingshuProvider>
     </AppCrashBoundary>
   </StrictMode>
 );

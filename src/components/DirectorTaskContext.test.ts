@@ -1,9 +1,10 @@
 import assert from 'node:assert/strict';
-import { buildDirectorContextView } from './DirectorTaskContext';
+import { buildDirectorContextView, resolveDirectorContextLink } from './DirectorTaskContext';
 import type { DigitalEmployeeDeepLink, DigitalEmployeeOverview } from '../lib/digitalEmployees';
 import { applyDirectorDecision } from '../lib/directorDecision';
 
 const overview = {
+  run: { id: 'run-1' },
   goal: { title: '西班牙市场获客', startsAt: '2026-09-14', endsAt: '2026-09-20' },
   plan: { businessPackage: {
     directorPlan: { currency: 'CNY', productionBudget: 1000, paidMediaBudget: 2000, productionReserved: 200, productionSpent: 300, originalTarget: 2, platformVersionTarget: 4, publishTarget: 6, collectionBrief: '采集安装问答', qualityStandard: '主张有实拍证据', progress: [{ id: 'p1', title: '热点筛选', status: 'approved', result: '保留安装问题', nextStep: '完成脚本', owner: 'director', updatedAt: '2026-09-15', estimatedCost: 0, actualCost: 0 }] },
@@ -24,6 +25,14 @@ assert.equal(view.stage, '详细选题与经营排期');
 assert.equal(view.status, '进行中');
 assert.equal(view.progress[0]?.nextStep, '完成脚本');
 assert.deepEqual(view.scriptVersions, [{ language: 'es', version: 2, hash: 'abcdef123456' }]);
+
+assert.equal(buildDirectorContextView({ ...overview, run: { ...overview.run!, id: 'run-new' } }, link), null, 'an old run link must not display the current run budget or same-key task');
+assert.equal(buildDirectorContextView(overview, { ...link, taskId: 'task-missing' }), null, 'a missing task must not fall back to another task with the same key');
+assert.equal(buildDirectorContextView({ ...overview, run: null }, link), null, 'a missing run must not expose another goal as the linked run');
+const runtimeLink = resolveDirectorContextLink('smartAssets', link, { runId: 'run-current', taskId: 'task-current', entityId: 'project-current' });
+assert.equal(runtimeLink?.runId, 'run-current', 'the open project attribution must take precedence over cached navigation');
+assert.equal(runtimeLink?.businessRef.entityId, 'project-current');
+assert.equal(resolveDirectorContextLink('scriptLibrary', link), link, 'valid legacy stored links remain available without runtime attribution');
 
 const weekly = buildDirectorContextView(overview, { ...link, businessRef: { taskKey: 'viral_analysis', contentId: 'missing' } });
 assert.equal(weekly?.scope, 'week');

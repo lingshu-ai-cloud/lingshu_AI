@@ -7,6 +7,9 @@ const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'lingshu-platform-ads-'));
 process.env.LOCAL_STORE_DIR = tempDir;
 process.env.PB_URL = 'http://127.0.0.1:1';
 process.env.NODE_ENV = 'test';
+// Isolated test JSON records and mocked provider calls only.
+process.env.ENABLE_LOCAL_DEV_FALLBACK = 'true';
+process.env.TEST_ONLY_EXTERNAL_EFFECT_LEASE_FALLBACK = 'true';
 
 try {
   const { createPlatformAdTask, getPlatformAdTask, listPlatformAdTasks, updatePlatformAdTask, validatePlatformAdTask, changePlatformAdManagement, withPlatformAdTaskLock } = await import('./tasks.js');
@@ -49,10 +52,18 @@ try {
   await withPlatformAdTaskLock('tenant-a', created.id, async () => {
     await assert.rejects(updatePlatformAdTask('tenant-a', created.id, input), /正在执行/);
   });
-  const fromAi = await createPlatformAdTask('tenant-a', 'user-a', input, { creationSource: 'ai_assisted' });
+  const fromAi = await createPlatformAdTask('tenant-a', 'user-a', input, {
+    creationSource: 'ai_assisted',
+    proposal: {
+      rationale: '已确认方案', audienceStrategy: '已确认人群', creativeStrategy: '已确认素材',
+      risks: ['待核验'], assumptions: ['待核验'], expectedOutcome: '暂不可预测', generatedAt: new Date().toISOString(),
+      enterpriseFactVersion: 'enterprise-facts-v1-test',
+    },
+  });
   const editedAi = await updatePlatformAdTask('tenant-a', fromAi.id, { ...input, expectedVersion: fromAi.version });
   assert.equal(editedAi?.creationSource, 'ai_assisted');
   assert.equal(editedAi?.managementMode, 'manual');
+  assert.equal(editedAi?.proposal, null, 'editing an AI task must invalidate its fact-bound proposal');
   const { parseAdProposal } = await import('./planning.js');
   const proposal = parseAdProposal(JSON.stringify({ rationale: '市场匹配', audienceStrategy: '目标客户', creativeStrategy: '素材对照', risks: ['缺少样本'], assumptions: ['待验证'], expectedOutcome: '保证收益 100 倍' }));
   assert.match(proposal.expectedOutcome, /暂不可预测/);

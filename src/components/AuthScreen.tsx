@@ -109,14 +109,13 @@ export default function AuthScreen({ onAuthed }: { onAuthed: (s: AuthSession) =>
 
       <section className="auth-panel">
         <motion.div
-          initial={{ opacity: 0, y: 12 }}
-          animate={{ opacity: 1, y: 0 }}
-          transition={{ duration: .34, ease: 'easeOut' }}
+          initial={{ opacity: 0 }}
+          animate={{ opacity: 1 }}
           className="auth-form-card"
         >
           <div className="auth-intro mb-8">
             <p className="mb-2 text-xs font-semibold uppercase tracking-[.18em] text-accent">Lingshu workspace</p>
-            <h1 aria-live="polite" className="text-[30px] font-semibold leading-tight tracking-[-.035em] text-text-primary">
+            <h1 aria-live="polite" className="ls-type-headline text-text-primary">
               {mode === 'register' ? '创建你的工作账号' : '欢迎回来'}
             </h1>
             <p className="mt-2 text-sm leading-6 text-text-secondary">
@@ -323,11 +322,11 @@ export default function AuthScreen({ onAuthed }: { onAuthed: (s: AuthSession) =>
           )}
 
           <div className="mt-7 flex flex-wrap items-center justify-between gap-3 border-t border-border pt-5 text-[11px] text-text-muted">
-            <span>© 2026 灵枢 AI</span>
+            <span>© 2026 灵小枢（杭州）科技有限公司</span>
             <span className="flex flex-wrap items-center gap-3">
-              <a href="/privacy" className="font-semibold transition-colors hover:text-accent">隐私政策</a>
-              <a href="/terms" className="font-semibold transition-colors hover:text-accent">用户协议</a>
-              <a href="/data-deletion" className="font-semibold transition-colors hover:text-accent">数据删除</a>
+              <a href="/privacy" target="_blank" rel="noreferrer" className="font-semibold transition-colors hover:text-accent">隐私政策</a>
+              <a href="/terms" target="_blank" rel="noreferrer" className="font-semibold transition-colors hover:text-accent">用户协议</a>
+              <a href="/data-deletion" target="_blank" rel="noreferrer" className="font-semibold transition-colors hover:text-accent">数据删除</a>
             </span>
           </div>
         </motion.div>

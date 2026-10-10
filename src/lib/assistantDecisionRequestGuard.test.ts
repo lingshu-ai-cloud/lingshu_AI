@@ -1,5 +1,20 @@
 import assert from 'node:assert/strict';
 import { createAssistantDecisionRequestGuard } from './assistantDecisionRequestGuard';
+import {
+  ASSISTANT_DECISION_MEMORY_MAX_CHARACTERS,
+  assistantDecisionSaveUnavailableReason,
+} from './useAssistantDecisionMemory';
+
+assert.equal(
+  assistantDecisionSaveUnavailableReason('x'.repeat(ASSISTANT_DECISION_MEMORY_MAX_CHARACTERS)),
+  '',
+  'a decision at the server limit remains saveable',
+);
+assert.match(
+  assistantDecisionSaveUnavailableReason('x'.repeat(ASSISTANT_DECISION_MEMORY_MAX_CHARACTERS + 1)),
+  /超过 2000 字上限/,
+  'an oversized decision is rejected with a clear user-facing reason',
+);
 
 let identity = 'tenantA:user1:token1';
 const guard = createAssistantDecisionRequestGuard(() => identity);

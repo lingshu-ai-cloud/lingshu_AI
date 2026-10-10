@@ -20,7 +20,7 @@ export default function SocialManagedExecutionNotice({ task }: { task: SocialCon
   if (publishing?.status === 'scheduled') messages.push('发布已经安排，系统正在等待平台结果。');
   else if (publishing?.status === 'blocked') messages.push(`成片已保留，发布尚未完成：${reason(publishing.reason)}${publishing.retryExhausted ? '自动重试已达上限。' : '系统会在后台重新检查，期间不会重复制作。'}`);
   if (!messages.length) return null;
-  return <div role="status" className="mb-4 space-y-1 rounded-xl border border-border bg-surface-2 px-4 py-3 text-xs leading-5 text-text-secondary">
+  return <div role="status" className="mb-4 space-y-1 rounded-lg border border-border bg-surface-2 px-4 py-3 text-xs leading-5 text-text-secondary">
     {messages.map(message => <p key={message}>{message}</p>)}
   </div>;
 }

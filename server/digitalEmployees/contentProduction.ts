@@ -972,9 +972,9 @@ ${lines.map((line, index) => `[${(hookEnd ? index === 0 ? 0 : hookEnd + (index -
   }
 }
 
-export async function generateDirectorScriptContracts(input: { tenantId: string; config: DigitalEmployeeConfig; goal: WeeklyGoalInput; orders: ContentProductionOrderInput[]; now?: string }): Promise<ContentProductionOrderInput[]> {
+export async function generateDirectorScriptContracts(input: { tenantId: string; config: DigitalEmployeeConfig; goal: WeeklyGoalInput; orders: ContentProductionOrderInput[]; now?: string; enterpriseProfile?: EnterpriseProfile }): Promise<ContentProductionOrderInput[]> {
   const [profile, analysesResult] = await Promise.all([
-    readTenantEnterpriseProfile(input.tenantId),
+    input.enterpriseProfile ? Promise.resolve(structuredClone(input.enterpriseProfile)) : readTenantEnterpriseProfile(input.tenantId),
     store.list<StoredRecord>('trend_videos', { where: { tenantId: input.tenantId }, sort: '-updatedAt', perPage: 500 }),
   ]);
   const allAssets = await collectProductionAssets(input.tenantId, profile);
@@ -1729,11 +1729,12 @@ export async function advanceAutomatedContentProduction(input: {
   taskId: string;
   config: DigitalEmployeeConfig;
   goal: WeeklyGoalInput;
+  enterpriseProfile?: EnterpriseProfile;
   batchPlanId?: string;
   contentOrders?: ContentProductionOrderInput[];
 }): Promise<ContentProductionAdvanceResult> {
   const [profile, analysesResult, existingProjects] = await Promise.all([
-    readTenantEnterpriseProfile(input.tenantId),
+    input.enterpriseProfile ? Promise.resolve(structuredClone(input.enterpriseProfile)) : readTenantEnterpriseProfile(input.tenantId),
     store.list<StoredRecord>('trend_videos', { where: { tenantId: input.tenantId }, sort: '-updatedAt', perPage: 500 }),
     listTenantContentProjects(input.tenantId),
   ]);

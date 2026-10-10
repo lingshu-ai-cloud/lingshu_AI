@@ -481,6 +481,7 @@ async function executeCommand(input: {
           requestHash: input.requestHash,
           expectedVersion,
           actorUserId: input.userId,
+          ...(object(payload.selection) ? { selection: object(payload.selection)! } : {}),
         });
       } catch (error) {
         if (error instanceof Starter198CommandMutationUncertainError) throw error;

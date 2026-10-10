@@ -164,7 +164,7 @@ export default function CrmDataBoard({ includeMockCustomers = false, mockCustome
         </button>
       </div>
 
-      {demoCustomers && <div className="mb-4 border-l-4 border-amber-400 bg-amber-50 px-4 py-3 text-xs text-amber-950"><strong>演示数据：</strong>订单客户、金额、状态与毛利均为模拟，不代表真实成交。</div>}
+      {demoCustomers && <div className="mb-4 border-l-4 border-amber-400 bg-amber-50 px-4 py-3 text-xs text-amber-950"><strong>参考预览：</strong>订单客户、金额、状态与毛利均为模拟，不代表真实成交。</div>}
 
       {(loading || customersLoading) && !demoCustomers ? (
         <div className="flex h-48 items-center justify-center gap-2 text-sm text-text-muted"><Loader2 size={16} className="animate-spin" />读取我的订单数据...</div>

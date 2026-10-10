@@ -23,5 +23,5 @@ assert.equal(presenterApprovalForProject(binding.tenantId, binding.projectId, sp
 const source = fs.readFileSync(new URL('./contentProduction.ts', import.meta.url), 'utf8');
 assert.match(source, /if \(usesDigitalPresenter\(brief\)\) automation\.heygenApproved = presenterApprovalForProject/);
 assert.match(source, /!approvalChanged && !contentProjectRetryable/);
-assert.match(source, /retryable: contentProjectRetryable\(projectAutomation\(project\)\) \|\| presenterApprovalResumesQuality/);
+assert.match(source, /retryable: contentProjectRetryable\(projectAutomation\(project\)\)[\s\S]{0,300}\|\| presenterApprovalResumesQuality/);
 console.log('Presenter approval recovery passed (in-memory records only; no provider or live writes).');

@@ -70,7 +70,7 @@ export function projectExecutionCalendar(tasks: WeeklyExecutionTask[], labels: R
       affectedPublicationIds: affectedPublications(task),
       agent, status, title: presentation.title,chain:presentation.chain,
       context: presentation.context,
-      output: `${presentation.topic?`${presentation.topic} · `:''}${task.resultRefs.length ? task.continuationObservation?.status === 'ready' ? `已核验承接原 v${task.continuationObservation.sourceVersion} 任务交付：${labels[task.schedule.stepKind]}` : task.resultRefs.map(ref => `${ref.type} · ${ref.id} · v${ref.version}`).join('；') : `待交付：${labels[task.schedule.stepKind]}`}`, 
+      output: `${presentation.topic?`${presentation.topic} · `:''}${task.resultRefs.length ? task.continuationObservation?.status === 'ready' ? `已核验承接原 v${task.continuationObservation.sourceVersion} 任务交付：${labels[task.schedule.stepKind]}` : task.resultRefs.map(ref => `${ref.type} · ${ref.id} · v${ref.version}`).join('；') : `待交付：${labels[task.schedule.stepKind]}`}`,
       minutes: task.schedule.estimatedDurationMinutes,
       dependsOn: task.dependsOnTaskIds,
       ...(task.schedule.stepKind === 'user_approval' ? {

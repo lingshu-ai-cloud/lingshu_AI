@@ -1,17 +1,21 @@
+import { getScrollBehavior } from "../../lib/usePrefersReducedMotion";
 import { StoryboardFirstFrame } from '../studio/StoryboardFirstFrame';
 export { StoryboardFirstFrame } from '../studio/StoryboardFirstFrame';
 import ReplicationWorkbenchHeader from './ReplicationWorkbenchHeader';
 import { useEffect, useMemo, useRef, useState } from 'react';
+import { Button, Modal } from 'antd';
 import {
   ChevronDown,
   ChevronRight,
   CircleAlert,
   Film,
+  FolderOpen,
   GripVertical,
   Loader2,
   Megaphone,
   Plus,
   RefreshCw,
+  Sparkles,
   Trash2,
   Upload,
 } from 'lucide-react';
@@ -29,6 +33,27 @@ import { normalizeFreeCreationState, type FreeCreationState, type FreeCreationSh
 interface EnterpriseProductOption {
   id: string;
   name: string;
+}
+
+export function resolveReplicationProductMappings(
+  slots: Array<{ shotId: string; sourceLabel: string }>,
+  products: EnterpriseProductOption[],
+  primaryProductId: string,
+  assignments: Record<string, string>,
+) {
+  return slots.map(slot => {
+    const selectedId = Object.prototype.hasOwnProperty.call(assignments, slot.shotId)
+      ? assignments[slot.shotId] : primaryProductId;
+    const product = products.find(item => item.id === selectedId);
+    return { sourceTerm: slot.sourceLabel, productId: product?.id || '', productName: product?.name || '' };
+  });
+}
+
+export function assignReplicationDefaultProduct(
+  slots: Array<{ shotId: string }>,
+  productId: string,
+): Record<string, string> {
+  return Object.fromEntries(slots.map(slot => [slot.shotId, productId]));
 }
 
 export interface FreeCreationLine {
@@ -175,7 +200,7 @@ export function WorkbenchVideoPreview({ source, poster, title, seekSeconds, seek
   }, [attempt, source]); // eslint-disable-line react-hooks/exhaustive-deps
 
   return (
-    <div className="relative h-full w-full overflow-hidden bg-[#e9eeeb]">
+    <div className="relative h-full w-full overflow-hidden bg-zinc-100">
       {poster && status !== 'ready' && <img src={poster} alt={`${title}封面`} className="absolute inset-0 h-full w-full object-contain" />}
       {playbackUrl && <video
         ref={videoRef}
@@ -197,8 +222,8 @@ export function WorkbenchVideoPreview({ source, poster, title, seekSeconds, seek
           setStatus('error');
         }}
       />}
-      {status === 'loading' && <div className="absolute inset-0 flex items-center justify-center bg-white/35 backdrop-blur-[1px]"><span className="inline-flex items-center gap-2 rounded-full bg-white/90 px-3 py-2 text-xs font-bold text-[#38594d] shadow-sm"><Loader2 size={14} className="animate-spin" />正在加载视频</span></div>}
-      {status === 'error' && <div className="absolute inset-0 flex items-center justify-center bg-white/88 p-6 text-center backdrop-blur-sm"><div><CircleAlert size={24} className="mx-auto text-amber-700" /><p className="mt-2 text-sm font-black text-text-primary">视频暂时无法预览</p><p className="mt-1 max-w-sm text-[11px] leading-5 text-text-muted">{message}</p><button type="button" onClick={() => setAttempt(value => value + 1)} className="mt-3 rounded-lg bg-[#173d31] px-3 py-2 text-xs font-black text-white">重新加载</button></div></div>}
+      {status === 'loading' && <div className="absolute inset-0 flex items-center justify-center bg-white/35 -[1px]"><span className="inline-flex items-center gap-2 rounded-full bg-white/90 px-3 py-2 text-xs font-bold text-[#38594d] shadow-none"><Loader2 size={14} className="animate-spin" />正在加载视频</span></div>}
+      {status === 'error' && <div className="absolute inset-0 flex items-center justify-center bg-white/88 p-6 text-center "><div><CircleAlert size={24} className="mx-auto text-amber-700" /><p className="mt-2 text-sm font-semibold text-text-primary">视频暂时无法预览</p><p className="mt-1 max-w-sm text-[11px] leading-5 text-text-muted">{message}</p><button type="button" onClick={() => setAttempt(value => value + 1)} className="mt-3 rounded-lg bg-blue-600 px-3 py-2 text-xs font-semibold text-white">重新加载</button></div></div>}
     </div>
   );
 }
@@ -222,6 +247,7 @@ export default function SocialCreationWorkbench({
   const [productId, setProductId] = useState('');
   const [selectedProductIds, setSelectedProductIds] = useState<string[]>([]);
   const [productAssignments, setProductAssignments] = useState<Record<string, string>>({});
+  const [productSelectionChanged, setProductSelectionChanged] = useState(false);
   const [productSelectorOpen, setProductSelectorOpen] = useState(false);
   const [manualProductTerms, setManualProductTerms] = useState<string[]>([]);
   const [newProductTerm, setNewProductTerm] = useState('');
@@ -245,6 +271,7 @@ export default function SocialCreationWorkbench({
   const aiHookRequestRef = useRef<{ frame: string; video: string } | null>(null);
   const [freeLines, setFreeLines] = useState<FreeCreationLine[]>([]);
   const [hookMode, setHookMode] = useState<'none' | 'upload' | 'library' | 'ai'>('none');
+  const [hookChooserOpen, setHookChooserOpen] = useState(mode !== 'viral_replication');
   const [libraryHooks, setLibraryHooks] = useState<Material[]>([]);
   const [libraryLoading, setLibraryLoading] = useState(false);
   const [draftProjectId, setDraftProjectId] = useState('');
@@ -275,7 +302,7 @@ export default function SocialCreationWorkbench({
     const panelBox = panel.getBoundingClientRect();
     // Scroll only the storyboard panel; preserve the video and page position.
     if (cardBox.top < panelBox.top + 85 || cardBox.bottom > panelBox.bottom) {
-      panel.scrollTo({ top: panel.scrollTop + cardBox.top - panelBox.top - 90, behavior: 'smooth' });
+      panel.scrollTo({ top: panel.scrollTop + cardBox.top - panelBox.top - 90, behavior: getScrollBehavior() });
     }
   }, [activeLine]);
   const [resolvedReferenceUrl, setResolvedReferenceUrl] = useState('');
@@ -294,6 +321,9 @@ export default function SocialCreationWorkbench({
   }, [seed?.confirmedSpeech]);
   const uploadRef = useRef<HTMLInputElement>(null);
   const isReplication = mode === 'viral_replication';
+  useEffect(() => {
+    if (!isReplication) setHookChooserOpen(true);
+  }, [isReplication]);
   const selectedFreeProducts = useMemo(() => products.filter(item => selectedProductIds.includes(item.id)), [products, selectedProductIds]);
   const freeDraftCreatedAt = useRef(new Date().toISOString());
   const freeCreationState = useMemo<FreeCreationState>(() => ({
@@ -412,7 +442,7 @@ export default function SocialCreationWorkbench({
     .map((term, index) => ({ shotId: `manual-product-${index}`, sourceLabel: term, time: '', visual: '' }))];
   const productMentions = referenceProductMentions(referenceLines, productSlots.map(slot => slot.sourceLabel));
   useEffect(() => {
-    if (!seed?.productMappings?.length || !products.length) return;
+    if (productSelectionChanged || !seed?.productMappings?.length || !products.length) return;
     setProductAssignments(current => {
       const next = { ...current };
       for (const slot of productSlots) {
@@ -423,39 +453,36 @@ export default function SocialCreationWorkbench({
       }
       return JSON.stringify(next) === JSON.stringify(current) ? current : next;
     });
-  }, [seed?.productMappings, products, JSON.stringify(productSlots)]);
+  }, [seed?.productMappings, products, productSelectionChanged, JSON.stringify(productSlots)]);
   useEffect(() => {
     if (!seed?.productMappings?.length || !products.length) return;
     const mapped = seed.productMappings.map(mapping => products.find(item => item.id === mapping.productId || item.name === mapping.productName)?.id).filter((id): id is string => Boolean(id));
     setSelectedProductIds(current => [...new Set([...current, ...mapped])]);
   }, [seed?.productMappings, products]);
-  const explicitlyAssignedIds = new Set(productSlots.map(slot => productAssignments[slot.shotId]).filter(Boolean));
-  const availableSelectedIds = selectedProductIds.filter(id => !explicitlyAssignedIds.has(id));
-  let nextSelectedIndex = 0;
-  const productMappings = productSlots.map(slot => {
-    const assigned = productAssignments[slot.shotId];
-    const selectedId = Object.prototype.hasOwnProperty.call(productAssignments, slot.shotId)
-      ? (selectedProductIds.includes(assigned) ? assigned : '')
-      : availableSelectedIds[nextSelectedIndex++] || '';
-    const product = products.find(item => item.id === selectedId);
-    return { sourceTerm: slot.sourceLabel, productId: product?.id || '', productName: product?.name || '' };
-  });
-  const productsReady = productMappings.length === selectedProductIds.length
-    && productMappings.every(mapping => mapping.productId && mapping.sourceTerm.trim())
-    && new Set(productMappings.map(mapping => mapping.productId)).size === productMappings.length;
+  const primaryProductId = productId || selectedProductIds[0] || '';
+  const primaryProduct = products.find(item => item.id === primaryProductId);
+  const productMappings = resolveReplicationProductMappings(productSlots, products, primaryProductId, productAssignments);
+  const productsReady = productMappings.every(mapping => mapping.productId && mapping.sourceTerm.trim());
+  const productSelectionLoading = productsLoading && (!isReplication || productSlots.length > 0);
+  const chooseDefaultProduct = (id: string) => {
+    setProductSelectionChanged(true);
+    setProductAssignments(assignReplicationDefaultProduct(productSlots, id));
+    setProductId(id);
+    setProductSelectorOpen(false);
+  };
   const spokenLabel = (sourceTerm: string, catalogName: string, line: string, names = spokenNames) =>
     names[catalogName] || spokenIdentityLabel(sourceTerm, catalogName, line);
   const mappingKey = JSON.stringify({ products: productMappings, brandSourceTerm, enterpriseBrandName, lines: referenceLines.map(line => line.text) });
   useEffect(() => {
     const saved = seed?.confirmedSpeech;
-    if (!isReplication || !saved?.length || enterpriseProfileState === 'loading' || !productsReady || !referenceLines.length) return;
+    if (!isReplication || productSelectionChanged || !saved?.length || enterpriseProfileState === 'loading' || !productsReady || !referenceLines.length) return;
     const restoreKey = JSON.stringify([saved, mappingKey]);
     if (restoredSpeechRef.current === restoreKey) return;
     if (saved.length !== referenceLines.length || saved.some((line, index) => line.source.trim() !== referenceLines[index]?.text.trim())) return;
     restoredSpeechRef.current = restoreKey;
     setGeneratedSpeech(saved.map(line => line.draft));
     setGeneratedMappingKey(mappingKey);
-  }, [isReplication, seed?.confirmedSpeech, enterpriseProfileState, productsReady, mappingKey, referenceLines]);
+  }, [isReplication, productSelectionChanged, seed?.confirmedSpeech, enterpriseProfileState, productsReady, mappingKey, referenceLines]);
   const speechGenerated = productsReady && generatedSpeech !== null && generatedMappingKey === mappingKey;
   const confirmedSpeech = referenceLines.map((line, index) => ({ source: line.text, time: line.time, draft: speechEdits[index] ?? generatedSpeech?.[index] ?? '' })).filter(line => line.source.trim());
   const generateSpeech = async () => {
@@ -615,7 +642,7 @@ export default function SocialCreationWorkbench({
   }, []);
 
   const startGeneration = async (replicationStep: 1 | 2 | 3 = 1, navigationOnly = false) => {
-    if (submitting || productsLoading || (!isReplication && !selectedProductIds.length) || (!navigationOnly && isReplication && (!productsReady || !speechGenerated || confirmedSpeech.some(line => !line.draft.trim())))) return;
+    if (submitting || productSelectionLoading || (!isReplication && !selectedProductIds.length) || (!navigationOnly && isReplication && (!productsReady || !speechGenerated || confirmedSpeech.some(line => !line.draft.trim())))) return;
     setSubmitting(true); setGenerationNotice('');
     try {
       const presenterAssetId = '';
@@ -662,7 +689,7 @@ export default function SocialCreationWorkbench({
         setSubmitting(false);
         return;
       }
-      const productName = isReplication ? productMappings[0]?.productName || (navigationOnly ? seed?.productName || '' : '') : selectedFreeProducts.map(item => item.name).join('、');
+      const productName = isReplication ? productMappings[0]?.productName || '' : selectedFreeProducts.map(item => item.name).join('、');
       let resolvedDraftProjectId = draftProjectId;
       if (!isReplication) {
         resolvedDraftProjectId = resolvedDraftProjectId || await draftCreationRef.current || '';
@@ -693,7 +720,7 @@ export default function SocialCreationWorkbench({
         requestId: Date.now(),
         creationPath: mode,
         title: isReplication
-          ? `${productName || seed?.productName || '自动选品'} · 爆款复刻`
+          ? productName ? `${productName} · 爆款复刻` : '爆款复刻'
           : `${productName || '自由创作'} · 新内容`,
         productId: isReplication ? productMappings[0]?.productId || '' : selected?.id || '',
         productName,
@@ -788,24 +815,70 @@ export default function SocialCreationWorkbench({
     setFreeHookMaterial(aiHookCandidate); setHookMode('ai'); setFiles([]);
     setGenerationNotice('AI 钩子已采纳并写入素材库，草稿正在自动保存。');
   };
+  const chooseHookMode = (value: 'none' | 'upload' | 'library' | 'ai') => {
+    setHookMode(value);
+    setHookChooserOpen(false);
+    if (value === 'upload') window.setTimeout(() => uploadRef.current?.click(), 0);
+    if (value === 'library' && !libraryHooks.length) {
+      setLibraryLoading(true);
+      void studioApi.listMaterials('library')
+        .then(items => setLibraryHooks(items.filter(item => item.type === 'video' || item.type === 'image')))
+        .finally(() => setLibraryLoading(false));
+    }
+    if (value === 'none' || value === 'ai') {
+      setFiles([]);
+      setFreeHookMaterial(null);
+    }
+  };
   const freeReady = selectedProductIds.length > 0 && Boolean(contentGoal.trim()) && Boolean(targetAudience.trim()) && freeLines.length > 0
     && freeLines.every(line => line.visual.trim() && (line.silent || line.speech.trim())) && freeLines.filter(line => line.hook).length === 1;
 
   return (
-    <section className="flex h-full min-h-0 flex-col bg-[#f2f7f4]">
-      <ReplicationWorkbenchHeader activeStep={0} stepLabels={isReplication ? undefined : ['创意与口播确认', '分镜匹配与制作', '成片渲染和导出']} onStepChange={index => { if (index > 0 && (isReplication ? speechGenerated : Boolean(freeScriptText))) void startGeneration(); }} navigationDisabled={submitting || productsLoading || (isReplication ? !speechGenerated : !freeScriptText)} title={isReplication ? seed?.referenceTitle : products.find(item => item.id === productId)?.name || '自由创作'} actions={<><button type="button" onClick={onShowCreations} className="rounded-lg border border-border px-3 py-2 text-xs font-bold">我的创作</button><button type="button" onClick={onOpenChooser} className="rounded-lg bg-[#173d31] px-3 py-2 text-xs font-bold text-white">切换制作方式</button></>} />
+    <section className="flex h-full min-h-0 flex-col bg-white">
+      <ReplicationWorkbenchHeader activeStep={0} compact={!isReplication} showTaskIdentity={isReplication} stepLabels={isReplication ? undefined : ['创意与口播确认', '分镜匹配与制作', '成片渲染和导出']} onStepChange={index => { if (index > 0 && (isReplication ? speechGenerated : Boolean(freeScriptText))) void startGeneration(); }} navigationDisabled={submitting || productSelectionLoading || (isReplication ? !speechGenerated : !freeScriptText)} title={isReplication ? seed?.referenceTitle : undefined} actions={<><Button htmlType="button" onClick={onShowCreations} className="whitespace-nowrap font-semibold">我的创作</Button><Button type="primary" htmlType="button" onClick={onOpenChooser} className="whitespace-nowrap font-semibold">切换制作方式</Button></>} />
+
+      <Modal
+        open={!isReplication && hookChooserOpen}
+        centered
+        getContainer={false}
+        width={760}
+        footer={null}
+        title="选择开场方式"
+        onCancel={() => setHookChooserOpen(false)}
+      >
+        <p className="mb-5 text-sm text-text-secondary">选择本次内容如何开始；稍后仍可在画面预览区更换。</p>
+        <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+          {([
+            ['ai', 'AI 生成', '根据产品与受众生成钩子', Sparkles],
+            ['upload', '上传素材', '使用本地图片或视频', Upload],
+            ['library', '素材库', '从已有素材中选择', FolderOpen],
+            ['none', '暂不指定', '进入分镜后再补充', Film],
+          ] as const).map(([value, label, description, Icon]) => (
+            <button
+              key={value}
+              type="button"
+              onClick={() => chooseHookMode(value)}
+              className="group flex min-h-40 flex-col rounded-lg border border-border bg-white p-4 text-left transition hover:border-accent hover:bg-accent-glow focus:outline-none focus:ring-2 focus:ring-accent/30"
+            >
+              <span className="flex h-10 w-10 items-center justify-center rounded-lg bg-surface-2 text-text-primary group-hover:bg-white group-hover:text-accent"><Icon size={20} /></span>
+              <span className="mt-auto whitespace-nowrap text-sm font-semibold text-text-primary">{label}</span>
+              <span className="mt-1 text-xs leading-5 text-text-secondary">{description}</span>
+            </button>
+          ))}
+        </div>
+      </Modal>
 
 
       <div className="social-creation-workbench-layout grid min-h-0 flex-1 grid-cols-1 overflow-y-auto lg:overflow-hidden">
         <aside className="min-h-0 border-b border-border bg-white lg:overflow-y-auto lg:border-b-0 lg:border-r">
-          <div className="sticky top-0 z-10 border-b border-border bg-white px-4 py-4">
-            <p className="text-sm font-black text-text-primary">{isReplication ? '口播替换与确认' : '创意与口播确认'}</p>
-            <p className="mt-1 text-[11px] leading-5 text-text-muted">{isReplication ? '先在右侧完成产品映射并生成口播，再检查高亮产品词、修改并确认。' : '选择一个或多个产品填写创作简报；钩子与口播均可按本次内容需要选择。'}</p>
-          </div>
+          {isReplication && <div className="sticky top-0 z-10 border-b border-border bg-white px-4 py-4">
+            <p className="text-sm font-semibold text-text-primary">口播替换与确认</p>
+            <p className="mt-1 text-[11px] leading-5 text-text-muted">先在右侧完成产品映射并生成口播，再检查高亮产品词、修改并确认。</p>
+          </div>}
           <ol ref={cardListRef} className="space-y-2 p-3">
-            {!isReplication && !freeLines.length && <li className="rounded-xl border border-dashed border-emerald-200 bg-emerald-50/50 p-4 text-xs leading-5 text-emerald-900">填写右侧创作简报即可生成分镜。钩子素材为可选项，也可以在第二页再完成首镜。</li>}
-            {!isReplication && freeLines.map((freeLine, index) => <li key={freeLine.id} draggable onDragStart={event => { draggedFreeLineIndex.current = index; event.dataTransfer.effectAllowed = 'move'; event.dataTransfer.setData('text/plain', freeLine.id); }} onDragOver={event => { event.preventDefault(); event.dataTransfer.dropEffect = 'move'; }} onDrop={event => { event.preventDefault(); const from = draggedFreeLineIndex.current; draggedFreeLineIndex.current = null; if (from == null || from === index) return; const next = [...freeLines]; const [moved] = next.splice(from, 1); next.splice(index, 0, moved); commitFreeLines(next); }} onDragEnd={() => { draggedFreeLineIndex.current = null; }} className={`rounded-xl border p-3 ${freeLine.hook ? 'border-emerald-500 bg-emerald-50' : 'border-border bg-white'}`}>
-              <div className="flex items-center gap-2"><span title="拖动调整分镜顺序" aria-label={`拖动第 ${index + 1} 个分镜排序`} className="cursor-grab text-text-muted active:cursor-grabbing"><GripVertical size={14} /></span><span className="text-xs font-black">{index + 1}</span><input aria-label={`第 ${index + 1} 个分镜时间`} value={freeLine.time} onChange={event => commitFreeLines(freeLines.map((item, i) => i === index ? { ...item, time: event.target.value } : item))} className="min-w-0 flex-1 rounded border border-border px-2 py-1 text-[10px]" /><button type="button" onClick={() => commitFreeLines(freeLines.map((item, i) => ({ ...item, hook: i === index })))} className={`rounded px-2 py-1 text-[10px] font-bold ${freeLine.hook ? 'bg-emerald-700 text-white' : 'bg-surface-2 text-text-secondary'}`}>{freeLine.hook ? '首要钩子' : '设为钩子'}</button></div>
+            {!isReplication && !freeLines.length && <li className="rounded-lg border border-dashed border-blue-200 bg-blue-50/40 p-4 text-xs leading-5 text-zinc-700">填写右侧创作简报即可生成分镜。钩子素材为可选项，也可以在第二页再完成首镜。</li>}
+            {!isReplication && freeLines.map((freeLine, index) => <li key={freeLine.id} draggable onDragStart={event => { draggedFreeLineIndex.current = index; event.dataTransfer.effectAllowed = 'move'; event.dataTransfer.setData('text/plain', freeLine.id); }} onDragOver={event => { event.preventDefault(); event.dataTransfer.dropEffect = 'move'; }} onDrop={event => { event.preventDefault(); const from = draggedFreeLineIndex.current; draggedFreeLineIndex.current = null; if (from == null || from === index) return; const next = [...freeLines]; const [moved] = next.splice(from, 1); next.splice(index, 0, moved); commitFreeLines(next); }} onDragEnd={() => { draggedFreeLineIndex.current = null; }} className={`rounded-lg border p-3 ${freeLine.hook ? 'border-blue-400 bg-blue-50/50' : 'border-border bg-white'}`}>
+              <div className="flex items-center gap-2"><span title="拖动调整分镜顺序" aria-label={`拖动第 ${index + 1} 个分镜排序`} className="cursor-grab text-text-muted active:cursor-grabbing"><GripVertical size={14} /></span><span className="text-xs font-semibold">{index + 1}</span><input aria-label={`第 ${index + 1} 个分镜时间`} value={freeLine.time} onChange={event => commitFreeLines(freeLines.map((item, i) => i === index ? { ...item, time: event.target.value } : item))} className="min-w-0 flex-1 rounded border border-border px-2 py-1 text-[10px]" /><button type="button" onClick={() => commitFreeLines(freeLines.map((item, i) => ({ ...item, hook: i === index })))} className={`rounded px-2 py-1 text-[10px] font-bold ${freeLine.hook ? 'bg-blue-600 text-white' : 'bg-surface-2 text-text-secondary'}`}>{freeLine.hook ? '首要钩子' : '设为钩子'}</button></div>
               <textarea aria-label={`第 ${index + 1} 个分镜口播`} disabled={freeLine.silent} value={freeLine.speech} onChange={event => commitFreeLines(freeLines.map((item, i) => i === index ? { ...item, speech: event.target.value } : item))} rows={3} placeholder="填写口播" className="mt-2 w-full resize-y rounded-lg border border-border p-2 text-xs leading-5 disabled:bg-slate-100" />
               <label className="mt-2 flex items-center gap-2 text-[10px] font-bold"><input type="checkbox" checked={freeLine.silent} onChange={event => commitFreeLines(freeLines.map((item, i) => i === index ? { ...item, silent: event.target.checked } : item))} />无口播画面</label>
               <textarea aria-label={`第 ${index + 1} 个分镜画面意图`} value={freeLine.visual} onChange={event => commitFreeLines(freeLines.map((item, i) => i === index ? { ...item, visual: event.target.value } : item))} rows={2} placeholder="画面意图" className="mt-2 w-full resize-y rounded-lg border border-border p-2 text-xs leading-5" />
@@ -813,14 +886,14 @@ export default function SocialCreationWorkbench({
               <p className="mt-2 rounded-md bg-slate-50 px-2 py-1.5 text-[10px] leading-4 text-text-muted">事实来源：{selectedFreeProducts.length ? selectedFreeProducts.map(item => item.name).join('、') : '尚未选择企业产品'}</p>
               <div className="mt-2 flex flex-wrap gap-1.5 text-[10px] font-bold"><button type="button" onClick={() => void regenerateFreeLine(index)} className="rounded border border-border px-2 py-1"><RefreshCw size={11} className="mr-1 inline" />重生成</button><button type="button" onClick={() => { const midpoint = Math.max(1, Math.floor(freeLine.speech.length / 2)); commitFreeLines([...freeLines.slice(0, index), { ...freeLine, id: `${freeLine.id}-a`, speech: freeLine.speech.slice(0, midpoint), hook: freeLine.hook }, { ...freeLine, id: `${freeLine.id}-b`, speech: freeLine.speech.slice(midpoint), hook: false }, ...freeLines.slice(index + 1)]); }} className="rounded border border-border px-2 py-1">拆分</button><button type="button" disabled={index === 0} onClick={() => { const previous = freeLines[index - 1]; commitFreeLines([...freeLines.slice(0, index - 1), { ...previous, speech: [previous.speech, freeLine.speech].filter(Boolean).join(' '), visual: [previous.visual, freeLine.visual].filter(Boolean).join('；'), hook: previous.hook || freeLine.hook }, ...freeLines.slice(index + 1)]); }} className="rounded border border-border px-2 py-1 disabled:opacity-40">与上条合并</button><button type="button" disabled={index === 0} onClick={() => { const next = [...freeLines]; [next[index - 1], next[index]] = [next[index], next[index - 1]]; commitFreeLines(next); }} className="rounded border border-border px-2 py-1 disabled:opacity-40">上移</button><button type="button" disabled={index === freeLines.length - 1} onClick={() => { const next = [...freeLines]; [next[index], next[index + 1]] = [next[index + 1], next[index]]; commitFreeLines(next); }} className="rounded border border-border px-2 py-1 disabled:opacity-40">下移</button><button type="button" disabled={freeLines.length === 1} onClick={() => commitFreeLines(freeLines.filter((_, i) => i !== index))} className="rounded border border-red-200 px-2 py-1 text-red-700 disabled:opacity-40"><Trash2 size={11} className="inline" />删除</button></div>
             </li>)}
-            {!isReplication && freeLines.length > 0 && <li><button type="button" onClick={() => commitFreeLines([...freeLines, { id: `free-line-${Date.now()}`, time: `${freeLines.length * 4}–${(freeLines.length + 1) * 4}s`, speech: '', visual: '', shotType: '产品', silent: true, hook: false }])} className="flex w-full items-center justify-center gap-1 rounded-xl border border-dashed border-emerald-300 py-2 text-xs font-bold text-emerald-800"><Plus size={13} />新增分镜</button><button type="button" onClick={() => { setFreeScriptText(''); setFreeLines([]); setFreeGeneration(null); setGenerationNotice(''); }} className="mt-2 text-xs font-bold text-emerald-800 underline">重新生成整版</button></li>}
-            {isReplication && !referenceShots.length && <li className="rounded-xl border border-dashed border-border p-4 text-xs leading-5 text-text-muted">原片分镜和口播尚未完成分析。完成后会在这里逐句显示真实口播与素材首帧。</li>}
+            {!isReplication && freeLines.length > 0 && <li><button type="button" onClick={() => commitFreeLines([...freeLines, { id: `free-line-${Date.now()}`, time: `${freeLines.length * 4}–${(freeLines.length + 1) * 4}s`, speech: '', visual: '', shotType: '产品', silent: true, hook: false }])} className="flex w-full items-center justify-center gap-1 rounded-lg border border-dashed border-emerald-300 py-2 text-xs font-bold text-emerald-800"><Plus size={13} />新增分镜</button><button type="button" onClick={() => { setFreeScriptText(''); setFreeLines([]); setFreeGeneration(null); setGenerationNotice(''); }} className="mt-2 text-xs font-bold text-emerald-800 underline">重新生成整版</button></li>}
+            {isReplication && !referenceShots.length && <li className="rounded-lg border border-dashed border-border p-4 text-xs leading-5 text-text-muted">原片分镜和口播尚未完成分析。完成后会在这里逐句显示真实口播与素材首帧。</li>}
             {script.map((line, index) => {
               const active = activeLine === index;
               return <li ref={element => { cardsRef.current[index] = element; }} key={`${index}:${line}`}>
-                <button type="button" aria-current={active ? 'step' : undefined} onClick={() => { setActiveLine(index); setSeekRequestId(current => current + 1); setRequestedSeek((referenceLines[index]?.startSeconds ?? shotStart(referenceLines[index]?.time || '')) + 0.05); }} className={`flex w-full items-start gap-3 rounded-xl border p-3 text-left transition ${active ? 'border-emerald-400 bg-emerald-50 shadow-sm' : 'border-border bg-white hover:border-emerald-200'}`}>
+                <button type="button" aria-current={active ? 'step' : undefined} onClick={() => { setActiveLine(index); setSeekRequestId(current => current + 1); setRequestedSeek((referenceLines[index]?.startSeconds ?? shotStart(referenceLines[index]?.time || '')) + 0.05); }} className={`flex w-full items-start gap-3 rounded-lg border p-3 text-left transition ${active ? 'border-blue-400 bg-blue-50/40 shadow-none' : 'border-border bg-white hover:border-blue-200'}`}>
                   {isReplication && <StoryboardFirstFrame source={resolvedReferenceUrl || seed?.referenceMediaUrl} firstFrameRef={referenceLines[index]?.firstFrameRef} time={referenceLines[index]?.firstFrameSeconds ?? shotStart(referenceLines[index]?.time || '')} label={`口播 ${index + 1}`} />}
-                  <span className={`mt-0.5 flex h-5 w-5 shrink-0 items-center justify-center rounded-md border text-[10px] font-black ${active ? 'border-emerald-600 bg-emerald-600 text-white' : 'border-border text-text-muted'}`}>{index + 1}</span>
+                  <span className={`mt-0.5 flex h-5 w-5 shrink-0 items-center justify-center rounded-md border text-[10px] font-semibold ${active ? 'border-blue-600 bg-blue-600 text-white' : 'border-border text-text-muted'}`}>{index + 1}</span>
                   <span className="min-w-0 flex-1"><span className="block text-xs font-bold leading-5 text-text-primary">{line || '该分镜暂无可识别口播'}</span><span className="mt-1 flex items-center gap-1 text-[10px] font-semibold text-text-muted">{isReplication ? referenceLines[index]?.time : `00:${String(index * 4).padStart(2, '0')}–00:${String((index + 1) * 4).padStart(2, '0')}`}<ChevronRight size={11} /></span>{isReplication && referenceLines[index]?.visuals.length > 0 && <span className="mt-1 line-clamp-2 text-[10px] leading-4 text-text-muted">画面：{referenceLines[index].visuals[0]}</span>}</span>
                 </button>
                 {isReplication && referenceLines[index]?.visualShotCount > 0 && <>
@@ -828,7 +901,7 @@ export default function SocialCreationWorkbench({
                     const next = new Set(current);
                     if (next.has(index)) next.delete(index); else next.add(index);
                     return next;
-                  })} className="mt-1 flex w-full items-center justify-between rounded-lg border border-emerald-100 bg-emerald-50/60 px-3 py-2 text-left text-[11px] font-bold text-emerald-800">
+                  })} className="mt-1 flex w-full items-center justify-between rounded-lg border border-zinc-200 bg-white px-3 py-2 text-left text-[11px] font-bold text-blue-600">
                     覆盖 {referenceLines[index].visualShotCount} 个分镜
                     <ChevronDown size={14} className={`transition-transform ${expandedSpeechLines.has(index) ? 'rotate-180' : ''}`} />
                   </button>
@@ -839,13 +912,13 @@ export default function SocialCreationWorkbench({
                       return <li key={`${shotIndex}:${shot.firstFrameRef || shot.visual || ''}`}>
                         <button type="button" onClick={() => { setActiveLine(index); setSeekRequestId(current => current + 1); setRequestedSeek((shot.startSeconds ?? shot.firstFrameSeconds ?? shotStart(shot.time)) + 0.05); }} className="flex w-full items-start gap-2 rounded-lg border border-border bg-white p-2 text-left hover:border-emerald-300">
                           <StoryboardFirstFrame source={resolvedReferenceUrl || seed?.referenceMediaUrl} firstFrameRef={shot.firstFrameRef} time={shot.firstFrameSeconds ?? shot.startSeconds ?? shotStart(shot.time)} label={`分镜 ${shotIndex + 1}`} />
-                          <span className="min-w-0 flex-1"><span className="block text-[10px] font-bold text-emerald-800">分镜 {shotIndex + 1} · {shotTime}</span><span className="mt-1 line-clamp-3 text-[10px] leading-4 text-text-secondary">{shot.visual || '画面待分析'}</span></span>
+                          <span className="min-w-0 flex-1"><span className="block text-[10px] font-bold text-zinc-700">分镜 {shotIndex + 1} · {shotTime}</span><span className="mt-1 line-clamp-3 text-[10px] leading-4 text-text-secondary">{shot.visual || '画面待分析'}</span></span>
                         </button>
                       </li>;
                     })}
                   </ol>}
                 </>}
-                {isReplication && line.trim() && speechGenerated && <div className={`mt-2 rounded-lg border p-2 ${productMappings.some(mapping => mapping.sourceTerm && line.toLocaleLowerCase().includes(mapping.sourceTerm.toLocaleLowerCase())) ? 'border-amber-400 bg-amber-50 ring-1 ring-amber-200' : 'border-emerald-100 bg-emerald-50/40'}`}><p className="text-[10px] font-bold text-emerald-800">替换后口播 · 请检查</p><p className="mt-1 whitespace-pre-wrap text-xs leading-5 text-text-primary">{highlightSpeech(speechEdits[index] ?? generatedSpeech?.[index] ?? '', line)}</p><label className="mt-2 block text-[10px] font-bold text-emerald-800">编辑口播<textarea aria-label={`第 ${index + 1} 句新口播`} value={speechEdits[index] ?? generatedSpeech?.[index] ?? ''} onChange={event => setSpeechEdits(current => ({ ...current, [index]: event.target.value }))} rows={3} className="mt-1 w-full resize-y rounded-md border border-border bg-white p-2 text-xs font-normal leading-5 text-text-primary" /></label></div>}
+                {isReplication && line.trim() && speechGenerated && <div className={`mt-2 rounded-lg border p-2 ${productMappings.some(mapping => mapping.sourceTerm && line.toLocaleLowerCase().includes(mapping.sourceTerm.toLocaleLowerCase())) ? 'border-amber-400 bg-amber-50 ring-1 ring-amber-200' : 'border-zinc-200 bg-zinc-50'}`}><p className="text-[10px] font-bold text-zinc-700">替换后口播 · 请检查</p><p className="mt-1 whitespace-pre-wrap text-xs leading-5 text-text-primary">{highlightSpeech(speechEdits[index] ?? generatedSpeech?.[index] ?? '', line)}</p><label className="mt-2 block text-[10px] font-bold text-zinc-700">编辑口播<textarea aria-label={`第 ${index + 1} 句新口播`} value={speechEdits[index] ?? generatedSpeech?.[index] ?? ''} onChange={event => setSpeechEdits(current => ({ ...current, [index]: event.target.value }))} rows={3} className="mt-1 w-full resize-y rounded-md border border-border bg-white p-2 text-xs font-normal leading-5 text-text-primary" /></label></div>}
               </li>;
             })}
           </ol>
@@ -853,14 +926,13 @@ export default function SocialCreationWorkbench({
 
         <main className="flex min-h-[560px] min-w-0 flex-col bg-[#f5f8f5] lg:min-h-0">
           <div className="flex items-center justify-between border-b border-black/5 px-5 py-3">
-            <div><p className="text-xs font-black text-text-primary">画面预览</p><p className="mt-0.5 text-[10px] text-text-muted">{isReplication ? `当前对应第 ${activeLine + 1} 句口播` : `当前对应第 ${activeLine + 1} 个分镜`}</p></div>
-            {!isReplication && <span className="text-[10px] font-bold text-emerald-800">钩子素材可选</span>}
+            <div><p className="text-xs font-semibold text-text-primary">画面预览</p>{isReplication && <p className="mt-0.5 text-[10px] text-text-muted">当前对应第 {activeLine + 1} 句口播</p>}</div>
+            {!isReplication && <Button size="small" htmlType="button" onClick={() => setHookChooserOpen(true)} className="whitespace-nowrap">更换开场方式</Button>}
           </div>
-          {!isReplication && <div className="flex flex-wrap gap-2 border-b border-black/5 px-4 py-3">{([['none', '暂不指定'], ['upload', '上传素材'], ['library', '素材库'], ['ai', 'AI 生成']] as const).map(([value, label]) => <button key={value} type="button" onClick={() => { setHookMode(value); if (value === 'upload') uploadRef.current?.click(); if (value === 'library' && !libraryHooks.length) { setLibraryLoading(true); void studioApi.listMaterials('library').then(items => setLibraryHooks(items.filter(item => item.type === 'video' || item.type === 'image'))).finally(() => setLibraryLoading(false)); } if (value === 'none' || value === 'ai') { setFiles([]); setFreeHookMaterial(null); } }} className={`rounded-lg border px-3 py-1.5 text-[10px] font-bold ${hookMode === value ? 'border-emerald-600 bg-emerald-50 text-emerald-800' : 'border-border bg-white text-text-secondary'}`}>{label}</button>)}</div>}
           <input ref={uploadRef} type="file" accept="video/*,image/*" className="hidden" onChange={event => { setFiles(Array.from(event.currentTarget.files || []).slice(0, 1)); setHookMode('upload'); setFreeScriptText(''); setFreeLines([]); setFreeGeneration(null); setFreeHookMaterial(null); }} />
-          {!isReplication && hookMode === 'library' && <div className="max-h-36 overflow-y-auto border-b border-border p-3">{libraryLoading ? <p className="text-xs text-text-muted">正在读取素材库…</p> : libraryHooks.length ? <div className="grid grid-cols-2 gap-2">{libraryHooks.map(item => <button type="button" key={item.id} onClick={() => { setFreeHookMaterial(item); setFiles([]); }} className={`rounded-lg border p-2 text-left text-[10px] ${freeHookMaterial?.id === item.id ? 'border-emerald-600 bg-emerald-50' : 'border-border'}`}><span className="line-clamp-2 font-bold">{item.name}</span></button>)}</div> : <p className="text-xs text-text-muted">素材库暂无可用图片或视频，可改用上传或暂不指定。</p>}</div>}
+          {!isReplication && hookMode === 'library' && <div className="max-h-36 overflow-y-auto border-b border-border p-3">{libraryLoading ? <p className="text-xs text-text-muted">正在读取素材库…</p> : libraryHooks.length ? <div className="grid grid-cols-2 gap-2">{libraryHooks.map(item => <button type="button" key={item.id} onClick={() => { setFreeHookMaterial(item); setFiles([]); }} className={`rounded-lg border p-2 text-left text-[10px] ${freeHookMaterial?.id === item.id ? 'border-blue-500 bg-blue-50' : 'border-border'}`}><span className="line-clamp-2 font-bold">{item.name}</span></button>)}</div> : <p className="text-xs text-text-muted">素材库暂无可用图片或视频，可改用上传或暂不指定。</p>}</div>}
           <div className="flex min-h-0 flex-1 items-center justify-center overflow-hidden p-4 sm:p-5">
-            <div className="relative flex h-full min-h-0 max-h-full w-full items-center justify-center overflow-hidden rounded-xl border border-[#dfe5e1] bg-[#eef0f3] shadow-[0_2px_12px_rgba(23,61,49,0.06)]">
+            <div className="relative flex h-full min-h-0 max-h-full w-full items-center justify-center overflow-hidden rounded-lg border border-[#dfe5e1] bg-[#eef0f3] ">
               {previewUrl && files[0]?.type.startsWith('video/') ? <video src={previewUrl} controls playsInline preload="metadata" className="h-full w-full object-contain" />
                 : previewUrl ? <img src={previewUrl} alt="用户上传素材预览" className="h-full w-full object-contain" />
                 : !isReplication && (aiHookCandidate?.url || freeHookMaterial?.url) && (aiHookCandidate || freeHookMaterial)?.type === 'video' ? <video src={(aiHookCandidate || freeHookMaterial)?.url} poster={(aiHookCandidate || freeHookMaterial)?.poster} controls playsInline className="h-full w-full object-contain" />
@@ -868,62 +940,64 @@ export default function SocialCreationWorkbench({
                 : seed?.referenceContentType === 'video' && seed.referenceMediaUrl ? <WorkbenchVideoPreview source={seed.referenceMediaUrl} poster={seed.referenceThumbnail} title={seed.referenceTitle || '爆款视频预览'} seekSeconds={requestedSeek} seekRequestId={seekRequestId} onPlaybackTime={syncPlaybackCard} onResolved={setResolvedReferenceUrl} />
                 : seed?.referenceThumbnail ? <img src={seed.referenceThumbnail} alt={isReplication ? '爆款视频预览' : '已选素材预览'} className="h-full w-full object-contain" />
                 : <div className="flex h-full w-full flex-col items-center justify-center gap-4 px-8 text-center text-[#294c40]">
-                    <span className="flex h-16 w-16 items-center justify-center rounded-full bg-white text-[#607b71] shadow-sm"><Film size={27} /></span>
-                    <div><p className="text-base font-black">{isReplication ? '等待爆款视频' : hookMode === 'ai' ? aiHookPhase === 'frame' ? '正在生成钩子首帧…' : aiHookPhase === 'video' ? '正在生成 4 秒钩子视频…' : '在第一页生成 AI 钩子' : '尚未指定钩子素材'}</p><p className="mt-2 text-xs leading-5 text-[#789087]">{isReplication ? '从灵感中心选择爆款后，会在这里显示原视频。' : hookMode === 'ai' ? '将按已选产品、内容目标和目标受众生成，预览满意后再采纳。' : '不影响脚本生成；进入分镜制作后仍可完成首镜。'}</p></div>
+                    <span className="flex h-16 w-16 items-center justify-center rounded-full bg-white text-[#607b71] shadow-none"><Film size={27} /></span>
+                    <div><p className="text-base font-semibold">{isReplication ? '等待爆款视频' : hookMode === 'ai' ? aiHookPhase === 'frame' ? '正在生成钩子首帧…' : aiHookPhase === 'video' ? '正在生成 4 秒钩子视频…' : '生成 AI 开场画面' : '尚未指定钩子素材'}</p>{(isReplication || hookMode === 'ai') && <p className="mt-2 text-xs leading-5 text-[#789087]">{isReplication ? '从灵感中心选择爆款后，会在这里显示原视频。' : '将按已选产品、内容目标和目标受众生成，预览满意后再采纳。'}</p>}</div>
                   </div>}
             </div>
           </div>
           {!isReplication && hookMode === 'ai' && <div className="border-t border-black/5 px-5 py-3 text-[11px]">
             <div className="flex flex-wrap items-center justify-between gap-2"><span className="text-text-muted">预计费用：Seedream 首帧约 ¥0.30 + Seedance 4 秒 480p 约 ¥0.96；以服务端预算核算为准。</span>
-              <div className="flex gap-2">{aiHookCandidate && freeHookMaterial?.id !== aiHookCandidate.id && <button type="button" onClick={adoptAiHook} className="rounded-lg bg-emerald-700 px-3 py-1.5 font-black text-white">采纳此钩子</button>}<button type="button" disabled={['saving','frame','video'].includes(aiHookPhase)} onClick={() => void generateAiHook()} className="rounded-lg border border-emerald-700 px-3 py-1.5 font-black text-emerald-800 disabled:opacity-50">{aiHookPhase === 'failed' ? '重试生成' : aiHookCandidate ? '重新生成' : '确认费用并生成'}</button></div></div>
+              <div className="flex gap-2">{aiHookCandidate && freeHookMaterial?.id !== aiHookCandidate.id && <button type="button" onClick={adoptAiHook} className="rounded-lg bg-blue-600 px-3 py-1.5 font-semibold text-white">采纳此钩子</button>}<button type="button" disabled={['saving','frame','video'].includes(aiHookPhase)} onClick={() => void generateAiHook()} className="rounded-lg border border-blue-200 px-3 py-1.5 font-semibold text-blue-700 disabled:opacity-50">{aiHookPhase === 'failed' ? '重试生成' : aiHookCandidate ? '重新生成' : '确认费用并生成'}</button></div></div>
             {aiHookFrame && !aiHookCandidate && <p className="mt-1 text-text-muted">首帧已生成并入库，正在继续生成视频。</p>}{aiHookEstimatedCost > 0 && <p className="mt-1 text-text-muted">本次已核算预计费用约 ¥{aiHookEstimatedCost.toFixed(2)}</p>}{aiHookError && <p role="alert" className="mt-1 text-red-600">{aiHookError}</p>}{freeHookMaterial && freeHookMaterial.id === aiHookCandidate?.id && <p className="mt-1 font-bold text-emerald-700">已采纳并保存到素材库；刷新后可从当前草稿恢复。</p>}
           </div>}
-          <div className="flex items-center justify-between border-t border-black/5 px-5 py-3 text-[11px] text-text-muted"><span>{files.length ? `已选择开场钩子：${files[0]?.name}` : freeHookMaterial ? `已选择开场钩子：${freeHookMaterial.name}` : isReplication ? '原片仅供分析' : hookMode === 'ai' ? '请生成、预览并采纳 AI 钩子' : '本次未指定钩子素材'}</span>{!isReplication && hookMode === 'upload' && <button type="button" onClick={()=>uploadRef.current?.click()} className="font-black text-emerald-700">更换钩子</button>}</div>
+          {(files.length > 0 || freeHookMaterial || isReplication || hookMode === 'ai') && <div className="flex items-center justify-between border-t border-black/5 px-5 py-3 text-[11px] text-text-muted"><span>{files.length ? `已选择开场钩子：${files[0]?.name}` : freeHookMaterial ? `已选择开场钩子：${freeHookMaterial.name}` : isReplication ? '原片仅供分析' : '请生成、预览并采纳 AI 钩子'}</span>{!isReplication && hookMode === 'upload' && <button type="button" onClick={()=>uploadRef.current?.click()} className="whitespace-nowrap font-semibold text-emerald-700">更换钩子</button>}</div>}
         </main>
 
         <aside className="flex min-h-0 flex-col border-t border-border bg-white lg:border-l lg:border-t-0">
           <div className="min-h-0 flex-1 overflow-y-auto p-4">
-            <div className="flex items-start justify-between gap-3"><div><p className="text-sm font-black text-text-primary">{isReplication ? '产品与品牌替换' : '生成设置'}</p><p className="mt-1 text-[11px] leading-5 text-text-muted">{isReplication ? '确认企业产品映射后，在左侧逐句检查新口播。' : '每一步都由你确认后再生成。'}</p></div></div>
+            <div className="flex items-start justify-between gap-3"><div><p className="text-sm font-semibold text-text-primary">{isReplication ? productSlots.length ? '产品与品牌替换' : '品牌替换' : '生成设置'}</p>{isReplication && <p className="mt-1 text-[11px] leading-5 text-text-muted">在左侧逐句检查新口播。</p>}</div></div>
 
             {isReplication && <div className="mt-4">
-              <p className="text-xs font-black text-text-primary">主推产品 · 多选</p>
-              <p className="mt-1 text-[10px] leading-4 text-text-muted">原口播产品词共出现 {productMentions.length} 次，去重后有 {productSlots.length} 个替换对象。同一产品重复出现沿用同一映射；请选择 {productSlots.length} 款企业产品。</p>
+              {productSlots.length > 0 && <>
+              <p className="text-xs font-semibold text-text-primary">默认企业产品</p>
+              <p className="mt-1 text-[10px] leading-4 text-text-muted">原口播产品词出现 {productMentions.length} 次，去重后有 {productSlots.length} 个替换对象。选择默认产品会将所有对象设为同一款；之后可在下方逐项调整。</p>
               <details className="mt-2 text-[10px] text-text-secondary"><summary className="cursor-pointer font-bold">查看识别依据与出现次数</summary><div className="mt-1 space-y-1">{productMentions.map((mention, index) => <p key={`${mention.time}:${index}`}>{index + 1}. {mention.time} · 「{mention.sourceLabel}」：{mention.text}</p>)}<p className="text-text-muted">按口播文本统计；画面中的瓶数、配方数量、重复分镜不计为不同口播产品。产品类别词不能证明具体 SKU 数量。</p></div></details>
-              <button type="button" aria-expanded={productSelectorOpen} aria-label="选择企业知识库产品" disabled={productsLoading || submitting} onClick={() => setProductSelectorOpen(value => !value)} className="mt-2 flex h-11 w-full items-center justify-between rounded-xl border border-border bg-white px-3 text-left text-xs font-bold text-text-primary disabled:bg-slate-100">
-                <span>{productsLoading ? '正在读取企业产品目录…' : selectedProductIds.length ? `已选 ${selectedProductIds.length}/${productSlots.length} 款产品` : '请选择主推产品'}</span><ChevronRight size={15} className={productSelectorOpen ? 'rotate-90' : ''} />
+              <button type="button" aria-expanded={productSelectorOpen} aria-label="选择企业知识库产品" disabled={productsLoading || submitting} onClick={() => setProductSelectorOpen(value => !value)} className="mt-2 flex h-11 w-full items-center justify-between rounded-lg border border-border bg-white px-3 text-left text-xs font-bold text-text-primary disabled:bg-slate-100">
+                <span>{productsLoading ? '正在读取企业产品目录…' : primaryProduct ? `默认产品：${primaryProduct.name}` : '请选择默认企业产品'}</span><ChevronRight size={15} className={productSelectorOpen ? 'rotate-90' : ''} />
               </button>
-              {productSelectorOpen && <div className="mt-2 max-h-56 space-y-1 overflow-y-auto rounded-xl border border-border bg-white p-2 shadow-sm">
-                {products.map(item => <label key={item.id} className="flex cursor-pointer items-center gap-2 rounded-lg px-2 py-2 text-xs hover:bg-emerald-50">
-                  <input type="checkbox" checked={selectedProductIds.includes(item.id)} disabled={submitting || (!selectedProductIds.includes(item.id) && selectedProductIds.length >= productSlots.length)} onChange={event => setSelectedProductIds(current => event.target.checked ? [...current, item.id] : current.filter(id => id !== item.id))} className="accent-emerald-700" />
+              {productSelectorOpen && <div className="mt-2 max-h-56 space-y-1 overflow-y-auto rounded-lg border border-border bg-white p-2 shadow-none">
+                {products.map(item => <label key={item.id} className="flex cursor-pointer items-center gap-2 rounded-lg px-2 py-2 text-xs hover:bg-zinc-50">
+                  <input type="radio" name="replication-primary-product" checked={primaryProductId === item.id} disabled={submitting} onChange={() => chooseDefaultProduct(item.id)} className="accent-emerald-700" />
                   <span className="min-w-0 truncate">{item.name}</span>
                 </label>)}
                 {!products.length && <div className="px-2 py-3 text-xs text-text-muted">企业知识库暂无产品。<button type="button" onClick={() => { try { sessionStorage.setItem('lingshu:enterprise-focus', 'products'); } catch { /* optional storage */ } window.dispatchEvent(new CustomEvent('lingshu:navigate', { detail: { page: 'enterprise' } })); }} className="ml-1 font-bold text-emerald-700 underline">前往录入产品</button></div>}
               </div>}
               {productsUnavailable && <p className="mt-2 flex items-center gap-1 text-[10px] text-amber-700"><CircleAlert size={11} />企业产品目录暂时无法读取</p>}
-              {productSlots.length > 0 && <section className="mt-3" aria-label="产品映射设置">
-                <div className="mb-2 flex items-center justify-between text-[10px] text-text-muted"><span className="font-bold">产品映射 · {productSlots.length} 项</span>{productSlots.length > 2 && <span>上下滚动查看全部</span>}</div>
+              <section className="mt-3" aria-label="产品映射设置">
+                <div className="mb-2 flex items-center justify-between text-[10px] text-text-muted"><span className="font-bold">产品映射 · {productSlots.length} 项</span>{primaryProduct && productMappings.some(mapping => mapping.productId !== primaryProductId) ? <button type="button" disabled={submitting} onClick={() => chooseDefaultProduct(primaryProductId)} className="font-bold text-emerald-700 disabled:opacity-50">全部使用默认产品</button> : productSlots.length > 2 && <span>上下滚动查看全部</span>}</div>
                 <div role="region" aria-label="产品映射列表" tabIndex={0} style={{ maxHeight: 160, overflowY: 'auto', flexShrink: 0 }} className="space-y-2 overscroll-contain pr-1 [scrollbar-gutter:stable]">
               {productSlots.map((slot, index) => <label key={slot.shotId} className="block min-h-[76px] rounded-lg border border-border bg-surface-2 p-2 text-[10px] font-bold text-text-secondary">
                 {index + 1}. 原口播「{slot.sourceLabel}」→ 企业产品
                 <select aria-label={`原口播产品 ${slot.sourceLabel} 对应企业产品`} value={productMappings[index]?.productId || ''} onChange={event => {
                   const id = event.target.value;
-                  const assignments = Object.fromEntries(productSlots.map((item, slotIndex) => [item.shotId, item.shotId === slot.shotId ? id : productMappings[slotIndex]?.productId || '']));
-                  setProductAssignments(assignments);
-                  setSelectedProductIds([...new Set(Object.values(assignments).filter(Boolean))]);
+                  setProductSelectionChanged(true);
+                  setProductAssignments(current => ({ ...current, [slot.shotId]: id }));
+                  if (!primaryProductId && id) setProductId(id);
                 }} className="mt-1 w-full rounded-md border border-border bg-white px-2 py-2 text-xs text-text-primary">
-                  <option value="">请选择对应产品</option>{products.map(item => <option key={item.id} value={item.id} disabled={productMappings.some((mapping, mappingIndex) => mappingIndex !== index && mapping.productId === item.id)}>{item.name}</option>)}
+                  <option value="">请选择对应产品</option>{products.map(item => <option key={item.id} value={item.id}>{item.name}</option>)}
                 </select>
               </label>)}
                 </div>
-              </section>}
-              {!productSlots.length && <p className="mt-2 text-[10px] leading-4 text-amber-700">未从原口播识别到产品词。若原片确有产品名，请在下方补充原词后再选择对应产品。</p>}
-              <div className="mt-2 flex gap-1.5"><input aria-label="补充原口播产品词" value={newProductTerm} onChange={event => setNewProductTerm(event.target.value)} placeholder="补充未识别的原产品词" className="min-w-0 flex-1 rounded-md border border-border px-2 py-1.5 text-[10px]" /><button type="button" disabled={!newProductTerm.trim()} onClick={() => { const term = newProductTerm.trim(); if (!script.join(' ').toLocaleLowerCase().includes(term.toLocaleLowerCase())) { setGenerationNotice('补充的产品词必须出现在原片口播中。'); return; } if (!productSlots.some(slot => slot.sourceLabel.toLocaleLowerCase() === term.toLocaleLowerCase())) setManualProductTerms(current => [...current, term]); setNewProductTerm(''); setGenerationNotice(''); }} className="rounded-md border border-border bg-white px-2 text-[10px] font-bold disabled:opacity-40">添加</button></div>
-              {productSlots.length > 0 && !productsReady && <p role="status" className="mt-2 text-[10px] font-bold text-amber-700">需选择 {productSlots.length} 款不同的企业产品，并完成一一对应。</p>}
+              </section>
+              {!productsReady && <p role="status" className="mt-2 text-[10px] font-bold text-amber-700">请选择默认企业产品，或为每个原口播产品词指定对应产品。</p>}
+              </>}
+              {!productSlots.length && referenceLines.length > 0 && <p className="text-[10px] leading-4 text-text-muted">原口播未识别到产品词，无需选择企业产品。若识别有遗漏，可补充原词。</p>}
+              {referenceLines.length > 0 && <div className="mt-2 flex gap-1.5"><input aria-label="补充原口播产品词" value={newProductTerm} onChange={event => setNewProductTerm(event.target.value)} placeholder="补充未识别的原产品词" className="min-w-0 flex-1 rounded-md border border-border px-2 py-1.5 text-[10px]" /><button type="button" disabled={!newProductTerm.trim()} onClick={() => { const term = newProductTerm.trim(); if (!script.join(' ').toLocaleLowerCase().includes(term.toLocaleLowerCase())) { setGenerationNotice('补充的产品词必须出现在原片口播中。'); return; } if (!productSlots.some(slot => slot.sourceLabel.toLocaleLowerCase() === term.toLocaleLowerCase())) setManualProductTerms(current => [...current, term]); setNewProductTerm(''); setGenerationNotice(''); }} className="rounded-md border border-border bg-white px-2 text-[10px] font-bold disabled:opacity-40">添加</button></div>}
               <div className="mt-3 rounded-lg border border-border bg-surface-2 p-2.5"><p className="text-[10px] font-bold text-text-secondary">企业品牌 · 自动读取</p><p className="mt-1 text-xs text-text-primary">{enterpriseBrandName || '企业知识库尚未填写品牌名称'}</p><p className="mt-1 text-[10px] text-text-muted">新口播使用企业知识库中的品牌信息，无需填写原片品牌名。</p></div>
             </div>}
 
             {!isReplication && <div className="mt-4 space-y-3">
-              <div><p className="text-xs font-black text-text-primary">主推产品 · 多选</p><button type="button" aria-expanded={productSelectorOpen} onClick={() => setProductSelectorOpen(value => !value)} disabled={productsLoading || submitting} className="mt-2 flex h-11 w-full items-center justify-between rounded-xl border border-border bg-white px-3 text-left text-xs font-bold"><span>{productsLoading ? '正在读取企业产品…' : selectedFreeProducts.length ? `已选 ${selectedFreeProducts.length} 款：${selectedFreeProducts.map(item => item.name).join('、')}` : '请选择一个或多个产品'}</span><ChevronDown size={14} /></button>{productSelectorOpen && <div className="mt-1 max-h-44 overflow-y-auto rounded-xl border border-border p-2">{products.map(item => <label key={item.id} className="flex items-center gap-2 rounded-lg p-2 text-xs hover:bg-emerald-50"><input type="checkbox" checked={selectedProductIds.includes(item.id)} onChange={event => { setSelectedProductIds(current => event.target.checked ? [...current, item.id] : current.filter(id => id !== item.id)); setProductId(current => event.target.checked && !current ? item.id : current === item.id && !event.target.checked ? '' : current); setFreeScriptText(''); setFreeLines([]); setFreeGeneration(null); }} /><span>{item.name}</span></label>)}</div>}{!productsLoading && !products.length && <span className="mt-2 block text-[10px] font-normal text-amber-700">请先在企业中心录入产品。</span>}</div>
+              <div><p className="text-xs font-semibold text-text-primary">主推产品 · 多选</p><button type="button" aria-expanded={productSelectorOpen} onClick={() => setProductSelectorOpen(value => !value)} disabled={productsLoading || submitting} className="mt-2 flex h-11 w-full items-center justify-between rounded-lg border border-border bg-white px-3 text-left text-xs font-bold"><span>{productsLoading ? '正在读取企业产品…' : selectedFreeProducts.length ? `已选 ${selectedFreeProducts.length} 款：${selectedFreeProducts.map(item => item.name).join('、')}` : '请选择一个或多个产品'}</span><ChevronDown size={14} /></button>{productSelectorOpen && <div className="mt-1 max-h-44 overflow-y-auto rounded-lg border border-border p-2">{products.map(item => <label key={item.id} className="flex items-center gap-2 rounded-lg p-2 text-xs hover:bg-zinc-50"><input type="checkbox" checked={selectedProductIds.includes(item.id)} onChange={event => { setSelectedProductIds(current => event.target.checked ? [...current, item.id] : current.filter(id => id !== item.id)); setProductId(current => event.target.checked && !current ? item.id : current === item.id && !event.target.checked ? '' : current); setFreeScriptText(''); setFreeLines([]); setFreeGeneration(null); }} /><span>{item.name}</span></label>)}</div>}{!productsLoading && !products.length && <span className="mt-2 block text-[10px] font-normal text-amber-700">请先在企业中心录入产品。</span>}</div>
               <label className="block text-[10px] font-bold">内容目标<select value={contentGoal} onChange={event => setContentGoal(event.target.value)} className="mt-1 w-full rounded-lg border border-border bg-white p-2 text-xs"><option>种草</option><option>询盘</option><option>品牌认知</option><option>活动推广</option></select></label>
               <label className="block text-[10px] font-bold">目标受众<input value={targetAudience} onChange={event => setTargetAudience(event.target.value)} className="mt-1 w-full rounded-lg border border-border p-2 text-xs" /></label>
               <div className="grid grid-cols-2 gap-2"><label className="text-[10px] font-bold">发布平台<select value={platform} onChange={event => setPlatform(event.target.value)} className="mt-1 w-full rounded-lg border border-border bg-white p-2 text-xs"><option>TikTok</option><option>Instagram</option><option>YouTube</option><option>Facebook</option></select></label><label className="text-[10px] font-bold">内容语言<select value={contentLanguage} onChange={event => setContentLanguage(event.target.value)} className="mt-1 w-full rounded-lg border border-border bg-white p-2 text-xs"><option value="zh">中文</option><option value="en">English</option></select></label></div>
@@ -933,14 +1007,14 @@ export default function SocialCreationWorkbench({
               <label className="block text-[10px] font-bold">禁止表达<input value={prohibitedClaims} onChange={event => setProhibitedClaims(event.target.value)} className="mt-1 w-full rounded-lg border border-border p-2 text-xs" /></label>
               <label className="block text-[10px] font-bold">补充说明<textarea value={briefNotes} onChange={event => setBriefNotes(event.target.value)} rows={2} className="mt-1 w-full rounded-lg border border-border p-2 text-xs" /></label>
             </div>}
-            {enterpriseProfileState === 'ready' && enterpriseCtas.length > 0 && <div className="mt-4 rounded-xl border border-border bg-surface-2 p-3">
-              <div className="flex items-center gap-2"><Megaphone size={14} /><p className="text-xs font-black text-text-primary">CTA · 已从企业知识库读取</p></div>
+            {enterpriseProfileState === 'ready' && enterpriseCtas.length > 0 && <div className="mt-4 rounded-lg border border-border bg-surface-2 p-3">
+              <div className="flex items-center gap-2"><Megaphone size={14} /><p className="text-xs font-semibold text-text-primary">CTA · 已从企业知识库读取</p></div>
               {enterpriseCtas.map(cta => <p key={cta} className="mt-1 text-[10px] leading-5 text-text-secondary">{cta}</p>)}
             </div>}
-            {enterpriseProfileState === 'ready' && !enterpriseCtas.length && <div className="mt-4 rounded-xl border border-dashed border-amber-200 bg-amber-50/60 p-3">
-              <div className="flex items-center gap-2"><Megaphone size={14} className="text-amber-700" /><p className="text-xs font-black text-amber-950">尚未设置 CTA</p></div>
+            {enterpriseProfileState === 'ready' && !enterpriseCtas.length && <div className="mt-4 rounded-lg border border-dashed border-amber-200 bg-amber-50/60 p-3">
+              <div className="flex items-center gap-2"><Megaphone size={14} className="text-amber-700" /><p className="text-xs font-semibold text-amber-950">尚未设置 CTA</p></div>
               <p className="mt-1 text-[10px] leading-5 text-amber-800">企业社媒策略尚未保存 CTA，填写后后续内容自动复用。</p>
-              <button type="button" onClick={() => { try { sessionStorage.setItem('lingshu:enterprise-focus', 'social-strategy'); } catch { /* optional storage */ } window.dispatchEvent(new CustomEvent('lingshu:navigate', { detail: { page: 'enterprise' } })); }} className="mt-2 text-[10px] font-black text-amber-800 underline underline-offset-2">前往企业中心填写</button>
+              <button type="button" onClick={() => { try { sessionStorage.setItem('lingshu:enterprise-focus', 'social-strategy'); } catch { /* optional storage */ } window.dispatchEvent(new CustomEvent('lingshu:navigate', { detail: { page: 'enterprise' } })); }} className="mt-2 text-[10px] font-semibold text-amber-800 underline underline-offset-2">前往企业中心填写</button>
             </div>}
             {enterpriseProfileState !== 'ready' && <p className="mt-4 text-[10px] text-text-muted">{enterpriseProfileState === 'loading' ? '正在读取企业 CTA…' : '企业 CTA 暂时无法读取，请稍后重试。'}</p>}
 
@@ -952,8 +1026,8 @@ export default function SocialCreationWorkbench({
             {generationNotice && <p role="alert" className="mb-3 text-xs text-amber-700">{generationNotice}</p>}
             {/* GENERATION_INTEGRATION_GAP: the server calculates estimatedCostCny only
                 after a task plan exists; there is no preflight quote endpoint yet. */}
-            {isReplication && <div className="flex items-center gap-3 text-[11px]"><span className="text-text-muted">预计消耗</span><span className="font-black text-text-primary" title="生成任务建立后由服务端返回真实预估">待生成服务核算</span></div>}
-            <button type="button" disabled={submitting || generatingSpeech || productsLoading || (!isReplication && (!selectedProductIds.length || (freeLines.length > 0 && !freeReady))) || (isReplication && (!productsReady || !confirmedSpeech.length || (speechGenerated && confirmedSpeech.some(line => !line.draft.trim()))))} onClick={() => { if (isReplication && !speechGenerated) void generateSpeech(); else void startGeneration(); }} className="flex min-w-[220px] items-center justify-center gap-2 rounded-xl bg-[#173d31] px-4 py-3 text-sm font-black text-white shadow-sm hover:bg-[#245644] disabled:cursor-not-allowed disabled:bg-slate-300">
+            {isReplication && <div className="flex items-center gap-3 text-[11px]"><span className="text-text-muted">预计消耗</span><span className="font-semibold text-text-primary" title="生成任务建立后由服务端返回真实预估">待生成服务核算</span></div>}
+            <button type="button" disabled={submitting || generatingSpeech || productSelectionLoading || (!isReplication && (!selectedProductIds.length || (freeLines.length > 0 && !freeReady))) || (isReplication && (!productsReady || !confirmedSpeech.length || (speechGenerated && confirmedSpeech.some(line => !line.draft.trim()))))} onClick={() => { if (isReplication && !speechGenerated) void generateSpeech(); else void startGeneration(); }} className="flex min-w-[220px] items-center justify-center gap-2 rounded-lg bg-blue-600 px-4 py-3 text-sm font-semibold text-white shadow-none hover:bg-[#245644] disabled:cursor-not-allowed disabled:bg-slate-300">
               {submitting || generatingSpeech ? <Loader2 size={16} className="animate-spin" /> : <Film size={16} />}{submitting ? '正在处理…' : generatingSpeech ? '正在生成英文口播' : isReplication ? speechGenerated ? '确认口播，进入分镜匹配' : '生成口播' : freeScriptText ? '确认口播，进入分镜制作' : 'Gemini 生成逐句口播与分镜'}
             </button>
           </div></footer>

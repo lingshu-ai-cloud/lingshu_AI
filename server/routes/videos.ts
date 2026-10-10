@@ -49,6 +49,13 @@ import { currentDataAuthority, runWithDataAuthority } from '../storage/dataAutho
 import { analysisTimelineQualityError, canPromoteExistingAnalysisToExact, exactVideoReviewReasons, hasCompleteVideoGeminiAnalysis, hasCompletedExactVideoEvidence, isAutoSeededVideo, isVideoLevelAnalysis, parseAnalysisTimeRange, serializeImagePostAnalysis, videoAnalysisOf } from '../lib/videoAnalysisCodec.js';
 import { applyOpeningHookMotionEvidence, firstSubstantiveOpeningShot } from './hookMotionEvidence.js';
 import { isDiscoveryVideoEligible, youtubeShortUrl } from '../../shared/contracts/discoveryVideoPolicy.js';
+import {
+  buildVideoAnalysisProgress,
+  hasDurableExactAnalysisOwner,
+  isOwnerlessExactAnalysisStale,
+  sourceAnalysisQueueFailurePatch,
+  sourceAnalysisQueueReceiptPatch,
+} from '../lib/videoAnalysisProgress.js';
 
 export const videosRouter = Router();
 videosRouter.use(requireAuth);
@@ -325,7 +332,7 @@ function isPublicTestTenantVideo(record: Record<string, unknown>): boolean {
   return isVideoLevelAnalysis(analysis);
 }
 
-function isDisplayableTestTenantVideo(record: Record<string, unknown>): boolean {
+export function isDisplayableTestTenantVideo(record: Record<string, unknown>): boolean {
   const analysis = videoAnalysisOf(record);
   if (analysis.usage === 'reference_only' && typeof analysis.contentSha256 === 'string') return true;
   if (analysis.contentFormat === 'image' || String(record.status || '') === 'failed') return false;
@@ -347,10 +354,12 @@ function isDisplayableTestTenantVideo(record: Record<string, unknown>): boolean 
     'queued', 'downloading', 'download_retrying', 'ops_queued',
     'ops_processing', 'analyzing', 'waiting_for_video',
   ]);
+  const paused = Boolean(analysis.analysisPausedAt)
+    || [downloadStatus, videoFetchStatus, geminiStatus].some(status => status === 'paused');
   return isPlatformUrl(sourceUrl, platform)
     && Boolean(String(record.title || '').trim())
     && hasRealThumbnail({ thumbnailUrl } as CrawledVideo)
-    && [downloadStatus, videoFetchStatus, geminiStatus].some(status => pendingStatuses.has(status));
+    && (paused || [downloadStatus, videoFetchStatus, geminiStatus].some(status => pendingStatuses.has(status)));
 }
 
 function compareCrawledAtDesc(a: Record<string, unknown>, b: Record<string, unknown>): number {
@@ -409,6 +418,7 @@ function videoLevelSuccessPatch(input: {
   const openingFrame = (input.analysis as VideoAiAnalysis & { openingFrameObservation?: { scene: string; confidence: number } | null }).openingFrameObservation;
   const hookReviewReasons = (input.analysis as VideoAiAnalysis & { hookReviewReasons?: string[] }).hookReviewReasons || [];
   const reviewReasons = exact ? [...exactVideoReviewReasons(input.analysis, 0, sceneCuts, openingFrame), ...hookReviewReasons] : [];
+  const completedAt = new Date().toISOString();
   return {
     gemini: input.analysis,
     analysisSource: input.source,
@@ -423,14 +433,19 @@ function videoLevelSuccessPatch(input: {
     analysisError: undefined,
     downloadError: undefined,
     analysisQueueState: 'completed',
-    analysisCompletedAt: new Date().toISOString(),
+    analysisStage: 'completed',
+    analysisStageUpdatedAt: completedAt,
+    analysisCompletedAt: completedAt,
     ...videoSuccessVisibilityPatch(),
-    analyzedAt: new Date().toISOString(),
+    analyzedAt: completedAt,
     ...(input.extra ?? {}),
   };
 }
 
-function publicVideoRecord<T extends Record<string, unknown>>(record: T): T {
+function publicVideoRecord<T extends Record<string, unknown>>(
+  record: T,
+  progressOptions: { queuePosition?: number | null; nowMs?: number } = {},
+): T {
   const stableYouTubeThumbnail = record.platform === 'youtube'
     ? youtubeThumbnailFromUrl(String(record.sourceUrl || ''))
     : '';
@@ -439,7 +454,18 @@ function publicVideoRecord<T extends Record<string, unknown>>(record: T): T {
     : record;
   const analysis = videoAnalysisOf(record);
   if (!Object.keys(analysis).length) return publicRecord;
-  const scrubbed = { ...analysis };
+  const scrubbed: Record<string, unknown> = {
+    ...analysis,
+    analysisProgress: buildVideoAnalysisProgress({
+      analysis,
+      recordStatus: record.status,
+      recordUpdatedAt: record.updated || record.updatedAt || record.crawledAt,
+      duration: record.duration,
+      queuePosition: progressOptions.queuePosition,
+      failureMessage: publicVideoPipelineError(analysis.analysisError || analysis.videoLevelFailureStatus || analysis.downloadError),
+      nowMs: progressOptions.nowMs,
+    }),
+  };
   const gemini = parseJsonRecord<Record<string, unknown>>(analysis.gemini, {});
   if (Array.isArray(gemini.scriptDetails15s)) {
     scrubbed.gemini = {
@@ -468,6 +494,40 @@ function publicVideoRecord<T extends Record<string, unknown>>(record: T): T {
     delete scrubbed[key];
   }
   return { ...publicRecord, aiAnalysis: JSON.stringify(scrubbed) };
+}
+
+function analysisQueuePositions(records: Record<string, unknown>[], nowMs = Date.now()): Map<string, number> {
+  const queued = records.flatMap(record => {
+    const analysis = videoAnalysisOf(record);
+    if (!['material', 'stored_video'].includes(String(analysis.analysisQueueKind || ''))) return [];
+    const progress = buildVideoAnalysisProgress({
+      analysis,
+      recordStatus: record.status,
+      recordUpdatedAt: record.updated || record.updatedAt || record.crawledAt,
+      duration: record.duration,
+      nowMs,
+    });
+    if (progress.stage !== 'queued' || !progress.backendAccepted) return [];
+    return [{ id: String(record.id || ''), queuedAt: Date.parse(progress.queuedAt || '') || Number.MAX_SAFE_INTEGER }];
+  }).filter(item => item.id).sort((a, b) => a.queuedAt - b.queuedAt || a.id.localeCompare(b.id));
+  return new Map(queued.map((item, index) => [item.id, index + 1]));
+}
+
+const analysisQueuePositionCache = new Map<string, { expiresAt: number; positions: Map<string, number> }>();
+
+async function tenantAnalysisQueuePositions(tenantId: string): Promise<Map<string, number>> {
+  const key = `${currentDataAuthority() || 'default'}:${tenantId}`;
+  const cached = analysisQueuePositionCache.get(key);
+  if (cached && cached.expiresAt > Date.now()) return cached.positions;
+  const records: Record<string, unknown>[] = [];
+  for (let page = 1; page <= 50; page += 1) {
+    const result = await store.list<Record<string, unknown>>(COL, { where: { tenantId }, page, perPage: 100, sort: 'updated' });
+    records.push(...result.items);
+    if (page >= result.totalPages || result.items.length < 100) break;
+  }
+  const positions = analysisQueuePositions(records);
+  analysisQueuePositionCache.set(key, { expiresAt: Date.now() + 2_000, positions });
+  return positions;
 }
 
 function withSignedThumbnail<T extends Record<string, unknown>>(record: T, tenantId: string): T {
@@ -1054,6 +1114,7 @@ export async function crawlImagePostsForTenant(input: {
       const storedImageUrls = await persistImagePostImages(recordId, item.imageUrls?.length ? item.imageUrls : [remoteThumbnail]);
       const storedRecord = await store.getById<Record<string, unknown>>(COL, recordId);
       const storedAnalysis = videoAnalysisOf(storedRecord || existingRecord);
+      const downloadStartedAt = new Date().toISOString();
       await store.update(COL, recordId, {
         contentFormat: 'image',
         thumbnailUrl,
@@ -1977,7 +2038,7 @@ async function listPublicVideosForTenant(input: {
         .filter(record => matchesCrawlRange(record, input.crawlRange))
         .filter(record => !input.search?.trim() || matchesVideoSearch(record, input.search));
       const start = (input.page - 1) * input.perPage;
-      return { items: matched.slice(start, start + input.perPage).map(publicVideoRecord), totalItems: matched.length, totalPages: Math.max(1, Math.ceil(matched.length / input.perPage)), page: input.page, perPage: input.perPage };
+      return { items: matched.slice(start, start + input.perPage).map(record => publicVideoRecord(record)), totalItems: matched.length, totalPages: Math.max(1, Math.ceil(matched.length / input.perPage)), page: input.page, perPage: input.perPage };
     }
     const result = await store.list<Record<string, unknown>>(COL, {
       where: { ...where, contentFormat: 'image' },
@@ -1994,7 +2055,7 @@ async function listPublicVideosForTenant(input: {
         if (sourceUrl) seenSourceUrls.add(sourceUrl);
         return true;
       })
-      .map(publicVideoRecord);
+      .map(record => publicVideoRecord(record));
     return { ...result, items };
   }
   if (!testTenant) {
@@ -2006,7 +2067,7 @@ async function listPublicVideosForTenant(input: {
         .filter(record => !input.search?.trim() || matchesVideoSearch(record, input.search));
       const start = (input.page - 1) * input.perPage;
       return {
-        items: matched.slice(start, start + input.perPage).map(publicVideoRecord),
+        items: matched.slice(start, start + input.perPage).map(record => publicVideoRecord(record)),
         totalItems: matched.length,
         totalPages: Math.max(1, Math.ceil(matched.length / input.perPage)),
         page: input.page,
@@ -2020,7 +2081,7 @@ async function listPublicVideosForTenant(input: {
       perPage: input.perPage,
     });
     const items = result.items.filter(record => !isAutoSeededVideo(record));
-    return { ...result, items: items.map(publicVideoRecord) };
+    return { ...result, items: items.map(record => publicVideoRecord(record)) };
   }
 
   const visible: Record<string, unknown>[] = [];
@@ -2200,8 +2261,12 @@ videosRouter.get('/inventory-summary', async (_req, res) => {
   const { tenantId } = res.locals as AuthLocals;
   const rawContentFormat = String(_req.query.contentFormat || 'video');
   const contentFormat: ContentFormat = rawContentFormat === 'image' ? 'image' : 'video';
+  const [totalItems, visible] = await Promise.all([
+    tenantInventoryTotal(tenantId, contentFormat),
+    listPublicVideosForTenant({ tenantId, contentFormat, page: 1, perPage: 1, crawlRange: 'all' }),
+  ]);
   res.setHeader('Cache-Control', 'private, no-store, max-age=0');
-  res.json({ contentFormat, totalItems: await tenantInventoryTotal(tenantId, contentFormat) });
+  res.json({ contentFormat, totalItems, visibleItems: visible.totalItems });
 });
 
 videosRouter.get('/', async (req, res) => {
@@ -2214,7 +2279,7 @@ videosRouter.get('/', async (req, res) => {
   // Inventory KPI: every crawled record owned by this tenant. This deliberately
   // ignores page/search/status/admin aggregation; the inspiration list below may
   // hide failed or processing records, but they still belong to the crawl total.
-  const [inventoryTotalItems, result] = await Promise.all([
+  const [inventoryTotalItems, result, queuePositions] = await Promise.all([
     tenantInventoryTotal(tenantId, contentFormat),
     listPublicVideosForTenant({
       tenantId,
@@ -2226,6 +2291,7 @@ videosRouter.get('/', async (req, res) => {
       page: pageNumber,
       perPage: perPageNumber,
     }),
+    contentFormat === 'video' ? tenantAnalysisQueuePositions(tenantId) : Promise.resolve(new Map<string, number>()),
   ]);
 
   // Keep list requests read-only and fast. Repair/download/analysis work belongs
@@ -2240,7 +2306,14 @@ videosRouter.get('/', async (req, res) => {
     res.json({ ...result, inventoryTotalItems, items: withImagePublicBaselines(result.items).map(item => withSignedThumbnail({ ...item, canManage: String(item.tenantId || '') === tenantId }, tenantId)) });
     return;
   }
-  res.json({ ...result, inventoryTotalItems, items: result.items.map(item => withSignedThumbnail({ ...item, canManage: String(item.tenantId || '') === tenantId }, tenantId)) });
+  res.json({
+    ...result,
+    inventoryTotalItems,
+    items: result.items.map(item => {
+      const withProgress = publicVideoRecord(item, { queuePosition: queuePositions.get(String(item.id || '')) || null });
+      return withSignedThumbnail({ ...withProgress, canManage: String(item.tenantId || '') === tenantId }, tenantId);
+    }),
+  });
 });
 
 videosRouter.post('/:id/reanalyze-image', async (req, res) => {
@@ -2863,16 +2936,17 @@ async function generateThumbnailFromStoredVideo(record: Record<string, unknown>)
   const filename = String(record.videoFileId || '');
   const localReference = localReferenceVideoPath(filename, String(record.tenantId || ''));
   let video: Awaited<ReturnType<typeof objectStorageDownload>> | null = null;
-  try {
-    video = videoKey ? await objectStorageDownload(videoKey)
-      : localReference && fs.existsSync(localReference) ? { buf: fs.readFileSync(localReference), contentType: 'video/mp4' }
-        : filename ? await fetchFile(COL, recordId, filename) : null;
-  } catch (error) {
-    // A stale object key must result in a missing thumbnail, not an unhandled
-    // rejection that takes down the local API while the queue is rendering.
-    console.warn('[videos] thumbnail source unavailable:', error instanceof Error ? error.message : error);
-    return null;
+  if (videoKey) {
+    try {
+      video = await objectStorageDownload(videoKey);
+    } catch (error) {
+      // A branch can carry database metadata without the corresponding local
+      // object-storage blob. Continue to the record/local reference fallbacks.
+      console.warn('[videos] object thumbnail source unavailable, trying local fallback:', error instanceof Error ? error.message : error);
+    }
   }
+  if (!video && localReference && fs.existsSync(localReference)) video = { buf: fs.readFileSync(localReference), contentType: 'video/mp4' };
+  if (!video && filename) video = await fetchFile(COL, recordId, filename);
   if (!video?.buf.length) return null;
 
   if (!fs.existsSync(ANALYSIS_DIR)) fs.mkdirSync(ANALYSIS_DIR, { recursive: true });
@@ -2925,7 +2999,22 @@ async function generateThumbnailFromStoredVideo(record: Record<string, unknown>)
 videosRouter.get('/:id/thumbnail', async (req, res) => {
   const { tenantId } = res.locals as AuthLocals;
   const record = await store.getById<Record<string, unknown>>(COL, req.params.id);
-  if (!record) { res.status(404).end(); return; }
+  if (!record) {
+    // Frozen weekly plans intentionally keep their source evidence after a
+    // discovery record is removed. Resolve that public source instead of
+    // turning every historical calendar card into a permanent broken cover.
+    const sourceUrl = String(req.query.sourceUrl || '').trim().slice(0, 2_000);
+    const platform = inferPlatformFromUrl(sourceUrl);
+    if (!sourceUrl || !isPlatformUrl(sourceUrl, platform)) { res.status(404).end(); return; }
+    const remoteUrl = await publicSourceThumbnail({ sourceUrl, platform });
+    const fallback = remoteUrl ? await fetchThumbnailBuffer(remoteUrl) : null;
+    if (!fallback) { res.status(404).end(); return; }
+    res.setHeader('Content-Type', fallback.contentType.startsWith('image/') ? fallback.contentType : 'image/jpeg');
+    res.setHeader('Cache-Control', 'private, max-age=86400');
+    res.setHeader('Content-Length', fallback.buf.length);
+    res.end(fallback.buf);
+    return;
+  }
   const ownsRecord = String(record.tenantId || '') === tenantId;
   if (!ownsRecord && !isSharedInspirationThumbnailReadable(record) && !await isAdminForAssetRequest(req)) {
     res.status(404).end();
@@ -2935,12 +3024,22 @@ videosRouter.get('/:id/thumbnail', async (req, res) => {
   const analysis = parseJsonRecord<Record<string, unknown>>(record.aiAnalysis, {});
   const cosKey = String(analysis.thumbnailObjectKey || '');
   if (cosKey) {
-    if (!await streamCrawlerCosObject(res, cosKey, req.headers.range)) res.status(404).end();
-    return;
+    try {
+      if (await streamCrawlerCosObject(res, cosKey, req.headers.range)) return;
+    } catch (error) {
+      console.warn('[videos] stored thumbnail unavailable, trying fallbacks:', error instanceof Error ? error.message : error);
+    }
   }
   const filename = String(record.thumbnailFile || '');
   let file = filename ? await fetchFile(COL, req.params.id, filename) : null;
   if (!file) file = await generateThumbnailFromStoredVideo(record as Record<string, unknown>);
+  if (!file) {
+    const remoteUrl = await publicSourceThumbnail(record);
+    if (remoteUrl) {
+      file = await fetchThumbnailBuffer(remoteUrl);
+      if (file) void storeThumbnailBuffer(String(record.id), file.buf, file.contentType);
+    }
+  }
   if (!file) { res.status(404).end(); return; }
 
   res.setHeader('Content-Type', file.contentType.startsWith('image/') ? file.contentType : 'image/jpeg');
@@ -3044,6 +3143,8 @@ videosRouter.post('/:id/analysis-pause', async (req, res) => {
       analysisRunId: randomUUID(),
       requestedAnalysisMode: undefined,
       analysisQueueState: 'paused',
+      analysisStage: 'paused',
+      analysisStageUpdatedAt: pausedAt,
       geminiStatus: 'paused',
       downloadStatus: activeStatuses.has(downloadStatus) ? 'paused' : previous.downloadStatus,
       videoFetchStatus: activeStatuses.has(videoFetchStatus) ? 'paused' : previous.videoFetchStatus,
@@ -3076,6 +3177,8 @@ videosRouter.post('/:id/analysis-cancel', async (req, res) => {
       analysisRunId: randomUUID(),
       requestedAnalysisMode: undefined,
       analysisQueueState: 'cancelled',
+      analysisStage: 'cancelled',
+      analysisStageUpdatedAt: cancelledAt,
       geminiStatus: 'cancelled',
       downloadStatus: previous.downloadStatus === 'analyzed' ? 'analyzed' : 'cancelled',
       videoFetchStatus: previous.videoFetchStatus === 'fetched' ? 'fetched' : 'cancelled',
@@ -3126,6 +3229,8 @@ videosRouter.post('/:id/analysis-resume', async (req, res) => {
     analysisQueueKind,
     analysisQueueState: 'queued',
     analysisQueuedAt: queuedAt,
+    analysisStage: 'queued',
+    analysisStageUpdatedAt: queuedAt,
     reanalyzeQueuedAt: queuedAt,
     geminiStatus: fileId || materialId ? 'queued' : 'waiting_for_video',
     analysisPausedAt: undefined,
@@ -3230,6 +3335,8 @@ videosRouter.post('/material-exact-analysis', async (req, res) => {
     reanalyzeQueuedAt: queuedAt,
     analysisQueueKind: 'material',
     analysisQueueState: 'queued',
+    analysisStage: 'queued',
+    analysisStageUpdatedAt: queuedAt,
     analysisError: undefined,
     videoLevelFailureStatus: undefined,
     userVisible: true,
@@ -3335,6 +3442,8 @@ videosRouter.patch('/:id/reanalyze', async (req, res) => {
           analysisQueueKind: 'material',
           analysisQueueState: 'queued',
           analysisQueuedAt: retryResetAt,
+          analysisStage: 'queued',
+          analysisStageUpdatedAt: retryResetAt,
           reanalyzeQueuedAt: retryResetAt,
           geminiStatus: 'queued',
           analysisPausedAt: undefined,
@@ -3355,7 +3464,7 @@ videosRouter.patch('/:id/reanalyze', async (req, res) => {
     }
     const retryResetAt = new Date().toISOString();
     resetCrawlerOpsTaskForExplicitRetry({ recordId: req.params.id, tenantId: recordTenantId, userId, usesSourceQueue: true, now: retryResetAt });
-    const queuedRecord = { ...record, aiAnalysis: JSON.stringify({ ...previous, requestedAnalysisMode: analysisMode, analysisRunId, analysisRunMode: analysisMode, analysisQueueKind: 'source_url', analysisQueueState: 'queued', analysisPausedAt: undefined, analysisPausedBy: undefined, analysisCancelledAt: undefined, analysisCancelledBy: undefined, analysisError: undefined, downloadError: undefined, crawlerOpsLastError: undefined, crawlerOpsReason: 'explicit_reanalyze_started', crawlerOpsStatus: 'queued', crawlerOpsAttempt: 0, crawlerOpsRetryResetAt: retryResetAt, crawlerOpsRetryResetBy: userId }) };
+    const queuedRecord = { ...record, aiAnalysis: JSON.stringify({ ...previous, requestedAnalysisMode: analysisMode, analysisRunId, analysisRunMode: analysisMode, analysisQueueKind: 'source_url', analysisQueueState: 'queued', analysisStage: 'queued', analysisStageUpdatedAt: retryResetAt, analysisQueuedAt: retryResetAt, analysisPausedAt: undefined, analysisPausedBy: undefined, analysisCancelledAt: undefined, analysisCancelledBy: undefined, analysisError: undefined, downloadError: undefined, crawlerOpsLastError: undefined, crawlerOpsReason: 'explicit_reanalyze_started', crawlerOpsStatus: 'queued', crawlerOpsAttempt: 0, crawlerOpsRetryResetAt: retryResetAt, crawlerOpsRetryResetBy: userId }) };
     await store.update(COL, req.params.id, { aiAnalysis: queuedRecord.aiAnalysis });
     await queueAnalyzeSource(queuedRecord);
     res.json({ status: 'pending', analysisRunId });
@@ -3366,7 +3475,7 @@ videosRouter.patch('/:id/reanalyze', async (req, res) => {
   resetCrawlerOpsTaskForExplicitRetry({ recordId: req.params.id, tenantId: recordTenantId, userId, usesSourceQueue: false, now: retryResetAt });
   await store.update(COL, req.params.id, {
     status: 'pending',
-    aiAnalysis: JSON.stringify({ ...previous, requestedAnalysisMode: analysisMode, analysisRunId, analysisRunMode: analysisMode, analysisQueueKind: 'stored_video', analysisQueueState: 'queued', analysisQueuedAt: retryResetAt, geminiStatus: 'queued', analysisError: undefined, downloadError: undefined, crawlerOpsLastError: undefined, crawlerOpsReason: 'explicit_reanalyze_uses_local_file', crawlerOpsStatus: 'resolved', crawlerOpsAttempt: 0, analysisPausedAt: undefined, analysisPausedBy: undefined, analysisCancelledAt: undefined, analysisCancelledBy: undefined, reanalyzeQueuedAt: retryResetAt, crawlerOpsRetryResetAt: retryResetAt, crawlerOpsRetryResetBy: userId }),
+    aiAnalysis: JSON.stringify({ ...previous, requestedAnalysisMode: analysisMode, analysisRunId, analysisRunMode: analysisMode, analysisQueueKind: 'stored_video', analysisQueueState: 'queued', analysisQueuedAt: retryResetAt, analysisStage: 'queued', analysisStageUpdatedAt: retryResetAt, geminiStatus: 'queued', analysisError: undefined, downloadError: undefined, crawlerOpsLastError: undefined, crawlerOpsReason: 'explicit_reanalyze_uses_local_file', crawlerOpsStatus: 'resolved', crawlerOpsAttempt: 0, analysisPausedAt: undefined, analysisPausedBy: undefined, analysisCancelledAt: undefined, analysisCancelledBy: undefined, reanalyzeQueuedAt: retryResetAt, crawlerOpsRetryResetAt: retryResetAt, crawlerOpsRetryResetBy: userId }),
   });
   if (!analysisRunsInWorkerProcess()) startQueuedLocalAnalysis(req.params.id);
 
@@ -3425,6 +3534,7 @@ async function triggerVideoAnalysis(
     fs.writeFileSync(tempPath, dl.buf);
     const previous = latestBeforeStartAnalysis;
     runId = runId || String(previous.analysisRunId || randomUUID());
+    const modelStartedAt = new Date().toISOString();
     await store.update(COL, recordId, {
       status: 'pending' as VideoStatus,
       aiAnalysis: JSON.stringify({
@@ -3434,7 +3544,9 @@ async function triggerVideoAnalysis(
         videoFetchStatus: 'manual_upload',
         geminiStatus: 'analyzing',
         analysisSource: 'gemini-upload-video',
-        geminiStartedAt: new Date().toISOString(),
+        geminiStartedAt: modelStartedAt,
+        analysisStage: 'analyzing',
+        analysisStageUpdatedAt: modelStartedAt,
         analysisRunId: runId,
         analysisRunMode: previous.requestedAnalysisMode === 'strategy' ? 'strategy' : 'exact',
       }),
@@ -3457,6 +3569,17 @@ async function triggerVideoAnalysis(
       analysisMode: previous.requestedAnalysisMode === 'strategy' ? 'strategy' : 'exact',
     });
     if (previous.requestedAnalysisMode !== 'strategy') {
+      const evidenceStartedAt = new Date().toISOString();
+      const beforeEvidence = await store.getById<Record<string, unknown>>(COL, recordId);
+      const beforeEvidenceAnalysis = parseJsonRecord<Record<string, unknown>>(beforeEvidence?.aiAnalysis, {});
+      await store.update(COL, recordId, {
+        aiAnalysis: JSON.stringify({
+          ...beforeEvidenceAnalysis,
+          analysisStage: 'extracting_evidence',
+          analysisStageUpdatedAt: evidenceStartedAt,
+          analysisEvidenceStartedAt: evidenceStartedAt,
+        }),
+      });
       result.analysis = await persistExactShotEvidence(recordId, tempPath, result.analysis);
     }
     cleanupTempVideo(tempPath);
@@ -3496,6 +3619,7 @@ async function triggerVideoAnalysis(
       return;
     }
     const compactError = compactVideoPipelineError(e instanceof Error ? e.message : e);
+    const failedAt = new Date().toISOString();
     await store.update(COL, recordId, {
       status: 'analyzed' as VideoStatus,
       aiAnalysis: JSON.stringify({
@@ -3506,6 +3630,10 @@ async function triggerVideoAnalysis(
         geminiStatus: 'video_failed',
         requestedAnalysisMode: undefined,
         analysisQueueState: 'failed',
+        analysisStage: 'failed',
+        analysisStageUpdatedAt: failedAt,
+        analysisFailedAt: failedAt,
+        analysisRetryable: true,
         analysisError: compactError,
         videoLevelFailureStatus: '视频级失败/需人工处理',
         manualRequiredReason: 'manual_upload_analysis_failed',
@@ -3544,6 +3672,7 @@ export async function attachManualVideoUploadAndQueue(input: {
 
   const previous = parseJsonRecord<Record<string, unknown>>(record.aiAnalysis, {});
   const analysisRunId = randomUUID();
+  const queuedAt = new Date().toISOString();
   await store.update(COL, input.recordId, {
     videoFileId: storedFilename,
     status: 'pending' as VideoStatus,
@@ -3551,7 +3680,7 @@ export async function attachManualVideoUploadAndQueue(input: {
       ...previous,
       videoStorage: 'cos',
       videoObjectKey: storedFilename,
-      manualVideoUploadedAt: new Date().toISOString(),
+      manualVideoUploadedAt: queuedAt,
       manualVideoUploadedBy: input.uploadedBy,
       manualVideoUploadStatus: 'queued',
       requestedAnalysisMode: 'exact',
@@ -3559,7 +3688,9 @@ export async function attachManualVideoUploadAndQueue(input: {
       analysisRunMode: 'exact',
       analysisQueueKind: 'stored_video',
       analysisQueueState: 'queued',
-      analysisQueuedAt: new Date().toISOString(),
+      analysisQueuedAt: queuedAt,
+      analysisStage: 'queued',
+      analysisStageUpdatedAt: queuedAt,
       downloadStatus: 'uploaded',
       videoFetchStatus: 'manual_upload',
       geminiStatus: 'queued',
@@ -3632,7 +3763,7 @@ async function handleAnalyzeSource(
   }
 }
 
-async function queueAnalyzeSource(
+export async function queueAnalyzeSource(
   record: Record<string, unknown>,
   job?: { record: Record<string, unknown> | null; sourceUrl: string; title: string; platform: Platform },
 ): Promise<void> {
@@ -3640,7 +3771,7 @@ async function queueAnalyzeSource(
   const platform = (job?.platform || record.platform || inferPlatformFromUrl(remoteUrl)) as Platform;
   const analysis = parseJsonRecord(record.aiAnalysis, {});
   const queuedAt = new Date().toISOString();
-  await store.update(COL, String(record.id), {
+  const queuedRecord = await store.update(COL, String(record.id), {
     status: 'pending' as VideoStatus,
     aiAnalysis: JSON.stringify({
       ...analysis,
@@ -3653,17 +3784,55 @@ async function queueAnalyzeSource(
       analysisQueueKind: 'source_url',
       analysisQueueState: 'queued',
       analysisQueuedAt: queuedAt,
+      analysisStage: 'queued',
+      analysisStageUpdatedAt: queuedAt,
     }),
   });
-  enqueueCrawlerOpsTask({
-    recordId: String(record.id),
-    tenantId: String(record.tenantId || '').trim() || undefined,
-    platform,
-    sourceUrl: remoteUrl,
-    title: String(job?.title || record.title || `${platform}-video`),
-    reason: 'analysis_requested',
-    forceQueue: true,
-  });
+  if (!queuedRecord) throw new Error('source_analysis_queue_marker_persist_failed');
+  let opsTask: CrawlerOpsTask | null = null;
+  try {
+    opsTask = enqueueCrawlerOpsTask({
+      recordId: String(record.id),
+      tenantId: String(record.tenantId || '').trim() || undefined,
+      platform,
+      sourceUrl: remoteUrl,
+      title: String(job?.title || record.title || `${platform}-video`),
+      reason: 'analysis_requested',
+      forceQueue: true,
+    });
+    const acceptedAt = new Date().toISOString();
+    const latest = await store.getById<Record<string, unknown>>(COL, String(record.id));
+    const latestAnalysis = parseJsonRecord<Record<string, unknown>>(latest?.aiAnalysis, analysis);
+    const receiptRecord = await store.update(COL, String(record.id), {
+      status: 'pending' as VideoStatus,
+      aiAnalysis: JSON.stringify({
+        ...latestAnalysis,
+        ...sourceAnalysisQueueReceiptPatch(opsTask, acceptedAt),
+      }),
+    });
+    if (!receiptRecord) throw new Error('source_analysis_queue_receipt_persist_failed');
+  } catch (error) {
+    const failedAt = new Date().toISOString();
+    const compactError = compactVideoPipelineError(error instanceof Error ? error.message : error);
+    if (opsTask?.id) {
+      updateCrawlerOpsTask(opsTask.id, { status: 'failed', reason: 'analysis_queue_receipt_failed', lastError: compactError, updatedAt: failedAt });
+    }
+    try {
+      const latest = await store.getById<Record<string, unknown>>(COL, String(record.id));
+      const latestAnalysis = parseJsonRecord<Record<string, unknown>>(latest?.aiAnalysis, analysis);
+      const failureRecord = await store.update(COL, String(record.id), {
+        status: latestAnalysis.gemini || latestAnalysis.analysisQuality === 'video' ? 'analyzed' as VideoStatus : 'failed' as VideoStatus,
+        aiAnalysis: JSON.stringify({
+          ...latestAnalysis,
+          ...sourceAnalysisQueueFailurePatch(compactError || 'crawler_ops_enqueue_failed', failedAt),
+        }),
+      });
+      if (!failureRecord) throw new Error('source_analysis_queue_failure_persist_failed');
+    } catch (persistError) {
+      console.error('[videos] failed to persist source analysis queue failure:', persistError);
+    }
+    throw error;
+  }
   if (analysisRunsInWorkerProcess()) return;
   void analyzeSourceVideoJob(job || {
     record,
@@ -3790,6 +3959,12 @@ function isRecordThumbnailUrl(url: string): boolean {
  * 现在图片跟记录绑在一起；本地文件只作为写入失败时的兜底。
  */
 async function cacheThumbnailLocally(recordId: string, url: string): Promise<string | null> {
+  const image = await fetchThumbnailBuffer(url);
+  if (!image) return null;
+  return storeThumbnailBuffer(recordId, image.buf, image.contentType);
+}
+
+async function fetchThumbnailBuffer(url: string): Promise<{ buf: Buffer; contentType: string } | null> {
   try {
     const resp = await fetch(url, {
       signal: AbortSignal.timeout(20_000),
@@ -3803,7 +3978,7 @@ async function cacheThumbnailLocally(recordId: string, url: string): Promise<str
     if (!type.startsWith('image/')) return null;
     const buf = Buffer.from(await resp.arrayBuffer());
     if (!buf.length || buf.length > 5 * 1024 * 1024) return null;
-    return await storeThumbnailBuffer(recordId, buf, type);
+    return { buf, contentType: type };
   } catch {
     return null;
   }
@@ -3822,7 +3997,63 @@ async function storeThumbnailBuffer(recordId: string, buf: Buffer, contentType: 
     return recordThumbnailUrl(recordId);
   } catch (error) {
     console.warn('[videos] COS thumbnail persistence failed:', error instanceof Error ? error.message : error);
-    return null;
+    try {
+      const thumbnailFile = await attachFile(COL, recordId, 'thumbnailFile', {
+        name: `${recordId}-thumbnail.${ext}`,
+        buf,
+        contentType,
+      });
+      if (!thumbnailFile) return null;
+      const record = await store.getById<Record<string, unknown>>(COL, recordId);
+      const analysis = parseJsonRecord<Record<string, unknown>>(record?.aiAnalysis, {});
+      const { thumbnailObjectKey: _staleThumbnailObjectKey, ...restAnalysis } = analysis;
+      await store.update(COL, recordId, {
+        thumbnailFile,
+        thumbnailUrl: recordThumbnailUrl(recordId),
+        aiAnalysis: JSON.stringify({ ...restAnalysis, thumbnailStorage: 'record_file', thumbnailExtension: ext }),
+      });
+      return recordThumbnailUrl(recordId);
+    } catch (fallbackError) {
+      console.warn('[videos] record thumbnail persistence failed:', fallbackError instanceof Error ? fallbackError.message : fallbackError);
+      return null;
+    }
+  }
+}
+
+async function publicSourceThumbnail(record: Record<string, unknown>): Promise<string> {
+  const sourceUrl = String(record.sourceUrl || '').trim();
+  const platform = String(record.platform || '') as Platform;
+  if (!sourceUrl) return '';
+  if (platform === 'youtube') return youtubeThumbnailFromUrl(sourceUrl);
+  if (platform === 'instagram' && /\/(?:p|reel|tv)\//i.test(sourceUrl)) return `${sourceUrl.replace(/[?#].*$/, '').replace(/\/$/, '')}/media/?size=l`;
+  if (platform !== 'tiktok' || !tiktokVideoId(sourceUrl)) return '';
+  try {
+    const response = await fetch(`https://www.tiktok.com/oembed?url=${encodeURIComponent(sourceUrl)}`, {
+      signal: AbortSignal.timeout(12_000),
+      headers: { 'User-Agent': 'Mozilla/5.0', 'Accept': 'application/json' },
+    });
+    if (response.ok) {
+      const payload = await response.json() as { thumbnail_url?: string };
+      if (/^https?:\/\//i.test(String(payload.thumbnail_url || ''))) return String(payload.thumbnail_url);
+    }
+  } catch {
+    // The public oEmbed endpoint rate-limits bursts; the public video page
+    // still carries an SSR cover preload that is safe to use as evidence.
+  }
+  try {
+    const response = await fetch(sourceUrl, {
+      signal: AbortSignal.timeout(12_000),
+      headers: { 'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 Chrome/130 Safari/537.36', 'Accept': 'text/html' },
+    });
+    if (!response.ok) return '';
+    const html = await response.text();
+    const encoded = html.match(/<link[^>]+href=["']([^"']+)["'][^>]+data-source=["']ssr-cover-preload["']/i)?.[1]
+      || html.match(/<link[^>]+data-source=["']ssr-cover-preload["'][^>]+href=["']([^"']+)["']/i)?.[1]
+      || '';
+    const cover = decodeHtml(encoded);
+    return /^https?:\/\//i.test(cover) ? cover : '';
+  } catch {
+    return '';
   }
 }
 
@@ -3999,23 +4230,34 @@ async function releaseStalledExactAnalysis(forceInterrupted = false, tenantId?: 
     const recordId = String(record.id || '');
     if (!recordId || inFlight.has(recordId) || activeAnalysisRecords.has(recordId) || durableAnalysisRecords.has(recordId)) continue;
     const analysis = parseJsonRecord<Record<string, unknown>>(record.aiAnalysis, {});
-    // Durable local/material jobs are owned by the analysis worker and must be
-    // resumed after a restart, not released back to a terminal retry state.
-    if (['queued', 'running'].includes(String(analysis.analysisQueueState || ''))
-      && ['material', 'stored_video', 'maintenance_exact'].includes(String(analysis.analysisQueueKind || ''))) continue;
-    const startedAt = Date.parse(String(analysis.reanalyzeQueuedAt || record.updated || ''));
-    // The durable ownership check above also protects work in sibling local
-    // processes. Only ownerless work can be released immediately on startup.
-    if (!forceInterrupted && Number.isFinite(startedAt) && now - startedAt < EXACT_ANALYSIS_STALL_MS) continue;
+    // Local/material jobs are recoverable by the durable analysis Worker.
+    // Legacy maintenance_exact markers never entered that queue. Keeping them
+    // here produced a permanent false “分析中” state after the script exited.
+    if (hasDurableExactAnalysisOwner(analysis)) continue;
+    // Startup bypasses only the sweep throttle. It does not make a recent
+    // maintenance script stale: without a queue lease we still require an old
+    // heartbeat/activity timestamp before releasing the marker.
+    if (!isOwnerlessExactAnalysisStale({
+      analysis,
+      recordUpdatedAt: record.maintenanceHeartbeatAt || record.updated || record.updatedAt,
+      nowMs: now,
+      stallMs: EXACT_ANALYSIS_STALL_MS,
+    })) continue;
+    const failedAt = new Date().toISOString();
     await store.update(COL, recordId, {
-      status: 'analyzed' as VideoStatus,
+      status: (analysis.gemini ? 'analyzed' : 'failed') as VideoStatus,
       aiAnalysis: JSON.stringify({
         ...analysis,
         requestedAnalysisMode: undefined,
+        analysisQueueState: 'failed',
+        analysisStage: 'failed',
+        analysisStageUpdatedAt: failedAt,
+        analysisFailedAt: failedAt,
+        analysisRetryable: true,
         // 超时的升级不能冒充已完成的精确分析。
         analysisMode: analysis.analysisMode === 'exact' ? 'exact' : 'strategy',
-        geminiStatus: analysis.gemini ? 'analyzed' : 'video_failed',
-        videoLevelFailureStatus: analysis.videoLevelFailureStatus || '全片精确分析超时/未完成',
+        geminiStatus: 'analysis_retryable',
+        videoLevelFailureStatus: analysis.videoLevelFailureStatus || '后台分析中断，可重试或恢复',
         analysisError: analysis.analysisError || 'exact_analysis_stalled',
       }),
     });
@@ -4510,6 +4752,7 @@ async function analyzeSourceVideoJobInner(input: {
         console.warn(`[videos] stale source analysis skipped for ${recordId}: ${analysisRunId}`);
         return analysis.gemini || null;
       }
+      const downloadStartedAt = new Date().toISOString();
       await store.update(COL, recordId, {
         status: 'pending' as VideoStatus,
         aiAnalysis: JSON.stringify({
@@ -4518,7 +4761,9 @@ async function analyzeSourceVideoJobInner(input: {
           videoFetchStatus: 'downloading',
           geminiStatus: 'waiting_for_video',
           analysisSource: 'gemini-temp-video',
-          downloadStartedAt: new Date().toISOString(),
+          downloadStartedAt,
+          analysisStage: 'downloading',
+          analysisStageUpdatedAt: downloadStartedAt,
           analysisRunId,
           analysisRunMode: analysisMode,
         }),
@@ -4534,6 +4779,18 @@ async function analyzeSourceVideoJobInner(input: {
       if (!await stillOwnsRun()) return null;
       let previewPath = '';
       try {
+        const previewTranscodeStartedAt = new Date().toISOString();
+        const beforePreview = await store.getById(COL, recordId);
+        const beforePreviewAnalysis = parseJsonRecord<Record<string, unknown>>(beforePreview?.aiAnalysis ?? input.record?.aiAnalysis, {});
+        await store.update(COL, recordId, {
+          status: 'pending' as VideoStatus,
+          aiAnalysis: JSON.stringify({
+            ...beforePreviewAnalysis,
+            analysisStage: 'transcoding',
+            analysisStageUpdatedAt: previewTranscodeStartedAt,
+            previewTranscodeStartedAt,
+          }),
+        });
         previewPath = await (adapters.compressPreview || compressPocketBasePreview)(downloaded.filePath);
         const pocketBaseFilename = await uploadCrawlerCosObject(recordId, 'video', fs.readFileSync(previewPath), 'video/mp4');
         if (!pocketBaseFilename) throw new Error('PocketBase analysis preview persistence failed');
@@ -4565,6 +4822,7 @@ async function analyzeSourceVideoJobInner(input: {
       if (!await stillOwnsRun()) return null;
       const latest = await store.getById(COL, recordId);
       const analysis = parseJsonRecord<Record<string, unknown>>(latest?.aiAnalysis ?? input.record?.aiAnalysis, {});
+      const downloadedAt = new Date().toISOString();
       await store.update(COL, recordId, {
         status: 'pending' as VideoStatus,
         aiAnalysis: JSON.stringify({
@@ -4574,7 +4832,9 @@ async function analyzeSourceVideoJobInner(input: {
           geminiStatus: 'queued',
           analysisSource: 'gemini-temp-video',
           analysisFileSize: humanSize(downloaded.size),
-          downloadedAt: new Date().toISOString(),
+          downloadedAt,
+          analysisStage: 'analyzing',
+          analysisStageUpdatedAt: downloadedAt,
         }),
       });
     }
@@ -4583,6 +4843,7 @@ async function analyzeSourceVideoJobInner(input: {
       if (!await stillOwnsRun()) return null;
       const latest = await store.getById(COL, recordId);
       const analysis = parseJsonRecord<Record<string, unknown>>(latest?.aiAnalysis ?? input.record?.aiAnalysis, {});
+      const modelStartedAt = new Date().toISOString();
       await store.update(COL, recordId, {
         status: 'pending' as VideoStatus,
         aiAnalysis: JSON.stringify({
@@ -4590,7 +4851,9 @@ async function analyzeSourceVideoJobInner(input: {
           downloadStatus: 'analyzing',
           videoFetchStatus: 'fetched',
           geminiStatus: 'analyzing',
-          geminiStartedAt: new Date().toISOString(),
+          geminiStartedAt: modelStartedAt,
+          analysisStage: 'analyzing',
+          analysisStageUpdatedAt: modelStartedAt,
         }),
       });
     }
@@ -4610,6 +4873,18 @@ async function analyzeSourceVideoJobInner(input: {
     });
 
     if (recordId && analysisMode === 'exact') {
+      const evidenceStartedAt = new Date().toISOString();
+      const beforeEvidence = await store.getById<Record<string, unknown>>(COL, recordId);
+      const beforeEvidenceAnalysis = parseJsonRecord<Record<string, unknown>>(beforeEvidence?.aiAnalysis ?? input.record?.aiAnalysis, {});
+      await store.update(COL, recordId, {
+        status: 'pending' as VideoStatus,
+        aiAnalysis: JSON.stringify({
+          ...beforeEvidenceAnalysis,
+          analysisStage: 'extracting_evidence',
+          analysisStageUpdatedAt: evidenceStartedAt,
+          analysisEvidenceStartedAt: evidenceStartedAt,
+        }),
+      });
       videoAnalysis.analysis = await persistExactShotEvidence(recordId, downloaded.filePath, videoAnalysis.analysis);
     }
 
@@ -4667,11 +4942,16 @@ async function analyzeSourceVideoJobInner(input: {
         // Production may intentionally pause the historical crawler-ops worker.
         // In that mode a retryable exact-analysis failure must become a visible,
         // retryable failure instead of entering a queue that nobody consumes.
+        const failedAt = new Date().toISOString();
         await store.update(COL, recordId, {
           status: 'analyzed' as VideoStatus,
           aiAnalysis: JSON.stringify({
             ...previous,
             requestedAnalysisMode: undefined,
+            analysisQueueState: 'failed',
+            analysisStage: 'failed',
+            analysisStageUpdatedAt: failedAt,
+            analysisFailedAt: failedAt,
             analysisMode: previous.analysisMode === 'exact' ? 'exact' : 'strategy',
             downloadStatus: previous.analysisQuality === 'video' ? 'analyzed' : 'manual_required',
             videoFetchStatus: previous.analysisQuality === 'video' ? 'fetched' : 'manual_required',
@@ -4708,6 +4988,8 @@ async function analyzeSourceVideoJobInner(input: {
           console.warn('[videos] crawler ops push failed:', pushError instanceof Error ? pushError.message : pushError);
         });
       }
+      const remainsQueued = Boolean(opsTask && ['queued', 'pushed', 'processing'].includes(opsTask.status));
+      const stateChangedAt = new Date().toISOString();
       await store.update(COL, recordId, {
         status: 'analyzed' as VideoStatus,
         aiAnalysis: JSON.stringify({
@@ -4726,6 +5008,12 @@ async function analyzeSourceVideoJobInner(input: {
           analysisRetryable: isRetryableAnalysisFailure(e),
           analysisFailureKind: isRetryableAnalysisFailure(e) ? 'quality_or_timeout' : previous.analysisFailureKind,
           downloadError: compactError,
+          requestedAnalysisMode: remainsQueued ? previous.requestedAnalysisMode : undefined,
+          analysisQueueKind: remainsQueued ? 'source_url' : previous.analysisQueueKind,
+          analysisQueueState: remainsQueued ? 'queued' : 'failed',
+          analysisStage: remainsQueued ? 'queued' : 'failed',
+          analysisStageUpdatedAt: stateChangedAt,
+          ...(remainsQueued ? {} : { analysisFailedAt: stateChangedAt }),
         }),
       });
     }
@@ -4776,6 +5064,11 @@ async function persistManualVideoFailure(input: {
       // A failed upgrade must not be presented as a completed exact analysis.
       analysisMode: previous.analysisMode === 'exact' ? 'exact' : 'strategy',
       requestedAnalysisMode: undefined,
+      analysisQueueState: 'failed',
+      analysisStage: 'failed',
+      analysisStageUpdatedAt: now,
+      analysisFailedAt: now,
+      analysisRetryable: true,
       downloadStatus: hadVideoAnalysis ? previous.downloadStatus || 'analyzed' : 'manual_required',
       videoFetchStatus: hadVideoAnalysis ? previous.videoFetchStatus || 'fetched' : 'manual_required',
       geminiStatus: hadVideoAnalysis ? previous.geminiStatus || 'analyzed' : 'video_failed',
@@ -4976,7 +5269,19 @@ async function analyzeDownloadedMaterial(recordId: string, filePath: string, mat
         return;
       }
     }
-    await store.update(COL, recordId, { status: 'pending' as VideoStatus });
+    const modelStartedAt = new Date().toISOString();
+    const beforeModel = await store.getById<Record<string, unknown>>(COL, recordId);
+    const beforeModelAnalysis = parseJsonRecord<Record<string, unknown>>(beforeModel?.aiAnalysis, {});
+    await store.update(COL, recordId, {
+      status: 'pending' as VideoStatus,
+      aiAnalysis: JSON.stringify({
+        ...beforeModelAnalysis,
+        geminiStatus: 'analyzing',
+        geminiStartedAt: modelStartedAt,
+        analysisStage: 'analyzing',
+        analysisStageUpdatedAt: modelStartedAt,
+      }),
+    });
     const videoAnalysis = await analyzeDownloadedVideoWithFallback({
       filePath,
       mimeType: mimeFromPath(filePath),
@@ -4988,6 +5293,18 @@ async function analyzeDownloadedMaterial(recordId: string, filePath: string, mat
       analysisMode,
     });
     if (analysisMode === 'exact') {
+      const evidenceStartedAt = new Date().toISOString();
+      const beforeEvidence = await store.getById<Record<string, unknown>>(COL, recordId);
+      const beforeEvidenceAnalysis = parseJsonRecord<Record<string, unknown>>(beforeEvidence?.aiAnalysis, {});
+      await store.update(COL, recordId, {
+        status: 'pending' as VideoStatus,
+        aiAnalysis: JSON.stringify({
+          ...beforeEvidenceAnalysis,
+          analysisStage: 'extracting_evidence',
+          analysisStageUpdatedAt: evidenceStartedAt,
+          analysisEvidenceStartedAt: evidenceStartedAt,
+        }),
+      });
       videoAnalysis.analysis = await persistExactShotEvidence(recordId, filePath, videoAnalysis.analysis);
     }
     const latest = await store.getById(COL, recordId);
@@ -5024,12 +5341,16 @@ async function analyzeDownloadedMaterial(recordId: string, filePath: string, mat
     }
     const platform = (latest?.platform || inferPlatformFromUrl(String(latest?.sourceUrl || ''))) as Platform;
     if (latest && isRetryableAnalysisFailure(e)) {
+      const failedAt = new Date().toISOString();
       await store.update(COL, recordId, {
         status: 'analyzed' as VideoStatus,
         aiAnalysis: JSON.stringify({
           ...previous,
           requestedAnalysisMode: undefined,
           analysisQueueState: 'failed',
+          analysisStage: 'failed',
+          analysisStageUpdatedAt: failedAt,
+          analysisFailedAt: failedAt,
           geminiStatus: 'analysis_retryable',
           analysisRetryable: true,
           analysisFailureKind: 'quality_or_timeout',
@@ -5054,6 +5375,7 @@ async function analyzeDownloadedMaterial(recordId: string, filePath: string, mat
         platform,
       }, e instanceof Error ? e.message : 'Gemini analysis failed', classifyCrawlerFailure(e instanceof Error ? e.message : String(e)), fallback);
     } else {
+      const failedAt = new Date().toISOString();
       await store.update(COL, recordId, {
         status: 'failed' as VideoStatus,
         aiAnalysis: JSON.stringify({
@@ -5061,6 +5383,10 @@ async function analyzeDownloadedMaterial(recordId: string, filePath: string, mat
           analysisSource: 'gemini-video',
           requestedAnalysisMode: undefined,
           analysisQueueState: 'failed',
+          analysisStage: 'failed',
+          analysisStageUpdatedAt: failedAt,
+          analysisFailedAt: failedAt,
+          analysisRetryable: true,
           analysisError: compactVideoPipelineError(e instanceof Error ? e.message : 'Gemini analysis failed'),
         }),
       });
@@ -5134,6 +5460,7 @@ async function executeQueuedLocalAnalysisRecord(recordId: string): Promise<boole
     if (!analysis.requestedAnalysisMode || ['paused', 'cancelled', 'completed'].includes(queueState)) return false;
     const analysisRunId = String(analysis.analysisRunId || randomUUID());
     const analysisMode = analysis.requestedAnalysisMode === 'strategy' ? 'strategy' : 'exact';
+    const workerStartedAt = new Date().toISOString();
     await store.update(COL, recordId, {
       status: 'pending' as VideoStatus,
       aiAnalysis: JSON.stringify({
@@ -5141,7 +5468,9 @@ async function executeQueuedLocalAnalysisRecord(recordId: string): Promise<boole
         analysisRunId,
         analysisRunMode: analysisMode,
         analysisQueueState: 'running',
-        analysisWorkerStartedAt: new Date().toISOString(),
+        analysisWorkerStartedAt: workerStartedAt,
+        analysisStage: 'downloading',
+        analysisStageUpdatedAt: workerStartedAt,
         analysisWorkerAttempt: Number(analysis.analysisWorkerAttempt || 0) + 1,
         geminiStatus: 'analyzing',
       }),
@@ -5185,11 +5514,16 @@ async function executeQueuedLocalAnalysisRecord(recordId: string): Promise<boole
         const succeeded = !finishedAnalysis.requestedAnalysisMode
           && ['analyzed', 'needs_review'].includes(String(finishedAnalysis.geminiStatus || ''))
           && ['video', 'video_review_required'].includes(String(finishedAnalysis.analysisQuality || ''));
+        const finishedAt = new Date().toISOString();
         await store.update(COL, recordId, {
           aiAnalysis: JSON.stringify({
             ...finishedAnalysis,
             analysisQueueState: succeeded ? 'completed' : 'failed',
-            ...(succeeded ? { analysisCompletedAt: new Date().toISOString() } : {}),
+            analysisStage: succeeded ? 'completed' : 'failed',
+            analysisStageUpdatedAt: finishedAt,
+            ...(succeeded
+              ? { analysisCompletedAt: finishedAt }
+              : { analysisFailedAt: finishedAt, analysisRetryable: true }),
           }),
         });
       }
@@ -5198,12 +5532,16 @@ async function executeQueuedLocalAnalysisRecord(recordId: string): Promise<boole
       const latest = await store.getById<Record<string, unknown>>(COL, recordId);
       const latestAnalysis = parseJsonRecord<Record<string, unknown>>(latest?.aiAnalysis, {});
       if (String(latestAnalysis.analysisRunId || '') === analysisRunId) {
+        const failedAt = new Date().toISOString();
         await store.update(COL, recordId, {
           status: 'failed' as VideoStatus,
           aiAnalysis: JSON.stringify({
             ...latestAnalysis,
             requestedAnalysisMode: undefined,
             analysisQueueState: 'failed',
+            analysisStage: 'failed',
+            analysisStageUpdatedAt: failedAt,
+            analysisFailedAt: failedAt,
             geminiStatus: 'analysis_retryable',
             analysisRetryable: true,
             analysisError: compactVideoPipelineError(error instanceof Error ? error.message : error),

@@ -140,7 +140,7 @@ export default function EnterpriseProductMultiSelect({
                   onClick={() => toggle(option.value)}
                   className={`flex w-full items-center gap-3 rounded-lg px-3 py-2.5 text-left ${checked ? "bg-emerald-50" : "hover:bg-slate-50"}`}
                 >
-                  <span className={`flex h-4 w-4 shrink-0 items-center justify-center rounded border ${checked ? "border-emerald-600 bg-emerald-600 text-white" : "border-slate-300"}`}>{checked && <Check size={11} />}</span>
+                  <span className={`flex h-4 w-4 shrink-0 items-center justify-center rounded border ${checked ? "border-blue-600 bg-blue-600 text-white" : "border-slate-300"}`}>{checked && <Check size={11} />}</span>
                   <span className="min-w-0 flex-1"><span className="block truncate text-xs font-bold text-slate-800">{option.value}</span>{option.meta && <span className="mt-0.5 block truncate text-[10px] text-slate-400">{option.meta}</span>}</span>
                 </button>
               );

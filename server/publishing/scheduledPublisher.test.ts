@@ -12,6 +12,13 @@ import { PublishSourceVerificationError } from './publishSourceClaim.js';
 import { ManagedPublishingAuthorizationError } from './managedPublishingAuthorization.js';
 import { WorkflowRunBlockedError } from '../digitalEmployees/runControl.js';
 import { buildBoundedPublishingAuthorization } from '../digitalEmployees/publishingExecution.js';
+import { isDeepStrictEqual } from 'node:util';
+import type { DataStore, ListQuery, ListResult, Record_ } from '../storage/datastore.js';
+import {
+  ASSISTANT_SCHEDULE_CHANGES,
+  createScheduleAdjustmentService,
+  ScheduleAdjustmentError,
+} from '../assistant/scheduleAdjustment.js';
 
 const now = Date.parse('2026-07-29T10:00:00.000Z');
 
@@ -21,6 +28,7 @@ function post(status: string, overrides: Partial<PostRecord> = {}, stats: Record
     tenant_id: 'tenant-1',
     platform: 'youtube',
     published_at: '2026-07-29T09:00:00.000Z',
+    platform_post_id: '',
     track_code: 'V1000',
     stats: { status, publishAttempts: 0, ...stats },
     ...overrides,
@@ -118,7 +126,7 @@ const noOpPublishLease = async () => ({
 
 const run = { id: 'run-1', tenant_id: 'tenant-1', status: 'running' };
 let current = post('scheduled', {}, { workflowRunId: run.id, realPublishingAuthorized: true, targetAccountIds: ['account-1', 'account-2'], videoPath: '/mock-owned-video.mp4' });
-const original = { list: store.list, getById: store.getById, update: store.update };
+const original = { list: store.list, getById: store.getById, update: store.update, compareAndSwap: store.compareAndSwap };
 let calls = 0;
 let pauseAfterFirstReceipt = false;
 store.list = (async () => ({ items: [current], totalItems: 1, totalPages: 1, page: 1, perPage: 500 })) as typeof store.list;
@@ -129,6 +137,12 @@ store.update = (async (_collection: string, _id: string, patch: Record<string, u
   if (pauseAfterFirstReceipt && (results?.['account-1'] as any)?.status === 'published') run.status = 'paused';
   return true;
 }) as typeof store.update;
+store.compareAndSwap = (async (collection: string, id: string, expected: Record<string, unknown>, patch: Record<string, unknown>) => {
+  if (collection !== 'posts' || id !== current.id
+    || !Object.entries(expected).every(([key, value]) => isDeepStrictEqual((current as any)[key], value))) return false;
+  Object.assign(current, patch);
+  return true;
+}) as NonNullable<typeof store.compareAndSwap>;
 const dependencies = {
   verifySource: async () => { /* source contract is isolated in this state-machine fixture */ },
   assertLegacyAccess: async () => {},
@@ -167,6 +181,7 @@ try {
   store.list = original.list;
   store.getById = original.getById;
   store.update = original.update;
+  store.compareAndSwap = original.compareAndSwap;
 }
 
 // Store snapshots are detached, like a real storage backend. A finalization
@@ -186,6 +201,12 @@ store.update = (async (_collection: string, id: string, patch: Record<string, un
   if (!row) return false;
   Object.assign(row, clone(patch)); return true;
 }) as typeof store.update;
+store.compareAndSwap = (async (_collection: string, id: string, expected: Record<string, unknown>, patch: Record<string, unknown>) => {
+  const row = rows.find(candidate => candidate.id === id);
+  if (!row || !Object.entries(expected).every(([key, value]) => isDeepStrictEqual((row as any)[key], value))) return false;
+  Object.assign(row, clone(patch));
+  return true;
+}) as NonNullable<typeof store.compareAndSwap>;
 const localDependencies = {
   verifySource: async () => { /* source contract is isolated in this state-machine fixture */ },
   assertLegacyAccess: async () => {},
@@ -433,6 +454,220 @@ try {
   assert.deepEqual((rows[0].stats as any).publishResults, {}, 'pre-submit rejection is not an unknown external attempt');
 } finally {
   Object.assign(store, original);
+}
+
+type RaceCasHook = (
+  collection: string,
+  id: string,
+  expected: Record<string, unknown>,
+  patch: Record<string, unknown>,
+) => void | Promise<void>;
+
+class PublishingRaceStore implements DataStore {
+  readonly rows = new Map<string, Record_[]>();
+  beforeCompareAndSwap?: RaceCasHook;
+  private nextId = 1;
+
+  seed(collection: string, records: Record_[]): void {
+    this.rows.set(collection, structuredClone(records));
+  }
+
+  async getById<T = Record_>(collection: string, id: string): Promise<T | null> {
+    const found = this.rows.get(collection)?.find(record => record.id === id);
+    return found ? structuredClone(found) as T : null;
+  }
+
+  async create<T = Record_>(collection: string, data: Record<string, unknown>): Promise<T | null> {
+    const id = typeof data.id === 'string' && data.id
+      ? data.id
+      : `race${String(this.nextId++).padStart(10, '0')}`;
+    const records = this.rows.get(collection) ?? [];
+    if (records.some(record => record.id === id)) return null;
+    const created = { id, ...structuredClone(data) } as Record_;
+    this.rows.set(collection, [...records, created]);
+    return structuredClone(created) as T;
+  }
+
+  async update(collection: string, id: string, data: Record<string, unknown>): Promise<boolean> {
+    const records = this.rows.get(collection) ?? [];
+    const index = records.findIndex(record => record.id === id);
+    if (index < 0) return false;
+    records[index] = { ...records[index], ...structuredClone(data) };
+    return true;
+  }
+
+  async compareAndSwap(
+    collection: string,
+    id: string,
+    expected: Record<string, unknown>,
+    data: Record<string, unknown>,
+  ): Promise<boolean> {
+    await this.beforeCompareAndSwap?.(collection, id, expected, data);
+    const records = this.rows.get(collection) ?? [];
+    const index = records.findIndex(record => record.id === id);
+    if (index < 0 || !Object.entries(expected)
+      .every(([key, value]) => isDeepStrictEqual(records[index]![key], value))) return false;
+    records[index] = { ...records[index], ...structuredClone(data) };
+    return true;
+  }
+
+  async delete(collection: string, id: string): Promise<boolean> {
+    const records = this.rows.get(collection) ?? [];
+    const kept = records.filter(record => record.id !== id);
+    this.rows.set(collection, kept);
+    return kept.length !== records.length;
+  }
+
+  async list<T = Record_>(collection: string, query: ListQuery = {}): Promise<ListResult<T>> {
+    let records = (this.rows.get(collection) ?? []).filter(record => Object.entries(query.where ?? {})
+      .every(([key, value]) => record[key] === value));
+    if (query.sort) {
+      const descending = query.sort.startsWith('-');
+      const field = descending ? query.sort.slice(1) : query.sort;
+      records = [...records].sort((left, right) => String(left[field] ?? '').localeCompare(String(right[field] ?? ''))
+        * (descending ? -1 : 1));
+    }
+    const page = query.page ?? 1;
+    const perPage = query.perPage ?? 500;
+    const items = records.slice((page - 1) * perPage, page * perPage);
+    return {
+      items: structuredClone(items) as T[],
+      totalItems: records.length,
+      totalPages: records.length ? Math.ceil(records.length / perPage) : 0,
+      page,
+      perPage,
+    };
+  }
+}
+
+function scheduledRacePost(): PostRecord & Record_ {
+  return post('scheduled', {
+    id: 'race-post',
+    tenant_id: 'race-tenant',
+    platform: 'tiktok',
+    title: '并发排期视频',
+    published_at: '2026-10-09T02:00:00.000Z', // Friday 10:00 in Beijing.
+    platform_post_id: '',
+    updated: '2026-10-08T00:00:00.000Z',
+  }, {
+    targetAccountIds: ['race-account'],
+    targetAccountLabels: ['Aurelia'],
+    videoPath: '/race-owned-video.mp4',
+    publishResults: {},
+  }) as PostRecord & Record_;
+}
+
+function connectPublisherToRaceStore(data: PublishingRaceStore): void {
+  store.list = ((collection: string, query?: ListQuery) => data.list(collection, query)) as typeof store.list;
+  store.getById = ((collection: string, id: string) => data.getById(collection, id)) as typeof store.getById;
+  store.create = ((collection: string, value: Record<string, unknown>) => data.create(collection, value)) as typeof store.create;
+  store.update = ((collection: string, id: string, value: Record<string, unknown>) => data.update(collection, id, value)) as typeof store.update;
+  store.compareAndSwap = ((collection: string, id: string, expected: Record<string, unknown>, value: Record<string, unknown>) => (
+    data.compareAndSwap(collection, id, expected, value)
+  )) as NonNullable<typeof store.compareAndSwap>;
+  store.delete = ((collection: string, id: string) => data.delete(collection, id)) as typeof store.delete;
+}
+
+function raceDependencies(data: PublishingRaceStore, publish: () => Promise<any>, verifySource: () => Promise<void> = async () => {}) {
+  return {
+    verifySource,
+    assertLegacyAccess: async () => {},
+    executeLegacyEffect: async <T>(_tenantId: string, effect: () => Promise<T>) => effect(),
+    acquirePublishLease: noOpPublishLease,
+    publish,
+    finalize: async (id: string, patch: { platformPostId?: string; stats?: Record<string, unknown> }) => {
+      await data.update('posts', id, {
+        platform_post_id: patch.platformPostId ?? '',
+        stats: patch.stats ?? {},
+      });
+    },
+  };
+}
+
+const raceOriginal = {
+  list: store.list,
+  getById: store.getById,
+  create: store.create,
+  update: store.update,
+  compareAndSwap: store.compareAndSwap,
+  delete: store.delete,
+};
+try {
+  {
+    const data = new PublishingRaceStore();
+    data.seed('posts', [scheduledRacePost()]);
+    data.seed(ASSISTANT_SCHEDULE_CHANGES, []);
+    connectPublisherToRaceStore(data);
+    const schedule = createScheduleAdjustmentService(data, () => new Date('2026-10-08T00:00:00.000Z'));
+    const prepared = await schedule.prepare({
+      tenantId: 'race-tenant', userId: 'race-user', requestId: 'schedule-wins-race',
+      platform: 'tiktok', sourceWeekday: 5, targetWeekday: 6, count: 1,
+    });
+    let scheduleWon = false;
+    data.beforeCompareAndSwap = async (collection, id, _expected, patch) => {
+      if (scheduleWon || collection !== 'posts' || id !== 'race-post'
+        || (patch.stats as any)?.status !== 'publishing') return;
+      scheduleWon = true;
+      await schedule.confirm({
+        tenantId: 'race-tenant', userId: 'race-user', changeId: prepared.id,
+        expectedVersion: prepared.expectedVersion,
+      });
+    };
+    let providerCalls = 0;
+    await runScheduledPublishingCycle(Date.parse('2026-10-09T03:00:00.000Z'), raceDependencies(data, async () => {
+      providerCalls += 1;
+      return { platformPostId: 'must-not-exist' };
+    }));
+    const moved = await data.getById<any>('posts', 'race-post');
+    assert.equal(scheduleWon, true, 'the test must interleave the schedule update before the publisher claim');
+    assert.equal(moved?.published_at, '2026-10-10T02:00:00.000Z');
+    assert.equal(moved?.stats?.status, 'scheduled');
+    assert.equal(providerCalls, 0, 'a publisher that loses the schedule CAS must never call the provider');
+  }
+
+  {
+    const data = new PublishingRaceStore();
+    data.seed('posts', [scheduledRacePost()]);
+    data.seed(ASSISTANT_SCHEDULE_CHANGES, []);
+    connectPublisherToRaceStore(data);
+    const schedule = createScheduleAdjustmentService(data, () => new Date('2026-10-08T00:00:00.000Z'));
+    const prepared = await schedule.prepare({
+      tenantId: 'race-tenant', userId: 'race-user', requestId: 'publisher-wins-race',
+      platform: 'tiktok', sourceWeekday: 5, targetWeekday: 6, count: 1,
+    });
+    let claimObserved!: () => void;
+    const claimed = new Promise<void>(resolve => { claimObserved = resolve; });
+    let releaseVerification!: () => void;
+    const verificationGate = new Promise<void>(resolve => { releaseVerification = resolve; });
+    let providerCalls = 0;
+    const cycle = runScheduledPublishingCycle(
+      Date.parse('2026-10-09T03:00:00.000Z'),
+      raceDependencies(data, async () => {
+        providerCalls += 1;
+        return { platformPostId: 'published-after-claim' };
+      }, async () => {
+        claimObserved();
+        await verificationGate;
+      }),
+    );
+    await claimed;
+    await assert.rejects(
+      schedule.confirm({
+        tenantId: 'race-tenant', userId: 'race-user', changeId: prepared.id,
+        expectedVersion: prepared.expectedVersion,
+      }),
+      (error: unknown) => error instanceof ScheduleAdjustmentError
+        && error.status === 409
+        && error.code === 'assistant_schedule_change_stale',
+      'once the publisher owns the post, schedule confirmation must conflict',
+    );
+    releaseVerification();
+    await cycle;
+    assert.equal(providerCalls, 1);
+    assert.equal((await data.getById<any>('posts', 'race-post'))?.stats?.status, 'published');
+  }
+} finally {
+  Object.assign(store, raceOriginal);
 }
 
 console.log('scheduledPublisher passed');

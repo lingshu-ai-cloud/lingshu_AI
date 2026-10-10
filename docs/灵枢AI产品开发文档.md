@@ -1102,37 +1102,18 @@ Studio 路由规模较大，按职责维护：
 
 ## 13. 视觉系统、交互与可访问性
 
-完整视觉规范见 [`design-system/lingshu-visual-system.md`](design-system/lingshu-visual-system.md)。
+前端视觉、组件、动效、排版与可访问性的唯一实施依据见 [`product/PRD-灵枢AI全系统UI设计规范-v2-2026-10-09.md`](product/PRD-灵枢AI全系统UI设计规范-v2-2026-10-09.md)。本节只保留系统结构与工程约束，不再复制设计 Token，避免与权威规范产生版本分叉。
 
 ### 13.1 品牌与视觉令牌
 
-| 角色 | 色值 | 用途 |
-| --- | --- | --- |
-| Brand / Primary | `#117F51` | 主操作、当前状态、关键数据 |
-| Brand Deep | `#173D31` | 标题和品牌文字 |
-| Canvas | `#F6F8F5` | 全局工作区 |
-| Surface | `#FFFFFF` | 面板、输入、弹层 |
-| Border | `#DFE8E1` | 边框和分隔 |
-| Muted | `#617169` | 次级说明 |
-| Support Apricot | `#E98268` | 洞察、提醒、人工介入 |
-| Support Soft | `#FFF3E7` | 暖色信息背景 |
-| Support Action | `#A45A3B` | 需白字的暖色动作 |
-
-视觉原则：
-
-- 明亮、克制、可信；绿色为主色，暖杏为洞察和人工介入辅色。
-- 信息先于装饰，一个页面只突出一个主操作。
-- 用留白、细分隔和稳定栏宽建立层级，避免大面积渐变、发光和卡片墙。
-- 常规控件圆角 6–8px，登录输入框 12px；常规面板不用重阴影和悬浮上移。
-- 状态同时用文字和颜色表达。
-- 水纹影像只用于品牌场景，不扩散到密集业务页。
+设计 Token 由全系统 UI 设计规范和共享主题集中维护。业务文档不得复制颜色、圆角、阴影或动效数值；新增或调整视觉规则时，先更新权威规范与共享组件，再由页面复用。
 
 ### 13.2 页面骨架
 
 - 侧栏由品牌、首页、分组导航和账户区组成；可收起到约 64px。
 - 工作区使用统一标题、说明、底线标签和最大宽度。
 - 同层指标优先使用连续数据带和竖向分隔，不使用独立浮卡墙。
-- 洞察/人工介入使用单一暖杏信息区。
+- 洞察与人工介入使用单一语义信息区，颜色和状态表达遵循全系统 UI 设计规范。
 - Studio 在宽屏显示多面板工作台，窄于 `xl` 时切为单面板标签。
 - 客服在宽屏显示客户/会话/画像三栏，窄于 `lg` 时切单面板。
 - 登录页桌面双栏，左图约 30%；低于 768px 改为上下布局。
@@ -1682,7 +1663,7 @@ npm run test:tenant-sync-smoke
 - [`docker-compose.yml`](../docker-compose.yml)：生产容器拓扑。
 - [`Dockerfile`](../Dockerfile)：应用镜像。
 - [`Caddyfile`](../Caddyfile)：HTTPS 入口。
-- [`docs/design-system/lingshu-visual-system.md`](design-system/lingshu-visual-system.md)：视觉体系。
+- [`docs/product/PRD-灵枢AI全系统UI设计规范-v2-2026-10-09.md`](product/PRD-灵枢AI全系统UI设计规范-v2-2026-10-09.md)：唯一的全系统 UI 设计规范。
 - [`docs/数字员工-经营任务编排与生产现场开发方案.md`](数字员工-经营任务编排与生产现场开发方案.md)：数字员工专项。
 - [`docs/Agent浏览器监控.md`](Agent浏览器监控.md)：浏览器监控。
 - [`docs/HeyGen与多语言验收.md`](HeyGen与多语言验收.md)：HeyGen 与语言验收。

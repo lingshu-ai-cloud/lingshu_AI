@@ -1,3 +1,4 @@
+import { getScrollBehavior } from "../lib/usePrefersReducedMotion";
 import { useState } from 'react';
 import { Plus, Sparkles } from 'lucide-react';
 import type { SocialContentTaskDetail, SocialContentTaskSummary } from '../../shared/contracts/socialContentWorkflow';
@@ -69,7 +70,7 @@ export default function SocialContentPreview() {
   const [message, setMessage] = useState('当前是交互预览，不会创建真实任务或调用模型。');
   const start = () => {
     setMessage('已模拟进入制作：正式工作台会保留任务来源、账号和预算，并打开内容制作默认页。');
-    document.getElementById('preview-production-progress')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    document.getElementById('preview-production-progress')?.scrollIntoView({ behavior: getScrollBehavior(), block: 'start' });
   };
 
   return (

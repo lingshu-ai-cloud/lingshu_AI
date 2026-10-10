@@ -55,6 +55,7 @@ import {
 } from '../auth/inviteRegistration.js';
 import { issueVerifiedLocalIdentityToken, verifyLocalIdentity, type VerifiedLocalIdentity } from '../auth/localIdentity.js';
 import { bindDataAuthority, currentDataAuthority } from '../storage/dataAuthority.js';
+import { resolveServerProductProfile } from '../starter198/productProfile.js';
 
 export const authRouter = Router();
 interface PbUser { id: string; email?: string; name?: string; tenantId?: string; role?: OrganizationRole }
@@ -64,6 +65,28 @@ interface LocalLoginResult {
   record: PbUser;
   accountType: 'customer' | 'trial' | 'admin';
   expiresAt?: string | null;
+}
+
+const LOCAL_PREVIEW_ORIGINS = new Set([
+  'http://127.0.0.1:5177',
+  'http://localhost:5177',
+  'http://[::1]:5177',
+]);
+
+export function isLocalPreviewLoopbackAddress(address: string | undefined): boolean {
+  const normalized = String(address || '').trim().toLowerCase();
+  return normalized === '127.0.0.1'
+    || normalized === '::1'
+    || normalized === '::ffff:127.0.0.1';
+}
+
+export function localPreviewRequestRejection(
+  origin: string | undefined,
+  remoteAddress: string | undefined,
+): 'local_preview_origin_required' | 'local_preview_loopback_required' | null {
+  if (!LOCAL_PREVIEW_ORIGINS.has(String(origin || ''))) return 'local_preview_origin_required';
+  if (!isLocalPreviewLoopbackAddress(remoteAddress)) return 'local_preview_loopback_required';
+  return null;
 }
 
 function localId(value: string): string {
@@ -228,6 +251,42 @@ function localLogin(email: string, password: string): LocalLoginResult | null {
     });
   }
   return { token: issueVerifiedLocalIdentityToken({ userId: record.id, tenantId: record.tenantId! }), record, accountType, expiresAt };
+}
+
+function localPreviewIdentity(): LocalAccount {
+  const email = String(process.env.LINGSHU_PREVIEW_AUTH_EMAIL || '').trim().toLowerCase();
+  if (!/^[a-z0-9._%+-]+@local\.test$/.test(email)) {
+    throw new Error('local_preview_identity_not_configured');
+  }
+  const accounts = readLocalAccounts();
+  const existing = accounts.find(account => account.email === email);
+  if (existing) {
+    if (!getLocalTenant(existing.tenantId)) throw new Error('local_preview_tenant_missing');
+    return existing;
+  }
+
+  const suffix = localId(email);
+  const tenantId = `local_tenant_preview_${suffix}`;
+  const userId = `local_user_preview_${suffix}`;
+  const name = '灵枢本地预览';
+  ensureLocalIdentityTenant({ tenantId, name, accountType: 'customer', email });
+  const salt = randomBytes(16).toString('hex');
+  const account: LocalAccount = {
+    userId,
+    tenantId,
+    email,
+    name,
+    accountType: 'customer',
+    role: 'admin',
+    salt,
+    // No usable preview password is generated or exposed. This opaque random
+    // verifier only satisfies the fail-closed local account record schema.
+    passwordHash: passwordHash(randomBytes(48).toString('base64url'), salt).toString('hex'),
+    createdAt: new Date().toISOString(),
+  };
+  accounts.push(account);
+  writeLocalAccounts(accounts);
+  return account;
 }
 
 function localRegister(email: string, password: string, tenant: LocalTenantRecord):
@@ -516,6 +575,37 @@ authRouter.post('/login', async (req, res) => {
   });
 });
 
+// The supervised loopback preview must not depend on a developer knowing a
+// local account password. Production, ordinary dev servers, and non-loopback
+// browser origins cannot reach this token issuer.
+authRouter.post('/local-preview-session', (req, res) => {
+  res.setHeader('Cache-Control', 'no-store');
+  if (
+    process.env.NODE_ENV === 'production'
+    || process.env.LINGSHU_LOCAL_PREVIEW !== '1'
+    || !localFallbacksEnabled()
+  ) {
+    res.status(404).json({ error: 'not_found' });
+    return;
+  }
+  const requestRejection = localPreviewRequestRejection(req.headers.origin, req.socket.remoteAddress);
+  if (requestRejection) {
+    res.status(403).json({ error: requestRejection });
+    return;
+  }
+  try {
+    const account = localPreviewIdentity();
+    bindDataAuthority('local');
+    res.json({ token: issueVerifiedLocalIdentityToken(account) });
+  } catch (error) {
+    if (isLocalAccountStoreError(error)) { localStoreUnavailable(res); return; }
+    console.error('[auth/local-preview-session] local preview identity unavailable', {
+      errorType: error instanceof Error ? error.message : 'UnknownError',
+    });
+    res.status(503).json({ error: 'local_preview_auth_unavailable' });
+  }
+});
+
 authRouter.post('/logout', (_req, res) => {
   clearAssetSessionCookie(res);
   res.json({ ok: true });
@@ -534,7 +624,7 @@ authRouter.get('/me', async (req, res) => {
         ? getLocalTenant(id.tenantId)
         : await pbGetStrict('tenants', id.tenantId);
       res.setHeader('Cache-Control', 'no-store');
-      res.json({ user: { id: id.userId, email: '', name: 'Agent 生产会话', tenantId: id.tenantId, role: id.browserReadRole }, tenant: publicTenant(tenant as Record<string, unknown> | null) });
+      res.json({ user: { id: id.userId, email: '', name: 'Agent 生产会话', tenantId: id.tenantId, role: id.browserReadRole }, tenant: publicTenant(tenant as Record<string, unknown> | null), productProfile: 'advanced_customer' });
       return;
     }
     const local = (id.dataAuthority ?? currentDataAuthority()) === 'local'
@@ -562,6 +652,7 @@ authRouter.get('/me', async (req, res) => {
       const storedTenant = getLocalTenant(id.tenantId);
       const admin = await adminUserForHttp(req, res);
       if (admin === undefined) return;
+      const productProfile = await resolveServerProductProfile(id.tenantId);
       res.json({
         user: { id: id.userId, email: local.email || '', name, tenantId: id.tenantId, role: normalizedRole(local.role) },
         tenant: publicTenant({
@@ -574,6 +665,7 @@ authRouter.get('/me', async (req, res) => {
         subscription,
         demo,
         platformAdmin: Boolean(admin),
+        productProfile,
       });
       return;
     }
@@ -597,6 +689,7 @@ authRouter.get('/me', async (req, res) => {
         }),
         subscription,
         supportAccess: id.supportAccess,
+        productProfile: 'advanced_customer',
       });
       return;
     }
@@ -613,11 +706,13 @@ authRouter.get('/me', async (req, res) => {
     );
     const admin = await adminUserForHttp(req, res);
     if (admin === undefined) return;
+    const productProfile = await resolveServerProductProfile(id.tenantId);
     res.json({
       user: user ? publicUser(user as unknown as PbUser) : { id: id.userId, email: '', name: '', tenantId: id.tenantId },
       tenant: publicTenant(tenant),
       subscription,
       platformAdmin: Boolean(admin),
+      productProfile,
       demo: {
         ...demo,
         guideTrigger: guide.pending,

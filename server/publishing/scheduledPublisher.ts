@@ -4,7 +4,7 @@ import { assertManagedPublishingAuthorization, ManagedPublishingAuthorizationErr
 import { randomUUID } from 'node:crypto';
 import type { PublishPlatform } from '../lib/publishHistory.js';
 import { store } from '../storage/index.js';
-import { publishVideoToAccount, resolvePendingPublishToAccount } from './platformPublisher.js';
+import { publishVideoToAccount, resolvePendingPublishToAccount, type PublishToAccountInput } from './platformPublisher.js';
 import { finalizeTrackedPost, type PostRecord } from './waLink.js';
 import { digitalEmployeeRunBlockedReason, withDigitalEmployeeExternalAction, WorkflowRunBlockedError } from '../digitalEmployees/runControl.js';
 import {
@@ -95,6 +95,20 @@ function statsOf(post: PostRecord): Record<string, unknown> {
 function attemptsOf(stats: Record<string, unknown>): number {
   const attempts = Number(stats.publishAttempts || 0);
   return Number.isFinite(attempts) && attempts > 0 ? Math.floor(attempts) : 0;
+}
+
+function publishClaimGuard(post: PostRecord): Record<string, unknown> {
+  // Claim the exact schedule snapshot that was authorized. The schedule
+  // adjustment service guards the same fields, so only one transition can
+  // win: either the post moves to another time, or the publisher owns it.
+  // In particular, never turn a post into `publishing` after a stale read.
+  return {
+    tenant_id: post.tenant_id,
+    platform: post.platform,
+    published_at: post.published_at,
+    platform_post_id: post.platform_post_id,
+    stats: post.stats,
+  };
 }
 
 export function scheduledRetryDelay(attempt: number): number {
@@ -269,7 +283,21 @@ async function publishScheduledPost(
     publishError: '',
     warnings: [],
   };
-  if (!await store.update('posts', post.id, { stats: lockedStats })) throw new Error('无法保存发布执行状态，尚未调用平台');
+  // A durable CAS is the authority to start publishing. A lease prevents
+  // duplicate workers, but it cannot serialize a user schedule edit running
+  // through a different service/process. Fail closed when CAS is unavailable
+  // or another writer changed any guarded field; no provider effect follows.
+  if (!store.compareAndSwap) return;
+  const claimed = await store.compareAndSwap(
+    'posts',
+    post.id,
+    publishClaimGuard(post),
+    { stats: lockedStats },
+  ).catch(error => {
+    console.error(`[publishing-worker] failed to claim post ${post.id}:`, error instanceof Error ? error.message : error);
+    return false;
+  });
+  if (!claimed) return;
 
   const platform = text(post.platform) as PublishPlatform;
   const accountIds = Array.isArray(initialStats.targetAccountIds)
@@ -458,6 +486,8 @@ async function publishScheduledPost(
           results[accountId] = updated;
         } } : {}),
         sourceClaim,
+        enterpriseFactVersion: text(initialStats.enterpriseFactVersion),
+        copyAudit: initialStats.copyAudit as PublishToAccountInput['copyAudit'],
       });
       const guardedPublish = () => isManagedSocialPublication(post)
         ? withManagedSocialPublication(post, accountId, publish)

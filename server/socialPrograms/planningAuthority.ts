@@ -59,7 +59,7 @@ export function buildWeeklyOperatingScheduleSkeleton(pkg: WeeklyOperatingPackage
     packageVersion: pkg.version,
     generatedBy: 'business_agent',
     tokenCost: 0,
-    slots: [...byMother.entries()].map(([motherContentId, tasks], index) => ({
+    slots: [...byMother.entries()].map(([motherContentId, tasks]) => ({
       ...(pkg.referenceSourcePolicy ? { referenceSource: sourceAllocation.get(motherContentId) as 'owned' | 'external' } : {}),
       slotId: stableId('weekly_slot', { packageId: pkg.packageId, version: pkg.version, motherContentId }),
       motherContentId,

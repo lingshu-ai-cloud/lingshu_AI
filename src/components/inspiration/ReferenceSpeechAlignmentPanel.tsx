@@ -77,7 +77,7 @@ export default function ReferenceSpeechAlignmentPanel({ details, transcript }: {
   const shots = rows(details);
   const timed = shots.filter(shot => rows(recordOf(shot.speechAlignment).words).length > 0).length;
   if (!shots.length) return null;
-  return <section data-reference-speech-alignment aria-label="口播时间戳与动作卡点" className="mb-4 rounded-xl border border-border bg-white p-4">
+  return <section data-reference-speech-alignment aria-label="口播时间戳与动作卡点" className="mb-4 rounded-lg border border-border bg-white p-4">
     <h3 className="text-sm font-black text-text-primary">口播时间戳与动作卡点</h3>
     <p className="mt-2 text-xs leading-5 text-text-secondary">{timed}/{shots.length} 镜有词级证据。词时间戳保留原始来源，跨镜词只在一个镜头中显示；词级对齐本身不代表动作与台词同步。</p>
     {!timed && <p className="mt-2 rounded-lg bg-amber-50 p-2 text-xs leading-5 text-amber-800">当前分析暂无真实词级时间戳，粗窗口口播不能用于动作与台词卡点判断。</p>}

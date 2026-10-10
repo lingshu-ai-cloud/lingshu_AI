@@ -10,6 +10,7 @@ import {
   type SocialOperatingProfileId,
 } from '../../shared/contracts/socialOperatingProfile.js';
 import { automaticExecutionAllowed, resolveRuntimePolicy } from './runtimePolicy.js';
+import type { Starter198ConfirmedOperatingPlan } from '../../shared/contracts/starter198.js';
 
 export type AutonomyMode = 'suggest' | 'collaborate' | 'managed' | 'automatic';
 /** The five user-facing roles. Legacy persisted `industry` values are mapped at the read boundary. */
@@ -62,6 +63,11 @@ export interface DigitalEmployeeConfig {
   followupCadence: string;
   reviewSchedule: string;
   publishingTargets: PublishingTarget[];
+  /**
+   * User-confirmed planning limits. Planned accounts are deliberately separate
+   * from publishingTargets: they do not claim a connection or grant publishing.
+   */
+  confirmedOperatingPlan?: Starter198ConfirmedOperatingPlan;
   /** Explicit tenant consent. Approval is still required for every content version. */
   allowRealPublishing: boolean;
   /** Shared outbound-consent flag consumed by the customer Agent. */
@@ -136,6 +142,46 @@ const number = (value: unknown, fallback = 0): number => {
   return Number.isFinite(parsed) ? parsed : fallback;
 };
 
+function normalizeConfirmedOperatingPlan(value: unknown): Starter198ConfirmedOperatingPlan | undefined {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return undefined;
+  const source = value as Partial<Starter198ConfirmedOperatingPlan>;
+  const allowedPlatforms = new Set<PublishingPlatform>(['facebook', 'instagram', 'tiktok', 'youtube']);
+  const presenter = ['brand_spokesperson', 'product_expert', 'none'].includes(String(source.presenter))
+    ? source.presenter as Starter198ConfirmedOperatingPlan['presenter']
+    : null;
+  const rawAccountCount = Array.isArray(source.plannedAccounts) ? source.plannedAccounts.length : 0;
+  const plannedAccounts = Array.isArray(source.plannedAccounts)
+    ? source.plannedAccounts.map(item => ({
+      platform: String(item?.platform || '') as PublishingPlatform,
+      accountName: text(item?.accountName, 200),
+      weeklyOutput: Math.floor(number(item?.weeklyOutput, 0)),
+    })).filter(item => allowedPlatforms.has(item.platform) && Boolean(item.accountName) && item.weeklyOutput > 0)
+      .filter((item, index, items) => items.findIndex(candidate => candidate.platform === item.platform) === index)
+    : [];
+  const weeklyMasterCount = Math.floor(number(source.weeklyMasterCount, 0));
+  const weeklyVariantCount = Math.floor(number(source.weeklyVariantCount, 0));
+  const minCost = Math.floor(number(source.estimatedCostCny?.min, -1));
+  const maxCost = Math.floor(number(source.estimatedCostCny?.max, -1));
+  const deliveryDays = Math.floor(number(source.deliveryDays, 0));
+  const accountOutput = plannedAccounts.reduce((sum, item) => sum + item.weeklyOutput, 0);
+  if (!text(source.brandName, 120) || !presenter || plannedAccounts.length === 0 || plannedAccounts.length > 4
+    || rawAccountCount !== plannedAccounts.length
+    || weeklyMasterCount < 1 || weeklyVariantCount < 1 || weeklyVariantCount !== accountOutput
+    || weeklyVariantCount > weeklyMasterCount * plannedAccounts.length
+    || plannedAccounts.some(item => item.weeklyOutput > weeklyMasterCount)
+    || minCost !== weeklyMasterCount * 10 || maxCost !== weeklyMasterCount * 15
+    || deliveryDays !== 7) return undefined;
+  return {
+    brandName: text(source.brandName, 120),
+    presenter,
+    plannedAccounts,
+    weeklyMasterCount,
+    weeklyVariantCount,
+    estimatedCostCny: { min: minCost, max: maxCost },
+    deliveryDays,
+  };
+}
+
 export function normalizeDigitalEmployeeConfig(input: Partial<DigitalEmployeeConfig>): DigitalEmployeeConfig {
   const autonomyMode: AutonomyMode = ['suggest', 'collaborate', 'managed', 'automatic'].includes(String(input.autonomyMode))
     ? input.autonomyMode as AutonomyMode
@@ -175,6 +221,7 @@ export function normalizeDigitalEmployeeConfig(input: Partial<DigitalEmployeeCon
   const videoLanguages = [...new Set(requestedVideoLanguages.map(normalizeVideoLanguage))]
     .filter(code => code in VIDEO_LANGUAGES)
     .slice(0, 5);
+  const confirmedOperatingPlan = normalizeConfirmedOperatingPlan(input.confirmedOperatingPlan);
   return {
     managedPublishingGrant: normalizeManagedPublishingGrant(input.managedPublishingGrant),
     continuationPolicy: normalizeContinuationPolicy(input.continuationPolicy),
@@ -203,6 +250,7 @@ export function normalizeDigitalEmployeeConfig(input: Partial<DigitalEmployeeCon
     followupCadence: text(input.followupCadence, 500) || '每周五 09:00 生成分层跟进草稿；17:00 前审批；仅在客户当地工作日 09:00–18:00 发送；同一客户 7 天最多 1 次',
     reviewSchedule: text(input.reviewSchedule, 300) || '周五 17:30（北京时间）；数据截止 17:00；通知审批负责人；仅生成复盘和下周任务草稿',
     publishingTargets,
+    ...(confirmedOperatingPlan ? { confirmedOperatingPlan } : {}),
     allowRealPublishing: input.allowRealPublishing === true,
     allowRealCustomerMessages: input.allowRealCustomerMessages === true,
     allowGeneratedVisuals: input.allowGeneratedVisuals === true,

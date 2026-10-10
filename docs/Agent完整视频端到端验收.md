@@ -63,7 +63,7 @@
 命令（本机shell无node PATH，使用已提供runtime）：
 
 ```sh
-PATH=/Users/julia1/.cache/codex-runtimes/codex-primary-runtime/dependencies/node/bin:$PATH node_modules/.bin/tsx --test tests/agent-video-e2e/media-evidence.test.ts server/socialPrograms/weeklyIndependentPlanning.test.ts server/runtime/weeklyProductionCoverageAdmission.test.ts server/runtime/socialWeeklyPublicationAdapter.test.ts
+pnpm exec tsx --test tests/agent-video-e2e/media-evidence.test.ts server/socialPrograms/weeklyIndependentPlanning.test.ts server/runtime/weeklyProductionCoverageAdmission.test.ts server/runtime/socialWeeklyPublicationAdapter.test.ts
 ```
 
 首次组合11项：9通过、2失败。新增测试首次因测试自己未更新content-addressed文件路径失败，已只修独占新增文件，重跑新增测试通过。源 `weeklyIndependentPlanning.test.ts:86` 连续两次失败：business_outline succeeded，benchmark_collection queued，3external评分卡继承采集阻塞，预期queuedExternal/completedExternal不成立；不修改其断言或业务实现来隐藏失败。独立来源准入4项、发布5项通过。最终当前证据为10项通过、1项源回归失败（来自上述两轮，未宣称全套green）。
@@ -128,7 +128,7 @@ Read111–135现在核recursive lineage、实际媒体SHA、真实G4去重/全�
 扩大回归命令：
 
 ```sh
-PATH=/Users/julia1/.cache/codex-runtimes/codex-primary-runtime/dependencies/node/bin:$PATH node_modules/.bin/tsx --test tests/agent-video-e2e/media-evidence.test.ts tests/agent-video-e2e/output-status.test.ts server/contentExecution/durableQueue.test.ts server/starter198/socialContentSceneReworkOutput.test.ts
+pnpm exec tsx --test tests/agent-video-e2e/media-evidence.test.ts tests/agent-video-e2e/output-status.test.ts server/contentExecution/durableQueue.test.ts server/starter198/socialContentSceneReworkOutput.test.ts
 ```
 
 日志最终21tests/pass21/fail0/exit0：独占5项、durableQueue10项、源Output6项。回调失败及receipt写入中断日志均为故意注入，相关断言通过。没有采用主会话曾口头估计的15项计数。

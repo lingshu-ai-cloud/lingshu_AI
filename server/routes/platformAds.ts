@@ -30,7 +30,7 @@ platformAdsRouter.post('/tasks/ai-plan', async (req, res) => {
   const { tenantId, userId } = res.locals as AuthLocals;
   try { res.status(201).json({ task: await createAiPlatformAdPlan(tenantId, userId, req.body || {}) }); }
   catch (error) {
-    if (error instanceof PlatformAdTaskValidationError) { res.status(400).json({ error: error.message }); return; }
+    if (error instanceof PlatformAdTaskValidationError) { res.status(error instanceof PlatformAdTaskConflictError ? 409 : 400).json({ error: error.message }); return; }
     console.error('[platform-ads:ai-plan]', error);
     res.status(503).json({ error: 'AI 方案生成失败，未创建投放计划，请稍后重试' });
   }

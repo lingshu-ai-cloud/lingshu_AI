@@ -184,7 +184,7 @@ export function deleteLocalInviteTenant(tenantId: string): boolean {
 export function ensureLocalIdentityTenant(input: {
   tenantId: string;
   name: string;
-  accountType: 'trial' | 'admin';
+  accountType: 'trial' | 'admin' | 'customer';
   email: string;
   expiresAt?: string | null;
 }): LocalTenantRecord {
