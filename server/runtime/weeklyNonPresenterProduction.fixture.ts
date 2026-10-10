@@ -20,7 +20,7 @@ import {createSocialWeeklyProductionAdapter} from './socialWeeklyProductionAdapt
 import {runSocialWeeklyExecutionScan} from './socialWeeklyExecutionRuntime.js';
 import type {WeeklyExecutionTask} from '../../shared/contracts/socialProgram.js';
 
-export interface WeeklyNonPresenterFixtureOptions {ownedReferenceBytes?:boolean;productInventory?:boolean;primaryStructure?:boolean;metricTargets?:string[];successCriteria?:string[];targetCta?:string}
+export interface WeeklyNonPresenterFixtureOptions {ownedReferenceBytes?:boolean;productInventory?:boolean;primaryStructure?:boolean;metricTargets?:string[];successCriteria?:string[];targetCta?:string;confirmedTemplate?:boolean}
 /** Real initialize/analyze/merge/confirm/dispatch over owned media and a controlled
  * source-analysis contract; no claim that external search or a live model ran. */
 export async function prepareWeeklyNonPresenterPlanningFixture(t:TestContext,options:WeeklyNonPresenterFixtureOptions={ownedReferenceBytes:true}){
@@ -78,6 +78,20 @@ export async function prepareWeeklyNonPresenterPlanningFixture(t:TestContext,opt
  await createSocialProgramService(f.store).savePlaybook('t','owner','p','account',{expectedAccountVersion:1,activate:true,audience:['企业采购'],pillars:['产品介绍'],evidenceRules:['仅展示已确认产品资料'],visualRules:['保留清晰产品外观'],languageRules:['英文说明'],conversionRoute:{entryType:'direct_message',callToAction:options.targetCta??'Contact sales'}});
  const goalResult=await createSocialOperatingDecisionService(f.store).buildAndSave({tenantId:'t',operator:{type:'user',id:'owner'},input:{programRef:{type:'social_program',id:'p',version:1},enterprise:{ref:{type:'enterprise_profile',id:'profile',version:1},products:['企业产品'],markets:['US'],audiences:['企业采购'],languages:['en'],publicFacts:pkg.socialContentPackage.publicationTasks[0]!.factRefs.map(ref=>({ref,statement:'已确认的企业产品信息'})),prohibitedClaims:['编造产品性能'],weeklyBudgetCny:10,salesOwnerId:'owner'},accounts:[{ref:{type:'owned_social_account',id:'account',version:1},accountId:'account',platform:'tiktok',role:'核心账号',status:'active',conversionRouteId:'test-contact'}],conversionRoutes:[{ref:{type:'conversion_route',id:'test-contact',version:1},routeId:'test-contact',kind:'website',target:'https://example.test/contact',verified:true}]}});
  assert.equal(goalResult.goal.status,'ready');pkg.businessContentGoalRef={type:'business_content_goal',id:goalResult.goal.goalId,version:goalResult.goal.version};
+ if(options.confirmedTemplate){
+  const {fixture}=await import('../socialPrograms/weeklyContentTemplates.fixture.js');const source=await fixture();t.after(source.cleanup);
+  const candidate=await source.service.create({tenantId:'t',programId:'p'},source.input);const templateRef={type:'weekly_content_template',id:candidate.templateId,version:1};
+  await source.service.confirm({tenantId:'t',programId:'p'},{actorUserId:'owner',templateRef,candidateHash:candidate.recordHash,usage:'trial',reason:'明确用于下一周完整阶段链受控验证'});
+  // Preserve actual past production/template records; the new target is a distinct future package.
+  for(const [collection,rows] of Object.entries(source.tables)){if(['starter_social_director_plan_versions'].includes(collection))f.tables[collection]=[];if(['users','social_programs','social_owned_accounts'].includes(collection))continue;for(const row of rows){const existing=f.tables[collection]?.findIndex(value=>value.id===row.id)??-1;if(existing>=0)f.tables[collection]![existing]=structuredClone(row);else(f.tables[collection]??=[]).push(structuredClone(row));}}
+  pkg.packageId='week2';pkg.version=1;pkg.status='draft';pkg.weekStart='2026-10-19';pkg.weekEnd='2026-10-25';
+  for(const pub of pkg.socialContentPackage.publicationTasks)pub.publishWindow='2026-10-20T10:00:00Z';
+  const targetRow=f.tables.social_weekly_operating_packages.find(row=>row.package_id==='week2'&&row.version===1);assert.ok(targetRow);targetRow.payload=structuredClone(pkg);
+  const {createWeeklyContentTemplateService}=await import('../socialPrograms/weeklyContentTemplates.js');const templates=createWeeklyContentTemplateService(f.store);
+  const publication=pkg.socialContentPackage.publicationTasks[0]!;const binding=await templates.bind({tenantId:'t',programId:'p',packageId:'week2',packageVersion:1,publicationTaskId:publication.publicationTaskId},{actorUserId:'owner',templateRef,candidateHash:candidate.recordHash,expectedTargetVersion:2});
+  pkg.version=2;const {buildWeeklyWorkflow}=await import('../socialPrograms/weeklyPlanner.js');const targetWorkflow=buildWeeklyWorkflow({packageId:pkg.packageId,version:pkg.version,businessGoal:goalResult.goal,capacity:null,automationPolicy:null,publicationTasks:pkg.socialContentPackage.publicationTasks,discoveryBudgetCny:pkg.discoveryBudgetCny});pkg.workflows=targetWorkflow.workflows;pkg.workflowTasks=targetWorkflow.tasks;publication.contentTemplateBindingRef={type:'weekly_content_template_binding',id:binding.bindingId,version:1};
+  await f.store.create('social_weekly_operating_packages',{tenant_id:'t',program_id:'p',package_id:pkg.packageId,version:pkg.version,payload:structuredClone(pkg)});
+ }
  const service=createWeeklyPlanningAuthority(f.store);
  const initial=await service.initialize('t',pkg);
  const analysis=await service.runDirectorAnalysis({tenantId:'t',programId:'p',packageId:pkg.packageId,packageVersion:pkg.version,expectedPlanningVersion:initial.version,actor:'director_agent'});
@@ -86,16 +100,16 @@ export async function prepareWeeklyNonPresenterPlanningFixture(t:TestContext,opt
  const confirmation=await service.confirm({tenantId:'t',programId:'p',packageId:pkg.packageId,packageVersion:pkg.version,expectedPlanningVersion:schedule.version,userId:'owner'});
  const dispatched=await service.dispatch({tenantId:'t',programId:'p',packageId:pkg.packageId,packageVersion:pkg.version,expectedPlanningVersion:confirmation.version,actor:'business_agent'});
  assert.equal(dispatched.status,'dispatched');
+ pkg.agentPlanning=structuredClone(dispatched);
  // Remove the unrelated already-produced fixture task; production must use actual creation.
- f.tables.starter_social_content_tasks=[];
- f.tables.social_weekly_execution_tasks=[];
+ if(!options.confirmedTemplate){f.tables.starter_social_content_tasks=[];f.tables.social_weekly_execution_tasks=[];}
  return {referenceId,repository:f.repository,f,pkg,dispatched};
 }
 
 export async function prepareWeeklyNonPresenterProductionFixture(t:TestContext,options:WeeklyNonPresenterFixtureOptions={ownedReferenceBytes:true}){
  const {referenceId,f,pkg,dispatched}=await prepareWeeklyNonPresenterPlanningFixture(t,options);
- const task:WeeklyExecutionTask={...f.task,taskId:'actual-planning-production',workflowKind:'content',status:'queued',schedule:{...f.task.schedule,stepKind:'material_readiness',responsibleActor:'content_agent'},dependsOnTaskIds:[],upstreamVersionRefs:[],ownBlockingReasons:[],inheritedBlockingTaskIds:[],resultRefs:[],attempt:0,lease:null,nextAttemptAt:null,inputSnapshot:{publicationTask:structuredClone(pkg.socialContentPackage.publicationTasks[0])}};
- f.tables.social_weekly_execution_tasks=[{id:task.taskId,tenant_id:'t',program_id:'p',package_id:pkg.packageId,package_version:pkg.version,task_id:task.taskId,status:'queued',payload:task}];
+ const task:WeeklyExecutionTask={...f.task,packageId:pkg.packageId,packageVersion:pkg.version,programId:pkg.programId,taskId:'actual-planning-production',workflowKind:'content',status:'queued',schedule:{...f.task.schedule,stepKind:'material_readiness',responsibleActor:'content_agent'},dependsOnTaskIds:[],upstreamVersionRefs:[],ownBlockingReasons:[],inheritedBlockingTaskIds:[],resultRefs:[],attempt:0,lease:null,nextAttemptAt:null,inputSnapshot:{publicationTask:structuredClone(pkg.socialContentPackage.publicationTasks[0])}};
+ f.tables.social_weekly_execution_tasks=[...(options.confirmedTemplate?f.tables.social_weekly_execution_tasks:[]),{id:task.taskId,tenant_id:'t',program_id:'p',package_id:pkg.packageId,package_version:pkg.version,task_id:task.taskId,status:'queued',payload:task}];
  let repository=f.repository;
  if(options.productInventory){
   const inventoryDir=await fs.mkdtemp(path.join(os.tmpdir(),'weekly-product-inventory-'));t.after(()=>fs.rm(inventoryDir,{recursive:true,force:true}));const mediaFolder=path.resolve(path.dirname(fileURLToPath(import.meta.url)),'../../data/media/tenants/t',path.basename(inventoryDir));await fs.mkdir(mediaFolder);t.after(()=>fs.rm(mediaFolder,{recursive:true,force:true}));const image=path.join(mediaFolder,'identity.png');
@@ -108,10 +122,10 @@ export async function prepareWeeklyNonPresenterProductionFixture(t:TestContext,o
  }
  const initialRunCount=f.tables.workflow_runs!.length;
  const report=await runSocialWeeklyExecutionScan({dataStore:f.store,adapters:{material_readiness:createSocialWeeklyProductionAdapter(f.store,{repository})},maxTasksPerTenant:1});
- const actual=f.tables.social_weekly_execution_tasks[0]!.payload as WeeklyExecutionTask;
+ const actual=f.tables.social_weekly_execution_tasks.find(row=>row.task_id===task.taskId)!.payload as WeeklyExecutionTask;
  assert.equal(report.claimed,1);assert.ok(['pending','blocked','succeeded'].includes(actual.status),JSON.stringify(actual.lastError));
  assert.equal(f.tables.starter_usage_ledger?.length??0,0,'planning and prerequisite checks must not pay a supplier');
- const created=f.tables.starter_social_content_tasks[0]!;assert.ok(created,JSON.stringify(actual));
+ const created=f.tables.starter_social_content_tasks.find(row=>row.create_idempotency_key===`weekly-production:${pkg.packageId}:${pkg.version}:${task.publicationTaskId}`)!;assert.ok(created,JSON.stringify(actual));
  const detail=await readSocialTaskDetail({repository,tenantId:'t',taskId:String(created.task_id)});assert.ok(detail);
  const referenceReviewHandoff=buildSocialReferenceReviewHandoff({record:f.tables.trend_videos!.find(row=>row.id===referenceId)!,verifiedEnterpriseFactRefs:pkg.socialContentPackage.publicationTasks[0]!.factRefs.map(ref=>`${ref.type}:${ref.id}@${ref.version}`)});
  return {referenceId,repository,f,pkg,task,actual,created,report,dispatched,detail,referenceReviewHandoff};

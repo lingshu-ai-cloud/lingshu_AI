@@ -433,7 +433,19 @@ export function createWeeklyOperatingPackageService(dataStore: DataStore) {
       if(!await assertExecutionPackageGate(dataStore,gateScope))return withExecutionPackageGate(dataStore,gateScope,()=>createWeeklyOperatingPackageService(dataStore).revise(tenantId,userId,programId,packageId,input,internal));
       requireExpectedVersion(current.payload.version, input.expectedVersion);
       const item=await buildRevisionDraft(tenantId,userId,programId,packageId,input,current,internal?.createdAt);
-      if(internal?.scheduleRevisionRef){await readScheduleSnapshot(dataStore,tenantId,item,internal.scheduleRevisionRef);(item as WeeklyScheduledPackage).scheduleRevisionRef=internal.scheduleRevisionRef;}
+      if(internal?.scheduleRevisionRef){
+ const snapshot=await readScheduleSnapshot(dataStore,tenantId,item,internal.scheduleRevisionRef);
+ for(const plan of snapshot.templateCarryovers??[]){
+ const publication=item.socialContentPackage.publicationTasks.find(p=>p.publicationTaskId===plan.targetScope.publicationTaskId);
+ const sourcePublication=current.payload.socialContentPackage.publicationTasks.find(p=>p.publicationTaskId===plan.sourceScope.publicationTaskId);
+ const bindingRow=await dataStore.getById<import('../storage/datastore.js').Record_>('social_weekly_content_template_bindings',plan.targetBindingRef.id);
+ const binding=bindingRow?.payload as import('../../shared/contracts/socialWeeklyContentTemplates.js').WeeklyContentTemplateBinding|undefined;
+ if(!binding)throw new SocialProgramError('weekly_schedule_template_binding_missing',409,'weekly_schedule_template_binding_missing');
+ const {recordHash,...body}=binding;
+ if(plan.sourceScope.tenantId!==tenantId||plan.sourceScope.programId!==programId||plan.sourceScope.packageId!==packageId||plan.sourceScope.packageVersion!==current.payload.version||plan.targetScope.packageVersion!==item.version||plan.plannedBy!==userId||scheduleHash(sourcePublication?.contentTemplateBindingRef)!==scheduleHash(plan.sourceBindingRef)||scheduleHash(publication?.contentTemplateBindingRef)!==scheduleHash(plan.targetBindingRef)||binding.bindingId!==plan.targetBindingRef.id||binding.tenantId!==tenantId||binding.programId!==programId||binding.packageId!==packageId||binding.packageVersion!==item.version||binding.publicationTaskId!==plan.targetScope.publicationTaskId||binding.confirmedBy!==userId||recordHash!==scheduleHash(body)||bindingRow?.record_hash!==recordHash||binding.carryover?.planHash!==plan.planHash||binding.carryover.sourceBindingHash!==plan.sourceBindingHash)throw new SocialProgramError('weekly_schedule_template_binding_invalid',409,'weekly_schedule_template_binding_invalid');
+ }
+ (item as WeeklyScheduledPackage).scheduleRevisionRef=internal.scheduleRevisionRef;
+ }
       if(internal?.templateApplicationRef){
         const ref=internal.templateApplicationRef,bindingRow=await dataStore.getById<import('../storage/datastore.js').Record_>('social_weekly_content_template_bindings',ref.id);
         const binding=bindingRow?.payload as import('../../shared/contracts/socialWeeklyContentTemplates.js').WeeklyContentTemplateBinding|undefined;

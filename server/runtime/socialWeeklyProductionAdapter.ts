@@ -157,7 +157,7 @@ export function createSocialWeeklyProductionAdapter(dataStore: DataStore, ports:
         if(boundRow.run_id){const {readWeeklyReplicationAuthority}=await import('../starter198/socialWeeklyReplicationAuthority.js');const proof=await readWeeklyReplicationAuthority(repository,boundRow);const {freezeSocialAccountProductionConstraints}=await import('../starter198/socialAccountProductionConstraints.js');const baseline=socialObject(socialJson(boundRow.script_baseline));const expected=proof?freezeSocialAccountProductionConstraints(proof.context,detail.brief.callToAction):undefined;if(expected&&socialRequestHash(baseline?.accountPlaybookConstraints)===socialRequestHash(expected))scriptEvidence=weeklyScriptEvidence(boundRow,(item.benchmarkVideoRefs??[]).map(ref=>ref.id));}
       }
       if (task.schedule.stepKind === 'storyboard') storyboardEvidence = weeklyStoryboardEvidence(boundRow, (item.benchmarkVideoRefs ?? []).map(ref => ref.id));
-      if(task.schedule.stepKind==='storyboard'&&pkg.executionGraphVersion===2&&boundRow.run_id&&!publication.contentTemplateBindingRef){
+      if(task.schedule.stepKind==='storyboard'&&pkg.executionGraphVersion===2&&boundRow.run_id){
         const {readWeeklyPreSupplyHandoff}=await import('../starter198/socialWeeklyPreSupplyHandoff.js');
         const handoff=await readWeeklyPreSupplyHandoff(repository,task.tenantId,detail.taskId);
         if(handoff&&handoff.programId===task.programId&&handoff.packageId===task.packageId&&handoff.packageVersion===task.packageVersion&&handoff.publicationTaskId===task.publicationTaskId)storyboardEvidence={type:'starter_weekly_pre_supply_handoff',id:handoff.runId,version:1};
@@ -300,7 +300,7 @@ export function createSocialWeeklyProductionAdapter(dataStore: DataStore, ports:
     if (!detail.runId) return blocked('weekly_production_confirmation_required', '内容任务已保留，等待既有生产准入确认。');
     let job = await readContentExecutionJob(dataStore, task.tenantId, detail.taskId, detail.runId);
     if(task.schedule.stepKind==='asset_generation'&&job?.status==='paused'&&job.retryClass==='weekly_production_waiting_asset_claim'){
-      try{const {resumeWeeklyProductionAssetStage}=await import('../starter198/socialWeeklyProductionStageResume.js');await resumeWeeklyProductionAssetStage({repository,assetTask:task,assertAdmission,validationPorts:{ownedProductIdentity:ports.ownedProductIdentity}});job=await readContentExecutionJob(dataStore,task.tenantId,detail.taskId,detail.runId);}
+      try{const {resumeWeeklyProductionAssetStage}=await import('../starter198/socialWeeklyProductionStageResume.js');await resumeWeeklyProductionAssetStage({repository,assetTask:task,assertAdmission,validationPorts:{ownedProductIdentity:ports.ownedProductIdentity?{...ports.ownedProductIdentity,repository}:undefined}});job=await readContentExecutionJob(dataStore,task.tenantId,detail.taskId,detail.runId);}
       catch(error){return blocked(error instanceof Error?error.message:'weekly_production_stage_resume_unverified','原生产任务尚不能进入资产阶段，请核验本周前置任务及原运行凭据。');}
     }
     if (['draft', 'needs_input', 'plan_review'].includes(detail.status) && !job) return blocked('weekly_production_confirmation_required', '运行身份已保留，但尚未完成生产准入确认。');

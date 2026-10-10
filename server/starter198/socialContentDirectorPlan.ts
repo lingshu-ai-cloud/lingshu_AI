@@ -242,6 +242,10 @@ function stableDirectorPlanId(taskId: string): string {
   return `director_plan_${socialRequestHash({ scope: 'social_content_task', taskId: id }).slice(0, 24)}`;
 }
 
+export function applyLockedTemplateDirection(direction: StoredSocialDirectorPlan['direction'], baseline: StoredSocialScriptBaseline): StoredSocialDirectorPlan['direction'] {
+ const c=baseline.contentTemplateStructure;if(!c)return direction;if(!validContentTemplateStructure(c))throw new SocialContentWorkflowError('content_template_structure_invalid',409);return {...direction,pace:c.pace,voiceover:{...direction.voiceover,speed:c.voiceSpeed,pauseStyle:c.pauseStyle}};
+}
+
 function directionFor(input: {
   formula?: InternalSocialContentFormula | null;
   themeId: SocialContentThemeId | null;
@@ -378,12 +382,11 @@ export function buildSocialDirectorPlan(input: {
   if (input.previous && input.previous.directorPlanId !== directorPlanId) {
     throw new SocialContentWorkflowError('social_content_director_plan_identity_invalid', 503);
   }
-  const direction = directionFor({
+  const direction = applyLockedTemplateDirection(directionFor({
     formula: input.formula,
     themeId: input.baseline.themeId,
     duration: input.productionPlan.maxDuration,
-  });
-  if(input.baseline.contentTemplateStructure){const c=input.baseline.contentTemplateStructure;if(!validContentTemplateStructure(c))throw new SocialContentWorkflowError('content_template_structure_invalid',409);direction.pace=c.pace;direction.voiceover.speed=c.voiceSpeed;direction.voiceover.pauseStyle=c.pauseStyle;}
+  }),input.baseline);
   if(input.baseline.accountPlaybookConstraints)assertSocialAccountProductionConstraints(input.baseline.accountPlaybookConstraints);
   const baselineById = new Map(input.baseline.scenes.map(scene => [scene.sceneId, scene]));
   const scenes = input.productionPlan.scenes.map((scene, index) => {

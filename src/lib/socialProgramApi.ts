@@ -163,8 +163,8 @@ export const socialProgramApi = {
   async createScheduleRevisionProposal(programId: string, packageId: string, packageVersion: number, input: WeeklyScheduleCapacityInput): Promise<WeeklyScheduleProposal> {
     return (await request<{ item: WeeklyScheduleProposal }>(`/${encodeURIComponent(programId)}/operating-packages/${encodeURIComponent(packageId)}/schedule-revisions`, { method: 'POST', ...json({ packageVersion, constraints: input.constraints, resources: input.resources, remainingBudgetCny: input.remainingBudgetCny, ...(input.operationalDeadlines ? { operationalDeadlines: input.operationalDeadlines } : {}) }) })).item;
   },
-  async confirmScheduleRevision(programId: string, packageId: string, proposalId: string, expectedVersion: number, inputEvidenceHash: string): Promise<WeeklyScheduleConfirmation> {
-    return request<WeeklyScheduleConfirmation>(`/${encodeURIComponent(programId)}/operating-packages/${encodeURIComponent(packageId)}/schedule-revisions/${encodeURIComponent(proposalId)}/confirm`, { method: 'POST', ...json({ expectedVersion, inputEvidenceHash }) });
+  async confirmScheduleRevision(programId: string, packageId: string, proposalId: string, expectedVersion: number, inputEvidenceHash: string, confirmedTemplateCarryoverPlanHashes?: string[]): Promise<WeeklyScheduleConfirmation> {
+    return request<WeeklyScheduleConfirmation>(`/${encodeURIComponent(programId)}/operating-packages/${encodeURIComponent(packageId)}/schedule-revisions/${encodeURIComponent(proposalId)}/confirm`, { method: 'POST', ...json({ expectedVersion, inputEvidenceHash, ...(confirmedTemplateCarryoverPlanHashes !== undefined ? { confirmedTemplateCarryoverPlanHashes } : {}) }) });
   },
   async bindCustomerRun(programId: string, packageId: string, packageVersion: number, runId: string): Promise<void> {
     await request(`/${encodeURIComponent(programId)}/operating-packages/${encodeURIComponent(packageId)}/customer-run-binding`, { method: 'POST', ...json({ packageVersion, runId }) });

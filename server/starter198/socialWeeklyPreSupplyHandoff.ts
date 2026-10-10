@@ -5,6 +5,7 @@ import {readWeeklyReplicationAuthority} from './socialWeeklyReplicationAuthority
 import {parseStoredSocialScriptBaseline} from './socialContentScriptBaseline.js';
 import {socialJson,socialObject,socialRequestHash,SocialContentWorkflowError} from './socialContentValidation.js';
 import {withWeeklyProductionAdmissionGuard} from '../socialPrograms/weeklyCancellation.js';
+import {publicationInstant} from '../socialPrograms/publicationDeadlines.js';
 
 export interface WeeklyPreSupplyHandoff {
  schemaVersion:'weekly-pre-supply-handoff.v1';tenantId:string;taskId:string;runId:string;
@@ -13,6 +14,7 @@ export interface WeeklyPreSupplyHandoff {
  replicationAuthorityHash:string;scheduledTaskVersion:string;directorBrief:NonNullable<SocialContentTaskDetail['agentWorkflow']>['directorBrief'];
  executionPlan:NonNullable<SocialContentTaskDetail['agentWorkflow']>['executionPlan'];
  directorReview:NonNullable<SocialContentTaskDetail['agentWorkflow']>['executionPlanReview'];
+ templateIntention?:{structure:import('../../shared/socialContentTemplateStructure.js').ContentTemplateStructureConstraint;pace:string;voiceSpeed:number;pauseStyle:string};
  assetAvailability:'planned_not_generated';createdAt:string;recordHash:string;
 }
 function fail():never{throw new SocialContentWorkflowError('weekly_pre_supply_handoff_unverified',409);}
@@ -21,7 +23,7 @@ export async function readWeeklyPreSupplyHandoff(repository:Starter198Repository
  const row=await requireSocialTask({repository,tenantId,taskId});if(!row.run_id||!repository.dataStore)return null;
  const run=await repository.dataStore.getById<Record<string,unknown>>('workflow_runs',String(row.run_id));
  const context=socialObject(socialJson(run?.starter_context)),raw=context?.weeklyPreSupplyHandoff;if(!raw)return null;
- const value=socialObject(raw) as unknown as WeeklyPreSupplyHandoff;if(!value||!socialObject(value.directorReview)||!socialObject(value.directorBrief)||!socialObject(value.executionPlan)||!parseStoredSocialScriptBaseline(value.baseline)||!Number.isFinite(Date.parse(value.createdAt))||!/[TZ]|[+-]\d\d:\d\d$/.test(value.createdAt))return fail();
+ const value=socialObject(raw) as unknown as WeeklyPreSupplyHandoff;if(!value||!socialObject(value.directorReview)||!socialObject(value.directorBrief)||!socialObject(value.executionPlan)||!parseStoredSocialScriptBaseline(value.baseline)||typeof value.createdAt!=='string'||publicationInstant(value.createdAt)===null)return fail();
  const {recordHash,...body}=value;
  const proof=await readWeeklyReplicationAuthority(repository,row),baseline=parseStoredSocialScriptBaseline(row.script_baseline);
  if(!proof||!baseline||!run||run.tenant_id!==tenantId||context?.socialTaskId!==taskId||['cancelled','failed','dead_letter'].includes(String(run.status))
@@ -50,7 +52,9 @@ export async function freezeWeeklyPreSupplyHandoff(input:{repository:Starter198R
  const run=await input.repository.dataStore.getById<Record<string,unknown>>('workflow_runs',input.runId),context=socialObject(socialJson(run?.starter_context));
  if(!run||run.tenant_id!==input.tenantId||run.status!=='running'||!context||context.socialTaskId!==input.taskId)return fail();
  const contextHash=socialRequestHash(context);
- const body={schemaVersion:'weekly-pre-supply-handoff.v1' as const,tenantId:input.tenantId,taskId:input.taskId,runId:input.runId,programId:proof.programId,packageId:proof.packageId,packageVersion:proof.packageVersion,publicationTaskId:proof.publicationTaskId,baseline:structuredClone(input.baseline),replicationAuthorityHash:proof.recordHash,scheduledTaskVersion:String(row.version),directorBrief:structuredClone(workflow.directorBrief),executionPlan:structuredClone(workflow.executionPlan),directorReview:structuredClone(workflow.executionPlanReview),assetAvailability:'planned_not_generated' as const,createdAt:new Date().toISOString()};
+ const c=input.baseline.contentTemplateStructure;
+ const templateIntention=c?{structure:structuredClone(c),pace:c.pace,voiceSpeed:c.voiceSpeed,pauseStyle:c.pauseStyle}:undefined;
+ const body={...(templateIntention?{templateIntention}:{}),schemaVersion:'weekly-pre-supply-handoff.v1' as const,tenantId:input.tenantId,taskId:input.taskId,runId:input.runId,programId:proof.programId,packageId:proof.packageId,packageVersion:proof.packageVersion,publicationTaskId:proof.publicationTaskId,baseline:structuredClone(input.baseline),replicationAuthorityHash:proof.recordHash,scheduledTaskVersion:String(row.version),directorBrief:structuredClone(workflow.directorBrief),executionPlan:structuredClone(workflow.executionPlan),directorReview:structuredClone(workflow.executionPlanReview),assetAvailability:'planned_not_generated' as const,createdAt:new Date().toISOString()};
  const handoff={...body,recordHash:socialRequestHash(body)};
  await withWeeklyProductionAdmissionGuard({dataStore:input.repository.dataStore,tenantId:input.tenantId,packageId:proof.packageId,packageVersion:proof.packageVersion,action:async assert=>{
   const fresh=await input.repository.dataStore!.getById<Record<string,unknown>>('workflow_runs',input.runId),current=await requireSocialTask(input);

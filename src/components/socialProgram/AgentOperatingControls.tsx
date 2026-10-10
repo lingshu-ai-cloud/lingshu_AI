@@ -1,3 +1,4 @@
+import {readTemplateCarryoverPlans} from '../../lib/weeklyTemplateCarryoverConfirmation';
 import { useRef,useState,useEffect } from 'react';
 import {AUTH_TOKEN_CHANGED_EVENT,getToken} from '../../lib/auth';
 import {createOperatingControlScopeGuard} from '../../lib/operatingControlScopeGuard';
@@ -12,6 +13,9 @@ import type { WeeklyScheduleConfirmation } from '../../../shared/contracts/socia
 import MaterialEvidenceConfigurationPanel from './MaterialEvidenceConfigurationPanel';
 import WeeklyAgentPlanningPanel from './WeeklyAgentPlanningPanel';
 import CustomerFeedbackTopicPanel from './CustomerFeedbackTopicPanel';
+import {weeklyInitialScheduleApi} from '../../lib/weeklyInitialScheduleApi';
+
+export function offersInitialSchedule(pkg:WeeklyOperatingPackage,tasks:WeeklyExecutionTask[]){return pkg.status==='draft'&&!('scheduleRevisionRef' in pkg)&&!pkg.socialContentPackage.authorization.allowRealPublishing&&tasks.length>0&&tasks.every(t=>t.programId===pkg.programId&&t.packageId===pkg.packageId&&t.packageVersion===pkg.version&&!t.lease&&t.attempt===0&&!t.resultRefs.length&&!t.schedule.actualStartedAt&&!t.schedule.actualFinishedAt&&!t.productionProgress&&['pending_activation','blocked','queued'].includes(t.status));}
 
 export interface AgentOperatingControlsProps {
   pkg: WeeklyOperatingPackage;
@@ -34,6 +38,9 @@ export default function AgentOperatingControls({ pkg, tasks, programRoute, onRev
   const scoped = tasks.filter(task => task.programId === pkg.programId && task.packageId === pkg.packageId && task.packageVersion === pkg.version);
   const requireScopedTenant=()=>{const tenants=[...new Set(scoped.map(task=>task.tenantId))];if(tenants.length!==1||typeof tenants[0]!=='string'||!tenants[0])throw Error('当前周包缺少唯一真实租户任务身份，请重新读取。');return tenants[0];};
   const actions = createAgentOperatingControlActions(pkg, scoped);
+  const initial=offersInitialSchedule(pkg,scoped);
+  const initialScope=()=>({tenantId:requireScopedTenant(),programId:pkg.programId,packageId:pkg.packageId,packageVersion:pkg.version});
+  const previewGraph=async()=>initial?(await weeklyInitialScheduleApi.preview(initialScope())).graph:await socialProgramApi.previewScheduleTargetGraph(pkg.programId,pkg.packageId,pkg.version,requireScopedTenant());
   return <section aria-label="本周真实经营配置" className="space-y-3">
     <div className="rounded-xl border border-stone-200 bg-white p-4"><h3 className="text-sm font-semibold">本周经营配置 · v{pkg.version}</h3><p className="mt-1 text-xs text-stone-500">承接条件修订保存为新周版本。客服选择仅绑定已有真实运行；补救评估不直接改排期。</p></div>
     {onPlanningChanged && <details className="rounded-xl border border-stone-200 bg-white p-4"><summary className="cursor-pointer text-sm font-semibold">分析参考、核对排期与正式派单</summary><WeeklyAgentPlanningPanel key={`planning:${identity}:${pkg.agentPlanning?.version}`} pkg={pkg} tasks={scoped} onChanged={onPlanningChanged} /></details>}
@@ -55,14 +62,14 @@ export default function AgentOperatingControls({ pkg, tasks, programRoute, onRev
     <details className="rounded-xl border border-stone-200 bg-white p-4"><summary className="cursor-pointer text-sm font-semibold">绑定本周真实客服运行</summary>
       {effectiveRoute ? <WeeklyCustomerRunBinding key={`customer:${identity}`} programId={pkg.programId} packageId={pkg.packageId} packageVersion={pkg.version} profile={effectiveRoute === 'cold_start' ? 'b2b_cold_start' : 'b2b_established'} /> : <p className="mt-3 text-sm text-amber-700">经营项目尚未确认用户画像，请先完成初始配置再绑定客服运行。</p>}
     </details>
-    <details className="rounded-xl border border-stone-200 bg-white p-4"><summary className="cursor-pointer text-sm font-semibold">评估素材延迟与发布补救排期</summary>
-      <WeeklyRecoveryPanel key={`recovery:${identity}`} packageVersion={pkg.version} weekStart={pkg.weekStart} tasks={scoped} onPreviewTarget={async()=>{const ensure=guard.current.capture(identity,authToken);ensure();const graph=await socialProgramApi.previewScheduleTargetGraph(pkg.programId,pkg.packageId,pkg.version,requireScopedTenant());ensure();if(current.current!==identity)throw Error('已切换周包，旧目标图不能用于当前排期。');return graph;}} onPropose={async input => {const ensure=guard.current.capture(identity,authToken);ensure();
-        const graph=await socialProgramApi.previewScheduleTargetGraph(pkg.programId,pkg.packageId,pkg.version,requireScopedTenant());ensure();if(current.current!==identity)throw Error('已切换周包，不能使用旧目标图。');const checked = buildBackwardScenario({ ...input, changedTaskIds: [] }, graph.tasks, pkg.version);assertTargetGraphCapacity(graph,checked);
-        ensure();const proposal = await socialProgramApi.createScheduleRevisionProposal(pkg.programId, pkg.packageId, pkg.version, checked);
+    <details className="rounded-xl border border-stone-200 bg-white p-4"><summary className="cursor-pointer text-sm font-semibold">{initial?'首次容量排期（尚未执行）':'评估素材延迟与发布补救排期'}</summary>
+      <WeeklyRecoveryPanel key={`recovery:${identity}:${initial}`} mode={initial?'initial':'recovery'} packageVersion={pkg.version} weekStart={pkg.weekStart} tasks={scoped} onReadProposal={initial?async proposalId=>{const ensure=guard.current.capture(identity,authToken);ensure();const proposal=await weeklyInitialScheduleApi.readProposal(initialScope(),proposalId);ensure();return proposal;}:undefined} onPreviewTarget={async()=>{const ensure=guard.current.capture(identity,authToken);ensure();const graph=await previewGraph();ensure();if(current.current!==identity)throw Error('已切换周包，旧目标图不能用于当前排期。');return graph;}} onPropose={async input => {const ensure=guard.current.capture(identity,authToken);ensure();
+        const graph=await previewGraph();ensure();if(current.current!==identity)throw Error('已切换周包，不能使用旧目标图。');const checked = buildBackwardScenario({ ...input, changedTaskIds: [] }, graph.tasks, pkg.version);assertTargetGraphCapacity(graph,checked);
+        ensure();const proposal = initial?await weeklyInitialScheduleApi.propose(initialScope(),checked):await socialProgramApi.createScheduleRevisionProposal(pkg.programId, pkg.packageId, pkg.version, checked);
         ensure();if (current.current !== identity) throw Error('已切换周包，本次旧版本提案不再用于当前排期。');
-        return proposal;
+        readTemplateCarryoverPlans(proposal);return proposal;
       }} onConfirm={async input => {const ensure=guard.current.capture(identity,authToken);ensure();
-        const result = await socialProgramApi.confirmScheduleRevision(pkg.programId, pkg.packageId, input.proposalId, input.expectedVersion, input.inputEvidenceHash);
+        const result = initial?await weeklyInitialScheduleApi.confirm(initialScope(),input):await socialProgramApi.confirmScheduleRevision(pkg.programId, pkg.packageId, input.proposalId, input.expectedVersion, input.inputEvidenceHash,input.confirmedTemplateCarryoverPlanHashes);
         ensure();if (current.current !== identity) throw Error('排期修订已保存，但当前视图已切换，请回到原周包查看新版本。');
         if (onScheduleConfirmed) onScheduleConfirmed(result);
         else onRevision(result.item);

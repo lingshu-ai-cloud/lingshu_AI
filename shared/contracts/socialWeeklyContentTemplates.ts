@@ -8,7 +8,8 @@ export interface WeeklyContentTemplateCandidate {
  createdBy:string;createdAt:string;recordHash:string;
 }
 export interface WeeklyContentTemplateConfirmation {confirmationId:string;templateRef:VersionedSocialRef;tenantId:string;programId:string;candidateHash:string;usage:'trial'|'retain';reason:string;confirmedBy:string;confirmedAt:string;recordHash:string;}
-export interface WeeklyContentTemplateBinding {bindingId:string;tenantId:string;programId:string;packageId:string;packageVersion:number;publicationTaskId:string;templateRef:VersionedSocialRef;candidateHash:string;confirmationId:string;confirmedBy:string;confirmedAt:string;recordHash:string;}
+export interface WeeklyContentTemplateRevisionPlan {sourceScope:{tenantId:string;programId:string;packageId:string;packageVersion:number;publicationTaskId:string};targetScope:{tenantId:string;programId:string;packageId:string;packageVersion:number;publicationTaskId:string};sourceBindingRef:VersionedSocialRef;sourceBindingHash:string;sourcePackageHash:string;sourcePublicationHash:string;targetBindingRef:VersionedSocialRef;templateRef:VersionedSocialRef;candidateHash:string;confirmationId:string;plannedBy:string;planHash:string;}
+export interface WeeklyContentTemplateBinding {carryover?:{sourceBindingRef:VersionedSocialRef;sourceBindingHash:string;planHash:string};bindingId:string;tenantId:string;programId:string;packageId:string;packageVersion:number;publicationTaskId:string;templateRef:VersionedSocialRef;candidateHash:string;confirmationId:string;confirmedBy:string;confirmedAt:string;recordHash:string;}
 
 /** Immutable explicit selection for one actual extraction task. */
 export interface WeeklyContentTemplateExecutionSelection {

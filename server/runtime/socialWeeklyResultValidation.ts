@@ -165,7 +165,9 @@ export async function validateWeeklyExecutionResults(store: DataStore, task: Wee
       const {readWeeklyPreSupplyHandoff}=await import('../starter198/socialWeeklyPreSupplyHandoff.js');
       const handoff=await readWeeklyPreSupplyHandoff(createStarter198Repository(store),task.tenantId,String(row.task_id));
       requireResult(handoff?.programId===task.programId&&handoff.packageId===task.packageId&&handoff.packageVersion===task.packageVersion&&handoff.publicationTaskId===task.publicationTaskId);
-      requireResult(!object(object(row.brief)._weeklyAuthority).publicationTask?.contentTemplateBindingRef,'weekly_template_pre_supply_validation_required');
+      requireResult(handoff);
+      const {validateWeeklyTemplateProductionOutput}=await import('../socialPrograms/weeklyTemplateStructure.js');
+      await validateWeeklyTemplateProductionOutput({store,task,contentRow:row,preSupply:handoff});
     } else if (['content', 'directing'].includes(task.workflowKind) && (ref.type === 'starter_social_content_script_baseline' && task.schedule.stepKind === 'script'
       || ref.type === 'starter_social_content_director_plan' && task.schedule.stepKind === 'storyboard')) {
       const row = await unique(store, 'starter_social_content_tasks', { tenant_id: task.tenantId, task_id: ref.id });

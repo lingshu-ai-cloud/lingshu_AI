@@ -567,3 +567,43 @@ Root修真实contentProgressNodes：已核只读等待状态下，脚本节点�
 统一types此次实际exit2（`/tmp/weekly-phase-current-types.log`）：首次baseline适配的narrativeMode可空与不存在inspiration sourcekind比较需修，未复用此前S8类型通过结果。代码仍在联调，pipeline暂停与samejob恢复完整正向尚未确认。
 
 上述等待UI改动后前端build实际退出0（`/tmp/weekly-phase-progress-current-build.log`），有既有大chunk提示；不表示后端首次baseline类型错误或真实阶段执行已解决。
+
+### 真实生产暂停与周卡核销联合验证（2026-10-10）
+
+当前源码与 `/tmp/weekly-actual-pause-detail-proof.log` 两项通过相互核对：正式素材提交、审核和绑定后，实际factory与planning worker完成前置任务；脚本卡经正式scheduler绑定原run，由真实durable worker运行producer，在供给前冻结分镜意图并暂停原job。供应商调用、成功回调、失败回调均为0，实际readSocialTaskDetail返回waitingForScheduledAssets=true、剩余时长null。随后脚本、分镜、材料核验经真实adapter和worker逐项核销，资产卡才可领取。该测试末端仍断言job.paused，证明领取顺序，尚未证明资产授权恢复或生产完成。
+
+首次baseline分支仍有一处读取nullable detail.theme，已改用前面真实窄化的themeId。随后完整types实际退出2（`/tmp/weekly-phase-theme-narrow-types.log`），当前失败转为adapter传递素材端口缺少repository；交由端口持有者修复，未声明类型全通过。
+
+按用户本轮上传要求，最新未完成版已推送至指定分支，提交 `8f2757fa772d5039433f7d5a31caa017a7ca154d`，远端与本地HEAD一致；本节及之后修复属于后续本地工作，不包含在该上传快照。未进行生产部署。
+
+后续同作业恢复联合测试实际40250退出0、两项通过（`/tmp/weekly-stage-resume-actual.log`）：恢复器改用真实task_mode列；实际资产claim恢复原job/run至queued，只保留一个job且供应商0调用；fresh授权校验通过，原worker未结算、unknown供应商回执、损坏回执、无proof的裸stage、proof漂移和周包撤回均被拒。真实pausedDetail同时投影到contentProgressNodes，脚本complete、逐镜blocked、后续pending且无active。证据仅覆盖恢复至队列与授权，不表示供应商后续制作、成片或发布已完成。新增负测组合仍待终态。
+
+端口补真实repository后的完整types进程17911实际退出0（`/tmp/weekly-phase-ports-repaired-types.log`）；测试和模板适配后续变更仍需对应核验。绑定模板的pre-supply校验目前仍明确阻塞，正补真实模板结构证据，不能以移除拒绝冒充链路打通。
+
+### 正式资产适配器与供给边界（2026-10-10）
+
+实际25960退出0（`/tmp/weekly-stage-adapter-boundary.log`）及源码末端核对：资产卡不直接绕过adapter调用恢复器，而是正式phaseAdapter.execute原leased任务，沿原job/run恢复queued；实际pauseWeeklyPreSupplyStage重新读取素材及授权后返回false，允许原producer继续。时钟对齐是独立测试的明确控制，未修改任务领取或准入条件；供应商仍为0调用。组合queue与真实阶段14项通过，错误claim、素材bytes漂移、重复恢复均拒。尚未证明实际供给成果。
+
+模板专门结构正负测试3项通过（`/tmp/weekly-template-planned-final.log`），从真实已确认模板生成新locked脚本，核角色/节奏约束，拒版本与意图漂移、planned冒充成片；该focused测试使用受控意图投影，未证明完整模板paused流水线。真实模板流水线另行验证。统一types65763实际退出0（`/tmp/weekly-template-presupply-current-types.log`），前端build78549实际退出0（`/tmp/weekly-template-stage-build.log`，既有大chunk提示），后续后台与测试变更仍需复核。
+
+实际后台注册发现新增material_preparation漏映射，而脚本依赖该任务。Root将backgroundJobs改为复用生产适配器WEEKLY_PRODUCTION_STEPS唯一列表，含prep；未启动真实后台或供应商来替代验证。另一真实缺口是新周默认图按createdAt向前排，24h/共享最早截止仅约束而未提供确认容量后的初次均衡倒排。初始capacity缺逐任务工时、资源并发和工作窗；正补初次容量排期合同，不把默认估计或日历七列视为可执行容量证明。
+
+### 原供应商未知回执对账（2026-10-10）
+
+实际96725退出0（`/tmp/weekly-stage-original-reconciliation.log`，定向1项）与末端源码核对：已授权原job持久unknown回执及原providerID后，既有控制器沿samejob/run进入reconciling，正式adapter保持provider_reconciliation待对账；fresh供给准入仍通过，实际Seedance gateway沿原ID受控GET两次并保存completed回执。新POST和再次预算预占均为0；网络响应及产物bytes为明确测试控制，不是live供应商结果。无providerID未知结果仍需原回执人工核对，未证明可自动恢复。
+
+模板完整pipeline首次实际运行在真实template admission拒绝，原因仍需从真实来源和下周绑定证据核对；focused3项通过不能覆盖此失败。后台注册变更后统一types3877运行中，尚未终态。
+
+### 首次容量排期接线与当前缺口（2026-10-10）
+
+后台统一步骤接线后的完整types3877实际退出0（`/tmp/weekly-background-stage-current-types.log`），后续初次排期源码与测试继续变化。PRD更新v1.10，明确新周草稿也需真实容量确认及初次/已执行修订区别。
+
+Root新增实际HTTP初次预览、版本/草稿漂移、严格请求体和身份范围测试，并接入前端parseInitialSchedulePreview核同一真实响应。首测28699实际退出1：initial wrapper先读周包，foreign租户得到409而非用户范围拒绝。已由service持有者复用真实用户tenant/role/disabled鉴权到预读前；HTTP测试的身份由独立Express注入AuthLocals，不是JWT签发或生产鉴权验收。
+
+首次容量服务已用真实正式规划图核验缺prep容量、激活漂移拒、确认后prep先script与成片提前24h、同提案重试同版本；新graph2生产任务正补强制容量门禁。初次确认可以解决自己的容量待确认理由，但不得忽略其它阻塞。联合门禁测试仍在运行，不能仅用此前服务通过宣称默认执行已强制。
+
+模板完整pipeline在严格准入后又暴露场景候选审核缺口，以及模板binding冻结V2、容量确认生成V3的版本不兼容。保持真实失败，正在建立新目标版本的不可变绑定迁移与提案确认协议，未扩大旧binding scope或伪造审核成功。
+
+首次容量门禁联合93137实际退出0、18项通过（`/tmp/weekly-initial-gate-tests.log`）：graph2生产卡保留独立容量待确认理由，普通unblock不能删除，完整fresh snapshot才清除；倒排预测只排除确认本身可解决的该理由，其他阻塞保留。旧历史图未回写。此前未走真实容量确认的phase测试不能计为当前新门禁下通过。
+
+Root将稳定initial router挂入真实socialPrograms父路由，沿现有getProgram租户门禁与外层requireAuth/support只读限制。10206实际退出0（`/tmp/weekly-initial-mounted-http.log`）：真实父路由initial-schedule路径返回200，并由前端真实parser核验完整图；独立scope测试覆盖401/foreign403/disabled403、严格body、版本漂移和active草稿拒，预览无业务数据写入及0job/发布调用。AuthLocals测试注入，不冒充JWT端到端。前端独立7项通过（`/tmp/weekly-initial-client-final.log`），后续全源码types/build进行中。

@@ -1,3 +1,4 @@
+import {INITIAL_CAPACITY_SCHEDULE_REQUIRED} from './weeklyInitialScheduleGate.js';
 import {createWeeklyExecutionContinuationService} from './weeklyExecutionContinuations.js';
 import {withExecutionPackageGate,assertExecutionPackageGate,executionPackageFrozen} from './weeklyExecutionGate.js';
 import {applyFrozenWeeklySchedule,scheduleHash} from './weeklyScheduleSnapshots.js';
@@ -195,7 +196,7 @@ function makeTask(tenantId: string, pkg: WeeklyOperatingPackage, seed: TaskSeed,
       actualFinishedAt: null,
     },
     status: 'pending_activation',
-    ownBlockingReasons: [...new Set(seed.ownBlockingReasons)],
+    ownBlockingReasons: [...new Set([...seed.ownBlockingReasons,...(pkg.executionGraphVersion===2&&seed.publicationTaskId&&(seed.workflowKind==='content'||['script','storyboard'].includes(seed.stepKind))?[INITIAL_CAPACITY_SCHEDULE_REQUIRED]:[])])],
     inheritedBlockingTaskIds: [],
     attempt: 0,
     maxAttempts: 3,
@@ -708,7 +709,7 @@ export function createWeeklyExecutionTaskService(dataStore: DataStore) {
         if (['succeeded', 'cancelled', 'dead_letter'].includes(task.status)) throw new SocialProgramError('weekly_execution_task_terminal', 409, '终态任务不能解除阻塞。');
         return {
           ...task,
-          ownBlockingReasons: reason ? task.ownBlockingReasons.filter(item => item !== reason) : [],
+          ownBlockingReasons: task.ownBlockingReasons.filter(item => item===INITIAL_CAPACITY_SCHEDULE_REQUIRED || (reason ? item!==reason : false)),
           ...(reason && task.lastError?.code === reason ? { lastError: null } : {}),
           updatedAt: now,
         };

@@ -1,3 +1,4 @@
+import {INITIAL_CAPACITY_SCHEDULE_REQUIRED} from './weeklyInitialScheduleGate.js';
 import type {WeeklyQueueSchedulingEvidence} from './weeklyQueueSchedulingEvidence.js';
 import { publicationInstant } from './publicationDeadlines.js';
 import type { WeeklyRecoveryInput } from './weeklyRecoveryAssessment.js';
@@ -143,8 +144,11 @@ export function planWeeklyBackwardSchedule(input: WeeklyBackwardScheduleInput): 
     if(queueMapping){if(queueMapping.taskFingerprint!==backwardTaskEvidenceFingerprint(task)){row.reasons.push('queue_task_evidence_changed');continue;}if(queueMapping.reasons.length){row.reasons.push(...queueMapping.reasons);continue;}if(!queueMapping.productionSubjectId||queueMapping.resourceKeys.length!==3||new Set(queueMapping.resourceKeys).size!==3||queueMapping.resourceKeys.some(key=>!vector!.pools[key])){row.reasons.push('queue_resource_vector_incomplete');continue;}if(queueMapping.resourceKeys.some(key=>vector!.pools[key]!.unknownRunningOccupation)){row.reasons.push('queue_running_finish_and_cost_unverified');continue;}}
     if(unresolvedRunningCommitment){row.reasons.push('running_commitment_evidence_required');continue;}
     if (task.status === 'cancelled' || task.status === 'dead_letter') { row.reasons.push('task_requires_explicit_recovery'); continue; }
-    if (task.ownBlockingReasons?.length) { row.reasons.push(...task.ownBlockingReasons); continue; }
-    if (task.status === 'blocked' && !task.inheritedBlockingTaskIds?.length) { row.reasons.push('blocking_state_requires_verification'); continue; }
+    // Capacity confirmation is the purpose of this forecast; its own admission
+    // blocker remains on the stored task until the resulting snapshot is applied.
+    const unresolvedOwnReasons=task.ownBlockingReasons?.filter(reason=>reason!==INITIAL_CAPACITY_SCHEDULE_REQUIRED)??[];
+    if (unresolvedOwnReasons.length) { row.reasons.push(...unresolvedOwnReasons); continue; }
+    if (task.status === 'blocked' && !task.inheritedBlockingTaskIds?.length && !task.ownBlockingReasons?.includes(INITIAL_CAPACITY_SCHEDULE_REQUIRED)) { row.reasons.push('blocking_state_requires_verification'); continue; }
     if(['performance_monitoring','weekly_review','template_extraction','template_performance_validation'].includes(task.schedule.stepKind)&&!task.schedule.latestFinishAt&&!operationalDeadlines.has(task.taskId)){row.reasons.push('operational_deadline_required');continue;}
     if (!constraint) { row.reasons.push('remaining_work_evidence_required'); continue; }
     if ([constraint.remainingMinutes,constraint.bufferMinutes,constraint.remainingCostCny].some(value => !Number.isFinite(value) || value < 0)) throw new Error('Invalid backward remaining work');

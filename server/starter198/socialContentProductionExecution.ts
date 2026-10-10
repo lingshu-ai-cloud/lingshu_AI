@@ -572,7 +572,7 @@ export async function runSocialContentAutoProduction(input: {
           if(!resolved)throw new SocialContentWorkflowError('weekly_reference_source_missing',409);return resolved.match;
         })():await resolveSocialInspirationScript({
           tenantId: input.tenantId,
-          themeId: detail.theme.themeId,
+          themeId,
           verifiedContext,
         })
       : null;

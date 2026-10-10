@@ -37,6 +37,7 @@ import { createSocialWeeklyCustomerChannelScopeRouter } from './socialWeeklyCust
 import { createWeeklyCustomerSendRecoveryService } from '../socialPrograms/weeklyCustomerSendRecovery.js';
 import { createSocialWeeklySalesConversationEvidenceRouter } from './socialWeeklySalesConversationEvidence.js';
 import { createSocialWeeklyScheduleRevisionsRouter } from './socialWeeklyScheduleRevisions.js';
+import { createWeeklyInitialScheduleRouter } from './weeklyInitialSchedule.js';
 import { createSocialWeeklyMaterialEvidenceConfigurationRouter } from './socialWeeklyMaterialEvidenceConfiguration.js';
 import { createSocialCustomerFeedbackTopicsRouter } from './socialCustomerFeedbackTopics.js';
 import { projectWeeklyContinuationCalendar } from '../socialPrograms/weeklyContinuationCalendar.js';
@@ -81,6 +82,10 @@ export function createSocialProgramsRouter(dataStore: DataStore = store, authent
     await service.getProgram(tenantId, String(req.params.programId || ''));
     next();
   }), createSocialWeeklyMaterialRequestsRouter(dataStore));
+  router.use('/:programId/operating-packages/:packageId/initial-schedule', asyncRoute(async (req, res, next) => {
+    await service.getProgram((res.locals as AuthLocals).tenantId, req.params.programId);
+    next();
+  }), createWeeklyInitialScheduleRouter(dataStore));
   router.use('/:programId/operating-packages/:packageId/schedule-revisions', asyncRoute(async (req, res, next) => {
     await service.getProgram((res.locals as AuthLocals).tenantId, req.params.programId);
     next();
