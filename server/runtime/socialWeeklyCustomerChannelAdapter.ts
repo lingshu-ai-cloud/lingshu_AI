@@ -23,6 +23,7 @@ async function authority(store:DataStore,task:WeeklyExecutionTask,ports:Ports={}
  const c=channel(task),authorization=await (ports.readAuthorization??readCustomerMessagingAuthorization)(task.tenantId,c,{dataStore:store});
  if(!authorization.tenantAuthorized)fail(authorization.reasons.find(reason=>reason!=='followup_background_worker_disabled')??'customer_channel_not_authorized');
  if(!authorization.providerReady)fail(`${c}_provider_not_ready`);
+ if(!authorization.backgroundWorkerEnabled)fail('followup_background_worker_disabled');
  if(c==='whatsapp'){
   const apps=await rows(store,'tenant_platform_apps',{tenant_id:task.tenantId,platform:'meta'});if(apps.length!==1)fail('whatsapp_account_ambiguous');
   const proof=await (ports.readWhatsApp??readCanonicalWhatsAppAccount)(store,task.tenantId,apps[0]!.id);return{channel:c,accountId:proof.accountId,nativeAccountId:proof.nativeAccountId,accountHash:proof.accountHash};
