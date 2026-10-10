@@ -1,8 +1,9 @@
 const api = require('../../lib/api');
 const model = require('../../lib/workbench');
 const starter = require('../../lib/starter');
+const demo = require('../../lib/workbench-demo');
 Page({
-    data: { loggedIn: false, email: '', password: '', userName: '', tab: 'work', loading: false, error: '', week: model.week(), selectedDay: model.day(new Date().toISOString()), overview: {}, tasks: [], agents: [], posts: [], calendarItems: [], matters: [], snoozed: [], activeMatter: null, cardX: 0, swipeLabel: '', metrics: [], dayPosts: [], sheet: null, sheetItems: [], detail: null, processing: false, assistantMode: 'chat', messages: [], input: '', sending: false, recording: false, transcribing: false, offline: false, suggestions: ['这周还有哪些任务没完成？', '哪条视频需要我处理？', '今天有哪些新询盘？'], notifications: [], chatAnchor: '' },
+    data: { loggedIn: false, email: '', password: '', userName: '', tab: 'work', loading: false, error: '', week: model.week(), selectedDay: model.day(new Date().toISOString()), overview: {}, tasks: [], agents: [], posts: [], calendarItems: [], matters: [], snoozed: [], activeMatter: null, cardX: 0, swipeDirection: '', swipeReady: false, swipeLabel: '', metrics: [], dayPosts: [], sheet: null, sheetItems: [], detail: null, processing: false, assistantMode: 'chat', messages: [], input: '', sending: false, recording: false, transcribing: false, offline: false, suggestions: ['这周还有哪些任务没完成？', '哪条视频需要我处理？', '今天有哪些新询盘？'], notifications: [], chatAnchor: '' },
     onLoad() { this.networkListener = r => this.setData({ offline: !r.isConnected }); if (wx.onNetworkStatusChange) wx.onNetworkStatusChange(this.networkListener); if (wx.getNetworkType) wx.getNetworkType({success:r=>this.setData({offline:r.networkType === 'none'})}); if (api.token())
         this.restore(); },
     onShow() { if (!api.token()) { if (this.data.loggedIn) this.signOut(); return; } if (this.data.loggedIn) { this.startSync(); this.refresh(); } },
@@ -54,6 +55,7 @@ Page({
         const epoch = this.epoch || 0;
         this.setData({ loading: true, error: '' });
         try {
+            if (this.workspaceKind === 'demo') { this.loadDemo(); return; }
             if (!this.workspaceKind) { const kind = api.workspaceKind ? await api.workspaceKind() : 'legacy'; if (epoch !== (this.epoch || 0) || this.disposed) return; this.workspaceKind = kind; }
             if (this.workspaceKind === 'starter') {
                 const queue = await api.request('starter-198/mobile/queue');
@@ -109,7 +111,8 @@ Page({
         catch (e) {
             if (epoch === (this.epoch || 0)) {
                 if (!api.token()) this.signOut();
-                this.setData({ error: e.message });
+                else if (e.status === 403 && (e.code === 'profile_not_enabled' || /profile_not_enabled/.test(e.message || ''))) this.loadDemo();
+                else this.setData({ error: e.message });
             }
         }
         finally {
@@ -122,19 +125,23 @@ Page({
             }
         }
     },
+    loadDemo() { const projection = demo.project(this.data.week); projection.activeMatter = projection.matters[0] || null; this.workspaceKind = 'demo'; this.snoozes = {}; this.setData({...projection,error:'',cardX:0}); this.updateDay(); },
     changeWeek(e) { if (this.data.recording && this.recorder) {this.cancelVoice=true;this.recorder.stop();} this.setData({sending:false,transcribing:false,recording:false}); this.epoch = (this.epoch || 0) + 1; const offset = (this.weekOffset || 0) + Number(e.currentTarget.dataset.offset); this.weekOffset = offset; const week = model.week(Date.now(), offset); this.setData({ week, selectedDay: week.start, posts: [], calendarItems: [], dayPosts: [], tasks: [], metrics: [], matters: [], activeMatter: null, sheet: null, detail: null }); this.refresh(); },
     selectDay(e) { this.setData({ selectedDay: e.currentTarget.dataset.date }); this.updateDay(); },
     updateDay() { this.setData({ dayPosts: this.data.calendarItems.filter(p => p.date === this.data.selectedDay), days: this.data.week.days.map(d => ({ ...d, count: this.data.calendarItems.filter(p => p.date === d.date).length })) }); },
     touchStart(e) { const t = e.touches[0]; this.gesture = { x: t.clientX, y: t.clientY, dx: 0, dy: 0 }; },
     touchMove(e) { if (!this.gesture)
-        return; const t = e.touches[0]; this.gesture.dx = t.clientX - this.gesture.x; this.gesture.dy = t.clientY - this.gesture.y; if (Math.abs(this.gesture.dx) > Math.abs(this.gesture.dy) * 1.4)
-        this.setData({ cardX: Math.max(-140, Math.min(140, this.gesture.dx)), swipeLabel: this.gesture.dx > 0 ? '现在处理 →' : '← 稍后处理' }); },
-    touchEnd() { const g = this.gesture; this.gesture = null; this.setData({ cardX: 0, swipeLabel: '' }); if (!g)
+        return; const t = e.touches[0]; this.gesture.dx = t.clientX - this.gesture.x; this.gesture.dy = t.clientY - this.gesture.y; if (Math.abs(this.gesture.dx) > Math.abs(this.gesture.dy) * 1.4) {
+        const direction = this.gesture.dx > 0 ? 'process' : 'later';
+        const ready = Math.abs(this.gesture.dx) >= 85;
+        this.setData({ cardX: Math.max(-140, Math.min(140, this.gesture.dx)), swipeDirection: direction, swipeReady: ready, swipeLabel: direction === 'process' ? (ready ? '松手，立即处理' : '继续右滑，立即处理') : (ready ? '松手，稍后提醒' : '继续左滑，稍后提醒') });
+    } },
+    touchEnd() { const g = this.gesture; this.gesture = null; this.setData({ cardX: 0, swipeDirection: '', swipeReady: false, swipeLabel: '' }); if (!g)
         return; const action = model.swipe(g.dx, g.dy);
         if (action) this.lastGestureAt = Date.now(); if (action === 'later')
         this.snooze(); if (action === 'process')
         this.processMatter(); },
-    touchCancel() { this.gesture = null; this.setData({ cardX: 0, swipeLabel: '' }); },
+    touchCancel() { this.gesture = null; this.setData({ cardX: 0, swipeDirection: '', swipeReady: false, swipeLabel: '' }); },
     snooze() {
         const item = this.data.activeMatter;
         if (!item || this.data.processing || this.data.offline) return;
@@ -151,7 +158,7 @@ Page({
         const epoch = this.epoch || 0;
         this.setData({ processing: true, error: '' });
         try {
-            await api.request(this.workspaceKind === 'starter' ? 'starter-198/mobile/snooze' : 'mobile-workbench/snooze', 'POST', { matterId: item.id, until });
+            if (this.workspaceKind !== 'demo') await api.request(this.workspaceKind === 'starter' ? 'starter-198/mobile/snooze' : 'mobile-workbench/snooze', 'POST', { matterId: item.id, until });
             if (epoch !== (this.epoch || 0) || this.disposed) return;
             if (until) {
                 this.snoozes[item.id] = until; this.lastSnooze = item.id;
@@ -202,7 +209,7 @@ Page({
         return; const task = this.data.tasks.find(t => t.id === (p.workflowTaskId || p.taskId)); this.setData({ detail: task ? { ...task, post: p, steps: p.steps || [], stage: p.stage || '' } : { ...p, kind: p.kind, reason: p.reason || p.publishError || '当前内容排期', statusLabel: p.statusLabel } }); if (task)
         if (!task.starter) this.loadTaskEvents(task); },
     async loadTaskEvents(task) {
-        if (!task?.run_id) return;
+        if (!task?.run_id || this.workspaceKind === 'demo') return;
         const epoch = this.epoch || 0;
         const requestId = this.detailRequest = (this.detailRequest || 0) + 1;
         this.setData({'detail.loading':true, 'detail.loadError':''});
@@ -235,10 +242,10 @@ Page({
     async decideApproval(e) { if (this.data.processing || !this.data.detail?.approval)
         return; const a = this.data.detail.approval; const decision = e.currentTarget.dataset.decision; const epoch = this.epoch || 0; wx.showModal({ title: decision === 'approved' ? '确认批准此事项？' : '退回此事项？', content: a.action_summary, success: async (r) => { if (!r.confirm || epoch !== (this.epoch || 0) || this.disposed)
             return; this.setData({ processing: true }); try {
-            await this.submitWorkbenchAction('approval_decision', a.id, a.subject_version || a.version || a.updated_at, { decision, note: '移动工作台确认' });
+            if (this.workspaceKind !== 'demo') await this.submitWorkbenchAction('approval_decision', a.id, a.subject_version || a.version || a.updated_at, { decision, note: '移动工作台确认' });
             if (epoch !== (this.epoch || 0) || this.disposed) return;
-            this.setData({ detail: null });
-            await this.refresh();
+            if (this.workspaceKind === 'demo') { const matters=this.data.matters.filter(i=>i.id!=='approval:'+a.id); this.setData({detail:null,matters,activeMatter:matters[0]||null}); wx.showToast({title:decision==='approved'?'已批准（演示）':'已退回（演示）',icon:'none'}); }
+            else { this.setData({ detail: null }); await this.refresh(); }
         }
         catch (e) {
             if (epoch === (this.epoch || 0)) this.setData({ error: e.message });
@@ -249,11 +256,12 @@ Page({
     async retryTask() { const task = this.data.detail; if (!task?.id || this.data.processing)
         return; const epoch = this.epoch || 0; wx.showModal({ title: '重试当前任务', content: '系统会重新核验依赖与预算，可能产生新增费用。确认后提交恢复请求。', success: async (r) => { if (!r.confirm || epoch !== (this.epoch || 0) || this.disposed)
             return; this.setData({ processing: true }); try {
-            await this.submitWorkbenchAction('retry_task', task.id, task.task_version || task.version || task.updated_at, { instruction: '重试当前任务并重置下游', rerunDownstream: true });
+            if (this.workspaceKind !== 'demo') await this.submitWorkbenchAction('retry_task', task.id, task.task_version || task.version || task.updated_at, { instruction: '重试当前任务并重置下游', rerunDownstream: true });
             if (epoch !== (this.epoch || 0) || this.disposed) return;
             this.setData({ detail: null });
-            await this.refresh();
-            wx.showToast({ title: '已提交恢复请求', icon: 'none' });
+            if (this.workspaceKind === 'demo') { const matters=this.data.matters.filter(i=>i.id!=='task:'+task.id); this.setData({matters,activeMatter:matters[0]||null}); }
+            else await this.refresh();
+            wx.showToast({ title: this.workspaceKind === 'demo' ? '已重试（演示）' : '已提交恢复请求', icon: 'none' });
         }
         catch (e) {
             if (epoch === (this.epoch || 0)) this.setData({ error: e.message });
@@ -283,7 +291,7 @@ Page({
     async send() { const input = this.data.input.trim(); if (!input || this.data.sending)
         return; const epoch = this.epoch || 0; const messages = [...this.data.messages, { id: 'm' + Date.now(), role: 'user', content: input }]; this.setData({ messages, input: '', sending: true, error: '' }); try {
         const context = JSON.stringify({ week: this.data.week, metrics: this.data.metrics, tasks: this.data.tasks, agents: this.data.agents });
-        const answer = this.workspaceKind === 'starter' ? starter.answer(this.data.starterWorkspace, input) : await api.chat([{ role: 'user', content: '以下为当前账号工作数据，仅据此回答实际进度；未提供数据明确说未知；任何执行请求仅提出操作建议，不宣称已执行。\n' + context }, ...messages.slice(-12).map(m => ({ role: m.role, content: m.content }))]);
+        const answer = this.workspaceKind === 'starter' ? starter.answer(this.data.starterWorkspace, input) : this.workspaceKind === 'demo' ? demo.answer(input) : await api.chat([{ role: 'user', content: '以下为当前账号工作数据，仅据此回答实际进度；未提供数据明确说未知；任何执行请求仅提出操作建议，不宣称已执行。\n' + context }, ...messages.slice(-12).map(m => ({ role: m.role, content: m.content }))]);
         if (epoch !== (this.epoch || 0) || this.disposed)
             return;
         this.inputCommandKey = null;
