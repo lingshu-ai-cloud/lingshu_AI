@@ -1,3 +1,4 @@
+import { executionInventoryApprovalTarget } from './calendarPublicationDestination';
 import {calendarClock,calendarDateTime,frozenCalendarClock} from './calendarTime';
 import {isTemplateCalendarStep} from './templateCalendarNavigation';
 import {executionCalendarPresentation,type ExecutionCalendarPresentationOptions} from './weeklyExecutionCalendarPresentation';
@@ -51,6 +52,7 @@ export function projectExecutionCalendar(tasks: WeeklyExecutionTask[], labels: R
     const planningRisks = (task.schedule.planningRisks ?? []).map(code => code === 'publication_deadline_at_risk' ? '预计完成时间晚于发布所需截止' : code === 'precise_publish_time_required' ? '缺少包含时区的具体发布时间' : code);
     const reason = [...task.ownBlockingReasons, ...task.inheritedBlockingTaskIds.map(id => `等待上游 ${id}`), ...planningRisks, ...currentRisks, ...(task.lastError ? [task.lastError.message] : [])].join('；');
     const boundIds = task.publicationTaskId ? bindings.get(bindingKey(task)) : undefined;
+    const inventoryTarget = executionInventoryApprovalTarget(task);
     return [{
       id: task.taskId,
       executionStep: task.schedule.stepKind,
@@ -83,7 +85,7 @@ export function projectExecutionCalendar(tasks: WeeklyExecutionTask[], labels: R
       ...(['performance_monitoring','weekly_review'].includes(task.schedule.stepKind)&&task.tenantId&&task.programId&&task.packageId&&Number.isSafeInteger(task.packageVersion)&&task.packageVersion>0?{reviewTarget:{tenantId:task.tenantId,programId:task.programId,packageId:task.packageId,packageVersion:task.packageVersion,taskId:task.taskId,stepKind:task.schedule.stepKind as 'performance_monitoring'|'weekly_review'}}:{}),
       ...(isTemplateCalendarStep(task.schedule.stepKind)?{templateTarget:{tenantId:task.tenantId,programId:task.programId,packageId:task.packageId,packageVersion:task.packageVersion,taskId:task.taskId,stepKind:task.schedule.stepKind}}:{}),
       ...(isPlanningCalendarStep(task.schedule.stepKind)&&task.tenantId&&task.programId&&task.packageId&&Number.isSafeInteger(task.packageVersion)&&task.packageVersion>0?{planningTarget:{tenantId:task.tenantId,programId:task.programId,packageId:task.packageId,packageVersion:task.packageVersion,taskId:task.taskId,stepKind:task.schedule.stepKind}}:{}),
-      ...((task.inputSnapshot?.publicationTask as {inventoryReuseRef?:{type:string;id:string;version:number}})?.inventoryReuseRef?.type==='weekly_inventory_binding'?{inventoryTarget:{tenantId:task.tenantId,programId:task.programId,packageId:task.packageId,packageVersion:task.packageVersion,bindingId:(task.inputSnapshot.publicationTask as {inventoryReuseRef:{id:string}}).inventoryReuseRef.id,publicationTaskId:task.publicationTaskId!,taskId:task.taskId}}:{}),
+      ...(inventoryTarget ? {inventoryTarget} : {}),
       ...(task.schedule.stepKind==='publishing'&&task.workflowKind==='publishing'&&task.publicationTaskId&&task.accountId?{publicationExecutionTarget:{tenantId:task.tenantId,programId:task.programId,packageId:task.packageId,packageVersion:task.packageVersion,taskId:task.taskId,publicationTaskId:task.publicationTaskId,accountId:task.accountId}}:{}),
       productionTaskId: (task.schedule.stepKind==='publishing'||isTemplateCalendarStep(task.schedule.stepKind)||isPlanningCalendarStep(task.schedule.stepKind)||['performance_monitoring','weekly_review'].includes(task.schedule.stepKind)) ? undefined : boundIds?.size === 1 ? [...boundIds][0] : undefined,
       productionExecutionTaskId: (task.schedule.stepKind==='publishing'||isTemplateCalendarStep(task.schedule.stepKind)||isPlanningCalendarStep(task.schedule.stepKind)||['performance_monitoring','weekly_review'].includes(task.schedule.stepKind)||boundIds?.size!==1) ? undefined : task.taskId,

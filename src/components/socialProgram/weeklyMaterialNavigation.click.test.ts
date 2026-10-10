@@ -4,7 +4,7 @@ import {materialActionPanelId,openMaterialPanelRequest} from './weeklyMaterialNa
 function surface(action:'upload'|'verification'){
  let scrolls=0,focuses=0;const details={tagName:'DETAILS',open:false,parentElement:null};
  const control={focus:()=>{focuses++;}};
- const node={id:materialActionPanelId('program','week',2,'request',action),dataset:{materialProgram:'program',materialPackage:'week',materialVersion:'2',materialRequest:'request',materialAction:action},parentElement:details,querySelector:()=>control,scrollIntoView:()=>{scrolls++;}};
+ const node={id:materialActionPanelId('program','week',2,'request',action),dataset:{materialProgram:'program',materialPackage:'week',materialVersion:'2',materialRequest:'request',materialAction:action as string},parentElement:details,querySelector:()=>control,scrollIntoView:()=>{scrolls++;}};
  return {node,details,effects:()=>[scrolls,focuses]};
 }
 const root=(nodes:unknown[])=>({querySelectorAll:()=>nodes}) as unknown as Pick<HTMLElement,'querySelectorAll'>;
