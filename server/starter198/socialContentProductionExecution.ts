@@ -2,7 +2,7 @@ import {readWeeklyReplicationAuthority} from './socialWeeklyReplicationAuthority
 import {assertAccountPlaybookBaselineCurrent} from './socialAccountProductionConstraints.js';
 import {readWeeklySchedulerMaterialPlan} from './socialWeeklySchedulerMaterialPlan.js';
 import {assertWeeklyProductionMaterialAdmission} from './socialWeeklyProductionMaterialGate.js';
-import {freezeWeeklyPreSupplyHandoff,pauseWeeklyPreSupplyStage} from './socialWeeklyPreSupplyHandoff.js';
+import {freezeWeeklyPreSupplyHandoff,pauseWeeklyPreSupplyStage,readWeeklyPreSupplyHandoff} from './socialWeeklyPreSupplyHandoff.js';
 import { persistSocialProductionWorkspace } from './socialContentProductionWorkspace.js';
 import {persistInitialSocialSceneCache,initialSceneCacheInputFingerprint,initialSceneSourceHashes,type InitialSceneQualityReport} from './socialContentInitialSceneCache.js';
 import {buildSocialProductionHandoff} from './socialContentProductionHandoff.js';
@@ -75,6 +75,7 @@ const { composite } = require('../../desktop/render.cjs') as { composite: (manif
 import { MEDIA_ROOT, type ProductionAsset, type SocialProductionBaseline, type SocialProductionAdaptation, type SocialReviewRevisionDirective, automaticSocialMaterialEligible, detectDistinctTaskVideoSegments, hasExactTaskProductAssociation, resolveTaskProductionMaterialLocation, taskProductionAssets, systemThemeGraphicAssets, applyZeroAssetTruthSafeNarration, socialReviewRevisionDirective, applySocialReviewRevision, createVideoCover } from './socialContentAutoProduction.js';
 import { AUTO_SCHEMA, analyzeProductionAssets, existingAssetSupplyAdapters, finishExecution, productionAdaptation, resolveLockedBgm, selectDirectorBgm, writeExecutionStage } from './socialContentAutoProduction.js';
 export interface SocialContentAutoProductionRuntime {
+  loadProductionAssets?: typeof taskProductionAssets;
   selectDirectorBgm?: typeof selectDirectorBgm;
   synthesizeVoice?: typeof synthesizeStudioVoiceForAutomation;
   resolveBgm?: typeof resolveLockedBgm;
@@ -495,7 +496,13 @@ export async function runSocialContentAutoProduction(input: {
   const weeklyAuthority=socialObject(socialObject(socialJson(taskRecord.brief))?._weeklyAuthority),weeklyPackage=socialObject(weeklyAuthority?.weeklyPackage),weeklyPublication=socialObject(weeklyAuthority?.publicationTask);
   const templateBindingRef=socialObject(weeklyPublication?.contentTemplateBindingRef);
   const contentTemplateStructure=templateBindingRef?await (async()=>{if(!input.repository.dataStore)throw new SocialContentWorkflowError('content_template_storage_unavailable',409);return readWeeklyTemplateStructure(input.repository.dataStore,{tenantId:input.tenantId,programId:String(weeklyPackage?.programId),packageId:String(weeklyPackage?.packageId),packageVersion:Number(weeklyPackage?.version),publicationTaskId:String(weeklyPublication?.publicationTaskId)},templateBindingRef as unknown as import('../../shared/contracts/socialProgram.js').VersionedSocialRef);})():undefined;
-  let baseline = parseStoredSocialScriptBaseline(taskRecord.script_baseline);
+  // A resumed weekly run must execute the baseline already sealed into its
+  // pre-supply handoff. Re-grounding after the asset card is claimed changes
+  // the very evidence that authorized continuation of the original job.
+  const existingWeeklyPreSupply = weeklyPackage?.executionGraphVersion===2
+    ? await readWeeklyPreSupplyHandoff(input.repository,input.tenantId,input.taskId)
+    : null;
+  let baseline = existingWeeklyPreSupply?.baseline ?? parseStoredSocialScriptBaseline(taskRecord.script_baseline);
   let initialAuthorityBaselineVersion:number|null=null;
   if(baseline&&originalReplication?.context.verifiedAccountPlaybook&&weeklyPackage?.executionGraphVersion===2&&!baseline.accountPlaybookConstraints){
     // Creation precedes the weekly authority binding. Such an initial script
@@ -539,7 +546,7 @@ export async function runSocialContentAutoProduction(input: {
     // system-theme baseline so first-content tasks gain the new safe fallback.
     baseline = null;
   }
-  const replicationBaselineOutdated = Boolean(detail.replicationScript?.shots.length
+  const replicationBaselineOutdated = !existingWeeklyPreSupply && Boolean(detail.replicationScript?.shots.length
     && (baseline?.scenes.length !== detail.replicationScript.shots.length
       || detail.replicationScript.shots.some((shot, index) => (
         socialText(baseline?.scenes[index]?.voiceover) !== socialText(shot.spokenText || shot.captionText)
@@ -615,7 +622,7 @@ export async function runSocialContentAutoProduction(input: {
 	  const productionMode = detail.brief.productionMode ?? 'concept_preview';
 	  const paidVisualProvidersAllowed = productionApproach === 'ai_enhanced';
 	  const zeroAssetRoute = detail.assetSupplyPlan?.productionRoute === 'zero_asset_generation';
-	  const rawAssets = await taskProductionAssets({
+	  const rawAssets = await (input.runtime?.loadProductionAssets ?? taskProductionAssets)({
 	    tenantId: input.tenantId,
 	    sources: detail.sources,
 	    productRef: detail.brief.productRef,
@@ -728,7 +735,9 @@ export async function runSocialContentAutoProduction(input: {
       });
     }
   }
-  let plan = buildSocialProductionPlan({ baseline: activeBaseline, assets, themeId: detail.theme?.themeId ?? null });
+  let plan = buildSocialProductionPlan({ baseline: activeBaseline, assets, themeId: detail.theme?.themeId ?? null,
+    ...(assetSupplyExecution?{routedSceneAssets:assetSupplyExecution.shots.map(shot=>({sceneId:shot.sceneId,assetId:shot.assetId}))}:{}), });
+  if(!plan.ok&&assetSupplyExecution)throw new Error(`asset_supply_scene_binding_invalid:${plan.reasonCode}:${plan.message}`);
   if (!plan.ok && productionApproach !== 'material_cut') {
     if (productionMode === 'social_ready' && rawAssets.length === 0 && !assetSupplyExecution) {
       throw new Error('production_input_required:当前没有可用于正式成片的客户画面。请上传至少一段产品视频或三张产品图片；系统不会把说明卡片冒充正式成片。');

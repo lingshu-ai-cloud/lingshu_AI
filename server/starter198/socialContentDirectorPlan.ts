@@ -402,7 +402,7 @@ export function buildSocialDirectorPlan(input: {
     const caption = sameSpokenContent(scene.narration, baselineScene.voiceover || baselineScene.narration)
       ? socialText(baselineScene.caption) || voiceover
       : voiceover;
-    if (!voiceover || !caption || Object.values(script).some(value => !value)) {
+    if (Object.values(script).some(value => !value)) {
       throw new SocialContentWorkflowError('social_content_director_plan_script_invalid', 503);
     }
     return {
@@ -435,6 +435,9 @@ export function buildSocialDirectorPlan(input: {
       },
     };
   });
+  if (!scenes.some(scene => socialText(scene.voiceover))) {
+    throw new SocialContentWorkflowError('social_content_director_plan_script_invalid', 503);
+  }
   const qualityGates: StoredSocialDirectorPlan['qualityGates'] = [
     {
       gateId: 'script_grounding',
@@ -731,19 +734,22 @@ export function parseStoredSocialDirectorPlan(value: unknown): StoredSocialDirec
     || Number(bgmSelection.volume) !== Number(music.volume)) {
     throw new SocialContentWorkflowError('social_content_director_plan_record_invalid', 503);
   }
+  let spokenSceneCount = 0;
   for (const value of scenesValue) {
     const scene = socialObject(value);
     const script = socialObject(scene?.script);
     const shotPlan = socialObject(scene?.shotPlan);
     const mapping = socialObject(scene?.materialMapping);
     if (!scene || !script || !shotPlan || !mapping
-      || !socialText(scene.sceneId) || !socialText(scene.voiceover) || !socialText(scene.caption)
+      || !socialText(scene.sceneId) || typeof scene.voiceover !== 'string' || typeof scene.caption !== 'string'
       || !socialText(script.text) || !socialText(script.shotFunction) || !socialText(script.subject) || !socialText(script.action)
       || !socialText(shotPlan.clipId) || !socialText(shotPlan.assetId) || !socialText(shotPlan.assetName)
       || !['video', 'image'].includes(socialText(shotPlan.type))) {
       throw new SocialContentWorkflowError('social_content_director_plan_record_invalid', 503);
     }
+    if (socialText(scene.voiceover)) spokenSceneCount += 1;
   }
+  if (!spokenSceneCount) throw new SocialContentWorkflowError('social_content_director_plan_record_invalid', 503);
   for (const value of materialsValue) {
     const material = socialObject(value);
     const clips = socialJson(material?.clips);

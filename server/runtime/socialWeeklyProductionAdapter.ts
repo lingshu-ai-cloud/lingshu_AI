@@ -60,6 +60,8 @@ export interface WeeklyProductionPorts {
   bindAuthority?: typeof bindWeeklyProductionAuthority;
   persistResultAuthority?: typeof persistWeeklyProductionResultAuthority;
   orchestratorQueue?: Parameters<typeof startSocialContentTask>[0]['orchestratorQueue'];
+  /** Shared scan clock for lease and continuation authorization checks. */
+  now?: () => Date;
 }
 /** Explicit customer evidence promises cannot be replaced by an automatic visual plan. */
 export function requiresFrozenHumanMaterialContract(requirements: string[]): boolean {
@@ -83,6 +85,7 @@ export function createSocialWeeklyProductionAdapter(dataStore: DataStore, ports:
   const sourceOptions=ports.sourceOptions??socialContentSourceOptions;
   const addSource=ports.addSource??addSocialTaskSource;
   const orchestratorQueue = ports.orchestratorQueue ?? createStarter198OrchestratorQueue({ repository, dataStore });
+  const now = ports.now ?? (() => new Date());
   return { async execute(task: WeeklyExecutionTask): Promise<WeeklyExecutionAdapterResult> {
     if(task.inputSnapshot?.weeklyContinuationPending||task.inputSnapshot?.weeklyContinuationRef)return blocked('weekly_execution_continuation_observation_required','该任务承接已有真实运行，只能由承接适配器观察及结算，禁止新启动生产。');
     try {
@@ -300,7 +303,7 @@ export function createSocialWeeklyProductionAdapter(dataStore: DataStore, ports:
     if (!detail.runId) return blocked('weekly_production_confirmation_required', '内容任务已保留，等待既有生产准入确认。');
     let job = await readContentExecutionJob(dataStore, task.tenantId, detail.taskId, detail.runId);
     if(task.schedule.stepKind==='asset_generation'&&job?.status==='paused'&&job.retryClass==='weekly_production_waiting_asset_claim'){
-      try{const {resumeWeeklyProductionAssetStage}=await import('../starter198/socialWeeklyProductionStageResume.js');await resumeWeeklyProductionAssetStage({repository,assetTask:task,assertAdmission,validationPorts:{ownedProductIdentity:ports.ownedProductIdentity?{...ports.ownedProductIdentity,repository}:undefined}});job=await readContentExecutionJob(dataStore,task.tenantId,detail.taskId,detail.runId);}
+      try{const {resumeWeeklyProductionAssetStage}=await import('../starter198/socialWeeklyProductionStageResume.js');await resumeWeeklyProductionAssetStage({repository,assetTask:task,now:now(),assertAdmission,validationPorts:{ownedProductIdentity:ports.ownedProductIdentity?{...ports.ownedProductIdentity,repository}:undefined}});job=await readContentExecutionJob(dataStore,task.tenantId,detail.taskId,detail.runId);}
       catch(error){return blocked(error instanceof Error?error.message:'weekly_production_stage_resume_unverified','原生产任务尚不能进入资产阶段，请核验本周前置任务及原运行凭据。');}
     }
     if (['draft', 'needs_input', 'plan_review'].includes(detail.status) && !job) return blocked('weekly_production_confirmation_required', '运行身份已保留，但尚未完成生产准入确认。');

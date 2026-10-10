@@ -61,7 +61,7 @@ import {
   buildInspirationHandoffs,
   buildReplicationJob,
   authoritativeHandoffs,
-  EMBEDDED_RUNTIME_REGISTRATIONS,
+  socialContentEmbeddedRuntimeRegistrations,
   mergeInspirationHandoffs,
   positiveNumber,
   socialContentCapabilityRegistry,
@@ -504,7 +504,7 @@ function capabilityCandidates(input: {
   capabilityRuntime?: SocialContentCapabilityRuntimeRegistration[];
   materialCandidates?: SocialWorkflowMaterialCandidate[];
 }): SocialExecutionCandidate[] {
-  const runtimeRegistration = new Map((input.capabilityRuntime ?? EMBEDDED_RUNTIME_REGISTRATIONS)
+  const runtimeRegistration = new Map((input.capabilityRuntime ?? socialContentEmbeddedRuntimeRegistrations())
     .map(item => [item.strategy, item]));
   const sourceRuntime = runtimeRegistration.get(input.supply.sourceStrategy);
   // Product image refs are inputs to the paid scene-generation capability,

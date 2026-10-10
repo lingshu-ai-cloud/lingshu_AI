@@ -66,12 +66,15 @@ export function socialDirectorContentHandoff(plan: StoredSocialDirectorPlan): So
     throw new SocialContentWorkflowError('social_content_director_plan_not_ready', 409);
   }
   const materialById = new Map(plan.materialSnapshot.map(material => [material.assetId, material]));
+  const spokenNarration = plan.scenes.map(scene => scene.voiceover.trim()).filter(Boolean)
+    .join(plan.language === 'en' ? ' ' : '');
+  if (!spokenNarration) throw new SocialContentWorkflowError('social_content_director_plan_script_invalid', 503);
   const payload: Omit<SocialDirectorContentHandoff, 'handoffHash'> = {
     directorPlanId: plan.directorPlanId,
     planVersion: plan.version,
     lockStatus: 'locked',
     lineageHash: plan.lineageHash,
-    narration: plan.scenes.map(scene => scene.voiceover).join(plan.language === 'en' ? ' ' : ''),
+    narration: spokenNarration,
     direction: plan.direction,
     outputSpec: plan.outputSpec,
     bgmSelection: plan.bgmSelection,
@@ -144,7 +147,8 @@ export function socialDirectorVoiceAlignedCaptionCues(
   const units = (value: string) => Math.max(1, [...value.normalize('NFKC')].filter(char => /[\p{L}\p{N}]/u.test(char)).length);
   const cueUnits = cues.map(cue => units(cue.text));
   const cueTotal = cueUnits.reduce((sum, value) => sum + value, 0);
-  const sceneUnits = handoff.scenes.map(scene => units(scene.voiceover));
+  const spokenScenes = handoff.scenes.filter(scene => scene.voiceover.trim() || scene.caption.trim());
+  const sceneUnits = spokenScenes.map(scene => units(scene.voiceover || scene.caption));
   const sceneTotal = sceneUnits.reduce((sum, value) => sum + value, 0);
   const timeAt = (position: number): number => {
     let consumed = 0;
@@ -159,10 +163,10 @@ export function socialDirectorVoiceAlignedCaptionCues(
     return cues.at(-1)!.end;
   };
   let sceneCursor = 0;
-  return handoff.scenes.map((scene, index) => {
+  return spokenScenes.map((scene, index) => {
     const start = index === 0 ? cues[0]!.start : timeAt(cueTotal * sceneCursor / sceneTotal);
     sceneCursor += sceneUnits[index]!;
-    const end = index === handoff.scenes.length - 1 ? cues.at(-1)!.end : timeAt(cueTotal * sceneCursor / sceneTotal);
+    const end = index === spokenScenes.length - 1 ? cues.at(-1)!.end : timeAt(cueTotal * sceneCursor / sceneTotal);
     return { start: roundSeconds(start), end: roundSeconds(Math.max(start + .05, end)), text: scene.caption };
   });
 }
