@@ -57,6 +57,12 @@ export async function publicationRecoveryFixture(context: TestContext) {
   const publicationTask = tasks.find(item => item.schedule.stepKind === 'publishing')!;
   const approval = tasks.find(item => item.schedule.stepKind === 'user_approval')!;
   await dataStore.create('social_weekly_execution_tasks', { tenant_id: 'tenant-a', package_id: weekly.packageId, package_version: weekly.version, payload: { ...approval, status: 'succeeded', resultRefs: [{ type: 'user_content_approval', id: 'approval-1', version: 1 }, { type: 'starter_social_content_artifact', id: 'accepted-artifact', version: 3 }] } });
+  for (const dependencyId of publicationTask.dependsOnTaskIds.filter(id => id !== approval.taskId)) {
+    const dependency = tasks.find(item => item.taskId === dependencyId);
+    assert.ok(dependency, `publishing dependency ${dependencyId} must exist in the planned graph`);
+    const completed = { ...dependency, status: 'succeeded' as const, ownBlockingReasons: [], inheritedBlockingTaskIds: [], blockingReasons: [], schedule: { ...dependency.schedule, actualStartedAt: '2026-09-21T08:00:00Z', actualFinishedAt: '2026-09-21T09:00:00Z' } };
+    await dataStore.create('social_weekly_execution_tasks', { tenant_id: 'tenant-a', program_id: weekly.programId, package_id: weekly.packageId, package_version: weekly.version, task_id: completed.taskId, status: completed.status, payload: completed });
+  }
   await dataStore.create('starter_social_content_tasks', { tenant_id: 'tenant-a', task_id: 'production-task', status: 'asset_review', run_id: 'production-run', brief: { programRef: { id: weekly.programId } }, create_idempotency_key: `weekly-production:${weekly.packageId}:${weekly.version}:${task.publicationTaskId}` });
   await dataStore.create('workflow_runs', { id: 'production-run', tenant_id: 'tenant-a', status: 'succeeded' });
   await dataStore.create('starter_social_content_files', { tenant_id: 'tenant-a', task_id: 'production-task', file_id: 'accepted-file', usage: 'artifact_media', content_sha256: mediaHash, byte_size: bytes.length, storage_kind: 'local', storage_key: path.relative(path.resolve('data/social-content-sources'), local), name: 'video.mp4', mime_type: 'video/mp4' });
