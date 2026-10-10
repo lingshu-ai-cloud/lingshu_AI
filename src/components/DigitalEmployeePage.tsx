@@ -1,3 +1,6 @@
+import { productionApi } from '../lib/productionApi';
+import InitialOperatingPlanDialog from './InitialOperatingPlanDialog';
+import { recommendFocusProducts, initialPlanVideoPlans, initialPlanMatrixRows, type InitialOperatingPlan } from '../lib/initialOperatingPlan';
 import EnterprisePresenters from "./enterprise/EnterprisePresenters";
 import ManagedPublishingGrantEditor from './ManagedPublishingGrantEditor';
 import { managedPublishingGrantErrors } from '../../shared/contracts/managedPublishingGrant';
@@ -29,7 +32,6 @@ import SmartBusinessDashboard, { WeeklyCommandCenter } from "./SmartBusinessDash
 import SmartOperationsAccountRail, { type SmartOperationsAccount } from "./SmartOperationsAccountRail";
 import WeeklyPlanCalendar from "./smartBusiness/WeeklyPlanCalendar";
 import PlanHistoryDialog from "./PlanHistoryDialog";
-import SocialContentStageOnboarding from "./socialContent/SocialContentStageOnboarding";
 import {
   saveSocialContentStage,
   socialContentStageProfile,
@@ -623,7 +625,7 @@ function OnboardingPanel({
   mode?: "first" | "rules";
   activeRun?: boolean;
   restartFromBeginning?: boolean;
-  onSave: (config: DigitalEmployeeConfig & { minimalOnboarding?: true; brandName?: string }) => void | boolean | Promise<void | boolean>;
+  onSave: (config: DigitalEmployeeConfig & { minimalOnboarding?: true; brandName?: string; initialPlan?: InitialOperatingPlan }) => void | boolean | Promise<void | boolean>;
   onOpenReadiness: (item: BusinessReadinessItem) => void;
   onNavigate?: (page: BusinessDestination) => void;
 }) {
@@ -673,6 +675,8 @@ function OnboardingPanel({
   const [contentStage, setContentStage] = useState<SocialContentStageId>();
   const [stageSaving, setStageSaving] = useState(false);
   const [stageError, setStageError] = useState("");
+  const [recommendedPlanOpen,setRecommendedPlanOpen]=useState(false);
+  const [focusSelection,setFocusSelection]=useState<string[]>([]);
   const themeContentEnabled = form.enabledWorkflows.some((item) =>
     contentCreationWorkflows.includes(item),
   );
@@ -778,6 +782,9 @@ function OnboardingPanel({
         setBrandName(loadedProfile.brandName);
         const loadedProducts = Array.isArray(profile.products?.items) ? profile.products.items : [];
         setKnowledgeProducts(loadedProducts);
+        const savedFocus=String(profile.strategy?.focusProducts||"").split(/[、，,]/).filter(Boolean);
+        setFocusSelection(savedFocus.length?savedFocus:recommendFocusProducts(loadedProducts));
+        if(savedFocus.length)setForm(current=>({...current,focusProducts:savedFocus.join("、")}));
         const loadedStage = socialContentStageProfile(profile.socialStrategy?.contentStage);
         if (loadedStage) setContentStage(loadedStage.id);
         setCollectionLanguage(primaryEnterpriseLanguage(profile.company?.primaryLanguages));
@@ -1009,22 +1016,25 @@ function OnboardingPanel({
       const result = await response.json().catch(() => ({}));
       if (!response.ok) throw new Error(result.message || "产品资料写入企业知识库失败");
       setKnowledgeProducts(next);
+      setFocusSelection(recommendFocusProducts(next));
       setProductImportMessage(`已从“${file.name}”识别并写入 ${decoded.length} 个产品，可以直接确认产品表。`);
     } catch (error) { setProductError(error instanceof Error ? error.message : "产品文件解析失败"); }
     finally { setProductImporting(false); }
   };
   const confirmProductTable = async () => {
-    if (!knowledgeProducts.length || productSaving) return;
+    if (!knowledgeProducts.length || !focusSelection.length || productSaving) return;
     setProductSaving(true); setProductError("");
     try {
-      const response = await fetch("/api/overseas/enterprise/profile", { method: "PATCH", headers: { "Content-Type": "application/json", "x-enterprise-save-source": "diagnosis", ...authHeader() }, body: JSON.stringify({ digitalEmployeeOnboarding: { productSelectionConfirmedAt: new Date().toISOString(), continuedWithoutProducts: false } }) });
+      const response = await fetch("/api/overseas/enterprise/profile", { method: "PATCH", headers: { "Content-Type": "application/json", "x-enterprise-save-source": "diagnosis", ...authHeader() }, body: JSON.stringify({ strategy: { focusProducts: focusSelection.join("、") }, digitalEmployeeOnboarding: { productSelectionConfirmedAt: new Date().toISOString(), continuedWithoutProducts: false } }) });
       const result = await response.json().catch(() => ({}));
       if (!response.ok) throw new Error(result.message || "产品表确认失败");
+      set("focusProducts",focusSelection.join("、"));
       setProductConfirmed(true);
     } catch (error) { setProductError(error instanceof Error ? error.message : "产品表确认失败"); }
     finally { setProductSaving(false); }
   };
-  const completeMinimalOnboarding = async (stageId: SocialContentStageId) => {
+  const completeMinimalOnboarding = async (plan: InitialOperatingPlan) => {
+    const stageId=plan.stage;
     if (stageSaving) return;
     setStageSaving(true);
     setStageError("");
@@ -1032,7 +1042,7 @@ function OnboardingPanel({
       const savedStage = await saveSocialContentStage(stageId);
       setContentStage(savedStage.profile.id);
       if (!savedStage.synced) throw new Error("社媒经营阶段保存失败，请稍后重试");
-      const completed = await onSave({ ...form, companyName: form.companyName.trim(), focusProducts: "", minimalOnboarding: true, brandName: brandName.trim() });
+      const completed = await onSave({ ...form, companyName: form.companyName.trim(), focusProducts: plan.products.join("、"), targetMarkets:plan.market, videoLanguages:[plan.language], allowGeneratedVisuals:true, operatingMaturity:stageId==="b2b_launch"?"starting":"growing", minimalOnboarding: true, brandName: brandName.trim(), initialPlan:plan });
       if (completed === false) throw new Error("新手引导暂未完成，请稍后重试");
     } catch (error) {
       setStageError(error instanceof Error ? error.message : "新手引导暂未完成，请稍后重试");
@@ -1089,33 +1099,26 @@ function OnboardingPanel({
   );
   if (mode === "first" && profileConfirmed && !productConfirmed) return (
     <section id="onboarding-focus-products" className="scroll-mt-24 rounded-3xl border border-slate-200 bg-white p-6 shadow-sm">
-      <div className="flex flex-wrap items-start justify-between gap-4"><div className="flex items-start gap-3"><div className="rounded-2xl bg-blue-50 p-3 text-blue-700"><Target size={22} /></div><div><p className="text-xs font-bold uppercase tracking-[0.18em] text-blue-700">第二步 · 产品表</p><h2 className="mt-1 text-xl font-bold text-slate-950">导入或确认企业已有产品表</h2><p className="mt-1 text-sm text-slate-500">这里只建立产品资料，不选择重点产品；具体宣传哪个产品会在内容制作时从企业中心选择。</p></div></div><span className="rounded-full bg-emerald-50 px-3 py-1.5 text-[10px] font-bold text-emerald-700">企业与品牌已保存</span></div>
+      <div className="flex flex-wrap items-start justify-between gap-4"><div className="flex items-start gap-3"><div className="rounded-2xl bg-blue-50 p-3 text-blue-700"><Target size={22} /></div><div><p className="text-xs font-bold uppercase tracking-[0.18em] text-blue-700">第二步 · 产品信息</p><h2 className="mt-1 text-xl font-bold text-slate-950">识别产品并确认本期主推</h2><p className="mt-1 text-sm text-slate-500">识别后推荐 2 个主推产品，您可确认或修改。缺少信息后续可在「灵小枢 / 企业信息」补充。</p></div></div><span className="rounded-full bg-emerald-50 px-3 py-1.5 text-[10px] font-bold text-emerald-700">企业与品牌已保存</span></div>
       {productsLoading ? <div role="status" className="mt-6 flex items-center gap-2 rounded-2xl bg-slate-50 p-5 text-sm text-slate-500"><Loader2 size={16} className="animate-spin" />正在读取企业知识库产品…</div> : <>
-        <div className="mt-6 flex flex-wrap items-center justify-between gap-3"><div><p className="text-sm font-bold text-slate-900">企业知识库产品表</p><p className="mt-1 text-xs text-slate-500">已有产品可直接确认，也可以导入 Excel / CSV 补充。</p></div><label className={`inline-flex items-center gap-2 rounded-xl border border-slate-200 px-4 py-2 text-xs font-bold text-slate-700 ${productImporting?"cursor-wait opacity-60":"cursor-pointer hover:bg-slate-50"}`}>{productImporting?<Loader2 size={14} className="animate-spin"/>:<FileSpreadsheet size={14}/>}上传产品表<input type="file" accept=".xlsx,.xls,.csv" className="hidden" disabled={productImporting} onChange={e=>{void importProductFile(e.currentTarget.files?.[0]??null);e.currentTarget.value="";}} /></label></div>
+        <div className="mt-6 flex flex-wrap items-center justify-between gap-3"><div><p className="text-sm font-bold text-slate-900">企业知识库产品表</p><p className="mt-1 text-xs text-slate-500">识别到 {knowledgeProducts.length} 个产品，推荐这 {Math.min(2,knowledgeProducts.length)} 个作为主推。可点击产品修改选择。</p></div><label className={`inline-flex items-center gap-2 rounded-xl border border-slate-200 px-4 py-2 text-xs font-bold text-slate-700 ${productImporting?"cursor-wait opacity-60":"cursor-pointer hover:bg-slate-50"}`}>{productImporting?<Loader2 size={14} className="animate-spin"/>:<FileSpreadsheet size={14}/>}上传产品表<input type="file" accept=".xlsx,.xls,.csv" className="hidden" disabled={productImporting} onChange={e=>{void importProductFile(e.currentTarget.files?.[0]??null);e.currentTarget.value="";}} /></label></div>
         <p className="mt-2 text-[11px] text-slate-500">支持 Excel（.xlsx/.xls）和 CSV。系统自动识别产品名称、SKU、规格、价格、MOQ、材质、图片链接和卖点，并直接写入企业知识库。</p>
         {productImportMessage&&<p role="status" className="mt-3 rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-xs font-semibold text-emerald-800">{productImportMessage}</p>}
-        {!knowledgeProducts.length ? <div className="mt-4 rounded-2xl border border-dashed border-slate-300 p-8 text-center"><p className="font-bold text-slate-800">企业知识库尚未录入产品</p><p className="mt-2 text-xs text-slate-500">请上传产品表后继续。</p></div> : <div className="mt-4 grid gap-3 md:grid-cols-2 lg:grid-cols-3">{knowledgeProducts.map((product,index)=>{const name=productName(product);const details=[product.category,product.sku || product.attributes?.model].filter(Boolean).join(" · ");return <div key={String(product.id||`${name}-${index}`)} className="rounded-2xl border border-slate-200 p-4 text-left"><div className="flex items-start justify-between gap-2"><p className="font-bold text-slate-900">{name}</p><CheckCircle2 size={17} className="shrink-0 text-emerald-600" /></div><p className="mt-1 text-xs text-slate-500">{details||"暂无型号与类别"}</p><p className="mt-3 line-clamp-2 text-[11px] leading-relaxed text-slate-500">{product.description||product.highlights||"详细资料可稍后在企业中心完善"}</p></div>})}</div>}
+        {!knowledgeProducts.length ? <div className="mt-4 rounded-2xl border border-dashed border-slate-300 p-8 text-center"><p className="font-bold text-slate-800">企业知识库尚未录入产品</p><p className="mt-2 text-xs text-slate-500">请上传产品表后继续。</p></div> : <div className="mt-4 grid gap-3 md:grid-cols-2 lg:grid-cols-3">{knowledgeProducts.map((product,index)=>{const name=productName(product);const details=[product.category,product.sku || product.attributes?.model].filter(Boolean).join(" · ");return <button type="button" aria-pressed={focusSelection.includes(name)} onClick={()=>setFocusSelection(current=>current.includes(name)?current.filter(x=>x!==name):[...current,name])} key={String(product.id||`${name}-${index}`)} className={`rounded-2xl border p-4 text-left ${focusSelection.includes(name)?"border-emerald-500 bg-emerald-50":"border-slate-200"}`}><div className="flex items-start justify-between gap-2"><p className="font-bold text-slate-900">{name}</p><CheckCircle2 size={17} className="shrink-0 text-emerald-600" /></div><p className="mt-1 text-xs text-slate-500">{details||"暂无型号与类别"}</p><p className="mt-3 line-clamp-2 text-[11px] leading-relaxed text-slate-500">{product.description||product.highlights||"详细资料可稍后在灵小枢 > 企业信息完善"}</p></button>})}</div>}
         {productError&&<p role="alert" className="mt-4 rounded-xl bg-red-50 px-4 py-3 text-xs text-red-700">{productError}</p>}
-        <div className="mt-6 flex flex-wrap items-center justify-between gap-3"><p role="status" className="text-xs text-slate-500">{knowledgeProducts.length?`产品表已有 ${knowledgeProducts.length} 个产品，可以继续。`:"导入至少一个产品后即可继续。"}</p><button type="button" disabled={!knowledgeProducts.length||productSaving} onClick={()=>void confirmProductTable()} className="inline-flex items-center gap-2 rounded-xl bg-slate-950 px-5 py-2.5 text-sm font-bold text-white disabled:cursor-not-allowed disabled:bg-slate-300">{productSaving?<Loader2 size={16} className="animate-spin"/>:<ArrowRight size={16}/>}确认产品表，下一步</button></div>
+        <div className="mt-6 flex flex-wrap items-center justify-between gap-3"><p role="status" className="text-xs text-slate-500">{knowledgeProducts.length?`产品表已有 ${knowledgeProducts.length} 个产品，可以继续。`:"导入至少一个产品后即可继续。"}</p><button type="button" disabled={!knowledgeProducts.length||!focusSelection.length||productSaving} onClick={()=>void confirmProductTable()} className="inline-flex items-center gap-2 rounded-xl bg-slate-950 px-5 py-2.5 text-sm font-bold text-white disabled:cursor-not-allowed disabled:bg-slate-300">{productSaving?<Loader2 size={16} className="animate-spin"/>:<ArrowRight size={16}/>}确认主推产品，下一步</button></div>
       </>}
     </section>
   );
   if (mode === "first" && profileConfirmed && productConfirmed) return (
     <div className="space-y-5">
-      <section className="rounded-3xl border border-slate-200 bg-white p-5 shadow-sm" aria-label="初始配置人物授权与声音">
-        <p className="text-xs font-bold text-emerald-700">第三步 · 人物与声音</p>
-        <h2 className="mt-1 text-xl font-bold text-slate-950">选择出镜人物和声音</h2>
-        <EnterprisePresenters initialConfiguration />
+      <section className="rounded-3xl border border-slate-200 bg-white p-5 shadow-sm" aria-label="初始配置数字人形象">
+        <p className="text-xs font-bold text-emerald-700">第三步 · 数字人形象</p>
+        <h2 className="mt-1 text-xl font-bold text-slate-950">选择默认数字人形象</h2>
+        <EnterprisePresenters initialConfiguration onInitialSelection={()=>setRecommendedPlanOpen(true)} />
+        <button type="button" disabled={busy||stageSaving} onClick={()=>void productionApi.defaults().then(defaults=>{if(!defaults.defaultPresenterId)throw Error("请先选择默认数字人形象");setStageError("");setRecommendedPlanOpen(true);}).catch(error=>setStageError(error.message))} className="mt-4 rounded-xl bg-emerald-700 px-5 py-3 text-white font-bold">生成推荐计划</button>{stageError&&<p role="alert" className="mt-2 text-red-700">{stageError}</p>}
       </section>
-    <SocialContentStageOnboarding
-      embedded
-      eyebrow="第四步 · 社媒经营阶段"
-      submitLabel="确认阶段并开始使用"
-      initialValue={contentStage}
-      busy={stageSaving || busy}
-      error={stageError}
-      onConfirm={(stageId) => void completeMinimalOnboarding(stageId)}
-    />
+      {recommendedPlanOpen&&<InitialOperatingPlanDialog config={form} initial={{stage:contentStage|| (connectedPublishingAccounts.length?'b2b_growth':'b2b_launch'),products:focusSelection.length?focusSelection:recommendFocusProducts(knowledgeProducts),market:form.targetMarkets&& !form.targetMarkets.includes('待')?form.targetMarkets:'北美',language:collectionLanguage||'英语',platforms:connectedPublishingAccounts.length?[...new Set(connectedPublishingAccounts.map(a=>a.platform))]:['youtube','tiktok'],count:5,budgetCapCny:500,deliveryDate:isoDay(6)}} busy={stageSaving||busy} error={stageError} onBack={()=>setRecommendedPlanOpen(false)} onConfirm={plan=>void completeMinimalOnboarding(plan)}/>}
     </div>
   );
   return (
@@ -3801,11 +3804,29 @@ export default function DigitalEmployeePage({
     });
   };
 
-  const saveConfig = async (config: DigitalEmployeeConfig & { minimalOnboarding?: true; brandName?: string }) => {
+  const saveConfig = async (config: DigitalEmployeeConfig & { minimalOnboarding?: true; brandName?: string; initialPlan?: InitialOperatingPlan }) => {
     const firstLogin = !data?.config;
     const next = await act("config", () =>
       digitalEmployeeApi.completeOnboarding(config),
     );
+    if (next && config.initialPlan) {
+      const plan=config.initialPlan;
+      try {
+        const created=await digitalEmployeeApi.createGoal({...EMPTY_GOAL,businessLine:'content_growth',title:'首次推荐经营计划',objective:`为 ${plan.products.join('、')} 制作 ${plan.count} 条面向 ${plan.market} 的视频`,contentPlatforms:plan.platforms,target:plan.count,unit:'条',scope:plan.market,endsAt:plan.deliveryDate,constraints:[`制作预算上限：${plan.budgetCapCny} 元`,'真实发布前绑定账号并取得授权'],videoPlans:initialPlanVideoPlans(plan,next.config!)});
+        if(!created.goal)throw Error('推荐计划创建失败');
+        setData(created);setNewGoal(false);setWeeklyPlanOpen(true);setOnboardingWelcomeOpen(false);
+        const draftPack=created.plan?.businessPackage;
+        if(!draftPack?.directorPlan)throw Error('推荐计划缺少可执行任务包或编导预算');
+        await digitalEmployeeApi.savePackage(created.goal.id,{...draftPack,matrixPlan:initialPlanMatrixRows(plan,next.config!),tasks:draftPack.tasks.map(task=>task.templateId==="production"?{...task,videoPlans:initialPlanVideoPlans(plan,next.config!)}:task),directorPlan:{...draftPack.directorPlan,originalTarget:plan.count,platformVersionTarget:plan.count*plan.platforms.length,publishTarget:plan.count*plan.platforms.length,productionBudget:plan.budgetCapCny,productionBudgetMax:plan.budgetCapCny,productionBudgetMin:Math.min(draftPack.directorPlan.productionBudgetMin||0,plan.budgetCapCny)}});
+        const prepared=await digitalEmployeeApi.generatePackageDetails(created.goal.id);
+        setData(prepared);
+        const pack=prepared.plan?.businessPackage;
+        if(pack?.detailGeneration?.status==='ready'){
+          const started=await digitalEmployeeApi.approveGoal(created.goal.id,pack.revision);setData(started);setWorkspaceView('matrix');
+        } else {setError('推荐计划已保存，数字员工正在准备参考与必要素材；具体缺口显示在原计划中。');}
+        return true;
+      }catch(error){setError(error instanceof Error?error.message:'推荐计划制作准备失败');return false;}
+    }
     if (next && firstLogin) {
       setWorkspaceView("today");
       setNewGoal(!next.goal);
@@ -4191,7 +4212,7 @@ export default function DigitalEmployeePage({
       {applicationGuideOpen && <div className="fixed inset-0 z-[190] flex items-center justify-center bg-slate-950/45 p-4 backdrop-blur-sm" onMouseDown={(event) => { if (event.target === event.currentTarget && !busy) setApplicationGuideOpen(false); }}>
         <section role="dialog" aria-modal="true" aria-label="新手引导" className="ui-modal-frame relative overflow-y-auto p-4 sm:p-6">
           <button type="button" aria-label="关闭新手引导" onClick={()=>setApplicationGuideOpen(false)} className="absolute right-4 top-4 z-10 rounded-xl border border-slate-200 bg-white p-2 text-slate-500 shadow-sm hover:bg-slate-50"><X size={18}/></button>
-          <OnboardingPanel initial={data.config} readiness={data.businessSnapshot?.readiness || []} busy={Boolean(busy)} restartFromBeginning onOpenReadiness={openReadiness} onSave={async () => { setApplicationGuideOpen(false); return true; }} />
+          <OnboardingPanel initial={data.config} readiness={data.businessSnapshot?.readiness || []} busy={Boolean(busy)} restartFromBeginning onOpenReadiness={openReadiness} onSave={async config => { const saved=await saveConfig(config);if(saved)setApplicationGuideOpen(false);return saved; }} />
         </section>
       </div>}
       {weeklyPlanOpen && <div className="fixed inset-0 z-[200] flex items-center justify-center bg-slate-950/45 p-4 backdrop-blur-sm" onMouseDown={event => { if (event.target === event.currentTarget && !busy) setWeeklyPlanOpen(false); }}>

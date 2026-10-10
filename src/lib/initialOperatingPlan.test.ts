@@ -1,0 +1,9 @@
+import assert from 'node:assert/strict';
+import { test } from 'node:test';
+import { recommendFocusProducts, initialPlanVideoPlans, validateInitialPlan, type InitialOperatingPlan } from './initialOperatingPlan';
+import type { DigitalEmployeeConfig } from './digitalEmployees';
+const config={companyName:'工厂',focusProducts:'',publishingTargets:[],customerProfile:'采购商',videoDefaults:{language:'en'}} as unknown as DigitalEmployeeConfig;
+const plan:InitialOperatingPlan={stage:'b2b_launch',products:['产品A','产品B'],market:'北美',language:'en',platforms:['youtube','tiktok'],count:5,budgetCapCny:500,deliveryDate:'2026-10-20'};
+test('five mother videos retain unique identity across two planned accounts without claiming connection',()=>{const videos=initialPlanVideoPlans(plan,config);assert.equal(videos.length,10);assert.equal(videos.filter(v=>v.productionRole==='master').length,5);assert.equal(new Set(videos.map(v=>v.contentFamilyId)).size,5);assert(videos.every(v=>v.matrix?.accountId.startsWith('planned:')));assert.equal(new Set(videos.map(v=>v.contentId)).size,10);});
+test('focus recommendation prioritizes concrete product evidence without inventing products',()=>{assert.deepEqual(recommendFocusProducts([{name:'空白'},{name:'有图片',images:[{}]},{name:'完整',description:'事实',sku:'x',images:[{}]}]),['完整','有图片']);assert.deepEqual(recommendFocusProducts([]),[]);});
+test('missing product and invalid budget cannot confirm a plan',()=>{assert.deepEqual(validateInitialPlan(plan),[]);assert.equal(validateInitialPlan({...plan,products:[],budgetCapCny:0}).length,2);});

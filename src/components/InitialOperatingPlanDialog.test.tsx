@@ -1,0 +1,11 @@
+import React from 'react';
+import { renderToStaticMarkup } from 'react-dom/server';
+import assert from 'node:assert/strict';
+import { test } from 'node:test';
+import InitialOperatingPlanDialog from './InitialOperatingPlanDialog';
+import type { DigitalEmployeeConfig } from '../lib/digitalEmployees';
+import type { InitialOperatingPlan } from '../lib/initialOperatingPlan';
+const config={companyName:'测试企业',focusProducts:'',publishingTargets:[],customerProfile:'采购商',videoDefaults:{language:'en'}} as unknown as DigitalEmployeeConfig;
+const plan:InitialOperatingPlan={stage:'b2b_launch',products:['产品A','产品B'],market:'北美',language:'en',platforms:['youtube','tiktok'],count:5,budgetCapCny:500,deliveryDate:'2026-10-20'};
+test('recommendation exposes concrete deliverables and deferred account binding',()=>{const html=renderToStaticMarkup(<InitialOperatingPlanDialog initial={plan} config={config} busy={false} error="" onConfirm={()=>{}} onBack={()=>{}}/>);for(const term of ['推荐经营计划','确认计划并开始制作','调整计划','预算上限','目标市场','Agent 工作排期','待绑定账号','5 条（母版适配）'])assert(html.includes(term));assert(!html.includes('历史平台账号链接'));});
+test('established profile shows optional historic collection without publication authorization',()=>{const html=renderToStaticMarkup(<InitialOperatingPlanDialog initial={{...plan,stage:'b2b_growth'}} config={config} busy={false} error="" onConfirm={()=>{}} onBack={()=>{}}/>);assert(html.includes('历史平台账号链接'));assert(html.includes('账号入库并发起采集'));assert(html.includes('不会授权真实发布'));});

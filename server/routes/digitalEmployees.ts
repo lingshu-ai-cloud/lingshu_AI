@@ -2420,16 +2420,16 @@ digitalEmployeesRouter.post('/onboarding/complete', async (req, res) => {
     ...onboardingInput,
     industry: '待在实际任务中确认',
     primaryBusiness: '待在实际任务中确认',
-    targetMarkets: '待在实际任务中确认',
+    targetMarkets: String(onboardingInput.targetMarkets || '').trim() || '待在实际任务中确认',
     customerProfile: '待在实际任务中确认',
-    focusProducts: '',
+    focusProducts: String(onboardingInput.focusProducts || '').trim(),
     primaryGoal: 'awareness',
     approvalOwner: String(onboardingInput.approvalOwner || '').trim() || '企业管理员',
     enabledWorkflows: ['viral_clone'],
-    publishingTargets: [],
+    publishingTargets: Array.isArray(onboardingInput.publishingTargets) ? onboardingInput.publishingTargets : [],
     allowRealPublishing: false,
     allowRealCustomerMessages: false,
-    allowGeneratedVisuals: false,
+    allowGeneratedVisuals: onboardingInput.allowGeneratedVisuals === true,
     autonomyMode: 'managed',
   } : onboardingInput);
   const boundPublishing = await bindPublishingTargets(tenantId, submittedConfig.publishingTargets);
@@ -2477,6 +2477,7 @@ digitalEmployeesRouter.post('/onboarding/complete', async (req, res) => {
   const enterprisePatch = minimalOnboarding ? {
     company: { ...enterprise.company, name: minimalCompanyName },
     brand: { ...enterprise.brand, name: minimalBrandName },
+    strategy: { ...enterprise.strategy, focusProducts: submittedConfig.focusProducts || enterprise.strategy?.focusProducts, focusMarkets: submittedConfig.targetMarkets || enterprise.strategy?.focusMarkets },
     customerService: {
       ...enterprise.customerService,
       enabled: false,
