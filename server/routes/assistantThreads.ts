@@ -1,10 +1,12 @@
 import { Router, type Request, type Response } from 'express';
 import { store } from '../storage/index.js';
-import { requireAuth, type AuthLocals } from '../middleware/auth.js';
+import { requireAuth, enforceSupportSessionReadOnly, type AuthLocals } from '../middleware/auth.js';
 
 type AssistantThread = {
   id: string;
   tenantId: string;
+  userId: string;
+  source?: string;
   agentId: string;
   messages: unknown[];
   draftInput: string;
@@ -14,12 +16,12 @@ type AssistantThread = {
 };
 
 export const assistantThreadsRouter = Router();
-assistantThreadsRouter.use(requireAuth);
+assistantThreadsRouter.use(requireAuth, enforceSupportSessionReadOnly);
 
 assistantThreadsRouter.get('/', async (_req: Request, res: Response) => {
   const identity = res.locals as AuthLocals;
   const result = await store.list<AssistantThread>('assistant_threads', {
-    where: { tenantId: identity.tenantId },
+    where: { tenantId: identity.tenantId, userId: identity.userId, source: 'desktop' },
     perPage: 20,
   });
   res.json({ items: result.items });
@@ -28,12 +30,14 @@ assistantThreadsRouter.get('/', async (_req: Request, res: Response) => {
 assistantThreadsRouter.get('/:agentId', async (req: Request, res: Response) => {
   const identity = res.locals as AuthLocals;
   const result = await store.list<AssistantThread>('assistant_threads', {
-    where: { tenantId: identity.tenantId, agentId: req.params.agentId },
+    where: { tenantId: identity.tenantId, userId: identity.userId, source: 'desktop', agentId: req.params.agentId },
     perPage: 1,
   });
   res.json(result.items[0] ?? {
     id: '',
     tenantId: identity.tenantId,
+    userId: identity.userId,
+    source: 'desktop',
     agentId: req.params.agentId,
     messages: [],
     draftInput: '',
@@ -45,11 +49,13 @@ assistantThreadsRouter.get('/:agentId', async (req: Request, res: Response) => {
 assistantThreadsRouter.put('/:agentId', async (req: Request, res: Response) => {
   const identity = res.locals as AuthLocals;
   const existing = await store.list<AssistantThread>('assistant_threads', {
-    where: { tenantId: identity.tenantId, agentId: req.params.agentId },
+    where: { tenantId: identity.tenantId, userId: identity.userId, source: 'desktop', agentId: req.params.agentId },
     perPage: 1,
   });
   const payload = {
     tenantId: identity.tenantId,
+    userId: identity.userId,
+    source: 'desktop',
     agentId: req.params.agentId,
     messages: Array.isArray(req.body.messages) ? req.body.messages : [],
     draftInput: String(req.body.draftInput ?? ''),
