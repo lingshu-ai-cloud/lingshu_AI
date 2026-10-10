@@ -13,13 +13,13 @@ export class SeedanceReferenceAdapter implements DigitalHumanExecutionAdapter {
   private async request(path: string, init: RequestInit): Promise<Task> {
     if (!this.options.apiKey.trim()) throw new Error('Seedance 未配置方舟 API Key');
     const response = await (this.options.transport || fetch)(`${(this.options.baseUrl || 'https://ark.cn-beijing.volces.com/api/v3').replace(/\/+$/, '')}${path}`, {
-      ...init, signal: AbortSignal.timeout(45_000), headers: { Authorization: `Bearer ${this.options.apiKey}`, 'Content-Type': 'application/json', ...(init.headers || {}) },
+      ...init, redirect: 'error', signal: AbortSignal.timeout(45_000), headers: { Authorization: `Bearer ${this.options.apiKey}`, 'Content-Type': 'application/json', ...(init.headers || {}) },
     });
     const value = await response.json().catch(() => ({})) as Task & { message?: string };
     if (!response.ok) {
       const message = typeof value.error === 'string' ? value.error : value.error?.message || value.message || `HTTP ${response.status}`;
       const error = new Error(`Seedance ${response.status}: ${message}`);
-      if ([400, 401, 403, 404, 422, 429].includes(response.status)) throw new DefinitiveSupplierSubmissionError(error.message);
+      if ([400, 401, 403, 404, 422].includes(response.status)) throw new DefinitiveSupplierSubmissionError(error.message);
       throw error;
     }
     return value;

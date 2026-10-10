@@ -46,3 +46,17 @@ test('Runway Act-Two distinguishes explicit create rejection from an uncertain s
     transport: (async () => Response.json({ error: 'supplier_error' }, { status: 500 })) as typeof fetch });
   await assert.rejects(uncertain.submit(input, 'uncertain'), error => !isDefinitiveSupplierSubmissionError(error) && /500/.test((error as Error).message));
 });
+
+for (const status of [408, 409, 429, 500, 503]) {
+  test('RunwayActTwoAdapter retains unknown submission classification for HTTP ' + status, async () => {
+    let calls = 0;
+    const adapter = new RunwayActTwoAdapter({ apiSecret: 'controlled', cnyPerCredit: .08, transport: async (_url, init) => {
+      calls++;
+      assert.equal(init?.redirect, 'error');
+      return Response.json({ error: 'controlled ambiguous outcome' }, { status });
+    } });
+    const input = { characterUrl: 'https://assets.invalid/person.jpg', characterType: 'image' as const, referenceVideoUrl: 'https://assets.invalid/reference.mp4', ratio: '720:1280' as const, bodyControl: true };
+    await assert.rejects(adapter.submit(input, 'original-operation'), error => !isDefinitiveSupplierSubmissionError(error) && String((error as Error).message).includes(String(status)));
+    assert.equal(calls, 1);
+  });
+}

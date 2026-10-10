@@ -230,3 +230,29 @@ test('unique-index create conflict reconciles only the exact persisted provider 
  const result=await refreshPlatformCapabilityEvidence({tenantId:'tenant-a',accountId:'account-a',platform:'youtube',capability:'publishing.official',now,dataStore:store,providers:providers([])});
  assert.equal(result.status,'verified');assert.equal(store.rows.get(PLATFORM_CAPABILITY_EVIDENCE_COLLECTION)?.length,1);assert.match(result.account_identity_hash??'',/^[a-f0-9]{64}$/);
 });
+
+test('Instagram Login and unknown OAuth providers cannot use legacy publishing probes or cached evidence', async () => {
+  for (const oauthProvider of ['instagram_login', 'unknown_login']) {
+    const dataStore = new MemoryStore();
+    dataStore.rows.set('social_accounts', [{id:'ig-account',tenantId:'tenant-a',platform:'instagram',status:'connected',providerAccountId:'ig-a',oauthProvider,scope:'instagram_business_content_publish instagram_content_publish',accessToken:sealAccountCredential('ig-token')}]);
+    dataStore.rows.set(PLATFORM_CAPABILITY_EVIDENCE_COLLECTION,[baseEvidence({account_id:'ig-account',platform:'instagram',evidence_ref:'provider:instagram:account:ig-a'}) as unknown as Record<string,unknown>&{id:string}]);
+    const calls:string[]=[];
+    const input={tenantId:'tenant-a',accountId:'ig-account',platform:'instagram' as const,capability:'publishing.official' as const,now,dataStore,providers:providers(calls)};
+    assert.equal((await platformCapabilityDecision(input)).status,'unavailable');
+    assert.equal((await ensurePlatformCapability(input)).reason,'instagram_publishing_oauth_provider_unsupported');
+    assert.equal((await refreshPlatformCapabilityEvidence(input)).reason_code,'instagram_publishing_oauth_provider_unsupported');
+    assert.deepEqual(calls,[]);
+  }
+});
+
+test('Instagram provider identity is frozen and explicit Facebook Login preserves legacy scope requirements', async () => {
+ const account={id:'ig-account',tenantId:'tenant-a',platform:'instagram',status:'connected',providerAccountId:'ig-a',oauthProvider:'facebook_login',scope:'instagram_content_publish',accessToken:sealAccountCredential('ig-token')};
+ assert.notEqual(platformAccountIdentityHash(account,'instagram'),platformAccountIdentityHash({...account,oauthProvider:'instagram_login'},'instagram'));
+ for(const oauthProvider of [undefined,'facebook_login']){
+  const dataStore=new MemoryStore();dataStore.rows.set('social_accounts',[{...account,oauthProvider}]);const calls:string[]=[];
+  const input={tenantId:'tenant-a',accountId:'ig-account',platform:'instagram' as const,capability:'publishing.official' as const,now,dataStore,providers:providers(calls)};
+  assert.equal((await refreshPlatformCapabilityEvidence(input)).status,'verified');assert.deepEqual(calls,['instagram']);
+  dataStore.rows.get('social_accounts')![0]!.scope='instagram_business_content_publish';
+  assert.equal((await refreshPlatformCapabilityEvidence(input)).reason_code,'provider_publish_scope_missing');
+ }
+});

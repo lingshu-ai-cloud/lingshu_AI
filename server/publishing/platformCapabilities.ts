@@ -78,6 +78,8 @@ export async function platformCapabilityDecision(input: {
   dataStore?: DataStore;
 }): Promise<PlatformCapabilityDecision> {
   const dataStore = input.dataStore ?? store;
+  const boundary = await instagramPublishingBoundary(input,dataStore);
+  if(boundary) return boundary;
   const result = await dataStore.list<PlatformCapabilityEvidence>(PLATFORM_CAPABILITY_EVIDENCE_COLLECTION, {
     where: {
       tenant_id: text(input.tenantId), account_id: text(input.accountId),
@@ -104,7 +106,7 @@ export async function platformCapabilityDecision(input: {
   };
 }
 
-type AccountRecord = Record<string, unknown> & { id: string };
+type AccountRecord = Record<string, unknown> & { id: string; oauthProvider?: unknown };
 
 export interface PlatformCapabilityProbeProviders {
   youtube(config: ReturnType<typeof youtubeCredentials>): Promise<{ id: string; publishGranted: boolean }>;
@@ -134,8 +136,23 @@ const liveProviders: PlatformCapabilityProbeProviders = {
   tiktokReceipt: getTikTokPublishStatus,
 };
 
+/** The publishing adapter currently implements Facebook Login Graph only. */
+export function assertLegacyInstagramPublishingProvider(account: { oauthProvider?: unknown }): void {
+  const provider = text(account.oauthProvider);
+  if (provider && provider !== 'facebook_login') throw new Error('instagram_publishing_oauth_provider_unsupported');
+}
+
+async function instagramPublishingBoundary(input: {tenantId:string;accountId:string;platform:RuntimeSocialPlatform;capability:RuntimePlatformCapability}, dataStore:DataStore): Promise<PlatformCapabilityDecision | null> {
+  if(input.platform !== 'instagram' || !LIVE_PROBE_REQUIRED.has(input.capability)) return null;
+  const account = await dataStore.getById<AccountRecord>('social_accounts',text(input.accountId));
+  let reason = '';
+  if(!account || account.tenantId !== input.tenantId || account.platform !== 'instagram' || account.status !== 'connected') reason = 'provider_account_not_connected';
+  else { try { assertLegacyInstagramPublishingProvider(account); } catch { reason = 'instagram_publishing_oauth_provider_unsupported'; } }
+  return reason ? {platform:input.platform,accountId:input.accountId,capability:input.capability,status:'unavailable',reason} : null;
+}
+
 /** Frozen actual native identity and credential configuration; never exposed as raw secrets. */
-export function platformAccountIdentityHash(record:Record<string,unknown>,platform:RuntimeSocialPlatform):string{return createHash('sha256').update(JSON.stringify({id:record.id,tenantId:record.tenantId,platform,nativeId:platform==='youtube'?record.channelId:record.providerAccountId,scope:record.scope,status:record.status,accessToken:record.accessToken,refreshToken:record.refreshToken,clientId:record.clientId,clientSecret:record.clientSecret})).digest('hex');}
+export function platformAccountIdentityHash(record:Record<string,unknown>,platform:RuntimeSocialPlatform):string{return createHash('sha256').update(JSON.stringify({id:record.id,tenantId:record.tenantId,platform,oauthProvider:record.oauthProvider,nativeId:platform==='youtube'?record.channelId:record.providerAccountId,scope:record.scope,status:record.status,accessToken:record.accessToken,refreshToken:record.refreshToken,clientId:record.clientId,clientSecret:record.clientSecret})).digest('hex');}
 
 function scopeSet(record: AccountRecord): Set<string> {
   return new Set(text(record.scope).split(/[\s,]+/).filter(Boolean));
@@ -200,6 +217,7 @@ export async function refreshPlatformCapabilityEvidence(input: {
 
   const accountIdentityHash=platformAccountIdentityHash(account,input.platform);
   try {
+    if(input.platform === 'instagram') assertLegacyInstagramPublishingProvider(account);
     let providerRef = '';
     if (input.capability === 'publishing.receipt_lookup') {
       if (input.platform !== 'tiktok' || !text(input.receiptId)) {
@@ -261,6 +279,8 @@ export async function ensurePlatformCapability(input: {
   providers?: PlatformCapabilityProbeProviders;
 }): Promise<PlatformCapabilityDecision> {
   const dataStore = input.dataStore ?? store;
+  const boundary = await instagramPublishingBoundary(input,dataStore);
+  if(boundary) return boundary;
   const now = input.now ?? new Date();
   const requestedReceiptRef = input.capability === 'publishing.receipt_lookup' && text(input.receiptId)
     ? `provider:${input.platform}:receipt:${text(input.receiptId)}` : '';

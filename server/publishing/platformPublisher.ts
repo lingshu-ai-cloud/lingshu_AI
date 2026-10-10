@@ -1,3 +1,4 @@
+import { assertLegacyInstagramPublishingProvider } from './platformCapabilities.js';
 import {assertPublicationAtomicStore} from './publicationAtomicStore.js';
 import { assertManagedPublishingAuthorization } from './managedPublishingAuthorization.js';
 import {
@@ -52,6 +53,7 @@ interface SocialAccountRecord {
   platform: SocialPlatform;
   providerAccountId: string;
   accessToken: string;
+  oauthProvider?: string;
   status: 'connected' | 'error' | 'expired';
 }
 
@@ -420,6 +422,7 @@ export async function resolvePendingPublishToAccount(input: {
     const account = await store.getById<SocialAccountRecord>('social_accounts', input.accountId);
     if (!account || account.tenantId !== input.tenantId || account.platform !== input.platform) throw publishError('Social account not found', 404);
     if (account.status !== 'connected') throw publishError('Social account is not connected', 400);
+    if (input.platform === 'instagram') assertLegacyInstagramPublishingProvider(account);
     if (input.platform === 'instagram' && receipt.startsWith('ig-container:')) {
       const containerId = receipt.slice('ig-container:'.length);
       if (!containerId) throw publishError('Instagram container receipt missing', 400);
@@ -571,6 +574,7 @@ async function publishVideoToAccountWithLease(
   const account = await store.getById<SocialAccountRecord>('social_accounts', input.accountId);
   if (!account || account.tenantId !== input.tenantId || account.platform !== input.platform) throw publishError('Social account not found', 404);
   if (account.status !== 'connected') throw publishError('Social account is not connected', 400);
+  if (input.platform === 'instagram') assertLegacyInstagramPublishingProvider(account);
   const filePath = input.videoPath
     ? validateLocalVideo(input.videoPath, ['.mp4', '.mov', '.webm'], Number(process.env.SOCIAL_MAX_UPLOAD_MB ?? 2048))
     : undefined;
@@ -696,6 +700,12 @@ async function publishVideoToAccountWithLease(
 }
 
 export async function publishVideoToAccount(input: PublishToAccountInput): Promise<PublishToAccountResult> {
+  // Reject unsupported token/API contracts before source, lease or tracking writes.
+  if(input.platform === 'instagram') {
+    const account = await store.getById<SocialAccountRecord>('social_accounts',input.accountId);
+    if(!account || account.tenantId !== input.tenantId || account.platform !== 'instagram') throw publishError('Social account not found',404);
+    assertLegacyInstagramPublishingProvider(account);
+  }
   await assertPublicationAtomicStore(store);
   if (!input.title.trim()) throw publishError('发布标题不能为空', 400);
   const sourceClaim = input.sourceClaim

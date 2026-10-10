@@ -78,20 +78,28 @@ export function selectReferenceAdapter(input: {
       // target person. Stronger product/background/composition claims require an explicit profile.
       const supported = profile?.preserves || ['identity'];
       const missing = input.requiredPreservation.filter(item => !supported.includes(item));
+      const durationInvalid = input.targetDurationSeconds != null && (!Number.isFinite(duration) || duration <= 0);
+      const profileInvalid = Boolean(profile && (
+        (profile.maxDurationSeconds != null && (!Number.isFinite(profile.maxDurationSeconds) || profile.maxDurationSeconds <= 0))
+        || (profile.estimatedCostCnyPerSecond != null && (!Number.isFinite(profile.estimatedCostCnyPerSecond) || profile.estimatedCostCnyPerSecond < 0))
+      ));
       const durationExceeded = Boolean(profile?.maxDurationSeconds && Number.isFinite(duration) && duration > profile.maxDurationSeconds);
-      const estimatedCostCny = profile?.estimatedCostCnyPerSecond != null && Number.isFinite(duration) && duration > 0
+      const rawEstimatedCostCny = profile?.estimatedCostCnyPerSecond != null && Number.isFinite(duration) && duration > 0
         ? Number((duration * profile.estimatedCostCnyPerSecond).toFixed(2)) : null;
+      const estimateInvalid = rawEstimatedCostCny != null && (!Number.isFinite(rawEstimatedCostCny) || rawEstimatedCostCny < 0);
+      const estimatedCostCny = estimateInvalid ? null : rawEstimatedCostCny;
       const budgetLimit = Number(input.maxEstimatedCostCny);
+      const budgetInvalid = input.maxEstimatedCostCny != null && (!Number.isFinite(budgetLimit) || budgetLimit < 0);
       const budgetConfigured = input.maxEstimatedCostCny != null && Number.isFinite(budgetLimit) && budgetLimit >= 0;
       const budgetUnknown = budgetConfigured && estimatedCostCny == null;
       const budgetExceeded = budgetConfigured && estimatedCostCny != null && estimatedCostCny > budgetLimit;
-      return { adapter, order, profile, missing, durationExceeded, estimatedCostCny, budgetUnknown, budgetExceeded };
+      return { adapter, order, profile, missing, durationExceeded, durationInvalid, profileInvalid, estimateInvalid, budgetInvalid, estimatedCostCny, budgetUnknown, budgetExceeded };
     });
-  const compatible = evaluated.filter(item => !item.durationExceeded && item.missing.length === 0 && !item.budgetUnknown && !item.budgetExceeded)
+  const compatible = evaluated.filter(item => !item.durationInvalid && !item.profileInvalid && !item.estimateInvalid && !item.budgetInvalid && !item.durationExceeded && item.missing.length === 0 && !item.budgetUnknown && !item.budgetExceeded)
     .sort((a, b) => Number(Boolean(b.profile?.qualityInspection)) - Number(Boolean(a.profile?.qualityInspection))
       || (a.estimatedCostCny ?? Number.MAX_SAFE_INTEGER) - (b.estimatedCostCny ?? Number.MAX_SAFE_INTEGER) || a.order - b.order)[0];
-  const evaluations = evaluated.map(item => ({ tool: item.adapter.id, compatible: !item.durationExceeded && item.missing.length === 0 && !item.budgetUnknown && !item.budgetExceeded,
-    reasons: [...(item.durationExceeded ? [`最长支持 ${item.profile?.maxDurationSeconds} 秒`] : []), ...(item.missing.length ? [`不能保证保留：${item.missing.join('、')}`] : []),
+  const evaluations = evaluated.map(item => ({ tool: item.adapter.id, compatible: !item.durationInvalid && !item.profileInvalid && !item.estimateInvalid && !item.budgetInvalid && !item.durationExceeded && item.missing.length === 0 && !item.budgetUnknown && !item.budgetExceeded,
+    reasons: [...(item.durationInvalid ? ['镜头时长必须是有限正数'] : []), ...(item.budgetInvalid ? ['预算上限必须是有限非负数'] : []), ...(item.profileInvalid || item.estimateInvalid ? ['供应商时长或估价配置无效'] : []), ...(item.durationExceeded ? [`最长支持 ${item.profile?.maxDurationSeconds} 秒`] : []), ...(item.missing.length ? [`不能保证保留：${item.missing.join('、')}`] : []),
       ...(item.budgetUnknown ? ['未声明估价，无法验证预算'] : []), ...(item.budgetExceeded ? [`预计 ¥${item.estimatedCostCny?.toFixed(2)} 超出预算上限 ¥${Number(input.maxEstimatedCostCny).toFixed(2)}`] : [])],
     qualityInspection: Boolean(item.profile?.qualityInspection), estimatedCostCny: item.estimatedCostCny }));
   if (compatible) return { adapter: compatible.adapter, reason: '', estimatedCostCny: compatible.estimatedCostCny, evaluations };

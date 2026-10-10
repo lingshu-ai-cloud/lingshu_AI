@@ -24,7 +24,10 @@ export async function produceFirstFrame(input: FirstFrameRequest, generator: Fir
     await budget.mark(input.tenantId, input.videoId, operationId, 'completed', output); return output;
   } catch (error) {
     if (error instanceof FirstFrameProviderError && error.status === 'rejected') await budget.releaseRejected(input.tenantId, input.videoId, operationId);
-    else await budget.mark(input.tenantId, input.videoId, operationId, 'uncertain', { error: error instanceof Error ? error.message : 'unknown' });
+    else await budget.mark(input.tenantId, input.videoId, operationId, 'uncertain', {
+      error: error instanceof Error ? error.message : 'unknown',
+      ...(error instanceof FirstFrameProviderError && error.providerRequestId ? { providerRequestId: error.providerRequestId } : {}),
+    });
     throw error;
   }
 }

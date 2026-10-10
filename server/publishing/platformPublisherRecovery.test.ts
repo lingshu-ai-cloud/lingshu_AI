@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import axios from 'axios';
 import { sealAccountCredential } from '../lib/accountCredentials.js';
 import { store } from '../storage/index.js';
-import { resolvePendingPublishToAccount } from './platformPublisher.js';
+import { publishVideoToAccount, resolvePendingPublishToAccount } from './platformPublisher.js';
 
 process.env.PLATFORM_TOKEN_ENCRYPTION_KEY = 'platform-recovery-test-key';
 const originalGet = axios.get;
@@ -60,6 +60,20 @@ try {
   await assert.rejects(resolvePendingPublishToAccount({
     tenantId: 'tenant-b', accountId: 'facebook-1', platform: 'facebook', providerReceiptId: 'facebook-video-1',
   }), /Social account not found/);
+
+  // Neither a new submission nor recovery may send IG User tokens to legacy Graph.
+  let wrongProviderCalls = 0;
+  axios.get = (async () => { wrongProviderCalls++; throw new Error('wrong provider called'); }) as typeof axios.get;
+  for (const oauthProvider of ['instagram_login', 'unknown_login']) {
+    accounts.instagram!.oauthProvider = oauthProvider;
+    accounts.instagram!.scope = 'instagram_business_content_publish instagram_content_publish';
+    for (const providerReceiptId of ['ig-container:original-container', 'instagram-media-1']) {
+      await assert.rejects(resolvePendingPublishToAccount({tenantId:'tenant-a',accountId:'instagram-1',platform:'instagram',providerReceiptId}), /instagram_publishing_oauth_provider_unsupported/);
+    }
+    await assert.rejects(publishVideoToAccount({tenantId:'tenant-a',accountId:'instagram-1',platform:'instagram',title:'blocked IG login',videoUrl:'https://controlled.invalid/video.mp4'}), /instagram_publishing_oauth_provider_unsupported/);
+  }
+  assert.equal(wrongProviderCalls, 0);
+  delete accounts.instagram!.oauthProvider;
 
   axios.get = (async () => ({
     data: { items: [{ id: 'youtube-private-1', status: { uploadStatus: 'processed', privacyStatus: 'private' } }] },

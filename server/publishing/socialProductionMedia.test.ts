@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import fs from 'node:fs';
+import path from 'node:path';
 import type { DataStore, ListQuery } from '../storage/datastore.js';
 import { socialProductionPublishSourceClaim } from './publishSourceClaim.js';
 import { materializeSocialProductionVideo } from './socialProductionMedia.js';
@@ -34,8 +35,52 @@ assert.equal(claim.artifactFileId, fileId);
 await materialized.cleanup();
 assert.equal(fs.existsSync(materialized.videoPath), false);
 
+// Concurrent/repeated delivery of the same attempt owns independent upload copies.
+const repeated = await Promise.all([1, 2].map(() => materializeSocialProductionVideo({ tenantId: 'tenant-a', artifactId: 'artifact-1', attemptId: 'same-attempt', expectedHash: sha256, dataStore, backendFilePort })));
+assert.notEqual(repeated[0]!.videoPath, repeated[1]!.videoPath);
+await repeated[0]!.cleanup();
+assert.deepEqual(fs.readFileSync(repeated[1]!.videoPath), bytes);
+await repeated[0]!.cleanup();
+assert.deepEqual(fs.readFileSync(repeated[1]!.videoPath), bytes);
+await repeated[1]!.cleanup();
+await assert.rejects(materializeSocialProductionVideo({ tenantId: 'tenant-a', artifactId: 'artifact-1', attemptId: 'corrupted', expectedHash: sha256, dataStore, backendFilePort: { async attach() { return null; }, async fetch() { return { buf: Buffer.from('corrupted-owned-video'), contentType: 'video/mp4' }; } } }), /social_content_file_integrity_violation/);
+// A rejected retry must leave the first successfully materialized copy untouched.
+const surviving = await materializeSocialProductionVideo({ tenantId: 'tenant-a', artifactId: 'artifact-1', attemptId: 'corrupted', expectedHash: sha256, dataStore, backendFilePort });
+await assert.rejects(materializeSocialProductionVideo({ tenantId: 'tenant-a', artifactId: 'artifact-1', attemptId: 'corrupted', expectedHash: sha256, dataStore, backendFilePort: { async attach() { return null; }, async fetch() { return { buf: Buffer.alloc(bytes.length), contentType: 'video/mp4' }; } } }), /social_content_file_integrity_violation/);
+assert.deepEqual(fs.readFileSync(surviving.videoPath), bytes);
+await surviving.cleanup();
+
 await assert.rejects(materializeSocialProductionVideo({ tenantId: 'tenant-b', artifactId: 'artifact-1', attemptId: 'cross-tenant', expectedHash: sha256, dataStore, backendFilePort }), /social_production_artifact_not_found/);
 await assert.rejects(materializeSocialProductionVideo({ tenantId: 'tenant-a', artifactId: 'artifact-1', attemptId: 'wrong-hash', expectedHash: 'b'.repeat(64), dataStore, backendFilePort }), /social_production_media_identity_mismatch/);
+// Local development storage must pass the same physical-byte check as backend storage.
+const localRoot = path.resolve('data', 'social-content-sources');
+fs.mkdirSync(localRoot, { recursive: true });
+const localDirectory = fs.mkdtempSync(path.join(localRoot, 'materialization-test-'));
+const localFile = path.join(localDirectory, `${sha256}.mp4`);
+const fileRow = dataStore.rows.get('starter_social_content_files')![0]!;
+const previousNodeEnv = process.env.NODE_ENV;
+try {
+  process.env.NODE_ENV = 'test';
+  fileRow.storage_kind = 'local';
+  fileRow.storage_key = path.relative(localRoot, localFile);
+  fs.writeFileSync(localFile, bytes);
+  const localCopy = await materializeSocialProductionVideo({ tenantId: 'tenant-a', artifactId: 'artifact-1', attemptId: 'local-copy', expectedHash: sha256, dataStore });
+  assert.notEqual(localCopy.videoPath, localFile);
+  fs.writeFileSync(localFile, Buffer.alloc(bytes.length));
+  assert.deepEqual(fs.readFileSync(localCopy.videoPath), bytes);
+  await localCopy.cleanup();
+  assert.equal(fs.existsSync(localFile), true);
+  await assert.rejects(materializeSocialProductionVideo({ tenantId: 'tenant-a', artifactId: 'artifact-1', attemptId: 'local-hash-failure', expectedHash: sha256, dataStore }), /social_production_media_integrity_violation/);
+  fs.writeFileSync(localFile, bytes.subarray(0, bytes.length - 1));
+  await assert.rejects(materializeSocialProductionVideo({ tenantId: 'tenant-a', artifactId: 'artifact-1', attemptId: 'local-size-failure', expectedHash: sha256, dataStore }), /social_production_media_integrity_violation/);
+} finally {
+  fs.rmSync(localDirectory, { recursive: true, force: true });
+  fileRow.storage_kind = 'backend_file';
+  fileRow.storage_key = 'stored-video.mp4';
+  if (previousNodeEnv === undefined) delete process.env.NODE_ENV;
+  else process.env.NODE_ENV = previousNodeEnv;
+}
+
 dataStore.rows.get('starter_social_content_artifacts')![0]!.content.productionResult.technicalReview.approved = false;
 const revoked = await materializeSocialProductionVideo({ tenantId: 'tenant-a', artifactId: 'artifact-1', attemptId: 'revoked', expectedHash: sha256, dataStore, backendFilePort });
 await assert.rejects(socialProductionPublishSourceClaim({ tenantId: 'tenant-a', artifactId: 'artifact-1', productionResultId: 'production-1', contentVersion: 'production-v3', contentHash: sha256, videoHash: sha256, videoPath: revoked.videoPath, artifactVideoUrl: sourceUrl, artifactFileId: fileId, artifactFileRef: fileRef, dataStore }), /social_production_artifact_stale/);
