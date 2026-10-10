@@ -326,6 +326,22 @@ export function createSocialWeeklyProductionAdapter(dataStore: DataStore, ports:
       try{const {resumeWeeklyProductionAssetStage}=await import('../starter198/socialWeeklyProductionStageResume.js');await resumeWeeklyProductionAssetStage({repository,assetTask:task,now:now(),assertAdmission,validationPorts:{ownedProductIdentity:ports.ownedProductIdentity?{...ports.ownedProductIdentity,repository}:undefined}});job=await readContentExecutionJob(dataStore,task.tenantId,detail.taskId,detail.runId);}
       catch(error){return blocked(error instanceof Error?error.message:'weekly_production_stage_resume_unverified','原生产任务尚不能进入资产阶段，请核验本周前置任务及原运行凭据。');}
     }
+    if(task.schedule.stepKind==='asset_generation'){
+      const candidates=await repository.list(STARTER_COLLECTIONS.socialContentTasks,task.tenantId,{perPage:500});
+      if(candidates.totalItems!==candidates.items.length)return blocked('weekly_creative_repair_lookup_incomplete','创意返工生产任务列表未完整读取，不能恢复资产生产。');
+      const {resolveWeeklyCreativeRepairAuthority}=await import('./weeklyCreativeRepairAuthority.js');
+      const {readWeeklyPreSupplyHandoff}=await import('../starter198/socialWeeklyPreSupplyHandoff.js');
+      const {resumeWeeklyProductionAssetStage}=await import('../starter198/socialWeeklyProductionStageResume.js');
+      for(const candidate of candidates.items.filter(row=>String(row.create_idempotency_key??'').startsWith('weekly-creative-repair:'))){
+        const authority=await resolveWeeklyCreativeRepairAuthority({store:dataStore,tenantId:task.tenantId,task:candidate});
+        if(!authority||authority.repairCase.packageId!==task.packageId||authority.repairCase.packageVersion!==task.packageVersion||authority.repairCase.publicationTaskId!==task.publicationTaskId)continue;
+        const taskId=String(candidate.task_id??''),runId=String(candidate.run_id??'');if(!taskId||!runId)continue;
+        const creativeJob=await readContentExecutionJob(dataStore,task.tenantId,taskId,runId);if(creativeJob?.status!=='paused'||creativeJob.retryClass!=='weekly_production_waiting_asset_claim')continue;
+        const handoff=await readWeeklyPreSupplyHandoff(repository,task.tenantId,taskId);if(!handoff)return blocked('weekly_creative_repair_handoff_missing','创意返工任务缺少已冻结的生产交接凭证。');
+        try{await resumeWeeklyProductionAssetStage({repository,assetTask:task,contentTaskId:taskId,now:now(),assertAdmission,validationPorts:{ownedProductIdentity:ports.ownedProductIdentity?{...ports.ownedProductIdentity,repository}:undefined}});}
+        catch(error){return blocked(error instanceof Error?error.message:'weekly_creative_repair_stage_resume_unverified','创意返工任务尚不能恢复资产生产，请核验真实前置产物。');}
+      }
+    }
     if (['draft', 'needs_input', 'plan_review'].includes(detail.status) && !job) return blocked('weekly_production_confirmation_required', '运行身份已保留，但尚未完成生产准入确认。');
     const progress = detail.productionProgress ? { contentTaskId: detail.taskId, runId: detail.runId, step: detail.productionProgress.step, activity: detail.productionProgress.activity, updatedAt: detail.productionProgress.updatedAt } : undefined;
     if(job&&['blocked','cancelled','dead_letter'].includes(job.status)||job?.status==='paused'&&job.retryClass!=='weekly_production_waiting_asset_claim')return blocked(job!.retryClass||`content_execution_${job!.status}`,job!.lastError||'后台生产需要处理后才能继续。');

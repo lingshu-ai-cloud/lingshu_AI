@@ -231,7 +231,6 @@ export async function updateSocialContentTask(input: {
   idempotencyKey: string;
   value: UpdateSocialContentTaskInput;
   referenceResolver?: SocialTaskReferenceResolver;
-  weeklyOwnedProductIdentity?:Omit<WeeklyOwnedProductIdentityPorts,'repository'>;
   now?: Date;
 }): Promise<SocialContentTaskDetail> {
   const mutation = await executeSocialContentMutation<{ task: SocialContentTaskDetail }>({
@@ -577,6 +576,7 @@ export async function startSocialContentTask(input: {
   expectedVersion: string;
   idempotencyKey: string;
   referenceResolver?: SocialTaskReferenceResolver;
+  weeklyOwnedProductIdentity?:Omit<WeeklyOwnedProductIdentityPorts,'repository'>;
   now?: Date;
 }): Promise<SocialContentTaskDetail> {
   return withWeeklyProductionStartGuard(input, async () => startSocialContentTaskUnderGuard(input));

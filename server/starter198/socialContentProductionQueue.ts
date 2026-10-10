@@ -117,7 +117,7 @@ export async function runSocialContentAutoProductionWithRetry(input: {
   userId: string;
   taskId: string;
   runId: string;
-  materialEvidencePorts?:Omit<WeeklyOwnedProductIdentityPorts,'repository'>;
+  materialEvidencePorts?:WeeklyOwnedProductIdentityPorts;
 }): Promise<void> {
   // The durable queue owns retry classification and delay. Keeping retries in
   // one layer prevents one paid failure from multiplying across nested loops.
@@ -252,6 +252,7 @@ export async function enqueueSocialContentAutoProduction(input: {
   userId: string;
   taskId: string;
   runId: string;
+  materialEvidencePorts?:Omit<WeeklyOwnedProductIdentityPorts,'repository'>;
 }): Promise<void> {
   const dataStore = input.repository.dataStore ?? store;
   // Admission gaps precede all execution writes; an unqueued owned run has not failed production.
