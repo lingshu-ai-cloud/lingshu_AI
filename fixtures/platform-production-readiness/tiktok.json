@@ -1,0 +1,109 @@
+{
+  "schemaVersion": 1,
+  "platform": "tiktok",
+  "checkedAt": "2026-10-10",
+  "evidenceKind": "controlled_contract_and_documentation",
+  "productionReady": false,
+  "providerApproval": {
+    "loginKit": "unverified",
+    "directPostProduct": "unverified",
+    "videoPublishScope": "unverified",
+    "directPostAudit": "unverified",
+    "evidenceRef": null
+  },
+  "configuration": {
+    "environmentVariableNames": [
+      "TIKTOK_CLIENT_KEY",
+      "TIKTOK_CLIENT_SECRET",
+      "PUBLIC_BASE_URL",
+      "TIKTOK_DIRECT_POST_RELEASE_MODE",
+      "TIKTOK_READ_FEATURES_ENABLED",
+      "TENANT_PLATFORM_APP_KEY",
+      "PLATFORM_TOKEN_ENCRYPTION_KEY"
+    ],
+    "releaseModeDefault": "disabled",
+    "approvedModeValue": "approved",
+    "tenantApp": {
+      "collection": "tenant_platform_apps",
+      "identityFields": [
+        "tenant_id",
+        "platform"
+      ],
+      "platformValue": "tiktok",
+      "clientKeyField": "app_id",
+      "encryptedClientSecretField": "app_secret",
+      "fallback": "global OAuth configuration when tenant key/secret pair unavailable"
+    },
+    "callbackTemplate": "https://YOUR_PUBLIC_ORIGIN/api/overseas/social/oauth/tiktok/callback",
+    "accountFields": [
+      "tenantId",
+      "platform",
+      "providerAccountId",
+      "accessToken",
+      "refreshToken",
+      "tokenExpiresAt",
+      "scope",
+      "status"
+    ],
+    "directPostScopes": [
+      "user.info.basic",
+      "video.publish"
+    ],
+    "optionalReadScopes": [
+      "user.info.profile",
+      "user.info.stats",
+      "video.list"
+    ]
+  },
+  "endpoints": {
+    "authorize": "https://www.tiktok.com/v2/auth/authorize/",
+    "token": "https://open.tiktokapis.com/v2/oauth/token/",
+    "creatorInfo": "https://open.tiktokapis.com/v2/post/publish/creator_info/query/",
+    "init": "https://open.tiktokapis.com/v2/post/publish/video/init/",
+    "status": "https://open.tiktokapis.com/v2/post/publish/status/fetch/"
+  },
+  "receiptContract": {
+    "originalIdentity": "publish_id",
+    "acceptedIsPublished": false,
+    "terminalPublicStatus": "PUBLISH_COMPLETE",
+    "terminalPublicIdField": "publicaly_available_post_id",
+    "emptyPublicIds": "unknown",
+    "unknownAction": "query original receipt only; never submit again",
+    "attemptIdentityMustRemainStable": true
+  },
+  "controlledCreatorInfo": {
+    "creator_username": "controlled_creator",
+    "creator_nickname": "Controlled Creator",
+    "privacy_level_options": [
+      "SELF_ONLY"
+    ],
+    "comment_disabled": true,
+    "duet_disabled": true,
+    "stitch_disabled": true,
+    "max_video_post_duration_sec": 60
+  },
+  "blockingCodeGaps": [
+    "per_publish_user_selection_UX_and_approval_evidence_not_verified",
+    "automatic_access_token_refresh_not_verified",
+    "PULL_FROM_URL_not_implemented_or_ownership_verified"
+  ],
+  "secretsIncluded": false,
+  "realAuthorizationAttempted": false,
+  "realPublishAttempted": false,
+  "sources": [
+    "https://developers.tiktok.com/docs/en/login-kit-web",
+    "https://developers.tiktok.com/docs/en/content-sharing-guidelines",
+    "https://developers.tiktok.com/docs/en/content-posting-api-reference-query-creator-info",
+    "https://developers.tiktok.com/docs/en/content-posting-api-reference-direct-post",
+    "https://developers.tiktok.com/docs/en/content-posting-api-reference-get-video-status"
+  ],
+  "implementedRuntimeControls": [
+    "fresh_creator_info_before_init_and_identity_recheck",
+    "explicit_consent_privacy_interaction_commercial_and_aigc_choices",
+    "real_local_duration_and_bounded_single_chunk_validation",
+    "canonical_same_attempt_posts_prepared_receipt_before_init",
+    "publish_id_and_upload_url_hash_atomically_persisted_before_put",
+    "unknown_original_receipt_only_lookup_and_no_resubmit",
+    "strict_http_200_error_envelope_and_redirect_refusal"
+  ]
+}
