@@ -27,6 +27,8 @@ type Props = {
   view?: LsCalendarView;
   firstDay?: number;
   eventCardMode?: 'compact' | 'media';
+  density?: 'default' | 'compact';
+  flush?: boolean;
   date?: string;
   timeZone?: string;
   loading?: boolean;
@@ -123,7 +125,7 @@ function CalendarThumbnail({ src, title, large = false, card = false }: { src?: 
 }
 
 /** Standard plugins only: all calendar pages share the same events, timezone and accessible detail path. */
-export function LsCalendar({ events, label, initialDate, initialView = 'dayGridMonth', view: controlledView, firstDay = 1, eventCardMode = 'compact', date, timeZone = 'Asia/Shanghai', loading, timeGridHeight = 'clamp(320px, 65dvh, 720px)', fixedHeight, primaryAction, filters, onRefresh, onDatesSet, onDateClick, onExternalDrop, onMoveEvent, renderDetails }: Props) {
+export function LsCalendar({ events, label, initialDate, initialView = 'dayGridMonth', view: controlledView, firstDay = 1, eventCardMode = 'compact', density = 'default', flush = false, date, timeZone = 'Asia/Shanghai', loading, timeGridHeight = 'clamp(320px, 65dvh, 720px)', fixedHeight, primaryAction, filters, onRefresh, onDatesSet, onDateClick, onExternalDrop, onMoveEvent, renderDetails }: Props) {
   const calendarRef = useRef<CalendarRef>(null);
   const hostRef = useRef<HTMLDivElement>(null);
   const eventsRef = useRef(events);
@@ -141,6 +143,7 @@ export function LsCalendar({ events, label, initialDate, initialView = 'dayGridM
   const dayView: LsCalendarView = eventCardMode === 'media' ? 'dayGridDay' : 'timeGridDay';
   const moveRef = useRef(onMoveEvent);
   moveRef.current = onMoveEvent;
+  const compact = density === 'compact';
 
   useEffect(() => {
     if (controlledView) { setView(controlledView); const api=calendarRef.current?.getApi(); if(api&&api.view.type!==controlledView)api.changeView(controlledView); }
@@ -197,17 +200,18 @@ export function LsCalendar({ events, label, initialDate, initialView = 'dayGridM
     }
     await moveRef.current(event, next.toISOString());
   };
-  return <div className={`ls-calendar${eventCardMode === 'media' ? ' ls-calendar-media-cards' : ''}`} ref={hostRef} aria-label={label}>
+  return <div className={`ls-calendar${eventCardMode === 'media' ? ' ls-calendar-media-cards' : ''}${compact ? ' ls-calendar-compact' : ''}${flush ? ' ls-calendar-flush' : ''}`} ref={hostRef} aria-label={label}>
     <div className="ls-calendar-toolbar">
       {primaryAction}
-      <Button onClick={() => calendarRef.current?.getApi().today()}>今天</Button>
-      <div className="ls-calendar-navigation"><Button aria-label="上一周期" icon={<ChevronLeft size={16}/>} onClick={() => calendarRef.current?.getApi().prev()}/><Button aria-label="下一周期" icon={<ChevronRight size={16}/>} onClick={() => calendarRef.current?.getApi().next()}/></div>
+      <Button size={compact ? 'small' : 'middle'} onClick={() => calendarRef.current?.getApi().today()}>今天</Button>
+      <div className="ls-calendar-navigation"><Button size={compact ? 'small' : 'middle'} aria-label="上一周期" icon={<ChevronLeft size={16}/>} onClick={() => calendarRef.current?.getApi().prev()}/><Button size={compact ? 'small' : 'middle'} aria-label="下一周期" icon={<ChevronRight size={16}/>} onClick={() => calendarRef.current?.getApi().next()}/></div>
       <h3 aria-live="polite">{title}</h3>
-      <Segmented aria-label="日历视图" value={view} options={[{ label: '月', value: 'dayGridMonth' }, { label: '周', value: weekView }, { label: '日', value: dayView }, { label: '列表', value: 'listWeek' }, { label: '全年', value: 'multiMonthYear' }]} onChange={value => { setView(value as LsCalendarView); calendarRef.current?.getApi().changeView(value); }}/>
+      {compact && <div className="ls-calendar-inline-meta"><span title={timeZone}>{timeZone === 'Asia/Shanghai' ? '北京时间' : timeZone}</span><span role="status">{loading ? <><Spin size="small"/> 同步中</> : `${events.length} 项`}</span></div>}
+      <Segmented size={compact ? 'small' : 'middle'} aria-label="日历视图" value={view} options={[{ label: '月', value: 'dayGridMonth' }, { label: '周', value: weekView }, { label: '日', value: dayView }, { label: '列表', value: 'listWeek' }, { label: '全年', value: 'multiMonthYear' }]} onChange={value => { setView(value as LsCalendarView); calendarRef.current?.getApi().changeView(value); }}/>
       {filters}
-      {onRefresh && <Button aria-label="刷新日历" icon={<RefreshCw size={15}/>} onClick={onRefresh} loading={loading}/>}
+      {onRefresh && <Button size={compact ? 'small' : 'middle'} aria-label="刷新日历" icon={<RefreshCw size={15}/>} onClick={onRefresh} loading={loading}/>}
     </div>
-    <div className="ls-calendar-meta"><span>{timeZone === 'Asia/Shanghai' ? '北京时间 · Asia/Shanghai' : `时区：${timeZone}`}</span><span role="status">{loading ? <><Spin size="small"/> 正在同步，保留当前排期</> : `已加载 ${events.length} 项排期`}</span></div>
+    {!compact && <div className="ls-calendar-meta"><span>{timeZone === 'Asia/Shanghai' ? '北京时间 · Asia/Shanghai' : `时区：${timeZone}`}</span><span role="status">{loading ? <><Spin size="small"/> 正在同步，保留当前排期</> : `已加载 ${events.length} 项排期`}</span></div>}
     <div className="ls-calendar-surface" onDragOver={event => { if (onExternalDrop && event.dataTransfer.types.includes('application/x-lingshu-pending-content')) event.preventDefault(); }} onDrop={event => {
       if (!onExternalDrop) return;
       const pendingId = event.dataTransfer.getData('application/x-lingshu-pending-content');
@@ -250,8 +254,8 @@ export function LsCalendar({ events, label, initialDate, initialView = 'dayGridM
               <CalendarThumbnail src={item.thumbnailUrl} title={item.title} card/>
               <div className="ls-calendar-event-copy">
                 <div className="ls-calendar-event-meta"><span className="ls-calendar-event-account">{item.platform && <SocialPlatformIcon platform={item.platform} size={13}/>}<span>{item.accountName || item.ownerAgent || '待绑定账号'}</span></span><span>{item.statusLabel || calendarStatusLabels[item.status]}</span></div>
-                <strong>{item.title}</strong>
-                {item.description && <span className="ls-calendar-event-summary">{item.description}</span>}
+                <strong title={item.title}>{item.title}</strong>
+                {!compact && item.description && <span className="ls-calendar-event-summary">{item.description}</span>}
               </div>
             </div>;
           }

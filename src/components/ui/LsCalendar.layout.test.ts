@@ -85,10 +85,11 @@ assert.equal(evaluate(expression('dayMaxEvents'), { eventCardMode: 'media', view
 assert.equal(evaluate(expression('dayMaxEvents'), { eventCardMode: 'compact', view: 'dayGridMonth' }), 3, 'compact month views retain their native overflow control');
 
 type RenderNode = { type: unknown; props: Record<string, unknown> | null; children: any[] };
-const render = evaluate(expression('eventContent'), {
+const renderBindings = {
   React: { createElement: (type: unknown, props: Record<string, unknown> | null, ...children: any[]): RenderNode => ({ type, props, children }) },
-  CalendarThumbnail: 'CalendarThumbnail', SocialPlatformIcon: 'SocialPlatformIcon', calendarStatusLabels: { planned: '待执行' }, eventCardMode: 'media',
-});
+  CalendarThumbnail: 'CalendarThumbnail', SocialPlatformIcon: 'SocialPlatformIcon', calendarStatusLabels: { planned: '待执行' }, eventCardMode: 'media', compact: false,
+};
+const render = evaluate(expression('eventContent'), renderBindings);
 function nodes(node: RenderNode): RenderNode[] {
   return [node, ...node.children.filter(item => item && typeof item === 'object').flatMap(nodes)];
 }
@@ -116,6 +117,14 @@ const event = { allDay: false, extendedProps: { item: { title: '新品短视频�
   assert.ok(nodes(result).some(node => node.type === 'CalendarThumbnail'), 'the weekly content-card view renders the thumbnail in the day cell');
   assert.ok(nodes(result).some(node => node.type === 'SocialPlatformIcon'), 'the weekly card retains its platform identity');
 }
+{
+  const renderCompact = evaluate(expression('eventContent'), { ...renderBindings, compact: true });
+  const item = { ...event.extendedProps.item, description: '重复标题不占第二块卡片区域' };
+  const result = renderCompact({ event: { ...event, allDay: true, extendedProps: { item } }, view: { type: 'dayGridWeek' }, timeText: '' }) as RenderNode;
+  assert.ok(nodes(result).some(node => node.type === 'CalendarThumbnail'), 'dense weekly cards retain their original-ratio media preview');
+  assert.equal(nodes(result).find(node => node.type === 'strong')?.props?.title, item.title, 'compact titles remain available in full');
+  assert.equal(nodes(result).some(node => node.props?.className === 'ls-calendar-event-summary'), false, 'dense cards avoid a duplicate description row');
+}
 assert.match(css, /\.ls-calendar-surface\s*\{[^}]*min-width: 0;[^}]*max-width: 100%/);
 assert.match(css, /\.ls-calendar-event-content-timed[^}]*overflow: hidden/);
 assert.match(css, /white-space: nowrap; text-overflow: ellipsis; line-height: var\(--ls-type-body-small-line\)/);
@@ -123,7 +132,13 @@ assert.match(css, /@container ls-calendar-slot \(max-height: 32px\)/, 'the small
 assert.match(css, /\.ls-calendar-event-content-all-day[^}]*max-height: 44px/, 'all-day rows must remain compact even when a legacy event has a long title');
 assert.match(css, /\.fc-timegrid-slot\s*\{[^}]*height:\s*48px/, 'hourly rows must be tall enough to make the day timeline readable');
 assert.match(css, /\.ls-calendar-media-cards \.fc-daygrid-day-frame\s*\{[^}]*min-height:\s*560px/, 'the weekly card calendar must remain a large, stable workspace');
-assert.match(css, /\.ls-calendar-card-media\s*\{[^}]*aspect-ratio:\s*16\/9/, 'thumbnail space must be reserved before media resolves so loading cannot reorder cards');
+assert.match(css, /\.ls-calendar-card-media\s*\{[^}]*aspect-ratio:\s*9\/16/, 'portrait video space must be reserved before media resolves so loading cannot reorder cards');
+assert.match(css, /\.ls-calendar-card-media img\s*\{[^}]*object-fit:\s*contain/, 'calendar covers preserve their entire original image instead of cropping portrait videos to landscape');
+assert.match(css, /\.ls-calendar-compact \.ls-calendar-event-content-media\s*\{[^}]*grid-template-columns:\s*48px minmax\(0, 1fr\)/, 'dense cards place the portrait cover beside the text so a complete daily schedule fits the calendar window');
+assert.match(css, /@container ls-calendar-card \(max-width: 112px\)/, 'very narrow date columns must stack their preview instead of crushing readable text');
+assert.match(css, /\.ls-calendar\.ls-calendar-flush\s*\{\s*padding:\s*0/, 'composed home calendars can use the full available width');
+assert.match(css, /\.ls-calendar-compact \.ls-calendar-toolbar\s*\{[^}]*flex-wrap:\s*nowrap[^}]*overflow-x:\s*auto/, 'dense controls stay in one locally scrollable row without page overflow');
+assert.match(source, /!compact && <div className="ls-calendar-meta"/, 'dense calendars do not retain a standalone metadata row');
 assert.match(css, /\.ls-calendar \.fc-daygrid-day-events\s*\{[^}]*display:\s*flex;[^}]*flex-direction:\s*column;[^}]*gap:\s*4px/, 'every FullCalendar day cell uses one dense native card flow');
 assert.match(css, /\.ls-calendar-media-cards \.fc-daygrid-day-events\s*\{[^}]*gap:\s*6px/, 'media-first weekly cards retain accessible separation inside the same native flow');
 assert.doesNotMatch(source, /\bMasonry\b/, 'calendar surfaces must stay on the FullCalendar layout engine');

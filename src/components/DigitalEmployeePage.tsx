@@ -1,5 +1,5 @@
 import { getScrollBehavior } from "../lib/usePrefersReducedMotion";
-import { PAGE_REGISTRY } from "../pageRegistry";
+import { PAGE_REGISTRY, type Page } from "../pageRegistry";
 import { readAgentCalendarReturnContext, registerAgentCalendarReturnState } from '../lib/agentCalendarReturnContext';
 import InitialPreparationStatusPanel from './InitialPreparationStatusPanel';
 import InitialOperatingPlanDialog from './InitialOperatingPlanDialog';
@@ -3643,7 +3643,7 @@ export default function DigitalEmployeePage({
   onOpenMonitor,
   onViewResults,
 }: {
-  onNavigate?: (page: BusinessDestination) => void;
+  onNavigate?: (page: Page) => void;
   onOpenMonitor?: () => void;
   onViewResults?: () => void;
 }) {
@@ -4322,15 +4322,14 @@ export default function DigitalEmployeePage({
     const dashboardView = workspaceView === "matrix"
       ? "matrix"
       : workspaceView === "overview"
-        ? "queue"
+        ? "review"
         : workspaceView === "live"
-          ? selectedContentItemId ? "production" : "queue"
+          ? selectedContentItemId ? "production" : "review"
           : workspaceView === "review" ? "review" : "home";
-    const views: Array<{ id: "today" | "matrix" | "overview" | "review"; label: string; caption: string }> = [
-      { id: "today", label: "经营总览", caption: "业绩与 Agent 实况" },
+    const views: Array<{ id: "today" | "matrix" | "review"; label: string; caption: string }> = [
+      { id: "today", label: "经营总览", caption: "资产健康度与下一轮建议" },
       { id: "matrix", label: "账号矩阵", caption: "职责、策略与连接" },
-      { id: "overview", label: "内容队列", caption: "视频数据、平台与热度" },
-      { id: "review", label: "数据复盘", caption: "热度排行与下周待办" },
+      { id: "review", label: "数据复盘", caption: "账号、询盘与投流明细" },
     ];
     const currentVideoPlans = data.plan?.businessPackage?.tasks.find(task => task.templateId === "production")?.videoPlans || goal?.videoPlans || [];
     const currentMasterPlans = currentVideoPlans.filter(plan => plan.productionRole !== "platform_adaptation");
@@ -4457,7 +4456,7 @@ export default function DigitalEmployeePage({
     return (
       <>
       {!weeklyPlanOpen && <div className="h-full overflow-y-auto bg-white">
-        <div className="mx-auto w-full max-w-[1440px] px-4 py-5 sm:px-6 lg:px-8">
+        <div className="mx-auto w-full px-2 py-3 sm:px-3">
           <h1 className="sr-only">{PAGE_REGISTRY.digitalEmployees.canonicalTitle}</h1>
           <div aria-label="当前周计划">
             {goal ? <WeeklyCommandCenter
@@ -4469,9 +4468,9 @@ export default function DigitalEmployeePage({
                 : undefined}
             /> : <section className="overflow-hidden rounded-lg border border-border bg-white"><div className="flex flex-wrap items-start justify-between gap-4 px-5 py-4"><div><p className="text-xs font-semibold text-accent">周经营计划</p><p className="mt-1 text-sm font-bold text-slate-800">本周还没有可执行计划</p><p className="mt-1 text-xs text-slate-500">点击“开始周任务”确定平台、账号、视频产量和预算，再选择产品并确认工作排期。</p></div><div aria-label="智能经营控制" className="flex max-w-full flex-wrap items-center justify-end gap-2">{weeklyPlanControls}</div></div></section>}
           </div>
-          <Tabs className="mt-6" aria-label="智能经营视图" activeKey={workspaceView === "live" ? "overview" : workspaceView} onChange={key => {setWorkspaceView(key as WorkspaceView); if(key !== "overview") setSelectedContentItemId("");}} items={views.map(view => ({key: view.id, label: view.label}))}/>
+          <Tabs className="mt-3" aria-label="智能经营视图" activeKey={workspaceView === "live" || workspaceView === "overview" ? "review" : workspaceView} onChange={key => {setWorkspaceView(key as WorkspaceView); setSelectedContentItemId("");}} items={views.map(view => ({key: view.id, label: view.label}))}/>
           {error && <Alert className="mt-5" type="error" showIcon title={error} closable onClose={()=>setError("")}/>}
-          <div className="grid grid-cols-1 gap-4 py-6">
+          <div className="grid grid-cols-1 gap-4 pb-6 pt-2">
             {workspaceView === "matrix" && <SmartOperationsAccountRail targets={smartOperationsAccounts} selectedAccountId={selectedAccountId} taskCounts={accountTaskCounts} onSelect={setSelectedAccountId} onManage={() => onNavigate?.('plugins')}/>}
             <main className="min-w-0">
             {workspaceView === "rules"
@@ -4482,7 +4481,11 @@ export default function DigitalEmployeePage({
                     setWeeklyPlanOpen(true);
                     return;
                   }
-                  if (["enterprise", "accountManagement", "plugins", "scheduled", "socialInspiration", "scriptLibrary", "smartAssets", "conversion", "digitalEmployees"].includes(page)) onNavigate?.(page as BusinessDestination);
+                  if (page === "socialAccounts") {
+                    setWorkspaceView("matrix");
+                    return;
+                  }
+                  onNavigate?.(page);
                 }} />}
             </main>
           </div>

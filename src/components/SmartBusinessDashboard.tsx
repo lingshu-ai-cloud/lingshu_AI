@@ -39,12 +39,12 @@ import ProductionTaskScene from "./ProductionTaskScene";
 import MatrixPublicationSchedule from "./smartBusiness/MatrixPublicationSchedule";
 import MatrixWorkSchedule from "./smartBusiness/MatrixWorkSchedule";
 import NextRoundRecommendationsSection from "./NextRoundRecommendationsSection";
-import AccountActivity from "./AccountActivity";
-import AccountHealthPanel from "./smartBusiness/AccountHealthPanel";
+import BusinessHealthOverview from "./smartBusiness/BusinessHealthOverview";
+import BusinessDataReview from "./smartBusiness/BusinessDataReview";
 import { LsCalendar, calendarDayKey, type LsCalendarEvent } from "./ui/LsCalendar";
 import { thumbnailUrlWithSourceFallback } from "../lib/calendarModel";
 
-export type SmartBusinessView = "home" | "matrix" | "queue" | "production" | "review";
+export type SmartBusinessView = "home" | "matrix" | "production" | "review";
 
 type AgentCard = {
   role: Exclude<DigitalEmployeeAgentRole, "orchestrator">;
@@ -341,7 +341,7 @@ export function WeeklyCommandCenter({
   })).filter(event => Boolean(event.start));
 
   return <section className={`overflow-hidden rounded-lg border border-border bg-white ${className}`.trim()} aria-label="本周任务驾驶舱">
-    <div className="flex flex-wrap items-start justify-between gap-5 border-b border-border px-5 py-5 text-text-primary sm:px-6">
+    <div className="flex flex-wrap items-start justify-between gap-3 border-b border-border px-4 py-3 text-text-primary">
       <div className="min-w-0 flex-1">
         <div className="flex flex-wrap items-center gap-2">
           <h2 className="text-xl font-semibold">周经营计划</h2>
@@ -363,9 +363,8 @@ export function WeeklyCommandCenter({
         { label: "已结算成本", value: settledContentCost > 0 ? `¥${settledContentCost.toFixed(2)}` : "暂无结算", color: "var(--color-text-primary)", note: "仅统计供应商对账回执" },
       ].map(item => <article key={item.label} className="bg-white px-4 py-4"><Statistic title={item.label} value={item.value} valueStyle={{ color: item.color }}/><p className="mt-2 text-xs text-text-secondary">{item.note}</p></article>)}
     </div>
-    <div className="border-t border-border px-4 py-5 sm:px-5">
-      <div className="mb-4 flex items-center justify-between gap-3"><h3 className="text-lg font-semibold text-text-primary">发布日历</h3><span className="text-xs text-text-secondary">{calendarEvents.length} 条本周内容</span></div>
-      <LsCalendar events={calendarEvents} label="本周发布日历" initialDate={display.startsAt ? calendarDayKey(display.startsAt) : undefined} date={display.startsAt ? calendarDayKey(display.startsAt) : undefined} initialView="dayGridWeek" eventCardMode="media" fixedHeight={640} firstDay={display.startsAt ? new Date(`${display.startsAt}T00:00:00+08:00`).getDay() : 1} renderDetails={event => {
+    <div className="border-t border-border">
+      <LsCalendar events={calendarEvents} label="本周发布日历" initialDate={display.startsAt ? calendarDayKey(display.startsAt) : undefined} date={display.startsAt ? calendarDayKey(display.startsAt) : undefined} initialView="dayGridWeek" eventCardMode="media" density="compact" flush fixedHeight={640} firstDay={display.startsAt ? new Date(`${display.startsAt}T00:00:00+08:00`).getDay() : 1} renderDetails={event => {
         const item = event.data as UnifiedPlanContent;
         return <div className="space-y-3"><div className="flex flex-wrap gap-2">{item.tags.map(tag => <Tag key={tag}>#{tag}</Tag>)}</div><dl className="ls-calendar-details"><div><dt>产品</dt><dd>{item.productName}</dd></div><div><dt>发布文案</dt><dd>{item.caption || "待完善"}</dd></div></dl></div>;
       }}/>
@@ -664,27 +663,10 @@ function PlanDataSourceBadge({ source }: { source: DisplayMetricSource }) {
   return <Tag color={source === "real" ? "success" : "default"}>{source === "real" ? "真实回传" : "参考估算"}</Tag>;
 }
 
-function HomeView({ calendarTasks, calendarDemo, data, onRefresh, onNavigate, onOpenProductionProgress, selectedAccountId = "" }: { calendarTasks?: AgentCalendarTask[]; calendarDemo?: boolean; data: DigitalEmployeeOverview; onRefresh?: () => void; onNavigate?: (page: Page) => void; onOpenProductionProgress?: (taskId: string, contentItemId: string) => void; selectedAccountId?: string }) {
-  const display = useMemo(() => buildSmartBusinessDisplayModel(data), [data]);
-  const snapshot = data.businessSnapshot;
-  const days = [...new Set(display.contents.map(item => item.plannedPublishDate).filter(Boolean))].sort();
-  const adSpend = snapshot?.ads?.spendByCurrency || [];
-  const inquiriesAvailable = snapshot?.content.inquiries.status === "available" && snapshot.content.inquiries.value !== null;
-  const wonAvailable = snapshot?.customer.won.status === "available" && snapshot.customer.won.value !== null;
-  const demoInquiryCount = Math.max(8, Math.round(display.totals.versionCount * 0.65));
-  const metrics = [
-    { label: "运营平台账号", value: display.totals.accountCount, note: `${display.accounts.filter(item => item.source === "connected").length} 个已连接`, demo: false },
-    { label: "获得询盘", value: metricValue(inquiriesAvailable ? snapshot?.content.inquiries.value : demoInquiryCount), note: snapshot?.content.inquiries.note || "等待询盘回传", demo: !inquiriesAvailable },
-    { label: "成交客户", value: metricValue(wonAvailable ? snapshot?.customer.won.value : Math.max(1, Math.round(demoInquiryCount * 0.22))), note: "按成交客户记录", demo: !wonAvailable },
-    { label: "投流消耗", value: adSpend.length === 1 ? `${adSpend[0].currency} ${adSpend[0].amount.toLocaleString("zh-CN", { maximumFractionDigits: 2 })}` : adSpend.length > 1 ? `${adSpend.length} 种币种` : "—", note: snapshot?.ads?.note || "等待平台费用回执", demo: false },
-  ];
+function HomeView({ data, onNavigate, selectedAccountId = "" }: { data: DigitalEmployeeOverview; onNavigate?: (page: Page) => void; selectedAccountId?: string }) {
   return <div className="space-y-6">
-    <MatrixWorkSchedule calendarTasks={calendarTasks} calendarDemo={calendarDemo} taskItems={data.contentQueue?.items} workflowTasks={data.tasks} planTasks={data.plan?.tasks} agentStatuses={data.agents} onOpenTask={onOpenProductionProgress} startsAt={display.startsAt} selectedAccountId={selectedAccountId} accountConnections={(data.config?.publishingTargets || []).map(account => ({ accountId: account.accountId, platform: account.platform, connected: true }))}/>
-    <div className="grid divide-y divide-border rounded-lg border border-border bg-white sm:grid-cols-2 sm:divide-y-0 xl:grid-cols-4">{metrics.map(item => <div key={item.label} className="border-border p-5 sm:border-r last:border-r-0"><Statistic title={item.label} value={item.value}/><p className="mt-2 text-xs text-text-secondary">{item.note}</p></div>)}</div>
-    <LsDataChart title="本周计划与完成" description="单位：条视频；按计划发布日期归组，完成数为当前已完成状态，不代表该日实际完成量。" kind="line" labels={days} series={[
-      { label: "计划版本", values: days.map(day => display.contents.filter(item => item.plannedPublishDate === day).length) },
-      { label: "已完成版本", values: days.map(day => display.contents.filter(item => item.plannedPublishDate === day && item.status === "completed").length) },
-    ]} unit="条"/>
+    <BusinessHealthOverview data={data} selectedAccountId={selectedAccountId} onNavigate={onNavigate}/>
+    <NextRoundRecommendationsSection summary={data.review?.status === "generated" ? data.review.summary : undefined} industryTrends={data.industryTrends} onOpen={page => onNavigate?.(page as Page)}/>
   </div>;
 }
 
@@ -906,11 +888,6 @@ function MatrixView({ calendarTasks, calendarDemo, data, onRefresh, onNavigate, 
 
   return <div className="space-y-5">
     <MatrixPublicationSchedule calendarTasks={calendarTasks} calendarDemo={calendarDemo} taskItems={data.contentQueue?.items} onOpenTask={onOpenProductionProgress} onOpenContent={onOpenContent} startsAt={goal?.startsAt} endsAt={goal?.endsAt} accounts={accountRows} plans={productionPlans} selectedAccountId={selectedAccountId} onOpenPublishing={() => onNavigate?.("traffic")}/>
-    <AccountHealthPanel accounts={selectedAccounts.map(row => ({ accountId: row.accountId, accountLabel: row.accountLabel, platform: row.platform, weeklyCount: row.weeklyCount, connected: row.connected, audience: row.audience, productName: row.productName, contentDirection: row.contentDirection, formats: row.formats, cta: row.cta }))} startsAt={goal?.startsAt || ""} endsAt={goal?.endsAt || ""} channelsLoaded={connectionStatus.loaded} whatsappConnected={connectionStatus.whatsapp} messengerPages={connectionStatus.messengerPages} inquiryEvidence={data.businessSnapshot?.interactionReview?.breakdown || []}/>
-    <section aria-label="本周账号更新完成度" className="flex items-center justify-between gap-5 rounded-lg border border-border bg-white px-5 py-4">
-      <div><h2 className="text-sm font-semibold text-text-primary">本周账号更新完成度</h2><p className="mt-1 text-xs text-text-secondary">{weeklyCompletedCount}/{weeklyTargetCount} 条计划视频已完成</p></div>
-      <strong className="shrink-0 bg-gradient-to-r from-blue-600 to-violet-600 bg-clip-text text-4xl font-semibold tracking-tight text-transparent">{weeklyCompletionPercent}%</strong>
-    </section>
     <section className="rounded-lg border border-slate-200 bg-white p-5 sm:p-6">
       <div className="flex flex-wrap items-start justify-between gap-4">
         <div><p className="text-xs font-bold tracking-[0.16em] text-blue-600">账号配置</p><h2 className="mt-1 text-2xl font-semibold text-slate-950">账号职责与连接状态</h2></div>
@@ -942,10 +919,6 @@ function MatrixView({ calendarTasks, calendarDemo, data, onRefresh, onNavigate, 
       } }}/>
       {!saved&&<div className="mt-5 flex justify-end"><Button type="primary" htmlType="button" onClick={onGeneratePlan} className="ls-brand-action !h-auto min-h-9 !whitespace-normal inline-flex items-center gap-2 rounded-lg bg-blue-600 px-4 py-2.5 text-xs font-semibold text-white"><CalendarRange size={14}/>生成周计划并应用矩阵</Button></div>}
       {saved&&!saved.matrixPlan?.length&&defaultRows.length>0&&editable&&<div className="mt-5 flex justify-end"><Button htmlType="button" disabled={saving} onClick={() => void save({ ...saved, matrixPlan: defaultRows })} className="!h-auto min-h-9 !whitespace-normal inline-flex items-center gap-2 rounded-lg bg-blue-600 px-4 py-2.5 text-xs font-semibold text-white disabled:opacity-50"><LayoutGrid size={14}/>应用默认矩阵</Button></div>}
-    </section>
-    <section aria-labelledby="account-monitor-title" className="overflow-hidden rounded-lg border border-border bg-white">
-      <header className="border-b border-border px-5 py-4"><h2 id="account-monitor-title" className="text-lg font-semibold">账号监控</h2></header>
-      <AccountActivity embedded/>
     </section>
     {editing && draft && config && goal && <Drawer open title="修改账号、内容方向与排期" size={880} onClose={() => !saving && setEditing(false)} mask={{ closable: false }} footer={<div className="flex justify-end gap-2"><Button disabled={saving} onClick={() => setEditing(false)}>取消</Button><Button type="primary" loading={saving} onClick={() => void save(draft)}>保存并更新内容清单</Button></div>}>
       <WeeklyMatrixEditor pack={draft} config={config} platforms={goal.contentPlatforms} startsAt={goal.startsAt} dueAt={goal.endsAt} projects={projects} onChange={setDraft} onNavigate={page => onNavigate?.(page)}/>
@@ -1189,54 +1162,6 @@ function ContentGenerationProgress({ data, selectedAccountId = "", onOpenContent
   </section>;
 }
 
-function QueueView({ data, onRefresh, onNavigate, onGenerateDetails, selectedAccountId = "", onOpenContent, onOpenProductionProgress, onControlJob, onRetryTask }: { data: DigitalEmployeeOverview; onRefresh?: () => void; onNavigate?: (page: Page) => void; onGenerateDetails?: () => void; selectedAccountId?: string; onOpenContent?: (taskId?: string, socialContentTaskId?: string) => void; onOpenProductionProgress?: (taskId: string, contentItemId: string) => void; onControlJob?: (jobId: string, action: ExecutionControlAction) => Promise<boolean>; onRetryTask?: (taskId: string) => Promise<boolean> }) {
-  const display = useMemo(() => buildSmartBusinessDisplayModel(data), [data]);
-  const [periodFilter, setPeriodFilter] = useState<"current" | "previous" | "30d" | "all">("current");
-  const [platformFilter, setPlatformFilter] = useState<"all" | Platform>("all");
-  const cycleStart = display.startsAt || data.businessSnapshot?.range.startsAt || "";
-  const cycleEnd = display.endsAt || data.businessSnapshot?.range.endsAt || "";
-  const start = periodFilter === "previous" ? shiftIsoDate(cycleStart, -7) : periodFilter === "30d" ? shiftIsoDate(cycleEnd, -29) : periodFilter === "all" ? "" : cycleStart;
-  const end = periodFilter === "previous" ? shiftIsoDate(cycleStart, -1) : periodFilter === "all" ? "" : cycleEnd;
-  const filteredItems = display.contents.filter(item => (platformFilter === "all" || item.platform === platformFilter) && (!start || !end || !item.plannedPublishDate || item.plannedPublishDate >= start && item.plannedPublishDate <= end));
-  const runtimeItems = (data.contentQueue?.items || []).filter(item => (!selectedAccountId || item.accountId === selectedAccountId) && (platformFilter === "all" || item.platform === platformFilter) && (!start || !end || !item.plannedPublishDate || item.plannedPublishDate >= start && item.plannedPublishDate <= end));
-  const states = [
-    { label: "排队中", keys: ["planned", "queued"] }, { label: "制作中", keys: ["producing"] },
-    { label: "待验收", keys: ["waiting_review"] }, { label: "需要处理", keys: ["blocked"] }, { label: "已完成", keys: ["completed"] },
-  ];
-  const stageDurations = new Map<string, number[]>();
-  for (const item of runtimeItems) for (const step of item.steps) {
-    if (!step.actualStartedAt || !step.actualFinishedAt) continue;
-    const duration = (Date.parse(step.actualFinishedAt) - Date.parse(step.actualStartedAt)) / 60000;
-    if (Number.isFinite(duration) && duration >= 0) stageDurations.set(step.label, [...(stageDurations.get(step.label) || []), duration]);
-  }
-  const durations = [...stageDurations].slice(0, 10);
-  const statusLabels: Record<ContentQueueItem["status"], string> = { planned: "未开始", queued: "排队中", producing: "制作中", waiting_review: "待验收", completed: "已完成", blocked: "需要处理" };
-  return <div className="space-y-5">
-    <div className="grid rounded-lg border border-border bg-white sm:grid-cols-2 xl:grid-cols-4">{[
-      { label: "视频播放量", value: metricValue(display.totals.views), demo: display.totals.performanceSource === "demo" },
-      { label: "互动总数", value: metricValue(display.totals.interactions), demo: display.totals.performanceSource === "demo" },
-      { label: "已发布视频", value: display.totals.publishedCount, demo: false },
-      { label: "本周计划视频", value: display.totals.versionCount, demo: false },
-    ].map(metric => <div key={metric.label} className="border-border p-5 sm:border-r last:border-0"><Statistic title={metric.label} value={metric.value}/></div>)}</div>
-    <div className="flex flex-wrap items-center gap-3">
-      <Segmented aria-label="内容时间周期" value={periodFilter} onChange={value => setPeriodFilter(value as typeof periodFilter)} options={[{ value: "current", label: "本周期" }, { value: "previous", label: "上周期" }, { value: "30d", label: "近 30 天" }, { value: "all", label: "全部" }]}/>
-      <Select aria-label="内容平台" value={platformFilter} onChange={setPlatformFilter} className="min-w-40" options={[{ value: "all", label: "全部平台" }, ...platformOptions.map(platform => ({ value: platform, label: platformLabels[platform] }))]}/>
-      <span className="text-xs text-text-secondary">{filteredItems.length} 条计划内容</span>
-    </div>
-    <LsDataChart title="各阶段任务量" description="单位：条；所选范围内的计划版本，未生成执行任务的内容计为未开始。" kind="bar" stacked labels={filteredItems.length ? ["内容状态"] : []} series={states.map(state => ({ label: state.label, values: filteredItems.length ? [filteredItems.filter(item => state.keys.includes(item.status)).length] : [] }))} unit="条" height={220}/>
-    <LsDataChart title="平均制作工期" description="单位：分钟；仅统计同时存在真实开始与完成时间的节点，不使用预计用时补齐。" kind="bar" horizontal labels={durations.map(([label]) => label)} series={[{ label: "平均实际工期", values: durations.map(([, values]) => Math.round(values.reduce((sum, value) => sum + value, 0) / values.length * 10) / 10) }]} unit="分钟" height={240}/>
-    <section className="rounded-lg border border-border bg-white p-5"><h2 className="mb-4 text-lg font-semibold">内容明细与热度</h2>
-      <Table<UnifiedPlanContent> rowKey="id" dataSource={filteredItems} pagination={{ pageSize: 8, showSizeChanger: false, showTotal: total => `共 ${total} 条` }} columns={[
-        { title: "内容", key: "title", render: (_, item) => <div><Button type="link" className="!h-auto !whitespace-normal !p-0 !text-left" onClick={() => item.queueItem ? onOpenProductionProgress?.(item.queueItem.taskId, item.queueItem.id) : onNavigate?.("socialInspiration")}>{item.title}</Button><p className="mt-1 text-xs text-text-secondary">产品：{item.productName}</p>{item.tags.length > 0 && <div className="mt-1 flex flex-wrap gap-1">{item.tags.slice(0, 6).map(tag => <span key={tag} className="text-xs font-medium text-accent">#{tag}</span>)}</div>}<p className="mt-1 flex items-center gap-1 text-xs text-text-secondary"><SocialPlatformIcon platform={item.platform} size={14}/><span>{platformLabels[item.platform]} · {item.accountLabel}</span></p><p className="mt-1 text-xs text-text-secondary sm:hidden">{statusLabels[item.status]} · {item.plannedPublishDate || "待排期"}</p></div> },
-        { title: "状态", dataIndex: "status", responsive: ["sm"], render: (status: ContentQueueItem["status"]) => <Tag color={status === "blocked" ? "error" : status === "completed" ? "success" : status === "waiting_review" ? "warning" : "default"}>{statusLabels[status]}</Tag> },
-        { title: "发布日期", dataIndex: "plannedPublishDate", responsive: ["lg"], sorter: (a, b) => a.plannedPublishDate.localeCompare(b.plannedPublishDate) },
-        { title: "播放量", key: "views", align: "right", sorter: (a, b) => a.metrics.views - b.metrics.views, render: (_, item) => <div>{metricValue(item.metrics.views)}<div className="mt-1"><PlanDataSourceBadge source={item.metrics.source}/></div></div> },
-        { title: "互动", key: "interactions", align: "right", responsive: ["md"], sorter: (a, b) => a.metrics.interactions - b.metrics.interactions, render: (_, item) => metricValue(item.metrics.interactions) },
-      ]}/>
-    </section>
-    <AccountContentPerformanceDetail data={data} display={display} selectedAccountId={selectedAccountId} platform={platformFilter} startsAt={start} endsAt={end} onNavigate={onNavigate}/>
-  </div>;
-}
 
 function ProductionDetailView({ data, contentItemId, onBack, onNavigate, onOpenContent, onRetryTask }: {
   data: DigitalEmployeeOverview;
@@ -1254,7 +1179,7 @@ function ProductionDetailView({ data, contentItemId, onBack, onNavigate, onOpenC
     <Clapperboard size={30} className="mx-auto text-slate-300"/>
     <h2 className="mt-3 text-base font-semibold text-slate-900">没有找到这条内容的制作记录</h2>
     <p className="mt-1 text-xs text-slate-500">任务可能尚未进入制作队列，或当前计划已经更新。</p>
-    <Button htmlType="button" onClick={onBack} className="!h-auto min-h-9 !whitespace-normal mt-5 rounded-lg bg-slate-950 px-4 py-2.5 text-xs font-semibold text-white">返回内容队列</Button>
+    <Button htmlType="button" onClick={onBack} className="!h-auto min-h-9 !whitespace-normal mt-5 rounded-lg bg-slate-950 px-4 py-2.5 text-xs font-semibold text-white">返回数据复盘</Button>
   </section>;
 
   const statusLabel: Record<ContentQueueItem["status"], string> = {
@@ -1282,7 +1207,7 @@ function ProductionDetailView({ data, contentItemId, onBack, onNavigate, onOpenC
   return <div className="space-y-5">
     <section className="overflow-hidden rounded-lg border border-slate-200 bg-white">
       <header className="flex flex-wrap items-start justify-between gap-4 border-b border-zinc-200 bg-white px-5 py-5 text-zinc-900 sm:px-6">
-        <div className="min-w-0"><Button htmlType="button" onClick={onBack} className="!h-auto min-h-9 !whitespace-normal inline-flex items-center gap-1 text-[10px] font-semibold text-blue-600"><ArrowLeft size={12}/>返回内容队列</Button><div className="mt-3 flex flex-wrap items-center gap-2"><span className="rounded-full bg-zinc-100 px-2.5 py-1 text-[9px] font-semibold">视频任务</span><span className="rounded-full bg-zinc-100 px-2.5 py-1 text-[9px] font-semibold">{platformLabels[item.platform]}</span><span className={`rounded-full px-2.5 py-1 text-[9px] font-semibold ${item.status === "blocked" ? "bg-red-500 text-white" : item.status === "completed" ? "bg-emerald-400 text-emerald-950" : "bg-sky-400 text-sky-950"}`}>{statusLabel[item.status]}</span></div><h2 className="mt-3 text-xl font-semibold">{item.title}</h2><p className="mt-1 text-xs text-zinc-500">{item.productName || "待绑定产品"} · {item.accountLabel || "仅制作"} · {item.languages.join(" / ").toUpperCase() || "语言待确认"}</p></div>
+        <div className="min-w-0"><Button htmlType="button" onClick={onBack} className="!h-auto min-h-9 !whitespace-normal inline-flex items-center gap-1 text-[10px] font-semibold text-blue-600"><ArrowLeft size={12}/>返回数据复盘</Button><div className="mt-3 flex flex-wrap items-center gap-2"><span className="rounded-full bg-zinc-100 px-2.5 py-1 text-[9px] font-semibold">视频任务</span><span className="rounded-full bg-zinc-100 px-2.5 py-1 text-[9px] font-semibold">{platformLabels[item.platform]}</span><span className={`rounded-full px-2.5 py-1 text-[9px] font-semibold ${item.status === "blocked" ? "bg-red-500 text-white" : item.status === "completed" ? "bg-emerald-400 text-emerald-950" : "bg-sky-400 text-sky-950"}`}>{statusLabel[item.status]}</span></div><h2 className="mt-3 text-xl font-semibold">{item.title}</h2><p className="mt-1 text-xs text-zinc-500">{item.productName || "待绑定产品"} · {item.accountLabel || "仅制作"} · {item.languages.join(" / ").toUpperCase() || "语言待确认"}</p></div>
         <div className="flex flex-wrap gap-2">{item.status === "blocked"&&item.taskId&&onRetryTask&&<Button htmlType="button" disabled={retrying} onClick={() => void retryCurrentTask()} className="!h-auto min-h-9 !whitespace-normal inline-flex items-center gap-2 rounded-lg bg-amber-400 px-4 py-2.5 text-xs font-semibold text-amber-950 disabled:opacity-50">{retrying&&<Loader2 size={13} className="animate-spin"/>}从当前节点重试</Button>}<Button htmlType="button" onClick={() => onOpenContent?.(item.taskId || undefined, item.socialContentTaskId || undefined)} className="!h-auto min-h-9 !whitespace-normal rounded-lg bg-white px-4 py-2.5 text-xs font-semibold text-slate-950">进入制作台</Button>{item.referenceId&&onNavigate&&<Button htmlType="button" onClick={() => onNavigate("socialInspiration")} className="!h-auto min-h-9 !whitespace-normal rounded-lg border border-zinc-200 bg-white px-4 py-2.5 text-xs font-semibold text-blue-600">核对参考视频</Button>}</div>
       </header>
       <div className="grid gap-px bg-slate-100 sm:grid-cols-2 xl:grid-cols-6">
@@ -1334,133 +1259,10 @@ function ProductionDetailView({ data, contentItemId, onBack, onNavigate, onOpenC
   </div>;
 }
 
-function ReviewView({ data, selectedAccountId = "", onNavigate }: { data: DigitalEmployeeOverview; selectedAccountId?: string; onNavigate?: (page: Page) => void }) {
-  const display = useMemo(() => buildSmartBusinessDisplayModel(data), [data]);
-  const selectedTarget = data.config?.publishingTargets.find(target => target.accountId === selectedAccountId);
-  const [platform, setPlatform] = useState<Platform>(selectedTarget?.platform || display.accounts[0]?.platform || "youtube");
-  const [performance, setPerformance] = useState<ConnectedSocialPerformance | null>(null);
-  const [performanceBusy, setPerformanceBusy] = useState(true);
-  const [performanceError, setPerformanceError] = useState("");
-  const deliveries = data.deliveries || [];
-  const review = data.review;
-  const reviewSummary = review?.summary;
-  const liveReview = data.liveReview;
-  const reviewQueue = data.contentQueue?.items.filter(item => item.origin === "weekly_plan" && (!selectedAccountId || item.accountId === selectedAccountId)) || [];
-  const settledReviewItems = reviewQueue.filter(item => item.settledCostCny !== null);
-  const settledReviewCost = settledReviewItems.reduce((sum,item)=>sum+Number(item.settledCostCny||0),0);
-  const performanceByAccount = Object.values((performance?.contents || []).reduce<Record<string,{ accountId:string; accountTitle:string; views:number; videos:number }>>((result,item)=>{
-    if(item.metrics.views===null)return result;
-    const row=result[item.accountId]||{accountId:item.accountId,accountTitle:item.accountTitle,views:0,videos:0};
-    row.views+=item.metrics.views;row.videos+=1;result[item.accountId]=row;return result;
-  },{})).sort((left,right)=>right.views-left.views);
-
-  const refreshPerformance = async () => {
-    setPerformanceBusy(true); setPerformanceError("");
-    try {
-      const next = await loadConnectedSocialPerformance();
-      setPerformance(next);
-      if (!next.accounts.some(item => item.platform === platform)) {
-        const first = platformOptions.find(item => next.accounts.some(account => account.platform === item));
-        if (first) setPlatform(first);
-      }
-    } catch (error) { setPerformanceError(error instanceof Error ? error.message : "账号内容数据读取失败"); }
-    finally { setPerformanceBusy(false); }
-  };
-
-  useEffect(() => { void refreshPerformance(); }, []);
-  useEffect(() => {
-    const target = data.config?.publishingTargets.find(item => item.accountId === selectedAccountId);
-    if (target) setPlatform(target.platform);
-  }, [data.config?.publishingTargets, selectedAccountId]);
-
-  const liveRanking = (performance?.contents || [])
-    .filter(item => item.platform === platform && item.metrics.views !== null)
-    .map(item => ({ id:item.id,title:item.title,subject:`${item.accountTitle} · 内容监控`,accountId:item.accountId,views:item.metrics.views || 0,likes:item.metrics.likes,comments:item.metrics.comments }))
-    .sort((left,right)=>right.views-left.views);
-  const planRanking = display.contents
-    .filter(item => item.platform === platform)
-    .map(item => ({ id:item.id,title:item.title,subject:`${item.accountLabel} · 本周计划`,accountId:item.accountId,views:item.metrics.views,likes:item.metrics.likes,comments:item.metrics.comments,source:item.metrics.source }))
-    .sort((left,right)=>right.views-left.views);
-  const fallbackRanking = deliveries
-    .filter(card => deliveryPlatform(card) === platform && deliveryMetric(card, /播放|浏览|view/i) !== null)
-    .map(card => ({id:card.id,title:card.title,subject:`${card.subject} · 经营交付记录`,accountId:"",views:deliveryMetric(card,/播放|浏览|view/i)||0,likes:null,comments:null,source:"real" as const}))
-    .sort((left,right)=>right.views-left.views);
-  const ranking: Array<{ id: string; title: string; subject: string; accountId: string; views: number; likes: number | null; comments: number | null; source: DisplayMetricSource }> = liveRanking.length
-    ? liveRanking.map(item => ({ ...item, source: "real" as const }))
-    : fallbackRanking.length ? fallbackRanking : planRanking;
-  const reviewMetricSource: DisplayMetricSource = liveRanking.length || fallbackRanking.length ? "real" : "demo";
-  const useDemoReview = review?.status !== "generated";
-  const demoTotal = Math.max(1, display.totals.versionCount || 18);
-  const demoCompleted = Math.min(demoTotal, Math.max(1, Math.round(demoTotal * 0.72)));
-  const realIndustryTrends: NextRoundRecommendations["industryTrends"] = data.industryTrends || reviewSummary?.nextRoundRecommendations?.industryTrends || {
-    status: "waiting", signals: [], systemActions: ["等待可追溯的社媒热点来源，不生成无来源行业结论"],
-  };
-  const demoTags = [...new Set(realIndustryTrends.signals.flatMap(signal => signal.tags))].slice(0, 6);
-  const demoContent = display.contents[0];
-  const demoRecommendations: NextRoundRecommendations = {
-    contentInheritance: {
-      status: "ready", sourceContentId: demoContent?.contentId || "demo", title: demoContent?.title || "本周首条产品视频", platform: demoContent?.platform || platform,
-      hook: "参考结构：前三秒直接呈现买家问题与产品证据", framework: ["买家问题", "产品证据", "行动引导"], tags: demoTags, sourceUrl: "",
-      thumbnailUrl: demoContent?.queueItem?.preproduction?.benchmark.thumbnailUrl || "",
-      reason: "参考复盘：该内容在当前预览中的播放与互动综合得分最高；真实回传后将自动替换。",
-      paidBoost: { status: "not_enough_data", reason: "参考预览不能触发追加投放，需等待真实播放、互动或询盘回流。" },
-      systemActions: ["把示例高表现结构带入下一轮候选", "真实数据回流后重新排序", "不自动消耗投放预算"],
-    },
-    tagAdaptation: {
-      status: demoTags.length ? "baseline" : "waiting", publishedTags: demoTags.slice(0, 3), hotTags: demoTags, newTags: [], droppedTags: [], requiresConfirmation: false,
-      systemActions: demoTags.length ? ["以真实采集视频的 Tag 建立观察基线", "下周期只比较新增与退出标签", "调整前仍需用户确认"] : ["等待真实热门 Tag 回流"],
-    },
-    industryTrends: realIndustryTrends,
-  };
-  const recommendationSummary: WeeklyReviewSummary = reviewSummary ? {
-    ...reviewSummary,
-    nextRoundRecommendations: reviewSummary.nextRoundRecommendations
-      ? { ...reviewSummary.nextRoundRecommendations, industryTrends: realIndustryTrends.status === "available" ? realIndustryTrends : reviewSummary.nextRoundRecommendations.industryTrends }
-      : demoRecommendations,
-  } : {
-    completionRate: demoCompleted / demoTotal * 100, automationRate: 78, approvalRate: 86, handoffRate: 75,
-    completedTasks: demoCompleted, totalTasks: demoTotal, failedTasks: 1,
-    highlights: ["参考预览，仅用于页面布局确认"], nextGoalSuggestion: "等待真实复盘后生成", knowledgeCandidates: [],
-    nextRoundRecommendations: demoRecommendations,
-  };
-
-  const dailyTrend = data.businessSnapshot?.social.dailyTrend || [];
-  const chartRanking = ranking.some(item => item.source === "real") ? ranking.filter(item => item.source === "real") : ranking;
-  const costResults = reviewQueue.flatMap(item => {
-    const metrics = performanceForQueueItem(item, deliveries);
-    return item.settledCostCny !== null && metrics.views !== null ? [{ title: item.title, cost: item.settledCostCny, views: metrics.views }] : [];
-  });
-  return <div className="space-y-5">
-    <header className="flex flex-wrap items-center justify-between gap-4"><div className="flex flex-wrap items-center gap-2"><h2 className="text-xl font-semibold">数据复盘</h2><Tag>{display.totals.accountCount} 个账号</Tag><Tag>{display.totals.versionCount} 条本周视频</Tag><Tag>同步 {dateLabel(performance?.loadedAt)}</Tag></div><Button loading={performanceBusy} icon={<RefreshCcw size={15}/>} onClick={() => void refreshPerformance()}>同步账号数据</Button></header>
-    <section className="rounded-lg border border-border bg-white">
-      <div className="flex items-center justify-between border-b border-border px-5 py-3"><h3 className="font-semibold">计划完成与业务回流</h3><Tag color={useDemoReview ? "default" : "success"}>{useDemoReview ? "参考预览" : "真实复盘"}</Tag></div>
-      <div className="grid sm:grid-cols-2 xl:grid-cols-4">{[
-        { label: "完成率", value: useDemoReview ? `${Math.round(recommendationSummary.completionRate)}%` : `${Math.round(reviewSummary?.completionRate || 0)}%`, demo: useDemoReview },
-        { label: "周计划内容", value: `${display.totals.completedCount}/${display.totals.versionCount}`, demo: false },
-        { label: "阻塞项", value: liveReview?.blockedTasks.length ?? reviewSummary?.failedTasks ?? "—", demo: false },
-        { label: "已结算制作费", value: settledReviewItems.length ? `¥${settledReviewCost.toFixed(2)}` : "待回传", demo: false },
-      ].map(item => <div key={item.label} className="border-border p-5 sm:border-r last:border-r-0"><Statistic title={item.label} value={item.value}/></div>)}</div>
-    </section>
-    {(performanceError || performance?.unavailable.length) ? <Alert type="warning" showIcon title={performanceError || `${performance?.unavailable.length} 个账号暂时无法同步；已保留其他账号的真实数据。`} action={<Button onClick={() => onNavigate?.("accountManagement")}>检查账号授权</Button>}/> : null}
-    {liveReview?.dataGaps.length ? <Alert type="info" showIcon title="数据尚未完整" description={liveReview.dataGaps.slice(0, 3).join("；")}/> : null}
-    <LsDataChart title="播放与互动趋势" description={`单位：次；${data.businessSnapshot?.range.startsAt || "待同步"} 至 ${data.businessSnapshot?.range.endsAt || "待同步"}，按平台每日快照。没有日级回传时不推算趋势。`} kind="line" labels={dailyTrend.map(item => item.date)} series={[
-      { label: "播放量", values: dailyTrend.map(item => item.views) },
-      { label: "互动量", values: dailyTrend.map(item => item.interactions) },
-    ]} unit="次"/>
-    <LsDataChart title="询盘趋势" description="单位：条；当前快照只提供周期询盘汇总，待接入日级询盘来源后展示趋势。" kind="line" labels={[]} series={[{ label: "每日询盘", values: [] }]} unit="条" height={220}/>
-    <Tabs aria-label="复盘平台" activeKey={platform} onChange={value => setPlatform(value as Platform)} items={platformOptions.map(item => ({ key: item, label: <span className="inline-flex items-center gap-2"><SocialPlatformIcon platform={item} size={17}/>{platformLabels[item]}</span> }))}/>
-    <div className="grid gap-5 xl:grid-cols-2">
-      <LsDataChart title="高播放内容 Top 10" description={`${platformLabels[platform]} · 单位：次；按已回传累计播放量排序。参考估算仅用于预览，不进入正式决策。`} kind="bar" horizontal labels={chartRanking.slice(0, 10).map(item => item.title)} series={[{ label: "播放量", values: chartRanking.slice(0, 10).map(item => item.views) }]} demo={chartRanking.length > 0 && chartRanking.every(item => item.source === "demo")} loading={performanceBusy && !chartRanking.length} unit="次"/>
-      <LsDataChart title="制作成本与播放结果" description="横轴：已结算制作费（元）；纵轴：真实累计播放（次）。仅展示同时存在费用回执与平台回传的内容，不使用估算费用。" kind="scatter" labels={costResults.map(item => item.title)} xValues={costResults.map(item => item.cost)} xUnit="元" series={[{ label: "已结算内容", values: costResults.map(item => item.views) }]} unit="次"/>
-    </div>
-    <NextRoundRecommendationsSection summary={recommendationSummary} onOpen={(page) => onNavigate?.(page as Page)}/>
-  </div>;
-}
 
 export default function SmartBusinessDashboard({ calendarTasks, calendarDemo, data, view, selectedAccountId, selectedContentItemId, onRefresh, onNavigate, onGeneratePlan, onGenerateDetails, onOpenContent, onOpenProductionProgress, onBackToQueue, onRetryTask, onControlJob }: { calendarTasks?: AgentCalendarTask[]; calendarDemo?: boolean; data: DigitalEmployeeOverview; view: SmartBusinessView; selectedAccountId?: string; selectedContentItemId?: string; onRefresh?: () => void; onNavigate?: (page: Page) => void; onGeneratePlan?: () => void; onGenerateDetails?: () => void; onOpenContent?: (taskId?: string, socialContentTaskId?: string) => void; onOpenProductionProgress?: (taskId: string, contentItemId: string) => void; onBackToQueue?: () => void; onRetryTask?: (taskId: string) => Promise<boolean>; onControlJob?: (jobId: string, action: ExecutionControlAction) => Promise<boolean> }) {
   if (view === "matrix") return <MatrixView calendarTasks={calendarTasks} calendarDemo={calendarDemo} data={data} selectedAccountId={selectedAccountId} onRefresh={onRefresh} onNavigate={onNavigate} onGeneratePlan={onGeneratePlan} onOpenContent={onOpenContent} onOpenProductionProgress={onOpenProductionProgress} onRetryTask={onRetryTask}/>;
-  if (view === "queue") return <QueueView data={data} selectedAccountId={selectedAccountId} onRefresh={onRefresh} onNavigate={onNavigate} onGenerateDetails={onGenerateDetails} onOpenContent={onOpenContent} onOpenProductionProgress={onOpenProductionProgress} onControlJob={onControlJob} onRetryTask={onRetryTask}/>;
   if (view === "production") return <ProductionDetailView data={data} contentItemId={selectedContentItemId} onBack={onBackToQueue} onNavigate={onNavigate} onOpenContent={onOpenContent} onRetryTask={onRetryTask}/>;
-  if (view === "review") return <ReviewView data={data} selectedAccountId={selectedAccountId} onNavigate={onNavigate}/>;
-  return <HomeView calendarTasks={calendarTasks} calendarDemo={calendarDemo} data={data} selectedAccountId={selectedAccountId} onRefresh={onRefresh} onNavigate={onNavigate} onOpenProductionProgress={onOpenProductionProgress}/>;
+  if (view === "review") return <BusinessDataReview data={data} selectedAccountId={selectedAccountId} onNavigate={onNavigate} onOpenContent={onOpenContent} onOpenProductionProgress={onOpenProductionProgress}/>;
+  return <HomeView data={data} onNavigate={onNavigate}/>;
 }

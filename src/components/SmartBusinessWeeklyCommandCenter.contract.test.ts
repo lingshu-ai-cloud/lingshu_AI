@@ -14,6 +14,8 @@ for (const label of ['待验收成片', '本周计划视频', '本周视频总�
 }
 assert.match(source, /durationSeconds: contents\.reduce\(\(sum, item\) => sum \+ item\.duration, 0\)/, '视频总时长必须按本周全部计划视频合计');
 assert.match(commandCenter, /initialView="dayGridWeek"[^>]*eventCardMode="media"[^>]*fixedHeight=\{640\}/, '发布日历必须使用固定高度的 FullCalendar 原生周卡片视图');
+assert.match(commandCenter, /<LsCalendar[^>]*density="compact"[^>]*\bflush\b/, '首页发布日历必须紧凑展示并使用左右全部宽度');
+assert.doesNotMatch(commandCenter, /<h[1-6][^>]*>发布日历<\/h[1-6]>/, '日历不得保留独占一行的重复标题');
 assert.match(commandCenter, /const calendarEvents:[\s\S]*display\.contents\.map/, '每条本周内容都必须映射为一个日历事件');
 for (const internalLabel of ['原创母版', '平台版本', '平台轻适配', '适配版', '手动单项']) {
   assert.doesNotMatch(source, new RegExp(internalLabel), `用户界面不得暴露内部生产分类“${internalLabel}”`);

@@ -68,8 +68,9 @@ function emptyRecommendations(summary?: WeeklyReviewSummary): NextRoundRecommend
   };
 }
 
-export function buildNextRoundRecommendationCards(summary?: WeeklyReviewSummary): NextRoundRecommendationCard[] {
-  const source = summary?.nextRoundRecommendations || emptyRecommendations(summary);
+export function buildNextRoundRecommendationCards(summary?: WeeklyReviewSummary, industryTrends?: NextRoundRecommendations['industryTrends']): NextRoundRecommendationCard[] {
+  const baseline = summary?.nextRoundRecommendations || emptyRecommendations(summary);
+  const source = industryTrends?.status === 'available' ? { ...baseline, industryTrends } : baseline;
   const inheritance = source.contentInheritance;
   const tags = source.tagAdaptation;
   const trends = source.industryTrends;
