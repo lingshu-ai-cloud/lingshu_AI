@@ -19,7 +19,10 @@ import {
 } from 'lucide-react';
 import { AGENT_ROLE_ICONS } from './ui/AgentRoleIcon';
 import type { AgentAction, AgentType, Message, Page } from '../App';
-import { authHeader } from '../lib/auth';
+import { authHeader, getToken } from '../lib/auth';
+import { useAssistantDecisionMemory } from '../lib/useAssistantDecisionMemory';
+import AssistantDecisionMemoryPanel, { AssistantDecisionSaveButton } from './AssistantDecisionMemoryPanel';
+import { renderAssistantConversationBoundary, selectAssistantConversationContext } from '../lib/assistantConversationContext';
 import { ASSISTANT_GUIDES, type AssistantGuide } from '../lib/assistantGuides';
 import { ORBIT_AGENT_IDS, type OrbitAgentId, useAssistantStore } from '../stores/assistantStore';
 import AgentReply from './AgentReply';
@@ -106,6 +109,7 @@ function readAssistantPosition(): AssistantPosition | null {
 
 interface Props {
   page: Page;
+  authScope: string;
   restore?: { agent: AgentType; messages: Message[]; key: string } | null;
   kickoff?: { agent: AgentType; text: string; key: string } | null;
   suppressForRightSidebar?: boolean;
@@ -197,7 +201,7 @@ const SKILL_AGENTS: Array<{
   Icon: typeof Compass;
   position: { x: number; y: number };
 }> = [
-  { id: 'business', label: '经营 Agent', agentType: 'strategy', Icon: AGENT_ROLE_ICONS.business, position: { x: 0, y: -1 } },
+  { id: 'business', label: '灵小枢 · 经营统筹', agentType: 'strategy', Icon: AGENT_ROLE_ICONS.business, position: { x: 0, y: -1 } },
   { id: 'director', label: '编导 Agent', agentType: 'traffic', Icon: AGENT_ROLE_ICONS.director, position: { x: -0.5, y: -0.866 } },
   { id: 'content', label: '内容 Agent', agentType: 'traffic', Icon: AGENT_ROLE_ICONS.content, position: { x: -0.866, y: -0.5 } },
   { id: 'customer', label: '客服 Agent', agentType: 'conversion', Icon: AGENT_ROLE_ICONS.customer, position: { x: -1, y: 0 } },
@@ -207,7 +211,7 @@ const ORBIT_AGENT_IDLE_STYLE = { color: '#53695F', borderColor: '#9AAEA4', backg
 const ORBIT_AGENT_ACTIVE_STYLE = { color: '#117F51', borderColor: '#117F51', backgroundColor: '#E7F6EE' };
 
 const AGENT_DISPLAY_NAME: Record<OrbitAgentId, string> = {
-  business: '经营 Agent',
+  business: '灵小枢 · 经营统筹',
   director: '编导 Agent',
   content: '内容 Agent',
   customer: '客服 Agent',
@@ -255,25 +259,26 @@ function compactText(text: string, maxLength = 900) {
 }
 
 async function loadLiveIntegrationFacts(): Promise<string> {
-  const readItems = async (path: string): Promise<Record<string, unknown>[]> => {
+  const readItems = async (path: string): Promise<Record<string, unknown>[] | null> => {
     try {
       const response = await fetch(path, { headers: authHeader() });
-      if (!response.ok) return [];
+      if (!response.ok) return null;
       const data = await response.json() as { items?: Record<string, unknown>[] };
-      return Array.isArray(data.items) ? data.items : [];
+      return Array.isArray(data.items) ? data.items : null;
     } catch {
-      return [];
+      return null;
     }
   };
 
-  const readVideoInventory = async (): Promise<number> => {
+  const readVideoInventory = async (): Promise<number | null> => {
     try {
       const response = await fetch('/api/overseas/videos?page=1&perPage=1&contentFormat=video', { headers: authHeader() });
-      if (!response.ok) return 0;
+      if (!response.ok) return null;
       const data = await response.json() as { inventoryTotalItems?: number; totalItems?: number };
-      return Math.max(0, Number(data.inventoryTotalItems ?? data.totalItems ?? 0));
+      const count = Number(data.inventoryTotalItems ?? data.totalItems);
+      return Number.isFinite(count) && count >= 0 ? count : null;
     } catch {
-      return 0;
+      return null;
     }
   };
 
@@ -283,27 +288,28 @@ async function loadLiveIntegrationFacts(): Promise<string> {
     readItems('/api/overseas/customers'),
     readVideoInventory(),
   ]);
-  const socialPlatforms = Array.from(new Set(socialAccounts
+  const socialPlatforms = Array.from(new Set((socialAccounts ?? [])
     .map(item => String(item.platform || item.provider || '').trim())
     .filter(Boolean)));
   // `/customers` returns customer profiles imported from WhatsApp. A profile is
   // not itself an inquiry event, so keep that distinction explicit in the
   // grounding context supplied to the model.
-  const whatsappCustomers = customers.filter(item => String(item.source || '').toLowerCase() === 'whatsapp');
-  const accountViews = [...socialAccounts, ...youtubeAccounts].reduce(
+  const whatsappCustomers = (customers ?? []).filter(item => String(item.source || '').toLowerCase() === 'whatsapp');
+  const accountViews = [...(socialAccounts ?? []), ...(youtubeAccounts ?? [])].reduce(
     (sum, item) => sum + Math.max(0, Number(item.viewCount ?? item.views ?? 0)),
     0,
   );
   const confirmed: string[] = [];
-  if (socialAccounts.length) confirmed.push(`社媒账号 ${socialAccounts.length} 个${socialPlatforms.length ? `（${socialPlatforms.join('、')}）` : ''}`);
-  if (youtubeAccounts.length) confirmed.push(`YouTube 账号 ${youtubeAccounts.length} 个`);
-  if (collectedVideos > 0) confirmed.push(`已采集视频 ${collectedVideos} 条`);
+  if (socialAccounts?.length) confirmed.push(`社媒账号 ${socialAccounts.length} 个${socialPlatforms.length ? `（${socialPlatforms.join('、')}）` : ''}`);
+  if (youtubeAccounts?.length) confirmed.push(`YouTube 账号 ${youtubeAccounts.length} 个`);
+  if (collectedVideos !== null && collectedVideos > 0) confirmed.push(`已采集视频 ${collectedVideos} 条`);
   if (accountViews > 0) confirmed.push(`账号内容曝光 ${accountViews.toLocaleString('zh-CN')}`);
   if (whatsappCustomers.length) confirmed.push(`WhatsApp 客户档案 ${whatsappCustomers.length} 条`);
   return [
     `核验时间：${new Date().toLocaleString('zh-CN', { timeZone: 'Asia/Shanghai', hour12: false })}`,
     `已确认接入/真实数据：${confirmed.length ? confirmed.join('；') : '本次实时接口未返回可确认项目'}`,
-    `客户档案总数：${customers.length} 条；其中 WhatsApp 来源客户档案：${whatsappCustomers.length} 条。`,
+    customers === null ? '客户档案接口读取失败，本次数量未知。' : `本次接口返回客户档案 ${customers.length} 条；其中 WhatsApp 来源客户档案 ${whatsappCustomers.length} 条。此处仅统计当前接口返回范围，不能视为全量总数。`,
+    socialAccounts === null || youtubeAccounts === null || collectedVideos === null ? '部分账号或素材接口未成功读取；未返回数据不代表数量为零。' : '',
     '统计边界：客户档案数量不等于询盘事件数量。当前事实未提供消息正文、关键词命中数、询盘事件数或历史订单数；不得推断或编造这些数字。',
     '判定规则：以上来自当前租户授权接口，优先级高于企业摘要；接口未返回某项只能说“本次未核验到”，不得说“未接入”。',
   ].join('\n');
@@ -321,19 +327,6 @@ function mergeConsecutiveAssistant(list: Message[]): Message[] {
     }
   }
   return merged;
-}
-
-function apiHistory(list: Message[]): Message[] {
-  return mergeConsecutiveAssistant(list)
-    .filter(msg => {
-      const text = msg.content.trim();
-      return text && text !== '请求失败，请稍后重试。' && text !== 'API error';
-    })
-    .slice(-8)
-    .map(msg => ({
-      ...msg,
-      content: compactText(msg.content, msg.role === 'assistant' ? 1200 : 800),
-    }));
 }
 
 async function responseErrorMessage(resp: Response): Promise<string> {
@@ -386,6 +379,7 @@ function todoDotClass(tone: AssistantTodoItem['tone'], completed: boolean) {
 
 export default function GlobalAssistant({
   page,
+  authScope,
   restore,
   kickoff,
   suppressForRightSidebar = false,
@@ -408,6 +402,10 @@ export default function GlobalAssistant({
   const [performanceLineIndex, setPerformanceLineIndex] = useState(0);
   const [speechBubble, setSpeechBubble] = useState<AssistantSpeech | null>(null);
   const [loading, setLoading] = useState(false);
+  const decisionMemory = useAssistantDecisionMemory(authScope, responseErrorMessage);
+  const authScopeRef = useRef(authScope);
+  authScopeRef.current = authScope;
+  const hydratedScopeRef = useRef<string | null>(null);
   const [assistantPosition, setAssistantPosition] = useState<AssistantPosition | null>(readAssistantPosition);
   const [viewport, setViewport] = useState(() => ({
     width: typeof window === 'undefined' ? 1440 : window.innerWidth,
@@ -494,6 +492,7 @@ export default function GlobalAssistant({
   const performanceMessage = performance?.message || performanceLines[performanceLineIndex % performanceLines.length];
 
   const persistThread = useCallback((agentId: OrbitAgentId) => {
+    if (hydratedScopeRef.current !== authScopeRef.current) return;
     const thread = useAssistantStore.getState().threads[agentId];
     fetch(`/api/overseas/assistant-threads/${agentId}`, {
       method: 'PUT',
@@ -512,9 +511,9 @@ export default function GlobalAssistant({
     persistThread(agentId);
   }, [pageContext.agent, pendingCount, persistThread, reduceMotion, setUnreadCount, todoItems.length]);
 
-  const openCurrentPageAgent = useCallback(() => {
-    openAgent(currentPageAgent);
-  }, [currentPageAgent, openAgent]);
+  const openMainAssistant = useCallback(() => {
+    openAgent('business');
+  }, [openAgent]);
 
   const rememberGuide = useCallback((id: string, shownAt: number) => {
     seenGuideIdsRef.current.add(id);
@@ -632,26 +631,37 @@ export default function GlobalAssistant({
   const send = useCallback(async (text: string, targetAgent = activeAgent, forcedContext?: AssistantContext) => {
     const visibleText = text.trim();
     if (!visibleText || loading) return;
+    const requestScope = authScope;
+    const requestToken = getToken();
+    const currentScope = () => requestScope === authScopeRef.current && requestToken === getToken();
 
     const thread = useAssistantStore.getState().threads[targetAgent];
     const context = forcedContext ?? contextForOrbit(targetAgent, pageContext);
+    const strategyRequest = agentForOrbit(targetAgent) === 'strategy';
     const enterpriseBrief = compactText(enterpriseContext);
-    const historyForApi = apiHistory(thread.messages);
+    const conversationContext = selectAssistantConversationContext(mergeConsecutiveAssistant(thread.messages));
+    const historyForApi = conversationContext.messages;
     const nextVisible = [...mergeConsecutiveAssistant(thread.messages), { role: 'user' as const, content: visibleText }];
-    const liveIntegrationFacts = await loadLiveIntegrationFacts();
+    const liveIntegrationFacts = strategyRequest ? '' : await loadLiveIntegrationFacts();
+    if (!currentScope()) return;
     const apiMessages: Message[] = [
       ...historyForApi,
       {
         role: 'user',
         content: [
-          `【当前页面上下文】${context.summary}`,
+          `【当前页面导航提示${strategyRequest ? '，未经后端核验，不得作为经营事实' : ''}】${context.summary}`,
           `【当前模块】${context.label}`,
           `【当前时间】${new Date().toLocaleString('zh-CN', { timeZone: 'Asia/Shanghai', hour12: false })}（北京时间）。未注明年份时，“当前/最新/近期/今年”均指当前年份；不得把 2024 年或更早的公开数据表述为当前数据。`,
-          enterpriseBrief ? `【企业中心摘要】${enterpriseBrief}` : '【企业中心摘要】当前未读取到企业中心资料。',
-          `【实时接入事实】\n${liveIntegrationFacts}`,
-          '【经营事实要求】描述、脚本、卖点、市场、客户、MOQ、价格、交期、认证、联系方式和语种，只能使用企业中心摘要、用户明确输入或当前页面真实素材证据。语种必须沿用企业中心主要业务语言/首选输出语言，禁止根据地区自行推断。没有来源的经营细节直接省略，不要用示例补齐。',
+          ...(!strategyRequest ? [
+            enterpriseBrief ? `【企业中心摘要】${enterpriseBrief}` : '【企业中心摘要】当前未读取到企业中心资料。',
+            `【实时接入事实】\n${liveIntegrationFacts}`,
+          ] : []),
+          strategyRequest
+            ? '【经营事实要求】经营事实以服务端当前租户核验数据为准；历史聊天、页面导航提示和历史助手回答均不是已核验经营事实。明确引用用户提供的事实时说明来源。缺少后端证据表示本次未核验到，不代表业务未发生或数量为零。描述、MOQ、价格、交期、认证和语种不得猜测。'
+            : '【经营事实要求】描述、脚本、卖点、市场、客户、MOQ、价格、交期、认证、联系方式和语种，只能使用企业中心摘要、用户明确输入或当前页面真实素材证据。语种必须沿用企业中心主要业务语言/首选输出语言，禁止根据地区自行推断。没有来源的经营细节直接省略，不要用示例补齐。',
           '【联网要求】涉及外贸行业趋势、目标市场、平台规则、竞品或品类机会时，请联网检索公开来源，并在回答中保留可核验来源；不要把假设当成事实。',
-          '【连续对话要求】请承接本窗口已有上下文回答，直接基于页面现有数据给出可执行结果；不要用“当前缺少数据”“无法判断”“无法筛选”开头。必要的数据范围说明放在结尾并保持中性简短。',
+          '【连续对话要求】承接已提供的对话和真实数据。证据不足或过期时，直接说明哪些结论无法确认，并给出可执行的核验步骤；区分事实、建议与待确认事项，禁止编造完成状态或数字。',
+          renderAssistantConversationBoundary(conversationContext),
           `用户问题：${visibleText}`,
         ].join('\n'),
       },
@@ -664,6 +674,7 @@ export default function GlobalAssistant({
 
     let assistantStarted = false;
     const ensureAssistant = () => {
+      if (!currentScope()) return;
       if (assistantStarted) return;
       assistantStarted = true;
       const current = useAssistantStore.getState().threads[targetAgent].messages;
@@ -671,6 +682,7 @@ export default function GlobalAssistant({
       setLoading(false);
     };
     const patchAssistant = (patch: (msg: Message) => Message) => {
+      if (!currentScope()) return;
       ensureAssistant();
       const current = [...useAssistantStore.getState().threads[targetAgent].messages];
       current[current.length - 1] = patch(current[current.length - 1]);
@@ -684,7 +696,18 @@ export default function GlobalAssistant({
       const resp = await fetch(API_PATH[agentForOrbit(targetAgent)], {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', ...authHeader() },
-        body: JSON.stringify({ messages: apiMessages, deepThinking: false }),
+        body: JSON.stringify({
+          messages: apiMessages,
+          deepThinking: false,
+          ...(strategyRequest ? {
+            userQuestion: visibleText,
+            pageContext: { label: context.label, summary: compactText(context.summary, 2000) },
+            conversationContext: {
+              omittedTurns: conversationContext.omittedTurns,
+              retainedUserInstructions: conversationContext.retainedUserInstructions,
+            },
+          } : {}),
+        }),
         signal: controller.signal,
       });
       if (!resp.ok) throw new Error(await responseErrorMessage(resp));
@@ -716,22 +739,36 @@ export default function GlobalAssistant({
       }
       if (buffer.trim()) consumeLine(buffer);
     } catch (err: any) {
+      if (!currentScope()) return;
       const message = err?.name === 'AbortError' ? '这次响应已停止。' : (err?.message || '请求失败，请稍后重试。');
       if (assistantStarted) patchAssistant(msg => ({ ...msg, content: msg.content ? `${msg.content}\n\n${message}` : message }));
       else setMessages(targetAgent, [...useAssistantStore.getState().threads[targetAgent].messages, { role: 'assistant', content: message }]);
     } finally {
-      setLoading(false);
-      abortRef.current = null;
-      persistThread(targetAgent);
-      onSessionRefresh?.();
+      if (currentScope()) {
+        setLoading(false);
+        abortRef.current = null;
+        persistThread(targetAgent);
+        onSessionRefresh?.();
+      }
     }
-  }, [activeAgent, enterpriseContext, loading, onSessionRefresh, openAgent, pageContext, persistThread, setDraftInput, setMessages]);
+  }, [activeAgent, authScope, enterpriseContext, loading, onSessionRefresh, openAgent, pageContext, persistThread, setDraftInput, setMessages]);
 
   useEffect(() => {
+    let cancelled = false;
+    const requestToken = getToken();
+    const currentScope = () => !cancelled && requestToken === getToken();
+    abortRef.current?.abort();
+    setLoading(false);
+    setEnterpriseContext('');
+    setLiveContext(null);
+    hydratedScopeRef.current = null;
+    for (const agentId of ORBIT_AGENT_IDS) hydrateThread(agentId, {
+      messages: [], draftInput: '', scrollPosition: 0, unreadCount: 0,
+    });
     fetch('/api/overseas/assistant-threads', { headers: authHeader() })
       .then(resp => resp.ok ? resp.json() : null)
       .then(data => {
-        if (!Array.isArray(data?.items)) return;
+        if (!currentScope() || !Array.isArray(data?.items)) return;
         for (const item of data.items) {
           if (!ORBIT_AGENT_IDS.includes(item.agentId)) continue;
           hydrateThread(item.agentId, {
@@ -741,15 +778,17 @@ export default function GlobalAssistant({
             unreadCount: Number(item.unreadCount ?? 0),
           });
         }
+        hydratedScopeRef.current = authScope;
       })
       .catch(() => {});
     fetch('/api/overseas/enterprise/context', { headers: authHeader() })
       .then(resp => resp.ok ? resp.json() : null)
       .then(data => {
-        if (typeof data?.context === 'string') setEnterpriseContext(data.context);
+        if (currentScope() && typeof data?.context === 'string') setEnterpriseContext(data.context);
       })
-      .catch(() => setEnterpriseContext(''));
-  }, [hydrateThread]);
+      .catch(() => { if (currentScope()) setEnterpriseContext(''); });
+    return () => { cancelled = true; };
+  }, [authScope, hydrateThread]);
 
   useEffect(() => {
     const handler = (event: Event) => {
@@ -1003,7 +1042,7 @@ export default function GlobalAssistant({
       return;
     }
     if (mode === 'expanded') {
-      openCurrentPageAgent();
+      openMainAssistant();
       return;
     }
     else setMode('expanded');
@@ -1167,7 +1206,7 @@ export default function GlobalAssistant({
             initial={{ opacity: 0, x: 6 }}
             animate={{ opacity: 1, x: 0 }}
             exit={{ opacity: 0, x: 4 }}
-            onClick={openCurrentPageAgent}
+            onClick={openMainAssistant}
             className={`absolute z-10 whitespace-nowrap rounded-md border border-border bg-surface px-3 py-1.5 text-[11px] font-black text-accent shadow-sm hover:border-accent/30 hover:bg-accent-glow ${dockOnLeft ? 'left-[68px]' : 'right-[68px]'} ${dockOnTop ? 'top-5' : 'bottom-5'}`}
           >
             要补资料？点我
@@ -1325,6 +1364,7 @@ export default function GlobalAssistant({
               </div>
             ) : (
               <>
+                {agentForOrbit(activeAgent) === 'strategy' && <AssistantDecisionMemoryPanel memory={decisionMemory} />}
                 <div
                   className="min-h-0 flex-1 overflow-y-auto px-4 py-4"
                   onScroll={event => setScrollPosition(activeAgent, event.currentTarget.scrollTop)}
@@ -1356,7 +1396,10 @@ export default function GlobalAssistant({
                           <div className={`max-w-[82%] rounded-lg px-3 py-2 text-sm leading-relaxed ${msg.role === 'user' ? 'rounded-tr-sm bg-accent text-white whitespace-pre-line' : 'rounded-tl-sm border border-border bg-surface-2 text-text-primary'}`}>
                             {msg.role === 'assistant'
                               ? (msg.content ? <AgentReply content={msg.content} sources={msg.sources} onAction={onAction} /> : <span className="opacity-40">...</span>)
-                              : msg.content}
+                              : <>
+                                {msg.content}
+                                {agentForOrbit(activeAgent) === 'strategy' && <AssistantDecisionSaveButton memory={decisionMemory} text={msg.content} />}
+                              </>}
                           </div>
                         </div>
                       ))}
@@ -1383,7 +1426,7 @@ export default function GlobalAssistant({
                         }
                       }}
                       rows={2}
-                      placeholder="问灵枢助手..."
+                      placeholder="问灵小枢..."
                       className="w-full resize-none bg-transparent px-3 pt-3 text-sm text-text-primary outline-none placeholder:text-text-muted"
                     />
                     <div className="flex items-center justify-end px-2 pb-2">
@@ -1423,7 +1466,7 @@ export default function GlobalAssistant({
             type="button"
             draggable
             data-global-assistant="launcher"
-            aria-label={mode === 'expanded' ? `打开${AGENT_DISPLAY_NAME[currentPageAgent]}` : '拖动可移动，点击可展开灵枢助手'}
+            aria-label={mode === 'expanded' ? '打开灵小枢 · 经营统筹' : '拖动可移动，点击可展开灵小枢'}
             onPointerDown={handlePointerDown}
             onPointerMove={handlePointerMove}
             onPointerUp={handlePointerUp}
@@ -1437,7 +1480,7 @@ export default function GlobalAssistant({
               ? { scale: [1, 1.08, 1], y: [0, -9, 0], rotate: [0, -5, 5, 0] }
               : mode === 'breathing' && pendingCount > 0 && !reduceMotion ? { scale: [1, 1.05, 1], y: [0, -2, 0] } : { scale: 1, y: 0 }}
             transition={{ duration: performance ? 1.55 : 2.4, ease: 'easeInOut', repeat: (performance || (mode === 'breathing' && pendingCount > 0)) && !reduceMotion ? Infinity : 0 }}
-            title={mode === 'expanded' ? `打开${AGENT_DISPLAY_NAME[currentPageAgent]}` : '拖动可移动，点击可展开灵枢助手'}
+            title={mode === 'expanded' ? '打开灵小枢 · 经营统筹' : '拖动可移动，点击可展开灵小枢'}
           >
             <AssistantLauncherMascot expression={assistantExpression} />
             {pendingCount > 0 && <span className="absolute -right-1 -top-1 min-w-5 rounded-full bg-red px-1 text-[11px] font-black text-white">{pendingBadge}</span>}
