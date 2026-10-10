@@ -1,5 +1,13 @@
 {
-  "pages": ["pages/index/index"],
-  "window": { "navigationBarTitleText": "拍摄任务", "navigationBarBackgroundColor": "#0f8054", "navigationBarTextStyle": "white", "backgroundColor": "#f5f8f5" },
+  "pages": [
+    "pages/workbench/index",
+    "pages/index/index"
+  ],
+  "window": {
+    "navigationBarTitleText": "灵枢工作",
+    "navigationBarBackgroundColor": "#F6F8F5",
+    "navigationBarTextStyle": "black",
+    "backgroundColor": "#f5f8f5"
+  },
   "style": "v2"
 }

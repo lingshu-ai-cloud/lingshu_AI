@@ -110,6 +110,9 @@
     "1791072006_create_social_operating_runtime.js": "83538773230c88eed508da645c4d01ae6aabb9e3a8c698355c5eacf8d8721a12",
     "1791072006_ensure_publishing_schedules.js": "7af3e6889270a7e4f9988cb480a2c60971e83ea033b8cef9ed21d11a566bf81a",
     "1791072007_fix_publishing_schedule_and_messenger_status.js": "159426312d27bb9c162696fe033dc279df17f90a2aecc1c674e969b0fe61d710",
-    "1791072008_create_content_execution_queue.js": "17082ecdb5a6228182507d1d2a01f55c6aac48922cd376c489fecce8c8fb2f07"
+    "1791072008_create_content_execution_queue.js": "2aed450a4c83a5f6133817f47eef9c1f08ecde5e65f22427aa7480c2c96f67f8",
+    "1791586800_create_assistant_decision_memories.js": "c0c6b1aaf9ca68024d9d53597460bec90de278e555073ebdfd2558075e8749fa",
+    "1791597600_mobile_workbench_snoozes.js": "4b3516773faa85aad806ef2cc6faae3f70b5cd64604686586f8a457886220d6a",
+    "1791597601_mobile_workbench_action_receipts.js": "3d8a8381cd9e6473416078bb09a89c17aa244a9308d00b6d92ad94273bb7b427"
   }
 }

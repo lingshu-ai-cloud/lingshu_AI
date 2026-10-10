@@ -65,7 +65,7 @@ const assistantOrbitSource = assistantSource.slice(
   assistantSource.indexOf('const SKILL_AGENTS'),
   assistantSource.indexOf('function pageKey'),
 );
-for (const label of ['经营 Agent', '编导 Agent', '内容 Agent', '客服 Agent']) {
+for (const label of ['灵小枢 · 经营统筹', '编导 Agent', '内容 Agent', '客服 Agent']) {
   assert.match(assistantOrbitSource, new RegExp(label), `灵小枢子 Agent 必须显示现有角色：${label}`);
 }
 assert.doesNotMatch(assistantOrbitSource, /策略助手|唤醒助手|统筹 Agent/, '灵小枢不应再显示旧助手或重复的统筹 Agent');
@@ -74,6 +74,11 @@ assert.match(assistantSource, /const current = agent\.id === currentPageAgent[\s
 assert.match(assistantSource, /page === 'smartAssets'\) return 'content'/, '内容制作页应高亮内容 Agent');
 assert.match(assistantSource, /page === 'socialInspiration'[\s\S]{0,160}return 'director'/, '灵感与脚本页面应高亮编导 Agent');
 assert.match(assistantSource, /page === 'conversion'[\s\S]{0,220}return 'customer'/, '客户页面应高亮客服 Agent');
+assert.match(assistantSource, /const openMainAssistant[\s\S]{0,120}openAgent\('business'\)/, '主入口必须进入灵小枢经营统筹');
+assert.match(assistantSource, /onClick=\{\(\) => openAgent\(agent\.id\)\}/, '专业 Agent 切换必须保留');
+assert.match(assistantSource, /send\(kickoff\.text, orbitIdForAgent\(kickoff\.agent, currentPageAgent\)\)/, '专业工作流启动仍应进入对应 Agent');
+assert.match(assistantSource, /strategyRequest \? '' : await loadLiveIntegrationFacts\(\)/, '经营回答不能重新注入客户端账号事实');
+assert.match(assistantSource, /if \(!currentScope\(\)\) return/, '跨身份异步响应必须被丢弃');
 
 assert.match(pageSource, /输出内容语言/);
 assert.match(pageSource, /需要输出的语言/);

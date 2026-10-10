@@ -119,6 +119,16 @@ assert.match(studioSource, /HeyGen 数字人口播生成/, 'the material workben
 assert.match(studioSource, /studioApi\.digitalHumanAvatars\(\)/, 'the Studio must load provider avatar assets instead of rendering an empty selector');
 assert.match(studioSource, /onDigitalHuman=\{\(\) => \{[\s\S]{0,1200}openProduction\(salesSlot\)/, 'the material decision panel must open the selected storyboard shot in digital-human production');
 assert.match(studioSource, /avatar\.defaultVoiceId/, 'provider-owned avatars must carry their default voice into production defaults');
+assert.match(
+  studioSource,
+  /setClipEdits\(current => \(\{ \.\.\.current, \[slotClipEditKey\(slot\.id, clip\.id\)\]: candidate\.source === 'avatar'[\s\S]{0,260}trimStart: 0, trimEnd: clip\.duration, speed: 1, targetDuration: clip\.duration, targetDurationEdited: true/,
+  'adopting a generated digital-human clip must make the shot duration follow the source material at normal speed',
+);
+assert.match(
+  studioSource,
+  /if \(adopted && clip\) return \{[\s\S]{0,260}trimStart: 0, trimEnd: clip\.duration, speed: 1,[\s\S]{0,120}targetDuration: clip\.duration/,
+  'the render timeline must preserve an adopted digital-human clip from source start to source end at normal speed',
+);
 
 const trafficSource = readFileSync(new URL('./TrafficPage.tsx', import.meta.url), 'utf8');
 assert.match(trafficSource, /digitalEmployee\.businessDeepLink/, 'the content workspace must consume the persisted Digital Employee handoff');

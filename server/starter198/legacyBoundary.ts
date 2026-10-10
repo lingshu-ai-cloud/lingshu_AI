@@ -4,6 +4,7 @@ import { Starter198RepositoryError, starter198Repository, type Starter198Reposit
 import { authorizeStarter198SocialLegacyRequest } from './socialLegacyAccess.js';
 
 const EXEMPT_PATHS = [
+  /^\/api\/overseas\/starter-198\/mobile\/(?:queue|snooze|transcribe)\/?$/,
   /^\/api\/overseas\/starter-198\/workspace\/?$/,
   /^\/api\/overseas\/starter-198\/commands\/?$/,
   /^\/api\/overseas\/starter-198\/publication-packages\/[^/]+\/download\/?$/,
