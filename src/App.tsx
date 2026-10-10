@@ -835,7 +835,7 @@ export default function App() {
       suppressRightPanel={starterMode || scriptPanelOpen} onAction={startAgentTask}>
       <Suspense fallback={null}>
         {!starterMode && !isAgentProductionSession() && <GlobalAssistant
-          page={page}
+          authScope={`${pagePreferenceScope(session)}:${session.supportAccess?.requestId || 'customer'}`} page={page}
           restore={restore}
           kickoff={kickoff}
           suppressForRightSidebar={scriptPanelOpen || conversation !== null || page === 'agentMonitor'}

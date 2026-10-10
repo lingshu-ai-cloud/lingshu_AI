@@ -1,9 +1,22 @@
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import { access, readFile } from 'node:fs/promises';
+import { spawnSync } from 'node:child_process';
+import { fileURLToPath } from 'node:url';
 import { createServer, transformWithEsbuild } from 'vite';
 import react from '@vitejs/plugin-react';
 import { chromium } from 'playwright-core';
+
+// Strict acceptance uses the real App, rather than inferring refresh behavior
+// from the legacy helper-only control shell below.
+if (process.argv.includes('--strict-return-position')) {
+  const result = spawnSync(process.execPath, [fileURLToPath(new URL('./agent-calendar-return-chrome-audit.mjs', import.meta.url))], {
+    cwd: fileURLToPath(new URL('../', import.meta.url)), stdio: 'inherit',
+    env: { ...process.env, AGENT_CALENDAR_AUDIT_FIXTURES: process.env.AGENT_CALENDAR_AUDIT_FIXTURES || fileURLToPath(new URL('./fixtures/agent-calendar-return-api.json', import.meta.url)) },
+  });
+  if (result.error) console.error(result.error.message);
+  process.exit(result.status ?? 1);
+}
 
 // Real browser + production handoff helpers; controlled navigation shell, not the full App.
 // Fail closed: no backend routes, non-local requests, or browser-side mutations are permitted.
@@ -80,5 +93,4 @@ try {
   evidence.gaps.push({id:'RETURN-RELOAD-DATE-SCROLL',finding:'Persisted production return context has no date/range/scroll fields; controlled remount resets these. Full App reload behavior is unverified.',persistedKeys:Object.keys(saved),controlledReload:afterReload});
   assert.deepEqual(errors,[]);assert.deepEqual(blocked,[]);
   console.log(JSON.stringify(evidence,null,2));
-  if(process.argv.includes('--strict-return-position'))process.exitCode=1;
 } finally {await browser?.close();await vite?.close();}

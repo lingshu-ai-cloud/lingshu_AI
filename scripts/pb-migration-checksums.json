@@ -149,6 +149,7 @@
     "1791072050_allow_initial_content_queue_zero_state.js": "b5d88b0baa23dbd04ca02f41d202497b1fa8885e7c661f802ed40c88d468842d",
     "1791072051_add_weekly_production_stage_checkpoint.js": "9a4fa58af20ede3f86cf4020995046359028ecd4d67c36aa8c0ea93c5f25a3a9",
     "1791535000_add_instagram_tenant_app.js": "f05cef6e9f9d4b95262184f557c84d9c0159697421137e7924dd21f4745d210b",
-    "1791535001_extend_social_accounts_instagram_login.js": "900e65b5e2cc78c6842f05501f064d457e7941bbd7c83194f7f184cfff1e4e28"
+    "1791535001_extend_social_accounts_instagram_login.js": "900e65b5e2cc78c6842f05501f064d457e7941bbd7c83194f7f184cfff1e4e28",
+    "1791586800_create_assistant_decision_memories.js": "c0c6b1aaf9ca68024d9d53597460bec90de278e555073ebdfd2558075e8749fa"
   }
 }

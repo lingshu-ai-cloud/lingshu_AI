@@ -1,6 +1,8 @@
 # 智能体卡片逐类业务合同验收
 
-2026-10-10，本地仓库验收。11 类共 100 项：99 项通过、1 项失败；10 类通过、1 类失败。执行入口：
+最新复跑全部通过，见 [第二轮报告](../acceptance/agent-card-e2e-round2.md)。以下保留首轮失败与逐类命令。
+
+2026-10-10，第一轮本地仓库验收。11 类共 90 项：89 项通过、1 项失败；10 类通过、1 类失败。原报告写成 100/99 是合计错误，已按逐类日志更正。最新复跑见端到端第二轮报告。执行入口：
 
 ```sh
 export PATH=/Users/julia1/.cache/codex-runtimes/codex-primary-runtime/dependencies/node/bin:$PATH

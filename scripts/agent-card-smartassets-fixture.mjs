@@ -1,0 +1,23 @@
+import {program as sourceProgram,pkg as sourcePackage,mockRead as baseRead} from './agent-card-click-connected-fixture.mjs';
+export const pkg=structuredClone(sourcePackage);
+export const program=structuredClone(sourceProgram);
+delete pkg.socialContentPackage.publicationTasks[0].inventoryReuseRef;
+const publication=pkg.socialContentPackage.publicationTasks[0];
+const scope={tenantId:'t',programId:'p',packageId:'week2',packageVersion:2};
+const base={...scope,publicationTaskId:publication.publicationTaskId,accountId:publication.accountId,scope:'content',workflowKind:'content',status:'queued',dependsOnTaskIds:[],inheritedBlockingTaskIds:[],ownBlockingReasons:[],resultRefs:[],inputSnapshot:{publicationTask:publication},schedule:{stepKind:'video_generation',responsibleActor:'content_agent',estimatedDurationMinutes:30,estimatedStartAt:'2026-10-07T09:00:00+08:00',estimatedFinishAt:'2026-10-07T10:00:00+08:00',actualStartedAt:null,actualFinishedAt:null}};
+export const tasks=[{...base,taskId:'audit-content-consumer',productionProgress:{contentTaskId:'audit-content-task',runId:'audit-original-run',activity:'隔离原运行等待素材',updatedAt:'2026-10-07T01:00:00Z'}}];
+export const binding={scope:{...scope,executionTaskId:tasks[0].taskId},publicationTaskId:publication.publicationTaskId,contentTaskId:'audit-content-task',runId:'audit-original-run',artifactRef:null,bindingKey:'audit-binding-week2-v2',source:'production_binding',gaps:[]};
+export const material={requestId:'audit-manual-request',tenantId:'t',programId:'p',requirementKey:'隔离真实产品镜头',requirements:'原消费者需要真实产品近景',assigneeUserId:'owner',reviewerUserId:'reviewer',dueAt:'2026-10-06T10:00:00+08:00',verificationDueAt:'2026-10-06T16:00:00+08:00',timeZone:'Asia/Shanghai',status:'missing',consumers:[{taskId:tasks[0].taskId,packageId:'week2',packageVersion:2,requirement:'隔离原消费者规格近景'}],submissions:[],history:[],createdAt:'2026-10-05T08:00:00+08:00',updatedAt:'2026-10-05T08:00:00+08:00'};
+export const content={taskId:binding.contentTaskId,version:'1',status:'attention',runId:binding.runId,brief:{title:'隔离原消费者生产标题',objective:'原周包生产',productRef:'fixture产品',programRef:{type:'social_program',id:'p',version:1},audience:'采购商',markets:['US'],languages:['en'],platforms:['tiktok'],formats:['short_video'],aspectRatio:'9:16',cadence:null,requestedOutputCount:1,dueAt:null,brandNotes:'',restrictions:[],callToAction:'询盘'},packageSelection:[],readiness:{complete:true,missing:[]},sourceCount:0,knowledgeSourceCount:0,materialSourceCount:0,artifactCount:0,approvedArtifactCount:0,deliveryPackageCount:0,publicationCount:0,metricSubmissionCount:0,createdAt:'2026-10-05T00:00:00Z',updatedAt:'2026-10-05T00:00:00Z',sources:[],artifacts:[],deliveryPackages:[],publications:[],metricSubmissions:[],productionProgress:{activity:'隔离原运行等待素材',updatedAt:'2026-10-07T01:00:00Z'}};
+export function mockRead(input){const p=new URL(input,'http://127.0.0.1').pathname;
+ if(p.endsWith('/operating-packages'))return{items:[pkg]};
+ if(p.endsWith('/execution-tasks'))return{items:tasks};
+ if(p.endsWith('/production-navigation'))return{item:binding};
+ if(p.endsWith('/material-requests'))return{items:[material]};
+ if(p.endsWith('/auth/me'))return{user:{id:'owner',tenantId:'t',role:'admin',name:'fixture owner'},tenant:{id:'t',name:'fixture tenant'}};
+ if(p.endsWith('/auth/employees'))return{employees:[{id:'owner',role:'admin',name:'fixture owner'},{id:'reviewer',role:'admin',name:'fixture reviewer'}]};
+ if(p.endsWith('/tasks/audit-content-task'))return{task:content};
+ if(p.endsWith('/studio/projects'))return[];
+ if(p.endsWith('/studio/materials'))return{items:[],total:0};
+ return baseRead(input);
+}
