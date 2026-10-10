@@ -4,6 +4,10 @@
 
 ## 身份门禁与一次发布审查包
 
+**发布清单状态：`blocked`。** A 权威审计提交 `99eb1df` 的 `mvp-session-a-identity-audit-2026-10-11.json` 确认 `uniqueExecutableCandidate=null`，目标 local-tiktok 不在 social_accounts，现有 Facebook 属其他租户。D 不创建真实发布 attempt，不借用他租户账号，不使用历史失败成片，也不以旧授权或制作批准替代本次发布授权。
+
+解除本项阻塞的顺序：业务负责人统一 tenant/product/account 及 task/run/version，管理员核验该账号真实权限，C 交付同 scope 的可发布冻结成片；此后才由主会话收束一次具体发布授权。已有同范围有效授权直接复用，缺失或扩范围才升级责任人；当前不发起授权询问。原 attempt unknown 恢复与指标暂无数据合同继续保留。
+
 没有最终统一执行包，以下是明确阻塞的审查草案，不能当成授权或可执行发布任务。经营/编导负责人应统一后交付 D，D 不另选产品、账号或版本。
 
 | 字段 | 权威现状 / 待冻结要求 |
