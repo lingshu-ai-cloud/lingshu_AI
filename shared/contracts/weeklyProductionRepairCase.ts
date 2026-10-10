@@ -1,6 +1,7 @@
 import type {VersionedSocialRef} from './socialProgram.js';
 
 export type WeeklyProductionRepairCaseState =
+  | 'awaiting_configuration'
   | 'awaiting_capacity'
   | 'ready'
   | 'running'
@@ -22,12 +23,19 @@ export interface WeeklyProductionRepairCase {
   accountId:string;
   qualityTaskId:string;
   approvalTaskId:string;
-  kind:'technical_scene_repair';
+  kind:'technical_scene_repair'|'creative_revision';
   trigger:{
     type:'verified_quality_failure';
     blocker:'weekly_quality_audit_actual_repair_required';
     qualityContextHash:string;
     failedReceiptIds:string[];
+  }|{
+    type:'user_changes_requested';
+    operationId:string;
+    operationRequestHash:string;
+    artifactDecisionVersion:number;
+    note:string;
+    noteHash:string;
   };
   parent:{
     taskId:string;
@@ -39,10 +47,11 @@ export interface WeeklyProductionRepairCase {
   affectedSceneIds:string[];
   ownerUserId:string;
   reviewerUserId:string;
-  deadlineAt:string;
+  deadlineAt:string|null;
   affectedPublishWindow:string;
-  estimatedDurationMinutes:number;
-  maximumCostCny:number;
+  estimatedDurationMinutes:number|null;
+  maximumCostCny:number|null;
+  configurationGaps:string[];
   state:WeeklyProductionRepairCaseState;
   execution:{operationId:string;runId:string;jobId:string}|null;
   childArtifactRef:VersionedSocialRef|null;

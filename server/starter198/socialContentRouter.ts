@@ -159,6 +159,7 @@ export function createSocialContentRouter(dependencies: SocialContentRouterDepen
   const accessResolver = dependencies.accessResolver ?? socialContentAccessResolver;
   const backendFilePort = dependencies.backendFilePort;
   const socialTaskMaterialPort = dependencies.socialTaskMaterialPort;
+  const weeklyRepairCases=repository.dataStore?createWeeklyProductionRepairCaseService(repository.dataStore,now):null;
 
   router.use(requireAuth);
   if(repository.dataStore) router.use('/tasks/:taskId/runs/:runId/artifacts/:artifactId/weekly-quality-recovery',createWeeklyContentQualityRecoveryRouter(createWeeklyContentQualityRecoveryService(repository.dataStore)));
@@ -617,6 +618,10 @@ router.use('/tasks/:taskId/runs/:runId/artifacts/:artifactId/g6-reviews',createS
       artifactId: requireSocialId(req.params.artifactId, 'social_artifact_id_invalid'),
       idempotencyKey: requireIdempotencyKey(req.headers['idempotency-key']),
       value: parseArtifactDecision(req.body),
+      ...(weeklyRepairCases?{weeklyRevisionBridge:{
+        handles:({tenantId,taskId,artifactId}:{tenantId:string;taskId:string;artifactId:string})=>weeklyRepairCases.handlesCreativeDecision(tenantId,taskId,artifactId),
+        persist:(value:{tenantId:string;actorUserId:string;taskId:string;artifactId:string;operationId:string;operationRequestHash:string;note:string})=>weeklyRepairCases.createCreativeFromDecision(value),
+      }}:{}),
       now: now(),
     }));
   }));
@@ -707,3 +712,4 @@ router.use('/tasks/:taskId/runs/:runId/artifacts/:artifactId/g6-reviews',createS
 }
 import {createWeeklyContentQualityRecoveryRouter} from './weeklyContentQualityRecoveryRouter.js';
 import {createWeeklyContentQualityRecoveryService} from '../socialPrograms/weeklyContentQualityRecovery.js';
+import {createWeeklyProductionRepairCaseService} from '../socialPrograms/weeklyProductionRepairCases.js';
