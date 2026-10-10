@@ -5,6 +5,7 @@ import {calendarDateTime,frozenCalendarClock} from './calendarTime';
 export type MaterialCalendarAction = 'upload' | 'verification';
 export type WeeklyMaterialCalendarTask = AgentCalendarTask & {
   materialRequestId:string;materialAction:MaterialCalendarAction;materialConsumerTaskIds:string[];
+  materialTenantId:string;materialProgramId:string;materialPackageId:string;materialPackageVersion:number;materialSubmissionVersion:number;
 };
 export interface WeeklyMaterialCalendarScope {
   tenantId:string;programId:string;packageId:string;packageVersion:number;weekStart:string;weekEnd:string;
@@ -53,12 +54,12 @@ export function projectWeeklyMaterialCalendar(requests:WeeklyMaterialRequest[],s
     const accepted=request.status==='accepted'&&reviewed&&verification?.decision==='accepted';
     const rejected=request.status==='rejected'&&reviewed&&verification?.decision==='rejected';
     if((pending&&!submitted)||(['accepted','rejected'].includes(request.status)&&(!reviewed||verification?.decision!==request.status))){result.issues.push({requestId,reason:'上传或核验状态缺少当前提交版本的真实证据'});continue;}
-    const emit=(action:MaterialCalendarAction,date:Date,card:Omit<WeeklyMaterialCalendarTask,'id'|'date'|'time'|'materialAction'>)=>{
+    const emit=(action:MaterialCalendarAction,date:Date,card:Omit<WeeklyMaterialCalendarTask,'id'|'date'|'time'|'materialAction'|'materialTenantId'|'materialProgramId'|'materialPackageId'|'materialPackageVersion'|'materialSubmissionVersion'>)=>{
       const deadline=action==='upload'?request.dueAt:request.verificationDueAt!;
       const clock=frozenCalendarClock([request.timeZone],deadline);
       const {date:day,time}=calendarDateTime(date.getTime(),clock);
       if(day<scope.weekStart||day>scope.weekEnd){result.sharedReferences.push({requestId,action,deadline:action==='upload'?request.dueAt:request.verificationDueAt!,consumerTaskIds,affectedPublicationIds,reason:'outside_current_week',status:card.status,submission:card.submission,assigneeUserId:card.assignee||'',availableForHuman:card.availableForHuman===true});return;}
-      result.tasks.push({...card,id:`material:${scope.tenantId}:${scope.programId}:${requestId}:${action}`,date:day,time,calendarClock:clock,materialAction:action,affectedPublicationIds});
+      result.tasks.push({...card,id:`material:${scope.tenantId}:${scope.programId}:${requestId}:${action}`,date:day,time,calendarClock:clock,materialAction:action,materialTenantId:scope.tenantId,materialProgramId:scope.programId,materialPackageId:scope.packageId,materialPackageVersion:scope.packageVersion,materialSubmissionVersion:latest?.version??0,affectedPublicationIds});
     };
     emit('upload',due,{agent:'human',title:`上传必需素材 · ${request.requirementKey}`,context:`${request.requirements} · 本周关联 ${consumerTaskIds.length} 个真实生产任务`,output:pending?'真实素材已提交，等待独立核验':accepted?'当前提交版本已逐项核验通过':rejected?'素材核验未通过，请按消费者要求补交':cancellation?'素材任务已取消':'提交符合镜头、事实和权利要求的真实素材',minutes:null,status:cancellation?'cancelled':pending||accepted?'completed':rejected?'blocked':'planned',assignee:request.assigneeUserId,dueAt:request.dueAt,submission:pending?'pending':accepted?'accepted':rejected?'rejected':'missing',humanAction:'upload',availableForHuman:!cancellation&&!pending&&!accepted,materialRequestId:requestId,materialConsumerTaskIds:consumerTaskIds});
     const verificationDate=instant(request.verificationDueAt);

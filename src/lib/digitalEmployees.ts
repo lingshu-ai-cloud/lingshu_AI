@@ -1,3 +1,4 @@
+import {productionNavigationIdentity} from './productionNavigation';
 import type { ManagedPublishingGrant } from '../../shared/contracts/managedPublishingGrant';
 import type { MatrixAccountReview } from './weeklyMatrix';
 import type { ContinuationPolicy } from './continuationPolicy';
@@ -786,6 +787,8 @@ export interface DigitalEmployeeDeepLink {
 }
 
 export interface DigitalEmployeeReturnContext {
+  customerNavigation?: unknown;
+  navigationIdentity?: string;
   deliveryId?: string;
   returnPage: "digitalEmployees";
   returnView: "live";
@@ -893,6 +896,7 @@ export function dispatchDigitalEmployeeDeepLink(
   // and prevents a browser-restored draft from silently replacing the task.
   const navigationDetail = {
     ...link,
+    navigationIdentity: productionNavigationIdentity(),
     workflowRunId: link.runId,
     workflowTaskId: link.taskId,
   };
@@ -904,7 +908,9 @@ export function dispatchDigitalEmployeeDeepLink(
     if (link.runId || link.taskId) {
       const returnContext: DigitalEmployeeReturnContext = {
         returnPage: "digitalEmployees",
+        navigationIdentity: productionNavigationIdentity(),
         returnView: "live",
+        ...(link.businessRef.customerNavigation ? {customerNavigation:link.businessRef.customerNavigation} : {}),
         runId: link.runId,
         taskId: link.taskId,
         taskKey: link.businessRef.taskKey,
@@ -932,6 +938,7 @@ export function consumeDigitalEmployeeReturnContext(): DigitalEmployeeReturnCont
     window.sessionStorage.removeItem("digitalEmployee.returnContext");
     const value = JSON.parse(raw) as Partial<DigitalEmployeeReturnContext>;
     if (
+      value.navigationIdentity !== productionNavigationIdentity() ||
       value.returnPage !== "digitalEmployees" ||
       typeof value.taskId !== "string" ||
       typeof value.runId !== "string"

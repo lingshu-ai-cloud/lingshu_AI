@@ -3520,7 +3520,7 @@ digitalEmployeesRouter.get('/runs/:runId/customer-workspace', async (req, res) =
   const segment = await first<StoredRecord & { tenant_id: string }>('customer_segments', { tenant_id: tenantId, run_id: run.id }, '-version');
   const batch = await first<FollowupBatchRecord>(COLLECTION.followupBatches, { tenant_id: tenantId, run_id: run.id }, '-version');
   const tasks = await store.list<TaskRecord>(COLLECTION.tasks, { where: { tenant_id: tenantId, run_id: run.id }, sort: 'sequence', perPage: 100 });
-  res.json({ tasks: tasks.items.map(task => ({ id: task.id, run_id: run.id, title: task.title, task_key: task.task_key, status: task.status, blocker_reason: task.blocker_reason })), readOnly: ['succeeded', 'cancelled'].includes(run.status), segment, members: segment ? await getCustomerSegmentMembers(tenantId, segment.id) : [], batch, items: batch ? await getFollowupBatchItems(tenantId, batch.id) : [] });
+  res.json({ scope: {tenantId,runId:run.id}, tasks: tasks.items.map(task => ({ id: task.id, run_id: run.id, title: task.title, task_key: task.task_key, status: task.status, blocker_reason: task.blocker_reason })), readOnly: ['succeeded', 'cancelled'].includes(run.status), segment, members: segment ? await getCustomerSegmentMembers(tenantId, segment.id) : [], batch, items: batch ? await getFollowupBatchItems(tenantId, batch.id) : [] });
 });
 
 digitalEmployeesRouter.post('/followup-batches/:batchId/revise', async (req, res) => {
@@ -3881,12 +3881,17 @@ async function applyTaskControl(input: {
   output?: Record<string, unknown>;
   businessRefs?: Array<Record<string, unknown>>;
   enabledWorkflows?: DigitalEmployeeConfig['enabledWorkflows'];
+  expectedTaskVersion?: string;
 }): Promise<{ runId: string; goalId: string }> {
   const initialTask = await tenantRecord<TaskRecord>(COLLECTION.tasks, input.taskId, input.tenantId);
   if (!initialTask) throw new TaskControlError(404, 'task_not_found');
   return withDigitalEmployeeRunLock(input.tenantId, initialTask.run_id, async () => {
     const task = await tenantRecord<TaskRecord>(COLLECTION.tasks, input.taskId, input.tenantId);
     if (!task) throw new TaskControlError(404, 'task_not_found');
+    if (input.expectedTaskVersion !== undefined
+      && String(task.task_version ?? task.updated_at ?? '').trim() !== input.expectedTaskVersion) {
+      throw new TaskControlError(409, 'task_version_conflict');
+    }
     const [run, goal, plan, configRecord, allTasks] = await Promise.all([
       tenantRecord<RunRecord>(COLLECTION.runs, task.run_id, input.tenantId),
       tenantRecord<GoalRecord>(COLLECTION.goals, task.goal_id, input.tenantId),
@@ -4088,6 +4093,29 @@ async function applyTaskControl(input: {
     await appendAudit({ tenantId: input.tenantId, userId: input.userId, action: `workflow_task.${input.action}`, targetType: 'workflow_task', targetId: task.id, metadata: { correctionId: correction.id, runId: run.id, version, scope: input.scope, rerunDownstream: input.rerunDownstream, affectedTaskIds: affected.map(item => item.id) } });
     return { runId: run.id, goalId: run.goal_id };
   });
+}
+
+/** Shared retry authority for alternate authenticated surfaces such as the mobile workbench. */
+export async function retryDigitalEmployeeTask(input: {
+  tenantId: string;
+  userId: string;
+  taskId: string;
+  expectedTaskVersion: string;
+  instruction?: string;
+  rerunDownstream?: boolean;
+}): Promise<{ runId: string; goalId: string }> {
+  const result = await applyTaskControl({
+    tenantId: input.tenantId,
+    userId: input.userId,
+    taskId: input.taskId,
+    expectedTaskVersion: input.expectedTaskVersion,
+    action: 'retry',
+    scope: 'one_off',
+    instruction: String(input.instruction || '').trim().slice(0, 5000) || '重试当前任务并重置下游',
+    rerunDownstream: input.rerunDownstream !== false,
+  });
+  await advanceRun(input.tenantId, result.runId);
+  return result;
 }
 
 async function handleTaskControl(req: Request, res: Response, forcedAction?: TaskControlAction): Promise<void> {

@@ -122,6 +122,10 @@ assert.match(assistantSource, /const currentPageAgent = useMemo\(\(\) => orbitId
 assert.match(assistantSource, /page === 'smartAssets'\) return 'content'/, '内容制作页应高亮内容 Agent');
 assert.match(assistantSource, /page === 'socialInspiration'[\s\S]{0,160}return 'director'/, '灵感与脚本页面应高亮编导 Agent');
 assert.match(assistantSource, /page === 'conversion'[\s\S]{0,220}return 'customer'/, '客户页面应高亮客服 Agent');
+assert.match(assistantSource, /const openAgent[\s\S]{0,160}const agentId = PRIMARY_ASSISTANT_THREAD/, '所有页面入口保持统一主线程');
+assert.match(assistantSource, /send\(kickoff\.text, orbitIdForAgent\(kickoff\.agent, currentPageAgent\)\)/, '专业工作流启动仍应进入对应 Agent');
+assert.match(assistantSource, /strategyRequest \? '' : await loadLiveIntegrationFacts\(\)/, '经营回答不能重新注入客户端账号事实');
+assert.match(assistantSource, /if \(!currentScope\(\)\) return/, '跨身份异步响应必须被丢弃');
 
 assert.match(pageSource, /输出内容语言/);
 assert.match(pageSource, /需要输出的语言/);

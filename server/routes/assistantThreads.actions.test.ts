@@ -69,6 +69,7 @@ test('assistant action endpoint is authenticated, tenant-scoped and mounted on t
   };
   const dataStore = memoryStore([
     { id: 'thread-a', tenantId: 'tenant-a', userId: 'user-tenant-a', agentId: 'content', version: 1, messages: [{ role: 'user', content: 'tenant-a-secret' }] },
+    { id: 'mobile-a', tenantId: 'tenant-a', userId: 'user-tenant-a', agentId: 'mobile_workbench', source: 'mobile_workbench', messages: [{role:'user',content:'mobile-private'}] },
     { id: 'thread-b', tenantId: 'tenant-b', userId: 'user-tenant-b', agentId: 'content', version: 1, messages: [{ role: 'user', content: 'tenant-b-secret' }] },
   ]);
   const app = express();

@@ -1,11 +1,12 @@
-import { pushProductionLocation, requestProductionBack } from './lib/productionNavigation';
+import { restoreAgentCalendarReturnContext } from './lib/agentCalendarReturnContext';
+import { pushProductionLocation, requestProductionBack, stampProductionHistoryState, canRestoreProductionHistoryState, restorableProductionDetail, productionNavigationIdentity } from './lib/productionNavigation';
 import { isAgentProductionSession } from './lib/agentProductionSession';
 import { Activity, lazy, Suspense, useCallback, useEffect, useRef, useState } from 'react';
 import { Button, Result } from 'antd';
 import { Loader2 } from 'lucide-react';
 import Layout from './components/Layout';
 import AuthScreen from './components/AuthScreen';
-import { authApi, getToken, startInitialAuthSessionRefresh, type AuthSession } from './lib/auth';
+import { authApi, getToken, AUTH_TOKEN_CHANGED_EVENT, startInitialAuthSessionRefresh, type AuthSession } from './lib/auth';
 import { isEnterpriseHomepageDemoAccount } from './mocks/enterpriseHomepageDemo';
 import { isLocalForeignTradeMockEnabled } from './mocks/foreignTradeOperations';
 import { completeDemoStep, setDemoProgressScope } from './lib/demoProgress';
@@ -224,28 +225,32 @@ export default function App() {
   } | null>(() => {
     const initialPage = loadPage();
     if (!isSocialTaskContextPage(initialPage)) return null;
-    const taskId = readSocialContentNavigationTaskId(initialPage, window.history.state);
+    const taskId = canRestoreProductionHistoryState(window.history.state) ? readSocialContentNavigationTaskId(initialPage, window.history.state) : null;
     return taskId ? { page: initialPage, taskId } : null;
   });
   useEffect(() => {
     document.title = `${PAGE_REGISTRY[page].canonicalTitle} · 灵枢 AI`;
   }, [page]);
   useEffect(() => {
-    window.history.replaceState({ ...window.history.state, productionPage: pageRef.current, productionDepth: 0 }, '');
+    const initialState = canRestoreProductionHistoryState(window.history.state) ? window.history.state : {};
+    window.history.replaceState(stampProductionHistoryState({ ...initialState, productionPage: pageRef.current, productionDepth: 0 }), '');
     const restorePage = (event: PopStateEvent) => {
-      const previous = resolveNavigationPage(event.state?.productionPage, event.state?.productionDetail?.view);
+      const trusted = canRestoreProductionHistoryState(event.state);
+      const restoredDetail = restorableProductionDetail(event.state);
+      const previous = trusted ? resolveNavigationPage(event.state?.productionPage, restoredDetail?.view) : 'digitalEmployees';
       if (previous) {
         setPage(previous);
-        const socialTaskId = isSocialTaskContextPage(previous)
+        restoreAgentCalendarReturnContext(trusted ? event.state?.agentCalendarReturnContext ?? null : null);
+        const socialTaskId = trusted && isSocialTaskContextPage(previous)
           ? readSocialContentNavigationTaskId(previous, event.state)
           : null;
         setSocialContentNavigation(socialTaskId ? { page: previous, taskId: socialTaskId } : null);
-        if (event.state?.productionDetail) {
-          const detail = event.state.productionDetail;
-          try { sessionStorage.setItem('digitalEmployee.businessDeepLink', JSON.stringify({ ...detail, issuedAt: Date.now() })); } catch { /* optional storage */ }
+        if (restoredDetail) {
+          const detail = restoredDetail;
+          try { sessionStorage.setItem('digitalEmployee.businessDeepLink', JSON.stringify({ ...detail, navigationIdentity:productionNavigationIdentity(), issuedAt: Date.now() })); } catch { /* optional storage */ }
           window.dispatchEvent(new CustomEvent('lingshu:navigate', { detail: { ...detail, restoreHistory: true } }));
         } else {
-          try { sessionStorage.removeItem('digitalEmployee.businessDeepLink'); } catch { /* optional storage */ }
+          try { sessionStorage.removeItem('digitalEmployee.businessDeepLink'); if(!trusted)sessionStorage.removeItem('digitalEmployee.returnContext'); } catch { /* optional storage */ }
           // A generic history entry is also authoritative: notify the page
           // coordinator so it clears any task binding from the newer entry.
           window.dispatchEvent(new CustomEvent('lingshu:navigate', { detail: { page: previous, restoreHistory: true } }));
@@ -259,9 +264,25 @@ export default function App() {
         setPage('digitalEmployees');
       }
     };
+    let navigationAuthority = productionNavigationIdentity();
+    const authChanged = () => {
+      const nextAuthority = productionNavigationIdentity();if(nextAuthority===navigationAuthority)return;navigationAuthority=nextAuthority;
+      const cleanUrl=new URL(window.location.href);cleanUrl.searchParams.set('page','digitalEmployees');
+      window.history.replaceState(stampProductionHistoryState({productionPage:'digitalEmployees',productionDepth:0}), '',cleanUrl);
+      try { sessionStorage.removeItem('digitalEmployee.businessDeepLink'); sessionStorage.removeItem('digitalEmployee.returnContext'); } catch { /* optional storage */ }
+      restoreAgentCalendarReturnContext(null);
+      setSmartAssetsWorkflowContext(null);setSmartAssetsCreateRequest(null);setSmartAssetsStudioOpen(false);
+      setConversation(null);setRestore(null);setKickoff(null);
+      setSocialContentNavigation(null);
+      setPage('digitalEmployees');
+      window.dispatchEvent(new CustomEvent('lingshu:navigate',{detail:{page:'digitalEmployees',restoreHistory:true}}));
+    };
+    const storageChanged = (event: StorageEvent) => { if(event.key === 'overseas_token' || event.key === null)authChanged(); };
+    window.addEventListener(AUTH_TOKEN_CHANGED_EVENT,authChanged);
+    window.addEventListener('storage',storageChanged);
     window.addEventListener('popstate', restorePage);
     window.addEventListener('lingshu:back', back);
-    return () => { window.removeEventListener('popstate', restorePage); window.removeEventListener('lingshu:back', back); };
+    return () => { window.removeEventListener(AUTH_TOKEN_CHANGED_EVENT,authChanged); window.removeEventListener('storage',storageChanged); window.removeEventListener('popstate', restorePage); window.removeEventListener('lingshu:back', back); };
   }, []);
   useEffect(() => {
     const syncSocialNavigation = (event: Event) => {
@@ -275,7 +296,7 @@ export default function App() {
   }, []);
   const [smartAssetsMounted, setSmartAssetsMounted] = useState(() => {
     if (loadPage() !== 'smartAssets') return false;
-    const detail = window.history.state?.productionDetail;
+    const detail = canRestoreProductionHistoryState(window.history.state) ? window.history.state?.productionDetail : null;
     return Boolean(
       readSocialContentNavigationTaskId('smartAssets', window.history.state)
       || window.__agentProductionTarget?.link.page === 'smartAssets'
@@ -288,25 +309,25 @@ export default function App() {
   const [smartAssetsView, setSmartAssetsView] = useState<'create' | 'publish'>(() => {
     const target = window.__agentProductionTarget;
     if (target?.link.page === 'smartAssets') return target.link.view || 'create';
-    const detail = window.history.state?.productionDetail;
+    const detail = canRestoreProductionHistoryState(window.history.state) ? window.history.state?.productionDetail : null;
     return loadPage() === 'smartAssets' && detail?.page === 'smartAssets' && detail.view === 'publish' ? 'publish' : 'create';
   });
   const [smartAssetsInstanceKey, setSmartAssetsInstanceKey] = useState(0);
   const [smartAssetsWorkflowContext, setSmartAssetsWorkflowContext] = useState<{ runId: string; taskId: string; taskKey: string; preview?: boolean; entityId?: string; contentId?: string; referenceId?: string } | null>(() => {
     const target = window.__agentProductionTarget;
     if (target?.link.page === 'smartAssets') return { runId: target.link.runId, taskId: target.link.taskId, taskKey: target.link.businessRef.taskKey, entityId: target.projectId };
-    const detail = window.history.state?.productionDetail;
+    const detail = canRestoreProductionHistoryState(window.history.state) ? window.history.state?.productionDetail : null;
     if (loadPage() !== 'smartAssets' || detail?.page !== 'smartAssets') return null;
     const runId = String(detail.workflowRunId || '');
     const taskId = String(detail.workflowTaskId || '');
     return runId && taskId || detail.businessRef?.entityId ? { runId, taskId, taskKey: String(detail.businessRef?.taskKey || ''), entityId: detail.businessRef?.entityId, contentId: detail.businessRef?.contentId, referenceId: detail.businessRef?.referenceId } : null;
   });
   const [smartAssetsCreateRequest, setSmartAssetsCreateRequest] = useState<SocialContentCreateRequest | null>(() => {
-    const detail = window.history.state?.productionDetail;
+    const detail = canRestoreProductionHistoryState(window.history.state) ? window.history.state?.productionDetail : null;
     return loadPage() === 'smartAssets' && detail?.page === 'smartAssets' ? detail.contentCreationRequest || null : null;
   });
   const [smartAssetsStudioOpen, setSmartAssetsStudioOpen] = useState(() => {
-    const detail = window.history.state?.productionDetail;
+    const detail = canRestoreProductionHistoryState(window.history.state) ? window.history.state?.productionDetail : null;
     return Boolean(new URLSearchParams(window.location.search).get('project') || detail?.directStudio);
   });
 
@@ -545,6 +566,7 @@ export default function App() {
     const handler = (event: Event) => {
       const incomingDetail = (event as CustomEvent<{
         restoreHistory?: boolean;
+        navigationIdentity?: string;
         page?: Page;
         view?: LegacyTrafficView;
         studioPanel?: 'projects';
@@ -562,6 +584,7 @@ export default function App() {
       }>).detail;
       const nextPage = resolveNavigationPage(incomingDetail?.page, incomingDetail?.view);
       if (!nextPage || !incomingDetail) return;
+      if(incomingDetail.navigationIdentity && incomingDetail.navigationIdentity !== productionNavigationIdentity())return;
       const detail = nextPage === incomingDetail.page
         ? incomingDetail
         : { ...incomingDetail, page: nextPage };
@@ -578,14 +601,15 @@ export default function App() {
           setActiveSocialContentTaskId(null);
           delete nextHistoryState.socialContentTaskId;
           delete nextHistoryState.socialContentPage;
+          delete nextHistoryState.weeklyContentTarget;
         }
         if (nextPage === 'smartAssets' && detail.contentCreationRequest
           && (!detail.socialContentTaskId || (detail.contentCreationRequest.creationPath === 'viral_replication' && detail.directStudio === false))) {
           try { localStorage.removeItem('ow_studio_open_project'); } catch { /* ignore */ }
           const freshUrl = new URL(window.location.href);
           freshUrl.searchParams.delete('project');
-          window.history.replaceState({ ...nextHistoryState, productionDetail: detail }, '', freshUrl);
-        } else window.history.replaceState({ ...nextHistoryState, productionDetail: detail }, '');
+          window.history.replaceState(stampProductionHistoryState({ ...nextHistoryState, productionDetail: detail }), '', freshUrl);
+        } else window.history.replaceState(stampProductionHistoryState({ ...nextHistoryState, productionDetail: detail }), '');
         const socialTaskId = String(detail.socialContentTaskId || '').trim();
         if (socialTaskId && isSocialTaskContextPage(nextPage)
           && (!detail.socialContentPage || detail.socialContentPage === nextPage)) {
@@ -666,6 +690,7 @@ export default function App() {
     const nextHistoryState = { ...window.history.state };
     delete nextHistoryState.socialContentTaskId;
     delete nextHistoryState.socialContentPage;
+    delete nextHistoryState.weeklyContentTarget;
     window.history.replaceState({
       ...nextHistoryState,
       productionDetail: { page: 'smartAssets', view: 'create' },

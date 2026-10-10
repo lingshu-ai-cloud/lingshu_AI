@@ -1,3 +1,4 @@
+import {assertCustomerWorkspaceIdentity} from '../lib/customerWorkspaceIdentity';
 import {readCustomerTaskApprovalContext,type CustomerTaskApprovalContext} from '../lib/customerTaskApprovalApi';
 import FollowupTemplateEditor, { needsFollowupTemplate } from './FollowupTemplateEditor';
 import { useAgentProductionAction } from '../lib/agentProductionSession';
@@ -12,7 +13,7 @@ const primaryButton = 'inline-flex min-h-9 items-center justify-center rounded-m
 
 export default function CustomerWorkflowPanel({ handoff, customers }: { handoff: DigitalEmployeeDeepLink; customers: Array<{ id: string; name: string }> }) {
   const [sessionToken,setSessionToken]=useState(getToken());
-  const identity=JSON.stringify([handoff.runId,handoff.taskId,handoff.businessRef.followupItemId,sessionToken]);
+  const identity=JSON.stringify([handoff.runId,handoff.taskId,handoff.businessRef.followupItemId,handoff.businessRef.customerNavigation,sessionToken]);
   const live=useRef(identity);live.current=identity;
   const panelRoot=useRef<HTMLElement|null>(null);
   const agentProduction = useAgentProductionAction('customer');
@@ -48,7 +49,7 @@ export default function CustomerWorkflowPanel({ handoff, customers }: { handoff:
     if(live.current!==captured||getToken()!==sessionToken)return;
     const data = await request(binding?`runs/${handoff.runId}/customer-task-navigation/workspace?taskId=${encodeURIComponent(handoff.taskId)}&itemId=${encodeURIComponent(binding.itemId)}`:`runs/${handoff.runId}/customer-workspace`);
     if(live.current!==captured||getToken()!==sessionToken)return;
-    if(binding&&!(data.items||[]).some((item:any)=>item.id===binding.itemId&&item.customer_id===binding.customerId))throw Error('原草稿条目不在核验后的实际批次中。');
+    assertCustomerWorkspaceIdentity(data,handoff,binding);
     if(taskKey==='followup_batch_approval'){const original=await readCustomerTaskApprovalContext(handoff.runId,handoff.taskId);if(live.current!==captured||getToken()!==sessionToken)return;if(original.batchId!==data.batch?.id||original.batchVersion!==data.batch?.version)throw Error('工作区批次与原审批请求不一致。');setApproval(original);setApprovalReadBackHash(original.requestHash);setApprovalObserved(false);}
     setWorkspace(data);
     setDrafts(Object.fromEntries((data.items || []).map((item: any) => [item.customer_id, item.draft_body || ''])));

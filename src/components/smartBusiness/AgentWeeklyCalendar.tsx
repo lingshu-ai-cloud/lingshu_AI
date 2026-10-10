@@ -1,4 +1,7 @@
-import { lazy, Suspense, useEffect, useMemo, useState } from 'react';
+import {agentCalendarAuthIdentity, captureAgentCalendarReturnContext, readAgentCalendarReturnContext, registerAgentCalendarReturnState, restoreAgentCalendarReturnContext} from '../../lib/agentCalendarReturnContext';
+import type {LsCalendarView} from '../ui/LsCalendar';
+import {validWeeklySalesTaskBinding,type WeeklySalesNavigationTarget} from '../socialProgram/weeklySalesNavigation';
+import { lazy, Suspense, useEffect, useMemo, useRef, useState } from 'react';
 import { Alert, Button, Tag } from 'antd';
 import type { CrossWeekMaterialTarget } from '../socialProgram/crossWeekMaterialCalendar';
 import type { CustomerExecutionCalendarTarget } from '../socialProgram/customerExecutionCalendarNavigation';
@@ -46,6 +49,7 @@ export type AgentCalendarTask = {
   submission?: 'missing' | 'pending' | 'accepted' | 'rejected';
   humanAction?: 'upload' | 'approval';
   availableForHuman?: boolean;
+  salesTarget?: WeeklySalesNavigationTarget;
   salesHandoffId?: string;
   salesPackageId?: string;
   salesPackageVersion?: number;
@@ -63,6 +67,8 @@ export type AgentCalendarTask = {
   crossWeekMaterialTarget?: CrossWeekMaterialTarget;
   customerExceptionTarget?: CustomerExceptionTarget;
   productionTaskId?: string;
+  /** Exact persisted weekly execution task that owns the production binding. */
+  productionExecutionTaskId?: string;
   materialRequestId?: string;
   materialAction?: 'upload' | 'verification';
   materialConsumerTaskIds?: string[];
@@ -156,11 +162,7 @@ export function hasCalendarProductionBinding(task: AgentCalendarTask): boolean {
     && Number.isSafeInteger(task.sendRecoveryTarget.packageVersion)
     && task.sendRecoveryTarget.packageVersion > 0
     && Boolean(task.sendRecoveryTarget.runId && task.sendRecoveryTarget.taskId && task.sendRecoveryTarget.itemId);
-  const sales = task.agent === 'human'
-    && Boolean(task.salesHandoffId && task.salesPackageId)
-    && Number.isSafeInteger(task.salesPackageVersion)
-    && (task.salesPackageVersion ?? 0) > 0
-    && ['claim', 'feedback'].includes(task.salesAction || '');
+  const sales = validWeeklySalesTaskBinding(task);
   const material = task.agent === 'human'
     && Boolean(task.materialRequestId)
     && ['upload', 'verification'].includes(task.materialAction || '');
@@ -264,6 +266,25 @@ export default function AgentWeeklyCalendar({
   scopeKey,
   canOpenContentTask,
 }: Props) {
+  const positionKey = JSON.stringify([agentCalendarAuthIdentity(),scopeKey,startsAt,demo]);
+  const stateKey = `agentCalendar:${positionKey}`;
+  const saved = readAgentCalendarReturnContext();
+  const previous = saved?.calendar.positionKey === positionKey ? saved.states[stateKey] as {date?: string; view?: LsCalendarView} | undefined : undefined;
+  const [calendarDate, setCalendarDate] = useState(previous?.date || startsAt || tasks[0]?.date);
+  const [calendarView, setCalendarView] = useState<LsCalendarView>(previous?.view || 'timeGridWeek');
+  const viewport = useRef({date:calendarDate,view:calendarView});
+  viewport.current = {date:calendarDate,view:calendarView};
+  useEffect(() => registerAgentCalendarReturnState(stateKey, {
+    read: () => viewport.current,
+    restore: value => { const state = value as typeof viewport.current; if(state?.date)setCalendarDate(state.date); if(state?.view)setCalendarView(state.view); },
+  }), [stateKey]);
+  useEffect(() => {
+    const context = readAgentCalendarReturnContext();
+    const state = context?.calendar.positionKey === positionKey ? context.states[stateKey] as typeof viewport.current | undefined : undefined;
+    setCalendarDate(state?.date || startsAt || tasks[0]?.date);
+    setCalendarView(state?.view || 'timeGridWeek');
+    restoreAgentCalendarReturnContext();
+  }, [positionKey]);
   const [now, setNow] = useState(() => Date.now());
   useEffect(() => {
     const timer = window.setInterval(() => setNow(Date.now()), 10_000);
@@ -300,6 +321,7 @@ export default function AgentWeeklyCalendar({
     const overdue = !demo && isCalendarTaskOverdue(task, now);
     const open = (action: ((task: AgentCalendarTask) => void) | undefined) => {
       if (!action) return;
+      captureAgentCalendarReturnContext({positionKey,offset:0,cardId:task.id});
       closeDetails();
       action(task);
     };
@@ -317,7 +339,7 @@ export default function AgentWeeklyCalendar({
             ? { label: '查看本周真实参考分析与排期', run: () => open(onOpenPlanning) }
             : !demo && (hasCalendarProductionBinding(task) || canOpenContentTask?.(task)) && onOpenProduction
               ? { label: task.publicationExecutionTarget ? '查看真实发布安排与平台尝试' : task.nativeRecoveryTarget ? '核验原生发送异常与真实回执' : task.publicationRecoveryTarget ? '处理发布恢复任务' : task.sendRecoveryTarget ? '核验原发送异常与真实回执' : task.productionTaskId ? '进入这条任务的生产实况' : '核验此任务生产对象与上游', run: () => open(onOpenProduction) }
-              : null;
+              : demo && onOpenProduction ? {label: '打开参考生产预览', run: () => open(onOpenProduction)} : null;
 
     return <div className="space-y-4">
       <dl className="ls-calendar-details">
@@ -338,7 +360,7 @@ export default function AgentWeeklyCalendar({
     </div>;
   };
 
-  return <section id="agent-weekly-calendar" key={scopeKey} className="scroll-mt-4 bg-white" aria-label={demo ? 'B2B 零基础首周任务日历' : 'Agent 周任务日历'}>
+  return <section id="agent-weekly-calendar" key={scopeKey} data-agent-calendar-position-key={positionKey} className="scroll-mt-4 bg-white" aria-label={demo ? 'B2B 零基础首周任务日历' : 'Agent 周任务日历'}>
     <div className="border-b border-border px-5 py-4">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <h3 className="ls-type-title-large text-text-primary">{demo ? 'B2B 零基础 · 首周任务日历' : 'Agent 周任务日历'}</h3>
@@ -354,11 +376,14 @@ export default function AgentWeeklyCalendar({
       return <li key={event.id}>{event.title} · {event.statusLabel}{task.affectedPublicationIds?.length ? ` · 受影响发布 ${task.affectedPublicationIds.join('、')}` : ''}</li>;
     })}</ul>
     {deliverables.length > 0 && <Suspense fallback={<p className="p-5 text-xs text-text-secondary">正在加载日历…</p>}><LsCalendar
+        key={positionKey}
         label={demo ? 'B2B 零基础首周任务日历' : 'Agent 周任务日历'}
         events={events}
-        initialDate={startsAt || deliverables[0]?.date}
-        date={startsAt || deliverables[0]?.date}
-        initialView="timeGridWeek"
+        initialDate={calendarDate}
+        date={calendarDate}
+        view={calendarView}
+        initialView={calendarView}
+        onDatesSet={info => { const next = info.view.currentStart.toISOString().slice(0,10); setCalendarDate(next); setCalendarView(info.view.type as LsCalendarView); }}
         firstDay={1}
         timeZone={timeZone}
         timeGridHeight={760}

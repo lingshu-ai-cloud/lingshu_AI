@@ -27,3 +27,19 @@
 ## 上线前验证
 
 需要真实 AppID、HTTPS 服务域名、微信后台合法域名配置，并在真机测试相机、相册、30 MB 视频、弱网重试和账号权限。当前代码没有发布或部署。
+
+## 移动工作台（2026-10-10 开发中）
+
+默认入口已改为 `pages/workbench/index`：待处理 / 工作 / 助手，默认进入工作。原拍摄功能保留在 `pages/index/index`。微信开发者工具仍导入本目录。
+
+工作台复用 `digital-employees/overview`、任务 workspace、审批、重试、发布 calendar 和社媒 interactions；权限继续由已有服务校验。曝光暂缺严格周口径时显示未知。询盘暂为按客户标识聚合的记录浏览；助手是文字问答与录音转文字，尚不从自由对话提交业务动作。待处理队列独立于选中的统计周；稍后设置通过后端按企业和用户保存，聊天历史仍保存在本机。移动端保持统一入口，内部兼容现有工作台投影和命令接口。
+
+新增录音转写接口为 `/api/overseas/mobile-workbench/transcribe`，复用后端千问配置与额度检查。本地代码尚未部署到 `config.js` 当前指向的服务，旧服务会明确返回功能不可用。请使用可访问的 HTTPS 开发服务做联调，不在配置内填写密钥。
+
+自动测试：`node --test apps/shooting-miniapp/workbench.test.cjs`。仍需微信开发者工具编译及真机测试登录、三 Tab、滑卡阈值、弱网、版本冲突、麦克风权限和录音识别。
+
+本轮新增 `/mobile-workbench/queue`、`/mobile-workbench/snooze`，以及既有工作台命令链路下的移动队列适配。后端租户与用户由登录令牌解析，客户端不传作用域。需应用 `pb_migrations/1791597600_mobile_workbench_snoozes.js` 后联调；本次未执行生产迁移。新投影未提供严格周统计时显示未知，不将当前周期数字冒充本周数字。结构化业务资料表单、完整询盘对话和真机联调仍需补齐。
+
+新增验证：`node --import tsx --test server/routes/mobileWorkbenchQueue.test.ts apps/shooting-miniapp/workbench.test.cjs`。
+
+体验验收增加 `apps/shooting-miniapp/workbench-experience.test.cjs`，上线队列验收增加 `server/routes/mobileWorkbenchQueue.release.test.ts`。兼容工作台的查询先展示真实快照；只有独立“提交工作指令”确认后才向后台提交，避免问进度时启动工作周期。最新整合 23 项测试通过；全仓类型和迁移检查尚有同期其他修改的阻塞，详见上线审查文档。

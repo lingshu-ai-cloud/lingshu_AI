@@ -53,6 +53,7 @@ export const agentCalendarDemo: AgentCalendarTask[] = rows.map(([day, chain, age
  calendarInternal:agent!=='human'&&(chain==='Z-M4'||[4,10,20].includes(index)),
  id:`task-${index}`, date:`2026-10-${String(5+day).padStart(2,'0')}`, time: index === 11 ? '17:00' : index === 16 ? '11:00' : index === 19 ? '12:00' : `${String(9 + rows.slice(0, index).filter(row => row[0] === day).length).padStart(2, '0')}:00`, agent, title, output, context, minutes, chain, dependsOn:dependsOn || [],
  status: [20,33].includes(index) ? 'blocked' : 'planned',
+ ...(index===14?{productionTaskId:'social-1',productionExecutionTaskId:'task-14'}:index===27?{productionTaskId:'social-3',productionExecutionTaskId:'task-27'}:index===33?{productionTaskId:'social-2',productionExecutionTaskId:'task-33'}:{}),
  ...(index === 11 ? {assignee:'李明', dueAt:'2026-10-06T17:00:00+08:00', submission:'missing' as const,reason:'安装特写 2 段未上传，请及时提交；影响产品 B 镜头 3/4'} : {}),
  ...(index === 32 ? {assignee:'王芳',submission:'pending' as const} : {}),
  ...([20,33].includes(index) ? {reason:'等待李明上传安装特写；其它独立任务继续'} : {}),

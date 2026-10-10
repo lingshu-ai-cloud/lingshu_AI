@@ -57,7 +57,7 @@ const individualTasks:AgentCalendarTask[]=videoPlan.flatMap(([video,day,finish,r
   const source=video==='A'||video==='B'?'自有迭代':'外部探索';
   const common={deliverableGroup:`preview:H:${video}`,status:'planned' as const,context:`${source} · 视频 ${video} · 示例任务；共享素材未核验时保持阻塞`,affectedPublicationIds:[`H-video-${video}`]};
   return [
-    {...common,id:productionId,executionStep:'video_generation',date:date(day),time:finish,agent:'content' as const,chain:'H-M5',minutes:132,title:`完成视频 ${video} ${source}成片`,output:`视频 ${video} 母版、字幕封面与技术质检`,dependsOn:[video==='A'||video==='B'?'h-task-8':'h-task-9','h-task-10']},
+    {...common,id:productionId,executionStep:'video_generation',productionTaskId:`social-${'ABCDE'.indexOf(video)+1}`,productionExecutionTaskId:productionId,date:date(day),time:finish,agent:'content' as const,chain:'H-M5',minutes:132,title:`完成视频 ${video} ${source}成片`,output:`视频 ${video} 母版、字幕封面与技术质检`,dependsOn:[video==='A'||video==='B'?'h-task-8':'h-task-9','h-task-10']},
     {...common,id:reviewId,executionStep:'quality_check',date:date(day),time:review,agent:'director' as const,chain:'H-M5',minutes:20,title:`审核视频 ${video} ${source}成片`,output:`视频 ${video} 逐镜事实、表达与验收结论`,dependsOn:[productionId]},
     {...common,id:publishId,date:date(publishDay),time:publishTime,agent:'business' as const,chain:'H-M6',minutes:20,title:`发布视频 ${video} ${source}平台版本`,output:`视频 ${video} 平台发布审批、原 attempt 与回执核验`,context:`${source} · 视频 ${video} · 审核后至少 24 小时发布；待用户验收与客服就绪，未知回执不重复发布`,dependsOn:[reviewId,'h-task-2']},
   ];

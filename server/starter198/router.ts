@@ -1,6 +1,6 @@
-import { Router, type Request } from 'express';
+import { json, Router, type Request } from 'express';
 import { requestOrganizationRoleStrict } from '../lib/organizationRole.js';
-import { requireAuth, type AuthLocals } from '../middleware/auth.js';
+import { enforceSupportSessionReadOnly, requireAuth, type AuthLocals } from '../middleware/auth.js';
 import {
   parseStarter198CommandInput,
   runStarter198Command,
@@ -26,6 +26,10 @@ import {
 import { createSocialContentRouter } from './socialContentRouter.js';
 
 export interface Starter198RouterDependencies extends Starter198CommandDependencies {
+  mobileWorkbench?: {
+    queueRouter: (workspace: (req: Request, res: import('express').Response) => ReturnType<typeof buildStarter198Workspace>) => Router;
+    transcribe: (req: Request, res: import('express').Response) => Promise<void>;
+  };
   repository?: Starter198Repository;
   resolveRole?: (request: Request, userId: string) => Promise<unknown>;
   readProductionModel?: (tenantId: string) => Promise<StarterProductionReadModel>;
@@ -52,9 +56,10 @@ function sendFailure(res: import('express').Response, error: unknown): void {
   }
   const code = error instanceof Error && [
     'starter_198_workspace_not_entitled',
+    'starter_198_role_required',
     'starter_198_workspace_projection_incomplete',
   ].includes(error.message) ? error.message : 'starter_198_unavailable';
-  res.status(code === 'starter_198_workspace_not_entitled' ? 403 : 503).json({ error: code, message: code });
+  res.status(['starter_198_workspace_not_entitled', 'starter_198_role_required'].includes(code) ? 403 : 503).json({ error: code, message: code });
 }
 
 export function createStarter198Router(dependencies: Starter198RouterDependencies = {}): Router {
@@ -69,6 +74,22 @@ export function createStarter198Router(dependencies: Starter198RouterDependencie
     orchestratorQueue: dependencies.orchestratorQueue,
     resolveRole,
   }));
+
+  const mobileWorkspace = async (req: Request, res: import('express').Response) => {
+    const { tenantId, userId } = res.locals as AuthLocals;
+    const role = starter198OrgRole(await resolveRole(req, userId));
+    if (!role) throw new Error('starter_198_role_required');
+    return buildStarter198Workspace({ tenantId, role, repository,
+      now: dependencies.now?.(), orchestratorAvailable: Boolean(dependencies.orchestratorQueue),
+      decisionAvailable: Boolean(dependencies.approvalDecision), quoteDecisionAvailable: Boolean(dependencies.quoteDecision),
+      quoteEvidenceAvailable: Boolean(dependencies.quoteEvidence), quoteSelfServiceAvailable: Boolean(dependencies.quoteSelfService),
+      setupAvailable: Boolean(dependencies.initialSetup), loadProductionReadModel: dependencies.readProductionModel });
+  };
+  if (dependencies.mobileWorkbench) router.use('/mobile', dependencies.mobileWorkbench.queueRouter(mobileWorkspace));
+
+  if (dependencies.mobileWorkbench) router.post('/mobile/transcribe', json({limit:'3mb'}), enforceSupportSessionReadOnly, async (req, res) => {
+    try { await mobileWorkspace(req, res); await dependencies.mobileWorkbench!.transcribe(req, res); } catch (error) { sendFailure(res, error); }
+  });
 
   router.get('/workspace', async (req, res) => {
     res.setHeader('Cache-Control', 'private, no-store');
@@ -183,7 +204,9 @@ export function createStarter198Router(dependencies: Starter198RouterDependencie
   return router;
 }
 
-export const starter198Router = createStarter198Router({
+export function createDefaultStarter198Router(mobileWorkbench?: Starter198RouterDependencies['mobileWorkbench']) {
+  return createStarter198Router({
+  mobileWorkbench,
   initialSetup: createStarter198InitialSetupPort(),
   orchestratorQueue: createStarter198OrchestratorQueue(),
   approvalDecision: createStarter198ApprovalDecisionPort(),
@@ -192,3 +215,6 @@ export const starter198Router = createStarter198Router({
   quoteSelfService: createStarter198QuoteSelfServicePort(),
   readProductionModel: readStarterProductionModel,
 });
+}
+
+export const starter198Router = createDefaultStarter198Router();

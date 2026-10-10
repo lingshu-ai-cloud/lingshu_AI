@@ -1,7 +1,7 @@
 import { Router, type Request, type RequestHandler, type Response } from 'express';
 import { store } from '../storage/index.js';
 import type { DataStore } from '../storage/datastore.js';
-import { requireAuth, type AuthLocals } from '../middleware/auth.js';
+import { requireAuth, enforceSupportSessionReadOnly, type AuthLocals } from '../middleware/auth.js';
 import {
   AssistantActionError,
   createAssistantActionService,
@@ -96,6 +96,7 @@ type AssistantThreadTaskCard = {
 };
 
 type AssistantThread = {
+  source?: string;
   id: string;
   tenantId: string;
   userId: string;
@@ -126,9 +127,13 @@ function actionHttpStatus(status: string): number {
   return 200;
 }
 
+function isDesktopThread(thread: AssistantThread): boolean {
+  return !thread.source || thread.source === 'desktop';
+}
+
 function safeAgentId(value: unknown): string {
   const agentId = typeof value === 'string' ? value.trim() : '';
-  if (!/^[a-z0-9:_-]{1,80}$/i.test(agentId)) {
+  if (agentId === 'mobile_workbench' || !/^[a-z0-9:_-]{1,80}$/i.test(agentId)) {
     throw new AssistantActionError('assistant_agent_id_invalid', 400, '助手编号无效。');
   }
   return agentId;
@@ -388,6 +393,7 @@ function parseThreadPayload(
   const payload = {
     tenantId: identity.tenantId,
     userId: identity.userId,
+    source: 'desktop',
     agentId,
     version: (prior?.version ?? 0) + 1,
     messages,
@@ -446,6 +452,7 @@ function threadWithDefaults(thread: AssistantThread): AssistantThread {
     id: typeof thread.id === 'string' ? thread.id : '',
     tenantId: typeof thread.tenantId === 'string' ? thread.tenantId : '',
     userId: typeof thread.userId === 'string' ? thread.userId : '',
+    source: 'desktop',
     agentId: typeof thread.agentId === 'string' ? thread.agentId : '',
     version: Number.isSafeInteger(thread.version) && thread.version > 0 ? thread.version : 0,
     messages,
@@ -483,15 +490,23 @@ export function createAssistantThreadsRouter(
       if (writeTails.get(key) === queued) writeTails.delete(key);
     }
   };
-  router.use(dependencies.authMiddleware ?? requireAuth);
+  router.use(dependencies.authMiddleware ?? requireAuth, enforceSupportSessionReadOnly);
 
   router.get('/', async (_req: Request, res: Response) => {
     const identity = res.locals as AuthLocals;
-    const result = await dataStore.list<AssistantThread>('assistant_threads', {
-      where: { tenantId: identity.tenantId, userId: identity.userId },
-      perPage: 20,
-    });
-    res.json({ items: result.items.map(threadWithDefaults) });
+    const items: AssistantThread[] = [];
+    let page = 1;
+    let totalPages = 1;
+    do {
+      const result = await dataStore.list<AssistantThread>('assistant_threads', {
+        where: { tenantId: identity.tenantId, userId: identity.userId },
+        perPage: 20, page,
+      });
+      items.push(...result.items.filter(isDesktopThread));
+      totalPages = result.totalPages;
+      page += 1;
+    } while (page <= totalPages && items.length < 20);
+    res.json({ items: items.slice(0,20).map(threadWithDefaults) });
   });
 
   router.get('/:agentId', async (req: Request, res: Response) => {
@@ -507,7 +522,8 @@ export function createAssistantThreadsRouter(
       where: { tenantId: identity.tenantId, userId: identity.userId, agentId },
       perPage: 1,
     });
-    res.json(result.items[0] ? threadWithDefaults(result.items[0]) : {
+    const desktop = result.items.find(isDesktopThread);
+    res.json(desktop ? threadWithDefaults(desktop) : {
       id: '',
       tenantId: identity.tenantId,
       userId: identity.userId,
@@ -554,7 +570,7 @@ export function createAssistantThreadsRouter(
           where: owner,
           perPage: 1,
         });
-        current = existing.items[0];
+        current = existing.items.find(isDesktopThread);
         const actualVersion = current ? threadWithDefaults(current).version : 0;
         if (expectedVersion !== actualVersion) {
           res.status(409).json({
@@ -586,7 +602,7 @@ export function createAssistantThreadsRouter(
         if (!updated) {
           try {
             const latest = await dataStore.list<AssistantThread>('assistant_threads', { where: owner, perPage: 1 });
-            const latestThread = latest.items[0];
+            const latestThread = latest.items.find(isDesktopThread);
             if (latestThread && threadWithDefaults(latestThread).version !== expectedVersion) {
               res.status(409).json({
                 error: 'assistant_thread_version_conflict',
@@ -610,11 +626,12 @@ export function createAssistantThreadsRouter(
       if (!created) {
         try {
           const latest = await dataStore.list<AssistantThread>('assistant_threads', { where: owner, perPage: 1 });
-          if (latest.items[0]) {
+          const winner = latest.items.find(isDesktopThread);
+          if (winner) {
             res.status(409).json({
               error: 'assistant_thread_version_conflict',
               message: '会话已在其他位置创建，请合并后重试。',
-              current: threadWithDefaults(latest.items[0]),
+              current: threadWithDefaults(winner),
             });
             return;
           }
