@@ -111,3 +111,19 @@ M1 协议缺口第一次修复：服务新增只读确认回执，严格绑定�
 当前用户入口：`http://127.0.0.1:5181/smart-business-preview?view=matrix&scheduleView=board`，此为已知预览地址，未验证最新运行和页面可用，不能作为交付完成证据。M1 交付时提供实际可打开页面、完整运行/恢复证据及本文路径。
 
 下一阶段：M0 保存后，首先沿当前真实非模板链完成一次 M1 受控完整运行；再准备真实环境验收。不得用 M3 模板局部通过代替 M1。
+
+
+## 2026-10-10 并发调度故障验收补充
+
+源码在 local-integrated-flow，调度验收从 83a160b 开始，使用三个并发子Agent检查，未调用真实平台、付费供应商或部署。
+
+- f29bc76：旧版 v1 图没有 material_preparation，复用共享素材 request 不再注入不存在的准备屏障；v2 的真实共享屏障保持。
+- 1dd2b54：performance_monitoring 归 Z/H-M8 经营复盘，与 PRD 的 M7 客服边界一致。
+- 8df2a97：周包/version 数据库租约内重查原 attempt，并把 published、unknown、in_flight 纳入发布额度预留；网络调用在预留后执行，只有明确 failed 释放额度，同 assignment 重放不新发。并发正确性依赖已有 durable_operation_leases 唯一索引。
+- acdfe90：原参考导航直接只读核对精确任务 source 及冻结版本，不为查看参考构建生产素材方案；真人自动分析生产门禁保持。
+
+联合执行 executionTasks、weeklyBackwardSchedule、publicationDeadlines、weeklyMaterialRequests、weeklyPublicationRecovery、weeklyPublicationExecutionWorker、weeklyReferenceReviewNavigationApi 共 64/64 通过，实际退出 0。发布竞态/取消/额度专项 5/5、原恢复/lineage 13/13 通过。类型检查尚未回报，不计通过。
+
+人工逾期未发现绕过生产准入：未提交、未逐消费者核验及取消仍阻塞，真实 worker 检查依赖。额外专项发现旧正例 fixture 缺 runProof（weekly_material_demand_unverified），不应为测试放宽生产门禁。库存复用与共享新素材的混合绑定路径仍需独立核验。
+
+Messenger/Instagram 后台自动消费缺口已确认，已转独立审计会话实施 scheduled 授权、人工接管与受控发送测试；本段不声称三渠道自动消费已完成。上述证据为受控代码验收，不是生产发布或整条 M1 交付完成。
