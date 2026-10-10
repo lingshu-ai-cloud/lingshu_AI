@@ -69,7 +69,7 @@ test('terminal real output awaits audit; audited recovery queues quality and com
  assert.deepEqual(result.resultRefs,[awaiting.childArtifactRef]);
  await worker.complete(claim,result.resultRefs,workerNow);
  const update=f.store.update.bind(f.store);
- f.store.update=async(...args:Parameters<typeof update>)=>args[0]===WEEKLY_PRODUCTION_REPAIR_CASES?null:update(...args);
+ f.store.update=async(...args:Parameters<typeof update>)=>args[0]===WEEKLY_PRODUCTION_REPAIR_CASES?false:update(...args);
  try{
   await assert.rejects(service.reconcile('t','owner',caseId),{code:'weekly_repair_completion_save_failed'});
   assert.equal((await cases.read('t',caseId)).state,'awaiting_audit');
