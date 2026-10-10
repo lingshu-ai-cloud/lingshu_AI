@@ -12,7 +12,7 @@ export interface WeeklyMaterialCalendarScope {
 export interface WeeklyMaterialCalendarProjection {
   tasks:WeeklyMaterialCalendarTask[];
   unscheduledVerification:Array<{requestId:string;title:string;assigneeUserId:string;consumerTaskIds:string[];reason:string}>;
-  sharedReferences:Array<{requestId:string;action:MaterialCalendarAction;deadline:string;consumerTaskIds:string[];reason:'outside_current_week';status:AgentCalendarTask['status'];submission:AgentCalendarTask['submission'];assigneeUserId:string;availableForHuman:boolean}>;
+  sharedReferences:Array<{requestId:string;action:MaterialCalendarAction;deadline:string;consumerTaskIds:string[];affectedPublicationIds:string[];reason:'outside_current_week';status:AgentCalendarTask['status'];submission:AgentCalendarTask['submission'];assigneeUserId:string;availableForHuman:boolean}>;
   issues:Array<{requestId:string;reason:string}>;
 }
 const text=(value:unknown)=>typeof value==='string'?value.trim():'';
@@ -30,7 +30,7 @@ export function isMaterialCalendarTask(task:AgentCalendarTask):task is WeeklyMat
  * its identity instead of reproducing upload work or moving its date to the selected week. */
 export function projectWeeklyMaterialCalendar(requests:WeeklyMaterialRequest[],scope:WeeklyMaterialCalendarScope,executionTasks:WeeklyExecutionTask[]):WeeklyMaterialCalendarProjection {
   const result:WeeklyMaterialCalendarProjection={tasks:[],unscheduledVerification:[],sharedReferences:[],issues:[]};
-  const ownedTasks=new Set(executionTasks.filter(task=>task.tenantId===scope.tenantId&&task.programId===scope.programId&&task.packageId===scope.packageId&&task.packageVersion===scope.packageVersion&&Boolean(task.publicationTaskId)&&['content','adaptation'].includes(task.scope)&&['material_readiness','asset_generation','storyboard','video_generation'].includes(task.schedule?.stepKind)).map(task=>task.taskId));
+  const ownedTasks=new Map(executionTasks.filter(task=>task.tenantId===scope.tenantId&&task.programId===scope.programId&&task.packageId===scope.packageId&&task.packageVersion===scope.packageVersion&&Boolean(task.publicationTaskId)&&['content','adaptation'].includes(task.scope)&&['material_readiness','asset_generation','storyboard','video_generation'].includes(task.schedule?.stepKind)).map(task=>[task.taskId,task.publicationTaskId!] as const));
   const identities=new Map<string,WeeklyMaterialRequest[]>();
   for(const request of requests){if(request.tenantId!==scope.tenantId||request.programId!==scope.programId||!text(request.requestId))continue;const group=identities.get(request.requestId)??[];group.push(request);identities.set(request.requestId,group);}
   for(const [requestId,copies] of identities){
@@ -40,6 +40,7 @@ export function projectWeeklyMaterialCalendar(requests:WeeklyMaterialRequest[],s
     if(!consumers.length)continue;
     if(new Set(consumers.map(consumer=>consumer.taskId)).size!==consumers.length){result.issues.push({requestId,reason:'素材消费者身份重复，请重新核验'});continue;}
     const consumerTaskIds=consumers.map(consumer=>consumer.taskId);
+    const affectedPublicationIds=[...new Set(consumerTaskIds.map(taskId=>ownedTasks.get(taskId)).filter((id):id is string=>Boolean(id)))].sort();
     if(!['missing','pending_verification','accepted','rejected','cancelled'].includes(request.status)){result.issues.push({requestId,reason:'素材任务状态无效，等待真实记录核验'});continue;}
     const due=instant(request.dueAt);
     if(!due||!text(request.assigneeUserId)||!text(request.reviewerUserId)){result.issues.push({requestId,reason:'素材上传截止或指定真人身份缺失'});continue;}
@@ -56,8 +57,8 @@ export function projectWeeklyMaterialCalendar(requests:WeeklyMaterialRequest[],s
       const deadline=action==='upload'?request.dueAt:request.verificationDueAt!;
       const clock=frozenCalendarClock([request.timeZone],deadline);
       const {date:day,time}=calendarDateTime(date.getTime(),clock);
-      if(day<scope.weekStart||day>scope.weekEnd){result.sharedReferences.push({requestId,action,deadline:action==='upload'?request.dueAt:request.verificationDueAt!,consumerTaskIds,reason:'outside_current_week',status:card.status,submission:card.submission,assigneeUserId:card.assignee||'',availableForHuman:card.availableForHuman===true});return;}
-      result.tasks.push({...card,id:`material:${scope.tenantId}:${scope.programId}:${requestId}:${action}`,date:day,time,calendarClock:clock,materialAction:action});
+      if(day<scope.weekStart||day>scope.weekEnd){result.sharedReferences.push({requestId,action,deadline:action==='upload'?request.dueAt:request.verificationDueAt!,consumerTaskIds,affectedPublicationIds,reason:'outside_current_week',status:card.status,submission:card.submission,assigneeUserId:card.assignee||'',availableForHuman:card.availableForHuman===true});return;}
+      result.tasks.push({...card,id:`material:${scope.tenantId}:${scope.programId}:${requestId}:${action}`,date:day,time,calendarClock:clock,materialAction:action,affectedPublicationIds});
     };
     emit('upload',due,{agent:'human',title:`上传必需素材 · ${request.requirementKey}`,context:`${request.requirements} · 本周关联 ${consumerTaskIds.length} 个真实生产任务`,output:pending?'真实素材已提交，等待独立核验':accepted?'当前提交版本已逐项核验通过':rejected?'素材核验未通过，请按消费者要求补交':cancellation?'素材任务已取消':'提交符合镜头、事实和权利要求的真实素材',minutes:null,status:cancellation?'cancelled':pending||accepted?'completed':rejected?'blocked':'planned',assignee:request.assigneeUserId,dueAt:request.dueAt,submission:pending?'pending':accepted?'accepted':rejected?'rejected':'missing',humanAction:'upload',availableForHuman:!cancellation&&!pending&&!accepted,materialRequestId:requestId,materialConsumerTaskIds:consumerTaskIds});
     const verificationDate=instant(request.verificationDueAt);

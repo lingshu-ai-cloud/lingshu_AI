@@ -14,6 +14,7 @@ test('upload and verification are distinct genuine deadline/owner tasks with rea
  const [upload,verification]=value.tasks;assert.equal(upload!.assignee,'uploader');assert.equal(verification!.assignee,'reviewer');
  assert.equal(upload!.dueAt,request.dueAt);assert.equal(verification!.dueAt,request.verificationDueAt);assert.equal(upload!.minutes,null);
  assert.equal(upload!.materialAction,'upload');assert.equal(verification!.materialAction,'verification');assert.equal(upload!.productionTaskId,undefined);assert.ok(isMaterialCalendarTask(upload!));
+ assert.deepEqual(upload!.affectedPublicationIds,['video']);assert.deepEqual(verification!.affectedPublicationIds,['video']);
  assert.equal(isHumanTaskOverdue(upload!,Date.parse(request.dueAt)+1),true);assert.equal(isHumanTaskOverdue(verification!,Date.parse(request.verificationDueAt!)+1),false);
 });
 test('pending upload is never overdue while available verification has its own overdue deadline',()=>{
@@ -38,6 +39,7 @@ test('shared physical requests deduplicate cards and cross-week consumers refere
  const current=projectWeeklyMaterialCalendar([shared,structuredClone(shared)],scope,tasks);assert.equal(current.tasks.length,2);assert.equal(new Set(current.tasks.map(task=>task.id)).size,2);
  const futureScope={...scope,packageId:'next-week',weekStart:'2026-10-12',weekEnd:'2026-10-18'};const futureTasks=[{...tasks[0]!,packageId:'next-week',taskId:'next-consumer'}];
  const next=projectWeeklyMaterialCalendar([shared],futureScope,futureTasks);assert.equal(next.tasks.length,0);assert.equal(next.sharedReferences.length,2);assert.ok(next.sharedReferences.every(ref=>ref.requestId===request.requestId));
+ assert.ok(next.sharedReferences.every(ref=>JSON.stringify(ref.affectedPublicationIds)===JSON.stringify(['video'])));
 });
 test('pre-week upload is referenced but genuine current-week verification remains a single dated task',()=>{
  const value=projectWeeklyMaterialCalendar([{...request,dueAt:'2026-10-04T18:00:00+08:00'}],scope,tasks);assert.equal(value.tasks.length,1);assert.equal(value.tasks[0]!.materialAction,'verification');assert.equal(value.sharedReferences.length,1);assert.equal(value.sharedReferences[0]!.action,'upload');assert.equal(materialReferenceIsOverdue(value.sharedReferences[0]!,Date.parse(request.dueAt)+1),true);
