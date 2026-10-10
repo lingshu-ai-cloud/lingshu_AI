@@ -655,7 +655,7 @@ function HomeView({ calendarTasks, calendarDemo, data, onRefresh, onNavigate, on
     { label: "投流消耗", value: adSpend.length === 1 ? `${adSpend[0].currency} ${adSpend[0].amount.toLocaleString("zh-CN", { maximumFractionDigits: 2 })}` : adSpend.length > 1 ? `${adSpend.length} 种币种` : "—", note: snapshot?.ads?.note || "等待平台费用回执", demo: false },
   ];
   return <div className="space-y-6">
-    <MatrixWorkSchedule calendarTasks={calendarTasks} calendarDemo={calendarDemo} taskItems={data.contentQueue?.items} workflowTasks={data.tasks} planTasks={data.plan?.tasks} agentStatuses={data.agents} onOpenTask={onOpenProductionProgress} startsAt={display.startsAt} selectedAccountId={selectedAccountId}/>
+    <MatrixWorkSchedule calendarTasks={calendarTasks} calendarDemo={calendarDemo} taskItems={data.contentQueue?.items} workflowTasks={data.tasks} planTasks={data.plan?.tasks} agentStatuses={data.agents} onOpenTask={onOpenProductionProgress} startsAt={display.startsAt} selectedAccountId={selectedAccountId} accountConnections={(data.config?.publishingTargets || []).map(account => ({ accountId: account.accountId, platform: account.platform, connected: true }))}/>
     <div className="grid divide-y divide-border rounded-lg border border-border bg-white sm:grid-cols-2 sm:divide-y-0 xl:grid-cols-4">{metrics.map(item => <div key={item.label} className="border-border p-5 sm:border-r last:border-r-0"><Statistic title={item.label} value={item.value}/><p className="mt-2 text-xs text-text-secondary">{item.note}</p></div>)}</div>
     <LsDataChart title="本周计划与完成" description="单位：条视频；按计划发布日期归组，完成数为当前已完成状态，不代表该日实际完成量。" kind="line" labels={days} series={[
       { label: "计划版本", values: days.map(day => display.contents.filter(item => item.plannedPublishDate === day).length) },

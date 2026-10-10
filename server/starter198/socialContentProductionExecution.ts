@@ -81,6 +81,7 @@ import {
   readNarrationAudioCheckpoint,
   recordNarrationAudioCheckpoint,
   restoreSocialAssetSupplyCheckpointAssets,
+  socialAssetSupplyCheckpointInputHash,
 } from './socialContentProductionCheckpoints.js';
 import { generatedAssetArchive } from '../lib/generatedAssetArchive.js';
 const require = createRequire(import.meta.url);
@@ -168,6 +169,7 @@ export async function archiveSocialGeneratedShots(input: {
     const qualityReport = segment.quality ?? null;
     const archived = await (input.archiveMedia ?? generatedAssetArchive.archiveNewMedia)({
       tenantId: input.tenantId,
+      ...(asset.automaticMaterial?{automaticMaterial:asset.automaticMaterial}:{}),
       name: asset.name,
       media: {
         type: asset.type,
@@ -204,6 +206,7 @@ export async function archiveSocialGeneratedShots(input: {
           { key: 'provider_completed', status: 'passed', evidence: `${execution.providerId}:${providerTaskId || asset.sourceId}` },
           { key: 'truth_boundary', status: 'passed', evidence: execution.provenance.representation },
           ...(qualityReport ? [{ key: 'pipeline_quality', status: 'passed' as const, evidence: 'adapter_quality_gate_passed' }] : []),
+          ...(asset.automaticMaterial?.requirement.evidenceRequirement==='product_identity'? [{key:'product_identity',status:'passed' as const,evidence:asset.automaticMaterial.independentVisualCheckRef}]:[]),
         ],
         ...(qualityReport ? { rawReport: qualityReport } : {}),
       },
@@ -674,7 +677,7 @@ export async function runSocialContentAutoProduction(input: {
 	  let assetSupplyExecution: SocialAssetSupplyExecution | null = null;
       let executedSupplyPlan:SocialAssetSupplyPlan|null=null;
 	  if (detail.assetSupplyPlan) {
-      const assetSupplyInputHash = socialRequestHash({
+      const assetSupplyInputHash = socialAssetSupplyCheckpointInputHash({
         materialAnalysisInputHash: analyzed.inputHash,
         baselineVersion: activeBaseline.version,
         assetSupplyPlan: detail.assetSupplyPlan,

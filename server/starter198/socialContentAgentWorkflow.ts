@@ -722,7 +722,10 @@ function executionScene(input: {
   const safeOriginalHookFallback = referenceHook
     ? undefined
     : capability('licensed_stock_asset') ?? capability('motion_graphics');
-  const preferred = identityLockedPresenter ? capability('authorized_digital_presenter') : expressivePerson ? undefined
+  const generatedReference=Boolean(input.scene.referenceProductionRouting && ['aigc_video','non_presenter_aigc_video'].includes(input.scene.referenceProductionRouting.route));
+  const preferred = identityLockedPresenter ? capability('authorized_digital_presenter')
+    : generatedReference ? capability(input.supply.sourceStrategy)
+    : expressivePerson ? undefined
     : visibleSpeech ? capability('authorized_digital_presenter')
       : primaryHook && topic?.kind === 'product_introduction'
         ? capability('aigc_product_scene_replication') ?? capability('customer_product_image_animation') ?? matchingAsset ?? safeOriginalHookFallback

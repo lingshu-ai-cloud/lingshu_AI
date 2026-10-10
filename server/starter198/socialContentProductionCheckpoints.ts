@@ -8,6 +8,7 @@ import {
 } from '../contentExecution/context.js';
 import type { ContentProviderReceiptState } from '../contentExecution/context.js';
 import type { MaterialScriptAnalysis } from '../../shared/materialScriptAnalysis.js';
+import type { SocialAssetSupplyPlan } from '../../shared/contracts/socialContentWorkflow.js';
 import type { VoiceQualityReport } from '../lib/voiceQuality.js';
 import type { SocialProductionAsset } from './socialContentProductionPlan.js';
 import { socialRequestHash } from './socialContentValidation.js';
@@ -47,6 +48,26 @@ export type ProductionAssetAnalysisResult = {
   assets: SocialProductionAsset[];
   failures: AnalysisFailure[];
 };
+
+/** Inventory audits are observation-time diagnostics. They include scannedAt
+ * and can also change when an unrelated library item is inspected, so they
+ * must not invalidate an otherwise identical paid asset-supply checkpoint. */
+export function socialAssetSupplyCheckpointInputHash(input: {
+  materialAnalysisInputHash: string;
+  baselineVersion: string;
+  assetSupplyPlan: SocialAssetSupplyPlan;
+  executionPlanId: string;
+  executionPlanVersion: string;
+}): string {
+  const { inventoryAudit: _inventoryAudit, ...stableAssetSupplyPlan } = input.assetSupplyPlan;
+  return socialRequestHash({
+    materialAnalysisInputHash: input.materialAnalysisInputHash,
+    baselineVersion: input.baselineVersion,
+    assetSupplyPlan: stableAssetSupplyPlan,
+    executionPlanId: input.executionPlanId,
+    executionPlanVersion: input.executionPlanVersion,
+  });
+}
 
 export type DurableSelectedProductionAsset = {
   assetId: string;

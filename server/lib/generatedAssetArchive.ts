@@ -1,3 +1,5 @@
+import {generatedAutomaticMaterialEvidence} from './weeklyAutomaticMaterialProducer.js';
+import {weeklyAssetRequirementIdentity} from '../../shared/weeklyAutomaticMaterial.js';
 import fs from 'node:fs';
 import path from 'node:path';
 import { createHash } from 'node:crypto';
@@ -57,6 +59,55 @@ async function bytesFrom(input: GeneratedAssetArchiveInput, deps: ArchiveDepende
   return downloaded.buf;
 }
 
+function storedAutomaticEvidenceIdentity(value: unknown): string | null {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
+  const evidence = value as Record<string, unknown>;
+  try {
+    return weeklyAssetRequirementIdentity({
+      subjectRef: String(evidence.subjectRef || ''),
+      action: String(evidence.action || ''),
+      scene: String(evidence.scene || ''),
+      evidenceRequirement: String(evidence.evidenceRequirement || ''),
+      aspectRatio: String(evidence.aspectRatio || ''),
+      minimumDurationSeconds: Number(evidence.minimumDurationSeconds),
+      authorizationScope: String(evidence.authorizationScope || ''),
+    });
+  } catch {
+    return null;
+  }
+}
+
+function mergeAutomaticMaterialEvidence(
+  existing: MaterialRecord | undefined,
+  input: GeneratedAssetArchiveInput,
+  digest: string,
+): unknown {
+  const provenance = existing?.provenance && typeof existing.provenance === 'object'
+    ? existing.provenance as Record<string, unknown>
+    : {};
+  const prior = provenance.weeklyAutomaticMaterialEvidence;
+  const next = generatedAutomaticMaterialEvidence(input, digest);
+  if (!next) return prior;
+  const nextIdentity = weeklyAssetRequirementIdentity(input.automaticMaterial!.requirement);
+  const accumulated = (Array.isArray(prior) ? prior : prior == null ? [] : [prior])
+    .filter(evidence => storedAutomaticEvidenceIdentity(evidence) !== nextIdentity);
+  return [...accumulated, next];
+}
+
+function mergeProvenance(
+  existing: MaterialRecord | undefined,
+  input: GeneratedAssetArchiveInput,
+  digest: string,
+): Record<string, unknown> {
+  const provenance = existing?.provenance && typeof existing.provenance === 'object'
+    ? existing.provenance as Record<string, unknown>
+    : {};
+  const evidence = mergeAutomaticMaterialEvidence(existing, input, digest);
+  return evidence === undefined
+    ? { ...provenance }
+    : { ...provenance, weeklyAutomaticMaterialEvidence: evidence };
+}
+
 function mergeRecord(existing: MaterialRecord | undefined, input: GeneratedAssetArchiveInput, metadata: GeneratedMaterialMetadata,
   storage: { objectKey: string; objectEtag?: string }, now: string): MaterialRecord {
   const digest = input.media.contentSha256.toLowerCase();
@@ -70,6 +121,7 @@ function mergeRecord(existing: MaterialRecord | undefined, input: GeneratedAsset
     url: existing?.url || '', sourceType: existing?.sourceType || 'ai-generated',
     generation: metadata.generation, lineage: metadata.lineage, quality: metadata.quality, reuse: metadata.reuse,
     rightsScope: metadata.rightsScope, generationState: 'archived',
+    provenance: mergeProvenance(existing, input, digest),
     createdAt: existing?.createdAt || now, updatedAt: now,
   };
 }
@@ -113,7 +165,8 @@ export function createGeneratedAssetArchiveService(overrides: Partial<ArchiveDep
       if (sha256(bytes) !== input.media.contentSha256.toLowerCase()) throw new Error('待归档素材内容哈希校验失败');
       const metadata = metadataOf(input, existing);
       const record = { ...existing, generation: metadata.generation, lineage: metadata.lineage, quality: metadata.quality,
-        reuse: metadata.reuse, rightsScope: metadata.rightsScope, generationState: 'archived', updatedAt: deps.now().toISOString() };
+        reuse: metadata.reuse, rightsScope: metadata.rightsScope, generationState: 'archived',
+        provenance: mergeProvenance(existing, input, input.media.contentSha256.toLowerCase()), updatedAt: deps.now().toISOString() };
       records[index] = record;
       deps.saveMaterials(records);
       return record;

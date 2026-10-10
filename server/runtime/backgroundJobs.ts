@@ -27,6 +27,7 @@ import type { ProcessRole } from './processRole.js';
 import { initLocalTempMaintenance } from '../storage/localTempMaintenance.js';
 import { initSocialContentProductionBullWorker } from '../starter198/socialContentProductionQueue.js';
 import { initSocialSceneReworkCompletionRecovery } from './socialSceneReworkCompletionRuntime.js';
+import { initInitialPreparationWorker, stopInitialPreparationWorker } from '../routes/digitalEmployees.js';
 import {
   markBackgroundJobsFailed,
   markBackgroundJobsReady,
@@ -35,8 +36,9 @@ import {
   writeWorkerHeartbeat,
 } from './workerHeartbeat.js';
 
-export async function startBackgroundJobs(role: ProcessRole = 'all'): Promise<void> {
+export async function startBackgroundJobs(role: ProcessRole = 'all'): Promise<() => void> {
   if (role === 'web') throw new Error('background_jobs_forbidden_for_web_role');
+  let initialPreparationWorkerStarted = false;
   markBackgroundJobsStarting();
   console.log('[runtime] starting background jobs');
   try {
@@ -60,6 +62,7 @@ export async function startBackgroundJobs(role: ProcessRole = 'all'): Promise<vo
     initEngagementIngestionWorker();
     initAgentNotificationOutboxWorker();
     initSocialWeeklyReviewWorker();
+    initialPreparationWorkerStarted = initInitialPreparationWorker();
     const planningAdapter = createSocialWeeklyPlanningAdapter(store);
     const productionAdapter = createSocialWeeklyProductionAdapter(store);
     const publicationAdapter = createSocialWeeklyPublicationAdapter(store);
@@ -76,7 +79,11 @@ export async function startBackgroundJobs(role: ProcessRole = 'all'): Promise<vo
     markBackgroundJobsReady();
     await startWorkerHeartbeat(role);
     console.log('[runtime] background jobs started');
+    return () => {
+      if (initialPreparationWorkerStarted) stopInitialPreparationWorker();
+    };
   } catch (error) {
+    if (initialPreparationWorkerStarted) stopInitialPreparationWorker();
     markBackgroundJobsFailed(error);
     await writeWorkerHeartbeat(role).catch(() => undefined);
     throw error;

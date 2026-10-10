@@ -10,13 +10,47 @@ import {
 } from '../contentExecution/context.js';
 import { admitContentExecutionJob, readContentExecutionJob } from '../contentExecution/durableQueue.js';
 import type { SocialProductionAsset } from './socialContentProductionPlan.js';
+import type { SocialAssetSupplyPlan } from '../../shared/contracts/socialContentWorkflow.js';
 import {
   analyzeSocialProductionAssetsWithCheckpoint,
   narrationReceiptRequiresRecovery,
   readNarrationAudioCheckpoint,
   recordNarrationAudioCheckpoint,
   restoreSocialAssetSupplyCheckpointAssets,
+  socialAssetSupplyCheckpointInputHash,
 } from './socialContentProductionCheckpoints.js';
+
+test('asset-supply checkpoint hash ignores observation-time inventory audits', () => {
+  const plan: SocialAssetSupplyPlan = {
+    planVersion: 'asset-supply.v1',
+    creationMode: 'viral_replication',
+    productionApproach: 'ai_enhanced',
+    assetAvailability: 'limited',
+    managementMode: 'one_click_managed',
+    productionRoute: 'product_anchored_generation',
+    status: 'ready',
+    overallFeasibility: 'functional_equivalent',
+    canProduceWithoutCustomerShoot: true,
+    customerActions: [],
+    systemActions: ['生成缺失镜头'],
+    optionalEnhancements: [],
+    shots: [],
+  };
+  const hash = (assetSupplyPlan: SocialAssetSupplyPlan) => socialAssetSupplyCheckpointInputHash({
+    materialAnalysisInputHash: 'analysis-v1',
+    baselineVersion: 'baseline-v1',
+    assetSupplyPlan,
+    executionPlanId: 'execution-plan-1',
+    executionPlanVersion: '1',
+  });
+  const first = hash({ ...plan, inventoryAudit: { scannedAt: '2026-10-10T00:00:00.000Z', records: [] } });
+  const second = hash({ ...plan, inventoryAudit: { scannedAt: '2026-10-10T00:01:00.000Z', records: [{
+    id: 'unrelated', sha256: null, mediaType: 'video', productRef: null, width: null, height: null,
+    durationSeconds: null, rightsEvidenceRef: null, productionEligible: false, gaps: ['missing_sha256'],
+  }] } });
+  assert.equal(first, second);
+  assert.notEqual(first, hash({ ...plan, planVersion: 'asset-supply.v2' }));
+});
 
 test('TTS receipts fail closed when a paid result exists but durable audio is unavailable', () => {
   assert.equal(narrationReceiptRequiresRecovery('submitting'), true);

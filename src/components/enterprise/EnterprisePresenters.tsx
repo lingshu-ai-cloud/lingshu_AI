@@ -14,7 +14,7 @@ function toggleDashscopeUse(current:RightsEvidence|undefined,use:'quality_inspec
   return{...existing,permittedProviders:nextUses.length?[...new Set([...existing.permittedProviders,'dashscope' as const])]:existing.permittedProviders.filter(item=>item!=='dashscope'),permittedUses:[...new Set([...existing.permittedUses,...nextUses])],providerScopes};
 }
 
-export default function EnterprisePresenters({ contentProduction = false, initialConfiguration = false }: { contentProduction?: boolean; initialConfiguration?: boolean } = {}) {
+export default function EnterprisePresenters({ contentProduction = false, initialConfiguration = false, onInitialSelection }: { contentProduction?: boolean; initialConfiguration?: boolean; onInitialSelection?: () => void } = {}) {
   const [value, setValue] = useState<ProductionDefaults>(EMPTY_DEFAULTS);
   const [draft, setDraft] = useState<PresenterAsset>({ id: '', name: '', avatarId: '', voiceId: '', authorized: false, supportsAlpha: false });
   const [editingId, setEditingId] = useState('');
@@ -27,7 +27,7 @@ export default function EnterprisePresenters({ contentProduction = false, initia
   useEffect(() => { let live = true; void productionApi.defaults().then(result => { if (live) { setValue(result); setLoaded(true); } }).catch(error => { if (live) setMessage(String(error)); }); return () => { live = false; }; }, []);
   useEffect(() => { let live = true; void fetchMaterialLibrary().then(result => { if (!live) return; setMaterials(result.items.filter(item => item.type === 'image' || item.type === 'video')); setMaterialStatus(result.status === 'ready' ? '' : '部分素材源暂不可用，仅显示当前可用素材'); }).catch(() => { if (live) setMaterialStatus(contentProduction ? '人物素材暂不可用，请返回当前分镜的上传区重试' : '人物素材库暂不可用，请先到素材库上传并稍后重试'); }); return () => { live = false; }; }, [contentProduction]);
   useEffect(() => { if (contentProduction) return; let live = true; void presenterApi.creations().then(items => { if (live) setCreationJobs(items); }).catch(() => {}); return () => { live = false; }; }, [contentProduction]);
-  const save = async (next: ProductionDefaults) => { if (!loaded || busy) return false; setBusy(true); setMessage(''); try { setValue(await productionApi.saveDefaults(next)); setMessage('已保存到企业，新的创作草稿会继承'); return true; } catch (error) { setMessage(String(error)); return false; } finally { setBusy(false); } };
+  const save = async (next: ProductionDefaults) => { if (!loaded || busy) return false; setBusy(true); setMessage(''); try { setValue(await productionApi.saveDefaults(next)); setMessage('已保存到企业，新的创作草稿会继承'); if(initialConfiguration && next.defaultPresenterId)onInitialSelection?.(); return true; } catch (error) { setMessage(String(error)); return false; } finally { setBusy(false); } };
   return <section className={`${initialConfiguration ? 'mt-4' : ''} rounded-xl border border-border bg-white p-5`}>
     <h3 className="text-sm font-bold">{initialConfiguration ? '企业默认人物' : '数字人社媒 · 企业出镜设置'}</h3>{!initialConfiguration && <p className="mt-1 text-xs text-text-muted">管理企业人物、音色与默认出镜方式。</p>}
     {!contentProduction && !initialConfiguration && creationJobs.length > 0 && <details className="mt-3 rounded-lg border p-3 text-xs"><summary className="cursor-pointer font-bold">内容制作同步的人物任务 · {creationJobs.length}</summary><ul className="mt-2 space-y-1">{creationJobs.map(job => <li key={job.id}>{job.name} · {{ submitting: '提交中', processing: '处理中', pending_consent: '等待本人验证', completed: '可预览并导入', failed: '处理失败', uncertain: '原任务待核对' }[job.status]}</li>)}</ul><p className="mt-2 text-text-muted">创建、本人验证和导入请在内容制作页的原分镜完成；这里保留同步记录供管理。</p></details>}
@@ -113,6 +113,6 @@ export default function EnterprisePresenters({ contentProduction = false, initia
       </details>}
     </fieldset>
     {message && <p role="status" className="mt-3 text-xs text-text-secondary">{message}</p>}
-    {showHeyGenManager && <PresenterManager initialConfiguration={initialConfiguration} onClose={() => setShowHeyGenManager(false)} onSynced={next => setValue(next)} onSaved={next => { setValue(next); setShowHeyGenManager(false); setMessage(initialConfiguration ? '初始人物和音色已保存为企业资产' : '人物已同步到企业资产'); }} />}
+    {showHeyGenManager && <PresenterManager initialConfiguration={initialConfiguration} onClose={() => setShowHeyGenManager(false)} onSynced={next => setValue(next)} onSaved={next => { setValue(next); setShowHeyGenManager(false); setMessage(initialConfiguration ? '初始人物和音色已保存为企业资产' : '人物已同步到企业资产');if(initialConfiguration&&next.defaultPresenterId)onInitialSelection?.(); }} />}
   </section>;
 }

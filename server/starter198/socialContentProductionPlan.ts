@@ -1,3 +1,4 @@
+import type {GeneratedAssetArchiveInput} from '../../shared/contracts/generatedMaterial.js';
 import { editorialEvidenceScore, visualEvidenceScore } from '../digitalEmployees/sceneEvidence.js';
 import type { SocialContentThemeId } from '../../shared/contracts/socialContentWorkflow.js';
 import { socialContentMaterialPolicy } from '../../shared/socialContentMaterialPolicy.js';
@@ -20,6 +21,7 @@ import {
 } from '../videoProduction/materialQualityLearning.js';
 
 export type SocialProductionAsset = {
+  automaticMaterial?:GeneratedAssetArchiveInput['automaticMaterial'];
   id: string;
   name: string;
   type: 'video' | 'image';

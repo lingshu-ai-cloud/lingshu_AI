@@ -10,7 +10,7 @@ export interface ReferencePresenterContinuityEvidence {
 }
 export interface ReferenceProductionRouteInput {
   shotId: string; time: string;
-  criticalShot?: { classification: 'critical' | 'non_critical'; model?: string; provenance?: string };
+  criticalShot?: { classification: 'critical' | 'non_critical'; model?: string; provenance?: string; primaryHook?: boolean; uniqueVisualMechanism?: boolean; explicitAudioVisualSync?: boolean };
   presenterContinuityEvidence?: ReferencePresenterContinuityEvidence;
 }
 export interface ReferenceShotProductionRouting {
@@ -75,7 +75,10 @@ export function buildReferenceShotProductionRouting(input: {
   const shots = input.shots.map((shot, index) => {
     const checked = verified[index], evidence = checked.evidence;
     const classification = shot.criticalShot?.classification;
-    const criticality = classification === 'critical' || classification === 'non_critical' ? classification : 'unknown';
+    // Director's actual hook and audiovisual evidence takes precedence over a coarse noncritical label.
+    const criticality = shot.criticalShot?.primaryHook === true || shot.criticalShot?.uniqueVisualMechanism === true
+      || shot.criticalShot?.explicitAudioVisualSync === true ? 'critical'
+      : classification === 'critical' || classification === 'non_critical' ? classification : 'unknown';
     const source = { model: text(evidence?.model), provenance: text(evidence?.provenance), sourceSha256: input.sourceSha256 };
     const base: ReferenceShotProductionRouting = { version: REFERENCE_PRODUCTION_ROUTING_VERSION,
       state: 'awaiting_automatic_analysis', route: 'undetermined', tier: null,

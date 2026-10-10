@@ -14,6 +14,10 @@ import { nodeDeepLink } from './WeeklyExecutionNodes.js';
 const pageSource = fs.readFileSync('src/components/DigitalEmployeePage.tsx', 'utf8');
 const smartBusinessSource = fs.readFileSync('src/components/SmartBusinessDashboard.tsx', 'utf8');
 const matrixScheduleSource = fs.readFileSync('src/components/smartBusiness/MatrixWorkSchedule.tsx', 'utf8');
+const agentWeeklyCalendarSource = fs.readFileSync('src/components/smartBusiness/AgentWeeklyCalendar.tsx', 'utf8');
+const connectedAgentCalendarSource = fs.readFileSync('src/components/smartBusiness/ConnectedAgentCalendar.tsx', 'utf8');
+const initialOperatingPlanSource = fs.readFileSync('src/components/InitialOperatingPlanDialog.tsx', 'utf8');
+const initialPreparationSource = fs.readFileSync('src/components/InitialPreparationStatusPanel.tsx', 'utf8');
 const weeklyPlanCalendarSource = fs.readFileSync('src/components/smartBusiness/WeeklyPlanCalendar.tsx', 'utf8');
 const accountRailSource = fs.readFileSync('src/components/SmartOperationsAccountRail.tsx', 'utf8');
 const nextRoundRecommendationsSource = fs.readFileSync('src/components/NextRoundRecommendationsSection.tsx', 'utf8');
@@ -77,6 +81,10 @@ const queueViewSource = smartBusinessSource.slice(
 const reviewViewSource = smartBusinessSource.slice(
   smartBusinessSource.indexOf('function ReviewView'),
   smartBusinessSource.indexOf('export default function SmartBusinessDashboard'),
+);
+const initialPlanSaveSource = pageSource.slice(
+  pageSource.indexOf('const saveConfig'),
+  pageSource.indexOf('const saveGoal'),
 );
 
 for (const label of ['制定本周目标', '数字员工工作排期']) {
@@ -310,6 +318,27 @@ assert.match(firstOnboardingSource, /label="企业名称"[\s\S]*label="品牌名
 assert.doesNotMatch(firstOnboardingSource, /label="(?:所属行业|目标市场|核心客户|经营目标|重点产品|Agent 设置)"/, 'first onboarding step must not ask for operating assumptions');
 assert.match(productTableOnboardingSource, /primaryLabel="确认产品表，下一步"[\s\S]*上传产品表/, 'second onboarding step must only import or confirm the product table');
 assert.doesNotMatch(productTableOnboardingSource, /确认重点产品|按资料完整度推荐产品|本期暂无产品，先继续|快速添加产品|Agent 设置/, 'product-table onboarding must only accept an imported or existing table, without focus-product or Agent setup');
+assert.match(pageSource, /primaryLabel=\{allowInitialPlan \? "生成推荐计划" : "完成引导并保存"\}/, 'the fourth onboarding step must lead into the recommended initial operating plan');
+assert.match(pageSource, /<InitialOperatingPlanDialog[\s\S]{0,1200}onConfirm=\{plan => void completeMinimalOnboarding\(plan\)\}/, 'the recommended plan must return the confirmed plan to onboarding');
+assert.match(initialOperatingPlanSource, /validateInitialPlan\(plan\)/, 'the recommended plan dialog must validate the user-confirmed operating plan');
+for (const operation of ['digitalEmployeeApi.createGoal', 'digitalEmployeeApi.savePackage', 'digitalEmployeeApi.startInitialPreparation']) {
+  assert.ok(initialPlanSaveSource.includes(operation), `the first recommended plan must persist and start through ${operation}`);
+}
+assert.doesNotMatch(initialPlanSaveSource, /setData\(created\)/, 'partial initial-plan persistence must not unmount onboarding before the full chain can finish or retry');
+assert.match(initialPlanSaveSource, /digitalEmployeeApi\.initialPreparation\(next\.goal\.id\)[\s\S]{0,500}existingPreparation\.preparation/, 'retrying onboarding must resume an already-created initial preparation instead of duplicating its goal');
+assert.match(initialPlanSaveSource, /initial-\$\{created\.goal\.id\.replace/, 'initial preparation retries must use a stable goal-derived request id');
+assert.match(initialPlanSaveSource, /initialOperatingPlanFingerprint\(plan\)[\s\S]{0,500}next\.goal\.constraints\.includes\(fingerprintConstraint\)/, 'retrying a partial first plan must refuse edits that would bind a new plan to the old goal');
+assert.match(pageSource, /closeRecommendedPlan[\s\S]{0,300}requestAnimationFrame[\s\S]{0,200}recommendedPlanTriggerId/, 'closing the initial-plan dialog must restore focus to the remounted trigger');
+assert.match(pageSource, /<InitialPreparationStatusPanel goalId=\{goal\.id\} onRunning=\{\(\) => void load\(goal\.id\)\}/, 'the weekly-plan page must expose real initial-preparation progress');
+assert.match(initialPreparationSource, /digitalEmployeeApi\.initialPreparation\(goalId\)/, 'initial-preparation progress must come from the persisted backend state');
+assert.match(pageSource, /allowInitialPlan=\{false\}[\s\S]{0,500}const saved = await saveConfig\(config\)/, 'reopening the guide must save settings without creating another initial plan');
+assert.match(agentWeeklyCalendarSource, /projectCalendarDeliverables\(tasks\)/, 'the Agent calendar must collapse scoped production internals into user-visible deliverables');
+assert.match(agentWeeklyCalendarSource, /task\.accountBindingTarget[\s\S]{0,120}绑定发布账号/, 'the Agent calendar must expose account-binding exceptions as actionable work');
+assert.match(agentWeeklyCalendarSource, /allDay \? undefined[\s\S]{0,80}allDay/, 'date-only binding work must render as a true all-day event rather than a mixed-zone timed range');
+assert.match(connectedAgentCalendarSource, /mainTasks=\{\[\.\.\.accountBindingTasks,/, 'account-binding exceptions must be shown alongside persisted weekly tasks');
+assert.match(matrixScheduleSource, /projectAccountBindingCalendar\(visibleTasks, accountConnections\)/, 'account selection must scope projected binding work to visible tasks');
+assert.match(smartBusinessSource, /accountConnections=\{\(data\.config\?\.publishingTargets \|\| \[\]\)/, 'binding truth must come from the authoritative configured publishing accounts');
+assert.doesNotMatch(pageSource, /productionApi\.defaults\(\)/, 'the optional presenter step must not block initial-plan generation');
 
 for (const label of ['\u8fd0\u884c\u4e2d', '\u9700\u8981\u6211\u51b3\u5b9a', '\u4eca\u65e5\u5b8c\u6210', '\u672a\u6765 24 \u5c0f\u65f6', '\u6570\u636e\u7f3a\u53e3']) {
   assert.match(pageSource, new RegExp(label), `Today Overview must include ${label}`);
@@ -432,7 +461,7 @@ assert.match(pageSource, /digitalEmployeeOnboarding:\s*\{\s*profileConfirmedAt:/
 assert.match(pageSource, /setProductConfirmed\(true\)/, 'confirming the product table must advance to the social-stage step');
 assert.match(pageSource, /<OnboardingGuideFrame[\s\S]{0,160}step=\{3\}[\s\S]{0,160}title="选择社媒经营阶段"[\s\S]{0,400}primaryLabel="确认阶段，下一步"/, 'the social operating stage must be the third guided step');
 assert.match(pageSource, /saveSocialContentStage\(stageId\)[\s\S]{0,180}!savedStage\.synced[\s\S]{0,180}setContentStage\(savedStage\.profile\.id\)[\s\S]{0,120}setStageConfirmed\(true\)/, 'the third step may advance only after its social stage is confirmed by persistence');
-assert.match(pageSource, /completeMinimalOnboarding[\s\S]{0,200}!stageConfirmed\s*\|\|\s*!contentStage[\s\S]{0,500}minimalOnboarding:\s*true/, 'minimal onboarding may complete only after a persisted social stage exists');
+assert.match(pageSource, /completeMinimalOnboarding[\s\S]{0,200}!stageConfirmed\s*\|\|\s*!contentStage[\s\S]{0,2200}minimalOnboarding:\s*true/, 'minimal onboarding may complete only after a persisted social stage exists');
 assert.match(pageSource, /profile\.digitalEmployeeOnboarding\?\.profileConfirmedAt[\s\S]{0,120}loadedProfile\.companyName[\s\S]{0,120}loadedProfile\.brandName[\s\S]{0,80}setProfileConfirmed\(true\)/, 'persisted onboarding progress may restore step two only after both names exist');
 assert.match(pageSource, /profile\.digitalEmployeeOnboarding\?\.productSelectionConfirmedAt[\s\S]{0,120}loadedProducts\.length[\s\S]{0,80}setProductConfirmed\(true\)/, 'persisted product confirmation may restore step three only when products still exist');
 assert.match(pageSource, /!data\?\.config \|\|[\s\S]{0,250}viewGoalId \|\|[\s\S]{0,250}!run/, 'first-time onboarding must not subscribe to an obsolete run stream');

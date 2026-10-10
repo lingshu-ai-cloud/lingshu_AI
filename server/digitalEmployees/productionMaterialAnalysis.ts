@@ -1,3 +1,4 @@
+import {canonicalMaterialAspectRatio,type VerifiedMaterialObservation} from '../lib/weeklyAutomaticMaterialProducer.js';
 import { analyzeMaterialFramesWithQwen, verifyMaterialFramesWithQwen } from '../agents/qwen.js';
 import { extractQwenAnalysisFrames } from '../routes/videos.js';
 import { normalizeMaterialObservations } from '../lib/materialObservation.js';
@@ -8,7 +9,7 @@ import crypto from 'node:crypto';
 import { analyzeImagePostEvidenceWithGemini } from '../agents/gemini.js';
 import { analyzeImagePostEvidenceWithQwen } from '../agents/qwen.js';
 import { analyzeMaterialVideo, productionAnalysisSegments } from '../routes/studio.js';
-import { runVisualFfmpeg } from '../lib/renderVisualQuality.js';
+import { runVisualFfmpeg, inspectRenderedVisuals } from '../lib/renderVisualQuality.js';
 import { resolveSourceDurations } from '../lib/videoSourcePlan.js';
 import { objectStorageGetObject } from '../storage/objectStorage.js';
 import { fetchCloudMaterial } from '../lib/cloudMaterials.js';
@@ -16,7 +17,7 @@ import { evidenceClips, observationStrings } from './sceneEvidence.js';
 import type { AssetCandidate } from './contentProduction.js';
 import { enrichMaterialSegmentsWithEditBoundaries } from '../lib/videoBoundaryAnalysis.js';
 
-export type MaterialAnalysis = { revision: string; duration: number; observations: string[]; segments: Array<Record<string, unknown>> };
+export type MaterialAnalysis = { revision: string; duration: number; observations: string[]; segments: Array<Record<string, unknown>>; automaticVisual?:{sha256:string;model:string;aspectRatio:string;durationSeconds:number;decoded:boolean;qualityPassed:boolean;observations:VerifiedMaterialObservation[]} };
 export function materialRevision(asset: AssetCandidate): string {
   let stat: fs.Stats | undefined;
   try { if (asset.localPath) stat = fs.statSync(asset.localPath); } catch { /* missing files invalidate the revision and fail analysis/render explicitly */ }
@@ -97,7 +98,7 @@ export async function analyzeProductionMaterial(asset: AssetCandidate, tenantId:
     if (!media) throw Error('素材文件不可读');
     bytes = await readMaterialBytes(media.body, { cancel: () => { (media.body as { destroy?: () => void }).destroy?.(); } });
   } else if (asset.cloudRecordId) {
-    const response = await fetchCloudMaterial(asset.cloudRecordId, asset.type === 'video' ? 'videoFile' : 'posterFile', undefined, tenantId);
+    const response = await fetchCloudMaterial(asset.cloudRecordId, 'videoFile', undefined, tenantId);
     if (!response?.ok || !response.body) throw Error('素材文件不可读');
     const reader = response.body.getReader();
     const body: AsyncIterable<Uint8Array> = { [Symbol.asyncIterator]: () => ({ next: () => reader.read() as Promise<IteratorResult<Uint8Array>> }) };
@@ -106,6 +107,8 @@ export async function analyzeProductionMaterial(asset: AssetCandidate, tenantId:
   } else throw Error('production_input_required:请将外链素材导入当前租户素材库后分析，不能只凭链接名称生成分镜');
   if (!bytes.length || bytes.length > MAX_BYTES) throw Error('production_input_required:素材为空或超过110MB上传限制，请先拆分文件');
   const revision = materialRevision(asset);
+  const digest=crypto.createHash('sha256').update(bytes).digest('hex');
+  const visualModel=(process.env.VIDEO_ANALYSIS_PROVIDER||'qwen').toLowerCase() === 'qwen'?'qwen_visual_material_review':'gemini_visual_material_review';
   if (asset.type === 'image') {
     const mimeType = /\.png$/i.test(asset.localPath || asset.name) ? 'image/png' : /\.webp$/i.test(asset.localPath || asset.name) ? 'image/webp' : 'image/jpeg';
     const analyze = (process.env.VIDEO_ANALYSIS_PROVIDER || 'qwen').toLowerCase() === 'qwen' ? analyzeImagePostEvidenceWithQwen : analyzeImagePostEvidenceWithGemini;
@@ -119,7 +122,14 @@ export async function analyzeProductionMaterial(asset: AssetCandidate, tenantId:
       ])
       .filter((value): value is string => typeof value === 'string' && Boolean(value.trim()));
     if (!observations.length) throw Error('production_input_required:图片没有足够可信的视觉观察，请补充清晰素材');
-    return { revision, duration: 0, observations, segments: [] };
+    const dir=fs.mkdtempSync(path.join(os.tmpdir(),'lingshu-image-quality-'));
+    try{const original=path.join(dir,mimeType==='image/png'?'source.png':'source.jpg');fs.writeFileSync(original,bytes);
+      const probe=await runVisualFfmpeg(['-i',original,'-vf','showinfo','-frames:v','1','-f','null','-'],false,{logLevel:'info'});
+      const size=probe.stderr.match(/s:(\d+)x(\d+)/);
+      const proxy=path.join(dir,'quality.mp4');const prepared=await runVisualFfmpeg(['-loop','1','-i',original,'-t','1','-vf','scale=720:-2','-c:v','libx264','-pix_fmt','yuv420p','-y',proxy]);
+      const quality=prepared.ok?await inspectRenderedVisuals({outputPath:proxy,expectedDuration:1,minSharpFrameRatio:.6}):null;
+      return {revision,duration:0,observations,segments:[],automaticVisual:{sha256:digest,model:visualModel,aspectRatio:size?canonicalMaterialAspectRatio(Number(size[1]),Number(size[2])):'',durationSeconds:0,decoded:probe.ok,qualityPassed:quality?.passed===true,observations:result.observedFacts.flatMap(fact=>(fact.subjects??[]).map(subjectRef=>({subjectRef,action:'static',scene:String(fact.scene||''),confidence:Number(fact.confidence),needsReview:Number(fact.confidence)<.85})))}};
+    }finally{fs.rmSync(dir,{recursive:true,force:true});}
   }
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'lingshu-material-analysis-'));
   try {
@@ -156,6 +166,9 @@ export async function analyzeProductionMaterial(asset: AssetCandidate, tenantId:
     } else segments = productionAnalysisSegments(asset.id, resolved.duration, await analyzeMaterialVideo(proxy, fs.readFileSync(proxy), resolved.duration));
     segments = await enrichMaterialSegmentsWithEditBoundaries({ inputPath: file, duration: resolved.duration, segments });
     if (!allowReview && !evidenceClips({ ...asset, duration: resolved.duration, segments }).length) throw Error('production_input_required:视频分析缺少已确认的可用片段，请复核素材分析');
-    return { revision, duration: resolved.duration, segments, observations: segments.flatMap(observationStrings) };
+    const probe=await runVisualFfmpeg(['-i',file,'-vf','showinfo','-frames:v','1','-f','null','-'],false,{logLevel:'info'});
+    const size=probe.stderr.match(/s:(\d+)x(\d+)/);
+    const quality=await inspectRenderedVisuals({outputPath:file,expectedDuration:resolved.duration,minSharpFrameRatio:.6});
+    return { revision, duration: resolved.duration, segments, observations: segments.flatMap(observationStrings),automaticVisual:{sha256:digest,model:visualModel,aspectRatio:size?canonicalMaterialAspectRatio(Number(size[1]),Number(size[2])):'',durationSeconds:resolved.duration,decoded:probe.ok,qualityPassed:quality.passed,observations:segments.flatMap(segment=>(Array.isArray(segment.subject)?segment.subject:[]).map(subject=>({subjectRef:String(subject),action:String(segment.action||''),scene:String(segment.environment||''),confidence:Number(segment.confidence),needsReview:segment.needsReview!==false})))}};
   } finally { fs.rmSync(dir, { recursive: true, force: true }); }
 }

@@ -1,3 +1,4 @@
+import {auditWeeklyMaterialInventory} from './weeklyMaterialInventory.js';
 import {readWeeklyStageObservation} from './socialWeeklyStageObservation.js';
 import {readWeeklyReplicationContext} from './weeklyReplicationContext.js';
 import { parseSocialReplicationContext } from './socialContentValidation.js';
@@ -829,7 +830,7 @@ export async function readSocialTaskDetail(input: {
     throw new SocialContentWorkflowError('social_content_task_projection_out_of_sync', 503);
   }
   const activeMaterials = activeSources.filter(source => source.kind === 'material');
-  const materialInventory = await (input.repository.materialLibrary ?? readMaterialLibrary)(input.tenantId).catch(() => ({ items: [] as MaterialRecord[] }));
+  const materialInventory = await (input.repository.materialLibrary ?? readMaterialLibrary)(input.tenantId).catch(() => {throw new SocialContentWorkflowError('social_content_material_inventory_unavailable',503);});
   const materialById = new Map(materialInventory.items.map(item => [socialText(item.id), item]));
   const linkedMaterialRows = activeMaterials.flatMap(source => {
     const record = materialById.get(decodeMaterialRef(source.sourceRef));
@@ -982,6 +983,7 @@ export async function readSocialTaskDetail(input: {
     })),
     rightsConfirmationRequired: false,
   });
+  assetSupplyPlan.inventoryAudit=auditWeeklyMaterialInventory(input.tenantId,materialInventory.items);
   const presenterLock = presenterInventory.accountPresenterLock;
   const referenceReviewHandoff = summary.brief.creationMode === 'viral_replication'
     ? referenceRecord ? buildSocialReferenceReviewHandoff({

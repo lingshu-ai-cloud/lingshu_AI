@@ -11,7 +11,8 @@ import { calendarClock, calendarDateTime, calendarTimestampLabel, type CalendarC
 import { hasTemplateCalendarTarget, type TemplateCalendarTarget } from '../socialProgram/templateCalendarNavigation';
 import { hasReviewCalendarTarget, type ReviewCalendarTarget } from '../socialProgram/reviewCalendarNavigation';
 import { hasPlanningCalendarTarget, type PlanningCalendarTarget } from '../socialProgram/planningCalendarNavigation';
-import type { LsCalendarEvent } from '../../lib/calendarModel';
+import { calendarInstant, type LsCalendarEvent } from '../../lib/calendarModel';
+import { projectCalendarDeliverables } from './calendarDeliverables';
 
 const LsCalendar = typeof document === 'undefined'
   ? function ServerCalendar({ events, label }: { events: LsCalendarEvent[]; label: string }) {
@@ -69,6 +70,15 @@ export type AgentCalendarTask = {
   customerWorkflowTaskId?: string;
   customerTaskKey?: string;
   timeSemantics?: 'start' | 'finish';
+  executionStep?: string;
+  deliverableGroup?: string;
+  calendarInternal?: boolean;
+  internalNodes?: AgentCalendarTask[];
+  accountBindingTarget?: {
+    platform: string;
+    accountId: string | null;
+    consumerIds: string[];
+  };
 };
 
 const agentLabels: Record<AgentCalendarTask['agent'], string> = {
@@ -161,10 +171,11 @@ export function hasCalendarProductionBinding(task: AgentCalendarTask): boolean {
 }
 
 export function isHumanTaskOverdue(task: AgentCalendarTask, now = Date.now()): boolean {
+  const due = taskDeadlineMillis(task);
   return task.agent === 'human'
     && task.availableForHuman !== false
     && !['completed', 'cancelled'].includes(task.status)
-    && Boolean(task.dueAt && Number.isFinite(Date.parse(task.dueAt)) && now > Date.parse(task.dueAt)
+    && Boolean(Number.isFinite(due) && now > due
       && (task.supplementTarget || task.salesHandoffId || task.sendRecoveryTarget || task.nativeRecoveryTarget
         || task.publicationRecoveryTarget || task.crossWeekMaterialTarget || task.customerExceptionTarget
         || ['missing', 'rejected'].includes(task.submission || '')));
@@ -173,11 +184,12 @@ export function isHumanTaskOverdue(task: AgentCalendarTask, now = Date.now()): b
 export function isCalendarTaskOverdue(task: AgentCalendarTask, now = Date.now()): boolean {
   if (['completed', 'cancelled', 'no_data'].includes(task.status)) return false;
   if (task.agent === 'human' && !task.deadlineTracked) return isHumanTaskOverdue(task, now);
-  return Boolean(task.dueAt && Number.isFinite(Date.parse(task.dueAt)) && now > Date.parse(task.dueAt));
+  const due = taskDeadlineMillis(task);
+  return Number.isFinite(due) && now > due;
 }
 
 export function calendarOverdueDuration(task: AgentCalendarTask, now = Date.now()): string {
-  const due = Date.parse(task.dueAt || '');
+  const due = taskDeadlineMillis(task);
   if (!Number.isFinite(due)) return '截止时间待核验';
   const minutes = Math.max(1, Math.floor((now - due) / 60_000));
   return minutes >= 1440 ? `${Math.floor(minutes / 1440)} 天 ${Math.floor(minutes % 1440 / 60)} 小时` : minutes >= 60 ? `${Math.floor(minutes / 60)} 小时 ${minutes % 60} 分钟` : `${minutes} 分钟`;
@@ -194,9 +206,25 @@ function offsetSuffix(minutes: number): string {
 }
 
 function taskInstant(task: AgentCalendarTask): string {
-  if (task.dueAt && Number.isFinite(Date.parse(task.dueAt))) return task.dueAt;
+  if (task.dueAt && !/^\d{4}-\d{2}-\d{2}$/.test(task.dueAt) && Number.isFinite(Date.parse(task.dueAt))) return task.dueAt;
   const suffix = task.calendarClock?.timeZone ? 'Z' : offsetSuffix(task.calendarClock?.offsetMinutes ?? 8 * 60);
   return `${task.date}T${task.time || '09:00'}:00${suffix}`;
+}
+
+function taskIsAllDay(task: AgentCalendarTask): boolean {
+  return /^\d{4}-\d{2}-\d{2}$/.test(task.dueAt || '') && (!task.time || task.time === '00:00');
+}
+
+function taskDeadlineMillis(task: AgentCalendarTask): number {
+  if (!task.dueAt) return Number.NaN;
+  if (/^\d{4}-\d{2}-\d{2}$/.test(task.dueAt)) {
+    try {
+      return calendarInstant(`${task.dueAt}T23:59`, task.calendarClock?.timeZone || 'Asia/Shanghai').getTime();
+    } catch {
+      return Number.NaN;
+    }
+  }
+  return Date.parse(task.dueAt);
 }
 
 function eventStatus(task: AgentCalendarTask, overdue: boolean): LsCalendarEvent['status'] {
@@ -217,6 +245,7 @@ type Props = {
   onOpenSupplement?: (task: AgentCalendarTask) => void;
   onOpenTemplate?: (task: AgentCalendarTask) => void;
   onOpenCustomerExecution?: (task: AgentCalendarTask) => void;
+  onBindAccount?: (task: AgentCalendarTask) => void;
   scopeKey?: string;
   canOpenContentTask?: (task: AgentCalendarTask) => boolean;
 };
@@ -231,6 +260,7 @@ export default function AgentWeeklyCalendar({
   onOpenSupplement,
   onOpenTemplate,
   onOpenCustomerExecution,
+  onBindAccount,
   scopeKey,
   canOpenContentTask,
 }: Props) {
@@ -240,17 +270,20 @@ export default function AgentWeeklyCalendar({
     return () => window.clearInterval(timer);
   }, []);
 
-  const pendingReferences = demo ? [] : calendarPendingReferences(tasks, now);
+  const deliverables = useMemo(() => projectCalendarDeliverables(tasks), [tasks]);
+  const pendingReferences = demo ? [] : calendarPendingReferences(deliverables, now);
   const timeZone = tasks.find(task => task.calendarClock?.timeZone)?.calendarClock?.timeZone || 'Asia/Shanghai';
-  const events = useMemo<LsCalendarEvent[]>(() => tasks.map(task => {
+  const events = useMemo<LsCalendarEvent[]>(() => deliverables.map(task => {
     const overdue = !demo && isCalendarTaskOverdue(task, now);
-    const start = taskInstant(task);
+    const allDay = taskIsAllDay(task);
+    const start = allDay ? task.date : taskInstant(task);
     const duration = Math.max(30, task.minutes ?? 60) * 60_000;
     return {
       id: task.id,
       title: task.title,
       start,
-      end: new Date(Date.parse(start) + duration).toISOString(),
+      end: allDay ? undefined : new Date(Date.parse(start) + duration).toISOString(),
+      allDay,
       timeZone: task.calendarClock?.timeZone || timeZone,
       status: eventStatus(task, overdue),
       statusLabel: overdue ? `交付已逾期 · ${calendarOverdueDuration(task, now)}` : task.deliveryTiming === 'late' ? '已完成 · 晚交付' : task.deliveryTiming === 'on_time' ? '已完成 · 按时' : statusLabels[task.status],
@@ -260,7 +293,7 @@ export default function AgentWeeklyCalendar({
       description: task.context,
       data: task,
     };
-  }), [demo, now, tasks, timeZone]);
+  }), [deliverables, demo, now, timeZone]);
 
   const renderDetails = (event: LsCalendarEvent, closeDetails: () => void) => {
     const task = event.data as AgentCalendarTask;
@@ -270,7 +303,9 @@ export default function AgentWeeklyCalendar({
       closeDetails();
       action(task);
     };
-    const action = !demo && task.customerExecutionTarget && onOpenCustomerExecution
+    const action = !demo && task.accountBindingTarget && onBindAccount
+      ? { label: '绑定发布账号', run: () => open(onBindAccount) }
+      : !demo && task.customerExecutionTarget && onOpenCustomerExecution
       ? { label: '进入真实客服承接任务', run: () => open(onOpenCustomerExecution) }
       : !demo && task.supplementTarget && onOpenSupplement
       ? { label: '处理当前真实补齐任务', run: () => open(onOpenSupplement) }
@@ -286,7 +321,7 @@ export default function AgentWeeklyCalendar({
 
     return <div className="space-y-4">
       <dl className="ls-calendar-details">
-        <div><dt>{task.timeSemantics === 'start' ? '计划开始' : '计划完成'}</dt><dd>{task.date} {task.time} · {task.calendarClock?.label || '冻结时区未知'}</dd></div>
+        <div><dt>{task.timeSemantics === 'start' ? '计划开始' : '计划完成'}</dt><dd>{taskIsAllDay(task) ? `${task.date} · 当天事项` : `${task.date} ${task.time} · ${task.calendarClock?.label || '冻结时区未知'}`}</dd></div>
         {task.dueAt && <div><dt>规定完成截止</dt><dd>{calendarTimestampLabel(task.dueAt, task.calendarClock)}</dd></div>}
         {task.sourceVersion !== undefined && <div><dt>原 v{task.sourceVersion} 任务规定截止</dt><dd>{task.sourceDeadlineAt ? calendarTimestampLabel(task.sourceDeadlineAt) : '原截止待核验'}</dd></div>}
         {task.status === 'completed' && <div><dt>实际完成</dt><dd>{task.actualFinishedAt ? calendarTimestampLabel(task.actualFinishedAt, task.sourceVersion !== undefined ? calendarClock(task.sourceDeadlineAt) : task.calendarClock) : '完成时间待核验'} · {task.deliveryTiming === 'late' ? '晚交付' : task.deliveryTiming === 'on_time' ? '按时交付' : '是否按时待核验'}</dd></div>}
@@ -295,6 +330,7 @@ export default function AgentWeeklyCalendar({
       </dl>
       {task.chain && <p className="text-xs text-text-secondary">{task.chain} · {task.chain.includes('-S') ? '副链路' : '主链路'}</p>}
       {task.dependsOn?.length ? <div><p className="text-xs font-semibold text-text-secondary">上游交付</p><p className="mt-1 text-xs text-text-primary">{task.dependsOn.join('、')}</p></div> : null}
+      {task.internalNodes?.length ? <section aria-label="Agent 协作任务流" className="max-h-60 overflow-y-auto rounded-lg bg-surface-2 p-3"><h4 className="text-xs font-semibold text-text-primary">Agent 协作任务流</h4><ol className="mt-2 space-y-2">{task.internalNodes.map(node => <li key={node.id} className="border-l-2 border-border pl-3 text-xs"><p className="font-semibold text-text-primary">{node.title}</p><p className="text-text-secondary">{agentLabels[node.agent]} · {statusLabels[node.status]} · {node.date} {node.time}</p>{node.reason && <p className="text-amber-700">{node.reason}</p>}</li>)}</ol></section> : null}
       {overdue && <Alert type="error" showIcon title={`交付已逾期 · ${calendarOverdueDuration(task, now)}`} description={`负责人：${task.assignee || agentLabels[task.agent]}；原因：${task.reason || '截止前尚未取得本任务核验交付'}；受影响发布：${task.affectedPublicationIds?.join('、') || '待核对真实下游依赖'}`}/>}
       {task.deadlineRecovery && <Alert type="warning" showIcon title={`经营 Agent 补救评估 · ${task.deadlineRecovery.status === 'blocked' ? '评估受阻' : '已评估，方案未生效'}`} description={`${task.deadlineRecovery.assessmentId} · ${calendarTimestampLabel(task.deadlineRecovery.assessedAt, task.calendarClock)}；受影响发布：${task.deadlineRecovery.affectedPublicationIds.join('、') || '无已绑定发布'}`}/>}
       {task.reason && !overdue && <Alert type="warning" showIcon title="当前卡点" description={task.reason}/>}
@@ -308,7 +344,7 @@ export default function AgentWeeklyCalendar({
         <h3 className="ls-type-title-large text-text-primary">{demo ? 'B2B 零基础 · 首周任务日历' : 'Agent 周任务日历'}</h3>
         <div className="flex flex-wrap gap-2">{Object.entries(agentLabels).map(([agent, label]) => <Tag key={agent}>{label}</Tag>)}</div>
       </div>
-      <p className="mt-1 text-xs text-text-secondary">{demo ? '参考预览会持续标记；真实任务以执行回执为准。' : `${tasks.length} 项真实交付 · ${calendarDurationLabel(tasks)}`}</p>
+      <p className="mt-1 text-xs text-text-secondary">{demo ? '参考预览会持续标记；真实任务以执行回执为准。' : `${deliverables.length} 项真实交付 · ${calendarDurationLabel(deliverables)}`}</p>
     </div>
     {!demo && tasks.length === 0 && <Alert className="m-4" type="info" showIcon title="尚无 Agent 执行排期" description="发布计划不会自动视为制作任务；生成执行排期后将在此显示。"/>}
     {pendingReferences.length > 0 && <Alert className="m-4" type="error" showIcon title={`当前待处理 · ${pendingReferences.length} 项原任务（按各任务冻结时区）`} description={<div><p>引用原任务，原计划卡保留；不计为新增交付。</p><p className="mt-1">{pendingReferences.map(task => `${task.title} · 原计划 ${task.date} · 逾期 ${calendarOverdueDuration(task, now)}`).join('；')}</p></div>}/>}
@@ -317,11 +353,11 @@ export default function AgentWeeklyCalendar({
       const task = event.data as AgentCalendarTask;
       return <li key={event.id}>{event.title} · {event.statusLabel}{task.affectedPublicationIds?.length ? ` · 受影响发布 ${task.affectedPublicationIds.join('、')}` : ''}</li>;
     })}</ul>
-    {tasks.length > 0 && <Suspense fallback={<p className="p-5 text-xs text-text-secondary">正在加载日历…</p>}><LsCalendar
+    {deliverables.length > 0 && <Suspense fallback={<p className="p-5 text-xs text-text-secondary">正在加载日历…</p>}><LsCalendar
         label={demo ? 'B2B 零基础首周任务日历' : 'Agent 周任务日历'}
         events={events}
-        initialDate={startsAt || tasks[0]?.date}
-        date={startsAt || tasks[0]?.date}
+        initialDate={startsAt || deliverables[0]?.date}
+        date={startsAt || deliverables[0]?.date}
         initialView="timeGridWeek"
         firstDay={1}
         timeZone={timeZone}

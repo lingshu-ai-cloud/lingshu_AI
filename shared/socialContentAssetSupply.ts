@@ -359,7 +359,11 @@ function generalStrategy(
         instruction: `${referenceRouting.reason}；匹配实际视频片段，不得用产品图缩放充当镜头；保留无人/非主讲人物约束。` };
       if (inventory.licensedStockAssetIds.length) return { strategy: 'licensed_stock_asset', refs: inventory.licensedStockAssetIds,
         instruction: `${referenceRouting.reason}；仅匹配已授权库内视频，保留无人/非主讲人物约束。` };
-      throw new Error(`reference_material_automatic_search_required:${shot.shotId}`);
+      return inventory.productImageIds.length ? { strategy: 'aigc_product_scene_replication', refs: inventory.productImageIds,
+        instruction: `${referenceRouting.reason}；素材库精准与近似检索无可用片段，自动生成非事实性支撑镜头，保持原镜头时长、构图与动作。`,
+        productSceneReplication: buildSocialProductSceneReplicationSpec({ shot, inventory, referenceShots }) }
+        : { strategy: 'non_evidentiary_ai_visual', refs: [],
+          instruction: `${referenceRouting.reason}；素材库无合格片段，自动生成非事实性支撑视频，不得生成虚构企业事实。` };
     }
     return inventory.productImageIds.length ? { strategy: 'aigc_product_scene_replication', refs: inventory.productImageIds,
       instruction: `${referenceRouting.reason}；锁定完整场景和动作生成视频，禁止静态产品图缩放或普通人物替代。`,
@@ -399,6 +403,13 @@ function generalStrategy(
         : '纯素材方案缺少可匹配的“我的素材”，必须停止并提示素材覆盖不足',
     };
   }
+
+  const isSpokenPresenter = signals.hasPerson && /口播|主讲|讲解|presenter|talking|speaker/i.test(signals.text);
+  if (isSpokenPresenter) return {
+    strategy: 'authorized_digital_presenter',
+    refs: presenterLockReady(accountPresenterLock) ? [accountPresenterLock.presenterAssetId] : inventory.presenterAssetIds,
+    instruction: '真人口播必须调用已授权 AIGC 数字人，保留原镜构图、人物动作、视线、情绪与口播节奏，不得使用普通库存人物补位。',
+  };
 
   // Real factory and customer-case media already in the material library has
   // first priority. These are edit inputs, not a request for new evidence.
@@ -539,7 +550,7 @@ function planShot(
   const hasEvidence = subject !== 'none' && evidenceRefs.length > 0
     && !(subject === 'product_effect' && signals.hasPerson);
 
-  if (hasEvidence && !referenceRouting) {
+  if (hasEvidence && !referenceRouting && !signals.hasPerson) {
     const truthBoundary: SocialShotTruthBoundary = {
       subject,
       syntheticVisualAllowed: false,
@@ -577,6 +588,11 @@ function planShot(
 
   const selected = generalStrategy(shot, inventory, confirmedFactRefs, accountPresenterLock, referenceShots, productionApproach);
   const frozenReferenceRouting = referenceRouting ? structuredClone(referenceRouting) : undefined;
+  if(frozenReferenceRouting && ['library_match','non_presenter_library_match'].includes(frozenReferenceRouting.route)
+    && ['aigc_product_scene_replication','non_evidentiary_ai_visual'].includes(selected.strategy)){
+    frozenReferenceRouting.route=frozenReferenceRouting.route==='library_match'?'aigc_video':'non_presenter_aigc_video';
+    frozenReferenceRouting.reason+='；实际素材库无合格片段，内容 Agent 自动转为非事实性视频生成。';
+  }
   if (frozenReferenceRouting?.route === 'reference_frame_presenter' && frozenReferenceRouting.identityLock
     && presenterLockReady(accountPresenterLock)) {
     const target = frozenReferenceRouting.identityLock.targetPresenterAssetId;
