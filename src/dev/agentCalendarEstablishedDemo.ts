@@ -35,10 +35,48 @@ const rows: Row[] = [
   [4,'H-M5','director','审核外部探索 C/D/E 成片','逐镜事实、企业表达与验收结论','用户最终验收另行记录；未通过不得发布',45,['h-task-16']],
 ];
 
-export const agentCalendarEstablishedDemo: AgentCalendarTask[] = rows.map(([day, chain, agent, title, output, context, minutes, dependsOn], index) => ({
+const aggregateTasks: AgentCalendarTask[] = rows.map(([day, chain, agent, title, output, context, minutes, dependsOn], index) => ({
   id:`h-task-${index}`,
   date:`2026-10-${String(5 + day).padStart(2,'0')}`,
   time:index===15?'11:00':index===17?'12:00':index===20?'12:00':index===23?'13:00':index===28?'11:00':`${String(9 + rows.slice(0,index).filter(row=>row[0]===day).length).padStart(2,'0')}:00`,
   agent,title,output,context,minutes,chain,dependsOn:dependsOn ?? [],status:index===7?'blocked':'planned',
   ...(index===7?{assignee:'陈晨',dueAt:'2026-10-06T17:00:00+08:00',deadlineTracked:true,availableForHuman:true,submission:'missing' as const,humanAction:'upload' as const,reason:'五条视频共用实拍尚未上传；所有母版生产保持阻塞',affectedPublicationIds:['H-video-A','H-video-B','H-video-C','H-video-D','H-video-E']}:{}),
 }));
+
+// Five separately deliverable mother contents; one shared upload/verification barrier.
+const videoPlan = [
+  ['A',2,'17:00','18:00',3,'18:00','h-task-12','h-task-13','h-task-15'],
+  ['B',3,'12:00','13:00',4,'13:00','h-video-B-production','h-video-B-review','h-video-B-publish'],
+  ['C',3,'16:00','17:00',4,'17:00','h-task-16','h-task-28','h-task-20'],
+  ['D',4,'12:00','13:00',5,'13:00','h-video-D-production','h-video-D-review','h-video-D-publish'],
+  ['E',5,'12:00','13:00',6,'13:00','h-video-E-production','h-video-E-review','h-video-E-publish'],
+] as const;
+const date=(day:number)=>`2026-10-${String(5+day).padStart(2,'0')}`;
+const aggregateIds=new Set(['h-task-12','h-task-13','h-task-15','h-task-16','h-task-28','h-task-20']);
+const individualTasks:AgentCalendarTask[]=videoPlan.flatMap(([video,day,finish,review,publishDay,publishTime,productionId,reviewId,publishId])=>{
+  const source=video==='A'||video==='B'?'自有迭代':'外部探索';
+  const common={status:'planned' as const,context:`${source} · 视频 ${video} · 示例任务；共享素材未核验时保持阻塞`,affectedPublicationIds:[`H-video-${video}`]};
+  return [
+    {...common,id:productionId,date:date(day),time:finish,agent:'content' as const,chain:'H-M5',minutes:132,title:`完成视频 ${video} ${source}成片`,output:`视频 ${video} 母版、字幕封面与技术质检`,dependsOn:[video==='A'||video==='B'?'h-task-8':'h-task-9','h-task-10']},
+    {...common,id:reviewId,date:date(day),time:review,agent:'director' as const,chain:'H-M5',minutes:20,title:`审核视频 ${video} ${source}成片`,output:`视频 ${video} 逐镜事实、表达与验收结论`,dependsOn:[productionId]},
+    {...common,id:publishId,date:date(publishDay),time:publishTime,agent:'business' as const,chain:'H-M6',minutes:20,title:`发布视频 ${video} ${source}平台版本`,output:`视频 ${video} 平台发布审批、原 attempt 与回执核验`,context:`${source} · 视频 ${video} · 审核后至少 24 小时发布；待用户验收与客服就绪，未知回执不重复发布`,dependsOn:[reviewId,'h-task-2']},
+  ];
+});
+const supportingTasks=aggregateTasks.filter(task=>!aggregateIds.has(task.id)).map(task=>{
+  if(task.id==='h-task-9')return {...task,time:'13:00'};
+  if(task.id==='h-task-10')return {...task,time:'09:45'};
+  if(task.id==='h-task-14')return {...task,time:'18:00'};
+  if(task.id==='h-task-17')return {...task,time:'14:00'};
+  if(task.id==='h-task-23')return {...task,time:'14:00'};
+  if(task.id==='h-task-0')return {...task,context:task.context+'；连续周一发布需上周完成前置素材、成片和审核，本首周示例不假定已完成'};
+  if(task.id==='h-task-24')return {...task,time:'18:00',dependsOn:[...new Set([...(task.dependsOn??[]),'h-video-E-publish'])]};
+  return task;
+});
+const dailyPreparation:AgentCalendarTask[]=[];
+const all=[...supportingTasks,...individualTasks];
+for(let day=0;day<7;day++)for(const agent of ['business','director','content','customer'] as const){
+  if(all.some(task=>task.date===date(day)&&task.agent===agent))continue;
+  const purpose={business:'核验当日容量与下游发布风险',director:'复核下一条视频的表达与参考边界',content:day===0?'盘点已有产品素材与可复用资产':day===6?'准备下周首条视频的素材缺口':'准备下一条视频的素材与生成输入',customer:'检查三渠道待处理会话与人工接管事项'}[agent];
+  dailyPreparation.push({id:`h-daily-${day}-${agent}`,date:date(day),time:'08:00',agent,chain:agent==='customer'?'H-M7':agent==='business'?'H-M3':'H-M4',title:purpose,output:{business:'逐条发布风险、当日容量缺口与修订建议',director:'逐镜表达与事实问题、参考采用边界及审核清单',content:'逐镜素材库存、权利与待补文件清单；绑定下一条消费者',customer:'渠道缺口、待审批、人工接管及无询盘时 no_data 清单'}[agent],context:'示例准备任务；按实际数据执行，不代表已完成生产或已发送消息',minutes:30,status:'planned',dependsOn:[]});
+}
+export const agentCalendarEstablishedDemo:AgentCalendarTask[]=[...all,...dailyPreparation];

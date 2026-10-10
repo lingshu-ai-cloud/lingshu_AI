@@ -17,8 +17,11 @@ export function establishedProfilePreviewTasks(ownedPercent: 20 | 40) {
         .replaceAll('2 条母版', '1 条母版').replaceAll('3 条母版', '4 条母版');
       return result;
     };
-    const workloadFactor = ownedPercent===20 ? ['h-task-1','h-task-8','h-task-12','h-task-13'].includes(task.id) ? 0.5 : ['h-task-4','h-task-9','h-task-16','h-task-28'].includes(task.id) ? 4/3 : 1 : 1;
-    return {...task, minutes:task.minutes===null?null:Math.round(task.minutes*workloadFactor), dependsOn: [...(task.dependsOn ?? [])], title:text(task.title), output:text(task.output), context:text(task.context),
-      ...(ownedPercent===20&&task.id==='h-task-0'?{context:'历史素材或播放、赞转评证据较少：保留 1 个自有槽位，探索 4 个外部方向；缺少证据不填零、不自动改配额'}:{})};
+    const workloadFactor = ownedPercent===20 ? ['h-task-1','h-task-8'].includes(task.id) ? 0.5 : ['h-task-4','h-task-9'].includes(task.id) ? 4/3 : 1 : 1;
+    const isVideoB = task.affectedPublicationIds?.length===1&&task.affectedPublicationIds[0]==='H-video-B';
+    const sourceText=(value:string)=>text(ownedPercent===20&&isVideoB?value.replaceAll('自有迭代','外部探索'):value);
+    return {...task, minutes:task.minutes===null?null:Math.round(task.minutes*workloadFactor), dependsOn: [...(task.dependsOn ?? [])], title:sourceText(task.title), output:sourceText(task.output), context:sourceText(task.context),
+      ...(ownedPercent===20&&task.id==='h-video-B-production'?{dependsOn:['h-task-9','h-task-10']}:{}),
+      ...(ownedPercent===20&&task.id==='h-task-0'?{context:'历史素材或播放、赞转评证据较少：保留 1 个自有槽位，探索 4 个外部方向；缺少证据不填零、不自动改配额；连续周一发布需上周完成素材、成片与审核，本首周示例不假定已完成'}:{})};
   });
 }
