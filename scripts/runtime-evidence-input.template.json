@@ -1,0 +1,12 @@
+{
+  "schemaVersion": "runtime-evidence-input.v1",
+  "expectedScope": {"tenantId":"", "programId":"", "programVersion":0, "packageId":"", "packageVersion":0, "accountVersions":{}},
+  "sections": {
+    "tenantScope": {},
+    "weeklyPackage": {},
+    "whatsapp": {},
+    "messenger": {},
+    "instagram": {},
+    "publication": {}
+  }
+}
