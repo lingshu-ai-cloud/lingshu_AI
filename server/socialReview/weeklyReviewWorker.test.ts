@@ -3,7 +3,7 @@ import type { DataStore, ListQuery } from '../storage/datastore.js';
 import type { WeeklyOperatingPackage } from '../../shared/contracts/socialProgram.js';
 import { createWeeklyOperatingPackageService } from '../socialPrograms/weeklyOperatingPackages.js';
 import { consumeAgentNotificationOutboxBatch } from '../notifications/agentNotificationOutbox.js';
-import { collectWeeklyReviewInput, runWeeklyReviewForPackage, weeklyReviewScheduleDecision } from './weeklyReviewWorker.js';
+import { collectWeeklyReviewInput, runWeeklyReviewForPackage, runSocialWeeklyReviewScan, weeklyReviewScheduleDecision } from './weeklyReviewWorker.js';
 
 function memoryStore(): DataStore & { rows: Map<string, Array<Record<string, any>>>; push: (name: string, value: Record<string, any>) => void } {
   const rows = new Map<string, Array<Record<string, any>>>();
@@ -114,7 +114,7 @@ assert.equal(completeInput.metricSnapshots[0]?.metrics.likes,0,'observed zero re
 assert.equal(completeInput.metricSnapshots[0]?.metrics.shares,undefined,'blank is unknown');
 assert.equal(completeInput.metricSnapshots[0]?.metrics.comments,undefined,'boolean is not a counter');
 const originalList = completeStore.list.bind(completeStore);
-completeStore.list = async (name,query) => { if(name==='social_metric_snapshots'&&query?.page===2)throw Error('source unavailable'); return originalList(name,query); };
+completeStore.list = async <T>(name:string,query?:ListQuery) => { if(name==='social_metric_snapshots'&&query?.page===2)throw Error('source unavailable'); return originalList<T>(name,query); };
 const partialInput = await collectWeeklyReviewInput({dataStore:completeStore,row,actorId:'owner',now:new Date('2026-09-28T00:01:00Z')});
 assert.equal(partialInput.metricSnapshots.length,0,'failed later page cannot become a complete observed sample');
 assert.ok(partialInput.unavailableMetricKeys?.includes('views'));
@@ -122,3 +122,27 @@ assert.ok(partialInput.unavailableMetricKeys?.includes('views'));
 dataStore.push('social_metric_snapshots',{id:'wrong-platform-baseline',tenant_id:'tenant-a',platform:'facebook',account_id:'account-a',content_id:'content-a',captured_at:'2026-09-21T00:00:00Z',metrics:{views:99999}});
 const scopedBaseline = await collectWeeklyReviewInput({dataStore,row,actorId:'owner',now:new Date('2026-09-28T00:01:00Z')});
 assert.equal(scopedBaseline.contents[0]?.baseline?.views,100,'another platform cannot replace the actual content baseline');
+
+// Formal worker must never freeze an incomplete source read as permanent no-data.
+assert.equal(partialInput.sourceScanComplete,false);
+const failedRead = await runWeeklyReviewForPackage({dataStore:completeStore,row,now:new Date('2026-09-28T00:01:00Z')});
+assert.equal(failedRead.reason,'weekly_review_sources_pending');
+assert.equal(completeStore.rows.get('social_weekly_review_snapshots')?.length??0,0);
+assert.equal(completeStore.rows.get('social_weekly_quota_references')?.length??0,0);
+completeStore.list=originalList;
+const recoveredRead=await runWeeklyReviewForPackage({dataStore:completeStore,row,now:new Date('2026-09-28T00:01:01Z')});
+assert.equal(recoveredRead.status,'completed','recovered pages retry the original package');
+assert.equal(completeStore.rows.get('social_weekly_review_snapshots')?.length,1);
+const repeatedRead=await runWeeklyReviewForPackage({dataStore:completeStore,row,now:new Date('2026-09-28T00:01:02Z')});
+assert.equal(repeatedRead.repeated,true);
+assert.equal(completeStore.rows.get('social_weekly_review_snapshots')?.length,1);
+const emptyStore=memoryStore();
+assert.equal((await collectWeeklyReviewInput({dataStore:emptyStore,row,actorId:'owner',now:new Date('2026-09-28T00:01:00Z')})).sourceScanComplete,true,'verified empty is distinct from unavailable');
+const discoveryStore=memoryStore();
+for(let i=0;i<501;i++)discoveryStore.push('social_weekly_operating_packages',{...row,id:`package-${i}`,package_id:`package-${i}`,payload:{...weekly,packageId:`package-${i}`,workflowTasks:[]}});
+const discovery=await runSocialWeeklyReviewScan(discoveryStore,new Date('2026-09-28T00:01:00Z'));
+assert.equal(discovery.scanned,501,'formal scanner includes packages after the first 500');
+const discoveryList=discoveryStore.list.bind(discoveryStore);
+discoveryStore.list=async<T>(name:string,query?:ListQuery)=>{const result=await discoveryList<T>(name,query);if(name==='social_weekly_operating_packages'&&query?.page===2)return {...result,items:[]};return result;};
+await assert.rejects(runSocialWeeklyReviewScan(discoveryStore),/weekly_review_source_page_missing/);
+console.log('review incomplete-source recovery and full package discovery passed');

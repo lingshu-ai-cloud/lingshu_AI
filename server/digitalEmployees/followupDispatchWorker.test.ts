@@ -207,24 +207,34 @@ try {
   assert.equal(item.attempts, 0, 'human control must not consume retry attempts');
   run.status = 'running';
 
-  const result = await dispatchFollowupBatch(tenantId, batch.id, {
-    mode: 'manual',
-    dependencies: {
-      now: () => now,
-      customers: () => [customer],
-      guard: async () => ({ allowed: true }),
-      recordOutbound: () => {},
-      authorization,
-      recipientDelayMs: 0,
-      sendText: async (_tenant, _to, _body, onReceipt) => {
-        sends += 1;
-        const receipt = { messageId: 'wamid.worker.1', recipientId: item.wa_number, raw: { messages: [{ id: 'wamid.worker.1' }] } };
-        await onReceipt?.({ message: body, receipt, index: 0, total: 1 });
-        return { messages: [body], receipts: [receipt] };
+  assert.equal(await runFollowupDispatchScan({
+    assertLegacyAccess: async () => {},
+    recover: async () => 0,
+    getItems: async () => [item],
+    getBatch: async () => batch,
+    dispatch: async (scannedTenant, scannedBatchId, scanOptions) => {
+      const result = await dispatchFollowupBatch(scannedTenant, scannedBatchId, {
+      mode: scanOptions?.mode,
+      dependencies: {
+        now: () => now,
+        customers: () => [customer],
+        guard: async () => ({ allowed: true }),
+        recordOutbound: () => {},
+        authorization,
+        recipientDelayMs: 0,
+        sendText: async (_tenant, _to, _body, onReceipt) => {
+          sends += 1;
+          const receipt = { messageId: 'wamid.worker.1', recipientId: item.wa_number, raw: { messages: [{ id: 'wamid.worker.1' }] } };
+          await onReceipt?.({ message: body, receipt, index: 0, total: 1 });
+          return { messages: [body], receipts: [receipt] };
+        },
       },
+    });
+    assert.equal(result.sent, 1);
+    assert.equal(result.mode, 'scheduled');
+    return result;
     },
-  });
-  assert.equal(result.sent, 1);
+  }), 1, 'formal scheduled scanner must reach the controlled WhatsApp provider');
   assert.equal(sends, 1);
   assert.equal(item.status, 'sent');
   assert.equal(item.provider_message_id, 'wamid.worker.1');

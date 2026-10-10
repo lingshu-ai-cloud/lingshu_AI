@@ -7,8 +7,8 @@ import {createCustomerChannelSendRequestService} from './customerChannelSendRequ
 import {socialRequestHash} from '../starter198/socialContentValidation.js';
 import type {CustomerMessagingAuthorization} from './customerMessagingPolicy.js';
 const scope={runId:'run',programId:'program',packageId:'week',packageVersion:1};
-export async function nativeDispatchFixture(channel:'messenger'|'instagram'='messenger',unknown=false){
- const f=sendRecoveryFixture();const oldRead=nativeWeeklyConversationPort.read;const source:WeeklyChannelConversation={tenantId:'tenant',customerId:'buyer',channel,nativeAccountId:'native-account',recipientId:'buyer-native',conversationId:`${channel}:native-account:buyer-native`,messages:[{id:'mid.inbound',actor:'buyer',body:'Please quote 100 units',timestamp:Date.parse('2026-10-06T10:00:00Z'),audit:{providerMessageId:'mid.inbound',providerRecipientId:'buyer-native'}}]};
+export async function nativeDispatchFixture(channel:'messenger'|'instagram'='messenger',unknown=false,route:'cold_start'|'account_repair'='account_repair'){
+ const f=sendRecoveryFixture();f.data.social_programs![0]!.payload={route};const oldRead=nativeWeeklyConversationPort.read;const source:WeeklyChannelConversation={tenantId:'tenant',customerId:'buyer',channel,nativeAccountId:'native-account',recipientId:'buyer-native',conversationId:`${channel}:native-account:buyer-native`,messages:[{id:'mid.inbound',actor:'buyer',body:'Please quote 100 units',timestamp:Date.parse('2026-10-06T10:00:00Z'),audit:{providerMessageId:'mid.inbound',providerRecipientId:'buyer-native'}}]};
  nativeWeeklyConversationPort.read=async(_,c)=>c===channel?[structuredClone(source)]:[];
  f.data.social_accounts=[{id:'account',tenantId:'tenant',platform:channel==='messenger'?'facebook':'instagram',providerAccountId:'native-account',status:'connected'}];
  const rawUpdate=f.store.update.bind(f.store);f.store.update=async(c,id,p)=>Boolean(await rawUpdate(c,id,p));f.store.delete=async(c,id)=>{const list=f.data[c]??[];const index=list.findIndex(r=>r.id===id);if(index<0)return false;list.splice(index,1);return true;};

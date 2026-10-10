@@ -1,3 +1,4 @@
+import { materializeWeeklySupplementException, runWeeklySupplementExceptionScan } from './weeklySupplementExceptionMaterializer.js';
 import {weeklyExecutionObservation} from './weeklyExecutionObservation.js';
 import { runWeeklyDeadlineRecoveryScan, type DeadlineRecoveryEvidenceReader } from './socialWeeklyDeadlineRecovery.js';
 import { randomUUID } from 'node:crypto';
@@ -86,6 +87,7 @@ export async function runSocialWeeklyExecutionScan(input: {
 }) {
   const dataStore = input.dataStore ?? store;
   const deadlineRecovery = await runWeeklyDeadlineRecoveryScan({ dataStore, now: input.now, readEvidence: input.readRecoveryEvidence });
+  const supplementRecovery = await runWeeklySupplementExceptionScan({ store: dataStore, now: input.now });
   const worker = createSocialWeeklyExecutionWorker(dataStore);
   const planningAuthority = createSocialWeeklyPlanningAdapter(dataStore);
   const workerId = input.workerId ?? `weekly-execution-${process.pid}-${randomUUID()}`;
@@ -140,7 +142,11 @@ export async function runSocialWeeklyExecutionScan(input: {
         await renewal;
         if (lostLease) throw lostLease;
         if (result.status === 'succeeded') { validatingCompletion = true; await worker.complete(claim, result.resultRefs, input.now); report.succeeded++; }
-        else { await worker.defer(claim, { now: input.now, code: result.code, message: result.message, progress: result.progress, retryDelayMs: result.status === 'pending' ? result.retryDelayMs : undefined, blockingReason: result.status === 'blocked' ? result.code : undefined }); report[result.status]++; }
+        else {
+          await worker.defer(claim, { now: input.now, code: result.code, message: result.message, progress: result.progress, retryDelayMs: result.status === 'pending' ? result.retryDelayMs : undefined, blockingReason: result.status === 'blocked' ? result.code : undefined });
+          if (result.status === 'blocked') await materializeWeeklySupplementException({ store: dataStore, task: claim.task, gapCode: result.code, now: input.now });
+          report[result.status]++;
+        }
       } catch (error) {
         clearInterval(timer);
         await renewal;
@@ -153,7 +159,7 @@ export async function runSocialWeeklyExecutionScan(input: {
       } finally { clearInterval(timer); }
     }
   }
-  return { ...report, deadlineRecovery };
+  return { ...report, deadlineRecovery, supplementRecovery };
 }
 
 let timer: ReturnType<typeof setInterval> | null = null;

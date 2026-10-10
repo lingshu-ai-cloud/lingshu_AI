@@ -120,6 +120,8 @@ export function alignSocialAssetSupplyPlanToBaseline(input: {
   plan: SocialAssetSupplyPlan;
   baseline: StoredSocialScriptBaseline;
 }): SocialAssetSupplyPlan {
+  if(!input.baseline.scenes.length||new Set(input.baseline.scenes.map(scene=>scene.sceneId)).size!==input.baseline.scenes.length||new Set(input.plan.shots.map(shot=>shot.shotId)).size!==input.plan.shots.length)throw new Error('asset_supply_scene_identity_missing_or_duplicate');
+  if(input.baseline.scenes.some(scene=>!scene.sceneId||input.plan.shots.filter(shot=>shot.shotId===scene.sceneId).length!==1))throw new Error('asset_supply_scene_identity_missing_or_duplicate');
   const confirmedFactRefs = [...new Set(input.plan.shots.flatMap(shot => shot.truthBoundary.confirmedFactRefs))];
   const productImageIds = [...new Set(input.plan.shots.flatMap(shot => (
     shot.productSceneReplication?.productIdentity.groups.flatMap(group => group.referenceImageIds) ?? []
@@ -175,7 +177,7 @@ export function alignSocialAssetSupplyPlanToBaseline(input: {
     // missing legacy rights metadata must not silently reroute a production.
     rightsConfirmationRequired: false,
     shots: input.baseline.scenes.map((scene, index) => {
-      const original = input.plan.shots.find(shot => shot.shotId === scene.sceneId) ?? input.plan.shots[index];
+      const original = input.plan.shots.find(shot => shot.shotId === scene.sceneId)!;
       return {
         shotId: scene.sceneId,
         function: shotFunction(scene, index, input.baseline.scenes.length),
@@ -192,8 +194,8 @@ export function alignSocialAssetSupplyPlanToBaseline(input: {
   const originalById = new Map(input.plan.shots.map(shot => [shot.shotId, shot]));
   return {
     ...aligned,
-    shots: aligned.shots.map((shot, index) => {
-      const original = originalById.get(shot.shotId) ?? input.plan.shots[index];
+    shots: aligned.shots.map(shot => {
+      const original = originalById.get(shot.shotId)!;
       if (original?.referenceProductionRouting) return { ...shot, ...structuredClone(original), shotId: shot.shotId, function: shot.function };
       if (original?.selectedMaterialSegment) {
         return {
@@ -352,8 +354,8 @@ export async function executeSocialAssetSupplyPlan(input: {
   const assets: SocialProductionAsset[] = [];
   const shots: SocialAssetSupplyShotExecution[] = [];
   if(input.baseline.accountPlaybookConstraints)assertSocialAccountProductionConstraints(input.baseline.accountPlaybookConstraints);
-  for (const [index, shot] of plan.shots.entries()) {
-    const scene = input.baseline.scenes[index];
+  for (const shot of plan.shots) {
+    const scene = input.baseline.scenes.find(scene=>scene.sceneId===shot.shotId);
     if (!scene) throw new Error(`asset_supply_baseline_scene_missing:${shot.shotId}`);
     const attempts: SocialAssetSupplyExecutionAttempt[] = [];
     let selected: SocialAssetSupplyAdapterResult | null = null;
