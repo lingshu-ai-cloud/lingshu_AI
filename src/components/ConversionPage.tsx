@@ -1740,7 +1740,7 @@ export default function ConversionPage({ onLeaveConversation: _onLeaveConversati
     selectedId ? customers.find(customer => customer.id === selectedId) ?? null : null
   ), [customers, selectedId]);
   useEffect(()=>{let live=true;setPendingSendIntent(null);if(selected&&!selected.isMock){void readCustomerSendScope(selected.id).then(scope=>{if(live)setPendingSendIntent(readSendIntent(localStorage,scope));}).catch(()=>{});}return()=>{live=false;};},[selected?.id]);
-  const manualHoldIdentity=JSON.stringify([selected?.id,authHeader().Authorization]);
+  const manualHoldIdentity=JSON.stringify([selected?.id,selected?.source,selected?.waNumber,selected?.pageId,selected?.instagramAccountId,authHeader().Authorization]);
   const actualManualIdentity=useRef(manualHoldIdentity);actualManualIdentity.current=manualHoldIdentity;
   useEffect(()=>{let active=true;setManualHold(null);setManualHoldError(null);setManualHoldUnknown(null);if(selected&&!selected.isMock){void customerManualTakeoverApi.read(selected.id).then(view=>{if(active&&actualManualIdentity.current===manualHoldIdentity)setManualHold({identity:manualHoldIdentity,view});}).catch(error=>{if(active&&actualManualIdentity.current===manualHoldIdentity)setManualHoldError({identity:manualHoldIdentity,message:error instanceof Error?error.message:'接管状态读取失败'});});}return()=>{active=false;};},[manualHoldIdentity,selected?.id]);
   const selectedLatestBuyerId = useMemo(() => (
@@ -1813,15 +1813,21 @@ export default function ConversionPage({ onLeaveConversation: _onLeaveConversati
     let active=true;
     setSelectedId(null);
     setDeliveryError('');
-    void readCustomerItemNavigation(link).then(binding=>{
+    void readCustomerItemNavigation(link).then(async binding=>{
       if(!active)return;
+      if(binding.programId){
+        if(!binding.accountId||!binding.conversationId)throw new Error('原周包渠道账号或真实会话身份缺失。');
+        const actual=await customerManualTakeoverApi.read(binding.customerId);
+        if(!active)return;
+        if(['tenantId','channel','accountId','nativeAccountId','conversationId'].some(key=>actual.scope[key as keyof typeof actual.scope]!==binding[key as keyof typeof binding]))throw new Error('原任务与当前真实渠道账号或会话不一致。');
+      }
       const customer=matchCustomerItemNavigation(binding,customers);
       if(!customer){if(customers.length)setDeliveryError('原任务客户或渠道当前不可访问，请核对实际渠道接入。');return;}
       setSelectedId(customer.id);
       setView(customer.stage==='won'?'won':['silent30','silent60'].includes(customer.stage)?'silent':'leads');
     }).catch(cause=>{if(active)setDeliveryError(cause instanceof Error?cause.message:'原客服条目无法核验。');});
     return()=>{active=false;};
-  },[deliveryHandoff,customers]);
+  },[deliveryHandoff,customers,JSON.stringify(deliveryHandoff?.businessRef.customerNavigation),authHeader().Authorization]);
 
   useEffect(() => {
     const ref = deliveryHandoff?.businessRef;
@@ -2268,7 +2274,7 @@ export default function ConversionPage({ onLeaveConversation: _onLeaveConversati
     const styleMemory = buildStyleMemoryPayload(customer, restoreText, meta);
     const eventBody = templatePlan ? templatePlan.rendered : body;
     const event = createMessageEvent(customer.id, eventBody, 'seller', {
-      type: customer.source === 'instagram' ? 'instagram' : 'messenger',
+      type: customer.source === 'whatsapp' ? 'whatsapp' : customer.source === 'instagram' ? 'instagram' : 'messenger',
       sendStatus: 'queued',
       sendRequestId: requestId,
       sendMode: templatePlan ? 'template' : 'free_text',
@@ -2288,9 +2294,10 @@ export default function ConversionPage({ onLeaveConversation: _onLeaveConversati
     let sendAccepted=false;
     const timer = window.setTimeout(() => {
       setUndoSend(current => current?.eventId === event.id ? null : current);
-      const send=async()=>{if(intent){assertSendScope(intent.scope,await readCustomerSendScope(customer.id));saveSendIntent({...intent,state:'unknown'});}return sendCustomerOutbox(customer,requestId,body, isOutsideWhatsAppWindow(customer), templatePlan, styleMemory);};
+      const send=async()=>{if(authHeader().Authorization!==sendingAuthorization)throw new Error('登录身份已变化，原请求尚未发送');if(intent){assertSendScope(intent.scope,await readCustomerSendScope(customer.id));if(authHeader().Authorization!==sendingAuthorization)throw new Error('登录身份已变化，原请求尚未发送');saveSendIntent({...intent,state:'unknown'});}return sendCustomerOutbox(customer,requestId,body, isOutsideWhatsAppWindow(customer), templatePlan, styleMemory);};
       void send()
         .then(async result => {
+          if(authHeader().Authorization!==sendingAuthorization)throw new Error('登录身份已变化，请重新读取原发送状态');
           if(intent){assertSendScope(intent.scope,await readCustomerSendScope(customer.id));const receipt=await readCustomerSendRequest(intent);const recovered=recoverSendIntent(intent,receipt);saveSendIntent(recovered);if(recovered.state!=='accepted')throw new Error('发送结果尚未确认，请读取发送状态');}
           if(!['sent','delivered'].includes(result.status||''))throw new Error('发送结果尚未确认');
           sendAccepted=true;
@@ -2550,7 +2557,7 @@ export default function ConversionPage({ onLeaveConversation: _onLeaveConversati
         />
         </div>
         <div className={mobilePanel === 'chat' ? 'flex min-h-0 min-w-0 flex-1 lg:contents' : 'hidden lg:contents'}>
-        {pendingSendIntent&&pendingSendIntent.scope.customerId===selected?.id&&pendingSendIntent.state!=='accepted'&&<div className="border border-amber-200 bg-amber-50 p-3 text-xs">原发送结果未确认；不会自动重发。{pendingSendIntent.state==='prepared'&&<button type="button" className="ml-2 underline" onClick={()=>{if(undoSend?.eventId===pendingSendIntent.eventId){undoQueuedSend();return;}localStorage.removeItem(sendIntentStorageKey(pendingSendIntent.scope));removeTimelineEvent(pendingSendIntent.scope.customerId,pendingSendIntent.eventId);setPendingSendIntent(null);}}>取消尚未发起的请求</button>}<button type="button" className="ml-2 underline" onClick={()=>{void readCustomerSendRequest(pendingSendIntent).then(item=>{const next=recoverSendIntent(pendingSendIntent,item);saveSendIntent(next);updateTimelineEvent(next.scope.customerId,next.eventId,{sendStatus:next.state==='accepted'?'sent':'unknown',audit:{providerMessageId:item.providerMessageId||undefined}});showToast(next.state==='accepted'?'已读取真实平台发送回执':'平台结果仍未知，请勿重复发送');}).catch(error=>showToast(error instanceof Error?error.message:'无法读取发送状态'));}}>读取原发送状态</button></div>}
+        {pendingSendIntent&&pendingSendIntent.scope.customerId===selected?.id&&pendingSendIntent.state!=='accepted'&&<div className="border border-amber-200 bg-amber-50 p-3 text-xs">原发送结果未确认；不会自动重发。{pendingSendIntent.state==='prepared'&&<button type="button" className="ml-2 underline" onClick={()=>{if(undoSend?.eventId===pendingSendIntent.eventId){undoQueuedSend();return;}localStorage.removeItem(sendIntentStorageKey(pendingSendIntent.scope));removeTimelineEvent(pendingSendIntent.scope.customerId,pendingSendIntent.eventId);setPendingSendIntent(null);}}>取消尚未发起的请求</button>}<button type="button" className="ml-2 underline" onClick={()=>{const captured=manualHoldIdentity;void readCustomerSendRequest(pendingSendIntent).then(item=>{if(actualManualIdentity.current!==captured)return;const next=recoverSendIntent(pendingSendIntent,item);saveSendIntent(next);updateTimelineEvent(next.scope.customerId,next.eventId,{sendStatus:next.state==='accepted'?'sent':'unknown',audit:{providerMessageId:item.providerMessageId||undefined}});showToast(next.state==='accepted'?'已读取真实平台发送回执':'平台结果仍未知，请勿重复发送');}).catch(error=>{if(actualManualIdentity.current===captured)showToast(error instanceof Error?error.message:'无法读取发送状态');});}}>读取原发送状态</button></div>}
         {selected&&!selected.isMock&&<div className="border border-slate-200 bg-slate-50 p-3 text-xs"><strong>真人接管</strong>{manualHold?.identity===manualHoldIdentity&&<span className="ml-2">{manualHold.view.active?`负责人 ${manualHold.view.item?.ownerUserId} · 截止 ${manualHold.view.item?.expiresAt}`:'当前没有有效临时接管'}{manualHold.view.humanHandling?'；客户仍处于持久人工处理状态，到期或释放临时接管不会自动切换 AI。':''}</span>}<button type="button" className="ml-2 underline" onClick={reportManualActive} disabled={manualHoldUnknown===manualHoldIdentity}>明确接管十分钟</button><button type="button" className="ml-2 underline" onClick={()=>void refreshManualHold()}>只读刷新状态</button>{manualHold?.identity===manualHoldIdentity&&manualHold.view.active&&manualHold.view.canRelease&&<button type="button" className="ml-2 underline" disabled={manualHoldUnknown===manualHoldIdentity} onClick={()=>void releaseManualHold()}>明确释放临时接管</button>}{manualHoldError?.identity===manualHoldIdentity&&<p role="alert" className="mt-1 text-amber-800">{manualHoldError.message}</p>}{manualHoldUnknown===manualHoldIdentity&&<p className="mt-1 text-amber-800">操作结果未恢复，禁止重复操作；请先只读刷新实际持久状态。</p>}</div>}
         <ChatThread
           customer={selected}

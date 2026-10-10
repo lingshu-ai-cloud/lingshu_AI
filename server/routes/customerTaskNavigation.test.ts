@@ -25,6 +25,6 @@ for(const channel of ['messenger','instagram'] as const)test(`${channel} real me
 });
 test('legacy actual WhatsApp member navigation requires matching real frozen phone and refuses missing native proof',async t=>{
  const f=await nativeDispatchFixture();t.after(f.restore);const member=f.data.customer_segment_members![0]!;member.customer_snapshot={source:'whatsapp',waNumber:'8613800000000'};Object.assign(f.item,{wa_number:'8613800000000',channel:'whatsapp',channel_selection:null,weekly_channel_evidence_hash:null});f.item.content_hash=followupItemContentHash(f.item as unknown as FollowupBatchItemRecord);
- const input={tenantId:'tenant',runId:'run',taskId:'followup_dispatch',itemId:'item'};const result=await readCustomerTaskNavigation(f.store,input);assert.equal(result.channel,'whatsapp');assert.equal(result.accountId,null);assert.equal(result.customerId,'buyer');assert.equal(f.sends(),0);
+ const input={tenantId:'tenant',runId:'run',taskId:'followup_dispatch',itemId:'item'};await assert.rejects(readCustomerTaskNavigation(f.store,input),/manual_takeover_customer_scope_invalid/);f.data.social_weekly_customer_bindings=[];const result=await readCustomerTaskNavigation(f.store,input);assert.equal(result.channel,'whatsapp');assert.equal(result.accountId,null);assert.equal(result.customerId,'buyer');assert.equal(f.sends(),0);
  f.item.wa_number='other';await assert.rejects(readCustomerTaskNavigation(f.store,input));
 });

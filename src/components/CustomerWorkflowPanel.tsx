@@ -12,7 +12,7 @@ const primaryButton = 'inline-flex min-h-9 items-center justify-center rounded-m
 
 export default function CustomerWorkflowPanel({ handoff, customers }: { handoff: DigitalEmployeeDeepLink; customers: Array<{ id: string; name: string }> }) {
   const [sessionToken,setSessionToken]=useState(getToken());
-  const identity=JSON.stringify([handoff.runId,handoff.taskId,handoff.businessRef.followupItemId,sessionToken]);
+  const identity=JSON.stringify([handoff.runId,handoff.taskId,handoff.businessRef.followupItemId,handoff.businessRef.customerNavigation,sessionToken]);
   const live=useRef(identity);live.current=identity;
   const panelRoot=useRef<HTMLElement|null>(null);
   const agentProduction = useAgentProductionAction('customer');

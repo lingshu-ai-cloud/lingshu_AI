@@ -783,6 +783,7 @@ export interface DigitalEmployeeDeepLink {
 }
 
 export interface DigitalEmployeeReturnContext {
+  customerNavigation?: unknown;
   deliveryId?: string;
   returnPage: "digitalEmployees";
   returnView: "live";
@@ -902,6 +903,7 @@ export function dispatchDigitalEmployeeDeepLink(
       const returnContext: DigitalEmployeeReturnContext = {
         returnPage: "digitalEmployees",
         returnView: "live",
+        ...(link.businessRef.customerNavigation ? {customerNavigation:link.businessRef.customerNavigation} : {}),
         runId: link.runId,
         taskId: link.taskId,
         taskKey: link.businessRef.taskKey,
