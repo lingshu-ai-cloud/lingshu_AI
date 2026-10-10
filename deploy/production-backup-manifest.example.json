@@ -1,0 +1,22 @@
+{
+  "schemaVersion": "infra-backup.v1",
+  "cutoverId": "REPLACE_CUTOVER_ID",
+  "createdAt": "REPLACE_ISO_TIMESTAMP",
+  "sourceCommit": "73c78766c985871cd925453aeb5f3e937ec8b3f7",
+  "postgres": {
+    "artifact": "/REPLACE_PATH/postgres.dump.encrypted",
+    "sha256": "REPLACE_64_HEX_SHA256",
+    "version": "REPLACE_POSTGRES_MAJOR"
+  },
+  "redis": {
+    "artifact": "/REPLACE_PATH/redis-snapshot.encrypted",
+    "sha256": "REPLACE_64_HEX_SHA256",
+    "version": "REPLACE_REDIS_MAJOR"
+  },
+  "activeJobIds": [],
+  "unknownAttemptIds": [],
+  "admissionStopped": false,
+  "cutoverPhase": "pre-cutover",
+  "postBackupWrites": true,
+  "consistentRecoveryPoint": false
+}
