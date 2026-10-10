@@ -1,3 +1,5 @@
+import {controlledMessengerAccount} from '../messenger/controlledCapability.fixture.js';
+import {socialAccessToken} from '../lib/accountCredentials.js';
 import assert from 'node:assert/strict';
 import type {DataStore,Record_} from '../storage/datastore.js';
 import type {WeeklyOperatingPackage} from '../../shared/contracts/socialProgram.js';
@@ -29,6 +31,13 @@ export async function recordFiveMotherMetrics(input:{store:DataStore;pkg:WeeklyO
 
 export async function finishFiveMotherReview(input:{store:DataStore;pkg:WeeklyOperatingPackage;tenantId:string;actorUserId:string;now:Date;seedMetrics?:boolean}){
  const {store,pkg,tenantId,actorUserId,now}=input;
+ // Recheck controlled grants after the caller advances Date to the review phase.
+ const currentMessenger=await store.getById<Record_>('social_accounts','five-sales');
+ const renewedMessenger=controlledMessengerAccount({accountId:'five-sales',tenantId,pageId:'five-controlled-sales'});
+ assert.ok(currentMessenger&&currentMessenger.tenantId===tenantId&&currentMessenger.providerAccountId===renewedMessenger.providerAccountId);
+ assert.equal(socialAccessToken(currentMessenger),socialAccessToken(renewedMessenger));
+ assert.equal(await store.update('social_accounts',currentMessenger.id,{scope:renewedMessenger.scope}),true);
+
  if(input.seedMetrics!==false)await recordFiveMotherMetrics(input);
  const tasks=createWeeklyExecutionTaskService(store),worker=createSocialWeeklyExecutionWorker(store);
  const publicationAdapter=createSocialWeeklyPublicationAdapter(store,{now:()=>now}),channelAdapter=createSocialWeeklyCustomerChannelAdapter(store,{now:()=>now});

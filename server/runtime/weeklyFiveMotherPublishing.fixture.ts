@@ -1,3 +1,6 @@
+import {whatsappAssetAuthorityHash} from '../whatsapp/assetAuthority.js';
+import type {TenantPlatformAppRecord} from '../lib/tenantPlatformApps.js';
+import {controlledMessengerAccount} from '../messenger/controlledCapability.fixture.js';
 import assert from 'node:assert/strict';
 import type {TestContext} from 'node:test';
 import {readFile} from 'node:fs/promises';
@@ -14,7 +17,7 @@ import {refreshPlatformCapabilityEvidence} from '../publishing/platformCapabilit
 import {runWeeklyPublicationPackageScan} from '../publishing/weeklyPublicationWorker.js';
 import {createTikTokWeeklyPublishingAdapter} from '../publishing/tiktokWeeklyPublishingAdapter.js';
 import {bindWeeklyCustomerRun} from './socialWeeklyCustomerBridge.js';
-import {sealAccountCredential} from '../lib/accountCredentials.js';
+import {sealAccountCredential,socialAccessToken} from '../lib/accountCredentials.js';
 import type {WeeklyPublishingProviderAdapter} from '../publishing/weeklyLineage.js';
 import {encryptSecret} from '../lib/tenantPlatformApps.js';
 
@@ -24,7 +27,9 @@ export async function publishFiveMotherWeek(t:TestContext,input:{store:DataStore
  const {store,repository,pkg}=input,tenantId='t',actorUserId='owner';
  const service=createWeeklyExecutionTaskService(store),worker=createSocialWeeklyExecutionWorker(store),g6=createSocialWeeklyG6ReviewService(repository);
  const prior=process.env.FOLLOWUP_WORKER_ENABLED;process.env.FOLLOWUP_WORKER_ENABLED='true';t.after(()=>{if(prior===undefined)delete process.env.FOLLOWUP_WORKER_ENABLED;else process.env.FOLLOWUP_WORKER_ENABLED=prior;});
- await store.create('tenant_platform_apps',{id:'five-wa',tenant_id:tenantId,platform:'meta',status:'active',app_id:'five-controlled-app',app_secret:encryptSecret('five-controlled-signing-secret'),waba_id:'five-controlled-waba',phone_number_id:'five-controlled-phone',access_token:encryptSecret('five-controlled-wa-token')});
+ const whatsappApp:Record<string,unknown>={id:'five-wa',tenant_id:tenantId,platform:'meta',status:'active',app_id:'five-controlled-app',app_secret:encryptSecret('five-controlled-signing-secret'),waba_id:'five-controlled-waba',phone_number_id:'five-controlled-phone',access_token:encryptSecret('five-controlled-wa-token')};
+ whatsappApp.last_checklist=JSON.stringify({whatsappAssetProof:{authorityHash:whatsappAssetAuthorityHash(whatsappApp as unknown as TenantPlatformAppRecord),verifiedAt:new Date().toISOString()}});
+ await store.create('tenant_platform_apps',whatsappApp);
  await store.create('social_accounts',{id:'five-instagram',tenantId,platform:'instagram',status:'connected',providerAccountId:'five-controlled-ig',oauthProvider:'instagram_login',scope:'instagram_business_manage_messages',instagramWebhookSubscribed:true,accessToken:sealAccountCredential('five-controlled-ig-token')});
  await store.create('digital_employee_configs',{id:'five-customer-config',tenant_id:tenantId,status:'active',config_version:100,config:{enabledWorkflows:['customer_segmentation','batch_followup'],allowRealCustomerMessages:true}});
  await store.create('weekly_goals',{id:'five-customer-goal',tenant_id:tenantId,business_line:'customer_conversion',starts_at:pkg.weekStart+'T00:00:00Z',ends_at:pkg.weekEnd+'T23:59:59Z'});
@@ -37,6 +42,14 @@ export async function publishFiveMotherWeek(t:TestContext,input:{store:DataStore
  const publishing=graph.filter(task=>task.schedule.stepKind==='publishing');assert.equal(publishing.length,5);
  const publishNow=new Date(Math.max(input.now.getTime(),...publishing.map(task=>Date.parse(task.schedule.estimatedStartAt)),...pkg.socialContentPackage.publicationTasks.map(publication=>{assert.ok(publication.publishWindow);return Date.parse(publication.publishWindow);}),...graph.filter(task=>task.schedule.stepKind==='customer_channel_readiness').map(task=>Date.parse(task.schedule.estimatedStartAt)))+1);
  assert.ok(publishNow.getTime()<Date.parse(pkg.weekEnd+'T23:59:59Z'),'controlled publication must stay in the actual operating week');t.mock.timers.setTime(publishNow.getTime());
+ // The controlled provider grants are still valid at this newly advanced time.
+ // Renew only the short-lived proof; never extend TTL or change the Page credential.
+ const currentMessenger=await store.getById<Record_>('social_accounts','five-sales');
+ const renewedMessenger=controlledMessengerAccount({accountId:'five-sales',tenantId,pageId:'five-controlled-sales'});
+ assert.ok(currentMessenger&&currentMessenger.tenantId===tenantId&&currentMessenger.providerAccountId===renewedMessenger.providerAccountId);
+ assert.equal(socialAccessToken(currentMessenger),socialAccessToken(renewedMessenger));
+ assert.equal(await store.update('social_accounts',currentMessenger.id,{scope:renewedMessenger.scope}),true);
+
  await refreshPlatformCapabilityEvidence({tenantId,accountId:'account',platform:'tiktok',capability:'publishing.official',dataStore:store,providers:{async tiktok(){return{openId:'five-controlled-account',publishGranted:true};},async youtube(){throw Error('unused');},async instagram(){throw Error('unused');},async facebook(){throw Error('unused');},async tiktokReceipt(){throw Error('unused');}}});
  for(const publication of pkg.socialContentPackage.publicationTasks){
   const videos=graph.filter(task=>task.publicationTaskId===publication.publicationTaskId&&task.schedule.stepKind==='video_generation');assert.equal(videos.length,1);assert.equal(videos[0]!.status,'succeeded');

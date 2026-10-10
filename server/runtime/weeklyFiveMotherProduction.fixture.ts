@@ -1,3 +1,4 @@
+import {controlledMessengerAccount} from '../messenger/controlledCapability.fixture.js';
 import assert from 'node:assert/strict';
 import {createHash} from 'node:crypto';
 import type {TestContext} from 'node:test';
@@ -34,7 +35,7 @@ export async function prepareFiveMotherProductionFixture(t:TestContext,seed?:Awa
   const {sealAccountCredential}=await import('../lib/accountCredentials.js');
   const {savePublicationReceptionBinding}=await import('../socialPrograms/publicationReceptionService.js');
   const {refreshPlatformCapabilityEvidence}=await import('../publishing/platformCapabilities.js');
-  f.tables.social_accounts=[{id:'account',tenantId:'t',platform:'tiktok',status:'connected',providerAccountId:'five-controlled-account',scope:'video.publish',accessToken:sealAccountCredential('five-controlled-token')},{id:'five-sales',tenantId:'t',platform:'facebook',status:'connected',providerAccountId:'five-controlled-sales',messengerSubscribed:true,accessToken:sealAccountCredential('five-controlled-sales-token')}];
+  f.tables.social_accounts=[{id:'account',tenantId:'t',platform:'tiktok',status:'connected',providerAccountId:'five-controlled-account',scope:'video.publish',accessToken:sealAccountCredential('five-controlled-token')},controlledMessengerAccount({accountId:'five-sales',tenantId:'t',pageId:'five-controlled-sales'})];
   const owner=await f.store.getById<Record<string,unknown>>('users','owner');assert.ok(owner);await f.store.update('users','owner',{role:'admin',active:true,disabled:false});
   const bindings=new Map<string,string>();
   for(const publication of pkg.socialContentPackage.publicationTasks){

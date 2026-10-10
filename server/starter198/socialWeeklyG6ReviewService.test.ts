@@ -1,3 +1,4 @@
+import {controlledMessengerAccount} from '../messenger/controlledCapability.fixture.js';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {prepareWeeklyQualityAuditFixture} from '../runtime/weeklyContentQualityAudit.fixture.js';
@@ -31,7 +32,7 @@ test('actual G4/G5, confirmed reception, provider-account fence and planned week
  if(typeof pub.cta!=='string'||!pub.cta)throw Error('actual_fixture_cta_missing');
  const binding=await savePublicationReceptionBinding(f.store,{tenantId:'t',programId:f.pkg.programId,packageId:f.pkg.packageId,packageVersion:f.pkg.version,publicationId:pub.publicationTaskId,cta:pub.cta,enterpriseFactHash:f.profile.factVersion!.contentHash,targets:[{id:'sales-inbox',required:true,ownerId:'owner',destination:{kind:'messaging',channel:'messenger',receptionMode:'human'},requiredDocumentUrls:[]}]},'owner');pub.receptionRequirement={required:true,bindingId:binding.bindingId};
  const brief=f.tables.starter_social_content_tasks![0]!.brief as Record<string,unknown>;const authority=brief._weeklyAuthority as Record<string,unknown>;authority.publicationTask=structuredClone(pub);
- f.tables.social_accounts=[{id:pub.accountId,tenantId:'t',platform:'tiktok',status:'connected',providerAccountId:'actual-open-id',scope:'video.publish',accessToken:sealAccountCredential('controlled-provider-token')},{id:'messenger-sales',tenantId:'t',platform:'facebook',status:'connected',providerAccountId:'actual-sales-page',messengerSubscribed:true,accessToken:sealAccountCredential('controlled-messenger-token')}];
+ f.tables.social_accounts=[{id:pub.accountId,tenantId:'t',platform:'tiktok',status:'connected',providerAccountId:'actual-open-id',scope:'video.publish',accessToken:sealAccountCredential('controlled-provider-token')},controlledMessengerAccount({accountId:'messenger-sales',tenantId:'t',pageId:'actual-sales-page'})];
  await refreshPlatformCapabilityEvidence({tenantId:'t',accountId:pub.accountId,platform:'tiktok',capability:'publishing.official',dataStore:f.store,providers:{async tiktok(){return {openId:'actual-open-id',publishGranted:true};},async youtube(){throw Error('not used');},async instagram(){throw Error('not used');},async facebook(){throw Error('not used');},async tiktokReceipt(){throw Error('not used');}}});
  await f.g5.assign(g5FixtureScope,'owner',{reviewerUserId:'owner'});const g5=await f.g5.context(g5FixtureScope,'owner');await f.g5.human(g5FixtureScope,'owner',{requestId:'actual-g6-source-director-0001',expectedContextHash:g5.contextHash,checks:passedDirectorChecks(g5)});
  const scope:SocialWeeklyG6Scope={...g5FixtureScope,programId:f.pkg.programId,packageId:f.pkg.packageId,packageVersion:f.pkg.version,publicationTaskId:pub.publicationTaskId};const service=createSocialWeeklyG6ReviewService(f.repository);const context=await service.context(scope,'owner');assert.deepEqual(context.checks.map(c=>[c.code,c.status]),[['account','passed'],['platform_format','passed'],['conversion_route','passed'],['sales_owner','passed'],['weekly_authorization','passed']]);assert.deepEqual(context.gaps,[]);
@@ -89,5 +90,25 @@ test('fresh G6 renews after quota usage changes while preserving trusted history
  await assert.rejects(readSocialProductionState({repository:f.repository,tenantId:f.scope.tenantId,taskId:f.scope.taskId}),/record_corrupt/);
  saved.content_hash=oldHash;
  assert.equal((await readSocialProductionState({repository:f.repository,tenantId:f.scope.tenantId,taskId:f.scope.taskId}))?.gates.readyForRelease,true);
+ }finally{await f.cleanup();}
+});
+
+test('G6 refuses requested Messenger scopes without admitted proof and rejects a rotated credential',async()=>{
+ const {prepareWeeklyG6Fixture}=await import('./socialWeeklyG6ReviewService.fixture.js');
+ const {sealAccountCredential}=await import('../lib/accountCredentials.js');
+ const f=await prepareWeeklyG6Fixture();try{
+  const account=f.tables.social_accounts!.find(row=>row.id==='messenger-sales')!;
+  const originalScope=account.scope,originalToken=account.accessToken;
+  const receiptCount=f.tables.starter_social_production_receipts?.length??0;
+  for(const [requestId,mutation] of [
+   ['g6-messenger-unproved-0001',()=>{account.scope='pages_messaging,pages_manage_metadata';}],
+   ['g6-messenger-rotated-0002',()=>{account.accessToken=sealAccountCredential('unadmitted-rotated-token');}],
+  ] as const){
+   account.scope=originalScope;account.accessToken=originalToken;mutation();
+   const context=await f.service.context(f.scope,'owner');
+   const result=await f.service.check(f.scope,'owner',{programId:f.scope.programId,packageId:f.scope.packageId,packageVersion:f.scope.packageVersion,publicationTaskId:f.scope.publicationTaskId,requestId,expectedContextHash:context.contextHash});
+   assert.equal(result.item?.status,'blocked');assert.equal(result.item?.receiptId,null);
+  }
+  assert.equal(f.tables.starter_social_production_receipts?.length??0,receiptCount);
  }finally{await f.cleanup();}
 });

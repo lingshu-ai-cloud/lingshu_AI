@@ -4,7 +4,7 @@
 
 ## 配置与租户身份
 
-`server/lib/tenantPlatformApps.ts` 从 `tenant_platform_apps` 按租户和 `platform=tiktok` 读取 `app_id`（client key）和加密 `app_secret`；不完整时回退共享 OAuth 配置。必须事先确认该回退与租户应用审批身份一致。共享字段 `tiktokClientKey/tiktokClientSecret` 最后回退 `TIKTOK_CLIENT_KEY/TIKTOK_CLIENT_SECRET`。生产需 `TENANT_PLATFORM_APP_KEY` 加密租户应用秘密，`PLATFORM_TOKEN_ENCRYPTION_KEY` 保护账号凭据。秘密必须在安全配置界面/secret store填写，本文模板不接收值。
+`server/lib/tenantPlatformApps.ts` 从 `tenant_platform_apps` 按租户和 `platform=tiktok` 读取 `app_id`（client key）和加密 `app_secret`；租户调用要求唯一、归属匹配且完整的配置；缺失、重复或不完整时拒绝，不回退共享 OAuth 配置。只有不带 tenant 的全局调用才使用共享字段 `tiktokClientKey/tiktokClientSecret` 及环境变量 `TIKTOK_CLIENT_KEY/TIKTOK_CLIENT_SECRET`。生产需 `TENANT_PLATFORM_APP_KEY` 加密租户应用秘密，`PLATFORM_TOKEN_ENCRYPTION_KEY` 保护账号凭据。秘密必须在安全配置界面/secret store填写，本文模板不接收值。
 
 配置 `PUBLIC_BASE_URL` 后，回调为 `https://PUBLIC_ORIGIN/api/overseas/social/oauth/tiktok/callback`。门户登记值必须与运行时完全一致；OAuth state 应一次性核对租户、用户、过期时间。官方 Login Kit 要求注册 redirect URI、CSRF state、安全存储及 token 到期前刷新。[Login Kit Web](https://developers.tiktok.com/docs/en/login-kit-web)
 
