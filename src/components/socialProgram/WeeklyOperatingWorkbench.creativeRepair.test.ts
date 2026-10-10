@@ -26,3 +26,23 @@ test('creative repair mutations are scoped to the loaded package generation and 
   assert.match(source,/旧预览已过期，不能用于费用确认/);
   assert.match(source,/不会把未知结果当成成功/);
 });
+
+
+test('blank repair budgets cannot become explicit zero-cost authority',()=>{
+  assert.match(source,/budgetText=draft\?\.maximumCostCny\.trim\(\)\?\?''/);
+  assert.match(source,/minutes<1\|\|!budgetText\|\|!Number\.isFinite\(maximumCostCny\)/);
+  assert.equal((source.match(/capText=repairCaps\[item\.caseId\]\?\.trim\(\)\?\?''/g)??[]).length,2);
+  assert.match(source,/!proposal\|\|!capText\|\|!Number\.isFinite\(cap\)\|\|cap<0/);
+  assert.match(source,/!preview\|\|!capText\|\|!Number\.isFinite\(cap\)\|\|cap<0/);
+});
+
+
+test('approval response cannot overwrite a newly selected weekly package',()=>{
+  const approval=source.slice(source.indexOf('  const approveTask = async'),source.indexOf('\n\n  if (loading'));
+  assert.match(source,/useEffect\(\(\) => \{ setPlanningBusy\(false\); setPlanningError\(''\); \}, \[packageIdentity\]\)/);
+  assert.match(approval,/task\.packageVersion !== pkg\.version/);
+  assert.match(approval,/const scope = pkg, identity = packageIdentity/);
+  assert.match(approval,/if \(packageIdentityRef\.current !== identity\) return;\s+setExecutionTasks\(tasks\)/);
+  assert.match(approval,/if \(packageIdentityRef\.current === identity\) setPlanningError/);
+  assert.match(approval,/if \(packageIdentityRef\.current === identity\) setPlanningBusy\(false\)/);
+});

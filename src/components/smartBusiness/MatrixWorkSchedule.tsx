@@ -121,7 +121,7 @@ export default function MatrixWorkSchedule({ calendarTasks, calendarDemo = false
     <header className="flex flex-wrap items-start justify-between gap-4 border-b border-slate-100 px-5 py-5 sm:px-6">
       <div className="flex items-start gap-3">
         <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-2xl bg-emerald-50 text-emerald-700"><CalendarRange size={19}/></span>
-        <div><p className="text-[10px] font-black tracking-[0.16em] text-emerald-700">AGENT WORK CALENDAR</p><h2 className="mt-1 text-xl font-black text-slate-950">数字员工工作排期</h2><p className="mt-1 text-xs text-slate-500">每条视频就是一条日历任务；悬停卡片查看内容、素材、成本、卡点和 Agent 用时。</p></div>
+        <div><p className="text-[10px] font-black tracking-[0.16em] text-emerald-700">AGENT WORK CALENDAR</p><h2 className="mt-1 text-xl font-black text-slate-950">数字员工工作排期</h2><p className="mt-1 text-xs text-slate-500">{view === 'board' ? '按周一到周日查看当天交付；每张任务卡标明主负责 Agent，点击查看任务详情。' : '每条视频就是一条日历任务；悬停卡片查看内容、素材、成本、卡点和 Agent 用时。'}</p></div>
       </div>
       <div className="flex flex-wrap items-center gap-2"><span className="rounded-xl border border-emerald-100 bg-emerald-50 px-3 py-2 text-[10px] font-black text-emerald-800">{goalStart.toLocaleDateString("zh-CN", { month: "numeric", day: "numeric" })} — {goalEnd.toLocaleDateString("zh-CN", { month: "numeric", day: "numeric" })}</span>{onOpenPublishing&&<button type="button" onClick={onOpenPublishing} className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-[10px] font-black text-slate-700 hover:border-emerald-200 hover:text-emerald-700">打开发布日历 →</button>}</div>
     </header>
@@ -188,6 +188,6 @@ export default function MatrixWorkSchedule({ calendarTasks, calendarDemo = false
       </div>
     </div>
     }
-    <footer className="flex flex-wrap items-center gap-3 bg-slate-50 px-5 py-3 text-[9px] font-bold text-slate-400"><span>排期规则：每个账号独立均匀铺满本周；同一天允许多个账号并行制作与发布。</span><span className="ml-auto">窄工期卡片会扩展到可读宽度；准确工期与发布时间以卡内字段为准。</span></footer>
+    <footer className="flex flex-wrap items-center gap-3 bg-slate-50 px-5 py-3 text-[9px] font-bold text-slate-400"><span>{view === 'board' ? '排期规则：先准备必要素材，成片至少提前一天完成；发布须满足验收、审批与账号授权。' : '排期规则：每个账号独立均匀铺满本周；同一天允许多个账号并行制作与发布。'}</span><span className="ml-auto">{view === 'board' ? '任务按上游交付衔接；上传逾期会标红并提示受影响任务。' : '窄工期卡片会扩展到可读宽度；准确工期与发布时间以卡内字段为准。'}</span></footer>
   </section>;
 }
