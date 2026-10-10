@@ -1,3 +1,4 @@
+import { createSocialWeeklyProducerEvidenceRouter } from './socialWeeklyProducerEvidence.js';
 import {createSocialWeeklyInventoryReuseRouter} from './socialWeeklyInventoryReuse.js';
 import {createWeeklyInventoryReuseService} from '../socialPrograms/weeklyInventoryReuse.js';
 import {createSocialWeeklyProfileUpgradeRouter} from './socialWeeklyProfileUpgrade.js';
@@ -81,6 +82,10 @@ export function createSocialProgramsRouter(dataStore: DataStore = store, authent
   const router = Router();
   if (authenticate) router.use(requireAuth, enforceSupportSessionReadOnly);
   const service = createSocialProgramService(dataStore);
+  router.use('/:programId/operating-packages/:packageId/producer-evidence', asyncRoute(async (req, res, next) => {
+    await service.getProgram((res.locals as AuthLocals).tenantId, req.params.programId);
+    next();
+  }), createSocialWeeklyProducerEvidenceRouter(dataStore));
   const weeklyPackages = createWeeklyOperatingPackageService(dataStore);
   const operating = createSocialOperatingOrchestrationService(dataStore);
   const executionTasks = createWeeklyExecutionTaskService(dataStore);

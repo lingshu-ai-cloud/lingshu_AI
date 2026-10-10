@@ -145,8 +145,19 @@ export function createSocialOperatingOrchestrationService(
       return snapshot;
     },
 
-    async resolve(tenantId: string, userId: string, programId: string, request: OperatingPlanningRequest): Promise<OperatingPlanningResolution> {
+    async resolve(tenantId: string, userId: string, programId: string, request: OperatingPlanningRequest, producerOriginal?:{key:string;recoveryOnly?:boolean}): Promise<OperatingPlanningResolution> {
       const weekStart = validateWeekStart(request.weekStart);
+      const producerHash=producerOriginal?deterministicFingerprint({tenantId,userId,programId,request}):null;
+      if(producerOriginal){
+        if(!producerOriginal.key)throw Error('weekly_outline_original_key_required');
+        const rows=await dataStore.list<Row>('social_operating_authority_snapshots',{where:{tenant_id:tenantId,program_id:programId},perPage:1000});if(rows.totalItems!==rows.items.length)throw Error('weekly_outline_original_scan_incomplete');
+        const matches=rows.items.filter(r=>(r.payload as OperatingAuthoritySnapshot & {weeklyProducer?:{key:string}})?.weeklyProducer?.key===producerOriginal.key);if(matches.length>1)throw Error('weekly_outline_original_not_unique');
+        if(matches[0]){const snapshot=matches[0].payload as OperatingAuthoritySnapshot & {weeklyProducer:{key:string;inputHash:string}};if(matches[0].tenant_id!==tenantId||matches[0].program_id!==programId||snapshot.programId!==programId||snapshot.weeklyProducer.inputHash!==producerHash||snapshot.planningWeekStart!==request.weekStart)throw Error('weekly_outline_original_scope_changed');
+          const [goal,capacity,automation,reference]=await Promise.all([goals.getGoal(tenantId,programId,snapshot.businessContentGoalRef.id,snapshot.businessContentGoalRef.version),repository.getOperatingDecision<OperatingPlanningResolution['capacityPlan']>(tenantId,programId,snapshot.capacityPlanRef.id),repository.getOperatingDecision<OperatingPlanningResolution['automationPolicy']>(tenantId,programId,snapshot.automationPolicyRef.id),repository.getOperatingDecision<OperatingPlanningResolution['referenceMode']>(tenantId,programId,snapshot.referenceModeRef.id)]);if(!capacity||!automation||!reference)throw Error('weekly_outline_original_evidence_missing');return {snapshot,goal,capacityPlan:capacity.output,automationPolicy:automation.output,referenceMode:reference.output};
+        }
+        if(producerOriginal.recoveryOnly)throw Error('weekly_outline_original_write_unknown');
+      }
+
       const [programRow, profileRows, accountRows, configRows, studioRows, constraints, previous] = await Promise.all([
         requiredProgram(tenantId, programId),
         dataStore.list<Row>('tenant_profiles', { where: { tenant_id: tenantId }, page: 1, perPage: 2 }),
@@ -203,7 +214,7 @@ export function createSocialOperatingOrchestrationService(
       };
       const goalResult = await goals.buildAndSave({
         tenantId, operator: { type: 'user', id: userId }, input: goalInput,
-        ...(previous ? { previousEnterprise: previous.enterprise } : {}),
+        ...(previous && changed ? { previousEnterprise: previous.enterprise } : {}),
         expectedVersion: previous ? previous.businessContentGoalRef.version : 0,
       });
       const goal = goalResult.goal;
@@ -295,7 +306,8 @@ export function createSocialOperatingOrchestrationService(
         inputFingerprint: deterministicFingerprint({ weekStart, goal: goal.inputFingerprint, constraints, capabilities: capabilityStates, referenceRef, request: { desiredOriginalContents: request.desiredOriginalContents, desiredAdaptations: request.desiredAdaptations, requestedReferenceMode: request.requestedReferenceMode } }),
         createdBy: userId, createdAt: options.decidedAt,
       };
-      await repository.saveSnapshot(tenantId, snapshot);
+      const storedSnapshot=producerOriginal?{...snapshot,weeklyProducer:{key:producerOriginal.key,inputHash:producerHash}}:snapshot;
+      await repository.saveSnapshot(tenantId, storedSnapshot);
       return { snapshot, goal, capacityPlan: capacity.plan, automationPolicy: automation.policy as OperatingPlanningResolution['automationPolicy'], referenceMode: reference.resolution };
     },
   };

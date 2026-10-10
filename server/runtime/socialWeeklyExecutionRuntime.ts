@@ -1,3 +1,6 @@
+import { runWeeklyPreproductionProducerScan, readWeeklyPreproductionExecutionGate } from './weeklyPreproductionProducer.js';
+import { runWeeklyTemplateExtractionRecoveryScan } from './weeklyContentTemplateCandidateProducer.js';
+import { runWeeklyMetricCollectionRecoveryScan } from './weeklyPublicationMetricProducer.js';
 import type { WeeklyMaterialPorts } from '../socialPrograms/weeklyMaterialRequests.js';
 import { checkWeeklyEnterpriseFactSupplement, WEEKLY_ENTERPRISE_FACT_STEPS } from './weeklyEnterpriseFactSupplement.js';
 import { runWeeklyHumanMaterialRecoveryScan } from './weeklyHumanMaterialRecoveryScan.js';
@@ -89,8 +92,13 @@ export async function runSocialWeeklyExecutionScan(input: {
   now?: Date;
   readRecoveryEvidence?: DeadlineRecoveryEvidenceReader;
   humanMaterialPorts?: WeeklyMaterialPorts;
+  preproductionPorts?: Omit<Parameters<typeof runWeeklyPreproductionProducerScan>[0], 'store' | 'now'>;
+  metricRecoveryPorts?: Omit<Parameters<typeof runWeeklyMetricCollectionRecoveryScan>[0], 'store' | 'now'>;
 }) {
   const dataStore = input.dataStore ?? store;
+  const preproduction = await runWeeklyPreproductionProducerScan({ ...input.preproductionPorts, store: dataStore, now: input.now });
+  const metricRecovery = await runWeeklyMetricCollectionRecoveryScan({ ...input.metricRecoveryPorts, store: dataStore, now: input.now });
+  const templateRecovery = await runWeeklyTemplateExtractionRecoveryScan({ store: dataStore, now: input.now });
   const deadlineRecovery = await runWeeklyDeadlineRecoveryScan({ dataStore, now: input.now, readEvidence: input.readRecoveryEvidence });
   const supplementRecovery = await runWeeklySupplementExceptionScan({ store: dataStore, now: input.now });
   const customerAuthorizationRecovery = await runWeeklyCustomerChannelAuthorizationExceptionScan({ store: dataStore, now: input.now });
@@ -130,6 +138,10 @@ export async function runSocialWeeklyExecutionScan(input: {
         if (dispatchGate.status === 'succeeded' && WEEKLY_ENTERPRISE_FACT_STEPS.has(claim.task.schedule.stepKind)) {
           const facts = await checkWeeklyEnterpriseFactSupplement({ store: dataStore, task: claim.task, now: input.now });
           if (facts.applicable && !facts.ready) dispatchGate = { status: 'blocked', code: facts.code, message: facts.reason };
+        }
+        if (dispatchGate.status === 'succeeded' && ['business_outline', 'benchmark_collection'].includes(claim.task.schedule.stepKind)) {
+          const preproductionGate = await readWeeklyPreproductionExecutionGate(dataStore, claim.task);
+          if (!preproductionGate.ready) dispatchGate = { status: 'blocked', code: preproductionGate.code ?? 'weekly_preproduction_evidence_required', message: '前置经营或采集尚缺绑定原任务的正式执行证据。' };
         }
         const continuationPending = claim.task.inputSnapshot.weeklyContinuationPending;
         const continuationRef = claim.task.inputSnapshot.weeklyContinuationRef;
@@ -174,7 +186,7 @@ export async function runSocialWeeklyExecutionScan(input: {
     }
   }
   const humanMaterialAfterExecution = await runWeeklyHumanMaterialRecoveryScan({ store: dataStore, now: input.now, materialPorts: input.humanMaterialPorts });
-  return { ...report, deadlineRecovery, supplementRecovery, customerAuthorizationRecovery, humanMaterialRecovery, humanMaterialAfterExecution };
+  return { ...report, preproduction, metricRecovery, templateRecovery, deadlineRecovery, supplementRecovery, customerAuthorizationRecovery, humanMaterialRecovery, humanMaterialAfterExecution };
 }
 
 let timer: ReturnType<typeof setInterval> | null = null;

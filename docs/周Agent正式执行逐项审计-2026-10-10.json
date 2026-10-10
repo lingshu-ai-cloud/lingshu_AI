@@ -17,41 +17,45 @@
       "id": "H-M1",
       "title": "审计基线与经营目标",
       "worker": [
-        "server/socialPrograms/planningAuthority.ts"
+        "server/runtime/weeklyPreproductionProducer.ts",
+        "server/socialOperating/orchestration.ts"
       ],
       "collections": [
+        "social_weekly_preproduction_jobs",
+        "social_operating_authority_snapshots",
+        "social_business_content_goals",
         "social_weekly_agent_planning"
       ],
-      "execution": "正式planning adapter复核已持久confirmed/dispatched规划；基础规划与director analysis在显式服务完成，不能称worker自主生成。",
-      "recoveryAndEmpty": "原冻结规划/version/事实及账号边界重验；缺必要输入阻塞，规划 worker 主要复核已生成决策。",
-      "status": "reconciliation_only",
+      "execution": "正式周扫描在派单前按已鉴权绑定的原消费者生成经营快照、目标和基础规划，持久原 run key 与来源 hash。",
+      "recoveryAndEmpty": "缺事实持久阻塞；实际确认后显式同消费者重绑；未知写只读原 key 回执；成功落盘后仅移除原前置阻塞，保留确认派单。",
+      "status": "controlled_formal_producer_verified",
       "tests": [
-        "server/runtime/weeklyM1ContinuousProduction.integration.test.ts",
-        "server/runtime/socialWeeklyExecutionRuntime.test.ts"
+        "server/runtime/weeklyPreproductionProducer.test.ts",
+        "server/routes/socialWeeklyProducerEvidence.integration.test.ts"
       ],
-      "productionGap": "尚缺真实租户整周运行、平台回执和指标；受控 DataStore/provider 结果不等于生产验收。"
+      "productionGap": "正式执行接入受控验证完成；未执行真实租户整周、平台外发、付费采集或生产部署验收。"
     },
     {
       "id": "H-M2",
       "title": "双来源分析与调性提取",
       "worker": [
-        "server/runtime/socialWeeklyExecutionRuntime.ts:createSocialWeeklyPlanningAdapter",
-        "server/socialPrograms/planningAuthority.ts:runDirectorAnalysis"
+        "server/runtime/weeklyPreproductionProducer.ts",
+        "server/socialDiscovery/service.ts"
       ],
       "collections": [
-        "social_weekly_agent_planning",
-        "social_weekly_execution_tasks",
+        "social_weekly_preproduction_jobs",
+        "social_discovery_runs",
         "trend_videos",
-        "starter_social_inspiration_handoff_versions"
+        "social_weekly_agent_planning"
       ],
-      "execution": "reconciliation_of_dispatched_frozen_analysis",
-      "recoveryAndEmpty": "Exact source allocation and reference rights re-read; missing owned source stays pending, never borrowed external. qualified_benchmark_supply_required / owned_reference_diagnosis_pending; no fabricated source or scoring.",
-      "status": "controlled_formal_evidence_passed",
+      "execution": "正式周扫描按批准 scope/version/modes 采集，合格来源进入真实编导分析和详细排期合并；仍等待用户确认与业务派单。",
+      "recoveryAndEmpty": "缺凭据、缺页、旧版本、跨租户、来源或消费者 hash 漂移持久阻塞；严格完整空集才 no_data；重复与未知结果读取原采集 run，迟到证据精确恢复原消费者。",
+      "status": "controlled_formal_producer_verified",
       "tests": [
-        "server/runtime/socialWeeklyReferenceSource.test.ts",
-        "server/runtime/weeklyEstablishedReferenceSource.integration.test.ts"
+        "server/runtime/weeklyPreproductionProducer.test.ts",
+        "server/runtime/weeklyPreproductionDiscoveryOriginal.test.ts"
       ],
-      "productionGap": "M2 weekly adapter reconciles dispatched analysis; autonomous pre-dispatch collection/scoring supplier worker and production media evidence remain missing."
+      "productionGap": "正式执行接入受控验证完成；未执行真实租户整周、平台外发、付费采集或生产部署验收。"
     },
     {
       "id": "H-M3",
@@ -295,43 +299,41 @@
       "id": "H-S5",
       "title": "历史与双来源数据比较",
       "worker": [
-        "server/runtime/weeklyPublicationMetricEvidence.ts"
+        "server/runtime/weeklyPublicationMetricProducer.ts",
+        "server/runtime/weeklyPublicationMetricProvider.ts",
+        "server/runtime/weeklyExecutionAdapters.ts"
       ],
       "collections": [
+        "weekly_metric_collection_jobs",
         "social_metric_snapshots"
       ],
-      "execution": "正式performance worker严格账户/平台/当前发布attempt/manifest/原时间窗口；缺数据pending、观察0保留；尚无独立平台指标主动采集worker证明。",
-      "recoveryAndEmpty": "按原发布、平台、账号、观察窗口重验指标；未观测 pending/unknown，真实观测零保留，验证器不等于自主采集器。",
-      "status": "controlled_chain_verified",
+      "execution": "正式默认 adapter 以实际发布回执和原账号读取官方 HTTP 指标，保留字段存在性与真实零值；原任务、周与来源 hash 封存快照。",
+      "recoveryAndEmpty": "缺凭据持久阻塞后同周补齐恢复；重复或丢写读取原封存样本不重采；旧周新累计值不充当历史指标；完全空发布范围持久 no_data，主任务保留必要发布阻塞。",
+      "status": "controlled_formal_producer_verified",
       "tests": [
-        "server/runtime/socialWeeklyPublicationAdapter.test.ts",
-        "server/socialPrograms/weeklyReviewEvidence.test.ts"
+        "server/runtime/weeklyPublicationMetricProducer.test.ts",
+        "server/runtime/weeklyPublicationMetricProducer.integration.test.ts"
       ],
-      "productionGap": "已有HTTP/SDK采集未绑定正式周worker；SDK缺指标归零导致presence丢失，自主no_data-safe collector仍缺。尚缺真实租户整周运行、平台回执和指标；受控 DataStore/provider 结果不等于生产验收。"
+      "productionGap": "正式执行接入受控验证完成；未执行真实租户整周、平台外发、付费采集或生产部署验收。"
     },
     {
       "id": "H-S6",
       "title": "模板保留/修订/新增",
       "worker": [
-        "server/runtime/socialWeeklyContentTemplateAdapter.ts",
-        "server/socialPrograms/weeklyContentTemplates.ts"
+        "server/runtime/weeklyContentTemplateCandidateProducer.ts",
+        "server/runtime/weeklyExecutionAdapters.ts"
       ],
       "collections": [
-        "social_content_template_candidates",
-        "social_content_template_confirmations",
-        "social_weekly_content_template_bindings",
-        "social_weekly_content_template_execution_selections",
-        "social_weekly_execution_tasks"
+        "social_weekly_template_extractions",
+        "social_content_templates"
       ],
-      "execution": "formal_worker_explicit_candidate_and_confirmation_consumption",
-      "recoveryAndEmpty": "Exact candidate/version/hash and original confirmation recovered; explicit selection permits narrow resume, never auto confirms intent or changes quota. content_template_execution_selection_required / content_template_confirmation_required; unknown metrics not zero and external views not owned success.",
-      "status": "controlled_formal_evidence_passed",
+      "execution": "正式默认 adapter 从实际脚本镜头结构、审核/批准产物、复盘及 S5 封存指标提炼候选，经现有模板服务持久化；保留用户选择与独立确认。",
+      "recoveryAndEmpty": "缺证据持久阻塞；迟到证据只移除原 producer gap；原输入 hash 幂等复用，跨租户/旧版本/伪平台来源不采纳，候选不自动选择确认。",
+      "status": "controlled_formal_producer_verified",
       "tests": [
-        "server/runtime/socialWeeklyContentTemplateAdapter.test.ts",
-        "server/socialPrograms/weeklyContentTemplates.test.ts",
-        "server/socialPrograms/weeklyTemplateRevisionCarryover.test.ts"
+        "server/runtime/weeklyContentTemplateCandidateProducer.test.ts"
       ],
-      "productionGap": "Adapter consumes existing candidates and explicit confirmation; autonomous candidate extraction worker and real cross-week performance/consumption evidence remain missing."
+      "productionGap": "正式执行接入受控验证完成；未执行真实租户整周、平台外发、付费采集或生产部署验收。"
     },
     {
       "id": "H-S7",
@@ -405,41 +407,45 @@
       "id": "Z-M1",
       "title": "建立经营基础与对标需求",
       "worker": [
-        "server/socialPrograms/planningAuthority.ts"
+        "server/runtime/weeklyPreproductionProducer.ts",
+        "server/socialOperating/orchestration.ts"
       ],
       "collections": [
+        "social_weekly_preproduction_jobs",
+        "social_operating_authority_snapshots",
+        "social_business_content_goals",
         "social_weekly_agent_planning"
       ],
-      "execution": "正式planning adapter复核已持久confirmed/dispatched规划；基础规划与director analysis在显式服务完成，不能称worker自主生成。",
-      "recoveryAndEmpty": "原冻结规划/version/事实及账号边界重验；缺必要输入阻塞，规划 worker 主要复核已生成决策。",
-      "status": "reconciliation_only",
+      "execution": "正式周扫描在派单前按已鉴权绑定的原消费者生成经营快照、目标和基础规划，持久原 run key 与来源 hash。",
+      "recoveryAndEmpty": "缺事实持久阻塞；实际确认后显式同消费者重绑；未知写只读原 key 回执；成功落盘后仅移除原前置阻塞，保留确认派单。",
+      "status": "controlled_formal_producer_verified",
       "tests": [
-        "server/runtime/weeklyM1ContinuousProduction.integration.test.ts",
-        "server/runtime/socialWeeklyExecutionRuntime.test.ts"
+        "server/runtime/weeklyPreproductionProducer.test.ts",
+        "server/routes/socialWeeklyProducerEvidence.integration.test.ts"
       ],
-      "productionGap": "尚缺真实租户整周运行、平台回执和指标；受控 DataStore/provider 结果不等于生产验收。"
+      "productionGap": "正式执行接入受控验证完成；未执行真实租户整周、平台外发、付费采集或生产部署验收。"
     },
     {
       "id": "Z-M2",
       "title": "外部参考采集与精确分析",
       "worker": [
-        "server/runtime/socialWeeklyExecutionRuntime.ts:createSocialWeeklyPlanningAdapter",
-        "server/socialPrograms/planningAuthority.ts:runDirectorAnalysis"
+        "server/runtime/weeklyPreproductionProducer.ts",
+        "server/socialDiscovery/service.ts"
       ],
       "collections": [
-        "social_weekly_agent_planning",
-        "social_weekly_execution_tasks",
+        "social_weekly_preproduction_jobs",
+        "social_discovery_runs",
         "trend_videos",
-        "starter_social_inspiration_handoff_versions"
+        "social_weekly_agent_planning"
       ],
-      "execution": "reconciliation_of_dispatched_frozen_analysis",
-      "recoveryAndEmpty": "Exact source allocation and reference rights re-read; missing owned source stays pending, never borrowed external. qualified_benchmark_supply_required / owned_reference_diagnosis_pending; no fabricated source or scoring.",
-      "status": "controlled_formal_evidence_passed",
+      "execution": "正式周扫描按批准 scope/version/modes 采集，合格来源进入真实编导分析和详细排期合并；仍等待用户确认与业务派单。",
+      "recoveryAndEmpty": "缺凭据、缺页、旧版本、跨租户、来源或消费者 hash 漂移持久阻塞；严格完整空集才 no_data；重复与未知结果读取原采集 run，迟到证据精确恢复原消费者。",
+      "status": "controlled_formal_producer_verified",
       "tests": [
-        "server/runtime/socialWeeklyReferenceSource.test.ts",
-        "server/runtime/weeklyEstablishedReferenceSource.integration.test.ts"
+        "server/runtime/weeklyPreproductionProducer.test.ts",
+        "server/runtime/weeklyPreproductionDiscoveryOriginal.test.ts"
       ],
-      "productionGap": "M2 weekly adapter reconciles dispatched analysis; autonomous pre-dispatch collection/scoring supplier worker and production media evidence remain missing."
+      "productionGap": "正式执行接入受控验证完成；未执行真实租户整周、平台外发、付费采集或生产部署验收。"
     },
     {
       "id": "Z-M3",
@@ -683,43 +689,41 @@
       "id": "Z-S5",
       "title": "首批数据观察",
       "worker": [
-        "server/runtime/weeklyPublicationMetricEvidence.ts"
+        "server/runtime/weeklyPublicationMetricProducer.ts",
+        "server/runtime/weeklyPublicationMetricProvider.ts",
+        "server/runtime/weeklyExecutionAdapters.ts"
       ],
       "collections": [
+        "weekly_metric_collection_jobs",
         "social_metric_snapshots"
       ],
-      "execution": "正式performance worker严格账户/平台/当前发布attempt/manifest/原时间窗口；缺数据pending、观察0保留；尚无独立平台指标主动采集worker证明。",
-      "recoveryAndEmpty": "按原发布、平台、账号、观察窗口重验指标；未观测 pending/unknown，真实观测零保留，验证器不等于自主采集器。",
-      "status": "controlled_chain_verified",
+      "execution": "正式默认 adapter 以实际发布回执和原账号读取官方 HTTP 指标，保留字段存在性与真实零值；原任务、周与来源 hash 封存快照。",
+      "recoveryAndEmpty": "缺凭据持久阻塞后同周补齐恢复；重复或丢写读取原封存样本不重采；旧周新累计值不充当历史指标；完全空发布范围持久 no_data，主任务保留必要发布阻塞。",
+      "status": "controlled_formal_producer_verified",
       "tests": [
-        "server/runtime/socialWeeklyPublicationAdapter.test.ts",
-        "server/socialPrograms/weeklyReviewEvidence.test.ts"
+        "server/runtime/weeklyPublicationMetricProducer.test.ts",
+        "server/runtime/weeklyPublicationMetricProducer.integration.test.ts"
       ],
-      "productionGap": "已有HTTP/SDK采集未绑定正式周worker；SDK缺指标归零导致presence丢失，自主no_data-safe collector仍缺。尚缺真实租户整周运行、平台回执和指标；受控 DataStore/provider 结果不等于生产验收。"
+      "productionGap": "正式执行接入受控验证完成；未执行真实租户整周、平台外发、付费采集或生产部署验收。"
     },
     {
       "id": "Z-S6",
       "title": "从外部复刻到自有模板候选",
       "worker": [
-        "server/runtime/socialWeeklyContentTemplateAdapter.ts",
-        "server/socialPrograms/weeklyContentTemplates.ts"
+        "server/runtime/weeklyContentTemplateCandidateProducer.ts",
+        "server/runtime/weeklyExecutionAdapters.ts"
       ],
       "collections": [
-        "social_content_template_candidates",
-        "social_content_template_confirmations",
-        "social_weekly_content_template_bindings",
-        "social_weekly_content_template_execution_selections",
-        "social_weekly_execution_tasks"
+        "social_weekly_template_extractions",
+        "social_content_templates"
       ],
-      "execution": "formal_worker_explicit_candidate_and_confirmation_consumption",
-      "recoveryAndEmpty": "Exact candidate/version/hash and original confirmation recovered; explicit selection permits narrow resume, never auto confirms intent or changes quota. content_template_execution_selection_required / content_template_confirmation_required; unknown metrics not zero and external views not owned success.",
-      "status": "controlled_formal_evidence_passed",
+      "execution": "正式默认 adapter 从实际脚本镜头结构、审核/批准产物、复盘及 S5 封存指标提炼候选，经现有模板服务持久化；保留用户选择与独立确认。",
+      "recoveryAndEmpty": "缺证据持久阻塞；迟到证据只移除原 producer gap；原输入 hash 幂等复用，跨租户/旧版本/伪平台来源不采纳，候选不自动选择确认。",
+      "status": "controlled_formal_producer_verified",
       "tests": [
-        "server/runtime/socialWeeklyContentTemplateAdapter.test.ts",
-        "server/socialPrograms/weeklyContentTemplates.test.ts",
-        "server/socialPrograms/weeklyTemplateRevisionCarryover.test.ts"
+        "server/runtime/weeklyContentTemplateCandidateProducer.test.ts"
       ],
-      "productionGap": "Adapter consumes existing candidates and explicit confirmation; autonomous candidate extraction worker and real cross-week performance/consumption evidence remain missing."
+      "productionGap": "正式执行接入受控验证完成；未执行真实租户整周、平台外发、付费采集或生产部署验收。"
     },
     {
       "id": "Z-S7",
@@ -796,32 +800,40 @@
       "chain": "H-M1",
       "criterion": "正式执行器与持久证据",
       "worker": [
-        "server/socialPrograms/planningAuthority.ts"
+        "server/runtime/weeklyPreproductionProducer.ts",
+        "server/socialOperating/orchestration.ts"
       ],
       "collections": [
+        "social_weekly_preproduction_jobs",
+        "social_operating_authority_snapshots",
+        "social_business_content_goals",
         "social_weekly_agent_planning"
       ],
-      "finding": "正式planning adapter复核已持久confirmed/dispatched规划；基础规划与director analysis在显式服务完成，不能称worker自主生成。",
-      "status": "reconciliation_only",
+      "finding": "正式周扫描在派单前按已鉴权绑定的原消费者生成经营快照、目标和基础规划，持久原 run key 与来源 hash。",
+      "status": "controlled_formal_producer_verified",
       "tests": [
-        "server/runtime/weeklyM1ContinuousProduction.integration.test.ts",
-        "server/runtime/socialWeeklyExecutionRuntime.test.ts"
+        "server/runtime/weeklyPreproductionProducer.test.ts",
+        "server/routes/socialWeeklyProducerEvidence.integration.test.ts"
       ]
     },
     {
       "id": "H-M1-B",
       "chain": "H-M1",
       "criterion": "异常恢复与空数据",
-      "finding": "原冻结规划/version/事实及账号边界重验；缺必要输入阻塞，规划 worker 主要复核已生成决策。",
-      "status": "reconciliation_only",
+      "finding": "缺事实持久阻塞；实际确认后显式同消费者重绑；未知写只读原 key 回执；成功落盘后仅移除原前置阻塞，保留确认派单。",
+      "status": "controlled_formal_producer_verified",
       "tests": [
-        "server/runtime/weeklyM1ContinuousProduction.integration.test.ts",
-        "server/runtime/socialWeeklyExecutionRuntime.test.ts"
+        "server/runtime/weeklyPreproductionProducer.test.ts",
+        "server/routes/socialWeeklyProducerEvidence.integration.test.ts"
       ],
       "worker": [
-        "server/socialPrograms/planningAuthority.ts"
+        "server/runtime/weeklyPreproductionProducer.ts",
+        "server/socialOperating/orchestration.ts"
       ],
       "collections": [
+        "social_weekly_preproduction_jobs",
+        "social_operating_authority_snapshots",
+        "social_business_content_goals",
         "social_weekly_agent_planning"
       ]
     },
@@ -830,41 +842,41 @@
       "chain": "H-M2",
       "criterion": "正式执行器与持久证据",
       "worker": [
-        "server/runtime/socialWeeklyExecutionRuntime.ts:createSocialWeeklyPlanningAdapter",
-        "server/socialPrograms/planningAuthority.ts:runDirectorAnalysis"
+        "server/runtime/weeklyPreproductionProducer.ts",
+        "server/socialDiscovery/service.ts"
       ],
       "collections": [
-        "social_weekly_agent_planning",
-        "social_weekly_execution_tasks",
+        "social_weekly_preproduction_jobs",
+        "social_discovery_runs",
         "trend_videos",
-        "starter_social_inspiration_handoff_versions"
+        "social_weekly_agent_planning"
       ],
-      "finding": "reconciliation_of_dispatched_frozen_analysis",
-      "status": "controlled_formal_evidence_passed",
+      "finding": "正式周扫描按批准 scope/version/modes 采集，合格来源进入真实编导分析和详细排期合并；仍等待用户确认与业务派单。",
+      "status": "controlled_formal_producer_verified",
       "tests": [
-        "server/runtime/socialWeeklyReferenceSource.test.ts",
-        "server/runtime/weeklyEstablishedReferenceSource.integration.test.ts"
+        "server/runtime/weeklyPreproductionProducer.test.ts",
+        "server/runtime/weeklyPreproductionDiscoveryOriginal.test.ts"
       ]
     },
     {
       "id": "H-M2-B",
       "chain": "H-M2",
       "criterion": "异常恢复与空数据",
-      "finding": "Exact source allocation and reference rights re-read; missing owned source stays pending, never borrowed external. qualified_benchmark_supply_required / owned_reference_diagnosis_pending; no fabricated source or scoring.",
-      "status": "controlled_formal_evidence_passed",
+      "finding": "缺凭据、缺页、旧版本、跨租户、来源或消费者 hash 漂移持久阻塞；严格完整空集才 no_data；重复与未知结果读取原采集 run，迟到证据精确恢复原消费者。",
+      "status": "controlled_formal_producer_verified",
       "tests": [
-        "server/runtime/socialWeeklyReferenceSource.test.ts",
-        "server/runtime/weeklyEstablishedReferenceSource.integration.test.ts"
+        "server/runtime/weeklyPreproductionProducer.test.ts",
+        "server/runtime/weeklyPreproductionDiscoveryOriginal.test.ts"
       ],
       "worker": [
-        "server/runtime/socialWeeklyExecutionRuntime.ts:createSocialWeeklyPlanningAdapter",
-        "server/socialPrograms/planningAuthority.ts:runDirectorAnalysis"
+        "server/runtime/weeklyPreproductionProducer.ts",
+        "server/socialDiscovery/service.ts"
       ],
       "collections": [
-        "social_weekly_agent_planning",
-        "social_weekly_execution_tasks",
+        "social_weekly_preproduction_jobs",
+        "social_discovery_runs",
         "trend_videos",
-        "starter_social_inspiration_handoff_versions"
+        "social_weekly_agent_planning"
       ]
     },
     {
@@ -1328,32 +1340,38 @@
       "chain": "H-S5",
       "criterion": "正式执行器与持久证据",
       "worker": [
-        "server/runtime/weeklyPublicationMetricEvidence.ts"
+        "server/runtime/weeklyPublicationMetricProducer.ts",
+        "server/runtime/weeklyPublicationMetricProvider.ts",
+        "server/runtime/weeklyExecutionAdapters.ts"
       ],
       "collections": [
+        "weekly_metric_collection_jobs",
         "social_metric_snapshots"
       ],
-      "finding": "正式performance worker严格账户/平台/当前发布attempt/manifest/原时间窗口；缺数据pending、观察0保留；尚无独立平台指标主动采集worker证明。",
-      "status": "controlled_chain_verified",
+      "finding": "正式默认 adapter 以实际发布回执和原账号读取官方 HTTP 指标，保留字段存在性与真实零值；原任务、周与来源 hash 封存快照。",
+      "status": "controlled_formal_producer_verified",
       "tests": [
-        "server/runtime/socialWeeklyPublicationAdapter.test.ts",
-        "server/socialPrograms/weeklyReviewEvidence.test.ts"
+        "server/runtime/weeklyPublicationMetricProducer.test.ts",
+        "server/runtime/weeklyPublicationMetricProducer.integration.test.ts"
       ]
     },
     {
       "id": "H-S5-B",
       "chain": "H-S5",
       "criterion": "异常恢复与空数据",
-      "finding": "按原发布、平台、账号、观察窗口重验指标；未观测 pending/unknown，真实观测零保留，验证器不等于自主采集器。",
-      "status": "controlled_chain_verified",
+      "finding": "缺凭据持久阻塞后同周补齐恢复；重复或丢写读取原封存样本不重采；旧周新累计值不充当历史指标；完全空发布范围持久 no_data，主任务保留必要发布阻塞。",
+      "status": "controlled_formal_producer_verified",
       "tests": [
-        "server/runtime/socialWeeklyPublicationAdapter.test.ts",
-        "server/socialPrograms/weeklyReviewEvidence.test.ts"
+        "server/runtime/weeklyPublicationMetricProducer.test.ts",
+        "server/runtime/weeklyPublicationMetricProducer.integration.test.ts"
       ],
       "worker": [
-        "server/runtime/weeklyPublicationMetricEvidence.ts"
+        "server/runtime/weeklyPublicationMetricProducer.ts",
+        "server/runtime/weeklyPublicationMetricProvider.ts",
+        "server/runtime/weeklyExecutionAdapters.ts"
       ],
       "collections": [
+        "weekly_metric_collection_jobs",
         "social_metric_snapshots"
       ]
     },
@@ -1362,45 +1380,35 @@
       "chain": "H-S6",
       "criterion": "正式执行器与持久证据",
       "worker": [
-        "server/runtime/socialWeeklyContentTemplateAdapter.ts",
-        "server/socialPrograms/weeklyContentTemplates.ts"
+        "server/runtime/weeklyContentTemplateCandidateProducer.ts",
+        "server/runtime/weeklyExecutionAdapters.ts"
       ],
       "collections": [
-        "social_content_template_candidates",
-        "social_content_template_confirmations",
-        "social_weekly_content_template_bindings",
-        "social_weekly_content_template_execution_selections",
-        "social_weekly_execution_tasks"
+        "social_weekly_template_extractions",
+        "social_content_templates"
       ],
-      "finding": "formal_worker_explicit_candidate_and_confirmation_consumption",
-      "status": "controlled_formal_evidence_passed",
+      "finding": "正式默认 adapter 从实际脚本镜头结构、审核/批准产物、复盘及 S5 封存指标提炼候选，经现有模板服务持久化；保留用户选择与独立确认。",
+      "status": "controlled_formal_producer_verified",
       "tests": [
-        "server/runtime/socialWeeklyContentTemplateAdapter.test.ts",
-        "server/socialPrograms/weeklyContentTemplates.test.ts",
-        "server/socialPrograms/weeklyTemplateRevisionCarryover.test.ts"
+        "server/runtime/weeklyContentTemplateCandidateProducer.test.ts"
       ]
     },
     {
       "id": "H-S6-B",
       "chain": "H-S6",
       "criterion": "异常恢复与空数据",
-      "finding": "Exact candidate/version/hash and original confirmation recovered; explicit selection permits narrow resume, never auto confirms intent or changes quota. content_template_execution_selection_required / content_template_confirmation_required; unknown metrics not zero and external views not owned success.",
-      "status": "controlled_formal_evidence_passed",
+      "finding": "缺证据持久阻塞；迟到证据只移除原 producer gap；原输入 hash 幂等复用，跨租户/旧版本/伪平台来源不采纳，候选不自动选择确认。",
+      "status": "controlled_formal_producer_verified",
       "tests": [
-        "server/runtime/socialWeeklyContentTemplateAdapter.test.ts",
-        "server/socialPrograms/weeklyContentTemplates.test.ts",
-        "server/socialPrograms/weeklyTemplateRevisionCarryover.test.ts"
+        "server/runtime/weeklyContentTemplateCandidateProducer.test.ts"
       ],
       "worker": [
-        "server/runtime/socialWeeklyContentTemplateAdapter.ts",
-        "server/socialPrograms/weeklyContentTemplates.ts"
+        "server/runtime/weeklyContentTemplateCandidateProducer.ts",
+        "server/runtime/weeklyExecutionAdapters.ts"
       ],
       "collections": [
-        "social_content_template_candidates",
-        "social_content_template_confirmations",
-        "social_weekly_content_template_bindings",
-        "social_weekly_content_template_execution_selections",
-        "social_weekly_execution_tasks"
+        "social_weekly_template_extractions",
+        "social_content_templates"
       ]
     },
     {
@@ -1538,32 +1546,40 @@
       "chain": "Z-M1",
       "criterion": "正式执行器与持久证据",
       "worker": [
-        "server/socialPrograms/planningAuthority.ts"
+        "server/runtime/weeklyPreproductionProducer.ts",
+        "server/socialOperating/orchestration.ts"
       ],
       "collections": [
+        "social_weekly_preproduction_jobs",
+        "social_operating_authority_snapshots",
+        "social_business_content_goals",
         "social_weekly_agent_planning"
       ],
-      "finding": "正式planning adapter复核已持久confirmed/dispatched规划；基础规划与director analysis在显式服务完成，不能称worker自主生成。",
-      "status": "reconciliation_only",
+      "finding": "正式周扫描在派单前按已鉴权绑定的原消费者生成经营快照、目标和基础规划，持久原 run key 与来源 hash。",
+      "status": "controlled_formal_producer_verified",
       "tests": [
-        "server/runtime/weeklyM1ContinuousProduction.integration.test.ts",
-        "server/runtime/socialWeeklyExecutionRuntime.test.ts"
+        "server/runtime/weeklyPreproductionProducer.test.ts",
+        "server/routes/socialWeeklyProducerEvidence.integration.test.ts"
       ]
     },
     {
       "id": "Z-M1-B",
       "chain": "Z-M1",
       "criterion": "异常恢复与空数据",
-      "finding": "原冻结规划/version/事实及账号边界重验；缺必要输入阻塞，规划 worker 主要复核已生成决策。",
-      "status": "reconciliation_only",
+      "finding": "缺事实持久阻塞；实际确认后显式同消费者重绑；未知写只读原 key 回执；成功落盘后仅移除原前置阻塞，保留确认派单。",
+      "status": "controlled_formal_producer_verified",
       "tests": [
-        "server/runtime/weeklyM1ContinuousProduction.integration.test.ts",
-        "server/runtime/socialWeeklyExecutionRuntime.test.ts"
+        "server/runtime/weeklyPreproductionProducer.test.ts",
+        "server/routes/socialWeeklyProducerEvidence.integration.test.ts"
       ],
       "worker": [
-        "server/socialPrograms/planningAuthority.ts"
+        "server/runtime/weeklyPreproductionProducer.ts",
+        "server/socialOperating/orchestration.ts"
       ],
       "collections": [
+        "social_weekly_preproduction_jobs",
+        "social_operating_authority_snapshots",
+        "social_business_content_goals",
         "social_weekly_agent_planning"
       ]
     },
@@ -1572,41 +1588,41 @@
       "chain": "Z-M2",
       "criterion": "正式执行器与持久证据",
       "worker": [
-        "server/runtime/socialWeeklyExecutionRuntime.ts:createSocialWeeklyPlanningAdapter",
-        "server/socialPrograms/planningAuthority.ts:runDirectorAnalysis"
+        "server/runtime/weeklyPreproductionProducer.ts",
+        "server/socialDiscovery/service.ts"
       ],
       "collections": [
-        "social_weekly_agent_planning",
-        "social_weekly_execution_tasks",
+        "social_weekly_preproduction_jobs",
+        "social_discovery_runs",
         "trend_videos",
-        "starter_social_inspiration_handoff_versions"
+        "social_weekly_agent_planning"
       ],
-      "finding": "reconciliation_of_dispatched_frozen_analysis",
-      "status": "controlled_formal_evidence_passed",
+      "finding": "正式周扫描按批准 scope/version/modes 采集，合格来源进入真实编导分析和详细排期合并；仍等待用户确认与业务派单。",
+      "status": "controlled_formal_producer_verified",
       "tests": [
-        "server/runtime/socialWeeklyReferenceSource.test.ts",
-        "server/runtime/weeklyEstablishedReferenceSource.integration.test.ts"
+        "server/runtime/weeklyPreproductionProducer.test.ts",
+        "server/runtime/weeklyPreproductionDiscoveryOriginal.test.ts"
       ]
     },
     {
       "id": "Z-M2-B",
       "chain": "Z-M2",
       "criterion": "异常恢复与空数据",
-      "finding": "Exact source allocation and reference rights re-read; missing owned source stays pending, never borrowed external. qualified_benchmark_supply_required / owned_reference_diagnosis_pending; no fabricated source or scoring.",
-      "status": "controlled_formal_evidence_passed",
+      "finding": "缺凭据、缺页、旧版本、跨租户、来源或消费者 hash 漂移持久阻塞；严格完整空集才 no_data；重复与未知结果读取原采集 run，迟到证据精确恢复原消费者。",
+      "status": "controlled_formal_producer_verified",
       "tests": [
-        "server/runtime/socialWeeklyReferenceSource.test.ts",
-        "server/runtime/weeklyEstablishedReferenceSource.integration.test.ts"
+        "server/runtime/weeklyPreproductionProducer.test.ts",
+        "server/runtime/weeklyPreproductionDiscoveryOriginal.test.ts"
       ],
       "worker": [
-        "server/runtime/socialWeeklyExecutionRuntime.ts:createSocialWeeklyPlanningAdapter",
-        "server/socialPrograms/planningAuthority.ts:runDirectorAnalysis"
+        "server/runtime/weeklyPreproductionProducer.ts",
+        "server/socialDiscovery/service.ts"
       ],
       "collections": [
-        "social_weekly_agent_planning",
-        "social_weekly_execution_tasks",
+        "social_weekly_preproduction_jobs",
+        "social_discovery_runs",
         "trend_videos",
-        "starter_social_inspiration_handoff_versions"
+        "social_weekly_agent_planning"
       ]
     },
     {
@@ -2070,32 +2086,38 @@
       "chain": "Z-S5",
       "criterion": "正式执行器与持久证据",
       "worker": [
-        "server/runtime/weeklyPublicationMetricEvidence.ts"
+        "server/runtime/weeklyPublicationMetricProducer.ts",
+        "server/runtime/weeklyPublicationMetricProvider.ts",
+        "server/runtime/weeklyExecutionAdapters.ts"
       ],
       "collections": [
+        "weekly_metric_collection_jobs",
         "social_metric_snapshots"
       ],
-      "finding": "正式performance worker严格账户/平台/当前发布attempt/manifest/原时间窗口；缺数据pending、观察0保留；尚无独立平台指标主动采集worker证明。",
-      "status": "controlled_chain_verified",
+      "finding": "正式默认 adapter 以实际发布回执和原账号读取官方 HTTP 指标，保留字段存在性与真实零值；原任务、周与来源 hash 封存快照。",
+      "status": "controlled_formal_producer_verified",
       "tests": [
-        "server/runtime/socialWeeklyPublicationAdapter.test.ts",
-        "server/socialPrograms/weeklyReviewEvidence.test.ts"
+        "server/runtime/weeklyPublicationMetricProducer.test.ts",
+        "server/runtime/weeklyPublicationMetricProducer.integration.test.ts"
       ]
     },
     {
       "id": "Z-S5-B",
       "chain": "Z-S5",
       "criterion": "异常恢复与空数据",
-      "finding": "按原发布、平台、账号、观察窗口重验指标；未观测 pending/unknown，真实观测零保留，验证器不等于自主采集器。",
-      "status": "controlled_chain_verified",
+      "finding": "缺凭据持久阻塞后同周补齐恢复；重复或丢写读取原封存样本不重采；旧周新累计值不充当历史指标；完全空发布范围持久 no_data，主任务保留必要发布阻塞。",
+      "status": "controlled_formal_producer_verified",
       "tests": [
-        "server/runtime/socialWeeklyPublicationAdapter.test.ts",
-        "server/socialPrograms/weeklyReviewEvidence.test.ts"
+        "server/runtime/weeklyPublicationMetricProducer.test.ts",
+        "server/runtime/weeklyPublicationMetricProducer.integration.test.ts"
       ],
       "worker": [
-        "server/runtime/weeklyPublicationMetricEvidence.ts"
+        "server/runtime/weeklyPublicationMetricProducer.ts",
+        "server/runtime/weeklyPublicationMetricProvider.ts",
+        "server/runtime/weeklyExecutionAdapters.ts"
       ],
       "collections": [
+        "weekly_metric_collection_jobs",
         "social_metric_snapshots"
       ]
     },
@@ -2104,45 +2126,35 @@
       "chain": "Z-S6",
       "criterion": "正式执行器与持久证据",
       "worker": [
-        "server/runtime/socialWeeklyContentTemplateAdapter.ts",
-        "server/socialPrograms/weeklyContentTemplates.ts"
+        "server/runtime/weeklyContentTemplateCandidateProducer.ts",
+        "server/runtime/weeklyExecutionAdapters.ts"
       ],
       "collections": [
-        "social_content_template_candidates",
-        "social_content_template_confirmations",
-        "social_weekly_content_template_bindings",
-        "social_weekly_content_template_execution_selections",
-        "social_weekly_execution_tasks"
+        "social_weekly_template_extractions",
+        "social_content_templates"
       ],
-      "finding": "formal_worker_explicit_candidate_and_confirmation_consumption",
-      "status": "controlled_formal_evidence_passed",
+      "finding": "正式默认 adapter 从实际脚本镜头结构、审核/批准产物、复盘及 S5 封存指标提炼候选，经现有模板服务持久化；保留用户选择与独立确认。",
+      "status": "controlled_formal_producer_verified",
       "tests": [
-        "server/runtime/socialWeeklyContentTemplateAdapter.test.ts",
-        "server/socialPrograms/weeklyContentTemplates.test.ts",
-        "server/socialPrograms/weeklyTemplateRevisionCarryover.test.ts"
+        "server/runtime/weeklyContentTemplateCandidateProducer.test.ts"
       ]
     },
     {
       "id": "Z-S6-B",
       "chain": "Z-S6",
       "criterion": "异常恢复与空数据",
-      "finding": "Exact candidate/version/hash and original confirmation recovered; explicit selection permits narrow resume, never auto confirms intent or changes quota. content_template_execution_selection_required / content_template_confirmation_required; unknown metrics not zero and external views not owned success.",
-      "status": "controlled_formal_evidence_passed",
+      "finding": "缺证据持久阻塞；迟到证据只移除原 producer gap；原输入 hash 幂等复用，跨租户/旧版本/伪平台来源不采纳，候选不自动选择确认。",
+      "status": "controlled_formal_producer_verified",
       "tests": [
-        "server/runtime/socialWeeklyContentTemplateAdapter.test.ts",
-        "server/socialPrograms/weeklyContentTemplates.test.ts",
-        "server/socialPrograms/weeklyTemplateRevisionCarryover.test.ts"
+        "server/runtime/weeklyContentTemplateCandidateProducer.test.ts"
       ],
       "worker": [
-        "server/runtime/socialWeeklyContentTemplateAdapter.ts",
-        "server/socialPrograms/weeklyContentTemplates.ts"
+        "server/runtime/weeklyContentTemplateCandidateProducer.ts",
+        "server/runtime/weeklyExecutionAdapters.ts"
       ],
       "collections": [
-        "social_content_template_candidates",
-        "social_content_template_confirmations",
-        "social_weekly_content_template_bindings",
-        "social_weekly_content_template_execution_selections",
-        "social_weekly_execution_tasks"
+        "social_weekly_template_extractions",
+        "social_content_templates"
       ]
     },
     {
@@ -4344,12 +4356,6 @@
       }
     },
     "network": "最终运行strict loopback guard，受控字节/本地数据库，不真实发消息、发布或付费供应商调用。",
-    "remainingExecutionGaps": [
-      "M1基础规划worker仍只复核显式服务生成的已派单决策",
-      "M2自主前置采集/评分worker缺口",
-      "S5已有HTTP指标采集没有weekly注册，SDK missing || 0丢失presence；不能将指标验证器通过等同自主采集",
-      "S6自主候选提炼worker缺口；现有adapter只消费既有候选和显式确认"
-    ],
     "validation": {
       "combinedFiles": 12,
       "tests": 50,
@@ -4368,6 +4374,279 @@
         "scope": "other owner initially dirty file; this group has no reported error"
       },
       "diffCheck": 0,
+      "externalPublicationOrMessageSend": false
+    },
+    "remainingExecutionGapsHistorical": [
+      "M1基础规划worker仍只复核显式服务生成的已派单决策",
+      "M2自主前置采集/评分worker缺口",
+      "S5已有HTTP指标采集没有weekly注册，SDK missing || 0丢失presence；不能将指标验证器通过等同自主采集",
+      "S6自主候选提炼worker缺口；现有adapter只消费既有候选和显式确认"
+    ]
+  },
+  "stage3": {
+    "status": "controlled_formal_producer_verified",
+    "scope": [
+      "M1",
+      "M2",
+      "S5",
+      "S6"
+    ],
+    "evidence": {
+      "preproduction": {
+        "stage": "M1-M2-formal-preproduction",
+        "owner": "meta",
+        "sourceFrozen": true,
+        "files": [
+          "server/runtime/weeklyPreproductionProducer.ts",
+          "server/runtime/weeklyPreproductionProducer.test.ts",
+          "server/runtime/weeklyPreproductionProducer.fixture.ts",
+          "server/runtime/weeklyPreproductionDiscoveryOriginal.test.ts",
+          "server/socialDiscovery/service.ts",
+          "server/socialOperating/orchestration.ts"
+        ],
+        "collection": {
+          "name": "social_weekly_preproduction_jobs",
+          "statuses": [
+            "bound",
+            "blocked",
+            "running",
+            "succeeded",
+            "no_data",
+            "unknown"
+          ],
+          "unique": [
+            "tenant_id",
+            "task_id",
+            "kind",
+            "input_hash"
+          ],
+          "rowFields": [
+            "id",
+            "tenant_id",
+            "program_id",
+            "package_id",
+            "package_version",
+            "task_id",
+            "input_hash",
+            "kind",
+            "status",
+            "original_run_key",
+            "record_hash",
+            "payload"
+          ]
+        },
+        "interfaces": [
+          "bindWeeklyPreproductionAuthority",
+          "listWeeklyPreproductionJobs",
+          "runWeeklyPreproductionProducerScan",
+          "readWeeklyPreproductionExecutionGate"
+        ],
+        "M1": {
+          "producer": "createSocialOperatingOrchestrationService.resolve with server-only original key + canonical goal/enterprise operating snapshot; retains existing package frozen authority",
+          "persistence": "sealed original-consumer job plus immutable operating snapshot and goal; actual member-confirmed enterprise facts required",
+          "recovery": "unknown write uses exact original-key readback; missing readback stays unknown; empty source authority requires explicit authenticated rebind after true facts confirmation",
+          "regressionFix": "unchanged enterprise must not enter change analysis requiring version advance"
+        },
+        "M2": {
+          "producer": "executeApprovedDiscoveryRun on exact approved scope/version/hash/modes + deterministic original run, then official runDirectorAnalysis and mergeDetailedSchedule before user confirmation",
+          "persistence": "job binds original task/input/deadline/actor/scope and freezes collection and planning evidence hashes",
+          "scopeProof": "analysis benchmark candidate IDs and exact evidence versions belong to original accepted outcomes; main gate rereads original run and current analysis/schedule",
+          "recovery": "same original run reused; no blind paid recollection after unknown or empty result; success receipt precedes selective original task prerequisite unblock; preserve business_dispatch_required",
+          "noData": "only verified complete zero arrays, zero fetched/failed, positive requested on every executed mode; fetched but unqualified stays blocked"
+        },
+        "validation": {
+          "command": "NODE_OPTIONS='--import ./scripts/production-gate-next-loopback-guard.mjs' node --import tsx --test server/runtime/weeklyPreproductionProducer.test.ts server/runtime/weeklyPreproductionDiscoveryOriginal.test.ts server/socialDiscovery/service.test.ts server/socialOperating/orchestration.test.ts",
+          "log": "work/preproduction-tests.log",
+          "expectedCases": 12,
+          "scope": "controlled local ports and formal DataStore; fetch and TCP guard; no real publish/outbound/paid calls"
+        },
+        "negativeCases": [
+          "cross tenant actor",
+          "corrupt durable hash",
+          "deadline drift",
+          "successor package version",
+          "incomplete page",
+          "missing enterprise confirmation",
+          "missing collection credentials",
+          "complete empty source",
+          "duplicate original run",
+          "frozen scope hash drift",
+          "lost snapshot acknowledgement",
+          "exact original consumer remains blocked pending business dispatch"
+        ],
+        "limitations": [
+          "Autonomous producer never confirms or dispatches user plan. Full main completion requires explicit user confirmation and existing business dispatch.",
+          "Default discovery without configured credentials remains durably blocked.",
+          "No S5 metric worker changes in this ownership; another owner is responsible."
+        ]
+      },
+      "metrics": {
+        "stage": "S5 formal metric producer",
+        "status": "controlled_verified",
+        "ownedFiles": [
+          "server/runtime/weeklyPublicationMetricProvider.ts",
+          "server/runtime/weeklyPublicationMetricProducer.ts",
+          "server/runtime/weeklyPublicationMetricProducer.fixture.ts",
+          "server/runtime/weeklyPublicationMetricProducer.test.ts",
+          "server/runtime/weeklyPublicationMetricProducer.integration.test.ts"
+        ],
+        "formalEntry": "createDefaultWeeklyExecutionAdapters -> runSocialWeeklyExecutionScan -> performance_monitoring producer; scan-start runWeeklyMetricCollectionRecoveryScan",
+        "persistence": {
+          "jobs": "weekly_metric_collection_jobs exact tenant/program/package/version/task/account sealed record_hash",
+          "numericEvidence": "social_metric_snapshots raw_metrics preserves provider payload, presence, original receipt lineage, task/publication/account hash"
+        },
+        "matrix": [
+          {
+            "requirement": "formal producer registered",
+            "proof": "actual default factory + formal scan produces job/evidence and succeeds original task"
+          },
+          {
+            "requirement": "credentials blocked/recovery",
+            "proof": "actual missing-token formal claim blocks; official account repair, later same-week formal scan auto-recovers original task, one provider GET total"
+          },
+          {
+            "requirement": "numeric zero vs absent",
+            "proof": "four platform controlled official HTTP readers retain observed zero and missing numeric fields; null/empty/false/NaN not promoted"
+          },
+          {
+            "requirement": "scope/receipt safety",
+            "proof": "foreign tenant, old package version, duplicate receipt assignment, truncated reads, wrong post/native owner rejected"
+          },
+          {
+            "requirement": "no_data boundary",
+            "proof": "only complete empty declared publications with ready actual account persist no_data; graph remains blocked without publication evidence; HTTP204/empty/missing numeric blocked"
+          },
+          {
+            "requirement": "late/duplicate/crash",
+            "proof": "new cumulative capture outside source week blocked; prior original snapshot reused across days without GET; lost final job refs recovered via original sealed snapshot"
+          },
+          {
+            "requirement": "read-only GET",
+            "proof": "actual combined producer-evidence HTTP returns metric job; oldversion409 and foreigntenant403; storage mutation methods throw; zero writes"
+          },
+          {
+            "requirement": "real graph empty path without platform input",
+            "proof": "complete empty exactaccount derives unique actual collection; all cancelled derives exact package unique platform; foreign/missing credentials/dual collection ambiguity reject; no test supplied platform"
+          }
+        ],
+        "test": {
+          "command": "NODE_OPTIONS='--import ./scripts/production-gate-next-loopback-guard.mjs' node --test work/weekly-metric-producer.strict.mjs",
+          "exit": 0,
+          "passed": 13,
+          "failed": 0,
+          "log": "work/weekly-metric-producer-strict-tests.log"
+        },
+        "limits": [
+          "Official HTTP provider contracts validated with intercepted controlled responses; no live credentials or live API sends performed.",
+          "Provider historical-window unavailable: new late cumulative values are durable blocked, not attributed to previous week.",
+          "No-data persisted for complete empty publications but does not change existing result validator into an empty completion."
+        ],
+        "baselineDirtyPreserved": [
+          "server/runtime/weeklyPublicationMetricEvidence.ts"
+        ],
+        "outbound": {
+          "realProviderRequests": 0,
+          "paidCalls": 0,
+          "realPublishes": 0
+        },
+        "commit": "none; parent integrates"
+      },
+      "templates": {
+        "schema": "content-s6-producer-evidence.v1",
+        "files": [
+          "server/runtime/weeklyContentTemplateCandidateProducer.ts",
+          "server/runtime/weeklyContentTemplateCandidateProducer.test.ts"
+        ],
+        "initialDirtyFilesTouched": [],
+        "exports": [
+          "produceWeeklyContentTemplateCandidate",
+          "createWeeklyContentTemplateCandidateProducerAdapter",
+          "runWeeklyTemplateExtractionRecoveryScan",
+          "listWeeklyTemplateExtractionJobs"
+        ],
+        "collection": "social_weekly_template_extractions",
+        "statuses": [
+          "produced",
+          "blocked",
+          "no_data"
+        ],
+        "index": [
+          "tenant_id",
+          "task_id",
+          "input_hash",
+          "status",
+          "code"
+        ],
+        "productionPath": "background -> createDefaultWeeklyExecutionAdapters -> template_extraction producer wrapper; runSocialWeeklyExecutionScan invokes producer-gap recovery at scan start",
+        "identity": [
+          "tenant",
+          "program",
+          "package",
+          "version",
+          "account",
+          "publication",
+          "original source task",
+          "original review task",
+          "inputSnapshot",
+          "upstreamVersionRefs",
+          "source locked structure",
+          "review frozen window",
+          "metric collection job and provider raw hash",
+          "original confirmed member"
+        ],
+        "candidateApproval": "No automatic execution selection or confirmation. Existing services.selectExecutionCandidate/resumeExecution/confirm remain explicit user actions.",
+        "recovery": "Original task only; producer evidence gap is removed under package gate after rechecking same input/version/no lease/not frozen. Selection/confirmation/approval barriers excluded.",
+        "noData": "Only a frozen empty review account scope with no noncancelled publication and a formal metric no_data collection job complete-empty. Missing/unavailable/late remains blocked.",
+        "tests": {
+          "path": "server/runtime/weeklyContentTemplateCandidateProducer.test.ts",
+          "log": "work/content-s6-producer-strict.log",
+          "pass": 4,
+          "fail": 0,
+          "strictGuard": "scripts/production-gate-next-loopback-guard.mjs",
+          "networkRejections": [],
+          "includes": "formal registered adapter factory + runtime block/recovery/explicit selection/worker completion, actual producer-evidence HTTP GET with zero writes; controlled formal metric producer fixtures"
+        },
+        "limitations": [
+          "No real deployment, publication, provider external call or paid generation asserted.",
+          "The fixture uses controlled metric provider and attribution ports, while executing the formal producer and source/candidate validator.",
+          "Low sample and missing metric keys remain honest in candidate performance; no success guarantee."
+        ],
+        "commit": "not_created"
+      }
+    },
+    "integration": {
+      "runtime": "runSocialWeeklyExecutionScan",
+      "defaultFactory": "createDefaultWeeklyExecutionAdapters",
+      "authenticatedGET": "/:programId/operating-packages/:packageId/producer-evidence?version=...",
+      "authorityPOST": "/producer-evidence/preproduction-authority",
+      "GETWrites": 0,
+      "migration": "pb_migrations/1791587000_create_weekly_producer_jobs.js"
+    },
+    "limitations": [
+      "未运行生产迁移、部署、真实外发或付费 provider。",
+      "缺实际凭据/来源保留持久阻塞；M1事实漂移需要显式重绑，M2排期需要人类确认派单。",
+      "旧周迟到新累计指标不替代原周历史值；S6候选需要显式选择及独立确认。"
+    ],
+    "publishingDependency": "独立发布 owner 已提交 Instagram Login provider 与回执恢复；本组未对真实平台生产发布验收。",
+    "validation": {
+      "combinedFiles": 18,
+      "tests": 77,
+      "pass": 77,
+      "fail": 0,
+      "exitCode": 0,
+      "strictGuard": "scripts/production-gate-next-loopback-guard.mjs",
+      "log": "work/stage3-final-tests.log",
+      "typescript": {
+        "exitCode": 0,
+        "diagnostics": 0,
+        "log": "work/stage3-tsc-final.log"
+      },
+      "migrationPreflight": {
+        "status": "passed",
+        "checkedMigrations": 150,
+        "log": "work/stage3-migration-check.json",
+        "readOnly": true
+      },
       "externalPublicationOrMessageSend": false
     }
   }

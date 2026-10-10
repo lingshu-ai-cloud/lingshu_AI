@@ -65,6 +65,10 @@ function task(tenantId = 'tenant-a'): WeeklyExecutionTask {
     status: 'queued', ownBlockingReasons: [], inheritedBlockingTaskIds: [], attempt: 0, maxAttempts: 3,
     nextAttemptAt: null, lease: null, resultRefs: [], lastError: null, recoveredFromDeadLetterAt: null, cancelReason: null, createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() };
 }
+function pendingQualityTask() {
+  const value = task(); value.workflowKind = 'content'; value.schedule.stepKind = 'quality_check'; value.schedule.responsibleActor = 'content_agent';
+  return value;
+}
 async function saveTask(dataStore: DataStore, value: WeeklyExecutionTask) {
   await dataStore.create('social_weekly_operating_packages', { tenant_id: value.tenantId, program_id: value.programId, package_id: value.packageId, version: value.packageVersion, payload: { packageId: value.packageId, version: value.packageVersion, status: 'draft' } });
   await dataStore.create('social_weekly_agent_planning', { tenant_id: value.tenantId, program_id: value.programId, package_id: value.packageId, package_version: value.packageVersion, planning_version: 4, payload: planning() });
@@ -152,29 +156,29 @@ test('missing owned-reference proof blocks completion instead of spending the re
   assert.equal(rows.items[0].payload.attempt, 0);
 });
 test('pending reconciliation does not exhaust retries or immediately reexecute', async () => {
-  const dataStore = memoryStore(); await saveTask(dataStore, task());
+  const dataStore = memoryStore(); await saveTask(dataStore, pendingQualityTask());
   let calls = 0;
-  const result = await runSocialWeeklyExecutionScan({ dataStore, adapters: { business_outline: { async execute() { calls++; return { status: 'pending', code: 'provider_result_unknown', message: '等待对账', retryDelayMs: 30_000 }; } } } });
+  const result = await runSocialWeeklyExecutionScan({ dataStore, adapters: { quality_check: { async execute() { calls++; return { status: 'pending', code: 'provider_result_unknown', message: '等待对账', retryDelayMs: 30_000 }; } } } });
   assert.equal(result.pending, 1); assert.equal(calls, 1);
   const row = (await dataStore.list<any>(WEEKLY_EXECUTION_TASKS)).items[0];
   assert.equal(row.payload.attempt, 0); assert.equal(row.payload.status, 'queued');
   assert.ok(Date.parse(row.payload.nextAttemptAt) > Date.now());
 });
 test('expired worker lease is reconciled on restart and never treated as completion', async () => {
-  const dataStore = memoryStore(); const value = task();
+  const dataStore = memoryStore(); const value = pendingQualityTask();
   value.status = 'leased'; value.attempt = 1;
   value.lease = { leaseId: 'expired', token: 'old', workerId: 'old', acquiredAt: '2020-01-01T00:00:00Z', expiresAt: '2020-01-01T00:01:00Z' };
   await saveTask(dataStore, value);
   let attempts = 0;
-  const adapters = { business_outline: { async execute() { attempts++; return { status: 'pending' as const, code: 'provider_result_unknown', message: '先核对已有供应商回执', progress: { contentTaskId: 'real-content', runId: 'real-run', step: '剪辑合成', activity: '等待合成回执', updatedAt: '2026-10-07T00:00:00Z' }, retryDelayMs: 30_000 }; } } };
+  const adapters = { quality_check: { async execute() { attempts++; return { status: 'pending' as const, code: 'provider_result_unknown', message: '先核对已有供应商回执', progress: { contentTaskId: 'real-content', runId: 'real-run', step: '剪辑合成', activity: '等待合成回执', updatedAt: '2026-10-07T00:00:00Z' }, retryDelayMs: 30_000 }; } } };
   const result = await runSocialWeeklyExecutionScan({ dataStore, adapters });
   assert.equal(result.pending, 1); assert.equal(attempts, 1);
   const current = (await dataStore.list<any>(WEEKLY_EXECUTION_TASKS)).items[0].payload;
   assert.equal(current.productionProgress.contentTaskId, 'real-content'); assert.equal(current.productionProgress.step, '剪辑合成'); assert.equal(current.attempt, 1); assert.equal(current.status, 'queued'); assert.equal(current.resultRefs.length, 0);
 });
 test('concurrent scans execute a claimed task once while the lease is renewed', async () => {
-  const dataStore = memoryStore(); await saveTask(dataStore, task()); let calls = 0;
-  const adapters = { business_outline: { async execute() {
+  const dataStore = memoryStore(); await saveTask(dataStore, pendingQualityTask()); let calls = 0;
+  const adapters = { quality_check: { async execute() {
     calls++;
     await new Promise(resolve => setTimeout(resolve, 650));
     return { status: 'pending' as const, code: 'production_running', message: '真实运行尚未完成', retryDelayMs: 30_000 };
