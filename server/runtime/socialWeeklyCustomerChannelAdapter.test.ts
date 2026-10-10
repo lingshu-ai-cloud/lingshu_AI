@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import type {DataStore,Record_} from '../storage/datastore.js';
 import type {WeeklyExecutionTask} from '../../shared/contracts/socialProgram.js';
-import {createSocialWeeklyCustomerChannelAdapter,WEEKLY_CUSTOMER_CHANNEL_EXECUTIONS} from './socialWeeklyCustomerChannelAdapter.js';
+import {createSocialWeeklyCustomerChannelAdapter,validateWeeklyCustomerChannelExecution,WEEKLY_CUSTOMER_CHANNEL_EXECUTIONS} from './socialWeeklyCustomerChannelAdapter.js';
 
 function fixture(){
  const rows:Record<string,Record_[]>={
@@ -25,9 +25,19 @@ function fixture(){
  return{rows,store,task,authorization,selection};
 }
 
-test('channel readiness persists a real account authority result and missing consent blocks instead of succeeding',async()=>{
+test('channel readiness requires the frozen weekly customer run and its completion validator detects rebinding',async()=>{
  const f=fixture(),adapter=createSocialWeeklyCustomerChannelAdapter(f.store,{readAuthorization:f.authorization as any,openSocialToken:()=> 'token',now:()=>new Date('2026-10-05T00:00:00Z')});
- const result=await adapter.execute(f.task('customer_channel_readiness'));assert.equal(result.status,'succeeded');assert.equal(f.rows[WEEKLY_CUSTOMER_CHANNEL_EXECUTIONS]?.length,1);assert.equal((f.rows[WEEKLY_CUSTOMER_CHANNEL_EXECUTIONS]![0]!.payload as any).channelAuthority.nativeAccountId,'native-page');
+ const task=f.task('customer_channel_readiness'),result=await adapter.execute(task);assert.equal(result.status,'succeeded');assert.equal(f.rows[WEEKLY_CUSTOMER_CHANNEL_EXECUTIONS]?.length,1);const evidence=f.rows[WEEKLY_CUSTOMER_CHANNEL_EXECUTIONS]![0]!.payload as any;assert.equal(evidence.channelAuthority.nativeAccountId,'native-page');assert.equal(evidence.runId,'run');
+ if(result.status!=='succeeded')return;const ports={readAuthorization:f.authorization as any,openSocialToken:()=> 'token'};await validateWeeklyCustomerChannelExecution(f.store,task,result.resultRefs,ports);
+ f.rows.social_weekly_customer_bindings![0]!.run_id='replacement-run';await assert.rejects(validateWeeklyCustomerChannelExecution(f.store,task,result.resultRefs,ports),/weekly_customer_channel_readiness_changed/);
+});
+
+test('channel readiness blocks without a unique weekly customer binding and never writes empty success evidence',async()=>{
+ const f=fixture();f.rows.social_weekly_customer_bindings=[];const task=f.task('customer_channel_readiness');const result=await createSocialWeeklyCustomerChannelAdapter(f.store,{readAuthorization:f.authorization as any,openSocialToken:()=> 'token'}).execute(task);assert.equal(result.status,'blocked');assert.equal('code' in result?result.code:'','weekly_customer_binding_missing');assert.equal(f.rows[WEEKLY_CUSTOMER_CHANNEL_EXECUTIONS]?.length??0,0);
+});
+
+test('missing consent blocks channel readiness instead of succeeding',async()=>{
+ const f=fixture();
  const blocked=await createSocialWeeklyCustomerChannelAdapter(f.store,{readAuthorization:async()=>({...await f.authorization(),tenantAuthorized:false,reasons:['tenant_real_customer_messages_not_authorized']}) as any,openSocialToken:()=> 'token'}).execute({...f.task('customer_channel_readiness'),taskId:'blocked'});assert.equal(blocked.status,'blocked');assert.equal('code' in blocked?blocked.code:'','tenant_real_customer_messages_not_authorized');
  const stopped=await createSocialWeeklyCustomerChannelAdapter(f.store,{readAuthorization:async()=>({...await f.authorization(),backgroundWorkerEnabled:false,scheduledFollowupSendAllowed:false,reasons:['followup_background_worker_disabled']}) as any,openSocialToken:()=> 'token'}).execute({...f.task('customer_channel_readiness'),taskId:'stopped'});assert.equal(stopped.status,'blocked');assert.equal('code' in stopped?stopped.code:'','followup_background_worker_disabled');
 });

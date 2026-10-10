@@ -36,7 +36,7 @@ export function projectExecutionCalendar(tasks: WeeklyExecutionTask[], labels: R
     const planned = calendarDateTime(task.schedule.estimatedFinishAt,clock);
     const presentation=executionCalendarPresentation(task,labels[task.schedule.stepKind]||'阶段交付',options);
     const actor = task.schedule.responsibleActor;
-    const agent: AgentCalendarTask['agent'] = actor === 'director_agent' ? 'director' : actor === 'content_agent' || actor === 'quality_agent' ? 'content' : actor === 'user' ? 'human' : 'business';
+    const agent: AgentCalendarTask['agent'] = actor === 'director_agent' ? 'director' : actor === 'content_agent' || actor === 'quality_agent' ? 'content' : actor === 'customer_agent' ? 'customer' : actor === 'user' ? 'human' : 'business';
     const status: AgentCalendarTask['status'] = task.status === 'succeeded' ? 'completed' : task.status === 'leased' ? 'active' : task.status === 'cancelled' ? 'cancelled' : task.status === 'dead_letter' ? 'failed' : task.status === 'blocked' ? 'blocked' : 'planned';
     const terminal = ['succeeded','cancelled'].includes(task.status);
     const latestStart = Date.parse(task.schedule.latestStartAt || '');
@@ -76,6 +76,7 @@ export function projectExecutionCalendar(tasks: WeeklyExecutionTask[], labels: R
       dueAt: task.schedule.latestFinishAt ?? task.schedule.estimatedFinishAt,
         submission: task.status === 'succeeded' ? 'accepted' as const : 'missing' as const,
       } : {}),
+      ...(['customer_channel_readiness','customer_inquiry_handoff'].includes(task.schedule.stepKind)&&task.publicationTaskId&&['whatsapp','messenger','instagram'].includes(String(task.inputSnapshot.customerChannel))?{customerExecutionTarget:{tenantId:task.tenantId,programId:task.programId,packageId:task.packageId,packageVersion:task.packageVersion,taskId:task.taskId,publicationTaskId:task.publicationTaskId,stepKind:task.schedule.stepKind as 'customer_channel_readiness'|'customer_inquiry_handoff',channel:task.inputSnapshot.customerChannel as 'whatsapp'|'messenger'|'instagram'}}:{}),
       ...(['performance_monitoring','weekly_review'].includes(task.schedule.stepKind)&&task.tenantId&&task.programId&&task.packageId&&Number.isSafeInteger(task.packageVersion)&&task.packageVersion>0?{reviewTarget:{tenantId:task.tenantId,programId:task.programId,packageId:task.packageId,packageVersion:task.packageVersion,taskId:task.taskId,stepKind:task.schedule.stepKind as 'performance_monitoring'|'weekly_review'}}:{}),
       ...(isTemplateCalendarStep(task.schedule.stepKind)?{templateTarget:{tenantId:task.tenantId,programId:task.programId,packageId:task.packageId,packageVersion:task.packageVersion,taskId:task.taskId,stepKind:task.schedule.stepKind}}:{}),
       ...(isPlanningCalendarStep(task.schedule.stepKind)&&task.tenantId&&task.programId&&task.packageId&&Number.isSafeInteger(task.packageVersion)&&task.packageVersion>0?{planningTarget:{tenantId:task.tenantId,programId:task.programId,packageId:task.packageId,packageVersion:task.packageVersion,taskId:task.taskId,stepKind:task.schedule.stepKind}}:{}),
