@@ -169,6 +169,7 @@ test('weekly execution tasks freeze the full worker contract and aggregate real 
     const handoffs = tasks.filter(task => task.publicationTaskId === publication.publicationTaskId && task.schedule.stepKind === 'customer_inquiry_handoff');
     assert.deepEqual(new Set(readiness.map(task => task.inputSnapshot.customerChannel)), new Set(['whatsapp','messenger','instagram']));
     assert.ok(readiness.every(task => publish.dependsOnTaskIds.includes(task.taskId)));
+    assert.ok(readiness.every(task => Date.parse(task.schedule.estimatedFinishAt) <= Date.parse(publish.schedule.estimatedStartAt)));
     assert.ok(handoffs.every(task => task.dependsOnTaskIds.includes(publish.taskId)));
   }
   const scheduleTask = tasks.find(task => task.schedule.stepKind === 'business_schedule');

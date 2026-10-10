@@ -440,6 +440,10 @@ export function planWeeklyExecutionTasks(
     customerReadiness.set(item.publicationTaskId, tasksForPublication);
     const publish = publishing.find(task => task.publicationTaskId === item.publicationTaskId)!;
     publish.dependsOnTaskIds = [...publish.dependsOnTaskIds, ...tasksForPublication.map(task => task.taskId)];
+    const readinessFinish = Math.max(...tasksForPublication.map(task => Date.parse(task.schedule.estimatedFinishAt)));
+    const publishStart = Math.max(Date.parse(publish.schedule.estimatedStartAt), readinessFinish);
+    publish.schedule.estimatedStartAt = new Date(publishStart).toISOString();
+    publish.schedule.estimatedFinishAt = new Date(publishStart + publish.schedule.estimatedDurationMinutes * 60_000).toISOString();
   }
 
   const customerHandoffs = publications.flatMap(item => {
