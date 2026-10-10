@@ -4,9 +4,9 @@ import type {SocialSceneReworkAvailability} from '../../../shared/contracts/soci
 import {validateScopedSceneTarget,type ScopedSceneTarget} from '../../lib/scopedSceneNavigation';
 export {isWeeklyContentNavigationExecution} from '../../../shared/contracts/weeklyContentNavigation';
 export const isSceneContentExecution=(task:WeeklyExecutionTask)=>task.workflowKind==='content'&&['material_readiness','asset_generation','video_generation','quality_check','rework'].includes(task.schedule.stepKind);
-export function sceneCalendarExecution(pkg:Pick<WeeklyOperatingPackage,'programId'|'packageId'|'version'>,tasks:WeeklyExecutionTask[],card:{id:string;productionTaskId?:string}){
+export function sceneCalendarExecution(pkg:Pick<WeeklyOperatingPackage,'programId'|'packageId'|'version'>,tasks:WeeklyExecutionTask[],card:{id:string;productionTaskId?:string;productionExecutionTaskId?:string}){
  const scoped=tasks.filter(t=>t.programId===pkg.programId&&t.packageId===pkg.packageId&&t.packageVersion===pkg.version);
- const exact=scoped.filter(t=>t.taskId===card.id&&t.workflowKind==='content');
+ const exact=scoped.filter(t=>t.taskId===(card.productionExecutionTaskId||card.id)&&t.workflowKind==='content');
  if(exact.length!==1||new Set(scoped.map(t=>t.tenantId)).size!==1)throw Error('日历卡与当前租户、周包或真实内容执行任务不一致，请刷新原周任务。');
  const actual=exact[0]!;
  if(!actual.productionProgress?.contentTaskId||!actual.productionProgress.runId)throw Error(`执行任务 ${actual.taskId} 尚未关联真实内容任务或生产运行；请核对上游 ${actual.dependsOnTaskIds.join('、')||'本周编导输入与生产启动'}。`);

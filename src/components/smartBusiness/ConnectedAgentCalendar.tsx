@@ -225,7 +225,8 @@ export default function ConnectedAgentCalendar({accountBindingTasks=[]}:{account
     setBindingContext(selection);setBindingError('');setSceneChoices(null);setSceneUpstream(null);setSceneReading(selection);
     try{
       const actualTasks=await socialProgramApi.listExecutionTasks(pkg.programId,pkg.packageId,pkg.version);
-      const currentTask=actualTasks.filter(t=>t.taskId===card.id&&t.programId===pkg.programId&&t.packageId===pkg.packageId&&t.packageVersion===pkg.version);
+      const executionTaskId=card.productionExecutionTaskId||card.id;
+      const currentTask=actualTasks.filter(t=>t.taskId===executionTaskId&&t.programId===pkg.programId&&t.packageId===pkg.packageId&&t.packageVersion===pkg.version);
       if(currentTask.length===1&&stillCurrent())setSceneUpstream({selection,tasks:actualTasks.filter(t=>currentTask[0]!.dependsOnTaskIds.includes(t.taskId)&&t.tenantId===currentTask[0]!.tenantId&&t.programId===pkg.programId&&t.packageId===pkg.packageId&&t.packageVersion===pkg.version)});
       if(!stillCurrent())return;
       if(currentTask.length!==1)throw Error('当前周任务身份不唯一，请刷新。');

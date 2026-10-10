@@ -86,6 +86,7 @@ export function projectExecutionCalendar(tasks: WeeklyExecutionTask[], labels: R
       ...((task.inputSnapshot?.publicationTask as {inventoryReuseRef?:{type:string;id:string;version:number}})?.inventoryReuseRef?.type==='weekly_inventory_binding'?{inventoryTarget:{tenantId:task.tenantId,programId:task.programId,packageId:task.packageId,packageVersion:task.packageVersion,bindingId:(task.inputSnapshot.publicationTask as {inventoryReuseRef:{id:string}}).inventoryReuseRef.id,publicationTaskId:task.publicationTaskId!,taskId:task.taskId}}:{}),
       ...(task.schedule.stepKind==='publishing'&&task.workflowKind==='publishing'&&task.publicationTaskId&&task.accountId?{publicationExecutionTarget:{tenantId:task.tenantId,programId:task.programId,packageId:task.packageId,packageVersion:task.packageVersion,taskId:task.taskId,publicationTaskId:task.publicationTaskId,accountId:task.accountId}}:{}),
       productionTaskId: (task.schedule.stepKind==='publishing'||isTemplateCalendarStep(task.schedule.stepKind)||isPlanningCalendarStep(task.schedule.stepKind)||['performance_monitoring','weekly_review'].includes(task.schedule.stepKind)) ? undefined : boundIds?.size === 1 ? [...boundIds][0] : undefined,
+      productionExecutionTaskId: (task.schedule.stepKind==='publishing'||isTemplateCalendarStep(task.schedule.stepKind)||isPlanningCalendarStep(task.schedule.stepKind)||['performance_monitoring','weekly_review'].includes(task.schedule.stepKind)||boundIds?.size!==1) ? undefined : task.taskId,
       reason: reason || undefined,
     }];
   });

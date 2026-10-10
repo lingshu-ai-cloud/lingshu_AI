@@ -4,9 +4,9 @@ import {projectCalendarDeliverables} from './calendarDeliverables';
 import type {AgentCalendarTask} from './AgentWeeklyCalendar';
 const card=(id:string,step:string,group='tenant:week:videoA'):AgentCalendarTask=>({id,executionStep:step,deliverableGroup:group,date:'2026-10-07',time:step==='quality_check'?'15:00':'10:00',agent:'content',title:'视频 A · 产品 A',output:'实际结果',context:'测试',minutes:20,status:'planned'});
 test('one deliverable retains final deadline, real navigation identity and internal nodes',()=>{
- const nodes=[card('script','script'),card('video','video_generation'),{...card('quality','quality_check'),productionTaskId:'actual-content'}];
+ const nodes=[card('script','script'),{...card('video','video_generation'),productionTaskId:'actual-content',productionExecutionTaskId:'video'},card('quality','quality_check')];
  const result=projectCalendarDeliverables(nodes);
- assert.equal(result.length,1);assert.equal(result[0].id,'quality');assert.equal(result[0].time,'15:00');assert.equal(result[0].productionTaskId,'actual-content');assert.equal(result[0].internalNodes?.length,3);
+ assert.equal(result.length,1);assert.equal(result[0].id,'quality');assert.equal(result[0].time,'15:00');assert.equal(result[0].productionTaskId,'actual-content');assert.equal(result[0].productionExecutionTaskId,'video');assert.equal(result[0].internalNodes?.length,3);
 });
 test('another tenant, publication and human exception never collapse into this video',()=>{
  const human={...card('upload','material_readiness'),agent:'human' as const};
