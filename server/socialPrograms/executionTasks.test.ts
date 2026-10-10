@@ -245,6 +245,8 @@ test('cold-start Z and established H generate distinct executable chain identiti
   assert.ok(historical.filter(task=>task.inputSnapshot.referenceSource==='external').every(task=>task.chainContract?.requiredInputKinds.includes('external_reference_evidence')));
   assert.equal(historical.find(task=>task.schedule.stepKind==='performance_monitoring')?.inputSnapshot.profileWork,'existing_customer_and_dual_source_attribution');
   assert.equal(cold.find(task=>task.schedule.stepKind==='performance_monitoring')?.inputSnapshot.profileWork,'new_inquiry_and_first_baseline_attribution');
+  assert.equal(cold.find(task=>task.schedule.stepKind==='performance_monitoring')?.chainTaskCode,'Z-M8');
+  assert.equal(historical.find(task=>task.schedule.stepKind==='performance_monitoring')?.chainTaskCode,'H-M8');
 });
 
 test('real Z and H five-day graphs fit confirmed Agent calendars and finish every video before the preceding-day cutoff',async()=>{

@@ -171,7 +171,7 @@ const MAIN_CHAIN_BY_STEP: Record<WeeklyProductionStepKind, number> = {
   business_outline:1, benchmark_collection:2, benchmark_scoring:2, director_analysis:2,
   business_schedule:3, material_preparation:4, material_readiness:4, script:4, storyboard:4,
   asset_generation:5, video_generation:5, quality_check:5, rework:5, user_approval:5,
-  publishing:6, customer_channel_readiness:7, customer_inquiry_handoff:7, performance_monitoring:7, weekly_review:8,
+  publishing:6, customer_channel_readiness:7, customer_inquiry_handoff:7, performance_monitoring:8, weekly_review:8,
   template_extraction:8, template_performance_validation:8,
 };
 
