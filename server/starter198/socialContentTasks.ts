@@ -122,9 +122,15 @@ export async function createSocialContentTask(input: {
   tenantId: string;
   userId: string;
   idempotencyKey: string;
+  /** Server-owned deterministic identity for workflows which must bind an
+   * authorization proof before the first run is admitted. */
+  taskId?: string;
   value: CreateSocialContentTaskInput;
   now?: Date;
 }): Promise<SocialContentTaskDetail> {
+  if (input.taskId !== undefined && !/^[a-zA-Z0-9._:@-]{1,240}$/.test(input.taskId)) {
+    throw new SocialContentWorkflowError('social_content_task_id_invalid', 400);
+  }
   const packageSelection = (await listActiveSocialWorkPackageCards(input)).map(card => ({
     kind: card.kind,
     packageKey: card.packageKey,
@@ -157,7 +163,7 @@ export async function createSocialContentTask(input: {
       }
       await assertSocialTaskCapacity(input);
       const timestamp = (input.now ?? new Date()).toISOString();
-      const taskId = socialPublicId('socialtask');
+      const taskId = input.taskId ?? socialPublicId('socialtask');
       const theme = resolveSocialThemeSelection(input.value);
       const brief = defaultBrief(input.value);
       const scriptBaseline = theme?.classificationStatus === 'confirmed' && theme.themeId
