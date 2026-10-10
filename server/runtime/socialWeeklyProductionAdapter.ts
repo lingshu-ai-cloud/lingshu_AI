@@ -75,6 +75,28 @@ function version(value: string): number | null {
 }
 function success(ref: VersionedSocialRef): WeeklyExecutionAdapterResult { return { status: 'succeeded', resultRefs: [ref] }; }
 
+/**
+ * New source mutations are scoped to the content task because the operation
+ * ledger is tenant-wide and different weekly videos may legitimately reuse
+ * the same frozen source version. A persisted legacy operation remains the
+ * replay authority only for the task it originally targeted; addSource still
+ * validates its operation and request hash before recovering it.
+ */
+export async function weeklySourceBindingIdempotencyKey(input: {
+  repository: Starter198Repository;
+  tenantId: string;
+  taskId: string;
+  legacyKey: string;
+}): Promise<string> {
+  const legacy = await input.repository.list(STARTER_COLLECTIONS.socialContentOperations, input.tenantId, {
+    where: { idempotency_key: input.legacyKey }, perPage: 2,
+  });
+  if (legacy.totalItems === 1 && legacy.items.length === 1
+    && legacy.items[0]?.operation === 'add_social_task_source'
+    && legacy.items[0]?.target_id === input.taskId) return input.legacyKey;
+  return `${input.legacyKey}:task:${input.taskId}`;
+}
+
 /** Admission uses the same guarded starter command and durable provider queue as the content workbench. */
 export function createSocialWeeklyProductionAdapter(dataStore: DataStore, ports: WeeklyProductionPorts = {}): SocialWeeklyExecutionAdapter {
   const repository = ports.repository ?? createStarter198Repository(dataStore);
@@ -216,7 +238,7 @@ export function createSocialWeeklyProductionAdapter(dataStore: DataStore, ports:
       const references=await readWeeklyReferenceSources(dataStore,task.tenantId,authority,planning.directorAnalyses.find(analysis=>analysis.analysisId===item.directorAnalysisRef?.id)!);
       if(!detail.sources.some(source=>source.kind==='reference_link'&&source.status==='active')) {
         if(detail.runId)return blocked('weekly_reference_binding_revision_required','原运行未冻结参考来源，请修订生产任务后再启动；不能修改已启动运行的来源。');
-        for(const reference of references){await assertAdmission();const attached=await addSource({repository,tenantId:task.tenantId,userId:planning.userConfirmation.confirmedBy,taskId:detail.taskId,idempotencyKey:`weekly-reference:${reference.sourceVersion}`,referenceResolver:weeklyReferenceResolver(references),value:{kind:'reference_link',sourceRef:reference.sourceRef,sourceVersion:reference.sourceVersion,label:reference.label,purpose:'冻结排期已确认参考；保留原来源与权利'}});detail=attached.task;}
+        for(const reference of references){await assertAdmission();const legacyKey=`weekly-reference:${reference.sourceVersion}`;const idempotencyKey=await weeklySourceBindingIdempotencyKey({repository,tenantId:task.tenantId,taskId:detail.taskId,legacyKey});const attached=await addSource({repository,tenantId:task.tenantId,userId:planning.userConfirmation.confirmedBy,taskId:detail.taskId,idempotencyKey,referenceResolver:weeklyReferenceResolver(references),value:{kind:'reference_link',sourceRef:reference.sourceRef,sourceVersion:reference.sourceVersion,label:reference.label,purpose:'冻结排期已确认参考；保留原来源与权利'}});detail=attached.task;}
       }
       assertWeeklyReferenceBindings(detail,references);
       if(['material_preparation','material_readiness'].includes(task.schedule.stepKind)&&!detail.runId){
@@ -286,7 +308,9 @@ export function createSocialWeeklyProductionAdapter(dataStore: DataStore, ports:
           if(detail.runId)return blocked('weekly_running_material_binding_change_required','生产已运行，但缺少被冻结素材绑定；不能运行中编辑输入或重新付费执行。');
           await assertAdmission();
           const sourceKey=createHash('sha256').update(JSON.stringify([binding,material.recordId,option.sourceVersion])).digest('hex');
-          const added=await addSource({repository,tenantId:task.tenantId,userId:planning.userConfirmation.confirmedBy,taskId:detail.taskId,idempotencyKey:`weekly-material:${sourceKey}`,sourceOptions,value:{kind:'material',sourceRef,sourceVersion:option.sourceVersion,label:option.label,purpose:'冻结周排期必需素材；逐视频事实、权利与镜头已核验'}});
+          const legacyKey=`weekly-material:${sourceKey}`;
+          const idempotencyKey=await weeklySourceBindingIdempotencyKey({repository,tenantId:task.tenantId,taskId:detail.taskId,legacyKey});
+          const added=await addSource({repository,tenantId:task.tenantId,userId:planning.userConfirmation.confirmedBy,taskId:detail.taskId,idempotencyKey,sourceOptions,value:{kind:'material',sourceRef,sourceVersion:option.sourceVersion,label:option.label,purpose:'冻结周排期必需素材；逐视频事实、权利与镜头已核验'}});
           detail=added.task;
           if(!(detail.sources??[]).some(source=>source.kind==='material'&&source.sourceRef===sourceRef&&source.sourceVersion===option.sourceVersion&&source.status==='active'))return blocked('weekly_material_source_binding_missing','真实素材来源绑定尚未持久保存。');
         }

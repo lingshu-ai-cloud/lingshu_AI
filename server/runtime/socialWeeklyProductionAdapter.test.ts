@@ -6,7 +6,7 @@ import type { DataStore, Record_, ListQuery } from '../storage/datastore.js';
 import type { WeeklyExecutionTask } from '../../shared/contracts/socialProgram.js';
 import type { SocialContentTaskDetail } from '../../shared/contracts/socialContentWorkflow.js';
 import { createStarter198Repository } from '../starter198/repository.js';
-import { createSocialWeeklyProductionAdapter, weeklyProductionBindingKey } from './socialWeeklyProductionAdapter.js';
+import { createSocialWeeklyProductionAdapter, weeklyProductionBindingKey, weeklySourceBindingIdempotencyKey } from './socialWeeklyProductionAdapter.js';
 function memory(): DataStore {
   const data = new Map<string, Record_[]>();
   return {
@@ -204,6 +204,20 @@ test('frozen material consumer lookup rejects a wrong package identity without i
 test('AI-only legacy production keeps its existing source readiness admission without a fabricated human request',async()=> {
  const f=await fixture();f.set({runId:null,status:'draft'});
  const result=await f.adapter.execute(f.task);assert.equal(result.status,'pending');assert.equal(f.starts(),1);
+});
+
+test('weekly source binding keys isolate different target tasks while preserving compatible legacy replay',async()=> {
+ const store=memory(),repository=createStarter198Repository(store),legacyKey='weekly-reference:shared-version';
+ assert.equal(await weeklySourceBindingIdempotencyKey({repository,tenantId:'tenant',taskId:'content-a',legacyKey}),`${legacyKey}:task:content-a`);
+ await store.create('starter_social_content_operations',{tenant_id:'tenant',idempotency_key:legacyKey,operation:'add_social_task_source',target_id:'content-a'});
+ assert.equal(await weeklySourceBindingIdempotencyKey({repository,tenantId:'tenant',taskId:'content-a',legacyKey}),legacyKey,'the original target keeps its persisted replay key');
+ assert.equal(await weeklySourceBindingIdempotencyKey({repository,tenantId:'tenant',taskId:'content-b',legacyKey}),`${legacyKey}:task:content-b`,'another target receives an isolated key for the same source version');
+});
+
+test('legacy keys from another operation are never adopted as source replay authority',async()=> {
+ const store=memory(),repository=createStarter198Repository(store),legacyKey='weekly-material:shared-input';
+ await store.create('starter_social_content_operations',{tenant_id:'tenant',idempotency_key:legacyKey,operation:'start_social_content_task',target_id:'content-a'});
+ assert.equal(await weeklySourceBindingIdempotencyKey({repository,tenantId:'tenant',taskId:'content-a',legacyKey}),`${legacyKey}:task:content-a`);
 });
 test('indispensable customer evidence promise blocks before paid start even with a safe automatic plan', async () => {
  const {createSocialAssetSupplyPlan}=await import('../../shared/socialContentAssetSupply.js');
