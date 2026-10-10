@@ -7,10 +7,35 @@ import { createSocialWeeklyPublicationAdapter } from './socialWeeklyPublicationA
 import { socialRequestHash } from '../starter198/socialContentValidation.js';
 import type { WeeklyProductionRepairCase } from '../../shared/contracts/weeklyProductionRepairCase.js';
 import type { ListQuery } from '../storage/datastore.js';
+import { assertPublicationAtomicStore } from '../publishing/publicationAtomicStore.js';
 
 async function approve(f: Awaited<ReturnType<typeof creativeRepairApprovalFixture>>) {
   await createWeeklyExecutionTaskService(f.store).approve('t', 'p', 'week1', f.approval.taskId, 'owner');
 }
+
+test('atomic publication store failure keeps its exact blocked reason instead of cancellation semantics', async t => {
+  const f = await creativeRepairApprovalFixture(t);
+  await approve(f);
+  const pkg = f.tables.social_weekly_operating_packages![0]!.payload as any;
+  const task = { ...f.approval, accountId: pkg.socialContentPackage.publicationTasks[0].accountId,
+    schedule: { ...f.approval.schedule, stepKind: 'publishing' as const } };
+  const list = f.store.list.bind(f.store);
+  f.store.list = async <T>(collection: string, query: ListQuery = {}) => {
+    // Exercise the real capability assertion at the guarded production boundary.
+    if (collection === 'social_weekly_execution_tasks') {
+      await assertPublicationAtomicStore({ ...f.store, supportsAtomicOperationLease: () => false });
+    }
+    return list<T>(collection, query);
+  };
+  let providerCalls = 0;
+  const result = await createSocialWeeklyPublicationAdapter(f.store, { adapterFactory: async () => {
+    providerCalls++; throw Error('provider must not be created');
+  } }).execute(task);
+  assert.equal(result.status, 'blocked');
+  assert.equal('code' in result && result.code, 'publication_atomic_store_unavailable');
+  assert.match('message' in result ? result.message : '', /数据库|publication_atomic_store_unavailable/);
+  assert.equal(providerCalls, 0);
+});
 
 test('publication acceptance consumes approved resolved child and refuses parent production identity', async t => {
   const f = await creativeRepairApprovalFixture(t);

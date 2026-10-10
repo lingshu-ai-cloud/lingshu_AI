@@ -42,6 +42,10 @@ export function createSocialWeeklyPublicationAdapter(dataStore: DataStore, optio
     if (task.schedule.stepKind === 'publishing') {
       try { return await withWeeklyProductionAdmissionGuard({ dataStore, tenantId: task.tenantId, packageId: task.packageId, packageVersion: task.packageVersion, action: assertAdmission => publish(task, pkg, assertAdmission) }); }
       catch (error) {
+        if (error instanceof Error && (error.message === 'publication_atomic_store_unavailable' ||
+          'code' in error && error.code === 'publication_atomic_store_unavailable')) {
+          return blocked('publication_atomic_store_unavailable', error.message);
+        }
         const code = error && typeof error === 'object' && 'code' in error ? String(error.code) : 'weekly_publication_admission_failed';
         return code === 'weekly_cancellation_busy' ? pending(code, '撤回或其他执行正在处理，等待安全核对。') : blocked(code, '本周发布已停止或撤回，已有回执保留。');
       }
