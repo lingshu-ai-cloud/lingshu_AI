@@ -1000,7 +1000,7 @@ function MatrixView({ calendarTasks, calendarDemo, data, onRefresh, onNavigate, 
   };
 
   return <div className="space-y-5">
-    <MatrixWorkSchedule calendarTasks={calendarTasks} calendarDemo={calendarDemo} taskItems={data.contentQueue?.items} onOpenTask={onOpenProductionProgress} startsAt={goal?.startsAt} endsAt={goal?.endsAt} accounts={accountRows} plans={productionPlans} selectedAccountId={selectedAccountId} onOpenPublishing={() => onNavigate?.("traffic")}/>
+    <MatrixWorkSchedule calendarTasks={calendarTasks} calendarDemo={calendarDemo} taskItems={data.contentQueue?.items} onOpenTask={onOpenProductionProgress} onOpenContent={onOpenContent} startsAt={goal?.startsAt} endsAt={goal?.endsAt} accounts={accountRows} plans={productionPlans} selectedAccountId={selectedAccountId} onOpenPublishing={() => onNavigate?.("traffic")}/>
     <section className="rounded-3xl border border-slate-200 bg-white p-5 shadow-sm sm:p-6">
       <div className="flex flex-wrap items-start justify-between gap-4">
         <div><p className="text-xs font-bold tracking-[0.16em] text-emerald-700">账号配置</p><h2 className="mt-1 text-2xl font-black text-slate-950">账号职责与连接状态</h2><p className="mt-1 text-sm text-slate-500">内容任务已统一放入上方工作排期；这里仅保留账号定位、承接能力和对标配置。</p></div>
