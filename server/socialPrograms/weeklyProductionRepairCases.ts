@@ -5,7 +5,8 @@ import type {WeeklyExecutionTask,WeeklyOperatingPackage} from '../../shared/cont
 import type {WeeklyProductionRepairCase} from '../../shared/contracts/weeklyProductionRepairCase.js';
 import {socialJson,socialObject,socialRequestHash} from '../starter198/socialContentValidation.js';
 import {createStarter198Repository} from '../starter198/repository.js';
-import {createSocialSceneReworkService} from '../starter198/socialContentSceneReworkService.js';
+import {createSocialSceneReworkService,SOCIAL_SCENE_INTENT_COLLECTION} from '../starter198/socialContentSceneReworkService.js';
+import {readSocialSceneReworkStatus} from '../starter198/socialContentSceneReworkRead.js';
 import {createWeeklyContentQualityRecoveryService,WEEKLY_QUALITY_ACTUAL_REPAIR_BLOCK} from './weeklyContentQualityRecovery.js';
 import {withWeeklyProductionAdmissionGuard} from './weeklyCancellation.js';
 import {getWeeklyExecutionTaskRow,withWeeklyExecutionTaskMutation,writeWeeklyExecutionTask,recomputePackageExecution} from './executionTasks.js';
@@ -40,6 +41,33 @@ export function createWeeklyProductionRepairCaseService(store:DataStore,clock:()
   if(actorUserId!==item.ownerUserId)fail('owner_required',403);
   return{repository,tenantId:item.tenantId,actorUserId,taskId:item.parent.taskId,sourceRunId:item.parent.runId,parentArtifactId:item.parent.artifactRef.id,affectedSceneIds:item.affectedSceneIds,expectedCacheHash:item.parent.sceneCacheHash};
  }
+ async function recoverTechnicalExecution(item:WeeklyProductionRepairCase,actorUserId:string){
+  const admission=item.admission!;
+  const{recordHash:admissionHash,...admissionBody}=admission;
+  if(admissionHash!==socialRequestHash(admissionBody))fail('execution_scope_invalid');
+  const rows=await store.list<Record_>(SOCIAL_SCENE_INTENT_COLLECTION,{where:{tenant_id:item.tenantId,operation_id:admission.operationId},perPage:2});
+  if(rows.totalItems===0&&rows.items.length===0)return null;
+  if(rows.totalItems!==1||rows.items.length!==1)fail('execution_scope_invalid');
+  const row=rows.items[0]!,intent=socialObject(socialJson(row.payload));
+  if(!intent||intent.schemaVersion!=='social-scene-rework-intent.v1'||row.content_hash!==socialRequestHash(intent)||row.task_id!==item.parent.taskId||row.run_id!==admission.executionRunId
+   ||row.parent_artifact_id!==item.parent.artifactRef.id||row.operation_id!==admission.operationId
+   ||intent.tenantId!==item.tenantId||intent.actorUserId!==actorUserId||intent.taskId!==item.parent.taskId
+   ||intent.operationId!==admission.operationId||intent.executionRunId!==admission.executionRunId||intent.sourceRunId!==item.parent.runId
+   ||intent.parentArtifactId!==item.parent.artifactRef.id||intent.parentArtifactHash!==item.parent.artifactHash
+   ||intent.cacheHash!==item.parent.sceneCacheHash||intent.cacheHash!==admission.sceneCacheHash||intent.planHash!==admission.planHash
+   ||admission.caseId!==item.caseId||admission.caseRequestHash!==item.requestHash||admission.confirmedBy!==actorUserId
+   ||!Array.isArray(intent.affectedSceneIds)||socialRequestHash([...intent.affectedSceneIds].sort())!==socialRequestHash([...item.affectedSceneIds].sort()))fail('execution_scope_invalid');
+  const jobs=await store.list<Record_>('content_execution_jobs',{where:{tenant_id:item.tenantId,task_id:item.parent.taskId,run_id:admission.executionRunId,task_type:`social_scene_rework:${admission.operationId}`},perPage:2});
+  // An intent saved before queue admission is still an incomplete admission;
+  // let the ordinary idempotent path finish it instead of binding a missing job.
+  if(jobs.totalItems===0&&jobs.items.length===0)return null;
+  if(jobs.totalItems!==1||jobs.items.length!==1)fail('execution_scope_invalid');
+  // Read-side verification accepts terminal runs and checks the exact authorization,
+  // unique owned job, and any saved output. Recovery never admits production again.
+  const status=await readSocialSceneReworkStatus({repository,tenantId:item.tenantId,actorUserId,taskId:item.parent.taskId,operationId:admission.operationId});
+  if(status.executionRunId!==admission.executionRunId||status.sourceRunId!==item.parent.runId||status.parentArtifactId!==item.parent.artifactRef.id)fail('execution_scope_invalid');
+  return{operationId:status.operationId,runId:status.executionRunId,jobId:status.jobId};
+ }
  return {read,list,
   async previewTechnicalCapacity(tenantId:string,actorUserId:string,caseId:string){const item=await read(tenantId,caseId),preview=await previewSocialSceneReworkAdmission(technicalInput(item,actorUserId));if(item.state!=='awaiting_capacity'&&item.state!=='ready')fail('capacity_state_invalid');if(preview.cacheHash!==item.parent.sceneCacheHash||socialRequestHash(preview.affectedSceneIds)!==socialRequestHash(item.affectedSceneIds))fail('source_changed');return{caseRecordHash:item.recordHash,preview,maximumCaseCostCny:item.maximumCostCny,deadlineAt:item.deadlineAt,estimatedDurationMinutes:item.estimatedDurationMinutes,admission:item.admission};},
   async confirmTechnicalCapacity(tenantId:string,actorUserId:string,caseId:string,input:{expectedCaseRecordHash:string;expectedPreviewHash:string;expectedQuoteHash?:string;authorizedMaximumCostCny:number}){
@@ -53,7 +81,10 @@ export function createWeeklyProductionRepairCaseService(store:DataStore,clock:()
   },
   async startTechnical(tenantId:string,actorUserId:string,caseId:string,input:{expectedCaseRecordHash:string}){
    const initial=await read(tenantId,caseId);return withWeeklyProductionAdmissionGuard({dataStore:store,tenantId,packageId:initial.packageId,packageVersion:initial.packageVersion,action:async assert=>{
-    const current=await caseRow(tenantId,caseId),item=current.item,base=technicalInput(item,actorUserId);if(item.execution){if(!['running','awaiting_audit','resolved'].includes(item.state))fail('execution_state_invalid');return item;}if(item.recordHash!==input.expectedCaseRecordHash||item.state!=='ready'||!item.admission)fail('capacity_confirmation_required');const admission=item.admission!;if(Date.parse(clock().toISOString())>Date.parse(admission.capacityWindow.startsAt)+300000||Date.parse(clock().toISOString())+Number(item.estimatedDurationMinutes)*60000>Date.parse(admission.capacityWindow.deadlineAt))fail('capacity_confirmation_expired');const preview=await previewSocialSceneReworkAdmission(base);if(preview.previewHash!==admission.previewHash||preview.operationId!==admission.operationId||preview.executionRunId!==admission.executionRunId)fail('preview_changed');const result=await admitSocialSceneRework({...base,expectedPreviewHash:admission.previewHash,...(admission.costPolicyHash?{expectedPolicyHash:admission.costPolicyHash}:{})});if(result.intent.operationId!==admission.operationId||result.intent.executionRunId!==admission.executionRunId)fail('execution_scope_invalid');const now=clock().toISOString(),{recordHash:_,...body}=item,updated=seal({...body,state:'running',execution:{operationId:result.intent.operationId,runId:result.job.runId,jobId:result.job.id},updatedAt:now});await assert();return writeCase(current.row,updated);
+    const current=await caseRow(tenantId,caseId),item=current.item,base=technicalInput(item,actorUserId);if(item.execution){if(!['running','awaiting_audit','resolved'].includes(item.state))fail('execution_state_invalid');return item;}if(item.recordHash!==input.expectedCaseRecordHash||item.state!=='ready'||!item.admission)fail('capacity_confirmation_required');
+    const recovered=await recoverTechnicalExecution(item,actorUserId);
+    if(recovered){const{recordHash:_,...body}=item,updated=seal({...body,state:'running',execution:recovered,updatedAt:clock().toISOString()});await assert();return writeCase(current.row,updated);}
+    const admission=item.admission!;if(Date.parse(clock().toISOString())>Date.parse(admission.capacityWindow.startsAt)+300000||Date.parse(clock().toISOString())+Number(item.estimatedDurationMinutes)*60000>Date.parse(admission.capacityWindow.deadlineAt))fail('capacity_confirmation_expired');const preview=await previewSocialSceneReworkAdmission(base);if(preview.previewHash!==admission.previewHash||preview.operationId!==admission.operationId||preview.executionRunId!==admission.executionRunId)fail('preview_changed');const result=await admitSocialSceneRework({...base,expectedPreviewHash:admission.previewHash,...(admission.costPolicyHash?{expectedPolicyHash:admission.costPolicyHash}:{})});if(result.intent.operationId!==admission.operationId||result.intent.executionRunId!==admission.executionRunId)fail('execution_scope_invalid');const now=clock().toISOString(),{recordHash:_,...body}=item,updated=seal({...body,state:'running',execution:{operationId:result.intent.operationId,runId:result.job.runId,jobId:result.job.id},updatedAt:now});await assert();return writeCase(current.row,updated);
    }});
   },
   async handlesCreativeDecision(tenantId:string,taskId:string,artifactId:string){
