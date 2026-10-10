@@ -1254,24 +1254,11 @@ export async function runSocialContentAutoProduction(input: {
           generationExecutionId: productionResultId,
           adoptedAt: new Date().toISOString(),
         },
-        scriptBaseline: {
-          version: activeBaseline.version,
-          source: activeBaseline.source,
-          matchConfidence: activeBaseline.match?.confidence ?? null,
-          groundingVersion: activeBaseline.groundingVersion ?? null,
-          language: activeBaseline.language,
-          lockedAt: activeBaseline.lockedAt,
-          scenes: activeBaseline.scenes.map(scene => ({
-            sceneId: scene.sceneId,
-            shotFunction: scene.shotFunction,
-            subject: scene.subject,
-            action: scene.action,
-            script: scene.script,
-            voiceover: scene.voiceover,
-            caption: scene.caption,
-            narration: scene.narration,
-          })),
-        },
+        // G5 compares the rendered artifact against the exact frozen baseline
+        // used to build the scene cache. A lossy summary cannot prove that
+        // account constraints, fact keys, template structure, or timing stayed
+        // unchanged through rendering.
+        scriptBaseline: structuredClone(activeBaseline),
         directorPlan: directorSummary,
         directorPlanReference: persistedDirectorPlan.reference,
         productionResult,
