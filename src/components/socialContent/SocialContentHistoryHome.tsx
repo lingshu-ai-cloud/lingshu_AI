@@ -95,7 +95,7 @@ export default function SocialContentHistoryHome({ onRequestCreate }: { onReques
   const [loading, setLoading] = useState(true);
   const [historyOpen, setHistoryOpen] = useState(false);
   const [loadError, setLoadError] = useState('');
-  const [previewVideoOpen, setPreviewVideoOpen] = useState(false);
+  const [previewProject, setPreviewProject] = useState<StudioProject | null>(null);
 
   useEffect(() => {
     let active = true;
@@ -119,7 +119,7 @@ export default function SocialContentHistoryHome({ onRequestCreate }: { onReques
   const featuredPreviewUrl = featuredProject ? projectPreviewUrl(featuredProject) : '';
   const openFeatured = () => {
     if (!featuredProject) return;
-    if (featuredPreviewUrl) setPreviewVideoOpen(true);
+    if (featuredPreviewUrl) setPreviewProject(featuredProject);
     else openProject(featuredProject);
   };
   const itemCount = filtered.length;
@@ -179,7 +179,7 @@ export default function SocialContentHistoryHome({ onRequestCreate }: { onReques
               const previewUrl = projectPreviewUrl(project);
               const category = projectCategory(project);
               return (
-                <button key={project.id} type="button" onClick={() => openProject(project)} className="group overflow-hidden rounded-lg border border-slate-200 bg-white text-left shadow-none transition  hover:border-emerald-300 ">
+                <button key={project.id} type="button" onClick={() => previewUrl ? setPreviewProject(project) : openProject(project)} className="group overflow-hidden rounded-lg border border-slate-200 bg-white text-left shadow-none transition  hover:border-emerald-300 ">
                   <span className="relative flex aspect-[16/10] items-center justify-center overflow-hidden bg-surface-2">
                     <CreationHistoryCover project={project} className="absolute inset-0 h-full w-full" />
                     <span className="absolute left-3 top-3 rounded-full bg-black/55 px-2.5 py-1 text-[9px] font-semibold text-white">{category === 'viral_replication' ? '爆款复刻模式' : '自由创作模式'}</span>
@@ -189,7 +189,7 @@ export default function SocialContentHistoryHome({ onRequestCreate }: { onReques
                     <span className="line-clamp-2 min-h-10 text-sm font-semibold leading-5 text-slate-950">{project.title}</span>
                     <span className="mt-3 flex items-center justify-between gap-3 text-[10px]">
                       <span className={`rounded-full px-2 py-1 font-semibold ${previewUrl ? 'bg-emerald-50 text-emerald-700' : 'bg-blue-50 text-blue-700'}`}>{statusLabel(project, previewUrl)}</span>
-                      <span className="flex items-center gap-1 font-semibold text-emerald-700">进入制作 →</span>
+                      <span className="flex items-center gap-1 font-semibold text-emerald-700">{previewUrl ? '预览成片 →' : '进入制作 →'}</span>
                     </span>
                     <span className="mt-2 flex items-center gap-1 text-[9px] text-slate-400"><Clock3 size={10} />{dateLabel(project.updatedAt)}</span>
                   </span>
@@ -212,7 +212,7 @@ export default function SocialContentHistoryHome({ onRequestCreate }: { onReques
         )}
       </section>
 
-      {previewVideoOpen && featuredProject && <CompletedVideoPreview project={featuredProject} onClose={() => setPreviewVideoOpen(false)} />}
+      {previewProject && <CompletedVideoPreview project={previewProject} onClose={() => setPreviewProject(null)} />}
     </div>
   );
 }

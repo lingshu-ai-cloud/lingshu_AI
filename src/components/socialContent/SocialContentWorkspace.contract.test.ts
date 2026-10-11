@@ -80,8 +80,10 @@ assert.match(historyHome, /projectHasAcceptedRender/,
   'the featured video must come from a persisted, accepted tenant project');
 assert.doesNotMatch(historyHome, /feishu-20260929-final\.mp4|FEATURED_COMPLETED_VIDEO/,
   'the creation history must not inject a hard-coded demo video');
-assert.match(historyHome, /setPreviewVideoOpen\(true\)/,
+assert.match(historyHome, /setPreviewProject\(featuredProject\)/,
   'the completed video must open a direct preview instead of navigating into the editor');
+assert.match(historyHome, /previewUrl \? setPreviewProject\(project\) : openProject\(project\)/,
+  'every completed history card must open its player instead of returning to the editor');
 assert.match(historyHome, /<video autoPlay controls playsInline preload="auto"/,
   'the direct completed-video preview must open as a playable video');
 assert.match(landing, /自由创作/);
