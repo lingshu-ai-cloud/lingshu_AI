@@ -1,3 +1,4 @@
+import {readWeeklyProductionStartAttempt} from './weeklyProductionStartAttempt.js';
 import {assessWeeklyOwnedProductIdentity,type WeeklyOwnedProductIdentityPorts} from './weeklyOwnedProductIdentityDemand.js';
 import {createExactShotMaterializationService} from '../lib/referenceExactShotMaterialization.js';
 import { weeklyProductionAdmissionMessage } from './weeklyProductionAdmissionMessage.js';
@@ -336,10 +337,11 @@ export function createSocialWeeklyProductionAdapter(dataStore: DataStore, ports:
         if (!detail.readiness.complete) return { status: 'blocked', code: 'weekly_production_inputs_required', message: `内容输入待补全：${detail.readiness.missing.join('、')}`,
           progress: { contentTaskId: detail.taskId, runId: null, step: 'material_readiness', activity: '等待内容输入补齐', updatedAt: new Date().toISOString() } };
         await assertAdmission();
+        const attempt=await readWeeklyProductionStartAttempt({repository,tenantId:task.tenantId,taskId:detail.taskId,binding,version:detail.version});
         startedHere=true;
         detail = await start({ repository, orchestratorQueue, tenantId: task.tenantId,
           userId: planning.userConfirmation.confirmedBy, taskId: detail.taskId,
-          expectedVersion: detail.version, referenceResolver:weeklyReferenceResolver(references), idempotencyKey: `${binding}:start` });
+          expectedVersion: attempt.expectedVersion, referenceResolver:weeklyReferenceResolver(references), idempotencyKey: attempt.idempotencyKey });
       }
       if(detail.runId&&!startedHere&&['asset_generation','video_generation','quality_check','rework'].includes(task.schedule.stepKind)&&!await readContentExecutionJob(dataStore,task.tenantId,detail.taskId,detail.runId)){await assertAdmission();await ensureOriginalSocialContentProductionQueued({repository,tenantId:task.tenantId,userId:planning.userConfirmation.confirmedBy,taskId:detail.taskId,runId:detail.runId});}
     } catch (error) {

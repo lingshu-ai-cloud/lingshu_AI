@@ -14,7 +14,8 @@ const tenant='material-original-run-isolated';
 test('original owned run with unsafe actual plan cannot freeze generated readiness',async t=>{
  const {f,pkg,created}=await prepareWeeklyControlledOriginalRunFixture(t,tenant);
  const scope:OriginalRunMaterialDemandScope={tenantId:tenant,taskId:String(created.task_id),programId:'p',packageId:pkg.packageId,packageVersion:pkg.version,publicationTaskId:'pub',accountId:'account',factRefs:pkg.socialContentPackage.publicationTasks[0]!.factRefs};
- await assert.rejects(freezeOriginalRunMaterialDemand(f.store,scope),/reference_person_automatic_analysis_required/);
+ assert.equal(await freezeOriginalRunMaterialDemand(f.store,scope),null,'unsafe actual supply cannot create a generated-readiness declaration');
+ assert.equal((created.brief as Record<string,unknown>)._weeklyMaterialDemand,undefined);
  assert.equal(await freezeOriginalRunMaterialDemand(f.store,{...scope,tenantId:'foreign'}),null);
  assert.equal(f.tables.content_execution_jobs?.length??0,0);
 });
