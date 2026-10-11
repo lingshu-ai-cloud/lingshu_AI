@@ -1,0 +1,500 @@
+{
+  "sourceTaskVersion": "4",
+  "sourceReferenceDurationSeconds": 38,
+  "referenceShot": {
+    "shotId": "reference-shot-3",
+    "personContinuityId": null,
+    "observedPresenterRole": "unknown",
+    "referenceProductionRouting": {
+      "version": "reference_identity_first_v1",
+      "state": "awaiting_automatic_analysis",
+      "route": "undetermined",
+      "tier": null,
+      "observedPresenterRole": "unknown",
+      "personPresence": "unknown",
+      "personContinuityId": null,
+      "criticality": "unknown",
+      "reason": "缺少独立的人物连续性证据，系统需自动识别。",
+      "evidence": [],
+      "source": {
+        "model": "",
+        "provenance": "",
+        "sourceSha256": "18c7f2ba2ff769378a8e410551128e1314ff7bf01c1e5a35c4c5d07dbf28c9e1"
+      },
+      "identityLock": null,
+      "constraints": {
+        "forbidGenericPersonMatch": true,
+        "mustUseReferenceFrames": false,
+        "nonPresenterBrollOnly": false
+      },
+      "automaticAnalysisRequired": true
+    },
+    "startSeconds": 4.9,
+    "endSeconds": 5.3,
+    "visualDescription": "多种唇部产品（唇釉、唇膏、唇线笔）呈扇形排列，聚焦在产品上，背景为均匀的棕色。；近景特写，固定镜头",
+    "semanticLabel": {
+      "content": "多种唇部产品（唇釉、唇膏、唇线笔）呈扇形排列，聚焦在产品上，背景为均匀的棕色。",
+      "intent": "展示热门唇部彩妆产品。"
+    },
+    "materialEvidence": {
+      "sourceVideoRef": "/api/overseas/videos/trend_videos_31733a08ae1142a0a636ff48d03991f8/media",
+      "clipRef": "/api/overseas/videos/trend_videos_31733a08ae1142a0a636ff48d03991f8/shot/3/clip",
+      "firstFrameRef": "/api/overseas/videos/trend_videos_31733a08ae1142a0a636ff48d03991f8/shot/3/first-frame",
+      "firstFrameSeconds": 4.94,
+      "extractionStatus": "ready"
+    },
+    "presenterMeasurements": {
+      "shotId": "reference-shot-3",
+      "durationSeconds": 0.4,
+      "sourceFirstFrameRef": "/api/overseas/videos/trend_videos_31733a08ae1142a0a636ff48d03991f8/shot/3/first-frame",
+      "enterprisePresenterAssetRef": null,
+      "visibleSpeechSeconds": null,
+      "lipSyncRequired": null,
+      "specificGestureCount": null,
+      "bodyCenterTravelFrameWidth": null,
+      "cameraTravelFrameDiagonal": null,
+      "compositionLockRequired": null,
+      "physicalProductContact": null,
+      "decisionConfidence": 0,
+      "evidence": [
+        {
+          "startSeconds": 0,
+          "endSeconds": 0.1,
+          "frameRef": "/api/overseas/videos/trend_videos_31733a08ae1142a0a636ff48d03991f8/shot/3/first-frame",
+          "observation": "服务器从该分镜时间区间抽取原视频首帧；仅证明参考画面存在，不证明口型、手势或位移",
+          "fieldName": "sourceFirstFrameRef",
+          "sourceKind": "server_extracted_frame"
+        }
+      ]
+    },
+    "spokenText": "Lip kits, skin creams, lash serums, and body oils are all getting strong attention across social media and TikTok.",
+    "spokenTextTiming": {
+      "precision": "phrase",
+      "provenance": "qwen_filetrans:measured_words",
+      "startSeconds": 5.12,
+      "endSeconds": 12.8
+    },
+    "spokenLines": [
+      {
+        "text": "Lip kits, skin creams, lash serums, and body oils are all getting strong attention across social media and TikTok.",
+        "startSeconds": 5.12,
+        "endSeconds": 12.8,
+        "precision": "phrase",
+        "provenance": "qwen_filetrans:measured_words"
+      }
+    ],
+    "captionText": "Lip kits",
+    "audioDescription": "口播逐字逐句冻结并仅替换身份词；保留声画配合，重新制作配音、配乐和音效。",
+    "rhythmDescription": "快速节奏，自然衔接",
+    "purpose": "value",
+    "action": {
+      "startState": "上一镜头结束，切换至产品展示。",
+      "path": "多种唇部产品（唇釉、唇膏、唇线笔）呈扇形排列，聚焦在产品上，背景为均匀的棕色。",
+      "endState": "唇部产品特写。",
+      "spatialRelation": "只记录画面中可确认的主体位置和连续关系；无法确认的左右方向不补写"
+    },
+    "shotLanguage": {
+      "shotSize": "近景特写",
+      "cameraAngle": "平视",
+      "movement": "固定镜头",
+      "composition": "中心构图"
+    },
+    "audioLayers": {
+      "voice": "检测到人声层；按原节奏保留并做产品关键词替换",
+      "captions": "检测到字幕层；保留信息顺序并重新制作字幕动效",
+      "ambient": null,
+      "music": "检测到音乐层；新视频必须重新授权或替换",
+      "soundEffects": null
+    },
+    "observation": {
+      "observableFacts": [
+        "多种唇部产品（唇釉、唇膏、唇线笔）呈扇形排列，聚焦在产品上，背景为均匀的棕色。",
+        "近景特写",
+        "固定镜头"
+      ],
+      "inferredIntent": [
+        "展示热门唇部彩妆产品。"
+      ],
+      "causalGaps": [],
+      "postProductionOverlays": [
+        "字幕或平台文字属于后期叠加层，不属于物理场景"
+      ]
+    },
+    "visualContract": {
+      "schemaVersion": "social-scene-visual-contract.v1",
+      "subjects": [
+        {
+          "subjectId": "subject-1",
+          "kind": "product",
+          "description": "画面产品",
+          "identityRef": null,
+          "confidence": null
+        }
+      ],
+      "interaction": {
+        "kind": "product_only_display",
+        "description": "多种唇部产品（唇釉、唇膏、唇线笔）呈扇形排列，聚焦在产品上，背景为均匀的棕色。",
+        "actorSubjectId": null,
+        "objectSubjectId": null,
+        "contactArea": null
+      },
+      "environment": {
+        "kind": "other",
+        "description": "产品拍摄棚",
+        "details": []
+      },
+      "productUsage": {
+        "kind": "other",
+        "description": "多种唇部产品（唇釉、唇膏、唇线笔）呈扇形排列，聚焦在产品上，背景为均匀的棕色。",
+        "productId": null,
+        "productRef": "云朵泡沫卸妆蜜"
+      },
+      "product": {
+        "policy": "preferred",
+        "requestedProductId": null,
+        "requestedProductRef": "云朵泡沫卸妆蜜",
+        "source": "agent_inferred"
+      },
+      "action": {
+        "startState": "上一镜头结束，切换至产品展示。",
+        "path": "多种唇部产品（唇釉、唇膏、唇线笔）呈扇形排列，聚焦在产品上，背景为均匀的棕色。",
+        "peakState": "",
+        "endState": "唇部产品特写。",
+        "startSeconds": 4.9,
+        "peakSeconds": null,
+        "endSeconds": 5.3
+      },
+      "camera": {
+        "shotSize": "特写",
+        "angle": "平视",
+        "movement": "固定镜头",
+        "composition": "中心构图"
+      },
+      "precision": "standard",
+      "evidence": {
+        "sourceRange": {
+          "startSeconds": 4.9,
+          "endSeconds": 5.3
+        },
+        "keyframeIds": [
+          "/api/overseas/videos/trend_videos_31733a08ae1142a0a636ff48d03991f8/shot/3/first-frame"
+        ],
+        "confidence": 1
+      }
+    },
+    "tags": {
+      "sceneTypes": [
+        "产品内容结构"
+      ],
+      "subjects": [
+        "素材中的产品实物"
+      ],
+      "subjectRelations": [
+        "主体承担镜头信息"
+      ],
+      "cameraLanguage": [
+        "近景特写",
+        "固定镜头",
+        "自然衔接"
+      ],
+      "contentFunctions": [
+        "value"
+      ],
+      "soundTypes": [
+        "原口播仅做企业名、品牌名或产品名替换",
+        "重新配乐与音效"
+      ],
+      "onScreenInformation": [
+        "原字幕仅做身份词替换与动效重制"
+      ],
+      "truthRequirements": [
+        "none"
+      ],
+      "suggestedProductionMethods": [
+        "aigc_product_scene_replication"
+      ]
+    },
+    "fidelityPoints": [
+      "保留镜头功能：value",
+      "保留时间位置：4.9-5.3 秒",
+      "保留景别与运镜：近景特写、固定镜头",
+      "保留节奏与转场：快速、自然衔接"
+    ],
+    "mustDifferPoints": [
+      "口播逐字逐句冻结，仅替换企业名、品牌名或产品名；不得改写事实、句序、停顿与时长",
+      "字幕仅做同一组身份词替换；替换原视频账号标识和水印",
+      "开场使用目标商品身份生成，后续优先使用素材库真实画面",
+      "保持原信息顺序，同时增加全新音乐、音效和字幕动效包装"
+    ]
+  },
+  "scriptShot": {
+    "shotId": "replication-reference-shot-3",
+    "referenceShotId": "reference-shot-3",
+    "startSeconds": 4.9,
+    "endSeconds": 5.3,
+    "purpose": "value",
+    "visualInstruction": "按多种唇部产品（唇釉、唇膏、唇线笔）呈扇形排列，聚焦在产品上，背景为均匀的棕色。；近景特写，固定镜头的镜头功能制作全新内容。 抽帧动作证据（static_state，1组）：抽帧只确认静态状态：上一镜头结束，切换至产品展示。。保持该姿态自然口播，不生成未经时间序列证实的产品交互动作。 须避免：text, watermark, logo, hands, human, blurry, low quality, inconsistent lighting, wrong background, irrelevant objects. 参考首帧：/api/overseas/videos/trend_videos_31733a08ae1142a0a636ff48d03991f8/shot/3/first-frame",
+    "referenceSpokenText": "Lip kits, skin creams, lash serums, and body oils are all getting strong attention across social media and TikTok.",
+    "spokenText": "Lip kits, skin creams, lash serums, and body oils are all getting strong attention across social media and TikTok.",
+    "speechLines": [
+      {
+        "lineId": "line-002",
+        "referenceText": "Lip kits, skin creams, lash serums, and body oils are all getting strong attention across social media and TikTok.",
+        "draftText": "Lip kits, skin creams, lash serums, and body oils are all getting strong attention across social media and TikTok.",
+        "sourceStartSeconds": 5.12,
+        "sourceEndSeconds": 12.8,
+        "sourcePrecision": "phrase",
+        "sourceWords": [
+          {
+            "start": 5.12,
+            "end": 5.28,
+            "text": "Lip"
+          },
+          {
+            "start": 5.28,
+            "end": 5.6,
+            "text": "kits,"
+          },
+          {
+            "start": 5.92,
+            "end": 6.24,
+            "text": "skin"
+          },
+          {
+            "start": 6.32,
+            "end": 6.64,
+            "text": "creams,"
+          },
+          {
+            "start": 7.04,
+            "end": 7.28,
+            "text": "lash"
+          },
+          {
+            "start": 7.28,
+            "end": 7.76,
+            "text": "serums,"
+          },
+          {
+            "start": 8,
+            "end": 8.16,
+            "text": "and"
+          },
+          {
+            "start": 8.16,
+            "end": 8.48,
+            "text": "body"
+          },
+          {
+            "start": 8.48,
+            "end": 8.88,
+            "text": "oils"
+          },
+          {
+            "start": 9.12,
+            "end": 9.36,
+            "text": "all"
+          },
+          {
+            "start": 9.44,
+            "end": 9.84,
+            "text": "getting"
+          },
+          {
+            "start": 9.92,
+            "end": 10.24,
+            "text": "strong"
+          },
+          {
+            "start": 10.24,
+            "end": 10.8,
+            "text": "attention"
+          },
+          {
+            "start": 10.8,
+            "end": 11.28,
+            "text": "across"
+          },
+          {
+            "start": 11.28,
+            "end": 11.68,
+            "text": "social"
+          },
+          {
+            "start": 11.68,
+            "end": 12.08,
+            "text": "media"
+          },
+          {
+            "start": 12.24,
+            "end": 12.32,
+            "text": "and"
+          },
+          {
+            "start": 12.32,
+            "end": 12.8,
+            "text": "TikTok."
+          }
+        ],
+        "sourceProvenance": "qwen_filetrans:measured_words",
+        "replacedEntityTypes": [],
+        "narrationOwnerShotId": "replication-reference-shot-3",
+        "visualShotIds": [
+          "replication-reference-shot-3",
+          "replication-reference-shot-4",
+          "replication-reference-shot-5",
+          "replication-reference-shot-6",
+          "replication-reference-shot-7",
+          "replication-reference-shot-8",
+          "replication-reference-shot-9",
+          "replication-reference-shot-10",
+          "replication-reference-shot-11",
+          "replication-reference-shot-12",
+          "replication-reference-shot-13"
+        ]
+      }
+    ],
+    "voiceoverReplacement": {
+      "mode": "identity_only",
+      "replacedEntityTypes": []
+    },
+    "captionText": "Lip kits",
+    "audioAndTransition": "口播逐字逐句冻结并仅替换身份词；保留声画配合，重新制作配音、配乐和音效。",
+    "fidelityPoints": [
+      "保留镜头功能：value",
+      "保留时间位置：4.9-5.3 秒",
+      "保留景别与运镜：近景特写、固定镜头",
+      "保留节奏与转场：快速、自然衔接"
+    ],
+    "mustDifferPoints": [
+      "口播逐字逐句冻结，仅替换企业名、品牌名或产品名；不得改写事实、句序、停顿与时长",
+      "字幕仅做同一组身份词替换；替换原视频账号标识和水印",
+      "开场使用目标商品身份生成，后续优先使用素材库真实画面",
+      "保持原信息顺序，同时增加全新音乐、音效和字幕动效包装"
+    ],
+    "materialPlan": {
+      "shotId": "replication-reference-shot-3",
+      "function": "value",
+      "requestedDescription": "按多种唇部产品（唇釉、唇膏、唇线笔）呈扇形排列，聚焦在产品上，背景为均匀的棕色。；近景特写，固定镜头的镜头功能制作全新内容。 抽帧动作证据（static_state，1组）：抽帧只确认静态状态：上一镜头结束，切换至产品展示。。保持该姿态自然口播，不生成未经时间序列证实的产品交互动作。 须避免：text, watermark, logo, hands, human, blurry, low quality, inconsistent lighting, wrong background, irrelevant objects. 参考首帧：/api/overseas/videos/trend_videos_31733a08ae1142a0a636ff48d03991f8/shot/3/first-frame",
+      "sourceStrategy": "authorized_digital_presenter",
+      "materialRouting": {
+        "schemaVersion": "social-material-routing.v1",
+        "materialType": "talking_head",
+        "policy": "authorized_presenter",
+        "localMatch": {
+          "state": "missing",
+          "sourceRefs": [],
+          "evidenceRef": null
+        }
+      },
+      "sourceRefs": [
+        "enterprise-person"
+      ],
+      "fallbackSourceStrategy": null,
+      "productionInstruction": "真人口播使用当前账号授权数字人视频，锁定人物、声音与明确口播文案；能力缺失时停止，不用库存人物或图文替代。",
+      "truthBoundary": {
+        "subject": "none",
+        "syntheticVisualAllowed": true,
+        "customerEvidenceRequired": false,
+        "customerEvidenceRefs": [],
+        "confirmedFactRefs": [],
+        "mustNotImplyCustomerReality": true,
+        "prohibitedRepresentations": [
+          "alter_locked_product_identity",
+          "present_synthetic_media_as_customer_evidence"
+        ]
+      },
+      "functionalEquivalentReplacement": {
+        "required": false,
+        "preservesFunction": "value",
+        "replacesSubject": null,
+        "description": null,
+        "reason": null
+      },
+      "feasibility": "functional_equivalent",
+      "feasibilityReason": "可使用当前已入库素材或已配置生成能力完成该镜头",
+      "customerShootRequired": false,
+      "visualContract": {
+        "schemaVersion": "social-scene-visual-contract.v1",
+        "subjects": [
+          {
+            "subjectId": "subject-1",
+            "kind": "product",
+            "description": "画面产品",
+            "identityRef": null,
+            "confidence": null
+          }
+        ],
+        "interaction": {
+          "kind": "product_only_display",
+          "description": "多种唇部产品（唇釉、唇膏、唇线笔）呈扇形排列，聚焦在产品上，背景为均匀的棕色。",
+          "actorSubjectId": null,
+          "objectSubjectId": null,
+          "contactArea": null
+        },
+        "environment": {
+          "kind": "other",
+          "description": "产品拍摄棚",
+          "details": []
+        },
+        "productUsage": {
+          "kind": "other",
+          "description": "多种唇部产品（唇釉、唇膏、唇线笔）呈扇形排列，聚焦在产品上，背景为均匀的棕色。",
+          "productId": null,
+          "productRef": "云朵泡沫卸妆蜜"
+        },
+        "product": {
+          "policy": "preferred",
+          "requestedProductId": null,
+          "requestedProductRef": "云朵泡沫卸妆蜜",
+          "source": "agent_inferred"
+        },
+        "action": {
+          "startState": "上一镜头结束，切换至产品展示。",
+          "path": "多种唇部产品（唇釉、唇膏、唇线笔）呈扇形排列，聚焦在产品上，背景为均匀的棕色。",
+          "peakState": "",
+          "endState": "唇部产品特写。",
+          "startSeconds": 4.9,
+          "peakSeconds": null,
+          "endSeconds": 5.3
+        },
+        "camera": {
+          "shotSize": "特写",
+          "angle": "平视",
+          "movement": "固定镜头",
+          "composition": "中心构图"
+        },
+        "precision": "standard",
+        "evidence": {
+          "sourceRange": {
+            "startSeconds": 4.9,
+            "endSeconds": 5.3
+          },
+          "keyframeIds": [
+            "/api/overseas/videos/trend_videos_31733a08ae1142a0a636ff48d03991f8/shot/3/first-frame"
+          ],
+          "confidence": 1
+        }
+      },
+      "digitalHumanPlan": {
+        "workflow": "viral_replication",
+        "method": "talking",
+        "presenterAssetIds": [
+          "enterprise-person"
+        ],
+        "referenceMaterialIds": [],
+        "referenceRequired": false,
+        "candidateTools": [
+          "heygen"
+        ],
+        "executionState": "ready_for_capability_check",
+        "accountPresenterLock": null
+      }
+    },
+    "lockedRegions": [
+      "客户产品外观、包装、Logo 和文字不得被生成式修改",
+      "客户真实人物身份和工厂事实不得被虚构替换"
+    ],
+    "risks": []
+  }
+}

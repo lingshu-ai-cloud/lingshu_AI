@@ -230,6 +230,7 @@ export function defaultBrief(value: CreateSocialContentTaskInput) {
     requestedOutputCount: value.mode === 'instant' ? 1 : value.requestedOutputCount ?? null,
     weeklyBudgetCny: value.weeklyBudgetCny ?? null,
     perItemBudgetCny: Math.min(10, value.perItemBudgetCny ?? 10),
+    targetDurationSeconds: value.targetDurationSeconds ?? null,
     retryReserveCny: value.retryReserveCny ?? null,
     planningMode: value.planningMode ?? 'auto_adjust',
     shootingWindowMinutes: value.shootingWindowMinutes ?? null,
@@ -295,6 +296,12 @@ export async function refreshSocialTaskReferenceOutputs(input: {
   const references = detail.sources.filter(source => source.status === 'active' && source.kind === 'reference_link');
   const profile = await readTenantEnterpriseProfile(input.tenantId).catch(() => null);
   const verifiedContext = verifiedSocialScriptContext(profile, summary.brief.productId || summary.brief.productRef);
+  const planning = {
+    targetDurationSeconds: summary.brief.targetDurationSeconds ?? null,
+    budgetCny: Math.min(10, summary.brief.perItemBudgetCny ?? 10),
+    language: summary.brief.languages.some(language => /^en(?:glish)?$/i.test(language)) ? 'en' as const : 'zh' as const,
+    callToAction: summary.brief.callToAction ?? null,
+  };
   let resolved: ResolvedSocialTaskReference | null = null;
   if (references.length) {
     resolved = await (input.referenceResolver ?? resolveSocialTaskReferenceScript)({
@@ -304,6 +311,7 @@ export async function refreshSocialTaskReferenceOutputs(input: {
       referenceSources: references,
       referenceReuse: summary.brief.referenceReuse,
       referenceStore: input.repository.dataStore,
+      planning,
     });
   } else {
     if (summary.brief.referenceReuse) throw new SocialContentWorkflowError('social_reference_reuse_source_missing', 409);
@@ -312,6 +320,7 @@ export async function refreshSocialTaskReferenceOutputs(input: {
       themeId: summary.theme.themeId,
       verifiedContext,
       createdAt: (input.now ?? new Date()).toISOString(),
+      planning,
     });
   }
   const storedReplication = socialObject(socialJson(task.replication_script));

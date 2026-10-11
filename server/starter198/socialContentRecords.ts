@@ -286,6 +286,7 @@ export function parseSocialTaskBrief(value: unknown): SocialContentTaskBrief {
     requestedOutputCount: typeof requested === 'number' && Number.isSafeInteger(requested) && requested > 0 ? requested : null,
     weeklyBudgetCny: optionalStoredNumber('weeklyBudgetCny', 10_000_000),
     perItemBudgetCny: optionalStoredNumber('perItemBudgetCny', 1_000_000),
+    targetDurationSeconds: optionalStoredNumber('targetDurationSeconds', 60),
     retryReserveCny: optionalStoredNumber('retryReserveCny', 10_000_000),
     planningMode: planningMode as SocialContentTaskBrief['planningMode'],
     shootingWindowMinutes: optionalStoredNumber('shootingWindowMinutes', 10_080, true),

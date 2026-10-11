@@ -39,6 +39,7 @@ export async function resolveSocialReferenceReuseOnly(input: {
   verifiedContext: VerifiedSocialScriptContext;
   referenceSources: Array<Pick<SocialTaskSource, 'sourceId' | 'sourceRef' | 'sourceVersion' | 'createdAt'>>;
   binding: SocialReferenceReuseBinding;
+  planning?: {targetDurationSeconds: number | null; budgetCny: number; language?: 'en' | 'zh'; callToAction?: string | null};
 }, ports: { readRecord(id: string): Promise<Record<string, unknown> | null> }): Promise<ResolvedSocialTaskReference> {
   const pin = input.binding;
   if (!pin || !socialText(pin.recordId) || !socialText(pin.analysisId)
@@ -52,7 +53,7 @@ export async function resolveSocialReferenceReuseOnly(input: {
     || (record.contentSha256 && record.contentSha256 !== pin.contentSha256)) fail('source_hash_changed');
   if (socialText(analysis.analysisRunId) !== pin.analysisId || socialRequestHash(analysis) !== pin.analysisHash) fail('analysis_changed');
   const resolved = buildSocialTaskReferencePackage({ record, source: input.referenceSources[0]!,
-    themeId: input.themeId, verifiedContext: input.verifiedContext });
+    themeId: input.themeId, verifiedContext: input.verifiedContext, planning: input.planning });
   if (!resolved) fail('exact_analysis_or_source_match_missing');
   return resolved;
 }

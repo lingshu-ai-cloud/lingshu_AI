@@ -25,6 +25,8 @@ test('normal API creation persists the policy while historic briefs remain unmar
   assert.equal(parseSocialTaskBrief(legacy).materialRoutingPolicyVersion, undefined);
   assert.throws(() => parseSocialTaskBrief({ ...brief, materialRoutingPolicyVersion: 'unknown' }), /social_material_routing_policy_invalid/);
   assert.deepEqual(parseUpdateSocialTask({ expectedVersion: 'v65', changes: { title: '更新标题' } }).changes, { title: '更新标题' });
+  assert.equal(parseUpdateSocialTask({ expectedVersion: 'v65', changes: { targetDurationSeconds: 18 } }).changes.targetDurationSeconds, 18);
+  assert.throws(() => parseUpdateSocialTask({ expectedVersion: 'v65', changes: { targetDurationSeconds: 3 } }), /social_content_target_duration_invalid/);
 });
 test('local product match retains its action evidence, SKU and exact analyzed segment', () => {
   const result = requests([candidate()])[0]!;

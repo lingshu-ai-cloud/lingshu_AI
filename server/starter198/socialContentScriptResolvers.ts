@@ -64,6 +64,7 @@ export async function resolveSocialTaskReferenceScript(input: {
   referenceReuse?: SocialReferenceReuseBinding;
   /** Server-owned repository transport; never read from a request body. */
   referenceStore?: Pick<DataStore, 'getById'>;
+  planning?: {targetDurationSeconds: number | null; budgetCny: number; language?: 'en' | 'zh'; callToAction?: string | null};
 }): Promise<ResolvedSocialTaskReference | null> {
   // Explicit reuse never enters catalog fallback, analysis queue or crawler.
   // Keep failures outside the legacy best-effort catch so the gap is visible.
@@ -96,6 +97,7 @@ export async function resolveSocialTaskReferenceScript(input: {
           source,
           themeId: input.themeId,
           verifiedContext: input.verifiedContext,
+          planning: input.planning,
         });
         if (resolved) return resolved;
       }
@@ -155,6 +157,7 @@ export async function resolveSocialRecommendedReferenceScript(input: {
   themeId: SocialContentThemeId;
   verifiedContext: VerifiedSocialScriptContext;
   createdAt: string;
+  planning?: {targetDurationSeconds: number | null; budgetCny: number; language?: 'en' | 'zh'; callToAction?: string | null};
 }): Promise<ResolvedSocialTaskReference | null> {
   try {
     const sharedTenantId = socialText(process.env.SOCIAL_SHARED_INSPIRATION_TENANT_ID)
@@ -181,6 +184,7 @@ export async function resolveSocialRecommendedReferenceScript(input: {
       },
       themeId: input.themeId,
       verifiedContext: input.verifiedContext,
+      planning: input.planning,
     });
     if (!resolved) return null;
     return {

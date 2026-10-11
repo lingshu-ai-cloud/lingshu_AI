@@ -71,8 +71,11 @@ export type SocialContentCapabilityRuntime = CapabilityDefinition & {
 /** Resolve runtime-backed capabilities when a workflow is built. Reading the
  * environment at module import made a worker keep an obsolete capability set
  * after its verified runtime configuration was refreshed. */
-export function socialContentEmbeddedRuntimeRegistrations(): SocialContentCapabilityRuntimeRegistration[] {
-  const productSceneReady = process.env.SEEDANCE_VIDEO_ENABLED === 'true'
+export function socialContentEmbeddedRuntimeRegistrations(options: { wholeFilmBudget?: boolean; productVideoProvider?: 'wan' | 'seedance' } = {}): SocialContentCapabilityRuntimeRegistration[] {
+  const firstFrameReady = Boolean(String(process.env.SEEDREAM_API_KEY || process.env.SEEDANCE_API_KEY || '').trim());
+  const productSceneReady = options.wholeFilmBudget && options.productVideoProvider === 'wan'
+    ? firstFrameReady && Boolean(String(process.env.DASHSCOPE_API_KEY || '').trim())
+    : process.env.SEEDANCE_VIDEO_ENABLED === 'true'
     && Boolean(String(process.env.SEEDANCE_API_KEY || '').trim())
     && Boolean(String(process.env.SEEDREAM_API_KEY || process.env.SEEDANCE_API_KEY || '').trim());
   const heygenBudget = studioPaidBudget.status('heygen');
@@ -81,7 +84,7 @@ export function socialContentEmbeddedRuntimeRegistrations(): SocialContentCapabi
     ...(process.env.HEYGEN_GENERATION_ENABLED === 'true' ? [] : ['HEYGEN_GENERATION_ENABLED']),
     ...(String(process.env.HEYGEN_API_KEY || '').trim() ? [] : ['HEYGEN_API_KEY']),
     ...(objectStorageEnabled() ? [] : ['对象存储']),
-    ...(heygenBudget.allowed && Number(heygenBudget.reservationCny) > 0 ? [] : [`付费预算：${heygenBudget.reason || '未配置正数预留额'}`]),
+    ...(options.wholeFilmBudget || heygenBudget.allowed && Number(heygenBudget.reservationCny) > 0 ? [] : [`付费预算：${heygenBudget.reason || '未配置正数预留额'}`]),
   ];
   return [
     { strategy: 'customer_real_asset', adapterIds: ['existing_customer_asset.v1'], environmentReady: true, reason: null },

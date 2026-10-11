@@ -427,9 +427,11 @@ export interface SocialInspirationScores {
 
 export interface SocialReplicationScriptShot {
   /** Authored copy/timing; not recovered reference ASR or a review decision. */
-  scriptOrigin?: 'independent_revision';
+  scriptOrigin?: 'independent_revision' | 'budget_semantic_revision';
   shotId: string;
   referenceShotId: string | null;
+  /** All reference factors retained by a consolidated authored scene. */
+  referenceShotIds?: string[];
   startSeconds: number;
   endSeconds: number;
   purpose: SocialShotFunction;

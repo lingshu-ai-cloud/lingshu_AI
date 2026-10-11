@@ -107,7 +107,8 @@ export interface StoredSocialScriptBaseline {
     } | null;
   };
   scenes: Array<{
-    scriptOrigin?: 'independent_revision';
+    scriptOrigin?: 'independent_revision' | 'budget_semantic_revision';
+    referenceShotIds?: string[];
     sceneId: string;
     formulaNodeId: string | null;
     inspirationNodeId?: string | null;
@@ -535,7 +536,8 @@ export function freezeSocialScriptBaseline(input: {
       shotFunction: socialText(shot.purpose) || '主题表达',
       subject: socialText(shot.materialPlan?.requestedDescription) || visualInstruction || '本次内容',
       action: visualInstruction || '按参考节奏展示',
-      ...(shot.scriptOrigin === 'independent_revision' ? { scriptOrigin: 'independent_revision' as const } : {}),
+      ...(['independent_revision','budget_semantic_revision'].includes(shot.scriptOrigin||'') ? {scriptOrigin:shot.scriptOrigin} : {}),
+      ...(shot.referenceShotIds ? {referenceShotIds:[...shot.referenceShotIds]} : {}),
       script: visualInstruction || narration,
       referenceSpokenText: shot.referenceSpokenText ?? null,
       voiceover: narration,
@@ -807,7 +809,8 @@ export function parseStoredSocialScriptBaseline(value: unknown): StoredSocialScr
       ...(Object.prototype.hasOwnProperty.call(scene ?? {}, 'referenceSpokenText')
         ? { referenceSpokenText: socialText(scene?.referenceSpokenText) || null }
         : {}),
-      ...(socialText(scene?.scriptOrigin) === 'independent_revision' ? { scriptOrigin: 'independent_revision' as const } : {}),
+      ...(['independent_revision','budget_semantic_revision'].includes(socialText(scene?.scriptOrigin)) ? {scriptOrigin:socialText(scene?.scriptOrigin) as 'independent_revision'|'budget_semantic_revision'} : {}),
+      ...(Array.isArray(scene?.referenceShotIds) ? {referenceShotIds:scene.referenceShotIds.map(socialText)} : {}),
       voiceover: socialText(scene?.voiceover) || socialText(scene?.narration),
       ...(speechLines ? { speechLines: speechLines.map(rawLine => {
         const line = rawLine ?? {};
@@ -852,7 +855,7 @@ export function parseStoredSocialScriptBaseline(value: unknown): StoredSocialScr
       caption: socialText(scene?.caption),
       narration: socialText(scene?.narration),
     };
-    const independentScene = parsed.scriptOrigin === 'independent_revision' && !parsed.referenceSpokenText
+    const independentScene = ['independent_revision','budget_semantic_revision'].includes(parsed.scriptOrigin||'') && !parsed.referenceSpokenText
       && !parsed.voiceoverReplacement && (parsed.speechLines ?? []).every(line => !line.referenceText
         && line.sourceProvenance === 'independent_revision_script:not_reference_asr' && line.sourcePrecision === 'coarse'
         && line.sourceWords?.length === 0 && line.replacedEntityTypes.length === 0);

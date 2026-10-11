@@ -1,3 +1,4 @@
+import {consolidateReferenceSemanticShots, type ReferenceSemanticPlanning} from './socialContentSemanticConsolidation.js';
 import type {
   SocialContentThemeId,
   SocialReferenceShotAnalysis,
@@ -1031,6 +1032,7 @@ function materialPlanForShot(shot: SocialReferenceShotAnalysis): SocialReplicati
 }
 
 export function buildSocialTaskReferencePackage(input: {
+  planning?: ReferenceSemanticPlanning;
   record: Record<string, unknown>;
   source: Pick<SocialTaskSource, 'sourceId' | 'sourceRef' | 'sourceVersion' | 'createdAt'>;
   themeId: SocialContentThemeId;
@@ -1204,7 +1206,7 @@ export function buildSocialTaskReferencePackage(input: {
         visualShotIds,
       };
     });
-  const scriptShots: SocialReplicationScriptShot[] = shots.map((shot, index) => {
+  let scriptShots: SocialReplicationScriptShot[] = shots.map((shot, index) => {
     const rawDetail = exact.details[index]!.detail;
     const frameAction = referenceFrameActionPrompt(rawDetail);
     const referenceSpokenText = referenceLines[index] ?? '';
@@ -1245,6 +1247,7 @@ export function buildSocialTaskReferencePackage(input: {
       : [],
     };
   });
+  if(input.planning)scriptShots=consolidateReferenceSemanticShots({shots:scriptShots,planning:input.planning,context:input.verifiedContext});
   const replicationScript: SocialReplicationScriptVersion = {
     version: String(Math.max(1, Date.parse(createdAt) || 1)),
     referenceAnalysisId: analysisId,
@@ -1252,9 +1255,9 @@ export function buildSocialTaskReferencePackage(input: {
     primaryHookId: primaryHook.hookId,
     hookOptions,
     shots: scriptShots,
-    narrationLines,
+    narrationLines: scriptShots.some(shot=>shot.scriptOrigin==='budget_semantic_revision') ? [] : narrationLines,
     narrationSourceStatus: narrationLines.length ? 'asr_aligned' : 'missing_source_asr',
-    structureFidelitySummary: '口播逐字逐句冻结，仅替换企业名、品牌名或产品名；同时保留句序、停顿、时长、前三秒机制、镜头功能与节奏关系。',
+    structureFidelitySummary: scriptShots.some(shot=>shot.scriptOrigin==='budget_semantic_revision') ? '按整片预算和目标时长合并语义功能镜；所有参考镜头因素保留many-to-one映射。口播为企业原创精简版本，参考原时长与逐字台词不声称保真。' : '口播逐字逐句冻结，仅替换企业名、品牌名或产品名；同时保留句序、停顿、时长、前三秒机制、镜头功能与节奏关系。',
     originalityDifferenceSummary: '不做事实改写；画面按当前技术栈重制，音乐、音效、字幕动效和视觉包装使用全新版本。',
     createdAt,
   };

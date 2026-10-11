@@ -219,6 +219,8 @@ export interface SocialContentTaskBrief {
   requestedOutputCount: number | null;
   weeklyBudgetCny?: number | null;
   perItemBudgetCny?: number | null;
+  /** Intended finished-film duration. Planning may adapt reference pacing to this bound. */
+  targetDurationSeconds?: number | null;
   retryReserveCny?: number | null;
   planningMode?: 'fixed' | 'auto_adjust';
   shootingWindowMinutes?: number | null;
@@ -526,6 +528,8 @@ export interface CreateSocialContentTaskInput {
   requestedOutputCount?: number | null;
   weeklyBudgetCny?: number | null;
   perItemBudgetCny?: number | null;
+  /** Intended finished-film duration, independent of the reference video's runtime. */
+  targetDurationSeconds?: number | null;
   retryReserveCny?: number | null;
   planningMode?: 'fixed' | 'auto_adjust';
   shootingWindowMinutes?: number | null;

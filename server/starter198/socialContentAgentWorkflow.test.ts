@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
+import cachedPresenterMicroshot from './fixtures/cached38-presenter-microshot.json';
 import { createSocialAssetSupplyPlan } from '../../shared/socialContentAssetSupply';
 import type {
   SocialContentTaskBrief,
@@ -608,3 +609,43 @@ test('missing reference ID cannot borrow a different ordinal reference after reo
   assert.equal(required.executionPlan.scenes[0].selectedSourceStrategy, 'aigc_product_scene_replication');
   assert.ok(required.executionPlan.scenes[0].productSceneReplication);
  });
+
+test('typed presenter route carries frozen reference factors on silent body micro-shots', () => {
+  // Regression from the cached 38s reference: narration belongs to a preceding
+  // shot, while this small body gesture still uses the approved presenter.
+  const reference = structuredClone(referenceAnalysis);
+  reference.shots[1]!.purpose = 'value';
+  reference.shots[1]!.visualDescription = '女主站立，面向镜头，双手摊开做讲解手势。';
+  const script = structuredClone(replicationScript);
+  script.shots[1]!.purpose='value';script.shots[1]!.spokenText=null;
+  const plan=createSocialAssetSupplyPlan({creationMode:'viral_replication',productionApproach:'ai_enhanced',materialRoutingPolicyVersion:'type-aware.v1',inventory:{presenterAssetIds:['enterprise-person']},presenterSelectionConfirmed:true,shots:script.shots.map(shot=>({shotId:shot.shotId,function:shot.purpose,referenceShotId:shot.referenceShotId,materialType:'talking_head',requestedDescription:'授权数字人口播主镜，保持原人物讲解手势' }))});
+  const workflow=buildSocialAgentWorkflow({taskId:'actual-reference-presenter-regression',taskVersion:'4',taskStatus:'plan_review',mode:'instant',weeklyPlanId:null,brief:{...brief,materialRoutingPolicyVersion:'type-aware.v1',perItemBudgetCny:10},sources:[],factSourceRefs:[],assetSupplyPlan:plan,referenceAnalysis:reference,replicationScript:script,capabilityRuntime:[{strategy:'authorized_digital_presenter',adapterIds:['controlled_digital_presenter.v1'],environmentReady:true,reason:null}]});
+  const scene=workflow.executionPlan.scenes.find(scene=>scene.sceneId==='scene-cta')!;
+  assert.ok(scene.recommendedCandidateIds.length);
+  assert.ok(scene.candidates.every(candidate=>candidate.sourceStrategy==='authorized_digital_presenter'));
+  assert.ok(scene.factorFeasibility?.length);assert.ok(scene.factorFeasibility.every(f=>f.feasible));
+  const failed=buildSocialAgentWorkflow({taskId:'actual-reference-presenter-regression',taskVersion:'4',taskStatus:'plan_review',mode:'instant',weeklyPlanId:null,brief:{...brief,materialRoutingPolicyVersion:'type-aware.v1'},sources:[],factSourceRefs:[],assetSupplyPlan:plan,referenceAnalysis:reference,replicationScript:script,capabilityRuntime:[]});
+  assert.equal(failed.executionPlan.scenes[1]!.recommendedCandidateIds.length,0);
+  assert.ok(failed.executionPlan.scenes[1]!.factorFeasibility?.every(f=>!f.feasible));
+});
+
+test('actual cached38 reference body shot retains all frozen factors when the typed presenter is executable',()=>{
+ const record=cachedPresenterMicroshot;assert.equal(record.sourceTaskVersion,'4');
+ const reference={...structuredClone(referenceAnalysis),shots:[record.referenceShot]} as SocialReferenceVideoAnalysis;
+ const script={...structuredClone(replicationScript),primaryHookId:replicationScript.primaryHookId,shots:[record.scriptShot]} as SocialReplicationScriptVersion;
+ const plan={...supply,shots:[record.scriptShot.materialPlan]} as typeof supply;
+ const workflow=buildSocialAgentWorkflow({taskId:'cached38-record-regression',taskVersion:'4',taskStatus:'plan_review',mode:'instant',weeklyPlanId:null,brief:{...brief,materialRoutingPolicyVersion:'type-aware.v1'},sources:[],factSourceRefs:[],assetSupplyPlan:plan,referenceAnalysis:reference,replicationScript:script,capabilityRuntime:[{strategy:'authorized_digital_presenter',adapterIds:['controlled_digital_presenter.v1'],environmentReady:true,reason:null}]});
+ const scene=workflow.executionPlan.scenes[0]!;assert.equal(scene.sceneId,'replication-reference-shot-3');assert.ok(scene.recommendedCandidateIds.length);assert.ok(scene.candidates.every(c=>c.sourceStrategy==='authorized_digital_presenter'));
+ assert.deepEqual(scene.replicationFactorIds,workflow.directorBrief.scenes[0]!.replicationFactors!.map(f=>f.factorId));assert.ok(scene.factorFeasibility!.every(f=>f.feasible&&f.plannedValidatorId));
+});
+
+test('whole-film typed runtime uses its formal funding gate without borrowing the legacy Studio reserve', async()=>{
+ const {socialContentEmbeddedRuntimeRegistrations}=await import('./socialContentAgentWorkflowContext.js');
+ const changes={SOCIAL_CONTENT_HEYGEN_ENABLED:'true',HEYGEN_GENERATION_ENABLED:'true',HEYGEN_API_KEY:'controlled-only',OBJECT_STORAGE_DRIVER:'local',STUDIO_PAID_BUDGET_CNY:'',SEEDANCE_VIDEO_ENABLED:'false',SEEDANCE_API_KEY:'',SEEDREAM_API_KEY:'controlled-frame',DASHSCOPE_API_KEY:'controlled-video'};
+ const saved=Object.fromEntries(Object.keys(changes).map(key=>[key,process.env[key]]));
+ try{Object.assign(process.env,changes);
+  const legacy=socialContentEmbeddedRuntimeRegistrations();assert.equal(legacy.find(r=>r.strategy==='authorized_digital_presenter')!.environmentReady,false);assert.ok(!legacy.some(r=>r.strategy==='aigc_product_scene_replication'));
+  const typed=socialContentEmbeddedRuntimeRegistrations({wholeFilmBudget:true,productVideoProvider:'wan'});assert.equal(typed.find(r=>r.strategy==='authorized_digital_presenter')!.environmentReady,true);assert.equal(typed.find(r=>r.strategy==='aigc_product_scene_replication')!.environmentReady,true);
+  process.env.HEYGEN_API_KEY='';process.env.DASHSCOPE_API_KEY='';const missing=socialContentEmbeddedRuntimeRegistrations({wholeFilmBudget:true,productVideoProvider:'wan'});assert.equal(missing.find(r=>r.strategy==='authorized_digital_presenter')!.environmentReady,false);assert.ok(!missing.some(r=>r.strategy==='aigc_product_scene_replication'));
+ }finally{for(const[key,value]of Object.entries(saved)){if(value===undefined)delete process.env[key];else process.env[key]=value;}}
+});

@@ -364,7 +364,8 @@ function buildDirectorBrief(
     && new Set(supplyShots.map(shot => shot.shotId)).size === supplyShots.length
     && new Set(referenceShots.map(shot => shot.shotId)).size === referenceShots.length
     && scriptShots.every(shot => supplyById.has(shot.shotId)
-      && (!shot.referenceShotId || referenceById.has(shot.referenceShotId)))
+      && (!shot.referenceShotId || referenceById.has(shot.referenceShotId))
+      && (shot.referenceShotIds||[]).every(id=>referenceById.has(id)))
   );
   const productSelection = sceneProductSelection(input);
   const scenes = (scriptShots.length ? scriptShots : supplyShots.map(() => null)).map((script, index) => {
@@ -379,7 +380,7 @@ function buildDirectorBrief(
       supply,
       reference,
       replicationFactors: replicationJob?.factorSpecs.filter(factor => (
-        factor.referenceShotId === (script?.referenceShotId ?? reference?.shotId ?? null)
+        script?.referenceShotIds?.length ? script.referenceShotIds.includes(factor.referenceShotId||'') : factor.referenceShotId === (script?.referenceShotId ?? reference?.shotId ?? null)
       )) ?? [],
       productSelection,
       primaryHook: input.referenceAnalysis?.hookAnalysis ?? null,
@@ -523,7 +524,8 @@ function capabilityCandidates(input: {
   capabilityRuntime?: SocialContentCapabilityRuntimeRegistration[];
   materialCandidates?: SocialWorkflowMaterialCandidate[];
 }): SocialExecutionCandidate[] {
-  const runtimeRegistration = new Map((input.capabilityRuntime ?? socialContentEmbeddedRuntimeRegistrations())
+  const registrations = input.capabilityRuntime ?? socialContentEmbeddedRuntimeRegistrations(input.supply.materialRouting ? { wholeFilmBudget: true, productVideoProvider: input.supply.materialRouting.generation?.videoProvider } : {});
+  const runtimeRegistration = new Map(registrations
     .map(item => [item.strategy, item]));
   const sourceRuntime = runtimeRegistration.get(input.supply.sourceStrategy);
   // Product image refs are inputs to the paid scene-generation capability,
@@ -632,7 +634,7 @@ function capabilityCandidates(input: {
     },
   });
   });
-  const capabilityRows = socialContentCapabilityRegistry(input.capabilityRuntime)
+  const capabilityRows = socialContentCapabilityRegistry(registrations)
     .filter(capability => capability.executable)
     .filter(capability => capability.strategy !== 'authorized_digital_presenter'
       || (input.supply.digitalHumanPlan !== undefined
@@ -751,7 +753,13 @@ function executionScene(input: {
   const generatedReference=Boolean(input.scene.referenceProductionRouting && ['aigc_video','non_presenter_aigc_video'].includes(input.scene.referenceProductionRouting.route));
   const mandatoryProductGeneration = input.supply.sourceStrategy === 'aigc_product_scene_replication'
     && !!input.supply.productSceneReplication && input.supply.fallbackSourceStrategy === null;
-  const preferred = identityLockedPresenter ? capability('authorized_digital_presenter')
+  const typedPreferred = input.supply.materialRouting
+    ? input.supply.materialRouting.localMatch.state === 'matched' && input.supply.materialRouting.policy !== 'authorized_presenter'
+      ? candidates.find(candidate => candidate.kind === 'asset' && candidate.sourceStrategy === 'customer_real_asset' && Boolean(candidate.sourceRef && input.supply.materialRouting!.localMatch.sourceRefs.includes(candidate.sourceRef)))
+      : input.supply.materialRouting.policy === 'authorized_presenter' ? capability('authorized_digital_presenter')
+        : input.supply.materialRouting.policy === 'local_first_product_i2v' ? capability('aigc_product_scene_replication') : undefined
+    : undefined;
+  const preferred = input.supply.materialRouting ? typedPreferred : identityLockedPresenter ? capability('authorized_digital_presenter')
     : mandatoryProductGeneration ? capability('aigc_product_scene_replication')
     : generatedReference ? capability(input.supply.sourceStrategy)
     : visibleSpeech ? capability('authorized_digital_presenter') ?? matchingAsset ?? functionalAsset ?? ordinaryCapability

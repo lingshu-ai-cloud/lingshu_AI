@@ -123,7 +123,7 @@ function safeRecord(value: unknown, code: string, maxBytes: number): Record<stri
 
 const BRIEF_KEYS = [
   'title', 'objective', 'productId', 'productRef', 'requestedPresenterName', 'requestedPresenterAssetId', 'presenterAssetId', 'audience', 'markets', 'languages', 'platforms', 'formats',
-  'aspectRatio', 'cadence', 'requestedOutputCount', 'weeklyBudgetCny', 'perItemBudgetCny',
+  'aspectRatio', 'cadence', 'requestedOutputCount', 'weeklyBudgetCny', 'perItemBudgetCny', 'targetDurationSeconds',
   'retryReserveCny', 'planningMode', 'shootingWindowMinutes', 'specialRequirements', 'dueAt',
   'brandNotes', 'restrictions', 'callToAction', 'mode', 'weeklyPlanId', 'themeId',
   'customTopic', 'topic', 'legacyCreationRoute',
@@ -230,6 +230,10 @@ export function parseCreateSocialTask(value: unknown): CreateSocialContentTaskIn
   if (legacyCreationRoute && !['material', 'clone', 'product'].includes(legacyCreationRoute)) {
     throw new SocialContentWorkflowError('social_content_legacy_route_invalid', 400);
   }
+  const targetDurationSeconds = optionalNumber(source.targetDurationSeconds, 'social_content_target_duration_invalid', 60);
+  if (targetDurationSeconds !== null && targetDurationSeconds < 6) {
+    throw new SocialContentWorkflowError('social_content_target_duration_invalid', 400);
+  }
   return {
     ...parseSocialReplicationContext(source),
     materialRoutingPolicyVersion: 'type-aware.v1',
@@ -251,6 +255,7 @@ export function parseCreateSocialTask(value: unknown): CreateSocialContentTaskIn
     requestedOutputCount: mode === 'instant' ? 1 : requestedOutputCount,
     weeklyBudgetCny: optionalNumber(source.weeklyBudgetCny, 'social_content_weekly_budget_invalid', 10_000_000),
     perItemBudgetCny: Math.min(10, optionalNumber(source.perItemBudgetCny, 'social_content_item_budget_invalid', 1_000_000) ?? 10),
+    targetDurationSeconds,
     retryReserveCny: optionalNumber(source.retryReserveCny, 'social_content_retry_reserve_invalid', 10_000_000),
     planningMode: planningMode as CreateSocialContentTaskInput['planningMode'],
     shootingWindowMinutes: optionalNumber(source.shootingWindowMinutes, 'social_content_shooting_window_invalid', 10_080, true),
