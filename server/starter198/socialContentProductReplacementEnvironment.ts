@@ -342,8 +342,14 @@ export async function createEnvironmentProductReplacementPorts(input: Input, con
       if (context.paidContext && !('dryRun' in result)) {if (!prior || funding?.paidOperationId) await paid('first_frame')!.completed(`seedream:${result.providerRequestId}:${fingerprint}`); await paid('first_frame_qa')!.completed(compactProviderReceipt('qwen',productReplacementOperationFingerprint('first-frame-qa', {fingerprint, qaModel})));}
       if ('dryRun' in result) throw Error('product_first_frame_unexpected_dryrun');
       if (result.qaModel !== qaModel) throw Error('product_first_frame_QA_model_binding_changed');
+      // Apply the same server-side single-SKU/static-first-frame policy on the
+      // initial evaluation and on recovery. A first run must not pause merely
+      // because a still image cannot prove a later contact action.
+      const adaptedQuality=adaptSingletonProductFirstFrameQuality(result.quality,input.spec);
+      const adaptationReceipt=path.join(root,`${fingerprint}.singleton-adaptation.json`);
+      if(adaptedQuality!==result.quality)fs.writeFileSync(adaptationReceipt,JSON.stringify({sourceReportId:result.quality?.firstFrameQuality?.reportId,quality:adaptedQuality,policy:'single_enterprise_sku_functional_equivalent_v1'}),{mode:0o600});
       return {bytes: fs.readFileSync(result.filePath), providerRequestId: result.providerRequestId, model: result.model, estimatedCostCny: amount,
-        canProceedToVideo: result.canProceedToVideo, evidenceRefs: [path.join(durableDirectory, 'first-frame-receipts', `${fingerprint}.json`)]};
+        canProceedToVideo: adaptedQuality?.canProceedToVideo === true||result.canProceedToVideo, evidenceRefs: [path.join(durableDirectory, 'first-frame-receipts', `${fingerprint}.json`),...(fs.existsSync(adaptationReceipt)?[adaptationReceipt]:[])]};
     },
     video: async request => {
       await assertCurrent();
