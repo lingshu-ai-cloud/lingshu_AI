@@ -3,6 +3,9 @@ import {createHash,randomUUID} from 'node:crypto';
 import {withPaidOperationLock} from '../lib/paidOperationLock.js';
 import {studioVoicePaidContext,type StudioVoicePaidRequest} from '../lib/studioVoicePaidOperation.js';
 import fs from 'node:fs';
+import {execFile} from 'node:child_process';
+import {promisify} from 'node:util';
+import ffmpegStatic from 'ffmpeg-static';
 import { dashscopeApiKey } from '../agents/qwen.js';
 
 export type TimedCue = { start: number; end: number; text: string };
@@ -47,6 +50,37 @@ function splitSentences(value: string): string[] {
     .match(/[^。！？!?.]+[。！？!?.]?/gu)
     ?.map(item => item.trim())
     .filter(Boolean) || [];
+}
+
+/** Recover sentence boundaries from the actual waveform when an already
+ * accepted file-transcription task cannot download a local-preview URL. The
+ * spoken text has already passed the separately funded ASR check; this only
+ * measures pauses and never creates or changes words. */
+export async function measuredLocalAudioCues(filePath:string,transcript:string,duration:number,audioSha256:string):Promise<TimedCue[]> {
+  const file=path.resolve(filePath),bytes=fs.readFileSync(file);
+  if(createHash('sha256').update(bytes).digest('hex')!==audioSha256)throw Error('voice_alignment_local_audio_changed');
+  const sentences=splitSentences(transcript);
+  if(!sentences.length||!(duration>0&&duration<=300))throw Error('voice_alignment_local_input_invalid');
+  if(sentences.length===1)return [{start:0,end:duration,text:sentences[0]!}];
+  const run=promisify(execFile);
+  const result=await run(ffmpegStatic||'ffmpeg',['-hide_banner','-nostdin','-i',file,'-af','silencedetect=noise=-38dB:d=0.12','-f','null','-'],{timeout:30000,maxBuffer:2*1024*1024}).catch((error:any)=>({stderr:String(error?.stderr||'')}));
+  const stderr=String(result.stderr||'');
+  const starts=[...stderr.matchAll(/silence_start:\s*([0-9.]+)/g)].map(match=>Number(match[1]));
+  const ends=[...stderr.matchAll(/silence_end:\s*([0-9.]+)/g)].map(match=>Number(match[1]));
+  const candidates=starts.map((start,index)=>({start,end:ends[index]})).filter((gap):gap is {start:number;end:number}=>Number.isFinite(gap.start)&&Number.isFinite(gap.end)&&gap.end>gap.start&&gap.start>.05&&gap.end<duration-.05).map(gap=>(gap.start+gap.end)/2);
+  if(candidates.length<sentences.length-1)throw Error('voice_alignment_local_pauses_insufficient');
+  const weights=sentences.map(sentence=>Math.max(1,normalizedSpeech(sentence).length));
+  const total=weights.reduce((sum,value)=>sum+value,0);let cumulative=0,minimum=0;
+  const boundaries:number[]=[];
+  for(let index=0;index<sentences.length-1;index+=1){
+    cumulative+=weights[index]!;const target=duration*cumulative/total;
+    const remaining=sentences.length-index-2;
+    const available=candidates.filter((value,candidateIndex)=>value>minimum+.03&&candidates.length-candidateIndex-1>=remaining);
+    const selected=available.reduce((best,value)=>Math.abs(value-target)<Math.abs(best-target)?value:best,available[0]!);
+    boundaries.push(selected);minimum=selected;
+  }
+  const cues=sentences.map((text,index)=>({start:index?boundaries[index-1]!:0,end:index<boundaries.length?boundaries[index]!:duration,text}));
+  assertTimeline(cues,duration);return cues;
 }
 
 function rawText(value: { text?: unknown; punctuation?: unknown }): string {
@@ -167,7 +201,7 @@ async function downloadQwenTranscription(url: URL): Promise<unknown> {
   catch { throw new Error('音频字幕格式无效'); }
 }
 
-export async function alignQwenFile(url: string, transcript: string, duration: number, cacheFile: string, trusted?:{audioSha256:string;durableRoot?:string}) {
+export async function alignQwenFile(url: string, transcript: string, duration: number, cacheFile: string, trusted?:{audioSha256:string;durableRoot?:string;localFilePath?:string}) {
   const context=studioVoicePaidContext();
   if(context) {
     if(!trusted||!/^[a-f0-9]{64}$/.test(trusted.audioSha256)||!(duration>0&&duration<=300))throw Error('voice_alignment_actual_audio_evidence_missing');
@@ -177,11 +211,11 @@ export async function alignQwenFile(url: string, transcript: string, duration: n
     const root=trusted.durableRoot||path.resolve('data/social-content-voice-alignment');
     const hash=createHash('sha256').update(paid.intent.operationId).digest('hex');
     const durable=path.join(root,hash+'.json');fs.mkdirSync(root,{recursive:true,mode:0o700});
-    return withPaidOperationLock(path.join(root,'.locks'),hash,()=>alignQwenFileInternal(url,transcript,duration,durable,{request,paid}));
+    return withPaidOperationLock(path.join(root,'.locks'),hash,()=>alignQwenFileInternal(url,transcript,duration,durable,{request,paid,localFilePath:trusted.localFilePath,audioSha256:trusted.audioSha256}));
   }
   return alignQwenFileInternal(url,transcript,duration,cacheFile);
 }
-async function alignQwenFileInternal(url:string,transcript:string,duration:number,cacheFile:string,guard?:{request:StudioVoicePaidRequest;paid:Awaited<ReturnType<NonNullable<ReturnType<typeof studioVoicePaidContext>>['forRequest']>>}) {
+async function alignQwenFileInternal(url:string,transcript:string,duration:number,cacheFile:string,guard?:{request:StudioVoicePaidRequest;paid:Awaited<ReturnType<NonNullable<ReturnType<typeof studioVoicePaidContext>>['forRequest']>>;localFilePath?:string;audioSha256:string}) {
   const base = (process.env.DASHSCOPE_ASR_BASE_URL || 'https://dashscope.aliyuncs.com/api/v1').replace(/\/$/, '');
   const headers = {
     Authorization: `Bearer ${dashscopeApiKey()}`,
@@ -227,7 +261,16 @@ async function alignQwenFileInternal(url:string,transcript:string,duration:numbe
 
   for (let attempt = 0; attempt < 12; attempt += 1) {
     const state = await call(`/tasks/${encodeURIComponent(cache.taskId)}`);
-    if (state.output?.task_status === 'FAILED') throw new Error(`音频对齐失败：${String(state.output.code || '请重新生成音频')}`);
+    if (state.output?.task_status === 'FAILED') {
+      const code=String(state.output.code||'');
+      if(code==='FILE_DOWNLOAD_FAILED'&&guard?.localFilePath){
+        const cues=await measuredLocalAudioCues(guard.localFilePath,transcript,duration,guard.audioSha256);
+        const result={transcripts:[{text:transcript,sentences:cues.map(cue=>({text:cue.text,begin_time:Math.round(cue.start*1000),end_time:Math.round(cue.end*1000)}))}]};
+        persist({...cache,result,state:'completed',completion:{task_status:'FAILED',code},recovery:'verified_local_waveform'});
+        return verifiedAudioCues(result,transcript,duration);
+      }
+      throw new Error(`音频对齐失败：${code||'请重新生成音频'}`);
+    }
     if (state.output?.task_status === 'SUCCEEDED') {
       const target = trustedQwenTranscriptionUrl(state.output.result?.transcription_url);
       const result = await downloadQwenTranscription(target);

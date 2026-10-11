@@ -8654,7 +8654,7 @@ export async function alignStudioVoiceForAutomation(input: { tenantId: string; t
     if(!objectStorageEnabled())throw Error('prepared_alignment_private_storage_missing');
     await persistPrivateStudioAsset('tts',input.tenantId,file);
     const signed=await objectStorageSignedGetUrl(tenantPrivateObjectKey('tts',input.tenantId,path.basename(file)),15*60);
-    return {cues:await alignQwenFile(signed,input.text,input.duration,file+'.asr.json',{audioSha256:track.audioSha256}),source:'audio_ai' as const};
+    return {cues:await alignQwenFile(signed,input.text,input.duration,file+'.asr.json',{audioSha256:track.audioSha256,localFilePath:file}),source:'audio_ai' as const};
   }));
 }
 

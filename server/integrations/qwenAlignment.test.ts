@@ -3,7 +3,10 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
-import { alignQwenFile, trustedQwenTranscriptionUrl, verifiedAudioCues } from './qwenAlignment.js';
+import { alignQwenFile, measuredLocalAudioCues, trustedQwenTranscriptionUrl, verifiedAudioCues } from './qwenAlignment.js';
+import {execFileSync} from 'node:child_process';
+import {createHash} from 'node:crypto';
+import ffmpeg from 'ffmpeg-static';
 
 test('accepts the official DashScope OSS result host without opening external download hosts', () => {
   const url = trustedQwenTranscriptionUrl('http://dashscope-result-bj.oss-cn-beijing.aliyuncs.com/result.json?signature=sample');
@@ -27,6 +30,17 @@ test('retains measured source sentence boundaries for matching spoken copy', () 
   ] }] };
   assert.deepEqual(verifiedAudioCues(raw, 'Hello world.', 2), [{ text: 'Hello world.', start: 0.12, end: 1.88 }]);
   assert.throws(() => verifiedAudioCues(raw, 'Different words.', 2), /实际音频与口播文本不一致/);
+});
+
+test('measures sentence boundaries from owned audio when remote file download failed',async()=>{
+  const dir=fs.mkdtempSync(path.join(os.tmpdir(),'local-waveform-alignment-')),file=path.join(dir,'voice.wav');
+  try{
+    execFileSync(ffmpeg||'ffmpeg',['-hide_banner','-loglevel','error','-f','lavfi','-i','sine=frequency=440:duration=1','-f','lavfi','-i','anullsrc=r=24000:cl=mono:d=0.4','-f','lavfi','-i','sine=frequency=550:duration=1','-filter_complex','[0:a][1:a][2:a]concat=n=3:v=0:a=1','-ar','24000','-ac','1','-y',file]);
+    const bytes=fs.readFileSync(file),duration=2.4;
+    const cues=await measuredLocalAudioCues(file,'First sentence. Second sentence.',duration,createHash('sha256').update(bytes).digest('hex'));
+    assert.equal(cues.length,2);assert.ok(cues[0]!.end>1&&cues[0]!.end<1.4);assert.equal(cues[1]!.start,cues[0]!.end);assert.equal(cues[1]!.end,duration);
+    await assert.rejects(measuredLocalAudioCues(file,'First. Second.',duration,'a'.repeat(64)),/local_audio_changed/);
+  }finally{fs.rmSync(dir,{recursive:true,force:true});}
 });
 
 test('file transcription downloads an official signed result and bounds its size', async () => {
