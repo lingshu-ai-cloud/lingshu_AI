@@ -14,7 +14,7 @@ export interface DownloadedReferenceMaterialInput {
   createdAt: string;
 }
 
-/** A collected video becomes a normal, tenant-scoped editing asset once saved. */
+/** Downloading a public reference preserves analysis access, without granting production rights. */
 export function buildDownloadedReferenceMaterial(input: DownloadedReferenceMaterialInput) {
   return {
     id: input.id,
@@ -29,21 +29,21 @@ export function buildDownloadedReferenceMaterial(input: DownloadedReferenceMater
     poster: input.poster ? `/media/${input.poster}` : undefined,
     contentSha256: input.contentSha256,
     scope: 'own' as const,
-    usage: 'editable' as const,
+    usage: 'reference_only' as const,
     pinned: true,
     sourceType: input.platform,
     sourceUrl: input.sourceUrl,
-    rightsReviewStatus: 'library_ready' as const,
-    rightsReviewRationale: '素材进入企业素材库后可直接用于内容制作。',
-    commercialUseApproved: true,
-    derivativesApproved: true,
-    rawLibraryUseApproved: true,
+    rightsReviewStatus: 'reference_only' as const,
+    rightsReviewRationale: '下载仅保留参考分析用途，不授予原片成片使用权。',
+    commercialUseApproved: false,
+    derivativesApproved: false,
+    rawLibraryUseApproved: false,
     mayAnalyze: true,
-    mayUseInProduction: true,
+    mayUseInProduction: false,
     provenance: {
       source: `${input.platform}_public_video`,
       sourceUrl: input.sourceUrl,
-      downloadedForAnalysisOnly: false,
+      downloadedForAnalysisOnly: true,
       downloadedAt: input.createdAt,
     },
     createdAt: input.createdAt,
