@@ -8,7 +8,7 @@ import {createSocialSceneG4ReviewRouter} from './socialSceneG4ReviewRouter.js';
 import {createSocialSceneG4ReviewService} from './socialSceneG4ReviewService.js';
 import { readReferencePreparation } from './socialContentScriptSources.js';
 import { createSocialSceneReworkRouter } from './socialContentSceneReworkRouter.js';
-import { assertSocialSceneReworkQueueRegistered, wakeSocialSceneReworkJob } from './socialContentProductionQueue.js';
+import { assertSocialSceneReworkQueueRegistered, wakeSocialSceneReworkJob, resumeSocialContentLangGraphAfterApproval } from './socialContentProductionQueue.js';
 import { Readable } from 'node:stream';
 import { pipeline } from 'node:stream/promises';
 import { Router, type NextFunction, type Request, type Response } from 'express';
@@ -611,7 +611,7 @@ router.use('/tasks/:taskId/runs/:runId/artifacts/:artifactId/g6-reviews',createS
   router.post('/tasks/:taskId/artifacts/:artifactId/decision', asyncRoute(async (req, res) => {
     const identity = await authorize(req, res, 'write');
     bodyWithinLimit(req);
-    res.json(await decideSocialContentArtifact({
+    const result = await decideSocialContentArtifact({
       repository,
       orchestratorQueue: dependencies.orchestratorQueue,
       ...identity,
@@ -624,7 +624,19 @@ router.use('/tasks/:taskId/runs/:runId/artifacts/:artifactId/g6-reviews',createS
         persist:(value:{tenantId:string;actorUserId:string;taskId:string;artifactId:string;operationId:string;operationRequestHash:string;note:string})=>weeklyRepairCases.createCreativeFromDecision(value),
       }}:{}),
       now: now(),
-    }));
+    });
+    // The canonical decision is already durable. A transient worker wake-up
+    // failure must not turn successful approval into an ambiguous mutation.
+    if (result.artifact.status === 'approved') {
+      try {
+        await resumeSocialContentLangGraphAfterApproval({
+          repository, ...identity, taskId: result.task.taskId, artifactId: result.artifact.artifactId,
+        });
+      } catch {
+        console.warn('[social-content] approved LangGraph run awaits durable recovery scan');
+      }
+    }
+    res.json(result);
   }));
 
   router.post('/tasks/:taskId/artifacts/batch-decision', asyncRoute(async (req, res) => {
@@ -639,6 +651,13 @@ router.use('/tasks/:taskId/runs/:runId/artifacts/:artifactId/g6-reviews',createS
       value: parseArtifactBatchDecision(req.body),
       now: now(),
     });
+    for (const artifact of task.artifacts.filter(item => item.status === 'approved')) {
+      try {
+        await resumeSocialContentLangGraphAfterApproval({ repository, ...identity, taskId: task.taskId, artifactId: artifact.artifactId });
+      } catch {
+        console.warn('[social-content] approved LangGraph run awaits durable recovery scan');
+      }
+    }
     res.json({ task });
   }));
 

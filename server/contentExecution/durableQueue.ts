@@ -247,6 +247,8 @@ export async function admitContentExecutionJob(input: {
   runId: string;
   accountId?: string | null;
   taskType: string;
+  /** Creation-only state; replay never changes the already chosen executor. */
+  initialCheckpoints?: ContentExecutionCheckpoints;
   now?: Date;
 }): Promise<ContentExecutionJob> {
   const tenantId = requiredIdentity(input.tenantId, 'tenant');
@@ -271,7 +273,7 @@ export async function admitContentExecutionJob(input: {
     account_id: accountId, task_type: taskType, status: 'queued', attempt: 0,
     reconciliation_attempt: 0, next_attempt_at: now, worker_id: '', lease_expires_at: '',
     retry_class: '', last_error: '', provider_state: 'none', provider_receipts: [],
-    checkpoints: {},
+    checkpoints: parseContentExecutionCheckpoints(input.initialCheckpoints),
     created_at: now, updated_at: now, last_started_at: '', completed_at: '',
   });
   if (!created) {
@@ -646,11 +648,13 @@ export type ContentExecutionControlAction = 'pause' | 'cancel' | 'resume' | 'ret
  * queue stages from being claimed and finish handlers preserve that decision.
  * Resuming the same job keeps its provider receipts and idempotency identity.
  */
-export async function controlContentExecutionJob(input: {
+async function applyContentExecutionControl(input: {
   dataStore: DataStore;
   tenantId: string;
   jobId: string;
   action: ContentExecutionControlAction;
+  /** Server-owned review waits may auto-resume; a customer pause never may. */
+  pauseOrigin?: 'workflow_review';
   now?: Date;
 }): Promise<ContentExecutionJob> {
   const tenantId = requiredIdentity(input.tenantId, 'tenant');
@@ -663,8 +667,14 @@ export async function controlContentExecutionJob(input: {
   let patch: Record<string, unknown>;
   if (input.action === 'pause') {
     if (['succeeded', 'cancelled'].includes(current.status)) throw new Error('content_execution_job_not_pauseable');
-    if (current.status === 'paused') return current;
-    patch = { status: 'paused', next_attempt_at: '', updated_at: now };
+    const origin = input.pauseOrigin ?? 'manual';
+    const priorOrigin = (current.checkpoints['runtime.pause']?.payload as { origin?: string } | undefined)?.origin;
+    if (current.status === 'paused' && origin === 'workflow_review' && priorOrigin === 'manual') return current;
+    if (current.status === 'paused' && priorOrigin === origin) return current;
+    patch = { status: 'paused', next_attempt_at: '', updated_at: now, checkpoints: {
+      ...current.checkpoints,
+      'runtime.pause': { version: '1', inputHash: current.id, payload: { origin }, updatedAt: now },
+    } };
   } else if (input.action === 'cancel') {
     if (current.status === 'succeeded') throw new Error('content_execution_job_not_cancellable');
     if (current.status === 'cancelled') return current;
@@ -702,4 +712,15 @@ export async function controlContentExecutionJob(input: {
   const saved = await input.dataStore.getById<JobRow>(CONTENT_EXECUTION_JOB_COLLECTION, current.id);
   if (!saved) throw new Error('content_execution_job_control_readback_failed');
   return jobFromRow(saved);
+}
+
+/** Serialize customer controls and automated review waits so a review pause
+ * cannot overwrite a concurrent explicit customer pause. */
+export async function controlContentExecutionJob(input: Parameters<typeof applyContentExecutionControl>[0]): Promise<ContentExecutionJob> {
+  const lease = await acquireDurableOperationLease({ dataStore: input.dataStore,
+    tenantId: requiredIdentity(input.tenantId, 'tenant'), subjectId: requiredIdentity(input.jobId, 'job'),
+    scope: 'content_execution_control', ownerId: `content-control:${randomUUID()}`, leaseDurationMs: 30_000 });
+  if (!lease) throw new Error('content_execution_job_control_busy');
+  try { return await applyContentExecutionControl(input); }
+  finally { await releaseDurableOperationLease({ dataStore: input.dataStore, lease }).catch(() => undefined); }
 }

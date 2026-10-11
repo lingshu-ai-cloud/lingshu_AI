@@ -193,6 +193,14 @@ export class ContentExecutionStoppedError extends Error {
   constructor() { super('content_execution_stopped:任务已暂停或撤回，不再提交新的生产工作'); }
 }
 
+/** Graph persistence is asynchronous; require its durable context before any
+ * node can submit work, rather than discovering a missing context on save. */
+export async function assertCurrentContentExecutionJobContext(jobId: string): Promise<void> {
+  const current = executionContext.getStore();
+  if (!current || current.jobId !== jobId) throw new Error('content_graph_job_context_required');
+  await assertContentExecutionOwnership(current);
+}
+
 async function assertContentExecutionOwnership(current: ContentExecutionContextValue): Promise<Record<string, unknown> | null> {
   if (!current.expectedWorkerId) return null;
   if (current.executionStillOwned && !current.executionStillOwned()) throw new ContentExecutionStoppedError();

@@ -138,7 +138,7 @@
     "test:production-workflows": "pnpm run test:production-quality && pnpm run test:publishing-calendar && tsx server/lib/downloadExecution.test.ts && tsx server/lib/crawlKeywords.test.ts && tsx server/routes/crawlWorker.test.ts && tsx src/lib/agentRuleFields.test.ts && tsx server/routes/schedulerExecutionState.test.ts && tsx server/routes/videoPipelineRecovery.test.ts && tsx src/App.navigationState.test.ts && tsx src/components/ScheduledPage.contract.test.ts && tsx src/components/AiCreateStudio.workflowContract.test.ts && tsx src/components/TrafficPage.publishQueue.test.ts",
     "test:tenant-sync-smoke": "tsx scripts/verify-tenant-sync.ts",
     "test:publishing-truthfulness": "tsx server/publishing/copyAdaptation.test.ts && tsx server/publishing/auditedCopyAdaptation.test.ts",
-    "test": "pnpm run test:journey-fixes && pnpm run test:delivery-chain && pnpm run test:outbound-guard && pnpm run test:autonomy && pnpm run test:knowledge-policy && pnpm run test:strategy-policy && pnpm run test:script-strategy && pnpm run test:script-matrix && pnpm run test:studio-script && pnpm run test:studio-media && pnpm run test:storyboard-aigc && pnpm run test:tenant-isolation && pnpm run test:onboarding-reset && pnpm run test:customer-service-activation && pnpm run test:external-customer-service-demo && pnpm run test:schedule-policy && pnpm run test:scheduled-publishing && pnpm run test:publishing-truthfulness && pnpm run test:pb-admin && pnpm run test:digital-employees && pnpm run test:production-workflows && pnpm run test:execution-gaps",
+    "test": "pnpm run test:journey-fixes && pnpm run test:delivery-chain && pnpm run test:outbound-guard && pnpm run test:autonomy && pnpm run test:knowledge-policy && pnpm run test:strategy-policy && pnpm run test:script-strategy && pnpm run test:script-matrix && pnpm run test:studio-script && pnpm run test:studio-media && pnpm run test:storyboard-aigc && pnpm run test:tenant-isolation && pnpm run test:onboarding-reset && pnpm run test:customer-service-activation && pnpm run test:external-customer-service-demo && pnpm run test:schedule-policy && pnpm run test:scheduled-publishing && pnpm run test:publishing-truthfulness && pnpm run test:pb-admin && pnpm run test:digital-employees && pnpm run test:production-workflows && pnpm run test:execution-gaps && pnpm run test:langgraph",
     "desktop": "electron desktop/main.cjs",
     "test:shooting-workflow": "tsx --test src/lib/shootingWorkflow.test.ts server/routes/shootingTasks.test.ts src/components/ShootingTaskDialog.test.tsx",
     "test:storyboard-aigc": "tsx --test --test-concurrency=1 scripts/storyboard-aigc-acceptance.test.ts shared/storyboard*.test.ts server/lib/storyboard*.test.ts server/routes/studioStoryboard*.test.ts server/routes/studioAigcBatchBudget.test.ts server/routes/studioBatchShotRoutes.test.ts src/lib/storyboard*.test.ts src/lib/referenceIdentityMapping.test.ts src/components/AiCreateStudio.workflowContract.test.ts",
@@ -171,7 +171,9 @@
     "test:mobile-workbench-release-gate": "node --test scripts/check-mobile-workbench-release.test.mjs",
     "sync:mobile-shared": "node scripts/sync-mobile-shared.mjs",
     "check:mobile-shared": "node scripts/sync-mobile-shared.mjs --check",
-    "test:mobile-shared": "node scripts/sync-mobile-shared.mjs --check && node --test shared/mobile-domain.test.mjs shared/request-policy.test.cjs shared/action-form.test.cjs shared/weekly-work-status.test.mjs scripts/generate-design-tokens.test.mjs scripts/mobile-shared-package.test.mjs apps/shooting-miniapp/*.test.cjs && tsx --test src/lib/designTokens.test.ts src/lib/assistantDecisionApi.test.ts src/lib/assistantDecisionRequestGuard.test.ts src/lib/weeklyWorkStatus.test.ts shared/materialTaxonomy.test.ts shared/shootingWorkflow.test.ts src/lib/shootingWorkflow.test.ts src/components/assistant/AssistantDecisionCenter.contract.test.ts src/components/socialContent/SocialSceneReworkPanel.test.tsx src/components/ShootingTaskDialog.test.tsx"
+    "test:mobile-shared": "node scripts/sync-mobile-shared.mjs --check && node --test shared/mobile-domain.test.mjs shared/request-policy.test.cjs shared/action-form.test.cjs shared/weekly-work-status.test.mjs scripts/generate-design-tokens.test.mjs scripts/mobile-shared-package.test.mjs apps/shooting-miniapp/*.test.cjs && tsx --test src/lib/designTokens.test.ts src/lib/assistantDecisionApi.test.ts src/lib/assistantDecisionRequestGuard.test.ts src/lib/weeklyWorkStatus.test.ts shared/materialTaxonomy.test.ts shared/shootingWorkflow.test.ts src/lib/shootingWorkflow.test.ts src/components/assistant/AssistantDecisionCenter.contract.test.ts src/components/socialContent/SocialSceneReworkPanel.test.tsx src/components/ShootingTaskDialog.test.tsx",
+    "test:langgraph": "node --import tsx --test --test-concurrency=1 server/contentExecution/langgraphEngine.test.ts scripts/langgraphPersistence.test.ts server/starter198/socialContentProductionGraph.test.ts server/starter198/socialContentGraphCompletion.test.ts scripts/langgraphProductionBinding.test.ts scripts/langgraphSceneReworkSeam.test.ts scripts/langgraphGeneratedInventory.test.ts",
+    "test:langgraph:local-production": "node --import tsx --test --test-concurrency=1 scripts/langgraphLocalProduction.test.ts"
   },
   "packageManager": "pnpm@11.19.0",
   "dependencies": {
@@ -221,7 +223,12 @@
     "antd": "6.6.5",
     "chart.js": "4.5.1",
     "dayjs": "1.11.21",
-    "temporal-polyfill": "1.0.5"
+    "temporal-polyfill": "1.0.5",
+    "@langchain/langgraph": "1.4.21",
+    "@langchain/core": "1.2.17",
+    "zod": "4.6.5",
+    "@langchain/langgraph-checkpoint": "1.1.6",
+    "langsmith": "0.10.11"
   },
   "devDependencies": {
     "@types/compression": "^1.8.1",

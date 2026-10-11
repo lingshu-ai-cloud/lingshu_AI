@@ -134,6 +134,40 @@ test('durable admission is idempotent and provider receipts survive execution co
   assert.equal(persisted?.providerReceipts[0]?.providerTaskId, 'provider-task-a');
 });
 
+test('executor selection is visible atomically at admission and cannot change on replay', async () => {
+  const store = new MemoryStore();
+  const base = { dataStore: store, tenantId: 'tenant-executor', userId: 'user-a', taskId: 'task-executor', runId: 'run-executor', taskType: 'social_content_weekly' };
+  const checkpoint = (executor: string) => ({ version: '1', inputHash: 'approved-plan-v1', payload: { executor }, updatedAt: '2026-10-11T00:00:00.000Z' });
+  const originalCreate = store.create.bind(store);
+  let observedExecutor: unknown;
+  store.create = async <T>(collection: string, data: Record<string, unknown>): Promise<T | null> => {
+    if (collection === CONTENT_EXECUTION_JOB_COLLECTION) observedExecutor = ((data.checkpoints as Record<string, ReturnType<typeof checkpoint>>)['social.executor'])?.payload.executor;
+    return originalCreate<T>(collection, data);
+  };
+  const first = await admitContentExecutionJob({ ...base, initialCheckpoints: { 'social.executor': checkpoint('langgraph') } });
+  assert.equal(observedExecutor, 'langgraph', 'a worker must never observe an unbound newly created job');
+  const replay = await admitContentExecutionJob({ ...base, initialCheckpoints: { 'social.executor': checkpoint('legacy') } });
+  assert.equal(replay.id, first.id);
+  assert.equal((replay.checkpoints['social.executor'].payload as { executor: string }).executor, 'langgraph');
+  const historic = await admitContentExecutionJob({ ...base, runId: 'historic-run' });
+  const historicReplay = await admitContentExecutionJob({ ...base, runId: 'historic-run', initialCheckpoints: { 'social.executor': checkpoint('langgraph') } });
+  assert.deepEqual(historic.checkpoints, {});
+  assert.deepEqual(historicReplay.checkpoints, {}, 'historic jobs remain on the legacy executor');
+});
+
+test('explicit customer pause replaces a workflow review wait without losing its receipts', async () => {
+  const store = new MemoryStore();
+  const job = await admitContentExecutionJob({ dataStore: store, tenantId: 'tenant-pause', userId: 'user-a', taskId: 'task-pause', runId: 'run-pause', taskType: 'social_content_weekly' });
+  const review = await controlContentExecutionJob({ dataStore: store, tenantId: job.tenantId, jobId: job.id, action: 'pause', pauseOrigin: 'workflow_review' });
+  assert.equal((review.checkpoints['runtime.pause'].payload as { origin: string }).origin, 'workflow_review');
+  const manual = await controlContentExecutionJob({ dataStore: store, tenantId: job.tenantId, jobId: job.id, action: 'pause' });
+  assert.equal((manual.checkpoints['runtime.pause'].payload as { origin: string }).origin, 'manual');
+  assert.equal(manual.id, job.id);
+  assert.deepEqual(manual.providerReceipts, review.providerReceipts);
+  const lateReview = await controlContentExecutionJob({ dataStore: store, tenantId: job.tenantId, jobId: job.id, action: 'pause', pauseOrigin: 'workflow_review' });
+  assert.equal((lateReview.checkpoints['runtime.pause'].payload as { origin: string }).origin, 'manual', 'a late graph wait cannot undo an explicit pause');
+});
+
 test('versioned checkpoints survive a new execution context and stale workers are fenced', async () => {
   const store = new MemoryStore();
   const job = await admitContentExecutionJob({

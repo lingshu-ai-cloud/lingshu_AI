@@ -242,7 +242,7 @@ export async function writeExecutionStage(input: {
       .slice(-11)
     : [];
   const updatedAt = new Date().toISOString();
-  const terminal = input.stage === 'review_ready' && input.status === 'completed';
+  const terminal = ['review_ready', 'delivery_prepared'].includes(input.stage) && input.status === 'completed';
   const blocked = input.status === 'waiting_external';
   const previousGraph = parseVideoProductionGraph(previousProduction.productionGraph);
   const productionGraph = advanceVideoProductionGraph({

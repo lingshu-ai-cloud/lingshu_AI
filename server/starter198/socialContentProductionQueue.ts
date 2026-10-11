@@ -24,6 +24,7 @@ import {
 import { analyzeProductionMaterial } from '../digitalEmployees/productionMaterialAnalysis.js';
 import { objectStorageEnabled, objectStorageSignedGetUrl } from '../storage/objectStorage.js';
 import { store, dataBackend } from '../storage/index.js';
+import { currentDataAuthority, runWithDataAuthority } from '../storage/dataAuthority.js';
 import { localFallbacksEnabled } from '../lib/localFallbackPolicy.js';
 import { createAgentNotification } from '../notifications/agentNotifications.js';
 import { enqueueBullJob, selectedQueueBackend, startBullWorker } from '../queues/bullmq.js';
@@ -109,6 +110,8 @@ const { composite } = require('../../desktop/render.cjs') as {
 
 import { MEDIA_ROOT, type ProductionAsset, type SocialProductionBaseline, type SocialProductionAdaptation, type SocialReviewRevisionDirective, automaticSocialMaterialEligible, detectDistinctTaskVideoSegments, hasExactTaskProductAssociation, resolveTaskProductionMaterialLocation, taskProductionAssets, systemThemeGraphicAssets, applyZeroAssetTruthSafeNarration, socialReviewRevisionDirective, applySocialReviewRevision, createVideoCover, type SocialContentAutoProductionRuntime } from './socialContentAutoProduction.js';
 import { runSocialContentAutoProduction } from './socialContentProductionExecution.js';
+import { createSocialProductionExecutorCheckpoint, executeSocialProductionGraph, resumeApprovedSocialProductionGraph, socialProductionExecutor } from './socialContentProductionGraph.js';
+import { completeSocialContentGraphRun, recoverSocialContentGraphCompletions } from './socialContentGraphCompletion.js';
 import { failExecution, writeExecutionStage } from './socialContentProductionRuntimeSupport.js';
 import { executeSocialSceneReworkJob, completeSocialSceneReworkRun, isSocialSceneReworkJob } from './socialContentSceneReworkExecution.js';
 export async function runSocialContentAutoProductionWithRetry(input: {
@@ -153,6 +156,11 @@ async function executePersistedProduction(job: ContentExecutionJob): Promise<voi
   }
   const record = await requireSocialTask({ repository, tenantId: job.tenantId, taskId: job.taskId });
   const task = socialTaskSummary(record);
+  const rawJob = await store.getById<StarterRecord>('content_execution_jobs', job.id);
+  if (socialProductionExecutor(job, rawJob?.checkpoints) === 'langgraph') {
+    await runOutsideSocialContentMutationScope(() => executeSocialProductionGraph({ repository, dataStore: store, job }));
+    return;
+  }
   if (['asset_review', 'packaging', 'delivered', 'awaiting_publish', 'awaiting_metrics', 'reviewed'].includes(task.status)) return;
   if (task.status !== 'producing') throw new Error(`user_input_required:content_task_${task.status}`);
   await runOutsideSocialContentMutationScope(() => runSocialContentAutoProductionWithRetry({
@@ -173,6 +181,16 @@ function ensureProductionWorker(): DurableContentExecutionWorker {
     execute: executePersistedProduction,
     async onSucceeded(job) {
       if (isSocialSceneReworkJob(job)) await completeSocialSceneReworkRun(createStarter198Repository(store), job);
+      if (socialProductionExecutor(job) === 'langgraph') {
+        await completeSocialContentGraphRun(createStarter198Repository(store), job);
+        await createAgentNotification({ tenantId: job.tenantId, eventKey: `content-execution:${job.id}:delivery-prepared`,
+          type: 'content_task_review_ready', severity: 'info', title: '一条内容已完成审核与交付准备',
+          summary: '人工审核和交付包已核验，后续可进入发布确认。', sourceAgent: '内容 Agent',
+          entityType: 'social_content_task', entityId: job.taskId,
+          action: { label: '查看交付内容', page: 'smartAssets', href: `/?page=smartAssets&taskId=${encodeURIComponent(job.taskId)}` },
+        }, store).catch(() => undefined);
+        return;
+      }
       await createAgentNotification({
         tenantId: job.tenantId,
         eventKey: `content-execution:${job.id}:review-ready`,
@@ -261,6 +279,8 @@ export async function enqueueSocialContentAutoProduction(input: {
   try {
     const record = await requireSocialTask(input);
     const task = socialTaskSummary(record);
+    const detail = await readSocialTaskDetail(input);
+    if (!detail) throw new Error('social_content_task_not_found');
     const job = await admitContentExecutionJob({
       dataStore,
       tenantId: input.tenantId,
@@ -269,6 +289,7 @@ export async function enqueueSocialContentAutoProduction(input: {
       runId: input.runId,
       accountId: task.brief.targetAccountRef?.id,
       taskType: `social_content_${task.mode}`,
+      initialCheckpoints: { 'social.executor': createSocialProductionExecutorCheckpoint(detail) },
     });
     if (job.status === 'queued' && !job.lastStartedAt) {
       await writeExecutionStage({
@@ -318,6 +339,47 @@ export function initSocialContentProductionBullWorker(): void {
     concurrency: Number(process.env.SOCIAL_CONTENT_PRODUCTION_CONCURRENCY || 4),
     processor: async () => durableWorker.drain(),
   });
+  if (!graphApprovalRecoveryTimer) {
+    graphApprovalRecoveryTimer = setInterval(() => void recoverSocialContentLangGraphApprovals()
+      .catch(() => console.warn('[content-execution] graph approval recovery unavailable')), 5_000);
+    graphApprovalRecoveryTimer.unref();
+  }
+}
+
+let graphApprovalRecoveryTimer: NodeJS.Timeout | null = null;
+let graphApprovalRecoveryRunning = false;
+/** Durable approval recovery covers a decision committed while the original
+ * worker is still releasing its lease, or a server restart before the wake-up. */
+export async function recoverSocialContentLangGraphApprovals(): Promise<void> {
+  if (process.env.LINGSHU_LOCAL_PREVIEW === '1' && localFallbacksEnabled() && dataBackend === 'pocketbase'
+    && currentDataAuthority() !== 'local') return runWithDataAuthority('local', recoverSocialContentLangGraphApprovals);
+  if (graphApprovalRecoveryRunning) return;
+  graphApprovalRecoveryRunning = true;
+  try {
+    const repository = createStarter198Repository(store);
+    for (let page = 1; page <= 100; page++) {
+      const rows = await store.list<StarterRecord>('content_execution_jobs', { where: { status: 'paused' }, page, perPage: 100, sort: 'id' });
+      for (const row of rows.items) {
+        const checkpoints = socialObject(socialJson(row.checkpoints));
+        const review = socialObject(socialObject(checkpoints?.['social.graph_review'])?.payload);
+        if (review?.waitingReview !== true) continue;
+        await resumeSocialContentLangGraphAfterApproval({ repository, tenantId: socialText(row.tenant_id),
+          userId: socialText(row.user_id), taskId: socialText(row.task_id), artifactId: socialText(review.artifactId) })
+          .catch(() => undefined); // Changed/rejected subjects remain paused for explicit rework.
+      }
+      if (page >= rows.totalPages || !rows.items.length) break;
+    }
+    await recoverSocialContentGraphCompletions(repository);
+  } finally { graphApprovalRecoveryRunning = false; }
+}
+
+export async function resumeSocialContentLangGraphAfterApproval(input: {
+  repository: Starter198Repository; tenantId: string; userId: string; taskId: string; artifactId: string;
+}): Promise<boolean> {
+  const jobId = await resumeApprovedSocialProductionGraph(input);
+  if (!jobId) return false;
+  await wakeSocialSceneReworkJob(jobId);
+  return true;
 }
 
 export function socialContentAutoProductionActive(tenantId: string, taskId: string): boolean {

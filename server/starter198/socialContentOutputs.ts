@@ -74,6 +74,8 @@ export async function createSocialContentArtifact(input: {
   idempotencyKey: string;
   value: CreateSocialArtifactInput;
   trustedAgentOrigin?: boolean;
+  /** Server-selected execution policy; never accepted from an HTTP payload. */
+  requireHumanReview?: boolean;
   accessResolver?: SocialContentAccessResolver;
   backendFilePort?: SocialContentBackendFilePort;
   now?: Date;
@@ -87,7 +89,8 @@ export async function createSocialContentArtifact(input: {
     tenantId: input.tenantId,
     userId: input.userId,
     idempotencyKey: input.idempotencyKey,
-    requestHash: socialRequestHash(input.value),
+    requestHash: socialRequestHash(input.requireHumanReview
+      ? { value: input.value, requireHumanReview: true } : input.value),
     operation: 'create_social_content_artifact',
     targetId: input.taskId,
     now: input.now,
@@ -147,7 +150,9 @@ export async function createSocialContentArtifact(input: {
       }
       const timestamp = (input.now ?? new Date()).toISOString();
       const artifactId = socialPublicId('socialart');
-      const automaticReview = socialManagedArtifactReview({
+      const automaticReview = input.requireHumanReview
+        ? { approved: false, reason: 'human_review_required' }
+        : socialManagedArtifactReview({
         brief: socialTaskSummary(task).brief,
         trustedAgentOrigin: input.trustedAgentOrigin,
         origin: input.value.origin,

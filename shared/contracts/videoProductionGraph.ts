@@ -153,6 +153,8 @@ const STARTER_STAGE_MAP: Record<string, VideoProductionNodeId> = {
   media_evaluation: 'quality',
   creative_review: 'quality',
   review_ready: 'approval',
+  waiting_review: 'approval',
+  delivery_prepared: 'approval',
 };
 
 const DIGITAL_EMPLOYEE_STAGE_MAP: Record<string, VideoProductionNodeId> = {
