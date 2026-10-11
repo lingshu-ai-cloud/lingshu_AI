@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { executableMaterialRouting } from './socialContentProductReplacementEnvironment.js';
+import { executableMaterialRouting, productReferenceBound } from './socialContentProductReplacementEnvironment.js';
 import { socialRequestHash } from './socialContentValidation.js';
 
 const routing = {
@@ -18,4 +18,12 @@ test('execution routing ignores duration provenance but keeps paid provider inpu
   assert.equal(socialRequestHash(executableMaterialRouting(routing)), socialRequestHash(executableMaterialRouting(projected)));
   const changed = {...projected, generation: {...projected.generation, durationSeconds: 4}};
   assert.notEqual(socialRequestHash(executableMaterialRouting(routing)), socialRequestHash(executableMaterialRouting(changed)));
+});
+
+test('budget preflight binds canonical product bytes while runtime references require the exact hash', () => {
+  assert.equal(productReferenceBound([], 'product-image', 'a'.repeat(64)), true);
+  assert.equal(productReferenceBound([{assetId: 'product-image', productRef: 'product:p', url: '/owned',
+    contentHash: 'a'.repeat(64)}], 'product-image', 'a'.repeat(64)), true);
+  assert.equal(productReferenceBound([{assetId: 'product-image', productRef: 'product:p', url: '/owned',
+    contentHash: 'b'.repeat(64)}], 'product-image', 'a'.repeat(64)), false);
 });

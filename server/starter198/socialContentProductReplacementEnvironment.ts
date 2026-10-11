@@ -34,6 +34,16 @@ export function executableMaterialRouting(value: unknown): unknown {
   if (routing.generation && typeof routing.generation === 'object') delete routing.generation.durationOrigin;
   return routing;
 }
+export function productReferenceBound(
+  references: Input['referenceImages'], id: string, contentHash: string | undefined,
+): boolean {
+  // Budget preflight deliberately has no render-workspace assets. It derives
+  // the bound from canonical same-tenant library bytes below. Runtime calls do
+  // carry references and must match the exact canonical hash.
+  return references.length === 0 || references.some(reference => (
+    reference.assetId === id && reference.contentHash === contentHash
+  ));
+}
 /** Exact inputs for server quotes; provider duration, not trimmed duration, is billed. */
 export function productReplacementOperationFingerprint(kind: string, value: unknown) {
   return sha(JSON.stringify({schema: 'product-replacement-operation.v1', kind, value}));
@@ -263,7 +273,7 @@ export async function createEnvironmentProductReplacementPorts(input: Input, con
           const associationMatches = r.productId ? r.productId === productId : groups.length > 0 && groups.some(g => refs.includes(g.productRef));
           return r.id === id && (r.tenantId || r.tenant_id) === input.tenantId && r.type === 'image' && r.scope !== 'shared' && groups.length > 0 && associationMatches;
         });
-        if (!record || !input.referenceImages.some(r => r.assetId === id && r.contentHash === (record.contentSha256 || record.contentHash))) throw Error('product_KB_same_tenant_packaging_missing');
+        if (!record || !productReferenceBound(input.referenceImages, id, record.contentSha256 || record.contentHash)) throw Error('product_KB_same_tenant_packaging_missing');
         const bytes=await readBytes(record);
         productAuthorities.set(id,{hash:sha(bytes),recordHash:socialRequestHash(record)});
         return imageReference(bytes, 'product_identity');
