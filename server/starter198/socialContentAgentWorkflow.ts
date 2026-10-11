@@ -538,6 +538,7 @@ function capabilityCandidates(input: {
   supply: SocialAssetSupplyShotPlan;
   capabilityRuntime?: SocialContentCapabilityRuntimeRegistration[];
   materialCandidates?: SocialWorkflowMaterialCandidate[];
+  preferLocalProductAnimation?: boolean;
 }): SocialExecutionCandidate[] {
   const targetSeconds = input.scene.duration.targetSeconds;
   const registrations = input.capabilityRuntime ?? socialContentEmbeddedRuntimeRegistrations(input.supply.materialRouting ? { wholeFilmBudget: true, productVideoProvider: input.supply.materialRouting.generation?.videoProvider } : {});
@@ -692,8 +693,9 @@ function capabilityCandidates(input: {
         if (typed.localMatch.state === 'matched' && typed.policy !== 'authorized_presenter') return candidate.kind === 'asset'
           && candidate.sourceStrategy === 'customer_real_asset' && Boolean(candidate.sourceRef && typed.localMatch.sourceRefs.includes(candidate.sourceRef));
         if (typed.policy === 'local_only') return false;
-        return candidate.kind === 'capability' && candidate.sourceStrategy === (typed.policy === 'authorized_presenter'
-          ? 'authorized_digital_presenter' : 'aigc_product_scene_replication');
+        return candidate.kind === 'capability' && (typed.policy === 'authorized_presenter'
+          ? candidate.sourceStrategy === 'authorized_digital_presenter'
+          : ['aigc_product_scene_replication', 'customer_product_image_animation'].includes(candidate.sourceStrategy));
       }
       const routing = input.scene.referenceProductionRouting;
       if (!routing) return true;
@@ -721,6 +723,7 @@ function executionScene(input: {
   supply: SocialAssetSupplyShotPlan;
   capabilityRuntime?: SocialContentCapabilityRuntimeRegistration[];
   materialCandidates?: SocialWorkflowMaterialCandidate[];
+  preferLocalProductAnimation?: boolean;
 }): SocialContentExecutionScenePlan {
   const candidates = capabilityCandidates({ ...input, sceneId: input.scene.sceneId });
   const identityLockedPresenter = input.scene.referenceProductionRouting?.state === 'ready'
@@ -773,7 +776,11 @@ function executionScene(input: {
     ? input.supply.materialRouting.localMatch.state === 'matched' && input.supply.materialRouting.policy !== 'authorized_presenter'
       ? candidates.find(candidate => candidate.kind === 'asset' && candidate.sourceStrategy === 'customer_real_asset' && Boolean(candidate.sourceRef && input.supply.materialRouting!.localMatch.sourceRefs.includes(candidate.sourceRef)))
       : input.supply.materialRouting.policy === 'authorized_presenter' ? capability('authorized_digital_presenter')
-        : input.supply.materialRouting.policy === 'local_first_product_i2v' ? capability('aigc_product_scene_replication') : undefined
+        : input.supply.materialRouting.policy === 'local_first_product_i2v'
+          ? input.preferLocalProductAnimation
+            ? capability('customer_product_image_animation') ?? capability('aigc_product_scene_replication')
+            : capability('aigc_product_scene_replication')
+          : undefined
     : undefined;
   const preferred = input.supply.materialRouting ? typedPreferred : identityLockedPresenter ? capability('authorized_digital_presenter')
     : mandatoryProductGeneration ? capability('aigc_product_scene_replication')
@@ -834,8 +841,11 @@ function executionScene(input: {
 
 function buildExecutionPlan(input: BuildSocialAgentWorkflowInput, directorBrief: SocialDirectorBrief): SocialContentExecutionPlan {
   const supplyById = new Map(input.assetSupplyPlan.shots.map(shot => [shot.shotId, shot]));
+  let paidProductSceneCount = 0;
   const scenes = directorBrief.scenes.flatMap(scene => {
     const supply = supplyById.get(scene.sceneId);
+    const productSceneOrdinal = supply?.sourceStrategy === 'aigc_product_scene_replication'
+      ? ++paidProductSceneCount : 0;
     return supply ? [executionScene({
       taskId: input.taskId,
       taskVersion: input.taskVersion,
@@ -843,6 +853,11 @@ function buildExecutionPlan(input: BuildSocialAgentWorkflowInput, directorBrief:
       supply,
       capabilityRuntime: input.capabilityRuntime,
       materialCandidates: input.materialCandidates,
+      // Keep the two strongest product beats as generated scenes. Later value
+      // and CTA beats use the exact owned product image with a local motion
+      // treatment so an 18-second film remains inside the whole-film ceiling.
+      preferLocalProductAnimation: productSceneOrdinal > 2
+        && ['value', 'call_to_action'].includes(supply.function),
     })] : [];
   });
   const selectedApproach = input.brief.productionApproach ?? 'ai_enhanced';

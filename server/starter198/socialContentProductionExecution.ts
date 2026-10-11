@@ -267,7 +267,7 @@ export function assetSupplyPlanWithExecutionSelections(
         ...structuredClone(shot),
         sourceStrategy: execution.selectedSourceStrategy,
         fallbackSourceStrategy: execution.fallbackSourceStrategy,
-        ...(candidate.kind === 'capability' && execution.selectedSourceStrategy !== 'authorized_digital_presenter'
+        ...(candidate.kind === 'capability' && !['authorized_digital_presenter', 'customer_product_image_animation'].includes(execution.selectedSourceStrategy)
           ? { sourceRefs: [] } : {}),
         ...(candidate.kind === 'asset' && candidate.sourceRef ? {
           sourceRefs: [candidate.sourceRef],
