@@ -17,6 +17,8 @@ export interface FrozenPaidProduction {
         maximumCny: number;
     };
     maximumRetries: number;
+    /** Product shots with a completed, failed attempt-0 video QA receipt. */
+    directedRetryShotIds?: string[];
     scenes: Array<{
         shotId: string;
         durationSeconds: number;
@@ -117,7 +119,7 @@ export function createSocialContentPaidOperationPlanner(ports: PaidOperationPlan
                 if (!gaps.includes(s))
                     gaps.push(s);
             };
-            if (!input || !Array.isArray(input.scenes) || !Array.isArray(input.shots) || !Array.isArray(input.assets) || !input.voice || !Array.isArray(input.voice.lines) || input.scenes.some(s => typeof s.spokenText !== 'string') || !['local', 'paid'].includes(input.finalReview) || paidProductionHash(input.scope) !== paidProductionHash(scope) || !hash(input.baselineHash) || input.recordHash !== paidProductionRecordHash(input) || input.approval?.approved !== true || !text(input.approval.reviewRef) || input.approval.planHash !== scope.planHash || input.approval.sourceHash !== paidProductionApprovalHash(input) || !text(input.authorization?.ref) || !Number.isFinite(input.authorization?.maximumCny) || input.authorization.maximumCny <= 0 || !Number.isInteger(input.maximumRetries) || input.maximumRetries < 0 || input.maximumRetries > 3)
+            if (!input || !Array.isArray(input.scenes) || !Array.isArray(input.shots) || !Array.isArray(input.assets) || !input.voice || !Array.isArray(input.voice.lines) || input.scenes.some(s => typeof s.spokenText !== 'string') || !['local', 'paid'].includes(input.finalReview) || paidProductionHash(input.scope) !== paidProductionHash(scope) || !hash(input.baselineHash) || input.recordHash !== paidProductionRecordHash(input) || input.approval?.approved !== true || !text(input.approval.reviewRef) || input.approval.planHash !== scope.planHash || input.approval.sourceHash !== paidProductionApprovalHash(input) || !text(input.authorization?.ref) || !Number.isFinite(input.authorization?.maximumCny) || input.authorization.maximumCny <= 0 || !Number.isInteger(input.maximumRetries) || input.maximumRetries < 0 || input.maximumRetries > 3 || (input.directedRetryShotIds !== undefined && (!Array.isArray(input.directedRetryShotIds) || input.directedRetryShotIds.some(id => !text(id)) || new Set(input.directedRetryShotIds).size !== input.directedRetryShotIds.length)))
                 return { plan: null, requirements, gaps: ['frozen_approved_production_unverified'] };
             if (!input.scenes.length || new Set(input.scenes.map(s => s.shotId)).size !== input.scenes.length || new Set(input.shots.map(s => s.shotId)).size !== input.shots.length || input.scenes.length !== input.shots.length)
                 gap('scene_mapping_invalid');
@@ -243,7 +245,8 @@ export function createSocialContentPaidOperationPlanner(ports: PaidOperationPlan
                 // repeated; every additional video/QA POST remains a distinct
                 // pre-priced operation in this same task/run budget scope.
                 const plannedAttempts = ['video', 'video_qa'].includes(requirement.stage)
-                    && requirement.shotId && input.shots.find(shot => shot.shotId === requirement.shotId)?.sourceStrategy === 'aigc_product_scene_replication'
+                    && requirement.shotId && input.directedRetryShotIds?.includes(requirement.shotId)
+                    && input.shots.find(shot => shot.shotId === requirement.shotId)?.sourceStrategy === 'aigc_product_scene_replication'
                     ? Math.min(2, input.maximumRetries + 1)
                     : route.maximumAttempts;
                 for (let attempt = 0; attempt < plannedAttempts; attempt++)

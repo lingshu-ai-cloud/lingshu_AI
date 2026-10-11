@@ -38,6 +38,7 @@ export interface ProductionBudgetReadPorts {
         batchFrameCounts: number[];
     } | null>;
     readTariff?: (operation: Parameters<ReturnType<typeof createSocialContentVerifiedTariffReader>['read']>[0]) => Promise<SocialVerifiedAccountTariff | null>;
+    readDirectedProductRetryShotIds?: (input: {scope: SocialTaskBudgetScope; shots: SocialAssetSupplyPlan['shots']; priorPlan: unknown}) => Promise<string[]>;
     ledgerRoot?: string;
 }
 export interface ProductionBudgetPreflightInput {
@@ -57,6 +58,33 @@ export interface ProductionBudgetPreflightInput {
 }
 const STAGE = 'social.whole_film_budget';
 const error = (gap: string): never => { throw Error(`user_input_required:whole_film_budget_preflight:${gap}`); };
+const sha = (value: string) => createHash('sha256').update(value).digest('hex');
+function readDirectedProductRetryShotIds(input: {scope: SocialTaskBudgetScope; shots: SocialAssetSupplyPlan['shots']; priorPlan: unknown}) {
+    const prior = socialObject(input.priorPlan), operations = Array.isArray(prior?.paidOperations) ? prior.paidOperations.map(socialObject) : [];
+    const root = path.resolve('data/social-product-replacement-executions');
+    const prefix = path.join(root, sha(input.scope.tenantId), sha(input.scope.taskId), sha(input.scope.runId));
+    const retryShots: string[] = [];
+    for (const shot of input.shots) {
+        if (shot.sourceStrategy !== 'aigc_product_scene_replication' || shot.productSceneReplication?.validation.singleShotRetryOnFailure !== true) continue;
+        const attempt0 = operations.find(operation => operation?.shotId === shot.shotId && operation?.stage === 'video_qa');
+        const shotRoot = path.join(prefix, sha(shot.shotId));
+        if (!attempt0?.operationId || !fs.existsSync(shotRoot)) continue;
+        let proven = false;
+        for (const execution of fs.readdirSync(shotRoot)) {
+            const qaRoot = path.join(shotRoot, execution, 'video-qa');
+            if (!fs.existsSync(qaRoot)) continue;
+            for (const name of fs.readdirSync(qaRoot).filter(value => /^[a-f0-9]{64}\.json$/.test(value))) {
+                try {
+                    const receipt = socialObject(JSON.parse(fs.readFileSync(path.join(qaRoot, name), 'utf8'))), report = socialObject(receipt?.report), funding = socialObject(receipt?.funding);
+                    if (receipt?.state === 'completed' && funding?.paidOperationId === attempt0.operationId && funding?.inputContractHash === attempt0.inputContractHash
+                        && report?.passed === false && report?.status === 'retry_video') proven = true;
+                } catch { /* malformed evidence never authorizes a retry */ }
+            }
+        }
+        if (proven) retryShots.push(shot.shotId);
+    }
+    return retryShots;
+}
 async function bytesHash(asset: SocialProductionAsset) {
     if (!asset.localPath)
         return null;
@@ -173,9 +201,12 @@ export async function prepareSocialContentProductionBudget(input: ProductionBudg
     const amount = Number(brief?.perItemBudgetCny), retry = Number(brief?.retryReserveCny || 0);
     if (!Number.isFinite(amount) || amount <= 0 || !Number.isFinite(retry) || retry < 0)
         return error('task_budget_missing');
-    const productRetryAuthorized = input.supplyPlan.shots.some(shot => shot.sourceStrategy === 'aigc_product_scene_replication'
-      && shot.productSceneReplication?.validation.singleShotRetryOnFailure === true);
-    const snapshot: FrozenPaidProduction = { scope, baselineHash, recordHash: '', approval: { approved: true, reviewRef: review.reviewId, sourceHash: '', planHash }, authorization: { ref: `task-budget:${socialRequestHash({ tenantId: input.tenantId, taskId: input.taskId, createdBy: row.created_by, budget: amount, retry })}`, maximumCny: Math.min(10, amount) }, maximumRetries: productRetryAuthorized ? 1 : 0,
+    const priorPlan = socialObject(priorPayload?.plan);
+    const directedRetryShotIds = await (ports?.readDirectedProductRetryShotIds
+      ? ports.readDirectedProductRetryShotIds({scope,shots:input.supplyPlan.shots,priorPlan})
+      : Promise.resolve(readDirectedProductRetryShotIds({scope,shots:input.supplyPlan.shots,priorPlan})));
+    const authorizedRetryShots = [...new Set(directedRetryShotIds)].filter(id => input.supplyPlan!.shots.some(shot => shot.shotId === id && shot.sourceStrategy === 'aigc_product_scene_replication' && shot.productSceneReplication?.validation.singleShotRetryOnFailure === true));
+    const snapshot: FrozenPaidProduction = { scope, baselineHash, recordHash: '', approval: { approved: true, reviewRef: review.reviewId, sourceHash: '', planHash }, authorization: { ref: `task-budget:${socialRequestHash({ tenantId: input.tenantId, taskId: input.taskId, createdBy: row.created_by, budget: amount, retry })}`, maximumCny: Math.min(10, amount) }, maximumRetries: authorizedRetryShots.length ? 1 : 0, directedRetryShotIds: authorizedRetryShots,
         scenes: approved.directorBrief.scenes.map(scene => ({ ...(voice.mode === 'continuous' && voice.requiresAlignment && input.supplyPlan?.shots.some(shot => shot.shotId === scene.sceneId && shot.sourceStrategy === 'authorized_digital_presenter') ? {presenterSpeech:'whole_track' as const} : {}), shotId: scene.sceneId, durationSeconds: scene.duration.endSeconds - scene.duration.startSeconds, spokenText: input.baseline.scenes.find(s => s.sceneId === scene.sceneId)?.voiceover || input.baseline.scenes.find(s => s.sceneId === scene.sceneId)?.narration || '' })), shots: input.supplyPlan.shots, assets: assetInputs, voice, finalReview: 'local' };
     snapshot.approval.sourceHash = paidProductionApprovalHash(snapshot);
     snapshot.recordHash = paidProductionRecordHash(snapshot);
