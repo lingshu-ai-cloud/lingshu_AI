@@ -30,7 +30,9 @@ assert.match(source, /response\.ok === false \|\| response\.source !== 'ai' \|\|
 assert.match(source, /resultProvenance !== 'ai'[^]*?不能进入视频生成/, '模板或被拒绝脚本不得进入视频生成');
 assert.match(source, /if \(shouldAdvanceDemo\)[^]*?completeDemoStep\('traffic'\)/, '演示流程只能在明确 AI 成功后推进');
 assert.doesNotMatch(source, /(?:GMP|FDA-ready|Low MOQ|Fast Turnaround|Export-ready)/, '本地脚本模板不得内置未核实商业承诺');
-assert.match(source, /disabled=\{!isImagePost && !draftReady\}/, '逐句口播起稿由编导交接状态控制，成片执行另行验收');
+assert.match(source, /const detailCreationReady = video\.id\.startsWith\('material-'\) \? true : isImagePost \? imageAnalysisReady : exactQuality\.ready && !pending/, '视频复刻入口必须有精确证据且分析不在执行中，图片入口保留自己的证据门');
+assert.match(source, /onClick=\{detailCreationReady \? onCreate : isImagePost \? onReanalyzeImage : onExactAnalysis\} disabled=\{!detailCreationReady && !canRunDetailAnalysis\}/, '证据不足必须进入真实分析或禁止操作，不得直接创建');
+assert.match(source, /const handoffReady = !pending && reviewHandoff\?\.status === 'production_ready' && reviewHandoff\.productionExecutionAllowed === true/, '开放任务起稿不能冒充成片制作已通过编导交接');
 assert.match(source, /review-handoff/, '编导分析抽屉必须读取服务端复核工作单');
 assert.match(source, /<AuthenticatedVideo[^]*?apiUrl=\{previewMaterial\.url\}[^]*?loadOnMount/, '素材弹窗必须走带超时和重试的统一视频播放器');
 assert.doesNotMatch(source, /<video src=\{`\$\{material\.url\}#t=0\.1`\}/, '素材卡片不能同时预加载整页视频并耗尽 Safari 媒体资源');

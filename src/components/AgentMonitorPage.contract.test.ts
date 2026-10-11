@@ -9,8 +9,9 @@ const appSource = fs.readFileSync("src/App.tsx", "utf8");
 const layoutSource = fs.readFileSync("src/components/Layout.tsx", "utf8");
 const libSource = fs.readFileSync("src/lib/digitalEmployees.ts", "utf8");
 
-assert.match(appSource, /lazy\(\(\) => import\(['"]\.\/components\/AgentMonitorPage['"]\)\)/, "the monitor wall must be a separately loaded page");
-assert.match(appSource, /page === ['"]agentMonitor['"][\s\S]{0,200}<AgentMonitorPage/, "the application must route to the independent monitor page");
+assert.match(appSource, /const loadAgentMonitorPage = \(\) => import\(['"]\.\/components\/AgentMonitorPage['"]\)/, "the monitor wall must retain a dedicated dynamic import loader");
+assert.match(appSource, /const AgentMonitorPage = lazy\(loadAgentMonitorPage\)/, "the monitor wall must be a separately loaded page");
+assert.match(appSource, /page === ['"]agentMonitor['"][\s\S]{0,400}<AgentMonitorPage/, "the application must route to the independent monitor page");
 assert.match(layoutSource, /page !== ['"]agentMonitor['"] && <motion\.aside/, "the independent monitor page must remove the ordinary sidebar");
 assert.match(cockpitSource, /打开监控大屏/, "the execution center must expose the monitor wall entry");
 assert.match(monitorSource, /digitalEmployeeApi\.overview\(\)/, "the monitor wall must use the real overview endpoint");

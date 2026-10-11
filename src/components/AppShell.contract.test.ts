@@ -24,7 +24,7 @@ assert.match(app, /data-app-page-slot[^>]+min-h-0[^>]+flex-1[^>]+overflow-hidden
   'context bars must leave one bounded page slot for the active page');
 assert.match(traffic, /flex h-full min-h-0 flex-col overflow-hidden/,
   'the social workspace must hand scrolling to its active panel');
-assert.match(layout, /matchMedia\('\(max-width: 760px\)'\)[\s\S]+addEventListener\('change'/,
+assert.match(layout, /matchMedia\('\(max-width: 767px\)'\)[\s\S]+addEventListener\('change'/,
   'the mobile navigation must react when viewport width changes');
 
 assert.doesNotMatch(layout, /投流与发布|CONTENT_NAV_ITEMS|ContentCreationNav/,
