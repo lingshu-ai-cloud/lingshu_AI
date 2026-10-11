@@ -1,3 +1,4 @@
+import { frozenStudioProject, restoreStudioSpec } from '../lib/frozenStudioProject';
 import { parseScopedSceneTarget, validateScopedSceneTarget } from '../lib/scopedSceneNavigation';
 import { socialProgramApi } from '../lib/socialProgramApi';
 import { socialSceneReworkApi } from '../lib/socialSceneReworkApi';
@@ -2908,6 +2909,7 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onLaunc
   const [sceneNavigationError, setSceneNavigationError] = useState('');
   const [sceneNavigationReceipt, setSceneNavigationReceipt] = useState('');
   const [boundProductionSnapshot,setBoundProductionSnapshot]=useState<{projectId:string;slots:BoundProductionSlot[]}|null>(null);
+  const frozenStudioSpecRef = useRef<Record<string, unknown> | null>(null);
   const localGateBypass = contentCreationTestBypassEnabled();
   const [stepIdx, setStepIdx] = useState(0);
   const [speechNames, setSpeechNames] = useState<{key: string; names: Record<string,string>}>({key:'',names:{}});
@@ -3496,8 +3498,8 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onLaunc
         setCooperationRoute(current => current || inheritedRoute);
         setAvailableCooperationRoutes(profile.socialStrategy?.enabledRoutes || []);
         setEnterpriseRouteStrategies(profile.socialStrategy?.routeStrategies || {});
-        setEnterprisePrimaryCta(inheritedCta || '');
-        if (!studioSettingsEditedRef.current) setPrimaryCta(inheritedCta || '');
+        if (!frozenStudioSpecRef.current) setEnterprisePrimaryCta(inheritedCta || '');
+        if (!frozenStudioSpecRef.current && !studioSettingsEditedRef.current) setPrimaryCta(inheritedCta || '');
         setSellingPoints(prev => prev || [
           profile.brand?.usp,
           profile.products?.highlights,
@@ -3637,8 +3639,8 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onLaunc
     // A saved workbench shell can predate the task's reference analysis. Rehydrate
     // that empty shell from the authoritative task instead of trapping the user
     // in a manual draft with no reference or enabled script action.
-    canApply: () => (!projectId && !autoGen.current && !studioSettingsEditedRef.current)
-      || Boolean(projectId && socialContentTaskId && !hasTimestampScript),
+    canApply: () => !frozenStudioSpecRef.current && ((!projectId && !autoGen.current && !studioSettingsEditedRef.current)
+      || Boolean(projectId && socialContentTaskId && !hasTimestampScript)),
     onRefresh: task => {
       setSceneReworkTask(task);
       setAgentTaskProductionPreview(socialTaskProductionPreview(task));
@@ -3791,6 +3793,8 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onLaunc
     if (!studioCreateRequest || studioCreateRequest.continueProjectId || socialContentTaskId || appliedCreateRequestRef.current === studioCreateRequest.requestId) return;
     appliedCreateRequestRef.current = studioCreateRequest.requestId;
     const prefill = studioCreateRequest.prefill;
+    frozenStudioSpecRef.current = null;
+    setBoundProductionSnapshot(null);
     setProjectId(null);
     setScriptStageTab('theme');
     setVoiceoverMode('unselected');
@@ -3825,6 +3829,8 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onLaunc
     if (isSameTask) return;
     // A fresh Digital Employee handoff starts a new attributed draft. It must
     // never relabel an unrelated project that happened to be open in Studio.
+    frozenStudioSpecRef.current = null;
+    setBoundProductionSnapshot(null);
     setProjectId(null);
     setProjectWorkflowContext(workflowContext);
     if (['content_production', 'content_quality_gate'].includes(workflowContext.taskKey || '')) {
@@ -9028,7 +9034,7 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onLaunc
         productions: savedShotProductions,
       },
     };
-    return ({
+    const currentSpec = ({
     ...(localFlowTestRef.current ? { localFlowTest: localFlowTestRef.current } : {}),
     mode, contentMode, posterStyle, platform, ratio, duration, lang, provider,
     workflowRunId: projectWorkflowContext?.runId || '', workflowTaskId: projectWorkflowContext?.taskId || '', workflowTaskKey: projectWorkflowContext?.taskKey || '',
@@ -9062,40 +9068,13 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onLaunc
     analysisResults,
     posterDraft, leadContentPackage, posterJsonText, posterImageUrl,
     });
+    return frozenStudioSpecRef.current ? { ...currentSpec, ...structuredClone(frozenStudioSpecRef.current) } : currentSpec;
   };
 
   const applySpec = (savedSpec: Record<string, unknown>) => {
     localFlowTestRef.current = (savedSpec as any).localFlowTest?.enabled === true ? (savedSpec as any).localFlowTest : null;
     if (!localFlowTestRef.current) localFlowRecoveryRef.current = null;
-    const analysisResults = savedSpec.analysisResults && typeof savedSpec.analysisResults === 'object'
-      ? savedSpec.analysisResults as Record<string, unknown>
-      : {};
-    const storyboardResults = analysisResults.storyboard && typeof analysisResults.storyboard === 'object'
-      ? analysisResults.storyboard as Record<string, unknown>
-      : {};
-    const voiceoverResults = analysisResults.voiceover && typeof analysisResults.voiceover === 'object'
-      ? analysisResults.voiceover as Record<string, unknown>
-      : {};
-    const shotResults = analysisResults.shots && typeof analysisResults.shots === 'object'
-      ? analysisResults.shots as Record<string, unknown>
-      : {};
-    // analysisResults is the durable, versioned recovery bundle. Keep the
-    // historical top-level fields for compatibility, but recover from the
-    // bundle when a future migration or partial save omitted one of them.
-    const s: Record<string, unknown> = {
-      ...(storyboardResults.script !== undefined ? { script: storyboardResults.script } : {}),
-      ...(storyboardResults.assignments !== undefined ? { storyboardAssignments: storyboardResults.assignments } : {}),
-      ...(storyboardResults.clipEdits !== undefined ? { clipEdits: storyboardResults.clipEdits } : {}),
-      ...(storyboardResults.sourcePlans !== undefined ? { storyboardSourcePlans: storyboardResults.sourcePlans } : {}),
-      ...(storyboardResults.assemblies !== undefined ? { storyboardAssemblies: storyboardResults.assemblies } : {}),
-      ...(voiceoverResults.text !== undefined ? { voiceoverLines: voiceoverResults.text } : {}),
-      ...(voiceoverResults.drafts !== undefined ? { voiceDrafts: voiceoverResults.drafts } : {}),
-      ...(voiceoverResults.audios !== undefined ? { voiceoverAudios: voiceoverResults.audios } : {}),
-      ...(voiceoverResults.alignedCuesByLang !== undefined ? { alignedCuesByLang: voiceoverResults.alignedCuesByLang } : {}),
-      ...(shotResults.shootingSlots !== undefined ? { shootingSlots: shotResults.shootingSlots } : {}),
-      ...(shotResults.productions !== undefined ? { shotProductions: shotResults.productions } : {}),
-      ...savedSpec,
-    };
+    const s = restoreStudioSpec(savedSpec);
     appliedCreateRequestRef.current = s.studioCreateRequest && typeof s.studioCreateRequest === 'object' ? (s.studioCreateRequest as SocialContentCreateRequest).requestId : null;
     setRestoredSocialTaskId(typeof s.socialContentTaskId === 'string' ? s.socialContentTaskId : null);
     setRestoredCreateRequest(s.studioCreateRequest && typeof s.studioCreateRequest === 'object' ? s.studioCreateRequest as SocialContentCreateRequest : null);
@@ -9232,7 +9211,7 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onLaunc
     if (s.replicationSpeechDraft && typeof s.replicationSpeechDraft === 'object') setReplicationSpeechDraft(s.replicationSpeechDraft as { signature: string; edits: Record<string, string>; deletedIds?: string[]; deletedShotIds?: string[] });
     if (typeof s.referenceBrandSourceTerm === 'string') setReferenceBrandSourceTerm(s.referenceBrandSourceTerm);
     if (typeof s.audience === 'string') setAudience(s.audience);
-    if (typeof s.primaryCta === 'string') setPrimaryCta(s.primaryCta);
+    if (typeof s.primaryCta === 'string') { setPrimaryCta(s.primaryCta); if (frozenStudioSpecRef.current) setEnterprisePrimaryCta(s.primaryCta); }
     setProductContentGoal(s.productContentGoal === 'reach' ? 'reach' : 'leads');
     setReachCta(typeof s.reachCta === 'string' ? s.reachCta : '');
     if (typeof s.cooperationRoute === 'string') setCooperationRoute(s.cooperationRoute);
@@ -9303,7 +9282,8 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onLaunc
       ? s.voiceoverLines
       : restoredVoiceDrafts[restoredSourceLanguage] || formatVoiceoverWithTimestamps(restoredScript));
     if (s.scriptType) setScriptType(s.scriptType as typeof scriptType);
-    if (Array.isArray(s.modeScripts)) setModeScripts(s.modeScripts as ModeScriptOutput[]);
+    if (frozenStudioSpecRef.current) setModeScripts([]);
+    else if (Array.isArray(s.modeScripts)) setModeScripts(s.modeScripts as ModeScriptOutput[]);
     if (typeof s.activeModeScriptId === 'string') setActiveModeScriptId(s.activeModeScriptId);
     if (s.voice) setVoice(s.voice as string);
     if (Array.isArray(s.voiceCandidates)) setVoiceCandidates(s.voiceCandidates as string[]);
@@ -9413,6 +9393,10 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onLaunc
     options: { silent?: boolean; allowDuringModeAction?: boolean; specOverrides?: Record<string, unknown> } = {},
   ) => {
     const silent = options.silent === true;
+    if (frozenStudioSpecRef.current) {
+      if (!silent) setModeNotice('当前是已冻结生产计划，请从原任务发起修订；浏览和刷新不会覆盖分镜或供应商记录。');
+      return false;
+    }
     if (projectHydrationPendingRef.current) {
       if (!silent) setModeNotice('正在恢复项目数据，请稍候再保存。');
       return false;
@@ -10092,7 +10076,11 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onLaunc
   };
 
   const loadProject = (p: StudioProject) => {
-    setBoundProductionSnapshot(null);
+    let frozen: ReturnType<typeof frozenStudioProject>;
+    try { frozen = p.status === 'template' ? null : frozenStudioProject(p.spec); }
+    catch (error) { setModeNotice(error instanceof Error ? error.message : '冻结生产计划校验失败'); return; }
+    frozenStudioSpecRef.current = frozen?.spec ?? null;
+    setBoundProductionSnapshot(frozen ? { projectId: p.id, slots: frozen.slots } : null);
     localFlowTestRef.current = (p.spec as any)?.localFlowTest?.enabled === true ? (p.spec as any).localFlowTest : null;
     localFlowRecoveryRef.current = localFlowTestRef.current ? { spec: p.spec, projectId: p.id } : null;
     if (p.status !== 'template') studioApi.adoptProjectRevision(p);
@@ -10303,6 +10291,8 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onLaunc
     await studioApi.deleteProject(id);
     setProjects(await studioApi.listProjects());
     if (projectId === id) {
+      frozenStudioSpecRef.current = null;
+      setBoundProductionSnapshot(null);
       setProjectId(null);
       setProjectWorkflowContext(null);
     }
@@ -17108,7 +17098,9 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onLaunc
                   <Button
                     type="default"
                     onClick={() => {
-                      setProjectId(null);
+                      frozenStudioSpecRef.current = null;
+      setBoundProductionSnapshot(null);
+      setProjectId(null);
                       setExistingSourceDraftPrompt(null);
                       setSourceDraftCheckPending(false);
                     }}
