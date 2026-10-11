@@ -118,3 +118,28 @@ test('replication adapter grades only factors still applicable after a compact s
   assert.equal(result.report?.blockers.some(issue => replacedFactors.some(factor => factor.factorId === issue.factorId)), false);
   assert.equal(result.report?.evidenceInventory.factorEvidence, 1);
 });
+
+test('replication adapter builds identity requirements from normalized applicable factor specs', async () => {
+  const identityWorkflow = structuredClone(workflow);
+  identityWorkflow.replicationJob!.factorSpecs[0] = {
+    ...identityWorkflow.replicationJob!.factorSpecs[0]!,
+    factorId: 'factor-identity', category: 'identity', policy: 'replace_identity',
+    target: { metric: 'identity', value: 'reference-person', unit: null, regionRef: null, stateKey: 'person' },
+  };
+  identityWorkflow.directorBrief.scenes[0]!.replicationFactors = [{ factorId: 'factor-identity' }] as never;
+  const reuse = ['exact_media_hash', 'text_similarity', 'consecutive_frame_similarity', 'audio_fingerprint_similarity'].map((kind, index) => ({
+    evidenceId: `identity-reuse-${index}`, kind: kind as 'exact_media_hash' | 'text_similarity' | 'consecutive_frame_similarity' | 'audio_fingerprint_similarity',
+    similarity: 0.1, riskThreshold: 0.9, status: 'available' as const, authorization: 'unknown' as const,
+    evidenceRefs: [`worker://identity-reuse/${index}`], provenance,
+  }));
+  const result = await evaluateSocialReplicationResult({
+    workflow: identityWorkflow as SocialContentAgentWorkflow, replicationScript: script,
+    productionResultId: 'result-identity', outputVideoPath: '/not/required.mp4',
+    evidence: {
+      factorEvidence: [{ factorId: 'factor-identity', sceneId: 'scene-1', outcome: 'pass', actual: 'reference-person', evidenceRefs: ['worker://identity-factor'], provenance }],
+      identityEvidence: [{ requirementId: 'factor-identity', outcome: 'replaced', detectedOriginal: false, detectedReplacement: 'product-1', evidenceRefs: ['worker://identity'], provenance }],
+      reuseRiskEvidence: reuse,
+    },
+  });
+  assert.equal(result.evaluation?.identityReplacement.status, 'passed', JSON.stringify(result.report, null, 2));
+});

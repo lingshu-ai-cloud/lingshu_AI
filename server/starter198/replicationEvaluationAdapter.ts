@@ -114,9 +114,9 @@ export async function evaluateSocialReplicationResult(input: {
   const identityRequirements = replacementFactors.map(factor => ({
     requirementId: factor.factorId,
     identityType: factor.category === 'identity' ? 'other' as const : 'other' as const,
-    originalIdentity: String(factor.target.value ?? ''),
+    originalIdentity: String(factor.expected ?? ''),
     expectedReplacement: job.target.productRef || job.target.accountRef?.id || null,
-    sceneIds: [sceneByFactor.get(factor.factorId) || factor.beatId],
+    sceneIds: [factor.sceneId],
     required: factor.importance === 'critical' || factor.importance === 'high',
   }));
   const defaultFitChecks: AccountProductFitCheck[] = [
