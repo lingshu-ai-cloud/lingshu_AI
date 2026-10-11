@@ -23,7 +23,7 @@ export interface ReplicationExecutionGap {
 /** The last read-only gate before a replication task may reuse an artifact or
  * call any paid producer. A model-written approval is not source evidence. */
 export function replicationExecutionGaps(
-  detail: Pick<SocialContentTaskDetail, 'agentWorkflow' | 'referenceVideoAnalysis'>,
+  detail: Pick<SocialContentTaskDetail, 'agentWorkflow' | 'referenceVideoAnalysis' | 'replicationScript'>,
 ): ReplicationExecutionGap[] {
   const workflow = detail.agentWorkflow;
   const analysis = detail.referenceVideoAnalysis;
@@ -61,6 +61,7 @@ export function replicationExecutionGaps(
     const reasons: string[] = [];
     const actions: string[] = [];
     const reference = scene.referenceShotId ? sourceShots.get(scene.referenceShotId) : null;
+    const authoredRevision = detail.replicationScript?.shots.find(shot => shot.shotId === scene.sceneId)?.scriptOrigin === 'budget_semantic_revision';
     if (!reference) {
       reasons.push('reference_shot_missing');
       actions.push('将执行镜头绑定到已验收的参考分镜');
@@ -96,11 +97,11 @@ export function replicationExecutionGaps(
       || Boolean(scriptSpeech && ownedMappedLines.length && ownedMappedLines.every(sourceLineExists)
         && cue && Number.isFinite(cue.startSeconds) && Number.isFinite(cue.endSeconds)
         && cue.endSeconds > cue.startSeconds);
-    if (sourceSpeech && !scriptSpeech && !sharedVisualSpeech) {
+    if (!authoredRevision && sourceSpeech && !scriptSpeech && !sharedVisualSpeech) {
       reasons.push('source_speech_missing_from_handoff');
       actions.push('将原片该镜口播逐句映射到编导脚本，保留可追溯原句');
     }
-    if (scriptSpeech && (!sourceSpeech || !phraseTimed)) {
+    if (!authoredRevision && scriptSpeech && (!sourceSpeech || !phraseTimed)) {
       reasons.push('source_phrase_timing_unverified');
       actions.push('对照原声逐句校准起止时间，并将原句准确映射到参考分镜');
     }

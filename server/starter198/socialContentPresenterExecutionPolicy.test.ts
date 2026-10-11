@@ -166,6 +166,13 @@ handoff.referenceVideoAnalysis.shots[0].spokenLines.push({ text: '第二句', pr
 assert.deepEqual(replicationExecutionGaps(handoff), []);
 handoff.agentWorkflow.directorBrief.scenes[0].audioLayers.dialogue = null;
 assert.ok(replicationExecutionGaps(handoff).some(gap => gap.reasonCodes.includes('source_speech_missing_from_handoff')));
+const authored = structuredClone(handoff);
+authored.agentWorkflow.directorBrief.scenes[0].audioLayers.dialogue = 'Original enterprise copy';
+authored.referenceVideoAnalysis.shots[0].spokenLines = [];
+authored.referenceVideoAnalysis.shots[0].spokenText = null;
+authored.replicationScript = {shots:[{shotId:'scene-1',scriptOrigin:'budget_semantic_revision'}]};
+assert.deepEqual(replicationExecutionGaps(authored), [],
+  'an explicit budget-authored revision does not claim or require source ASR phrase timing');
 
 // A word-measured Qwen phrase may span multiple physical cuts. Only its owner
 // emits narration; intersecting visual cuts retain the shared line mapping and
