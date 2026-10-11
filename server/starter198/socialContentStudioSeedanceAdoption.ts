@@ -20,6 +20,7 @@ const ledger=await new StoryboardAigcProjectBudget(path.join(root,'data/storyboa
 const entry=ledger.entries.find(value=>value.operationId===operationId);if(!entry||entry.status!=='completed')return null;
 const output=socialObject(entry.output),providerTaskId=String(output?.providerTaskId||''),fingerprint=String(output?.seedanceInputFingerprint||'');if(!providerTaskId||!fingerprint)throw Error('studio_seedance_completion_receipt_incomplete');
 const file=path.join(root,'data/mvp-studio-video-results',`S04-${providerTaskId.replace(/[^a-zA-Z0-9_-]/g,'_')}.mp4`),qaFile=file+'.qa.json';if(!fs.existsSync(qaFile)||!fs.existsSync(file))return null;
+if(fs.existsSync(file+'.local-rejection.json'))throw Error('studio_seedance_independent_visual_rejected');
 const currentShot=storyboardProjectShotInput(spec,'S04');if(!currentShot)throw Error('studio_seedance_current_shot_missing');
 const frozenSupply=(approved?.assetSupplyPlan as {shots?:Array<{shotId:string;requestedDescription:string}>})?.shots?.find(value=>value.shotId==='S04');
 const currentVisual=/^Visual: (.*)$/m.exec(currentShot.input.detail)?.[1]?.trim();

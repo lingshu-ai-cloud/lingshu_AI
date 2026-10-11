@@ -11,6 +11,7 @@ import { socialJson, socialObject, socialRequestHash, socialText } from './socia
 import { assertStudioSocialArtifactGeneration } from './socialContentOutputSupport.js';
 import { writeExecutionStage } from './socialContentAutoProduction.js';
 import { createSocialDeliveryPackage } from './socialContentOutputs.js';
+import { graphRuntimeInventoryVisible, readCanonicalGraphRuntimeMedia } from './socialContentGraphRuntimeInventory.js';
 import { withStarter198RunMutationLease } from './runMutationLease.js';
 
 type Detail = NonNullable<Awaited<ReturnType<typeof readSocialTaskDetail>>>;
@@ -56,14 +57,16 @@ export async function readSocialProductionGraphDetail(input: { repository: Start
     if (planHash !== approvedContext.revisionPlanHash || socialRequestHash(immutable) !== planHash)
       throw new Error('user_input_required:graph_revision_plan_changed');
   }
-  const admittedRefs = new Set([
+  const admittedRefs = new Set<string>([
     ...(approvedContext.agentWorkflow?.executionPlan.scenes.flatMap(scene => scene.candidates.map(candidate => candidate.sourceRef).filter(Boolean)) ?? []),
     ...(approvedContext.assetSupplyPlan?.inventoryAudit?.records.map(record => record.id) ?? []),
-  ]);
+  ].filter((ref): ref is string => typeof ref === 'string' && Boolean(ref)));
+  const task = await requireSocialTask(input);
+  const canonical = input.repository.dataStore && task.run_id ? await readCanonicalGraphRuntimeMedia({dataStore:input.repository.dataStore,tenantId:input.tenantId,taskId:input.taskId,runId:String(task.run_id),approvedContext}) : [];
   const library = input.repository.materialLibrary;
   const repository: Starter198Repository = library ? { ...input.repository, materialLibrary: async (...args) => {
     const result = await library(...args);
-    return { ...result, items: result.items.filter(item => socialObject(item.lineage)?.sourceTaskId !== input.taskId || admittedRefs.has(socialText(item.id))) };
+    return { ...result, items: result.items.filter(item => graphRuntimeInventoryVisible(item,{tenantId:input.tenantId,taskId:input.taskId,admittedRefs,canonical})) };
   } } : input.repository;
   return readSocialTaskDetail({ ...input, repository });
 }
