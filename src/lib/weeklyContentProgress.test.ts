@@ -20,11 +20,32 @@ const queue = (overrides: Partial<ContentQueueItem> = {}): ContentQueueItem => (
 const task = (overrides: Partial<WorkflowTask> = {}): WorkflowTask => ({ id: 'task', run_id: 'run', task_key: 'content_production', status: 'running', blocked_reason: '', output: {}, ...overrides } as WorkflowTask);
 const overview = (plans = [plan()]): DigitalEmployeeOverview => ({ goal: { id: 'goal' }, plan: { id: 'plan', businessPackage: { tasks: [{ templateId: 'production', videoPlans: plans }] } }, run: { id: 'run', goal_id: 'goal', plan_id: 'plan', status: 'running' }, tasks: [task()], contentQueue: { sourceStatus: 'available', items: [queue()] } } as DigitalEmployeeOverview);
 const project = (spec: Record<string, unknown> = {}, automation: Record<string, unknown> = {}): WeeklyContentProgressProject => ({ id: 'project', spec: {
+  lang: 'en',
   workflowRunId: 'run', workflowTaskId: 'task', contentOrderId: 'order', contentOrder: { lineage: { goalId: 'goal', planId: 'plan' } },
   automation: { managedBy: 'digital_employee', stage: 'script', status: 'processing', ...automation }, ...spec,
 } });
 const get = (model: ReturnType<typeof buildWeeklyContentProgress>, key: string) => model.stages.find(stage => stage.key === key)!;
 const build = (data = overview(), projects: WeeklyContentProgressProject[] = []) => buildWeeklyContentProgress(data, 'master', { projects, projectsStatus: 'available' });
+
+{
+  for (const language of ['zh-CN', '']) {
+    const selected = plan(); selected.preproduction!.directorScript!.language = language;
+    const result = build(overview([selected]));
+    assert.equal(get(result, 'script').status, 'ready');
+    assert.match(get(result, 'script').statusLabel, /语言/);
+    assert.doesNotMatch(get(result, 'script').statusLabel, /已完成/);
+  }
+  const data = overview();
+  for (const spec of [{ lang: 'zh-CN' }, { lang: '' }, { contentOrder: { lineage: { goalId: 'goal', planId: 'plan' }, scripts: { en: { language: 'zh-CN' } } } }]) {
+    const result = build(data, [project({ script: '[0-30] Retained script', ...spec }, { stage: 'material_match', scriptGeneratedAt: '2026-10-11' })]);
+    assert.equal(get(result, 'script').status, 'ready', 'a generated timestamp cannot override explicit language mismatch or missing language');
+  }
+  const valid = build(data, [project({ script: '[0-30] Confirmed English script' }, { stage: 'material_match', scriptGeneratedAt: '2026-10-11' })]);
+  assert.equal(get(valid, 'script').status, 'completed');
+  const rejected = build(data, [project({ script: '[0-30] 中文但声明为英文' }, { stage: 'blocked', resumeStage: 'material_match', scriptGeneratedAt: '2026-10-11', blockerCode: 'REPLICATION_NARRATION_LANGUAGE_MISMATCH', blocker: '冻结口播与目标语种不符' })]);
+  assert.equal(get(rejected, 'script').status, 'blocked', 'explicit backend contract rejection overrides a declared-language match');
+  assert.equal(get(rejected, 'script').detail, '冻结口播与目标语种不符');
+}
 
 {
   const data = overview(); data.run = null;
@@ -366,6 +387,60 @@ const build = (data = overview(), projects: WeeklyContentProgressProject[] = [])
     { ...pendingShot, intendedKind: 'person', blockerCode: 'presenter_authorization_required', blocker: '第 2 镜需要已授权企业数字人' }] }, automation)]);
   assert.equal(get(blockedPerson, 'benchmark').status, 'completed', 'authorization gap does not erase genuine shot analysis');
   assert.equal(get(blockedPerson, 'presenter').status, 'blocked');
+  assert.equal(get(blockedPerson, 'presenter').statusLabel, '待补充数字人');
   assert.match(get(blockedPerson, 'presenter').detail, /已授权企业数字人/);
+  assert.match(get(blockedPerson, 'presenter').detail, /添加并授权企业数字人.*已有镜头产物保留/);
+  assert.equal(blockedPerson.shots[1]!.statusLabel, '待补充数字人');
+  const humanWait = structuredClone(data);
+  humanWait.tasks[0] = task({ status: 'waiting_external', blocked_reason: '等待外部服务', output: { waitState: { kind: 'input', requiresAttention: true } } });
+  const waitingForAvatar = build(humanWait, [project({ ...base, automatedReplicationShots: [
+    base.automatedReplicationShots[0], { ...pendingShot, intendedKind: 'person', blockerCode: 'presenter_authorization_required', blocker: '第 2 镜需要已授权企业数字人' },
+  ] }, automation)]);
+  assert.equal(waitingForAvatar.statusLabel, '待补充数字人');
+  assert.equal(waitingForAvatar.nextAction?.label, '补充数字人后继续');
+  const missingAvatar = build(humanWait, [project({ ...base, automatedReplicationShots: [
+    { ...pendingShot, intendedKind: 'person', blockerCode: 'avatar_required', blocker: '请先添加企业数字人' },
+  ] }, automation)]);
+  assert.equal(missingAvatar.statusLabel, '待补充数字人');
+  const referenceAuthorization = build(humanWait, [project({ ...base, automatedReplicationShots: [
+    { ...pendingShot, intendedKind: 'person', blockerCode: 'reference_model_input_authorization_required', blocker: '参考视频未授权作为模型输入' },
+  ] }, automation)]);
+  assert.notEqual(referenceAuthorization.statusLabel, '待补充数字人', 'reference input authorization is not proof of a missing enterprise avatar');
+}
+{
+  const data = overview([plan({ route: 'clone', referenceId: 'reference' })]);
+  const supplier = { providerTaskId: 'native-task', providerAcceptedAt: '2026-10-11T00:00:00Z', updatedAt: '2026-10-11T00:01:00Z' };
+  const spec = { automatedReplicationShots: [
+    { shotId: 'shot-1', slotId: 'slot-1', kind: 'nonperson', start: 0, end: 5.25 },
+    { shotId: 'shot-2', slotId: 'slot-2', kind: 'blocked', blocker: '需要授权人物', start: 5.25, end: 10 },
+  ], storyboardAssignments: { 'slot-1': 'video' }, automatedReplicationProgress: { 'shot-1': { ...supplier, firstFrameMaterialId: 'frame', firstFrameFingerprint: 'frame-fp', videoMaterialId: 'video', qualityChecked: true, videoContentSha256: 'sha', adopted: true, materialId: 'video' } } };
+  const automation = { stage: 'material_match', status: 'processing', replicationBridgeVersion: 1 };
+  const result = build(data, [project(spec, automation)]);
+  assert.equal(result.shots.length, 2);
+  assert.equal(result.shots[0]!.statusLabel, '已采用');
+  assert.equal(result.shots[0]!.providerTaskId, 'native-task', 'supplier receipt stays visible after generated video arrives');
+  assert.equal(result.shots[0]!.qualityLabel, '镜头质检通过');
+  assert.equal(result.shots[0]!.timeRange, '0–5.25 秒');
+  assert.equal(result.shots[1]!.status, 'blocked');
+  assert.notEqual(get(result, 'render').status, 'completed');
+  data.run!.status = 'paused';
+  const paused = build(data, [project(spec, automation)]);
+  assert.match(get(paused, 'materials').detail, /1\/2.*视频产物.*周任务当前没有继续执行/);
+  assert.equal(paused.shots[0]!.videoMaterialId, 'video');
+
+  for (const [providerStatus, expected] of [['failed', '供应商失败'], ['succeeded', '产物待同步'], ['processing', '供应商生成中'], ['queued', '供应商排队中']] as const) {
+    const receipts = build(overview([plan({ route: 'clone' })]), [project({ ...spec, storyboardAssignments: {}, automatedReplicationProgress: { 'shot-1': { ...supplier, providerStatus } } }, automation)]).shots;
+    assert.equal(receipts[0]!.statusLabel, expected);
+    assert.equal(receipts[0]!.qualityLabel, '视频尚未生成');
+  }
+  const unverifiedQuality = build(data, [project({ ...spec, automatedReplicationProgress: { 'shot-1': { videoMaterialId: 'video', qualityChecked: true } } }, automation)]);
+  assert.equal(unverifiedQuality.shots[0]!.qualityLabel, '镜头质检待回执', 'a quality flag without a content hash is not a verified current video');
+  assert.equal(build(data, [project(spec, { ...automation, stage: 'script' })]).shots.length, 0, 'rewind does not display stale shots as current production');
+  const foreign = { ...project(spec, automation), id: 'foreign' };
+  assert.equal(build(data, [foreign]).shots.length, 0);
+  const adaptation = plan({ contentId: 'variant', productionRole: 'platform_adaptation', masterContentId: 'master' });
+  const shared = buildWeeklyContentProgress(overview([plan(), adaptation]), 'variant', { projects: [project(spec, automation)] });
+  assert.equal(shared.shots[0]!.videoMaterialId, 'video');
+  assert.equal(shared.sharedMaster, true);
 }
 console.log('Weekly content progress evidence tests passed');

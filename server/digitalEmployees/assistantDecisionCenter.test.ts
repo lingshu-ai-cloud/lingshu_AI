@@ -6,6 +6,7 @@ import {
   approvalDecisionVersion,
   executeAssistantDecisionCommand,
   starterDecisionCards,
+  taskWithAssistantProductionInput,
   validateAssistantDecisionCommand,
 } from './assistantDecisionCenter.js';
 import type {
@@ -101,6 +102,55 @@ test('decision command accepts current legal action and rejects stale, illegal a
     () => validateAssistantDecisionCommand(card, 'reject', card.subject.version),
     (error: unknown) => error instanceof AssistantDecisionValidationError && error.code === 'assistant_decision_note_required',
   );
+});
+
+test('a missing enterprise presenter becomes an actionable assistant card while preserving handoff', () => {
+  const blocked = {
+    ...task('task-avatar', 'content_production', 'failed'),
+    blocked_reason: '第 1 镜尚未录入可用企业数字人，其他镜头已保留',
+    output: { waitState: { kind: 'input', code: 'avatar_required', requiresAttention: true } },
+  } as TaskRecord;
+  const card = buildAssistantDecisionFeed({
+    page: 'digitalEmployees', goal: null, plan: null, run: { ...run, status: 'paused' },
+    tasks: [blocked], approvals: [], now,
+  }).items[0]!;
+  assert.equal(card.title, '请添加企业数字人形象');
+  assert.equal(card.actions[0]?.id, 'open_workspace');
+  assert.equal(card.actions[0]?.label, '添加数字人形象');
+  assert.ok(card.actions.some(action => action.id === 'take_over'));
+  assert.equal(card.deepLink?.page, 'enterprise');
+  assert.equal(card.deepLink?.businessRef?.enterpriseView, 'presenters');
+  assert.doesNotMatch(JSON.stringify(card), /providerLog/);
+});
+
+test('a linked production project can surface the avatar requirement without leaking its full spec', () => {
+  const waiting = {
+    ...task('task-avatar-project', 'content_production', 'waiting_external'),
+    blocked_reason: '当前分镜未进入智能生成预算计划，未调用供应商',
+    business_refs: [{ type: 'studio_project', id: 'project-avatar' }],
+    output: { businessRefs: [{ type: 'studio_project', id: 'project-avatar' }] },
+  } as TaskRecord;
+  const enriched = taskWithAssistantProductionInput(waiting, [{
+    id: 'project-avatar',
+    spec: {
+      providerLog: 'must-not-leak',
+      automatedReplicationShots: [
+        { shotId: 'one', kind: 'blocked', intendedKind: 'person', blockerCode: 'presenter_authorization_required' },
+      ],
+    },
+  }]);
+  const card = buildAssistantDecisionFeed({
+    page: 'digitalEmployees', goal: null, plan: null, run: { ...run, status: 'paused' },
+    tasks: [enriched], approvals: [], now,
+  }).items[0]!;
+  assert.equal(card.title, '请添加企业数字人形象');
+  assert.equal(card.actions[0]?.label, '添加数字人形象');
+  assert.doesNotMatch(JSON.stringify(enriched), /must-not-leak|providerLog|automatedReplicationShots/);
+  assert.deepEqual((enriched.output as any).assistantInput, {
+    code: 'avatar_required',
+    message: '人物镜头缺少可用且已授权的企业数字人形象',
+    projectCount: 1,
+  });
 });
 
 test('starter decisions remain available through the unified queue without exposing workspace telemetry', () => {

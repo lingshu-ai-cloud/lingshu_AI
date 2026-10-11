@@ -72,6 +72,8 @@ import { contentProjectLineageFields } from '../digitalEmployees/contentProjectL
 import { buildContentBatchPlan, contentPlanCoverage, enterpriseAssetStableId, type ContentBatchPlanDraft, type ContentOrder } from '../digitalEmployees/contentBatchPlan.js';
 import { bindDefaultProductsToPackage, enrichPackageWithContentSignals, publicationCopyForPlan } from '../digitalEmployees/contentPlanRecommendation.js';
 import { MATERIAL_TYPE_LABELS, SHOT_ROLE_LABELS, buildBenchmarkAnalysis } from '../../shared/benchmarkAnalysis.js';
+import { productionReferenceAdmission } from '../../shared/productionReferenceAdmission.js';
+import { benchmarkAnalysisForRecord } from '../lib/benchmarkAnalysis.js';
 import { summarizeContentFeedback, traceableIndustryTrends } from '../digitalEmployees/contentReview.js';
 import { summarizeWeeklyMatrix } from '../digitalEmployees/weeklyMatrixReview.js';
 import {
@@ -94,7 +96,7 @@ import { buildPublishingApprovalPackage, createPublishingCalendarEntries, type P
 import { beijingDate, followupScheduleFromCadence, latestDueReviewSlot, socialScheduleFromCadence } from '../digitalEmployees/runtimeSchedule.js';
 import { withDigitalEmployeeRunLock } from '../digitalEmployees/runControl.js';
 import { cancelDigitalEmployeeRun as cancelDigitalEmployeeRunApplication } from '../digitalEmployees/runCancellation.js';
-import { buildAssistantDecisionFeed, AssistantDecisionValidationError, executeAssistantDecisionCommand, mergeAssistantDecisionFeeds, starterDecisionCards, approvalDecisionVersion, weeklyPlanDecisionVersion, workflowTaskDecisionVersion } from '../digitalEmployees/assistantDecisionCenter.js';
+import { buildAssistantDecisionFeed, AssistantDecisionValidationError, executeAssistantDecisionCommand, mergeAssistantDecisionFeeds, starterDecisionCards, approvalDecisionVersion, taskWithAssistantProductionInput, weeklyPlanDecisionVersion, workflowTaskDecisionVersion } from '../digitalEmployees/assistantDecisionCenter.js';
 import { normalizeAssistantDecisionPage, normalizeAssistantDecisionExecutionReceipt, type AssistantDecisionExecutionReceipt, type AssistantDecisionActionId, type AssistantDecisionFeed, type AssistantDecisionPage, type AssistantDecisionCard } from '../../shared/contracts/assistantDecisionCenter.js';
 import { customerApprovalRequestHash } from '../digitalEmployees/customerTaskApprovalNavigation.js';
 import {
@@ -531,6 +533,9 @@ async function contentRoutingEvidence(tenantId: string, config: DigitalEmployeeC
       };
     }),
     exactAnalysisIds: analyses.items.filter(exactVideoAnalysis).map(item => item.id),
+    referenceAdmissions: Object.fromEntries(analyses.items.map(item => [item.id,
+      productionReferenceAdmission(benchmarkAnalysisForRecord(item, jsonObject<Record<string, unknown>>(item.aiAnalysis, {}))),
+    ])),
     materialIds: [
       ...enterpriseMaterialIds(tenantId, selectedProducts, selectedProducts.map(product => rawProducts.indexOf(product))),
       ...associatedMaterialRows.filter(row => selectedProducts.some(product => row.association?.productId === stableProductId(product, rawProducts.indexOf(product)))).map(row => row.item.id),
@@ -2679,7 +2684,24 @@ async function buildDigitalEmployeeAssistantFeed(
   const approvalResult = run
     ? await store.list<ApprovalRecord>(COLLECTION.approvals, { where: { tenant_id: tenantId, run_id: run.id, status: 'pending' }, sort: '-created_at', perPage: 100 })
     : { items: [] as ApprovalRecord[] };
-  return buildAssistantDecisionFeed({ page, goal, plan, run, tasks: taskResult.items, approvals: approvalResult.items, limit });
+  const productionProjectIds = [...new Set(taskResult.items.flatMap(task => {
+    const output = jsonObject<Record<string, unknown>>(task.output, {});
+    const refs = [
+      ...jsonObject<Array<Record<string, unknown>>>(task.business_refs, []),
+      ...(Array.isArray(output.businessRefs) ? output.businessRefs as Array<Record<string, unknown>> : []),
+    ];
+    return refs
+      .filter(ref => ref?.type === 'studio_project')
+      .map(ref => String(ref.id || ref.entityId || '').trim())
+      .filter(Boolean);
+  }))];
+  const productionProjects = await Promise.all(productionProjectIds.map(projectId =>
+    tenantRecord<StoredRecord & { tenant_id: string }>('studio_projects', projectId, tenantId)));
+  const assistantTasks = taskResult.items.map(task => taskWithAssistantProductionInput(
+    task,
+    productionProjects.filter((project): project is StoredRecord & { tenant_id: string } => Boolean(project)),
+  ));
+  return buildAssistantDecisionFeed({ page, goal, plan, run, tasks: assistantTasks, approvals: approvalResult.items, limit });
 }
 
 async function buildStarterAssistantCards(req: Request, tenantId: string, userId: string) {
@@ -2743,7 +2765,7 @@ async function takeOverWorkflowTask(input: { tenantId: string; userId: string; t
     }
     if (task.status === 'handed_off' && task.owner_id === input.userId) return;
     const run = await tenantRecord<RunRecord>(COLLECTION.runs, task.run_id, input.tenantId);
-    if (!run || !['waiting_external', 'waiting_approval', 'running'].includes(run.status)) {
+    if (!run || !['waiting_external', 'waiting_approval', 'running', 'paused', 'waiting_human'].includes(run.status)) {
       throw new AssistantDecisionCommandError('run_not_handoff_ready', 409);
     }
     if (!['waiting_external', 'waiting_approval', 'running', 'failed', 'pending'].includes(task.status)) {
@@ -5221,7 +5243,9 @@ digitalEmployeesRouter.post('/tasks/:taskId/handoff', async (req, res) => {
   const task = await tenantRecord<TaskRecord>(COLLECTION.tasks, req.params.taskId, tenantId);
   if (!task) { res.status(404).json({ error: 'task_not_found' }); return; }
   const run = await tenantRecord<RunRecord>(COLLECTION.runs, task.run_id, tenantId);
-  if (!run || !['waiting_external', 'waiting_approval', 'running'].includes(run.status)) { res.status(409).json({ error: 'run_not_handoff_ready' }); return; }
+  if (task.status === 'handed_off' && task.owner_id === userId) { res.json(await buildOverview(tenantId)); return; }
+  if (!run || !['waiting_external', 'waiting_approval', 'running', 'paused', 'waiting_human'].includes(run.status)) { res.status(409).json({ error: 'run_not_handoff_ready' }); return; }
+  if (!['waiting_external', 'waiting_approval', 'running', 'failed', 'pending'].includes(task.status)) { res.status(409).json({ error: 'task_not_handoff_ready' }); return; }
   const now = new Date().toISOString();
   const session = await requiredCreate<HandoffRecord>(COLLECTION.handoffs, {
     tenant_id: tenantId,

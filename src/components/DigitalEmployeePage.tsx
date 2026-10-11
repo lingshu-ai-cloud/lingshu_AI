@@ -32,6 +32,7 @@ import DeliveryBoard from "./DeliveryBoard";
 import ProductionTaskScene from "./ProductionTaskScene";
 import AgentDecisionCard, { type AgentDecisionKind } from "./AgentDecisionCard";
 import SmartBusinessDashboard, { WeeklyCommandCenter } from "./SmartBusinessDashboard";
+import WeeklyProductionStudioEntry from "./smartBusiness/WeeklyProductionStudioEntry";
 import SmartOperationsAccountRail, { type SmartOperationsAccount } from "./SmartOperationsAccountRail";
 import PlanHistoryDialog from "./PlanHistoryDialog";
 import SocialContentStageOnboarding from "./socialContent/SocialContentStageOnboarding";
@@ -94,7 +95,7 @@ import {
   notifyWeeklyWorkUpdated,
   type WeeklyWorkUpdatedDetail,
 } from "../lib/weeklyWorkEvents";
-import { weeklyWorkStatus, type WeeklyWorkStatus } from "../lib/weeklyWorkStatus";
+import { weeklyWorkStatus } from "../lib/weeklyWorkStatus";
 import { socialDiscoveryApi } from "../lib/socialDiscoveryApi";
 import type { SocialCrawlStrategy } from '../../shared/contracts/socialContentWorkflow';
 import EnterpriseProductMultiSelect, { splitSelectedProducts } from './EnterpriseProductMultiSelect';
@@ -526,50 +527,6 @@ function confirmedWeeklyExecution(data: DigitalEmployeeOverview, goalId: string)
 function weeklyStartResultNeedsReconciliation(error: unknown): boolean {
   if (!(error instanceof DigitalEmployeeApiError)) return true;
   return error.status === 408 || error.status >= 500;
-}
-
-function WeeklyWorkStatusAlert({
-  status,
-  onViewProgress,
-}: {
-  status: WeeklyWorkStatus;
-  onViewProgress: () => void;
-}) {
-  const validStartedAt = status.startedAt && Number.isFinite(Date.parse(status.startedAt))
-    ? new Date(status.startedAt).toLocaleString("zh-CN")
-    : "";
-  const alertType = status.phase === "blocked" || (status.phase === "finished" && status.outcome === "failed")
-    ? "error"
-    : status.phase === "paused" || status.phase === "unknown" || (status.phase === "finished" && status.outcome === "cancelled")
-      ? "warning"
-      : status.phase === "finished" && status.outcome === "succeeded"
-        ? "success"
-        : "info";
-  const controller = status.controller ? agentLabel[status.controller] || status.controller : "";
-  return (
-    <Alert
-      type={alertType}
-      showIcon
-      title={status.title}
-      description={(
-        <div className="space-y-1 text-xs leading-5">
-          <p>{status.description}</p>
-          {status.runId && (
-            <p className="text-text-muted">
-              运行编号 <span className="font-mono text-text-secondary">{status.runId}</span>
-              {controller ? ` · 当前责任：${controller}` : ""}
-              {validStartedAt ? ` · 启动于 ${validStartedAt}` : ""}
-            </p>
-          )}
-        </div>
-      )}
-      action={status.runId ? (
-        <Button className="min-h-11" onClick={onViewProgress}>
-          {status.phase === "finished" ? "查看运行详情" : "查看生产进度"}
-        </Button>
-      ) : undefined}
-    />
-  );
 }
 
 function WeeklyStartConflictAlert({
@@ -3798,6 +3755,8 @@ export default function DigitalEmployeePage({
   const [approvalNote, setApprovalNote] = useState("");
   const [selectedTaskId, setSelectedTaskId] = useState("");
   const [selectedContentItemId, setSelectedContentItemId] = useState("");
+  const [weeklyStudioContentId, setWeeklyStudioContentId] = useState("");
+  useEffect(() => setWeeklyStudioContentId(""), [data?.goal?.id, data?.plan?.id, data?.run?.id]);
   const [selectedAccountId, setSelectedAccountId] = useState("");
   const [deliveryFocus, setDeliveryFocus] = useState<{ id: string; request: number }>();
   const [viewGoalId, setViewGoalId] = useState("");
@@ -4630,7 +4589,6 @@ export default function DigitalEmployeePage({
         connected: Boolean(connected),
       };
     });
-    const currentWeeklyWorkStatus = weeklyWorkStatus(data);
     const openConflictingRun = async () => {
       const conflict = weeklyStartConflict;
       if (!conflict) return;
@@ -4718,16 +4676,22 @@ export default function DigitalEmployeePage({
       dispatchDigitalEmployeeDeepLink(buildTaskDeepLink(task, planTask, data.run?.id || task.run_id));
     };
     const openProductionProgress = (taskId: string, contentItemId: string) => {
+      const items = (data.contentQueue?.items || []).filter(item => item.id === contentItemId && (!taskId || item.taskId === taskId));
+      if (items.length === 1 && items[0]!.origin === "weekly_plan") {
+        // Preserve the source tab. Returning from Studio must not reopen a redirect.
+        setWeeklyStudioContentId(items[0]!.contentId);
+        return;
+      }
       if (taskId) setSelectedTaskId(taskId);
       setSelectedContentItemId(contentItemId);
       setWorkspaceView("live");
       window.setTimeout(() => document.querySelector('[data-testid="production-task-scene"]')?.scrollIntoView({ behavior: getScrollBehavior(), block: "start" }), 50);
     };
-    const weeklyStatusSlot = weeklyStartConflict || currentWeeklyWorkStatus || error ? (
+    // Only explicit action failures/conflicts belong here. Persisted run state
+    // remains in the compact header and per-content progress, never a home banner.
+    const weeklyActionFeedback = (weeklyStartConflict && !viewGoalId) || error ? (
       <div className="space-y-2">
-        {weeklyStartConflict && !viewGoalId
-          ? <WeeklyStartConflictAlert conflict={weeklyStartConflict} onViewRun={() => void openConflictingRun()} />
-          : currentWeeklyWorkStatus && <WeeklyWorkStatusAlert status={currentWeeklyWorkStatus} onViewProgress={() => goLive(currentWeeklyWorkStatus.currentTaskId)} />}
+        {weeklyStartConflict && !viewGoalId && <WeeklyStartConflictAlert conflict={weeklyStartConflict} onViewRun={() => void openConflictingRun()} />}
         {error && <Alert type="error" showIcon title={error} closable onClose={() => setError("")} />}
       </div>
     ) : undefined;
@@ -4738,6 +4702,7 @@ export default function DigitalEmployeePage({
     </>;
     return (
       <>
+      {weeklyStudioContentId && <WeeklyProductionStudioEntry data={data} contentId={weeklyStudioContentId} autoOpen onOpened={() => setWeeklyStudioContentId("")} onUnavailable={() => setWeeklyStudioContentId("")} />}
       {!weeklyPlanOpen && <div className="h-full overflow-y-auto bg-white">
         <div className="mx-auto w-full px-2 py-3 sm:px-3">
           <h1 className="sr-only">{PAGE_REGISTRY.digitalEmployees.canonicalTitle}</h1>
@@ -4746,13 +4711,13 @@ export default function DigitalEmployeePage({
               data={data}
               statusLabel={currentPlanStatusLabel}
               actions={weeklyPlanControls}
-              status={weeklyStatusSlot}
+              feedback={weeklyActionFeedback}
               onRefresh={() => void load()}
               onOpenProductionProgress={openProductionProgress}
               notice={!activeRun && !viewGoalId && (missingReferenceMasters.length > 0 || missingProductMasters.length > 0 || detailGeneration?.status === "blocked")
                 ? <p className="mr-auto text-xs text-text-secondary">可直接开始任务；{detailGeneration?.blockedCount || missingReferenceMasters.length || missingProductMasters.length} 条内容的待补资料将在对应制作步骤提示，不阻止其他内容推进。账号连接与发布授权在正式发布前核验。</p>
                 : undefined}
-            /> : <><section className="overflow-hidden rounded-lg border border-border bg-white"><div className="flex flex-wrap items-start justify-between gap-4 px-5 py-4"><div><p className="text-xs font-semibold text-accent">周经营计划</p><p className="mt-1 text-sm font-bold text-slate-800">本周还没有可执行计划</p><p className="mt-1 text-xs text-slate-500">点击“开始周任务”确定平台、账号、视频产量和预算，再选择产品并确认工作排期。</p></div><div aria-label="智能经营控制" className="flex max-w-full flex-wrap items-center justify-end gap-2">{weeklyPlanControls}</div></div></section>{weeklyStatusSlot && <div className="border-x border-b border-border px-4 py-2.5">{weeklyStatusSlot}</div>}</>}
+            /> : <><section className="overflow-hidden rounded-lg border border-border bg-white"><div className="flex flex-wrap items-start justify-between gap-4 px-5 py-4"><div><p className="text-xs font-semibold text-accent">周经营计划</p><p className="mt-1 text-sm font-bold text-slate-800">本周还没有可执行计划</p><p className="mt-1 text-xs text-slate-500">点击“开始周任务”确定平台、账号、视频产量和预算，再选择产品并确认工作排期。</p></div><div aria-label="智能经营控制" className="flex max-w-full flex-wrap items-center justify-end gap-2">{weeklyPlanControls}</div></div></section>{weeklyActionFeedback && <div className="border-b border-border px-4 py-2.5">{weeklyActionFeedback}</div>}</>}
           </div>
           <Tabs className="mt-3" aria-label="智能经营视图" activeKey={workspaceView === "live" || workspaceView === "overview" ? "review" : workspaceView} onChange={key => {setWorkspaceView(key as WorkspaceView); setSelectedContentItemId("");}} items={views.map(view => ({key: view.id, label: view.label}))}/>
           <div className="grid grid-cols-1 gap-4 pb-6 pt-2">

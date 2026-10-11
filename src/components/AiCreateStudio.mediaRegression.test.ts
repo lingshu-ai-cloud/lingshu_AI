@@ -136,6 +136,14 @@ const speechPlan = buildReferenceSpeechPlan({ referenceAnalysis: { narrationSour
 assert.equal(speechPlan.lines.length, 1, '跨镜口播只朗读一次');
 assert.deepEqual(speechPlan.lines[0]?.visuals.map(item => item.label), ['人物口播', '产品展示'], '一条口播跨两个实际画面时两个分镜都必须呈现');
 assert.equal((speechPlan.script.match(/口播：Enterprise brand\./g) || []).length, 1);
+const silentReferencePlan = buildReferenceSpeechPlan({ referenceAnalysis: { narrationSourceStatus: 'missing_source_asr', details: [
+  { shotId: 'silent-1', time: '0-3s', shot: '产品特写', camera: '缓慢推近', visual: '企业产品包装', speechLines: [] },
+] } } as any, [{ shotId: 'silent-1', sourceTerm: '', productId: 'product-1', productLabel: '云朵泡沫卸妆蜜' }]);
+assert.equal(silentReferencePlan.error, undefined, '缺少原片 ASR 不应成为制作死路');
+assert.equal(silentReferencePlan.fallbackMode, 'enterprise_script_or_silent_subtitle');
+assert.match(silentReferencePlan.script, /口播：无/);
+assert.match(silentReferencePlan.script, /字幕：云朵泡沫卸妆蜜/);
+assert.doesNotMatch(silentReferencePlan.script, /原片台词/);
 
 const multiProductReference = { referenceAnalysis: { narrationSourceStatus: 'asr_aligned', details: [
   { shotId: 'intro', time: '0-1s', subtitle: '', visual: '销售人物口播', speechLines: [{ lineId: 'products', referenceText: 'Try cream and oil.', sourceStartSeconds: 0, sourceEndSeconds: 3, narrationOwnerShotId: 'intro' }] },

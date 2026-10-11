@@ -56,6 +56,7 @@ const singleEntry = resolveStudioWorkflowProjectEntry([workflowProjects[0]!, wor
 assert.equal(singleEntry.project?.id, 'one', 'a single exact task project may open directly');
 assert.equal(singleEntry.openList, false);
 assert.equal(resolveStudioWorkflowProjectEntry(workflowProjects, { ...workflowContext, entityId: 'two' }).project?.id, 'two', 'a resource handoff must select exactly the requested project');
+assert.equal(resolveStudioWorkflowProjectEntry(workflowProjects, { ...workflowContext, taskId: 'other-task', entityId: 'two' }).project, null, 'an exact project handoff must still reject a project attributed to another task');
 assert.equal(resolveStudioWorkflowProjectEntry(workflowProjects, { ...workflowContext, entityId: 'missing' }).project, null, 'missing project must not open a sibling');
 assert.deepEqual(resolveStudioWorkflowProjectEntry([workflowProjects[0]!], workflowContext).projects, [], 'zero task projects must not fall back to unrelated drafts');
 

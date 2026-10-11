@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import { batchShotRequestId, planStudioBatchShotRoutes, uniqueAuthorizedSalesPresenter } from './studioBatchShotRoutes.js';
+import { newShotProduction, shotFingerprint } from '../../src/lib/shotProduction.js';
 
 const key = { projectId: 'project', batchId: 'click-1', assemblyId: 'assembly', shotId: 'a', fingerprint: 'f1' };
 assert.equal(batchShotRequestId(key), batchShotRequestId({ ...key }));
@@ -185,3 +186,52 @@ const consumerDemo = planStudioBatchShotRoutes({ activeAssemblyId: 'a',
   storyboardSourcePlans: { 'demo-slot': { mode: 'ai', shotTopic: 'consumer_demo' } },
 }, { talkingExecutorReady: false, actionExecutorReady: false, authorizedPresenterIds: [] });
 assert.equal(consumerDemo[0]?.visualTopic, 'usage_scene');
+
+const adoptionShot = { ...newShotProduction(), adoptedId: 'candidate' };
+const adoptionFingerprint = shotFingerprint(adoptionShot, 'current-reference-context', 'shot');
+adoptionShot.candidates = [{ id: 'candidate', materialId: 'generated-video', fingerprint: adoptionFingerprint, source: 'ai', createdAt: '2026-10-11' }];
+const hash = 'a'.repeat(64);
+const adoptedSpec = {
+  mode: 'clone', ratio: '9:16', activeAssemblyId: 'assembly', automation: { managedBy: 'digital_employee' },
+  automatedReplicationPlan: { tenantId: 'tenant' },
+  shootingSlots: [{ id: 'shot', slotId: 'slot', duration: 4, detail: '产品镜头' }],
+  shotProductions: { 'assembly:shot': adoptionShot },
+  storyboardAssignments: { slot: 'generated-video' }, storyboardSourcePlans: { slot: { mode: 'ai', confirmed: false } },
+  automatedReplicationShots: [{ shotId: 'shot', slotId: 'slot', kind: 'nonperson', start: 0, end: 4,
+    fingerprintContext: 'current-reference-context', firstFrameRequest: { projectId: 'project', shotDescription: '产品镜头', startSeconds: 0, endSeconds: 4 } }],
+  automatedReplicationProgress: { shot: { adopted: true, qualityChecked: true, materialId: 'generated-video', videoMaterialId: 'generated-video',
+    videoContentSha256: hash, fingerprint: adoptionFingerprint, firstFrameMaterialId: 'first-frame', firstFrameFingerprint: 'frame-fingerprint' } },
+};
+const adoptionContext = { tenantId: 'tenant', projectId: 'project', verifiedContentSha256ByMaterialId: { 'generated-video': hash }, materials: [{
+  id: 'generated-video', tenantId: 'tenant', scope: 'own', type: 'video', duration: 4, contentSha256: hash,
+  provenance: { storyboardAigc: true, projectId: 'project', shotId: 'slot', firstFrameMaterialId: 'first-frame', firstFrameFingerprint: 'frame-fingerprint',
+    storyboardQualityReport: { phase: 'video', status: 'passed', passed: true },
+    shotSpec: { shotId: 'slot', description: '产品镜头', startSeconds: 0, endSeconds: 4, layout: { ratio: '9:16' } } },
+}] };
+const adoptionOptions = { talkingExecutorReady: false, actionExecutorReady: false, authorizedPresenterIds: [], verifiedAdoptionContext: adoptionContext };
+assert.equal(planStudioBatchShotRoutes(adoptedSpec, adoptionOptions)[0].route, 'local_material',
+  'verified adopted assignment is reused even when the older source plan lacks generatedClipId');
+assert.equal(planStudioBatchShotRoutes(adoptedSpec, adoptionOptions)[0].matchedMaterialId, 'generated-video');
+for (const mutate of [
+  (s: typeof adoptedSpec, c: typeof adoptionContext) => { c.tenantId = 'other'; },
+  (s: typeof adoptedSpec, c: typeof adoptionContext) => { c.projectId = 'other'; },
+  (s: typeof adoptedSpec, c: typeof adoptionContext) => { c.materials[0].tenantId = 'other'; },
+  (s: typeof adoptedSpec, c: typeof adoptionContext) => { c.materials[0].provenance.shotId = 'other'; },
+  (s: typeof adoptedSpec, c: typeof adoptionContext) => { c.materials[0].contentSha256 = 'b'.repeat(64); },
+  (s: typeof adoptedSpec, c: typeof adoptionContext) => { c.verifiedContentSha256ByMaterialId['generated-video'] = 'b'.repeat(64); },
+  (s: typeof adoptedSpec, c: typeof adoptionContext) => { c.materials[0].provenance.storyboardQualityReport.passed = false; },
+  (s: typeof adoptedSpec, c: typeof adoptionContext) => { c.materials[0].provenance.firstFrameFingerprint = 'old'; },
+  (s: typeof adoptedSpec, c: typeof adoptionContext) => { s.automatedReplicationProgress.shot.qualityChecked = false; },
+  (s: typeof adoptedSpec, c: typeof adoptionContext) => { s.shotProductions['assembly:shot'].productId = 'new-product'; },
+  (s: typeof adoptedSpec, c: typeof adoptionContext) => { s.automatedReplicationShots[0].fingerprintContext = 'new-context'; },
+  (s: typeof adoptedSpec, c: typeof adoptionContext) => { s.shootingSlots[0].duration = 5; },
+  (s: typeof adoptedSpec, c: typeof adoptionContext) => { s.storyboardAssignments.slot = 'other'; },
+  (s: typeof adoptedSpec, c: typeof adoptionContext) => { s.shotProductions['assembly:shot'].candidates = []; },
+]) {
+  const spec = structuredClone(adoptedSpec), context = structuredClone(adoptionContext); mutate(spec, context);
+  const result = planStudioBatchShotRoutes(spec, { ...adoptionOptions, verifiedAdoptionContext: context })[0];
+  assert.equal(result.route, 'unresolved'); assert.equal(result.status, 'blocked');
+  assert.equal(result.matchedMaterialId, null, 'stale/cross-tenant assets cannot be reused or silently regenerated');
+}
+assert.equal(planStudioBatchShotRoutes(adoptedSpec, { ...adoptionOptions, verifiedAdoptionContext: undefined })[0].status, 'blocked',
+  'bare adopted flags cannot substitute for current server evidence');

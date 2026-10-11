@@ -306,7 +306,7 @@ assert.match(confirmWeeklyPlanSource, /catch \(actionError\)[\s\S]{0,2200}report
 assert.match(confirmWeeklyPlanSource, /weeklyStartConflictFromError\(actionError\)[\s\S]{0,500}setWeeklyStartConflict\(conflict\)[\s\S]{0,500}本轮计划没有被重复启动/, 'active_goal_exists must retain the other persisted goal/run as a visible blocker without cancelling or starting either run');
 assert.match(confirmWeeklyPlanSource, /launchRequestSent && weeklyStartResultNeedsReconciliation\(actionError\)[\s\S]{0,300}digitalEmployeeApi\.overview\(goal\.id\)[\s\S]{0,220}presentConfirmedWeeklyExecution\(reconciled, goal\.id\)[\s\S]{0,500}启动结果待确认/, 'an uncertain launch response must perform one read-only reconciliation and never repeat the start mutation');
 assert.match(pageSource, /<WeeklyStartConflictAlert[\s\S]{0,220}openConflictingRun/, 'the persistent active-run conflict must provide a direct view-run action');
-assert.match(pageSource, /<WeeklyWorkStatusAlert[\s\S]{0,220}goLive\(currentWeeklyWorkStatus\.currentTaskId\)/, 'production progress must open this goal current task rather than an unscoped global monitor');
+assert.doesNotMatch(pageSource, /WeeklyWorkStatusAlert|currentWeeklyWorkStatus|weeklyStatusSlot/, 'the entire persistent home run-status banner must be removed for every runtime state');
 assert.match(weeklyWorkStatusSource, /制作准备已完成，尚未开始生产/, 'generated details without a persisted run must never be labelled as production');
 assert.match(weeklyWorkStatusSource, /run\.goal_id !== data\.goal\.id[\s\S]{0,300}运行与页面周目标不一致/, 'a run for another goal must not be presented as current production');
 assert.match(weeklyWorkStatusSource, /run\.status === 'waiting_external'[\s\S]{0,900}本周任务已启动，等待外部服务/, 'waiting for an external service must not be described as active production');
@@ -316,12 +316,11 @@ assert.match(weeklyWorkEventsSource, /WEEKLY_WORK_UPDATED_EVENT = 'lingshu:weekl
 assert.match(weeklyWorkUpdateSource, /notifyWeeklyWorkUpdated\([\s\S]{0,420}source: ["']page["'][\s\S]{0,520}runId: run\.id[\s\S]{0,220}taskCount: tasks\.length/, 'a confirmed start must publish the normalized persisted execution receipt for assistant refresh');
 assert.match(weeklyWorkUpdateSource, /run && run\.goal_id === updatedGoal\.id/, 'an execution event must never relabel a run belonging to another goal');
 assert.match(pageSource, /detail\.source !== ["']assistant["'][\s\S]{0,420}addEventListener\(WEEKLY_WORK_UPDATED_EVENT, refreshFromAssistant\)/, 'assistant-originated weekly-work updates must reload the visible goal from the authoritative overview');
-assert.match(weeklyCommandCenterSource, /status\?: ReactNode/, 'the command center must expose a reusable production-status slot');
-const weeklyStatusSlotIndex = weeklyCommandCenterSource.indexOf('aria-label="本周生产状态"');
-const weeklyMetricsIndex = weeklyCommandCenterSource.indexOf('<div className="grid gap-px', weeklyStatusSlotIndex);
-assert.ok(weeklyStatusSlotIndex > weeklyCommandCenterSource.indexOf('aria-label="智能经营控制"') && weeklyMetricsIndex > weeklyStatusSlotIndex, 'the production status slot must remain directly below the command header and above metrics/calendar content');
-assert.match(currentPlanSource, /status=\{weeklyStatusSlot\}/, 'the current plan must place persistent status and errors in the command-center status slot');
-assert.match(pageSource, /\{error && <Alert type="error" showIcon title=\{error\}/, 'start failure feedback must remain visible in the command-center status slot');
+assert.doesNotMatch(weeklyCommandCenterSource, /status\?: ReactNode|aria-label="本周生产状态"/, 'the command center must not retain the deleted persistent run-state banner or its empty wrapper');
+assert.match(weeklyCommandCenterSource, /\{feedback && <div aria-label="周任务操作反馈"/, 'action feedback must not reserve a row when no failure or conflict exists');
+assert.match(pageSource, /const weeklyActionFeedback = \(weeklyStartConflict && !viewGoalId\) \|\| error \?/, 'only explicit action conflicts/errors can create feedback, not run or pause state');
+assert.match(currentPlanSource, /feedback=\{weeklyActionFeedback\}/, 'explicit action failure feedback must remain separate from persisted runtime state');
+assert.match(pageSource, /\{error && <Alert type="error" showIcon title=\{error\}/, 'start failure feedback must remain visible without restoring the run-status banner');
 assert.doesNotMatch(pageSource, /\{error && <Alert className="mt-5"/, 'the page must not duplicate launch errors below the large calendar');
 for (const label of ['执行失败', '已取消', '已暂停', '等待外部服务', '待处理', '准备中', '已完成', '执行中']) assert.match(pageSource, new RegExp(label), `the command header must expose the persisted run state: ${label}`);
 assert.doesNotMatch(pageSource, /按发布时间查看内容，检查产品与参考依据后确认排期。|确定各平台账号的产量、总产量和预计成本。/, 'the weekly-plan page title must not repeat an explanatory subtitle');

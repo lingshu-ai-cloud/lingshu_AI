@@ -148,6 +148,78 @@ export function workflowTaskDecisionVersion(task: TaskRecord): string {
   return `task:${Number(task.task_version || 1)}|status:${text(task.status)}|updated:${text(task.updated_at) || '-'}`;
 }
 
+export function workflowTaskNeedsEnterprisePresenter(task: TaskRecord): boolean {
+  const evidence = `${text(task.blocked_reason, 2_000)} ${JSON.stringify(parseJson(task.output, {})).slice(0, 12_000)}`;
+  return /avatar_required|presenter_authorization_required|尚未录入可用企业数字人|请先添加(?:并授权)?企业数字人|缺少(?:已授权)?企业数字人/i.test(evidence);
+}
+
+type AssistantStudioProject = { id: string; spec?: unknown; status?: unknown };
+
+function productionProjectIds(task: TaskRecord): Set<string> {
+  const output = parseJson<Record<string, unknown>>(task.output, {});
+  const refs = [
+    ...parseJson<Array<Record<string, unknown>>>(task.business_refs, []),
+    ...(Array.isArray(output.businessRefs) ? output.businessRefs as Array<Record<string, unknown>> : []),
+  ];
+  return new Set(refs
+    .filter(ref => ref?.type === 'studio_project')
+    .map(ref => text(ref.id || ref.entityId, 200))
+    .filter(Boolean));
+}
+
+function projectNeedsEnterprisePresenter(project: AssistantStudioProject): boolean {
+  const spec = parseJson<Record<string, unknown>>(project.spec, {});
+  const automation = parseJson<Record<string, unknown>>(spec.automation, {});
+  if (['completed', 'superseded', 'cancelled'].includes(text(automation.stage || automation.status).toLowerCase())) return false;
+  const shots = Array.isArray(spec.automatedReplicationShots)
+    ? spec.automatedReplicationShots as Array<Record<string, unknown>>
+    : [];
+  return shots.some(shot => {
+    const evidence = `${text(shot.blockerCode, 200)} ${text(shot.blocker, 1_000)}`;
+    return /avatar_required|presenter_authorization_required|企业数字人/i.test(evidence)
+      || (text(shot.kind) === 'blocked' && text(shot.intendedKind) === 'person');
+  });
+}
+
+/**
+ * Adds a compact, safe assistant input marker from the current task's linked
+ * production projects. The full project spec and provider telemetry never
+ * enter the assistant feed, and the persisted workflow task is not mutated.
+ */
+export function taskWithAssistantProductionInput(
+  task: TaskRecord,
+  projects: AssistantStudioProject[],
+): TaskRecord {
+  if (task.task_key !== 'content_production') return task;
+  const referencedIds = productionProjectIds(task);
+  const blockedProjectIds = projects
+    .filter(project => referencedIds.has(project.id) && projectNeedsEnterprisePresenter(project))
+    .map(project => project.id);
+  if (!blockedProjectIds.length) return task;
+  const output = parseJson<Record<string, unknown>>(task.output, {});
+  return {
+    ...task,
+    output: {
+      ...output,
+      assistantInput: {
+        code: 'avatar_required',
+        message: '人物镜头缺少可用且已授权的企业数字人形象',
+        projectCount: blockedProjectIds.length,
+      },
+    },
+  };
+}
+
+function enterprisePresenterDeepLink(task: TaskRecord, runId: string): DigitalEmployeeDeepLink {
+  const existing = workflowDeepLink(task, runId);
+  const { view: _view, studioPanel: _studioPanel, ...base } = existing;
+  return {
+    ...base,
+    page: 'enterprise',
+    businessRef: { ...existing.businessRef, enterpriseView: 'presenters', reason: 'avatar_required' },
+  };
+}
+
 function workflowDeepLink(task: TaskRecord, runId: string) {
   return buildTaskDeepLink({
     ...task,
@@ -257,25 +329,33 @@ function approvalCard(approval: ApprovalRecord, task: TaskRecord, run: RunRecord
 
 function attentionCard(task: TaskRecord, run: RunRecord, now: string): AssistantDecisionCard {
   const failed = task.status === 'failed';
+  const presenterRequired = workflowTaskNeedsEnterprisePresenter(task);
   return {
     id: `task:${task.id}`,
     kind: 'input_required',
     priority: failed ? 650 : 600,
     status: 'pending',
-    title: text(task.title) || '需要你处理',
-    summary: text(task.blocked_reason) || (failed ? '任务失败，需要你选择处理方式。' : '任务正在等待必要资料或人工决定。'),
+    title: presenterRequired ? '请添加企业数字人形象' : text(task.title) || '需要你处理',
+    summary: presenterRequired
+      ? '人物镜头已停在数字人生成前；其他已完成镜头和生产回执会保留。添加并授权后，可从当前节点继续。'
+      : text(task.blocked_reason) || (failed ? '任务失败，需要你选择处理方式。' : '任务正在等待必要资料或人工决定。'),
     facts: [
-      { label: '当前状态', value: failed ? '失败' : '等待用户', tone: failed ? 'danger' : 'warning' },
+      { label: '当前状态', value: presenterRequired ? '待补充数字人' : failed ? '失败' : '等待用户', tone: presenterRequired ? 'warning' : failed ? 'danger' : 'warning' },
       ...(task.destination ? [{ label: '处理位置', value: text(task.destination) }] : []),
     ],
     subject: { type: 'workflow_task', id: task.id, version: workflowTaskDecisionVersion(task) },
-    actions: [
+    actions: presenterRequired ? [
+      { id: 'open_workspace', label: '添加数字人形象', mode: 'navigate', emphasis: PRIMARY },
+      ...(!['handed_off', 'cancelled', 'succeeded', 'skipped'].includes(task.status)
+        ? [{ id: 'take_over', label: '人工接管当前任务', mode: 'command', emphasis: DEFAULT } as const]
+        : []),
+    ] : [
       ...(!['handed_off', 'cancelled', 'succeeded', 'skipped'].includes(task.status)
         ? [{ id: 'take_over', label: '人工接管', mode: 'command', emphasis: PRIMARY } as const]
         : []),
       { id: 'open_workspace', label: '前往处理', mode: 'navigate', emphasis: DEFAULT },
     ],
-    deepLink: workflowDeepLink(task, run.id),
+    deepLink: presenterRequired ? enterprisePresenterDeepLink(task, run.id) : workflowDeepLink(task, run.id),
     createdAt: text(task.updated_at || task.created_at) || now,
   };
 }

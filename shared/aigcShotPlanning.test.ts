@@ -60,4 +60,16 @@ assert.equal(pinned[1].resolutionTier, '480p');
 const unaffordablePinned = allocateAigcBudget({ candidates: [{ shotId: 'pinned-720', targetDurationSeconds: 4, requestedResolution: '720p' }],
   offers: [...offers], budgetCny: 4, maxRetries: 0 });
 assert.equal(unaffordablePinned[0].status, 'budget_excluded');
+const frameCounts = allocateAigcBudget({ candidates: [
+  { shotId: 'legacy', targetDurationSeconds: 4 },
+  { shotId: 'reused-frame', targetDurationSeconds: 4, firstFrameCallCount: 0 },
+  { shotId: 'product-composite', targetDurationSeconds: 4, firstFrameCallCount: 2 },
+], offers: [...offers], budgetCny: 30, maxRetries: 0, preferredResolution: '480p' });
+assert.deepEqual(frameCounts.map(item => item.estimatedFirstFrameCostCny), [1, 0, 2]);
+assert.deepEqual(frameCounts.map(item => item.estimatedCostCny), [3, 2, 4]);
+assert.deepEqual(frameCounts.map(item => item.firstFrameCallCount), [1, 0, 2]);
+for (const firstFrameCallCount of [-1, 0.5, 3, Number.NaN]) {
+  assert.equal(allocateAigcBudget({ candidates: [{ shotId: 'invalid', targetDurationSeconds: 4, firstFrameCallCount }],
+    offers: [...offers], budgetCny: 30, maxRetries: 0 })[0].status, 'unsupported');
+}
 console.log('aigcShotPlanning tests passed');

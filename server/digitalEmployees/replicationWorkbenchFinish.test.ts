@@ -5,7 +5,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { createHash } from 'node:crypto';
 import { shotFingerprint } from '../../src/lib/shotProduction.js';
-import { finishReplicationWorkbench, type ReplicationFinishDependencies } from './replicationWorkbenchFinish.js';
+import { finishReplicationWorkbench, replicationNarrationPreflightIssue, type ReplicationFinishDependencies } from './replicationWorkbenchFinish.js';
 
 const bytes = Buffer.from('real-video-fixture-loaded-by-injected-reader');
 const hash = createHash('sha256').update(bytes).digest('hex');
@@ -56,9 +56,43 @@ test('a required blocked shot fails before reading materials or invoking paid fi
   } finally { fs.rmSync(f.root, { recursive: true, force: true }); }
 });
 
+test('frozen language mismatch is rejected before media reads, ASR, TTS and uncertain intent files', async () => {
+  const f = fixture('nonperson'); let reads = 0, syntheses = 0;
+  f.spec.script = '[0-2s]\n台词：这是我们的产品。';
+  f.spec.shotProductions['a:s'].narration = '这是我们的产品。';
+  f.deps.materials = () => { reads++; return [f.material]; };
+  f.deps.synthesize = async () => { syntheses++; throw Error('must not submit'); };
+  try {
+    for (let attempt = 0; attempt < 2; attempt++) {
+      await assert.rejects(finishReplicationWorkbench({ tenantId: 'tenant', projectId: 'p', spec: f.spec }, f.deps), /冻结口播与目标语种 en 不一致/);
+    }
+    assert.equal(reads, 0); assert.equal(syntheses, 0); assert.equal(f.paidCalls(), 0);
+    assert.deepEqual(fs.readdirSync(f.root), ['output.mp4'], 'deterministic input rejection must not create an uncertain TTS intent');
+    assert.equal(f.spec.script, '[0-2s]\n台词：这是我们的产品。', 'frozen text is never translated silently');
+  } finally { fs.rmSync(f.root, { recursive: true, force: true }); }
+});
+
+test('narration preflight rejects lost words and half-sentence synthesis, but accepts complete frozen phrases', () => {
+  const spec: any = { lang: 'en', activeAssemblyId: 'a',
+    script: '[0-4s]\n台词：Our verified product arrives.',
+    automatedReplicationShots: [{ shotId: 'one', start: 0, end: 2 }, { shotId: 'two', start: 2, end: 4 }],
+    shotProductions: { 'a:one': { narration: 'Our verified' }, 'a:two': { narration: 'product arrives.' } } };
+  assert.match(replicationNarrationPreflightIssue(spec) || '', /半句.*完整句连续配音/);
+  spec.shotProductions['a:two'].narration = 'arrives.';
+  assert.match(replicationNarrationPreflightIssue(spec) || '', /文字覆盖不完整/);
+  spec.script = '[0-4s]\n台词：Our verified product. Discover more.';
+  spec.shotProductions['a:one'].narration = 'Our verified product.';
+  spec.shotProductions['a:two'].narration = 'Discover more.';
+  assert.equal(replicationNarrationPreflightIssue(spec), null);
+  spec.script = '[0-2s]\n台词：Our verified product\n[2-4s]\n台词：Discover more';
+  spec.shotProductions['a:one'].narration = 'Our verified product';
+  spec.shotProductions['a:two'].narration = 'Discover more';
+  assert.equal(replicationNarrationPreflightIssue(spec), null, 'do not require arbitrary punctuation on independently frozen lines');
+});
+
 test('hard visual failure does not emit a successful completion', async () => {
   const f = fixture(); f.deps.visuals = async () => ({ passed: false, failures: ['decode failed'], metrics: {} as any, evidenceFrames: [] });
-  try { await assert.rejects(finishReplicationWorkbench({ tenantId: 'tenant', projectId: 'p', spec: f.spec }, f.deps), /decode failed/); }
+  try { await assert.rejects(finishReplicationWorkbench({ tenantId: 'tenant', projectId: 'p', spec: f.spec }, f.deps), { code: 'FINAL_VIDEO_QA_FAILED', message: /decode failed/ }); }
   finally { fs.rmSync(f.root, { recursive: true, force: true }); }
 });
 

@@ -1,7 +1,31 @@
 import { digitalHumanDecisionIssues, enterpriseMaterialIssue } from '../../shared/contracts/smartStoryboardAdmission.js';
 import { recognizePresenterShot, salesPresenterRecognition, confirmedSalesPresenterRoute } from '../../shared/contracts/presenterShotRecognition.js';
 import { createHash } from 'node:crypto';
-import type { ShotProduction } from '../../src/lib/shotProduction.js';
+import { shotFingerprint, type ShotProduction } from '../../src/lib/shotProduction.js';
+
+/** Server-loaded material metadata, never a client-supplied material snapshot. */
+export interface StudioBudgetMaterial {
+  id: string;
+  tenantId?: string;
+  tenant_id?: string;
+  scope?: string;
+  type?: string;
+  sourceType?: string;
+  contentSha256?: string;
+  duration?: number;
+  provenance?: Record<string, any>;
+}
+
+/** The caller must run current assignment/KB checks and hash the actual video
+ * bytes before including an ID in this map. This is not a paid-call receipt. */
+export interface StudioVerifiedAdoptionContext {
+  tenantId: string;
+  projectId: string;
+  materials: readonly StudioBudgetMaterial[];
+  verifiedContentSha256ByMaterialId: Readonly<Record<string, string>>;
+  /** Current-input/KB/source validation and actual bytes must both pass. */
+  verifiedFirstFrameContentSha256ByMaterialId?: Readonly<Record<string, string>>;
+}
 
 export function batchShotRequestId(input: {
   projectId: string; batchId: string; assemblyId: string; shotId: string; fingerprint: string;
@@ -41,6 +65,59 @@ interface BatchShotSpec {
   storyboardSourcePlans?: Record<string, { userSource?: string; mode?: string; shotTopic?: 'presenter' | 'factory' | 'product' | 'consumer_demo' | 'general'; sceneType?: 'product' | 'factory' | 'usage' | 'general'; confirmed?: boolean; firstFrameMaterialId?: string; firstFrameConfirmed?: boolean; generatedClipId?: string; videoResolution?: '480p' | '720p'; videoResolutionPinned?: boolean; blocker?: string }>;
   clipEdits?: Record<string, { segmentId?: string; trimStart?: number; trimEnd?: number }>;
   materialSnapshots?: Array<{ id?: string; usage?: string; name?: string; type?: string; url?: string; duration?: number; width?: number; height?: number; aspectRatio?: number; transcript?: string }>;
+  automation?: { managedBy?: string };
+  shotProductionContext?: string;
+  selectedProductIds?: string[];
+  automatedReplicationPlan?: { tenantId?: string };
+  automatedReplicationShots?: Array<{ shotId: string; slotId: string; kind: string; start: number; end: number; fingerprintContext?: string; firstFrameRequest?: Record<string, any> }>;
+  automatedReplicationProgress?: Record<string, { adopted?: boolean; qualityChecked?: boolean; materialId?: string; videoMaterialId?: string; videoContentSha256?: string; fingerprint?: string; firstFrameMaterialId?: string; firstFrameFingerprint?: string }>;
+}
+
+/** Reuse is a conjunction of current inputs, adoption, QA and actual byte
+ * identity. An invalid old adoption blocks this shot instead of silently
+ * consuming another image/video budget allocation. */
+function verifiedAutomatedAdoption(spec: BatchShotSpec, shotId: string, slotId: string, context?: StudioVerifiedAdoptionContext) {
+  if (spec.automation?.managedBy !== 'digital_employee') return { state: 'none' as const };
+  const state = spec.automatedReplicationProgress?.[shotId];
+  if (state?.adopted !== true) return { state: 'none' as const };
+  const invalid = { state: 'invalid' as const };
+  const entry = spec.automatedReplicationShots?.find(item => item.shotId === shotId && item.slotId === slotId);
+  const shot = spec.shotProductions?.[`${spec.activeAssemblyId}:${shotId}`];
+  const assigned = spec.storyboardAssignments?.[slotId];
+  // Enterprise footage and the separate digital-human executor have their
+  // own validation paths; this guard concerns generated storyboard videos.
+  if (entry?.kind === 'person' || (!state.videoMaterialId && !state.firstFrameMaterialId
+    && !shot?.candidates?.some(candidate => candidate.id === shot.adoptedId && candidate.source === 'ai'))) return { state: 'none' as const };
+  if (!context?.tenantId || !context.projectId || spec.automatedReplicationPlan?.tenantId !== context.tenantId
+    || !entry || entry.kind !== 'nonperson' || !shot || !assigned
+    || state.qualityChecked !== true || state.materialId !== assigned || state.videoMaterialId !== assigned) return invalid;
+  const fingerprint = shotFingerprint(shot, String(entry.fingerprintContext || spec.shotProductionContext || ''), shotId);
+  if (!state.fingerprint || state.fingerprint !== fingerprint
+    || !shot.candidates?.some(candidate => candidate.id === shot.adoptedId && candidate.materialId === assigned
+      && candidate.source === 'ai' && candidate.fingerprint === fingerprint)) return invalid;
+  const material = context.materials.find(item => item.id === assigned);
+  const actualHash = context.verifiedContentSha256ByMaterialId[assigned];
+  const provenance = material?.provenance;
+  const qa = provenance?.storyboardQualityReport;
+  if (!material || String(material.tenantId || material.tenant_id || '') !== context.tenantId
+    || material.scope !== 'own' || material.type !== 'video'
+    || !/^[a-f0-9]{64}$/.test(actualHash || '') || actualHash !== material.contentSha256 || actualHash !== state.videoContentSha256
+    || provenance?.storyboardAigc !== true || provenance.projectId !== context.projectId || provenance.shotId !== slotId
+    || !state.firstFrameMaterialId || provenance.firstFrameMaterialId !== state.firstFrameMaterialId
+    || !state.firstFrameFingerprint || provenance.firstFrameFingerprint !== state.firstFrameFingerprint
+    || qa?.phase !== 'video' || qa.status !== 'passed' || qa.passed !== true || qa.requiresHumanReview === true) return invalid;
+  const request = entry.firstFrameRequest;
+  const produced = provenance.shotSpec;
+  const slot = spec.shootingSlots?.find(item => item.id === shotId && String(item.slotId || item.id) === slotId);
+  const duration = entry.end - entry.start;
+  if (!request || request.projectId !== context.projectId || !produced || produced.shotId !== slotId
+    || produced.description !== request.shotDescription || produced.layout?.ratio !== spec.ratio
+    || !Number.isFinite(duration) || duration <= 0 || !Number.isFinite(material.duration) || Number(material.duration) + 0.05 < duration
+    || !Number.isFinite(slot?.duration)
+    || Math.abs(Number(slot?.duration) - duration) > 0.01
+    || produced.startSeconds !== entry.start || produced.endSeconds !== entry.end
+    || request.startSeconds !== entry.start || request.endSeconds !== entry.end) return invalid;
+  return { state: 'reused' as const, materialId: assigned };
 }
 
 /** Read-only planning for the workbench. Actual provider work must go through
@@ -50,6 +127,7 @@ export function planStudioBatchShotRoutes(spec: BatchShotSpec, options: {
   actionExecutorReady: boolean;
   authorizedPresenterIds: string[];
   defaultSalesPresenterId?: string | null;
+  verifiedAdoptionContext?: StudioVerifiedAdoptionContext;
 }): StudioBatchShotRoute[] {
   const slots = Array.isArray(spec.shootingSlots) ? spec.shootingSlots : [];
   const production = spec.shotProductions ?? {};
@@ -89,6 +167,11 @@ export function planStudioBatchShotRoutes(spec: BatchShotSpec, options: {
     const choice = sourcePlan?.userSource;
     if (sourcePlan?.mode === 'blocked' || slot.locked) return { ...base, route: 'unresolved', status: 'blocked',
       reason: sourcePlan?.blocker || slot.blocker || '镜头证据待确认，未提交智能生成' };
+    const adoption = verifiedAutomatedAdoption(spec, shotId, slotId, options.verifiedAdoptionContext);
+    if (adoption.state === 'reused') return { ...base, route: 'local_material', status: 'matched',
+      matchedMaterialId: adoption.materialId!, reason: '复用已质检且当前输入、企业归属及视频内容校验一致的镜头，不重复分配生成预算' };
+    if (adoption.state === 'invalid') return { ...base, route: 'unresolved', status: 'blocked', matchedMaterialId: null,
+      reason: '原已采用镜头需要核对当前输入、归属或视频版本，保留原资产且不重复付费' };
     if (!['material', 'shoot'].includes(choice || '') && slot.personContinuityId && salesPresenterRecognition(slot) === 'confirmed') {
       const identityAssets = new Set(slots.filter(peer => peer.personContinuityId === slot.personContinuityId && salesPresenterRecognition(peer) === 'confirmed'
         && !['material', 'shoot'].includes(spec.storyboardSourcePlans?.[String(peer.slotId || peer.id || '')]?.userSource || ''))

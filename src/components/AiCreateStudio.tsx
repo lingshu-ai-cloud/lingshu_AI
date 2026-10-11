@@ -1153,10 +1153,17 @@ export function referenceProductSlots(kickoff: VideoKickoff | null): Array<{ sho
 type ReferenceProductMapping = { shotId: string; sourceTerm: string; productId: string; productLabel: string };
 type ReferenceBrandMapping = { sourceTerm: string; brandLabel: string };
 
-export function buildReferenceSpeechPlan(kickoff: VideoKickoff | null, productMappings: ReferenceProductMapping[] = [], brandMapping?: ReferenceBrandMapping): { script: string; lines: Array<{ id: string; source: string; draft: string; time: string; sourcePrecision?: string; productTerms?: string[]; words?: Array<{start: number; end: number; text: string}>; visuals: Array<{ time: string; label: string; shotId?: string }> }>; error?: string } {
+export interface ReferenceSpeechPlan {
+  script: string;
+  lines: Array<{ id: string; source: string; draft: string; time: string; sourcePrecision?: string; productTerms?: string[]; words?: Array<{start: number; end: number; text: string}>; visuals: Array<{ time: string; label: string; shotId?: string }> }>;
+  error?: string;
+  fallbackMode?: 'enterprise_script_or_silent_subtitle';
+  notice?: string;
+}
+
+export function buildReferenceSpeechPlan(kickoff: VideoKickoff | null, productMappings: ReferenceProductMapping[] = [], brandMapping?: ReferenceBrandMapping): ReferenceSpeechPlan {
   const details = kickoff?.referenceAnalysis?.details || [];
   if (!details.length) return { script: '', lines: [], error: '参考视频尚无可用的画面切点。' };
-  if (kickoff?.referenceAnalysis?.narrationSourceStatus === 'missing_source_asr') return { script: '', lines: [], error: '原片 ASR 尚未提取完成，请等待编导 Agent 自动提取口播后再试。' };
   const lines = new Map<string, { id: string; source: string; draft: string; time: string; sourcePrecision?: string; productTerms?: string[]; words?: Array<{start: number; end: number; text: string}>; visuals: Array<{ time: string; label: string; shotId?: string }> }>();
   const shotRows = details.map((shot, shotIndex) => {
     const range = parseCueRange(shot.time);
@@ -1183,7 +1190,20 @@ export function buildReferenceSpeechPlan(kickoff: VideoKickoff | null, productMa
     const mappedProduct = productMappings.find(mapping => mapping.shotId === ownerId);
     return `[${range.start.toFixed(2)}s-${range.end.toFixed(2)}s]\n画面：${shot.visual || shot.shot || '按参考视频画面'}\n${mappedProduct ? `目标产品：${mappedProduct.productLabel}\n` : ''}镜头功能：${shot.purpose || '沿用参考视频表达目的'}\n口播：${spoken.join(' ') || '无'}`;
   }).filter((row): row is string => Boolean(row));
-  if (!lines.size) return { script: '', lines: [], error: '参考视频缺少真实 ASR 原片口播，无法生成忠实复刻口播方案。' };
+  if (!lines.size) {
+    const enterpriseCaption = [...new Set([
+      ...productMappings.map(mapping => mapping.productLabel.trim()),
+      brandMapping?.brandLabel.trim() || '',
+    ].filter(Boolean))].join(' · ');
+    const silentScript = shotRows.map(row => `${row}\n字幕：${enterpriseCaption || '无'}`).join('\n\n');
+    if (!silentScript.trim()) return { script: '', lines: [], error: '参考视频缺少可用的真实画面切点，暂不能建立分镜。' };
+    return {
+      script: silentScript,
+      lines: [],
+      fallbackMode: 'enterprise_script_or_silent_subtitle',
+      notice: `参考视频没有可验证的原片口播，已改用${enterpriseCaption ? '企业自有产品字幕' : '无口播字幕'}方案；仅沿用真实画面切点，不推断或伪造原片台词。`,
+    };
+  }
   const unmatched = productMappings.filter(mapping => mapping.sourceTerm.trim()
     && ![...lines.values()].some(line => line.source.toLocaleLowerCase().includes(mapping.sourceTerm.trim().toLocaleLowerCase())));
   if (unmatched.length) return { script: shotRows.join('\n\n'), lines: [...lines.values()],
@@ -14747,7 +14767,7 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onLaunc
         setReplicationConfirmationError(message);
         setModeNotice(message);
       };
-      if (hasIncompleteReferenceAnalysis(videoKickoff)) {
+      if (hasIncompleteReferenceAnalysis(videoKickoff) && !storyboardSlots.length) {
         reportConfirmationError('参考视频尚未完成覆盖全片的逐镜分析。请先到灵感中心查看编导分析状态，并完成或重新分析。');
         return;
       }
@@ -14762,29 +14782,35 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onLaunc
       const plan = buildReferenceSpeechPlan(videoKickoff, referenceProductMappings,
         referenceBrandSourceTerm && referenceBrandLabel ? { sourceTerm: referenceBrandSourceTerm, brandLabel: speechNames.names[referenceBrandLabel] || referenceBrandLabel } : undefined);
       if (plan.error) { reportConfirmationError(plan.error); return; }
+      const useExistingEnterpriseScript = Boolean(plan.fallbackMode && hasTimestampScript && storyboardSlots.length);
       try {
-        if (confirmedLines) Object.assign(plan, confirmReferenceSpeechEdits(plan, confirmedLines));
+        if (confirmedLines?.length && plan.lines.length) Object.assign(plan, confirmReferenceSpeechEdits(plan, confirmedLines));
       } catch (error) {
         reportConfirmationError(error instanceof Error ? error.message : '口播确认失败，请检查后重试。');
         return;
       }
-      replicationConfirmedLinesRef.current = confirmedLines;
+      replicationConfirmedLinesRef.current = plan.lines.length ? confirmedLines : [];
       replicationPreparationRef.current = true;
       try {
         setReplicationPreparationError('');
         setModeActionLoading(true);
         setModeActionStatus('正在保存产品映射…');
         if (!await saveProject('draft')) throw new Error('产品映射尚未保存，请稍后重试。');
-        applyTimestampScript(plan.script);
+        if (!useExistingEnterpriseScript) applyTimestampScript(plan.script);
         // Show the storyboard immediately; measured timing replaces reference timing below.
         const materialIndex = activeSteps.findIndex(item => item.id === 'material');
         if (materialIndex >= 0) setStepIdx(materialIndex);
         setActiveStoryboardSlotId('slot-1');
         setCanvasView('creation');
-        setVoiceoverMode('ai');
-        setVoiceoverStaleLangs(Object.keys(voiceoverAudios));
-        setVoiceoverUrl(null);
-        setVoiceoverDur(0);
+        if (useExistingEnterpriseScript) {
+          const hasEnterpriseNarration = storyboardSlots.some(slot => !isNonSpeechSfx(storyboardSlotScript(slot.detail).voice));
+          setVoiceoverMode(hasEnterpriseNarration ? 'ai' : 'none');
+        } else {
+          setVoiceoverMode(plan.fallbackMode ? 'none' : 'ai');
+          setVoiceoverStaleLangs(Object.keys(voiceoverAudios));
+          setVoiceoverUrl(null);
+          setVoiceoverDur(0);
+        }
         setModeActionStatus('正在保存口播方案…');
         const task = await socialContentApi.getTask(socialContentTaskId!);
         const selectedProductLabel = referenceProducts.length
@@ -14801,10 +14827,16 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onLaunc
         setSocialTaskProductReference(selectedProductLabel);
         setModeNotice('');
         const language = detectSourceSpeechLanguageCode(plan.lines.map(line => line.source).join(' ')) || detectScriptLanguageCode(plan.lines.map(line => line.draft).join(' '));
-        setActiveVoiceLang(language);
-        setLang(language);
+        if (language) {
+          setActiveVoiceLang(language);
+          setLang(language);
+        }
         setLastGeneratedSetupSignature(setupSignature);
-        setModeNotice(`已确认 ${plan.lines.length} 句口播；按原片切点匹配分镜，成片渲染时再生成配音。`);
+        setModeNotice(plan.fallbackMode
+          ? useExistingEnterpriseScript
+            ? '原片没有可验证的 ASR，已保留编导确认的企业自有脚本并进入分镜制作；不会复制或推断原片台词。'
+            : plan.notice || '已使用无口播字幕方案进入分镜制作；不会复制或推断原片台词。'
+          : `已确认 ${plan.lines.length} 句口播；按原片切点匹配分镜，成片渲染时再生成配音。`);
       } catch (error) {
         const message = error instanceof Error ? error.message : '口播准备失败，请重试。';
         setReplicationPreparationError(message);
