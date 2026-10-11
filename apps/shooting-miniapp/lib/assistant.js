@@ -1,3 +1,4 @@
+const { terminalReceipt } = require('./request-policy')
 // Server owns conversation truth, action eligibility and execution receipts.
 // This controller never turns an assistant suggestion into an executed action.
 function createAssistantController(options) {
@@ -15,7 +16,7 @@ function createAssistantController(options) {
   const save = () => storage.set(key(), pending)
   const live = ticket => !disposed && epoch === ticket
   const stop = () => { if (timer !== null) cancel(timer); timer = null }
-  const terminal = receipt => ['succeeded', 'failed', 'cancelled'].includes(receipt.status)
+  const terminal = terminalReceipt
   async function poll() {
     stop()
     const ticket = epoch

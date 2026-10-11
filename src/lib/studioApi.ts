@@ -792,6 +792,18 @@ export const studioApi = {
       return [];
     }
   },
+  getProject: async (id: string, workflow?: { runId?: string; taskId?: string }): Promise<StudioProject> => {
+    const query = new URLSearchParams();
+    if (workflow?.runId) query.set('workflowRunId', workflow.runId);
+    if (workflow?.taskId) query.set('workflowTaskId', workflow.taskId);
+    const suffix = query.size ? `?${query.toString()}` : '';
+    const r = await fetch(`/api/overseas/studio/projects/${encodeURIComponent(id)}${suffix}`, { headers: authHeader(), cache: 'no-store' });
+    const data = await r.json().catch(() => ({})) as StudioProject & { error?: string };
+    if (!r.ok) throw new Error(data.error || String(r.status));
+    if (!data.id || data.id !== id) throw new Error('项目读取身份不一致');
+    if (!studioProjectRevisions.has(data.id)) studioProjectRevisions.set(data.id, data.updatedAt);
+    return data;
+  },
   adoptProjectRevision: (project: StudioProject) => {
     studioProjectRevisions.set(project.id, project.updatedAt);
   },

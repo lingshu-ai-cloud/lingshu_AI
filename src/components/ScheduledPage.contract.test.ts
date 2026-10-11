@@ -82,5 +82,8 @@ assert.match(source, /action: 'pause' \| 'cancel' \| 'resume' \| 'reanalyze'/, '
 assert.match(source, /analysis-\$\{action\}/, 'pause, cancel and resume must use the durable task-control API');
 assert.match(source, /item\.status === 'analyzing'[\s\S]{0,1400}updateVideoAnalysis\(item, 'cancel'\)/, 'a running analysis must be cancellable');
 assert.match(source, /item\.status === 'paused'[\s\S]{0,1400}updateVideoAnalysis\(item, 'resume'\)/, 'a paused analysis must be resumable');
+assert.match(source, /visibleState === 'succeeded'[\s\S]{0,120}执行成功/, 'only an explicit succeeded state may display execution success');
+assert.match(source, /状态未知（\$\{time\}），请展开结果查看。/, 'idle or unknown execution state must remain visibly unresolved');
+assert.match(source, /error: !\['queued', 'running', 'no_data', 'collected', 'partial', 'succeeded'\]\.includes\(String\(visibleState\)\)/, 'idle and unknown states must use the error notice treatment');
 
 console.log('scheduled workspace contract tests passed');

@@ -23,3 +23,7 @@ test('drawer polls only while mounted and visible, rejects stale auth, and expos
   assert.match(panel, /暂未取得最新制作回执/);
   assert.match(panel, /正式发布前仍需验收与发布授权/);
 });
+
+test('production navigation preserves the exact studio project identity', () => {
+  assert.match(panel, /onOpenProduction\(progress\.taskId!, progress\.queueItemId \|\| '', progress\.projectIds\[0\]\)/);
+});

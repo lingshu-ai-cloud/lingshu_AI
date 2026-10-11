@@ -18,13 +18,14 @@ test('two H preview policies allocate five mother contents without mutating orig
   assert.equal(JSON.stringify(agentCalendarEstablishedDemo),original);
 });
 
-test('preview provides explicit policy switch and query URL without production persistence',()=>{
+test('preview reads the authenticated real calendar without demo task injection',()=>{
  const source=readFileSync(new URL('./SmartBusinessPreview.tsx',import.meta.url),'utf8');
- assert.match(source,/get\('ownedPercent'\)==='20'/);
- assert.match(source,/有基础用户来源配额预览/);
- assert.match(source,/仅切换示例，不保存真实配额/);
- assert.match(source,/Agent 的示例工作安排/);
- assert(!source.includes('两项真实素材'));
+ assert.match(source,/<SocialProgramProvider scope="smart-business-preview-live" enabled>/);
+ assert.match(source,/真实周包、真实视频交付和 Agent 协作节点/);
+ assert.doesNotMatch(source,/<SmartBusinessDashboard[^>]*calendarTasks=/);
+ assert.doesNotMatch(source,/<SmartBusinessDashboard[^>]*calendarDemo/);
+ assert.match(source,/goal: null/);
+ assert.doesNotMatch(source,/工业控制器|calendarDemo|calendarTasks=/);
 });
 
 test('H individual videos keep source identity, shared barrier and day capacity in both policies',()=>{

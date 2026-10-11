@@ -332,6 +332,7 @@ export function WeeklyCommandCenter({
   notice,
   onRefresh,
   onOpenProductionProgress,
+  onOpenContent,
   className = "",
 }: {
   data: DigitalEmployeeOverview;
@@ -340,7 +341,8 @@ export function WeeklyCommandCenter({
   status?: ReactNode;
   notice?: ReactNode;
   onRefresh?: () => void;
-  onOpenProductionProgress?: (taskId: string, contentItemId: string) => void;
+  onOpenProductionProgress?: (taskId: string, contentItemId: string, projectId?: string) => void;
+  onOpenContent?: (taskId?: string, socialContentTaskId?: string, projectId?: string) => void;
   className?: string;
 }) {
   const display = buildSmartBusinessDisplayModel(data);
@@ -435,7 +437,8 @@ export function WeeklyCommandCenter({
       <LsCalendar events={calendarEvents} label="本周发布日历" initialDate={display.startsAt ? calendarDayKey(display.startsAt) : undefined} date={display.startsAt ? calendarDayKey(display.startsAt) : undefined} initialView="dayGridWeek" eventCardMode="media" density="compact" flush fixedHeight="clamp(300px, calc(100dvh - 270px), 640px)" firstDay={display.startsAt ? new Date(`${display.startsAt}T00:00:00+08:00`).getDay() : 1} detailsTitle="内容制作进度" detailsMedia="compact" renderDetails={(event, closeDetails) => {
         const item = event.data as UnifiedPlanContent;
         return <WeeklyContentProgressPanel key={item.contentId} data={data} contentId={item.contentId} onRefresh={onRefresh}
-          onOpenProduction={onOpenProductionProgress ? (taskId, contentItemId) => { closeDetails(); onOpenProductionProgress(taskId, contentItemId); } : undefined}
+          onOpenProduction={onOpenProductionProgress ? (taskId, contentItemId, projectId) => { closeDetails(); onOpenProductionProgress(taskId, contentItemId, projectId); } : undefined}
+          onOpenSocialProduction={onOpenContent ? socialContentTaskId => { closeDetails(); onOpenContent(undefined, socialContentTaskId); } : undefined}
           onOpenReference={item.inspirationReference ? () => {
             closeDetails();
             window.dispatchEvent(new CustomEvent("lingshu:navigate", { detail: inspirationReferenceNavigationDetail(item.inspirationReference!, item.contentId) }));
@@ -632,7 +635,7 @@ function buildSmartBusinessDisplayModel(data: DigitalEmployeeOverview, selectedA
     return candidates.length === 1 ? candidates[0] : undefined;
   };
 
-  const mappedContents = sourcePlans.map((plan, index): UnifiedPlanContent => {
+  const plannedContents = sourcePlans.map((plan, index): UnifiedPlanContent => {
     const directQueueItem = findQueueItem(plan) || null;
     const queueItem = directQueueItem || sharedProductionItem(plan) || null;
     const referencePlan = referencePlanForPublication(sourcePlans, plan);
@@ -676,6 +679,42 @@ function buildSmartBusinessDisplayModel(data: DigitalEmployeeOverview, selectedA
       metrics: { views, likes, comments, shares, interactions, engagementRate, source: hasActual ? "real" : "demo" },
     };
   });
+  const manualContents = (data.contentQueue?.items || []).filter(item => item.origin === 'manual' && Boolean(item.socialContentTaskId)).map((item, index): UnifiedPlanContent => {
+    const actual = performanceForQueueItem(item, deliveries);
+    const fallback = demoMetrics(item.platform, item.contentId || item.id);
+    const hasActual = Boolean(actual?.hasPlatformData);
+    return {
+      id: item.id,
+      contentId: item.contentId,
+      familyId: item.contentId,
+      title: item.title,
+      caption: '',
+      tags: [],
+      productName: item.productName,
+      thumbnailUrl: '',
+      platform: item.platform,
+      accountId: item.accountId || `manual-${item.platform}`,
+      accountLabel: item.accountLabel || `${data.config?.companyName || '企业'} · ${platformLabels[item.platform]}`,
+      plannedPublishDate: item.plannedPublishDate || data.goal?.endsAt || '',
+      duration: item.outputSummary.durationSeconds || 0,
+      inspirationReference: null,
+      productionRole: 'master',
+      status: item.status,
+      queueItem: item,
+      metrics: {
+        views: hasActual ? actual?.views || 0 : fallback.views,
+        likes: hasActual ? actual?.likes || 0 : fallback.likes,
+        comments: hasActual ? actual?.comments || 0 : fallback.comments,
+        shares: hasActual ? actual?.shares || 0 : fallback.shares,
+        interactions: hasActual ? actual?.interactions || 0 : fallback.interactions,
+        engagementRate: hasActual ? actual?.engagementRate || 0 : fallback.engagementRate,
+        source: hasActual ? 'real' : 'demo',
+      },
+    };
+  });
+  // Until weekly orders have real task bindings, show the tenant's actual content
+  // executions instead of five generated placeholders that all appear unstarted.
+  const mappedContents = queue.length ? plannedContents : manualContents.length ? manualContents : plannedContents;
   const contents = mappedContents.filter(item => !selectedAccountId || item.accountId === selectedAccountId);
   const masters = contents.filter(item => item.productionRole === "master");
   const groupedAccounts = new Map<string, UnifiedAccountRow>();
@@ -842,8 +881,8 @@ const matrixScheduleStages = [
 ] as const;
 
 
-function MatrixView({ calendarTasks, calendarDemo, data, onRefresh }: { calendarTasks?: AgentCalendarTask[]; calendarDemo?: boolean; data: DigitalEmployeeOverview; onRefresh?: () => void; onNavigate?: (page: Page) => void; onGeneratePlan?: () => void; selectedAccountId?: string; onOpenContent?: (taskId?: string, socialContentTaskId?: string) => void; onOpenProductionProgress?: (taskId: string, contentItemId: string) => void; onRetryTask?: (taskId: string) => Promise<boolean> }) {
-  return <DigitalEmployeeWorkspace data={data} calendarTasks={calendarTasks} calendarDemo={calendarDemo} onRefresh={onRefresh}/>;
+function MatrixView({ calendarTasks, calendarDemo, data, onRefresh, onOpenContent }: { calendarTasks?: AgentCalendarTask[]; calendarDemo?: boolean; data: DigitalEmployeeOverview; onRefresh?: () => void; onNavigate?: (page: Page) => void; onGeneratePlan?: () => void; selectedAccountId?: string; onOpenContent?: (taskId?: string, socialContentTaskId?: string, projectId?: string) => void; onOpenProductionProgress?: (taskId: string, contentItemId: string, projectId?: string) => void; onRetryTask?: (taskId: string) => Promise<boolean> }) {
+  return <DigitalEmployeeWorkspace data={data} calendarTasks={calendarTasks} calendarDemo={calendarDemo} onRefresh={onRefresh} onOpenContent={onOpenContent}/>;
 }
 
 function openTaskPreviewPage(item: ContentQueueItem, target: "benchmark" | "materials", onNavigate?: (page: Page) => void) {
@@ -1057,8 +1096,8 @@ function AccountContentPerformanceDetail({ data, display, selectedAccountId, pla
 function ContentGenerationProgress({ data, selectedAccountId = "", onOpenContent, onOpenProductionProgress, onRetryTask }: {
   data: DigitalEmployeeOverview;
   selectedAccountId?: string;
-  onOpenContent?: (taskId?: string, socialContentTaskId?: string) => void;
-  onOpenProductionProgress?: (taskId: string, contentItemId: string) => void;
+  onOpenContent?: (taskId?: string, socialContentTaskId?: string, projectId?: string) => void;
+  onOpenProductionProgress?: (taskId: string, contentItemId: string, projectId?: string) => void;
   onRetryTask?: (taskId: string) => Promise<boolean>;
 }) {
   const items = (data.contentQueue?.items || []).filter(item => !selectedAccountId || item.accountId === selectedAccountId);
@@ -1084,7 +1123,7 @@ function ContentGenerationProgress({ data, selectedAccountId = "", onOpenContent
   };
   return <section className="rounded-lg border border-slate-200 bg-white p-5 sm:p-6" aria-labelledby="content-generation-progress-title">
     <div className="flex flex-wrap items-end justify-between gap-4"><div><p className="text-xs font-bold tracking-[0.16em] text-blue-600">逐视频生产</p><h2 id="content-generation-progress-title" className="mt-1 text-xl font-semibold text-slate-950">每条视频生成进度</h2></div><Select aria-label="生成进度状态" value={statusFilter} onChange={value => setStatusFilter(value)} className="min-w-36" options={[{ value: "all", label: "全部状态" }, { value: "active", label: "制作中" }, { value: "waiting_review", label: "待验收" }, { value: "blocked", label: "异常任务" }, { value: "completed", label: "已完成" }]}/></div>
-    <div className="mt-4 grid gap-3 lg:grid-cols-2">{pageItems.map(item => { const currentStep = item.steps.find(step => step.state === "active") || item.steps.find(step => step.state !== "done") || item.steps.at(-1); return <article key={item.id} className="rounded-lg border border-slate-200 bg-slate-50/50 p-4"><div className="flex items-start justify-between gap-3"><div className="min-w-0"><div className="flex flex-wrap items-center gap-2"><SocialPlatformIcon platform={item.platform} size={15}/><span className="text-[9px] font-semibold text-zinc-500">{platformLabels[item.platform]}</span><span className={`rounded-full px-2 py-1 text-[8px] font-semibold ${statusTone[item.status]}`}>{statusLabel[item.status]}</span><span className="text-[9px] text-slate-400">{item.plannedPublishDate || "待排期"}</span></div><h3 className="mt-2 truncate text-sm font-semibold text-slate-950">{item.title}</h3><p className="mt-1 truncate text-[10px] text-slate-500">{item.accountLabel || "仅制作"} · {item.productName || "待绑定产品"}</p></div><strong className="shrink-0 text-sm text-slate-800">{item.progress}%</strong></div><LsGradientProgress className="mt-3" percent={item.progress} showInfo={false} size="small" status={item.status === "blocked" ? "exception" : item.status === "completed" ? "success" : "active"}/><div className="mt-3 flex flex-wrap items-center justify-between gap-3"><p className="text-[9px] font-bold text-slate-500">{currentStep ? `${currentStep.responsibleAgent} · ${currentStep.label} · ${productionDurationLabel(currentStep.estimatedMinutes)}` : "等待经营 Agent 派发"}</p><div className="flex gap-2">{item.status === "blocked" && onRetryTask && item.taskId&&<Button htmlType="button" disabled={retryingTaskId === item.taskId} onClick={()=>void retry(item)} className="!h-auto min-h-9 !whitespace-normal rounded-lg bg-amber-400 px-2.5 py-1.5 text-[9px] font-semibold text-amber-950 disabled:opacity-40">{retryingTaskId === item.taskId ? "重试中…" : "重新生成"}</Button>}{onOpenProductionProgress&&<Button htmlType="button" onClick={()=>onOpenProductionProgress(item.taskId,item.id)} className="!h-auto min-h-9 !whitespace-normal rounded-lg border border-slate-200 bg-white px-2.5 py-1.5 text-[9px] font-semibold text-slate-700">查看完整进度</Button>}<Button htmlType="button" onClick={()=>onOpenContent?.(item.taskId||undefined,item.socialContentTaskId||undefined)} className="!h-auto min-h-9 !whitespace-normal rounded-lg bg-slate-950 px-2.5 py-1.5 text-[9px] font-semibold text-white">进入制作台</Button></div></div>{item.reason&&<p className="mt-2 rounded-lg bg-red-50 px-2.5 py-2 text-[9px] font-bold text-red-700">{item.reason}</p>}</article>;})}</div>
+    <div className="mt-4 grid gap-3 lg:grid-cols-2">{pageItems.map(item => { const currentStep = item.steps.find(step => step.state === "active") || item.steps.find(step => step.state !== "done") || item.steps.at(-1); return <article key={item.id} className="rounded-lg border border-slate-200 bg-slate-50/50 p-4"><div className="flex items-start justify-between gap-3"><div className="min-w-0"><div className="flex flex-wrap items-center gap-2"><SocialPlatformIcon platform={item.platform} size={15}/><span className="text-[9px] font-semibold text-zinc-500">{platformLabels[item.platform]}</span><span className={`rounded-full px-2 py-1 text-[8px] font-semibold ${statusTone[item.status]}`}>{statusLabel[item.status]}</span><span className="text-[9px] text-slate-400">{item.plannedPublishDate || "待排期"}</span></div><h3 className="mt-2 truncate text-sm font-semibold text-slate-950">{item.title}</h3><p className="mt-1 truncate text-[10px] text-slate-500">{item.accountLabel || "仅制作"} · {item.productName || "待绑定产品"}</p></div><strong className="shrink-0 text-sm text-slate-800">{item.progress}%</strong></div><LsGradientProgress className="mt-3" percent={item.progress} showInfo={false} size="small" status={item.status === "blocked" ? "exception" : item.status === "completed" ? "success" : "active"}/><div className="mt-3 flex flex-wrap items-center justify-between gap-3"><p className="text-[9px] font-bold text-slate-500">{currentStep ? `${currentStep.responsibleAgent} · ${currentStep.label} · ${productionDurationLabel(currentStep.estimatedMinutes)}` : "等待经营 Agent 派发"}</p><div className="flex gap-2">{item.status === "blocked" && onRetryTask && item.taskId&&<Button htmlType="button" disabled={retryingTaskId === item.taskId} onClick={()=>void retry(item)} className="!h-auto min-h-9 !whitespace-normal rounded-lg bg-amber-400 px-2.5 py-1.5 text-[9px] font-semibold text-amber-950 disabled:opacity-40">{retryingTaskId === item.taskId ? "重试中…" : "重新生成"}</Button>}{onOpenProductionProgress&&<Button htmlType="button" onClick={()=>onOpenProductionProgress(item.taskId,item.id,item.projectIds[0])} className="!h-auto min-h-9 !whitespace-normal rounded-lg border border-slate-200 bg-white px-2.5 py-1.5 text-[9px] font-semibold text-slate-700">查看完整进度</Button>}<Button htmlType="button" onClick={()=>onOpenContent?.(item.taskId||undefined,item.socialContentTaskId||undefined,item.projectIds[0])} className="!h-auto min-h-9 !whitespace-normal rounded-lg bg-slate-950 px-2.5 py-1.5 text-[9px] font-semibold text-white">进入制作台</Button></div></div>{item.reason&&<p className="mt-2 rounded-lg bg-red-50 px-2.5 py-2 text-[9px] font-bold text-red-700">{item.reason}</p>}</article>;})}</div>
     {!filtered.length&&<div className="mt-4 rounded-lg border border-dashed border-slate-200 px-5 py-12 text-center"><Clapperboard size={24} className="mx-auto text-slate-300"/><p className="mt-2 text-xs font-bold text-slate-500">当前筛选下没有视频任务</p></div>}
     {totalPages>1&&<nav aria-label="生成进度分页" className="mt-4 flex items-center justify-between"><p className="text-[9px] font-bold text-slate-400">第 {page}/{totalPages} 页 · {filtered.length} 条</p><div className="flex gap-2"><Button htmlType="button" disabled={page===1} onClick={()=>setPage(current=>Math.max(1,current-1))} className="!h-auto min-h-9 !whitespace-normal rounded-lg border border-slate-200 px-3 py-1.5 text-[9px] font-semibold disabled:opacity-40">上一页</Button><Button htmlType="button" disabled={page===totalPages} onClick={()=>setPage(current=>Math.min(totalPages,current+1))} className="!h-auto min-h-9 !whitespace-normal rounded-lg border border-slate-200 px-3 py-1.5 text-[9px] font-semibold disabled:opacity-40">下一页</Button></div></nav>}
   </section>;
@@ -1096,7 +1135,7 @@ function ProductionDetailView({ data, contentItemId, onBack, onNavigate, onOpenC
   contentItemId?: string;
   onBack?: () => void;
   onNavigate?: (page: Page) => void;
-  onOpenContent?: (taskId?: string, socialContentTaskId?: string) => void;
+  onOpenContent?: (taskId?: string, socialContentTaskId?: string, projectId?: string) => void;
   onRetryTask?: (taskId: string) => Promise<boolean>;
 }) {
   const [retrying, setRetrying] = useState(false);
@@ -1136,7 +1175,7 @@ function ProductionDetailView({ data, contentItemId, onBack, onNavigate, onOpenC
     <section className="overflow-hidden rounded-lg border border-slate-200 bg-white">
       <header className="flex flex-wrap items-start justify-between gap-4 border-b border-zinc-200 bg-white px-5 py-5 text-zinc-900 sm:px-6">
         <div className="min-w-0"><Button htmlType="button" onClick={onBack} className="!h-auto min-h-9 !whitespace-normal inline-flex items-center gap-1 text-[10px] font-semibold text-blue-600"><ArrowLeft size={12}/>返回数据复盘</Button><div className="mt-3 flex flex-wrap items-center gap-2"><span className="rounded-full bg-zinc-100 px-2.5 py-1 text-[9px] font-semibold">视频任务</span><span className="rounded-full bg-zinc-100 px-2.5 py-1 text-[9px] font-semibold">{platformLabels[item.platform]}</span><span className={`rounded-full px-2.5 py-1 text-[9px] font-semibold ${item.status === "blocked" ? "bg-red-500 text-white" : item.status === "completed" ? "bg-emerald-400 text-emerald-950" : "bg-sky-400 text-sky-950"}`}>{statusLabel[item.status]}</span></div><h2 className="mt-3 text-xl font-semibold">{item.title}</h2><p className="mt-1 text-xs text-zinc-500">{item.productName || "待绑定产品"} · {item.accountLabel || "仅制作"} · {item.languages.join(" / ").toUpperCase() || "语言待确认"}</p></div>
-        <div className="flex flex-wrap gap-2">{item.status === "blocked"&&item.taskId&&onRetryTask&&<Button htmlType="button" disabled={retrying} onClick={() => void retryCurrentTask()} className="!h-auto min-h-9 !whitespace-normal inline-flex items-center gap-2 rounded-lg bg-amber-400 px-4 py-2.5 text-xs font-semibold text-amber-950 disabled:opacity-50">{retrying&&<Loader2 size={13} className="animate-spin"/>}从当前节点重试</Button>}<Button htmlType="button" onClick={() => onOpenContent?.(item.taskId || undefined, item.socialContentTaskId || undefined)} className="!h-auto min-h-9 !whitespace-normal rounded-lg bg-white px-4 py-2.5 text-xs font-semibold text-slate-950">进入制作台</Button>{item.referenceId&&onNavigate&&<Button htmlType="button" onClick={() => onNavigate("socialInspiration")} className="!h-auto min-h-9 !whitespace-normal rounded-lg border border-zinc-200 bg-white px-4 py-2.5 text-xs font-semibold text-blue-600">核对参考视频</Button>}</div>
+        <div className="flex flex-wrap gap-2">{item.status === "blocked"&&item.taskId&&onRetryTask&&<Button htmlType="button" disabled={retrying} onClick={() => void retryCurrentTask()} className="!h-auto min-h-9 !whitespace-normal inline-flex items-center gap-2 rounded-lg bg-amber-400 px-4 py-2.5 text-xs font-semibold text-amber-950 disabled:opacity-50">{retrying&&<Loader2 size={13} className="animate-spin"/>}从当前节点重试</Button>}<Button htmlType="button" onClick={() => onOpenContent?.(item.taskId || undefined, item.socialContentTaskId || undefined, item.projectIds[0])} className="!h-auto min-h-9 !whitespace-normal rounded-lg bg-white px-4 py-2.5 text-xs font-semibold text-slate-950">进入制作台</Button>{item.referenceId&&onNavigate&&<Button htmlType="button" onClick={() => onNavigate("socialInspiration")} className="!h-auto min-h-9 !whitespace-normal rounded-lg border border-zinc-200 bg-white px-4 py-2.5 text-xs font-semibold text-blue-600">核对参考视频</Button>}</div>
       </header>
       <div className="grid gap-px bg-slate-100 sm:grid-cols-2 xl:grid-cols-6">
         {[
@@ -1188,7 +1227,7 @@ function ProductionDetailView({ data, contentItemId, onBack, onNavigate, onOpenC
 }
 
 
-export default function SmartBusinessDashboard({ calendarTasks, calendarDemo, data, view, selectedAccountId, selectedContentItemId, overviewRangeBusy, onOverviewRangeChange, onRefresh, onNavigate, onGeneratePlan, onGenerateDetails, onOpenContent, onOpenProductionProgress, onBackToQueue, onRetryTask, onControlJob }: { calendarTasks?: AgentCalendarTask[]; calendarDemo?: boolean; data: DigitalEmployeeOverview; view: SmartBusinessView; selectedAccountId?: string; selectedContentItemId?: string; overviewRangeBusy?: boolean; onOverviewRangeChange?: (range: BusinessHealthOverviewRange) => void; onRefresh?: () => void; onNavigate?: (page: Page) => void; onGeneratePlan?: () => void; onGenerateDetails?: () => void; onOpenContent?: (taskId?: string, socialContentTaskId?: string) => void; onOpenProductionProgress?: (taskId: string, contentItemId: string) => void; onBackToQueue?: () => void; onRetryTask?: (taskId: string) => Promise<boolean>; onControlJob?: (jobId: string, action: ExecutionControlAction) => Promise<boolean> }) {
+export default function SmartBusinessDashboard({ calendarTasks, calendarDemo, data, view, selectedAccountId, selectedContentItemId, overviewRangeBusy, onOverviewRangeChange, onRefresh, onNavigate, onGeneratePlan, onGenerateDetails, onOpenContent, onOpenProductionProgress, onBackToQueue, onRetryTask, onControlJob }: { calendarTasks?: AgentCalendarTask[]; calendarDemo?: boolean; data: DigitalEmployeeOverview; view: SmartBusinessView; selectedAccountId?: string; selectedContentItemId?: string; overviewRangeBusy?: boolean; onOverviewRangeChange?: (range: BusinessHealthOverviewRange) => void; onRefresh?: () => void; onNavigate?: (page: Page) => void; onGeneratePlan?: () => void; onGenerateDetails?: () => void; onOpenContent?: (taskId?: string, socialContentTaskId?: string, projectId?: string) => void; onOpenProductionProgress?: (taskId: string, contentItemId: string, projectId?: string) => void; onBackToQueue?: () => void; onRetryTask?: (taskId: string) => Promise<boolean>; onControlJob?: (jobId: string, action: ExecutionControlAction) => Promise<boolean> }) {
   if (view === "matrix") return <MatrixView calendarTasks={calendarTasks} calendarDemo={calendarDemo} data={data} selectedAccountId={selectedAccountId} onRefresh={onRefresh} onNavigate={onNavigate} onGeneratePlan={onGeneratePlan} onOpenContent={onOpenContent} onOpenProductionProgress={onOpenProductionProgress} onRetryTask={onRetryTask}/>;
   if (view === "production") return <ProductionDetailView data={data} contentItemId={selectedContentItemId} onBack={onBackToQueue} onNavigate={onNavigate} onOpenContent={onOpenContent} onRetryTask={onRetryTask}/>;
   if (view === "review") return <BusinessDataReview data={data} selectedAccountId={selectedAccountId} onNavigate={onNavigate} onOpenContent={onOpenContent} onOpenProductionProgress={onOpenProductionProgress}/>;

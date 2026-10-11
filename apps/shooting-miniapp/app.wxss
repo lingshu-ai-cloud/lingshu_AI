@@ -1,2 +1,5 @@
-page { background: #f5f8f5; color: #18362b; font-size: 30rpx; }
+@import "styles/tokens.wxss";
+page { background: var(--ls-bg); color: var(--ls-text); font-size: 30rpx; }
 button { border-radius: 16rpx; }
+
+@import "styles/components.wxss";

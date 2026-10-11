@@ -11,7 +11,7 @@ function api() {
     {
       module,
       exports: module.exports,
-      require: () => ({ apiBase: 'https://example.test' }),
+      require: id => { if (id === '../config') return { apiBase: 'https://example.test' }; const policy = { exports: {} }; vm.runInNewContext(fs.readFileSync(path.join(__dirname, 'lib/request-policy.js'), 'utf8'), { module: policy }); return policy.exports },
       wx: { getStorageSync: () => '', removeStorageSync() {}, setStorageSync() {} },
       Promise,
       Error,

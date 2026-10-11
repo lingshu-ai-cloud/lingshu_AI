@@ -100,6 +100,8 @@ export function serializeFreeCreationLines(lines: FreeCreationLine[]): string {
 
 export interface SocialCreationWorkbenchSeed {
   continueTaskId?: string;
+  continueProjectId?: string;
+  presenterAssetId?: string;
   referenceTitle?: string;
   referenceThumbnail?: string;
   referenceMediaUrl?: string;
@@ -309,6 +311,7 @@ export default function SocialCreationWorkbench({
   const [taskProductTerms, setTaskProductTerms] = useState<string[] | undefined>();
   const [taskReferenceShots, setTaskReferenceShots] = useState<SocialCreationWorkbenchSeed['referenceShots']>(undefined);
   const [taskSpeechLines, setTaskSpeechLines] = useState<SpeechGroup[]>([]);
+  const [taskPresenterAssetId, setTaskPresenterAssetId] = useState('');
   const [generationNotice, setGenerationNotice] = useState('');
   const [speechEdits, setSpeechEdits] = useState<Record<number, string>>({});
   const [generatedSpeech, setGeneratedSpeech] = useState<string[] | null>(null);
@@ -551,6 +554,7 @@ export default function SocialCreationWorkbench({
       if (!refreshed) { refreshed = true; task = await socialContentApi.refreshReference(initial.taskId, initial.version).catch(() => initial); }
       if (!active || task.referenceVideoAnalysis?.status !== 'ready') return;
       window.clearInterval(timer);
+      setTaskPresenterAssetId(task.brief.presenterAssetId || task.brief.requestedPresenterAssetId || '');
       setTaskProductTerms(task.referenceVideoAnalysis.narrationProducts);
       setTaskReferenceShots(task.referenceVideoAnalysis.shots.map(shot => {
         const base = { startSeconds: shot.startSeconds, endSeconds: shot.endSeconds, visual: shot.visualDescription, firstFrameRef: shot.materialEvidence?.firstFrameRef || undefined,
@@ -645,7 +649,7 @@ export default function SocialCreationWorkbench({
     if (submitting || productSelectionLoading || (!isReplication && !selectedProductIds.length) || (!navigationOnly && isReplication && (!productsReady || !speechGenerated || confirmedSpeech.some(line => !line.draft.trim())))) return;
     setSubmitting(true); setGenerationNotice('');
     try {
-      const presenterAssetId = '';
+      const presenterAssetId = isReplication ? seed?.presenterAssetId || taskPresenterAssetId : '';
       const uploadedMaterials: Material[] = freeHookMaterial && !isReplication ? [freeHookMaterial] : [];
       for (const file of navigationOnly || (freeHookMaterial && !isReplication) ? [] : files) {
         const type: Material['type'] = file.type.startsWith('video/') ? 'video' : file.type.startsWith('audio/') ? 'audio' : 'image';
@@ -716,7 +720,7 @@ export default function SocialCreationWorkbench({
         confirmedSpeech: isReplication && !navigationOnly ? confirmedSpeech : undefined,
         initialScript: !isReplication ? freeScriptText : undefined,
         initialGeneration: !isReplication ? freeGeneration || undefined : undefined,
-        draftProjectId: !isReplication ? resolvedDraftProjectId : undefined,
+        draftProjectId: isReplication ? seed?.continueProjectId : resolvedDraftProjectId,
         requestId: Date.now(),
         creationPath: mode,
         title: isReplication

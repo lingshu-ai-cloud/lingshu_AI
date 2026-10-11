@@ -22,6 +22,8 @@ function seedFromRequest(request?: SocialContentCreateRequest | null): SocialCre
   if (!request) return undefined;
   return {
     continueTaskId: request.continueTaskId,
+    continueProjectId: request.continueProjectId,
+    presenterAssetId: request.presenterAssetId,
     referenceTitle: request.sourceContext?.referenceTitle,
     referenceThumbnail: request.sourceContext?.referenceThumbnail,
     referenceMediaUrl: request.sourceContext?.referenceMediaUrl,
@@ -125,7 +127,7 @@ export default function SocialContentPlanningPage({
       requestId: request.requestId,
       replicationStep: request.replicationStep,
       confirmedSpeech: request.confirmedSpeech,
-      continueProjectId: request.draftProjectId,
+      continueProjectId: request.draftProjectId || sourceRequest?.continueProjectId,
       themeId: sourceRequest?.themeId || 'product_value',
       mode: 'instant',
       creationPath: request.creationPath,
@@ -146,7 +148,7 @@ export default function SocialContentPlanningPage({
         products: request.productMappings,
         brand: request.brandMapping,
       },
-      presenterAssetId: request.presenterAssetId || undefined,
+      presenterAssetId: request.presenterAssetId || sourceRequest?.presenterAssetId,
       specialRequirements: request.specialRequirements,
     });
   };

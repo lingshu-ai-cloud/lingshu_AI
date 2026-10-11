@@ -345,6 +345,7 @@ assert.match(weeklyCommandCenterSource, /detailsTitle="内容制作进度"[\s\S]
 assert.match(weeklyCommandCenterSource, /onOpenReference[\s\S]{0,350}inspirationReferenceNavigationDetail/, 'the drawer must retain the exact persisted inspiration reference as a secondary action');
 assert.doesNotMatch(confirmWeeklyPlanSource, /approvalBlocked|missingProducts|missingReferences|generatePackageDetails|readiness\.canStart/, 'launch must not duplicate production preparation or publishing readiness gates in the UI');
 assert.match(confirmWeeklyPlanSource, /approveGoal\(goal\.id, data\.plan\.businessPackage\.revision\)/, 'launch must submit the exact plan revision to authoritative server validation');
+assert.match(digitalEmployeeApiSource, /approveGoal:[\s\S]{0,900}AbortSignal\.timeout\(12_000\)/, 'weekly launch must stop indefinite loading and hand unknown results to read-only reconciliation');
 assert.match(inspirationSource, /receiveReference[\s\S]{0,5000}setSelectedVideo\(match\)/, 'Inspiration Center must open the exact requested viral-video detail');
 assert.match(inspirationSource, /weekly-plan-snapshot[\s\S]{0,600}setSelectedVideo\(snapshot\)/, 'deleted references must still open the frozen weekly-plan analysis snapshot');
 assert.match(pageSource, /具体缺少/, 'weekly-plan validation must name the missing business fields instead of showing a generic warning');
@@ -525,8 +526,13 @@ const collectionLink = buildTaskDeepLink(task('scheduled_source_collection'), un
 assert.deepEqual(
   { page: collectionLink.page, view: collectionLink.view, runId: collectionLink.runId, taskId: collectionLink.taskId },
   { page: 'scheduled', view: undefined, runId: 'run-1', taskId: 'task-scheduled_source_collection' },
-  'scheduled source collection must deep-link to Scheduler with run and task context',
+  'source collection must deep-link to the inspiration workspace with run and task context',
 );
+
+const adsLink = buildTaskDeepLink({ ...task('optimize_campaign'), business_domain: 'advertising', capability_key: 'ads.optimize' }, undefined, 'run-ads');
+assert.equal(adsLink.page, 'adsManaged', 'advertising tasks must open the managed ads workspace');
+assert.equal(adsLink.runId, 'run-ads');
+assert.equal(adsLink.taskId, 'task-optimize_campaign');
 
 const publishPlan: PlanTask = {
   key: 'publishing_calendar', title: 'Publishing calendar', description: '', agentRole: 'business', kind: 'activation', sequence: 9,

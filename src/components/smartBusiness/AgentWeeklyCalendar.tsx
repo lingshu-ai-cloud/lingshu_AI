@@ -1,3 +1,4 @@
+import { roles as sharedAgentLabels } from '../../../shared/mobile-domain.mjs';
 import {validWeeklySalesTaskBinding,type WeeklySalesNavigationTarget} from '../socialProgram/weeklySalesNavigation';
 import {projectCalendarDeliverables} from './calendarDeliverables';
 import type {CrossWeekMaterialTarget} from '../socialProgram/crossWeekMaterialCalendar';
@@ -77,10 +78,10 @@ export type AgentCalendarTask = {
 };
 const agents = {
   human: { label: "人工任务", tone: "bg-rose-50 text-rose-800", stripe: "border-t-rose-500" },
-  business: { label: '经营 Agent', tone: 'bg-emerald-50 text-emerald-800', stripe: 'border-t-emerald-500' },
-  director: { label: '编导 Agent', tone: 'bg-violet-50 text-violet-800', stripe: 'border-t-violet-500' },
-  content: { label: '内容 Agent', tone: 'bg-sky-50 text-sky-800', stripe: 'border-t-sky-500' },
-  customer: { label: '客服 Agent', tone: 'bg-orange-50 text-orange-800', stripe: 'border-t-orange-400' },
+  business: { label: sharedAgentLabels.business, tone: 'bg-emerald-50 text-emerald-800', stripe: 'border-t-emerald-500' },
+  director: { label: sharedAgentLabels.director, tone: 'bg-violet-50 text-violet-800', stripe: 'border-t-violet-500' },
+  content: { label: sharedAgentLabels.content, tone: 'bg-sky-50 text-sky-800', stripe: 'border-t-sky-500' },
+  customer: { label: sharedAgentLabels.customer, tone: 'bg-orange-50 text-orange-800', stripe: 'border-t-orange-400' },
 };
 const statuses = { planned: '待执行', active: '进行中', completed: '已完成', blocked: '需处理', cancelled: '已取消', failed: '执行失败', no_data: '无符合条件的客户' };
 export function calendarDurationLabel(tasks: AgentCalendarTask[]): string {

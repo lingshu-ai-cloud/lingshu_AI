@@ -779,8 +779,14 @@ export default function ScheduledPage({ onAction }: { onAction?: AgentAction }) 
                   ? `已采集，视频分析在后台继续（${time}）。`
                   : visibleState === 'partial'
                     ? `部分成功（${time}），请展开查看未完成的平台和原因。`
-                    : `执行成功（${time}），结果已刷新。`;
-      setRunNotice({ taskId: id, message, error: visibleState === 'failed' || visibleState === 'worker_offline' });
+                    : visibleState === 'succeeded'
+                      ? `执行成功（${time}），结果已刷新。`
+                      : `状态未知（${time}），请展开结果查看。`;
+      setRunNotice({
+        taskId: id,
+        message,
+        error: !['queued', 'running', 'no_data', 'collected', 'partial', 'succeeded'].includes(String(visibleState)),
+      });
       window.setTimeout(() => { void fetchTasks(false); }, 800);
     } catch (error) {
       setRunNotice({ taskId: id, message: error instanceof Error ? error.message : '任务执行失败，请稍后重试。', error: true });

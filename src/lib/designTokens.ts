@@ -1,42 +1,9 @@
-/** Implementation of PRD v2.3 §§3.3, 3.6–3.8. Durations are milliseconds. */
-const spring = (stiffness: number) => ({
-  type: 'spring' as const,
-  mass: 1,
-  stiffness,
-  damping: 2 * 0.9 * Math.sqrt(stiffness),
-});
-
-export const lsMotion = {
-  duration: { instant: 0, fast: 150, exit: 200, enter: 250, standard: 300, slow: 400 },
-  ease: {
-    standard: [0.2, 0, 0, 1] as [number, number, number, number],
-    enter: [0, 0, 0, 1] as [number, number, number, number],
-    exit: [0.3, 0, 1, 1] as [number, number, number, number],
-  },
-  spring: { fast: spring(1400), standard: spring(700), slow: spring(300) },
-} as const;
-
-export const lsFonts = {
-  sans: '"SF Pro Text","PingFang SC","Noto Sans SC",ui-sans-serif,system-ui,sans-serif',
-  mono: '"SFMono-Regular",ui-monospace,monospace',
-} as const;
-
-export const lsTypography = {
-  display: { size: 36, line: 44, weight: 600 },
-  headline: { size: 28, line: 36, weight: 600 },
-  'title-large': { size: 20, line: 28, weight: 600 },
-  'title-medium': { size: 16, line: 24, weight: 600 },
-  'title-small': { size: 14, line: 22, weight: 600 },
-  'body-large': { size: 16, line: 24, weight: 400 },
-  'body-medium': { size: 14, line: 22, weight: 400 },
-  'body-small': { size: 12, line: 18, weight: 400 },
-  'label-large': { size: 14, line: 20, weight: 600 },
-  'label-medium': { size: 12, line: 18, weight: 500 },
-  'label-small': { size: 11, line: 18, weight: 500 },
-  metric: { size: 24, line: 32, weight: 600 },
-} as const;
+/** Generated base values come from shared/design/tokens.json. */
+import { lsFonts, lsMotion, lsTypography, lsSharedCssVariables } from './designTokens.generated';
+export { lsFonts, lsMotion, lsTypography, lsColors, lsDimensions } from './designTokens.generated';
 
 export const lsCssVariables: Record<string, string> = {
+  ...lsSharedCssVariables,
   '--font-sans': lsFonts.sans,
   '--font-display': lsFonts.sans,
   '--font-mono': lsFonts.mono,

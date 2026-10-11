@@ -26,3 +26,13 @@ export function bindSocialProjectSpec(value: unknown, taskId: string): unknown {
 export function socialProjectBelongs(project: ProjectRecord, taskId: string): boolean {
   return !taskId || String(projectSpec(project.spec).socialContentTaskId || '') === taskId;
 }
+
+/** Exact cross-workbench access for a trusted digital-employee project. */
+export function digitalEmployeeProjectBelongs(project: ProjectRecord, runId: string, taskId: string): boolean {
+  if (!runId || !taskId) return false;
+  const spec = projectSpec(project.spec);
+  const automation = projectSpec(spec.automation);
+  return automation.managedBy === 'digital_employee'
+    && String(spec.workflowRunId || '') === runId
+    && String(spec.workflowTaskId || '') === taskId;
+}

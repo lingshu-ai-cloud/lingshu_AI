@@ -10,12 +10,13 @@ type Props = {
   data: DigitalEmployeeOverview;
   contentId: string;
   onRefresh?: () => void;
-  onOpenProduction?: (taskId: string, contentItemId: string) => void;
+  onOpenProduction?: (taskId: string, contentItemId: string, projectId?: string) => void;
+  onOpenSocialProduction?: (socialContentTaskId: string) => void;
   onOpenReference?: () => void;
 };
 
 /** Read-only production evidence. Opening a calendar card never starts or retries work. */
-export default function WeeklyContentProgressPanel({ data, contentId, onRefresh, onOpenProduction, onOpenReference }: Props) {
+export default function WeeklyContentProgressPanel({ data, contentId, onRefresh, onOpenProduction, onOpenSocialProduction, onOpenReference }: Props) {
   const { token } = theme.useToken();
   const base = buildWeeklyContentProgress(data, contentId);
   const projectKey = [...base.projectIds].sort().join('|');
@@ -97,7 +98,9 @@ export default function WeeklyContentProgressPanel({ data, contentId, onRefresh,
       content: <div className="space-y-1 pb-3 text-sm text-text-secondary"><p>{stage.detail}</p>{stage.evidence.length > 0 && <p className="text-xs text-text-muted">{stage.evidence.join(' · ')}</p>}</div>,
     }))} />
     <div className="flex flex-wrap gap-2 border-t border-border pt-4">
-      {progress.taskId && onOpenProduction && <Button type="primary" onClick={() => onOpenProduction(progress.taskId!, progress.queueItemId || '')}>打开制作工作台</Button>}
+      {progress.taskId && onOpenSocialProduction && data.contentQueue?.items.some(item => item.contentId === contentId && item.socialContentTaskId === progress.taskId)
+        ? <Button type="primary" onClick={() => onOpenSocialProduction(progress.taskId!)}>进入内容生产实况</Button>
+        : progress.taskId && onOpenProduction && <Button type="primary" onClick={() => onOpenProduction(progress.taskId!, progress.queueItemId || '', progress.projectIds[0])}>打开制作工作台</Button>}
       {onOpenReference && <Button icon={<ExternalLink size={15} />} onClick={onOpenReference}>查看爆款参考</Button>}
     </div>
     <p className="text-xs text-text-muted">{updatedAt ? `制作回执更新于 ${updatedAt}` : '进度依据当前计划与实际制作回执'} · 正式发布前仍需验收与发布授权</p>

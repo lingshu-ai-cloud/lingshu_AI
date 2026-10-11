@@ -12,6 +12,7 @@ import {
 import type { Starter198AccessSnapshot } from './profile.js';
 import {
   bindSocialProjectSpec,
+  digitalEmployeeProjectBelongs,
   socialProjectBelongs,
   socialProjectTaskId,
 } from './socialProjectScope.js';
@@ -145,6 +146,13 @@ try {
     'a task context must not read or mutate another social task project');
   assert.equal(socialProjectBelongs({ spec: { socialContentTaskId: 'task-b' } }, ''), true,
     'legacy project behavior remains unchanged outside a starter social context');
+  const managedProject = { spec: { workflowRunId: 'run-a', workflowTaskId: 'workflow-task-a', automation: { managedBy: 'digital_employee' } } };
+  assert.equal(digitalEmployeeProjectBelongs(managedProject, 'run-a', 'workflow-task-a'), true,
+    'an exact digital-employee workflow handoff may read its managed project');
+  assert.equal(digitalEmployeeProjectBelongs(managedProject, 'run-a', 'workflow-task-b'), false,
+    'a different workflow task cannot borrow the managed project');
+  assert.equal(digitalEmployeeProjectBelongs({ spec: { ...managedProject.spec, automation: {} } }, 'run-a', 'workflow-task-a'), false,
+    'ordinary projects cannot opt into the digital-employee handoff');
   assert.equal(socialProjectTaskId({ starter198SocialContext: {
     taskId: 'task-a', page: 'smartAssets', accessKind: 'edit',
   } }), 'task-a');

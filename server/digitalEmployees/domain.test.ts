@@ -55,6 +55,15 @@ const goal = normalizeWeeklyGoal({
 }, config);
 
 assert.deepEqual(validateWeeklyGoal(goal), []);
+const directorCollectionGoal = normalizeWeeklyGoal({
+  ...goal,
+  videoPlans: [{
+    route: 'clone', productName: '检测设备', theme: '采购验机', language: 'en', duration: 30,
+    platform: 'youtube', materialIds: [], referenceId: '', presenter: 'material', heygenAvatarId: '',
+    avatarConsent: false, voice: 'v1', directorStatus: 'candidate',
+  }],
+}, config);
+assert.deepEqual(validateWeeklyGoal(directorCollectionGoal), [], 'a new weekly goal must allow the Director Agent to collect its reference after confirmation');
 const plan = buildWeeklyPlan(goal, config);
 const expectedTaskKeys = [
   'context_readiness',

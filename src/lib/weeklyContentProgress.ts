@@ -326,6 +326,46 @@ export function buildWeeklyContentProgress(data: DigitalEmployeeOverview, conten
   projects?: readonly WeeklyContentProgressProject[];
   projectsStatus?: 'loading' | 'available' | 'unavailable';
 } = {}): WeeklyContentProgress {
+  const directSocial = (data.contentQueue?.items || []).find(item => item.contentId === contentId && Boolean(item.socialContentTaskId));
+  if (directSocial) {
+    const queueState = (keys: string[]): WeeklyContentProgressStage => {
+      const values = directSocial.steps.filter(item => keys.includes(item.key));
+      const state: StageStatus = values.some(item => item.state === 'active') ? 'running'
+        : values.length && values.every(item => item.state === 'done') ? 'completed'
+          : directSocial.status === 'blocked' ? 'blocked' : 'pending';
+      const key = keys[0] === 'brief' ? 'benchmark' : keys.includes('storyboard') ? 'script'
+        : keys.includes('assets') ? 'materials' : keys.includes('video') ? 'render' : 'quality';
+      return stage(key, state, values.length ? values.map(item => `${item.label}：${item.state === 'done' ? '已有任务回执' : item.state === 'active' ? '当前执行阶段' : '等待前置阶段'}`).join('；') : '当前任务未定义此阶段。', values.filter(item => item.state === 'done').map(item => item.label));
+    };
+    const script = queueState(['script', 'storyboard']);
+    const render = queueState(['video']);
+    const quality = queueState(['quality', 'approval']);
+    const stages: WeeklyContentProgressStage[] = [
+      queueState(['brief']), script, queueState(['assets']),
+      {...render, key:'voice', label:'口播与字幕'},
+      {...render, key:'presenter', label:'数字人生成'},
+      render, quality,
+    ];
+    const status: StageStatus = directSocial.status === 'completed' ? 'completed'
+      : directSocial.status === 'blocked' ? 'blocked'
+        : directSocial.status === 'waiting_review' ? 'waiting'
+          : directSocial.status === 'producing' ? 'running' : 'pending';
+    return {
+      contentId,
+      masterContentId: contentId,
+      isAdaptation: false,
+      sharedMaster: false,
+      queueItemId: directSocial.id,
+      taskId: directSocial.socialContentTaskId || contentId,
+      projectIds: directSocial.projectIds,
+      status,
+      statusLabel: directSocial.status === 'waiting_review' ? '待验收' : labels[status],
+      summary: directSocial.stage || (status === 'waiting' ? '真实成片已经生成，等待内容验收。' : '已读取真实单条内容任务。'),
+      stages,
+      blockingReasons: directSocial.reason ? [directSocial.reason] : [],
+      nextAction: { kind: directSocial.status === 'blocked' ? 'resolve_blocker' : 'view_production', label: '打开制作工作台', taskId: directSocial.socialContentTaskId || contentId, ...(directSocial.projectIds[0] ? {projectId:directSocial.projectIds[0]} : {}) },
+    };
+  }
   const plans = data.plan?.businessPackage?.tasks.filter(item => item.templateId === 'production').flatMap(item => item.videoPlans || []) || [];
   const selected = plans.find(plan => plan.contentId === contentId);
   const master = selected && resolveMaster(plans, selected);

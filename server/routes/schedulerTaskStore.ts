@@ -14,8 +14,19 @@ export interface ScheduledTask {
 export type ScheduledExecutionState = 'idle' | 'queued' | 'running' | 'succeeded' | 'failed' | 'worker_offline' | 'no_data' | 'collected' | 'partial';
 export interface ScheduledRunOutcome { taskId: string; state: ScheduledExecutionState; result: string; lastRun?: string }
 
+export function canonicalScheduledTasks(tasks: ScheduledTask[]): ScheduledTask[] {
+  const canonical = new Map<string, ScheduledTask>();
+  for (const task of tasks) {
+    const key = `${task.tenantId || ''}:${task.id}`;
+    const previous = canonical.get(key);
+    const timestamp = (item: ScheduledTask) => Date.parse(item.lastRun || item.createdAt || '') || 0;
+    if (!previous || timestamp(task) >= timestamp(previous)) canonical.set(key, task);
+  }
+  return [...canonical.values()];
+}
+
 export function loadScheduledTasks(): ScheduledTask[] {
-  try { return JSON.parse(fs.readFileSync(DATA, 'utf8')); } catch { return []; }
+  try { return canonicalScheduledTasks(JSON.parse(fs.readFileSync(DATA, 'utf8'))); } catch { return []; }
 }
 function taskPayload(task: ScheduledTask): Record<string, unknown> {
   return { task_id: task.id, tenant_id: task.tenantId || '', name: task.name, category: task.category,
@@ -42,22 +53,32 @@ async function allRemoteTasks(): Promise<Array<Record<string, any>>> {
   return items;
 }
 async function mirrorTasks(tasks: ScheduledTask[]): Promise<void> {
-  const remote = await allRemoteTasks(); const remoteByTaskId = new Map(remote.map(record => [String(record.task_id || ''), record]));
-  const localIds = new Set(tasks.map(task => task.id));
+  const remote = await allRemoteTasks();
+  const remoteByTaskId = new Map<string, Record<string, any>>();
+  const duplicateRemoteIds: string[] = [];
+  for (const record of remote) {
+    const taskId = `${String(record.tenant_id || '')}:${String(record.task_id || '')}`;
+    const previous = remoteByTaskId.get(taskId);
+    if (previous?.id) duplicateRemoteIds.push(String(previous.id));
+    remoteByTaskId.set(taskId, record);
+  }
+  const localIds = new Set(tasks.map(task => `${task.tenantId || ''}:${task.id}`));
   for (const task of tasks) {
-    if (!task.tenantId) continue; const existing = remoteByTaskId.get(task.id);
+    if (!task.tenantId) continue; const existing = remoteByTaskId.get(`${task.tenantId}:${task.id}`);
     if (existing?.id) await store.update('scheduled_tasks', existing.id, taskPayload(task));
     else await store.create('scheduled_tasks', taskPayload(task));
   }
-  for (const record of remote) if (record.id && record.task_id && !localIds.has(String(record.task_id))) await store.delete('scheduled_tasks', String(record.id));
+  for (const record of remote) if (record.id && record.task_id && !localIds.has(`${String(record.tenant_id || '')}:${String(record.task_id)}`)) await store.delete('scheduled_tasks', String(record.id));
+  for (const id of duplicateRemoteIds) await store.delete('scheduled_tasks', id);
 }
 export function saveScheduledTasks(tasks: ScheduledTask[]): void {
-  fs.mkdirSync(path.dirname(DATA), { recursive: true }); fs.writeFileSync(DATA, JSON.stringify(tasks, null, 2));
-  void mirrorTasks(tasks).catch(error => console.error('[scheduler] PocketBase task mirror failed:', error instanceof Error ? error.message : error));
+  const canonical = canonicalScheduledTasks(tasks);
+  fs.mkdirSync(path.dirname(DATA), { recursive: true }); fs.writeFileSync(DATA, JSON.stringify(canonical, null, 2));
+  void mirrorTasks(canonical).catch(error => console.error('[scheduler] PocketBase task mirror failed:', error instanceof Error ? error.message : error));
 }
 export async function hydrateScheduledTasks(): Promise<ScheduledTask[]> {
   try {
-    const remote = (await allRemoteTasks()).map(taskFromRecord).filter((task): task is ScheduledTask => Boolean(task));
+    const remote = canonicalScheduledTasks((await allRemoteTasks()).map(taskFromRecord).filter((task): task is ScheduledTask => Boolean(task)));
     if (!remote.length) return loadScheduledTasks();
     fs.mkdirSync(path.dirname(DATA), { recursive: true }); fs.writeFileSync(DATA, JSON.stringify(remote, null, 2)); return remote;
   } catch (error) {

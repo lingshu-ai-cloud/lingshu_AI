@@ -1,4 +1,5 @@
 const { apiBase } = require('../config')
+const { httpFailure } = require('./request-policy')
 const TOKEN_KEY = 'overseas_token'
 
 function base() {
@@ -11,15 +12,16 @@ function token() { return wx.getStorageSync(TOKEN_KEY) || '' }
 function clearToken() { wx.removeStorageSync(TOKEN_KEY) }
 
 function request(path, method = 'GET', data, authorized = true) {
+  const requestToken = authorized ? token() : ''
   return new Promise((resolve, reject) => {
     wx.request({
       url: base() + '/api/overseas/' + path,
       method,
       data,
-      header: { 'Content-Type': 'application/json', ...(authorized && token() ? { Authorization: 'Bearer ' + token() } : {}) },
+      header: { 'Content-Type': 'application/json', ...(requestToken ? { Authorization: 'Bearer ' + requestToken } : {}) },
       success(res) {
-        if (res.statusCode === 401) clearToken()
-        if (res.statusCode < 200 || res.statusCode >= 300) { const error = new Error(((res.data && (res.data.message || res.data.error)) || '请求失败') + '（HTTP ' + res.statusCode + '）'); error.status = res.statusCode; error.code = res.data && res.data.error; return reject(error) }
+        if (res.statusCode === 401 && requestToken && token() === requestToken) clearToken()
+        if (res.statusCode < 200 || res.statusCode >= 300) { const failure = httpFailure(res.statusCode, res.data); const message = failure.stale ? '这项待办已更新，请刷新最新内容' : failure.message; const error = new Error(message + '（HTTP ' + failure.status + '）'); Object.assign(error, failure, { message: error.message }); return reject(error) }
         if (!res.data || typeof res.data !== 'object') return reject(new Error('服务器未返回接口数据，请检查服务版本（HTTP ' + res.statusCode + '）'))
         resolve(res.data)
       },

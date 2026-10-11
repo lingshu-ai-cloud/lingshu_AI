@@ -23,7 +23,7 @@
           <view wx:elif="{{productsError}}"><view class="message">{{productsError}}</view><button size="mini" bindtap="loadProducts">重新加载</button></view>
           <view wx:elif="{{!products.length}}" class="muted">企业知识库暂无产品，请先在网页端添加产品。</view>
           <checkbox-group wx:else bindchange="selectProducts">
-            <scroll-view scroll-y class="product-options"><label wx:for="{{products}}" wx:key="id" class="product-option"><checkbox value="{{item.id}}" checked="{{item.checked}}" disabled="{{creating}}" color="#0f8054"/><text>{{item.name}}</text></label></scroll-view>
+            <scroll-view scroll-y class="product-options"><label wx:for="{{products}}" wx:key="id" class="product-option"><checkbox value="{{item.id}}" checked="{{item.checked}}" disabled="{{creating}}" color="#2563EB"/><text>{{item.name}}</text></label></scroll-view>
           </checkbox-group>
           <view class="link product-done" bindtap="toggleProducts">完成选择</view>
         </view>

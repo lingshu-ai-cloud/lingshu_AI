@@ -1,0 +1,30 @@
+import assert from 'node:assert/strict';
+import test from 'node:test';
+import type {DataStore,ListQuery,Record_} from '../storage/datastore.js';
+import type {WeeklyExecutionTask,WeeklyOperatingPackage,WeeklyProductionStepKind,WeeklyResponsibleActor} from '../../shared/contracts/socialProgram.js';
+import {listUnplannedSocialDeliveryCards,projectWeeklyDeliveryCards} from './weeklyDeliveryCards.js';
+
+const pkg={programId:'program',packageId:'week',version:2,socialContentPackage:{publicationTasks:[{publicationTaskId:'publication',motherContentId:'mother',accountId:'account',platform:'tiktok',businessProposition:'卸妆蜜真实测评',publishWindow:'2026-10-08T10:00:00+08:00',status:'planned'}]},agentPlanning:{dispatch:{scheduleItems:[{publicationTaskId:'publication',topic:'卸妆蜜三秒卸妆挑战'}]}}} as unknown as WeeklyOperatingPackage;
+function task(id:string,stepKind:WeeklyProductionStepKind,responsibleActor:WeeklyResponsibleActor,status:WeeklyExecutionTask['status'],finish:string):WeeklyExecutionTask{return{taskId:id,tenantId:'tenant',programId:'program',packageId:'week',packageVersion:2,publicationTaskId:'publication',workflowKind:stepKind==='director_analysis'?'directing':'content',scope:'content',subjectId:'publication',accountId:'account',dependsOnTaskIds:[],upstreamVersionRefs:[],inputSnapshot:{},idempotencyKey:id,budget:{category:'none',limitCny:null},schedule:{stepKind,responsibleActor,estimatedDurationMinutes:30,estimatedStartAt:'2026-10-07T01:00:00Z',estimatedFinishAt:finish,actualStartedAt:null,actualFinishedAt:status==='succeeded'?finish:null},status,ownBlockingReasons:[],inheritedBlockingTaskIds:[],attempt:0,maxAttempts:3,nextAttemptAt:null,lease:null,resultRefs:stepKind==='video_generation'?[{type:'starter_social_content_artifact',id:'artifact',version:1}]:[],lastError:null,recoveredFromDeadLetterAt:null,cancelReason:null,createdAt:'2026-10-07T00:00:00Z',updatedAt:'2026-10-07T00:00:00Z'};}
+function store(rows:Record_[]):DataStore{return{getById:async()=>null,list:async<T=Record_>(_c:string,q:ListQuery={})=>{const items=rows.filter(row=>Object.entries(q.where??{}).every(([key,value])=>row[key]===value));return{items:items as T[],totalItems:items.length,totalPages:1,page:1,perPage:2};},create:async()=>null,update:async()=>false,delete:async()=>false};}
+
+test('one publication becomes one delivery card with real Agent nodes and verified production identity',async()=>{
+ const authority={weeklyPackage:{programId:'program',packageId:'week',version:2},publicationTask:{publicationTaskId:'publication'}};
+ const rows=[{id:'content-row',tenant_id:'tenant',task_id:'real-content',run_id:'real-run',create_idempotency_key:'weekly-production:week:2:publication',brief:{programRef:{id:'program'},_weeklyAuthority:authority}}];
+ const cards=await projectWeeklyDeliveryCards(store(rows), 'tenant',pkg,[task('director','director_analysis','director_agent','succeeded','2026-10-07T02:00:00Z'),task('render','video_generation','content_agent','succeeded','2026-10-07T04:00:00Z'),task('quality','quality_check','quality_agent','queued','2026-10-07T05:00:00Z')]);
+ assert.equal(cards.length,1);assert.equal(cards[0]!.title,'卸妆蜜三秒卸妆挑战');assert.equal(cards[0]!.deliverableAt,'2026-10-07T05:00:00Z');assert.equal(cards[0]!.status,'planned');assert.equal(cards[0]!.nodes.length,3);assert.deepEqual(cards[0]!.nodes.map(node=>node.responsibleActor),['director_agent','content_agent','quality_agent']);assert.deepEqual(cards[0]!.production,{bindingKey:'weekly-production:week:2:publication',contentTaskId:'real-content',runId:'real-run'});assert.deepEqual(cards[0]!.artifactRefs,[{type:'starter_social_content_artifact',id:'artifact',version:1}]);
+});
+
+test('ambiguous or forged production rows never become a clickable binding',async()=>{
+ const valid={id:'a',tenant_id:'tenant',task_id:'one',create_idempotency_key:'weekly-production:week:2:publication',brief:{programRef:{id:'program'},_weeklyAuthority:{weeklyPackage:{programId:'program',packageId:'week',version:2},publicationTask:{publicationTaskId:'publication'}}}};
+ const actual=[task('render','video_generation','content_agent','leased','2026-10-07T04:00:00Z')];
+ assert.equal((await projectWeeklyDeliveryCards(store([valid,{...valid,id:'b',task_id:'two'}]),'tenant',pkg,actual))[0]!.production,null);
+ assert.equal((await projectWeeklyDeliveryCards(store([{...valid,brief:{programRef:{id:'program'},_weeklyAuthority:{weeklyPackage:{programId:'program',packageId:'other',version:2},publicationTask:{publicationTaskId:'publication'}}}}]),'tenant',pkg,actual))[0]!.production,null);
+ assert.equal((await projectWeeklyDeliveryCards(store([valid]),'tenant',pkg,actual))[0]!.status,'active');
+});
+
+test('a real instant task remains visible without inventing weekly authority',async()=>{
+ const tables:Record<string,Record_[]>={starter_social_content_tasks:[{id:'row',tenant_id:'tenant',task_id:'instant-task',run_id:'instant-run',weekly_plan_id:'',create_idempotency_key:'instant:one',status:'asset_review',brief:{title:'GUIANFA 卸妆蜜'}}],starter_social_content_artifacts:[{id:'artifact-row',tenant_id:'tenant',task_id:'instant-task',artifact_id:'instant-artifact',version:'43',created_at:'2026-10-11T08:00:00Z'}]};
+ const data:DataStore={getById:async()=>null,list:async<T=Record_>(collection:string,q:ListQuery={})=>{const items=(tables[collection]??[]).filter(row=>Object.entries(q.where??{}).every(([key,value])=>row[key]===value));return{items:items as T[],totalItems:items.length,totalPages:1,page:1,perPage:500};},create:async()=>null,update:async()=>false,delete:async()=>false};
+ const cards=await listUnplannedSocialDeliveryCards(data,'tenant');assert.equal(cards.length,1);assert.equal(cards[0]!.title,'GUIANFA 卸妆蜜');assert.equal(cards[0]!.contentTaskId,'instant-task');assert.equal(cards[0]!.runId,'instant-run');assert.equal(cards[0]!.reason,'not_bound_to_weekly_package');assert.equal(cards[0]!.deliverableAt,'2026-10-11T08:00:00Z');assert.deepEqual(cards[0]!.artifactRefs,[{type:'starter_social_content_artifact',id:'instant-artifact',version:43}]);
+});

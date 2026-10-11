@@ -2,7 +2,7 @@ import { normalizeManagedPublishingGrant, type ManagedPublishingGrant } from '..
 import { normalizeContinuationPolicy, type ContinuationPolicy } from '../../shared/contracts/continuationPolicy.js';
 import { normalizeAssessment, type OperatingAssessment } from '../../shared/contracts/operatingMaturity.js';
 import { VIDEO_LANGUAGES, normalizeVideoLanguage } from '../../shared/contracts/videoLanguages.js';
-import { normalizeVideoPlan, videoPlanErrors, type VideoCreationPlan } from '../../shared/contracts/videoCreationPlan.js';
+import { normalizeVideoPlan, videoSchedulingErrors, type VideoCreationPlan } from '../../shared/contracts/videoCreationPlan.js';
 import {
   connectedAccountIssues,
   SOCIAL_DISCOVERY_BASELINE,
@@ -317,7 +317,7 @@ export function normalizeWeeklyGoal(input: Partial<WeeklyGoalInput>, config: Dig
 
 export function validateWeeklyGoal(goal: WeeklyGoalInput): string[] {
   const missing: string[] = [];
-  for (const [index, plan] of (goal.videoPlans || []).entries()) missing.push(...videoPlanErrors(plan).map(error => `第 ${index + 1} 条：${error}`));
+  for (const [index, plan] of (goal.videoPlans || []).entries()) missing.push(...videoSchedulingErrors(plan).map(error => `第 ${index + 1} 条：${error}`));
   if (!goal.title) missing.push('目标名称');
   if (!goal.objective) missing.push('目标说明');
   if (!goal.metric) missing.push('指标');

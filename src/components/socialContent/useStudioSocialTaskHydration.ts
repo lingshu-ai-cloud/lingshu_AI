@@ -43,6 +43,31 @@ export interface StudioSocialTaskSeed {
     sourceTaskId: string;
     sourceTaskVersion: string;
   }>;
+  /** Read-only evidence already produced by the task. This powers the Agent-entry demo view. */
+  productionPreview: StudioSocialTaskProductionPreview;
+}
+
+export interface StudioSocialTaskProductionPreview {
+  deliverableVideoUrl: string;
+  coverUrl: string;
+  narrationLines: Array<{
+    text: string;
+    startSeconds: number;
+    endSeconds: number;
+  }>;
+  shots: Array<{
+    shotId: string;
+    startSeconds: number;
+    endSeconds: number;
+    visual: string;
+    spokenText: string;
+    audioDescription: string;
+  }>;
+  audio: {
+    embeddedInDeliverable: boolean;
+    technicalCheckPassed: boolean | null;
+    bgmMood: string;
+  };
 }
 
 export interface StudioSocialShotMaterialBinding {
@@ -95,6 +120,55 @@ function materialId(sourceRef: string): string | null {
 function languageCode(value: string): string | null {
   const normalized = value.trim().toLowerCase();
   return LANGUAGE_CODES[value.trim()] || LANGUAGE_CODES[normalized] || null;
+}
+
+function record(value: unknown): Record<string, unknown> | null {
+  return value && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : null;
+}
+
+function finite(value: unknown): number {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : 0;
+}
+
+/**
+ * Project only persisted task evidence into the demo surface. It deliberately
+ * does not manufacture TTS URLs: completed task audio is played from the real
+ * deliverable when the pipeline stored it as an embedded track.
+ */
+export function socialTaskProductionPreview(task: SocialContentTaskDetail): StudioSocialTaskProductionPreview {
+  const narrationLines = (task.replicationScript?.narrationLines || []).flatMap(line => {
+    const text = clean(line.draftText) || clean(line.referenceText);
+    return text ? [{ text, startSeconds: finite(line.sourceStartSeconds), endSeconds: finite(line.sourceEndSeconds) }] : [];
+  });
+  const shots = (task.referenceVideoAnalysis?.shots || []).map(shot => ({
+    shotId: clean(shot.shotId),
+    startSeconds: finite(shot.startSeconds),
+    endSeconds: finite(shot.endSeconds),
+    visual: clean(shot.visualDescription),
+    spokenText: clean(shot.spokenText),
+    audioDescription: clean(shot.audioDescription),
+  }));
+  const artifact = [...task.artifacts].reverse().find(item => item.kind === 'short_video' || item.kind === 'long_video');
+  const content = record(artifact?.content);
+  const mediaStorage = record(content?.mediaStorage);
+  const video = record(mediaStorage?.video);
+  const cover = record(mediaStorage?.cover);
+  const technicalQuality = record(content?.technicalQualityReport);
+  const technicalAudio = record(technicalQuality?.audio);
+  const render = record(content?.render);
+  const bgm = record(render?.bgm);
+  return {
+    deliverableVideoUrl: clean(video?.url),
+    coverUrl: clean(cover?.url),
+    narrationLines,
+    shots,
+    audio: {
+      embeddedInDeliverable: Boolean(clean(video?.url)) && technicalAudio?.ok === true,
+      technicalCheckPassed: typeof technicalAudio?.ok === 'boolean' ? technicalAudio.ok : null,
+      bgmMood: clean(bgm?.mood),
+    },
+  };
 }
 
 export function socialTaskShotMaterialBindings(
@@ -196,6 +270,7 @@ export function socialTaskToStudioSeed(task: SocialContentTaskDetail): StudioSoc
     shotMaterialBindings: socialTaskShotMaterialBindings(task),
     unsupportedLanguages: languagePairs.filter(item => !item.code).map(item => item.language),
     digitalHumanShotPlans,
+    productionPreview: socialTaskProductionPreview(task),
   };
 }
 

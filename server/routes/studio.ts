@@ -162,7 +162,7 @@ import { materialAssetContentType, materialAssetObjectKey, materialAssetTypeAllo
 import { isSyntheticMaterial } from '../lib/materialTruthfulness.js';
 import { MATERIAL_SOURCE_CATEGORIES, MATERIAL_THEMES, materialSourceCategoryOf, materialThemeTagsOf } from '../../shared/materialTaxonomy.js';
 import { untrustedPromptData } from '../lib/untrustedPromptData.js';
-import { bindSocialProjectSpec, socialProjectBelongs, socialProjectTaskId } from '../starter198/socialProjectScope.js';
+import { bindSocialProjectSpec, digitalEmployeeProjectBelongs, socialProjectBelongs, socialProjectTaskId } from '../starter198/socialProjectScope.js';
 import {
   THEME_PROMPT_CONSTRAINTS,
   buildScriptContentPlan,
@@ -9588,7 +9588,11 @@ studioRouter.get('/projects/:id/evidence', async (req, res) => {
 studioRouter.get('/projects/:id', async (req, res) => {
   const { tenantId } = res.locals as AuthLocals;
   const p = await store.getById<any>('studio_projects', req.params.id);
-  if (!p || p.tenant_id !== tenantId || !socialProjectBelongs(p, socialProjectTaskId(res.locals))) { res.status(404).json({ ok: false, error: 'Project not found' }); return; }
+  const workflowRunId = String(req.query.workflowRunId || '').trim();
+  const workflowTaskId = String(req.query.workflowTaskId || '').trim();
+  const belongs = p && (socialProjectBelongs(p, socialProjectTaskId(res.locals))
+    || digitalEmployeeProjectBelongs(p, workflowRunId, workflowTaskId));
+  if (!p || p.tenant_id !== tenantId || !belongs) { res.status(404).json({ ok: false, error: 'Project not found' }); return; }
   res.json(projectFromRecord(p, tenantId));
 });
 

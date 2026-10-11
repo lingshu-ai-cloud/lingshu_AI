@@ -42,6 +42,7 @@ import { createWeeklyInitialScheduleRouter } from './weeklyInitialSchedule.js';
 import { createSocialWeeklyMaterialEvidenceConfigurationRouter } from './socialWeeklyMaterialEvidenceConfiguration.js';
 import { createSocialCustomerFeedbackTopicsRouter } from './socialCustomerFeedbackTopics.js';
 import { projectWeeklyContinuationCalendar } from '../socialPrograms/weeklyContinuationCalendar.js';
+import { listUnplannedSocialDeliveryCards, projectWeeklyDeliveryCards } from '../socialPrograms/weeklyDeliveryCards.js';
 import { createSocialWeeklyContentTemplatesRouter } from './socialWeeklyContentTemplates.js';
 import { createSocialWeeklyReviewEvidenceRouter } from './socialWeeklyReviewEvidence.js';
 import { createSocialWeeklyRunningResourceEvidenceRouter } from './socialWeeklyRunningResourceEvidence.js';
@@ -94,6 +95,7 @@ export function createSocialProgramsRouter(dataStore: DataStore = store, authent
   const creativeRepairConfiguration=createWeeklyCreativeRepairConfigurationService(dataStore);
   const creativeRepairExecution=createWeeklyCreativeRepairExecutionService(dataStore,createWeeklyCreativeRepairProductionPort(dataStore));
   const creativeRepairCompletion=createWeeklyCreativeRepairCompletionService(dataStore);
+  router.get('/unplanned-delivery-cards',asyncRoute(async(_req,res)=>{const{tenantId}=res.locals as AuthLocals;res.setHeader('Cache-Control','private, no-store');res.json({items:await listUnplannedSocialDeliveryCards(dataStore,tenantId)});}));
   router.use('/:programId/operating-packages/:packageId/supplement-requests', asyncRoute(async (req, res, next) => {
     await service.getProgram((res.locals as AuthLocals).tenantId, req.params.programId);
     next();
@@ -392,6 +394,16 @@ export function createSocialProgramsRouter(dataStore: DataStore = store, authent
       throw new SocialProgramError('package_version_invalid', 400, '周包版本无效。');
     }
     res.json({ items: await projectWeeklyContinuationCalendar(dataStore, await executionTasks.list(tenantId, programId, packageId, requestedVersion)) });
+  }));
+
+  router.get('/:programId/operating-packages/:packageId/delivery-cards', asyncRoute(async (req,res)=>{
+    const {tenantId}=res.locals as AuthLocals,programId=String(req.params.programId||''),packageId=String(req.params.packageId||'');
+    const pkg=await weeklyPackages.get(tenantId,programId,packageId),requestedVersion=Number(req.query.version??pkg.version);
+    if(!Number.isSafeInteger(requestedVersion)||requestedVersion<1)throw new SocialProgramError('package_version_invalid',400,'周包版本无效。');
+    if(pkg.version!==requestedVersion)throw new SocialProgramError('package_version_conflict',409,'周包版本已变化，请刷新真实排期。');
+    const tasks=await projectWeeklyContinuationCalendar(dataStore,await executionTasks.list(tenantId,programId,packageId,requestedVersion));
+    res.setHeader('Cache-Control','private, no-store');
+    res.json({items:await projectWeeklyDeliveryCards(dataStore,tenantId,pkg,tasks)});
   }));
 
   router.get('/:programId/operating-packages/:packageId/repair-cases',asyncRoute(async(req,res)=>{

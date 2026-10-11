@@ -19,6 +19,13 @@ import type { Platform } from '../types/index.js';
 import { requireAuth, type AuthLocals } from '../middleware/auth.js';
 import { resolveCrawlKeywords, resolveCrawlStrategy } from '../lib/crawlKeywords.js';
 import { normalizeKeywordInput, type KeywordPlatform } from '../../src/lib/keywordInput.js';
+import { buildConfirmedWeeklyDiscoveryScopeWithKeywords, type ConfirmedWeeklyDiscoveryBoundary } from '../digitalEmployees/weeklyDiscoveryScope.js';
+import { normalizeModePolicies } from '../socialDiscovery/domain.js';
+import { formatScheduledDiscoveryResult } from '../socialDiscovery/scheduledResult.js';
+import { discoveryTriggerForScheduler, type SchedulerExecutionTrigger } from '../socialDiscovery/scheduledTrigger.js';
+import { localFallbacksEnabled } from '../lib/localFallbackPolicy.js';
+import { runWithDataAuthority } from '../storage/dataAuthority.js';
+import { schedulerBootstrapAuthority } from './schedulerBootstrapAuthority.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PDF_SCRIPT = path.join(__dirname, '../../scripts/render-task-report-pdf.py');
@@ -1149,7 +1156,7 @@ export function scheduledCrawlBatchResult(jobs: Record<string, any>[], requested
   ].join('\n');
 }
 
-async function executeTask(task: ScheduledTask): Promise<string> {
+async function executeTask(task: ScheduledTask, trigger: SchedulerExecutionTrigger): Promise<string> {
   if (task.taskType === 'video_keyword_crawl' &&
     (task.config.managedBy === 'digital_employee' || task.id.startsWith('task_de_'))) {
     return '编导旧采集任务已停用，请使用已批准的连续发现采集计划。';
@@ -1158,13 +1165,11 @@ async function executeTask(task: ScheduledTask): Promise<string> {
     const { executeApprovedDiscoveryRun } = await import('../socialDiscovery/service.js');
     const result = await executeApprovedDiscoveryRun({
       tenantId: String(task.tenantId || task.config.tenantId || ''),
-      triggerType: 'scheduled',
+      triggerType: discoveryTriggerForScheduler(trigger),
       expectedScopeId: task.config.discoveryScopeId,
       expectedScopeVersion: Number(task.config.discoveryScopeVersion || 0) || undefined,
     });
-    return result.skipped
-      ? `发现采集未执行：${result.reason || 'no_discovery_mode_due'}`
-      : `发现采集已完成：${result.run?.runId || 'unknown_run'}`;
+    return formatScheduledDiscoveryResult(result);
   }
   if (task.taskType === 'video_keyword_crawl') return executeVideoKeywordCrawl(task);
   if (task.taskType === 'image_post_crawl') return executeImagePostCrawl(task);
@@ -1258,11 +1263,11 @@ export async function reconcileSocialDiscoveryCollectionTasks(): Promise<number>
   return reconciled;
 }
 
-async function executeAndPersistTask(task: ScheduledTask, trigger: 'cron' | 'catch-up' | 'manual'): Promise<string> {
+async function executeAndPersistTask(task: ScheduledTask, trigger: SchedulerExecutionTrigger): Promise<string> {
   if (runningTaskIds.has(task.id)) return '任务正在执行，请稍后查看结果。';
   runningTaskIds.add(task.id);
   try {
-    const result = await executeTask(task).catch(e => `执行失败: ${e instanceof Error ? e.message : String(e)}`);
+    const result = await executeTask(task, trigger).catch(e => `执行失败: ${e instanceof Error ? e.message : String(e)}`);
     const tasks = load();
     const idx = tasks.findIndex(item => item.id === task.id && item.tenantId === task.tenantId);
     if (idx !== -1) {
@@ -1352,6 +1357,7 @@ export async function ensureDigitalEmployeeSocialCollectionTask(input: {
   limit?: number;
   dateWindowDays?: number;
   dedupeWindowDays?: number;
+  confirmedWeeklyBoundary?: ConfirmedWeeklyDiscoveryBoundary;
 }): Promise<{ task: ScheduledTask; created: boolean; updated: boolean; pendingReason?: string } | null> {
   const tasks = load();
   let retiredLegacy = false;
@@ -1367,12 +1373,52 @@ export async function ensureDigitalEmployeeSocialCollectionTask(input: {
   const result = await store.list<Record<string, any>>('social_discovery_scopes', {
     where: { tenant_id: input.tenantId, status: 'active' }, sort: '-updated_at', page: 1, perPage: 20,
   });
-  const scope = result.items.find(item => {
+  let scope = result.items.find(item => {
     const approval = item.payload?.approval;
     return approval?.status === 'approved' && Number(approval.scopeVersion || 0) === Number(item.version || 0);
   });
+  const scopeNeedsDirectorKeywords = Boolean(scope?.id && input.confirmedWeeklyBoundary && (
+    !scope.payload?.keywordRecommendation ||
+    hasLegacyProductTitleQueries(scope.payload?.keywordSet?.graph?.discoverySeeds || [])
+  ));
+  if ((!scope?.id || scopeNeedsDirectorKeywords) && input.confirmedWeeklyBoundary) {
+    const latest = await store.list<Record<string, any>>('social_discovery_scopes', {
+      where: { tenant_id: input.tenantId }, sort: '-version', page: 1, perPage: 1,
+    });
+    const version = Math.max(1, Number(latest.items[0]?.version || 0) + 1);
+    const profile = await readTenantEnterpriseProfile(input.tenantId);
+    const strategy = await buildConfirmedWeeklyDiscoveryScopeWithKeywords(input.confirmedWeeklyBoundary, version, {
+      companyType: profile.company.companyType,
+      enabledRoutes: profile.socialStrategy?.enabledRoutes,
+      products: profile.products.items || [],
+    });
+    if (strategy) {
+      const now = new Date().toISOString();
+      for (const active of result.items) {
+        await store.update('social_discovery_scopes', active.id, { status: 'retired', updated_at: now });
+      }
+      scope = (await store.create<Record<string, any>>('social_discovery_scopes', {
+        tenant_id: input.tenantId,
+        keyword_set_id: strategy.keywordSet.keywordSetId,
+        version,
+        status: 'active',
+        payload: strategy,
+        created_by: input.confirmedWeeklyBoundary.approvedBy,
+        created_at: now,
+        updated_at: now,
+      })) || undefined;
+    }
+  }
   if (!scope?.id) return null;
-  const brief = scope.payload?.discoveryBrief || {};
+  let brief = scope.payload?.discoveryBrief || {};
+  if (!brief.modePolicies && input.confirmedWeeklyBoundary) {
+    brief = {
+      ...brief,
+      modePolicies: normalizeModePolicies(undefined, brief.discoveryModes || ['momentum', 'account', 'innovation'], Number(brief.resultLimit || input.limit || 20), brief.platforms || input.platforms || []),
+    };
+    scope.payload = { ...scope.payload, discoveryBrief: brief };
+    await store.update('social_discovery_scopes', scope.id, { payload: scope.payload, updated_at: new Date().toISOString() });
+  }
   const differences: string[] = [];
   const requestedPlatforms = [...new Set((input.platforms || []).map(value => String(value).toLowerCase()))].sort();
   const approvedPlatforms = [...new Set((brief.platforms || []).map((value: unknown) => String(value).toLowerCase()))].sort();
@@ -1404,18 +1450,21 @@ export async function ensureDigitalEmployeeSocialCollectionTask(input: {
 
 // Boot: restore active tasks
 export async function initScheduler() {
-  await hydrateTasksFromPocketBase();
-  try { await reconcileSocialDiscoveryCollectionTasks(); }
-  catch (error) { console.warn('[scheduler] discovery schedule reconciliation skipped:', error instanceof Error ? error.message : error); }
-  const tasks = load().filter(t => t.enabled && t.tenantId);
-  tasks.forEach(scheduleTask);
-  for (const task of tasks) {
-    const missedAt = latestMissedRun(task);
-    if (!missedAt) continue;
-    console.log(`[scheduler] catching up "${task.name}" missed at ${missedAt.toISOString()}`);
-    void executeAndPersistTask(task, 'catch-up');
-  }
-  console.log('[scheduler] initialized with', tasks.length, 'active tasks');
+  const authority = schedulerBootstrapAuthority(process.env, localFallbacksEnabled());
+  await runWithDataAuthority(authority, async () => {
+    await hydrateTasksFromPocketBase();
+    try { await reconcileSocialDiscoveryCollectionTasks(); }
+    catch (error) { console.warn('[scheduler] discovery schedule reconciliation skipped:', error instanceof Error ? error.message : error); }
+    const tasks = load().filter(t => t.enabled && t.tenantId);
+    tasks.forEach(scheduleTask);
+    for (const task of tasks) {
+      const missedAt = latestMissedRun(task);
+      if (!missedAt) continue;
+      console.log(`[scheduler] catching up "${task.name}" missed at ${missedAt.toISOString()}`);
+      void executeAndPersistTask(task, 'catch-up');
+    }
+    console.log('[scheduler] initialized with', tasks.length, 'active tasks');
+  });
 }
 
 export const schedulerRouter = Router();

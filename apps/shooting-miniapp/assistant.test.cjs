@@ -3,7 +3,7 @@ const assert = require('node:assert/strict')
 const fs = require('node:fs')
 const vm = require('node:vm')
 const mod = { exports: {} }
-vm.runInNewContext(fs.readFileSync(__dirname + '/lib/assistant.js', 'utf8'), { module: mod, setTimeout, clearTimeout })
+vm.runInNewContext(fs.readFileSync(__dirname + '/lib/assistant.js', 'utf8'), { module: mod, setTimeout, clearTimeout, require: id => { assert.equal(id, './request-policy'); const policy = { exports: {} }; vm.runInNewContext(fs.readFileSync(__dirname + '/lib/request-policy.js', 'utf8'), { module: policy }); return policy.exports } })
 const { createAssistantController } = mod.exports
 function fixture(extra) {
   const calls = [], stored = new Map()
