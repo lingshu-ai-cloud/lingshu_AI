@@ -275,6 +275,14 @@ export interface SocialDirectorBriefScene {
     target: SocialReplicationFactorTarget;
     tolerance: SocialReplicationFactorTolerance;
     validator: SocialReplicationFactorValidator;
+    /** Records whether the source factor still applies literally after an
+     * authored semantic rewrite, without losing its stable source identity. */
+    semanticAdaptation?: {
+      status: 'applicable' | 'functionally_replaced';
+      sourceFactorId: string;
+      targetFunction: SocialShotFunction;
+      replacementReason: string | null;
+    };
   }>;
   /** @deprecated Human-readable compatibility projection. */
   fidelityPoints: string[];
@@ -438,9 +446,18 @@ export interface SocialContentExecutionScenePlan {
   replicationFactorIds?: string[];
   factorFeasibility?: Array<{
     factorId: string;
+    /** False means the source factor is retained for lineage but was honestly
+     * replaced by the scene's target function and is not an output validator. */
+    required?: boolean;
     feasible: boolean;
     reason: string;
     plannedValidatorId: string;
+    semanticAdaptation?: {
+      status: 'applicable' | 'functionally_replaced';
+      sourceFactorId: string;
+      targetFunction: SocialShotFunction;
+      replacementReason: string | null;
+    };
   }>;
   feasibility: SocialProductionFeasibility;
   feasibilityReason: string;

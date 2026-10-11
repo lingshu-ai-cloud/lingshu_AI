@@ -183,6 +183,27 @@ assert.deepEqual(workflow.responsibilityBoundary?.finalGateOrder, ['content_agen
 assert.equal(workflow.responsibilityBoundary?.selfApprovalForbidden, true);
 assert.equal(workflow.directorBrief.scenes[0]?.voiceoverAlignment?.text, replicationScript.shots[0]?.spokenText);
 assert.equal(workflow.directorBrief.scenes[0]?.voiceoverAlignment?.matchMode, 'verbatim_semantic');
+
+test('budget semantic revision retains factor lineage while reviewing only applicable constraints', () => {
+  const authored = structuredClone(replicationScript);
+  authored.shots.forEach(shot => { shot.scriptOrigin = 'budget_semantic_revision'; });
+  const adapted = buildSocialAgentWorkflow({
+    taskId: 'budget-semantic-factor-adaptation', taskVersion: '12', taskStatus: 'plan_review', mode: 'instant', weeklyPlanId: null,
+    brief: { ...brief, perItemBudgetCny: 10 }, sources: [], factSourceRefs: ['knowledge:product-1'],
+    assetSupplyPlan: supply, referenceAnalysis, replicationScript: authored,
+  });
+  const factors = adapted.directorBrief.scenes.flatMap(scene => scene.replicationFactors ?? []);
+  const feasibility = adapted.executionPlan.scenes.flatMap(scene => scene.factorFeasibility ?? []);
+  assert.deepEqual(adapted.executionPlan.scenes.flatMap(scene => scene.replicationFactorIds ?? []), factors.map(factor => factor.factorId));
+  assert.ok(factors.some(factor => factor.semanticAdaptation?.status === 'functionally_replaced'));
+  assert.ok(factors.filter(factor => factor.policy === 'prohibit_reuse' || factor.policy === 'replace_identity' || factor.category === 'identity')
+    .every(factor => factor.semanticAdaptation?.status === 'applicable' && factor.semanticAdaptation.sourceFactorId === factor.factorId));
+  assert.ok(feasibility.filter(factor => factor.semanticAdaptation?.status === 'functionally_replaced')
+    .every(factor => factor.required === false && factor.feasible && factor.plannedValidatorId === '' && Boolean(factor.semanticAdaptation?.replacementReason)));
+  assert.ok(feasibility.filter(factor => factor.semanticAdaptation?.status === 'applicable')
+    .every(factor => factor.required === true && Boolean(factor.plannedValidatorId)));
+  assert.equal(adapted.executionPlanReview.approved, true);
+});
 const lineDrivenScript = structuredClone(replicationScript);
 lineDrivenScript.shots[0]!.spokenText = 'A stale generated storyboard sentence.';
 lineDrivenScript.shots[0]!.speechLines = [
@@ -636,6 +657,8 @@ test('actual cached38 reference body shot retains all frozen factors when the ty
  const plan={...supply,shots:[record.scriptShot.materialPlan]} as typeof supply;
  const workflow=buildSocialAgentWorkflow({taskId:'cached38-record-regression',taskVersion:'4',taskStatus:'plan_review',mode:'instant',weeklyPlanId:null,brief:{...brief,materialRoutingPolicyVersion:'type-aware.v1'},sources:[],factSourceRefs:[],assetSupplyPlan:plan,referenceAnalysis:reference,replicationScript:script,capabilityRuntime:[{strategy:'authorized_digital_presenter',adapterIds:['controlled_digital_presenter.v1'],environmentReady:true,reason:null}]});
  const scene=workflow.executionPlan.scenes[0]!;assert.equal(scene.sceneId,'replication-reference-shot-3');assert.ok(scene.recommendedCandidateIds.length);assert.ok(scene.candidates.every(c=>c.sourceStrategy==='authorized_digital_presenter'));
+ assert.equal(workflow.directorBrief.scenes[0]!.duration.targetSeconds,.4);assert.ok(scene.candidates.every(c=>c.estimatedSeconds===.4));
+ assert.equal(scene.candidates[0]!.estimatedCostCny,.0119);assert.equal(scene.estimatedSeconds,.4);assert.equal(scene.estimatedCostCny,.0119);
  assert.deepEqual(scene.replicationFactorIds,workflow.directorBrief.scenes[0]!.replicationFactors!.map(f=>f.factorId));assert.ok(scene.factorFeasibility!.every(f=>f.feasible&&f.plannedValidatorId));
 });
 

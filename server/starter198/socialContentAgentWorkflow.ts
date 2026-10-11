@@ -323,7 +323,10 @@ function directorScene(input: {
       ...(presenterVisible ? ['必须提取该分镜的原始首帧，并以企业人物资产替换人物身份；全片人物身份保持一致'] : []),
       ...(isPrimaryHook ? ['开场钩子须依据原分镜首帧、动作轨迹、构图与逐镜脚本做高精度复刻'] : []),
       ...evidence.map(item => `证据要求：${item}`),
-      ...input.replicationFactors.map(factor => `裂变因素 ${factor.factorId}：${factor.target.metric} 达到目标并通过 ${factor.validator.detector}`),
+      ...input.replicationFactors.map(factor => input.script?.scriptOrigin === 'budget_semantic_revision'
+        && factor.policy !== 'prohibit_reuse' && factor.policy !== 'replace_identity' && factor.category !== 'identity'
+        ? `来源因素 ${factor.factorId}：已按本镜头功能诚实替换，不声明复现原视觉`
+        : `裂变因素 ${factor.factorId}：${factor.target.metric} 达到目标并通过 ${factor.validator.detector}`),
       ...(boundary.mustNotImplyCustomerReality ? ['合成或通用画面不得被表述为客户真实证据'] : []),
       ...(input.supply.productSceneReplication ? [
         '产品身份相似度、Logo 与标签 OCR 必须通过，不得重设计产品',
@@ -333,16 +336,28 @@ function directorScene(input: {
     ...(input.supply.productSceneReplication ? {
       productSceneReplication: structuredClone(input.supply.productSceneReplication),
     } : {}),
-    replicationFactors: input.replicationFactors.map(factor => ({
-      factorId: factor.factorId,
-      factorSpecVersion: factor.version,
-      category: factor.category,
-      policy: factor.policy,
-      importance: factor.importance,
-      target: structuredClone(factor.target),
-      tolerance: structuredClone(factor.tolerance),
-      validator: structuredClone(factor.validator),
-    })),
+    replicationFactors: input.replicationFactors.map(factor => {
+      const remainsApplicable = input.script?.scriptOrigin !== 'budget_semantic_revision'
+        || factor.policy === 'prohibit_reuse' || factor.policy === 'replace_identity' || factor.category === 'identity';
+      const replacementReason = remainsApplicable ? null
+        : '目标镜头为原创产品介绍；保留来源因素及谱系，但不声称逐项复现原工厂、DTC 或第三方视觉';
+      return {
+        factorId: factor.factorId,
+        factorSpecVersion: factor.version,
+        category: factor.category,
+        policy: factor.policy,
+        importance: factor.importance,
+        target: structuredClone(factor.target),
+        tolerance: structuredClone(factor.tolerance),
+        validator: structuredClone(factor.validator),
+        semanticAdaptation: {
+          status: remainsApplicable ? 'applicable' : 'functionally_replaced',
+          sourceFactorId: factor.factorId,
+          targetFunction: input.script?.purpose ?? input.supply.function,
+          replacementReason,
+        },
+      };
+    }),
     fidelityPoints: input.script?.fidelityPoints ?? input.reference?.fidelityPoints ?? [],
     mustDifferPoints: input.script?.mustDifferPoints ?? input.reference?.mustDifferPoints ?? [],
   };
@@ -524,6 +539,7 @@ function capabilityCandidates(input: {
   capabilityRuntime?: SocialContentCapabilityRuntimeRegistration[];
   materialCandidates?: SocialWorkflowMaterialCandidate[];
 }): SocialExecutionCandidate[] {
+  const targetSeconds = input.scene.duration.targetSeconds;
   const registrations = input.capabilityRuntime ?? socialContentEmbeddedRuntimeRegistrations(input.supply.materialRouting ? { wholeFilmBudget: true, productVideoProvider: input.supply.materialRouting.generation?.videoProvider } : {});
   const runtimeRegistration = new Map(registrations
     .map(item => [item.strategy, item]));
@@ -598,7 +614,7 @@ function capabilityCandidates(input: {
     durationFitScore: 0.9,
     repetitionPenalty: 0,
     estimatedCostCny: 0,
-    estimatedSeconds: 8,
+    estimatedSeconds: targetSeconds,
     estimatedSuccessRate: 0.99,
     dataTransfer: 'local_only',
     providerId: sourceRuntime?.adapterIds[0] ?? null,
@@ -657,8 +673,8 @@ function capabilityCandidates(input: {
       qualityScore: capability.estimatedSuccessRate,
       durationFitScore: 0.8,
       repetitionPenalty: 0,
-      estimatedCostCny: capability.estimatedCostCny,
-      estimatedSeconds: capability.estimatedSeconds,
+      estimatedCostCny: +(capability.estimatedCostCny * targetSeconds / capability.estimatedSeconds).toFixed(4),
+      estimatedSeconds: targetSeconds,
       estimatedSuccessRate: capability.estimatedSuccessRate,
       dataTransfer: capability.dataTransfer,
       providerId: capability.registeredAdapterIds[0] ?? null,
@@ -783,12 +799,19 @@ function executionScene(input: {
       source: 'content_agent',
     },
     replicationFactorIds: (input.scene.replicationFactors ?? []).map(factor => factor.factorId),
-    factorFeasibility: (input.scene.replicationFactors ?? []).map(factor => ({
-      factorId: factor.factorId,
-      feasible: Boolean(preferred),
-      reason: preferred ? `由推荐候选 ${preferred.label} 承担，并在成片后由 ${factor.validator.detector} 独立检测` : '当前没有可执行候选',
-      plannedValidatorId: factor.validator.validatorId,
-    })),
+    factorFeasibility: (input.scene.replicationFactors ?? []).map(factor => {
+      const required = factor.semanticAdaptation?.status !== 'functionally_replaced';
+      return {
+        factorId: factor.factorId,
+        required,
+        feasible: required ? Boolean(preferred) : true,
+        reason: required
+          ? preferred ? `由推荐候选 ${preferred.label} 承担，并在成片后由 ${factor.validator.detector} 独立检测` : '当前没有可执行候选'
+          : factor.semanticAdaptation!.replacementReason!,
+        plannedValidatorId: required ? factor.validator.validatorId : '',
+        ...(factor.semanticAdaptation ? { semanticAdaptation: structuredClone(factor.semanticAdaptation) } : {}),
+      };
+    }),
     feasibility: preferred ? input.supply.feasibility : 'blocked_for_facts_or_rights',
     feasibilityReason: preferred ? input.supply.feasibilityReason : '内容 Agent 未找到满足本镜头要求的可执行素材或能力',
     candidates,
@@ -959,8 +982,16 @@ function reviewScene(input: {
   }
   const requiredFactorIds = (input.scene.replicationFactors ?? []).map(factor => factor.factorId);
   const plannedFactorIds = new Set(input.plan.replicationFactorIds ?? []);
-  const missingFactorIds = requiredFactorIds.filter(factorId => !plannedFactorIds.has(factorId));
-  const infeasibleFactorIds = (input.plan.factorFeasibility ?? []).filter(item => !item.feasible).map(item => item.factorId);
+  const applicableFactorIds = new Set((input.scene.replicationFactors ?? [])
+    .filter(factor => factor.semanticAdaptation?.status !== 'functionally_replaced')
+    .map(factor => factor.factorId));
+  const factorExecutionById = new Map((input.plan.factorFeasibility ?? []).map(item => [item.factorId, item]));
+  const missingFactorIds = requiredFactorIds.filter(factorId => applicableFactorIds.has(factorId)
+    && (!plannedFactorIds.has(factorId) || !factorExecutionById.has(factorId)));
+  const infeasibleFactorIds = [...applicableFactorIds].filter(factorId => {
+    const execution = factorExecutionById.get(factorId);
+    return Boolean(execution && (!execution.feasible || !execution.plannedValidatorId));
+  });
   if (missingFactorIds.length || infeasibleFactorIds.length) {
     failedCriteria.push(`存在未被执行方案承接的裂变因素：${unique([...missingFactorIds, ...infeasibleFactorIds]).join('、')}`);
     requiredRevision.push('为每个冻结因素补充可执行候选和独立检测器，不得通过放宽因素规格绕过');

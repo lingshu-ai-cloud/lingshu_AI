@@ -906,6 +906,29 @@ export async function readSocialTaskDetail(input: {
   if(frozen){const {resolveWeeklyCreativeRepairAuthority}=await import('../runtime/weeklyCreativeRepairAuthority.js'),creative=input.repository.dataStore?await resolveWeeklyCreativeRepairAuthority({store:input.repository.dataStore,tenantId:input.tenantId,task}):null;if(creative){const {recordHash,...body}=frozen;if(frozen.schemaVersion!=='weekly-owned-product-identity.v1'||recordHash!==socialRequestHash(body)||frozen.tenantId!==input.tenantId||frozen.contentTaskId!==summary.taskId||frozen.packageId!==creative.repairCase.packageId||frozen.packageVersion!==creative.repairCase.packageVersion||frozen.publicationTaskId!==creative.repairCase.publicationTaskId||!Array.isArray(frozen.requirements)||!Array.isArray(frozen.verifiedMaterials))throw new SocialContentWorkflowError('weekly_owned_product_identity_binding_changed',409);for(const value of frozen.verifiedMaterials){const material=socialObject(value);if(!material||typeof material.sha256!=='string'||!activeMaterials.some(source=>source.sourceRef===material.sourceRef&&source.sourceVersion===material.sourceVersion&&material.sourceVersion===material.sha256))throw new SocialContentWorkflowError('weekly_owned_product_identity_material_changed',409);const matches=materialInventory.items.filter(item=>String(item.tenantId||item.tenant_id)===input.tenantId&&item.type==='image'&&item.contentSha256===material.sha256&&(frozen.requirements as unknown[]).some((value:unknown)=>{const requirement=socialObject(value);return Array.isArray(requirement?.imageIds)&&requirement.imageIds.includes(item.id)&&Array.isArray(requirement.imageHashes)&&requirement.imageHashes.includes(material.sha256)&&String(item.productRef||item.productName)===requirement.productRef;}));if(matches.length!==1)throw new SocialContentWorkflowError('weekly_owned_product_identity_material_changed',409);linkedRecordIds.add(matches[0]!.id);}}}
   const selectedTaskProductId = socialText(summary.brief.productId) || null;
   const selectedTaskProductRef = socialText(summary.brief.productRef) || null;
+  let enterpriseProductImageUrls: string[] = [];
+  if (selectedTaskProductId && input.repository.dataStore) {
+    const profiles = await input.repository.dataStore.list<Record<string, unknown>>('tenant_profiles', {
+      where: { tenant_id: input.tenantId }, page: 1, perPage: 2,
+    });
+    if (profiles.totalItems > 1 || profiles.items.some(row => row.tenant_id !== input.tenantId)) {
+      throw new SocialContentWorkflowError('enterprise_product_inventory_scope_invalid', 503);
+    }
+    const profile = socialObject(socialJson(profiles.items[0]?.profile));
+    const products = socialObject(profile?.products);
+    const items = Array.isArray(products?.items) ? products.items.map(item => socialObject(item)).filter(Boolean) : [];
+    const selected = items.find(product => {
+      const persisted = [product?.id, product?.productId, product?.sku].map(socialText).find(Boolean);
+      return persisted === selectedTaskProductId;
+    });
+    if (selected) {
+      enterpriseProductImageUrls = [...new Set([
+        socialText(selected.imageUrl),
+        ...(Array.isArray(selected.images) ? selected.images.map(image => socialText(socialObject(image)?.url)) : []),
+        ...(Array.isArray(selected.packagingImages) ? selected.packagingImages.map(image => socialText(socialObject(image)?.url)) : []),
+      ].filter(Boolean))];
+    }
+  }
   const candidateSet = buildSocialWorkflowMaterialCandidates({
     records: materialInventory.items,
     tenantId: input.tenantId,
@@ -938,6 +961,7 @@ export async function readSocialTaskDetail(input: {
     ...(summary.brief.materialRoutingPolicyVersion === 'type-aware.v1' ? ownedProductReferenceImageIds({
       records: materialInventory.items, tenantId: input.tenantId,
       productId: selectedTaskProductId, productRef: selectedTaskProductRef,
+      enterpriseProductImageUrls,
     }) : []),
   ])].slice(0, 4);
   const primaryProductRef = candidateSet.requestedProductRef
