@@ -323,14 +323,18 @@ function materialStrategyOrder(shot: SocialAssetSupplyShotPlan): SocialShotSourc
       return ['customer_real_asset'];
     }
     const generation = routing.generation;
-    if (local.state !== 'missing' || local.sourceRefs.length || shot.sourceStrategy !== 'aigc_product_scene_replication'
-      || !generation || !(['reference_first_frame_product_replacement_i2v', 'enterprise_authored_product_first_frame_i2v'] as string[]).includes(generation.method)
-      || (generation.method === 'enterprise_authored_product_first_frame_i2v' && generation.firstFrameOrigin !== 'enterprise_authored_storyboard')
-      || !Number.isFinite(generation.durationSeconds) || generation.durationSeconds <= 0
-      || !Array.isArray(generation.productImageRefs) || !generation.productImageRefs.length
-      || !shot.productSceneReplication || generation.durationSeconds !== shot.productSceneReplication.cameraLock.durationSeconds
-      || !shot.sourceRefs.length
-      || shot.sourceRefs.some(ref => !generation.productImageRefs.includes(ref))) fail('product_generation_contract');
+    const invalidProductGeneration = (detail: string): never => fail(`product_generation_contract:${detail}`);
+    if (local.state !== 'missing' || local.sourceRefs.length) invalidProductGeneration('local_match_state');
+    if (shot.sourceStrategy !== 'aigc_product_scene_replication') invalidProductGeneration('source_strategy');
+    if (!generation) return invalidProductGeneration('generation_missing');
+    if (!(['reference_first_frame_product_replacement_i2v', 'enterprise_authored_product_first_frame_i2v'] as string[]).includes(generation.method)) invalidProductGeneration('method');
+    if (generation.method === 'enterprise_authored_product_first_frame_i2v' && generation.firstFrameOrigin !== 'enterprise_authored_storyboard') invalidProductGeneration('first_frame_origin');
+    if (!Number.isFinite(generation.durationSeconds) || generation.durationSeconds <= 0) invalidProductGeneration('duration');
+    if (!Array.isArray(generation.productImageRefs) || !generation.productImageRefs.length) invalidProductGeneration('product_images');
+    const replication = shot.productSceneReplication;
+    if (!replication) return invalidProductGeneration('replication_spec');
+    if (Math.abs(generation.durationSeconds - replication.cameraLock.durationSeconds) > 0.000001) invalidProductGeneration('frozen_duration');
+    if (!shot.sourceRefs.length || shot.sourceRefs.some(ref => !generation.productImageRefs.includes(ref))) invalidProductGeneration('source_refs');
     return ['aigc_product_scene_replication'];
   }
   if (routing.materialType === 'talking_head') {
