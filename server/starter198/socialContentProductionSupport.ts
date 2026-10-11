@@ -108,8 +108,9 @@ export async function taskProductionAssets(input: {
   outputDirectory: string;
   cloudMaterialPort?: SocialContentCloudMaterialPort;
   allowAuthorizedSharedLibrary?: boolean;
+  materialLibrary?: typeof readMaterialLibrary;
 }): Promise<ProductionAsset[]> {
-  const inventory = await readMaterialLibrary(input.tenantId);
+  const inventory = await (input.materialLibrary ?? readMaterialLibrary)(input.tenantId);
   if (inventory.status === 'unavailable') throw new Error('素材库暂时不可用，请稍后重试');
   const byId = new Map(inventory.items.map(item => [socialText(item.id), item]));
   const linkedSources = input.sources.filter(item => item.status === 'active' && item.kind === 'material');

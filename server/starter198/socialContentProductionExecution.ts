@@ -710,6 +710,7 @@ export async function runSocialContentAutoProduction(input: {
 	    productionMode,
 	    outputDirectory: outputDir,
 	    allowAuthorizedSharedLibrary: paidVisualProvidersAllowed,
+	    materialLibrary: input.repository.materialLibrary,
 	  }).catch(error => {
 	    if (zeroAssetRoute) return [];
 	    throw error;
