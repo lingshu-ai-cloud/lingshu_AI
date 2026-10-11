@@ -1,6 +1,7 @@
 import type { AddSocialTaskSourceInput, CreateSocialContentTaskInput, SocialContentTaskDetail } from '../../shared/contracts/socialContentWorkflow';
 import type { OwnedSocialAccount, SocialProgram } from '../../shared/contracts/socialProgram';
 import { socialContentApi } from './socialContentApi';
+import type { TrendVideo } from './inspirationTypes';
 
 export interface InspirationTaskCandidate {
   id: string;
@@ -16,6 +17,23 @@ export interface InspirationTaskCandidate {
   context?: Pick<CreateSocialContentTaskInput, 'themeId' | 'productRef' | 'audience' | 'markets' | 'languages' | 'platforms' | 'programRef' | 'targetAccountRef' | 'accountPlaybookRef' | 'brandNotes' | 'restrictions' | 'callToAction'>;
 }
 export type InspirationTaskPort = Pick<typeof socialContentApi, 'createTask' | 'getTask' | 'addSource' | 'startTask'>;
+
+/** Normal inspiration-center product workflow. canManage is computed by the
+ * authenticated list API from tenant equality; the server still rechecks it. */
+export function cachedProductInspirationCandidate(video: TrendVideo,
+  context?: InspirationTaskCandidate['context']): InspirationTaskCandidate {
+  if (video.canManage !== true) throw Error('该参考不属于当前工作区，请选择本工作区已有参考；不会自动重新采集。');
+  const analysis = video.aiAnalysis;
+  if (!video.recordId || video.status !== 'analyzed' || analysis?.analysisMode !== 'exact'
+    || analysis.analysisQuality !== 'video' || !analysis.analysisRunId?.trim()
+    || !/^[a-f0-9]{64}$/.test(analysis.contentSha256 || '')) {
+    throw Error('该参考缺少已完成的精确视频分析，请在原参考中检查；不会自动重新采集或分析。');
+  }
+  return { id: video.recordId, title: video.title,
+    sourceUrl: video.sourceUrl || `local://${video.recordId}`, crawledAt: video.crawledAt,
+    cachedReference: { recordId: video.recordId, status: 'ready' },
+    context: { themeId: 'product_value', ...context } };
+}
 
 export function inspirationTaskInput(candidate: InspirationTaskCandidate, program?: SocialProgram): CreateSocialContentTaskInput {
   return {

@@ -44,6 +44,11 @@ export function materialRoutingRequests(input: {
     });
     const description = affirmative([shot.requestedDescription, expected.action.path,
       expected.interaction.description].filter(Boolean).join('；'));
+    // Preserve the planned contract used to match the source. The Director
+    // otherwise has no subjects for non-reference baselines and cannot review
+    // the same match against the actual material contract.
+    const plannedShot = ['product', 'factory', 'consumer_demo'].includes(materialType)
+      ? { ...shot, visualContract: expected } : shot;
     const required = actionRequirements.filter(pattern => pattern.test(description));
     const candidates = input.candidates.filter(candidate => {
       if (candidate.synthetic || candidate.origin !== 'my_materials' || candidate.mediaType !== 'video' || !candidate.timeRange
@@ -60,10 +65,10 @@ export function materialRoutingRequests(input: {
     }).sort((a, b) => scoreSceneVisualCompatibility(expected, b.visualContract)
       - scoreSceneVisualCompatibility(expected, a.visualContract) || a.assetId.localeCompare(b.assetId));
     const match = candidates[0];
-    if (!match?.timeRange) return { ...shot, materialType };
+    if (!match?.timeRange) return { ...plannedShot, materialType };
     const segment = { sourceRef: match.sourceRef, segmentId: match.segmentId,
       startSeconds: match.timeRange.startSeconds, endSeconds: match.timeRange.endSeconds };
-    return { ...shot, materialType, selectedMaterialSegment: segment,
+    return { ...plannedShot, materialType, selectedMaterialSegment: segment,
       localVideoMatch: { sourceRefs: [match.sourceRef], semanticMatch: 'verified' as const,
         productRef: match.productRef,
         evidenceRef: `material-visual-match:${input.tenantId}:${socialRequestHash({ shotId: shot.shotId, expected,

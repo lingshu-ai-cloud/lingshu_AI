@@ -38,7 +38,7 @@ export { canProcessVideo, displayDuration, resultEmptyState, trendFromEvidence }
 import { useScriptGapTasks } from '../hooks/useScriptGapTasks';
 import InspirationEmptyState from './InspirationEmptyState';
 import { scoreSocialInspirationCandidate } from '../../shared/socialInspirationStrategy';
-import { resumeOrCreateInspirationTask, soleInspirationCreationAccount } from '../lib/socialInspirationTask';
+import { cachedProductInspirationCandidate, resumeOrCreateInspirationTask, soleInspirationCreationAccount } from '../lib/socialInspirationTask';
 import { useSocialProgram } from '../contexts/SocialProgramContext';
 import { VideoCard, VideoListItem } from './InspirationVideoCards';
 import { showActionFeedback, showActionSuccess } from '../lib/actionFeedback';
@@ -4170,14 +4170,11 @@ export default function InspirationDashboard({ onScriptPanelOpen, onScriptPanelC
     try {
       const program = activeProgram?.status === 'active' ? activeProgram : undefined;
       const creationAccount = accounts.find(account => account.accountId === creationAccountId && account.status === 'active');
-      const result = await resumeOrCreateInspirationTask({
-        id: video.recordId || video.id, title: video.title,
-        sourceUrl: video.sourceUrl || (video.recordId ? `local://${video.recordId}` : undefined), crawledAt: video.crawledAt,
-        ...(creationAccount ? { context: {
+      const result = await resumeOrCreateInspirationTask(cachedProductInspirationCandidate(video,
+        creationAccount ? {
           targetAccountRef: { objectType: 'social_owned_account', id: creationAccount.accountId, version: String(creationAccount.version) },
           platforms: [creationAccount.platform],
-        } } : {}),
-      }, program);
+        } : undefined), program);
       setReplicationTasks(tasks => ({ ...tasks, [candidateKey]: result.task.taskId }));
       if (result.warning) {
         setMaterialMessage(`${result.warning} 已保留原任务，点击“继续制作”查看和恢复。`);

@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { inspirationTaskInput, inspirationTaskSource, resumeOrCreateInspirationTask, type InspirationTaskPort } from './socialInspirationTask';
+import { cachedProductInspirationCandidate, inspirationTaskInput, inspirationTaskSource, resumeOrCreateInspirationTask, type InspirationTaskPort } from './socialInspirationTask';
 import type { SocialContentTaskDetail } from '../../shared/contracts/socialContentWorkflow';
 
 const candidate = { id: 'candidate-1', title: '参考演示', sourceUrl: 'https://example.com/video/1', sourceVersion: 'v1' };
@@ -71,3 +71,16 @@ assert.equal(pending.task.taskId,'cache-task');assert.match(pending.warning??'',
 cacheTask={...cacheTask,theme:{themeId:'product_value',inputKind:'preset',topic:'',classificationStatus:'confirmed'}};
 await resumeOrCreateInspirationTask(cachedCandidate,undefined,cachePort);
 assert.equal(cachedAdds,1);assert.equal(cachedStarts,1);
+
+const readyVideo={id:'display-only-id',recordId:'server-record',title:'已有38秒参考',sourceUrl:'https://example.com/38',duration:38,status:'analyzed',canManage:true,aiAnalysis:{analysisMode:'exact',analysisQuality:'video',analysisRunId:'server-run',contentSha256:'a'.repeat(64)}} as import('./inspirationTypes').TrendVideo;
+const normalCandidate=cachedProductInspirationCandidate(readyVideo);
+assert.equal(normalCandidate.id,'server-record');assert.equal(inspirationTaskInput(normalCandidate).themeId,'product_value');
+assert.equal(inspirationTaskSource(normalCandidate).cachedReferenceRecordId,'server-record');
+for(const bad of [{...readyVideo,canManage:false},{...readyVideo,recordId:undefined},{...readyVideo,status:'pending'},
+ {...readyVideo,aiAnalysis:{...readyVideo.aiAnalysis,analysisMode:'strategy'}},
+ {...readyVideo,aiAnalysis:{...readyVideo.aiAnalysis,analysisQuality:'metadata'}},
+ {...readyVideo,aiAnalysis:{...readyVideo.aiAnalysis,analysisRunId:''}},
+ {...readyVideo,aiAnalysis:{...readyVideo.aiAnalysis,contentSha256:''}}])
+ assert.throws(()=>cachedProductInspirationCandidate(bad as import('./inspirationTypes').TrendVideo),/不会自动重新采集/);
+const sourceText=(await import('node:fs')).readFileSync(new URL('../components/InspirationDashboard.tsx',import.meta.url),'utf8');
+assert.match(sourceText,/resumeOrCreateInspirationTask\(cachedProductInspirationCandidate\(video,/,'normal page action uses the tested cache adapter');

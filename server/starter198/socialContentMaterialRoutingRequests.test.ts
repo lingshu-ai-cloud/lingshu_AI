@@ -81,3 +81,15 @@ test('normal source selection accepts a cached record ID and rejects client pric
     assert.throws(() => parseSocialSource(bad));
   }
 });
+test('baseline scene carries its planned visual subjects into Director review without borrowing candidate facts', () => {
+  const result = materialRoutingRequests({policyVersion: 'type-aware.v1', tenantId: 'tenant', productRef: 'SKU-1',
+    shots: [{shotId: 'baseline-detail', function: 'demonstration', requestedDescription: '产品可见细节 · 观察产品包装'}], candidates: []})[0]!;
+  assert.equal(result.materialType, 'product');
+  assert.deepEqual(result.visualContract?.subjects.map(subject => subject.kind), ['product']);
+  assert.equal(result.visualContract?.action.path, '产品可见细节 · 观察产品包装');
+  assert.equal(result.localVideoMatch, undefined);
+  const unknown = materialRoutingRequests({policyVersion: 'type-aware.v1', tenantId: 'tenant', productRef: 'SKU-1',
+    shots: [{shotId: 'unknown', function: 'transition', requestedDescription: '说明选择思路'}], candidates: []})[0]!;
+  assert.equal(unknown.materialType, 'unknown');
+  assert.equal(unknown.visualContract, undefined);
+});

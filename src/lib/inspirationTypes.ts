@@ -82,6 +82,7 @@ export interface VideoAnalysisPayload {
   benchmarkAnalysis?: import('../../shared/benchmarkAnalysis').BenchmarkAnalysis;
   usage?: 'editable' | 'reference_only';
   contentSha256?: string;
+  analysisRunId?: string;
   userVisible?: boolean;
   source?: string;
   contentFormat?: ContentFormat;

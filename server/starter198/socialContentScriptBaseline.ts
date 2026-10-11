@@ -168,8 +168,8 @@ const SYSTEM_THEME_SCENES: Record<SocialContentThemeId, ReadonlyArray<{
 }>> = {
   product_value: [
     { nodeId: 'system-opening', shotFunction: '开场吸引', subject: '通用产品观察', action: '从整体印象开始' },
-    { nodeId: 'system-detail', shotFunction: '细节观察', subject: '可见细节与操作方式', action: '分步骤观察' },
-    { nodeId: 'system-scenario', shotFunction: '场景说明', subject: '适用场景', action: '说明选择思路' },
+    { nodeId: 'system-detail', shotFunction: '细节观察', subject: '产品可见细节与操作方式', action: '分步骤观察产品细节' },
+    { nodeId: 'system-scenario', shotFunction: '场景说明', subject: '消费者使用产品的适用场景', action: '展示产品使用场景，说明选择思路' },
     { nodeId: 'system-closing', shotFunction: '信息收束', subject: '正式产品资料', action: '提醒进一步核对' },
   ],
   scenario_solution: [
