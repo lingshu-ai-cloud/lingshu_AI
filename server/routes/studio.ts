@@ -167,6 +167,7 @@ import { isSyntheticMaterial } from '../lib/materialTruthfulness.js';
 import { MATERIAL_SOURCE_CATEGORIES, MATERIAL_THEMES, materialSourceCategoryOf, materialThemeTagsOf } from '../../shared/materialTaxonomy.js';
 import { untrustedPromptData } from '../lib/untrustedPromptData.js';
 import { bindSocialProjectSpec, digitalEmployeeProjectBelongs, socialProjectBelongs, socialProjectTaskId } from '../starter198/socialProjectScope.js';
+import { assertFrozenStudioProjectWrite, frozenStudioProjectSpec } from '../starter198/socialContentStudioFrozenBridge.js';
 import {
   THEME_PROMPT_CONSTRAINTS,
   buildScriptContentPlan,
@@ -9366,7 +9367,7 @@ function projectFromRecord(record: any, tenantId: string): StudioProject {
     id: String(record.id),
     title: String(record.title || '未命名草稿'),
     status: record.status || 'draft',
-    spec: { ...refreshStudioProjectAssetUrls(record.spec || {}, tenantId), _baseUpdatedAt: String(record.updated_at || record.updated || '') },
+    spec: { ...refreshStudioProjectAssetUrls(frozenStudioProjectSpec(record.spec || {}), tenantId), _baseUpdatedAt: String(record.updated_at || record.updated || '') },
     thumbSeed: record.thumb_seed || undefined,
     createdAt: String(record.created_at || record.created || ''),
     updatedAt: String(record.updated_at || record.updated || ''),
@@ -9637,6 +9638,7 @@ studioRouter.post('/projects', async (req, res) => {
   const { id, title, status = 'draft', spec: rawSpec = {}, thumbSeed, baseUpdatedAt } = req.body ?? {};
   const socialTaskId = socialProjectTaskId(res.locals);
   let spec = normalizeFreeCreationProjectSpec(studioProjectSpecForStorage(bindSocialProjectSpec(rawSpec, socialTaskId)));
+  if (!id && spec.resolvedStudioContract) { res.status(403).json({ok:false,code:'studio_frozen_contract_server_owned',error:'冻结制作计划只能由受信任业务流程绑定'}); return; }
   const automation = spec.automation && typeof spec.automation === 'object' && !Array.isArray(spec.automation)
     ? spec.automation as Record<string, unknown> : {};
   const now = new Date().toISOString();
@@ -9679,6 +9681,8 @@ studioRouter.post('/projects', async (req, res) => {
         return;
       }
       const storedSpec = typeof existing.spec === 'string' ? JSON.parse(existing.spec) : existing.spec;
+      try { assertFrozenStudioProjectWrite(storedSpec, spec); }
+      catch { res.status(409).json({ok:false,code:'studio_frozen_plan_changed',error:'当前任务制作计划已冻结，请刷新；修改脚本或时长需正式修订',project:projectFromRecord(existing,tenantId)});return; }
       spec = normalizeFreeCreationProjectSpec(spec, storedSpec);
       const freeCreationIssues = spec.creationPath === 'free_creation' ? freeCreationCompletionIssues(spec.freeCreation) : [];
       if (!['draft', 'template'].includes(String(status)) && freeCreationIssues.length) {
