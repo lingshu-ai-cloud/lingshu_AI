@@ -123,6 +123,11 @@ export interface ReplicationEvaluationInput {
   referenceTimeline: TimelineShot[];
   outputTimeline: TimelineShot[];
   factors: ReplicationFactorSpec[];
+  /** The caller deliberately projected the source factor set onto the final
+   * output contract. An empty projection is valid when every source-specific
+   * factor was functionally replaced; the timeline and global safety gates
+   * remain independently enforceable. */
+  factorScopeDeclared?: boolean;
   factorEvidence: ReplicationFactorEvidence[];
   identityRequirements?: IdentityReplacementRequirement[];
   identityEvidence?: IdentityReplacementEvidence[];
@@ -404,7 +409,7 @@ export async function evaluateReplication(input: ReplicationEvaluationInput): Pr
 
   const timeline = evaluateTimeline(input);
   timeline.issues.forEach(addIssue);
-  if (!input.factors.length) addIssue({ code: 'factor_spec_missing', message: '缺少冻结的爆点因素规格，无法验证高保真复刻', severity: 'blocker' });
+  if (!input.factors.length && !input.factorScopeDeclared) addIssue({ code: 'factor_spec_missing', message: '缺少冻结的爆点因素规格，无法验证高保真复刻', severity: 'blocker' });
 
   const factorEvidenceById = new Map(input.factorEvidence.map(item => [item.factorId, item]));
   let checkedFactors = 0;

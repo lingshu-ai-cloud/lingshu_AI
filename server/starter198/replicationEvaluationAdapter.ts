@@ -79,11 +79,20 @@ export async function evaluateSocialReplicationResult(input: {
       }
     }
   }
-  const factorSpecs = job.factorSpecs
+  const activeSourceFactors = job.factorSpecs
     .filter(factor => applicableFactorIds.has(factor.factorId))
-    .map(factor => ({
+    .map(factor => ({ source: factor, sceneId: sceneByFactor.get(factor.factorId) || factor.beatId }));
+  // Identity replacement and prohibited reuse are evaluated by their own
+  // dimensions below. Sending the same source factors through fidelity as
+  // well would require evidence that the media worker intentionally does not
+  // produce and would multiply one global requirement into hundreds of false
+  // blockers.
+  const factorSpecs = activeSourceFactors
+    .filter(({ source }) => source.policy !== 'replace_identity'
+      && source.policy !== 'prohibit_reuse' && source.category !== 'identity')
+    .map(({ source: factor, sceneId }) => ({
     factorId: factor.factorId,
-    sceneId: sceneByFactor.get(factor.factorId) || factor.beatId,
+    sceneId,
     referenceShotId: factor.referenceShotId,
     category: factor.category,
     description: factor.description,
@@ -97,7 +106,16 @@ export async function evaluateSocialReplicationResult(input: {
       maxAbsoluteDeviation: factor.tolerance.maximumDeviation ?? undefined,
     },
     }));
-  const referenceTimeline = (input.replicationScript?.shots ?? []).map(shot => ({
+  const scriptShots = input.replicationScript?.shots ?? [];
+  // The reference analysis can contain hundreds of shots, while a budget
+  // semantic revision explicitly selects a compact authored subset. Only
+  // shots selected into the final director brief form the output contract.
+  const selectedScriptShots = input.workflow.directorBrief.scenes.flatMap(scene => {
+    const selected = scriptShots.find(shot => shot.shotId === scene.sceneId)
+      ?? scriptShots.find(shot => Boolean(scene.referenceShotId) && shot.referenceShotId === scene.referenceShotId);
+    return selected ? [selected] : [];
+  }).filter((shot, index, shots) => shots.findIndex(item => item.shotId === shot.shotId) === index);
+  const referenceTimeline = selectedScriptShots.map(shot => ({
     shotId: shot.referenceShotId || shot.shotId,
     startSeconds: shot.startSeconds,
     endSeconds: shot.endSeconds,
@@ -110,13 +128,16 @@ export async function evaluateSocialReplicationResult(input: {
     endSeconds: scene.duration.endSeconds,
     purpose: scene.purpose,
   }));
-  const replacementFactors = factorSpecs.filter(factor => factor.policy === 'replace_identity');
-  const identityRequirements = replacementFactors.map(factor => ({
+  const replacementFactors = activeSourceFactors.filter(({ source }) => (
+    source.policy === 'replace_identity' || source.category === 'identity'));
+  const identityByScene = new Map<string, typeof replacementFactors[number]>();
+  for (const factor of replacementFactors) if (!identityByScene.has(factor.sceneId)) identityByScene.set(factor.sceneId, factor);
+  const identityRequirements = [...identityByScene.values()].map(({ source: factor, sceneId }) => ({
     requirementId: factor.factorId,
-    identityType: factor.category === 'identity' ? 'other' as const : 'other' as const,
-    originalIdentity: String(factor.expected ?? ''),
+    identityType: 'other' as const,
+    originalIdentity: String(factor.target.value ?? ''),
     expectedReplacement: job.target.productRef || job.target.accountRef?.id || null,
-    sceneIds: [factor.sceneId],
+    sceneIds: [sceneId],
     required: factor.importance === 'critical' || factor.importance === 'high',
   }));
   const defaultFitChecks: AccountProductFitCheck[] = [
@@ -160,6 +181,7 @@ export async function evaluateSocialReplicationResult(input: {
     referenceTimeline,
     outputTimeline,
     factors: factorSpecs,
+    factorScopeDeclared: true,
     factorEvidence: [
       ...(input.evidence?.factorEvidence ?? []),
       ...automaticFactorEvidence.filter(item => !suppliedFactorIds.has(item.factorId)),

@@ -143,3 +143,69 @@ test('replication adapter builds identity requirements from normalized applicabl
   });
   assert.equal(result.evaluation?.identityReplacement.status, 'passed', JSON.stringify(result.report, null, 2));
 });
+
+test('five selected scenes do not inherit 38-second timeline or 501 source-factor assertions', async () => {
+  const base = workflow.replicationJob!.factorSpecs[0]!;
+  const replaced = Array.from({ length: 300 }, (_, index) => ({
+    ...base, factorId: `replaced-${index}`, beatId: `source-beat-${index}`,
+    referenceShotId: `source-reference-${index}`, description: `已由紧凑脚本功能替换 ${index}`,
+  }));
+  const identities = Array.from({ length: 100 }, (_, index) => ({
+    ...base, factorId: `identity-${index}`, beatId: `source-identity-${index}`,
+    referenceShotId: `selected-reference-${index % 5}`, category: 'identity', policy: 'replace_identity' as const,
+    description: `来源身份 ${index}`, target: { ...base.target, metric: 'identity', value: `source-person-${index}` },
+  }));
+  const prohibitReuse = Array.from({ length: 101 }, (_, index) => ({
+    ...base, factorId: `prohibit-${index}`, beatId: `source-reuse-${index}`,
+    referenceShotId: `selected-reference-${index % 5}`, policy: 'prohibit_reuse' as const,
+    description: `禁止复用来源媒体 ${index}`,
+  }));
+  const allFactors = [...replaced, ...identities, ...prohibitReuse];
+  assert.equal(allFactors.length, 501);
+  const scenes = Array.from({ length: 5 }, (_, index) => ({
+    ...workflow.directorBrief.scenes[0]!, sceneId: `selected-scene-${index}`,
+    referenceShotId: `selected-reference-${index}`, purpose: 'proof',
+    duration: { startSeconds: index * 2, endSeconds: index * 2 + 2, targetSeconds: 2 },
+    replicationFactors: allFactors.filter((_, factorIndex) => factorIndex % 5 === index).map(factor => ({
+      factorId: factor.factorId,
+      semanticAdaptation: factor.factorId.startsWith('replaced-')
+        ? { status: 'functionally_replaced', sourceFactorId: factor.factorId, targetFunction: 'proof', replacementReason: '预算语义修订' }
+        : { status: 'applicable', sourceFactorId: factor.factorId, targetFunction: 'proof', replacementReason: null },
+    })),
+  }));
+  const selectedShots = scenes.map((scene, index) => ({
+    shotId: scene.sceneId, referenceShotId: scene.referenceShotId,
+    startSeconds: index * 2, endSeconds: index * 2 + 2, purpose: 'proof',
+  }));
+  const unselectedShots = Array.from({ length: 95 }, (_, index) => ({
+    shotId: `unselected-${index}`, referenceShotId: `unselected-reference-${index}`,
+    startSeconds: 10 + index * .3, endSeconds: 10.3 + index * .3, purpose: 'source-only',
+  }));
+  const compactWorkflow = {
+    ...workflow,
+    replicationJob: { ...workflow.replicationJob!, factorSpecs: allFactors },
+    directorBrief: { ...workflow.directorBrief, scenes },
+  } as unknown as SocialContentAgentWorkflow;
+  const reuse = ['exact_media_hash', 'text_similarity', 'consecutive_frame_similarity', 'audio_fingerprint_similarity'].map((kind, index) => ({
+    evidenceId: `selected-reuse-${index}`, kind: kind as 'exact_media_hash' | 'text_similarity' | 'consecutive_frame_similarity' | 'audio_fingerprint_similarity',
+    similarity: 0.1, riskThreshold: 0.9, status: 'available' as const, authorization: 'unknown' as const,
+    evidenceRefs: [`worker://selected-reuse/${index}`], provenance,
+  }));
+  const result = await evaluateSocialReplicationResult({
+    workflow: compactWorkflow,
+    replicationScript: { shots: [...selectedShots, ...unselectedShots] } as unknown as SocialReplicationScriptVersion,
+    productionResultId: 'result-five-scenes', outputVideoPath: '/not/required.mp4',
+    evidence: {
+      identityEvidence: Array.from({ length: 5 }, (_, index) => ({
+        requirementId: `identity-${index}`, outcome: 'replaced' as const, detectedOriginal: false,
+        detectedReplacement: 'product-1', evidenceRefs: [`worker://selected-identity/${index}`], provenance,
+      })),
+      reuseRiskEvidence: reuse,
+    },
+  });
+  assert.equal(result.report?.releaseDecision, 'pass', JSON.stringify(result.report, null, 2));
+  assert.equal(result.report?.dimensions.viralFactorFidelity.required, 5, 'only the five selected timeline shots remain');
+  assert.equal(result.report?.dimensions.identityReplacement.required, 5, 'source identity factors collapse to one requirement per final scene');
+  assert.equal(result.report?.blockers.some(issue => issue.code === 'shot_missing'), false);
+  assert.equal(result.report?.blockers.some(issue => issue.factorId?.startsWith('replaced-')), false);
+});
