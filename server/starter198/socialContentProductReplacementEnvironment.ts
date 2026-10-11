@@ -26,6 +26,14 @@ type Input = Parameters<ProductSceneExecutionPorts['execute']>[0];
 type Row = Record<string, any>;
 const json = (x: unknown): any => typeof x === 'string' ? JSON.parse(x) : x;
 const sha = (x: Buffer | string) => createHash('sha256').update(x).digest('hex');
+export function executableMaterialRouting(value: unknown): unknown {
+  const routing = structuredClone((value && typeof value === 'object' ? value : {}) as Row);
+  // durationOrigin records which planner supplied the already-frozen duration.
+  // It does not alter provider inputs; projections rebuilt from the same task
+  // may legitimately label that provenance differently.
+  if (routing.generation && typeof routing.generation === 'object') delete routing.generation.durationOrigin;
+  return routing;
+}
 /** Exact inputs for server quotes; provider duration, not trimmed duration, is billed. */
 export function productReplacementOperationFingerprint(kind: string, value: unknown) {
   return sha(JSON.stringify({schema: 'product-replacement-operation.v1', kind, value}));
@@ -62,7 +70,7 @@ export async function createEnvironmentProductReplacementPorts(input: Input, con
   const shot = script?.shots?.find((s: Row) => s.shotId === input.shotId);
   if (!task || task.tenant_id !== input.tenantId || !task.run_id || !shot
     || !shot.materialPlan?.materialRouting || !shot.materialPlan?.productSceneReplication
-    || socialRequestHash(shot.materialPlan?.materialRouting) !== socialRequestHash(input.materialRouting)
+    || socialRequestHash(executableMaterialRouting(shot.materialPlan?.materialRouting)) !== socialRequestHash(executableMaterialRouting(input.materialRouting))
     || socialRequestHash(shot.materialPlan?.productSceneReplication) !== socialRequestHash(input.spec)) throw Error('product_replacement_current_frozen_shot_missing');
   const brief = json(task.brief);
   const productId = brief?.productId;
