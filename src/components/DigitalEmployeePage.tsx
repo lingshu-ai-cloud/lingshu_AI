@@ -17,6 +17,7 @@ import { normalizeContinuationPolicy, recommendedContinuationPolicy } from '../l
 import WeeklyReviewPanel from "./WeeklyReviewPanel";
 import { agentExecutionSummary } from '../lib/agentExecutionSummary';
 import { taskNeedsAttention, taskWaitLabels, type TaskWaitState } from '../lib/taskExecutionState';
+import { discoveryFailurePresentation } from '../lib/discoveryFailurePresentation';
 import OperatingAssessmentEditor from './OperatingAssessmentEditor';
 import { maturityLabels, maturityProfiles, assessMaturity, gapLabels } from '../lib/operatingMaturity';
 import ProductionProgressPanel from './ProductionProgressPanel';
@@ -2611,6 +2612,9 @@ function BlockedTaskActions({
   const [mode, setMode] = useState<"skip" | "complete" | "">("");
   const [note, setNote] = useState("");
   const [feedback, setFeedback] = useState("");
+  const discoveryDiagnosis = task.task_key === "scheduled_source_collection"
+    ? discoveryFailurePresentation(task.blocked_reason)
+    : null;
   const manualCompletionAllowed =
     !["publish", "send"].includes(task.external_effect || "none") &&
     !["platform_publish", "followup_dispatch"].includes(task.task_key);
@@ -2649,6 +2653,7 @@ function BlockedTaskActions({
         {task.blocked_reason ||
           "真实业务状态未能推进，请选择恢复方式。所有操作都会写入审计记录。"}
       </p>
+      {discoveryDiagnosis && <div className="mt-2 rounded-md border border-red-200 bg-white/70 px-3 py-2 text-[11px] text-red-800"><p className="font-semibold">{discoveryDiagnosis.label}</p><p className="mt-0.5">{discoveryDiagnosis.action}</p></div>}
       <div className="mt-3 grid grid-cols-3 gap-2">
         <Button
           htmlType="button"

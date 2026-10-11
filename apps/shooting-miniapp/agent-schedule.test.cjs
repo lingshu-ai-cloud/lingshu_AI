@@ -3,7 +3,7 @@ const assert=require('node:assert/strict');
 const fs=require('node:fs');
 const vm=require('node:vm');
 function load(file,bindings={}){const module={exports:{}};vm.runInNewContext(fs.readFileSync(__dirname+'/'+file,'utf8'),{module,Date,...bindings});return module.exports}
-const model=load('lib/workbench.js', {require:()=>load('lib/generated/mobile-domain.js')});
+const model=load('lib/workbench.js', {require:id=>load(id.includes('weekly-work-status') ? 'lib/generated/weekly-work-status.js' : 'lib/generated/mobile-domain.js')});
 const schedule=load('lib/agentSchedule.js',{require:()=>load('lib/generated/mobile-domain.js')});
 function page(api={}) {
  let definition;
@@ -33,4 +33,28 @@ test('same task routes to queue matter without creating another intervention',as
 test('snoozed matter is not opened when unsnoozing fails',async()=>{
  const p=page();p.data.agentScheduleItems=[{taskId:'t'}];p.data.snoozed=[{id:'task:t',task:{id:'t'}}];p.snoozes={'task:t':Date.now()+10000};p.saveSnooze=async()=>{};
  let opened=false;p.processMatter=()=>{opened=true};await p.openAgentAssignment({currentTarget:{dataset:{id:'t'}}});assert.equal(opened,false);
+});
+test('workspace observation replaces stale blocker, state and next without inventing a next action',async()=>{
+ let response={task:{status:'waiting_external',blocked_reason:'等待平台回写',next:'核对平台回执'},events:[]};
+ const p=page({request:async()=>response});
+ p.data.detail={id:'t',run_id:'r',status:'blocked',next:'旧操作',reason:'旧卡点',blocked_reason:'旧卡点',description:'旧说明',output:{stage:'旧阶段'}};
+ await p.loadTaskEvents(p.data.detail);
+ assert.equal(p.data.detail.statusLabel,'等待外部结果');
+ assert.equal(p.data.detail.execution.blocker,'等待平台回写');
+ assert.equal(p.data.detail.next,'核对平台回执');
+ response={task:{status:'running'},events:[]};
+ await p.loadTaskEvents(p.data.detail);
+ assert.equal(p.data.detail.statusLabel,'执行中');
+ assert.equal(p.data.detail.execution.blocker,'');
+ assert.equal(p.data.detail.next,'');
+ assert.equal(p.data.detail.status,'running');
+ assert.equal(p.data.detail.reason,'');
+ assert.equal(p.data.detail.blocked_reason,'');
+ assert.equal(p.data.detail.description,'');
+ assert.equal(p.data.detail.stage,'');
+ assert.equal(Object.keys(p.data.detail.output).length,0);
+ response={task:{status:'succeeded',description:'最新成果'},events:[]};
+ await p.loadTaskEvents(p.data.detail);
+ assert.equal(p.data.detail.status,'succeeded');
+ assert.equal(p.data.detail.reason,'最新成果');
 });

@@ -32,6 +32,7 @@ import { digitalEmployeeApi } from '../../lib/digitalEmployeeApi';
 import { normalizeAssistantDecisionExecutionReceipt } from '../../../shared/contracts/assistantDecisionCenter';
 import { LsBrandAction } from '../ui/LsExperiencePrimitives';
 import './assistantDecisionCenter.css';
+import { fieldValue } from '../../../shared/action-form.mjs';
 
 const kindMeta: Record<AssistantDecisionKind, {
   label: string;
@@ -515,7 +516,7 @@ export default function AssistantDecisionCenter({
         expectedVersion: first.subject.version,
         page,
         goalId,
-        note,
+        note: fieldValue({ key: 'note', label: '处理意见', type: 'text', required: action.requiresNote, maxLength: 500 }, note) as string,
         signal: controller.signal,
       });
       if (controller.signal.aborted) return;

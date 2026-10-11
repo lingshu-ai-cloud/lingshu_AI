@@ -17,6 +17,7 @@ import {
   type ScheduleActionPrefill,
 } from '../lib/contentActionNavigation';
 import { normalizeKeywordInput, type KeywordPlatform } from '../lib/keywordInput';
+import { discoveryFailurePresentation } from '../lib/discoveryFailurePresentation';
 export type ScheduledTaskExecutionState = 'idle' | 'queued' | 'running' | 'succeeded' | 'failed' | 'worker_offline' | 'no_data' | 'collected' | 'partial';
 
 export type ScheduledWorkflowHandoff = {
@@ -1814,6 +1815,7 @@ export default function ScheduledPage({ onAction }: { onAction?: AgentAction }) 
                   const taskScope = isDirectorTask && discoveryScope && String(discoveryScope.approval?.scopeVersion) === task.config.discoveryScopeVersion
                     ? discoveryScope : null;
                   const result = runResult[task.id];
+                  const resultDiagnosis = isDirectorTask ? discoveryFailurePresentation(result || task.lastResult) : null;
                   const isExpanded = expandedId === task.id;
                   const crawlerTask = ['video_keyword_crawl', 'image_post_crawl', 'competitor_account_crawl'].includes(task.taskType);
                   const executionState = scheduledTaskExecutionState(task, {
@@ -1903,8 +1905,9 @@ export default function ScheduledPage({ onAction }: { onAction?: AgentAction }) 
 
                       {/* Last result */}
                       {(result || task.lastResult) && isExpanded && (
-                        <div className="mt-3 p-3 bg-gray-50 rounded-lg text-xs text-gray-600 max-h-32 overflow-y-auto whitespace-pre-wrap">
-                          {result || task.lastResult}
+                        <div className="mt-3 space-y-2">
+                          {resultDiagnosis && <div className="rounded-lg border border-amber-200 bg-amber-50 p-2.5 text-xs text-amber-900"><p className="font-semibold">{resultDiagnosis.label}</p><p className="mt-1">{resultDiagnosis.action}</p></div>}
+                          <div className="p-3 bg-gray-50 rounded-lg text-xs text-gray-600 max-h-32 overflow-y-auto whitespace-pre-wrap">{result || task.lastResult}</div>
                         </div>
                       )}
 

@@ -171,7 +171,7 @@
     "test:mobile-workbench-release-gate": "node --test scripts/check-mobile-workbench-release.test.mjs",
     "sync:mobile-shared": "node scripts/sync-mobile-shared.mjs",
     "check:mobile-shared": "node scripts/sync-mobile-shared.mjs --check",
-    "test:mobile-shared": "node scripts/sync-mobile-shared.mjs --check && node --test shared/mobile-domain.test.mjs shared/request-policy.test.cjs scripts/generate-design-tokens.test.mjs scripts/mobile-shared-package.test.mjs apps/shooting-miniapp/*.test.cjs && tsx --test src/lib/designTokens.test.ts src/lib/assistantDecisionApi.test.ts src/lib/assistantDecisionRequestGuard.test.ts"
+    "test:mobile-shared": "node scripts/sync-mobile-shared.mjs --check && node --test shared/mobile-domain.test.mjs shared/request-policy.test.cjs shared/action-form.test.cjs shared/weekly-work-status.test.mjs scripts/generate-design-tokens.test.mjs scripts/mobile-shared-package.test.mjs apps/shooting-miniapp/*.test.cjs && tsx --test src/lib/designTokens.test.ts src/lib/assistantDecisionApi.test.ts src/lib/assistantDecisionRequestGuard.test.ts src/lib/weeklyWorkStatus.test.ts shared/materialTaxonomy.test.ts shared/shootingWorkflow.test.ts src/lib/shootingWorkflow.test.ts src/components/assistant/AssistantDecisionCenter.contract.test.ts src/components/socialContent/SocialSceneReworkPanel.test.tsx src/components/ShootingTaskDialog.test.tsx"
   },
   "packageManager": "pnpm@11.19.0",
   "dependencies": {

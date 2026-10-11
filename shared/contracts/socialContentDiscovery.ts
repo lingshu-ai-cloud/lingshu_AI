@@ -239,6 +239,7 @@ export interface SocialInspirationCollectionRun {
     failedCandidateIds: string[];
   }>>;
   sourceRunRefs: string[];
+  failureDetails?: Array<{ mode: SocialDiscoveryMode; platform: string; queryRef: string; error: string }>;
   queryBasis: Partial<Record<SocialDiscoveryMode, string[]>>;
   market: string;
   language: string;

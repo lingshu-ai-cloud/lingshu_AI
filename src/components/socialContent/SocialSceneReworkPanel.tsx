@@ -1,3 +1,4 @@
+import { fieldValue } from '../../../shared/action-form.mjs';
 import { useEffect, useRef, useState } from 'react';
 import type { SocialContentTaskDetail } from '../../../shared/contracts/socialContentWorkflow';
 import type { SocialSceneReworkAvailability, SocialSceneReworkStatus } from '../../../shared/contracts/socialSceneRework';
@@ -112,7 +113,7 @@ export function SocialSceneReworkPanel({
     setBusy(true);
     setError('');
     try {
-      const value = await socialSceneReworkApi.submit(scope(), availability, ids, admissionPreview, admissionPolicy || undefined);
+      const value = await socialSceneReworkApi.submit(scope(), availability, fieldValue({ key: 'sceneIds', type: 'scenes', label: '分镜' }, ids), admissionPreview, admissionPolicy || undefined);
       if (current.current !== token) return;
       setStatus(value);
       onChanged?.();
@@ -132,7 +133,7 @@ export function SocialSceneReworkPanel({
     setBusy(true);
     setError('');
     try {
-      const value = await socialSceneReworkApi.preview(scope(), availability, ids);
+      const value = await socialSceneReworkApi.preview(scope(), availability, fieldValue({ key: 'sceneIds', type: 'scenes', label: '分镜' }, ids));
       if (current.current !== token) return;
       setAdmissionPreview(value);
       setAdmissionPolicy(null);
@@ -150,7 +151,7 @@ export function SocialSceneReworkPanel({
     setBusy(true);
     setError('');
     try {
-      const value = await socialSceneReworkApi.confirmAdmissionCost(scope(), availability, ids, admissionPreview, Number(cap));
+      const value = await socialSceneReworkApi.confirmAdmissionCost(scope(), availability, ids, admissionPreview, fieldValue({ key: 'cap', label: '费用上限', type: 'number', min: admissionPreview.quote.totalUpperBoundCny, max: admissionPreview.quote.maximumOriginalBudgetCny }, cap));
       if (current.current !== token) return;
       setAdmissionPolicy(value);
     } catch (cause) {
@@ -206,7 +207,7 @@ export function SocialSceneReworkPanel({
     setBusy(true);
     setError('');
     try {
-      const policy = await socialSceneReworkCostApi.confirm(status, cost, Number(cap));
+      const policy = await socialSceneReworkCostApi.confirm(status, cost, fieldValue({ key: 'cap', label: '费用上限', type: 'number', min: cost.quote?.totalUpperBoundCny, max: cost.quote?.maximumOriginalBudgetCny }, cap));
       if (current.current !== token || operationId !== currentOperation.current) return;
       setCost({ ...cost, policy });
     } catch (cause) {

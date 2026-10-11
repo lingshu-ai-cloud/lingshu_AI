@@ -243,7 +243,8 @@ Page({
             const r = await api.request('digital-employees/runs/' + encodeURIComponent(task.run_id) + '/tasks/' + encodeURIComponent(task.id) + '/workspace');
             if (epoch !== (this.epoch || 0) || this.disposed || requestId !== this.detailRequest || this.data.detail?.id !== task.id) return;
             const current = r.task || task;
-            this.setData({'detail.events':r.events || [], 'detail.result':current.output && Object.keys(current.output).length ? JSON.stringify(current.output,null,2) : '', 'detail.statusLabel':model.labels[current.status] || current.status || task.statusLabel, 'detail.stage':current.output?.stage || current.stage || task.stage || '', 'detail.loading':false});
+            const latest = model.taskView({ id: task.id, run_id: task.run_id, ...current, blocked_reason: current.blocked_reason || '', description: current.description || '', output: current.output || {}, next: typeof current.next === 'string' ? current.next : '' });
+            this.setData({detail: { ...this.data.detail, ...latest, events: r.events || [], result: Object.keys(latest.output).length ? JSON.stringify(latest.output,null,2) : '', stage: latest.output?.stage || current.stage || '', loading: false }});
         } catch(e) {
             if (epoch === (this.epoch || 0) && requestId === this.detailRequest && this.data.detail?.id === task.id) this.setData({'detail.loading':false,'detail.loadError':e.message});
         }

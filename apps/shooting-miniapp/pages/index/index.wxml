@@ -55,9 +55,12 @@
         <view class="meta">建议时长：{{selected.durationText}}</view>
         <view wx:if="{{selected.ratio}}" class="meta">画面比例：{{selected.ratio}}</view>
         <view class="meta">声音：{{selected.soundText}}</view>
+        <view class="muted">{{selected.soundInstructions}}</view>
+        <view class="meta">{{selected.bindingText}}</view>
         <view wx:if="{{selected.expectedNarration}}" class="detail-text">口播：{{selected.expectedNarration}}</view>
-        <view wx:if="{{selected.done}}" class="success">已有 {{selected.uploadedMaterialIds.length}} 个视频关联此任务</view>
+        <view wx:if="{{selected.done}}" class="success">已有 {{selected.uploadedCount}} 个视频关联此任务</view>
       </view>
+      <view wx:if="{{uploadedMaterialSummary}}" class="meta">本次入库素材：{{uploadedMaterialSummary}}</view>
       <button class="primary" disabled="{{busy}}" bindtap="shoot">拍摄并上传</button>
       <button class="secondary" disabled="{{busy}}" bindtap="chooseExisting">上传已有视频</button>
       <view wx:if="{{busy}}" class="progress">{{progress < 30 ? '正在读取视频' : '正在上传并保存视频'}} · {{progress}}%</view>

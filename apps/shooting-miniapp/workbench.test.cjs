@@ -4,7 +4,7 @@ const fs = require('node:fs')
 const vm = require('node:vm')
 const path = require('node:path')
 function load(file, bindings={}) { const module={exports:{}};vm.runInNewContext(fs.readFileSync(path.join(__dirname,file),'utf8'),{module,exports:module.exports,Date,console,...bindings});return module.exports }
-const model=load('lib/workbench.js', {require:()=>load('lib/generated/mobile-domain.js')})
+const model=load('lib/workbench.js', {require:id=>load(id.includes('weekly-work-status') ? 'lib/generated/weekly-work-status.js' : 'lib/generated/mobile-domain.js')})
 test('Beijing week crosses UTC day and Monday correctly',()=>{const w=model.week(Date.parse('2026-10-11T17:00:00Z'));assert.equal(w.start,'2026-10-12');assert.equal(w.end,'2026-10-18');assert.equal(w.days.length,7)})
 test('urgency puts overdue first, then priority and nearest due date',()=>{const items=[{id:'low',priority:'low'},{id:'urgent',priority:'urgent'},{id:'overdue',priority:'low',dueAt:'2026-10-08T12:00:00Z'},{id:'soon',priority:'high',dueAt:'2026-10-10T14:00:00Z'},{id:'later',priority:'high',dueAt:'2026-10-11T14:00:00Z'}];assert.equal(model.sortUrgency(items,Date.parse('2026-10-10T00:00:00Z')).map(i=>i.id).join(','),'overdue,urgent,soon,later,low');assert.equal(items[0].id,'low')})
 test('short and mostly vertical gestures do not trigger actions',()=>{assert.equal(model.swipe(80,0),'');assert.equal(model.swipe(100,100),'');assert.equal(model.swipe(-100,20),'later');assert.equal(model.swipe(100,20),'process')})

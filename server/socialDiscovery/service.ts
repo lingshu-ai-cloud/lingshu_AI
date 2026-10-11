@@ -180,6 +180,7 @@ export async function executeApprovedDiscoveryRun(input: {
   const keywordTierStats: NonNullable<SocialInspirationCollectionRun['keywordTierStats']> = {};
   const evidenceOutcomes: NonNullable<SocialInspirationCollectionRun['evidenceOutcomes']> = {};
   const sourceRunRefs: string[] = [];
+  const failureDetails: NonNullable<SocialInspirationCollectionRun['failureDetails']> = [];
   const quotaPlatforms = [...new Set([
     ...brief.platforms,
     ...brief.competitorAccounts.map(account => inferPlatformFromUrl(account)),
@@ -274,7 +275,9 @@ export async function executeApprovedDiscoveryRun(input: {
         stats.failed += 1;
         addStats(platformStats[target.platform]!, { failed: 1 });
         addStats(keywordTierStats[target.tier]!, { failed: 1 });
-        error = cause instanceof Error ? cause.message : '采集来源失败';
+        const causeMessage = cause instanceof Error ? cause.message : '采集来源失败';
+        failureDetails.push({ mode, platform: target.platform, queryRef: target.ref, error: causeMessage });
+        error = causeMessage;
       }
     }
     stats.accepted = acceptedCandidateIds.size;
@@ -290,11 +293,12 @@ export async function executeApprovedDiscoveryRun(input: {
   const accepted = Object.values(modeStats).reduce((sum, item) => sum + (item?.accepted || 0), 0);
   const status = failed ? (accepted ? 'partial' as const : 'failed' as const) : accepted ? 'succeeded' as const : 'stopped' as const;
   const finishedAt = new Date().toISOString();
+  const failureSummary = [...new Set(failureDetails.map(item => `${item.platform}/${item.queryRef}: ${item.error}`))].join('；');
   const run: SocialInspirationCollectionRun = {
-    ...initial, ...(input.originalRun?{scopeSnapshot:{...initial.scopeSnapshot,weeklyProducer:{inputHash:originalHash,key:input.originalRun.key,completeEmptyVerified:completeEmptyVerified&&failed===0&&Object.values(modeStats).every(s=>(s?.requested??0)>0)}} as typeof initial.scopeSnapshot}:{}), status, modeStats, platformStats, keywordTierStats, evidenceOutcomes, sourceRunRefs,
-    stopReason: status === 'failed' ? 'source_failed' : status === 'stopped' ? 'no_valid_results' : 'completed', finishedAt, error,
+    ...initial, ...(input.originalRun?{scopeSnapshot:{...initial.scopeSnapshot,weeklyProducer:{inputHash:originalHash,key:input.originalRun.key,completeEmptyVerified:completeEmptyVerified&&failed===0&&Object.values(modeStats).every(s=>(s?.requested??0)>0)}} as typeof initial.scopeSnapshot}:{}), status, modeStats, platformStats, keywordTierStats, evidenceOutcomes, sourceRunRefs, failureDetails,
+    stopReason: status === 'failed' ? 'source_failed' : status === 'stopped' ? 'no_valid_results' : 'completed', finishedAt, error: failureSummary || error,
   };
-  const saved = await dependencies.dataStore.update(DISCOVERY_RUN_COLLECTION, created.id, { status, scopeSnapshot:run.scopeSnapshot, modeStats, platformStats, keywordTierStats, evidenceOutcomes, sourceRunRefs, stopReason: run.stopReason, finishedAt, error });
+  const saved = await dependencies.dataStore.update(DISCOVERY_RUN_COLLECTION, created.id, { status, scopeSnapshot:run.scopeSnapshot, modeStats, platformStats, keywordTierStats, evidenceOutcomes, sourceRunRefs, failureDetails, stopReason: run.stopReason, finishedAt, error: run.error });
   if (!saved) throw new Error('discovery_run_storage_unavailable');
   return { run };
 }

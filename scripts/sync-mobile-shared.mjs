@@ -15,6 +15,9 @@ for (const script of [
   'generate-design-tokens.mjs',
   'sync-mobile-domain.mjs',
   'generate-miniapp-request-policy.mjs',
+  'generate-miniapp-action-form.mjs',
+  'generate-miniapp-work-status.mjs',
+  'generate-miniapp-material-shooting.mjs',
 ]) {
   const result = spawnSync(process.execPath, [path.join(root, 'scripts', script), ...args], {
     cwd: root,
