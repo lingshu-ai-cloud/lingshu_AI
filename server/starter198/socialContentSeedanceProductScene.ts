@@ -12,6 +12,7 @@ import { runVisualFfmpeg } from '../lib/renderVisualQuality.js';
 import { objectStorageDownload, objectStorageSignedGetUrl, objectStorageUpload, objectStorageUploadFile } from '../storage/objectStorage.js';
 import { store } from '../storage/index.js';
 import {executeProductReplacementScene,type ProductReplacementPorts} from './socialContentProductReplacementExecution.js';
+import {createEnvironmentProductReplacementPorts,type ProductReplacementEnvironmentContext} from './socialContentProductReplacementEnvironment.js';
 import type { ProductSceneExecutionPorts, ProductSceneReferenceImage } from './socialContentProductSceneAdapter.js';
 
 function mimeFor(value: string): 'image/jpeg' | 'image/png' | 'image/webp' {
@@ -99,14 +100,18 @@ function productScenePrompt(spec: Parameters<ProductSceneExecutionPorts['execute
   ].join('\n');
 }
 
-export function createEnvironmentSeedanceProductScenePorts(options:{replacementPorts?:ProductReplacementPorts}={}): ProductSceneExecutionPorts {
+export function createEnvironmentSeedanceProductScenePorts(options:{replacementPorts?:ProductReplacementPorts; replacementEnvironment?:ProductReplacementEnvironmentContext}={}): ProductSceneExecutionPorts {
   return {
     maximumCostCny: Math.max(0.5, Number(process.env.SEEDANCE_MAX_SHOT_COST_CNY || 3)),
     async execute(input) {
       if(input.materialRouting){
         if(input.materialRouting.policy!=='local_first_product_i2v')return{status:'failed',error:'material_route_not_product_generation'};
-        if(!options.replacementPorts)return{status:'failed',error:'product_replacement_trusted_pixels_QA_budget_ports_missing'};
-        return executeProductReplacementScene(input,options.replacementPorts);
+        let ports = options.replacementPorts;
+        if (!ports) {
+          try { ports = await createEnvironmentProductReplacementPorts(input, options.replacementEnvironment); }
+          catch (error) { return {status:'failed',error:error instanceof Error && error.message.startsWith('product_') ? error.message : 'product_replacement_environment_unavailable'}; }
+        }
+        return executeProductReplacementScene(input, ports);
       }
       const apiKey = String(process.env.SEEDANCE_API_KEY || '').trim();
       const seedreamKey = String(process.env.SEEDREAM_API_KEY || apiKey).trim();

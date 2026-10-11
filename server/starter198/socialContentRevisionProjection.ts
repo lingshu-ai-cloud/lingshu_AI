@@ -19,10 +19,16 @@ export function applySocialContentRevisionSupply(input: {
   if (socialRequestHash({ ...input.script, status: 'draft' }) !== socialRequestHash({ ...expected, status: 'draft' }))
     throw new SocialContentWorkflowError('social_revision_script_changed', 409);
   if (input.plan.shots.length !== 8) throw new SocialContentWorkflowError('social_revision_scene_projection_changed', 409);
-  return { ...input.plan, shots: input.plan.shots.map(projected => {
+  const result = { ...input.plan, shots: input.plan.shots.map(projected => {
     const source = expected.shots.find(shot => shot.shotId === projected.shotId);
     if (!source || source.scriptOrigin !== 'independent_revision' || !source.materialPlan || source.materialPlan.shotId !== source.shotId)
       throw new SocialContentWorkflowError('social_revision_scene_projection_changed', 409);
-    return { ...projected, ...structuredClone(source.materialPlan), shotId: source.shotId };
+    const output = { ...projected, ...structuredClone(source.materialPlan), shotId: source.shotId };
+    // New ordinary-policy fields must not leak into a previously frozen independent revision.
+    if (!source.materialPlan.materialRouting) delete output.materialRouting;
+    if (!source.materialPlan.selectedMaterialSegment) delete output.selectedMaterialSegment;
+    return output;
   }) };
+  if (!expected.shots.some(shot => shot.materialPlan.materialRouting)) delete result.materialRoutingPolicyVersion;
+  return result;
 }

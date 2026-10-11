@@ -22,7 +22,7 @@ import {
 } from './sceneVisualContract';
 import type { BenchmarkMaterialType } from './benchmarkAnalysis';
 import type { SocialMaterialRouting } from './contracts/socialContentReplication';
-import {selectTypeAwareSocialMaterial,selectVerifiedSocialMaterialSegment} from './socialContentMaterialRouting';
+import {selectTypeAwareSocialMaterial,selectVerifiedSocialMaterialSegment,affirmativeSocialMaterialDescription,explicitSocialPresenterRequest} from './socialContentMaterialRouting';
 
 export interface SocialAssetInventory {
   customerVideoIds?: string[];
@@ -42,6 +42,7 @@ export interface SocialAssetSupplyShotRequest {
   /** Supplied only after the Content Agent checks this exact shot against tenant-visible video. */
   localVideoMatch?: { sourceRefs: string[]; semanticMatch: 'verified'; evidenceRef: string; productRef?: string | null };
   selectedMaterialSegment?: SocialAssetSupplyShotPlan['selectedMaterialSegment'];
+  plannedDurationSeconds?: number;
   shotId: string;
   function: SocialShotFunction;
   requestedDescription?: string | null;
@@ -341,7 +342,11 @@ export function buildSocialProductSceneReplicationSpec(input: {
 
 export function classifySocialAssetSupplyMaterialType(shot:SocialAssetSupplyShotRequest,referenceShots?:SocialReferenceShotAnalysis[]):BenchmarkMaterialType {
   if(shot.materialType)return shot.materialType;
-  const signals=shotSignals(shot,referenceShots);
+  const affirmative=affirmativeSocialMaterialDescription(shot.requestedDescription);
+  if(explicitSocialPresenterRequest(affirmative))return 'talking_head';
+  const signals=shotSignals({...shot,requestedDescription:affirmative},referenceShots);
+  const presenter=referenceShot(shot,referenceShots)?.referenceProductionRouting;
+  if(presenter?.state==='ready'&&presenter.personPresence==='person'&&presenter.observedPresenterRole==='sales_presenter')return 'talking_head';
   if(signals.hasPerson&&/口播|主讲|讲解|presenter|talking|speaker/i.test(signals.text))return 'talking_head';
   if(signals.factory)return 'factory';
   // Holding or turning a package is a product display, not consumer use.

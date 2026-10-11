@@ -104,10 +104,10 @@ function safeBoundary(boundary: SocialShotTruthBoundary): SocialShotTruthBoundar
   };
 }
 
-function requiredEvidence(boundary: SocialShotTruthBoundary, purpose: SocialDirectorBriefScene['purpose']): string[] {
+function requiredEvidence(boundary: SocialShotTruthBoundary, purpose: SocialDirectorBriefScene['purpose'], typedMaterial = false): string[] {
   const subjectLabel = boundary.subject === 'customer_factory' ? '优先使用“我的素材”中的真实工厂或生产过程'
     : boundary.subject === 'customer_case' ? '优先使用“我的素材”中的客户案例'
-      : boundary.subject === 'product_effect' ? '人物使用产品的效果镜头使用数字人路线'
+      : boundary.subject === 'product_effect' ? typedMaterial ? '消费者使用或效果镜头仅使用已核验真实素材，不生成效果或消费者证据' : '人物使用产品的效果镜头使用数字人路线'
         : null;
   return unique([
     ...(subjectLabel ? [subjectLabel] : []),
@@ -179,7 +179,7 @@ function directorScene(input: {
     .map(line => line.draftText.trim()).filter(Boolean).join(' ')
     || input.script?.spokenText || null;
   const boundary = safeBoundary(input.supply.truthBoundary);
-  const evidence = requiredEvidence(boundary, input.supply.function);
+  const evidence = requiredEvidence(boundary, input.supply.function, Boolean(input.supply.materialRouting));
   const visualContract = normalizeSceneVisualContract({
     ...(input.supply.visualContract ?? input.reference?.visualContract ?? {
       subjects: input.reference?.tags.subjects ?? [],
@@ -198,13 +198,14 @@ function directorScene(input: {
     precision: startSeconds < 3 ? 'hook_high' : 'standard',
   });
   const reference = input.reference;
-  const referenceRouting = reference?.referenceProductionRouting;
+  const typedRouting = input.supply.materialRouting;
+  const referenceRouting = typedRouting && typedRouting.materialType !== 'talking_head' ? undefined : reference?.referenceProductionRouting;
   const identityLockedPresenter = referenceRouting?.state === 'ready' && referenceRouting.route === 'reference_frame_presenter';
   // Optional continuity analysis controls identity fidelity, not whether a
   // plainly visible foreground person exists. An unresolved route must not
   // erase observable presenter evidence and silently replace a talking-head
   // shot with a product still.
-  const presenterVisible = Boolean(identityLockedPresenter) || Boolean(reference && /真人|人物|人像|口播|数字人|主播|女性|男性|女主|男主|模特|presenter|person|human|face|talking/i.test([
+  const presenterVisible = typedRouting ? typedRouting.materialType === 'talking_head' : Boolean(identityLockedPresenter) || Boolean(reference && /真人|人物|人像|口播|数字人|主播|女性|男性|女主|男主|模特|presenter|person|human|face|talking/i.test([
     reference.visualDescription, reference.semanticLabel?.content, ...reference.tags.subjects,
   ].filter(Boolean).join(' ')));
   const isPrimaryHook = Boolean(reference && input.primaryHook?.referencePoints.includes(reference.shotId));
@@ -668,6 +669,14 @@ function capabilityCandidates(input: {
     }));
   return [...actualAssets, ...capabilityRows]
     .filter(candidate => {
+      const typed = input.supply.materialRouting;
+      if (typed) {
+        if (typed.localMatch.state === 'matched' && typed.policy !== 'authorized_presenter') return candidate.kind === 'asset'
+          && candidate.sourceStrategy === 'customer_real_asset' && Boolean(candidate.sourceRef && typed.localMatch.sourceRefs.includes(candidate.sourceRef));
+        if (typed.policy === 'local_only') return false;
+        return candidate.kind === 'capability' && candidate.sourceStrategy === (typed.policy === 'authorized_presenter'
+          ? 'authorized_digital_presenter' : 'aigc_product_scene_replication');
+      }
       const routing = input.scene.referenceProductionRouting;
       if (!routing) return true;
       // An unresolved optional person-continuity observation is retained for

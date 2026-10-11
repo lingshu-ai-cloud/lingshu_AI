@@ -28,13 +28,24 @@ test('products require per-shot semantic and product evidence before local reuse
   assert.equal(generated.sourceStrategy,'aigc_product_scene_replication');assert.equal(generated.materialRouting?.localMatch.state,'missing');assert.equal(generated.materialRouting?.generation?.method,'reference_first_frame_product_replacement_i2v');assert.equal(generated.materialRouting?.generation?.durationSeconds,3);assert.deepEqual(generated.materialRouting?.generation?.productImageRefs,['own-image']);assert.equal(generated.fallbackSourceStrategy,null);
  }
  const missingOwnProduct=plan({...request,productRef:'not-in-kb'});assert.equal(missingOwnProduct.feasibility,'goal_degraded');assert.deepEqual(missingOwnProduct.sourceRefs,[]);
+ assert.equal(plan({...request,plannedDurationSeconds:8}).productSceneReplication?.cameraLock.durationSeconds,8);
+ for(const duration of [NaN,Infinity,0,-1])assert.throws(()=>plan({...request,plannedDurationSeconds:duration}),/material_planned_duration_invalid/);
 });
 test('only actual talking-head classification requests a presenter and unknown scenes cannot silently become products',()=>{
+ const actualHook='Original authorized digital twin; new exact English hook, original voice, no product claim';
+ assert.equal(classifySocialAssetSupplyMaterialType({shotId:'S01',function:'hook',requestedDescription:actualHook}),'talking_head');
+ assert.equal(plan({shotId:'S01',function:'hook',requestedDescription:actualHook}).sourceStrategy,'authorized_digital_presenter');
+ for(const description of ['数字分身对镜口播','avatar talking to camera','真人对镜speaking'])assert.equal(classifySocialAssetSupplyMaterialType({shotId:'speaker',function:'hook',requestedDescription:description}),'talking_head');
+ for(const description of ['Product packaging close-up with voiceover; no avatar talking','产品运镜展示，加旁白，不出现数字分身口播'])assert.equal(classifySocialAssetSupplyMaterialType({shotId:'product',function:'demonstration',requestedDescription:description}),'product');
+ assert.equal(classifySocialAssetSupplyMaterialType({shotId:'none',function:'transition',requestedDescription:'No product claim; no avatar talking'}),'unknown');
  assert.equal(classifySocialAssetSupplyMaterialType({shotId:'u',function:'demonstration',requestedDescription:'消费者涂抹产品上脸'}),'consumer_demo');
  assert.equal(classifySocialAssetSupplyMaterialType({shotId:'f',function:'trust',requestedDescription:'工人检查工厂设备'}),'factory');
  assert.equal(classifySocialAssetSupplyMaterialType({shotId:'p',function:'demonstration',requestedDescription:'手拿产品晃一圈展示包装',interaction:'person_holding_product'}),'product');
  assert.equal(classifySocialAssetSupplyMaterialType({shotId:'f',function:'trust',requestedDescription:'工厂输送带灌装产品'}),'factory');
  assert.equal(classifySocialAssetSupplyMaterialType({shotId:'t',function:'hook',requestedDescription:'真人在工厂拿产品对镜口播'}),'talking_head');
+ const factoryReference:any={shotId:'ref',visualDescription:'工厂内人物手持包装',spokenText:'Meet our product.',tags:{subjects:['person','product'],subjectRelations:[],sceneTypes:['factory']},referenceProductionRouting:{state:'ready',personPresence:'person',observedPresenterRole:'sales_presenter'}};
+ assert.equal(classifySocialAssetSupplyMaterialType({shotId:'t',function:'hook',referenceShotId:'ref'},[factoryReference]),'talking_head');
+ assert.equal(classifySocialAssetSupplyMaterialType({shotId:'f',function:'trust',referenceShotId:'ref'},[{...factoryReference,referenceProductionRouting:{...factoryReference.referenceProductionRouting,observedPresenterRole:'background'}}]),'factory');
  const speaker=plan({shotId:'s',function:'hook',materialType:'talking_head',requestedDescription:'真人口播'});assert.equal(speaker.sourceStrategy,'authorized_digital_presenter');assert.equal(speaker.materialRouting?.policy,'authorized_presenter');assert.ok(speaker.digitalHumanPlan);
  const factorySpeaker=plan({shotId:'t',function:'hook',requestedDescription:'真人在工厂拿产品对镜口播'});assert.equal(factorySpeaker.sourceStrategy,'authorized_digital_presenter');assert.equal(factorySpeaker.feasibility,'goal_degraded');assert.equal(factorySpeaker.truthBoundary.subject,'customer_factory');assert.equal(factorySpeaker.truthBoundary.customerEvidenceRequired,true);assert.ok(factorySpeaker.truthBoundary.prohibitedRepresentations.includes('depict_generated_factory_as_customer_factory'));
  const unknown=plan({shotId:'unknown',function:'transition',materialType:'unknown'});assert.equal(unknown.sourceStrategy,'customer_real_asset');assert.equal(unknown.feasibility,'goal_degraded');assert.equal(unknown.productSceneReplication,undefined);
@@ -44,6 +55,7 @@ test('historical plans omit the new contract and explicit approved generation du
  const historic=createSocialAssetSupplyPlan({creationMode:'viral_replication',inventory,shots:[shot]});assert.equal(historic.materialRoutingPolicyVersion,undefined);assert.equal(historic.shots[0].materialRouting,undefined);
  const original=historic.shots[0].productSceneReplication!;const snapshot=JSON.stringify(original);const current=plan({...shot,materialType:'product',productSceneReplication:original});
  assert.equal(current.materialRouting?.generation?.durationSeconds,original.cameraLock.durationSeconds);assert.equal(JSON.stringify(original),snapshot);
+ assert.throws(()=>plan({...shot,materialType:'product',productSceneReplication:original,plannedDurationSeconds:original.cameraLock.durationSeconds+1}),/material_frozen_duration_changed/);
 });
 test('explicit free edits retain a verified exact video window without enabling paid generation',()=>{
  const segment={sourceRef:'product-local',segmentId:'real-segment',startSeconds:2,endSeconds:5},shot={shotId:'p',function:'demonstration',materialType:'product',productRef:'own-product',localVideoMatch:{sourceRefs:['product-local'],semanticMatch:'verified',evidenceRef:'semantic:free',productRef:'own-product'},selectedMaterialSegment:segment};

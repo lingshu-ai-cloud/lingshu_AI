@@ -765,7 +765,16 @@ export async function runSocialContentAutoProduction(input: {
           adapters: paidVisualProvidersAllowed ? socialProductionSupplyAdapters({
             recoveryOnly: input.assetSupplyRecoveryOnly, hasPresenterExecution: Boolean(presenterExecutions.length),
             custom: input.assetSupplyAdapters ?? [], free: existingAdapters,
-            paid: () => [createSocialProductSceneAdapter(createEnvironmentSeedanceProductScenePorts()),
+            paid: () => [createSocialProductSceneAdapter(createEnvironmentSeedanceProductScenePorts({
+              replacementEnvironment: {
+                dataStore: input.repository.dataStore,
+                materials: input.repository.materialLibrary,
+                assertCurrent: async () => {
+                  const current = await requireSocialTask(input);
+                  if (socialText(current.run_id) !== input.runId) throw new Error('product_replacement_run_superseded');
+                },
+              },
+            })),
               ...(environmentPresenter?.ports ? [createSocialDigitalPresenterAdapter(environmentPresenter.ports)] : []),
               createConfiguredSocialAiVisualAdapter()],
           }) : existingAdapters,

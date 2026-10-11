@@ -12,7 +12,7 @@ const actionRequirements = [
   /手持|手握|hold|grip/i,
   /涂抹|上脸|apply|applying|rub/i,
 ];
-const affirmative = (text: string) => text.split(/[；;。\n]/)
+const affirmative = (text: string) => text.split(/[；;。，,\n]/)
   .filter(clause => !/禁止|不得|不能|没有|未见|without|\b(?:no|not)\s/i.test(clause)).join('；');
 
 /** Uses analyzed, tenant-scoped segments rather than treating inventory presence as a match. */
@@ -26,7 +26,9 @@ export function materialRoutingRequests(input: {
 }): SocialAssetSupplyShotRequest[] {
   if (input.policyVersion !== 'type-aware.v1') return input.shots;
   return input.shots.map(original => {
-    const shot = { ...original, productRef: original.productRef ?? input.productRef };
+    // Re-evaluate evidence against this inventory; a prior plan's proof is not current evidence.
+    const { localVideoMatch: _priorMatch, selectedMaterialSegment: _priorSegment, ...current } = original;
+    const shot = { ...current, productRef: original.productRef ?? input.productRef };
     const materialType = classifySocialAssetSupplyMaterialType(shot, input.referenceShots);
     const reference = input.referenceShots?.find(item => item.shotId === shot.referenceShotId);
     const holdingProduct = materialType === 'product' && /手持|手握|拿|hold|grip/i.test(shot.requestedDescription ?? '');
@@ -44,7 +46,7 @@ export function materialRoutingRequests(input: {
       expected.interaction.description].filter(Boolean).join('；'));
     const required = actionRequirements.filter(pattern => pattern.test(description));
     const candidates = input.candidates.filter(candidate => {
-      if (candidate.origin !== 'my_materials' || candidate.mediaType !== 'video' || !candidate.timeRange
+      if (candidate.synthetic || candidate.origin !== 'my_materials' || candidate.mediaType !== 'video' || !candidate.timeRange
         || candidate.timeRange.endSeconds - candidate.timeRange.startSeconds < 3) return false;
       if (materialType === 'talking_head' || materialType === 'unknown') return false;
       if (materialType === 'factory' && !candidate.materialRoles.includes('factory')) return false;

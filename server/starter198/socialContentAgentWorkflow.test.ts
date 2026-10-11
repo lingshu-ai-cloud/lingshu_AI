@@ -222,6 +222,25 @@ personReference.shots[0]!.materialEvidence = {
   sourceVideoRef: 'reference-video:1', clipRef: 'reference-clip:1',
   firstFrameRef: 'reference-first-frame:1', firstFrameSeconds: 0, extractionStatus: 'ready',
 };
+test('typed factory and consumer footage retain local routes despite visible people in the reference', () => {
+  for (const materialType of ['factory', 'consumer_demo'] as const) {
+    const typed = createSocialAssetSupplyPlan({ creationMode: 'viral_replication', productionApproach: 'ai_enhanced',
+      materialRoutingPolicyVersion: 'type-aware.v1', inventory: { customerVideoIds: ['owned-real'] },
+      confirmedFactRefs: ['knowledge:product-1'], shots: [{ shotId: 'scene-hook', function: 'hook', materialType,
+        referenceShotId: 'reference-hook', requestedDescription: '真实人物场景',
+        localVideoMatch: { sourceRefs: ['owned-real'], semanticMatch: 'verified', evidenceRef: 'actual-action-evidence' } }] });
+    const actual = buildSocialAgentWorkflow({ taskId: 'typed-local', taskVersion: '1', taskStatus: 'plan_review',
+      mode: 'instant', weeklyPlanId: null, brief: { ...brief, materialRoutingPolicyVersion: 'type-aware.v1' },
+      sources: [], factSourceRefs: ['knowledge:product-1'], assetSupplyPlan: typed,
+      referenceAnalysis: personReference, replicationScript });
+    assert.equal(actual.directorBrief.scenes[0]!.productionRouting?.presenterIdentityReplacementRequired, false);
+    assert.equal(actual.directorBrief.scenes[0]!.productionRouting?.presenterVisible, false);
+    assert.equal(actual.directorBrief.scenes[0]!.referenceProductionRouting, undefined);
+    assert.ok(actual.executionPlan.scenes[0]!.candidates.length);
+    assert.ok(actual.executionPlan.scenes[0]!.candidates.every(candidate => candidate.sourceStrategy === 'customer_real_asset'
+      && candidate.sourceRef === 'owned-real'));
+  }
+});
 const personWorkflow = buildSocialAgentWorkflow({
   taskId: 'task-person', taskVersion: '1', taskStatus: 'plan_review', mode: 'weekly', weeklyPlanId: 'weekly-1',
   brief, sources: [], factSourceRefs: ['knowledge:product-1'],
@@ -571,7 +590,11 @@ test('missing reference ID cannot borrow a different ordinal reference after reo
   const marker = { ...immutable, planHash: socialRequestHash(immutable) };
   const base = { ...productSceneSupply, shots: shots.map(shot => ({ ...productSceneSupply.shots[0], shotId: shot.shotId, sourceStrategy: 'motion_graphics' })) } as typeof productSceneSupply;
   const args = { tenantId: 'tenant-1', taskId: 'task-1', brief: { _productionRevision: marker }, script, plan: base };
+  Object.assign(base, { materialRoutingPolicyVersion: 'type-aware.v1' });
+  for (const shot of base.shots) Object.assign(shot, { materialRouting: { materialType: 'product' }, selectedMaterialSegment: { startSeconds: 0, endSeconds: 3 } });
   const projected = applySocialContentRevisionSupply(args);
+  assert.equal(projected.materialRoutingPolicyVersion, undefined);
+  assert.ok(projected.shots.every(shot => !shot.materialRouting && !shot.selectedMaterialSegment));
   assert.equal(projected.shots[0].sourceStrategy, 'authorized_digital_presenter');
   assert.deepEqual(projected.shots[0].digitalHumanPlan, shots[0].materialPlan.digitalHumanPlan);
   assert.equal(projected.shots[3].sourceStrategy, 'aigc_product_scene_replication');

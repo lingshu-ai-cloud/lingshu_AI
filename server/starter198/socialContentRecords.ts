@@ -58,6 +58,7 @@ import {
 } from './socialContentDirectorPlan.js';
 import { createSocialAssetSupplyPlan } from '../../shared/socialContentAssetSupply.js';
 import { materialRoutingRequests } from './socialContentMaterialRoutingRequests.js';
+import { ownedProductReferenceImageIds } from './socialContentProductReferenceInventory.js';
 import type { SocialShotFunction } from '../../shared/contracts/socialContentReplication.js';
 import {
   parseStoredSocialReferenceVideoAnalysis,
@@ -592,6 +593,7 @@ async function taskRows(
 }
 
 export interface SocialWorkflowMaterialClipCandidate extends SocialWorkflowMaterialCandidate {
+  synthetic?: boolean;
   segmentId: string;
   /** Stable material identity, independent from the task's requested product. */
   productId: string | null;
@@ -908,6 +910,10 @@ export async function readSocialTaskDetail(input: {
   });
   const materialCandidates: SocialWorkflowMaterialClipCandidate[] = candidateSet.candidates.map(candidate => ({
     ...candidate,
+    ...(summary.brief.materialRoutingPolicyVersion === 'type-aware.v1' ? {
+      synthetic: /ai.generated|seedream|seedance|synthetic|generated/i.test(String(materialById.get(candidate.assetId)?.sourceType || ''))
+        || materialById.get(candidate.assetId)?.synthetic === true,
+    } : {}),
     previewUrl: safeMaterialPreview(materialById.get(candidate.assetId) ?? { id: candidate.assetId }),
   }));
   const uniqueAssetIds = (rows: SocialWorkflowMaterialClipCandidate[]) => [...new Set(rows.map(row => row.assetId))];
@@ -921,7 +927,12 @@ export async function readSocialTaskDetail(input: {
     ? productRows.filter(candidate => candidate.assetId === productRows[0]?.assetId
       || Boolean(candidate.productRef && candidate.productRef === productRows[0]?.productRef))
     : productRows.filter(sameRequestedProduct);
-  const productImageIds = uniqueAssetIds(productFamilyRows).slice(0, 4);
+  const productImageIds = [...new Set([...uniqueAssetIds(productFamilyRows),
+    ...(summary.brief.materialRoutingPolicyVersion === 'type-aware.v1' ? ownedProductReferenceImageIds({
+      records: materialInventory.items, tenantId: input.tenantId,
+      productId: selectedTaskProductId, productRef: selectedTaskProductRef,
+    }) : []),
+  ])].slice(0, 4);
   const primaryProductRef = candidateSet.requestedProductRef
     || productFamilyRows[0]?.productRef
     || productImageIds[0]
@@ -1014,6 +1025,10 @@ export async function readSocialTaskDetail(input: {
       requestedDescription: shot.visualInstruction,
       truthSensitiveSubject: shot.materialPlan.truthBoundary.subject,
       referenceShotId: shot.referenceShotId,
+      ...(summary.brief.materialRoutingPolicyVersion === 'type-aware.v1' && shot.materialPlan.materialRouting ? {
+        plannedDurationSeconds: shot.endSeconds - shot.startSeconds,
+        ...(shot.materialPlan.productSceneReplication ? { productSceneReplication: shot.materialPlan.productSceneReplication } : {}),
+      } : {}),
     })) ?? storedScriptBaseline?.scenes.map((scene, index, scenes) => ({
       shotId: scene.sceneId,
       function: assetSupplyShotFunction(scene.shotFunction, index, scenes.length),

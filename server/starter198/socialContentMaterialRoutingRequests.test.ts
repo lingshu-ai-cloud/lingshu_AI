@@ -35,7 +35,7 @@ test('local product match retains its action evidence, SKU and exact analyzed se
 });
 test('inventory presence, wrong product, still image and missing movement are not verified matches', () => {
   for (const item of [candidate({ productRef: 'other' }), candidate({ mediaType: 'image' }),
-    candidate({ origin: 'shared_library' }), candidate({ visualContract: visual('手握包装盒静止展示') }),
+    candidate({ origin: 'shared_library' }), candidate({ synthetic: true }), candidate({ visualContract: visual('手握包装盒静止展示') }),
     candidate({ timeRange: { startSeconds: 0, endSeconds: 2 } })]) {
     assert.equal(requests([item])[0]?.localVideoMatch, undefined);
   }
@@ -43,4 +43,13 @@ test('inventory presence, wrong product, still image and missing movement are no
 test('legacy request identity is preserved and is not silently routed to a new policy', () => {
   const shots = [shot];
   assert.equal(materialRoutingRequests({ tenantId: 'tenant', shots, candidates: [candidate()], productRef: 'SKU-1' }), shots);
+});
+test('positive motion remains required beside a packaging prohibition and stale proofs are cleared', () => {
+  const prior = { ...shot, requestedDescription: '手持旋转产品，禁止改标签',
+    localVideoMatch: { sourceRefs: ['gone'], semanticMatch: 'verified' as const, productRef: 'SKU-1', evidenceRef: 'old' },
+    selectedMaterialSegment: { sourceRef: 'gone', segmentId: 'old', startSeconds: 0, endSeconds: 4 } };
+  const result = materialRoutingRequests({ policyVersion: 'type-aware.v1', tenantId: 'tenant',
+    shots: [prior], candidates: [candidate({ visualContract: visual('手握产品静止展示') })], productRef: 'SKU-1' })[0]!;
+  assert.equal(result.localVideoMatch, undefined);
+  assert.equal(result.selectedMaterialSegment, undefined);
 });

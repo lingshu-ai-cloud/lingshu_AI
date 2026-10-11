@@ -354,6 +354,7 @@ export interface SocialMaterialRouting {
   generation?: {
     method: 'reference_first_frame_product_replacement_i2v';
     durationSeconds: number;
+    durationOrigin?: 'default_short_shot' | 'planned_timeline' | 'explicit_frozen';
     productImageRefs: string[];
     referenceShotId: string | null;
     referenceSourceId: string | null;

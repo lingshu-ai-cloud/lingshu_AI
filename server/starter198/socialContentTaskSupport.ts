@@ -1,4 +1,5 @@
 import {publicationPreparationDeadline} from '../socialPrograms/publicationDeadlines.js';
+import { planNewSocialMaterialRoutes } from './socialContentMaterialRoutePlanning.js';
 import type {
   AddSocialTaskSourceInput,
   CreateSocialContentTaskInput,
@@ -318,6 +319,8 @@ export async function refreshSocialTaskReferenceOutputs(input: {
       replicationScript: { ...resolved.replicationScript, status: 'confirmed' },
     };
   }
+  if (resolved) resolved = await planNewSocialMaterialRoutes({ repository: input.repository,
+    tenantId: input.tenantId, task, resolved });
   const previous = parseStoredSocialScriptBaseline(task.script_baseline);
   const baseline = resolved
     ? freezeSocialScriptBaseline({

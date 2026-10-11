@@ -3,6 +3,14 @@ import type {BenchmarkMaterialType} from './benchmarkAnalysis';
 import {normalizeSceneVisualContract,type SocialSceneVisualContract} from './sceneVisualContract';
 import type {SocialMaterialRouting,SocialProductSceneReplicationSpec,SocialShotSourceStrategy} from './contracts/socialContentReplication';
 
+export function affirmativeSocialMaterialDescription(description:string|null|undefined){
+ return (description??'').split(/[；;。,.，\n]/).filter(clause=>!/禁止|不得|不能|没有|未见|不含|不出现|\b(?:no|not|without|never)\b/i.test(clause)).join('；');
+}
+export function explicitSocialPresenterRequest(description:string){
+ const direct=/(?:avatar|数字人).{0,32}(?:talking|speaking|口播|说话)|(?:talking|speaking).{0,32}(?:avatar|数字人)|对镜.{0,12}(?:speaking|说话|口播)|(?:talking|speaking)\s+(?:to|at)\s+(?:the\s+)?camera/i.test(description);
+ return direct||/digital\s+twin|数字分身/i.test(description)&&/hook|口播|主讲|说话|talking|speaking|speaker|presenter/i.test(description);
+}
+
 /** Free edit routes may keep a trusted match window without enabling generation. */
 export function selectVerifiedSocialMaterialSegment(shot:SocialAssetSupplyShotRequest,sourceRefs:string[]){
  const match=shot.localVideoMatch,segment=shot.selectedMaterialSegment;
@@ -35,9 +43,10 @@ const {shot,inventory,materialType,referenceVisualContract,presenterRefs,buildPr
       if (materialType !== 'product') return {strategy:'customer_real_asset',refs:[],materialRouting,blocked:true,
         instruction:materialType==='factory'?'工厂镜头仅匹配本地真实工厂素材；无合格片段时停止，不生成虚构工厂。':materialType==='consumer_demo'?'consumer_demo 仅匹配本地真实消费者使用或生活场景；缺口停止，不生成消费者场景或改成数字人口播。':'素材类型或镜头语义未明确，仅允许合格本地匹配；缺口停止，不因账号有产品图或人物资产擅自改走生成。'};
       const spec=buildProductSpec();
-      if(!shot.productSceneReplication)spec.cameraLock.durationSeconds=3;
+      if(shot.productSceneReplication&&shot.plannedDurationSeconds!==undefined&&(!Number.isFinite(shot.plannedDurationSeconds)||Math.abs(shot.plannedDurationSeconds-spec.cameraLock.durationSeconds)>0.000001))throw Error(`material_frozen_duration_changed:${shot.shotId}`);
+      if(!shot.productSceneReplication){if(shot.plannedDurationSeconds!==undefined&&(!Number.isFinite(shot.plannedDurationSeconds)||shot.plannedDurationSeconds<=0))throw Error(`material_planned_duration_invalid:${shot.shotId}`);spec.cameraLock.durationSeconds=shot.plannedDurationSeconds??3;}
       const productImageRefs=[...new Set(spec.productIdentity.groups.flatMap(group=>group.referenceImageIds))];
-      materialRouting.generation={method:'reference_first_frame_product_replacement_i2v',durationSeconds:spec.cameraLock.durationSeconds,productImageRefs,referenceShotId:spec.referenceShotId,referenceSourceId:spec.referenceSourceId??null};
+      materialRouting.generation={method:'reference_first_frame_product_replacement_i2v',durationSeconds:spec.cameraLock.durationSeconds,durationOrigin:shot.productSceneReplication?'explicit_frozen':shot.plannedDurationSeconds!==undefined?'planned_timeline':'default_short_shot',productImageRefs,referenceShotId:spec.referenceShotId,referenceSourceId:spec.referenceSourceId??null};
       return {strategy:'aigc_product_scene_replication',refs:productImageRefs,materialRouting,productSceneReplication:spec,blocked:!productImageRefs.length,
         instruction:'先按镜头语义匹配本地真实产品视频；无合格片段时，用企业知识库对应实际产品图替换参考分镜首帧中的产品，再图生视频，默认3秒短镜头。保持实物标签、结构与事实；参考像素与产品素材用途权利未通过时停止，不直生、不用图片缩放替代。'};
 }
