@@ -112,12 +112,15 @@ export async function executeProductReplacementScene(input: Input, ports: Produc
     for (const attempt of [0, 1] as const) {
       const retry = attempt === 1;
       if (retry && (!input.spec.validation.singleShotRetryOnFailure || !qualityFailed(quality))) break;
+      const attemptIdentity = retry ? `${identity}:attempt:1` : identity;
       video = await ports.video({ attempt,
-        requestId: `${input.idempotencyKey}:${identity}:attempt:${attempt}`,
+        // Attempt zero keeps its historical durable identity so an in-flight
+        // task recovers the accepted provider request instead of resubmitting it.
+        requestId: `${input.idempotencyKey}:${attemptIdentity}`,
         firstFrame: frame.bytes,
         prompt: `Animate the supplied actual approved enterprise product first frame according to this director shot: ${directorScene}. Preserve product packaging, labels and composition. No added text or fabricated manufacturing facts.${retry ? ' This is the single directed correction: keep the supplied first frame unchanged and correct the prior video quality failure without changing product identity or scene topology.' : ''}`,
         providerDurationSeconds,
-        checkpointPath: path.join(input.outputDirectory, `${identity}.attempt-${attempt}${g.videoProvider==='wan'?'.wan.json':'.seedance.json'}`),
+        checkpointPath: path.join(input.outputDirectory, `${attemptIdentity}${g.videoProvider==='wan'?'.wan.json':'.seedance.json'}`),
       });
       fs.mkdirSync(input.outputDirectory, { recursive: true, mode: 0o700 });
       const original = path.join(input.outputDirectory, `${input.shotId}-${identity}-attempt-${attempt}-provider.mp4`);
