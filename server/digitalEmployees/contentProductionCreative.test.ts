@@ -8,7 +8,8 @@ test('historic projects remain effect-free and new effect plans are stable', () 
   assert.equal(socialVideoEffectPlan({ schemaVersion: 3, scenes }), undefined);
   const current = socialVideoEffectPlan({ schemaVersion: 4, scenes });
   assert.equal(current?.schemaVersion, 1);
-  assert.equal(current?.scenes[0]?.color, 'original');
+  assert.equal(current?.scenes[0]?.color, 'clean');
+  assert.deepEqual(socialVideoEffectPlan({ schemaVersion: 4, scenes }), current, 'the same scene/seed must keep its generated intent stable');
   assert.deepEqual(socialVideoEffectPlan({ schemaVersion: 4, stored: current, scenes }), current);
 });
 

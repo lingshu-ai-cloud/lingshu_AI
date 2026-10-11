@@ -1,3 +1,5 @@
+import {productionQueueItemForPlan} from '../../lib/matrixProductionNavigation';
+export {productionQueueItemForPlan} from '../../lib/matrixProductionNavigation';
 import { registerAgentCalendarReturnState } from '../../lib/agentCalendarReturnContext';
 import {projectAccountBindingCalendar} from './accountBindingCalendar';
 import AgentWeeklyCalendar, { type AgentCalendarTask } from "./AgentWeeklyCalendar";
@@ -90,11 +92,6 @@ function planBlockers(plan?: VideoCreationPlan) {
   ];
 }
 
-export function productionQueueItemForPlan(plan: VideoCreationPlan | undefined, items: ContentQueueItem[]): ContentQueueItem | null {
-  if (!plan?.contentId) return null;
-  const matches = items.filter(item => item.contentId === plan.contentId && (!plan.matrix?.accountId || item.accountId === plan.matrix.accountId));
-  return matches.length === 1 ? matches[0]! : null;
-}
 
 export default function MatrixPublicationSchedule({ calendarTasks, calendarDemo = false, taskItems = [], onOpenTask, onOpenContent, startsAt, endsAt, accounts, plans, selectedAccountId, onOpenPublishing }: Props) {
   const [view, setView] = useState<"calendar" | "board">(() => typeof window !== "undefined" && new URLSearchParams(window.location.search).get("scheduleView") === "board" ? "board" : "calendar");

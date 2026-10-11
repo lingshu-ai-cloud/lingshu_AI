@@ -5,15 +5,18 @@ import path from 'node:path';
 import express from 'express';
 import type { Browser, Page } from 'playwright-core';
 import { createServer } from 'vite';
-import { AgentBrowserSessions, type BrowserFrame, type BrowserProductionTarget } from './browserSessions.js';
-import { browserReadIdentity, createBrowserReadSession } from './browserReadSession.js';
+import type { BrowserFrame, BrowserProductionTarget } from './browserSessions.js';
+
 
 // Test fixtures live only in a temporary datastore. The browser loads the
 // actual App, AiCreateStudio and original API routes, never a substitute HTML UI.
 const temp = fs.mkdtempSync(path.join(os.tmpdir(), 'agent-production-page-test-'));
 process.env.LOCAL_STORE_DIR = temp;
 process.env.NODE_ENV = 'test';
+process.env.ENABLE_LOCAL_DEV_FALLBACK = 'true';
 process.env.PB_URL = 'http://127.0.0.1:1';
+const { AgentBrowserSessions } = await import('./browserSessions.js');
+const { browserReadIdentity, createBrowserReadSession } = await import('./browserReadSession.js');
 const scope = { tenantId: 'browser-test-a', runId: 'run-a', taskId: 'script-a', dataAuthority: 'local' as const };
 const projectId = 'browser-test-project';
 const project = { id: projectId, tenant_id: scope.tenantId, title: '隔离测试项目', status: 'draft', spec: { mode: 'material_mix', productName: '浏览器回归产品', script: '', duration: 15 }, created_at: new Date().toISOString(), updated_at: new Date().toISOString() };
@@ -26,18 +29,21 @@ const customerFixture = { ...createMockCustomers()[0], id: 'browser-test-custome
 const app = express();
 app.use(express.json());
 app.use('/api/overseas/auth', authRouter);
+// This fixture exercises the legacy production workspace, with an explicit
+// server response rather than failing the product capability probe as a 404.
+app.get('/api/overseas/starter-198/workspace', (_req, res) => res.status(403).json({ error: 'profile_not_enabled' }));
 app.get('/api/overseas/customers', (req, res) => {
   const identity = browserReadIdentity(req);
   if (!identity || identity.tenantId !== scope.tenantId) { res.status(403).json({ error: 'not_allowed' }); return; }
   res.json({ items: [customerFixture], source: 'test_fixture' });
 });
 let draftExecutions = 0;
-const monitorTasks = Array.from({ length: 12 }, (_, index) => ({ id: `monitor-${index}`, run_id: 'run-a', title: `客户任务 ${index}`, task_key: 'followup_batch_draft', agent_role: 'customer', business_domain: 'customer', status: 'pending' }));
+const monitorTasks = Array.from({ length: 12 }, (_, index) => ({ id: `monitor-${index}`, run_id: 'run-a', title: `客户任务 ${index}`, task_key: 'followup_batch_draft', agent_role: 'customer', business_domain: 'customer', status: 'pending', output: {}  }));
 app.get('/api/overseas/digital-employees/overview', (_req, res) => res.json({ config: null, goals: [], goal: null, plan: null, run: null, tasks: monitorTasks, events: [], approvals: [], handoffs: [], review: null, agents: [], businessSnapshot: null }));
 app.get('/api/overseas/digital-employees/runs/:runId/tasks/:taskId/workspace', (req, res) => res.json({ task: { id: req.params.taskId, title: '隔离生产任务', status: 'succeeded' }, stage: 'completed', events: [{ id: 'event-completed', task_id: req.params.taskId, occurred_at: '2026-09-06T12:00:00Z', level: 'info', summary: '已生成脚本并保存到项目' }], link: { page: 'conversion', runId: req.params.runId, taskId: req.params.taskId, businessRef: { taskKey: 'followup_batch_draft', entityId: customerFixture.id } } }));
 
 app.get('/api/overseas/digital-employees/runs/:runId/customer-workspace', (_req, res) => {
-  res.json({ segment: null, batch: null, members: [], items: [], tasks: [{ id: 'customer-task', task_key: 'followup_batch_draft', title: '生成跟进草稿', status: 'running' }] });
+  res.json({ scope: { tenantId: scope.tenantId, runId: scope.runId }, segment: null, batch: null, members: [], items: [], tasks: [{ id: 'customer-task', run_id: scope.runId, task_key: 'followup_batch_draft', title: '生成跟进草稿', status: 'running' }] });
 });
 app.get('/api/overseas/digital-employees/runs/:runId/tasks/:taskId/browser-stream', async (req, res) => {
   if (req.params.taskId !== scope.taskId) { res.status(404).json({ error: '无对应直播会话' }); return; }
@@ -83,7 +89,7 @@ try {
   assert.equal(new URL(page.url()).pathname, '/');
   assert.equal(new URL(page.url()).searchParams.get('page'), 'smartAssets');
   assert.equal(new URL(page.url()).searchParams.get('project'), projectId);
-  assert.match(await page.locator('body').innerText(), /AI 智能创作|AI智能创作|智能创作/);
+  assert.match(await page.locator('body').innerText(), /AI 智能创作|AI智能创作|智能创作|分镜脚本/);
   assert.equal(executions, 0);
   assert.equal(clicks.length, 0);
   assert.ok(frames.length);
@@ -105,7 +111,7 @@ try {
   const customerScope = { ...scope, taskId: 'customer-task' };
   const customerRead = async (): Promise<BrowserProductionTarget> => ({ userId: 'browser-test-user', customerId: customerFixture.id, link: { page: 'conversion', runId: scope.runId, taskId: customerScope.taskId, businessRef: { taskKey: 'followup_batch_draft', entityId: customerFixture.id } } });
   const stopCustomer = await manager.watch(customerScope, customerRead, () => {});
-  const customerSession = await sessions.get(JSON.stringify([scope.tenantId, scope.runId, customerScope.taskId]))!;
+  const customerSession = await sessions.get(JSON.stringify([scope.tenantId, scope.runId, customerScope.taskId, scope.dataAuthority]))!;
   await customerSession.page.getByText(customerFixture.name, { exact: true }).first().waitFor({ timeout: 30_000 });
   const originalMessage = customerFixture.timeline.find(item => item.body)?.body;
   if (originalMessage) await customerSession.page.getByText(originalMessage, { exact: false }).first().waitFor({ timeout: 30_000 });
@@ -113,11 +119,13 @@ try {
   assert.equal(executions, 3);
   assert.equal(new URL(customerSession.page.url()).searchParams.get('customer'), customerFixture.id);
   // A batch task must remain executable even before it has a customer or draft.
-  const emptyRead = async (): Promise<BrowserProductionTarget> => ({ ...(await customerRead()), customerId: undefined });
-  await manager.perform(customerScope, emptyRead, '空客群任务点击回归', async () => { draftExecutions++; });
+  const emptyRead = async (): Promise<BrowserProductionTarget> => { const target = await customerRead(); return { ...target, customerId: undefined, link: { ...target.link, businessRef: { taskKey: 'followup_batch_draft' } } }; };
+  const emptyScope = { ...customerScope, taskId: 'empty-customer-task' };
+  await manager.perform(emptyScope, emptyRead, '空客群任务点击回归', async () => { draftExecutions++; });
   assert.equal(draftExecutions, 1);
-  assert.match(await customerSession.page.locator('body').innerText(), /本轮尚未建立客群/);
-  assert.equal(await customerSession.page.locator('[data-agent-action="customer-primary"]').count(), 1);
+  const emptySession = await sessions.get(JSON.stringify([scope.tenantId, scope.runId, emptyScope.taskId, scope.dataAuthority]))!;
+  assert.match(await emptySession.page.locator('body').innerText(), /本轮尚未建立客群/);
+  assert.equal(await emptySession.page.locator('[data-agent-action="customer-primary"]').count(), 1);
   stopCustomer();
   const schedulerScope = { ...scope, taskId: 'scheduler-task' };
   const schedulerRead = async (): Promise<BrowserProductionTarget> => ({ userId: 'browser-test-user', link: { page: 'scheduled', runId: scope.runId, taskId: schedulerScope.taskId, businessRef: { taskKey: 'scheduled_source_collection', entityId: 'browser-test-schedule' } } });
@@ -135,8 +143,9 @@ try {
   try {
     const page = await viewer.newPage();
     await page.goto(`${origin}/?page=smartAssets`);
-    await page.getByText('AI 智能创作', { exact: true }).first().waitFor();
+    await page.getByText('内容制作', { exact: true }).first().waitFor();
     await page.evaluate(({ runId, taskId, projectId }) => window.dispatchEvent(new CustomEvent('lingshu:navigate', { detail: { page: 'smartAssets', view: 'create', workflowRunId: runId, workflowTaskId: taskId, businessRef: { taskKey: 'content_production', entityId: projectId } } })), { runId: scope.runId, taskId: scope.taskId, projectId });
+    await page.getByText('关联任务进度 · 点击查看制作状态', { exact: true }).click();
     const scene = page.getByTestId('production-task-scene');
     await scene.getByRole('heading', { name: '内容生产现场' }).waitFor();
     await scene.getByRole('navigation', { name: 'Agent 制作顺序' }).waitFor();
@@ -148,11 +157,12 @@ try {
     assert.equal(clicks.length, beforeLiveClick + 1);
     assert.equal(executions, 5);
     await page.reload();
+    await page.getByText('关联任务进度 · 点击查看制作状态', { exact: true }).click();
     await scene.getByRole('heading', { name: '内容生产现场' }).waitFor();
     assert.equal(await page.getByText(/已恢复历史创作草稿/).count(), 0);
     await page.screenshot({ path: '/tmp/lingshu-production-scene-verified.png' });
-    await scene.getByRole('button', { name: /字幕 Agent/ }).click();
-    assert.equal(await scene.getByRole('button', { name: /字幕 Agent/ }).getAttribute('aria-pressed'), 'true');
+    await scene.getByRole('button', { name: /配音、字幕与人物/ }).click();
+    assert.equal(await scene.getByRole('button', { name: /配音、字幕与人物/ }).getAttribute('aria-pressed'), 'true');
   } finally { await viewer.close(); viewerIdentity.revoke(); }
   // Exercise the real App history with the normal UI, including the focused window.
   const navigationPage = customerSession.page;
@@ -168,7 +178,7 @@ try {
   const scrollBefore = await navigationPage.locator('main').last().evaluate(element => element.scrollTop);
   await navigationPage.getByRole('dialog').getByRole('button', { name: '工作页' }).click();
   await navigationPage.getByRole('heading', { name: 'Agent 实时生产监控大屏' }).waitFor({ state: 'hidden' });
-  await navigationPage.getByRole('button', { name: '返回上一页（保留查看位置）' }).click();
+  await navigationPage.goBack();
   await navigationPage.getByRole('dialog', { name: '客户任务 8' }).waitFor();
   assert.equal(await navigationPage.getByRole('button', { name: '客服 Agent', exact: true }).getAttribute('aria-pressed'), 'true');
   assert.ok(Math.abs(await navigationPage.locator('main').last().evaluate(element => element.scrollTop) - scrollBefore) <= 4, 'return must preserve the scroll position within browser layout rounding');
