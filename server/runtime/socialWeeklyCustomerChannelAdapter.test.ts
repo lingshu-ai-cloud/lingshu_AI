@@ -1,4 +1,6 @@
 import test from 'node:test';
+import {controlledMessengerAccount} from '../messenger/controlledCapability.fixture.js';
+import {socialAccessToken} from '../lib/accountCredentials.js';
 import assert from 'node:assert/strict';
 import type {DataStore,Record_} from '../storage/datastore.js';
 import type {WeeklyExecutionTask} from '../../shared/contracts/socialProgram.js';
@@ -7,7 +9,7 @@ import {createSocialWeeklyCustomerChannelAdapter,validateWeeklyCustomerChannelEx
 function fixture(){
  const rows:Record<string,Record_[]>={
   digital_employee_configs:[{id:'config',tenant_id:'tenant',status:'active',config_version:1,config:{enabledWorkflows:['batch_followup'],allowRealCustomerMessages:true}}],
-  social_accounts:[{id:'page',tenantId:'tenant',platform:'facebook',status:'connected',providerAccountId:'native-page',messengerSubscribed:true,accessToken:'sealed'}],
+  social_accounts:[controlledMessengerAccount({accountId:'page',tenantId:'tenant',pageId:'native-page'})],
   social_weekly_customer_bindings:[{id:'binding',tenant_id:'tenant',program_id:'program',package_id:'package',package_version:1,run_id:'run',goal_id:'goal'}],
   social_programs:[{id:'program-row',tenant_id:'tenant',program_id:'program',payload:{route:'cold_start'}}],
   weekly_goals:[{id:'goal',tenant_id:'tenant',starts_at:'2026-10-05T00:00:00Z',ends_at:'2026-10-11T23:59:59Z'}],
@@ -26,24 +28,24 @@ function fixture(){
 }
 
 test('channel readiness requires the frozen weekly customer run and its completion validator detects rebinding',async()=>{
- const f=fixture(),adapter=createSocialWeeklyCustomerChannelAdapter(f.store,{readAuthorization:f.authorization as any,openSocialToken:()=> 'token',now:()=>new Date('2026-10-05T00:00:00Z')});
+ const f=fixture(),adapter=createSocialWeeklyCustomerChannelAdapter(f.store,{readAuthorization:f.authorization as any,openSocialToken:socialAccessToken,now:()=>new Date('2026-10-05T00:00:00Z')});
  const task=f.task('customer_channel_readiness'),result=await adapter.execute(task);assert.equal(result.status,'succeeded');assert.equal(f.rows[WEEKLY_CUSTOMER_CHANNEL_EXECUTIONS]?.length,1);const evidence=f.rows[WEEKLY_CUSTOMER_CHANNEL_EXECUTIONS]![0]!.payload as any;assert.equal(evidence.channelAuthority.nativeAccountId,'native-page');assert.equal(evidence.runId,'run');
- if(result.status!=='succeeded')return;const ports={readAuthorization:f.authorization as any,openSocialToken:()=> 'token'};await validateWeeklyCustomerChannelExecution(f.store,task,result.resultRefs,ports);
+ if(result.status!=='succeeded')return;const ports={readAuthorization:f.authorization as any,openSocialToken:socialAccessToken};await validateWeeklyCustomerChannelExecution(f.store,task,result.resultRefs,ports);
  f.rows.social_weekly_customer_bindings![0]!.run_id='replacement-run';await assert.rejects(validateWeeklyCustomerChannelExecution(f.store,task,result.resultRefs,ports),/weekly_customer_channel_readiness_changed/);
 });
 
 test('channel readiness blocks without a unique weekly customer binding and never writes empty success evidence',async()=>{
- const f=fixture();f.rows.social_weekly_customer_bindings=[];const task=f.task('customer_channel_readiness');const result=await createSocialWeeklyCustomerChannelAdapter(f.store,{readAuthorization:f.authorization as any,openSocialToken:()=> 'token'}).execute(task);assert.equal(result.status,'blocked');assert.equal('code' in result?result.code:'','weekly_customer_binding_missing');assert.equal(f.rows[WEEKLY_CUSTOMER_CHANNEL_EXECUTIONS]?.length??0,0);
+ const f=fixture();f.rows.social_weekly_customer_bindings=[];const task=f.task('customer_channel_readiness');const result=await createSocialWeeklyCustomerChannelAdapter(f.store,{readAuthorization:f.authorization as any,openSocialToken:socialAccessToken}).execute(task);assert.equal(result.status,'blocked');assert.equal('code' in result?result.code:'','weekly_customer_binding_missing');assert.equal(f.rows[WEEKLY_CUSTOMER_CHANNEL_EXECUTIONS]?.length??0,0);
 });
 
 test('missing consent blocks channel readiness instead of succeeding',async()=>{
  const f=fixture();
- const blocked=await createSocialWeeklyCustomerChannelAdapter(f.store,{readAuthorization:async()=>({...await f.authorization(),tenantAuthorized:false,reasons:['tenant_real_customer_messages_not_authorized']}) as any,openSocialToken:()=> 'token'}).execute({...f.task('customer_channel_readiness'),taskId:'blocked'});assert.equal(blocked.status,'blocked');assert.equal('code' in blocked?blocked.code:'','tenant_real_customer_messages_not_authorized');
- const stopped=await createSocialWeeklyCustomerChannelAdapter(f.store,{readAuthorization:async()=>({...await f.authorization(),backgroundWorkerEnabled:false,scheduledFollowupSendAllowed:false,reasons:['followup_background_worker_disabled']}) as any,openSocialToken:()=> 'token'}).execute({...f.task('customer_channel_readiness'),taskId:'stopped'});assert.equal(stopped.status,'blocked');assert.equal('code' in stopped?stopped.code:'','followup_background_worker_disabled');
+ const blocked=await createSocialWeeklyCustomerChannelAdapter(f.store,{readAuthorization:async()=>({...await f.authorization(),tenantAuthorized:false,reasons:['tenant_real_customer_messages_not_authorized']}) as any,openSocialToken:socialAccessToken}).execute({...f.task('customer_channel_readiness'),taskId:'blocked'});assert.equal(blocked.status,'blocked');assert.equal('code' in blocked?blocked.code:'','tenant_real_customer_messages_not_authorized');
+ const stopped=await createSocialWeeklyCustomerChannelAdapter(f.store,{readAuthorization:async()=>({...await f.authorization(),backgroundWorkerEnabled:false,scheduledFollowupSendAllowed:false,reasons:['followup_background_worker_disabled']}) as any,openSocialToken:socialAccessToken}).execute({...f.task('customer_channel_readiness'),taskId:'stopped'});assert.equal(stopped.status,'blocked');assert.equal('code' in stopped?stopped.code:'','followup_background_worker_disabled');
 });
 
 test('handoff binds the original weekly customer run and provider conversation; unknown outcome remains pending for recovery',async()=>{
- const f=fixture(),common={readAuthorization:f.authorization as any,openSocialToken:()=> 'token',verifySelection:async()=>f.selection as any,now:()=>new Date('2026-10-06T00:00:00Z')};
+ const f=fixture(),common={readAuthorization:f.authorization as any,openSocialToken:socialAccessToken,verifySelection:async()=>f.selection as any,now:()=>new Date('2026-10-06T00:00:00Z')};
  const succeeded=await createSocialWeeklyCustomerChannelAdapter(f.store,{...common,readStep:async()=>({status:'succeeded',reason:null,runId:'run',taskId:'dispatch',resultRefs:[{type:'weekly_customer_followup_batch',id:'batch',version:1}]})}).execute(f.task('customer_inquiry_handoff'));
  assert.equal(succeeded.status,'succeeded');const evidence=f.rows[WEEKLY_CUSTOMER_CHANNEL_EXECUTIONS]![0]!.payload as any;assert.equal(evidence.runId,'run');assert.equal(evidence.conversationId,f.selection.conversationId);assert.deepEqual(evidence.providerMessageIds,['mid.real']);
  const pending=await createSocialWeeklyCustomerChannelAdapter(f.store,{...common,readStep:async()=>({status:'blocked',reason:'weekly_customer_send_outcome_unknown',runId:'run',taskId:'dispatch',resultRefs:[]})}).execute({...f.task('customer_inquiry_handoff'),taskId:'unknown'});assert.equal(pending.status,'pending');assert.equal('code' in pending?pending.code:'','weekly_customer_send_outcome_unknown');
@@ -51,16 +53,16 @@ test('handoff binds the original weekly customer run and provider conversation; 
 
 test('successful customer dispatch without the requested channel receipt cannot complete the weekly handoff',async()=>{
  const f=fixture();f.rows.followup_batch_items![0]!.channel='instagram';
- const result=await createSocialWeeklyCustomerChannelAdapter(f.store,{readAuthorization:f.authorization as any,openSocialToken:()=> 'token',verifySelection:async()=>f.selection as any,readStep:async()=>({status:'succeeded',reason:null,runId:'run',taskId:'dispatch',resultRefs:[{type:'weekly_customer_followup_batch',id:'batch',version:1}]})}).execute(f.task('customer_inquiry_handoff'));
+ const result=await createSocialWeeklyCustomerChannelAdapter(f.store,{readAuthorization:f.authorization as any,openSocialToken:socialAccessToken,verifySelection:async()=>f.selection as any,readStep:async()=>({status:'succeeded',reason:null,runId:'run',taskId:'dispatch',resultRefs:[{type:'weekly_customer_followup_batch',id:'batch',version:1}]})}).execute(f.task('customer_inquiry_handoff'));
  assert.equal(result.status,'blocked');assert.equal('code' in result?result.code:'','weekly_customer_channel_dispatch_missing');
 });
 
  test('another valid account cannot mask the selected expired or malformed account',async()=>{
  for(const channel of ['messenger','instagram'] as const){for(const expiry of ['2026-10-04T00:00:00Z','not-a-date']){
- const f=fixture();const platform=channel==='messenger'?'facebook':'instagram';const account=f.rows.social_accounts![0]!;Object.assign(account,{platform,tokenExpiresAt:expiry,oauthProvider:'instagram_login',scope:'instagram_business_manage_messages',instagramWebhookSubscribed:true});
+ const f=fixture();const platform=channel==='messenger'?'facebook':'instagram';const account=f.rows.social_accounts![0]!;Object.assign(account,{platform,tokenExpiresAt:expiry,...(channel==='instagram'?{oauthProvider:'instagram_login',scope:'instagram_business_manage_messages',instagramWebhookSubscribed:true}:{})});
  f.rows.social_accounts!.push({...account,id:'valid-other',providerAccountId:'native-other',tokenExpiresAt:'2026-11-01T00:00:00Z'});
  const task={...f.task('customer_channel_readiness'),inputSnapshot:{customerChannel:channel}};
- const ports={readAuthorization:async()=>({...await f.authorization(),channel}),openSocialToken:()=> 'token',now:()=>new Date('2026-10-05T00:00:00Z')};
+ const ports={readAuthorization:async()=>({...await f.authorization(),channel}),openSocialToken:socialAccessToken,now:()=>new Date('2026-10-05T00:00:00Z')};
  const result=await createSocialWeeklyCustomerChannelAdapter(f.store,ports).execute(task);assert.equal(result.status,'blocked');assert.equal('code' in result?result.code:'',`${channel}_selected_account_unavailable`);assert.equal(f.rows[WEEKLY_CUSTOMER_CHANNEL_EXECUTIONS]?.length??0,0);
  account.tokenExpiresAt='2026-11-01T00:00:00Z';const ready=await createSocialWeeklyCustomerChannelAdapter(f.store,ports).execute(task);assert.equal(ready.status,'succeeded');if(ready.status!=='succeeded')continue;
  account.tokenExpiresAt=expiry;await assert.rejects(validateWeeklyCustomerChannelExecution(f.store,task,ready.resultRefs,ports),new RegExp(`${channel}_selected_account_unavailable`));
