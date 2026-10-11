@@ -86,7 +86,7 @@ export function createWholeTrackSocialHeyGenBridge(input:{
   },
  });
  const resolve=async(request:DigitalPresenterExecutionRequest):Promise<WholeTrackPresenterSpeech>=>{
-  await funding.assertCurrent();const {requirement,route}=canonical(request);await funding.assertLivePresenter(route,request,keyHash);
+  await funding.assertCurrent();const {requirement,route,intent}=canonical(request);await funding.assertLivePresenter(route,request,keyHash);
   const frozenDuration=Number(requirement.durationSeconds);
   if(!(frozenDuration>0))throw Error('whole_track_heygen_frozen_window_missing');
   // The reference clip timing describes the source video's edit. Paid scene
@@ -101,6 +101,19 @@ export function createWholeTrackSocialHeyGenBridge(input:{
   };
   const clip=await readPreparedWholeVoiceScene({prepared:input.prepared,scope:funding.scope,shotId:request.shotId,spokenText:request.script,assertCurrent:funding.assertCurrent});
   if(Math.abs(clip.durationSeconds-frozenDuration)>.02)throw Error('whole_track_heygen_frozen_window_changed');
+  const completedReceiptRef=path.join(root,sha(intent.operationId)+'.completed.json');
+  if(fs.existsSync(completedReceiptRef)){
+   const completed=JSON.parse(fs.readFileSync(completedReceiptRef,'utf8')),audio=completed.audio as WholeTrackPresenterSpeech;
+   if(completed.operationId!==intent.operationId||completed.inputContractHash!==intent.inputContractHash
+    ||paidProductionHash(completed.scope)!==paidProductionHash(funding.scope)||completed.providerTaskId!==completed.output?.providerTaskId
+    ||audio?.tenantId!==request.tenantId||audio.taskId!==request.taskId||audio.runId!==funding.scope.runId||audio.planHash!==funding.scope.planHash
+    ||audio.shotId!==request.shotId||audio.presenterAssetId!==request.presenter.presenterAssetId||audio.presenterAssetVersion!==request.presenter.assetVersion
+    ||audio.providerAvatarId!==request.presenter.providerPresenterId||audio.scriptSha256!==sha(request.script)
+    ||audio.clipSha256!==clip.clipSha256||audio.durationSeconds!==clip.durationSeconds||audio.frozenSceneDurationSeconds!==frozenDuration)
+    throw Error('whole_track_heygen_completed_receipt_scope_changed');
+   audioRequests.set(audio.audioAssetId,{request,audio});
+   return audio;
+  }
   const identity={scope:funding.scope,shotId:request.shotId,presenter:request.presenter,visualControl:request.visualControl,clipSha256:clip.clipSha256,sourceReceipts:clip.sourceReceipts,alignmentReceiptSha256:clip.alignmentReceiptSha256};
   const identityHash=paidProductionHash(identity),file=path.join(root,identityHash+'.upload.json');
   const audio=await withPaidOperationLock(path.join(root,'.locks'),identityHash,async()=>{
