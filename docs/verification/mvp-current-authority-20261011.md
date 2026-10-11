@@ -166,3 +166,13 @@ S04 返工唯一实际任务 `cgt-20261011185530-ddcj4` 已受理，后续只查
 当前租户 social_accounts=0、tenant_platform_apps=0、任务 targetAccountRef=null，仅有 generate_media 授权；未找到该任务真实发布 attempt 或指标记录。发布、平台回执、指标回收仍未完成，缺数据不补零。已有产品图、合格 IV、完整 24 秒自然音轨与内置 BGM 文件可用于正常 renderer；BGM 来源说明存在且实际解码通过，不替代最终合成和听觉验收。
 
 下一次首尾帧返工仅完成无付费请求构建/身份/恢复测试，用户追加 ¥3.60 并重新分配现未预占 ¥0.65 的问题仍待答复。未制作尾帧、未建立新报价/预占、未新 POST；方案不代表供应商能硬锁机位或保证质量。
+
+### 完整回归修复与真实原声试听
+
+首次新增后的完整回归为 318 文件/682 项，其中 2 项失败。普通本地 Graph 场景没有 Studio canonical 记录却被误套冻结路由门禁，现修为先查精确当前 scope/shot 记录；零记录不触发 Studio 识别，有记录仍严格验证且坏路由拒绝。工作台旧测试依赖已替换的注释，现改为普通草稿完整恢复与冻结方案优先的行为断言，没有删除原兼容要求。真实 FFmpeg Graph 生产、审核与交付回归已恢复通过。
+
+已有自然原声 WAV 经 canonical reader、词证据、完整 PCM 比对和文件哈希验证，正规登记为 `socialfile:socialfile_c453f8750ac8f7a16e381664`，SHA256 `db461ab4b68f8cdeeecb4cb4275c65fc19386af8fc8abe44ac4c0f3fde72a696`。只读 GET 不生成、不写库；目录别名只规范化到配置的真实 data 根，未放松租户、路径或媒体哈希门禁。`voice-assembly-preview-root-execution.log` 记录 paidCalls=0、workerDispatched=false、humanApproved=false、artifactCompleted=false。
+
+正常页面鉴权音轨实际播放到 24 秒结束，readyState=4、error=null；`frontend-audio-playing.json` 与 `frontend-audio-ended.json` 保存播放进度，刷新前后项目 SHA 不变（`frontend-audio-readonly-proof.json`）。这证明试听链可用，不证明真人主观听审、ASR 或整片创意验收。新截图两次 CDP 超时，未用旧截图冒充新音轨截图。
+
+修复后的完整回归覆盖 **320 文件/691 项，0 失败、0 跳过**（`voice-preview-final-runtime-regression.log` / `voice-preview-final-regression-files.json`）；最终 alias 修复后全树 TypeScript 检查与主站生产构建通过。原 5 个未知来源 presenter 修改保持原样且未混入本轮提交，检查结论对应当前本地源码。合格 S04、最终 MP4/真人验收、发布账号和真实平台指标仍缺；预算追加问题仍待答复，没有新付费请求。
