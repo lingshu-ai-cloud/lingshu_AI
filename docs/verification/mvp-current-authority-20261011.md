@@ -126,3 +126,11 @@ allowRealPublishing=false；social_accounts只有另一租户的Facebook测试�
 总授权仍为 ¥10；正式从返工分配移入 ¥0.9 后，制作 ¥9.4、返工保留 ¥0.6。A池 ¥4.3、B池 ¥4.6、独立质检分配 ¥0.5，均非实际结算账单。Ark 当前账户模型价格/余额原始 DOM 与截图已经保存在 `ark-pricing-evidence/`，Qwen 所属 Dashscope 的账户费用仍需单独核验，不使用 Ark 余额替代。
 
 可信 worker 新增 `allowedJobIds`，只认领及恢复指定 job；全局并发仍统计其他正在运行的任务，空列表不操作任何 job，构造时复制列表避免后续扩大范围。`scoped-worker-tests.log` 18/18 通过，包括其他租户排队任务和过期 running 任务保持原状态、空列表拒绝执行。真实 Graph worker 尚未 dispatch，须先完成 S01/S04 供应商媒体及绑定质检证据，再使用当前原 job 恢复。尚无本轮最终成片、人工创意批准、真实发布或指标闭环证据。
+
+### 正文自然语速与正式 0003 冻结（最新）
+
+正文 Starfish 原声一次真实提交完成，回执 `6dfb1dd286bef133c0b5998f9f14d8f3b95d6129c7e12922cbf6214ab4fd0d69`，MP3 SHA256 `668562108511a64bc9cd3562eb21afe341d522159a0bf96d0ad633c73a41a68a`。48 kHz PCM 实测 13.844917 秒、无削波；供应商真实词级时间戳中 Meet GUIANFA 为 0.28–2.82 秒。原 S02 的 1.4 秒槽无法容纳，不能删词或伪造时间戳。
+
+正式自然语速修订执行及源存储读回证据 `natural-cadence-execution-receipt.json` / `natural-cadence-authority-readback.json` 已证明当前 **v65 / run `d67c7e8ca4fa067` / Graph job `2edab29616ddffc` / script `2026101100003`**，planHash `a1fa649fa0d4a89a67b928b5bd9bc9a87cf8d7bfbac73d24045acb0e8c5e2736`。冻结镜头边界为 0、5.6、8.4、10.1、14.1、16.2、18.8、20.5、24 秒；完整自然正文各句词窗可装入相应槽，S04 静音 4 秒。旧 v61 Graph job 已 cancelled，新 job queued 无 worker/lease；9.4/.6 分配不变，无新付费调用或任务派发。
+
+真实 HeyGen IV 唯一任务 `25d121ab21e7c2aff86f21e7e59d9ce1` 已 completed 并下载，MP4 SHA256 `6d88809a93622a4978acf73e53e26f2bfc71ff7baea1d7964fa3cb70362b758f`，5.48569 秒。`actual-iv-technical-qa.json` / `actual-iv-canonical-source.json` 保存解码、PCM、真实中帧及原始供应商/费用谱系。该输出原属 v61，将经严格跨修订复用入口绑定 v65，不能手工改写原供应商回执。A 池 .2 hook + .3 body + 3.8 IV 已预占满 4.3；实际结算仍 null。中帧已实际查看，未标人审通过。B 产品镜头、最终 MP4、人工创意批准、页面真实成片验收、发布与指标仍未完成。
