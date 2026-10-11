@@ -273,6 +273,7 @@ test('production router persists jobs, never resubmits uncertain operations, iso
     const sharedFingerprint = shotFingerprint(shared as typeof shot, context);
     assert.equal((await request('/plans', { projectId: 'draft', assemblyId: 'video-1', shotId: 'shot1', fingerprint: sharedFingerprint })).status, 200);
     const sharedJob = await (await request('/jobs', { ...input, requestId: 'req3', fingerprint: sharedFingerprint })).json();
+    assert.equal(sharedJob.status, 'pending', JSON.stringify(sharedJob));
     assert.equal(calls.at(-1)!.body.audio_asset_id, 'audio1'); assert.equal(calls.at(-1)!.body.script, undefined);
     assert.equal(audioRefs.at(-1)?.start, 0.5); assert.equal(audioRefs.at(-1)?.duration, 2);
     const sharedExecution = (await (await request('/executions?projectId=draft')).json()).find((item: any) => item.jobId === sharedJob.id);

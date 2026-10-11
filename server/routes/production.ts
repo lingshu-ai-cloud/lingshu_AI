@@ -859,7 +859,7 @@ export function createProductionRouter(store: DataStore, importVideo: (url: stri
         const prepared = await options.prepareAudio(record.input.audioRef, record.tenant_id);
         const audio = prepared instanceof Uint8Array ? prepared : prepared.bytes;
         const audioAssetId = await client().uploadAudio(audio, `${record.request_id}:audio`);
-        const input = { ...record.input, audioAssetId };
+        const input = { ...record.input, audioAssetId, voiceId: '', script: '' };
         if (!await store.update('studio_avatar_jobs', record.id, { input })) throw new Error('音频资产绑定保存失败');
         record.input = input;
         if (!(prepared instanceof Uint8Array)) {
