@@ -292,6 +292,7 @@ export function buildSocialProductSceneReplicationSpec(input: {
     ? Math.max(0.5, +(reference.endSeconds - reference.startSeconds).toFixed(2))
     : input.shot.function === 'hook' ? 3 : 4;
   const referenceShotId = input.shot.referenceShotId ?? reference?.shotId ?? null;
+  const singleProduct = groups.length === 1;
   return {
     schemaVersion: 'social-product-scene-replication.v1',
     templateSource: reference ? 'reference_shot' : 'system_clean_stage',
@@ -306,11 +307,15 @@ export function buildSocialProductSceneReplicationSpec(input: {
       ocrExactMatchRequired: true,
     },
     sceneLock: {
-      environment: reference?.visualDescription || '干净摄影棚产品展示环境',
+      environment: singleProduct && reference
+        ? '保留参考镜头的展示功能与背景风格，改为企业当前单一 SKU 的简洁产品展示，不保留或虚构参考商品'
+        : reference?.visualDescription || '干净摄影棚产品展示环境',
       background: reference ? '沿用参考镜头的背景类别、明暗关系和留白' : '纯净中性背景，无无关道具和文字',
       platform: reference ? '沿用参考镜头的承托面和高低层级' : '简洁圆形展示台',
       lighting: reference ? '沿用参考镜头的光向、软硬、色温和产品高光关系' : '柔和棚拍主光与轮廓光',
-      composition: reference?.shotLanguage?.composition || cameraTags.join('、') || '多产品有序排列，主体位于安全区内',
+      composition: singleProduct
+        ? '单一企业产品居中展示，比例自然，标签完整可读；不得复制瓶身或补造其他商品'
+        : reference?.shotLanguage?.composition || cameraTags.join('、') || '多产品有序排列，主体位于安全区内',
       productSlots: groups.map((group, index) => ({
         slotId: `product-slot-${index + 1}`,
         productRef: group.productRef,

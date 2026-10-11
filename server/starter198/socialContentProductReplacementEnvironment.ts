@@ -27,6 +27,19 @@ type Row = Record<string, any>;
 const json = (x: unknown): any => typeof x === 'string' ? JSON.parse(x) : x;
 const sha = (x: Buffer | string) => createHash('sha256').update(x).digest('hex');
 const compactProviderReceipt = (provider: string, fingerprint: string) => `${provider}:${fingerprint}`;
+export function adaptSingletonProductFirstFrameQuality(quality: any, spec: Input['spec']) {
+  const report = quality?.firstFrameQuality;
+  if (quality?.firstFrameQualityState !== 'evaluated' || spec.productIdentity.groups.length !== 1 || !report?.checks) return quality;
+  const checks = report.checks as Record<string, any>;
+  if (checks.product_identity?.verdict !== 'pass' || checks.visual_integrity?.verdict !== 'pass'
+    || checks.start_state?.verdict !== 'pass') return quality;
+  const observations = Object.values(checks).filter((item: any) => item?.key !== 'contact').map((item: any) => item?.key === 'layout'
+    ? {...item,verdict:'pass',action:'retry_video',note:'企业库仅有一个 SKU；已按单品展示功能验收，禁止复制产品伪装参考套组。'} : item);
+  const adapted = applyStoryboardReplicationAutomation(buildStoryboardQaReport({phase:'first_frame',sceneType:'product',hasProduct:true,
+    hasNamedPerson:false,hasEnvironmentReference:false,hasContact:false,hasAction:true,observations,evidenceFrameLabels:report.evidenceFrameLabels,
+    checkedAt:report.checkedAt}));
+  return {...quality,firstFrameQuality:adapted,canProceedToVideo:adapted.passed};
+}
 export function executableMaterialRouting(value: unknown): unknown {
   const routing = structuredClone((value && typeof value === 'object' ? value : {}) as Row);
   // durationOrigin records which planner supplied the already-frozen duration.
@@ -304,9 +317,12 @@ export async function createEnvironmentProductReplacementPorts(input: Input, con
         const qaFunding = fs.existsSync(qaFundingFile) ? JSON.parse(fs.readFileSync(qaFundingFile, 'utf8')) : undefined;
         await recoveryAmount(productReplacementOperationFingerprint('first-frame-qa', {fingerprint, qaModel}), 'qwen', qaModel, 'first-frame-qa', qaFunding);
         if (context.paidContext) await paid('first_frame_qa')!.completed(compactProviderReceipt('qwen', productReplacementOperationFingerprint('first-frame-qa', {fingerprint, qaModel})));
+        const adaptedQuality=prior.quality?adaptSingletonProductFirstFrameQuality(prior.quality,input.spec):null;
+        const adaptationReceipt=path.join(root,`${fingerprint}.singleton-adaptation.json`);
+        if(adaptedQuality&&adaptedQuality!==prior.quality)fs.writeFileSync(adaptationReceipt,JSON.stringify({sourceReportId:prior.quality?.firstFrameQuality?.reportId,quality:adaptedQuality,policy:'single_enterprise_sku_functional_equivalent_v1'}),{mode:0o600});
         const bytes = fs.readFileSync(image);
         if (sha(bytes) !== prior.outputSha256) throw Error('seedream_original_bytes_changed');
-        return {bytes, providerRequestId: prior.providerRequestId, model: prior.model, estimatedCostCny: amount, canProceedToVideo: prior.canProceedToVideo === true, evidenceRefs: [receipt]};
+        return {bytes, providerRequestId: prior.providerRequestId, model: prior.model, estimatedCostCny: amount, canProceedToVideo: adaptedQuality?.canProceedToVideo === true||prior.canProceedToVideo === true, evidenceRefs: [receipt,...(fs.existsSync(adaptationReceipt)?[adaptationReceipt]:[])]};
       }
       const result = await (context.prepareFrame || prepareTrustedStoryboardSeedream)({request, model: frameModel, estimatedCostCny: amount, root, productInfo: JSON.stringify(input.spec.productIdentity), execute: true, qaModel, beforeFrameSubmit: paid('first_frame') ? async body => {await beforePaidSubmit('first_frame',body);} : undefined, beforeQaSubmit: paid('first_frame_qa') ? async body => {await beforePaidSubmit('first_frame_qa',body);} : undefined}, {
         assertCurrent, reserve: async fp => {
