@@ -30,7 +30,9 @@ Object.assign(store,{
 globalThis.fetch=(async()=>{networkCalls++;throw Error('NETWORK_FORBIDDEN_IN_MOCK');}) as typeof fetch;
 
 const routing = tasks.find(t => t.task_key === 'content_mode_routing')!;
-for (const task of tasks) task.status = 'succeeded';
+// Isolate routing: upstream collection belongs to its own proof/reconciliation
+// tests and is explicitly skipped here, rather than claiming a native receipt.
+for (const task of tasks) task.status = 'skipped';
 routing.status = 'pending';
 const downstream = tasks.find(t => t.task_key === 'content_production')!;
 downstream.status = 'pending'; downstream.depends_on = ['never-ready'];
@@ -51,7 +53,7 @@ try {
     for (let i = 0; i < 4; i++) await reconcileDigitalEmployeeRun(tenant, run.id);
     assert.equal(clicks, 0, 'blocked polling must never click the generation button');
     assert.equal(records.content_batch_plans.length, 0, 'readiness checks must not create blocked orders');
-    assert.equal(routing.output.routingCheck.count, 4);
+    assert.equal(routing.output.routingCheck?.count, 4, 'each blocked routing poll must retain its readiness check');
     const waitingEvents = () => Object.values(records).flat().filter(e => e.type === 'task.routing_waiting');
     assert.equal(waitingEvents().length, 1, 'unchanged blocker emits one event');
     records.tenant_profiles[0].profile.products.items = [{name:'LIVE PROFILE REPLACEMENT',sku:'new-live-sku',material:'plastic'}];

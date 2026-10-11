@@ -8,7 +8,7 @@ import {createStarter198Repository} from './repository.js';
 import {createSocialSceneG4ReviewService} from './socialSceneG4ReviewService.js';
 import {SCENE_G4_CHECK_CODES} from '../../shared/contracts/socialSceneG4Review.js';
 import {DIRECTOR_G5_CHECK_CODES,type SocialDirectorG5Context} from '../../shared/contracts/socialDirectorG5Review.js';
-import {enterpriseFactContentHash,type EnterpriseProfile} from '../routes/enterprise.js';
+import {enterpriseFactContentHash,type EnterpriseProfile} from '../lib/socialContentLegacyPorts.js';
 import {socialRequestHash} from './socialContentValidation.js';
 import {sealSocialSceneMediaCache} from './socialContentSceneRework.js';
 import {buildSocialProductionReceipt,persistSocialProductionReceipt} from './socialContentProductionHandoff.js';

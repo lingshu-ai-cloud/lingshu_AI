@@ -10,7 +10,7 @@ import type {SocialProductionResult} from '../../shared/contracts/socialContentW
 import {DIRECTOR_G5_CHECK_CODES,type SocialDirectorG5Scope,type SocialDirectorG5Check,type SocialDirectorG5Context,type SocialDirectorG5Review,type SocialDirectorG5ReviewRead} from '../../shared/contracts/socialDirectorG5Review.js';
 import {socialObject,socialJson,socialRequestHash} from './socialContentValidation.js';
 import {organizationRoleOrNull} from '../lib/organizationRole.js';
-import {enterpriseFactContentHash,type EnterpriseProfile} from '../routes/enterprise.js';
+import {enterpriseFactContentHash,type EnterpriseProfile} from '../lib/socialContentLegacyPorts.js';
 import {verifiedSocialScriptContext} from './socialContentScriptBaseline.js';
 import {createSocialSceneReworkService} from './socialContentSceneReworkService.js';
 import {createSocialSceneG4ReviewService} from './socialSceneG4ReviewService.js';

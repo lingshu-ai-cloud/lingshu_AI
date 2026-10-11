@@ -3,12 +3,15 @@ import type { DigitalEmployeeConfig, PublishingPlatform, WeeklyGoalInput } from 
 import type { DirectorScriptContract } from '../../src/lib/directorScript.js';
 import { platformExecutionConstraints } from '../../shared/contracts/socialOperatingProfile.js';
 import { MATERIAL_TYPE_LABELS, SHOT_ROLE_LABELS } from '../../shared/benchmarkAnalysis.js';
+import { productionReferenceAdmission, type ProductionReferenceAdmission } from '../../shared/productionReferenceAdmission.js';
 
 export type ContentRoute = 'clone' | 'product' | 'material';
 
 export interface ContentRoutingEvidence {
   products: Array<{ id: string; name: string; materialIds: string[] }>;
   exactAnalysisIds: string[];
+  /** Server-rebuilt admission; completion IDs alone only prove analysis ran. */
+  referenceAdmissions?: Record<string, ProductionReferenceAdmission>;
   materialIds: string[];
 }
 
@@ -134,6 +137,8 @@ export function buildContentBatchPlan(input: {
   const disabledRoutes: ContentBatchPlanDraft['disabledRoutes'] = [];
   const eligibleRoutes: ContentRoute[] = [];
   const enabled = new Set(input.config.enabledWorkflows);
+  const readyExactAnalysisIds = input.evidence.exactAnalysisIds.filter(id => !input.evidence.referenceAdmissions
+    || input.evidence.referenceAdmissions[id]?.ready === true);
   const productsWithMaterial = input.evidence.products.filter(product => product.materialIds.length > 0);
   const reviewConstraints = priorReviewConstraints(input.priorRoutingEvidence);
   if (input.goal.videoPlans?.length) {
@@ -157,6 +162,12 @@ export function buildContentBatchPlan(input: {
       // Keep the order so other masters in the same week can still run; the
       // storyboard preflight below reports the exact missing shot requirement.
       if (plan.route === 'clone' && !input.evidence.exactAnalysisIds.includes(plan.referenceId)) blockers.push(prefix + '参考视频尚无有效精确分析');
+      if (plan.route === 'clone') {
+        const admission = input.evidence.referenceAdmissions
+          ? input.evidence.referenceAdmissions[plan.referenceId] || productionReferenceAdmission(null)
+          : plan.benchmarkAnalysis ? productionReferenceAdmission(plan.benchmarkAnalysis) : undefined;
+        if (admission && !admission.ready) blockers.push(...admission.blockers.map(reason => `${prefix}制作前编导交接待复核：${reason}`));
+      }
       const account = input.config.publishingTargets.find(target => target.platform === plan.platform && (!plan.matrix || target.accountId === plan.matrix.accountId));
       if (!input.goal.contentPlatforms.includes(plan.platform)) blockers.push(prefix + '制作平台不在本周目标范围中');
       const familyVariants = input.goal.videoPlans!.filter(candidate => (candidate.contentFamilyId || candidate.contentId) === (plan.contentFamilyId || plan.contentId));
@@ -221,7 +232,7 @@ export function buildContentBatchPlan(input: {
   const missingProducts = input.evidence.products.filter(product => !product.materialIds.length);
   if (missingProducts.length) return { status: 'blocked', orders: [], blocker: `重点产品缺少素材：${missingProducts.map(product => product.name).join('、')}。请补充素材或逐条确认制作计划，不能自动替换产品。`, eligibleRoutes, disabledRoutes };
 
-  if (enabled.has('viral_clone') && input.evidence.exactAnalysisIds.length && productsWithMaterial.length) eligibleRoutes.push('clone');
+  if (enabled.has('viral_clone') && readyExactAnalysisIds.length && productsWithMaterial.length) eligibleRoutes.push('clone');
   else if (enabled.has('viral_clone')) disabledRoutes.push({ route: 'clone', reason: '缺少全片精确分析或真实产品，请由编导 Agent 补齐对标分析后重试' });
   if (enabled.has('product_content') && productsWithMaterial.length) eligibleRoutes.push('product');
   if (enabled.has('material_content') && productsWithMaterial.length) eligibleRoutes.push('material');
@@ -240,7 +251,7 @@ export function buildContentBatchPlan(input: {
     const theme = themes[index % themes.length];
     const productMaterial = { type: 'enterprise_material' as const, id: product.materialIds[index % product.materialIds.length] };
     const evidenceRefs: ContentOrder['evidenceRefs'] = route === 'clone'
-      ? [{ type: 'exact_analysis', id: input.evidence.exactAnalysisIds[index % input.evidence.exactAnalysisIds.length] }, productMaterial]
+      ? [{ type: 'exact_analysis', id: readyExactAnalysisIds[index % readyExactAnalysisIds.length] }, productMaterial]
       : [productMaterial];
     return {
       id: `content_order_${index + 1}`,

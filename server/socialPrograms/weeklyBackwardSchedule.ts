@@ -24,22 +24,8 @@ export type WeeklyBackwardScheduleInput = Pick<WeeklyRecoveryInput, 'tasks' | 'n
   /** Server-read independent queue dimensions, never client free-slot assumptions. */
   queueCapacityEvidence?:WeeklyQueueSchedulingEvidence;
 };
-export interface WeeklyBackwardSchedule {
-  assignments: Array<{ taskId: string; startAt: string | null; finishAt: string | null; resourceKey: string | null; reasons: string[];mode:'planned'|'completed_verified'|'running_reserved'|'unavailable' }>;
-  publications: Array<{ publicationId: string; conditionallyReachable: boolean; reasons: string[] }>;
-  targetPublicationCount: number;
-  conditionallyReachableCount: number;
-  publicationGap: number;
-  reservedCostCny: number;
-  confirmationRequired: boolean;
-  fullGraphConditionallyReachable:boolean;
-  unscheduledTaskIds:string[];
-  crossWeekOperationalTaskIds:string[];
-  agentDailyLoads:Array<{responsibleActor:WeeklyExecutionTask['schedule']['responsibleActor'];localDate:string;plannedMinutes:number;taskIds:string[]}>;
-  queueConfigurationHash?:string;
-  queueCapacityEvidenceHash?:string;
-  revisionApplied: false;
-}
+import type { WeeklyBackwardSchedule } from '../../shared/contracts/socialWeeklyCapacity.js';
+export type { WeeklyBackwardSchedule } from '../../shared/contracts/socialWeeklyCapacity.js';
 const instant = (value: string): number => {
   const parsed = publicationInstant(value);
   if (parsed === null) throw new Error('Invalid precise backward scheduling timestamp');

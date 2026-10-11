@@ -399,6 +399,9 @@ try {
     const beforeReplay = supplierVideoPosts;
     const replay = await post('/seedance-video', videoRequest);
     assert.equal(replay.body.reused, true, `${shot.id} same request should recover the original material: ${JSON.stringify(replay.body)}`);
+    assert.equal(replay.body.material.id, result.body.material.id, 'draft recovery must return the original persisted candidate');
+    assert.notEqual(replay.body.quality?.passed, true, 'recovering an unreviewed draft must not manufacture QA acceptance');
+    assert.equal(projectSpec.storyboardAssignments?.[shot.id], undefined, 'receipt recovery must not assign a candidate to the project');
     assert.equal(supplierVideoPosts, beforeReplay, 'same request must not resubmit paid provider work');
     if (shot.id === 'free-product') {
       process.env.STORYBOARD_AIGC_MAX_RETRIES = '0';

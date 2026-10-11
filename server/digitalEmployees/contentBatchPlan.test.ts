@@ -88,6 +88,23 @@ assert.equal(explicitUnanalyzedClone.status, 'planned', 'a missing clone analysi
 assert.equal(explicitUnanalyzedClone.orders.length, 1);
 assert.ok(explicitUnanalyzedClone.orders[0]?.readinessBlockers?.some(issue => issue.includes('精确分析')));
 
+const referenceAdmissions = { 'analysis-1': { ready: false, blockers: ['第 8 镜：镜头类型未确认'],
+  blockingShotIds: ['shot_8'], executableShotIds: ['shot_1', 'shot_2'], reviewShotIds: ['shot_8'] } };
+const explicitReviewClone = buildContentBatchPlan({
+  goalId: 'review-clone', goal: explicitMissingMaterialGoal, config,
+  evidence: { products: [{ id: 'sku-1', name: '产品 A', materialIds: ['asset-a'] }], exactAnalysisIds: ['analysis-1'], materialIds: ['asset-a'], referenceAdmissions },
+  versions: { configVersion: 1, policyVersion: 'p', factsVersion: 'f' },
+});
+assert.equal(explicitReviewClone.status, 'planned', 'do not erase or globally reject an explicit batch that contains partial evidence');
+assert.equal(explicitReviewClone.orders[0].videoPlan?.referenceId, 'analysis-1');
+assert.ok(explicitReviewClone.orders[0].readinessBlockers?.some(reason => reason.includes('第 8 镜')));
+const automaticReviewClone = buildContentBatchPlan({
+  goalId: 'auto-review-clone', goal, config,
+  evidence: { products: [{ id: 'sku-1', name: '产品 A', materialIds: ['asset-a'] }], exactAnalysisIds: ['analysis-1'], materialIds: ['asset-a'], referenceAdmissions },
+  versions: { configVersion: 1, policyVersion: 'p', factsVersion: 'f' },
+});
+assert.ok(automaticReviewClone.orders.every(order => order.route !== 'clone'), 'automatic new allocations must not admit completed but unresolved analysis');
+
 const mixedReadinessGoal = normalizeWeeklyGoal({
   ...goal,
   contentPlatforms: ['tiktok'],

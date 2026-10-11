@@ -17,7 +17,7 @@ const video = (id: string, title: string, hook: string, views: string) => ({
   id, platform: 'tiktok', title, views, thumbnailUrl: `https://cdn.example.com/${id}.jpg`, sourceUrl: `https://tiktok.com/@benchmark/video/${id}`,
   duration: 6, updatedAt: '2026-10-08T00:00:00.000Z',
   aiAnalysis: {
-    analysisMode: 'exact', analysisQuality: 'video', sourceAccount: 'https://tiktok.com/@benchmark', sourceAccountName: 'Benchmark Factory', relativeViewMultiple: 4.2,
+    analysisMode: 'exact', analysisQuality: 'video', geminiStatus: 'analyzed', sourceAccount: 'https://tiktok.com/@benchmark', sourceAccountName: 'Benchmark Factory', relativeViewMultiple: 4.2,
     candidateEvidence: { relevance: { level: 'high' }, momentum: { level: 'high_performance' }, transferability: { level: 'high' } },
     gemini: { theme: title, hooks: [hook], sellingPoints: ['验机流程与检测证据'], scriptDetails15s: [
       { time: '0-3s', materialType: 'talking_head', narrativeRole: 'hook', classificationEvidence: '可见人物正对镜头口播', visual: '采购顾问正对镜头提出问题', purpose: '开头钩子', materialEvidence: { firstFrameRef: `/api/overseas/videos/${id}/shot/1/first-frame` } },
@@ -38,6 +38,25 @@ const ranked = rankContentReferences({ videos, benchmarks, platform: 'tiktok', p
 assert.equal(ranked[0]?.id, 'viral-1');
 assert.equal(ranked[0]?.benchmarkAccount, 'Benchmark Factory');
 assert.ok((ranked[0]?.score || 0) >= 80, 'exact benchmark evidence with strong relative performance should rank highly');
+const uncertain = video('review-video', '待复核工业设备', '证据待确认', '8M');
+uncertain.aiAnalysis.analysisQuality = 'video_review_required';
+uncertain.aiAnalysis.geminiStatus = 'needs_review';
+uncertain.aiAnalysis.gemini.scriptDetails15s[1].materialType = 'unknown';
+const uncertainRank = rankContentReferences({ videos: [uncertain], benchmarks, platform: 'tiktok', productName: '工业检测设备', audience: '采购', direction: '采购教育' })[0]!;
+assert.equal(uncertainRank.exact, true, 'retain completed exact evidence without asking to crawl it again');
+assert.equal(uncertainRank.productionReady, false);
+assert.ok(uncertainRank.admission.blockers.some(reason => reason.includes('第 2 镜') && reason.includes('类型未确认')));
+assert.ok(!uncertainRank.factors.some(reason => reason.includes('发布前需轻量复核')));
+const uncertainPack = enrichPackageWithContentSignals({ pack: recommendPackage(goal, config), goal, config, videos: [uncertain], benchmarks });
+assert.ok(uncertainPack.tasks.find(task => task.templateId === 'production')!.videoPlans!.every(plan => !plan.referenceId),
+  'an unresolved exact analysis is not auto-selected for a new production plan');
+assert.ok(uncertainPack.tasks.find(task => task.templateId === 'production')!.videoPlans!.some(plan => plan.planningEvidence?.factors.some(reason => reason.includes('待复核'))));
+const frozenPack = recommendPackage(goal, config);
+const frozenProduction = frozenPack.tasks.find(task => task.templateId === 'production')!;
+frozenProduction.videoPlans = frozenProduction.videoPlans!.map(plan => ({ ...plan, referenceId: 'review-video' }));
+const preserved = enrichPackageWithContentSignals({ pack: frozenPack, goal, config, videos: [uncertain, ...videos], benchmarks });
+assert.ok(preserved.tasks.find(task => task.templateId === 'production')!.videoPlans!.every(plan => plan.referenceId === 'review-video'),
+  'enrichment must not silently replace explicit or frozen references with another video');
 
 const enriched = enrichPackageWithContentSignals({ pack: recommendPackage(goal, config), goal, config, videos, benchmarks });
 const plans = enriched.tasks.find(task => task.templateId === 'production')?.videoPlans || [];

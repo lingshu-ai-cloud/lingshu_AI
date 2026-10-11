@@ -80,6 +80,9 @@ export interface AigcBudgetCandidate {
   segmentDurations?: number[];
   /** Conservatively reserves optional paid pre-image observation. */
   firstFrameSurchargeCny?: number;
+  /** Zero only for a server-verified existing frame; product compositing may
+   * require two image calls. Omitted preserves the original one-call plan. */
+  firstFrameCallCount?: number;
 }
 
 export interface AigcBudgetAllocation {
@@ -93,6 +96,7 @@ export interface AigcBudgetAllocation {
   estimatedVideoCostCny: number;
   estimatedFirstFrameCostCny: number;
   estimatedGeometryObservationCostCny: number;
+  firstFrameCallCount: number;
 }
 
 const roundMoney = (value: number) => Math.round(value * 100) / 100;
@@ -115,18 +119,21 @@ export function allocateAigcBudget(input: {
     shotId: candidate.shotId, status: 'budget_excluded', targetDurationSeconds: Math.max(4, Math.ceil(candidate.targetDurationSeconds)),
     resolutionTier: null, modelId: null, estimatedCostCny: 0, estimatedVideoCostCny: 0,
     estimatedFirstFrameCostCny: 0, estimatedGeometryObservationCostCny: 0,
+    firstFrameCallCount: candidate.firstFrameCallCount ?? 1,
     segmentDurations: candidate.segmentDurations?.length ? [...candidate.segmentDurations] : [Math.max(4, Math.ceil(candidate.targetDurationSeconds))],
   }));
   const choices = (candidate: AigcBudgetCandidate, resolution: AigcResolution) => input.offers.flatMap(offer => {
     const durations = candidate.segmentDurations?.length ? candidate.segmentDurations : [Math.max(4, Math.ceil(candidate.targetDurationSeconds))];
     const duration = durations.reduce((sum, item) => sum + item, 0);
     const rate = offer.videoCostCnyPerSecond[resolution];
+    const frameCalls = candidate.firstFrameCallCount ?? 1;
     if (!Number.isFinite(duration) || duration > 300 || !offer.resolutions.includes(resolution)
       || durations.some(segment => !Number.isInteger(segment) || segment < offer.minDurationSeconds || segment > offer.maxDurationSeconds)
       || rate === null || !nonnegative(rate) || !nonnegative(offer.firstFrameCostCny)
-      || !nonnegative(candidate.firstFrameSurchargeCny ?? 0)) return [];
+      || !nonnegative(candidate.firstFrameSurchargeCny ?? 0)
+      || !Number.isInteger(frameCalls) || frameCalls < 0 || frameCalls > 2) return [];
     const surcharge = roundMoney(candidate.firstFrameSurchargeCny ?? 0);
-    const imageCost = roundMoney(offer.firstFrameCostCny + surcharge);
+    const imageCost = roundMoney(offer.firstFrameCostCny * frameCalls + surcharge);
     const videoCost = roundMoney(rate * duration);
     return [{ modelId: offer.modelId, resolution, cost: roundMoney((imageCost + videoCost) * (input.maxRetries + 1)), imageCost, videoCost, surcharge }];
   }).sort((a, b) => a.cost - b.cost || a.modelId.localeCompare(b.modelId));

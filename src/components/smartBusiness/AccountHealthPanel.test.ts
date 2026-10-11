@@ -59,14 +59,16 @@ test('Facebook handoff requires both WhatsApp and a matching Messenger subscript
   assert.ok(result.userActions.some(item => item.includes('Messenger')));
 });
 
-test('Agent board is top of HomeView while the weekly calendar lives above it and MatrixView starts with account health', () => {
+test('business health stays in the overview while MatrixView hosts the Digital Employee workspace', () => {
   const source = fs.readFileSync('src/components/SmartBusinessDashboard.tsx', 'utf8');
   const healthSource = fs.readFileSync('src/components/smartBusiness/AccountHealthPanel.tsx', 'utf8');
   const home = source.slice(source.indexOf('function HomeView'), source.indexOf('const matrixRoleLabel'));
   const matrix = source.slice(source.indexOf('function MatrixView'), source.indexOf('function openTaskPreviewPage'));
-  assert.ok(home.indexOf('<MatrixWorkSchedule') > 0);
-  assert.ok(home.indexOf('<MatrixWorkSchedule') < home.indexOf('<div className="grid divide-y'), 'schedule must precede overview metric strip');
-  assert.match(matrix, /<AccountHealthPanel/);
+  assert.match(home, /<BusinessHealthOverview[^>]*data=\{data\}/);
+  assert.doesNotMatch(home, /<MatrixWorkSchedule/);
+  assert.match(matrix, /<DigitalEmployeeWorkspace[^>]*data=\{data\}/);
+  assert.match(matrix, /publishingCalendar=\{<WeeklyPublishingCalendar/);
+  assert.doesNotMatch(matrix, /<AccountHealthPanel/);
   assert.doesNotMatch(matrix, /<MatrixWorkSchedule/);
   assert.doesNotMatch(matrix, /title="账号表现趋势"/);
   assert.doesNotMatch(healthSource, /图中只显示可核验值。当前暂无使用前快照时不补假低分/);

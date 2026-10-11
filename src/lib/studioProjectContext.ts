@@ -20,7 +20,8 @@ export function resolveStudioWorkflowProjectEntry(
     const projectContext = studioWorkflowContextFromSpec(project.spec);
     if (context.entityId) {
       return project.id === context.entityId
-        && (!context.runId || projectContext?.runId === context.runId);
+        && (!context.runId || projectContext?.runId === context.runId)
+        && (!context.taskId || projectContext?.taskId === context.taskId);
     }
     return projectContext?.runId === context.runId && projectContext.taskId === context.taskId;
   });

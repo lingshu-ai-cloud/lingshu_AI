@@ -114,6 +114,6 @@ test('production preflight requires a complete director timeline and rejects an 
   const needsReview = benchmarkVideo();
   needsReview.aiAnalysis = { ...needsReview.aiAnalysis, geminiStatus: 'needs_review', analysisReviewReasons: ['opening_hook_observation_uncertainty'] };
   const publicReason = inspirationCreationShotPreflight(needsReview).reason;
-  assert.match(publicReason, /1 项镜头证据尚未通过质量校验/);
+  assert.match(publicReason, /编导交接待复核：原片分析已生成，但编导交接仍待复核/);
   assert.doesNotMatch(publicReason, /opening_hook_observation_uncertainty/);
 });

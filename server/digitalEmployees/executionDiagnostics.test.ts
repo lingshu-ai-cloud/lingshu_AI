@@ -41,7 +41,12 @@ const config = normalizeDigitalEmployeeConfig({enabledWorkflows:['viral_clone','
 const product = normalizeVideoPlan({route:'product',productName:'Press',theme:'Product introduction',platform:'youtube',language:'en'});
 const clone = normalizeVideoPlan({...product,route:'clone',referenceId:'reference-missing',materialIds:['material-1']});
 const input = {goalId:'test',config,goal:normalizeWeeklyGoal({videoPlans:[clone],contentPlatforms:['youtube']},config),evidence:{products:[{id:'p',name:'Press',materialIds:['material-1']}],exactAnalysisIds:[],materialIds:['material-1']},versions:{configVersion:1,policyVersion:'1',factsVersion:'1'}};
-assert.equal(buildContentBatchPlan(input).status,'blocked','all-clone requests cannot silently fall back');
+const cloneOnly=buildContentBatchPlan(input);
+assert.equal(cloneOnly.status,'planned','retain the frozen clone master while reference evidence is missing');
+assert.deepEqual(cloneOnly.orders.map(order=>order.route),['clone'],'all-clone requests cannot silently fall back');
+assert.equal(cloneOnly.orders[0].videoPlan?.referenceId,'reference-missing');
+assert.ok(cloneOnly.orders[0].readinessBlockers?.some(reason=>/精确分析/.test(reason)));
+assert.ok(!cloneOnly.eligibleRoutes.includes('clone'),'missing evidence must still block clone execution');
 const mixed=buildContentBatchPlan({...input,goal:{...input.goal,videoPlans:[clone,product]}});
 assert.equal(mixed.status,'planned');
 assert.deepEqual(mixed.orders.map(order=>order.route),['clone','product']);

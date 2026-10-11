@@ -5,9 +5,12 @@ import { test } from 'node:test';
 const dashboard = readFileSync(new URL('../SmartBusinessDashboard.tsx', import.meta.url), 'utf8');
 const page = readFileSync(new URL('../DigitalEmployeePage.tsx', import.meta.url), 'utf8');
 const studio = readFileSync(new URL('../AiCreateStudio.tsx', import.meta.url), 'utf8');
+const entry = readFileSync(new URL('./WeeklyProductionStudioEntry.tsx', import.meta.url), 'utf8');
 
 test('every Smart Business production entry preserves its exact project id', () => {
-  assert.match(dashboard, /onOpenProduction=\{onOpenProductionProgress \? \(taskId, contentItemId, projectId\) => \{ closeDetails\(\); onOpenProductionProgress\(taskId, contentItemId, projectId\); \}/);
+  assert.match(dashboard, /<WeeklyContentProgressPanel[^>]*contentId=\{item\.contentId\}[^>]*onOpenWorkbench=\{closeDetails\}/);
+  assert.match(entry, /weeklyProductionStudioLinks\(snapshot\.data, contentId, snapshot\.projects\)/);
+  assert.match(entry, /dispatchDigitalEmployeeDeepLink\(choice\.link\)/);
   assert.match(dashboard, /onOpenProductionProgress\(item\.taskId,item\.id,item\.projectIds\[0\]\)/);
   assert.match(dashboard, /onOpenContent\?\.\(item\.taskId\|\|undefined,item\.socialContentTaskId\|\|undefined,item\.projectIds\[0\]\)/);
   assert.match(page, /data\.tasks\.find\(item => item\.run_id === data\.run\?\.id && item\.task_key === "content_production"\)/);

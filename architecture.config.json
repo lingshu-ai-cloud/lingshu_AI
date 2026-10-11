@@ -24,7 +24,6 @@
     "src/components/AdminDeliveryPage.tsx": 1288,
     "src/components/PluginsPage.tsx": 1279,
     "src/components/YouTubeIntegration.tsx": 1211,
-    "src/components/publishing/CalendarPlanner.tsx": 1129,
     "server/routes/youtube.ts": 1050,
     "src/lib/studioApi.ts": 1039,
     "src/components/WorkspaceManagementPages.tsx": 1028,

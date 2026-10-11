@@ -115,6 +115,7 @@ function normalizeDeepLink(value: unknown): AssistantDecisionDeepLink | undefine
     ['statusSource', text(rawBusinessRef.statusSource, 120)],
     ['contentId', text(rawBusinessRef.contentId, 200)],
     ['referenceId', text(rawBusinessRef.referenceId, 200)],
+    ['enterpriseView', rawBusinessRef.enterpriseView === 'presenters' ? 'presenters' : ''],
     ['taskVersion', Number.isFinite(Number(rawBusinessRef.taskVersion)) ? Number(rawBusinessRef.taskVersion) : ''],
     ['correctionVersion', Number.isFinite(Number(rawBusinessRef.correctionVersion)) ? Number(rawBusinessRef.correctionVersion) : ''],
   ].filter(([, item]) => item !== '')) : undefined;

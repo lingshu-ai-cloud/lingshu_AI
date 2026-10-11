@@ -12,9 +12,15 @@ assert.match(page, /digitalEmployeeApi\.overview\(viewGoalId, nextRange\)/, 'ran
 assert.match(page, /productionRangeRef\.current = nextRange;[\s\S]{0,120}setData\(next\)/, 'the accepted range and overview data must update only after a successful response');
 assert.match(page, /overviewRangeBusy=\{busy === "overview-range"\}[\s\S]{0,120}onOverviewRangeChange=\{changeOverviewDateRange\}/, 'the health range control must receive the real request state and handler');
 assert.match(overview, /title="四领域评分口径覆盖结构"[\s\S]{0,180}horizontal stacked unit="项"/, 'criteria coverage must use the shared stacked data chart');
+assert.match(overview, /title="四领域评分口径覆盖结构"[\s\S]{0,260}showDataTable=\{false\}/, 'the criteria chart must omit the redundant visible data-table disclosure');
+assert.match(overview, /title="经营健康度与完善目标"[\s\S]{0,700}showDataTable=\{false\}/, 'the health-target chart must omit the redundant visible data-table disclosure');
 assert.match(overview, /label: '已评分'[\s\S]{0,280}label: '待数据'[\s\S]{0,280}label: '不适用'/, 'the chart must distinguish scored, pending and inapplicable criteria');
 assert.match(overview, /评分证据覆盖 \$\{totals\.scored\}\/\$\{totals\.applicable\} 项/, 'coverage progress must expose its real numerator and applicable denominator');
-assert.match(overview, /criterion\.score === null \? '—' : criterion\.score/, 'missing criterion scores must stay visibly unknown instead of becoming zero');
+assert.doesNotMatch(overview, /health-actions-title|优先补齐|const prioritized/, 'the redundant priority-fill rail must be removed');
+assert.match(overview, /aria-label="指标覆盖拼图"/, 'criterion coverage must use a visual puzzle board');
+assert.match(overview, /data-coverage-status=\{status\}/, 'every puzzle tile must expose its real coverage state');
+assert.match(overview, /status === 'scored'[\s\S]{0,120}Number\.isFinite\(criterion\.score\)/, 'only a real finite score may appear as a completed puzzle tile');
+assert.match(overview, /hasScore \? `\$\{criterion\.score\} 分` : meta\.label/, 'missing criterion scores must show their state instead of becoming zero');
 assert.match(overview, /label: '查看完整计算口径'/, 'the full textual basis must remain available on demand');
 
 console.log('Business Health range contract tests passed');

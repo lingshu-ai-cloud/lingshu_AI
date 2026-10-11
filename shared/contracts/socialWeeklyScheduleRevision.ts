@@ -1,7 +1,6 @@
 import type {WeeklyContentTemplateRevisionPlan} from './socialWeeklyContentTemplates.js';
 import type { VersionedSocialRef, WeeklyOperatingPackage,WeeklyExecutionTask } from './socialProgram.js';
-import type { WeeklyBackwardSchedule } from '../../server/socialPrograms/weeklyBackwardSchedule.js';
-import type { RecoveryResource,RecoveryTaskConstraint } from '../../server/socialPrograms/weeklyRecoveryAssessment.js';
+import type { WeeklyBackwardSchedule, RecoveryResource, RecoveryTaskConstraint } from './socialWeeklyCapacity.js';
 export interface WeeklyScheduleCapacityInput {constraints:Record<string,RecoveryTaskConstraint>;resources:Record<string,RecoveryResource>;remainingBudgetCny:number;operationalDeadlines?:Record<string,string>;}
 export interface WeeklyScheduleTargetGraph {tenantId:string;programId:string;packageId:string;sourceVersion:number;targetVersion:number;executionGraphVersion:1|2|3;targetGraphHash:string;tasks:WeeklyExecutionTask[];bindings:Array<{planningTaskId:string;targetTaskId:string;sourceTaskId:string|null;signature:string;origin:'existing_source'|'new_planned'}>;}
 export interface WeeklyScheduleProposal {

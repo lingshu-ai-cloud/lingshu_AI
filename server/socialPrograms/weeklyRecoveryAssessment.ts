@@ -1,19 +1,7 @@
 import type { WeeklyExecutionTask } from '../../shared/contracts/socialProgram.js';
 
-export interface RecoveryResource {
-  /** Business actors and provider capabilities can share the same resource key. */
-  concurrency: number;
-  workingWindows: Array<{ startAt: string; finishAt: string }>;
-}
-export interface RecoveryTaskConstraint {
-  resourceKey: string;
-  remainingMinutes: number;
-  remainingCostCny: number;
-  /** Explicit buffer includes quality/rework allowance; never inferred as already delivered. */
-  bufferMinutes: number;
-  availableAt: string;
-  unresolvedReasons?: string[];
-}
+import type { RecoveryResource, RecoveryTaskConstraint } from '../../shared/contracts/socialWeeklyCapacity.js';
+export type { RecoveryResource, RecoveryTaskConstraint } from '../../shared/contracts/socialWeeklyCapacity.js';
 export interface WeeklyRecoveryInput {
   tasks: WeeklyExecutionTask[];
   changedTaskIds: string[];

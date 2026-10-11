@@ -126,12 +126,29 @@ export function assistantDecisionExecutionFeedback(
 
 function dispatchDeepLink(link?: AssistantDecisionDeepLink): void {
   if (!link || typeof window === 'undefined') return;
+  const opensEnterprisePresenters = link.page === 'enterprise'
+    && link.businessRef?.enterpriseView === 'presenters';
+  if (opensEnterprisePresenters) {
+    try {
+      window.localStorage.setItem('lingshu:enterprise:initial-view', 'presenters');
+    } catch {
+      /* The live event below still handles browsers with storage disabled. */
+    }
+  }
   const detail = {
     ...link,
     ...(link.runId ? { workflowRunId: link.runId } : {}),
     ...(link.taskId ? { workflowTaskId: link.taskId } : {}),
   };
   window.dispatchEvent(new CustomEvent('lingshu:navigate', { detail }));
+  if (opensEnterprisePresenters) {
+    const revealPresenters = () => window.dispatchEvent(new CustomEvent(
+      'lingshu:enterprise-view',
+      { detail: { view: 'presenters' } },
+    ));
+    revealPresenters();
+    window.requestAnimationFrame?.(revealPresenters);
+  }
 }
 
 function factTone(tone: AssistantDecisionCard['facts'][number]['tone']): string {

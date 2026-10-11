@@ -5,7 +5,7 @@ import { newShotProduction } from '../../src/lib/shotProduction.js';
 export interface AutomatedReplicationShot {
   shotId: string; slotId: string; kind: 'person' | 'nonperson' | 'blocked'; start: number; end: number;
   required: true; productionState: 'ready' | 'blocked'; intendedKind?: 'person' | 'nonperson';
-  blockerCode?: 'physical_boundary_unconfirmed' | 'material_type_unconfirmed' | 'visual_evidence_missing' | 'presenter_authorization_required' | 'target_narration_missing' | 'reference_model_input_authorization_required';
+  blockerCode?: 'physical_boundary_unconfirmed' | 'material_type_unconfirmed' | 'visual_evidence_missing' | 'avatar_required' | 'presenter_authorization_required' | 'target_narration_missing' | 'reference_model_input_authorization_required' | 'usage_action_required';
   blocker?: string;
   fingerprintContext?: string;
   firstFrameRequest?: Record<string, unknown>;
@@ -15,14 +15,46 @@ export interface ReplicationWorkbenchInput {
   reference: Record<string, unknown>; assets?: Array<Record<string, unknown>>;
   presenterId?: string; productIds?: string[];
 }
+export const MANAGED_REPLICATION_PLAN_VERSION = 2;
 const parse = (value: unknown): Record<string, unknown> => {
   if (typeof value === 'string') { try { return recordOf(JSON.parse(value)); } catch { return {}; } }
   return recordOf(value);
 };
 const hash = (value: unknown) => createHash('sha256').update(JSON.stringify(value)).digest('hex');
-const narrationSegments = (script: string) => [...script.matchAll(/\[(\d+(?:\.\d+)?)\s*[-–—]\s*(\d+(?:\.\d+)?)\s*s?\]([^]*?)(?=\[\d+(?:\.\d+)?\s*[-–—]|$)/g)].map(match => ({
+export const replicationNarrationSegments = (script: string) => [...script.matchAll(/\[(\d+(?:\.\d+)?)\s*[-–—]\s*(\d+(?:\.\d+)?)\s*s?\]([^]*?)(?=\[\d+(?:\.\d+)?\s*[-–—]|$)/g)].map(match => ({
   start: Number(match[1]), end: Number(match[2]), text: match[3]!.match(/(?:台词|口播|旁白|对白)\s*[：:]\s*([^\n]+)/)?.[1]?.trim() || '',
 }));
+
+/** Source motion is not automatically valid for a different target product.
+ * Explicit saved target actions already bind to their selected product IDs;
+ * reference actions are transferable only for the same verified enterprise
+ * product, never because two items happen to share a broad category. */
+export function managedReplicationAction(input: {
+  plan: Record<string, unknown>; raw: Record<string, unknown>;
+  reference: Record<string, unknown>; productIds: string[];
+}): { startState: string; beats: string[]; endState: string; cameraMotion: string; evidence: 'confirmed_storyboard' | 'confirmed_reference_analysis' } | null {
+  const clean = (value: unknown) => typeof value === 'string' ? value.trim() : '';
+  const ids = Array.isArray(input.plan.productIds) ? input.plan.productIds.map(String) : [];
+  const sameTarget = input.productIds.length > 0 && JSON.stringify(ids) === JSON.stringify(input.productIds);
+  const saved = {
+    startState: clean(input.plan.actionStartState),
+    beats: clean(input.plan.actionBeats).split(/[；;\n]+/).map(value => value.trim()).filter(Boolean),
+    endState: clean(input.plan.actionEndState), cameraMotion: clean(input.raw.camera),
+    evidence: 'confirmed_storyboard' as const,
+  };
+  if (sameTarget && saved.startState && saved.beats.length && saved.endState) return saved;
+  const referenceProductId = clean(input.reference.productId);
+  const sameEnterpriseProduct = input.reference.scope === 'own' && input.productIds.length === 1
+    && referenceProductId === input.productIds[0] && input.raw.needsReview !== true;
+  if (!sameEnterpriseProduct) return null;
+  const observed = {
+    startState: clean(input.raw.startState),
+    beats: (Array.isArray(input.raw.beats) ? input.raw.beats : []).map(value => clean(recordOf(value).action)).filter(Boolean),
+    endState: clean(input.raw.endState), cameraMotion: clean(input.raw.camera),
+    evidence: 'confirmed_reference_analysis' as const,
+  };
+  return observed.startState && observed.beats.length && observed.endState ? observed : null;
+}
 
 export function trustedReferenceDuration(reference: Record<string, unknown>): number {
   const analysis = parse(reference.aiAnalysis);
@@ -69,9 +101,13 @@ export function buildReplicationWorkbenchSpec(input: ReplicationWorkbenchInput):
   if (!normalized.timelineComplete) throw Error('复刻逐镜时间线不完整，不能生成完整成片');
   const revision = hash(normalized.shots);
   const prior = recordOf(input.spec.automatedReplicationPlan);
-  if (prior.version === 1) {
+  if (prior.version === MANAGED_REPLICATION_PLAN_VERSION) {
     if (prior.referenceId !== referenceId || prior.referenceRevision !== revision) throw Error('复刻参考分析已变化，请创建新制作版本，不能覆盖已有供应商任务');
     return input.spec;
+  }
+  if (prior.version && prior.version !== 1) throw Error('复刻工作台版本不兼容，请创建新制作版本');
+  if (prior.version === 1 && (prior.referenceId !== referenceId || prior.referenceRevision !== revision)) {
+    throw Error('复刻参考分析已变化，请创建新制作版本，不能覆盖已有供应商任务');
   }
   const assemblyId = 'video-1';
   const ratio = String(input.spec.ratio || '9:16');
@@ -84,7 +120,7 @@ export function buildReplicationWorkbenchSpec(input: ReplicationWorkbenchInput):
   if (frozenBody && input.spec.script && input.spec.script !== frozenBody) throw Error('工作台脚本与编导冻结合同不一致');
   const script = frozenBody || String(input.spec.script || '');
   if (!script) throw Error('逐镜复刻缺少编导冻结脚本');
-  const narration = narrationSegments(script);
+  const narration = replicationNarrationSegments(script);
   const referenceModelInputAuthorized = (input.reference.modelInputAuthorized === true || analysis.modelInputAuthorized === true)
     && Boolean(String(input.reference.modelInputAuthorizationEvidence || analysis.modelInputAuthorizationEvidence || '').trim());
   const referenceModelInputAuthorizationEvidence = String(input.reference.modelInputAuthorizationEvidence || analysis.modelInputAuthorizationEvidence || '').trim();
@@ -102,9 +138,10 @@ export function buildReplicationWorkbenchSpec(input: ReplicationWorkbenchInput):
     const role = String(raw.observedPresenterRole || '');
     const foregroundPerson = /女性|男性|女人|男人|女士|男士|主播|主持人|presenter/i.test(shot.visual)
       && !/背景.{0,8}(女性|男性|人物)|工人背影|人群|路人/.test(shot.visual);
-    const person = ['sales_presenter', 'presenter_action'].includes(role) || shot.materialType === 'talking_head'
+    const observedPerson = ['sales_presenter', 'presenter_action'].includes(role) || shot.materialType === 'talking_head'
       || (role === 'unknown' && foregroundPerson);
-    const detail = `镜头功能：${shot.purpose}\n画面：${shot.visual}\n环境：${shot.environment}\n景别：${shot.framing}\n运镜：${shot.camera}`;
+    const savedSourcePlan = recordOf(recordOf(input.spec.storyboardSourcePlans)[slotId]);
+    const action = managedReplicationAction({ plan: savedSourcePlan, raw, reference: input.reference, productIds });
     const targetText = narration.filter(segment => segment.start < end && segment.end > start).map(segment => {
       // A frozen narration line spanning several reference beats is partitioned, never repeated per shot.
       const tokens = /\s/.test(segment.text) ? segment.text.split(/\s+/) : Array.from(segment.text);
@@ -113,30 +150,40 @@ export function buildReplicationWorkbenchSpec(input: ReplicationWorkbenchInput):
       const to = Math.round(Math.min(length, end - segment.start) / length * tokens.length);
       return tokens.slice(from, to).join(/\s/.test(segment.text) ? ' ' : '');
     }).filter(Boolean).join('\n');
-    const evidenceBlocker = shot.granularity !== 'shot'
-      ? { code: 'physical_boundary_unconfirmed' as const, message: `第 ${shot.index} 段缺少已确认的物理镜头边界` }
-      : shot.materialType === 'unknown'
-        ? { code: 'material_type_unconfirmed' as const, message: `第 ${shot.index} 镜缺少已确认的镜头类型` }
-        : !shot.visual.trim()
-          ? { code: 'visual_evidence_missing' as const, message: `第 ${shot.index} 镜缺少逐镜可见事实` }
-          : person && !input.presenterId
-            ? { code: 'presenter_authorization_required' as const, message: `第 ${shot.index} 镜需要已授权企业数字人` }
-            : person && !targetText
-              ? { code: 'target_narration_missing' as const, message: `第 ${shot.index} 镜缺少企业目标台词，禁止直接复用原片商业口播` }
-              : person && !referenceModelInputAuthorized
-                ? { code: 'reference_model_input_authorization_required' as const, message: `第 ${shot.index} 镜缺少原片首帧作为模型输入的授权依据` }
-              : null;
+    const evidenceBlocker = observedPerson && !input.presenterId
+      ? { code: 'avatar_required' as const, message: `第 ${shot.index} 镜尚未录入可用企业数字人，人物镜头待补录，其他已就绪镜头继续制作` }
+      : null;
+    const fallbackReasons = [
+      ...(shot.granularity !== 'shot' ? ['未确认物理切镜，仅保留时间窗口'] : []),
+      ...(shot.materialType === 'unknown' ? ['镜头类型待复核'] : []),
+      ...(!shot.visual.trim() ? ['原片画面事实不足'] : []),
+      ...(observedPerson && input.presenterId && !targetText ? ['原片无可验证口播'] : []),
+      ...(observedPerson && input.presenterId && !referenceModelInputAuthorized ? ['原片人物帧未授权模型输入'] : []),
+      ...(shot.materialType === 'consumer_demo' && !action ? ['目标产品用法未确认'] : []),
+    ];
+    const safeFallback = !evidenceBlocker && fallbackReasons.length > 0;
+    const person = observedPerson && !safeFallback;
+    const fallbackVisual = productIds.length
+      ? '使用已绑定的企业产品素材做静物、转台或包装细节展示；不展示人物，不演示未确认用法，不复刻原片品牌与口播'
+      : '使用企业已授权素材做无人物的中性信息画面；不推断产品功效或原片台词';
+    const detail = `镜头功能：${shot.purpose}\n画面：${safeFallback ? fallbackVisual : shot.visual}\n环境：${safeFallback ? '企业产品展示场景' : shot.environment}\n景别：${safeFallback ? '产品近景或细节特写' : shot.framing}\n运镜：${safeFallback ? '固定或缓慢推拉' : shot.camera}${safeFallback ? `\n安全降级：${fallbackReasons.join('；')}` : ''}`;
     slots.push({ id: shotId, slotId, detail, duration: end - start, requirements: JSON.stringify({ detail, start, end, ratio, productIds,
       ...(evidenceBlocker ? { blockerCode: evidenceBlocker.code } : {}) }),
-      observedPresenterRole: person ? 'sales_presenter' : 'none', salesPresenterConfirmed: false,
+      observedPresenterRole: observedPerson ? 'sales_presenter' : 'none', salesPresenterConfirmed: false,
       ...(evidenceBlocker ? { locked: true, blocker: evidenceBlocker.message } : {}) });
     const sourceFirstFrameUrl = `/api/overseas/videos/${encodeURIComponent(referenceId)}/shot/${shot.index}/first-frame`;
-    details.push({ ...shot, shotId: slotId, firstFrameRef: sourceFirstFrameUrl, observedPresenterRole: person ? 'sales_presenter' : 'none',
+    details.push({ ...shot, shotId: slotId,
+      ...(referenceModelInputAuthorized && !safeFallback ? { firstFrameRef: sourceFirstFrameUrl } : {}),
+      observedPresenterRole: observedPerson ? 'sales_presenter' : 'none',
+      startState: typeof raw.startState === 'string' ? raw.startState : '',
+      endState: typeof raw.endState === 'string' ? raw.endState : '',
+      beats: Array.isArray(raw.beats) ? raw.beats : [],
+      ...(safeFallback ? { productionFallback: { mode: 'enterprise_product_display', reasons: fallbackReasons } } : {}),
       ...(evidenceBlocker ? { productionBlocker: evidenceBlocker } : {}) });
     if (evidenceBlocker) {
       sourcePlans[slotId] = { mode: 'blocked', sceneType: 'general', productIds, confirmed: false, decided: false,
         blockerCode: evidenceBlocker.code, blocker: evidenceBlocker.message };
-      automatedShots.push({ shotId, slotId, kind: 'blocked', intendedKind: person ? 'person' : 'nonperson', start, end,
+      automatedShots.push({ shotId, slotId, kind: 'blocked', intendedKind: observedPerson ? 'person' : 'nonperson', start, end,
         required: true, productionState: 'blocked', blockerCode: evidenceBlocker.code, blocker: evidenceBlocker.message, fingerprintContext });
       continue;
     }
@@ -153,23 +200,49 @@ export function buildReplicationWorkbenchSpec(input: ReplicationWorkbenchInput):
             composition: { presenterKey: input.presenterId!, shotSize: shot.framing, cameraAngle: shot.camera, background: shot.environment, actionIntent: shot.visual } }] } };
     }
     productions[`${assemblyId}:${shotId}`] = production;
-    const sceneType = shot.materialType === 'product' ? 'product'
+    const sceneType = safeFallback && productIds.length ? 'product'
+      : shot.materialType === 'product' ? 'product'
       : shot.materialType === 'factory' ? 'factory'
       : shot.materialType === 'consumer_demo' ? 'usage'
       : 'general';
     sourcePlans[slotId] = { mode: person ? 'digital_human' : 'ai', sceneType, productIds,
+      ...(safeFallback ? { fallbackMode: 'enterprise_product_display', fallbackReasons } : {}),
+      ...(!safeFallback && action?.evidence === 'confirmed_storyboard' ? { actionStartState: action.startState,
+        actionBeats: action.beats.join('；'), actionEndState: action.endState } : {}),
       confirmed: false, decided: true, videoResolution: '480p', videoResolutionPinned: true };
     automatedShots.push({ shotId, slotId, kind: person ? 'person' : 'nonperson', start, end, required: true, productionState: 'ready', fingerprintContext,
       ...(!person ? { firstFrameRequest: { projectId: input.projectId, shotId, requestId: `auto-frame-${hash([input.projectId, revision, shot.index]).slice(0, 32)}`,
         mode: 'replication', sceneType, shotDescription: detail,
-        startSeconds: start, endSeconds: end, ratio, productIds, sourceFirstFrameUrl } } : {}) });
+        startSeconds: start, endSeconds: end, ratio, productIds,
+        ...(referenceModelInputAuthorized && !safeFallback ? { sourceFirstFrameUrl } : {}),
+        ...(!safeFallback && action ? { action } : {}),
+        ...(safeFallback ? { fallbackMode: 'enterprise_product_display' } : {}) } } : {}) });
   }
-  return { ...input.spec, mode: 'clone', contentMode: 'video', creationPath: 'viral_replication', manualWorkflow: false,
+  const built = { ...input.spec, mode: 'clone', contentMode: 'video', creationPath: 'viral_replication', manualWorkflow: false,
     activeAssemblyId: assemblyId, assemblyName: '视频1', ratio, script, selectedProductIds: productIds,
     shootingSlots: slots, shotProductions: productions, shotProductionContext: `automated-replication:${revision}`, automatedReplicationShots: automatedShots,
     storyboardAssignments: {}, storyboardSourcePlans: sourcePlans, selected: [],
     storyboardAssemblies: [{ id: assemblyId, name: '视频1', assignments: {}, sourcePlans, selected: [] }],
     videoKickoff: { ...recordOf(input.spec.videoKickoff), source: 'inspiration', video: { ...input.reference, referenceRecordId: referenceId, videoUrl: `/api/overseas/videos/${encodeURIComponent(referenceId)}/media-url`, aiAnalysis: analysis }, referenceAnalysis: { details } },
-    automatedReplicationPlan: { version: 1, referenceId, referenceRevision: revision, tenantId: input.tenantId, ...(terminalBoundaryCorrected ? { terminalBoundaryCorrection: { source: 'media_duration_and_detected_scene_cuts', originalEnd: last!.end, effectiveEnd: mediaDuration } } : {}) },
+    automatedReplicationPlan: { version: MANAGED_REPLICATION_PLAN_VERSION, referenceId, referenceRevision: revision, tenantId: input.tenantId, ...(terminalBoundaryCorrected ? { terminalBoundaryCorrection: { source: 'media_duration_and_detected_scene_cuts', originalEnd: last!.end, effectiveEnd: mediaDuration } } : {}) },
+  };
+  if (prior.version !== 1) return built;
+
+  const previousSourcePlans = recordOf(input.spec.storyboardSourcePlans);
+  const migratedSourcePlans = Object.fromEntries(Object.entries(sourcePlans).map(([slotId, next]) => {
+    const previous = recordOf(previousSourcePlans[slotId]);
+    return [slotId, previous.mode && previous.mode !== 'blocked' ? previous : next];
+  }));
+  const assignments = recordOf(input.spec.storyboardAssignments);
+  const selected = Array.isArray(input.spec.selected) ? input.spec.selected : [];
+  return {
+    ...built,
+    shotProductions: { ...productions, ...recordOf(input.spec.shotProductions) },
+    storyboardAssignments: assignments,
+    storyboardSourcePlans: migratedSourcePlans,
+    selected,
+    ...(input.spec.automatedReplicationProgress ? { automatedReplicationProgress: input.spec.automatedReplicationProgress } : {}),
+    ...(input.spec.clipEdits ? { clipEdits: input.spec.clipEdits } : {}),
+    storyboardAssemblies: [{ id: assemblyId, name: '视频1', assignments, sourcePlans: migratedSourcePlans, selected }],
   };
 }

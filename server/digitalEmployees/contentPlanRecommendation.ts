@@ -6,6 +6,7 @@ import type { WeeklyPackage } from '../../src/lib/weeklyPackage.js';
 import { buildBenchmarkAnalysis, type BenchmarkAnalysis } from '../../shared/benchmarkAnalysis.js';
 import { includedAdaptationCostRange, masterVideoCostRange, MASTER_VIDEO_COST_POINT_CNY } from '../../shared/contracts/contentCostModel.js';
 import { isDiscoveryVideoEligible } from '../../shared/contracts/discoveryVideoPolicy.js';
+import { productionReferenceAdmission, type ProductionReferenceAdmission } from '../../shared/productionReferenceAdmission.js';
 
 type EvidenceRecord = { id: string; [key: string]: unknown };
 type BenchmarkAccount = {
@@ -28,6 +29,8 @@ export interface RankedContentReference {
   evidenceRequirement: string;
   benchmarkAccount: string;
   exact: boolean;
+  productionReady: boolean;
+  admission: ProductionReferenceAdmission;
   score: number;
   factors: string[];
   analysis: BenchmarkAnalysis;
@@ -173,6 +176,7 @@ export function rankContentReferences(input: {
       evidenceRevision: text(video.updatedAt || video.updated_at || analysis.evidenceRevision || analysis.analysisRunId || `analysis:${video.id}`, 160),
     });
     const benchmark = benchmarkFor(video, input.benchmarks);
+    const admission = productionReferenceAdmission(benchmarkAnalysis);
     const publicBaseline = record(analysis.publicBaseline);
     const relativeMultiple = Number(analysis.relativeViewMultiple || publicBaseline.relativeMultiple || 0);
     const title = text(video.title || analysis.caption || video.id);
@@ -184,8 +188,9 @@ export function rankContentReferences(input: {
     const factors: string[] = [];
     let score = 0;
     if (platform === input.platform) { score += 24; factors.push('同平台'); }
-    if (exact) { score += 28; factors.push('全片精确分析'); }
-    if (exactReviewRequired) factors.push('精确分析已完成，发布前需轻量复核');
+    if (exact && admission.ready) { score += 28; factors.push('全片精确分析已通过编导交接'); }
+    else if (exact) factors.push('分析证据已生成，制作前待复核');
+    if (exactReviewRequired || !admission.ready) factors.push(...admission.blockers.slice(0, 2));
     if (benchmark) { score += 18; factors.push(`来自对标账号 ${text(benchmark.accountName || benchmark.handle || benchmark.accountUrl, 80)}`); }
     if (relevance === 'high') { score += 10; factors.push('业务相关性高'); }
     else if (relevance === 'medium') score += 5;
@@ -208,6 +213,8 @@ export function rankContentReferences(input: {
       evidenceRequirement: sellingPoints[0] ? `用企业资料核验并呈现：${sellingPoints[0]}` : '必须使用企业资料或素材库中的可核验事实与画面',
       benchmarkAccount: benchmark ? text(benchmark.accountName || benchmark.handle || benchmark.accountUrl, 300) : text(analysis.sourceAccountName || analysis.author, 300),
       exact,
+      productionReady: exact && admission.ready,
+      admission,
       score: Math.max(0, Math.min(100, Math.round(score))),
       factors: [...new Set(factors)].slice(0, 8),
       analysis: benchmarkAnalysis,
@@ -255,7 +262,12 @@ export function enrichPackageWithContentSignals(input: {
       audience: anchorRow?.audience || anchor.plan.matrix?.audience || input.config.customerProfile,
       direction: anchorRow?.contentDirection || anchor.plan.theme,
     });
-    const reference = ranked.find(item => item.exact && !used.has(item.id));
+    const existingReferenceId = anchor.plan.referenceId;
+    // Preserve an explicit/frozen reference; do not silently replace it while
+    // enriching its visible diagnostics. Only new picks require full admission.
+    const reference = existingReferenceId ? ranked.find(item => item.id === existingReferenceId)
+      : ranked.find(item => item.productionReady && !used.has(item.id));
+    const awaitingReview = ranked.find(item => item.exact && !item.productionReady && !used.has(item.id));
     if (reference) used.add(reference.id);
     const mayClone = input.config.enabledWorkflows.includes('viral_clone');
     const angle = contentAngles[familyIndex % contentAngles.length];
@@ -303,7 +315,10 @@ export function enrichPackageWithContentSignals(input: {
           factors: [
             `原创母版 ${familyIndex + 1}/${groups.size} · 本账号发布位 ${slot}/${requiredCount}`,
             ...(reference?.factors || []),
-            reference?.exact ? '参考内容已具备可执行精确分析' : '爆款视频数量不足，补齐后才能确认周计划',
+            reference?.productionReady ? '参考内容已具备可执行精确分析'
+              : reference ? `制作前待复核：${reference.admission.blockers.slice(0, 3).join('；')}`
+                : awaitingReview ? `参考分析待复核：${awaitingReview.admission.blockers.slice(0, 3).join('；')}`
+                  : '爆款视频数量不足，补齐后才能确认周计划',
             master ? '原创母版承担一次生产成本' : '跨平台轻适配包含在母版成本中',
           ],
         },

@@ -6,6 +6,9 @@ import { digitalEmployeesRouter, reconcileDigitalEmployeeRun } from '../routes/d
 import { runDigitalEmployeeRuntimeCycle } from './runtimeOrchestrator.js';
 import { reopenNoDataCustomerBranch } from './customerReentry.js';
 import { dataAuthorityRequestScope } from '../storage/dataAuthority.js';
+import { withExecutionAdapters } from './executionAdapters.js';
+import { buildBusinessSnapshot } from './businessSnapshot.js';
+import { createCustomerSegmentSnapshot, DEFAULT_FOLLOWUP_SEGMENT_CRITERIA } from './customerWorkflow.js';
 const previousLocalFallback = process.env.ENABLE_LOCAL_DEV_FALLBACK;
 const previousNodeEnv = process.env.NODE_ENV;
 process.env.NODE_ENV = 'test';
@@ -15,7 +18,7 @@ const today = new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Shanghai'
 const config = { autonomyMode: 'managed', enabledWorkflows: ['customer_segmentation', 'batch_followup'], reviewSchedule: '月底有空时', continuationPolicy: { newCustomers: 'reopen', missedFollowup: 'catch_up', overlappingCycles: 'allow_disjoint' } };
 let customers: any[] = [];
 let rows: Record<string, any[]> = {};
-const original = { list: store.list, getById: store.getById, create: store.create, update: store.update, verifyToken: auth.verifyToken, readFileSync: fs.readFileSync, writeFileSync: fs.writeFileSync, fetch: globalThis.fetch };
+const original = { list: store.list, getById: store.getById, create: store.create, update: store.update, compareAndSwap: store.compareAndSwap, verifyToken: auth.verifyToken, readFileSync: fs.readFileSync, writeFileSync: fs.writeFileSync, fetch: globalThis.fetch };
 let failTask = '', unexpectedNetwork = 0;
 store.list = (async (collection: string, query: any = {}) => {
   let filtered = (rows[collection] || []).filter(row => Object.entries(query.where || {}).every(([key, value]) => row[key] === value));
@@ -26,6 +29,12 @@ store.list = (async (collection: string, query: any = {}) => {
 store.getById = (async (collection: string, id: string) => structuredClone((rows[collection] || []).find(row => row.id === id) || null)) as typeof store.getById;
 store.create = (async (collection: string, body: any) => { const record = { ...body, id: `test-${collection}-${(rows[collection] || []).length}` }; (rows[collection] ||= []).push(record); return structuredClone(record); }) as typeof store.create;
 store.update = (async (collection: string, id: string, patch: any) => { if (collection === 'workflow_tasks' && id === failTask) return false; const record = (rows[collection] || []).find(row => row.id === id); if (!record) return false; Object.assign(record, structuredClone(patch)); return true; }) as typeof store.update;
+store.compareAndSwap = async (collection, id, expected, patch) => {
+  const record = (rows[collection] || []).find(row => row.id === id);
+  if (!record || !Object.entries(expected).every(([key, value]) => JSON.stringify(record[key]) === JSON.stringify(value))) return false;
+  Object.assign(record, structuredClone(patch));
+  return true;
+};
 auth.verifyToken = (async () => ({ userId: 'test-user', tenantId: tenant, dataAuthority: 'local' })) as typeof auth.verifyToken;
 fs.readFileSync = ((path: any, ...args: any[]) => {
   if (String(path).includes('/data/') && String(path).endsWith('.json')) return String(path).endsWith('whatsapp-customers.json') ? JSON.stringify(customers) : String(path).endsWith('enterprise.json') ? '{}' : '[]';
@@ -41,14 +50,33 @@ const token = issueLocalIdentityTokenForTest({ userId: 'test-user', tenantId: te
 function setup() {
   customers = [];
   rows = { digital_employee_configs: [{ id: 'cfg', tenant_id: tenant, config }], tenant_profiles: [{ id: 'profile', tenant_id: tenant, profile: { company: { name: 'Test', industry: 'Test' }, products: { items: [] } } }],
-    weekly_goals: [{ id: 'goal', tenant_id: tenant, title: 'Current', starts_at: today, ends_at: today, status: 'completed', objective: 'Isolated', metric: 'test', scope: {}, content_platforms: [] }],
-    weekly_plans: [{ id: 'plan', tenant_id: tenant, goal_id: 'goal', plan: { configSnapshot: config } }],
+    weekly_goals: [{ id: 'goal', tenant_id: tenant, version: 1, title: 'Current', starts_at: today, ends_at: today, status: 'completed', objective: 'Isolated', metric: 'test', scope: {}, content_platforms: [] }],
+    weekly_plans: [{ id: 'plan', tenant_id: tenant, goal_id: 'goal', status: 'draft', plan: { configSnapshot: config } }],
     workflow_runs: [{ id: 'run', tenant_id: tenant, goal_id: 'goal', plan_id: 'plan', status: 'succeeded', started_at: '2026-01-01T00:00:00Z' }],
     workflow_tasks: ['customer_segmentation', 'followup_batch_draft', 'followup_batch_approval', 'followup_dispatch', 'weekly_review'].map((key, index) => ({ id: key, task_key: key, tenant_id: tenant, run_id: 'run', title: key, status: 'skipped', output: { dataStatus: 'no_data' }, sequence: index,
       kind: key === 'followup_batch_approval' ? 'approval' : 'execution', execution_mode: key === 'customer_segmentation' ? 'draft_executor' : key === 'followup_batch_approval' ? 'approval' : 'observe', external_effect: 'none', automatic_execution_allowed: true, requires_approval: key === 'followup_batch_approval', depends_on: key === 'customer_segmentation' ? [] : key === 'followup_batch_draft' ? ['test_missing'] : [ ['customer_segmentation', 'followup_batch_draft', 'followup_batch_approval', 'followup_dispatch'][index - 1] ] })),
   };
 }
 try {
+  // This test exercises orchestration with already authorized customer data;
+  // live WhatsApp consent and inbound ownership are tested by its read boundary.
+  await withExecutionAdapters({
+    customers: requestedTenant => requestedTenant === tenant ? structuredClone(customers) : [],
+    snapshot: async (requestedTenant, range) => {
+      const snapshot = await buildBusinessSnapshot(requestedTenant, range);
+      snapshot.customer.total = { ...snapshot.customer.total, value: requestedTenant === tenant ? customers.length : 0, status: 'available' };
+      return snapshot;
+    },
+    prepare: async ({ tenantId, run, task }) => {
+      if (task.task_key !== 'customer_segmentation') return false;
+      const result = await createCustomerSegmentSnapshot({ tenantId, goalId: 'goal', runId: run.id,
+        taskId: task.id, userId: 'test-user', criteria: DEFAULT_FOLLOWUP_SEGMENT_CRITERIA, idempotent: true },
+      requestedTenant => requestedTenant === tenant ? structuredClone(customers) : []);
+      await store.update('workflow_tasks', task.id, { business_refs: [{ type: 'customer_segment', id: result.segment.id,
+        version: result.segment.version, memberCount: result.segment.member_count }] });
+      return result.created;
+    },
+  }, async () => {
   setup();
   let cycle = await runDigitalEmployeeRuntimeCycle(new Date());
   assert.equal(cycle.reconciled, 1, 'same-cycle completed runs must enter reconciliation');
@@ -100,8 +128,9 @@ try {
   assert.equal(rows.workflow_runs.filter(run => run.goal_id === 'goal').length, 1, 'disjoint cycle creates one run while unfinished old cycle remains');
   assert.equal(unexpectedNetwork, 0);
   console.log('Continuation integration passed: runtime completed scanning, new customer segmentation, renewed approval, history pagination, restart recovery, overlapping/disjoint activation');
+  });
 } finally {
-  Object.assign(store, { list: original.list, getById: original.getById, create: original.create, update: original.update }); auth.verifyToken = original.verifyToken;
+  Object.assign(store, { list: original.list, getById: original.getById, create: original.create, update: original.update, compareAndSwap: original.compareAndSwap }); auth.verifyToken = original.verifyToken;
   fs.readFileSync = original.readFileSync; fs.writeFileSync = original.writeFileSync; globalThis.fetch = original.fetch;
   if (previousLocalFallback === undefined) delete process.env.ENABLE_LOCAL_DEV_FALLBACK;
   else process.env.ENABLE_LOCAL_DEV_FALLBACK = previousLocalFallback;

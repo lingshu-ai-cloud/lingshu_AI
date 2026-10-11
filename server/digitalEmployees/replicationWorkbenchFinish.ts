@@ -10,7 +10,7 @@ import { readTenantMaterialBytes } from '../lib/sentenceReplicationProduction.js
 import { measureAvatarSourceCaptions } from '../lib/avatarSourceCaptions.js';
 import { studioPaidBudget } from '../lib/studioPaidBudget.js';
 import { withPaidOperationLock } from '../lib/paidOperationLock.js';
-import { synthesizeStudioVoiceForAutomation } from '../routes/studio.js';
+import { synthesizeStudioVoiceForAutomation, voiceoverLineNeedsLanguageRepair } from '../routes/studio.js';
 import { inspectRenderedVisuals, inspectRenderedScenes } from '../lib/renderVisualQuality.js';
 import { paginateAlignedCues, subtitleCuesAreSafe } from '../lib/subtitleCues.js';
 import { finishContent } from './contentFinish.js';
@@ -18,6 +18,7 @@ import { CONTENT_SCRIPT_QUALITY_RULE_VERSION } from './contentQualityContract.js
 import { store } from '../storage/index.js';
 import { digitalHumanQualityState } from '../../src/lib/digitalHumanQuality.js';
 import { shotFingerprint } from '../../src/lib/shotProduction.js';
+import { replicationNarrationSegments } from './replicationWorkbenchPlan.js';
 
 const run = promisify(execFile);
 const require = createRequire(import.meta.url);
@@ -26,6 +27,31 @@ type Cue = { start: number; end: number; text: string };
 type Probe = { duration: number; hasAudio: boolean };
 const digest = (value: Buffer | string) => createHash('sha256').update(value).digest('hex');
 const normalizedSpeech = (value: string) => value.toLocaleLowerCase().replace(/[^\p{L}\p{N}]/gu, '');
+
+/** Pure preflight, before ASR/TTS intents or media IO. A rejected input is not
+ * an uncertain paid operation. Never repair a frozen script by rewriting it,
+ * dropping words, or independently voicing fragments of a continuous line. */
+export function replicationNarrationPreflightIssue(spec: Record<string, any>): string | null {
+  const language = String(spec.activeVoiceLang || spec.lang || 'en');
+  const shots = Array.isArray(spec.automatedReplicationShots) ? spec.automatedReplicationShots : [];
+  const lines = shots.map((shot: any) => String(spec.shotProductions?.[`${spec.activeAssemblyId}:${shot.shotId}`]?.narration || '').trim());
+  const frozen = replicationNarrationSegments(String(spec.script || '')).filter(segment => segment.text);
+  if ([...lines, ...frozen.map(segment => segment.text)].some(line => voiceoverLineNeedsLanguageRepair(line, language))) {
+    return `冻结口播与目标语种 ${language} 不一致；请先确认完整目标语种脚本，未提交配音`;
+  }
+  if (!frozen.length) return null;
+  if (normalizedSpeech(frozen.map(segment => segment.text).join(' ')) !== normalizedSpeech(lines.join(' '))) {
+    return '冻结口播文字覆盖不完整或顺序不一致；请修复完整脚本与镜头映射，未提交配音';
+  }
+  for (let index = 0; index < shots.length - 1; index++) {
+    const boundary = Number(shots[index]?.end);
+    const crossesLine = frozen.some(segment => segment.start < boundary - .001 && segment.end > boundary + .001);
+    if (crossesLine && lines[index] && lines[index + 1] && !/[.!?。！？…][”’"']?$/.test(lines[index])) {
+      return `冻结口播跨越第 ${index + 1}、${index + 2} 镜且被分割为半句；需保留完整句连续配音及实测对齐，未提交配音`;
+    }
+  }
+  return null;
+}
 
 async function probe(file: string): Promise<Probe> {
   const result = await run(String(ffmpeg || 'ffmpeg'), ['-hide_banner', '-nostdin', '-xerror', '-protocol_whitelist', 'file,pipe', '-f', 'mov', '-i', file, '-map', '0:v:0', '-map', '0:a:0?', '-f', 'null', '-'], { timeout: 120_000, maxBuffer: 4 * 1024 * 1024 });
@@ -56,6 +82,8 @@ export async function finishReplicationWorkbench(input: { tenantId: string; proj
   if (!tenantId || !projectId || !Array.isArray(shots) || !shots.length || shots.length > 32) throw new Error('逐镜装配缺少有效时间轴');
   const blocked = shots.filter(shot => shot.kind === 'blocked' || shot.productionState === 'blocked');
   if (blocked.length) throw new Error(`逐镜装配仍有必需镜头未就绪：${blocked.map(shot => shot.blocker || shot.shotId).join('；')}`);
+  const narrationIssue = replicationNarrationPreflightIssue(spec);
+  if (narrationIssue) throw new Error(narrationIssue);
   const root = path.resolve(deps.workRoot || 'data/replication-workbench-finish', digest(`${tenantId}:${projectId}`));
   return withPaidOperationLock(path.join(root, '.locks'), 'finish', async () => {
     fs.mkdirSync(root, { recursive: true, mode: 0o700 });
@@ -175,7 +203,7 @@ export async function finishReplicationWorkbench(input: { tenantId: string; proj
     const visuals = await (deps.visuals || inspectRenderedVisuals)({ outputPath: result.outputPath, expectedDuration: cursor, expectedUniqueScenes: Math.min(2, shots.length), minSharpFrameRatio: .5, evidenceDir: path.join(outputDir, `${fingerprint}-quality`) });
     let sceneCursor = 0;
     const scenes = await (deps.scenes || inspectRenderedScenes)({ outputPath: result.outputPath, requireDistinct: false, scenes: timeline.map(item => { const start = sceneCursor; sceneCursor += item.targetDuration; return { start, end: sceneCursor }; }) });
-    if (!visuals.passed || !scenes.passed) throw new Error(`逐镜成片自动质检失败：${[...visuals.failures, ...scenes.issues.map(issue => issue.reason)].join('；')}`);
+    if (!visuals.passed || !scenes.passed) throw Object.assign(new Error(`逐镜成片自动质检失败：${[...visuals.failures, ...scenes.issues.map(issue => issue.reason)].join('；')}`), { code: 'FINAL_VIDEO_QA_FAILED' });
     const finished = await (deps.finish || finishContent)(result.outputPath, { ...spec, duration: cursor, bgm: null, bgmVol: 0 });
     return { ...finished, duration: cursor, renderOutputPath: result.outputPath, activeStepId: 'preview', subtitlesOn: true, subMode: 'target', alignedCuesByLang: { ...(spec.alignedCuesByLang || {}), [language]: subtitles }, subtitleAlignmentSource: 'replication_measured_audio',
       automatedReplicationFinish: { fingerprint, receipts, outputContentSha256: digest(fs.readFileSync(result.outputPath)), audioPolicy: 'generated_person_source_and_measured_nonperson_tts', checkedAt: new Date().toISOString() },

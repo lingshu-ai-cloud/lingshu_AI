@@ -29,6 +29,10 @@ type Props = {
   view?: LsCalendarView;
   firstDay?: number;
   eventCardMode?: 'compact' | 'media';
+  /** Keep week/day navigation on date columns when events have no verified time. */
+  dateOnly?: boolean;
+  /** Render every event in date-only week/day views; month/year keep native overflow. */
+  showAllEvents?: boolean;
   density?: 'default' | 'compact';
   flush?: boolean;
   date?: string;
@@ -139,7 +143,7 @@ function CalendarThumbnail({ src, title, large = false, card = false, compact = 
 }
 
 /** Standard plugins only: all calendar pages share the same events, timezone and accessible detail path. */
-export function LsCalendar({ events, label, initialDate, initialView = 'dayGridMonth', view: controlledView, firstDay = 1, eventCardMode = 'compact', density = 'default', flush = false, date, timeZone = 'Asia/Shanghai', loading, timeGridHeight = 'clamp(320px, calc(100dvh - 280px), 720px)', fixedHeight, primaryAction, filters, onRefresh, onDatesSet, onDateClick, onEventClick, onExternalDrop, onMoveEvent, detailsTitle = '排期详情', detailsMedia = 'large', renderDetails }: Props) {
+export function LsCalendar({ events, label, initialDate, initialView = 'dayGridMonth', view: controlledView, firstDay = 1, eventCardMode = 'compact', dateOnly = false, showAllEvents = false, density = 'default', flush = false, date, timeZone = 'Asia/Shanghai', loading, timeGridHeight = 'clamp(320px, calc(100dvh - 280px), 720px)', fixedHeight, primaryAction, filters, onRefresh, onDatesSet, onDateClick, onEventClick, onExternalDrop, onMoveEvent, detailsTitle = '排期详情', detailsMedia = 'large', renderDetails }: Props) {
   const calendarRef = useRef<CalendarRef>(null);
   const hostRef = useRef<HTMLDivElement>(null);
   const revealObserverRef = useRef<IntersectionObserver | null>(null);
@@ -157,8 +161,8 @@ export function LsCalendar({ events, label, initialDate, initialView = 'dayGridM
   const moveInputId = useId();
   const [moving, setMoving] = useState(false);
   const previousWidth = useRef<boolean | undefined>(undefined);
-  const weekView: LsCalendarView = eventCardMode === 'media' ? 'dayGridWeek' : 'timeGridWeek';
-  const dayView: LsCalendarView = eventCardMode === 'media' ? 'dayGridDay' : 'timeGridDay';
+  const weekView: LsCalendarView = dateOnly || eventCardMode === 'media' ? 'dayGridWeek' : 'timeGridWeek';
+  const dayView: LsCalendarView = dateOnly || eventCardMode === 'media' ? 'dayGridDay' : 'timeGridDay';
   const moveRef = useRef(onMoveEvent);
   moveRef.current = onMoveEvent;
   const compact = density === 'compact';
@@ -239,7 +243,7 @@ export function LsCalendar({ events, label, initialDate, initialView = 'dayGridM
     element.classList.add('is-revealed');
     revealObserverRef.current?.unobserve(element);
   };
-  const showDateOnlyTimeRail = eventCardMode === 'media' && ['dayGridWeek', 'dayGridDay'].includes(view);
+  const showDateOnlyTimeRail = (dateOnly || eventCardMode === 'media') && ['dayGridWeek', 'dayGridDay'].includes(view);
   return <div className={`ls-calendar${eventCardMode === 'media' ? ' ls-calendar-media-cards' : ''}${compact ? ' ls-calendar-compact' : ''}${flush ? ' ls-calendar-flush' : ''}`} ref={hostRef} aria-label={label} onFocusCapture={event => {
     const eventElement = (event.target as HTMLElement).closest<HTMLElement>('.ls-calendar-event-reveal');
     if (eventElement) revealEventElement(eventElement);
@@ -266,7 +270,7 @@ export function LsCalendar({ events, label, initialDate, initialView = 'dayGridM
       <FullCalendar ref={calendarRef} plugins={[themePlugin, dayGridPlugin, timeGridPlugin, listPlugin, multiMonthPlugin, interactionPlugin]} locale={zhLocale} timeZone={timeZone} firstDay={firstDay} initialView={view} initialDate={initialDate || undefined}
         // Every view shares a bounded FullCalendar content window. FullCalendar
         // owns the sole internal scroller; the surrounding page stays stable.
-        headerToolbar={false} contentHeight={fixedHeight ?? timeGridHeight} events={inputs} eventOrder="start,id" eventOrderStrict slotEventOverlap={false} editable={Boolean(onMoveEvent)} eventDurationEditable={false} eventInteractive dayMaxEvents={eventCardMode === 'media' && ['dayGridWeek', 'dayGridDay'].includes(view) ? false : 3} nowIndicator expandRows tableHeaderSticky
+        headerToolbar={false} contentHeight={fixedHeight === 'auto' && showAllEvents && !['dayGridWeek', 'dayGridDay'].includes(view) ? timeGridHeight : fixedHeight ?? timeGridHeight} events={inputs} eventOrder="start,id" eventOrderStrict slotEventOverlap={false} editable={Boolean(onMoveEvent)} eventDurationEditable={false} eventInteractive dayMaxEvents={(showAllEvents || eventCardMode === 'media') && ['dayGridWeek', 'dayGridDay'].includes(view) ? false : 3} nowIndicator expandRows tableHeaderSticky
         allDaySlot={eventCardMode === 'media' ? false : inputs.some(event => event.allDay)} noEventsText="当前周期没有排期" slotMinTime="08:00:00" slotMaxTime="22:00:00" slotDuration="01:00:00" slotHeaderInterval="02:00:00" scrollTime="08:00:00" scrollTimeReset slotHeaderFormat={{ hour: '2-digit', minute: '2-digit', hour12: false }} eventTimeFormat={{ hour: '2-digit', minute: '2-digit', hour12: false }}
         eventMinHeight={24} eventShortHeight={68} columnEventInnerClass="ls-calendar-time-inner"
         datesSet={info => { setTitle(info.view.title); setView(info.view.type as LsCalendarView); onDatesSet?.(info); }}
@@ -310,7 +314,7 @@ export function LsCalendar({ events, label, initialDate, initialView = 'dayGridM
           const showMedia = info.view.type !== 'dayGridMonth' && info.view.type !== 'multiMonthYear';
           return <div className="ls-calendar-event-content">
             {showMedia && <CalendarThumbnail src={item.thumbnailUrl} title={item.title}/>}
-            <div className="ls-calendar-event-copy"><div className="ls-calendar-event-meta">{item.platform && <SocialPlatformIcon platform={item.platform} size={13}/>}<span>{item.accountName || item.ownerAgent || info.timeText}</span></div><strong>{item.title}</strong><span>{info.timeText && `${info.timeText} · `}{item.statusLabel || calendarStatusLabels[item.status]}</span></div>
+            <div className="ls-calendar-event-copy"><div className="ls-calendar-event-meta">{item.platform && <SocialPlatformIcon platform={item.platform} size={13}/>}<span>{item.accountName || item.ownerAgent || info.timeText}</span></div><strong>{item.title}</strong>{(item.eventType !== 'publish' || item.status !== 'planned') && <span>{info.timeText && `${info.timeText} · `}{item.statusLabel || calendarStatusLabels[item.status]}</span>}</div>
           </div>;
         }}
         eventClick={info => {

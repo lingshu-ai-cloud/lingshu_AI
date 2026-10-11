@@ -8,6 +8,7 @@ import { hasExactReferenceReview, parseExactReferenceReview, loadExactReferenceR
 import BenchmarkAnalysisSections from './inspiration/BenchmarkAnalysisSections';
 import ReferenceSpeechAlignmentPanel from './inspiration/ReferenceSpeechAlignmentPanel';
 import { buildBenchmarkAnalysis } from '../../shared/benchmarkAnalysis';
+import { productionReferenceAdmission } from '../../shared/productionReferenceAdmission';
 import MaterialLibraryStatus from './studio/MaterialLibraryStatus';
 import { useState, useEffect, useMemo, useRef } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
@@ -404,10 +405,6 @@ function exactAnalysisQuality(video: TrendVideo): AnalysisQualityGate {
   if (progress?.stage === 'paused') return { ready: false, reason: `精确分析已暂停：${progress.currentStep || '进度已保留'}`, requiredFrames, actualFrames: valid.length };
   if (progress?.stage === 'cancelled') return { ready: false, reason: '精确分析已取消，可重新提交', requiredFrames, actualFrames: valid.length };
   if (analysisProgressIsActive(progress)) return { ready: false, reason: progress?.currentStep || '全片精确分析正在进行中', requiredFrames, actualFrames: valid.length };
-  if (payload?.geminiStatus === 'needs_review' || payload?.analysisQuality === 'video_review_required' || payload?.analysisReviewReasons?.length) {
-    const reviewCount = payload?.analysisReviewReasons?.length || 1;
-    return { ready: false, reason: `编导交接待复核：${reviewCount} 项镜头证据尚未通过质量校验`, requiredFrames, actualFrames: valid.length };
-  }
   if (payload?.videoLevelFailureStatus || payload?.analysisError || ['failed', 'video_failed', 'analysis_retryable', 'paused', 'cancelled'].includes(String(payload?.geminiStatus || ''))) return { ready: false, reason: '精确分析未完成或已失败，请重试', requiredFrames, actualFrames: valid.length };
   if (payload?.requestedAnalysisMode === 'exact' && payload?.geminiStatus !== 'analyzed') return { ready: false, reason: '全片精确分析正在排队或生成中', requiredFrames, actualFrames: valid.length };
   if (payload?.analysisMode !== 'exact') return { ready: false, reason: '当前仅有策略级分析，需先完成全片精确分析', requiredFrames, actualFrames: valid.length };
@@ -415,6 +412,12 @@ function exactAnalysisQuality(video: TrendVideo): AnalysisQualityGate {
   if (valid.some(({ item }) => isUnusableAnalysisText(item.visual))) return { ready: false, reason: '存在不可用分镜，请重试精确分析', requiredFrames, actualFrames: valid.length };
   if (!Number.isFinite(video.duration) || video.duration <= 0) return { ready: false, reason: '原片时长尚未确认，无法核对分镜是否覆盖整片', requiredFrames, actualFrames: valid.length };
   const benchmark = buildBenchmarkAnalysis({ analysis: payload, videoId: video.recordId || video.id, duration });
+  const admission = productionReferenceAdmission(benchmark);
+  if (!admission.ready) {
+    const visible = admission.blockers.slice(0, 3);
+    const remaining = admission.blockers.length - visible.length;
+    return { ready: false, reason: `编导交接待复核：${visible.join('；')}${remaining > 0 ? `；另有 ${remaining} 项待复核` : ''}`, requiredFrames, actualFrames: valid.length };
+  }
   if (benchmark.totalShots === null || benchmark.shots.some(shot => shot.granularity !== 'shot')) return { ready: false, reason: '当前只有观察片段，尚无可用于创作的导演级逐镜切点', requiredFrames, actualFrames: valid.length };
   if (!benchmark.timelineComplete || benchmark.shots.some(shot => shot.start === null || shot.end === null)) return { ready: false, reason: '导演级分镜的时间线未完整覆盖原片，需重新分析切点', requiredFrames, actualFrames: valid.length };
   if (benchmark.shots.some(shot => isUnusableAnalysisText(shot.visual))) return { ready: false, reason: '导演级分镜仍有不可用画面描述，需重新分析', requiredFrames, actualFrames: valid.length };

@@ -81,19 +81,22 @@ assert.match(customerUi, /data-testid="conversation-workspace-main"/, 'the three
 assert.doesNotMatch(customerUi, /mockCustomerCount/, 'the simulation workspace must not reserve a full-width banner above conversations');
 assert.doesNotMatch(customerUi, /今日处理/, 'per-customer action guidance must be merged into the AI intent panel');
 const customerRailUi = customerUi.slice(customerUi.indexOf('function CustomerInfoRail'), customerUi.indexOf('function createMessageEvent'));
-for (const marker of ['CustomerInsightDisclosure', 'CustomerIntentActionPanel', 'BasicInfoWidget', 'TagsWidget', 'RulesDisclosure']) {
+for (const marker of ['CustomerInsightDisclosure', 'CustomerIntentActionPanel', 'QuoteSkillCard', 'RulesDisclosure']) {
   assert.match(customerRailUi, new RegExp(marker), `the customer rail must include ${marker}`);
 }
-const railMarkers = ['CustomerInsightDisclosure', 'CustomerIntentActionPanel', 'BasicInfoWidget', 'TagsWidget', 'RulesDisclosure'];
+assert.match(customerRailUi, /quickPanel === 'profile'[\s\S]{0,1000}customer\.product[\s\S]{0,1000}STAGE_LABEL\[customer\.stage\][\s\S]{0,1000}customer\.estimatedValue/, 'customer profile facts must remain available through the quick profile disclosure');
+assert.match(customerRailUi, /quickActions\.map[\s\S]{0,700}aria-pressed=\{active\}[\s\S]{0,700}openQuickPanel\(action\.id\)/, 'quick profile controls must expose their current state and open the requested disclosure');
+const railMarkers = ['CustomerInsightDisclosure', 'CustomerIntentActionPanel', 'QuoteSkillCard', 'RulesDisclosure'];
 assert.deepEqual(
   railMarkers.map(marker => customerRailUi.indexOf(marker)),
   [...railMarkers.map(marker => customerRailUi.indexOf(marker))].sort((a, b) => a - b),
-  'the customer rail must keep warning, AI intent, profile, tags and assignment rules in the requested order',
+  'the customer rail must keep warning, AI intent, quote workbench and assignment rules in the requested order',
 );
 assert.doesNotMatch(customerRailUi, /OrderHistoryWidget|SortableWidget/, 'the compact customer rail must not contain extra or draggable panels');
 assert.match(customerUi, /AI 草稿 · 人工改过/, 'conversation history must expose human collaboration without adding fake messages');
 assert.match(customerUi, /已用学习记忆/, 'conversation history must expose memory usage without cluttering the transcript');
-assert.match(customerUi, /客服演示沙盘/, 'the dedicated account must clearly label the simulation workspace');
+assert.match(customerUi, /customer\.isMock \? '模拟客户 · 不对外发送'/, 'each simulated conversation must clearly label its isolation from live sending');
+assert.match(customerUi, /只在演示沙盘里推进，不会发送到真实平台/, 'the simulation input must explain that it cannot send to real platforms');
 
 const memoryUi = fs.readFileSync(path.join(root, 'src/components/WorkspaceManagementPages.tsx'), 'utf8');
 assert.match(memoryUi, /includeMockCustomers/, 'the memory workspace must be able to show the same simulation customer contexts');

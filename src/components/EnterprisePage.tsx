@@ -986,6 +986,17 @@ export default function EnterprisePage() {
 
   useEffect(() => {
     const handler = (event: Event) => {
+      const view = (event as CustomEvent<{ view?: KnowledgeView }>).detail?.view;
+      if (!view || !['products', 'bizRules', 'faq', 'company', 'socialStrategy', 'salesStyle', 'advanced', 'presenters', 'presenterRouting'].includes(view)) return;
+      setKnowledgeView(view);
+      setEnterpriseArea(enterpriseAreaForView(view));
+    };
+    window.addEventListener('lingshu:enterprise-view', handler);
+    return () => window.removeEventListener('lingshu:enterprise-view', handler);
+  }, []);
+
+  useEffect(() => {
+    const handler = (event: Event) => {
       const detail = (event as CustomEvent<{ profile?: AppliedProfile }>).detail;
       if (detail?.profile) applyKnowledgeProfile(detail.profile);
     };

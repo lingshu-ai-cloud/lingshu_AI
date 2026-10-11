@@ -109,7 +109,10 @@ try {
   assert.match(tenantRouteSource, /webhookVerifyToken:\s*text\(req\.body\?\.metaWebhookVerifyToken\)/);
   assert.match(platformStoreSource, /webhook_verify_token:\s*input\.webhookVerifyToken\s*\|\|\s*existing\?\.webhook_verify_token/);
   assert.match(deliveryUiSource, /secret[^\n]+webhookVerifyToken/, 'delivery UI must treat webhook tokens as write-only secrets');
-  assert.match(tenantUiSource, /secret[^\n]+metaWebhookVerifyToken/, 'tenant UI must treat webhook tokens as write-only secrets');
+  assert.doesNotMatch(tenantUiSource, /metaWebhookVerifyToken|webhookVerifyToken/, 'the OAuth-only tenant form must neither read nor submit webhook secrets');
+  assert.match(tenantUiSource, /<Field secret[^\n]+value=\{form\[card\.secretKey\]\}/, 'tenant OAuth credentials must use password fields with write-only draft values');
+  assert.match(tenantUiSource, /type=\{secret \? 'password' : 'text'\}/, 'secret fields must not display plaintext');
+  assert.match(tenantUiSource, /setForm\(current => \(\{ \.\.\.current, youtubeOAuthClientSecret: '', metaSocialAppSecret: '', instagramAppSecret: '', tiktokClientSecret: '' \}\)\)/, 'successful saves must clear every secret draft');
 
   console.log('admin secret response tests passed');
 } finally {

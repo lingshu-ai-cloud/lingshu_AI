@@ -45,6 +45,11 @@ export function calendarDayKey(value: Date | string, timeZone = 'Asia/Shanghai')
   return Temporal.Instant.fromEpochMilliseconds(new Date(value).getTime()).toZonedDateTimeISO(timeZone).toPlainDate().toString();
 }
 
+/** Align a weekly workspace to the persisted plan boundary instead of assuming Monday. */
+export function calendarWeekday(value: Date | string, timeZone = 'Asia/Shanghai'): number {
+  return new Date(`${calendarDayKey(value, timeZone)}T00:00:00Z`).getUTCDay();
+}
+
 export function calendarDateTimeValue(value: Date | string, timeZone = 'Asia/Shanghai'): string {
   return Temporal.Instant.fromEpochMilliseconds(new Date(value).getTime()).toZonedDateTimeISO(timeZone).toPlainDateTime().toString().slice(0, 16);
 }

@@ -42,6 +42,14 @@ test('deep-link navigation explicitly notifies the owning shell before dispatch'
   assert.doesNotMatch(navigationBranch, /\.focus\(/, 'a closing navigation dialog must not steal focus back from the destination page');
 });
 
+test('digital-human recovery lands on the enterprise presenter assets instead of a generic facts page', () => {
+  const dispatchSource = source.slice(source.indexOf('function dispatchDeepLink'), source.indexOf('function factTone'));
+  assert.match(dispatchSource, /link\.page === 'enterprise'[\s\S]*enterpriseView === 'presenters'/, 'the assistant recognizes the presenter recovery destination');
+  assert.match(dispatchSource, /localStorage\.setItem\('lingshu:enterprise:initial-view', 'presenters'\)/, 'a newly mounted enterprise page receives the presenter initial view');
+  assert.match(dispatchSource, /CustomEvent\([\s\S]*'lingshu:enterprise-view'[\s\S]*view: 'presenters'/, 'an already-mounted enterprise page is switched to presenter assets');
+  assert.match(dispatchSource, /requestAnimationFrame\?\.\(revealPresenters\)/, 'the presenter selection is repeated after the destination render commits');
+});
+
 test('assistant uses shared Ant controls and the single branded primary action', () => {
   assert.match(source, /from 'antd'/);
   assert.match(source, /<LsBrandAction/);

@@ -14,6 +14,22 @@ export interface WeeklyContentProgressStage {
 }
 /** A read-only subset of StudioProject; importing the API here would make this model impure. */
 export interface WeeklyContentProgressProject { id: string; status?: string; spec: unknown; updatedAt?: string }
+export interface WeeklyContentShotReceipt {
+  id: string;
+  projectId: string;
+  label: string;
+  timeRange: string;
+  status: StageStatus;
+  statusLabel: string;
+  detail: string;
+  firstFrameMaterialId: string;
+  videoMaterialId: string;
+  adoptedMaterialId: string;
+  qualityLabel: string;
+  providerTaskId: string;
+  providerAcceptedAt: string;
+  updatedAt: string;
+}
 export interface WeeklyContentProgress {
   contentId: string;
   masterContentId: string;
@@ -26,6 +42,7 @@ export interface WeeklyContentProgress {
   statusLabel: string;
   summary: string;
   stages: WeeklyContentProgressStage[];
+  shots: WeeklyContentShotReceipt[];
   blockingReasons: string[];
   nextAction: { label: string; kind: 'start' | 'view_master' | 'view_production' | 'resolve_blocker' | 'refresh' | 'none'; taskId?: string; projectId?: string } | null;
 }
@@ -106,6 +123,9 @@ function completeSceneMatching(spec: Record<string, unknown>, automation: Record
 
 const blockedShot = (shot: Record<string, unknown>) => shot.kind === 'blocked' || shot.productionState === 'blocked';
 const analysisBlockerCodes = new Set(['physical_boundary_unconfirmed', 'material_type_unconfirmed', 'visual_evidence_missing']);
+const presenterInputCodes = new Set(['presenter_authorization_required', 'avatar_required']);
+const needsPresenterInput = (shot: Record<string, unknown>) => blockedShot(shot) && presenterInputCodes.has(text(shot.blockerCode));
+const presenterNextStep = '请先添加并授权企业数字人；已有镜头产物保留，补齐后从数字人步骤继续。';
 function replicationEvidence(spec: Record<string, unknown>) {
   const shots = array(spec.automatedReplicationShots).map(object);
   const progress = object(spec.automatedReplicationProgress);
@@ -146,6 +166,44 @@ function supplierSummary(projects: readonly WeeklyContentProgressProject[]) {
   };
 }
 
+function shotReceipts(project: WeeklyContentProgressProject): WeeklyContentShotReceipt[] {
+  const spec = object(project.spec), automation = object(spec.automation);
+  const current = ['blocked', 'failed'].includes(text(automation.stage)) ? text(automation.resumeStage) : text(automation.stage);
+  if (!(Number(automation.replicationBridgeVersion) > 0) || !['material_match', 'voice_subtitles', 'heygen', 'render', 'quality', 'completed'].includes(current)) return [];
+  const evidence = replicationEvidence(spec), progress = object(spec.automatedReplicationProgress);
+  return evidence.shots.map((shot, index) => {
+    const state = object(progress[text(shot.shotId)]);
+    const adopted = evidence.assigned.includes(shot);
+    const video = text(state.videoMaterialId);
+    const firstFrame = text(state.firstFrameMaterialId) && text(state.firstFrameFingerprint) ? text(state.firstFrameMaterialId) : '';
+    const qualityPassed = state.qualityChecked === true && Boolean(text(state.videoContentSha256));
+    const accepted = text(state.providerTaskId) && Number.isFinite(Date.parse(text(state.providerAcceptedAt)));
+    const supplierStatus = text(state.providerStatus);
+    let status: StageStatus = 'pending', statusLabel = '等待制作', detail = '尚无此镜头的生成或采用回执。';
+    if (blockedShot(shot)) { status = 'blocked'; statusLabel = needsPresenterInput(shot) ? '待补充数字人' : '需补条件'; detail = [text(shot.blocker) || '必需镜头待补齐，未从完整成片中跳过。', needsPresenterInput(shot) ? presenterNextStep : ''].filter(Boolean).join('；'); }
+    else if (adopted) { status = 'completed'; statusLabel = '已采用'; detail = '镜头已绑定当前分镜；不代表完整成片已合成或通过验收。'; }
+    else if (video) { status = 'ready'; statusLabel = qualityPassed ? '质检通过 · 待采用' : '视频已生成'; detail = qualityPassed ? '已取得镜头视频与质检回执，等待采用。' : '已保留真实镜头视频，质检和采用尚待确认。'; }
+    else if (accepted) {
+      if (['failed', 'cancelled', 'canceled'].includes(supplierStatus)) { status = 'blocked'; statusLabel = supplierStatus === 'failed' ? '供应商失败' : '供应商已取消'; detail = '保留原供应商任务回执，尚无可采用视频；不会自动重复提交。'; }
+      else if (['succeeded', 'completed', 'done'].includes(supplierStatus)) { status = 'waiting'; statusLabel = '产物待同步'; detail = '供应商报告已完成，本地视频产物仍待回传核验。'; }
+      else if (['running', 'processing'].includes(supplierStatus)) { status = 'running'; statusLabel = '供应商生成中'; detail = '供应商回执确认正在生成，视频尚未回传。'; }
+      else { status = 'waiting'; statusLabel = ['queued', 'pending'].includes(supplierStatus) ? '供应商排队中' : '供应商已受理'; detail = '已取得供应商任务编号，等待生成状态与视频产物。'; }
+    } else if (firstFrame) { status = 'ready'; statusLabel = '首帧已生成'; detail = '已保留首帧产物，视频生成与首帧质检状态以实际回执为准。'; }
+    const start = typeof shot.start === 'number' && Number.isFinite(shot.start) ? shot.start : null;
+    const end = typeof shot.end === 'number' && Number.isFinite(shot.end) ? shot.end : null;
+    return {
+      id: `${project.id}:${text(shot.shotId)}`, projectId: project.id,
+      label: `镜头 ${text(shot.slotId).match(/^slot-(\d+)$/)?.[1] || index + 1}`,
+      timeRange: start !== null && end !== null && end > start ? `${start}–${end} 秒` : '时间边界待确认',
+      status, statusLabel, detail, firstFrameMaterialId: firstFrame, videoMaterialId: video,
+      adoptedMaterialId: adopted ? text(state.materialId) : '',
+      qualityLabel: qualityPassed ? '镜头质检通过' : adopted && !video ? shot.kind === 'person' ? '已采用人物视频；成片质检待完成' : '已采用来源素材；成片质检待完成' : video ? '镜头质检待回执' : '视频尚未生成',
+      providerTaskId: accepted ? text(state.providerTaskId) : '', providerAcceptedAt: accepted ? text(state.providerAcceptedAt) : '',
+      updatedAt: text(state.updatedAt),
+    };
+  });
+}
+
 function preparation(plan: VideoCreationPlan): WeeklyContentProgressStage[] {
   const result = definitions.map(([key]) => stage(key));
   const put = (value: WeeklyContentProgressStage) => { result[result.findIndex(item => item.key === value.key)] = value; };
@@ -162,13 +220,29 @@ function preparation(plan: VideoCreationPlan): WeeklyContentProgressStage[] {
     put({ ...stage('benchmark', 'ready', analysis.gaps.join('；') || '已保存分析结果，尚未确认全片时间线、物理切镜边界与镜头类型。', ['冻结的分析结果（待校验）']), statusLabel: '待校验' });
   }
   if (preview?.directorScript?.status === 'confirmed' && text(preview.directorScript.body) && text(preview.directorScript.hash)) {
-    put(stage('script', 'completed', '导演脚本已确认；不代表口播或视频已生成。', ['已确认的导演脚本版本']));
+    put(scriptLanguageReview(preview.directorScript.language, plan.language, '准备原稿')
+      || stage('script', 'completed', '导演脚本已确认；不代表口播或视频已生成。', ['已确认的导演脚本版本']));
   }
   if (preview?.materials.status === 'blocked') put(stage('materials', 'blocked', preview.materials.blockers.join('；') || '素材仍有缺失或待授权项。'));
   else if (preview?.materials.status === 'ready') put(stage('materials', 'ready', '生产前素材检查已就绪，尚未取得实际分镜匹配回执。', ['素材准备检查']));
   // Clone shots may require digital humans even when the old plan-level presenter says material.
   if (plan.presenter === 'material' && plan.route !== 'clone') put(stage('presenter', 'not_applicable', '此内容为纯素材剪辑，不生成数字人。'));
   return result;
+}
+
+// Only declared language fields and explicit production failures affect this
+// read-only projection; do not guess a script's language from its characters.
+function scriptLanguageReview(actual: unknown, target: unknown, source: string): WeeklyContentProgressStage | null {
+  const declared = text(actual).toLowerCase().replaceAll('_', '-');
+  const expected = text(target).toLowerCase().replaceAll('_', '-');
+  if (declared && expected && declared === expected) return null;
+  const mismatch = Boolean(declared && expected);
+  return {
+    ...stage('script', 'ready', mismatch
+      ? `${source}声明语种 ${declared.toUpperCase()} 与计划输出 ${expected.toUpperCase()} 不一致；待完成目标语言适配与核验，不能视为目标脚本已完成。`
+      : `${source}或计划输出缺少明确语言记录；已保留脚本，目标语言仍待核验。`, ['已有脚本；目标语言待核验']),
+    statusLabel: mismatch ? '待语言适配' : '待语言核验',
+  };
 }
 
 function resolveMaster(plans: VideoCreationPlan[], selected: VideoCreationPlan): VideoCreationPlan | undefined {
@@ -183,7 +257,7 @@ function resolveMaster(plans: VideoCreationPlan[], selected: VideoCreationPlan):
   return master;
 }
 
-function scopedProject(project: WeeklyContentProgressProject, item: ContentQueueItem, runId: string, taskId: string): boolean {
+export function isWeeklyContentProgressProjectInScope(project: WeeklyContentProgressProject, item: ContentQueueItem, runId: string, taskId: string): boolean {
   const spec = object(project.spec);
   const automation = object(spec.automation);
   const order = object(spec.contentOrder);
@@ -216,7 +290,13 @@ function projectStages(project: WeeklyContentProgressProject, plan: VideoCreatio
   const progress = object(spec.automatedReplicationProgress);
   const finish = object(spec.automatedReplicationFinish);
   const receipts = array(finish.receipts).map(object);
-  if (canUse('script') && text(spec.script) && text(automation.scriptGeneratedAt)) put(stage('script', 'completed', '已保存实际生产脚本。', ['生产脚本回执']));
+  if (canUse('script') && text(spec.script) && text(automation.scriptGeneratedAt)) {
+    const projectLanguage = text(spec.lang) || text(spec.language);
+    const frozenScript = object(object(object(spec.contentOrder).scripts)[projectLanguage]);
+    put(scriptLanguageReview(projectLanguage, plan.language, '生产版本')
+      || (text(frozenScript.language) ? scriptLanguageReview(frozenScript.language, projectLanguage, '冻结原稿') : null)
+      || stage('script', 'completed', '已保存目标语言对应的实际生产脚本。', ['生产脚本回执']));
+  }
 
   if (isReplication && canUse('material_match')) {
     const { assigned, blocked: unresolved, executable, firstFrames, videos, providerAccepted, providerProcessing, providerQueued } = replicationEvidence(spec);
@@ -249,7 +329,9 @@ function projectStages(project: WeeklyContentProgressProject, plan: VideoCreatio
     else if (unresolved.length) put(stage('materials', executable.length ? 'ready' : 'blocked', materialDetail));
     const people = shots.filter(shot => shot.kind === 'person');
     const blockedPeople = unresolved.filter(shot => shot.intendedKind === 'person');
-    if (blockedPeople.length) put(stage('presenter', 'blocked', blockedPeople.map(shot => text(shot.blocker)).filter(Boolean).join('；') || `${blockedPeople.length} 个人物镜头等待补充必要条件。`));
+    const missingPresenter = unresolved.filter(needsPresenterInput);
+    if (missingPresenter.length) put({ ...stage('presenter', 'blocked', `${missingPresenter.map(shot => text(shot.blocker)).filter(Boolean).join('；')}；${presenterNextStep}`), statusLabel: '待补充数字人' });
+    else if (blockedPeople.length) put(stage('presenter', 'blocked', blockedPeople.map(shot => text(shot.blocker)).filter(Boolean).join('；') || `${blockedPeople.length} 个人物镜头等待补充必要条件。`));
     else if (!people.length) put(stage('presenter', analysisBlocked.length ? 'pending' : 'not_applicable', analysisBlocked.length ? '部分镜头类型或画面证据待确认，暂不能断言无需数字人。' : '逐镜生产计划中没有人物生成镜头。'));
     else {
       const adoptions = object(spec.digitalHumanAssemblyAdoptions);
@@ -284,7 +366,8 @@ function projectStages(project: WeeklyContentProgressProject, plan: VideoCreatio
   const blocker = text(automation.blocker);
   const blocked = ['blocked', 'failed'].includes(rawStage) || ['blocked', 'failed'].includes(text(automation.status));
   const benchmarkFailure = blocked ? benchmarkFailureDetail(plan, blocker) : null;
-  const runtimeKey = benchmarkFailure ? 'benchmark' : runtimeKeys[current];
+  const scriptContractFailure = blocked && /^REPLICATION_NARRATION_/.test(text(automation.blockerCode));
+  const runtimeKey = benchmarkFailure ? 'benchmark' : scriptContractFailure ? 'script' : runtimeKeys[current];
   if (runtimeKey) {
     const existing = result.find(item => item.key === runtimeKey)!;
     // A current, scoped failure supersedes preparation/previous-attempt receipts
@@ -362,6 +445,7 @@ export function buildWeeklyContentProgress(data: DigitalEmployeeOverview, conten
       statusLabel: directSocial.status === 'waiting_review' ? '待验收' : labels[status],
       summary: directSocial.stage || (status === 'waiting' ? '真实成片已经生成，等待内容验收。' : '已读取真实单条内容任务。'),
       stages,
+      shots: [],
       blockingReasons: directSocial.reason ? [directSocial.reason] : [],
       nextAction: { kind: directSocial.status === 'blocked' ? 'resolve_blocker' : 'view_production', label: '打开制作工作台', taskId: directSocial.socialContentTaskId || contentId, ...(directSocial.projectIds[0] ? {projectId:directSocial.projectIds[0]} : {}) },
     };
@@ -374,7 +458,7 @@ export function buildWeeklyContentProgress(data: DigitalEmployeeOverview, conten
     contentId, masterContentId: master?.contentId || '', isAdaptation, sharedMaster: isAdaptation && Boolean(master),
     queueItemId: null, taskId: null, projectIds: [], status: 'pending', statusLabel: '未开始',
     summary: '尚未启动此内容的生产。', stages: master ? preparation(master) : definitions.map(([key]) => stage(key, 'unavailable', '当前计划中缺少可核验的内容或母版关联。')),
-    blockingReasons: [], nextAction: null,
+    shots: [], blockingReasons: [], nextAction: null,
   };
   const finish = (status: StageStatus, summary: string, statusLabel = labels[status]) => ({ ...base, status, statusLabel, summary });
   if (!selected || !master || !data.goal || !data.plan) {
@@ -403,9 +487,10 @@ export function buildWeeklyContentProgress(data: DigitalEmployeeOverview, conten
   // A foreign/old queue item's task must never supply project IDs, even if content IDs repeat.
   const queue = item?.taskId === task.id ? item : undefined;
   base.projectIds = unique(queue?.projectIds || []);
-  const projects = queue ? [...new Map((options.projects || []).filter(project => scopedProject(project, queue, run.id, task.id)).map(project => [project.id, project])).values()] : [];
+  const projects = queue ? [...new Map((options.projects || []).filter(project => isWeeklyContentProgressProjectInScope(project, queue, run.id, task.id)).map(project => [project.id, project])).values()] : [];
   const missingProjectCount = base.projectIds.filter(id => !projects.some(project => project.id === id)).length;
   if (projects.length) {
+    base.shots = projects.flatMap(shotReceipts);
     const results = projects.map(project => projectStages(project, master));
     for (let missing = 0; missing < missingProjectCount; missing++) results.push(preparation(master).map(item => ['voice', 'presenter', 'render', 'quality'].includes(item.key) && item.status !== 'not_applicable' ? stage(item.key, 'unavailable', '部分生产版本的产物回执未同步。') : item));
     base.stages = mergeStages(results);
@@ -436,7 +521,7 @@ export function buildWeeklyContentProgress(data: DigitalEmployeeOverview, conten
   const localBlocked = localQueueBlocked || base.blockingReasons.length > 0 || base.stages.some(item => item.status === 'blocked');
   if (outputComplete && !localBlocked) return finish(queue?.status === 'completed' ? 'completed' : 'waiting', queue?.status === 'completed' ? '成片已完成并通过内容验收；发布状态请查看发布回执。' : '成片已生成且机器质检通过，等待内容验收。', queue?.status === 'completed' ? '已完成' : '待验收');
   const notExecuting = ['paused', 'cancelled', 'failed'].includes(run.status) || ['paused', 'cancelled', 'failed', 'waiting_human', 'waiting_approval'].includes(task.status);
-  if (notExecuting) base.stages = base.stages.map(item => item.status === 'running' || item.status === 'ready' ? stage(item.key, 'waiting', '周任务当前没有继续执行，已保留本内容的阶段结果。', item.evidence) : item);
+  if (notExecuting) base.stages = base.stages.map(item => item.status === 'running' || item.status === 'ready' ? stage(item.key, 'waiting', `${item.detail} 周任务当前没有继续执行，已保留本内容的阶段结果。`, item.evidence) : item);
   if (run.status === 'paused' || task.status === 'paused') return finish('waiting', run.pause_reason || taskWait(task) || '本周任务已暂停，已保留完成的产物。', '已暂停');
   if (run.status === 'cancelled' || task.status === 'cancelled') return finish('waiting', '本次运行已取消，已有产物记录保留；未完成阶段不会继续。', '已取消');
   if (localBlocked) {
@@ -461,7 +546,9 @@ export function buildWeeklyContentProgress(data: DigitalEmployeeOverview, conten
       });
       return finish(hasProductionArtifacts ? 'running' : 'ready', `${hasProductionArtifacts ? '部分镜头已有真实生成产物，其他可执行镜头继续推进' : '可执行镜头已进入制作调度，供应商生成结果尚待回执'}；待处理镜头仍保留在完整计划中，不会提前标记成片完成。${base.blockingReasons.join('；')}`, hasProductionArtifacts ? '部分生产中' : '部分已排队');
     }
-    return finish('blocked', base.blockingReasons.join('；') || taskWait(task) || run.pause_reason || '生产遇到卡点，请查看当前阶段。');
+    const missingPresenter = base.stages.some(item => item.key === 'presenter' && item.statusLabel === '待补充数字人');
+    if (missingPresenter) base.nextAction = { ...base.nextAction, label: '补充数字人后继续' };
+    return finish('blocked', base.blockingReasons.join('；') || taskWait(task) || run.pause_reason || '生产遇到卡点，请查看当前阶段。', missingPresenter ? '待补充数字人' : labels.blocked);
   }
   if (run.status === 'failed' || task.status === 'failed') return finish('waiting', '周任务已停止，但本内容没有独立失败回执；已保留完成结果，等待恢复。', '等待恢复');
   if (['waiting_human', 'waiting_approval'].includes(task.status)) return finish('waiting', taskWait(task) || '生产等待确认，未继续执行。', '待确认');

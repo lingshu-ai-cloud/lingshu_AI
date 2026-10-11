@@ -81,3 +81,67 @@ await advanceAutomatedReplication({ tenantId: 'tenant', projectId: 'project', st
 });
 assert.equal(persistedReceipt.project().spec.automatedReplicationProgress.shot.providerTaskId, 'receipt-during-call',
   'saving a finished asset must not erase the receipt projected during supplier polling');
+
+function withSibling() {
+  const f = fixture();
+  f.project().spec.automatedReplicationShots.push({ ...structuredClone(f.project().spec.automatedReplicationShots[0]), shotId: 'sibling', slotId: 'slot-2' });
+  f.project().spec.shotProductions['video-1:sibling'] = structuredClone(shot);
+  return f;
+}
+const runtimeBlocked = withSibling();
+const runtimeCalls: string[] = [];
+const runtimeResult = await advanceAutomatedReplication({ tenantId: 'tenant', projectId: 'project', store: runtimeBlocked.store }, {
+  ...deps, call: async (_surface, _method, route, body) => {
+    runtimeCalls.push(String(body?.shotId));
+    return body?.shotId === 'slot'
+      ? { status: 409, body: { code: 'STORYBOARD_BUDGET_PLAN_UNAVAILABLE', error: '镜头预算不足' } }
+      : { status: 200, body: { ok: true, fingerprint: 'sibling-frame', material: { id: 'frame-2' } } };
+  },
+});
+assert.equal(runtimeResult.state, 'pending');
+assert.deepEqual(runtimeCalls, ['slot', 'slot-2'], 'a proven pre-admission rejection does not block the next independent shot');
+assert.equal(runtimeBlocked.project().spec.automatedReplicationProgress.shot.blocker, '镜头预算不足');
+assert.equal(runtimeBlocked.project().spec.automatedReplicationProgress.sibling.firstFrameMaterialId, 'frame-2');
+await advanceAutomatedReplication({ tenantId: 'tenant', projectId: 'project', store: runtimeBlocked.store }, deps);
+assert.equal(runtimeBlocked.project().spec.automatedReplicationProgress.shot.blocker, '', 'successful recovery clears only the recovered shot error');
+
+const uncertainSubmission = withSibling(); let submissionAttempts = 0;
+const uncertainResult = await advanceAutomatedReplication({ tenantId: 'tenant', projectId: 'project', store: uncertainSubmission.store }, {
+  ...deps, call: async () => { submissionAttempts++; return { status: 502, body: { error: 'provider polling timed out' } }; },
+});
+assert.equal(uncertainResult.state, 'blocked');
+assert.equal(submissionAttempts, 1, 'an uncertain paid attempt stops this tick and never starts another paid step');
+
+const changedInput = withSibling();
+changedInput.project().spec.automatedReplicationProgress = { shot: { fingerprint: 'old-input', providerTaskId: 'kept-original' } };
+let independentAttempts = 0;
+const changedResult = await advanceAutomatedReplication({ tenantId: 'tenant', projectId: 'project', store: changedInput.store }, {
+  ...deps, call: async (_surface, _method, _route, body) => {
+    independentAttempts++; assert.equal(body?.shotId, 'slot-2');
+    return { status: 200, body: { ok: true, fingerprint: 'new-frame', material: { id: 'frame-2' } } };
+  },
+});
+assert.equal(changedResult.state, 'pending');
+assert.equal(independentAttempts, 1);
+assert.equal(changedInput.project().spec.automatedReplicationProgress.shot.providerTaskId, 'kept-original');
+
+for (const qualityState of ['service_unavailable', 'invalid_response']) {
+  const retainedFrame = fixture();
+  retainedFrame.project().spec.automatedReplicationProgress = { shot: { firstFrameMaterialId: 'frame', firstFrameFingerprint: 'frame-fp' } };
+  const result = await advanceAutomatedReplication({ tenantId: 'tenant', projectId: 'project', store: retainedFrame.store }, {
+    ...deps,
+    materials: () => [{ id: 'frame', tenantId: 'tenant', provenance: { firstFrameQualityState: qualityState } }],
+    call: async () => { throw new Error('Must not regenerate an existing image or submit a video while image QA is unavailable'); },
+  });
+  assert.equal(result.state, 'blocked');
+  assert.equal(result.blockerCode, 'FIRST_FRAME_QA_SERVICE_UNAVAILABLE');
+  assert.equal(retainedFrame.project().spec.automatedReplicationProgress.shot.firstFrameMaterialId, 'frame');
+}
+const rejectedFrame = fixture();
+rejectedFrame.project().spec.automatedReplicationProgress = { shot: { firstFrameMaterialId: 'frame' } };
+const rejectedFrameResult = await advanceAutomatedReplication({ tenantId: 'tenant', projectId: 'project', store: rejectedFrame.store }, {
+  ...deps,
+  materials: () => [{ id: 'frame', tenantId: 'tenant', provenance: { firstFrameQualityState: 'evaluated', firstFrameQuality: { passed: false, reasonCodes: ['PRODUCT_MISMATCH'] } } }],
+  call: async () => { throw new Error('Rejected frame must never reach video generation'); },
+});
+assert.equal(rejectedFrameResult.blockerCode, 'FIRST_FRAME_QA_FAILED');

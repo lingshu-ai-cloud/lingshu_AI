@@ -979,6 +979,10 @@ export function dispatchDigitalEmployeeDeepLink(
     workflowTaskId: link.taskId,
   };
   try {
+    if (link.page === 'enterprise' && link.businessRef.enterpriseView === 'presenters') {
+      window.localStorage.setItem('lingshu:enterprise:initial-view', 'presenters');
+      window.dispatchEvent(new CustomEvent('lingshu:enterprise-view', { detail: { view: 'presenters' } }));
+    }
     window.sessionStorage.setItem(
       "digitalEmployee.businessDeepLink",
       JSON.stringify({ ...navigationDetail, issuedAt: Date.now() }),

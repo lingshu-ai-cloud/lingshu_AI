@@ -139,6 +139,12 @@ backward = app => { evidenceBackward!(app); creativeBackward!(app); baseBackward
 
 const expectedNames = Object.keys(AD_SCHEMA_REQUIREMENTS).sort();
 const runtimeSchemas = new Map<string, CollectionDefinition>();
+// Execution jobs are provisioned by their own migration before delivery setup.
+// Keep that precondition in the isolated fixture rather than permitting runtime
+// creation of a partial queue schema.
+runtimeSchemas.set('content_execution_jobs', {
+  name: 'content_execution_jobs', fields: [{ name: 'checkpoint', type: 'json' }],
+});
 const previousFetch = globalThis.fetch;
 const previousPbUrl = process.env.PB_URL;
 const previousAdminEmail = process.env.PB_ADMIN_EMAIL;
@@ -151,6 +157,8 @@ globalThis.fetch = (async (input, init) => {
   assert.equal(url.origin, 'http://platform-ad-schema.invalid', 'schema parity test must never contact a real PocketBase');
   const method = init?.method ?? 'GET';
   if (method === 'GET' && /^\/api\/collections\/[a-z0-9_]+$/.test(url.pathname)) {
+    const existing = runtimeSchemas.get(url.pathname.split('/').at(-1)!);
+    if (existing) return Response.json(existing);
     return new Response('{}', { status: 404 });
   }
   if (method === 'POST' && url.pathname === '/api/collections') {

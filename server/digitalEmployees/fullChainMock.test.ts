@@ -2,6 +2,8 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { recommendPackage } from './weeklyPackage.js';
+import { normalizeVideoPlan } from '../../shared/contracts/videoCreationPlan.js';
 import { followupItemContentHash } from './customerWorkflow.js';
 import { store } from '../storage/index.js';
 import { buildWeeklyPlan, normalizeDigitalEmployeeConfig, normalizeWeeklyGoal } from './domain.js';
@@ -17,6 +19,13 @@ const config = normalizeDigitalEmployeeConfig({companyName:'MOCK company',indust
 const goalInput = normalizeWeeklyGoal({title:'MOCK 16 node plan',objective:'Isolated simulation',businessLine:'full_funnel',metric:'published_posts',target:1,startsAt:'2026-09-01',endsAt:'2026-09-30',contentPlatforms:['facebook']},config);
 const plan = buildWeeklyPlan(goalInput,config);
 assert.equal(plan.tasks.length,16);
+// The real analysis gate requires a frozen clone master, not just a truthy model envelope.
+const businessPackage=recommendPackage(goalInput,config);
+businessPackage.authorization.mode='each';
+delete businessPackage.matrixPlan;
+delete businessPackage.operatingContext;
+businessPackage.tasks.find(t=>t.templateId==='production')!.videoPlans=[normalizeVideoPlan({contentId:'mock-master',contentFamilyId:'mock-master',masterContentId:'mock-master',productionRole:'master',route:'clone',theme:'MOCK shirt',productName:'MOCK cotton shirt',platform:'facebook'})];
+Object.assign(plan,{businessPackage});
 const run:any={id:'mock-run',tenant_id:tenant,goal_id:'mock-goal',plan_id:'mock-plan',status:'running',started_at:'2026-09-01T00:00:00.000Z'};
 const tasks:any[]=plan.tasks.map(p=>({id:`mock-${p.key}`,tenant_id:tenant,run_id:run.id,task_key:p.key,title:p.title,status:'pending',depends_on:p.dependsOn,sequence:p.sequence,kind:p.kind,agent_role:p.agentRole,execution_mode:p.executionMode,external_effect:p.externalEffect,automatic_execution_allowed:p.automaticExecutionAllowed,requires_approval:p.requiresApproval,task_version:1,output:{},business_refs:[]}));
 assert.equal(tasks.find(task => task.task_key === 'content_release_approval')?.agent_role, 'business');
@@ -36,14 +45,15 @@ Object.assign(store,{
 globalThis.fetch=(async()=>{networkCalls++;throw Error('NETWORK_FORBIDDEN_IN_MOCK');}) as typeof fetch;
 const task=(key:string)=>tasks.find(t=>t.task_key===key)!;
 const scope=(key:string)=>({workflowRunId:run.id,workflowTaskId:task(key).id,synthetic:true});
-let permitAnalysis=false,permitQuality=false,permitPublish=false,permitSend=false;
+let permitCollection=false,permitAnalysis=false,permitQuality=false,permitPublish=false,permitSend=false;
 const steps:any[]=[];
 const saveStep=(name:string)=>steps.push({name,status:run.status,nodes:tasks.map(t=>({key:t.task_key,status:t.status,proof:t.output?.proof||null}))});
 const customer={id:'mock-customer',tenantId:tenant,sourcePostId:'',name:'MOCK buyer',waNumber:'12025550123'};
 const prepare=async({task:t}:any)=>{
  const c=t.task_key;
- if(c==='scheduled_source_collection')records.scheduled_tasks=[{id:'mock-schedule',tenant_id:tenant,enabled:true,task_id:'mock-schedule',task_type:'social_discovery_collection',config:{workflowRefs:JSON.stringify([{workflowRunId:run.id,workflowTaskId:t.id}]),synthetic:true}}];
- if(c==='viral_analysis'&&permitAnalysis)records.trend_videos=[{id:'mock-reference',tenantId:tenant,...scope(c),aiAnalysis:{analysisMode:'exact',analysisQuality:'video',gemini:{synthetic:true,shots:[{text:'MOCK shot'}]}}}];
+ if(c==='scheduled_source_collection')records.scheduled_tasks=[{id:'mock-schedule',tenant_id:tenant,enabled:true,task_id:'mock-schedule',task_type:'social_discovery_collection',config:{discoveryScopeId:'mock-discovery-scope',workflowRefs:JSON.stringify([{workflowRunId:run.id,workflowTaskId:t.id}]),synthetic:true}}];
+ if(c==='scheduled_source_collection'&&permitCollection)records.social_discovery_runs=[{id:'mock-discovery-run',tenant_id:tenant,discoveryScopeId:'mock-discovery-scope',status:'completed',modeStats:{momentum:{accepted:1}},finishedAt:new Date().toISOString(),synthetic:true}];
+ if(c==='viral_analysis'&&permitAnalysis)records.trend_videos=[{id:'mock-reference',tenantId:tenant,...scope(c),aiAnalysis:{analysisMode:'exact',analysisQuality:'video',gemini:{synthetic:true,scriptDetails15s:[{time:'0-3s',visual:'MOCK shirt product close-up'}]}}}];
  if(c==='content_production')records.studio_projects=[{id:'mock-project',tenant_id:tenant,...scope(c),status:'ready_for_approval',spec:{caption:'MOCK content - simulation only',automation:{managedBy:'digital_employee',stage:'completed',renderOutputPath:fixtureVideo,quality:{passed:permitQuality,ruleVersion:9,synthetic:true}}}}];
  if(c==='content_quality_gate'&&permitQuality)records.studio_projects[0].spec.automation.quality.passed=true;
  if(c==='platform_publish'&&permitPublish){for(const post of records.posts||[]){post.platform_post_id='MOCK-platform-receipt';post.stats={...post.stats,status:'published',publishResults:{'mock-account':{accountId:'mock-account',platform:'facebook',status:'published',platformPostId:'MOCK-platform-receipt'}},synthetic:true};customer.sourcePostId=post.id;}}
@@ -65,7 +75,11 @@ try {
  for(const metric of Object.values(snapshot.customer))Object.assign(metric,{value:1,status:'available'});
  snapshot.readiness.find(r=>r.key==='social_accounts')!.status='ready';
  await withExecutionAdapters({prepare,customers:()=>[customer],snapshot:async()=>structuredClone(snapshot)},async()=>{
-  await reconcileDigitalEmployeeRun(tenant,run.id);saveStep('missing_analysis');
+  await reconcileDigitalEmployeeRun(tenant,run.id);saveStep('missing_collection_result');
+  assert.equal(task('scheduled_source_collection').status,'waiting_external');
+  assert.equal(task('viral_analysis').status,'pending','schedule creation alone is not completed collection evidence');
+  permitCollection=true;await reconcileDigitalEmployeeRun(tenant,run.id);saveStep('missing_analysis');
+  assert.equal(task('scheduled_source_collection').status,'succeeded');
   assert.equal(task('viral_analysis').status,'waiting_external');assert.notEqual(task('content_release_approval').status,'succeeded');
   permitAnalysis=true;await reconcileDigitalEmployeeRun(tenant,run.id);saveStep('quality_failed');
   assert.equal(task('content_production').status,'waiting_external');assert.equal(task('content_release_approval').status,'pending');

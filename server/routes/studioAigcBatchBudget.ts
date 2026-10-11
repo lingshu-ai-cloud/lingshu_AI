@@ -1,6 +1,13 @@
 import { allocateAigcBudget, type AigcModelOffer, type AigcResolution } from '../../shared/aigcShotPlanning.js';
 import { estimateSeedanceCostCny } from '../lib/seedanceBudget.js';
-import { planStudioBatchShotRoutes, type StudioBatchShotRoute } from './studioBatchShotRoutes.js';
+import { storyboardProjectShotInput } from '../lib/storyboardProjectShotInput.js';
+import { planStudioBatchShotRoutes, type StudioBatchShotRoute, type StudioVerifiedAdoptionContext } from './studioBatchShotRoutes.js';
+
+export interface StudioAigcBudgetContext extends StudioVerifiedAdoptionContext {
+  /** Sum of ALL native allocations, including completed/uncertain/reserved.
+   * This is an admission estimate, not a settled supplier invoice. */
+  usedCny: number;
+}
 
 export interface StudioAigcBudgetSlot {
   id?: string;
@@ -101,6 +108,8 @@ export function studioAigcBatchBudgetPreview(routes: StudioBatchShotRoute[], inp
   requestedResolutions?: Record<string, AigcResolution | undefined>;
   offers?: AigcModelOffer[];
   preferredResolution?: AigcResolution;
+  usedCostCny?: number;
+  firstFrameCallCounts?: Record<string, number>;
 }) {
   const active = routes.filter(route => route.route === 'aigc_first_frame');
   const byId = new Map((input.slots || []).flatMap(slot => [slot.id, slot.slotId].filter(Boolean).map(id => [id!, slot] as const)));
@@ -109,6 +118,10 @@ export function studioAigcBatchBudgetPreview(routes: StudioBatchShotRoute[], inp
   const cloneGeometryCost = input.creationMode === 'clone' && Number.isFinite(input.cloneGeometryObservationCostCny)
     ? Math.max(0, Number(input.cloneGeometryObservationCostCny)) : 0;
   const budgetCny = Number.isFinite(input.batchBudgetCny) ? Math.max(0, input.batchBudgetCny) : 0;
+  const usedCostCny = input.usedCostCny ?? 0;
+  const budgetEvidenceValid = Number.isFinite(usedCostCny) && usedCostCny >= 0
+    && Number.isSafeInteger(Math.round(usedCostCny * 1e6));
+  const availableBudgetCny = budgetEvidenceValid ? Math.max(0, Math.round((budgetCny - usedCostCny) * 1e6) / 1e6) : 0;
   const offers: AigcModelOffer[] = input.offers || [{
     modelId: input.modelId, resolutions: ['480p', '720p'], minDurationSeconds: 4, maxDurationSeconds: 15,
     firstFrameCostCny: firstFrameCost,
@@ -121,14 +134,17 @@ export function studioAigcBatchBudgetPreview(routes: StudioBatchShotRoute[], inp
     const actionPlan = input.actionPlans?.[route.slotId] || input.actionPlans?.[route.shotId];
     const usageScene = route.visualTopic === 'usage_scene' || actionPlan?.sceneType === 'usage';
     const confirmedStages = usageScene ? storyboardBudgetConfirmedStageDurations(raw, actionPlan) : null;
+    const firstFrameCallCount = input.firstFrameCallCounts?.[route.slotId] ?? input.firstFrameCallCounts?.[route.shotId] ?? 1;
     return { shotId: route.shotId, targetDurationSeconds: Number.isFinite(raw) && raw > 0 ? Math.ceil(raw) : 4,
       priority: Number(slot?.priority ?? slot?.importance ?? 0) || 0,
       requestedResolution: requested === '480p' || requested === '720p' ? requested : undefined,
-      firstFrameSurchargeCny: cloneGeometryCost,
+      firstFrameSurchargeCny: firstFrameCallCount === 0 ? 0 : cloneGeometryCost, firstFrameCallCount,
       segmentDurations: confirmedStages || (usageScene && Number.isFinite(raw) && raw > 15
         ? storyboardBudgetSegmentDurations(raw) : undefined) };
   });
-  const shotPlans = allocateAigcBudget({ candidates, offers, budgetCny, maxRetries, preferredResolution: input.preferredResolution });
+  const shotPlans = allocateAigcBudget({ candidates, offers, budgetCny: availableBudgetCny, maxRetries, preferredResolution: input.preferredResolution })
+    .map(plan => ({ ...plan, firstFrameOverheadCny: Math.round(Math.max(0, plan.firstFrameCallCount - 1)
+      * Number(offers.find(offer => offer.modelId === plan.modelId)?.firstFrameCostCny || 0) * 100) / 100 }));
   const total = routes.length;
   const costAt = (tier: AigcResolution) => Math.round(candidates.reduce((sum, candidate) => {
     const segments = candidate.segmentDurations?.length ? candidate.segmentDurations : [Math.max(4, candidate.targetDurationSeconds)];
@@ -137,7 +153,8 @@ export function studioAigcBatchBudgetPreview(routes: StudioBatchShotRoute[], inp
       && segments.every(segment => offer.minDurationSeconds <= segment && offer.maxDurationSeconds >= segment)
       && offer.videoCostCnyPerSecond[tier] !== null);
     if (!compatible.length) return sum;
-    return sum + Math.min(...compatible.map(offer => (offer.firstFrameCostCny + (candidate.firstFrameSurchargeCny || 0)
+    if (!Number.isInteger(candidate.firstFrameCallCount) || candidate.firstFrameCallCount < 0 || candidate.firstFrameCallCount > 2) return sum;
+    return sum + Math.min(...compatible.map(offer => (offer.firstFrameCostCny * candidate.firstFrameCallCount + (candidate.firstFrameSurchargeCny || 0)
       + duration * (offer.videoCostCnyPerSecond[tier] || 0)) * (maxRetries + 1)));
   }, 0) * 100) / 100;
   const estimate480pCny = costAt('480p');
@@ -148,11 +165,12 @@ export function studioAigcBatchBudgetPreview(routes: StudioBatchShotRoute[], inp
     planningOnly: true as const, modelId: input.modelId, totalShots: total, aigcShots: active.length,
     aigcShotRatio: total ? Math.round(active.length / total * 100) / 100 : 0,
     candidateDurationSeconds: 4 as const, maxRetries, estimate480pCny, estimate720pCny,
-    batchBudgetCny: budgetCny,
-    recommendedResolution: (estimate720pCny <= budgetCny ? '720p' : '480p') as AigcResolution,
-    budgetEnoughFor480p: estimate480pCny <= budgetCny,
+    batchBudgetCny: budgetCny, budgetUsedCny: budgetEvidenceValid ? usedCostCny : null,
+    availableBudgetCny, budgetEvidenceValid,
+    recommendedResolution: (estimate720pCny <= availableBudgetCny ? '720p' : '480p') as AigcResolution,
+    budgetEnoughFor480p: budgetEvidenceValid && !shotPlans.some(plan => plan.status === 'unsupported') && estimate480pCny <= availableBudgetCny,
     shotPlans, readyShots, excludedShots: active.length - readyShots, estimatedCostCny,
-    budgetRemainingCny: Math.round((budgetCny - estimatedCostCny) * 100) / 100,
+    budgetRemainingCny: Math.round((availableBudgetCny - estimatedCostCny) * 100) / 100,
   };
 }
 
@@ -161,11 +179,41 @@ export function studioAigcBatchBudgetPreview(routes: StudioBatchShotRoute[], inp
 export function studioAigcBudgetPreviewForSpec(
   spec: Parameters<typeof planStudioBatchShotRoutes>[0],
   input: Omit<Parameters<typeof studioAigcBatchBudgetPreview>[1], 'slots' | 'requestedResolutions' | 'actionPlans'>,
+  context?: StudioAigcBudgetContext,
 ) {
   const routes = planStudioBatchShotRoutes(spec, {
-    talkingExecutorReady: false, actionExecutorReady: false, authorizedPresenterIds: [],
+    talkingExecutorReady: false, actionExecutorReady: false, authorizedPresenterIds: [], verifiedAdoptionContext: context,
   });
+  const firstFrameCallCounts = Object.fromEntries(routes.map(route => {
+    const entry = spec.automatedReplicationShots?.find(item => item.shotId === route.shotId && item.slotId === route.slotId);
+    const state = spec.automatedReplicationProgress?.[route.shotId];
+    const plan = spec.storyboardSourcePlans?.[route.slotId] || spec.storyboardSourcePlans?.[route.shotId];
+    const frameId = state?.firstFrameMaterialId || plan?.firstFrameMaterialId;
+    const frame = context?.materials.find(item => item.id === frameId);
+    const actualHash = frameId ? context?.verifiedFirstFrameContentSha256ByMaterialId?.[frameId] : undefined;
+    const provenance = frame?.provenance;
+    const currentShot = storyboardProjectShotInput(spec, route.slotId);
+    const qa = provenance?.firstFrameQuality;
+    const reusable = !!context?.tenantId && !!context.projectId && frame?.scope === 'own' && frame.type === 'image'
+      && frame.sourceType === 'ai-storyboard-first-frame' && String(frame.tenantId || frame.tenant_id || '') === context.tenantId
+      && provenance?.projectId === context.projectId && provenance.shotId === route.slotId
+      && !!currentShot && provenance.projectShotFingerprint === currentShot.fingerprint
+      && !!actualHash && /^[a-f0-9]{64}$/.test(actualHash) && actualHash === provenance.firstFrameQualityInput?.sourceSha256
+      && provenance.confirmed === true && qa?.phase === 'first_frame' && qa.status === 'passed' && qa.passed === true
+      && qa.requiresHumanReview !== true && (!state?.firstFrameFingerprint || state.firstFrameFingerprint === provenance.fingerprint);
+    // Only the native product-remake path has two paid image calls: clearing
+    // the reference product, then compositing the enterprise product into it.
+    const request = entry?.firstFrameRequest;
+    const products = [request?.productIds, currentShot?.input.source.productIds, spec.selectedProductIds]
+      .find(value => Array.isArray(value) && value.length > 0) || [];
+    const productComposite = spec.mode === 'clone' && (request?.sceneType || plan?.sceneType || route.visualTopic) === 'product'
+      && !!(request?.sourceFirstFrameUrl || currentShot?.input.reference?.firstFrameRef)
+      && Array.isArray(products) && products.length > 0;
+    return [route.slotId, reusable ? 0 : productComposite ? 2 : 1];
+  }));
   return studioAigcBatchBudgetPreview(routes, { ...input, slots: Array.isArray(spec.shootingSlots) ? spec.shootingSlots : [],
+    firstFrameCallCounts,
+    usedCostCny: context?.usedCny ?? (spec.automation?.managedBy === 'digital_employee' ? Number.NaN : input.usedCostCny),
     creationMode: spec.mode,
     actionPlans: spec.storyboardSourcePlans || {},
     requestedResolutions: Object.fromEntries(Object.entries(spec.storyboardSourcePlans || {}).map(([id, plan]) => [id,

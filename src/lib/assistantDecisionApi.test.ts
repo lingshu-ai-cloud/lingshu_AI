@@ -81,6 +81,21 @@ test('weekly plan navigation retains the backend goal and plan identity only', (
   } });
 });
 
+test('digital-human recovery keeps the allowlisted enterprise presenter destination', () => {
+  const feed = normalizeAssistantDecisionFeed({ page: 'digitalEmployees', items: [card({
+    kind: 'input_required',
+    deepLink: { page: 'enterprise', businessRef: {
+      taskKey: 'content_production',
+      enterpriseView: 'presenters',
+      reason: 'avatar_required',
+      privateProjectSpec: { prompt: 'must not enter the assistant' },
+    } },
+  })] });
+  assert.deepEqual(feed.items[0].deepLink, { page: 'enterprise', businessRef: {
+    taskKey: 'content_production', enterpriseView: 'presenters',
+  } });
+});
+
 test('invalid actions and unbounded text cannot enter the decision UI', () => {
   const feed = normalizeAssistantDecisionFeed({
     page: 'socialInspiration',
