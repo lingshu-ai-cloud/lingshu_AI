@@ -282,7 +282,7 @@ export async function inspectStoryboardAigcFramesWithQwen(opts: {
   const selectedFrames = opts.frames.length <= availableFrames ? opts.frames
     : Array.from({ length: availableFrames }, (_, index) => opts.frames[Math.round(index * (opts.frames.length - 1) / (availableFrames - 1))]);
   const images = [...references, ...(opts.previousTerminalFrame ? [opts.previousTerminalFrame] : []), ...selectedFrames];
-  if (opts.boundedPaidQa && (images.length > 4 || images.some(x => x.timeLabel.length > 200))) throw Error('bounded_paid_qa_input_exceeded');
+  if (opts.boundedPaidQa && (images.length > 5 || images.some(x => x.timeLabel.length > 200))) throw Error('bounded_paid_qa_input_exceeded');
   const candidateLabels = selectedFrames.map(item => item.timeLabel);
   const exampleLabel = candidateLabels[0] || opts.frames[0]!.timeLabel;
   const expected = opts.phase === 'first_frame'
