@@ -104,7 +104,8 @@ export function replicationExecutionGaps(
       reasons.push('source_phrase_timing_unverified');
       actions.push('对照原声逐句校准起止时间，并将原句准确映射到参考分镜');
     }
-    if (scene.productionRouting?.presenterVisible) {
+    if (scene.productionRouting?.needsPreciseLipSync
+      || scene.productionRouting?.presenterIdentityReplacementRequired) {
       // Publishing-account binding happens later. At generation time an exact
       // enterprise asset reference is sufficient for this synchronous gate;
       // verifyNamedPresenterLock performs the tenant/version/mapping/rights
@@ -199,12 +200,11 @@ export function selectPresenterExecutions(input: {
   if (!workflow) return [];
   const references = new Map((input.detail.referenceVideoAnalysis?.shots ?? []).map(shot => [shot.shotId, shot]));
   const executionByScene = new Map(workflow.executionPlan.scenes.map(scene => [scene.sceneId, scene]));
-  return workflow.directorBrief.scenes.filter(scene => {
-    if (!scene.productionRouting?.presenterVisible) return false;
+  return workflow.directorBrief.scenes.filter(scene => scene.productionRouting?.needsPreciseLipSync
+    || scene.productionRouting?.presenterIdentityReplacementRequired).map(scene => {
     const execution = executionByScene.get(scene.sceneId);
-    const selected = execution?.candidates?.find(item => execution.recommendedCandidateIds?.includes(item.candidateId));
-    return (selected?.sourceStrategy ?? execution?.selectedSourceStrategy) === 'authorized_digital_presenter';
-  }).map(scene => {
+    const selectedCandidate = execution?.candidates?.find(item => execution.recommendedCandidateIds?.includes(item.candidateId));
+    const selectedStrategy = selectedCandidate?.sourceStrategy ?? execution?.selectedSourceStrategy;
     const reference = scene.referenceShotId ? references.get(scene.referenceShotId) : undefined;
     const measurement = reference?.presenterMeasurements as PresenterShotMeasurements | undefined;
     const missing: PresenterShotMeasurements = {
@@ -230,7 +230,7 @@ export function selectPresenterExecutions(input: {
     let decision = decidePresenterStack(governed, {
       heygen: input.heygenReady, seedance: input.seedancePresenterReady, budget: input.budgetReady,
     });
-    const selected = executionByScene.get(scene.sceneId)?.selectedSourceStrategy;
+    const selected = selectedStrategy;
     // Exact source speech plus the Director's frozen lip-sync requirement is
     // sufficient to select the talking presenter when optional motion CV was
     // not run. This does not infer a gesture or camera route.
@@ -246,9 +246,10 @@ export function selectPresenterExecutions(input: {
     }
     const reasonCodes = [...decision.reasonCodes];
     let providerId: PresenterExecutionSelection['providerId'] = null;
-    if (decision.route === 'heygen_talking' && decision.executable) {
-      if (selected === 'authorized_digital_presenter') providerId = 'heygen';
-      else reasonCodes.push('execution_strategy_does_not_match_heygen');
+    if (selected !== 'authorized_digital_presenter') {
+      reasonCodes.push('presenter_visible_requires_authorized_digital_presenter');
+    } else if (decision.route === 'heygen_talking' && decision.executable) {
+      providerId = 'heygen';
     }
     if (decision.route === 'seedance_first_frame' && decision.executable) {
       // No social presenter Seedance executor is registered at present. Keep

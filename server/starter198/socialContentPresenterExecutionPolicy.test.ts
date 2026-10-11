@@ -20,7 +20,8 @@ function detail(value: Partial<PresenterShotMeasurements> | null, strategy = 'au
     agentWorkflow: {
       directorBrief: { scenes: [{
         sceneId: 'scene-1', referenceShotId: 'ref-1', duration: { targetSeconds: 3 },
-        productionRouting: { presenterVisible: true, enterprisePresenterAssetRef: 'authorized-person-1',
+        productionRouting: { presenterVisible: true, presenterIdentityReplacementRequired: true,
+          enterprisePresenterAssetRef: 'authorized-person-1',
           needsPreciseLipSync: true, needsCameraOrCompositionReconstruction: false },
         referenceMaterial: { extractionStatus: 'ready', firstFrameRef: 'server-frame-1' },
       }] },
@@ -40,9 +41,22 @@ assert.equal(route({}).decision.route, 'heygen_talking');
 assert.equal(route({}).providerId, 'heygen');
 assert.equal(route({}).decision.measurements.enterprisePresenterAssetRef, 'authorized-person-1');
 assert.equal(route({}).decision.measurements.sourceFirstFrameRef, 'server-frame-1');
-assert.equal(selectPresenterExecutions({ detail: detail({}, 'aigc_product_scene_replication'), heygenReady: true,
-  seedancePresenterReady: false, budgetReady: true }).length, 0,
-  'a visual person observed in the reference does not enter the presenter provider when the execution plan selected another strategy');
+const wrongPresenterStrategy = selectPresenterExecutions({ detail: detail({}, 'aigc_product_scene_replication'), heygenReady: true,
+  seedancePresenterReady: false, budgetReady: true })[0]!;
+assert.equal(wrongPresenterStrategy.executionStatus, 'blocked');
+assert.equal(wrongPresenterStrategy.providerId, null);
+assert.ok(wrongPresenterStrategy.reasonCodes.includes('presenter_visible_requires_authorized_digital_presenter'),
+  'a visible presenter must fail closed instead of falling through to product-scene or stock generation');
+const presenterWithoutHeygen = selectPresenterExecutions({ detail: detail({}), heygenReady: false,
+  seedancePresenterReady: false, budgetReady: true })[0]!;
+assert.equal(presenterWithoutHeygen.executionStatus, 'blocked');
+assert.equal(presenterWithoutHeygen.providerId, null);
+const backgroundPerson = detail({}, 'aigc_product_scene_replication');
+backgroundPerson.agentWorkflow.directorBrief.scenes[0].productionRouting.presenterIdentityReplacementRequired = false;
+backgroundPerson.agentWorkflow.directorBrief.scenes[0].productionRouting.needsPreciseLipSync = false;
+assert.equal(selectPresenterExecutions({ detail: backgroundPerson, heygenReady: false,
+  seedancePresenterReady: false, budgetReady: false }).length, 0,
+  'a background or incidental person does not require digital-presenter generation');
 const motion = route({ specificGestureCount: 1, visibleSpeechSeconds: 0, lipSyncRequired: false });
 assert.equal(motion.decision.route, 'blocked');
 assert.ok(motion.reasonCodes.includes('seedance_capability_unavailable'));

@@ -407,7 +407,8 @@ export async function runSocialContentAutoProduction(input: {
   }
   let presenterExecutions: PresenterExecutionSelection[] = [];
   if (detail.brief.creationMode === 'viral_replication') {
-    if (agentWorkflow.directorBrief.scenes.some(scene => scene.productionRouting?.presenterVisible)) {
+    if (agentWorkflow.directorBrief.scenes.some(scene => scene.productionRouting?.needsPreciseLipSync
+      || scene.productionRouting?.presenterIdentityReplacementRequired)) {
       const namedPresenter = await verifyNamedPresenterLock({
         store: input.repository.dataStore ?? null,
         tenantId: input.tenantId,
