@@ -80,8 +80,8 @@ async function createSynchronousWeeklyPublishingAdapter(input: {
     capability: unavailableReason ? 'unavailable' : 'available',
     ...(unavailableReason ? { unavailableReason } : {}),
     async publish({ assignment, publicationPackage, attemptId }) {
-      await assertPublicationAtomicStore(dataStore);
       if(input.purpose==='receipt_lookup')return {status:'rejected',failureCode:'receipt_lookup_adapter_read_only'};
+      await assertPublicationAtomicStore(dataStore);
       if(unavailableReason)return {status:'rejected',failureCode:unavailableReason};
       if (assignment.tenantId !== input.tenantId || assignment.accountId !== input.accountId
         || assignment.platform !== input.platform) return { status: 'rejected', failureCode: 'adapter_account_scope_mismatch' };

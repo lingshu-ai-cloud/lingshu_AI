@@ -62,7 +62,7 @@ assert.match(
 );
 assert.match(
   source,
-  /\[data-draft-suggestion\][\s\S]{0,100}scrollIntoView\(\{ behavior: 'smooth', block: 'center' \}\)/,
+  /\[data-draft-suggestion\][\s\S]{0,100}scrollIntoView\(\{ behavior: getScrollBehavior\(\), block: 'center' \}\)/,
   'a newly generated draft must scroll into the visible conversation area',
 );
 
@@ -107,12 +107,12 @@ assert.match(
 );
 assert.match(
   source,
-  /\.catch\(error => \{[\s\S]{0,180}removeTimelineEvent\(customer\.id, event\.id\);[\s\S]{0,220}hasUnread: true[\s\S]{0,120}pendingDraft: restoreText/,
-  'a provider failure must remove the optimistic message and restore the customer draft/todo state',
+  /\.catch\(error => \{[\s\S]{0,600}updateTimelineEvent\(customer\.id,event\.id,\{sendStatus:'unknown'\}\)/,
+  'an uncertain provider response must retain the original event as unknown for receipt recovery',
 );
 assert.match(
   source,
-  /\.then\(async result => \{[\s\S]{0,520}persistCustomerPatch\(customer\.id, \{ lastActive: '刚刚', hasUnread: false/,
+  /\.then\(async result => \{[\s\S]{0,900}if\(!\['sent','delivered'\]\.includes\(result\.status\|\|''\)\)[\s\S]{0,900}persistCustomerPatch\(customer\.id, \{ lastActive: '刚刚', hasUnread: false/,
   'a customer todo may only be completed after the provider confirms the send',
 );
 
