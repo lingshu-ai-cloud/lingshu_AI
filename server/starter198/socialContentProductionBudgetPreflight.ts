@@ -104,7 +104,16 @@ export async function prepareSocialContentProductionBudget(input: ProductionBudg
     // inputs and must never create a second set of reservations.
     const priorPlanHash = prior?.inputHash && /^[a-f0-9]{64}$/.test(prior.inputHash)
       && priorPayload?.baselineHash === baselineHash ? prior.inputHash : null;
-    const planHash = priorPlanHash || (typeof binding?.inputHash === 'string' && /^[a-f0-9]{64}$/.test(binding.inputHash) ? binding.inputHash : paidProductionHash({ baselineHash, plan, review, supplyPlan: input.supplyPlan }));
+    const calculatedPlanHash = priorPlanHash || (typeof binding?.inputHash === 'string' && /^[a-f0-9]{64}$/.test(binding.inputHash) ? binding.inputHash : paidProductionHash({ baselineHash, plan, review, supplyPlan: input.supplyPlan }));
+    // The ledger is the durable financial authority. If an interrupted worker
+    // wrote a newer planning checkpoint through a different working directory,
+    // keep the single already-funded scope for this same run.
+    const ledgerProbe = new SocialContentTaskBudget(input.ports?.ledgerRoot, {
+      authorization: async()=>{throw Error('budget_probe_read_only');}, quote:async()=>{throw Error('budget_probe_read_only');},
+      assertCurrent:async()=>{},verifyRejection:async()=>false,
+    }).status({tenantId:input.tenantId,taskId:input.taskId,runId:input.runId,planHash:calculatedPlanHash});
+    const fundedPlanHashes=[...new Set((ledgerProbe?.entries||[]).filter(entry=>entry.runId===input.runId&&entry.status!=='rejected').map(entry=>entry.planHash))];
+    const planHash = fundedPlanHashes.length===1 ? fundedPlanHashes[0]! : calculatedPlanHash;
     if (input.graphApprovedContext && graph.socialProductionGraphInput(detail, input.graphApprovedContext).inputHash !== planHash)
         return error('graph_binding_changed');
     const initialWorkflowHash = socialRequestHash({ plan: detail.agentWorkflow.executionPlan, review: detail.agentWorkflow.executionPlanReview, director: detail.agentWorkflow.directorBrief });
