@@ -16,6 +16,7 @@ import { nodeDeepLink } from './WeeklyExecutionNodes.js';
 
 const pageSource = fs.readFileSync('src/components/DigitalEmployeePage.tsx', 'utf8');
 const smartBusinessSource = fs.readFileSync('src/components/SmartBusinessDashboard.tsx', 'utf8');
+const digitalEmployeeWorkspaceSource = fs.readFileSync('src/components/smartBusiness/DigitalEmployeeWorkspace.tsx', 'utf8');
 const matrixScheduleSource = fs.readFileSync('src/components/smartBusiness/MatrixWorkSchedule.tsx', 'utf8');
 const agentWeeklyCalendarSource = fs.readFileSync('src/components/smartBusiness/AgentWeeklyCalendar.tsx', 'utf8');
 const connectedAgentCalendarSource = fs.readFileSync('src/components/smartBusiness/ConnectedAgentCalendar.tsx', 'utf8');
@@ -70,6 +71,10 @@ const weeklyCommandCenterSource = smartBusinessSource.slice(
 );
 const homeSource = smartBusinessSource.slice(
   smartBusinessSource.indexOf('function HomeView'),
+  smartBusinessSource.indexOf('const matrixRoleLabel'),
+);
+const publishingCalendarSource = smartBusinessSource.slice(
+  smartBusinessSource.indexOf('function WeeklyPublishingCalendar'),
   smartBusinessSource.indexOf('const matrixRoleLabel'),
 );
 const weeklyPlanControlsSource = pageSource.slice(
@@ -183,8 +188,11 @@ for (const label of ['爆款视频预览', '素材组合预览', '效果置信�
 }
 assert.match(matrixScheduleSource, /Agent 任务看板/, 'the overview schedule section must retain only the Agent task board');
 assert.doesNotMatch(matrixScheduleSource, /<LsCalendar|发布日历/, 'the publishing calendar must not be duplicated inside the Agent task board');
-assert.match(weeklyCommandCenterSource, /<LsCalendar[^>]*label="本周发布日历"[^>]*density="compact"[^>]*\bflush\b/, 'the publishing calendar must use a compact edge-to-edge window beneath the weekly metrics');
-assert.doesNotMatch(weeklyCommandCenterSource, /<h[1-6][^>]*>发布日历<\/h[1-6]>/, 'the calendar must not spend another row on its repeated title');
+assert.doesNotMatch(weeklyCommandCenterSource, /<LsCalendar|WeeklyContentProgressPanel|本周发布日历/, 'the weekly-plan metrics must not duplicate the publishing calendar');
+assert.match(digitalEmployeeWorkspaceSource, /aria-label="数字员工视图"[\s\S]{0,300}员工排期[\s\S]{0,200}发布日历/, 'the Digital Employee tab must expose employee scheduling and publishing as two switchable views');
+assert.match(matrixViewSource, /publishingCalendar=\{<WeeklyPublishingCalendar data=\{data\} onRefresh=\{onRefresh\}\/>\}/, 'the publishing calendar must be injected into the Digital Employee workspace');
+assert.match(publishingCalendarSource, /<LsCalendar[^>]*label="本周发布日历"[^>]*density="compact"[^>]*\bflush\b/, 'the Digital Employee publishing view must use a compact edge-to-edge calendar');
+assert.doesNotMatch(publishingCalendarSource, /<h[1-6][^>]*>发布日历<\/h[1-6]>/, 'the calendar must not spend another row on its repeated title');
 assert.doesNotMatch(matrixScheduleSource, /gridTemplateColumns|group-hover:max-h-72/, 'calendar must not retain a handwritten or hover-only schedule');
 assert.match(matrixScheduleSource, /<AgentWorkMonitor/, 'the Agent task board must retain the detailed work monitor');
 assert.doesNotMatch(smartBusinessSource, /数字员工协作状态|四位数字员工协作状态/, 'the dashboard must not create a separate Digital Employee section');
@@ -272,7 +280,7 @@ assert.match(weeklyCommandCenterSource, /aria-label="智能经营控制"/, 'the 
 assert.match(weeklyCommandCenterSource, /周经营计划[\s\S]{0,1800}aria-label="智能经营控制"/, 'the weekly-plan visual date range must keep the management controls in the same header');
 assert.match(weeklyCommandCenterSource, /WeeklyRangeVisual/, 'the weekly-plan header must visualize its operating range instead of appending a raw date string');
 assert.match(weeklyCommandCenterSource, /周经营计划[\s\S]{0,500}<WeeklyRangeVisual/, 'the compact week range must remain in the same title row instead of consuming its own line');
-assert.match(weeklyCommandCenterSource, /initialView="dayGridWeek"[^>]*eventCardMode="media"[^>]*fixedHeight="clamp\(300px, calc\(100dvh - 270px\), 640px\)"/, 'the weekly publishing calendar must open as a viewport-bounded, media-first cascading card window');
+assert.match(publishingCalendarSource, /initialView="dayGridWeek"[^>]*eventCardMode="media"[^>]*fixedHeight="clamp\(300px, calc\(100dvh - 270px\), 640px\)"/, 'the weekly publishing calendar must open as a viewport-bounded, media-first cascading card window');
 assert.doesNotMatch(smartBusinessSource, />各平台计划与完成</, 'the overview must not add a low-value platform summary chart');
 assert.match(currentPlanSource, /WeeklyCommandCenter/, 'the full weekly command center must replace the simplified current-plan summary');
 assert.match(currentPlanSource, /notice=\{!activeRun[\s\S]{0,1200}detailGeneration\?\.blockedCount/, 'the weekly-plan header must retain actionable readiness and generation blockers');
@@ -340,8 +348,8 @@ assert.match(weeklyPlanCalendarSource, /plans\.length[\s\S]{0,300}条内容/, 't
 assert.match(weeklyPlanCalendarSource, /plans\.map[\s\S]{0,650}plan\.plannedPublishDate/, 'the weekly calendar must adapt every publishing version with its real planned date');
 assert.match(weeklyPlanCalendarSource, /<LsCalendar/, 'the weekly calendar must use FullCalendar for all views');
 assert.match(smartBusinessSource, /function inspirationReferenceForPlan[\s\S]{0,700}referenceId[\s\S]{0,260}sourceUrl[\s\S]{0,260}title:/, 'weekly content cards must preserve a traceable reference for Inspiration Center after the detail page is removed');
-assert.match(weeklyCommandCenterSource, /detailsTitle="内容制作进度"[\s\S]{0,600}WeeklyContentProgressPanel/, 'the homepage calendar must open read-only content progress in the shared drawer');
-assert.match(weeklyCommandCenterSource, /onOpenReference[\s\S]{0,350}inspirationReferenceNavigationDetail/, 'the drawer must retain the exact persisted inspiration reference as a secondary action');
+assert.match(publishingCalendarSource, /detailsTitle="内容制作进度"[\s\S]{0,600}WeeklyContentProgressPanel/, 'the Digital Employee publishing calendar must open read-only content progress in the shared drawer');
+assert.match(publishingCalendarSource, /onOpenReference[\s\S]{0,350}inspirationReferenceNavigationDetail/, 'the drawer must retain the exact persisted inspiration reference as a secondary action');
 assert.doesNotMatch(confirmWeeklyPlanSource, /approvalBlocked|missingProducts|missingReferences|generatePackageDetails|readiness\.canStart/, 'launch must not duplicate production preparation or publishing readiness gates in the UI');
 assert.match(confirmWeeklyPlanSource, /approveGoal\(goal\.id, data\.plan\.businessPackage\.revision\)/, 'launch must submit the exact plan revision to authoritative server validation');
 assert.match(digitalEmployeeApiSource, /approveGoal:[\s\S]{0,900}AbortSignal\.timeout\(12_000\)/, 'weekly launch must stop indefinite loading and hand unknown results to read-only reconciliation');

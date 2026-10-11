@@ -4742,9 +4742,6 @@ export default function DigitalEmployeePage({
               statusLabel={currentPlanStatusLabel}
               actions={weeklyPlanControls}
               feedback={weeklyActionFeedback}
-              onRefresh={() => void load()}
-              onOpenProductionProgress={openProductionProgress}
-              onOpenContent={openContentProduction}
               notice={!activeRun && !viewGoalId && (missingReferenceMasters.length > 0 || missingProductMasters.length > 0 || detailGeneration?.status === "blocked")
                 ? <p className="mr-auto text-xs text-text-secondary">可直接开始任务；{detailGeneration?.blockedCount || missingReferenceMasters.length || missingProductMasters.length} 条内容的待补资料将在对应制作步骤提示，不阻止其他内容推进。账号连接与发布授权在正式发布前核验。</p>
                 : undefined}

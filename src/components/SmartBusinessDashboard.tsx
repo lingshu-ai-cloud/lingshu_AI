@@ -331,9 +331,6 @@ export function WeeklyCommandCenter({
   actions,
   feedback,
   notice,
-  onRefresh,
-  onOpenProductionProgress,
-  onOpenContent,
   className = "",
 }: {
   data: DigitalEmployeeOverview;
@@ -341,9 +338,6 @@ export function WeeklyCommandCenter({
   actions?: ReactNode;
   feedback?: ReactNode;
   notice?: ReactNode;
-  onRefresh?: () => void;
-  onOpenProductionProgress?: (taskId: string, contentItemId: string, projectId?: string) => void;
-  onOpenContent?: (taskId?: string, socialContentTaskId?: string, projectId?: string) => void;
   className?: string;
 }) {
   const display = buildSmartBusinessDisplayModel(data);
@@ -368,39 +362,6 @@ export function WeeklyCommandCenter({
     blocked: Math.max(display.totals.blockedCount, queuedBlockedCount, preproductionBlockedCount),
     completed: display.totals.completedCount,
   };
-  const calendarStatus: Record<ContentQueueItem["status"], LsCalendarEvent["status"]> = {
-    planned: "planned",
-    queued: "queued",
-    producing: "working",
-    waiting_review: "needs_action",
-    completed: "done",
-    blocked: "needs_action",
-  };
-  const calendarStatusLabel: Record<ContentQueueItem["status"], string> = {
-    planned: "已计划",
-    queued: "待制作",
-    producing: "制作中",
-    waiting_review: "待验收",
-    completed: "已完成",
-    blocked: "需要处理",
-  };
-  const calendarEvents: LsCalendarEvent[] = display.contents.map((item): LsCalendarEvent => ({
-    id: `weekly-publish-${item.id}`,
-    title: item.title,
-    start: item.plannedPublishDate || display.startsAt,
-    timeZone: "Asia/Shanghai",
-    allDay: true,
-    status: calendarStatus[item.status],
-    statusLabel: calendarStatusLabel[item.status],
-    eventType: "publish",
-    platform: item.platform,
-    accountId: item.accountId,
-    accountName: item.accountLabel,
-    thumbnailUrl: item.thumbnailUrl,
-    sourceId: item.inspirationReference?.referenceId || item.contentId,
-    description: `${item.productName} · ${item.caption || "发布文案待完善"}`,
-    data: item,
-  })).filter(event => Boolean(event.start));
 
   return <section className={`overflow-hidden bg-white ${className}`.trim()} aria-label="本周任务驾驶舱">
     <div className="flex flex-wrap items-start justify-between gap-3 border-b border-border px-4 py-3 text-text-primary">
@@ -433,17 +394,6 @@ export function WeeklyCommandCenter({
         { label: "预计制作成本", value: estimatedContentCost > 0 ? `¥${estimatedContentCost.toFixed(2)}` : "待核算", color: "var(--color-text-primary)", note: "按当前周计划与供应商报价估算" },
         { label: "已结算成本", value: settledContentCost > 0 ? `¥${settledContentCost.toFixed(2)}` : "暂无结算", color: "var(--color-text-primary)", note: "仅统计供应商对账回执" },
       ].map(item => <article key={item.label} className="bg-white px-4 py-4"><Statistic title={item.label} value={item.value} styles={{ content: { color: item.color } }}/><p className="mt-2 text-xs text-text-secondary">{item.note}</p></article>)}
-    </div>
-    <div className="border-t border-border">
-      <LsCalendar events={calendarEvents} label="本周发布日历" initialDate={display.startsAt ? calendarDayKey(display.startsAt) : undefined} date={display.startsAt ? calendarDayKey(display.startsAt) : undefined} initialView="dayGridWeek" eventCardMode="media" density="compact" flush fixedHeight="clamp(300px, calc(100dvh - 270px), 640px)" firstDay={display.startsAt ? new Date(`${display.startsAt}T00:00:00+08:00`).getDay() : 1} detailsTitle="内容制作进度" detailsMedia="compact" renderDetails={(event, closeDetails) => {
-        const item = event.data as UnifiedPlanContent;
-        return <WeeklyContentProgressPanel key={item.contentId} data={data} contentId={item.contentId} onRefresh={onRefresh}
-          onOpenWorkbench={closeDetails}
-          onOpenReference={item.inspirationReference ? () => {
-            closeDetails();
-            window.dispatchEvent(new CustomEvent("lingshu:navigate", { detail: inspirationReferenceNavigationDetail(item.inspirationReference!, item.contentId) }));
-          } : undefined}/>;
-      }}/>
     </div>
     {notice && <div className="flex flex-wrap items-center gap-2 border-t border-slate-100 bg-slate-50/70 px-5 py-3">{notice}</div>}
   </section>;
@@ -827,6 +777,55 @@ function HomeView({ data, onNavigate, selectedAccountId = "", overviewRangeBusy 
   </div>;
 }
 
+function WeeklyPublishingCalendar({ data, onRefresh }: { data: DigitalEmployeeOverview; onRefresh?: () => void }) {
+  const display = buildSmartBusinessDisplayModel(data);
+  const calendarStatus: Record<ContentQueueItem["status"], LsCalendarEvent["status"]> = {
+    planned: "planned",
+    queued: "queued",
+    producing: "working",
+    waiting_review: "needs_action",
+    completed: "done",
+    blocked: "needs_action",
+  };
+  const calendarStatusLabel: Record<ContentQueueItem["status"], string> = {
+    planned: "已计划",
+    queued: "待制作",
+    producing: "制作中",
+    waiting_review: "待验收",
+    completed: "已完成",
+    blocked: "需要处理",
+  };
+  const calendarEvents: LsCalendarEvent[] = display.contents.map((item): LsCalendarEvent => ({
+    id: `weekly-publish-${item.id}`,
+    title: item.title,
+    start: item.plannedPublishDate || display.startsAt,
+    timeZone: "Asia/Shanghai",
+    allDay: true,
+    status: calendarStatus[item.status],
+    statusLabel: calendarStatusLabel[item.status],
+    eventType: "publish",
+    platform: item.platform,
+    accountId: item.accountId,
+    accountName: item.accountLabel,
+    thumbnailUrl: item.thumbnailUrl,
+    sourceId: item.inspirationReference?.referenceId || item.contentId,
+    description: `${item.productName} · ${item.caption || "发布文案待完善"}`,
+    data: item,
+  })).filter(event => Boolean(event.start));
+
+  return <section aria-label="发布日历" className="overflow-hidden rounded-lg border border-border bg-white">
+    <LsCalendar events={calendarEvents} label="本周发布日历" initialDate={display.startsAt ? calendarDayKey(display.startsAt) : undefined} date={display.startsAt ? calendarDayKey(display.startsAt) : undefined} initialView="dayGridWeek" eventCardMode="media" density="compact" flush fixedHeight="clamp(300px, calc(100dvh - 270px), 640px)" firstDay={display.startsAt ? new Date(`${display.startsAt}T00:00:00+08:00`).getDay() : 1} detailsTitle="内容制作进度" detailsMedia="compact" renderDetails={(event, closeDetails) => {
+      const item = event.data as UnifiedPlanContent;
+      return <WeeklyContentProgressPanel key={item.contentId} data={data} contentId={item.contentId} onRefresh={onRefresh}
+        onOpenWorkbench={closeDetails}
+        onOpenReference={item.inspirationReference ? () => {
+          closeDetails();
+          window.dispatchEvent(new CustomEvent("lingshu:navigate", { detail: inspirationReferenceNavigationDetail(item.inspirationReference!, item.contentId) }));
+        } : undefined}/>;
+    }}/>
+  </section>;
+}
+
 const matrixRoleLabel: Record<string, string> = {
   brand_capability: "品牌能力号",
   buyer_advisor: "买家顾问号",
@@ -882,7 +881,7 @@ const matrixScheduleStages = [
 
 
 function MatrixView({ calendarTasks, calendarDemo, data, onRefresh, onOpenContent }: { calendarTasks?: AgentCalendarTask[]; calendarDemo?: boolean; data: DigitalEmployeeOverview; onRefresh?: () => void; onNavigate?: (page: Page) => void; onGeneratePlan?: () => void; selectedAccountId?: string; onOpenContent?: (taskId?: string, socialContentTaskId?: string, projectId?: string) => void; onOpenProductionProgress?: (taskId: string, contentItemId: string, projectId?: string) => void; onRetryTask?: (taskId: string) => Promise<boolean> }) {
-  return <DigitalEmployeeWorkspace data={data} calendarTasks={calendarTasks} calendarDemo={calendarDemo} onRefresh={onRefresh} onOpenContent={onOpenContent}/>;
+  return <DigitalEmployeeWorkspace data={data} calendarTasks={calendarTasks} calendarDemo={calendarDemo} onRefresh={onRefresh} onOpenContent={onOpenContent} publishingCalendar={<WeeklyPublishingCalendar data={data} onRefresh={onRefresh}/>}/>;
 }
 
 function openTaskPreviewPage(item: ContentQueueItem, target: "benchmark" | "materials", onNavigate?: (page: Page) => void) {
