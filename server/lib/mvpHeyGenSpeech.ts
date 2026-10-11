@@ -17,12 +17,12 @@ export interface MvpHeyGenSpeechInput {
 export interface MvpHeyGenSpeechResult {
   receiptRef: string; receiptHash: string; tenantId: string; taskId: string; taskVersion: number; accountId: string | null;
   runId: string; shotId: string; operationRole: 'hook' | 'body'; maxDurationSeconds: number; voiceId: string; scriptSha256: string; clipSha256: string;
-  durationSeconds: number; filePath: string; providerRequestId: string;
+  durationSeconds: number; filePath: string; providerRequestId: string; providerEvidenceSha256?: string;
   usage: { reportedDurationSeconds: number; actualCostCny: null };
 }
 interface Receipt { schemaVersion: 1; fingerprint: string; input: MvpHeyGenSpeechInput;
   state: 'prepared' | 'unknown' | 'accepted' | 'completed';
-  provider?: { requestId: string; audioUrl: string; duration: number; engine: 'starfish' };
+  provider?: { requestId: string; audioUrl: string; duration: number; engine: 'starfish'; responseEvidence: unknown };
   failure?: { httpStatus: number; code: string | null; message: string | null };
   result?: MvpHeyGenSpeechResult;
 }
@@ -57,11 +57,16 @@ export function readMvpHeyGenSpeech(receiptRef: string, root = defaultRoot()): M
     || r.accountId !== row.input.scope.accountId || r.accountId === undefined || r.taskVersion !== row.input.scope.version || r.runId !== row.input.scope.runId
     || r.shotId !== row.input.shotId || r.voiceId !== row.input.voiceId || r.operationRole !== row.input.operationRole
     || r.scriptSha256 !== hash(row.input.text) || r.maxDurationSeconds !== row.input.maxDurationSeconds
+    || !r.providerEvidenceSha256 || r.providerEvidenceSha256 !== hash(JSON.stringify(row.provider.responseEvidence))
     || r.providerRequestId !== row.provider.requestId || r.usage.reportedDurationSeconds !== row.provider.duration
     || r.usage.actualCostCny !== null || r.receiptRef !== receiptRef || path.resolve(r.filePath) !== expectedPath || resultHash(body) !== receiptHash
     || hash(fs.readFileSync(r.filePath)) !== r.clipSha256 || !Number.isFinite(r.durationSeconds)
     || r.durationSeconds <= 0 || r.durationSeconds > row.input.maxDurationSeconds) throw Error('speech_audio_corrupt');
   return r;
+}
+export function readMvpHeyGenSpeechProviderEvidence(receiptRef: string, root = defaultRoot()): unknown {
+  readMvpHeyGenSpeech(receiptRef, root);
+  return readReceipt(receiptRef, root).provider!.responseEvidence;
 }
 async function probeAudio(filePath: string) {
   const { stderr } = await promisify(execFile)(process.env.FFMPEG_PATH || ffmpegStatic || 'ffmpeg', ['-v','info','-i',filePath,'-vn','-f','null','-'], { maxBuffer: 4_000_000 });
@@ -121,10 +126,12 @@ export async function generateMvpHeyGenSpeech(input: MvpHeyGenSpeechInput, ports
             message:typeof error.message === 'string' ? error.message.slice(0,500) : null };
           throw Error('speech_provider_rejected_or_unknown');
         }
-        const x = await response.json(); const p = x.data || x;
+        const x = await response.json();
+        if (JSON.stringify(x).length > 256_000) throw Error('speech_provider_receipt_oversized');
+        const p = x.data || x;
         if (p.engine !== 'starfish' || typeof p.request_id !== 'string' || !p.request_id || typeof p.audio_url !== 'string'
           || !Number.isFinite(p.duration) || p.duration <= 0) throw Error('speech_provider_receipt_invalid');
-        row.provider = { requestId:p.request_id,audioUrl:p.audio_url,duration:p.duration,engine:'starfish' }; row.state='accepted'; write(row);
+        row.provider = { requestId:p.request_id,audioUrl:p.audio_url,duration:p.duration,engine:'starfish',responseEvidence:x }; row.state='accepted'; write(row);
       } catch (error) { row.state='unknown'; write(row); throw error; }
     }
     if (!row.provider) throw Error('speech_provider_receipt_missing');
@@ -139,7 +146,7 @@ export async function generateMvpHeyGenSpeech(input: MvpHeyGenSpeechInput, ports
     if (!Number.isFinite(durationSeconds) || durationSeconds <= 0 || durationSeconds > input.maxDurationSeconds) throw Error('speech_audio_duration_exceeded');
     const body = { receiptRef:id,tenantId:input.scope.tenantId,taskId:input.scope.taskId,taskVersion:input.scope.version,accountId:input.scope.accountId,
       runId:input.scope.runId,shotId:input.shotId,operationRole:input.operationRole,maxDurationSeconds:input.maxDurationSeconds,voiceId:input.voiceId,scriptSha256:hash(input.text),clipSha256:hash(bytes),durationSeconds,
-      filePath,providerRequestId:row.provider.requestId,usage:{ reportedDurationSeconds:row.provider.duration,actualCostCny:null } };
+      filePath,providerRequestId:row.provider.requestId,providerEvidenceSha256:hash(JSON.stringify(row.provider.responseEvidence)),usage:{ reportedDurationSeconds:row.provider.duration,actualCostCny:null } };
     row.result = { ...body,receiptHash:resultHash(body) }; row.state='completed'; write(row); return row.result;
   });
 }
