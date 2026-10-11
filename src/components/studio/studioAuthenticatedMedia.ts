@@ -59,7 +59,7 @@ export async function authenticatedAudioBlobUrl(sourceUrl: string): Promise<stri
   return request;
 }
 
-async function authenticatedVideoBlobUrl(sourceUrl: string): Promise<string> {
+export async function authenticatedVideoBlobUrl(sourceUrl: string): Promise<string> {
   if (/^(?:blob:|data:)/i.test(sourceUrl)) return sourceUrl;
   const cached = videoBlobCache.get(sourceUrl);
   if (cached) return cached;

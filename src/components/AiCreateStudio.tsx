@@ -86,6 +86,7 @@ import type { FreeCreationShotType } from '../../shared/contracts/freeCreationPr
 import { currentRenderOutput } from '../lib/studioRenderVersion';
 import {
   authenticatedAudioBlobUrl,
+  authenticatedVideoBlobUrl,
   playAudioWithAuthenticatedFallback,
   playVideoWithAuthenticatedFallback,
   StudioRequestTimeoutError,
@@ -14268,6 +14269,16 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onLaunc
   const activeWorkbenchClip = activeWorkbenchSlot
     ? assignedWorkbenchClip && isProductionEligibleClip(assignedWorkbenchClip, videoKickoff) ? assignedWorkbenchClip : undefined
     : previewClip || selectedClips[0];
+  const [frozenPreviewUrl, setFrozenPreviewUrl] = useState<string | null>(null);
+  const frozenAssets = frozenStudioSpecRef.current?.resolvedStudioContract as { adoptedAssets?: Record<string, { url?: string; sha256?: string; humanApproved?: boolean; artifactCompleted?: boolean }> } | undefined;
+  const frozenCandidate = activeWorkbenchSlot ? frozenAssets?.adoptedAssets?.[activeWorkbenchSlot.id] : undefined;
+  const frozenCandidateUrl = typeof frozenCandidate?.url === 'string' && /^\/api\/overseas\/starter-198\/social-content\/files\/socialfile_[a-zA-Z0-9]+$/.test(frozenCandidate.url) && /^[a-f0-9]{64}$/.test(frozenCandidate.sha256 || '') ? frozenCandidate.url : null;
+  useEffect(() => {
+    let active = true;
+    setFrozenPreviewUrl(null);
+    if (frozenCandidateUrl) void authenticatedVideoBlobUrl(frozenCandidateUrl).then(url => { if (active) setFrozenPreviewUrl(url); }).catch(error => { if (active) setWorkbenchPlaybackError(error instanceof Error ? error.message : '正式镜头读取失败'); });
+    return () => { active = false; };
+  }, [frozenCandidateUrl]);
   const activeMaterialPlan = activeWorkbenchSlot ? sourcePlanFor(activeWorkbenchSlot) : null;
   const activeMaterialAssessment = activeWorkbenchSlot && activeWorkbenchClip
     ? assessMaterialMatch(activeWorkbenchSlot, activeWorkbenchClip, ratio)
@@ -16701,6 +16712,11 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onLaunc
                 onTimeUpdate={event => setWorkbenchTimelineTime(Math.min(workbenchTimelineDuration, Math.max(0, event.currentTarget.currentTime)))}
                 className="h-full w-full object-contain"
               />
+            </div>
+          ) : frozenPreviewUrl ? (
+            <div className="relative flex h-full w-full items-center justify-center bg-black">
+              <video aria-label="已采纳原始镜头预览" src={frozenPreviewUrl} controls playsInline preload="metadata" className="h-full w-full object-contain" />
+              <span className="absolute left-2 top-2 rounded bg-black/80 px-2 py-1 text-xs text-white">原始镜头 · 待整片验收和人工审核</span>
             </div>
           ) : activeWorkbenchClip?.type === 'video' && activeWorkbenchClip.url ? (
             <div className="flex h-full w-full items-center justify-center rounded-lg bg-slate-950 shadow-xl">
