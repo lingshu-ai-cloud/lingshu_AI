@@ -1,0 +1,31 @@
+{
+  "expectedScope": {
+    "tenantId": "",
+    "accountId": "",
+    "productId": "",
+    "projectId": "",
+    "taskId": "",
+    "runId": "",
+    "version": ""
+  },
+  "artifacts": [],
+  "technicalReview": {
+    "status": "pending",
+    "reportRef": ""
+  },
+  "creativeReview": {
+    "status": "pending",
+    "reviewerId": "",
+    "reportRef": ""
+  },
+  "executionPackage": null,
+  "clips": [],
+  "businessIdentityAudit": {
+    "file": "",
+    "sha256": ""
+  },
+  "historicalBudgetSpent": {
+    "A": null,
+    "B": null
+  }
+}

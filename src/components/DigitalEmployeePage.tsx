@@ -1,3 +1,8 @@
+import { labels as sharedTaskLabels, day as shanghaiDay } from '../../shared/mobile-domain.mjs';
+import WeeklyPlanCalendar from './smartBusiness/WeeklyPlanCalendar';
+import { socialOperatingProfile } from '../../shared/contracts/socialOperatingProfile';
+import WeeklyGoalScheduleCards from './smartBusiness/WeeklyGoalScheduleCards';
+import { scheduleWeeklyVideos } from '../lib/weeklyGoalSchedule';
 import { getScrollBehavior } from "../lib/usePrefersReducedMotion";
 import { PAGE_REGISTRY, type Page } from "../pageRegistry";
 import { readAgentCalendarReturnContext, registerAgentCalendarReturnState } from '../lib/agentCalendarReturnContext';
@@ -20,7 +25,7 @@ import WeeklyPackagePanel from "./WeeklyPackagePanel";
 import { nodeDeepLink } from './WeeklyExecutionNodes';
 import { agentRuleFields } from '../lib/agentRuleFields';
 import VideoPlanEditor from './VideoPlanEditor';
-import { videoPlanErrors } from '../lib/videoCreationPlan';
+import { videoSchedulingErrors } from '../lib/videoCreationPlan';
 import {
   buildPresetMatrixVideoPlans,
   WEEKLY_TASK_PACKAGE_PRESETS,
@@ -83,6 +88,7 @@ import {
   Sparkles,
   Target,
   TrendingUp,
+  Trash2,
   Users,
   X,
   XCircle,
@@ -251,6 +257,7 @@ const destinationLabel: Record<BusinessDestination, string> = {
   socialInspiration: "爆款灵感",
   scriptLibrary: "话术库",
   smartAssets: "内容工作台",
+  adsManaged: "广告投放",
   conversion: "客户工作台",
   digitalEmployees: "数字员工驾驶舱",
 };
@@ -413,9 +420,8 @@ function humanizeValue(value: unknown): string {
 }
 
 function isoDay(offset: number): string {
-  const date = new Date();
-  date.setDate(date.getDate() + offset);
-  return date.toISOString().slice(0, 10);
+  const date = new Date(Date.now() + offset * 86_400_000);
+  return shanghaiDay(date.toISOString());
 }
 
 const EMPTY_GOAL = {
@@ -435,26 +441,21 @@ const EMPTY_GOAL = {
 };
 
 const statusLabel: Record<string, string> = {
+  ...sharedTaskLabels,
   draft: "待确认",
   active: "运行中",
   initializing: "初始化中",
-  queued: "排队中",
   blocked: "等待处理",
   paused: "已暂停",
-  completed: "已完成",
-  cancelled: "已取消",
   planning: "规划中",
   running: "执行中",
   waiting_external: "等待业务回写",
   waiting_approval: "待审批",
   waiting_human: "人工接管",
-  succeeded: "已完成",
-  failed: "失败",
   pending: "待执行",
   handed_off: "已接管",
   approved: "已批准",
   rejected: "已驳回",
-  idle: "空闲",
 };
 
 const weeklyRunHeaderLabel: Record<string, string> = {
@@ -1590,7 +1591,7 @@ function GoalPanel({
   contentPlatform: ContentPlatform;
   onOpenSettings?: () => void;
 }) {
-  const configuredPlatforms = config.enabledWorkflows.includes("content_publish") && config.publishingTargets.length ? [...new Set(config.publishingTargets.map(target => target.platform))] : (["youtube", "tiktok", "instagram", "facebook"] as const).slice();
+  const configuredPlatforms = [...new Set([...socialOperatingProfile(config.socialOperatingProfile).accounts.map(account => account.platform), ...config.publishingTargets.map(target => target.platform)])];
   const initialPlatforms = contentPlatform !== "all" && configuredPlatforms.includes(contentPlatform)
     ? [contentPlatform]
     : config.enabledWorkflows.includes("content_publish") ? configuredPlatforms : [configuredPlatforms[0]];
@@ -1619,6 +1620,8 @@ function GoalPanel({
   const [goalEditorOpen, setGoalEditorOpen] = useState(false);
   const [form, setForm] = useState<GoalDraft>(() => ({
     ...EMPTY_GOAL,
+    startsAt: isoDay(0),
+    endsAt: isoDay(6),
     businessLine,
     videoPlans: initialVideoPlans,
     contentPlatforms: businessLine === 'customer_conversion' ? initialPlatforms : initialPresetPlatforms,
@@ -1642,21 +1645,21 @@ function GoalPanel({
     contentPlatforms: businessLine !== "customer_conversion" && !form.contentPlatforms.length ? "请至少选择一个内容制作平台" : "",
     product: businessLine !== 'customer_conversion' && !initialProduct ? '请先在 Agent 设置中选择重点产品' : '',
   };
-  const hasErrors = Object.values(errors).some(Boolean) || (form.videoPlans || []).some(plan => videoPlanErrors(plan).length > 0 || !form.contentPlatforms.includes(plan.platform));
+  const hasErrors = Object.values(errors).some(Boolean) || (form.videoPlans || []).some(plan => videoSchedulingErrors(plan).length > 0 || !form.contentPlatforms.includes(plan.platform));
   const goalErrorLabels: Record<keyof typeof errors, string> = {
     title: '目标名称', objective: '本周重点结果', scope: '业务范围（目标市场）', target: '目标值', dates: '目标周期', contentPlatforms: '内容制作平台', product: '重点产品',
   };
   const missingGoalFields = (Object.entries(errors) as Array<[keyof typeof errors, string]>).filter(([, error]) => Boolean(error)).map(([key, error]) => `${goalErrorLabels[key]}：${error}`);
-  const videoPlanIssues = (form.videoPlans || []).flatMap((plan, index) => videoPlanErrors(plan).map(error => `第 ${index + 1} 条：${error}`));
+  const videoPlanIssues = (form.videoPlans || []).flatMap((plan, index) => videoSchedulingErrors(plan).map(error => `第 ${index + 1} 条：${error}`));
   const platformPlanCounts = form.contentPlatforms.map(platform => ({ platform, count: (form.videoPlans || []).filter(plan => plan.platform === platform).length }));
-  const submit = () => {
+  const confirmPlanDraft = () => {
     setSubmitted(true);
     if (hasErrors) {
       setGoalEditorOpen(true);
       return;
     }
     setGoalEditorOpen(false);
-    onSave(form);
+    onSave({ ...form, videoPlans: scheduleWeeklyVideos(form.videoPlans || [], form.startsAt, form.endsAt) });
   };
   const choosePreset = (presetId: WeeklyTaskPackagePresetId) => {
     const preset = weeklyTaskPackagePreset(presetId);
@@ -1710,22 +1713,9 @@ function GoalPanel({
           <div className="rounded-lg bg-slate-50 p-4"><p className="text-[10px] font-bold text-slate-400">预计成本</p><p className="mt-1 text-sm font-semibold text-slate-900">{estimatedPlanCost > 0 ? `¥${estimatedPlanCost.toFixed(2)}` : '待真实核算'}</p><p className="mt-1 text-[9px] text-slate-400">实际以服务费用回执为准</p></div>
         </div>
         <div className="mt-4 rounded-lg border border-emerald-100 bg-emerald-50/55 px-4 py-3"><p className="text-xs font-semibold text-emerald-950">本周重点结果</p><p className="mt-1 text-xs leading-5 text-emerald-800">{form.objective}</p></div>
-        {businessLine !== 'customer_conversion' && Boolean(form.videoPlans?.length) && <section aria-label="社媒视频矩阵" className="mt-4 rounded-lg border border-slate-200 bg-slate-50/60 p-4">
-          <div className="flex flex-wrap items-start justify-between gap-3">
-            <div><p className="text-sm font-semibold text-slate-900">社媒视频矩阵</p><p className="mt-1 text-xs text-slate-500">已按平台拆成 {form.videoPlans?.length || 0} 条视频任务，确认前仍可逐条调整。</p></div>
-            <Button htmlType="button" onClick={() => setGoalEditorOpen(true)} className="!h-auto min-h-9 !whitespace-normal rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs font-bold text-slate-700 hover:border-emerald-300">编辑完整矩阵</Button>
-          </div>
-          <div className="mt-3 grid gap-2 md:grid-cols-2 xl:grid-cols-3">
-            {form.videoPlans?.slice(0, 8).map((plan, index) => <div key={`${plan.platform}-${index}`} className="rounded-lg border border-slate-200 bg-white p-3">
-              <div className="flex items-center justify-between gap-2"><span className="text-[10px] font-semibold uppercase tracking-[0.12em] text-emerald-700">{contentPlatformLabel[plan.platform]}</span><span className="text-[10px] font-semibold text-slate-400">{plan.duration} 秒 · {plan.language}</span></div>
-              <p className="mt-2 truncate text-xs font-semibold text-slate-900">{plan.productName || '待选择产品'}</p>
-              <p className="mt-1 line-clamp-2 text-[11px] leading-5 text-slate-500">{plan.theme || '待补充视频主题'}</p>
-            </div>)}
-          </div>
-          {(form.videoPlans?.length || 0) > 8 && <p className="mt-3 text-[10px] font-bold text-slate-500">当前先展示 8 条，另有 {(form.videoPlans?.length || 0) - 8} 条可在“编辑完整矩阵”中查看。</p>}
-        </section>}
+        {businessLine !== 'customer_conversion' && <WeeklyGoalScheduleCards plans={form.videoPlans || []} accounts={config.publishingTargets} startsAt={form.startsAt} endsAt={form.endsAt} onEdit={() => setGoalEditorOpen(true)}/>}
         {submitted && hasErrors && <div role="alert" className="mt-4 rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-xs text-amber-900"><p className="font-semibold">暂时不能确认，具体缺少：</p><ul className="mt-2 list-disc space-y-1 pl-4">{[...missingGoalFields, ...videoPlanIssues.slice(0, 3)].map(item => <li key={item}>{item}</li>)}</ul>{errors.product && onOpenSettings && <Button htmlType="button" onClick={onOpenSettings} className="!h-auto min-h-9 !whitespace-normal mt-3 rounded-lg bg-amber-900 px-3 py-2 text-[11px] font-semibold text-white">去 Agent 设置选择重点产品</Button>}</div>}
-        <div className="mt-5 flex flex-wrap justify-end gap-2"><Button htmlType="button" onClick={() => setGoalEditorOpen(true)} className="!h-auto min-h-9 !whitespace-normal rounded-lg border border-slate-200 bg-white px-4 py-2.5 text-sm font-bold text-slate-700 hover:bg-slate-50">调整本周设置</Button><Button type="primary" htmlType="button" disabled={busy} onClick={submit} className="!h-auto min-h-9 !whitespace-normal inline-flex items-center gap-2 rounded-lg px-5 py-2.5 text-sm font-semibold">{busy ? <Loader2 size={16} className="animate-spin" /> : <Check size={16} />}确认周计划</Button></div>
+        <div className="mt-5 flex flex-wrap justify-end gap-2"><Button htmlType="button" onClick={() => setGoalEditorOpen(true)} className="!h-auto min-h-9 !whitespace-normal rounded-lg border border-slate-200 bg-white px-4 py-2.5 text-sm font-bold text-slate-700 hover:bg-slate-50">调整本周设置</Button><Button type="primary" htmlType="button" disabled={busy} onClick={confirmPlanDraft} className="!h-auto min-h-9 !whitespace-normal inline-flex items-center gap-2 rounded-lg px-5 py-2.5 text-sm font-semibold">{busy ? <Loader2 size={16} className="animate-spin" /> : <Check size={16} />}确认周计划</Button></div>
       </section>
       {goalEditorOpen && <section aria-label="调整本周设置" className="rounded-lg border border-border bg-white p-4 sm:p-5">
       <Button htmlType="button" aria-label="关闭本周设置" disabled={busy} onClick={() => setGoalEditorOpen(false)} className="!h-auto min-h-9 !whitespace-normal sticky top-0 z-10 float-right rounded-lg border border-slate-200 bg-white p-2 text-slate-500 hover:bg-slate-50"><X size={18} /></Button>
@@ -1885,7 +1875,7 @@ function GoalPanel({
         <Button type="primary"
           htmlType="button"
           disabled={busy || (submitted && hasErrors)}
-          onClick={submit}
+          onClick={confirmPlanDraft}
           className="!h-auto min-h-9 !whitespace-normal inline-flex items-center gap-2 rounded-lg px-5 py-2.5 text-sm font-bold transition"
         >
           {busy ? (
@@ -2546,6 +2536,7 @@ function taskBusinessAction(link: DigitalEmployeeDeepLink): string {
   if (link.page === "accountManagement") return "核对社媒账号";
   if (link.page === "scheduled") return "查看定时任务";
   if (link.page === "socialInspiration") return "查看爆款证据";
+  if (link.page === "adsManaged") return "进入投流工作台";
   if (link.page === "scriptLibrary") return "打开跟进话术";
   if (link.page === "smartAssets" && link.view === "publish")
     return "核对发布清单";
@@ -3782,6 +3773,7 @@ export default function DigitalEmployeePage({
   const [applicationGuideOpen, setApplicationGuideOpen] = useState(false);
   const [onboardingWelcomeOpen, setOnboardingWelcomeOpen] = useState(false);
   const [weeklyPlanOpen, setWeeklyPlanOpen] = useState(false);
+  const [weeklyPlanDetailsOpen, setWeeklyPlanDetailsOpen] = useState(false);
   const [planHistoryOpen, setPlanHistoryOpen] = useState(false);
   const goalPanelRef = useRef<HTMLDivElement>(null);
   const overviewRequestVersionRef = useRef(0);
@@ -4499,7 +4491,26 @@ export default function DigitalEmployeePage({
     }
   };
 
-  const goLive = (taskId?: string, deliveryId?: string) => {
+  const goLive = async (taskId?: string, deliveryId?: string) => {
+    let nextData = data;
+    let targetTask = taskId ? nextData?.tasks.find((task) => task.id === taskId) : undefined;
+    // Opening a blocked Agent task is also an explicit retry from the product UI.
+    // Reconcile first so newly available configuration can prepare the canonical
+    // business resource before the user reaches its workbench.
+    if (targetTask && data?.run?.id && ['waiting_external', 'pending'].includes(targetTask.status)) {
+      try {
+        nextData = await digitalEmployeeApi.reconcileRun(data.run.id);
+        setData(nextData);
+        targetTask = nextData.tasks.find((task) => task.id === taskId);
+      } catch (reconcileError) {
+        setError(reconcileError instanceof Error ? reconcileError.message : 'Agent 任务重试失败');
+      }
+    }
+    if (targetTask && !deliveryId && !['content_production', 'content_quality_gate'].includes(targetTask.task_key)) {
+      const planTask = nextData?.plan?.tasks.find((task) => task.key === targetTask!.task_key);
+      dispatchDigitalEmployeeDeepLink(buildTaskDeepLink(targetTask, planTask, nextData?.run?.id || targetTask.run_id));
+      return;
+    }
     setDeliveryFocus(deliveryId ? { id: deliveryId, request: Date.now() } : undefined);
     if (taskId) setSelectedTaskId(taskId);
     else if (
@@ -4544,7 +4555,7 @@ export default function DigitalEmployeePage({
           : workspaceView === "review" ? "review" : "home";
     const views: Array<{ id: "today" | "matrix" | "review"; label: string; caption: string }> = [
       { id: "today", label: "经营总览", caption: "资产健康度与下一轮建议" },
-      { id: "matrix", label: "账号矩阵", caption: "职责、策略与连接" },
+      { id: "matrix", label: "数字员工", caption: "Agent 职责与工作排期" },
       { id: "review", label: "数据复盘", caption: "账号、询盘与投流明细" },
     ];
     const currentVideoPlans = data.plan?.businessPackage?.tasks.find(task => task.templateId === "production")?.videoPlans || goal?.videoPlans || [];
@@ -4657,10 +4668,21 @@ export default function DigitalEmployeePage({
       : activeRun
         ? data.run?.status === "paused" ? "继续周任务" : "暂停周任务"
         : canCreateNextGoal ? "开始下一周任务" : "开始周任务";
-    const openContentProduction = (taskId?: string, socialContentTaskId?: string) => {
+    const openContentProduction = (taskId?: string, socialContentTaskId?: string, projectId?: string) => {
+      if (projectId) {
+        const contentProductionTask = data.tasks.find(item => item.run_id === data.run?.id && item.task_key === "content_production")
+          || data.tasks.find(item => item.task_key === "content_production");
+        window.dispatchEvent(new CustomEvent("lingshu:navigate", { detail: {
+          page: "smartAssets", view: "create", studioPanel: "projects", directStudio: true,
+          workflowRunId: contentProductionTask?.run_id || data.run?.id || "",
+          workflowTaskId: contentProductionTask?.id || taskId || "",
+          businessRef: { taskKey: "content_production", entityId: projectId },
+        } }));
+        return;
+      }
       if (socialContentTaskId) {
         window.dispatchEvent(new CustomEvent("lingshu:navigate", { detail: {
-          page: "smartAssets", view: "create", directStudio: true,
+          page: "smartAssets", view: "create", directStudio: true, agentTaskDemo: true,
           socialContentTaskId, socialContentPage: "smartAssets",
         } }));
         return;
@@ -4675,7 +4697,7 @@ export default function DigitalEmployeePage({
       const planTask = data.plan?.tasks.find(item => item.key === task.task_key);
       dispatchDigitalEmployeeDeepLink(buildTaskDeepLink(task, planTask, data.run?.id || task.run_id));
     };
-    const openProductionProgress = (taskId: string, contentItemId: string) => {
+    const openProductionProgress = (taskId: string, contentItemId: string, _projectId?: string) => {
       const items = (data.contentQueue?.items || []).filter(item => item.id === contentItemId && (!taskId || item.taskId === taskId));
       if (items.length === 1 && items[0]!.origin === "weekly_plan") {
         // Preserve the source tab. Returning from Studio must not reopen a redirect.
@@ -4698,6 +4720,14 @@ export default function DigitalEmployeePage({
     const weeklyPlanControls = <>
       <Button onClick={()=>setWorkspaceView("rules")} icon={<Settings2 size={15}/>}>Agent 设置</Button>
       <Button onClick={()=>setPlanHistoryOpen(true)} icon={<History size={15}/>}>历史计划</Button>
+      {data.run && !viewGoalId && !['cancelled', 'succeeded', 'failed'].includes(data.run.status) && <Button danger icon={<Trash2 size={15}/>} onClick={() => {
+        Modal.confirm({
+          title: '删除当前周任务？',
+          content: '经营 Agent 将正式取消当前任务及未完成的下游执行。历史记录会保留用于审计，取消后可以重新建立任务。',
+          okText: '删除旧任务', cancelText: '保留任务', okButtonProps: { danger: true },
+          onOk: async () => { const next = await act('cancel', () => digitalEmployeeApi.cancelRun(data.run!.id)); if (next) publishWeeklyWorkUpdate(next); },
+        });
+      }}>删除旧任务</Button>}
       <Button type="primary" loading={Boolean(busy)} onClick={()=>void controlWeeklyWork()} icon={activeRun && !recoverableProductionTask && data.run?.status !== "paused" ? <Pause size={15}/> : <Play size={15}/>}>{weeklyControlLabel}</Button>
     </>;
     return (
@@ -4714,6 +4744,7 @@ export default function DigitalEmployeePage({
               feedback={weeklyActionFeedback}
               onRefresh={() => void load()}
               onOpenProductionProgress={openProductionProgress}
+              onOpenContent={openContentProduction}
               notice={!activeRun && !viewGoalId && (missingReferenceMasters.length > 0 || missingProductMasters.length > 0 || detailGeneration?.status === "blocked")
                 ? <p className="mr-auto text-xs text-text-secondary">可直接开始任务；{detailGeneration?.blockedCount || missingReferenceMasters.length || missingProductMasters.length} 条内容的待补资料将在对应制作步骤提示，不阻止其他内容推进。账号连接与发布授权在正式发布前核验。</p>
                 : undefined}
@@ -4721,7 +4752,6 @@ export default function DigitalEmployeePage({
           </div>
           <Tabs className="mt-3" aria-label="智能经营视图" activeKey={workspaceView === "live" || workspaceView === "overview" ? "review" : workspaceView} onChange={key => {setWorkspaceView(key as WorkspaceView); setSelectedContentItemId("");}} items={views.map(view => ({key: view.id, label: view.label}))}/>
           <div className="grid grid-cols-1 gap-4 pb-6 pt-2">
-            {workspaceView === "matrix" && <SmartOperationsAccountRail targets={smartOperationsAccounts} selectedAccountId={selectedAccountId} taskCounts={accountTaskCounts} onSelect={setSelectedAccountId} onManage={() => onNavigate?.('plugins')}/>}
             <main className="min-w-0">
             {workspaceView === "rules"
               ? <OnboardingPanel initial={data.config} readiness={data.businessSnapshot?.readiness || []} busy={Boolean(busy)} mode="rules" activeRun={activeRun} onOpenReadiness={openReadiness} onSave={(config) => void saveConfig(config)} />

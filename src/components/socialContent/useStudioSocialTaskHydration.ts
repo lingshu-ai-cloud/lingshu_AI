@@ -3,6 +3,8 @@ import type { VideoKickoff } from '../AiCreateStudio';
 import type { SocialAccountPresenterLock, SocialContentTaskDetail } from '../../../shared/contracts/socialContentWorkflow';
 import { socialContentApi } from '../../lib/socialContentApi';
 import { localReferenceMediaUrl } from '../studio/studioReferenceMedia';
+import { AUTH_TOKEN_CHANGED_EVENT, getToken } from '../../lib/auth';
+import { readCurrentStudioSocialTask } from '../../lib/studioSocialTaskRead';
 
 export type StudioContentTheme = 'product_proof' | 'use_case' | 'supplier_capability' | 'customization' | 'customer_case';
 
@@ -41,6 +43,31 @@ export interface StudioSocialTaskSeed {
     sourceTaskId: string;
     sourceTaskVersion: string;
   }>;
+  /** Read-only evidence already produced by the task. This powers the Agent-entry demo view. */
+  productionPreview: StudioSocialTaskProductionPreview;
+}
+
+export interface StudioSocialTaskProductionPreview {
+  deliverableVideoUrl: string;
+  coverUrl: string;
+  narrationLines: Array<{
+    text: string;
+    startSeconds: number;
+    endSeconds: number;
+  }>;
+  shots: Array<{
+    shotId: string;
+    startSeconds: number;
+    endSeconds: number;
+    visual: string;
+    spokenText: string;
+    audioDescription: string;
+  }>;
+  audio: {
+    embeddedInDeliverable: boolean;
+    technicalCheckPassed: boolean | null;
+    bgmMood: string;
+  };
 }
 
 export interface StudioSocialShotMaterialBinding {
@@ -95,6 +122,55 @@ function languageCode(value: string): string | null {
   return LANGUAGE_CODES[value.trim()] || LANGUAGE_CODES[normalized] || null;
 }
 
+function record(value: unknown): Record<string, unknown> | null {
+  return value && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : null;
+}
+
+function finite(value: unknown): number {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : 0;
+}
+
+/**
+ * Project only persisted task evidence into the demo surface. It deliberately
+ * does not manufacture TTS URLs: completed task audio is played from the real
+ * deliverable when the pipeline stored it as an embedded track.
+ */
+export function socialTaskProductionPreview(task: SocialContentTaskDetail): StudioSocialTaskProductionPreview {
+  const narrationLines = (task.replicationScript?.narrationLines || []).flatMap(line => {
+    const text = clean(line.draftText) || clean(line.referenceText);
+    return text ? [{ text, startSeconds: finite(line.sourceStartSeconds), endSeconds: finite(line.sourceEndSeconds) }] : [];
+  });
+  const shots = (task.referenceVideoAnalysis?.shots || []).map(shot => ({
+    shotId: clean(shot.shotId),
+    startSeconds: finite(shot.startSeconds),
+    endSeconds: finite(shot.endSeconds),
+    visual: clean(shot.visualDescription),
+    spokenText: clean(shot.spokenText),
+    audioDescription: clean(shot.audioDescription),
+  }));
+  const artifact = [...task.artifacts].reverse().find(item => item.kind === 'short_video' || item.kind === 'long_video');
+  const content = record(artifact?.content);
+  const mediaStorage = record(content?.mediaStorage);
+  const video = record(mediaStorage?.video);
+  const cover = record(mediaStorage?.cover);
+  const technicalQuality = record(content?.technicalQualityReport);
+  const technicalAudio = record(technicalQuality?.audio);
+  const render = record(content?.render);
+  const bgm = record(render?.bgm);
+  return {
+    deliverableVideoUrl: clean(video?.url),
+    coverUrl: clean(cover?.url),
+    narrationLines,
+    shots,
+    audio: {
+      embeddedInDeliverable: Boolean(clean(video?.url)) && technicalAudio?.ok === true,
+      technicalCheckPassed: typeof technicalAudio?.ok === 'boolean' ? technicalAudio.ok : null,
+      bgmMood: clean(bgm?.mood),
+    },
+  };
+}
+
 export function socialTaskShotMaterialBindings(
   task: Pick<SocialContentTaskDetail, 'shotMaterialMap'>,
 ): StudioSocialShotMaterialBinding[] {
@@ -111,8 +187,9 @@ export function socialTaskShotMaterialBindings(
 export function socialTaskReferenceKickoff(task: SocialContentTaskDetail): VideoKickoff | null {
   if (task.brief.creationMode !== 'viral_replication') return null;
   const analysis = task.referenceVideoAnalysis;
-  const source = task.sources.find(item => item.status === 'active' && item.sourceId === analysis?.referenceSourceId)
-    || task.sources.find(item => item.status === 'active' && item.kind === 'reference_link');
+  const source = analysis?.referenceSourceId
+    ? task.sources.find(item => item.status === 'active' && item.sourceId === analysis.referenceSourceId)
+    : task.sources.find(item => item.status === 'active' && item.kind === 'reference_link');
   if (!source) return null;
   const replication = task.replicationScript as (typeof task.replicationScript & {
     narrationSourceStatus?: 'asr_aligned' | 'missing_source_asr';
@@ -193,6 +270,7 @@ export function socialTaskToStudioSeed(task: SocialContentTaskDetail): StudioSoc
     shotMaterialBindings: socialTaskShotMaterialBindings(task),
     unsupportedLanguages: languagePairs.filter(item => !item.code).map(item => item.language),
     digitalHumanShotPlans,
+    productionPreview: socialTaskProductionPreview(task),
   };
 }
 
@@ -213,17 +291,28 @@ export function useStudioSocialTaskHydration(input: {
     const taskId = input.taskId?.trim();
     if (!taskId) return;
     const controller = new AbortController();
+    const token = getToken();
+    const invalidate = () => controller.abort();
+    window.addEventListener(AUTH_TOKEN_CHANGED_EVENT, invalidate);
+    window.addEventListener('storage', invalidate);
     let timer: ReturnType<typeof setTimeout> | undefined;
     const refresh = async () => {
       try {
-        const task = await socialContentApi.getTask(taskId, controller.signal);
-        if (controller.signal.aborted) return;
-        if (canApplyRef.current()) onHydrateRef.current(socialTaskToStudioSeed(task));
-        refreshRef.current?.(task);
+        await readCurrentStudioSocialTask(taskId,
+          () => socialContentApi.getTask(taskId, controller.signal),
+          () => !controller.signal.aborted && getToken() === token,
+          task => {
+            if (canApplyRef.current()) onHydrateRef.current(socialTaskToStudioSeed(task));
+            refreshRef.current?.(task);
+          });
       } catch { /* Preserve the loaded editor during a temporary read failure. */ }
       if (!controller.signal.aborted) timer = setTimeout(refresh, 8000);
     };
     void refresh();
-    return () => { controller.abort(); clearTimeout(timer); };
+    return () => {
+      controller.abort(); clearTimeout(timer);
+      window.removeEventListener(AUTH_TOKEN_CHANGED_EVENT, invalidate);
+      window.removeEventListener('storage', invalidate);
+    };
   }, [input.taskId]);
 }

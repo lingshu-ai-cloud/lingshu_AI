@@ -1,3 +1,4 @@
+import {parseTikTokDirectPostOptions, type TikTokAttemptPreparedReceipt} from '../lib/tikTokDirectPostContract.js';
 import { isManagedSocialPublication, assertManagedSocialPublication, withManagedSocialPublication } from './managedSocialEffect.js';
 import { assertManagedPublishingAuthorization, ManagedPublishingAuthorizationError } from './managedPublishingAuthorization.js';
 import { randomUUID } from 'node:crypto';
@@ -67,6 +68,7 @@ type PublishResult = {
   platformUrl?: string;
   providerReceiptId?: string;
   providerStatus?: string;
+  tiktokValidationReceipt?: TikTokAttemptPreparedReceipt;
   lastCheckedAt?: string;
   publishedAt?: string;
   error?: string;
@@ -117,7 +119,10 @@ export function isScheduledPostDue(post: PostRecord, now = Date.now()): boolean 
   const stats = statsOf(post);
   if (!externalVideoApprovalValid(post)) return false;
   const status = text(stats.status);
-  const continuingExistingDelivery = ['provider_processing', 'finalize_pending'].includes(status);
+  const recoverableKnownReceiptUnknown = ['instagram', 'tiktok'].includes(text(post.platform)) && status === 'needs_attention'
+    && Array.isArray(stats.targetAccountIds) && stats.targetAccountIds.length > 0
+    && stats.targetAccountIds.every(id => { const result = resultMap(stats)[String(id)]; return result?.status === 'published' || (result?.status === 'unknown' && Boolean(text(result.providerReceiptId))); });
+  const continuingExistingDelivery = ['provider_processing', 'finalize_pending'].includes(status) || recoverableKnownReceiptUnknown;
   // Digital-employee calendar entries require an explicit, version-frozen
   // tenant authorization in addition to the human content approval. Once a
   // provider receipt exists, status recovery/local finalization is read-only
@@ -134,7 +139,8 @@ export function isScheduledPostDue(post: PostRecord, now = Date.now()): boolean 
   }
   const scheduledAt = Date.parse(text(post.published_at));
   if (!Number.isFinite(scheduledAt) || scheduledAt > now) return false;
-  if (Object.values(resultMap(stats)).some(result => result.status === 'unknown')) return false;
+  if (Object.values(resultMap(stats)).some(result => result.status === 'unknown') && !recoverableKnownReceiptUnknown) return false;
+  if (recoverableKnownReceiptUnknown) { const retryAt = Date.parse(text(stats.nextProviderCheckAt)); return !Number.isFinite(retryAt) || retryAt <= now; }
   if (status === 'finalize_pending') {
     const retryAt = Date.parse(text(stats.nextPublishAttemptAt));
     return !Number.isFinite(retryAt) || retryAt <= now;
@@ -214,7 +220,7 @@ async function markFailed(post: PostRecord, stats: Record<string, unknown>, atte
   const results = resultMap(stats);
   const hasSuccess = Object.values(results).some(result => result.status === 'published');
   const unknown = Object.values(results).some(result => ['unknown', 'in_flight'].includes(result.status));
-  const providerProcessing = Object.values(results).some(result => result.status === 'provider_accepted');
+  const providerProcessing = Object.values(results).some(result => result.status === 'provider_accepted' || (['instagram','tiktok'].includes(post.platform) && result.status === 'unknown' && Boolean(text(result.providerReceiptId))));
   if (unknown) for (const result of Object.values(results)) { if (result.status === 'in_flight') result.status = 'unknown'; }
   await store.update('posts', post.id, {
     stats: {
@@ -243,7 +249,7 @@ async function publishScheduledPost(
   if (!post || text(post.tenant_id) !== text(queuedPost.tenant_id) || !isScheduledPostDue(post, cycleNow)) return;
   const initialStats = statsOf(post);
   const recoveringAcceptedReceipt = Object.values(resultMap(initialStats))
-    .some(result => result.status === 'provider_accepted');
+    .some(result => result.status === 'provider_accepted' || (['instagram','tiktok'].includes(post.platform) && result.status === 'unknown' && Boolean(text(result.providerReceiptId))));
   const localFinalizationOnly = text(initialStats.status) === 'finalize_pending';
   if (text(initialStats.status) === 'provider_processing' && !recoveringAcceptedReceipt) {
     await store.update('posts', post.id, { stats: {
@@ -265,7 +271,7 @@ async function publishScheduledPost(
   const workflowRunId = text(initialStats.workflowRunId);
   if (workflowRunId && !recoveringAcceptedReceipt && !localFinalizationOnly
     && await digitalEmployeeRunBlockedReason(post.tenant_id, workflowRunId)) return;
-  const continuingReceipt = ['finalize_pending', 'provider_processing'].includes(text(initialStats.status));
+  const continuingReceipt = ['finalize_pending', 'provider_processing'].includes(text(initialStats.status)) || recoveringAcceptedReceipt;
   const attempts = attemptsOf(initialStats) + (continuingReceipt ? 0 : 1);
   const attemptStartedAt = new Date().toISOString();
   const lockedStats = {
@@ -320,7 +326,7 @@ async function publishScheduledPost(
   const sourceClaim = initialStats.publishSourceClaim as FrozenPublishSourceClaim | undefined;
   for (const accountId of accountIds) {
     if (results[accountId]?.status === 'published') continue;
-    if (results[accountId]?.status === 'provider_accepted') {
+    if (results[accountId]?.status === 'provider_accepted' || (['instagram','tiktok'].includes(platform) && results[accountId]?.status === 'unknown' && text(results[accountId]?.providerReceiptId))) {
       const accepted = results[accountId];
       const providerReceiptId = text(accepted.providerReceiptId);
       if (!providerReceiptId) {
@@ -337,10 +343,13 @@ async function publishScheduledPost(
             accountId,
             platform,
             providerReceiptId,
+            ...(platform === 'tiktok' ? { publishAttemptId: accepted.attemptId } : {}),
+            ...(text(accepted.platformPostId) ? { platformPostId: text(accepted.platformPostId) } : {}),
           });
           if (resolution.providerReceiptId !== providerReceiptId) {
             throw new Error('平台状态回执与原发送回执不一致');
           }
+          if (text(accepted.platformPostId) && resolution.status === 'published' && text(resolution.platformPostId) !== text(accepted.platformPostId)) throw new Error('instagram_media_identity_changed');
           const checkedAt = new Date().toISOString();
           if (resolution.status === 'published' && text(resolution.platformPostId)) {
             results[accountId] = {
@@ -434,6 +443,28 @@ async function publishScheduledPost(
         trackingPost: post,
         finalizeTracking: false,
         publishAttemptId: attemptId,
+        ...(platform === 'tiktok' ? {
+          tiktokCreatorReceiptHash: typeof initialStats.tiktokCreatorReceiptHash === 'string' ? initialStats.tiktokCreatorReceiptHash : undefined,
+          tiktokPostOptions: initialStats.tiktokPostOptions === undefined ? undefined : parseTikTokDirectPostOptions(initialStats.tiktokPostOptions),
+          async onTikTokAttemptPrepared(receipt) {
+            const current = await store.getById<PostRecord>('posts', post.id);
+            if (!current || current.tenant_id !== post.tenant_id || receipt.tenantId !== post.tenant_id || receipt.accountId !== accountId || receipt.attemptId !== attemptId) throw Error('tiktok_attempt_scope_changed');
+            const currentStats = statsOf(current), currentResults = resultMap(currentStats), currentAttempt = currentResults[accountId];
+            if (currentAttempt?.attemptId !== attemptId || currentAttempt.status !== 'in_flight') throw Error('tiktok_attempt_scope_changed');
+            const updated = {...currentAttempt,tiktokValidationReceipt:receipt};
+            if(!await store.update('posts',post.id,{stats:{...currentStats,publishResults:{...currentResults,[accountId]:updated}}}))throw Error('tiktok_attempt_persistence_failed');
+            results[accountId]=updated;
+          },
+          async onProviderReceipt(receiptId) {
+            const current = await store.getById<PostRecord>('posts', post.id);
+            if(!current || current.tenant_id!==post.tenant_id)throw Error('tiktok_attempt_scope_changed');
+            const currentStats=statsOf(current),currentResults=resultMap(currentStats),currentAttempt=currentResults[accountId];
+            if(currentAttempt?.attemptId!==attemptId||currentAttempt.status!=='in_flight'||!currentAttempt.tiktokValidationReceipt||(currentAttempt.providerReceiptId&&currentAttempt.providerReceiptId!==receiptId))throw Error('tiktok_attempt_scope_changed');
+            const updated={...currentAttempt,providerReceiptId:receiptId};
+            if(!await store.update('posts',post.id,{stats:{...currentStats,publishResults:{...currentResults,[accountId]:updated}}}))throw Error('tiktok_provider_receipt_persistence_failed');
+            results[accountId]=updated;
+          },
+        } : {}),
         ...(platform === 'instagram' ? { async onProviderReceipt(receiptId: string) {
           const current = await store.getById<PostRecord>('posts', post.id);
           if (!current || current.tenant_id !== post.tenant_id) throw new Error('instagram_container_attempt_missing');
@@ -441,8 +472,18 @@ async function publishScheduledPost(
           const currentResults = resultMap(currentStats);
           const currentAttempt = currentResults[accountId];
           if (currentAttempt?.attemptId !== attemptId || currentAttempt.status !== 'in_flight') throw new Error('instagram_container_attempt_changed');
+          if (text(currentAttempt.providerReceiptId) && text(currentAttempt.providerReceiptId) !== receiptId) throw new Error('instagram_container_identity_changed');
           results[accountId] = { ...currentAttempt, providerReceiptId: receiptId };
           if (!await store.update('posts', post.id, { stats: { ...currentStats, publishResults: { ...currentResults, [accountId]: results[accountId] } } })) throw new Error('instagram_container_persistence_failed');
+        }, async onPublishedMedia(mediaId: string) {
+          const current = await store.getById<PostRecord>('posts', post.id);
+          if (!current || current.tenant_id !== post.tenant_id) throw new Error('instagram_media_attempt_missing');
+          const currentStats = statsOf(current), currentResults = resultMap(currentStats), currentAttempt = currentResults[accountId];
+          if (currentAttempt?.attemptId !== attemptId || currentAttempt.status !== 'in_flight' || !text(currentAttempt.providerReceiptId)) throw new Error('instagram_media_attempt_changed');
+          if (!text(mediaId) || (text(currentAttempt.platformPostId) && text(currentAttempt.platformPostId) !== mediaId)) throw new Error('instagram_media_identity_changed');
+          const updated = { ...currentAttempt, platformPostId: mediaId };
+          if (!await store.update('posts', post.id, { stats: { ...currentStats, publishResults: { ...currentResults, [accountId]: updated } } })) throw new Error('instagram_media_persistence_failed');
+          results[accountId] = updated;
         } } : {}),
         sourceClaim,
         enterpriseFactVersion: text(initialStats.enterpriseFactVersion),
@@ -454,17 +495,22 @@ async function publishScheduledPost(
       const result = workflowRunId
         ? await withDigitalEmployeeExternalAction(post.tenant_id, workflowRunId, guardedPublish)
         : await guardedPublish();
+      const persisted = results[accountId];
+      if (platform === 'instagram' && text(persisted.platformPostId) && text(result.platformPostId) !== text(persisted.platformPostId)) throw new Error('instagram_media_identity_changed');
+      if (platform === 'instagram' && text(result.providerReceiptId) && text(result.providerReceiptId) !== text(persisted.providerReceiptId)) throw new Error('instagram_container_identity_changed');
       if (result.deliveryStatus === 'provider_accepted' && text(result.providerReceiptId)) {
         results[accountId] = {
+          ...persisted,
           status: 'provider_accepted',
           attemptId,
           startedAt: attemptStartedAt,
-          providerReceiptId: result.providerReceiptId,
+          providerReceiptId: persisted.providerReceiptId || result.providerReceiptId,
           lastCheckedAt: '',
         };
       } else {
         if (!text(result.platformPostId)) throw new Error('平台未返回最终发布内容 id');
         results[accountId] = {
+          ...persisted,
           status: 'published', attemptId, startedAt: attemptStartedAt,
           platformPostId: result.platformPostId,
           platformUrl: result.platformUrl,
@@ -472,7 +518,8 @@ async function publishScheduledPost(
         };
       }
     } catch (error) {
-      if (error instanceof PublishSourceVerificationError || error instanceof ManagedPublishingAuthorizationError) {
+      const hasProviderIdentity = Boolean(text(results[accountId]?.providerReceiptId) || text(results[accountId]?.platformPostId));
+      if (!hasProviderIdentity && (error instanceof PublishSourceVerificationError || error instanceof ManagedPublishingAuthorizationError)) {
         delete results[accountId];
         await store.update('posts', post.id, { stats: {
           ...lockedStats,
@@ -485,7 +532,7 @@ async function publishScheduledPost(
         } });
         return;
       }
-      if (error instanceof WorkflowRunBlockedError) {
+      if (!hasProviderIdentity && error instanceof WorkflowRunBlockedError) {
         delete results[accountId];
         await store.update('posts', post.id, { stats: {
           ...lockedStats, status: 'scheduled', publishAttempts: attempts - 1,
@@ -493,7 +540,7 @@ async function publishScheduledPost(
         } });
         return;
       }
-      if (error instanceof Starter198LegacyEffectError) {
+      if (!hasProviderIdentity && error instanceof Starter198LegacyEffectError) {
         delete results[accountId];
         await store.update('posts', post.id, { stats: {
           ...lockedStats,

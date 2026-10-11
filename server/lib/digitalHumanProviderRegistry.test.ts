@@ -63,3 +63,19 @@ test('reference routing rejects registered tools that cannot honor duration or p
   const unknownPrice = selectReferenceAdapter({ adapters: [unprofiled], candidates: ['local_head_pipeline'], method: 'replace', maxEstimatedCostCny: 10, requiredPreservation: ['identity'] });
   assert.equal(unknownPrice.adapter, undefined); assert.match(unknownPrice.reason, /无法验证预算/);
 });
+
+
+test('malformed production duration, budget or supplier price cannot admit a paid reference adapter', () => {
+  let submissions = 0;
+  const adapter = { id: 'runway_act_two' as const, methods: ['reenact' as const],
+    executionProfile: { maxDurationSeconds: 30, preserves: ['identity' as const], qualityInspection: true, estimatedCostCnyPerSecond: 2 },
+    async submit() { submissions++; return { externalTaskId: 'must-not-submit' }; }, async status() { return { state: 'pending' as const }; } };
+  const valid = { adapters: [adapter], candidates: ['runway_act_two'], method: 'reenact' as const, targetDurationSeconds: 6, maxEstimatedCostCny: 20, requiredPreservation: ['identity' as const] };
+  for (const targetDurationSeconds of [0, -1, NaN, Infinity]) assert.equal(selectReferenceAdapter({ ...valid, targetDurationSeconds }).adapter, undefined);
+  for (const maxEstimatedCostCny of [-1, NaN, Infinity]) assert.equal(selectReferenceAdapter({ ...valid, maxEstimatedCostCny }).adapter, undefined);
+  for (const estimatedCostCnyPerSecond of [-1, NaN, Infinity, Number.MAX_VALUE]) assert.equal(selectReferenceAdapter({ ...valid, adapters: [{ ...adapter, executionProfile: { ...adapter.executionProfile, estimatedCostCnyPerSecond } }] }).adapter, undefined);
+  for (const maxDurationSeconds of [0, -1, NaN, Infinity]) assert.equal(selectReferenceAdapter({ ...valid, adapters: [{ ...adapter, executionProfile: { ...adapter.executionProfile, maxDurationSeconds } }] }).adapter, undefined);
+  const free = selectReferenceAdapter({ ...valid, maxEstimatedCostCny: 0, adapters: [{ ...adapter, executionProfile: { ...adapter.executionProfile, estimatedCostCnyPerSecond: 0 } }] });
+  assert.equal(free.adapter?.id, adapter.id); assert.equal(free.estimatedCostCny, 0);
+  assert.equal(selectReferenceAdapter(valid).estimatedCostCny, 12); assert.equal(submissions, 0);
+});

@@ -1,3 +1,4 @@
+import type { TikTokDirectPostOptions } from './tikTokPostSettings';
 import type { PublishPlatform } from './publishQueueState';
 
 export const EXTERNAL_VIDEO_PLATFORMS: readonly PublishPlatform[] = ['youtube', 'instagram', 'facebook', 'tiktok'];
@@ -17,6 +18,8 @@ export type ExternalVideoApprovalRequest = {
   targetAccountIds: string[];
   scheduledAt: string;
   trackWaLink: boolean;
+  tiktokPostOptions?: TikTokDirectPostOptions;
+  tiktokCreatorReceiptHash?: string;
 };
 
 export type ExternalApprovalState = { status: string; scheduledAt: string; platformPostId?: string; platformUrl?: string };
@@ -41,6 +44,8 @@ export function buildExternalVideoApprovalRequests(input: {
   accountIds: Partial<Record<PublishPlatform, string>>;
   accounts: readonly ExternalVideoAccount[];
   trackWaLink: boolean;
+  tiktokPostOptions?: TikTokDirectPostOptions;
+  tiktokCreatorReceiptHash?: string;
 }): ExternalVideoApprovalRequest[] {
   const videoPath = input.videoPath.trim();
   const title = input.title.trim();
@@ -51,7 +56,9 @@ export function buildExternalVideoApprovalRequests(input: {
     const accountId = input.accountIds[platform];
     const account = input.accounts.find(item => item.id === accountId && item.platform === platform && item.status === 'connected');
     if (!account) throw new Error(`请为 ${platform} 选择一个已授权账号`);
+    if (platform === 'tiktok' && (!input.tiktokPostOptions || input.tiktokPostOptions.userConsent !== true || input.tiktokPostOptions.musicUsageConfirmed !== true || !/^[a-f0-9]{64}$/.test(input.tiktokCreatorReceiptHash || ''))) throw new Error('请完成 TikTok 最新账号设置与本次发布授权');
     return {
+      ...(platform === 'tiktok' ? { tiktokPostOptions: structuredClone(input.tiktokPostOptions!), tiktokCreatorReceiptHash: input.tiktokCreatorReceiptHash } : {}),
       videoPath,
       title,
       description: input.description.trim(),

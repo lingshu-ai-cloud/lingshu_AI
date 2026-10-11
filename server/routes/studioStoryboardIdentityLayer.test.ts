@@ -147,18 +147,18 @@ try {
   const clone = await request('clone', undefined, true);
   assert.equal(clone.status, 200, JSON.stringify(clone.body));
   const cloneSaved = readLocalMaterials().find(item => item.id === clone.body.material.id);
-  assert.equal(cloneSaved?.provenance?.identityLayer?.strategy, 'exact_source_pixels');
+  assert.equal(cloneSaved?.provenance?.identityLayer?.strategy, 'seedream_reference_composite');
   assert.equal(cloneSaved?.provenance?.geometryPlan?.source, 'observed_source_frame');
-  assert.equal(cloneSaved?.provenance?.estimatedCostCny, .1,
-    'direct Seedance routing charges only the geometry observation and skips Seedream cost');
+  assert.equal(cloneSaved?.provenance?.estimatedCostCny, .7,
+    'product replication charges geometry observation plus cleanup and enterprise-product composite frames');
   assert.equal(geometryPosts, 1, 'only current-shot source frame is observed once');
-  assert.equal(imagePosts, 4, 'reliable clone composition bypasses Seedream');
-  assert.equal(cloneSaved?.provenance?.identityLayer?.directToSeedance, true);
+  assert.equal(imagePosts, 6, 'product replication removes the source product and rebuilds with enterprise references');
+  assert.equal(cloneSaved?.provenance?.identityLayer?.directToSeedance, undefined);
   const replay = await request('clone', undefined, true);
   assert.equal(replay.status, 200, JSON.stringify(replay.body));
   assert.equal(replay.body.reused, true);
   assert.equal(geometryPosts, 1, 'idempotent replay must not re-observe the paid source frame');
-  assert.equal(imagePosts, 4, 'idempotent replay must not regenerate the first frame');
+  assert.equal(imagePosts, 6, 'idempotent replay must not regenerate the first frame');
   console.log('storyboard identity route mocked exact/fallback passed');
 } finally {
   server.close(); globalThis.fetch = oldFetch;

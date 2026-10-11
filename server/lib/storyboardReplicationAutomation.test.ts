@@ -5,8 +5,10 @@ const original=buildStoryboardQaReport({...base,observations:[{key:'environment_
 const automated=applyStoryboardReplicationAutomation(original);
 assert.equal(automated.passed,false);assert.equal(automated.requiresHumanReview,false);
 assert.equal(automated.automatedPassed,false,'uncertain must not become a claimed vision pass');
-assert.equal(automated.acceptanceSource,'automatic_policy');
-assert(!automated.findings.some(item=>item.key==='environment_fidelity'));
+assert.equal(automated.acceptanceSource,undefined);
+assert(automated.findings.some(item=>item.key==='environment_fidelity'&&item.severity==='hard_failure'));
+assert.equal(automated.checks.environment_fidelity.verdict,'fail');
+assert.equal(automated.backgroundCheckPolicy,undefined);
 assert(automated.findings.some(item=>item.key==='product_identity'&&item.verdict==='uncertain'&&item.severity==='hard_failure'));
 assert.equal(original.status,'retry_first_frame','original report is not mutated');
 for (const key of ['product_identity','visual_integrity','contact']) {
@@ -19,3 +21,21 @@ assert.equal(automaticStoryboardFrameAdmission({...p,shotSpec:{mode:'free_creati
 assert.equal(automaticStoryboardFrameAdmission({...p,shotSpec:{mode:'replication',constraints:['person_identity']}}),false,'person path is handled separately');
 assert.equal(automaticStoryboardFrameAdmission({...p,firstFrameQuality:undefined}),false,'missing QA is not execution evidence');
 assert.equal(automated.reviewedBy,undefined);assert.equal(automated.reviewDecision,undefined);
+
+const factoryBase = { phase: 'video' as const, sceneType: 'factory' as const, hasProduct: false, hasNamedPerson: false, hasEnvironmentReference: true, hasContact: false, hasAction: false, evidenceFrameLabels: ['视频0s', '视频4s'] };
+const factoryChecks = ['environment_fidelity', 'layout_continuity', 'visual_integrity'];
+const factoryReport = (verdict: 'pass' | 'fail' | 'uncertain') => buildStoryboardQaReport({ ...factoryBase, observations: factoryChecks.map(key => ({ key, verdict: key === 'environment_fidelity' ? verdict : 'pass', evidenceFrames: ['视频0s', '视频4s'], note: '实际抽帧核验' })) });
+const factoryFailed = applyStoryboardReplicationAutomation(factoryReport('fail'));
+assert.equal(factoryFailed.passed, false, 'factory mismatch must block automatic admission');
+assert.equal(factoryFailed.status, 'retry_video');
+const factoryUnknown = applyStoryboardReplicationAutomation(factoryReport('uncertain'));
+assert.equal(factoryUnknown.passed, false);
+assert.equal(factoryUnknown.requiresHumanReview, true);
+assert.equal(factoryUnknown.status, 'needs_review');
+assert.equal(factoryUnknown.acceptanceSource, undefined);
+const factoryPassed = applyStoryboardReplicationAutomation({ ...factoryReport('pass'), reviewedBy: 'old-reviewer', reviewedAt: 'old-time', reviewDecision: 'accept' });
+assert.equal(factoryPassed.passed, true);
+assert.equal(factoryPassed.acceptanceSource, 'automatic_policy');
+assert.equal(factoryPassed.reviewedBy, undefined, 'automation never impersonates a reviewer');
+assert.equal(factoryPassed.reviewedAt, undefined);
+assert.equal(factoryPassed.reviewDecision, undefined);

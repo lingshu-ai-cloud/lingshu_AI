@@ -1,3 +1,4 @@
+import {socialAssetSupplyPlanIdentityHash} from './socialAssetSupplyPlanIdentity.js';
 import type {Starter198Repository,StarterRecord} from './repository.js';
 import type {SocialContentTaskDetail,SocialTaskSource} from '../../shared/contracts/socialContentWorkflow.js';
 import {socialJson,socialObject,socialRequestHash} from './socialContentValidation.js';
@@ -23,6 +24,6 @@ export async function readWeeklySchedulerMaterialPlan(repository:Starter198Repos
  const sources=detail.sources.filter(s=>s.status==='active');
  if(proof.sourceHash!==sourceHash(sources))return null;
  const current={...detail.assetSupplyPlan,planVersion:proof.plan.planVersion};
- if(detail.assetSupplyPlan.planVersion!==detail.version||proof.plan.planVersion!==proof.originalTaskVersion||socialRequestHash(current)!==socialRequestHash(proof.plan))return null;
+ if(detail.assetSupplyPlan.planVersion!==detail.version||proof.plan.planVersion!==proof.originalTaskVersion||socialAssetSupplyPlanIdentityHash(current)!==socialAssetSupplyPlanIdentityHash(proof.plan))return null;
  return structuredClone(proof.plan);
 }

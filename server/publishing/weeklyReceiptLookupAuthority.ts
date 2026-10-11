@@ -1,3 +1,4 @@
+import {resolveInstagramPublishingContract} from './instagramPublishingContract.js';
 import type {DataStore,Record_} from '../storage/datastore.js';
 import {socialAccessToken,youtubeCredentials} from '../lib/accountCredentials.js';
 import {ensurePlatformCapability,platformAccountIdentityHash} from './platformCapabilities.js';
@@ -9,6 +10,10 @@ export async function weeklyReceiptLookupAuthority(input:{tenantId:string;accoun
  if(account.status!=='connected')return {reason:'receipt_lookup_account_not_connected',identityHash:null};
  if(typeof (input.platform==='youtube'?account.channelId:account.providerAccountId)!=='string'||!String(input.platform==='youtube'?account.channelId:account.providerAccountId).trim())return {reason:'receipt_lookup_native_identity_missing',identityHash:null};
  try{if(input.platform==='youtube')youtubeCredentials(account);else socialAccessToken(account);}catch{return {reason:'receipt_lookup_credential_unavailable',identityHash:null};}
+ if(input.platform==='instagram') {
+  let contract;try{contract=resolveInstagramPublishingContract({oauthProvider:account.oauthProvider});}catch{return {reason:'instagram_publishing_oauth_provider_unsupported',identityHash:null};}
+  if(contract.oauthProvider==='instagram_login'&&!new Set(String(account.scope??'').split(/[\s,]+/)).has('instagram_business_basic'))return {reason:'receipt_lookup_scope_missing',identityHash:null};
+ }
  const identityHash=platformAccountIdentityHash(account,input.platform);
  if(input.platform==='tiktok'){
   const decision=await ensurePlatformCapability({tenantId:input.tenantId,accountId:input.accountId,platform:'tiktok',capability:'publishing.receipt_lookup',receiptId:receipt,dataStore:input.dataStore,now:input.now});if(decision.status!=='available')return {reason:decision.reason,identityHash};

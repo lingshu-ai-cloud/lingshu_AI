@@ -12,6 +12,7 @@ import type {
 } from '../../shared/contracts/assistantDecisionCenter';
 import { normalizeAssistantDecisionPage, normalizeAssistantDecisionExecutionReceipt } from '../../shared/contracts/assistantDecisionCenter';
 import { authHeader } from './auth';
+import { httpFailure, decisionCommand } from '../../shared/request-policy.mjs';
 
 const BASE = '/api/overseas/digital-employees/assistant/decision-center';
 
@@ -213,14 +214,8 @@ async function request<T>(url: string, init?: RequestInit): Promise<T> {
       throw new AssistantDecisionApiError('待办接口未返回有效数据，请重新加载', 502, 'invalid_decision_response');
     }) as Record<string, unknown>;
     if (!response.ok) {
-      const code = text(body.error, 120);
-      const stale = response.status === 409 && ['stale_decision', 'assistant_decision_changed', 'assistant_decision_not_pending'].includes(code);
-      throw new AssistantDecisionApiError(
-        stale ? '这项待办已更新，已为你刷新最新内容' : text(body.message || body.error, 240) || '待办请求失败，请重试',
-        response.status,
-        code,
-        body,
-      );
+      const failure = httpFailure(response.status, body, '待办请求失败，请重试');
+      throw new AssistantDecisionApiError(failure.message, failure.status, failure.code, failure.details);
     }
     return body as T;
   } catch (reason) {
@@ -255,11 +250,7 @@ export async function executeAssistantDecision(input: {
   note?: string;
   signal?: AbortSignal;
 }): Promise<AssistantDecisionActionResponse> {
-  const command: AssistantDecisionCommand = {
-    actionId: input.actionId,
-    expectedVersion: input.expectedVersion,
-    ...(input.note?.trim() ? { note: input.note.trim() } : {}),
-  };
+  const command: AssistantDecisionCommand = decisionCommand(input);
   const params = new URLSearchParams({ page: normalizeAssistantDecisionPage(input.page) });
   if (input.goalId?.trim()) params.set('goalId', input.goalId.trim());
   const body = await request<AssistantDecisionActionResponse>(

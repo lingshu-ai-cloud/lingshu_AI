@@ -250,7 +250,7 @@ assert.match(pageSource, /输出内容语言/, 'content Agent settings must reta
 assert.doesNotMatch(appSource, /SocialOperatingSummary/, 'Smart Business must not render the redundant social-operation background bar');
 assert.match(appSource, /page === 'traffic'[\s\S]{0,1200}initialView="publish"[\s\S]{0,300}visibleModes=\{\['publish'\]\}[\s\S]{0,200}showModeTabs=\{false\}/, 'publishing must not keep the redundant publish/account top-level tabs');
 assert.doesNotMatch(matrixViewSource, /<AccountActivity|<AccountHealthPanel/, 'the matrix must retain account configuration, not duplicate health and pure numeric data');
-for (const label of ['经营总览', '账号矩阵', '数据复盘']) assert.match(workspaceTabsSource, new RegExp(label), `Smart Business must expose ${label}`);
+for (const label of ['经营总览', '数字员工', '数据复盘']) assert.match(workspaceTabsSource, new RegExp(label), `Smart Business must expose ${label}`);
 assert.equal((workspaceTabsSource.match(/^\s*\{ id:/gm) || []).length, 3, 'Smart Business must expose exactly three main tabs');
 assert.doesNotMatch(workspaceTabsSource, /内容队列/, 'the removed content queue must not remain a navigation tab');
 assert.doesNotMatch(smartBusinessSource, /function QueueView|view === "queue"/, 'the removed content queue must not retain a render branch');
@@ -334,8 +334,8 @@ assert.doesNotMatch(pageSource, /const updateWeeklyPlanProduct|const refreshWeek
 assert.match(weeklyPlanCalendarSource, /补齐 \{missingReferences\} 条爆款/, 'a weekly plan with missing references must expose an actionable repair instead of a dead-end warning');
 assert.match(pageSource, /预计成本/, 'the compact weekly-plan summary must retain its cost estimate');
 assert.doesNotMatch(pageSource, /aria-label="Agent To Do List"/, 'the removed weekly-plan detail page must not retain its embedded Agent task list');
-assert.match(pageSource, /aria-label="社媒视频矩阵"[\s\S]{0,2500}编辑完整矩阵/, 'the default weekly proposal must visibly restore the social video matrix');
-assert.match(pageSource, /workspaceView === "matrix" && <SmartOperationsAccountRail/, 'the account rail must only appear inside the account-matrix tab');
+assert.match(pageSource, /<WeeklyGoalScheduleCards plans=\{form.videoPlans/, 'the weekly proposal must retain the latest shared schedule and its matrix editing entry');
+assert.doesNotMatch(pageSource, /<SmartOperationsAccountRail/, 'the digital employee calendar must retain the latest layout without an account selector');
 assert.match(weeklyPlanCalendarSource, /plans\.length[\s\S]{0,300}条内容/, 'the weekly calendar must expose the conserved total publishing count');
 assert.match(weeklyPlanCalendarSource, /plans\.map[\s\S]{0,650}plan\.plannedPublishDate/, 'the weekly calendar must adapt every publishing version with its real planned date');
 assert.match(weeklyPlanCalendarSource, /<LsCalendar/, 'the weekly calendar must use FullCalendar for all views');
@@ -344,6 +344,7 @@ assert.match(weeklyCommandCenterSource, /detailsTitle="内容制作进度"[\s\S]
 assert.match(weeklyCommandCenterSource, /onOpenReference[\s\S]{0,350}inspirationReferenceNavigationDetail/, 'the drawer must retain the exact persisted inspiration reference as a secondary action');
 assert.doesNotMatch(confirmWeeklyPlanSource, /approvalBlocked|missingProducts|missingReferences|generatePackageDetails|readiness\.canStart/, 'launch must not duplicate production preparation or publishing readiness gates in the UI');
 assert.match(confirmWeeklyPlanSource, /approveGoal\(goal\.id, data\.plan\.businessPackage\.revision\)/, 'launch must submit the exact plan revision to authoritative server validation');
+assert.match(digitalEmployeeApiSource, /approveGoal:[\s\S]{0,900}AbortSignal\.timeout\(12_000\)/, 'weekly launch must stop indefinite loading and hand unknown results to read-only reconciliation');
 assert.match(inspirationSource, /receiveReference[\s\S]{0,5000}setSelectedVideo\(match\)/, 'Inspiration Center must open the exact requested viral-video detail');
 assert.match(inspirationSource, /weekly-plan-snapshot[\s\S]{0,600}setSelectedVideo\(snapshot\)/, 'deleted references must still open the frozen weekly-plan analysis snapshot');
 assert.match(pageSource, /具体缺少/, 'weekly-plan validation must name the missing business fields instead of showing a generic warning');
@@ -363,18 +364,10 @@ assert.match(smartBusinessSource, /costCny\.settlementStatus === "settled"[\s\S]
 assert.match(smartBusinessSource, /过去已核算消耗/, 'Agent detail must expose historical settled spend');
 assert.match(smartBusinessSource, /账号真实结算账本/, 'Agent detail must identify the persisted account ledger as its source');
 assert.match(smartBusinessSource, /<MatrixView[^>]*\bdata=\{data\}/, 'the account matrix tab must use the deterministic editable weekly matrix');
-assert.match(matrixViewSource, /<MatrixPublicationSchedule[^>]+taskItems=\{data\.contentQueue\?\.items\}/, 'the matrix schedule must retain persisted content tasks after the queue tab is removed');
+assert.match(matrixViewSource, /<DigitalEmployeeWorkspace data=\{data\}/, 'the digital employee workspace must receive the complete persisted overview');
 assert.doesNotMatch(smartBusinessSource, /排期规则：/, 'the matrix must not add a redundant prose rule below the visual schedule');
 assert.doesNotMatch(smartBusinessSource, /matrixSystemLayers|谁来建立信任|aria-label="按平台查看账号"/, 'the deleted dark explainer and duplicate platform cards must not remain');
-for (const item of ['企业默认 CTA', 'WhatsApp', 'Messenger', '对标账号']) {
-  assert.match(smartBusinessSource, new RegExp(item), `account details must expose ${item}`);
-}
-assert.doesNotMatch(smartBusinessSource, /内容任务已统一放入上方工作排期/, 'account content ownership should be evident from layout rather than a subtitle');
-assert.doesNotMatch(smartBusinessSource, /账号宪法完成项|唯一 CTA 待锁定|当前只有平台承接规则/, 'account completion must hide unrelated constitution fields and the duplicate CTA warning');
-assert.match(smartBusinessSource, /按矩阵同步周任务包/, 'draft weekly packages must expose an explicit matrix synchronization action');
-assert.match(smartBusinessSource, /\/api\/overseas\/competitor-accounts/, 'account details must use the persisted benchmark-account library');
-assert.match(smartBusinessSource, /\/api\/oauth\/whatsapp\/config/, 'account details must read the real WhatsApp connection state');
-assert.match(smartBusinessSource, /messengerSubscribed/, 'Facebook account details must read the real Messenger subscription state');
+assert.doesNotMatch(matrixViewSource, /MatrixPublicationSchedule|管理连接账号|账号职责与连接状态/, 'the employee workspace must remove account publishing and configuration panels');
 assert.doesNotMatch(matrixViewSource, /本周账号更新完成度/, 'pure account completion statistics must move to the data review');
 assert.doesNotMatch(smartBusinessSource, /各账号周更稳定度/, 'the account matrix must not render an empty stability chart');
 assert.doesNotMatch(matrixViewSource, /<ContentGenerationProgress/, 'the removed per-video production section must not render in the matrix');
@@ -459,12 +452,10 @@ assert.doesNotMatch(pageSource, /<InitialPreparationStatusPanel/, 'initial-prepa
 assert.match(initialPreparationSource, /digitalEmployeeApi\.initialPreparation\(goalId\)/, 'initial-preparation progress must come from the persisted backend state');
 assert.match(pageSource, /allowInitialPlan=\{false\}[\s\S]{0,500}const saved = await saveConfig\(config\)/, 'reopening the guide must save settings without creating another initial plan');
 assert.match(agentWeeklyCalendarSource, /projectCalendarDeliverables\(tasks\)/, 'the Agent calendar must collapse scoped production internals into user-visible deliverables');
-assert.match(agentWeeklyCalendarSource, /task\.accountBindingTarget[\s\S]{0,120}绑定发布账号/, 'the Agent calendar must expose account-binding exceptions as actionable work');
-assert.match(agentWeeklyCalendarSource, /allDay \? undefined[\s\S]{0,80}allDay/, 'date-only binding work must render as a true all-day event rather than a mixed-zone timed range');
+assert.match(agentWeeklyCalendarSource, /selected\.accountBindingTarget[\s\S]{0,450}绑定发布账号/, 'the Agent calendar must expose account-binding exceptions as actionable work');
+assert.match(agentWeeklyCalendarSource, /task.date === key\(day\)/, '保留本地日历按原任务日期展示绑定工作');
 assert.match(connectedAgentCalendarSource, /mainTasks=\{\[\.\.\.accountBindingTasks,/, 'account-binding exceptions must be shown alongside persisted weekly tasks');
 assert.match(matrixScheduleSource, /projectAccountBindingCalendar\(visibleTasks, accountConnections\)/, 'account selection must scope projected binding work to visible tasks');
-assert.match(matrixViewSource, /config\?\.publishingTargets\.find[\s\S]{0,600}connected: row\.connected !== false && Boolean\(target\)/, 'binding truth must come from the authoritative configured publishing accounts');
-assert.match(matrixViewSource, /<MatrixPublicationSchedule[^>]*accounts=\{accountRows\}/, 'the publication schedule must receive authoritative account connection states');
 assert.doesNotMatch(pageSource, /productionApi\.defaults\(\)/, 'the optional presenter step must not block initial-plan generation');
 
 for (const label of ['\u8fd0\u884c\u4e2d', '\u9700\u8981\u6211\u51b3\u5b9a', '\u4eca\u65e5\u5b8c\u6210', '\u672a\u6765 24 \u5c0f\u65f6', '\u6570\u636e\u7f3a\u53e3']) {
@@ -534,8 +525,13 @@ const collectionLink = buildTaskDeepLink(task('scheduled_source_collection'), un
 assert.deepEqual(
   { page: collectionLink.page, view: collectionLink.view, runId: collectionLink.runId, taskId: collectionLink.taskId },
   { page: 'scheduled', view: undefined, runId: 'run-1', taskId: 'task-scheduled_source_collection' },
-  'scheduled source collection must deep-link to Scheduler with run and task context',
+  'source collection must deep-link to the inspiration workspace with run and task context',
 );
+
+const adsLink = buildTaskDeepLink({ ...task('optimize_campaign'), business_domain: 'advertising', capability_key: 'ads.optimize' }, undefined, 'run-ads');
+assert.equal(adsLink.page, 'adsManaged', 'advertising tasks must open the managed ads workspace');
+assert.equal(adsLink.runId, 'run-ads');
+assert.equal(adsLink.taskId, 'task-optimize_campaign');
 
 const publishPlan: PlanTask = {
   key: 'publishing_calendar', title: 'Publishing calendar', description: '', agentRole: 'business', kind: 'activation', sequence: 9,

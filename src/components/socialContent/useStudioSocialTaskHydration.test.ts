@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import type { SocialContentTaskDetail } from '../../../shared/contracts/socialContentWorkflow.js';
-import { socialTaskShotMaterialBindings, socialTaskToStudioSeed, socialThemeToStudioTheme } from './useStudioSocialTaskHydration.js';
+import { socialTaskProductionPreview, socialTaskShotMaterialBindings, socialTaskToStudioSeed, socialThemeToStudioTheme } from './useStudioSocialTaskHydration.js';
 import { createSocialAssetSupplyPlan } from '../../../shared/socialContentAssetSupply.js';
 
 const task = {
@@ -150,3 +150,29 @@ assert.deepEqual(socialTaskToStudioSeed(speechTask).reference?.referenceAnalysis
   referenceText: '旧品牌口播', draftText: '新品牌口播', sourceStartSeconds: 0.2, sourceEndSeconds: 2.8,
   sourcePrecision: 'coarse', sourceProvenance: 'reference_asr', replacedEntityTypes: ['brand'], narrationOwnerShotId: 'replication-ref-1', visualShotIds: ['replication-ref-1'],
 }]);
+
+const completedProductionTask = {
+  ...speechTask,
+  artifacts: [{
+    artifactId: 'artifact-1', taskId: speechTask.taskId, kind: 'short_video', platform: 'tiktok', language: 'en',
+    version: '1', status: 'review_required', origin: 'agent', resourceRef: 'socialfile:video-1',
+    content: {
+      mediaStorage: { video: { url: '/api/social-content/files/video-1' }, cover: { url: '/api/social-content/files/cover-1' } },
+      technicalQualityReport: { audio: { ok: true } },
+      render: { bgm: { mood: '科技产业 · 律动推进' } },
+    }, parentArtifactId: null, createdAt: '', updatedAt: '',
+  }],
+  referenceVideoAnalysis: {
+    ...speechTask.referenceVideoAnalysis,
+    shots: [{ shotId: 'ref-1', startSeconds: 0, endSeconds: 3, visualDescription: '工厂口播', spokenText: '旧品牌口播', audioDescription: '人物同期声' }],
+  },
+} as unknown as SocialContentTaskDetail;
+assert.deepEqual(socialTaskProductionPreview(completedProductionTask), {
+  deliverableVideoUrl: '/api/social-content/files/video-1',
+  coverUrl: '/api/social-content/files/cover-1',
+  narrationLines: [{ text: '新品牌口播', startSeconds: 0.2, endSeconds: 2.8 }],
+  shots: [{ shotId: 'ref-1', startSeconds: 0, endSeconds: 3, visual: '工厂口播', spokenText: '旧品牌口播', audioDescription: '人物同期声' }],
+  audio: { embeddedInDeliverable: true, technicalCheckPassed: true, bgmMood: '科技产业 · 律动推进' },
+});
+assert.equal(socialTaskToStudioSeed(completedProductionTask).productionPreview.deliverableVideoUrl,
+  '/api/social-content/files/video-1', 'agent-entry seed includes the real completed deliverable');

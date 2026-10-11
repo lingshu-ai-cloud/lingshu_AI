@@ -274,7 +274,7 @@ function applySharedMaterialPreparation(tasks:WeeklyExecutionTask[],publications
   const canonical=preparationByPublication.get(ordered[0]!.publicationTaskId)!;
   const preparationIds=[...preparationByPublication.values()].map(task=>task.taskId);
   canonical.dependsOnTaskIds=[...new Set([...canonical.dependsOnTaskIds,...preparationIds.filter(id=>id!==canonical.taskId)])];
-  canonical.inputSnapshot={...canonical.inputSnapshot,sharedMaterialBarrier:{requestId,consumerPublicationTaskIds:ordered.map(p=>p.publicationTaskId),preparationTaskIds:preparationIds}};
+  const barrier={requestId,consumerPublicationTaskIds:ordered.map(p=>p.publicationTaskId),preparationTaskIds:preparationIds};const prior=Array.isArray(canonical.inputSnapshot.sharedMaterialBarriers)?canonical.inputSnapshot.sharedMaterialBarriers:[];canonical.inputSnapshot={...canonical.inputSnapshot,sharedMaterialBarrier:canonical.inputSnapshot.sharedMaterialBarrier??barrier,sharedMaterialBarriers:[...prior,barrier]};
   for(const publication of ordered){const scripts=tasks.filter(task=>task.publicationTaskId===publication.publicationTaskId&&task.schedule.stepKind==='script');if(scripts.length!==1)throw new SocialProgramError('weekly_shared_material_script_ambiguous',409,'共享素材消费者缺少唯一脚本任务。');scripts[0]!.dependsOnTaskIds=[...new Set([...scripts[0]!.dependsOnTaskIds,canonical.taskId])];}
  }
 }

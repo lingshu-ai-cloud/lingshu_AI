@@ -34,7 +34,7 @@ export interface SocialOperatingProfile {
 const starterAccounts: SocialPlatformAccountPlan[] = [
   { platform: 'tiktok', accountRole: 'brand_combined', weeklyVideoCount: 5, weeklyNonVideoCount: 0, formats: ['native_short_video'], purpose: '用买家问题、产品演示和过程证据验证短视频需求。' },
   { platform: 'facebook', accountRole: 'brand_combined', weeklyVideoCount: 5, weeklyNonVideoCount: 1, formats: ['reel', 'buyer_article'], purpose: '沉淀供应能力、采购说明与 WhatsApp/主页承接。' },
-  { platform: 'instagram', accountRole: 'brand_combined', weeklyVideoCount: 5, weeklyNonVideoCount: 1, formats: ['reel', 'carousel'], purpose: '用视觉化产品证据和可收藏清单建立信任。' },
+  { platform: 'instagram', accountRole: 'brand_combined', weeklyVideoCount: 3, weeklyNonVideoCount: 1, formats: ['reel', 'carousel'], purpose: '用视觉化产品证据和可收藏清单建立信任。' },
   { platform: 'youtube', accountRole: 'brand_combined', weeklyVideoCount: 3, weeklyNonVideoCount: 0, formats: ['short'], purpose: '用可搜索的买家问题与长期内容资产承接采购意图。' },
 ];
 
@@ -52,9 +52,9 @@ export const SOCIAL_OPERATING_PROFILES: Record<SocialOperatingProfileId, SocialO
     id: 'starter_four_platform',
     stage: 'validation',
     name: '四平台单账号验证',
-    description: '每个平台先使用一个综合账号，以 5 条基础视频和 1 篇基础采购内容完成 20 次差异化发布。',
+    description: '每个平台先使用一个综合账号，以 5 条基础视频和 1 篇基础采购内容完成 18 次差异化发布。',
     accounts: starterAccounts,
-    weeklyTargets: { baseVideoOriginals: 5, baseNonVideoOriginals: 1, adaptationVersions: 14, publicationTasks: 20 },
+    weeklyTargets: { baseVideoOriginals: 5, baseNonVideoOriginals: 1, adaptationVersions: 12, publicationTasks: 18 },
     activationGates: [
       '四个平台至少各有一个已确认账号或明确标记为待接入。',
       '企业事实、重点产品、目标市场、买家角色和承接入口已确认。',

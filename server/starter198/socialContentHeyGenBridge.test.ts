@@ -31,6 +31,9 @@ class MemoryStore implements DataStore {
 
 assert.deepEqual(socialHeyGenBridgeReadiness({ enabled: 'false', generationEnabled: 'true', apiKey: 'key', storageReady: true,
   budget: { allowed: true, reservationCny: 1, reason: '' } }), { ready: false, reasons: ['SOCIAL_CONTENT_HEYGEN_ENABLED'] });
+assert.deepEqual(socialHeyGenBridgeReadiness({ enabled: 'true', generationEnabled: 'true', apiKey: 'key', storageReady: true,
+  budget: { allowed: false, reservationCny: 1, reason: '预算余额不足，已禁止新付费任务；已有任务仍可刷新' } }),
+{ ready: true, reasons: [] }, 'budget exhaustion must not disable recovery of an already-paid idempotent task');
 
 assert.deepEqual(auditSocialHeyGenPresenters([
   { id: 'ready', authorized: true, toolMappings: { heygen: { avatarId: 'avatar', voiceId: 'voice' } }, authorizationRef: 'rights', consentRef: 'consent' },

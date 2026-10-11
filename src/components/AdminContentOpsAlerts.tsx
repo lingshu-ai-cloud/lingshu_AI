@@ -41,6 +41,15 @@ interface VideoAlertReconciliation {
 const MAX_UPLOAD_BYTES = 10 * 1024 * 1024;
 const TARGET_UPLOAD_BYTES = 9.2 * 1024 * 1024;
 
+function safeAlertMessage(value: string) {
+  const text = String(value || '').toLowerCase();
+  if (!text) return '媒体处理失败，可上传原视频后重新分析。';
+  if (text.includes('download') || text.includes('yt-dlp') || text.includes('http')) return '源视频下载失败，请确认原链接可访问后重试。';
+  if (text.includes('ffmpeg') || text.includes('codec') || text.includes('decode')) return '视频转码失败，请上传标准 MP4 文件后重试。';
+  if (text.includes('timeout') || text.includes('timed out')) return '处理超时，请稍后重试。';
+  return '媒体处理未完成，请重试或上传原视频。';
+}
+
 const fmtDate = (value?: string | null) => {
   if (!value) return '-';
   return new Date(value).toLocaleString('zh-CN', { hour12: false });
@@ -333,10 +342,8 @@ export default function AdminContentOpsAlerts() {
                   <p className="mt-1 truncate text-[10px] font-semibold text-text-secondary">
                     {alert.tenantName}{alert.accountEmail ? ` · ${alert.accountEmail}` : ''} · {alert.platform.toUpperCase()}
                   </p>
-                  <p className="mt-1 truncate text-[10px] text-text-muted">
-                    tenant {alert.tenantId} · record {alert.recordId} · {alert.reason} · {fmtDate(alert.updatedAt)}
-                  </p>
-                  <p className="mt-1 line-clamp-2 text-[10px] text-text-secondary">{alert.error || '无详细错误'}</p>
+                  <p className="mt-1 truncate text-[10px] text-text-muted">{alert.reason} · {fmtDate(alert.updatedAt)}</p>
+                  <p className="mt-1 line-clamp-2 text-[10px] text-text-secondary">{safeAlertMessage(alert.error)}</p>
                 </div>
                 <div className="flex min-w-0 flex-col items-start gap-1.5 lg:items-end">
                   <div className="flex max-w-full flex-wrap items-center gap-1.5">

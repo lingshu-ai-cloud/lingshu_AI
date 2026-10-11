@@ -1,0 +1,313 @@
+{
+  "schemaVersion": 1,
+  "kind": "platform_messaging_production_readiness",
+  "auditedAt": "2026-10-10",
+  "ready": false,
+  "status": "blocked",
+  "mode": "code_audit_and_controlled_in_memory_test",
+  "liveAuthorizationPerformed": false,
+  "liveProviderCalls": 0,
+  "liveMessagesSent": 0,
+  "paidOperations": 0,
+  "secretsLoaded": false,
+  "productionMigrationsRun": false,
+  "requiredEnvironmentNames": [
+    "TENANT_PLATFORM_APP_KEY",
+    "PUBLIC_BASE_URL",
+    "META_SOCIAL_APP_ID",
+    "META_SOCIAL_APP_SECRET",
+    "INSTAGRAM_APP_ID",
+    "INSTAGRAM_APP_SECRET",
+    "META_GRAPH_VERSION",
+    "FOLLOWUP_WORKER_ENABLED"
+  ],
+  "environmentAliases": {
+    "META_SOCIAL_APP_ID": [
+      "WHATSAPP_EMBEDDED_SIGNUP_APP_ID"
+    ],
+    "META_SOCIAL_APP_SECRET": [
+      "WHATSAPP_EMBEDDED_SIGNUP_APP_SECRET"
+    ]
+  },
+  "environmentObserved": false,
+  "callbacks": {
+    "messenger": "${PUBLIC_BASE_URL}/api/overseas/social/oauth/facebook/callback",
+    "instagramLogin": "${PUBLIC_BASE_URL}/api/overseas/social/oauth/instagram/callback",
+    "metaWebhook": "${PUBLIC_BASE_URL}/api/webhooks/meta/{tenantId}",
+    "instagramWebhook": "${PUBLIC_BASE_URL}/api/webhooks/instagram/{tenantId}"
+  },
+  "channels": {
+    "whatsapp": {
+      "canonicalCollection": "tenant_platform_apps",
+      "appPlatform": "meta",
+      "requiredRecordFields": [
+        "tenant_id",
+        "app_id",
+        "app_secret",
+        "wa_config_id",
+        "waba_id",
+        "phone_number_id",
+        "access_token",
+        "token_expires_at",
+        "webhook_verify_token",
+        "status"
+      ],
+      "embeddedSignup": {
+        "configPath": "/api/oauth/whatsapp/config",
+        "exchangePath": "/api/oauth/whatsapp/exchange",
+        "routerMounted": false,
+        "responseType": "code",
+        "featureType": "whatsapp_business_app_onboarding",
+        "sessionInfoVersion": "3",
+        "trustedSessionOrigins": [
+          "https://www.facebook.com",
+          "https://web.facebook.com"
+        ]
+      },
+      "requiredProviderEvidence": [
+        "customer_waba_and_phone_ownership",
+        "granted_whatsapp_business_messaging_and_management_permissions",
+        "phone_registration",
+        "waba_subscription",
+        "approved_template_when_required",
+        "verified_inbound_and_original_provider_message_id"
+      ]
+    },
+    "messenger": {
+      "canonicalCollection": "social_accounts",
+      "accountPlatform": "facebook",
+      "startPath": "/api/overseas/social/oauth/facebook/start",
+      "startPurpose": "messenger",
+      "requestedScopes": [
+        "pages_show_list",
+        "pages_read_engagement",
+        "pages_messaging",
+        "pages_manage_metadata"
+      ],
+      "tokenKind": "page_access_token",
+      "requiredRecordFields": [
+        "tenantId",
+        "userId",
+        "providerAccountId",
+        "accessToken",
+        "scope",
+        "status",
+        "messengerSubscribed"
+      ],
+      "subscribedFields": [
+        "messages",
+        "messaging_postbacks",
+        "message_deliveries",
+        "message_reads",
+        "message_echoes"
+      ],
+      "ordinarySendWindowHours": 24,
+      "requiredProviderEvidence": [
+        "page_token_native_identity_and_message_task",
+        "provider_granted_permission",
+        "successful_page_subscription",
+        "verified_psid_inbound",
+        "original_message_id_and_signed_delivery_read"
+      ]
+    },
+    "instagram": {
+      "canonicalCollection": "social_accounts",
+      "nativeOAuthProvider": "instagram_login",
+      "nativeTokenKind": "instagram_user_token",
+      "nativeGraphHost": "https://graph.instagram.com",
+      "startPath": "/api/overseas/social/oauth/instagram/start",
+      "requestedMessagingScopes": [
+        "instagram_business_basic",
+        "instagram_business_manage_messages"
+      ],
+      "requiredRecordFields": [
+        "tenantId",
+        "userId",
+        "providerAccountId",
+        "accessToken",
+        "tokenExpiresAt",
+        "scope",
+        "status",
+        "oauthProvider",
+        "instagramWebhookSubscribed"
+      ],
+      "subscribedFields": [
+        "messages",
+        "messaging_postbacks",
+        "message_reactions",
+        "messaging_seen"
+      ],
+      "ordinarySendWindowHours": 24,
+      "legacy": {
+        "oauthProvider": "facebook_login",
+        "tokenKind": "page_access_token",
+        "graphHost": "https://graph.facebook.com",
+        "messageScope": "instagram_manage_messages",
+        "requiresParentPageId": true
+      },
+      "requiredProviderEvidence": [
+        "professional_account_native_me_identity",
+        "granted_native_messaging_permission",
+        "successful_account_subscription",
+        "verified_scoped_recipient_inbound",
+        "graph_to_messaging_user_identity_mapping",
+        "original_message_id_and_signed_receipt"
+      ]
+    }
+  },
+  "securityContracts": {
+    "oauthState": [
+      "hmac_tenant_user_platform_purpose",
+      "ten_minute_expiry",
+      "platform_match_in_callback"
+    ],
+    "webhook": [
+      "nonempty_tenant_verify_token_challenge",
+      "raw_body_hmac_sha256",
+      "tenant_secret",
+      "tenant_native_account_filter_after_signature"
+    ],
+    "sendIntent": [
+      "actor_tenant_role",
+      "account_tenant_platform",
+      "request_intent_hash",
+      "exact_provider_recipient_and_message_id",
+      "durable_receipt_before_history",
+      "unknown_no_resend",
+      "signed_receipt_native_account_recipient_message_binding"
+    ]
+  },
+  "codeBlockers": [
+    {
+      "code": "whatsapp_embedded_signup_router_unmounted",
+      "source": "server/routes/whatsappOAuth.ts; server/index.ts",
+      "status": "fixed_controlled_not_live_verified"
+    },
+    {
+      "code": "whatsapp_session_asset_ownership_unverified_before_active",
+      "source": "server/routes/whatsappOAuth.ts",
+      "status": "fixed_controlled_not_live_verified"
+    },
+    {
+      "code": "messenger_subscription_success_and_granted_scope_unverified",
+      "source": "server/integrations/messenger.ts; server/routes/social.ts",
+      "status": "implemented_controlled_live_unverified"
+    },
+    {
+      "code": "oauth_signed_state_not_durably_consumed",
+      "source": "server/lib/tenantPlatformApps.ts; server/routes/social.ts",
+      "status": "open"
+    },
+    {
+      "code": "legacy_instagram_messaging_oauth_scope_missing",
+      "source": "server/lib/socialOAuthScopes.ts",
+      "status": "implemented_controlled_live_unverified"
+    }
+  ],
+  "externalEvidenceRequired": [
+    "platform_app_review_and_access_approval",
+    "tenant_business_asset_authorization",
+    "credential_validity_and_granted_scope",
+    "exact_https_callback_registration",
+    "real_webhook_challenge_and_signed_inbound",
+    "unique_tenant_native_account_binding",
+    "production_schema_atomic_storage_and_worker_heartbeat",
+    "explicit_recipient_authorization_and_message_window",
+    "provider_message_id",
+    "signed_delivery_or_read_receipt",
+    "revocation_and_unknown_recovery_without_resend"
+  ],
+  "controlledTest": {
+    "path": "scripts/platform-messaging-readiness.controlled.test.ts",
+    "status": "passed",
+    "testCount": 1,
+    "realProviderCalls": 0,
+    "networkAttempts": 0,
+    "controlledInMemorySendCallbacks": 1,
+    "apiServerStarted": false,
+    "coverage": [
+      "state_signature_tamper_and_expiry",
+      "webhook_signature_wrong_secret_or_body",
+      "challenge_wrong_token",
+      "whatsapp_wrong_tenant_and_expired_token",
+      "waba_phone_payload_filter",
+      "instagram_account_payload_filter",
+      "channel_specific_consent_and_subscription",
+      "receipt_idempotency_and_changed_intent",
+      "cross_tenant_actor_refusal",
+      "signed_receipt_wrong_native_account_and_recipient"
+    ]
+  },
+  "limitations": [
+    "No browser OAuth or actual webhook HTTP routing exercised.",
+    "No external app approval, credential validity, provider response or live message evidence observed.",
+    "In-memory storage does not prove Postgres uniqueness or cross-process durable fencing.",
+    "Controlled provider-shaped receipt is synthetic and must never be used as production evidence."
+  ],
+  "officialSources": [
+    {
+      "url": "https://www.postman.com/meta/messenger-platform-api/folder/vilwbh4/send-api",
+      "observed": "Meta primary search result exposes Page token, pages_messaging, standard 24-hour window"
+    },
+    {
+      "url": "https://www.postman.com/meta/instagram/documentation/6yqw8pt/instagram-api?entity=request-23987686-1ff01566-3509-48bd-a0f4-8571a91ccfdf",
+      "observed": "Meta native messaging endpoint and scope"
+    },
+    {
+      "url": "https://whatsapp.github.io/WhatsApp-Nodejs-SDK/api-reference/webhooks/start/",
+      "observed": "Meta archived SDK challenge/signature contract; not current review-policy evidence"
+    },
+    {
+      "url": "https://github.com/fbsamples/business-messaging-sample-tech-provider-app",
+      "observed": "Meta official onboarding sample"
+    },
+    {
+      "url": "https://developers.facebook.com/documentation/business-messaging/whatsapp/embedded-signup/implementation",
+      "observed": "unavailable_429; console/manual verification remains required"
+    }
+  ],
+  "whatsappRuntimeCorrection": {
+    "productionParentPath": "/api/oauth/whatsapp",
+    "controlledOnly": true,
+    "liveReady": false,
+    "requiresVerifiedAssetProof": true,
+    "legacyActiveRecords": "re-authorization required before customer content reading or sending",
+    "guards": [
+      "tenant",
+      "native_asset_membership",
+      "foreign_local_owner",
+      "account_version",
+      "tenant_consent",
+      "verified_recipient",
+      "24h_text_image_window",
+      "exact_provider_receipt"
+    ],
+    "remaining": [
+      "live tenant authorization",
+      "external app review",
+      "provider delivery evidence"
+    ]
+  },
+  "messengerRuntimeCorrection": {
+    "liveReady": false,
+    "controlledOnly": true,
+    "proofMaxValiditySeconds": 600,
+    "existingStorageField": "scope",
+    "proofMarkerIsPermission": false,
+    "guards": [
+      "actual_provider_grants",
+      "exact_native_page",
+      "local_foreign_owner",
+      "subscription_success_true",
+      "subscription_readback_current_app",
+      "tenant_account_token_bound_proof",
+      "proof_expiry",
+      "fresh_sender_provider_probe"
+    ],
+    "remaining": [
+      "live app review",
+      "production granted permissions",
+      "live tenant asset and delivery evidence"
+    ]
+  }
+}

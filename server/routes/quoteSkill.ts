@@ -1,3 +1,4 @@
+import { readAuthorizedWhatsAppCustomers } from '../whatsapp/authorizedCustomerRead.js';
 import { Router, type NextFunction, type Request, type RequestHandler, type Response } from 'express';
 import { randomUUID } from 'node:crypto';
 import { requireAuth, type AuthLocals } from '../middleware/auth.js';
@@ -8,9 +9,9 @@ import { requestOrganizationRoleStrict } from '../lib/organizationRole.js';
 import { applyQuoteDraftPatch, buildQuoteDraft, catalogProductsFromEnterprise, composeQuoteReply, quoteQuestions } from '../quoteSkill/engine.js';
 import type { QuoteCatalogProduct, QuoteSkillDraft } from '../quoteSkill/types.js';
 import { quoteCardDigest, quoteNumber, renderQuoteCard } from '../quoteSkill/card.js';
-import { getMessengerCustomers } from '../messenger/conversations.js';
+import { readAuthorizedMessengerCustomers } from '../messenger/authorizedCustomerRead.js';
 import { getInstagramCustomers } from '../instagram/conversations.js';
-import { getWhatsAppCustomers, markWhatsAppHumanReply } from '../whatsapp/historyImport.js';
+import { markWhatsAppHumanReply } from '../whatsapp/historyImport.js';
 import { sendTenantWhatsAppImageWithReceipt } from '../whatsapp/send.js';
 import { readCustomerMessagingAuthorization } from '../digitalEmployees/customerMessagingPolicy.js';
 
@@ -39,7 +40,7 @@ type QuoteSkillDeps = {
   canConfirm?: (req: Request, userId: string) => Promise<boolean>;
   renderCard?: typeof renderQuoteCard;
   sendImage?: typeof sendTenantWhatsAppImageWithReceipt;
-  findCustomer?: (tenantId: string, customerId: string) => { id?: string; source?: string; messagingChannel?: string; waNumber?: string; whatsappProfileName?: string; timeline?: Array<{ actor?: string; type?: string; timestamp?: number }> } | undefined;
+  findCustomer?: (tenantId: string, customerId: string) => { id?: string; source?: string; messagingChannel?: string; waNumber?: string; whatsappProfileName?: string; timeline?: Array<{ actor?: string; type?: string; timestamp?: number }> } | undefined | Promise<{ id?: string; source?: string; messagingChannel?: string; waNumber?: string; whatsappProfileName?: string; timeline?: Array<{ actor?: string; type?: string; timestamp?: number }> } | undefined>;
   messagingReady?: (tenantId: string) => Promise<boolean>;
   recordOutbound?: typeof markWhatsAppHumanReply;
 };
@@ -237,20 +238,20 @@ export function createQuoteSkillRouter(deps: QuoteSkillDeps = {}): Router {
   const withDraftLock = createKeyedLock();
   const renderCard = deps.renderCard || renderQuoteCard;
   const sendImage = deps.sendImage || sendTenantWhatsAppImageWithReceipt;
-  const findCustomer = deps.findCustomer || ((tenantId: string, customerId: string) => {
+  const findCustomer = deps.findCustomer || (async (tenantId: string, customerId: string) => {
     // Acquisition source can be Instagram even for a WhatsApp customer.
     // Route delivery by the actual conversation store, not that attribution.
-    const whatsapp = getWhatsAppCustomers(tenantId).find(item => item.id === customerId);
+    const whatsapp = (await readAuthorizedWhatsAppCustomers(tenantId, dataStore)).find(item => item.id === customerId);
     if (whatsapp) return { ...whatsapp, messagingChannel: 'whatsapp' };
-    const messenger = getMessengerCustomers(tenantId).find(item => item.id === customerId);
+    const messenger = (await readAuthorizedMessengerCustomers(tenantId, dataStore)).find(item => item.id === customerId);
     if (messenger) return { ...messenger, messagingChannel: 'messenger' };
     const instagram = getInstagramCustomers(tenantId).find(item => item.id === customerId);
     return instagram ? { ...instagram, messagingChannel: 'instagram' } : undefined;
   });
   const messagingReady = deps.messagingReady || (async (tenantId: string) => (await readCustomerMessagingAuthorization(tenantId)).providerReady);
   const recordOutbound = deps.recordOutbound || markWhatsAppHumanReply;
-  const customerVisibleDraft = (tenantId: string, draft: QuoteSkillDraft): QuoteSkillDraft => {
-    const currentWhatsAppName = boundedText(findCustomer(tenantId, draft.customerId)?.whatsappProfileName, 200);
+  const customerVisibleDraft = async (tenantId: string, draft: QuoteSkillDraft): Promise<QuoteSkillDraft> => {
+    const currentWhatsAppName = boundedText((await findCustomer(tenantId, draft.customerId))?.whatsappProfileName, 200);
     return currentWhatsAppName
       ? { ...draft, customerName: currentWhatsAppName, customerNameSource: 'whatsapp_profile' }
       : draft;
@@ -305,7 +306,7 @@ export function createQuoteSkillRouter(deps: QuoteSkillDeps = {}): Router {
       dataStore.list<StoredDraft>(DRAFT_COLLECTION, { where: { tenant_id: tenantId, customer_id: customerId }, sort: '-updated_at', page: 1, perPage: 1 }),
     ]);
     const previous = draftPayload(priorResult.items[0] || null);
-    const serverWhatsAppName = boundedText(findCustomer(tenantId, customerId)?.whatsappProfileName, 200);
+    const serverWhatsAppName = boundedText((await findCustomer(tenantId, customerId))?.whatsappProfileName, 200);
     const mockWhatsAppName = process.env.NODE_ENV !== 'production' && customerId.startsWith('mock-')
       ? boundedText(req.body?.customerWhatsAppName, 200)
       : '';
@@ -476,7 +477,7 @@ export function createQuoteSkillRouter(deps: QuoteSkillDeps = {}): Router {
     const { tenantId } = res.locals as AuthLocals;
     const owned = await ownedDraft(dataStore, boundedText(req.params.id, 160), tenantId);
     if (!owned) { res.status(404).json({ error: 'quote_not_found' }); return; }
-    const bytes = await renderCard(customerVisibleDraft(tenantId, owned.draft));
+    const bytes = await renderCard(await customerVisibleDraft(tenantId, owned.draft));
     res.setHeader('Content-Type', 'image/png');
     res.setHeader('Cache-Control', 'private, no-store');
     res.setHeader('Content-Disposition', `inline; filename="${owned.draft.quoteNumber || 'quotation'}-v${owned.draft.version}.png"`);
@@ -503,7 +504,7 @@ export function createQuoteSkillRouter(deps: QuoteSkillDeps = {}): Router {
       }
       if (!await canConfirm(req, userId)) { res.status(403).json({ error: 'quote_send_forbidden', message: '当前角色无权发送正式报价。' }); return; }
       if (!await messagingReady(tenantId)) { res.status(409).json({ error: 'whatsapp_not_ready', message: 'WhatsApp 通道尚未连接。' }); return; }
-      const customer = findCustomer(tenantId, owned.draft.customerId);
+      const customer = await findCustomer(tenantId, owned.draft.customerId);
       const channel = customer?.messagingChannel || (['messenger', 'instagram'].includes(customer?.source || '') ? customer?.source : 'whatsapp');
       if (channel !== 'whatsapp') { res.status(409).json({ error: 'quote_delivery_channel_mismatch', message: '该客户会话不是 WhatsApp，不能通过 WhatsApp 发送报价卡。请插入报价回复到当前会话。' }); return; }
       const to = boundedText(customer?.waNumber, 80);
@@ -514,7 +515,7 @@ export function createQuoteSkillRouter(deps: QuoteSkillDeps = {}): Router {
       if (!latestBuyerAt || windowNow - latestBuyerAt > 24 * 60 * 60 * 1000) {
         res.status(409).json({ error: 'whatsapp_template_required', message: '距客户上次消息已超过 24 小时，图片报价需通过已审核的 WhatsApp 模板发送。' }); return;
       }
-      const bytes = await renderCard(customerVisibleDraft(tenantId, owned.draft));
+      const bytes = await renderCard(await customerVisibleDraft(tenantId, owned.draft));
       const caption = `${owned.draft.quoteNumber} · V${owned.draft.version}\n${owned.draft.productName}\n${owned.draft.currency} ${owned.draft.subtotal?.toLocaleString('en-US')}`;
       const attemptId = randomUUID();
       const startedAt = new Date().toISOString();

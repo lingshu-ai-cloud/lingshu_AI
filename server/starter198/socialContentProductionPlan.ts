@@ -477,7 +477,13 @@ export function buildSocialProductionPlan(input: {
     if (routed.size !== input.routedSceneAssets.length || routed.size !== input.baseline.scenes.length) {
       return { ok:false,reasonCode:'insufficient_visual_coverage',message:'逐镜供应结果与冻结脚本数量不一致。',scenes:[],pendingScenes:pendingScenes([]),selectedAssetIds:[],unusedAssets,narrationChanged:false,maxDuration:0,sourceClipSeconds:0,averageConfidence:0,notes:['生成结果必须逐镜绑定，不能回退到未绑定素材。'] };
     }
-    const assetsById = new Map(uniqueAssets.map(asset => [asset.id, asset]));
+    // Routed output identity is scene binding, not byte uniqueness. Two scenes
+    // may intentionally reuse the same customer clip or render identical safe
+    // graphic bytes under different scene-owned asset IDs. Content-hash
+    // deduplication is useful for free matching below, but applying it here
+    // deletes a valid route and turns full coverage into a false missing-scene
+    // error.
+    const assetsById = new Map(input.assets.map(asset => [asset.id, asset]));
     const scenes = input.baseline.scenes.flatMap((scene, sceneIndex) => {
       const assetId = routed.get(scene.sceneId), asset = assetId ? assetsById.get(assetId) : null;
       if (!asset || asset.type !== 'video' || !asset.localPath || !asset.contentHash
@@ -488,7 +494,7 @@ export function buildSocialProductionPlan(input: {
     });
     if(scenes.length!==input.baseline.scenes.length)return {ok:false,reasonCode:'material_analysis_required',message:'逐镜供应结果缺少可验证的视频字节、哈希、时长或场景绑定。',scenes:[],pendingScenes:pendingScenes(scenes.map(scene=>scene.baselineSceneIndex)),selectedAssetIds:[],unusedAssets,narrationChanged:false,maxDuration:0,sourceClipSeconds:0,averageConfidence:0,notes:['不能用原始产品图或系统说明图代替已承诺的生成镜头。']};
     const selectedAssetIds=[...new Set(scenes.map(scene=>scene.clip.assetId))],sourceClipSeconds=scenes.reduce((sum,scene)=>sum+scene.clip.sourceDuration,0),referenceDuration=Math.max(0,...input.baseline.scenes.map(scene=>Number(scene.referenceStructure?.sourceTiming.endSeconds)||0));
-    for(const asset of uniqueAssets.filter(asset=>!selectedAssetIds.includes(asset.id)))unusedAssets.push({assetId:asset.id,assetName:asset.name,reason:'该逐镜供应结果未绑定当前冻结场景，未进入剪辑'});
+    for(const asset of input.assets.filter(asset=>!selectedAssetIds.includes(asset.id)))unusedAssets.push({assetId:asset.id,assetName:asset.name,reason:'该逐镜供应结果未绑定当前冻结场景，未进入剪辑'});
     return {ok:true,reasonCode:'ready',message:'已按审核后的逐镜供应回执绑定生成视频；最终画面质量仍需独立验收。',scenes,selectedAssetIds,unusedAssets,narrationChanged:false,maxDuration:Math.max(sourceClipSeconds,referenceDuration),sourceClipSeconds,averageConfidence:1,notes:['供应回执只证明生成结果与场景身份绑定，不代表G4/G5质量检查通过。']};
   }
   const taskAssociatedAssetCount = uniqueAssets.filter(hasTaskUploadAssociation).length;

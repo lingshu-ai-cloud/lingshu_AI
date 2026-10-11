@@ -39,16 +39,17 @@ export async function materializeSocialProductionVideo(input: {
   if (opened.view.taskId !== text(artifact.task_id) || opened.view.usage !== 'artifact_media'
     || opened.view.fileRef !== fileRef || opened.view.sha256 !== input.expectedHash.toLowerCase()
     || !opened.view.mimeType.startsWith('video/')) throw new PublishSourceVerificationError('social_production_media_ownership_mismatch');
-  if (opened.localPath) return { videoPath: opened.localPath, sourceUrl, async cleanup() {} };
 
   const extension = opened.view.mimeType === 'video/webm' ? '.webm' : opened.view.mimeType === 'video/quicktime' ? '.mov' : '.mp4';
   const directory = publishingUploadDir(input.tenantId);
   await fsp.mkdir(directory, { recursive: true });
   const safeAttempt = input.attemptId.replace(/[^a-zA-Z0-9_-]/g, '').slice(0, 80);
-  const videoPath = path.join(directory, `social-${safeAttempt}-${input.expectedHash.slice(0, 16)}${extension}`);
-  const body = opened.backend ? Readable.from(opened.backend.buf) : opened.object?.body;
-  if (!body) throw new PublishSourceVerificationError('social_production_media_unavailable', 503);
+  if (!opened.localPath && !opened.backend && !opened.object?.body) throw new PublishSourceVerificationError('social_production_media_unavailable', 503);
+  // Each consumer owns its copy: a retry must never delete another attempt's bytes.
+  const ownedDirectory = await fsp.mkdtemp(path.join(directory, `social-${safeAttempt}-`));
+  const videoPath = path.join(ownedDirectory, `${input.expectedHash.slice(0, 16)}${extension}`);
   try {
+    const body = opened.localPath ? fs.createReadStream(opened.localPath) : opened.backend ? Readable.from(opened.backend.buf) : opened.object!.body;
     await pipeline(body, fs.createWriteStream(videoPath, { flags: 'wx', mode: 0o600 }));
     const stat = await fsp.stat(videoPath);
     if (stat.size !== opened.view.size) throw new Error('size_mismatch');
@@ -56,12 +57,12 @@ export async function materializeSocialProductionVideo(input: {
     for await (const chunk of fs.createReadStream(videoPath)) digest.update(chunk);
     if (digest.digest('hex') !== opened.view.sha256) throw new Error('hash_mismatch');
     return { videoPath, sourceUrl, async cleanup() {
-      await fsp.rm(videoPath, { force: true }).catch(error => {
+      await fsp.rm(ownedDirectory, { recursive: true, force: true }).catch(error => {
         console.error('[weekly-publishing] failed to remove materialized social video:', error instanceof Error ? error.message : error);
       });
     } };
   } catch (error) {
-    await fsp.rm(videoPath, { force: true }).catch(() => undefined);
+    await fsp.rm(ownedDirectory, { recursive: true, force: true }).catch(() => undefined);
     if (error instanceof PublishSourceVerificationError) throw error;
     throw new PublishSourceVerificationError('social_production_media_integrity_violation', 503);
   }

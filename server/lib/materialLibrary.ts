@@ -3,6 +3,7 @@ import path from 'node:path';
 import { readCloudMaterialLibrary, type MaterialSourceStatus } from './cloudMaterials.js';
 import { isSyntheticMaterial } from './materialTruthfulness.js';
 import { currentDataAuthority } from '../storage/dataAuthority.js';
+import type { DataStore } from '../storage/datastore.js';
 export type MaterialRecord = Record<string, any> & { id: string };
 
 export interface SocialTaskMaterialRecordInput {
@@ -112,7 +113,7 @@ export function accessibleMaterial(item: MaterialRecord, tenantId: string): bool
 }
 /** The UI and worker share this inventory; source failures are never reported as an empty library. */
 export async function readMaterialLibrary(tenantId: string, adapters: {
-  local?: typeof readLocalMaterials; cloud?: typeof readCloudMaterialLibrary;
+  local?: typeof readLocalMaterials; cloud?: typeof readCloudMaterialLibrary; dataStore?: DataStore;
 } = {}): Promise<{ items: MaterialRecord[]; status: 'ready' | 'partial' | 'unavailable'; sources: MaterialSourceStatus[] }> {
   let local: MaterialRecord[] = [];
   let localStatus: MaterialSourceStatus = { source: 'server', state: 'ready', message: '服务端素材目录可用' };
@@ -120,7 +121,7 @@ export async function readMaterialLibrary(tenantId: string, adapters: {
   catch { localStatus = { source: 'server', state: 'unavailable', message: '服务端素材目录读取失败，请重试或联系管理员' }; }
   const cloud = currentDataAuthority() === 'local' && !adapters.cloud
     ? { items: [] as MaterialRecord[], source: { source: 'database', state: 'ready', message: '本地账号使用本地素材库' } as MaterialSourceStatus }
-    : await (adapters.cloud || readCloudMaterialLibrary)(tenantId);
+    : await (adapters.cloud || readCloudMaterialLibrary)(tenantId, undefined, adapters.dataStore);
   const sources = [localStatus, cloud.source];
   const items = [...new Map([...local, ...cloud.items].filter(item => accessibleMaterial(item as MaterialRecord, tenantId)).map(item => [String(item.id), item as MaterialRecord])).values()];
   const ready = sources.filter(source => source.state === 'ready').length;

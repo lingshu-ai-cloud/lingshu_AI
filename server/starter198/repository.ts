@@ -1,4 +1,4 @@
-import type {readMaterialLibrary} from '../lib/materialLibrary.js';
+import {readMaterialLibrary} from '../lib/materialLibrary.js';
 import type { DataStore, ListQuery, ListResult } from '../storage/datastore.js';
 import { dataBackend, store } from '../storage/index.js';
 import { pbListStrict } from '../storage/pb.js';
@@ -214,7 +214,7 @@ export function createStarter198Repository(dataStore: DataStore = store, ports: 
     return parsed;
   }
 
-  return { materialLibrary: ports.materialLibrary, dataStore, list, get, create, update, access };
+  return { materialLibrary: ports.materialLibrary ?? ((tenantId, adapters = {}) => readMaterialLibrary(tenantId, {...adapters, dataStore})), dataStore, list, get, create, update, access };
 }
 
 export const starter198Repository = createStarter198Repository();

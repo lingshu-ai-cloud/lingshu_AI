@@ -1,5 +1,6 @@
 import {directorG5AccountRuleRequirements} from '../../shared/contracts/socialDirectorG5AccountRules.js';
 import OpenAI from 'openai';
+import { GoogleGenAI } from '@google/genai';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -645,6 +646,8 @@ import { REFERENCE_NARRATION_PROOFREAD_PROMPT } from '../prompts/referenceNarrat
 export function assertSalesPresenterQwenConfigured(): void { client(); }
 export async function reviewSalesPresenterFramesWithQwen(input: { frames: Array<{ index: number; images: string[]; dialogue: string; visual: string }> }) {
   const model = QWEN_EXACT_VL_MODEL();
+  let provider: 'qwen' | 'gemini' = 'qwen';
+  let actualModel = model;
   let inputTokens = 0, outputTokens = 0;
   const request = async (system: string, frames: typeof input.frames) => {
     const content: any[] = [];
@@ -652,17 +655,45 @@ export async function reviewSalesPresenterFramesWithQwen(input: { frames: Array<
       content.push({ type: 'text', text: `SHOT ${shot.index}: the next TWO images belong ONLY to this shot.` });
       for (const image of shot.images) content.push({ type: 'image_url', image_url: { url: `data:image/jpeg;base64,${image}` } });
     }
-    const completion = await client().chat.completions.create({ model,
-      messages: [{ role: 'user', content: [{ type: 'text', text: system }, ...content, { type: 'text', text: `Required shot indexes: ${JSON.stringify(frames.map(frame => frame.index))}. Return precisely these indexes, preserving the SHOT labels above. Never renumber from zero.` }] }],
-      enable_thinking: false, response_format: { type: 'json_object' }, max_tokens: Math.min(12000, Math.max(2048, frames.length * 300 + 500)),
-    } as any, { timeout: 120_000, maxRetries: 0 });
-    inputTokens += completion.usage?.prompt_tokens || 0;
-    outputTokens += completion.usage?.completion_tokens || 0;
-    const raw = String(completion.choices[0]?.message?.content || '');
+    const suffix = `Required shot indexes: ${JSON.stringify(frames.map(frame => frame.index))}. Return precisely these indexes, preserving the SHOT labels above. Never renumber from zero.`;
+    let raw = '', finishReason = '';
+    if (provider === 'qwen') {
+      try {
+        const completion = await client().chat.completions.create({ model,
+          messages: [{ role: 'user', content: [{ type: 'text', text: system }, ...content, { type: 'text', text: suffix }] }],
+          enable_thinking: false, response_format: { type: 'json_object' }, max_tokens: Math.min(12000, Math.max(2048, frames.length * 300 + 500)),
+        } as any, { timeout: 120_000, maxRetries: 0 });
+        inputTokens += completion.usage?.prompt_tokens || 0;
+        outputTokens += completion.usage?.completion_tokens || 0;
+        raw = String(completion.choices[0]?.message?.content || '');
+        finishReason = completion.choices[0]?.finish_reason || '';
+      } catch (error) {
+        const reason = error instanceof Error ? error.message : String(error);
+        if (!/free quota exhausted|use free tier only/i.test(reason) || !process.env.GEMINI_API_KEY?.trim()) throw error;
+        provider = 'gemini';
+      }
+    }
+    if (provider === 'gemini' && !raw) {
+      actualModel = (process.env.GEMINI_PRESENTER_CONTINUITY_MODEL || process.env.GEMINI_MODEL || 'gemini-2.5-flash').trim();
+      const parts: any[] = [{ text: system }];
+      for (const shot of frames) {
+        parts.push({ text: `SHOT ${shot.index}: the next TWO images belong ONLY to this shot.` });
+        for (const image of shot.images) parts.push({ inlineData: { mimeType: 'image/jpeg', data: image } });
+      }
+      parts.push({ text: suffix });
+      const completion = await new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY!.trim() }).models.generateContent({
+        model: actualModel, contents: [{ role: 'user', parts }],
+        config: { responseMimeType: 'application/json', temperature: 0, maxOutputTokens: Math.min(12000, Math.max(2048, frames.length * 300 + 500)), abortSignal: AbortSignal.timeout(120_000) },
+      });
+      raw = String(completion.text || '');
+      inputTokens += Number(completion.usageMetadata?.promptTokenCount || 0);
+      outputTokens += Number(completion.usageMetadata?.candidatesTokenCount || 0);
+      finishReason = 'stop';
+    }
     const payload = parseJson<any>(raw, {});
     const parsed: { shots?: any[] } = Array.isArray(payload) ? { shots: payload } : payload;
     if (Array.isArray(parsed.shots)) parsed.shots = parsed.shots.map(row => ({ ...row, index: Number(row.index) }));
-    if (!Array.isArray(parsed.shots) || parsed.shots.length !== frames.length || frames.some(frame => parsed.shots!.filter(row => row.index === frame.index).length !== 1)) throw new Error(`千问逐镜视觉证据不完整（预期 ${frames.map(frame => frame.index).join(',')}；返回 ${parsed.shots?.map(row => row.index).join(',') || '空'}；结束状态 ${completion.choices[0]?.finish_reason || '未知'}）`);
+    if (!Array.isArray(parsed.shots) || parsed.shots.length !== frames.length || frames.some(frame => parsed.shots!.filter(row => row.index === frame.index).length !== 1)) throw new Error(`逐镜视觉证据不完整（预期 ${frames.map(frame => frame.index).join(',')}；返回 ${parsed.shots?.map(row => row.index).join(',') || '空'}；结束状态 ${finishReason || '未知'}）`);
     return parsed.shots;
   };
   // Narrow batches prevent a person seen in one shot leaking into product inserts.
@@ -679,7 +710,7 @@ export async function reviewSalesPresenterFramesWithQwen(input: { frames: Array<
     const speaker = speakers.find(item => item.index === row.index);
     if (speaker) return { ...speaker, role: ['sales_presenter', 'background', 'unknown'].includes(speaker.role) ? speaker.role : 'unknown' };
     return { index: row.index, role: row.faceVisible === false ? 'none' : row.nonSpeakerRole === 'background' ? 'background' : 'unknown', personId: '', confidence: Number(row.confidence), evidence: row.evidence };
-  }), model, usage: { inputTokens, outputTokens } };
+  }), model: actualModel, provider, usage: { inputTokens, outputTokens } };
 }
 
 /** Independent Director G5 runtime. Reads rendered evidence; never grades from a producer success label. */

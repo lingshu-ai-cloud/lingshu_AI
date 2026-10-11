@@ -132,4 +132,19 @@ assert.throws(() => buildPlannedTimeline({
   duration: driftedPlan.maxDuration,
 }), /production_plan_locked_source_range_mismatch/);
 
+const sameBytes = 'a'.repeat(64);
+const routedDuplicateVisuals: SocialProductionAsset[] = baseline.scenes.map((scene, index) => ({
+  id: `scene-owned-${index}`, name: `场景 ${index + 1}`, type: 'video',
+  sourceId: `scene-source-${index}`, url: `/tmp/scene-${index}.mp4`, localPath: `/tmp/scene-${index}.mp4`,
+  contentHash: sameBytes, duration: 2.8, visualObservations: ['同一合法画面可由多个冻结场景复用'],
+  segments: [], selectionOrigin: 'system_graphic',
+}));
+const routedDuplicatePlan = buildSocialProductionPlan({
+  baseline, assets: routedDuplicateVisuals,
+  routedSceneAssets: baseline.scenes.map((scene, index) => ({ sceneId: scene.sceneId, assetId: `scene-owned-${index}` })),
+});
+assert.equal(routedDuplicatePlan.ok, true, routedDuplicatePlan.message);
+assert.equal(routedDuplicatePlan.scenes.length, baseline.scenes.length,
+  '逐镜路由必须保留内容哈希相同但场景身份不同的合法视频');
+
 console.log('social content production plan matching tests passed');

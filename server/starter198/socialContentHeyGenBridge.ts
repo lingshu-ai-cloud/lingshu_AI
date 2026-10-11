@@ -72,7 +72,7 @@ export function socialHeyGenBridgeReadiness(input: {
     ...(input.generationEnabled === 'true' ? [] : ['HEYGEN_GENERATION_ENABLED']),
     ...(String(input.apiKey || '').trim() ? [] : ['HEYGEN_API_KEY']),
     ...(input.storageReady ? [] : ['对象存储']),
-    ...(input.budget.allowed && Number(input.budget.reservationCny) > 0 ? [] : [`付费预算：${input.budget.reason || '未配置正数预留额'}`]),
+    ...(Number(input.budget.reservationCny) > 0 ? [] : [`付费预算：${input.budget.reason || '未配置正数预留额'}`]),
   ];
   return { ready: reasons.length === 0, reasons };
 }
@@ -133,10 +133,17 @@ export function createSocialHeyGenBridgePorts(deps: SocialHeyGenBridgeDependenci
     async authorizeBudget({ idempotencyKey, maximumCostCny }) {
       if (!deps.storageReady()) return { allowed: false, reason: 'object_storage_unavailable' };
       const status = deps.budget.status('heygen');
-      if (!status.allowed || !(Number(status.reservationCny) > 0)) return { allowed: false, reason: status.reason || 'budget_unavailable' };
+      if (!(Number(status.reservationCny) > 0)) return { allowed: false, reason: status.reason || 'budget_unavailable' };
       if (Number(status.reservationCny) > maximumCostCny) return { allowed: false, reason: 'reservation_exceeds_shot_limit' };
-      await deps.budget.reserve('heygen', idempotencyKey);
-      return { allowed: true, reservationRef: idempotencyKey };
+      try {
+        // reserve() is idempotent for an existing request key. Always let it
+        // decide so an already-paid provider task remains recoverable even
+        // when the remaining budget is too small for a new generation.
+        await deps.budget.reserve('heygen', idempotencyKey);
+        return { allowed: true, reservationRef: idempotencyKey };
+      } catch (error) {
+        return { allowed: false, reason: error instanceof Error ? error.message : status.reason || 'budget_unavailable' };
+      }
     },
     async execute(input) {
       if(input.accountPlaybookConstraints)assertSocialAccountProductionConstraints(input.accountPlaybookConstraints);

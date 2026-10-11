@@ -23,8 +23,14 @@ export function createProductionRuntime(options: ProductionRouterOptions) {
   };
   const enabled = () => options.enabled?.() ?? Boolean(process.env.HEYGEN_API_KEY && process.env.HEYGEN_GENERATION_ENABLED === 'true');
   const client = () => options.client || new HeyGenClient(process.env.HEYGEN_API_KEY || '');
-  const executableReferenceAdapters = () => options.reserveReference && options.importReferenceVideo && options.resolveReferenceInputs ? options.adapters || [] : [];
-  const referenceBudgetLimitCny = () => { const value = Number(options.referenceBudgetLimitCny ?? process.env.DIGITAL_HUMAN_REFERENCE_MAX_CNY_PER_SHOT); return Number.isFinite(value) && value >= 0 ? value : null; };
+  const referenceBudgetLimitCny = () => {
+    const raw = options.referenceBudgetLimitCny ?? process.env.DIGITAL_HUMAN_REFERENCE_MAX_CNY_PER_SHOT;
+    if (raw == null || String(raw).trim() === '') return null;
+    const value = Number(raw);
+    return Number.isFinite(value) && value >= 0 ? value : null;
+  };
+  // Configured ports do not authorize an unbounded paid reference operation.
+  const executableReferenceAdapters = () => options.reserveReference && options.importReferenceVideo && options.resolveReferenceInputs && referenceBudgetLimitCny() !== null ? options.adapters || [] : [];
   const maxAttemptsPerShot = () => { const value = Number(options.maxAttemptsPerShot ?? process.env.DIGITAL_HUMAN_MAX_ATTEMPTS_PER_SHOT ?? 3); return Number.isSafeInteger(value) && value >= 1 && value <= 10 ? value : 3; };
   const sentenceReadiness = () => options.sentenceReplicationReadiness?.() ?? sentenceReplicationReadiness();
   const releaseReferenceReservation = async (tool: DigitalHumanToolId, requestId: string): Promise<string> => { if (!options.releaseReference) return ''; try { await options.releaseReference(tool, requestId); return ''; } catch (error) { return `预算预占释放失败，请管理员核对账本：${error instanceof Error ? error.message : '未知错误'}`; } };

@@ -25,9 +25,11 @@ fs.writeFileSync(path.join(temporary, 'widgets.json'), JSON.stringify([
   { id: 'seeded-widget', tenant_id: 'tenant-a', name: 'demo record' },
 ]));
 
-const [{ localFallbacksEnabled }, { pbStore }] = await Promise.all([
+const [{ localFallbacksEnabled }, { pbStore }, { runWithDataAuthority }, { acquireDurableOperationLease }] = await Promise.all([
   import('../lib/localFallbackPolicy.js'),
   import('./pbStore.js'),
+  import('./dataAuthority.js'),
+  import('../runtime/durableLease.js'),
 ]);
 
 try {
@@ -57,6 +59,26 @@ try {
 
   process.env.DISABLE_LOCAL_AUTH_FALLBACK = 'false';
   assert.equal(localFallbacksEnabled(), true, 'legacy test flag remains an explicit opt-in');
+
+  const leaseInput = {
+    dataStore: pbStore,
+    tenantId: 'tenant-local',
+    scope: 'content_queue_scheduler',
+    subjectId: 'global',
+    now: new Date('2026-10-11T00:00:00.000Z'),
+    leaseDurationMs: 60_000,
+  };
+  const leaseAttempts = await runWithDataAuthority('local', () => Promise.all(
+    Array.from({ length: 8 }, (_, index) => acquireDurableOperationLease({
+      ...leaseInput,
+      ownerId: `local-worker-${index}`,
+    })),
+  ));
+  assert.equal(leaseAttempts.filter(Boolean).length, 1,
+    'local preview storage must elect one durable lease owner for a composite key');
+  const storedLeases = JSON.parse(fs.readFileSync(path.join(temporary, 'durable_operation_leases.json'), 'utf8')) as Array<Record<string, unknown>>;
+  assert.equal(storedLeases.length, 1, 'concurrent local acquisition must persist one lease generation');
+
   process.env.NODE_ENV = 'production';
   assert.equal(localFallbacksEnabled(), false, 'production must fail closed regardless of demo flags');
   console.log('PocketBase local fallback policy passed');

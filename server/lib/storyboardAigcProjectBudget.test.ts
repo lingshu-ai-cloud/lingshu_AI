@@ -12,7 +12,9 @@ try {
   assert.equal(first.existing, false);
   assert.equal((await budget.reserve({ ...base, operationId: 'frame-a' })).existing, true);
   await assert.rejects(budget.reserve({ ...base, operationId: 'frame-a', estimatedCostCny: 3 }), /不同输入/);
+  await budget.mark('tenant', 'project', 'frame-a', 'reserved', { providerRequestId: 'original-receipt' });
   await budget.mark('tenant', 'project', 'frame-a', 'completed', { materialId: 'm1' });
+  assert.equal((await budget.status('tenant', 'project')).entries.find(entry => entry.operationId === 'frame-a')?.output?.providerRequestId, 'original-receipt', 'completion preserves original supplier receipt');
   await budget.releaseRejected('tenant', 'project', 'frame-a');
   assert.equal((await budget.status('tenant', 'project')).usedCny, 2);
   const second = await budget.reserve({ ...base, operationId: 'frame-b' });

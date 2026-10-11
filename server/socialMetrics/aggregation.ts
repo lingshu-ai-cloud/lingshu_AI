@@ -34,7 +34,11 @@ export function normalizeMetricValues(value: unknown): MetricValues {
   if (!source || typeof source !== 'object' || Array.isArray(source)) return {};
   const result: MetricValues = {};
   for (const key of SOCIAL_METRIC_KEYS) {
-    const number = Number((source as Record<string, unknown>)[key]);
+    const raw = (source as Record<string, unknown>)[key];
+    // Only provider-reported numbers or nonempty numeric strings are evidence.
+    // Number(null), Number('') and Number(false) would manufacture zeroes.
+    if (typeof raw !== 'number' && (typeof raw !== 'string' || !raw.trim())) continue;
+    const number = Number(raw);
     if (Number.isFinite(number) && number >= 0) result[key] = number;
   }
   return result;

@@ -1,3 +1,4 @@
+import type { DurablePublicationAttempt } from './weeklyLineage.js';
 import {assertPublicationAtomicStore} from './publicationAtomicStore.js';
 import {weeklyReceiptLookupAuthority,type WeeklyPublishingPurpose} from './weeklyReceiptLookupAuthority.js';
 import { fileURLToPath } from 'node:url';
@@ -5,7 +6,7 @@ import type { DataStore } from '../storage/datastore.js';
 import { store } from '../storage/index.js';
 import { socialAccessToken } from '../lib/accountCredentials.js';
 import { ensurePlatformCapability } from './platformCapabilities.js';
-import { publishVideoToAccount, resolvePendingPublishToAccount, type PublishToAccountInput, type PublishToAccountResult, type PendingPublishResolution } from './platformPublisher.js';
+import { publishVideoToAccount, resolvePendingPublishToAccount, readTikTokCanonicalAttemptReceipt, type PublishToAccountInput, type PublishToAccountResult, type PendingPublishResolution } from './platformPublisher.js';
 import { socialProductionPublishSourceClaim } from './publishSourceClaim.js';
 import { materializeSocialProductionVideo } from './socialProductionMedia.js';
 import type { WeeklyPublishingProviderAdapter } from './weeklyLineage.js';
@@ -20,7 +21,7 @@ type SocialAccount = {
 
 export interface TikTokWeeklyPublishingPorts {
   publish(input: PublishToAccountInput): Promise<PublishToAccountResult>;
-  reconcile(input: { tenantId: string; accountId: string; platform: 'tiktok'; providerReceiptId: string }): Promise<PendingPublishResolution>;
+  reconcile(input: { tenantId: string; accountId: string; platform: 'tiktok'; providerReceiptId: string; publishAttemptId?: string }): Promise<PendingPublishResolution>;
 }
 
 function localVideoPath(downloadUrl: string): string {
@@ -95,6 +96,19 @@ export async function createTikTokWeeklyPublishingAdapter(input: {
           videoPath: materialized.videoPath, title: publicationPackage.copy.title, description: publicationPackage.copy.body,
           tags: publicationPackage.copy.hashtags, contentId: publicationPackage.contentId,
           sourceClaim, publishAttemptId: attemptId,
+          tiktokPostOptions: publicationPackage.tiktokPostOptions,
+          async onTikTokAttemptPrepared(receipt) {
+            const attempts = await dataStore.list<DurablePublicationAttempt>('social_publication_attempts', {where:{tenant_id:assignment.tenantId,attempt_id:attemptId},perPage:2});
+            const attempt = attempts.items[0];
+            if(attempts.totalItems!==1||attempts.items.length!==1||!attempt||attempt.tenant_id!==assignment.tenantId||attempt.attempt_id!==attemptId||attempt.assignment_id!==assignment.assignmentId||attempt.package_id!==assignment.packageId||attempt.provider!=='tiktok-content-posting-api'||attempt.status!=='in_flight'||receipt.tenantId!==assignment.tenantId||receipt.accountId!==assignment.accountId||receipt.attemptId!==attemptId)throw Error('tiktok_attempt_scope_changed');
+          },
+          async onProviderReceipt(receiptId) {
+            if(!receiptId.trim()||receiptId.length>64||/[\x00-\x1f\x7f]/.test(receiptId))throw Error('tiktok_provider_receipt_invalid');
+            const attempts = await dataStore.list<DurablePublicationAttempt>('social_publication_attempts', {where:{tenant_id:assignment.tenantId,attempt_id:attemptId},perPage:2});
+            const attempt=attempts.items[0];
+            if(attempts.totalItems!==1||attempts.items.length!==1||!attempt||attempt.tenant_id!==assignment.tenantId||attempt.attempt_id!==attemptId||attempt.assignment_id!==assignment.assignmentId||attempt.package_id!==assignment.packageId||attempt.provider!=='tiktok-content-posting-api'||attempt.status!=='in_flight'||(attempt.provider_receipt_id&&attempt.provider_receipt_id!==receiptId))throw Error('tiktok_attempt_scope_changed');
+            if(!await dataStore.update('social_publication_attempts',attempt.id,{provider_receipt_id:receiptId,updated_at:new Date().toISOString()}))throw Error('tiktok_provider_receipt_persistence_failed');
+          },
         });
         if (result.deliveryStatus === 'provider_accepted' && result.providerReceiptId) return { status: 'accepted', providerReceiptId: result.providerReceiptId };
         if (result.platformPostId) return { status: 'published', providerReceiptId: result.providerReceiptId || result.platformPostId, platformPostId: result.platformPostId, ...(result.platformUrl ? { platformUrl: result.platformUrl } : {}) };
@@ -102,15 +116,25 @@ export async function createTikTokWeeklyPublishingAdapter(input: {
       } finally { await materialized.cleanup(); }
     },
     async reconcile({ assignment, attempt }) {
+      if(assignment.tenantId!==input.tenantId||assignment.accountId!==input.accountId||assignment.platform!=='tiktok'||attempt.tenant_id!==input.tenantId||attempt.assignment_id!==assignment.assignmentId||attempt.package_id!==assignment.packageId||attempt.provider!=='tiktok-content-posting-api'||!['unknown','in_flight'].includes(attempt.status))return {status:'unknown',failureCode:'receipt_lookup_scope_mismatch'};
       if(input.purpose==='receipt_lookup'){if(assignment.tenantId!==input.tenantId||assignment.accountId!==input.accountId||assignment.platform!=='tiktok'||attempt.tenant_id!==input.tenantId||attempt.assignment_id!==assignment.assignmentId||attempt.package_id!==assignment.packageId||!['unknown','in_flight'].includes(attempt.status)||attempt.provider!=='tiktok-content-posting-api'||attempt.provider_receipt_id!==input.providerReceiptId)return {status:'unknown',failureCode:'receipt_lookup_scope_mismatch'};const fresh=await weeklyReceiptLookupAuthority({...input,platform:'tiktok',dataStore});if(fresh.reason||fresh.identityHash!==lookup?.identityHash)return {status:'unknown',failureCode:fresh.reason||'receipt_lookup_account_changed'};}
-      if (!attempt.provider_receipt_id) return { status: 'unknown', failureCode: 'provider_receipt_missing' };
+      if (!attempt.provider_receipt_id) {
+        const recovered = await readTikTokCanonicalAttemptReceipt({tenantId:assignment.tenantId,accountId:assignment.accountId,attemptId:attempt.attempt_id,dataStore});
+        if(!recovered)return {status:'unknown',failureCode:'provider_receipt_missing'};
+        const records=await dataStore.list<DurablePublicationAttempt>('social_publication_attempts',{where:{tenant_id:assignment.tenantId,attempt_id:attempt.attempt_id},perPage:2});
+        const current=records.items[0];
+        if(records.totalItems!==1||records.items.length!==1||!current||current.id!==attempt.id||current.tenant_id!==assignment.tenantId||current.assignment_id!==assignment.assignmentId||current.package_id!==assignment.packageId||current.provider!=='tiktok-content-posting-api'||!['unknown','in_flight'].includes(current.status)||(current.provider_receipt_id&&current.provider_receipt_id!==recovered))return {status:'unknown',failureCode:'receipt_lookup_scope_mismatch'};
+        if(!await dataStore.update('social_publication_attempts',current.id,{provider_receipt_id:recovered,updated_at:new Date().toISOString()}))return {status:'unknown',failureCode:'tiktok_provider_receipt_persistence_failed'};
+        attempt={...attempt,provider_receipt_id:recovered};
+      }
+      if(!attempt.provider_receipt_id)return {status:'unknown',failureCode:'provider_receipt_missing'};
       const lookupDecision = await ensurePlatformCapability({
         tenantId: assignment.tenantId, accountId: assignment.accountId, platform: 'tiktok',
         capability: 'publishing.receipt_lookup', receiptId: attempt.provider_receipt_id, dataStore,
         now: input.now,
       });
       if (lookupDecision.status !== 'available') return { status: 'unknown', providerReceiptId: attempt.provider_receipt_id, failureCode: lookupDecision.reason };
-      const result = await ports.reconcile({ tenantId: assignment.tenantId, accountId: assignment.accountId, platform: 'tiktok', providerReceiptId: attempt.provider_receipt_id });
+      const result = await ports.reconcile({ tenantId: assignment.tenantId, accountId: assignment.accountId, platform: 'tiktok', providerReceiptId: attempt.provider_receipt_id, publishAttemptId: attempt.attempt_id });
       if(input.purpose==='receipt_lookup'){const after=await weeklyReceiptLookupAuthority({...input,platform:'tiktok',dataStore});if(after.reason||after.identityHash!==lookup?.identityHash)return {status:'unknown',providerReceiptId:attempt.provider_receipt_id,failureCode:after.reason||'receipt_lookup_account_changed'};}
       if(result.providerReceiptId!==attempt.provider_receipt_id)return {status:'unknown',failureCode:'provider_receipt_mismatch'};
       if (result.status === 'published' && result.platformPostId) return { status: 'published', providerReceiptId: result.providerReceiptId, platformPostId: result.platformPostId, platformUrl: result.platformUrl };

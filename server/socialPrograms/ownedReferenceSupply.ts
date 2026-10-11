@@ -37,7 +37,7 @@ export async function ownedReferenceSupply(dataStore: DataStore, tenantId: strin
   ]);
   if ([accounts, contents, metrics].some(result => result.totalItems > result.items.length)) throw new SocialProgramError('owned_reference_scan_truncated', 409, '历史视频供给超出读取范围，需分页核验后才能分配来源。');
   const owned = accounts.items.map(row => object(row.payload) as unknown as OwnedSocialAccount).filter(account => account?.programId === programId && Number.isSafeInteger(account.version) && account.version > 0);
-  return videos.flatMap(video => {
+  const supply=videos.flatMap(video => {
     const source = url(video.sourceUrl);
     if (!source) return [];
     const matches = contents.items.flatMap(row => {
@@ -69,4 +69,8 @@ export async function ownedReferenceSupply(dataStore: DataStore, tenantId: strin
     if (identities.size > 1) throw new SocialProgramError('owned_reference_account_ambiguous', 409, '历史视频对应多个经营账号，需确认归属后再排期。');
     return matches.length ? [matches[0]!] : [];
   });
+  // Complete real platform observations take precedence over discovery scores or row order.
+  // Incomplete history remains visible as an explicit gap when no measured reference exists.
+  const measured=(pair:typeof supply[number])=>{const p=pair.historicalPerformance;return p&&p.source.trim()&&!/^(?:unknown|mock|simulated|demo|fixture)$/i.test(p.source)&&(['views','likes','shares','comments'] as const).every(key=>typeof p.metrics[key]==='number'&&Number.isFinite(p.metrics[key])&&p.metrics[key]!>=0)?p.metrics:null;};
+  return supply.sort((a,b)=>{const first=measured(a),second=measured(b);if(Boolean(first)!==Boolean(second))return first?-1:1;if(first&&second){for(const key of ['views','shares','comments','likes'] as const){const difference=second[key]!-first[key]!;if(difference)return difference;}}return a.video.candidateId.localeCompare(b.video.candidateId);});
 }

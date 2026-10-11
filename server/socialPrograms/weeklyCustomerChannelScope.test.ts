@@ -1,9 +1,10 @@
+import {controlledMessengerAccount} from '../messenger/controlledCapability.fixture.js';
 import test from 'node:test';import assert from 'node:assert/strict';
 import type {DataStore} from '../storage/datastore.js';
 import {selectWeeklyChannelConversation,verifyWeeklyChannelSelection,type WeeklyChannelConversation,type WeeklyChannelConversationPort} from './weeklyCustomerChannelScope.js';
 import type {WeeklyCustomerRelationshipScope} from './weeklyCustomerRelationshipScope.js';
 const scope:WeeklyCustomerRelationshipScope={tenantId:'tenant',programId:'program',packageId:'week',packageVersion:1,runId:'run',goalId:'goal',route:'cold_start',weekStart:'2026-10-05T00:00:00+08:00',weekEnd:'2026-10-11T23:59:59+08:00'};
-function fixture(){const account:Record<string,unknown>={id:'account',tenantId:'tenant',platform:'facebook',providerAccountId:'page',status:'connected'};
+function fixture(){const account:Record<string,unknown>=controlledMessengerAccount({accountId:'account',tenantId:'tenant',pageId:'page'});
  const c:WeeklyChannelConversation={tenantId:'tenant',customerId:'buyer',channel:'messenger',nativeAccountId:'page',recipientId:'native-buyer',conversationId:'messenger:page:native-buyer',messages:[{id:'mid.native',actor:'buyer',body:'What is the minimum order?',timestamp:Date.parse('2026-10-06T01:00:00Z'),audit:{providerMessageId:'mid.native',providerRecipientId:'native-buyer'}}]};
  const store={async getById(){return structuredClone(account);}}as unknown as DataStore;const port:WeeklyChannelConversationPort={async read(){return structuredClone([c]);}};return {account,c,store,port,input:{scope,channel:'messenger' as const,accountId:'account',customerId:'buyer',inboundMessageId:'mid.native'}};}
 test('freezes actual account and provider inbound without inferring new relationship or completion',async()=>{const f=fixture();const value=await selectWeeklyChannelConversation(f.store,f.input,f.port);assert.equal(value.conversationId,f.c.conversationId);assert.equal(value.inboundAt,'2026-10-06T01:00:00.000Z');assert.equal('classification' in value,false);assert.deepEqual(await verifyWeeklyChannelSelection(f.store,scope,value,f.port),value);});

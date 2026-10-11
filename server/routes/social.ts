@@ -1,3 +1,9 @@
+import { normalizeMetricValues } from '../socialMetrics/aggregation.js';
+import {refreshMessengerCapability} from '../messenger/capabilityRefresh.js';
+import {createMessengerCapabilityScope} from '../messenger/capabilityAuthority.js';
+import { readTikTokCreatorConsent } from '../publishing/tiktokCreatorConsent.js';
+import { assertExactOAuthRedirectUri } from '../lib/oauthConfig.js';
+import { consumeOAuthNonce, issueOAuthNonce, oauthClientIdentityHash } from '../lib/oauthNonceStore.js';
 import { Router, type Request } from 'express';
 import { requireAuth, type AuthLocals } from '../middleware/auth.js';
 import { store } from '../storage/index.js';
@@ -35,9 +41,10 @@ export { socialUploadHttpResponse } from '../publishing/directPublishHttp.js';
 import { saveSocialMetricSnapshot } from '../socialMetrics/store.js';
 import { sealedSocialCredentialPatch, socialAccessToken } from '../lib/accountCredentials.js';
 import { instagramLoginOAuthScopes, metaOAuthScopes, tikTokOAuthScopes } from '../lib/socialOAuthScopes.js';
+import { connectMessengerPageCapability } from '../integrations/messenger.js';
+import { subscribeInstagramAccount } from '../integrations/instagramWebhook.js';
 
 const COL = 'social_accounts';
-const OAUTH_STATE_TTL_MS = 10 * 60 * 1000;
 
 const TIKTOK_AUTH_URL = 'https://www.tiktok.com/v2/auth/authorize/';
 const META_AUTH_URL = 'https://www.facebook.com';
@@ -52,6 +59,8 @@ interface PendingOAuthState {
   returnTo: string;
   expiresAt: number;
   purpose?: 'messenger';
+  clientHash?: string;
+  redirectUri?: string;
 }
 
 interface SocialAccountRecord {
@@ -83,7 +92,6 @@ interface SocialAccountRecord {
   instagramWebhookSubscriptionError?: string;
 }
 
-const pendingOAuthStates = new Map<string, PendingOAuthState>();
 
 function graphVersion() {
   return process.env.META_GRAPH_VERSION?.trim() || 'v25.0';
@@ -128,12 +136,6 @@ function normalizeReturnTo(value: unknown) {
   return trimmed.slice(0, 300);
 }
 
-function cleanupOAuthStates() {
-  const now = Date.now();
-  for (const [state, pending] of pendingOAuthStates) {
-    if (pending.expiresAt <= now) pendingOAuthStates.delete(state);
-  }
-}
 
 function htmlEscape(value: unknown) {
   return String(value ?? '')
@@ -305,12 +307,38 @@ async function getAvailableMetaPages(accessToken: string) {
   });
 }
 
+async function assertTenantMessengerPageOwnership(tenantId:string,pageId:string) {
+  let count=0;
+  for(let page=1;page<=1000;page++) {
+    const owners=await store.list<SocialAccountRecord>(COL,{where:{platform:'facebook',providerAccountId:pageId},page,perPage:250});
+    if(owners.items.some(owner=>owner.tenantId!==tenantId)) throw Error('messenger_native_page_owned_by_foreign_tenant');
+    count+=owners.items.length;if(count===owners.totalItems)break;
+    if(!owners.items.length||count>owners.totalItems||page===1000)throw Error('messenger_native_page_ownership_incomplete');
+  }
+}
+async function admitTenantMessengerPage(tenantId:string,pageId:string,pageAccessToken:string) {
+  await assertTenantMessengerPageOwnership(tenantId,pageId);
+  const client=await getTenantAwareMetaOAuthClient(tenantId);
+  if(!client)throw Error('messenger_tenant_app_missing');
+  const capability=await connectMessengerPageCapability({pageId,pageAccessToken,...client});
+  const currentClient=await getTenantAwareMetaOAuthClient(tenantId);
+  if(!currentClient||currentClient.appId!==client.appId||currentClient.appSecret!==client.appSecret)throw Error('messenger_tenant_app_changed');
+  return capability;
+}
+
+async function assertMessengerAccountVersion(account:SocialAccountRecord,pageId:string,pageAccessToken:string) {
+  const current=await store.getById<SocialAccountRecord>(COL,account.id);
+  if(!current||current.tenantId!==account.tenantId||current.platform!=='facebook'||current.status!=='connected'||current.providerAccountId!==pageId||socialAccessToken({accessToken:current.accessToken})!==pageAccessToken)throw Error('messenger_account_changed');
+}
+
 async function saveFacebookPageFromMeta(input: {
   tenantId: string;
   userId: string;
   page: Awaited<ReturnType<typeof getMetaPages>>[number];
+  purpose?: 'messenger';
 }) {
-  return upsertSocialAccount({
+  await assertTenantMessengerPageOwnership(input.tenantId,input.page.id);
+  const account = await upsertSocialAccount({
     tenantId: input.tenantId,
     userId: input.userId,
     platform: 'facebook',
@@ -321,7 +349,8 @@ async function saveFacebookPageFromMeta(input: {
     accessToken: input.page.accessToken,
     refreshToken: '',
     tokenExpiresAt: '',
-    scope: metaOAuthScopes('facebook').join(','),
+    scope: metaOAuthScopes(input.purpose || 'facebook').filter(scope => !['pages_messaging','pages_manage_metadata'].includes(scope)).join(','),
+    messengerSubscribed: false,
     parentPageId: input.page.id,
     parentPageName: input.page.name,
     followerCount: input.page.fanCount || 0,
@@ -329,6 +358,17 @@ async function saveFacebookPageFromMeta(input: {
     viewCount: 0,
     likeCount: 0,
   });
+  try {
+    const capability=await admitTenantMessengerPage(input.tenantId,input.page.id,input.page.accessToken);
+    await assertMessengerAccountVersion(account,input.page.id,input.page.accessToken);
+    const capabilityScope=createMessengerCapabilityScope({tenantId:input.tenantId,accountId:account.id,pageId:input.page.id,appId:capability.appId,accessToken:input.page.accessToken,grantedScopes:capability.grantedScopes,validUntil:capability.validUntil});
+    if(!await store.update(COL, account.id, { messengerSubscribed: true, messengerSubscriptionError: '', scope: capabilityScope })) throw Error('messenger_capability_persist_failed');
+    return { ...account, messengerSubscribed: true, messengerSubscriptionError: '', scope: capabilityScope };
+  } catch (error) {
+    const message = error instanceof Error ? error.message : 'Messenger webhook subscription failed';
+    await store.update(COL, account.id, { messengerSubscribed: false, messengerSubscriptionError: message });
+    return { ...account, messengerSubscribed: false, messengerSubscriptionError: message };
+  }
 }
 
 async function saveInstagramFromMeta(input: {
@@ -363,6 +403,7 @@ async function saveInstagramFromMeta(input: {
 
 async function connectTikTok(pending: PendingOAuthState, code: string, req: Request) {
   const client = await getTikTokClient(pending.tenantId);
+  if (!client || oauthClientIdentityHash(client) !== pending.clientHash) throw new Error('oauth_tenant_client_changed');
   if (!client) throw new Error('TikTok 一键授权暂未开启，请联系服务顾问配置平台应用和回调地址。');
   const tokens = await exchangeTikTokCode({ ...client, code, redirectUri: redirectUri(req, 'tiktok') });
   const user = await getTikTokUser(tokens.accessToken);
@@ -389,16 +430,20 @@ async function connectTikTok(pending: PendingOAuthState, code: string, req: Requ
 
 async function connectInstagramLogin(pending: PendingOAuthState, code: string, req: Request) {
   const client = await getInstagramClient(pending.tenantId);
+  if (!client || oauthClientIdentityHash(client) !== pending.clientHash) throw new Error('oauth_tenant_client_changed');
   if (!client) throw new Error('Instagram 一键授权尚未配置 Instagram App ID 和 App Secret。');
   const tokens = await exchangeInstagramLoginCode({
     ...client,
     code,
     redirectUri: redirectUri(req, 'instagram'),
   });
+  if (!tokens.permissions.includes('instagram_business_manage_messages')) {
+    throw new Error('Instagram 未授予私信权限，请重新授权并允许消息访问。');
+  }
   const account = await getInstagramLoginAccount(tokens.accessToken, graphVersion());
   // /me resolves the account represented by the exchanged access token. Its
   // Graph ID can differ from the user_id returned by Instagram's OAuth endpoint.
-  await upsertSocialAccount({
+  const saved = await upsertSocialAccount({
     tenantId: pending.tenantId,
     userId: pending.userId,
     platform: 'instagram',
@@ -420,10 +465,18 @@ async function connectInstagramLogin(pending: PendingOAuthState, code: string, r
     viewCount: 0,
     likeCount: 0,
   });
+  try {
+    await subscribeInstagramAccount({ accountId: account.id, accessToken: tokens.accessToken });
+    await store.update(COL, saved.id, { instagramWebhookSubscribed: true, instagramWebhookSubscriptionError: '' });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : 'Instagram webhook subscription failed';
+    await store.update(COL, saved.id, { instagramWebhookSubscribed: false, instagramWebhookSubscriptionError: message });
+  }
 }
 
 async function connectMeta(pending: PendingOAuthState, code: string, req: Request) {
   const client = await getMetaClient(pending.tenantId);
+  if (!client || oauthClientIdentityHash(client) !== pending.clientHash) throw new Error('oauth_tenant_client_changed');
   if (!client) throw new Error('Meta 一键授权暂未开启，请联系服务顾问配置平台应用和回调地址。');
   const userToken = await exchangeMetaCode({
     appId: client.appId,
@@ -436,7 +489,7 @@ async function connectMeta(pending: PendingOAuthState, code: string, req: Reques
   let saved = 0;
   for (const page of pages) {
     if (pending.platform === 'facebook') {
-      await saveFacebookPageFromMeta({ tenantId: pending.tenantId, userId: pending.userId, page });
+      await saveFacebookPageFromMeta({ tenantId: pending.tenantId, userId: pending.userId, page, purpose: pending.purpose });
       saved += 1;
     }
     if (pending.platform === 'instagram' && page.instagram) {
@@ -484,25 +537,20 @@ socialRouter.get('/oauth/:platform/callback', async (req, res) => {
     res.status(404).send('Unknown platform');
     return;
   }
-  cleanupOAuthStates();
   const state = String(req.query.state || '');
   const code = typeof req.query.code === 'string' ? req.query.code : '';
   const signedState = parseOAuthState(state);
-  const pending = pendingOAuthStates.get(state) || (signedState && signedState.platform === platform ? {
-    userId: signedState.userId,
-    tenantId: signedState.tenantId,
-    platform,
-    returnTo: signedState.returnTo,
-    expiresAt: signedState.expiresAt,
-    purpose: signedState.purpose,
-  } : undefined);
+  const pending: PendingOAuthState | undefined = signedState && signedState.platform === platform ? { ...signedState, platform } : undefined;
   const returnTo = pending?.returnTo || '/';
   if (!pending || pending.platform !== platform) {
     res.status(400).type('html').send(callbackHtml({ ok: false, title: '授权已失效', message: '请回到系统重新连接账号。', returnTo, platform }));
     return;
   }
-  pendingOAuthStates.delete(state);
   try {
+    assertExactOAuthRedirectUri(pending.redirectUri, redirectUri(req, platform));
+    const client = platform === 'tiktok' ? await getTikTokClient(pending.tenantId) : platform === 'instagram' ? await getInstagramClient(pending.tenantId) : await getMetaClient(pending.tenantId);
+    if (!client || !await consumeOAuthNonce(state, { ...pending, clientHash: oauthClientIdentityHash(client) })) throw new Error('oauth_state_consumed_or_invalid');
+    pending.clientHash = oauthClientIdentityHash(client);
     if (!code) throw new Error(String(req.query.error_description || req.query.error || '缺少授权码'));
     if (platform === 'tiktok') await connectTikTok(pending, code, req);
     else if (platform === 'instagram') await connectInstagramLogin(pending, code, req);
@@ -539,10 +587,6 @@ socialRouter.post('/oauth/:platform/start', async (req, res) => {
     res.status(404).json({ error: 'Unknown platform' });
     return;
   }
-  if (platform === 'facebook' && req.body?.purpose === 'messenger') {
-    res.status(403).json({ error: '首轮 Meta 审核仅开放账号读取与内容发布，Messenger 私信与 Webhook 接入暂未开放。' });
-    return;
-  }
   const { userId, tenantId } = res.locals as AuthLocals;
   const tiktokClient = platform === 'tiktok' ? await getTikTokClient(tenantId) : null;
   const metaClient = platform === 'facebook' ? await getMetaClient(tenantId) : null;
@@ -551,20 +595,21 @@ socialRouter.post('/oauth/:platform/start', async (req, res) => {
     res.status(503).json({ error: `${platform} 一键授权暂未开启，请联系服务顾问配置平台应用和回调地址。` });
     return;
   }
-  cleanupOAuthStates();
+  const purpose = platform === 'facebook' && req.body?.purpose === 'messenger' ? 'messenger' as const : undefined;
   const state = signOAuthState({
     userId,
     tenantId,
     platform,
     returnTo: normalizeReturnTo(req.body?.returnTo),
+    redirectUri: redirectUri(req, platform),
+    purpose,
   });
-  pendingOAuthStates.set(state, {
-    userId,
-    tenantId,
-    platform,
-    returnTo: normalizeReturnTo(req.body?.returnTo),
-    expiresAt: Date.now() + OAUTH_STATE_TTL_MS,
-  });
+  const parsedState = parseOAuthState(state);
+  if (!parsedState) { res.status(503).json({ error: 'oauth_state_invalid' }); return; }
+  try {
+    await issueOAuthNonce(state, { ...parsedState, clientHash: oauthClientIdentityHash(tiktokClient || instagramClient || metaClient) });
+  } catch { res.status(503).json({ error: 'oauth_state_storage_unavailable' }); return; }
+
 
   if (platform === 'tiktok') {
     const scopes = tikTokOAuthScopes();
@@ -590,7 +635,7 @@ socialRouter.post('/oauth/:platform/start', async (req, res) => {
     return;
   }
 
-  const scopes = metaOAuthScopes(platform);
+  const scopes = metaOAuthScopes(purpose || platform);
   const url = new URL(`${META_AUTH_URL}/${graphVersion()}/dialog/oauth`);
   url.searchParams.set('client_id', metaClient!.appId);
   url.searchParams.set('redirect_uri', redirectUri(req, platform));
@@ -675,6 +720,7 @@ socialRouter.post('/connect/manual', async (req, res) => {
         account = saved[0];
       } else {
         const page = await getFacebookPage(accessToken, graphVersion(), requestedId);
+        await assertTenantMessengerPageOwnership(tenantId,page.id);
         account = await upsertSocialAccount({
           tenantId,
           userId,
@@ -686,7 +732,8 @@ socialRouter.post('/connect/manual', async (req, res) => {
           accessToken: page.accessToken,
           refreshToken: '',
           tokenExpiresAt: '',
-          scope: metaOAuthScopes('facebook').join(','),
+          scope: metaOAuthScopes('facebook').filter(scope => !['pages_messaging','pages_manage_metadata'].includes(scope)).join(','),
+          messengerSubscribed: false,
           parentPageId: page.id,
           parentPageName: page.name,
           followerCount: page.fanCount || 0,
@@ -694,6 +741,17 @@ socialRouter.post('/connect/manual', async (req, res) => {
           viewCount: 0,
           likeCount: 0,
         });
+        try {
+          const capability=await admitTenantMessengerPage(tenantId,page.id,page.accessToken);
+          await assertMessengerAccountVersion(account,page.id,page.accessToken);
+          const capabilityScope=createMessengerCapabilityScope({tenantId,accountId:account.id,pageId:page.id,appId:capability.appId,accessToken:page.accessToken,grantedScopes:capability.grantedScopes,validUntil:capability.validUntil});
+          if(!await store.update(COL, account.id, { messengerSubscribed: true, messengerSubscriptionError: '', scope: capabilityScope })) throw Error('messenger_capability_persist_failed');
+          account = { ...account, messengerSubscribed: true, messengerSubscriptionError: '', scope: capabilityScope };
+        } catch (subscriptionError) {
+          const message = subscriptionError instanceof Error ? subscriptionError.message : 'Messenger webhook subscription failed';
+          await store.update(COL, account.id, { messengerSubscribed: false, messengerSubscriptionError: message });
+          account = { ...account, messengerSubscribed: false, messengerSubscriptionError: message };
+        }
       }
     }
 
@@ -761,6 +819,18 @@ socialRouter.post('/connect/manual', async (req, res) => {
     console.error(`${platform} manual connect error:`, error?.response?.data ?? error?.message ?? error);
     res.status(error?.response?.status || 500).json({ ok: false, error: readableSocialError(error) });
   }
+});
+
+socialRouter.get('/accounts/:id/tiktok/creator-info', async (req, res) => {
+  const { tenantId } = res.locals as AuthLocals;
+  try { res.json(await readTikTokCreatorConsent({ tenantId, accountId: String(req.params.id) })); }
+  catch (error) { res.status(409).json({ error: error instanceof Error ? error.message : 'tiktok_creator_query_failed' }); }
+});
+
+socialRouter.post('/accounts/:id/messenger/capability-refresh', async (req,res) => {
+  const {tenantId}=res.locals as AuthLocals;
+  try {res.json(await refreshMessengerCapability(store,tenantId,req.params.id));}
+  catch {res.status(409).json({error:'messenger_capability_refresh_failed'});}
 });
 
 socialRouter.get('/accounts', async (req, res) => {
@@ -911,14 +981,14 @@ socialRouter.get('/accounts/:id/videos', async (req, res) => {
     }
     const capturedAt = new Date().toISOString();
     await Promise.all((videos as Array<Record<string, unknown>>).map(video => {
-      const metrics: Record<string, number> = {
-        likes: Number(video.likeCount || 0),
-        comments: Number(video.commentCount || 0),
-      };
+      const metrics = normalizeMetricValues({
+        likes: video.likeCount,
+        comments: video.commentCount,
+        ...(account.platform !== 'instagram' ? { views: video.viewCount } : {}),
+        ...(account.platform === 'tiktok' ? { shares: video.shareCount } : {}),
+      });
       // Instagram media listing does not return plays, and Facebook listing does
       // not return shares. Omit unavailable metrics instead of writing fake zeroes.
-      if (account.platform !== 'instagram') metrics.views = Number(video.viewCount || 0);
-      if (account.platform === 'tiktok') metrics.shares = Number(video.shareCount || 0);
       return saveSocialMetricSnapshot({
         tenantId,
         platform: account.platform,

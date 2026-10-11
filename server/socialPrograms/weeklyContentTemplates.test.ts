@@ -6,3 +6,54 @@ test('actual source/confirmation hashes and next-week target scope are verified 
 
 function freezeTarget(f:{tables:Record<string,Record_[]>},bindingId:string){const row=f.tables.social_weekly_operating_packages!.find(x=>x.package_id==='week2')!,pkg=structuredClone(row.payload) as any;pkg.version=2;pkg.socialContentPackage.publicationTasks[0].contentTemplateBindingRef={type:'weekly_content_template_binding',id:bindingId,version:1};f.tables.social_weekly_operating_packages!.push({...row,id:'future',version:2,payload:pkg});return {...target,packageVersion:2};}
 test('lost responses recover exact confirmations/bindings without a new approval; different intent and stale draft are rejected',async()=>{const f=await fixture();try{const c=await f.service.create(scope,f.input),ref={type:'weekly_content_template',id:c.templateId,version:1},confirmation={actorUserId:'owner',templateRef:ref,candidateHash:c.recordHash,usage:'trial' as const,reason:'只小规模试用'};assert.equal(await f.service.readConfirmation(scope,ref),null);const conf=await f.service.confirm(scope,confirmation);assert.equal((await f.service.confirm(scope,confirmation)).confirmationId,conf.confirmationId);assert.equal((await f.service.readConfirmation(scope,ref))?.confirmationId,conf.confirmationId);await assert.rejects(()=>f.service.confirm(scope,{...confirmation,reason:'不同确认意图'}),{code:'content_template_confirmation_changed'});const input={actorUserId:'owner',templateRef:ref,candidateHash:c.recordHash,expectedTargetVersion:2};const binding=await f.service.bind(target,input);assert.equal((await f.service.bind(target,input)).bindingId,binding.bindingId);assert.equal((await f.service.readPendingBinding(target,input))?.bindingId,binding.bindingId);freezeTarget(f,binding.bindingId);assert.equal((await f.service.readPendingBinding(target,input))?.bindingId,binding.bindingId);const another=await f.service.create(scope,{...f.input,action:'retain',previousRef:ref});await f.service.confirm(scope,{...confirmation,templateRef:{...ref,version:another.version},candidateHash:another.recordHash});await assert.rejects(()=>f.service.bind(target,{...input,templateRef:{...ref,version:another.version},candidateHash:another.recordHash}),{code:'content_template_current_draft_changed'});assert.equal(f.tables[CONTENT_TEMPLATE_CONFIRMATIONS]!.length,2);assert.equal(f.tables[CONTENT_TEMPLATE_BINDINGS]!.length,1);}finally{await f.cleanup();}});
+
+test('formal artifact decision preserves generated version and supplies the approved template version',async()=>{
+ const f=await fixture();try{
+ const {decideSocialContentArtifact}=await import('../starter198/socialContentOutputs.js');
+ const {createStarter198Repository}=await import('../starter198/repository.js');
+ const artifact=f.tables.starter_social_content_artifacts![0]!;artifact.status='review_required';
+ const content=f.tables.starter_social_content_tasks![0]!;content.package_selection=['industry_launch','content_rocket','task_express'].map(kind=>({kind,packageKey:kind,version:'1',name:kind}));content.version='1';content.status='asset_review';content.created_at='2026-10-01T00:00:00Z';content.updated_at='2026-10-01T00:00:00Z';content.brief={...(content.brief as object),programRef:{objectType:'social_program',id:'p',version:'1'},title:'真实内容',objective:'经营内容说明',markets:['US'],languages:['zh'],platforms:['tiktok'],formats:['short_video'],restrictions:[]};
+ const approval={tenantId:'t',programId:'p',packageId:'week1',packageVersion:1,taskId:'approval',workflowKind:'content',publicationTaskId:'pub',accountId:'account',schedule:{stepKind:'user_approval',responsibleActor:'user'},status:'succeeded',resultRefs:[{type:'user_content_approval',id:'approval:owner',version:1},{type:'starter_social_content_artifact',id:'artifact',version:2}]};
+ const frozenAuthority=(content.brief as Record<string,unknown>)._weeklyAuthority;delete (content.brief as Record<string,unknown>)._weeklyAuthority;
+ const accepted=await decideSocialContentArtifact({repository:createStarter198Repository(f.store),tenantId:'t',userId:'owner',taskId:'content',artifactId:'artifact',idempotencyKey:'weekly-content-approval:approval:artifact',value:{decision:'approved',expectedVersion:'1',note:'用户在周工作台确认本条真实成片'},now:new Date('2026-10-05T01:00:00Z')});assert.equal(accepted.artifact.version,'2');(content.brief as Record<string,unknown>)._weeklyAuthority=frozenAuthority;
+ await f.store.create('social_weekly_execution_tasks',{tenant_id:'t',program_id:'p',package_id:'week1',package_version:1,task_id:'approval',payload:approval});
+ const candidate=await f.service.create(scope,f.input);assert.equal(candidate.source.artifactRef.version,2);assert.equal((f.tables.social_weekly_execution_tasks![0]!.payload as typeof approval).resultRefs[0]!.version,1);
+ artifact.version='3';await assert.rejects(()=>f.service.create(scope,f.input),{code:'content_template_current_approval_changed'});artifact.version='2';
+ approval.accountId='foreign';await assert.rejects(()=>f.service.create(scope,f.input),{code:'content_template_current_approval_required'});approval.accountId='account';
+ const saved=artifact.last_operation_id;artifact.last_operation_id='invented-operation';await assert.rejects(()=>f.service.create(scope,f.input),{code:'content_template_source_missing'});artifact.last_operation_id=saved;
+ const operation=f.tables.starter_social_content_operations!.find(row=>row.operation_id===saved)!;operation.request_hash='forged';await assert.rejects(()=>f.service.create(scope,f.input),{code:'content_template_current_approval_unverified'});
+ }finally{await f.cleanup();}
+});
+
+test('independent actual G4 and G5 establish template quality without changing immutable pending summaries',async()=>{
+ const {prepareWeeklyG6Fixture}=await import('../starter198/socialWeeklyG6ReviewService.fixture.js');
+ const {validateWeeklyTemplateArtifactAcceptance}=await import('./weeklyContentTemplates.js');
+ const f=await prepareWeeklyG6Fixture();try{
+ const artifact=f.tables.starter_social_content_artifacts![0]!;
+ const {decideSocialContentArtifact}=await import('../starter198/socialContentOutputs.js');
+ await decideSocialContentArtifact({repository:f.repository,tenantId:f.scope.tenantId,userId:'owner',taskId:f.scope.taskId,artifactId:f.scope.artifactId,idempotencyKey:'template-quality-actual-approval',value:{decision:'approved',expectedVersion:String(artifact.version),note:'正式模板质量来源验收'}});
+ const task={tenantId:f.scope.tenantId,programId:f.scope.programId,packageId:f.scope.packageId,packageVersion:f.scope.packageVersion,publicationTaskId:f.scope.publicationTaskId,workflowKind:'content',schedule:{stepKind:'video_generation'}} as import('../../shared/contracts/socialProgram.js').WeeklyExecutionTask;
+ const ref={type:'starter_social_content_artifact',id:f.scope.artifactId,version:Number(String(artifact.version).replace(/^v/,''))};
+ const original=structuredClone(artifact.content);
+ await validateWeeklyTemplateArtifactAcceptance(f.store,task,ref,artifact);assert.deepEqual(artifact.content,original);
+ await assert.rejects(()=>validateWeeklyTemplateArtifactAcceptance(f.store,{...task,programId:'foreign'},ref,artifact),{code:'weekly_quality_audit_weekly_binding_changed'});
+ await assert.rejects(()=>validateWeeklyTemplateArtifactAcceptance(f.store,task,{...ref,version:ref.version+1},artifact),{code:'weekly_quality_audit_artifact_invalid'});
+ const saved=artifact.content_hash;artifact.content_hash='fake-quality-hash';await assert.rejects(()=>validateWeeklyTemplateArtifactAcceptance(f.store,task,ref,artifact),{code:'weekly_quality_audit_artifact_changed'});artifact.content_hash=saved;
+ }finally{await f.cleanup();}
+});
+
+test('missing production result or identity cannot authorize a template source',async()=>{
+ const f=await fixture();try{
+ const artifact=f.tables.starter_social_content_artifacts![0]!;
+ const content=artifact.content as Record<string,unknown>,original=content.productionResult;
+ for(const productionResult of [null,{}, {technicalReview:{approved:true},creativeReview:{approved:true}}]){
+  content.productionResult=productionResult;
+  await assert.rejects(()=>f.service.create(scope,f.input),{code:'content_template_artifact_acceptance_missing'});
+  assert.equal(f.tables[CONTENT_TEMPLATE_CANDIDATES]?.length??0,0);
+ }
+ delete content.productionResult;
+ await assert.rejects(()=>f.service.create(scope,f.input),{code:'content_template_artifact_acceptance_missing'});
+ content.productionResult=original;
+ assert.ok((await f.service.create(scope,f.input)).templateId);
+ }finally{await f.cleanup();}
+});

@@ -1,0 +1,50 @@
+name: Refresh internal inventory
+
+on:
+  schedule:
+    - cron: '*/5 * * * *'
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: Fixed safety scope
+        required: true
+        default: internal
+        type: choice
+        options:
+          - internal
+
+permissions:
+  contents: read
+
+concurrency:
+  group: deploy-internal
+  cancel-in-progress: false
+
+jobs:
+  inventory:
+    runs-on: [self-hosted, linux, x64, internal]
+    timeout-minutes: 5
+    environment: internal
+    steps:
+      - name: Enforce read-only internal scope
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          TARGET_ENVIRONMENT: ${{ inputs.environment }}
+          RELEASE_CONSOLE_URL: ${{ secrets.RELEASE_CONSOLE_URL }}
+          RELEASE_INVENTORY_WEBHOOK_SECRET: ${{ secrets.RELEASE_INVENTORY_WEBHOOK_SECRET }}
+        run: |
+          set -euo pipefail
+          [[ "$EVENT_NAME" == "schedule" || "$TARGET_ENVIRONMENT" == "internal" ]]
+          [[ "$RELEASE_CONSOLE_URL" == https://* ]]
+          [[ ${#RELEASE_INVENTORY_WEBHOOK_SECRET} -ge 32 ]]
+
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: main
+          fetch-depth: 1
+
+      - name: Read and report current internal state
+        env:
+          RELEASE_CONSOLE_URL: ${{ secrets.RELEASE_CONSOLE_URL }}
+          RELEASE_INVENTORY_WEBHOOK_SECRET: ${{ secrets.RELEASE_INVENTORY_WEBHOOK_SECRET }}
+        run: bash deploy/report-environment-inventory.sh internal

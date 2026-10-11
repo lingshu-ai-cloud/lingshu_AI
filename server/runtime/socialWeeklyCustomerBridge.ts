@@ -118,7 +118,9 @@ export async function readWeeklyCustomerStep(store: DataStore, authority: Weekly
   requireProof(relationshipScope?.programId===authority.programId&&relationshipScope.packageId===authority.packageId&&relationshipScope.packageVersion===authority.packageVersion,'weekly_customer_relationship_scope_mismatch');
   try{for(const member of included){await verifyWeeklyCustomerMemberProof(store,relationshipScope!,String(member.customer_id),member.customer_snapshot);}}catch(error){return result('blocked',error instanceof Error?error.message:'weekly_customer_relationship_evidence_unverified');}
   if(members.some(member=>Array.isArray(member.exclusion_reasons)&&member.exclusion_reasons.includes('weekly_customer_relationship_unknown')))return result('blocked','weekly_customer_relationship_unknown_requires_new_snapshot');
-  if (included.length === 0) return segmentation?.status === 'succeeded' && segment.status === 'generated' ? result('no_data', 'weekly_customer_no_eligible_customers') : result('blocked', 'weekly_customer_segmentation_pending');
+  const skippedNoData = segmentation?.status === 'skipped' && obj(segmentation.output).dataStatus === 'no_data'
+    && (Array.isArray(segmentation.business_refs) ? segmentation.business_refs : (()=>{try{const parsed=JSON.parse(String(segmentation.business_refs));return Array.isArray(parsed)?parsed:[];}catch{return [];}})()).some((ref:Record<string,unknown>)=>ref&&ref.type==='customer_segment'&&ref.id===segment.id&&Number(ref.version)===Number(segment.version)&&Number(ref.memberCount)===0);
+  if (included.length === 0) return (segmentation?.status === 'succeeded' || skippedNoData) && segment.status === 'generated' ? result('no_data', 'weekly_customer_no_eligible_customers') : result('blocked', 'weekly_customer_segmentation_pending');
   if (step === 'customer_segmentation') {
     if (task.status !== 'succeeded' || segment.status !== 'generated') return result('blocked', 'weekly_customer_segmentation_pending');
     return result('succeeded', null, [{ type: 'weekly_customer_segment', id: segment.id, version: Number(segment.version) }]);

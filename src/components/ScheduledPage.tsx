@@ -550,8 +550,9 @@ export default function ScheduledPage({ onAction }: { onAction?: AgentAction }) 
     const progress = readDemoProgress();
     if (!progress.scheduler || progress.automation_workflow || resultTaskId || tasks.length === 0) return;
     didAutoOpenDemoTask.current = true;
-    setResultTaskId(tasks[0].id);
-  }, [resultTaskId, tasks]);
+    const taskInCurrentGroup = tasks.find(task => taskAgentGroup(task.taskType) === activeGroup);
+    if (taskInCurrentGroup) setResultTaskId(taskInCurrentGroup.id);
+  }, [activeGroup, resultTaskId, tasks]);
 
   async function fetchTasks(showLoading = true) {
     if (tasksRequestRef.current) return;
@@ -778,8 +779,14 @@ export default function ScheduledPage({ onAction }: { onAction?: AgentAction }) 
                   ? `已采集，视频分析在后台继续（${time}）。`
                   : visibleState === 'partial'
                     ? `部分成功（${time}），请展开查看未完成的平台和原因。`
-                    : `执行成功（${time}），结果已刷新。`;
-      setRunNotice({ taskId: id, message, error: visibleState === 'failed' || visibleState === 'worker_offline' });
+                    : visibleState === 'succeeded'
+                      ? `执行成功（${time}），结果已刷新。`
+                      : `状态未知（${time}），请展开结果查看。`;
+      setRunNotice({
+        taskId: id,
+        message,
+        error: !['queued', 'running', 'no_data', 'collected', 'partial', 'succeeded'].includes(String(visibleState)),
+      });
       window.setTimeout(() => { void fetchTasks(false); }, 800);
     } catch (error) {
       setRunNotice({ taskId: id, message: error instanceof Error ? error.message : '任务执行失败，请稍后重试。', error: true });
@@ -1296,6 +1303,12 @@ export default function ScheduledPage({ onAction }: { onAction?: AgentAction }) 
           {businessDynamicsError && (
             <div className="mt-3 flex items-center gap-2 rounded-lg border border-red-100 bg-red-50 px-3 py-2 text-xs text-red-700">
               <AlertTriangle size={14} /> {businessDynamicsError}
+            </div>
+          )}
+          {!businessDynamicsLoading && intelligence && intelligence.status !== 'ready' && (
+            <div className="mt-3 rounded-lg border border-amber-100 bg-amber-50 px-3 py-2 text-xs leading-5 text-amber-800">
+              <p className="font-semibold">{intelligence.summary || statusLabel}</p>
+              <p className="mt-0.5 text-amber-700">最近生成：{formatTime(businessDynamics?.generatedAt)}。可点击“刷新动态”重试；若持续失败，请检查外部检索服务配置与网络状态。</p>
             </div>
           )}
           {missingFields.length > 0 && !businessDynamicsLoading && (

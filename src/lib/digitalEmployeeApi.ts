@@ -99,6 +99,7 @@ function rebuildGoalFromLatestFacts(
 }
 
 export const digitalEmployeeApi = {
+  confirmWeeklyPreparation: (goalId: string, revision: number) => request<{ preparation: InitialPreparation }>(`/goals/${encodeURIComponent(goalId)}/initial-preparation`, { method: 'POST', body: JSON.stringify({ revision, requestId: `weekly-${goalId.replace(/[^a-zA-Z0-9-]/g, '-').slice(0, 80)}` }) }),
   startInitialPreparation: (goalId:string,revision:number,plan:InitialOperatingPlan,requestId:string)=>request<{preparation:InitialPreparation}>(`/goals/${encodeURIComponent(goalId)}/initial-preparation`,{method:"POST",body:JSON.stringify({...plan,revision,requestId})}),
   initialPreparation:(goalId:string)=>request<{preparation:InitialPreparation|null}>(`/goals/${encodeURIComponent(goalId)}/initial-preparation`),
   resumeInitialPreparation:(goalId:string)=>request<{preparation:InitialPreparation}>(`/goals/${encodeURIComponent(goalId)}/initial-preparation`,{method:"POST",body:JSON.stringify({resume:true})}),
@@ -145,7 +146,16 @@ export const digitalEmployeeApi = {
   approveGoal: (goalId: string, packageRevision?: number) =>
     request<DigitalEmployeeOverview>(
       `/goals/${encodeURIComponent(goalId)}/approve`,
-      { method: "POST", body: JSON.stringify({ packageRevision }) },
+      {
+        method: "POST",
+        body: JSON.stringify({ packageRevision }),
+        // Starting a week persists the run before the first Agent pass. That
+        // pass can include provider and browser work, so do not leave the UI
+        // waiting indefinitely for the same HTTP response. The page treats an
+        // abort as an unknown mutation result and performs one read-only
+        // overview reconciliation using the exact goal id.
+        signal: AbortSignal.timeout(12_000),
+      },
     ),
   decideApproval: (
     approvalId: string,

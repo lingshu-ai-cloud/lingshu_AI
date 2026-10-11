@@ -340,10 +340,10 @@ function generalStrategy(
   productionApproach: SocialProductionApproach = 'ai_enhanced',
 ): { strategy: SocialShotSourceStrategy; refs: string[]; instruction: string; productSceneReplication?: SocialProductSceneReplicationSpec } {
   const signals = shotSignals(shot, referenceShots);
-  const referenceRouting = referenceShot(shot, referenceShots)?.referenceProductionRouting;
+  const observedReferenceRouting = referenceShot(shot, referenceShots)?.referenceProductionRouting;
+  const referenceRouting = observedReferenceRouting?.state === 'ready' && observedReferenceRouting.route !== 'undetermined'
+    ? observedReferenceRouting : undefined;
   if (referenceRouting) {
-    if (referenceRouting.state !== 'ready' || referenceRouting.route === 'undetermined')
-      throw new Error(`reference_person_automatic_analysis_required:${shot.shotId}`);
     if (referenceRouting.route === 'reference_frame_presenter') return {
       strategy: 'authorized_digital_presenter', refs: presenterLockReady(accountPresenterLock)
         ? [accountPresenterLock.presenterAssetId] : inventory.presenterAssetIds,
@@ -529,7 +529,10 @@ function fallbackFor(strategy: SocialShotSourceStrategy, productionApproach: Soc
 
 function digitalHumanMethod(creationMode: SocialContentCreationMode, description: string | null | undefined): 'talking' | 'replace' | 'reenact' {
   if (creationMode !== 'viral_replication') return 'talking';
-  return /重新演绎|reenact|re-?perform/i.test(String(description || '')) ? 'reenact' : 'replace';
+  const text = String(description || '');
+  if (/重新演绎|reenact|re-?perform/i.test(text)) return 'reenact';
+  if (/换脸|替换(?:原)?人物|人物复刻|复刻参考片|face\s*swap|person\s*replacement/i.test(text)) return 'replace';
+  return 'talking';
 }
 
 function planShot(
@@ -545,7 +548,9 @@ function planShot(
   const subject = shot.truthSensitiveSubject ?? 'none';
   const canonicalVisualContract = shot.visualContract ?? referenceShot(shot, referenceShots)?.visualContract;
   const signals = shotSignals(shot, referenceShots);
-  const referenceRouting = referenceShot(shot, referenceShots)?.referenceProductionRouting;
+  const observedReferenceRouting = referenceShot(shot, referenceShots)?.referenceProductionRouting;
+  const referenceRouting = observedReferenceRouting?.state === 'ready' && observedReferenceRouting.route !== 'undetermined'
+    ? observedReferenceRouting : undefined;
   const evidenceRefs = evidenceRefsFor(subject, inventory);
   const hasEvidence = subject !== 'none' && evidenceRefs.length > 0
     && !(subject === 'product_effect' && signals.hasPerson);
@@ -654,9 +659,10 @@ function planShot(
         presenterAssetIds: presenterLockReady(accountPresenterLock)
           ? [accountPresenterLock.presenterAssetId]
           : [...inventory.presenterAssetIds],
-        referenceMaterialIds: creationMode === 'viral_replication' ? [...inventory.referenceVideoIds] : [],
-        referenceRequired: creationMode === 'viral_replication',
-        candidateTools: creationMode !== 'viral_replication' ? ['heygen']
+        referenceMaterialIds: creationMode === 'viral_replication' && digitalHumanMethod(creationMode, shot.requestedDescription) !== 'talking'
+          ? [...inventory.referenceVideoIds] : [],
+        referenceRequired: creationMode === 'viral_replication' && digitalHumanMethod(creationMode, shot.requestedDescription) !== 'talking',
+        candidateTools: digitalHumanMethod(creationMode, shot.requestedDescription) === 'talking' ? ['heygen']
           : digitalHumanMethod(creationMode, shot.requestedDescription) === 'replace'
             ? ['local_head_pipeline', 'runway_kling_motion']
             : ['runway_seedance', 'runway_kling_motion', 'runway_act_two'],
@@ -664,7 +670,7 @@ function planShot(
           ? creationMode === 'viral_replication'
             ? inventory.referenceVideoIds.length ? 'preview_only' as const : 'needs_confirmation' as const
             : 'ready_for_capability_check' as const
-          : presenterSelectionConfirmed && inventory.presenterAssetIds.length === 1 && creationMode !== 'viral_replication'
+          : presenterSelectionConfirmed && inventory.presenterAssetIds.length === 1
             ? 'ready_for_capability_check' as const
             : 'needs_presenter' as const,
         accountPresenterLock: presenterLockReady(accountPresenterLock)

@@ -1,0 +1,60 @@
+import assert from 'node:assert/strict';
+import {weeklyReviewWindowBounds} from '../socialReview/weeklyReviewTiming.js';
+import {createWeeklyPlanningAuthority} from '../socialPrograms/planningAuthority.js';
+import {applyBusinessDispatchToExecutionTasks} from '../socialPrograms/executionTasks.js';
+import type {DataStore,Record_} from '../storage/datastore.js';
+import type {WeeklyOperatingPackage} from '../../shared/contracts/socialProgram.js';
+import type {WeeklyContentTemplateCandidate} from '../../shared/contracts/socialWeeklyContentTemplates.js';
+import {CONTENT_TEMPLATE_BINDINGS,CONTENT_TEMPLATE_CANDIDATES,createWeeklyContentTemplateService} from '../socialPrograms/weeklyContentTemplates.js';
+import {createWeeklyContentTemplateApplicationService} from '../socialPrograms/weeklyContentTemplateApplications.js';
+import {createWeeklyOperatingPackageService} from '../socialPrograms/weeklyOperatingPackages.js';
+import {createWeeklyScheduleRevisionService} from '../socialPrograms/socialWeeklyScheduleRevisions.js';
+
+/** Consume the actual frozen review/template, then use human-confirmed services
+ * to create a future draft, bind and carry over through a real schedule revision. */
+export async function assertFiveMotherReviewRevision(input:{store:DataStore;pkg:WeeklyOperatingPackage;now:Date}){
+ const {store,pkg,now}=input,scope={tenantId:'t',programId:pkg.programId},actorUserId='owner';
+ const templates=createWeeklyContentTemplateService(store,{now:()=>now.toISOString()});
+ const rows=await store.list<Record_>(CONTENT_TEMPLATE_CANDIDATES,{where:{tenant_id:'t',program_id:pkg.programId},perPage:100});
+ const candidates=rows.items.map(row=>row.payload as WeeklyContentTemplateCandidate).filter(c=>c.source.packageId===pkg.packageId&&c.source.packageVersion===pkg.version);assert.equal(candidates.length,5);
+ const first=candidates[0]!;const originalRef={type:'weekly_content_template',id:first.templateId,version:first.version};
+ const revised=await templates.create(scope,{actorUserId,sourceTaskId:first.source.sourceTaskId,reviewRef:first.source.reviewRef,action:'revise',previousRef:originalRef,title:'明确复盘修订试用结构',reason:'保留真实冻结证据，修订适用范围',applicability:{...first.applicability,audience:'企业采购复盘修订范围'}});
+ assert.equal(revised.version,first.version+1);assert.deepEqual(await templates.candidateRead(scope,originalRef),first);
+ await assert.rejects(templates.candidateRead({...scope,tenantId:'foreign'},originalRef));
+ const revisedRef={type:'weekly_content_template',id:revised.templateId,version:revised.version};
+ await templates.confirm(scope,{actorUserId,templateRef:revisedRef,candidateHash:revised.recordHash,usage:'trial',reason:'明确试用复盘修订，需重新核验新产品事实'});
+ const packages=createWeeklyOperatingPackageService(store);
+ const publications=pkg.socialContentPackage.publicationTasks.map((p,index)=>{const {materialRequirement,contentTemplateBindingRef,inventoryReuseRef,...rest}=p;return{...rest,publishWindow:`2026-11-${String(4+index).padStart(2,'0')}T10:00:00Z`};});
+ const future=await packages.revise('t',actorUserId,pkg.programId,pkg.packageId,{expectedVersion:pkg.version,weekStart:'2026-11-02',publicationTasks:publications,changeReason:'依据已冻结复盘明确准备下周新事实与模板试用'});
+ assert.equal(future.status,'draft');assert.equal(future.socialContentPackage.authorization.allowRealPublishing,false);
+ const target={...scope,packageId:future.packageId,packageVersion:future.version,publicationTaskId:publications[0]!.publicationTaskId};
+ await assert.rejects(templates.bind(target,{actorUserId,templateRef:revisedRef,candidateHash:first.recordHash,expectedTargetVersion:future.version+1}));
+ const binding=await templates.bind(target,{actorUserId,templateRef:revisedRef,candidateHash:revised.recordHash,expectedTargetVersion:future.version+1});
+ const applications=createWeeklyContentTemplateApplicationService(store);
+ await assert.rejects(applications.apply({...scope,tenantId:'foreign',actorUserId},{bindingId:binding.bindingId,sourceVersion:future.version,targetVersion:future.version+1}));
+ const applied=await applications.apply({...scope,actorUserId},{bindingId:binding.bindingId,sourceVersion:future.version,targetVersion:future.version+1});
+ const appliedScope={...target,packageVersion:applied.item.version};assert.equal(applied.activated,false);
+ assert.equal((await templates.readForPlanning(appliedScope,binding.bindingId)).template.version,revised.version);
+ const oldBinding=structuredClone(binding);
+ const planning=createWeeklyPlanningAuthority(store);
+ const initial=await planning.initialize('t',applied.item);
+ const analyzed=await planning.runDirectorAnalysis({...scope,packageId:applied.item.packageId,packageVersion:applied.item.version,expectedPlanningVersion:initial.version,actor:'director_agent'});
+ const detailed=await planning.mergeDetailedSchedule({...scope,package:applied.item,expectedPlanningVersion:analyzed.version,actor:'business_agent'});
+ const humanConfirmed=await planning.confirm({...scope,packageId:applied.item.packageId,packageVersion:applied.item.version,expectedPlanningVersion:detailed.version,userId:actorUserId});
+ const dispatched=await planning.dispatch({...scope,packageId:applied.item.packageId,packageVersion:applied.item.version,expectedPlanningVersion:humanConfirmed.version,actor:'business_agent'});
+ assert.ok(dispatched.dispatch);
+ await applyBusinessDispatchToExecutionTasks(store,'t',pkg.programId,applied.item.packageId,applied.item.version,dispatched.dispatch,now.toISOString());
+ const scheduler=createWeeklyScheduleRevisionService(store,{now:()=>now.toISOString()}),scheduleScope={...appliedScope,actorUserId};
+ const graph=await scheduler.preview(scheduleScope);
+ const deadlineAt=new Date(Date.parse(weeklyReviewWindowBounds(applied.item).endsAt)+2*86400000).toISOString();
+ const finishAt=new Date(Date.parse(deadlineAt)+86400000).toISOString();
+ const capacity={constraints:Object.fromEntries(graph.tasks.map(task=>[task.taskId,{resourceKey:'controlled-work',remainingMinutes:1,remainingCostCny:0,bufferMinutes:0,availableAt:now.toISOString()}])),resources:{'controlled-work':{concurrency:5,workingWindows:[{startAt:now.toISOString(),finishAt}]}},remainingBudgetCny:100,operationalDeadlines:Object.fromEntries(graph.tasks.filter(task=>['performance_monitoring','weekly_review','template_extraction','template_performance_validation'].includes(task.schedule.stepKind)).map(task=>[task.taskId,deadlineAt]))};
+ const proposal=await scheduler.propose(scheduleScope,capacity);assert.equal(proposal.templateCarryovers?.length,1);assert.equal(proposal.plan.publicationGap,0,JSON.stringify(proposal.plan.assignments.filter(a=>a.reasons.some(r=>r!=='human_completion_not_verified')).slice(0,12)));assert.ok(proposal.plan.assignments.every(a=>a.startAt&&a.finishAt&&!a.reasons.some(r=>r!=='human_completion_not_verified')),JSON.stringify(proposal.plan.assignments.filter(a=>!a.startAt||a.reasons.some(r=>r!=='human_completion_not_verified')).slice(0,12)));console.log('STAGE2_REVIEW_REVISION_PREPARED',JSON.stringify({templateVersion:revised.version,appliedVersion:applied.item.version,carryovers:proposal.templateCarryovers.length,publicationGap:proposal.plan.publicationGap}));
+ await assert.rejects(scheduler.confirm(scheduleScope,{proposalId:proposal.proposalId,expectedVersion:applied.item.version,inputEvidenceHash:proposal.inputEvidenceHash}),{code:'weekly_schedule_template_carryover_confirmation_required'});
+ const confirmed=await scheduler.confirm(scheduleScope,{proposalId:proposal.proposalId,expectedVersion:applied.item.version,inputEvidenceHash:proposal.inputEvidenceHash,confirmedTemplateCarryoverPlanHashes:proposal.templateCarryovers!.map(p=>p.planHash)});
+ const carried=confirmed.item.socialContentPackage.publicationTasks.find(p=>p.publicationTaskId===target.publicationTaskId)?.contentTemplateBindingRef;assert.ok(carried);assert.notEqual(carried.id,binding.bindingId);
+ const finalScope={...target,packageVersion:confirmed.item.version};const read=await templates.readForPlanning(finalScope,carried.id);assert.equal(read.binding.carryover?.sourceBindingHash,oldBinding.recordHash);
+ await assert.rejects(templates.readForPlanning(finalScope,binding.bindingId),{code:'content_template_binding_invalid'});
+ assert.deepEqual((await store.getById<Record_>(CONTENT_TEMPLATE_BINDINGS,binding.bindingId))?.payload,oldBinding);
+ return{templateId:revised.templateId,sourceTemplateVersion:first.version,revisedTemplateVersion:revised.version,futurePackageVersion:future.version,appliedVersion:applied.item.version,carriedVersion:confirmed.item.version};
+}

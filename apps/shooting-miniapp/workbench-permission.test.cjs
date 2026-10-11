@@ -4,7 +4,7 @@ const fs = require('node:fs');
 const vm = require('node:vm');
 const path = require('node:path');
 function load(file, bindings = {}) { const module = { exports: {} }; vm.runInNewContext(fs.readFileSync(path.join(__dirname, file), 'utf8'), { module, Date, ...bindings }); return module.exports; }
-const model = load('lib/workbench.js');
+const model = load('lib/workbench.js', {require:()=>load('lib/generated/mobile-domain.js')});
 function page(wx = {}) { let definition; load('pages/workbench/index.js', { Page: value => definition = value, require: id => id.endsWith('workbench') ? model : id.endsWith('starter') ? load('lib/starter.js', { require: () => model }) : {}, wx: { getStorageSync: () => [], ...wx }, setInterval: () => 1, clearInterval: () => {} }); return { ...definition, data: structuredClone(definition.data), setData(patch) { Object.assign(this.data, patch); } }; }
 test('denied recorder permission keeps text fallback and opens settings only after user choice', async () => {
   let modal; let opened = 0; let recorder = 0;

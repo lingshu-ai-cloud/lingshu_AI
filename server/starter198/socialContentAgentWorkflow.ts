@@ -200,7 +200,11 @@ function directorScene(input: {
   const reference = input.reference;
   const referenceRouting = reference?.referenceProductionRouting;
   const identityLockedPresenter = referenceRouting?.state === 'ready' && referenceRouting.route === 'reference_frame_presenter';
-  const presenterVisible = referenceRouting ? Boolean(identityLockedPresenter) : Boolean(reference && /真人|人物|人像|口播|数字人|主播|女性|男性|模特|presenter|person|human|face|talking/i.test([
+  // Optional continuity analysis controls identity fidelity, not whether a
+  // plainly visible foreground person exists. An unresolved route must not
+  // erase observable presenter evidence and silently replace a talking-head
+  // shot with a product still.
+  const presenterVisible = Boolean(identityLockedPresenter) || Boolean(reference && /真人|人物|人像|口播|数字人|主播|女性|男性|女主|男主|模特|presenter|person|human|face|talking/i.test([
     reference.visualDescription, reference.semanticLabel?.content, ...reference.tags.subjects,
   ].filter(Boolean).join(' ')));
   const isPrimaryHook = Boolean(reference && input.primaryHook?.referencePoints.includes(reference.shotId));
@@ -213,9 +217,9 @@ function directorScene(input: {
   const personRole = identityLockedPresenter ? referenceRouting.observedPresenterRole === 'presenter_action' ? 'expressive_action' : 'visible_speech'
     : visualTopicFor(reference, targetVisual, input.supply.function).personRole;
   const visibleMouth = personRole === 'visible_speech' || (personRole === 'expressive_action'
-    && /口播|说话|对镜|唇|talking|speaking/i.test([
+    && (Boolean(spokenText || reference?.spokenText) || /口播|说话|对镜|唇|talking|speaking/i.test([
       reference?.visualDescription, reference?.semanticLabel?.content,
-    ].filter(Boolean).join(' ')));
+    ].filter(Boolean).join(' '))));
   const needsPreciseLipSync = presenterVisible && visibleMouth && Boolean(spokenText || reference?.spokenText);
   return {
     sceneId: input.script?.shotId || input.supply.shotId,
@@ -378,7 +382,8 @@ function buildDirectorBrief(
       )) ?? [],
       productSelection,
       primaryHook: input.referenceAnalysis?.hookAnalysis ?? null,
-      enterprisePresenterAssetRef: input.assetSupplyPlan.accountPresenterLock?.presenterAssetId ?? null,
+      enterprisePresenterAssetRef: input.assetSupplyPlan.accountPresenterLock?.presenterAssetId
+        ?? input.enterprisePresenterAssetRef ?? null,
     });
   }).filter((scene): scene is SocialDirectorBriefScene => Boolean(scene));
   const coverage = input.referenceAnalysis?.coverage;
@@ -665,7 +670,9 @@ function capabilityCandidates(input: {
     .filter(candidate => {
       const routing = input.scene.referenceProductionRouting;
       if (!routing) return true;
-      if (routing.state !== 'ready' || routing.route === 'undetermined') return false;
+      // An unresolved optional person-continuity observation is retained for
+      // audit, but does not suppress otherwise executable assets/capabilities.
+      if (routing.state !== 'ready' || routing.route === 'undetermined') return true;
       if (routing.route === 'reference_frame_presenter') return candidate.kind === 'capability' && candidate.sourceStrategy === 'authorized_digital_presenter';
       if (['aigc_video', 'non_presenter_aigc_video'].includes(routing.route)) return candidate.kind === 'capability'
         && ['aigc_product_scene_replication', 'non_evidentiary_ai_visual'].includes(candidate.sourceStrategy);
@@ -696,41 +703,51 @@ function executionScene(input: {
   const referenceHook = Boolean(input.scene.referenceMaterial?.isPrimaryHook
     || (input.scene.replicationFactors?.length ?? 0) > 0);
   const expressivePerson = topic?.personRole === 'expressive_action' && input.scene.productionRouting?.presenterIdentityReplacementRequired;
-  const visibleSpeech = topic?.personRole === 'visible_speech' && input.scene.productionRouting?.needsPreciseLipSync;
+  const visibleSpeech = topic?.personRole === 'visible_speech' && input.scene.productionRouting?.needsPreciseLipSync
+    && Boolean(input.scene.audioLayers.dialogue?.trim() || input.scene.audioLayers.voiceover?.trim());
   const matchingAsset = candidates.find(candidate => candidate.kind === 'asset'
     && candidate.sourceStrategy === 'customer_real_asset'
     && candidate.actionAndShotScore >= 0.8 && candidate.semanticScore >= 0.72);
+  // For ordinary, non-evidentiary beats, a tenant-owned clip with a very high
+  // subject/narration match remains a valid functional equivalent even when
+  // its camera action differs from the reference. Hooks and evidence claims
+  // retain the strict action/shot threshold above.
+  const functionalAsset = !primaryHook && !input.supply.truthBoundary.customerEvidenceRequired
+    ? candidates.find(candidate => candidate.kind === 'asset'
+      && candidate.sourceStrategy === 'customer_real_asset'
+      && candidate.semanticScore >= 0.9 && candidate.actionAndShotScore >= 0.25)
+    : undefined;
   const capability = (strategy: SocialShotSourceStrategy) => candidates.find(candidate =>
     candidate.kind === 'capability' && candidate.sourceStrategy === strategy);
   // The Content Agent routes from observed purpose and available assets. A
   // Director-side supply hint cannot silently turn an action hook into a
   // talking avatar or a customer factory claim into generated evidence.
-  const policy = expressivePerson ? 'expressive_action'
-    : visibleSpeech ? 'visible_speech'
+  const policy = visibleSpeech ? 'visible_speech'
+    : expressivePerson ? 'expressive_action'
       : primaryHook ? 'hook_fidelity'
-        : matchingAsset ? 'reuse_material'
+        : matchingAsset || functionalAsset ? 'reuse_material'
           : topic?.kind === 'product_introduction' ? 'product_scene' : 'needs_capability';
   const ordinaryCapability = topic?.kind === 'factory_footage'
     ? (input.supply.truthBoundary.customerEvidenceRequired ? undefined : capability('licensed_stock_asset'))
+    : input.supply.function === 'call_to_action'
+      ? capability('verified_fact_card') ?? capability('motion_graphics')
     : topic?.kind === 'product_introduction'
       ? capability('aigc_product_scene_replication') ?? capability('customer_product_image_animation')
       : topic?.kind === 'competitor_comparison'
         ? capability('verified_fact_card')
-        : input.supply.function === 'call_to_action'
-          ? capability('verified_fact_card') ?? capability('motion_graphics')
-          : capability('licensed_stock_asset') ?? capability('motion_graphics');
+        : capability('licensed_stock_asset') ?? capability('motion_graphics');
   const safeOriginalHookFallback = referenceHook
     ? undefined
     : capability('licensed_stock_asset') ?? capability('motion_graphics');
   const generatedReference=Boolean(input.scene.referenceProductionRouting && ['aigc_video','non_presenter_aigc_video'].includes(input.scene.referenceProductionRouting.route));
   const preferred = identityLockedPresenter ? capability('authorized_digital_presenter')
     : generatedReference ? capability(input.supply.sourceStrategy)
-    : expressivePerson ? undefined
-    : visibleSpeech ? capability('authorized_digital_presenter')
+    : visibleSpeech ? capability('authorized_digital_presenter') ?? matchingAsset ?? functionalAsset ?? ordinaryCapability
+    : expressivePerson ? capability('authorized_digital_presenter') ?? matchingAsset ?? functionalAsset ?? ordinaryCapability
       : primaryHook && topic?.kind === 'product_introduction'
         ? capability('aigc_product_scene_replication') ?? capability('customer_product_image_animation') ?? matchingAsset ?? safeOriginalHookFallback
         : primaryHook ? matchingAsset ?? candidates.find(candidate => candidate.sourceStrategy === input.supply.sourceStrategy) ?? safeOriginalHookFallback
-          : matchingAsset ?? ordinaryCapability;
+          : matchingAsset ?? functionalAsset ?? ordinaryCapability;
   const fallback = candidates.find(candidate => candidate.sourceStrategy === input.supply.fallbackSourceStrategy && candidate.candidateId !== preferred?.candidateId);
   return {
     sceneId: input.scene.sceneId,
@@ -741,6 +758,7 @@ function executionScene(input: {
         : visibleSpeech ? '可见口播需要企业授权人物与逐句口型能力'
           : primaryHook ? '开场钩子先保持参考表现机制，再核对可执行素材或能力'
             : matchingAsset ? '现有素材满足视觉主题、表达目的与画面契约'
+              : functionalAsset ? '现有素材与主体及逐句口播高度匹配，可作为普通镜头的功能等价画面'
               : '没有合格素材，按分镜目标检查可用能力',
       source: 'content_agent',
     },
@@ -876,6 +894,28 @@ function buildExecutionPlan(input: BuildSocialAgentWorkflowInput, directorBrief:
   };
 }
 
+export function socialExecutionExternalCost(plan: SocialContentExecutionPlan, directorBrief: SocialDirectorBrief): number {
+  const briefByScene = new Map(directorBrief.scenes.map(scene => [scene.sceneId, scene]));
+  const reusedExternal = new Set<string>();
+  return +plan.scenes.reduce((sum, scene) => {
+    const candidate = scene.candidates.find(item => scene.recommendedCandidateIds.includes(item.candidateId));
+    if (!candidate || candidate.dataTransfer === 'local_only') return sum;
+    const briefScene = briefByScene.get(scene.sceneId);
+    if (candidate.sourceStrategy === 'authorized_digital_presenter' && briefScene) {
+      const seconds = Math.max(0, briefScene.duration.endSeconds - briefScene.duration.startSeconds);
+      return sum + seconds * Math.max(0, Number(process.env.HEYGEN_ESTIMATED_CNY_PER_SECOND || 0.8));
+    }
+    // A physical edit may split one semantic stock shot into adjacent cards.
+    // The library asset is acquired once and trimmed several times.
+    if (candidate.sourceStrategy === 'licensed_stock_asset') {
+      const key = `${candidate.sourceStrategy}:${briefScene?.visualTopic?.subject.trim().toLowerCase() || scene.sceneId}`;
+      if (reusedExternal.has(key)) return sum;
+      reusedExternal.add(key);
+    }
+    return sum + candidate.estimatedCostCny;
+  }, 0).toFixed(2);
+}
+
 function reviewScene(input: {
   scene: SocialDirectorBriefScene;
   plan: SocialContentExecutionScenePlan;
@@ -924,7 +964,7 @@ function reviewScene(input: {
 }
 
 function buildReview(input: BuildSocialAgentWorkflowInput, directorBrief: SocialDirectorBrief, plan: SocialContentExecutionPlan): SocialExecutionPlanReview {
-  const estimatedCost = plan.scenes.reduce((sum, scene) => sum + scene.estimatedCostCny, 0);
+  const estimatedCost = socialExecutionExternalCost(plan, directorBrief);
   const budgetExceeded = plan.budgetLimitCny !== null && estimatedCost > plan.budgetLimitCny;
   const planByScene = new Map(plan.scenes.map(scene => [scene.sceneId, scene]));
   const shootingPlanOnly = plan.selectedApproach === 'shooting_plan';
@@ -1048,6 +1088,7 @@ export interface BuildSocialAgentWorkflowInput {
   capabilityRuntime?: SocialContentCapabilityRuntimeRegistration[];
   materialCandidates?: SocialWorkflowMaterialCandidate[];
   inferredProductRef?: string | null;
+  enterprisePresenterAssetRef?: string | null;
   referencePreviewUrl?: string | null;
   now?: Date;
 }

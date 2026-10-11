@@ -3,8 +3,8 @@ const assert=require('node:assert/strict');
 const fs=require('node:fs');
 const vm=require('node:vm');
 function load(file,bindings={}){const module={exports:{}};vm.runInNewContext(fs.readFileSync(__dirname+'/'+file,'utf8'),{module,Date,...bindings});return module.exports}
-const model=load('lib/workbench.js');
-const schedule=load('lib/agentSchedule.js',{require:()=>model});
+const model=load('lib/workbench.js', {require:()=>load('lib/generated/mobile-domain.js')});
+const schedule=load('lib/agentSchedule.js',{require:()=>load('lib/generated/mobile-domain.js')});
 function page(api={}) {
  let definition;
  vm.runInNewContext(fs.readFileSync(__dirname+'/pages/workbench/index.js','utf8'),{Page:p=>definition=p,require:id=>id.endsWith('agentSchedule')?schedule:id.endsWith('workbench')?model:id.endsWith('starter')?{}:api,wx:{},Date});

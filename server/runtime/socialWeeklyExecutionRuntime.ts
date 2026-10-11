@@ -1,3 +1,11 @@
+import { runWeeklyPreproductionProducerScan, readWeeklyPreproductionExecutionGate } from './weeklyPreproductionProducer.js';
+import { runWeeklyTemplateExtractionRecoveryScan } from './weeklyContentTemplateCandidateProducer.js';
+import { runWeeklyMetricCollectionRecoveryScan } from './weeklyPublicationMetricProducer.js';
+import type { WeeklyMaterialPorts } from '../socialPrograms/weeklyMaterialRequests.js';
+import { checkWeeklyEnterpriseFactSupplement, WEEKLY_ENTERPRISE_FACT_STEPS } from './weeklyEnterpriseFactSupplement.js';
+import { runWeeklyHumanMaterialRecoveryScan } from './weeklyHumanMaterialRecoveryScan.js';
+import { materializeWeeklyCustomerChannelAuthorizationException, runWeeklyCustomerChannelAuthorizationExceptionScan } from './weeklyCustomerChannelAuthorizationExceptions.js';
+import { materializeWeeklySupplementException, runWeeklySupplementExceptionScan } from './weeklySupplementExceptionMaterializer.js';
 import {weeklyExecutionObservation} from './weeklyExecutionObservation.js';
 import { runWeeklyDeadlineRecoveryScan, type DeadlineRecoveryEvidenceReader } from './socialWeeklyDeadlineRecovery.js';
 import { randomUUID } from 'node:crypto';
@@ -83,9 +91,18 @@ export async function runSocialWeeklyExecutionScan(input: {
   leaseDurationMs?: number;
   now?: Date;
   readRecoveryEvidence?: DeadlineRecoveryEvidenceReader;
+  humanMaterialPorts?: WeeklyMaterialPorts;
+  preproductionPorts?: Omit<Parameters<typeof runWeeklyPreproductionProducerScan>[0], 'store' | 'now'>;
+  metricRecoveryPorts?: Omit<Parameters<typeof runWeeklyMetricCollectionRecoveryScan>[0], 'store' | 'now'>;
 }) {
   const dataStore = input.dataStore ?? store;
+  const preproduction = await runWeeklyPreproductionProducerScan({ ...input.preproductionPorts, store: dataStore, now: input.now });
+  const metricRecovery = await runWeeklyMetricCollectionRecoveryScan({ ...input.metricRecoveryPorts, store: dataStore, now: input.now });
+  const templateRecovery = await runWeeklyTemplateExtractionRecoveryScan({ store: dataStore, now: input.now });
   const deadlineRecovery = await runWeeklyDeadlineRecoveryScan({ dataStore, now: input.now, readEvidence: input.readRecoveryEvidence });
+  const supplementRecovery = await runWeeklySupplementExceptionScan({ store: dataStore, now: input.now });
+  const customerAuthorizationRecovery = await runWeeklyCustomerChannelAuthorizationExceptionScan({ store: dataStore, now: input.now });
+  const humanMaterialRecovery = await runWeeklyHumanMaterialRecoveryScan({ store: dataStore, now: input.now, materialPorts: input.humanMaterialPorts });
   const worker = createSocialWeeklyExecutionWorker(dataStore);
   const planningAuthority = createSocialWeeklyPlanningAdapter(dataStore);
   const workerId = input.workerId ?? `weekly-execution-${process.pid}-${randomUUID()}`;
@@ -116,8 +133,17 @@ export async function runSocialWeeklyExecutionScan(input: {
       try {
         const adapter = input.adapters[claim.task.schedule.stepKind];
         let dispatchGate:WeeklyExecutionAdapterResult;
-        try{const {readWeeklyInventoryExecutionGate}=await import('./weeklyInventoryOutlineEvidence.js');const inventoryGate=await readWeeklyInventoryExecutionGate(dataStore,claim.task);dispatchGate=inventoryGate?{status:'succeeded',resultRefs:inventoryGate.resultRefs}:await planningAuthority.execute({ ...claim.task, accountId: null, inputSnapshot: {}, schedule: { ...claim.task.schedule, stepKind: 'business_outline' } });}
+        let inventoryGateReady=false;
+        try{const {readWeeklyInventoryExecutionGate}=await import('./weeklyInventoryOutlineEvidence.js');const inventoryGate=await readWeeklyInventoryExecutionGate(dataStore,claim.task);inventoryGateReady=Boolean(inventoryGate);dispatchGate=inventoryGate?{status:'succeeded',resultRefs:inventoryGate.resultRefs}:await planningAuthority.execute({ ...claim.task, accountId: null, inputSnapshot: {}, schedule: { ...claim.task.schedule, stepKind: 'business_outline' } });}
         catch(error){if(error instanceof SocialProgramError)dispatchGate={status:'blocked',code:error.code,message:error.message};else throw error;}
+        if (dispatchGate.status === 'succeeded' && WEEKLY_ENTERPRISE_FACT_STEPS.has(claim.task.schedule.stepKind)) {
+          const facts = await checkWeeklyEnterpriseFactSupplement({ store: dataStore, task: claim.task, now: input.now });
+          if (facts.applicable && !facts.ready) dispatchGate = { status: 'blocked', code: facts.code, message: facts.reason };
+        }
+        if (dispatchGate.status === 'succeeded' && !inventoryGateReady && ['business_outline', 'benchmark_collection'].includes(claim.task.schedule.stepKind)) {
+          const preproductionGate = await readWeeklyPreproductionExecutionGate(dataStore, claim.task);
+          if (!preproductionGate.ready) dispatchGate = { status: 'blocked', code: preproductionGate.code ?? 'weekly_preproduction_evidence_required', message: '前置经营或采集尚缺绑定原任务的正式执行证据。' };
+        }
         const continuationPending = claim.task.inputSnapshot.weeklyContinuationPending;
         const continuationRef = claim.task.inputSnapshot.weeklyContinuationRef;
         let continuationResult: WeeklyExecutionAdapterResult | undefined;
@@ -140,7 +166,14 @@ export async function runSocialWeeklyExecutionScan(input: {
         await renewal;
         if (lostLease) throw lostLease;
         if (result.status === 'succeeded') { validatingCompletion = true; await worker.complete(claim, result.resultRefs, input.now); report.succeeded++; }
-        else { await worker.defer(claim, { now: input.now, code: result.code, message: result.message, progress: result.progress, retryDelayMs: result.status === 'pending' ? result.retryDelayMs : undefined, blockingReason: result.status === 'blocked' ? result.code : undefined }); report[result.status]++; }
+        else {
+          await worker.defer(claim, { now: input.now, code: result.code, message: result.message, progress: result.progress, retryDelayMs: result.status === 'pending' ? result.retryDelayMs : undefined, blockingReason: result.status === 'blocked' ? result.code : undefined });
+          if (result.status === 'blocked') {
+            await materializeWeeklySupplementException({ store: dataStore, task: claim.task, gapCode: result.code, now: input.now });
+            await materializeWeeklyCustomerChannelAuthorizationException({ store: dataStore, task: claim.task, gapCode: result.code, now: input.now });
+          }
+          report[result.status]++;
+        }
       } catch (error) {
         clearInterval(timer);
         await renewal;
@@ -153,7 +186,8 @@ export async function runSocialWeeklyExecutionScan(input: {
       } finally { clearInterval(timer); }
     }
   }
-  return { ...report, deadlineRecovery };
+  const humanMaterialAfterExecution = await runWeeklyHumanMaterialRecoveryScan({ store: dataStore, now: input.now, materialPorts: input.humanMaterialPorts });
+  return { ...report, preproduction, metricRecovery, templateRecovery, deadlineRecovery, supplementRecovery, customerAuthorizationRecovery, humanMaterialRecovery, humanMaterialAfterExecution };
 }
 
 let timer: ReturnType<typeof setInterval> | null = null;

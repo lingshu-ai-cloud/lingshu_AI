@@ -1,3 +1,5 @@
+import { useAssistantDecisionMemory } from '../lib/useAssistantDecisionMemory';
+import AssistantDecisionMemoryPanel, { AssistantDecisionSaveButton } from './AssistantDecisionMemoryPanel';
 import {
   useCallback,
   useEffect,
@@ -751,6 +753,7 @@ export default function GlobalAssistant({
     userId: persistenceScope.userId.trim(),
   }), [persistenceScope.tenantId, persistenceScope.userId]);
   const persistenceScopeKey = `${stablePersistenceScope.tenantId}\u0000${stablePersistenceScope.userId}`;
+  const decisionMemory = useAssistantDecisionMemory(persistenceScopeKey, responseErrorMessage);
   const welcomeBubbleStorageKey = `${ASSISTANT_CONVERSATION_WELCOME_SEEN_KEY}:${encodeURIComponent(stablePersistenceScope.tenantId)}:${encodeURIComponent(stablePersistenceScope.userId)}`;
   const persistenceFenceRef = useRef({ scopeKey: persistenceScopeKey, active: true });
   if (persistenceFenceRef.current.scopeKey !== persistenceScopeKey) {
@@ -1995,7 +1998,11 @@ export default function GlobalAssistant({
   return (
     <div
       data-global-assistant="root"
-      className={`fixed right-4 z-[75] md:bottom-5 md:right-5 ${page === 'conversion' ? 'bottom-[calc(env(safe-area-inset-bottom)+8rem)]' : 'bottom-[calc(env(safe-area-inset-bottom)+1rem)]'}`}
+      className={`fixed right-4 z-[75] md:right-5 ${page === 'conversion'
+        ? 'bottom-[calc(env(safe-area-inset-bottom)+8rem)]'
+        : page === 'smartAssets' || page === 'digitalEmployees'
+          ? 'bottom-[calc(env(safe-area-inset-bottom)+5.5rem)]'
+          : 'bottom-[calc(env(safe-area-inset-bottom)+1rem)] md:bottom-5'}`}
     >
       <AnimatePresence>
         {mode === 'breathing' && performance && shouldNotifyAssistant(performance.reason) && !performanceHidden && (
@@ -2223,6 +2230,7 @@ export default function GlobalAssistant({
               </div>
             ) : (
               <>
+                <AssistantDecisionMemoryPanel memory={decisionMemory} />
                 <div
                   ref={messageScrollRef}
                   data-assistant-surface="conversation"
@@ -2264,7 +2272,7 @@ export default function GlobalAssistant({
                           : 'ls-messenger-bubble ls-messenger-bubble--inbound'}>
                           {msg.role === 'assistant'
                             ? (msg.content ? <AgentReply content={msg.content} sources={msg.sources} onAction={onAction} /> : <span className="opacity-40">...</span>)
-                            : msg.content}
+                            : <>{msg.content}<AssistantDecisionSaveButton memory={decisionMemory} text={msg.content} /></>}
                         </div>
                       </div>
                     ))}

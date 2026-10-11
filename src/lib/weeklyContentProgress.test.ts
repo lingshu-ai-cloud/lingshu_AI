@@ -48,6 +48,28 @@ const build = (data = overview(), projects: WeeklyContentProgressProject[] = [])
 }
 
 {
+  const data = overview();
+  data.contentQueue!.items = [queue({
+    id: 'social:real', contentId: 'socialtask-real', socialContentTaskId: 'socialtask-real', origin: 'manual',
+    status: 'waiting_review', stage: '内容验收', projectIds: ['studio-real'], taskId: '',
+    steps: [
+      {key:'brief',label:'确认需求',responsibleAgent:'用户',estimatedMinutes:10,state:'done'},
+      {key:'script',label:'脚本',responsibleAgent:'编导 Agent',estimatedMinutes:30,state:'done'},
+      {key:'storyboard',label:'分镜',responsibleAgent:'编导 Agent',estimatedMinutes:30,state:'done'},
+      {key:'assets',label:'素材',responsibleAgent:'内容 Agent',estimatedMinutes:30,state:'done'},
+      {key:'video',label:'成片',responsibleAgent:'内容 Agent',estimatedMinutes:60,state:'done'},
+      {key:'quality',label:'质检',responsibleAgent:'内容 Agent',estimatedMinutes:20,state:'active'},
+    ],
+  })];
+  const result = buildWeeklyContentProgress(data,'socialtask-real');
+  assert.equal(result.taskId,'socialtask-real');
+  assert.equal(result.statusLabel,'待验收');
+  assert.equal(get(result,'script').status,'completed');
+  assert.equal(get(result,'render').status,'completed');
+  assert.equal(get(result,'quality').status,'running');
+}
+
+{
   const data = overview(); data.run = null;
   const result = build(data);
   assert.equal(result.statusLabel, '待启动');

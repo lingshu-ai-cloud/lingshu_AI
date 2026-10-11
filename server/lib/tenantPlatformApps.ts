@@ -165,9 +165,10 @@ async function getTenantPlatformAppFrom(
 ): Promise<TenantPlatformAppRecord | null> {
   const result = await dataStore.list<TenantPlatformAppRecord>(COL, {
     where: { tenant_id: tenantId, platform },
-    perPage: 1,
+    perPage: 2,
   });
-  return result.items[0] ?? null;
+  const app = result.items[0];
+  return result.totalItems === 1 && result.items.length === 1 && app?.tenant_id === tenantId && app.platform === platform ? app : null;
 }
 
 export async function getTenantPlatformApp(tenantId: string, platform: TenantPlatform): Promise<TenantPlatformAppRecord | null> {
@@ -308,42 +309,46 @@ export async function markTenantPlatformStatus(id: string, status: TenantPlatfor
   });
 }
 
-export async function getTenantMetaOAuthClient(tenantId?: string): Promise<{ appId: string; appSecret: string } | null> {
+export async function getTenantMetaOAuthClient(tenantId?: string, dataStore: DataStore = store): Promise<{ appId: string; appSecret: string } | null> {
   if (tenantId) {
-    const app = await getTenantPlatformApp(tenantId, 'meta');
+    const app = await getTenantPlatformAppFrom(dataStore, tenantId, 'meta');
     const appId = text(app?.app_id);
     const appSecret = decryptSecret(app?.app_secret);
-    if (appId && appSecret) return { appId, appSecret };
+    if (app?.tenant_id === tenantId && appId && appSecret) return { appId, appSecret };
+    return null;
   }
   return getMetaOAuthClient();
 }
 
-export async function getTenantInstagramOAuthClient(tenantId?: string): Promise<{ appId: string; appSecret: string } | null> {
+export async function getTenantInstagramOAuthClient(tenantId?: string, dataStore: DataStore = store): Promise<{ appId: string; appSecret: string } | null> {
   if (tenantId) {
-    const app = await getTenantPlatformApp(tenantId, 'instagram');
+    const app = await getTenantPlatformAppFrom(dataStore, tenantId, 'instagram');
     const appId = text(app?.app_id);
     const appSecret = decryptSecret(app?.app_secret);
-    if (appId && appSecret) return { appId, appSecret };
+    if (app?.tenant_id === tenantId && appId && appSecret) return { appId, appSecret };
+    return null;
   }
   return getInstagramOAuthClient();
 }
 
-export async function getTenantGoogleOAuthClient(tenantId?: string): Promise<{ clientId: string; clientSecret: string } | null> {
+export async function getTenantGoogleOAuthClient(tenantId?: string, dataStore: DataStore = store): Promise<{ clientId: string; clientSecret: string } | null> {
   if (tenantId) {
-    const app = await getTenantPlatformApp(tenantId, 'google');
+    const app = await getTenantPlatformAppFrom(dataStore, tenantId, 'google');
     const clientId = text(app?.app_id);
     const clientSecret = decryptSecret(app?.app_secret);
-    if (clientId && clientSecret) return { clientId, clientSecret };
+    if (app?.tenant_id === tenantId && clientId && clientSecret) return { clientId, clientSecret };
+    return null;
   }
   return getYouTubeOAuthClient();
 }
 
-export async function getTenantTikTokOAuthClient(tenantId?: string): Promise<{ clientKey: string; clientSecret: string } | null> {
+export async function getTenantTikTokOAuthClient(tenantId?: string, dataStore: DataStore = store): Promise<{ clientKey: string; clientSecret: string } | null> {
   if (tenantId) {
-    const app = await getTenantPlatformApp(tenantId, 'tiktok');
+    const app = await getTenantPlatformAppFrom(dataStore, tenantId, 'tiktok');
     const clientKey = text(app?.app_id);
     const clientSecret = decryptSecret(app?.app_secret);
-    if (clientKey && clientSecret) return { clientKey, clientSecret };
+    if (app?.tenant_id === tenantId && clientKey && clientSecret) return { clientKey, clientSecret };
+    return null;
   }
   return getTikTokOAuthClient();
 }
@@ -354,6 +359,7 @@ export function signOAuthState(input: {
   platform: string;
   returnTo: string;
   purpose?: 'messenger';
+  redirectUri?: string;
   nonce?: string;
   expiresAt?: number;
 }): string {
@@ -363,6 +369,7 @@ export function signOAuthState(input: {
     platform: input.platform,
     returnTo: input.returnTo,
     ...(input.purpose ? { purpose: input.purpose } : {}),
+    ...(input.redirectUri ? { redirectUri: input.redirectUri } : {}),
     nonce: input.nonce || crypto.randomBytes(12).toString('base64url'),
     expiresAt: input.expiresAt || Date.now() + STATE_TTL_MS,
   };
@@ -377,9 +384,12 @@ export function parseOAuthState(state: string): null | {
   platform: string;
   returnTo: string;
   purpose?: 'messenger';
+  redirectUri?: string;
   expiresAt: number;
 } {
-  const [body, sig] = text(state).split('.');
+  const parts = text(state).split('.');
+  if (parts.length !== 2) return null;
+  const [body, sig] = parts;
   if (!body || !sig) return null;
   const expected = crypto.createHmac('sha256', secretKey()).update(body).digest('base64url');
   if (Buffer.byteLength(sig) !== Buffer.byteLength(expected)) return null;
@@ -391,15 +401,18 @@ export function parseOAuthState(state: string): null | {
       platform?: string;
       returnTo?: string;
       purpose?: string;
+      redirectUri?: string;
       expiresAt?: number;
     };
-    if (!payload.tenantId || !payload.userId || !payload.platform || !payload.expiresAt) return null;
-    if (payload.expiresAt <= Date.now()) return null;
+    if (typeof payload.tenantId !== 'string' || !payload.tenantId || typeof payload.userId !== 'string' || !payload.userId || typeof payload.platform !== 'string' || !payload.platform || !Number.isFinite(payload.expiresAt)) return null;
+    if (typeof payload.returnTo !== 'string' || !payload.returnTo.startsWith('/') || payload.returnTo.startsWith('//') || /[\\\r\n]/.test(payload.returnTo)) return null;
+    if (typeof payload.expiresAt !== 'number' || payload.expiresAt <= Date.now() || payload.expiresAt > Date.now() + STATE_TTL_MS) return null;
     return {
       tenantId: payload.tenantId,
       userId: payload.userId,
       platform: payload.platform,
       returnTo: payload.returnTo || '/',
+      ...(typeof payload.redirectUri === 'string' ? { redirectUri: payload.redirectUri } : {}),
       ...(payload.purpose === 'messenger' ? { purpose: 'messenger' as const } : {}),
       expiresAt: payload.expiresAt,
     };

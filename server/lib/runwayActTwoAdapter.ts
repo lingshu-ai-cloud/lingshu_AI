@@ -31,7 +31,7 @@ export class RunwayActTwoAdapter implements DigitalHumanExecutionAdapter {
   private async request(path: string, init: RequestInit): Promise<RunwayTask> {
     if (!this.options.apiSecret.trim()) throw new Error('Runway Act-Two 未配置 API Secret');
     const response = await (this.options.transport || fetch)(`${this.options.baseUrl || 'https://api.dev.runwayml.com'}${path}`, {
-      ...init, signal: AbortSignal.timeout(45_000), headers: { Authorization: `Bearer ${this.options.apiSecret}`, 'X-Runway-Version': '2024-11-06', ...(init.body ? { 'Content-Type': 'application/json' } : {}), ...(init.headers || {}) },
+      ...init, redirect: 'error', signal: AbortSignal.timeout(45_000), headers: { Authorization: `Bearer ${this.options.apiSecret}`, 'X-Runway-Version': '2024-11-06', ...(init.body ? { 'Content-Type': 'application/json' } : {}), ...(init.headers || {}) },
     });
     if (response.status === 204) return {};
     const value = await response.json().catch(() => ({})) as RunwayTask & { error?: string };
@@ -51,7 +51,7 @@ export class RunwayActTwoAdapter implements DigitalHumanExecutionAdapter {
         character: { type: input.characterType, uri: input.characterUrl },
         reference: { type: 'video', uri: input.referenceVideoUrl }, ratio: input.ratio, bodyControl: input.bodyControl !== false, expressionIntensity }) });
     } catch (error) {
-      if (error instanceof RunwayApiError && [400, 401, 403, 404, 422, 429].includes(error.status)) throw new DefinitiveSupplierSubmissionError(error.message);
+      if (error instanceof RunwayApiError && [400, 401, 403, 404, 422].includes(error.status)) throw new DefinitiveSupplierSubmissionError(error.message);
       throw error;
     }
     if (!result.id) throw new Error('Runway 提交结果未知：未返回任务 ID，请核对供应商后台且不要重复提交');

@@ -229,14 +229,14 @@ export async function validateWeeklyExecutionResults(store: DataStore, task: Wee
       requireResult(matches.length === 1);
       requireResult(matches[0].materialRequirement?.required === true, 'weekly_material_contract_required');
       if (matches[0].materialRequirement) {
-        const admitted = await createWeeklyRequiredMaterialAdmission(store)({ tenantId: task.tenantId, programId: task.programId, consumerTaskId: task.taskId, requirement: matches[0].materialRequirement });
+        const admitted = await createWeeklyRequiredMaterialAdmission(store,ports.ownedProductIdentity?.materialPorts)({ tenantId: task.tenantId, programId: task.programId, consumerTaskId: task.taskId, requirement: matches[0].materialRequirement });
         requireResult(admitted.status === 'ready' && admitted.materials.length > 0, 'weekly_required_materials_unverified');
         const classification = await materialClassification(store, task);
         const gap = await checkWeeklyHumanRequirementBindings({ store, tenantId: task.tenantId, programId: task.programId, packageId: task.packageId, packageVersion: task.packageVersion, consumerTaskId: task.taskId, publication: matches[0], contract: classification });
         requireResult(!gap, gap ?? undefined);
         for (const material of admitted.materials) {
           const sourceRef = `socialmaterial:${Buffer.from(`pb-${material.recordId}`, 'utf8').toString('base64url')}`;
-          const option = await socialContentSourceOptions.resolve({ tenantId: task.tenantId, kind: 'material', sourceRef });
+          const option = await (ports.ownedProductIdentity?.sourceOptions??socialContentSourceOptions).resolve({ tenantId: task.tenantId, kind: 'material', sourceRef });
           requireResult(option?.sourceVersion, 'weekly_required_material_source_unverified');
           const source = await unique(store, 'starter_social_task_sources', { tenant_id: task.tenantId, task_id: ref.id, source_kind: 'material', source_ref: sourceRef, status: 'active' });
           requireResult(source.source_version === option.sourceVersion, 'weekly_required_material_source_unverified');

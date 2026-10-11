@@ -1,0 +1,88 @@
+name: Reconcile internal rollback baseline
+
+on:
+  workflow_dispatch:
+    inputs:
+      current_commit:
+        description: Full commit SHA explicitly identified as the currently running internal version
+        required: true
+        type: string
+      current_branch:
+        description: GitHub branch corresponding to the running internal version
+        required: true
+        type: string
+      confirmation:
+        description: Enter RECONCILE internal
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: deploy-internal
+  cancel-in-progress: false
+
+jobs:
+  reconcile:
+    runs-on: [self-hosted, linux, x64, internal]
+    timeout-minutes: 10
+    environment: internal
+    steps:
+      - name: Require exact internal-only confirmation
+        env:
+          CURRENT_COMMIT: ${{ inputs.current_commit }}
+          CONFIRMATION: ${{ inputs.confirmation }}
+          RELEASE_CONSOLE_URL: ${{ secrets.RELEASE_CONSOLE_URL }}
+          RELEASE_INVENTORY_WEBHOOK_SECRET: ${{ secrets.RELEASE_INVENTORY_WEBHOOK_SECRET }}
+        run: |
+          set -euo pipefail
+          [[ "$CONFIRMATION" == "RECONCILE internal" ]]
+          [[ "$CURRENT_COMMIT" =~ ^[0-9a-f]{40}$ ]]
+          [[ "$RELEASE_CONSOLE_URL" == https://* ]]
+          [[ ${#RELEASE_INVENTORY_WEBHOOK_SECRET} -ge 32 ]]
+
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: main
+          fetch-depth: 0
+
+      - name: Verify the attested branch contains the attested commit
+        env:
+          CURRENT_COMMIT: ${{ inputs.current_commit }}
+          CURRENT_BRANCH: ${{ inputs.current_branch }}
+        run: |
+          set -euo pipefail
+          git check-ref-format --branch "$CURRENT_BRANCH" >/dev/null || {
+            echo "The attested branch name is invalid." >&2
+            exit 1
+          }
+          git fetch --no-tags origin \
+            "+refs/heads/${CURRENT_BRANCH}:refs/remotes/origin/reconciliation-source"
+          git cat-file -e "${CURRENT_COMMIT}^{commit}" || {
+            echo "The attested commit is not available from the named branch." >&2
+            exit 1
+          }
+          git merge-base --is-ancestor "$CURRENT_COMMIT" refs/remotes/origin/reconciliation-source || {
+            echo "The attested commit is not contained in the named branch history." >&2
+            exit 1
+          }
+
+      - name: Reconcile the running internal images without restarting them
+        env:
+          DEPLOY_ACTOR: ${{ github.actor }}
+          CURRENT_COMMIT: ${{ inputs.current_commit }}
+          CURRENT_BRANCH: ${{ inputs.current_branch }}
+        run: |
+          bash deploy/reconcile-existing-release.sh \
+            internal \
+            lingshu-ai-cs-preview \
+            /home/ubuntu/lingshu-ai-cs-preview \
+            "$CURRENT_COMMIT" \
+            "$CURRENT_BRANCH"
+
+      - name: Report signed fail-closed inventory
+        env:
+          RELEASE_CONSOLE_URL: ${{ secrets.RELEASE_CONSOLE_URL }}
+          RELEASE_INVENTORY_WEBHOOK_SECRET: ${{ secrets.RELEASE_INVENTORY_WEBHOOK_SECRET }}
+        run: bash deploy/report-environment-inventory.sh internal

@@ -1,13 +1,15 @@
+import { execFileSync } from 'node:child_process';
+import ffmpegStatic from 'ffmpeg-static';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
 import axios from 'axios';
 import { store } from '../storage/index.js';
 import { socialUploadHttpResponse } from '../routes/social.js';
-import { publishVideoToAccount, resolvePendingPublishToAccount } from './platformPublisher.js';
+import { publishVideoToAccount, resolvePendingPublishToAccount, readTikTokCanonicalAttemptReceipt } from './platformPublisher.js';
 import { publishingUploadDir } from './publishSourceClaim.js';
 
-const originalAxios = { post: axios.post, put: axios.put };
+const originalAxios = { post: axios.post, put: axios.put, get: axios.get };
 const originalTikTokReleaseMode = process.env.TIKTOK_DIRECT_POST_RELEASE_MODE;
 process.env.TIKTOK_DIRECT_POST_RELEASE_MODE = 'approved';
 const originalStore = {
@@ -21,12 +23,12 @@ const originalStore = {
 const temporaryRoot = publishingUploadDir('tenant-1');
 fs.mkdirSync(temporaryRoot, { recursive: true });
 const videoPath = path.join(temporaryRoot, `manual-${process.pid}-${Date.now()}-fixture.mp4`);
-fs.writeFileSync(videoPath, Buffer.from([0, 0, 0, 20, 0x66, 0x74, 0x79, 0x70]));
+execFileSync(String(ffmpegStatic), ['-hide_banner','-loglevel','error','-f','lavfi','-i','color=c=black:s=64x64:d=1','-c:v','libx264','-pix_fmt','yuv420p','-y',videoPath]);
 
 const rows: Record<string, Array<Record<string, any>>> = {
   social_accounts: [{
     id: 'tiktok-account', tenantId: 'tenant-1', platform: 'tiktok',
-    providerAccountId: 'open-id', accessToken: 'token', status: 'connected',
+    providerAccountId: 'open-id', accessToken: 'token', status: 'connected', scope: 'user.info.basic video.publish',
   }],
   posts: [],
   tenant_platform_apps: [],
@@ -71,12 +73,12 @@ try {
     rows[collection].splice(index, 1);
     return true;
   }) as typeof store.delete;
-  axios.post = (async (url: string) => url.endsWith('/video/init/')
-    ? (initCalls += 1, { data: { data: { upload_url: 'https://upload.invalid/one', publish_id: 'publish-receipt-1' } } })
-    : { data: { data: {
-      status: providerStatus,
-      publicaly_available_post_id: providerStatus === 'PUBLISH_COMPLETE' ? ['public-post-1'] : [],
-    } } }) as typeof axios.post;
+  axios.get = (async () => ({ data: { data: { user: { open_id: 'open-id', display_name: 'Controlled' } }, error: { code: 'ok' } } })) as typeof axios.get;
+  axios.post = (async (url: string) => {
+    if (url.endsWith('/creator_info/query/')) return { data: { data: {creator_username:'controlled',creator_nickname:'Controlled',privacy_level_options:['PUBLIC_TO_EVERYONE'],comment_disabled:true,duet_disabled:true,stitch_disabled:true,max_video_post_duration_sec:60}, error:{code:'ok'} } };
+    if (url.endsWith('/video/init/')) return (initCalls++, {data:{data:{upload_url:'https://open-upload.tiktokapis.com/one',publish_id:'publish-receipt-1'},error:{code:'ok'}}});
+    return {data:{data:{status:providerStatus,publicaly_available_post_id:providerStatus==='PUBLISH_COMPLETE'?['public-post-1']:[]},error:{code:'ok'}}};
+  }) as typeof axios.post;
   axios.put = (async (_url: string, body: AsyncIterable<unknown>) => {
     uploadEntered();
     await uploadGate;
@@ -92,6 +94,7 @@ try {
     videoPath,
     title: 'Async TikTok fixture',
     privacyStatus: 'public',
+    tiktokPostOptions: {privacyLevel:'PUBLIC_TO_EVERYONE',allowComment:false,allowDuet:false,allowStitch:false,commercial:{ownBrand:false,brandedContent:false},isAigc:false,musicUsageConfirmed:true,userConsent:true},
     contentId: 'content-1',
     trackWaLink: false,
     sourceKind: 'manual_upload',
@@ -112,6 +115,23 @@ try {
   assert.equal((accepted.tracking.stats as any).status, 'provider_processing');
   assert.equal((accepted.tracking.stats as any).publishResults['tiktok-account'].providerReceiptId, 'publish-receipt-1');
   assert.equal(rows.posts[0]?.platform_post_id, '', 'provider init must not finalize local tracking');
+  const originalAttemptId = String(rows.posts[0]?.stats?.publishResults?.['tiktok-account']?.attemptId);
+  assert.equal(await readTikTokCanonicalAttemptReceipt({tenantId:'tenant-1',accountId:'tiktok-account',attemptId:originalAttemptId}), 'publish-receipt-1');
+  assert.equal(await readTikTokCanonicalAttemptReceipt({tenantId:'tenant-other',accountId:'tiktok-account',attemptId:originalAttemptId}), null);
+  assert.equal(await readTikTokCanonicalAttemptReceipt({tenantId:'tenant-1',accountId:'tiktok-account',attemptId:'different-attempt'}), null);
+  rows.social_accounts[0]!.accessToken = 'changed-token';
+  assert.equal(await readTikTokCanonicalAttemptReceipt({tenantId:'tenant-1',accountId:'tiktok-account',attemptId:originalAttemptId}), null);
+  rows.social_accounts[0]!.accessToken = 'token';
+  const canonicalSnapshot = structuredClone(rows.posts[0]!);
+  rows.posts.push({...structuredClone(canonicalSnapshot),id:'duplicate-canonical'});
+  assert.equal(await readTikTokCanonicalAttemptReceipt({tenantId:'tenant-1',accountId:'tiktok-account',attemptId:originalAttemptId}), null);
+  rows.posts.pop();
+  const canonicalAttempt = rows.posts[0]?.stats?.publishResults?.['tiktok-account'];
+  const savedReceipt = canonicalAttempt.providerReceiptId;
+  delete canonicalAttempt.providerReceiptId;
+  assert.equal(await readTikTokCanonicalAttemptReceipt({tenantId:'tenant-1',accountId:'tiktok-account',attemptId:originalAttemptId}), null);
+  canonicalAttempt.providerReceiptId = savedReceipt;
+
 
   const acceptedHttp = socialUploadHttpResponse(accepted);
   assert.equal(acceptedHttp.statusCode, 202, 'provider acceptance is an asynchronous HTTP result, not created/published');

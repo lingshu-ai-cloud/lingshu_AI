@@ -1,0 +1,97 @@
+{
+  "schemaVersion": 1,
+  "recordedAtUtc": "2026-10-10T16:38:59.825251+00:00",
+  "collectedAtUtc": null,
+  "collectionTimeNote": "Exact timestamps of earlier two live GET requests were not captured. recordedAtUtc is evidence serialization time only.",
+  "configurationPresent": {
+    "HEYGEN_API_KEY": true,
+    "HEYGEN_GENERATION_ENABLED": true,
+    "STUDIO_PAID_BUDGET_CNY": false,
+    "STUDIO_PAID_OPENING_USED_CNY": false,
+    "STUDIO_HEYGEN_RESERVE_CNY": false,
+    "HEYGEN_ESTIMATED_CNY_PER_SECOND": false
+  },
+  "liveRequests": [
+    {
+      "method": "GET",
+      "route": "/v3/users/me",
+      "httpStatus": 200,
+      "safeData": {
+        "billing_type": "wallet",
+        "currency": "usd",
+        "remaining_balance": 25.85,
+        "auto_reload_enabled": false
+      }
+    },
+    {
+      "method": "GET",
+      "route": "/v3/avatars/looks/fb24c5d371714724bcd105ec2c18e8d4",
+      "httpStatus": 200,
+      "safeData": {
+        "id": "fb24c5d371714724bcd105ec2c18e8d4",
+        "status": "completed",
+        "avatar_type": "photo_avatar",
+        "supported_api_engines": [
+          "avatar_v",
+          "avatar_iv",
+          "avatar_iii"
+        ]
+      }
+    }
+  ],
+  "priceSource": {
+    "url": "https://help.heygen.com/en/articles/10060327-heygen-api-pricing-explained",
+    "avatarIvPhotoUsdPerMinute": 2.31,
+    "speechStarfishUsdPerMinute": 0.12,
+    "metering": "actual seconds generated",
+    "currentOfficialPage": true,
+    "accountSpecificQuote": false
+  },
+  "engineSource": {
+    "url": "https://developers.heygen.com/reference/create-video",
+    "defaultEngine": "avatar_iv",
+    "sourceCodeOmitsExplicitEngine": true
+  },
+  "authorization": {
+    "id": "presenter-2e0e18ac9a69c4eec935886e",
+    "name": "Zihan",
+    "authorized": true,
+    "avatarId": "fb24c5d371714724bcd105ec2c18e8d4",
+    "voiceId": "bc1ff447710f455586b15507bf49c062",
+    "rightsEvidence": {
+      "authorizationRef": "document://studio_presenter_assets/catalog/fb24c5d371714724bcd105ec2c18e8d4",
+      "consentRef": "consent://heygen/e44a4228bd9649f5bdbe18ee5253d5ed",
+      "grantedAt": "2026-10-09T07:40:02.217Z",
+      "subjectAdultConfirmed": true,
+      "permittedProviders": [
+        "heygen"
+      ],
+      "permittedUses": [
+        "digital_presenter",
+        "voice_synthesis"
+      ]
+    }
+  },
+  "conditionalEstimate": {
+    "durationSeconds": [
+      9,
+      12
+    ],
+    "assumedBudgetCnyPerUsd": 8,
+    "contingencyMultiplier": 1.2,
+    "videoOnlyCny": [
+      3.3264,
+      4.4352
+    ],
+    "withSeparateTtsCnyUpper": 4.6656,
+    "hardSpendCap": false
+  },
+  "risks": [
+    "Script-estimated duration is not enforceable maximum duration",
+    "No max_duration or per-job monetary cap found in inspected avatar request schema or current client",
+    "Supplier actual billing rate and TTS inclusion not verified with account-specific quote",
+    "Invoice and payment FX may differ",
+    "Local reservation does not impose supplier spending cap"
+  ],
+  "paidActionsPerformed": false
+}

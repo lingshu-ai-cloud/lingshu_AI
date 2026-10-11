@@ -263,9 +263,12 @@ export function existingAssetSupplyAdapters(): SocialAssetSupplyProviderAdapter[
     adapterId: 'existing_customer_asset.v1',
     sourceStrategies: ['customer_real_asset', 'customer_product_image_animation'],
     async execute(context) {
-      const candidates = context.availableAssets.filter(candidate => (
+      let candidates = context.availableAssets.filter(candidate => (
         context.shot.sourceRefs.includes(candidate.sourceId) || context.shot.sourceRefs.includes(candidate.id)
       ));
+      if (!candidates.length && context.shot.sourceStrategy === 'customer_product_image_animation') {
+        candidates = context.availableAssets.filter(candidate => candidate.type === 'image');
+      }
       const selected = context.shot.selectedMaterialSegment;
       const matched = selected
         ? candidates.find(candidate => selected.sourceRef === candidate.sourceId || selected.sourceRef === candidate.id)
@@ -283,6 +286,60 @@ export function existingAssetSupplyAdapters(): SocialAssetSupplyProviderAdapter[
         segments: selectedSegments,
         ...(selectedAnalysis ? { scriptAnalysis: selectedAnalysis } : {}),
       } : matched;
+      if (context.shot.sourceStrategy === 'customer_product_image_animation' && asset.type === 'image') {
+        const referenceTiming = context.baselineScene.referenceStructure?.sourceTiming;
+        const requestedDuration = Math.max(1.2, Math.min(12,
+          Number(referenceTiming?.endSeconds || 0) - Number(referenceTiming?.startSeconds || 0)
+            || Number(asset.duration || 0)
+            || 2.8));
+        const sceneKey = socialRequestHash({
+          taskId: context.taskId,
+          sceneId: context.baselineScene.sceneId,
+          sourceId: asset.sourceId,
+          contentHash: asset.contentHash ?? null,
+          requestedDuration,
+        }).slice(0, 20);
+        const localPath = path.join(context.outputDirectory, `product-image-motion-${sceneKey}.mp4`);
+        const sourcePath = asset.localPath || asset.url;
+        const rendered = await runVisualFfmpeg([
+          '-y', '-loop', '1', '-i', sourcePath,
+          '-t', requestedDuration.toFixed(3), '-r', '30',
+          '-vf', "scale=720:1280:force_original_aspect_ratio=decrease,pad=720:1280:(ow-iw)/2:(oh-ih)/2:color=white,zoompan=z='min(zoom+0.0008,1.08)':d=1:s=720x1280:fps=30,format=yuv420p",
+          '-an', '-c:v', 'libx264', '-pix_fmt', 'yuv420p', '-movflags', '+faststart',
+          localPath,
+        ], false, { timeoutMs: 120_000 });
+        if (!rendered.ok || !existsSync(localPath) || statSync(localPath).size <= 0) {
+          throw new Error(`customer_product_image_animation_failed:${context.baselineScene.sceneId}`);
+        }
+        const contentHash = createHash('sha256').update(await fsp.readFile(localPath)).digest('hex');
+        const animatedAsset: SocialProductionAsset = {
+          ...asset,
+          id: `${asset.id}:motion:${sceneKey}`,
+          name: `${asset.name} · 基础产品动效`,
+          type: 'video',
+          sourceId: `${asset.sourceId}:motion:${context.baselineScene.sceneId}`,
+          url: localPath,
+          localPath,
+          contentHash,
+          duration: requestedDuration,
+          visualObservations: [
+            ...asset.visualObservations,
+            `由已授权产品图生成的 ${requestedDuration.toFixed(2)} 秒受控基础运镜`,
+          ],
+          segments: [],
+          scriptAnalysis: undefined,
+        };
+        return {
+          asset: animatedAsset,
+          sourceStrategy: context.shot.sourceStrategy,
+          providerId: this.adapterId,
+          sourceRef: asset.sourceId,
+          synthetic: true,
+          representation: 'non_evidentiary_visual',
+          authorizationRef: 'material_library_default',
+          disclosure: '由客户已授权产品图生成的基础运镜',
+        };
+      }
       const customerEvidence = context.shot.truthBoundary.customerEvidenceRefs.includes(asset.sourceId)
         || context.shot.truthBoundary.customerEvidenceRefs.includes(asset.id);
       return {
@@ -350,16 +407,28 @@ export function existingAssetSupplyAdapters(): SocialAssetSupplyProviderAdapter[
         <text x="94" y="825" fill="#60736e" font-size="23" font-family="Arial, PingFang SC, sans-serif">不作为客户工厂、案例或产品效果证据</text>
       </svg>`;
       await sharp(Buffer.from(svg)).png().toFile(localPath);
-      const contentHash = createHash('sha256').update(await fsp.readFile(localPath)).digest('hex');
+      const referenceTiming = context.baselineScene.referenceStructure?.sourceTiming;
+      const duration = Math.max(1.2, Math.min(12,
+        Number(referenceTiming?.endSeconds || 0) - Number(referenceTiming?.startSeconds || 0) || 2.8));
+      const videoPath = localPath.replace(/\.png$/i, '.mp4');
+      const rendered = await runVisualFfmpeg([
+        '-y', '-loop', '1', '-i', localPath, '-t', duration.toFixed(3), '-r', '30',
+        '-vf', "zoompan=z='min(zoom+0.0006,1.06)':d=1:s=720x1280:fps=30,format=yuv420p",
+        '-an', '-c:v', 'libx264', '-pix_fmt', 'yuv420p', '-movflags', '+faststart', videoPath,
+      ], false, { timeoutMs: 120_000 });
+      if (!rendered.ok || !existsSync(videoPath) || statSync(videoPath).size <= 0) {
+        throw new Error(`system_motion_graphic_render_failed:${context.baselineScene.sceneId}`);
+      }
+      const contentHash = createHash('sha256').update(await fsp.readFile(videoPath)).digest('hex');
       const asset: ProductionAsset = {
         id: `asset-supply-${context.taskId}-${context.shot.shotId}`,
         name: `${title} · ${disclosure}`,
-        type: 'image',
+        type: 'video',
         sourceId: `asset_supply_${context.shot.shotId}`,
-        url: localPath,
-        localPath,
+        url: videoPath,
+        localPath: videoPath,
         contentHash,
-        duration: 2.8,
+        duration,
         visualObservations: [
           `${context.baselineScene.shotFunction} ${context.baselineScene.subject} ${context.baselineScene.action}`,
           disclosure,
@@ -489,6 +558,11 @@ export async function analyzeProductionAssets(input: {
           assetName: asset.name,
           reason: '视觉分析服务不可用，且素材没有与当前任务产品的明确关联',
         });
+        continue;
+      }
+      if (/素材逐镜分析未达到可匹配标准/.test(rawReason)) {
+        failures.push({ assetId: asset.id, assetName: asset.name,
+          reason: `历史逐镜时间线质量不合格，已隔离该素材：${rawReason.slice(0, 240)}` });
         continue;
       }
       if (!rawReason.startsWith('production_input_required:')) throw error;

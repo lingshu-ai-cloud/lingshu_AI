@@ -1,3 +1,4 @@
+import {createMessengerCapabilityScope} from '../messenger/capabilityAuthority.js';
 import assert from 'node:assert/strict';
 import { resolveCustomerMessagingAuthorization } from './customerMessagingPolicy.js';
 
@@ -46,7 +47,7 @@ const { resolveTenantWhatsAppConfig } = await import('../whatsapp/send.js');
 const now = new Date('2026-10-07T00:00:00Z');
 const config = { id: 'config', tenant_id: base.tenantId, status: 'active', config_version: 3, config: { enabledWorkflows: ['batch_followup'], allowRealCustomerMessages: true } };
 const wa = { id: 'meta', tenant_id: base.tenantId, platform: 'meta' as const, status: 'active' as const, phone_number_id: 'phone-id', access_token: 'sealed-valid', token_expires_at: '2026-11-01T00:00:00Z' };
-const messenger = { id: 'page', tenantId: base.tenantId, platform: 'facebook', status: 'connected', messengerSubscribed: true, providerAccountId: 'page-id', accessToken: 'sealed-valid' };
+const messenger = { id: 'page', tenantId: base.tenantId, platform: 'facebook', status: 'connected', messengerSubscribed: true, providerAccountId: 'page-id', accessToken: 'sealed-valid', scope: createMessengerCapabilityScope({tenantId:base.tenantId,accountId:'page',pageId:'page-id',appId:'controlled-app',accessToken:'test-token',grantedScopes:['pages_messaging','pages_manage_metadata']}) };
 const instagram = { id: 'ig', tenantId: base.tenantId, platform: 'instagram', status: 'connected', oauthProvider: 'instagram_login', providerAccountId: 'ig-id', accessToken: 'sealed-valid', scope: 'instagram_business_manage_messages', instagramWebhookSubscribed: true };
 function fixtures(meta: Record<string, unknown>[], pages: Record<string, unknown>[], consent = true) {
   return {

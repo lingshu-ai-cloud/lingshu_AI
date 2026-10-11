@@ -7,9 +7,9 @@
   ],
   "window": {
     "navigationBarTitleText": "灵枢工作",
-    "navigationBarBackgroundColor": "#F6F8F5",
+    "navigationBarBackgroundColor": "#FFFFFF",
     "navigationBarTextStyle": "black",
-    "backgroundColor": "#f5f8f5"
+    "backgroundColor": "#FFFFFF"
   },
   "permission": {
     "scope.record": {

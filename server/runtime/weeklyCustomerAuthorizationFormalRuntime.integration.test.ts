@@ -1,0 +1,42 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import express from 'express';
+import type {WeeklyExecutionTask} from '../../shared/contracts/socialProgram.js';
+import {nativeDispatchFixture} from '../digitalEmployees/weeklyNativeFollowupDispatch.fixture.js';
+import {resolveCustomerMessagingAuthorization} from '../digitalEmployees/customerMessagingPolicy.js';
+import {encryptSecret} from '../lib/tenantPlatformApps.js';
+import {runSocialWeeklyExecutionScan} from './socialWeeklyExecutionRuntime.js';
+import {createSocialWeeklyCustomerChannelAdapter} from './socialWeeklyCustomerChannelAdapter.js';
+import {createSocialWeeklySupplementRequestsRouter} from '../routes/socialWeeklySupplementRequests.js';
+const now=new Date('2026-10-06T12:00:00Z');
+const CUSTOMER_CHANNEL_AUTHORIZATION_EXCEPTIONS='social_weekly_supplement_events';
+async function fixture(channel:'whatsapp'|'messenger'|'instagram') {
+ const f=await nativeDispatchFixture(channel==='instagram'?'instagram':'messenger');
+ if(channel==='whatsapp'){f.data.social_weekly_customer_channel_selections=[];f.data.tenant_platform_apps=[{id:'wa-app',tenant_id:'tenant',platform:'meta',phone_number_id:'wa-phone'}];}
+ else Object.assign(f.data.social_accounts![0]!,{messengerSubscribed:true,oauthProvider:'instagram_login',scope:'instagram_business_manage_messages',instagramWebhookSubscribed:true,expiresAt:'2026-10-10T00:00:00Z'});
+ const t:WeeklyExecutionTask={tenantId:'tenant',programId:'program',packageId:'week',packageVersion:1,taskId:`readiness-${channel}`,workflowKind:'engagement',scope:'publication',subjectId:'pub',publicationTaskId:'pub',accountId:'account',dependsOnTaskIds:[],upstreamVersionRefs:[],inputSnapshot:{customerChannel:channel},idempotencyKey:`readiness-${channel}`,budget:{category:'none',limitCny:null},schedule:{stepKind:'customer_channel_readiness',responsibleActor:'customer_agent',estimatedDurationMinutes:5,estimatedStartAt:'2026-10-07T12:00:00Z',estimatedFinishAt:'2026-10-07T12:05:00Z',actualStartedAt:null,actualFinishedAt:null},status:'blocked',ownBlockingReasons:['tenant_real_customer_messages_not_authorized'],inheritedBlockingTaskIds:[],attempt:0,maxAttempts:3,nextAttemptAt:null,lease:null,resultRefs:[],lastError:{code:'tenant_real_customer_messages_not_authorized',message:'missing consent',retryable:false,occurredAt:now.toISOString()},recoveredFromDeadLetterAt:null,cancelReason:null,createdAt:now.toISOString(),updatedAt:now.toISOString()};
+ f.data.social_weekly_execution_tasks=[{id:t.taskId,tenant_id:'tenant',program_id:'program',package_id:'week',package_version:1,task_id:t.taskId,status:'blocked',payload:t}];
+ const pkg=f.data.social_weekly_operating_packages![0]!;Object.assign(pkg,{version:1,payload:{...(pkg.payload as object),programId:'program',packageId:'week',version:1,status:'active'}});
+ let consent=false;
+ const ports={now:()=>now,readAuthorization:async()=>resolveCustomerMessagingAuthorization({tenantId:'tenant',channel,configActive:true,customerAgentEnabled:true,allowRealCustomerMessages:consent,providerReady:true,backgroundWorkerEnabled:true}),openSocialToken:()=> 'controlled-token',readWhatsApp:async()=>({tenantId:'tenant',accountId:'wa-app',nativeAccountId:'wa-phone',wabaId:'waba',accountHash:'verified-wa'})};
+ return {...f,t,ports,allow:()=>{consent=true;}};
+}
+
+for(const channel of ['whatsapp','messenger','instagram']as const)test(`${channel} formal runtime blocks real readiness adapter, records exception, restores original task; combined authenticated HTTP reads without writes`,async t=>{
+ const worker=process.env.FOLLOWUP_WORKER_ENABLED;process.env.FOLLOWUP_WORKER_ENABLED='true';const f=await fixture(channel);
+ try{
+ f.t.status='queued';f.t.ownBlockingReasons=[];f.t.lastError=null;f.t.schedule.estimatedStartAt=now.toISOString();f.t.schedule.latestStartAt='2026-10-07T12:00:00Z';f.data.social_weekly_execution_tasks![0]!.status='queued';
+ f.data.digital_employee_configs=[{id:'config',tenant_id:'tenant',status:'active',config_version:1,config:{enabledWorkflows:['batch_followup'],allowRealCustomerMessages:false}}];
+ if(channel==='whatsapp')Object.assign(f.data.tenant_platform_apps![0]!,{app_id:'app',waba_id:'waba',status:'active',app_secret:encryptSecret('local-app-secret'),access_token:encryptSecret('local-token'),token_expires_at:'2099-01-01T00:00:00Z'});
+ else Object.assign(f.data.social_accounts![0]!,{accessToken:encryptSecret('local-token'),expiresAt:'2099-01-01T00:00:00Z'});
+ const pkg=f.data.social_weekly_operating_packages![0]!.payload as Record<string,unknown>;pkg.socialContentPackage={publicationTasks:[]};
+ f.data.social_weekly_agent_planning=[{id:'planning',tenant_id:'tenant',program_id:'program',package_id:'week',package_version:1,planning_version:4,payload:{planningId:'planning',version:4,programId:'program',packageId:'week',packageVersion:1,status:'dispatched',skeleton:{slots:[{slotId:'slot',motherContentId:'mother',publicationTaskIds:['pub'],accountIds:['account'],platforms:['facebook']}]},directorAnalyses:[],detailedSchedule:{ref:{type:'detailed_schedule',id:'schedule',version:1},items:[]},userConfirmation:{confirmedBy:'owner',confirmedAt:now.toISOString()},dispatch:{packageVersion:1,detailedScheduleRef:{id:'schedule',version:1},scheduleItems:[]}}}];
+ const adapter=createSocialWeeklyCustomerChannelAdapter(f.store,{now:()=>now});let executions=0;const originalExecute=adapter.execute;adapter.execute=async task=>{executions++;return originalExecute(task);};
+ const first=await runSocialWeeklyExecutionScan({dataStore:f.store,now,adapters:{customer_channel_readiness:adapter},maxTasksPerTenant:1});assert.equal(executions,1,JSON.stringify(first));assert.equal(first.blocked,1,JSON.stringify(first));const pending=f.data[CUSTOMER_CHANNEL_AUTHORIZATION_EXCEPTIONS]!.filter(row=>row.version===2);assert.equal(pending.length,1);assert.equal((pending[0]!.payload as {type:string}).type,'customer_channel_authorization_exception');
+ (f.data.digital_employee_configs[0]!.config as Record<string,unknown>).allowRealCustomerMessages=true;
+ const second=await runSocialWeeklyExecutionScan({dataStore:f.store,now,adapters:{customer_channel_readiness:adapter},maxTasksPerTenant:0});assert.equal(second.customerAuthorizationRecovery.resolved,1,JSON.stringify(second));const restored=f.data.social_weekly_execution_tasks![0]!.payload as WeeklyExecutionTask;assert.equal(restored.taskId,f.t.taskId);assert.equal(restored.status,'queued');assert.equal(restored.ownBlockingReasons.length,0);assert.equal(executions,1,'recovery is a formal scan-start read, no new provider send');assert.equal(f.sends(),0);
+ let tenant='tenant',user='owner';const app=express();app.use((_req,res,next)=>{res.locals.tenantId=tenant;res.locals.userId=user;next();});app.use('/:programId/:packageId',createSocialWeeklySupplementRequestsRouter(f.store));app.use((error:Error,_req:express.Request,res:express.Response,_next:express.NextFunction)=>res.status(409).json({error:error.message}));const server=app.listen(0,'127.0.0.1');await new Promise<void>(resolve=>server.once('listening',resolve));t.after(()=>new Promise<void>(resolve=>server.close(()=>resolve())));const address=server.address();assert.ok(address&&typeof address==='object');const url=`http://127.0.0.1:${address.port}/program/week/scheduler-exceptions`;
+ let writes=0;const create=f.store.create,update=f.store.update,del=f.store.delete;f.store.create=async()=>{writes++;throw Error('GET_cannot_create');};f.store.update=async()=>{writes++;throw Error('GET_cannot_update');};f.store.delete=async()=>{writes++;throw Error('GET_cannot_delete');};
+ try{const response=await fetch(`${url}?version=1`),body=await response.json();assert.equal(response.status,200,JSON.stringify(body));const own=body.items.find((item:{type:string})=>item.type==='customer_channel_authorization_exception');assert.ok(own);assert.equal(own.consumerTaskId,f.t.taskId);assert.equal(own.status,'resolved');assert.equal((await fetch(`${url}?version=2`)).status,409);assert.equal((await fetch(url.replace('/program/','/other-program/')+'?version=1')).status,409);tenant='foreign';assert.equal((await fetch(`${url}?version=1`)).status,403);tenant='tenant';user='missing-user';assert.equal((await fetch(`${url}?version=1`)).status,403);assert.equal(writes,0);}finally{f.store.create=create;f.store.update=update;f.store.delete=del;}
+ }finally{f.restore();if(worker===undefined)delete process.env.FOLLOWUP_WORKER_ENABLED;else process.env.FOLLOWUP_WORKER_ENABLED=worker;}
+});

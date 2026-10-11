@@ -30,8 +30,6 @@ function mount(props: Parameters<typeof Calendar>[0]) {
         }];
       },
       useEffect() {},
-      useRef(value: unknown) { return {current:value}; },
-      useMemo(factory: () => unknown) { return factory(); },
     };
     try { tree = Calendar(props); } finally { internals.H = previous; }
   };
@@ -50,6 +48,7 @@ const identity = {tenantId:'tenant', programId:'program', packageId:'package', p
 const cases: Array<{name:string; patch:Partial<AgentCalendarTask>; callback:string; demo?:boolean}> = [
   {name:'production',patch:{productionTaskId:'content-object'},callback:'onOpenProduction'},
   {name:'account binding',patch:{accountBindingTarget:{platform:'instagram',accountId:null,consumerIds:['consumer']}},callback:'onBindAccount'},
+  {name:'enterprise facts',patch:{enterpriseFactExceptionId:'exception'},callback:'onOpenEnterpriseFacts'},
   {name:'customer execution',patch:{customerExecutionTarget:{} as AgentCalendarTask['customerExecutionTarget']},callback:'onOpenCustomerExecution'},
   {name:'supplement',patch:{supplementTarget:{} as AgentCalendarTask['supplementTarget']},callback:'onOpenSupplement'},
   {name:'template',patch:{templateTarget:{...identity,stepKind:'template_extraction'}},callback:'onOpenTemplate'},
@@ -61,24 +60,19 @@ for (const entry of cases) test(`${entry.name} dismisses details before opening 
   const task = {...base,...entry.patch};
   let calls = 0;
   let ui: ReturnType<typeof mount>;
-  let closed = false;
   const props = {startsAt:'2026-10-05',tasks:[task],scopeKey:`navigation-${entry.name}`,demo:entry.demo,
     [entry.callback]: (opened: AgentCalendarTask) => {
       calls++;
       assert.equal(opened.id,task.id);
-      assert.equal(closed,true,'destination must see the modal already dismissed');
+      assert.equal(ui.nodes().some(node => node.props.role === 'dialog'),false,'destination must see the modal already dismissed');
     }};
   ui = mount(props);
-  const calendar = ui.nodes().find(node => typeof node.props.renderDetails === 'function');
-  assert(calendar, 'calendar provides actual task detail actions');
-  const renderDetails = calendar.props.renderDetails as (event: unknown, close: () => void) => ReactNode;
-  const details = renderDetails({data:task}, () => {closed=true;});
-  const action = elements(details).find(node => node.type !== 'span' && typeof node.props.onClick === 'function');
-  assert(action, 'task detail exposes its destination action');
-  (action.props.onClick as () => void)();
-  assert.equal(closed,true,'navigation dismisses the calendar detail');
+  ui.click(node => node.type === 'button' && node.key === task.id);
+  assert(ui.nodes().some(node => node.props.role === 'dialog'));
+  ui.click(node => node.type === 'button' && String(node.props.className).includes('bg-emerald-800'));
   assert.equal(calls,1);
   const returned = mount(props);
   assert.equal(returned.nodes().some(node => node.props.role === 'dialog'),false);
-
+  const originalCard = returned.nodes().find(node => node.props['data-agent-calendar-card-id'] === task.id);
+  assert.equal(originalCard?.props['aria-current'],'true','return retains and highlights the originating card ID');
 });

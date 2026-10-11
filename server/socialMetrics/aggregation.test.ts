@@ -19,6 +19,10 @@ assert.equal(trend.previous, 100);
 assert.equal(trend.changeRate, 1);
 assert.equal(buildMetricTrend(snapshots.slice(-1), 'followers', 7, new Date('2026-08-15T12:00:00Z')).reason, 'no_data');
 assert.deepEqual(normalizeMetricValues({ views: '12', impossible: 99, likes: -1 }), { views: 12 });
+assert.deepEqual(normalizeMetricValues({ views: null, likes: '', comments: false, shares: undefined, reach: '   ', saves: [] }), {}, 'missing or nonnumeric provider values must remain unavailable');
+assert.deepEqual(normalizeMetricValues({ views: 0, likes: '0', comments: ' 0 ', shares: 3 }), { views: 0, likes: 0, comments: 0, shares: 3 }, 'explicit provider zeroes are valid data');
+assert.deepEqual(normalizeMetricValues(JSON.stringify({ views: null, likes: 0, shares: 'not available' })), { likes: 0 });
+assert.equal(currentMetricTotal([{ platform: 'youtube', accountId: 'a', capturedAt: '2026-10-10T00:00:00Z', metrics: normalizeMetricValues({ views: null }) }], 'views'), null, 'missing metrics must not appear as reported totals');
 
 const mixedGranularity: MetricSnapshot[] = [
   { platform: 'tiktok', accountId: 'tk', contentId: 'video', capturedAt: '2026-08-15T08:00:00Z', metrics: { views: 120 } },

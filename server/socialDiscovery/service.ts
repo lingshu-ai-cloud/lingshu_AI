@@ -1,3 +1,4 @@
+import {socialRequestHash,socialObject,socialJson} from '../starter198/socialContentValidation.js';
 import { store } from '../storage/index.js';
 import { crawlVideosForTenant, inferPlatformFromUrl } from '../routes/videos.js';
 import { dueDiscoveryModes, nextDiscoveryRunAt, validateDiscoveryBrief } from './domain.js';
@@ -94,6 +95,7 @@ export async function executeApprovedDiscoveryRun(input: {
   tenantId: string;
   triggerType: 'scheduled' | 'manual' | 'production_gap';
   requestedModes?: SocialDiscoveryMode[];
+  originalRun?:{key:string;scopeHash:string};
   expectedScopeId?: string;
   expectedScopeVersion?: number;
   productionGapContext?: {
@@ -115,6 +117,14 @@ export async function executeApprovedDiscoveryRun(input: {
     throw new Error('discovery_scope_not_approved');
   }
 
+  const originalId=input.originalRun?`weekly_discovery_${socialRequestHash({tenantId:input.tenantId,key:input.originalRun.key})}`:null;
+  const originalHash=input.originalRun?socialRequestHash({tenantId:input.tenantId,key:input.originalRun.key,scopeId:input.expectedScopeId,scopeVersion:input.expectedScopeVersion,scopeHash:input.originalRun.scopeHash,modes:input.requestedModes,triggerType:input.triggerType,productionGapContext:input.productionGapContext}):null;
+  if(input.originalRun){
+    if(!input.originalRun.key||!input.expectedScopeId||!input.expectedScopeVersion||socialRequestHash(scope.payload)!==input.originalRun.scopeHash)throw Error('weekly_discovery_frozen_scope_changed');
+    const prior=await dependencies.dataStore.list<SocialInspirationCollectionRun & {tenant_id:string}>(DISCOVERY_RUN_COLLECTION,{where:{tenant_id:input.tenantId,runId:originalId!},perPage:2});
+    if(prior.totalItems>1||prior.items.length!==prior.totalItems)throw Error('weekly_discovery_original_not_unique');
+    if(prior.items[0]){const run=prior.items[0],marker=socialObject(socialObject(socialJson(run.scopeSnapshot))?.weeklyProducer);if(run.tenant_id!==input.tenantId||run.discoveryScopeId!==input.expectedScopeId||run.discoveryScopeVersion!==input.expectedScopeVersion||marker?.inputHash!==originalHash)throw Error('weekly_discovery_original_scope_changed');return {run};}
+  }
   const brief = structuredClone(scope.payload.discoveryBrief);
   // The account library is the user's current source of truth. A saved scope
   // snapshot must not keep collecting an account after it is removed there.
@@ -122,6 +132,7 @@ export async function executeApprovedDiscoveryRun(input: {
     where: { tenantId: input.tenantId }, page: 1, perPage: 200,
   });
   const accountNameByUrl = new Map(savedAccounts.items.map(account => [account.accountUrl, account.accountName || account.accountUrl]));
+  if(input.originalRun&&input.requestedModes?.includes('account')&&socialRequestHash([...brief.competitorAccounts].sort())!==socialRequestHash([...accountNameByUrl.keys()].sort()))throw Error('weekly_discovery_account_sources_changed');
   brief.competitorAccounts = [...accountNameByUrl.keys()];
   if (brief.modePolicies?.account) brief.modePolicies.account.sourceRefs = brief.competitorAccounts;
   if (input.productionGapContext) {
@@ -152,16 +163,17 @@ export async function executeApprovedDiscoveryRun(input: {
   if (issues.length) throw new Error(`discovery_run_scope_invalid: ${issues.join('; ')}`);
 
   const startedAt = new Date().toISOString();
-  const runId = `discovery_run_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
+  let completeEmptyVerified=true;
+  const runId = originalId??`discovery_run_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
   const queryBasis = Object.fromEntries(requestedModes.map(mode => [mode, mode === 'account' ? brief.competitorAccounts : modeRefs(scope, mode)])) as Partial<Record<SocialDiscoveryMode, string[]>>;
   const initial: SocialInspirationCollectionRun & { tenant_id: string } = {
     tenant_id: input.tenantId, runId, planId: brief.discoveryBriefId, keywordSetId: brief.keywordSetId, keywordSetVersion: brief.keywordSetVersion,
     discoveryScopeId: scope.id, discoveryScopeVersion: scope.version, status: 'running', triggerType: input.triggerType,
-    scopeSnapshot: brief, modeStats: {}, platformStats: {}, keywordTierStats: {}, evidenceOutcomes: {}, sourceRunRefs: [], queryBasis, market: scope.payload.market || brief.market, language: scope.payload.language || '',
+    scopeSnapshot: input.originalRun?({...brief,weeklyProducer:{inputHash:originalHash,key:input.originalRun.key}} as typeof brief):brief, modeStats: {}, platformStats: {}, keywordTierStats: {}, evidenceOutcomes: {}, sourceRunRefs: [], queryBasis, market: scope.payload.market || brief.market, language: scope.payload.language || '',
     stopReason: null, startedAt, finishedAt: null, error: null,
   };
-  const created = await dependencies.dataStore.create<SocialInspirationCollectionRun & { id: string }>(DISCOVERY_RUN_COLLECTION, { ...initial });
-  if (!created) throw new Error('discovery_run_storage_unavailable');
+  const created = await dependencies.dataStore.create<SocialInspirationCollectionRun & { id: string }>(DISCOVERY_RUN_COLLECTION, {...(input.originalRun?{id:socialRequestHash({tenantId:input.tenantId,key:input.originalRun.key}).slice(0,15)}:{}), ...initial });
+  if (!created){if(input.originalRun){const prior=await dependencies.dataStore.list<SocialInspirationCollectionRun>(DISCOVERY_RUN_COLLECTION,{where:{tenant_id:input.tenantId,runId:runId},perPage:2});if(prior.totalItems===1&&prior.items.length===1)return executeApprovedDiscoveryRun(input,dependencies);}throw new Error('discovery_run_storage_unavailable');}
 
   const modeStats: SocialInspirationCollectionRun['modeStats'] = {};
   const platformStats: NonNullable<SocialInspirationCollectionRun['platformStats']> = {};
@@ -226,6 +238,8 @@ export async function executeApprovedDiscoveryRun(input: {
           dateTo,
           discoveryContext: { runId, scopeId: scope.id, scopeVersion: scope.version, mode, queryRef: target.ref },
         });
+        if(input.originalRun&&(!Array.isArray(result.items)||!Array.isArray(result.candidateIds)||!Number.isSafeInteger(result.total)||result.total<0))throw Error('weekly_discovery_source_incomplete');
+        if(result.total!==0||result.items?.length!==0||result.candidateIds?.length!==0)completeEmptyVerified=false;
         stats.fetched += Number(result.total || 0);
         stats.deduplicated += Number(result.skippedExisting || 0);
         addStats(platformStats[target.platform]!, { fetched: Number(result.total || 0), deduplicated: Number(result.skippedExisting || 0) });
@@ -277,10 +291,10 @@ export async function executeApprovedDiscoveryRun(input: {
   const status = failed ? (accepted ? 'partial' as const : 'failed' as const) : accepted ? 'succeeded' as const : 'stopped' as const;
   const finishedAt = new Date().toISOString();
   const run: SocialInspirationCollectionRun = {
-    ...initial, status, modeStats, platformStats, keywordTierStats, evidenceOutcomes, sourceRunRefs,
+    ...initial, ...(input.originalRun?{scopeSnapshot:{...initial.scopeSnapshot,weeklyProducer:{inputHash:originalHash,key:input.originalRun.key,completeEmptyVerified:completeEmptyVerified&&failed===0&&Object.values(modeStats).every(s=>(s?.requested??0)>0)}} as typeof initial.scopeSnapshot}:{}), status, modeStats, platformStats, keywordTierStats, evidenceOutcomes, sourceRunRefs,
     stopReason: status === 'failed' ? 'source_failed' : status === 'stopped' ? 'no_valid_results' : 'completed', finishedAt, error,
   };
-  const saved = await dependencies.dataStore.update(DISCOVERY_RUN_COLLECTION, created.id, { status, modeStats, platformStats, keywordTierStats, evidenceOutcomes, sourceRunRefs, stopReason: run.stopReason, finishedAt, error });
+  const saved = await dependencies.dataStore.update(DISCOVERY_RUN_COLLECTION, created.id, { status, scopeSnapshot:run.scopeSnapshot, modeStats, platformStats, keywordTierStats, evidenceOutcomes, sourceRunRefs, stopReason: run.stopReason, finishedAt, error });
   if (!saved) throw new Error('discovery_run_storage_unavailable');
   return { run };
 }

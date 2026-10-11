@@ -1,0 +1,14 @@
+import {fixtureMetrics,fixtureObject} from './weeklyFiveMotherFixtureRecords.js';
+import test from 'node:test';import assert from 'node:assert/strict';
+import {prepareHCanonicalQueuedRuns} from './weeklyFiveMotherMultiAccount.fixture.js';
+import {admitContentExecutionJob,DurableContentExecutionWorker,controlContentExecutionJob,readContentExecutionJob} from '../contentExecution/durableQueue.js';
+import {runSocialContentAutoProduction} from '../starter198/socialContentProductionExecution.js';
+for(const percent of [40,20] as const)test(`H${percent} actual queued producer rejects owned metric drift before source or voice provider calls`,async t=>{
+ const setup=await prepareHCanonicalQueuedRuns(t,percent);const own=setup.bindings.find(binding=>binding.slot.referenceSource==='owned')!,target=setup.canonical.find(row=>row.taskId===own.record.task_id)!;
+ for(const row of setup.canonical){const job=await admitContentExecutionJob({dataStore:setup.f.store,tenantId:'t',userId:'owner',...row,taskType:'social_content_weekly'});if(row.taskId!==target.taskId)await controlContentExecutionJob({dataStore:setup.f.store,tenantId:'t',jobId:job.id,action:'pause'});}
+ const row=setup.f.tables.social_channel_metric_snapshots!.find(row=>row.snapshot_id===own.analysis.historicalPerformance!.snapshotRef.id)!;const metrics=fixtureMetrics(fixtureObject(row.snapshot).metrics);metrics.views++;
+ const originalArtifacts=structuredClone(setup.f.tables.starter_social_content_artifacts??[]);
+ let providers=0;const errors:unknown[]=[];
+ const worker=new DurableContentExecutionWorker({dataStore:setup.f.store,execute:job=>runSocialContentAutoProduction({repository:setup.repository,tenantId:job.tenantId,userId:job.userId,taskId:job.taskId,runId:job.runId,materialEvidencePorts:setup.ports,runtime:{loadProductionAssets:async()=>{providers++;throw Error('source provider must not run on drift');},synthesizeVoice:async()=>{providers++;throw Error('voice must not run on drift');}}}),onBlocked:async(_job,error)=>{errors.push(error);},onRetry:async(_job,error)=>{errors.push(error);}});
+ try{await worker.drain();for(let i=0;i<1000&&worker.isLocallyActive('t',target.taskId);i++)await new Promise(resolve=>setTimeout(resolve,10));assert.equal(worker.isLocallyActive('t',target.taskId),false);assert.equal(providers,0);assert.ok(errors.some(error=>(error as {code?:string}).code==='weekly_owned_reference_metrics_changed'),JSON.stringify(errors.map(error=>error instanceof Error?error.message:error)));assert.equal(setup.f.tables.starter_usage_ledger?.length??0,0);assert.deepEqual(setup.f.tables.starter_social_content_artifacts??[],originalArtifacts,'queued rejection cannot add, delete or rewrite historical artifacts');const job=await readContentExecutionJob(setup.f.store,'t',target.taskId,target.runId);assert.ok(job);assert.notEqual(job.status,'succeeded');assert.deepEqual(job.providerReceipts,[]);}finally{metrics.views--;worker.stop();}
+});

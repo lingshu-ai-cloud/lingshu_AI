@@ -1,3 +1,4 @@
+import { parseTikTokDirectPostOptions } from '../lib/tikTokDirectPostContract.js';
 import { createHash } from 'node:crypto';
 import fs from 'node:fs';
 import type { PostRecord } from './waLink.js';
@@ -26,6 +27,8 @@ export interface ExternalVideoApprovalSnapshot {
   scheduledAt: string;
   targetAccountIds: string[];
   trackWaLink: boolean;
+  tiktokPostOptions?: ReturnType<typeof parseTikTokDirectPostOptions>;
+  tiktokCreatorReceiptHash?: string;
 }
 
 export function externalVideoApprovalSnapshot(post: PostRecord): ExternalVideoApprovalSnapshot {
@@ -45,6 +48,7 @@ export function externalVideoApprovalSnapshot(post: PostRecord): ExternalVideoAp
     scheduledAt: text(post.published_at),
     targetAccountIds: Array.isArray(stats.targetAccountIds) ? stats.targetAccountIds.map(text).filter(Boolean) : [],
     trackWaLink: stats.trackWaLink === true,
+    ...(post.platform === 'tiktok' ? { tiktokPostOptions: parseTikTokDirectPostOptions(stats.tiktokPostOptions), tiktokCreatorReceiptHash: text(stats.tiktokCreatorReceiptHash) } : {}),
   };
 }
 
@@ -61,7 +65,9 @@ export async function externalVideoSha256(videoPath: string): Promise<string> {
 export function externalVideoApprovalValid(post: PostRecord): boolean {
   const stats = object(post.stats);
   if (stats.origin !== 'authorized_external_video') return true;
-  const snapshot = externalVideoApprovalSnapshot(post);
+  let snapshot: ExternalVideoApprovalSnapshot;
+  try { snapshot = externalVideoApprovalSnapshot(post); } catch { return false; }
+  if (post.platform === 'tiktok' && (!/^[a-f0-9]{64}$/.test(snapshot.tiktokCreatorReceiptHash || '') || snapshot.targetAccountIds.length !== 1)) return false;
   return stats.externalApprovalStatus === 'approved'
     && text(stats.externalApprovedContentHash) === externalVideoApprovalHash(snapshot)
     && snapshot.sourceFingerprint.length === 64

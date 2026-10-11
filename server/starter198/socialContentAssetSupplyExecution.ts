@@ -120,6 +120,11 @@ export function alignSocialAssetSupplyPlanToBaseline(input: {
   plan: SocialAssetSupplyPlan;
   baseline: StoredSocialScriptBaseline;
 }): SocialAssetSupplyPlan {
+  const baselineIds = input.baseline.scenes.map(scene => scene.sceneId);
+  const planIds = input.plan.shots.map(shot => shot.shotId);
+  const identityError = () => new Error(`asset_supply_scene_identity_missing_or_duplicate:baseline=${baselineIds.join(',')}:plan=${planIds.join(',')}`);
+  if(!baselineIds.length||new Set(baselineIds).size!==baselineIds.length||new Set(planIds).size!==planIds.length)throw identityError();
+  if(baselineIds.some(sceneId=>!sceneId||planIds.filter(shotId=>shotId===sceneId).length!==1))throw identityError();
   const confirmedFactRefs = [...new Set(input.plan.shots.flatMap(shot => shot.truthBoundary.confirmedFactRefs))];
   const productImageIds = [...new Set(input.plan.shots.flatMap(shot => (
     shot.productSceneReplication?.productIdentity.groups.flatMap(group => group.referenceImageIds) ?? []
@@ -175,7 +180,7 @@ export function alignSocialAssetSupplyPlanToBaseline(input: {
     // missing legacy rights metadata must not silently reroute a production.
     rightsConfirmationRequired: false,
     shots: input.baseline.scenes.map((scene, index) => {
-      const original = input.plan.shots.find(shot => shot.shotId === scene.sceneId) ?? input.plan.shots[index];
+      const original = input.plan.shots.find(shot => shot.shotId === scene.sceneId)!;
       return {
         shotId: scene.sceneId,
         function: shotFunction(scene, index, input.baseline.scenes.length),
@@ -192,8 +197,14 @@ export function alignSocialAssetSupplyPlanToBaseline(input: {
   const originalById = new Map(input.plan.shots.map(shot => [shot.shotId, shot]));
   return {
     ...aligned,
-    shots: aligned.shots.map((shot, index) => {
-      const original = originalById.get(shot.shotId) ?? input.plan.shots[index];
+    shots: aligned.shots.map(shot => {
+      const original = originalById.get(shot.shotId)!;
+      // The reviewed Content-Agent route is authoritative. A legacy
+      // digitalHumanPlan describes an available capability and must not turn a
+      // reviewed product/stock/local scene back into a paid presenter scene.
+      if (original && original.sourceStrategy !== 'authorized_digital_presenter' && original.digitalHumanPlan) {
+        return { ...shot, ...structuredClone(original), shotId: shot.shotId, function: shot.function };
+      }
       if (original?.referenceProductionRouting) return { ...shot, ...structuredClone(original), shotId: shot.shotId, function: shot.function };
       if (original?.selectedMaterialSegment) {
         return {
@@ -291,7 +302,7 @@ function strategyOrder(shot: SocialAssetSupplyShotPlan): SocialShotSourceStrateg
         throw new Error(`reference_presenter_account_identity_required:${shot.shotId}`);
       if (routing.identityLock?.targetPresenterAssetId && routing.identityLock.targetPresenterAssetId !== shot.digitalHumanPlan.accountPresenterLock.presenterAssetId)
         throw new Error(`reference_presenter_account_identity_conflict:${shot.shotId}`);
-      if (!shot.digitalHumanPlan.referenceRequired || !shot.digitalHumanPlan.referenceMaterialIds.length)
+      if (shot.digitalHumanPlan.referenceRequired && !shot.digitalHumanPlan.referenceMaterialIds.length)
         throw new Error(`reference_presenter_source_evidence_required:${shot.shotId}`);
       return ['authorized_digital_presenter'];
     }
@@ -352,8 +363,8 @@ export async function executeSocialAssetSupplyPlan(input: {
   const assets: SocialProductionAsset[] = [];
   const shots: SocialAssetSupplyShotExecution[] = [];
   if(input.baseline.accountPlaybookConstraints)assertSocialAccountProductionConstraints(input.baseline.accountPlaybookConstraints);
-  for (const [index, shot] of plan.shots.entries()) {
-    const scene = input.baseline.scenes[index];
+  for (const shot of plan.shots) {
+    const scene = input.baseline.scenes.find(scene=>scene.sceneId===shot.shotId);
     if (!scene) throw new Error(`asset_supply_baseline_scene_missing:${shot.shotId}`);
     const attempts: SocialAssetSupplyExecutionAttempt[] = [];
     let selected: SocialAssetSupplyAdapterResult | null = null;

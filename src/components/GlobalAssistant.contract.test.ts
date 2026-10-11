@@ -206,11 +206,8 @@ assert.match(sendSource, /strategyRequest \? '' : await loadLiveIntegrationFacts
 assert.match(sendSource, /userQuestion: visibleText[\s\S]{0,260}retainedUserInstructions/, '经营主对话必须把当前问题与有界历史约束交给服务端组装上下文');
 assert.match(sendSource, /requestToken === getToken\(\)/, '身份切换后旧请求的异步响应必须被丢弃');
 
-assert.doesNotMatch(
-  source,
-  /AssistantDecisionMemoryPanel|AssistantDecisionSaveButton|useAssistantDecisionMemory/,
-  '对话记忆由后台默认机制维护，灵小枢前端不得显示查看、保存或撤销入口',
-);
+assert.match(source, /<AssistantDecisionMemoryPanel memory=\{decisionMemory\}/, '统一主对话保留已确认的经营决策管理');
+assert.match(source, /<AssistantDecisionSaveButton memory=\{decisionMemory\} text=\{msg.content\}/, '保存用户原话必须显式确认');
 assert.match(conversationContextSource, /较早用户原话/, '历史用户约束必须保留原文且不得升级为已核验事实');
 
 const responseErrorSource = sourceSection('async function responseErrorMessage', '\n}\n\nfunction todoToneClass', '助手请求错误提示');

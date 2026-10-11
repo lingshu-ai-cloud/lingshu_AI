@@ -26,6 +26,23 @@ assert.equal(effects, 1, 'forged hints, missing binding and changed media never 
 console.log('managed social effect authority tests passed');
 
 sourceValid = true;
+const originalRead = dependencies.data.getById;
+for (const change of [
+  { status: 'pending', directorApproved: true, humanConfirmed: true },
+  { tenant_id: 'other-tenant' },
+  { run_id: 'other-run' },
+  { content_hash: 'new-version-hash' },
+]) {
+  dependencies.data.getById = async (collection: string) => {
+    const row = await originalRead(collection);
+    return collection === 'approval_requests' ? { ...row, ...change } : row;
+  };
+  await assert.rejects(() => withManagedSocialPublication(post, 'account', effect, dependencies), /持久授权/, 'director hints or changed tenant/run/version do not replace the frozen publishing approval');
+}
+dependencies.data.getById = originalRead;
+assert.equal(effects, 1, 'unapproved or mismatched content never reaches the provider');
+
+sourceValid = true;
 dependencies.accessResolver = createSocialContentAccessResolver({ loadSubscription: async () => ({ status: 'expired', plan: 'customer', expiresAt: '2020-01-01' }) });
 await assert.rejects(() => withManagedSocialPublication(post, 'account', effect, dependencies), /not_entitled/);
 let subscriptionReads = 0;

@@ -1,3 +1,7 @@
+import {readAuthorizedMessengerCustomers,messengerCustomerAccountIdentityHash} from './authorizedCustomerRead.js';
+import {getTenantAwareMetaOAuthClient} from '../lib/oauthConfig.js';
+import {probeMessengerPageCapability} from '../integrations/messenger.js';
+import {assertMessengerCapabilityAuthority} from './capabilityAuthority.js';
 import type {WeeklyNativeSendAuthority} from '../../shared/contracts/weeklyNativeSendAuthority.js';
 import { createHash } from 'node:crypto';
 import fs from 'node:fs';
@@ -24,7 +28,7 @@ type TimelineEvent = {
   time: string;
   timestamp: number;
   sendStatus?: 'sent' | 'delivered' | 'failed';
-  audit?: { providerMessageId?: string; providerRecipientId?: string; providerReadAt?: number };
+  audit?: { providerMessageId?: string; providerRecipientId?: string; providerReadAt?: number; inboundSource?: string; accountId?: string; pageId?: string; accountHash?: string };
 };
 
 export type MessengerCustomer = Record<string, unknown> & {
@@ -78,7 +82,7 @@ function eventTime(timestamp: number) {
 
 function upsertMessage(input: {
   tenantId: string; pageId: string; userId: string; messageId: string; body: string;
-  timestamp: number; actor: 'buyer' | 'seller' | 'ai'; sendStatus?: 'sent' | 'delivered';
+  timestamp: number; actor: 'buyer' | 'seller' | 'ai'; sendStatus?: 'sent' | 'delivered'; audit?:TimelineEvent['audit'];
 }) {
   const items = readCustomers();
   const id = customerId(input.tenantId, input.pageId, input.userId);
@@ -91,7 +95,7 @@ function upsertMessage(input: {
       title: input.actor === 'buyer' ? '客户消息' : input.actor === 'ai' ? 'AI 回复' : '我的回复',
       body: input.body, time: eventTime(input.timestamp), timestamp: input.timestamp,
       ...(input.sendStatus ? { sendStatus: input.sendStatus } : {}),
-      audit: { providerMessageId: input.messageId, providerRecipientId: input.userId },
+      audit: { ...input.audit, providerMessageId: input.messageId, providerRecipientId: input.userId },
     });
   }
   customer.lastActive = '刚刚';
@@ -142,18 +146,25 @@ function refreshBuyerQualification(customer: MessengerCustomer): void {
   });
 }
 
+async function readMessengerAnalysisCustomer(tenantId:string,id:string):Promise<MessengerCustomer|null>{
+ const admitted=(await readAuthorizedMessengerCustomers(tenantId)).find(customer=>customer.id===id);if(!admitted)return null;
+ const metadata=getMessengerCustomers(tenantId).find(customer=>customer.id===id);if(!metadata)return null;
+ const fields=['tags','contextTagEvidence','contextTagsAttempts','contextTagsRetryAt','contextTagsBuyerFingerprint','contextTagsAnalysisVersion','language'];
+ return {...Object.fromEntries(fields.filter(field=>field in metadata).map(field=>[field,metadata[field]])),...admitted};
+}
+
 export function analyzeMessengerCustomerTags(tenantId: string, id: string, classify = classifyContextTags): Promise<MessengerCustomer | null> {
   const key = `${tenantId}:${id}`;
   const pending = tagAnalyses.get(key);
   if (pending) return pending;
   const analysis = (async () => {
     for (let attempt = 0; attempt < 3; attempt += 1) {
-    const customer = getMessengerCustomers(tenantId).find(item => item.id === id);
+    const customer = await readMessengerAnalysisCustomer(tenantId,id);
     if (!customer) return null;
     refreshBuyerQualification(customer);
     const snapshot = JSON.stringify(customer.timeline);
     const contextTagEvidence = await classify(customer.timeline);
-    const current = getMessengerCustomers(tenantId).find(item => item.id === id);
+    const current = await readMessengerAnalysisCustomer(tenantId,id);
     if (!current) return null;
     if (JSON.stringify(current.timeline) !== snapshot) continue;
     const oldTags = Array.isArray(current.contextTagEvidence) ? current.contextTagEvidence as ContextTagEvidence[] : [];
@@ -169,8 +180,8 @@ export function analyzeMessengerCustomerTags(tenantId: string, id: string, class
     });
     }
     throw new Error('会话持续更新，请稍后重新分析标签');
-  })().catch(error => {
-    const current = getMessengerCustomers(tenantId).find(item => item.id === id);
+  })().catch(async error => {
+    const current = await readMessengerAnalysisCustomer(tenantId,id);
     if (current) {
       refreshBuyerQualification(current);
       const attempts = Number(current.contextTagsAttempts || 0) + 1;
@@ -213,13 +224,15 @@ export function startMessengerContextTagRecovery(): () => void {
   return () => { stopped = true; clearInterval(timer); };
 }
 
-export async function handleMessengerWebhook(tenantId: string, payload: unknown, options: { analyzeTags?: boolean } = {}) {
+export async function handleMessengerWebhook(tenantId: string, payload: unknown, options: { analyzeTags?: boolean; verifiedSignature?: boolean } = {}) {
   const root = payload && typeof payload === 'object' ? payload as Record<string, unknown> : {};
-  if (root.object !== 'page' || !Array.isArray(root.entry)) return { accepted: 0 };
+  if (options.verifiedSignature !== true || root.object !== 'page' || !Array.isArray(root.entry)) return { accepted: 0 };
   let accepted = 0;
   for (const rawEntry of root.entry) {
     const entry = rawEntry && typeof rawEntry === 'object' ? rawEntry as Record<string, unknown> : {};
     const pageId = String(entry.id || '');
+    const accounts=await store.list<Record<string,unknown>>('social_accounts',{where:{tenantId,platform:'facebook',status:'connected',providerAccountId:pageId},perPage:2});
+    if(accounts.totalItems!==1||accounts.items.length!==1)continue;const currentAccount=accounts.items[0]!;let authority:string;try{assertMessengerCapabilityAuthority(currentAccount);authority=messengerCustomerAccountIdentityHash(currentAccount);}catch{continue;}
     const events = Array.isArray(entry.messaging) ? entry.messaging : [];
     for (const rawEvent of events) {
       const event = rawEvent && typeof rawEvent === 'object' ? rawEvent as Record<string, any> : {};
@@ -235,7 +248,7 @@ export async function handleMessengerWebhook(tenantId: string, payload: unknown,
         const mids = new Set(Array.isArray(receipt.mids) ? receipt.mids.map(String) : []);
         let changed = false;
         for (const message of customer.timeline) {
-          if (message.actor === 'buyer') continue;
+          if (message.actor === 'buyer'||message.audit?.accountId!==String(currentAccount.id)||message.audit?.pageId!==pageId||message.audit?.accountHash!==authority) continue;
           if (!mids.has(message.id) && !(Number.isFinite(watermark) && watermark > 0 && message.timestamp <= watermark)) continue;
           if (message.sendStatus !== 'delivered') { message.sendStatus = 'delivered'; changed = true; }
           if (event.read && Number.isFinite(watermark) && watermark > (message.audit?.providerReadAt || 0)) {
@@ -262,8 +275,8 @@ export async function handleMessengerWebhook(tenantId: string, payload: unknown,
       if (!pageId || !userId || userId === pageId || !body) continue;
       const providerTimestamp = Number(event.timestamp);
       const timestamp = Number.isFinite(providerTimestamp) && providerTimestamp > 0 && providerTimestamp <= 8.64e15 ? providerTimestamp : Date.now();
-      const messageId = String(event.message?.mid || `messenger_${timestamp}_${userId}`);
-      const customer = upsertMessage({ tenantId, pageId, userId, messageId, body, timestamp, actor: isEcho ? 'seller' : 'buyer', sendStatus: isEcho ? 'sent' : undefined });
+      const messageId = String(event.message?.mid || '');if(!messageId.startsWith('mid.'))continue;
+      const customer = upsertMessage({ tenantId, pageId, userId, messageId, body, timestamp, actor: isEcho ? 'seller' : 'buyer', sendStatus: isEcho ? 'sent' : undefined, audit:{inboundSource:'verified_meta_webhook',accountId:String(currentAccount.id),pageId,accountHash:authority} });
       if (!isEcho && options.analyzeTags !== false) void analyzeMessengerCustomerTags(tenantId, customer.id).catch(error => console.warn('[messenger:context-tags]', error instanceof Error ? error.message : 'analysis_failed'));
       accepted += 1;
     }
@@ -272,17 +285,18 @@ export async function handleMessengerWebhook(tenantId: string, payload: unknown,
 }
 
 export async function sendTenantMessengerText(input: { tenantId: string; customerId: string; body: string; requestId:string;actorUserId:string;weeklyAuthority?:WeeklyNativeSendAuthority }) {
-  const customer = getMessengerCustomers(input.tenantId).find(item => item.id === input.customerId);
+  const customer = (await readAuthorizedMessengerCustomers(input.tenantId)).find(item => item.id === input.customerId);
   if (!customer) throw new Error('messenger_customer_not_found');
   const lastBuyerAt = Math.max(0, ...customer.timeline.filter(event => event.actor === 'buyer').map(event => event.timestamp));
   if (!lastBuyerAt || Date.now() - lastBuyerAt > 24 * 60 * 60 * 1000) throw new Error('距客户上次互动已超过 24 小时，当前不能直接发送普通 Messenger 消息。');
   const context=await resolveCustomerChannelOutboxContext(store,{tenantId:input.tenantId,actorUserId:input.actorUserId,customerId:input.customerId,channel:'messenger',nativeAccountId:customer.pageId});
   const account=(await store.getById<Record<string,unknown>>('social_accounts',context.accountId))!;
+  const messengerAuthority=assertMessengerCapabilityAuthority(account);
   return createCustomerChannelSendRequestService(store).execute({
     tenantId:input.tenantId,actorUserId:input.actorUserId,requestId:input.requestId,weeklyAuthority:input.weeklyAuthority,channel:'messenger',customerId:input.customerId,
     accountId:String(account.id),recipientId:customer.messengerUserId,body:input.body,
-    send:()=>sendMessengerText({pageId:customer.pageId,pageAccessToken:socialAccessToken(account),recipientId:customer.messengerUserId,text:input.body}),
-    recordHistory:receipt=>{upsertMessage({tenantId:input.tenantId,pageId:customer.pageId,userId:customer.messengerUserId,messageId:receipt.messageId,body:input.body,timestamp:Date.parse(receipt.acceptedAt),actor:'seller',sendStatus:'sent'});}
+    send:async()=>{const fresh=await store.getById<Record<string,unknown>>('social_accounts',context.accountId);if(!fresh||assertMessengerCapabilityAuthority(fresh)!==messengerAuthority)throw Error('messenger_account_changed_before_send');const client=await getTenantAwareMetaOAuthClient(input.tenantId);if(!client)throw Error('messenger_tenant_app_missing');await probeMessengerPageCapability({pageId:customer.pageId,pageAccessToken:socialAccessToken(fresh),...client});const current=await store.getById<Record<string,unknown>>('social_accounts',context.accountId);if(!current||assertMessengerCapabilityAuthority(current)!==messengerAuthority)throw Error('messenger_account_changed_before_send');return sendMessengerText({pageId:customer.pageId,pageAccessToken:socialAccessToken(fresh),recipientId:customer.messengerUserId,text:input.body});},
+    recordHistory:receipt=>{upsertMessage({tenantId:input.tenantId,pageId:customer.pageId,userId:customer.messengerUserId,messageId:receipt.messageId,body:input.body,timestamp:Date.parse(receipt.acceptedAt),actor:'seller',sendStatus:'sent',audit:{inboundSource:'verified_meta_webhook',accountId:String(account.id),pageId:customer.pageId,accountHash:messengerCustomerAccountIdentityHash(account)}});}
   });
 }
 

@@ -44,15 +44,18 @@ test('noncritical source presenter overrides abundant ordinary factory/library a
   assert.deepEqual(result.shots[0].sourceRefs, ['account-presenter']);
   assert.equal(result.shots[0].referenceProductionRouting?.tier, 'standard');
   assert.equal(result.shots[0].referenceProductionRouting?.identityLock?.targetPresenterAssetId, 'account-presenter');
-  assert.equal(result.shots[0].digitalHumanPlan?.referenceRequired, true);
-  assert.deepEqual(result.shots[0].digitalHumanPlan?.referenceMaterialIds, ['source-video']);
+  assert.equal(result.shots[0].digitalHumanPlan?.referenceRequired, false,
+    'talking presenter uses the authorized enterprise avatar without a source-person continuity gate');
+  assert.deepEqual(result.shots[0].digitalHumanPlan?.referenceMaterialIds, []);
   const aligned = alignSocialAssetSupplyPlanToBaseline({ plan: result, baseline });
   assert.equal(aligned.shots[0].referenceProductionRouting?.route, 'reference_frame_presenter');
   assert.equal(aligned.shots[0].sourceStrategy, 'authorized_digital_presenter');
 });
 
-test('unknown source role cannot create an ordinary matching plan', () => {
-  assert.throws(() => plan({ unknown: true }), /reference_person_automatic_analysis_required/);
+test('unknown source role does not block planning and keeps the configured presenter path', () => {
+  const result = plan({ unknown: true });
+  assert.equal(result.shots[0]?.sourceStrategy, 'authorized_digital_presenter');
+  assert.equal(result.shots[0]?.referenceProductionRouting, undefined);
 });
 
 test('execution does not downgrade presenter to any material or graphic adapter if presenter provider is unavailable', async () => {
@@ -85,7 +88,7 @@ test('execution catches a later candidate selection that attempts to substitute 
 
 test('execution preserves the source reference requirement instead of submitting an unconstrained generic talking head', async () => {
   const changed = plan();
-  changed.shots[0].digitalHumanPlan!.referenceRequired = false;
+  changed.shots[0].digitalHumanPlan!.referenceRequired = true;
   changed.shots[0].digitalHumanPlan!.referenceMaterialIds = [];
   let calls = 0;
   await assert.rejects(() => executeSocialAssetSupplyPlan({ tenantId: 'tenant', taskId: 'task', outputDirectory: '/tmp',

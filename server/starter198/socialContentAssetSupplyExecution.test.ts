@@ -1,4 +1,9 @@
 import assert from 'node:assert/strict';
+import { mkdtemp, readFile, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import path from 'node:path';
+import sharp from 'sharp';
+import { createHash } from 'node:crypto';
 import { createSocialAssetSupplyPlan } from '../../shared/socialContentAssetSupply.js';
 import type { StoredSocialScriptBaseline } from './socialContentScriptBaseline.js';
 import {
@@ -103,6 +108,48 @@ assert.deepEqual(supplied.assets.map(asset => asset.id), ['asset-b']);
 assert.deepEqual(supplied.assets[0]?.segments.map(segment => segment.id), ['segment-2']);
 assert.equal(supplied.execution.shots[0]?.sourceStrategy, 'customer_real_asset');
 assert.equal(supplied.execution.shots[0]?.sourceRef, 'asset-b');
+
+// Product-image compatibility is a real media producer. The routed scene gate
+// consumes video bytes, so returning the source JPEG as a successful "motion"
+// receipt would make production fail after supply.
+const imageMotionDirectory = await mkdtemp(path.join(tmpdir(), 'product-image-motion-'));
+try {
+  const productImage = path.join(imageMotionDirectory, 'product.png');
+  await sharp({ create: { width: 320, height: 480, channels: 3, background: '#de6f9c' } })
+    .png().toFile(productImage);
+  const imageBytes = await readFile(productImage);
+  const productAsset = {
+      id: 'product-image-1', name: '产品图', type: 'image', sourceId: 'product-image-1',
+      url: productImage, localPath: productImage,
+      contentHash: createHash('sha256').update(imageBytes).digest('hex'), duration: 0,
+      visualObservations: ['客户授权产品图'], segments: [],
+    } as const;
+  const adapter = existingAssetSupplyAdapters().find(item => item.adapterId === 'existing_customer_asset.v1')!;
+  const baseImageShot = createSocialAssetSupplyPlan({
+    creationMode: 'viral_replication', productionApproach: 'ai_enhanced',
+    inventory: { productImageIds: ['product-image-1'] },
+    shots: [{ shotId: 'scene-product', function: 'value', requestedDescription: '产品基础运镜' }],
+  }).shots[0]!;
+  const adapterResult = await adapter.execute({
+    tenantId: 'tenant-1', taskId: 'task-product-image', outputDirectory: imageMotionDirectory,
+    shot: {
+      ...baseImageShot,
+      sourceStrategy: 'customer_product_image_animation', sourceRefs: ['product-image-1'], fallbackSourceStrategy: null,
+    },
+    baselineScene: baseline({ sceneId: 'scene-product', shotFunction: 'value', subject: '产品', action: '缓慢推进', voiceover: '展示产品。' }).scenes[0]!,
+    availableAssets: [productAsset as any],
+  });
+  assert.ok(adapterResult);
+  const generated = adapterResult.asset;
+  assert.equal(generated.type, 'video');
+  assert.ok(generated.localPath?.endsWith('.mp4'));
+  assert.ok((await readFile(generated.localPath!)).length > 0);
+  assert.match(generated.contentHash ?? '', /^[a-f0-9]{64}$/);
+  assert.ok(generated.duration >= 1.2);
+  assert.equal(adapterResult.synthetic, true);
+} finally {
+  await rm(imageMotionDirectory, { recursive: true, force: true });
+}
 
 // Customer-case evidence must survive baseline alignment as the same real
 // material; it must not be reclassified as a presenter or generated visual.

@@ -40,3 +40,9 @@ test('ambiguous owned account mappings require resolution instead of silently ch
   f.rows.social_owned_accounts.push({ ...f.rows.social_owned_accounts[0], id: 'another', payload: { ...f.rows.social_owned_accounts[0].payload, accountId: 'second-owned' } });
   await assert.rejects(ownedReferenceSupply(f.store, 't', 'p', [f.video]), { code: 'owned_reference_account_ambiguous' });
 });
+test('complete actual four-metric evidence ranks historical references before partial, synthetic or discovery order',async()=>{
+ const f=fixture();const add=(id:string,metrics:Record<string,unknown>,source='provider')=>{const publicUrl=`https://example.com/${id}`,content={...f.rows.social_external_contents[0].content,publicUrl,externalContentId:id};f.rows.social_external_contents.push({...f.rows.social_external_contents[0],id:`history-${id}`,external_content_id:id,content});const snapshot={...f.snapshot,snapshotId:`metrics-${id}`,externalContentId:id,source,metrics};f.rows.social_channel_metric_snapshots.push({...f.rows.social_channel_metric_snapshots[0],id:`row-${id}`,snapshot_id:snapshot.snapshotId,external_content_id:id,snapshot});return {...f.video,candidateId:id,sourceUrl:publicUrl};};
+ const partial=add('partial',{views:999999,likes:100,shares:null,comments:100}),fake=add('synthetic',{views:999999,likes:999,shares:999,comments:999},'fixture'),best=add('best',{views:2000,likes:1,shares:1,comments:1}),tie=add('tie',{views:2000,likes:0,shares:2,comments:0}),zero=add('zero',{views:0,likes:0,shares:0,comments:0});
+ const result=await ownedReferenceSupply(f.store,'t','p',[partial,fake,f.video,best,tie,zero],new Date('2026-10-09T00:00:00Z'));
+ assert.deepEqual(result.map(pair=>pair.video.candidateId),['tie','best','candidate','zero','partial','synthetic']);assert.deepEqual(result[3]!.historicalPerformance!.metrics,{views:0,likes:0,shares:0,comments:0});
+});

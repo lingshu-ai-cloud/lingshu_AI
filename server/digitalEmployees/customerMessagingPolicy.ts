@@ -1,3 +1,4 @@
+import {assertMessengerCapabilityAuthority} from '../messenger/capabilityAuthority.js';
 import { socialAccessToken } from '../lib/accountCredentials.js';
 import { resolveTenantWhatsAppConfig } from '../whatsapp/send.js';
 import { decryptSecret, type TenantPlatformAppRecord } from '../lib/tenantPlatformApps.js';
@@ -118,7 +119,7 @@ export async function readCustomerMessagingAuthorization(
       : channelAccounts.items.some(rawAccount => {
           const account = rawAccount as unknown as Record<string, unknown>;
           if (account.tenantId !== tenantId || account.platform !== (channel === 'instagram' ? 'instagram' : 'facebook') || account.status !== 'connected' || !String(account.providerAccountId || '').trim()) return false;
-          if (channel === 'messenger' && account.messengerSubscribed !== true) return false;
+          if (channel === 'messenger') { try { assertMessengerCapabilityAuthority(account,dependencies.openMessengerToken ?? socialAccessToken); } catch { return false; } }
           if (channel === 'instagram') {
             const isInstagramLogin = account.oauthProvider === 'instagram_login';
             const scope = isInstagramLogin ? 'instagram_business_manage_messages' : 'instagram_manage_messages';

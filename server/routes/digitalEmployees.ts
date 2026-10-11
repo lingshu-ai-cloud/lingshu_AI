@@ -58,9 +58,9 @@ import { settledSeedanceUsageForTenant } from '../lib/seedanceBudget.js';
 import type { ExecutionStoreRecord } from './productionContracts.js';
 import { currentDataAuthority } from '../storage/dataAuthority.js';
 import { signAssetUrl } from '../lib/assetAccess.js';
-import { getWhatsAppCustomers as defaultGetWhatsAppCustomers } from '../whatsapp/historyImport.js';
+import { readAuthorizedWhatsAppCustomers as defaultGetWhatsAppCustomers } from '../whatsapp/authorizedCustomerRead.js';
 import { currentExecutionAdapters, readExecutionMaterialLibrary } from '../digitalEmployees/executionAdapters.js';
-const getWhatsAppCustomers: typeof defaultGetWhatsAppCustomers = (tenantId) => currentExecutionAdapters()?.customers?.(tenantId) ?? defaultGetWhatsAppCustomers(tenantId);
+const getWhatsAppCustomers = async (tenantId: string) => currentExecutionAdapters()?.customers?.(tenantId) ?? defaultGetWhatsAppCustomers(tenantId);
 import { ensureDigitalEmployeeSocialCollectionTask, runScheduledTaskNow } from './scheduler.js';
 import { readTenantEnterpriseProfile, updateTenantEnterpriseProfile, type EnterpriseProfile } from './enterprise.js';
 import { buildBusinessSnapshot as defaultBuildBusinessSnapshot, type BusinessSnapshot } from '../digitalEmployees/businessSnapshot.js';
@@ -87,6 +87,9 @@ import { dispatchFollowupBatch, recoverStaleFollowupSending, followupDispatchPre
 import { bindPublishingTargets, listConnectedPublishingAccounts, localPublishingAccountMocksEnabled, publishingTargetPlatforms } from '../digitalEmployees/publishingTargets.js';
 import { digitalEmployeeOperatingGoals, isDigitalEmployeeOperatingGoal } from '../digitalEmployees/overviewGoalScope.js';
 import { directorAnalysisReferenceIds, liveDirectorAnalysisTasks, projectDirectorAnalysisStatus } from '../digitalEmployees/liveDirectorAnalyses.js';
+import { canSkipCollectionForExplicitReferences, evaluateViralAnalysisCoverage, hasParseableExactVideoAnalysis, reusableExplicitReferenceIds, viralCoverageBypassAllowed } from '../digitalEmployees/viralAnalysisCoverage.js';
+import { mustInvalidateContentDownstream } from '../digitalEmployees/dependencyInvalidation.js';
+import { canonicalScheduledCollectionRecords, evaluateScheduledDiscoveryRuns, mustReobserveSucceededCollection, type DiscoveryRunRecord } from '../digitalEmployees/scheduledCollectionProof.js';
 import {
   VISIBLE_DIGITAL_EMPLOYEE_AGENT_ROLES as VISIBLE_AGENT_ROLES,
   visibleDigitalEmployeeAgentRole as visibleAgentRole,
@@ -1121,6 +1124,9 @@ function availableTaskActions(task: TaskRecord): string[] {
   if (task.status === 'handed_off') return ['return_to_agent'];
   if (['succeeded', 'skipped', 'cancelled'].includes(task.status)) return ['replan'];
   const actions = ['retry', 'skip', 'manual_complete', 'handoff', 'replan'];
+  if (task.task_key === 'viral_analysis') {
+    return actions.filter(action => !['skip', 'manual_complete'].includes(action));
+  }
   if (['platform_publish', 'followup_dispatch'].includes(task.task_key)) {
     return actions.filter(action => action !== 'manual_complete');
   }
@@ -1637,10 +1643,7 @@ function scopedProof(metricKey: string, source: string, records: StoredRecord[],
 }
 
 function exactVideoAnalysis(record: StoredRecord): boolean {
-  const analysis = jsonObject<Record<string, unknown>>(record.aiAnalysis, {});
-  return analysis.analysisMode === 'exact'
-    && ['video', 'video_review_required'].includes(String(analysis.analysisQuality || ''))
-    && Boolean(analysis.gemini);
+  return hasParseableExactVideoAnalysis(record);
 }
 
 function studioProjectCompleted(record: StoredRecord): boolean {
@@ -1718,32 +1721,66 @@ async function observeTaskProof(tenantId: string, run: RunRecord, task: TaskReco
     const scheduled = await store.list<StoredRecord>('scheduled_tasks', {
       where: { tenant_id: tenantId }, perPage: 500,
     });
-    const matching = scheduled.items.filter(item => {
+    const matching = canonicalScheduledCollectionRecords(scheduled.items.filter(item => {
       const config = jsonObject<Record<string, unknown>>(item.config, {});
       if (item.task_type !== 'social_discovery_collection') return false;
       let workflowRefs: Array<{ workflowTaskId?: string }> = [];
       try { workflowRefs = JSON.parse(String(config.workflowRefs || '[]')); } catch { /* older task */ }
       return Array.isArray(workflowRefs) && workflowRefs.some(ref => ref.workflowTaskId === task.id);
-    });
-    const persistedRefs = jsonObject<Array<Record<string, unknown>>>(task.business_refs, [])
-      .filter(ref => ref.type === 'scheduled_task');
+    }));
+    const persistedRefs = [...new Map(jsonObject<Array<Record<string, unknown>>>(task.business_refs, [])
+      .filter(ref => ref.type === 'scheduled_task')
+      .map(ref => [String(ref.id || ref.recordId || ''), ref])).values()];
     const businessRefs = matching.length
       ? matching.map(item => ({ type: 'scheduled_task', id: String(item.task_id || item.id), recordId: item.id }))
       : persistedRefs.filter(ref => matching.length || !String(ref.id || '').startsWith('task_de_'));
+    const scopeIds = matching.map(item => String(jsonObject<Record<string, unknown>>(item.config, {}).discoveryScopeId || '')).filter(Boolean);
+    const discoveryRuns = await store.list<StoredRecord & DiscoveryRunRecord>('social_discovery_runs', {
+      where: { tenant_id: tenantId }, perPage: 500,
+    });
+    const health = evaluateScheduledDiscoveryRuns(matching.length ? discoveryRuns.items : [], scopeIds);
+    const ready = businessRefs.length > 0 && health.ready;
     return {
-      ready: businessRefs.length > 0,
-      proof: { metricKey: 'scheduledAutomations', value: businessRefs.length, status: businessRefs.length ? 'available' : 'awaiting_director_approval', source: 'scheduled_tasks.config.workflowRefs + workflow_tasks.business_refs', scope: 'workflow_task' },
+      ready,
+      proof: {
+        metricKey: 'scheduledAutomations', value: businessRefs.length,
+        usableContent: health.usable,
+        discoveryRunId: health.latest?.id || '',
+        status: ready ? 'available' : health.latest ? 'blocked' : 'pending',
+        source: 'scheduled_tasks.config.workflowRefs + social_discovery_runs', scope: 'workflow_task',
+      },
       businessRefs,
+      blockedReason: businessRefs.length ? health.blockedReason : '待编导确认并创建平台采集任务。',
+      waitState: ready ? undefined : waitState(health.latest ? 'service' : 'processing', businessRefs.length ? health.blockedReason : '待编导确认并创建平台采集任务。'),
     };
   }
   if (task.task_key === 'viral_analysis') {
     const videos = await store.list<StoredRecord>('trend_videos', { where: { tenantId }, perPage: 500 });
     const boundPlan = await tenantRecord<PlanRecord>(COLLECTION.plans, run.plan_id, tenantId);
     const packageBody = jsonObject<Record<string, any>>(boundPlan?.plan, {});
-    const explicitReferences = new Set<string>((packageBody.businessPackage?.tasks?.find((item: any) => item.templateId === 'production')?.videoPlans || [])
-      .filter((video: VideoCreationPlan) => video.route === 'clone' && video.referenceId).map((video: VideoCreationPlan) => video.referenceId));
-    const matching = videos.items.filter(item => (recordBelongsToTask(item, run, scope) || explicitReferences.has(item.id)) && exactVideoAnalysis(item));
-    return scopedProof('exactAnalyses', 'trend_videos.aiAnalysis + workflow scope', matching, matching.map(item => ({ type: 'trend_video', id: item.id })), snapshot.content.exactAnalyses.value);
+    const videoPlans: VideoCreationPlan[] = packageBody.businessPackage?.tasks?.find((item: any) => item.templateId === 'production')?.videoPlans || [];
+    const explicitReferences = new Set(reusableExplicitReferenceIds(videoPlans));
+    const candidates = videos.items.filter(item => {
+      const runIds = scopedValues(item, ['workflowRunId', 'workflow_run_id', 'runId', 'run_id', 'digitalEmployeeRunId']);
+      const taskIds = scopedValues(item, ['workflowTaskId', 'workflow_task_id', 'taskId', 'task_id', 'digitalEmployeeTaskId']);
+      const currentRunEvidence = runIds.includes(run.id) && taskIds.some(id => scope.taskIds.has(id));
+      return currentRunEvidence || explicitReferences.has(item.id);
+    });
+    const coverage = evaluateViralAnalysisCoverage(videoPlans, candidates, { explicitReferenceIds: explicitReferences });
+    return {
+      ready: coverage.ready,
+      proof: {
+        metricKey: 'exactAnalyses', value: coverage.completedCount,
+        requiredValue: coverage.requiredCount,
+        status: coverage.ready ? 'available' : 'pending',
+        source: 'trend_videos.aiAnalysis + weekly clone master coverage + workflow scope',
+        scope: 'workflow_run_and_task', tenantSnapshotValue: snapshot.content.exactAnalyses.value,
+        invalidReferenceIds: coverage.invalidReferenceIds,
+      },
+      businessRefs: coverage.validRecords.map(item => ({ type: 'trend_video', id: item.id })),
+      blockedReason: coverage.blockedReason,
+      waitState: coverage.ready ? undefined : waitState('processing', coverage.blockedReason),
+    };
   }
   if (task.task_key === 'content_production' || task.task_key === 'content_quality_gate') {
     const projects = await store.list<StoredRecord>('studio_projects', { where: { tenant_id: tenantId }, perPage: 500 });
@@ -1824,7 +1861,7 @@ async function observeTaskProof(tenantId: string, run: RunRecord, task: TaskReco
     const scopedPosts = posts.items.filter(item => recordBelongsToTask(item, run, scope));
     const postIds = new Set(scopedPosts.map(item => item.id));
     const trackCodes = new Set(scopedPosts.map(item => String(item.track_code || item.trackCode || '')).filter(Boolean));
-    const customers = getWhatsAppCustomers(tenantId) as Array<Record<string, unknown>>;
+    const customers = await getWhatsAppCustomers(tenantId) as Array<Record<string, unknown>>;
     const matching = customers.filter(customer => postIds.has(String(customer.sourcePostId || '')) || trackCodes.has(String(customer.sourceTrackCode || '')));
     return scopedProof('attributedCustomers', 'whatsapp_customers.sourcePostId + run-scoped posts', matching.map(customer => ({ id: String(customer.id || '') })), matching.map(customer => ({ type: 'customer', id: String(customer.id || ''), sourcePostId: String(customer.sourcePostId || '') })), snapshot.customer.attributed.value);
   }
@@ -1908,7 +1945,21 @@ async function prepareObserveBusinessResource(input: {
     const ensured = await ensureDigitalEmployeeSocialCollectionTask({ tenantId: input.tenantId,
       workflowRunId: input.run.id, workflowTaskId: input.task.id,
       keywords: input.config.focusProducts || goalInput(input.goal).scope || input.config.primaryBusiness,
-      ...schedule });
+      ...schedule,
+      confirmedWeeklyBoundary: {
+        businessGoal: goalInput(input.goal).objective,
+        products: input.config.focusProducts.split(/[、，,；;\n]/).map(value => value.trim()).filter(Boolean),
+        market: goalInput(input.goal).scope || input.config.targetMarkets,
+        language: input.config.videoLanguages[0] || input.config.videoDefaults?.language || 'en',
+        audience: input.config.customerProfile,
+        platforms: schedule.platforms,
+        lookbackDays: schedule.dateWindowDays,
+        resultLimit: schedule.limit,
+        approvedBy: input.goal.owner_id,
+        workflowRunId: input.run.id,
+        workflowTaskId: input.task.id,
+      },
+    });
     if (!ensured || ensured.pendingReason) {
       const reason = ensured?.pendingReason || '待编导确认采集范围';
       await store.update(COLLECTION.tasks, input.task.id, { blocked_reason: reason, updated_at: new Date().toISOString() });
@@ -1962,6 +2013,19 @@ async function prepareObserveBusinessResourceDirect(input: {
       limit: collectionSchedule.limit,
       dateWindowDays: collectionSchedule.dateWindowDays,
       dedupeWindowDays: collectionSchedule.dedupeWindowDays,
+      confirmedWeeklyBoundary: {
+        businessGoal: goalInput(goal).objective,
+        products: config.focusProducts.split(/[、，,；;\n]/).map(value => value.trim()).filter(Boolean),
+        market: goalInput(goal).scope || config.targetMarkets,
+        language: config.videoLanguages[0] || config.videoDefaults?.language || 'en',
+        audience: config.customerProfile,
+        platforms: collectionSchedule.platforms,
+        lookbackDays: collectionSchedule.dateWindowDays,
+        resultLimit: collectionSchedule.limit,
+        approvedBy: actorId,
+        workflowRunId: run.id,
+        workflowTaskId: task.id,
+      },
     });
     if (!ensured || ensured.pendingReason) {
       const reason = ensured?.pendingReason || '待编导确认采集范围';
@@ -2170,7 +2234,7 @@ async function advanceRunUnlocked(tenantId: string, runId: string): Promise<void
   let reopened = false;
   if (normalizeContinuationPolicy(config.continuationPolicy).newCustomers === 'reopen') {
     const criteria = { ...DEFAULT_FOLLOWUP_SEGMENT_CRITERIA, ...(businessPackage?.authorization.customerIds.length ? { includeCustomerIds: businessPackage.authorization.customerIds } : {}) };
-    reopened = await reopenNoDataCustomerBranch({ tenantId, run, tasks: taskResult.items, startsAt: goal.starts_at, endsAt: goal.ends_at, customerIds: eligibleFollowupCustomerIds(getWhatsAppCustomers(tenantId), criteria), onReopened: async customerIds => { await appendEvent({tenantId,runId:run.id,type:'customer.no_data_reopened',summary:`新增 ${customerIds.length} 位符合条件客户，重新生成分层与草稿，发送仍需审批`,payload:{customerIds,messagesSent:0}}); } });
+    reopened = await reopenNoDataCustomerBranch({ tenantId, run, tasks: taskResult.items, startsAt: goal.starts_at, endsAt: goal.ends_at, customerIds: eligibleFollowupCustomerIds(await getWhatsAppCustomers(tenantId), criteria), onReopened: async customerIds => { await appendEvent({tenantId,runId:run.id,type:'customer.no_data_reopened',summary:`新增 ${customerIds.length} 位符合条件客户，重新生成分层与草稿，发送仍需审批`,payload:{customerIds,messagesSent:0}}); } });
   }
   if (run.status === 'succeeded' && !reopened) return;
   await store.update(COLLECTION.runs, run.id, { status: 'running', current_controller: 'business', pause_reason: '' });
@@ -2195,9 +2259,35 @@ async function advanceRunUnlocked(tenantId: string, runId: string): Promise<void
         await appendEvent({ tenantId, runId: run.id, taskId: task.id, type: 'task.failure_superseded', level: 'success', summary: '制作草稿已有新版本，已撤销历史失败并重新核验' });
       }
     }
-    if (['succeeded', 'skipped', 'cancelled', 'handed_off'].includes(task.status)) continue;
+    const dependencyStateReady = dependenciesReady(task, taskResult.items);
+    if (mustInvalidateContentDownstream(task.task_key, task.status, dependencyStateReady)) {
+      const affected = downstreamTasks(taskResult.items, task, true)
+        .filter(item => mustInvalidateContentDownstream(item.task_key, item.status, false));
+      const now = new Date().toISOString();
+      await supersedeAffectedBusinessState(tenantId, run, affected, now);
+      for (const item of affected) {
+        const output = { ...jsonObject<Record<string, unknown>>(item.output, {}), dataStatus: 'dependency_pending', waitState: undefined, invalidatedAt: now };
+        await store.update(COLLECTION.tasks, item.id, { status: 'pending', output, business_refs: [], blocked_reason: '', updated_at: now });
+        item.status = 'pending'; item.output = output; item.business_refs = []; item.blocked_reason = '';
+      }
+      await appendEvent({ tenantId, runId: run.id, taskId: task.id, type: 'task.downstream_invalidated', level: 'warning', summary: `${task.title}：上游证据失效，已停止并回退 ${affected.length} 个下游节点`, payload: { affectedTaskIds: affected.map(item => item.id) } });
+      continue;
+    }
+    if (['succeeded', 'skipped', 'cancelled', 'handed_off'].includes(task.status)
+      && !mustReobserveSucceededCollection(task.task_key, task.status)) continue;
     if (task.status === 'failed' && !jsonObject<Record<string, any>>(task.output, {}).executionFailure?.retryAt) continue;
-    if (!dependenciesReady(task, taskResult.items)) continue;
+    if (!dependencyStateReady) {
+      // A previously observed downstream wait is stale when an upstream proof
+      // is later downgraded (for example, a scheduled collection whose real
+      // provider run finished failed). Return it to dependency-pending so the
+      // actual upstream failure remains the primary card and pause reason.
+      if (task.status === 'waiting_external') {
+        const output = { ...jsonObject<Record<string, unknown>>(task.output, {}), dataStatus: 'dependency_pending', waitState: undefined };
+        await store.update(COLLECTION.tasks, task.id, { status: 'pending', output, blocked_reason: '', updated_at: new Date().toISOString() });
+        task.status = 'pending'; task.output = output; task.blocked_reason = '';
+      }
+      continue;
+    }
     if (task.task_key.startsWith('review_todo_')) {
       const reason = '请按本任务的执行要求完成业务操作，并提交验收记录；尚未自动完成。';
       await store.update(COLLECTION.tasks, task.id, { status: 'waiting_external', blocked_reason: reason, output: { waitState: { kind: 'manual', message: reason, requiresAttention: true } }, updated_at: new Date().toISOString() });
@@ -2212,9 +2302,9 @@ async function advanceRunUnlocked(tenantId: string, runId: string): Promise<void
     // Do not require creating a new recurring crawler for a one-off remake.
     if (task.task_key === 'scheduled_source_collection' && videoTask?.videoPlans?.length
       && videoTask.videoPlans.every(video => video.route === 'clone' && video.referenceId)) {
-      const referenceIds = [...new Set(videoTask.videoPlans.map(video => video.referenceId))];
+      const referenceIds = reusableExplicitReferenceIds(videoTask.videoPlans);
       const references = await Promise.all(referenceIds.map(id => store.getById<StoredRecord>('trend_videos', id)));
-      if (references.every(reference => reference && reference.tenantId === tenantId && exactVideoAnalysis(reference))) {
+      if (canSkipCollectionForExplicitReferences(videoTask.videoPlans, references.filter((reference): reference is StoredRecord => Boolean(reference && reference.tenantId === tenantId)))) {
         const output = { dataStatus: 'not_required', summary: '本轮已选择采集并完成精确分析的灵感视频，无需新增定时采集。', referenceIds };
         await store.update(COLLECTION.tasks, task.id, { status: 'skipped', output, blocked_reason: '', updated_at: new Date().toISOString() });
         task.status = 'skipped'; task.output = output; task.blocked_reason = '';
@@ -2245,7 +2335,9 @@ async function advanceRunUnlocked(tenantId: string, runId: string): Promise<void
         ? { ready: businessSnapshot.readiness.some(item => item.key === 'enterprise' && item.status === 'ready'), businessRefs: [], proof: {} }
         : await observeTaskProof(tenantId, run, task, businessSnapshot, taskResult.items);
       task.status = observation.ready ? 'succeeded' : 'waiting_external';
-      task.blocked_reason = observation.ready ? '' : `等待 ${packageTaskForKey(businessPackage, task.task_key)?.ownerName || '指定成员'} 在业务工作台完成`;
+      task.blocked_reason = observation.ready ? '' : ('blockedReason' in observation && observation.blockedReason
+        ? String(observation.blockedReason)
+        : `等待 ${packageTaskForKey(businessPackage, task.task_key)?.ownerName || '指定成员'} 在业务工作台完成`);
       await store.update(COLLECTION.tasks, task.id, { status: task.status, blocked_reason: task.blocked_reason, output: { proof: observation.proof, assignedMember: task.owner_id }, ...(observation.businessRefs.length ? { business_refs: observation.businessRefs } : {}), updated_at: new Date().toISOString() });
       continue;
     }
@@ -2597,6 +2689,14 @@ async function irreversibleEffects(tenantId: string, run: RunRecord, affected: T
 async function supersedeAffectedBusinessState(tenantId: string, run: RunRecord, affected: TaskRecord[], now: string): Promise<void> {
   const affectedIds = new Set(affected.map(task => task.id));
   const affectedKeys = new Set(affected.map(task => task.task_key));
+  if (affectedKeys.has('content_mode_routing') || affectedKeys.has('content_production')) {
+    const jobs = await store.list<StoredRecord>('content_execution_jobs', {
+      where: { tenant_id: tenantId, run_id: run.id }, perPage: 500,
+    });
+    for (const job of jobs.items.filter(item => !['succeeded', 'cancelled'].includes(String(item.status || '')))) {
+      await controlContentExecutionJob({ dataStore: store, tenantId, jobId: job.id, action: 'cancel', now: new Date(now) });
+    }
+  }
   if (affectedKeys.has('content_mode_routing')) {
     const batches = await store.list<ContentBatchPlanRecord>(COLLECTION.contentBatchPlans, { where: { tenant_id: tenantId, run_id: run.id }, perPage: 100 });
     for (const batch of batches.items.filter(item => item.status !== 'superseded')) {
@@ -3318,7 +3418,7 @@ digitalEmployeesRouter.get('/planning-options', async (_req, res) => {
 digitalEmployeesRouter.get('/package-options', async (req, res) => {
   const { tenantId } = res.locals as AuthLocals;
   const [members, projects] = await Promise.all([listTenantEmployees(res.locals as AuthLocals, req.headers.authorization), store.list<StoredRecord>('studio_projects', { where: { tenant_id: tenantId }, perPage: 500 })]);
-  res.json({ members: members.map(m => ({ id: m.id, name: m.name || m.email })), projects: projects.items.filter(studioProjectRendered).map(p => ({ id: p.id, title: String(p.title || p.id) })), customers: getWhatsAppCustomers(tenantId).map(c => ({ id: c.id, name: String(c.name || c.id) })) });
+  res.json({ members: members.map(m => ({ id: m.id, name: m.name || m.email })), projects: projects.items.filter(studioProjectRendered).map(p => ({ id: p.id, title: String(p.title || p.id) })), customers: (await getWhatsAppCustomers(tenantId)).map(c => ({ id: c.id, name: String(c.name || c.id) })) });
 });
 
 digitalEmployeesRouter.post('/goals/:goalId/package/recommend', async (req, res) => {
@@ -3513,7 +3613,7 @@ digitalEmployeesRouter.put('/goals/:goalId/package', async (req, res) => {
       : configSnapshotForPlan(plan, currentConfig);
     if (pack.authorization.accountIds.some(id => !config.publishingTargets.some(t => t.accountId === id))) { res.status(400).json({ error: 'invalid_account_scope', message: '请选择本计划绑定的发布账号。' }); return; }
     if (pack.matrixPlan?.some(row => !goalInput(goal).contentPlatforms.includes(row.platform) || (row.connected !== false && !config.publishingTargets.some(target => target.accountId === row.accountId && target.platform === row.platform)))) { res.status(400).json({ error: 'invalid_matrix_account', message: '矩阵账号必须属于本计划及本周平台范围。' }); return; }
-    const customerIds = new Set(getWhatsAppCustomers(tenantId).map(c => c.id));
+    const customerIds = new Set((await getWhatsAppCustomers(tenantId)).map(c => c.id));
     if (pack.authorization.customerIds.some(id => !customerIds.has(id))) { res.status(400).json({ error: 'invalid_customer_scope' }); return; }
     for (const id of [...new Set([...pack.tasks.flatMap(t => t.sourceProjectIds), ...(pack.matrixPlan || []).flatMap(row => row.sourceProjectIds)])]) {
       const project = await tenantRecord<StoredRecord & { tenant_id: string }>('studio_projects', id, tenantId);
@@ -4844,6 +4944,16 @@ async function applyTaskControl(input: {
     if (input.action === 'manual_complete' && task.execution_mode === 'approval') {
       throw new TaskControlError(409, 'approval_decision_required', { message: '审批节点必须通过正式审批接口决策，不能用人工完成绕过。' });
     }
+    if (task.task_key === 'viral_analysis' && ['skip', 'manual_complete'].includes(input.action)) {
+      const snapshot = await buildBusinessSnapshot(input.tenantId, { startsAt: goal.starts_at, endsAt: goal.ends_at });
+      const coverage = await observeTaskProof(input.tenantId, run, task, snapshot, allTasks.items);
+      if (!viralCoverageBypassAllowed(task.task_key, input.action, coverage.ready)) {
+        throw new TaskControlError(409, 'viral_analysis_exact_coverage_required', {
+          message: '本周复刻原创母版的精确分析尚未覆盖完整，不能跳过或人工完成该节点。',
+          proof: coverage.proof,
+        });
+      }
+    }
 
     const downstream = downstreamTasks(allTasks.items, task, input.rerunDownstream);
     const replanConfig = input.action === 'replan' && input.enabledWorkflows ? { ...config, enabledWorkflows: input.enabledWorkflows } : config;
@@ -5181,7 +5291,7 @@ async function canonicalEvidenceRef(tenantId: string, raw: Record<string, unknow
     return record ? { ...raw, type, id: String(record.task_id || record.id), recordId: record.id } : null;
   }
   if (type === 'customer') {
-    const customer = getWhatsAppCustomers(tenantId).find(item => String(item.id || '') === id);
+    const customer = (await getWhatsAppCustomers(tenantId)).find(item => String(item.id || '') === id);
     return customer ? { ...raw, type, id } : null;
   }
   return null;

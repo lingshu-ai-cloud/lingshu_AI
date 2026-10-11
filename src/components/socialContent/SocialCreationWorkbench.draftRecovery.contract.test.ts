@@ -11,5 +11,9 @@ assert.match(source, /generatedVideo: freeHookMaterial \? \{/,
   'autosave must retain the selected hook material snapshot');
 assert.match(source, /setFreeHookMaterial\(kickoff\?\.generatedVideo\?\.material \|\| null\)/,
   'draft recovery must restore the hook material as well as its identifier');
+assert.match(source, /presenterAssetId = isReplication \? seed\?\.presenterAssetId \|\| taskPresenterAssetId : ''/,
+  'replication must preserve the presenter selected by the product workflow');
+assert.match(source, /draftProjectId: isReplication \? seed\?\.continueProjectId : resolvedDraftProjectId/,
+  'replication must continue the task-bound Studio project');
 
 console.log('free creation draft recovery contract tests passed');

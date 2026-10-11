@@ -2,7 +2,7 @@ import { contentAcceptanceHash, contentAccepted } from './contentAcceptance.js';
 import { createHash } from 'node:crypto';
 import { listSocialMetricSnapshots } from '../socialMetrics/store.js';
 import { currentMetricTotal } from '../socialMetrics/aggregation.js';
-import { getWhatsAppCustomers } from '../whatsapp/historyImport.js';
+import { readAuthorizedWhatsAppCustomers as getWhatsAppCustomers } from '../whatsapp/authorizedCustomerRead.js';
 import fs from 'node:fs';
 import path from 'node:path';
 import { store } from '../storage/index.js';
@@ -210,7 +210,7 @@ export async function buildDeliveryResources(tenantId: string, tasks: WorkflowTa
   const posts = (await Promise.all(referencedPostIds.map(id => get('post', id)))).filter((post): post is RecordData => Boolean(post));
   if (posts.length) {
     const snapshots = await listSocialMetricSnapshots(tenantId).catch(() => []);
-    const customers = getWhatsAppCustomers(tenantId);
+    const customers = await getWhatsAppCustomers(tenantId);
     for (const card of cards.filter(item => item.id.startsWith('studio_project:'))) {
       const projectId = card.id.slice('studio_project:'.length);
       const relatedPosts = posts.filter(post => object(post.stats).sourceProjectId === projectId);

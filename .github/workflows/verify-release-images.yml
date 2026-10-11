@@ -1,0 +1,230 @@
+name: Verify existing release images
+
+on:
+  workflow_dispatch:
+    inputs:
+      source_sha:
+        description: Full lowercase 40-character commit SHA already published to GHCR
+        required: true
+        type: string
+      source_ref:
+        description: Remote branch whose current head must equal source_sha
+        required: true
+        type: string
+
+permissions:
+  contents: read
+  packages: read
+
+concurrency:
+  group: verify-release-images-${{ inputs.source_sha }}
+  cancel-in-progress: false
+
+jobs:
+  verify:
+    name: Verify immutable app and PocketBase images
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Validate trusted workflow ref and inputs
+        env:
+          WORKFLOW_REF: ${{ github.ref }}
+          SOURCE_SHA: ${{ inputs.source_sha }}
+          SOURCE_REF: ${{ inputs.source_ref }}
+        run: |
+          set -euo pipefail
+          if [[ "$WORKFLOW_REF" != "refs/heads/main" ]]; then
+            echo "This verification workflow must run from main." >&2
+            exit 1
+          fi
+          if [[ ! "$SOURCE_SHA" =~ ^[0-9a-f]{40}$ ]]; then
+            echo "source_sha must be a full lowercase 40-character Git commit SHA." >&2
+            exit 1
+          fi
+          if [[ -z "$SOURCE_REF" || ${#SOURCE_REF} -gt 255 || "$SOURCE_REF" == refs/* ]]; then
+            echo "source_ref must be a short remote branch name." >&2
+            exit 1
+          fi
+          if ! git check-ref-format --branch "$SOURCE_REF" >/dev/null; then
+            echo "source_ref is not a valid Git branch name." >&2
+            exit 1
+          fi
+
+      - name: Check out trusted main
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: main
+          fetch-depth: 1
+
+      - name: Verify source is the current remote branch head
+        id: source
+        env:
+          SOURCE_SHA: ${{ inputs.source_sha }}
+          SOURCE_REF: ${{ inputs.source_ref }}
+        run: |
+          set -euo pipefail
+          git fetch --no-tags --depth=1 origin \
+            "+refs/heads/${SOURCE_REF}:refs/remotes/origin/release-image-source"
+          remote_sha="$(git rev-parse --verify 'refs/remotes/origin/release-image-source^{commit}')"
+          if [[ "$remote_sha" != "$SOURCE_SHA" ]]; then
+            echo "source_sha is not the current head of source_ref." >&2
+            exit 1
+          fi
+          echo "sha=$remote_sha" >> "$GITHUB_OUTPUT"
+
+      - name: Sign in to GitHub Container Registry
+        uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Pull images and verify OCI revisions
+        env:
+          SOURCE_SHA: ${{ steps.source.outputs.sha }}
+          APP_IMAGE: ghcr.io/${{ github.repository_owner }}/lingshu-ai-app:sha-${{ steps.source.outputs.sha }}
+          POCKETBASE_IMAGE: ghcr.io/${{ github.repository_owner }}/lingshu-ai-pocketbase:sha-${{ steps.source.outputs.sha }}
+        run: |
+          set -euo pipefail
+          for image in "$APP_IMAGE" "$POCKETBASE_IMAGE"; do
+            docker pull "$image"
+            revision="$(docker image inspect \
+              --format '{{ index .Config.Labels "org.opencontainers.image.revision" }}' \
+              "$image")"
+            if [[ "$revision" != "$SOURCE_SHA" ]]; then
+              echo "Image revision does not match the requested immutable commit." >&2
+              exit 1
+            fi
+          done
+
+      - name: Smoke-check application API, HTML, and PocketBase API
+        env:
+          APP_IMAGE: ghcr.io/${{ github.repository_owner }}/lingshu-ai-app:sha-${{ steps.source.outputs.sha }}
+          POCKETBASE_IMAGE: ghcr.io/${{ github.repository_owner }}/lingshu-ai-pocketbase:sha-${{ steps.source.outputs.sha }}
+        run: |
+          set -euo pipefail
+          app_container="release-image-app-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          pocketbase_container="release-image-pocketbase-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          smoke_network="release-image-smoke-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          smoke_admin_email="release-image-smoke@example.invalid"
+          smoke_admin_password="release-image-smoke-password-2026"
+          cleanup() {
+            docker rm -f "$app_container" "$pocketbase_container" >/dev/null 2>&1 || true
+            docker network rm "$smoke_network" >/dev/null 2>&1 || true
+          }
+          trap cleanup EXIT
+          cleanup
+
+          docker network create "$smoke_network" >/dev/null
+          docker run --detach \
+            --name "$pocketbase_container" \
+            --network "$smoke_network" \
+            --publish 127.0.0.1:18090:8090 \
+            --env "PB_ADMIN_EMAIL=$smoke_admin_email" \
+            --env "PB_ADMIN_PASSWORD=$smoke_admin_password" \
+            "$POCKETBASE_IMAGE" >/dev/null
+
+          wait_for_url() {
+            local label="$1"
+            local url="$2"
+            local output="$3"
+            local container="$4"
+            for attempt in $(seq 1 36); do
+              if curl --fail --silent --show-error --max-time 5 \
+                --output "$output" "$url"; then
+                echo "$label is ready."
+                return 0
+              fi
+              sleep 3
+            done
+            docker logs "$container" >&2 || true
+            echo "$label did not become ready." >&2
+            return 1
+          }
+
+          wait_for_url \
+            "PocketBase API" \
+            "http://127.0.0.1:18090/api/health" \
+            "$RUNNER_TEMP/pocketbase-health.json" \
+            "$pocketbase_container"
+          jq --exit-status '.code == 200' "$RUNNER_TEMP/pocketbase-health.json" >/dev/null
+
+          docker run --detach \
+            --name "$app_container" \
+            --network "$smoke_network" \
+            --publish 127.0.0.1:18788:8788 \
+            --env "PB_URL=http://${pocketbase_container}:8090" \
+            --env "PB_ADMIN_EMAIL=$smoke_admin_email" \
+            --env "PB_ADMIN_PASSWORD=$smoke_admin_password" \
+            --env "WORKBENCH_ADMIN_EMAIL=$smoke_admin_email" \
+            --env "WORKBENCH_ADMIN_PASSWORD=$smoke_admin_password" \
+            --env "TENANT_PLATFORM_APP_KEY=release-image-smoke-tenant-platform-key-2026" \
+            "$APP_IMAGE" >/dev/null
+
+          wait_for_url \
+            "Application API" \
+            "http://127.0.0.1:18788/api/overseas/health" \
+            "$RUNNER_TEMP/app-health.json" \
+            "$app_container"
+          jq --exit-status 'type == "object"' "$RUNNER_TEMP/app-health.json" >/dev/null
+
+          curl --fail --silent --show-error --location --max-time 10 \
+            --dump-header "$RUNNER_TEMP/app-html.headers" \
+            --output "$RUNNER_TEMP/app.html" \
+            "http://127.0.0.1:18788/"
+          tr -d '\r' < "$RUNNER_TEMP/app-html.headers" \
+            | grep --ignore-case --quiet '^content-type:.*text/html'
+          grep --ignore-case --extended-regexp --quiet '<(!doctype|html)' \
+            "$RUNNER_TEMP/app.html"
+
+      - name: Write verification attestation
+        id: attestation
+        env:
+          SOURCE_SHA: ${{ steps.source.outputs.sha }}
+          SOURCE_REF: ${{ inputs.source_ref }}
+          APP_IMAGE: ghcr.io/${{ github.repository_owner }}/lingshu-ai-app:sha-${{ steps.source.outputs.sha }}
+          POCKETBASE_IMAGE: ghcr.io/${{ github.repository_owner }}/lingshu-ai-pocketbase:sha-${{ steps.source.outputs.sha }}
+          REPOSITORY: ${{ github.repository }}
+          RUN_ID: ${{ github.run_id }}
+          RUN_ATTEMPT: ${{ github.run_attempt }}
+        run: |
+          set -euo pipefail
+          artifact_dir="$RUNNER_TEMP/release-image-attestation"
+          mkdir -p "$artifact_dir"
+          jq --null-input \
+            --arg sourceSha "$SOURCE_SHA" \
+            --arg sourceRef "$SOURCE_REF" \
+            --arg appImage "$APP_IMAGE" \
+            --arg pocketbaseImage "$POCKETBASE_IMAGE" \
+            --arg repository "$REPOSITORY" \
+            --arg runId "$RUN_ID" \
+            --arg runAttempt "$RUN_ATTEMPT" \
+            --arg verifiedAt "$(date -u +'%Y-%m-%dT%H:%M:%SZ')" \
+            '{
+              schemaVersion: 1,
+              sourceSha: $sourceSha,
+              sourceRef: $sourceRef,
+              appImage: $appImage,
+              pocketbaseImage: $pocketbaseImage,
+              repository: $repository,
+              workflowRunId: $runId,
+              workflowRunAttempt: $runAttempt,
+              verifiedAt: $verifiedAt,
+              checks: {
+                appOciRevision: true,
+                appApi: true,
+                appHtml: true,
+                pocketbaseOciRevision: true,
+                pocketbaseApi: true
+              }
+            }' > "$artifact_dir/attestation.json"
+          echo "path=$artifact_dir/attestation.json" >> "$GITHUB_OUTPUT"
+
+      - name: Upload immutable image verification attestation
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: release-image-attestation-${{ steps.source.outputs.sha }}
+          path: ${{ steps.attestation.outputs.path }}
+          if-no-files-found: error
+          retention-days: 30
+          compression-level: 0

@@ -74,7 +74,7 @@ assert.match(start, /ensure-pb-volume\.sh" "\$volume_mode"/, 'start must pass th
 assert.match(update, /ensure-pb-volume\.sh" --require-existing/, 'update must never create a missing production PB volume');
 for (const [name, source] of [['start', start], ['update', update]]) {
   assert.match(source, /up -d --force-recreate --wait --wait-timeout 180 pocketbase[\s\S]*bootstrap-workbench-admin\.mjs[\s\S]*up -d --no-build --wait/, `${name} must restart/migrate PB, bootstrap records, then start the app`);
-  assert.match(source, /http:\/\/127\.0\.0\.1:\$\{app_host_port\}\/api\/overseas\/ready/, `${name} must probe the same loopback host port`);
+  assert.match(source, /exec -T app node scripts\/check-runtime-readiness\.mjs http:\/\/127\.0\.0\.1:8788\/api\/overseas\/ready/, `${name} must validate JSON readiness inside the app container without requiring host Node`);
   assert.match(source, /env -u COMPOSE_FILE -u COMPOSE_PROJECT_NAME/, `${name} must clear ambient Compose topology selectors`);
   assert.match(source, /--project-directory "\$ROOT_DIR" -f "\$ROOT_DIR\/docker-compose\.yml"/, `${name} must select the reviewed Compose file explicitly`);
   assert.match(source, /PB_DATA_VOLUME_NAME=\$pb_data_volume_name["']?\s+"APP_HOST_PORT=\$app_host_port"\s+"ENV_FILE_PATH=\$ENV_FILE"/, `${name} must pin validated topology values against ambient overrides`);

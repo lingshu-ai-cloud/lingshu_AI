@@ -31,7 +31,7 @@ import { presenterShotMeasurements } from './presenterShotMeasurements.js';
 import { reviewShotMaterialRefs } from '../lib/referenceShotReview.js';
 import { validateVerifiedSpeechLines } from '../lib/verifiedReferenceSpeech.js';
 import { approximateSpeechLines } from '../lib/referenceApproxSpeech.js';
-import { hasCompletedExactVideoEvidence } from '../lib/videoAnalysisCodec.js';
+import { hasCompletedExactVideoEvidence, parseAnalysisTimeRange } from '../lib/videoAnalysisCodec.js';
 import { referenceFrameActionPrompt } from './referenceFrameActionPrompt.js';
 import { buildReferenceShotProductionRouting, type ReferenceShotProductionRouting,
   type ReferencePresenterContinuityEvidence } from '../../shared/referenceShotProductionRouting.js';
@@ -122,6 +122,7 @@ function exactAnalysis(record: Record<string, unknown>): {
   analysis: Record<string, unknown>;
   gemini: Record<string, unknown>;
   details: ExactReferenceDetail[];
+  allDetails: ExactReferenceDetail[];
   reviewedSpeech: Record<string, unknown>[] | null;
   reviewedSpeechPrecision: 'phrase' | 'coarse' | null;
 } | null {
@@ -200,6 +201,10 @@ function exactAnalysis(record: Record<string, unknown>): {
     reviewedSpeechPrecision = manualSpeech ? 'phrase' : 'coarse';
   }
   const seenRanges = new Set<string>();
+  const allDetails = rawDetails.flatMap(detail => {
+    const timing = detailTiming(detail, 0.01);
+    return timing ? [{ detail, timing }] : [];
+  });
   const details = rawDetails.flatMap(detail => {
     const timing = detailTiming(detail, reviewedSpeech ? 0.15 : 0.2);
     const physicalEvidence = recordObject(detail.materialEvidence);
@@ -216,7 +221,7 @@ function exactAnalysis(record: Record<string, unknown>): {
   if (socialText(analysis.analysisMode) !== 'exact'
     || !['video', 'video_review_required'].includes(socialText(analysis.analysisQuality))
     || details.length < 2) return null;
-  return { analysis, gemini, details, reviewedSpeech, reviewedSpeechPrecision };
+  return { analysis, gemini, details, allDetails, reviewedSpeech, reviewedSpeechPrecision };
 }
 
 function synthetic(record: Record<string, unknown>, analysis: Record<string, unknown>): boolean {
@@ -235,9 +240,23 @@ function referenceCoverage(input: {
   const analyzedUntil = Math.max(0, ...input.shots.map(shot => shot.endSeconds));
   const fullDurationSeconds = declaredDuration > 0 ? declaredDuration : analyzedUntil || null;
   const gaps: Array<{ startSeconds: number; endSeconds: number; reason: string }> = [];
+  const exactRanges = input.exact.allDetails.flatMap(item => {
+    const range = parseAnalysisTimeRange(socialText(item.detail.time || item.detail.timestamp));
+    return range ? [range] : [];
+  });
+  const exactCovers = (start: number, end: number) => {
+    let coveredUntil = start;
+    for (const range of exactRanges.filter(range => range.end > start && range.start < end)
+      .sort((left, right) => left.start - right.start)) {
+      if (range.start - coveredUntil > 0.03) return false;
+      coveredUntil = Math.max(coveredUntil, range.end);
+      if (coveredUntil >= end - 0.03) return true;
+    }
+    return coveredUntil >= end - 0.03;
+  };
   let cursor = 0;
   for (const shot of input.shots) {
-    if (shot.startSeconds - cursor > 0.15) {
+    if (shot.startSeconds - cursor > 0.15 && !exactCovers(cursor, shot.startSeconds)) {
       gaps.push({ startSeconds: +cursor.toFixed(2), endSeconds: +shot.startSeconds.toFixed(2), reason: '该区间没有通过精确分析校验，保留为空档等待补充分析' });
     }
     cursor = Math.max(cursor, shot.endSeconds);

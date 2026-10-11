@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { groupExactObservationWindows, selectFramesForPhysicalCuts } from './videos.js';
+import { groupExactObservationWindows, selectFramesForPhysicalCuts, splitExactGeminiShotsAtSceneCuts } from './videos.js';
 import type { VideoAiAnalysis } from '../types/index.js';
 
 const base: VideoAiAnalysis = {
@@ -47,3 +47,13 @@ assert.equal(mixedClassification.scriptDetails15s?.[0]?.narrativeRole, 'unknown'
 assert.equal(mixedClassification.scriptDetails15s?.[0]?.needsReview, true);
 assert.match(mixedClassification.scriptDetails15s?.[0]?.classificationEvidence || '', /可见讲话.*可见涂抹/);
 assert.equal(mixedClassification.scriptDetails15s?.[1]?.materialType, 'product');
+
+const geminiMontage = splitExactGeminiShotsAtSceneCuts({ ...base, scriptDetails15s: [{
+  time: '0-5.1s', visual: '人物口播后切到产品', purpose: '开场',
+  beats: [{ time: '0-1s', action: '人物指向镜头' }, { time: '4.9-5.1s', action: '产品出现' }],
+}] }, [4.83]);
+assert.equal(geminiMontage.scriptDetails15s?.length, 2, 'Gemini 语义段中的物理切点必须拆成独立生产镜头');
+assert.equal(geminiMontage.scriptDetails15s?.[0]?.time, '0s–4.83s');
+assert.equal(geminiMontage.scriptDetails15s?.[1]?.time, '4.83s–5.1s');
+assert.equal(geminiMontage.scriptDetails15s?.[0]?.beats?.length, 1);
+assert.equal(geminiMontage.scriptDetails15s?.[1]?.beats?.length, 1);

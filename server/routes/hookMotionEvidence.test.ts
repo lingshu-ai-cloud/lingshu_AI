@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { applyOpeningHookMotionEvidence, firstSubstantiveOpeningShot } from './hookMotionEvidence.js';
+import { applyOpeningHookMotionEvidence, firstSubstantiveOpeningShot, reconcileStoredOpeningHookMotionEvidence } from './hookMotionEvidence.js';
 import type { VideoAiAnalysis } from '../types/index.js';
 
 const analysis = {
@@ -26,6 +26,26 @@ const observed = applyOpeningHookMotionEvidence(analysis, {
 assert.deepEqual(observed.reviewReasons, []);
 assert.match(observed.analysis.scriptDetails15s?.[1]?.visual || '', /靠近.*敲门/);
 assert.equal(observed.analysis.scriptDetails15s?.[0]?.visual, '展厅闪帧');
+
+const observedWithNamingUncertainty = applyOpeningHookMotionEvidence(analysis, {
+  observations: [
+    { time: 0.2, visibleState: '女子快速靠近镜头', confidence: 0.9 },
+    { time: 0.52, visibleState: '手指贴近镜头', confidence: 0.91 },
+    { time: 0.86, visibleState: '手势到达峰值', confidence: 0.92 },
+  ],
+  transitions: [
+    { from: 0.2, to: 0.52, action: '快速靠近镜头', evidence: '人物占画比例由小变大', confidence: 0.86 },
+    { from: 0.52, to: 0.86, action: '手势到达镜头前', evidence: '手部连续位置变化', confidence: 0.88 },
+  ],
+  uncertainties: ['不确定该手势在语义上是否应称为敲门'],
+});
+assert.deepEqual(observedWithNamingUncertainty.reviewReasons, [],
+  'semantic naming uncertainty must stay auditable without invalidating independently observed motion');
+assert.deepEqual((observedWithNamingUncertainty.analysis.scriptDetails15s?.[1] as any)?.hookMotionEvidence?.uncertainties,
+  ['不确定该手势在语义上是否应称为敲门']);
+const reconciled = reconcileStoredOpeningHookMotionEvidence(observedWithNamingUncertainty.analysis);
+assert.equal((reconciled.scriptDetails15s?.[1] as any)?.hookMotionEvidence?.status, 'verified');
+assert.equal(reconciled.scriptDetails15s?.[1]?.needsReview, false);
 
 const unverified = applyOpeningHookMotionEvidence(analysis, {
   observations: [{ time: 0.33, visibleState: '女子站立', confidence: 0.9 }],

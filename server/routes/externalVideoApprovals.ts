@@ -1,3 +1,5 @@
+import { readTikTokCreatorConsent } from '../publishing/tiktokCreatorConsent.js';
+import { parseTikTokDirectPostOptions, validateTikTokPostChoices } from '../lib/tikTokDirectPostContract.js';
 import { Router } from 'express';
 import path from 'node:path';
 import { requireAuth, type AuthLocals } from '../middleware/auth.js';
@@ -49,6 +51,8 @@ function externalApprovalResponse(post: PostRecord) {
     platformUrl: text(firstReceipt.platformUrl),
     publishError: text(stats.publishError) || text(firstReceipt.error),
     deliveries: results,
+    tiktokPostOptions: stats.tiktokPostOptions, tiktokCreatorReceiptHash: stats.tiktokCreatorReceiptHash,
+    creatorNickname: stats.creatorNickname, creatorUsername: stats.creatorUsername,
   };
 }
 
@@ -72,6 +76,16 @@ externalVideoApprovalsRouter.post('/', async (req, res) => {
       res.status(409).json({ error: 'external_video_accounts_not_connected' });
       return;
     }
+    let tikTokStats: Record<string, unknown> = {};
+    if (platform === 'tiktok') {
+      if (targets.length !== 1) throw Error('tiktok_single_creator_required');
+      const options = parseTikTokDirectPostOptions(req.body?.tiktokPostOptions);
+      const consent = await readTikTokCreatorConsent({ tenantId, accountId: targets[0]!.accountId });
+      validateTikTokPostChoices(consent.creator, options);
+      if (req.body?.tiktokCreatorReceiptHash !== consent.creatorReceiptHash) throw Error('tiktok_creator_display_changed');
+      if (!consent.directPostApproved) throw Error('tiktok_direct_post_not_approved');
+      tikTokStats = { tiktokPostOptions: options, tiktokCreatorReceiptHash: consent.creatorReceiptHash, creatorNickname: consent.creator.creator_nickname, creatorUsername: consent.creator.creator_username };
+    }
     const controlledVideoPath = sourceClaim.deliveryVideoPath;
     const sha256 = await externalVideoSha256(controlledVideoPath);
     const updated = await withExternalVideoApprovalUniqueness({
@@ -80,7 +94,7 @@ externalVideoApprovalsRouter.post('/', async (req, res) => {
     const post = await createTrackedPostDraft(tenantId, { platform, title, enabled: req.body?.trackWaLink === true }, {
       published_at: scheduledAt,
       stats: {
-        origin: 'authorized_external_video', status: 'awaiting_approval',
+        origin: 'authorized_external_video', status: 'awaiting_approval', ...tikTokStats,
         description, firstComment: text(req.body?.firstComment), videoPath: controlledVideoPath,
         videoSha256: sha256, publishSourceClaim: sourceClaim,
         targetAccountIds: targets.map(target => target.accountId),
@@ -101,8 +115,8 @@ externalVideoApprovalsRouter.post('/', async (req, res) => {
     res.status(201).json({ approval: externalApprovalResponse(updated) });
   } catch (error) {
     const status = error instanceof PublishSourceVerificationError ? error.statusCode
-      : error instanceof ExternalVideoApprovalConflict ? (error.code === 'external_video_approval_lock_unavailable' ? 503 : 409) : 500;
-    res.status(status).json({ error: error instanceof PublishSourceVerificationError || error instanceof ExternalVideoApprovalConflict ? error.code : 'external_video_approval_failed' });
+      : error instanceof ExternalVideoApprovalConflict ? (error.code === 'external_video_approval_lock_unavailable' ? 503 : 409) : error instanceof Error && error.message.startsWith('tiktok_') ? 409 : 500;
+    res.status(status).json({ error: error instanceof PublishSourceVerificationError || error instanceof ExternalVideoApprovalConflict ? error.code : error instanceof Error && error.message.startsWith('tiktok_') ? error.message : 'external_video_approval_failed' });
   }
 });
 
@@ -154,6 +168,14 @@ externalVideoApprovalsRouter.post('/:id/approve', async (req, res) => {
       const { targets, invalidAccountIds } = await bindPublishingTargets(tenantId, accountIds.map(accountId => ({ platform: post.platform as 'youtube' | 'facebook' | 'instagram' | 'tiktok', accountId, accountLabel: '' })));
       if (invalidAccountIds.length || targets.length !== accountIds.length) {
         res.status(409).json({ error: 'external_video_accounts_not_connected' }); return;
+      }
+      if (post.platform === 'tiktok') {
+        const options = parseTikTokDirectPostOptions(stats.tiktokPostOptions);
+        if (accountIds.length !== 1) throw Error('tiktok_single_creator_required');
+        const consent = await readTikTokCreatorConsent({ tenantId, accountId: accountIds[0]! });
+        validateTikTokPostChoices(consent.creator, options);
+        if (!consent.directPostApproved) throw Error('tiktok_direct_post_not_approved');
+        if (stats.tiktokCreatorReceiptHash !== consent.creatorReceiptHash) throw Error('tiktok_creator_display_changed');
       }
       await assertNoUnresolvedPublishing({ tenantId, platform: post.platform, accountIds, videoPath: text(stats.videoPath), currentPostId: post.id });
       const saved = await store.update('posts', post.id, { stats: {

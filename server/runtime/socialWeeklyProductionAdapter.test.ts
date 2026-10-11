@@ -1,3 +1,5 @@
+import {buildWeeklySchedulerMaterialPlanProof} from '../starter198/socialWeeklySchedulerMaterialPlan.js';
+import {readWeeklyReferenceSources} from './socialWeeklyReferenceSource.js';
 import { classifyMaterialEvidence } from '../socialPrograms/materialEvidenceClassification.js';
 import { socialRequestHash } from '../starter198/socialContentValidation.js';
 import assert from 'node:assert/strict';
@@ -20,26 +22,47 @@ function memory(): DataStore {
 async function fixture() {
   const store = memory();
   const task = { tenantId:'tenant', programId:'program', packageId:'package', packageVersion:2, publicationTaskId:'publication', accountId:'account', workflowKind:'content', schedule:{stepKind:'script'} } as WeeklyExecutionTask;
-  const pub = { publicationTaskId:'publication', accountId:'account', businessProposition:'真实经营主张', cta:'了解产品', factRefs:[{type:'enterprise_fact',id:'fact',version:1}], platform:'tiktok' };
-  const handoff:any={inspirationId:'safe-reference',version:'1',analysisVersion:'1',readiness:'production_reference',rights:{mayAnalyze:true,mayAdapt:true},productionImplications:{requiredEvidence:[],likelyAssetNeeds:['AI纯装饰非证据背景']},adaptationBoundary:{reusable:[],mustReplace:[],prohibited:[]}};
+  const pub = {metricTargets:['播放'],accountPositioning:'采购商',motherContentId:'mother', publicationTaskId:'publication', accountId:'account', businessProposition:'真实经营主张', cta:'了解产品', factRefs:[{type:'enterprise_fact',id:'fact',version:1}], platform:'tiktok' };
+  const handoff:any={whySelected:['实际受控参考'],taskContext:{},reusableLogic:{hookTypes:[],revealOrder:[],proofPlacement:[],pacing:'简单',emotionalProgression:'清晰',ctaPosition:'结尾'},evidenceRefs:[],source:{sourceUrl:'https://example.test/safe-reference'},inspirationId:'safe-reference',version:'1',analysisVersion:'1',readiness:'production_reference',rights:{mayAnalyze:true,mayAdapt:true},productionImplications:{requiredEvidence:[],likelyAssetNeeds:['AI纯装饰非证据背景']},adaptationBoundary:{reusable:[],mustReplace:[],prohibited:[]}};
   const handoffRef={inspirationId:handoff.inspirationId,version:'1',recordHash:socialRequestHash(handoff)};
   const classification=classifyMaterialEvidence({scope:{packageId:'package',packageVersion:2,slotId:'slot'},handoff,handoffRef});
   await store.create('starter_social_inspiration_handoff_versions',{tenant_id:'tenant',handoff_version:'1',record_hash:handoffRef.recordHash,payload:handoff});
-  const planning = { status:'dispatched', userConfirmation:{confirmedBy:'human'},directorAnalyses:[{analysisId:'classification-analysis',packageId:'package',packageVersion:2,slotId:'slot',frozenHandoffRefs:[handoffRef],materialEvidenceRequirements:classification}], dispatch:{packageId:'package',packageVersion:2, scheduleItems:[{slotId:'slot',directorAnalysisRef:{type:'weekly_director_analysis',id:'classification-analysis',version:1},publicationTaskId:'publication',accountId:'account',topic:'真实主题',materialRequirements:classification.items.map(i=>i.description),materialEvidenceRequirements:classification}]}};
+  const planning = { status:'dispatched', userConfirmation:{confirmedBy:'human'},directorAnalyses:[{analysisId:'classification-analysis',packageId:'package',packageVersion:2,slotId:'slot',benchmarkVideoRefs:[{type:'social_discovery_video',id:'safe-reference',version:1}],benchmarkAccountRefs:[{type:'social_benchmark_account',id:'https://www.tiktok.com/@unit_factory',version:1}],benchmarkEvidenceRefs:['safe-evidence'],frozenHandoffRefs:[handoffRef],materialEvidenceRequirements:classification}], dispatch:{packageId:'package',packageVersion:2, scheduleItems:[{slotId:'slot',directorAnalysisRef:{type:'weekly_director_analysis',id:'classification-analysis',version:1},publicationTaskId:'publication',accountId:'account',topic:'真实主题',materialRequirements:classification.items.map(i=>i.description),materialEvidenceRequirements:classification}]}};
   Object.assign(planning,{programId:'program',packageId:'package',packageVersion:2,skeleton:{packageId:'package',packageVersion:2,slots:[{slotId:'slot',publicationTaskIds:['publication']}]},detailedSchedule:{ref:{type:'weekly_detailed_schedule',id:'detail',version:1},items:planning.dispatch.scheduleItems}});Object.assign(planning.userConfirmation,{confirmedAt:'2026-10-09T00:00:00Z'});Object.assign(planning.dispatch,{detailedScheduleRef:{type:'weekly_detailed_schedule',id:'detail',version:1},scheduleItemIds:planning.dispatch.scheduleItems.map(()=> 'item')});Object.assign(planning.dispatch.scheduleItems[0]!,{scheduleItemId:'item'});
-  const pkg = { packageId:'package',programId:'program',version:2,status:'draft',socialContentPackage:{publicationTasks:[pub],perItemBudgetCny:10,weeklyBudgetCny:10}};
+  const weeklyWorkflowTask={taskId:'weekly-content',kind:'content',subjectRefs:[{type:'weekly_publication_task',id:pub.publicationTaskId,version:2}],dependsOnTaskIds:[],ownBlockingReasons:[],inheritedBlockingTaskIds:[],status:'planned'};
+  const businessGoal={goalId:'goal',programId:'program',version:1,status:'ready',objective:'真实产品说明',products:['产品'],markets:['US'],audiences:['采购商'],languages:['en'],publicFactRefs:pub.factRefs,prohibitedClaims:[],weeklyBudgetCny:10,blockers:[],inputRefs:[],conversionRouteIds:[],accountBoundaries:[],evidence:[]};
+  const pkg = {successCriteria:['真实交付'],objective:'产品说明',weekEnd:'2026-10-11',workflowTasks:[weeklyWorkflowTask],businessContentGoalRef:{type:'business_content_goal',id:'goal',version:1},enterpriseProfileRef:{type:'enterprise_profile',id:'enterprise',version:1},agentPlanning:planning,packageId:'package',programId:'program',version:2,status:'draft',socialContentPackage:{publicationTasks:[pub],perItemBudgetCny:10,weeklyBudgetCny:10}};
   await store.create('social_weekly_operating_packages',{tenant_id:'tenant',program_id:'program',package_id:'package',version:2,payload:pkg});
   await store.create('social_weekly_agent_planning',{tenant_id:'tenant',program_id:'program',package_id:'package',package_version:2,planning_version:1,payload:planning});
-  await store.create('starter_social_content_tasks',{ tenant_id:'tenant',task_id:'content',create_idempotency_key:weeklyProductionBindingKey(task),brief:{_weeklyAuthority:{}} });
-  let detail = { taskId:'content',version:'4',runId:'run-existing',status:'producing',readiness:{complete:true,missing:[]},artifacts:[] } as unknown as SocialContentTaskDetail;
+  await store.create('trend_videos',{id:'safe-reference',tenantId:'tenant',sourceUrl:handoff.source.sourceUrl,title:'受控真实参考',platform:'tiktok',aiAnalysis:{analysisMode:'exact',analysisQuality:'video'}});
+  await store.create('social_programs',{tenant_id:'tenant',program_id:'program',payload:{version:1}});
+  await store.create('social_discovery_scopes',{tenant_id:'tenant',program_id:'program',status:'active',version:1,keyword_set_id:'unit-keywords',payload:{approval:{status:'approved',scopeVersion:1},keywordSet:{scope:{audienceRole:'brand_buyer'}},graph:{sceneClusters:[]}}});
+  await store.create('social_tracked_accounts',{tenant_id:'tenant',accountId:'https://www.tiktok.com/@unit_factory',decision:'track',status:'tracked',accountRole:'brand_factory',reasons:['OEM factory wholesale supplier'],evidenceVideoIds:['safe-reference','unit-2','unit-3'],relatedSceneIds:[],missingEvidence:[],confidence:.95,businessConfirmation:{status:'confirmed',confirmedBy:'business_agent',decisionRef:'unit-decision',reason:null,confirmedAt:'2026-10-01T00:00:00Z'}});
+  const authority={weeklyWorkflowTask,businessGoal,enterpriseProfileRef:pkg.enterpriseProfileRef,programRef:{type:'social_program',id:'program',version:1},weeklyPackage:{...pkg,agentPlanning:planning},publicationTask:pub,referenceSelection:{selectionId:'selection',version:1,status:'selected',upstreamTaskRef:'weekly-content',evidenceVersionRefs:['safe-evidence@1'],selected:[{candidateId:'safe-reference',evidenceId:'safe-evidence',evidenceVersion:1}]},selectedHandoffs:[handoff]};
+  const references=await readWeeklyReferenceSources(store,'tenant',authority,planning.directorAnalyses[0]!);
+  const sources=references.map(reference=>({sourceId:'frozen-reference',kind:'reference_link',status:'active',sourceRef:reference.sourceRef,sourceVersion:reference.sourceVersion}));
+  const brief={title:'实际企业内容',objective:'真实产品说明',markets:['US'],languages:['en'],platforms:['tiktok'],formats:['short_video'],restrictions:[],requestedOutputCount:1,_weeklyAuthority:authority};
+  await store.create('starter_social_content_tasks',{ tenant_id:'tenant',task_id:'content',version:'4',status:'producing',run_id:'run-existing',created_at:'2026-10-09T00:00:00Z',updated_at:'2026-10-09T00:00:00Z',create_idempotency_key:weeklyProductionBindingKey(task),brief,sources,package_selection:['industry_launch','content_rocket','task_express'].map(kind=>({kind,packageKey:kind,version:'1',name:kind})),source_count:1,knowledge_source_count:0,material_source_count:0,artifact_count:0,approved_artifact_count:0,delivery_package_count:0,publication_count:0,metric_submission_count:0 });
+  await store.create('starter_social_task_sources',{tenant_id:'tenant',task_id:'content',source_id:'frozen-reference',source_kind:'reference_link',source_ref:references[0]!.sourceRef,source_version:references[0]!.sourceVersion,status:'active',created_at:'2026-10-09T00:00:00Z',label:'受控冻结参考'});
+  let detail = { taskId:'content',version:'4',runId:'run-existing',status:'producing',brief,sources,readiness:{complete:true,missing:[]},artifacts:[] } as unknown as SocialContentTaskDetail;
+  const repository=createStarter198Repository(store);
+  const persisted=(await store.list<any>('starter_social_content_tasks')).items[0];
+  const actual=await (await import('../starter198/socialContentRecords.js')).readSocialTaskDetail({repository,tenantId:'tenant',taskId:'content'});
+  assert.ok(actual);
+  assert.ok(actual.assetSupplyPlan);
+  const proof=buildWeeklySchedulerMaterialPlanProof({tenantId:'tenant',taskId:'content',commandId:'controlled-scheduler',row:{...persisted,version:'3'},detail:{...actual,version:'3',runId:null,assetSupplyPlan:{...actual.assetSupplyPlan!,planVersion:'3'}},sources:actual.sources});
+  assert.ok(proof,'actual canonical task must produce scheduler plan proof');
+  await store.update('starter_social_content_tasks',persisted.id,{last_operation_id:'controlled-scheduler'});
+  await store.create('workflow_runs',{id:'run-existing',tenant_id:'tenant',status:'running',starter_context:{schemaVersion:'starter-social-content.auto-execution.v1',socialTaskId:'content',socialTaskVersion:'3',sourceRefs:actual.sources.map(source=>({id:source.sourceId,version:source.sourceVersion})),packageSelection:actual.packageSelection,weeklyMaterialPlan:proof}});
+  detail={...detail,assetSupplyPlan:actual.assetSupplyPlan};
   let starts = 0;
   const adapter = createSocialWeeklyProductionAdapter(store,{repository:createStarter198Repository(store),read:async()=>structuredClone(detail),start:async()=>{starts++;detail={...detail,runId:'run-new',status:'producing'};return detail;},persistResultAuthority:async()=>{}});
-  return { store,task,pkg,planning,adapter,starts:()=>starts,set:(value:Partial<SocialContentTaskDetail>)=>{detail={...detail,...value};} };
+  return { store,task,pkg,planning,adapter,starts:()=>starts,sources,authority,brief,refreshAuthority:async(weeklyPackage:any,publication:any)=>{const row=(await store.list<any>('starter_social_content_tasks')).items[0];const nextBrief={...brief,_weeklyAuthority:{...authority,weeklyPackage,publicationTask:publication}};await store.update('starter_social_content_tasks',row.id,{brief:nextBrief});const current=await (await import('../starter198/socialContentRecords.js')).readSocialTaskDetail({repository,tenantId:'tenant',taskId:'content'});assert.ok(current);assert.ok(current.assetSupplyPlan);const next=buildWeeklySchedulerMaterialPlanProof({tenantId:'tenant',taskId:'content',commandId:'controlled-scheduler',row:{...row,brief:nextBrief,version:'3'},detail:{...current,version:'3',runId:null,assetSupplyPlan:{...current.assetSupplyPlan!,planVersion:'3'}},sources:current.sources});assert.ok(next);const run=await store.getById<any>('workflow_runs','run-existing');await store.update('workflow_runs','run-existing',{starter_context:{...run.starter_context,weeklyMaterialPlan:next}});detail={...detail,brief:{...current.brief,...nextBrief},assetSupplyPlan:current.assetSupplyPlan};},set:(value:Partial<SocialContentTaskDetail>)=>{detail={...detail,...value};} };
 }
 
 test('existing running identity is polled without starting another paid run; missing artifact never succeeds',async()=>{
   const f=await fixture();
-  assert.equal((await f.adapter.execute(f.task)).status,'pending');
+  const actual=await f.adapter.execute(f.task);assert.equal(actual.status,'pending',JSON.stringify(actual));
   assert.equal((await f.adapter.execute(f.task)).status,'pending');
   assert.equal(f.starts(),0);
 });
@@ -68,7 +91,8 @@ test('mandatory materials block weekly production even when generic readiness pa
   assert.equal(result.status === 'blocked' ? result.progress?.contentTaskId : undefined, 'content');
   f.set({runId:null,status:'draft'});
   result=await f.adapter.execute(f.task);
-  assert.equal(result.status === 'blocked' ? result.progress?.runId : undefined,null);
+  assert.equal(result.status,'blocked');
+  assert.equal(f.starts(),0,'a mock lifecycle drift cannot start a replacement run');
   assert.equal(f.starts(),0);
   f.set({runId:'run-existing',status:'producing'});
   f.set({materialReadiness:{complete:true,requiredCount:1,satisfiedRequiredCount:1,blockingRequirementIds:[]}});
@@ -76,27 +100,26 @@ test('mandatory materials block weekly production even when generic readiness pa
   assert.equal(result.status,'blocked');assert.equal('code' in result?result.code:null,'weekly_material_contract_required');
   assert.equal(f.starts(),0);
 });
-test('real generated artifact completes evidence-backed steps; creative quality failure stays blocked',async()=>{
+test('an unpersisted artifact summary cannot prove generated output or creative quality',async()=>{
   const f=await fixture();
-  f.task.schedule.stepKind='asset_generation';
   const artifact:any={artifactId:'artifact',taskId:'content',version:'1',kind:'short_video',origin:'agent',resourceRef:'socialfile:file',status:'review_required',content:{render:{completed:true,selectedAssetIds:['asset']},scriptBaseline:{scenes:[{script:'真实脚本'}]},directorPlan:{sceneCount:1},productionResult:{technicalReview:{approved:true},creativeReview:{approved:false}}}};
   f.set({status:'asset_review',artifacts:[artifact]});
-  assert.equal((await f.adapter.execute(f.task)).status,'succeeded');
+  f.task.schedule.stepKind='asset_generation';
+  const rejected=await f.adapter.execute(f.task);assert.equal(rejected.status,'blocked');assert.equal('code'in rejected?rejected.code:null,'weekly_execution_result_unverified');
   for (const stepKind of ['script', 'storyboard'] as const) {
     f.task.schedule.stepKind=stepKind;
-    const stage=await f.adapter.execute(f.task);
-    assert.equal(stage.status,'pending','rendered artifact summary cannot replace locked handoff proof');
+    assert.equal((await f.adapter.execute(f.task)).status,'pending','artifact summaries cannot replace a locked handoff');
   }
-  f.task.schedule.stepKind='quality_check';
-  assert.equal((await f.adapter.execute(f.task)).status,'blocked');
-  f.task.schedule.stepKind='rework';
-  assert.equal((await f.adapter.execute(f.task)).status,'blocked','a rendered rework without independent same-output review is not completed');
-  assert.equal(f.starts(),0,'review gaps must not restart paid production');
-  f.task.schedule.stepKind='quality_check';
+  for (const stepKind of ['quality_check','rework'] as const) {
+    f.task.schedule.stepKind=stepKind;
+    assert.equal((await f.adapter.execute(f.task)).status,'blocked');
+  }
   artifact.content.productionResult.creativeReview.approved=true;f.set({artifacts:[artifact]});
-  assert.equal((await f.adapter.execute(f.task)).status,'succeeded');
+  f.task.schedule.stepKind='quality_check';
+  const reviewed=await f.adapter.execute(f.task);assert.equal(reviewed.status,'blocked');assert.equal('code'in reviewed?reviewed.code:null,'weekly_execution_result_unverified');
+  assert.equal(f.starts(),0,'summary review changes must not restart paid production');
   artifact.status='superseded';f.set({artifacts:[artifact]});
-  assert.equal((await f.adapter.execute(f.task)).status,'pending');
+  assert.equal((await f.adapter.execute(f.task)).status,'blocked','superseded summaries cannot supply review evidence');
 });
 test('current quality and conditional rework cards consume only the exact upstream artifact',async()=>{
   const f=await fixture();
@@ -136,7 +159,7 @@ test('authoritative production binding freezes real analyzed evidence and reject
   const pkg:any={...f.pkg,enterpriseProfileRef:{type:'enterprise_profile',id:'enterprise',version:1},businessContentGoalRef:{type:'business_content_goal',id:'goal',version:1},workflowTasks:[weeklyWorkflowTask],successCriteria:['询盘'],weekEnd:'2026-10-11',socialContentPackage:{...f.pkg.socialContentPackage,publicationTasks:[publication],originalContentTarget:1,adaptationVersionTarget:0,publicationTaskTarget:1},agentPlanning:{...f.planning,directorAnalyses:[analysis],dispatch:{...f.planning.dispatch,issuedAt:'2026-10-07T00:00:00Z',scheduleItems:[{...f.planning.dispatch.scheduleItems[0],directorAnalysisRef:{type:'weekly_director_analysis',id:'analysis',version:1}}]}}};
   const goal={goalId:'goal',programId:'program',version:1,status:'ready',objective:'获得询盘',products:['产品'],markets:['US'],audiences:['采购商'],languages:['zh'],publicFactRefs:[fact],prohibitedClaims:[],weeklyBudgetCny:10,blockers:[],inputRefs:[],conversionRouteIds:[],accountBoundaries:[],evidence:[]};
   await f.store.create('social_business_content_goals',{tenant_id:'tenant',program_id:'program',goal_id:'goal',version:1,payload:goal});
-  await f.store.create('social_programs',{tenant_id:'tenant',program_id:'program',payload:{version:4}});
+  await f.store.update('social_programs',(await f.store.list<any>('social_programs')).items[0].id,{payload:{version:4}});
   await f.store.create('social_candidate_evidence',{tenant_id:'tenant',tenantId:'tenant',candidateId:'candidate',evidenceId:'evidence',version:3,g1:{sourceUrl:'https://example.com/reference'},evidence:{qualityScore:{dimensions:{relevance:90,transferability:80}}}});
   const handoff:any={inspirationId:'candidate',analysisId:'real-analysis',analysisVersion:'3',version:'3',readiness:'production_reference',source:{platform:'tiktok',sourceUrl:'https://example.com/reference'},taskContext:{},whySelected:['观察到的结构'],referenceRole:'primary_structure',reusableLogic:{hookTypes:[],revealOrder:[],proofPlacement:[],pacing:'',emotionalProgression:'',ctaPosition:''},adaptationBoundary:{reusable:[],mustReplace:[],prohibited:[]},productionImplications:{requiredEvidence:[],likelyAssetNeeds:[],risks:[]},evidenceRefs:[{description:'真实观测',confidence:0.9,needsReview:false}],rights:{mayAnalyze:true,mayUseOriginalMedia:false,mayAdapt:true}};
   await f.store.create('starter_social_inspiration_handoff_versions',{tenant_id:'tenant',handoff_id:'candidate',handoff_version:'3',payload:handoff,record_hash:socialRequestHash(handoff)});
@@ -178,11 +201,11 @@ async function requiredMaterialFixture() {
  const packageRow=(await f.store.list<any>('social_weekly_operating_packages')).items[0];await f.store.update('social_weekly_operating_packages',packageRow.id,{payload:pkg});
  const consumer:any={...f.task,taskId:'real-material-consumer',scope:'content',status:'queued',schedule:{stepKind:'material_readiness'}};
  await f.store.create('social_weekly_execution_tasks',{tenant_id:f.task.tenantId,program_id:f.task.programId,package_id:f.task.packageId,package_version:f.task.packageVersion,task_id:consumer.taskId,payload:consumer});
- let detail:any={taskId:'content',version:'4',runId:null,status:'draft',readiness:{complete:true,missing:[]},sources:[],artifacts:[]};
+ let detail:any={taskId:'content',version:'4',runId:null,status:'draft',brief:f.brief,readiness:{complete:true,missing:[]},sources:structuredClone(f.sources),artifacts:[]};
  let starts=0,adds=0;let verified=true;let rawHash='a'.repeat(64);
  const sourceRef=`socialmaterial:${Buffer.from('pb-material0000001').toString('base64url')}`;
  const option:any={kind:'material',sourceRef,sourceVersion:'actual-library-revision-7',label:'真实企业素材'};
- const adapter=createSocialWeeklyProductionAdapter(f.store,{repository:createStarter198Repository(f.store),read:async()=>structuredClone(detail),persistResultAuthority:async()=>{},materialAdmission:async input=>{assert.equal(input.consumerTaskId,'real-material-consumer');return verified?{status:'ready',materials:[{recordId:'material0000001',sha256:'a'.repeat(64),type:'image',byteSize:12}],verifiedRequestRefs:[{requestId:'human-request',submissionVersion:1}],gaps:[]}:{status:'blocked',materials:[],verifiedRequestRefs:[],gaps:[{requestId:'human-request',code:'pending_verification'}]};},materialRecord:async()=>({id:'material0000001',tenantId:'tenant',scope:'own',sha256:rawHash}),sourceOptions:{list:async()=>({items:[option],page:1,perPage:1,totalItems:1,totalPages:1,status:'ready'}),resolve:async()=>option},addSource:async input=>{adds++;assert.equal(detail.runId,null);assert.equal(input.value.sourceVersion,'actual-library-revision-7','persist actual option version, not merely review hash');detail={...detail,version:'5',sources:[{sourceId:'bound-material',taskId:'content',kind:'material',sourceRef:input.value.sourceRef,sourceVersion:input.value.sourceVersion,status:'active'}]};return {source:detail.sources[0],task:detail};},start:async input=>{starts++;assert.equal(adds,1,'canonical source must bind before any paid start');assert.equal(input.expectedVersion,'5');detail={...detail,runId:'run-material',status:'producing'};return detail;}});
+ const adapter=createSocialWeeklyProductionAdapter(f.store,{repository:createStarter198Repository(f.store),read:async()=>structuredClone(detail),persistResultAuthority:async()=>{},materialAdmission:async input=>{assert.equal(input.consumerTaskId,'real-material-consumer');return verified?{status:'ready',materials:[{recordId:'material0000001',sha256:'a'.repeat(64),type:'image',byteSize:12}],verifiedRequestRefs:[{requestId:'human-request',submissionVersion:1}],gaps:[]}:{status:'blocked',materials:[],verifiedRequestRefs:[],gaps:[{requestId:'human-request',code:'pending_verification'}]};},materialRecord:async()=>({id:'material0000001',tenantId:'tenant',scope:'own',sha256:rawHash}),sourceOptions:{list:async()=>({items:[option],page:1,perPage:1,totalItems:1,totalPages:1,status:'ready'}),resolve:async()=>option},addSource:async input=>{adds++;assert.equal(detail.runId,null);assert.equal(input.value.sourceVersion,'actual-library-revision-7','persist actual option version, not merely review hash');detail={...detail,version:'5',sources:[...f.sources,{sourceId:'bound-material',taskId:'content',kind:'material',sourceRef:input.value.sourceRef,sourceVersion:input.value.sourceVersion,status:'active'}]};return {source:detail.sources[0],task:detail};},start:async input=>{starts++;assert.equal(adds,1,'canonical source must bind before any paid start');assert.equal(input.expectedVersion,'5');detail={...detail,runId:'run-material',status:'producing'};return detail;}});
  return {...f,adapter,sourceRef,starts:()=>starts,adds:()=>adds,setDetail:(value:any)=>{detail={...detail,...value};},setVerified:(value:boolean)=>{verified=value;},setRawHash:(value:string)=>{rawHash=value;}};
 }
 test('frozen required material blocks paid admission until checked, then canonical option version binds before start exactly once',async()=> {
@@ -193,7 +216,7 @@ test('frozen required material blocks paid admission until checked, then canonic
 test('running production never edits a missing frozen source; drift blocks without replacement or restart',async()=> {
  const f=await requiredMaterialFixture();f.setDetail({runId:'existing-run',status:'producing'});
  let result=await f.adapter.execute(f.task);assert.equal(result.status,'blocked');assert.equal('code' in result?result.code:null,'weekly_running_material_binding_change_required');assert.equal(f.adds(),0);assert.equal(f.starts(),0);
- f.setDetail({sources:[{kind:'material',sourceRef:f.sourceRef,sourceVersion:'actual-library-revision-7',status:'active'}]});f.setRawHash('b'.repeat(64));
+ f.setDetail({sources:[...f.sources,{kind:'material',sourceRef:f.sourceRef,sourceVersion:'actual-library-revision-7',status:'active'}]});f.setRawHash('b'.repeat(64));
  result=await f.adapter.execute(f.task);assert.equal(result.status,'blocked');assert.equal('code' in result?result.code:null,'weekly_material_source_revision_invalid');assert.equal(f.adds(),0);assert.equal(f.starts(),0);
 });
 test('frozen material consumer lookup rejects a wrong package identity without invoking production',async()=> {
@@ -238,22 +261,22 @@ test('indispensable customer evidence promise blocks before paid start even with
 test('real existing source mutation persists the resolved library revision and still respects remaining content input gates',async()=> {
  const f=await requiredMaterialFixture();
  const row=(await f.store.list<any>('starter_social_content_tasks')).items[0];
- await f.store.update('starter_social_content_tasks',row.id,{status:'draft',version:'4',created_at:'2026-10-09T00:00:00Z',updated_at:'2026-10-09T00:00:00Z',brief:{title:'真实企业产品',objective:'采购询盘',productRef:'产品',audience:'采购商',markets:['US'],languages:['zh'],platforms:['tiktok'],formats:['short_video'],requestedOutputCount:1,creationMode:'material_processing',managementMode:'one_click_managed',productionMode:'social_ready',_weeklyAuthority:{}},source_count:0,knowledge_source_count:0,material_source_count:0,artifact_count:0,approved_artifact_count:0,delivery_package_count:0,publication_count:0,metric_submission_count:0});
+ await f.store.update('starter_social_content_tasks',row.id,{status:'draft',version:'4',created_at:'2026-10-09T00:00:00Z',updated_at:'2026-10-09T00:00:00Z',brief:{title:'真实企业产品',objective:'采购询盘',productRef:'产品',audience:'采购商',markets:['US'],languages:['zh'],platforms:['tiktok'],formats:['short_video'],requestedOutputCount:1,creationMode:'material_processing',managementMode:'one_click_managed',productionMode:'social_ready',_weeklyAuthority:f.authority},source_count:1,knowledge_source_count:0,material_source_count:0,artifact_count:0,approved_artifact_count:0,delivery_package_count:0,publication_count:0,metric_submission_count:0});
  const option:any={kind:'material',sourceRef:f.sourceRef,sourceVersion:'actual-revision-9',label:'企业产品素材'};let starts=0;
- const adapter=createSocialWeeklyProductionAdapter(f.store,{repository:createStarter198Repository(f.store),read:async()=>({taskId:'content',version:'4',runId:null,status:'draft',readiness:{complete:true,missing:[]},sources:[],artifacts:[]} as any),persistResultAuthority:async()=>{},materialAdmission:async()=>({status:'ready',materials:[{recordId:'material0000001',sha256:'a'.repeat(64),type:'image',byteSize:12}],verifiedRequestRefs:[{requestId:'human-request',submissionVersion:1}],gaps:[]}),materialRecord:async()=>({id:'material0000001',tenantId:'tenant',scope:'own',sha256:'a'.repeat(64)}),sourceOptions:{list:async()=>({items:[option],page:1,perPage:1,totalItems:1,totalPages:1,status:'ready'}),resolve:async()=>option},start:async()=>{starts++;throw Error('must not start incomplete actual content');}});
+ const adapter=createSocialWeeklyProductionAdapter(f.store,{repository:createStarter198Repository(f.store),read:async()=>({taskId:'content',version:'4',runId:null,status:'draft',brief:f.brief,readiness:{complete:true,missing:[]},sources:structuredClone(f.sources),artifacts:[]} as any),persistResultAuthority:async()=>{},materialAdmission:async()=>({status:'ready',materials:[{recordId:'material0000001',sha256:'a'.repeat(64),type:'image',byteSize:12}],verifiedRequestRefs:[{requestId:'human-request',submissionVersion:1}],gaps:[]}),materialRecord:async()=>({id:'material0000001',tenantId:'tenant',scope:'own',sha256:'a'.repeat(64)}),sourceOptions:{list:async()=>({items:[option],page:1,perPage:1,totalItems:1,totalPages:1,status:'ready'}),resolve:async()=>option},start:async()=>{starts++;throw Error('must not start incomplete actual content');}});
  const result=await adapter.execute(f.task);
- const sources=(await f.store.list<any>('starter_social_task_sources')).items;
+ const sources=(await f.store.list<any>('starter_social_task_sources')).items.filter(source=>source.source_kind==='material');
  assert.equal(sources.length,1,JSON.stringify(result));assert.equal(sources[0].source_ref,f.sourceRef);assert.equal(sources[0].source_version,'actual-revision-9');assert.equal(starts,0,'real source mutation rechecks knowledge readiness, not mocked initial readiness');
 });
 
-test('safe AI-only requirement evidence unblocks material readiness and preserves the paid run across polling',async()=> {
+test('AI-only material plans without physical reference analysis evidence cannot start paid production',async()=> {
  const {createSocialAssetSupplyPlan}=await import('../../shared/socialContentAssetSupply.js');
  const f=await fixture();f.task.schedule.stepKind='material_readiness';f.set({runId:null,status:'draft',assetSupplyPlan:createSocialAssetSupplyPlan({creationMode:'material_processing',planVersion:'4',confirmedFactRefs:['enterprise_fact:fact@1'],shots:[{shotId:'fact',function:'proof',requestedDescription:'已确认事实图形卡片'},{shotId:'transition',function:'transition',requestedDescription:'非证据动画'}]})});
  const row=(await f.store.list<any>('starter_social_content_tasks')).items[0];await f.store.update('starter_social_content_tasks',row.id,{material_requirements:[]});
- const result=await f.adapter.execute(f.task);assert.deepEqual(result,{status:'succeeded',resultRefs:[{type:'starter_social_content_material_demand',id:'content',version:4}]});assert.equal(f.starts(),1);
- const stored=(await f.store.list<any>('starter_social_content_tasks')).items[0];assert.equal(stored.brief._weeklyMaterialDemand.mode,'no_shared_requests');assert.equal(stored.brief._weeklyMaterialDemand.assetSupplyPlan.shots[0].sourceStrategy,'verified_fact_card');
- assert.equal((await f.adapter.execute(f.task)).status,'succeeded');assert.equal(f.starts(),1);
- await f.store.update('starter_social_content_tasks',row.id,{material_requirements:[{required:true}]});assert.equal((await f.adapter.execute(f.task)).status,'blocked');assert.equal(f.starts(),1,'running input changes are not rewritten or restarted');
+ for(let attempt=0;attempt<2;attempt++){const rejected=await f.adapter.execute(f.task);assert.equal(rejected.status,'blocked');assert.equal('code'in rejected?rejected.code:null,'weekly_reference_source_evidence_required');}
+ assert.equal(f.starts(),0);
+ const stored=(await f.store.list<any>('starter_social_content_tasks')).items[0];
+ assert.equal(stored.run_id,'run-existing','unverified input cannot replace the persisted run identity');
 });
 
 test('missing classification and unknown requirements block before any paid start',async()=>{
@@ -295,7 +318,7 @@ test('continuation markers cannot fall through to new version paid production ev
  }
  assert.equal(starts,0);assert.equal(creates,0);
 });
-test('actual partial dispatch admits selected external publication and refuses pending owned or confirmation drift before start',async()=>{const f=await fixture(),policy={profile:'b2b_existing',allocationUnit:'mother_content',ownedPercent:40,externalPercent:60},coverage={selectedSlotIds:['slot'],pendingSlotIds:['owned'],referenceSourcePolicy:policy};const item={...f.planning.dispatch.scheduleItems[0]!,scheduleItemId:'selected'};const plan:any={...f.planning,programId:'program',packageId:'package',packageVersion:2,referenceSourcePolicy:policy,skeleton:{packageId:'package',packageVersion:2,slots:[{slotId:'slot',motherContentId:'selected-mother',referenceSource:'external',publicationTaskIds:['publication']},{slotId:'owned',motherContentId:'owned-mother',referenceSource:'owned',publicationTaskIds:['pending']}]},userConfirmation:{confirmedBy:'human',confirmedAt:'2026-10-09T00:00:00Z',selectedSlotIds:['slot']},detailedSchedule:{ref:{type:'weekly_detailed_schedule',id:'detailed',version:1},coverage,items:[item]},dispatch:{...f.planning.dispatch,coverage:structuredClone(coverage),scheduleItems:[item],scheduleItemIds:['selected'],detailedScheduleRef:{type:'weekly_detailed_schedule',id:'detailed',version:1}}};const pkgrow=(await f.store.list<any>('social_weekly_operating_packages')).items[0],planrow=(await f.store.list<any>('social_weekly_agent_planning')).items[0];const pending={...f.pkg.socialContentPackage.publicationTasks[0]!,publicationTaskId:'pending',motherContentId:'owned-mother'};await f.store.update('social_weekly_operating_packages',pkgrow.id,{payload:{...f.pkg,referenceSourcePolicy:policy,socialContentPackage:{...f.pkg.socialContentPackage,publicationTasks:[pending,...f.pkg.socialContentPackage.publicationTasks.map(pub=>({...pub,motherContentId:'selected-mother'}))]}}});await f.store.update('social_weekly_agent_planning',planrow.id,{payload:plan});assert.equal((await f.adapter.execute(f.task)).status,'pending');f.task.publicationTaskId='pending';assert.equal((await f.adapter.execute(f.task)).status,'blocked');f.task.publicationTaskId='publication';plan.userConfirmation.selectedSlotIds=['owned'];await f.store.update('social_weekly_agent_planning',planrow.id,{payload:plan});assert.equal((await f.adapter.execute(f.task)).status,'blocked');assert.equal(f.starts(),0);});
+test('actual partial dispatch admits selected external publication and refuses pending owned or confirmation drift before start',async()=>{const f=await fixture(),policy={profile:'b2b_existing',allocationUnit:'mother_content',ownedPercent:40,externalPercent:60},coverage={selectedSlotIds:['slot'],pendingSlotIds:['owned'],referenceSourcePolicy:policy};const item={...f.planning.dispatch.scheduleItems[0]!,scheduleItemId:'selected'};const plan:any={...f.planning,programId:'program',packageId:'package',packageVersion:2,referenceSourcePolicy:policy,skeleton:{packageId:'package',packageVersion:2,slots:[{slotId:'slot',motherContentId:'selected-mother',referenceSource:'external',publicationTaskIds:['publication']},{slotId:'owned',motherContentId:'owned-mother',referenceSource:'owned',publicationTaskIds:['pending']}]},userConfirmation:{confirmedBy:'human',confirmedAt:'2026-10-09T00:00:00Z',selectedSlotIds:['slot']},detailedSchedule:{ref:{type:'weekly_detailed_schedule',id:'detailed',version:1},coverage,items:[item]},dispatch:{...f.planning.dispatch,coverage:structuredClone(coverage),scheduleItems:[item],scheduleItemIds:['selected'],detailedScheduleRef:{type:'weekly_detailed_schedule',id:'detailed',version:1}}};const pkgrow=(await f.store.list<any>('social_weekly_operating_packages')).items[0],planrow=(await f.store.list<any>('social_weekly_agent_planning')).items[0];const pending={...f.pkg.socialContentPackage.publicationTasks[0]!,publicationTaskId:'pending',motherContentId:'owned-mother'};await f.store.update('social_weekly_operating_packages',pkgrow.id,{payload:{...f.pkg,agentPlanning:plan,referenceSourcePolicy:policy,socialContentPackage:{...f.pkg.socialContentPackage,publicationTasks:[pending,...f.pkg.socialContentPackage.publicationTasks.map(pub=>({...pub,motherContentId:'selected-mother'}))]}}});await f.store.update('social_weekly_agent_planning',planrow.id,{payload:plan});await f.refreshAuthority((await f.store.getById<any>('social_weekly_operating_packages',pkgrow.id)).payload,{...f.pkg.socialContentPackage.publicationTasks[0],motherContentId:'selected-mother'});const selected=await f.adapter.execute(f.task);assert.equal(selected.status,'pending',JSON.stringify(selected));f.task.publicationTaskId='pending';assert.equal((await f.adapter.execute(f.task)).status,'blocked');f.task.publicationTaskId='publication';plan.userConfirmation.selectedSlotIds=['owned'];await f.store.update('social_weekly_agent_planning',planrow.id,{payload:plan});assert.equal((await f.adapter.execute(f.task)).status,'blocked');assert.equal(f.starts(),0);});
 
 test('stored package payload scope drift blocks before content creation or paid start',async()=>{
  for(const field of ['programId','packageId','version'] as const){

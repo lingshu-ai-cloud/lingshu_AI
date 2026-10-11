@@ -54,9 +54,9 @@ interface YouTubeVideo {
   description: string;
   publishedAt: string;
   thumbnailUrl: string;
-  viewCount: number;
-  likeCount: number;
-  commentCount: number;
+  viewCount?: number;
+  likeCount?: number;
+  commentCount?: number;
   duration: string;
 }
 
@@ -936,14 +936,30 @@ export function ChannelOverview() {
     const url = currentPlatform === 'youtube'
       ? `/api/overseas/youtube/accounts/${selectedAccountId}/videos?maxResults=50`
       : `/api/overseas/social/accounts/${selectedAccountId}/videos?maxResults=50`;
-    fetchJson<{ videos?: OverviewVideo[] }>(url)
-      .then(data => {
-        const list = data.videos ?? [];
-        setVideos(list);
-        setSelectedVideoId(list[0]?.id || '');
-      })
-      .catch(e => setError(e instanceof Error ? e.message : '无法读取视频列表'))
-      .finally(() => setVideosLoading(false));
+    let cancelled = false;
+    const loadVideos = async () => {
+      let lastError: unknown;
+      for (let attempt = 0; attempt < 2; attempt += 1) {
+        try {
+          const data = await fetchJson<{ videos?: OverviewVideo[] }>(url);
+          if (cancelled) return;
+          const list = data.videos ?? [];
+          setVideos(list);
+          setSelectedVideoId(list[0]?.id || '');
+          setVideosLoading(false);
+          return;
+        } catch (reason) {
+          lastError = reason;
+          if (attempt === 0) await new Promise(resolve => window.setTimeout(resolve, 500));
+        }
+      }
+      if (!cancelled) {
+        setError(lastError instanceof Error ? lastError.message : '无法读取视频列表');
+        setVideosLoading(false);
+      }
+    };
+    void loadVideos();
+    return () => { cancelled = true; };
   }, [selectedAccountId, currentPlatform]);
 
   useEffect(() => {
@@ -1088,8 +1104,8 @@ export function ChannelOverview() {
                         <span className="min-w-0 flex-1">
                           <span className="block line-clamp-2 text-sm font-semibold text-text-primary">{video.title}</span>
                           <span className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px] text-text-muted">
-                            <span className="inline-flex items-center gap-1"><Eye size={11} />{compactNumber.format(video.viewCount || 0)}</span>
-                            <span className="inline-flex items-center gap-1"><MessageSquare size={11} />{compactNumber.format(video.commentCount || 0)}</span>
+                            <span className="inline-flex items-center gap-1"><Eye size={11} />{typeof video.viewCount === 'number' ? compactNumber.format(video.viewCount) : '暂无数据'}</span>
+                            <span className="inline-flex items-center gap-1"><MessageSquare size={11} />{typeof video.commentCount === 'number' ? compactNumber.format(video.commentCount) : '暂无数据'}</span>
                             <span>{formatDate(video.publishedAt)}</span>
                           </span>
                         </span>

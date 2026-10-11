@@ -1,6 +1,7 @@
 import { getToken } from './auth';
 import type { WeeklyScheduleTargetGraph, WeeklyScheduleCapacityInput, WeeklyScheduleProposal, WeeklyScheduleConfirmation } from '../../shared/contracts/socialWeeklyScheduleRevision';
 import type {WeeklyProductionRepairCase} from '../../shared/contracts/weeklyProductionRepairCase';
+import type {UnplannedSocialDeliveryCard,WeeklyDeliveryCard} from '../../shared/contracts/weeklyDeliveryCard';
 import type {SceneReworkAdmissionPreview} from '../../server/starter198/socialContentSceneReworkAdmission';
 import type {WeeklyCreativeRepairCapacityPreview} from '../../shared/contracts/weeklyCreativeRepairExecution';
 import type {CreativeRepairConfiguration} from '../../server/socialPrograms/weeklyCreativeRepairConfiguration';
@@ -201,6 +202,10 @@ export const socialProgramApi = {
   async listExecutionTasks(programId: string, packageId: string, version: number): Promise<WeeklyExecutionTask[]> {
     return (await request<{ items: WeeklyExecutionTask[] }>(`/${encodeURIComponent(programId)}/operating-packages/${encodeURIComponent(packageId)}/execution-tasks?version=${version}`)).items;
   },
+  async listDeliveryCards(programId:string,packageId:string,version:number):Promise<WeeklyDeliveryCard[]> {
+    return (await request<{items:WeeklyDeliveryCard[]}>(`/${encodeURIComponent(programId)}/operating-packages/${encodeURIComponent(packageId)}/delivery-cards?version=${version}`)).items;
+  },
+  async listUnplannedDeliveryCards():Promise<UnplannedSocialDeliveryCard[]> {return (await request<{items:UnplannedSocialDeliveryCard[]}>('/unplanned-delivery-cards')).items;},
   async listRepairCases(programId:string,packageId:string,version:number):Promise<WeeklyProductionRepairCase[]>{
     return (await request<{items:WeeklyProductionRepairCase[]}>(`/${encodeURIComponent(programId)}/operating-packages/${encodeURIComponent(packageId)}/repair-cases?version=${version}`)).items;
   },

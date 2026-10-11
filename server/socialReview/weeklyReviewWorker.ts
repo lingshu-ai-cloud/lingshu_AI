@@ -1,4 +1,6 @@
 import { randomUUID } from 'node:crypto';
+import {readWeeklyPublicationMetricEvidence} from '../runtime/weeklyPublicationMetricEvidence.js';
+import type {WeeklyExecutionTask} from '../../shared/contracts/socialProgram.js';
 import type { MetricSnapshot, MetricValues, SocialMetricKey } from '../socialMetrics/aggregation.js';
 import { SOCIAL_METRIC_KEYS } from '../socialMetrics/aggregation.js';
 import type { DataStore } from '../storage/datastore.js';
@@ -59,23 +61,24 @@ export function weeklyReviewScheduleDecision(weekly: WeeklyOperatingPackage, now
   return { status: 'due', ...bounds };
 }
 
-async function safeList(dataStore: DataStore, collection: string, tenantId: string): Promise<{ items: RecordRow[]; available: boolean }> {
-  try {
-    const items: RecordRow[] = [];
-    const seen = new Set<string>();
-    for (let page = 1; ; page++) {
-      const result = await dataStore.list<RecordRow>(collection, { where: { tenant_id: tenantId }, sort: 'id', page, perPage: 1_000 });
-      if (!result.items.length && page < result.totalPages) throw new Error('weekly_review_source_page_missing');
-      for (const item of result.items) {
-        if (item.tenant_id !== tenantId || !item.id || seen.has(item.id)) throw new Error('weekly_review_source_identity_invalid');
-        seen.add(item.id); items.push(item);
-      }
-      if (page >= result.totalPages) break;
+async function scanReviewRows(dataStore: DataStore, collection: string, where: Record<string,string>, perPage=1_000): Promise<RecordRow[]> {
+  const items:RecordRow[]=[];const seen=new Set<string>();let total:number|undefined;
+  for(let page=1;page<=10_000;page++){
+    const result=await dataStore.list<RecordRow>(collection,{where,sort:'id',page,perPage});
+    if(!Number.isSafeInteger(result.totalItems)||result.totalItems<0||(total!==undefined&&total!==result.totalItems))throw Error('weekly_review_source_count_changed');
+    total=result.totalItems;
+    for(const item of result.items){
+      if(!item.id||seen.has(item.id)||Object.entries(where).some(([key,value])=>item[key]!==value))throw Error('weekly_review_source_identity_invalid');
+      seen.add(item.id);items.push(item);
     }
-    return { items, available: true };
-  } catch {
-    return { items: [], available: false };
+    if(items.length===total)return items;
+    if(!result.items.length||items.length>total)throw Error('weekly_review_source_page_missing');
   }
+  throw Error('weekly_review_source_scan_limit');
+}
+async function safeList(dataStore: DataStore, collection: string, tenantId: string): Promise<{ items: RecordRow[]; available: boolean }> {
+  try{return {items:await scanReviewRows(dataStore,collection,{tenant_id:tenantId}),available:true};}
+  catch{return {items:[],available:false};}
 }
 
 function sourceAvailability(sourceAvailable: boolean, refs: string[]): ReviewAvailability {
@@ -136,7 +139,7 @@ export async function collectWeeklyReviewInput(input: {
   actorId: string;
   now: Date;
   minimumOwnedContent?: number;
-}): Promise<FreezeWeeklyReviewInput> {
+}): Promise<FreezeWeeklyReviewInput & { sourceScanComplete:boolean }> {
   const { dataStore, row, actorId, now } = input;
   const weekly = row.payload;
   const schedule = weeklyReviewScheduleDecision(weekly, now);
@@ -156,13 +159,25 @@ export async function collectWeeklyReviewInput(input: {
   const publicationReceiptRefs: string[] = [];
   const interactionRefs: string[] = [];
   const salesQualificationRefs: string[] = [];
+  const durablePublications=new Map<string,Awaited<ReturnType<typeof readWeeklyPublicationMetricEvidence>>['publications'][number]>();
+  let durableScanComplete=true;
+  for(const task of weekly.socialContentPackage.publicationTasks.filter(task=>task.status!=='cancelled')){
+   try{
+    const evidence=await readWeeklyPublicationMetricEvidence(dataStore,{tenantId:row.tenant_id,programId:weekly.programId,packageId:weekly.packageId,packageVersion:weekly.version,publicationTaskId:task.publicationTaskId,accountId:task.accountId,workflowKind:'engagement',schedule:{stepKind:'performance_monitoring'}} as WeeklyExecutionTask,weekly,now,{durableOnly:true});
+    if(evidence.publicationEvidenceIncomplete)durableScanComplete=false;
+    const matches=evidence.publications.filter(proof=>proof.publicationTaskId===task.publicationTaskId);
+    if(matches.length>1)throw Error('weekly_review_publication_ambiguous');
+    if(matches[0])durablePublications.set(task.publicationTaskId,matches[0]);
+   }catch{durableScanComplete=false;}
+  }
   const contents: ReviewContentInput[] = weekly.socialContentPackage.publicationTasks
     .filter(task => task.status !== 'cancelled')
     .map(task => {
       const publication = publications.items.find(item => publicationMatches(item, weekly, task.publicationTaskId));
       const manifest = object(publication?.manifest);
-      const contentId = text(publication?.content_id || manifest.contentId || task.motherContentId);
-      const receiptRefs = publication && verifiedPublication(publication)
+      const durable=publications.available?durablePublications.get(task.publicationTaskId):undefined;
+      const contentId = durable?.contentId??text(publication?.content_id || manifest.contentId || task.motherContentId);
+      const receiptRefs = durable?[durable.receiptRef]:publication && verifiedPublication(publication)
         ? [text(object(publication.evidence).verificationReceiptHash || object(publication.evidence).sourceReceiptHash || publication.package_id)].filter(Boolean)
         : [];
       publicationReceiptRefs.push(...receiptRefs);
@@ -199,6 +214,7 @@ export async function collectWeeklyReviewInput(input: {
   const unavailableMetricKeys: SocialMetricKey[] = metrics.available ? [] : [...SOCIAL_METRIC_KEYS];
   const workflowEventRefs = weekly.appliedWorkflowEvents.map(event => event.eventId);
   return {
+    sourceScanComplete:durableScanComplete&&[publications,metrics,starterMetrics,interactions,qualifications].every(source=>source.available),
     tenantId: row.tenant_id,
     actorId,
     programId: weekly.programId,
@@ -270,7 +286,8 @@ export async function runWeeklyReviewForPackage(input: {
     let snapshot = await existingSnapshot(dataStore, input.row);
     let repeated = Boolean(snapshot);
     if (!snapshot) {
-      const reviewInput = await collectWeeklyReviewInput({ dataStore, row: input.row, actorId: input.actorId || 'social_weekly_review_worker', now, minimumOwnedContent: input.minimumOwnedContent });
+      const {sourceScanComplete,...reviewInput} = await collectWeeklyReviewInput({ dataStore, row: input.row, actorId: input.actorId || 'social_weekly_review_worker', now, minimumOwnedContent: input.minimumOwnedContent });
+      if(!sourceScanComplete)return {status:'not_due',reason:'weekly_review_sources_pending'};
       const frozen = await freezeWeeklyReview(reviewInput, dataStore);
       snapshot = frozen.snapshot;
       repeated = frozen.repeated;
@@ -307,8 +324,7 @@ export async function runWeeklyReviewForPackage(input: {
 export async function runSocialWeeklyReviewScan(dataStore: DataStore = store, now = new Date()): Promise<{ scanned: number; completed: number; failed: number }> {
   const rows: PackageRow[] = [];
   for (const status of ['active', 'superseded']) {
-    const result = await dataStore.list<PackageRow>(WEEKLY_PACKAGES, { where: { status }, sort: 'week_start', page: 1, perPage: 500 });
-    rows.push(...result.items);
+    rows.push(...await scanReviewRows(dataStore,WEEKLY_PACKAGES,{status},500) as PackageRow[]);
   }
   const unique = [...new Map(rows.map(row => [`${row.tenant_id}:${row.package_id}:${row.version}`, row])).values()];
   const report = { scanned: unique.length, completed: 0, failed: 0 };

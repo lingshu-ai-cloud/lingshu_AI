@@ -43,3 +43,31 @@
 新增验证：`node --import tsx --test server/routes/mobileWorkbenchQueue.test.ts apps/shooting-miniapp/workbench.test.cjs`。
 
 体验验收增加 `apps/shooting-miniapp/workbench-experience.test.cjs`，上线队列验收增加 `server/routes/mobileWorkbenchQueue.release.test.ts`。兼容工作台的查询先展示真实快照；只有独立“提交工作指令”确认后才向后台提交，避免问进度时启动工作周期。最新整合 23 项测试通过；全仓类型和迁移检查尚有同期其他修改的阻塞，详见上线审查文档。
+
+## 与网页端统一的视觉主题（2026-10-11）
+
+本地联调模块位于 `local-integrated-flow/apps/shooting-miniapp`。所有原生页面使用 `styles/tokens.wxss` 与 `styles/components.wxss`，按现行全系统 UI 规范共享网页端的色彩、字体、圆角、控件和动效。工作台、助手、拍摄与审批采用白底黑灰正文、中性导航、蓝紫主按钮与发出消息；反馈保留成功、警告、错误语义。原生小程序不直接加载 React/Ant Design 组件。
+
+后续页面应复用该主题；勿再添加页面专属主色。主题通过 `app.wxss` 提供变量，页面末尾导入共享组件样式。尚需在微信开发者工具及真机检查 390px 布局、文字放大、输入聚焦、禁用按钮与底部安全区。
+
+## 网页与小程序共享代码
+
+在仓库根目录运行：
+
+```sh
+pnpm run sync:mobile-shared   # 修改共享源后生成两端产物
+pnpm run check:mobile-shared  # 只检查，不写文件
+pnpm run test:mobile-shared   # 共享行为、原生包依赖与相关网页测试
+```
+
+网页开发和构建入口会先检查生成文件是否同步。修改共享源后，先生成，再测试；微信开发者工具导入本目录前也要检查。生成文件需随共享源保存，不能手工修改。
+
+| 唯一维护源 | 网页消费 | 小程序消费 |
+| --- | --- | --- |
+| `shared/design/tokens.json` | `src/lib/designTokens.generated.ts` → `designTokens.ts`、主题 Provider 和共享样式 | `styles/tokens.wxss` → 页面和 `styles/components.wxss` |
+| `shared/mobile-domain.mjs` / `.d.mts` | 数字员工页任务状态、上海日期与排期角色文案 | `lib/generated/mobile-domain.js` → workbench、agentSchedule |
+| `shared/request-policy.cjs` / `.d.cts` | 生成 `shared/request-policy.mjs` / `.d.mts` → 助手审批 API、账号请求锁 | 生成 `lib/request-policy.js` → API 错误解析、助手回执终态 |
+
+生成器分别为 `scripts/generate-design-tokens.mjs`、`scripts/sync-mobile-domain.mjs`、`scripts/generate-miniapp-request-policy.mjs`，总入口为 `scripts/sync-mobile-shared.mjs`；均支持 `--check`。共享模块不依赖 React、DOM 或微信 API，小程序运行时不引用包外源代码。
+
+网页和小程序继续使用各自现有接口、网络和设备适配器。两端已共用错误解析；版本命令和账号请求锁目前由网页消费，回执终态目前由小程序消费，它们均由同一平台无关策略源提供。审批对象版本、明确确认、幂等重试与真实执行回执保留；发布日历的海外冻结时区不改成上海时区。当前共享状态文案和请求基础，不将完整网页工作台或自由对话动作执行器移入小程序。

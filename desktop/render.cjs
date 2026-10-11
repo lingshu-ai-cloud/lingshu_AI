@@ -171,6 +171,21 @@ function finiteNumber(value, fallback) {
   return Number.isFinite(n) ? n : fallback;
 }
 
+function runBoundedFfmpeg(args, timeoutMs = 120000) {
+  return new Promise((resolve, reject) => {
+    const proc = spawn(ffmpegPath, args, { stdio: ['ignore', 'ignore', 'pipe'] });
+    let stderr = '';
+    const timer = setTimeout(() => proc.kill('SIGKILL'), timeoutMs);
+    proc.stderr.on('data', chunk => { stderr = (stderr + chunk.toString()).slice(-4096); });
+    proc.on('error', error => { clearTimeout(timer); reject(error); });
+    proc.on('close', (code, signal) => {
+      clearTimeout(timer);
+      if (code === 0) resolve();
+      else reject(new Error(`ffmpeg preprocessing failed (${code ?? signal})\n${stderr.slice(-1200)}`));
+    });
+  });
+}
+
 function assTime(sec) {
   const n = Math.max(0, Number(sec) || 0);
   const h = Math.floor(n / 3600);
@@ -558,8 +573,51 @@ async function composite(manifest, onProgress = () => {}, outDir) {
 
     if (process.env.RENDER_DEBUG) console.error(`[render] downloaded clips=${localClips.length} bgm=${bgmFile ? 'yes' : 'no'} voiceover=${voFile ? 'yes' : 'no'}`);
 
+    // A single ffmpeg filter graph with dozens of independent H.264 inputs can
+    // segfault in the bundled macOS binary before the first frame is emitted.
+    // Normalize and concatenate large, voiceover-only timelines in bounded
+    // one-input steps, then apply subtitles/BGM to the resulting owned video.
+    // This preserves every frozen scene duration while keeping the final graph
+    // at one visual decoder. Source-audio scenes and layered compositions stay
+    // on the full graph because collapsing them would change approved audio or
+    // layer semantics.
+    let visualClips = localClips;
+    const canPrecompose = localClips.length > 16 && extraClips.length === 0
+      && !localClips.some(clip => clip.production?.sound === 'source' || clip.production?.layout);
+    if (canPrecompose) {
+      const normalized = [];
+      for (let i = 0; i < localClips.length; i++) {
+        const clip = localClips[i];
+        const target = Math.max(1 / 30, finiteNumber(clip.targetDuration, duration / localClips.length));
+        const trimStart = Math.max(0, finiteNumber(clip.trimStart, 0));
+        const trimEnd = Math.max(trimStart + 0.1, finiteNumber(clip.trimEnd, trimStart + target));
+        const speed = Math.min(4, Math.max(0.25, finiteNumber(clip.speed, 1)));
+        const segment = path.join(tmp, `normalized-${String(i).padStart(3, '0')}.mp4`);
+        const inputArgs = clip.image
+          ? ['-loop', '1', '-t', target.toFixed(3), '-i', clip.file]
+          : ['-i', clip.file];
+        const source = clip.image
+          ? `trim=duration=${target.toFixed(3)},setpts=PTS-STARTPTS`
+          : `trim=start=${trimStart.toFixed(3)}:end=${trimEnd.toFixed(3)},setpts=(PTS-STARTPTS)/${speed.toFixed(3)},tpad=stop_mode=clone:stop_duration=${target.toFixed(3)},trim=duration=${target.toFixed(3)},setpts=PTS-STARTPTS`;
+        await runBoundedFfmpeg([
+          '-hide_banner', '-nostdin', '-y', ...inputArgs,
+          '-vf', `${source},scale=${w}:${h}:force_original_aspect_ratio=decrease,pad=${w}:${h}:(ow-iw)/2:(oh-ih)/2:color=black,setsar=1,fps=30,format=yuv420p`,
+          '-an', '-t', target.toFixed(3), '-c:v', 'libx264', '-threads', '1', '-preset', 'veryfast', '-crf', '20',
+          '-pix_fmt', 'yuv420p', '-r', '30', '-g', '60', '-keyint_min', '30', '-sc_threshold', '0', segment,
+        ], Math.max(120000, target * 15000));
+        normalized.push(segment);
+      }
+      const concatList = path.join(tmp, 'normalized-concat.txt');
+      fs.writeFileSync(concatList, normalized.map(file => `file '${file.replace(/'/g, "'\\''")}'`).join('\n') + '\n');
+      const precomposed = path.join(tmp, 'normalized-timeline.mp4');
+      await runBoundedFfmpeg(['-hide_banner', '-nostdin', '-y', '-f', 'concat', '-safe', '0', '-i', concatList,
+        '-c', 'copy', '-movflags', '+faststart', precomposed], Math.max(120000, duration * 5000));
+      visualClips = [{ file: precomposed, image: false, targetDuration: duration, trimStart: 0, trimEnd: duration,
+        targetStart: 0, cropMode: 'contain', sceneId: 'precomposed-timeline' }];
+    }
+
     // 2) 组装 ffmpeg 参数
-    const n = localClips.length;
+    const n = visualClips.length;
     // Bound filter workers: multiple 1080p xfade inputs otherwise retain large
     // frame queues per worker and can exhaust memory on a local preview host.
     const args = ['-hide_banner', '-nostdin', '-fflags', '+genpts', '-filter_complex_threads', '2']; // -nostdin：别等键盘输入，否则 spawn 的 stdin 管道会让 ffmpeg 永久挂起
@@ -567,7 +625,7 @@ async function composite(manifest, onProgress = () => {}, outDir) {
     let vlabel;
 
     if (n > 0) {
-      localClips.forEach(c => {
+      visualClips.forEach(c => {
         const target = Math.max(1 / 30, finiteNumber(c.targetDuration, duration / n));
         if (c.image) args.push('-loop', '1', '-t', target.toFixed(3), '-i', c.file);
         else { if (c.production?.transparent && /\.webm$/i.test(c.file)) args.push('-c:v', 'libvpx-vp9'); args.push('-i', c.file); }
@@ -576,7 +634,7 @@ async function composite(manifest, onProgress = () => {}, outDir) {
         if (c.image) args.push('-loop', '1', '-t', c.target.toFixed(3), '-i', c.file);
         else args.push('-i', c.file);
       });
-      localClips.forEach((c, i) => {
+      visualClips.forEach((c, i) => {
         const target = Math.max(1 / 30, finiteNumber(c.targetDuration, duration / n));
         const trimStart = Math.max(0, finiteNumber(c.trimStart, 0));
         const rawTrimEnd = finiteNumber(c.trimEnd, trimStart + target);
@@ -616,18 +674,18 @@ async function composite(manifest, onProgress = () => {}, outDir) {
       });
       const effectLabels = [];
       const targets = [];
-      localClips.forEach((clip, index) => {
+      visualClips.forEach((clip, index) => {
         const target = Math.max(.03, finiteNumber(clip.targetDuration, duration / n));
         const output = `ve${index}`;
         filters.push(...sceneEffectFilters({
           source: `[v${index}]`, output,
-          scene: effectPlan.scenes[index], width: w, height: h, target,
-          intensity: effectPlan.intensity,
+          scene: canPrecompose ? null : effectPlan.scenes[index], width: w, height: h, target,
+          intensity: canPrecompose ? 0 : effectPlan.intensity,
         }));
         effectLabels.push(`[${output}]`);
         targets.push(target);
       });
-      const joined = joinSceneFilters({ labels: effectLabels, scenes: effectPlan.scenes, targets, output: 'vcat' });
+      const joined = joinSceneFilters({ labels: effectLabels, scenes: canPrecompose ? [] : effectPlan.scenes, targets, output: 'vcat' });
       filters.push(...joined.filters);
       vlabel = joined.output;
     } else {

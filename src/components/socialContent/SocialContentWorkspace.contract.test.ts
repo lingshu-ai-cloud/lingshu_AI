@@ -65,6 +65,10 @@ assert.match(workspace, /onNavigate\('enterprise'\)/,
   'facts-required must link to the authoritative enterprise knowledge editor');
 assert.match(workspace, /onLoadMoreTasks=\{\(\) => void state\.loadMoreTasks\(\)\}/);
 assert.match(planning, /<SocialContentHistoryHome/);
+assert.match(planning, /continueProjectId: request\.draftProjectId \|\| sourceRequest\?\.continueProjectId/,
+  'replication handoff must retain the bound Studio project');
+assert.match(planning, /presenterAssetId: request\.presenterAssetId \|\| sourceRequest\?\.presenterAssetId/,
+  'replication handoff must retain the task presenter asset');
 assert.match(planning, /useState\(false\)/, 'the creation chooser must not cover the history home by default');
 assert.match(historyHome, /爆款复刻/);
 assert.match(historyHome, /自由创作/);
@@ -94,6 +98,18 @@ assert.match(overview, /编导 Agent 会结合现有素材安排导演方案/);
 assert.doesNotMatch(starterWorkspace, /我会统筹今天的经营任务|系统会主动推进|<StarterWorkflowOverview|socialTaskHeadline/, 'the home must open directly on task progress instead of an explanatory hero or agent map');
 assert.doesNotMatch(workspace, />灵小枢<[^]*?>社媒内容工作台</, 'the social workspace must not repeat a large explanatory heading above the task');
 assert.match(studio, /item\.id === 'kickoff-product' \|\| item\.id\.startsWith\('social-task-product:'\)/);
+assert.match(studio, /真人出镜角色尚未识别完成；产品必须先判断是真人口播、人物动作还是普通出镜/,
+  'ambiguous human shots must block batch generation until the product classifies their role');
+assert.match(studio, /studioCreateRequest\?\.presenterAssetId\?\.trim\(\)/,
+  'viral replication must read the presenter asset bound by the social task');
+assert.match(studio, /requestedPresenterId && !requestedPresenter\) shot\.presenterId = ''/,
+  'a missing or unauthorized bound presenter must block instead of falling back to another person');
+assert.match(studio, /item\.authorized && item\.id === productionDefaults\.defaultPresenterId/,
+  'the enterprise default presenter must be the first choice when a task does not override it');
+assert.match(studio, /managedMode === 'one_click_managed' && presenterConfirmed/,
+  'managed video creation must apply its preferred presenter to every confirmed speaking shot');
+assert.match(studio, /requirements\.presenterMode = 'video_twin'[\s\S]*?requirements\.method = 'talking'/,
+  'confirmed presenter speech must use the configured digital-twin talking route');
 assert.match(overview, /READINESS_LABEL/);
 assert.doesNotMatch(overview, />\{item\}<\/li>/);
 assert.match(overview, /setPreviewArtifact\(artifact\)/);

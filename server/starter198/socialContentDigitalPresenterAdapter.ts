@@ -183,21 +183,27 @@ function visualControl(context: Parameters<SocialAssetSupplyProviderAdapter['exe
   const durationSeconds = Math.max(0.5, Number(reference?.sourceTiming.durationSeconds ?? 3));
   const endSeconds = Math.max(startSeconds + 0.5, Number(contract.action.endSeconds
     ?? reference?.sourceTiming.endSeconds ?? startSeconds + durationSeconds));
-  const interaction: DigitalPresenterVisualControl['interaction'] = contract.interaction.kind === 'apply_product_to_face' || applyFace
+  const inferredInteraction: DigitalPresenterVisualControl['interaction'] = contract.interaction.kind === 'apply_product_to_face' || applyFace
     ? 'product_applied_to_face'
     : contract.interaction.kind === 'person_using_product' || usesProduct ? 'person_uses_product'
       : contract.interaction.kind === 'person_holding_product' || holdsProduct ? 'person_holds_product'
         : contract.interaction.kind === 'person_factory_interaction'
           || /工厂|车间|环境|factory|workshop|environment/.test(text) ? 'person_in_environment' : 'talking';
+  // In viral replication the talking-avatar route is deliberately a speech
+  // layer. Reference action/product/camera requirements remain assigned to
+  // their visual scenes and must not be falsely submitted as HeyGen controls.
+  const talkingReplication = context.shot.digitalHumanPlan?.workflow === 'viral_replication'
+    && context.shot.digitalHumanPlan.method === 'talking';
+  const interaction: DigitalPresenterVisualControl['interaction'] = talkingReplication ? 'talking' : inferredInteraction;
   const productGroups = context.shot.productSceneReplication?.productIdentity.groups ?? [];
   const controls = new Set<DigitalPresenterControlCapability>(['scripted_speech', 'timing_control']);
   if (context.shot.digitalHumanPlan?.method !== 'talking') controls.add('reference_motion');
-  if (interaction !== 'talking') controls.add('guided_action');
-  if (['person_holds_product', 'person_uses_product', 'product_applied_to_face'].includes(interaction)) controls.add('product_interaction');
-  if (interaction === 'person_in_environment' || contract.environment.kind !== 'unknown'
-    || environment !== '与导演镜头要求一致的稳定环境') controls.add('environment_control');
-  if (contract.camera.shotSize || contract.camera.angle || contract.camera.movement || contract.camera.composition
-    || (reference?.cameraMovement && reference.cameraMovement !== '通用运镜')) controls.add('camera_control');
+  if (!talkingReplication && interaction !== 'talking') controls.add('guided_action');
+  if (!talkingReplication && ['person_holds_product', 'person_uses_product', 'product_applied_to_face'].includes(interaction)) controls.add('product_interaction');
+  if (!talkingReplication && (interaction === 'person_in_environment' || contract.environment.kind !== 'unknown'
+    || environment !== '与导演镜头要求一致的稳定环境')) controls.add('environment_control');
+  if (!talkingReplication && (contract.camera.shotSize || contract.camera.angle || contract.camera.movement || contract.camera.composition
+    || (reference?.cameraMovement && reference.cameraMovement !== '通用运镜'))) controls.add('camera_control');
   return {
     precision: contract.precision === 'hook_high' || startSeconds < 3 ? 'hook_high' : 'standard',
     interaction,

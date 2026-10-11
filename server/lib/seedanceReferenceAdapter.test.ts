@@ -47,3 +47,19 @@ test('Seedance reference adapter accepts a trusted portrait asset URI and dedupl
     role: 'reference_video',
   });
 });
+
+import { isDefinitiveSupplierSubmissionError } from './digitalHumanProviderRegistry.js';
+
+for (const status of [408, 409, 429, 500, 503]) {
+  test('SeedanceReferenceAdapter retains unknown submission classification for HTTP ' + status, async () => {
+    let calls = 0;
+    const adapter = new SeedanceReferenceAdapter({ apiKey: 'controlled', model: 'controlled', estimatedCostCnyPerSecond: 1, transport: async (_url, init) => {
+      calls++;
+      assert.equal(init?.redirect, 'error');
+      return Response.json({ error: 'controlled ambiguous outcome' }, { status });
+    } });
+    const input = { characterUrl: 'https://assets.invalid/person.jpg', referenceVideoUrl: 'https://assets.invalid/reference.mp4' };
+    await assert.rejects(adapter.submit(input), error => !isDefinitiveSupplierSubmissionError(error) && String((error as Error).message).includes(String(status)));
+    assert.equal(calls, 1);
+  });
+}

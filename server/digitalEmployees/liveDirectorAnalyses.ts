@@ -101,6 +101,8 @@ export function directorAnalysisReferenceIds(planBody: Record<string, unknown>, 
   const pack = object(planBody.businessPackage);
   const planTasks = Array.isArray(pack.tasks) ? pack.tasks.map(object) : [];
   const planIds = planTasks.flatMap(task => Array.isArray(task.videoPlans) ? task.videoPlans.map(value => text(object(value).referenceId)) : []);
-  const taskIds = tasks.flatMap(task => (task.business_refs || []).filter(ref => ref.type === 'trend_video').map(ref => text(ref.id)));
+  const taskIds = tasks.flatMap(task => (Array.isArray(task.business_refs) ? task.business_refs : [])
+    .filter(ref => ref && typeof ref === 'object' && ref.type === 'trend_video')
+    .map(ref => text(ref.id)));
   return [...new Set([...planIds, ...taskIds].filter(Boolean))];
 }

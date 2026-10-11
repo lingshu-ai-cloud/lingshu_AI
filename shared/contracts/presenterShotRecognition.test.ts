@@ -9,6 +9,7 @@ console.log('Legacy reference presenter recognition passed');
 
 assert.equal(salesPresenterRecognition({ detail: '画面：女性靠近镜头，敲门 镜头功能：d_to_c 口播：Hello' }), 'candidate');
 assert.equal(salesPresenterRecognition({ detail: '画面：女性正面说话 口播：Hello' }), 'candidate');
+assert.equal(salesPresenterRecognition({ detail: '画面：女主面向镜头，右手指向镜头 口播：Hello' }), 'candidate');
 assert.equal(confirmedSalesPresenterRoute({ detail: '画面：女性正面说话 口播：Hello' }), 'material');
 assert.equal(salesPresenterRecognition({ observedPresenterRole: 'sales_presenter' }), 'candidate');
 assert.equal(salesPresenterRecognition({ observedPresenterRole: 'sales_presenter', personContinuityId: 'main-sales' }), 'confirmed');

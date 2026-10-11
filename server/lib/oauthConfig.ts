@@ -182,7 +182,20 @@ export function advancedManualConnectEnabled(): boolean {
   return effectiveOAuthConfig().advancedManualConnectEnabled;
 }
 
+export function assertExactOAuthRedirectUri(expected: unknown, actual: string): void {
+  if (typeof expected !== 'string' || !expected || expected !== actual) throw new Error('oauth_callback_uri_changed');
+}
+
+export function validatedProductionOAuthOrigin(value: unknown): string {
+  if (typeof value !== 'string' || !value.trim()) throw new Error('oauth_public_origin_required');
+  if (!value.trim().startsWith('https://') || /[\\?#\r\n]/.test(value.trim())) throw new Error('oauth_public_origin_invalid');
+  let url: URL; try { url = new URL(value.trim()); } catch { throw new Error('oauth_public_origin_invalid'); }
+  if (url.protocol !== 'https:' || url.username || url.password || url.pathname !== '/' || url.search || url.hash || url.hostname.includes('your-domain.com')) throw new Error('oauth_public_origin_invalid');
+  return url.origin;
+}
+
 export function getPublicOrigin(req: Request): string {
+  if (process.env.NODE_ENV === 'production') return validatedProductionOAuthOrigin(process.env.PUBLIC_BASE_URL);
   const configured = envText('PUBLIC_BASE_URL').replace(/\/$/, '');
   if (configured && !configured.includes('your-domain.com')) return configured;
 

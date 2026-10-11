@@ -836,6 +836,7 @@ export type BusinessDestination =
   | "socialInspiration"
   | "scriptLibrary"
   | "smartAssets"
+  | "adsManaged"
   | "conversion"
   | "digitalEmployees";
 
@@ -877,6 +878,8 @@ const taskDestinationByKey: Record<
 > = {
   context_readiness: { page: "enterprise" },
   goal_decomposition: { page: "digitalEmployees" },
+  // The scheduler owns the collection trigger. Results remain visible in the
+  // inspiration workspace after the bound run has actually executed.
   scheduled_source_collection: { page: "scheduled" },
   viral_analysis: { page: "socialInspiration" },
   content_mode_routing: { page: "smartAssets", view: "create" },
@@ -905,6 +908,9 @@ export function buildTaskDeepLink(
   const studioProjectId = studioProject ? String(studioProject.id).trim() : undefined;
   const mapped =
     taskDestinationByKey[task.task_key] ||
+    (/^(ads?|campaign|traffic)\./.test(task.capability_key || '') || ['ads', 'advertising', 'traffic'].includes(task.business_domain || '')
+      ? { page: "adsManaged" as const }
+      : null) ||
     (task.kind === "production"
       ? { page: "smartAssets" as const, view: "create" as const }
       : task.kind === "activation"
@@ -920,10 +926,11 @@ export function buildTaskDeepLink(
       "socialInspiration",
       "scriptLibrary",
       "smartAssets",
+      "adsManaged",
       "conversion",
       "digitalEmployees",
     ].includes(declaredDestination)
-      ? declaredDestination
+      ? (taskDestinationByKey[task.task_key]?.page || declaredDestination)
       : mapped.page;
   return {
     page,

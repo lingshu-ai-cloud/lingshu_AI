@@ -55,22 +55,29 @@ export class SeedreamFirstFrameGenerator implements FirstFrameGenerator {
       response = await fetcher(`${base}/images/generations`, { method: 'POST', headers: {
         Authorization: `Bearer ${apiKey}`, 'Content-Type': 'application/json', 'X-Client-Request-Id': input.idempotencyKey,
       }, body: JSON.stringify({ model: this.model, prompt: input.prompt.trim(), ...(input.references.length ? { image: input.references.map(dataUrl) } : {}), size: seedreamSize(input.ratio, this.model),
-        response_format: 'url', output_format: 'jpeg', watermark: false }), signal: AbortSignal.timeout(timeoutMs) });
+        response_format: 'url', output_format: 'jpeg', watermark: false }), signal: AbortSignal.timeout(timeoutMs), redirect: 'error' });
     } catch (error) {
       throw new FirstFrameProviderError(`Seedream 请求状态未知：${transportFailure(error)}`, 'uncertain', input.idempotencyKey);
     }
     const requestId = response.headers.get('x-request-id') || response.headers.get('x-tt-logid') || input.idempotencyKey;
     const payload = await response.json().catch(() => ({})) as SeedreamPayload;
-    if (!response.ok) throw new FirstFrameProviderError(`Seedream ${response.status}: ${String(payload.error?.message || payload.message || response.statusText).slice(0, 300)}`, 'rejected', requestId);
+    if (!response.ok) {
+      // A timeout, throttled response or upstream fault does not prove that the
+      // billable generation was rejected. Keep its reservation for reconciliation.
+      const rejected = [400, 401, 403, 404, 422].includes(response.status);
+      throw new FirstFrameProviderError(`Seedream ${response.status}: ${String(payload.error?.message || payload.message || response.statusText).slice(0, 300)}`, rejected ? 'rejected' : 'uncertain', requestId);
+    }
     const item = payload.data?.[0];
     let bytes: Buffer; let mimeType: FirstFrameResult['mimeType'] = 'image/jpeg';
     if (item?.b64_json) bytes = Buffer.from(item.b64_json, 'base64');
     else if (/^https:\/\//i.test(String(item?.url || ''))) {
       let download: Response;
-      try { download = await fetcher(String(item!.url), { signal: AbortSignal.timeout(90_000) }); }
+      try { download = await fetcher(String(item!.url), { signal: AbortSignal.timeout(90_000), redirect: 'error' }); }
       catch (error) { throw new FirstFrameProviderError(`Seedream 已生成但产物下载状态未知：${transportFailure(error)}`, 'uncertain', requestId); }
       if (!download.ok) throw new FirstFrameProviderError(`Seedream 已生成但产物下载失败：HTTP ${download.status}`, 'uncertain', requestId);
-      mimeType = mimeFromResponse(download.headers.get('content-type')); bytes = Buffer.from(await download.arrayBuffer());
+      mimeType = mimeFromResponse(download.headers.get('content-type'));
+      try { bytes = Buffer.from(await download.arrayBuffer()); }
+      catch (error) { throw new FirstFrameProviderError(`Seedream 已生成但产物读取状态未知：${error instanceof Error ? error.message : 'body_error'}`, 'uncertain', requestId); }
     } else throw new FirstFrameProviderError('Seedream 返回成功但缺少图片产物', 'uncertain', requestId);
     if (!bytes.length) throw new FirstFrameProviderError('Seedream 返回空图片', 'uncertain', requestId);
     return { bytes, mimeType, provider: this.provider, model: payload.model || this.model, providerRequestId: requestId, estimatedCostCny: this.estimatedCostCny };

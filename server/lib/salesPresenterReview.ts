@@ -1,5 +1,5 @@
 import type { ObservedPresenterRole } from '../../shared/contracts/presenterShotRecognition.js';
-export const SALES_REVIEW_VERSION = 6;
+export const SALES_REVIEW_VERSION = 7;
 export type SalesShot = { time: string; visual?: string; dialogue?: string; observedPresenterRole?: ObservedPresenterRole; personContinuityId?: string; needsReview?: boolean };
 export function salesReviewKey(sourceSha: string, shots: SalesShot[]): string {
   return JSON.stringify([SALES_REVIEW_VERSION, 'qwen', sourceSha, shots.map(s => [s.time, s.visual, s.dialogue])]);

@@ -14,7 +14,7 @@ const props = {
 test('failed media verification is not presented as a usable completed candidate', () => {
   const html = renderToStaticMarkup(<ShotProductionPanel {...props} shot={{ ...newShotProduction(), source: 'avatar' }} jobs={[{ id: 'j1', projectId: 'p1', shotId: 's1', assemblyId: 'a1', fingerprint: 'f1', status: 'pending', error: '供应商已生成，但下载或技术检查未通过：缺少音轨', createdAt: '', updatedAt: '' }]} />);
   assert.match(html, /已生成 · 待入库核验/);
-  assert.match(html, /技术通过不代表口型/);
+  assert.match(html, /下载或技术检查未通过/);
   assert.doesNotMatch(html, /候选已就绪/);
 });
 test('AI storyboard candidate can be adopted only after its own quality review', () => {
@@ -352,8 +352,8 @@ test('photo talking hides internal shot type and composition inputs', () => {
   assert.doesNotMatch(html,/原片镜头类型/);
   assert.doesNotMatch(html,/人物构图|原片分析 · 女性正面讲话/);
   for (const section of ['人物与声音', '口播内容', '授权与目标首帧', '费用与生成']) assert.match(html, new RegExp(section));
-  assert.match(html,/确认本镜头口播文案/);
-  assert.match(html,/待生成，可生成后预览确认/);
+  assert.match(html,/本镜头口播文案/);
+  assert.match(html,/待生成，可生成后预览/);
   assert.match(html,/高级设置 · 原片取帧范围/);
 });
 

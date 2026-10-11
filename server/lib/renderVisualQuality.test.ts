@@ -6,7 +6,7 @@ import { execFileSync } from 'node:child_process';
 import { EventEmitter } from 'node:events';
 import { PassThrough } from 'node:stream';
 import ffmpegStatic from 'ffmpeg-static';
-import { inspectRenderedVisuals, runVisualFfmpeg } from './renderVisualQuality.js';
+import { inspectRenderedScenes, inspectRenderedVisuals, runVisualFfmpeg } from './renderVisualQuality.js';
 
 function fakeDecoder(onStart?: (child: EventEmitter & { stdout: PassThrough; stderr: PassThrough }) => void) {
   const child = Object.assign(new EventEmitter(), {
@@ -35,13 +35,18 @@ const root = fs.mkdtempSync(path.join(os.tmpdir(), 'render-business-quality-'));
 try {
   const repeated = path.join(root, 'repeated.mp4');
   const moving = path.join(root, 'moving.mp4');
+  const manyScenes = path.join(root, 'many-scenes.mp4');
   execFileSync(String(ffmpegStatic), [
     '-hide_banner', '-loglevel', 'error', '-f', 'lavfi', '-i', 'smptebars=s=320x480:r=10:d=4',
     '-pix_fmt', 'yuv420p', '-y', repeated,
   ]);
   execFileSync(String(ffmpegStatic), [
-    '-hide_banner', '-loglevel', 'error', '-f', 'lavfi', '-i', 'testsrc2=s=320x480:r=10:d=4',
+    '-hide_banner', '-loglevel', 'error', '-f', 'lavfi', '-i', 'testsrc2=s=320x480:r=30:d=4',
     '-pix_fmt', 'yuv420p', '-y', moving,
+  ]);
+  execFileSync(String(ffmpegStatic), [
+    '-hide_banner', '-loglevel', 'error', '-f', 'lavfi', '-i', 'testsrc2=s=320x480:r=30:d=7',
+    '-pix_fmt', 'yuv420p', '-y', manyScenes,
   ]);
 
   const repeatedResult = await inspectRenderedVisuals({
@@ -62,6 +67,13 @@ try {
   assert.equal(movingResult.passed, true, movingResult.failures.join('；'));
   assert.ok(movingResult.metrics.estimatedDistinctFrames >= 3);
   assert.ok(movingResult.metrics.sharpFrameRatio >= 0.5);
+
+  const manySceneResult = await inspectRenderedScenes({
+    outputPath: manyScenes,
+    scenes: Array.from({ length: 33 }, (_, index) => ({ start: index * .2, end: (index + 1) * .2 })),
+  });
+  assert.equal(manySceneResult.checkedScenes, 33,
+    'reference edits above 32 cuts must be inspected instead of rejected before decoding');
 } finally {
   fs.rmSync(root, { recursive: true, force: true });
 }
