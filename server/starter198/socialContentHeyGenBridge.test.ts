@@ -85,6 +85,30 @@ await adapter.execute(context);
 assert.equal(creates, 1);
 assert.equal(reserves, 2); // budget ledger reserve is itself idempotent by request key
 
+// Legacy bad speech is recovery-only: the original provider task remains
+// queryable, while a new visual-only input cannot create or reserve anything.
+const beforeRecoveryCreates = creates, beforeRecoveryReserves = reserves;
+const legacyContext = { ...context, baselineScene: { narration: '', voiceover: '', script: '已确认口播' } };
+const acceptedRow = store.rows.get('studio_social_presenter_jobs')![0]!;
+acceptedRow.status = 'pending';
+const legacyRecovered = await adapter.execute(legacyContext);
+assert.equal(legacyRecovered?.asset.providerTaskId, 'provider-task-a');
+assert.equal(creates, beforeRecoveryCreates); assert.equal(reserves, beforeRecoveryReserves);
+await assert.rejects(adapter.execute({ ...legacyContext, baselineScene: { narration: '', script: '全新导演动作，不能作口播' } }), /accepted_provider_job_required_for_recovery/);
+assert.equal(creates, beforeRecoveryCreates); assert.equal(reserves, beforeRecoveryReserves);
+const priorProviderId = acceptedRow.provider_task_id; acceptedRow.provider_task_id = '';
+await assert.rejects(adapter.execute(legacyContext), /accepted_provider_job_required_for_recovery/);
+assert.equal(creates, beforeRecoveryCreates); acceptedRow.provider_task_id = priorProviderId;
+const priorTask = acceptedRow.task_id; acceptedRow.task_id = 'foreign-task';
+await assert.rejects(adapter.execute(legacyContext), /accepted_provider_job_scope_changed/);
+assert.equal(creates, beforeRecoveryCreates); acceptedRow.task_id = priorTask;
+const providerRows = store.rows.get('studio_social_presenter_jobs')!;
+providerRows.push({ ...acceptedRow, id: 'conflicting-accepted-record' });
+await assert.rejects(adapter.execute(legacyContext), /duplicate_provider_job_records/);
+assert.equal(creates, beforeRecoveryCreates); assert.equal(reserves, beforeRecoveryReserves);
+providerRows.pop();
+
+
 const rules = {recordHash:'a'.repeat(64),audience:['采购'],pillars:['证据'],recurringFormats:[],conversionRoute:{routeId:'route',entryType:'whatsapp' as const,entryRef:'contact',callToAction:'咨询',qualificationFields:[],handoffTarget:null,verifiedAt:null},evidenceRules:['真实参数'],visualRules:[],languageRules:['中文'],presenterRules:['已授权人物'],fixedFactors:[],experimentFactors:[]};
 context.accountPlaybookConstraints=freezeSocialAccountProductionConstraints({targetAccountRef:{objectType:'owned_social_account',id:'account',version:'1'},accountPlaybookRef:{objectType:'account_playbook',id:'playbook',version:'1',accountRef:'account'},verifiedAccountPlaybook:rules});
 await adapter.execute(context);

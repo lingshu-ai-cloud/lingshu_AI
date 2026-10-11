@@ -28,6 +28,8 @@ export interface DigitalPresenterExecutionRequest {
   idempotencyKey: string;
   presenter: AuthorizedDigitalPresenter;
   script: string;
+  /** Server-only recovery gate: never submit a new provider job. */
+  recoveryOnly?: true;
   aspectRatio: '9:16';
   outputDirectory: string;
   maximumCostCny: number;
@@ -113,6 +115,7 @@ export interface SocialDigitalPresenterBridgePorts {
     maximumCostCny: number;
   }): Promise<{ allowed: true; reservationRef: string } | { allowed: false; reason: string }>;
   execute(input: DigitalPresenterExecutionRequest & { reservationRef: string }): Promise<CompletedDigitalPresenterExecution | FailedDigitalPresenterExecution>;
+  recoverExisting?(input: DigitalPresenterExecutionRequest): Promise<CompletedDigitalPresenterExecution | FailedDigitalPresenterExecution | null>;
   reconcileBudget?(input: {
     reservationRef: string;
     providerTaskId: string;
@@ -325,19 +328,32 @@ export function createSocialDigitalPresenterAdapter(
         || presenter.consentRef !== lock.consentRef
         || presenter.consistencyKey !== lock.consistencyKey
       )) return null;
-      const script = String(context.baselineScene.narration || context.baselineScene.voiceover
-        || context.baselineScene.script || context.baselineScene.caption || '').trim();
-      if (!script) return null;
+      // Visual directions/captions are not speech. Legacy values are used only
+      // to locate an already accepted request through a recovery-only port.
+      const script = [context.baselineScene.narration, context.baselineScene.voiceover]
+        .find(value => typeof value === 'string' && value.trim())?.trim() ?? '';
+      const legacyScript = String(context.baselineScene.script || context.baselineScene.caption || '').trim();
+      const requestScript = script || legacyScript;
+      if (!requestScript) throw new Error('digital_presenter_spoken_text_required');
       const idempotencyKey = stableKey({ tenantId: context.tenantId, taskId: context.taskId,
-        operationId: context.operationId,accountConstraintHash:context.accountPlaybookConstraints?.constraintHash, shotId: context.shot.shotId, presenter, script, visualControl: control });
-      const budget = await ports.authorizeBudget({ tenantId: context.tenantId, taskId: context.taskId,
-        shotId: context.shot.shotId, idempotencyKey, providerId: presenter.providerId, maximumCostCny });
-      if (!budget.allowed) throw new Error(`digital_presenter_budget_denied:${budget.reason}`);
-      const execution = await ports.execute({ tenantId: context.tenantId, taskId: context.taskId,
-        shotId: context.shot.shotId, idempotencyKey, presenter, script, aspectRatio: '9:16',
-        outputDirectory: context.outputDirectory, maximumCostCny, reservationRef: budget.reservationRef,
-        visualControl: control,
-        ...(context.accountPlaybookConstraints?{accountPlaybookConstraints:structuredClone(context.accountPlaybookConstraints)}:{}) });
+        operationId: context.operationId,accountConstraintHash:context.accountPlaybookConstraints?.constraintHash, shotId: context.shot.shotId, presenter, script: requestScript, visualControl: control });
+      const request: DigitalPresenterExecutionRequest = { tenantId: context.tenantId, taskId: context.taskId,
+        shotId: context.shot.shotId, idempotencyKey, presenter, script: requestScript, aspectRatio: '9:16',
+        outputDirectory: context.outputDirectory, maximumCostCny, visualControl: control,
+        ...(context.accountPlaybookConstraints ? { accountPlaybookConstraints: structuredClone(context.accountPlaybookConstraints) } : {}) };
+      let reservationRef: string | undefined;
+      let execution: CompletedDigitalPresenterExecution | FailedDigitalPresenterExecution;
+      if (!script) {
+        const recovered = await ports.recoverExisting?.({ ...request, recoveryOnly: true });
+        if (!recovered) throw new Error('digital_presenter_spoken_text_required');
+        execution = recovered;
+      } else {
+        const budget = await ports.authorizeBudget({ tenantId: context.tenantId, taskId: context.taskId,
+          shotId: context.shot.shotId, idempotencyKey, providerId: presenter.providerId, maximumCostCny });
+        if (!budget.allowed) throw new Error(`digital_presenter_budget_denied:${budget.reason}`);
+        reservationRef = budget.reservationRef;
+        execution = await ports.execute({ ...request, reservationRef });
+      }
       if (execution.status !== 'completed') {
         throw new Error(`digital_presenter_not_completed:${execution.status}:${execution.providerTaskId || 'no_task'}:${execution.error}`);
       }
@@ -346,7 +362,7 @@ export function createSocialDigitalPresenterAdapter(
       }
       const output = await stat(execution.localPath).catch(() => null);
       if (!output?.isFile() || output.size < 1) throw new Error('digital_presenter_output_file_missing');
-      await ports.reconcileBudget?.({ reservationRef: budget.reservationRef,
+      if (reservationRef) await ports.reconcileBudget?.({ reservationRef,
         providerTaskId: execution.providerTaskId, actualCostCny: execution.actualCostCny });
       return {
         asset: outputAsset({ taskId: context.taskId, shotId: context.shot.shotId, presenter,

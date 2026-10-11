@@ -113,7 +113,7 @@ function configuredPresenter(item: PresenterRecord, presenterAssetId: string): A
 export function createSocialHeyGenBridgePorts(deps: SocialHeyGenBridgeDependencies): SocialDigitalPresenterBridgePorts {
   const polls = Math.max(1, Math.min(240, deps.maxPolls ?? 120));
   const pollInterval = Math.max(0, deps.pollIntervalMs ?? 5_000);
-  return {
+  const ports: SocialDigitalPresenterBridgePorts = {
     maximumCostCny: Number(deps.budget.status('heygen').reservationCny) || 0,
     // This bridge is the current talking-presenter integration. It does not
     // claim guided body action, product contact, face application, reference
@@ -145,14 +145,22 @@ export function createSocialHeyGenBridgePorts(deps: SocialHeyGenBridgeDependenci
         return { allowed: false, reason: error instanceof Error ? error.message : status.reason || 'budget_unavailable' };
       }
     },
+    async recoverExisting(input) {
+      return ports.execute({ ...input, recoveryOnly: true, reservationRef: input.idempotencyKey });
+    },
     async execute(input) {
       if(input.accountPlaybookConstraints)assertSocialAccountProductionConstraints(input.accountPlaybookConstraints);
       const existing = await deps.store.list<any>('studio_social_presenter_jobs',
         { where: { tenant_id: input.tenantId, request_id: input.idempotencyKey }, perPage: 2 });
-      if (existing.totalItems > 1) return { status: 'uncertain', error: 'duplicate_provider_job_records' };
+      if (existing.totalItems > 1 || existing.items.length > 1 || existing.totalItems !== existing.items.length) return { status: 'uncertain', error: 'duplicate_provider_job_records' };
       let record = existing.items[0];
       if(record && socialRequestHash(record.visual_control?.accountPlaybookConstraints??null)!==socialRequestHash(input.accountPlaybookConstraints??null))return {status:'uncertain',error:'digital_presenter_account_constraints_changed'};
-      let providerTaskId = String(record?.provider_task_id || '');
+      let providerTaskId = String(record?.provider_task_id || '').trim();
+      if (input.recoveryOnly && (!record || !providerTaskId)) return { status: 'uncertain', error: 'accepted_provider_job_required_for_recovery' };
+      if (input.recoveryOnly && (record.task_id !== input.taskId || record.shot_id !== input.shotId
+        || record.presenter_asset_id !== input.presenter.presenterAssetId || record.provider !== 'heygen'))
+        return { status: 'uncertain', error: 'accepted_provider_job_scope_changed' };
+
       if (!record) {
         record = await deps.store.create<any>('studio_social_presenter_jobs', { tenant_id: input.tenantId,
           task_id: input.taskId, shot_id: input.shotId, request_id: input.idempotencyKey, status: 'submitting',
@@ -239,6 +247,7 @@ export function createSocialHeyGenBridgePorts(deps: SocialHeyGenBridgeDependenci
       return { status: 'completed', providerTaskId, localPath, contentHash, duration };
     },
   };
+  return ports;
 }
 
 export function createEnvironmentSocialHeyGenBridge(store: DataStore): {
