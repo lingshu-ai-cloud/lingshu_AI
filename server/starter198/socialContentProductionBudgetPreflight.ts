@@ -23,8 +23,8 @@ import type { SocialProductionAsset } from './socialContentProductionPlan.js';
 import type { StoredSocialScriptBaseline } from './socialContentScriptBaseline.js';
 import type { SocialGraphApprovedContext } from './socialContentProductionExecution.js';
 import type { SocialAssetSupplyPlan } from '../../shared/contracts/socialContentReplication.js';
-import { createSocialContentPaidOperationPlanner, paidProductionApprovalHash, paidProductionRecordHash, paidProductionHash, type FrozenPaidProduction, type PaidOperationPlannerPorts, type BoundPaidRoute } from './socialContentPaidOperationPlan.js';
-import { createSocialContentTaskBudgetAuthority, type SocialVerifiedAccountTariff } from '../lib/socialContentTaskBudgetAuthority.js';
+import { createSocialContentPaidOperationPlanner, paidProductionApprovalHash, paidProductionRecordHash, paidProductionHash, type FrozenPaidProduction, type PaidOperationPlannerPorts, type BoundPaidRoute, type PaidStageRequirement } from './socialContentPaidOperationPlan.js';
+import { createSocialContentTaskBudgetAuthority, type SocialApprovedBudgetPlan, type SocialVerifiedAccountTariff } from '../lib/socialContentTaskBudgetAuthority.js';
 import { createSocialContentVerifiedTariffReader } from '../lib/socialContentVerifiedTariffs.js';
 import { SocialContentTaskBudget, type SocialTaskBudgetScope } from '../lib/socialContentTaskBudget.js';
 export interface ProductionBudgetReadPorts {
@@ -172,8 +172,19 @@ export async function prepareSocialContentProductionBudget(input: ProductionBudg
         const status = ledger.status(scope);
         if (!status || !Array.isArray(payload.operationIds) || payload.operationIds.some(id => !status.entries.some(e => e.operationId === id && e.runId === scope.runId && e.planHash === scope.planHash)))
             return error('existing_reservation_corrupt');
+        const frozenPlan = payload.plan as SocialApprovedBudgetPlan | undefined;
+        const requirements = Array.isArray(payload.requirements) ? payload.requirements as PaidStageRequirement[] : null;
+        const routeBindings = socialObject(payload.routeBindings) as Record<string, BoundPaidRoute> | null;
+        const quotes = socialObject(payload.quotes) as Record<string, import('../lib/socialContentTaskBudget.js').SocialTaskBudgetQuote> | null;
+        if (!frozenPlan || paidProductionHash(frozenPlan.scope) !== paidProductionHash(scope)
+          || !Array.isArray(frozenPlan.paidOperations) || !requirements || !routeBindings || !quotes)
+            return error('existing_reservation_contract_missing');
+        const operationIds = payload.operationIds as string[];
+        const operations = operationIds.map(id => status.entries.find(entry => entry.operationId === id)!);
+        const paidPermit = createSocialContentPaidOperationPermit({scope,operations,intents:frozenPlan.paidOperations,
+          ledger,root:path.join(input.ports?.ledgerRoot || process.env.SOCIAL_CONTENT_TASK_BUDGET_DIR || 'data/social-content-task-budget','.permits'),assertCurrent});
         await assertCurrent();
-        return { status: 'recovery' as const, scope, budget: status };
+        return {status:'reserved' as const,scope,reserved:{scope,operations,intents:structuredClone(frozenPlan.paidOperations),quotes,status,ledger},paidPermit,requirements,routeBindings};
     }
     const ports = input.ports, assetInputs: FrozenPaidProduction['assets'] = [];
     const cached = job.checkpoints['social.material_analysis'];
