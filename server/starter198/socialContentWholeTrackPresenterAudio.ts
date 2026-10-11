@@ -17,26 +17,20 @@ export interface WholeTrackPresenterSpeech extends Omit<PresenterHookSpeechAudio
  frozenSceneDurationSeconds:number;nativeVoice:{provider:'qwen'|'minimax';model:string;physicalVoiceId:string};
  sourceReceiptRef:string;sourceReceiptSha256:string;alignmentReceiptRef:string;alignmentReceiptSha256:string;
 }
-/** Measured cues may only be consumed once, in frozen scene order. No
- * character-derived timing, punctuation trimming or reused repeated sentence. */
+/** Visual cuts share one continuous voice performance. Words and sentences
+ * may cross scene cuts; clips use exact frozen visual windows. */
 export function measuredWholeTrackSceneRanges(input:{scenes:Array<{shotId:string;spokenText:string;durationSeconds:number;startSeconds:number;endSeconds:number}>;cues:Array<{start:number;end:number;text:string}>;durationSeconds:number}) {
- const ranges=new Map<string,{start:number;end:number}>();let index=0,lastEnd=0;
- for(const scene of input.scenes) {
-  if(!scene.spokenText.trim())continue;
-  const expected=normalized(scene.spokenText);let spoken='',start:number|null=null,end=0;
-  while(index<input.cues.length&&spoken.length<expected.length) {
-   const cue=input.cues[index++]!;
-   if(!Number.isFinite(cue.start)||!Number.isFinite(cue.end)||cue.start<lastEnd-.03||cue.end<=cue.start||cue.end>input.durationSeconds+.02)throw Error('presenter_whole_track_alignment_invalid');
-   start??=cue.start;end=cue.end;lastEnd=cue.end;spoken+=normalized(cue.text);
-   if(!expected.startsWith(spoken))throw Error('presenter_scene_alignment_not_unique');
-  }
-  if(spoken!==expected||start===null)throw Error('presenter_scene_alignment_not_unique');
-  if(!Number.isFinite(scene.startSeconds)||!Number.isFinite(scene.endSeconds)||scene.startSeconds<0||scene.endSeconds<=scene.startSeconds||Math.abs(scene.endSeconds-scene.startSeconds-scene.durationSeconds)>.02)throw Error('presenter_frozen_scene_timeline_missing');
-  if(end-start>scene.durationSeconds+.02)throw Error('director_revision_required:presenter_natural_speech_exceeds_frozen_scene');
-  if(start<scene.startSeconds-.02||end>scene.endSeconds+.02)throw Error('director_revision_required:presenter_speech_outside_frozen_scene_window');
-  ranges.set(scene.shotId,{start:scene.startSeconds,end:scene.endSeconds});
+ const ranges=new Map<string,{start:number;end:number}>();let lastEnd=0;
+ for(const cue of input.cues){
+  if(!Number.isFinite(cue.start)||!Number.isFinite(cue.end)||cue.start<lastEnd-.03||cue.end<=cue.start||cue.end>input.durationSeconds+.02)throw Error('presenter_whole_track_alignment_invalid');
+  lastEnd=cue.end;
  }
- if(index!==input.cues.length)throw Error('presenter_whole_track_alignment_extra_speech');
+ if(normalized(input.cues.map(c=>c.text).join(' '))!==normalized(input.scenes.map(s=>s.spokenText).join(' ')))throw Error('presenter_scene_alignment_not_unique');
+ let previousEnd=0;
+ for(const scene of input.scenes){
+  if(!Number.isFinite(scene.startSeconds)||!Number.isFinite(scene.endSeconds)||scene.startSeconds<previousEnd-.02||scene.endSeconds<=scene.startSeconds||Math.abs(scene.endSeconds-scene.startSeconds-scene.durationSeconds)>.02)throw Error('presenter_frozen_scene_timeline_missing');
+  ranges.set(scene.shotId,{start:scene.startSeconds,end:scene.endSeconds});previousEnd=scene.endSeconds;
+ }
  return ranges;
 }
 /** Trusted server-only port. Each clip derives from the same paid full track;
@@ -73,7 +67,7 @@ export function createWholeTrackPresenterAudioPort(input:{
   const identity={scope:input.scope,taskVersion:input.taskVersion,shotId:request.shotId,range,wholeTrackSha256:input.wholeTrackSha256,nativeVoice:input.nativeVoice,presenter:request.presenter,...evidence};
   const key=sha(JSON.stringify(identity)),file=path.join(root,key+'.wav'),stateFile=path.join(root,key+'.json');
   return withPaidOperationLock(path.join(root,'.locks'),key,async()=>{
-   if(!fs.existsSync(file))await run(ffmpegStatic||'ffmpeg',['-y','-i',input.filePath,'-ss',String(range.start),'-t',String(range.end-range.start),'-af','apad=pad_dur='+String(range.end-range.start),'-ac','1','-ar','24000','-c:a','pcm_s16le',file],{timeout:30000});
+   if(!fs.existsSync(file))await run(ffmpegStatic||'ffmpeg',['-y','-i',input.filePath,'-af',`apad=whole_dur=${range.end},atrim=start=${range.start}:end=${range.end},asetpts=PTS-STARTPTS`,'-ac','1','-ar','24000','-c:a','pcm_s16le',file],{timeout:30000});
    const pcm=await run(ffmpegStatic||'ffmpeg',['-v','error','-i',file,'-f','s16le','-ac','1','-ar','24000','pipe:1'],{encoding:'buffer',maxBuffer:64*1024*1024,timeout:30000});
    const durationSeconds=pcm.stdout.length/(24000*2),bytes=fs.readFileSync(file),clipSha256=sha(bytes);
    if(!(durationSeconds>0)||Math.abs(durationSeconds-(range.end-range.start))>.02||durationSeconds>scene.durationSeconds+.02)throw Error('presenter_scene_clip_probe_invalid');

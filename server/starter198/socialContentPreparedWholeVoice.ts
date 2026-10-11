@@ -24,6 +24,12 @@ export interface PreparedWholeVoice {
   alignmentReceiptRef: string;
   nativeVoice: { provider: 'qwen' | 'minimax'; model: string; physicalVoiceId: string };
 }
+export class WholeVoiceDurationRevisionRequired extends Error {
+  readonly code = 'director_whole_voice_duration_revision_required';
+  constructor(readonly proofRef:string, readonly actualDurationSeconds:number, readonly maximumDurationSeconds:number) {
+    super('director_revision_required:whole_track_speech_exceeds_frozen_film_requires_formal_replan');
+  }
+}
 /** Prepares one full performance using the preallocated voice operations.
  * Avatar providers only consume measured slices of this already-paid track. */
 export async function prepareSocialContentWholeVoice(input: {
@@ -102,7 +108,7 @@ export async function prepareSocialContentWholeVoice(input: {
     const alignmentId = 'paid-plan:' + paidProductionHash({ scope: funding.scope, key: 'voice:alignment', attempt: 0 });
     const alignmentReceiptRef = path.resolve(input.alignmentRoot || 'data/social-content-voice-alignment', sha(alignmentId) + '.json');
     let cues: Array<{ start: number; end: number; text: string }>;
-    if (state.status === 'completed') {
+    if (state.status === 'completed' || state.status === 'audio_aligned') {
       await funding.permit.assertRecovery(alignmentId);
       const alignment = JSON.parse(fs.readFileSync(alignmentReceiptRef, 'utf8'));
       if (alignment.state !== 'completed' || alignment.scope?.audioSha256 !== state.wholeTrackSha256)
@@ -114,8 +120,12 @@ export async function prepareSocialContentWholeVoice(input: {
         preparedTrack:{scope:funding.scope,receiptRef:stateFile,filePath:voice.localPath,audioSha256:state.wholeTrackSha256} });
       cues = aligned.cues;
     }
-    // Fail before avatar dispatch if the natural performance does not fit the
-    // frozen scene boundaries. Never cut words or silently rewrite the script.
+    // Persist the paid original performance before checking the whole-film
+    // maximum. Visual cuts may cross sentences; the source track stays intact.
+    persist({ ...state, status: 'audio_aligned', voice: { ...voice, cues }, proof: { sourceReceiptRefs, alignmentReceiptRef, nativeVoice: { provider: primary.provider, model: primary.model, physicalVoiceId: primary.voiceId } } });
+    if (voice.duration > input.targetDuration + .02) {
+      throw new WholeVoiceDurationRevisionRequired(stateFile, voice.duration, input.targetDuration);
+    }
     measuredWholeTrackSceneRanges({ scenes: input.scenes, cues, durationSeconds: voice.duration });
     const result: PreparedWholeVoice = { voice: { ...voice, localPath: voice.localPath, duration: voice.duration, cues, alignmentSource: 'audio_ai' as any },
       inputHash, receiptRef:stateFile, wholeTrackSha256: state.wholeTrackSha256, sourceReceiptRefs, alignmentReceiptRef,
@@ -164,7 +174,7 @@ export async function readPreparedWholeVoiceScene(input: {
   const file=path.join(path.dirname(input.prepared.receiptRef),key+'.scene.wav');
   return withPaidOperationLock(path.join(path.dirname(file),'.locks'),key,async()=>{
     const execute=promisify(execFile);
-    if(!fs.existsSync(file))await execute(ffmpegStatic||'ffmpeg',['-y','-i',state.voice.localPath,'-ss',String(range.start),'-t',String(range.end-range.start),'-af','apad=pad_dur='+String(range.end-range.start),'-ac','1','-ar','24000','-c:a','pcm_s16le',file],{timeout:30000});
+    if(!fs.existsSync(file))await execute(ffmpegStatic||'ffmpeg',['-y','-i',state.voice.localPath,'-af',`apad=whole_dur=${range.end},atrim=start=${range.start}:end=${range.end},asetpts=PTS-STARTPTS`,'-ac','1','-ar','24000','-c:a','pcm_s16le',file],{timeout:30000});
     const pcm=await execute(ffmpegStatic||'ffmpeg',['-v','error','-i',file,'-f','s16le','-ac','1','-ar','24000','pipe:1'],{encoding:'buffer',maxBuffer:64*1024*1024,timeout:30000});
     const durationSeconds=pcm.stdout.length/(24000*2),bytes=fs.readFileSync(file);
     if(!(durationSeconds>0)||Math.abs(durationSeconds-(range.end-range.start))>.02||durationSeconds>scene.durationSeconds+.02)

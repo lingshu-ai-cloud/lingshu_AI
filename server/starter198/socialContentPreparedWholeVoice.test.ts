@@ -47,6 +47,21 @@ test('one guarded full track and real alignment feed measured scene clips and re
   assert.ok(Math.abs(clip.durationSeconds-1.5)<.001);const decoded=execFileSync(ffmpeg||'ffmpeg',['-v','error','-i',clip.filePath,'-f','s16le','-ac','1','-ar','24000','pipe:1']);
   assert.equal(decoded.subarray(0,24000*2).every(byte=>byte===0),true,'one-second leading silence must stay aligned with global track');
   assert.equal(clip.sourceReceipts.length,1);assert.equal(clip.nativeVoice.physicalVoiceId,p.voiceId);
+  const crossCut={...options,scenes:[{...options.scenes[0],durationSeconds:1.2,endSeconds:1.2},{...options.scenes[1],durationSeconds:1.8,startSeconds:1.2}]};
+  const continuous=await prepareSocialContentWholeVoice(crossCut);
+  const first=await readPreparedWholeVoiceScene({prepared:continuous,scope,shotId:'s1',spokenText:'Hello world.',assertCurrent:async()=>{}});
+  const second=await readPreparedWholeVoiceScene({prepared:continuous,scope,shotId:'s2',spokenText:'Choose your product.',assertCurrent:async()=>{}});
+  const decode=(file:string)=>execFileSync(ffmpeg||'ffmpeg',['-v','error','-i',file,'-f','s16le','-ac','1','-ar','24000','pipe:1']);
+  assert.ok(Buffer.concat([decode(first.filePath),decode(second.filePath)]).equals(decode(continuous.voice.localPath)),'visual cut inside a sentence must preserve every original PCM sample');
+  assert.equal(continuous.wholeTrackSha256,prepared.wholeTrackSha256);assert.equal(tts,1);assert.equal(alignmentPosts,1);
+  const lateWindow=await prepareSocialContentWholeVoice({...options,targetDuration:5,scenes:[...options.scenes,{shotId:'silent-presenter',spokenText:'',durationSeconds:1,startSeconds:4,endSeconds:5}]});
+  const silentClip=await readPreparedWholeVoiceScene({prepared:lateWindow,scope,shotId:'silent-presenter',spokenText:'',assertCurrent:async()=>{}});
+  assert.equal(decode(silentClip.filePath).length,48000);assert.ok(decode(silentClip.filePath).every(x=>x===0));
+  await assert.rejects(prepareSocialContentWholeVoice({...options,targetDuration:2.5}), (error:any)=>error.code==='director_whole_voice_duration_revision_required'&&error.actualDurationSeconds===3&&fs.existsSync(error.proofRef));
+  const alignedProof=JSON.parse(fs.readFileSync(prepared.receiptRef,'utf8'));
+  assert.equal(alignedProof.status,'audio_aligned');assert.ok(alignedProof.proof.sourceReceiptRefs.length);
+  await assert.rejects(prepareSocialContentWholeVoice({...options,targetDuration:2.5,synthesize:async()=>assert.fail('duplicate TTS'),align:async()=>assert.fail('duplicate alignment')}), (error:any)=>error.code==='director_whole_voice_duration_revision_required');
+  assert.equal(tts,1);assert.equal(alignmentPosts,1);
   // Orphan stable WAV from a crash before manifest fsync is reused only when
   // its bytes match the original accepted native-cache output.
   fs.rmSync(prepared.receiptRef);
