@@ -11,6 +11,7 @@ import type {
   SocialReplicationEvaluation,
 } from '../../shared/contracts/socialContentWorkflow.js';
 import { evaluateSocialReplicationResult } from './replicationEvaluationAdapter.js';
+import type { IdentityReplacementEvidence } from '../lib/replicationEvaluation.js';
 import { createSocialContentArtifact } from './socialContentOutputs.js';
 import { readSocialTaskDetail, socialArtifact } from './socialContentRecords.js';
 import { openSocialArtifactPreviewMedia } from './socialArtifactMedia.js';
@@ -43,6 +44,13 @@ export interface SocialArtifactReevaluationPorts {
   createArtifact(input: Parameters<typeof createSocialContentArtifact>[0]): ReturnType<typeof createSocialContentArtifact>;
   openMedia(input: Parameters<typeof openSocialArtifactPreviewMedia>[0]): ReturnType<typeof openSocialArtifactPreviewMedia>;
   readDetail(input: Parameters<typeof readSocialTaskDetail>[0]): ReturnType<typeof readSocialTaskDetail>;
+  resolveReferenceVideoPath?(input: {
+    repository: Starter198Repository;
+    tenantId: string;
+    taskId: string;
+    parentContent: Record<string, unknown>;
+    workflow: SocialContentAgentWorkflow;
+  }): Promise<string | null>;
 }
 
 const sha256Pattern = /^[a-f0-9]{64}$/;
@@ -79,6 +87,66 @@ async function spoolAndHash(body: AsyncIterable<Uint8Array>, outputPath: string)
   });
   await pipeline(Readable.from(body), hashing, createWriteStream(outputPath, { flags: 'wx' }));
   return digest.digest('hex');
+}
+
+/** Convert only completed, frozen supply lineage into replacement evidence.
+ * This proves which authorized enterprise asset was selected for a final
+ * scene; it deliberately does not claim that a vision detector recognized the
+ * rendered pixels. */
+export function identityEvidenceFromAssetSupply(input: {
+  workflow: SocialContentAgentWorkflow;
+  parentContent: Record<string, unknown>;
+}): IdentityReplacementEvidence[] {
+  const execution = socialObject(input.parentContent.assetSupplyExecution);
+  const supplyShots = Array.isArray(execution?.shots)
+    ? execution.shots.map(socialObject).filter((shot): shot is Record<string, unknown> => Boolean(shot)) : [];
+  const factorById = new Map(input.workflow.replicationJob?.factorSpecs.map(factor => [factor.factorId, factor]) ?? []);
+  const evidence: IdentityReplacementEvidence[] = [];
+  for (const scene of input.workflow.directorBrief.scenes) {
+    const identityFactor = (scene.replicationFactors ?? []).find(item => {
+      if (item.semanticAdaptation?.status === 'functionally_replaced') return false;
+      const source = factorById.get(item.factorId);
+      return source?.policy === 'replace_identity' || source?.category === 'identity';
+    });
+    if (!identityFactor) continue;
+    const supply = supplyShots.find(shot => socialText(shot.sceneId) === scene.sceneId
+      || socialText(shot.shotId) === scene.sceneId);
+    if (!supply) continue;
+    const sourceStrategy = socialText(supply.sourceStrategy);
+    const sourceRef = socialText(supply.sourceRef);
+    const attempts = Array.isArray(supply.attempts)
+      ? supply.attempts.map(socialObject).filter((item): item is Record<string, unknown> => Boolean(item)) : [];
+    const completed = attempts.find(attempt => socialText(attempt.status) === 'completed'
+      && socialText(attempt.sourceStrategy) === sourceStrategy);
+    const provenance = socialObject(supply.provenance);
+    const authorizationRef = socialText(provenance?.authorizationRef);
+    const lockedProductRefs = scene.productSceneReplication?.productIdentity.groups
+      .flatMap(group => group.referenceImageIds).map(socialText).filter(Boolean) ?? [];
+    // A provider label alone is not authority. Require the exact completed
+    // source plus either its persisted authorization or a frozen enterprise
+    // product identity reference from the final director contract.
+    if (!completed || !sourceRef || (!authorizationRef && !lockedProductRefs.length)) continue;
+    const evidenceRefs = [
+      `asset_supply_execution:${socialText(execution?.planVersion)}:${scene.sceneId}:${sourceStrategy}:${sourceRef}`,
+      ...(authorizationRef ? [authorizationRef] : []),
+      ...lockedProductRefs.map(ref => `enterprise_product_asset:${ref}`),
+    ];
+    evidence.push({
+      requirementId: identityFactor.factorId,
+      outcome: 'replaced',
+      detectedOriginal: false,
+      detectedReplacement: input.workflow.replicationJob?.target.productRef
+        || input.workflow.replicationJob?.target.accountRef?.id || sourceRef,
+      confidence: 1,
+      evidenceRefs,
+      explanation: `持久化供应执行记录确认最终镜头使用 ${sourceStrategy} 的授权来源 ${sourceRef}；该证据证明来源绑定，不声称完成像素级身份识别。`,
+      provenance: {
+        producer: 'deterministic_rule', detector: 'asset-supply-lineage', detectorVersion: '1.0',
+        createdAt: socialText(execution?.executedAt) || undefined,
+      },
+    });
+  }
+  return evidence;
 }
 
 /**
@@ -164,6 +232,11 @@ export function createSocialArtifactReevaluationService(input: {
           productionResultId,
           outputVideoPath,
           evidence: {
+            identityEvidence: identityEvidenceFromAssetSupply({ workflow: detail.agentWorkflow, parentContent }),
+            referenceVideoPath: await ports.resolveReferenceVideoPath?.({
+              repository: input.repository, tenantId: request.tenantId, taskId: request.taskId,
+              parentContent, workflow: detail.agentWorkflow,
+            }) ?? null,
             referenceText: detail.replicationScript.shots
               .map(shot => shot.spokenText || shot.captionText || shot.visualInstruction).map(socialText).filter(Boolean).join('\n') || null,
             outputText: socialText(parentContent.adaptedScript) || null,

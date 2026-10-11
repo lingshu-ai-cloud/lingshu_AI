@@ -4,7 +4,7 @@ import { existsSync } from 'node:fs';
 import test from 'node:test';
 import type { SocialContentAgentWorkflow, SocialReplicationEvaluation } from '../../shared/contracts/socialContentWorkflow.js';
 import { STARTER_COLLECTIONS, type Starter198Repository, type StarterRecord } from './repository.js';
-import { createSocialArtifactReevaluationService } from './socialContentArtifactReevaluation.js';
+import { createSocialArtifactReevaluationService, identityEvidenceFromAssetSupply } from './socialContentArtifactReevaluation.js';
 import { socialRequestHash } from './socialContentValidation.js';
 
 const bytes = Buffer.from('immutable-owned-video-bytes');
@@ -12,6 +12,7 @@ const mediaSha256 = createHash('sha256').update(bytes).digest('hex');
 const workflow = {
   replicationJob: { replicationJobId: 'replication-job', version: '1', factorSpecVersion: '1', factorSpecs: [] },
   executionPlan: { executionPlanId: 'execution-plan' },
+  directorBrief: { scenes: [] },
 } as unknown as SocialContentAgentWorkflow;
 const script = { shots: [{ shotId: 'scene-1', startSeconds: 0, endSeconds: 2, purpose: 'proof', visualInstruction: '产品特写' }] } as never;
 const evaluation = {
@@ -61,8 +62,10 @@ function fixture() {
         evaluations += 1;
         evaluatorSawExistingFile = existsSync(input.outputVideoPath);
         assert.equal(input.productionResultId, 'production-result');
+        assert.equal(input.evidence?.referenceVideoPath, '/trusted/reference-38s.mp4');
         return { evaluation, report: null };
       },
+      resolveReferenceVideoPath: async () => '/trusted/reference-38s.mp4',
       createArtifact: async input => {
         creations += 1;
         assert.equal(input.requireHumanReview, true);
@@ -122,4 +125,50 @@ test('reevaluation rejects parent version, content hash and media sha drift befo
     assert.equal(f.counters().evaluations, 0);
     assert.equal(f.counters().creations, 0);
   }
+});
+
+test('identity evidence is derived once per final scene only from completed authorized supply lineage', () => {
+  const identityFactors = Array.from({ length: 5 }, (_, index) => ({
+    factorId: `identity-${index}`, version: '1', beatId: `beat-${index}`, referenceShotId: `reference-${index}`,
+    category: 'identity', description: `替换身份 ${index}`, causalRole: 'identity', causalStatus: 'observed_correlation',
+    policy: 'replace_identity', importance: 'critical',
+    target: { metric: 'identity', value: `source-${index}`, unit: null, regionRef: null, stateKey: 'identity' },
+    tolerance: { metric: 'enum', minimum: null, maximum: null, allowedValues: [], maximumDeviation: null, unit: null, humanReviewWhen: [] },
+    observationConfidence: 1, causalConfidence: 1, evidenceRefs: [],
+    validator: { validatorId: `validator-${index}`, kind: 'vision_state', detector: 'identity', blocking: true, threshold: .8, evidenceOutput: ['identity'] },
+    status: 'frozen', frozenAt: '2026-10-12T00:00:00.000Z', decisionOwner: 'director_agent',
+  }));
+  const scenes = identityFactors.map((factor, index) => ({
+    sceneId: `scene-${index}`, referenceShotId: factor.referenceShotId,
+    replicationFactors: [{ factorId: factor.factorId, semanticAdaptation: { status: 'applicable' } }],
+    ...(index ? { productSceneReplication: { productIdentity: { groups: [{ referenceImageIds: [`enterprise-image-${index}`] }] } } } : {}),
+  }));
+  const identityWorkflow = {
+    replicationJob: { replicationJobId: 'job', target: { productRef: 'enterprise-product' }, factorSpecs: identityFactors },
+    directorBrief: { scenes },
+  } as unknown as SocialContentAgentWorkflow;
+  const shots = scenes.map((scene, index) => ({
+    shotId: scene.sceneId, sceneId: scene.sceneId,
+    sourceStrategy: index ? 'customer_product_image_animation' : 'authorized_digital_presenter',
+    sourceRef: `owned-source-${index}`,
+    provenance: { authorizationRef: index ? null : 'document://presenter-authorization' },
+    attempts: [{
+      sourceStrategy: index ? 'customer_product_image_animation' : 'authorized_digital_presenter',
+      adapterId: 'trusted-adapter', status: 'completed', reason: null,
+    }],
+  }));
+  const content = { assetSupplyExecution: { planVersion: '37', executedAt: '2026-10-12T00:00:00.000Z', shots } };
+  const evidence = identityEvidenceFromAssetSupply({ workflow: identityWorkflow, parentContent: content });
+  assert.equal(evidence.length, 5);
+  assert.deepEqual(evidence.map(item => item.requirementId), identityFactors.map(item => item.factorId));
+  assert.ok(evidence.every(item => item.provenance.detector === 'asset-supply-lineage'));
+  assert.match(evidence[0]!.explanation!, /不声称完成像素级身份识别/);
+
+  const missingSupply = identityEvidenceFromAssetSupply({
+    workflow: identityWorkflow, parentContent: { assetSupplyExecution: { planVersion: '37', shots: [] } },
+  });
+  assert.deepEqual(missingSupply, [], 'no persisted supply record must remain missing evidence');
+  const incomplete = structuredClone(content);
+  (incomplete.assetSupplyExecution.shots[1]!.attempts[0] as { status: string }).status = 'failed';
+  assert.equal(identityEvidenceFromAssetSupply({ workflow: identityWorkflow, parentContent: incomplete }).length, 4);
 });
