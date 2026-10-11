@@ -74,3 +74,47 @@ test('replication adapter is not applicable to material-processing workflows', a
   });
   assert.deepEqual(result, { evaluation: null, report: null });
 });
+
+test('replication adapter grades only factors still applicable after a compact semantic revision', async () => {
+  const replacedFactors = Array.from({ length: 500 }, (_, index) => ({
+    ...workflow.replicationJob!.factorSpecs[0]!,
+    factorId: `factor-from-long-reference-${index}`,
+    beatId: `beat-from-long-reference-${index}`,
+    referenceShotId: `reference-from-long-reference-${index}`,
+    description: `38 秒参考片中的原视觉细节 ${index}`,
+  }));
+  const compactWorkflow = structuredClone(workflow);
+  compactWorkflow.replicationJob!.factorSpecs.push(...replacedFactors);
+  compactWorkflow.directorBrief.scenes[0]!.replicationFactors = [
+    {
+      factorId: 'factor-cap',
+      semanticAdaptation: { status: 'applicable', sourceFactorId: 'factor-cap', targetFunction: 'proof', replacementReason: null },
+    },
+    ...replacedFactors.map(replacedFactor => ({
+      factorId: replacedFactor.factorId,
+      semanticAdaptation: {
+        status: 'functionally_replaced', sourceFactorId: replacedFactor.factorId,
+        targetFunction: 'proof', replacementReason: '压缩成片以企业产品镜头承担相同证明功能',
+      },
+    })),
+  ] as never;
+  const reuse = ['exact_media_hash', 'text_similarity', 'consecutive_frame_similarity', 'audio_fingerprint_similarity'].map((kind, index) => ({
+    evidenceId: `compact-reuse-${index}`, kind: kind as 'exact_media_hash' | 'text_similarity' | 'consecutive_frame_similarity' | 'audio_fingerprint_similarity',
+    similarity: 0.1, riskThreshold: 0.9, status: 'available' as const, authorization: 'unknown' as const,
+    evidenceRefs: [`worker://compact-reuse/${index}`], provenance,
+  }));
+  const result = await evaluateSocialReplicationResult({
+    workflow: compactWorkflow as SocialContentAgentWorkflow,
+    replicationScript: script,
+    productionResultId: 'result-compact', outputVideoPath: '/not/required.mp4',
+    evidence: {
+      factorEvidence: [{ factorId: 'factor-cap', sceneId: 'scene-1', outcome: 'pass', actual: 'open', evidenceRefs: ['worker://frame/compact'], provenance }],
+      reuseRiskEvidence: reuse,
+    },
+    now: new Date('2026-09-24T00:00:00.000Z'),
+  });
+  assert.equal(result.evaluation?.status, 'passed', JSON.stringify(result.report, null, 2));
+  assert.equal(result.report?.dimensions.viralFactorFidelity.required, 2, 'one compact timeline shot plus one applicable factor');
+  assert.equal(result.report?.blockers.some(issue => replacedFactors.some(factor => factor.factorId === issue.factorId)), false);
+  assert.equal(result.report?.evidenceInventory.factorEvidence, 1);
+});

@@ -64,10 +64,24 @@ export async function evaluateSocialReplicationResult(input: {
   const job = input.workflow.replicationJob;
   if (!job) return { evaluation: null, report: null };
   const sceneByFactor = new Map<string, string>();
+  const applicableFactorIds = new Set<string>();
   for (const scene of input.workflow.directorBrief.scenes) {
-    for (const factor of scene.replicationFactors ?? []) sceneByFactor.set(factor.factorId, scene.sceneId);
+    for (const factor of scene.replicationFactors ?? []) {
+      sceneByFactor.set(factor.factorId, scene.sceneId);
+      // Budget semantic revisions deliberately retain the source factor in the
+      // lineage while replacing its visual implementation with a shorter,
+      // functionally equivalent scene. Such a factor is not a claim that the
+      // output reproduces the original detector target, so grading it would
+      // incorrectly apply every factor from the long reference to the compact
+      // output. Legacy briefs without semanticAdaptation remain applicable.
+      if (factor.semanticAdaptation?.status !== 'functionally_replaced') {
+        applicableFactorIds.add(factor.factorId);
+      }
+    }
   }
-  const factorSpecs = job.factorSpecs.map(factor => ({
+  const factorSpecs = job.factorSpecs
+    .filter(factor => applicableFactorIds.has(factor.factorId))
+    .map(factor => ({
     factorId: factor.factorId,
     sceneId: sceneByFactor.get(factor.factorId) || factor.beatId,
     referenceShotId: factor.referenceShotId,
@@ -82,7 +96,7 @@ export async function evaluateSocialReplicationResult(input: {
       max: factor.tolerance.maximum ?? undefined,
       maxAbsoluteDeviation: factor.tolerance.maximumDeviation ?? undefined,
     },
-  }));
+    }));
   const referenceTimeline = (input.replicationScript?.shots ?? []).map(shot => ({
     shotId: shot.referenceShotId || shot.shotId,
     startSeconds: shot.startSeconds,
@@ -96,7 +110,7 @@ export async function evaluateSocialReplicationResult(input: {
     endSeconds: scene.duration.endSeconds,
     purpose: scene.purpose,
   }));
-  const replacementFactors = job.factorSpecs.filter(factor => factor.policy === 'replace_identity');
+  const replacementFactors = factorSpecs.filter(factor => factor.policy === 'replace_identity');
   const identityRequirements = replacementFactors.map(factor => ({
     requirementId: factor.factorId,
     identityType: factor.category === 'identity' ? 'other' as const : 'other' as const,
