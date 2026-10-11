@@ -139,7 +139,7 @@ export async function loadSocialProductionGraphApproval(repository: Starter198Re
 }
 
 export async function executeSocialProductionGraph(input: { repository: Starter198Repository; dataStore: DataStore; job: ContentExecutionJob;
-  runtime?: SocialContentAutoProductionRuntime; assetSupplyAdapters?: SocialAssetSupplyProviderAdapter[];
+  runtime?: SocialContentAutoProductionRuntime; assetSupplyAdapters?: SocialAssetSupplyProviderAdapter[]; assetSupplyRecoveryOnly?: boolean;
   materialEvidencePorts?: Parameters<typeof runSocialContentAutoProduction>[0]['materialEvidencePorts']; }) {
   const { repository, dataStore, job } = input;
   const binding = socialObject(job.checkpoints['social.executor']?.payload);
@@ -166,7 +166,7 @@ export async function executeSocialProductionGraph(input: { repository: Starter1
     if (!latest || socialProductionGraphInput(latest, approvedContext).inputHash !== current.inputHash) throw new Error('user_input_required:graph_production_plan_changed');
     await runSocialContentAutoProduction({ repository, tenantId: job.tenantId, userId: job.userId,
       taskId: job.taskId, runId: job.runId, graphPhase, runtime: input.runtime,
-      assetSupplyAdapters: input.assetSupplyAdapters, materialEvidencePorts: input.materialEvidencePorts, graphApprovedContext: approvedContext });
+      assetSupplyAdapters: input.assetSupplyAdapters, assetSupplyRecoveryOnly: input.assetSupplyRecoveryOnly, materialEvidencePorts: input.materialEvidencePorts, graphApprovedContext: approvedContext });
     if (graphPhase === 'quality') {
       const artifact = await productionArtifact(repository, job);
       const evidence = artifactEvidence(artifact);

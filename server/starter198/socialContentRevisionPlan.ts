@@ -80,7 +80,9 @@ export async function prepareSocialContentRevisionPlan(input: TrustedSocialRevis
       if (row.last_operation_id === operationId && prior?.planHash === planHash)
         return { task: (await readSocialTaskDetail(input))!, planHash };
       if (socialText(row.version) !== input.expectedTaskVersion) throw new SocialContentWorkflowError('social_content_version_conflict', 409);
-      if (!['asset_review', 'attention', 'paused'].includes(socialText(row.status))) throw new SocialContentWorkflowError('social_revision_task_not_editable', 409);
+      const { planHash: priorHash, preparedBy: _priorBy, preparedAt: _priorAt, ...priorFrozen } = prior ?? {};
+      const frozenProductionRevision = socialText(row.status) === 'producing' && prior?.tenantId === input.tenantId && prior?.taskId === input.taskId && typeof priorHash === 'string' && socialRequestHash(priorFrozen) === priorHash;
+      if (!frozenProductionRevision && !['asset_review', 'attention', 'paused'].includes(socialText(row.status))) throw new SocialContentWorkflowError('social_revision_task_not_editable', 409);
       const publicBrief = (await readSocialTaskDetail(input))?.brief;
       if (!publicBrief || socialRequestHash(publicBrief) !== input.expectedBriefHash
         || socialRequestHash(socialJson(row.reference_video_analysis)) !== input.expectedReferenceAnalysisHash)
@@ -97,7 +99,7 @@ export async function prepareSocialContentRevisionPlan(input: TrustedSocialRevis
       const store = input.repository.dataStore;
       if (!store?.compareAndSwap) throw new SocialContentWorkflowError('social_revision_atomic_storage_required', 503);
       const jobs = await store.list<Record<string, unknown>>('content_execution_jobs', { where: { tenant_id: input.tenantId, task_id: input.taskId }, page: 1, perPage: 500 });
-      if (jobs.totalItems !== jobs.items.length || jobs.items.some(job => ['running', 'queued'].includes(String(job.status))))
+      if (jobs.totalItems !== jobs.items.length || jobs.items.some(job => ['running', 'queued', 'retry_wait', 'reconciling', 'paused'].includes(String(job.status)) || Boolean(job.worker_id) || Boolean(job.lease_expires_at)))
         throw new SocialContentWorkflowError('social_revision_execution_active', 409);
       const version = Number(row.version);
       if (!Number.isSafeInteger(version) || version < 1) throw new SocialContentWorkflowError('social_revision_version_invalid', 409);
@@ -165,4 +167,34 @@ export async function startPreparedSocialContentRevision(input: {
     await assertFacts({ tenantId: input.tenantId, expectedEnterpriseFactsHash: String(marker.enterpriseFactsHash), readEnterpriseFactsHash: input.readEnterpriseFactsHash }, detail.brief.productId || detail.brief.productRef || '');
     return structuredClone(resolved);
   } });
+}
+
+/** Trusted budget reallocation for an idle frozen revision; preserves all ledgers. */
+export async function reallocatePreparedSocialRevisionBudget(input: {
+  repository: Starter198Repository; tenantId: string; userId: string; taskId: string;
+  expectedVersion: string; expectedPlanHash: string; idempotencyKey: string;
+}) {
+  const result = await executeSocialContentMutation({ ...input, operation: 'reallocate_social_revision_budget', targetId: input.taskId,
+    requestHash: socialRequestHash({ expectedVersion: input.expectedVersion, expectedPlanHash: input.expectedPlanHash, production: 9.4, repair: .6 }),
+    replay: async () => ({ task: (await readSocialTaskDetail(input))! }), action: async operationId => {
+      const row = await requireSocialTask(input), brief = socialObject(socialJson(row.brief));
+      const marker = socialObject(brief?._productionRevision);
+      const { planHash, preparedBy: _by, preparedAt: _at, ...frozen } = marker ?? {};
+      if (socialText(row.version) !== input.expectedVersion || !brief || marker?.tenantId !== input.tenantId || marker?.taskId !== input.taskId
+        || planHash !== input.expectedPlanHash || socialRequestHash(frozen) !== planHash)
+        throw new SocialContentWorkflowError('social_revision_plan_changed', 409);
+      const jobs = await input.repository.dataStore!.list<Record<string, unknown>>('content_execution_jobs', { where: { tenant_id: input.tenantId, task_id: input.taskId }, perPage: 500 });
+      if (jobs.totalItems !== jobs.items.length || jobs.items.some(job => !['cancelled', 'succeeded', 'dead_letter', 'blocked'].includes(String(job.status)) || Boolean(job.worker_id) || Boolean(job.lease_expires_at)))
+        throw new SocialContentWorkflowError('social_revision_execution_active', 409);
+      if (Number(brief.perItemBudgetCny) !== 8.5 || Number(brief.retryReserveCny) !== 1.5)
+        throw new SocialContentWorkflowError('social_revision_budget_allocation_changed', 409);
+      const changed = { ...brief, perItemBudgetCny: 9.4, retryReserveCny: .6,
+        _revisionBudgetReallocation: { oldProduction: 8.5, oldRepair: 1.5, newProduction: 9.4, remainingRepair: .6, total: 10, purpose: 'Preserve full natural authorized hook voice via image-to-video; existing reservations and billing ledger unchanged', approvedScope: 'explicit_mvp_director_revision_20261011', operationId } };
+      const saved = await input.repository.dataStore!.compareAndSwap!(STARTER_COLLECTIONS.socialContentTasks, row.id,
+        { tenant_id: input.tenantId, version: row.version, last_operation_id: row.last_operation_id },
+        { brief: changed, version: String(Number(row.version) + 1), last_operation_id: operationId, updated_by: input.userId, updated_at: new Date().toISOString() });
+      if (!saved) throw new SocialContentWorkflowError('social_content_version_conflict', 409);
+      return { task: (await readSocialTaskDetail(input))! };
+    } });
+  return result.value;
 }

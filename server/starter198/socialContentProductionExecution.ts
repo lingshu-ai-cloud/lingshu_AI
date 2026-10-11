@@ -1,3 +1,4 @@
+import { socialProductionSupplyAdapters } from './socialContentRecoveryAdapters.js';
 import {
   assertCurrentContentExecutionActive,
   currentContentProviderReceipt,
@@ -91,6 +92,7 @@ import { MEDIA_ROOT, type ProductionAsset, type SocialProductionBaseline, type S
 import { AUTO_SCHEMA, analyzeProductionAssets, existingAssetSupplyAdapters, finishExecution, productionAdaptation, resolveLockedBgm, selectDirectorBgm, writeExecutionStage } from './socialContentAutoProduction.js';
 export interface SocialContentAutoProductionRuntime {
   loadProductionAssets?: typeof taskProductionAssets;
+  analyzeAssets?: typeof analyzeProductionAssets;
   selectDirectorBgm?: typeof selectDirectorBgm;
   synthesizeVoice?: typeof synthesizeStudioVoiceForAutomation;
   resolveBgm?: typeof resolveLockedBgm;
@@ -355,6 +357,8 @@ export async function runSocialContentAutoProduction(input: {
   /** Optional providers are explicitly registered by the deployment. Missing
    * digital-human/stock/AI providers remain visible fallback attempts. */
   assetSupplyAdapters?: SocialAssetSupplyProviderAdapter[];
+  /** Server-only recovery: never append submitting provider adapters. */
+  assetSupplyRecoveryOnly?: boolean;
   /** Deterministic ports for worker-level tests and alternate local runtimes. */
   runtime?: SocialContentAutoProductionRuntime;
   /** Server-only canonical material storage ports; never client approval flags. */
@@ -698,7 +702,10 @@ export async function runSocialContentAutoProduction(input: {
 	  const analyzed = await analyzeSocialProductionAssetsWithCheckpoint({
       tenantId: input.tenantId,
       assets: productionAssetsToAnalyze,
-      analyze: analyzeProductionAssets,
+      analyze: input.runtime?.analyzeAssets ?? (input.assetSupplyRecoveryOnly ? async value => {
+        if (value.assets.some(asset => !asset.visualObservations.length && !asset.segments.length)) throw new Error('user_input_required:canonical_material_analysis_missing_no_paid_fallback');
+        return { assets: value.assets, failures: [] };
+      } : analyzeProductionAssets),
     });
 	  let assets = analyzed.assets;
 	  let assetSupplyExecution: SocialAssetSupplyExecution | null = null;
@@ -755,14 +762,13 @@ export async function runSocialContentAutoProduction(input: {
           })(),
           baseline: activeBaseline,
           availableAssets: assets,
-          adapters: paidVisualProvidersAllowed ? [
-            ...(input.assetSupplyAdapters ?? []).filter(adapter => !presenterExecutions.length
-              || !adapter.sourceStrategies.includes('authorized_digital_presenter')),
-            createSocialProductSceneAdapter(createEnvironmentSeedanceProductScenePorts()),
-            ...(environmentPresenter?.ports ? [createSocialDigitalPresenterAdapter(environmentPresenter.ports)] : []),
-            createConfiguredSocialAiVisualAdapter(),
-            ...existingAdapters,
-          ] : existingAdapters,
+          adapters: paidVisualProvidersAllowed ? socialProductionSupplyAdapters({
+            recoveryOnly: input.assetSupplyRecoveryOnly, hasPresenterExecution: Boolean(presenterExecutions.length),
+            custom: input.assetSupplyAdapters ?? [], free: existingAdapters,
+            paid: () => [createSocialProductSceneAdapter(createEnvironmentSeedanceProductScenePorts()),
+              ...(environmentPresenter?.ports ? [createSocialDigitalPresenterAdapter(environmentPresenter.ports)] : []),
+              createConfiguredSocialAiVisualAdapter()],
+          }) : existingAdapters,
         });
         // Only assets selected by the Director's per-shot router enter the edit.
         assets = supplied.assets;
@@ -1054,6 +1060,7 @@ export async function runSocialContentAutoProduction(input: {
           retainVoiceForRecovery = true;
         } else {
           await assertCurrentContentExecutionActive();
+          if (input.assetSupplyRecoveryOnly && !input.runtime?.synthesizeVoice) throw new Error('user_input_required:canonical_voice_tracks_missing_no_paid_tts');
           const ttsRequestId = `social-tts:${narrationCheckpointInputHash}`;
           const priorTtsReceipt = currentContentProviderReceipt({
             provider: 'studio_tts', requestId: ttsRequestId,

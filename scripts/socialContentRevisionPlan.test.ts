@@ -8,7 +8,7 @@ import { createStarter198Repository, STARTER_COLLECTIONS } from '../server/start
 import { createSocialContentTask, addSocialTaskSource } from '../server/starter198/socialContentTasks.js';
 import { parseCreateSocialTask, socialRequestHash } from '../server/starter198/socialContentValidation.js';
 import { readSocialTaskDetail } from '../server/starter198/socialContentRecords.js';
-import { prepareSocialContentRevisionPlan, startPreparedSocialContentRevision } from '../server/starter198/socialContentRevisionPlan.js';
+import { prepareSocialContentRevisionPlan, startPreparedSocialContentRevision, reallocatePreparedSocialRevisionBudget } from '../server/starter198/socialContentRevisionPlan.js';
 import { createSocialProductionExecutorCheckpoint, readSocialProductionGraphDetail } from '../server/starter198/socialContentProductionGraph.js';
 
 async function fixture(t: any) {
@@ -128,4 +128,31 @@ test('explicit revision start freezes eight scenes and admits a fresh sticky gra
   assert.equal(job.checkpoints['social.executor'].payload.approvedContext.agentWorkflow.executionPlan.scenes.length, 8);
   assert.equal(started.artifacts[0].status, 'review_required');
   assert.deepEqual(await store.getById(STARTER_COLLECTIONS.socialContentArtifacts, f.artifact.id), f.artifact);
+  const retimedInput = { ...input, idempotencyKey: 'retiming-v2', expectedTaskVersion: started.version, expectedBriefHash: socialRequestHash(started.brief), expectedReferenceAnalysisHash: socialRequestHash(started.referenceVideoAnalysis), resolved: structuredClone(input.resolved) };
+  retimedInput.resolved.replicationScript.version = '2026101100002';
+  retimedInput.resolved.replicationScript.shots[0].endSeconds = 5.6;
+  retimedInput.resolved.replicationScript.shots[1].startSeconds = 5.6;
+  retimedInput.resolved.replicationScript.shots[1].endSeconds = 7;
+  retimedInput.resolved.replicationScript.shots[2].startSeconds = 7;
+  retimedInput.resolved.replicationScript.shots[2].endSeconds = 9;
+  await assert.rejects(() => prepareSocialContentRevisionPlan(retimedInput), /social_revision_execution_active/);
+  const { controlContentExecutionJob } = await import('../server/contentExecution/durableQueue.js');
+  await controlContentExecutionJob({ dataStore: store, tenantId: input.tenantId, jobId: job.id, action: 'cancel' });
+  const retimed = await prepareSocialContentRevisionPlan({ ...retimedInput, idempotencyKey: 'retiming-v2-after-cancel' });
+  assert.equal(retimed.task.runId, null);
+  assert.notEqual(retimed.planHash, prepared.planHash);
+  assert.equal((await store.getById<any>('content_execution_jobs', job.id))?.status, 'cancelled');
+  assert.equal(job.checkpoints['social.executor'].payload.approvedContext.revisionPlanHash, prepared.planHash);
+});
+
+test('trusted natural-hook budget reallocation preserves total, original receipts and frozen old lineage', async t => {
+  const f = await fixture(t), prepared = await prepareSocialContentRevisionPlan(f.input);
+  const row = (await f.store.list<any>(STARTER_COLLECTIONS.socialContentTasks, { where: { task_id: f.input.taskId } })).items[0];
+  await f.store.update(STARTER_COLLECTIONS.socialContentTasks, row.id, { brief: { ...row.brief, perItemBudgetCny: 8.5, retryReserveCny: 1.5 } });
+  const old = await f.store.getById('content_execution_jobs', 'legacy-job');
+  const result = await reallocatePreparedSocialRevisionBudget({ ...f.input, expectedVersion: prepared.task.version, expectedPlanHash: prepared.planHash, idempotencyKey: 'budget-reallocate' });
+  assert.equal(result.task.brief.perItemBudgetCny, 9.4); assert.equal(result.task.brief.retryReserveCny, .6);
+  assert.equal(result.task.brief.perItemBudgetCny! + result.task.brief.retryReserveCny!, 10);
+  assert.deepEqual(await f.store.getById('content_execution_jobs', 'legacy-job'), old);
+  assert.deepEqual(await f.store.getById(STARTER_COLLECTIONS.socialContentArtifacts, f.artifact.id), f.artifact);
 });
