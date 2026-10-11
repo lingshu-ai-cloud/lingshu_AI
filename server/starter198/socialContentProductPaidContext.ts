@@ -51,7 +51,7 @@ export function bindProductPaidStage(context: ProductPaidContext, shotId: string
           else actualUnits.outputTokens = Number(request.max_tokens);
         }
         else if (unit === 'inputImages') actualUnits.inputImages = images;
-        else if (unit === 'outputImages') {if(stage!=='first_frame' || request.sequential_image_generation==='auto')fail('image_output_mode_unsupported');actualUnits.outputImages=1;}
+        else if (unit === 'outputImages') {if(stage!=='first_frame' || request.sequential_image_generation==='auto'||['layers','layer','layered_output','image_generation_mode','tools','stream'].some(key=>key in request))fail('image_output_mode_unsupported');actualUnits.outputImages=1;}
         else if (unit === 'inputTokens') actualUnits.inputTokens = await context.measureInputTokens(request, route);
         else fail('actual_usage_dimension_unsupported:' + unit);
       }

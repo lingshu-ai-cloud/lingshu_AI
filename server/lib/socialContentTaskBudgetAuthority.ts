@@ -1,3 +1,4 @@
+import {verifySeedreamPublishedTariff,type SeedreamPublishedPricingEvidence} from './seedreamPublishedPricing.js';
 import {verifyNativeVoicePublishedTariff} from './studioVoicePublishedPricing.js';
 import {verifyWanPublishedTariff,type WanPublishedPricingEvidence} from './wanPublishedPricing.js';
 import {isVerifiedPublishedTariff,type PublishedPricingEvidence} from './socialContentPublishedTariffs.js';
@@ -31,7 +32,7 @@ export interface SocialVerifiedAccountTariff {
     currency: 'CNY';
     verifiedAccountPrice: boolean;
     pricingBasis?:'negotiated_verified_account'|'published_undiscounted_ceiling';
-    publicPricingEvidence?:PublishedPricingEvidence|WanPublishedPricingEvidence;
+    publicPricingEvidence?:PublishedPricingEvidence|SeedreamPublishedPricingEvidence|WanPublishedPricingEvidence;
     evidenceRef: string;
     checkedAt: string;
     validUntil: string;
@@ -64,7 +65,7 @@ function intentOperation(scope: SocialTaskBudgetScope, intent: SocialPaidOperati
 }
 function price(intent: SocialPaidOperationIntent, tariff: SocialVerifiedAccountTariff | null): SocialTaskBudgetQuote {
     const now = Date.now();
-    if (!tariff || !((tariff.verifiedAccountPrice===true&&(!tariff.pricingBasis||tariff.pricingBasis==='negotiated_verified_account'))||isVerifiedPublishedTariff(tariff)||verifyNativeVoicePublishedTariff(tariff)||verifyWanPublishedTariff(tariff)) || tariff.currency !== 'CNY' || !nonempty(tariff.evidenceRef) || ['provider', 'model', 'accountRef', 'stage'].some(k => tariff[k as 'provider'] !== intent[k as 'provider']) || !Number.isFinite(Date.parse(tariff.checkedAt)) || Date.parse(tariff.checkedAt) > now || !Number.isFinite(Date.parse(tariff.validUntil)) || Date.parse(tariff.validUntil) <= now)
+    if (!tariff || !((tariff.verifiedAccountPrice===true&&(!tariff.pricingBasis||tariff.pricingBasis==='negotiated_verified_account'))||isVerifiedPublishedTariff(tariff)||verifyNativeVoicePublishedTariff(tariff)||verifyWanPublishedTariff(tariff)||verifySeedreamPublishedTariff(tariff)) || tariff.currency !== 'CNY' || !nonempty(tariff.evidenceRef) || ['provider', 'model', 'accountRef', 'stage'].some(k => tariff[k as 'provider'] !== intent[k as 'provider']) || !Number.isFinite(Date.parse(tariff.checkedAt)) || Date.parse(tariff.checkedAt) > now || !Number.isFinite(Date.parse(tariff.validUntil)) || Date.parse(tariff.validUntil) <= now)
         fail('account_tariff_missing_or_expired');
     const keys = Object.keys(intent.maximumUnits).sort(), meters = Object.keys(tariff.meters || {}).sort();
     if (JSON.stringify(keys) !== JSON.stringify(meters))

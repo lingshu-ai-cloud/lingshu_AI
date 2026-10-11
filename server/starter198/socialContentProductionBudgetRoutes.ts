@@ -19,7 +19,7 @@ export interface FrozenProductBudgetInputs {
     };
     qaModel: string;
 }
-export interface CanonicalProductBudgetBounds {videoProvider?:'wan'|'seedance';videoModel?:'wan2.6-i2v-flash'|'wan2.2-i2v-flash';firstFrameMaximumFrames:number;videoMaximumFrames:number;productSha256s:string[];providerDurationSeconds:number;evidenceRef:string;}
+export interface CanonicalProductBudgetBounds {qaModel?:'qwen3-vl-plus';videoProvider?:'wan'|'seedance';videoModel?:'wan2.6-i2v-flash'|'wan2.2-i2v-flash';firstFrameMaximumFrames:number;videoMaximumFrames:number;productSha256s:string[];providerDurationSeconds:number;evidenceRef:string;}
 const digest = (v: string) => createHash('sha256').update(v).digest('hex');
 const official = (base: string, host: string) => { try {
     const u = new URL(base);
@@ -74,7 +74,7 @@ export function createProductionBudgetRouteReaders(input: {
             const p = await input.readFrozenProduct?.(r);
             if(!p){
              const b=await input.readCanonicalProductBounds?.(r);if(!b||!b.evidenceRef||!b.productSha256s.length||b.productSha256s.some(h=>!/^[a-f0-9]{64}$/.test(h)))return null;
-             if(r.stage.endsWith('_qa')){const expected=r.stage==='first_frame_qa'?b.firstFrameMaximumFrames:b.videoMaximumFrames;if(r.frameCount!==expected||expected>5)return null;const route=qwenRoute(r.stage,env().QWEN_VL_MODEL||'qwen3-vl-plus',expected,4096);return route?{...route,usageBoundRef:`${route.usageBoundRef}:${b.evidenceRef}`}:null;}
+             if(r.stage.endsWith('_qa')){const expected=r.stage==='first_frame_qa'?b.firstFrameMaximumFrames:b.videoMaximumFrames;if(r.frameCount!==expected||expected>5)return null;const route=qwenRoute(r.stage,b.qaModel||env().QWEN_VL_MODEL||'qwen3-vl-plus',expected,4096);return route?{...route,usageBoundRef:`${route.usageBoundRef}:${b.evidenceRef}`}:null;}
              if(r.stage==='first_frame'){const config=ark('seedream');if(!config||!/^doubao-seedream-5-0-(pro|flash)-/.test(config.model))return null;return {provider:'seedream',model:config.model,accountRef:productionBillingAccountRef('seedream',config.baseUrl,config.credentialSha256),routeEvidenceRef:`sdk:seedream:${paidProductionHash(config)}`,usageBoundRef:b.evidenceRef,maximumAttempts:1,maximumUnits:{outputImages:1,inputImages:b.firstFrameMaximumFrames-1}};}
              if(b.videoProvider==='wan') {const config=qwen();if(!official(config.baseUrl,'dashscope.aliyuncs.com')||!['wan2.6-i2v-flash','wan2.2-i2v-flash'].includes(b.videoModel||'')||!Number.isInteger(b.providerDurationSeconds)||b.providerDurationSeconds<2||b.providerDurationSeconds>15)return null;return {provider:'wan',model:b.videoModel!,accountRef:productionBillingAccountRef('wan','https://dashscope.aliyuncs.com/api/v1',config.credentialSha256),routeEvidenceRef:`sdk:wan:${paidProductionHash(config)}`,usageBoundRef:`https://help.aliyun.com/zh/model-studio/legacy-image-to-video-api-reference/#duration:${b.evidenceRef}`,maximumAttempts:1,maximumUnits:{providerSeconds:b.providerDurationSeconds}};}
              // Public video token formula is an estimate, not a documented hard
@@ -127,7 +127,7 @@ export function createProductionBudgetRouteReaders(input: {
                 const b = qwen();
                 if (!official(b.baseUrl, 'dashscope.aliyuncs.com'))
                     throw Error('production_provider_gateway_changed');
-                const model = expected.stage === 'material_image_analysis' ? b.imageModel : ['material_video_analysis', 'material_video_review'].includes(expected.stage) ? b.materialModel : (env().QWEN_VL_MODEL || 'qwen3-vl-plus');
+                const model = expected.stage === 'material_image_analysis' ? b.imageModel : ['material_video_analysis', 'material_video_review'].includes(expected.stage) ? b.materialModel : (expected.model === 'qwen3-vl-plus' ? expected.model : env().QWEN_VL_MODEL || 'qwen3-vl-plus');
                 actual = { model, accountRef: productionBillingAccountRef('qwen', b.baseUrl, b.credentialSha256) };
             }
             else if (expected.provider === 'seedance' || expected.provider === 'seedream') {

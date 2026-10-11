@@ -357,6 +357,7 @@ export interface SocialMaterialRouting {
     /** Frozen choice; absence preserves the historic Seedance route. */
     videoProvider?: 'wan' | 'seedance';
     videoModel?: 'wan2.6-i2v-flash' | 'wan2.2-i2v-flash';
+    qaModel?: 'qwen3-vl-plus';
     durationSeconds: number;
     durationOrigin?: 'default_short_shot' | 'planned_timeline' | 'explicit_frozen';
     productImageRefs: string[];
