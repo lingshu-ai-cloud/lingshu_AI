@@ -172,7 +172,7 @@ export function createSocialContentPaidOperationPlanner(ports: PaidOperationPlan
                             gap(`supply_route_execution_unverified:${route}`);
                         continue;
                     }
-                    if (route === 'aigc_product_scene_replication' && shot.materialRouting?.generation?.method === 'reference_first_frame_product_replacement_i2v') {
+                    if (route === 'aigc_product_scene_replication' && ['reference_first_frame_product_replacement_i2v', 'enterprise_authored_product_first_frame_i2v'].includes(shot.materialRouting?.generation?.method || '')) {
                         const extraction = make(`${key}:frames`, 'product_frame_extract_plan', shot.shotId, null, scene.durationSeconds, null, null);
                         const bounds = await ports.readProductFrameBounds(extraction);
                         if (!bounds || bounds.inputContractHash !== extraction.inputContractHash || !text(bounds.evidenceRef) || !Number.isInteger(bounds.firstFrameMaximumFrames) || bounds.firstFrameMaximumFrames < 1 || !Number.isInteger(bounds.videoMaximumFrames) || bounds.videoMaximumFrames < 1) {

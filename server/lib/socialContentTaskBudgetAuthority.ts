@@ -117,7 +117,7 @@ export function createSocialContentTaskBudgetAuthority(input: {
             verifyRejection: ports.verifyRejection,
         });
         const status = await ledger.reserveBatch(scope, prepared.operations);
-        return { scope, operations: prepared.operations, quotes: Object.fromEntries(prepared.quotes), status, ledger };
+        return { scope, operations: prepared.operations, intents: structuredClone(prepared.plan.paidOperations), quotes: Object.fromEntries(prepared.quotes), status, ledger };
     }
     /** Receipt recovery grants no new submission authority. A tariff expiry
      * must not strand already accepted requests, while pending stages still
