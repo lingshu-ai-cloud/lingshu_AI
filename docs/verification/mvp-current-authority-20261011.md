@@ -144,3 +144,14 @@ v65 实际 Seedream 首帧通过真实 qwen3-vl-plus 检查并保留原包装主
 正常官方预览登录后，新 Studio `ecad...` 在打开时被客户端 autosave 全量改写为旧 0002 时间与 slot-1…slot-8，丢失冻结 taskVersion/timeline/CTA；当前任务与 Graph job 仍为原 v65/0003，未改变。`frontend-after-read-snapshot/manifest.json` 保存真实写后证据，已离开 Studio 页面避免继续覆盖，正在修复正常 hydration/冻结保存桥。尚无新最终 MP4、人工创意批准、真实发布与指标。
 
 两次真实 Qwen QA 已结束。为本轮调用关闭了该模型“免费额度用完即停”；恢复尝试中详情和免费额度页均显示“不支持开启”，证据为 `dashscope-free-only-restore-unavailable.dom.txt/.png`，没有声称恢复成功。只修改此模型、未充值；本地独立 QA 预算池已占满，禁止未授权新增请求。原付费回执、原预占及未知实际结算均保留。
+
+
+### 冻结页面修复与已授权 S04 单次返工（进行中）
+
+用户已在本会话明确批准追加 ¥4.30，授权证据 `S04-repair-user-authorization.json`；总授权为 ¥14.30。复用已合格首帧，新增视频预占 ¥4、质检上限 ¥0.25，原失败调用和原预占保留，实际账单仍不得用预占或估价替代。
+
+`08f2698`、`284ae62`、`69a00f6`、`0a2ced3` 修复服务端冻结合同、客户端旧脚本覆盖及真实素材预览。正式同 scope CAS 读回为 0003 八镜与 mixed/heygen，S04 fingerprint 保持不变；S01 通过可信原供应商媒体验证及正规 artifact_media 注册，未标整片完成或人工批准。正常登录页面证据 `frontend-studio-media.jpg` / `frontend-media-readonly-proof.json`：英文 CTA、混剪选项、八镜时长正确；真实 S01 720×1280 播放器 readyState=4、error=null，刷新前后项目 SHA 一致。冻结合同集成 6/6、全树类型检查和主站构建通过；这不是对新增代码重复声称此前 672 项全量回归。
+
+S04 返工唯一实际任务 `cgt-20261011185530-ddcj4` 已受理，后续只查询该任务，没有重复 POST。用户追加授权不包含公开发布或生产部署。返工质检、Graph 最终合成与人工创意验收仍需实际完成；原失败视频继续拒绝采用。
+
+返工原任务随后 completed 并下载，MP4 SHA256 `7e722db701938673c21cb68401392c05ebd6b51f8a8ac50d66cb4fa130b26277`。实际 0.2/3.7 秒帧已由主会话独立查看：额外中央圆标和烧入字幕消失，但右侧面显著变窄、包装转向正面，仍违反锁定朝向/禁止旋转合同。禁止将此镜头接入 canonical adoption 或最终片，即便模型质检误判；单次真实质检正在完成，不再提交新生成。
