@@ -81,7 +81,7 @@ test('default presenter route resolves frozen presenter IDs with empty source re
   assert.equal(result.status,'reserved');assert.ok(result.status==='reserved');
   const presenterRequirements=result.requirements.filter(r=>r.stage==='presenter_video');
   assert.equal(presenterRequirements.length,supplyPlan.shots.length);assert.ok(presenterRequirements.every(r=>r.sourceRef===null));
-  for(const requirement of presenterRequirements){const boundRoute=result.routeBindings[requirement.key];assert.ok(boundRoute);assert.equal(boundRoute.provider,'heygen');assert.equal(boundRoute.model,'avatar_iv');assert.match(boundRoute.routeEvidenceRef,/^heygen-approved-person:/);}
+  for(const requirement of presenterRequirements){const boundRoute:{provider:string;model:string;routeEvidenceRef:string}|undefined=result.routeBindings[requirement.key];assert.ok(boundRoute);assert.equal(boundRoute.provider,'heygen');assert.equal(boundRoute.model,'avatar_iv');assert.match(boundRoute.routeEvidenceRef,/^heygen-approved-person:/);}
   const quotes=Object.values(result.reserved.quotes);const ivQuotes=quotes.filter(q=>q.nativePricing?.currency==='USD');assert.equal(ivQuotes.length,supplyPlan.shots.length);assert.ok(ivQuotes.every(q=>q.nativePricing?.usdPerMinute===4.83));assert.ok(quotes.reduce((n,q)=>n+q.upperBoundCny,0)<=10);
   assert.ok(gets.some(u=>u.endsWith('/avatars/looks/original-look')));
   assert.ok(gets.some(u=>u.endsWith('/users/me')));
