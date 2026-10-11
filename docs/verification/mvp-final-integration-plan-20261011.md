@@ -43,10 +43,16 @@ LangGraph 试点已完成资产、渲染、技术质量、可恢复人工审核�
 
 已有短 HeyGen 片经原提交 fingerprint 重算，确认与当前第一镜台词一致：`Beauty brand owners, stop launching products based on only on guesswork.`。保留原声不能消除该语法重复；独立创意审查须明确记录，不能悄悄配新台词并宣称口型通过。短片完整解码通过，抽帧未见严重人物漂移，但音口同步和最终观感仍需实际播放与真人验收。长片 72.96 秒已有时间线分析失败，不强压缩成 38 秒。
 
-账户登录阻断已解除。2026-10-11 浏览器只读费用概览显示可用余额 ¥194.40，资源包页未发现 Seedance 视频资源包；视觉模型计价已按上述实际账户页面读取。未购买、充值、预占或生成。余额仍需与代码实际使用的 Ark Key 所属账户匹配，不能把浏览器登录本身当作 Key 归属证据。
+账户登录阻断已解除。2026-10-11 浏览器只读费用概览显示可用余额 ¥194.40，资源包页未发现 Seedance 视频资源包；视觉模型计价已按上述实际账户页面读取。未购买、充值、预占或生成。已完成代码有效配置与控制台两条 Key 完整值的 SHA256 内存比对：Seedance 匹配 `apikey-20260629201346-fnblc`，Seedream 匹配 `apikey-20260925164909-4wflx`，两者创建账户与费用账户一致。未输出或保存 Key 明文，核验后已重新隐藏。Key 名称与用途不同，不能凭名称判断。
 
 本次可沿既有 Studio、原供应商任务与真实证据执行，无需先建设通用交接表。但 `social_mvp_handoffs/evidence` 尚无通用生产写入 adapter，不能宣称该只读面板已完整核验来源。生产部署和迁移继续遵守 `AGENTS.md`，本轮未获部署授权。
 
 当前具体英文修订包见 `mvp-revised-storyboard-20261011.md`：推荐 20–24 秒、8 镜，采用正确的新短句口播和真实产品镜头，不为填满 38 秒重复静物。新数字人短镜与 B 镜都需有效计价和预算核验。它是可审查制作方案，尚非新制作版本或成片证据。
 
 真实旧媒体重检证据：任务外 `work/mvp-final-recheck/technical-reinspection.json`。检查前核对原文件 hash，将媒体复制到隔离目录后运行正式 `inspectRenderedVisuals` / `inspectRenderedScenes`，避免在原业务媒体旁写抽帧。时间线读取同租户同任务原 job 的 `social.narration_audio` checkpoint，共 37 镜，保存时间线摘要。未产生新供应商媒体、未修改 canonical 记录、未把技术通过写成 creativeAccepted 或 mvpPassed。
+
+### 固定镜头费用准备补证
+
+官方规格确认 Seedance 2.0-fast 最高 720p、24fps；720p 9:16 为 720×1280，明确 `duration=4`，不使用自动时长 `-1`、frames 或视频参考输入。按官方公式估算 86,400 tokens × ¥0.037/千 = ¥3.1968。准备使用单次 ¥6 保守预占（约 87.7% 裕量），这不是供应商硬封顶，也不是已结算费用；首帧、QA、数字人及旁白独立计入总 ¥10 预算。仍未提交供应商生成。
+
+来源：[模型规格](https://docs.volcengine.com/docs/ark/model-list?lang=zh)、[任务参数](https://docs.volcengine.com/docs/ark/create-video-generation-task-api?lang=zh)、[计费说明](https://docs.volcengine.com/docs/ark/model-pricing?lang=en&redirect=1)。

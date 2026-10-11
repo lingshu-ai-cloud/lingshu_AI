@@ -29,20 +29,44 @@ M3：72.96s HeyGen SHA `2159dd010771d14a7421935ed7396d91bbca7531665316b76ba11026
 
 ## 推荐24秒 / 8镜英文预排
 
-时间均为成片时间，不套用参考ASR到M1。S01暂分配4秒给新短镜A1，仅作预排，不是尚未生成的真实时长；新语音probe后由编导重排边界并保存新manifest，不强拉伸凑秒。各镜字幕是精确拟用文本；除镜1，其余配音均是拟稿，没有现成生成证据。
+时间均为成片时间，不套用参考ASR到M1。S01暂分配4秒给新短镜A1，仅作预排，不是尚未生成的真实时长；新语音probe后由编导重排边界并保存新manifest，不强拉伸凑秒。各镜字幕是精确拟用文本；所有新版配音均是拟稿，没有目标人物/音色的新生成证据。
 
 | 镜头 / 时间 | 精确英文屏幕文本 | 拟用声音 | 画面、来源与缺口 |
 | --- | --- | --- | --- |
 | S01 / 0–4 | `Beauty brand owners:` / `stop guessing your next product launch.` | **新短镜A1**：`Beauty brand owners: stop guessing your next product launch.`；当前缺生成媒体 | 沿原授权人物/音色版本做新的自然英文短镜；不用旧M1配新词，不宣称店铺动作等价。旧M1不进入高质量候选。 |
 | S02 / 4–6 | `GUIANFA` | `Meet GUIANFA.` | M2清楚整包，单次切入，保留真实标签像素。F1品牌；不用系统说明卡替代产品。 |
-| S03 / 6–9 | `Cloud Foam Makeup Remover` / `100 mL` | `Cloud Foam Makeup Remover. One hundred milliliters.` | M2正面轻微推近，F1类别与容量；工作译名正式采用前核对。不假造另一视角/质地。 |
+| S03 / 6–9 | `Cloud Foam Makeup Remover` / `100 mL` | `A hundred milliliters.` | M2正面轻微推近，F1类别与容量；工作译名正式采用前核对。不假造另一视角/质地。 |
 | S04 / 9–13 | `A closer look` | 无新口播，授权BGM短桥接 | **B1真实生成hero位置**，4秒。真实回执及QA未齐则该镜未完成；不以静物动画填充后声称MVP完成。 |
-| S05 / 13–16 | `Product: GUIANFA-RS-001` | `Ask about GUIANFA RS zero zero one.` | M2较小整包+SKU，F1采购识别。SKU文字是图外信息，不伪装包装印字。 |
+| S05 / 13–16 | `Product: GUIANFA-RS-001` | `Explore this product.` | M2较小整包+SKU，F1采购识别。SKU文字是图外信息，不伪装包装印字。 |
 | S06 / 16–18.5 | `Your market. Your requirements.` | `Tell us your market and requirements.` | M2保持，采购需求文字F2；属于询问，不保证流行/销量/定制能力。 |
-| S07 / 18.5–21 | `Let's discuss a cleansing product quote` | `Let's discuss a cleansing product quote.` | M2构图为CTA过渡；F2/F3询价，无价格/MOQ/交期保证。 |
+| S07 / 18.5–21 | `Let's discuss a cleansing product quote` | 无口播，音乐短过渡 | M2构图为CTA过渡；F2/F3询价，无价格/MOQ/交期保证。 |
 | S08 / 21–24 | `DM us for a private-label cleansing quote.` | `DM us for a private-label cleansing quote.` | M2清晰整包，精确task CTA，不添加Messenger账号/虚构二维码。 |
 
 S02–S08是拟稿，没有新声音或B1生成证据；S03/S08真录可能超过预排，先测自然语速，再由编导缩写同义非事实文案/调整总长至20–24秒，不能截尾或极端加速。S07可与S08合并字幕呈现但保留连续语义切点。当前只有类别、容量、品牌足够稳妥，不延长为38秒以堆重复图；此稿缺强产品差异卖点，不预先声称高转化或创意通过。
+
+
+### 已执行本地免费时长探测与字幕落地
+
+2026-10-11 使用 macOS Samantha `/usr/bin/say -r 160` 逐句生成任务外临时AIFF并用FFmpeg读时长，输出 `/tmp/mvp-voice-timing-UFHD3Y`。这是系统声音的预排参考，**不是目标HeyGen音色的准确生成时长、真实供应商回执或最终口播**；原始权威媒体不改动。正式目标语音仍必须probe/听验，不把下列测量套成目标音频词级时间。
+
+| 镜 | 最终拟用口播 | 本地完整文件测量 | 槽长 / 剩余空间 | 执行决定 |
+| --- | --- | --- | --- | --- |
+| S01 | `Beauty brand owners: stop guessing your next product launch.` | 3.49s | 4s / 0.51s | 新短镜A1完整句，开场不追加停顿/口播，生成超过4s则重排，不加速嘴部。 |
+| S02 | `Meet GUIANFA.` | 0.86s | 2s / 1.14s | GUIANFA读法需品牌/目标声音听验，不能因为系统读法短就直接认定正确。 |
+| S03 | `A hundred milliliters.` | 1.26s | 3s / 1.74s | 产品英文名屏幕呈现，不在3秒内同时朗读长名称+容量，解决超时。 |
+| S05 | `Explore this product.` | 1.27s | 3s / 1.73s | SKU只做采购识别文字，不读“RS zero zero one”，减少僵硬感；无新增功效。 |
+| S06 | `Tell us your market and requirements.` | 1.99s | 2.5s / 0.51s | 独立自然短句，留换气；实际目标语音过长则借S07空隙，字幕相应新manifest。 |
+| S08 | `DM us for a private-label cleansing quote.` | 2.41s | 3s / 0.59s | 精确当前task CTA，不追加重复结尾，不冒读不存在的账号名。 |
+
+S04和S07无新口播；其余新句合计本地测量11.28s，不代表所有音频拼接后已生成。S07保留询价屏幕过渡，S08才完整说CTA，避免连续两次重复询价。非人物镜头新旁白可一次生成整段（句间停顿由真实音频测量后对齐），无需为每个视觉切点提交独立TTS订单；A1人声是否可同时承担片外旁白需目标端口/报价证明，不能假定收费免费。严禁把免费系统声音冒作最终授权品牌音色。
+
+720×1280布局预排：有效区域x=58–662、y=154–998；标题优先y=170–285，字幕基线区y=845–980；商品主图控制在y=320–810，M1/A1人物脸部无遮挡。S01上标题 `Beauty brand owners:`，下方两行 `stop guessing your` / `next product launch.`，完整句意而非假卡拉OK词级高亮。S03上两行 `Cloud Foam` / `Makeup Remover`（44px），右下短标 `100 mL`（40px），不把文字烧到产品标签上。S05采购编号 `GUIANFA-RS-001`（36px），人物口播字幕仅 `Explore this product.`（44px）。S08两行 `DM us for a private-label` / `cleansing quote.`（44px）；300px缩略读验后必要时使用更宽留白或适度增字，不靠缩小到不可读塞满。文本白色/深色高对比、轻描边或半透明底，字体必须授权。上述坐标是制作提案，需实际帧/OCR/手机尺寸截图验证，不声称已有真实页面验收。
+
+### 长口播不能提供本版免费的完整英文短句
+
+只读代码 `server/starter198/socialContentDigitalPresenterAdapter.ts` 中stableKey包含script与visualControl；execute当前取 `baselineScene.narration || voiceover || script || caption`。权威baseline39第二镜narration/voiceover为空，script是中文导演动作描述、negative prompts和参考首帧路径。以原tenant/task/shot/person资产数值version4、原job.visual_control、空profile/consistency、provider heygen、该script原文按adapter字段顺序重算SHA，精确命中72.96s job的 `social-presenter:393b51832d103a1037c87c8248bb0d045997d0472b8e44051c5425545a440c86`。这证明当时提交的是导演指令串，不是当前新版自然英文配音稿。
+
+原receipt与hash证明文件可恢复，不证明台词适用。没有可信目标音轨的英文句子ASR/词级边界与本版文本对应，所以**不从长片剪出本版口播**，不使用参考视频sourceWords替代该长片timing。S01必须新短镜；S02/S03/S05/S06/S08必须新旁白或正式有权录制，Q_audio计入预算。正式生产前还应由实现负责人修复“空spoken取导演script”的准入问题，本次只记录证据不修改主实现。
 
 参考38秒不是新片强制时长。原task固定预算/目标不等于授权静默改变旧single_source_fidelity脚本；正式采用20–24秒/8镜改编必须由经营/编导保存新制作版本及fidelity偏离说明。若业务权威版本明确要求38秒，记录该冲突，补足真实信息/合法资产后重新编排，不能用静物填时间。开盖、真实泡沫/使用、背标、其他角度及工厂资料当前均缺，不纳入镜头。
 
