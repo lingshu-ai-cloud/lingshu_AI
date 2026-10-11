@@ -4,7 +4,9 @@ import { randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const LOCAL_TENANTS_FILE = process.env.NODE_ENV === 'test' && process.env.LOCAL_TENANTS_DATA_FILE
+const configuredPreviewStore = process.env.NODE_ENV !== 'production'
+  && process.env.LINGSHU_LOCAL_PREVIEW === '1';
+const LOCAL_TENANTS_FILE = (process.env.NODE_ENV === 'test' || configuredPreviewStore) && process.env.LOCAL_TENANTS_DATA_FILE
   ? path.resolve(process.env.LOCAL_TENANTS_DATA_FILE)
   : path.join(__dirname, '../../data/local-auth-tenants.json');
 

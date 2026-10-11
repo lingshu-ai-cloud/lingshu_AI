@@ -41,7 +41,9 @@ function isStoredAccount(value: unknown): value is LocalStoredAccount {
 }
 
 export function localAccountRecordsFile(): string {
-  return process.env.NODE_ENV === 'test' && process.env.LOCAL_AUTH_ACCOUNTS_FILE
+  const configuredPreviewStore = process.env.NODE_ENV !== 'production'
+    && process.env.LINGSHU_LOCAL_PREVIEW === '1';
+  return (process.env.NODE_ENV === 'test' || configuredPreviewStore) && process.env.LOCAL_AUTH_ACCOUNTS_FILE
     ? path.resolve(process.env.LOCAL_AUTH_ACCOUNTS_FILE)
     : path.join(__dirname, '../../data/local-auth-accounts.json');
 }
