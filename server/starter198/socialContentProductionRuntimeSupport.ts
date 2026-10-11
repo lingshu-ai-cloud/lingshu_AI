@@ -288,9 +288,9 @@ export async function finishExecution(input: {
   taskId: string;
   userId: string;
 }): Promise<void> {
+  await assertCurrentContentExecutionActive();
   const bound = await requireSocialTask(input);
   if (socialObject(socialObject(socialJson(bound.brief))?._productionRevision) && socialText(bound.run_id) !== input.runId) return;
-  await assertCurrentContentExecutionActive();
   const detail = await readSocialTaskDetail(input);
   const artifact = detail?.artifacts.find(item => item.artifactId === input.artifactId);
   const managed = detail?.brief.managementMode === 'one_click_managed';
@@ -347,12 +347,12 @@ export async function failExecution(input: {
   userId: string;
   error: unknown;
 }): Promise<void> {
-  const bound = await requireSocialTask(input);
-  if (socialObject(socialObject(socialJson(bound.brief))?._productionRevision) && socialText(bound.run_id) !== input.runId) return;
   const stoppedRun = await input.repository.get(STARTER_COLLECTIONS.runs, input.tenantId, input.runId).catch(() => null);
   if (stoppedRun && ['paused', 'pausing', 'cancelling', 'cancelled', 'succeeded', 'completed', 'failed'].includes(socialText(stoppedRun.status))) return;
   const stoppedJobs = await input.repository.dataStore?.list<Record<string, unknown>>('content_execution_jobs', { where: { tenant_id: input.tenantId, task_id: input.taskId, run_id: input.runId }, page: 1, perPage: 2 });
   if (stoppedJobs?.items.some(job => ['paused', 'cancelled'].includes(socialText(job.status)))) return;
+  const bound = await requireSocialTask(input);
+  if (socialObject(socialObject(socialJson(bound.brief))?._productionRevision) && socialText(bound.run_id) !== input.runId) return;
   const detail = await readSocialTaskDetail(input).catch(() => null);
   const pendingRevision = detail?.artifacts.some(artifact => artifact.kind === 'short_video'
     && artifact.status === 'changes_requested');
