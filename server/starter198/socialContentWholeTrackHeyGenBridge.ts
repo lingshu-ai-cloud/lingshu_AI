@@ -86,9 +86,21 @@ export function createWholeTrackSocialHeyGenBridge(input:{
   },
  });
  const resolve=async(request:DigitalPresenterExecutionRequest):Promise<WholeTrackPresenterSpeech>=>{
-  await funding.assertCurrent();const {route}=canonical(request);await funding.assertLivePresenter(route,request,keyHash);
+  await funding.assertCurrent();const {requirement,route}=canonical(request);await funding.assertLivePresenter(route,request,keyHash);
+  const frozenDuration=Number(requirement.durationSeconds);
+  if(!(frozenDuration>0))throw Error('whole_track_heygen_frozen_window_missing');
+  // The reference clip timing describes the source video's edit. Paid scene
+  // execution must use the final whole-film slot frozen by budget preflight.
+  // Normalize the shared request before hashing, audio upload, and provider
+  // submission so every downstream receipt records the same authority.
+  request.visualControl.timing={
+   startSeconds:0,
+   endSeconds:frozenDuration,
+   durationSeconds:frozenDuration,
+   actionPeakSeconds:Math.min(frozenDuration,Math.max(0,frozenDuration*.58)),
+  };
   const clip=await readPreparedWholeVoiceScene({prepared:input.prepared,scope:funding.scope,shotId:request.shotId,spokenText:request.script,assertCurrent:funding.assertCurrent});
-  if(Math.abs(clip.durationSeconds-request.visualControl.timing.durationSeconds)>.02)throw Error('whole_track_heygen_frozen_window_changed');
+  if(Math.abs(clip.durationSeconds-frozenDuration)>.02)throw Error('whole_track_heygen_frozen_window_changed');
   const identity={scope:funding.scope,shotId:request.shotId,presenter:request.presenter,visualControl:request.visualControl,clipSha256:clip.clipSha256,sourceReceipts:clip.sourceReceipts,alignmentReceiptSha256:clip.alignmentReceiptSha256};
   const identityHash=paidProductionHash(identity),file=path.join(root,identityHash+'.upload.json');
   const audio=await withPaidOperationLock(path.join(root,'.locks'),identityHash,async()=>{
