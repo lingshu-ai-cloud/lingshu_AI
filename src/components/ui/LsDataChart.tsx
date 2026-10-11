@@ -10,7 +10,7 @@ export interface LsDataChartProps {
   title: string; description?: string; kind: 'bar' | 'line' | 'doughnut' | 'scatter';
   labels: string[]; series: LsChartSeries[]; horizontal?: boolean; stacked?: boolean;
   percent?: boolean; unit?: string; xUnit?: string; xValues?: Array<number | null>;
-  loading?: boolean; error?: string; demo?: boolean; height?: number;
+  loading?: boolean; error?: string; demo?: boolean; height?: number; showDataTable?: boolean;
 }
 export const chartPalette = ['#36A2EB', '#FF6384', '#4BC0C0', '#FFCD56', '#9966FF', '#FF9F40'];
 const finite = (value: unknown): number | null => typeof value === 'number' && Number.isFinite(value) ? value : null;
@@ -18,11 +18,12 @@ const displayValue = (value: unknown, unit = '') => finite(value) === null ? '�
 type ChartRow = { key: number; label: string; [field: string]: number | string | null };
 
 /** The graph and accessible data table consume the same query snapshot. */
-export function LsDataChart({ title, description, kind, labels, series, horizontal = false, stacked = false, percent = false, unit = '', xUnit = '', xValues, loading = false, error, demo = false, height = 280 }: LsDataChartProps) {
+export function LsDataChart({ title, description, kind, labels, series, horizontal = false, stacked = false, percent = false, unit = '', xUnit = '', xValues, loading = false, error, demo = false, height = 280, showDataTable = true }: LsDataChartProps) {
   const canvas = useRef<HTMLCanvasElement>(null);
   const renderedChart = useRef<{ chart: Chart; canvas: HTMLCanvasElement; kind: LsDataChartProps['kind'] } | null>(null);
   const reducedMotion = usePrefersReducedMotion();
   const titleId = useId();
+  const dataId = `${titleId}-data`;
   const [renderError, setRenderError] = useState('');
   // A series-specific X array owns its gaps; only absent arrays use the shared X values.
   const rows = useMemo<ChartRow[]>(() => labels.map((label, index) => ({ key: index, label, ...Object.fromEntries(series.flatMap((item, i) => [[`value${i}`, finite(item.values[index])], [`x${i}`, finite((item.xValues ?? xValues)?.[index])]])) })), [labels, series, xValues]);
@@ -98,9 +99,9 @@ export function LsDataChart({ title, description, kind, labels, series, horizont
         active?.chart.destroy();
         renderedChart.current = { chart: new ChartJS(canvas.current, config), canvas: canvas.current, kind };
       }
-    }).catch(() => { if (!canceled) setRenderError('图表暂时无法显示，可在下方数据表查看完整数据。'); });
+    }).catch(() => { if (!canceled) setRenderError(showDataTable ? '图表暂时无法显示，可在下方数据表查看完整数据。' : '图表暂时无法显示，请稍后重试。'); });
     return () => { canceled = true; };
-  }, [kind, labels, series, horizontal, stacked, percent, unit, xUnit, rows, hasData, loading, plottedCount, reducedMotion]);
+  }, [kind, labels, series, horizontal, stacked, percent, unit, xUnit, rows, hasData, loading, plottedCount, reducedMotion, showDataTable]);
 
   const download = () => {
     // Prefix spreadsheet formula characters to keep exported user text inert.
@@ -119,9 +120,10 @@ export function LsDataChart({ title, description, kind, labels, series, horizont
     <header className="ls-chart__header"><div><h3 id={titleId} className="ls-type-title-small">{title}</h3>{description && <p className="ls-type-body-small">{description}</p>}</div>{demo && <Tag color="warning">参考预览</Tag>}</header>
     {(error || renderError) && <Alert type="warning" showIcon title={error || renderError} style={{ marginBottom: 12 }} />}
     {loading ? <Skeleton active={!reducedMotion} paragraph={{ rows: 5 }} /> : !hasData ? <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="暂无可展示的数据" /> : <>
-      <div style={{ height, position: 'relative' }}><canvas ref={canvas} role="img" aria-label={`${demo ? '参考预览。' : ''}${title}。${description || ''}完整数值请查看下方数据表。`} /></div>
-      {(plottedCount < labels.length || series.length > 5) && <p className="ls-chart__note">图中展示前 {plottedCount} 项、最多 5 个序列，完整数值见数据表。</p>}
-      <Collapse ghost items={[{ key: 'data', label: '查看数据表', children: <><Table size="small" rowKey="key" dataSource={rows} pagination={rows.length > 10 ? { pageSize: 10, showSizeChanger: false } : false} scroll={{ x: 'max-content' }} columns={[{ title: '日期 / 对象', dataIndex: 'label' }, ...series.flatMap((item, i) => [...(kind === 'scatter' ? [{ title: `${item.label} · ${xUnit || 'X'}`, dataIndex: `x${i}`, align: 'right' as const, render: (value: unknown) => displayValue(value, xUnit) }] : []), { title: kind === 'scatter' ? `${item.label} · ${unit || 'Y'}` : item.label, dataIndex: `value${i}`, align: 'right' as const, render: (value: unknown) => displayValue(value, unit || (percent ? '%' : '')) }])]} /><Button type="text" size="small" icon={<Download size={14} />} onClick={download}>下载 CSV{demo ? '（参考预览）' : ''}</Button></> }]} />
+      <div style={{ height, position: 'relative' }}><canvas ref={canvas} role="img" aria-describedby={showDataTable ? undefined : dataId} aria-label={`${demo ? '参考预览。' : ''}${title}。${description || ''}${showDataTable ? '完整数值请查看下方数据表。' : ''}`} /></div>
+      {(plottedCount < labels.length || series.length > 5) && <p className="ls-chart__note">图中展示前 {plottedCount} 项、最多 5 个序列{showDataTable ? '，完整数值见数据表' : ''}。</p>}
+      {showDataTable && <Collapse ghost items={[{ key: 'data', label: '查看数据表', children: <><Table size="small" rowKey="key" dataSource={rows} pagination={rows.length > 10 ? { pageSize: 10, showSizeChanger: false } : false} scroll={{ x: 'max-content' }} columns={[{ title: '日期 / 对象', dataIndex: 'label' }, ...series.flatMap((item, i) => [...(kind === 'scatter' ? [{ title: `${item.label} · ${xUnit || 'X'}`, dataIndex: `x${i}`, align: 'right' as const, render: (value: unknown) => displayValue(value, xUnit) }] : []), { title: kind === 'scatter' ? `${item.label} · ${unit || 'Y'}` : item.label, dataIndex: `value${i}`, align: 'right' as const, render: (value: unknown) => displayValue(value, unit || (percent ? '%' : '')) }])]} /><Button type="text" size="small" icon={<Download size={14} />} onClick={download}>下载 CSV{demo ? '（参考预览）' : ''}</Button></> }]} />}
+      {!showDataTable && <table id={dataId} className="sr-only"><caption>{title}完整数值</caption><thead><tr><th scope="col">日期 / 对象</th>{series.flatMap(item => kind === 'scatter' ? [<th key={`${item.label}-x`} scope="col">{item.label} · {xUnit || 'X'}</th>, <th key={`${item.label}-y`} scope="col">{item.label} · {unit || 'Y'}</th>] : [<th key={item.label} scope="col">{item.label}</th>])}</tr></thead><tbody>{rows.map(row => <tr key={row.key}><th scope="row">{row.label}</th>{series.flatMap((item, index) => kind === 'scatter' ? [<td key={`${item.label}-x`}>{displayValue(row[`x${index}`], xUnit)}</td>, <td key={`${item.label}-y`}>{displayValue(row[`value${index}`], unit)}</td>] : [<td key={item.label}>{displayValue(row[`value${index}`], unit || (percent ? '%' : ''))}</td>])}</tr>)}</tbody></table>}
     </>}
   </section>;
 }

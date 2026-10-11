@@ -15,7 +15,7 @@ import { calendarClock, calendarTimestampLabel } from '../socialProgram/calendar
 import { hasTemplateCalendarTarget, type TemplateCalendarTarget } from '../socialProgram/templateCalendarNavigation';
 import { hasReviewCalendarTarget, type ReviewCalendarTarget } from '../socialProgram/reviewCalendarNavigation';
 import { hasPlanningCalendarTarget, type PlanningCalendarTarget } from '../socialProgram/planningCalendarNavigation';
-import { calendarDayKey, calendarInstant, type LsCalendarEvent } from '../../lib/calendarModel';
+import { calendarDayKey, calendarInstant, calendarWeekday, type LsCalendarEvent } from '../../lib/calendarModel';
 import { projectCalendarDeliverables } from './calendarDeliverables';
 
 const LsCalendar = typeof document === 'undefined'
@@ -220,7 +220,7 @@ export default function RestoredAgentWorkCalendar({
         view={calendarView}
         initialView={calendarView}
         onDatesSet={info => { const next = calendarDayKey(info.view.currentStart, timeZone); setCalendarDate(next); setCalendarView(info.view.type as LsCalendarView); }}
-        firstDay={1}
+        firstDay={startsAt || tasks[0]?.date ? calendarWeekday(startsAt || tasks[0]!.date, timeZone) : 1}
         timeZone={timeZone}
         timeGridHeight="clamp(420px, calc(100dvh - 260px), 760px)"
         renderDetails={renderDetails}

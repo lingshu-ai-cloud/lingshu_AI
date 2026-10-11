@@ -44,7 +44,8 @@ export function businessHealthStatus(score: number | null, covered: number, tota
 }
 
 export function healthCriterionCoverageStatus(criterion: HealthCriterion): HealthCriterionCoverageStatus {
-  return criterion.coverageStatus || (criterion.score === null ? 'pending' : 'scored');
+  if (criterion.coverageStatus === 'not_applicable') return 'not_applicable';
+  return typeof criterion.score === 'number' && Number.isFinite(criterion.score) ? 'scored' : 'pending';
 }
 
 export function summarizeHealthCriteria(criteria: HealthCriterion[]) {

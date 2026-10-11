@@ -178,6 +178,26 @@ test('demonstration data is labeled in the view, accessible canvas and downloade
   h.runTimers(); assert.deepEqual(h.revoked, [h.downloads[0].href], 'object URL is released after download');
 });
 
+test('a locally hidden visible table keeps a screen-reader snapshot without disclosure or export controls', async () => {
+  const h = harness({ ...base, showDataTable: false }); await h.mount();
+  const nodes = allNodes(h.tree);
+  assert.equal(nodes.some(node => name(node) === 'Collapse'), false);
+  assert.equal(nodes.some(node => name(node) === 'Table'), false);
+  assert.equal(nodes.some(node => name(node) === 'Button'), false);
+  const canvas = find(h.tree, 'canvas');
+  assert.doesNotMatch(canvas.props['aria-label'], /下方数据表/);
+  assert.ok(canvas.props['aria-describedby']);
+  const table = find(h.tree, 'table');
+  assert.equal(table.props.id, canvas.props['aria-describedby']);
+  assert.equal(table.props.className, 'sr-only');
+  assert.match(text(table), /指标趋势完整数值[\s\S]*甲[\s\S]*1/);
+
+  const failed = harness({ ...base, showDataTable: false }, { importFailure: true });
+  await failed.mount(); failed.render();
+  assert.equal(find(failed.tree, 'Alert').props.title, '图表暂时无法显示，请稍后重试。');
+  assert.equal(allNodes(failed.tree).some(node => name(node) === 'Collapse'), false);
+});
+
 test('bar charts cap plotting at ten rows and five series without truncating table or CSV', async () => {
   const labels = Array.from({ length: 12 }, (_, i) => `账号 ${i + 1}`);
   const series = Array.from({ length: 7 }, (_, i) => ({ label: `序列 ${i + 1}`, values: labels.map((_, j) => i * 100 + j) }));

@@ -1,6 +1,7 @@
 import InitialPreparationStatusPanel from '../InitialPreparationStatusPanel';
 import { useEffect, useState, type ReactNode } from 'react';
-import { Segmented, Tag } from 'antd';
+import { Button, Segmented, Tag } from 'antd';
+import { Settings2 } from 'lucide-react';
 import type { DigitalEmployeeOverview } from '../../lib/digitalEmployees';
 import AgentRoleIcon, { AGENT_ROLE_PALETTE, type AgentVisualRole } from '../ui/AgentRoleIcon';
 import type { AgentCalendarTask } from './AgentWeeklyCalendar';
@@ -12,7 +13,7 @@ import { projectAccountBindingCalendar } from './accountBindingCalendar';
 const statusLabels = { working: '执行中', needs_action: '待处理', queued: '待执行', standby: '待命' };
 type DigitalEmployeeWorkspaceView = 'agents' | 'publishing';
 
-export default function DigitalEmployeeWorkspace({ data, calendarTasks, calendarDemo = false, onRefresh, onOpenContent, publishingCalendar }: { data: DigitalEmployeeOverview; calendarTasks?: AgentCalendarTask[]; calendarDemo?: boolean; onRefresh?: () => void; onOpenContent?: (taskId?: string, socialContentTaskId?: string) => void; publishingCalendar?: ReactNode }) {
+export default function DigitalEmployeeWorkspace({ data, calendarTasks, calendarDemo = false, onRefresh, onOpenContent, onOpenAgentSettings, publishingCalendar }: { data: DigitalEmployeeOverview; calendarTasks?: AgentCalendarTask[]; calendarDemo?: boolean; onRefresh?: () => void; onOpenContent?: (taskId?: string, socialContentTaskId?: string) => void; onOpenAgentSettings?: () => void; publishingCalendar?: ReactNode }) {
   const [selectedAgent, setSelectedAgent] = useState<AgentVisualRole | ''>('');
   const [workspaceView, setWorkspaceView] = useState<DigitalEmployeeWorkspaceView>('agents');
   const [publishingVisited, setPublishingVisited] = useState(false);
@@ -33,7 +34,7 @@ export default function DigitalEmployeeWorkspace({ data, calendarTasks, calendar
   };
   return <div className="space-y-4">
     {data.goal && <InitialPreparationStatusPanel goalId={data.goal.id} onRunning={() => onRefresh?.()}/>}
-    <div className="flex min-h-11 items-center border-b border-border pb-3">
+    <div className="flex min-h-11 flex-wrap items-center justify-between gap-3 border-b border-border pb-3">
       <Segmented<DigitalEmployeeWorkspaceView>
         aria-label="数字员工视图"
         size="large"
@@ -41,6 +42,7 @@ export default function DigitalEmployeeWorkspace({ data, calendarTasks, calendar
         options={[{ label: '员工排期', value: 'agents' }, { label: '发布日历', value: 'publishing' }]}
         onChange={changeWorkspaceView}
       />
+      {workspaceView === 'agents' && onOpenAgentSettings && <Button icon={<Settings2 size={15}/>} onClick={onOpenAgentSettings}>Agent 设置</Button>}
     </div>
     <div hidden={workspaceView !== 'agents'} aria-hidden={workspaceView !== 'agents'} className="space-y-4">
       <section aria-label="数字员工列表" className="rounded-lg border border-border bg-white p-4">

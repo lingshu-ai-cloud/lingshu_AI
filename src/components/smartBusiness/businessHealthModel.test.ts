@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import type { BusinessMetric, BusinessSnapshot, DigitalEmployeeOverview } from '../../lib/digitalEmployees';
-import { availableMetric, buildBusinessHealthModel, businessHealthStatus, meanKnownScores, summarizeHealthCriteria, type BusinessHealthSources } from './businessHealthModel';
+import { availableMetric, buildBusinessHealthModel, businessHealthStatus, healthCriterionCoverageStatus, meanKnownScores, summarizeHealthCriteria, type BusinessHealthSources } from './businessHealthModel';
 
 const metric = (value: number | null, status: BusinessMetric['status'] = 'available'): BusinessMetric => ({ value, status, source: 'confirmed-receipt' });
 const sources: BusinessHealthSources = { performance: null, channelsLoaded: false, whatsappConnected: false, messengerPages: [] };
@@ -91,4 +91,7 @@ test('coverage visualization counts status without turning missing or inapplicab
     { label: '不适用', score: null, current: '当前范围不适用', basis: '已核验范围', coverageStatus: 'not_applicable' },
   ]);
   assert.deepEqual(coverage, { scored: 1, pending: 1, notApplicable: 1, applicable: 2, total: 3, coveragePercent: 50 });
+  assert.equal(healthCriterionCoverageStatus({ label: '真实零分', score: 0, current: '0', basis: '真实回执' }), 'scored');
+  assert.equal(healthCriterionCoverageStatus({ label: '错误完成态', score: null, current: '待接入', basis: '缺少回执', coverageStatus: 'scored' }), 'pending');
+  assert.equal(healthCriterionCoverageStatus({ label: '非有限值', score: Number.NaN, current: '异常', basis: '无效回执' }), 'pending');
 });

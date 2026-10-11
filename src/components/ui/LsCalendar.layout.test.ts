@@ -32,9 +32,12 @@ function evaluate(code: string, bindings: Record<string, unknown>) {
 
 assert.equal(attributes.has('height'), false, 'a height=auto override would disable the time scroller even with bounded contentHeight');
 for (const view of ['timeGridDay', 'timeGridWeek', 'dayGridMonth', 'dayGridWeek', 'dayGridDay', 'listWeek', 'multiMonthYear']) {
-  assert.equal(evaluate(expression('contentHeight'), { view, fixedHeight: undefined, timeGridHeight: 'clamp(320px, calc(100dvh - 280px), 720px)' }), 'clamp(320px, calc(100dvh - 280px), 720px)', 'every calendar view must use the shared viewport-bounded internal scroller');
+  assert.equal(evaluate(expression('contentHeight'), { view, fixedHeight: undefined, showAllEvents: false, timeGridHeight: 'clamp(320px, calc(100dvh - 280px), 720px)' }), 'clamp(320px, calc(100dvh - 280px), 720px)', 'every calendar view must use the shared viewport-bounded internal scroller');
 }
-assert.equal(evaluate(expression('contentHeight'), { view: 'dayGridWeek', fixedHeight: 640, timeGridHeight: 520 }), 640, 'a composed calendar may opt into a stable workspace height');
+assert.equal(evaluate(expression('contentHeight'), { view: 'dayGridWeek', fixedHeight: 640, showAllEvents: false, timeGridHeight: 520 }), 640, 'a composed calendar may opt into a stable workspace height');
+assert.equal(evaluate(expression('contentHeight'), { view: 'dayGridWeek', fixedHeight: 'auto', showAllEvents: false, timeGridHeight: 520 }), 'auto', 'an explicit full-content calendar may expand to show its complete week');
+assert.equal(evaluate(expression('contentHeight'), { view: 'dayGridWeek', fixedHeight: 'auto', showAllEvents: true, timeGridHeight: 520 }), 'auto', 'a full weekly publishing calendar expands to reveal every item');
+assert.equal(evaluate(expression('contentHeight'), { view: 'dayGridMonth', fixedHeight: 'auto', showAllEvents: true, timeGridHeight: 520 }), 520, 'month and annual views return to the shared bounded workspace');
 assert.equal(attributes.get('scrollTime')?.initializer?.getText(file), '"08:00:00"');
 assert.equal(attributes.get('slotMinTime')?.initializer?.getText(file), '"08:00:00"');
 assert.equal(attributes.get('slotMaxTime')?.initializer?.getText(file), '"22:00:00"');
@@ -79,8 +82,12 @@ assert.ok(inputsInitializer, 'calendar inputs should be derived inside the share
   assert.equal(fullWeekInputs.length, 18, 'the fixed weekly calendar must retain all 18 scheduled cards');
   assert.equal(new Set(Array.from(fullWeekInputs, item => item.id)).size, 18, 'each scheduled card keeps its stable FullCalendar key');
 }
-assert.equal(evaluate(expression('dayMaxEvents'), { eventCardMode: 'media', view: 'dayGridWeek' }), false, 'the weekly media-card flow must keep every scheduled card visible');
-assert.equal(evaluate(expression('dayMaxEvents'), { eventCardMode: 'compact', view: 'dayGridMonth' }), 3, 'compact month views retain their native overflow control');
+assert.equal(evaluate(expression('dayMaxEvents'), { showAllEvents: false, eventCardMode: 'media', view: 'dayGridWeek' }), false, 'the weekly media-card flow must keep every scheduled card visible');
+assert.equal(evaluate(expression('dayMaxEvents'), { showAllEvents: false, eventCardMode: 'compact', view: 'dayGridMonth' }), 3, 'compact month views retain their native overflow control');
+assert.equal(evaluate(expression('dayMaxEvents'), { showAllEvents: true, eventCardMode: 'compact', view: 'dayGridWeek' }), false, 'an explicit full-content calendar must never collapse events behind +N');
+assert.equal(evaluate(expression('dayMaxEvents'), { showAllEvents: true, eventCardMode: 'compact', view: 'dayGridMonth' }), 3, 'show-all publishing mode is limited to week and day views');
+assert.match(source, /const weekView:[^\n]+dateOnly \|\| eventCardMode === 'media' \? 'dayGridWeek' : 'timeGridWeek'/, 'date-only schedules keep week navigation on verified date columns');
+assert.match(source, /const dayView:[^\n]+dateOnly \|\| eventCardMode === 'media' \? 'dayGridDay' : 'timeGridDay'/, 'date-only schedules keep day navigation free of invented hours');
 
 type RenderNode = { type: unknown; props: Record<string, unknown> | null; children: any[] };
 const renderBindings = {
@@ -126,6 +133,13 @@ const event = { allDay: false, extendedProps: { item: { title: '新品短视频�
   assert.ok(nodes(result).some(node => node.type === 'CalendarThumbnail'), 'dense weekly cards retain their original-ratio media preview');
   assert.equal(nodes(result).find(node => node.type === 'strong')?.props?.title, item.title, 'compact titles remain available in full');
   assert.equal(nodes(result).some(node => node.props?.className === 'ls-calendar-event-summary'), false, 'dense cards avoid a duplicate description row');
+
+  const plannedPublishItem = { ...item, eventType: 'publish', status: 'planned', statusLabel: '已计划' };
+  const plannedPublish = renderCompact({ event: { ...event, allDay: true, extendedProps: { item: plannedPublishItem } }, view: { type: 'dayGridWeek' }, timeText: '' }) as RenderNode;
+  assert.equal(nodes(plannedPublish).some(node => node.type === 'span' && node.children.includes('已计划')), false, 'compact publishing cards omit the redundant planned status');
+  const blockedPublishItem = { ...plannedPublishItem, status: 'needs_action', statusLabel: '需要处理' };
+  const blockedPublish = renderCompact({ event: { ...event, allDay: true, extendedProps: { item: blockedPublishItem } }, view: { type: 'dayGridWeek' }, timeText: '' }) as RenderNode;
+  assert.ok(nodes(blockedPublish).some(node => node.type === 'span' && node.children.includes('需要处理')), 'compact publishing cards keep exceptional states visible');
 }
 assert.match(css, /\.ls-calendar-surface\s*\{[^}]*min-width: 0;[^}]*max-width: 100%/);
 assert.match(css, /\.ls-calendar-event-content-timed[^}]*overflow: hidden/);

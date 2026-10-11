@@ -1,6 +1,6 @@
 import { Button, Collapse, DatePicker, Empty, Tag } from 'antd';
 import dayjs, { type Dayjs } from 'dayjs';
-import { Activity, ArrowRight, CheckCircle2, CircleDashed, CircleDollarSign, Clapperboard, MessageSquareText, Minus, RefreshCcw, Users } from 'lucide-react';
+import { Activity, CheckCircle2, CircleDashed, CircleDollarSign, Clapperboard, MessageSquareText, Minus, Puzzle, RefreshCcw, Users } from 'lucide-react';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { DigitalEmployeeOverview } from '../../lib/digitalEmployees';
 import { authHeader } from '../../lib/auth';
@@ -42,11 +42,37 @@ function Criteria({ items }: { items: HealthCriterion[] }) {
   </dl>;
 }
 
-const coverageStatusMeta: Record<HealthCriterionCoverageStatus, { label: string; className: string; icon: typeof CheckCircle2 }> = {
-  scored: { label: '已评分', className: 'text-success', icon: CheckCircle2 },
-  pending: { label: '待数据', className: 'text-warning', icon: CircleDashed },
-  not_applicable: { label: '不适用', className: 'text-text-muted', icon: Minus },
+const coverageStatusMeta: Record<HealthCriterionCoverageStatus, { label: string; className: string; tileClassName: string; icon: typeof CheckCircle2 }> = {
+  scored: { label: '已评分', className: 'text-[var(--ls-success)]', tileClassName: 'border-[var(--ls-success)] bg-[var(--ls-success-bg)]', icon: CheckCircle2 },
+  pending: { label: '待数据', className: 'text-[var(--ls-warning)]', tileClassName: 'border-dashed border-[var(--ls-warning)] bg-[var(--ls-warning-bg)]', icon: CircleDashed },
+  not_applicable: { label: '不适用', className: 'text-text-muted', tileClassName: 'border-dashed border-border-bright bg-surface-2', icon: Minus },
 };
+
+function HealthCoveragePuzzleBoard({ dimensions }: { dimensions: BusinessHealthDimension[] }) {
+  const dimensionCoverage = dimensions.map(dimension => ({ dimension, coverage: summarizeHealthCriteria(dimension.criteria) }));
+  const totals = summarizeHealthCriteria(dimensions.flatMap(dimension => dimension.criteria));
+  return <section aria-labelledby="criteria-map-title" aria-label="指标覆盖拼图">
+    <div className="flex flex-wrap items-start justify-between gap-3">
+      <div><h3 id="criteria-map-title" className="flex items-center gap-2 ls-type-title-small text-text-primary"><Puzzle size={17} className="text-accent" aria-hidden="true"/>指标覆盖图谱</h3><p className="mt-1 text-xs text-text-secondary">每块拼图代表一个真实评分口径，补齐程度不等于经营结果。</p></div>
+      <span className="text-xs tabular-nums text-text-secondary">已补齐 <strong className="font-semibold text-text-primary">{totals.scored}/{totals.applicable}</strong> 个适用口径</span>
+    </div>
+    <div className="mt-3 flex flex-wrap gap-3 text-xs" aria-label="拼图状态图例">{(Object.keys(coverageStatusMeta) as HealthCriterionCoverageStatus[]).map(status => { const meta = coverageStatusMeta[status]; const Icon = meta.icon; return <span key={status} className={`inline-flex items-center gap-1 ${meta.className}`}><Icon size={14} aria-hidden="true"/>{meta.label}</span>; })}</div>
+    <div className="mt-3 overflow-hidden rounded-lg border border-border bg-border">
+      <div className="grid gap-px md:grid-cols-2">
+        {dimensionCoverage.map(({ dimension, coverage }, dimensionIndex) => <section key={dimension.key} className="min-w-0 bg-white p-4" aria-labelledby={`coverage-${dimension.key}`}>
+          <header className="flex min-w-0 items-start justify-between gap-3 border-b border-border pb-3" style={{ borderInlineStart: `3px solid ${chartPalette[dimensionIndex]}`, paddingInlineStart: 10 }}><div><h4 id={`coverage-${dimension.key}`} className="text-sm font-semibold text-text-primary">{dimension.label}</h4><p className="mt-1 text-xs text-text-muted">覆盖 {coverage.scored}/{coverage.applicable} 个适用口径</p></div><span className="shrink-0 text-xs tabular-nums text-text-secondary">{scoreLabel(dimension.score)}</span></header>
+          <ul className="mt-3 grid grid-cols-1 gap-2 sm:grid-cols-2" aria-label={`${dimension.label}口径拼图`}>
+            {dimension.criteria.map(criterion => { const status = healthCriterionCoverageStatus(criterion); const meta = coverageStatusMeta[status]; const Icon = meta.icon; const hasScore = status === 'scored' && criterion.score !== null && Number.isFinite(criterion.score); return <li key={criterion.label} data-coverage-status={status} title={criterion.current} aria-label={`${dimension.label}，${criterion.label}，${meta.label}${hasScore ? `，${criterion.score} 分` : ''}`} className={`relative min-h-24 overflow-hidden rounded-md border p-3 transition-colors motion-reduce:transition-none ${meta.tileClassName}`}>
+              <div className="flex items-start justify-between gap-2"><Icon size={17} className={`mt-0.5 shrink-0 ${meta.className}`} aria-hidden="true"/><span className={`text-xs font-medium ${meta.className}`}>{hasScore ? `${criterion.score} 分` : meta.label}</span></div>
+              <p className="mt-3 text-sm font-semibold leading-5 text-text-primary">{criterion.label}</p>
+              <span aria-hidden="true" className="absolute -bottom-3 -right-3 h-8 w-8 rounded-full border border-current opacity-10"/>
+            </li>; })}
+          </ul>
+        </section>)}
+      </div>
+    </div>
+  </section>;
+}
 
 function HealthCriteriaVisualization({ dimensions, selectedAccountId, generatedAt, accountLoadedAt }: {
   dimensions: BusinessHealthDimension[];
@@ -73,7 +99,7 @@ function HealthCriteriaVisualization({ dimensions, selectedAccountId, generatedA
 
     <div className="grid min-w-0 border-y border-border lg:grid-cols-[minmax(0,1.2fr)_minmax(280px,0.8fr)]">
       <div className="min-w-0 border-b border-border py-4 lg:border-b-0 lg:border-r lg:pr-4">
-        <LsDataChart title="四领域评分口径覆盖结构" kind="bar" horizontal stacked unit="项" labels={dimensions.map(item => item.label)} series={chartSeries} height={250}/>
+        <LsDataChart title="四领域评分口径覆盖结构" kind="bar" horizontal stacked unit="项" labels={dimensions.map(item => item.label)} series={chartSeries} height={250} showDataTable={false}/>
       </div>
       <section className="min-w-0 py-4 lg:pl-4" aria-labelledby="domain-coverage-title">
         <div className="flex flex-wrap items-center justify-between gap-2"><h3 id="domain-coverage-title" className="ls-type-title-small text-text-primary">领域覆盖进度</h3><span className="text-xs tabular-nums text-text-muted">{totals.scored}/{totals.applicable} 项</span></div>
@@ -87,22 +113,7 @@ function HealthCriteriaVisualization({ dimensions, selectedAccountId, generatedA
       </section>
     </div>
 
-    <section aria-labelledby="criteria-map-title">
-      <div className="flex flex-wrap items-center justify-between gap-2"><h3 id="criteria-map-title" className="ls-type-title-small text-text-primary">指标覆盖图谱</h3><div className="flex flex-wrap gap-3 text-xs">{(Object.keys(coverageStatusMeta) as HealthCriterionCoverageStatus[]).map(status => { const meta = coverageStatusMeta[status]; const Icon = meta.icon; return <span key={status} className={`inline-flex items-center gap-1 ${meta.className}`}><Icon size={14} aria-hidden="true"/>{meta.label}</span>; })}</div></div>
-      <div className="mt-3 grid gap-px overflow-hidden rounded-md border border-border bg-border md:grid-cols-2">
-        {dimensionCoverage.map(({ dimension, coverage }) => <section key={dimension.key} className="min-w-0 bg-white p-3" aria-labelledby={`coverage-${dimension.key}`}>
-          <header className="flex min-w-0 items-center justify-between gap-2 border-b border-border pb-2"><h4 id={`coverage-${dimension.key}`} className="text-sm font-semibold text-text-primary">{dimension.label}</h4><span className="text-xs tabular-nums text-text-secondary">{scoreLabel(dimension.score)}</span></header>
-          <ul className="divide-y divide-border">
-            {dimension.criteria.map(criterion => { const status = healthCriterionCoverageStatus(criterion); const meta = coverageStatusMeta[status]; const Icon = meta.icon; return <li key={criterion.label} className="grid min-w-0 grid-cols-[auto_minmax(0,1fr)_auto] items-start gap-2 py-2.5">
-              <Icon size={16} className={`mt-0.5 ${meta.className}`} aria-hidden="true"/>
-              <div className="min-w-0"><p className="text-sm font-medium text-text-primary">{criterion.label}</p><p className="mt-0.5 text-xs leading-5 text-text-secondary">{criterion.current}</p></div>
-              <div className="text-right"><strong className="text-sm tabular-nums text-text-primary">{criterion.score === null ? '—' : criterion.score}</strong><span className={`block text-xs ${meta.className}`}>{meta.label}</span></div>
-            </li>; })}
-          </ul>
-          <p className="border-t border-border pt-2 text-xs text-text-muted">计分覆盖：{coverage.scored}/{coverage.applicable} 个适用口径</p>
-        </section>)}
-      </div>
-    </section>
+    <HealthCoveragePuzzleBoard dimensions={dimensions}/>
 
     <div className="border-l-2 border-accent pl-3 text-xs leading-5 text-text-secondary" role="note"><strong className="font-medium text-text-primary">计分规则</strong>：总经营分只对已评估领域等权平均；待数据不填 0、不补 100，不适用项排除分母。当前不包含收入或 ROI 判断。{selectedAccountId ? '当前筛选账号；缺少账号级归因的数据不以全公司数值代替。' : ''}</div>
     <Collapse ghost items={[{ key: 'basis', label: '查看完整计算口径', children: <div className="space-y-4">{dimensions.map(dimension => <section key={dimension.key}><h4 className="text-sm font-semibold text-text-primary">{dimension.label}</h4><Criteria items={dimension.criteria}/></section>)}</div> }]}/>
@@ -158,10 +169,6 @@ export default function BusinessHealthOverview({ data, selectedAccountId = '', o
   const rangeValue = useMemo<[Dayjs, Dayjs] | null>(() => model.startsAt && model.endsAt
     ? [dayjs(model.startsAt), dayjs(model.endsAt)]
     : null, [model.endsAt, model.startsAt]);
-  const knownCriteria = model.dimensions.reduce((sum, dimension) => sum + dimension.criteria.filter(item => item.score !== null).length, 0);
-  const allCriteria = model.dimensions.reduce((sum, dimension) => sum + dimension.criteria.length, 0);
-  const prioritized = [...model.dimensions].sort((a, b) => (a.score ?? -1) - (b.score ?? -1));
-
   return <div className="space-y-6">
     <section className="overflow-hidden rounded-lg border border-border bg-white" aria-labelledby="business-health-title">
       <header className="flex flex-wrap items-center justify-between gap-3 border-b border-border px-4 py-3">
@@ -195,12 +202,7 @@ export default function BusinessHealthOverview({ data, selectedAccountId = '', o
           <p className="mt-2 text-xs text-text-secondary">{businessHealthStatus(dimension.score, dimension.criteria.filter(item => item.score !== null).length, dimension.criteria.length)} · {dimension.criteria.filter(item => item.score !== null).length}/{dimension.criteria.length} 项已评估</p>
         </div>; })}
       </div>
-      <div className="grid border-t border-border lg:grid-cols-[minmax(0,1.35fr)_minmax(0,1fr)]">
-        <div className="min-w-0 border-b border-border p-4 lg:border-b-0 lg:border-r"><LsDataChart title="经营健康度与完善目标" unit="分" percent horizontal kind="bar" labels={model.dimensions.map(item => item.label)} series={[{ label: '当前已评估得分', values: model.dimensions.map(item => item.score), color: chartPalette[0] }, { label: '完善目标', values: model.dimensions.map(item => item.score === null ? null : 100), color: chartPalette[2] }]} height={260}/></div>
-        <section className="min-w-0 p-4" aria-labelledby="health-actions-title"><div className="flex flex-wrap items-center justify-between gap-2"><h3 id="health-actions-title" className="ls-type-title-small text-text-primary">优先补齐</h3><span className="text-xs text-text-muted">数据覆盖 {knownCriteria}/{allCriteria} 项</span></div>
-          <ol className="mt-3 divide-y divide-border">{prioritized.map((dimension, index) => <li key={dimension.key} className="flex min-w-0 items-start gap-3 py-3"><span className="pt-0.5 text-xs tabular-nums text-text-muted">0{index + 1}</span><div className="min-w-0 flex-1"><p className="text-sm font-medium text-text-primary">{dimension.label}<span className="ml-2 text-xs font-normal text-text-secondary">{scoreLabel(dimension.score)}</span></p><p className="mt-1 text-xs leading-5 text-text-secondary">{dimension.action}</p></div>{onNavigate && <Button type="text" aria-label={dimension.action} icon={<ArrowRight size={16}/>} onClick={() => onNavigate(dimension.page)}/>}</li>)}</ol>
-        </section>
-      </div>
+      <div className="border-t border-border p-4"><LsDataChart title="经营健康度与完善目标" unit="分" percent horizontal kind="bar" labels={model.dimensions.map(item => item.label)} series={[{ label: '当前已评估得分', values: model.dimensions.map(item => item.score), color: chartPalette[0] }, { label: '完善目标', values: model.dimensions.map(item => item.score === null ? null : 100), color: chartPalette[2] }]} height={260} showDataTable={false}/></div>
       <div className="border-t border-border px-3"><Collapse ghost items={[{ key: 'method', label: '评分口径与数据覆盖', children: <HealthCriteriaVisualization dimensions={model.dimensions} selectedAccountId={selectedAccountId} generatedAt={model.generatedAt} accountLoadedAt={sources.performance?.loadedAt}/> }]}/></div>
     </section>
 

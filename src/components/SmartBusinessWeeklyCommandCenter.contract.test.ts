@@ -16,13 +16,13 @@ assert.ok(publishingStart >= 0 && publishingEnd > publishingStart, '数字员工
 for (const label of ['待验收成片', '本周计划视频', '本周视频总时长', '本周成本范围', '预计制作成本', '已结算成本']) {
   assert.match(commandCenter, new RegExp(label), `周经营计划必须展示“${label}”`);
 }
-assert.match(commandCenter, /计划估算，逐镜生成与重试费用待核算/, '计划额度不能冒充完整的逐镜供应商成本');
+assert.doesNotMatch(commandCenter, /note:|item\.note|当前没有待验收成片|发布任务 ·|逐镜生成与重试费用待核算|按当前周计划与供应商报价估算|仅统计供应商对账回执/, '六项周计划指标不得保留解释性小字');
 assert.doesNotMatch(commandCenter, /已包含本周全部视频制作/, '费用未核算前不得承诺覆盖本周全部视频制作');
 assert.match(source, /durationSeconds: contents\.reduce\(\(sum, item\) => sum \+ item\.duration, 0\)/, '视频总时长必须按本周全部计划视频合计');
 assert.doesNotMatch(commandCenter, /<LsCalendar|WeeklyContentProgressPanel|本周发布日历/, '顶部周经营计划不得重复渲染发布日历');
-assert.match(publishingCalendar, /initialView="dayGridWeek"[^>]*eventCardMode="media"[^>]*fixedHeight="clamp\(300px, calc\(100dvh - 270px\), 640px\)"/, '发布日历必须使用不超过一屏可用空间的 FullCalendar 原生周卡片视图');
-assert.match(publishingCalendar, /<LsCalendar[^>]*density="compact"[^>]*\bflush\b/, '数字员工发布日历必须紧凑展示并使用左右全部宽度');
-assert.doesNotMatch(publishingCalendar, /<h[1-6][^>]*>发布日历<\/h[1-6]>/, '日历不得保留独占一行的重复标题');
+assert.match(publishingCalendar, /<h3[^>]*>发布日历<\/h3>[\s\S]{0,160}<Tag>\{calendarEvents\.length\} 项发布<\/Tag>/, '发布视图必须使用与员工排期一致的工作台标题栏');
+assert.match(publishingCalendar, /initialView="dayGridWeek"[^>]*\bdateOnly\b[^>]*\bshowAllEvents\b[^>]*fixedHeight="auto"[^>]*firstDay=\{display\.startsAt \? calendarWeekday\(display\.startsAt\) : 1\}/, '发布日历必须按真实计划起始日完整展开全部事件');
+assert.doesNotMatch(publishingCalendar, /eventCardMode="media"|density="compact"|\bflush\b/, '发布日历不得继续使用与员工排期不一致的媒体大卡或贴边紧凑模式');
 assert.doesNotMatch(commandCenter, /<section className=\{`[^`]*(?:rounded-lg|border border-border)/, '周经营计划不得再使用封闭卡片外框');
 assert.match(publishingCalendar, /const calendarEvents:[\s\S]*display\.contents\.map/, '每条本周内容都必须映射为一个日历事件');
 assert.doesNotMatch(publishingCalendar, /onEventClick=/, '发布卡点击必须由共享日历打开侧栏，不能直接导航离开');

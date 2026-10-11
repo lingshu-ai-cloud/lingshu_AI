@@ -1,10 +1,12 @@
 import assert from 'node:assert/strict';
-import { calendarDateTimeValue, calendarDayKey, calendarInstant, calendarMovedInstant, calendarPublishStatus, canMoveCalendarPost, thumbnailUrlWithSourceFallback } from './calendarModel';
+import { calendarDateTimeValue, calendarDayKey, calendarInstant, calendarMovedInstant, calendarPublishStatus, calendarWeekday, canMoveCalendarPost, thumbnailUrlWithSourceFallback } from './calendarModel';
 
 assert.equal(calendarDayKey('2026-10-08T18:30:00Z'), '2026-10-09', 'publishing dates use Beijing time, independent of the browser timezone');
 assert.equal(calendarDateTimeValue('2026-10-08T18:30:00Z'), '2026-10-09T02:30');
 assert.equal(calendarInstant('2026-10-09T02:30').toISOString(), '2026-10-08T18:30:00.000Z');
 assert.equal(calendarDayKey('2026-10-09'), '2026-10-09', 'date-only business deadlines do not change timezone');
+assert.equal(calendarWeekday('2026-09-27'), 0, 'a Sunday-start plan keeps all Sunday-to-Saturday tasks in one operating week');
+assert.equal(calendarWeekday('2026-10-05'), 1, 'a Monday-start plan keeps the usual Monday operating week');
 assert.equal(calendarInstant('2026-07-01T10:00', 'America/New_York').toISOString(), '2026-07-01T14:00:00.000Z');
 assert.equal(calendarInstant('2026-12-01T10:00', 'America/New_York').toISOString(), '2026-12-01T15:00:00.000Z');
 assert.throws(() => calendarInstant('2026-03-08T02:30', 'America/New_York'), 'a nonexistent DST clock time must not silently change the schedule');
