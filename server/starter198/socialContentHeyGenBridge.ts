@@ -1,3 +1,4 @@
+import { readAdoptedMvpHeyGenSpeech } from '../lib/mvpHeyGenSpeechAdoption.js';
 import {socialRequestHash, socialJson, socialObject} from './socialContentValidation.js';
 import { readMvpHeyGenSpeech } from '../lib/mvpHeyGenSpeech.js';
 import {assertSocialAccountProductionConstraints} from './socialAccountProductionConstraints.js';
@@ -96,7 +97,7 @@ export function createSocialHeyGenHookAudioPort(options: {
     const mimeType = codec === 'mp3' ? 'audio/mpeg' as const : codec?.startsWith('pcm_') ? 'audio/wav' as const : null;
     if (!mimeType) throw new Error('digital_presenter_hook_audio_format_unsupported');
     const measured = decoded.stdout.length / (48000 * 2);
-    if (!(measured > 0) || measured > 4 || Math.abs(measured - source.durationSeconds) > 0.02)
+    if (!(measured > 0) || measured > (source.adoptedSpeech === true && source.frozenHookDurationSeconds === 5.6 ? 5.6 : 4) || Math.abs(measured - source.durationSeconds) > 0.02)
       throw new Error('digital_presenter_hook_probe_duration_invalid');
     const { filePath, ...identity } = source;
     void filePath;
@@ -157,19 +158,34 @@ export function createSocialHeyGenHookAudioPort(options: {
 /** Concrete MVP mapper: reads persisted speech plus current business records,
  * not request-body paths, durations or externally supplied audio asset IDs. */
 export function createMvpSocialHeyGenHookAudioPort(options: {
-  store: DataStore; client: Pick<HeyGenClient, 'uploadAudio'>; speechRoot?: string;
+  store: DataStore; client: Pick<HeyGenClient, 'uploadAudio'>; speechRoot?: string; adoptionRoot?: string; useAdoptedSpeech?: true;
   /** Frozen server-side original presenter version; never read from an HTTP body. */
   presenterAssetVersion: number;
   receiptRef(input: import('./socialContentDigitalPresenterAdapter.js').DigitalPresenterExecutionRequest): Promise<string>;
   authorizeUpload(input: import('./socialContentDigitalPresenterAdapter.js').DigitalPresenterExecutionRequest, source: PresenterHookAudioSource): Promise<boolean>;
 }): NonNullable<SocialHeyGenBridgeDependencies['speechAudio']> {
   return createSocialHeyGenHookAudioPort({ ...options, load: async input => {
-    const result = readMvpHeyGenSpeech(await options.receiptRef(input), options.speechRoot);
+    const ref = await options.receiptRef(input);
+    const adoption = options.useAdoptedSpeech === true ? readAdoptedMvpHeyGenSpeech(ref, options.adoptionRoot) : null;
+    const result = adoption || readMvpHeyGenSpeech(ref, options.speechRoot);
     const rows = await options.store.list<any>('starter_social_content_tasks',
       { where: { tenant_id: input.tenantId, task_id: input.taskId }, perPage: 2 });
     const task = rows.items[0], brief = socialObject(socialJson(task?.brief));
+    const script = socialObject(socialJson(task?.replication_script));
+    const shot = Array.isArray(script?.shots) ? script.shots.find((x:any)=>x.shotId===input.shotId) : null;
+    const adopted = options.useAdoptedSpeech === true;
+    const marker = socialObject(brief?._productionRevision);
+    const { planHash, preparedBy: _preparedBy, preparedAt: _preparedAt, ...immutable } = marker || {};
+    const frozenScript = socialObject(socialObject(marker?.resolved)?.replicationScript);
+    const frozen = Array.isArray(frozenScript?.shots) ? frozenScript.shots.find((x:any)=>x.shotId===input.shotId) : null;
+    if(adopted && (!marker || !planHash || socialRequestHash(immutable)!==planHash || marker.tenantId!==input.tenantId || marker.taskId!==input.taskId
+      || !frozen || Number(frozen.endSeconds)-Number(frozen.startSeconds)!==5.6 || frozen.spokenText!==input.script || !adoption || adoption.adoption !== true || result.maxDurationSeconds !== 5.6
+      || !shot || Number(shot.endSeconds)-Number(shot.startSeconds)!==5.6 || shot.spokenText!==input.script
+      || adoption!.presenter.presenterAssetId!==input.presenter.presenterAssetId || adoption!.presenter.presenterAssetVersion!==input.presenter.assetVersion
+      || adoption!.presenter.providerAvatarId!==input.presenter.providerPresenterId || adoption!.presenter.voiceId!==input.presenter.providerVoiceId))
+      throw new Error('digital_presenter_mvp_adoption_authority_changed');
     const run = result.runId ? await options.store.getById<any>('workflow_runs', result.runId) : null;
-    if (rows.totalItems !== 1 || rows.items.length !== 1 || result.operationRole !== 'hook' || result.maxDurationSeconds > 4
+    if (rows.totalItems !== 1 || rows.items.length !== 1 || result.operationRole !== 'hook' || result.maxDurationSeconds > (adopted ? 5.6 : 4)
       || result.tenantId !== input.tenantId || result.taskId !== input.taskId || result.shotId !== input.shotId
       || String(task.version) !== String(result.taskVersion) || task.run_id !== result.runId
       || result.accountId !== (socialObject(brief?.targetAccountRef)?.id ?? null)
@@ -183,7 +199,7 @@ export function createMvpSocialHeyGenHookAudioPort(options: {
       presenterAssetId: input.presenter.presenterAssetId, presenterAssetVersion: input.presenter.assetVersion,
       providerAvatarId: input.presenter.providerPresenterId, voiceId: result.voiceId, operationRole: 'hook',
       scriptSha256: result.scriptSha256, clipSha256: result.clipSha256, durationSeconds: result.durationSeconds,
-      receiptRef: result.receiptRef, receiptHash: result.receiptHash, engine: 'avatar_iv', filePath: result.filePath };
+      ...(adopted ? {adoptedSpeech:true as const,frozenHookDurationSeconds:5.6} : {}), receiptRef: result.receiptRef, receiptHash: result.receiptHash, engine: 'avatar_iv', filePath: result.filePath };
   } });
 }
 

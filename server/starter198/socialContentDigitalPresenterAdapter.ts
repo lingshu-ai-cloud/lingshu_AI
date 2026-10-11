@@ -25,6 +25,7 @@ export interface VerifiedPresenterSpeechAudio {
   tenantId: string; taskId: string; taskVersion: string; shotId: string;
   presenterAssetId: string; presenterAssetVersion: number; providerAvatarId: string; voiceId: string;
   scriptSha256: string; clipSha256: string; durationSeconds: number;
+  frozenHookDurationSeconds?: number; adoptedSpeech?: true;
   receiptRef: string; receiptHash: string; audioAssetId: string; engine: 'avatar_iv'; operationRole: 'hook';
 }
 
@@ -36,7 +37,7 @@ export function assertPresenterSpeechAudio(request: Pick<DigitalPresenterExecuti
     || audio.scriptSha256 !== createHash('sha256').update(request.script).digest('hex')
     || !/^[a-f0-9]{64}$/.test(audio.clipSha256) || !/^[a-f0-9]{64}$/.test(audio.receiptHash)
     || !audio.receiptRef || !audio.audioAssetId || !Number.isFinite(audio.durationSeconds)
-    || audio.durationSeconds <= 0 || audio.durationSeconds > 4) throw new Error('digital_presenter_audio_scope_or_duration_invalid');
+    || audio.durationSeconds <= 0 || audio.durationSeconds > (audio.adoptedSpeech === true && audio.frozenHookDurationSeconds === 5.6 ? 5.6 : 4)) throw new Error('digital_presenter_audio_scope_or_duration_invalid');
 }
 
 export interface DigitalPresenterExecutionRequest {
@@ -175,7 +176,7 @@ function stableKey(input: {
       taskVersion: input.speechAudio.taskVersion, shotId: input.speechAudio.shotId, presenterAssetId: input.speechAudio.presenterAssetId,
       presenterAssetVersion: input.speechAudio.presenterAssetVersion, providerAvatarId: input.speechAudio.providerAvatarId, voiceId: input.speechAudio.voiceId,
       scriptSha256: input.speechAudio.scriptSha256, clipSha256: input.speechAudio.clipSha256, durationSeconds: input.speechAudio.durationSeconds,
-      receiptRef: input.speechAudio.receiptRef, receiptHash: input.speechAudio.receiptHash, engine: input.speechAudio.engine, operationRole: input.speechAudio.operationRole } } : {}),
+      ...(input.speechAudio.adoptedSpeech ? {adoptedSpeech:true,frozenHookDurationSeconds:input.speechAudio.frozenHookDurationSeconds} : {}), receiptRef: input.speechAudio.receiptRef, receiptHash: input.speechAudio.receiptHash, engine: input.speechAudio.engine, operationRole: input.speechAudio.operationRole } } : {}),
   })).digest('hex')}`;
 }
 

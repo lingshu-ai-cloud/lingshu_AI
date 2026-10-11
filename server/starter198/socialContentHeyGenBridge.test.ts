@@ -5,7 +5,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import type { DataStore, ListQuery, Record_ } from '../storage/datastore.js';
-import { createSocialDigitalPresenterAdapter } from './socialContentDigitalPresenterAdapter.js';
+import { assertPresenterSpeechAudio, createSocialDigitalPresenterAdapter } from './socialContentDigitalPresenterAdapter.js';
 import { auditSocialHeyGenPresenters, createSocialHeyGenBridgePorts, createSocialHeyGenHookAudioPort, createMvpSocialHeyGenHookAudioPort, socialHeyGenBridgeReadiness } from './socialContentHeyGenBridge.js';
 
 const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'social-heygen-bridge-'));
@@ -131,6 +131,11 @@ const audio = { tenantId: 'tenant-a', taskId: 'task-a', taskVersion: 'revision-2
   presenterAssetId: 'presenter-a', presenterAssetVersion: 2, providerAvatarId: 'avatar-a', voiceId: 'voice-a',
   scriptSha256: createHash('sha256').update(audioScript).digest('hex'), clipSha256: 'a'.repeat(64), durationSeconds: 3.6,
   receiptRef: 'server-tts-receipt', receiptHash: 'b'.repeat(64), audioAssetId: 'uploaded-audio', engine: 'avatar_iv' as const, operationRole: 'hook' as const };
+const guardRequest={tenantId:'tenant-a',taskId:'task-a',shotId:'shot-a',script:audioScript,presenter:{presenterAssetId:'presenter-a',assetVersion:2,providerPresenterId:'avatar-a',providerVoiceId:'voice-a'}} as any;
+assert.throws(()=>assertPresenterSpeechAudio(guardRequest,{...audio,durationSeconds:5.4857}),/duration_invalid/);
+assertPresenterSpeechAudio(guardRequest,{...audio,durationSeconds:5.4857,adoptedSpeech:true,frozenHookDurationSeconds:5.6});
+assert.throws(()=>assertPresenterSpeechAudio(guardRequest,{...audio,durationSeconds:5.7,adoptedSpeech:true,frozenHookDurationSeconds:5.6}),/duration_invalid/);
+assert.throws(()=>assertPresenterSpeechAudio(guardRequest,{...audio,durationSeconds:5.4857,adoptedSpeech:true,frozenHookDurationSeconds:6}),/duration_invalid/);
 let audioCreates = 0, audioReserves = 0, resolves = 0, verified = true, incoming: any;
 const audioPorts = createSocialHeyGenBridgePorts({ store,
   speechAudio: { resolve: async () => { resolves++; return structuredClone(audio); }, verify: async (_request, candidate) => verified && candidate.taskVersion === 'revision-2' },
