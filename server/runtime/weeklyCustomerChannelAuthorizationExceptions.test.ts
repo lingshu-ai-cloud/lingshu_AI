@@ -1,6 +1,8 @@
 import test from 'node:test';
 import {readWeeklyCustomerChannelReadiness} from './socialWeeklyCustomerChannelAdapter.js';
-import {encryptSecret} from '../lib/tenantPlatformApps.js';
+import {encryptSecret,type TenantPlatformAppRecord} from '../lib/tenantPlatformApps.js';
+import {whatsappAssetAuthorityHash} from '../whatsapp/assetAuthority.js';
+import {socialAccessToken} from '../lib/accountCredentials.js';
 import assert from 'node:assert/strict';
 import type {WeeklyExecutionTask} from '../../shared/contracts/socialProgram.js';
 import {nativeDispatchFixture} from '../digitalEmployees/weeklyNativeFollowupDispatch.fixture.js';
@@ -10,12 +12,12 @@ const now=new Date('2026-10-06T12:00:00Z');
 async function fixture(channel:'whatsapp'|'messenger'|'instagram') {
  const f=await nativeDispatchFixture(channel==='instagram'?'instagram':'messenger');
  if(channel==='whatsapp'){f.data.social_weekly_customer_channel_selections=[];f.data.tenant_platform_apps=[{id:'wa-app',tenant_id:'tenant',platform:'meta',phone_number_id:'wa-phone'}];}
- else Object.assign(f.data.social_accounts![0]!,{messengerSubscribed:true,oauthProvider:'instagram_login',scope:'instagram_business_manage_messages',instagramWebhookSubscribed:true,expiresAt:'2026-10-10T00:00:00Z'});
+ else Object.assign(f.data.social_accounts![0]!,{...(channel==='instagram'?{oauthProvider:'instagram_login',scope:'instagram_business_manage_messages',instagramWebhookSubscribed:true,accessToken:encryptSecret('controlled-instagram-token')}:{}),expiresAt:'2099-01-01T00:00:00Z'});
  const t:WeeklyExecutionTask={tenantId:'tenant',programId:'program',packageId:'week',packageVersion:1,taskId:`readiness-${channel}`,workflowKind:'engagement',scope:'publication',subjectId:'pub',publicationTaskId:'pub',accountId:'account',dependsOnTaskIds:[],upstreamVersionRefs:[],inputSnapshot:{customerChannel:channel},idempotencyKey:`readiness-${channel}`,budget:{category:'none',limitCny:null},schedule:{stepKind:'customer_channel_readiness',responsibleActor:'customer_agent',estimatedDurationMinutes:5,estimatedStartAt:'2026-10-07T12:00:00Z',estimatedFinishAt:'2026-10-07T12:05:00Z',actualStartedAt:null,actualFinishedAt:null},status:'blocked',ownBlockingReasons:['tenant_real_customer_messages_not_authorized'],inheritedBlockingTaskIds:[],attempt:0,maxAttempts:3,nextAttemptAt:null,lease:null,resultRefs:[],lastError:{code:'tenant_real_customer_messages_not_authorized',message:'missing consent',retryable:false,occurredAt:now.toISOString()},recoveredFromDeadLetterAt:null,cancelReason:null,createdAt:now.toISOString(),updatedAt:now.toISOString()};
  f.data.social_weekly_execution_tasks=[{id:t.taskId,tenant_id:'tenant',program_id:'program',package_id:'week',package_version:1,task_id:t.taskId,status:'blocked',payload:t}];
  const pkg=f.data.social_weekly_operating_packages![0]!;Object.assign(pkg,{version:1,payload:{...(pkg.payload as object),programId:'program',packageId:'week',version:1,status:'active'}});
  let consent=false;
- const ports={now:()=>now,readAuthorization:async()=>resolveCustomerMessagingAuthorization({tenantId:'tenant',channel,configActive:true,customerAgentEnabled:true,allowRealCustomerMessages:consent,providerReady:true,backgroundWorkerEnabled:true}),openSocialToken:()=> 'controlled-token',readWhatsApp:async()=>({tenantId:'tenant',accountId:'wa-app',nativeAccountId:'wa-phone',wabaId:'waba',accountHash:'verified-wa'})};
+ const ports={now:()=>now,readAuthorization:async()=>resolveCustomerMessagingAuthorization({tenantId:'tenant',channel,configActive:true,customerAgentEnabled:true,allowRealCustomerMessages:consent,providerReady:true,backgroundWorkerEnabled:true}),openSocialToken:socialAccessToken,readWhatsApp:async()=>({tenantId:'tenant',accountId:'wa-app',nativeAccountId:'wa-phone',wabaId:'waba',accountHash:'verified-wa'})};
  return {...f,t,ports,allow:()=>{consent=true;}};
 }
 for(const channel of ['whatsapp','messenger','instagram']as const){
@@ -63,7 +65,8 @@ for(const channel of ['whatsapp','messenger','instagram']as const)test(`${channe
  try{
  f.data.digital_employee_configs=[{id:'config',tenant_id:'tenant',status:'active',config_version:1,config:{enabledWorkflows:['batch_followup'],allowRealCustomerMessages:false}}];
  if(channel==='whatsapp')Object.assign(f.data.tenant_platform_apps![0]!,{app_id:'app',waba_id:'waba',status:'active',app_secret:encryptSecret('local-app-secret'),access_token:encryptSecret('local-token'),token_expires_at:'2099-01-01T00:00:00Z'});
- else Object.assign(f.data.social_accounts![0]!,{accessToken:encryptSecret('local-token'),expiresAt:'2099-01-01T00:00:00Z'});
+ else Object.assign(f.data.social_accounts![0]!,{...(channel==='instagram'?{accessToken:encryptSecret('local-token')}:{}),expiresAt:'2099-01-01T00:00:00Z'});
+ if(channel==='whatsapp'){const app=f.data.tenant_platform_apps![0]!;app.last_checklist=JSON.stringify({whatsappAssetProof:{authorityHash:whatsappAssetAuthorityHash(app as unknown as TenantPlatformAppRecord),verifiedAt:now.toISOString()}});}
  assert.equal((await runWeeklyCustomerChannelAuthorizationExceptionScan({store:f.store,now})).resolved,0);(f.data.digital_employee_configs[0]!.config as Record<string,unknown>).allowRealCustomerMessages=true;
  const result=await runWeeklyCustomerChannelAuthorizationExceptionScan({store:f.store,now});assert.equal(result.resolved,1,JSON.stringify(result));assert.equal(f.sends(),0);
  }finally{f.restore();globalThis.fetch=originalFetch;if(worker===undefined)delete process.env.FOLLOWUP_WORKER_ENABLED;else process.env.FOLLOWUP_WORKER_ENABLED=worker;}
