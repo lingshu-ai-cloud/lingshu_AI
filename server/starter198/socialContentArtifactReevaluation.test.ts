@@ -3,7 +3,7 @@ import { createHash } from 'node:crypto';
 import { existsSync } from 'node:fs';
 import test from 'node:test';
 import type { SocialContentAgentWorkflow, SocialReplicationEvaluation } from '../../shared/contracts/socialContentWorkflow.js';
-import { STARTER_COLLECTIONS, type Starter198Repository, type StarterRecord } from './repository.js';
+import { STARTER_COLLECTIONS, type Starter198Repository, type StarterCollection, type StarterRecord } from './repository.js';
 import { createSocialArtifactReevaluationService, identityEvidenceFromAssetSupply } from './socialContentArtifactReevaluation.js';
 import { socialRequestHash } from './socialContentValidation.js';
 
@@ -28,8 +28,12 @@ class MemoryRepository implements Starter198Repository {
     return { page: 1, perPage: 500, totalPages: 1, totalItems: items.length, items };
   }
   async get() { return null; }
-  async create() { throw Error('unexpected direct create'); }
-  async update() { throw Error('unexpected direct update'); }
+  async create(_collection: StarterCollection, _tenantId: string, _data: Record<string, unknown>): Promise<StarterRecord> {
+    throw Error('unexpected direct create');
+  }
+  async update(_collection: StarterCollection, _tenantId: string, _id: string, _data: Record<string, unknown>): Promise<void> {
+    throw Error('unexpected direct update');
+  }
   async access() { return {} as never; }
 }
 

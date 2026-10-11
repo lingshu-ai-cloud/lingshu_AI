@@ -212,32 +212,35 @@ export function createSocialArtifactReevaluationService(input: {
         }
 
         const detail = await ports.readDetail({ repository: input.repository, tenantId: request.tenantId, taskId: request.taskId });
-        if (!detail?.agentWorkflow.replicationJob || !detail.replicationScript) return fail('social_artifact_reevaluation_context_missing');
+        if (!detail) return fail('social_artifact_reevaluation_context_missing');
+        const agentWorkflow = detail.agentWorkflow;
+        const replicationScript = detail.replicationScript;
+        if (!agentWorkflow?.replicationJob || !replicationScript) return fail('social_artifact_reevaluation_context_missing');
         const parentProductionResult = socialObject(parentContent.productionResult);
         const productionResultId = socialText(parentProductionResult?.productionResultId);
         if (!productionResultId
-          || socialText(parentProductionResult?.executionPlanId) !== detail.agentWorkflow.executionPlan.executionPlanId) {
+          || socialText(parentProductionResult?.executionPlanId) !== agentWorkflow.executionPlan.executionPlanId) {
           return fail('social_artifact_reevaluation_context_changed');
         }
         const parentEvaluation = socialObject(parentContent.replicationEvaluation);
         if (parentEvaluation && socialText(parentEvaluation.replicationJobId)
-          && socialText(parentEvaluation.replicationJobId) !== detail.agentWorkflow.replicationJob.replicationJobId) {
+          && socialText(parentEvaluation.replicationJobId) !== agentWorkflow.replicationJob.replicationJobId) {
           return fail('social_artifact_reevaluation_context_changed');
         }
         const stableTime = new Date(socialText(parentRecord.updated_at) || socialText(parentRecord.created_at));
         if (Number.isNaN(stableTime.getTime())) return fail('social_artifact_reevaluation_parent_time_invalid', 503);
         const evaluated = await ports.evaluate({
-          workflow: detail.agentWorkflow as SocialContentAgentWorkflow,
-          replicationScript: detail.replicationScript,
+          workflow: agentWorkflow as SocialContentAgentWorkflow,
+          replicationScript,
           productionResultId,
           outputVideoPath,
           evidence: {
-            identityEvidence: identityEvidenceFromAssetSupply({ workflow: detail.agentWorkflow, parentContent }),
+            identityEvidence: identityEvidenceFromAssetSupply({ workflow: agentWorkflow, parentContent }),
             referenceVideoPath: await ports.resolveReferenceVideoPath?.({
               repository: input.repository, tenantId: request.tenantId, taskId: request.taskId,
-              parentContent, workflow: detail.agentWorkflow,
+              parentContent, workflow: agentWorkflow,
             }) ?? null,
-            referenceText: detail.replicationScript.shots
+            referenceText: replicationScript.shots
               .map(shot => shot.spokenText || shot.captionText || shot.visualInstruction).map(socialText).filter(Boolean).join('\n') || null,
             outputText: socialText(parentContent.adaptedScript) || null,
           },
