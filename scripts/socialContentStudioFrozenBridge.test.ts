@@ -11,7 +11,7 @@ test('server frozen snapshot prevents old hydration/autosave drift while retaini
  const job={id:'j',job_key:'key',user_id:'u',account_id:'a',task_type:'social',tenant_id:'t',task_id:'s',run_id:'r',status:'queued',checkpoints:{'social.executor':{version:'1',inputHash:'hash',updatedAt:new Date().toISOString(),payload:binding}}};
  const store:any={getById:async(c:string)=>c==='studio_projects'?project:job,list:async(c:string)=>({totalItems:1,items:c==='starter_social_content_tasks'?[task]:[job]}),compareAndSwap:async(_c:string,_id:string,expected:any,next:any)=>{if(expected.updated_at!==project.updated_at)return false;project={...project,...next};return true;}};
  // durable job reader consumes the schema-qualified checkpoint used by persisted queue rows.
- 
+
  const result=await bindFrozenSocialStudioProject({dataStore:store,tenantId:'t',taskId:'s',runId:'r',projectId:'p1',expectedUpdatedAt:'old',planSpec:spec});
  assert.equal(result.replayed,false);assert.equal(project.spec.failedProviderReceipt.canAdopt,false);assert.deepEqual(project.spec.shotProductions.S04.candidates,['failed']);
  const canonical=frozenStudioProjectSpec(project.spec);assert.match(canonical.script,/5.6s-9.6s/);assert.equal(canonical.taskVersion,65);
