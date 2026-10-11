@@ -360,7 +360,9 @@ async function claimNextJob(input: {
   workerId: string;
   env: NodeJS.ProcessEnv;
   now: Date;
+  allowedJobIds?: ReadonlySet<string>;
 }): Promise<{ job: ContentExecutionJob; lease: DurableOperationLease } | null> {
+  if (input.allowedJobIds?.size === 0) return null;
   const defaults = contentExecutionDefaults(input.env);
   const schedulerLease = await acquireDurableOperationLease({
     dataStore: input.dataStore, tenantId: '__system__', scope: 'content_queue_scheduler',
@@ -369,12 +371,12 @@ async function claimNextJob(input: {
   if (!schedulerLease) return null;
   try {
     let jobs = await readSchedulerJobs(input.dataStore);
-    await recoverAbandonedJobs(input.dataStore, jobs, input.now);
+    await recoverAbandonedJobs(input.dataStore, jobs.filter(job => !input.allowedJobIds || input.allowedJobIds.has(job.id)), input.now);
     jobs = await readSchedulerJobs(input.dataStore);
     const running = jobs.filter(job => ACTIVE_STATUSES.has(job.status));
     const allTenantIds = [...new Set(jobs.map(job => job.tenantId))];
     const limits = (await Promise.all(allTenantIds.map(tenantId => listContentExecutionLimits(input.dataStore, tenantId)))).flat();
-    const candidates = jobs.filter(job => CLAIMABLE_STATUSES.includes(job.status as typeof CLAIMABLE_STATUSES[number]) && isDue(job, input.now));
+    const candidates = jobs.filter(job => (!input.allowedJobIds || input.allowedJobIds.has(job.id)) && CLAIMABLE_STATUSES.includes(job.status as typeof CLAIMABLE_STATUSES[number]) && isDue(job, input.now));
     candidates.sort((left, right) => {
       const leftRunning = running.filter(item => item.tenantId === left.tenantId).length;
       const rightRunning = running.filter(item => item.tenantId === right.tenantId).length;
@@ -491,6 +493,8 @@ async function finishFailed(input: {
 }
 
 export interface DurableContentExecutionWorkerOptions {
+  /** Trusted worker scope; empty means execute and recover no jobs. */
+  allowedJobIds?: string[];
   dataAuthority?: DataAuthority;
   dataStore: DataStore;
   execute(job: ContentExecutionJob): Promise<void>;
@@ -504,11 +508,16 @@ export interface DurableContentExecutionWorkerOptions {
 export class DurableContentExecutionWorker {
   private readonly env: NodeJS.ProcessEnv;
   private readonly workerId: string;
+  private readonly allowedJobIds: ReadonlySet<string> | undefined;
   private readonly active = new Map<string, Promise<void>>();
   private draining = false;
   private interval: NodeJS.Timeout | null = null;
 
   constructor(private readonly options: DurableContentExecutionWorkerOptions) {
+    if (options.allowedJobIds?.some(id => typeof id !== 'string' || !id.trim() || id !== id.trim())) {
+      throw new Error('invalid_content_execution_allowed_job_ids');
+    }
+    this.allowedJobIds = options.allowedJobIds === undefined ? undefined : new Set(options.allowedJobIds);
     this.env = options.env ?? process.env;
     this.workerId = `${os.hostname().replace(/[^a-zA-Z0-9._-]/g, '-').slice(0, 80)}-${process.pid}-${randomUUID()}`;
   }
@@ -543,7 +552,7 @@ export class DurableContentExecutionWorker {
       while (this.active.size < concurrency) {
         const claimed = await claimNextJob({
           dataStore: this.options.dataStore, workerId: this.workerId, env: this.env,
-          now: this.options.now?.() ?? new Date(),
+          now: this.options.now?.() ?? new Date(), allowedJobIds: this.allowedJobIds,
         });
         if (!claimed) break;
         const key = `${claimed.job.tenantId}\0${claimed.job.taskId}\0${claimed.job.id}`;

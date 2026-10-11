@@ -528,3 +528,27 @@ test('resume cannot erase an unsettled paused worker or let its late completion 
   assert.equal((await store.list(CONTENT_EXECUTION_JOB_COLLECTION)).totalItems,1);
  }finally{release();worker.stop();}
 });
+
+test('trusted job scope excludes unrelated queued jobs and abandoned recovery, and snapshots the allowlist', async () => {
+  const store = new MemoryStore();
+  const admit = (taskId: string, tenantId: string) => admitContentExecutionJob({dataStore: store, tenantId, userId:'user-a', taskId, runId:taskId, accountId:taskId, taskType:'social_content_weekly'});
+  const unrelated = await admit('unrelated', 'tenant-other');
+  const abandoned = await admit('abandoned', 'tenant-other');
+  await store.update(CONTENT_EXECUTION_JOB_COLLECTION, abandoned.id, {status:'running', worker_id:'external-worker', lease_expires_at:'2020-01-01T00:00:00Z'});
+  const target = await admit('target', 'tenant-target');
+  const ids = [target.id];
+  const executed: string[] = [];
+  const worker = new DurableContentExecutionWorker({dataStore:store, env, allowedJobIds:ids, async execute(job){executed.push(job.id);}});
+  ids.push(unrelated.id);
+  await worker.drain();
+  for(let i=0;i<30 && worker.isLocallyActive('tenant-target','target');i++) await new Promise<void>(resolve=>setImmediate(resolve));
+  await worker.drain();
+  worker.stop();
+  assert.deepEqual(executed,[target.id]);
+  assert.equal((await store.getById<Record<string,unknown>>(CONTENT_EXECUTION_JOB_COLLECTION,unrelated.id))?.status,'queued');
+  assert.equal((await store.getById<Record<string,unknown>>(CONTENT_EXECUTION_JOB_COLLECTION,abandoned.id))?.status,'running');
+  const empty = new DurableContentExecutionWorker({dataStore:store,env,allowedJobIds:[],async execute(){assert.fail('empty scope must not execute');}});
+  await empty.drain(); empty.stop();
+  assert.equal((await store.getById<Record<string,unknown>>(CONTENT_EXECUTION_JOB_COLLECTION,abandoned.id))?.status,'running');
+  assert.throws(()=>new DurableContentExecutionWorker({dataStore:store,allowedJobIds:[' '],async execute(){}}),/invalid_content_execution_allowed_job_ids/);
+});

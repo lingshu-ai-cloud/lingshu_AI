@@ -112,3 +112,17 @@ allowRealPublishing=false；social_accounts只有另一租户的Facebook测试�
 当前仍显示旧 37 镜 baseline；新的 8 镜 baseline 与新 Graph job **尚未冻结**。未 dispatch worker，未产生本轮新付费生成、人工创意审批或公开发布。实际接入日志与只读后检为任务外 `work/mvp-final-recheck/revision-execute.log`、`post-execute-preflight.json`；备份位于同目录 `backups/`。`cc5e387` 已修复冻结分镜供给合同投影，但启动状态恢复仍在验证，不能把代码测试通过当作当前 MVP 成片通过。
 
 随后正式恢复启动成功，取代上述中间状态：当前 **v56 / run `5cfd395dcace5f0` / Graph job `bce9542ffe0db4a` / 8 镜**，修订 planHash `86c960361e86e96defab66a4c90768cd137ef22a6e697c109fdb70125fadc603`。执行回执为任务外 `work/mvp-final-recheck/execution-receipt.json`；未 dispatch worker、未付费生成。Studio 新草稿接入遇到 `formal_business_identity_changed`，尚未创建，正在核对实际运行集合与身份 schema。新 baseline 冻结成功不等于供应商媒体完成或创意审核通过。
+
+后续 Studio 草稿已真实创建：`studio_projects_6021eb6c405b44b295dd323827b89094`，同 v56/run，8 镜逐镜 fingerprint 读回通过。此前身份报错来自环境加载前间接初始化存储，已经修正，并非运行集合名称错误。实际创建日志为任务外 `studio-create-execute.log`。
+
+原音色 Starfish hook 已进行一次真实提交，供应商返回成功并归档原音轨与完整响应。内部回执 `bc31aa16e075e35724f0608d94387445ecc7b2a55c4a13b5c4b0b3eb468b888e` 为 accepted，供应商 request_id=null（官方允许），报告时长 5.485714285714286 秒。真实音频 probe 超过本次 4 秒 hook 上限，因此未标 completed、未驱动 IV 视频。不能因该验收失败重复 POST；当前进行原音轨时长/静音分析。实际费用尚无账单证据，不能填 0 或把预算预占当已结算。未发生新的数字人视频生成、人工创意批准或发布。
+
+### 自然原声重新定时与单任务恢复（当前状态）
+
+正式修订执行回执 `work/mvp-final-recheck/retimed-execution-receipt.json` 将任务冻结为 **v61 / run `f865c9796bdddc6` / Graph job `f7481cbe9d3da8f`**，planHash `1b36d5febf7c56573f540aa3e610d380d60582dcda3d6b5ead9d9cfb34abcae6`。保留完整自然 hook，S01 为 5.6 秒，S04 为 4 秒，总片 24 秒。旧 v56 job 已正式取消；原供应商记录不改写。当前 Studio 草稿为 `studio_projects_fef2bd29da1142a2bf9a79b48a8dad71`，创建与读回证据 `studio-retimed-create.log`。
+
+`adopt-natural-hook-execute.json` 证明完整原声已通过正式复用入口绑定当前 v61/run/person/voice。新复用回执 `7570f4f65226601f1b67657d4366521b5ca013c2aa03d85cbafe6ce8a73a0b6d`，probe 5.485729 秒、媒体 SHA256 `72e4c5ffcf72b2625cfdd459b279c622cf4a83e5f2ff0705440ddb0e977b32c3`；paidCalls=0、新 TTS 预占=0、原 accepted 回执保持不变。此证据证明音频复用，不证明数字人视频完成。
+
+总授权仍为 ¥10；正式从返工分配移入 ¥0.9 后，制作 ¥9.4、返工保留 ¥0.6。A池 ¥4.3、B池 ¥4.6、独立质检分配 ¥0.5，均非实际结算账单。Ark 当前账户模型价格/余额原始 DOM 与截图已经保存在 `ark-pricing-evidence/`，Qwen 所属 Dashscope 的账户费用仍需单独核验，不使用 Ark 余额替代。
+
+可信 worker 新增 `allowedJobIds`，只认领及恢复指定 job；全局并发仍统计其他正在运行的任务，空列表不操作任何 job，构造时复制列表避免后续扩大范围。`scoped-worker-tests.log` 18/18 通过，包括其他租户排队任务和过期 running 任务保持原状态、空列表拒绝执行。真实 Graph worker 尚未 dispatch，须先完成 S01/S04 供应商媒体及绑定质检证据，再使用当前原 job 恢复。尚无本轮最终成片、人工创意批准、真实发布或指标闭环证据。
