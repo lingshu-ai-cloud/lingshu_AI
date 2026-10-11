@@ -216,8 +216,12 @@ export async function createEnvironmentProductReplacementPorts(input: Input, con
         if (bytes?.length !== result.view.size) throw Error('product_replacement_registered_task_file_size_changed');
       }
     } else {
-      const mediaRoot = path.resolve('data/media');
-      const candidate = record.localPath || (typeof record.url === 'string' && record.url.startsWith('/media/') ? path.resolve('data', record.url.slice(1)) : null);
+      // Enterprise product projection and execution must resolve the same media
+      // authority. Preview workers keep canonical bytes outside the checkout;
+      // resolving /media URLs against process.cwd() can select a stale namesake.
+      const mediaRoot = path.resolve(process.env.SOCIAL_CONTENT_MEDIA_ROOT || 'data/media');
+      const candidate = record.localPath || (typeof record.url === 'string' && record.url.startsWith('/media/')
+        ? path.join(mediaRoot, decodeURIComponent(record.url.slice('/media/'.length))) : null);
       if (typeof candidate === 'string' && fs.existsSync(candidate)) {
         const actual = fs.realpathSync(candidate);
         if (actual.startsWith(fs.realpathSync(mediaRoot) + path.sep)) bytes = fs.readFileSync(actual);

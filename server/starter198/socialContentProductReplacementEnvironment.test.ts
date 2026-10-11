@@ -67,6 +67,14 @@ test('canonical frozen materialPlan and actual composition/product bytes are rea
   const factory = createEnvironmentSeedanceProductScenePorts({replacementEnvironment: f.context});
   await assert.rejects(factory.execute(f.input), /exact_server_budget_quote_missing/); assert.equal(paid, 0);
 });
+test('media URL product bytes resolve against the configured worker media root',async()=>{
+  const f=await fixture(),mediaRoot=path.join(f.root,'canonical-media'),relative='tenants/tenant/catalog/product.png';
+  fs.mkdirSync(path.dirname(path.join(mediaRoot,relative)),{recursive:true});fs.writeFileSync(path.join(mediaRoot,relative),f.product);
+  f.context.materials=async()=>({items:[{id:'KB',type:'image',tenantId:'tenant',productId:'product',url:'/media/'+relative,contentSha256:sha(f.product)}],sources:[],status:'ready'});
+  const prior=process.env.SOCIAL_CONTENT_MEDIA_ROOT;process.env.SOCIAL_CONTENT_MEDIA_ROOT=mediaRoot;
+  try{const ports=await createEnvironmentProductReplacementPorts(f.input,f.context);assert.equal((await ports.products(f.input))[0]!.sha256,sha(f.product));}
+  finally{if(prior===undefined)delete process.env.SOCIAL_CONTENT_MEDIA_ROOT;else process.env.SOCIAL_CONTENT_MEDIA_ROOT=prior;}
+});
 test('environment ports integrate actual extraction, exact budget grants, provider4s, real trim3s, bounded delivered-media QA and terminal replay', async () => {
   const f = await fixture();
   const frameModel = process.env.SEEDREAM_IMAGE_MODEL || 'doubao-seedream-5-0-pro-260628';
