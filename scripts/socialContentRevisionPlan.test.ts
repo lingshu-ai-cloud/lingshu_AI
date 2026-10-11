@@ -5,7 +5,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { LangGraphTestStore } from './langgraphTestStore.js';
 import { createStarter198Repository, STARTER_COLLECTIONS } from '../server/starter198/repository.js';
-import { createSocialContentTask } from '../server/starter198/socialContentTasks.js';
+import { createSocialContentTask, addSocialTaskSource } from '../server/starter198/socialContentTasks.js';
 import { parseCreateSocialTask, socialRequestHash } from '../server/starter198/socialContentValidation.js';
 import { readSocialTaskDetail } from '../server/starter198/socialContentRecords.js';
 import { prepareSocialContentRevisionPlan, startPreparedSocialContentRevision } from '../server/starter198/socialContentRevisionPlan.js';
@@ -97,11 +97,14 @@ test('explicit revision start freezes eight scenes and admits a fresh sticky gra
   });
   input.expectedBriefHash = socialRequestHash(before.brief);
   const prepared = await prepareSocialContentRevisionPlan(input);
+  const intake = await addSocialTaskSource({ ...input, idempotencyKey: 'owned-product-intake', value: { kind: 'material', sourceRef: 'owned-product-front', sourceVersion: 'product-sha', label: 'Owned front', purpose: 'Own product pixels' }, sourceOptions: { resolve: async () => ({ sourceVersion: 'product-sha' }) } as any });
+  assert.equal(intake.task.status, 'asset_review');
+  assert.equal(intake.task.runId, null);
   const env = process.env.SOCIAL_CONTENT_EXECUTOR; process.env.SOCIAL_CONTENT_EXECUTOR = 'langgraph';
   t.after(() => { if (env === undefined) delete process.env.SOCIAL_CONTENT_EXECUTOR; else process.env.SOCIAL_CONTENT_EXECUTOR = env; });
   let queued = 0, job: any;
   const { admitContentExecutionJob } = await import('../server/contentExecution/durableQueue.js');
-  const started = await startPreparedSocialContentRevision({ ...input, idempotencyKey: 'start-new-eight', expectedVersion: prepared.task.version, expectedPlanHash: prepared.planHash,
+  const started = await startPreparedSocialContentRevision({ ...input, idempotencyKey: 'start-new-eight', expectedVersion: intake.task.version, expectedPlanHash: prepared.planHash,
     orchestratorQueue: { enqueue: async () => {
       queued++; const detail = await readSocialTaskDetail(input); assert.ok(detail);
       assert.equal(detail.scriptBaseline?.sceneCount, 8);

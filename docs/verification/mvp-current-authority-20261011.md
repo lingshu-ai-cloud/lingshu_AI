@@ -102,3 +102,13 @@ allowRealPublishing=false；social_accounts只有另一租户的Facebook测试�
 | `data/materials.json` | `87058a40a3e6238b19acfaa8c4c37432f32032a4b329e1c7a5e2d41358ba4d20` |
 | `data/studio-paid-budget/ledger.json` | `c5e46f42e29991995a7a8a2a5d662cf4ae0e1f9a5c139e3871d0fdddaad27a36` |
 | `data/local-store/studio_social_presenter_jobs.json` | `a9169ba4a15a5ce6c63812646df9caf0750162581230e80da084899c98cb9944` |
+
+### 实际修订接入后的状态
+
+上述快照属于修订前证据。2026-10-11 正式执行修订接入命令后，原 task 当前为 **v53 / asset_review / run 为空**，保留有效 `_productionRevision`。旧等待运行已由 prepare 围栏取消；旧媒体、供应商回执和审核记录仍保留。
+
+原产品正面 PNG 已通过正式文件/素材/任务来源入口登记；文件记录为 `starter_social_content_files_64d3dc75d5ed4702934c8d2a639cca7a`，usage=source，SHA256 `c9673dc0eb6fc0be4dff188ae7a23c520dcfc07054e71f483d666a7608178548`，与原字节一致。新运行启动被 `social_content_task_not_startable` 拦截：素材来源登记将 prepare 的 attention 状态重算为 asset_review，旧公共启动门禁不接受此状态。恢复须从当前 marker/版本继续正式 start，不能重复 prepare/intake。
+
+当前仍显示旧 37 镜 baseline；新的 8 镜 baseline 与新 Graph job **尚未冻结**。未 dispatch worker，未产生本轮新付费生成、人工创意审批或公开发布。实际接入日志与只读后检为任务外 `work/mvp-final-recheck/revision-execute.log`、`post-execute-preflight.json`；备份位于同目录 `backups/`。`cc5e387` 已修复冻结分镜供给合同投影，但启动状态恢复仍在验证，不能把代码测试通过当作当前 MVP 成片通过。
+
+随后正式恢复启动成功，取代上述中间状态：当前 **v56 / run `5cfd395dcace5f0` / Graph job `bce9542ffe0db4a` / 8 镜**，修订 planHash `86c960361e86e96defab66a4c90768cd137ef22a6e697c109fdb70125fadc603`。执行回执为任务外 `work/mvp-final-recheck/execution-receipt.json`；未 dispatch worker、未付费生成。Studio 新草稿接入遇到 `formal_business_identity_changed`，尚未创建，正在核对实际运行集合与身份 schema。新 baseline 冻结成功不等于供应商媒体完成或创意审核通过。

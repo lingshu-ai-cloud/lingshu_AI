@@ -576,6 +576,8 @@ export async function startSocialContentTask(input: {
   expectedVersion: string;
   idempotencyKey: string;
   referenceResolver?: SocialTaskReferenceResolver;
+  /** Server-only revision admission; never bound from an HTTP body. */
+  preparedRevisionAdmission?: (record: StarterRecord) => Promise<void>;
   weeklyOwnedProductIdentity?:Omit<WeeklyOwnedProductIdentityPorts,'repository'>;
   now?: Date;
 }): Promise<SocialContentTaskDetail> {
@@ -606,7 +608,9 @@ async function startSocialContentTaskUnderGuard(input: Parameters<typeof startSo
       if (!projectionAlreadyApplied) {
         assertVersion(record, input.expectedVersion);
       }
-      if (!['draft', 'needs_input', 'plan_review', 'paused', 'attention'].includes(socialText(record.status))
+      const preparedAssetReview = socialText(record.status) === 'asset_review' && Boolean(input.preparedRevisionAdmission);
+      if (preparedAssetReview) await input.preparedRevisionAdmission!(record);
+      if (!preparedAssetReview && !['draft', 'needs_input', 'plan_review', 'paused', 'attention'].includes(socialText(record.status))
         && !(projectionAlreadyApplied && socialText(record.status) === 'asset_review')) {
         throw new SocialContentWorkflowError('social_content_task_not_startable', 409);
       }

@@ -17,12 +17,12 @@ export interface MvpHeyGenSpeechInput {
 export interface MvpHeyGenSpeechResult {
   receiptRef: string; receiptHash: string; tenantId: string; taskId: string; taskVersion: number; accountId: string | null;
   runId: string; shotId: string; operationRole: 'hook' | 'body'; maxDurationSeconds: number; voiceId: string; scriptSha256: string; clipSha256: string;
-  durationSeconds: number; filePath: string; providerRequestId: string; providerEvidenceSha256?: string;
+  durationSeconds: number; filePath: string; providerRequestId: string | null; providerEvidenceSha256?: string;
   usage: { reportedDurationSeconds: number; actualCostCny: null };
 }
 interface Receipt { schemaVersion: 1; fingerprint: string; input: MvpHeyGenSpeechInput;
   state: 'prepared' | 'unknown' | 'accepted' | 'completed';
-  provider?: { requestId: string; audioUrl: string; duration: number; engine: 'starfish'; responseEvidence: unknown };
+  provider?: { requestId: string | null; audioUrl: string; duration: number; engine: 'starfish'; responseEvidence: unknown };
   failure?: { httpStatus: number; code: string | null; message: string | null };
   result?: MvpHeyGenSpeechResult;
 }
@@ -129,9 +129,9 @@ export async function generateMvpHeyGenSpeech(input: MvpHeyGenSpeechInput, ports
         const x = await response.json();
         if (JSON.stringify(x).length > 256_000) throw Error('speech_provider_receipt_oversized');
         const p = x.data || x;
-        if (p.engine !== 'starfish' || typeof p.request_id !== 'string' || !p.request_id || typeof p.audio_url !== 'string'
+        if (p.engine !== 'starfish' || (p.request_id != null && (typeof p.request_id !== 'string' || !p.request_id)) || typeof p.audio_url !== 'string'
           || !Number.isFinite(p.duration) || p.duration <= 0) throw Error('speech_provider_receipt_invalid');
-        row.provider = { requestId:p.request_id,audioUrl:p.audio_url,duration:p.duration,engine:'starfish',responseEvidence:x }; row.state='accepted'; write(row);
+        row.provider = { requestId:p.request_id ?? null,audioUrl:p.audio_url,duration:p.duration,engine:'starfish',responseEvidence:x }; row.state='accepted'; write(row);
       } catch (error) { row.state='unknown'; write(row); throw error; }
     }
     if (!row.provider) throw Error('speech_provider_receipt_missing');

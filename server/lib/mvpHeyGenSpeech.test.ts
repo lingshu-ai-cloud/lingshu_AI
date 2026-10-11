@@ -5,13 +5,13 @@ import os from 'node:os';
 import path from 'node:path';
 import { generateMvpHeyGenSpeech, readMvpHeyGenSpeech, readMvpHeyGenSpeechProviderEvidence, type MvpHeyGenSpeechInput, type MvpHeyGenSpeechPorts } from './mvpHeyGenSpeech.js';
 const input: MvpHeyGenSpeechInput = { scope:{tenantId:'tenant',taskId:'task',version:1,session:'A',accountId:'account',productId:'product',runId:'run',action:'generate_media',authority:'customer',expiresAt:'2099-01-01',revoked:false,provider:'heygen',model:'starfish',shotIds:['hook'],authorizedBy:'human',authorizationRef:'grant',budgetPoolId:'pool',budgetLimitCny:10},shotId:'hook',operationRole:'hook',voiceId:'voice',text:'Ready to launch your own skincare brand?',maxDurationSeconds:4,reservationCny:.2 };
-function fixture(options: { incompatible?:boolean; unknown?:boolean; downloadFail?:boolean; duration?:number; deny?:boolean } = {}) {
+function fixture(options: { incompatible?:boolean; unknown?:boolean; downloadFail?:boolean; duration?:number; deny?:boolean; requestIdNull?:boolean } = {}) {
   const root=fs.mkdtempSync(path.join(os.tmpdir(),'speech-test-')); const calls:string[]=[]; let downloadFail=options.downloadFail;
   const ports:MvpHeyGenSpeechPorts = { root,apiKey:'fixture',assertCurrentScope:async()=>{},probe:async()=>options.duration||3,
     admission:{ reserve:async()=>{calls.push('pool'); if(options.deny)throw Error('denied'); return null;} },
     legacyBudget:{ reserve:async()=>{calls.push('legacy');} },fetch:(async(url,init)=>{
       const u=String(url); calls.push(init?.method==='POST'?'POST':u.includes('/v3/voices')?'voices':'download');
-      if(u.includes('/v3/voices/speech')) {assert.equal(init?.method,'POST');const body=JSON.parse(String(init?.body));assert.equal(body.engine,'starfish');assert.equal(body.force_regenerate,false);if(options.unknown)throw Error('network unknown');return Response.json({audio_url:'https://files.heygen.ai/speech.mp3',duration:3,engine:'starfish',request_id:'vendor-request'});}
+      if(u.includes('/v3/voices/speech')) {assert.equal(init?.method,'POST');const body=JSON.parse(String(init?.body));assert.equal(body.engine,'starfish');assert.equal(body.force_regenerate,false);if(options.unknown)throw Error('network unknown');return Response.json({audio_url:'https://files.heygen.ai/speech.mp3',duration:3,engine:'starfish',request_id:options.requestIdNull?null:'vendor-request'});}
       if(u.includes('/v3/voices'))return Response.json({data:[{voice_id:'voice',available_engines:options.incompatible?['orca']:['starfish']}],has_more:false});
       if(downloadFail){downloadFail=false;return new Response('',{status:503});}return new Response(new Uint8Array([1,2,3]));
     }) as typeof fetch };
@@ -45,3 +45,5 @@ test('speech: explicit null account remains null in trusted receipt',async()=>{c
 test('speech: preserved supplier evidence is integrity bound and cannot be edited independently',async()=>{
  const f=fixture();try{const r=await generateMvpHeyGenSpeech(input,f.ports);const file=path.join(f.root,`${r.receiptRef}.json`);const row=JSON.parse(fs.readFileSync(file,'utf8'));row.provider.responseEvidence.duration=0;fs.writeFileSync(file,JSON.stringify(row));assert.throws(()=>readMvpHeyGenSpeech(r.receiptRef,f.root),/speech_audio_corrupt/);}finally{f.clean();}
 });
+
+test('speech: official nullable request_id remains null; receipt and raw response identify accepted audio',async()=>{const f=fixture({requestIdNull:true});try{const r=await generateMvpHeyGenSpeech(input,f.ports);assert.equal(r.providerRequestId,null);assert.equal(readMvpHeyGenSpeech(r.receiptRef,f.root).providerRequestId,null);assert.equal((readMvpHeyGenSpeechProviderEvidence(r.receiptRef,f.root) as {request_id:null}).request_id,null);assert.ok(r.providerEvidenceSha256);await generateMvpHeyGenSpeech(input,f.ports);assert.equal(f.calls.filter(x=>x==='POST').length,1);}finally{f.clean();}});

@@ -148,7 +148,13 @@ export async function startPreparedSocialContentRevision(input: {
   if (socialRequestHash(immutable) !== planHash) throw new SocialContentWorkflowError('social_revision_plan_corrupt', 409);
   const resolved = validateEightScenePlan(marker.resolved as unknown as ResolvedSocialTaskReference);
   await assertFacts({ tenantId: input.tenantId, expectedEnterpriseFactsHash: String(marker.enterpriseFactsHash), readEnterpriseFactsHash: input.readEnterpriseFactsHash }, (await readSocialTaskDetail(input))?.brief.productId || (await readSocialTaskDetail(input))?.brief.productRef || '');
-  return startSocialContentTask({ ...input, referenceResolver: async () => {
+  return startSocialContentTask({ ...input, preparedRevisionAdmission: async current => {
+    const actual = socialObject(socialObject(socialJson(current.brief))?._productionRevision);
+    if (socialText(current.run_id) || actual?.planHash !== input.expectedPlanHash || actual.tenantId !== input.tenantId || actual.taskId !== input.taskId)
+      throw new SocialContentWorkflowError('social_revision_plan_changed', 409);
+    const { planHash: currentHash, preparedBy: _by, preparedAt: _at, ...frozen } = actual;
+    if (socialRequestHash(frozen) !== currentHash) throw new SocialContentWorkflowError('social_revision_plan_corrupt', 409);
+  }, referenceResolver: async () => {
     const current = await requireSocialTask(input);
     const currentMarker = socialObject(socialObject(socialJson(current.brief))?._productionRevision);
     const detail = await readSocialTaskDetail(input);
