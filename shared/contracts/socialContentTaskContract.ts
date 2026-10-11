@@ -236,6 +236,8 @@ export interface SocialContentTaskBrief {
   productionMode?: SocialContentProductionMode;
   /** Defaults to the zero-paid-provider customer-material edit. */
   productionApproach?: SocialProductionApproach;
+  /** Explicit new-plan policy; omission preserves historical frozen routing. */
+  materialRoutingPolicyVersion?: 'type-aware.v1';
 }
 
 /** Public metadata only. Formula identifiers and internal prompt templates stay server-side. */
@@ -534,6 +536,7 @@ export interface CreateSocialContentTaskInput {
   productionMode?: SocialContentProductionMode;
   productionApproach?: SocialProductionApproach;
   mode?: SocialContentTaskMode;
+  materialRoutingPolicyVersion?: 'type-aware.v1';
   weeklyPlanId?: string | null;
   themeId?: SocialContentThemeId | null;
   customTopic?: string | null;

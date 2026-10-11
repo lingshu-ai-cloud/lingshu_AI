@@ -57,6 +57,7 @@ import {
   publicSocialDirectorPlanSummary,
 } from './socialContentDirectorPlan.js';
 import { createSocialAssetSupplyPlan } from '../../shared/socialContentAssetSupply.js';
+import { materialRoutingRequests } from './socialContentMaterialRoutingRequests.js';
 import type { SocialShotFunction } from '../../shared/contracts/socialContentReplication.js';
 import {
   parseStoredSocialReferenceVideoAnalysis,
@@ -260,9 +261,13 @@ export function parseSocialTaskBrief(value: unknown): SocialContentTaskBrief {
     || (referenceMode && !SOCIAL_REPLICATION_REFERENCE_MODES.includes(referenceMode as typeof SOCIAL_REPLICATION_REFERENCE_MODES[number]))) {
     throw new SocialContentWorkflowError('social_content_task_record_invalid', 503);
   }
+  if (record.materialRoutingPolicyVersion != null && record.materialRoutingPolicyVersion !== 'type-aware.v1') {
+    throw new SocialContentWorkflowError('social_material_routing_policy_invalid', 503);
+  }
   return {
     title,
     objective,
+    ...(record.materialRoutingPolicyVersion === 'type-aware.v1' ? { materialRoutingPolicyVersion: 'type-aware.v1' as const } : {}),
     productId: nullable(record.productId),
     productRef: nullable(record.productRef),
     requestedPresenterName: nullable(record.requestedPresenterName),
@@ -978,6 +983,7 @@ export async function readSocialTaskDetail(input: {
     }
   }
   const assetSupplyPlan = applySocialContentRevisionSupply({ tenantId: input.tenantId, taskId: summary.taskId, brief: task.brief, script: replicationScript, plan: createSocialAssetSupplyPlan({
+    materialRoutingPolicyVersion: summary.brief.materialRoutingPolicyVersion,
     creationMode: summary.brief.creationMode ?? 'material_processing',
     assetAvailability: summary.brief.assetAvailability,
     managementMode: summary.brief.managementMode,
@@ -1000,7 +1006,9 @@ export async function readSocialTaskDetail(input: {
     accountPresenterLock: presenterInventory.accountPresenterLock,
     presenterSelectionConfirmed: Boolean(summary.brief.presenterAssetId && presenterInventory.assetIds.length === 1),
     referenceShots: referenceVideoAnalysis?.shots,
-    shots: replicationScript?.shots.map(shot => ({
+    shots: materialRoutingRequests({ policyVersion: summary.brief.materialRoutingPolicyVersion,
+      tenantId: input.tenantId, candidates: materialCandidates, referenceShots: referenceVideoAnalysis?.shots,
+      productRef: primaryProductRef, shots: replicationScript?.shots.map(shot => ({
       shotId: shot.shotId,
       function: shot.purpose,
       requestedDescription: shot.visualInstruction,
@@ -1010,7 +1018,7 @@ export async function readSocialTaskDetail(input: {
       shotId: scene.sceneId,
       function: assetSupplyShotFunction(scene.shotFunction, index, scenes.length),
       requestedDescription: [scene.shotFunction, scene.subject, scene.action].map(socialText).filter(Boolean).join(' · '),
-    })),
+    })) ?? [] }),
     rightsConfirmationRequired: false,
   }) });
   assetSupplyPlan.inventoryAudit=auditWeeklyMaterialInventory(input.tenantId,materialInventory.items);

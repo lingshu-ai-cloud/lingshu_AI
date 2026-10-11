@@ -210,6 +210,7 @@ export async function sourceCreatedByOperation(input: {
 export function defaultBrief(value: CreateSocialContentTaskInput) {
   const themeDriven = Boolean(value.mode || value.themeId || value.customTopic || value.topic || value.weeklyPlanId);
   return {
+    ...(value.materialRoutingPolicyVersion ? { materialRoutingPolicyVersion: value.materialRoutingPolicyVersion } : {}),
     title: value.title,
     objective: value.objective,
     productId: value.productId ?? null,

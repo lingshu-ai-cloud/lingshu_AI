@@ -20,6 +20,9 @@ import {
   normalizeSceneVisualContract,
   type SocialSceneVisualContract,
 } from './sceneVisualContract';
+import type { BenchmarkMaterialType } from './benchmarkAnalysis';
+import type { SocialMaterialRouting } from './contracts/socialContentReplication';
+import {selectTypeAwareSocialMaterial,selectVerifiedSocialMaterialSegment} from './socialContentMaterialRouting';
 
 export interface SocialAssetInventory {
   customerVideoIds?: string[];
@@ -35,6 +38,10 @@ export interface SocialAssetInventory {
 }
 
 export interface SocialAssetSupplyShotRequest {
+  materialType?: BenchmarkMaterialType;
+  /** Supplied only after the Content Agent checks this exact shot against tenant-visible video. */
+  localVideoMatch?: { sourceRefs: string[]; semanticMatch: 'verified'; evidenceRef: string; productRef?: string | null };
+  selectedMaterialSegment?: SocialAssetSupplyShotPlan['selectedMaterialSegment'];
   shotId: string;
   function: SocialShotFunction;
   requestedDescription?: string | null;
@@ -54,6 +61,7 @@ export interface SocialAssetSupplyShotRequest {
 }
 
 export interface CreateSocialAssetSupplyPlanInput {
+  materialRoutingPolicyVersion?: 'type-aware.v1';
   creationMode: SocialContentCreationMode;
   assetAvailability?: SocialAssetAvailability;
   managementMode?: SocialContentManagementMode;
@@ -331,6 +339,19 @@ export function buildSocialProductSceneReplicationSpec(input: {
   };
 }
 
+export function classifySocialAssetSupplyMaterialType(shot:SocialAssetSupplyShotRequest,referenceShots?:SocialReferenceShotAnalysis[]):BenchmarkMaterialType {
+  if(shot.materialType)return shot.materialType;
+  const signals=shotSignals(shot,referenceShots);
+  if(signals.hasPerson&&/口播|主讲|讲解|presenter|talking|speaker/i.test(signals.text))return 'talking_head';
+  if(signals.factory)return 'factory';
+  // Holding or turning a package is a product display, not consumer use.
+  const visual=normalizeSceneVisualContract(shot.visualContract??referenceShot(shot,referenceShots)?.visualContract??{subjects:shot.subjects,interaction:shot.interaction,environment:shot.environment,productUsage:shot.productUsage});
+  const consumerUse=['person_using_product','apply_product_to_face'].includes(visual.interaction.kind)
+    || /消费者.{0,20}(使用|试用|生活)|用户.{0,20}(使用|试用)|涂抹|上脸|consumer.?demo|consumer.{0,20}use|customer.{0,20}use|apply.{0,20}(face|skin)|lifestyle/i.test(signals.text);
+  if(consumerUse)return 'consumer_demo';
+  return signals.hasProduct?'product':'unknown';
+}
+
 function generalStrategy(
   shot: SocialAssetSupplyShotRequest,
   inventory: Required<SocialAssetInventory>,
@@ -338,8 +359,10 @@ function generalStrategy(
   accountPresenterLock: SocialAccountPresenterLock | null | undefined,
   referenceShots?: SocialReferenceShotAnalysis[],
   productionApproach: SocialProductionApproach = 'ai_enhanced',
-): { strategy: SocialShotSourceStrategy; refs: string[]; instruction: string; productSceneReplication?: SocialProductSceneReplicationSpec } {
+  materialRoutingPolicyVersion?: 'type-aware.v1',
+): { strategy: SocialShotSourceStrategy; refs: string[]; instruction: string; productSceneReplication?: SocialProductSceneReplicationSpec; materialRouting?: SocialMaterialRouting; blocked?: boolean } {
   const signals = shotSignals(shot, referenceShots);
+  if (productionApproach === 'ai_enhanced' && materialRoutingPolicyVersion === 'type-aware.v1') return selectTypeAwareSocialMaterial({shot,inventory,materialType:classifySocialAssetSupplyMaterialType(shot,referenceShots),referenceVisualContract:referenceShot(shot,referenceShots)?.visualContract,presenterRefs:presenterLockReady(accountPresenterLock)?[accountPresenterLock.presenterAssetId]:inventory.presenterAssetIds,buildProductSpec:()=>buildSocialProductSceneReplicationSpec({shot,inventory,referenceShots})});
   const observedReferenceRouting = referenceShot(shot, referenceShots)?.referenceProductionRouting;
   const referenceRouting = observedReferenceRouting?.state === 'ready' && observedReferenceRouting.route !== 'undetermined'
     ? observedReferenceRouting : undefined;
@@ -544,8 +567,9 @@ function planShot(
   referenceShots?: SocialReferenceShotAnalysis[],
   productionApproach: SocialProductionApproach = 'ai_enhanced',
   presenterSelectionConfirmed = false,
+  materialRoutingPolicyVersion?: 'type-aware.v1',
 ): SocialAssetSupplyShotPlan {
-  const subject = shot.truthSensitiveSubject ?? 'none';
+  const subject = shot.truthSensitiveSubject ?? (materialRoutingPolicyVersion==='type-aware.v1'&&shotSignals(shot,referenceShots).factory?'customer_factory':'none');
   const canonicalVisualContract = shot.visualContract ?? referenceShot(shot, referenceShots)?.visualContract;
   const signals = shotSignals(shot, referenceShots);
   const observedReferenceRouting = referenceShot(shot, referenceShots)?.referenceProductionRouting;
@@ -555,7 +579,7 @@ function planShot(
   const hasEvidence = subject !== 'none' && evidenceRefs.length > 0
     && !(subject === 'product_effect' && signals.hasPerson);
 
-  if (hasEvidence && !referenceRouting && !signals.hasPerson) {
+  if (hasEvidence && !referenceRouting && !signals.hasPerson && materialRoutingPolicyVersion !== 'type-aware.v1') {
     const truthBoundary: SocialShotTruthBoundary = {
       subject,
       syntheticVisualAllowed: false,
@@ -591,8 +615,12 @@ function planShot(
     };
   }
 
-  const selected = generalStrategy(shot, inventory, confirmedFactRefs, accountPresenterLock, referenceShots, productionApproach);
+  const selected = generalStrategy(shot, inventory, confirmedFactRefs, accountPresenterLock, referenceShots, productionApproach,materialRoutingPolicyVersion);
   const frozenReferenceRouting = referenceRouting ? structuredClone(referenceRouting) : undefined;
+  if(frozenReferenceRouting&&selected.materialRouting&&selected.materialRouting.policy!=='authorized_presenter'){
+    frozenReferenceRouting.route=selected.strategy==='aigc_product_scene_replication'?'non_presenter_aigc_video':'non_presenter_library_match';
+    frozenReferenceRouting.reason+='；按冻结素材类型执行本地匹配优先规则，禁止自动改为其他素材类型。';
+  }
   if(frozenReferenceRouting && ['library_match','non_presenter_library_match'].includes(frozenReferenceRouting.route)
     && ['aigc_product_scene_replication','non_evidentiary_ai_visual'].includes(selected.strategy)){
     frozenReferenceRouting.route=frozenReferenceRouting.route==='library_match'?'aigc_video':'non_presenter_aigc_video';
@@ -608,7 +636,9 @@ function planShot(
     && !selected.refs.length;
   const lockedProductUnavailable = Boolean(selected.productSceneReplication
     && selected.productSceneReplication.productIdentity.groups.length === 0);
-  const feasibility = noFreeMaterial || lockedProductUnavailable
+  const realFactoryBackgroundMissing=selected.materialRouting?.policy==='authorized_presenter'&&subject==='customer_factory'&&selected.materialRouting.localMatch.state!=='matched';
+  const selectedSegment=selected.materialRouting?.localMatch.state==='matched'?shot.selectedMaterialSegment:materialRoutingPolicyVersion==='type-aware.v1'&&selected.strategy==='customer_real_asset'?selectVerifiedSocialMaterialSegment(shot,selected.refs):undefined;
+  const feasibility = noFreeMaterial || lockedProductUnavailable || selected.blocked || realFactoryBackgroundMissing
     ? 'goal_degraded'
     : selected.strategy === 'customer_real_asset' || selected.strategy === 'customer_product_image_animation'
       || selected.strategy === 'aigc_product_scene_replication'
@@ -619,15 +649,17 @@ function planShot(
     function: shot.function,
     requestedDescription: shot.requestedDescription ?? null,
     sourceStrategy: selected.strategy,
+    ...(selected.materialRouting?{materialRouting:selected.materialRouting}:{}),
     ...(frozenReferenceRouting ? { referenceProductionRouting: frozenReferenceRouting } : {}),
     sourceRefs: selected.refs,
-    fallbackSourceStrategy: referenceRouting ? null : fallbackFor(selected.strategy, productionApproach),
+    ...(selectedSegment?{selectedMaterialSegment:structuredClone(selectedSegment)}:{}),
+    fallbackSourceStrategy: referenceRouting || selected.materialRouting ? null : fallbackFor(selected.strategy, productionApproach),
     productionInstruction: selected.instruction,
     truthBoundary: {
       subject,
-      syntheticVisualAllowed: selected.strategy !== 'customer_real_asset',
-      customerEvidenceRequired: false,
-      customerEvidenceRefs: [],
+      syntheticVisualAllowed: selected.materialRouting?.policy==='local_only'?false:selected.strategy !== 'customer_real_asset',
+      customerEvidenceRequired: Boolean(selected.materialRouting&&subject==='customer_factory'&&selected.strategy!=='customer_real_asset'),
+      customerEvidenceRefs: selected.materialRouting&&subject==='customer_factory'?selected.materialRouting.localMatch.sourceRefs:[],
       confirmedFactRefs,
       mustNotImplyCustomerReality: selected.strategy !== 'customer_real_asset',
       prohibitedRepresentations: prohibitionsFor(subject),
@@ -644,6 +676,10 @@ function planShot(
       ? '已有客户素材，可在不改变真实主体的情况下完整实现'
       : feasibility === 'functional_equivalent'
         ? '可使用当前已入库素材或已配置生成能力完成该镜头'
+        : realFactoryBackgroundMissing
+          ? '真人口播仍需绑定真实本地工厂背景；不允许数字人 provider 虚构工厂，无法复合时必须停止'
+        : selected.blocked
+          ? '当前素材类型缺少合格的本地匹配或对应企业产品图；必须保留缺口，不切换类型或静默生成'
         : lockedProductUnavailable
           ? '用户明确锁定的产品暂无对应参考素材；只有 locked 策略会停止异品替换'
           : '免费方案当前没有可裁切的已入库素材',
@@ -701,6 +737,7 @@ export function createSocialAssetSupplyPlan(input: CreateSocialAssetSupplyPlanIn
     input.referenceShots,
     input.productionApproach ?? 'ai_enhanced',
     input.presenterSelectionConfirmed === true,
+    input.materialRoutingPolicyVersion,
   ));
   const overallFeasibility = shots.some(shot => shot.feasibility === 'goal_degraded')
       ? 'goal_degraded'
@@ -714,6 +751,7 @@ export function createSocialAssetSupplyPlan(input: CreateSocialAssetSupplyPlanIn
 
   return {
     planVersion: input.planVersion?.trim() || 'historic-unversioned',
+    ...(input.materialRoutingPolicyVersion?{materialRoutingPolicyVersion:input.materialRoutingPolicyVersion}:{}),
     creationMode: input.creationMode,
     productionApproach: input.productionApproach ?? 'ai_enhanced',
     assetAvailability: availability,

@@ -220,6 +220,7 @@ export function parseCreateSocialTask(value: unknown): CreateSocialContentTaskIn
   }
   return {
     ...parseSocialReplicationContext(source),
+    materialRoutingPolicyVersion: 'type-aware.v1',
     title: requiredText(source.title, 'social_content_title_invalid', 120),
     objective: requiredText(source.objective, 'social_content_objective_invalid', 1_000),
     productId: optionalText(source.productId, 'social_content_product_id_invalid', 200),

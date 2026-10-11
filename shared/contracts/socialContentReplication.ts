@@ -305,6 +305,8 @@ export interface SocialProductSceneReplicationSpec {
 }
 
 export interface SocialAssetSupplyShotPlan {
+  /** Frozen on new plans. Missing on historical jobs; never retroactively inferred at execution. */
+  materialRouting?: SocialMaterialRouting;
   shotId: string;
   referenceProductionRouting?: import('../referenceShotProductionRouting.js').ReferenceShotProductionRouting;
   function: SocialShotFunction;
@@ -344,11 +346,26 @@ export interface SocialAssetSupplyShotPlan {
   };
 }
 
+export interface SocialMaterialRouting {
+  schemaVersion: 'social-material-routing.v1';
+  materialType: import('../benchmarkAnalysis').BenchmarkMaterialType;
+  policy: 'local_only' | 'local_first_product_i2v' | 'authorized_presenter';
+  localMatch: { state: 'matched' | 'missing'; sourceRefs: string[]; evidenceRef: string | null };
+  generation?: {
+    method: 'reference_first_frame_product_replacement_i2v';
+    durationSeconds: number;
+    productImageRefs: string[];
+    referenceShotId: string | null;
+    referenceSourceId: string | null;
+  };
+}
+
 /**
  * A complete, customer-safe source plan. Missing visual assets are solved by
  * the system; only unconfirmed facts or rights may remain as customer actions.
  */
 export interface SocialAssetSupplyPlan {
+  materialRoutingPolicyVersion?: 'type-aware.v1';
   inventoryAudit?: { scannedAt:string; records:Array<{id:string;sha256:string|null;mediaType:string;productRef:string|null;width:number|null;height:number|null;durationSeconds:number|null;rightsEvidenceRef:string|null;productionEligible:boolean;gaps:string[]}> };
   planVersion: string;
   creationMode: SocialContentCreationMode;

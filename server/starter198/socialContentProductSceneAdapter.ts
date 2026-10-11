@@ -3,6 +3,7 @@ import {runVisualFfmpeg} from '../lib/renderVisualQuality.js';
 import type {SocialAccountProductionConstraints} from './socialAccountProductionConstraints.js';
 import { createHash } from 'node:crypto';
 import { stat } from 'node:fs/promises';
+import type { SocialMaterialRouting } from '../../shared/contracts/socialContentReplication.js';
 import type { SocialProductSceneReplicationSpec } from '../../shared/contracts/socialContentWorkflow.js';
 import type {
   SocialAssetSupplyAdapterContext,
@@ -17,6 +18,7 @@ export interface ProductSceneReferenceImage {
   localPath?: string;
   objectKey?: string;
   contentHash: string | null;
+  authorizationRef?: string | null;
 }
 
 export interface ProductSceneQualityReport {
@@ -37,7 +39,8 @@ export interface CompletedProductSceneExecution {
   url?: string;
   contentHash: string;
   duration: number;
-  actualCostCny: number;
+  actualCostCny: number | null;
+  estimatedCostCny?: number;
   quality: ProductSceneQualityReport;
 }
 
@@ -49,6 +52,7 @@ export interface ProductSceneExecutionPorts {
     shotId: string;
     idempotencyKey: string;
     spec: SocialProductSceneReplicationSpec;
+    materialRouting?: SocialMaterialRouting;
     referenceImages: ProductSceneReferenceImage[];
     outputDirectory: string;
     maximumCostCny: number;
@@ -94,6 +98,7 @@ function references(context: SocialAssetSupplyAdapterContext, spec: SocialProduc
         ...(asset.localPath ? { localPath: asset.localPath } : {}),
         ...(asset.objectKey ? { objectKey: asset.objectKey } : {}),
         contentHash: asset.contentHash || null,
+        authorizationRef: asset.authorizationRef || null,
       });
     }
   }
@@ -156,6 +161,7 @@ function outputAsset(input: {
       validationEvidenceRefs: input.execution.quality.evidenceRefs,
       quality: input.execution.quality,
       actualCostCny: input.execution.actualCostCny,
+      ...(input.execution.estimatedCostCny !== undefined ? {estimatedCostCny:input.execution.estimatedCostCny} : {}),
       idempotencyKey: input.idempotencyKey,
       disclosure,
     }],
@@ -182,12 +188,14 @@ export function createSocialProductSceneAdapter(ports: ProductSceneExecutionPort
         operationId: context.operationId, accountConstraintHash:context.accountPlaybookConstraints?.constraintHash,shotId: context.shot.shotId, spec, references: productReferences });
       const execution = await ports.execute({ tenantId: context.tenantId, taskId: context.taskId,
         shotId: context.shot.shotId, idempotencyKey, spec: structuredClone(spec),
+        ...(context.shot.materialRouting ? {materialRouting:structuredClone(context.shot.materialRouting)} : {}),
         ...(context.accountPlaybookConstraints?{accountPlaybookConstraints:structuredClone(context.accountPlaybookConstraints)}:{}),
         referenceImages: productReferences, outputDirectory: context.outputDirectory, maximumCostCny });
       if (execution.status !== 'completed') {
         throw new Error(`product_scene_not_completed:${execution.status}:${execution.providerTaskId || 'no_task'}:${execution.error}`);
       }
-      if (execution.actualCostCny > maximumCostCny) throw new Error('product_scene_cost_exceeds_shot_budget');
+      const admissionCost=execution.estimatedCostCny??execution.actualCostCny;
+      if (admissionCost===null||!Number.isFinite(admissionCost)||admissionCost>maximumCostCny) throw new Error('product_scene_cost_exceeds_shot_budget');
       const expectedDuration = spec.cameraLock.durationSeconds;
       if (Math.abs(execution.duration - expectedDuration) > spec.tolerance.durationSeconds) {
         throw new Error('product_scene_duration_out_of_tolerance');

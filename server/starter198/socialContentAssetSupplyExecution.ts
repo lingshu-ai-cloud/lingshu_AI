@@ -158,6 +158,7 @@ export function alignSocialAssetSupplyPlanToBaseline(input: {
     assetAvailability: input.plan.assetAvailability,
     managementMode: input.plan.managementMode,
     planVersion: input.plan.planVersion,
+    ...(input.plan.materialRoutingPolicyVersion ? { materialRoutingPolicyVersion: input.plan.materialRoutingPolicyVersion } : {}),
     accountPresenterLock: input.plan.accountPresenterLock,
     inventory: {
       productImageIds,
@@ -199,6 +200,15 @@ export function alignSocialAssetSupplyPlanToBaseline(input: {
     ...aligned,
     shots: aligned.shots.map(shot => {
       const original = originalById.get(shot.shotId)!;
+      // Upgraded planning defaults do not migrate an already frozen legacy shot.
+      if (!original.materialRouting) {
+        delete shot.materialRouting;
+      }
+      // Versioned material routing is a reviewed production decision. Keep it
+      // intact rather than letting legacy reference/capability inference replan it.
+      if (original.materialRouting) {
+        return { ...shot, ...structuredClone(original), shotId: shot.shotId, function: shot.function };
+      }
       // The reviewed Content-Agent route is authoritative. A legacy
       // digitalHumanPlan describes an available capability and must not turn a
       // reviewed product/stock/local scene back into a paid presenter scene.
@@ -290,7 +300,51 @@ export function assertSocialAssetSupplyTruthBoundary(input: {
   if (violation) throw new Error(`asset_supply_truth_boundary:${input.shot.shotId}:${violation}`);
 }
 
+function materialStrategyOrder(shot: SocialAssetSupplyShotPlan): SocialShotSourceStrategy[] | null {
+  const routing = shot.materialRouting;
+  if (!routing) return null;
+  const fail = (reason: string): never => { throw new Error(`material_routing_invalid:${shot.shotId}:${reason}`); };
+  if (routing.schemaVersion !== 'social-material-routing.v1' || !routing.localMatch
+    || !Array.isArray(routing.localMatch.sourceRefs)) fail('contract');
+  const local = routing.localMatch;
+  const matched = local.state === 'matched' && local.sourceRefs.length > 0
+    && typeof local.evidenceRef === 'string' && local.evidenceRef.trim().length > 0;
+  if (['factory', 'consumer_demo', 'general', 'unknown'].includes(routing.materialType)) {
+    if (routing.policy !== 'local_only' || routing.generation || !matched
+      || shot.sourceStrategy !== 'customer_real_asset' || shot.fallbackSourceStrategy !== null
+      || !shot.sourceRefs.length || shot.sourceRefs.some(ref => !local.sourceRefs.includes(ref))) fail('local_real_video_required');
+    return ['customer_real_asset'];
+  }
+  if (routing.materialType === 'product') {
+    if (routing.policy !== 'local_first_product_i2v' || shot.fallbackSourceStrategy !== null) fail('product_policy');
+    if (matched) {
+      if (shot.sourceStrategy !== 'customer_real_asset' || !shot.sourceRefs.length
+        || shot.sourceRefs.some(ref => !local.sourceRefs.includes(ref))) fail('product_local_route');
+      return ['customer_real_asset'];
+    }
+    const generation = routing.generation;
+    if (local.state !== 'missing' || local.sourceRefs.length || shot.sourceStrategy !== 'aigc_product_scene_replication'
+      || !generation || generation.method !== 'reference_first_frame_product_replacement_i2v'
+      || !Number.isFinite(generation.durationSeconds) || generation.durationSeconds <= 0
+      || !Array.isArray(generation.productImageRefs) || !generation.productImageRefs.length
+      || !shot.productSceneReplication || generation.durationSeconds !== shot.productSceneReplication.cameraLock.durationSeconds
+      || !shot.sourceRefs.length
+      || shot.sourceRefs.some(ref => !generation.productImageRefs.includes(ref))) fail('product_generation_contract');
+    return ['aigc_product_scene_replication'];
+  }
+  if (routing.materialType === 'talking_head') {
+    if (routing.policy !== 'authorized_presenter' || shot.sourceStrategy !== 'authorized_digital_presenter'
+      || shot.fallbackSourceStrategy !== null || !shot.digitalHumanPlan
+      || !['preview_only', 'ready_for_capability_check'].includes(shot.digitalHumanPlan.executionState)) fail('authorized_presenter_required');
+    // Continue through the existing reference identity lock checks below.
+    return null;
+  }
+  return fail('unknown_material_type');
+}
+
 function strategyOrder(shot: SocialAssetSupplyShotPlan): SocialShotSourceStrategy[] {
+  const materialStrategies = materialStrategyOrder(shot);
+  if (materialStrategies) return materialStrategies;
   const routing = shot.referenceProductionRouting;
   if (routing) {
     if (routing.state !== 'ready' || routing.route === 'undetermined') throw new Error(`reference_person_automatic_analysis_required:${shot.shotId}`);
@@ -397,6 +451,14 @@ export async function executeSocialAssetSupplyPlan(input: {
               status: 'rejected_by_truth_boundary',
               reason: 'adapter_returned_wrong_strategy',
             });
+            continue;
+          }
+          const materialRouting = shot.materialRouting;
+          if (materialRouting?.localMatch.state === 'matched' && strategy === 'customer_real_asset'
+            && (candidate.asset.type !== 'video' || candidate.synthetic
+              || !candidate.sourceRef || !materialRouting.localMatch.sourceRefs.includes(candidate.sourceRef)
+              || ![candidate.asset.sourceId, candidate.asset.id].includes(candidate.sourceRef))) {
+            attempts.push({ sourceStrategy: strategy, adapterId: adapter.adapterId, status: 'rejected_by_truth_boundary', reason: 'material_route_requires_verified_local_video' });
             continue;
           }
           const violation = truthBoundaryViolation(shot, candidate);
