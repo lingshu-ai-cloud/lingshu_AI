@@ -15,6 +15,23 @@ const failed = await readMaterialLibrary('a', {local: () => { throw Error('corru
 assert.equal(failed.status, 'unavailable');
 const empty = await readMaterialLibrary('a', {local: () => [], cloud: async () => ({ items: [], source: ready })});
 assert.equal(empty.status, 'ready'); assert.equal(empty.items.length, 0);
+const catalogRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'enterprise-product-library-'));
+const previousMediaRoot = process.env.SOCIAL_CONTENT_MEDIA_ROOT;
+try {
+  const tenantId = 'tenant-catalog';
+  const imageDirectory = path.join(catalogRoot, 'tenants', tenantId, 'catalog');
+  fs.mkdirSync(imageDirectory, {recursive: true});
+  const image = Buffer.from([137,80,78,71,13,10,26,10,1,2,3,4]);
+  fs.writeFileSync(path.join(imageDirectory, 'product.png'), image);
+  process.env.SOCIAL_CONTENT_MEDIA_ROOT = catalogRoot;
+  const dataStore = {list: async (collection: string) => ({items: collection === 'tenant_profiles' ? [{id:'profile',tenant_id:tenantId,profile:{products:{items:[{id:'sku-1',name:'Product',imageUrl:`/media/tenants/${tenantId}/catalog/product.png`}]}}}] : [], totalItems: collection === 'tenant_profiles' ? 1 : 0, totalPages:1,page:1,perPage:2})};
+  const catalog = await readMaterialLibrary(tenantId, {local:()=>[],cloud:async()=>({items:[],source:ready}),dataStore:dataStore as never});
+  assert.equal(catalog.items.length,1);assert.equal(catalog.items[0]!.productId,'sku-1');assert.match(catalog.items[0]!.contentSha256,/^[a-f0-9]{64}$/);
+  assert.equal(catalog.items[0]!.file,`tenants/${tenantId}/catalog/product.png`);
+} finally {
+  if(previousMediaRoot===undefined)delete process.env.SOCIAL_CONTENT_MEDIA_ROOT;else process.env.SOCIAL_CONTENT_MEDIA_ROOT=previousMediaRoot;
+  fs.rmSync(catalogRoot,{recursive:true,force:true});
+}
 let pages = 0;
 const paged = await readCloudMaterialLibrary('a', async (_url, options) => {
   assert.ok(options?.signal); pages++;
