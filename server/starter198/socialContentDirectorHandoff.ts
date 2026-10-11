@@ -59,6 +59,10 @@ function assertHandoffIntegrity(handoff: SocialDirectorContentHandoff): void {
 
 /** Exact immutable execution contract handed to Content Agent. No prompt,
  * brief, raw assets or generative/rewrite input exists in this object. */
+export function socialDirectorSpokenNarration(scenes: ReadonlyArray<{voiceover: string}>, language: string): string {
+ return scenes.map(scene => scene.voiceover.trim()).filter(Boolean).join(language === 'en' ? ' ' : '');
+}
+
 export function socialDirectorContentHandoff(plan: StoredSocialDirectorPlan): SocialDirectorContentHandoff {
   assertDirectorPlanIntegrity(plan);
   if (plan.status !== 'ready' || plan.lockStatus !== 'locked'
@@ -66,8 +70,7 @@ export function socialDirectorContentHandoff(plan: StoredSocialDirectorPlan): So
     throw new SocialContentWorkflowError('social_content_director_plan_not_ready', 409);
   }
   const materialById = new Map(plan.materialSnapshot.map(material => [material.assetId, material]));
-  const spokenNarration = plan.scenes.map(scene => scene.voiceover.trim()).filter(Boolean)
-    .join(plan.language === 'en' ? ' ' : '');
+  const spokenNarration = socialDirectorSpokenNarration(plan.scenes, plan.language);
   if (!spokenNarration) throw new SocialContentWorkflowError('social_content_director_plan_script_invalid', 503);
   const payload: Omit<SocialDirectorContentHandoff, 'handoffHash'> = {
     directorPlanId: plan.directorPlanId,

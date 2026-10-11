@@ -118,3 +118,9 @@ test('Seedream interrupted artifact body preserves provider ID and blocks paid r
   assert.equal(reservation.entry.status, 'uncertain');
   assert.equal(calls, 2);
 });
+
+test('trusted paid boundary receives exact prepared model/images and rejection prevents transport',async()=>{
+ let posts=0;const input=request();
+ const generator=new SeedreamFirstFrameGenerator({apiKey:'controlled',model:'seedream-test',beforeSubmit:async body=>{assert.equal(body.model,'seedream-test');assert.equal((body.image as string[]).length,2);assert.equal(body.prompt,input.prompt);throw Error('canonical_permit_denied');},transport:async()=>{posts++;throw Error('must not submit');}});
+ await assert.rejects(generator.generate(input),/canonical_permit_denied/);assert.equal(posts,0);
+});

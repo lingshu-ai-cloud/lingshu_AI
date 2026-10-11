@@ -10,7 +10,7 @@ import {generateSeedanceConceptVideo} from '../lib/generativeVideoGateway.js';
 import {runVisualFfmpeg} from '../lib/renderVisualQuality.js';
 import {socialRequestHash} from './socialContentValidation.js';
 import {firstFrameInputFingerprint} from '../lib/firstFrameGenerator.js';
-import {createEnvironmentProductReplacementPorts, productReplacementOperationFingerprint, type ProductReplacementEnvironmentContext} from './socialContentProductReplacementEnvironment.js';
+import {createEnvironmentProductReplacementPorts, productReplacementOperationFingerprint, readProductReplacementRequestBounds, type ProductReplacementEnvironmentContext} from './socialContentProductReplacementEnvironment.js';
 import {createEnvironmentSeedanceProductScenePorts} from './socialContentSeedanceProductScene.js';
 import type {MvpBudgetRecord} from '../lib/mvpBudgetAdmission.js';
 const sha = (x: Buffer | string) => createHash('sha256').update(x).digest('hex');
@@ -264,4 +264,29 @@ test('authored default environment accepts owned KB with structural-only referen
   assert.equal(products[0]!.sha256, sha(f.product));
   assert.equal(f.downloads(), 1);
   await ports.assertCurrent();
+  const bounds=await readProductReplacementRequestBounds(input,f.context);
+  assert.equal(bounds.firstFrameMaximumFrames,2);assert.equal(bounds.videoMaximumFrames,5);
+  assert.deepEqual(bounds.productSha256s,[sha(f.product)]);assert.equal(bounds.providerDurationSeconds,4);
+  assert.equal(fs.existsSync(f.context.budgetRoot!),false);
+});
+
+test('whole preallocated four-stage context executes canonical authored pipeline with no MVP quote or duplicate reservation, then replays after cleanup',async()=>{
+  const f=await fixture(false);
+  const routing={...f.input.materialRouting,generation:{...f.input.materialRouting.generation,method:'enterprise_authored_product_first_frame_i2v' as const,firstFrameOrigin:'enterprise_authored_storyboard' as const}};
+  Object.assign(f.task.replication_script.shots[0]!.materialPlan,{materialRouting:routing});
+  const input={...f.input,materialRouting:routing};
+  const {paidProductionHash}=await import('./socialContentPaidOperationPlan.js');
+  const scope={tenantId:'tenant',taskId:'task',runId:'run',planHash:'a'.repeat(64)};
+  const stages=['first_frame','first_frame_qa','video','video_qa'] as const;
+  const models={first_frame:process.env.SEEDREAM_IMAGE_MODEL||'doubao-seedream-5-0-pro-260628',first_frame_qa:'qwen3-vl-plus',video:process.env.SEEDANCE_MODEL||'doubao-seedance-2-0-fast-260128',video_qa:'qwen3-vl-plus'};
+  const requirements=stages.map(stage=>({key:`scene:S04:${stage}`,stage,shotId:'S04',sourceRef:null,durationSeconds:stage==='video'?3:null,text:null,frameCount:stage.endsWith('_qa')?5:null,inputContractHash:'b'.repeat(64)}));
+  const routes: Record<string,import('./socialContentPaidOperationPlan.js').BoundPaidRoute>=Object.fromEntries(requirements.map(r=>[r.key,{provider:r.stage.endsWith('_qa')?'qwen':r.stage==='video'?'seedance':'seedream',model:models[r.stage as keyof typeof models],accountRef:'fixture-provider-account',routeEvidenceRef:'canonical-fixture-route',usageBoundRef:'request-enforced-fixture',maximumAttempts:1,maximumUnits:r.stage.endsWith('_qa')?{frames:5,inputTokens:32000,outputTokens:4096}:r.stage==='video'?{providerSeconds:4,requests:1}:{images:2,requests:1} as Record<string,number>}]));
+  const intents=requirements.map(r=>{const route=routes[r.key]!;return {operationId:'paid-plan:'+paidProductionHash({scope,key:r.key,attempt:0}),provider:route.provider,model:route.model,accountRef:route.accountRef,stage:r.stage,shotId:'S04',inputContractHash:paidProductionHash({requirement:r,route,attempt:0}),maximumUnits:route.maximumUnits};});
+  const claims=new Map<string,unknown>();let supplierCalls=0;let recoveries=0;
+  f.context.paidContext={scope,requirements,routeBindings:routes,intents,readReservedCny:id=>{assert.ok(intents.some(i=>i.operationId===id));return .2;},assertRecovery:async id=>{assert.ok(claims.has(id));recoveries++;},permit:{beforeSubmit:async body=>{assert.equal(claims.has(body.operationId),false);claims.set(body.operationId,body);return {operationId:body.operationId,fingerprint:'fixture-preallocated'};},markOutcome:async id=>{assert.ok(claims.has(id));},assertRecovery:async()=>{throw Error('unused');}},assertProviderBinding:async route=>{assert.equal(route.accountRef,'fixture-provider-account');},measureInputTokens:async()=>100};
+  f.context.prepareFrame=(async(args,ports)=>{supplierCalls++;const fp=firstFrameInputFingerprint(args.request,'seedream',models.first_frame);await ports.reserveQa(fp);await ports.reserve(fp);await args.beforeFrameSubmit!({model:models.first_frame,image:args.request.references.map(r=>'data:image/png;base64,'+r.bytes.toString('base64')),prompt:args.request.prompt});await args.beforeQaSubmit!({model:models.first_frame_qa,enable_thinking:false,max_tokens:4096,messages:[{content:[{type:'image_url'},{type:'image_url'}]}]});fs.mkdirSync(args.root,{recursive:true});const filePath=path.join(args.root,fp+'.png');fs.writeFileSync(filePath,f.product);fs.writeFileSync(path.join(args.root,fp+'.json'),JSON.stringify({fingerprint:fp,state:'evaluated',tenantId:'tenant',projectId:'task',shotId:'S04',model:models.first_frame,qaModel:models.first_frame_qa,providerRequestId:'controlled-frame',outputSha256:sha(f.product),canProceedToVideo:true}));return {filePath,providerRequestId:'controlled-frame',model:models.first_frame,qaModel:models.first_frame_qa,canProceedToVideo:true};}) as typeof f.context.prepareFrame;
+  f.context.generateVideo=async args=>{supplierCalls++;await args.beforeSubmit!({model:models.video,duration:4,resolution:'720p',generate_audio:false,content:[{role:'first_frame',type:'image_url',image_url:{url:args.firstFrameDataUrl}}]});return {bytes:f.video,providerId:'seedance',providerTaskId:'controlled-video',model:models.video,duration:4,estimatedCostCny:.2};};
+  f.context.inspectVisual=async args=>{supplierCalls++;await args.paidSubmission!({model:models.video_qa,enable_thinking:false,max_tokens:4096,messages:[{content:[...(args.productReferences||[]),...(args.environmentReferences||[]),...args.frames].map(()=>({type:'image_url'}))}]});args.onReceipt?.({id:'controlled-QA'});return ['product_identity','environment_fidelity','layout_continuity','contact_continuity','action_order','end_state','visual_integrity'].map(key=>({key,verdict:'pass',note:'controlled fixture',evidenceFrames:args.frames.map(r=>r.timeLabel)}));};
+  const priorEnabled=process.env.SEEDANCE_VIDEO_ENABLED;process.env.SEEDANCE_VIDEO_ENABLED='true';
+  try{const factory=createEnvironmentSeedanceProductScenePorts({replacementEnvironment:f.context});const first=await factory.execute(input);assert.equal(first.status,'completed');assert.equal(claims.size,4);assert.equal(fs.existsSync(f.context.budgetRoot!),false,'no legacy MVP pool or fresh quote was created');fs.rmSync(input.outputDirectory,{recursive:true,force:true});fs.mkdirSync(input.outputDirectory);const again=await factory.execute(input);assert.equal(again.status,'completed');assert.equal(supplierCalls,3);assert.equal(claims.size,4);assert.equal(recoveries,4);}finally{if(priorEnabled===undefined)delete process.env.SEEDANCE_VIDEO_ENABLED;else process.env.SEEDANCE_VIDEO_ENABLED=priorEnabled;}
 });

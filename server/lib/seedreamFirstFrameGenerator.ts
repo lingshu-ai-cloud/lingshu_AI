@@ -37,7 +37,7 @@ export class SeedreamFirstFrameGenerator implements FirstFrameGenerator {
   readonly provider = 'seedream' as const;
   readonly model: string;
   readonly estimatedCostCny: number;
-  constructor(private readonly options: { apiKey?: string; baseUrl?: string; model?: string; estimatedCostCny?: number; timeoutMs?: number; transport?: typeof fetch } = {}) {
+  constructor(private readonly options: { apiKey?: string; baseUrl?: string; model?: string; estimatedCostCny?: number; timeoutMs?: number; transport?: typeof fetch; beforeSubmit?: (request: Record<string, unknown>) => Promise<void> } = {}) {
     this.model = options.model || process.env.SEEDREAM_IMAGE_MODEL || 'doubao-seedream-5-0-pro-260628';
     this.estimatedCostCny = options.estimatedCostCny ?? Number(process.env.SEEDREAM_FIRST_FRAME_ESTIMATED_CNY || 0.22);
   }
@@ -50,12 +50,13 @@ export class SeedreamFirstFrameGenerator implements FirstFrameGenerator {
     const base = String(this.options.baseUrl || process.env.SEEDREAM_BASE_URL || process.env.SEEDANCE_BASE_URL || 'https://ark.cn-beijing.volces.com/api/v3').replace(/\/+$/, '');
     const fetcher = this.options.transport || fetch;
     const timeoutMs = Math.max(30_000, this.options.timeoutMs ?? Number(process.env.SEEDREAM_TIMEOUT_MS || 300_000));
+    const request = { model: this.model, prompt: input.prompt.trim(), ...(input.references.length ? { image: input.references.map(dataUrl) } : {}), size: seedreamSize(input.ratio, this.model), response_format: 'url', output_format: 'jpeg', watermark: false };
+    await this.options.beforeSubmit?.(structuredClone(request));
     let response: Response;
     try {
       response = await fetcher(`${base}/images/generations`, { method: 'POST', headers: {
         Authorization: `Bearer ${apiKey}`, 'Content-Type': 'application/json', 'X-Client-Request-Id': input.idempotencyKey,
-      }, body: JSON.stringify({ model: this.model, prompt: input.prompt.trim(), ...(input.references.length ? { image: input.references.map(dataUrl) } : {}), size: seedreamSize(input.ratio, this.model),
-        response_format: 'url', output_format: 'jpeg', watermark: false }), signal: AbortSignal.timeout(timeoutMs), redirect: 'error' });
+      }, body: JSON.stringify(request), signal: AbortSignal.timeout(timeoutMs), redirect: 'error' });
     } catch (error) {
       throw new FirstFrameProviderError(`Seedream 请求状态未知：${transportFailure(error)}`, 'uncertain', input.idempotencyKey);
     }

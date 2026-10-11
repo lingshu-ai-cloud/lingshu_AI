@@ -102,6 +102,7 @@ export async function generateSeedanceConceptVideo(input: ConceptVideoInput & {
   firstFrameDataUrl?: string;
   referenceImageDataUrls?: string[];
   referenceVideoUrl?: string;
+  beforeSubmit?: (request: Record<string, unknown>) => Promise<void>;
   checkpointPath?: string;
 }): Promise<ConceptVideoResult> {
   if (!input.apiKey.trim()) throw new Error('Seedance 未配置方舟 API Key');
@@ -155,20 +156,14 @@ export async function generateSeedanceConceptVideo(input: ConceptVideoInput & {
         provider: 'seedance', requestId: input.idempotencyKey, state: 'submitting',
         metadata: { reservationId: budget.reservationId, reservedCny: budget.reservedCny, model: input.model },
       });
+      const request = {model: input.model, content, ratio: input.ratio, duration, resolution, generate_audio: false, watermark: false};
+      await input.beforeSubmit?.(structuredClone(request));
       let created: SeedanceTask;
       try {
         created = await jsonRequest(fetcher, `${baseUrl}/contents/generations/tasks`, input.apiKey, {
           method: 'POST',
           headers: { 'X-Client-Request-Id': input.idempotencyKey },
-          body: JSON.stringify({
-            model: input.model,
-            content,
-            ratio: input.ratio,
-            duration,
-            resolution,
-            generate_audio: false,
-            watermark: false,
-          }),
+          body: JSON.stringify(request),
           signal: AbortSignal.timeout(Math.min(input.timeoutMs, 180_000)),
         });
       } catch (error) {

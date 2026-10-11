@@ -1,4 +1,5 @@
 import {canonicalMaterialAspectRatio,type VerifiedMaterialObservation} from '../lib/weeklyAutomaticMaterialProducer.js';
+import type {MaterialAnalysisPaidContext} from './materialAnalysisPaidOperation.js';
 import { analyzeMaterialFramesWithQwen, verifyMaterialFramesWithQwen } from '../agents/qwen.js';
 import { extractQwenAnalysisFrames } from '../routes/videos.js';
 import { normalizeMaterialObservations } from '../lib/materialObservation.js';
@@ -88,7 +89,7 @@ export async function readMaterialBytes(body: AsyncIterable<Uint8Array>, options
   }
 }
 /** Called for one asset per worker tick. No display-name facts enter the vision prompt. */
-export async function analyzeProductionMaterial(asset: AssetCandidate, tenantId: string, allowReview = false): Promise<MaterialAnalysis> {
+export async function analyzeProductionMaterial(asset: AssetCandidate, tenantId: string, allowReview = false, paidOperationContext?: MaterialAnalysisPaidContext): Promise<MaterialAnalysis> {
   let bytes: Buffer;
   if (asset.localPath) {
     if (fs.statSync(asset.localPath).size > MAX_BYTES) throw Error('production_input_required:素材超过110MB上传限制，请先拆分文件');
@@ -108,11 +109,20 @@ export async function analyzeProductionMaterial(asset: AssetCandidate, tenantId:
   if (!bytes.length || bytes.length > MAX_BYTES) throw Error('production_input_required:素材为空或超过110MB上传限制，请先拆分文件');
   const revision = materialRevision(asset);
   const digest=crypto.createHash('sha256').update(bytes).digest('hex');
+  if(paidOperationContext&&(process.env.VIDEO_ANALYSIS_PROVIDER||'qwen').trim().toLowerCase()!=='qwen')throw Error('material_paid_gemini_request_guard_missing');
+  const paid = async(stage:'material_image_analysis'|'material_video_analysis'|'material_video_review',batchIndex:number,model:string)=>{
+    if(!paidOperationContext)return undefined;
+    const call=await paidOperationContext.forRequest({assetId:asset.id,sourceSha256:digest,stage,batchIndex,provider:'qwen',model});
+    const requirementKey=stage==='material_image_analysis'?`asset:${asset.id}:image`:`asset:${asset.id}:${batchIndex}:${stage==='material_video_analysis'?'analysis':'review'}`;
+    if(call.requirementKey!==requirementKey||call.intent.stage!==stage||call.intent.model!==model||call.intent.provider!=='qwen')throw Error('material_paid_frozen_operation_changed');
+    return call;
+  };
   const visualModel=(process.env.VIDEO_ANALYSIS_PROVIDER||'qwen').toLowerCase() === 'qwen'?'qwen_visual_material_review':'gemini_visual_material_review';
   if (asset.type === 'image') {
     const mimeType = /\.png$/i.test(asset.localPath || asset.name) ? 'image/png' : /\.webp$/i.test(asset.localPath || asset.name) ? 'image/webp' : 'image/jpeg';
     const analyze = (process.env.VIDEO_ANALYSIS_PROVIDER || 'qwen').toLowerCase() === 'qwen' ? analyzeImagePostEvidenceWithQwen : analyzeImagePostEvidenceWithGemini;
-    const result = await analyze({ images: [{ base64: bytes.toString('base64'), mimeType, imageIndex: 1 }] });
+    const result = await analyze({ images: [{ base64: bytes.toString('base64'), mimeType, imageIndex: 1 }],
+      paidOperation:await paid('material_image_analysis',0,(process.env.QWEN_VL_MODEL??'qwen-vl-max').trim()) });
     const observations = result.observedFacts
       .filter(fact => Number(fact.confidence) >= .65)
       .flatMap(fact => [
@@ -150,13 +160,14 @@ export async function analyzeProductionMaterial(asset: AssetCandidate, tenantId:
       const frames = await extractQwenAnalysisFrames(proxy, frameBudget, resolved.duration);
       const batches = materialFrameBatches(frames, resolved.duration);
       const reviewedSegments: Array<Record<string, unknown>> = [];
-      for (const batch of batches) {
+      for (const [batchIndex,batch] of batches.entries()) {
+        const model=(process.env.QWEN_MATERIAL_VL_MODEL||(process.env.QWEN_EXACT_VL_MODEL??'qwen3-vl-flash')).trim();
         const draftRaw = await analyzeMaterialFramesWithQwen({ frames: batch.frames, duration: resolved.duration,
-          windowStart: batch.start, windowEnd: batch.end });
+          windowStart: batch.start, windowEnd: batch.end,paidOperation:await paid('material_video_analysis',batchIndex,model) });
         const draft = boundMaterialAnalysisToWindow(draftRaw, batch.start, batch.end);
         normalizeMaterialObservations(asset.id, resolved.duration, draft);
         const reviewedRaw = await verifyMaterialFramesWithQwen({ frames: batch.frames, duration: resolved.duration, draft,
-          windowStart: batch.start, windowEnd: batch.end });
+          windowStart: batch.start, windowEnd: batch.end,paidOperation:await paid('material_video_review',batchIndex,model) });
         const reviewed = boundMaterialAnalysisToWindow(reviewedRaw, batch.start, batch.end);
         reviewedSegments.push(...normalizeMaterialObservations(asset.id, resolved.duration, reviewed));
       }

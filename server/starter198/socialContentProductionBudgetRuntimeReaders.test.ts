@@ -1,0 +1,46 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+import { createHash } from 'node:crypto';
+import { createProductionBudgetRuntimeReaders } from './socialContentProductionBudgetRuntimeReaders.js';
+import type { StoredSocialScriptBaseline } from './socialContentScriptBaseline.js';
+import type { SocialProductionAsset } from './socialContentProductionPlan.js';
+import type { InternalSocialContentFormula } from './socialContentThemes.js';
+import { runVisualFfmpeg } from '../lib/renderVisualQuality.js';
+const baseline = { themeId: 'product_value', formulaReference: null, language: 'en', scenes: [{ voiceover: 'Meet GUIANFA.', narration: 'Meet GUIANFA.' }, { voiceover: 'DM us.', narration: 'DM us.' }] } as StoredSocialScriptBaseline;
+test('real Studio sentence splitting and shared frozen direction determine clone/fallback/ASR', async () => {
+    const native = await createProductionBudgetRuntimeReaders({ env: { MINIMAX_API_KEY: 'fixture-only', TTS_REQUIRE_MINIMAX: 'true', TTS_ASR_QA_ENABLED: 'false' } }).readVoicePlan!(baseline);
+    assert.equal(native?.mode, 'continuous');
+    assert.equal(native?.requiresClone, false);
+    assert.equal(native?.allowFallback, false);
+    assert.equal(native?.requiresAsr, false);
+    assert.deepEqual(native?.lines, ['Meet GUIANFA.', 'DM us.']);
+    const formula = { formulaId: 'f', version: '1', direction: { voiceover: { voice: 'custom:owned' } } } as InternalSocialContentFormula;
+    const custom = await createProductionBudgetRuntimeReaders({ formula, env: { DASHSCOPE_API_KEY: 'fixture-only' } }).readVoicePlan!({ ...baseline, formulaReference: { formulaId: 'f', version: '1' } });
+    assert.equal(custom?.requiresClone, true);
+    assert.equal(custom?.allowFallback, true);
+    assert.equal(custom?.requiresAsr, true);
+    assert.equal(await createProductionBudgetRuntimeReaders({ formula }).readVoicePlan!({ ...baseline, formulaReference: { formulaId: 'f', version: '2' } }), null);
+});
+test('strategy name does not fabricate a free execution receipt', async () => {
+    assert.equal(await createProductionBudgetRuntimeReaders().readVerifiedLocalExecution!({} as never), null);
+});
+test('actual offline proxy extraction counts batches and rejects changed source bytes', async () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'budget-reader-test-'));
+    try {
+        const file = path.join(dir, 'owned.mp4');
+        const made = await runVisualFfmpeg(['-f', 'lavfi', '-i', 'testsrc2=size=160x240:rate=6', '-t', '1', '-c:v', 'libx264', '-y', file], false, { timeoutMs: 30000 });
+        assert.equal(made.ok, true);
+        const sha = createHash('sha256').update(fs.readFileSync(file)).digest('hex');
+        const asset = { id: 'owned', type: 'video', localPath: file, contentHash: sha } as SocialProductionAsset;
+        const frames = await createProductionBudgetRuntimeReaders({ env: {} }).readAnalysisFrames!(asset);
+        assert.ok(frames && frames.frameCount > 0);
+        assert.equal(frames.batchFrameCounts.reduce((a, b) => a + b, 0), frames.frameCount);
+        await assert.rejects(createProductionBudgetRuntimeReaders().readAnalysisFrames!({ ...asset, contentHash: '0'.repeat(64) }), /source_changed/);
+    }
+    finally {
+        fs.rmSync(dir, { recursive: true, force: true });
+    }
+});

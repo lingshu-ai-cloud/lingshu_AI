@@ -7,8 +7,8 @@ import {inspectStoryboardTechnicalFrames} from './storyboardAigcQuality.js';
 import {inspectStoryboardAigcFramesWithQwen} from '../agents/qwen.js';
 /** Trusted internal generation stage. Every irreversible boundary has durable local
  * evidence; an unknown Seedream submission may only be reconciled, never re-POSTed. */
-export async function prepareTrustedStoryboardSeedream(input:{request:FirstFrameRequest;model:string;estimatedCostCny:number;root:string;productInfo:string;execute:boolean;qaModel?:string},ports:{assertCurrent:()=>Promise<void>;reserve:(fingerprint:string)=>Promise<void>;reserveQa:(fingerprint:string)=>Promise<void>}){
-const generator=new SeedreamFirstFrameGenerator({model:input.model,estimatedCostCny:input.estimatedCostCny});
+export async function prepareTrustedStoryboardSeedream(input:{request:FirstFrameRequest;model:string;estimatedCostCny:number;root:string;productInfo:string;execute:boolean;qaModel?:string;beforeFrameSubmit?:(request:Record<string,unknown>)=>Promise<void>;beforeQaSubmit?:(request:Record<string,unknown>)=>Promise<void>},ports:{assertCurrent:()=>Promise<void>;reserve:(fingerprint:string)=>Promise<void>;reserveQa:(fingerprint:string)=>Promise<void>}){
+const generator=new SeedreamFirstFrameGenerator({model:input.model,estimatedCostCny:input.estimatedCostCny,beforeSubmit:input.beforeFrameSubmit});
 const fingerprint=firstFrameInputFingerprint(input.request,generator.provider,generator.model);
 if(!input.execute)return{dryRun:true,fingerprint,model:generator.model,estimatedCostCny:input.estimatedCostCny};
 fs.mkdirSync(input.root,{recursive:true,mode:0o700});
@@ -26,7 +26,7 @@ return withPaidOperationLock(path.join(input.root,'.locks'),fingerprint,async()=
  write({...prior,fingerprint,state:'qa_prepared',model:generator.model,providerRequestId,outputSha256:createHash('sha256').update(bytes).digest('hex')});
  let qaReceipt:unknown=null;
  const quality=await evaluateStoryboardFirstFrameQuality({sceneType:'product',hasProduct:true,hasNamedPerson:false,hasContact:true,hasAction:true,candidateLabels:['候选首帧'],referenceLabels:refs.map(x=>x.timeLabel),applyReplicationAutomation:true,
-  inspectTechnical:()=>inspectStoryboardTechnicalFrames('first_frame',[{bytes,timeLabel:'候选首帧'}]),inspectVisual:()=>inspectStoryboardAigcFramesWithQwen({model:input.qaModel||process.env.QWEN_VL_MODEL,boundedPaidQa:true,onReceipt:r=>{qaReceipt=r;fs.writeFileSync(`${file}.qa-provider.json`,JSON.stringify(r),{mode:0o600});},phase:'first_frame',sceneType:'product',frames:[{base64:bytes.toString('base64'),mimeType:'image/png',timeLabel:'候选首帧'}],productReferences:refs,storyboard:input.request.prompt,productInfo:input.productInfo})});
+  inspectTechnical:()=>inspectStoryboardTechnicalFrames('first_frame',[{bytes,timeLabel:'候选首帧'}]),inspectVisual:()=>inspectStoryboardAigcFramesWithQwen({model:input.qaModel||process.env.QWEN_VL_MODEL,boundedPaidQa:true,paidSubmission:input.beforeQaSubmit,onReceipt:r=>{qaReceipt=r;fs.writeFileSync(`${file}.qa-provider.json`,JSON.stringify(r),{mode:0o600});},phase:'first_frame',sceneType:'product',frames:[{base64:bytes.toString('base64'),mimeType:'image/png',timeLabel:'候选首帧'}],productReferences:refs,storyboard:input.request.prompt,productInfo:input.productInfo})});
  const result={tenantId:input.request.tenantId,projectId:input.request.videoId,shotId:input.request.compositionId,sourceHashes:input.request.references.map(x=>x.sha256),fingerprint,state:'evaluated',model:generator.model,providerRequestId,outputSha256:createHash('sha256').update(bytes).digest('hex'),filePath:image,quality,canProceedToVideo:quality.canProceedToVideo,humanApproved:false,qaModel:input.qaModel||process.env.QWEN_VL_MODEL,qaProviderReceiptRef:`${file}.qa-provider.json`,qaReceipt};write(result);return result;
 });
 }

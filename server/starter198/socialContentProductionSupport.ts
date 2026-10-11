@@ -457,6 +457,7 @@ export function existingAssetSupplyAdapters(): SocialAssetSupplyProviderAdapter[
 export async function analyzeProductionAssets(input: {
   tenantId: string;
   assets: ProductionAsset[];
+  paidOperationContext?: import('../digitalEmployees/materialAnalysisPaidOperation.js').MaterialAnalysisPaidContext;
 }): Promise<{ assets: ProductionAsset[]; failures: Array<{ assetId: string; assetName: string; reason: string }> }> {
   const assets: ProductionAsset[] = [];
   const failures: Array<{ assetId: string; assetName: string; reason: string }> = [];
@@ -491,7 +492,7 @@ export async function analyzeProductionAssets(input: {
         synthetic: false,
         tags: [],
         source: 'tenant_material',
-      }, input.tenantId);
+      }, input.tenantId,false,input.paidOperationContext);
       const scriptAnalysis = buildMaterialScriptAnalysis({
         materialId: asset.id, name: asset.name, sourceRevision: analyzed.revision,
         duration: analyzed.duration, segments: analyzed.segments, visualObservations: analyzed.observations,

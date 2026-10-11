@@ -1,3 +1,4 @@
+import { prepareSocialContentProductionBudget, type ProductionBudgetReadPorts } from './socialContentProductionBudgetPreflight.js';
 import { socialProductionSupplyAdapters } from './socialContentRecoveryAdapters.js';
 import {
   assertCurrentContentExecutionActive,
@@ -14,6 +15,11 @@ import {freezeWeeklyPreSupplyHandoff,pauseWeeklyPreSupplyStage,readWeeklyPreSupp
 import { persistSocialProductionWorkspace } from './socialContentProductionWorkspace.js';
 import {persistInitialSocialSceneCache,initialSceneCacheInputFingerprint,initialSceneSourceHashes,type InitialSceneQualityReport} from './socialContentInitialSceneCache.js';
 import {buildSocialProductionHandoff} from './socialContentProductionHandoff.js';
+import { createProductionBudgetRuntimeReaders } from './socialContentProductionBudgetRuntimeReaders.js';
+import { createSocialContentMaterialPaidContext, type SocialMaterialPaidRuntimePorts } from './socialContentMaterialPaidContext.js';
+import { socialContentMaterialAnalysisInputs } from './socialContentMaterialAnalysisInputs.js';
+import { createProductionBudgetRouteReaders } from './socialContentProductionBudgetRoutes.js';
+import type { ProductPaidContext } from './socialContentProductPaidContext.js';
 import {assertStoredWeeklyProductionCoverage} from '../runtime/weeklyProductionCoverageAdmission.js';
 import {readWeeklyTemplateStructure} from '../socialPrograms/weeklyTemplateStructure.js';
 import {contentTemplateOutputMatches} from '../../shared/socialContentTemplateStructure.js';
@@ -91,6 +97,9 @@ const { composite } = require('../../desktop/render.cjs') as { composite: (manif
 import { MEDIA_ROOT, type ProductionAsset, type SocialProductionBaseline, type SocialProductionAdaptation, type SocialReviewRevisionDirective, automaticSocialMaterialEligible, detectDistinctTaskVideoSegments, hasExactTaskProductAssociation, resolveTaskProductionMaterialLocation, taskProductionAssets, systemThemeGraphicAssets, applyZeroAssetTruthSafeNarration, socialReviewRevisionDirective, applySocialReviewRevision, createVideoCover } from './socialContentAutoProduction.js';
 import { AUTO_SCHEMA, analyzeProductionAssets, existingAssetSupplyAdapters, finishExecution, productionAdaptation, resolveLockedBgm, selectDirectorBgm, writeExecutionStage } from './socialContentAutoProduction.js';
 export interface SocialContentAutoProductionRuntime {
+  productionBudgetReadPorts?: ProductionBudgetReadPorts;
+  materialPaidRuntimePorts?: SocialMaterialPaidRuntimePorts;
+  productPaidRuntimePorts?: Pick<ProductPaidContext, 'assertProviderBinding' | 'measureInputTokens' | 'measureVideoOutputTokens'>;
   loadProductionAssets?: typeof taskProductionAssets;
   analyzeAssets?: typeof analyzeProductionAssets;
   selectDirectorBgm?: typeof selectDirectorBgm;
@@ -697,23 +706,53 @@ export async function runSocialContentAutoProduction(input: {
 	  const reviewedSupplyPlan = detail.assetSupplyPlan
 	    ? assetSupplyPlanWithExecutionSelections(detail.assetSupplyPlan, agentWorkflow)
 	    : null;
-	  const requiredAssetRefs = new Set(reviewedSupplyPlan?.shots.flatMap(shot => shot.sourceRefs) ?? []);
-	  const needsProductImage = reviewedSupplyPlan?.shots.some(shot => shot.sourceStrategy === 'customer_product_image_animation') ?? false;
 	  // Analyze only assets that the reviewed execution can consume. Scanning an
 	  // unrelated tenant video can add minutes, provider cost, and make a bad
 	  // legacy timeline block a production that never selected that material.
-	  const productionAssetsToAnalyze = reviewedSupplyPlan ? rawAssets.filter(asset =>
-	    requiredAssetRefs.has(asset.id) || requiredAssetRefs.has(asset.sourceId)
-	      || (needsProductImage && asset.type === 'image')) : rawAssets;
+	  const materialInputs = socialContentMaterialAnalysisInputs({assets: rawAssets, plan: reviewedSupplyPlan,
+      policyVersion: detail.brief.materialRoutingPolicyVersion});
+	  const productionAssetsToAnalyze = materialInputs.analyze;
+	  const budgetRoutes = createProductionBudgetRouteReaders();
+	  const productionBudget = await prepareSocialContentProductionBudget({repository:input.repository,tenantId:input.tenantId,taskId:input.taskId,runId:input.runId,baseline:activeBaseline,assets:productionAssetsToAnalyze,supplyPlan:reviewedSupplyPlan,graphApprovedContext:input.graphApprovedContext,recoveryOnly:input.assetSupplyRecoveryOnly,ports:{...createProductionBudgetRuntimeReaders({formula:directorFormula}),...budgetRoutes,...input.runtime?.productionBudgetReadPorts}});
+	  const materialPaidContext = productionBudget.status === 'reserved'
+      && productionBudget.reserved.intents.some(operation => operation.stage.startsWith('material_'))
+      ? (() => {
+          if (!input.runtime?.materialPaidRuntimePorts) throw Error('whole_film_budget_material_runtime_ports_missing');
+          return createSocialContentMaterialPaidContext({scope: productionBudget.scope,
+            requirements: productionBudget.requirements, intents: productionBudget.reserved.intents,
+            permit: productionBudget.paidPermit, ports: input.runtime.materialPaidRuntimePorts});
+        })() : undefined;
+	  const productPaidContext: ProductPaidContext | undefined = productionBudget.status === 'reserved'
+      && productionBudget.reserved.intents.some(operation => ['first_frame', 'first_frame_qa', 'video', 'video_qa'].includes(operation.stage))
+      ? (() => {
+          const ports = input.runtime?.productPaidRuntimePorts;
+          if (!ports) throw Error('whole_film_budget_product_runtime_ports_missing');
+          const video = productionBudget.reserved.intents.filter(operation => operation.stage === 'video');
+          if (video.some(operation => 'outputTokens' in operation.maximumUnits) && !ports.measureVideoOutputTokens) {
+            throw Error('whole_film_budget_video_usage_reader_missing');
+          }
+          return {scope: productionBudget.scope, requirements: productionBudget.requirements,
+            routeBindings: productionBudget.routeBindings, intents: productionBudget.reserved.intents,
+            permit: productionBudget.paidPermit, ...ports,
+            readReservedCny(operationId) {
+              const entry = productionBudget.reserved.ledger.status(productionBudget.scope)?.entries.find(row =>
+                row.operationId === operationId && row.runId === productionBudget.scope.runId
+                && row.planHash === productionBudget.scope.planHash && row.status !== 'rejected');
+              if (!entry) throw Error('whole_film_budget_product_reservation_missing');
+              return entry.reservedMicros / 1e6;
+            },
+            async assertRecovery(operationId) {await productionBudget.paidPermit.assertRecovery(operationId);},
+          };
+        })() : undefined;
 	  const analyzed = await analyzeSocialProductionAssetsWithCheckpoint({
       tenantId: input.tenantId,
       assets: productionAssetsToAnalyze,
-      analyze: input.runtime?.analyzeAssets ?? (input.assetSupplyRecoveryOnly ? async value => {
+      analyze: value => (input.runtime?.analyzeAssets ?? (input.assetSupplyRecoveryOnly ? async value => {
         if (value.assets.some(asset => !asset.visualObservations.length && !asset.segments.length)) throw new Error('user_input_required:canonical_material_analysis_missing_no_paid_fallback');
         return { assets: value.assets, failures: [] };
-      } : analyzeProductionAssets),
+      } : analyzeProductionAssets))({...value, paidOperationContext: materialPaidContext}),
     });
-	  let assets = analyzed.assets;
+	  let assets = [...analyzed.assets, ...materialInputs.productReferences];
 	  let assetSupplyExecution: SocialAssetSupplyExecution | null = null;
       let executedSupplyPlan:SocialAssetSupplyPlan|null=null;
 	  if (detail.assetSupplyPlan) {
@@ -774,6 +813,7 @@ export async function runSocialContentAutoProduction(input: {
             paid: () => [createSocialProductSceneAdapter(createEnvironmentSeedanceProductScenePorts({
               maximumCostCny: detail.brief.materialRoutingPolicyVersion === 'type-aware.v1' ? Math.min(10, detail.brief.perItemBudgetCny ?? 10) : undefined,
               replacementEnvironment: {
+                paidContext: productPaidContext,
                 dataStore: input.repository.dataStore,
                 materials: input.repository.materialLibrary,
                 assertCurrent: async () => {

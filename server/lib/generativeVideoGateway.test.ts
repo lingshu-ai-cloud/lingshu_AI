@@ -111,3 +111,9 @@ test('Veo concept gateway consumes only a controlled worker output file', async 
   assert.equal(result.providerTaskId, 'operation-1');
   assert.equal(result.bytes.toString(), 'veo-video');
 });
+
+test('trusted paid boundary measures actual normalized four-second I2V request and blocks new POST',async()=>{
+ let posts=0;
+ await assert.rejects(generateSeedanceConceptVideo({tenantId:'tenant',prompt:'frozen shot',durationSeconds:3,ratio:'9:16',idempotencyKey:'controlled-blocked',timeoutMs:1000,apiKey:'controlled',model:'controlled-model',firstFrameDataUrl:'data:image/png;base64,aGVsbG8=',beforeSubmit:async body=>{assert.equal(body.duration,4);assert.equal(body.generate_audio,false);assert.ok((body.content as any[]).some(i=>i.role==='first_frame'));throw Error('canonical_permit_denied');},transport:async()=>{posts++;throw Error('must not submit');},reserveBudget:()=>({ok:true,reservationId:'fixture-reservation',reservedCny:1,limitCny:10,usedCny:1,remainingCny:9}),releaseBudget:()=>{} }),/canonical_permit_denied/);
+ assert.equal(posts,0);
+});

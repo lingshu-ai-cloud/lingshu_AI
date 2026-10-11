@@ -246,6 +246,11 @@ export function applyLockedTemplateDirection(direction: StoredSocialDirectorPlan
  const c=baseline.contentTemplateStructure;if(!c)return direction;if(!validContentTemplateStructure(c))throw new SocialContentWorkflowError('content_template_structure_invalid',409);return {...direction,pace:c.pace,voiceover:{...direction.voiceover,speed:c.voiceSpeed,pauseStyle:c.pauseStyle}};
 }
 
+/** The same direction selection used before budget admission and during render. */
+export function socialDirectorFrozenDirection(input: {baseline: StoredSocialScriptBaseline; formula?: InternalSocialContentFormula | null; duration: number}): StoredSocialDirectorPlan['direction'] {
+ return applyLockedTemplateDirection(directionFor({formula: input.formula, themeId: input.baseline.themeId, duration: input.duration}), input.baseline);
+}
+
 function directionFor(input: {
   formula?: InternalSocialContentFormula | null;
   themeId: SocialContentThemeId | null;
@@ -382,11 +387,7 @@ export function buildSocialDirectorPlan(input: {
   if (input.previous && input.previous.directorPlanId !== directorPlanId) {
     throw new SocialContentWorkflowError('social_content_director_plan_identity_invalid', 503);
   }
-  const direction = applyLockedTemplateDirection(directionFor({
-    formula: input.formula,
-    themeId: input.baseline.themeId,
-    duration: input.productionPlan.maxDuration,
-  }),input.baseline);
+  const direction = socialDirectorFrozenDirection({baseline: input.baseline, formula: input.formula, duration: input.productionPlan.maxDuration});
   if(input.baseline.accountPlaybookConstraints)assertSocialAccountProductionConstraints(input.baseline.accountPlaybookConstraints);
   const baselineById = new Map(input.baseline.scenes.map(scene => [scene.sceneId, scene]));
   const scenes = input.productionPlan.scenes.map((scene, index) => {
