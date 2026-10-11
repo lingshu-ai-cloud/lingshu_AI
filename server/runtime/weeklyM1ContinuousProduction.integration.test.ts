@@ -1,3 +1,4 @@
+import {controlledMessengerAccount} from '../messenger/controlledCapability.fixture.js';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {createWeeklyOperatingPackageService} from '../socialPrograms/weeklyOperatingPackages.js';
@@ -33,7 +34,7 @@ test('M1 continuous new week capacity activation production audits approval and 
  const {sealAccountCredential}=await import('../lib/accountCredentials.js');
  const {refreshPlatformCapabilityEvidence}=await import('../publishing/platformCapabilities.js');
  const {savePublicationReceptionBinding}=await import('../socialPrograms/publicationReceptionService.js');
- f.tables.social_accounts=[{id:'account',tenantId:'t',platform:'tiktok',status:'connected',providerAccountId:'m1-controlled-account',scope:'video.publish',accessToken:sealAccountCredential('m1-controlled-token')},{id:'m1-sales',tenantId:'t',platform:'facebook',status:'connected',providerAccountId:'m1-controlled-sales',messengerSubscribed:true,accessToken:sealAccountCredential('m1-controlled-sales-token')}];
+ f.tables.social_accounts=[{id:'account',tenantId:'t',platform:'tiktok',status:'connected',providerAccountId:'m1-controlled-account',scope:'video.publish',accessToken:sealAccountCredential('m1-controlled-token')},controlledMessengerAccount({accountId:'m1-sales',tenantId:'t',pageId:'m1-controlled-sales'})];
  const owner=await f.store.getById<Record<string,unknown>>('users','owner');assert.ok(owner);await f.store.update('users','owner',{role:'admin',active:true,disabled:false});
  const pub=source.socialContentPackage.publicationTasks[0]!;
  const reception=await savePublicationReceptionBinding(f.store,{tenantId:'t',programId:'p',packageId:source.packageId,packageVersion:source.version+2,publicationId:pub.publicationTaskId,cta:pub.cta!,enterpriseFactHash:f.profile.factVersion!.contentHash,targets:[{id:'m1-sales',required:true,ownerId:'owner',destination:{kind:'messaging',channel:'messenger',receptionMode:'human'},requiredDocumentUrls:[]}]},'owner');
@@ -63,6 +64,7 @@ test('M1 continuous new week capacity activation production audits approval and 
  const originalFollowupWorker=process.env.FOLLOWUP_WORKER_ENABLED;process.env.FOLLOWUP_WORKER_ENABLED='true';t.after(()=>{if(originalFollowupWorker===undefined)delete process.env.FOLLOWUP_WORKER_ENABLED;else process.env.FOLLOWUP_WORKER_ENABLED=originalFollowupWorker;});
  const {encryptSecret}=await import('../lib/tenantPlatformApps.js');
  await f.store.create('tenant_platform_apps',{id:'m1-wa',tenant_id:'t',platform:'meta',status:'active',app_id:'m1-controlled-app',app_secret:encryptSecret('m1-controlled-signing-secret'),waba_id:'m1-controlled-waba',phone_number_id:'m1-controlled-phone',access_token:encryptSecret('m1-controlled-wa-token')});
+ const {whatsappAssetAuthorityHash}=await import('../whatsapp/assetAuthority.js');const whatsappApp=await f.store.getById<import('../lib/tenantPlatformApps.js').TenantPlatformAppRecord>('tenant_platform_apps','m1-wa');assert.ok(whatsappApp);await f.store.update('tenant_platform_apps','m1-wa',{last_checklist:JSON.stringify({whatsappAssetProof:{authorityHash:whatsappAssetAuthorityHash(whatsappApp),verifiedAt:new Date().toISOString()}})});
  await f.store.create('social_accounts',{id:'m1-instagram',tenantId:'t',platform:'instagram',status:'connected',providerAccountId:'m1-controlled-ig',oauthProvider:'instagram_login',scope:'instagram_business_manage_messages',instagramWebhookSubscribed:true,accessToken:sealAccountCredential('m1-controlled-ig-token')});
  await f.store.create('digital_employee_configs',{id:'m1-customer-config',tenant_id:'t',status:'active',config_version:100,config:{enabledWorkflows:['customer_segmentation','batch_followup'],allowRealCustomerMessages:true}});
  await f.store.create('weekly_goals',{id:'m1-customer-goal',tenant_id:'t',business_line:'customer_conversion',starts_at:pkg.weekStart+'T00:00:00Z',ends_at:pkg.weekEnd+'T23:59:59Z'});
@@ -144,6 +146,9 @@ test('M1 continuous new week capacity activation production audits approval and 
  const {createSocialWeeklyG6ReviewService}=await import('../starter198/socialWeeklyG6ReviewService.js');
  const g6=createSocialWeeklyG6ReviewService(repository),g6scope={...auditScope,programId:pkg.programId,packageId:pkg.packageId,packageVersion:pkg.version,publicationTaskId:material.publicationTaskId!};
  await refreshPlatformCapabilityEvidence({tenantId:'t',accountId:'account',platform:'tiktok',capability:'publishing.official',dataStore:f.store,providers:{async tiktok(){return{openId:'m1-controlled-account',publishGranted:true};},async youtube(){throw Error('unused');},async instagram(){throw Error('unused');},async facebook(){throw Error('unused');},async tiktokReceipt(){throw Error('unused');}}});
+ // Renew the controlled permission observation at the current simulated admission time.
+ f.tables.social_accounts=f.tables.social_accounts!.map(row=>row.id==='m1-sales'?controlledMessengerAccount({accountId:'m1-sales',tenantId:'t',pageId:'m1-controlled-sales'}):row);
+ const {assertMessengerCapabilityAuthority}=await import('../messenger/capabilityAuthority.js');assertMessengerCapabilityAuthority(f.tables.social_accounts.find(row=>row.id==='m1-sales')!);
  const preflight=await g6.context(g6scope,'owner');assert.deepEqual(preflight.gaps,[]);assert.ok(preflight.checks.every(check=>check.status==='passed'),JSON.stringify(preflight.checks));
  const checked=await g6.check(g6scope,'owner',{...g6scope,requestId:'m1-continuous-g6-review-0001',expectedContextHash:preflight.contextHash});assert.equal(checked.item?.status,'passed');
  const approvalTask=tasks.find(task=>task.schedule.stepKind==='user_approval');assert.ok(approvalTask);

@@ -3,10 +3,10 @@ import {prepareWeeklyControlledOriginalRunFixture} from '../runtime/weeklyContro
 import {ensureOriginalSocialContentProductionQueued} from './socialContentOriginalRunQueueRecovery.js';
 import {enqueueSocialContentAutoProduction} from './socialContentProductionQueue.js';
 
-test('missing independent reference person evidence leaves controlled preexisting owned run nonterminal without suppliers or replacement run',async t=>{
+test('missing canonical original identity plan leaves controlled preexisting owned run nonterminal without suppliers or replacement run',async t=>{
  const {f,created}=await prepareWeeklyControlledOriginalRunFixture(t);const input={repository:f.repository,tenantId:'t',userId:'owner',taskId:String(created.task_id),runId:String(created.run_id)};const run=f.tables.workflow_runs!.find(row=>row.id===input.runId)!;assert.equal(run.status,'running');const count=f.tables.workflow_runs!.length;
- const rejected=(error:unknown)=>error instanceof Error&&error.message==='reference_person_automatic_analysis_required:replication-reference-shot-1';
- await assert.rejects(enqueueSocialContentAutoProduction(input),{code:'weekly_material_contract_required'});assert.equal(run.status,'running','prerequisite gaps must not fail an execution that never entered the queue');
+ const rejected=(error:unknown)=>error instanceof Error&&error.message==='weekly_owned_product_identity_original_plan_missing';
+ await assert.rejects(enqueueSocialContentAutoProduction(input),{code:'weekly_owned_product_identity_original_plan_missing'});assert.equal(run.status,'running','prerequisite gaps must not fail an execution that never entered the queue');
  await assert.rejects(ensureOriginalSocialContentProductionQueued(input),rejected);assert.equal(run.status,'running');assert.equal(f.tables.workflow_runs!.length,count);assert.equal(created.run_id,input.runId);assert.equal(f.tables.content_execution_jobs?.length??0,0);assert.equal(f.tables.starter_usage_ledger?.length??0,0);
  const old=run.tenant_id;run.tenant_id='foreign';await assert.rejects(ensureOriginalSocialContentProductionQueued(input),{code:'weekly_original_run_queue_identity_invalid'});run.tenant_id=old;run.status='completed';await assert.rejects(ensureOriginalSocialContentProductionQueued(input),{code:'weekly_original_run_queue_identity_invalid'});
 });
