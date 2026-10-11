@@ -158,7 +158,10 @@ export async function prepareSocialContentProductionBudget(input: ProductionBudg
         if (!active || active.id !== job.id || ['cancelled', 'failed'].includes(active.status))
             return error('job_authority_changed');
     };
-    if (input.recoveryOnly) {
+    // Once this run has a frozen whole-film reservation, every later execution
+    // is recovery. Re-planning could append newly priced operations after local
+    // code or routing changes and spend beyond the user's original cap.
+    if (input.recoveryOnly || prior) {
         // Read-only recovery cannot obtain a new quote, reserve or reset task expenses.
         if (!prior || prior.inputHash !== planHash)
             return error('existing_whole_film_reservation_missing');
