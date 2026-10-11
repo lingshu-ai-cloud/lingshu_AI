@@ -105,6 +105,7 @@ import {
 } from './socialContentAccess.js';
 import { readSocialProductionState } from './socialContentProductionHandoff.js';
 import { refreshSocialTaskReferenceOutputs } from './socialContentTaskSupport.js';
+import { createSocialArtifactReevaluationService } from './socialContentArtifactReevaluation.js';
 
 type AccessLevel = 'read' | 'write' | 'start';
 
@@ -161,6 +162,7 @@ export function createSocialContentRouter(dependencies: SocialContentRouterDepen
   const backendFilePort = dependencies.backendFilePort;
   const socialTaskMaterialPort = dependencies.socialTaskMaterialPort;
   const weeklyRepairCases=repository.dataStore?createWeeklyProductionRepairCaseService(repository.dataStore,now):null;
+  const artifactReevaluation = createSocialArtifactReevaluationService({ repository, backendFilePort });
 
   router.use(requireAuth);
   if(repository.dataStore) router.use('/tasks/:taskId/runs/:runId/artifacts/:artifactId/weekly-quality-recovery',createWeeklyContentQualityRecoveryRouter(createWeeklyContentQualityRecoveryService(repository.dataStore)));
@@ -517,6 +519,27 @@ router.use('/tasks/:taskId/runs/:runId/artifacts/:artifactId/g6-reviews',createS
     res.setHeader('Content-Length', String(media.file.size));
     res.setHeader('Content-Disposition', `inline; filename*=UTF-8''${encodeURIComponent(media.file.name)}`);
     await pipeline(Readable.from(media.body), res);
+  }));
+
+  router.post('/tasks/:taskId/artifacts/:artifactId/reevaluate', asyncRoute(async (req, res) => {
+    const identity = await authorize(req, res, 'write');
+    bodyWithinLimit(req);
+    const source = socialObject(req.body);
+    if (!source || Object.keys(source).some(key => ![
+      'parentArtifactVersion', 'parentContentHash', 'expectedMediaSha256',
+    ].includes(key))) {
+      throw new SocialContentWorkflowError('social_artifact_reevaluation_request_invalid', 400);
+    }
+    const result = await artifactReevaluation.reevaluate({
+      ...identity,
+      taskId: requireSocialId(req.params.taskId),
+      parentArtifactId: requireSocialId(req.params.artifactId, 'social_artifact_id_invalid'),
+      parentArtifactVersion: socialText(source.parentArtifactVersion),
+      parentContentHash: socialText(source.parentContentHash),
+      expectedMediaSha256: socialText(source.expectedMediaSha256),
+      requestId: requireIdempotencyKey(req.headers['idempotency-key']),
+    });
+    res.status(result.replayed ? 200 : 201).json(result);
   }));
 
   router.post('/tasks/:taskId/sources', asyncRoute(async (req, res) => {
