@@ -426,6 +426,8 @@ export interface SocialInspirationScores {
 }
 
 export interface SocialReplicationScriptShot {
+  /** Authored copy/timing; not recovered reference ASR or a review decision. */
+  scriptOrigin?: 'independent_revision';
   shotId: string;
   referenceShotId: string | null;
   startSeconds: number;

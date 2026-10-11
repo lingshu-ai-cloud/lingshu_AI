@@ -20,6 +20,25 @@ export interface AuthorizedDigitalPresenter {
   authorized: true;
 }
 
+/** Resolved only by a server-owned receipt reader; never from a client body. */
+export interface VerifiedPresenterSpeechAudio {
+  tenantId: string; taskId: string; taskVersion: string; shotId: string;
+  presenterAssetId: string; presenterAssetVersion: number; providerAvatarId: string; voiceId: string;
+  scriptSha256: string; clipSha256: string; durationSeconds: number;
+  receiptRef: string; receiptHash: string; audioAssetId: string; engine: 'avatar_iv'; operationRole: 'hook';
+}
+
+export function assertPresenterSpeechAudio(request: Pick<DigitalPresenterExecutionRequest, 'tenantId' | 'taskId' | 'shotId' | 'script' | 'presenter'>, audio: VerifiedPresenterSpeechAudio): void {
+  if (!audio || audio.tenantId !== request.tenantId || audio.taskId !== request.taskId || audio.shotId !== request.shotId
+    || !audio.taskVersion || audio.presenterAssetId !== request.presenter.presenterAssetId
+    || audio.presenterAssetVersion !== request.presenter.assetVersion || audio.providerAvatarId !== request.presenter.providerPresenterId
+    || audio.voiceId !== request.presenter.providerVoiceId || audio.engine !== 'avatar_iv' || audio.operationRole !== 'hook'
+    || audio.scriptSha256 !== createHash('sha256').update(request.script).digest('hex')
+    || !/^[a-f0-9]{64}$/.test(audio.clipSha256) || !/^[a-f0-9]{64}$/.test(audio.receiptHash)
+    || !audio.receiptRef || !audio.audioAssetId || !Number.isFinite(audio.durationSeconds)
+    || audio.durationSeconds <= 0 || audio.durationSeconds > 4) throw new Error('digital_presenter_audio_scope_or_duration_invalid');
+}
+
 export interface DigitalPresenterExecutionRequest {
   accountPlaybookConstraints?:SocialAccountProductionConstraints;
   tenantId: string;
@@ -30,6 +49,7 @@ export interface DigitalPresenterExecutionRequest {
   script: string;
   /** Server-only recovery gate: never submit a new provider job. */
   recoveryOnly?: true;
+  speechAudio?: VerifiedPresenterSpeechAudio;
   aspectRatio: '9:16';
   outputDirectory: string;
   maximumCostCny: number;
@@ -115,6 +135,7 @@ export interface SocialDigitalPresenterBridgePorts {
     maximumCostCny: number;
   }): Promise<{ allowed: true; reservationRef: string } | { allowed: false; reason: string }>;
   execute(input: DigitalPresenterExecutionRequest & { reservationRef: string }): Promise<CompletedDigitalPresenterExecution | FailedDigitalPresenterExecution>;
+  resolveSpeechAudio?(input: DigitalPresenterExecutionRequest): Promise<VerifiedPresenterSpeechAudio>;
   recoverExisting?(input: DigitalPresenterExecutionRequest): Promise<CompletedDigitalPresenterExecution | FailedDigitalPresenterExecution | null>;
   reconcileBudget?(input: {
     reservationRef: string;
@@ -133,6 +154,7 @@ function stableKey(input: {
   presenter: AuthorizedDigitalPresenter;
   script: string;
   visualControl: DigitalPresenterVisualControl;
+  speechAudio?: VerifiedPresenterSpeechAudio;
 }) {
   return `social-presenter:${createHash('sha256').update(JSON.stringify({
     tenantId: input.tenantId,
@@ -149,6 +171,11 @@ function stableKey(input: {
     script: input.script,
     visualControl: input.visualControl,
     aspectRatio: '9:16',
+    ...(input.speechAudio ? { speechAudio: { tenantId: input.speechAudio.tenantId, taskId: input.speechAudio.taskId,
+      taskVersion: input.speechAudio.taskVersion, shotId: input.speechAudio.shotId, presenterAssetId: input.speechAudio.presenterAssetId,
+      presenterAssetVersion: input.speechAudio.presenterAssetVersion, providerAvatarId: input.speechAudio.providerAvatarId, voiceId: input.speechAudio.voiceId,
+      scriptSha256: input.speechAudio.scriptSha256, clipSha256: input.speechAudio.clipSha256, durationSeconds: input.speechAudio.durationSeconds,
+      receiptRef: input.speechAudio.receiptRef, receiptHash: input.speechAudio.receiptHash, engine: input.speechAudio.engine, operationRole: input.speechAudio.operationRole } } : {}),
   })).digest('hex')}`;
 }
 
@@ -335,7 +362,7 @@ export function createSocialDigitalPresenterAdapter(
       const legacyScript = String(context.baselineScene.script || context.baselineScene.caption || '').trim();
       const requestScript = script || legacyScript;
       if (!requestScript) throw new Error('digital_presenter_spoken_text_required');
-      const idempotencyKey = stableKey({ tenantId: context.tenantId, taskId: context.taskId,
+      let idempotencyKey = stableKey({ tenantId: context.tenantId, taskId: context.taskId,
         operationId: context.operationId,accountConstraintHash:context.accountPlaybookConstraints?.constraintHash, shotId: context.shot.shotId, presenter, script: requestScript, visualControl: control });
       const request: DigitalPresenterExecutionRequest = { tenantId: context.tenantId, taskId: context.taskId,
         shotId: context.shot.shotId, idempotencyKey, presenter, script: requestScript, aspectRatio: '9:16',
@@ -348,11 +375,26 @@ export function createSocialDigitalPresenterAdapter(
         if (!recovered) throw new Error('digital_presenter_spoken_text_required');
         execution = recovered;
       } else {
+        // Audio adoption must first recover an already accepted historical text
+        // request with its exact original key. A mode change never buys it twice.
+        const previous = ports.resolveSpeechAudio ? await ports.recoverExisting?.({ ...request, recoveryOnly: true }) : null;
+        if (previous) execution = previous;
+        else {
+          if (ports.resolveSpeechAudio) {
+            const audio = await ports.resolveSpeechAudio(request);
+            assertPresenterSpeechAudio(request, audio);
+            request.speechAudio = audio;
+            idempotencyKey = stableKey({ tenantId: request.tenantId, taskId: request.taskId, operationId: context.operationId,
+              accountConstraintHash: context.accountPlaybookConstraints?.constraintHash, shotId: request.shotId, presenter,
+              script, visualControl: control, speechAudio: audio });
+            request.idempotencyKey = idempotencyKey;
+          }
         const budget = await ports.authorizeBudget({ tenantId: context.tenantId, taskId: context.taskId,
           shotId: context.shot.shotId, idempotencyKey, providerId: presenter.providerId, maximumCostCny });
         if (!budget.allowed) throw new Error(`digital_presenter_budget_denied:${budget.reason}`);
         reservationRef = budget.reservationRef;
         execution = await ports.execute({ ...request, reservationRef });
+        }
       }
       if (execution.status !== 'completed') {
         throw new Error(`digital_presenter_not_completed:${execution.status}:${execution.providerTaskId || 'no_task'}:${execution.error}`);

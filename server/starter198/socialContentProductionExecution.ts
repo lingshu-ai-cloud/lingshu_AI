@@ -104,7 +104,7 @@ export interface SocialContentAutoProductionRuntime {
   backendFilePort?: SocialContentBackendFilePort;
 }
 type ProductionTaskDetail = NonNullable<Awaited<ReturnType<typeof readSocialTaskDetail>>>;
-export type SocialGraphApprovedContext = Pick<ProductionTaskDetail, 'version' | 'agentWorkflow' | 'assetSupplyPlan'>;
+export type SocialGraphApprovedContext = Pick<ProductionTaskDetail, 'version' | 'agentWorkflow' | 'assetSupplyPlan'> & { revisionPlanHash?: string };
 import { executeSocialRenderStage, executeSocialQualityStage, rebindSocialGraphRenderSources, type SocialProductionGraphPhase } from './socialContentProductionStages.js';
 
 export const SOCIAL_SHOOTING_PLAN_SCHEMA = 'social-content.shooting-plan.v1';
@@ -365,6 +365,7 @@ export async function runSocialContentAutoProduction(input: {
 }): Promise<void> {
   await assertWeeklyProductionMaterialAdmission(input,input.materialEvidencePorts?.materialPorts,input.materialEvidencePorts);
   const admissionRow=await requireSocialTask(input),admissionAuthority=socialObject(socialObject(socialJson(admissionRow.brief))?._weeklyAuthority);
+  if(socialObject(socialObject(socialJson(admissionRow.brief))?._productionRevision)&&socialText(admissionRow.run_id)!==input.runId)throw new SocialContentWorkflowError('social_revision_run_superseded',409);
   if(admissionAuthority||String(admissionRow.create_idempotency_key??'').startsWith('weekly-production:')){if(!admissionAuthority)throw new SocialContentWorkflowError('weekly_production_start_authority_invalid',409);if(!input.repository.dataStore)throw new SocialContentWorkflowError('weekly_production_planning_missing',409);const pkg=socialObject(admissionAuthority.weeklyPackage) as unknown as import('../../shared/contracts/socialProgram.js').WeeklyOperatingPackage,publication=socialObject(admissionAuthority.publicationTask);if(!pkg||!publication?.publicationTaskId)throw new SocialContentWorkflowError('weekly_production_start_authority_invalid',409);await assertStoredWeeklyProductionCoverage({store:input.repository.dataStore,tenantId:input.tenantId,package:pkg,publicationTaskId:String(publication.publicationTaskId),frozenPlanning:pkg.agentPlanning});}
   let detail = await readSocialTaskDetail(input);
   if (!detail) throw new Error('社媒内容任务不存在');
@@ -394,7 +395,8 @@ export async function runSocialContentAutoProduction(input: {
   const existing = detail.artifacts.find(artifact => artifact.origin === 'agent'
     && artifact.kind === targetArtifactKind
     && socialText(artifact.content?.workflowSchema) === targetWorkflowSchema
-    && !['superseded', 'changes_requested'].includes(artifact.status));
+    && !['superseded', 'changes_requested'].includes(artifact.status)
+    && (!input.graphPhase || socialObject(artifact.content?.productionWorkspaceSource)?.runId === input.runId));
   if (!revisionParent && existing) {
     if (input.graphPhase) return;
     if (productionApproach === 'shooting_plan') {
@@ -1478,7 +1480,7 @@ export async function runSocialContentAutoProduction(input: {
       platform: contentHandoff.outputSpec.platform,
       language: contentHandoff.outputSpec.language,
       origin: 'agent',
-      parentArtifactId: revisionParent?.artifactId,
+      parentArtifactId: (input.graphPhase && input.graphApprovedContext?.revisionPlanHash ? socialText(socialObject(socialObject(socialJson(taskRecord.brief))?._productionRevision)?.parentArtifactId) : '') || revisionParent?.artifactId,
       resourceRef: file.fileRef,
       content: {
         workflowSchema: AUTO_SCHEMA,

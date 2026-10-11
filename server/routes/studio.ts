@@ -2281,7 +2281,7 @@ studioRouter.post('/storyboard-first-frame', async (req, res) => {
   const frameMvpIdentity = firstFrameProject.spec?.mvpExecutionPackage?.identity || firstFrameProject.spec;
   try {
     await mvpBudgetAdmission.reserve({ scope: frameMvpScope, tenantId,
-      accountId: String(frameMvpIdentity.accountId || ''), productId: String(frameMvpIdentity.productId || ''), runId: String(frameMvpIdentity.runId || ''),
+      accountId: frameMvpIdentity.accountId === null ? null : String(frameMvpIdentity.accountId || ''), productId: String(frameMvpIdentity.productId || ''), runId: String(frameMvpIdentity.runId || ''),
       action: 'generate_media', taskId: String(frameMvpIdentity.taskId || ''), version: Number(frameMvpIdentity.version), session: 'B',
       provider: 'seedream', model: new SeedreamFirstFrameGenerator().model, shotId, estimatedCostCny: reservedFirstFrameCostCny,
       operationId: frameOperationId, fingerprint });
@@ -3222,7 +3222,7 @@ studioRouter.post('/seedance-video', async (req, res) => {
     }
     try {
       await mvpBudgetAdmission.reserve({ scope: videoMvpScope, tenantId,
-        accountId: String(videoMvpIdentity?.accountId || ''), productId: String(videoMvpIdentity?.productId || ''), runId: String(videoMvpIdentity?.runId || ''),
+        accountId: videoMvpIdentity?.accountId === null ? null : String(videoMvpIdentity?.accountId || ''), productId: String(videoMvpIdentity?.productId || ''), runId: String(videoMvpIdentity?.runId || ''),
         action: 'generate_media', taskId: String(videoMvpIdentity?.taskId || ''), version: Number(videoMvpIdentity?.version), session: 'B',
         provider: 'seedance', model: config.model, shotId: String(shotId), estimatedCostCny: storyboardEstimatedCostCny,
         operationId: storyboardOperationId, fingerprint: videoInputFingerprint });

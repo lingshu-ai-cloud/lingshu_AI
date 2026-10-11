@@ -1,11 +1,12 @@
 import {freezeSocialAccountProductionConstraints} from './socialAccountProductionConstraints.js';
 import assert from 'node:assert/strict';
+import { createHash } from 'node:crypto';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import type { DataStore, ListQuery, Record_ } from '../storage/datastore.js';
 import { createSocialDigitalPresenterAdapter } from './socialContentDigitalPresenterAdapter.js';
-import { auditSocialHeyGenPresenters, createSocialHeyGenBridgePorts, socialHeyGenBridgeReadiness } from './socialContentHeyGenBridge.js';
+import { auditSocialHeyGenPresenters, createSocialHeyGenBridgePorts, createSocialHeyGenHookAudioPort, createMvpSocialHeyGenHookAudioPort, socialHeyGenBridgeReadiness } from './socialContentHeyGenBridge.js';
 
 const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'social-heygen-bridge-'));
 const previousCwd = process.cwd();
@@ -94,7 +95,7 @@ acceptedRow.status = 'pending';
 const legacyRecovered = await adapter.execute(legacyContext);
 assert.equal(legacyRecovered?.asset.providerTaskId, 'provider-task-a');
 assert.equal(creates, beforeRecoveryCreates); assert.equal(reserves, beforeRecoveryReserves);
-await assert.rejects(adapter.execute({ ...legacyContext, baselineScene: { narration: '', script: '全新导演动作，不能作口播' } }), /accepted_provider_job_required_for_recovery/);
+await assert.rejects(adapter.execute({ ...legacyContext, baselineScene: { narration: '', script: '全新导演动作，不能作口播' } }), /spoken_text_required|accepted_provider_job_required_for_recovery/);
 assert.equal(creates, beforeRecoveryCreates); assert.equal(reserves, beforeRecoveryReserves);
 const priorProviderId = acceptedRow.provider_task_id; acceptedRow.provider_task_id = '';
 await assert.rejects(adapter.execute(legacyContext), /accepted_provider_job_required_for_recovery/);
@@ -122,6 +123,106 @@ assert.equal(creates,2,'same canonical rules recover original provider job witho
 ruleRow.visual_control.accountPlaybookConstraints.rules.languageRules=['changed actual content'];
 await assert.rejects(adapter.execute(context),/uncertain:.*digital_presenter_account_constraints_changed/);
 assert.equal(creates,2,'drift never creates another provider job');
+
+// Server-owned, verified audio adoption uses IV and never forwards text TTS.
+const audioScript = 'Beauty brand owners: stop guessing your next product launch.';
+const audioContext = { ...context, accountPlaybookConstraints: undefined, baselineScene: { narration: audioScript } };
+const audio = { tenantId: 'tenant-a', taskId: 'task-a', taskVersion: 'revision-2', shotId: 'shot-a',
+  presenterAssetId: 'presenter-a', presenterAssetVersion: 2, providerAvatarId: 'avatar-a', voiceId: 'voice-a',
+  scriptSha256: createHash('sha256').update(audioScript).digest('hex'), clipSha256: 'a'.repeat(64), durationSeconds: 3.6,
+  receiptRef: 'server-tts-receipt', receiptHash: 'b'.repeat(64), audioAssetId: 'uploaded-audio', engine: 'avatar_iv' as const, operationRole: 'hook' as const };
+let audioCreates = 0, audioReserves = 0, resolves = 0, verified = true, incoming: any;
+const audioPorts = createSocialHeyGenBridgePorts({ store,
+  speechAudio: { resolve: async () => { resolves++; return structuredClone(audio); }, verify: async (_request, candidate) => verified && candidate.taskVersion === 'revision-2' },
+  client: { create: async input => { audioCreates++; incoming = input; return 'audio-driven-task'; }, status: async () => ({ status: 'completed', url: 'https://files.heygen.ai/audio.mp4', duration: 3.6 }) },
+  budget: { status: () => ({ allowed: true, reservationCny: 1, remainingCny: 10, reason: '' }), reserve: async () => { audioReserves++; } },
+  storageReady: () => true, download: async () => Buffer.alloc(12000, 2), upload: async () => 'https://storage.test/audio',
+  head: async () => ({ size: 12000, etag: 'audio-etag', contentType: 'video/mp4', lastModified: new Date() }), pollIntervalMs: 0,
+});
+const audioAdapter = createSocialDigitalPresenterAdapter(audioPorts);
+assert.equal((await audioAdapter.execute(audioContext))?.asset.providerTaskId, 'audio-driven-task');
+assert.equal(incoming.audioAssetId, 'uploaded-audio'); assert.equal(incoming.engine, 'avatar_iv');
+assert.equal(incoming.script, ''); assert.equal(incoming.voiceId, '');
+assert.equal(audioCreates, 1); assert.equal(audioReserves, 1);
+const audioJob = store.rows.get('studio_social_presenter_jobs')!.find(row => row.provider_task_id === 'audio-driven-task')!;
+assert.equal(audioJob.visual_control.speechAudio.clipSha256, audio.clipSha256);
+await audioAdapter.execute(audioContext); assert.equal(audioCreates, 1, 'audio replay uses original provider ID');
+for (const patch of [{ durationSeconds: 4.01 }, { voiceId: 'other-voice' }, { tenantId: 'foreign' }, { scriptSha256: 'c'.repeat(64) }, { presenterAssetVersion: 3 }]) {
+  const guarded = createSocialDigitalPresenterAdapter({ ...audioPorts, resolveSpeechAudio: async () => ({ ...audio, ...patch }) });
+  const before: number = audioReserves;
+  await assert.rejects(guarded.execute(audioContext), /audio_scope_or_duration_invalid/);
+  assert.equal(audioReserves, before); assert.equal(audioCreates, 1);
+}
+verified = false;
+await assert.rejects(audioAdapter.execute(audioContext), /audio_receipt_unverified/); assert.equal(audioCreates, 1);
+verified = true;
+const beforeResolve = resolves, beforeAudioReserve = audioReserves;
+await audioAdapter.execute({ ...audioContext, baselineScene: { narration: '已确认口播' } });
+assert.equal(resolves, beforeResolve, 'old accepted text task is recovered before generating new TTS');
+assert.equal(audioReserves, beforeAudioReserve); assert.equal(audioCreates, 1);
+
+// Persisted uploads use real decodable WAV bytes, verified sample duration and
+// a server-owned receipt reader. This is local contract proof, not cloud TTS.
+const samples = Math.round(48000 * 3.6), wav = Buffer.alloc(44 + samples * 2);
+wav.write('RIFF'); wav.writeUInt32LE(wav.length - 8, 4); wav.write('WAVEfmt ', 8);
+wav.writeUInt32LE(16, 16); wav.writeUInt16LE(1, 20); wav.writeUInt16LE(1, 22); wav.writeUInt32LE(48000, 24);
+wav.writeUInt32LE(96000, 28); wav.writeUInt16LE(2, 32); wav.writeUInt16LE(16, 34); wav.write('data', 36); wav.writeUInt32LE(samples * 2, 40);
+for (let n = 0; n < samples; n++) wav.writeInt16LE(Math.round(1000 * Math.sin(n * 2 * Math.PI * 220 / 48000)), 44 + n * 2);
+const hookPath = path.join(tmp, 'measured-hook.wav'); fs.writeFileSync(hookPath, wav);
+const uploadSource = { ...audio, clipSha256: createHash('sha256').update(wav).digest('hex'), filePath: hookPath };
+const { audioAssetId: ignoredAsset, ...serverSource } = uploadSource; void ignoredAsset;
+const request: any = { tenantId: context.tenantId, taskId: context.taskId, shotId: 'shot-a', idempotencyKey: 'prepared-hook',
+  presenter: await audioPorts.resolvePresenter({ tenantId: 'tenant-a', presenterAssetId: 'presenter-a' }), script: audioScript,
+  aspectRatio: '9:16', outputDirectory: tmp, maximumCostCny: 2, visualControl: incoming.visualControl };
+let uploads = 0, grant = true;
+const persistedAudio = createSocialHeyGenHookAudioPort({ store, load: async () => structuredClone(serverSource),
+  authorizeUpload: async () => grant, client: { uploadAudio: async bytes => { uploads++; assert.deepEqual(Buffer.from(bytes), wav); return 'real-upload-contract'; } } });
+const firstUpload = await persistedAudio.resolve(request); assert.equal(uploads, 1);
+assert.equal(await persistedAudio.verify(request, firstUpload), true);
+grant = false; assert.equal((await persistedAudio.resolve(request)).audioAssetId, firstUpload.audioAssetId);
+assert.equal(uploads, 1, 'saved audio upload survives retry without re-upload or reserve');
+fs.writeFileSync(hookPath, Buffer.alloc(wav.length));
+await assert.rejects(persistedAudio.resolve(request), /hook_bytes_changed/); assert.equal(uploads, 1); fs.writeFileSync(hookPath, wav);
+const longAudio = createSocialHeyGenHookAudioPort({ store, load: async () => ({ ...serverSource, durationSeconds: 3.5 }), authorizeUpload: async () => true, client: { uploadAudio: async () => { throw Error('probe drift must not upload'); } } });
+await assert.rejects(longAudio.resolve(request), /probe_duration_invalid/);
+let uncertainUploads = 0;
+const uncertainAudio = createSocialHeyGenHookAudioPort({ store, load: async () => ({ ...serverSource, receiptRef: 'uncertain-receipt' }), authorizeUpload: async () => true,
+  client: { uploadAudio: async () => { uncertainUploads++; throw Error('upload-connection-lost'); } } });
+await assert.rejects(uncertainAudio.resolve(request), /upload-connection-lost/);
+await assert.rejects(uncertainAudio.resolve(request), /hook_upload_unknown/); assert.equal(uncertainUploads, 1);
+
+// Exercise the concrete persisted speech reader + real bytes/probe mapping.
+const { generateMvpHeyGenSpeech } = await import('../lib/mvpHeyGenSpeech.js');
+const speechRoot = path.join(tmp, 'mvp-speech');
+store.rows.set('starter_social_content_tasks', [{ id: 'task-row', tenant_id: 'tenant-a', task_id: 'task-a', version: '2', run_id: 'audio-run',
+  brief: { presenterAssetId: 'presenter-a', requestedPresenterAssetId: 'avatar-a' } }]);
+store.rows.set('workflow_runs', [{ id: 'audio-run', tenant_id: 'tenant-a', status: 'running' }]);
+const speech = await generateMvpHeyGenSpeech({ scope: { tenantId: 'tenant-a', taskId: 'task-a', version: 2, session: 'A', accountId: null,
+  productId: 'product-a', runId: 'audio-run', action: 'generate_media', authority: 'customer', expiresAt: '2099-01-01', revoked: false,
+  provider: 'heygen', model: 'starfish', shotIds: ['shot-a'], authorizedBy: 'fixture-reviewer', authorizationRef: 'fixture-grant', budgetPoolId: 'pool-a', budgetLimitCny: 10 },
+  shotId: 'shot-a', operationRole: 'hook', voiceId: 'voice-a', text: audioScript, maxDurationSeconds: 4, reservationCny: .2 }, {
+  root: speechRoot, apiKey: 'controlled-only', assertCurrentScope: async () => { assert.equal(store.rows.get('starter_social_content_tasks')![0]!.version, '2'); },
+  admission: { reserve: async () => null }, legacyBudget: { reserve: async () => undefined }, probe: async () => 3.6,
+  fetch: (async (url) => { const address = String(url); if (address.includes('/voices/speech')) return Response.json({ audio_url: 'https://files.heygen.ai/fixture.mp3', duration: 3.6, engine: 'starfish', request_id: 'controlled-speech' });
+    if (address.includes('/voices')) return Response.json({ data: [{ voice_id: 'voice-a', available_engines: ['starfish'] }], has_more: false });
+    assert.equal(address, 'https://files.heygen.ai/fixture.mp3'); return new Response(wav); }) as typeof fetch,
+});
+let concreteUploads = 0;
+const concrete = createMvpSocialHeyGenHookAudioPort({ store, speechRoot, presenterAssetVersion: 2,
+  receiptRef: async () => speech.receiptRef, authorizeUpload: async () => true,
+  client: { uploadAudio: async (_bytes, _id, mime) => { concreteUploads++; assert.equal(mime, 'audio/wav'); return 'concrete-mvp-asset'; } } });
+const mapped = await concrete.resolve(request); assert.equal(concreteUploads, 1);
+assert.equal(await concrete.verify(request, mapped), true);
+assert.equal((await concrete.resolve(request)).audioAssetId, mapped.audioAssetId); assert.equal(concreteUploads, 1);
+const currentTask = store.rows.get('starter_social_content_tasks')![0]!; currentTask.version = '3';
+await assert.rejects(concrete.resolve(request), /mvp_speech_authority_changed/); assert.equal(concreteUploads, 1); currentTask.version = '2';
+currentTask.brief.targetAccountRef = { id: 'different-account' };
+await assert.rejects(concrete.resolve(request), /mvp_speech_authority_changed/); assert.equal(concreteUploads, 1);
+delete currentTask.brief.targetAccountRef;
+const currentRun = store.rows.get('workflow_runs')![0]!; currentRun.status = 'paused';
+await assert.rejects(concrete.resolve(request), /mvp_speech_authority_changed/); assert.equal(concreteUploads, 1); currentRun.status = 'running';
+await assert.rejects(concrete.resolve({ ...request, presenter: { ...request.presenter, providerVoiceId: 'different-voice' } }), /mvp_speech_authority_changed/);
+assert.equal(concreteUploads, 1);
 
 store.rows.set('studio_production_defaults', [{ id: 'defaults', tenant_id: 'tenant-a', payload: { presenters: [{
   id: 'presenter-a', authorized: true, avatarId: 'avatar-a', voiceId: 'voice-a', rightsEvidence: {

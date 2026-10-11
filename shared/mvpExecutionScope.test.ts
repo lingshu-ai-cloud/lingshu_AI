@@ -27,3 +27,15 @@ test('grant survives repeated in-scope choices but rejects expiry, revocation an
  for (const action of ['publish', 'deploy']) assert.throws(() => assertMvpExecutionScope({ ...input, action }), /action_not_authorized/);
  assert.doesNotThrow(() => assertMvpExecutionScope({ ...input, scope: { ...scope, authority: 'authorized_business_reviewer' } }));
 });
+
+
+test('media-only grant binds explicit absent account and cannot authorize publication', () => {
+ const media = { ...input, accountId: null, scope: { ...scope, accountId: null } };
+ assert.doesNotThrow(() => assertMvpExecutionScope(media));
+ for (const accountId of ['account', '', undefined])
+  assert.throws(() => assertMvpExecutionScope({ ...media, accountId } as any), /authority_mismatch/);
+ for (const accountId of ['', undefined])
+  assert.throws(() => assertMvpExecutionScope({ ...media, scope: { ...media.scope, accountId } } as any), /scope_invalid/);
+ assert.throws(() => assertMvpExecutionScope({ ...input, scope: { ...scope, accountId: null } }), /authority_mismatch/);
+ assert.throws(() => assertMvpExecutionScope({ ...media, action: 'publish' }), /action_not_authorized/);
+});

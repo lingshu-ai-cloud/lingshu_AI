@@ -289,7 +289,7 @@ export async function enqueueSocialContentAutoProduction(input: {
       runId: input.runId,
       accountId: task.brief.targetAccountRef?.id,
       taskType: `social_content_${task.mode}`,
-      initialCheckpoints: { 'social.executor': createSocialProductionExecutorCheckpoint(detail) },
+      initialCheckpoints: { 'social.executor': createSocialProductionExecutorCheckpoint(detail, process.env, socialText(socialObject(socialObject(socialJson(record.brief))?._productionRevision)?.planHash) || undefined) },
     });
     if (job.status === 'queued' && !job.lastStartedAt) {
       await writeExecutionStage({

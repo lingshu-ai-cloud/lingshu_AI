@@ -107,6 +107,7 @@ export interface StoredSocialScriptBaseline {
     } | null;
   };
   scenes: Array<{
+    scriptOrigin?: 'independent_revision';
     sceneId: string;
     formulaNodeId: string | null;
     inspirationNodeId?: string | null;
@@ -534,6 +535,7 @@ export function freezeSocialScriptBaseline(input: {
       shotFunction: socialText(shot.purpose) || '主题表达',
       subject: socialText(shot.materialPlan?.requestedDescription) || visualInstruction || '本次内容',
       action: visualInstruction || '按参考节奏展示',
+      ...(shot.scriptOrigin === 'independent_revision' ? { scriptOrigin: 'independent_revision' as const } : {}),
       script: visualInstruction || narration,
       referenceSpokenText: shot.referenceSpokenText ?? null,
       voiceover: narration,
@@ -805,6 +807,7 @@ export function parseStoredSocialScriptBaseline(value: unknown): StoredSocialScr
       ...(Object.prototype.hasOwnProperty.call(scene ?? {}, 'referenceSpokenText')
         ? { referenceSpokenText: socialText(scene?.referenceSpokenText) || null }
         : {}),
+      ...(socialText(scene?.scriptOrigin) === 'independent_revision' ? { scriptOrigin: 'independent_revision' as const } : {}),
       voiceover: socialText(scene?.voiceover) || socialText(scene?.narration),
       ...(speechLines ? { speechLines: speechLines.map(rawLine => {
         const line = rawLine ?? {};
@@ -818,7 +821,10 @@ export function parseStoredSocialScriptBaseline(value: unknown): StoredSocialScr
           ? line.replacedEntityTypes.map(socialText)
             .filter((type): type is 'company' | 'brand' | 'product' => ['company', 'brand', 'product'].includes(type))
           : [];
-        if (!referenceText || !draftText || !sourceProvenance || !Number.isFinite(sourceStartSeconds)
+        const independent = socialText(scene?.scriptOrigin) === 'independent_revision' && sourceProvenance === 'independent_revision_script:not_reference_asr'
+          && sourcePrecision === 'coarse' && !socialText(scene?.referenceSpokenText) && !voiceoverReplacement
+          && replacedEntityTypes.length === 0 && Array.isArray(line.sourceWords) && line.sourceWords.length === 0;
+        if ((!referenceText && !independent) || !draftText || !sourceProvenance || !Number.isFinite(sourceStartSeconds)
           || !Number.isFinite(sourceEndSeconds) || sourceStartSeconds < 0 || sourceEndSeconds <= sourceStartSeconds
           || !['phrase', 'coarse'].includes(sourcePrecision)) {
           throw new SocialContentWorkflowError('social_content_script_baseline_record_invalid', 503);
@@ -846,10 +852,14 @@ export function parseStoredSocialScriptBaseline(value: unknown): StoredSocialScr
       caption: socialText(scene?.caption),
       narration: socialText(scene?.narration),
     };
+    const independentScene = parsed.scriptOrigin === 'independent_revision' && !parsed.referenceSpokenText
+      && !parsed.voiceoverReplacement && (parsed.speechLines ?? []).every(line => !line.referenceText
+        && line.sourceProvenance === 'independent_revision_script:not_reference_asr' && line.sourcePrecision === 'coarse'
+        && line.sourceWords?.length === 0 && line.replacedEntityTypes.length === 0);
     const frozenReferenceScene = source === 'inspiration_script'
       && socialText(voiceoverReplacement?.mode) === 'identity_only';
     if (!scene || !parsed.sceneId || !parsed.shotFunction || !parsed.subject || !parsed.action
-      || !parsed.script || (!frozenReferenceScene && (!parsed.voiceover || !parsed.caption || !parsed.narration))) {
+      || !parsed.script || (!frozenReferenceScene && !independentScene && (!parsed.voiceover || !parsed.caption || !parsed.narration))) {
       throw new SocialContentWorkflowError('social_content_script_baseline_record_invalid', 503);
     }
     if (parsedReferenceStructure && (

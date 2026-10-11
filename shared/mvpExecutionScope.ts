@@ -4,7 +4,8 @@ export interface MvpExecutionScope {
   taskId: string;
   version: number;
   session: 'A' | 'B';
-  accountId: string;
+  /** Null explicitly binds media-only work with no selected publishing account. */
+  accountId: string | null;
   productId: string;
   runId: string;
   action: 'generate_media';
@@ -35,7 +36,7 @@ export function assertMvpExecutionScope(input: {
   taskId: string;
   version: number;
   session: 'A' | 'B';
-  accountId: string;
+  accountId: string | null;
   productId: string;
   runId: string;
   action: string;
@@ -48,8 +49,9 @@ export function assertMvpExecutionScope(input: {
 }): void {
   const s = input.scope;
   if (!s) return;
-  const strings = [s.tenantId, s.taskId, s.provider, s.model, s.authorizedBy, s.authorizationRef, s.budgetPoolId, s.accountId, s.productId, s.runId];
-  if (strings.some(v => typeof v !== 'string' || !v.trim()) || !Number.isSafeInteger(s.version) || s.version < 1
+  const strings = [s.tenantId, s.taskId, s.provider, s.model, s.authorizedBy, s.authorizationRef, s.budgetPoolId, s.productId, s.runId];
+  if ((s.accountId !== null && (typeof s.accountId !== 'string' || !s.accountId.trim()))
+    || strings.some(v => typeof v !== 'string' || !v.trim()) || !Number.isSafeInteger(s.version) || s.version < 1
     || !Array.isArray(s.shotIds) || !s.shotIds.length || s.shotIds.some(v => typeof v !== 'string' || !v.trim())
     || new Set(s.shotIds).size !== s.shotIds.length) throw Error('mvp_scope_invalid');
   const expires = Date.parse(s.expiresAt);

@@ -5,7 +5,7 @@ import { assertCurrentContentExecutionActive, recordCurrentContentExecutionCheck
 import { runLangGraphProduction } from '../contentExecution/langgraphEngine.js';
 import { runSocialContentAutoProduction, type SocialContentAutoProductionRuntime, type SocialGraphApprovedContext } from './socialContentProductionExecution.js';
 import type { SocialAssetSupplyProviderAdapter } from './socialContentAssetSupplyExecution.js';
-import { readSocialTaskDetail } from './socialContentRecords.js';
+import { readSocialTaskDetail, requireSocialTask } from './socialContentRecords.js';
 import { STARTER_COLLECTIONS, type Starter198Repository, type StarterRecord } from './repository.js';
 import { socialJson, socialObject, socialRequestHash, socialText } from './socialContentValidation.js';
 import { assertStudioSocialArtifactGeneration } from './socialContentOutputSupport.js';
@@ -42,13 +42,20 @@ export function socialProductionGraphInput(detail: Detail, approvedContext?: Soc
     planVersion: String(approved.agentWorkflow.executionPlan.version),
     inputHash: socialRequestHash({ brief: detail.brief, executionPlan: approved.agentWorkflow.executionPlan,
       executionPlanReview: approved.agentWorkflow.executionPlanReview,
-      directorBrief: approved.agentWorkflow.directorBrief, sources: detail.sources }),
+      directorBrief: approved.agentWorkflow.directorBrief, sources: detail.sources,
+      ...((approved as SocialGraphApprovedContext).revisionPlanHash ? { revisionPlanHash: (approved as SocialGraphApprovedContext).revisionPlanHash } : {}) }),
   };
 }
 
 /** Self-generated runtime inventory cannot rewrite the admitted business plan.
  * Previously admitted sources remain visible and retain all normal validation. */
 export async function readSocialProductionGraphDetail(input: { repository: Starter198Repository; tenantId: string; taskId: string }, approvedContext: SocialGraphApprovedContext) {
+  if (approvedContext.revisionPlanHash) {
+    const row = await requireSocialTask(input), marker = socialObject(socialObject(socialJson(row.brief))?._productionRevision);
+    const { planHash, preparedBy: _actor, preparedAt: _time, ...immutable } = marker ?? {};
+    if (planHash !== approvedContext.revisionPlanHash || socialRequestHash(immutable) !== planHash)
+      throw new Error('user_input_required:graph_revision_plan_changed');
+  }
   const admittedRefs = new Set([
     ...(approvedContext.agentWorkflow?.executionPlan.scenes.flatMap(scene => scene.candidates.map(candidate => candidate.sourceRef).filter(Boolean)) ?? []),
     ...(approvedContext.assetSupplyPlan?.inventoryAudit?.records.map(record => record.id) ?? []),
@@ -61,11 +68,12 @@ export async function readSocialProductionGraphDetail(input: { repository: Start
   return readSocialTaskDetail({ ...input, repository });
 }
 
-export function createSocialProductionExecutorCheckpoint(detail: Detail, env: NodeJS.ProcessEnv = process.env) {
+export function createSocialProductionExecutorCheckpoint(detail: Detail, env: NodeJS.ProcessEnv = process.env, revisionPlanHash?: string) {
+  if (revisionPlanHash && !/^[a-f0-9]{64}$/.test(revisionPlanHash)) throw new Error('user_input_required:graph_revision_plan_changed');
   const graphEnabled = env.SOCIAL_CONTENT_EXECUTOR === 'langgraph' && detail.brief.productionApproach !== 'shooting_plan';
-  const identity = graphEnabled ? socialProductionGraphInput(detail) : { planVersion: 'legacy', inputHash: 'legacy' };
+  const identity = graphEnabled ? socialProductionGraphInput(detail, revisionPlanHash ? { ...detail, revisionPlanHash } : undefined) : { planVersion: 'legacy', inputHash: 'legacy' };
   const approvedContext: SocialGraphApprovedContext | null = graphEnabled ? structuredClone({
-    version: detail.version, agentWorkflow: detail.agentWorkflow, assetSupplyPlan: detail.assetSupplyPlan }) : null;
+    version: detail.version, agentWorkflow: detail.agentWorkflow, assetSupplyPlan: detail.assetSupplyPlan, ...(revisionPlanHash ? { revisionPlanHash } : {}) }) : null;
   if (approvedContext?.agentWorkflow) {
     approvedContext.agentWorkflow.productionResult = null;
     approvedContext.agentWorkflow.replicationEvaluation = null;

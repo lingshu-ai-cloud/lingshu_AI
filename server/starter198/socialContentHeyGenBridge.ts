@@ -1,14 +1,19 @@
-import {socialRequestHash} from './socialContentValidation.js';
+import {socialRequestHash, socialJson, socialObject} from './socialContentValidation.js';
+import { readMvpHeyGenSpeech } from '../lib/mvpHeyGenSpeech.js';
 import {assertSocialAccountProductionConstraints} from './socialAccountProductionConstraints.js';
 import fs from 'node:fs';
 import path from 'node:path';
 import { createHash } from 'node:crypto';
+import { execFile } from 'node:child_process';
+import { promisify } from 'node:util';
+import ffmpegStatic from 'ffmpeg-static';
 import type { DataStore } from '../storage/datastore.js';
 import { HeyGenClient } from '../lib/heygen.js';
 import { studioPaidBudget, type StudioPaidBudget } from '../lib/studioPaidBudget.js';
 import { objectStorageEnabled, objectStorageHead, objectStorageUpload } from '../storage/objectStorage.js';
 import { materialAssetObjectKey } from '../storage/materialAssets.js';
 import { readLocalMaterials, saveLocalMaterials } from '../lib/materialLibrary.js';
+import { assertPresenterSpeechAudio } from './socialContentDigitalPresenterAdapter.js';
 import type {
   AuthorizedDigitalPresenter,
   SocialDigitalPresenterBridgePorts,
@@ -48,6 +53,11 @@ export function auditSocialHeyGenPresenters(items: PresenterRecord[]): SocialHey
 
 export interface SocialHeyGenBridgeDependencies {
   store: DataStore;
+  /** Server-owned persistent TTS/upload reader, including byte hash and probe verification. */
+  speechAudio?: {
+    resolve(input: import('./socialContentDigitalPresenterAdapter.js').DigitalPresenterExecutionRequest): Promise<import('./socialContentDigitalPresenterAdapter.js').VerifiedPresenterSpeechAudio>;
+    verify(input: import('./socialContentDigitalPresenterAdapter.js').DigitalPresenterExecutionRequest, audio: import('./socialContentDigitalPresenterAdapter.js').VerifiedPresenterSpeechAudio): Promise<boolean>;
+  };
   client: Pick<HeyGenClient, 'create' | 'status'>;
   budget: Pick<StudioPaidBudget, 'status' | 'reserve'>;
   storageReady: () => boolean;
@@ -56,6 +66,125 @@ export interface SocialHeyGenBridgeDependencies {
   head: typeof objectStorageHead;
   pollIntervalMs?: number;
   maxPolls?: number;
+}
+
+export type PresenterHookAudioSource = Omit<import('./socialContentDigitalPresenterAdapter.js').VerifiedPresenterSpeechAudio, 'audioAssetId'> & { filePath: string };
+
+/** Trusted receipt loaders must re-read current task revision, voice/person and
+ * the hook receipt from server storage. Clients cannot supply this dependency.
+ * Uploads have their own durable claim, and an uncertain claim never re-POSTs. */
+export function createSocialHeyGenHookAudioPort(options: {
+  store: DataStore;
+  client: Pick<HeyGenClient, 'uploadAudio'>;
+  load(input: import('./socialContentDigitalPresenterAdapter.js').DigitalPresenterExecutionRequest): Promise<PresenterHookAudioSource>;
+  authorizeUpload(input: import('./socialContentDigitalPresenterAdapter.js').DigitalPresenterExecutionRequest, source: PresenterHookAudioSource): Promise<boolean>;
+}): NonNullable<SocialHeyGenBridgeDependencies['speechAudio']> {
+  async function checked(input: import('./socialContentDigitalPresenterAdapter.js').DigitalPresenterExecutionRequest) {
+    const source = await options.load(input);
+    assertPresenterSpeechAudio(input, { ...source, audioAssetId: 'pending-server-upload' });
+    const bytes = fs.readFileSync(source.filePath);
+    if (!bytes.length || bytes.length > 32 * 1024 * 1024 || createHash('sha256').update(bytes).digest('hex') !== source.clipSha256)
+      throw new Error('digital_presenter_hook_bytes_changed');
+    if (!ffmpegStatic) throw new Error('digital_presenter_hook_probe_unavailable');
+    // Decode the full file to PCM: duration comes from actual sample count,
+    // not an estimated text length or rounded input-container header.
+    const decoded = await promisify(execFile)(ffmpegStatic, ['-hide_banner', '-loglevel', 'info', '-i', source.filePath,
+      '-vn', '-ac', '1', '-ar', '48000', '-f', 's16le', 'pipe:1'], { encoding: 'buffer', maxBuffer: 4 * 1024 * 1024, timeout: 45_000 });
+    if (createHash('sha256').update(fs.readFileSync(source.filePath)).digest('hex') !== source.clipSha256)
+      throw new Error('digital_presenter_hook_bytes_changed');
+    const codec = String(decoded.stderr).match(/Audio: ([a-z0-9_]+)/)?.[1];
+    const mimeType = codec === 'mp3' ? 'audio/mpeg' as const : codec?.startsWith('pcm_') ? 'audio/wav' as const : null;
+    if (!mimeType) throw new Error('digital_presenter_hook_audio_format_unsupported');
+    const measured = decoded.stdout.length / (48000 * 2);
+    if (!(measured > 0) || measured > 4 || Math.abs(measured - source.durationSeconds) > 0.02)
+      throw new Error('digital_presenter_hook_probe_duration_invalid');
+    const { filePath, ...identity } = source;
+    void filePath;
+    const key = `social-presenter-audio:${socialRequestHash(identity)}`;
+    return { source, bytes, identity, key, mimeType };
+  }
+  return {
+    async resolve(input) {
+      const actual = await checked(input);
+      const rows = await options.store.list<any>('studio_social_presenter_jobs',
+        { where: { tenant_id: input.tenantId, request_id: actual.key }, perPage: 2 });
+      if (rows.totalItems !== rows.items.length || rows.items.length > 1) throw new Error('digital_presenter_hook_upload_ambiguous');
+      let row = rows.items[0];
+      if (row) {
+        if (row.task_id !== input.taskId || row.shot_id !== input.shotId || row.presenter_asset_id !== input.presenter.presenterAssetId
+          || socialRequestHash(row.visual_control?.hookAudio) !== socialRequestHash(actual.identity))
+          throw new Error('digital_presenter_hook_upload_scope_changed');
+        const assetId = row.visual_control?.audioAssetId;
+        if (row.status !== 'audio_uploaded' || typeof assetId !== 'string' || !assetId)
+          throw new Error('digital_presenter_hook_upload_unknown');
+        return { ...actual.identity, audioAssetId: assetId };
+      }
+      if (!await options.authorizeUpload(input, actual.source)) throw new Error('digital_presenter_hook_upload_budget_denied');
+      row = await options.store.create<any>('studio_social_presenter_jobs', {
+        tenant_id: input.tenantId, task_id: input.taskId, shot_id: input.shotId, request_id: actual.key,
+        provider: 'heygen', presenter_asset_id: input.presenter.presenterAssetId, status: 'audio_uploading',
+        authorization_ref: input.presenter.authorizationRef, consent_ref: input.presenter.consentRef,
+        visual_control: { hookAudio: actual.identity }, created_at: new Date().toISOString(), updated_at: new Date().toISOString(),
+      });
+      if (!row) throw new Error('digital_presenter_hook_upload_claim_failed');
+      try {
+        const audioAssetId = await options.client.uploadAudio(actual.bytes, actual.key, actual.mimeType);
+        if (!audioAssetId) throw new Error('digital_presenter_hook_upload_asset_missing');
+        if (!await options.store.update('studio_social_presenter_jobs', row.id, {
+          status: 'audio_uploaded', visual_control: { hookAudio: actual.identity, audioAssetId }, updated_at: new Date().toISOString(),
+        })) throw new Error('digital_presenter_hook_upload_receipt_write_failed');
+        return { ...actual.identity, audioAssetId };
+      } catch (error) {
+        await options.store.update('studio_social_presenter_jobs', row.id, { status: 'audio_upload_unknown', updated_at: new Date().toISOString() }).catch(() => undefined);
+        throw error;
+      }
+    },
+    async verify(input, audio) {
+      const actual = await checked(input);
+      const rows = await options.store.list<any>('studio_social_presenter_jobs',
+        { where: { tenant_id: input.tenantId, request_id: actual.key }, perPage: 2 });
+      const row = rows.items[0];
+      if (!await options.authorizeUpload(input, actual.source)) return false;
+      return rows.totalItems === 1 && rows.items.length === 1 && row.status === 'audio_uploaded'
+        && row.task_id === input.taskId && row.shot_id === input.shotId && row.presenter_asset_id === input.presenter.presenterAssetId
+        && row.visual_control?.audioAssetId === audio.audioAssetId
+        && socialRequestHash(row.visual_control?.hookAudio) === socialRequestHash(actual.identity)
+        && socialRequestHash({ ...actual.identity, audioAssetId: audio.audioAssetId }) === socialRequestHash(audio);
+    },
+  };
+}
+
+/** Concrete MVP mapper: reads persisted speech plus current business records,
+ * not request-body paths, durations or externally supplied audio asset IDs. */
+export function createMvpSocialHeyGenHookAudioPort(options: {
+  store: DataStore; client: Pick<HeyGenClient, 'uploadAudio'>; speechRoot?: string;
+  /** Frozen server-side original presenter version; never read from an HTTP body. */
+  presenterAssetVersion: number;
+  receiptRef(input: import('./socialContentDigitalPresenterAdapter.js').DigitalPresenterExecutionRequest): Promise<string>;
+  authorizeUpload(input: import('./socialContentDigitalPresenterAdapter.js').DigitalPresenterExecutionRequest, source: PresenterHookAudioSource): Promise<boolean>;
+}): NonNullable<SocialHeyGenBridgeDependencies['speechAudio']> {
+  return createSocialHeyGenHookAudioPort({ ...options, load: async input => {
+    const result = readMvpHeyGenSpeech(await options.receiptRef(input), options.speechRoot);
+    const rows = await options.store.list<any>('starter_social_content_tasks',
+      { where: { tenant_id: input.tenantId, task_id: input.taskId }, perPage: 2 });
+    const task = rows.items[0], brief = socialObject(socialJson(task?.brief));
+    const run = result.runId ? await options.store.getById<any>('workflow_runs', result.runId) : null;
+    if (rows.totalItems !== 1 || rows.items.length !== 1 || result.operationRole !== 'hook' || result.maxDurationSeconds > 4
+      || result.tenantId !== input.tenantId || result.taskId !== input.taskId || result.shotId !== input.shotId
+      || String(task.version) !== String(result.taskVersion) || task.run_id !== result.runId
+      || result.accountId !== (socialObject(brief?.targetAccountRef)?.id ?? null)
+      || !run || run.tenant_id !== input.tenantId || ['cancelled','cancelling','paused','pausing','failed'].includes(String(run.status))
+      || brief?.presenterAssetId !== input.presenter.presenterAssetId
+      || brief?.requestedPresenterAssetId !== input.presenter.providerPresenterId
+      || input.presenter.assetVersion !== options.presenterAssetVersion || result.voiceId !== input.presenter.providerVoiceId
+      || result.scriptSha256 !== createHash('sha256').update(input.script).digest('hex'))
+      throw new Error('digital_presenter_mvp_speech_authority_changed');
+    return { tenantId: result.tenantId, taskId: result.taskId, taskVersion: String(result.taskVersion), shotId: result.shotId,
+      presenterAssetId: input.presenter.presenterAssetId, presenterAssetVersion: input.presenter.assetVersion,
+      providerAvatarId: input.presenter.providerPresenterId, voiceId: result.voiceId, operationRole: 'hook',
+      scriptSha256: result.scriptSha256, clipSha256: result.clipSha256, durationSeconds: result.durationSeconds,
+      receiptRef: result.receiptRef, receiptHash: result.receiptHash, engine: 'avatar_iv', filePath: result.filePath };
+  } });
 }
 
 export interface SocialHeyGenBridgeReadiness {
@@ -114,6 +243,7 @@ export function createSocialHeyGenBridgePorts(deps: SocialHeyGenBridgeDependenci
   const polls = Math.max(1, Math.min(240, deps.maxPolls ?? 120));
   const pollInterval = Math.max(0, deps.pollIntervalMs ?? 5_000);
   const ports: SocialDigitalPresenterBridgePorts = {
+    ...(deps.speechAudio ? { resolveSpeechAudio: (input: import('./socialContentDigitalPresenterAdapter.js').DigitalPresenterExecutionRequest) => deps.speechAudio!.resolve(input) } : {}),
     maximumCostCny: Number(deps.budget.status('heygen').reservationCny) || 0,
     // This bridge is the current talking-presenter integration. It does not
     // claim guided body action, product contact, face application, reference
@@ -146,6 +276,9 @@ export function createSocialHeyGenBridgePorts(deps: SocialHeyGenBridgeDependenci
       }
     },
     async recoverExisting(input) {
+      const records = await deps.store.list<any>('studio_social_presenter_jobs',
+        { where: { tenant_id: input.tenantId, request_id: input.idempotencyKey }, perPage: 2 });
+      if (records.totalItems === 0 && records.items.length === 0) return null;
       return ports.execute({ ...input, recoveryOnly: true, reservationRef: input.idempotencyKey });
     },
     async execute(input) {
@@ -154,6 +287,14 @@ export function createSocialHeyGenBridgePorts(deps: SocialHeyGenBridgeDependenci
         { where: { tenant_id: input.tenantId, request_id: input.idempotencyKey }, perPage: 2 });
       if (existing.totalItems > 1 || existing.items.length > 1 || existing.totalItems !== existing.items.length) return { status: 'uncertain', error: 'duplicate_provider_job_records' };
       let record = existing.items[0];
+      if (input.speechAudio) {
+        assertPresenterSpeechAudio(input, input.speechAudio);
+        if (!deps.speechAudio || !await deps.speechAudio.verify(input, input.speechAudio))
+          return { status: 'uncertain', error: 'digital_presenter_audio_receipt_unverified' };
+      }
+      if (record && socialRequestHash(record.visual_control?.speechAudio ?? null) !== socialRequestHash(input.speechAudio ?? null))
+        return { status: 'uncertain', error: 'digital_presenter_audio_binding_changed' };
+
       if(record && socialRequestHash(record.visual_control?.accountPlaybookConstraints??null)!==socialRequestHash(input.accountPlaybookConstraints??null))return {status:'uncertain',error:'digital_presenter_account_constraints_changed'};
       let providerTaskId = String(record?.provider_task_id || '').trim();
       if (input.recoveryOnly && (!record || !providerTaskId)) return { status: 'uncertain', error: 'accepted_provider_job_required_for_recovery' };
@@ -167,7 +308,7 @@ export function createSocialHeyGenBridgePorts(deps: SocialHeyGenBridgeDependenci
           provider: 'heygen', presenter_asset_id: input.presenter.presenterAssetId, authorization_ref: input.presenter.authorizationRef,
           consent_ref: input.presenter.consentRef, social_account_id: input.presenter.socialAccountId || '',
           presenter_profile_id: input.presenter.presenterProfileId || '', presenter_profile_version: input.presenter.presenterProfileVersion || '',
-          presenter_consistency_key: input.presenter.consistencyKey || '', visual_control: {...input.visualControl,...(input.accountPlaybookConstraints?{accountPlaybookConstraints:structuredClone(input.accountPlaybookConstraints)}:{})},
+          presenter_consistency_key: input.presenter.consistencyKey || '', visual_control: {...input.visualControl,...(input.speechAudio ? { speechAudio: structuredClone(input.speechAudio) } : {}),...(input.accountPlaybookConstraints?{accountPlaybookConstraints:structuredClone(input.accountPlaybookConstraints)}:{})},
           created_at: new Date().toISOString(), updated_at: new Date().toISOString() });
         if (!record) return { status: 'uncertain', error: 'provider_job_claim_failed' };
         try {
@@ -176,7 +317,7 @@ export function createSocialHeyGenBridgePorts(deps: SocialHeyGenBridgeDependenci
             metadata: { reservationRef: input.reservationRef },
           });
           providerTaskId = await deps.client.create({ avatarId: input.presenter.providerPresenterId,
-            voiceId: input.presenter.providerVoiceId, script: input.script, ratio: input.aspectRatio,
+            ...(input.speechAudio ? { voiceId: '', script: '', audioAssetId: input.speechAudio.audioAssetId, engine: 'avatar_iv' as const } : { voiceId: input.presenter.providerVoiceId, script: input.script }), ratio: input.aspectRatio,
             transparent: false, title: `灵枢社媒镜头 ${input.shotId}` }, input.idempotencyKey);
           await deps.store.update('studio_social_presenter_jobs', record.id, { provider_task_id: providerTaskId,
             status: 'pending', updated_at: new Date().toISOString() });
