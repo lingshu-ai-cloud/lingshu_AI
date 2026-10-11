@@ -97,7 +97,10 @@ const { composite } = require('../../desktop/render.cjs') as {
   ) => Promise<{ ok: boolean; outputPath?: string; error?: string }>;
 };
 
-export const MEDIA_ROOT = path.resolve(process.cwd(), 'data', 'media');
+// API and worker processes may run from different checkouts while sharing one
+// canonical media volume. Keep material loading and all derived outputs on the
+// configured authority used by the enterprise product projection.
+export const MEDIA_ROOT = path.resolve(process.env.SOCIAL_CONTENT_MEDIA_ROOT || path.join(process.cwd(), 'data', 'media'));
 export const AUTO_TASK_KEY = 'social_content_auto_production';
 export const AUTO_SCHEMA = 'social-content.auto-production.v3';
 
