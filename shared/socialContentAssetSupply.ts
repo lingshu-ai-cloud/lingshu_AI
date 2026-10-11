@@ -43,6 +43,8 @@ export interface SocialAssetSupplyShotRequest {
   localVideoMatch?: { sourceRefs: string[]; semanticMatch: 'verified'; evidenceRef: string; productRef?: string | null };
   selectedMaterialSegment?: SocialAssetSupplyShotPlan['selectedMaterialSegment'];
   plannedDurationSeconds?: number;
+  /** Existing frozen routing is retained; new plans author enterprise-owned frames. */
+  materialRouting?: SocialMaterialRouting;
   shotId: string;
   function: SocialShotFunction;
   requestedDescription?: string | null;

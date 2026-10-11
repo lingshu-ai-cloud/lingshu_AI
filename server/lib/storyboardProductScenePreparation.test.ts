@@ -9,3 +9,12 @@ test('local semantic and identity-qualified material wins; incompatible candidat
 test('composition+KB are exact two supplier images; director rotation preserved; 3s plan does not lie about 4s provider minimum', async () => { const p = planStoryboardProductScene(input); assert.equal(p.route, 'replace_product_first_frame'); if (p.route !== 'replace_product_first_frame')
     throw Error('unexpected'); assert.equal(p.desiredDurationSeconds, 3); assert.equal(p.seedanceFastProviderDurationSeconds, 4); assert.equal(p.requiresExplicitTrim, true); assert.match(p.request.prompt, /Slow camera orbit/); assert.doesNotMatch(p.request.prompt, /no rotation/i); let posts = 0; const g = new SeedreamFirstFrameGenerator({ apiKey: 'controlled', model: 'controlled', transport: async (_url, init) => { posts++; const body = JSON.parse(String(init?.body)); assert.deepEqual(body.image, [`data:image/png;base64,${input.composition.bytes.toString('base64')}`, `data:image/png;base64,${input.product.bytes.toString('base64')}`]); return new Response(JSON.stringify({ data: [{ b64_json: Buffer.from('controlled-output').toString('base64') }] }), { status: 200 }); } }); await g.generate(p.request); assert.equal(posts, 1); const frozen = planStoryboardProductScene({ ...input, frozenDurationSeconds: 4 }); assert.equal(frozen.desiredDurationSeconds, 4); });
 test('missing actual composition/rights/KB identity fail closed before paid request construction', () => { assert.throws(() => planStoryboardProductScene({ ...input, productOwned: false }), /authorized_composition/); assert.throws(() => planStoryboardProductScene({ ...input, compositionAuthorized: false }), /authorized_composition/); assert.throws(() => planStoryboardProductScene({ ...input, product: { ...input.product, sha256: 'a'.repeat(64) } }), /哈希不匹配/); });
+
+test('authored enterprise frame uses only actual KB pixels and frozen scene, without reference rights or downloads',()=>{
+ const p=planStoryboardProductScene({...input,firstFrameOrigin:'enterprise_authored_storyboard',composition:undefined,compositionAuthorized:false});
+ assert.equal(p.route,'author_product_first_frame');
+ assert.equal(p.request.referenceMode,'storyboard_scene');assert.deepEqual(p.request.references,[input.product]);
+ assert.match(p.request.prompt,/Slow camera orbit/);assert.doesNotMatch(p.request.prompt,/Edit image 1/);
+ assert.notEqual(p.identity,planStoryboardProductScene(input).identity);
+ assert.throws(()=>planStoryboardProductScene({...input,firstFrameOrigin:'enterprise_authored_storyboard',productOwned:false}),/owned_KB/);
+});

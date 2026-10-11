@@ -324,7 +324,8 @@ function materialStrategyOrder(shot: SocialAssetSupplyShotPlan): SocialShotSourc
     }
     const generation = routing.generation;
     if (local.state !== 'missing' || local.sourceRefs.length || shot.sourceStrategy !== 'aigc_product_scene_replication'
-      || !generation || generation.method !== 'reference_first_frame_product_replacement_i2v'
+      || !generation || !(['reference_first_frame_product_replacement_i2v', 'enterprise_authored_product_first_frame_i2v'] as string[]).includes(generation.method)
+      || (generation.method === 'enterprise_authored_product_first_frame_i2v' && generation.firstFrameOrigin !== 'enterprise_authored_storyboard')
       || !Number.isFinite(generation.durationSeconds) || generation.durationSeconds <= 0
       || !Array.isArray(generation.productImageRefs) || !generation.productImageRefs.length
       || !shot.productSceneReplication || generation.durationSeconds !== shot.productSceneReplication.cameraLock.durationSeconds

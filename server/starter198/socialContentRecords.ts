@@ -1034,6 +1034,7 @@ export async function readSocialTaskDetail(input: {
       ...(summary.brief.materialRoutingPolicyVersion === 'type-aware.v1' && shot.materialPlan.materialRouting ? {
         plannedDurationSeconds: shot.endSeconds - shot.startSeconds,
         ...(shot.materialPlan.productSceneReplication ? { productSceneReplication: shot.materialPlan.productSceneReplication } : {}),
+        ...(shot.materialPlan.materialRouting ? { materialRouting: structuredClone(shot.materialPlan.materialRouting) } : {}),
       } : {}),
     })) ?? storedScriptBaseline?.scenes.map((scene, index, scenes) => ({
       shotId: scene.sceneId,

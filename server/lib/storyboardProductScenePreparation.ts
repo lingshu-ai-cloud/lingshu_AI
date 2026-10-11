@@ -10,7 +10,8 @@ export function planStoryboardProductScene(input: {
     productVersion: string;
     directorScene: string;
     ratio: '9:16' | '16:9' | '1:1';
-    composition: FirstFrameReference;
+    firstFrameOrigin?: 'original_reference_pixels' | 'enterprise_authored_storyboard';
+    composition?: FirstFrameReference;
     product: FirstFrameReference;
     compositionAuthorized: boolean;
     productOwned: boolean;
@@ -32,11 +33,13 @@ export function planStoryboardProductScene(input: {
     const local = input.localMatch;
     if (local && local.materialId.trim() && local.tenantId === input.tenantId && local.productId === input.productId && local.semanticMatch && local.identityPassed && local.qualityPassed && local.durationSeconds >= duration)
         return { route: 'reuse_local' as const, materialId: local.materialId, desiredDurationSeconds: duration };
-    if (!input.compositionAuthorized || !input.productOwned || input.composition.role !== 'source_composition' || input.product.role !== 'product_identity')
+    const authored = input.firstFrameOrigin === 'enterprise_authored_storyboard';
+    if (!authored && (!input.compositionAuthorized || !input.productOwned || input.composition?.role !== 'source_composition' || input.product.role !== 'product_identity'))
         throw Error('product_scene_authorized_composition_and_KB_required');
-    const prompt = `Edit image 1, the original storyboard first-frame composition. Replace only the depicted product and its packaging with the actual enterprise product packaging in image 2. Preserve the original shot's composition, setting, lighting, object placement and director action unless replacement requires fitting the correct package. Image 2 is the sole product-identity authority: preserve its brand, printed product name, quantity, label texture, marks and package geometry; do not invent claims, contents or factory/manufacturing evidence. Do not replace the scene with a generic neutral tabletop. No new on-screen captions or logos outside the original packaging. Director shot specification: ${input.directorScene}`;
-    const request: FirstFrameRequest = { referenceMode: 'product_scene', tenantId: input.tenantId, videoId: input.projectId, compositionId: input.shotId, presenterVersion: input.productVersion, prompt, ratio: input.ratio, references: [input.composition, input.product], idempotencyKey: input.operationId };
+    if (!input.productOwned || input.product.role !== 'product_identity') throw Error('product_scene_owned_KB_required');
+    const prompt = authored ? `Author an original enterprise product storyboard first frame from the supplied actual KB packaging image. Use only the frozen director scene and camera specification for setting, framing, lighting and action; structural references supply no original video pixels. Preserve the exact package geometry and all printed labels, brand, quantity and marks from the KB image. Do not invent product claims or manufacturing evidence, or add on-screen captions. Director shot specification: ${input.directorScene}` : `Edit image 1, the original storyboard first-frame composition. Replace only the depicted product and its packaging with the actual enterprise product packaging in image 2. Preserve the original shot's composition, setting, lighting, object placement and director action unless replacement requires fitting the correct package. Image 2 is the sole product-identity authority: preserve its brand, printed product name, quantity, label texture, marks and package geometry; do not invent claims, contents or factory/manufacturing evidence. Do not replace the scene with a generic neutral tabletop. No new on-screen captions or logos outside the original packaging. Director shot specification: ${input.directorScene}`;
+    const request: FirstFrameRequest = { referenceMode: authored ? 'storyboard_scene' : 'product_scene', tenantId: input.tenantId, videoId: input.projectId, compositionId: input.shotId, presenterVersion: input.productVersion, prompt, ratio: input.ratio, references: authored ? [input.product] : [input.composition!, input.product], idempotencyKey: input.operationId };
     validateFirstFrameRequest(request);
-    const identity = createHash('sha256').update(JSON.stringify({ productId: input.productId, productVersion: input.productVersion, compositionSha256: input.composition.sha256, productSha256: input.product.sha256, directorScene: input.directorScene, desiredDurationSeconds: duration })).digest('hex');
-    return { route: 'replace_product_first_frame' as const, request, identity, desiredDurationSeconds: duration, seedanceFastProviderDurationSeconds: Math.max(4, Math.ceil(duration)), requiresExplicitTrim: duration < 4 };
+    const identity = createHash('sha256').update(JSON.stringify({ productId: input.productId, productVersion: input.productVersion, firstFrameOrigin: input.firstFrameOrigin ?? 'original_reference_pixels', compositionSha256: authored ? null : input.composition!.sha256, productSha256: input.product.sha256, directorScene: input.directorScene, desiredDurationSeconds: duration })).digest('hex');
+    return { route: authored ? 'author_product_first_frame' as const : 'replace_product_first_frame' as const, request, identity, desiredDurationSeconds: duration, seedanceFastProviderDurationSeconds: Math.max(4, Math.ceil(duration)), requiresExplicitTrim: duration < 4 };
 }

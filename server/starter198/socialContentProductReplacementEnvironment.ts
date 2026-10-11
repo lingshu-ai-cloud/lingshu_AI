@@ -180,6 +180,7 @@ export async function createEnvironmentProductReplacementPorts(input: Input, con
     estimatedCostCny: () => +(taskBudget.status(taskBudgetScope)?.entries.filter(e => e.shotId === input.shotId && e.status !== 'rejected').reduce((total, e) => total + e.reservedMicros, 0) || 0) / 1e6,
     assertCurrent,
     composition: async () => {
+      if (input.materialRouting?.generation?.method === 'enterprise_authored_product_first_frame_i2v') throw Error('authored_frame_must_not_read_reference_pixels');
       await assertCurrent();
       const sourceId = input.materialRouting!.generation!.referenceSourceId!.replace(/^system-reference:/, '');
       const source = await db.getById<Row>('trend_videos', sourceId);

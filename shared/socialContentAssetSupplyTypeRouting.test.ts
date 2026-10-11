@@ -25,7 +25,7 @@ test('products require per-shot semantic and product evidence before local reuse
  for(const invalid of [{...segment,sourceRef:'outside'},{...segment,startSeconds:NaN},{...segment,endSeconds:4},{...segment,startSeconds:-1}])assert.throws(()=>plan({...withSegment,selectedMaterialSegment:invalid}),/material_local_match_segment_invalid/);
  for(const match of [undefined,{sourceRefs:['product-local'],semanticMatch:'verified',evidenceRef:'',productRef:'own-product'},{sourceRefs:['product-local'],semanticMatch:'verified',evidenceRef:'semantic',productRef:'wrong-product'},{sourceRefs:['outside-tenant'],semanticMatch:'verified',evidenceRef:'semantic',productRef:'own-product'}]){
   const generated=plan({...request,localVideoMatch:match});
-  assert.equal(generated.sourceStrategy,'aigc_product_scene_replication');assert.equal(generated.materialRouting?.localMatch.state,'missing');assert.equal(generated.materialRouting?.generation?.method,'reference_first_frame_product_replacement_i2v');assert.equal(generated.materialRouting?.generation?.durationSeconds,3);assert.deepEqual(generated.materialRouting?.generation?.productImageRefs,['own-image']);assert.equal(generated.fallbackSourceStrategy,null);
+  assert.equal(generated.sourceStrategy,'aigc_product_scene_replication');assert.equal(generated.materialRouting?.localMatch.state,'missing');assert.equal(generated.materialRouting?.generation?.method,'enterprise_authored_product_first_frame_i2v');assert.equal(generated.materialRouting?.generation?.durationSeconds,3);assert.deepEqual(generated.materialRouting?.generation?.productImageRefs,['own-image']);assert.equal(generated.fallbackSourceStrategy,null);
  }
  const missingOwnProduct=plan({...request,productRef:'not-in-kb'});assert.equal(missingOwnProduct.feasibility,'goal_degraded');assert.deepEqual(missingOwnProduct.sourceRefs,[]);
  assert.equal(plan({...request,plannedDurationSeconds:8}).productSceneReplication?.cameraLock.durationSeconds,8);
@@ -62,4 +62,13 @@ test('explicit free edits retain a verified exact video window without enabling 
  const free=plan(shot,{productionApproach:'material_cut'});assert.equal(free.sourceStrategy,'customer_real_asset');assert.equal(free.materialRouting,undefined);assert.deepEqual(free.selectedMaterialSegment,segment);assert.equal(free.productSceneReplication,undefined);assert.equal(free.fallbackSourceStrategy,null);
  assert.throws(()=>plan({...shot,selectedMaterialSegment:{...segment,endSeconds:NaN}},{productionApproach:'material_cut'}),/material_local_match_segment_invalid/);
  assert.equal(plan({...shot,localVideoMatch:{...shot.localVideoMatch,evidenceRef:''}},{productionApproach:'material_cut'}).selectedMaterialSegment,undefined);
+});
+
+test('normal plan refresh preserves explicit original-pixel method while new product plans author KB-only frames',()=>{
+ const shot:any={shotId:'p',function:'demonstration',materialType:'product',productRef:'own-product',productPolicy:'locked'};
+ const fresh=plan(shot);assert.equal(fresh.materialRouting?.generation?.firstFrameOrigin,'enterprise_authored_storyboard');
+ const frozen=structuredClone(fresh.materialRouting!);frozen.generation!.method='reference_first_frame_product_replacement_i2v';delete frozen.generation!.firstFrameOrigin;
+ const refreshed=plan({...shot,productSceneReplication:fresh.productSceneReplication,materialRouting:frozen});
+ assert.equal(refreshed.materialRouting?.generation?.method,'reference_first_frame_product_replacement_i2v');
+ assert.equal(refreshed.materialRouting?.generation?.firstFrameOrigin,'original_reference_pixels');
 });

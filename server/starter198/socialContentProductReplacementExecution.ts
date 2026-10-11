@@ -40,7 +40,7 @@ export interface ProductReplacementPorts {
         filePath: string;
         durationSeconds: number;
         productReferences: FirstFrameReference[];
-        composition: FirstFrameReference;
+        composition?: FirstFrameReference;
         firstFrame: Buffer;
         directorScene: string;
     }) => Promise<ProductSceneQualityReport>;
@@ -61,13 +61,14 @@ export async function trimAndProbeProductScene(sourcePath: string, targetPath: s
 /** Explicit type-aware policy only. Historic shots retain their prior executor. */
 export async function executeProductReplacementScene(input: Input, ports: ProductReplacementPorts) {
     const routing = input.materialRouting, g = routing?.generation;
-    if (routing?.policy !== 'local_first_product_i2v' || routing.materialType !== 'product' || g?.method !== 'reference_first_frame_product_replacement_i2v' || g.durationSeconds !== input.spec.cameraLock.durationSeconds)
+    const authored = g?.method === 'enterprise_authored_product_first_frame_i2v';
+    if (routing?.policy !== 'local_first_product_i2v' || routing.materialType !== 'product' || (!authored && g?.method !== 'reference_first_frame_product_replacement_i2v') || (authored && g?.firstFrameOrigin !== 'enterprise_authored_storyboard') || (!authored && g?.firstFrameOrigin !== undefined && g.firstFrameOrigin !== 'original_reference_pixels') || !g || g.durationSeconds !== input.spec.cameraLock.durationSeconds)
         throw Error('product_replacement_contract_invalid');
-    if (!g.referenceSourceId || !g.referenceShotId)
+    if (!authored && (!g.referenceSourceId || !g.referenceShotId))
         throw Error('product_reference_first_frame_missing');
     await ports.assertCurrent();
-    const composition = await ports.composition(input);
-    if (!composition?.usageEvidenceRef || composition.reference.role !== 'source_composition')
+    const composition = authored ? null : await ports.composition(input);
+    if (!authored && (!composition?.usageEvidenceRef || composition.reference.role !== 'source_composition'))
         throw Error('product_reference_pixels_usage_missing');
     const products = await ports.products(input);
     if (!products.length || products.some(p => p.role !== 'product_identity'))
@@ -81,17 +82,18 @@ export async function executeProductReplacementScene(input: Input, ports: Produc
         productVersion: products.map(p => p.sha256).join(':'),
         directorScene,
         ratio: '9:16',
-        composition: composition.reference,
+        composition: composition?.reference,
+        firstFrameOrigin: authored ? 'enterprise_authored_storyboard' : 'original_reference_pixels',
         product: products[0]!,
         compositionAuthorized: true,
         productOwned: true,
         operationId: input.idempotencyKey + ':product-replacement-first-frame',
         frozenDurationSeconds: g.durationSeconds,
     });
-    if (plan.route !== 'replace_product_first_frame')
+    if (plan.route !== 'replace_product_first_frame' && plan.route !== 'author_product_first_frame')
         throw Error('product_replacement_plan_unexpected');
     // Keep every specified same-product KB reference, not a guessed SKU.
-    plan.request.references = [composition.reference, ...products];
+    plan.request.references = authored ? products : [composition!.reference, ...products];
     const frame = await ports.firstFrame(plan.request);
     if (!frame.canProceedToVideo || !frame.bytes.length || !frame.evidenceRefs.length)
         throw Error('product_replacement_first_frame_identity_QA_failed');
@@ -101,7 +103,7 @@ export async function executeProductReplacementScene(input: Input, ports: Produc
     const video = await ports.video({
         requestId: input.idempotencyKey + ':' + identity,
         firstFrame: frame.bytes,
-        prompt: `Animate the supplied actual product-replacement first frame according to this director shot: ${directorScene}. Preserve product packaging, labels and composition. No added text or fabricated manufacturing facts.`,
+        prompt: `Animate the supplied actual approved enterprise product first frame according to this director shot: ${directorScene}. Preserve product packaging, labels and composition. No added text or fabricated manufacturing facts.`,
         providerDurationSeconds: plan.seedanceFastProviderDurationSeconds,
         checkpointPath: path.join(input.outputDirectory, identity + '.seedance.json'),
     });
@@ -109,11 +111,11 @@ export async function executeProductReplacementScene(input: Input, ports: Produc
     const original = path.join(input.outputDirectory, input.shotId + '-' + identity + '-provider.mp4'), target = path.join(input.outputDirectory, input.shotId + '-' + identity + '-delivery.mp4');
     fs.writeFileSync(original, video.bytes, { mode: 0o600 });
     const duration = await trimAndProbeProductScene(original, target, g.durationSeconds);
-    const quality = await ports.quality({ filePath: target, durationSeconds: duration, productReferences: products, composition: composition.reference, firstFrame: frame.bytes, directorScene: plan.request.prompt });
+    const quality = await ports.quality({ filePath: target, durationSeconds: duration, productReferences: products, composition: composition?.reference, firstFrame: frame.bytes, directorScene: plan.request.prompt });
     const contentHash = hash(fs.readFileSync(target));
     const evidenceDirectory = ports.evidenceDirectory || input.outputDirectory;
     fs.mkdirSync(evidenceDirectory, {recursive: true, mode: 0o700});
     const lineage = path.join(evidenceDirectory, input.shotId + '-' + identity + '-trim-lineage.json');
-    fs.writeFileSync(lineage, JSON.stringify({ providerTaskId: video.providerTaskId, sourceSha256: hash(video.bytes), deliveredSha256: contentHash, providerDurationSeconds: plan.seedanceFastProviderDurationSeconds, actualDeliveredDurationSeconds: duration, transform: 'ffmpeg video-only re-encode trim; no tempo or still-image synthesis', compositionSha256: composition.reference.sha256, productSha256s: products.map(p => p.sha256), usageEvidenceRef: composition.usageEvidenceRef, humanApproved: false }, null, 2), { mode: 0o600 });
+    fs.writeFileSync(lineage, JSON.stringify({ providerTaskId: video.providerTaskId, sourceSha256: hash(video.bytes), deliveredSha256: contentHash, providerDurationSeconds: plan.seedanceFastProviderDurationSeconds, actualDeliveredDurationSeconds: duration, transform: 'ffmpeg video-only re-encode trim; no tempo or still-image synthesis', firstFrameOrigin: authored ? 'enterprise_authored_storyboard' : 'original_reference_pixels', compositionSha256: composition?.reference.sha256 ?? null, productSha256s: products.map(p => p.sha256), usageEvidenceRef: composition?.usageEvidenceRef ?? null, humanApproved: false }, null, 2), { mode: 0o600 });
     return { status: 'completed' as const, providerId: 'seedream-product-replacement-seedance', providerTaskId: video.providerTaskId, model: frame.model + '+' + video.model, localPath: target, contentHash, duration, actualCostCny: null, estimatedCostCny: ports.estimatedCostCny?.() ?? frame.estimatedCostCny + video.estimatedCostCny, quality: { ...quality, evidenceRefs: [...frame.evidenceRefs, ...quality.evidenceRefs, lineage] } };
 }

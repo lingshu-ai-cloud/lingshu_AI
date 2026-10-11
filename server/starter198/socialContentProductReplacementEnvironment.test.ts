@@ -251,3 +251,17 @@ test('actual Seedance gateway resumes the original accepted task with GET after 
     assert.equal(result.providerTaskId, 'controlled-original-task'); assert.equal(sha(result.bytes), sha(f.video)); assert.equal(posts, 1); assert.equal(gets, 1);
   } finally {if (old === undefined) delete process.env.SEEDANCE_VIDEO_ENABLED; else process.env.SEEDANCE_VIDEO_ENABLED = old;}
 });
+test('authored default environment accepts owned KB with structural-only reference rights and never reads source pixels', async () => {
+  const f = await fixture(false);
+  const routing = {...f.input.materialRouting, generation: {...f.input.materialRouting.generation,
+    method: 'enterprise_authored_product_first_frame_i2v' as const, firstFrameOrigin: 'enterprise_authored_storyboard' as const}};
+  Object.assign(f.task.replication_script.shots[0]!.materialPlan, {materialRouting: routing});
+  const input = {...f.input, materialRouting: routing};
+  const ports = await createEnvironmentProductReplacementPorts(input, f.context);
+  await assert.rejects(ports.composition(input), /must_not_read_reference_pixels/);
+  assert.equal(f.downloads(), 0);
+  const products = await ports.products(input);
+  assert.equal(products[0]!.sha256, sha(f.product));
+  assert.equal(f.downloads(), 1);
+  await ports.assertCurrent();
+});
