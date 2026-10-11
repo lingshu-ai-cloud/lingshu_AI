@@ -54,6 +54,12 @@ export function auditSocialHeyGenPresenters(items: PresenterRecord[]): SocialHey
 
 export interface SocialHeyGenBridgeDependencies {
   store: DataStore;
+  wholeBudget?: {
+    maximumCostCny: number;
+    authorize(input: Parameters<SocialDigitalPresenterBridgePorts['authorizeBudget']>[0]): ReturnType<SocialDigitalPresenterBridgePorts['authorizeBudget']>;
+    recover(input: import('./socialContentDigitalPresenterAdapter.js').DigitalPresenterExecutionRequest, record: any): Promise<string>;
+    completed(input: import('./socialContentDigitalPresenterAdapter.js').DigitalPresenterExecutionRequest, output:{providerTaskId:string;contentHash:string;duration:number;objectKey:string}): Promise<void>;
+  };
   /** Server-owned persistent TTS/upload reader, including byte hash and probe verification. */
   speechAudio?: {
     resolve(input: import('./socialContentDigitalPresenterAdapter.js').DigitalPresenterExecutionRequest): Promise<import('./socialContentDigitalPresenterAdapter.js').VerifiedPresenterSpeechAudio>;
@@ -69,7 +75,7 @@ export interface SocialHeyGenBridgeDependencies {
   maxPolls?: number;
 }
 
-export type PresenterHookAudioSource = Omit<import('./socialContentDigitalPresenterAdapter.js').VerifiedPresenterSpeechAudio, 'audioAssetId'> & { filePath: string };
+export type PresenterHookAudioSource = Omit<import('./socialContentDigitalPresenterAdapter.js').PresenterHookSpeechAudio, 'audioAssetId'> & { filePath: string };
 
 /** Trusted receipt loaders must re-read current task revision, voice/person and
  * the hook receipt from server storage. Clients cannot supply this dependency.
@@ -230,7 +236,7 @@ function safeOutputUrl(raw: string) {
   } catch { return false; }
 }
 
-async function defaultDownload(raw: string): Promise<Buffer> {
+export async function defaultDownload(raw: string): Promise<Buffer> {
   if (!safeOutputUrl(raw)) throw new Error('heygen_output_url_untrusted');
   const response = await fetch(raw, { redirect: 'error', signal: AbortSignal.timeout(90_000) });
   if (!response.ok || !response.body) throw new Error(`heygen_output_download_failed:${response.status}`);
@@ -260,7 +266,7 @@ export function createSocialHeyGenBridgePorts(deps: SocialHeyGenBridgeDependenci
   const pollInterval = Math.max(0, deps.pollIntervalMs ?? 5_000);
   const ports: SocialDigitalPresenterBridgePorts = {
     ...(deps.speechAudio ? { resolveSpeechAudio: (input: import('./socialContentDigitalPresenterAdapter.js').DigitalPresenterExecutionRequest) => deps.speechAudio!.resolve(input) } : {}),
-    maximumCostCny: Number(deps.budget.status('heygen').reservationCny) || 0,
+    maximumCostCny: deps.wholeBudget?.maximumCostCny ?? (Number(deps.budget.status('heygen').reservationCny) || 0),
     // This bridge is the current talking-presenter integration. It does not
     // claim guided body action, product contact, face application, reference
     // motion, custom environment or camera-path support.
@@ -276,7 +282,9 @@ export function createSocialHeyGenBridgePorts(deps: SocialHeyGenBridgeDependenci
         .filter(item => !socialAccountId || item.socialAccountId === socialAccountId)
         .map(item => configuredPresenter(item, presenterAssetId)).find(Boolean) || null;
     },
-    async authorizeBudget({ idempotencyKey, maximumCostCny }) {
+    async authorizeBudget(input) {
+      if(deps.wholeBudget)return deps.wholeBudget.authorize(input);
+      const {idempotencyKey,maximumCostCny}=input;
       if (!deps.storageReady()) return { allowed: false, reason: 'object_storage_unavailable' };
       const status = deps.budget.status('heygen');
       if (!(Number(status.reservationCny) > 0)) return { allowed: false, reason: status.reason || 'budget_unavailable' };
@@ -303,6 +311,11 @@ export function createSocialHeyGenBridgePorts(deps: SocialHeyGenBridgeDependenci
         { where: { tenant_id: input.tenantId, request_id: input.idempotencyKey }, perPage: 2 });
       if (existing.totalItems > 1 || existing.items.length > 1 || existing.totalItems !== existing.items.length) return { status: 'uncertain', error: 'duplicate_provider_job_records' };
       let record = existing.items[0];
+      if(deps.wholeBudget && record && (record.task_id!==input.taskId||record.shot_id!==input.shotId||record.provider!=='heygen'||record.presenter_asset_id!==input.presenter.presenterAssetId))return {status:'uncertain',error:'whole_track_provider_job_scope_changed'};
+      if(deps.wholeBudget && record && !input.speechAudio && record.visual_control?.speechAudio?.operationRole==='production_scene'){
+        input={...input,speechAudio:await deps.speechAudio!.resolve(input)};
+      }
+      if(deps.wholeBudget && !input.speechAudio)return {status:'uncertain',error:'whole_track_presenter_audio_required'};
       if (input.speechAudio) {
         assertPresenterSpeechAudio(input, input.speechAudio);
         if (!deps.speechAudio || !await deps.speechAudio.verify(input, input.speechAudio))
@@ -313,6 +326,7 @@ export function createSocialHeyGenBridgePorts(deps: SocialHeyGenBridgeDependenci
 
       if(record && socialRequestHash(record.visual_control?.accountPlaybookConstraints??null)!==socialRequestHash(input.accountPlaybookConstraints??null))return {status:'uncertain',error:'digital_presenter_account_constraints_changed'};
       let providerTaskId = String(record?.provider_task_id || '').trim();
+      if(deps.wholeBudget && record)providerTaskId=await deps.wholeBudget.recover(input,record);
       if (input.recoveryOnly && (!record || !providerTaskId)) return { status: 'uncertain', error: 'accepted_provider_job_required_for_recovery' };
       if (input.recoveryOnly && (record.task_id !== input.taskId || record.shot_id !== input.shotId
         || record.presenter_asset_id !== input.presenter.presenterAssetId || record.provider !== 'heygen'))
@@ -401,6 +415,7 @@ export function createSocialHeyGenBridgePorts(deps: SocialHeyGenBridgeDependenci
         provider: 'heygen', requestId: input.idempotencyKey, state: 'completed', providerTaskId,
         metadata: { reservationRef: input.reservationRef, materialId, objectKey, contentHash, duration },
       });
+      await deps.wholeBudget?.completed(input,{providerTaskId,contentHash,duration,objectKey});
       return { status: 'completed', providerTaskId, localPath, contentHash, duration };
     },
   };

@@ -4,7 +4,7 @@ import {createHash} from 'node:crypto';
 import type {SocialPaidOperationIntent} from './socialContentTaskBudgetAuthority.js';
 import type {createSocialContentPaidOperationPermit} from './socialContentPaidOperationPermit.js';
 export interface StudioVoicePaidRequest {
-  stage: 'tts' | 'tts_fallback' | 'voice_clone' | 'voice_asr';
+  stage: 'tts' | 'tts_fallback' | 'voice_clone' | 'voice_asr' | 'voice_alignment';
   provider: 'minimax' | 'qwen'; model: string; voiceId: string | null;
   endpoint?: string; accountKeyHash?: string;
   request: Record<string,unknown>; audioSha256?: string; audioSeconds?: number;
@@ -36,7 +36,7 @@ export async function submitStudioVoicePaidRequest<T>(input:StudioVoicePaidReque
  if(request.stage==='tts' && request.provider!==context.primaryProvider)request.stage='tts_fallback';
  try{
   if(!request.endpoint || !/^[a-f0-9]{64}$/.test(request.accountKeyHash||''))throw Error('voice_actual_provider_binding_missing');
-  if(request.stage==='voice_asr' && (!/^[a-f0-9]{64}$/.test(request.audioSha256||'') || !Number.isFinite(request.audioSeconds) || !(request.audioSeconds!>0)))throw Error('voice_asr_actual_audio_identity_missing');
+  if(['voice_asr','voice_alignment'].includes(request.stage) && (!/^[a-f0-9]{64}$/.test(request.audioSha256||'') || !Number.isFinite(request.audioSeconds) || !(request.audioSeconds!>0)))throw Error('voice_asr_actual_audio_identity_missing');
   const call=await context.forRequest(request);
   if(call.intent.stage!==request.stage||call.intent.provider!==request.provider||call.intent.model!==request.model)throw Error('frozen_voice_paid_route_changed');
   await call.assertProviderBinding(request);

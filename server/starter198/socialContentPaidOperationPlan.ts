@@ -21,7 +21,7 @@ export interface FrozenPaidProduction {
         shotId: string;
         durationSeconds: number;
         spokenText: string;
-        presenterSpeech?: 'included' | 'separate' | 'reused';
+        presenterSpeech?: 'included' | 'separate' | 'reused' | 'whole_track';
         presenterSpeechReceiptRef?: string | null;
     }>;
     shots: Array<Pick<SocialAssetSupplyShotPlan, 'shotId' | 'sourceStrategy' | 'fallbackSourceStrategy' | 'materialRouting' | 'sourceRefs'>>;
@@ -40,6 +40,7 @@ export interface FrozenPaidProduction {
         requiresClone: boolean;
         allowFallback: boolean;
         requiresAsr: boolean;
+        requiresAlignment?: boolean;
         reuseReceiptRef: string | null;
     };
     finalReview: 'local' | 'paid';
@@ -188,6 +189,7 @@ export function createSocialContentPaidOperationPlanner(ports: PaidOperationPlan
                         add(`${key}:presenter`, 'presenter_video', shot.shotId, null, scene.durationSeconds, scene.spokenText, null);
                         if (scene.presenterSpeech === 'reused' && (!text(scene.presenterSpeechReceiptRef) || !await local(make(`${key}:speech-reuse`, 'presenter_audio_reuse', shot.shotId, scene.presenterSpeechReceiptRef || null, scene.durationSeconds, scene.spokenText, null), ['existing_audio'])))
                             gap('presenter_speech_reuse_receipt_missing');
+                        if (scene.presenterSpeech === 'whole_track' && (input.voice.mode !== 'continuous' || !input.voice.requiresAlignment)) gap('presenter_whole_track_alignment_dependency_missing');
                         if (scene.presenterSpeech === 'separate')
                             add(`${key}:speech`, 'presenter_tts', shot.shotId, null, scene.durationSeconds, scene.spokenText, null);
                     }
@@ -220,6 +222,7 @@ export function createSocialContentPaidOperationPlanner(ports: PaidOperationPlan
                         add(`voice:${i}:fallback`, 'tts_fallback', null, null, null, s, null);
                 });
             }
+            if (voice.requiresAlignment && voice.mode !== 'none') add('voice:alignment', 'voice_alignment', null, voice.reuseReceiptRef, null, spoken, null);
             if (voice.requiresAsr && voice.mode !== 'none')
                 add('voice:asr', 'voice_asr', null, voice.reuseReceiptRef, null, spoken, null);
             if (input.finalReview === 'paid')

@@ -1,3 +1,7 @@
+import path from 'node:path';
+import {createHash,randomUUID} from 'node:crypto';
+import {withPaidOperationLock} from '../lib/paidOperationLock.js';
+import {studioVoicePaidContext,type StudioVoicePaidRequest} from '../lib/studioVoicePaidOperation.js';
 import fs from 'node:fs';
 import { dashscopeApiKey } from '../agents/qwen.js';
 
@@ -163,7 +167,21 @@ async function downloadQwenTranscription(url: URL): Promise<unknown> {
   catch { throw new Error('音频字幕格式无效'); }
 }
 
-export async function alignQwenFile(url: string, transcript: string, duration: number, cacheFile: string) {
+export async function alignQwenFile(url: string, transcript: string, duration: number, cacheFile: string, trusted?:{audioSha256:string;durableRoot?:string}) {
+  const context=studioVoicePaidContext();
+  if(context) {
+    if(!trusted||!/^[a-f0-9]{64}$/.test(trusted.audioSha256)||!(duration>0&&duration<=300))throw Error('voice_alignment_actual_audio_evidence_missing');
+    const base=(process.env.DASHSCOPE_ASR_BASE_URL||'https://dashscope.aliyuncs.com/api/v1').replace(/\/$/,'');
+    const request:StudioVoicePaidRequest={stage:'voice_alignment',provider:'qwen',model:'qwen3-asr-flash-filetrans',voiceId:null,endpoint:base+'/services/audio/asr/transcription',accountKeyHash:createHash('sha256').update(dashscopeApiKey()).digest('hex'),audioSha256:trusted.audioSha256,audioSeconds:duration,request:{model:'qwen3-asr-flash-filetrans',input:{file_url:url},parameters:{channel_id:[0],enable_itn:false,enable_words:true}}};
+    const paid=await context.forRequest(request);await paid.assertProviderBinding(request);
+    const root=trusted.durableRoot||path.resolve('data/social-content-voice-alignment');
+    const hash=createHash('sha256').update(paid.intent.operationId).digest('hex');
+    const durable=path.join(root,hash+'.json');fs.mkdirSync(root,{recursive:true,mode:0o700});
+    return withPaidOperationLock(path.join(root,'.locks'),hash,()=>alignQwenFileInternal(url,transcript,duration,durable,{request,paid}));
+  }
+  return alignQwenFileInternal(url,transcript,duration,cacheFile);
+}
+async function alignQwenFileInternal(url:string,transcript:string,duration:number,cacheFile:string,guard?:{request:StudioVoicePaidRequest;paid:Awaited<ReturnType<NonNullable<ReturnType<typeof studioVoicePaidContext>>['forRequest']>>}) {
   const base = (process.env.DASHSCOPE_ASR_BASE_URL || 'https://dashscope.aliyuncs.com/api/v1').replace(/\/$/, '');
   const headers = {
     Authorization: `Bearer ${dashscopeApiKey()}`,
@@ -172,7 +190,18 @@ export async function alignQwenFile(url: string, transcript: string, duration: n
   };
   let cache: any = {};
   try { cache = JSON.parse(fs.readFileSync(cacheFile, 'utf8')); } catch { /* no cached task yet */ }
-  if (cache.result) return verifiedAudioCues(cache.result, transcript, duration);
+  const scope=guard?{audioSha256:guard.request.audioSha256,transcriptSha256:createHash('sha256').update(transcript).digest('hex'),duration,endpoint:guard.request.endpoint,accountKeyHash:guard.request.accountKeyHash,operationId:guard.paid.intent.operationId,inputContractHash:guard.paid.intent.inputContractHash}:null;
+  if(guard&&Object.keys(cache).length&&JSON.stringify(cache.scope)!==JSON.stringify(scope))throw Error('voice_alignment_original_scope_changed');
+  const persist=(value:unknown)=>{const temporary=cacheFile+'.'+randomUUID()+'.tmp';const fd=fs.openSync(temporary,'wx',0o600);try{fs.writeFileSync(fd,JSON.stringify(value));fs.fsyncSync(fd);}finally{fs.closeSync(fd);}fs.renameSync(temporary,cacheFile);const directory=fs.openSync(path.dirname(cacheFile),'r');try{fs.fsyncSync(directory);}finally{fs.closeSync(directory);}};
+  if (cache.result) {if(guard)await guard.paid.permit.assertRecovery(guard.paid.intent.operationId);return verifiedAudioCues(cache.result, transcript, duration);}
+  if(guard&&cache.state==='submitting'&&!cache.taskId) {
+    const recovery=await guard.paid.permit.assertRecovery(guard.paid.intent.operationId);
+    let raw:any;try {raw=JSON.parse(fs.readFileSync(recovery.receiptRef || '', 'utf8'));}catch{}
+    const originalId=raw?.response?.output?.task_id;
+    if(recovery?.status!=='accepted'||typeof originalId!=='string'||!originalId||raw.operationId!==guard.paid.intent.operationId||raw.inputContractHash!==guard.paid.intent.inputContractHash||raw.audioSha256!==guard.request.audioSha256||raw.audioSeconds!==duration||raw.accountKeyHash!==guard.request.accountKeyHash)throw Error('voice_alignment_submission_unknown_no_repost');
+    cache={scope,state:'accepted',taskId:originalId};persist(cache);
+  }
+  if(guard&&cache.taskId)await guard.paid.permit.assertRecovery(guard.paid.intent.operationId);
 
   const call = async (route: string, body?: any) => {
     const response = await fetch(base + route, {
@@ -187,14 +216,13 @@ export async function alignQwenFile(url: string, transcript: string, duration: n
   };
 
   if (!cache.taskId) {
-    const task = await call('/services/audio/asr/transcription', {
-      model: 'qwen3-asr-flash-filetrans',
-      input: { file_url: url },
-      parameters: { channel_id: [0], enable_itn: false, enable_words: true },
-    });
+    const body={model:'qwen3-asr-flash-filetrans',input:{file_url:url},parameters:{channel_id:[0],enable_itn:false,enable_words:true}};
+    if(guard){const {maximumUnits:_,...binding}=guard.paid.intent;await guard.paid.permit.beforeSubmit({...binding,actualUnits:await guard.paid.measureUsage(guard.request)});persist({scope,state:'submitting'});}
+    const task = await call('/services/audio/asr/transcription', body);
+    if(guard){const receipt=await guard.paid.persistProviderReceipt({requestSha256:createHash('sha256').update(JSON.stringify(body)).digest('hex'),response:task,audioSha256:guard.request.audioSha256,audioSeconds:duration});await guard.paid.permit.markOutcome(guard.paid.intent.operationId,'accepted',receipt);}
     if (!task.output?.task_id) throw new Error('音频对齐未返回任务ID');
-    cache = { taskId: task.output.task_id };
-    fs.writeFileSync(cacheFile, JSON.stringify(cache));
+    cache = { taskId: task.output.task_id,...(guard?{scope,state:'accepted'}:{}) };
+    persist(cache);
   }
 
   for (let attempt = 0; attempt < 12; attempt += 1) {
@@ -203,8 +231,10 @@ export async function alignQwenFile(url: string, transcript: string, duration: n
     if (state.output?.task_status === 'SUCCEEDED') {
       const target = trustedQwenTranscriptionUrl(state.output.result?.transcription_url);
       const result = await downloadQwenTranscription(target);
-      fs.writeFileSync(cacheFile, JSON.stringify({ ...cache, result }));
-      return verifiedAudioCues(result, transcript, duration);
+      const cues=verifiedAudioCues(result,transcript,duration);
+      persist({...cache,result,...(guard?{state:'completed',completion:state}:{})});
+      if(guard)await guard.paid.permit.markOutcome(guard.paid.intent.operationId,'completed',cacheFile);
+      return cues;
     }
     await new Promise(resolve => setTimeout(resolve, 1_500));
   }

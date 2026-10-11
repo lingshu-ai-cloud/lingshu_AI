@@ -11,6 +11,10 @@ import type {createSocialContentPaidOperationPermit} from './socialContentPaidOp
 import type {StudioVoicePaidContext,StudioVoicePaidRequest} from './studioVoicePaidOperation.js';
 const sha=(v:unknown)=>createHash('sha256').update(JSON.stringify(v)).digest('hex');
 type VoiceInput=Parameters<typeof resolveStudioVoiceExecutionPlan>[0];
+export function nativeStudioVoiceReceiptPath(scope:SocialTaskBudgetScope,operationId:string,root=path.resolve('data/social-content-native-voice-receipts')) {
+ return path.join(root,sha(scope.tenantId),sha(scope.taskId),sha(scope.runId),sha(operationId)+'.json');
+}
+
 /** Trusted runtime factory. Uses automatic canonical requirements and real live
  * Studio voices. No body supplied pricing, routes, account or receipt paths. */
 export function createNativeStudioVoicePaidContext(input:{scope:SocialTaskBudgetScope;requirements:PaidStageRequirement[];routeBindings:Record<string,BoundPaidRoute>;intents:SocialPaidOperationIntent[];permit:ReturnType<typeof createSocialContentPaidOperationPermit>;voiceInput:VoiceInput;assertCurrent:()=>Promise<void>;root?:string}):StudioVoicePaidContext {
@@ -43,9 +47,9 @@ export function createNativeStudioVoicePaidContext(input:{scope:SocialTaskBudget
    // permission. Only a separately frozen exact route may add that in future.
    if(request.stage==='tts_fallback')throw Error('same_voice_fallback_route_not_frozen');
    if(request.stage==='voice_clone')throw Error('clone_preview_activation_paid_plan_required');
-   const index=request.stage==='voice_asr'?0:primary.texts.indexOf(selectedText(request));
+   const index=['voice_asr','voice_alignment'].includes(request.stage)?0:primary.texts.indexOf(selectedText(request));
    if(index<0)throw Error('director_voice_text_changed_requires_budget_replan');
-   const key=request.stage==='voice_asr'?'voice:asr':`voice:${index}:tts`;
+   const key=request.stage==='voice_alignment'?'voice:alignment':request.stage==='voice_asr'?'voice:asr':`voice:${index}:tts`;
    const requirements=input.requirements.filter(r=>r.key===key);
    const requirement=requirements[0],route=input.routeBindings[key];
    if(requirements.length!==1 || !requirement || !route)throw Error('native_voice_canonical_requirement_route_missing');

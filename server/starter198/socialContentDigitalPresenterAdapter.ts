@@ -1,3 +1,4 @@
+import type {WholeTrackPresenterSpeech} from './socialContentWholeTrackPresenterAudio.js';
 import {assertSocialAccountProductionConstraints,type SocialAccountProductionConstraints} from './socialAccountProductionConstraints.js';
 import { createHash } from 'node:crypto';
 import { stat } from 'node:fs/promises';
@@ -21,7 +22,7 @@ export interface AuthorizedDigitalPresenter {
 }
 
 /** Resolved only by a server-owned receipt reader; never from a client body. */
-export interface VerifiedPresenterSpeechAudio {
+export interface PresenterHookSpeechAudio {
   tenantId: string; taskId: string; taskVersion: string; shotId: string;
   presenterAssetId: string; presenterAssetVersion: number; providerAvatarId: string; voiceId: string;
   scriptSha256: string; clipSha256: string; durationSeconds: number;
@@ -29,15 +30,18 @@ export interface VerifiedPresenterSpeechAudio {
   receiptRef: string; receiptHash: string; audioAssetId: string; engine: 'avatar_iv'; operationRole: 'hook';
 }
 
+export type VerifiedPresenterSpeechAudio = PresenterHookSpeechAudio | WholeTrackPresenterSpeech;
+
 export function assertPresenterSpeechAudio(request: Pick<DigitalPresenterExecutionRequest, 'tenantId' | 'taskId' | 'shotId' | 'script' | 'presenter'>, audio: VerifiedPresenterSpeechAudio): void {
   if (!audio || audio.tenantId !== request.tenantId || audio.taskId !== request.taskId || audio.shotId !== request.shotId
     || !audio.taskVersion || audio.presenterAssetId !== request.presenter.presenterAssetId
     || audio.presenterAssetVersion !== request.presenter.assetVersion || audio.providerAvatarId !== request.presenter.providerPresenterId
-    || audio.voiceId !== request.presenter.providerVoiceId || audio.engine !== 'avatar_iv' || audio.operationRole !== 'hook'
+    || audio.engine !== 'avatar_iv'
+    || (audio.operationRole==='hook' ? audio.voiceId!==request.presenter.providerVoiceId : audio.operationRole!=='production_scene'||audio.voiceId!==audio.nativeVoice.physicalVoiceId||!audio.runId||!audio.planHash||!/^[a-f0-9]{64}$/.test(audio.wholeTrackSha256)||!audio.sourceReceiptRef||!audio.alignmentReceiptRef)
     || audio.scriptSha256 !== createHash('sha256').update(request.script).digest('hex')
     || !/^[a-f0-9]{64}$/.test(audio.clipSha256) || !/^[a-f0-9]{64}$/.test(audio.receiptHash)
     || !audio.receiptRef || !audio.audioAssetId || !Number.isFinite(audio.durationSeconds)
-    || audio.durationSeconds <= 0 || audio.durationSeconds > (audio.adoptedSpeech === true && audio.frozenHookDurationSeconds === 5.6 ? 5.6 : 4)) throw new Error('digital_presenter_audio_scope_or_duration_invalid');
+    || audio.durationSeconds <= 0 || audio.durationSeconds > (audio.operationRole==='production_scene'?audio.frozenSceneDurationSeconds+.02:audio.adoptedSpeech === true && audio.frozenHookDurationSeconds === 5.6 ? 5.6 : 4)) throw new Error('digital_presenter_audio_scope_or_duration_invalid');
 }
 
 export interface DigitalPresenterExecutionRequest {

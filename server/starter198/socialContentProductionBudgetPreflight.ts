@@ -1,3 +1,5 @@
+import {readHeyGenPublishedTariff} from '../lib/heygenPublishedPricing.js';
+import {heyGenRuntimeRouteEvidence,readTrustedHeyGenRuntimeBinding,type TrustedHeyGenRuntimeBinding} from './socialContentHeyGenRuntimeBinding.js';
 import {readSeedreamPublishedTariff} from '../lib/seedreamPublishedPricing.js';
 import {readNativeVoicePublishedTariff} from '../lib/studioVoicePublishedPricing.js';
 import {readWanPublishedTariff} from '../lib/wanPublishedPricing.js';
@@ -154,7 +156,7 @@ export async function prepareSocialContentProductionBudget(input: ProductionBudg
     if (!Number.isFinite(amount) || amount <= 0 || !Number.isFinite(retry) || retry < 0)
         return error('task_budget_missing');
     const snapshot: FrozenPaidProduction = { scope, baselineHash, recordHash: '', approval: { approved: true, reviewRef: review.reviewId, sourceHash: '', planHash }, authorization: { ref: `task-budget:${socialRequestHash({ tenantId: input.tenantId, taskId: input.taskId, createdBy: row.created_by, budget: amount, retry })}`, maximumCny: Math.min(10, amount) }, maximumRetries: 0,
-        scenes: approved.directorBrief.scenes.map(scene => ({ shotId: scene.sceneId, durationSeconds: scene.duration.endSeconds - scene.duration.startSeconds, spokenText: input.baseline.scenes.find(s => s.sceneId === scene.sceneId)?.voiceover || input.baseline.scenes.find(s => s.sceneId === scene.sceneId)?.narration || '' })), shots: input.supplyPlan.shots, assets: assetInputs, voice, finalReview: 'local' };
+        scenes: approved.directorBrief.scenes.map(scene => ({ ...(voice.mode === 'continuous' && voice.requiresAlignment && input.supplyPlan?.shots.some(shot => shot.shotId === scene.sceneId && shot.sourceStrategy === 'authorized_digital_presenter') ? {presenterSpeech:'whole_track' as const} : {}), shotId: scene.sceneId, durationSeconds: scene.duration.endSeconds - scene.duration.startSeconds, spokenText: input.baseline.scenes.find(s => s.sceneId === scene.sceneId)?.voiceover || input.baseline.scenes.find(s => s.sceneId === scene.sceneId)?.narration || '' })), shots: input.supplyPlan.shots, assets: assetInputs, voice, finalReview: 'local' };
     snapshot.approval.sourceHash = paidProductionApprovalHash(snapshot);
     snapshot.recordHash = paidProductionRecordHash(snapshot);
     const localSupplyProof=createSocialContentLocalSupplyBudgetProofReader({scope,supplyPlan:input.supplyPlan,baseline:input.baseline,assets:input.assets,repository:input.repository,assertCurrent});
@@ -167,9 +169,27 @@ export async function prepareSocialContentProductionBudget(input: ProductionBudg
       const previous=productBounds.get(req.shotId);if(previous&&socialRequestHash(previous)!==socialRequestHash(value))return error('product_input_authority_changed');
       productBounds.set(req.shotId,value);return value;
     }});
+    const presenterBindings = new Map<string, TrustedHeyGenRuntimeBinding>();
+    const readPresenterRoute = async (requirement: Parameters<PaidOperationPlannerPorts['resolveBoundRoute']>[0]): Promise<BoundPaidRoute | null> => {
+      if (requirement.stage !== 'presenter_video' || !requirement.shotId || !requirement.durationSeconds || requirement.durationSeconds <= 0) return null;
+      const shot = input.supplyPlan?.shots.find(item => item.shotId === requirement.shotId);
+      if (!shot || shot.sourceStrategy !== 'authorized_digital_presenter') return null;
+      const presenterIds = [...new Set(shot.digitalHumanPlan?.presenterAssetIds.length ? shot.digitalHumanPlan.presenterAssetIds : shot.sourceRefs)];
+      if (presenterIds.length !== 1) return null;
+      let binding = presenterBindings.get(requirement.shotId);
+      if (!binding) {
+        const resolved = await readTrustedHeyGenRuntimeBinding({tenantId:input.tenantId,presenterAssetId:presenterIds[0]!},{store,assertCurrent});
+        if (!resolved) return null;
+        binding = resolved; presenterBindings.set(requirement.shotId,binding);
+      }
+      return {provider:'heygen',model:'avatar_iv',accountRef:binding.accountRef,
+        routeEvidenceRef:heyGenRuntimeRouteEvidence(binding),
+        usageBoundRef:'measured-whole-track-scene:'+requirement.inputContractHash,
+        maximumAttempts:1,maximumUnits:{providerSeconds:Math.ceil(requirement.durationSeconds)}};
+    };
     const routeBindings: Record<string, BoundPaidRoute> = {};
     const planner = createSocialContentPaidOperationPlanner({ readFrozenProduction: async () => { await assertCurrent(); return snapshot; }, assertCurrent,
-        resolveBoundRoute: async (requirement) => { const route = await ports?.resolveBoundRoute?.(requirement) || await canonicalRoutes.resolveBoundRoute(requirement); if (route)
+        resolveBoundRoute: async (requirement) => { const route = await ports?.resolveBoundRoute?.(requirement) || await readPresenterRoute(requirement) || await canonicalRoutes.resolveBoundRoute(requirement); if (route)
             routeBindings[requirement.key] = structuredClone(route); return route; },
         readProductFrameBounds: async req=>await ports?.readProductFrameBounds?.(req)||await canonicalRoutes.readProductFrameBounds(req),
         readVerifiedLocalExecution: async (req) => {
@@ -194,9 +214,9 @@ export async function prepareSocialContentProductionBudget(input: ProductionBudg
       const model=intent.stage==='material_image_analysis'?b.imageModel:['material_video_analysis','material_video_review'].includes(intent.stage)?b.materialModel:['first_frame_qa','video_qa'].includes(intent.stage)?(intent.model==='qwen3-vl-plus'?intent.model:process.env.QWEN_VL_MODEL||'qwen3-vl-plus'):null;
       return model?{provider:'qwen',model,baseUrl:b.baseUrl,credentialSha256:b.credentialSha256}:null;
     }});
-    const authority = createSocialContentTaskBudgetAuthority({ ledgerRoot: ports?.ledgerRoot, ports: { assertCurrent, readApprovedPlan: async () => { await assertCurrent(); return planned.plan!; }, readVerifiedTariff: ports?.readTariff || (async intent=>await reader.read(intent)||(['tts','voice_asr','voice_alignment'].includes(intent.stage)?await readNativeVoicePublishedTariff(intent):intent.provider==='seedream'?await readSeedreamPublishedTariff(intent,{baseUrl:process.env.SEEDREAM_BASE_URL||process.env.SEEDANCE_BASE_URL||'https://ark.cn-beijing.volces.com/api/v3',credentialSha256:createHash('sha256').update((process.env.SEEDREAM_API_KEY||process.env.SEEDANCE_API_KEY||'').trim()).digest('hex')}):intent.provider==='wan'?await readWanPublishedTariff(intent,getQwenProviderBinding()):await publishedReader.read(intent))), verifyRejection: async () => false } });
+    const authority = createSocialContentTaskBudgetAuthority({ ledgerRoot: ports?.ledgerRoot, ports: { assertCurrent, readApprovedPlan: async () => { await assertCurrent(); return planned.plan!; }, readVerifiedTariff: ports?.readTariff || (async intent=>await reader.read(intent)||(['tts','voice_asr','voice_alignment'].includes(intent.stage)?await readNativeVoicePublishedTariff(intent):intent.provider==='seedream'?await readSeedreamPublishedTariff(intent,{baseUrl:process.env.SEEDREAM_BASE_URL||process.env.SEEDANCE_BASE_URL||'https://ark.cn-beijing.volces.com/api/v3',credentialSha256:createHash('sha256').update((process.env.SEEDREAM_API_KEY||process.env.SEEDANCE_API_KEY||'').trim()).digest('hex')}):intent.provider==='wan'?await readWanPublishedTariff(intent,getQwenProviderBinding()):intent.provider==='heygen'?await readHeyGenPublishedTariff(intent,{readBinding:async operation=>operation.shotId?presenterBindings.get(operation.shotId)||null:null}):await publishedReader.read(intent))), verifyRejection: async () => false } });
     const reserved = await authority.prepareAndReserve(scope);
-    await recordCurrentContentExecutionCheckpoint({ stage: STAGE, version: '1', inputHash: planHash, payload: { scopeHash: paidProductionHash(scope), baselineHash, operationIds: reserved.operations.map(o => o.operationId), requirements: planned.requirements, routeBindings, plan: planned.plan } });
+    await recordCurrentContentExecutionCheckpoint({ stage: STAGE, version: '1', inputHash: planHash, payload: { scopeHash: paidProductionHash(scope), baselineHash, operationIds: reserved.operations.map(o => o.operationId), requirements: planned.requirements, routeBindings, quotes: reserved.quotes, plan: planned.plan } });
     const paidPermit = createSocialContentPaidOperationPermit({ ...reserved, root: path.join(ports?.ledgerRoot || process.env.SOCIAL_CONTENT_TASK_BUDGET_DIR || 'data/social-content-task-budget', '.permits'), assertCurrent });
     return { status: 'reserved' as const, scope, reserved, paidPermit, requirements: planned.requirements, routeBindings };
 }

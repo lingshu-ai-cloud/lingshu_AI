@@ -20,6 +20,8 @@ import { createSocialContentMaterialPaidContext, type SocialMaterialPaidRuntimeP
 import { socialContentMaterialAnalysisInputs } from './socialContentMaterialAnalysisInputs.js';
 import { createProductionBudgetRouteReaders } from './socialContentProductionBudgetRoutes.js';
 import { createSocialContentPaidRuntimePorts } from './socialContentPaidRuntimePorts.js';
+import { prepareSocialContentWholeVoice, type PreparedWholeVoice } from './socialContentPreparedWholeVoice.js';
+import { socialDirectorSpokenNarration } from './socialContentDirectorHandoff.js';
 import { createNativeStudioVoicePaidContext } from '../lib/studioNativeVoicePaidContext.js';
 import type { ProductPaidContext } from './socialContentProductPaidContext.js';
 import {assertStoredWeeklyProductionCoverage} from '../runtime/weeklyProductionCoverageAdmission.js';
@@ -78,8 +80,10 @@ import { createSocialProductSceneAdapter } from './socialContentProductSceneAdap
 import { createEnvironmentSeedanceProductScenePorts } from './socialContentSeedanceProductScene.js';
 import { createSocialDigitalPresenterAdapter } from './socialContentDigitalPresenterAdapter.js';
 import { createEnvironmentSocialHeyGenBridge } from './socialContentHeyGenBridge.js';
+import {createWholeTrackSocialHeyGenBridge} from './socialContentWholeTrackHeyGenBridge.js';
+import {heyGenRuntimeRouteEvidence,readTrustedHeyGenRuntimeBinding} from './socialContentHeyGenRuntimeBinding.js';
 import { replicationExecutionGaps, selectPresenterExecutions, verifyNamedPresenterLock, type PresenterExecutionSelection } from './socialContentPresenterExecutionPolicy.js';
-import { buildSocialDirectorPlan, parseStoredSocialDirectorPlan, publicSocialDirectorPlanSummary, reviseSocialDirectorPlanForVoiceoverFit, socialDirectorContentHandoff, socialDirectorCoverTimestamp, socialDirectorRenderTimeline, socialDirectorVoiceAlignedCaptionCues, socialDirectorScriptText, type SocialDirectorBgmSelection, type SocialDirectorBgmTrack, type SocialDirectorContentHandoff } from './socialContentDirectorPlan.js';
+import { socialDirectorFrozenDirection, buildSocialDirectorPlan, parseStoredSocialDirectorPlan, publicSocialDirectorPlanSummary, reviseSocialDirectorPlanForVoiceoverFit, socialDirectorContentHandoff, socialDirectorCoverTimestamp, socialDirectorRenderTimeline, socialDirectorVoiceAlignedCaptionCues, socialDirectorScriptText, type SocialDirectorBgmSelection, type SocialDirectorBgmTrack, type SocialDirectorContentHandoff } from './socialContentDirectorPlan.js';
 import { latestSocialDirectorPlanVersion, persistSocialDirectorPlanVersion, resolveSocialDirectorArtifactLineage } from './socialContentDirectorPlanVersions.js';
 import type { InternalSocialContentFormula } from './socialContentThemes.js';
 import { socialProductionCollaborationFailures, socialProductionCollaborationTrace, socialProductionExecutionSceneForFinal } from './socialContentProductionCollaboration.js';
@@ -453,13 +457,18 @@ export async function runSocialContentAutoProduction(input: {
     const heygenBridge = input.repository.dataStore
       ? createEnvironmentSocialHeyGenBridge(input.repository.dataStore)
       : null;
+    const wholeFilmPresenterConfigured=detail.brief.materialRoutingPolicyVersion==='type-aware.v1'
+      && process.env.SOCIAL_CONTENT_HEYGEN_ENABLED==='true' && process.env.HEYGEN_GENERATION_ENABLED==='true'
+      && Boolean(process.env.HEYGEN_API_KEY?.trim()) && objectStorageEnabled();
     presenterExecutions = selectPresenterExecutions({
       detail,
-      heygenReady: productionApproach === 'ai_enhanced' && Boolean(heygenBridge?.readiness.ready && heygenBridge.ports),
+      heygenReady: productionApproach === 'ai_enhanced' && (wholeFilmPresenterConfigured || Boolean(heygenBridge?.readiness.ready && heygenBridge.ports)),
       // The currently registered social Seedance executor handles product
       // scenes, not enterprise-presenter first-frame reenactment.
       seedancePresenterReady: false,
-      budgetReady: productionApproach === 'ai_enhanced' && Boolean(heygenBridge?.readiness.ready),
+      // New whole-film plans authorize actual fees in preflight; the old
+      // independent Studio reservation must not block this admission preview.
+      budgetReady: productionApproach === 'ai_enhanced' && (wholeFilmPresenterConfigured || Boolean(heygenBridge?.readiness.ready)),
     });
     if (presenterExecutions.length) {
       await writeExecutionStage({
@@ -715,7 +724,8 @@ export async function runSocialContentAutoProduction(input: {
       policyVersion: detail.brief.materialRoutingPolicyVersion});
 	  const productionAssetsToAnalyze = materialInputs.analyze;
 	  const budgetRoutes = createProductionBudgetRouteReaders();
-	  const productionBudget = await prepareSocialContentProductionBudget({repository:input.repository,tenantId:input.tenantId,taskId:input.taskId,runId:input.runId,baseline:activeBaseline,assets:productionAssetsToAnalyze,supplyPlan:reviewedSupplyPlan,graphApprovedContext:input.graphApprovedContext,recoveryOnly:input.assetSupplyRecoveryOnly,ports:{...createProductionBudgetRuntimeReaders({tenantId:input.tenantId,formula:directorFormula}),...budgetRoutes,...input.runtime?.productionBudgetReadPorts}});
+  const budgetRuntimeReaders = createProductionBudgetRuntimeReaders({tenantId:input.tenantId,formula:directorFormula,requiresMeasuredAlignment:reviewedSupplyPlan?.shots.some(shot=>shot.sourceStrategy==='authorized_digital_presenter')});
+	  const productionBudget = await prepareSocialContentProductionBudget({repository:input.repository,tenantId:input.tenantId,taskId:input.taskId,runId:input.runId,baseline:activeBaseline,assets:productionAssetsToAnalyze,supplyPlan:reviewedSupplyPlan,graphApprovedContext:input.graphApprovedContext,recoveryOnly:input.assetSupplyRecoveryOnly,ports:{...budgetRuntimeReaders,...budgetRoutes,resolveBoundRoute: requirement => ['tts','tts_fallback','voice_clone','voice_asr','voice_alignment'].includes(requirement.stage) ? budgetRuntimeReaders.resolveBoundRoute!(requirement) : budgetRoutes.resolveBoundRoute(requirement),...input.runtime?.productionBudgetReadPorts}});
 	  const defaultPaidRuntime = productionBudget.status === 'reserved' ? createSocialContentPaidRuntimePorts({scope:productionBudget.scope,routes:budgetRoutes,assertCurrent:assertCurrentContentExecutionActive}) : undefined;
 	  const materialPaidContext = productionBudget.status === 'reserved'
       && productionBudget.reserved.intents.some(operation => operation.stage.startsWith('material_'))
@@ -755,6 +765,22 @@ export async function runSocialContentAutoProduction(input: {
       } : analyzeProductionAssets))({...value, paidOperationContext: materialPaidContext}),
     });
 	  let assets = [...analyzed.assets, ...materialInputs.productReferences];
+  let preparedWholeVoice: PreparedWholeVoice | null = null;
+  let preparedWholeVoiceInput: Parameters<typeof synthesizeStudioVoiceForAutomation>[0] | null = null;
+  if (productionBudget.status === 'reserved' && productionBudget.requirements.some(requirement => requirement.stage === 'voice_alignment')) {
+    const direction = socialDirectorFrozenDirection({baseline: activeBaseline, formula: directorFormula, duration: 0});
+    const text = socialDirectorSpokenNarration(activeBaseline.scenes.map(scene => ({voiceover:scene.voiceover || scene.narration})),activeBaseline.language);
+    preparedWholeVoiceInput = {tenantId:input.tenantId,text,language:activeBaseline.language,voice:direction.voiceover.voice,
+      style:{preset:direction.voiceover.preset,speed:direction.voiceover.speed,pauseStyle:direction.voiceover.pauseStyle}};
+    preparedWholeVoice = await prepareSocialContentWholeVoice({
+      funding:{scope:productionBudget.scope,requirements:productionBudget.requirements,routeBindings:productionBudget.routeBindings,
+        intents:productionBudget.reserved.intents,permit:productionBudget.paidPermit,assertCurrent:assertCurrentContentExecutionActive,voiceInput:preparedWholeVoiceInput},
+      targetDuration:agentWorkflow.directorBrief.scenes.reduce((total,scene)=>total+scene.duration.endSeconds-scene.duration.startSeconds,0),
+      scenes:agentWorkflow.directorBrief.scenes.map(scene=>({shotId:scene.sceneId,spokenText:activeBaseline.scenes.find(item=>item.sceneId===scene.sceneId)?.voiceover || activeBaseline.scenes.find(item=>item.sceneId===scene.sceneId)?.narration || '',durationSeconds:scene.duration.endSeconds-scene.duration.startSeconds,startSeconds:scene.duration.startSeconds,endSeconds:scene.duration.endSeconds})),
+      synthesize:input.runtime?.synthesizeVoice,
+    });
+  }
+
 	  let assetSupplyExecution: SocialAssetSupplyExecution | null = null;
       let executedSupplyPlan:SocialAssetSupplyPlan|null=null;
 	  if (detail.assetSupplyPlan) {
@@ -788,8 +814,24 @@ export async function runSocialContentAutoProduction(input: {
           : null;
       } else {
         await assertWeeklyProductionMaterialAdmission(input,input.materialEvidencePorts?.materialPorts,input.materialEvidencePorts);
+        // Whole-track scenes require an explicitly frozen audio-driven video consumer.
+        // The legacy environment bridge submits text and its separate budget.
         const environmentPresenter = paidVisualProvidersAllowed && input.repository.dataStore
-          ? createEnvironmentSocialHeyGenBridge(input.repository.dataStore)
+          ? preparedWholeVoice && productionBudget.status==='reserved'
+            ? {ports:createWholeTrackSocialHeyGenBridge({store:input.repository.dataStore,prepared:preparedWholeVoice,
+                taskVersion:String(taskRecord.version),apiKey:process.env.HEYGEN_API_KEY||'',
+                funding:{scope:productionBudget.scope,requirements:productionBudget.requirements,routeBindings:productionBudget.routeBindings,
+                  intents:productionBudget.reserved.intents,permit:productionBudget.paidPermit,assertCurrent:assertCurrentContentExecutionActive,
+                  readReservedCny(operationId){
+                    const entry=productionBudget.reserved.ledger.status(productionBudget.scope)?.entries.find(row=>row.operationId===operationId&&row.runId===productionBudget.scope.runId&&row.planHash===productionBudget.scope.planHash&&row.status!=='rejected');
+                    if(!entry)throw Error('whole_track_heygen_reservation_missing');return entry.reservedMicros/1e6;
+                  },
+                  async assertLivePresenter(route,request,credentialSha256){
+                    const binding=await readTrustedHeyGenRuntimeBinding({tenantId:input.tenantId,presenterAssetId:request.presenter.presenterAssetId,expectedVersion:request.presenter.assetVersion},{store:input.repository.dataStore!,assertCurrent:assertCurrentContentExecutionActive});
+                    if(!binding||binding.credentialSha256!==credentialSha256||binding.avatarId!==request.presenter.providerPresenterId||binding.voiceId!==request.presenter.providerVoiceId||binding.authorizationRef!==request.presenter.authorizationRef||binding.consentRef!==request.presenter.consentRef||binding.model!==route.model||binding.accountRef!==route.accountRef||route.routeEvidenceRef!==heyGenRuntimeRouteEvidence(binding))throw Error('whole_track_heygen_approved_person_changed');
+                  },
+                }})}
+            : createEnvironmentSocialHeyGenBridge(input.repository.dataStore)
           : null;
         const existingAdapters = existingAssetSupplyAdapters().filter(adapter => (
           paidVisualProvidersAllowed
@@ -1113,7 +1155,14 @@ export async function runSocialContentAutoProduction(input: {
           narration: contentHandoff.narration,
         });
         narrationCheckpointReused = Boolean(recoveredVoice);
-        if (recoveredVoice) {
+        if (preparedWholeVoice && preparedWholeVoiceInput) {
+          const actualInput={tenantId:input.tenantId,text:contentHandoff.narration,language:contentHandoff.outputSpec.language,voice:contentHandoff.direction.voiceover.voice,
+            style:{preset:contentHandoff.direction.voiceover.preset,speed:contentHandoff.direction.voiceover.speed,pauseStyle:contentHandoff.direction.voiceover.pauseStyle}};
+          if(socialRequestHash(actualInput)!==socialRequestHash(preparedWholeVoiceInput))throw Error('director_voice_text_changed_requires_budget_replan');
+          voice=preparedWholeVoice.voice;
+          retainVoiceForRecovery=true;
+          narrationCheckpointReused=true;
+        } else if (recoveredVoice) {
           voice = recoveredVoice;
           retainVoiceForRecovery = true;
         } else {
@@ -1198,6 +1247,7 @@ export async function runSocialContentAutoProduction(input: {
           metadata: { narrationCheckpointInputHash, duration },
         });
         if (duration <= contentHandoff.outputSpec.maximumDurationSeconds + 0.25) break;
+        if(preparedWholeVoice)throw Error('director_revision_required:whole_track_speech_exceeds_frozen_film_requires_formal_replan');
         if (revisionAttempt >= 2) {
           throw new Error(`director_revision_required:口播经过 2 次编导内部压缩仍为 ${duration.toFixed(1)} 秒，超过锁定素材 ${contentHandoff.outputSpec.maximumDurationSeconds.toFixed(1)} 秒`);
         }

@@ -18,6 +18,8 @@ export interface SocialTaskBudgetOperation {
     shotId: string | null;
 }
 export interface SocialTaskBudgetQuote {
+    /** Original currency is retained; the CNY allocation is a planning estimate. */
+    nativePricing?: { basis: 'published_fx_estimate'; currency: 'USD'; usdPerMinute: number; maximumProviderSeconds: number; estimatedCnyPerUsd: number; fxDate: string; pricingSourceSha256: string; fxSourceSha256: string };
     upperBoundCny: number;
     quoteRef: string;
     validUntil: string;

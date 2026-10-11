@@ -6,7 +6,7 @@ export class HeyGenRequestError extends Error {
   }
 }
 export class HeyGenClient {
-  constructor(private key: string, private transport: typeof fetch = fetch, private paidSubmission?: {beforeSubmit(request:Record<string,unknown>,requestId:string):Promise<void>;onAccepted(taskId:string,requestId:string):Promise<void>}) {}
+  constructor(private key: string, private transport: typeof fetch = fetch, private paidSubmission?: {beforeSubmit(request:Record<string,unknown>,requestId:string):Promise<void>;onAccepted(taskId:string,requestId:string,receipt?:Record<string,unknown>):Promise<void>;onStatus?(taskId:string,receipt:Record<string,unknown>):Promise<void>}) {}
   private async call(path: string, body?: unknown, requestId?: string) {
     if (!this.key) throw new Error('尚未配置 HEYGEN_API_KEY');
     const response = await this.transport(`https://api.heygen.com/v3/videos${path}`, {
@@ -29,7 +29,7 @@ export class HeyGenClient {
     await this.paidSubmission?.beforeSubmit(structuredClone(request),requestId);
     const data=await this.call('',request,requestId);
     if (typeof data.video_id !== 'string') throw new Error('提交结果未知：未返回video_id，请检查供应商任务，不要重复付费提交');
-    await this.paidSubmission?.onAccepted(data.video_id,requestId);
+    await this.paidSubmission?.onAccepted(data.video_id,requestId,structuredClone(data));
     return data.video_id;
   }
   async uploadImage(bytes: Uint8Array, mimeType: string, requestId: string): Promise<string> {
@@ -50,6 +50,7 @@ export class HeyGenClient {
   }
   async status(id: string): Promise<{ status: 'pending' | 'completed' | 'failed'; url?: string; duration?: number; error?: string }> {
     const data = await this.call(`/${encodeURIComponent(id)}`);
+    await this.paidSubmission?.onStatus?.(id,structuredClone(data));
     if (data.status === 'completed') {
       if (typeof data.video_url !== 'string' || !(Number(data.duration) > 0)) throw new Error('生成完成但缺少可用视频或时长');
       return { status: 'completed', url: data.video_url, duration: Number(data.duration) };
