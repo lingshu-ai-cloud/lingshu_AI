@@ -305,6 +305,14 @@ async function request(pathname: string, options: {
   };
 }
 
+/** Explicit persisted pre-policy fixture; only compatibility cases opt into it. */
+function usePersistedLegacyRouting(taskId: string) {
+  const row = dataStore.rows.get(STARTER_COLLECTIONS.socialContentTasks)!.find(item => item.task_id === taskId)!;
+  const brief = typeof row.brief === 'string' ? JSON.parse(row.brief) : structuredClone(row.brief);
+  delete brief.materialRoutingPolicyVersion;
+  row.brief = brief;
+}
+
 const completeBrief = {
   title: '秋季新品内容', objective: '制作新品介绍内容', productRef: 'product:chair', audience: '海外家具采购商',
   markets: ['US'], languages: ['en'], platforms: ['instagram'], formats: ['short_video'], aspectRatio: '9:16',
@@ -423,6 +431,16 @@ try {
   });
   assert.equal(durableMaterial.status, 201, durableMaterial.raw);
   assert.equal(durableMaterial.body.task.status, 'plan_review');
+  const typedDurableRejected = await request(`/api/default-social-content/tasks/${durableTaskId}/start`, {
+    idempotencyKey: 'social-durable-new-policy-gap',
+    body: { expectedVersion: durableMaterial.body.task.version },
+  });
+  assert.equal(typedDurableRejected.status, 409, typedDurableRejected.raw);
+  assert.equal(typedDurableRejected.body.error, 'social_content_execution_director_review_required');
+  assert.equal(productionQueueInputs.length, 0, 'missing typed scene evidence cannot dispatch production');
+  // This fixture represents a persisted task created before the type-aware policy.
+  // Its scheduling/idempotency contract remains supported, independently of new-task admission.
+  usePersistedLegacyRouting(durableTaskId);
   const durableStarted = await request(`/api/default-social-content/tasks/${durableTaskId}/start`, {
     idempotencyKey: 'social-durable-start',
     body: { expectedVersion: durableMaterial.body.task.version },
@@ -508,6 +526,7 @@ try {
       sourceVersion: scheduleRaceUpload.body.file.sha256, label: '并发真实素材',
     },
   });
+  usePersistedLegacyRouting(scheduleRaceTaskId);
   const racedStarts = await Promise.all(['a', 'b'].map(suffix => request(
     `/api/default-social-content/tasks/${scheduleRaceTaskId}/start`,
     {
@@ -780,6 +799,7 @@ try {
   });
   assert.equal(fakeFile.status, 404);
 
+  usePersistedLegacyRouting(taskId);
   const started = await request(`/api/overseas/starter-198/social-content/tasks/${taskId}/start`, {
     idempotencyKey: 'social-start-0001', body: { expectedVersion: restoredKnowledge.body.task.version },
   });
@@ -1045,6 +1065,7 @@ try {
     decision: 'changes_requested',
     note: '请缩短口播和字幕，开头更直接一些',
   };
+  usePersistedLegacyRouting(bypassTaskId);
   const revisionDecision = await request(
     `/api/overseas/starter-198/social-content/tasks/${bypassTaskId}/artifacts/${revisionArtifact.body.artifact.artifactId}/decision`,
     { idempotencyKey: 'social-revision-decision', body: revisionDecisionInput },
@@ -1261,12 +1282,21 @@ try {
   assert.equal(zeroInputTask.body.task.brief.assetAvailability, 'none');
   assert.equal(zeroInputTask.body.task.brief.managementMode, 'one_click_managed');
   assert.equal(zeroInputTask.body.task.readiness.complete, true,
-    'missing customer material is routed to safe generation or substitution instead of blocking admission');
+    'planning readiness does not certify executable scene evidence');
   assert.deepEqual(zeroInputTask.body.task.readiness.missing, []);
   assert.equal(zeroInputTask.body.task.status, 'plan_review');
   assert.ok(zeroInputTask.body.task.readiness.personalizationGaps.includes('enterprise_knowledge'));
   assert.ok(zeroInputTask.body.task.readiness.personalizationGaps.includes('source_material'));
   assert.equal(zeroInputTask.body.task.scriptBaseline.source, 'system_theme_baseline');
+  const zeroInputQueuedBefore = orchestratorInputs.length;
+  const zeroInputRejected = await request(`/api/overseas/starter-198/social-content/tasks/${zeroInputTask.body.task.taskId}/start`, {
+    idempotencyKey: 'social-zero-input-typed-gap',
+    body: { expectedVersion: zeroInputTask.body.task.version },
+  });
+  assert.equal(zeroInputRejected.status, 409, zeroInputRejected.raw);
+  assert.equal(zeroInputRejected.body.error, 'social_content_execution_director_review_required');
+  assert.equal(orchestratorInputs.length, zeroInputQueuedBefore, 'new task with missing scene evidence never reaches a production or paid provider executor');
+  usePersistedLegacyRouting(zeroInputTask.body.task.taskId);
   const zeroInputStarted = await request(`/api/overseas/starter-198/social-content/tasks/${zeroInputTask.body.task.taskId}/start`, {
     idempotencyKey: 'social-zero-input-start-001',
     body: { expectedVersion: zeroInputTask.body.task.version },
@@ -1549,6 +1579,7 @@ try {
   assert.equal(conceptPreviewTask.status, 201, conceptPreviewTask.raw);
   assert.equal(conceptPreviewTask.body.task.readiness.complete, true,
     'an explicit non-publishable concept preview may retain the historic graphic fallback');
+  usePersistedLegacyRouting(conceptPreviewTask.body.task.taskId);
   const conceptPreviewStarted = await request(`/api/overseas/starter-198/social-content/tasks/${conceptPreviewTask.body.task.taskId}/start`, {
     idempotencyKey: 'social-zero-input-preview-start-001',
     body: { expectedVersion: conceptPreviewTask.body.task.version },
@@ -1611,6 +1642,7 @@ try {
   assert.equal(sameThemeUpdate.status, 200, sameThemeUpdate.raw);
   assert.deepEqual(sameThemeUpdate.body.task.materialRequirements, [],
     'submitting an unchanged theme must not reintroduce formula-owned material suggestions');
+  usePersistedLegacyRouting(instantTaskId);
   const instantStarted = await request(`/api/overseas/starter-198/social-content/tasks/${instantTaskId}/start`, {
     idempotencyKey: 'social-instant-start-001', body: { expectedVersion: sameThemeUpdate.body.task.version },
   });

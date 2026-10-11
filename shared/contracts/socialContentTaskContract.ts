@@ -189,6 +189,14 @@ export interface SocialWorkPackageSelection {
   name: string;
 }
 
+/** Use this exact already-analyzed video; cache gaps never trigger collection. */
+export interface SocialReferenceReuseBinding {
+  recordId: string;
+  contentSha256: string;
+  analysisId: string;
+  analysisHash: string;
+}
+
 export interface SocialContentTaskBrief {
   title: string;
   objective: string;
@@ -238,6 +246,7 @@ export interface SocialContentTaskBrief {
   productionApproach?: SocialProductionApproach;
   /** Explicit new-plan policy; omission preserves historical frozen routing. */
   materialRoutingPolicyVersion?: 'type-aware.v1';
+  referenceReuse?: SocialReferenceReuseBinding;
 }
 
 /** Public metadata only. Formula identifiers and internal prompt templates stay server-side. */
@@ -537,6 +546,7 @@ export interface CreateSocialContentTaskInput {
   productionApproach?: SocialProductionApproach;
   mode?: SocialContentTaskMode;
   materialRoutingPolicyVersion?: 'type-aware.v1';
+  referenceReuse?: SocialReferenceReuseBinding;
   weeklyPlanId?: string | null;
   themeId?: SocialContentThemeId | null;
   customTopic?: string | null;
@@ -553,6 +563,8 @@ export interface UpdateSocialContentTaskInput {
 export interface AddSocialTaskSourceInput {
   kind: SocialSourceKind;
   sourceRef: string;
+  /** Select an existing tenant-owned analysis; hashes are derived by the server. */
+  cachedReferenceRecordId?: string;
   sourceVersion?: string | null;
   label: string;
   purpose?: string | null;

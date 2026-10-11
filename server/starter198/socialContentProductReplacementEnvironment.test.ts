@@ -73,13 +73,14 @@ test('environment ports integrate actual extraction, exact budget grants, provid
   const videoModel = process.env.SEEDANCE_MODEL || 'doubao-seedance-2-0-fast-260128';
   const qaModel = process.env.QWEN_VL_MODEL || 'qwen3-vl-plus';
   let frameCalls = 0, videoCalls = 0, qaCalls = 0;
+  let provisionQuotes = true;
   f.context.prepareFrame = (async (input, ports) => {
     frameCalls++; const fp = firstFrameInputFingerprint(input.request, 'seedream', frameModel);
     assert.deepEqual(input.request.references.map(r => r.role), ['source_composition', 'product_identity']);
     await ports.reserveQa(fp); await ports.reserve(fp); await ports.assertCurrent();
     fs.mkdirSync(input.root, {recursive: true});
     const filePath = path.join(input.root, `${fp}.png`); fs.writeFileSync(filePath, f.product);
-    fs.writeFileSync(path.join(input.root, `${fp}.json`), JSON.stringify({state: 'evaluated', outputSha256: sha(f.product)}));
+    fs.writeFileSync(path.join(input.root, `${fp}.json`), JSON.stringify({fingerprint: fp, tenantId: input.request.tenantId, projectId: input.request.videoId, shotId: input.request.compositionId, state: 'evaluated', model: frameModel, qaModel, providerRequestId: 'controlled-frame', filePath, outputSha256: sha(f.product), canProceedToVideo: true}));
     return {filePath, providerRequestId: 'controlled-frame', model: frameModel, qaModel, canProceedToVideo: true};
   }) as typeof f.context.prepareFrame;
   f.context.generateVideo = async request => {
@@ -95,15 +96,18 @@ test('environment ports integrate actual extraction, exact budget grants, provid
   const firstFrame = ports.firstFrame, video = ports.video, quality = ports.quality;
   ports.firstFrame = async request => {
     const fp = firstFrameInputFingerprint(request, 'seedream', frameModel);
-    f.addQuote(fp, 'seedream', frameModel, .6); f.addQuote(productReplacementOperationFingerprint('first-frame-qa', {fingerprint: fp, qaModel}), 'qwen', qaModel, .1);
+    if (provisionQuotes) {
+      f.addQuote(fp, 'seedream', frameModel, .6);
+      f.addQuote(productReplacementOperationFingerprint('first-frame-qa', {fingerprint: fp, qaModel}), 'qwen', qaModel, .1);
+    }
     return firstFrame(request);
   };
   ports.video = async request => {
-    f.addQuote(productReplacementOperationFingerprint('video', {...request, firstFrame: sha(request.firstFrame), checkpointPath: undefined, model: videoModel}), 'seedance', videoModel, 4);
+    if (provisionQuotes) f.addQuote(productReplacementOperationFingerprint('video', {...request, firstFrame: sha(request.firstFrame), checkpointPath: undefined, model: videoModel}), 'seedance', videoModel, 4);
     return video(request);
   };
   ports.quality = async request => {
-    f.addQuote(productReplacementOperationFingerprint('video-qa', {mediaSha256: sha(fs.readFileSync(request.filePath)), qaModel, directorScene: request.directorScene, products: request.productReferences.map(r => r.sha256)}), 'qwen', qaModel, .1);
+    if (provisionQuotes) f.addQuote(productReplacementOperationFingerprint('video-qa', {mediaSha256: sha(fs.readFileSync(request.filePath)), qaModel, directorScene: request.directorScene, products: request.productReferences.map(r => r.sha256)}), 'qwen', qaModel, .1);
     return quality(request);
   };
   const old = process.env.SEEDANCE_VIDEO_ENABLED; process.env.SEEDANCE_VIDEO_ENABLED = 'true';
@@ -119,7 +123,17 @@ test('environment ports integrate actual extraction, exact budget grants, provid
     const evidence = result.quality.evidenceRefs.filter(ref => ref.endsWith('.json'));
     fs.rmSync(f.input.outputDirectory, {recursive: true, force: true}); fs.mkdirSync(f.input.outputDirectory);
     assert.ok(evidence.every(ref => fs.existsSync(ref)));
-    await factory.execute(f.input); assert.equal(videoCalls, 1); assert.equal(qaCalls, 1); assert.equal(frameCalls, 2);
+    provisionQuotes = false;
+    for (const name of fs.readdirSync(f.context.budgetRoot!)) {
+      if (!name.endsWith('.json')) continue;
+      const file = path.join(f.context.budgetRoot!, name);
+      const record = JSON.parse(fs.readFileSync(file, 'utf8'));
+      record.pricing.operationQuotes = [];
+      record.pricing.expiresAt = '2000-01-01T00:00:00.000Z';
+      fs.writeFileSync(file, JSON.stringify(record));
+    }
+    process.env.SEEDANCE_VIDEO_ENABLED = 'false';
+    await factory.execute(f.input); assert.equal(videoCalls, 1); assert.equal(qaCalls, 1); assert.equal(frameCalls, 1);
     assert.ok(fs.existsSync(result.localPath));
   } finally { if (old === undefined) delete process.env.SEEDANCE_VIDEO_ENABLED; else process.env.SEEDANCE_VIDEO_ENABLED = old; }
 });
@@ -231,6 +245,7 @@ test('actual Seedance gateway resumes the original accepted task with GET after 
     const ports = await createEnvironmentProductReplacementPorts(f.input, f.context);
     await assert.rejects(ports.video(request), /timed out; do not resubmit/);
     fs.rmSync(f.input.outputDirectory, {recursive: true, force: true});
+    for (const name of fs.readdirSync(f.context.budgetRoot!)) {if (!name.endsWith('.json')) continue; const file = path.join(f.context.budgetRoot!, name), pool = JSON.parse(fs.readFileSync(file, 'utf8')); pool.pricing.operationQuotes = {}; pool.pricing.validUntil = '2020-01-01T00:00:00Z'; fs.writeFileSync(file, JSON.stringify(pool));}
     const restarted = await createEnvironmentProductReplacementPorts({...f.input, outputDirectory: path.join(f.root, 'next-worker')}, f.context);
     const result = await restarted.video({...request, checkpointPath: path.join(f.root, 'next-worker', 'other.json')});
     assert.equal(result.providerTaskId, 'controlled-original-task'); assert.equal(sha(result.bytes), sha(f.video)); assert.equal(posts, 1); assert.equal(gets, 1);

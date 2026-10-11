@@ -212,6 +212,7 @@ export function defaultBrief(value: CreateSocialContentTaskInput) {
   const themeDriven = Boolean(value.mode || value.themeId || value.customTopic || value.topic || value.weeklyPlanId);
   return {
     ...(value.materialRoutingPolicyVersion ? { materialRoutingPolicyVersion: value.materialRoutingPolicyVersion } : {}),
+    ...(value.referenceReuse ? {referenceReuse: value.referenceReuse} : {}),
     title: value.title,
     objective: value.objective,
     productId: value.productId ?? null,
@@ -301,8 +302,11 @@ export async function refreshSocialTaskReferenceOutputs(input: {
       themeId: summary.theme.themeId,
       verifiedContext,
       referenceSources: references,
+      referenceReuse: summary.brief.referenceReuse,
+      referenceStore: input.repository.dataStore,
     });
   } else {
+    if (summary.brief.referenceReuse) throw new SocialContentWorkflowError('social_reference_reuse_source_missing', 409);
     resolved = await resolveSocialRecommendedReferenceScript({
       tenantId: input.tenantId,
       themeId: summary.theme.themeId,

@@ -5,7 +5,8 @@ import type {
   SocialShotMaterialMapEntry,
   SocialTaskSource,
 } from '../../shared/contracts/socialContentWorkflow.js';
-import { store } from '../storage/index.js';
+import { store, type DataStore } from '../storage/index.js';
+import { resolveSocialReferenceReuseOnly, type SocialReferenceReuseBinding } from './socialContentReferenceReuse.js';
 import {
   SocialContentWorkflowError,
   socialJson,
@@ -60,7 +61,15 @@ export async function resolveSocialTaskReferenceScript(input: {
   themeId: SocialContentThemeId;
   verifiedContext: VerifiedSocialScriptContext;
   referenceSources: Array<Pick<SocialTaskSource, 'sourceId' | 'sourceRef' | 'sourceVersion' | 'createdAt'>>;
+  referenceReuse?: SocialReferenceReuseBinding;
+  /** Server-owned repository transport; never read from a request body. */
+  referenceStore?: Pick<DataStore, 'getById'>;
 }): Promise<ResolvedSocialTaskReference | null> {
+  // Explicit reuse never enters catalog fallback, analysis queue or crawler.
+  // Keep failures outside the legacy best-effort catch so the gap is visible.
+  if (input.referenceReuse) return resolveSocialReferenceReuseOnly({ ...input, binding: input.referenceReuse }, {
+    readRecord: async id => await (input.referenceStore ?? store).getById<Record<string, unknown>>('trend_videos', id),
+  });
   if (!input.referenceSources.length) return null;
   try {
     const sharedTenantId = socialText(process.env.SOCIAL_SHARED_INSPIRATION_TENANT_ID)

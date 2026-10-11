@@ -9,6 +9,7 @@ import {firstFrameInputFingerprint, type FirstFrameReference} from '../lib/first
 import {generateSeedanceConceptVideo} from '../lib/generativeVideoGateway.js';
 import {withPaidOperationLock} from '../lib/paidOperationLock.js';
 import {MvpBudgetAdmission, type MvpBudgetRecord} from '../lib/mvpBudgetAdmission.js';
+import {readProductRecoveryFunding} from './socialContentProductRecoveryFunding.js';
 import {SocialContentTaskBudget} from '../lib/socialContentTaskBudget.js';
 import {runVisualFfmpeg} from '../lib/renderVisualQuality.js';
 import {inspectStoryboardAigcFramesWithQwen} from '../agents/qwen.js';
@@ -125,6 +126,14 @@ export async function createEnvironmentProductReplacementPorts(input: Input, con
       estimatedCostCny: q.amount, operationId: `product-replacement:${sha(input.idempotencyKey + ':' + operation)}`, fingerprint});
     return q.amount;
   };
+  const originalBinding = (fingerprint: string, provider: string, model: string) => {
+    const q = quote(fingerprint, provider, model);
+    return {poolId: q.record.id, authorizationRef: q.scope.authorizationRef, scopeHash: sha(JSON.stringify(q.scope))};
+  };
+  const recoveryAmount = (fingerprint: string, provider: string, model: string, operation: string, binding?: {poolId: string; authorizationRef: string; scopeHash: string}) => readProductRecoveryFunding({
+    budgetRoot, tenantId: input.tenantId, taskId: input.taskId, runId: String(task.run_id), shotId: input.shotId, productId, accountId, provider, model, fingerprint,
+    binding, operationId: `product-replacement:${sha(input.idempotencyKey + ':' + operation)}`, wholeFilmEntries: taskBudget.status(taskBudgetScope)?.entries || [],
+  });
   const readBytes = async (record: Row): Promise<Buffer> => {
     // Only canonical registered object keys; arbitrary caller URLs/paths are not read.
     const key = String(record.objectKey || record.videoFileId || '').trim();
@@ -213,59 +222,103 @@ export async function createEnvironmentProductReplacementPorts(input: Input, con
     },
     firstFrame: async request => {
       await assertCurrent();
-      if (!context.prepareFrame && !(process.env.SEEDREAM_API_KEY || process.env.SEEDANCE_API_KEY)) throw Error('product_replacement_seedream_not_configured');
       const fingerprint = firstFrameInputFingerprint(request, 'seedream', frameModel);
-      const q = quote(fingerprint, 'seedream', frameModel);
-      firstFrameEstimate = q.amount;
-      const result = await (context.prepareFrame || prepareTrustedStoryboardSeedream)({request, model: frameModel, estimatedCostCny: q.amount, root: path.join(durableDirectory, 'first-frame-receipts'), productInfo: JSON.stringify(input.spec.productIdentity), execute: true, qaModel}, {
-        assertCurrent, reserve: fp => reserve(fp, 'seedream', frameModel, 'first-frame').then(() => undefined),
-        reserveQa: fp => reserve(productReplacementOperationFingerprint('first-frame-qa', {fingerprint: fp, qaModel}), 'qwen', qaModel, 'first-frame-qa').then(() => undefined),
+      const root = path.join(durableDirectory, 'first-frame-receipts');
+      const receipt = path.join(root, `${fingerprint}.json`);
+      const prior = fs.existsSync(receipt) ? JSON.parse(fs.readFileSync(receipt, 'utf8')) : null;
+      if (prior && (prior.fingerprint !== fingerprint || !['generated', 'evaluated'].includes(prior.state))) throw Error('seedream_unknown_requires_original_receipt_reconciliation');
+      const fundingFile = `${receipt}.funding.json`;
+      const funding = fs.existsSync(fundingFile) ? JSON.parse(fs.readFileSync(fundingFile, 'utf8')) : undefined;
+      const amount = prior ? recoveryAmount(fingerprint, 'seedream', frameModel, 'first-frame', funding) : quote(fingerprint, 'seedream', frameModel).amount;
+      if (!prior && !context.prepareFrame && !(process.env.SEEDREAM_API_KEY || process.env.SEEDANCE_API_KEY)) throw Error('product_replacement_seedream_not_configured');
+      firstFrameEstimate = amount;
+      if (prior?.state === 'evaluated') {
+        const image = path.join(root, `${fingerprint}.png`);
+        if (prior.model !== frameModel || prior.qaModel !== qaModel || !prior.providerRequestId || prior.tenantId !== request.tenantId
+          || prior.projectId !== request.videoId || prior.shotId !== request.compositionId || !fs.existsSync(image)) throw Error('product_first_frame_original_scope_changed');
+        const qaFundingFile = `${receipt}.qa-funding.json`;
+        const qaFunding = fs.existsSync(qaFundingFile) ? JSON.parse(fs.readFileSync(qaFundingFile, 'utf8')) : undefined;
+        recoveryAmount(productReplacementOperationFingerprint('first-frame-qa', {fingerprint, qaModel}), 'qwen', qaModel, 'first-frame-qa', qaFunding);
+        const bytes = fs.readFileSync(image);
+        if (sha(bytes) !== prior.outputSha256) throw Error('seedream_original_bytes_changed');
+        return {bytes, providerRequestId: prior.providerRequestId, model: prior.model, estimatedCostCny: amount, canProceedToVideo: prior.canProceedToVideo === true, evidenceRefs: [receipt]};
+      }
+      const result = await (context.prepareFrame || prepareTrustedStoryboardSeedream)({request, model: frameModel, estimatedCostCny: amount, root, productInfo: JSON.stringify(input.spec.productIdentity), execute: true, qaModel}, {
+        assertCurrent, reserve: async fp => {
+          await reserve(fp, 'seedream', frameModel, 'first-frame');
+          fs.mkdirSync(root, {recursive: true, mode: 0o700});
+          fs.writeFileSync(fundingFile, JSON.stringify(originalBinding(fp, 'seedream', frameModel)), {mode: 0o600});
+        },
+        reserveQa: async fp => {
+          const qaFingerprint = productReplacementOperationFingerprint('first-frame-qa', {fingerprint: fp, qaModel});
+          await reserve(qaFingerprint, 'qwen', qaModel, 'first-frame-qa');
+          fs.mkdirSync(root, {recursive: true, mode: 0o700});
+          fs.writeFileSync(`${receipt}.qa-funding.json`, JSON.stringify(originalBinding(qaFingerprint, 'qwen', qaModel)), {mode: 0o600});
+        },
       });
       if ('dryRun' in result) throw Error('product_first_frame_unexpected_dryrun');
       if (result.qaModel !== qaModel) throw Error('product_first_frame_QA_model_binding_changed');
-      return {bytes: fs.readFileSync(result.filePath), providerRequestId: result.providerRequestId, model: result.model, estimatedCostCny: q.amount,
+      return {bytes: fs.readFileSync(result.filePath), providerRequestId: result.providerRequestId, model: result.model, estimatedCostCny: amount,
         canProceedToVideo: result.canProceedToVideo, evidenceRefs: [path.join(durableDirectory, 'first-frame-receipts', `${fingerprint}.json`)]};
     },
     video: async request => {
       await assertCurrent();
       const fingerprint = productReplacementOperationFingerprint('video', {...request, firstFrame: sha(request.firstFrame), checkpointPath: undefined, model: videoModel});
-      const q = quote(fingerprint, 'seedance', videoModel);
-      if (q.amount + firstFrameEstimate > input.maximumCostCny) throw Error('product_replacement_total_quote_exceeds_shot_budget');
-      if (process.env.SEEDANCE_VIDEO_ENABLED !== 'true') throw Error('seedance_not_enabled');
-      if (!context.generateVideo && !process.env.SEEDANCE_API_KEY) throw Error('product_replacement_seedance_not_configured');
       return withPaidOperationLock(path.join(durableDirectory, '.video-locks'), fingerprint, async () => {
       const checkpointPath = path.join(durableDirectory, 'video', `${fingerprint}.json`);
       const attempt = `${checkpointPath}.attempt.json`, media = `${checkpointPath}.completed.mp4`;
       const prior = fs.existsSync(attempt) ? JSON.parse(fs.readFileSync(attempt, 'utf8')) : null;
       if (prior && prior.fingerprint !== fingerprint) throw Error('product_video_attempt_changed');
       if (prior?.state === 'completed') {
+        const originalAmount = recoveryAmount(fingerprint, 'seedance', videoModel, request.requestId, prior.funding);
+        if (prior.model !== videoModel || prior.provider !== 'seedance' || prior.requestId !== request.requestId || !prior.providerTaskId || prior.estimatedCostCny !== originalAmount) throw Error('product_video_original_scope_changed');
         const bytes = fs.readFileSync(media);
         if (sha(bytes) !== prior.sha256) throw Error('product_video_completed_bytes_changed');
+        if (fs.existsSync(checkpointPath) && JSON.parse(fs.readFileSync(checkpointPath, 'utf8')).taskId !== prior.providerTaskId) throw Error('product_video_original_task_changed');
         return {bytes, providerTaskId: prior.providerTaskId, model: videoModel, estimatedCostCny: prior.estimatedCostCny};
       }
       if (prior) {
+        if (prior.model !== videoModel || prior.provider !== 'seedance' || prior.requestId !== request.requestId || prior.firstFrameSha256 !== sha(request.firstFrame)) throw Error('product_video_original_scope_changed');
         const checkpoint = fs.existsSync(checkpointPath) ? JSON.parse(fs.readFileSync(checkpointPath, 'utf8')) : null;
         if (!checkpoint?.taskId || !checkpoint.reservationId || !Number.isFinite(checkpoint.reservedCny)) throw Error('product_video_submission_unknown_requires_original_receipt');
+        if (prior.providerTaskId && prior.providerTaskId !== checkpoint.taskId) throw Error('product_video_original_task_changed');
+        if (prior.providerKeySha256 !== sha(process.env.SEEDANCE_API_KEY || '')) throw Error('product_video_provider_account_changed');
       } else if (fs.existsSync(checkpointPath)) throw Error('product_video_checkpoint_without_attempt_identity');
-      const amount = await reserve(fingerprint, 'seedance', videoModel, request.requestId);
+      if (!prior) {
+        const q = quote(fingerprint, 'seedance', videoModel);
+        if (q.amount + firstFrameEstimate > input.maximumCostCny) throw Error('product_replacement_total_quote_exceeds_shot_budget');
+        if (process.env.SEEDANCE_VIDEO_ENABLED !== 'true') throw Error('seedance_not_enabled');
+      }
+      if (!context.generateVideo && !process.env.SEEDANCE_API_KEY) throw Error('product_replacement_seedance_not_configured');
+      const amount = prior ? recoveryAmount(fingerprint, 'seedance', videoModel, request.requestId, prior.funding) : await reserve(fingerprint, 'seedance', videoModel, request.requestId);
       await assertCurrent();
       fs.mkdirSync(path.dirname(attempt), {recursive: true, mode: 0o700});
-      fs.writeFileSync(attempt, JSON.stringify({fingerprint, state: 'prepared'}), {mode: 0o600});
-      const result = await (context.generateVideo || generateSeedanceConceptVideo)({tenantId: input.tenantId, apiKey: process.env.SEEDANCE_API_KEY || '', model: videoModel,
+      if (prior && !prior.funding) throw Error('product_video_original_funding_binding_missing');
+      const binding = {funding: prior ? prior.funding : originalBinding(fingerprint, 'seedance', videoModel), fingerprint, provider: 'seedance', model: videoModel, requestId: request.requestId, firstFrameSha256: sha(request.firstFrame), providerKeySha256: sha(process.env.SEEDANCE_API_KEY || ''), estimatedCostCny: amount};
+      fs.writeFileSync(attempt, JSON.stringify({...prior, ...binding, state: 'prepared'}), {mode: 0o600});
+      let result;
+      try { result = await (context.generateVideo || generateSeedanceConceptVideo)({tenantId: input.tenantId, apiKey: process.env.SEEDANCE_API_KEY || '', model: videoModel,
         prompt: request.prompt, durationSeconds: request.providerDurationSeconds, ratio: '9:16', resolution: '720p', idempotencyKey: request.requestId,
-        timeoutMs: 900000, checkpointPath, firstFrameDataUrl: `data:image/png;base64,${request.firstFrame.toString('base64')}`});
+        timeoutMs: 900000, checkpointPath, firstFrameDataUrl: `data:image/png;base64,${request.firstFrame.toString('base64')}`}); } catch (error) {
+        if (fs.existsSync(checkpointPath)) {
+          const checkpoint = JSON.parse(fs.readFileSync(checkpointPath, 'utf8'));
+          if (checkpoint.taskId) fs.writeFileSync(attempt, JSON.stringify({...binding, state: 'accepted', providerTaskId: checkpoint.taskId}), {mode: 0o600});
+        }
+        throw error;
+      }
       fs.writeFileSync(media, result.bytes, {mode: 0o600});
-      fs.writeFileSync(attempt, JSON.stringify({fingerprint, state: 'completed', providerTaskId: result.providerTaskId, sha256: sha(result.bytes), estimatedCostCny: amount}), {mode: 0o600});
+      fs.writeFileSync(attempt, JSON.stringify({...binding, state: 'completed', providerTaskId: result.providerTaskId, sha256: sha(result.bytes), estimatedCostCny: amount}), {mode: 0o600});
       return {...result, estimatedCostCny: amount};
       });
     },
     quality: async request => {
       const mediaSha256 = sha(fs.readFileSync(request.filePath));
       const fingerprint = productReplacementOperationFingerprint('video-qa', {mediaSha256, qaModel, directorScene: request.directorScene, products: request.productReferences.map(r => r.sha256)});
-      await reserve(fingerprint, 'qwen', qaModel, 'video-qa');
       const receipt = path.join(durableDirectory, 'video-qa', `${fingerprint}.json`);
       fs.mkdirSync(path.dirname(receipt), {recursive: true, mode: 0o700});
-      if (fs.existsSync(receipt)) { const prior = JSON.parse(fs.readFileSync(receipt, 'utf8')); if (prior.fingerprint !== fingerprint || !prior.quality) throw Error('product_video_qa_unknown'); return prior.quality; }
+      if (fs.existsSync(receipt)) { const prior = JSON.parse(fs.readFileSync(receipt, 'utf8')); if (prior.fingerprint !== fingerprint || prior.mediaSha256 !== mediaSha256 || prior.model !== qaModel || !prior.quality) throw Error('product_video_qa_unknown'); recoveryAmount(fingerprint, 'qwen', qaModel, 'video-qa', prior.funding); return prior.quality; }
+      await reserve(fingerprint, 'qwen', qaModel, 'video-qa');
+      const funding = originalBinding(fingerprint, 'qwen', qaModel);
       const frames: Array<{bytes: Buffer; timeLabel: string}> = [];
       const sampleTimes = request.productReferences.length === 1 ? [0.1, request.durationSeconds / 2, request.durationSeconds - 0.1] : [0.1, request.durationSeconds - 0.1];
       for (const [index, second] of sampleTimes.entries()) {
@@ -275,7 +328,7 @@ export async function createEnvironmentProductReplacementPorts(input: Input, con
         frames.push({bytes: fs.readFileSync(image), timeLabel: `actual-video-${index}`});
       }
       await assertCurrent();
-      fs.writeFileSync(receipt, JSON.stringify({fingerprint, state: 'prepared', mediaSha256}), {mode: 0o600});
+      fs.writeFileSync(receipt, JSON.stringify({funding, fingerprint, state: 'prepared', model: qaModel, mediaSha256}), {mode: 0o600});
       const visual = await (context.inspectVisual || inspectStoryboardAigcFramesWithQwen)({model: qaModel, boundedPaidQa: true, phase: 'video', sceneType: 'product',
         frames: frames.map(f => ({base64: f.bytes.toString('base64'), mimeType: 'image/png', timeLabel: f.timeLabel})),
         productReferences: request.productReferences.map((p, i) => ({base64: p.bytes.toString('base64'), mimeType: p.mimeType, timeLabel: `KB-package-${i}`})),
@@ -287,7 +340,7 @@ export async function createEnvironmentProductReplacementPorts(input: Input, con
       const pass = report.automatedPassed ? 1 : 0;
       const quality = {productIdentitySimilarity: Object.fromEntries(input.spec.productIdentity.groups.map(g => [g.productRef, pass])), labelOcrExactMatch: pass === 1,
         sceneTopologyScore: pass, productSlotLayoutScore: pass, cameraTrajectoryScore: pass, evidenceRefs: [receipt, `${receipt}.provider.json`]};
-      fs.writeFileSync(receipt, JSON.stringify({fingerprint, state: 'completed', mediaSha256, report, quality, humanApproved: false}), {mode: 0o600});
+      fs.writeFileSync(receipt, JSON.stringify({funding, fingerprint, state: 'completed', model: qaModel, mediaSha256, report, quality, humanApproved: false}), {mode: 0o600});
       return quality;
     },
   };

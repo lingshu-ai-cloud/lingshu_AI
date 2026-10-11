@@ -9,8 +9,11 @@ export interface InspirationTaskCandidate {
   crawledAt?: string;
   sourceVersion?: string;
   objective?: string;
+  /** Set by the server-backed ready-reference candidate adapter, never inferred
+   * from an arbitrary candidate ID. The server revalidates tenant and analysis. */
+  cachedReference?: { recordId: string; status: 'ready' };
   /** Existing, verified task context only; never inferred from the reference. */
-  context?: Pick<CreateSocialContentTaskInput, 'productRef' | 'audience' | 'markets' | 'languages' | 'platforms' | 'programRef' | 'targetAccountRef' | 'accountPlaybookRef' | 'brandNotes' | 'restrictions' | 'callToAction'>;
+  context?: Pick<CreateSocialContentTaskInput, 'themeId' | 'productRef' | 'audience' | 'markets' | 'languages' | 'platforms' | 'programRef' | 'targetAccountRef' | 'accountPlaybookRef' | 'brandNotes' | 'restrictions' | 'callToAction'>;
 }
 export type InspirationTaskPort = Pick<typeof socialContentApi, 'createTask' | 'getTask' | 'addSource' | 'startTask'>;
 
@@ -29,14 +32,20 @@ export function inspirationTaskInput(candidate: InspirationTaskCandidate, progra
 }
 
 export function inspirationTaskSource(candidate: InspirationTaskCandidate): AddSocialTaskSourceInput {
+  if (candidate.cachedReference && (candidate.cachedReference.status !== 'ready'
+    || typeof candidate.cachedReference.recordId !== 'string' || !candidate.cachedReference.recordId.trim())) {
+    throw new Error('所选缓存参考尚未就绪，请返回原参考检查分析状态；不会自动重新采集。');
+  }
   const url = candidate.sourceUrl?.trim() || '';
   if (!/^(?:https?:\/\/|local:\/\/[A-Za-z0-9._-]+$)/i.test(url)) throw new Error('该候选缺少可追溯的原始链接或本地入库记录，请补充来源后发起复刻。');
   return { kind: 'reference_link', sourceRef: url, sourceVersion: candidate.sourceVersion || candidate.crawledAt || null,
+    ...(candidate.cachedReference
+      ? { cachedReferenceRecordId: candidate.cachedReference.recordId.trim() } : {}),
     label: candidate.title.slice(0, 160), purpose: '仅用于参考分析；参考内容不构成企业事实或素材使用授权。' };
 }
 
 async function operationKey(candidate: InspirationTaskCandidate, program?: SocialProgram): Promise<string> {
-  const bytes = new TextEncoder().encode(JSON.stringify([candidate.id, candidate.sourceUrl, candidate.sourceVersion || candidate.crawledAt || null, program?.programId || null, program?.version || null, candidate.context || null, candidate.objective || null]));
+  const bytes = new TextEncoder().encode(JSON.stringify([candidate.id, candidate.sourceUrl, candidate.sourceVersion || candidate.crawledAt || null, program?.programId || null, program?.version || null, candidate.context || null, candidate.objective || null, ...(candidate.cachedReference ? [candidate.cachedReference] : [])]));
   const hash = await crypto.subtle.digest('SHA-256', bytes);
   return `inspiration:${Array.from(new Uint8Array(hash), b => b.toString(16).padStart(2, '0')).join('')}`;
 }
@@ -51,6 +60,9 @@ export async function resumeOrCreateInspirationTask(
   const key = await operationKey(candidate, program);
   const created = await port.createTask(inspirationTaskInput(candidate, program), `${key}:create`);
   let task = await port.getTask(created.taskId);
+  if (source.cachedReferenceRecordId && (!task.theme?.themeId || task.theme.classificationStatus !== 'confirmed')) {
+    return { task, warning: '请先在任务中确认制作主题，再关联已有参考；当前任务已保留，未启动采集或制作。' };
+  }
   if (!task.sources.some(item => item.status === 'active' && item.kind === source.kind && item.sourceRef === source.sourceRef)) {
     try { task = (await port.addSource(task.taskId, source, `${key}:reference`)).task; }
     catch (error) { return { task, warning: error instanceof Error ? error.message : '参考关联失败，请在原任务中恢复。' }; }

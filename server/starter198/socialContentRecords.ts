@@ -1,3 +1,4 @@
+import {parseSocialReferenceReuse} from './socialContentValidation.js';
 import {applySocialContentRevisionSupply} from './socialContentRevisionProjection.js';
 import {auditWeeklyMaterialInventory} from './weeklyMaterialInventory.js';
 import {readWeeklyStageObservation} from './socialWeeklyStageObservation.js';
@@ -268,6 +269,7 @@ export function parseSocialTaskBrief(value: unknown): SocialContentTaskBrief {
   return {
     title,
     objective,
+    ...(record.referenceReuse != null ? {referenceReuse: parseSocialReferenceReuse(record.referenceReuse)} : {}),
     ...(record.materialRoutingPolicyVersion === 'type-aware.v1' ? { materialRoutingPolicyVersion: 'type-aware.v1' as const } : {}),
     productId: nullable(record.productId),
     productRef: nullable(record.productRef),
@@ -884,10 +886,14 @@ export async function readSocialTaskDetail(input: {
   const referenceVideoAnalysis = parseStoredSocialReferenceVideoAnalysis(task.reference_video_analysis);
   const replicationScript = parseStoredSocialReplicationScript(task.replication_script);
   const shotMaterialMap = parseStoredSocialShotMaterialMap(task.shot_material_map);
-  const voiceoverRows = (replicationScript?.shots ?? []).map(shot => ({
+  const voiceoverRows = (replicationScript ? replicationScript.shots.map(shot => ({
     cueId: `${shot.shotId}:voiceover`,
     text: socialText(shot.spokenText || shot.captionText || shot.visualInstruction),
-  })).filter(item => item.text);
+  })) : (storedScriptBaseline?.scenes ?? []).map(scene => ({
+    cueId: `${scene.sceneId}:voiceover`,
+    text: socialText(scene.voiceover || scene.narration || scene.caption)
+      || [scene.subject, scene.action].map(socialText).filter(Boolean).join(' · '),
+  }))).filter(item => item.text);
   const safeMaterialPreview = (record: MaterialRecord): string | null => {
     const values = socialText(record.type) === 'video'
       ? [record.poster, record.url]

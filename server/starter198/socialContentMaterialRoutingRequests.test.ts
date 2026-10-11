@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { normalizeSceneVisualContract } from '../../shared/sceneVisualContract.js';
 import { materialRoutingRequests } from './socialContentMaterialRoutingRequests.js';
-import { parseCreateSocialTask, parseUpdateSocialTask } from './socialContentValidation.js';
+import { parseCreateSocialTask, parseUpdateSocialTask, parseSocialSource } from './socialContentValidation.js';
 import { defaultBrief } from './socialContentTaskSupport.js';
 import { parseSocialTaskBrief } from './socialContentRecords.js';
 
@@ -62,4 +62,22 @@ test('new product tasks default to a ten-yuan whole-film ceiling and cannot rais
     assert.equal(defaultBrief(input).perItemBudgetCny, expected);
   }
   assert.equal(defaultBrief({ title: '内部创建', objective: '制作', perItemBudgetCny: 600 } as never).perItemBudgetCny, 10);
+});
+
+test('normal creation and stored brief keep exact cached reference evidence without changing historical updates', () => {
+  const referenceReuse = {recordId: 'trend_video_38', analysisId: 'verified-analysis-run', contentSha256: 'a'.repeat(64), analysisHash: 'b'.repeat(64)};
+  const parsed = parseCreateSocialTask({title: '沿用38秒参考', objective: '由产品制作', referenceReuse});
+  assert.deepEqual(parsed.referenceReuse, referenceReuse);
+  assert.deepEqual(parseSocialTaskBrief(defaultBrief(parsed)).referenceReuse, referenceReuse);
+  assert.deepEqual(parseUpdateSocialTask({expectedVersion: '1', changes: {referenceReuse}}).changes.referenceReuse, referenceReuse);
+  for (const bad of [{...referenceReuse, contentSha256: 'missing'}, {...referenceReuse, analysisHash: ''}, {...referenceReuse, recordId: '../other'}, {...referenceReuse, allowApify: true}])
+    assert.throws(() => parseCreateSocialTask({title: '拒绝错误缓存绑定', objective: '测试', referenceReuse: bad}));
+});
+test('normal source selection accepts a cached record ID and rejects client pricing or hash authority', () => {
+  const source = {kind: 'reference_link', sourceRef: 'https://example.com/reference38', label: '已分析参考', cachedReferenceRecordId: 'trend_video_38'};
+  assert.equal(parseSocialSource(source).cachedReferenceRecordId, 'trend_video_38');
+  for (const bad of [{...source, kind: 'material'}, {...source, cachedReferenceRecordId: '../other'},
+    {...source, cachedReferenceRecordId: ''}, {...source, analysisHash: 'a'.repeat(64)}, {...source, verifiedAccountPrice: true}]) {
+    assert.throws(() => parseSocialSource(bad));
+  }
 });

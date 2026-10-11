@@ -129,7 +129,7 @@ const BRIEF_KEYS = [
   'customTopic', 'topic', 'legacyCreationRoute',
   'productionMode', 'creationMode', 'assetAvailability', 'managementMode',
   'programRef', 'targetAccountRef', 'accountPlaybookRef', 'referenceMode', 'primaryExperimentVariable',
-  'productionApproach',
+  'productionApproach', 'referenceReuse',
 ] as const;
 
 function optionalNumber(value: unknown, code: string, maximum: number, integer = false): number | null {
@@ -163,6 +163,18 @@ export function parseSocialReplicationContext(source: Record<string, unknown>) {
     ...(referenceMode === undefined ? {} : { referenceMode: referenceMode as typeof SOCIAL_REPLICATION_REFERENCE_MODES[number] }),
     primaryExperimentVariable: optionalText(source.primaryExperimentVariable, 'social_content_experiment_variable_invalid', 500),
   };
+}
+
+export function parseSocialReferenceReuse(value: unknown) {
+  if (value === undefined || value === null) return undefined;
+  const pin = socialObject(value);
+  if (!pin) throw new SocialContentWorkflowError('social_reference_reuse_invalid', 400);
+  assertKeys(pin, ['recordId', 'contentSha256', 'analysisId', 'analysisHash']);
+  const recordId = requiredText(pin.recordId, 'social_reference_reuse_invalid', 180);
+  const analysisId = requiredText(pin.analysisId, 'social_reference_reuse_invalid', 180);
+  if (!/^[A-Za-z0-9_-]+$/.test(recordId) || !/^[a-f0-9]{64}$/.test(String(pin.contentSha256)) || !/^[a-f0-9]{64}$/.test(String(pin.analysisHash)))
+    throw new SocialContentWorkflowError('social_reference_reuse_invalid', 400);
+  return {recordId, analysisId, contentSha256: String(pin.contentSha256), analysisHash: String(pin.analysisHash)};
 }
 
 export function parseCreateSocialTask(value: unknown): CreateSocialContentTaskInput {
@@ -221,6 +233,7 @@ export function parseCreateSocialTask(value: unknown): CreateSocialContentTaskIn
   return {
     ...parseSocialReplicationContext(source),
     materialRoutingPolicyVersion: 'type-aware.v1',
+    ...(source.referenceReuse != null ? {referenceReuse: parseSocialReferenceReuse(source.referenceReuse)} : {}),
     title: requiredText(source.title, 'social_content_title_invalid', 120),
     objective: requiredText(source.objective, 'social_content_objective_invalid', 1_000),
     productId: optionalText(source.productId, 'social_content_product_id_invalid', 200),
@@ -312,16 +325,22 @@ export function parseUpdateSocialTask(value: unknown): UpdateSocialContentTaskIn
 export function parseSocialSource(value: unknown): AddSocialTaskSourceInput {
   const source = socialObject(value);
   if (!source) throw new SocialContentWorkflowError('social_content_source_invalid', 400);
-  assertKeys(source, ['kind', 'sourceRef', 'sourceVersion', 'label', 'purpose']);
+  assertKeys(source, ['kind', 'sourceRef', 'sourceVersion', 'label', 'purpose', 'cachedReferenceRecordId']);
   const kind = socialText(source.kind) as AddSocialTaskSourceInput['kind'];
   if (!SOCIAL_SOURCE_KINDS.includes(kind)) throw new SocialContentWorkflowError('social_content_source_kind_invalid', 400);
   const sourceRef = reference(source.sourceRef, 'social_content_source_ref_invalid');
   if (kind === 'reference_link' && !/^(?:https?:\/\/|local:\/\/[A-Za-z0-9._-]+$)/i.test(sourceRef)) {
     throw new SocialContentWorkflowError('social_content_source_ref_invalid', 400);
   }
+  const cachedReferenceRecordId = source.cachedReferenceRecordId == null ? undefined
+    : requiredText(source.cachedReferenceRecordId, 'social_reference_cache_selection_invalid', 180);
+  if (cachedReferenceRecordId && (kind !== 'reference_link' || !/^[A-Za-z0-9_-]+$/.test(cachedReferenceRecordId))) {
+    throw new SocialContentWorkflowError('social_reference_cache_selection_invalid', 400);
+  }
   return {
     kind,
     sourceRef,
+    ...(cachedReferenceRecordId ? { cachedReferenceRecordId } : {}),
     sourceVersion: optionalText(source.sourceVersion, 'social_content_source_version_invalid', 100),
     label: requiredText(source.label, 'social_content_source_label_invalid', 160),
     purpose: optionalText(source.purpose, 'social_content_source_purpose_invalid', 500),

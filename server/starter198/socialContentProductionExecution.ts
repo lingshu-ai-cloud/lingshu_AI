@@ -52,7 +52,7 @@ import {
 } from './socialContentScriptBaseline.js';
 import { resolveSocialContentFormulaReference } from './socialContentFormulas.js';
 import { runOutsideSocialContentMutationScope } from './socialContentMutation.js';
-import { resolveSocialInspirationScript } from './socialContentScriptSources.js';
+import { resolveSocialInspirationScript, resolveSocialTaskReferenceScript } from './socialContentScriptSources.js';
 import { socialExecutionExternalCost } from './socialContentAgentWorkflow.js';
 import {
   buildSocialProductionPlan,
@@ -622,7 +622,13 @@ export async function runSocialContentAutoProduction(input: {
       : null;
     const themeId=detail.theme?.themeId;
     const inspiration = themeId
-      ? originalReplication?await (async()=>{
+      ? detail.brief.referenceReuse ? await (async () => {
+          const resolved = await resolveSocialTaskReferenceScript({tenantId: input.tenantId, themeId,
+            verifiedContext: executionVerifiedContext, referenceReuse: detail.brief.referenceReuse, referenceStore: input.repository.dataStore,
+            referenceSources: detail.sources.filter(source => source.status === 'active' && source.kind === 'reference_link')});
+          if (!resolved) throw new SocialContentWorkflowError('social_reference_reuse_source_missing', 409);
+          return resolved.match;
+        })() : originalReplication?await (async()=>{
           if(!input.repository.dataStore)throw new SocialContentWorkflowError('weekly_replication_authority_unverified',409);
           const authority=socialObject(socialObject(socialJson(taskRecord.brief))?._weeklyAuthority) as unknown as Awaited<ReturnType<typeof import('../runtime/socialWeeklyProductionAuthority.js').bindWeeklyProductionAuthority>>;
           const pkg=authority.weeklyPackage,item=pkg.agentPlanning?.dispatch?.scheduleItems.find(item=>item.publicationTaskId===originalReplication.publicationTaskId),analysis=pkg.agentPlanning?.directorAnalyses.find(analysis=>analysis.analysisId===item?.directorAnalysisRef.id);

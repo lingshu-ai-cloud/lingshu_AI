@@ -91,6 +91,7 @@ import {
 export { buildAuthoritativeSocialContentWorkflow, listSocialWeeklyPlans } from './socialContentTaskSupport.js';
 import { listSocialWeeklyPlans } from './socialContentTaskSupport.js';
 import { socialContentReviewAdmissionAllowed } from './socialContentTestBypass.js';
+import { buildSocialReferenceReuseBinding } from './socialContentReferenceReuse.js';
 
 async function socialTaskSourcesEditable(input: {
   repository: Starter198Repository;
@@ -435,6 +436,30 @@ export async function addSocialTaskSource(input: {
       if (attached.items.length) throw new SocialContentWorkflowError('social_content_source_already_attached', 409);
       const timestamp = (input.now ?? new Date()).toISOString();
       const sourceId = socialPublicId('socialsrc');
+      if (value.cachedReferenceRecordId) {
+        const summary = socialTaskSummary(task);
+        const referenceCoverage = await input.repository.list(STARTER_COLLECTIONS.socialTaskSources, input.tenantId, {
+          where: { task_id: input.taskId, source_kind: 'reference_link', status: 'active' }, perPage: 1,
+        });
+        if (referenceCoverage.totalItems || summary.brief.creationMode !== 'viral_replication'
+          || !summary.theme?.themeId || summary.theme.classificationStatus !== 'confirmed') {
+          throw new SocialContentWorkflowError('social_reference_cache_selection_context_invalid', 409);
+        }
+        if (!input.repository.dataStore) throw new SocialContentWorkflowError('social_reference_cache_store_unavailable', 503);
+        const profile = await readTenantEnterpriseProfile(input.tenantId).catch(() => null);
+        const referenceReuse = await buildSocialReferenceReuseBinding({
+          tenantId: input.tenantId, recordId: value.cachedReferenceRecordId, themeId: summary.theme.themeId,
+          verifiedContext: verifiedSocialScriptContext(profile, summary.brief.productId || summary.brief.productRef),
+          source: { sourceId, sourceRef: value.sourceRef, sourceVersion: value.sourceVersion ?? null, createdAt: timestamp },
+        }, { readRecord: id => input.repository.dataStore!.getById<Record<string, unknown>>('trend_videos', id) });
+        if (summary.brief.referenceReuse && socialRequestHash(summary.brief.referenceReuse) !== socialRequestHash(referenceReuse)) {
+          throw new SocialContentWorkflowError('social_reference_cache_selection_changed', 409);
+        }
+        // Persist the no-collection binding before the source can trigger refresh.
+        await input.repository.update(STARTER_COLLECTIONS.socialContentTasks, input.tenantId, task.id, {
+          brief: { ...summary.brief, referenceReuse },
+        });
+      }
       const created = await input.repository.create(STARTER_COLLECTIONS.socialTaskSources, input.tenantId, {
         source_id: sourceId,
         task_id: input.taskId,

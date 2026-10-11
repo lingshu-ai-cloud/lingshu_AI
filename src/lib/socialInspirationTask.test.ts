@@ -56,3 +56,18 @@ assert.throws(() => parseCreateSocialTask({ ...inspirationTaskInput(candidate), 
 
 const { parseSocialSource } = await import('../../server/starter198/socialContentValidation');
 assert.equal(parseSocialSource(inspirationTaskSource(longCandidate)).label.length, 160);
+
+const cachedCandidate = {...candidate,cachedReference:{recordId:'actual-cache-record',status:'ready' as const},context:{themeId:'product_value' as const}};
+assert.equal(inspirationTaskSource(candidate).cachedReferenceRecordId,undefined,'arbitrary candidate IDs are never cache authority');
+assert.equal(inspirationTaskSource(cachedCandidate).cachedReferenceRecordId,'actual-cache-record');
+assert.equal(parseSocialSource(inspirationTaskSource(cachedCandidate)).cachedReferenceRecordId,'actual-cache-record');
+assert.equal(inspirationTaskInput(cachedCandidate).themeId,'product_value','only explicit preset is transported');
+assert.throws(()=>inspirationTaskSource({...cachedCandidate,cachedReference:{recordId:'',status:'ready'}}),/不会自动重新采集/);
+let cachedAdds=0,cachedStarts=0;
+let cacheTask={taskId:'cache-task',version:'1',status:'draft',sources:[],theme:null} as unknown as SocialContentTaskDetail;
+const cachePort: InspirationTaskPort={createTask:async input=>{assert.equal(input.themeId,'product_value');return cacheTask;},getTask:async()=>cacheTask,addSource:async(_id,source)=>{cachedAdds++;assert.equal(source.cachedReferenceRecordId,'actual-cache-record');return {task:cacheTask,source:{} as never};},startTask:async()=>{cachedStarts++;return cacheTask;}};
+const pending=await resumeOrCreateInspirationTask(cachedCandidate,undefined,cachePort);
+assert.equal(pending.task.taskId,'cache-task');assert.match(pending.warning??'',/确认制作主题/);assert.equal(cachedAdds,0);assert.equal(cachedStarts,0);
+cacheTask={...cacheTask,theme:{themeId:'product_value',inputKind:'preset',topic:'',classificationStatus:'confirmed'}};
+await resumeOrCreateInspirationTask(cachedCandidate,undefined,cachePort);
+assert.equal(cachedAdds,1);assert.equal(cachedStarts,1);
