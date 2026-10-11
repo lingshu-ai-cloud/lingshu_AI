@@ -19,6 +19,8 @@ import { createProductionBudgetRuntimeReaders } from './socialContentProductionB
 import { createSocialContentMaterialPaidContext, type SocialMaterialPaidRuntimePorts } from './socialContentMaterialPaidContext.js';
 import { socialContentMaterialAnalysisInputs } from './socialContentMaterialAnalysisInputs.js';
 import { createProductionBudgetRouteReaders } from './socialContentProductionBudgetRoutes.js';
+import { createSocialContentPaidRuntimePorts } from './socialContentPaidRuntimePorts.js';
+import { createNativeStudioVoicePaidContext } from '../lib/studioNativeVoicePaidContext.js';
 import type { ProductPaidContext } from './socialContentProductPaidContext.js';
 import {assertStoredWeeklyProductionCoverage} from '../runtime/weeklyProductionCoverageAdmission.js';
 import {readWeeklyTemplateStructure} from '../socialPrograms/weeklyTemplateStructure.js';
@@ -713,19 +715,19 @@ export async function runSocialContentAutoProduction(input: {
       policyVersion: detail.brief.materialRoutingPolicyVersion});
 	  const productionAssetsToAnalyze = materialInputs.analyze;
 	  const budgetRoutes = createProductionBudgetRouteReaders();
-	  const productionBudget = await prepareSocialContentProductionBudget({repository:input.repository,tenantId:input.tenantId,taskId:input.taskId,runId:input.runId,baseline:activeBaseline,assets:productionAssetsToAnalyze,supplyPlan:reviewedSupplyPlan,graphApprovedContext:input.graphApprovedContext,recoveryOnly:input.assetSupplyRecoveryOnly,ports:{...createProductionBudgetRuntimeReaders({formula:directorFormula}),...budgetRoutes,...input.runtime?.productionBudgetReadPorts}});
+	  const productionBudget = await prepareSocialContentProductionBudget({repository:input.repository,tenantId:input.tenantId,taskId:input.taskId,runId:input.runId,baseline:activeBaseline,assets:productionAssetsToAnalyze,supplyPlan:reviewedSupplyPlan,graphApprovedContext:input.graphApprovedContext,recoveryOnly:input.assetSupplyRecoveryOnly,ports:{...createProductionBudgetRuntimeReaders({tenantId:input.tenantId,formula:directorFormula}),...budgetRoutes,...input.runtime?.productionBudgetReadPorts}});
+	  const defaultPaidRuntime = productionBudget.status === 'reserved' ? createSocialContentPaidRuntimePorts({scope:productionBudget.scope,routes:budgetRoutes,assertCurrent:assertCurrentContentExecutionActive}) : undefined;
 	  const materialPaidContext = productionBudget.status === 'reserved'
       && productionBudget.reserved.intents.some(operation => operation.stage.startsWith('material_'))
       ? (() => {
-          if (!input.runtime?.materialPaidRuntimePorts) throw Error('whole_film_budget_material_runtime_ports_missing');
           return createSocialContentMaterialPaidContext({scope: productionBudget.scope,
             requirements: productionBudget.requirements, intents: productionBudget.reserved.intents,
-            permit: productionBudget.paidPermit, ports: input.runtime.materialPaidRuntimePorts});
+            permit: productionBudget.paidPermit, ports: input.runtime?.materialPaidRuntimePorts ?? defaultPaidRuntime!.material});
         })() : undefined;
 	  const productPaidContext: ProductPaidContext | undefined = productionBudget.status === 'reserved'
       && productionBudget.reserved.intents.some(operation => ['first_frame', 'first_frame_qa', 'video', 'video_qa'].includes(operation.stage))
       ? (() => {
-          const ports = input.runtime?.productPaidRuntimePorts;
+          const ports = input.runtime?.productPaidRuntimePorts ?? defaultPaidRuntime?.product;
           if (!ports) throw Error('whole_film_budget_product_runtime_ports_missing');
           const video = productionBudget.reserved.intents.filter(operation => operation.stage === 'video');
           if (video.some(operation => 'outputTokens' in operation.maximumUnits) && !ports.measureVideoOutputTokens) {
@@ -1134,6 +1136,15 @@ export async function runSocialContentAutoProduction(input: {
           try {
             voice = await (input.runtime?.synthesizeVoice ?? synthesizeStudioVoiceForAutomation)({
               tenantId: input.tenantId,
+              paidContext: productionBudget.status === 'reserved' ? createNativeStudioVoicePaidContext({
+                scope: productionBudget.scope, requirements: productionBudget.requirements,
+                routeBindings: productionBudget.routeBindings, intents: productionBudget.reserved.intents,
+                permit: productionBudget.paidPermit, assertCurrent: assertCurrentContentExecutionActive,
+                voiceInput: {tenantId: input.tenantId, text: contentHandoff.narration,
+                  language: contentHandoff.outputSpec.language, voice: contentHandoff.direction.voiceover.voice,
+                  style: {preset: contentHandoff.direction.voiceover.preset,
+                    speed: contentHandoff.direction.voiceover.speed, pauseStyle: contentHandoff.direction.voiceover.pauseStyle}},
+              }) : undefined,
               text: contentHandoff.narration,
               language: contentHandoff.outputSpec.language,
               voice: contentHandoff.direction.voiceover.voice,
@@ -1320,7 +1331,7 @@ export async function runSocialContentAutoProduction(input: {
     message: '内容 Agent 正在检查成片画面、音轨和字幕。',
   });
   const { quality, sceneQuality, audio } = await executeSocialQualityStage({ outputPath: result.outputPath,
-    duration, scenes: captionCues, expectedUniqueScenes: contentHandoff.scenes.length,
+    duration, scenes: timeline.map(clip => ({ start: clip.targetStart, end: clip.targetEnd })), expectedUniqueScenes: contentHandoff.scenes.length,
     inspectVisuals: input.runtime?.inspectVisuals ?? inspectRenderedVisuals,
     inspectScenes: input.runtime?.inspectScenes ?? inspectRenderedScenes,
     runFfmpeg: input.runtime?.runFfmpeg ?? runVisualFfmpeg, checkpointEnabled: Boolean(input.graphPhase) });

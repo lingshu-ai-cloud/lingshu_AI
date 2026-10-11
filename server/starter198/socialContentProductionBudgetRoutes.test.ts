@@ -49,3 +49,5 @@ test('canonical product hashes bind actual QA image bounds and raw Seedream inpu
  assert.equal(await reader.resolveBoundRoute({...extraction,stage:'first_frame_qa',frameCount:2}),null);
  assert.equal(await reader.resolveBoundRoute({...extraction,stage:'video',durationSeconds:3}),null,'unknown hard video billing bound remains an explicit gap, not a made-up maximum');
 });
+
+test('frozen Wan silent 3s binds actual account and per-second envelope, not Ark estimated tokens',async()=>{const reader=createProductionBudgetRouteReaders({readQwenBinding:()=>binding,readCanonicalProductBounds:async()=>({firstFrameMaximumFrames:2,videoMaximumFrames:5,productSha256s:['a'.repeat(64)],providerDurationSeconds:3,videoProvider:'wan',videoModel:'wan2.6-i2v-flash',evidenceRef:'canonical-KB-frozen-route'})});const route=await reader.resolveBoundRoute({...req('video',1),shotId:'p',durationSeconds:3});assert.ok(route);assert.equal(route.provider,'wan');assert.equal(route.model,'wan2.6-i2v-flash');assert.deepEqual(route.maximumUnits,{providerSeconds:3});await reader.assertProviderBinding({...route,stage:'video'});});

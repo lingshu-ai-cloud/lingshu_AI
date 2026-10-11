@@ -6,11 +6,11 @@ import {createProductionBudgetRouteReaders} from './socialContentProductionBudge
 import type {SocialMaterialPaidRuntimePorts} from './socialContentMaterialPaidContext.js';
 import type {ProductPaidContext} from './socialContentProductPaidContext.js';
 const sha=(value:string)=>createHash('sha256').update(value).digest('hex');
-/** Conservative accepted-request bound, not billed/observed usage. Qwen's
- * byte-level text tokenizer cannot exceed the UTF-8 byte envelope. Every image
- * reserves the documented maximum 16,384 visual tokens plus two boundaries.
- * Source: https://help.aliyun.com/zh/model-studio/vision-model/
- * No image URL/data URI bytes are mistaken for textual prompt tokens. */
+/** Model accepted-context ceiling for this actual SDK request, not observed
+ * billed usage or a copied intent maximum. Validate supported body/modalities
+ * before applying the independently documented model envelope.
+ * Sources: official model pages/context window, and
+ * https://help.aliyun.com/zh/model-studio/vision-model/ . */
 export async function measureQwenRequestInputUpperBound(body:Record<string,unknown>):Promise<number>{
  if(typeof body.model!=='string'||!/^(qwen3-vl-(flash|plus)|qwen-vl-max)(?:-\d{4}-\d{2}-\d{2})?$/.test(body.model)||!Array.isArray(body.messages)||!body.messages.length||body.messages.length>32)throw Error('qwen_request_token_bound_unsupported');
  if(Object.keys(body).some(k=>!['model','messages','max_tokens','temperature','top_p','enable_thinking','stream','response_format','vl_high_resolution_images'].includes(k)))throw Error('qwen_request_token_bound_extra_input');
@@ -26,10 +26,9 @@ export async function measureQwenRequestInputUpperBound(body:Record<string,unkno
    throw Error('qwen_request_modality_unsupported');
   })};
  });
- // Serialized text envelope includes role delimiters; reserve a further 1024
- // tokens per message for provider chat framing, independently of plan maxima.
- const upper=Buffer.byteLength(JSON.stringify({...body,messages:normalized}),'utf8')+body.messages.length*1024+count*16386;
- if(!Number.isSafeInteger(upper)||upper<=0||upper>(body.model.startsWith('qwen-vl-max')?129024:262144))throw Error('qwen_request_input_exceeds_context');return upper;
+ const ceiling=body.model.startsWith('qwen-vl-max')?129024:262144;
+ if(!Number.isSafeInteger(body.max_tokens)||Number(body.max_tokens)<=0||Number(body.max_tokens)>ceiling||count===0||Buffer.byteLength(JSON.stringify({...body,messages:normalized}),'utf8')>ceiling)throw Error('qwen_request_input_exceeds_context');
+ return ceiling;
 }
 export function createSocialContentPaidRuntimePorts(input:{scope:SocialTaskBudgetScope;receiptRoot?:string;assertCurrent:()=>Promise<void>;routes?:ReturnType<typeof createProductionBudgetRouteReaders>}){
  const routes=input.routes||createProductionBudgetRouteReaders();

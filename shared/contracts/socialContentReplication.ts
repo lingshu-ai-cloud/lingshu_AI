@@ -354,6 +354,9 @@ export interface SocialMaterialRouting {
   generation?: {
     method: 'reference_first_frame_product_replacement_i2v' | 'enterprise_authored_product_first_frame_i2v';
     firstFrameOrigin?: 'original_reference_pixels' | 'enterprise_authored_storyboard';
+    /** Frozen choice; absence preserves the historic Seedance route. */
+    videoProvider?: 'wan' | 'seedance';
+    videoModel?: 'wan2.6-i2v-flash' | 'wan2.2-i2v-flash';
     durationSeconds: number;
     durationOrigin?: 'default_short_shot' | 'planned_timeline' | 'explicit_frozen';
     productImageRefs: string[];

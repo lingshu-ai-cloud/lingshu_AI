@@ -1,3 +1,4 @@
+import {submitStudioVoicePaidRequest,studioVoicePaidContext} from '../lib/studioVoicePaidOperation.js';
 import {submitMaterialAnalysisPaidRequest,type MaterialAnalysisPaidCall} from '../digitalEmployees/materialAnalysisPaidOperation.js';
 import {directorG5AccountRuleRequirements} from '../../shared/contracts/socialDirectorG5AccountRules.js';
 import OpenAI from 'openai';
@@ -92,14 +93,15 @@ export function normalizeQwenQualityScore(value: unknown): number {
   if (!Number.isFinite(score) || score <= 0) return 0;
   return Math.max(0, Math.min(100, score <= 10 ? score * 10 : score));
 }
-export async function transcribeAudioWithQwen(opts: { audio: Buffer; fileName?: string; signal?: AbortSignal }): Promise<{ text: string; segments: QwenAsrSegment[] }> {
+export async function transcribeAudioWithQwen(opts: { audio: Buffer; fileName?: string; signal?: AbortSignal; audioSeconds?: number }): Promise<{ text: string; segments: QwenAsrSegment[] }> {
   const audioMime = opts.audio.subarray(0,4).toString() === 'RIFF' ? 'audio/wav' : /\.m4a$/i.test(opts.fileName || '') ? 'audio/mp4' : 'audio/mpeg';
-  const completion = await client().chat.completions.create({
+  const request = {
     model: process.env.QWEN_ASR_MODEL || 'qwen3-asr-flash',
     messages: [{ role: 'user', content: [{ type: 'input_audio', input_audio: { data: `data:${audioMime};base64,${opts.audio.toString('base64')}` } }] as any }],
     stream: false,
     asr_options: { enable_itn: true },
-  } as any, opts.signal ? { signal: opts.signal } : undefined);
+  } as any;
+  const completion=await submitStudioVoicePaidRequest({stage:'voice_asr',provider:'qwen',endpoint:BASE_URL()+'/chat/completions',accountKeyHash:createHash('sha256').update(dashscopeApiKey()).digest('hex'),model:request.model,voiceId:null,request,audioSha256:createHash('sha256').update(opts.audio).digest('hex'),audioSeconds:opts.audioSeconds},()=>client().chat.completions.create(request,{...(opts.signal?{signal:opts.signal}:{}),...(studioVoicePaidContext()?{maxRetries:0}:{})}));
   const text = String(completion.choices[0]?.message?.content || '').trim();
   return { text, segments: text ? [{ start: 0, end: 0, text }] : [] };
 }

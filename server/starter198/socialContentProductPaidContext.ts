@@ -45,7 +45,7 @@ export function bindProductPaidStage(context: ProductPaidContext, shotId: string
       for (const unit of Object.keys(intent.maximumUnits)) {
         if (unit === 'requests') actualUnits.requests = 1;
         else if (unit === 'frames' || unit === 'images') actualUnits[unit] = images;
-        else if (unit === 'providerSeconds') actualUnits.providerSeconds = Number(request.duration);
+        else if (unit === 'providerSeconds') actualUnits.providerSeconds = Number(intent.provider==='wan'?(request.parameters as Record<string,unknown>|undefined)?.duration:request.duration);
         else if (unit === 'outputTokens') {
           if(stage === 'video'){if(!context.measureVideoOutputTokens)fail('video_token_measurement_missing');actualUnits.outputTokens=await context.measureVideoOutputTokens!(request,route);}
           else actualUnits.outputTokens = Number(request.max_tokens);
@@ -57,7 +57,8 @@ export function bindProductPaidStage(context: ProductPaidContext, shotId: string
       }
       if (Object.values(actualUnits).some(n => !Number.isFinite(n) || n < 0)) fail('actual_usage_invalid');
       if (stage === 'first_frame' && (!images || typeof request.prompt !== 'string' || !request.prompt.trim())) fail('actual_KB_frame_request_changed');
-      if (stage === 'video' && (Number(request.duration) !== Math.max(4, Math.ceil(requirement.durationSeconds || 0)) || request.generate_audio !== false || request.resolution !== '720p' || !Array.isArray(request.content)
+      if(stage==='video'&&intent.provider==='wan'){const params=request.parameters as Record<string,unknown>|undefined,input=request.input as Record<string,unknown>|undefined;const expected=intent.model==='wan2.2-i2v-flash'?5:Math.max(2,Math.ceil(requirement.durationSeconds||0));if(!params||!input||Number(params.duration)!==expected||params.resolution!=='720P'||params.prompt_extend!==false||typeof input.img_url!=='string'||!input.img_url.startsWith('data:image/')||(intent.model==='wan2.6-i2v-flash'&&params.audio!==false))fail('actual_wan_i2v_request_changed');}
+      if (stage === 'video' && intent.provider!=='wan' && (Number(request.duration) !== Math.max(4, Math.ceil(requirement.durationSeconds || 0)) || request.generate_audio !== false || request.resolution !== '720p' || !Array.isArray(request.content)
         || !request.content.some((i: any) => i.role === 'first_frame'))) fail('actual_i2v_request_changed');
       if (stage.endsWith('_qa') && (images > (requirement.frameCount ?? 0))) fail('actual_qa_frames_exceed_contract');
       if (stage.endsWith('_qa') && (!Array.isArray(request.messages) || request.enable_thinking !== false || Number(request.max_tokens) !== 4096 || !images)) fail('actual_qa_request_changed');

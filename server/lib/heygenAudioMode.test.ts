@@ -19,3 +19,8 @@ test('verified audio request maps documented v3 Avatar IV engine without text or
   await assert.rejects(client.create({ ...input, engine: 'avatar_iii' as any }, 'invalid'), /仅允许Avatar IV/);
   assert.equal(calls, 1, 'invalid mode never contacts provider');
 });
+
+test('HeyGen actual create body consumes trusted boundary before new provider POST',async()=>{
+ let posts=0;const client=new HeyGenClient('controlled',async()=>{posts++;throw Error('must not submit');},{beforeSubmit:async(body,id)=>{assert.equal(id,'exact-request');assert.equal(body.audio_asset_id,'actual-audio-asset');assert.equal(body.avatar_id,'actual-avatar');assert.equal(body.resolution,'720p');assert.equal('script' in body,false);throw Error('frozen_presenter_intent_missing');},onAccepted:async()=>{throw Error('must not accept');}});
+ await assert.rejects(client.create({avatarId:'actual-avatar',voiceId:'',script:'',audioAssetId:'actual-audio-asset',engine:'avatar_iv',ratio:'9:16',transparent:false,title:'frozen'},'exact-request'),/frozen_presenter_intent_missing/);assert.equal(posts,0);
+});

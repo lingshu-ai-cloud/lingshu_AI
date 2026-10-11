@@ -72,3 +72,5 @@ test('normal plan refresh preserves explicit original-pixel method while new pro
  assert.equal(refreshed.materialRouting?.generation?.method,'reference_first_frame_product_replacement_i2v');
  assert.equal(refreshed.materialRouting?.generation?.firstFrameOrigin,'original_reference_pixels');
 });
+
+test('new generation freezes Wan while refresh cannot switch existing unspecified provider',()=>{const request={shotId:'p',function:'demonstration',materialType:'product',productRef:'own-product'};const fresh=plan(request);assert.equal(fresh.materialRouting?.generation?.videoProvider,'wan');assert.equal(fresh.materialRouting?.generation?.videoModel,'wan2.6-i2v-flash');const old=structuredClone(fresh.materialRouting!);delete old.generation!.videoProvider;delete old.generation!.videoModel;const refresh=plan({...request,materialRouting:old,productSceneReplication:fresh.productSceneReplication});assert.equal(refresh.materialRouting?.generation?.videoProvider,undefined);assert.equal(refresh.materialRouting?.generation?.videoModel,undefined);});

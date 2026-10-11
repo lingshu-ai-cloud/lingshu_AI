@@ -1,3 +1,4 @@
+import {submitStudioVoicePaidRequest, studioVoicePaidContext, StudioVoicePaidBoundaryError, withStudioVoicePaidContext, rethrowStudioVoicePaidBoundary, type StudioVoicePaidContext} from '../lib/studioVoicePaidOperation.js';
 import { submitStoryboardSeedance } from '../lib/storyboardSeedanceSubmission.js';
 import { mvpBudgetAdmission } from '../lib/mvpBudgetAdmission.js';
 import { isTrustedSocialOutputWorkspace, socialOutputWorkspaceClientWriteBlocked } from '../starter198/socialContentProductionWorkspace.js';
@@ -7794,20 +7795,20 @@ function minimaxLanguageBoost(language: string): string {
   return map[code] || 'auto';
 }
 
-function minimaxEndpoint(pathname: string): string {
-  const base = (process.env.MINIMAX_BASE_URL || 'https://api.minimax.io').replace(/\/+$/, '');
+function minimaxEndpoint(pathname: string, env: NodeJS.ProcessEnv = process.env): string {
+  const base = (env.MINIMAX_BASE_URL || 'https://api.minimax.io').replace(/\/+$/, '');
   const url = new URL(`${base}${pathname.startsWith('/') ? pathname : `/${pathname}`}`);
-  const groupId = process.env.MINIMAX_GROUP_ID || process.env.MINIMAX_GROUPID || '';
-  if (groupId) url.searchParams.set(process.env.MINIMAX_GROUP_ID_PARAM || 'GroupId', groupId);
+  const groupId = process.env.MINIMAX_GROUP_ID || env.MINIMAX_GROUPID || '';
+  if (groupId) url.searchParams.set(env.MINIMAX_GROUP_ID_PARAM || 'GroupId', groupId);
   return url.toString();
 }
 
-function minimaxVoiceFor(voice: string, language: string): string {
+function minimaxVoiceFor(voice: string, language: string, env: NodeJS.ProcessEnv = process.env): string {
   const lang = normalizeTtsLanguage(language);
   const envCode = lang.toUpperCase().replace(/[^A-Z0-9]/g, '_');
   const voiceCode = String(voice || 'v1').toUpperCase().replace(/[^A-Z0-9]/g, '_');
-  return process.env[`MINIMAX_VOICE_${envCode}_${voiceCode}`]
-    || process.env[`MINIMAX_VOICE_${voiceCode}`]
+  return env[`MINIMAX_VOICE_${envCode}_${voiceCode}`]
+    || env[`MINIMAX_VOICE_${voiceCode}`]
     || MINIMAX_VOICE_MAP[lang]?.[voice]
     || MINIMAX_VOICE_MAP.en?.[voice]
     || MINIMAX_ENGLISH_PRESETS.v1.voiceId;
@@ -7959,6 +7960,7 @@ function durationFromText(text: string): number {
 async function minimaxFetchJson(pathname: string, body: Record<string, unknown>, timeoutMs = 90_000): Promise<any> {
   const apiKey = process.env.MINIMAX_API_KEY || process.env.MINIMAX_API_TOKEN || '';
   if (!apiKey) throw new Error('MINIMAX_API_KEY not set');
+  const send = async () => {
   const response = await fetch(minimaxEndpoint(pathname), {
     method: 'POST',
     headers: {
@@ -7975,6 +7977,9 @@ async function minimaxFetchJson(pathname: string, body: Record<string, unknown>,
     throw new Error(`MiniMax ${statusCode}: ${String(json?.base_resp?.status_msg || 'request failed')}`);
   }
   return json;
+  };
+  if (pathname === '/v1/t2a_v2' || pathname === '/v1/voice_clone') return submitStudioVoicePaidRequest({stage:pathname === '/v1/voice_clone'?'voice_clone':'tts',provider:'minimax',endpoint:minimaxEndpoint(pathname),accountKeyHash:createHash('sha256').update(apiKey).digest('hex'),model:String(body.model||''),voiceId:String((body.voice_setting as any)?.voice_id || body.voice_id || ''),request:body},send);
+  return send();
 }
 
 function minimaxSpeechText(text: string, style: TtsStyleOptions): string {
@@ -8141,6 +8146,7 @@ async function ensureMinimaxClonedVoice(voice: string, language: string): Promis
             updateMinimaxVoiceCache(cacheKey, { activationState: 'activated', activatedAt: now, lastSynthesizedAt: now, lastError: undefined });
           }
         } catch (error) {
+          rethrowStudioVoicePaidBoundary(error);
           updateMinimaxVoiceCache(cacheKey, { lastError: String(error instanceof Error ? error.message : error).slice(0, 240) });
         }
       }
@@ -8159,6 +8165,7 @@ async function ensureMinimaxClonedVoice(voice: string, language: string): Promis
       language_boost: minimaxLanguageBoost(language),
     }, Number(process.env.MINIMAX_CLONE_TIMEOUT_MS || 120_000));
   } catch (error: any) {
+    rethrowStudioVoicePaidBoundary(error);
     const message = String(error?.message || error);
     if (!/duplicate|already exists|exist|重复/i.test(message)) throw error;
   }
@@ -8181,6 +8188,7 @@ async function ensureMinimaxClonedVoice(voice: string, language: string): Promis
       updateMinimaxVoiceCache(cacheKey, { activationState: 'activated', activatedAt: now, lastSynthesizedAt: now, lastError: undefined });
     }
   } catch (error) {
+          rethrowStudioVoicePaidBoundary(error);
     updateMinimaxVoiceCache(cacheKey, { lastError: String(error instanceof Error ? error.message : error).slice(0, 240) });
   }
   return { voiceId, cacheKey };
@@ -8313,23 +8321,13 @@ async function generateQwenTts(text: string, voice: string, language: string): P
   if (!apiKey) return null;
   const endpoint = process.env.DASHSCOPE_TTS_ENDPOINT
     || 'https://dashscope.aliyuncs.com/api/v1/services/aigc/multimodal-generation/generation';
-  const response = await fetch(endpoint, {
-    method: 'POST',
-    headers: { Authorization: `Bearer ${apiKey}`, 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      model: process.env.QWEN_TTS_MODEL || 'qwen3-tts-flash',
-      input: {
-        text: text.slice(0, 5000),
-        voice: process.env[`QWEN_TTS_VOICE_${String(voice || 'v1').toUpperCase()}`] || QWEN_TTS_VOICE_MAP[voice] || 'Cherry',
-        language_type: qwenTtsLanguageType(language),
-      },
-    }),
-    signal: AbortSignal.timeout(Number(process.env.QWEN_TTS_TIMEOUT_MS || 90_000)),
+  const request = { model: process.env.QWEN_TTS_MODEL || 'qwen3-tts-flash', input: {text:text.slice(0,5000),voice:process.env[`QWEN_TTS_VOICE_${String(voice || 'v1').toUpperCase()}`] || QWEN_TTS_VOICE_MAP[voice] || 'Cherry',language_type:qwenTtsLanguageType(language)}};
+  const json = await submitStudioVoicePaidRequest({stage:'tts',provider:'qwen',endpoint,accountKeyHash:createHash('sha256').update(apiKey).digest('hex'),model:request.model,voiceId:request.input.voice,request},async()=>{
+    const response=await fetch(endpoint,{method:'POST',headers:{Authorization:`Bearer ${apiKey}`,'Content-Type':'application/json'},body:JSON.stringify(request),signal:AbortSignal.timeout(Number(process.env.QWEN_TTS_TIMEOUT_MS || 90_000))});
+    const json=await response.json().catch(()=>({} as any)) as any;
+    if(!response.ok || json?.code)throw Error(`Qwen TTS HTTP ${response.status}: ${String(json?.message||'request failed')}`);
+    return json;
   });
-  const json = await response.json().catch(() => ({} as any)) as any;
-  if (!response.ok || json?.code) {
-    throw new Error(friendlyTtsProviderError(`${json?.code || `HTTP ${response.status}`}: ${String(json?.message || 'request failed').slice(0, 240)}`, 'DashScope 语音服务'));
-  }
   const remoteUrl = String(json?.output?.audio?.url || '').trim();
   if (!/^https?:\/\//i.test(remoteUrl)) throw new Error('Qwen TTS did not return an audio URL');
   const audioResponse = await fetch(remoteUrl, { signal: AbortSignal.timeout(Number(process.env.QWEN_TTS_DOWNLOAD_TIMEOUT_MS || 60_000)) });
@@ -8377,23 +8375,41 @@ async function generateQwenTts(text: string, voice: string, language: string): P
 
 type CachedTtsResult = Awaited<ReturnType<typeof generateTtsAudioUncached>>;
 const inFlightTts = new Map<string,Promise<CachedTtsResult>>();
+function studioNativeTtsCacheKey(tenantId:string,spoken:string,voice:string,language:string,style:TtsStyleOptions) {
+  const providerPolicy = [process.env.TTS_PROVIDER_POLICY_VERSION || 'minimax-subtitle-time-v3-english-boundaries', process.env.TTS_PREFER_EXPRESSIVE_PROVIDER !== 'false', process.env.TTS_REQUIRE_MINIMAX === 'true',
+    dashscopeCredentialConfigured(), Boolean((process.env.MINIMAX_API_KEY || process.env.MINIMAX_API_TOKEN || '').trim())];
+  return createHash('sha256').update(JSON.stringify([tenantId,spoken,voice,language,normalizeTtsStyle(style),providerPolicy,process.env.QWEN_TTS_MODEL || 'qwen3-tts-flash',process.env.MINIMAX_TTS_MODEL || 'speech-2.8-hd',process.env[`QWEN_TTS_VOICE_${voice.toUpperCase()}`],minimaxVoiceFor(voice,language)])).digest('hex');
+
+}
+function readStudioNativeTtsCache(tenantId:string,text:string,voice:string,language:string,style:TtsStyleOptions) {
+ const key=studioNativeTtsCacheKey(tenantId,text,voice,language,style),dir=tenantAssetDir(TTS_ROOT,tenantId),file=path.join(dir,`sentence-${key}.json`);
+ try {const cached=JSON.parse(fs.readFileSync(file,'utf8'));const audio=path.join(dir,path.basename(new URL(cached.url,'http://local').pathname));
+  if(!cached.ok || !['qwen_tts','minimax'].includes(cached.source) || !fs.existsSync(audio) || !fs.realpathSync(audio).startsWith(fs.realpathSync(dir)+path.sep))return null;
+  const bytes=fs.readFileSync(audio);if(bytes.length<=44)return null;
+  return {cacheKey:key,provider:cached.source as string,audioSha256:createHash('sha256').update(bytes).digest('hex'),durationSeconds:Number(cached.duration),measuredWavDurationSeconds:wavDurationFromBytes(bytes),receiptVerificationRequired:true};
+ } catch {return null;}
+}
 async function generateTtsAudio(spoken: string, voice: string, language = 'zh', style: TtsStyleOptions = {}, requireNatural = false): Promise<CachedTtsResult> {
   const tenantId = studioTenantContext.getStore();
   // Custom voice lifecycle is managed by the clone registry, not a text cache.
   if (!tenantId || voice.startsWith('custom:')) return generateTtsAudioUncached(spoken,voice,language,style,requireNatural);
-  const providerPolicy = [process.env.TTS_PROVIDER_POLICY_VERSION || 'minimax-subtitle-time-v3-english-boundaries', process.env.TTS_PREFER_EXPRESSIVE_PROVIDER !== 'false', process.env.TTS_REQUIRE_MINIMAX === 'true',
-    dashscopeCredentialConfigured(), Boolean((process.env.MINIMAX_API_KEY || process.env.MINIMAX_API_TOKEN || '').trim())];
-  const key = createHash('sha256').update(JSON.stringify([tenantId,spoken,voice,language,normalizeTtsStyle(style),providerPolicy,process.env.QWEN_TTS_MODEL || 'qwen3-tts-flash',process.env.MINIMAX_TTS_MODEL || 'speech-2.8-hd',process.env[`QWEN_TTS_VOICE_${voice.toUpperCase()}`],minimaxVoiceFor(voice,language)])).digest('hex');
+  const key = studioNativeTtsCacheKey(tenantId,spoken,voice,language,style);
   const dir = tenantAssetDir(TTS_ROOT,tenantId);
   const cacheFile = path.join(dir,`sentence-${key}.json`);
   try {
     const cached = JSON.parse(fs.readFileSync(cacheFile,'utf8')) as CachedTtsResult;
     const file = cached.url ? path.join(dir,path.basename(new URL(cached.url,'http://local').pathname)) : '';
-    if (cached.ok && ['qwen_tts','minimax'].includes(cached.source) && file && fs.existsSync(file) && fs.statSync(file).size > 44) return cached;
-  } catch { /* missing/invalid cache is regenerated */ }
-  const existing = inFlightTts.get(key); if(existing) return existing;
-  const pending = generateTtsAudioUncached(spoken,voice,language,style,requireNatural).then(result=>{
+    if (cached.ok && ['qwen_tts','minimax'].includes(cached.source) && file && fs.existsSync(file) && fs.statSync(file).size > 44) {
+      const context=studioVoicePaidContext();
+      if(context && !await context.verifyCachedAudio?.({tenantId,text:spoken,logicalVoice:voice,language,provider:cached.source,audioSha256:createHash('sha256').update(fs.readFileSync(file)).digest('hex'),durationSeconds:Number(cached.duration)})) throw new StudioVoicePaidBoundaryError('voice_existing_cache_requires_canonical_receipt_verification');
+      return cached;
+    }
+  } catch(error) { rethrowStudioVoicePaidBoundary(error); /* missing/invalid cache is regenerated */ }
+  const existing = inFlightTts.get(key); if(existing) {if(studioVoicePaidContext())throw new StudioVoicePaidBoundaryError('voice_existing_submission_requires_original_receipt');return existing;}
+  const pending = generateTtsAudioUncached(spoken,voice,language,style,requireNatural).then(async result=>{
     if(result.ok && ['qwen_tts','minimax'].includes(result.source)) {
+      const context=studioVoicePaidContext();
+      if(context?.persistAudioCacheProof && result.url) {const audioFile=path.join(dir,path.basename(new URL(result.url,'http://local').pathname));if(fs.existsSync(audioFile)) await context.persistAudioCacheProof({tenantId,text:spoken,logicalVoice:voice,language,provider:result.source,audioSha256:createHash('sha256').update(fs.readFileSync(audioFile)).digest('hex'),durationSeconds:Number(result.duration)});}
       fs.mkdirSync(dir,{recursive:true});const tmp=cacheFile+'.tmp';fs.writeFileSync(tmp,JSON.stringify(result),{mode:0o600});fs.renameSync(tmp,cacheFile);
     }
     return result;
@@ -8413,6 +8429,7 @@ async function generateTtsAudioUncached(spoken: string, voice: string, language 
         try {
           minimax = await generateMinimaxTts(spoken, clonedVoice.voiceId, language, style);
         } catch (error) {
+          rethrowStudioVoicePaidBoundary(error);
           if (!minimaxVoiceNeedsReclone(error)) throw error;
           clearMinimaxVoiceCache(clonedVoice.cacheKey);
           clonedVoice = await ensureMinimaxClonedVoice(voice, language);
@@ -8431,6 +8448,7 @@ async function generateTtsAudioUncached(spoken: string, voice: string, language 
         }
       }
     } catch (e: any) {
+      rethrowStudioVoicePaidBoundary(e);
       minimaxError = String(e?.message ?? e).slice(0, 240);
     }
     const cloned = await generateXttsCloneTts(spoken, voice, language);
@@ -8442,6 +8460,12 @@ async function generateTtsAudioUncached(spoken: string, voice: string, language 
         ? `已录入真人音色，但 MiniMax 克隆/合成失败：${minimaxError}。若要本地兜底，请配置 XTTS/Coqui（XTTS_BIN/COQUI_TTS_BIN）。`
         : '已录入真人音色，但后端未配置 MiniMax（MINIMAX_API_KEY）或 XTTS/Coqui 音色克隆引擎，无法用该音色合成。',
     };
+  }
+  const paidNative=studioVoicePaidContext()?.primaryProvider;
+  if(paidNative) {
+    const result=paidNative==='qwen' ? await generateQwenTts(spoken,voice,language) : await generateMinimaxTts(spoken,minimaxVoiceFor(voice,language),language,style);
+    if(!result)throw new StudioVoicePaidBoundaryError('frozen_native_voice_provider_unavailable');
+    return {ok:true,...result};
   }
   let aiError = '';
 
@@ -8459,6 +8483,7 @@ async function generateTtsAudioUncached(spoken: string, voice: string, language 
       const minimax = await tryMinimax();
       if (minimax) return minimax;
     } catch (e: any) {
+      rethrowStudioVoicePaidBoundary(e);
       aiError = friendlyTtsProviderError(e, 'MiniMax 语音服务').slice(0, 240);
     }
   }
@@ -8469,6 +8494,7 @@ async function generateTtsAudioUncached(spoken: string, voice: string, language 
     const qwen = await generateQwenTts(spoken, voice, language);
     if (qwen) return { ok: true, ...qwen };
   } catch (e: any) {
+    rethrowStudioVoicePaidBoundary(e);
     aiError = friendlyTtsProviderError(e, 'DashScope 语音服务').slice(0, 240);
   }
 
@@ -8476,6 +8502,7 @@ async function generateTtsAudioUncached(spoken: string, voice: string, language 
     const minimax = await tryMinimax();
     if (minimax) return minimax;
   } catch (e: any) {
+    rethrowStudioVoicePaidBoundary(e);
     aiError = [aiError, friendlyTtsProviderError(e, 'MiniMax 语音服务').slice(0, 240)].filter(Boolean).join('；');
   }
 
@@ -8776,11 +8803,40 @@ export function splitStudioNarrationSentences(spoken: string): string[] {
   return spoken.split(/(?<=[。！？!?])\s*|(?<=\.)\s+(?=[¿¡]?[A-ZÀ-ž])/u).map(value => value.trim()).filter(Boolean);
 }
 
+/** Read-only view of the exact native selection policy used below. Physical
+ * voices and prepared paid text are resolved before supplier pricing. */
+export function resolveStudioVoiceExecutionPlan(input:{tenantId:string;text:string;voice?:string;language?:string;style?:TtsStyleOptions;sentenceLines?:string[];measuredSentenceTiming?:boolean;env?:NodeJS.ProcessEnv;nativeProvider?:'qwen'|'minimax'}) {
+ return studioTenantContext.run(input.tenantId,()=>{
+  const env=input.env||process.env;
+  const spoken=String(input.text||'').trim(),voice=input.voice||'v1',language=input.language||'en';
+  const style=normalizeTtsStyle(input.style||{preset:'authentic_review'});
+  const requested=input.sentenceLines?.map(line=>line.trim()).filter(Boolean)||[];
+  if(requested.length && requested.join(' ').replace(/\s+/g,'')!==spoken.replace(/\s+/g,''))throw Error('voice_plan_sentence_text_mismatch');
+  const lines=requested.length?requested:splitStudioNarrationSentences(spoken);
+  const continuous=!input.measuredSentenceTiming&&lines.length>1&&lines.length<=100&&spoken.length<=5000;
+  const texts=continuous?[spoken]:lines;
+  const minimaxConfigured=Boolean((env.MINIMAX_API_KEY||env.MINIMAX_API_TOKEN||'').trim());
+  const qwenConfigured=Boolean(String(env.DASHSCOPE_API_KEY||'').trim())&&Boolean(qwenTtsLanguageType(language));
+  const expressive=env.TTS_PREFER_EXPRESSIVE_PROVIDER!=='false'&&minimaxConfigured&&Boolean(style.preset||style.emotion||style.pauseStyle||style.pronunciations?.length);
+  const account=(provider:'minimax'|'qwen')=>createHash('sha256').update(provider==='minimax'?env.MINIMAX_API_KEY||env.MINIMAX_API_TOKEN||'':env.DASHSCOPE_API_KEY||'').digest('hex');
+  const native=(provider:'minimax'|'qwen')=>({provider,model:provider==='minimax'?env.MINIMAX_TTS_MODEL||'speech-2.8-hd':env.QWEN_TTS_MODEL||'qwen3-tts-flash',accountKeyHash:account(provider),endpoint:provider==='minimax'?minimaxEndpoint('/v1/t2a_v2',env):env.DASHSCOPE_TTS_ENDPOINT||'https://dashscope.aliyuncs.com/api/v1/services/aigc/multimodal-generation/generation',voiceId:provider==='minimax'?minimaxVoiceFor(voice,language,env):env[`QWEN_TTS_VOICE_${voice.toUpperCase()}`]||QWEN_TTS_VOICE_MAP[voice]||'Cherry',texts:texts.map(text=>provider==='minimax'?minimaxSpeechText(text,style).slice(0,5000):text.slice(0,5000))});
+  if(voice.startsWith('custom:')) {
+   const sample=voiceSamplePathFromId(voice);const key=sample?minimaxVoiceCacheKey(voice,sample):null;
+   const cached=key?readMinimaxVoiceCache()[key]:null;
+   return {mode:continuous?'continuous' as const:'sentences' as const,lines,texts,logicalVoice:voice,language,custom:{sampleSha256:sample?createHash('sha256').update(fs.readFileSync(sample)).digest('hex'):null,voiceId:cached?.voiceId||null,activationState:cached?.activationState||null,requiresClone:!cached?.voiceId,requiresActivation:cached?.activationState!=='activated',clonePreviewText:env.MINIMAX_CLONE_PREVIEW_TEXT||'这是一段用于确认真人音色的试读音频。',activationText:env.MINIMAX_ACTIVATION_TEXT||'你好，这是我的品牌授权音色。'},cacheCandidates:[],primary:minimaxConfigured&&cached?.voiceId?{...native('minimax'),voiceId:cached.voiceId}:null,fallback:null,asrConfigured:env.TTS_ASR_QA_ENABLED!=='false'&&dashscopeCredentialConfigured(env)};
+  }
+  const primary=input.nativeProvider ? (input.nativeProvider==='qwen'&&qwenConfigured?native('qwen'):input.nativeProvider==='minimax'&&minimaxConfigured?native('minimax'):null) : expressive?native('minimax'):qwenConfigured?native('qwen'):minimaxConfigured?native('minimax'):null;
+  const fallback=primary?.provider==='minimax'&&expressive&&env.TTS_REQUIRE_MINIMAX==='true'?null:primary?.provider==='minimax'&&qwenConfigured?native('qwen'):primary?.provider==='qwen'&&minimaxConfigured?native('minimax'):null;
+  return {mode:!spoken?'none' as const:continuous?'continuous' as const:'sentences' as const,lines,texts,logicalVoice:voice,language,custom:null,primary,fallback,cacheCandidates:texts.map(text=>readStudioNativeTtsCache(input.tenantId,text,voice,language,style)),asrConfigured:env.TTS_ASR_QA_ENABLED!=='false'&&dashscopeCredentialConfigured(env)};
+ });
+}
+
 export async function synthesizeStudioVoiceForAutomation(input: {
   tenantId: string; text: string; language?: string; voice?: string; targetDuration?: number;
+  paidContext?: StudioVoicePaidContext;
   style?: TtsStyleOptions; sentenceLines?: string[]; measuredSentenceTiming?: boolean;
 }): Promise<{ ok: boolean; source?: string; url?: string; localPath?: string; duration?: number; text?: string; error?: string; cues?: AlignedCue[]; alignmentSource?: string; qualityReport?: VoiceQualityReport }> {
-  return studioTenantContext.run(input.tenantId, async () => {
+  return withStudioVoicePaidContext(input.paidContext, () => studioTenantContext.run(input.tenantId, async () => {
     const spoken = String(input.text || '').trim();
     if (!spoken) return { ok: false, error: '口播为空' };
     if (!['zh','ja'].includes(normalizeTtsLanguage(input.language || 'en')) && /[\u4e00-\u9fff]/.test(spoken)) return { ok: false, error: '口播含中文，请先统一为目标语种后再生成配音。' };
@@ -8862,7 +8918,7 @@ export async function synthesizeStudioVoiceForAutomation(input: {
     fs.writeFileSync(joined + '.alignment.json', JSON.stringify({ text: spoken, cues, source: 'synthesized_sentence_audio' }));
     for (const file of files) fs.unlinkSync(file);
     return { ...result, localPath: joined, text: spoken, cues, source: [...providers].join('+'), alignmentSource: 'synthesized_sentence_audio', qualityReport };
-  });
+  }));
 }
 
 // POST /studio/tts  Body: { script?, text?, voice?, language? } → { ok, url, duration }

@@ -37,3 +37,10 @@ test('formal Ark units count real reference inputs and delegate actual video tok
  video.context.measureVideoOutputTokens=async actual=>{assert.equal(actual.duration,4);assert.equal(actual.resolution,'720p');return 87300;};
  await bindProductPaidStage(video.context,'S04','video').beforeSubmit(body);assert.deepEqual(video.calls[0].actualUnits,{outputTokens:87300});
 });
+test('real prepared Wan request consumes exactly frozen silent seconds and rejects paid audio changes',async()=>{
+ const {prepareWanImageVideoRequest}=await import('../lib/wanImageVideo.js');const {createHash}=await import('node:crypto');const frame=Buffer.from('actual licensed KB frame');
+ const f=fixture('video'),key='scene:S04:video',route=f.context.routeBindings[key]!;Object.assign(route,{provider:'wan',model:'wan2.6-i2v-flash',maximumUnits:{providerSeconds:3}});Object.assign(f.context.intents[0]!,{provider:route.provider,model:route.model,maximumUnits:route.maximumUnits,inputContractHash:paidProductionHash({requirement:f.context.requirements[0],route,attempt:0})});
+ const prepared=prepareWanImageVideoRequest({model:'wan2.6-i2v-flash',firstFrame:frame,mimeType:'image/png',prompt:'Preserve actual package',durationSeconds:3,firstFrameSha256:createHash('sha256').update(frame).digest('hex'),inputContractHash:'a'.repeat(64)});
+ const bound=bindProductPaidStage(f.context,'S04','video');await bound.beforeSubmit(prepared.body);assert.deepEqual(f.calls[0].actualUnits,{providerSeconds:3});
+ await assert.rejects(bound.beforeSubmit({...prepared.body,parameters:{...prepared.body.parameters,audio:true}}),/wan_i2v_request_changed/);assert.equal(f.calls.length,1);
+});

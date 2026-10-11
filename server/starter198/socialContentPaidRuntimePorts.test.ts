@@ -2,7 +2,7 @@ import test from 'node:test';import assert from 'node:assert/strict';import fs f
 import {createSocialContentPaidRuntimePorts,measureQwenRequestInputUpperBound} from './socialContentPaidRuntimePorts.js';
 const body={model:'qwen3-vl-plus',max_tokens:4096,messages:[{role:'user',content:[{type:'text',text:'真实产品'},{type:'image_url',image_url:{url:'data:image/jpeg;base64,'+'A'.repeat(100000)}}]}]};
 test('actual request-derived token bound excludes base64 transport bytes and rejects unsupported modalities',async()=>{
- const measured=await measureQwenRequestInputUpperBound(body);assert.ok(measured>16384&&measured<20000);
+ const measured=await measureQwenRequestInputUpperBound(body);assert.equal(measured,262144);
  assert.equal(await measureQwenRequestInputUpperBound({...body,messages:[{role:'user',content:[{type:'text',text:'真实产品'},{type:'image_url',image_url:{url:'https://real/image'}}]}]}),measured);
  await assert.rejects(measureQwenRequestInputUpperBound({...body,tools:[]}),/extra_input/);await assert.rejects(measureQwenRequestInputUpperBound({...body,messages:[{role:'user',content:[{type:'audio',audio:'not priced'}]}]}),/modality/);
 });

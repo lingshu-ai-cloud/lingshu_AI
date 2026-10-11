@@ -1,3 +1,4 @@
+import {executeWanImageVideo,type WanImageVideoCheckpoint} from '../lib/wanImageVideo.js';
 import fs from 'node:fs';
 import path from 'node:path';
 import {createHash} from 'node:crypto';
@@ -34,6 +35,9 @@ export interface ProductReplacementEnvironmentContext {
   materials?: typeof readMaterialLibrary;
   download?: typeof objectStorageDownload;
   paidContext?: ProductPaidContext;
+  /** Internal transport/configuration injection for offline contract tests. */
+  wanTransport?: typeof fetch;
+  wanCredentials?:()=>{apiKey:string;baseUrl:string;credentialSha256:string};
   budgetRoot?: string;
   /** Private server evidence cache; never a worker render workspace. */
   durableRoot?: string;
@@ -301,6 +305,20 @@ export async function createEnvironmentProductReplacementPorts(input: Input, con
     },
     video: async request => {
       await assertCurrent();
+      if(input.materialRouting?.generation?.videoProvider==='wan'){
+       if(!context.paidContext)throw Error('wan_whole_film_budget_context_missing');const bound=paid('video')!;
+       const model=input.materialRouting.generation.videoModel;if(!model||bound.intent.provider!=='wan'||bound.intent.model!==model)throw Error('wan_frozen_provider_changed');
+       const checkpointPath=path.join(durableDirectory,'wan',sha(request.requestId)+'.json'),media=checkpointPath+'.mp4';
+       return withPaidOperationLock(path.join(durableDirectory,'.wan-locks'),sha(request.requestId),async()=>{
+        const cp=()=>fs.existsSync(checkpointPath)?JSON.parse(fs.readFileSync(checkpointPath,'utf8')) as WanImageVideoCheckpoint:null;
+        if(cp()?.status==='completed'&&fs.existsSync(media)){await context.paidContext!.assertRecovery(bound.intent.operationId);const bytes=fs.readFileSync(media);if(sha(bytes)!==cp()!.mediaSha256)throw Error('wan_completed_media_changed');await bound.completed('wan:'+cp()!.providerTaskId+':'+cp()!.mediaSha256);return {bytes,providerTaskId:cp()!.providerTaskId!,model,estimatedCostCny:paidAmount('video')};}
+        const run=()=>executeWanImageVideo({model,firstFrame:request.firstFrame,mimeType:'image/png',prompt:request.prompt,durationSeconds:request.providerDurationSeconds,firstFrameSha256:sha(request.firstFrame),inputContractHash:bound.intent.inputContractHash},{transport:context.wanTransport,credentials:context.wanCredentials,assertCurrent,readCheckpoint:async()=>cp(),writeCheckpoint:async value=>{fs.mkdirSync(path.dirname(checkpointPath),{recursive:true,mode:0o700});const temp=checkpointPath+'.tmp';fs.writeFileSync(temp,JSON.stringify(value),{mode:0o600});fs.renameSync(temp,checkpointPath);},beforeSubmit:async body=>{await beforePaidSubmit('video',body);},assertRecovery:async()=>{await context.paidContext!.assertRecovery(bound.intent.operationId);}});
+        let result=await run();const deadline=Date.now()+900000;while(result.status==='pending'&&Date.now()<deadline){await assertCurrent();await new Promise(resolve=>setTimeout(resolve,5000));result=await run();}
+        if(result.status==='pending')throw Error('waiting_external:wan:'+result.providerTaskId);
+        fs.writeFileSync(media,result.bytes,{mode:0o600});await bound.completed('wan:'+result.providerTaskId+':'+result.mediaSha256);return {bytes:result.bytes,providerTaskId:result.providerTaskId,model,estimatedCostCny:paidAmount('video')};
+       });
+      }
+
       const fingerprint = productReplacementOperationFingerprint('video', {...request, firstFrame: sha(request.firstFrame), checkpointPath: undefined, model: videoModel});
       return withPaidOperationLock(path.join(durableDirectory, '.video-locks'), fingerprint, async () => {
       const checkpointPath = path.join(durableDirectory, 'video', `${fingerprint}.json`);
@@ -398,7 +416,7 @@ export async function readProductReplacementRequestBounds(input: Input, context:
   const firstFrameMaximumFrames = 1 + products.length + (authored ? 0 : 1);
   const videoCandidateFrames = products.length === 1 ? 3 : 2;
   return {firstFrameMaximumFrames, videoMaximumFrames: products.length + videoCandidateFrames + 1,
-    compositionSha256, productSha256s: products.map(p => p.sha256), providerDurationSeconds: Math.max(4, Math.ceil(input.spec.cameraLock.durationSeconds)),
+    compositionSha256, productSha256s: products.map(p => p.sha256), videoProvider:input.materialRouting?.generation?.videoProvider,videoModel:input.materialRouting?.generation?.videoModel,providerDurationSeconds:input.materialRouting?.generation?.videoProvider==='wan'?(input.materialRouting.generation.videoModel==='wan2.2-i2v-flash'?5:Math.max(2,Math.ceil(input.spec.cameraLock.durationSeconds))):Math.max(4, Math.ceil(input.spec.cameraLock.durationSeconds)),
     evidenceRef: 'canonical-product-request-bounds:' + socialRequestHash({tenantId:input.tenantId,taskId:input.taskId,shotId:input.shotId,
       materialRouting:input.materialRouting,spec:input.spec,products:products.map(p=>p.sha256),compositionSha256,firstFrameMaximumFrames,videoCandidateFrames})};
 }

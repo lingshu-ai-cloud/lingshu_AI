@@ -6,7 +6,7 @@ export class HeyGenRequestError extends Error {
   }
 }
 export class HeyGenClient {
-  constructor(private key: string, private transport: typeof fetch = fetch) {}
+  constructor(private key: string, private transport: typeof fetch = fetch, private paidSubmission?: {beforeSubmit(request:Record<string,unknown>,requestId:string):Promise<void>;onAccepted(taskId:string,requestId:string):Promise<void>}) {}
   private async call(path: string, body?: unknown, requestId?: string) {
     if (!this.key) throw new Error('尚未配置 HEYGEN_API_KEY');
     const response = await this.transport(`https://api.heygen.com/v3/videos${path}`, {
@@ -24,9 +24,12 @@ export class HeyGenClient {
     if (input.audioAssetId && (input.script.trim() || input.voiceId)) throw new Error('HeyGen音频模式不能同时指定台词或声音');
     if (input.engine && input.engine !== 'avatar_iv') throw new Error('HeyGen受控音频镜头仅允许Avatar IV');
     const image = input.imageAssetId ? { type: 'asset_id', asset_id: input.imageAssetId } : input.imageUrl ? { type: 'url', url: input.imageUrl } : null;
-    const data = await this.call('', { ...(image ? { type: 'image', image } : { type: 'avatar', avatar_id: input.avatarId }), ...(input.audioAssetId ? { audio_asset_id: input.audioAssetId } : { voice_id: input.voiceId, script: input.script }),
-      ...(input.engine ? { engine: { type: input.engine } } : {}), aspect_ratio: input.ratio, resolution: '720p', title: input.title, output_format: input.transparent ? 'webm' : 'mp4' }, requestId);
+    const request = { ...(image ? { type: 'image', image } : { type: 'avatar', avatar_id: input.avatarId }), ...(input.audioAssetId ? { audio_asset_id: input.audioAssetId } : { voice_id: input.voiceId, script: input.script }),
+      ...(input.engine ? { engine: { type: input.engine } } : {}), aspect_ratio: input.ratio, resolution: '720p', title: input.title, output_format: input.transparent ? 'webm' : 'mp4' };
+    await this.paidSubmission?.beforeSubmit(structuredClone(request),requestId);
+    const data=await this.call('',request,requestId);
     if (typeof data.video_id !== 'string') throw new Error('提交结果未知：未返回video_id，请检查供应商任务，不要重复付费提交');
+    await this.paidSubmission?.onAccepted(data.video_id,requestId);
     return data.video_id;
   }
   async uploadImage(bytes: Uint8Array, mimeType: string, requestId: string): Promise<string> {

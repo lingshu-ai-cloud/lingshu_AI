@@ -11,16 +11,16 @@ import type { InternalSocialContentFormula } from './socialContentThemes.js';
 import { runVisualFfmpeg } from '../lib/renderVisualQuality.js';
 const baseline = { themeId: 'product_value', formulaReference: null, language: 'en', scenes: [{ voiceover: 'Meet GUIANFA.', narration: 'Meet GUIANFA.' }, { voiceover: 'DM us.', narration: 'DM us.' }] } as StoredSocialScriptBaseline;
 test('real Studio sentence splitting and shared frozen direction determine clone/fallback/ASR', async () => {
-    const native = await createProductionBudgetRuntimeReaders({ env: { MINIMAX_API_KEY: 'fixture-only', TTS_REQUIRE_MINIMAX: 'true', TTS_ASR_QA_ENABLED: 'false' } }).readVoicePlan!(baseline);
+    const native = await createProductionBudgetRuntimeReaders({ tenantId:'tenant', env: { MINIMAX_API_KEY: 'fixture-only', TTS_REQUIRE_MINIMAX: 'true', TTS_ASR_QA_ENABLED: 'false' } }).readVoicePlan!(baseline);
     assert.equal(native?.mode, 'continuous');
     assert.equal(native?.requiresClone, false);
     assert.equal(native?.allowFallback, false);
     assert.equal(native?.requiresAsr, false);
     assert.deepEqual(native?.lines, ['Meet GUIANFA.', 'DM us.']);
     const formula = { formulaId: 'f', version: '1', direction: { voiceover: { voice: 'custom:owned' } } } as InternalSocialContentFormula;
-    const custom = await createProductionBudgetRuntimeReaders({ formula, env: { DASHSCOPE_API_KEY: 'fixture-only' } }).readVoicePlan!({ ...baseline, formulaReference: { formulaId: 'f', version: '1' } });
+    const custom = await createProductionBudgetRuntimeReaders({ tenantId:'tenant', formula, env: { DASHSCOPE_API_KEY: 'fixture-only' } }).readVoicePlan!({ ...baseline, formulaReference: { formulaId: 'f', version: '1' } });
     assert.equal(custom?.requiresClone, true);
-    assert.equal(custom?.allowFallback, true);
+    assert.equal(custom?.allowFallback, false);
     assert.equal(custom?.requiresAsr, true);
     assert.equal(await createProductionBudgetRuntimeReaders({ formula }).readVoicePlan!({ ...baseline, formulaReference: { formulaId: 'f', version: '2' } }), null);
 });
@@ -35,7 +35,7 @@ test('actual offline proxy extraction counts batches and rejects changed source 
         assert.equal(made.ok, true);
         const sha = createHash('sha256').update(fs.readFileSync(file)).digest('hex');
         const asset = { id: 'owned', type: 'video', localPath: file, contentHash: sha } as SocialProductionAsset;
-        const frames = await createProductionBudgetRuntimeReaders({ env: {} }).readAnalysisFrames!(asset);
+        const frames = await createProductionBudgetRuntimeReaders({ tenantId:'tenant', env: {} }).readAnalysisFrames!(asset);
         assert.ok(frames && frames.frameCount > 0);
         assert.equal(frames.batchFrameCounts.reduce((a, b) => a + b, 0), frames.frameCount);
         await assert.rejects(createProductionBudgetRuntimeReaders().readAnalysisFrames!({ ...asset, contentHash: '0'.repeat(64) }), /source_changed/);
@@ -43,4 +43,12 @@ test('actual offline proxy extraction counts batches and rejects changed source 
     finally {
         fs.rmSync(dir, { recursive: true, force: true });
     }
+});
+test('new paid plan freezes available mainland Qwen native route instead of borrowing international MiniMax CNY price', async () => {
+ const readers=createProductionBudgetRuntimeReaders({tenantId:'tenant',env:{MINIMAX_API_KEY:'controlled-only',DASHSCOPE_API_KEY:'controlled-only',TTS_ASR_QA_ENABLED:'false'}});
+ const voice=await readers.readVoicePlan!(baseline);assert.ok(voice);assert.equal(voice.allowFallback,false);
+ const text=voice.lines.join(' ');
+ const route=await readers.resolveBoundRoute!({key:'voice:0:tts',stage:'tts',shotId:null,sourceRef:null,durationSeconds:null,text,frameCount:null,inputContractHash:'a'.repeat(64)});
+ assert.equal(route?.provider,'qwen');assert.equal(route?.model,'qwen3-tts-flash');assert.equal(route?.maximumUnits.characters,text.length);
+ assert.equal(await readers.resolveBoundRoute!({key:'voice:0:tts',stage:'tts',shotId:null,sourceRef:null,durationSeconds:null,text:'rewritten text',frameCount:null,inputContractHash:'a'.repeat(64)}),null);
 });

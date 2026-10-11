@@ -99,13 +99,15 @@ export async function executeProductReplacementScene(input: Input, ports: Produc
         throw Error('product_replacement_first_frame_identity_QA_failed');
     await ports.assertCurrent();
     const hash = (b: Buffer | string) => createHash('sha256').update(b).digest('hex');
-    const identity = hash(JSON.stringify({ request: plan.identity, firstFrameSha256: hash(frame.bytes), providerDuration: plan.seedanceFastProviderDurationSeconds, targetDuration: g.durationSeconds }));
+    const providerDurationSeconds = g.videoProvider === 'wan' ? (g.videoModel === 'wan2.2-i2v-flash' ? 5 : Math.max(2,Math.ceil(g.durationSeconds))) : plan.seedanceFastProviderDurationSeconds;
+    if(g.videoProvider==='wan'&&(!['wan2.6-i2v-flash','wan2.2-i2v-flash'].includes(g.videoModel||'')||!Number.isInteger(providerDurationSeconds)||providerDurationSeconds<2||providerDurationSeconds>15||(g.videoModel==='wan2.2-i2v-flash'&&g.durationSeconds>5)))throw Error('product_wan_frozen_duration_invalid');
+    const identity = hash(JSON.stringify({ request: plan.identity, firstFrameSha256: hash(frame.bytes), providerDuration: providerDurationSeconds, targetDuration: g.durationSeconds }));
     const video = await ports.video({
         requestId: input.idempotencyKey + ':' + identity,
         firstFrame: frame.bytes,
         prompt: `Animate the supplied actual approved enterprise product first frame according to this director shot: ${directorScene}. Preserve product packaging, labels and composition. No added text or fabricated manufacturing facts.`,
-        providerDurationSeconds: plan.seedanceFastProviderDurationSeconds,
-        checkpointPath: path.join(input.outputDirectory, identity + '.seedance.json'),
+        providerDurationSeconds,
+        checkpointPath: path.join(input.outputDirectory, identity + (g.videoProvider==='wan'?'.wan.json':'.seedance.json')),
     });
     fs.mkdirSync(input.outputDirectory, { recursive: true, mode: 0o700 });
     const original = path.join(input.outputDirectory, input.shotId + '-' + identity + '-provider.mp4'), target = path.join(input.outputDirectory, input.shotId + '-' + identity + '-delivery.mp4');
@@ -116,6 +118,6 @@ export async function executeProductReplacementScene(input: Input, ports: Produc
     const evidenceDirectory = ports.evidenceDirectory || input.outputDirectory;
     fs.mkdirSync(evidenceDirectory, {recursive: true, mode: 0o700});
     const lineage = path.join(evidenceDirectory, input.shotId + '-' + identity + '-trim-lineage.json');
-    fs.writeFileSync(lineage, JSON.stringify({ providerTaskId: video.providerTaskId, sourceSha256: hash(video.bytes), deliveredSha256: contentHash, providerDurationSeconds: plan.seedanceFastProviderDurationSeconds, actualDeliveredDurationSeconds: duration, transform: 'ffmpeg video-only re-encode trim; no tempo or still-image synthesis', firstFrameOrigin: authored ? 'enterprise_authored_storyboard' : 'original_reference_pixels', compositionSha256: composition?.reference.sha256 ?? null, productSha256s: products.map(p => p.sha256), usageEvidenceRef: composition?.usageEvidenceRef ?? null, humanApproved: false }, null, 2), { mode: 0o600 });
-    return { status: 'completed' as const, providerId: 'seedream-product-replacement-seedance', providerTaskId: video.providerTaskId, model: frame.model + '+' + video.model, localPath: target, contentHash, duration, actualCostCny: null, estimatedCostCny: ports.estimatedCostCny?.() ?? frame.estimatedCostCny + video.estimatedCostCny, quality: { ...quality, evidenceRefs: [...frame.evidenceRefs, ...quality.evidenceRefs, lineage] } };
+    fs.writeFileSync(lineage, JSON.stringify({provider:g.videoProvider??'seedance',model:video.model,providerTaskId: video.providerTaskId, sourceSha256: hash(video.bytes), deliveredSha256: contentHash, providerDurationSeconds, actualDeliveredDurationSeconds: duration, transform: 'ffmpeg video-only re-encode trim; no tempo or still-image synthesis', firstFrameOrigin: authored ? 'enterprise_authored_storyboard' : 'original_reference_pixels', compositionSha256: composition?.reference.sha256 ?? null, productSha256s: products.map(p => p.sha256), usageEvidenceRef: composition?.usageEvidenceRef ?? null, humanApproved: false }, null, 2), { mode: 0o600 });
+    return { status: 'completed' as const, providerId: g.videoProvider==='wan'?'seedream-product-replacement-wan':'seedream-product-replacement-seedance', providerTaskId: video.providerTaskId, model: frame.model + '+' + video.model, localPath: target, contentHash, duration, actualCostCny: null, estimatedCostCny: ports.estimatedCostCny?.() ?? frame.estimatedCostCny + video.estimatedCostCny, quality: { ...quality, evidenceRefs: [...frame.evidenceRefs, ...quality.evidenceRefs, lineage] } };
 }

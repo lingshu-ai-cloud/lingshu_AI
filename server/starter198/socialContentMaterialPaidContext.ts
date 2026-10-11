@@ -32,7 +32,9 @@ export function createSocialContentMaterialPaidContext(input: {
         throw Error('material_paid_canonical_request_changed');
       }
       await input.ports.assertProviderBinding(intents[0]!);
-      return { requirementKey: key, intent: structuredClone(intents[0]!), permit: input.permit, ...input.ports };
+      return { requirementKey: key, intent: structuredClone(intents[0]!), permit: input.permit, ...input.ports,
+        async measureInputTokens(body){const frames=Array.isArray(body.messages)?body.messages.flatMap((message:any)=>Array.isArray(message.content)?message.content:[]).filter((part:any)=>part.type==='image_url').length:0;if(!Number.isSafeInteger(requirements[0]!.frameCount)||frames!==requirements[0]!.frameCount)throw Error('material_paid_actual_frame_count_changed');return input.ports.measureInputTokens(body);}
+      };
     },
   };
 }
