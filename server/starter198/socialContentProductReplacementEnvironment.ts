@@ -26,6 +26,7 @@ type Input = Parameters<ProductSceneExecutionPorts['execute']>[0];
 type Row = Record<string, any>;
 const json = (x: unknown): any => typeof x === 'string' ? JSON.parse(x) : x;
 const sha = (x: Buffer | string) => createHash('sha256').update(x).digest('hex');
+const compactProviderReceipt = (provider: string, fingerprint: string) => `${provider}:${fingerprint}`;
 export function executableMaterialRouting(value: unknown): unknown {
   const routing = structuredClone((value && typeof value === 'object' ? value : {}) as Row);
   // durationOrigin records which planner supplied the already-frozen duration.
@@ -302,6 +303,7 @@ export async function createEnvironmentProductReplacementPorts(input: Input, con
         const qaFundingFile = `${receipt}.qa-funding.json`;
         const qaFunding = fs.existsSync(qaFundingFile) ? JSON.parse(fs.readFileSync(qaFundingFile, 'utf8')) : undefined;
         await recoveryAmount(productReplacementOperationFingerprint('first-frame-qa', {fingerprint, qaModel}), 'qwen', qaModel, 'first-frame-qa', qaFunding);
+        if (context.paidContext) await paid('first_frame_qa')!.completed(compactProviderReceipt('qwen', productReplacementOperationFingerprint('first-frame-qa', {fingerprint, qaModel})));
         const bytes = fs.readFileSync(image);
         if (sha(bytes) !== prior.outputSha256) throw Error('seedream_original_bytes_changed');
         return {bytes, providerRequestId: prior.providerRequestId, model: prior.model, estimatedCostCny: amount, canProceedToVideo: prior.canProceedToVideo === true, evidenceRefs: [receipt]};
@@ -319,7 +321,7 @@ export async function createEnvironmentProductReplacementPorts(input: Input, con
           fs.writeFileSync(`${receipt}.qa-funding.json`, JSON.stringify(originalBinding(qaFingerprint, 'qwen', qaModel, 'first-frame-qa')), {mode: 0o600});
         },
       });
-      if (context.paidContext && !('dryRun' in result)) {if (!prior || funding?.paidOperationId) await paid('first_frame')!.completed(`seedream:${result.providerRequestId}:${fingerprint}`); await paid('first_frame_qa')!.completed(path.join(root,`${fingerprint}.json.qa-provider.json`));}
+      if (context.paidContext && !('dryRun' in result)) {if (!prior || funding?.paidOperationId) await paid('first_frame')!.completed(`seedream:${result.providerRequestId}:${fingerprint}`); await paid('first_frame_qa')!.completed(compactProviderReceipt('qwen',productReplacementOperationFingerprint('first-frame-qa', {fingerprint, qaModel})));}
       if ('dryRun' in result) throw Error('product_first_frame_unexpected_dryrun');
       if (result.qaModel !== qaModel) throw Error('product_first_frame_QA_model_binding_changed');
       return {bytes: fs.readFileSync(result.filePath), providerRequestId: result.providerRequestId, model: result.model, estimatedCostCny: amount,
@@ -395,7 +397,7 @@ export async function createEnvironmentProductReplacementPorts(input: Input, con
       const fingerprint = productReplacementOperationFingerprint('video-qa', {mediaSha256, qaModel, directorScene: request.directorScene, products: request.productReferences.map(r => r.sha256)});
       const receipt = path.join(durableDirectory, 'video-qa', `${fingerprint}.json`);
       fs.mkdirSync(path.dirname(receipt), {recursive: true, mode: 0o700});
-      if (fs.existsSync(receipt)) { const prior = JSON.parse(fs.readFileSync(receipt, 'utf8')); if (prior.fingerprint !== fingerprint || prior.mediaSha256 !== mediaSha256 || prior.model !== qaModel || !prior.quality) throw Error('product_video_qa_unknown'); await recoveryAmount(fingerprint, 'qwen', qaModel, 'video-qa', prior.funding); return prior.quality; }
+      if (fs.existsSync(receipt)) { const prior = JSON.parse(fs.readFileSync(receipt, 'utf8')); if (prior.fingerprint !== fingerprint || prior.mediaSha256 !== mediaSha256 || prior.model !== qaModel || !prior.quality) throw Error('product_video_qa_unknown'); await recoveryAmount(fingerprint, 'qwen', qaModel, 'video-qa', prior.funding); if(context.paidContext)await paid('video_qa')!.completed(compactProviderReceipt('qwen',fingerprint));return prior.quality; }
       await reserve(fingerprint, 'qwen', qaModel, 'video-qa');
       const funding = originalBinding(fingerprint, 'qwen', qaModel);
       const frames: Array<{bytes: Buffer; timeLabel: string}> = [];
@@ -413,7 +415,7 @@ export async function createEnvironmentProductReplacementPorts(input: Input, con
         productReferences: request.productReferences.map((p, i) => ({base64: p.bytes.toString('base64'), mimeType: p.mimeType, timeLabel: `KB-package-${i}`})),
         environmentReferences: [{base64: request.firstFrame.toString('base64'), mimeType: 'image/png', timeLabel: 'approved-first-frame'}],
         storyboard: request.directorScene, productInfo: JSON.stringify(input.spec.productIdentity), onReceipt: raw => fs.writeFileSync(`${receipt}.provider.json`, JSON.stringify(raw), {mode: 0o600})});
-      if (context.paidContext) await paid('video_qa')!.completed(`${receipt}.provider.json`);
+      if (context.paidContext) await paid('video_qa')!.completed(compactProviderReceipt('qwen',fingerprint));
       const technical = await inspectStoryboardTechnicalFrames('video', frames);
       const report = applyStoryboardReplicationAutomation(buildStoryboardQaReport({phase: 'video', sceneType: 'product', hasProduct: true, hasNamedPerson: false,
         hasEnvironmentReference: true, hasContact: true, hasAction: true, observations: [...technical, ...visual], evidenceFrameLabels: frames.map(f => f.timeLabel)}));
