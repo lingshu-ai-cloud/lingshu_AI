@@ -84,6 +84,10 @@ assert.match(historyHome, /setPreviewProject\(featuredProject\)/,
   'the completed video must open a direct preview instead of navigating into the editor');
 assert.match(historyHome, /previewUrl \? setPreviewProject\(project\) : openProject\(project\)/,
   'every completed history card must open its player instead of returning to the editor');
+assert.match(historyHome, /socialOutputOwnedReviewMedia\(project\)/,
+  'server-owned output workspaces must resolve their signed task and artifact lineage');
+assert.match(historyHome, /loadOwnedReviewMedia\(owned, controller\.signal\)/,
+  'protected completed films must load with authorization and verify their bytes before playback');
 assert.match(historyHome, /<video autoPlay controls playsInline preload="auto"/,
   'the direct completed-video preview must open as a playable video');
 assert.match(landing, /自由创作/);

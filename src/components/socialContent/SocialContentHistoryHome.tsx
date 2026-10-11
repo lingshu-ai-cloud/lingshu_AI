@@ -15,6 +15,8 @@ import {
 import { studioApi, type StudioProject } from '../../lib/studioApi';
 import CreationMaterialHistory from './CreationMaterialHistory';
 import CreationHistoryCover from './CreationHistoryCover';
+import { dedupeSocialOutputHistoryProjects, socialOutputOwnedReviewMedia } from '../../lib/socialOutputHistoryProjects';
+import { loadOwnedReviewMedia } from '../../lib/socialReviewOwnedMedia';
 
 type CreationFilter = 'all' | 'viral_replication' | 'free_creation';
 
@@ -22,15 +24,31 @@ const PAGE_SIZE = 8;
 const STUDIO_OPEN_PROJECT_KEY = 'ow_studio_open_project';
 
 function CompletedVideoPreview({ project, onClose }: { project: StudioProject; onClose: () => void }) {
-  const url = projectPreviewUrl(project);
+  const directUrl = projectPreviewUrl(project);
+  const owned = useMemo(() => socialOutputOwnedReviewMedia(project), [project]);
+  const [url, setUrl] = useState(owned ? '' : directUrl);
+  const [error, setError] = useState('');
+
+  useEffect(() => {
+    if (!owned) { setUrl(directUrl); setError(''); return; }
+    const controller = new AbortController();
+    let objectUrl = '';
+    setUrl(''); setError('');
+    void loadOwnedReviewMedia(owned, controller.signal).then(blob => {
+      if (controller.signal.aborted) return;
+      objectUrl = URL.createObjectURL(blob);
+      setUrl(objectUrl);
+    }).catch(loadError => { if (!controller.signal.aborted) setError(loadError instanceof Error ? loadError.message : '成片暂时无法预览'); });
+    return () => { controller.abort(); if (objectUrl) URL.revokeObjectURL(objectUrl); };
+  }, [directUrl, owned]);
 
   return (
     <Drawer open title={project.title} size={840} onClose={onClose}>
-      <p className="mb-4 text-sm text-text-secondary">{projectCategory(project) === 'viral_replication' ? '爆款复刻模式' : '自由创作模式'} · {statusLabel(project, url)}</p>
+      <p className="mb-4 text-sm text-text-secondary">{projectCategory(project) === 'viral_replication' ? '爆款复刻模式' : '自由创作模式'} · {statusLabel(project, directUrl)}</p>
         <div className="min-h-0 flex-1 overflow-y-auto bg-black p-3 sm:p-5">
-          <video autoPlay controls playsInline preload="auto" src={url} className="mx-auto max-h-[76vh] w-full rounded-lg bg-black object-contain" aria-label={`${project.title}成片预览`}>
+          {error ? <p role="alert" className="p-8 text-center text-sm text-white">{error}</p> : url ? <video autoPlay controls playsInline preload="auto" src={url} className="mx-auto max-h-[76vh] w-full rounded-lg bg-black object-contain" aria-label={`${project.title}成片预览`}>
             您的浏览器暂不支持视频预览。
-          </video>
+          </video> : <p className="p-8 text-center text-sm text-white">正在校验并加载成片…</p>}
         </div>
     </Drawer>
   );
@@ -102,8 +120,8 @@ export default function SocialContentHistoryHome({ onRequestCreate }: { onReques
     setLoading(true);
     void studioApi.listProjects({ throwOnError: true }).then(items => {
       if (!active) return;
-      setProjects(items
-        .filter(item => item.status !== 'template')
+      setProjects(dedupeSocialOutputHistoryProjects(items
+        .filter(item => item.status !== 'template'))
         .sort((left, right) => {
           const outputDifference = Number(Boolean(projectPreviewUrl(right))) - Number(Boolean(projectPreviewUrl(left)));
           return outputDifference || new Date(right.updatedAt).getTime() - new Date(left.updatedAt).getTime();
