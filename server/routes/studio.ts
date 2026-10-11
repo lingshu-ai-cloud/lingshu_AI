@@ -168,6 +168,7 @@ import { MATERIAL_SOURCE_CATEGORIES, MATERIAL_THEMES, materialSourceCategoryOf, 
 import { untrustedPromptData } from '../lib/untrustedPromptData.js';
 import { bindSocialProjectSpec, digitalEmployeeProjectBelongs, socialProjectBelongs, socialProjectTaskId } from '../starter198/socialProjectScope.js';
 import { assertFrozenStudioProjectWrite, frozenStudioProjectSpec } from '../starter198/socialContentStudioFrozenBridge.js';
+import { readFrozenStudioOperationalEvidence } from '../starter198/socialContentStudioOperationalEvidence.js';
 import {
   THEME_PROMPT_CONSTRAINTS,
   buildScriptContentPlan,
@@ -9775,7 +9776,11 @@ studioRouter.get('/projects/:id', async (req, res) => {
   const belongs = p && (socialProjectBelongs(p, socialProjectTaskId(res.locals))
     || digitalEmployeeProjectBelongs(p, workflowRunId, workflowTaskId));
   if (!p || p.tenant_id !== tenantId || !belongs) { res.status(404).json({ ok: false, error: 'Project not found' }); return; }
-  res.json(projectFromRecord(p, tenantId));
+  const projected=projectFromRecord(p,tenantId);
+  const contract=projected.spec.resolvedStudioContract as Record<string,unknown>|undefined;
+  if(contract){const readonlyContract=structuredClone(contract);projected.spec.resolvedStudioContract=readonlyContract;try{readonlyContract.operationalEvidence=await readFrozenStudioOperationalEvidence({dataStore:store,tenantId,projectId:String(p.id),spec:p.spec});}
+    catch(error){const reason=error instanceof Error&&/^(?:studio|speech|mvp|content)_[a-z_]+$/.test(error.message)?error.message:'canonical_evidence_unavailable';readonlyContract.operationalEvidence={schemaVersion:'social-studio-operational.v1',status:'unavailable',reason,artifactCompleted:false,humanApproved:false};}}
+  res.json(projected);
 });
 
 // Re-run the final project gate after any manual script, storyboard, material,
