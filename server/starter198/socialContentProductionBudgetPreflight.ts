@@ -173,7 +173,9 @@ export async function prepareSocialContentProductionBudget(input: ProductionBudg
     const amount = Number(brief?.perItemBudgetCny), retry = Number(brief?.retryReserveCny || 0);
     if (!Number.isFinite(amount) || amount <= 0 || !Number.isFinite(retry) || retry < 0)
         return error('task_budget_missing');
-    const snapshot: FrozenPaidProduction = { scope, baselineHash, recordHash: '', approval: { approved: true, reviewRef: review.reviewId, sourceHash: '', planHash }, authorization: { ref: `task-budget:${socialRequestHash({ tenantId: input.tenantId, taskId: input.taskId, createdBy: row.created_by, budget: amount, retry })}`, maximumCny: Math.min(10, amount) }, maximumRetries: 0,
+    const productRetryAuthorized = input.supplyPlan.shots.some(shot => shot.sourceStrategy === 'aigc_product_scene_replication'
+      && shot.productSceneReplication?.validation.singleShotRetryOnFailure === true);
+    const snapshot: FrozenPaidProduction = { scope, baselineHash, recordHash: '', approval: { approved: true, reviewRef: review.reviewId, sourceHash: '', planHash }, authorization: { ref: `task-budget:${socialRequestHash({ tenantId: input.tenantId, taskId: input.taskId, createdBy: row.created_by, budget: amount, retry })}`, maximumCny: Math.min(10, amount) }, maximumRetries: productRetryAuthorized ? 1 : 0,
         scenes: approved.directorBrief.scenes.map(scene => ({ ...(voice.mode === 'continuous' && voice.requiresAlignment && input.supplyPlan?.shots.some(shot => shot.shotId === scene.sceneId && shot.sourceStrategy === 'authorized_digital_presenter') ? {presenterSpeech:'whole_track' as const} : {}), shotId: scene.sceneId, durationSeconds: scene.duration.endSeconds - scene.duration.startSeconds, spokenText: input.baseline.scenes.find(s => s.sceneId === scene.sceneId)?.voiceover || input.baseline.scenes.find(s => s.sceneId === scene.sceneId)?.narration || '' })), shots: input.supplyPlan.shots, assets: assetInputs, voice, finalReview: 'local' };
     snapshot.approval.sourceHash = paidProductionApprovalHash(snapshot);
     snapshot.recordHash = paidProductionRecordHash(snapshot);

@@ -105,9 +105,24 @@ export function createSocialContentTaskBudgetAuthority(input: {
         if (new Set(operations.map(o => o.operationId)).size !== operations.length)
             fail('duplicate_operation');
         const quotes = new Map<string, SocialTaskBudgetQuote>();
-        // Every tariff is verified before the ledger is changed. No provider calls occur here.
-        for (const intent of plan.paidOperations)
-            quotes.set(intent.operationId, price(intent, await ports.readVerifiedTariff(intent)));
+        const existing = new SocialContentTaskBudget(input.ledgerRoot, {
+            assertCurrent: ports.assertCurrent, authorization: async () => fail('existing_ledger_read_only'),
+            quote: async () => fail('existing_ledger_read_only'), verifyRejection: ports.verifyRejection,
+        }).status(scope);
+        // Existing same-scope entries retain their original quote and receipt.
+        // Only newly appended operations need a current tariff; this permits a
+        // safe in-flight plan extension without repricing completed work.
+        for (const [index, intent] of plan.paidOperations.entries()) {
+            const operation = operations[index]!;
+            const prior = existing?.entries.find(entry => entry.operationId === operation.operationId);
+            if (prior) {
+                if (prior.status === 'rejected' || prior.runId !== scope.runId || prior.planHash !== scope.planHash
+                    || (['operationId', 'fingerprint', 'provider', 'model', 'accountRef', 'stage', 'shotId'] as const)
+                        .some(key => prior[key] !== operation[key])) fail('existing_operation_changed');
+                quotes.set(intent.operationId, {upperBoundCny: prior.reservedMicros / 1e6,
+                    quoteRef: prior.quoteRef, validUntil: '9999-12-31T23:59:59.999Z'});
+            } else quotes.set(intent.operationId, price(intent, await ports.readVerifiedTariff(intent)));
+        }
         await ports.assertCurrent(scope);
         const current = await ports.readApprovedPlan(scope);
         if (digest(current) !== digest(plan))

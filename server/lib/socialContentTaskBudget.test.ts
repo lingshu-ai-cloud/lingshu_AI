@@ -54,6 +54,15 @@ test('lower user ceiling persists and larger authorization never raises it', asy
 finally {
     f.clean();
 } });
+test('same run and plan safely append retry operations while preserving completed receipts and ceiling', async () => { const f = fixture(2, 10); try {
+    await f.budget.reserveBatch(scope, [op('frame', 'first_frame'), op('video-0'), {...op('qa-0','video_qa'),provider:'qwen'}]);
+    await f.budget.markOutcome(scope,'frame','completed','frame-receipt');
+    await f.budget.markOutcome(scope,'video-0','completed','video-receipt');
+    const extended=await f.budget.reserveBatch(scope,[op('frame','first_frame'),op('video-0'),{...op('qa-0','video_qa'),provider:'qwen'},op('video-1'),{...op('qa-1','video_qa'),provider:'qwen'}]);
+    assert.equal(extended.retainedCny,10);assert.equal(extended.entries.find(e=>e.operationId==='frame')?.receiptRef,'frame-receipt');assert.equal(extended.entries.find(e=>e.operationId==='video-0')?.receiptRef,'video-receipt');assert.equal(extended.entries.find(e=>e.operationId==='video-1')?.status,'reserved');
+    await assert.rejects(f.budget.reserveBatch(scope,[op('overflow')]),/exceeded/);
+    const unchanged=f.budget.status(scope)!;assert.equal(unchanged.retainedCny,10);assert.equal(unchanged.entries.length,5);assert.equal(unchanged.entries.find(e=>e.operationId==='frame')?.receiptRef,'frame-receipt');
+} finally { f.clean(); } });
 test('only canonical pre-acceptance rejection releases, completed retains unknown invoice estimate', async () => { const f = fixture(5); try {
     await f.budget.reserveBatch(scope, [op('a'), op('b')]);
     f.ports.verifyRejection = async () => false;

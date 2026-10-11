@@ -49,7 +49,7 @@ test('token QA quote requires complete input and output usage envelopes', async 
     const result = await f.service.prepareAndReserve(scope);
     assert.equal(result.status.retainedCny, .006);
     f.plan.paidOperations[0]!.maximumUnits = { inputTokens: 5000 };
-    await assert.rejects(f.service.prepareAndReserve(scope), /usage_envelope_incomplete/);
+    await assert.rejects(f.service.prepareAndReserve(scope), /existing_operation_changed/);
 }
 finally {
     f.clean();
@@ -92,10 +92,16 @@ test('accepted receipt recovery retains original funding without a fresh tariff 
         assert.equal(recovered.status.retainedCny, 4.8);
         assert.equal('ledger' in recovered, false);
         await assert.rejects(f.service.recoverAccepted(scope, ['qa2']), /recovery_receipt_missing_or_changed/);
-        await assert.rejects(f.service.prepareAndReserve(scope), /expired tariff/);
+        const samePlan = await f.service.prepareAndReserve(scope);
+        assert.equal(samePlan.status.entries.find(entry=>entry.operationId==='video')?.receiptRef,'provider-task:original');
         assert.equal(f.paidCalls, 0);
     } finally { f.clean(); }
 });
+test('in-flight same-scope plan extension prices only new retry intents and preserves old receipts',async()=>{const f=fixture();try{
+ const first={...f.plan,paidOperations:f.plan.paidOperations.slice(0,4)};f.ports.readApprovedPlan=async()=>structuredClone(first);const reserved=await f.service.prepareAndReserve(scope);await reserved.ledger.markOutcome(scope,'video','completed','wan:existing');
+ const extended={...f.plan,paidOperations:[...first.paidOperations,intent('video-attempt-1'),intent('qa-attempt-1','video_qa')]};f.ports.readApprovedPlan=async()=>structuredClone(extended);let reads=0;const tariff=f.ports.readVerifiedTariff;f.ports.readVerifiedTariff=async operation=>{reads++;assert.ok(['video-attempt-1','qa-attempt-1'].includes(operation.operationId));return tariff(operation);};
+ const result=await f.service.prepareAndReserve(scope);assert.equal(reads,2);assert.equal(result.status.entries.find(entry=>entry.operationId==='video')?.receiptRef,'wan:existing');assert.equal(result.status.entries.length,6);assert.ok(result.status.retainedCny<=10);
+}finally{f.clean();}});
 test('recovery rejects plan, account, input or approval drift rather than reusing paid funding', async () => {
     const f = fixture();
     try {

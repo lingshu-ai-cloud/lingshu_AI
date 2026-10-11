@@ -11,6 +11,10 @@ function fixture(stage:ProductPaidStage) {
  const context:ProductPaidContext={scope,requirements:[requirement],routeBindings:{[requirement.key]:route},intents:[intent],readReservedCny:()=>1,assertRecovery:async()=>{},permit:{beforeSubmit:async req=>{calls.push(req);return {operationId:req.operationId,fingerprint:'bound'};},markOutcome:async()=>{},assertRecovery:async()=>{throw Error('unused');}},assertProviderBinding:async()=>{providerChecks++;},measureInputTokens:async body=>JSON.stringify(body).length};
  return {context,calls,providerChecks:()=>providerChecks};
 }
+test('attempt one binds only the separately reserved video and video QA intents',()=>{
+ for(const stage of ['video','video_qa'] as const){const f=fixture(stage),r=f.context.requirements[0]!,route=f.context.routeBindings[r.key]!;f.context.intents.push({...f.context.intents[0]!,operationId:'paid-plan:'+paidProductionHash({scope,key:r.key,attempt:1}),inputContractHash:paidProductionHash({requirement:r,route,attempt:1})});assert.equal(bindProductPaidStage(f.context,'S04',stage,1).intent.operationId,f.context.intents[1]!.operationId);}
+ const frame=fixture('first_frame');assert.throws(()=>bindProductPaidStage(frame.context,'S04','first_frame',1),/attempt_invalid/);
+});
 test('four actual request dimensions are derived from prepared supplier body rather than maximumUnits',async()=>{
  for(const stage of ['first_frame','first_frame_qa','video','video_qa'] as const){const f=fixture(stage),bound=bindProductPaidStage(f.context,'S04',stage);
  const body=stage.endsWith('_qa')?{model:'bound-model',max_tokens:4096,enable_thinking:false,messages:[{content:[{type:'image_url',image_url:{url:'data:image/png;base64,actual'}}]}]}:stage==='video'?{model:'bound-model',duration:4,resolution:'720p',generate_audio:false,content:[{type:'image_url',role:'first_frame',image_url:{url:'data:image/png;base64,actual'}}]}:{model:'bound-model',image:['actual-KB'],prompt:'frozen actual storyboard'};

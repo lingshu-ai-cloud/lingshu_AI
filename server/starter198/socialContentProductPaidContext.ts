@@ -20,16 +20,17 @@ export interface ProductPaidContext {
   measureInputTokens(request: Record<string, unknown>, route: BoundPaidRoute): Promise<number>;
 }
 const fail = (reason: string): never => {throw Error('product_paid_' + reason);};
-export function bindProductPaidStage(context: ProductPaidContext, shotId: string, stage: ProductPaidStage) {
+export function bindProductPaidStage(context: ProductPaidContext, shotId: string, stage: ProductPaidStage, attempt = 0) {
+  if (!Number.isInteger(attempt) || attempt < 0 || attempt > 1 || (attempt > 0 && !['video', 'video_qa'].includes(stage))) fail('attempt_invalid');
   const requirements = context.requirements.filter(r => r.shotId === shotId && r.stage === stage);
   if (requirements.length !== 1) fail('requirement_missing_or_ambiguous');
   const requirement = requirements[0]!, route = context.routeBindings[requirement.key];
   if (!route) fail('canonical_route_missing');
-  const operationId = 'paid-plan:' + paidProductionHash({scope: context.scope, key: requirement.key, attempt: 0});
+  const operationId = 'paid-plan:' + paidProductionHash({scope: context.scope, key: requirement.key, attempt});
   const intents = context.intents.filter(i => i.operationId === operationId);
   if (intents.length !== 1) fail('intent_missing_or_ambiguous');
   const intent = intents[0]!;
-  if (intent.inputContractHash !== paidProductionHash({requirement, route, attempt: 0}) || intent.shotId !== shotId || intent.stage !== stage
+  if (intent.inputContractHash !== paidProductionHash({requirement, route, attempt}) || intent.shotId !== shotId || intent.stage !== stage
     || intent.provider !== route.provider || intent.model !== route.model || intent.accountRef !== route.accountRef
     || paidProductionHash(intent.maximumUnits) !== paidProductionHash(route.maximumUnits)) fail('canonical_intent_changed');
   return {

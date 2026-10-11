@@ -25,6 +25,7 @@ export interface ProductReplacementPorts {
         evidenceRefs: string[];
     }>;
     video: (input: {
+        attempt?: 0 | 1;
         requestId: string;
         firstFrame: Buffer;
         prompt: string;
@@ -37,6 +38,7 @@ export interface ProductReplacementPorts {
         estimatedCostCny: number;
     }>;
     quality: (input: {
+        attempt?: 0 | 1;
         filePath: string;
         durationSeconds: number;
         productReferences: FirstFrameReference[];
@@ -102,18 +104,29 @@ export async function executeProductReplacementScene(input: Input, ports: Produc
     const providerDurationSeconds = g.videoProvider === 'wan' ? (g.videoModel === 'wan2.2-i2v-flash' ? 5 : Math.max(2,Math.ceil(g.durationSeconds))) : plan.seedanceFastProviderDurationSeconds;
     if(g.videoProvider==='wan'&&(!['wan2.6-i2v-flash','wan2.2-i2v-flash'].includes(g.videoModel||'')||!Number.isInteger(providerDurationSeconds)||providerDurationSeconds<2||providerDurationSeconds>15||(g.videoModel==='wan2.2-i2v-flash'&&g.durationSeconds>5)))throw Error('product_wan_frozen_duration_invalid');
     const identity = hash(JSON.stringify({ request: plan.identity, firstFrameSha256: hash(frame.bytes), providerDuration: providerDurationSeconds, targetDuration: g.durationSeconds }));
-    const video = await ports.video({
-        requestId: input.idempotencyKey + ':' + identity,
+    let video!: Awaited<ReturnType<ProductReplacementPorts['video']>>, quality!: ProductSceneQualityReport, duration = 0, target = '';
+    const qualityFailed = (report: ProductSceneQualityReport) => input.spec.productIdentity.groups.some(group =>
+      Number(report.productIdentitySimilarity[group.productRef] || 0) < input.spec.productIdentity.identitySimilarityMinimum)
+      || input.spec.productIdentity.ocrExactMatchRequired && !report.labelOcrExactMatch
+      || report.sceneTopologyScore < .75 || report.productSlotLayoutScore < .75 || report.cameraTrajectoryScore < .75 || !report.evidenceRefs.length;
+    for (const attempt of [0, 1] as const) {
+      const retry = attempt === 1;
+      if (retry && (!input.spec.validation.singleShotRetryOnFailure || !qualityFailed(quality))) break;
+      video = await ports.video({ attempt,
+        requestId: `${input.idempotencyKey}:${identity}:attempt:${attempt}`,
         firstFrame: frame.bytes,
-        prompt: `Animate the supplied actual approved enterprise product first frame according to this director shot: ${directorScene}. Preserve product packaging, labels and composition. No added text or fabricated manufacturing facts.`,
+        prompt: `Animate the supplied actual approved enterprise product first frame according to this director shot: ${directorScene}. Preserve product packaging, labels and composition. No added text or fabricated manufacturing facts.${retry ? ' This is the single directed correction: keep the supplied first frame unchanged and correct the prior video quality failure without changing product identity or scene topology.' : ''}`,
         providerDurationSeconds,
-        checkpointPath: path.join(input.outputDirectory, identity + (g.videoProvider==='wan'?'.wan.json':'.seedance.json')),
-    });
-    fs.mkdirSync(input.outputDirectory, { recursive: true, mode: 0o700 });
-    const original = path.join(input.outputDirectory, input.shotId + '-' + identity + '-provider.mp4'), target = path.join(input.outputDirectory, input.shotId + '-' + identity + '-delivery.mp4');
-    fs.writeFileSync(original, video.bytes, { mode: 0o600 });
-    const duration = await trimAndProbeProductScene(original, target, g.durationSeconds);
-    const quality = await ports.quality({ filePath: target, durationSeconds: duration, productReferences: products, composition: composition?.reference, firstFrame: frame.bytes, directorScene: plan.request.prompt });
+        checkpointPath: path.join(input.outputDirectory, `${identity}.attempt-${attempt}${g.videoProvider==='wan'?'.wan.json':'.seedance.json'}`),
+      });
+      fs.mkdirSync(input.outputDirectory, { recursive: true, mode: 0o700 });
+      const original = path.join(input.outputDirectory, `${input.shotId}-${identity}-attempt-${attempt}-provider.mp4`);
+      target = path.join(input.outputDirectory, `${input.shotId}-${identity}-attempt-${attempt}-delivery.mp4`);
+      fs.writeFileSync(original, video.bytes, { mode: 0o600 });
+      duration = await trimAndProbeProductScene(original, target, g.durationSeconds);
+      quality = await ports.quality({ attempt, filePath: target, durationSeconds: duration, productReferences: products, composition: composition?.reference, firstFrame: frame.bytes, directorScene: plan.request.prompt });
+      if (!qualityFailed(quality)) break;
+    }
     const contentHash = hash(fs.readFileSync(target));
     const evidenceDirectory = ports.evidenceDirectory || input.outputDirectory;
     fs.mkdirSync(evidenceDirectory, {recursive: true, mode: 0o700});

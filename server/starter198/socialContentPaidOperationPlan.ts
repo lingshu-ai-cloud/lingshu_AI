@@ -238,7 +238,15 @@ export function createSocialContentPaidOperationPlanner(ports: PaidOperationPlan
                     gap(`provider_usage_bound_insufficient:${requirement.key}`);
                     continue;
                 }
-                for (let attempt = 0; attempt < route.maximumAttempts; attempt++)
+                // Product video QA may authorize one directed regeneration from
+                // the already-approved first frame. Frame generation is never
+                // repeated; every additional video/QA POST remains a distinct
+                // pre-priced operation in this same task/run budget scope.
+                const plannedAttempts = ['video', 'video_qa'].includes(requirement.stage)
+                    && requirement.shotId && input.shots.find(shot => shot.shotId === requirement.shotId)?.sourceStrategy === 'aigc_product_scene_replication'
+                    ? Math.min(2, input.maximumRetries + 1)
+                    : route.maximumAttempts;
+                for (let attempt = 0; attempt < plannedAttempts; attempt++)
                     operations.push({ operationId: `paid-plan:${paidProductionHash({ scope, key: requirement.key, attempt })}`, provider: route.provider, model: route.model, accountRef: route.accountRef, stage: requirement.stage, shotId: requirement.shotId, inputContractHash: paidProductionHash({ requirement, route, attempt }), maximumUnits: { ...route.maximumUnits } });
             }
             await ports.assertCurrent(scope);
