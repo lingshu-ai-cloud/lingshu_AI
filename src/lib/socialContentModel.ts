@@ -402,7 +402,7 @@ export const EMPTY_SOCIAL_CONTENT_DRAFT: SocialContentDraft = {
   formats: [],
   quantity: 1,
   weeklyBudgetCny: null,
-  perItemBudgetCny: null,
+  perItemBudgetCny: 10,
   retryReserveCny: null,
   planningMode: 'auto_adjust',
   shootingWindowMinutes: null,

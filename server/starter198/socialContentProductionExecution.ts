@@ -202,7 +202,7 @@ export async function archiveSocialGeneratedShots(input: {
           ...[segment.productIdentityRefs].flatMap(value => Array.isArray(value) ? value.map(socialText) : []),
         ].filter(Boolean))),
         ...(Number.isFinite(Number(segment.estimatedCostCny)) ? { estimatedCostCny: Number(segment.estimatedCostCny) } : {}),
-        ...(Number.isFinite(Number(segment.actualCostCny)) ? { actualCostCny: Number(segment.actualCostCny) } : {}),
+        ...(typeof segment.actualCostCny === 'number' && Number.isFinite(segment.actualCostCny) && segment.actualCostCny >= 0 ? { actualCostCny: segment.actualCostCny } : {}),
       },
       lineage: { sourceTaskId: input.taskId, sourceShotId: candidate.sceneId },
       quality: {
@@ -766,6 +766,7 @@ export async function runSocialContentAutoProduction(input: {
             recoveryOnly: input.assetSupplyRecoveryOnly, hasPresenterExecution: Boolean(presenterExecutions.length),
             custom: input.assetSupplyAdapters ?? [], free: existingAdapters,
             paid: () => [createSocialProductSceneAdapter(createEnvironmentSeedanceProductScenePorts({
+              maximumCostCny: detail.brief.materialRoutingPolicyVersion === 'type-aware.v1' ? Math.min(10, detail.brief.perItemBudgetCny ?? 10) : undefined,
               replacementEnvironment: {
                 dataStore: input.repository.dataStore,
                 materials: input.repository.materialLibrary,
@@ -1387,7 +1388,7 @@ export async function runSocialContentAutoProduction(input: {
     .map(shot => [shot.assetId, shot.archivedMaterial!.materialId]));
   const finalInputMaterialIds = [...selectedAssetIds]
     .map(assetId => archivedMaterialIdByAssetId.get(assetId) || assetId);
-  const recordedProviderCostCny = +assets
+  const recordedProviderEstimatedCostCny = +assets
     .filter(asset => selectedAssetIds.has(asset.id))
     .flatMap(asset => asset.segments ?? [])
     .reduce((sum, segment) => sum + Math.max(0, Number(segment.estimatedCostCny || 0)), 0)
@@ -1427,7 +1428,8 @@ export async function runSocialContentAutoProduction(input: {
       promptOrSpecHash: directorPlan.lineageHash,
       inputMaterialIds: finalInputMaterialIds,
       estimatedCostCny: plannedCostCny,
-      actualCostCny: recordedProviderCostCny,
+      // Visual reservations omit audio, QA and unknown invoices; never label them actual cost.
+      actualCostCny: undefined,
       },
       lineage: { sourceTaskId: input.taskId, sourceAssemblyId: productionResultId },
       quality: {
@@ -1539,7 +1541,8 @@ export async function runSocialContentAutoProduction(input: {
         costSummary: {
           currency: 'CNY',
           estimatedBeforeGenerationCny: plannedCostCny,
-          recordedProviderCostCny,
+          recordedProviderCostCny: null,
+          recordedProviderEstimatedCostCny,
           settlementStatus: 'recorded',
           note: '实际费用只统计本次已记录的媒体供应商调用；存储、带宽和人工审核未计入。',
         },

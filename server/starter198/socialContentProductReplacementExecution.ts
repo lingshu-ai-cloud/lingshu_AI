@@ -7,6 +7,9 @@ import type { FirstFrameReference, FirstFrameRequest } from '../lib/firstFrameGe
 import type { ProductSceneExecutionPorts, ProductSceneQualityReport } from './socialContentProductSceneAdapter.js';
 type Input = Parameters<ProductSceneExecutionPorts['execute']>[0];
 export interface ProductReplacementPorts {
+    estimatedCostCny?: () => number;
+    /** Trusted server receipt directory, independent of render workspace cleanup. */
+    evidenceDirectory?: string;
     assertCurrent: () => Promise<void>;
     composition: (input: Input) => Promise<{
         reference: FirstFrameReference;
@@ -107,7 +110,10 @@ export async function executeProductReplacementScene(input: Input, ports: Produc
     fs.writeFileSync(original, video.bytes, { mode: 0o600 });
     const duration = await trimAndProbeProductScene(original, target, g.durationSeconds);
     const quality = await ports.quality({ filePath: target, durationSeconds: duration, productReferences: products, composition: composition.reference, firstFrame: frame.bytes, directorScene: plan.request.prompt });
-    const contentHash = hash(fs.readFileSync(target)), lineage = path.join(input.outputDirectory, input.shotId + '-' + identity + '-trim-lineage.json');
+    const contentHash = hash(fs.readFileSync(target));
+    const evidenceDirectory = ports.evidenceDirectory || input.outputDirectory;
+    fs.mkdirSync(evidenceDirectory, {recursive: true, mode: 0o700});
+    const lineage = path.join(evidenceDirectory, input.shotId + '-' + identity + '-trim-lineage.json');
     fs.writeFileSync(lineage, JSON.stringify({ providerTaskId: video.providerTaskId, sourceSha256: hash(video.bytes), deliveredSha256: contentHash, providerDurationSeconds: plan.seedanceFastProviderDurationSeconds, actualDeliveredDurationSeconds: duration, transform: 'ffmpeg video-only re-encode trim; no tempo or still-image synthesis', compositionSha256: composition.reference.sha256, productSha256s: products.map(p => p.sha256), usageEvidenceRef: composition.usageEvidenceRef, humanApproved: false }, null, 2), { mode: 0o600 });
-    return { status: 'completed' as const, providerId: 'seedream-product-replacement-seedance', providerTaskId: video.providerTaskId, model: frame.model + '+' + video.model, localPath: target, contentHash, duration, actualCostCny: null, estimatedCostCny: frame.estimatedCostCny + video.estimatedCostCny, quality: { ...quality, evidenceRefs: [...frame.evidenceRefs, ...quality.evidenceRefs, lineage] } };
+    return { status: 'completed' as const, providerId: 'seedream-product-replacement-seedance', providerTaskId: video.providerTaskId, model: frame.model + '+' + video.model, localPath: target, contentHash, duration, actualCostCny: null, estimatedCostCny: ports.estimatedCostCny?.() ?? frame.estimatedCostCny + video.estimatedCostCny, quality: { ...quality, evidenceRefs: [...frame.evidenceRefs, ...quality.evidenceRefs, lineage] } };
 }

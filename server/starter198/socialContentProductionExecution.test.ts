@@ -113,6 +113,16 @@ await archiveSocialGeneratedShots({
     return { id: 'generated-material-1' } as any;
   },
 });
+const unknownCostInputs: any[] = [];
+await archiveSocialGeneratedShots({
+  tenantId: 'tenant-a', taskId: 'task-a', now: new Date('2026-10-09T00:00:00.000Z'),
+  assets: [{ ...generatedAssets[0], localPath: generatedPath, url: generatedPath, providerTaskId: 'unknown-cost-task',
+    idempotencyKey: 'unknown-cost-operation', segments: [{ model: 'seedance-v1', estimatedCostCny: 4, actualCostCny: null, quality: { passed: true } }] }],
+  execution: { ...archiveExecution, shots: [shot('product-shot', 'product-scene', 'aigc_product_scene_replication', true)] },
+  archiveMedia: async input => { unknownCostInputs.push(input); return { id: 'unknown-cost-material' } as any; },
+});
+assert.equal(unknownCostInputs[0].generation.estimatedCostCny, 4);
+assert.equal(unknownCostInputs[0].generation.actualCostCny, undefined, 'unknown actual invoice must not be cast to zero');
 fs.rmSync(generatedPath, { force: true });
 assert.equal(archiveInputs.length, 1);
 assert.equal(archiveInputs[0].generation.pipelineId, 'non_person_generation');

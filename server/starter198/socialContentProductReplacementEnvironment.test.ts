@@ -6,6 +6,7 @@ import path from 'node:path';
 import {createHash} from 'node:crypto';
 import sharp from 'sharp';
 import {buildSocialProductSceneReplicationSpec} from '../../shared/socialContentAssetSupply.js';
+import {generateSeedanceConceptVideo} from '../lib/generativeVideoGateway.js';
 import {runVisualFfmpeg} from '../lib/renderVisualQuality.js';
 import {socialRequestHash} from './socialContentValidation.js';
 import {firstFrameInputFingerprint} from '../lib/firstFrameGenerator.js';
@@ -25,7 +26,7 @@ async function fixture(rights = true) {
   spec.referenceSourceId = 'system-reference:source'; spec.referenceShotId = 'ref-shot';
   const routing = {schemaVersion: 'social-material-routing.v1' as const, materialType: 'product' as const, policy: 'local_first_product_i2v' as const,
     localMatch: {state: 'missing' as const, sourceRefs: [], evidenceRef: null}, generation: {method: 'reference_first_frame_product_replacement_i2v' as const, durationSeconds: 3, productImageRefs: ['KB'], referenceSourceId: spec.referenceSourceId, referenceShotId: spec.referenceShotId}};
-  const task = {id: 'record-task', task_id: 'task', tenant_id: 'tenant', version: 1, run_id: 'run', brief: {productId: 'product', targetAccountRef: null}, replication_script: {shots: [{shotId: 'S04', materialPlan: {materialRouting: routing, productSceneReplication: spec}}]}};
+  const task = {id: 'record-task', task_id: 'task', tenant_id: 'tenant', version: 1, run_id: 'run', brief: {productId: 'product', targetAccountRef: null, perItemBudgetCny: 10}, replication_script: {shots: [{shotId: 'S04', materialPlan: {materialRouting: routing, productSceneReplication: spec}}]}};
   const handoff = {inspirationId: 'inspiration-analysis', source: {sourceUrl: 'https://example.test/owned-source'}, taskContext: {taskId: 'task'}, rights: {mayUseOriginalMedia: rights, mayAdapt: rights}};
   let downloads = 0;
   const context: ProductReplacementEnvironmentContext = {
@@ -33,10 +34,11 @@ async function fixture(rights = true) {
       list: async (table: string) => ({items: table === 'starter_social_content_tasks' ? [task] : [{id: 'handoff', tenant_id: 'tenant', payload: handoff, record_hash: socialRequestHash(handoff)}], totalItems: 1})} as unknown as ProductReplacementEnvironmentContext['dataStore'],
     materials: async () => ({items: [{id: 'KB', type: 'image', tenantId: 'tenant', productId: 'product', objectKey: 'product-key', contentSha256: sha(product)}], sources: [], status: 'ready'}),
     download: async key => {downloads++; return {buf: key === 'product-key' ? product : video, contentType: key === 'product-key' ? 'image/png' : 'video/mp4'};},
-    budgetRoot: path.join(root, 'budgets'),
+    budgetRoot: path.join(root, 'budgets'), durableRoot: path.join(root, 'durable'),
   };
+  fs.mkdirSync(path.join(root, 'workspace'));
   const input = {tenantId: 'tenant', taskId: 'task', shotId: 'S04', idempotencyKey: 'fixture-operation', spec, materialRouting: routing,
-    referenceImages: [{assetId: 'KB', productRef: 'product', url: 'never-fetch-client-url', contentHash: sha(product)}], outputDirectory: root, maximumCostCny: 10};
+    referenceImages: [{assetId: 'KB', productRef: 'product', url: 'never-fetch-client-url', contentHash: sha(product)}], outputDirectory: path.join(root, 'workspace'), maximumCostCny: 10};
   const records = new Map<string, MvpBudgetRecord>();
   const addQuote = (fp: string, provider: string, model: string, amount: number) => {
     const id = `fixture-${provider}`;
@@ -75,7 +77,9 @@ test('environment ports integrate actual extraction, exact budget grants, provid
     frameCalls++; const fp = firstFrameInputFingerprint(input.request, 'seedream', frameModel);
     assert.deepEqual(input.request.references.map(r => r.role), ['source_composition', 'product_identity']);
     await ports.reserveQa(fp); await ports.reserve(fp); await ports.assertCurrent();
-    const filePath = path.join(f.root, 'controlled-frame.png'); fs.writeFileSync(filePath, f.product);
+    fs.mkdirSync(input.root, {recursive: true});
+    const filePath = path.join(input.root, `${fp}.png`); fs.writeFileSync(filePath, f.product);
+    fs.writeFileSync(path.join(input.root, `${fp}.json`), JSON.stringify({state: 'evaluated', outputSha256: sha(f.product)}));
     return {filePath, providerRequestId: 'controlled-frame', model: frameModel, qaModel, canProceedToVideo: true};
   }) as typeof f.context.prepareFrame;
   f.context.generateVideo = async request => {
@@ -84,6 +88,7 @@ test('environment ports integrate actual extraction, exact budget grants, provid
   };
   f.context.inspectVisual = async request => {
     qaCalls++; assert.equal(request.frames.length, 3); assert.ok(request.boundedPaidQa);
+    request.onReceipt?.({provider: 'controlled-fixture', requestId: 'controlled-qa'});
     return ['product_identity', 'environment_fidelity', 'layout_continuity', 'contact_continuity', 'action_order', 'end_state', 'visual_integrity'].map(key => ({key, verdict: 'pass', note: 'Controlled no-network fixture', evidenceFrames: request.frames.map(r => r.timeLabel)}));
   };
   const ports = await createEnvironmentProductReplacementPorts(f.input, f.context);
@@ -106,7 +111,14 @@ test('environment ports integrate actual extraction, exact budget grants, provid
     const factory = createEnvironmentSeedanceProductScenePorts({replacementPorts: ports});
     const result = await factory.execute(f.input); assert.equal(result.status, 'completed');
     if (result.status !== 'completed') throw Error('unexpected');
-    assert.equal(result.duration, 3); assert.equal(result.actualCostCny, null); assert.equal(result.estimatedCostCny, 4.6);
+    const budgetDirectory = path.join(path.dirname(f.context.budgetRoot!), 'social-content-task-budget');
+    const ledger = JSON.parse(fs.readFileSync(path.join(budgetDirectory, fs.readdirSync(budgetDirectory).find(n => n.endsWith('.json'))!), 'utf8'));
+    assert.equal(ledger.limitMicros, 10000000);
+    assert.equal(Object.values(ledger.entries).reduce((total: number, e: any) => total + e.reservedMicros, 0), 4800000, 'both QA stages count against the whole-film ceiling');
+    assert.equal(result.duration, 3); assert.equal(result.actualCostCny, null); assert.equal(result.estimatedCostCny, 4.8);
+    const evidence = result.quality.evidenceRefs.filter(ref => ref.endsWith('.json'));
+    fs.rmSync(f.input.outputDirectory, {recursive: true, force: true}); fs.mkdirSync(f.input.outputDirectory);
+    assert.ok(evidence.every(ref => fs.existsSync(ref)));
     await factory.execute(f.input); assert.equal(videoCalls, 1); assert.equal(qaCalls, 1); assert.equal(frameCalls, 2);
     assert.ok(fs.existsSync(result.localPath));
   } finally { if (old === undefined) delete process.env.SEEDANCE_VIDEO_ENABLED; else process.env.SEEDANCE_VIDEO_ENABLED = old; }
@@ -123,7 +135,9 @@ test('unknown accepted video submission cannot trigger another POST without its 
   const old = process.env.SEEDANCE_VIDEO_ENABLED; process.env.SEEDANCE_VIDEO_ENABLED = 'true';
   try {
     await assert.rejects(ports.video(request), /transport lost/);
-    await assert.rejects(ports.video(request), /submission_unknown_requires_original_receipt/);
+    fs.rmSync(f.input.outputDirectory, {recursive: true, force: true}); fs.mkdirSync(f.input.outputDirectory);
+    const restarted = await createEnvironmentProductReplacementPorts(f.input, f.context);
+    await assert.rejects(restarted.video({...request, checkpointPath: path.join(f.input.outputDirectory, 'new-worker.json')}), /submission_unknown_requires_original_receipt/);
     assert.equal(calls, 1);
     const pool = JSON.parse(fs.readFileSync(path.join(f.context.budgetRoot!, `${sha('fixture-seedance')}.json`), 'utf8'));
     assert.equal(Object.values(pool.entries).length, 1);
@@ -166,4 +180,59 @@ test('wrong SKU, arbitrary URL and changed canonical task-file SHA cannot reach 
   material.productRef = 'product'; await assert.rejects(ports.products(f.input), /registered_bytes_changed/); assert.equal(calls, 0);
   material.url = '/api/overseas/starter-198/social-content/files/socialfile_registered';
   await assert.rejects(ports.products(f.input), /registered_bytes_changed/); assert.equal(calls, 1);
+});
+test('actual Seedream prepared fence survives render cleanup and a fresh environment instance', async () => {
+  const f = await fixture();
+  const model = process.env.SEEDREAM_IMAGE_MODEL || 'doubao-seedream-5-0-pro-260628', qaModel = process.env.QWEN_VL_MODEL || 'qwen3-vl-plus';
+  const request = {referenceMode: 'product_scene' as const, tenantId: 'tenant', videoId: 'task', compositionId: 'S04', presenterVersion: 'KB-v1',
+    prompt: 'Replace only the package, retaining the real composition.', ratio: '9:16' as const, idempotencyKey: 'fixture-frame',
+    references: [{role: 'source_composition' as const, bytes: f.product, mimeType: 'image/png' as const, sha256: sha(f.product)},
+      {role: 'product_identity' as const, bytes: f.product, mimeType: 'image/png' as const, sha256: sha(f.product)}]};
+  const fp = firstFrameInputFingerprint(request, 'seedream', model);
+  f.addQuote(fp, 'seedream', model, .6); f.addQuote(productReplacementOperationFingerprint('first-frame-qa', {fingerprint: fp, qaModel}), 'qwen', qaModel, .1);
+  const oldKey = process.env.SEEDREAM_API_KEY, oldBase = process.env.SEEDREAM_BASE_URL, oldFetch = globalThis.fetch;
+  process.env.SEEDREAM_API_KEY = 'controlled-no-real-provider'; process.env.SEEDREAM_BASE_URL = 'http://127.0.0.1:1';
+  let posts = 0;
+  globalThis.fetch = async url => {assert.ok(String(url).startsWith('http://127.0.0.1:1/')); posts++; throw Error('controlled unknown submit');};
+  try {
+    const ports = await createEnvironmentProductReplacementPorts(f.input, f.context);
+    await assert.rejects(ports.firstFrame(request), /请求状态未知/);
+    fs.rmSync(f.input.outputDirectory, {recursive: true, force: true}); fs.mkdirSync(f.input.outputDirectory);
+    const restarted = await createEnvironmentProductReplacementPorts({...f.input, outputDirectory: path.join(f.root, 'different-worker-workspace')}, f.context);
+    await assert.rejects(restarted.firstFrame(request), /original_receipt_reconciliation/);
+    assert.equal(posts, 1);
+    const firstFrames: string[] = [];
+    const walk = (directory: string) => {for (const name of fs.readdirSync(directory)) {const file = path.join(directory, name); if (fs.statSync(file).isDirectory()) walk(file); else if (name === `${fp}.json`) firstFrames.push(file);}};
+    walk(f.context.durableRoot!); assert.equal(firstFrames.length, 1);
+    assert.equal(JSON.parse(fs.readFileSync(firstFrames[0]!, 'utf8')).state, 'prepared');
+  } finally {
+    globalThis.fetch = oldFetch;
+    if (oldKey === undefined) delete process.env.SEEDREAM_API_KEY; else process.env.SEEDREAM_API_KEY = oldKey;
+    if (oldBase === undefined) delete process.env.SEEDREAM_BASE_URL; else process.env.SEEDREAM_BASE_URL = oldBase;
+  }
+});
+test('actual Seedance gateway resumes the original accepted task with GET after workspace cleanup', async () => {
+  const f = await fixture(), model = process.env.SEEDANCE_MODEL || 'doubao-seedance-2-0-fast-260128';
+  let posts = 0, gets = 0, gatewayCalls = 0;
+  const transport: typeof fetch = async (url, init) => {
+    const address = String(url);
+    if (init?.method === 'POST') {assert.ok(address.startsWith('http://127.0.0.1:1/')); posts++; return new Response(JSON.stringify({id: 'controlled-original-task'}), {status: 200});}
+    if (address.endsWith('/controlled-original-task')) {gets++; return new Response(JSON.stringify({status: 'succeeded', content: {video_url: 'https://controlled-media.test/controlled.mp4'}}), {status: 200});}
+    assert.equal(address, 'https://controlled-media.test/controlled.mp4'); return new Response(f.video, {status: 200});
+  };
+  f.context.generateVideo = request => generateSeedanceConceptVideo({...request, apiKey: 'controlled', baseUrl: 'http://127.0.0.1:1', transport,
+    timeoutMs: gatewayCalls++ === 0 ? 0 : 1000, reserveBudget: () => ({ok: true, reservationId: 'controlled-monthly-reservation', limitCny: 10, usedCny: 0, reservedCny: 4, remainingCny: 6}),
+    releaseBudget: () => {throw Error('accepted reservation must be retained');}});
+  const request = {requestId: 'controlled-original-video', firstFrame: f.product, prompt: 'Animate original director motion', providerDurationSeconds: 4, checkpointPath: path.join(f.input.outputDirectory, 'first-worker.json')};
+  const fp = productReplacementOperationFingerprint('video', {...request, firstFrame: sha(f.product), checkpointPath: undefined, model});
+  f.addQuote(fp, 'seedance', model, 4);
+  const old = process.env.SEEDANCE_VIDEO_ENABLED; process.env.SEEDANCE_VIDEO_ENABLED = 'true';
+  try {
+    const ports = await createEnvironmentProductReplacementPorts(f.input, f.context);
+    await assert.rejects(ports.video(request), /timed out; do not resubmit/);
+    fs.rmSync(f.input.outputDirectory, {recursive: true, force: true});
+    const restarted = await createEnvironmentProductReplacementPorts({...f.input, outputDirectory: path.join(f.root, 'next-worker')}, f.context);
+    const result = await restarted.video({...request, checkpointPath: path.join(f.root, 'next-worker', 'other.json')});
+    assert.equal(result.providerTaskId, 'controlled-original-task'); assert.equal(sha(result.bytes), sha(f.video)); assert.equal(posts, 1); assert.equal(gets, 1);
+  } finally {if (old === undefined) delete process.env.SEEDANCE_VIDEO_ENABLED; else process.env.SEEDANCE_VIDEO_ENABLED = old;}
 });

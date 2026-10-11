@@ -53,3 +53,13 @@ test('positive motion remains required beside a packaging prohibition and stale 
   assert.equal(result.localVideoMatch, undefined);
   assert.equal(result.selectedMaterialSegment, undefined);
 });
+
+test('new product tasks default to a ten-yuan whole-film ceiling and cannot raise it through creation input', () => {
+  for (const requested of [undefined, null, 600, 10, 4]) {
+    const input = parseCreateSocialTask({ title: '预算检查', objective: '产品正常制作', perItemBudgetCny: requested });
+    const expected = requested === 4 ? 4 : 10;
+    assert.equal(input.perItemBudgetCny, expected);
+    assert.equal(defaultBrief(input).perItemBudgetCny, expected);
+  }
+  assert.equal(defaultBrief({ title: '内部创建', objective: '制作', perItemBudgetCny: 600 } as never).perItemBudgetCny, 10);
+});

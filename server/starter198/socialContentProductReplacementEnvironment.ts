@@ -9,6 +9,7 @@ import {firstFrameInputFingerprint, type FirstFrameReference} from '../lib/first
 import {generateSeedanceConceptVideo} from '../lib/generativeVideoGateway.js';
 import {withPaidOperationLock} from '../lib/paidOperationLock.js';
 import {MvpBudgetAdmission, type MvpBudgetRecord} from '../lib/mvpBudgetAdmission.js';
+import {SocialContentTaskBudget} from '../lib/socialContentTaskBudget.js';
 import {runVisualFfmpeg} from '../lib/renderVisualQuality.js';
 import {inspectStoryboardAigcFramesWithQwen} from '../agents/qwen.js';
 import {applyStoryboardReplicationAutomation, buildStoryboardQaReport, inspectStoryboardTechnicalFrames} from '../lib/storyboardAigcQuality.js';
@@ -31,6 +32,8 @@ export interface ProductReplacementEnvironmentContext {
   materials?: typeof readMaterialLibrary;
   download?: typeof objectStorageDownload;
   budgetRoot?: string;
+  /** Private server evidence cache; never a worker render workspace. */
+  durableRoot?: string;
   backendFilePort?: SocialContentBackendFilePort;
   readRegisteredFile?: (input: {tenantId: string; fileId: string; expectedSha256: string}) => Promise<Buffer>;
   /** Trusted server callback, never populated from an HTTP body. */
@@ -74,6 +77,8 @@ export async function createEnvironmentProductReplacementPorts(input: Input, con
   const budgetRoot = context.budgetRoot || path.resolve(process.env.MVP_BUDGET_POOL_DIR || 'data/mvp-budget-pools');
   const repository = createStarter198Repository(db as typeof store);
   const admission = new MvpBudgetAdmission(budgetRoot);
+  const durableDirectory = path.join(context.durableRoot || path.resolve('data/social-product-replacement-executions'),
+    sha(input.tenantId), sha(input.taskId), sha(String(task.run_id)), sha(input.shotId), sha(input.idempotencyKey));
   const quote = (fingerprint: string, provider: string, model: string) => {
     const candidates: Array<{record: MvpBudgetRecord; scope: MvpBudgetRecord['authorizations'][number]; amount: number}> = [];
     for (const name of fs.existsSync(budgetRoot) ? fs.readdirSync(budgetRoot).filter(n => /^[a-f0-9]{64}\.json$/.test(n)) : []) {
@@ -87,10 +92,34 @@ export async function createEnvironmentProductReplacementPorts(input: Input, con
     if (candidates.length !== 1) throw Error('product_replacement_exact_server_budget_quote_missing_or_ambiguous');
     return candidates[0]!;
   };
+  const taskBudgetScope = {tenantId: input.tenantId, taskId: input.taskId, runId: String(task.run_id), planHash: taskIdentity};
+  const taskBudget = new SocialContentTaskBudget(path.join(path.dirname(budgetRoot), 'social-content-task-budget'), {
+    assertCurrent: async () => assertCurrent(),
+    authorization: async () => {
+      const limit = Number(brief.perItemBudgetCny);
+      if (!Number.isFinite(limit) || limit <= 0) throw Error('product_whole_film_budget_missing');
+      return {maximumCny: Math.min(10, limit), authorizationRef: 'canonical-task-budget:' + taskIdentity};
+    },
+    quote: async (_scope, op) => {
+      const q = quote(op.fingerprint, op.provider, op.model);
+      return {upperBoundCny: q.amount, quoteRef: q.record.pricing.evidenceRef + ':' + op.fingerprint, validUntil: q.record.pricing.validUntil};
+    },
+    verifyRejection: async () => false, // Unknown/failed generation does not refund this chain's upper bound.
+  });
   const reserve = async (fingerprint: string, provider: string, model: string, operation: string) => {
     await assertCurrent();
     const q = quote(fingerprint, provider, model);
     if (q.amount > input.maximumCostCny) throw Error('product_replacement_quote_exceeds_shot_budget');
+    // Refuse to create a fresh whole-film ledger over unreconciled historical spending.
+    if (!taskBudget.status(taskBudgetScope)) {
+      for (const name of fs.existsSync(budgetRoot) ? fs.readdirSync(budgetRoot).filter(n => /^[a-f0-9]{64}\.json$/.test(n)) : []) {
+        const existing = JSON.parse(fs.readFileSync(path.join(budgetRoot, name), 'utf8')) as MvpBudgetRecord;
+        if (existing.tenantId === input.tenantId && existing.taskId === input.taskId && Object.keys(existing.entries || {}).length)
+          throw Error('product_whole_film_historical_budget_reconciliation_required');
+      }
+    }
+    await taskBudget.reserveBatch(taskBudgetScope, [{operationId: `product-replacement:${sha(input.idempotencyKey + ':' + operation)}`,
+      fingerprint, provider, model, accountRef: accountId || 'unbound', stage: operation, shotId: input.shotId}]);
     await admission.reserve({scope: q.scope, tenantId: input.tenantId, taskId: input.taskId, version: Number(task.version), runId: task.run_id,
       session: q.scope.session, accountId: accountId, productId: productId, action: 'generate_media', provider, model, shotId: input.shotId,
       estimatedCostCny: q.amount, operationId: `product-replacement:${sha(input.idempotencyKey + ':' + operation)}`, fingerprint});
@@ -138,6 +167,8 @@ export async function createEnvironmentProductReplacementPorts(input: Input, con
   const videoModel = process.env.SEEDANCE_MODEL || 'doubao-seedance-2-0-fast-260128';
   const qaModel = process.env.QWEN_VL_MODEL || 'qwen3-vl-plus';
   return {
+    evidenceDirectory: durableDirectory,
+    estimatedCostCny: () => +(taskBudget.status(taskBudgetScope)?.entries.filter(e => e.shotId === input.shotId && e.status !== 'rejected').reduce((total, e) => total + e.reservedMicros, 0) || 0) / 1e6,
     assertCurrent,
     composition: async () => {
       await assertCurrent();
@@ -186,14 +217,14 @@ export async function createEnvironmentProductReplacementPorts(input: Input, con
       const fingerprint = firstFrameInputFingerprint(request, 'seedream', frameModel);
       const q = quote(fingerprint, 'seedream', frameModel);
       firstFrameEstimate = q.amount;
-      const result = await (context.prepareFrame || prepareTrustedStoryboardSeedream)({request, model: frameModel, estimatedCostCny: q.amount, root: path.join(input.outputDirectory, 'first-frame-receipts'), productInfo: JSON.stringify(input.spec.productIdentity), execute: true, qaModel}, {
+      const result = await (context.prepareFrame || prepareTrustedStoryboardSeedream)({request, model: frameModel, estimatedCostCny: q.amount, root: path.join(durableDirectory, 'first-frame-receipts'), productInfo: JSON.stringify(input.spec.productIdentity), execute: true, qaModel}, {
         assertCurrent, reserve: fp => reserve(fp, 'seedream', frameModel, 'first-frame').then(() => undefined),
         reserveQa: fp => reserve(productReplacementOperationFingerprint('first-frame-qa', {fingerprint: fp, qaModel}), 'qwen', qaModel, 'first-frame-qa').then(() => undefined),
       });
       if ('dryRun' in result) throw Error('product_first_frame_unexpected_dryrun');
       if (result.qaModel !== qaModel) throw Error('product_first_frame_QA_model_binding_changed');
       return {bytes: fs.readFileSync(result.filePath), providerRequestId: result.providerRequestId, model: result.model, estimatedCostCny: q.amount,
-        canProceedToVideo: result.canProceedToVideo, evidenceRefs: [path.join(input.outputDirectory, 'first-frame-receipts', `${fingerprint}.json`)]};
+        canProceedToVideo: result.canProceedToVideo, evidenceRefs: [path.join(durableDirectory, 'first-frame-receipts', `${fingerprint}.json`)]};
     },
     video: async request => {
       await assertCurrent();
@@ -202,8 +233,9 @@ export async function createEnvironmentProductReplacementPorts(input: Input, con
       if (q.amount + firstFrameEstimate > input.maximumCostCny) throw Error('product_replacement_total_quote_exceeds_shot_budget');
       if (process.env.SEEDANCE_VIDEO_ENABLED !== 'true') throw Error('seedance_not_enabled');
       if (!context.generateVideo && !process.env.SEEDANCE_API_KEY) throw Error('product_replacement_seedance_not_configured');
-      return withPaidOperationLock(path.join(input.outputDirectory, '.video-locks'), fingerprint, async () => {
-      const attempt = `${request.checkpointPath}.attempt.json`, media = `${request.checkpointPath}.completed.mp4`;
+      return withPaidOperationLock(path.join(durableDirectory, '.video-locks'), fingerprint, async () => {
+      const checkpointPath = path.join(durableDirectory, 'video', `${fingerprint}.json`);
+      const attempt = `${checkpointPath}.attempt.json`, media = `${checkpointPath}.completed.mp4`;
       const prior = fs.existsSync(attempt) ? JSON.parse(fs.readFileSync(attempt, 'utf8')) : null;
       if (prior && prior.fingerprint !== fingerprint) throw Error('product_video_attempt_changed');
       if (prior?.state === 'completed') {
@@ -212,16 +244,16 @@ export async function createEnvironmentProductReplacementPorts(input: Input, con
         return {bytes, providerTaskId: prior.providerTaskId, model: videoModel, estimatedCostCny: prior.estimatedCostCny};
       }
       if (prior) {
-        const checkpoint = fs.existsSync(request.checkpointPath) ? JSON.parse(fs.readFileSync(request.checkpointPath, 'utf8')) : null;
+        const checkpoint = fs.existsSync(checkpointPath) ? JSON.parse(fs.readFileSync(checkpointPath, 'utf8')) : null;
         if (!checkpoint?.taskId || !checkpoint.reservationId || !Number.isFinite(checkpoint.reservedCny)) throw Error('product_video_submission_unknown_requires_original_receipt');
-      } else if (fs.existsSync(request.checkpointPath)) throw Error('product_video_checkpoint_without_attempt_identity');
+      } else if (fs.existsSync(checkpointPath)) throw Error('product_video_checkpoint_without_attempt_identity');
       const amount = await reserve(fingerprint, 'seedance', videoModel, request.requestId);
       await assertCurrent();
       fs.mkdirSync(path.dirname(attempt), {recursive: true, mode: 0o700});
       fs.writeFileSync(attempt, JSON.stringify({fingerprint, state: 'prepared'}), {mode: 0o600});
       const result = await (context.generateVideo || generateSeedanceConceptVideo)({tenantId: input.tenantId, apiKey: process.env.SEEDANCE_API_KEY || '', model: videoModel,
         prompt: request.prompt, durationSeconds: request.providerDurationSeconds, ratio: '9:16', resolution: '720p', idempotencyKey: request.requestId,
-        timeoutMs: 900000, checkpointPath: request.checkpointPath, firstFrameDataUrl: `data:image/png;base64,${request.firstFrame.toString('base64')}`});
+        timeoutMs: 900000, checkpointPath, firstFrameDataUrl: `data:image/png;base64,${request.firstFrame.toString('base64')}`});
       fs.writeFileSync(media, result.bytes, {mode: 0o600});
       fs.writeFileSync(attempt, JSON.stringify({fingerprint, state: 'completed', providerTaskId: result.providerTaskId, sha256: sha(result.bytes), estimatedCostCny: amount}), {mode: 0o600});
       return {...result, estimatedCostCny: amount};
@@ -231,7 +263,8 @@ export async function createEnvironmentProductReplacementPorts(input: Input, con
       const mediaSha256 = sha(fs.readFileSync(request.filePath));
       const fingerprint = productReplacementOperationFingerprint('video-qa', {mediaSha256, qaModel, directorScene: request.directorScene, products: request.productReferences.map(r => r.sha256)});
       await reserve(fingerprint, 'qwen', qaModel, 'video-qa');
-      const receipt = `${request.filePath}.qa.json`;
+      const receipt = path.join(durableDirectory, 'video-qa', `${fingerprint}.json`);
+      fs.mkdirSync(path.dirname(receipt), {recursive: true, mode: 0o700});
       if (fs.existsSync(receipt)) { const prior = JSON.parse(fs.readFileSync(receipt, 'utf8')); if (prior.fingerprint !== fingerprint || !prior.quality) throw Error('product_video_qa_unknown'); return prior.quality; }
       const frames: Array<{bytes: Buffer; timeLabel: string}> = [];
       const sampleTimes = request.productReferences.length === 1 ? [0.1, request.durationSeconds / 2, request.durationSeconds - 0.1] : [0.1, request.durationSeconds - 0.1];

@@ -106,7 +106,7 @@ export function buildAuthoritativeSocialContentWorkflow(input: Omit<BuildSocialA
       callToAction: input.publicationTask.cta,
       dueAt: publicationPreparationDeadline(input.publicationTask.publishWindow),
       weeklyBudgetCny: input.weeklyPackage.socialContentPackage.weeklyBudgetCny,
-      perItemBudgetCny: input.weeklyPackage.socialContentPackage.perItemBudgetCny,
+      perItemBudgetCny: Math.min(10, input.brief.perItemBudgetCny ?? 10, input.weeklyPackage.socialContentPackage.perItemBudgetCny ?? 10),
     },
     factSourceRefs: input.publicationTask.factRefs.map(ref => `${ref.type}:${ref.id}@${ref.version}`),
     authoritativeContext: {
@@ -228,7 +228,7 @@ export function defaultBrief(value: CreateSocialContentTaskInput) {
     cadence: value.cadence ?? null,
     requestedOutputCount: value.mode === 'instant' ? 1 : value.requestedOutputCount ?? null,
     weeklyBudgetCny: value.weeklyBudgetCny ?? null,
-    perItemBudgetCny: value.perItemBudgetCny ?? null,
+    perItemBudgetCny: Math.min(10, value.perItemBudgetCny ?? 10),
     retryReserveCny: value.retryReserveCny ?? null,
     planningMode: value.planningMode ?? 'auto_adjust',
     shootingWindowMinutes: value.shootingWindowMinutes ?? null,
