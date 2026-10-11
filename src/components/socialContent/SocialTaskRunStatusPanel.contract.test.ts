@@ -6,7 +6,7 @@ const source = readFileSync(new URL('./SocialTaskRunStatusPanel.tsx', import.met
 for (const label of ['预计生成耗时', '当前步骤', '系统正在做什么']) {
   assert.match(source, new RegExp(`\\['${label}'`), `运行页必须显示“${label}”`);
 }
-assert.match(source, /shots.length > 0 && <Progress[^]*?completedShots \/ shots.length/, '有逐镜结果时必须展示真实完成进度');
+assert.match(source, /shots.length > 0 && <LsGradientProgress[^]*?completedShots \/ shots.length/, '有逐镜结果时必须展示真实完成进度');
 assert.match(source, /内容 Agent · \{currentStep\(task\)\}/, 'v2 规范要求明确责任 Agent 和真实制作节点');
 assert.match(source, /task\.productionProgress\?\.estimatedRemainingSeconds/, '预计耗时必须优先读取实时进度');
 assert.match(source, /task\.productionProgress\?\.step/, '当前步骤必须读取实时进度');

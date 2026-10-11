@@ -38,6 +38,6 @@ test('missing handlers and stale targets fail explicitly without opening another
 });
 test('connected calendar wires the customer execution handler and real details',()=>{
   const source=readFileSync(new URL('../smartBusiness/ConnectedAgentCalendar.tsx',import.meta.url),'utf8');
-  assert.match(source,/<WeeklyCustomerCalendar onOpenExecutionTask=\{openCustomerExecution\}/);
+  assert.match(source,/<WeeklyCustomerCalendar[^>]*onOpenExecutionTask=\{openCustomerExecution\}/);
   assert.match(source,/aria-label="真实客服承接任务"/);
 });

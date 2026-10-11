@@ -11410,6 +11410,8 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onLaunc
         };
         const executeAutoPlan = async (slot: StoryboardSlot) => {
           if (productionFor(slot).locked || storyboardAssignments[slot.id] || sourcePlanFor(slot).generatedClipId) return;
+          const selectedPlan = storyboardSourcePlans[slot.id];
+          if (selectedPlan?.userSource || selectedPlan?.decided) return;
           const recommendedMode = recommendedSourceMode(slot);
           const localClip = bestLocalClipForSlot(slot);
           const resolvedMode: StoryboardSourceMode = recommendedMode === 'auto'

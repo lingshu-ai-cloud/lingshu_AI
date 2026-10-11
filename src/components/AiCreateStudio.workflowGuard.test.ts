@@ -89,7 +89,7 @@ assert.match(studioSource, /const generateSetupScriptAndContinue = async[^]*?if 
 assert.match(studioSource, /ranges\.length !== details\.length/, '逐镜分析不能忽略缺少时间码的镜头');
 assert.match(studioSource, /inherited \|\| selectedProductIds\[0\] \|\| ''/, '多个参考产品位应默认映射到同一企业产品');
 assert.doesNotMatch(studioSource, /selectedProductOptions\.length !== referenceProducts\.length/, '产品位数量不能强迫用户选择同样数量的不同产品');
-assert.match(studioSource, /blockReason: threeStepWorkflow && step === 'preview'/, '必须保留真实的主操作阻断原因');
+assert.match(studioSource, /blockReason: frozenStudioSpecRef\.current[^\n]+threeStepWorkflow && step === 'preview' \? previewRenderBlockers\[0\][^\n]+primaryActionBlockedReason/, '必须保留真实的主操作阻断原因');
 assert.match(studioSource, /xl:hidden[^]*?返回生产现场/, '移动端必须保留返回数字员工生产现场的入口');
 assert.match(studioSource, /本批计划上限[^]*?并非账户余额[^]*?不会自动提交/, '预算说明必须区分任务上限、账户余额与真实提交费用');
 assert.match(studioSource, /coverMaterialVersions\.filter\(item => Boolean\(materialVersionCovers\[item.key\]\)\)\.length/, '封面计数只能统计当前有效版本');

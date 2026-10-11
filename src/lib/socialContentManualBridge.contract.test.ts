@@ -72,7 +72,7 @@ assert.match(studio, /generationProvenance:\s*contentMode === 'poster'[\s\S]{0,5
 assert.match(studio, /manualScriptDraft\(item, (?:cleaned|value|nextScript)\)/,
   'manual timeline/script edits must invalidate the previously verified generation record');
 assert.match(submissionHook, /submitManualSocialArtifact\(taskId, snapshot\)/);
-assert.match(socialOutputs, /createSocialContentArtifact[\s\S]{0,500}assertStudioSocialArtifactGeneration/,
+assert.match(socialOutputs.slice(socialOutputs.indexOf('export async function createSocialContentArtifact('), socialOutputs.indexOf("  if (input.value.origin === 'agent'")), /\n  await assertStudioSocialArtifactGeneration\(input.tenantId, input.value.kind, input.value.content\);/,
   'the server must validate Studio generation metadata on artifact ingest');
 assert.match(socialOutputs, /decision === 'approved'[\s\S]{0,200}assertStudioSocialArtifactGeneration/,
   'the server must revalidate Studio generation metadata on approval');
