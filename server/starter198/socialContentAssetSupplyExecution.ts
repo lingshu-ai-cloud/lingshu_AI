@@ -336,7 +336,6 @@ function materialStrategyOrder(shot: SocialAssetSupplyShotPlan): SocialShotSourc
     const generation = routing.generation;
     const invalidProductGeneration = (detail: string): never => fail(`product_generation_contract:${detail}`);
     if (local.state !== 'missing' || local.sourceRefs.length) invalidProductGeneration('local_match_state');
-    if (shot.sourceStrategy !== 'aigc_product_scene_replication') invalidProductGeneration('source_strategy');
     if (!generation) return invalidProductGeneration('generation_missing');
     if (!(['reference_first_frame_product_replacement_i2v', 'enterprise_authored_product_first_frame_i2v'] as string[]).includes(generation.method)) invalidProductGeneration('method');
     if (generation.method === 'enterprise_authored_product_first_frame_i2v' && generation.firstFrameOrigin !== 'enterprise_authored_storyboard') invalidProductGeneration('first_frame_origin');
@@ -346,6 +345,8 @@ function materialStrategyOrder(shot: SocialAssetSupplyShotPlan): SocialShotSourc
     if (!replication) return invalidProductGeneration('replication_spec');
     if (Math.abs(generation.durationSeconds - replication.cameraLock.durationSeconds) > 0.000001) invalidProductGeneration('frozen_duration');
     if (!shot.sourceRefs.length || shot.sourceRefs.some(ref => !generation.productImageRefs.includes(ref))) invalidProductGeneration('source_refs');
+    if (shot.sourceStrategy === 'customer_product_image_animation') return ['customer_product_image_animation'];
+    if (shot.sourceStrategy !== 'aigc_product_scene_replication') invalidProductGeneration('source_strategy');
     return ['aigc_product_scene_replication'];
   }
   if (routing.materialType === 'talking_head') {

@@ -267,9 +267,6 @@ export function existingAssetSupplyAdapters(): SocialAssetSupplyProviderAdapter[
       let candidates = context.availableAssets.filter(candidate => (
         context.shot.sourceRefs.includes(candidate.sourceId) || context.shot.sourceRefs.includes(candidate.id)
       ));
-      if (!candidates.length && context.shot.sourceStrategy === 'customer_product_image_animation') {
-        candidates = context.availableAssets.filter(candidate => candidate.type === 'image');
-      }
       const selected = context.shot.selectedMaterialSegment;
       const matched = selected
         ? candidates.find(candidate => selected.sourceRef === candidate.sourceId || selected.sourceRef === candidate.id)
@@ -289,8 +286,10 @@ export function existingAssetSupplyAdapters(): SocialAssetSupplyProviderAdapter[
       } : matched;
       if (context.shot.sourceStrategy === 'customer_product_image_animation' && asset.type === 'image') {
         const referenceTiming = context.baselineScene.referenceStructure?.sourceTiming;
+        const frozenDuration = context.shot.materialRouting?.generation?.durationSeconds;
         const requestedDuration = Math.max(1.2, Math.min(12,
-          Number(referenceTiming?.endSeconds || 0) - Number(referenceTiming?.startSeconds || 0)
+          Number(frozenDuration || 0)
+            || Number(referenceTiming?.endSeconds || 0) - Number(referenceTiming?.startSeconds || 0)
             || Number(asset.duration || 0)
             || 2.8));
         const sceneKey = socialRequestHash({
