@@ -8,6 +8,10 @@ const temp = await mkdtemp(path.join(os.tmpdir(), 'ads-routes-'));
 process.env.LOCAL_STORE_DIR = temp;
 process.env.PB_URL = 'http://127.0.0.1:1';
 process.env.NODE_ENV = 'test';
+process.env.ENABLE_LOCAL_DEV_FALLBACK = 'true';
+// Only this isolated fixture uses controlled provider transports and JSON leases.
+process.env.TEST_ONLY_EXTERNAL_EFFECT_LEASE_FALLBACK = 'true';
+process.env.DATA_BACKEND = 'pocketbase';
 process.env.META_ADS_API_VERSION = 'v25.0';
 process.env.TENANT_PLATFORM_APP_KEY = 'ad-connections-route-test-key-32bytes';
 const { platformAdsRouter } = await import('../routes/platformAds.js');

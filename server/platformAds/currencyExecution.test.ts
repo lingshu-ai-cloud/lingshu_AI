@@ -6,6 +6,10 @@ const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ad-currency-'));
 process.env.LOCAL_STORE_DIR = dir;
 process.env.PB_URL = 'http://127.0.0.1:1';
 process.env.NODE_ENV = 'test';
+process.env.ENABLE_LOCAL_DEV_FALLBACK = 'true';
+// Only this isolated fixture uses controlled provider transports and JSON leases.
+process.env.TEST_ONLY_EXTERNAL_EFFECT_LEASE_FALLBACK = 'true';
+process.env.DATA_BACKEND = 'pocketbase';
 process.env.META_ADS_API_VERSION = 'v25.0';
 const originalFetch = globalThis.fetch;
 try {
