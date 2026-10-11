@@ -1,5 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import {isDeepStrictEqual} from 'node:util';
 import { store } from '../storage/index.js';
 import type {PostRecord} from './waLink.js';
 import {runScheduledPublishingCycle, isScheduledPostDue} from './scheduledPublisher.js';
@@ -8,12 +9,16 @@ import {PublishSourceVerificationError} from './publishSourceClaim.js';
 const options:TikTokDirectPostOptions={privacyLevel:'SELF_ONLY',allowComment:false,allowDuet:false,allowStitch:false,commercial:{ownBrand:false,brandedContent:false},isAigc:false,musicUsageConfirmed:true,userConsent:true};
 function object(value:unknown):Record<string,unknown>{assert.ok(value&&typeof value==='object'&&!Array.isArray(value));return value as Record<string,unknown>;}
 test('TikTok scheduler retains prepared receipt across lost return and recovers only same attempt',async()=>{
- const original={list:store.list,getById:store.getById,update:store.update};
+ const original={list:store.list,getById:store.getById,update:store.update,compareAndSwap:store.compareAndSwap};
  const now=Date.parse('2026-10-10T12:00:00Z');
  const post:PostRecord={id:'post',tenant_id:'tenant',platform:'tiktok',title:'controlled',published_at:'2026-10-10T11:00:00Z',track_code:'controlled',stats:{status:'scheduled',publishAttempts:0,targetAccountIds:['account'],videoPath:'/controlled-local-fixture.mp4',tiktokPostOptions:options}};
  store.list=async<T>()=>({items:[structuredClone(post)] as T[],totalItems:1,totalPages:1,page:1,perPage:500});
  store.getById=async<T>(collection:string,id:string)=>collection==='posts'&&id===post.id?structuredClone(post) as T:null;
  store.update=async(collection:string,id:string,patch:Record<string,unknown>)=>{if(collection!=='posts'||id!==post.id)return false;Object.assign(post,structuredClone(patch));return true;};
+ store.compareAndSwap=async(collection,id,expected,patch)=>{
+  if(collection!=='posts'||id!==post.id||!Object.entries(expected).every(([key,value])=>isDeepStrictEqual((post as unknown as Record<string,unknown>)[key],value)))return false;
+  Object.assign(post,structuredClone(patch));return true;
+ };
  let submits=0,queries=0,attemptId='';
  const deps={verifySource:async()=>{},assertLegacyAccess:async()=>{},executeLegacyEffect:async<T>(_tenant:string,effect:()=>Promise<T>)=>effect(),acquirePublishLease:async()=>({async beforeEffect(){},async release(){}}),finalize:async(_id:string,patch:{stats?:Record<string,unknown>})=>{Object.assign(post,patch);},
   publish:async(input:import('./platformPublisher.js').PublishToAccountInput)=>{
