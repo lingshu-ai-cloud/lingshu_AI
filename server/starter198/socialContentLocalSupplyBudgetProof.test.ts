@@ -4,6 +4,7 @@ import { mkdtemp, writeFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { createHash } from 'node:crypto';
+import sharp from 'sharp';
 import { createSocialContentLocalSupplyBudgetProofReader, LOCAL_SUPPLY_EXECUTOR } from './socialContentLocalSupplyBudgetProof.js';
 import { paidProductionHash } from './socialContentPaidOperationPlan.js';
 
@@ -30,5 +31,23 @@ test('canonical tenant video selection produces readonly executor-bound proof; s
       assert.equal(await createSocialContentLocalSupplyBudgetProofReader({...input,supplyPlan:{shots:[{...shot,...patch}]}} as never)(requirement),null);
     }
     await writeFile(file,'changed'); await assert.rejects(read(requirement),/source_bytes_changed/);
+  } finally {await rm(directory,{recursive:true,force:true});}
+});
+
+test('owned product image proves the local motion route with real output bytes', async () => {
+  const directory = await mkdtemp(path.join(tmpdir(), 'local-product-motion-proof-'));
+  try {
+    const file = path.join(directory, 'product.png');
+    const bytes = await sharp({create:{width:180,height:320,channels:3,background:'#f5f5f5'}}).png().toBuffer();
+    await writeFile(file, bytes); const sha = createHash('sha256').update(bytes).digest('hex');
+    const scope = {tenantId:'tenant',taskId:'task',runId:'run',planHash:'plan'};
+    const asset = {id:'product-image',sourceId:'library-product',type:'image',url:file,localPath:file,contentHash:sha,duration:0,visualObservations:[],segments:[]};
+    const shot = {shotId:'S02',sourceStrategy:'customer_product_image_animation',sourceRefs:['product-image'],fallbackSourceStrategy:null,
+      truthBoundary:{syntheticVisualAllowed:true,customerEvidenceRequired:false},materialRouting:{policy:'local_first_product_i2v',localMatch:{state:'missing',sourceRefs:[],evidenceRef:null}}};
+    const input = {scope,supplyPlan:{shots:[shot]},baseline:{scenes:[{sceneId:'S02',referenceStructure:{sourceTiming:{startSeconds:0,endSeconds:1.2}}}]},assets:[asset],assertCurrent:async()=>{},
+      repository:{dataStore:{},materialLibrary:async()=>({status:'ready',items:[{id:'product-image',tenantId:'tenant',type:'image',scope:'own',contentSha256:sha}]})}};
+    const requirement={key:'scene:S02:customer_product_image_animation',stage:'local_supply_selection',shotId:'S02',sourceRef:null,durationSeconds:1.2,text:null,frameCount:null,inputContractHash:'b'.repeat(64)};
+    const proof=await createSocialContentLocalSupplyBudgetProofReader(input as never)(requirement);
+    assert.ok(proof); assert.equal(proof.kind,'local_render'); assert.equal(proof.sourceSha256,sha); assert.match(proof.receiptRef,/^local_render:/);
   } finally {await rm(directory,{recursive:true,force:true});}
 });

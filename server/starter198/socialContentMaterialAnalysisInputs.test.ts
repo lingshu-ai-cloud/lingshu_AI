@@ -14,12 +14,12 @@ test('registered product references stay available for actual frame QA without r
   assert.deepEqual(result.analyze, [video]);
   assert.deepEqual(result.productReferences, [image]);
 });
-test('historical, shared material consumers and image animation keep their analysis dependency', () => {
+test('historical and shared material consumers keep analysis while an exclusive owned product animation reuses verified bytes', () => {
   assert.deepEqual(socialContentMaterialAnalysisInputs({assets: [image], plan: plan([productShot])}).analyze, [image]);
-  for (const sourceStrategy of ['customer_real_asset', 'customer_product_image_animation']) {
-    const result = socialContentMaterialAnalysisInputs({assets: [image], policyVersion: 'type-aware.v1',
-      plan: plan([productShot, {shotId: 'other', sourceStrategy, sourceRefs: [image.id]}])});
-    assert.deepEqual(result.analyze, [image]);
-    assert.deepEqual(result.productReferences, []);
-  }
+  const shared = socialContentMaterialAnalysisInputs({assets: [image], policyVersion: 'type-aware.v1',
+    plan: plan([productShot, {shotId: 'other', sourceStrategy: 'customer_real_asset', sourceRefs: [image.id]}])});
+  assert.deepEqual(shared.analyze, [image]); assert.deepEqual(shared.productReferences, []);
+  const animation = socialContentMaterialAnalysisInputs({assets: [image], policyVersion: 'type-aware.v1',
+    plan: plan([{...productShot, sourceStrategy: 'customer_product_image_animation'}])});
+  assert.deepEqual(animation.analyze, []); assert.deepEqual(animation.productReferences, [image]);
 });
