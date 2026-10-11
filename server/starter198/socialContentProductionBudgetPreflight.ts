@@ -1,4 +1,6 @@
 import fs from 'node:fs';
+import {getQwenProviderBinding} from '../agents/qwen.js';
+import {createSocialContentPublishedTariffReader} from '../lib/socialContentPublishedTariffs.js';
 import path from 'node:path';
 import os from 'node:os';
 import {createProductionBudgetRouteReaders,type CanonicalProductBudgetBounds} from './socialContentProductionBudgetRoutes.js';
@@ -184,7 +186,12 @@ export async function prepareSocialContentProductionBudget(input: ProductionBudg
     if (!planned.plan.paidOperations.length)
         return { status: 'local' as const, scope };
     const reader = createSocialContentVerifiedTariffReader(store, input.tenantId);
-    const authority = createSocialContentTaskBudgetAuthority({ ledgerRoot: ports?.ledgerRoot, ports: { assertCurrent, readApprovedPlan: async () => { await assertCurrent(); return planned.plan!; }, readVerifiedTariff: ports?.readTariff || reader.read, verifyRejection: async () => false } });
+    const publishedReader=createSocialContentPublishedTariffReader({readProviderBinding:async intent=>{
+      if(intent.provider!=='qwen')return null;let b:ReturnType<typeof getQwenProviderBinding>;try{b=getQwenProviderBinding();}catch{return null;}
+      const model=intent.stage==='material_image_analysis'?b.imageModel:['material_video_analysis','material_video_review'].includes(intent.stage)?b.materialModel:['first_frame_qa','video_qa'].includes(intent.stage)?process.env.QWEN_VL_MODEL||'qwen3-vl-plus':null;
+      return model?{provider:'qwen',model,baseUrl:b.baseUrl,credentialSha256:b.credentialSha256}:null;
+    }});
+    const authority = createSocialContentTaskBudgetAuthority({ ledgerRoot: ports?.ledgerRoot, ports: { assertCurrent, readApprovedPlan: async () => { await assertCurrent(); return planned.plan!; }, readVerifiedTariff: ports?.readTariff || (async intent=>await reader.read(intent)||await publishedReader.read(intent)), verifyRejection: async () => false } });
     const reserved = await authority.prepareAndReserve(scope);
     await recordCurrentContentExecutionCheckpoint({ stage: STAGE, version: '1', inputHash: planHash, payload: { scopeHash: paidProductionHash(scope), baselineHash, operationIds: reserved.operations.map(o => o.operationId), requirements: planned.requirements, routeBindings, plan: planned.plan } });
     const paidPermit = createSocialContentPaidOperationPermit({ ...reserved, root: path.join(ports?.ledgerRoot || process.env.SOCIAL_CONTENT_TASK_BUDGET_DIR || 'data/social-content-task-budget', '.permits'), assertCurrent });

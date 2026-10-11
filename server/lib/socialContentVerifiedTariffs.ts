@@ -1,3 +1,4 @@
+import {isVerifiedPublishedTariff} from './socialContentPublishedTariffs.js';
 import { createHash } from 'node:crypto';
 import type { DataStore, Record_ } from '../storage/datastore.js';
 import type { SocialPaidOperationIntent, SocialVerifiedAccountTariff } from './socialContentTaskBudgetAuthority.js';
@@ -39,7 +40,7 @@ function time(value: string, now: number) { return Number.isFinite(Date.parse(va
 function binding(row: Record_, tenantId: string, intent: SocialPaidOperationIntent) { if (row.tenant_id !== tenantId || row.provider !== intent.provider || row.model !== intent.model || row.account_ref !== intent.accountRef || row.stage !== intent.stage)
     fail('scope_mismatch'); }
 function tariffValid(t: SocialVerifiedAccountTariff, intent: SocialPaidOperationIntent, now: number) {
-    if (!t || t.currency !== 'CNY' || t.verifiedAccountPrice !== true || !string(t.evidenceRef) || ['provider', 'model', 'accountRef', 'stage'].some(k => t[k as 'provider'] !== intent[k as 'provider']) || !time(t.checkedAt, now) || !Number.isFinite(Date.parse(t.validUntil)) || Date.parse(t.validUntil) <= now || !t.meters || typeof t.meters !== 'object' || Array.isArray(t.meters) || !Object.keys(t.meters).length)
+    if (!t || t.currency !== 'CNY' || !((t.verifiedAccountPrice===true&&(!t.pricingBasis||t.pricingBasis==='negotiated_verified_account'))||isVerifiedPublishedTariff(t)) || !string(t.evidenceRef) || ['provider', 'model', 'accountRef', 'stage'].some(k => t[k as 'provider'] !== intent[k as 'provider']) || !time(t.checkedAt, now) || !Number.isFinite(Date.parse(t.validUntil)) || Date.parse(t.validUntil) <= now || !t.meters || typeof t.meters !== 'object' || Array.isArray(t.meters) || !Object.keys(t.meters).length)
         fail('invalid_or_expired');
     const keys = Object.keys(t.meters).sort();
     if (JSON.stringify(keys) !== JSON.stringify(Object.keys(intent.maximumUnits).sort()))
