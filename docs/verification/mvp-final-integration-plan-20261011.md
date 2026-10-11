@@ -43,4 +43,6 @@ LangGraph 试点已完成资产、渲染、技术质量、可恢复人工审核�
 
 已有短 HeyGen 片经原提交 fingerprint 重算，确认与当前第一镜台词一致：`Beauty brand owners, stop launching products based on only on guesswork.`。保留原声不能消除该语法重复；独立创意审查须明确记录，不能悄悄配新台词并宣称口型通过。短片完整解码通过，抽帧未见严重人物漂移，但音口同步和最终观感仍需实际播放与真人验收。长片 72.96 秒已有时间线分析失败，不强压缩成 38 秒。
 
+账户核验已进一步尝试浏览器只读控制台：打开 `https://console.volcengine.com/finance/account-overview` 后实际跳转到火山引擎账号登录页，当前没有可读取账单的认证会话。保留该标签供账户管理员直接登录，未填账号、密码、验证码或 API Key，未购买、充值或生成。登录后继续读取当前计价、余额及资源包，不能把公开活动最低价当本账户费用上界。
+
 本次可沿既有 Studio、原供应商任务与真实证据执行，无需先建设通用交接表。但 `social_mvp_handoffs/evidence` 尚无通用生产写入 adapter，不能宣称该只读面板已完整核验来源。生产部署和迁移继续遵守 `AGENTS.md`，本轮未获部署授权。
