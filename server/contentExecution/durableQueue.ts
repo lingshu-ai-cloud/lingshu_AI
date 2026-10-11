@@ -712,6 +712,13 @@ async function applyContentExecutionControl(input: {
       retry_class: reconcile ? 'provider_reconciliation' : '',
       next_attempt_at: now, worker_id: '', lease_expires_at: '', last_error: '', completed_at: '',
       ...(reconcile ? {} : { attempt: 0, reconciliation_attempt: 0 }),
+      checkpoints: {
+        ...current.checkpoints,
+        'runtime.retry': {
+          version: '1', inputHash: current.id,
+          payload: { action: 'retry', fromStatus: current.status }, updatedAt: now,
+        },
+      },
       updated_at: now,
     };
   }

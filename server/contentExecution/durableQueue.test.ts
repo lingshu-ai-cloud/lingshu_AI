@@ -299,6 +299,9 @@ test('pause, cancel, resume and manual retry preserve the same durable job ident
   assert.equal(retried.attempt, 0);
   assert.equal(retried.lastError, null);
   assert.equal(retried.id, job.id);
+  assert.deepEqual(retried.checkpoints['runtime.retry']?.payload, {
+    action: 'retry', fromStatus: 'blocked',
+  });
   const duplicateRetry = await controlContentExecutionJob({ dataStore: store, tenantId: 'tenant-a', jobId: job.id, action: 'retry' });
   assert.equal(duplicateRetry.id, job.id);
   assert.equal(duplicateRetry.status, 'queued');

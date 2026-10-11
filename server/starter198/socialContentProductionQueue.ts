@@ -154,9 +154,27 @@ async function executePersistedProduction(job: ContentExecutionJob): Promise<voi
     await dedicatedExecutors.get('social_scene_rework')!(repository, job);
     return;
   }
-  const record = await requireSocialTask({ repository, tenantId: job.tenantId, taskId: job.taskId });
-  const task = socialTaskSummary(record);
+  let record = await requireSocialTask({ repository, tenantId: job.tenantId, taskId: job.taskId });
   const rawJob = await store.getById<StarterRecord>('content_execution_jobs', job.id);
+  const explicitRetry = socialObject(socialObject(rawJob?.checkpoints)?.['runtime.retry']);
+  if (socialText(record.status) === 'paused'
+    && socialText(record.run_id) === job.runId
+    && socialText(explicitRetry?.inputHash) === job.id) {
+    const timestamp = new Date().toISOString();
+    await repository.update(STARTER_COLLECTIONS.socialContentTasks, job.tenantId, record.id, {
+      status: 'producing',
+      version: String(Math.max(1, Number(record.version) || 1) + 1),
+      updated_by: job.userId,
+      updated_at: timestamp,
+    });
+    const run = await repository.get(STARTER_COLLECTIONS.runs, job.tenantId, job.runId);
+    if (run && socialText(run.status) === 'waiting_external') await repository.update(
+      STARTER_COLLECTIONS.runs, job.tenantId, run.id,
+      { status: 'running', current_controller: 'agent', pause_reason: '', updated_at: timestamp },
+    );
+    record = await requireSocialTask({ repository, tenantId: job.tenantId, taskId: job.taskId });
+  }
+  const task = socialTaskSummary(record);
   if (socialProductionExecutor(job, rawJob?.checkpoints) === 'langgraph') {
     await runOutsideSocialContentMutationScope(() => executeSocialProductionGraph({ repository, dataStore: store, job }));
     return;
