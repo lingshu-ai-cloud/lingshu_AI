@@ -47,6 +47,9 @@ export interface ProductionBudgetPreflightInput {
     runId: string;
     baseline: StoredSocialScriptBaseline;
     assets: SocialProductionAsset[];
+    /** Exact owned inputs consumed by a local supply adapter without requiring
+     * a separate semantic-analysis purchase. */
+    localSupplyAssets?: SocialProductionAsset[];
     supplyPlan: SocialAssetSupplyPlan | null;
     graphApprovedContext?: SocialGraphApprovedContext;
     recoveryOnly?: boolean;
@@ -159,7 +162,8 @@ export async function prepareSocialContentProductionBudget(input: ProductionBudg
         scenes: approved.directorBrief.scenes.map(scene => ({ ...(voice.mode === 'continuous' && voice.requiresAlignment && input.supplyPlan?.shots.some(shot => shot.shotId === scene.sceneId && shot.sourceStrategy === 'authorized_digital_presenter') ? {presenterSpeech:'whole_track' as const} : {}), shotId: scene.sceneId, durationSeconds: scene.duration.endSeconds - scene.duration.startSeconds, spokenText: input.baseline.scenes.find(s => s.sceneId === scene.sceneId)?.voiceover || input.baseline.scenes.find(s => s.sceneId === scene.sceneId)?.narration || '' })), shots: input.supplyPlan.shots, assets: assetInputs, voice, finalReview: 'local' };
     snapshot.approval.sourceHash = paidProductionApprovalHash(snapshot);
     snapshot.recordHash = paidProductionRecordHash(snapshot);
-    const localSupplyProof=createSocialContentLocalSupplyBudgetProofReader({scope,supplyPlan:input.supplyPlan,baseline:input.baseline,assets:input.assets,repository:input.repository,assertCurrent});
+    const localSupplyProof=createSocialContentLocalSupplyBudgetProofReader({scope,supplyPlan:input.supplyPlan,baseline:input.baseline,
+      assets:[...input.assets,...(input.localSupplyAssets??[])],repository:input.repository,assertCurrent});
     const productBounds=new Map<string,CanonicalProductBudgetBounds>();
     const canonicalRoutes=createProductionBudgetRouteReaders({readCanonicalProductBounds:async req=>{
       if(!req.shotId)return null;const shot=input.supplyPlan!.shots.find(s=>s.shotId===req.shotId);
