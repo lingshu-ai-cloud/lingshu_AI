@@ -134,3 +134,13 @@ allowRealPublishing=false；social_accounts只有另一租户的Facebook测试�
 正式自然语速修订执行及源存储读回证据 `natural-cadence-execution-receipt.json` / `natural-cadence-authority-readback.json` 已证明当前 **v65 / run `d67c7e8ca4fa067` / Graph job `2edab29616ddffc` / script `2026101100003`**，planHash `a1fa649fa0d4a89a67b928b5bd9bc9a87cf8d7bfbac73d24045acb0e8c5e2736`。冻结镜头边界为 0、5.6、8.4、10.1、14.1、16.2、18.8、20.5、24 秒；完整自然正文各句词窗可装入相应槽，S04 静音 4 秒。旧 v61 Graph job 已 cancelled，新 job queued 无 worker/lease；9.4/.6 分配不变，无新付费调用或任务派发。
 
 真实 HeyGen IV 唯一任务 `25d121ab21e7c2aff86f21e7e59d9ce1` 已 completed 并下载，MP4 SHA256 `6d88809a93622a4978acf73e53e26f2bfc71ff7baea1d7964fa3cb70362b758f`，5.48569 秒。`actual-iv-technical-qa.json` / `actual-iv-canonical-source.json` 保存解码、PCM、真实中帧及原始供应商/费用谱系。该输出原属 v61，将经严格跨修订复用入口绑定 v65，不能手工改写原供应商回执。A 池 .2 hook + .3 body + 3.8 IV 已预占满 4.3；实际结算仍 null。中帧已实际查看，未标人审通过。B 产品镜头、最终 MP4、人工创意批准、页面真实成片验收、发布与指标仍未完成。
+
+### 完整源码回归与真实 B 拒绝（不可放行）
+
+提交 `2259d84` 的最终运行回归覆盖 313 文件，672 项通过、0 失败、0 跳过（`final-runtime-regression.log` / `final-regression-files.json`），TypeScript 与主站、账号中心生产构建通过。该结论仅证明此代码版本的测试与构建，不证明 MVP 创意或页面验收。
+
+v65 实际 Seedream 首帧通过真实 qwen3-vl-plus 检查并保留原包装主要标识，文件 SHA256 `496b4184a4de243003e18d8cb7cd62a2b03227a21972baf40457de058584375d`。实际 Seedance 唯一任务 `cgt-20261011184015-j7lrx` completed，720×1280、4.04 秒、无音轨，MP4 SHA256 `9aff7a4c0c613d778f9f44272a332ce843321b7500e4db147a76fa48da70d154`。真实 Qwen 视频检查与独立三帧查看均拒绝：新增中央 3X Biosome 圆标、修改原小字、烧入 A closer look 字幕，并旋转盒体。`S04-v65-actual-visual-rejection.json` 保留实际原图/首帧/视频/QA 哈希。不得采纳、放行或通过改变原始回执掩盖失败；没有再次付费提交。
+
+正常官方预览登录后，新 Studio `ecad...` 在打开时被客户端 autosave 全量改写为旧 0002 时间与 slot-1…slot-8，丢失冻结 taskVersion/timeline/CTA；当前任务与 Graph job 仍为原 v65/0003，未改变。`frontend-after-read-snapshot/manifest.json` 保存真实写后证据，已离开 Studio 页面避免继续覆盖，正在修复正常 hydration/冻结保存桥。尚无新最终 MP4、人工创意批准、真实发布与指标。
+
+两次真实 Qwen QA 已结束。为本轮调用关闭了该模型“免费额度用完即停”；恢复尝试中详情和免费额度页均显示“不支持开启”，证据为 `dashscope-free-only-restore-unavailable.dom.txt/.png`，没有声称恢复成功。只修改此模型、未充值；本地独立 QA 预算池已占满，禁止未授权新增请求。原付费回执、原预占及未知实际结算均保留。
