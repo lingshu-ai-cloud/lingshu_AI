@@ -18,7 +18,7 @@ import {applyStoryboardReplicationAutomation, buildStoryboardQaReport, inspectSt
 import {createStarter198Repository} from './repository.js';
 import {findSocialContentFile, readSocialContentFile, MAX_SOCIAL_CONTENT_FILE_BYTES, type SocialContentBackendFilePort} from './socialContentFiles.js';
 import {socialRequestHash} from './socialContentValidation.js';
-import {bindProductPaidStage, type ProductPaidContext, type ProductPaidStage} from './socialContentProductPaidContext.js';
+import {bindProductPaidStage, hasProductPaidStage, type ProductPaidContext, type ProductPaidStage} from './socialContentProductPaidContext.js';
 import type {ProductReplacementPorts} from './socialContentProductReplacementExecution.js';
 import type {ProductSceneExecutionPorts} from './socialContentProductSceneAdapter.js';
 
@@ -251,6 +251,8 @@ export async function createEnvironmentProductReplacementPorts(input: Input, con
   const qaModel = input.materialRouting?.generation?.qaModel || process.env.QWEN_VL_MODEL || 'qwen3-vl-plus';
   return {
     evidenceDirectory: durableDirectory,
+    canUseVideoAttempt: attempt => !context.paidContext || (hasProductPaidStage(context.paidContext, input.shotId, 'video', attempt)
+      && hasProductPaidStage(context.paidContext, input.shotId, 'video_qa', attempt)),
     estimatedCostCny: () => context.paidContext ? ['first_frame','first_frame_qa','video','video_qa'].reduce((total, stage) => total + paidAmount(stage as ProductPaidStage),0) : +(taskBudget.status(taskBudgetScope)?.entries.filter(e => e.shotId === input.shotId && e.status !== 'rejected').reduce((total, e) => total + e.reservedMicros, 0) || 0) / 1e6,
     assertCurrent,
     composition: async () => {

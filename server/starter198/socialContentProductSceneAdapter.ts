@@ -131,7 +131,10 @@ function outputAsset(input: {
 }): SocialProductionAsset {
   const authorizedRefs=input.spec.productIdentity.groups.flatMap(group=>group.referenceImageIds).map(id=>input.context.availableAssets.find(asset=>asset.id===id)?.authorizationRef||'');
   const rightsReady=authorizedRefs.length>0&&authorizedRefs.every(Boolean);
-  const disclosure = 'AIGC 产品场景·真实产品身份锁定·非客户实拍场景';
+  const localFallback = input.execution.providerId === 'local-product-low-motion';
+  const disclosure = localFallback
+    ? '本地确定性产品动效·来源为已质检首帧·非客户实拍视频'
+    : 'AIGC 产品场景·真实产品身份锁定·非客户实拍场景';
   return {
     ...(rightsReady&&input.aspectRatio?{automaticMaterial:{requirement:{subjectRef:input.spec.productIdentity.groups.map(g=>g.productRef).join('|'),action:input.spec.cameraLock.movementPath,scene:input.spec.sceneLock.environment,evidenceRequirement:'product_identity',aspectRatio:input.aspectRatio,minimumDurationSeconds:input.spec.cameraLock.durationSeconds,authorizationScope:'tenant_generated_reusable'},independentVisualCheckRef:input.execution.quality.evidenceRefs.join('|'),rightsEvidenceRef:authorizedRefs.join('|'),authorizationScopes:['tenant_generated_reusable']}}:{}),
     id: `product-scene-${input.context.taskId}-${input.context.shot.shotId}`,
@@ -216,7 +219,9 @@ export function createSocialProductSceneAdapter(ports: ProductSceneExecutionPort
         synthetic: true,
         representation: 'non_evidentiary_visual',
         authorizationRef: null,
-        disclosure: 'AIGC 产品场景·真实产品身份锁定·非客户实拍场景',
+        disclosure: execution.providerId === 'local-product-low-motion'
+          ? '本地确定性产品动效·来源为已质检首帧·非客户实拍视频'
+          : 'AIGC 产品场景·真实产品身份锁定·非客户实拍场景',
       };
     },
   };

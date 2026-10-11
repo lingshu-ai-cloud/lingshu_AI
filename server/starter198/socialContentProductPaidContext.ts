@@ -70,3 +70,16 @@ export function bindProductPaidStage(context: ProductPaidContext, shotId: string
     async completed(receiptRef: string) {await context.permit.markOutcome(operationId, 'completed', receiptRef);},
   };
 }
+export function hasProductPaidStage(context: ProductPaidContext, shotId: string, stage: ProductPaidStage, attempt = 0) {
+  if (!Number.isInteger(attempt) || attempt < 0 || attempt > 1 || (attempt > 0 && !['video', 'video_qa'].includes(stage))) fail('attempt_invalid');
+  const requirements = context.requirements.filter(r => r.shotId === shotId && r.stage === stage);
+  if (requirements.length !== 1) fail('requirement_missing_or_ambiguous');
+  const requirement = requirements[0]!;
+  if (!context.routeBindings[requirement.key]) fail('canonical_route_missing');
+  const operationId = 'paid-plan:' + paidProductionHash({scope: context.scope, key: requirement.key, attempt});
+  const count = context.intents.filter(intent => intent.operationId === operationId).length;
+  if (count > 1) fail('intent_ambiguous');
+  if (count === 0) return false;
+  bindProductPaidStage(context, shotId, stage, attempt);
+  return true;
+}

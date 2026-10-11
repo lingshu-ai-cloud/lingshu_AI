@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {bindProductPaidStage, type ProductPaidContext, type ProductPaidStage} from './socialContentProductPaidContext.js';
+import {bindProductPaidStage, hasProductPaidStage, type ProductPaidContext, type ProductPaidStage} from './socialContentProductPaidContext.js';
 import {paidProductionHash} from './socialContentPaidOperationPlan.js';
 const scope={tenantId:'tenant',taskId:'task',runId:'run',planHash:'a'.repeat(64)};
 function fixture(stage:ProductPaidStage) {
@@ -14,6 +14,11 @@ function fixture(stage:ProductPaidStage) {
 test('attempt one binds only the separately reserved video and video QA intents',()=>{
  for(const stage of ['video','video_qa'] as const){const f=fixture(stage),r=f.context.requirements[0]!,route=f.context.routeBindings[r.key]!;f.context.intents.push({...f.context.intents[0]!,operationId:'paid-plan:'+paidProductionHash({scope,key:r.key,attempt:1}),inputContractHash:paidProductionHash({requirement:r,route,attempt:1})});assert.equal(bindProductPaidStage(f.context,'S04',stage,1).intent.operationId,f.context.intents[1]!.operationId);}
  const frame=fixture('first_frame');assert.throws(()=>bindProductPaidStage(frame.context,'S04','first_frame',1),/attempt_invalid/);
+});
+test('funded-attempt discovery distinguishes a missing retry from malformed funding',()=>{
+ const f=fixture('video');assert.equal(hasProductPaidStage(f.context,'S04','video',0),true);assert.equal(hasProductPaidStage(f.context,'S04','video',1),false);
+ const r=f.context.requirements[0]!,route=f.context.routeBindings[r.key]!;f.context.intents.push({...f.context.intents[0]!,operationId:'paid-plan:'+paidProductionHash({scope,key:r.key,attempt:1}),inputContractHash:paidProductionHash({requirement:r,route,attempt:1})});
+ assert.equal(hasProductPaidStage(f.context,'S04','video',1),true);f.context.intents[1]!.inputContractHash='bad';assert.throws(()=>hasProductPaidStage(f.context,'S04','video',1),/canonical_intent_changed/);
 });
 test('four actual request dimensions are derived from prepared supplier body rather than maximumUnits',async()=>{
  for(const stage of ['first_frame','first_frame_qa','video','video_qa'] as const){const f=fixture(stage),bound=bindProductPaidStage(f.context,'S04',stage);
