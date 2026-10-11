@@ -9,6 +9,7 @@ import {
   validateStudioScriptGenerationInput,
 } from './AiCreateStudio.js';
 import { parseDigitalEmployeeWorkflowContext } from './TrafficPage.js';
+import { restoreStudioSpec } from '../lib/frozenStudioProject.js';
 import { reconcileShootingSlots } from '../lib/shootingWorkflow.js';
 
 const validBase = {
@@ -140,7 +141,15 @@ for (const persistedField of ['reference', 'storyboard', 'voiceover', 'shots']) 
   assert.match(studioSource, new RegExp(`analysisResults[\\s\\S]{0,900}${persistedField}`), `${persistedField} analysis must be persisted with the project`);
 }
 assert.match(studioSource, /Analysis output is expensive[\s\S]{0,700}setTimeout[\s\S]{0,160}autosaveSnapshotRef\.current/, 'analysis changes must be saved without waiting for the ten-second checkpoint');
-assert.match(studioSource, /analysisResults is the durable, versioned recovery bundle/, 'project hydration must recover from the versioned analysis bundle');
+assert.match(studioSource, /const s = restoreStudioSpec\(savedSpec\)/, 'hydration must use the tested frozen-aware recovery helper');
+const recoveredLegacy = restoreStudioSpec({ analysisResults: { storyboard: { script: 'recovered legacy script', assignments: { legacy: 'material' } }, voiceover: { text: 'recovered voice' }, shots: { shootingSlots: [{ id: 'legacy' }] } } });
+assert.equal(recoveredLegacy.script, 'recovered legacy script');
+assert.equal(recoveredLegacy.voiceoverLines, 'recovered voice');
+assert.deepEqual(recoveredLegacy.storyboardAssignments, { legacy: 'material' });
+assert.deepEqual(recoveredLegacy.shootingSlots, [{ id: 'legacy' }]);
+const frozenRecovery = restoreStudioSpec({ resolvedStudioContract: { schemaVersion: 'social-frozen-studio.v1', readOnlyPlan: true, tenantId: 'tenant', taskId: 'task', taskVersion: 65, runId: 'run', jobId: 'job', planHash: 'plan', inputHash: 'input', scriptVersion: '0003' }, duration: 24, script: 'frozen canonical script', primaryCta: 'DM for a quote', shootingSlots: [{ id: 'S01', slotId: 'S01', duration: 24 }], storyboardTimeline: [{ id: 'S01', start: 0, end: 24 }], analysisResults: { storyboard: { script: 'old script', assignments: { stale: 'old' } } } });
+assert.equal(frozenRecovery.script, 'frozen canonical script');
+assert.equal(frozenRecovery.storyboardAssignments, undefined, 'old expensive analysis must not replace frozen production attribution');
 assert.match(studioSource, /onCreatePresenter=\{async input => \{/,'the current shot must expose inline presenter completion');
 assert.match(studioSource, /presenterApi\.uploadPhotoMaterial\(input\.file, input\.name\)[\s\S]{0,140}studioApi\.uploadMaterialFile\(input\.file,\{folder:'presenter',type:mediaType,sourceType:'presenter-inline-upload'\}\)/,'inline completion must upload the selected person asset through the available provider path');
 assert.match(studioSource, /setProductionDefaults\(saved\);await refreshMaterials\(\)/,'inline completion must refresh enterprise presenters and Studio materials before returning');
