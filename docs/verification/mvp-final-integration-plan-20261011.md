@@ -56,3 +56,11 @@ LangGraph 试点已完成资产、渲染、技术质量、可恢复人工审核�
 官方规格确认 Seedance 2.0-fast 最高 720p、24fps；720p 9:16 为 720×1280，明确 `duration=4`，不使用自动时长 `-1`、frames 或视频参考输入。按官方公式估算 86,400 tokens × ¥0.037/千 = ¥3.1968。准备使用单次 ¥6 保守预占（约 87.7% 裕量），这不是供应商硬封顶，也不是已结算费用；首帧、QA、数字人及旁白独立计入总 ¥10 预算。仍未提交供应商生成。
 
 来源：[模型规格](https://docs.volcengine.com/docs/ark/model-list?lang=zh)、[任务参数](https://docs.volcengine.com/docs/ark/create-video-generation-task-api?lang=zh)、[计费说明](https://docs.volcengine.com/docs/ark/model-pricing?lang=en&redirect=1)。
+
+### 数字人预算与执行路径纠正
+
+只读 HeyGen 核验确认当前选定人物是 digital twin，仅支持 Avatar V / Avatar IV，不能按 Photo Avatar 或 Avatar III 的较低价格安排本次制作。当前社媒桥接原先仅提交文本，没有固定音轨时长的准入；已有底层上传音频及 audio_asset_id 能力，正在接入同任务、版本、人物、音色、音频 SHA 和真实测长绑定的受信任通路。
+
+执行准备采用先生成原音色旁白、真实 probe 音轨，再用不超过 4 秒的完整钩子音轨驱动原人物；原文字模式不能充当固定时长保证。原 72.96 秒导演指令误提交不能复用为英文旁白。`8ab2728` 已禁止新的导演 script/caption 兜底，并允许已有真实供应商 ID 只恢复原任务，不新增提交或预占。
+
+当前条件性预算组合为关键视频 ¥4、数字人 ¥2.9、首帧 ¥0.6、旁白 ¥0.5、QA ¥0.5，共生产 ¥8.5，另保留返工 ¥1.5。视频 ¥4 是固定规格估算 ¥3.1968 的约 25.1% 保守裕量，不是硬封顶；数字人按实际音轨不超过 4 秒准备，仍需核对原音色 Starfish 兼容及计费取整规则。这是执行方案，尚未写入预算池或发起真实供应商生成，不能标记已结算或成片通过。
