@@ -316,7 +316,8 @@ app.get('*', (_req, res) => {
 });
 
 if (processRoleStartsHttp(processRole)) {
-  const stopMessengerContextTagRecovery = startMessengerContextTagRecovery();
+  const stopMessengerContextTagRecovery = process.env.MESSENGER_CONTEXT_TAG_RECOVERY_ENABLED === 'false'
+    ? () => undefined : startMessengerContextTagRecovery();
   const server = app.listen(PORT, '0.0.0.0', () => {
     console.log(`[overseas-agent] http://0.0.0.0:${PORT}`);
   });

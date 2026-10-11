@@ -173,8 +173,21 @@ async function executePersistedProduction(job: ContentExecutionJob): Promise<voi
 }
 
 function ensureProductionWorker(): DurableContentExecutionWorker {
-  if (productionWorker) return productionWorker;
-  productionWorker = new DurableContentExecutionWorker({
+  if (!productionWorker) productionWorker = createProductionWorker();
+  return productionWorker;
+}
+
+/** Runs the normal product executor and settlement callbacks for an explicitly
+ * selected durable job set, without enabling unrelated scheduler/recovery loops. */
+export function createScopedSocialContentProductionWorker(jobIds: readonly string[]): DurableContentExecutionWorker {
+  if (!jobIds.length || jobIds.some(id => typeof id !== 'string' || !id.trim() || id !== id.trim()))
+    throw new Error('scoped_production_job_ids_required');
+  return createProductionWorker([...new Set(jobIds)]);
+}
+
+function createProductionWorker(allowedJobIds?: string[]): DurableContentExecutionWorker {
+  return new DurableContentExecutionWorker({
+    ...(allowedJobIds === undefined ? {} : {allowedJobIds}),
     ...(process.env.LINGSHU_LOCAL_PREVIEW === '1' && localFallbacksEnabled() && dataBackend === 'pocketbase'
       ? { dataAuthority: 'local' as const } : {}),
     dataStore: store,
@@ -260,7 +273,6 @@ function ensureProductionWorker(): DurableContentExecutionWorker {
       }));
     },
   });
-  return productionWorker;
 }
 
 /** Admission returns only after the database row exists; execution remains asynchronous. */
