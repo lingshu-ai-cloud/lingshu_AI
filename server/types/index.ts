@@ -33,6 +33,16 @@ export interface VideoSpatialContinuity {
 
 export interface VideoAiAnalysis {
   theme: string;
+  /** Container clock measured from the exact source bytes used by this analysis. */
+  sourceMediaClock?: {
+    schemaVersion: 1;
+    duration: number;
+    fps: number | null;
+    sourceSha256: string;
+    analysisRunId: string;
+    videoObjectKey?: string;
+    measuredAt: string;
+  };
   /** Raw ASR remains available for review; coarse chunks are never treated as shot dialogue. */
   audioTranscript?: { text: string; words?: import('../lib/referenceWordAlignment.js').ReferenceTimedWord[];
     segments: Array<{ start: number; end: number; text: string; words?: import('../lib/referenceWordAlignment.js').ReferenceTimedWord[];

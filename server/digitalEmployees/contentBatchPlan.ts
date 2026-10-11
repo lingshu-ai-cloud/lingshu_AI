@@ -39,6 +39,8 @@ export interface ContentOrder extends Partial<DirectorScriptContract> {
   cta: string;
   constraints: string[];
   evidenceRefs: Array<{ type: 'exact_analysis' | 'enterprise_material'; id: string }>;
+  /** Missing inputs for this master only; unrelated orders may still run. */
+  readinessBlockers?: string[];
   status: 'planned';
 }
 
@@ -136,26 +138,27 @@ export function buildContentBatchPlan(input: {
   const reviewConstraints = priorReviewConstraints(input.priorRoutingEvidence);
   if (input.goal.videoPlans?.length) {
     const orders: ContentOrder[] = [];
-    const errors: string[] = [];
-    const referenceErrors: string[] = [];
     input.goal.videoPlans.forEach((plan, index) => {
+      if (plan.productionRole === 'platform_adaptation') return;
       const prefix = `第 ${index + 1} 条：`;
       const deferredMaterialErrors = /(?:请选择本条素材|数字人混剪需选择产品画面素材)/;
-      errors.push(...videoPlanErrors(plan).filter(error => !deferredMaterialErrors.test(error)).map(error => prefix + error));
+      const blockers = videoPlanErrors(plan).filter(error => !deferredMaterialErrors.test(error)).map(error => prefix + error);
       const workflowByRoute = { clone: 'viral_clone', product: 'product_content', material: 'material_content' } as const;
-      if (!enabled.has(workflowByRoute[plan.route])) errors.push(prefix + '指定内容路径未在 Agent 配置中开启');
-      const product = input.evidence.products.find(product => product.id === plan.productId)
-        || input.evidence.products.find(product => product.name === plan.productName || product.id === plan.productName);
-      if (!product) { errors.push(prefix + '指定产品不在重点产品资料中'); return; }
-      const ids = plan.materialIds.length ? plan.materialIds : product.materialIds;
-      if (ids.some(id => !product.materialIds.includes(id))) errors.push(prefix + '所选素材不存在或不属于指定产品');
+      if (!enabled.has(workflowByRoute[plan.route])) blockers.push(prefix + '指定内容路径未在 Agent 配置中开启');
+      const explicitProductId = String(plan.productId || '').trim();
+      const legacyProductMatches = explicitProductId ? [] : input.evidence.products.filter(product => product.name === plan.productName || product.id === plan.productName);
+      const product = explicitProductId
+        ? input.evidence.products.find(candidate => candidate.id === explicitProductId)
+        : legacyProductMatches.length === 1 ? legacyProductMatches[0] : undefined;
+      if (!product) blockers.push(prefix + '指定产品不在当前冻结产品资料中');
+      const ids = product ? (plan.materialIds.length ? plan.materialIds : product.materialIds) : [];
+      if (product && ids.some(id => !product.materialIds.includes(id))) blockers.push(prefix + '所选素材不存在或不属于指定产品');
       // A missing product visual is a per-master production readiness issue.
       // Keep the order so other masters in the same week can still run; the
       // storyboard preflight below reports the exact missing shot requirement.
-      if (plan.route === 'clone' && !input.evidence.exactAnalysisIds.includes(plan.referenceId)) referenceErrors.push(prefix + '参考视频尚无有效精确分析');
+      if (plan.route === 'clone' && !input.evidence.exactAnalysisIds.includes(plan.referenceId)) blockers.push(prefix + '参考视频尚无有效精确分析');
       const account = input.config.publishingTargets.find(target => target.platform === plan.platform && (!plan.matrix || target.accountId === plan.matrix.accountId));
-      if (!input.goal.contentPlatforms.includes(plan.platform)) errors.push(prefix + '制作平台不在本周目标范围中');
-      if (plan.productionRole === 'platform_adaptation') return;
+      if (!input.goal.contentPlatforms.includes(plan.platform)) blockers.push(prefix + '制作平台不在本周目标范围中');
       const familyVariants = input.goal.videoPlans!.filter(candidate => (candidate.contentFamilyId || candidate.contentId) === (plan.contentFamilyId || plan.contentId));
       const deliveryVariants: NonNullable<ContentOrder['deliveryVariants']> = familyVariants.map((variant, variantIndex) => {
         const target = input.config.publishingTargets.find(item => item.platform === variant.platform && (!variant.matrix || item.accountId === variant.matrix.accountId));
@@ -175,8 +178,10 @@ export function buildContentBatchPlan(input: {
         const first = shots[0];
         return `参考结构 ${structureIndex + 1}：${MATERIAL_TYPE_LABELS[step.materialType]} / ${SHOT_ROLE_LABELS[step.narrativeRole]} / ${step.shotIds.length} 镜${first?.purpose ? `；作用：${first.purpose}` : ''}`;
       }) || [];
-      const frozenVideoPlan = normalizeVideoPlan({ ...plan, productId: product.id, productName: product.name });
-      orders.push({ id: `content_order_${index + 1}`, goalId: input.goalId, productId: product.id, productName: product.name,
+      const productId = product?.id || explicitProductId;
+      const productName = product?.name || plan.productName;
+      const frozenVideoPlan = normalizeVideoPlan({ ...plan, productId, productName });
+      orders.push({ id: `content_order_${index + 1}`, goalId: input.goalId, productId, productName,
         languages: plan.matrix ? [plan.language] : input.config.videoLanguages,
         theme: { key: 'user_selected', label: plan.theme }, platform: plan.platform, accountId: account?.accountId || '', accountLabel: account?.accountLabel || (enabled.has('content_publish') ? '发布前待绑定账号' : '仅内容生产，不分发'),
         route: plan.route, videoPlan: frozenVideoPlan, deliveryVariants, configurationSnapshot: input.versions, cta: plan.matrix?.cta || ctaFor(input.config.primaryGoal),
@@ -190,8 +195,9 @@ export function buildContentBatchPlan(input: {
           ...(plan.matrix?.formats?.length ? [`平台内容形式：${plan.matrix.formats.join('、')}`] : []),
           ...(benchmarkStructureConstraints.length ? ['素材调用必须严格按以下规范化结构顺序逐段匹配，不得合并或改写素材类别', ...benchmarkStructureConstraints] : []),
           ...(plan.reviewRequirements || []).map(r => `复盘分镜约束【${r.todoId}】：第1镜0–3秒；参考：${r.reference}；保留：${r.requirements}；素材：${r.materials}；验收：${r.acceptance}`)])],
-        evidenceRefs: [...ids.map(id => ({ type: 'enterprise_material' as const, id })), ...(plan.route === 'clone' ? [{ type: 'exact_analysis' as const, id: plan.referenceId }] : [])], status: 'planned',
-        ...(frozenScript && plan.preproduction?.readiness.canStart ? {
+        evidenceRefs: [...ids.map(id => ({ type: 'enterprise_material' as const, id })), ...(plan.route === 'clone' && plan.referenceId ? [{ type: 'exact_analysis' as const, id: plan.referenceId }] : [])],
+        readinessBlockers: [...new Set(blockers)], status: 'planned',
+        ...(frozenScript ? {
           contractVersion: 1 as const,
           scripts: { [frozenScript.language]: frozenScript },
         } : {}),
@@ -202,10 +208,15 @@ export function buildContentBatchPlan(input: {
     // Missing clone evidence blocks that master, not unrelated product orders.
     // Keep its frozen reference and surface the disabled route; the production
     // preflight still refuses to generate it until the analysis is available.
-    const allOrdersMissingReference = orders.length > 0 && orders.every(order =>
-      order.route === 'clone' && !input.evidence.exactAnalysisIds.includes(order.videoPlan?.referenceId || ''));
-    if (allOrdersMissingReference) errors.push(...referenceErrors);
-    return { coverage: contentPlanCoverage(input.config, input.goal, errors.length ? 0 : orders.length), status: errors.length ? 'blocked' : 'planned', orders: errors.length ? [] : orders, blocker: errors.join('；'), eligibleRoutes: [...new Set(orders.map(order => order.route))], disabledRoutes: [...disabledRoutes, ...referenceErrors.map(reason => ({ route: 'clone' as const, reason }))] };
+    const routeBlockers = orders.flatMap(order => (order.readinessBlockers || []).map(reason => ({ route: order.route, reason })));
+    return {
+      coverage: contentPlanCoverage(input.config, input.goal, orders.length),
+      status: orders.length ? 'planned' : 'blocked',
+      orders,
+      blocker: orders.length ? '' : '周视频计划中没有可执行的原创母版',
+      eligibleRoutes: [...new Set(orders.filter(order => !order.readinessBlockers?.length).map(order => order.route))],
+      disabledRoutes: [...disabledRoutes, ...routeBlockers],
+    };
   }
   const missingProducts = input.evidence.products.filter(product => !product.materialIds.length);
   if (missingProducts.length) return { status: 'blocked', orders: [], blocker: `重点产品缺少素材：${missingProducts.map(product => product.name).join('、')}。请补充素材或逐条确认制作计划，不能自动替换产品。`, eligibleRoutes, disabledRoutes };

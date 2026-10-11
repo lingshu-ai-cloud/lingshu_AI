@@ -10,6 +10,20 @@ const renderInputs = (spec: Record<string, any>) => createHash('sha256').update(
   productions: spec.shotProductions, edits: spec.clipEdits, script: spec.script, ratio: spec.ratio, exportSpec: spec.exportSpec,
 })).digest('hex');
 
+export function managedReplicationFailureState(error: unknown): { blocker: string; retryPolicy: 'input_required' | 'service_retry' } {
+  const raw = error instanceof Error ? error.message : String(error || '逐镜复刻执行失败');
+  if (/镜头类型或物理镜头边界不完整/.test(raw)) {
+    return { blocker: '爆款分析缺少已确认的镜头类型或物理镜头边界，需补全分析后继续生产', retryPolicy: 'input_required' };
+  }
+  if (/物理镜头边界|镜头边界不完整/.test(raw)) {
+    return { blocker: '爆款分析缺少物理镜头边界，需补全分析后继续生产', retryPolicy: 'input_required' };
+  }
+  if (/已确认的镜头类型|逐镜可见事实|精确参考分析|参考结构|缺少可执行素材|素材.*(?:缺少|不存在|未授权)|冻结内容订单.*额度|产品资料|口播.*(?:依据|事实)|人物.*(?:授权|不可用)/i.test(raw)) {
+    return { blocker: raw, retryPolicy: 'input_required' };
+  }
+  return { blocker: raw, retryPolicy: 'service_retry' };
+}
+
 export function selectManagedReplicationPresenter(defaults: Record<string, any>, requested?: string): Record<string, any> | undefined {
   const presenters = (Array.isArray(defaults.presenters) ? defaults.presenters : []).filter((item: any) => item.authorized);
   if (requested) return presenters.find((item: any) => item.id === requested || item.avatarId === requested);
@@ -25,9 +39,23 @@ export function selectManagedReplicationPresenter(defaults: Record<string, any>,
 
 export interface ManagedReplicationPorts {
   initialize: typeof buildReplicationWorkbenchSpec;
-  execute: (input: { tenantId: string; projectId: string; store: DataStore }) => Promise<{ state: string; changed: boolean; blocker?: string }>;
+  execute: (input: { tenantId: string; projectId: string; maxCostCny: number; store: DataStore }) => Promise<{ state: string; changed: boolean; blocker?: string }>;
   finish: (input: { tenantId: string; projectId: string; spec: Record<string, any> }) => Promise<Record<string, any>>;
   materials: (tenantId: string) => Promise<Array<Record<string, any>>>;
+}
+
+/** One managed clone may spend at most its already-frozen content estimate.
+ * This consumes an existing weekly reservation; it does not create a second
+ * reservation or fall back to a provider-wide default. */
+export function managedReplicationCostCap(spec: Record<string, any>): number | null {
+  const context = object(object(spec.contentOrder).operatingContext);
+  const estimated = Number(context.estimatedContentCost);
+  const budget = Number(context.productionBudget);
+  const spent = Number(context.productionSpent);
+  if (!Number.isFinite(estimated) || estimated <= 0 || !Number.isFinite(budget) || budget <= 0
+    || !Number.isFinite(spent) || spent < 0) return null;
+  const remaining = Math.max(0, budget - spent);
+  return remaining > 0 ? Math.round(Math.min(estimated, remaining) * 100) / 100 : null;
 }
 
 /** The business worker owns orchestration; existing workbench executors own
@@ -74,7 +102,9 @@ export async function advanceManagedReplication(input: {
         replicationBridgeVersion: MANAGED_REPLICATION_BRIDGE_VERSION, blocker: '', retryPolicy: '', retryAfter: '', updatedAt: now } });
       return { changed: true, blocker: '' };
     }
-    const result = await ports.execute({ tenantId: input.tenantId, projectId: input.projectId, store: input.store });
+    const maxCostCny = managedReplicationCostCap(spec);
+    if (!maxCostCny) throw Error('冻结内容订单缺少可用的单条制作额度，未调用供应商');
+    const result = await ports.execute({ tenantId: input.tenantId, projectId: input.projectId, maxCostCny, store: input.store });
     const latest = await input.store.getById<any>('studio_projects', input.projectId);
     if (!latest || latest.tenant_id !== input.tenantId) throw Error('逐镜执行后的经营项目已失效');
     spec = object(latest.spec);
@@ -100,11 +130,14 @@ export async function advanceManagedReplication(input: {
     const latest = await input.store.getById<any>('studio_projects', input.projectId);
     if (!latest || latest.tenant_id !== input.tenantId) throw error;
     spec = object(latest.spec);
-    const blocker = error instanceof Error ? error.message : String(error);
+    const failure = managedReplicationFailureState(error);
+    const blocker = failure.blocker;
     const unchanged = spec.automation?.stage === 'blocked' && spec.automation?.blocker === blocker;
     await persist({ ...spec, automation: { ...spec.automation, stage: 'blocked', status: 'blocked',
       replicationBridgeVersion: MANAGED_REPLICATION_BRIDGE_VERSION, resumeStage: 'material_match', blocker,
-      retryPolicy: 'service_retry', retryAfter: new Date(Date.parse(now) + 15 * 60_000).toISOString(), updatedAt: now } });
+      retryPolicy: failure.retryPolicy,
+      retryAfter: failure.retryPolicy === 'input_required' ? '' : new Date(Date.parse(now) + 15 * 60_000).toISOString(),
+      updatedAt: now } });
     return { changed: !unchanged, blocker };
   }
 }

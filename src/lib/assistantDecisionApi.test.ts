@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
+import { normalizeAssistantDecisionExecutionReceipt } from '../../shared/contracts/assistantDecisionCenter';
 import {
   AssistantDecisionApiError,
   executeAssistantDecision,
@@ -155,6 +156,49 @@ test('409 becomes a refreshable stale-decision error', async () => {
       executeAssistantDecision({ cardId: 'one', actionId: 'approve', expectedVersion: 'old', page: 'digitalEmployees' }),
       (error: unknown) => error instanceof AssistantDecisionApiError && error.status === 409 && /刷新/.test(error.message),
     );
+  } finally {
+    globalThis.fetch = originalFetch;
+    Object.defineProperty(globalThis, 'localStorage', { configurable: true, value: originalLocalStorage });
+  }
+});
+
+test('business blockers retain their real reason and conflicting workflow identity', async () => {
+  const originalFetch = globalThis.fetch;
+  const originalLocalStorage = globalThis.localStorage;
+  Object.defineProperty(globalThis, 'localStorage', { configurable: true, value: { getItem: () => null } });
+  globalThis.fetch = (async () => new Response(JSON.stringify({
+    error: 'active_goal_exists', message: '另一轮周目标尚未结束', activeGoalId: 'other-goal', activeRunId: 'other-run',
+  }), { status: 409 })) as typeof fetch;
+  try {
+    await assert.rejects(executeAssistantDecision({ cardId: 'plan', actionId: 'approve_and_start', expectedVersion: '1', page: 'digitalEmployees' }),
+      (error: unknown) => error instanceof AssistantDecisionApiError && error.message === '另一轮周目标尚未结束'
+        && error.details.activeRunId === 'other-run' && !error.message.includes('待办已更新'));
+  } finally {
+    globalThis.fetch = originalFetch;
+    Object.defineProperty(globalThis, 'localStorage', { configurable: true, value: originalLocalStorage });
+  }
+});
+
+test('plan start requires a persisted execution receipt, not preparation or a generic completed outcome', async () => {
+  const originalFetch = globalThis.fetch;
+  const originalLocalStorage = globalThis.localStorage;
+  Object.defineProperty(globalThis, 'localStorage', { configurable: true, value: { getItem: () => null } });
+  const receipt = { goalId: 'goal', runId: 'run', status: 'waiting_external', taskCount: 5, startedAt: '2026-10-11T00:00:00Z' };
+  let execution: unknown;
+  globalThis.fetch = (async () => new Response(JSON.stringify({
+    ...normalizeAssistantDecisionFeed({ page: 'digitalEmployees', items: [] }), ok: true, outcome: 'completed', execution,
+  }), { status: 200 })) as typeof fetch;
+  const input = { cardId: 'plan', actionId: 'approve_and_start' as const, expectedVersion: '1', page: 'digitalEmployees' };
+  try {
+    for (execution of [undefined, { status: 'ready' }, { ...receipt, runId: '' }, { ...receipt, taskCount: 0 }, { ...receipt, startedAt: '' }]) {
+      await assert.rejects(executeAssistantDecision(input),
+        (error: unknown) => error instanceof AssistantDecisionApiError && error.code === 'plan_start_unconfirmed');
+    }
+    execution = { ...receipt, providerLogs: ['private'], tokens: 'private' };
+    assert.deepEqual((await executeAssistantDecision(input)).execution, receipt);
+    assert.equal(normalizeAssistantDecisionExecutionReceipt({ ...receipt, status: 'preparing' }), undefined);
+    assert.equal(normalizeAssistantDecisionExecutionReceipt({ ...receipt, taskCount: '5' }), undefined);
+    assert.equal(normalizeAssistantDecisionExecutionReceipt({ ...receipt, status: 'failed' })?.status, 'failed', 'a real failed run must not be advertised as producing');
   } finally {
     globalThis.fetch = originalFetch;
     Object.defineProperty(globalThis, 'localStorage', { configurable: true, value: originalLocalStorage });

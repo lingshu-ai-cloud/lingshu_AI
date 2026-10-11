@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { studioAigcBatchBudgetPreview, studioAigcBudgetConfigFromEnv, storyboardBudgetSegmentDurations, storyboardBudgetConfirmedStageDurations } from './studioAigcBatchBudget.js';
+import { studioAigcBatchBudgetPreview, studioAigcBudgetConfigForSpec, studioAigcBudgetConfigFromEnv, storyboardBudgetSegmentDurations, storyboardBudgetConfirmedStageDurations } from './studioAigcBatchBudget.js';
 import type { StudioBatchShotRoute } from './studioBatchShotRoutes.js';
 
 const route = (shotId: string, kind: StudioBatchShotRoute['route']): StudioBatchShotRoute => ({
@@ -59,6 +59,14 @@ const freeWithObserverEnabled = studioAigcBatchBudgetPreview([route('free-shot',
   maxRetries: 1, batchBudgetCny: 30, modelId: 'seedance',
 });
 assert.equal(freeWithObserverEnabled.shotPlans[0]?.estimatedFirstFrameCostCny, 0.3);
+assert.equal(studioAigcBudgetConfigForSpec({ automation: { managedBy: 'digital_employee' },
+  contentOrder: { operatingContext: { estimatedContentCost: 12.5 } } }).batchBudgetCny, 12.5,
+'managed production uses the already-frozen per-content estimate instead of the 30 yuan environment default');
+assert.equal(studioAigcBudgetConfigForSpec({ automation: { managedBy: 'digital_employee' },
+  contentOrder: { operatingContext: { estimatedContentCost: 12.5 } } }, 8).batchBudgetCny, 8,
+'a native request may lower but never raise the frozen limit');
+assert.equal(studioAigcBudgetConfigForSpec({ automation: { managedBy: 'digital_employee' } }).batchBudgetCny, 0,
+'managed production without a frozen order limit fails closed');
 const oldGeometryEnabled = process.env.STORYBOARD_CLONE_GEOMETRY_QWEN_ENABLED;
 const oldGeometryCost = process.env.STORYBOARD_AIGC_CLONE_GEOMETRY_ESTIMATED_CNY;
 try {

@@ -19,12 +19,15 @@ import {
   contentFingerprint,
   detectContentDuplication,
   isLlmUnavailableError,
+  immutableContentOrderBlockers,
   matchSceneSources,
   platformCreativeBrief,
   productionTiming,
   resolveEnterpriseAssetLocation,
   sceneIntent,
+  repairFrozenOrderProductBinding,
   resumeContentProjectForTaskControl,
+  resolveFrozenOrderProduct,
   selectExplicitFocusProducts,
   selectContentProjectsForTick,
   proportionalCues,
@@ -71,12 +74,34 @@ assert.equal(
 assert.equal(sceneIntent('[0-4s]\n环境：工作台\n画面：元件', 0, 4), '环境：工作台；画面：元件');
 assert.deepEqual(selectExplicitFocusProducts([{ name: 'Product A', sku: 'A-1' }], ''), [], 'an empty focus-product selection means no current focus, not every knowledge-base product');
 assert.deepEqual(selectExplicitFocusProducts([{ name: 'Product A', sku: 'A-1' }, { name: 'Product B', sku: 'B-1' }], 'B-1').map(item => item.name), ['Product B']);
+const frozenCatalog = [{ id: 'product-a', name: 'Product A', sku: 'A-1' }, { id: 'product-b', name: 'Product B', sku: 'B-1' }];
+assert.equal(resolveFrozenOrderProduct(frozenCatalog, { productId: 'product-b', productName: 'Product B' })?.productId, 'product-b', 'a frozen order may use a catalog product outside the focus-product default');
+assert.equal(resolveFrozenOrderProduct(frozenCatalog, { productId: 'stale-product', productName: 'Product B' }), undefined, 'an unknown explicit id must not silently rebind by display name');
+assert.equal(resolveFrozenOrderProduct(frozenCatalog, { productId: '', productName: 'B-1' })?.productId, 'product-b', 'legacy id-less orders may use one unambiguous name or SKU match');
+assert.equal(resolveFrozenOrderProduct([{ id: 'one', name: 'Same' }, { id: 'two', name: 'Same' }], { productName: 'Same' }), undefined, 'ambiguous legacy names must fail closed');
+assert.deepEqual(immutableContentOrderBlockers({ readinessBlockers: ['参考视频尚无有效精确分析', '指定产品不在当前冻结产品资料中'] }), [], 'reference/product readiness must be recomputed so the same task can continue after evidence is supplied');
+assert.deepEqual(immutableContentOrderBlockers({ readinessBlockers: ['第 2 条：指定内容路径未在 Agent 配置中开启'] }), ['第 2 条：指定内容路径未在 Agent 配置中开启'], 'frozen route scope remains a hard order-local boundary');
 
 const asset = (partial: Partial<AssetCandidate> & Pick<AssetCandidate, 'id' | 'name'>): AssetCandidate => ({
   type: 'image', duration: 0, observations: ['产品置于桌面'], visualObservations: ['产品置于桌面'],
   authorization: { status: 'owned', scope: 'tenant', evidence: '当前租户上传' }, synthetic: false, tags: [], source: 'enterprise_product',
   ...partial,
 });
+const legacyProductBlockedSpec = {
+  contentOrder: { id: 'order-b', route: 'product', platform: 'tiktok', productId: 'product-b', productName: 'Product B', evidenceRefs: [{ type: 'enterprise_material', id: 'asset-product-b' }] },
+  automation: { managedBy: 'digital_employee', stage: 'blocked', status: 'blocked', blocker: '批次订单引用的产品不在当前冻结重点产品中', routePlan: { route: 'product', productId: '', productName: 'Product B', assetIds: [], platform: 'tiktok', platformBrief: 'brief', gap: '旧产品范围误拦' } },
+  evidenceSnapshot: { reference: null },
+};
+const repairedProductBinding = repairFrozenOrderProductBinding({
+  spec: legacyProductBlockedSpec,
+  profile: { products: { items: frozenCatalog }, company: {} } as any,
+  config: { focusProducts: 'Product A' } as any,
+  assets: [asset({ id: 'asset-product-b', name: 'B 产品图', productId: 'product-b', productName: 'Product B' })],
+})!;
+assert.equal((repairedProductBinding.automation as any).routePlan.productId, 'product-b', 'legacy focus-only blocker must repair from the frozen order product id');
+assert.equal((repairedProductBinding.automation as any).routePlan.gap, undefined, 'the obsolete focus-product gap must not survive the binding repair');
+assert.equal((repairedProductBinding.automation as any).stage, 'blocked', 'binding repair alone must not retry production without task control');
+assert.equal((repairedProductBinding.automation as any).blocker, legacyProductBlockedSpec.automation.blocker, 'the user-visible blocker remains until the scoped retry is requested');
 
 const balanced = allocateBalancedContentRoutes({
   count: 6,
@@ -218,6 +243,18 @@ assert.equal(resumedProjectSpec!.renderOutputPath, '/preserved/render.mp4', 'ret
 assert.equal(resumedAutomation.renderOutputPath, '/preserved/render.mp4');
 assert.equal(resumeContentProjectForTaskControl({ project: blockedProject, runId: 'other-run', affectedTaskIds: new Set(['task-content']), now: retryNow }), null, 'retry must not mutate another run');
 assert.equal(resumeContentProjectForTaskControl({ project: blockedProject, runId: 'run-1', affectedTaskIds: new Set(['other-task']), now: retryNow }), null, 'retry must not mutate another task');
+const legacyBlockedAtNode = {
+  id: 'legacy-project-blocked-at-node',
+  spec: {
+    workflowRunId: 'run-1', workflowTaskId: 'task-content',
+    automation: { managedBy: 'digital_employee', stage: 'script', status: 'blocked', resumeStage: 'script', blocker: '旧重点产品范围误拦' },
+  },
+};
+const resumedLegacy = resumeContentProjectForTaskControl({ project: legacyBlockedAtNode, runId: 'run-1', affectedTaskIds: new Set(['task-content']), now: retryNow });
+assert.equal((resumedLegacy?.automation as Record<string, unknown>).stage, 'script', 'legacy node-stage plus blocked status must resume the same safe production node');
+assert.equal((resumedLegacy?.automation as Record<string, unknown>).status, 'queued');
+assert.equal((resumedLegacy?.automation as Record<string, unknown>).blocker, undefined);
+assert.equal(resumeContentProjectForTaskControl({ project: { ...legacyBlockedAtNode, spec: { ...legacyBlockedAtNode.spec, automation: { ...legacyBlockedAtNode.spec.automation, stage: 'completed' } } }, runId: 'run-1', affectedTaskIds: new Set(['task-content']), now: retryNow }), null, 'task retry must never reopen completed production');
 assert.equal(contentProjectBlockIsSemanticallyUnchanged({
   automation: { stage: 'blocked', status: 'blocked', resumeStage: 'script', blocker: 'Request timed out.', retryAfter: '2026-09-04T08:15:00.000Z' },
   resumeStage: 'script',

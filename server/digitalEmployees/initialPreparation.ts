@@ -42,7 +42,7 @@ export function initialPreparationSourcesFromPersisted(
 }
 export function initialPreparationJobKey(tenantId:string,state:InitialPreparation,source:InitialPreparationSource){return createHash('sha256').update(JSON.stringify(source.origin==='owned'?[tenantId,'history',source.key]:[tenantId,state.goalId,state.requestId,source.key])).digest('hex').slice(0,15);}
 
-type InitialPreparationPlanRecord = { id: string; tenant_id: string; plan: unknown };
+type InitialPreparationPlanRecord = { id: string; tenant_id: string; status: string; plan: unknown };
 type InitialPreparationPlanStore = Pick<DataStore, 'getById' | 'compareAndSwap'>;
 
 function planBody(value: unknown): Record<string, unknown> {
@@ -66,8 +66,10 @@ export async function persistInitialPreparationState(input:{
  for(let attempt=0;attempt<maxAttempts;attempt+=1){
   const latest=await input.dataStore.getById<InitialPreparationPlanRecord>(input.collection,input.planId);
   if(!latest||latest.tenant_id!==input.tenantId)throw Error('原计划不存在');
-  const nextPlan={...planBody(latest.plan),initialPreparation:structuredClone(input.state)};
-  if(await compareAndSwap(input.collection,input.planId,{plan:latest.plan},{plan:nextPlan}))return;
+  if(!['draft','approved'].includes(latest.status))throw Error('原计划已锁定，请刷新后重试');
+  const currentPlan=planBody(latest.plan);if(Object.prototype.hasOwnProperty.call(currentPlan,'factRebuildFence'))throw Error('原计划正在重建，请刷新后重试');
+  const nextPlan={...currentPlan,initialPreparation:structuredClone(input.state)};
+  if(await compareAndSwap(input.collection,input.planId,{tenant_id:input.tenantId,status:latest.status,plan:latest.plan},{plan:nextPlan}))return;
  }
  throw Error('初始化进度保存冲突，请重试');
 }
@@ -78,8 +80,10 @@ export async function replaceInitialPreparationPlan(input:{
  nextPlan:Record<string,unknown>;conflictMessage?:string;
 }):Promise<void>{
  if(input.expected.tenant_id!==input.tenantId)throw Error('原计划不存在');
+ if(input.expected.status!=='draft')throw Error('原计划已锁定，请刷新后重试');
+ if(Object.prototype.hasOwnProperty.call(planBody(input.expected.plan),'factRebuildFence'))throw Error('原计划正在重建，请刷新后重试');
  const compareAndSwap=compareAndSwapPort(input.dataStore);
- if(!await compareAndSwap(input.collection,input.expected.id,{plan:input.expected.plan},{plan:structuredClone(input.nextPlan)}))
+ if(!await compareAndSwap(input.collection,input.expected.id,{tenant_id:input.tenantId,status:'draft',plan:input.expected.plan},{plan:structuredClone(input.nextPlan)}))
   throw Error(input.conflictMessage||'计划版本已修改，请重新确认');
 }
 

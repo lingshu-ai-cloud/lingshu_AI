@@ -92,9 +92,34 @@ export type AssistantDecisionCommand = {
   idempotencyKey?: string;
 };
 
+/** Compact receipt of a persisted workflow; preparation is not a running workflow. */
+export type AssistantDecisionExecutionReceipt = {
+  goalId: string;
+  runId: string;
+  status: string;
+  taskCount: number;
+  startedAt: string;
+};
+
+export function normalizeAssistantDecisionExecutionReceipt(value: unknown): AssistantDecisionExecutionReceipt | undefined {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return undefined;
+  const source = value as Record<string, unknown>;
+  const statuses = ['initializing', 'planning', 'queued', 'running', 'waiting_external', 'waiting_approval', 'waiting_human', 'paused', 'succeeded', 'failed', 'cancelled'];
+  if (typeof source.goalId !== 'string' || !source.goalId.trim()
+    || typeof source.runId !== 'string' || !source.runId.trim()
+    || typeof source.status !== 'string' || !statuses.includes(source.status)
+    || typeof source.taskCount !== 'number' || !Number.isSafeInteger(source.taskCount) || source.taskCount < 1
+    || typeof source.startedAt !== 'string' || !Number.isFinite(Date.parse(source.startedAt))) return undefined;
+  return {
+    goalId: source.goalId.trim(), runId: source.runId.trim(), status: source.status,
+    taskCount: source.taskCount, startedAt: source.startedAt,
+  };
+}
+
 export type AssistantDecisionActionResponse = AssistantDecisionFeed & {
   ok: true;
   outcome: 'completed' | 'already_completed' | 'navigation_required';
+  execution?: AssistantDecisionExecutionReceipt;
 };
 
 export function normalizeAssistantDecisionPage(value: unknown): AssistantDecisionPage {

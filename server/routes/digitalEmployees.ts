@@ -3,6 +3,20 @@ import { createCrawlWorkerJob } from './crawlWorker.js';
 import {createCustomerTaskNavigationRouter} from './customerTaskNavigation.js';
 import { requiresContentHumanAcceptance } from '../digitalEmployees/contentProductionAcceptancePolicy.js';
 import { nextManagedCycleWindow, prepareManagedCyclePackage } from '../digitalEmployees/managedOperatingCycle.js';
+import {
+  commitWeeklyGoalFactRebuildReplacement,
+  hasWeeklyGoalFactRebuildMarker,
+  hasWeeklyGoalFactRebuildPlanFence,
+  sameCompletedWeeklyGoalFactRebuild,
+  sameWeeklyGoalFactRebuild,
+  weeklyGoalFactRebuildLink,
+  weeklyGoalFactRebuildRecordId,
+  weeklyGoalFactRebuildReplacement,
+  weeklyGoalFactRebuildSnapshotMatches,
+  weeklyGoalFactRebuildSourcePlanDigest,
+  WeeklyGoalFactRebuildCommitError,
+  type WeeklyGoalFactRebuildLink,
+} from '../digitalEmployees/goalFactRebuild.js';
 import { acquireDurableOperationLease, assertDurableOperationLease, releaseDurableOperationLease } from '../runtime/durableLease.js';
 import { createHash, randomUUID } from 'node:crypto';
 import { managedPublishingGrantErrors } from '../../shared/contracts/managedPublishingGrant.js';
@@ -11,14 +25,15 @@ import { productionQualitySummary } from '../digitalEmployees/productionQualityS
 import { productionFailureState } from '../digitalEmployees/productionPreflight.js';
 import { reopenNoDataCustomerBranch } from '../digitalEmployees/customerReentry.js';
 import { normalizeContinuationPolicy } from '../../shared/contracts/continuationPolicy.js';
-import { cyclesOverlap, followupDraftDue } from '../digitalEmployees/continuationPolicy.js';
+import { followupDraftDue } from '../digitalEmployees/continuationPolicy.js';
+import { findOperatingGoalConflict } from '../digitalEmployees/operatingGoalConflicts.js';
 import { reviewTodoService } from '../digitalEmployees/reviewTodos.js';
 import { applyReviewTodoPlan, sameTodoRequirements } from '../digitalEmployees/reviewTodoPlan.js';
 import type { ReviewTodoBoard } from '../../src/lib/reviewTodos.js';
 import { nextTaskFailure, taskRetryDue, type TaskFailure } from '../digitalEmployees/taskRetry.js';
 import { analysisWait, basicTaskWait, collectionWait, followupComplete, followupWait, postFullyPublished, publishingPlatformsCovered, publishingWait, waitState } from '../digitalEmployees/executionDiagnostics.js';
 import { listTenantEmployees } from './auth.js';
-import { recommendPackage, normalizePackage, validatePackage, compilePackage, packageConfig, packageTaskForKey, grantCovers, criticalBusinessConfigChanges } from '../digitalEmployees/weeklyPackage.js';
+import { recommendPackage, normalizePackage, validatePackage, validatePackageForStart, compilePackage, packageConfig, packageTaskForKey, grantCovers, criticalBusinessConfigChanges } from '../digitalEmployees/weeklyPackage.js';
 import { TASK_TEMPLATES, type WeeklyPackage } from '../../src/lib/weeklyPackage.js';
 import { fillMatrixVideos } from '../../src/lib/weeklyMatrix.js';
 import { applyDirectorDecision, DIRECTOR_DECISION_LABELS, DIRECTOR_REASON_LABELS, type DirectorDecision, type DirectorDecisionReason } from '../../src/lib/directorDecision.js';
@@ -51,9 +66,10 @@ import { readTenantEnterpriseProfile, updateTenantEnterpriseProfile, type Enterp
 import { buildBusinessSnapshot as defaultBuildBusinessSnapshot, type BusinessSnapshot } from '../digitalEmployees/businessSnapshot.js';
 const buildBusinessSnapshot: typeof defaultBuildBusinessSnapshot = (tenantId, range) => currentExecutionAdapters()?.snapshot?.(tenantId, range) ?? defaultBuildBusinessSnapshot(tenantId, range);
 import { freezeStoryboardNarration, CONTENT_SCRIPT_QUALITY_RULE_VERSION, advanceAutomatedContentProduction, collectProductionAssets, generateDirectorScriptContracts, productIdentity, resolveEnterpriseAssetLocation, resumeContentProjectForTaskControl } from '../digitalEmployees/contentProduction.js';
+import { managedReplicationFailureState } from '../digitalEmployees/replicationContentProduction.js';
 import { assessStoryboardMaterialReadiness, resolveMaterialProductAssociation } from '../digitalEmployees/materialProductionReadiness.js';
 import { contentProjectLineageFields } from '../digitalEmployees/contentProjectLineage.js';
-import { buildContentBatchPlan, contentPlanCoverage, enterpriseAssetStableId, type ContentBatchPlanDraft } from '../digitalEmployees/contentBatchPlan.js';
+import { buildContentBatchPlan, contentPlanCoverage, enterpriseAssetStableId, type ContentBatchPlanDraft, type ContentOrder } from '../digitalEmployees/contentBatchPlan.js';
 import { bindDefaultProductsToPackage, enrichPackageWithContentSignals, publicationCopyForPlan } from '../digitalEmployees/contentPlanRecommendation.js';
 import { MATERIAL_TYPE_LABELS, SHOT_ROLE_LABELS, buildBenchmarkAnalysis } from '../../shared/benchmarkAnalysis.js';
 import { summarizeContentFeedback, traceableIndustryTrends } from '../digitalEmployees/contentReview.js';
@@ -79,7 +95,7 @@ import { beijingDate, followupScheduleFromCadence, latestDueReviewSlot, socialSc
 import { withDigitalEmployeeRunLock } from '../digitalEmployees/runControl.js';
 import { cancelDigitalEmployeeRun as cancelDigitalEmployeeRunApplication } from '../digitalEmployees/runCancellation.js';
 import { buildAssistantDecisionFeed, AssistantDecisionValidationError, executeAssistantDecisionCommand, mergeAssistantDecisionFeeds, starterDecisionCards, approvalDecisionVersion, weeklyPlanDecisionVersion, workflowTaskDecisionVersion } from '../digitalEmployees/assistantDecisionCenter.js';
-import { normalizeAssistantDecisionPage, type AssistantDecisionActionId, type AssistantDecisionFeed, type AssistantDecisionPage, type AssistantDecisionCard } from '../../shared/contracts/assistantDecisionCenter.js';
+import { normalizeAssistantDecisionPage, normalizeAssistantDecisionExecutionReceipt, type AssistantDecisionExecutionReceipt, type AssistantDecisionActionId, type AssistantDecisionFeed, type AssistantDecisionPage, type AssistantDecisionCard } from '../../shared/contracts/assistantDecisionCenter.js';
 import { customerApprovalRequestHash } from '../digitalEmployees/customerTaskApprovalNavigation.js';
 import {
   createDigitalEmployeeApprovalDecisionApplication,
@@ -311,6 +327,129 @@ async function appendAudit(input: {
   });
 }
 
+async function ensureWeeklyGoalFactRebuildAudit(input: {
+  tenantId: string;
+  userId: string;
+  sourceGoalId: string;
+  sourceGoalVersion: number;
+  sourcePlanId: string;
+  sourcePlanDigest: string;
+  targetGoalId: string;
+  targetPlanId: string;
+  fromFactsVersion: string;
+  toFactsVersion: string;
+  configVersion: number;
+  policyVersion: string;
+  requestId: string;
+}): Promise<void> {
+  const id = weeklyGoalFactRebuildRecordId('audit', input.tenantId, input.sourceGoalId, input.sourceGoalVersion, input.toFactsVersion, input.configVersion, input.policyVersion, input.sourcePlanDigest);
+  const metadata = {
+    requestId: input.requestId,
+    sourceGoalId: input.sourceGoalId,
+    sourceGoalVersion: input.sourceGoalVersion,
+    sourcePlanId: input.sourcePlanId,
+    sourcePlanDigest: input.sourcePlanDigest,
+    targetGoalId: input.targetGoalId,
+    targetPlanId: input.targetPlanId,
+    fromFactsVersion: input.fromFactsVersion,
+    toFactsVersion: input.toFactsVersion,
+    configVersion: input.configVersion,
+    policyVersion: input.policyVersion,
+    automatic: true,
+    started: false,
+  };
+  const auditMatches = (record: StoredRecord | null) => {
+    const saved = jsonObject<Record<string, unknown>>(record?.metadata, {});
+    return Boolean(record
+      && String(record.tenantId || '') === input.tenantId
+      && String(record.action || '') === 'weekly_goal.rebuilt_from_latest_facts'
+      && String(record.targetType || '') === 'weekly_goal'
+      && String(record.targetId || '') === input.targetGoalId
+      && String(saved.requestId || '') === input.requestId
+      && String(saved.sourceGoalId || '') === input.sourceGoalId
+      && Number(saved.sourceGoalVersion) === input.sourceGoalVersion
+      && String(saved.sourcePlanId || '') === input.sourcePlanId
+      && String(saved.sourcePlanDigest || '') === input.sourcePlanDigest
+      && String(saved.targetGoalId || '') === input.targetGoalId
+      && String(saved.targetPlanId || '') === input.targetPlanId
+      && String(saved.fromFactsVersion || '') === input.fromFactsVersion
+      && String(saved.toFactsVersion || '') === input.toFactsVersion
+      && Number(saved.configVersion) === input.configVersion
+      && String(saved.policyVersion || '') === input.policyVersion
+      && saved.automatic === true
+      && saved.started === false);
+  };
+  const existing = await store.getById<StoredRecord>('audit_logs', id);
+  if (existing) {
+    if (!auditMatches(existing)) {
+      throw new Error('weekly_goal_fact_rebuild_audit_conflict');
+    }
+    return;
+  }
+  let created: StoredRecord | null = null;
+  try {
+    created = await store.create<StoredRecord>('audit_logs', {
+      id,
+      tenantId: input.tenantId,
+      actorUserId: input.userId,
+      actorEmail: '',
+      action: 'weekly_goal.rebuilt_from_latest_facts',
+      targetType: 'weekly_goal',
+      targetId: input.targetGoalId,
+      metadata,
+      createdAt: new Date().toISOString(),
+    });
+  } catch { /* A deterministic-ID winner is recovered and validated below. */ }
+  if (created) return;
+  const recovered = await store.getById<StoredRecord>('audit_logs', id);
+  if (!auditMatches(recovered)) {
+    throw new Error('weekly_goal_fact_rebuild_audit_unavailable');
+  }
+}
+
+function weeklyGoalFactRebuildRecovery(goal: GoalRecord, plan: PlanRecord, expectedFactsVersion: string, factVersion: string) {
+  return {
+    recoveryAction: 'rebuild_weekly_goal',
+    sourceGoalId: goal.id,
+    expectedGoalVersion: Number(goal.version || 1),
+    sourcePlanId: plan.id,
+    expectedFactsVersion,
+    expectedSourcePlanDigest: weeklyGoalFactRebuildSourcePlanDigest(plan),
+    factVersion,
+  };
+}
+
+async function weeklyGoalFactRebuildTargetCommitted(tenantId: string, target: GoalRecord): Promise<boolean> {
+  if (!hasWeeklyGoalFactRebuildMarker(target.scope)) return true;
+  const targetLink = weeklyGoalFactRebuildLink(target.scope);
+  if (!targetLink) return false;
+  const source = await tenantRecord<GoalRecord>(COLLECTION.goals, targetLink.sourceGoalId, tenantId);
+  const replacement = weeklyGoalFactRebuildReplacement(source?.scope);
+  if (!source
+    || source.status !== 'cancelled'
+    || !replacement
+    || replacement.targetGoalId !== target.id
+    || !sameCompletedWeeklyGoalFactRebuild(targetLink, replacement)) return false;
+  try {
+    return await commitWeeklyGoalFactRebuildReplacement({
+      dataStore: store,
+      tenantId,
+      sourceGoalId: source.id,
+      sourceGoalVersion: targetLink.sourceGoalVersion,
+      sourceDescription: goalInput(source).scope,
+      replacement,
+    }) === 'replayed';
+  } catch {
+    return false;
+  }
+}
+
+async function committedDigitalEmployeeOperatingGoals(tenantId: string, goals: GoalRecord[]): Promise<GoalRecord[]> {
+  const operatingGoals = digitalEmployeeOperatingGoals(goals);
+  const commitStates = await Promise.all(operatingGoals.map(goal => weeklyGoalFactRebuildTargetCommitted(tenantId, goal)));
+  return operatingGoals.filter((_goal, index) => commitStates[index]);
+}
+
 function goalInput(record: GoalRecord): WeeklyGoalInput {
   const publicRecord = publicGoal(record);
   const { id: _id, status: _status, version: _version, createdAt: _created, updatedAt: _updated, ...goal } = publicRecord;
@@ -528,7 +667,6 @@ async function generateWeeklyTaskPreviews(input: {
 
   const assets = await collectProductionAssets(input.tenantId, profile);
   const assetById = new Map(assets.map(asset => [asset.id, asset]));
-  const publishingRequired = input.pack.tasks.some(task => task.templateId === 'publishing');
   const pendingShooting = shootingRows.items.map(row => ({ row, payload: jsonObject<Record<string, unknown>>(row.payload, {}) }))
     .filter(item => !jsonObject<string[]>(item.payload.uploadedMaterialIds, []).length);
   const budgetExceeded = Boolean(input.pack.directorPlan
@@ -575,12 +713,12 @@ async function generateWeeklyTaskPreviews(input: {
     });
     const unresolvedShootTasks = !managedClone && materialBlockers.length ? shootTasks : [];
     const blockers = [
+      ...(order.readinessBlockers || []),
       ...videoPlanErrors(plan),
       ...materialBlockers,
       selectedAssets.some(asset => asset.authorization.status === 'unknown') ? '素材授权范围未确认' : '',
       unresolvedShootTasks.length ? `本条母版有 ${unresolvedShootTasks.length} 个待拍任务尚未回填素材` : '',
       budgetExceeded ? '本周预计制作成本超过生产预算' : '',
-      publishingRequired && (order.deliveryVariants || []).some(variant => !input.config.publishingTargets.some(target => target.accountId === variant.accountId && target.platform === variant.platform)) ? '一个或多个平台发布账号尚未连接或不在本周授权范围' : '',
       plan.route === 'clone' && !references.items.some(item => item.id === plan.referenceId) ? '爆款参考不存在或已失效' : '',
     ].filter(Boolean);
     return { order, plan, reference, analysis, benchmarkAnalysis, materialReadiness, selectedAssets, shootTasks: unresolvedShootTasks, blockers: [...new Set(blockers)] };
@@ -771,7 +909,24 @@ async function ensureContentBatchPlan(input: { tenantId: string; goal: GoalRecor
     constraints: [...new Set([...(order.constraints || []), ...(director?.qualityStandard ? [`编导确认的脚本与审片标准：${director.qualityStandard}`] : [])])],
     ...(director ? { operatingContext: { productionBudget: director.productionBudget, productionSpent: director.productionSpent, productionReserved: estimatedTotal, estimatedContentCost: Number(order.videoPlan?.estimatedCost || 0), originalTarget: director.originalTarget, platformVersionTarget: director.platformVersionTarget, publishTarget: director.publishTarget, qualityStandard: director.qualityStandard, packageRevision: Number(pack?.revision || 0) } } : {}),
   }));
-  const effectiveDraft = draft.status === 'planned' ? { ...draft, orders: await generateDirectorScriptContracts({ tenantId: input.tenantId, config: input.config, goal: goalInput(input.goal), orders: constrainedOrders, now, enterpriseProfile: prepared.enterpriseProfile }) } : draft;
+  let effectiveDraft = draft;
+  if (draft.status === 'planned') {
+    const scriptableOrders = constrainedOrders.filter(order => !order.readinessBlockers?.length);
+    const directedOrders = scriptableOrders.length
+      ? await generateDirectorScriptContracts({ tenantId: input.tenantId, config: input.config, goal: goalInput(input.goal), orders: scriptableOrders, now, enterpriseProfile: prepared.enterpriseProfile })
+      : [];
+    const directedById = new Map(directedOrders.map(order => [order.id, order]));
+    // Keep every frozen order in the batch. An input gap becomes one blocked
+    // content item instead of erasing the other masters from this week.
+    effectiveDraft = { ...draft, orders: constrainedOrders.map(order => {
+      const directed = directedById.get(order.id);
+      return directed ? {
+        ...order,
+        contractVersion: directed.contractVersion,
+        scripts: directed.scripts,
+      } satisfies ContentOrder : order;
+    }) };
+  }
   if (director && input.plan && director.productionReserved !== estimatedTotal) {
     const nextPack = { ...pack!, directorPlan: { ...director, productionReserved: estimatedTotal } };
     await store.update(COLLECTION.plans, input.plan.id, { plan: { ...planBody, businessPackage: nextPack } });
@@ -1017,7 +1172,7 @@ async function buildOverview(tenantId: string, requestedGoalId = '', requestedRa
     configForTenant(tenantId),
     store.list<GoalRecord>(COLLECTION.goals, { where: { tenant_id: tenantId }, sort: '-created_at', page: 1, perPage: 500 }),
   ]);
-  const operatingGoals = digitalEmployeeOperatingGoals(goalResult.items);
+  const operatingGoals = await committedDigitalEmployeeOperatingGoals(tenantId, goalResult.items);
   const goal = requestedGoalId
     ? operatingGoals.find(item => item.id === requestedGoalId) ?? null
     : operatingGoals.find(item => ['active', 'paused'].includes(item.status)) ?? operatingGoals[0] ?? null;
@@ -1614,8 +1769,34 @@ async function observeTaskProof(tenantId: string, run: RunRecord, task: TaskReco
     const expectedCount = pack?.tasks.find(t => t.templateId === 'production')?.videoPlans?.length || 1;
     result.ready = scoped.length >= expectedCount && matching.length === scoped.length;
     result.proof = { ...result.proof, value: matching.length, status: result.ready ? 'available' : 'pending' };
-    const blocker = scoped.map(item => String(jsonObject<Record<string, unknown>>(jsonObject<Record<string, unknown>>(item.spec, {}).automation, {}).blocker || '').trim()).find(Boolean) || '';
-    return { ...result, blockedReason: blocker || (requiresAcceptance && !result.ready ? '内容成片尚未完成所需质量检查' : '') };
+    const projectAutomationStates = scoped.map(item =>
+      jsonObject<Record<string, unknown>>(jsonObject<Record<string, unknown>>(item.spec, {}).automation, {}));
+    const retryPolicy = (automation: Record<string, unknown>) => {
+      if (automation.retryPolicy === 'input_required') return 'input_required';
+      if (automation.route === 'clone' && String(automation.blocker || '').trim()) {
+        return managedReplicationFailureState(String(automation.blocker)).retryPolicy;
+      }
+      return 'service_retry';
+    };
+    const activeProjects = projectAutomationStates.filter(automation => {
+      return !['blocked', 'completed', 'superseded'].includes(String(automation.stage || ''))
+        || (automation.stage === 'blocked' && retryPolicy(automation) !== 'input_required');
+    });
+    // One content item's missing input must not pause siblings that can still
+    // advance. Escalate to waiting_human only after no runnable item remains.
+    const blocker = activeProjects.length ? '' : projectAutomationStates
+      .filter(automation => automation.stage === 'blocked' && retryPolicy(automation) === 'input_required')
+      .map(automation => String(automation.blocker || '').trim())
+      .find(Boolean) || '';
+    const serviceReason = projectAutomationStates
+      .filter(automation => automation.stage === 'blocked' && retryPolicy(automation) !== 'input_required')
+      .map(automation => String(automation.blocker || '').trim())
+      .find(Boolean) || '';
+    return {
+      ...result,
+      ...(serviceReason && !blocker ? { waitState: waitState('service', `部分内容等待服务恢复后自动重试：${serviceReason}`) } : {}),
+      blockedReason: blocker || (requiresAcceptance && !result.ready && !activeProjects.length ? '内容成片尚未完成所需质量检查' : ''),
+    };
   }
   if (task.task_key === 'publishing_calendar') {
     const posts = await store.list<StoredRecord>('posts', { where: { tenant_id: tenantId }, perPage: 500 });
@@ -2481,7 +2662,7 @@ async function buildDigitalEmployeeAssistantFeed(
   const goalResult = await store.list<GoalRecord>(COLLECTION.goals, {
     where: { tenant_id: tenantId }, sort: '-created_at', page: 1, perPage: 500,
   });
-  const goals = digitalEmployeeOperatingGoals(goalResult.items);
+  const goals = await committedDigitalEmployeeOperatingGoals(tenantId, goalResult.items);
   const goal = requestedGoalId
     ? goals.find(item => item.id === requestedGoalId) ?? null
     : goals.find(item => ['draft', 'pending_approval', 'active', 'paused'].includes(item.status)) ?? goals[0] ?? null;
@@ -2599,7 +2780,9 @@ digitalEmployeesRouter.get('/overview', async (req, res) => {
   const goalId = String(req.query.goalId || '').trim();
   if (goalId) {
     const goal = await tenantRecord<GoalRecord>(COLLECTION.goals, goalId, tenantId);
-    if (!goal || !isDigitalEmployeeOperatingGoal(goal)) { res.status(404).json({ error: 'goal_not_found' }); return; }
+    if (!goal || !isDigitalEmployeeOperatingGoal(goal) || !await weeklyGoalFactRebuildTargetCommitted(tenantId, goal)) {
+      res.status(404).json({ error: 'goal_not_found' }); return;
+    }
   }
   const startsAt = String(req.query.startsAt || '').trim();
   const endsAt = String(req.query.endsAt || '').trim();
@@ -2615,8 +2798,10 @@ async function resumeInitialPreparationPlan(tenantId:string,goalId:string,allowB
  if(!lease)return;
  try{
  const plan=await first<PlanRecord>(COLLECTION.plans,{tenant_id:tenantId,goal_id:goalId});const goal=await tenantRecord<GoalRecord>(COLLECTION.goals,goalId,tenantId);if(!plan||!goal)return;
- const body=jsonObject<Record<string,unknown>>(plan.plan,{});const state=body.initialPreparation as InitialPreparation|undefined;if(!state||state.status==='running'||state.status==='blocked'&&!allowBlocked)return;
+ if(!await weeklyGoalFactRebuildTargetCommitted(tenantId,goal))return;
+ const body=jsonObject<Record<string,unknown>>(plan.plan,{});if(hasWeeklyGoalFactRebuildPlanFence(body))return;const state=body.initialPreparation as InitialPreparation|undefined;if(!state||state.status==='running'||state.status==='blocked'&&!allowBlocked)return;
  const existingRun=await first<RunRecord>(COLLECTION.runs,{tenant_id:tenantId,goal_id:goalId});if(existingRun&&existingRun.plan_id===plan.id){await persistInitialPreparationState({dataStore:store,collection:COLLECTION.plans,planId:plan.id,tenantId,state:{...state,status:'running',runId:existingRun.id,reason:''}});return;}
+ if(plan.status!=='draft')return;
  const resolved=await resolveCurrentConfiguration(tenantId,await configForTenant(tenantId));if(!resolved)throw Error('初始化配置不存在');const config=executionConfigForPlan(plan,resolved.config);if(config.allowRealPublishing||config.allowRealCustomerMessages)throw Error('初始化制作准备不接受真实发布或客户发送授权');
  await advanceInitialPreparation(state,{
  save:async value=>{await assertDurableOperationLease({dataStore:store,lease,minimumRemainingMs:1000});await persistInitialPreparationState({dataStore:store,collection:COLLECTION.plans,planId:plan.id,tenantId,state:value});},
@@ -2646,7 +2831,8 @@ digitalEmployeesRouter.post('/goals/:goalId/initial-preparation',async(req,res)=
  const confirmationLease=await acquireDurableOperationLease({dataStore:store,tenantId,scope:'initial_operating_confirmation',subjectId:goalId,ownerId:`confirm-${randomUUID()}`,leaseDurationMs:30*60_000});if(!confirmationLease){res.status(409).json({error:'initial_confirmation_in_progress',message:'原确认正在处理，请查询原计划进度'});return;}
  try{await withLocalQueue(goalApprovalQueues,`${tenantId}:initial-confirm:${goalId}`,async()=>{
  const goal=await tenantRecord<GoalRecord>(COLLECTION.goals,goalId,tenantId);const plan=await first<PlanRecord>(COLLECTION.plans,{tenant_id:tenantId,goal_id:goalId});if(!goal||!plan)throw Error('原计划不存在');
- const body=jsonObject<Record<string,unknown>>(plan.plan,{});const existing=body.initialPreparation as InitialPreparation|undefined;const pack=body.businessPackage as WeeklyPackage;
+ if(!await weeklyGoalFactRebuildTargetCommitted(tenantId,goal))throw Error('最新事实周目标尚未完成安全替换');
+ const body=jsonObject<Record<string,unknown>>(plan.plan,{});if(plan.status!=='draft'||hasWeeklyGoalFactRebuildPlanFence(body))throw Error('原计划正在发生状态变更');const existing=body.initialPreparation as InitialPreparation|undefined;const pack=body.businessPackage as WeeklyPackage;
  if(req.body?.resume&&existing){await resumeInitialPreparationPlan(tenantId,goalId,true);return;}
  const sourceScope=()=>initialPreparationSourcesFromPersisted({goalPlatforms:jsonObject(goal.content_platforms,[]),businessPackage:pack,config:body.configSnapshot,profile:frozenEnterpriseProfileForPlan(plan,false)},{historyAccounts:req.body?.historyAccounts,historyCollectionRequestId:req.body?.historyCollectionRequestId});
  if(existing){if(existing.requestId!==String(req.body?.requestId))throw Error('已确认原计划，请查询或恢复原请求');if(JSON.stringify(existing.sources.map(({jobId,...source})=>source))!==JSON.stringify(sourceScope()))throw Error('确认范围变化，请修订计划');return;}
@@ -2667,7 +2853,7 @@ digitalEmployeesRouter.get('/assistant/decision-center', async (req, res) => {
   const goalId = String(req.query.goalId || '').trim();
   if (goalId) {
     const goal = await tenantRecord<GoalRecord>(COLLECTION.goals, goalId, identity.tenantId);
-    if (!goal || !isDigitalEmployeeOperatingGoal(goal)) {
+    if (!goal || !isDigitalEmployeeOperatingGoal(goal) || !await weeklyGoalFactRebuildTargetCommitted(identity.tenantId, goal)) {
       res.status(404).json({ error: 'goal_not_found' });
       return;
     }
@@ -2691,11 +2877,12 @@ digitalEmployeesRouter.post('/assistant/decision-center/:decisionId/actions', as
   try {
     if (goalId) {
       const goal = await tenantRecord<GoalRecord>(COLLECTION.goals, goalId, identity.tenantId);
-      if (!goal || !isDigitalEmployeeOperatingGoal(goal)) throw new AssistantDecisionCommandError('goal_not_found', 404);
+      if (!goal || !isDigitalEmployeeOperatingGoal(goal) || !await weeklyGoalFactRebuildTargetCommitted(identity.tenantId, goal)) throw new AssistantDecisionCommandError('goal_not_found', 404);
     }
     const fullFeed = await assistantDecisionFeedForRequest(req, identity, page, goalId, 100);
     const card = fullFeed.items.find(item => item.id === decisionId);
     if (!card) throw new AssistantDecisionCommandError('assistant_decision_not_pending', 409);
+    let execution: AssistantDecisionExecutionReceipt | undefined;
     const outcome = await executeAssistantDecisionCommand({
       card, actionId, expectedVersion, note,
       handlers: {
@@ -2730,6 +2917,16 @@ digitalEmployeesRouter.post('/assistant/decision-center/:decisionId/actions', as
             const body = result.body as Record<string, unknown>;
             throw new AssistantDecisionCommandError(String(body.error || 'plan_start_failed'), result.status, body);
           }
+          const started = result.body as Awaited<ReturnType<typeof buildOverview>>;
+          const run = started.run;
+          execution = run?.goal_id === goal.id ? normalizeAssistantDecisionExecutionReceipt({
+            goalId: goal.id, runId: run.id, status: run.status,
+            taskCount: started.tasks.filter(task => task.run_id === run.id).length,
+            startedAt: run.started_at,
+          }) : undefined;
+          if (!execution) throw new AssistantDecisionCommandError('plan_start_unconfirmed', 409, {
+            message: '启动结果尚未确认，请刷新查看真实运行状态；不会重复创建同一周任务。',
+          });
         },
         decideApproval: async (selected, decision, decisionNote) => {
           const approval = await tenantRecord<ApprovalRecord>(COLLECTION.approvals, selected.subject.id, identity.tenantId);
@@ -2754,8 +2951,18 @@ digitalEmployeesRouter.post('/assistant/decision-center/:decisionId/actions', as
       },
     });
 
-    const feed = await assistantDecisionFeedForRequest(req, identity, page, goalId);
-    res.json({ ok: true, outcome, ...feed });
+    const feed = await assistantDecisionFeedForRequest(req, identity, page, goalId).catch(error => {
+      // A secondary read failure must not erase proof of an already persisted
+      // start. Only retire the exact decision confirmed by that receipt; the
+      // remaining snapshot will be refreshed by the normal feed polling.
+      if (!execution) throw error;
+      return {
+        ...fullFeed,
+        items: fullFeed.items.filter(item => item.id !== card.id),
+        total: Math.max(0, fullFeed.total - 1),
+      };
+    });
+    res.json({ ok: true, outcome, ...feed, ...(execution ? { execution } : {}) });
   } catch (error) {
     if (error instanceof AssistantDecisionCommandError) {
       res.status(error.status).json({ error: error.code, ...error.details });
@@ -3096,6 +3303,9 @@ digitalEmployeesRouter.post('/goals/:goalId/package/recommend', async (req, res)
   const { tenantId, userId } = res.locals as AuthLocals;
   const goal = await tenantRecord<GoalRecord>(COLLECTION.goals, req.params.goalId, tenantId);
   if (!goal || goal.status !== 'draft') { res.status(409).json({ error: 'draft_required' }); return; }
+  if (!await weeklyGoalFactRebuildTargetCommitted(tenantId, goal)) {
+    res.status(409).json({ error: 'goal_fact_rebuild_not_committed', message: '最新事实周目标尚未完成安全替换，暂不能修改。' }); return;
+  }
   const plan = await first<PlanRecord>(COLLECTION.plans, { tenant_id: tenantId, goal_id: goal.id });
   const configRecord = await configForTenant(tenantId);
   const current = publicConfig(configRecord);
@@ -3112,7 +3322,7 @@ digitalEmployeesRouter.post('/goals/:goalId/package/recommend', async (req, res)
   const planBody = plan ? jsonObject<Record<string, unknown>>(plan.plan, {}) : {};
   const savedFactsVersion = String(jsonObject<Record<string, unknown>>(planBody.knowledgeBinding, {}).factsVersion || '').trim();
   if (savedFactsVersion && resolved && savedFactsVersion !== resolved.knowledgeBinding.factsVersion) {
-    res.status(409).json({ error: 'enterprise_facts_changed', message: '企业事实已更新，请基于最新事实新建周目标。', factVersion: resolved.knowledgeBinding.factsVersion });
+    res.status(409).json({ error: 'enterprise_facts_changed', message: '企业事实已更新，请基于最新事实新建周目标。', ...weeklyGoalFactRebuildRecovery(goal, plan!, savedFactsVersion, resolved.knowledgeBinding.factsVersion) });
     return;
   }
   const enterpriseProfile = frozenEnterpriseProfileForPlan(plan, false)
@@ -3133,6 +3343,10 @@ digitalEmployeesRouter.post('/goals/:goalId/package/details', async (req, res) =
       res.status(409).json({ error: 'draft_required', message: '只有待确认的周视频计划可以生成制作准备。' });
       return;
     }
+    if (!await weeklyGoalFactRebuildTargetCommitted(tenantId, goal)) {
+      res.status(409).json({ error: 'goal_fact_rebuild_not_committed', message: '最新事实周目标尚未完成安全替换，暂不能修改。' });
+      return;
+    }
     const run = await first<RunRecord>(COLLECTION.runs, { tenant_id: tenantId, goal_id: goal.id });
     if (run) {
       res.status(409).json({ error: 'package_locked', message: '计划已经开始执行，不能重新生成任务预览。' });
@@ -3140,7 +3354,11 @@ digitalEmployeesRouter.post('/goals/:goalId/package/details', async (req, res) =
     }
     const plan = await first<PlanRecord>(COLLECTION.plans, { tenant_id: tenantId, goal_id: goal.id });
     if (!plan) { res.status(404).json({ error: 'plan_not_found' }); return; }
+    const observedPlanPayload = plan.plan;
     const planBody = jsonObject<Record<string, unknown>>(plan.plan, {});
+    if (plan.status !== 'draft' || hasWeeklyGoalFactRebuildPlanFence(planBody)) {
+      res.status(409).json({ error: 'package_locked', message: '计划正在发生状态变更，请刷新后重试。' }); return;
+    }
     const pack = planBody.businessPackage as WeeklyPackage | undefined;
     if (!pack) { res.status(409).json({ error: 'weekly_package_missing', message: '请先制定本周目标和视频计划。' }); return; }
     const configRecord = await configForTenant(tenantId);
@@ -3149,7 +3367,7 @@ digitalEmployeesRouter.post('/goals/:goalId/package/details', async (req, res) =
     const resolvedConfiguration = await resolveCurrentConfiguration(tenantId, configRecord);
     const savedFactsVersion = String(jsonObject<Record<string, unknown>>(planBody.knowledgeBinding, {}).factsVersion || '').trim();
     if (savedFactsVersion && resolvedConfiguration && savedFactsVersion !== resolvedConfiguration.knowledgeBinding.factsVersion) {
-      res.status(409).json({ error: 'enterprise_facts_changed', message: '企业事实已更新，请基于最新事实新建周目标。', factVersion: resolvedConfiguration.knowledgeBinding.factsVersion });
+      res.status(409).json({ error: 'enterprise_facts_changed', message: '企业事实已更新，请基于最新事实新建周目标。', ...weeklyGoalFactRebuildRecovery(goal, plan, savedFactsVersion, resolvedConfiguration.knowledgeBinding.factsVersion) });
       return;
     }
     if (resolvedConfiguration && !frozenEnterpriseProfileForPlan(plan, false)) {
@@ -3188,7 +3406,9 @@ digitalEmployeesRouter.post('/goals/:goalId/package/details', async (req, res) =
         },
       };
       const generatingPlan = { ...planBody, businessPackage: generatingPack };
-      if (!await store.update(COLLECTION.plans, plan.id, { plan: generatingPlan })) {
+      if (!store.compareAndSwap || !await store.compareAndSwap(COLLECTION.plans, plan.id, {
+        tenant_id: tenantId, goal_id: goal.id, status: 'draft', plan: observedPlanPayload,
+      }, { plan: generatingPlan })) {
         res.status(503).json({ error: 'weekly_plan_storage_unavailable' });
         return;
       }
@@ -3196,7 +3416,9 @@ digitalEmployeesRouter.post('/goals/:goalId/package/details', async (req, res) =
         const detailed = await generateWeeklyTaskPreviews({ tenantId, goal, plan, pack: generatingPack, config, planBody: generatingPlan });
         await assertDurableOperationLease({ dataStore: store, lease, minimumRemainingMs: 1_000 });
         const compiled = compilePackage(detailed, goalInput(goal), config);
-        if (!await store.update(COLLECTION.plans, plan.id, { plan: { ...generatingPlan, ...compiled } })) {
+        if (!await store.compareAndSwap!(COLLECTION.plans, plan.id, {
+          tenant_id: tenantId, goal_id: goal.id, status: 'draft', plan: generatingPlan,
+        }, { plan: { ...generatingPlan, ...compiled } })) {
           throw new Error('周任务详情保存失败，请重试');
         }
         await appendAudit({
@@ -3218,7 +3440,9 @@ digitalEmployeesRouter.post('/goals/:goalId/package/details', async (req, res) =
             readyCount: 0, blockedCount: currentMasterPlans.length, blockers: [reason.slice(0, 500)],
           },
         };
-        await store.update(COLLECTION.plans, plan.id, { plan: { ...generatingPlan, businessPackage: blockedPack } }).catch(() => false);
+        await store.compareAndSwap!(COLLECTION.plans, plan.id, {
+          tenant_id: tenantId, goal_id: goal.id, status: 'draft', plan: generatingPlan,
+        }, { plan: { ...generatingPlan, businessPackage: blockedPack } }).catch(() => false);
         res.status(503).json({ error: 'weekly_package_detail_generation_failed', message: `${reason}。已保留周视频计划，可修复后重试。` });
       }
     } finally {
@@ -3232,11 +3456,17 @@ digitalEmployeesRouter.put('/goals/:goalId/package', async (req, res) => {
   await withLocalQueue(goalApprovalQueues, `${tenantId}:activate`, async () => {
     const goal = await tenantRecord<GoalRecord>(COLLECTION.goals, req.params.goalId, tenantId);
     if (!goal) { res.status(404).json({ error: 'goal_not_found' }); return; }
+    if (!await weeklyGoalFactRebuildTargetCommitted(tenantId, goal)) {
+      res.status(409).json({ error: 'goal_fact_rebuild_not_committed', message: '最新事实周目标尚未完成安全替换，暂不能修改。' }); return;
+    }
     const run = await first<RunRecord>(COLLECTION.runs, { tenant_id: tenantId, goal_id: goal.id });
     if (goal.status !== 'draft' || run) { res.status(409).json({ error: 'package_locked', message: '计划已启动，请在执行任务中处理调整。' }); return; }
     const plan = await first<PlanRecord>(COLLECTION.plans, { tenant_id: tenantId, goal_id: goal.id });
     if (!plan) { res.status(404).json({ error: 'plan_not_found' }); return; }
     const body = jsonObject<Record<string, unknown>>(plan.plan, {});
+    if (plan.status !== 'draft' || hasWeeklyGoalFactRebuildPlanFence(body)) {
+      res.status(409).json({ error: 'package_locked', message: '计划正在发生状态变更，请刷新后重试。' }); return;
+    }
     let pack: WeeklyPackage;
     try { pack = normalizePackage(req.body); } catch (e) { res.status(400).json({ error: String(e) }); return; }
     if (new Set(pack.tasks.map(t => t.templateId)).size !== pack.tasks.length || pack.tasks.some(t => !TASK_TEMPLATES.some(template => template.id === t.templateId))) { res.status(400).json({ error: 'invalid_templates' }); return; }
@@ -3253,7 +3483,7 @@ digitalEmployeesRouter.put('/goals/:goalId/package', async (req, res) => {
     const resolvedConfiguration = await resolveCurrentConfiguration(tenantId, configRecord);
     const savedFactsVersion = String(jsonObject<Record<string, unknown>>(body.knowledgeBinding, {}).factsVersion || '').trim();
     if (savedFactsVersion && resolvedConfiguration && savedFactsVersion !== resolvedConfiguration.knowledgeBinding.factsVersion) {
-      res.status(409).json({ error: 'enterprise_facts_changed', message: '企业事实已更新，请基于最新事实新建周目标。', factVersion: resolvedConfiguration.knowledgeBinding.factsVersion });
+      res.status(409).json({ error: 'enterprise_facts_changed', message: '企业事实已更新，请基于最新事实新建周目标。', ...weeklyGoalFactRebuildRecovery(goal, plan, savedFactsVersion, resolvedConfiguration.knowledgeBinding.factsVersion) });
       return;
     }
     const config = localPublishingAccountMocksEnabled() && resolvedConfiguration
@@ -3294,9 +3524,391 @@ digitalEmployeesRouter.put('/goals/:goalId/package', async (req, res) => {
           ? { knowledgeBinding: resolvedConfiguration.knowledgeBinding }
           : {}
       : {};
-    if (!await store.update(COLLECTION.plans, plan.id, { plan: { ...body, ...localConfigurationSnapshot, ...compiled } })) { res.status(503).json({ error: 'weekly_plan_storage_unavailable' }); return; }
+    if (!store.compareAndSwap || !await store.compareAndSwap(COLLECTION.plans, plan.id, {
+      tenant_id: tenantId, goal_id: goal.id, status: 'draft', plan: plan.plan,
+    }, { plan: { ...body, ...localConfigurationSnapshot, ...compiled } })) {
+      res.status(409).json({ error: 'package_changed', message: '计划已更新或正在重建，请刷新后重新调整。' }); return;
+    }
     await appendAudit({ tenantId, userId, action: 'weekly_package.updated', targetType: 'weekly_plan', targetId: plan.id, metadata: { revision: pack.revision, tasks: pack.tasks } });
     res.json(await buildOverview(tenantId, goal.id));
+  });
+});
+
+digitalEmployeesRouter.post('/goals/:goalId/rebuild-from-latest-facts', async (req, res) => {
+  const { tenantId, userId } = res.locals as AuthLocals;
+  const requestId = String(req.body?.requestId || '').trim();
+  const expectedGoalVersion = Number(req.body?.expectedGoalVersion);
+  const suppliedSourcePlanId = String(req.body?.sourcePlanId || '').trim();
+  const suppliedExpectedFactsVersion = String(req.body?.expectedFactsVersion || '').trim();
+  const suppliedSourcePlanDigest = String(req.body?.expectedSourcePlanDigest || '').trim();
+  if (!/^[A-Za-z0-9_-]{8,120}$/.test(requestId)
+    || !Number.isSafeInteger(expectedGoalVersion)
+    || expectedGoalVersion < 1
+    || !/^[A-Za-z0-9_-]{1,200}$/.test(suppliedSourcePlanId)
+    || !suppliedExpectedFactsVersion
+    || suppliedExpectedFactsVersion.length > 160
+    || !/^[a-f0-9]{64}$/.test(suppliedSourcePlanDigest)) {
+    res.status(400).json({ error: 'goal_fact_rebuild_request_invalid', message: '周目标重建请求身份或版本无效。' });
+    return;
+  }
+  await withLocalQueue(goalApprovalQueues, `${tenantId}:activate`, async () => {
+    let source = await tenantRecord<GoalRecord>(COLLECTION.goals, req.params.goalId, tenantId);
+    if (!source) { res.status(404).json({ error: 'goal_not_found' }); return; }
+    if (!isDigitalEmployeeOperatingGoal(source)) { res.status(409).json({ error: 'operating_goal_required' }); return; }
+    if (!await weeklyGoalFactRebuildTargetCommitted(tenantId, source)) {
+      res.status(409).json({ error: 'goal_fact_rebuild_not_committed', message: '最新事实周目标尚未完成安全替换，暂不能再次重建。' }); return;
+    }
+    if (Number(source.version) !== expectedGoalVersion) {
+      res.status(409).json({ error: 'goal_changed', message: '周目标版本已变化，请刷新后重试。', goalVersion: Number(source.version || 0) });
+      return;
+    }
+    let sourcePlan = await first<PlanRecord>(COLLECTION.plans, { tenant_id: tenantId, goal_id: source.id });
+    if (!sourcePlan) { res.status(404).json({ error: 'plan_not_found' }); return; }
+    if (sourcePlan.id !== suppliedSourcePlanId || weeklyGoalFactRebuildSourcePlanDigest(sourcePlan) !== suppliedSourcePlanDigest) {
+      res.status(409).json({ error: 'goal_source_plan_changed', message: '原周计划已变化，请刷新后重试。' });
+      return;
+    }
+    if (source.status === 'draft' && sourcePlan.status !== 'draft') {
+      res.status(409).json({ error: 'draft_required', message: '只有尚未启动的过期周目标可以自动重建。' });
+      return;
+    }
+    let sourcePlanBody = jsonObject<Record<string, unknown>>(sourcePlan.plan, {});
+    let fromFactsVersion = String(jsonObject<Record<string, unknown>>(sourcePlanBody.knowledgeBinding, {}).factsVersion || '').trim();
+    if (!fromFactsVersion) {
+      res.status(409).json({ error: 'enterprise_fact_snapshot_missing', message: '原周目标缺少可核验的企业事实版本，不能自动重建。' });
+      return;
+    }
+    if (suppliedExpectedFactsVersion !== fromFactsVersion) {
+      res.status(409).json({ error: 'goal_fact_binding_changed', message: '周目标引用的企业事实版本已变化，请刷新后重试。', factVersion: fromFactsVersion });
+      return;
+    }
+    const sourceRun = await first<RunRecord>(COLLECTION.runs, { tenant_id: tenantId, goal_id: source.id });
+    if (sourceRun) {
+      res.status(409).json({ error: 'package_locked', message: '周目标已经产生运行记录，不能自动重建。' });
+      return;
+    }
+    if (source.status === 'cancelled') {
+      const replacement = weeklyGoalFactRebuildReplacement(source.scope);
+      if (!replacement
+        || replacement.sourceGoalId !== source.id
+        || replacement.sourceGoalVersion !== expectedGoalVersion
+        || replacement.sourcePlanId !== sourcePlan.id
+        || replacement.sourcePlanDigest !== suppliedSourcePlanDigest
+        || replacement.fromFactsVersion !== fromFactsVersion) {
+        res.status(409).json({ error: 'draft_required', message: '只有尚未启动的过期周目标可以自动重建。' });
+        return;
+      }
+      const target = await tenantRecord<GoalRecord>(COLLECTION.goals, replacement.targetGoalId, tenantId);
+      const targetPlan = target
+        ? await tenantRecord<PlanRecord>(COLLECTION.plans, replacement.targetPlanId, tenantId)
+        : null;
+      const targetPlanBody = jsonObject<Record<string, unknown>>(targetPlan?.plan, {});
+      const targetFactsVersion = String(jsonObject<Record<string, unknown>>(targetPlanBody.knowledgeBinding, {}).factsVersion || '').trim();
+      const targetLink = weeklyGoalFactRebuildLink(target?.scope);
+      const targetPlanLink = weeklyGoalFactRebuildLink(targetPlanBody);
+      if (!target
+        || !targetPlan
+        || targetPlan.goal_id !== target.id
+        || !['draft', 'approved'].includes(targetPlan.status)
+        || !sameCompletedWeeklyGoalFactRebuild(targetLink, replacement)
+        || !sameCompletedWeeklyGoalFactRebuild(targetPlanLink, replacement)
+        || targetFactsVersion !== replacement.toFactsVersion
+        || Number(targetPlanBody.configVersion) !== replacement.configVersion
+        || String(targetPlanBody.policyVersion || '') !== replacement.policyVersion) {
+        res.status(409).json({ error: 'weekly_goal_fact_rebuild_recovery_conflict', message: '已重建周目标的恢复记录不完整，请人工检查。' });
+        return;
+      }
+      try {
+        await commitWeeklyGoalFactRebuildReplacement({
+          dataStore: store,
+          tenantId,
+          sourceGoalId: source.id,
+          sourceGoalVersion: expectedGoalVersion,
+          sourceDescription: goalInput(source).scope,
+          replacement,
+        });
+      } catch (error) {
+        if (error instanceof WeeklyGoalFactRebuildCommitError) {
+          res.status(409).json({ error: error.code, message: error.message });
+          return;
+        }
+        throw error;
+      }
+      await ensureWeeklyGoalFactRebuildAudit({ tenantId, userId: replacement.rebuiltBy || userId, sourceGoalId: source.id, sourceGoalVersion: expectedGoalVersion, sourcePlanId: sourcePlan.id, sourcePlanDigest: replacement.sourcePlanDigest, targetGoalId: target.id, targetPlanId: targetPlan.id, fromFactsVersion, toFactsVersion: replacement.toFactsVersion, configVersion: replacement.configVersion, policyVersion: replacement.policyVersion, requestId: replacement.requestId });
+      res.json(await buildOverview(tenantId, target.id));
+      return;
+    }
+    if (source.status !== 'draft') {
+      res.status(409).json({ error: 'draft_required', message: '只有尚未启动的过期周目标可以自动重建。' });
+      return;
+    }
+    let resolved = await resolveCurrentConfiguration(tenantId, await configForTenant(tenantId));
+    if (!resolved) { res.status(409).json({ error: 'onboarding_required' }); return; }
+    if (resolved.config.smartOperationsEnabled === false) {
+      res.status(409).json({ error: 'smart_operations_disabled', message: '智能经营已关闭，不能自动重建周目标。' });
+      return;
+    }
+    let toFactsVersion = resolved.knowledgeBinding.factsVersion;
+    const rebuildIdentity = {
+      sourceGoalId: source.id,
+      sourceGoalVersion: expectedGoalVersion,
+      sourcePlanId: sourcePlan.id,
+      sourcePlanDigest: suppliedSourcePlanDigest,
+      fromFactsVersion,
+      toFactsVersion,
+      configVersion: resolved.configVersion,
+      policyVersion: resolved.policyVersion,
+    };
+    const targetGoalId = weeklyGoalFactRebuildRecordId('goal', tenantId, source.id, expectedGoalVersion, toFactsVersion, resolved.configVersion, resolved.policyVersion, suppliedSourcePlanDigest);
+    const targetPlanId = weeklyGoalFactRebuildRecordId('plan', tenantId, source.id, expectedGoalVersion, toFactsVersion, resolved.configVersion, resolved.policyVersion, suppliedSourcePlanDigest);
+    const readTarget = async () => {
+      const target = await tenantRecord<GoalRecord>(COLLECTION.goals, targetGoalId, tenantId);
+      if (target && !sameWeeklyGoalFactRebuild(weeklyGoalFactRebuildLink(target.scope), rebuildIdentity)) {
+        throw new WeeklyGoalFactRebuildCommitError('weekly_goal_fact_rebuild_target_conflict', '已存在的替代周目标与本次重建不一致。');
+      }
+      if (target && (target.status !== 'draft' || Number(target.version) !== 1
+        || await first<RunRecord>(COLLECTION.runs, { tenant_id: tenantId, goal_id: target.id }))) {
+        throw new WeeklyGoalFactRebuildCommitError('weekly_goal_fact_rebuild_target_not_pristine', '替代周目标已被修改或启动，不能替换原草稿。');
+      }
+      const targetPlan = target ? await tenantRecord<PlanRecord>(COLLECTION.plans, targetPlanId, tenantId) : null;
+      if (targetPlan) {
+        const targetBody = jsonObject<Record<string, unknown>>(targetPlan.plan, {});
+        const targetFactsVersion = String(jsonObject<Record<string, unknown>>(targetBody.knowledgeBinding, {}).factsVersion || '').trim();
+        const targetLink = weeklyGoalFactRebuildLink(target?.scope);
+        const targetPlanLink = weeklyGoalFactRebuildLink(targetBody);
+        if (targetPlan.id !== targetPlanId
+          || targetPlan.status !== 'draft'
+          || targetFactsVersion !== toFactsVersion
+          || Number(targetBody.configVersion) !== rebuildIdentity.configVersion
+          || String(targetBody.policyVersion || '') !== rebuildIdentity.policyVersion
+          || !targetLink
+          || !sameCompletedWeeklyGoalFactRebuild(targetPlanLink, targetLink)
+          || !sameWeeklyGoalFactRebuild(targetPlanLink, rebuildIdentity)) {
+          throw new WeeklyGoalFactRebuildCommitError('weekly_goal_fact_rebuild_plan_conflict', '已存在的替代周计划与本次重建不一致。');
+        }
+      }
+      return { target, targetPlan };
+    };
+    let recovered: Awaited<ReturnType<typeof readTarget>>;
+    try { recovered = await readTarget(); }
+    catch (error) {
+      if (error instanceof WeeklyGoalFactRebuildCommitError) {
+        res.status(409).json({ error: error.code, message: error.message });
+      } else {
+        res.status(503).json({ error: 'goal_fact_rebuild_recovery_unavailable', message: '暂时无法核验周目标重建记录，请稍后重试。' });
+      }
+      return;
+    }
+    if (fromFactsVersion === toFactsVersion) {
+      res.status(409).json({ error: 'goal_facts_current', message: '当前周目标已经引用最新企业事实，无需重建。', factVersion: toFactsVersion });
+      return;
+    }
+    if (!store.compareAndSwap) {
+      res.status(503).json({ error: 'goal_fact_rebuild_atomic_store_required', message: '当前存储不支持安全重建周目标。' });
+      return;
+    }
+    const durableLeaseSupported = await store.supportsAtomicOperationLease?.() === true;
+    const lease = durableLeaseSupported ? await acquireDurableOperationLease({
+      dataStore: store,
+      tenantId,
+      scope: 'weekly_goal_fact_rebuild',
+      subjectId: source.id,
+      ownerId: `goal-facts-${randomUUID()}`,
+      leaseDurationMs: 30 * 60_000,
+    }) : null;
+    if (durableLeaseSupported && !lease) {
+      res.status(409).json({ error: 'goal_fact_rebuild_in_progress', message: '最新事实周目标正在重建，请稍后查询最新计划。', retryable: true });
+      return;
+    }
+    let postFenceFactsVersion = '';
+    try {
+      source = await tenantRecord<GoalRecord>(COLLECTION.goals, req.params.goalId, tenantId);
+      sourcePlan = source ? await first<PlanRecord>(COLLECTION.plans, { tenant_id: tenantId, goal_id: source.id }) : null;
+      if (!source
+        || !sourcePlan
+        || sourcePlan.id !== rebuildIdentity.sourcePlanId
+        || weeklyGoalFactRebuildSourcePlanDigest(sourcePlan) !== rebuildIdentity.sourcePlanDigest
+        || sourcePlan.status !== 'draft'
+        || Number(source.version) !== expectedGoalVersion) {
+        res.status(409).json({ error: 'goal_changed', message: '周目标版本已变化，请刷新后重试。' });
+        return;
+      }
+      sourcePlanBody = jsonObject<Record<string, unknown>>(sourcePlan.plan, {});
+      fromFactsVersion = String(jsonObject<Record<string, unknown>>(sourcePlanBody.knowledgeBinding, {}).factsVersion || '').trim();
+      if (!fromFactsVersion || suppliedExpectedFactsVersion !== fromFactsVersion) {
+        res.status(409).json({ error: 'goal_fact_binding_changed', message: '周目标引用的企业事实版本已变化，请刷新后重试。', factVersion: fromFactsVersion });
+        return;
+      }
+      resolved = await resolveCurrentConfiguration(tenantId, await configForTenant(tenantId));
+      if (!resolved) { res.status(409).json({ error: 'onboarding_required' }); return; }
+      if (resolved.config.smartOperationsEnabled === false) {
+        res.status(409).json({ error: 'smart_operations_disabled', message: '智能经营已关闭，不能自动重建周目标。' });
+        return;
+      }
+      toFactsVersion = resolved.knowledgeBinding.factsVersion;
+      if (toFactsVersion !== rebuildIdentity.toFactsVersion) {
+        res.status(409).json({ error: 'enterprise_facts_changed', message: '企业事实再次更新，正在等待基于最新版本重建。', ...weeklyGoalFactRebuildRecovery(source, sourcePlan, fromFactsVersion, toFactsVersion) });
+        return;
+      }
+      if (source.status !== 'draft') {
+        res.status(409).json({ error: 'draft_required', message: '只有尚未启动的过期周目标可以自动重建。' });
+        return;
+      }
+      if (await first<RunRecord>(COLLECTION.runs, { tenant_id: tenantId, goal_id: source.id })) {
+        res.status(409).json({ error: 'package_locked', message: '周目标已经产生运行记录，不能自动重建。' });
+        return;
+      }
+      recovered = await readTarget();
+      let target = recovered.target;
+      let targetPlan = recovered.targetPlan;
+      let rebuildLink = target ? weeklyGoalFactRebuildLink(target.scope)! : null;
+      if (!targetPlan) {
+        const enterpriseProfile = enterpriseProfileFromKnowledgeBinding(resolved.knowledgeBinding) as EnterpriseProfile | null;
+        if (!enterpriseProfile) {
+          res.status(409).json({ error: 'enterprise_fact_snapshot_missing', message: '最新企业事实快照不可用，不能自动重建周目标。' });
+          return;
+        }
+        const { videoPlans: _staleVideoPlans, ...sourceIntent } = goalInput(source);
+        const refreshedGoal = normalizeWeeklyGoal(sourceIntent, resolved.config);
+        const planDraft = buildWeeklyPlan(refreshedGoal, resolved.config);
+        const recommendedPackage = await recommendPackageWithTenantEvidence(tenantId, refreshedGoal, resolved.config, source.owner_id || userId, '', enterpriseProfile);
+        const latestResolved = await resolveCurrentConfiguration(tenantId, await configForTenant(tenantId));
+        if (!latestResolved
+          || latestResolved.knowledgeBinding.factsVersion !== toFactsVersion
+          || latestResolved.configVersion !== resolved.configVersion
+          || latestResolved.policyVersion !== resolved.policyVersion) {
+          res.status(409).json({ error: 'goal_rebuild_configuration_changed', message: '经营配置在重建期间发生变化，请按最新配置重试。', recoveryAction: 'rebuild_weekly_goal' });
+          return;
+        }
+        if (lease) await assertDurableOperationLease({ dataStore: store, lease, minimumRemainingMs: 1_000 });
+        if (!target) {
+          const rebuiltAt = new Date().toISOString();
+          rebuildLink = { ...rebuildIdentity, requestId, rebuiltBy: userId, rebuiltAt };
+          let createdTarget: GoalRecord | null = null;
+          try {
+            createdTarget = await store.create<GoalRecord>(COLLECTION.goals, {
+              id: targetGoalId,
+              tenant_id: tenantId,
+              business_line: refreshedGoal.businessLine,
+              content_platforms: refreshedGoal.contentPlatforms,
+              title: refreshedGoal.title,
+              objective: refreshedGoal.objective,
+              metric: refreshedGoal.metric,
+              baseline: refreshedGoal.baseline,
+              target: refreshedGoal.target,
+              unit: refreshedGoal.unit,
+              starts_at: refreshedGoal.startsAt,
+              ends_at: refreshedGoal.endsAt,
+              scope: { description: refreshedGoal.scope, factRebuild: rebuildLink },
+              constraints: refreshedGoal.constraints,
+              owner_id: source.owner_id || userId,
+              status: 'draft',
+              version: 1,
+              created_at: rebuiltAt,
+              updated_at: rebuiltAt,
+            });
+          } catch { /* A deterministic-ID winner is recovered and validated below. */ }
+          target = createdTarget || await tenantRecord<GoalRecord>(COLLECTION.goals, targetGoalId, tenantId);
+          if (!target || !sameWeeklyGoalFactRebuild(weeklyGoalFactRebuildLink(target.scope), rebuildIdentity)) {
+            res.status(503).json({ error: 'goal_fact_rebuild_target_unavailable' });
+            return;
+          }
+          rebuildLink = weeklyGoalFactRebuildLink(target.scope)!;
+        }
+        if (lease) await assertDurableOperationLease({ dataStore: store, lease, minimumRemainingMs: 1_000 });
+        let createdPlan: PlanRecord | null = null;
+        try {
+          createdPlan = await store.create<PlanRecord>(COLLECTION.plans, {
+            id: targetPlanId,
+            tenant_id: tenantId,
+            goal_id: target.id,
+            status: 'draft',
+            plan: { ...planDraft, ...configurationSnapshot(resolved), businessPackage: recommendedPackage, factRebuild: rebuildLink },
+            created_at: rebuildLink!.rebuiltAt,
+          });
+        } catch { /* A deterministic-ID winner is recovered and validated below. */ }
+        targetPlan = createdPlan || await tenantRecord<PlanRecord>(COLLECTION.plans, targetPlanId, tenantId);
+        const rebuiltPlanBody = jsonObject<Record<string, unknown>>(targetPlan?.plan, {});
+        if (!targetPlan
+          || targetPlan.id !== targetPlanId
+          || String(jsonObject<Record<string, unknown>>(rebuiltPlanBody.knowledgeBinding, {}).factsVersion || '') !== toFactsVersion
+          || !sameWeeklyGoalFactRebuild(weeklyGoalFactRebuildLink(rebuiltPlanBody), rebuildIdentity)) {
+          res.status(503).json({ error: 'goal_fact_rebuild_plan_unavailable' });
+          return;
+        }
+      }
+      const finalResolved = await resolveCurrentConfiguration(tenantId, await configForTenant(tenantId));
+      if (finalResolved && finalResolved.knowledgeBinding.factsVersion !== rebuildIdentity.toFactsVersion) {
+        res.status(409).json({
+          error: 'enterprise_facts_changed',
+          message: '企业事实在提交前再次更新，将按最新事实重新设定周目标。',
+          ...weeklyGoalFactRebuildRecovery(source, sourcePlan, fromFactsVersion, finalResolved.knowledgeBinding.factsVersion),
+        });
+        return;
+      }
+      if (!finalResolved
+        || finalResolved.config.smartOperationsEnabled === false
+        || !weeklyGoalFactRebuildSnapshotMatches({
+          factsVersion: finalResolved.knowledgeBinding.factsVersion,
+          configVersion: finalResolved.configVersion,
+          policyVersion: finalResolved.policyVersion,
+        }, rebuildIdentity)) {
+        res.status(409).json({ error: 'goal_rebuild_configuration_changed', message: '经营配置或策略在提交前发生变化，未取消原周目标。', recoveryAction: 'rebuild_weekly_goal' });
+        return;
+      }
+      if (lease) await assertDurableOperationLease({ dataStore: store, lease, minimumRemainingMs: 1_000 });
+      const link = weeklyGoalFactRebuildLink(target!.scope)!;
+      await commitWeeklyGoalFactRebuildReplacement({
+        dataStore: store,
+        tenantId,
+        sourceGoalId: source.id,
+        sourceGoalVersion: expectedGoalVersion,
+        sourceDescription: goalInput(source).scope,
+        replacement: { ...link, targetGoalId, targetPlanId },
+        validateAfterSourcePlanFence: async () => {
+          const commitResolved = await resolveCurrentConfiguration(tenantId, await configForTenant(tenantId));
+          if (!commitResolved) {
+            throw new WeeklyGoalFactRebuildCommitError(
+              'goal_rebuild_configuration_changed',
+              '经营配置或策略在提交前不可用，未取消原周目标。',
+            );
+          }
+          if (commitResolved.knowledgeBinding.factsVersion !== rebuildIdentity.toFactsVersion) {
+            postFenceFactsVersion = commitResolved.knowledgeBinding.factsVersion;
+            throw new WeeklyGoalFactRebuildCommitError(
+              'enterprise_facts_changed',
+              '企业事实在提交前再次更新，将按最新事实重新设定周目标。',
+            );
+          }
+          if (commitResolved.config.smartOperationsEnabled === false
+            || commitResolved.configVersion !== rebuildIdentity.configVersion
+            || commitResolved.policyVersion !== rebuildIdentity.policyVersion) {
+            throw new WeeklyGoalFactRebuildCommitError(
+              'goal_rebuild_configuration_changed',
+              '经营配置或策略在提交前发生变化，未取消原周目标。',
+            );
+          }
+        },
+      });
+      await ensureWeeklyGoalFactRebuildAudit({ tenantId, userId: link.rebuiltBy || userId, sourceGoalId: source.id, sourceGoalVersion: expectedGoalVersion, sourcePlanId: sourcePlan.id, sourcePlanDigest: link.sourcePlanDigest, targetGoalId, targetPlanId, fromFactsVersion, toFactsVersion, configVersion: link.configVersion, policyVersion: link.policyVersion, requestId: link.requestId });
+      res.json(await buildOverview(tenantId, targetGoalId));
+    } catch (error) {
+      if (error instanceof WeeklyGoalFactRebuildCommitError) {
+        if (error.code === 'enterprise_facts_changed' && postFenceFactsVersion) {
+          res.status(409).json({
+            error: error.code,
+            message: error.message,
+            ...weeklyGoalFactRebuildRecovery(source!, sourcePlan!, fromFactsVersion, postFenceFactsVersion),
+          });
+          return;
+        }
+        res.status(409).json({ error: error.code, message: error.message });
+        return;
+      }
+      if (!res.headersSent) res.status(503).json({ error: 'goal_fact_rebuild_failed', message: '周目标自动重建失败，请稍后重试。' });
+    } finally {
+      if (lease) await releaseDurableOperationLease({ dataStore: store, lease }).catch(() => undefined);
+    }
   });
 });
 
@@ -3392,8 +4004,15 @@ async function ensureReviewRunTasks(tenantId: string, goal: GoalRecord, plan: Pl
 
 export async function approveGoalForReview(tenantId: string, userId: string, goalId: string, packageRevision: number | undefined, members: Array<{id: string}>) {
   return withLocalQueue(goalApprovalQueues, `${tenantId}:activate`, async () => {
+  if (!store.compareAndSwap) return { status: 503, body: { error: 'goal_atomic_store_required', message: '当前存储不支持安全启动周目标。' } };
   const goal = await tenantRecord<GoalRecord>(COLLECTION.goals, goalId, tenantId);
   if (!goal) { return { status: 404, body: { error: 'goal_not_found' } }; }
+  if (!isDigitalEmployeeOperatingGoal(goal)) {
+    return { status: 409, body: { error: 'operating_goal_required', message: '该任务属于独立视频制作，请在对应内容任务中继续操作。' } };
+  }
+  if (!await weeklyGoalFactRebuildTargetCommitted(tenantId, goal)) {
+    return { status: 409, body: { error: 'goal_fact_rebuild_not_committed', message: '最新事实周目标尚未完成安全替换，暂不能启动。' } };
+  }
   const existingRun = await first<RunRecord>(COLLECTION.runs, { tenant_id: tenantId, goal_id: goal.id }, '-started_at');
   if (existingRun) {
     if (existingRun.status === 'initializing') {
@@ -3407,45 +4026,70 @@ export async function approveGoalForReview(tenantId: string, userId: string, goa
     }
     return { status: 200, body: await buildOverview(tenantId, goal.id) };
   }
+  // Conflict checks must see every tenant record, including old operating runs
+  // pushed beyond the first page by independent social-content bridge records.
+  async function conflictRecords<T extends { id: string; tenant_id: string }>(collection: string): Promise<T[]> {
+    const records: T[] = [];
+    const seen = new Set<string>();
+    let totalItems: number | undefined;
+    for (let page = 1; ; page++) {
+      const batch = await store.list<T>(collection, { where: { tenant_id: tenantId }, sort: 'id', page, perPage: 500 });
+      if (!Number.isSafeInteger(batch.totalPages) || batch.totalPages < 0
+        || !Number.isSafeInteger(batch.totalItems) || batch.totalItems < 0
+        || batch.page !== page || (totalItems !== undefined && totalItems !== batch.totalItems)) {
+        throw Error('周目标互斥检查分页发生变化，请刷新后重试。');
+      }
+      totalItems = batch.totalItems;
+      for (const record of batch.items) {
+        if (record.tenant_id !== tenantId || seen.has(record.id)) throw Error('周目标互斥检查记录不完整，请刷新后重试。');
+        seen.add(record.id);
+        records.push(record);
+      }
+      if (page >= batch.totalPages) {
+        if (records.length !== totalItems) throw Error('周目标互斥检查记录不完整，请刷新后重试。');
+        return records;
+      }
+      if (!batch.items.length) throw Error('周目标互斥检查记录不完整，请刷新后重试。');
+    }
+  }
   const [configRecord, tenantGoals, tenantRuns, existingPlan] = await Promise.all([
     configForTenant(tenantId),
-    store.list<GoalRecord>(COLLECTION.goals, { where: { tenant_id: tenantId }, sort: '-created_at', perPage: 500 }),
-    store.list<RunRecord>(COLLECTION.runs, { where: { tenant_id: tenantId }, sort: '-started_at', perPage: 500 }),
+    conflictRecords<GoalRecord>(COLLECTION.goals),
+    conflictRecords<RunRecord>(COLLECTION.runs),
     first<PlanRecord>(COLLECTION.plans, { tenant_id: tenantId, goal_id: goal.id }),
   ]);
   const allowDisjoint = normalizeContinuationPolicy(publicConfig(configRecord)?.continuationPolicy).overlappingCycles === 'allow_disjoint';
-  // Hybrid storage may list migrated goals while a legacy run still refers to
-  // a goal available only through the tenant-scoped record fallback.
-  const goalsById = new Map(tenantGoals.items.map(item => [item.id, item]));
-  if (allowDisjoint) {
-    const missingIds = [...new Set(tenantRuns.items.filter(item => !['succeeded', 'failed', 'cancelled'].includes(item.status))
-      .map(item => item.goal_id).filter(id => id !== goal.id && !goalsById.has(id)))];
-    const missingGoals = await Promise.all(missingIds.map(id => tenantRecord<GoalRecord>(COLLECTION.goals, id, tenantId)));
-    for (const other of missingGoals) if (other) goalsById.set(other.id, other);
-  }
-  const conflicts = (otherId: string) => { const other = goalsById.get(otherId); return !allowDisjoint || !other || cyclesOverlap(goal, other); };
-  const overlappingGoal = tenantGoals.items.find(item => item.id !== goal.id && conflicts(item.id) && ['active', 'paused'].includes(item.status) && !tenantRuns.items.some(run => run.goal_id === item.id && ['failed', 'cancelled', 'succeeded'].includes(run.status)));
-  const overlappingRun = tenantRuns.items.find(item => item.goal_id !== goal.id && conflicts(item.goal_id) && !['succeeded', 'failed', 'cancelled'].includes(item.status));
-  if (overlappingGoal || overlappingRun) {
+  const conflict = await findOperatingGoalConflict({
+    goal, goals: tenantGoals, runs: tenantRuns, allowDisjoint,
+    loadGoal: id => tenantRecord<GoalRecord>(COLLECTION.goals, id, tenantId),
+  });
+  if (conflict) {
     return { status: 409, body: {
       error: 'active_goal_exists',
       message: '当前租户已有活跃周目标，请先完成、暂停后取消，或明确结束现有运行。',
-      activeGoalId: overlappingGoal?.id || overlappingRun?.goal_id || '',
-      activeRunId: overlappingRun?.id || '',
+      activeGoalId: conflict.goal?.id || conflict.run?.goal_id || '',
+      activeRunId: conflict.run?.id || '',
+      activeGoalTitle: conflict.goal?.title || '',
+      activeGoalStatus: conflict.goal?.status || '',
+      activeRunStatus: conflict.run?.status || '',
+      activeStartsAt: conflict.goal?.starts_at || '',
+      activeEndsAt: conflict.goal?.ends_at || '',
     } };
   }
   const resolvedConfiguration = await resolveCurrentConfiguration(tenantId, configRecord);
   const currentConfig = resolvedConfiguration?.config || null;
   if (!currentConfig || !resolvedConfiguration) { return { status: 409, body: { error: 'onboarding_required' } }; }
   const savedBody = existingPlan ? jsonObject<Record<string, unknown>>(existingPlan.plan, {}) : {};
+  if (existingPlan && (existingPlan.status !== 'draft' || hasWeeklyGoalFactRebuildPlanFence(savedBody))) {
+    return { status: 409, body: { error: 'package_locked', message: '计划已启动或正在重建，请刷新后重试。' } };
+  }
   const savedFactsVersion = String(jsonObject<Record<string, unknown>>(savedBody.knowledgeBinding, {}).factsVersion || '').trim();
   const canonicalFactsVersion = resolvedConfiguration.knowledgeBinding.factsVersion;
   if (savedFactsVersion && savedFactsVersion !== canonicalFactsVersion) {
     return { status: 409, body: {
       error: 'enterprise_facts_changed',
       message: '企业事实已更新；当前草稿仍引用旧事实，请基于最新事实新建周目标后再启动。',
-      expectedFactVersion: savedFactsVersion,
-      factVersion: canonicalFactsVersion,
+      ...weeklyGoalFactRebuildRecovery(goal, existingPlan!, savedFactsVersion, canonicalFactsVersion),
     } };
   }
   const needsFrozenFactSnapshot = !existingPlan || !frozenEnterpriseProfileForPlan(existingPlan, false);
@@ -3463,32 +4107,37 @@ export async function approveGoalForReview(tenantId: string, userId: string, goa
   if (pack) {
     if (packageRevision !== pack.revision) { return { status: 409, body: { error: 'package_changed', message: '请查看并确认最新版本的经营包。' } }; }
     if (pack.tasks.some(t => t.ownerId && !members.some(m => m.id === t.ownerId))) { return { status: 409, body: { error: 'owner_unavailable', message: '计划中的负责人已不可用，请重新分配任务。' } }; }
-    const detailedPlans = pack.tasks.find(task => task.templateId === 'production')?.videoPlans || [];
-    const detailedMasters = detailedPlans.filter(item => item.productionRole !== 'platform_adaptation');
-    if (pack.detailGeneration && (pack.detailGeneration.status !== 'ready' || !detailedMasters.some(item => item.preproduction?.readiness.canStart))) {
-      return { status: 409, body: { error: 'package_details_blocked', message: '当前没有可开工的母版；请先为至少一条内容补齐对应产品素材、授权、预算或爆款参考。' } };
-    }
-    const issues = validatePackage(pack, goalInput(goal), configSnapshotForPlan(existingPlan, currentConfig));
+    const issues = validatePackageForStart(pack, goalInput(goal), configSnapshotForPlan(existingPlan, currentConfig));
     if (issues.length) { return { status: 400, body: { error: 'package_invalid', message: issues.join('；') } }; }
   }
   const planDraft = pack ? compilePackage(pack, goalInput(goal), config) : buildWeeklyPlan(goalInput(goal), config);
   const now = new Date().toISOString();
   const productionTask = pack?.tasks.find(t => t.templateId === 'production');
   if (productionTask?.videoPlans) goal.scope = { ...jsonObject<Record<string, unknown>>(goal.scope, {}), description: goalInput(goal).scope, videoPlans: productionTask.videoPlans };
-  await store.update(COLLECTION.goals, goal.id, { status: 'active', updated_at: now, ...(pack ? { scope: goal.scope, content_platforms: goal.content_platforms } : {}) });
   const frozenPlanMetadata = existingPlan
     ? { ...savedBody, ...(needsFrozenFactSnapshot ? { knowledgeBinding: resolvedConfiguration.knowledgeBinding } : {}) }
     : configurationSnapshot(resolvedConfiguration);
   const approvedPlanBody = { ...frozenPlanMetadata, ...planDraft, ...(managedPublishingGrantId ? { managedPublishingGrantId } : {}), ...(pack ? { packageApprovedBy: userId, packageApprovedAt: now } : {}) };
   let plan: PlanRecord;
   if (existingPlan) {
-    const updated = await store.update(COLLECTION.plans, existingPlan.id, { status: 'approved', plan: approvedPlanBody });
-    if (!updated) { return { status: 503, body: { error: 'weekly_plan_storage_unavailable' } }; }
+    const updated = await store.compareAndSwap?.(COLLECTION.plans, existingPlan.id, {
+      tenant_id: tenantId, goal_id: goal.id, status: 'draft', plan: existingPlan.plan,
+    }, { status: 'approved', plan: approvedPlanBody });
+    if (!updated) { return { status: 409, body: { error: 'package_changed', message: '计划已更新或正在重建，请刷新后重试。' } }; }
     plan = { ...existingPlan, status: 'approved', plan: approvedPlanBody };
   } else {
     plan = await requiredCreate<PlanRecord>(COLLECTION.plans, {
       tenant_id: tenantId, goal_id: goal.id, status: 'approved', plan: approvedPlanBody, created_at: now,
     });
+  }
+  const activated = await store.compareAndSwap?.(COLLECTION.goals, goal.id, {
+    tenant_id: tenantId, status: 'draft', version: Number(goal.version || 1),
+  }, { status: 'active', updated_at: now, ...(pack ? { scope: goal.scope, content_platforms: goal.content_platforms } : {}) });
+  if (!activated) {
+    if (existingPlan) await store.compareAndSwap?.(COLLECTION.plans, existingPlan.id, {
+      tenant_id: tenantId, goal_id: goal.id, status: 'approved', plan: approvedPlanBody,
+    }, { status: 'draft', plan: existingPlan.plan });
+    return { status: 409, body: { error: 'goal_changed', message: '周目标状态已变化，未启动新运行。' } };
   }
   const run = await requiredCreate<RunRecord>(COLLECTION.runs, {
     tenant_id: tenantId,
@@ -4748,6 +5397,7 @@ export async function allocateReviewTodos(tenantId: string, userId: string, boar
     if (board.targetGoalId && !target) throw Error('下周目标不存在或不可访问');
     if (!target && goals.items.filter(g => g.status === 'draft').length > 1) throw Error('有多个下周目标，请先明确选择');
     if (target && target.starts_at !== board.week) throw Error('目标周期与待办周期不一致');
+    if (target && !await weeklyGoalFactRebuildTargetCommitted(tenantId, target)) throw Error('最新事实周目标尚未完成安全替换');
     const configRecord = await configForTenant(tenantId);
     const resolved = await resolveCurrentConfiguration(tenantId, configRecord);
     if (!resolved) throw Error('请先完成 Agent 设置');
@@ -4778,10 +5428,12 @@ export async function allocateReviewTodos(tenantId: string, userId: string, boar
     }
     if (!plan) throw Error('下周目标缺少计划，请在目标页补充');
     const body = jsonObject<Record<string, unknown>>(plan.plan, {});
+    if (hasWeeklyGoalFactRebuildPlanFence(body)) throw Error('下周计划正在发生状态变更');
     const pack = body.businessPackage as WeeklyPackage | undefined;
     if (!pack) throw Error('请先完善下周目标的具体任务安排');
     const alreadyApplied = board.items.every(i => pack.reviewTodos?.some(p => sameTodoRequirements(p, i)));
     if (target.status !== 'draft') { if (alreadyApplied) return target.id; throw Error('下周目标已启动，请在任务执行页调整，不能自动追加'); }
+    if (plan.status !== 'draft') throw Error('下周计划正在发生状态变更');
     const updated = applyReviewTodoPlan(pack, board.items);
     // Never inherit last cycle's grant. Resolve explicit, current expiring consent.
     const recurring = applyManagedPublishingGrant(updated, resolved.config, target.ends_at);
@@ -4790,7 +5442,9 @@ export async function allocateReviewTodos(tenantId: string, userId: string, boar
     const config = executionConfigForPlan(plan, resolved.config);
     const issues = validatePackage(updated, goalInput(target), configSnapshotForPlan(plan, resolved.config));
     if (issues.length) throw Error(issues.join('；'));
-    if (!await store.update(COLLECTION.plans, plan.id, { plan: { ...body, ...compilePackage(updated, goalInput(target), config), managedPublishingGrantId: recurring.grantId || '' } })) throw Error('下周计划保存失败');
+    if (!store.compareAndSwap || !await store.compareAndSwap(COLLECTION.plans, plan.id, {
+      tenant_id: tenantId, goal_id: target.id, status: 'draft', plan: plan.plan,
+    }, { plan: { ...body, ...compilePackage(updated, goalInput(target), config), managedPublishingGrantId: recurring.grantId || '' } })) throw Error('下周计划已更新或正在重建，请刷新后重试');
     return target.id;
   });
   const plan = await first<PlanRecord>(COLLECTION.plans, { tenant_id: tenantId, goal_id: targetId });

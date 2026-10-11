@@ -65,6 +65,27 @@ export function studioAigcBudgetConfigFromEnv() {
   };
 }
 
+/** Managed weekly production must use the cost already frozen on its content
+ * order. A request may lower that ceiling, but cannot raise either the frozen
+ * order limit or the installation-wide storyboard limit. */
+export function studioAigcBudgetConfigForSpec(spec: Record<string, any>, requestedMaxCostCny?: unknown) {
+  const config = studioAigcBudgetConfigFromEnv();
+  const managed = spec?.automation?.managedBy === 'digital_employee';
+  const frozen = Number(spec?.contentOrder?.operatingContext?.estimatedContentCost);
+  const requested = requestedMaxCostCny === undefined ? null : Number(requestedMaxCostCny);
+  if (requested !== null && (!Number.isFinite(requested) || requested <= 0)) {
+    return { ...config, batchBudgetCny: 0 };
+  }
+  if (managed && (!Number.isFinite(frozen) || frozen <= 0)) {
+    return { ...config, batchBudgetCny: 0 };
+  }
+  return { ...config, batchBudgetCny: Math.min(
+    config.batchBudgetCny,
+    ...(managed ? [frozen] : []),
+    ...(requested !== null ? [requested] : []),
+  ) };
+}
+
 /** Cost-only plan for the existing one-click storyboard flow. Product/first
  * frame readiness remains a separate per-shot gate. No supplier is submitted
  * by this function. */

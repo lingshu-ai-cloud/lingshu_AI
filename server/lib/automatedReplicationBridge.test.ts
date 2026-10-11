@@ -11,10 +11,11 @@ function fixture() {
 const router = Router();
 router.post('/native/:id', async (req, res) => { assert.equal(res.locals.tenantId, 'tenant'); res.status(202).json({ id: req.params.id, value: req.body.value }); });
 assert.deepEqual(await invokeReplicationRoute(router, 'tenant', 'post', '/native/one', { value: 2 }), { status: 202, body: { id: 'one', value: 2 } });
-const f = fixture(); let calls: string[] = []; let validations = 0;
-const deps: any = { validateAdoption: async () => [], materials: () => [{ id: 'video', tenantId: 'tenant', scope: 'own', type: 'video' }], validateVideo: async () => { validations++; }, call: async (_: string, _method: string, route: string, body: any) => { calls.push(route); assert.equal(body.shotId || 'slot', 'slot'); if (route === '/storyboard-first-frame') return { status: 200, body: { ok: true, fingerprint: 'frame-fp', material: { id: 'frame' } } }; if (route === '/seedance-video') { assert.equal(body.duration, 4); assert.equal(body.firstFrameMaterialId, 'frame'); return { status: 200, body: { ok: true, material: { id: 'video' } } }; } return { status: 200, body: { quality: { passed: true } } }; } };
-for (let index = 0; index < 4; index++) { const result = await advanceAutomatedReplication({ tenantId: 'tenant', projectId: 'project', store: f.store }, deps); assert.equal(result.state, 'pending'); }
+const f = fixture(); let calls: string[] = []; const callBodies: any[] = []; let validations = 0;
+const deps: any = { validateAdoption: async () => [], materials: () => [{ id: 'video', tenantId: 'tenant', scope: 'own', type: 'video' }], validateVideo: async () => { validations++; }, call: async (_: string, _method: string, route: string, body: any) => { calls.push(route); callBodies.push(body); assert.equal(body.shotId || 'slot', 'slot'); if (route === '/storyboard-first-frame') return { status: 200, body: { ok: true, fingerprint: 'frame-fp', material: { id: 'frame' } } }; if (route === '/seedance-video') { assert.equal(body.duration, 4); assert.equal(body.firstFrameMaterialId, 'frame'); return { status: 200, body: { ok: true, material: { id: 'video' } } }; } return { status: 200, body: { quality: { passed: true } } }; } };
+for (let index = 0; index < 4; index++) { const result = await advanceAutomatedReplication({ tenantId: 'tenant', projectId: 'project', maxCostCny: 12.5, store: f.store }, deps); assert.equal(result.state, 'pending'); }
 assert.deepEqual(calls, ['/storyboard-first-frame', '/seedance-video', '/storyboard-quality-check']);
+assert.equal(callBodies[0].maxCostCny, 12.5); assert.equal(callBodies[1].maxCostCny, 12.5, 'both paid native steps receive the frozen project cap');
 assert.equal(f.project().spec.storyboardAssignments.slot, 'video');
 assert.equal((await advanceAutomatedReplication({ tenantId: 'tenant', projectId: 'project', store: f.store }, deps)).state, 'ready');
 assert.equal(validations, 4); assert.equal(calls.length, 3);
@@ -46,3 +47,37 @@ videoHash = 'a'.repeat(64);
 assert.equal((await advanceAutomatedReplication({ tenantId: 'tenant', projectId: 'project', store: replaced.store }, boundDeps)).state, 'pending');
 videoHash = 'c'.repeat(64);
 assert.equal((await advanceAutomatedReplication({ tenantId: 'tenant', projectId: 'project', store: replaced.store }, boundDeps)).state, 'blocked');
+
+const partial = fixture();
+partial.project().spec.automatedReplicationShots.unshift({ shotId: 'blocked-shot', slotId: 'blocked-slot', kind: 'blocked', required: true,
+  productionState: 'blocked', start: 0, end: 1, blockerCode: 'material_type_unconfirmed', blocker: '第 1 镜缺少已确认的镜头类型' });
+let partialCalls = 0;
+const partialDeps: any = { ...deps, call: async (...args: any[]) => { partialCalls++; return deps.call(...args); } };
+assert.equal((await advanceAutomatedReplication({ tenantId: 'tenant', projectId: 'project', maxCostCny: 12.5, store: partial.store }, partialDeps)).state, 'pending');
+assert.equal(partialCalls, 1, 'a blocked required shot does not prevent the next executable shot from entering production');
+for (let tick = 0; tick < 3; tick++) await advanceAutomatedReplication({ tenantId: 'tenant', projectId: 'project', maxCostCny: 12.5, store: partial.store }, partialDeps);
+const partialTerminal = await advanceAutomatedReplication({ tenantId: 'tenant', projectId: 'project', maxCostCny: 12.5, store: partial.store }, partialDeps);
+assert.equal(partialTerminal.state, 'blocked');
+assert.match(partialTerminal.blocker!, /第 1 镜/);
+assert.equal(partial.project().spec.storyboardAssignments.slot, 'video');
+
+const queued = fixture();
+queued.project().spec.automatedReplicationProgress = { shot: { firstFrameMaterialId: 'frame', firstFrameFingerprint: 'frame-fp' } };
+const queuedResult = await advanceAutomatedReplication({ tenantId: 'tenant', projectId: 'project', store: queued.store }, {
+  ...deps, call: async () => ({ status: 202, body: { ok: false, code: 'STORYBOARD_VIDEO_IN_PROGRESS',
+    providerTaskId: 'supplier-original', providerAcceptedAt: '2026-10-11T00:00:00Z', providerModel: 'model' } }),
+});
+assert.equal(queuedResult.state, 'pending', 'an existing native request is pending, not a production failure');
+assert.equal(queued.project().spec.automatedReplicationProgress.shot.providerTaskId, 'supplier-original');
+assert.equal(queued.project().spec.automatedReplicationProgress.shot.videoMaterialId, undefined);
+
+const persistedReceipt = fixture();
+persistedReceipt.project().spec.automatedReplicationProgress = { shot: { firstFrameMaterialId: 'frame', firstFrameFingerprint: 'frame-fp' } };
+await advanceAutomatedReplication({ tenantId: 'tenant', projectId: 'project', store: persistedReceipt.store }, {
+  ...deps, call: async () => {
+    persistedReceipt.project().spec.automatedReplicationProgress.shot.providerTaskId = 'receipt-during-call';
+    return { status: 200, body: { ok: true, material: { id: 'video' } } };
+  },
+});
+assert.equal(persistedReceipt.project().spec.automatedReplicationProgress.shot.providerTaskId, 'receipt-during-call',
+  'saving a finished asset must not erase the receipt projected during supplier polling');

@@ -15,7 +15,7 @@ import { automationBgmCatalog, automationBgmAudio } from '../routes/studio.js';
 import { buildPresentationTimeline } from './presenterMix.js';
 import { normalizeVideoPlan, spokenLanguageMatches, usesDigitalPresenter, presentationScenes, type VideoCreationPlan } from '../../shared/contracts/videoCreationPlan.js';
 import { VIDEO_LANGUAGES, normalizeVideoLanguage } from '../../shared/contracts/videoLanguages.js';
-import { generateNarration, reviewFinalNarration, narrationEvidenceIssues } from './narration.js';
+import { generateNarration, reviewFinalNarration, narrationEvidenceIssues, type NarrationVisibleEvidence } from './narration.js';
 import fs from 'node:fs';
 import path from 'node:path';
 import crypto from 'node:crypto';
@@ -127,6 +127,16 @@ export function assetAuthorization(record: Record<string, unknown>, source: Asse
 
 function assetEligible(asset: AssetCandidate): boolean {
   return !asset.synthetic && asset.authorization.status !== 'unknown';
+}
+
+function narrationEvidenceForProduct(assets: AssetCandidate[], productId?: string): NarrationVisibleEvidence[] {
+  const expectedProductId = text(productId, 200);
+  return assets.map(asset => ({
+    authorization: asset.authorization.status,
+    productMatched: Boolean(expectedProductId && asset.productId === expectedProductId),
+    synthetic: asset.synthetic,
+    observations: asset.visualObservations,
+  }));
 }
 
 function normalizedTokens(value: string): string[] {
@@ -512,10 +522,55 @@ function selectedProductItems(profile: EnterpriseProfile, config: DigitalEmploye
     .filter(({ item }) => selected.includes(item));
 }
 
-function productFacts(profile: EnterpriseProfile, config: DigitalEmployeeConfig, productId?: string): string {
-  const items = selectedProductItems(profile, config).filter(item => !productId || item.productId === productId).map(item => item.item);
+/**
+ * Resolve a frozen order against the complete frozen catalog. An explicit
+ * product id is authoritative and never falls back to a same-named product;
+ * name/SKU matching exists only for legacy orders that predate stable ids.
+ */
+export function resolveFrozenOrderProduct<T extends { id?: unknown; productId?: unknown; sku?: unknown; name?: unknown }>(
+  products: T[],
+  order: { productId?: unknown; productName?: unknown },
+): { item: T; productId: string } | undefined {
+  const catalog = products.map((item, index) => ({ item, productId: enterpriseProductIdentity(item, index) }));
+  const explicitId = text(order.productId, 200);
+  if (explicitId) return catalog.find(candidate => candidate.productId === explicitId);
+  const legacyName = text(order.productName, 200);
+  if (!legacyName) return undefined;
+  const matches = catalog.filter(({ item }) => text(item.name, 200) === legacyName || text(item.sku, 160) === legacyName);
+  return matches.length === 1 ? matches[0] : undefined;
+}
+
+function frozenOrderProductItems(profile: EnterpriseProfile, orders: ContentProductionOrderInput[]) {
+  const catalog = profile.products.items || [];
+  const resolved = orders.map(order => resolveFrozenOrderProduct(catalog, order)).filter((item): item is NonNullable<typeof item> => Boolean(item));
+  return [...new Map(resolved.map(item => [item.productId, item])).values()];
+}
+
+/** Product, reference and material availability can change after a worker or
+ * user supplies the missing evidence. Only immutable route/platform scope is
+ * allowed to survive as a frozen runtime blocker. */
+export function immutableContentOrderBlockers(order: Pick<ContentProductionOrderInput, 'readinessBlockers'>): string[] {
+  return (order.readinessBlockers || []).filter(reason =>
+    /指定内容路径未在 Agent 配置中开启|制作平台不在本周目标范围中/.test(reason));
+}
+
+function confirmedProductSpecification(value: unknown): string {
+  if (typeof value !== 'string') return '';
+  const specification = value.trim();
+  return /^(?:无|暂无|未知|待补充|待确认|未(?:确认|提供|填写|标注)|(?:附件|资料|原文|标签)(?:中)?未(?:提供|标注)|unknown|n\/?a|none|not specified|[-—–]+)$/i.test(specification)
+    ? '' : specification;
+}
+
+export function productFacts(profile: EnterpriseProfile, config: DigitalEmployeeConfig, productId?: string): string {
+  // An explicit weekly-plan binding may select any confirmed catalog product.
+  // The focus list is a default, and can contain names from an older catalog.
+  const items = productId
+    ? (profile.products.items || []).filter((item, index) => productIdentity(item, index) === productId)
+    : selectedProductItems(profile, config).map(item => item.item);
   return items.map(item => [
     `产品：${item.name}`, item.sku ? `SKU：${item.sku}` : '', item.category ? `类别：${item.category}` : '',
+    confirmedProductSpecification(item.size) ? `规格：${confirmedProductSpecification(item.size)}` : '',
+    confirmedProductSpecification(item.attributes?.['净含量']) ? `净含量：${confirmedProductSpecification(item.attributes?.['净含量'])}` : '',
     item.material ? `材质：${item.material}` : '', item.priceRange ? `价格范围：${item.priceRange}` : '',
     item.moq ? `MOQ：${item.moq}` : '', item.certifications ? `认证：${item.certifications}` : '', item.highlights ? `特点：${item.highlights}` : '',
   ].filter(Boolean).join('；')).join('\n').slice(0, 8_000);
@@ -832,11 +887,17 @@ export function resumeContentProjectForTaskControl(input: {
   const automation = json<Record<string, unknown>>(spec.automation, {});
   if (automation.managedBy !== 'digital_employee') return null;
   if (text(spec.workflowRunId) !== input.runId || !input.affectedTaskIds.has(text(spec.workflowTaskId))) return null;
-  if (text(automation.stage) !== 'blocked') return null;
+  const resumableStages: ProductionStage[] = ['script', 'material_match', 'voice_subtitles', 'heygen', 'render', 'quality'];
+  const currentStage = text(automation.stage) as ProductionStage;
+  // Historical projects stored the active production node in `stage` and the
+  // blocked state separately in `status`. Treat both encodings as retryable,
+  // while never reopening completed or superseded work.
+  const legacyBlocked = text(automation.status) === 'blocked' && resumableStages.includes(currentStage);
+  if (currentStage !== 'blocked' && !legacyBlocked) return null;
   const requestedStage = text(automation.resumeStage) as ProductionStage;
-  const resumeStage: ProductionStage = ['script', 'material_match', 'voice_subtitles', 'heygen', 'render', 'quality'].includes(requestedStage)
+  const resumeStage: ProductionStage = resumableStages.includes(requestedStage)
     ? requestedStage
-    : 'script';
+    : legacyBlocked ? currentStage : 'script';
   const { retryPolicy: _retryPolicy, retryAfter: _retryAfter, resumeStage: _resumeStage, blocker: _blocker, ...preserved } = automation;
   return {
     ...spec,
@@ -903,7 +964,9 @@ export async function generateScript(input: {
   const lines = await generateNarration({ facts, theme: input.contentOrder?.theme?.label || input.goal.objective, audience: brief.matrix?.audience || input.config.customerProfile,
     language: brief.language, duration: brief.duration, cta: input.contentOrder?.cta || '引导买家讨论当前问题，不承诺额外服务',
     constraints: [...(input.contentOrder?.constraints || input.goal.constraints), ...(brief.reviewRequirements?.length ? ['第一段口播必须能在3秒内自然读完，与首镜钩子对应；其余段落展开解释。'] : []), ...(brief.presenter === 'heygen' ? [`必须恰好分为 ${brief.scenePlan?.length || 4} 段口播，对应用户分镜画面安排；数字人段简短，素材段展开解释。`] : [])], reference: referenceSummary,
-    styleProfile: narrationStyleInstruction(narrationStyle) });
+    styleProfile: narrationStyleInstruction(narrationStyle),
+    visibleEvidence: narrationEvidenceForProduct(input.assets, input.productId),
+  });
   if (brief.presenter === 'heygen' && brief.scenePlan?.length && lines.length !== brief.scenePlan.length) throw Error('口播段数与用户指定分镜数量不一致，请重新生成');
   const hookEnd = brief.reviewRequirements?.length ? 3 : 0;
   const step = hookEnd ? (brief.duration - hookEnd) / (lines.length - 1) : brief.duration / lines.length;
@@ -1018,10 +1081,67 @@ export async function generateDirectorScriptContracts(input: { tenantId: string;
   return results;
 }
 
+/** Repair legacy projects created while frozen orders were incorrectly
+ * resolved only inside focusProducts. This updates evidence binding only; it
+ * never clears the blocker or retries production without an explicit task
+ * recovery action. */
+export function repairFrozenOrderProductBinding(input: {
+  spec: Record<string, unknown>;
+  profile: EnterpriseProfile;
+  config: DigitalEmployeeConfig;
+  assets: AssetCandidate[];
+}): Record<string, unknown> | null {
+  const contentOrder = json<ContentProductionOrderInput | undefined>(input.spec.contentOrder, undefined);
+  if (!contentOrder) return null;
+  const product = resolveFrozenOrderProduct(input.profile.products.items || [], contentOrder);
+  if (!product) return null;
+  const automation = json<Record<string, unknown>>(input.spec.automation, {});
+  const routePlan = json<RouteSourcePlan>(automation.routePlan, {
+    route: contentOrder.route, assetIds: [], platform: contentOrder.platform, platformBrief: platformCreativeBrief(contentOrder.platform),
+  });
+  if (text(routePlan.productId, 200) === product.productId) return null;
+  // Never replace a different explicit catalog binding. The compatibility
+  // repair is only for the historical empty binding produced by the focus bug.
+  if (text(routePlan.productId, 200)) return null;
+  const assetIds = contentOrder.evidenceRefs
+    .filter(ref => ref.type === 'enterprise_material')
+    .map(ref => ref.id)
+    .filter(id => input.assets.some(asset => asset.id === id && assetEligible(asset) && (!asset.productId || asset.productId === product.productId)));
+  const boundAssets = assetIds.map(id => input.assets.find(asset => asset.id === id)).filter((asset): asset is AssetCandidate => Boolean(asset));
+  const previousSnapshot = json<Record<string, unknown>>(input.spec.evidenceSnapshot, {});
+  const preservedRoutePlan = { ...routePlan };
+  delete preservedRoutePlan.gap;
+  const nextRoutePlan: RouteSourcePlan = {
+    ...preservedRoutePlan,
+    productId: product.productId,
+    productName: text(product.item.name, 160) || contentOrder.productName,
+    assetIds,
+  };
+  const productSnapshot = { id: product.productId, name: nextRoutePlan.productName || '', facts: productFacts(input.profile, input.config, product.productId) };
+  const assetSnapshots = boundAssets.map(evidenceAssetSnapshot);
+  const reference = previousSnapshot.reference ?? null;
+  return {
+    ...input.spec,
+    productInfo: productSnapshot.facts,
+    evidenceSnapshot: {
+      ...previousSnapshot,
+      product: productSnapshot,
+      assets: assetSnapshots,
+      hash: stableHash({ productId: product.productId, assets: assetSnapshots, reference }),
+    },
+    automation: { ...automation, routePlan: nextRoutePlan },
+  };
+}
+
 export async function advanceOneProject(input: {
   tenantId: string; record: StoredRecord; config: DigitalEmployeeConfig; goal: WeeklyGoalInput; profile: EnterpriseProfile; assets: AssetCandidate[]; analyses: StoredRecord[]; allProjects: StoredRecord[];
 }): Promise<{ changed: boolean; blocker: string }> {
   const spec = json<Record<string, unknown>>(input.record.spec, {});
+  const repairedSpec = repairFrozenOrderProductBinding({ spec, profile: input.profile, config: input.config, assets: input.assets });
+  if (repairedSpec) {
+    await updateProject(input.record, repairedSpec);
+    return { changed: true, blocker: '' };
+  }
   const automation = projectAutomation(input.record);
   const route = text(automation.route) as ContentProductionRoute;
   // Clone has its own real per-shot pipeline. Never send it into the generic
@@ -1030,8 +1150,14 @@ export async function advanceOneProject(input: {
     const contract = json<Record<string, any>>(spec.contentOrder, {});
     const language = text(spec.lang) || input.config.videoDefaults?.language || 'en';
     const script = text(spec.script || contract.scripts?.[language]?.body, 30_000);
-    const productId = text(json<Record<string, unknown>>(automation.routePlan, {}).productId);
-    const issues = narrationEvidenceIssues(productFacts(input.profile, input.config, productId), voiceoverText(script));
+    const cloneRoutePlan = json<RouteSourcePlan>(automation.routePlan, { route: 'clone', assetIds: [], platform: '', platformBrief: '' });
+    const productId = text(cloneRoutePlan.productId);
+    const cloneAssets = cloneRoutePlan.assetIds.map(id => input.assets.find(asset => asset.id === id)).filter((asset): asset is AssetCandidate => Boolean(asset));
+    const issues = narrationEvidenceIssues(
+      productFacts(input.profile, input.config, productId),
+      voiceoverText(script),
+      narrationEvidenceForProduct(cloneAssets, productId),
+    );
     return advanceManagedReplication({ tenantId: input.tenantId, projectId: input.record.id,
       store, references: input.analyses, preflightBlocker: issues.length ? issues.join('；') : undefined });
   }
@@ -1067,8 +1193,6 @@ export async function advanceOneProject(input: {
   try {
     const replicationBlocker = legacyReplicationBlocker({ route, creationPath: spec.creationPath, stage, heygenJobId: automation.heygenJobId });
     if (replicationBlocker) return block('material_match', replicationBlocker, { retryPolicy: 'input_required' });
-    const evidenceIssues = narrationEvidenceIssues(productFacts(input.profile, input.config, routePlan.productId), stage === 'script' ? '' : voiceoverText(text(spec.script, 30_000)));
-    if (evidenceIssues.length) return block('script', evidenceIssues.join('；'), { retryPolicy: 'input_required' });
     if (brief.presenter !== 'avatar' && ['script', 'material_match', 'voice_subtitles', 'render'].includes(stage)) {
       const pending = routeAssets.find(asset => !evidenceClips(asset).length);
       if (pending) {
@@ -1089,6 +1213,13 @@ export async function advanceOneProject(input: {
         }
       }
     }
+    const visibleEvidence = narrationEvidenceForProduct(routeAssets, routePlan.productId);
+    const evidenceIssues = narrationEvidenceIssues(
+      productFacts(input.profile, input.config, routePlan.productId),
+      stage === 'script' ? '' : voiceoverText(text(spec.script, 30_000)),
+      visibleEvidence,
+    );
+    if (evidenceIssues.length) return block('script', evidenceIssues.join('；'), { retryPolicy: 'input_required' });
     if (brief.presenter === 'material' && ['voice_subtitles', 'render'].includes(stage)) {
       const plan = json<SceneSourcePlanItem[]>(spec.sceneSourcePlan, []);
       const timings = productionTiming(spec, storyboardSceneRanges(text(spec.script, 30_000)));
@@ -1333,6 +1464,7 @@ export async function advanceOneProject(input: {
       const issues = await reviewFinalNarration({
         spoken, facts: productFacts(input.profile, input.config, routePlan.productId),
         visualFacts: routeAssets.flatMap(asset => [asset.name, ...asset.visualObservations]),
+        visibleEvidence,
         sceneEvidence: narrationSceneEvidence,
         language: brief.language, constraints: contentOrder?.constraints || input.goal.constraints,
       });
@@ -1740,9 +1872,6 @@ export async function advanceAutomatedContentProduction(input: {
   ]);
   const analyses = analysesResult.items.filter(record => exactAnalysis(record) && Boolean(referenceStructure(record)));
   const assets = await collectProductionAssets(input.tenantId, profile);
-  const selectedProducts = selectedProductItems(profile, input.config);
-  const productNames = selectedProducts.map(({ item }) => text(item.name, 160)).filter(Boolean);
-  const evidence: ContentRouteEvidence = { exactAnalysisIds: analyses.map(item => item.id), productNames, assetIds: assets.map(item => item.id) };
   let projects = existingProjects.filter(record => {
     const spec = json<Record<string, unknown>>(record.spec, {});
     return spec.workflowRunId === input.runId && spec.workflowTaskId === input.taskId && projectAutomation(record).managedBy === 'digital_employee' && projectAutomation(record).stage !== 'superseded';
@@ -1753,6 +1882,14 @@ export async function advanceAutomatedContentProduction(input: {
     return { changed: false, ready: false, projectRefs: [], knowledgeGaps: [], blocker: '内容批次订单为空、重复或包含无效路径', summary: '内容生产未启动' };
   }
   const frozenOrders = expandContentOrdersByLanguage(requestedOrders, input.config);
+  // A frozen order may intentionally target any product from the frozen
+  // enterprise snapshot. focusProducts is only the default for an unfrozen,
+  // automatically allocated batch.
+  const selectedProducts = frozenOrders.length
+    ? frozenOrderProductItems(profile, frozenOrders)
+    : selectedProductItems(profile, input.config);
+  const productNames = selectedProducts.map(({ item }) => text(item.name, 160)).filter(Boolean);
+  const evidence: ContentRouteEvidence = { exactAnalysisIds: analyses.map(item => item.id), productNames, assetIds: assets.map(item => item.id) };
   const missingOrders = contentOrderCoverage(projects, frozenOrders.map(order => order.id)).missing;
   const requiredRoutes = requiredContentRoutes({ frozenOrders, videoPlans: input.goal.videoPlans,
     projectRoutes: projects.map(project => text(projectAutomation(project).route) as ContentProductionRoute).filter(route => ['clone', 'product', 'material'].includes(route)),
@@ -1773,7 +1910,7 @@ export async function advanceAutomatedContentProduction(input: {
     const now = new Date().toISOString();
     const created: StoredRecord[] = [];
     const sourcePlans = frozenOrders.length ? frozenOrders.map(order => {
-      const product = selectedProducts.find(candidate => candidate.productId === order.productId || text(candidate.item.name, 160) === text(order.productName, 160));
+      const product = resolveFrozenOrderProduct(profile.products.items || [], order);
       const productId = product?.productId || '';
       const productName = text(product?.item.name || order.productName, 160);
       const owned = assets.filter(asset => assetEligible(asset) && (order.route === 'material' ? !asset.productId || asset.productId === productId : asset.productId === productId));
@@ -1790,10 +1927,11 @@ export async function advanceAutomatedContentProduction(input: {
       // Additional material may still be chosen by a future batch plan, but it
       // must be explicit evidence rather than an implicit same-product sweep.
       const assetIds = order.evidenceRefs.filter(ref => ref.type === 'enterprise_material').map(ref => ref.id).filter(id => owned.some(asset => asset.id === id));
-      const preproductionGap = order.videoPlan?.preproduction && !order.videoPlan.preproduction.readiness.canStart
-        ? order.videoPlan.preproduction.readiness.blockers.join('；') || '本条母版制作准备尚未完成'
-        : '';
-      const gap = preproductionGap || (!productId ? '批次订单引用的产品不在当前冻结重点产品中'
+      // Re-evaluate mutable product/reference/material readiness from the
+      // current frozen evidence on every retry. Only immutable route/platform
+      // scope errors remain hard-frozen on the order.
+      const orderGap = immutableContentOrderBlockers(order).join('；');
+      const gap = orderGap || (!productId ? '批次订单引用的产品不在当前冻结产品资料中'
         : order.route === 'clone' && !analyses.some(record => record.id === referenceId) ? '批次订单引用的精确参考结构不存在或不可解析'
           : order.route === 'material' && !material ? '批次订单引用的锁定素材不存在、未授权或不属于当前产品'
             : !assetIds.length && (!order.videoPlan || !usesDigitalPresenter(order.videoPlan)) && order.route !== 'product' ? '批次订单没有属于当前产品的已授权视觉素材' : '');
@@ -1858,6 +1996,30 @@ export async function advanceAutomatedContentProduction(input: {
     }
     projects = [...projects, ...created];
     changed = created.length > 0;
+  }
+
+  // Repair the historical focus-product binding bug for every project in the
+  // scoped run/task before allocating scarce production slots. The repair is
+  // metadata-only: it neither generates media nor clears a genuine blocker.
+  // Without this pass, each repaired script project consumed an entire tick
+  // before the next sibling could even have its frozen product restored.
+  const bindingRepairs = await Promise.all(projects.map(async project => {
+    if (text(projectAutomation(project).stage) === 'completed') return null;
+    const repaired = repairFrozenOrderProductBinding({
+      spec: json<Record<string, unknown>>(project.spec, {}),
+      profile,
+      config: input.config,
+      assets,
+    });
+    if (!repaired) return null;
+    await updateProject(project, repaired);
+    return await store.getById<StoredRecord>('studio_projects', project.id)
+      || { ...project, spec: repaired, status: 'draft' };
+  }));
+  const repairedById = new Map(bindingRepairs.filter((project): project is StoredRecord => Boolean(project)).map(project => [project.id, project]));
+  if (repairedById.size) {
+    projects = projects.map(project => repairedById.get(project.id) || project);
+    changed = true;
   }
 
   // A historical `passed` result is not proof under newer fact/visual rules.

@@ -10,7 +10,7 @@ import type {
   AssistantDecisionKind,
   AssistantDecisionPage,
 } from '../../shared/contracts/assistantDecisionCenter';
-import { normalizeAssistantDecisionPage } from '../../shared/contracts/assistantDecisionCenter';
+import { normalizeAssistantDecisionPage, normalizeAssistantDecisionExecutionReceipt } from '../../shared/contracts/assistantDecisionCenter';
 import { authHeader } from './auth';
 
 const BASE = '/api/overseas/digital-employees/assistant/decision-center';
@@ -33,6 +33,7 @@ export class AssistantDecisionApiError extends Error {
     message: string,
     readonly status: number,
     readonly code = '',
+    readonly details: Readonly<Record<string, unknown>> = {},
   ) {
     super(message);
     this.name = 'AssistantDecisionApiError';
@@ -211,11 +212,13 @@ async function request<T>(url: string, init?: RequestInit): Promise<T> {
       throw new AssistantDecisionApiError('待办接口未返回有效数据，请重新加载', 502, 'invalid_decision_response');
     }) as Record<string, unknown>;
     if (!response.ok) {
-      const stale = response.status === 409;
+      const code = text(body.error, 120);
+      const stale = response.status === 409 && ['stale_decision', 'assistant_decision_changed', 'assistant_decision_not_pending'].includes(code);
       throw new AssistantDecisionApiError(
         stale ? '这项待办已更新，已为你刷新最新内容' : text(body.message || body.error, 240) || '待办请求失败，请重试',
         response.status,
-        text(body.error, 120),
+        code,
+        body,
       );
     }
     return body as T;
@@ -267,10 +270,15 @@ export async function executeAssistantDecision(input: {
     throw new AssistantDecisionApiError('操作结果尚未确认，请重新加载待办核对', 502, 'invalid_decision_response');
   }
   const feed = normalizeAssistantDecisionFeed(body);
+  const execution = normalizeAssistantDecisionExecutionReceipt(body.execution);
+  if (input.actionId === 'approve_and_start' && body.outcome !== 'navigation_required' && !execution) {
+    throw new AssistantDecisionApiError('启动结果尚未确认，请刷新查看真实运行状态', 502, 'plan_start_unconfirmed');
+  }
   return {
     ...feed,
     ok: true,
     outcome: body.outcome,
+    ...(execution ? { execution } : {}),
   };
 }
 

@@ -82,6 +82,8 @@
 .ls-calendar-event-meta { display: flex; align-items: center; gap: 4px; font-size: var(--ls-type-body-small-size); line-height: var(--ls-type-body-small-line); }
 .ls-calendar-event-meta span { overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
 .ls-calendar-thumb { flex-shrink: 0; width: 40px; height: 48px; overflow: hidden; border-radius: 4px; background: #f5f5f5; }
+.ls-calendar-detail-thumb { flex: 0 0 72px; width: 72px; height: 128px; overflow: hidden; border-radius: 8px; background: var(--color-surface-2); }
+.ls-calendar-detail-thumb img { width: 100%; height: 100%; object-fit: contain; }
 .ls-calendar-card-media { inline-size: 100%; block-size: 100%; aspect-ratio: 9/16; margin-inline: auto; overflow: hidden; background: #f5f5f5; }
 .ls-calendar-thumb img, .ls-calendar-media img { width: 100%; height: 100%; object-fit: contain; opacity: 0; transition: opacity var(--ls-motion-enter) var(--ls-ease-enter); }
 .ls-calendar-card-media img { width: 100%; height: 100%; object-fit: cover; object-position: center; opacity: 0; transition: opacity var(--ls-motion-enter) var(--ls-ease-enter); }

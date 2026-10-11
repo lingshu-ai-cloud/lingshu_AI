@@ -45,6 +45,8 @@ type Props = {
   onEventClick?: (event: LsCalendarEvent) => boolean | void;
   onExternalDrop?: (pendingId: string, day: string) => void;
   onMoveEvent?: (event: LsCalendarEvent, start: string) => Promise<void>;
+  detailsTitle?: string;
+  detailsMedia?: 'large' | 'compact';
   renderDetails?: (event: LsCalendarEvent, closeDetails: () => void) => ReactNode;
 };
 
@@ -78,7 +80,7 @@ function loadProtectedThumbnail(src: string, refresh = false): Promise<Blob | nu
   return request;
 }
 
-function CalendarThumbnail({ src, title, large = false, card = false }: { src?: string; title: string; large?: boolean; card?: boolean }) {
+function CalendarThumbnail({ src, title, large = false, card = false, compact = false }: { src?: string; title: string; large?: boolean; card?: boolean; compact?: boolean }) {
   const [failedSource, setFailedSource] = useState<string | undefined>();
   const [loadedSource, setLoadedSource] = useState<string | undefined>();
   const [resolvedSource, setResolvedSource] = useState('');
@@ -127,7 +129,7 @@ function CalendarThumbnail({ src, title, large = false, card = false }: { src?: 
   const ready = Boolean(resolvedSource && loadedSource === resolvedSource);
   const loading = Boolean(src && !failed && !ready);
   const mediaState = failed || !src ? 'error' : ready ? 'ready' : 'loading';
-  return <div className={large ? 'ls-calendar-media' : card ? 'ls-calendar-card-media' : 'ls-calendar-thumb'}>
+  return <div className={compact ? 'ls-calendar-detail-thumb' : large ? 'ls-calendar-media' : card ? 'ls-calendar-card-media' : 'ls-calendar-thumb'}>
     <LsMediaStateFrame state={mediaState} label={loading ? '正在加载封面' : failed ? '封面暂不可用' : !src ? '暂无封面' : undefined}>
       {resolvedSource && !failed ? <img src={resolvedSource} alt={title} loading={card ? 'eager' : 'lazy'} decoding="async" className={ready ? 'is-ready' : undefined} onLoad={() => setLoadedSource(resolvedSource)} onError={() => setFailedSource(src)}/> : null}
       {!src && <ImageOff size={large || card ? 24 : 16} aria-hidden="true"/>}
@@ -137,7 +139,7 @@ function CalendarThumbnail({ src, title, large = false, card = false }: { src?: 
 }
 
 /** Standard plugins only: all calendar pages share the same events, timezone and accessible detail path. */
-export function LsCalendar({ events, label, initialDate, initialView = 'dayGridMonth', view: controlledView, firstDay = 1, eventCardMode = 'compact', density = 'default', flush = false, date, timeZone = 'Asia/Shanghai', loading, timeGridHeight = 'clamp(320px, calc(100dvh - 280px), 720px)', fixedHeight, primaryAction, filters, onRefresh, onDatesSet, onDateClick, onEventClick, onExternalDrop, onMoveEvent, renderDetails }: Props) {
+export function LsCalendar({ events, label, initialDate, initialView = 'dayGridMonth', view: controlledView, firstDay = 1, eventCardMode = 'compact', density = 'default', flush = false, date, timeZone = 'Asia/Shanghai', loading, timeGridHeight = 'clamp(320px, calc(100dvh - 280px), 720px)', fixedHeight, primaryAction, filters, onRefresh, onDatesSet, onDateClick, onEventClick, onExternalDrop, onMoveEvent, detailsTitle = '排期详情', detailsMedia = 'large', renderDetails }: Props) {
   const calendarRef = useRef<CalendarRef>(null);
   const hostRef = useRef<HTMLDivElement>(null);
   const revealObserverRef = useRef<IntersectionObserver | null>(null);
@@ -357,10 +359,12 @@ export function LsCalendar({ events, label, initialDate, initialView = 'dayGridM
         }}/>
       </div>
     </div>
-    <Drawer title="排期详情" open={Boolean(selected)} onClose={() => setSelectedId(null)} size={520} destroyOnHidden>
+    <Drawer title={detailsTitle} open={Boolean(selected)} onClose={() => setSelectedId(null)} size={520} destroyOnHidden>
       {selected && <div className="space-y-5">
-        {['content', 'publish', 'shooting'].includes(selected.eventType) && <CalendarThumbnail src={selected.thumbnailUrl} title={selected.title} large/>}
-        <div><Tag>{selected.statusLabel || calendarStatusLabels[selected.status]}</Tag><h3 className="mt-3 ls-type-title-medium text-text-primary">{selected.title}</h3>{selected.description && <p className="mt-2 ls-type-body-medium text-text-secondary">{selected.description}</p>}</div>
+        <div className={detailsMedia === 'compact' ? 'flex items-start gap-4' : 'space-y-4'}>
+          {['content', 'publish', 'shooting'].includes(selected.eventType) && <CalendarThumbnail src={selected.thumbnailUrl} title={selected.title} large={detailsMedia === 'large'} compact={detailsMedia === 'compact'}/>}
+          <div className="min-w-0"><Tag>{selected.statusLabel || calendarStatusLabels[selected.status]}</Tag><h3 className="mt-3 ls-type-title-medium text-text-primary">{selected.title}</h3>{selected.description && <p className="mt-2 ls-type-body-medium text-text-secondary">{selected.description}</p>}</div>
+        </div>
         <dl className="ls-calendar-details">
           <div><dt>交付时间</dt><dd>{selected.allDay ? selected.start.slice(0, 10) : new Date(selected.start).toLocaleString('zh-CN', { timeZone: selected.timeZone })} · {selected.timeZone}</dd></div>
           {selected.platform && <div><dt>平台账号</dt><dd className="flex items-center gap-2"><SocialPlatformIcon platform={selected.platform} size={16}/>{socialBrandLabel(selected.platform)} · {selected.accountName || '待绑定账号'}</dd></div>}

@@ -12,14 +12,17 @@ assert.ok(start >= 0 && end > start, '周经营计划区必须存在');
 for (const label of ['待验收成片', '本周计划视频', '本周视频总时长', '本周成本范围', '预计制作成本', '已结算成本']) {
   assert.match(commandCenter, new RegExp(label), `周经营计划必须展示“${label}”`);
 }
+assert.match(commandCenter, /计划估算，逐镜生成与重试费用待核算/, '计划额度不能冒充完整的逐镜供应商成本');
+assert.doesNotMatch(commandCenter, /已包含本周全部视频制作/, '费用未核算前不得承诺覆盖本周全部视频制作');
 assert.match(source, /durationSeconds: contents\.reduce\(\(sum, item\) => sum \+ item\.duration, 0\)/, '视频总时长必须按本周全部计划视频合计');
 assert.match(commandCenter, /initialView="dayGridWeek"[^>]*eventCardMode="media"[^>]*fixedHeight="clamp\(300px, calc\(100dvh - 270px\), 640px\)"/, '发布日历必须使用不超过一屏可用空间的 FullCalendar 原生周卡片视图');
 assert.match(commandCenter, /<LsCalendar[^>]*density="compact"[^>]*\bflush\b/, '首页发布日历必须紧凑展示并使用左右全部宽度');
 assert.doesNotMatch(commandCenter, /<h[1-6][^>]*>发布日历<\/h[1-6]>/, '日历不得保留独占一行的重复标题');
 assert.doesNotMatch(commandCenter, /<section className=\{`[^`]*(?:rounded-lg|border border-border)/, '周经营计划不得再使用封闭卡片外框');
 assert.match(commandCenter, /const calendarEvents:[\s\S]*display\.contents\.map/, '每条本周内容都必须映射为一个日历事件');
-assert.match(commandCenter, /onEventClick=\{event =>[\s\S]*item\.inspirationReference[\s\S]*inspirationReferenceNavigationDetail[\s\S]*return true/, '具备精确爆款身份的发布卡必须直接跳转到对应详情');
-assert.match(commandCenter, /if \(!item\.inspirationReference[^]*return false/, '没有精确爆款身份的发布卡必须回退到原详情抽屉');
+assert.doesNotMatch(commandCenter, /onEventClick=/, '发布卡点击必须由共享日历打开侧栏，不能直接导航离开');
+assert.match(commandCenter, /detailsTitle="内容制作进度"[^]*<WeeklyContentProgressPanel[^]*contentId=\{item\.contentId\}/, '每条内容必须在共享侧栏展示其真实制作进度');
+assert.match(commandCenter, /onOpenReference=\{item\.inspirationReference[^]*inspirationReferenceNavigationDetail/, '精确爆款详情必须保留为侧栏里的次级入口');
 assert.match(source, /businessRef: \{ referenceId: reference\.referenceId \}[\s\S]*inspirationReference: reference/, '爆款跳转必须使用既有的嵌套引用协议');
 assert.match(source, /target === "benchmark"[\s\S]{0,200}inspirationReferenceNavigationDetail\(benchmarkReference, item\.id\)/, '内容预览的爆款入口也必须发送嵌套引用协议');
 for (const internalLabel of ['原创母版', '平台版本', '平台轻适配', '适配版', '手动单项']) {

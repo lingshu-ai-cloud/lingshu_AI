@@ -19,6 +19,10 @@ assert.match(source, /LOCAL_DEMO_TOKEN_SECRET: localAuthSecret/, '本地预览�
 assert.match(source, /LOCAL_DEMO_TOKEN_TTL_SECONDS: '86400'/, '本地预览登录应保持完整一天，不能在工作过程中提前失效');
 assert.match(source, /VITE_LINGSHU_LOCAL_PREVIEW: '1'/, '本地预览前端必须显式启用仅回环地址可用的会话引导');
 assert.match(source, /LINGSHU_PREVIEW_AUTH_EMAIL: localPreviewAuthEmail/, '本地预览后端必须只选择显式的本地测试身份');
+assert.match(source, /loadLocalPreviewProviderEnvironment\(\{ runtimeRoot \}\)/, '共享 provider 配置必须显式选择并验证相同 Git 主工作区');
+assert.match(source, /providerEnvironmentForService\(service.name, providerConfiguration\)/, '共享 provider 凭据只能注入后端，不能注入 Vite');
+assert.match(source, /providerConfiguration.loadedKeys.join/, 'provider 配置日志只能记录白名单键名');
+assert.doesNotMatch(source, /(?:log|console\.[a-z]+)\([^\n]*providerConfiguration\.providerEnv/, '不能记录 provider 凭据值');
 assert.doesNotMatch(source, /'0\.0\.0\.0'/, '受监督的本地预览不能监听局域网接口');
 assert.match(source, /'--host',\s*'127\.0\.0\.1'/, '受监督的本地预览必须只绑定 IPv4 回环地址');
 assert.match(viteSource, /optimizeDeps:\s*\{[^}]*exclude:\s*\['xlsx'\]/s, '本地预览不能给 vendored xlsx 生成会失效的优化哈希');

@@ -35,10 +35,10 @@ interface BatchShotSpec {
   mode?: string;
   activeAssemblyId?: string;
   ratio?: string;
-  shootingSlots?: Array<{ id?: string; slotId?: string; detail?: string; duration?: number; requirements?: string; observedPresenterRole?: import('../../shared/contracts/presenterShotRecognition.js').ObservedPresenterRole; personContinuityId?: string; salesPresenterConfirmed?: boolean }>;
+  shootingSlots?: Array<{ id?: string; slotId?: string; detail?: string; duration?: number; requirements?: string; observedPresenterRole?: import('../../shared/contracts/presenterShotRecognition.js').ObservedPresenterRole; personContinuityId?: string; salesPresenterConfirmed?: boolean; locked?: boolean; blocker?: string }>;
   shotProductions?: Record<string, ShotProduction>;
   storyboardAssignments?: Record<string, string>;
-  storyboardSourcePlans?: Record<string, { userSource?: string; mode?: string; shotTopic?: 'presenter' | 'factory' | 'product' | 'consumer_demo' | 'general'; sceneType?: 'product' | 'factory' | 'usage' | 'general'; confirmed?: boolean; firstFrameMaterialId?: string; firstFrameConfirmed?: boolean; generatedClipId?: string; videoResolution?: '480p' | '720p'; videoResolutionPinned?: boolean }>;
+  storyboardSourcePlans?: Record<string, { userSource?: string; mode?: string; shotTopic?: 'presenter' | 'factory' | 'product' | 'consumer_demo' | 'general'; sceneType?: 'product' | 'factory' | 'usage' | 'general'; confirmed?: boolean; firstFrameMaterialId?: string; firstFrameConfirmed?: boolean; generatedClipId?: string; videoResolution?: '480p' | '720p'; videoResolutionPinned?: boolean; blocker?: string }>;
   clipEdits?: Record<string, { segmentId?: string; trimStart?: number; trimEnd?: number }>;
   materialSnapshots?: Array<{ id?: string; usage?: string; name?: string; type?: string; url?: string; duration?: number; width?: number; height?: number; aspectRatio?: number; transcript?: string }>;
 }
@@ -65,7 +65,8 @@ export function planStudioBatchShotRoutes(spec: BatchShotSpec, options: {
     // every reference cut. Neither is reliable evidence of what is on screen.
     const description = String(slot.detail || '').split('镜头功能：')[0] || String(slot.detail || '');
     const purpose = String(slot.detail || '').match(/镜头功能：([^\s]+)/)?.[1] || String(slot.requirements || '').slice(0, 120);
-    const explicitScene = spec.storyboardSourcePlans?.[slotId]?.sceneType;
+    const sourcePlan = spec.storyboardSourcePlans?.[slotId];
+    const explicitScene = sourcePlan?.sceneType;
     const recognition = confirmedSalesPresenterRoute(slot);
     const selectedTopic = spec.storyboardSourcePlans?.[slotId]?.shotTopic;
     const factoryScene = selectedTopic === 'factory' || (!selectedTopic && recognition !== 'presenter' && (explicitScene === 'factory' || /工厂|车间|生产线|流水线|灌装|工人|factory|manufactur/i.test(description)));
@@ -85,8 +86,9 @@ export function planStudioBatchShotRoutes(spec: BatchShotSpec, options: {
       trimStart: assigned && Number.isFinite(trimStart) ? trimStart : null,
       trimEnd: assigned && Number.isFinite(trimEnd) && trimEnd > trimStart ? trimEnd : null,
       generated: false as const };
-    const choice = spec.storyboardSourcePlans?.[slotId]?.userSource;
-    const sourcePlan = spec.storyboardSourcePlans?.[slotId];
+    const choice = sourcePlan?.userSource;
+    if (sourcePlan?.mode === 'blocked' || slot.locked) return { ...base, route: 'unresolved', status: 'blocked',
+      reason: sourcePlan?.blocker || slot.blocker || '镜头证据待确认，未提交智能生成' };
     if (!['material', 'shoot'].includes(choice || '') && slot.personContinuityId && salesPresenterRecognition(slot) === 'confirmed') {
       const identityAssets = new Set(slots.filter(peer => peer.personContinuityId === slot.personContinuityId && salesPresenterRecognition(peer) === 'confirmed'
         && !['material', 'shoot'].includes(spec.storyboardSourcePlans?.[String(peer.slotId || peer.id || '')]?.userSource || ''))

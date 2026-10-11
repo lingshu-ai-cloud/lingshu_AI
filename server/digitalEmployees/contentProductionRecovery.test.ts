@@ -1,6 +1,75 @@
 import assert from 'node:assert/strict';
-import { requiredContentRoutes, contentProductionKnowledgeGaps, paginateAlignedCues, subtitleCuesAreSafe, contentProjectRetryable, sceneHasVisualEvidence, resumeContentProjectForTaskControl, type AssetCandidate } from './contentProduction.js';
-import { narrationEvidenceIssues, reviewFinalNarration, generateNarration } from './narration.js';
+import { requiredContentRoutes, contentProductionKnowledgeGaps, paginateAlignedCues, subtitleCuesAreSafe, contentProjectRetryable, sceneHasVisualEvidence, resumeContentProjectForTaskControl, productFacts, type AssetCandidate } from './contentProduction.js';
+import { narrationEvidenceIssues, narrationVisibleObservations, reviewFinalNarration, generateNarration, type NarrationVisibleEvidence } from './narration.js';
+import type { EnterpriseProfile } from '../routes/enterprise.js';
+import type { DigitalEmployeeConfig } from './domain.js';
+
+const factProfile = {
+  products: { items: [
+    { id: 'catalog-cleanser', sku: 'CLEAN-001', name: 'Current cleanser', category: 'Cleanser', highlights: 'Foaming texture', size: 'Travel bottle', attributes: { 净含量: '100ml', 来源文件: 'catalog.pdf', 来源页码: 1 } },
+    { id: 'catalog-cream', sku: 'CREAM-002', name: 'Current cream', category: 'Cream', highlights: 'Cream texture' },
+  ] },
+} as EnterpriseProfile;
+const staleFocusConfig = { focusProducts: 'Old serum、Old sunscreen' } as DigitalEmployeeConfig;
+const boundFacts = productFacts(factProfile, staleFocusConfig, 'catalog-cleanser');
+assert.match(boundFacts, /产品：Current cleanser；SKU：CLEAN-001；类别：Cleanser/);
+assert.match(boundFacts, /规格：Travel bottle；净含量：100ml/);
+assert.match(boundFacts, /特点：Foaming texture/);
+assert.doesNotMatch(boundFacts, /Current cream|catalog\.pdf|来源页码/, 'explicit product facts must stay within the bound product and exclude source metadata');
+assert.deepEqual(narrationEvidenceIssues(boundFacts), [], 'a confirmed plan product must remain usable when the default focus names are stale');
+assert.equal(productFacts(factProfile, staleFocusConfig, 'missing-product'), '', 'an unknown explicit product must not fall back to another catalog item');
+assert.ok(narrationEvidenceIssues(productFacts(factProfile, staleFocusConfig, 'missing-product')).length);
+assert.equal(productFacts(factProfile, staleFocusConfig), '', 'without an explicit binding, stale focus names must not select the entire catalog');
+assert.equal(productFacts(factProfile, { ...staleFocusConfig, focusProducts: '' }), '', 'an empty focus list must retain its existing no-selection behavior');
+const focusedFacts = productFacts(factProfile, { ...staleFocusConfig, focusProducts: 'CREAM-002' });
+assert.match(focusedFacts, /产品：Current cream/);
+assert.doesNotMatch(focusedFacts, /Current cleanser/, 'unbound facts must still follow the explicit name or SKU focus selection');
+assert.equal(productFacts(factProfile, { ...staleFocusConfig, focusProducts: 'Current cream' }), focusedFacts);
+
+const verifiedProductVisual: NarrationVisibleEvidence = {
+  authorization: 'owned',
+  productMatched: true,
+  synthetic: false,
+  observations: ['A clear pump bottle is visible beside white foam on a hand'],
+};
+assert.deepEqual(
+  narrationEvidenceIssues('产品：Current cleanser；SKU：CLEAN-001', 'A clear pump bottle is visible.', [verifiedProductVisual]),
+  [],
+  'an authorized product-owned visual observation must admit conservative narration without inventing missing product attributes',
+);
+assert.deepEqual(narrationVisibleObservations([verifiedProductVisual]), verifiedProductVisual.observations);
+for (const rejected of [
+  { ...verifiedProductVisual, authorization: 'unknown' as const },
+  { ...verifiedProductVisual, productMatched: false },
+  { ...verifiedProductVisual, synthetic: true },
+  { ...verifiedProductVisual, observations: ['企业知识库产品“Current cleanser”的已上传图片'] },
+]) {
+  assert.ok(
+    narrationEvidenceIssues('产品：Current cleanser；SKU：CLEAN-001', 'A clear pump bottle is visible.', [rejected]).length,
+    'unverified, cross-product, synthetic or upload-receipt-only visuals must not satisfy the evidence gate',
+  );
+}
+assert.ok(
+  narrationEvidenceIssues('产品：Current cleanser；SKU：CLEAN-001', 'Stable voltage and temperature performance with no derating.', [verifiedProductVisual]).length,
+  'visible product appearance must not become evidence for unconfirmed performance claims',
+);
+
+const specificationProfile = (size: unknown, netContent: unknown) => ({
+  products: { items: [{ id: 'spec-product', name: 'Spec product', size, attributes: { 净含量: netContent, 来源文件: 'catalog.pdf', 来源页码: 9 } }] },
+}) as unknown as EnterpriseProfile; // Exercise malformed persisted fields at the fact boundary.
+assert.deepEqual(narrationEvidenceIssues(productFacts(specificationProfile('', '50g'), staleFocusConfig, 'spec-product')), []);
+assert.deepEqual(narrationEvidenceIssues(productFacts(specificationProfile('10 × 20 cm', ''), staleFocusConfig, 'spec-product')), []);
+for (const [size, netContent] of [
+  [{ description: 'do not stringify' }, ['100ml']],
+  [undefined, '附件未标注'],
+  ['未知', '待补充'],
+  [' N/A ', 'unknown'],
+  ['', ''],
+]) {
+  const facts = productFacts(specificationProfile(size, netContent), staleFocusConfig, 'spec-product');
+  assert.equal(facts, '产品：Spec product', 'non-string, placeholder and provenance values cannot supply missing product evidence');
+  assert.ok(narrationEvidenceIssues(facts).length, 'missing substantive facts must remain blocked');
+}
 
 const text = 'Before selecting this product, ask your supplier to confirm which documented materials and dimensions match your intended use. Review the provided details together before making a decision.';
 const oldCues = [{ start: 0.5, end: 10.25, text }, { start: 11, end: 15, text: 'Review the confirmed product details.' }];

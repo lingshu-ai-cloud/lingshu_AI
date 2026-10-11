@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import sharp from 'sharp';
-import { buildStoryboardQaReport, inspectStoryboardTechnicalFrames, reviewStoryboardQaReport, storyboardQaRequiredChecks } from './storyboardAigcQuality.js';
+import { buildStoryboardQaReport, inspectStoryboardTechnicalFrames, reviewStoryboardQaReport, storyboardQaObservationContractIssues, storyboardQaRequiredChecks } from './storyboardAigcQuality.js';
 
 const base = {
   phase: 'video' as const, sceneType: 'usage' as const, hasProduct: true,
@@ -78,3 +78,25 @@ const technical = await inspectStoryboardTechnicalFrames('first_frame', [
 assert.equal(technical[0].verdict, 'fail');
 assert.equal(technical[0].action, 'retry_first_frame');
 assert.deepEqual(technical[0].evidenceFrames, ['首帧', '无效小图']);
+
+const firstFrameContract = {
+  requiredKeys: ['product_identity', 'layout', 'visual_integrity'],
+  allowedCitationLabels: ['企业产品参考1：冰沙面霜', '候选首帧'],
+  candidateLabels: ['候选首帧'],
+};
+assert.deepEqual(storyboardQaObservationContractIssues({ ...firstFrameContract, observations: [
+  { key: 'product_identity', verdict: 'pass', evidenceFrames: ['企业产品参考1：冰沙面霜', '候选首帧'] },
+  { key: 'layout', verdict: 'pass', evidenceFrames: ['候选首帧'] },
+  { key: 'visual_integrity', verdict: 'pass', evidenceFrames: ['候选首帧'] },
+] }), []);
+assert(storyboardQaObservationContractIssues({ ...firstFrameContract, observations: [
+  { key: 'product_identity', verdict: 'pass', evidenceFrames: ['候选0s'] },
+  { key: 'layout', verdict: 'pass', evidenceFrames: ['候选首帧'] },
+] }).includes('product_identity:unknown_evidence_label'), 'unknown model citations are a service-contract error');
+assert(storyboardQaObservationContractIssues({ ...firstFrameContract, observations: [
+  { key: 'product_identity', verdict: 'pass', evidenceFrames: ['企业产品参考1：冰沙面霜'] },
+  { key: 'layout', verdict: 'pass', evidenceFrames: ['候选首帧'] },
+  { key: 'visual_integrity', verdict: 'uncertain', evidenceFrames: [] },
+] }).includes('product_identity:candidate_evidence_required'), 'references alone cannot prove the candidate passed');
+assert(storyboardQaObservationContractIssues({ ...firstFrameContract, observations: [], technicalKeys: ['visual_integrity'] })
+  .includes('product_identity:missing_or_invalid_verdict'), 'technical QA must not hide a missing visual-model contract');

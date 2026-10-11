@@ -5,9 +5,15 @@ import fs from 'node:fs';
 import { execFileSync } from 'node:child_process';
 import os from 'node:os';
 import { randomBytes } from 'node:crypto';
+import { loadLocalPreviewProviderEnvironment, providerEnvironmentForService } from './local-preview-provider-env.mjs';
 
 const repositoryRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const runtimeRoot = path.resolve(process.env.LINGSHU_PREVIEW_ROOT || repositoryRoot);
+const providerConfiguration = loadLocalPreviewProviderEnvironment({ runtimeRoot });
+if (providerConfiguration.loadedKeys.length) {
+  // Key names only. Never log the providerEnv object or any environment values.
+  log(`backend provider configuration loaded: ${providerConfiguration.loadedKeys.join(', ')}`);
+}
 const nodeExecutable = process.execPath;
 const shuttingDown = { value: false };
 let monitoring = false;
@@ -156,7 +162,7 @@ function start(service) {
   const revision = currentRevision() || repositoryRevision;
   const child = spawn(nodeExecutable, service.args, {
     cwd: runtimeRoot,
-    env: localNetworkEnvironment({ ...service.env, APP_BUILD_SHA: revision, VITE_APP_BUILD_SHA: revision }),
+    env: localNetworkEnvironment({ ...providerEnvironmentForService(service.name, providerConfiguration), ...service.env, APP_BUILD_SHA: revision, VITE_APP_BUILD_SHA: revision }),
     stdio: 'inherit',
     detached: true,
   });

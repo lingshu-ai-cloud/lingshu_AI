@@ -84,6 +84,25 @@ const explicitUnanalyzedClone = buildContentBatchPlan({
   evidence: { products: [{ id: 'sku-1', name: '产品 A', materialIds: ['asset-a'] }], exactAnalysisIds: [], materialIds: ['asset-a'] },
   versions: { configVersion: 1, policyVersion: 'p', factsVersion: 'f' },
 });
-assert.equal(explicitUnanalyzedClone.status, 'blocked', 'enabling product/material must never replace an explicit clone with missing analysis');
-assert.equal(explicitUnanalyzedClone.orders.length, 0);
+assert.equal(explicitUnanalyzedClone.status, 'planned', 'a missing clone analysis must block only that frozen master, not erase the weekly batch');
+assert.equal(explicitUnanalyzedClone.orders.length, 1);
+assert.ok(explicitUnanalyzedClone.orders[0]?.readinessBlockers?.some(issue => issue.includes('精确分析')));
+
+const mixedReadinessGoal = normalizeWeeklyGoal({
+  ...goal,
+  contentPlatforms: ['tiktok'],
+  videoPlans: [
+    normalizeVideoPlan({ route: 'product', productId: 'sku-1', productName: '产品 A', theme: '真实产品展示', language: 'en', duration: 30, platform: 'tiktok', presenter: 'material' }),
+    normalizeVideoPlan({ route: 'clone', productId: 'missing-product', productName: '产品 B', theme: '参考结构', language: 'en', duration: 30, platform: 'tiktok', presenter: 'material', referenceId: 'analysis-1' }),
+  ],
+}, config);
+const mixedReadiness = buildContentBatchPlan({
+  goalId: 'mixed-readiness', goal: mixedReadinessGoal, config,
+  evidence: { products: [{ id: 'sku-1', name: '产品 A', materialIds: ['asset-a'] }, { id: 'sku-2', name: '产品 B', materialIds: ['asset-b'] }], exactAnalysisIds: ['analysis-1'], materialIds: ['asset-a', 'asset-b'] },
+  versions: { configVersion: 1, policyVersion: 'p', factsVersion: 'f' },
+});
+assert.equal(mixedReadiness.status, 'planned');
+assert.equal(mixedReadiness.orders.length, 2, 'one invalid product must not remove its valid sibling order');
+assert.equal(mixedReadiness.orders[0]?.readinessBlockers?.length, 0);
+assert.ok(mixedReadiness.orders[1]?.readinessBlockers?.some(issue => issue.includes('冻结产品')));
 console.log('content batch plan tests passed');
