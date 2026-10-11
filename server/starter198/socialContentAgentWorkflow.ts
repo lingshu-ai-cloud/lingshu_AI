@@ -740,7 +740,10 @@ function executionScene(input: {
     ? undefined
     : capability('licensed_stock_asset') ?? capability('motion_graphics');
   const generatedReference=Boolean(input.scene.referenceProductionRouting && ['aigc_video','non_presenter_aigc_video'].includes(input.scene.referenceProductionRouting.route));
+  const mandatoryProductGeneration = input.supply.sourceStrategy === 'aigc_product_scene_replication'
+    && !!input.supply.productSceneReplication && input.supply.fallbackSourceStrategy === null;
   const preferred = identityLockedPresenter ? capability('authorized_digital_presenter')
+    : mandatoryProductGeneration ? capability('aigc_product_scene_replication')
     : generatedReference ? capability(input.supply.sourceStrategy)
     : visibleSpeech ? capability('authorized_digital_presenter') ?? matchingAsset ?? functionalAsset ?? ordinaryCapability
     : expressivePerson ? capability('authorized_digital_presenter') ?? matchingAsset ?? functionalAsset ?? ordinaryCapability

@@ -1,3 +1,4 @@
+import {applySocialContentRevisionSupply} from './socialContentRevisionProjection.js';
 import {auditWeeklyMaterialInventory} from './weeklyMaterialInventory.js';
 import {readWeeklyStageObservation} from './socialWeeklyStageObservation.js';
 import {readWeeklyReplicationContext} from './weeklyReplicationContext.js';
@@ -976,7 +977,7 @@ export async function readSocialTaskDetail(input: {
       }
     }
   }
-  const assetSupplyPlan = createSocialAssetSupplyPlan({
+  const assetSupplyPlan = applySocialContentRevisionSupply({ tenantId: input.tenantId, taskId: summary.taskId, brief: task.brief, script: replicationScript, plan: createSocialAssetSupplyPlan({
     creationMode: summary.brief.creationMode ?? 'material_processing',
     assetAvailability: summary.brief.assetAvailability,
     managementMode: summary.brief.managementMode,
@@ -1011,7 +1012,7 @@ export async function readSocialTaskDetail(input: {
       requestedDescription: [scene.shotFunction, scene.subject, scene.action].map(socialText).filter(Boolean).join(' · '),
     })),
     rightsConfirmationRequired: false,
-  });
+  }) });
   assetSupplyPlan.inventoryAudit=auditWeeklyMaterialInventory(input.tenantId,materialInventory.items);
   const presenterLock = presenterInventory.accountPresenterLock;
   const referenceReviewHandoff = summary.brief.creationMode === 'viral_replication'

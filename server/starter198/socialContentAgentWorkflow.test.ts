@@ -8,6 +8,8 @@ import type {
 } from '../../shared/contracts/socialContentWorkflow';
 import { buildSocialAgentWorkflow as buildWorkflowUnderTest, socialContentCapabilityRegistry } from './socialContentAgentWorkflow';
 import { alignSocialAssetSupplyPlanToBaseline } from './socialContentAssetSupplyExecution';
+import { applySocialContentRevisionSupply } from './socialContentRevisionProjection';
+import { socialRequestHash } from './socialContentValidation';
 import { buildReferenceShotProductionRouting } from '../../shared/referenceShotProductionRouting';
 
 const brief: SocialContentTaskBrief = {
@@ -560,3 +562,26 @@ test('missing reference ID cannot borrow a different ordinal reference after reo
   assert.equal(result.executionPlanReview.approved, false,
     'missing reference identity must not inherit the CTA reference at ordinal zero');
 });
+
+ test('frozen independent revision retains presenter and mandatory product generation contracts', () => {
+  const shots = Array.from({ length: 8 }, (_, i) => ({ shotId: `S0${i + 1}`, scriptOrigin: 'independent_revision', script: 'Own authored words', materialPlan: { ...structuredClone(productSceneSupply.shots[0]), shotId: `S0${i + 1}`, fallbackSourceStrategy: null } }));
+  shots[0].materialPlan = { ...shots[0].materialPlan, sourceStrategy: 'authorized_digital_presenter', digitalHumanPlan: structuredClone(alignedDigitalHumanSupply.shots[0].digitalHumanPlan) } as typeof shots[0]['materialPlan'];
+  const script = { version: 'fixed-revision-1', status: 'draft', shots } as unknown as SocialReplicationScriptVersion;
+  const immutable = { schemaVersion: 'social-production-revision.v1', tenantId: 'tenant-1', taskId: 'task-1', resolved: { replicationScript: script } };
+  const marker = { ...immutable, planHash: socialRequestHash(immutable) };
+  const base = { ...productSceneSupply, shots: shots.map(shot => ({ ...productSceneSupply.shots[0], shotId: shot.shotId, sourceStrategy: 'motion_graphics' })) } as typeof productSceneSupply;
+  const args = { tenantId: 'tenant-1', taskId: 'task-1', brief: { _productionRevision: marker }, script, plan: base };
+  const projected = applySocialContentRevisionSupply(args);
+  assert.equal(projected.shots[0].sourceStrategy, 'authorized_digital_presenter');
+  assert.deepEqual(projected.shots[0].digitalHumanPlan, shots[0].materialPlan.digitalHumanPlan);
+  assert.equal(projected.shots[3].sourceStrategy, 'aigc_product_scene_replication');
+  assert.deepEqual(projected.shots[3].productSceneReplication, shots[3].materialPlan.productSceneReplication);
+  assert.equal(projected.shots[3].fallbackSourceStrategy, null);
+  assert.equal(applySocialContentRevisionSupply({ ...args, brief: {} }), base);
+  assert.equal(applySocialContentRevisionSupply({ ...args, script: { ...script, version: 'old-version' } }), base);
+  assert.throws(() => applySocialContentRevisionSupply({ ...args, script: { ...script, shots: script.shots.map((shot, i) => i ? shot : { ...shot, script: 'Changed words' }) } }), /social_revision_script_changed/);
+  assert.throws(() => applySocialContentRevisionSupply({ ...args, brief: { _productionRevision: { ...marker, tenantId: 'other' } } }), /social_revision_plan_corrupt/);
+  const required = buildSocialAgentWorkflow({ taskId: 'required-generation', taskVersion: '1', taskStatus: 'plan_review', mode: 'instant', weeklyPlanId: null, brief: { ...brief, creationMode: 'material_processing' }, sources: [], factSourceRefs: ['knowledge:product-1'], assetSupplyPlan: { ...productSceneSupply, shots: [{ ...productSceneSupply.shots[0], fallbackSourceStrategy: null }] }, referenceAnalysis: null, replicationScript: null, capabilityRuntime: [{ strategy: 'aigc_product_scene_replication', adapterIds: ['controlled_product_scene_replication.v1'], environmentReady: true, reason: null }] });
+  assert.equal(required.executionPlan.scenes[0].selectedSourceStrategy, 'aigc_product_scene_replication');
+  assert.ok(required.executionPlan.scenes[0].productSceneReplication);
+ });
