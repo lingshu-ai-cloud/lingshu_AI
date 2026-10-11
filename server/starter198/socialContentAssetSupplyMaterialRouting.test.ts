@@ -31,6 +31,11 @@ test('explicit product mismatch dispatches only reviewed product I2V, and unknow
  const p=plan('product','missing');let local=0,generated=0;const localAdapter=adapter();localAdapter.execute=async()=>{local++;return null;};const gen:SocialAssetSupplyProviderAdapter={adapterId:'product-i2v',sourceStrategies:['aigc_product_scene_replication'],async execute(context){generated++;assert.equal((context.shot as any).materialRouting.generation.durationSeconds,3);throw Error('provider_submission_unknown:receipt-persisted');}};
  await assert.rejects(run(p,[localAdapter,gen]),/provider_submission_unknown/);assert.equal(local,0);assert.equal(generated,1);
 });
+test('baseline alignment replaces stale product source refs with frozen enterprise image refs',()=>{
+ const p=plan('product','missing');p.shots[0]!.sourceRefs=['stale-route-ref'];
+ const aligned=alignSocialAssetSupplyPlanToBaseline({plan:p,baseline});
+ assert.deepEqual(aligned.shots[0]!.sourceRefs,['actual-product-image']);
+});
 test('already approved canonical product asset wins before a paid adapter and is not generated again',async()=>{
  const p=plan('product','missing');let paid=0;
  const canonical:SocialAssetSupplyProviderAdapter={adapterId:'canonical-approved',sourceStrategies:['aigc_product_scene_replication'],async execute(){return {asset:{id:'canonical-product-video',sourceId:'approved-generation',type:'video',url:'local',localPath:'local',name:'approved product video',duration:3,segments:[]} as any,sourceStrategy:'aigc_product_scene_replication',providerId:'durable-approved-receipt',sourceRef:'actual-product-image',synthetic:true,representation:'non_evidentiary_visual',authorizationRef:'tenant-product-rights',disclosure:'Synthetic product scene; not a real customer demonstration.'};}};

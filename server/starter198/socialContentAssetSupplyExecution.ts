@@ -207,7 +207,18 @@ export function alignSocialAssetSupplyPlanToBaseline(input: {
       // Versioned material routing is a reviewed production decision. Keep it
       // intact rather than letting legacy reference/capability inference replan it.
       if (original.materialRouting) {
-        return { ...shot, ...structuredClone(original), shotId: shot.shotId, function: shot.function };
+        const preserved = { ...shot, ...structuredClone(original), shotId: shot.shotId, function: shot.function };
+        // Product generation consumes the enterprise product images frozen in
+        // the reviewed routing contract. Older task retries can retain stale
+        // sourceRefs from a preceding route; do not let that mutable index
+        // override the versioned generation inputs.
+        const routing = preserved.materialRouting!;
+        if (routing.materialType === 'product'
+          && routing.localMatch.state === 'missing'
+          && routing.generation) {
+          preserved.sourceRefs = [...routing.generation.productImageRefs];
+        }
+        return preserved;
       }
       // The reviewed Content-Agent route is authoritative. A legacy
       // digitalHumanPlan describes an available capability and must not turn a
