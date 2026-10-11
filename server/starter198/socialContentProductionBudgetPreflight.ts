@@ -1,3 +1,4 @@
+import {readSeedreamPublishedTariff} from '../lib/seedreamPublishedPricing.js';
 import {readNativeVoicePublishedTariff} from '../lib/studioVoicePublishedPricing.js';
 import {readWanPublishedTariff} from '../lib/wanPublishedPricing.js';
 import fs from 'node:fs';
@@ -190,10 +191,10 @@ export async function prepareSocialContentProductionBudget(input: ProductionBudg
     const reader = createSocialContentVerifiedTariffReader(store, input.tenantId);
     const publishedReader=createSocialContentPublishedTariffReader({readProviderBinding:async intent=>{
       if(intent.provider!=='qwen')return null;let b:ReturnType<typeof getQwenProviderBinding>;try{b=getQwenProviderBinding();}catch{return null;}
-      const model=intent.stage==='material_image_analysis'?b.imageModel:['material_video_analysis','material_video_review'].includes(intent.stage)?b.materialModel:['first_frame_qa','video_qa'].includes(intent.stage)?process.env.QWEN_VL_MODEL||'qwen3-vl-plus':null;
+      const model=intent.stage==='material_image_analysis'?b.imageModel:['material_video_analysis','material_video_review'].includes(intent.stage)?b.materialModel:['first_frame_qa','video_qa'].includes(intent.stage)?(intent.model==='qwen3-vl-plus'?intent.model:process.env.QWEN_VL_MODEL||'qwen3-vl-plus'):null;
       return model?{provider:'qwen',model,baseUrl:b.baseUrl,credentialSha256:b.credentialSha256}:null;
     }});
-    const authority = createSocialContentTaskBudgetAuthority({ ledgerRoot: ports?.ledgerRoot, ports: { assertCurrent, readApprovedPlan: async () => { await assertCurrent(); return planned.plan!; }, readVerifiedTariff: ports?.readTariff || (async intent=>await reader.read(intent)||(['tts','voice_asr'].includes(intent.stage)?await readNativeVoicePublishedTariff(intent):intent.provider==='wan'?await readWanPublishedTariff(intent,getQwenProviderBinding()):await publishedReader.read(intent))), verifyRejection: async () => false } });
+    const authority = createSocialContentTaskBudgetAuthority({ ledgerRoot: ports?.ledgerRoot, ports: { assertCurrent, readApprovedPlan: async () => { await assertCurrent(); return planned.plan!; }, readVerifiedTariff: ports?.readTariff || (async intent=>await reader.read(intent)||(['tts','voice_asr','voice_alignment'].includes(intent.stage)?await readNativeVoicePublishedTariff(intent):intent.provider==='seedream'?await readSeedreamPublishedTariff(intent,{baseUrl:process.env.SEEDREAM_BASE_URL||process.env.SEEDANCE_BASE_URL||'https://ark.cn-beijing.volces.com/api/v3',credentialSha256:createHash('sha256').update((process.env.SEEDREAM_API_KEY||process.env.SEEDANCE_API_KEY||'').trim()).digest('hex')}):intent.provider==='wan'?await readWanPublishedTariff(intent,getQwenProviderBinding()):await publishedReader.read(intent))), verifyRejection: async () => false } });
     const reserved = await authority.prepareAndReserve(scope);
     await recordCurrentContentExecutionCheckpoint({ stage: STAGE, version: '1', inputHash: planHash, payload: { scopeHash: paidProductionHash(scope), baselineHash, operationIds: reserved.operations.map(o => o.operationId), requirements: planned.requirements, routeBindings, plan: planned.plan } });
     const paidPermit = createSocialContentPaidOperationPermit({ ...reserved, root: path.join(ports?.ledgerRoot || process.env.SOCIAL_CONTENT_TASK_BUDGET_DIR || 'data/social-content-task-budget', '.permits'), assertCurrent });
