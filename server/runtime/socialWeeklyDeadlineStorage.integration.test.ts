@@ -1,3 +1,4 @@
+import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
@@ -15,13 +16,14 @@ const [{ pbStore: store }, { runWithDataAuthority }, { runSocialWeeklyExecutionS
   import('../../src/components/socialProgram/weeklyExecutionCalendar.js'),
   import('./socialWeeklyDeadlineRecovery.js'),
 ]);
-const now = Date.now();
+let now = Date.now();
+let packageId='deadline-package',packageVersion=1;let planningRef:{type:string;id:string;version:number};
 const time = (offset: number) => new Date(now + offset).toISOString();
-function task(id: string, tenantId = 'deadline-tenant'): WeeklyExecutionTask {
-  return { taskId: id, tenantId, programId: 'deadline-program', packageId: 'deadline-package', packageVersion: 1,
-    workflowKind: 'readiness', scope: 'package', subjectId: 'deadline-package', accountId: null, publicationTaskId: null,
+function task(id: string, tenantId = 't'): WeeklyExecutionTask {
+  return { taskId: id, tenantId, programId: 'p', packageId, packageVersion,
+    workflowKind: 'directing', scope: 'package', subjectId: packageId, accountId: null, publicationTaskId: null,
     dependsOnTaskIds: [], upstreamVersionRefs: [], inputSnapshot: {}, idempotencyKey: `${tenantId}:${id}`,
-    budget: { category: 'none', limitCny: null }, schedule: { stepKind: 'business_outline', responsibleActor: 'business_agent',
+    budget: { category: 'none', limitCny: null }, schedule: { stepKind: 'business_schedule', responsibleActor: 'business_agent',
       estimatedDurationMinutes: 15, estimatedStartAt: time(-3600000), estimatedFinishAt: time(-60000),
       latestStartAt: time(-3600000), latestFinishAt: time(-60000), actualStartedAt: null, actualFinishedAt: null },
     status: 'queued', ownBlockingReasons: [], inheritedBlockingTaskIds: [], attempt: 0, maxAttempts: 3,
@@ -33,16 +35,47 @@ async function save(value: WeeklyExecutionTask) {
     program_id: value.programId, package_id: value.packageId, package_version: value.packageVersion,
     status: value.status, idempotency_key: value.idempotencyKey, created_at: value.createdAt, payload: value });
 }
+test('formal frozen planning executes through isolated disk deadline scan and lease without paid providers',async t=>{
 try {
   await runWithDataAuthority('local', async () => {
-    await store.create('social_weekly_operating_packages', { tenant_id: 'deadline-tenant', program_id: 'deadline-program', package_id: 'deadline-package', version: 1,
-      payload: { programId: 'deadline-program', packageId: 'deadline-package', version: 1, status: 'draft' } });
-    await store.create('social_weekly_agent_planning', { tenant_id: 'deadline-tenant', program_id: 'deadline-program', package_id: 'deadline-package', package_version: 1, planning_version: 1,
-      payload: { planningId: 'deadline-plan', version: 1, packageId: 'deadline-package', packageVersion: 1, status: 'dispatched',
-        skeleton: { slots: [{ slotId: 'slot', motherContentId: 'mother', accountIds: ['account'], publicationTaskIds: ['publication'] }] },
-        directorAnalyses: [], userConfirmation: { confirmedBy: 'actual-user', confirmedAt: time(-7200000) },
-        detailedSchedule: { ref: { id: 'actual-schedule', version: 1 }, items: [{ publicationTaskId: 'publication' }] },
-        dispatch: { packageVersion: 1, detailedScheduleRef: { id: 'actual-schedule', version: 1 }, scheduleItems: [{ publicationTaskId: 'publication' }] } } });
+    const {prepareWeeklyNonPresenterPlanningFixture}=await import('./weeklyNonPresenterProduction.fixture.js');
+    const {f,pkg}=await prepareWeeklyNonPresenterPlanningFixture(t,{ownedReferenceBytes:true,primaryStructure:true,targetCta:'Contact sales',metricTargets:['播放目标1000','点赞目标20','评论目标5','分享目标5']});
+    const {materializeWeeklyExecutionTasks,planWeeklyExecutionTasks}=await import('../socialPrograms/executionTasks.js');
+    f.tables.social_weekly_execution_tasks=[];
+ // This graph test starts a pristine future draft, not an active historical week.
+ pkg.status='draft';pkg.weekStart='2026-10-19';pkg.weekEnd='2026-10-25';for(const publication of pkg.socialContentPackage.publicationTasks)publication.publishWindow='2026-10-24T12:00:00+08:00';
+ pkg.planningBlockers=[];
+ pkg.executionGraphVersion=2;
+ const {createSocialOperatingDecisionService}=await import('../socialOperating/service.js'),{planCapacity}=await import('../socialOperating/capacityPlanner.js'),{resolveAutomationPolicy}=await import('../socialOperating/automationPolicyResolver.js');
+ const decisionService=createSocialOperatingDecisionService(f.store),goal=await decisionService.getGoal('t',pkg.programId,pkg.businessContentGoalRef!.id,pkg.businessContentGoalRef!.version);assert.equal(goal.status,'ready');
+ const enterpriseRef=goal.inputRefs.find(ref=>ref.type==='enterprise_profile');assert.ok(enterpriseRef);pkg.enterpriseProfileRef=enterpriseRef;
+ const capacity=planCapacity({goal,desiredOriginalContents:1,desiredAdaptations:0,costPerOriginalCny:1,costPerAdaptationCny:1,readyMaterialUnits:1,materialUnitsPerOriginal:1,productionItemsPerDay:1,daysUntilDeadline:7,accounts:[{ref:{type:'owned_social_account',id:'account',version:1},accountId:'account',status:'active',weeklyPublicationCapacity:1}],interactionItemsPerWeek:10,salesLeadsPerWeek:10,expectedInteractionsPerPublication:1,expectedLeadsPerPublication:1,capabilities:{'studio.production':'available','publishing.calendar':'available','customer.attribution':'available'}},{operator:{type:'user',id:'owner'},decidedAt:new Date().toISOString()});assert.equal(capacity.plan.status,'ready');await decisionService.saveOperatingDecision('t',pkg.programId,capacity.decision);pkg.capacityPlanRef={type:'capacity_plan',id:capacity.decision.decisionId,version:1};
+ const policy=resolveAutomationPolicy({goal,mode:'managed',action:'draft',capability:{key:'studio.production',availability:'available'},factsVerified:true,withinBudget:true,rightsSufficient:true},{operator:{type:'user',id:'owner'},decidedAt:new Date().toISOString()});await decisionService.saveOperatingDecision('t',pkg.programId,policy.decision);pkg.automationPolicyRef={type:'automation_policy',id:policy.decision.decisionId,version:1};
+ pkg.objective='验证已确认模板的正式排期和逐阶段素材供给';pkg.successCriteria=['完整保留冻结参考结构与企业产品身份','素材授权通过后才执行真实供给'];
+ pkg.appliedWorkflowEvents=[];pkg.workflowStateVersion=0;
+ pkg.socialContentPackage.authorization={mode:'each',accountIds:pkg.socialContentPackage.publicationTasks.map(task=>task.accountId),maxPublishItems:0,weekStart:pkg.weekStart,weekEnd:pkg.weekEnd,allowRealPublishing:false,authorizedBy:null,authorizedAt:null,revokedBy:null,revokedAt:null};
+ let storedPackage=f.tables.social_weekly_operating_packages.find(row=>row.package_id===pkg.packageId&&row.version===pkg.version);assert.ok(storedPackage);storedPackage.payload=structuredClone(pkg);
+ const executionsForFixture=async()=>{const {createWeeklyExecutionTaskService}=await import('../socialPrograms/executionTasks.js');return createWeeklyExecutionTaskService(f.store).list('t',pkg.programId,pkg.packageId,pkg.version);};const {applyBusinessDispatchToExecutionTasks}=await import('../socialPrograms/executionTasks.js');await materializeWeeklyExecutionTasks(f.store,'t',pkg);assert.ok(pkg.agentPlanning?.dispatch);await applyBusinessDispatchToExecutionTasks(f.store,'t',pkg.programId,pkg.packageId,pkg.version,pkg.agentPlanning.dispatch);const initialTasks=await executionsForFixture();
+ const {createWeeklyInitialScheduleService}=await import('../socialPrograms/weeklyInitialSchedule.js');
+ const {setContentExecutionLimit}=await import('../contentExecution/durableQueue.js');for(const [scope,scopeKey] of [['tenant','*'],['account','account'],['task_type','social_content_weekly']] as const)await setContentExecutionLimit({dataStore:f.store,tenantId:'t',scope,scopeKey,maxRunning:1,updatedBy:'owner'});
+ const scheduleClock=new Date().toISOString(),initialSchedule=createWeeklyInitialScheduleService(f.store,{now:()=>scheduleClock});
+ const scheduleScope={tenantId:'t',programId:pkg.programId,packageId:pkg.packageId,packageVersion:pkg.version,actorUserId:'owner'};
+ const proposal=await initialSchedule.propose(scheduleScope,{constraints:Object.fromEntries(initialTasks.map(task=>[task.taskId,{resourceKey:task.schedule.responsibleActor,remainingMinutes:task.schedule.estimatedDurationMinutes,remainingCostCny:1,bufferMinutes:0,availableAt:scheduleClock}])),resources:Object.fromEntries([...new Set(initialTasks.map(task=>task.schedule.responsibleActor))].map(actor=>[actor,{concurrency:1,workingWindows:[{startAt:scheduleClock,finishAt:'2026-10-27T20:00:00Z'}]}])),remainingBudgetCny:1000,operationalDeadlines:Object.fromEntries(initialTasks.filter(task=>['performance_monitoring','weekly_review','template_extraction','template_performance_validation'].includes(task.schedule.stepKind)).map(task=>[task.taskId,'2026-10-27T18:00:00Z']))});
+ assert.equal(proposal.plan.publicationGap,0,JSON.stringify(proposal.plan.assignments.filter(item=>item.mode!=='planned')));
+ const confirmedSchedule=await initialSchedule.confirm(scheduleScope,{proposalId:proposal.proposalId,expectedVersion:pkg.version,inputEvidenceHash:proposal.inputEvidenceHash,confirmedTemplateCarryoverPlanHashes:(proposal.templateCarryovers??[]).map(plan=>plan.planHash)});
+ Object.assign(pkg,confirmedSchedule.item);
+ storedPackage=f.tables.social_weekly_operating_packages.find(row=>row.package_id===pkg.packageId&&row.version===pkg.version)!;assert.ok(storedPackage);
+ const {createWeeklyPlanningAuthority}=await import('../socialPrograms/planningAuthority.js');const planning=createWeeklyPlanningAuthority(f.store);
+ const initialized=await planning.initialize('t',pkg),analyzed=await planning.runDirectorAnalysis({...scheduleScope,packageVersion:pkg.version,expectedPlanningVersion:initialized.version,actor:'director_agent'}),merged=await planning.mergeDetailedSchedule({tenantId:'t',programId:pkg.programId,package:pkg,expectedPlanningVersion:analyzed.version,actor:'business_agent'}),confirmed=await planning.confirm({...scheduleScope,packageVersion:pkg.version,expectedPlanningVersion:merged.version,userId:'owner'}),freshDispatch=await planning.dispatch({...scheduleScope,packageVersion:pkg.version,expectedPlanningVersion:confirmed.version,actor:'business_agent'});
+ assert.ok(freshDispatch.dispatch);pkg.agentPlanning=freshDispatch;await applyBusinessDispatchToExecutionTasks(f.store,'t',pkg.programId,pkg.packageId,pkg.version,freshDispatch.dispatch,scheduleClock);
+ const {createWeeklyOperatingPackageService}=await import('../socialPrograms/weeklyOperatingPackages.js');const packageService=createWeeklyOperatingPackageService(f.store);Object.assign(pkg,await packageService.activate('t','owner',pkg.programId,pkg.packageId,{expectedVersion:pkg.version,expectedProgramVersion:1,authorizePublishing:false}));
+ const tasks=await executionsForFixture(),planned=planWeeklyExecutionTasks('t',pkg,pkg.createdAt);assert.deepEqual(tasks.map(task=>task.taskId).sort(),planned.map(task=>task.taskId).sort());
+
+    packageId=pkg.packageId;packageVersion=pkg.version;planningRef={type:'weekly_agent_planning',id:freshDispatch.planningId,version:freshDispatch.version};now=Date.now();
+    for(const [collection,records] of Object.entries(f.tables)){
+      if(collection==='social_weekly_execution_tasks')continue;
+      for(const record of records??[])await store.create(collection,structuredClone(record));
+    }
     await save(task('ready'));
     const future = task('future'); future.schedule.estimatedStartAt = time(3600000); future.schedule.latestStartAt = time(3600000);
     future.schedule.estimatedFinishAt = time(7200000); future.schedule.latestFinishAt = time(7200000);
@@ -52,27 +85,28 @@ try {
     const staleQueued = task('stale-queued-child'); staleQueued.dependsOnTaskIds = ['human']; await save(staleQueued);
     await save(task('unauthorized', 'other-tenant'));
     const executions: string[] = [];
-    const adapters = { business_outline: { async execute(value: WeeklyExecutionTask) {
-      executions.push(value.taskId); return { status: 'succeeded' as const, resultRefs: [{ type: 'weekly_agent_planning', id: 'deadline-plan', version: 1 }] };
+    const {createSocialWeeklyPlanningAdapter}=await import('./socialWeeklyExecutionRuntime.js');const planningAdapter=createSocialWeeklyPlanningAdapter(store);
+    const adapters = { business_schedule: { async execute(value: WeeklyExecutionTask) {
+      executions.push(value.taskId); return planningAdapter.execute(value);
     } } };
-    await runSocialWeeklyExecutionScan({ dataStore: store, adapters });
-    assert.deepEqual(executions, ['ready'], 'future, human, dependency and unauthorized tenant do not enter executor');
-    const completed = (await getWeeklyExecutionTaskRow(store, 'deadline-tenant', 'ready')).payload;
-    assert.equal(completed.status, 'succeeded'); assert.ok(completed.schedule.actualFinishedAt);
+    const scan = await runSocialWeeklyExecutionScan({ dataStore: store, adapters });
+    assert.deepEqual(executions, ['ready'], JSON.stringify({scan, ready:(await getWeeklyExecutionTaskRow(store, 't', 'ready')).payload}));
+    const completed = (await getWeeklyExecutionTaskRow(store, 't', 'ready')).payload;
+    assert.equal(completed.status, 'succeeded',JSON.stringify(completed.lastError)); assert.ok(completed.schedule.actualFinishedAt);
     assert.equal(completed.schedule.latestFinishAt, time(-60000));
-    assert.deepEqual(completed.resultRefs, [{ type: 'weekly_agent_planning', id: 'deadline-plan', version: 1 }]);
-    assert.equal((await getWeeklyExecutionTaskRow(store, 'deadline-tenant', 'future')).payload.attempt, 0);
-    assert.equal((await getWeeklyExecutionTaskRow(store, 'deadline-tenant', 'human')).payload.status, 'queued');
-    assert.equal((await getWeeklyExecutionTaskRow(store, 'deadline-tenant', 'dependent')).payload.status, 'blocked');
-    assert.equal((await getWeeklyExecutionTaskRow(store, 'deadline-tenant', 'stale-queued-child')).payload.attempt, 0, 'fresh dependency check fences a stale queued row');
+    assert.deepEqual(completed.resultRefs, [planningRef]);
+    assert.equal((await getWeeklyExecutionTaskRow(store, 't', 'future')).payload.attempt, 0);
+    assert.equal((await getWeeklyExecutionTaskRow(store, 't', 'human')).payload.status, 'queued');
+    assert.equal((await getWeeklyExecutionTaskRow(store, 't', 'dependent')).payload.status, 'blocked');
+    assert.equal((await getWeeklyExecutionTaskRow(store, 't', 'stale-queued-child')).payload.attempt, 0, 'fresh dependency check fences a stale queued row');
     assert.equal((await getWeeklyExecutionTaskRow(store, 'other-tenant', 'unauthorized')).payload.status, 'blocked');
     await runSocialWeeklyExecutionScan({ dataStore: store, adapters });
     assert.deepEqual(executions, ['ready'], 'repeated real scan does not execute completed work twice');
-    const recovery = (await getWeeklyExecutionTaskRow(store, 'deadline-tenant', 'human')).payload.deadlineRecovery!;
+    const recovery = (await getWeeklyExecutionTaskRow(store, 't', 'human')).payload.deadlineRecovery!;
     assert.equal(recovery.status, 'blocked');
     assert.deepEqual(recovery.affectedPublicationIds, ['affected-publication']);
     assert.deepEqual(recovery.blockingReasons, ['fresh_remaining_budget_capacity_work_windows_required']);
-    const history = await store.list<any>(WEEKLY_DEADLINE_ASSESSMENTS, { where: { tenant_id: 'deadline-tenant' } });
+    const history = await store.list<any>(WEEKLY_DEADLINE_ASSESSMENTS, { where: { tenant_id: 't' } });
     assert.ok(history.totalItems > 0);
     const unchanged = await runWeeklyDeadlineRecoveryScan({ dataStore: store });
     assert.equal(unchanged.created, 0, 'unchanged evidence does not duplicate the durable assessment');
@@ -81,14 +115,14 @@ try {
       constraints: Object.fromEntries(tasks.map(value => [value.taskId, { resourceKey: 'actual-reviewer', remainingMinutes: 15, remainingCostCny: 0, bufferMinutes: 5, availableAt: at.toISOString() }])),
       resources: { 'actual-reviewer': { concurrency: 1, workingWindows: [{ startAt: time(-3600000), finishAt: time(10800000) }] } },
     }) });
-    const evaluated = (await getWeeklyExecutionTaskRow(store, 'deadline-tenant', 'human')).payload.deadlineRecovery!;
+    const evaluated = (await getWeeklyExecutionTaskRow(store, 't', 'human')).payload.deadlineRecovery!;
     assert.equal(evaluated.status, 'evaluated');
     assert.notEqual(evaluated.assessmentId, recovery.assessmentId, 'fresh evidence creates a new immutable assessment');
     const evaluatedRows = await store.list<any>(WEEKLY_DEADLINE_ASSESSMENTS, { where: { assessment_id: evaluated.assessmentId } });
     assert.equal(evaluatedRows.items[0].payload.revisionApplied, false);
     assert.equal(evaluatedRows.items[0].payload.assessment.publicationGap, 1);
-    assert.equal((await getWeeklyExecutionTaskRow(store, 'deadline-tenant', 'human')).payload.status, 'queued', 'forecast never approves human work');
-    const card = projectExecutionCalendar([completed], { business_outline: '经营初排' } as any)[0]!;
+    assert.equal((await getWeeklyExecutionTaskRow(store, 't', 'human')).payload.status, 'queued', 'forecast never approves human work');
+    const card = projectExecutionCalendar([completed], { business_schedule: '正式经营排期' } as any)[0]!;
     assert.equal(card.status, 'completed');
     assert.equal(card.deliveryTiming, 'late');
     const disk = JSON.parse(fs.readFileSync(path.join(directory, 'social_weekly_execution_tasks.json'), 'utf8'));
@@ -98,3 +132,4 @@ try {
 } finally {
   fs.rmSync(directory, { recursive: true, force: true });
 }
+});

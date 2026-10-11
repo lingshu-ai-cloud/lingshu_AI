@@ -34,7 +34,7 @@ for (const task of tasks) task.status = 'succeeded';
 review.status = 'pending'; review.depends_on = ['never-ready'];
 const selectedVideo = { route: 'clone', referenceId: 'previously-collected', preproduction: { benchmark: { status: 'ready' } } };
 records.weekly_plans[0].plan = { ...plan, businessPackage: { tasks: [{ templateId: 'production', videoPlans: [selectedVideo] }], authorization: { mode: 'each', accountIds: [], customerIds: [] } } };
-records.trend_videos = [{ id: 'previously-collected', tenantId: tenant, aiAnalysis: { analysisMode: 'exact', analysisQuality: 'video', gemini: { theme: 'Confirmed reference' } } }];
+records.trend_videos = [{ id: 'previously-collected', tenantId: tenant, aiAnalysis: { analysisMode: 'exact', analysisQuality: 'video', gemini: { scriptDetails15s: [{ time: '0-3s', visual: 'Tenant-owned cotton shirt close-up' }] } } }];
 try {
   await withExecutionAdapters({ materials: () => [] }, async () => {
     run.status = 'running'; collection.status = 'pending'; analysis.status = 'pending';
@@ -47,6 +47,8 @@ try {
     await reconcileDigitalEmployeeRun(tenant, run.id);
     assert.notEqual(collection.status, 'skipped', 'other tenant references cannot waive collection');
     assert.notEqual(analysis.status, 'succeeded');
+    for (const task of tasks) { task.status = 'succeeded'; task.output = {}; task.blocked_reason = ''; }
+    review.status = 'pending';
     records.trend_videos[0].tenantId = tenant;
     records.trend_videos[0].aiAnalysis.analysisQuality = 'video_review_required';
     run.status = 'running'; collection.status = 'pending'; analysis.status = 'pending';

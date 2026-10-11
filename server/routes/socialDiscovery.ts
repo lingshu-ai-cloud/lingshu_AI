@@ -240,7 +240,6 @@ socialDiscoveryRouter.put('/scope', async (req, res) => {
           evidence: ['product'],
           status: 'approved',
         })),
-        ...sceneClusters,
       ]
       : sceneClusters,
     competitorTerms: unique(body.competitorTerms, 20),
