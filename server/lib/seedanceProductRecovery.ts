@@ -1,4 +1,6 @@
 import path from 'node:path';
+import fs from 'node:fs/promises';
+import { createHash } from 'node:crypto';
 import { withPaidOperationLock } from './paidOperationLock.js';
 import type { StoryboardAigcProjectBudget, StoryboardAigcSpendEntry } from './storyboardAigcProjectBudget.js';
 
@@ -66,12 +68,20 @@ export class SeedanceProductRecovery {
         method: 'GET', headers: { Authorization: `Bearer ${config.apiKey}` }, signal: AbortSignal.timeout(45_000), redirect: 'error',
       });
       if (!response.ok) throw new Error(`Seedance 原任务查询 HTTP ${response.status}；保留预占，禁止重复提交`);
-      const task = await response.json() as { id?: string; status?: string; content?: { video_url?: string } };
+      const rawReceipt = await response.text();
+      const task = JSON.parse(rawReceipt) as { id?: string; status?: string; content?: { video_url?: string }; usage?: Record<string, unknown> };
+      const receiptHash = createHash('sha256').update(rawReceipt).digest('hex');
+      const receiptDir = path.join(this.lockRoot, 'receipts', createHash('sha256').update(`${scope.tenantId}:${scope.projectId}:${scope.operationId}`).digest('hex'));
+      await fs.mkdir(receiptDir, { recursive: true, mode: 0o700 });
+      const rawReceiptRef = path.join(receiptDir, `${receiptHash}.json`);
+      await fs.writeFile(rawReceiptRef, rawReceipt, { mode: 0o600 });
       if (task.id && task.id !== taskId) throw new Error('Seedance 查询返回不同任务 ID');
       const providerStatus = String(task.status || '').toLowerCase();
       const videoUrl = String(task.content?.video_url || '');
       await this.budget.mark(scope.tenantId, scope.projectId, scope.operationId, 'uncertain', {
-        ...entry.output, providerStatus, ...( /^https:\/\//.test(videoUrl) ? { providerVideoUrl: videoUrl } : {}), lastQueriedAt: new Date().toISOString(),
+        ...entry.output, providerStatus, rawReceiptRef, rawReceiptSha256: receiptHash, actualCostCny: null,
+        ...(task.usage && typeof task.usage === 'object' && !Array.isArray(task.usage) ? { usage: task.usage } : {}),
+        ...( /^https:\/\//.test(videoUrl) ? { providerVideoUrl: videoUrl } : {}), lastQueriedAt: new Date().toISOString(),
       });
       if (['succeeded', 'success', 'completed', 'done'].includes(providerStatus)) {
         if (!/^https:\/\//.test(videoUrl)) throw new Error('Seedance 原任务成功但缺少有效产物；禁止重复提交');

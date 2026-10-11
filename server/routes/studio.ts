@@ -1,3 +1,4 @@
+import { submitStoryboardSeedance } from '../lib/storyboardSeedanceSubmission.js';
 import { mvpBudgetAdmission } from '../lib/mvpBudgetAdmission.js';
 import { isTrustedSocialOutputWorkspace, socialOutputWorkspaceClientWriteBlocked } from '../starter198/socialContentProductionWorkspace.js';
 import { MINIMAX_ENGLISH_PRESETS, ttsPostProcessingSpeed } from '../lib/studioVoiceSelection.js';
@@ -3301,23 +3302,25 @@ studioRouter.post('/seedance-video', async (req, res) => {
         ...(firstFrame ? { role: 'first_frame' } : {}),
       });
     }
-    if (firstFrame && !recoveredTaskId) await productRecovery.recordPrepared(recoveryScope, { model: config.model, baseUrl: config.baseUrl, firstFrameMaterialId: firstFrame.id, firstFrameFingerprint: String(firstFrameFingerprint) });
-    const created = recoveredTaskId ? { id: recoveredTaskId } : await seedanceFetchJson(`${config.baseUrl}/contents/generations/tasks`, config.apiKey, {
-      method: 'POST',
-      body: JSON.stringify({
-        model: config.model,
-        content,
-        ratio,
-        duration,
-        resolution,
-        generate_audio: !firstFrame,
-        watermark: false,
-      }),
+    const created = await submitStoryboardSeedance({ model: config.model, baseUrl: config.baseUrl,
+      apiKey: config.apiKey, content, ratio, duration, resolution: String(resolution), silent: !!firstFrame,
+      existingTaskId: recoveredTaskId || undefined }, {
+      assertCurrent: async () => {
+        if (!firstFrame) return;
+        const latest = await store.getById<any>('studio_projects', storyboardProjectId);
+        const current = latest?.tenant_id === tenantId ? storyboardProjectShotInput(latest.spec ?? {}, String(shotId)) : null;
+        if (!current || current.fingerprint !== firstFrame.provenance?.projectShotFingerprint)
+          throw new Error('storyboard_seedance_current_input_changed');
+      },
+      prepare: async () => { if (firstFrame) await productRecovery.recordPrepared(recoveryScope,
+        { model: config.model, baseUrl: config.baseUrl, firstFrameMaterialId: firstFrame.id, firstFrameFingerprint: String(firstFrameFingerprint) }); },
+      accepted: async id => { if (firstFrame) await productRecovery.recordAccepted(recoveryScope, id); },
+      request: seedanceFetchJson,
     });
     const taskId = seedanceTaskId(created);
     if (!taskId) throw new Error('Seedance 未返回任务 ID');
     taskAccepted = true;
-    if (firstFrame && !recoveredTaskId) await productRecovery.recordAccepted(recoveryScope, taskId);
+
     if (storyboardOperationId) {
       const receipt = await storyboardAigcProjectBudget.recordProviderAcceptance(tenantId, storyboardProjectId,
         storyboardOperationId, taskId, config.model);

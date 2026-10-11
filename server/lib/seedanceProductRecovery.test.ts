@@ -15,7 +15,7 @@ try {
   const requests: string[] = [];
   const config = { ...snapshot, apiKey: 'test', transport: (async (url, init) => {
     requests.push(`${init?.method}:${url}`);
-    return new Response(JSON.stringify({ id: 'cgt-original', status: 'succeeded', content: { video_url: 'https://output.example/video.mp4' } }));
+    return new Response(JSON.stringify({ id: 'cgt-original', status: 'succeeded', usage: { completion_tokens: 123, total_tokens: 123 }, content: { video_url: 'https://output.example/video.mp4' } }));
   }) as typeof fetch };
   assert.deepEqual(await recovery.recover(scope, config), { state: 'reconciliation_required', reason: 'missing_task_id' });
   assert.equal(requests.length, 0);
@@ -25,6 +25,11 @@ try {
   await budget.mark(scope.tenantId, scope.projectId, scope.operationId, 'uncertain');
   assert.equal((await recovery.recover(scope, config)).state, 'ready');
   assert.equal(requests.length, 1);
+  const recorded = (await budget.status(scope.tenantId, scope.projectId)).entries[0].output!;
+  assert.deepEqual(recorded.usage, { completion_tokens: 123, total_tokens: 123 });
+  assert.equal(recorded.actualCostCny, null);
+  assert.equal(fs.statSync(String(recorded.rawReceiptRef)).mode & 0o777, 0o600);
+  assert.equal(JSON.parse(fs.readFileSync(String(recorded.rawReceiptRef), 'utf8')).id, 'cgt-original');
   assert.match(requests[0], /^GET:.*cgt-original$/);
   await assert.rejects(recovery.recover({ ...scope, tenantId: 'foreign' }, config), /原镜头输入不一致/);
   await assert.rejects(recovery.recover({ ...scope, inputFingerprint: 'changed' }, config), /原镜头输入不一致/);
