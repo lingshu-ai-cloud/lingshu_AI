@@ -5,6 +5,7 @@ import { socialSceneReworkApi } from '../lib/socialSceneReworkApi';
 import { frozenSceneSlotId, verifiedProductionSlots, verifyProductionSnapshotHash, type BoundProductionSlot } from '../lib/socialSceneReworkNavigation';
 import { SocialSceneReworkPanel } from './socialContent/SocialSceneReworkPanel';
 import SocialMvpHandoffPanel from './socialContent/SocialMvpHandoffPanel';
+import StudioOperationalEvidencePanel from './socialContent/StudioOperationalEvidencePanel';
 import { readCurrentStudioSocialTask } from '../lib/studioSocialTaskRead';
 import type { SocialContentTaskDetail } from '../../shared/contracts/socialContentWorkflow';
 import { localFlowRenderRecovery, localFlowRenderInputIdentity } from '../lib/localFlowRenderRecovery';
@@ -10615,6 +10616,7 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onLaunc
                     {selectedVisualClips.length ? `${selectedVisualClips.length} 项已准备` : (mode === 'material' ? '待选择' : '可稍后补充')}
                   </span>
                 </div>
+                {frozenAssets?.adoptedAssets && <p className="mt-2 text-xs">已采纳原始视频：{Object.values(frozenAssets.adoptedAssets).filter(asset => asset.url && /^[a-f0-9]{64}$/.test(asset.sha256 || '')).length} 个 · 待整片验收；所选素材统计单独保留。</p>}
                 <div className="mt-3 grid grid-cols-2 gap-1.5">
                   {[
                     ['视频', `${selectedVideoCount} 个`],
@@ -14269,6 +14271,18 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onLaunc
   const activeWorkbenchClip = activeWorkbenchSlot
     ? assignedWorkbenchClip && isProductionEligibleClip(assignedWorkbenchClip, videoKickoff) ? assignedWorkbenchClip : undefined
     : previewClip || selectedClips[0];
+  const [frozenOperationalEvidence, setFrozenOperationalEvidence] = useState<unknown>(null);
+  useEffect(() => {
+    let active = true;
+    setFrozenOperationalEvidence(null);
+    if (!projectId || !frozenStudioSpecRef.current) return;
+    const current = frozenStudioSpecRef.current.resolvedStudioContract as Record<string, unknown>;
+    void studioApi.getProject(projectId).then(project => {
+      const incoming = project.spec.resolvedStudioContract as Record<string, unknown> | undefined;
+      if (active && incoming && ['tenantId','taskId','taskVersion','runId','jobId','planHash','inputHash'].every(key => incoming[key] === current[key])) setFrozenOperationalEvidence(incoming.operationalEvidence);
+    }).catch(() => { /* Unavailable receipts stay unverified; never rebuild the frozen plan. */ });
+    return () => { active = false; };
+  }, [projectId, boundProductionSnapshot]);
   const [frozenPreviewUrl, setFrozenPreviewUrl] = useState<string | null>(null);
   const frozenAssets = frozenStudioSpecRef.current?.resolvedStudioContract as { adoptedAssets?: Record<string, { url?: string; sha256?: string; humanApproved?: boolean; artifactCompleted?: boolean }> } | undefined;
   const frozenCandidate = activeWorkbenchSlot ? frozenAssets?.adoptedAssets?.[activeWorkbenchSlot.id] : undefined;
@@ -14590,7 +14604,15 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onLaunc
     const warning = Boolean(sourcePlanFor(slot).qualityError || sourcePlanFor(slot).error);
     const copyReady = Boolean(voiceDrafts[activeVoiceLang]?.trim() || voiceoverLines.trim());
     const voiceReady = voiceoverMode === 'none' || (Boolean(voiceoverAudios[activeVoiceLang]?.url) && !voiceoverStaleLangs.includes(activeVoiceLang));
-    const stageStatus = step === 'script'
+    const adoptedCandidate = frozenAssets?.adoptedAssets?.[slot.id];
+    const adoptedPreview = Boolean(adoptedCandidate?.url && /^[a-f0-9]{64}$/.test(adoptedCandidate.sha256 || ''));
+    const operations = (frozenOperationalEvidence as { providerOperations?: Array<{ shotId: string; qualityStatus: string }> } | null)?.providerOperations;
+    const rejectedCandidate = operations?.some(row => row.shotId === slot.id && row.qualityStatus === 'rejected');
+    const stageStatus = rejectedCandidate
+      ? { status: 'warning' as const, label: '已生成 · 质检拒用' }
+      : adoptedPreview
+      ? { status: 'warning' as const, label: '已生成 · 待整片验收' }
+      : step === 'script'
       ? scriptStageTab === 'theme'
         ? { status: 'ready' as const, label: '脚本已生成' }
         : scriptStageTab === 'voiceover'
@@ -14614,7 +14636,7 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onLaunc
       frameSource: material?.type === 'video' ? material.url : undefined,
       frameTime: material?.type === 'video' ? editForSlot(material, slot).trimStart : 0,
       firstFrameRef: undefined,
-      frameLabel: material
+      frameLabel: rejectedCandidate ? '供应商已生成，质量不合格；未采用' : adoptedPreview ? '已采纳原始镜头 · 未完成人工审核' : material
         ? `${material.name} · ${editForSlot(material, slot).trimStart.toFixed(1)}–${editForSlot(material, slot).trimEnd.toFixed(1)}s`
         : salesPresenterRecognition(presenterEvidenceFor(slot)) === 'confirmed' ? '数字人待生成' : '待拍摄补充',
       duration: `${Math.max(0.1, slot.end - slot.start).toFixed(1)}s`,
@@ -15404,6 +15426,7 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onLaunc
     }
   };
   const runPrimaryAction = () => {
+    if (frozenStudioSpecRef.current) { setModeNotice('当前生产计划已冻结，请从原任务正式修订；此页面只读查看原始记录。'); return; }
     if (step === 'script' && scriptStageTab !== 'theme' && !hasTimestampScript) {
       setScriptStageTab('theme');
       setModeNotice('请先生成并确认分镜脚本，再继续口播、翻译和配音。');
@@ -16093,7 +16116,7 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onLaunc
         onProjectTitleChange={title => { setProjectTitle(title); setAutosaveStatus('idle'); }}
         saveStatus={{
           state: savingProj ? 'saving' : autosaveStatus,
-          label: autosaveStatus === 'error' && !savingProj ? `${autosaveError || '保存失败'} 点击重试` : undefined,
+          label: frozenStudioSpecRef.current ? '冻结计划 · 只读浏览' : autosaveStatus === 'error' && !savingProj ? `${autosaveError || '保存失败'} 点击重试` : undefined,
           savedAt: lastAutosavedAt?.toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' }),
           onRetry: () => void saveProject('draft').catch(error => setModeNotice(error.message)),
         }}
@@ -16159,6 +16182,7 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onLaunc
         ) : <button key={index} type="button" className="block w-full rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-left text-[10px] text-amber-900" onClick={() => { const slot = storyboardSlots.find(item => item.id === todo.slotId); if (todo.target === 'system') { void navigateReplicationStep(0); return; } if (!slot) return; focusWorkbenchStoryboardSlot(slot.id); if (todo.target === 'digital') openProduction(slot); else void createBoundShootingTask(storyboardSlotScript(slot.detail).visual || slot.title, slot.id); }}>{todo.label}</button>)}</div>)}
         propertyPanel={(
           <>
+          {frozenStudioSpecRef.current?.resolvedStudioContract && <StudioOperationalEvidencePanel contract={{...(frozenStudioSpecRef.current.resolvedStudioContract as Parameters<typeof StudioOperationalEvidencePanel>[0]['contract']),operationalEvidence:frozenOperationalEvidence}} />}
           {socialContentTaskId && <SocialMvpHandoffPanel value={sceneReworkTask?.taskId === socialContentTaskId ? sceneReworkTask.socialMvpHandoff : null}
             expected={{ taskId: socialContentTaskId, runId: sceneReworkTask?.runId || '', version: sceneReworkTask?.version || '', projectId: projectId || '' }} />}
           {threeStepWorkflow && step === 'preview' ? (
@@ -16670,10 +16694,10 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onLaunc
         primaryAction={{
           label: threeStepWorkflow && step === 'material' ? renderReadiness.ready || freeVisualReady ? '查看成片设置' : freeThreeStep ? `查看缺项（${renderReadiness.issues.filter(issue => issue.code !== 'voiceover_missing').length}）` : batchShotSummary ? '查看首帧审核' : '一次性生成所有智能分镜' : threeStepWorkflow && step === 'preview' ? workbenchHasFormalVideo ? '重新渲染成片' : replicationNeedsVoiceover ? '生成配音并渲染成片' : '渲染成片' : agentProduction.action?.label || primaryActionLabel,
           onClick: threeStepWorkflow && step === 'material' ? freeThreeStep && !freeCanEnterPreview ? explainFreePreviewBlockers : renderReadiness.ready || freeVisualReady ? () => void navigateReplicationStep(2) : batchShotSummary ? () => setBatchReviewOpen(true) : () => void runBatchShotJobs() : threeStepWorkflow && step === 'preview' ? startReplicationRender : agentProduction.active ? () => void agentProduction.execute().catch(error => setModeNotice(error.message)) : runPrimaryAction,
-          disabled: threeStepWorkflow && step === 'material' ? (freeThreeStep ? batchShotBusy || savingProj : smartBatchTodos.some(todo => todo.target === 'system') || batchShotBusy || savingProj || replicationTimingBlocked) : threeStepWorkflow && step === 'preview' ? rendering || batchRenderingLangs || ttsLoading || !renderReadiness.ready && !freeCanGenerateVoiceover || Boolean(subtitleSourceBlockReason) && !freeCanGenerateVoiceover || Boolean(voiceoverAlignmentBlockReason) && !replicationNeedsVoiceover || workbenchRenderableVersionCount === 0 && !replicationNeedsVoiceover || replicationTimingBlocked : agentProduction.active ? !agentProduction.action || agentProduction.busy || Boolean(window.__agentProductionTarget?.projectId && projectId !== window.__agentProductionTarget.projectId) : primaryActionDisabled,
+          disabled: Boolean(frozenStudioSpecRef.current) || (threeStepWorkflow && step === 'material' ? (freeThreeStep ? batchShotBusy || savingProj : smartBatchTodos.some(todo => todo.target === 'system') || batchShotBusy || savingProj || replicationTimingBlocked) : threeStepWorkflow && step === 'preview' ? rendering || batchRenderingLangs || ttsLoading || !renderReadiness.ready && !freeCanGenerateVoiceover || Boolean(subtitleSourceBlockReason) && !freeCanGenerateVoiceover || Boolean(voiceoverAlignmentBlockReason) && !replicationNeedsVoiceover || workbenchRenderableVersionCount === 0 && !replicationNeedsVoiceover || replicationTimingBlocked : agentProduction.active ? !agentProduction.action || agentProduction.busy || Boolean(window.__agentProductionTarget?.projectId && projectId !== window.__agentProductionTarget.projectId) : primaryActionDisabled),
           loading: agentProduction.busy || primaryActionLoading,
           loadingLabel: socialArtifactSubmitting ? '正在提交成品' : modeActionStatus || (rendering ? `正在生成 ${renderPct}%` : undefined),
-          blockReason: threeStepWorkflow && step === 'preview' ? previewRenderBlockers[0] : agentProduction.active ? undefined : primaryActionBlockedReason,
+          blockReason: frozenStudioSpecRef.current ? '冻结计划只读；请从原任务发起正式修订。' : threeStepWorkflow && step === 'preview' ? previewRenderBlockers[0] : agentProduction.active ? undefined : primaryActionBlockedReason,
           icon: primarySubmitsSocialArtifact || step === 'preview' && workbenchHasFormalVideo && !primaryGeneratesVideo ? <Send size={15} /> : <ChevronRight size={15} />,
         }}
       >
