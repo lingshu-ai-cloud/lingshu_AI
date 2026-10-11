@@ -20,6 +20,9 @@ export async function readCanonicalGraphRuntimeMedia(input:{dataStore:DataStore;
  const adapter=createPersistedStudioReceiptAdoptionAdapter({dataStore:input.dataStore,scope:{tenantId:input.tenantId,taskId:input.taskId,runId:input.runId,jobId:job.id}}),proofs:CanonicalRuntimeMedia[]=[];
  for(const shot of input.approvedContext.assetSupplyPlan?.shots??[]){
   if(!['authorized_digital_presenter','aigc_product_scene_replication'].includes(shot.sourceStrategy))continue;
+  const saved=await input.dataStore.list<any>('social_studio_asset_adoptions',{where:{tenant_id:input.tenantId,task_id:input.taskId,run_id:input.runId,job_id:job.id,shot_id:shot.shotId},perPage:2});
+  if(saved.totalItems===0)continue;
+  if(saved.totalItems!==1)throw Error('studio_adoption_receipt_ambiguous');
   try{const result=await adapter.execute({tenantId:input.tenantId,taskId:input.taskId,shot,baselineScene:{} as any,availableAssets:[],outputDirectory:''});
    if(result?.asset.providerTaskId&&result.asset.contentHash)proofs.push({providerTaskId:result.asset.providerTaskId,sha256:result.asset.contentHash});
   }catch(error){if(!(error instanceof Error)||error.message!=='user_input_required:studio_completed_receipt_missing')throw error;}

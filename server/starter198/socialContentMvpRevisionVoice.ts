@@ -4,15 +4,16 @@ import {readMvpSpeechRevision} from '../lib/mvpSpeechRevisionReuse.js';import {r
 import {createCanonicalVoiceAssembly,type CanonicalVoiceCue,type CanonicalVoiceTrack} from '../lib/socialContentCanonicalVoiceAssembly.js';import {socialObject} from './socialContentValidation.js';import type {StudioAdoptionScope} from './socialContentStudioAdoption.js';
 const tokens=(s:string)=>s.toLowerCase().match(/[\p{L}\p{N}]+/gu)??[];
 /** Reads verified revision-reuse receipts, original provider words, and the immutable graph director timeline. */
-export function createMvpRevisionVoiceRuntime(input:{dataStore:DataStore;scope:StudioAdoptionScope;hookRef:string;bodyRef:string;authorityRoot:string}){
-return createCanonicalVoiceAssembly({tenantId:input.scope.tenantId,durationSeconds:24,silentIntervals:[{start:10.1,end:14.1},{start:18.8,end:20.5}],outputDirectory:path.join(input.authorityRoot,'data/mvp-voice-assemblies'),readCanonicalCues:async()=>{
-const root=input.authorityRoot,hook=readMvpSpeechRevision(input.hookRef,path.join(root,'data/mvp-speech-revision-reuse')),body=readMvpSpeechRevision(input.bodyRef,path.join(root,'data/mvp-speech-revision-reuse'));
+export interface MvpRevisionVoiceInput {dataStore:DataStore;scope:StudioAdoptionScope;hookRef:string;bodyRef:string;authorityRoot:string}
+export function createMvpRevisionVoiceRuntime(input:MvpRevisionVoiceInput){return createCanonicalVoiceAssembly({tenantId:input.scope.tenantId,durationSeconds:24,silentIntervals:[{start:10.1,end:14.1},{start:18.8,end:20.5}],outputDirectory:path.join(input.authorityRoot,'data/mvp-voice-assemblies'),readCanonicalCues:()=>readMvpRevisionVoiceCues(input)});}
+export async function readMvpRevisionVoiceCues(input:MvpRevisionVoiceInput):Promise<CanonicalVoiceCue[]>{
+const dataRoot=fs.realpathSync(path.join(input.authorityRoot,'data')),hook=readMvpSpeechRevision(input.hookRef,path.join(dataRoot,'mvp-speech-revision-reuse')),body=readMvpSpeechRevision(input.bodyRef,path.join(dataRoot,'mvp-speech-revision-reuse'));
 const job=await readContentExecutionJob(input.dataStore,input.scope.tenantId,input.scope.taskId,input.scope.runId),binding=socialObject(job?.checkpoints['social.executor']?.payload),approved=socialObject(binding?.approvedContext);
 if(!job||job.id!==input.scope.jobId||[hook,body].some(audio=>audio.tenantId!==input.scope.tenantId||audio.taskId!==input.scope.taskId||audio.runId!==input.scope.runId||audio.taskVersion!==Number(approved?.version)||audio.targetIdentity.planHash!==approved?.revisionPlanHash))throw Error('canonical_voice_revision_scope_changed');
 const hookSource=(hook.sourceResult as unknown as {source:{sourceReceiptRef:string}}).source?.sourceReceiptRef;if(!hookSource)throw Error('canonical_hook_source_lineage_missing');
-const hookRow=JSON.parse(fs.readFileSync(path.join(root,'data/mvp-heygen-speech',hookSource+'.json'),'utf8')),hookEvidence=hookRow.provider?.responseEvidence;
+const hookRow=JSON.parse(fs.readFileSync(path.join(dataRoot,'mvp-heygen-speech',hookSource+'.json'),'utf8')),hookEvidence=hookRow.provider?.responseEvidence;
 if(createHash('sha256').update(JSON.stringify(hookEvidence)).digest('hex')!==hook.providerEvidenceSha256)throw Error('canonical_hook_provider_words_changed');
-const bodyEvidence=readMvpHeyGenSpeechProviderEvidence(body.sourceRef,path.join(root,'data/mvp-heygen-speech')) as {data?:{word_timestamps?:Array<{word:string;start:number;end:number}>}};
+const bodyEvidence=readMvpHeyGenSpeechProviderEvidence(body.sourceRef,path.join(dataRoot,'mvp-heygen-speech')) as {data?:{word_timestamps?:Array<{word:string;start:number;end:number}>}};
 const parse=(e:any)=>{if(!Array.isArray(e?.data?.word_timestamps))throw Error('canonical_provider_word_timing_missing');return e.data.word_timestamps.filter((w:any)=>!/^<.*>$/.test(String(w.word))).map((w:any)=>({text:String(w.word),start:Number(w.start),end:Number(w.end)}));};
 const hookWords=parse(hookEvidence),bodyWords=parse(bodyEvidence);let cursor=0;const result:CanonicalVoiceCue[]=[];
 const director=socialObject(socialObject(approved?.agentWorkflow)?.directorBrief),scenes=director?.scenes as Array<{sceneId:string;audioLayers:{voiceover:string|null};duration:{startSeconds:number;endSeconds:number;targetSeconds:number}}>;
@@ -26,5 +27,4 @@ const track:CanonicalVoiceTrack={filePath:trackResult.filePath,sha256:trackResul
 result.push({sceneId:scene.sceneId,text,startSeconds:scene.duration.startSeconds,endSeconds:scene.duration.endSeconds,track,sourceStartSeconds:start,sourceEndSeconds:end,words:selected,...(isHook?{keepCompleteTrack:true}:{boundaryPaddingSeconds:.04 as const})});
 }
 if(cursor!==bodyWords.length||tokens(result[0]?.text??'').join(' ')!==hookWords.flatMap((w:any)=>tokens(w.text)).join(' '))throw Error('canonical_voice_words_dropped');return result;
-}});
 }
