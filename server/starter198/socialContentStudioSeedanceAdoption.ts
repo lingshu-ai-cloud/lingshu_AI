@@ -8,12 +8,14 @@ import {socialJson,socialObject,socialRequestHash} from './socialContentValidati
 import type {StudioAdoptionScope,StudioCompletedAssetEvidence} from './socialContentStudioAdoption.js';
 /** Read only canonical server result/QA files and the original Studio budget receipt.
  * No GET polling, download, generation, budget mutation or material registration. */
-export async function readCompletedStudioSeedanceAdoptionEvidence(input:{dataStore:DataStore;scope:StudioAdoptionScope;projectId:string;authorityRoot?:string}):Promise<StudioCompletedAssetEvidence|null>{
+export async function readCompletedStudioSeedanceAdoptionEvidence(input:{dataStore:DataStore;scope:StudioAdoptionScope;projectId:string;authorityRoot?:string;operationId?:string}):Promise<StudioCompletedAssetEvidence|null>{
 const {scope}=input,root=input.authorityRoot??process.cwd();
 const project=await input.dataStore.getById<Record<string,unknown>>('studio_projects',input.projectId),spec=socialObject(socialJson(project?.spec));
 const job=await readContentExecutionJob(input.dataStore,scope.tenantId,scope.taskId,scope.runId),binding=socialObject(job?.checkpoints['social.executor']?.payload),approved=socialObject(binding?.approvedContext);
 if(!project||project.tenant_id!==scope.tenantId||spec?.socialContentTaskId!==scope.taskId||spec?.workflowRunId!==scope.runId||job?.id!==scope.jobId||Number(spec?.taskVersion)!==Number(approved?.version))throw Error('studio_seedance_adoption_scope_changed');
-const operationId=`mvp-studio:${input.projectId}:S04:video:v${spec.taskVersion}`;
+const originalOperation=`mvp-studio:${input.projectId}:S04:video:v${spec.taskVersion}`;
+const operationId=input.operationId??originalOperation;
+if(operationId!==originalOperation&&(!operationId.startsWith(originalOperation+':repair-')||!/^\d+$/.test(operationId.slice((originalOperation+':repair-').length))||Number(operationId.slice((originalOperation+':repair-').length))<1))throw Error('studio_seedance_operation_scope_changed');
 const ledger=await new StoryboardAigcProjectBudget(path.join(root,'data/storyboard-aigc-budget')).status(scope.tenantId,input.projectId);
 const entry=ledger.entries.find(value=>value.operationId===operationId);if(!entry||entry.status!=='completed')return null;
 const output=socialObject(entry.output),providerTaskId=String(output?.providerTaskId||''),fingerprint=String(output?.seedanceInputFingerprint||'');if(!providerTaskId||!fingerprint)throw Error('studio_seedance_completion_receipt_incomplete');

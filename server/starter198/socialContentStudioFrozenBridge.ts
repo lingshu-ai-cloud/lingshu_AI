@@ -41,10 +41,12 @@ export async function bindFrozenSocialStudioProject(input:{dataStore:DataStore;t
  spec.scriptType='storyboard';
  spec.storyboardTimeline=shots.map((shot:any,i:number)=>({...timeline[i],id:shot.shotId,start:shot.startSeconds,end:shot.endSeconds,time:`${shot.startSeconds}s-${shot.endSeconds}s`,detail:slots[i].detail}));
  spec.socialContentTaskId=input.taskId;spec.workflowRunId=input.runId;spec.contextRunId=input.runId;spec.taskVersion=Number(approved.version);spec.scriptVersion=(socialObject(marker.resolved)?.replicationScript as any)?.version;
- spec.presenterMode='digital';spec.presentationMode='avatar';spec.presentationSources=Object.fromEntries(shots.map((s:any)=>[s.shotId,s.materialPlan?.digitalHumanPlan?'avatar':'material']));
+ spec.presenterMode='digital';spec.presentationMode='heygen';spec.presentationSources=Object.fromEntries(shots.map((s:any)=>[s.shotId,s.materialPlan?.digitalHumanPlan?'avatar':'material']));
  const snapshot=plan(spec),contract={schemaVersion:'social-frozen-studio.v1',tenantId:input.tenantId,taskId:input.taskId,taskVersion:spec.taskVersion,runId:input.runId,jobId:job!.id,planHash,inputHash:binding.inputHash,scriptVersion:spec.scriptVersion,readOnlyPlan:true,planSnapshot:snapshot,planSnapshotHash:socialRequestHash(snapshot)};
  const current=String(project.updated_at||project.updated||'');
  if(current!==input.expectedUpdatedAt)throw Error('studio_project_version_conflict');
+ const oldContract=socialObject(stored?.resolvedStudioContract);
+ if(oldContract?.planHash===contract.planHash&&oldContract?.inputHash===contract.inputHash&&oldContract?.runId===contract.runId&&oldContract.adoptedAssets)(contract as any).adoptedAssets=oldContract.adoptedAssets;
  const next={...stored,...snapshot,resolvedStudioContract:contract};
  if(input.dryRun)return {replayed:false,projectId:input.projectId,contract,dryRun:true};
  if(socialRequestHash(stored?.resolvedStudioContract??null)===socialRequestHash(contract))return {replayed:true,projectId:input.projectId,contract};
