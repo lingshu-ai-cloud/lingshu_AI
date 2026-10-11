@@ -16,7 +16,7 @@ test('real Studio sentence splitting and shared frozen direction determine clone
     assert.equal(native?.requiresClone, false);
     assert.equal(native?.allowFallback, false);
     assert.equal(native?.requiresAsr, false);
-    assert.deepEqual(native?.lines, ['Meet GUIANFA.', 'DM us.']);
+    assert.deepEqual(native?.lines, ['Meet GUIANFA. DM us.']);
     const formula = { formulaId: 'f', version: '1', direction: { voiceover: { voice: 'custom:owned' } } } as InternalSocialContentFormula;
     const custom = await createProductionBudgetRuntimeReaders({ tenantId:'tenant', formula, env: { DASHSCOPE_API_KEY: 'fixture-only' } }).readVoicePlan!({ ...baseline, formulaReference: { formulaId: 'f', version: '1' } });
     assert.equal(custom?.requiresClone, true);
@@ -51,4 +51,12 @@ test('new paid plan freezes available mainland Qwen native route instead of borr
  const route=await readers.resolveBoundRoute!({key:'voice:0:tts',stage:'tts',shotId:null,sourceRef:null,durationSeconds:null,text,frameCount:null,inputContractHash:'a'.repeat(64)});
  assert.equal(route?.provider,'qwen');assert.equal(route?.model,'qwen3-tts-flash');assert.equal(route?.maximumUnits.characters,text.length);
  assert.equal(await readers.resolveBoundRoute!({key:'voice:0:tts',stage:'tts',shotId:null,sourceRef:null,durationSeconds:null,text:'rewritten text',frameCount:null,inputContractHash:'a'.repeat(64)}),null);
+});
+
+test('Chinese continuous narration uses the exact shared Studio request text instead of inserting scene spaces',async()=>{
+ const readers=createProductionBudgetRuntimeReaders({tenantId:'tenant',env:{DASHSCOPE_API_KEY:'controlled-only',TTS_ASR_QA_ENABLED:'false'}});
+ const b={...baseline,language:'zh' as const,scenes:[{voiceover:'欢迎了解。',narration:'欢迎了解。'},{voiceover:'联系我们。',narration:'联系我们。'}]} as StoredSocialScriptBaseline;
+ const voice=await readers.readVoicePlan!(b);assert.ok(voice);assert.equal(voice.mode,'continuous');assert.deepEqual(voice.lines,['欢迎了解。联系我们。']);
+ const req={key:'voice:0:tts',stage:'tts',shotId:null,sourceRef:null,durationSeconds:null,text:voice.lines.join(' '),frameCount:null,inputContractHash:'a'.repeat(64)};
+ assert.ok(await readers.resolveBoundRoute!(req));assert.equal(await readers.resolveBoundRoute!({...req,text:'欢迎了解。 联系我们。'}),null);
 });

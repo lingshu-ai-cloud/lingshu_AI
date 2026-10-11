@@ -64,7 +64,7 @@ export function createProductionBudgetRuntimeReaders(input: {
                 const qwenPlan=resolveStudioVoiceExecutionPlan({tenantId:input.tenantId,text,voice:direction.voiceover.voice,language:baseline.language,style:{preset:direction.voiceover.preset,speed:direction.voiceover.speed,pauseStyle:direction.voiceover.pauseStyle},env,nativeProvider:'qwen'});
                 if(qwenPlan.primary&&qwenPlan.primary.endpoint==='https://dashscope.aliyuncs.com/api/v1/services/aigc/multimodal-generation/generation')voicePlan=qwenPlan;
             }
-            return {mode:voicePlan.mode,lines:voicePlan.lines,requiresClone:Boolean(voicePlan.custom?.requiresClone||voicePlan.custom?.requiresActivation),allowFallback:false,requiresAsr:voicePlan.asrConfigured,requiresAlignment:input.requiresMeasuredAlignment===true,reuseReceiptRef:null};
+            return {mode:voicePlan.mode,lines:voicePlan.mode==='continuous'?voicePlan.texts:voicePlan.lines,requiresClone:Boolean(voicePlan.custom?.requiresClone||voicePlan.custom?.requiresActivation),allowFallback:false,requiresAsr:voicePlan.asrConfigured,requiresAlignment:input.requiresMeasuredAlignment===true,reuseReceiptRef:null};
         },
         async readAnalysisFrames(asset) {
             if (asset.type !== 'video' || !asset.localPath || (env.VIDEO_ANALYSIS_PROVIDER || 'qwen').trim().toLowerCase() !== 'qwen')

@@ -12,6 +12,7 @@ import { parseCreateSocialTask, socialJson, socialObject } from './socialContent
 import { readSocialTaskDetail, requireSocialTask } from './socialContentRecords.js';
 import { parseStoredSocialScriptBaseline } from './socialContentScriptBaseline.js';
 import { admitContentExecutionJob } from '../contentExecution/durableQueue.js';
+import {createProductionBudgetRuntimeReaders} from './socialContentProductionBudgetRuntimeReaders.js';
 import { prepareSocialContentProductionBudget } from './socialContentProductionBudgetPreflight.js';
 async function fixture() { const root = fs.mkdtempSync(path.join(os.tmpdir(), 'real-budget-preflight-')), store = new LangGraphTestStore(path.join(root, 'business.json')), repository = createStarter198Repository(store), tenantId = 'budget-tenant', userId = 'owner', now = new Date(); await store.create(STARTER_COLLECTIONS.access, { tenant_id: tenantId, product_profile: 'starter_198', profile_version: 'starter_198.v1', entitlement_snapshot_id: 'test', feature_entitlements: STARTER_198_CAPABILITIES.map(capability => ({ capability, enabled: true })), resource_limits: STARTER_198_DEFAULT_LIMITS, status: 'active', cycle_started_at: new Date(now.getTime() - 86400000).toISOString(), cycle_ends_at: new Date(now.getTime() + 86400000).toISOString() }); const value = parseCreateSocialTask({ title: 'Budget entry contract', objective: 'Actual production preflight', mode: 'instant', themeId: 'customization_process', productionApproach: 'material_polish', perItemBudgetCny: 10 }); delete value.materialRoutingPolicyVersion; const task = await createSocialContentTask({ repository, tenantId, userId, idempotencyKey: 'create-budget-test', value }); const started = await startSocialContentTask({ repository, tenantId, userId, taskId: task.taskId, expectedVersion: task.version, idempotencyKey: 'start-budget-test', orchestratorQueue: { enqueue: async () => ({ queueItemId: 'queue-test', runId: 'run-test' }) } }); assert.ok(started.runId); const runId = started.runId!; const job = await admitContentExecutionJob({ dataStore: store, tenantId, userId, taskId: task.taskId, runId, taskType: 'social_content_test' }); const row = await requireSocialTask({ repository, tenantId, taskId: task.taskId }); const baseline = parseStoredSocialScriptBaseline(row!.script_baseline)!; assert.ok(baseline); const detail = await readSocialTaskDetail({ repository, tenantId, taskId: task.taskId }); return { root, store, repository, tenantId, taskId: task.taskId, runId, job, baseline, supplyPlan: detail!.assetSupplyPlan!, clean: () => fs.rmSync(root, { recursive: true, force: true }), enable: async () => { const fresh = await requireSocialTask({ repository, tenantId, taskId: task.taskId }); await store.update(STARTER_COLLECTIONS.socialContentTasks, fresh.id, { brief: { ...socialObject(socialJson(fresh!.brief)), materialRoutingPolicyVersion: 'type-aware.v1' } }); } }; }
 test('historical admission remains read only and does not suddenly provision a new budget', async () => { const f = await fixture(); try {
@@ -51,3 +52,40 @@ test('superseded task run is rejected before any provider or quote', async () =>
 finally {
     f.clean();
 } });
+
+// Presenter selection, native voice planning and pricing use production
+// defaults; only official GET responses and the isolated business store are controlled.
+test('default presenter route resolves frozen presenter IDs with empty source refs and reads official IV pricing', async () => {
+ const f=await fixture(); const originalFetch=globalThis.fetch, oldKey=process.env.HEYGEN_API_KEY, oldDash=process.env.DASHSCOPE_API_KEY;
+ const gets:string[]=[];
+ try {
+  await f.enable();
+  f.baseline.language='en';f.baseline.scenes=f.baseline.scenes.map(scene=>({...scene,voiceover:'Welcome to our company.',narration:'Welcome to our company.'}));
+  await f.store.update(STARTER_COLLECTIONS.socialContentTasks,(await requireSocialTask(f)).id,{script_baseline:f.baseline});
+  await f.store.create('studio_production_defaults',{tenant_id:f.tenantId,payload:{presenters:[{id:'enterprise-person',authorized:true,assetVersion:4,avatarId:'original-look',voiceId:'original-voice',rightsEvidence:{authorizationRef:'rights://original',consentRef:'consent://original',grantedAt:'2026-01-01T00:00:00Z',subjectAdultConfirmed:true,permittedProviders:['heygen'],permittedUses:['digital_presenter','voice_synthesis']}}]}});
+  process.env.HEYGEN_API_KEY='controlled-key';process.env.DASHSCOPE_API_KEY='controlled-native';
+  const row=(...cells:string[])=>({cells:cells.map(text=>({content:[{text}]}))});
+  const price='<script id="__NEXT_DATA__">'+JSON.stringify({props:{pageProps:{articleContent:{articleId:'10060327',blocks:[{rows:[row('Video Generation with Avatar IV engine','Price per 1 minute, charged by actual seconds generated','Credits per min'),row('Photo Avatar','$2.31','46'),row('Digital Twin','$4.83','97'),row('Studio Avatar','$4.83','97'),row('Video Generation with Avatar III engine','Price per 1 minute, charged by actual seconds generated','Credits per min'),row('Digital Twin','$0.60','12')]}]}}}})+'</script>';
+  globalThis.fetch=async (url,init)=>{ const u=String(url);assert.ok(!init?.method||init.method==='GET');gets.push(u);let body:string;
+   if(u.includes('/avatars/looks/'))body=JSON.stringify({data:{id:'original-look',avatar_type:'digital_twin',supported_api_engines:['avatar_iv'],status:'completed'}});
+   else if(u.endsWith('/users/me'))body=JSON.stringify({data:{billing_type:'wallet',wallet:{currency:'usd',remaining_balance:20}}});
+   else if(u.includes('ecb.europa.eu'))body=`<Envelope xmlns="http://www.ecb.int/vocabulary/2002-08-01/eurofxref"><Cube><Cube time='${new Date().toISOString().slice(0,10)}'><Cube currency='USD' rate='1.12'/><Cube currency='CNY' rate='7.49'/></Cube></Cube></Envelope>`;
+   else if(u.includes('heygen'))body=price;
+   else if(u.includes('help.aliyun.com'))body='window.__ICE_PAGE_PROPS__='+JSON.stringify({docDetailData:{storeData:{data:{alias:'/model-studio/model-pricing',website:'cn',language:'zh',content:'<h4 id="千问3-tts-flash">千问3-TTS-Flash</h4>输入单价（每万字符）<table><tr><td>qwen3-tts-flash</td><td>0.8元</td><td>不计费</td></tr></table><h4 id="新加坡">新加坡</h4><h3 id="千问asr">千问ASR</h3>按输入音频的秒数计费<table><tr><td>qwen3-asr-flash-filetrans</td><td rowspan="2">0.00022元/秒</td><td>不计费</td></tr><tr><td>qwen3-asr-flash</td><td>试用36,000秒</td></tr></table><h4 id="新加坡">新加坡</h4>'}}}})+';';
+   else throw Error('Unexpected controlled GET '+u);
+   const r=new Response(body,{status:200});Object.defineProperty(r,'url',{value:u});return r;
+  };
+  const supplyPlan={...f.supplyPlan,shots:f.supplyPlan.shots.map(shot=>({...shot,sourceStrategy:'authorized_digital_presenter' as const,sourceRefs:[],fallbackStrategies:[],digitalHumanPlan:{workflow:'material_processing' as const,method:'talking' as const,presenterAssetIds:['enterprise-person'],referenceMaterialIds:[],referenceRequired:false,candidateTools:['heygen'],executionState:'ready_for_capability_check' as const}}))};
+  const readers=createProductionBudgetRuntimeReaders({tenantId:f.tenantId,requiresMeasuredAlignment:true,env:{...process.env,MINIMAX_API_KEY:'',MINIMAX_API_TOKEN:''}});
+  const result=await prepareSocialContentProductionBudget({...f,supplyPlan,assets:[],ports:{...readers,ledgerRoot:path.join(f.root,'task-budget')}});
+  assert.equal(result.status,'reserved');assert.ok(result.status==='reserved');
+  const presenterRequirements=result.requirements.filter(r=>r.stage==='presenter_video');
+  assert.equal(presenterRequirements.length,supplyPlan.shots.length);assert.ok(presenterRequirements.every(r=>r.sourceRef===null));
+  for(const requirement of presenterRequirements){const route=result.routeBindings[requirement.key];assert.equal(route.provider,'heygen');assert.equal(route.model,'avatar_iv');assert.match(route.routeEvidenceRef,/^heygen-approved-person:/);}
+  const quotes=Object.values(result.reserved.quotes);const ivQuotes=quotes.filter(q=>q.nativePricing?.currency==='USD');assert.equal(ivQuotes.length,supplyPlan.shots.length);assert.ok(ivQuotes.every(q=>q.nativePricing?.usdPerMinute===4.83));assert.ok(quotes.reduce((n,q)=>n+q.upperBoundCny,0)<=10);
+  assert.ok(gets.some(u=>u.endsWith('/avatars/looks/original-look')));
+  assert.ok(gets.some(u=>u.endsWith('/users/me')));
+  assert.ok(gets.some(u=>u.includes('10060327')));
+  assert.ok(gets.some(u=>u.includes('ecb.europa.eu')));
+ } finally {globalThis.fetch=originalFetch;if(oldKey===undefined)delete process.env.HEYGEN_API_KEY;else process.env.HEYGEN_API_KEY=oldKey;if(oldDash===undefined)delete process.env.DASHSCOPE_API_KEY;else process.env.DASHSCOPE_API_KEY=oldDash;f.clean();}
+});
