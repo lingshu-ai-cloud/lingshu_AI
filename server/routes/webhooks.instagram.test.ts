@@ -45,7 +45,7 @@ test('Instagram payload accepts either tenant app signature and rejects foreign 
       app_id: query.where.platform === 'instagram' ? 'ig-app' : 'meta-app',
       app_secret: encryptSecret(query.where.platform === 'instagram' ? 'ig-secret' : 'fb-secret'),
       webhook_verify_token: query.where.platform === 'instagram' ? 'ig-verify' : 'fb-verify',
-    }] };
+    }], totalItems: 1 };
     return { items: [] };
   };
   const app = express();

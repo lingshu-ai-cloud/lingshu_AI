@@ -21,7 +21,11 @@ process.env.STUDIO_TRANSLATION_PROVIDER_TIMEOUT_MS = '1000';
 // Keep this route-level test independent from production subscription settings.
 process.env.SUBSCRIPTION_ENFORCED = 'false';
 
-const { auth } = await import('../storage/index.js');
+const { auth, store } = await import('../storage/index.js');
+const originalList = store.list;
+store.list = (async (collection, query) => collection === 'starter_198_access'
+  ? { items: [], page: 1, perPage: 20, totalItems: 0, totalPages: 0 }
+  : originalList.call(store, collection, query)) as typeof store.list;
 auth.verifyToken = async () => ({ userId: 'deadline-test-user', tenantId: 'deadline-test-tenant' });
 const { studioRouter } = await import('./studio.js');
 const app = express();
@@ -67,6 +71,7 @@ try {
   for (let i = 0; i < 50 && activeUpstreamRequests > 0; i += 1) await delay(10);
   assert.equal(activeUpstreamRequests, 0, 'client disconnect should abort the in-flight provider socket');
 } finally {
+  store.list = originalList;
   await new Promise<void>(resolve => apiServer.close(() => resolve()));
   stalledUpstream.closeAllConnections();
   await new Promise<void>(resolve => stalledUpstream.close(() => resolve()));
