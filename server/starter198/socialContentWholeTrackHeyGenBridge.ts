@@ -167,8 +167,12 @@ export function createWholeTrackSocialHeyGenBridge(input:{
     await funding.permit.markOutcome(intent.operationId,'completed',receiptRef);
    },
   }});
+ const completedAlready=(request:DigitalPresenterExecutionRequest)=>fs.existsSync(path.join(root,sha(canonical(request).intent.operationId)+'.completed.json'));
  return {...ports,
-  execute:(request:Parameters<typeof ports.execute>[0])=>withPaidOperationLock(path.join(root,'.provider-locks'),sha(canonical(request).intent.operationId),()=>ports.execute(request)),
-  recoverExisting:(request:DigitalPresenterExecutionRequest)=>withPaidOperationLock(path.join(root,'.provider-locks'),sha(canonical(request).intent.operationId),()=>ports.recoverExisting!(request)),
+  // A canonical completed receipt proves that the paid POST finished. Recovery
+  // performs GET/download verification only, so a lock orphaned by a killed
+  // worker cannot permanently block this task or trigger another paid POST.
+  execute:(request:Parameters<typeof ports.execute>[0])=>completedAlready(request)?ports.execute(request):withPaidOperationLock(path.join(root,'.provider-locks'),sha(canonical(request).intent.operationId),()=>ports.execute(request)),
+  recoverExisting:(request:DigitalPresenterExecutionRequest)=>completedAlready(request)?ports.recoverExisting!(request):withPaidOperationLock(path.join(root,'.provider-locks'),sha(canonical(request).intent.operationId),()=>ports.recoverExisting!(request)),
  };
 }
