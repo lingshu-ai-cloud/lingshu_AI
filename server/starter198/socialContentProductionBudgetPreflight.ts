@@ -97,7 +97,14 @@ export async function prepareSocialContentProductionBudget(input: ProductionBudg
     if (socialRequestHash(socialJson(row.script_baseline)) !== baselineHash)
         return error('baseline_authority_changed');
     const binding = socialObject(job.checkpoints['social.executor']?.payload);
-    const planHash = typeof binding?.inputHash === 'string' && /^[a-f0-9]{64}$/.test(binding.inputHash) ? binding.inputHash : paidProductionHash({ baselineHash, plan, review, supplyPlan: input.supplyPlan });
+    const prior = job.checkpoints[STAGE];
+    const priorPayload = socialObject(prior?.payload);
+    // A retry of the same run must retain its original paid-operation scope.
+    // Task status timestamps and legacy version counters are not provider
+    // inputs and must never create a second set of reservations.
+    const priorPlanHash = prior?.inputHash && /^[a-f0-9]{64}$/.test(prior.inputHash)
+      && priorPayload?.baselineHash === baselineHash ? prior.inputHash : null;
+    const planHash = priorPlanHash || (typeof binding?.inputHash === 'string' && /^[a-f0-9]{64}$/.test(binding.inputHash) ? binding.inputHash : paidProductionHash({ baselineHash, plan, review, supplyPlan: input.supplyPlan }));
     if (input.graphApprovedContext && graph.socialProductionGraphInput(detail, input.graphApprovedContext).inputHash !== planHash)
         return error('graph_binding_changed');
     const initialWorkflowHash = socialRequestHash({ plan: detail.agentWorkflow.executionPlan, review: detail.agentWorkflow.executionPlanReview, director: detail.agentWorkflow.directorBrief });
@@ -114,7 +121,6 @@ export async function prepareSocialContentProductionBudget(input: ProductionBudg
         if (!active || active.id !== job.id || ['cancelled', 'failed'].includes(active.status))
             return error('job_authority_changed');
     };
-    const prior = job.checkpoints[STAGE];
     if (input.recoveryOnly) {
         // Read-only recovery cannot obtain a new quote, reserve or reset task expenses.
         if (!prior || prior.inputHash !== planHash)

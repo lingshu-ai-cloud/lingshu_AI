@@ -163,7 +163,6 @@ async function executePersistedProduction(job: ContentExecutionJob): Promise<voi
     const timestamp = new Date().toISOString();
     await repository.update(STARTER_COLLECTIONS.socialContentTasks, job.tenantId, record.id, {
       status: 'producing',
-      version: String(Math.max(1, Number(record.version) || 1) + 1),
       updated_by: job.userId,
       updated_at: timestamp,
     });
