@@ -2,7 +2,7 @@ import {verifyHeyGenPublishedTariff,type HeyGenPublishedPricingEvidence} from '.
 import {verifySeedreamPublishedTariff,type SeedreamPublishedPricingEvidence} from './seedreamPublishedPricing.js';
 import {verifyNativeVoicePublishedTariff} from './studioVoicePublishedPricing.js';
 import {verifyWanPublishedTariff,type WanPublishedPricingEvidence} from './wanPublishedPricing.js';
-import {isVerifiedPublishedTariff,type PublishedPricingEvidence} from './socialContentPublishedTariffs.js';
+import {isVerifiedPublishedTariff,type LocalPublishedPricingEvidence,type PublishedPricingEvidence} from './socialContentPublishedTariffs.js';
 import { createHash } from 'node:crypto';
 import { SocialContentTaskBudget, type SocialTaskBudgetScope, type SocialTaskBudgetOperation, type SocialTaskBudgetQuote } from './socialContentTaskBudget.js';
 /** Server-frozen maximum input usage. Token stages must bound both prompt and
@@ -41,7 +41,7 @@ export interface SocialVerifiedAccountTariff {
     currency: 'CNY';
     verifiedAccountPrice: boolean;
     pricingBasis?:'negotiated_verified_account'|'published_undiscounted_ceiling'|'published_fx_estimate';
-    publicPricingEvidence?:PublishedPricingEvidence|SeedreamPublishedPricingEvidence|WanPublishedPricingEvidence|HeyGenPublishedPricingEvidence;
+    publicPricingEvidence?:PublishedPricingEvidence|LocalPublishedPricingEvidence|SeedreamPublishedPricingEvidence|WanPublishedPricingEvidence|HeyGenPublishedPricingEvidence;
     evidenceRef: string;
     checkedAt: string;
     validUntil: string;

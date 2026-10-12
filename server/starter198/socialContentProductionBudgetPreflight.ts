@@ -5,7 +5,7 @@ import {readNativeVoicePublishedTariff} from '../lib/studioVoicePublishedPricing
 import {readWanPublishedTariff} from '../lib/wanPublishedPricing.js';
 import fs from 'node:fs';
 import {getQwenProviderBinding} from '../agents/qwen.js';
-import {createSocialContentPublishedTariffReader} from '../lib/socialContentPublishedTariffs.js';
+import {createSocialContentLocalPublishedTariffReader} from '../lib/socialContentPublishedTariffs.js';
 import path from 'node:path';
 import os from 'node:os';
 import {createProductionBudgetRouteReaders,type CanonicalProductBudgetBounds} from './socialContentProductionBudgetRoutes.js';
@@ -320,7 +320,7 @@ export async function prepareSocialContentProductionBudget(input: ProductionBudg
     if (!planned.plan.paidOperations.length)
         return { status: 'local' as const, scope };
     const reader = createSocialContentVerifiedTariffReader(store, input.tenantId);
-    const publishedReader=createSocialContentPublishedTariffReader({readProviderBinding:async intent=>{
+    const publishedReader=createSocialContentLocalPublishedTariffReader({readProviderBinding:async intent=>{
       if(intent.provider!=='qwen')return null;let b:ReturnType<typeof getQwenProviderBinding>;try{b=getQwenProviderBinding();}catch{return null;}
       const model=intent.stage==='material_image_analysis'?b.imageModel:['material_video_analysis','material_video_review'].includes(intent.stage)?b.materialModel:['first_frame_qa','video_qa'].includes(intent.stage)?(intent.model==='qwen3-vl-plus'?intent.model:process.env.QWEN_VL_MODEL||'qwen3-vl-plus'):null;
       return model?{provider:'qwen',model,baseUrl:b.baseUrl,credentialSha256:b.credentialSha256}:null;
