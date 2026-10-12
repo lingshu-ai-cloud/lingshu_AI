@@ -23,6 +23,15 @@ function graphAuthority(workflow: NonNullable<Detail['agentWorkflow']>) {
   const plan = structuredClone(workflow.executionPlan) as unknown as Record<string, unknown>;
   const review = structuredClone(workflow.executionPlanReview) as unknown as Record<string, unknown>;
   delete director.version;
+  const replicationJobRef = director.replicationJobRef as Record<string, unknown> | undefined;
+  if (replicationJobRef) delete replicationJobRef.version;
+  // Task status projection increments the task version and re-stamps every
+  // derived factor without changing its frozen value. Ignore that projection
+  // stamp while retaining the factor id, value, source and confidence so a
+  // business edit still invalidates the admitted graph.
+  for (const scene of (director.scenes ?? []) as Array<Record<string, unknown>>) {
+    for (const factor of (scene.replicationFactors ?? []) as Array<Record<string, unknown>>) delete factor.factorSpecVersion;
+  }
   for (const key of ['version', 'directorBriefVersion']) delete plan[key];
   for (const key of ['version', 'executionPlanVersion', 'directorBriefVersion', 'reviewId']) delete review[key];
   const scenes = plan.scenes as Array<Record<string, unknown>>;
