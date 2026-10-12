@@ -23,3 +23,10 @@ test('historical and shared material consumers keep analysis while an exclusive 
     plan: plan([{...productShot, sourceStrategy: 'customer_product_image_animation'}])});
   assert.deepEqual(animation.analyze, []); assert.deepEqual(animation.productReferences, [image]);
 });
+test('frozen local clips with registered segment evidence skip duplicate paid production analysis', () => {
+  const ready = {...video, visualObservations: ['真实工厂流水线'], segments: [{start: 0, end: 3}]} as SocialProductionAsset;
+  const result = socialContentMaterialAnalysisInputs({assets: [ready], policyVersion: 'type-aware.v1',
+    plan: plan([{shotId: 'factory', sourceStrategy: 'customer_real_asset', sourceRefs: [ready.id]}])});
+  assert.deepEqual(result.analyze, []);
+  assert.deepEqual(result.productReferences, [ready]);
+});

@@ -18,6 +18,7 @@ import {getQwenProviderBinding} from '../agents/qwen.js';
 export function createProductionBudgetRuntimeReaders(input: {
     tenantId?: string;
     requiresMeasuredAlignment?: boolean;
+    frozenTrackSeconds?: number;
     formula?: InternalSocialContentFormula | null;
     env?: NodeJS.ProcessEnv;
     localExecutionReader?: ProductionBudgetReadPorts['readVerifiedLocalExecution'];
@@ -25,6 +26,9 @@ export function createProductionBudgetRuntimeReaders(input: {
     const env = { ...(input.env || process.env) };
     const baseReaders=createProductionBudgetRouteReaders({env:()=>input.env||process.env});
     let voicePlan: ReturnType<typeof resolveStudioVoiceExecutionPlan>|null=null;
+    const configuredTrackSeconds = Number(input.frozenTrackSeconds);
+    const frozenTrackSeconds = Number.isFinite(configuredTrackSeconds) && configuredTrackSeconds > 0
+      ? Math.ceil(configuredTrackSeconds) : 300;
     return {
         ...baseReaders,
         async resolveBoundRoute(requirement) {
@@ -39,13 +43,13 @@ export function createProductionBudgetRuntimeReaders(input: {
                 const base=(process.env.DASHSCOPE_ASR_BASE_URL||'https://dashscope.aliyuncs.com/api/v1').replace(/\/$/,'');
                 if(base!=='https://dashscope.aliyuncs.com/api/v1')return null;
                 const endpoint=base+'/services/audio/asr/transcription';
-                return {provider:'qwen',model:'qwen3-asr-flash-filetrans',accountRef:productionBillingAccountRef('qwen',endpoint,b.credentialSha256),routeEvidenceRef:'sdk-native-alignment:'+paidProductionHash({endpoint,credentialSha256:b.credentialSha256}),usageBoundRef:'frozen-native-track-max300seconds',maximumAttempts:1,maximumUnits:{audioSeconds:300}} satisfies BoundPaidRoute;
+                return {provider:'qwen',model:'qwen3-asr-flash-filetrans',accountRef:productionBillingAccountRef('qwen',endpoint,b.credentialSha256),routeEvidenceRef:'sdk-native-alignment:'+paidProductionHash({endpoint,credentialSha256:b.credentialSha256}),usageBoundRef:`frozen-native-track-${frozenTrackSeconds}-seconds`,maximumAttempts:1,maximumUnits:{audioSeconds:frozenTrackSeconds}} satisfies BoundPaidRoute;
             }
             if(requirement.stage==='voice_asr'&&voicePlan?.asrConfigured) {
                 let binding:ReturnType<typeof getQwenProviderBinding>;try{binding=getQwenProviderBinding();}catch{return null;}
                 const model=process.env.QWEN_ASR_MODEL||'qwen3-asr-flash';
                 if(model!=='qwen3-asr-flash'||binding.baseUrl!=='https://dashscope.aliyuncs.com/compatible-mode/v1')return null;
-                return {provider:'qwen',model,accountRef:productionBillingAccountRef('qwen',binding.baseUrl,binding.credentialSha256),routeEvidenceRef:'sdk-native-asr:'+paidProductionHash(binding),usageBoundRef:'https://help.aliyun.com/zh/model-studio/asr-model#qwen3-asr-flash-max-300-seconds',maximumAttempts:1,maximumUnits:{audioSeconds:300}} satisfies BoundPaidRoute;
+                return {provider:'qwen',model,accountRef:productionBillingAccountRef('qwen',binding.baseUrl,binding.credentialSha256),routeEvidenceRef:'sdk-native-asr:'+paidProductionHash({binding,frozenTrackSeconds}),usageBoundRef:`frozen-native-track-${frozenTrackSeconds}-seconds`,maximumAttempts:1,maximumUnits:{audioSeconds:frozenTrackSeconds}} satisfies BoundPaidRoute;
             }
             return baseReaders.resolveBoundRoute(requirement);
         },
