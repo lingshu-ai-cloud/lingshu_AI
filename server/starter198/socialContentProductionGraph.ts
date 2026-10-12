@@ -24,7 +24,10 @@ function graphAuthority(workflow: NonNullable<Detail['agentWorkflow']>) {
   const review = structuredClone(workflow.executionPlanReview) as unknown as Record<string, unknown>;
   delete director.version;
   const replicationJobRef = director.replicationJobRef as Record<string, unknown> | undefined;
-  if (replicationJobRef) delete replicationJobRef.version;
+  if (replicationJobRef) {
+    delete replicationJobRef.version;
+    delete replicationJobRef.factorSpecVersion;
+  }
   // Task status projection increments the task version and re-stamps every
   // derived factor without changing its frozen value. Ignore that projection
   // stamp while retaining the factor id, value, source and confidence so a
