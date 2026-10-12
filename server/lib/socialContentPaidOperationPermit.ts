@@ -20,6 +20,18 @@ export function createSocialContentPaidOperationPermit(input:{scope:SocialTaskBu
  const read=(id:string):Record<string,unknown>|null=>{if(!fs.existsSync(file(id)))return null;try{const row=JSON.parse(fs.readFileSync(file(id),'utf8'));const {op,intent}=bound(id);if(row.schemaVersion!==1||row.scopeHash!==hash(scope)||row.operationId!==id||row.fingerprint!==op.fingerprint||!['unknown','accepted','completed'].includes(row.status)||!row.submission||row.submissionHash!==hash(row.submission)||(['operationId','provider','model','accountRef','stage','shotId','inputContractHash'] as const).some(k=>row.submission[k]!==intent[k])||hash(row.actualUnits)!==hash(row.submission.actualUnits))fail('claim_corrupt');return row;}catch{return fail('claim_corrupt');}};
  const bound=(id:string)=>{const ops=operations.filter(o=>o.operationId===id),plans=intents.filter(o=>o.operationId===id);if(ops.length!==1||plans.length!==1)fail('operation_missing_or_ambiguous');return {op:ops[0]!,intent:plans[0]!};};
  const entry=(id:string)=>{const {op}=bound(id);const entries=input.ledger.status(scope)?.entries.filter(e=>e.operationId===id)||[];if(entries.length!==1)fail('reservation_missing');const e=entries[0]!;if(e.runId!==scope.runId||e.planHash!==scope.planHash||(['operationId','fingerprint','provider','model','accountRef','stage','shotId'] as const).some(k=>e[k]!==op[k]))fail('reservation_changed');return e;};
+ const assertWholePlanReserved=()=>{
+  const status=input.ledger.status(scope);
+  if(!status||!Number.isFinite(status.limitCny)||status.limitCny>10||status.retainedCny>status.limitCny||status.retainedCny>10)fail('whole_plan_budget_invalid');
+  const current=status!;
+  for(const op of operations){
+   const entries=current.entries.filter(e=>e.operationId===op.operationId);
+   if(entries.length!==1)fail('whole_plan_reservation_missing');
+   const e=entries[0]!;
+   if(e.status==='rejected'||e.runId!==scope.runId||e.planHash!==scope.planHash
+    ||(['operationId','fingerprint','provider','model','accountRef','stage','shotId'] as const).some(k=>e[k]!==op[k]))fail('whole_plan_reservation_changed');
+  }
+ };
  return {
   async assertRecovery(operationId:string){return withPaidOperationLock(path.join(root,'.locks'),key(operationId),async()=>{
    await input.assertCurrent(scope);const e=entry(operationId),prior=read(operationId);
@@ -29,7 +41,7 @@ export function createSocialContentPaidOperationPermit(input:{scope:SocialTaskBu
     submission:structuredClone(prior!.submission) as PaidOperationSubmission,submissionHash:String(prior!.submissionHash)};
   });},
   async beforeSubmit(request:PaidOperationSubmission){return withPaidOperationLock(path.join(root,'.locks'),key(request.operationId),async()=>{
-   await input.assertCurrent(scope);const {op,intent}=bound(request.operationId);
+   await input.assertCurrent(scope);assertWholePlanReserved();const {op,intent}=bound(request.operationId);
    if((['provider','model','accountRef','stage','shotId','inputContractHash'] as const).some(k=>request[k]!==intent[k])
     ||(['provider','model','accountRef','stage','shotId'] as const).some(k=>op[k]!==intent[k]))fail('request_binding_changed');
    const actual=Object.keys(request.actualUnits).sort(),maximum=Object.keys(intent.maximumUnits).sort();
