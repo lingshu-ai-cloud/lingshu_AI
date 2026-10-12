@@ -48,11 +48,39 @@ function graphAuthority(workflow: NonNullable<Detail['agentWorkflow']>) {
   return { director, plan, review };
 }
 
+function firstAuthorityDifference(left: unknown, right: unknown, path = 'root'): string | null {
+  if (Object.is(left, right)) return null;
+  if (Array.isArray(left) && Array.isArray(right)) {
+    if (left.length !== right.length) return `${path}.length`;
+    for (let index = 0; index < left.length; index += 1) {
+      const difference = firstAuthorityDifference(left[index], right[index], `${path}[${index}]`);
+      if (difference) return difference;
+    }
+    return null;
+  }
+  if (left && right && typeof left === 'object' && typeof right === 'object') {
+    const leftRecord = left as Record<string, unknown>, rightRecord = right as Record<string, unknown>;
+    const keys = [...new Set([...Object.keys(leftRecord), ...Object.keys(rightRecord)])].sort();
+    for (const key of keys) {
+      if (!Object.hasOwn(leftRecord, key) || !Object.hasOwn(rightRecord, key)) return `${path}.${key}`;
+      const difference = firstAuthorityDifference(leftRecord[key], rightRecord[key], `${path}.${key}`);
+      if (difference) return difference;
+    }
+    return null;
+  }
+  return path;
+}
+
 export function socialProductionGraphInput(detail: Detail, approvedContext?: SocialGraphApprovedContext) {
   const approved = approvedContext ?? detail;
   if (!approved.agentWorkflow) throw new Error('user_input_required:production_execution_plan_missing');
-  if (approvedContext && (!detail.agentWorkflow || socialRequestHash(graphAuthority(detail.agentWorkflow)) !== socialRequestHash(graphAuthority(approved.agentWorkflow))))
-    throw new Error('user_input_required:graph_production_plan_changed:business_authority');
+  if (approvedContext && !detail.agentWorkflow) throw new Error('user_input_required:graph_production_plan_changed:business_authority_missing');
+  if (approvedContext && detail.agentWorkflow) {
+    const liveAuthority = graphAuthority(detail.agentWorkflow), admittedAuthority = graphAuthority(approved.agentWorkflow);
+    if (socialRequestHash(liveAuthority) !== socialRequestHash(admittedAuthority)) throw new Error(
+      `user_input_required:graph_production_plan_changed:business_authority:${firstAuthorityDifference(liveAuthority, admittedAuthority) || 'hash'}`,
+    );
+  }
   return {
     planVersion: String(approved.agentWorkflow.executionPlan.version),
     inputHash: socialRequestHash({ brief: detail.brief, executionPlan: approved.agentWorkflow.executionPlan,
