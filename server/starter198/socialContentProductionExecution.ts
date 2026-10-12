@@ -335,6 +335,107 @@ export function assetSupplyPlanWithExecutionSelections(
   };
 }
 
+type BudgetRouteCandidate = NonNullable<SocialContentTaskDetail['agentWorkflow']>['executionPlan']['scenes'][number]['candidates'][number];
+
+function localProductFallbackRank(candidate: BudgetRouteCandidate, requestedProductRef: string) {
+  const segment=candidate.materialSegments?.[0];
+  if (candidate.kind !== 'asset' || candidate.dataTransfer !== 'local_only' || !candidate.sourceRef || !segment
+    || !segment.segmentId?.trim() || !Number.isFinite(segment.startSeconds) || !Number.isFinite(segment.endSeconds)
+    || segment.startSeconds < 0 || segment.endSeconds <= segment.startSeconds) return null;
+  const roles = new Set(candidate.materialRoles ?? []);
+  const normalizedProduct = String(candidate.productRef || candidate.productId || '').normalize('NFKC').trim().toLocaleLowerCase();
+  const exactProduct = Boolean(requestedProductRef && normalizedProduct === requestedProductRef);
+  const tier = exactProduct ? 0
+    : roles.has('product') || Boolean(normalizedProduct) ? 2
+      : roles.has('factory') ? 3 : 4;
+  const sourceTier = tier===0 ? 'product_high_fidelity_local' as const : tier===2 ? 'product_local' as const
+    : tier===3 ? 'factory_local' as const : 'other_local' as const;
+  return {candidate,tier,sourceTier,score:candidate.enterpriseOwnershipScore * 4 + candidate.semanticScore * 3
+    + candidate.actionAndShotScore * 2 + candidate.qualityScore + candidate.durationFitScore - candidate.repetitionPenalty};
+}
+
+/** Applies the task-level spending policy before the immutable whole-film
+ * reservation is built. Presenter routes keep first claim on the cap. Product
+ * scenes then use exact owned product footage, paid product replacement while
+ * the remaining allowance permits it, owned product footage, factory footage,
+ * and finally any owned local video. No scene or timing entry is removed. */
+export function applyPresenterFirstBudgetDegradation(input: {
+  plan: SocialAssetSupplyPlan;
+  workflow: NonNullable<SocialContentTaskDetail['agentWorkflow']>;
+  maximumCny: number;
+}): SocialAssetSupplyPlan {
+  const maximumCny = Math.max(0, Math.min(10, Number(input.maximumCny) || 0));
+  const scenes = new Map(input.workflow.executionPlan.scenes.map(scene => [scene.sceneId, scene]));
+  const calculatedFixedNonProductCost = input.workflow.executionPlan.scenes
+    .filter(scene => input.plan.shots.find(shot=>shot.shotId===scene.sceneId)?.materialRouting?.materialType !== 'product')
+    .reduce((sum, scene) => sum + Math.max(0, Number(scene.estimatedCostCny) || 0), 0);
+  const hasPresenter=input.plan.shots.some(shot=>shot.sourceStrategy==='authorized_digital_presenter');
+  // A presenter mother also incurs its approved first-frame composition, QA,
+  // voice and material-analysis envelope. Old workflow estimates only carried
+  // the video candidate, so reserve the current conservative frozen bundle
+  // floor until those formal quotes are available to this earlier planner.
+  const fixedNonProductCost=Math.max(calculatedFixedNonProductCost,hasPresenter?8.5:0);
+  let remaining = Math.max(0, maximumCny - fixedNonProductCost);
+  const allLocalCandidates = input.workflow.executionPlan.scenes.flatMap(scene=>scene.candidates)
+    .map(candidate=>localProductFallbackRank(candidate,''))
+    .filter((value): value is NonNullable<typeof value> => Boolean(value));
+  return {
+    ...structuredClone(input.plan),
+    shots: input.plan.shots.map(original => {
+      const shot = structuredClone(original);
+      if (shot.materialRouting?.materialType !== 'product' || shot.sourceStrategy === 'authorized_digital_presenter') return shot;
+      const scene = scenes.get(shot.shotId);
+      if (!scene) return shot;
+      const requestedProductRef = String(shot.productSceneReplication?.productIdentity.groups[0]?.productRef
+        || shot.materialRouting.generation?.productImageRefs[0] || '').normalize('NFKC').trim().toLocaleLowerCase();
+      const sceneLocal = scene.candidates.map(candidate => localProductFallbackRank(candidate, requestedProductRef))
+        .filter((value): value is NonNullable<typeof value> => Boolean(value))
+        .sort((a,b)=>a.tier-b.tier||b.score-a.score||a.candidate.candidateId.localeCompare(b.candidate.candidateId));
+      const local = sceneLocal.length ? sceneLocal : [...allLocalCandidates]
+        .sort((a,b)=>a.tier-b.tier||b.score-a.score||a.candidate.candidateId.localeCompare(b.candidate.candidateId));
+      const exact = sceneLocal.find(value => value.tier === 0);
+      const paid = scene.candidates.find(candidate => candidate.kind === 'capability'
+        && candidate.sourceStrategy === 'aigc_product_scene_replication');
+      const duration=Math.max(0.1,Number(shot.materialRouting.generation?.durationSeconds
+        || shot.productSceneReplication?.cameraLock?.durationSeconds || 3));
+      const formalProductFloor=0.22+0.15*duration+0.05;
+      const paidCost = Math.max(0.67,formalProductFloor,Number(paid?.estimatedCostCny) || Number(scene.estimatedCostCny) || 0);
+      const selected = exact?.candidate ?? (paid && paidCost <= remaining ? paid : local[0]?.candidate);
+      if (!selected) return shot;
+      if (selected.kind === 'capability' && selected.sourceStrategy === 'aigc_product_scene_replication') {
+        remaining = Math.max(0, remaining - paidCost);
+        return shot;
+      }
+      const ranked=local.find(value=>value.candidate.candidateId===selected.candidateId)!;
+      const segment = selected.materialSegments![0]!;
+      const replacement:SocialAssetSupplyPlan['shots'][number]={
+        ...shot,
+        sourceStrategy: 'customer_real_asset',
+        fallbackSourceStrategy: null,
+        sourceRefs: [selected.sourceRef!],
+        selectedMaterialSegment: {sourceRef:selected.sourceRef!,segmentId:segment.segmentId,
+          startSeconds:segment.startSeconds,endSeconds:segment.endSeconds},
+        productSceneReplication: undefined,
+        materialRouting: {...shot.materialRouting,policy:'local_first_product_i2v',
+          localMatch:{state:'matched',sourceRefs:[selected.sourceRef!],sourceTier:ranked.sourceTier,evidenceRef:`execution-plan:${input.workflow.executionPlan.executionPlanId}:candidate:${selected.candidateId}`},
+          generation: undefined},
+        productionInstruction: `预算自动降级：采用本地素材候选 ${selected.label}，保持本镜头原顺序、起止时间和表达功能。`,
+        feasibility: 'functional_equivalent',
+        feasibilityReason: '数字人口播预算已优先保留；本镜头按产品素材降级顺序选用可执行本地素材。',
+      };
+      return replacement;
+    }),
+  };
+}
+
+export function typeAwareRequiredMaterialIds(plan:SocialAssetSupplyPlan|null):string[]{
+  return [...new Set((plan?.shots??[]).flatMap(shot=>[
+    ...shot.sourceRefs,
+    ...(shot.materialRouting?.localMatch?.sourceRefs??[]),
+    ...(shot.materialRouting?.generation?.productImageRefs??[]),
+  ]).filter(Boolean))];
+}
+
 /** Pure projection used by the non-rendering third option. Keeping this
  * separate from the worker makes it testable that a shooting-plan request has
  * all Director controls without touching TTS, providers or the renderer. */
@@ -764,6 +865,13 @@ export async function runSocialContentAutoProduction(input: {
 	  const productionMode = detail.brief.productionMode ?? 'concept_preview';
 	  const paidVisualProvidersAllowed = productionApproach === 'ai_enhanced';
 	  const zeroAssetRoute = detail.assetSupplyPlan?.productionRoute === 'zero_asset_generation';
+	  const selectedSupplyPlan = detail.assetSupplyPlan
+	    ? assetSupplyPlanWithExecutionSelections(detail.assetSupplyPlan, agentWorkflow)
+	    : null;
+	  const reviewedSupplyPlan = selectedSupplyPlan && detail.brief.materialRoutingPolicyVersion==='type-aware.v1'
+	    ? applyPresenterFirstBudgetDegradation({plan:selectedSupplyPlan,workflow:agentWorkflow,
+	      maximumCny:Math.min(10,Number(detail.brief.perItemBudgetCny)||10)})
+	    : selectedSupplyPlan;
 	  const rawAssets = await (input.runtime?.loadProductionAssets ?? taskProductionAssets)({
 	    tenantId: input.tenantId,
 	    sources: detail.sources,
@@ -773,18 +881,12 @@ export async function runSocialContentAutoProduction(input: {
 	    outputDirectory: outputDir,
 	    allowAuthorizedSharedLibrary: paidVisualProvidersAllowed,
 	    materialLibrary: input.repository.materialLibrary,
-	    requiredMaterialIds: detail.brief.materialRoutingPolicyVersion==='type-aware.v1' ? [...new Set((detail.assetSupplyPlan?.shots??[]).flatMap(shot=>[
-	      ...shot.sourceRefs,
-	      ...(shot.materialRouting?.localMatch.sourceRefs??[]),
-	      ...(shot.materialRouting?.generation?.productImageRefs??[]),
-	    ]))] : undefined,
+	    requiredMaterialIds: detail.brief.materialRoutingPolicyVersion==='type-aware.v1'
+	      ? typeAwareRequiredMaterialIds(reviewedSupplyPlan) : undefined,
 	  }).catch(error => {
 	    if (zeroAssetRoute) return [];
 	    throw error;
 	  });
-	  const reviewedSupplyPlan = detail.assetSupplyPlan
-	    ? assetSupplyPlanWithExecutionSelections(detail.assetSupplyPlan, agentWorkflow)
-	    : null;
     if(detail.brief.materialRoutingPolicyVersion==='type-aware.v1'){
       if(!reviewedSupplyPlan)throw Error('type_aware_execution_plan_missing');
       assertCompleteTypeAwareExecutionPlan(reviewedSupplyPlan);
