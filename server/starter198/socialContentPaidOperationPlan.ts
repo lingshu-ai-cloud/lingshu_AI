@@ -232,7 +232,7 @@ export function createSocialContentPaidOperationPlanner(ports: PaidOperationPlan
                     if (potentiallyLocalRoutes.has(route)) {
                         const selected = make(key, 'local_supply_selection', shot.shotId, null, scene.durationSeconds, scene.spokenText, null);
                         if (!await local(selected, ['existing_media', 'local_render']))
-                            gap(`supply_route_execution_unverified:${route}`);
+                            gap(`supply_route_execution_unverified:${route}:${shot.shotId}`);
                         continue;
                     }
                     if (route === 'aigc_product_scene_replication' && ['reference_first_frame_product_replacement_i2v', 'enterprise_authored_product_first_frame_i2v'].includes(shot.materialRouting?.generation?.method || '')) {

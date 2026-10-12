@@ -51,3 +51,13 @@ test('owned product image proves the local motion route with real output bytes',
     assert.ok(proof); assert.equal(proof.kind,'local_render'); assert.equal(proof.sourceSha256,sha); assert.match(proof.receiptRef,/^local_render:/);
   } finally {await rm(directory,{recursive:true,force:true});}
 });
+
+test('system CTA graphics render real local video bytes before claiming a free route', async () => {
+  const scope={tenantId:'tenant',taskId:'task',runId:'run',planHash:'plan'};
+  const shot={shotId:'CTA',sourceStrategy:'motion_graphics',sourceRefs:[],truthBoundary:{subject:'none',confirmedFactRefs:[],syntheticVisualAllowed:true,customerEvidenceRequired:false},
+    functionalEquivalentReplacement:{description:'联系企业获取方案'},productionInstruction:'本地片尾联系卡',materialRouting:{policy:'local_only',localMatch:{state:'missing',sourceRefs:[],evidenceRef:null}}};
+  const scene={sceneId:'CTA',shotFunction:'call_to_action',subject:'联系企业',action:'展示联系提示',referenceStructure:{sourceTiming:{startSeconds:0,endSeconds:1.2}}};
+  const reader=createSocialContentLocalSupplyBudgetProofReader({scope,supplyPlan:{shots:[shot]},baseline:{scenes:[scene]},assets:[],assertCurrent:async()=>{},repository:{dataStore:{},materialLibrary:async()=>({status:'ready',items:[]})}} as never);
+  const proof=await reader({key:'scene:CTA:motion_graphics',stage:'local_supply_selection',shotId:'CTA',sourceRef:null,durationSeconds:1.2,text:null,frameCount:null,inputContractHash:'c'.repeat(64)});
+  assert.ok(proof);assert.equal(proof.kind,'local_render');assert.match(proof.receiptRef,/^local_render:/);assert.match(proof.sourceSha256,/^[a-f0-9]{64}$/);
+});
