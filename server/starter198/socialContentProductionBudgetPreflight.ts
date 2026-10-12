@@ -65,6 +65,11 @@ export interface ProductionBudgetPreflightInput {
 const STAGE = 'social.whole_film_budget';
 const error = (gap: string): never => { throw Error(`user_input_required:whole_film_budget_preflight:${gap}`); };
 const sha = (value: string) => createHash('sha256').update(value).digest('hex');
+const paidBaselineContractHash = (baseline: StoredSocialScriptBaseline) => socialRequestHash({
+  language: baseline.language,
+  scenes: baseline.scenes.map(scene => ({sceneId: scene.sceneId,
+    narration: scene.narration || '', voiceover: scene.voiceover || ''})),
+});
 function readDirectedProductRetryShotIds(input: {scope: SocialTaskBudgetScope; shots: SocialAssetSupplyPlan['shots']; priorPlan: unknown}) {
     const prior = socialObject(input.priorPlan), operations = Array.isArray(prior?.paidOperations) ? prior.paidOperations.map(socialObject) : [];
     const root = path.resolve('data/social-product-replacement-executions');
@@ -177,14 +182,33 @@ export async function prepareSocialContentProductionBudget(input: ProductionBudg
         if (!prior || prior.inputHash !== planHash)
             return error('existing_whole_film_reservation_missing');
         const payload = socialObject(prior.payload);
-        if (payload?.scopeHash !== paidProductionHash(scope) || payload?.baselineHash !== baselineHash)
+        if (payload?.scopeHash !== paidProductionHash(scope))
             return error('existing_reservation_scope_changed');
+        const frozenRequirements = Array.isArray(payload.requirements) ? payload.requirements as PaidStageRequirement[] : null;
+        const currentPaidBaselineHash = paidBaselineContractHash(input.baseline);
+        let baselineCompatible = payload?.baselineHash === baselineHash
+          || payload?.paidBaselineContractHash === currentPaidBaselineHash;
+        // Checkpoints created before the paid-field contract was introduced can
+        // be recovered only when the currently resolved voice route produces
+        // the exact same frozen TTS request text. This accepts harmless record
+        // serialization drift while still rejecting any paid speech change.
+        if (!baselineCompatible && !payload?.paidBaselineContractHash && frozenRequirements && input.ports?.readVoicePlan) {
+          const currentVoice = await input.ports.readVoicePlan(input.baseline);
+          const frozenTts = frozenRequirements.filter(item => item.stage === 'tts').map(item => item.text || '');
+          const currentTts = currentVoice?.mode === 'sentences' ? currentVoice.lines
+            : currentVoice && currentVoice.mode !== 'none' && currentVoice.mode !== 'reuse'
+              ? [currentVoice.lines.join(' ').trim()] : [];
+          baselineCompatible = frozenTts.length === currentTts.length
+            && frozenTts.every((text, index) => text === currentTts[index]);
+        }
+        if (!baselineCompatible)
+          return error('existing_reservation_paid_baseline_changed');
         const ledger = new SocialContentTaskBudget(input.ports?.ledgerRoot, { authorization: async () => { throw Error('recovery_never_authorizes'); }, quote: async () => { throw Error('recovery_never_quotes'); }, assertCurrent, verifyRejection: async () => false });
         const status = ledger.status(scope);
         if (!status || !Array.isArray(payload.operationIds) || payload.operationIds.some(id => !status.entries.some(e => e.operationId === id && e.runId === scope.runId && e.planHash === scope.planHash)))
             return error('existing_reservation_corrupt');
         const frozenPlan = payload.plan as SocialApprovedBudgetPlan | undefined;
-        const requirements = Array.isArray(payload.requirements) ? payload.requirements as PaidStageRequirement[] : null;
+        const requirements = frozenRequirements;
         const routeBindings = socialObject(payload.routeBindings) as Record<string, BoundPaidRoute> | null;
         const quotes = socialObject(payload.quotes) as Record<string, import('../lib/socialContentTaskBudget.js').SocialTaskBudgetQuote> | null;
         if (!frozenPlan || paidProductionHash(frozenPlan.scope) !== paidProductionHash(scope)
@@ -350,7 +374,8 @@ export async function prepareSocialContentProductionBudget(input: ProductionBudg
     const formalPaidRouteUpperBoundCny=Object.values(reserved.quotes).reduce((sum,quote)=>sum+quote.upperBoundCny,0);
     if(formalPaidRouteUpperBoundCny>planned.plan.maximumCny||formalPaidRouteUpperBoundCny>10)
       return error(`formal_paid_route_budget_exceeded:${formalPaidRouteUpperBoundCny.toFixed(6)}`);
-    await recordCurrentContentExecutionCheckpoint({ stage: STAGE, version: '1', inputHash: planHash, payload: { scopeHash: paidProductionHash(scope), baselineHash, operationIds: reserved.operations.map(o => o.operationId), requirements: planned.requirements, routeBindings, quotes: reserved.quotes, formalPaidRouteUpperBoundCny, wholeTaskRetainedCny:reserved.status.retainedCny, plan: planned.plan } });
+    await recordCurrentContentExecutionCheckpoint({ stage: STAGE, version: '1', inputHash: planHash, payload: { scopeHash: paidProductionHash(scope), baselineHash,
+      paidBaselineContractHash: paidBaselineContractHash(input.baseline), operationIds: reserved.operations.map(o => o.operationId), requirements: planned.requirements, routeBindings, quotes: reserved.quotes, formalPaidRouteUpperBoundCny, wholeTaskRetainedCny:reserved.status.retainedCny, plan: planned.plan } });
     const paidPermit = createSocialContentPaidOperationPermit({ ...reserved, root: path.join(ports?.ledgerRoot || process.env.SOCIAL_CONTENT_TASK_BUDGET_DIR || 'data/social-content-task-budget', '.permits'), assertCurrent });
     await input.ports?.preparePresenterFirstFrameReviews?.({scope,groups:presenterGroups,requirements:planned.requirements,intents:planned.plan.paidOperations,paidPermit});
     const approvalReader=input.ports?.readConfirmedPresenterFirstFrame??(async({scope,group}:{scope:SocialTaskBudgetScope;group:FrozenPresenterGroup})=>readConfirmedPresenterFirstFrameApproval(store,{scope,groupId:group.groupId,presenterGroupContractHash:group.contractHash,presenterAssetId:group.presenterAssetId}));
