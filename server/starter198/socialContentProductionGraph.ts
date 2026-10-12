@@ -52,7 +52,7 @@ export function socialProductionGraphInput(detail: Detail, approvedContext?: Soc
   const approved = approvedContext ?? detail;
   if (!approved.agentWorkflow) throw new Error('user_input_required:production_execution_plan_missing');
   if (approvedContext && (!detail.agentWorkflow || socialRequestHash(graphAuthority(detail.agentWorkflow)) !== socialRequestHash(graphAuthority(approved.agentWorkflow))))
-    throw new Error('user_input_required:graph_production_plan_changed');
+    throw new Error('user_input_required:graph_production_plan_changed:business_authority');
   return {
     planVersion: String(approved.agentWorkflow.executionPlan.version),
     inputHash: socialRequestHash({ brief: detail.brief, executionPlan: approved.agentWorkflow.executionPlan,
@@ -176,7 +176,7 @@ export async function executeSocialProductionGraph(input: { repository: Starter1
   if (!detail) throw new Error('user_input_required:graph_task_missing');
   const current = socialProductionGraphInput(detail, approvedContext);
   if (binding?.inputHash !== current.inputHash || binding?.planVersion !== current.planVersion)
-    throw new Error('user_input_required:graph_production_plan_changed');
+    throw new Error('user_input_required:graph_production_plan_changed:executor_binding');
   const identity = { tenantId: job.tenantId, taskId: job.taskId, runId: job.runId, jobId: job.id,
     ...current, graphVersion: 'content-production.v1' as const };
   const refreshedJob = async () => {
@@ -190,7 +190,7 @@ export async function executeSocialProductionGraph(input: { repository: Starter1
   const phase = async (graphPhase: 'assets' | 'render' | 'quality') => {
     await assertCurrentContentExecutionActive();
     const latest = await readSocialProductionGraphDetail({ repository, tenantId: job.tenantId, taskId: job.taskId }, approvedContext);
-    if (!latest || socialProductionGraphInput(latest, approvedContext).inputHash !== current.inputHash) throw new Error('user_input_required:graph_production_plan_changed');
+    if (!latest || socialProductionGraphInput(latest, approvedContext).inputHash !== current.inputHash) throw new Error('user_input_required:graph_production_plan_changed:phase_input');
     await runSocialContentAutoProduction({ repository, tenantId: job.tenantId, userId: job.userId,
       taskId: job.taskId, runId: job.runId, graphPhase, runtime: input.runtime,
       assetSupplyAdapters: input.assetSupplyAdapters, assetSupplyRecoveryOnly: input.assetSupplyRecoveryOnly, materialEvidencePorts: input.materialEvidencePorts, graphApprovedContext: approvedContext });
@@ -217,7 +217,7 @@ export async function executeSocialProductionGraph(input: { repository: Starter1
         const task = await readSocialProductionGraphDetail({ repository, tenantId: job.tenantId, taskId: job.taskId }, approvedContext);
         if (!task) throw new Error('graph_task_missing');
         if (socialProductionGraphInput(task, approvedContext).inputHash !== current.inputHash)
-          throw new Error('user_input_required:graph_production_plan_changed');
+          throw new Error('user_input_required:graph_production_plan_changed:delivery_input');
         const packaged = await createSocialDeliveryPackage({ repository, tenantId: job.tenantId, userId: job.userId,
           taskId: job.taskId, idempotencyKey: `graph-delivery:${job.id}:${accepted.contentHash}`,
           backendFilePort: input.runtime?.backendFilePort,
