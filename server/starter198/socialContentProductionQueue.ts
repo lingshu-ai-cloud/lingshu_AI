@@ -30,6 +30,7 @@ import { createAgentNotification } from '../notifications/agentNotifications.js'
 import { enqueueBullJob, selectedQueueBackend, startBullWorker } from '../queues/bullmq.js';
 import {
   admitContentExecutionJob,
+  bindPristineContentExecutionCheckpoint,
   DurableContentExecutionWorker,
   type ContentExecutionJob,
 } from '../contentExecution/durableQueue.js';
@@ -314,7 +315,8 @@ export async function enqueueSocialContentAutoProduction(input: {
     const task = socialTaskSummary(record);
     const detail = await readSocialTaskDetail(input);
     if (!detail) throw new Error('social_content_task_not_found');
-    const job = await admitContentExecutionJob({
+    const executorCheckpoint = createSocialProductionExecutorCheckpoint(detail, process.env, socialText(socialObject(socialObject(socialJson(record.brief))?._productionRevision)?.planHash) || undefined);
+    let job = await admitContentExecutionJob({
       dataStore,
       tenantId: input.tenantId,
       userId: input.userId,
@@ -322,8 +324,14 @@ export async function enqueueSocialContentAutoProduction(input: {
       runId: input.runId,
       accountId: task.brief.targetAccountRef?.id,
       taskType: `social_content_${task.mode}`,
-      initialCheckpoints: { 'social.executor': createSocialProductionExecutorCheckpoint(detail, process.env, socialText(socialObject(socialObject(socialJson(record.brief))?._productionRevision)?.planHash) || undefined) },
+      initialCheckpoints: { 'social.executor': executorCheckpoint },
     });
+    // Historic admissions predate the executor binding. They may be upgraded
+    // in place only before any durable execution/provider evidence exists.
+    if (!job.checkpoints['social.executor'] && executorCheckpoint.payload && (executorCheckpoint.payload as { executor?: unknown }).executor === 'langgraph') {
+      job = await bindPristineContentExecutionCheckpoint({ dataStore, tenantId: input.tenantId,
+        jobId: job.id, runId: input.runId, checkpointKey: 'social.executor', checkpoint: executorCheckpoint });
+    }
     if (job.status === 'queued' && !job.lastStartedAt) {
       await writeExecutionStage({
         repository: input.repository,

@@ -11,6 +11,7 @@ import {
 } from './context.js';
 import {
   admitContentExecutionJob,
+  bindPristineContentExecutionCheckpoint,
   DurableContentExecutionWorker,
   controlContentExecutionJob,
   readContentExecutionJob,
@@ -153,6 +154,21 @@ test('executor selection is visible atomically at admission and cannot change on
   const historicReplay = await admitContentExecutionJob({ ...base, runId: 'historic-run', initialCheckpoints: { 'social.executor': checkpoint('langgraph') } });
   assert.deepEqual(historic.checkpoints, {});
   assert.deepEqual(historicReplay.checkpoints, {}, 'historic jobs remain on the legacy executor');
+});
+
+test('historic executor binding is allowed only before any durable execution or provider evidence', async () => {
+  const store = new MemoryStore();
+  const checkpoint = { version: '1', inputHash: 'a'.repeat(64), payload: { executor: 'langgraph', inputHash: 'a'.repeat(64), planVersion: '1' }, updatedAt: '2026-10-11T00:00:00.000Z' };
+  const pristine = await admitContentExecutionJob({ dataStore: store, tenantId: 'tenant-bind', userId: 'user-a', taskId: 'task-bind', runId: 'run-bind', taskType: 'social_content_weekly' });
+  const bound = await bindPristineContentExecutionCheckpoint({ dataStore: store, tenantId: pristine.tenantId, jobId: pristine.id, runId: pristine.runId, checkpointKey: 'social.executor', checkpoint });
+  assert.equal(bound.id, pristine.id);
+  assert.equal(bound.runId, pristine.runId);
+  assert.equal((bound.checkpoints['social.executor'].payload as { executor: string }).executor, 'langgraph');
+  const replay = await bindPristineContentExecutionCheckpoint({ dataStore: store, tenantId: pristine.tenantId, jobId: pristine.id, runId: pristine.runId, checkpointKey: 'social.executor', checkpoint });
+  assert.equal(replay.checkpoints['social.executor'].inputHash, checkpoint.inputHash);
+
+  const started = await admitContentExecutionJob({ dataStore: store, tenantId: 'tenant-bind', userId: 'user-a', taskId: 'task-started', runId: 'run-started', taskType: 'social_content_weekly', initialCheckpoints: { 'runtime.retry': checkpoint } });
+  await assert.rejects(bindPristineContentExecutionCheckpoint({ dataStore: store, tenantId: started.tenantId, jobId: started.id, runId: started.runId, checkpointKey: 'social.executor', checkpoint }), /pristine_binding_not_allowed/);
 });
 
 test('explicit customer pause replaces a workflow review wait without losing its receipts', async () => {

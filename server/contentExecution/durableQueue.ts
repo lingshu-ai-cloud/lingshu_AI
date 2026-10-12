@@ -740,3 +740,45 @@ export async function controlContentExecutionJob(input: Parameters<typeof applyC
   try { return await applyContentExecutionControl(input); }
   finally { await releaseDurableOperationLease({ dataStore: input.dataStore, lease }).catch(() => undefined); }
 }
+
+/** Attach a frozen executor binding to a historic job only while there is
+ * durable proof that execution has never crossed a provider or checkpoint
+ * boundary. This is intentionally narrower than normal checkpoint writes:
+ * it cannot migrate a partially executed job. */
+export async function bindPristineContentExecutionCheckpoint(input: {
+  dataStore: DataStore;
+  tenantId: string;
+  jobId: string;
+  runId: string;
+  checkpointKey: string;
+  checkpoint: ContentExecutionCheckpoints[string];
+}): Promise<ContentExecutionJob> {
+  const tenantId = requiredIdentity(input.tenantId, 'tenant');
+  const jobId = requiredIdentity(input.jobId, 'job');
+  const runId = requiredIdentity(input.runId, 'run');
+  const checkpointKey = requiredIdentity(input.checkpointKey, 'checkpoint');
+  const lease = await acquireDurableOperationLease({ dataStore: input.dataStore, tenantId,
+    subjectId: jobId, scope: 'content_execution_control', ownerId: `content-binding:${randomUUID()}`, leaseDurationMs: 30_000 });
+  if (!lease) throw new Error('content_execution_job_control_busy');
+  try {
+    const row = await input.dataStore.getById<JobRow>(CONTENT_EXECUTION_JOB_COLLECTION, jobId);
+    if (!row) throw new Error('content_execution_job_not_found');
+    const current = jobFromRow(row);
+    if (current.tenantId !== tenantId || current.runId !== runId) throw new Error('content_execution_job_not_found');
+    if (current.checkpoints[checkpointKey]) return current;
+    if (Object.keys(current.checkpoints).length || current.providerState !== 'none' || current.providerReceipts.length || current.completedAt)
+      throw new Error('content_execution_pristine_binding_not_allowed');
+    const updatedAt = new Date().toISOString();
+    if (!await input.dataStore.update(CONTENT_EXECUTION_JOB_COLLECTION, current.id, {
+      checkpoints: { [checkpointKey]: input.checkpoint }, updated_at: updatedAt,
+    })) throw new Error('content_execution_pristine_binding_failed');
+    const saved = await input.dataStore.getById<JobRow>(CONTENT_EXECUTION_JOB_COLLECTION, current.id);
+    if (!saved) throw new Error('content_execution_pristine_binding_readback_failed');
+    const bound = jobFromRow(saved);
+    if (bound.checkpoints[checkpointKey]?.inputHash !== input.checkpoint.inputHash)
+      throw new Error('content_execution_pristine_binding_readback_failed');
+    return bound;
+  } finally {
+    await releaseDurableOperationLease({ dataStore: input.dataStore, lease }).catch(() => undefined);
+  }
+}
