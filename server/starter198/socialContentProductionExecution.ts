@@ -373,11 +373,11 @@ export function applyPresenterFirstBudgetDegradation(input: {
     .filter(scene => input.plan.shots.find(shot=>shot.shotId===scene.sceneId)?.materialRouting?.materialType !== 'product')
     .reduce((sum, scene) => sum + Math.max(0, Number(scene.estimatedCostCny) || 0), 0);
   const hasPresenter=input.plan.shots.some(shot=>shot.sourceStrategy==='authorized_digital_presenter');
-  // A presenter mother also incurs its approved first-frame composition, QA,
-  // voice and material-analysis envelope. Old workflow estimates only carried
-  // the video candidate, so reserve the current conservative frozen bundle
-  // floor until those formal quotes are available to this earlier planner.
-  const fixedNonProductCost=Math.max(calculatedFixedNonProductCost,hasPresenter?8.5:0);
+  // When a film contains an AI presenter, the user's policy gives the entire
+  // cap first claim to that route (mother video, first frame, voice, QA and
+  // analysis). Product visuals may spend only in presenter-free films; with a
+  // presenter they deterministically use the ranked owned-video fallbacks.
+  const fixedNonProductCost=Math.max(calculatedFixedNonProductCost,hasPresenter?maximumCny:0);
   let remaining = Math.max(0, maximumCny - fixedNonProductCost);
   const allLocalCandidates = input.workflow.executionPlan.scenes.flatMap(scene=>scene.candidates);
   return {

@@ -32,19 +32,20 @@ test('keeps presenter spend first and degrades product scenes without dropping t
   const result=applyPresenterFirstBudgetDegradation({...f,maximumCny:10});
   assert.deepEqual(result.shots.map((shot:any)=>shot.shotId),before);
   assert.equal(result.shots.length,37);
-  assert.equal(result.shots.filter((shot:any)=>shot.sourceStrategy==='aigc_product_scene_replication').length,2);
-  assert.equal(result.shots.filter((shot:any)=>shot.sourceStrategy==='customer_real_asset').length,34);
+  assert.equal(result.shots.filter((shot:any)=>shot.sourceStrategy==='aigc_product_scene_replication').length,0);
+  assert.equal(result.shots.filter((shot:any)=>shot.sourceStrategy==='customer_real_asset').length,36);
   assert.equal(result.shots[0]!.sourceStrategy,'authorized_digital_presenter');
 });
 
-test('exact owned product video outranks paid generation, then budget exhaustion follows product, factory and other local tiers',()=>{
+test('presenter-first exhaustion follows exact product, product, factory and other local tiers',()=>{
   const f=fixture({S1:[paid('paid-exact',2),asset('other',[],null,.99),asset('exact',['product'],'SKU',.5)],
     S2:[paid('paid-two',.8),asset('factory',['factory'],null,.9),asset('product',['product'],'other-sku',.2)],
     S3:[paid('paid-three',.8),asset('other-three',[],null,.99),asset('factory-three',['factory'],null,.1)]},5);
   const result=applyPresenterFirstBudgetDegradation({...f,maximumCny:10});
   assert.equal(result.shots[1]!.sourceRefs[0],'exact');
   assert.equal(result.shots[1]!.materialRouting!.localMatch.sourceTier,'product_high_fidelity_local');
-  assert.equal(result.shots[2]!.sourceStrategy,'aigc_product_scene_replication');
+  assert.equal(result.shots[2]!.sourceStrategy,'customer_real_asset');
+  assert.equal(result.shots[2]!.sourceRefs[0],'product');
   assert.equal(result.shots[3]!.sourceRefs[0],'factory-three');
   assert.equal(result.shots[3]!.materialRouting!.localMatch.sourceTier,'factory_local');
   assert.equal(result.shots[3]!.productSceneReplication,undefined);
@@ -65,12 +66,12 @@ test('local fallback segment must cover the frozen scene duration',()=>{
   assert.equal(result.shots[1]!.sourceRefs[0],'long-factory');
 });
 
-test('formal product floor keeps at most two three-second I2V shots after conservative presenter bundle reserve',()=>{
+test('presenter film gives no paid product spend before the formal whole-film reserve',()=>{
   const candidates:Record<string,any[]>={};
   for(let i=1;i<=6;i++)candidates[`S${i}`]=[paid(`paid-${i}`,0.01),asset(`local-${i}`,[],null)];
   const f=fixture(candidates,0.01);
   const result=applyPresenterFirstBudgetDegradation({...f,maximumCny:10});
-  assert.equal(result.shots.filter((shot:any)=>shot.sourceStrategy==='aigc_product_scene_replication').length,2);
+  assert.equal(result.shots.filter((shot:any)=>shot.sourceStrategy==='aigc_product_scene_replication').length,0);
 });
 
 test('zero remaining visual budget still produces every product scene from local material',()=>{
