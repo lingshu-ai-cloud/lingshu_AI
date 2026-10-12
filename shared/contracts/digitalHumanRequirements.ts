@@ -14,7 +14,10 @@ export interface DigitalHumanReferenceCue {
   /** Only person shots enter the paid first-frame replacement chain. */
   personShot?: boolean;
   classificationSource?: 'analysis' | 'manual';
-  composition?: { presenterKey: string; shotSize: string; cameraAngle: string; background: string; actionIntent: string };
+  /** Immutable matched reference shot. Presenter frames may not use a generic scene fallback. */
+  referenceShotId?: string;
+  referenceFirstFrameUrl?: string;
+  composition?: { presenterKey: string; shotSize: string; cameraAngle: string; background: string; actionIntent: string; referenceShotId?: string; sourceComposition?: string };
   compositionClusterId?: string;
   /** Tenant-owned replacement footage for product/factory/B-roll cues. */
   nonPersonMaterialId?: string;

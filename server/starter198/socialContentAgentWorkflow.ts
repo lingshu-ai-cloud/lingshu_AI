@@ -54,6 +54,7 @@ import {
   type SocialSceneVisualContract,
 } from '../../shared/sceneVisualContract.js';
 import type { SocialReferenceReviewHandoff } from './socialReferenceReviewHandoff.js';
+import { socialReferenceFidelityFailures } from './socialContentReferenceFidelity.js';
 
 import {
   buildBusinessContext,
@@ -144,14 +145,14 @@ function shotLanguage(reference: SocialReferenceShotAnalysis | undefined) {
 function visualTopicFor(reference: SocialReferenceShotAnalysis | undefined, targetVisual: string, intent: string): NonNullable<SocialDirectorBriefScene['visualTopic']> {
   const subject = reference?.semanticLabel?.content || targetVisual;
   const description = [subject, reference?.visualDescription, ...(reference?.tags.sceneTypes ?? [])].filter(Boolean).join(' ');
-  const personIsForeground = /(?:女|男)?主播|人物|真人|女性|男性|口播|数字人|presenter|talking/i.test(description)
+  const personIsForeground = /(?:女|男)?主播|女主|男主|人物|真人|女性|男性|口播|数字人|presenter|talking/i.test(description)
     && !/背影|背景人物|远景人物|路人|人群|silhouette|background person/i.test(description);
   const personHasAction = /手势|靠近|凑近|转身|敲门|gesture|approach/i.test(description);
   const kind = personIsForeground && personHasAction ? 'presenter_talking'
     : /工厂|车间|生产线|灌装|factory|manufactur/i.test(description) ? 'factory_footage'
     : /竞品|对比|比较|before.?after|competitor|comparison/i.test(description) ? 'competitor_comparison'
       : /产品|商品|包装|质地|瓶身|product|packaging/i.test(description) ? 'product_introduction'
-      : /口播|主播|人物|真人|数字人|女性|男性|女主播|男主播|presenter|talking/i.test(description) ? 'presenter_talking' : 'other';
+      : /口播|主播|女主|男主|人物|真人|数字人|女性|男性|女主播|男主播|presenter|talking/i.test(description) ? 'presenter_talking' : 'other';
   const personRole = /背影|背景人物|远景人物|路人|人群|silhouette|background person/i.test(description) ? 'background'
     : /手势|靠近|凑近|转身|敲门|双臂|手臂|动作|gesture|approach/i.test(description) && personIsForeground ? 'expressive_action'
       : /口播|说话|对镜|口型|唇|talking|speaking/i.test(description) && personIsForeground ? 'visible_speech'
@@ -215,7 +216,9 @@ function directorScene(input: {
   const needsCameraOrCompositionReconstruction = Boolean(isPrimaryHook || (reference && /推进|拉远|运镜|构图|特写|镜头|camera|composition|zoom|pan/i.test([
     reference.visualDescription, reference.shotLanguage?.movement, reference.shotLanguage?.composition,
   ].filter(Boolean).join(' '))));
-  const personRole = identityLockedPresenter ? referenceRouting.observedPresenterRole === 'presenter_action' ? 'expressive_action' : 'visible_speech'
+  const personRole = typedRouting?.materialType === 'talking_head'
+    ? Boolean(spokenText || reference?.spokenText) ? 'visible_speech' : needsExpressiveAction ? 'expressive_action' : 'visible_speech'
+    : identityLockedPresenter ? referenceRouting.observedPresenterRole === 'presenter_action' ? 'expressive_action' : 'visible_speech'
     : visualTopicFor(reference, targetVisual, input.supply.function).personRole;
   const visibleMouth = personRole === 'visible_speech' || (personRole === 'expressive_action'
     && (Boolean(spokenText || reference?.spokenText) || /口播|说话|对镜|唇|talking|speaking/i.test([
@@ -407,6 +410,8 @@ function buildDirectorBrief(
   const referenceRequired = input.brief.creationMode === 'viral_replication';
   const referenceReady = !referenceRequired || Boolean(input.referenceAnalysis?.status === 'ready' && coverage?.fullTimelineCovered !== false);
   const factorsReady = !referenceRequired || replicationJob?.status === 'factor_ready';
+  const fidelityReady = !referenceRequired
+    || socialReferenceFidelityFailures({ referenceAnalysis: input.referenceAnalysis, replicationScript: input.replicationScript }).length === 0;
   const orderedScenes = [...scenes].sort((left, right) => left.order - right.order);
   const timelineValid = orderedScenes.every((scene, index) => scene.duration.endSeconds > scene.duration.startSeconds
     && (index === 0 || scene.duration.startSeconds >= orderedScenes[index - 1]!.duration.endSeconds));
@@ -424,7 +429,7 @@ function buildDirectorBrief(
   });
   const expectedSceneCount = scriptShots.length || supplyShots.length;
   const status = scenes.length > 0 && scenes.length === expectedSceneCount && scriptIdentityReady
-    && referenceReady && factorsReady && timelineValid && dialogueFits ? 'ready' : 'blocked';
+    && referenceReady && factorsReady && fidelityReady && timelineValid && dialogueFits ? 'ready' : 'blocked';
   const totalDurationSeconds = Math.max(0, ...scenes.map(scene => scene.duration.endSeconds));
   const inferredProductRef = productSelection.productRef;
   const requirementText = [
@@ -658,6 +663,10 @@ function capabilityCandidates(input: {
         && ['preview_only', 'ready_for_capability_check'].includes(input.supply.digitalHumanPlan.executionState)))
     .filter(capability => capability.strategy !== 'aigc_product_scene_replication'
       || (input.supply.productSceneReplication !== undefined && input.supply.sourceRefs.length > 0))
+    .filter(capability => capability.strategy !== 'customer_product_image_animation'
+      || (input.supply.productSceneReplication !== undefined
+        && input.supply.productSceneReplication.productIdentity.groups.length > 0
+        && input.supply.sourceRefs.length > 0))
     .map((capability): SocialExecutionCandidate => ({
       candidateId: stableId('capability', { sceneId: input.sceneId, strategy: capability.strategy }),
       kind: 'capability',
@@ -674,7 +683,11 @@ function capabilityCandidates(input: {
       qualityScore: capability.estimatedSuccessRate,
       durationFitScore: 0.8,
       repetitionPenalty: 0,
-      estimatedCostCny: +(capability.estimatedCostCny * targetSeconds / capability.estimatedSeconds).toFixed(4),
+      estimatedCostCny: +(capability.strategy === 'authorized_digital_presenter'
+        && Number.isFinite(Number(process.env.HEYGEN_ESTIMATED_CNY_PER_SECOND))
+        && Number(process.env.HEYGEN_ESTIMATED_CNY_PER_SECOND) > 0
+        ? Number(process.env.HEYGEN_ESTIMATED_CNY_PER_SECOND) * targetSeconds
+        : capability.estimatedCostCny * targetSeconds / capability.estimatedSeconds).toFixed(4),
       estimatedSeconds: targetSeconds,
       estimatedSuccessRate: capability.estimatedSuccessRate,
       dataTransfer: capability.dataTransfer,
@@ -695,7 +708,7 @@ function capabilityCandidates(input: {
         if (typed.policy === 'local_only') return false;
         return candidate.kind === 'capability' && (typed.policy === 'authorized_presenter'
           ? candidate.sourceStrategy === 'authorized_digital_presenter'
-          : ['aigc_product_scene_replication', 'customer_product_image_animation'].includes(candidate.sourceStrategy));
+          : candidate.sourceStrategy === 'aigc_product_scene_replication');
       }
       const routing = input.scene.referenceProductionRouting;
       if (!routing) return true;
@@ -762,7 +775,7 @@ function executionScene(input: {
     : input.supply.function === 'call_to_action'
       ? capability('verified_fact_card') ?? capability('motion_graphics')
     : topic?.kind === 'product_introduction'
-      ? capability('aigc_product_scene_replication') ?? capability('customer_product_image_animation')
+      ? capability('aigc_product_scene_replication')
       : topic?.kind === 'competitor_comparison'
         ? capability('verified_fact_card')
         : capability('licensed_stock_asset') ?? capability('motion_graphics');
@@ -777,9 +790,7 @@ function executionScene(input: {
       ? candidates.find(candidate => candidate.kind === 'asset' && candidate.sourceStrategy === 'customer_real_asset' && Boolean(candidate.sourceRef && input.supply.materialRouting!.localMatch.sourceRefs.includes(candidate.sourceRef)))
       : input.supply.materialRouting.policy === 'authorized_presenter' ? capability('authorized_digital_presenter')
         : input.supply.materialRouting.policy === 'local_first_product_i2v'
-          ? input.preferLocalProductAnimation
-            ? capability('customer_product_image_animation') ?? capability('aigc_product_scene_replication')
-            : capability('aigc_product_scene_replication')
+          ? capability('aigc_product_scene_replication')
           : undefined
     : undefined;
   const preferred = input.supply.materialRouting ? typedPreferred : identityLockedPresenter ? capability('authorized_digital_presenter')
@@ -788,10 +799,25 @@ function executionScene(input: {
     : visibleSpeech ? capability('authorized_digital_presenter') ?? matchingAsset ?? functionalAsset ?? ordinaryCapability
     : expressivePerson ? capability('authorized_digital_presenter') ?? matchingAsset ?? functionalAsset ?? ordinaryCapability
       : primaryHook && topic?.kind === 'product_introduction'
-        ? capability('aigc_product_scene_replication') ?? capability('customer_product_image_animation') ?? matchingAsset ?? safeOriginalHookFallback
+        ? capability('aigc_product_scene_replication') ?? matchingAsset ?? safeOriginalHookFallback
         : primaryHook ? matchingAsset ?? candidates.find(candidate => candidate.sourceStrategy === input.supply.sourceStrategy) ?? safeOriginalHookFallback
           : matchingAsset ?? functionalAsset ?? ordinaryCapability;
   const fallback = candidates.find(candidate => candidate.sourceStrategy === input.supply.fallbackSourceStrategy && candidate.candidateId !== preferred?.candidateId);
+  const factorDetectionPlan = (factor: NonNullable<SocialDirectorBriefScene['replicationFactors']>[number]) => {
+    const wholeOutput = factor.policy === 'prohibit_reuse';
+    const validationScope = wholeOutput ? 'whole_output' as const
+      : factor.category === 'rhythm' || factor.category === 'hook' ? 'timeline_segment' as const
+        : factor.category === 'audio' ? 'audio_track' as const
+          : factor.category === 'caption' ? 'caption_track' as const
+            : 'scene_frames' as const;
+    const requiredEvidence = validationScope === 'whole_output' ? ['fingerprint_measurement'] as const
+      : validationScope === 'timeline_segment' ? ['reference_frame', 'output_frame', 'timeline_measurement'] as const
+        : validationScope === 'audio_track' ? ['audio_segment'] as const
+          : validationScope === 'caption_track' ? ['caption_text'] as const
+            : ['reference_frame', 'output_frame'] as const;
+    const detectorReady = Boolean(factor.validator.validatorId.trim() && factor.validator.detector.trim());
+    return { validationScope, requiredEvidence: [...requiredEvidence], detectorReady };
+  };
   return {
     sceneId: input.scene.sceneId,
     routeDecision: {
@@ -808,14 +834,25 @@ function executionScene(input: {
     replicationFactorIds: (input.scene.replicationFactors ?? []).map(factor => factor.factorId),
     factorFeasibility: (input.scene.replicationFactors ?? []).map(factor => {
       const required = factor.semanticAdaptation?.status !== 'functionally_replaced';
+      const detection = factorDetectionPlan(factor);
       return {
         factorId: factor.factorId,
         required,
-        feasible: required ? Boolean(preferred) : true,
+        // A post-render detector plan is executable independently of whether
+        // the Content Agent has already selected the production candidate.
+        // Candidate absence is reviewed once by the candidate gate below; it
+        // must not fan out into one false factor failure per frozen factor.
+        feasible: required ? detection.detectorReady : true,
         reason: required
-          ? preferred ? `由推荐候选 ${preferred.label} 承担，并在成片后由 ${factor.validator.detector} 独立检测` : '当前没有可执行候选'
+          ? `${preferred ? `由推荐候选 ${preferred.label} 承担` : '生产候选待补齐'}；成片后由 ${factor.validator.detector} 对 ${detection.validationScope} 独立检测`
           : factor.semanticAdaptation!.replacementReason!,
         plannedValidatorId: required ? factor.validator.validatorId : '',
+        ...(required ? {
+          validationScope: detection.validationScope,
+          requiredEvidence: detection.requiredEvidence,
+          detectorIndependence: 'independent_post_render' as const,
+          plannedCandidateId: preferred?.candidateId ?? null,
+        } : {}),
         ...(factor.semanticAdaptation ? { semanticAdaptation: structuredClone(factor.semanticAdaptation) } : {}),
       };
     }),
@@ -961,7 +998,13 @@ export function socialExecutionExternalCost(plan: SocialContentExecutionPlan, di
     const briefScene = briefByScene.get(scene.sceneId);
     if (candidate.sourceStrategy === 'authorized_digital_presenter' && briefScene) {
       const seconds = Math.max(0, briefScene.duration.endSeconds - briefScene.duration.startSeconds);
-      return sum + seconds * Math.max(0, Number(process.env.HEYGEN_ESTIMATED_CNY_PER_SECOND || 0.8));
+      const configuredRate = Number(process.env.HEYGEN_ESTIMATED_CNY_PER_SECOND);
+      // The capability registry's candidate estimate is the planner's frozen
+      // quote. Override it only when operations configured an explicit,
+      // positive provider rate; an absent env var must not silently replace
+      // the quote with the historic 0.8 CNY/s placeholder.
+      return sum + (Number.isFinite(configuredRate) && configuredRate > 0
+        ? seconds * configuredRate : candidate.estimatedCostCny);
     }
     // A physical edit may split one semantic stock shot into adjacent cards.
     // The library asset is acquired once and trimmed several times.
@@ -974,10 +1017,17 @@ export function socialExecutionExternalCost(plan: SocialContentExecutionPlan, di
   }, 0).toFixed(2);
 }
 
+export function socialExecutionBudgetStatus(plan: SocialContentExecutionPlan, directorBrief: SocialDirectorBrief): {
+  estimatedCostCny: number; budgetLimitCny: number | null; exceeded: boolean;
+} {
+  const estimatedCostCny = socialExecutionExternalCost(plan, directorBrief);
+  return { estimatedCostCny, budgetLimitCny: plan.budgetLimitCny,
+    exceeded: plan.budgetLimitCny !== null && estimatedCostCny > plan.budgetLimitCny };
+}
+
 function reviewScene(input: {
   scene: SocialDirectorBriefScene;
   plan: SocialContentExecutionScenePlan;
-  budgetExceeded: boolean;
   weekly: boolean;
   rightsMissing: boolean;
   conceptPreview: boolean;
@@ -1012,11 +1062,6 @@ function reviewScene(input: {
     requiredRevision.push('为每个冻结因素补充可执行候选和独立检测器，不得通过放宽因素规格绕过');
     reasonCodes.push('capability_mismatch');
   }
-  if (input.budgetExceeded) {
-    failedCriteria.push('预计成本超过单条预算');
-    requiredRevision.push('改用预算内的本地能力或请求预算确认');
-    reasonCodes.push('budget_exceeded');
-  }
   const approved = failedCriteria.length === 0;
   return {
     sceneId: input.scene.sceneId,
@@ -1030,8 +1075,9 @@ function reviewScene(input: {
 }
 
 function buildReview(input: BuildSocialAgentWorkflowInput, directorBrief: SocialDirectorBrief, plan: SocialContentExecutionPlan): SocialExecutionPlanReview {
-  const estimatedCost = socialExecutionExternalCost(plan, directorBrief);
-  const budgetExceeded = plan.budgetLimitCny !== null && estimatedCost > plan.budgetLimitCny;
+  const budget = socialExecutionBudgetStatus(plan, directorBrief);
+  const estimatedCost = budget.estimatedCostCny;
+  const budgetExceeded = budget.exceeded;
   const planByScene = new Map(plan.scenes.map(scene => [scene.sceneId, scene]));
   const shootingPlanOnly = plan.selectedApproach === 'shooting_plan';
   const sceneResults = directorBrief.scenes.flatMap(scene => {
@@ -1048,7 +1094,6 @@ function buildReview(input: BuildSocialAgentWorkflowInput, directorBrief: Social
     return scenePlan ? [reviewScene({
       scene,
       plan: scenePlan,
-      budgetExceeded,
       weekly: input.mode === 'weekly',
       rightsMissing: input.assetSupplyPlan.status === 'requires_rights_confirmation',
       conceptPreview: input.brief.productionMode === 'concept_preview',
@@ -1057,14 +1102,21 @@ function buildReview(input: BuildSocialAgentWorkflowInput, directorBrief: Social
   const directorBlocked = directorBrief.status === 'blocked';
   const referenceBlocked = input.brief.creationMode === 'viral_replication'
     && input.referenceReviewHandoff?.productionExecutionAllowed !== true;
-  const approved = !directorBlocked && !referenceBlocked && sceneResults.length === directorBrief.scenes.length && sceneResults.every(result => result.approved);
+  const fidelityFailures = input.brief.creationMode === 'viral_replication'
+    ? socialReferenceFidelityFailures({ referenceAnalysis: input.referenceAnalysis, replicationScript: input.replicationScript }) : [];
+  const approved = !directorBlocked && !referenceBlocked && !budgetExceeded
+    && sceneResults.length === directorBrief.scenes.length && sceneResults.every(result => result.approved);
   const failedCriteria = unique([
     ...(directorBlocked ? ['导演方案或参考分析尚未满足完整性要求'] : []),
     ...(referenceBlocked ? ['参考视频的逐句时间码、分镜证据或授权尚未通过生产门禁'] : []),
+    ...(budgetExceeded ? [`全片预计外部成本 ¥${estimatedCost.toFixed(2)} 超过预算 ¥${plan.budgetLimitCny!.toFixed(2)}`] : []),
+    ...fidelityFailures,
     ...sceneResults.flatMap(result => result.failedCriteria),
   ]);
   const requiredRevision = unique([
     ...(directorBlocked ? ['补齐参考分析覆盖或导演方案后重新规划'] : []),
+    ...(fidelityFailures.length ? ['逐槽恢复参考镜头身份、顺序与原始时间区间；预算不得缩短或合并参考时间线'] : []),
+    ...(budgetExceeded ? ['改用有真实成本依据的预算内路线、复用已验收成片资产，或请求预算确认'] : []),
     ...(referenceBlocked ? (input.referenceReviewHandoff?.issues?.length
       ? input.referenceReviewHandoff.issues.map(issue => issue.action).filter(action => action.trim())
       : ['补齐参考视频的动作、声音、分镜及授权证据后重新审核']) : []),
@@ -1073,6 +1125,7 @@ function buildReview(input: BuildSocialAgentWorkflowInput, directorBrief: Social
   const reasonCodes = unique([
     ...(directorBlocked ? ['expression_failed' as const] : []),
     ...(referenceBlocked ? ['expression_failed' as const] : []),
+    ...(budgetExceeded ? ['budget_exceeded' as const] : []),
     ...sceneResults.flatMap(result => result.reasonCodes),
   ]);
   return {

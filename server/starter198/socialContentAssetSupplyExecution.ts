@@ -345,7 +345,10 @@ function materialStrategyOrder(shot: SocialAssetSupplyShotPlan): SocialShotSourc
     if (!replication) return invalidProductGeneration('replication_spec');
     if (Math.abs(generation.durationSeconds - replication.cameraLock.durationSeconds) > 0.000001) invalidProductGeneration('frozen_duration');
     if (!shot.sourceRefs.length || shot.sourceRefs.some(ref => !generation.productImageRefs.includes(ref))) invalidProductGeneration('source_refs');
-    if (shot.sourceStrategy === 'customer_product_image_animation') return ['customer_product_image_animation'];
+    // A tenant product image is an identity input for the approved first-frame
+    // editor and I2V provider. It is never itself an executable video source.
+    // Reject frozen compatibility plans before an adapter can render zoom/pan.
+    if (shot.sourceStrategy === 'customer_product_image_animation') invalidProductGeneration('still_image_motion_forbidden');
     if (shot.sourceStrategy !== 'aigc_product_scene_replication') invalidProductGeneration('source_strategy');
     return ['aigc_product_scene_replication'];
   }

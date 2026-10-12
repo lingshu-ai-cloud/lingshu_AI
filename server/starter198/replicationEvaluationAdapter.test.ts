@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import type { SocialContentAgentWorkflow, SocialReplicationScriptVersion } from '../../shared/contracts/socialContentWorkflow.js';
 import { evaluateSocialReplicationResult } from './replicationEvaluationAdapter.js';
+import type { SocialReferenceVideoAnalysis } from '../../shared/contracts/socialContentReplication.js';
 
 const workflow = {
   replicationJob: {
@@ -33,6 +34,33 @@ const workflow = {
 const script = {
   shots: [{ shotId: 'shot-1', referenceShotId: 'reference-1', startSeconds: 0, endSeconds: 2, purpose: 'proof' }],
 } as unknown as SocialReplicationScriptVersion;
+
+test('single source fidelity grades the original 37 shots even when the authored script shrinks to one', async () => {
+  const strictWorkflow = structuredClone(workflow);
+  strictWorkflow.replicationJob!.referenceMode = 'single_source_fidelity';
+  strictWorkflow.directorBrief.scenes[0]!.replicationFactors![0]!.semanticAdaptation = {
+    status: 'functionally_replaced', sourceFactorId: 'factor-cap', targetFunction: 'proof', replacementReason: 'budget',
+  };
+  const result = await evaluateSocialReplicationResult({
+    workflow: strictWorkflow, replicationScript: script, productionResultId: 'strict-result', outputVideoPath: '/unused.mp4',
+    referenceAnalysis: { shots: Array.from({ length: 37 }, (_, index) => ({
+      shotId: `reference-${index + 1}`, startSeconds: index, endSeconds: index === 36 ? 38 : index + 1, purpose: 'proof',
+    })) } as SocialReferenceVideoAnalysis,
+  });
+  assert.equal(result.evaluation?.status, 'failed');
+  assert.ok(result.report?.blockers.some(issue => issue.code === 'shot_missing'));
+  assert.ok(result.report?.blockers.some(issue => issue.factorId === 'factor-cap'), 'functional replacement cannot exempt a fidelity factor');
+});
+
+test('single source fidelity cannot substitute an authored script for missing reference analysis', async () => {
+  const strictWorkflow = structuredClone(workflow);
+  strictWorkflow.replicationJob!.referenceMode = 'single_source_fidelity';
+  const result = await evaluateSocialReplicationResult({
+    workflow: strictWorkflow, replicationScript: script, productionResultId: 'missing-reference', outputVideoPath: '/unused.mp4',
+  });
+  assert.equal(result.evaluation?.status, 'failed');
+  assert.ok(result.report?.blockers.some(issue => issue.code === 'fidelity_reference_analysis_missing'));
+});
 
 const provenance = { producer: 'cv_worker' as const, detector: 'test-detector', detectorVersion: '1' };
 

@@ -26,7 +26,17 @@ export interface FrozenPaidProduction {
         presenterSpeech?: 'included' | 'separate' | 'reused' | 'whole_track';
         presenterSpeechReceiptRef?: string | null;
     }>;
-    shots: Array<Pick<SocialAssetSupplyShotPlan, 'shotId' | 'sourceStrategy' | 'fallbackSourceStrategy' | 'materialRouting' | 'sourceRefs'>>;
+    /** A presenter group is one provider execution spanning an ordered, contiguous
+     * run of frozen scenes. Scenes remain independently addressable downstream. */
+    presenterGroups?: Array<{
+        groupId: string;
+        shotIds: string[];
+        durationSeconds: number;
+        spokenText: string;
+        presenterAssetId: string;
+        contractHash: string;
+    }>;
+    shots: Array<Pick<SocialAssetSupplyShotPlan, 'shotId' | 'sourceStrategy' | 'fallbackSourceStrategy' | 'materialRouting' | 'sourceRefs' | 'digitalHumanPlan'>>;
     assets: Array<{
         assetId: string;
         contentHash: string;
@@ -55,6 +65,10 @@ export interface PaidStageRequirement {
     durationSeconds: number | null;
     text: string | null;
     frameCount: number | null;
+    presenterGroupId?: string;
+    presenterGroupShotIds?: string[];
+    presenterAssetId?: string;
+    presenterGroupContractHash?: string;
     inputContractHash: string;
 }
 export interface BoundPaidRoute {
@@ -100,7 +114,9 @@ function stable(v: unknown): unknown {
     return v;
 }
 export const paidProductionHash = (v: unknown) => createHash('sha256').update(JSON.stringify(stable(v))).digest('hex');
-export function paidProductionApprovalHash(input: FrozenPaidProduction) { return paidProductionHash({ scope: input.scope, baselineHash: input.baselineHash, scenes: input.scenes, shots: input.shots, voice: input.voice }); }
+export type FrozenPresenterGroup = NonNullable<FrozenPaidProduction['presenterGroups']>[number];
+export function presenterGroupContractHash(input: Omit<FrozenPresenterGroup, 'contractHash'> | FrozenPresenterGroup) { const {contractHash:_,...value}=input as FrozenPresenterGroup; return paidProductionHash(value); }
+export function paidProductionApprovalHash(input: FrozenPaidProduction) { return paidProductionHash({ scope: input.scope, baselineHash: input.baselineHash, scenes: input.scenes, presenterGroups: input.presenterGroups, shots: input.shots, voice: input.voice }); }
 export function paidProductionRecordHash(input: Omit<FrozenPaidProduction, 'recordHash'> | FrozenPaidProduction) { const { recordHash: _, ...value } = input as FrozenPaidProduction; return paidProductionHash(value); }
 const text = (v: unknown) => typeof v === 'string' && v.trim() === v && v.length > 0 && v.length <= 512;
 const hash = (v: unknown) => typeof v === 'string' && /^[a-f0-9]{64}$/.test(v);
@@ -119,11 +135,43 @@ export function createSocialContentPaidOperationPlanner(ports: PaidOperationPlan
                 if (!gaps.includes(s))
                     gaps.push(s);
             };
-            if (!input || !Array.isArray(input.scenes) || !Array.isArray(input.shots) || !Array.isArray(input.assets) || !input.voice || !Array.isArray(input.voice.lines) || input.scenes.some(s => typeof s.spokenText !== 'string') || !['local', 'paid'].includes(input.finalReview) || paidProductionHash(input.scope) !== paidProductionHash(scope) || !hash(input.baselineHash) || input.recordHash !== paidProductionRecordHash(input) || input.approval?.approved !== true || !text(input.approval.reviewRef) || input.approval.planHash !== scope.planHash || input.approval.sourceHash !== paidProductionApprovalHash(input) || !text(input.authorization?.ref) || !Number.isFinite(input.authorization?.maximumCny) || input.authorization.maximumCny <= 0 || !Number.isInteger(input.maximumRetries) || input.maximumRetries < 0 || input.maximumRetries > 3 || (input.directedRetryShotIds !== undefined && (!Array.isArray(input.directedRetryShotIds) || input.directedRetryShotIds.some(id => !text(id)) || new Set(input.directedRetryShotIds).size !== input.directedRetryShotIds.length)))
+            if (!input || !Array.isArray(input.scenes) || !Array.isArray(input.shots) || !Array.isArray(input.assets) || (input.presenterGroups!==undefined&&(!Array.isArray(input.presenterGroups)||input.presenterGroups.some(group=>!group||typeof group!=='object'||!Array.isArray(group.shotIds)))) || !input.voice || !Array.isArray(input.voice.lines) || input.scenes.some(s => typeof s.spokenText !== 'string') || !['local', 'paid'].includes(input.finalReview) || paidProductionHash(input.scope) !== paidProductionHash(scope) || !hash(input.baselineHash) || input.recordHash !== paidProductionRecordHash(input) || input.approval?.approved !== true || !text(input.approval.reviewRef) || input.approval.planHash !== scope.planHash || input.approval.sourceHash !== paidProductionApprovalHash(input) || !text(input.authorization?.ref) || !Number.isFinite(input.authorization?.maximumCny) || input.authorization.maximumCny <= 0 || !Number.isInteger(input.maximumRetries) || input.maximumRetries < 0 || input.maximumRetries > 3 || (input.directedRetryShotIds !== undefined && (!Array.isArray(input.directedRetryShotIds) || input.directedRetryShotIds.some(id => !text(id)) || new Set(input.directedRetryShotIds).size !== input.directedRetryShotIds.length)))
                 return { plan: null, requirements, gaps: ['frozen_approved_production_unverified'] };
-            if (!input.scenes.length || new Set(input.scenes.map(s => s.shotId)).size !== input.scenes.length || new Set(input.shots.map(s => s.shotId)).size !== input.shots.length || input.scenes.length !== input.shots.length)
-                gap('scene_mapping_invalid');
-            const make = (key: string, stage: string, shotId: string | null, sourceRef: string | null, durationSeconds: number | null, spoken: string | null, frameCount: number | null): PaidStageRequirement => ({ key, stage, shotId, sourceRef, durationSeconds, text: spoken, frameCount, inputContractHash: paidProductionHash({ scope, baselineHash: input.baselineHash, approvalSourceHash: input.approval.sourceHash, key, stage, shotId, sourceRef, durationSeconds, spoken, frameCount }) });
+            // Financial planning may select another executor, but may never
+            // drop a locked scene or substitute another scene with the same count.
+            // Validate coverage before any runtime reader or local render runs.
+            if (!input.scenes.length || new Set(input.scenes.map(s => s.shotId)).size !== input.scenes.length || new Set(input.shots.map(s => s.shotId)).size !== input.shots.length || input.scenes.length !== input.shots.length
+                || input.scenes.some(scene => !input.shots.some(shot => shot.shotId === scene.shotId)))
+                return { plan: null, requirements, gaps: ['scene_mapping_invalid'] };
+            if (input.scenes.some(scene => !text(scene.shotId) || !Number.isFinite(scene.durationSeconds) || scene.durationSeconds <= 0))
+                return { plan: null, requirements, gaps: ['scene_contract_missing'] };
+            const presenterGroups=input.presenterGroups||[], presenterGroupByShot=new Map<string,FrozenPresenterGroup>();
+            if(new Set(presenterGroups.map(group=>group.groupId)).size!==presenterGroups.length)return {plan:null,requirements,gaps:['presenter_group_contract_invalid']};
+            let previousGroupLastIndex=-2, previousGroupPresenter='';
+            for(const group of presenterGroups){
+                const indexes=group.shotIds.map(id=>input.scenes.findIndex(scene=>scene.shotId===id));
+                const scenes=group.shotIds.map(id=>input.scenes.find(scene=>scene.shotId===id));
+                const shots=group.shotIds.map(id=>input.shots.find(shot=>shot.shotId===id));
+                const presenterIds=shots.map(shot=>[...new Set(shot?.digitalHumanPlan?.presenterAssetIds?.length?shot.digitalHumanPlan.presenterAssetIds:shot?.sourceRefs||[])]);
+                if(!text(group.groupId)||!group.shotIds.length||new Set(group.shotIds).size!==group.shotIds.length||group.contractHash!==presenterGroupContractHash(group)
+                    ||indexes.some(i=>i<0)||indexes.some((value,index)=>index>0&&value!==indexes[index-1]!+1)
+                    ||scenes.some(scene=>!scene||scene.presenterSpeech!=='whole_track')||shots.some(shot=>shot?.sourceStrategy!=='authorized_digital_presenter')
+                    ||presenterIds.some(ids=>ids.length!==1||ids[0]!==group.presenterAssetId)
+                    ||Math.abs(scenes.reduce((sum,scene)=>sum+(scene?.durationSeconds||0),0)-group.durationSeconds)>1e-9
+                    ||scenes.map(scene=>scene?.spokenText||'').join(' ')!==group.spokenText
+                    ||indexes[0]!<=previousGroupLastIndex||(indexes[0]===previousGroupLastIndex+1&&group.presenterAssetId===previousGroupPresenter)
+                    ||group.shotIds.some(id=>presenterGroupByShot.has(id))){
+                    return {plan:null,requirements,gaps:['presenter_group_contract_invalid']};
+                }
+                group.shotIds.forEach(id=>presenterGroupByShot.set(id,group));
+                previousGroupLastIndex=indexes.at(-1)!;previousGroupPresenter=group.presenterAssetId;
+            }
+            if(presenterGroups.length&&input.scenes.some(scene=>scene.presenterSpeech==='whole_track'&&input.shots.find(shot=>shot.shotId===scene.shotId)?.sourceStrategy==='authorized_digital_presenter'&&!presenterGroupByShot.has(scene.shotId)))
+                return {plan:null,requirements,gaps:['presenter_group_coverage_invalid']};
+            const make = (key: string, stage: string, shotId: string | null, sourceRef: string | null, durationSeconds: number | null, spoken: string | null, frameCount: number | null, presenterGroup?:FrozenPresenterGroup): PaidStageRequirement => {
+                const groupFields=presenterGroup?{presenterGroupId:presenterGroup.groupId,presenterGroupShotIds:[...presenterGroup.shotIds],presenterAssetId:presenterGroup.presenterAssetId,presenterGroupContractHash:presenterGroup.contractHash}:{};
+                return { key, stage, shotId, sourceRef, durationSeconds, text: spoken, frameCount,...groupFields, inputContractHash: paidProductionHash({ scope, baselineHash: input.baselineHash, approvalSourceHash: input.approval.sourceHash, key, stage, shotId, sourceRef, durationSeconds, spoken, frameCount,...groupFields }) };
+            };
             const add = (...args: Parameters<typeof make>) => { const r = make(...args); requirements.push(r); return r; };
             const local = async (requirement: PaidStageRequirement, kinds: VerifiedLocalExecution['kind'][], expectedReceipt?: string) => {
                 const proof = await ports.readVerifiedLocalExecution(requirement);
@@ -134,6 +182,17 @@ export function createSocialContentPaidOperationPlanner(ports: PaidOperationPlan
             };
             if (new Set(input.assets.map(a => a.assetId)).size !== input.assets.length)
                 gap('material_source_duplicate');
+            for(const group of presenterGroups){
+                // The review image is a real paid production artifact.  One
+                // Seedream edit removes the reference person and composites
+                // the authorised presenter; Qwen then independently reviews
+                // that image.  Both are reserved with the later mother video
+                // so the whole-film cap is proven before either provider sees
+                // a request.
+                add(`presenter-group:${group.groupId}:first-frame`,'first_frame',group.groupId,null,null,null,null,group);
+                add(`presenter-group:${group.groupId}:first-frame-qa`,'first_frame_qa',group.groupId,null,null,null,3,group);
+                add(`presenter-group:${group.groupId}:presenter`,'presenter_video',null,null,group.durationSeconds,group.spokenText,null,group);
+            }
             for (const asset of input.assets) {
                 if (!text(asset.assetId) || !hash(asset.contentHash)) {
                     gap('material_source_hash_missing');
@@ -188,7 +247,7 @@ export function createSocialContentPaidOperationPlanner(ports: PaidOperationPlan
                     else if (route === 'authorized_digital_presenter') {
                         if (!scene.spokenText.trim() || !scene.presenterSpeech)
                             gap('presenter_speech_route_missing');
-                        add(`${key}:presenter`, 'presenter_video', shot.shotId, null, scene.durationSeconds, scene.spokenText, null);
+                        if (!presenterGroupByShot.has(shot.shotId)) add(`${key}:presenter`, 'presenter_video', shot.shotId, null, scene.durationSeconds, scene.spokenText, null);
                         if (scene.presenterSpeech === 'reused' && (!text(scene.presenterSpeechReceiptRef) || !await local(make(`${key}:speech-reuse`, 'presenter_audio_reuse', shot.shotId, scene.presenterSpeechReceiptRef || null, scene.durationSeconds, scene.spokenText, null), ['existing_audio'])))
                             gap('presenter_speech_reuse_receipt_missing');
                         if (scene.presenterSpeech === 'whole_track' && (input.voice.mode !== 'continuous' || !input.voice.requiresAlignment)) gap('presenter_whole_track_alignment_dependency_missing');

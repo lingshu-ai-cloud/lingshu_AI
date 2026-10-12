@@ -7,7 +7,7 @@ import type {
   SocialReferenceVideoAnalysis,
   SocialReplicationScriptVersion,
 } from '../../shared/contracts/socialContentWorkflow';
-import { buildSocialAgentWorkflow as buildWorkflowUnderTest, socialContentCapabilityRegistry } from './socialContentAgentWorkflow';
+import { buildSocialAgentWorkflow as buildWorkflowUnderTest, socialContentCapabilityRegistry, socialExecutionBudgetStatus, socialExecutionExternalCost } from './socialContentAgentWorkflow';
 import { alignSocialAssetSupplyPlanToBaseline } from './socialContentAssetSupplyExecution';
 import { applySocialContentRevisionSupply } from './socialContentRevisionProjection';
 import { socialRequestHash } from './socialContentValidation';
@@ -104,6 +104,16 @@ const supply = createSocialAssetSupplyPlan({
   ],
 });
 
+const workflowSupply = createSocialAssetSupplyPlan({
+  creationMode: 'viral_replication', planVersion: '12', confirmedFactRefs: ['knowledge:product-1'],
+  productionApproach: 'ai_enhanced', materialRoutingPolicyVersion: 'type-aware.v1',
+  inventory: { productIdentityGroups: [{ productRef: 'product:verified-1', imageIds: ['product-image-1'] }] },
+  shots: [
+    { shotId: 'scene-hook', function: 'hook', materialType: 'product', productRef: 'product:verified-1', plannedDurationSeconds: 3, referenceShotId: 'reference-hook', requestedDescription: '三秒内呈现产品主体' },
+    { shotId: 'scene-cta', function: 'call_to_action', materialType: 'product', productRef: 'product:verified-1', plannedDurationSeconds: 3, referenceShotId: 'reference-cta', requestedDescription: '产品画面承接询盘行动' },
+  ],
+});
+
 const replicationScript: SocialReplicationScriptVersion = {
   version: '9',
   referenceAnalysisId: referenceAnalysis.analysisId,
@@ -136,9 +146,10 @@ const workflow = buildSocialAgentWorkflow({
   brief,
   sources: [],
   factSourceRefs: ['knowledge:product-1'],
-  assetSupplyPlan: supply,
+  assetSupplyPlan: workflowSupply,
   referenceAnalysis,
   replicationScript,
+  capabilityRuntime: [{ strategy: 'aigc_product_scene_replication', adapterIds: ['controlled_product_scene_replication.v1'], environmentReady: true, reason: null }],
   replicationContext: {
     referenceMode: 'single_source_fidelity',
     programRef: { objectType: 'social_program', id: 'program-1', version: '2' },
@@ -184,13 +195,14 @@ assert.equal(workflow.responsibilityBoundary?.selfApprovalForbidden, true);
 assert.equal(workflow.directorBrief.scenes[0]?.voiceoverAlignment?.text, replicationScript.shots[0]?.spokenText);
 assert.equal(workflow.directorBrief.scenes[0]?.voiceoverAlignment?.matchMode, 'verbatim_semantic');
 
-test('budget semantic revision retains factor lineage while reviewing only applicable constraints', () => {
+test('budget semantic revision retains factor lineage but cannot approve a compressed viral replica', () => {
   const authored = structuredClone(replicationScript);
   authored.shots.forEach(shot => { shot.scriptOrigin = 'budget_semantic_revision'; });
   const adapted = buildSocialAgentWorkflow({
     taskId: 'budget-semantic-factor-adaptation', taskVersion: '12', taskStatus: 'plan_review', mode: 'instant', weeklyPlanId: null,
-    brief: { ...brief, perItemBudgetCny: 10 }, sources: [], factSourceRefs: ['knowledge:product-1'],
-    assetSupplyPlan: supply, referenceAnalysis, replicationScript: authored,
+    brief: { ...brief, perItemBudgetCny: 10, referenceMode: 'multi_source_hybrid' }, sources: [], factSourceRefs: ['knowledge:product-1'],
+    assetSupplyPlan: workflowSupply, referenceAnalysis, replicationScript: authored,
+    capabilityRuntime: [{ strategy: 'aigc_product_scene_replication', adapterIds: ['controlled_product_scene_replication.v1'], environmentReady: true, reason: null }],
   });
   const factors = adapted.directorBrief.scenes.flatMap(scene => scene.replicationFactors ?? []);
   const feasibility = adapted.executionPlan.scenes.flatMap(scene => scene.factorFeasibility ?? []);
@@ -202,7 +214,30 @@ test('budget semantic revision retains factor lineage while reviewing only appli
     .every(factor => factor.required === false && factor.feasible && factor.plannedValidatorId === '' && Boolean(factor.semanticAdaptation?.replacementReason)));
   assert.ok(feasibility.filter(factor => factor.semanticAdaptation?.status === 'applicable')
     .every(factor => factor.required === true && Boolean(factor.plannedValidatorId)));
-  assert.equal(adapted.executionPlanReview.approved, true);
+  assert.equal(adapted.executionPlanReview.approved, false);
+  assert.ok(adapted.executionPlanReview.failedCriteria.some(item => item.includes('semantic_compression_forbidden')));
+});
+test('single reference rejects a merged or retimed script before Content execution', () => {
+  for (const kind of ['merged', 'retimed', 'semantic'] as const) {
+    const changed = structuredClone(replicationScript);
+    if (kind === 'merged') {
+      changed.shots = [{ ...changed.shots[0]!, endSeconds: 6,
+        referenceShotIds: referenceAnalysis.shots.map(shot => shot.shotId) }];
+    } else if (kind === 'retimed') {
+      changed.shots[0]!.endSeconds = 2;
+      changed.shots[1]!.startSeconds = 2;
+    } else {
+      changed.shots.forEach(shot => { shot.scriptOrigin = 'budget_semantic_revision'; });
+    }
+    const rejected = buildSocialAgentWorkflow({
+      taskId: `fidelity-${kind}`, taskVersion: '12', taskStatus: 'plan_review', mode: 'instant', weeklyPlanId: null,
+      brief: { ...brief, referenceMode: 'single_source_fidelity', targetDurationSeconds: 18 }, sources: [],
+      factSourceRefs: ['knowledge:product-1'], assetSupplyPlan: supply, referenceAnalysis, replicationScript: changed,
+    });
+    assert.equal(rejected.directorBrief.status, 'blocked', kind);
+    assert.equal(rejected.executionPlanReview.approved, false, kind);
+    assert.ok(rejected.executionPlanReview.requiredRevision.some(text => text.includes('逐槽恢复')), kind);
+  }
 });
 const lineDrivenScript = structuredClone(replicationScript);
 lineDrivenScript.shots[0]!.spokenText = 'A stale generated storyboard sentence.';
@@ -278,6 +313,19 @@ assert.equal(personScene.productionRouting?.presenterIdentityReplacementRequired
 assert.equal(personScene.productionRouting?.enterprisePresenterAssetRef, presenterLock.presenterAssetId);
 assert.equal(personScene.productionRouting?.needsExpressiveAction, true);
 assert.equal(personScene.productionRouting?.needsPreciseLipSync, true);
+const heroineReference = structuredClone(personReference);
+heroineReference.shots[0]!.visualDescription = '女主面向镜头，双手做打电话手势；中景，固定镜头';
+heroineReference.shots[0]!.semanticLabel = { content: '女主面向镜头做手势', intent: '行动号召' };
+heroineReference.shots[0]!.tags.subjects = [];
+const heroineWorkflow = buildSocialAgentWorkflow({
+  taskId: 'task-heroine', taskVersion: '1', taskStatus: 'plan_review', mode: 'instant', weeklyPlanId: null,
+  brief, sources: [], factSourceRefs: ['knowledge:product-1'],
+  assetSupplyPlan: { ...supply, accountPresenterLock: presenterLock },
+  referenceAnalysis: heroineReference, replicationScript,
+});
+assert.equal(heroineWorkflow.directorBrief.scenes[0]!.productionRouting?.presenterVisible, true);
+assert.equal(heroineWorkflow.directorBrief.scenes[0]!.productionRouting?.needsPreciseLipSync, true,
+  'a typed talking-head shot with verified source speech must retain its lip-sync requirement');
 assert.equal(personWorkflow.executionPlan.scenes[0]?.routeDecision?.policy, 'expressive_action');
 assert.equal(personWorkflow.executionPlan.scenes[0]?.recommendedCandidateIds.length, 1);
 assert.equal(personWorkflow.executionPlan.scenes[0]?.candidates.find(candidate => (
@@ -311,7 +359,7 @@ assert.ok(runtimeCapabilities.every(capability => (
   capability.canDo.length > 0
   && capability.cannotDo.length > 0
   && capability.inputRequirements.length > 0
-  && capability.fallbackStrategies.length > 0
+  && Array.isArray(capability.fallbackStrategies)
   && capability.concurrencyLimit > 0
   && capability.rateLimitPerMinute > 0
   && capability.planningAvailability === 'supported'
@@ -319,6 +367,8 @@ assert.ok(runtimeCapabilities.every(capability => (
     : capability.registeredAdapterIds.length ? 'degraded' : 'unavailable')
   && capability.applicableScenes.length > 0
 )));
+assert.deepEqual(runtimeCapabilities.find(capability => capability.strategy === 'aigc_product_scene_replication')?.fallbackStrategies, [],
+  'product replacement must fail closed instead of degrading to product-image motion');
 assert.equal(runtimeCapabilities.find(item => item.strategy === 'authorized_digital_presenter')?.registeredAdapterIds[0],
   'controlled_digital_presenter.v1');
 assert.ok(runtimeCapabilities.find(item => item.strategy === 'authorized_digital_presenter')?.availabilityReason !== '未注册执行适配器');
@@ -512,6 +562,22 @@ assert.equal(productSceneWorkflow.executionPlan.scenes[0]?.selectedSourceStrateg
 assert.equal(productSceneWorkflow.executionPlan.scenes[0]?.productSceneReplication?.cameraLock.movementPath.includes('环绕'), true);
 assert.ok(productSceneWorkflow.directorBrief.scenes[0]?.acceptanceCriteria.some(item => item.includes('单图平移缩放')));
 
+const missingProductIdentitySupply = createSocialAssetSupplyPlan({
+  creationMode: 'material_processing', materialRoutingPolicyVersion: 'type-aware.v1',
+  inventory: { productIdentityGroups: [] },
+  shots: [{ shotId: 'scene-product', function: 'demonstration', materialType: 'product',
+    productRef: 'missing-sku', requestedDescription: '产品包装近景并做简单运动' }],
+});
+const missingProductIdentityWorkflow = buildSocialAgentWorkflow({
+  taskId: 'task-product-missing', taskVersion: '1', taskStatus: 'plan_review', mode: 'instant', weeklyPlanId: null,
+  brief: { ...brief, creationMode: 'material_processing' }, sources: [], factSourceRefs: ['knowledge:product-1'],
+  assetSupplyPlan: missingProductIdentitySupply, referenceAnalysis: null, replicationScript: null,
+  capabilityRuntime: [{ strategy: 'customer_product_image_animation', adapterIds: ['existing_customer_asset.v1'], environmentReady: true, reason: null }],
+});
+assert.equal(missingProductIdentityWorkflow.executionPlan.scenes[0]?.candidates.some(candidate =>
+  candidate.sourceStrategy === 'customer_product_image_animation'), false,
+  'an executable animator is not a candidate until this SKU has a locked enterprise product image');
+
 const blockedSupply = createSocialAssetSupplyPlan({
   creationMode: 'viral_replication',
   planVersion: '13',
@@ -523,9 +589,9 @@ const blocked = buildSocialAgentWorkflow({
   referenceAnalysis, replicationScript: null,
 });
 assert.equal(blocked.adHocBusinessContext?.version, '13');
-assert.equal(blocked.executionPlanReview.approved, true);
+assert.equal(blocked.executionPlanReview.approved, false);
 assert.equal(blocked.executionPlanReview.reasonCodes.includes('facts_missing'), false);
-assert.equal(blocked.stage, 'director_ready');
+assert.equal(blocked.stage, 'factor_ready');
 
 const incompleteReference = { ...referenceAnalysis, coverage: { ...referenceAnalysis.coverage!, gaps: [{ startSeconds: 5, endSeconds: 6, reason: '未覆盖' }], fullTimelineCovered: false } };
 const incomplete = buildSocialAgentWorkflow({
@@ -647,7 +713,22 @@ test('typed presenter route carries frozen reference factors on silent body micr
   assert.ok(scene.factorFeasibility?.length);assert.ok(scene.factorFeasibility.every(f=>f.feasible));
   const failed=buildSocialAgentWorkflow({taskId:'actual-reference-presenter-regression',taskVersion:'4',taskStatus:'plan_review',mode:'instant',weeklyPlanId:null,brief:{...brief,materialRoutingPolicyVersion:'type-aware.v1'},sources:[],factSourceRefs:[],assetSupplyPlan:plan,referenceAnalysis:reference,replicationScript:script,capabilityRuntime:[]});
   assert.equal(failed.executionPlan.scenes[1]!.recommendedCandidateIds.length,0);
-  assert.ok(failed.executionPlan.scenes[1]!.factorFeasibility?.every(f=>!f.feasible));
+  assert.ok(failed.executionPlan.scenes[1]!.factorFeasibility?.every(f=>f.feasible));
+  assert.ok(failed.executionPlan.scenes[1]!.factorFeasibility?.every(f=>f.detectorIndependence==='independent_post_render'&&f.plannedCandidateId===null));
+  assert.equal(failed.executionPlanReview.sceneResults[1]!.failedCriteria.filter(item=>item.includes('裂变因素')).length,0);
+});
+
+test('real 37-shot failure shape plans frozen factors by output domain without treating a missing production candidate as 501 detector failures',()=>{
+ const reference=structuredClone(referenceAnalysis);const script=structuredClone(replicationScript);
+ reference.shots=Array.from({length:37},(_,index)=>({...structuredClone(referenceAnalysis.shots[index%referenceAnalysis.shots.length]!),shotId:`reference-${index+1}`,startSeconds:index,endSeconds:index+1}));
+ script.shots=reference.shots.map((shot,index)=>({...structuredClone(replicationScript.shots[index%replicationScript.shots.length]!),shotId:`scene-${index+1}`,referenceShotId:shot.shotId,referenceShotIds:[shot.shotId],startSeconds:index,endSeconds:index+1,materialPlan:{...structuredClone(alignedDigitalHumanSupply.shots[0]),shotId:`scene-${index+1}`}}));
+ const plan=createSocialAssetSupplyPlan({creationMode:'viral_replication',productionApproach:'ai_enhanced',materialRoutingPolicyVersion:'type-aware.v1',inventory:{presenterAssetIds:['enterprise-person']},presenterSelectionConfirmed:true,shots:script.shots.map(shot=>({shotId:shot.shotId,function:shot.purpose,referenceShotId:shot.referenceShotId,materialType:'talking_head',requestedDescription:'授权数字人口播'}))});
+ const workflow=buildSocialAgentWorkflow({taskId:'socialtask_ea31ab88b2a46bb4b72d3b21',taskVersion:'4',taskStatus:'plan_review',mode:'instant',weeklyPlanId:null,brief:{...brief,materialRoutingPolicyVersion:'type-aware.v1'},sources:[],factSourceRefs:[],assetSupplyPlan:plan,referenceAnalysis:reference,replicationScript:script,capabilityRuntime:[]});
+ assert.equal(workflow.executionPlan.scenes.length,37);assert.ok(workflow.executionPlan.scenes.every(scene=>scene.recommendedCandidateIds.length===0));
+ const factors=workflow.executionPlan.scenes.flatMap(scene=>scene.factorFeasibility??[]);assert.ok(factors.length>100);assert.ok(factors.every(factor=>factor.required&&factor.feasible&&factor.plannedValidatorId&&factor.detectorIndependence==='independent_post_render'));
+ assert.ok(factors.every(factor=>factor.validationScope&&factor.requiredEvidence?.length&&factor.plannedCandidateId===null));
+ assert.ok(workflow.executionPlanReview.failedCriteria.includes('没有可执行的推荐候选'));
+ assert.ok(!workflow.executionPlanReview.failedCriteria.some(item=>item.includes('存在未被执行方案承接的裂变因素')));
 });
 
 test('actual cached38 reference body shot retains all frozen factors when the typed presenter is executable',()=>{
@@ -671,4 +752,28 @@ test('whole-film typed runtime uses its formal funding gate without borrowing th
   const typed=socialContentEmbeddedRuntimeRegistrations({wholeFilmBudget:true,productVideoProvider:'wan'});assert.equal(typed.find(r=>r.strategy==='authorized_digital_presenter')!.environmentReady,true);assert.equal(typed.find(r=>r.strategy==='aigc_product_scene_replication')!.environmentReady,true);
   process.env.HEYGEN_API_KEY='';process.env.DASHSCOPE_API_KEY='';const missing=socialContentEmbeddedRuntimeRegistrations({wholeFilmBudget:true,productVideoProvider:'wan'});assert.equal(missing.find(r=>r.strategy==='authorized_digital_presenter')!.environmentReady,false);assert.ok(!missing.some(r=>r.strategy==='aigc_product_scene_replication'));
  }finally{for(const[key,value]of Object.entries(saved)){if(value===undefined)delete process.env[key];else process.env[key]=value;}}
+});
+
+test('v9 budget review uses frozen presenter candidate quotes unless an explicit positive HeyGen rate overrides them',()=>{
+ const saved=process.env.HEYGEN_ESTIMATED_CNY_PER_SECOND;
+ const scene=(id:string,seconds:number,cost:number)=>({sceneId:id,recommendedCandidateIds:[`candidate-${id}`],candidates:[{candidateId:`candidate-${id}`,sourceStrategy:'authorized_digital_presenter',dataTransfer:'external_processor',estimatedCostCny:cost}]});
+ const plan={scenes:[scene('s1',1.1,.0329),scene('s2',1.7,.0508)]};
+ const director={scenes:[{sceneId:'s1',duration:{startSeconds:0,endSeconds:1.1}},{sceneId:'s2',duration:{startSeconds:1.1,endSeconds:2.8}}]};
+ try{
+  delete process.env.HEYGEN_ESTIMATED_CNY_PER_SECOND;
+  assert.equal(socialExecutionExternalCost(plan as never,director as never),.08,'missing env preserves the same frozen quote shown in the execution plan');
+  process.env.HEYGEN_ESTIMATED_CNY_PER_SECOND='0.8';
+  assert.equal(socialExecutionExternalCost(plan as never,director as never),2.24,'an explicit operations rate remains authoritative');
+  process.env.HEYGEN_ESTIMATED_CNY_PER_SECOND='0';
+  assert.equal(socialExecutionExternalCost(plan as never,director as never),.08,'zero is not a configured paid-provider rate');
+ }finally{if(saved===undefined)delete process.env.HEYGEN_ESTIMATED_CNY_PER_SECOND;else process.env.HEYGEN_ESTIMATED_CNY_PER_SECOND=saved;}
+});
+
+test('v9 whole-film budget status remains blocked at the real configured rate rather than the stale UI quote',()=>{
+ const saved=process.env.HEYGEN_ESTIMATED_CNY_PER_SECOND;
+ const scenes=Array.from({length:18},(_,index)=>({sceneId:`v9-${index}`,recommendedCandidateIds:[`candidate-${index}`],candidates:[{candidateId:`candidate-${index}`,sourceStrategy:'authorized_digital_presenter',dataTransfer:'external_processor',estimatedCostCny:.5249/18}]}));
+ const directorScenes=scenes.map((scene,index)=>({sceneId:scene.sceneId,duration:{startSeconds:index*(18.5/18),endSeconds:(index+1)*(18.5/18)}}));
+ try{process.env.HEYGEN_ESTIMATED_CNY_PER_SECOND='0.8';const budget=socialExecutionBudgetStatus({scenes,budgetLimitCny:10} as never,{scenes:directorScenes} as never);
+  assert.equal(budget.estimatedCostCny,14.8);assert.equal(budget.exceeded,true);
+ }finally{if(saved===undefined)delete process.env.HEYGEN_ESTIMATED_CNY_PER_SECOND;else process.env.HEYGEN_ESTIMATED_CNY_PER_SECOND=saved;}
 });

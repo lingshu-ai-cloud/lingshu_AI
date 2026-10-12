@@ -1,4 +1,5 @@
 import type { SocialContentTaskBrief } from '../../shared/contracts/socialContentWorkflow.js';
+import { inspectSocialContentReleaseQuality } from './socialContentReleaseQuality.js';
 
 function object(value: unknown): Record<string, unknown> {
   return value && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : {};
@@ -19,6 +20,9 @@ export function socialManagedArtifactReview(input: {
     return { approved: false, reason: 'trusted_worker_required' };
   }
   const content = object(input.content);
+  if (!inspectSocialContentReleaseQuality({ brief: input.brief, content, mode: 'managed' }).approved) {
+    return { approved: false, reason: 'release_quality_evidence_incomplete_or_failed' };
+  }
   const result = object(content.productionResult);
   const technical = object(result.technicalReview);
   const creative = object(result.creativeReview);

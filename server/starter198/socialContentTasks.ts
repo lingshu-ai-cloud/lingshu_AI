@@ -22,6 +22,7 @@ import type { Starter198OrchestratorQueuePort } from './runtimePorts.js';
 import { Starter198RuntimePortError } from './runtimePorts.js';
 import { readTenantEnterpriseProfile } from '../lib/socialContentLegacyPorts.js';
 import { enterpriseProductIdentity } from '../lib/enterpriseProductIdentity.js';
+import {registerEnterpriseProductMaterials} from './enterpriseProductMaterialRegistration.js';
 import { STARTER_COLLECTIONS, type Starter198Repository, type StarterRecord } from './repository.js';
 import { executeSocialContentMutation } from './socialContentMutation.js';
 import {
@@ -153,11 +154,13 @@ export async function createSocialContentTask(input: {
     replay: async () => {
       const existing = await taskCreatedByOperation(input);
       if (!existing) throw new SocialContentWorkflowError('social_content_operation_integrity_violation', 503);
+      if(input.repository.dataStore)await registerEnterpriseProductMaterials({dataStore:input.repository.dataStore,tenantId:input.tenantId,taskId:socialText(existing.task_id),productId:input.value.productId});
       return { task: (await readSocialTaskDetail({ ...input, taskId: socialText(existing.task_id) }))! };
     },
     action: async operationId => {
       const existing = await taskCreatedByOperation(input);
       if (existing) {
+        if(input.repository.dataStore)await registerEnterpriseProductMaterials({dataStore:input.repository.dataStore,tenantId:input.tenantId,taskId:socialText(existing.task_id),productId:input.value.productId});
         if (input.value.creationMode === 'viral_replication') {
           await refreshSocialTaskReferenceOutputs({ ...input, taskId: socialText(existing.task_id), operationId });
         }
@@ -215,6 +218,7 @@ export async function createSocialContentTask(input: {
         created_at: timestamp,
         updated_at: timestamp,
       });
+      if(input.repository.dataStore)await registerEnterpriseProductMaterials({dataStore:input.repository.dataStore,tenantId:input.tenantId,taskId,productId:brief.productId});
       if (brief.creationMode === 'viral_replication') {
         await refreshSocialTaskReferenceOutputs({ ...input, taskId, operationId });
       }
@@ -341,6 +345,7 @@ export async function updateSocialContentTask(input: {
         updated_by: input.userId,
         updated_at: timestamp,
       });
+      if(input.repository.dataStore)await registerEnterpriseProductMaterials({dataStore:input.repository.dataStore,tenantId:input.tenantId,taskId:input.taskId,productId:brief.productId});
       if (brief.creationMode === 'viral_replication'
         && (themeChanged || hasThemeInput || scriptFieldsChanged)) {
         await refreshSocialTaskReferenceOutputs({

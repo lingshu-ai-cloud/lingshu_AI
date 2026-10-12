@@ -41,7 +41,7 @@ export async function planNewSocialMaterialRoutes(input: {
     if (matches.length !== 1) throw Error(`material_route_new_plan_shot_missing:${shot.shotId}`);
     shot.materialPlan = structuredClone(matches[0]!);
   }
-  const timed = planTypeAwareProductScriptTiming({ policyVersion: brief.materialRoutingPolicyVersion,
+  const timed = planTypeAwareProductScriptTiming({ policyVersion: brief.materialRoutingPolicyVersion, referenceMode: brief.referenceMode,
     script, referenceShots: input.resolved.referenceVideoAnalysis.shots });
   return { ...input.resolved, replicationScript: timed.script,
     shotMaterialMap: input.resolved.shotMaterialMap.map(row => {

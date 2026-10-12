@@ -50,8 +50,8 @@ test('拒绝伪装的 xls 和超大产品表', async () => {
     () => parseWorkbook(new File(['legacy'], 'products.xls')),
     /扩展名与文件内容不匹配/,
   );
-  const oversized = new File([new Uint8Array(10 * 1024 * 1024 + 1)], 'products.xlsx');
-  await assert.rejects(() => parseWorkbook(oversized), /不能超过 10 MB/);
+  const oversized = new File([new Uint8Array(50 * 1024 * 1024 + 1)], 'products.xlsx');
+  await assert.rejects(() => parseWorkbook(oversized), /不能超过 50 MB/);
 });
 
 test('拒绝畸形 CSV 和不支持的扩展名', async () => {

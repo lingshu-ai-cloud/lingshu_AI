@@ -56,6 +56,23 @@ export interface SocialContentUploadResult {
   };
 }
 
+export interface PresenterFirstFrameReviewNode {
+  groupId: string;
+  status: 'pending_confirmation' | 'confirmed';
+  expectedRecordHash: string;
+  previewUrl: string;
+  compositionSummary: {
+    referenceCount: number;
+    backgroundPrepared: true;
+    personRemovalVerified: true;
+  };
+  presenter: { assetId: string; assetVersion: number };
+  qaPassed: boolean;
+  createdAt: string;
+  decisionVersion: 1 | null;
+  confirmedAt: string | null;
+}
+
 function idempotencyKey(): string {
   return typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function'
     ? crypto.randomUUID()
@@ -415,6 +432,14 @@ export const socialContentApi = {
     return socialSourceOptionPage(await requestJson<unknown>(`/source-options?${params}`));
   },
   getTask: async (taskId: string, signal?: AbortSignal): Promise<SocialContentTaskDetail> => socialTaskEnvelope(await requestJson<unknown>(`/tasks/${encodeURIComponent(taskId)}`, { signal })),
+  listPresenterFirstFrameReviews: async (taskId: string, runId: string): Promise<PresenterFirstFrameReviewNode[]> => (
+    (await requestJson<{ items: PresenterFirstFrameReviewNode[] }>(`/tasks/${encodeURIComponent(taskId)}/runs/${encodeURIComponent(runId)}/presenter-first-frame-reviews`)).items
+  ),
+  confirmPresenterFirstFrameReview: async (taskId: string, runId: string, groupId: string, expectedRecordHash: string, operationKey?: string): Promise<PresenterFirstFrameReviewNode> => (
+    (await requestJson<{ item: PresenterFirstFrameReviewNode }>(`/tasks/${encodeURIComponent(taskId)}/runs/${encodeURIComponent(runId)}/presenter-first-frame-reviews/${encodeURIComponent(groupId)}/confirm`, {
+      method: 'POST', body: JSON.stringify({ expectedRecordHash }),
+    }, operationKey)).item
+  ),
   refreshReference: async (taskId: string, expectedVersion: string): Promise<SocialContentTaskDetail> => socialTaskEnvelope(await requestJson<unknown>(`/tasks/${encodeURIComponent(taskId)}/refresh-reference`, { method: 'POST', body: JSON.stringify({ expectedVersion }) }, idempotencyKey())),
   createTask: async (input: CreateSocialContentTaskInput, operationKey?: string): Promise<SocialContentTaskDetail> => socialTaskEnvelope(await requestJson<unknown>('/tasks', { method: 'POST', body: JSON.stringify(input) }, operationKey)),
   createWeeklyPlan: async (input: CreateSocialWeeklyPlanInput, operationKey?: string): Promise<{ weeklyPlan: SocialWeeklyPlan; tasks: SocialContentTaskDetail[] }> => (

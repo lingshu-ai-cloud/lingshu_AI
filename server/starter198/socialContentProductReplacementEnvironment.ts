@@ -18,9 +18,10 @@ import {applyStoryboardReplicationAutomation, buildStoryboardQaReport, inspectSt
 import {createStarter198Repository} from './repository.js';
 import {findSocialContentFile, readSocialContentFile, MAX_SOCIAL_CONTENT_FILE_BYTES, type SocialContentBackendFilePort} from './socialContentFiles.js';
 import {socialRequestHash} from './socialContentValidation.js';
-import {bindProductPaidStage, hasProductPaidStage, type ProductPaidContext, type ProductPaidStage} from './socialContentProductPaidContext.js';
+import {bindProductPaidStage, hasProductPaidStage, productPaidReservedCostCny, type ProductPaidContext, type ProductPaidStage} from './socialContentProductPaidContext.js';
 import type {ProductReplacementPorts} from './socialContentProductReplacementExecution.js';
 import type {ProductSceneExecutionPorts} from './socialContentProductSceneAdapter.js';
+import type {SocialAssetSupplyPlan} from '../../shared/contracts/socialContentWorkflow.js';
 
 type Input = Parameters<ProductSceneExecutionPorts['execute']>[0];
 type Row = Record<string, any>;
@@ -80,6 +81,43 @@ export interface ProductReplacementEnvironmentContext {
   prepareFrame?: typeof prepareTrustedStoryboardSeedream;
   generateVideo?: typeof generateSeedanceConceptVideo;
   inspectVisual?: typeof inspectStoryboardAigcFramesWithQwen;
+  /** The read-only plan admitted by this production run. Product shots are
+   * generated from this plan, while replication_script remains the director
+   * script and is not a persisted copy of the derived supply plan. */
+  frozenSupplyPlan?: SocialAssetSupplyPlan;
+  /** Identity sealed in the executor checkpoint when the run starts. Task
+   * status/version may advance afterwards without changing this authority. */
+  frozenSupplyPlanBinding?: {planVersion:string;planHash:string};
+}
+
+function canonicalFrozenProductShot(input: Input, task: Row, context: ProductReplacementEnvironmentContext) {
+  if (!context.frozenSupplyPlan) {
+    const script = task && json(task.replication_script);
+    return script?.shots?.find((shot: Row) => shot.shotId === input.shotId)?.materialPlan;
+  }
+  const plan = context.frozenSupplyPlan;
+  const binding=context.frozenSupplyPlanBinding;
+  if(!binding||!/^[a-f0-9]{64}$/.test(binding.planHash))throw Error('product_replacement_current_frozen_plan_binding_missing');
+  if(String(plan.planVersion)!==binding.planVersion||socialRequestHash(plan)!==binding.planHash)throw Error('product_replacement_current_frozen_plan_changed');
+  const ids = plan.shots.map(shot => shot.shotId);
+  if (new Set(ids).size !== ids.length) throw Error('product_replacement_current_frozen_plan_ambiguous');
+  const matches = plan.shots.filter(shot => shot.shotId === input.shotId);
+  if (matches.length !== 1) return null;
+  return matches[0]!;
+}
+
+export function diagnoseFrozenProductShot(input: Pick<Input,'tenantId'|'shotId'|'materialRouting'|'spec'>, task: Row, shot: any) {
+  if (!task) return 'task_missing';
+  if (task.tenant_id !== input.tenantId) return 'tenant_changed';
+  if (!task.run_id) return 'run_missing';
+  if (!shot) return 'shot_not_in_frozen_plan';
+  if (!shot.materialRouting) return 'frozen_material_routing_missing';
+  if (!input.materialRouting) return 'execution_material_routing_missing';
+  if (!shot.productSceneReplication) return 'frozen_product_spec_missing';
+  if (!input.spec) return 'execution_product_spec_missing';
+  if (socialRequestHash(executableMaterialRouting(shot.materialRouting)) !== socialRequestHash(executableMaterialRouting(input.materialRouting))) return 'material_routing_changed';
+  if (socialRequestHash(shot.productSceneReplication) !== socialRequestHash(input.spec)) return 'product_spec_changed';
+  return null;
 }
 
 /** Default readers use canonical task, immutable handoffs, registered KB bytes and
@@ -90,23 +128,22 @@ export async function createEnvironmentProductReplacementPorts(input: Input, con
   const tasks = taskRows.items.filter(row => row.tenant_id === input.tenantId && row.task_id === input.taskId);
   if (tasks.length !== 1 || taskRows.totalItems > taskRows.items.length) throw Error('product_replacement_canonical_task_missing_or_ambiguous');
   const task = tasks[0]!;
-  const script = task && json(task.replication_script);
-  const shot = script?.shots?.find((s: Row) => s.shotId === input.shotId);
-  if (!task || task.tenant_id !== input.tenantId || !task.run_id || !shot
-    || !shot.materialPlan?.materialRouting || !shot.materialPlan?.productSceneReplication
-    || socialRequestHash(executableMaterialRouting(shot.materialPlan?.materialRouting)) !== socialRequestHash(executableMaterialRouting(input.materialRouting))
-    || socialRequestHash(shot.materialPlan?.productSceneReplication) !== socialRequestHash(input.spec)) throw Error('product_replacement_current_frozen_shot_missing');
+  const shot = canonicalFrozenProductShot(input, task, context);
+  const frozenShotDiagnostic = diagnoseFrozenProductShot(input, task, shot);
+  if (frozenShotDiagnostic) throw Error(`product_replacement_current_frozen_shot_missing:${frozenShotDiagnostic}:${input.shotId}`);
   const brief = json(task.brief);
   const productId = brief?.productId;
   const accountId = brief?.targetAccountRef?.id ?? null;
   if (typeof productId !== 'string' || !productId) throw Error('product_replacement_canonical_product_identity_missing');
+  const frozenProductRefs: string[] = shot.productSceneReplication.productIdentity.groups.map((group: {productRef:string}) => group.productRef.replace(/^product:/, ''));
+  if (!frozenProductRefs.length || frozenProductRefs.some((ref: string) => ref !== productId)) throw Error('product_replacement_canonical_product_identity_changed');
   const productAuthorities = new Map<string, {hash:string; recordHash:string}>();
   let usageAuthority: {id: string; hash: string} | null = null;
-  const taskIdentity = socialRequestHash({version: task.version, run: task.run_id, script: task.replication_script, brief: task.brief});
+  const taskIdentity = socialRequestHash({run: task.run_id, script: task.replication_script, brief: task.brief});
   const assertCurrent = async () => {
     await context.assertCurrent?.();
     const live = await db.getById<Row>('starter_social_content_tasks', task.id);
-    if (!live || live.tenant_id !== input.tenantId || socialRequestHash({version: live.version, run: live.run_id, script: live.replication_script, brief: live.brief}) !== taskIdentity) throw Error('product_replacement_task_changed');
+    if (!live || live.tenant_id !== input.tenantId || socialRequestHash({run: live.run_id, script: live.replication_script, brief: live.brief}) !== taskIdentity) throw Error('product_replacement_task_changed');
     if (productAuthorities.size) {
       const library=await (context.materials || readMaterialLibrary)(input.tenantId);
       for (const [id, authority] of productAuthorities) {
@@ -253,7 +290,7 @@ export async function createEnvironmentProductReplacementPorts(input: Input, con
     evidenceDirectory: durableDirectory,
     canUseVideoAttempt: attempt => !context.paidContext || (hasProductPaidStage(context.paidContext, input.shotId, 'video', attempt)
       && hasProductPaidStage(context.paidContext, input.shotId, 'video_qa', attempt)),
-    estimatedCostCny: () => context.paidContext ? ['first_frame','first_frame_qa','video','video_qa'].reduce((total, stage) => total + paidAmount(stage as ProductPaidStage),0) : +(taskBudget.status(taskBudgetScope)?.entries.filter(e => e.shotId === input.shotId && e.status !== 'rejected').reduce((total, e) => total + e.reservedMicros, 0) || 0) / 1e6,
+    estimatedCostCny: () => context.paidContext ? productPaidReservedCostCny(context.paidContext, input.shotId) : +(taskBudget.status(taskBudgetScope)?.entries.filter(e => e.shotId === input.shotId && e.status !== 'rejected').reduce((total, e) => total + e.reservedMicros, 0) || 0) / 1e6,
     assertCurrent,
     composition: async () => {
       if (input.materialRouting?.generation?.method === 'enterprise_authored_product_first_frame_i2v') throw Error('authored_frame_must_not_read_reference_pixels');

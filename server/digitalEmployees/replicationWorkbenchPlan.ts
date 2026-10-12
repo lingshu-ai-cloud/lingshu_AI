@@ -1,13 +1,17 @@
 import { createHash } from 'node:crypto';
 import { benchmarkTimeRange, buildBenchmarkAnalysis, recordOf } from '../../shared/benchmarkAnalysis.js';
 import { newShotProduction } from '../../src/lib/shotProduction.js';
+import { referencePresenterCompositionIssue, type ReferencePresenterComposition } from './referencePresenterComposite.js';
 
 export interface AutomatedReplicationShot {
   shotId: string; slotId: string; kind: 'person' | 'nonperson' | 'blocked'; start: number; end: number;
   required: true; productionState: 'ready' | 'blocked'; intendedKind?: 'person' | 'nonperson';
-  blockerCode?: 'physical_boundary_unconfirmed' | 'material_type_unconfirmed' | 'visual_evidence_missing' | 'avatar_required' | 'presenter_authorization_required' | 'target_narration_missing' | 'reference_model_input_authorization_required' | 'usage_action_required';
+  blockerCode?: 'physical_boundary_unconfirmed' | 'material_type_unconfirmed' | 'visual_evidence_missing' | 'avatar_required' | 'presenter_authorization_required' | 'target_narration_missing' | 'reference_model_input_authorization_required' | 'reference_composition_missing' | 'usage_action_required';
   blocker?: string;
   fingerprintContext?: string;
+  referenceShotId?: string;
+  referenceFirstFrameUrl?: string;
+  referenceComposition?: ReferencePresenterComposition;
   firstFrameRequest?: Record<string, unknown>;
 }
 export interface ReplicationWorkbenchInput {
@@ -135,6 +139,16 @@ export function buildReplicationWorkbenchSpec(input: ReplicationWorkbenchInput):
     const shotId = `replication-${hash([input.projectId, referenceId, shot.index]).slice(0, 24)}`;
     const fingerprintContext = `automated-replication-shot:${hash({ referenceId, shot })}`;
     const raw = rawDetails[shot.index - 1]!;
+    const referenceShotId = String(raw.shotId || raw.id || `${referenceId}:shot-${shot.index}`);
+    const referenceFirstFrameUrl = `/api/overseas/videos/${encodeURIComponent(referenceId)}/shot/${shot.index}/first-frame`;
+    const referenceComposition: ReferencePresenterComposition = {
+      referenceShotId,
+      referenceFirstFrameUrl,
+      background: String(shot.environment || '').trim(),
+      framing: String(shot.framing || '').trim(),
+      camera: String(shot.camera || '').trim(),
+      composition: String(raw.composition || shot.visual || '').trim(),
+    };
     const role = String(raw.observedPresenterRole || '');
     const foregroundPerson = /女性|男性|女人|男人|女士|男士|主播|主持人|presenter/i.test(shot.visual)
       && !/背景.{0,8}(女性|男性|人物)|工人背影|人群|路人/.test(shot.visual);
@@ -150,19 +164,27 @@ export function buildReplicationWorkbenchSpec(input: ReplicationWorkbenchInput):
       const to = Math.round(Math.min(length, end - segment.start) / length * tokens.length);
       return tokens.slice(from, to).join(/\s/.test(segment.text) ? ' ' : '');
     }).filter(Boolean).join('\n');
+    const compositionIssue = observedPerson ? referencePresenterCompositionIssue(referenceComposition) : null;
     const evidenceBlocker = observedPerson && !input.presenterId
-      ? { code: 'avatar_required' as const, message: `第 ${shot.index} 镜尚未录入可用企业数字人，人物镜头待补录，其他已就绪镜头继续制作` }
-      : null;
+      ? { code: 'avatar_required' as const, message: `第 ${shot.index} 镜尚未录入并授权企业默认人物` }
+      : observedPerson && !targetText
+        ? { code: 'target_narration_missing' as const, message: `第 ${shot.index} 镜缺少企业目标台词，禁止直接复用原片商业口播` }
+        : observedPerson && !referenceModelInputAuthorized
+          ? { code: 'reference_model_input_authorization_required' as const, message: `第 ${shot.index} 镜缺少对标分镜首帧作为模型输入的授权依据` }
+          : observedPerson && compositionIssue
+            ? { code: 'reference_composition_missing' as const, message: `第 ${shot.index} 镜${compositionIssue}` }
+            : null;
     const fallbackReasons = [
       ...(shot.granularity !== 'shot' ? ['未确认物理切镜，仅保留时间窗口'] : []),
       ...(shot.materialType === 'unknown' ? ['镜头类型待复核'] : []),
       ...(!shot.visual.trim() ? ['原片画面事实不足'] : []),
-      ...(observedPerson && input.presenterId && !targetText ? ['原片无可验证口播'] : []),
-      ...(observedPerson && input.presenterId && !referenceModelInputAuthorized ? ['原片人物帧未授权模型输入'] : []),
+      ...(!observedPerson && !targetText && shot.materialType === 'talking_head' ? ['原片无可验证口播'] : []),
       ...(shot.materialType === 'consumer_demo' && !action ? ['目标产品用法未确认'] : []),
     ];
-    const safeFallback = !evidenceBlocker && fallbackReasons.length > 0;
-    const person = observedPerson && !safeFallback;
+    // A detected presenter shot must remain a presenter shot. It may block for
+    // missing evidence, but it cannot silently degrade to a generic scene.
+    const safeFallback = !evidenceBlocker && !observedPerson && fallbackReasons.length > 0;
+    const person = observedPerson && !evidenceBlocker;
     const fallbackVisual = productIds.length
       ? '使用已绑定的企业产品素材做静物、转台或包装细节展示；不展示人物，不演示未确认用法，不复刻原片品牌与口播'
       : '使用企业已授权素材做无人物的中性信息画面；不推断产品功效或原片台词';
@@ -171,7 +193,7 @@ export function buildReplicationWorkbenchSpec(input: ReplicationWorkbenchInput):
       ...(evidenceBlocker ? { blockerCode: evidenceBlocker.code } : {}) }),
       observedPresenterRole: observedPerson ? 'sales_presenter' : 'none', salesPresenterConfirmed: false,
       ...(evidenceBlocker ? { locked: true, blocker: evidenceBlocker.message } : {}) });
-    const sourceFirstFrameUrl = `/api/overseas/videos/${encodeURIComponent(referenceId)}/shot/${shot.index}/first-frame`;
+    const sourceFirstFrameUrl = referenceFirstFrameUrl;
     details.push({ ...shot, shotId: slotId,
       ...(referenceModelInputAuthorized && !safeFallback ? { firstFrameRef: sourceFirstFrameUrl } : {}),
       observedPresenterRole: observedPerson ? 'sales_presenter' : 'none',
@@ -196,8 +218,10 @@ export function buildReplicationWorkbenchSpec(input: ReplicationWorkbenchInput):
           derivativeAuthorized: false, modelInputAuthorized: true, modelInputAuthorizationEvidence: referenceModelInputAuthorizationEvidence,
           cues: [{ id: `${shotId}:cue`, start, end, originalText: shot.dialogue, targetText,
             shotIds: [slotId], personShot: true, classificationSource: 'analysis', sourceFirstFrame: {time: start},
+            referenceShotId, referenceFirstFrameUrl,
             generationDurationSeconds: Math.max(4, end - start), outputDurationSeconds: end - start,
-            composition: { presenterKey: input.presenterId!, shotSize: shot.framing, cameraAngle: shot.camera, background: shot.environment, actionIntent: shot.visual } }] } };
+            composition: { presenterKey: input.presenterId!, shotSize: shot.framing, cameraAngle: shot.camera, background: shot.environment,
+              actionIntent: shot.visual, referenceShotId, sourceComposition: referenceComposition.composition } }] } };
     }
     productions[`${assemblyId}:${shotId}`] = production;
     const sceneType = safeFallback && productIds.length ? 'product'
@@ -211,6 +235,7 @@ export function buildReplicationWorkbenchSpec(input: ReplicationWorkbenchInput):
         actionBeats: action.beats.join('；'), actionEndState: action.endState } : {}),
       confirmed: false, decided: true, videoResolution: '480p', videoResolutionPinned: true };
     automatedShots.push({ shotId, slotId, kind: person ? 'person' : 'nonperson', start, end, required: true, productionState: 'ready', fingerprintContext,
+      ...(person ? { referenceShotId, referenceFirstFrameUrl, referenceComposition } : {}),
       ...(!person ? { firstFrameRequest: { projectId: input.projectId, shotId, requestId: `auto-frame-${hash([input.projectId, revision, shot.index]).slice(0, 32)}`,
         mode: 'replication', sceneType, shotDescription: detail,
         startSeconds: start, endSeconds: end, ratio, productIds,

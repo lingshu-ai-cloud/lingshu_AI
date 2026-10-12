@@ -3,6 +3,7 @@ import type {
   SocialContentAgentWorkflow,
   SocialReplicationEvaluation,
   SocialReplicationScriptVersion,
+  SocialReferenceVideoAnalysis,
 } from '../../shared/contracts/socialContentWorkflow.js';
 import {
   evaluateReplication,
@@ -56,6 +57,7 @@ function dimension(
 export async function evaluateSocialReplicationResult(input: {
   workflow: SocialContentAgentWorkflow;
   replicationScript: SocialReplicationScriptVersion | null;
+  referenceAnalysis?: SocialReferenceVideoAnalysis | null;
   productionResultId: string;
   outputVideoPath: string;
   evidence?: AdapterEvidence;
@@ -63,6 +65,8 @@ export async function evaluateSocialReplicationResult(input: {
 }): Promise<{ evaluation: SocialReplicationEvaluation | null; report: ReplicationEvaluationReport | null }> {
   const job = input.workflow.replicationJob;
   if (!job) return { evaluation: null, report: null };
+  const fidelity = job.referenceMode === 'single_source_fidelity'
+    || input.workflow.directorBrief.referenceMode === 'single_source_fidelity';
   const sceneByFactor = new Map<string, string>();
   const applicableFactorIds = new Set<string>();
   for (const scene of input.workflow.directorBrief.scenes) {
@@ -74,13 +78,13 @@ export async function evaluateSocialReplicationResult(input: {
       // output reproduces the original detector target, so grading it would
       // incorrectly apply every factor from the long reference to the compact
       // output. Legacy briefs without semanticAdaptation remain applicable.
-      if (factor.semanticAdaptation?.status !== 'functionally_replaced') {
+      if (fidelity || factor.semanticAdaptation?.status !== 'functionally_replaced') {
         applicableFactorIds.add(factor.factorId);
       }
     }
   }
   const activeSourceFactors = job.factorSpecs
-    .filter(factor => applicableFactorIds.has(factor.factorId))
+    .filter(factor => fidelity || applicableFactorIds.has(factor.factorId))
     .map(factor => ({ source: factor, sceneId: sceneByFactor.get(factor.factorId) || factor.beatId }));
   // Identity replacement and prohibited reuse are evaluated by their own
   // dimensions below. Sending the same source factors through fidelity as
@@ -115,7 +119,10 @@ export async function evaluateSocialReplicationResult(input: {
       ?? scriptShots.find(shot => Boolean(scene.referenceShotId) && shot.referenceShotId === scene.referenceShotId);
     return selected ? [selected] : [];
   }).filter((shot, index, shots) => shots.findIndex(item => item.shotId === shot.shotId) === index);
-  const referenceTimeline = selectedScriptShots.map(shot => ({
+  const referenceTimeline = fidelity && input.referenceAnalysis
+    ? input.referenceAnalysis.shots.map(shot => ({
+      shotId: shot.shotId, startSeconds: shot.startSeconds, endSeconds: shot.endSeconds, purpose: shot.purpose,
+    })) : (fidelity ? scriptShots : selectedScriptShots).map(shot => ({
     shotId: shot.referenceShotId || shot.shotId,
     startSeconds: shot.startSeconds,
     endSeconds: shot.endSeconds,
@@ -182,6 +189,7 @@ export async function evaluateSocialReplicationResult(input: {
     outputTimeline,
     factors: factorSpecs,
     factorScopeDeclared: true,
+    ...(fidelity ? { timelineTolerance: { maxStartDriftSeconds: 0.08, maxDurationDriftRatio: 0.01, maxShotCountDifference: 0 } } : {}),
     factorEvidence: [
       ...(input.evidence?.factorEvidence ?? []),
       ...automaticFactorEvidence.filter(item => !suppliedFactorIds.has(item.factorId)),
@@ -200,6 +208,15 @@ export async function evaluateSocialReplicationResult(input: {
       outputText: input.evidence?.outputText ?? null,
     },
   });
+  // A script is an authored derivative, never authoritative reference evidence.
+  // Historic artifacts without the original analysis must return to review.
+  if (fidelity && !input.referenceAnalysis?.shots.length) {
+    report.releaseDecision = 'blocked';
+    report.blockers.push({
+      code: 'fidelity_reference_analysis_missing', severity: 'blocker',
+      message: '单一参考复刻缺少原始逐镜分析，不能用执行方案代替参考分母',
+    });
+  }
   const generatedAt = (input.now ?? new Date()).toISOString();
   const evaluationId = `replication_evaluation_${hash({ job: job.replicationJobId, result: input.productionResultId, generatedAt })}`;
   const status: SocialReplicationEvaluation['status'] = report.releaseDecision === 'pass'
@@ -214,6 +231,19 @@ export async function evaluateSocialReplicationResult(input: {
     productionResultId: input.productionResultId,
     attemptId: `attempt_${hash({ evaluationId, outputVideoPath: input.outputVideoPath })}`,
     status,
+    ...(fidelity ? { referenceTimelineAudit: {
+      referenceShotCount: input.referenceAnalysis?.shots.length ?? 0,
+      referenceDurationSeconds: input.referenceAnalysis?.durationSeconds ?? 0,
+      outputShotCount: outputTimeline.length,
+      fullCoverageValidated: Boolean(input.referenceAnalysis?.shots.length)
+        && referenceTimeline.length === outputTimeline.length
+        && referenceTimeline.every((shot, index) => {
+          const output = outputTimeline[index];
+          return output?.referenceShotId === shot.shotId
+            && Math.abs(output.startSeconds - shot.startSeconds) <= 0.08
+            && Math.abs(output.endSeconds - shot.endSeconds) <= 0.08;
+        }),
+    } } : {}),
     viralFactorFidelity: dimension(report, 'viralFactorFidelity'),
     identityReplacement: dimension(report, 'identityReplacement'),
     originalityDifference: dimension(report, 'originalityDifference'),

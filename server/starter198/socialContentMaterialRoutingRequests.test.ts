@@ -56,6 +56,13 @@ test('positive motion remains required beside a packaging prohibition and stale 
   assert.equal(result.selectedMaterialSegment, undefined);
 });
 
+test('negative prompt and evidence prohibitions never become positive local-match requirements', () => {
+  const expected=normalizeSceneVisualContract({subjects:['person','product'],interaction:{kind:'person_using_product',description:'手部操作产品'},action:{path:'手部持续操作'},evidence:{sourceRange:{startSeconds:0,endSeconds:0.8}}});
+  const usage=normalizeSceneVisualContract({subjects:['person','product'],interaction:{kind:'person_using_product',description:'手部操作产品'},action:{path:'手部持续操作'}});
+  const result=materialRoutingRequests({policyVersion:'type-aware.v1',tenantId:'tenant',productRef:'SKU-1',shots:[{shotId:'negative',function:'demonstration',materialType:'consumer_demo',requestedDescription:'手部操作产品；不添加抽帧中未出现的旋转或摇晃动作。须避免：旋转、摇晃、错误背景',visualContract:expected}],candidates:[{assetId:'owned-usage',sourceRef:'owned-usage',segmentId:'usage',origin:'my_materials',mediaType:'video',productId:null,productRef:null,enterpriseCommon:true,productPolicy:'locked',materialRoles:['product','person_usage'],visualContract:usage,timeRange:{startSeconds:0,endSeconds:1},matchedVoiceoverCueIds:[],matchScore:1}] as never});
+  assert.deepEqual(result[0]!.localVideoMatch?.sourceRefs,['owned-usage']);
+});
+
 test('new product tasks default to a ten-yuan whole-film ceiling and cannot raise it through creation input', () => {
   for (const requested of [undefined, null, 600, 10, 4]) {
     const input = parseCreateSocialTask({ title: '预算检查', objective: '产品正常制作', perItemBudgetCny: requested });
@@ -94,4 +101,43 @@ test('baseline scene carries its planned visual subjects into Director review wi
     shots: [{shotId: 'unknown', function: 'transition', requestedDescription: '说明选择思路'}], candidates: []})[0]!;
   assert.equal(unknown.materialType, 'unknown');
   assert.equal(unknown.visualContract, undefined);
+});
+test('negative prompt text cannot turn product b-roll into presenter and verified factory action survives cosmetic mismatch', () => {
+  const product = materialRoutingRequests({policyVersion:'type-aware.v1',tenantId:'tenant',productRef:'SKU-1',candidates:[],shots:[{shotId:'product',function:'value',requestedDescription:'产品静态展示。须避免：hands, human, presenter, watermark。保持该姿态自然口播。',visualContract:normalizeSceneVisualContract({subjects:['product'],interaction:{kind:'product_only_display',description:'产品静态展示'},productRef:'SKU-1',productPolicy:'locked'})}]});
+  assert.equal(product[0]!.materialType,'product');
+  const expected=normalizeSceneVisualContract({subjects:['factory','person','product'],interaction:{kind:'factory_process',description:'工厂灌装透明瓶'},action:{path:'自动灌装机将液体灌入透明瓶'}});
+  const actual=normalizeSceneVisualContract({subjects:['factory','person','product'],interaction:{kind:'factory_process',description:'车间工人扶瓶灌装'},action:{path:'灌装进行中；手部稳定扶瓶'},camera:{shotSize:'特写',angle:'俯视',movement:'固定',composition:'中心'}});
+  const factory=materialRoutingRequests({policyVersion:'type-aware.v1',tenantId:'tenant',productRef:'SKU-1',shots:[{shotId:'factory',function:'demonstration',requestedDescription:'化妆品工厂自动灌装机将液体灌入透明瓶',visualContract:expected}],candidates:[{assetId:'owned-factory',sourceRef:'owned-factory',segmentId:'fill-1',origin:'my_materials',mediaType:'video',productId:null,productRef:null,enterpriseCommon:true,productPolicy:'locked',materialRoles:['factory'],visualContract:actual,timeRange:{startSeconds:0,endSeconds:3},matchedVoiceoverCueIds:[],matchScore:1}] as never});
+  assert.deepEqual(factory[0]!.localVideoMatch?.sourceRefs,['owned-factory']);
+});
+
+test('short reference slots accept owned segments that cover the slot instead of imposing a three-second floor', () => {
+  const expected=normalizeSceneVisualContract({subjects:['factory','product'],interaction:{kind:'factory_process',description:'机器灌装容器并沿传送带移动'},action:{path:'灌装物料；容器沿传送带移动'},evidence:{sourceRange:{startSeconds:24.9,endSeconds:25.63}}});
+  const actual=normalizeSceneVisualContract({subjects:['factory','product'],interaction:{kind:'factory_process',description:'灌装头向罐内注入物料，罐体随传送带移动'},action:{path:'灌装头持续注入物料；罐体随传送带匀速前移'}});
+  const result=materialRoutingRequests({policyVersion:'type-aware.v1',tenantId:'tenant-a',productRef:'SKU-1',shots:[{shotId:'short-factory',function:'demonstration',requestedDescription:'机器灌装容器并沿传送带移动',visualContract:expected}],candidates:[{assetId:'owned-fill',sourceRef:'owned-fill',segmentId:'fill',origin:'my_materials',mediaType:'video',productId:null,productRef:null,enterpriseCommon:true,productPolicy:'locked',materialRoles:['factory'],visualContract:actual,timeRange:{startSeconds:0,endSeconds:2.5},matchedVoiceoverCueIds:[],matchScore:1}] as never});
+  assert.deepEqual(result[0]!.localVideoMatch?.sourceRefs,['owned-fill']);
+  assert.deepEqual(result[0]!.selectedMaterialSegment,{sourceRef:'owned-fill',segmentId:'fill',startSeconds:0,endSeconds:2.5});
+});
+
+test('consumer demonstration uses a close owned usage clip but never factory or presenter footage', () => {
+  const expected=normalizeSceneVisualContract({subjects:['person','product'],interaction:{kind:'person_using_product',description:'手部完成产品设计演示'},environment:{kind:'office',description:'设计工作室'},action:{path:'手部持续操作并完成演示'},evidence:{sourceRange:{startSeconds:23.7,endSeconds:24.27}}});
+  const usage=normalizeSceneVisualContract({subjects:['person','product'],interaction:{kind:'person_using_product',description:'双手操作并展示产品使用'},environment:{kind:'other',description:'生活场景'},action:{path:'双手持续揉搓并完成使用演示'}});
+  const base={origin:'my_materials',mediaType:'video',productId:null,productRef:null,enterpriseCommon:true,productPolicy:'locked',visualContract:usage,timeRange:{startSeconds:0,endSeconds:4},matchedVoiceoverCueIds:[],matchScore:1};
+  const make=(assetId:string,materialRoles:string[])=>({assetId,sourceRef:assetId,segmentId:`${assetId}-segment`,materialRoles,...base});
+  const accepted=materialRoutingRequests({policyVersion:'type-aware.v1',tenantId:'tenant-a',productRef:'SKU-1',shots:[{shotId:'consumer',function:'demonstration',materialType:'consumer_demo',requestedDescription:'手部完成产品设计演示',visualContract:expected}],candidates:[make('owned-usage',['product','person_usage'])] as never});
+  assert.deepEqual(accepted[0]!.localVideoMatch?.sourceRefs,['owned-usage']);
+  for(const roles of [['factory','person_usage'],['presenter','person_usage']]) {
+    const rejected=materialRoutingRequests({policyVersion:'type-aware.v1',tenantId:'tenant-a',productRef:'SKU-1',shots:[{shotId:'consumer',function:'demonstration',materialType:'consumer_demo',requestedDescription:'手部完成产品设计演示',visualContract:expected}],candidates:[make('wrong-role',roles)] as never});
+    assert.equal(rejected[0]!.localVideoMatch,undefined);
+  }
+});
+
+test('consumer semantic scoring ignores only projected task identity on a product-unbound candidate', () => {
+  const expected=normalizeSceneVisualContract({subjects:['person','product'],interaction:{kind:'person_using_product',description:'手部操作产品'},environment:{kind:'office',description:'设计工作室'},productRef:'云朵泡沫卸妆蜜',productPolicy:'preferred',action:{path:'手部持续操作'},evidence:{sourceRange:{startSeconds:0,endSeconds:0.6}}});
+  const projected=normalizeSceneVisualContract({subjects:['person','product'],interaction:{kind:'person_using_product',description:'手部操作并展示使用过程'},environment:{kind:'other',description:'生活场景'},productRef:'product:GUIANFA-RS-001',productPolicy:'locked',action:{path:'手部持续操作产品'}});
+  const candidate={assetId:'owned-generic',sourceRef:'owned-generic',segmentId:'generic',origin:'my_materials',mediaType:'video',productId:null,productRef:null,enterpriseCommon:true,productPolicy:'locked',materialRoles:['product','person_usage'],visualContract:projected,timeRange:{startSeconds:0,endSeconds:1},matchedVoiceoverCueIds:[],matchScore:1};
+  const input={policyVersion:'type-aware.v1' as const,tenantId:'tenant',productRef:'product:GUIANFA-RS-001',shots:[{shotId:'consumer',function:'demonstration' as const,materialType:'consumer_demo' as const,requestedDescription:'手部操作产品',visualContract:expected}]};
+  assert.deepEqual(materialRoutingRequests({...input,candidates:[candidate] as never})[0]!.localVideoMatch?.sourceRefs,['owned-generic']);
+  const identified={...candidate,assetId:'wrong-product',sourceRef:'wrong-product',productId:'OTHER-SKU',productRef:'其他品牌'};
+  assert.equal(materialRoutingRequests({...input,candidates:[identified] as never})[0]!.localVideoMatch,undefined);
 });

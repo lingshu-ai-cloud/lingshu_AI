@@ -50,12 +50,53 @@ test('only actual talking-head classification requests a presenter and unknown s
  const factorySpeaker=plan({shotId:'t',function:'hook',requestedDescription:'真人在工厂拿产品对镜口播'});assert.equal(factorySpeaker.sourceStrategy,'authorized_digital_presenter');assert.equal(factorySpeaker.feasibility,'goal_degraded');assert.equal(factorySpeaker.truthBoundary.subject,'customer_factory');assert.equal(factorySpeaker.truthBoundary.customerEvidenceRequired,true);assert.ok(factorySpeaker.truthBoundary.prohibitedRepresentations.includes('depict_generated_factory_as_customer_factory'));
  const unknown=plan({shotId:'unknown',function:'transition',materialType:'unknown'});assert.equal(unknown.sourceStrategy,'customer_real_asset');assert.equal(unknown.feasibility,'goal_degraded');assert.equal(unknown.productSceneReplication,undefined);
 });
+test('adjacent-shot boundary states do not contaminate material type classification',()=>{
+ const office:any={shotId:'office-ref',visualDescription:'手在 iPad 上绘制包装设计图',tags:{subjects:['person','product'],subjectRelations:['person uses tablet'],sceneTypes:['office']},visualContract:{schemaVersion:'social-scene-visual-contract.v1',subjects:[{subjectId:'person',kind:'person',description:'设计师的手',identityRef:null,confidence:null},{subjectId:'product',kind:'product',description:'包装设计',identityRef:null,confidence:null}],interaction:{kind:'person_using_product',description:'在 iPad 上绘图',actorSubjectId:null,objectSubjectId:null,contactArea:null},environment:{kind:'office',description:'设计工作室',details:[]},productUsage:{kind:'other',description:'包装设计',productId:null,productRef:'own-product'},product:{policy:'preferred',requestedProductId:null,requestedProductRef:'own-product',source:'agent_inferred'},action:{startState:'工人操作灌装黑色瓶子',path:'手在 iPad 上绘制包装设计图',peakState:'',endState:'设计图完成',startSeconds:1,peakSeconds:null,endSeconds:2},camera:{shotSize:'特写',angle:'俯视',movement:'固定镜头',composition:'中心构图'},precision:'standard',evidence:{sourceRange:{startSeconds:1,endSeconds:2},keyframeIds:[],confidence:1}}};
+ assert.equal(classifySocialAssetSupplyMaterialType({shotId:'office',referenceShotId:'office-ref',function:'demonstration',visualContract:office.visualContract},[office]),'consumer_demo');
+ const presenter:any={...office,shotId:'presenter-ref',visualDescription:'女主面向镜头做打电话手势',visualContract:{...office.visualContract,subjects:[{subjectId:'person',kind:'person',description:'女主',identityRef:null,confidence:null}],interaction:{...office.visualContract.interaction,kind:'other',description:'面向镜头做打电话手势'},environment:{kind:'other',description:'美妆展厅',details:[]},productUsage:{kind:'none',description:'',productId:null,productRef:null},action:{...office.visualContract.action,startState:'机器继续灌装膏体',path:'女主面向镜头做打电话手势'}}};
+ assert.notEqual(classifySocialAssetSupplyMaterialType({shotId:'presenter',referenceShotId:'presenter-ref',function:'call_to_action',visualContract:presenter.visualContract},[presenter]),'factory');
+});
+test('visible presenter evidence selects five slots in three runs while narrated people remain B-roll',()=>{
+ const ref=(shotId:string,purpose:any,visualDescription:string,spokenText:string,interaction:string='other'):any=>({shotId,purpose,visualDescription,spokenText,tags:{subjects:['person'],subjectRelations:[],sceneTypes:[]},visualContract:{subjects:[{kind:'person'}],interaction:{kind:interaction,description:visualDescription},environment:{kind:'other'},productUsage:{kind:'none'},action:{path:visualDescription}}});
+ const references=[
+  ref('r1','hook','女主站立，面向镜头，右手食指指向镜头','Beauty brand owners, stop guessing.'),
+  ref('r2','d_to_c','女主面向镜头，双手交叉做 X 手势','Stop launching on guesswork.'),
+  ref('r11','value','女模特手持精华液展示，看向镜头','Lip kits are trending.','person_holding_product'),
+  ref('r13','trust','工人操作自动灌装机','Our factory helps brands.','factory_process'),
+  ref('r18','value','一双手捧着两支唇釉','We support private label.','person_holding_product'),
+  ref('r30','value','女主面向镜头，双手做打电话手势','Tell us what market you want to sell in.'),
+  ref('r31','value','两位女性顾客从背后在货架前挑选产品','We will show opportunities.','person_using_product'),
+  ref('r35','call_to_action','女主面向镜头做打电话手势并比赞','DM me for the latest catalog.'),
+  ref('r36','call_to_action','女主面向镜头摊开双手并比赞','DM me for the latest catalog.'),
+ ];
+ const types=references.map(reference=>classifySocialAssetSupplyMaterialType({shotId:`s-${reference.shotId}`,referenceShotId:reference.shotId,function:reference.purpose,requestedDescription:`${reference.visualDescription}。保持画面中的静态姿态。`,visualContract:reference.visualContract},references));
+ assert.deepEqual(types.map((type,index)=>type==='talking_head'?references[index]!.shotId:null).filter(Boolean),['r1','r2','r30','r35','r36']);
+ assert.equal(types.filter(type=>type==='talking_head').length,5);
+});
 test('historical plans omit the new contract and explicit approved generation duration stays frozen',()=>{
  const shot:any={shotId:'p',function:'demonstration',requestedDescription:'纯产品展示',productRef:'own-product',productPolicy:'locked'};
  const historic=createSocialAssetSupplyPlan({creationMode:'viral_replication',inventory,shots:[shot]});assert.equal(historic.materialRoutingPolicyVersion,undefined);assert.equal(historic.shots[0].materialRouting,undefined);
  const original=historic.shots[0].productSceneReplication!;const snapshot=JSON.stringify(original);const current=plan({...shot,materialType:'product',productSceneReplication:original});
  assert.equal(current.materialRouting?.generation?.durationSeconds,original.cameraLock.durationSeconds);assert.equal(JSON.stringify(original),snapshot);
  assert.throws(()=>plan({...shot,materialType:'product',productSceneReplication:original,plannedDurationSeconds:original.cameraLock.durationSeconds+1}),/material_frozen_duration_changed/);
+});
+
+test('named preferred products cannot borrow another SKU packaging, and reference composition is rebuilt without benchmark pixels',()=>{
+ const extra={inventory:{...inventory,referenceVideoIds:['benchmark'],productIdentityGroups:[...inventory.productIdentityGroups,{productRef:'other-product',imageIds:['other-packaging']}]}};
+ const request={shotId:'p',function:'demonstration',materialType:'product',productRef:'own-product',productPolicy:'preferred',referenceShotId:'reference-p'};
+ const generated=plan(request,extra);
+ assert.deepEqual(generated.materialRouting?.generation?.productImageRefs,['own-image']);
+ assert.equal(generated.materialRouting?.generation?.method,'enterprise_authored_product_first_frame_i2v');
+ assert.equal(generated.materialRouting?.generation?.firstFrameOrigin,'enterprise_authored_storyboard');
+ assert.equal(generated.materialRouting?.generation?.referenceSourceId,'benchmark');
+ assert.equal(generated.materialRouting?.generation?.durationSeconds,3);
+ const missing=plan({...request,productRef:'missing-product'},extra);
+ assert.equal(missing.feasibility,'goal_degraded');
+ assert.deepEqual(missing.sourceRefs,[]);
+ const frozen=structuredClone(generated.materialRouting!);
+ frozen.generation!.method='enterprise_authored_product_first_frame_i2v';
+ const refreshed=plan({...request,materialRouting:frozen,productSceneReplication:generated.productSceneReplication},extra);
+ assert.equal(refreshed.materialRouting?.generation?.method,'enterprise_authored_product_first_frame_i2v');
 });
 test('explicit free edits retain a verified exact video window without enabling paid generation',()=>{
  const segment={sourceRef:'product-local',segmentId:'real-segment',startSeconds:2,endSeconds:5},shot={shotId:'p',function:'demonstration',materialType:'product',productRef:'own-product',localVideoMatch:{sourceRefs:['product-local'],semanticMatch:'verified',evidenceRef:'semantic:free',productRef:'own-product'},selectedMaterialSegment:segment};
@@ -64,13 +105,13 @@ test('explicit free edits retain a verified exact video window without enabling 
  assert.equal(plan({...shot,localVideoMatch:{...shot.localVideoMatch,evidenceRef:''}},{productionApproach:'material_cut'}).selectedMaterialSegment,undefined);
 });
 
-test('normal plan refresh preserves explicit original-pixel method while new product plans author KB-only frames',()=>{
+test('normal plan refresh migrates legacy original-pixel routes to KB-authored frames',()=>{
  const shot:any={shotId:'p',function:'demonstration',materialType:'product',productRef:'own-product',productPolicy:'locked'};
  const fresh=plan(shot);assert.equal(fresh.materialRouting?.generation?.firstFrameOrigin,'enterprise_authored_storyboard');
  const frozen=structuredClone(fresh.materialRouting!);frozen.generation!.method='reference_first_frame_product_replacement_i2v';delete frozen.generation!.firstFrameOrigin;
  const refreshed=plan({...shot,productSceneReplication:fresh.productSceneReplication,materialRouting:frozen});
- assert.equal(refreshed.materialRouting?.generation?.method,'reference_first_frame_product_replacement_i2v');
- assert.equal(refreshed.materialRouting?.generation?.firstFrameOrigin,'original_reference_pixels');
+ assert.equal(refreshed.materialRouting?.generation?.method,'enterprise_authored_product_first_frame_i2v');
+ assert.equal(refreshed.materialRouting?.generation?.firstFrameOrigin,'enterprise_authored_storyboard');
 });
 
 test('new generation freezes Wan while refresh cannot switch existing unspecified provider',()=>{const request={shotId:'p',function:'demonstration',materialType:'product',productRef:'own-product'};const fresh=plan(request);assert.equal(fresh.materialRouting?.generation?.videoProvider,'wan');assert.equal(fresh.materialRouting?.generation?.videoModel,'wan2.6-i2v-flash');assert.equal(fresh.materialRouting?.generation?.qaModel,'qwen3-vl-plus');const old=structuredClone(fresh.materialRouting!);delete old.generation!.videoProvider;delete old.generation!.videoModel;delete old.generation!.qaModel;const refresh=plan({...request,materialRouting:old,productSceneReplication:fresh.productSceneReplication});assert.equal(refresh.materialRouting?.generation?.videoProvider,undefined);assert.equal(refresh.materialRouting?.generation?.videoModel,undefined);assert.equal(refresh.materialRouting?.generation?.qaModel,undefined);});

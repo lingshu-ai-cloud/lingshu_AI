@@ -4,6 +4,8 @@ import {
   buildSocialShootingPlanArtifactContent,
   archiveSocialGeneratedShots,
   socialGeneratedShotArchiveCandidates,
+  bindCanonicalTypeAwareRouting,
+  assertCompleteTypeAwareExecutionPlan,
   SOCIAL_SHOOTING_PLAN_SCHEMA,
 } from './socialContentProductionExecution.js';
 import { archiveGeneratedSocialContentFile } from './socialContentFiles.js';
@@ -35,6 +37,22 @@ const detail: any = {
   },
 };
 
+{
+  const shots=Array.from({length:37},(_,i)=>({shotId:`replication-reference-shot-${i+1}`,sourceStrategy:i<21?'aigc_product_scene_replication':'customer_real_asset',sourceRefs:[],truthBoundary:{},materialRouting:{schemaVersion:'social-material-routing.v1',materialType:i<21?'product':'factory',policy:i<21?'local_first_product_i2v':'local_only',localMatch:{state:i<21?'missing':'matched',sourceRefs:i<21?[]:['local'],evidenceRef:i<21?null:'evidence'},...(i<21?{generation:{method:'reference_first_frame_product_replacement_i2v',durationSeconds:3,productImageRefs:['RS-001']}}:{})},...(i<21?{productSceneReplication:{schemaVersion:'social-product-scene-replication.v1',sceneTemplateKey:`scene-${i}`,productIdentity:{groups:[]}}}:{})}));
+  const canonical:any={planVersion:'27',materialRoutingPolicyVersion:'type-aware.v1',shots};
+  const approved:any={...structuredClone(canonical),shots:canonical.shots.map((shot:any)=>{const copy=structuredClone(shot);delete copy.materialRouting;delete copy.productSceneReplication;return copy})};
+  const rebound=bindCanonicalTypeAwareRouting(approved,canonical);
+  assert.equal(rebound.shots.length,37);
+  assert.equal(rebound.shots.filter((shot:any)=>shot.materialRouting).length,37);
+  assert.equal(rebound.shots.filter((shot:any)=>shot.materialRouting.materialType==='product'&&shot.productSceneReplication).length,21);
+  assert.doesNotThrow(()=>assertCompleteTypeAwareExecutionPlan(rebound));
+  const schedulerOverlay=structuredClone(approved);
+  const finalAfterAllOverlays=bindCanonicalTypeAwareRouting(schedulerOverlay,canonical);
+  assert.doesNotThrow(()=>assertCompleteTypeAwareExecutionPlan(finalAfterAllOverlays));
+  assert.throws(()=>assertCompleteTypeAwareExecutionPlan(schedulerOverlay),/execution_routing_missing:replication-reference-shot-1/);
+  assert.throws(()=>bindCanonicalTypeAwareRouting({...approved,shots:approved.shots.slice(1)},canonical),/scene_set_changed/);
+}
+
 const content: any = buildSocialShootingPlanArtifactContent(detail);
 assert.equal(content.workflowSchema, SOCIAL_SHOOTING_PLAN_SCHEMA);
 assert.equal(content.contentType, 'shooting_plan');
@@ -59,6 +77,19 @@ const shootingPlanFinalizer = source.slice(
 assert.doesNotMatch(shootingPlanFinalizer, /finishExecution\(/,
   'shooting plans must not enter the video delivery/publishing finalizer');
 assert.match(shootingPlanFinalizer, /stage: 'review_ready'[\s\S]*?status: 'completed'/);
+
+const presenterPrepare=source.indexOf('preparePresenterFirstFrameReviews:async');
+const presenterPause=source.indexOf("stage:'social.presenter_first_frames'");
+const wholeFilmBudget=source.indexOf('const productionBudget = await prepareSocialContentProductionBudget');
+const presenterProvider=source.indexOf('motherSupply=await preparePresenterMotherSupply(');
+assert.ok(wholeFilmBudget>0&&presenterPrepare>wholeFilmBudget&&presenterPause>presenterPrepare&&presenterProvider>presenterPause,
+  'whole-film admission must prepare and persist review nodes before any mother provider invocation');
+assert.match(source,/preparePresenterFirstFrameReviews:async[\s\S]*?await input\.runtime\.preparePresenterMotherFirstFrames[\s\S]*?status:'awaiting_explicit_user_confirmation'/,
+  'preflight callback must checkpoint inspectable review nodes before explicit confirmation is read');
+assert.match(source,/if\(!input\.runtime\?\.evaluatePresenterMotherDynamicQa\)throw Error\('presenter_mother_dynamic_qa_port_missing'\)[\s\S]*?await input\.runtime!\.evaluatePresenterMotherDynamicQa!/,
+  'dynamic presenter output must pass the bound identity and lip-sync QA port before crop receipts');
+assert.match(source,/const frozenReviewedSupplyPlan = reviewedSupplyPlan \? structuredClone\(reviewedSupplyPlan\) : null;[\s\S]*?frozenSupplyPlan: frozenReviewedSupplyPlan![\s\S]*?planHash:socialRequestHash\(frozenReviewedSupplyPlan\)/,
+  'product execution must bind an immutable reviewed supply snapshot before budget and adapter stages can mutate projections');
 
 const generatedAssets: any[] = [
   { id: 'product-scene', name: '产品镜头', type: 'video', sourceId: 'seedance:1', url: '/tmp/product.mp4', localPath: '/tmp/product.mp4', duration: 5, visualObservations: [], segments: [] },

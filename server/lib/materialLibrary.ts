@@ -6,6 +6,7 @@ import { isSyntheticMaterial } from './materialTruthfulness.js';
 import { currentDataAuthority } from '../storage/dataAuthority.js';
 import type { DataStore } from '../storage/datastore.js';
 import { tenantCatalogImageFile } from './enterpriseMediaImage.js';
+import sharp from 'sharp';
 export type MaterialRecord = Record<string, any> & { id: string };
 
 export interface SocialTaskMaterialRecordInput {
@@ -19,7 +20,10 @@ export interface SocialTaskMaterialRecordInput {
   productName?: string | null;
   record: MaterialRecord;
 }
-export function materialLibraryFile() { return path.resolve(process.cwd(), 'data', 'materials.json'); }
+export function materialLibraryFile() {
+  const configured = String(process.env.MATERIAL_LIBRARY_FILE || '').trim();
+  return configured ? path.resolve(configured) : path.resolve(process.cwd(), 'data', 'materials.json');
+}
 export function readLocalMaterials(): MaterialRecord[] {
   const file = materialLibraryFile();
   if (!fs.existsSync(file)) return [];
@@ -67,8 +71,19 @@ export function upsertSocialTaskMaterial(input: SocialTaskMaterialRecordInput): 
   const associations = { sourceTaskIds: taskIds, sourceTaskFileRefs: taskFileRefs, productRefs };
   if (index >= 0) {
     const current = records[index]!;
+    const enterpriseMetadata = input.record.sourceType === 'enterprise_product_table' ? {
+      width: input.record.width,
+      height: input.record.height,
+      licenseEvidence: input.record.licenseEvidence,
+      rightsEvidenceRef: input.record.rightsEvidenceRef,
+      rightsStatus: input.record.rightsStatus,
+      commercialUseApproved: input.record.commercialUseApproved,
+      sourceRevision: input.record.sourceRevision,
+      provenance: input.record.provenance,
+    } : {};
     const next: MaterialRecord = {
       ...current,
+      ...enterpriseMetadata,
       ...associations,
       ...(productRef ? { productRef } : {}),
       ...(productId ? { productId } : {}),
@@ -131,8 +146,9 @@ async function enterpriseProductImageMaterials(tenantId: string, dataStore?: Dat
   const products = profile?.products && typeof profile.products === 'object' ? profile.products as Record<string, unknown> : null;
   const items = Array.isArray(products?.items) ? products.items : [];
   const mediaRoot = path.resolve(process.env.SOCIAL_CONTENT_MEDIA_ROOT || path.join(process.cwd(), 'data/media'));
-  return items.flatMap((value, productIndex) => {
-    if (!value || typeof value !== 'object') return [];
+  const result: MaterialRecord[] = [];
+  for (const [productIndex, value] of items.entries()) {
+    if (!value || typeof value !== 'object') continue;
     const product = value as Record<string, unknown>;
     const productId = String(product.id || product.productId || product.sku || `product-${productIndex}`).trim();
     const productName = String(product.name || product.sku || productId).trim();
@@ -142,27 +158,32 @@ async function enterpriseProductImageMaterials(tenantId: string, dataStore?: Dat
       ...(Array.isArray(product.packagingImages) ? product.packagingImages : []),
     ];
     const seen = new Set<string>();
-    return assets.flatMap((asset, assetIndex) => {
-      if (!asset || typeof asset !== 'object') return [];
+    for (const [assetIndex, asset] of assets.entries()) {
+      if (!asset || typeof asset !== 'object') continue;
       const row = asset as Record<string, unknown>, url = String(row.url || '').trim();
-      if (!url || seen.has(url)) return [];
+      if (!url || seen.has(url)) continue;
       seen.add(url);
       const file = tenantCatalogImageFile(url, tenantId, mediaRoot);
-      if (!file) return [];
+      if (!file) continue;
       const bytes = fs.readFileSync(file), contentSha256 = createHash('sha256').update(bytes).digest('hex');
+      const metadata = await sharp(bytes).metadata();
+      if (!metadata.width || !metadata.height) continue;
       const relative = decodeURIComponent(new URL(url, 'http://local.invalid').pathname).replace(/^\/media\//, '');
-      return [{
+      const licenseEvidence = `enterprise_profile:${rows.items[0]?.id || 'profile'}:product:${productId}`;
+      result.push({
         id: `enterprise-product-${createHash('sha256').update(`${tenantId}\0${productId}\0${url}`).digest('hex').slice(0, 24)}`,
         tenantId, type: 'image', name: String(row.name || `${productName}图片 ${assetIndex + 1}`),
         folder: 'product', scope: 'own', usage: 'editable', url, file: relative,
         sourceType: 'enterprise_product_table', source: 'tenant_enterprise_profile',
         productId, productRef: `product:${productId}`, productRefs: [`product:${productId}`, productName], productName,
         contentSha256, contentHash: contentSha256, sourceRevision: contentSha256,
-        rightsStatus: 'authorized', rightsEvidenceRef: `enterprise_profile:${rows.items[0]?.id || 'profile'}:product:${productId}`,
+        width: metadata.width, height: metadata.height,
+        rightsStatus: 'authorized', rightsEvidenceRef: licenseEvidence, licenseEvidence, commercialUseApproved: true,
         createdAt: String(row.updatedAt || new Date(0).toISOString()),
-      } satisfies MaterialRecord];
-    });
-  });
+      } satisfies MaterialRecord);
+    }
+  }
+  return result;
 }
 /** The UI and worker share this inventory; source failures are never reported as an empty library. */
 export async function readMaterialLibrary(tenantId: string, adapters: {

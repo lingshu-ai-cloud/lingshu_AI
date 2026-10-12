@@ -15,11 +15,13 @@ import { isTenantPrivateObjectKey } from '../storage/materialAssets.js';
 import { tenantAssetDir } from './assetAccess.js';
 import { matchReplicationMaterial } from './replicationMaterialMatching.js';
 import { referenceCues } from '../../src/lib/digitalHumanPlan.js';
+import { assertReferencePresenterComposition, type ReferencePresenterComposition } from '../digitalEmployees/referencePresenterComposite.js';
 
 export interface AutomatedReplicationShot {
   shotId: string; slotId: string; kind: 'person' | 'nonperson' | 'blocked'; start: number; end: number;
   required?: boolean; productionState?: 'ready' | 'blocked'; blockerCode?: string; blocker?: string;
   fingerprintContext?: string;
+  referenceShotId?: string; referenceFirstFrameUrl?: string; referenceComposition?: ReferencePresenterComposition;
   firstFrameRequest?: Record<string, unknown>;
 }
 export interface ReplicationRouteReply { status: number; body: any }
@@ -165,6 +167,17 @@ export async function advanceAutomatedReplication(input: { tenantId: string; pro
       const requestId = `bridge:${createHash('sha256').update(`${key}:${assemblyId}:${entry.shotId}:${fingerprint}:${generationRevision}`).digest('hex').slice(0,40)}`;
       const b = { projectId: project.id, assemblyId, shotId: entry.shotId, fingerprint, requestId, confirmed: true, maxCostCny: input.maxCostCny };
       if (entry.kind === 'person') {
+        assertReferencePresenterComposition(entry.referenceComposition);
+        if (entry.referenceShotId !== entry.referenceComposition.referenceShotId
+          || entry.referenceFirstFrameUrl !== entry.referenceComposition.referenceFirstFrameUrl) {
+          throw new Error('真人口播对标分镜绑定不一致');
+        }
+        const personCues = referenceCues(shot.digitalHuman).filter(cue => cue.personShot !== false);
+        if (!personCues.length || personCues.some(cue => cue.referenceShotId !== entry.referenceShotId
+          || cue.referenceFirstFrameUrl !== entry.referenceFirstFrameUrl
+          || cue.composition?.referenceShotId !== entry.referenceShotId)) {
+          throw new Error('真人口播逐句计划未绑定当前对标分镜首帧');
+        }
         if (!referenceCues(shot.digitalHuman).every(cue => cue.personShot === false || cue.sourceFirstFrame?.materialId)) {
           const reply = await call('production', 'post', '/sentence-first-frames', b); if (reply.status >= 400 || !reply.body?.cues) throw nativeFailure(reply, '人物源首帧提取失败');
           const nextShot = { ...shot, digitalHuman: { ...shot.digitalHuman, reference: { ...shot.digitalHuman.reference, cues: reply.body.cues } } };

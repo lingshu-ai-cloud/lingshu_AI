@@ -61,7 +61,7 @@ function projectCategory(project: StudioProject): Exclude<CreationFilter, 'all'>
     : 'free_creation';
 }
 
-function projectPreviewUrl(project: StudioProject): string {
+function rawProjectPreviewUrl(project: StudioProject): string {
   const outputs = project.spec.languageRenderOutputs;
   if (outputs && typeof outputs === 'object') {
     const done = Object.values(outputs as Record<string, { status?: string; previewUrl?: string }>).find(
@@ -76,14 +76,22 @@ function projectHasAcceptedRender(project: StudioProject): boolean {
   const acceptance = project.spec.renderAcceptance;
   return Boolean(acceptance && typeof acceptance === 'object' && !Array.isArray(acceptance)
     && (acceptance as Record<string, unknown>).accepted === true
-    && (acceptance as Record<string, unknown>).renderPath === projectPreviewUrl(project));
+    && (acceptance as Record<string, unknown>).renderPath === rawProjectPreviewUrl(project));
+}
+
+function projectPreviewUrl(project: StudioProject): string {
+  return projectHasAcceptedRender(project) || project.status === 'ready_for_approval' || project.status === 'published'
+    ? rawProjectPreviewUrl(project) : '';
 }
 
 function statusLabel(project: StudioProject, previewUrl: string): string {
   if (projectHasAcceptedRender(project)) return '已验收成片';
-  if (previewUrl) return '待验收成片';
   if (project.status === 'published') return '已发布';
-  if (project.status === 'ready_for_approval') return '待验收';
+  if (project.status === 'ready_for_approval' && previewUrl) return '待验收成片';
+  if (project.title.startsWith('返工草稿 · ')) return '需返工';
+  const automation = project.spec.automation;
+  if (automation && typeof automation === 'object' && !Array.isArray(automation)
+    && (automation as Record<string, unknown>).stage === 'requires_revision') return '需返工';
   return '制作中';
 }
 

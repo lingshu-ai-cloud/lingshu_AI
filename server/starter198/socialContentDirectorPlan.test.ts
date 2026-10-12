@@ -246,3 +246,25 @@ assert.equal(naturalChineseRevision.scenes[0]?.voiceover, '详情请联系我们
 assert.doesNotMatch(naturalChineseRevision.scenes[0]?.voiceover ?? '', /的已。/);
 
 console.log('Social Director Agent plan contract tests passed');
+
+// Reference cut points are independent of short speech and music beats.
+const referencePayload = {
+  ...handoff,
+  outputSpec: { ...handoff.outputSpec, targetDurationSeconds: 38, maximumDurationSeconds: 38 },
+  scenes: Array.from({ length: 37 }, (_, index) => ({
+    ...handoff.scenes[0]!, sceneId: `ref-${index}`, order: index + 1,
+    referenceStructure: { shotScale: '中景' as const, cameraMovement: '固定镜头' as const,
+      pace: '紧凑' as const, transition: '快速切换' as const,
+      sourceTiming: { startSeconds: index, endSeconds: index === 36 ? 38 : index + 1, durationSeconds: index === 36 ? 2 : 1 } },
+    source: { ...handoff.scenes[0]!.source, type: 'video' as const, sourceStart: 0, sourceEnd: 3 },
+  })),
+};
+const { handoffHash: _referenceHash, ...referenceHashPayload } = referencePayload;
+const referenceHandoff = { ...referenceHashPayload, handoffHash: socialRequestHash(referenceHashPayload) };
+const referenceTimeline = socialDirectorRenderTimeline(referenceHandoff, 38,
+  Array.from({ length: 37 }, (_, index) => ({ start: index * 10 / 37, end: (index + 1) * 10 / 37 })), true);
+assert.equal(referenceTimeline.length, 37);
+assert.equal(referenceTimeline.at(-1)?.targetEnd, 38);
+assert.equal(referenceTimeline[20]?.targetStart, 20, 'short TTS cannot move locked reference cut points');
+assert.equal(referenceTimeline[36]?.targetDuration, 2);
+assert.throws(() => socialDirectorRenderTimeline(referenceHandoff, 10, undefined, true), /reference_timeline_missing_or_drifted/);

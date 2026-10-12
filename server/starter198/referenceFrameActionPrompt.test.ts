@@ -38,5 +38,6 @@ test('uses sampled beats and explicitly forbids invented product interaction', (
 test('does not invent motion from a static frame description', () => {
   const result = referenceFrameActionPrompt({ startState:'人物正对镜头，双手自然下垂' });
   assert.equal(result.evidenceKind, 'static_state');
+  assert.doesNotMatch(result.prompt, /口播|talking|speaking/i);
   assert.match(result.prompt, /不生成未经时间序列证实的产品交互动作/);
 });

@@ -38,35 +38,29 @@ test('failed video QA permits exactly one directed video retry while reusing the
  const result=await createEnvironmentSeedanceProductScenePorts({replacementPorts:factory({firstFrame:async()=>{frames++;return{bytes:Buffer.from('one-approved-frame'),providerRequestId:'frame',model:'controlled',estimatedCostCny:.6,canProceedToVideo:true,evidenceRefs:['frame-QA']};},video:async request=>{assert.equal(request.attempt,videos);if(request.attempt===0)assert.doesNotMatch(request.requestId,/attempt:/);if(request.attempt===1){assert.match(request.requestId,/attempt:1/);assert.match(request.prompt,/single directed correction/);}videos++;return{bytes:fs.readFileSync(provider),providerTaskId:`video-${request.attempt}`,model:'controlled',estimatedCostCny:2};},quality:async request=>{assert.equal(request.attempt,qas);qas++;return{productIdentitySimilarity:{product:request.attempt===0?0:1},labelOcrExactMatch:request.attempt===1,sceneTopologyScore:1,productSlotLayoutScore:1,cameraTrajectoryScore:1,evidenceRefs:[`qa-${request.attempt}`]};}})}).execute({...input,idempotencyKey:'directed-retry'});
  assert.equal(result.status,'completed');assert.equal(frames,1);assert.equal(videos,2);assert.equal(qas,2);
 });
-test('two pixel-integrity QA failures fall back to a zero-cost local motion clip from the approved frame',async()=>{
+test('two pixel-integrity QA failures stop the shot and never synthesize a still-image motion fallback',async()=>{
  const provider=path.join(root,'fallback-provider.mp4'),approved=path.join(root,'fallback-approved.png');
  assert.equal((await runVisualFfmpeg(['-f','lavfi','-i','testsrc2=size=160x288:rate=1','-frames:v','1','-y',approved],false,{timeoutMs:120000})).ok,true);
  assert.equal((await runVisualFfmpeg(['-f','lavfi','-i','testsrc2=size=160x288:rate=24','-t','4','-c:v','libx264','-pix_fmt','yuv420p','-y',provider],false,{timeoutMs:120000})).ok,true);
- const approvedBytes=fs.readFileSync(approved);let videos=0,qas=0;
- const result=await createEnvironmentSeedanceProductScenePorts({replacementPorts:factory({
-  firstFrame:async()=>({bytes:approvedBytes,providerRequestId:'approved-frame',model:'controlled',estimatedCostCny:.6,canProceedToVideo:true,evidenceRefs:['approved-frame-QA']}),
+ let videos=0,qas=0;
+ await assert.rejects(createEnvironmentSeedanceProductScenePorts({replacementPorts:factory({
+  firstFrame:async()=>({bytes:fs.readFileSync(approved),providerRequestId:'approved-frame',model:'controlled',estimatedCostCny:.6,canProceedToVideo:true,evidenceRefs:['approved-frame-QA']}),
   video:async request=>{videos++;return{bytes:fs.readFileSync(provider),providerTaskId:`failed-video-${request.attempt}`,model:'controlled',estimatedCostCny:2};},
   quality:async request=>{qas++;return{productIdentitySimilarity:{product:0},labelOcrExactMatch:false,sceneTopologyScore:.4,productSlotLayoutScore:.4,cameraTrajectoryScore:1,evidenceRefs:[`failed-QA-${request.attempt}`]};},
- })}).execute({...input,idempotencyKey:'local-fallback'});
- assert.equal(result.status,'completed');if(result.status!=='completed')throw Error('unexpected');
- assert.equal(videos,2,'the local fallback must not make a third provider request');assert.equal(qas,2,'the local fallback uses deterministic QA instead of a third paid QA request');
- assert.equal(result.providerId,'local-product-low-motion');assert.match(result.providerTaskId,/^local:/);assert.equal(result.actualCostCny,0);assert.equal(result.duration,3);
- assert.equal(result.quality.labelOcrExactMatch,true);assert.ok(result.quality.productIdentitySimilarity.product>=.82);
- const qa=JSON.parse(fs.readFileSync(result.quality.evidenceRefs.at(-2)!,'utf8'));
- assert.equal(qa.schemaVersion,'social-product-local-low-motion-QA.v1');assert.equal(qa.costCny,0);assert.equal(qa.sourceSha256,hash(approvedBytes));assert.equal(qa.invariants.providerCalledForFallback,false);assert.equal(qa.invariants.transformIsDeterministicAffineWithCodecInterpolation,true);assert.equal(qa.verification.samples.length,3);assert.ok(qa.verification.minimumSsim>=qa.verification.passThreshold);assert.deepEqual(qa.priorAigcQualityEvidenceRefs,['failed-QA-0','failed-QA-1']);
- assert.equal(qa.attemptedVideoCount,2);
- const lineage=JSON.parse(fs.readFileSync(result.quality.evidenceRefs.at(-1)!,'utf8'));assert.equal(lineage.provider,'local_deterministic_motion');assert.equal(lineage.fallbackCostCny,0);assert.equal(lineage.sourceSha256,hash(approvedBytes));
+ })}).execute({...input,idempotencyKey:'no-local-fallback'}),/product_scene_quality_failed_after_retry/);
+ assert.equal(videos,2);assert.equal(qas,2);
+ const evidence=fs.readdirSync(root).filter(name=>name.endsWith('-product-video-failed-QA.json')).map(name=>JSON.parse(fs.readFileSync(path.join(root,name),'utf8'))).at(-1)!;
+ assert.equal(evidence.passed,false);assert.deepEqual(evidence.forbiddenFallbacks,['still_image_zoom','still_image_pan','slideshow','motion_graphics']);assert.equal(evidence.attemptedVideoCount,2);
 });
-test('an unfunded retry is skipped and one funded failed attempt can use the local fallback',async()=>{
+test('an unfunded retry is skipped and one funded failed attempt still stops without local image motion',async()=>{
  const provider=path.join(root,'funded-only-provider.mp4'),approved=path.join(root,'funded-only-approved.png');
  assert.equal((await runVisualFfmpeg(['-f','lavfi','-i','testsrc2=size=160x288:rate=1','-frames:v','1','-y',approved],false,{timeoutMs:120000})).ok,true);
  assert.equal((await runVisualFfmpeg(['-f','lavfi','-i','testsrc2=size=160x288:rate=24','-t','4','-c:v','libx264','-pix_fmt','yuv420p','-y',provider],false,{timeoutMs:120000})).ok,true);
  let videos=0,qas=0;
- const result=await createEnvironmentSeedanceProductScenePorts({replacementPorts:factory({canUseVideoAttempt:attempt=>attempt===0,
+ await assert.rejects(createEnvironmentSeedanceProductScenePorts({replacementPorts:factory({canUseVideoAttempt:attempt=>attempt===0,
   firstFrame:async()=>({bytes:fs.readFileSync(approved),providerRequestId:'approved',model:'controlled',estimatedCostCny:.6,canProceedToVideo:true,evidenceRefs:['frame-QA']}),
   video:async()=>{videos++;return{bytes:fs.readFileSync(provider),providerTaskId:'only-funded-video',model:'controlled',estimatedCostCny:2};},
   quality:async()=>{qas++;return{productIdentitySimilarity:{product:0},labelOcrExactMatch:false,sceneTopologyScore:.4,productSlotLayoutScore:.4,cameraTrajectoryScore:1,evidenceRefs:['funded-failed-QA']};},
- })}).execute({...input,idempotencyKey:'funded-only-fallback'});
- assert.equal(result.status,'completed');if(result.status!=='completed')throw Error('unexpected');assert.equal(videos,1);assert.equal(qas,1);assert.equal(result.providerId,'local-product-low-motion');
- const qa=JSON.parse(fs.readFileSync(result.quality.evidenceRefs.at(-2)!,'utf8'));assert.deepEqual(qa.priorAigcQualityEvidenceRefs,['funded-failed-QA']);assert.equal(qa.attemptedVideoCount,1);assert.match(qa.reason,/available_authorized/);
+ })}).execute({...input,idempotencyKey:'funded-only-no-fallback'}),/product_scene_quality_failed_after_retry/);
+ assert.equal(videos,1);assert.equal(qas,1);
 });

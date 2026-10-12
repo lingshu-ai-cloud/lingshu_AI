@@ -16,7 +16,8 @@ const measurement: PresenterShotMeasurements = {
 
 function detail(value: Partial<PresenterShotMeasurements> | null, strategy = 'authorized_digital_presenter') {
   return {
-    referenceVideoAnalysis: { shots: [{ shotId: 'ref-1', presenterMeasurements: value ? { ...measurement, ...value } : undefined }] },
+    referenceVideoAnalysis: { shots: [{ shotId: 'ref-1', startSeconds: 0, endSeconds: 3,
+      presenterMeasurements: value ? { ...measurement, ...value } : undefined }] },
     agentWorkflow: {
       directorBrief: { scenes: [{
         sceneId: 'scene-1', referenceShotId: 'ref-1', duration: { targetSeconds: 3 },
@@ -70,6 +71,19 @@ phraseMeasured.referenceVideoAnalysis.shots[0].spokenLines = [{ text: 'hello', p
   provenance: 'qwen_filetrans:measured_words', startSeconds: 0.1, endSeconds: 1.8 }];
 assert.equal(selectPresenterExecutions({ detail: phraseMeasured, heygenReady: true,
   seedancePresenterReady: false, budgetReady: true })[0].providerId, 'heygen');
+assert.equal(selectPresenterExecutions({ detail: phraseMeasured, heygenReady: true,
+  seedancePresenterReady: false, budgetReady: true })[0].decision.measurements.visibleSpeechSeconds, 1.7,
+  'verified phrase ASR is intersected with the exact visual shot interval');
+const narrationOutsideShot = detail({ visibleSpeechSeconds: null, lipSyncRequired: null,
+  specificGestureCount: null, bodyCenterTravelFrameWidth: null, cameraTravelFrameDiagonal: null,
+  compositionLockRequired: null, physicalProductContact: null, decisionConfidence: 0 });
+narrationOutsideShot.referenceVideoAnalysis.shots[0].startSeconds = 0;
+narrationOutsideShot.referenceVideoAnalysis.shots[0].endSeconds = 3;
+narrationOutsideShot.referenceVideoAnalysis.shots[0].spokenLines = [{ text: 'later', precision: 'phrase',
+  provenance: 'qwen_filetrans:measured_words', startSeconds: 4, endSeconds: 5 }];
+assert.equal(selectPresenterExecutions({ detail: narrationOutsideShot, heygenReady: true,
+  seedancePresenterReady: false, budgetReady: true })[0].executionStatus, 'blocked',
+  'ASR outside the visual interval cannot satisfy the presenter measurement gate');
 const contact = route({ physicalProductContact: true, specificGestureCount: 1 });
 assert.equal(contact.decision.route, 'blocked');
 assert.equal(contact.providerId, null);

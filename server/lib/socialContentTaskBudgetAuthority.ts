@@ -24,6 +24,14 @@ export interface SocialApprovedBudgetPlan {
     /** Includes every paid stage (images, QA, presenter, voice, analysis, retries).
      * This is produced by the trusted planner, never passed from an HTTP body. */
     paidOperations: SocialPaidOperationIntent[];
+    presenterGroups?: Array<{
+        groupId: string;
+        shotIds: string[];
+        durationSeconds: number;
+        spokenText: string;
+        presenterAssetId: string;
+        contractHash: string;
+    }>;
 }
 export interface SocialVerifiedAccountTariff {
     provider: string;

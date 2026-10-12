@@ -7,7 +7,7 @@ import {createHash} from 'node:crypto';
 import {execFileSync} from 'node:child_process';
 import ffmpeg from 'ffmpeg-static';
 import {createWholeTrackSocialHeyGenBridge} from './socialContentWholeTrackHeyGenBridge.js';
-import {paidProductionHash} from './socialContentPaidOperationPlan.js';
+import {paidProductionHash,presenterGroupContractHash} from './socialContentPaidOperationPlan.js';
 import {productionBillingAccountRef} from './socialContentProductionBudgetRoutes.js';
 const sha=(b:Buffer|string)=>createHash('sha256').update(b).digest('hex');
 function fixture(){
@@ -56,4 +56,18 @@ test('accepted raw receipt restores original task despite crash before ledger ac
  const f=fixture();try{f.setAcceptCrash();assert.equal((await f.execute(createWholeTrackSocialHeyGenBridge(f.options))).status,'uncertain');assert.equal(f.rows[0].provider_task_id,undefined);
  const restored=await createWholeTrackSocialHeyGenBridge(f.options).recoverExisting!(f.request);assert.equal(restored?.status,'completed');assert.deepEqual(f.counters(),{uploads:1,posts:1,gets:1});
  }finally{f.cleanup();}
+});
+test('group request uses one canonical mother-segment operation and rejects changed member contract hash',async()=>{
+ const configure=(f:ReturnType<typeof fixture>)=>{
+  const groupId='presenter-group-a',shotIds=['s1','s2'];
+  const value={groupId,shotIds,durationSeconds:1,spokenText:'Hello.',presenterAssetId:'person'};
+  const requirement={key:`presenter-group:${groupId}:presenter`,stage:'presenter_video',shotId:null,sourceRef:null,durationSeconds:1,text:'Hello.',frameCount:null,presenterGroupId:groupId,presenterGroupShotIds:shotIds,presenterAssetId:'person',presenterGroupContractHash:presenterGroupContractHash(value),inputContractHash:'d'.repeat(64)};
+  const route=Object.values(f.options.funding.routeBindings)[0] as any;
+  const intent={operationId:'paid-plan:'+paidProductionHash({scope:f.scope,key:requirement.key,attempt:0}),provider:route.provider,model:route.model,accountRef:route.accountRef,stage:requirement.stage,shotId:null,inputContractHash:paidProductionHash({requirement,route,attempt:0}),maximumUnits:route.maximumUnits};
+  f.options.funding.requirements=[requirement];f.options.funding.routeBindings={[requirement.key]:route};f.options.funding.intents=[intent];f.request.shotId=groupId;
+  const prepared=JSON.parse(fs.readFileSync(f.options.prepared.receiptRef,'utf8'));prepared.scenes=[{shotId:groupId,spokenText:'Hello.',startSeconds:0,endSeconds:1,durationSeconds:1}];fs.writeFileSync(f.options.prepared.receiptRef,JSON.stringify(prepared));
+  return {requirement,intent};
+ };
+ const f=fixture();try{const {intent}=configure(f);const output=await f.execute(createWholeTrackSocialHeyGenBridge(f.options));assert.equal(output.status,'completed');assert.equal(f.claims.length,1);assert.equal(f.claims[0].operationId,intent.operationId);assert.equal(f.claims[0].shotId,null);assert.deepEqual(f.counters(),{uploads:1,posts:1,gets:1});}finally{f.cleanup();}
+ const changed=fixture();try{const {requirement}=configure(changed);requirement.presenterGroupShotIds=['s1','s3'];await assert.rejects(createWholeTrackSocialHeyGenBridge(changed.options).resolveSpeechAudio!(changed.request),/group_contract_changed/);assert.deepEqual(changed.counters(),{uploads:0,posts:0,gets:0});}finally{changed.cleanup();}
 });

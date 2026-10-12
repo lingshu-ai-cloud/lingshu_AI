@@ -14,6 +14,7 @@ export interface PresenterCreation {
   id: string; name: string; type: 'photo' | 'digital_twin'; voiceId?: string;
   status: 'submitting' | 'processing' | 'pending_consent' | 'completed' | 'failed' | 'uncertain';
   look?: PresenterLook; groupId?: string; error?: string; consentUrl?: string;
+  consentStatus?: string;
   consentRequestedAt?: string;
   createdAt: string; updatedAt: string;
 }

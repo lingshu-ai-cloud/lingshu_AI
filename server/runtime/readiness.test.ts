@@ -125,6 +125,14 @@ try {
   assert.equal(qualityReady.localVisual.ready, true);
   assert.equal(qualityReady.lipSync.ready, true);
   assert.equal(qualityReady.autoRelease.ready, true);
+
+  const qualityReadyWithoutSyncNet = await digitalHumanQualityRuntimeReadiness({
+    DIGITAL_HUMAN_VISUAL_QA_PYTHON: fakePython,
+    DIGITAL_HUMAN_SEMANTIC_QA_ENABLED: 'true', DASHSCOPE_API_KEY: 'configured-for-test', QWEN_DIGITAL_HUMAN_QA_MODEL: 'qwen-test',
+  });
+  assert.equal(qualityReadyWithoutSyncNet.lipSync.ready, false);
+  assert.equal(qualityReadyWithoutSyncNet.autoRelease.ready, true,
+    'an unconfigured optional SyncNet diagnostic must not block automatic production');
   fs.rmSync(qualityRoot, { recursive: true, force: true });
 
   process.env.GEMINI_API_KEY = 'configured-for-test';

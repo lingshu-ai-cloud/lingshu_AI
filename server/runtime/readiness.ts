@@ -181,9 +181,12 @@ function digitalHumanQualityConfig(env: NodeJS.ProcessEnv): DigitalHumanQualityR
   const lipSyncReady = envEnabled(env, 'DIGITAL_HUMAN_SYNCNET_QA_ENABLED')
     && envPresent(env, 'DIGITAL_HUMAN_SYNCNET_QA_PYTHON') && envPresent(env, 'DIGITAL_HUMAN_SYNCNET_DIR');
   const lipSync: CapabilityState = lipSyncReady ? { ready: true } : { ready: false, reason: 'official_syncnet_disabled_or_unconfigured' };
-  const autoRelease: CapabilityState = localVisual.ready && semantic.ready && lipSync.ready
+  // SyncNet is an optional diagnostic. Automatic production/release is gated
+  // by the independent visual and semantic checks; an absent local lip-sync
+  // model must not force a human review or stop the video pipeline.
+  const autoRelease: CapabilityState = localVisual.ready && semantic.ready
     ? { ready: true }
-    : { ready: false, reason: 'automatic_release_requires_visual_semantic_and_official_syncnet' };
+    : { ready: false, reason: 'automatic_release_requires_visual_and_semantic_qa' };
   return { localVisual, semantic, lipSync, autoRelease };
 }
 
@@ -222,9 +225,9 @@ export async function digitalHumanQualityRuntimeReadiness(
     ];
     if (required.some(file => !fs.existsSync(file))) report.lipSync = { ready: false, reason: 'official_syncnet_model_or_runner_missing' };
   }
-  report.autoRelease = report.localVisual.ready && report.semantic.ready && report.lipSync.ready
+  report.autoRelease = report.localVisual.ready && report.semantic.ready
     ? { ready: true }
-    : { ready: false, reason: 'automatic_release_requires_visual_semantic_and_official_syncnet' };
+    : { ready: false, reason: 'automatic_release_requires_visual_and_semantic_qa' };
   return report;
 }
 

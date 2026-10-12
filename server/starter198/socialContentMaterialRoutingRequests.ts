@@ -1,5 +1,5 @@
 import { classifySocialAssetSupplyMaterialType, type SocialAssetSupplyShotRequest } from '../../shared/socialContentAssetSupply.js';
-import { normalizeSceneVisualContract, scoreSceneVisualCompatibility } from '../../shared/sceneVisualContract.js';
+import { normalizeSceneVisualContract, scoreSceneVisualCompatibility, type SocialSceneVisualContract } from '../../shared/sceneVisualContract.js';
 import type { SocialReferenceShotAnalysis } from '../../shared/contracts/socialContentWorkflow.js';
 import type { SocialWorkflowMaterialClipCandidate } from './socialContentRecords.js';
 import { socialRequestHash } from './socialContentValidation.js';
@@ -12,8 +12,23 @@ const actionRequirements = [
   /手持|手握|hold|grip/i,
   /涂抹|上脸|apply|applying|rub/i,
 ];
-const affirmative = (text: string) => text.split(/[；;。，,\n]/)
-  .filter(clause => !/禁止|不得|不能|没有|未见|without|\b(?:no|not)\s/i.test(clause)).join('；');
+const affirmative = (text: string) => (text.split(/须避免[:：]?|负面提示[:：]?|negative\s*prompt[:：]?|\bavoid[:：]?/i, 1)[0] ?? '').split(/[；;。，,\n]/)
+  .filter(clause => !/禁止|不得|不能|没有|未见|不添加|不出现|without|\b(?:no|not)\s/i.test(clause)).join('；');
+
+function consumerSemanticScore(expected: SocialSceneVisualContract, candidate: SocialWorkflowMaterialClipCandidate): number {
+  if (candidate.productId || candidate.productRef) return scoreSceneVisualCompatibility(expected, candidate.visualContract);
+  // Candidate construction projects the task's authoritative product identity
+  // into every visual contract. For a genuinely product-unbound usage clip,
+  // that projection is planning context rather than observed package evidence.
+  // Neutralize it only for semantic scoring; a candidate with any observed
+  // product identity continues through the strict product-compatibility path.
+  const withoutProductIdentity = (contract: SocialSceneVisualContract): SocialSceneVisualContract => normalizeSceneVisualContract({
+    ...contract,
+    productUsage: { ...contract.productUsage, productId: null, productRef: null },
+    product: { policy: 'open', requestedProductId: null, requestedProductRef: null, source: 'inventory_open' },
+  });
+  return scoreSceneVisualCompatibility(withoutProductIdentity(expected), withoutProductIdentity(candidate.visualContract));
+}
 
 /** Uses analyzed, tenant-scoped segments rather than treating inventory presence as a match. */
 export function materialRoutingRequests(input: {
@@ -50,20 +65,44 @@ export function materialRoutingRequests(input: {
     const plannedShot = ['product', 'factory', 'consumer_demo'].includes(materialType)
       ? { ...shot, visualContract: expected } : shot;
     const required = actionRequirements.filter(pattern => pattern.test(description));
+    const evidenceDuration = expected.evidence.sourceRange
+      ? expected.evidence.sourceRange.endSeconds - expected.evidence.sourceRange.startSeconds : NaN;
+    // A local clip only has to cover this edit slot. Requiring every analyzed
+    // source segment to be three seconds discarded exact 0.5–1 second reference
+    // beats even when the owned segment was substantially longer than the slot.
+    const requiredDuration = Number.isFinite(shot.plannedDurationSeconds) && Number(shot.plannedDurationSeconds) > 0
+      ? Number(shot.plannedDurationSeconds)
+      : Number.isFinite(evidenceDuration) && evidenceDuration > 0 ? evidenceDuration : 3;
     const candidates = input.candidates.filter(candidate => {
       if (candidate.synthetic || candidate.origin !== 'my_materials' || candidate.mediaType !== 'video' || !candidate.timeRange
-        || candidate.timeRange.endSeconds - candidate.timeRange.startSeconds < 3) return false;
+        || candidate.timeRange.endSeconds - candidate.timeRange.startSeconds + 0.001 < requiredDuration) return false;
       if (materialType === 'talking_head' || materialType === 'unknown') return false;
       if (materialType === 'factory' && !candidate.materialRoles.includes('factory')) return false;
-      if (materialType === 'consumer_demo' && !candidate.materialRoles.includes('person_usage')) return false;
+      if (materialType === 'consumer_demo' && (!candidate.materialRoles.includes('person_usage')
+        || candidate.materialRoles.includes('factory') || candidate.materialRoles.includes('presenter'))) return false;
+      if (materialType === 'consumer_demo' && (candidate.productId || candidate.productRef) && shot.productRef) {
+        const identity = (value: unknown) => String(value ?? '').normalize('NFKC').trim().toLocaleLowerCase().replace(/^product:/, '');
+        if (![candidate.productId, candidate.productRef].map(identity).filter(Boolean).includes(identity(shot.productRef))) return false;
+      }
       if (materialType === 'product' && (!shot.productRef || String(candidate.productRef ?? '').trim().toLocaleLowerCase()
         !== shot.productRef.trim().toLocaleLowerCase())) return false;
       const visual = candidate.visualContract;
       const observed = affirmative([visual.action.path, visual.interaction.description,
         ...visual.subjects.map(subject => subject.description)].join('；'));
-      return required.every(pattern => pattern.test(observed)) && scoreSceneVisualCompatibility(expected, visual) >= 0.72;
-    }).sort((a, b) => scoreSceneVisualCompatibility(expected, b.visualContract)
-      - scoreSceneVisualCompatibility(expected, a.visualContract) || a.assetId.localeCompare(b.assetId));
+      const visualScore = materialType === 'consumer_demo' ? consumerSemanticScore(expected, candidate)
+        : scoreSceneVisualCompatibility(expected, visual);
+      // Factory footage is selected by its analyzed factory role and observed
+      // process action. Cosmetic differences from the reference must not erase
+      // a real tenant-owned filling, conveyor or inspection candidate.
+      const minimumVisualScore = materialType === 'factory' ? (required.length ? 0.4 : 0.6)
+        // Consumer b-roll preserves the real hand/person-use function while the
+        // reference's set dressing may differ. The role exclusions above keep
+        // factory and presenter footage out of this bounded fallback.
+        : materialType === 'consumer_demo' ? 0.65 : 0.72;
+      return required.every(pattern => pattern.test(observed)) && visualScore >= minimumVisualScore;
+    }).sort((a, b) => (materialType === 'consumer_demo' ? consumerSemanticScore(expected, b) - consumerSemanticScore(expected, a)
+      : scoreSceneVisualCompatibility(expected, b.visualContract) - scoreSceneVisualCompatibility(expected, a.visualContract))
+      || a.assetId.localeCompare(b.assetId));
     const match = candidates[0];
     if (!match?.timeRange) return { ...plannedShot, materialType };
     const segment = { sourceRef: match.sourceRef, segmentId: match.segmentId,

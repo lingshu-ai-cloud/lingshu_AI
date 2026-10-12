@@ -154,6 +154,11 @@ try {
     'customer_service',
     'authorization must use the persisted role rather than a token claim',
   );
+  assert.equal(
+    await runWithDataAuthority('local', () => requestOrganizationRoleStrict(undefined, account.userId)),
+    'customer_service',
+    'an authenticated local asset session must resolve its persisted role without crossing into PocketBase',
+  );
 
   const requestsBeforeLocalRead = pocketBaseRequests;
   const localRows = await runInDataAuthorityRequestScope(async () => {

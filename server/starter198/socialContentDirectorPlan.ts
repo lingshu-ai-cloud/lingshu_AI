@@ -204,6 +204,7 @@ export interface SocialDirectorContentHandoff {
   scenes: Array<{
     sceneId: string;
     order: number;
+    referenceStructure?: StoredSocialDirectorPlan['scenes'][number]['referenceStructure'];
     script: StoredSocialDirectorPlan['scenes'][number]['script'];
     voiceover: string;
     caption: string;

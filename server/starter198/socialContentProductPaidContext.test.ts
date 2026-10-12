@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {bindProductPaidStage, hasProductPaidStage, type ProductPaidContext, type ProductPaidStage} from './socialContentProductPaidContext.js';
+import {bindProductPaidStage, hasProductPaidStage, productPaidReservedCostCny, type ProductPaidContext, type ProductPaidStage} from './socialContentProductPaidContext.js';
 import {paidProductionHash} from './socialContentPaidOperationPlan.js';
 const scope={tenantId:'tenant',taskId:'task',runId:'run',planHash:'a'.repeat(64)};
 function fixture(stage:ProductPaidStage) {
@@ -14,6 +14,17 @@ function fixture(stage:ProductPaidStage) {
 test('attempt one binds only the separately reserved video and video QA intents',()=>{
  for(const stage of ['video','video_qa'] as const){const f=fixture(stage),r=f.context.requirements[0]!,route=f.context.routeBindings[r.key]!;f.context.intents.push({...f.context.intents[0]!,operationId:'paid-plan:'+paidProductionHash({scope,key:r.key,attempt:1}),inputContractHash:paidProductionHash({requirement:r,route,attempt:1})});assert.equal(bindProductPaidStage(f.context,'S04',stage,1).intent.operationId,f.context.intents[1]!.operationId);}
  const frame=fixture('first_frame');assert.throws(()=>bindProductPaidStage(frame.context,'S04','first_frame',1),/attempt_invalid/);
+});
+test('product shot audit includes both reserved retry operations without duplicating static stages',()=>{
+ const f=fixture('video');
+ f.context.requirements=[];f.context.routeBindings={};f.context.intents=[];f.context.readReservedCny=()=>.5;
+ for(const stage of ['first_frame','first_frame_qa','video','video_qa'] as const){
+  const part=fixture(stage),requirement=part.context.requirements[0]!,route=part.context.routeBindings[requirement.key]!;
+  f.context.requirements.push(requirement);f.context.routeBindings[requirement.key]=route;
+  f.context.intents.push(part.context.intents[0]!);
+  if(stage==='video'||stage==='video_qa')f.context.intents.push({...part.context.intents[0]!,operationId:'paid-plan:'+paidProductionHash({scope,key:requirement.key,attempt:1}),inputContractHash:paidProductionHash({requirement,route,attempt:1})});
+ }
+ assert.equal(productPaidReservedCostCny(f.context,'S04'),3);
 });
 test('funded-attempt discovery distinguishes a missing retry from malformed funding',()=>{
  const f=fixture('video');assert.equal(hasProductPaidStage(f.context,'S04','video',0),true);assert.equal(hasProductPaidStage(f.context,'S04','video',1),false);

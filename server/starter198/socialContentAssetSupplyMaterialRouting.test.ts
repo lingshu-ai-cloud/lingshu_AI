@@ -31,11 +31,11 @@ test('explicit product mismatch dispatches only reviewed product I2V, and unknow
  const p=plan('product','missing');let local=0,generated=0;const localAdapter=adapter();localAdapter.execute=async()=>{local++;return null;};const gen:SocialAssetSupplyProviderAdapter={adapterId:'product-i2v',sourceStrategies:['aigc_product_scene_replication'],async execute(context){generated++;assert.equal((context.shot as any).materialRouting.generation.durationSeconds,3);throw Error('provider_submission_unknown:receipt-persisted');}};
  await assert.rejects(run(p,[localAdapter,gen]),/provider_submission_unknown/);assert.equal(local,0);assert.equal(generated,1);
 });
-test('reviewed customer product image animation uses only the locked enterprise image and no paid adapter',async()=>{
+test('product image animation is rejected before local zoom or paid generation can run',async()=>{
  const p=plan('product','missing');p.shots[0]!.sourceStrategy='customer_product_image_animation';let local=0,paid=0;
- const exact:SocialAssetSupplyProviderAdapter={adapterId:'locked-local-motion',sourceStrategies:['customer_product_image_animation'],async execute(context){local++;assert.deepEqual(context.shot.sourceRefs,['actual-product-image']);assert.equal(context.shot.materialRouting?.generation?.durationSeconds,3);return {asset:{id:'local-motion',sourceId:'actual-product-image:motion',type:'video',url:'local',localPath:'local',name:'locked image motion',duration:3,segments:[]} as any,sourceStrategy:'customer_product_image_animation',providerId:'local-ffmpeg',sourceRef:'actual-product-image',synthetic:true,representation:'non_evidentiary_visual',authorizationRef:'tenant-product-rights',disclosure:'Synthetic product motion from an authorized enterprise image.'};}};
- const result=await run(p,[exact,{adapterId:'paid-trap',sourceStrategies:['aigc_product_scene_replication'],async execute(){paid++;throw Error('unexpected paid');}}]);
- assert.equal(result.assets[0]!.id,'local-motion');assert.equal(local,1);assert.equal(paid,0);
+ const exact:SocialAssetSupplyProviderAdapter={adapterId:'forbidden-local-motion',sourceStrategies:['customer_product_image_animation'],async execute(){local++;throw Error('must-not-render');}};
+ await assert.rejects(run(p,[exact,{adapterId:'paid-trap',sourceStrategies:['aigc_product_scene_replication'],async execute(){paid++;throw Error('unexpected paid');}}]),/still_image_motion_forbidden/);
+ assert.equal(local,0);assert.equal(paid,0);
 });
 test('customer product image animation rejects unfrozen duration and missing locked image contract before execution',async()=>{
  for(const mutate of [(p:ReturnType<typeof plan>)=>{p.shots[0]!.productSceneReplication!.cameraLock.durationSeconds=4;},(p:ReturnType<typeof plan>)=>{p.shots[0]!.materialRouting!.generation!.productImageRefs=[];}]){

@@ -452,7 +452,11 @@ assert.match(pageSource, /statusSourceLabel\[task\.statusSource\]/, 'plan previe
 assert.match(pageSource, /\/api\/overseas\/enterprise\/profile/, 'the onboarding product table must be loaded from the tenant enterprise knowledge profile');
 assert.match(firstOnboardingSource, /label="企业名称"[\s\S]*label="品牌名称"/, 'first onboarding step must ask only for enterprise and brand names');
 assert.doesNotMatch(firstOnboardingSource, /label="(?:所属行业|目标市场|核心客户|经营目标|重点产品|Agent 设置)"/, 'first onboarding step must not ask for operating assumptions');
-assert.match(productTableOnboardingSource, /primaryLabel="确认产品表，下一步"[\s\S]*上传产品表/, 'second onboarding step must only import or confirm the product table');
+assert.match(productTableOnboardingSource, /primaryLabel="确认产品表，下一步"[\s\S]*上传产品资料/, 'second onboarding step must only import or confirm the product table');
+assert.match(productTableOnboardingSource, /accept="\.xlsx,\.xls,\.csv,\.pdf,\.docx,\.txt"/, 'product onboarding must accept spreadsheet, PDF, DOCX and TXT files');
+assert.match(productTableOnboardingSource, /支持 Excel（\.xlsx\/\.xls）、CSV、PDF、Word（\.docx）和 TXT/, 'product onboarding must explain every supported mainstream format');
+assert.match(pageSource, /parseProductDocument\(file\)/, 'product onboarding must parse PDF and DOCX through the document importer');
+assert.match(pageSource, /productsFromLabeledText\(await readProductDiscoveryFile\(file\)\)/, 'product onboarding must parse labeled TXT product fields');
 assert.doesNotMatch(productTableOnboardingSource, /确认重点产品|按资料完整度推荐产品|本期暂无产品，先继续|快速添加产品|Agent 设置/, 'product-table onboarding must only accept an imported or existing table, without focus-product or Agent setup');
 assert.match(pageSource, /primaryLabel=\{allowInitialPlan \? "生成推荐计划" : "完成引导并保存"\}/, 'the fourth onboarding step must lead into the recommended initial operating plan');
 assert.match(pageSource, /<InitialOperatingPlanDialog[\s\S]{0,1200}onConfirm=\{plan => void completeMinimalOnboarding\(plan\)\}/, 'the recommended plan must return the confirmed plan to onboarding');

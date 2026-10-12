@@ -13,6 +13,8 @@ import { writeExecutionStage } from './socialContentAutoProduction.js';
 import { createSocialDeliveryPackage } from './socialContentOutputs.js';
 import { graphRuntimeInventoryVisible, readCanonicalGraphRuntimeMedia } from './socialContentGraphRuntimeInventory.js';
 import { withStarter198RunMutationLease } from './runMutationLease.js';
+import { assertSocialContentReleaseQuality } from './socialContentReleaseQuality.js';
+import { socialTaskSummary } from './socialContentRecords.js';
 
 type Detail = NonNullable<Awaited<ReturnType<typeof readSocialTaskDetail>>>;
 /** Compare business authority, excluding only identifiers derived from task projection versions. */
@@ -138,6 +140,11 @@ export async function loadSocialProductionGraphApproval(repository: Starter198Re
     || receipt.target_id !== job.taskId)
     throw new Error('user_input_required:graph_review_receipt_invalid');
   await assertStudioSocialArtifactGeneration(job.tenantId, socialText(artifact.artifact_kind), artifact.content);
+  const content = socialJson(artifact.content);
+  if (socialObject(content)?.workflowSchema === 'social-content.auto-production.v3') {
+    const task = await requireSocialTask({ repository, tenantId: job.tenantId, taskId: job.taskId });
+    assertSocialContentReleaseQuality({ brief: socialTaskSummary(task).brief, content, mode: 'human' });
+  }
   return { approved: true, receiptRef, subjectVersion: evidence.version, contentHash: evidence.contentHash };
 }
 

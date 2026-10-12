@@ -1,0 +1,56 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import fs from 'node:fs';
+import { renderToStaticMarkup } from 'react-dom/server';
+import PresenterManager from './PresenterManager.js';
+
+const props = { onClose: () => {}, onSaved: () => {} };
+const source = fs.readFileSync('src/components/enterprise/PresenterManager.tsx', 'utf8');
+
+test('presenter onboarding exposes one material upload instead of technical creation modes', () => {
+  const html = renderToStaticMarkup(<PresenterManager {...props} />);
+  assert.match(html, /人物素材/);
+  assert.match(html, /Digital Twin 视频须为 30 秒至 5 分钟/);
+  assert.match(html, /提交人物并继续官方授权/);
+  assert.match(source, /选择已有声音/);
+  assert.match(source, /录入本人声音/);
+  assert.match(source, /直接录音（推荐）/);
+  assert.match(source, /开始录音/);
+  assert.doesNotMatch(source, />提交本人声音</);
+  assert.match(source, /人像授权通过后，可在保存人物时一并录入本人声音/);
+  assert.match(source, /也可直接提交较短的有效录音/);
+  assert.match(source, /已完成并选中/);
+  assert.match(source, /presenterConsentReturn/);
+  assert.match(source, /window\.location\.assign\(updated\.consentUrl\)/);
+  assert.match(source, /voicePollInFlight/);
+  assert.doesNotMatch(source, /const refreshVoiceClone = \(\) => run/);
+  assert.match(source, /disabled=\{busy \|\| !name\.trim\(\)/);
+  assert.match(source, /正在创建人物任务/);
+  assert.match(source, /声音处理中，将自动保存/);
+  assert.match(source, /本次提交未完成/);
+  assert.match(source, /actionFeedback\.current\?\.scrollIntoView/);
+  assert.match(source, /authorizationSection\.current\?\.scrollIntoView/);
+  assert.match(source, /resumeSaveAfterVoice/);
+  assert.match(source, /window\.setTimeout\(\(\) => void saveSelected\(result\.voice!\.id\), 0\)/);
+  assert.match(source, /clean\.searchParams\.delete\('presenterConsentReturn'\)/);
+  assert.doesNotMatch(source, /disabled=\{!name\.trim\(\) \|\| !file \|\| !voiceId/);
+  assert.match(source, /还需完成：/);
+  assert.match(source, /前往 HeyGen 完成本人授权/);
+  assert.doesNotMatch(source, /模拟官方授权|mockConsentCompletionAvailable|mockComplete/);
+  assert.match(source, /邀请您创建属于自己的口播角色/);
+  assert.match(source, /或上传本人录音/);
+  assert.match(source, /先按 HeyGen 官方顺序创建人物并完成人像授权/);
+  assert.match(source, /presenterApi\.create\(\{ name: name\.trim\(\), type: videoSource \? 'digital_twin' : 'photo', uploadId:/);
+  assert.doesNotMatch(source, /presenterApi\.create\(\{[^\n]*voiceId:/);
+  assert.match(source, /声音任务已留档但尚未确认可用/);
+  assert.doesNotMatch(source, /recordingSeconds < 15/);
+  assert.doesNotMatch(html, /照片形象|视频分身|专家模式|生成 10 个场景/);
+});
+
+test('initial onboarding communicates the official-consent gate and default-person outcome', () => {
+  const html = renderToStaticMarkup(<PresenterManager {...props} initialConfiguration />);
+  assert.match(html, /录入人物资产/);
+  assert.match(html, /官方本人授权/);
+  assert.match(html, /配置声音并保存/);
+  assert.match(html, /选择已授权人物/);
+});

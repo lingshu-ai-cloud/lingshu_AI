@@ -114,6 +114,7 @@ import { createSocialProductionExecutorCheckpoint, executeSocialProductionGraph,
 import { completeSocialContentGraphRun, recoverSocialContentGraphCompletions } from './socialContentGraphCompletion.js';
 import { failExecution, writeExecutionStage } from './socialContentProductionRuntimeSupport.js';
 import { executeSocialSceneReworkJob, completeSocialSceneReworkRun, isSocialSceneReworkJob } from './socialContentSceneReworkExecution.js';
+import { createPresenterFirstFrameProductionRuntime,createPresenterFirstFrameStaticExecutor } from './socialContentPresenterFirstFrameRuntime.js';
 export async function runSocialContentAutoProductionWithRetry(input: {
   repository: Starter198Repository;
   tenantId: string;
@@ -121,6 +122,7 @@ export async function runSocialContentAutoProductionWithRetry(input: {
   taskId: string;
   runId: string;
   materialEvidencePorts?:WeeklyOwnedProductIdentityPorts;
+  runtime?: SocialContentAutoProductionRuntime;
 }): Promise<void> {
   // The durable queue owns retry classification and delay. Keeping retries in
   // one layer prevents one paid failure from multiplying across nested loops.
@@ -148,6 +150,7 @@ export async function wakeSocialSceneReworkJob(jobId: string): Promise<void> {
 
 async function executePersistedProduction(job: ContentExecutionJob): Promise<void> {
   const repository = createStarter198Repository(store);
+  const runtime = createPresenterFirstFrameProductionRuntime(store,createPresenterFirstFrameStaticExecutor(store));
   if (job.taskType.startsWith('social_scene_rework:')) {
     if (!isSocialSceneReworkJob(job)) throw new Error('scene_rework_job_type_invalid');
     await assertSocialSceneReworkQueueRegistered();
@@ -175,7 +178,7 @@ async function executePersistedProduction(job: ContentExecutionJob): Promise<voi
   }
   const task = socialTaskSummary(record);
   if (socialProductionExecutor(job, rawJob?.checkpoints) === 'langgraph') {
-    await runOutsideSocialContentMutationScope(() => executeSocialProductionGraph({ repository, dataStore: store, job }));
+    await runOutsideSocialContentMutationScope(() => executeSocialProductionGraph({ repository, dataStore: store, job, runtime }));
     return;
   }
   if (['asset_review', 'packaging', 'delivered', 'awaiting_publish', 'awaiting_metrics', 'reviewed'].includes(task.status)) return;
@@ -186,6 +189,7 @@ async function executePersistedProduction(job: ContentExecutionJob): Promise<voi
     userId: job.userId,
     taskId: job.taskId,
     runId: job.runId,
+    runtime,
   }));
 }
 

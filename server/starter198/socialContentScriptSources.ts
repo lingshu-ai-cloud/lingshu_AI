@@ -58,6 +58,55 @@ type ExactReferenceDetail = {
   timing: { startSeconds: number; endSeconds: number; durationSeconds: number };
 };
 
+const REFERENCE_BOUNDARY_NORMALIZATION_SECONDS = 0.2;
+
+/**
+ * The frame sampler can emit a sub-200ms transition row which is too short to
+ * become its own production slot.  Removing that row must not leave a hole in
+ * the production timeline.  Prefer the analyzer's physical scene cut; only
+ * use the deterministic midpoint when the unfiltered L3 ranges prove that the
+ * entire interval was analyzed.  Slot identity and count are never changed.
+ */
+export function normalizeReferenceTimelineBoundaries(
+  details: ExactReferenceDetail[],
+  exactRanges: Array<{ startSeconds: number; endSeconds: number }>,
+  detectedSceneCuts: number[],
+): ExactReferenceDetail[] {
+  const rows = details.map(row => ({ ...row, timing: { ...row.timing } }));
+  const ranges = exactRanges
+    .filter(range => Number.isFinite(range.startSeconds) && Number.isFinite(range.endSeconds) && range.endSeconds > range.startSeconds)
+    .sort((left, right) => left.startSeconds - right.startSeconds || left.endSeconds - right.endSeconds);
+  const cuts = detectedSceneCuts.filter(Number.isFinite).sort((left, right) => left - right);
+  const fullyCovered = (start: number, end: number) => {
+    if (end <= start) return true;
+    let cursor = start;
+    for (const range of ranges) {
+      if (range.endSeconds <= cursor || range.startSeconds >= end) continue;
+      if (range.startSeconds - cursor > 0.03) return false;
+      cursor = Math.max(cursor, range.endSeconds);
+      if (cursor >= end - 0.001) return true;
+    }
+    return cursor >= end - 0.001;
+  };
+  for (let index = 1; index < rows.length; index += 1) {
+    const previous = rows[index - 1]!;
+    const current = rows[index]!;
+    const left = Math.min(previous.timing.endSeconds, current.timing.startSeconds);
+    const right = Math.max(previous.timing.endSeconds, current.timing.startSeconds);
+    if (right - left > REFERENCE_BOUNDARY_NORMALIZATION_SECONDS + 0.001) continue;
+    const hardCuts = cuts.filter(cut => cut >= left - 0.001 && cut <= right + 0.001);
+    const boundary = hardCuts.length
+      ? hardCuts.reduce((best, cut) => Math.abs(cut - (left + right) / 2) < Math.abs(best - (left + right) / 2) ? cut : best)
+      : fullyCovered(left, right) ? +((left + right) / 2).toFixed(3) : null;
+    if (boundary === null || boundary <= previous.timing.startSeconds || boundary >= current.timing.endSeconds) continue;
+    previous.timing.endSeconds = boundary;
+    previous.timing.durationSeconds = +(boundary - previous.timing.startSeconds).toFixed(3);
+    current.timing.startSeconds = boundary;
+    current.timing.durationSeconds = +(current.timing.endSeconds - boundary).toFixed(3);
+  }
+  return rows;
+}
+
 export interface ResolvedSocialTaskReference {
   match: SocialInspirationScriptMatch;
   referenceVideoAnalysis: SocialReferenceVideoAnalysis;
@@ -205,8 +254,9 @@ function exactAnalysis(record: Record<string, unknown>): {
   const allDetails = rawDetails.flatMap(detail => {
     const timing = detailTiming(detail, 0.01);
     return timing ? [{ detail, timing }] : [];
-  });
-  const details = rawDetails.flatMap(detail => {
+  }).sort((left, right) => left.timing.startSeconds - right.timing.startSeconds
+    || left.timing.endSeconds - right.timing.endSeconds);
+  const filteredDetails = rawDetails.flatMap(detail => {
     const timing = detailTiming(detail, reviewedSpeech ? 0.15 : 0.2);
     const physicalEvidence = recordObject(detail.materialEvidence);
     // A model uncertainty flag is advisory when the original video clip and
@@ -219,6 +269,11 @@ function exactAnalysis(record: Record<string, unknown>): {
     return [{ detail, timing }];
   }).sort((left, right) => left.timing.startSeconds - right.timing.startSeconds
     || left.timing.endSeconds - right.timing.endSeconds);
+  const details = normalizeReferenceTimelineBoundaries(
+    filteredDetails,
+    allDetails.map(row => row.timing),
+    Array.isArray(gemini.detectedSceneCuts) ? gemini.detectedSceneCuts.map(Number) : [],
+  );
   if (socialText(analysis.analysisMode) !== 'exact'
     || !['video', 'video_review_required'].includes(socialText(analysis.analysisQuality))
     || details.length < 2) return null;

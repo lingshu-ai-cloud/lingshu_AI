@@ -2,7 +2,8 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { readLocalMaterials, readMaterialLibrary, upsertSocialTaskMaterial } from './materialLibrary.js';
+import sharp from 'sharp';
+import { materialLibraryFile, readLocalMaterials, readMaterialLibrary, upsertSocialTaskMaterial } from './materialLibrary.js';
 import { readCloudMaterialLibrary } from './cloudMaterials.js';
 const ready = { source: 'database' as const, state: 'ready' as const, message: 'ok' };
 const down = { source: 'database' as const, state: 'unavailable' as const, message: 'down' };
@@ -21,13 +22,14 @@ try {
   const tenantId = 'tenant-catalog';
   const imageDirectory = path.join(catalogRoot, 'tenants', tenantId, 'catalog');
   fs.mkdirSync(imageDirectory, {recursive: true});
-  const image = Buffer.from([137,80,78,71,13,10,26,10,1,2,3,4]);
+  const image = await sharp({create:{width:320,height:480,channels:3,background:'#6699cc'}}).png().toBuffer();
   fs.writeFileSync(path.join(imageDirectory, 'product.png'), image);
   process.env.SOCIAL_CONTENT_MEDIA_ROOT = catalogRoot;
   const dataStore = {list: async (collection: string) => ({items: collection === 'tenant_profiles' ? [{id:'profile',tenant_id:tenantId,profile:{products:{items:[{id:'sku-1',name:'Product',imageUrl:`/media/tenants/${tenantId}/catalog/product.png`}]}}}] : [], totalItems: collection === 'tenant_profiles' ? 1 : 0, totalPages:1,page:1,perPage:2})};
   const catalog = await readMaterialLibrary(tenantId, {local:()=>[],cloud:async()=>({items:[],source:ready}),dataStore:dataStore as never});
   assert.equal(catalog.items.length,1);assert.equal(catalog.items[0]!.productId,'sku-1');assert.match(catalog.items[0]!.contentSha256,/^[a-f0-9]{64}$/);
   assert.equal(catalog.items[0]!.file,`tenants/${tenantId}/catalog/product.png`);
+  assert.equal(catalog.items[0]!.width,320);assert.equal(catalog.items[0]!.height,480);assert.equal(catalog.items[0]!.commercialUseApproved,true);assert.equal(catalog.items[0]!.licenseEvidence,'enterprise_profile:profile:product:sku-1');
 } finally {
   if(previousMediaRoot===undefined)delete process.env.SOCIAL_CONTENT_MEDIA_ROOT;else process.env.SOCIAL_CONTENT_MEDIA_ROOT=previousMediaRoot;
   fs.rmSync(catalogRoot,{recursive:true,force:true});
@@ -45,6 +47,7 @@ assert.equal(broken.source.state,'unavailable');
 console.log('material library: tenant isolation, empty/failed distinction, partial access, pagination and authorization passed');
 const originalCwd = process.cwd();
 const materialRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'lingshu-material-upsert-'));
+const previousMaterialLibraryFile = process.env.MATERIAL_LIBRARY_FILE;
 try {
   process.chdir(materialRoot);
   const sha = 'a'.repeat(64);
@@ -68,7 +71,12 @@ try {
   assert.equal(reused.productName, '产品 B', '展示名与稳定 ID 分开保存');
   assert.notEqual(isolated.id, first.id, 'a second tenant never reuses another tenant material identity');
   assert.equal(readLocalMaterials().length, 2);
+  const configuredFile = path.join(materialRoot, 'tenant-data', 'materials.json');
+  process.env.MATERIAL_LIBRARY_FILE = configuredFile;
+  assert.equal(materialLibraryFile(), configuredFile);
 } finally {
+  if (previousMaterialLibraryFile === undefined) delete process.env.MATERIAL_LIBRARY_FILE;
+  else process.env.MATERIAL_LIBRARY_FILE = previousMaterialLibraryFile;
   process.chdir(originalCwd);
   fs.rmSync(materialRoot, { recursive: true, force: true });
 }

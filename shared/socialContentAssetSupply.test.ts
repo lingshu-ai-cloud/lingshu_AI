@@ -214,8 +214,8 @@ const preferredMissingProduct = createSocialAssetSupplyPlan({
   shots: [{ shotId: 'preferred-product', function: 'demonstration', requestedDescription: '纯产品展示',
     productPolicy: 'preferred', productRef: 'cream-b' }],
 });
-assert.equal(preferredMissingProduct.shots[0]?.productSceneReplication?.productIdentity.groups[0]?.productRef, 'serum-a');
-assert.equal(preferredMissingProduct.shots[0]?.feasibility, 'full_fidelity', 'preferred/open 应使用库内可用产品而不阻断');
+assert.equal(preferredMissingProduct.shots[0]?.productSceneReplication?.productIdentity.groups.length, 0);
+assert.equal(preferredMissingProduct.shots[0]?.feasibility, 'goal_degraded', '明确指定的产品缺失时不得借用其他 SKU 包装');
 
 const lockedPersonProductWithoutReference = createSocialAssetSupplyPlan({
   creationMode: 'material_processing', productionApproach: 'ai_enhanced',

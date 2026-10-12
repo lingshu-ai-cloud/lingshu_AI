@@ -108,17 +108,31 @@ export async function executeSocialQualityStage(input: {
   inspectScenes: NonNullable<SocialContentAutoProductionRuntime['inspectScenes']>;
   runFfmpeg: NonNullable<SocialContentAutoProductionRuntime['runFfmpeg']>;
   checkpointEnabled?: boolean;
+  verifyDuration?: boolean;
 }) {
   const sha256 = input.checkpointEnabled === false ? '' : await mediaHash(input.outputPath);
-  const inputHash = socialRequestHash({ sha256, duration: input.duration, scenes: input.scenes, expectedUniqueScenes: input.expectedUniqueScenes });
-  type Report = { quality: Awaited<ReturnType<typeof input.inspectVisuals>>; sceneQuality: Awaited<ReturnType<typeof input.inspectScenes>>; audio: { ok: boolean } };
+  const inputHash = socialRequestHash({ sha256, duration: input.duration, scenes: input.scenes, expectedUniqueScenes: input.expectedUniqueScenes, verifyDuration: input.verifyDuration === true });
+  type Report = { quality: Awaited<ReturnType<typeof input.inspectVisuals>>; sceneQuality: Awaited<ReturnType<typeof input.inspectScenes>>; audio: { ok: boolean }; measuredDurationSeconds?: number };
   const saved = input.checkpointEnabled === false ? null : readCurrentContentExecutionCheckpoint<Report>({ stage: 'social.graph_quality', version: '1', inputHash });
   if (input.checkpointEnabled !== false) await assertCurrentContentExecutionActive();
   if (saved) return saved;
   const quality = await input.inspectVisuals({ outputPath: input.outputPath, expectedDuration: input.duration, expectedUniqueScenes: input.expectedUniqueScenes });
   const sceneQuality = await input.inspectScenes({ outputPath: input.outputPath, scenes: input.scenes, requireDistinct: true });
   const audio = await input.runFfmpeg(['-i', input.outputPath, '-map', '0:a:0', '-t', String(Math.min(2, input.duration)), '-f', 'null', '-']);
-  const report = { quality, sceneQuality, audio: { ok: audio.ok } };
+  let measuredDurationSeconds: number | undefined;
+  if (input.verifyDuration) {
+    // Decode the video stream through EOF: container/audio duration cannot prove
+    // that the visual timeline actually reached the locked end.
+    const decoded = await input.runFfmpeg(['-i', input.outputPath, '-map', '0:v:0', '-an', '-f', 'null', '-', '-progress', 'pipe:1', '-nostats'], true);
+    const progress = decoded.stdout.toString();
+    const times = [...progress.matchAll(/out_time_us=(\d+)/g)].map(match => Number(match[1]) / 1e6);
+    measuredDurationSeconds = decoded.ok && /progress=end/.test(progress) && times.length ? Math.max(...times) : 0;
+    if (!measuredDurationSeconds || Math.abs(measuredDurationSeconds - input.duration) > 0.25) {
+      quality.passed = false;
+      quality.failures.push(`实际视频时长 ${measuredDurationSeconds.toFixed(3)} 秒与锁定 ${input.duration.toFixed(3)} 秒不一致`);
+    }
+  }
+  const report: Report = { quality, sceneQuality, audio: { ok: audio.ok }, ...(input.verifyDuration ? { measuredDurationSeconds } : {}) };
   if (input.checkpointEnabled !== false) await recordCurrentContentExecutionCheckpoint({ stage: 'social.graph_quality', version: '1', inputHash, payload: report });
   return report;
 }

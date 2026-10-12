@@ -452,6 +452,14 @@ export interface SocialContentExecutionScenePlan {
     feasible: boolean;
     reason: string;
     plannedValidatorId: string;
+    /** Output domain consumed by the independent post-render detector. This
+     * keeps detector planning separate from production-candidate selection. */
+    validationScope?: 'scene_frames' | 'timeline_segment' | 'audio_track' | 'caption_track' | 'whole_output';
+    /** Concrete evidence that must be emitted before this frozen factor can
+     * pass. The detector remains planned while those render artifacts are pending. */
+    requiredEvidence?: Array<'reference_frame' | 'output_frame' | 'timeline_measurement' | 'audio_segment' | 'caption_text' | 'fingerprint_measurement'>;
+    detectorIndependence?: 'independent_post_render';
+    plannedCandidateId?: string | null;
     semanticAdaptation?: {
       status: 'applicable' | 'functionally_replaced';
       sourceFactorId: string;
@@ -578,6 +586,12 @@ export interface SocialReplicationEvaluation {
   productionResultId: string;
   attemptId: string;
   status: 'running' | 'passed' | 'failed' | 'review_required';
+  referenceTimelineAudit?: {
+    referenceShotCount: number;
+    referenceDurationSeconds: number;
+    outputShotCount: number;
+    fullCoverageValidated: boolean;
+  };
   viralFactorFidelity: SocialReplicationEvaluationDimension;
   identityReplacement: SocialReplicationEvaluationDimension;
   originalityDifference: SocialReplicationEvaluationDimension;

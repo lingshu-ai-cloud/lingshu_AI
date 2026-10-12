@@ -23,10 +23,11 @@ import type { SocialProductionAsset } from './socialContentProductionPlan.js';
 import type { StoredSocialScriptBaseline } from './socialContentScriptBaseline.js';
 import type { SocialGraphApprovedContext } from './socialContentProductionExecution.js';
 import type { SocialAssetSupplyPlan } from '../../shared/contracts/socialContentReplication.js';
-import { createSocialContentPaidOperationPlanner, paidProductionApprovalHash, paidProductionRecordHash, paidProductionHash, type FrozenPaidProduction, type PaidOperationPlannerPorts, type BoundPaidRoute, type PaidStageRequirement } from './socialContentPaidOperationPlan.js';
+import { createSocialContentPaidOperationPlanner, paidProductionApprovalHash, paidProductionRecordHash, paidProductionHash, presenterGroupContractHash, type FrozenPaidProduction, type FrozenPresenterGroup, type PaidOperationPlannerPorts, type BoundPaidRoute, type PaidStageRequirement } from './socialContentPaidOperationPlan.js';
 import { createSocialContentTaskBudgetAuthority, type SocialApprovedBudgetPlan, type SocialVerifiedAccountTariff } from '../lib/socialContentTaskBudgetAuthority.js';
 import { createSocialContentVerifiedTariffReader } from '../lib/socialContentVerifiedTariffs.js';
 import { SocialContentTaskBudget, type SocialTaskBudgetScope } from '../lib/socialContentTaskBudget.js';
+import {readConfirmedPresenterFirstFrameApproval} from './socialContentPresenterFirstFrameApproval.js';
 export interface ProductionBudgetReadPorts {
     /** Trusted readonly runtime/account readers. Never task/body supplied manifests. */
     resolveBoundRoute?: PaidOperationPlannerPorts['resolveBoundRoute'];
@@ -39,6 +40,11 @@ export interface ProductionBudgetReadPorts {
     } | null>;
     readTariff?: (operation: Parameters<ReturnType<typeof createSocialContentVerifiedTariffReader>['read']>[0]) => Promise<SocialVerifiedAccountTariff | null>;
     readDirectedProductRetryShotIds?: (input: {scope: SocialTaskBudgetScope; shots: SocialAssetSupplyPlan['shots']; priorPlan: unknown}) => Promise<string[]>;
+    /** Trusted explicit-user decision reader. A task/body `confirmed:true` is never authority. */
+    readConfirmedPresenterFirstFrame?: (input:{scope:SocialTaskBudgetScope;group:FrozenPresenterGroup})=>Promise<Awaited<ReturnType<typeof readConfirmedPresenterFirstFrameApproval>>>;
+    /** Produces the paid review images only after the complete whole-film
+     * reservation exists. Dynamic presenter video remains confirmation-gated. */
+    preparePresenterFirstFrameReviews?: (input:{scope:SocialTaskBudgetScope;groups:FrozenPresenterGroup[];requirements:PaidStageRequirement[];intents:SocialApprovedBudgetPlan['paidOperations'];paidPermit:ReturnType<typeof createSocialContentPaidOperationPermit>})=>Promise<void>;
     ledgerRoot?: string;
 }
 export interface ProductionBudgetPreflightInput {
@@ -84,6 +90,11 @@ function readDirectedProductRetryShotIds(input: {scope: SocialTaskBudgetScope; s
         if (proven) retryShots.push(shot.shotId);
     }
     return retryShots;
+}
+export function productRetryReservationShotIds(shots: SocialAssetSupplyPlan['shots'], priorFailureShotIds: string[]) {
+    const eligible = shots.filter(shot => shot.sourceStrategy === 'aigc_product_scene_replication'
+        && shot.productSceneReplication?.validation.singleShotRetryOnFailure === true).map(shot => shot.shotId);
+    return [...new Set([...eligible, ...priorFailureShotIds])].filter(id => eligible.includes(id));
 }
 async function bytesHash(asset: SocialProductionAsset) {
     if (!asset.localPath)
@@ -183,6 +194,10 @@ export async function prepareSocialContentProductionBudget(input: ProductionBudg
         const operations = operationIds.map(id => status.entries.find(entry => entry.operationId === id)!);
         const paidPermit = createSocialContentPaidOperationPermit({scope,operations,intents:frozenPlan.paidOperations,
           ledger,root:path.join(input.ports?.ledgerRoot || process.env.SOCIAL_CONTENT_TASK_BUDGET_DIR || 'data/social-content-task-budget','.permits'),assertCurrent});
+        const recoveryPresenterGroups=frozenPlan.presenterGroups||[];
+        await input.ports?.preparePresenterFirstFrameReviews?.({scope,groups:recoveryPresenterGroups,requirements,intents:frozenPlan.paidOperations,paidPermit});
+        const approvalReader=input.ports?.readConfirmedPresenterFirstFrame??(async({scope,group}:{scope:SocialTaskBudgetScope;group:FrozenPresenterGroup})=>readConfirmedPresenterFirstFrameApproval(store,{scope,groupId:group.groupId,presenterGroupContractHash:group.contractHash,presenterAssetId:group.presenterAssetId}));
+        for(const group of recoveryPresenterGroups)if(!await approvalReader({scope,group}))return error(`presenter_first_frame_confirmation_missing:${group.groupId}`);
         await assertCurrent();
         return {status:'reserved' as const,scope,reserved:{scope,operations,intents:structuredClone(frozenPlan.paidOperations),quotes,status,ledger},paidPermit,requirements,routeBindings};
     }
@@ -219,9 +234,20 @@ export async function prepareSocialContentProductionBudget(input: ProductionBudg
     const directedRetryShotIds = await (ports?.readDirectedProductRetryShotIds
       ? ports.readDirectedProductRetryShotIds({scope,shots:input.supplyPlan.shots,priorPlan})
       : Promise.resolve(readDirectedProductRetryShotIds({scope,shots:input.supplyPlan.shots,priorPlan})));
-    const authorizedRetryShots = [...new Set(directedRetryShotIds)].filter(id => input.supplyPlan!.shots.some(shot => shot.shotId === id && shot.sourceStrategy === 'aigc_product_scene_replication' && shot.productSceneReplication?.validation.singleShotRetryOnFailure === true));
+    // The paid plan is immutable once the first supplier request is admitted.
+    // Therefore the one allowed product-video correction must be priced and
+    // reserved before attempt zero; waiting for failed-QA evidence would make
+    // the retry impossible because recovery is deliberately read-only. Runtime
+    // still exposes attempt one only after attempt-zero QA fails.
+    const authorizedRetryShots = productRetryReservationShotIds(input.supplyPlan.shots, directedRetryShotIds);
+    const frozenScenes:FrozenPaidProduction['scenes']=approved.directorBrief.scenes.map(scene => ({ ...(voice.mode === 'continuous' && voice.requiresAlignment && input.supplyPlan?.shots.some(shot => shot.shotId === scene.sceneId && shot.sourceStrategy === 'authorized_digital_presenter') ? {presenterSpeech:'whole_track' as const} : {}), shotId: scene.sceneId, durationSeconds: scene.duration.endSeconds - scene.duration.startSeconds, spokenText: input.baseline.scenes.find(s => s.sceneId === scene.sceneId)?.voiceover || input.baseline.scenes.find(s => s.sceneId === scene.sceneId)?.narration || '' }));
+    const presenterGroups:FrozenPresenterGroup[]=[];
+    let pending:{presenterAssetId:string;scenes:typeof frozenScenes}|null=null;
+    const flushPresenterGroup=()=>{if(!pending?.scenes.length)return;const value={shotIds:pending.scenes.map(scene=>scene.shotId),durationSeconds:pending.scenes.reduce((sum,scene)=>sum+scene.durationSeconds,0),spokenText:pending.scenes.map(scene=>scene.spokenText).join(' '),presenterAssetId:pending.presenterAssetId};const groupId=`presenter-mother-${presenterGroups.length+1}`;const group={groupId,...value,contractHash:''};group.contractHash=presenterGroupContractHash(group);presenterGroups.push(group);pending=null;};
+    for(const scene of frozenScenes){const shot=input.supplyPlan.shots.find(item=>item.shotId===scene.shotId);const ids=[...new Set(shot?.digitalHumanPlan?.presenterAssetIds?.length?shot.digitalHumanPlan.presenterAssetIds:shot?.sourceRefs||[])];const eligible=scene.presenterSpeech==='whole_track'&&shot?.sourceStrategy==='authorized_digital_presenter'&&ids.length===1;if(!eligible){flushPresenterGroup();continue;}if(pending&&pending.presenterAssetId!==ids[0])flushPresenterGroup();if(!pending)pending={presenterAssetId:ids[0]!,scenes:[]};pending.scenes.push(scene);}
+    flushPresenterGroup();
     const snapshot: FrozenPaidProduction = { scope, baselineHash, recordHash: '', approval: { approved: true, reviewRef: review.reviewId, sourceHash: '', planHash }, authorization: { ref: `task-budget:${socialRequestHash({ tenantId: input.tenantId, taskId: input.taskId, createdBy: row.created_by, budget: amount, retry })}`, maximumCny: Math.min(10, amount) }, maximumRetries: authorizedRetryShots.length ? 1 : 0, directedRetryShotIds: authorizedRetryShots,
-        scenes: approved.directorBrief.scenes.map(scene => ({ ...(voice.mode === 'continuous' && voice.requiresAlignment && input.supplyPlan?.shots.some(shot => shot.shotId === scene.sceneId && shot.sourceStrategy === 'authorized_digital_presenter') ? {presenterSpeech:'whole_track' as const} : {}), shotId: scene.sceneId, durationSeconds: scene.duration.endSeconds - scene.duration.startSeconds, spokenText: input.baseline.scenes.find(s => s.sceneId === scene.sceneId)?.voiceover || input.baseline.scenes.find(s => s.sceneId === scene.sceneId)?.narration || '' })), shots: input.supplyPlan.shots, assets: assetInputs, voice, finalReview: 'local' };
+        scenes:frozenScenes, presenterGroups, shots: input.supplyPlan.shots, assets: assetInputs, voice, finalReview: 'local' };
     snapshot.approval.sourceHash = paidProductionApprovalHash(snapshot);
     snapshot.recordHash = paidProductionRecordHash(snapshot);
     const localSupplyProof=createSocialContentLocalSupplyBudgetProofReader({scope,supplyPlan:input.supplyPlan,baseline:input.baseline,
@@ -231,32 +257,51 @@ export async function prepareSocialContentProductionBudget(input: ProductionBudg
       if(!req.shotId)return null;const shot=input.supplyPlan!.shots.find(s=>s.shotId===req.shotId);
       if(!shot?.materialRouting||!shot.productSceneReplication)return null;
       await assertCurrent();
-      const value=await readProductReplacementRequestBounds({tenantId:input.tenantId,taskId:input.taskId,shotId:req.shotId,idempotencyKey:`budget-read:${planHash}:${req.shotId}`,spec:shot.productSceneReplication,materialRouting:shot.materialRouting,referenceImages:[],outputDirectory:os.tmpdir(),maximumCostCny:Math.min(10,amount)}, {dataStore:store,materials:input.repository.materialLibrary,assertCurrent});
+      const value=await readProductReplacementRequestBounds({tenantId:input.tenantId,taskId:input.taskId,shotId:req.shotId,idempotencyKey:`budget-read:${planHash}:${req.shotId}`,spec:shot.productSceneReplication,materialRouting:shot.materialRouting,referenceImages:[],outputDirectory:os.tmpdir(),maximumCostCny:Math.min(10,amount)}, {
+        dataStore:store,
+        materials:input.repository.materialLibrary,
+        assertCurrent,
+        frozenSupplyPlan:input.supplyPlan!,
+        frozenSupplyPlanBinding:{planVersion:String(input.supplyPlan!.planVersion),planHash:socialRequestHash(input.supplyPlan)},
+      });
       const previous=productBounds.get(req.shotId);if(previous&&socialRequestHash(previous)!==socialRequestHash(value))return error('product_input_authority_changed');
       productBounds.set(req.shotId,value);return value;
     }});
     const presenterBindings = new Map<string, TrustedHeyGenRuntimeBinding>();
     const readPresenterRoute = async (requirement: Parameters<PaidOperationPlannerPorts['resolveBoundRoute']>[0]): Promise<BoundPaidRoute | null> => {
-      if (requirement.stage !== 'presenter_video' || !requirement.shotId || !requirement.durationSeconds || requirement.durationSeconds <= 0) return null;
-      const shot = input.supplyPlan?.shots.find(item => item.shotId === requirement.shotId);
-      if (!shot || shot.sourceStrategy !== 'authorized_digital_presenter') return null;
-      const presenterIds = [...new Set(shot.digitalHumanPlan?.presenterAssetIds.length ? shot.digitalHumanPlan.presenterAssetIds : shot.sourceRefs)];
-      if (presenterIds.length !== 1) return null;
-      let binding = presenterBindings.get(requirement.shotId);
+      if (!requirement.presenterGroupId || !['first_frame','first_frame_qa','presenter_video'].includes(requirement.stage)) return null;
+      const memberIds=requirement.presenterGroupId?requirement.presenterGroupShotIds:requirement.shotId?[requirement.shotId]:null;
+      if(!memberIds?.length)return null;
+      const frozenGroup=requirement.presenterGroupId?snapshot.presenterGroups?.find(group=>group.groupId===requirement.presenterGroupId):null;
+      if(requirement.presenterGroupId&&(!frozenGroup||paidProductionHash(frozenGroup.shotIds)!==paidProductionHash(memberIds)||frozenGroup.presenterAssetId!==requirement.presenterAssetId))return null;
+      const memberShots=memberIds.map(id=>input.supplyPlan?.shots.find(item=>item.shotId===id));
+      if(memberShots.some(shot=>!shot||shot.sourceStrategy!=='authorized_digital_presenter'))return null;
+      const presenterIds=[...new Set(memberShots.flatMap(shot=>shot?.digitalHumanPlan?.presenterAssetIds?.length?shot.digitalHumanPlan.presenterAssetIds:shot?.sourceRefs||[]))];
+      if (presenterIds.length !== 1 || (requirement.presenterAssetId&&requirement.presenterAssetId!==presenterIds[0])) return null;
+      if(requirement.stage==='first_frame'||requirement.stage==='first_frame_qa'){
+        const generic=await canonicalRoutes.resolveBoundRoute(requirement);
+        if(generic)return generic;
+        const staticReaders=createProductionBudgetRouteReaders({readCanonicalProductBounds:async()=>({qaModel:'qwen3-vl-plus',firstFrameMaximumFrames:3,videoMaximumFrames:3,productSha256s:[requirement.presenterGroupContractHash!],providerDurationSeconds:4,evidenceRef:`presenter-first-frame:${requirement.presenterGroupContractHash}`})});
+        return staticReaders.resolveBoundRoute(requirement);
+      }
+      if (!requirement.durationSeconds || requirement.durationSeconds <= 0) return null;
+      let binding = presenterBindings.get(presenterIds[0]!);
       if (!binding) {
         const resolved = await readTrustedHeyGenRuntimeBinding({tenantId:input.tenantId,presenterAssetId:presenterIds[0]!},{store,assertCurrent});
         if (!resolved) return null;
-        binding = resolved; presenterBindings.set(requirement.shotId,binding);
+        binding = resolved; presenterBindings.set(presenterIds[0]!,binding);
       }
       return {provider:'heygen',model:'avatar_iv',accountRef:binding.accountRef,
         routeEvidenceRef:heyGenRuntimeRouteEvidence(binding),
-        usageBoundRef:'measured-whole-track-scene:'+requirement.inputContractHash,
+        usageBoundRef:(requirement.presenterGroupId?'measured-presenter-group:':'measured-whole-track-scene:')+requirement.inputContractHash,
         maximumAttempts:1,maximumUnits:{providerSeconds:Math.ceil(requirement.durationSeconds)}};
     };
     const routeBindings: Record<string, BoundPaidRoute> = {};
     const planner = createSocialContentPaidOperationPlanner({ readFrozenProduction: async () => { await assertCurrent(); return snapshot; }, assertCurrent,
-        resolveBoundRoute: async (requirement) => { const route = await ports?.resolveBoundRoute?.(requirement) || await readPresenterRoute(requirement) || await canonicalRoutes.resolveBoundRoute(requirement); if (route)
-            routeBindings[requirement.key] = structuredClone(route); return route; },
+        resolveBoundRoute: async (requirement) => {
+          const route = await ports?.resolveBoundRoute?.(requirement) || await readPresenterRoute(requirement) || await canonicalRoutes.resolveBoundRoute(requirement);
+          if (route) routeBindings[requirement.key] = structuredClone(route); return route;
+        },
         readProductFrameBounds: async req=>await ports?.readProductFrameBounds?.(req)||await canonicalRoutes.readProductFrameBounds(req),
         readVerifiedLocalExecution: async (req) => {
             const trusted = await ports?.readVerifiedLocalExecution?.(req); if(trusted)return trusted;
@@ -280,9 +325,12 @@ export async function prepareSocialContentProductionBudget(input: ProductionBudg
       const model=intent.stage==='material_image_analysis'?b.imageModel:['material_video_analysis','material_video_review'].includes(intent.stage)?b.materialModel:['first_frame_qa','video_qa'].includes(intent.stage)?(intent.model==='qwen3-vl-plus'?intent.model:process.env.QWEN_VL_MODEL||'qwen3-vl-plus'):null;
       return model?{provider:'qwen',model,baseUrl:b.baseUrl,credentialSha256:b.credentialSha256}:null;
     }});
-    const authority = createSocialContentTaskBudgetAuthority({ ledgerRoot: ports?.ledgerRoot, ports: { assertCurrent, readApprovedPlan: async () => { await assertCurrent(); return planned.plan!; }, readVerifiedTariff: ports?.readTariff || (async intent=>await reader.read(intent)||(['tts','voice_asr','voice_alignment'].includes(intent.stage)?await readNativeVoicePublishedTariff(intent):intent.provider==='seedream'?await readSeedreamPublishedTariff(intent,{baseUrl:process.env.SEEDREAM_BASE_URL||process.env.SEEDANCE_BASE_URL||'https://ark.cn-beijing.volces.com/api/v3',credentialSha256:createHash('sha256').update((process.env.SEEDREAM_API_KEY||process.env.SEEDANCE_API_KEY||'').trim()).digest('hex')}):intent.provider==='wan'?await readWanPublishedTariff(intent,getQwenProviderBinding()):intent.provider==='heygen'?await readHeyGenPublishedTariff(intent,{readBinding:async operation=>operation.shotId?presenterBindings.get(operation.shotId)||null:null}):await publishedReader.read(intent))), verifyRejection: async () => false } });
+    const authority = createSocialContentTaskBudgetAuthority({ ledgerRoot: ports?.ledgerRoot, ports: { assertCurrent, readApprovedPlan: async () => { await assertCurrent(); return planned.plan!; }, readVerifiedTariff: async intent=>await ports?.readTariff?.(intent)||await reader.read(intent)||(['tts','voice_asr','voice_alignment'].includes(intent.stage)?await readNativeVoicePublishedTariff(intent):intent.provider==='seedream'?await readSeedreamPublishedTariff(intent,{baseUrl:process.env.SEEDREAM_BASE_URL||process.env.SEEDANCE_BASE_URL||'https://ark.cn-beijing.volces.com/api/v3',credentialSha256:createHash('sha256').update((process.env.SEEDREAM_API_KEY||process.env.SEEDANCE_API_KEY||'').trim()).digest('hex')}):intent.provider==='wan'?await readWanPublishedTariff(intent,getQwenProviderBinding()):intent.provider==='heygen'?await readHeyGenPublishedTariff(intent,{readBinding:async operation=>[...presenterBindings.values()].find(binding=>binding.accountRef===operation.accountRef)||null}):await publishedReader.read(intent)), verifyRejection: async () => false } });
     const reserved = await authority.prepareAndReserve(scope);
     await recordCurrentContentExecutionCheckpoint({ stage: STAGE, version: '1', inputHash: planHash, payload: { scopeHash: paidProductionHash(scope), baselineHash, operationIds: reserved.operations.map(o => o.operationId), requirements: planned.requirements, routeBindings, quotes: reserved.quotes, plan: planned.plan } });
     const paidPermit = createSocialContentPaidOperationPermit({ ...reserved, root: path.join(ports?.ledgerRoot || process.env.SOCIAL_CONTENT_TASK_BUDGET_DIR || 'data/social-content-task-budget', '.permits'), assertCurrent });
+    await input.ports?.preparePresenterFirstFrameReviews?.({scope,groups:presenterGroups,requirements:planned.requirements,intents:planned.plan.paidOperations,paidPermit});
+    const approvalReader=input.ports?.readConfirmedPresenterFirstFrame??(async({scope,group}:{scope:SocialTaskBudgetScope;group:FrozenPresenterGroup})=>readConfirmedPresenterFirstFrameApproval(store,{scope,groupId:group.groupId,presenterGroupContractHash:group.contractHash,presenterAssetId:group.presenterAssetId}));
+    for(const group of presenterGroups)if(!await approvalReader({scope,group}))return error(`presenter_first_frame_confirmation_missing:${group.groupId}`);
     return { status: 'reserved' as const, scope, reserved, paidPermit, requirements: planned.requirements, routeBindings };
 }

@@ -63,8 +63,8 @@ export function referenceFrameActionPrompt(detailValue: unknown): ReferenceFrame
   const start = text(detail.startState) || text(detail.persistentState) || text(detail.observedFacts);
   return {
     prompt: start
-      ? `抽帧只确认静态状态：${start}。${movementContract ? `${movementContract}。` : ''}保持该姿态自然口播，不生成未经时间序列证实的产品交互动作。`
-      : '抽帧没有提供可验证的人物动作；保持目标首帧姿态自然口播，不添加产品交互动作。',
+      ? `抽帧只确认静态状态：${start}。${movementContract ? `${movementContract}。` : ''}保持画面中的静态姿态，不生成未经时间序列证实的产品交互动作。`
+      : '抽帧没有提供可验证的人物动作；保持目标首帧的静态画面状态，不添加产品交互动作。',
     evidenceKind: 'static_state',
     sampleCount: 1,
   };

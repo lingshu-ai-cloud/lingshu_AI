@@ -232,6 +232,7 @@ export function createSocialArtifactReevaluationService(input: {
         const evaluated = await ports.evaluate({
           workflow: agentWorkflow as SocialContentAgentWorkflow,
           replicationScript,
+          referenceAnalysis: detail.referenceVideoAnalysis,
           productionResultId,
           outputVideoPath,
           evidence: {

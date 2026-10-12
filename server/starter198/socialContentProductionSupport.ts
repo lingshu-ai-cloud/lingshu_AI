@@ -109,6 +109,9 @@ export async function taskProductionAssets(input: {
   cloudMaterialPort?: SocialContentCloudMaterialPort;
   allowAuthorizedSharedLibrary?: boolean;
   materialLibrary?: typeof readMaterialLibrary;
+  /** The planner already scanned the complete library. Execution materializes
+   * only the immutable ids selected by the reviewed shot plan. */
+  requiredMaterialIds?: string[];
 }): Promise<ProductionAsset[]> {
   const inventory = await (input.materialLibrary ?? readMaterialLibrary)(input.tenantId);
   if (inventory.status === 'unavailable') throw new Error('素材库暂时不可用，请稍后重试');
@@ -126,8 +129,10 @@ export async function taskProductionAssets(input: {
     return [{ record, sourceId: source.sourceId, label: source.label, origin: 'task' as const, linked: true }];
   });
   const linkedIds = new Set(linkedCandidates.map(item => socialText(item.record.id)));
+  const requiredIds = input.requiredMaterialIds?.length ? new Set(input.requiredMaterialIds.map(socialText).filter(Boolean)) : null;
   const libraryCandidates = inventory.items
     .filter(record => !linkedIds.has(socialText(record.id))
+      && (!requiredIds || requiredIds.has(socialText(record.id)))
       && automaticSocialMaterialEligible(record, input.tenantId)
       && (input.allowAuthorizedSharedLibrary !== false || materialTenantId(record) === input.tenantId))
     .map(record => ({
@@ -148,8 +153,7 @@ export async function taskProductionAssets(input: {
       record: right.record, tenantId: input.tenantId, productRef: input.productRef, themeId: input.themeId, linked: right.linked,
     }) - automaticMaterialScore({
       record: left.record, tenantId: input.tenantId, productRef: input.productRef, themeId: input.themeId, linked: left.linked,
-    }))
-    .slice(0, 64);
+    }));
   const assets: ProductionAsset[] = [];
   for (const [index, candidate] of candidates.entries()) {
     const { record } = candidate;

@@ -67,6 +67,17 @@ for (const bookType of ['xlsx', 'xls'] as const) {
   ], `${bookType} behavior must remain compatible`);
 }
 
+const inflatedEmptyRange = await parseWorkbook(workbookFile('xlsx', [
+  ['SKU', '产品名称'],
+  ['A-2B', '冲锋衣'],
+], sheet => {
+  sheet['!ref'] = 'A1:XBN144';
+}));
+assert.deepEqual(inflatedEmptyRange[0]?.rows, [
+  ['SKU', '产品名称'],
+  ['A-2B', '冲锋衣'],
+], 'empty formatting ranges must not make a normal product table exceed the column limit');
+
 let oversizedRead = false;
 const oversized = {
   name: 'oversized.xlsx',
@@ -76,7 +87,7 @@ const oversized = {
     return new ArrayBuffer(0);
   },
 } as File;
-await assert.rejects(parseWorkbook(oversized), /文件不能超过 10 MB/);
+await assert.rejects(parseWorkbook(oversized), /文件不能超过 50 MB/);
 assert.equal(oversizedRead, false, 'oversized files must be rejected before allocating their buffers');
 
 await assert.rejects(

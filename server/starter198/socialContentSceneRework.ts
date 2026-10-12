@@ -4,13 +4,14 @@ import { socialRequestHash } from './socialContentValidation.js';
 import { alignSocialAssetSupplyPlanToBaseline, executeSocialAssetSupplyPlan, type SocialAssetSupplyAdapterResult, type SocialAssetSupplyProviderAdapter } from './socialContentAssetSupplyExecution.js';
 import type { SocialAssetSupplyPlan } from '../../shared/contracts/socialContentWorkflow.js';
 import type { StoredSocialScriptBaseline } from './socialContentScriptBaseline.js';
+import type { PresenterMotherExecutionReceipt, PresenterSlotCropReceipt } from './presenterMotherSegmentExecution.js';
 
 export const sceneReworkHash = (value: unknown): string => socialRequestHash(value);
 export interface SocialSceneMediaCache {
   schemaVersion: 'social-scene-media-cache.v1';
   tenantId: string; taskId: string; runId: string; parentArtifactId: string;
   parentArtifactHash: string; planVersion: string; planHash: string;
-  scenes: Array<{ sceneId: string; productionSceneId: string; shotHash: string; sha256: string; result: SocialAssetSupplyAdapterResult; technicalReceiptId: string; status: 'passed' | 'failed' | 'review_required' }>;
+  scenes: Array<{ sceneId: string; productionSceneId: string; shotHash: string; sha256: string; result: SocialAssetSupplyAdapterResult; technicalReceiptId: string; status: 'passed' | 'failed' | 'review_required'; presenterMotherLineage?:{groupingHash:string;providerReceipt:PresenterMotherExecutionReceipt;slotCropReceipt:PresenterSlotCropReceipt} }>;
   /** Whole audio and timing are frozen: visual-only retry must never regenerate narration. */
   renderInput: { sourceManifest: Record<string, unknown>;mediaRemap:Array<{source:string;target:string}>;manifest: Record<string, unknown>; voice: { localPath: string; sha256: string }; bgm: { localPath: string; sha256: string } | null };
   recordHash: string;

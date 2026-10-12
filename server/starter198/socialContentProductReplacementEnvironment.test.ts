@@ -10,7 +10,7 @@ import {generateSeedanceConceptVideo} from '../lib/generativeVideoGateway.js';
 import {runVisualFfmpeg} from '../lib/renderVisualQuality.js';
 import {socialRequestHash} from './socialContentValidation.js';
 import {firstFrameInputFingerprint} from '../lib/firstFrameGenerator.js';
-import {adaptSingletonProductFirstFrameQuality, createEnvironmentProductReplacementPorts, productReplacementOperationFingerprint, readProductReplacementRequestBounds, type ProductReplacementEnvironmentContext} from './socialContentProductReplacementEnvironment.js';
+import {adaptSingletonProductFirstFrameQuality, createEnvironmentProductReplacementPorts, diagnoseFrozenProductShot, productReplacementOperationFingerprint, readProductReplacementRequestBounds, type ProductReplacementEnvironmentContext} from './socialContentProductReplacementEnvironment.js';
 import {createEnvironmentSeedanceProductScenePorts} from './socialContentSeedanceProductScene.js';
 import type {MvpBudgetRecord} from '../lib/mvpBudgetAdmission.js';
 const sha = (x: Buffer | string) => createHash('sha256').update(x).digest('hex');
@@ -72,6 +72,36 @@ test('canonical frozen materialPlan and actual composition/product bytes are rea
   let paid = 0; f.context.prepareFrame = (async () => {paid++; throw Error('must not submit');}) as typeof f.context.prepareFrame;
   const factory = createEnvironmentSeedanceProductScenePorts({replacementEnvironment: f.context});
   await assert.rejects(factory.execute(f.input), /exact_server_budget_quote_missing/); assert.equal(paid, 0);
+});
+test('current v15 derived supply plan binds the exact shot and SKU when the director script has no embedded supply projection',async()=>{
+  const f=await fixture();
+  f.task.version=15;
+  f.task.brief.productId='GUIANFA-RS-001';
+  f.task.replication_script={shots:[{shotId:'S04',materialPlan:{truthBoundary:{subject:'product'}}}]} as any;
+  f.input.spec.productIdentity.groups[0]!.productRef='product:GUIANFA-RS-001';
+  f.input.spec.sceneLock.productSlots[0]!.productRef='product:GUIANFA-RS-001';
+  f.context.materials=async()=>({items:[{id:'KB',type:'image',tenantId:'tenant',productId:'GUIANFA-RS-001',objectKey:'product-key',contentSha256:sha(f.product)}],sources:[],status:'ready'});
+  f.context.frozenSupplyPlan={planVersion:'15',status:'ready',productionRoute:'asset_supply',rightsConfirmationRequired:false,shots:[{shotId:'S04',function:'demonstration',requestedDescription:'Hold the package',sourceStrategy:'aigc_product_scene_replication',fallbackSourceStrategy:null,sourceRefs:[],truthBoundary:{subject:'product',allowedClaims:[],forbiddenClaims:[]},customerShootRequired:false,feasibility:'ready',feasibilityReason:'exact SKU',productionInstruction:'replace product',materialRouting:f.input.materialRouting,productSceneReplication:f.input.spec}]} as any;
+  f.context.frozenSupplyPlanBinding={planVersion:'15',planHash:socialRequestHash(f.context.frozenSupplyPlan)};
+  const ports=await createEnvironmentProductReplacementPorts(f.input,f.context);
+  assert.ok(await ports.composition(f.input));
+  const changedVersion=structuredClone(f.context.frozenSupplyPlan);changedVersion!.planVersion='14';
+  await assert.rejects(createEnvironmentProductReplacementPorts(f.input,{...f.context,frozenSupplyPlan:changedVersion}),/frozen_plan_changed/);
+  const wrongSku=structuredClone(f.context.frozenSupplyPlan);wrongSku!.shots[0]!.productSceneReplication!.productIdentity.groups[0]!.productRef='product:OTHER';
+  await assert.rejects(createEnvironmentProductReplacementPorts(f.input,{...f.context,frozenSupplyPlan:wrongSku}),/frozen_plan_changed/);
+  f.task.version=26;
+  await ports.assertCurrent();
+  const afterStatusAdvance=await createEnvironmentProductReplacementPorts(f.input,f.context);
+  assert.ok(await afterStatusAdvance.composition(f.input));
+  await afterStatusAdvance.assertCurrent();
+});
+test('frozen product shot diagnostics identify the exact failed invariant without provider work',async()=>{
+  const f=await fixture(),shot=(f.task.replication_script as any).shots[0].materialPlan;
+  assert.equal(diagnoseFrozenProductShot(f.input,f.task,shot),null);
+  assert.equal(diagnoseFrozenProductShot({...f.input,materialRouting:undefined},f.task,shot),'execution_material_routing_missing');
+  assert.equal(diagnoseFrozenProductShot({...f.input,materialRouting:{...f.input.materialRouting,policy:'local_only'} as any},f.task,shot),'material_routing_changed');
+  assert.equal(diagnoseFrozenProductShot({...f.input,spec:{...f.input.spec,sceneTemplateKey:'changed'}},f.task,shot),'product_spec_changed');
+  assert.equal(diagnoseFrozenProductShot(f.input,f.task,null),'shot_not_in_frozen_plan');
 });
 test('media URL product bytes resolve against the configured worker media root',async()=>{
   const f=await fixture(),mediaRoot=path.join(f.root,'canonical-media'),relative='tenants/tenant/catalog/product.png';

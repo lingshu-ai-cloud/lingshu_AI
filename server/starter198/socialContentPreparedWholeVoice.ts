@@ -141,6 +141,7 @@ export async function readPreparedWholeVoiceScene(input: {
   prepared: PreparedWholeVoice;
   scope: Funding['scope'];
   shotId: string;
+  memberShotIds?: string[];
   spokenText: string;
   assertCurrent: () => Promise<void>;
 }) {
@@ -162,15 +163,22 @@ export async function readPreparedWholeVoiceScene(input: {
   const cues=verifiedAudioCues(alignment.result,transcript,state.voice.duration);
   if(paidProductionHash(cues)!==paidProductionHash(state.voice.cues))throw Error('prepared_whole_voice_measured_cues_changed');
   const ranges=measuredWholeTrackSceneRanges({scenes:state.scenes,cues,durationSeconds:state.voice.duration});
-  const scene=state.scenes.find((item:{shotId:string})=>item.shotId===input.shotId),range=ranges.get(input.shotId);
-  if(!scene||!range||scene.spokenText!==input.spokenText)throw Error('prepared_whole_voice_scene_not_frozen');
+  const frozenGroupScene=state.scenes.some((item:{shotId:string})=>item.shotId===input.shotId);
+  const members=frozenGroupScene?[input.shotId]:input.memberShotIds?.length?input.memberShotIds:[input.shotId];
+  if(new Set(members).size!==members.length)throw Error('prepared_whole_voice_scene_not_frozen');
+  const memberScenes=members.map(id=>state.scenes.find((item:{shotId:string})=>item.shotId===id));
+  const memberRanges=members.map(id=>ranges.get(id));
+  if(memberScenes.some((scene:unknown)=>!scene)||memberRanges.some((range:unknown)=>!range))throw Error('prepared_whole_voice_scene_not_frozen');
+  const scene={shotId:input.shotId,spokenText:memberScenes.map((item:any)=>item.spokenText).join(' '),durationSeconds:memberScenes.reduce((sum:number,item:any)=>sum+item.durationSeconds,0)};
+  const range={start:memberRanges[0]!.start,end:memberRanges.at(-1)!.end};
+  if(scene.spokenText!==input.spokenText||Math.abs((range.end-range.start)-scene.durationSeconds)>.02)throw Error('prepared_whole_voice_scene_not_frozen');
   const sourceReceipts=input.prepared.sourceReceiptRefs.map(receiptRef=>{
     const bytes=fs.readFileSync(receiptRef),raw=JSON.parse(bytes.toString());
     if(paidProductionHash(raw.scope)!==paidProductionHash(input.scope)||raw.provider!==input.prepared.nativeVoice.provider||raw.model!==input.prepared.nativeVoice.model||raw.voiceId!==input.prepared.nativeVoice.physicalVoiceId)
       throw Error('prepared_whole_voice_original_receipt_changed');
     return {receiptRef,sha256:sha(bytes),operationId:raw.operationId};
   });
-  const key=paidProductionHash({scope:input.scope,shotId:input.shotId,range,wholeTrackSha256:state.wholeTrackSha256});
+  const key=paidProductionHash({scope:input.scope,shotId:input.shotId,members,range,wholeTrackSha256:state.wholeTrackSha256});
   const file=path.join(path.dirname(input.prepared.receiptRef),key+'.scene.wav');
   return withPaidOperationLock(path.join(path.dirname(file),'.locks'),key,async()=>{
     const execute=promisify(execFile);

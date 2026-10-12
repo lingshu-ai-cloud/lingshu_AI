@@ -5,7 +5,7 @@ const root = '/api/overseas/studio/production/presenters';
 async function request<T>(path: string, body?: unknown): Promise<T> {
   const response = await fetch(root + path, { method: body === undefined ? 'GET' : 'POST', headers: { ...authHeader(), 'Content-Type': 'application/json' }, ...(body === undefined ? {} : { body: JSON.stringify(body) }) });
   const data = await response.json().catch(() => null);
-  if (!data) throw new Error('当前服务尚未接入历史人物绑定接口');
+  if (!data) throw new Error(`人物服务暂时未返回有效响应 (${response.status})，请刷新后重试`);
   if (!response.ok) throw new Error(data.error || '人物服务请求失败');
   return data;
 }
@@ -40,6 +40,6 @@ export const presenterApi = {
   },
   create: (body: { name: string; type: 'photo' | 'digital_twin'; voiceId?: string; uploadId: string; requestId: string; authorized: boolean; adultConfirmed: boolean; confirmed: boolean; reusePresenterId?: string; samePersonConfirmed?: boolean }) => request<PresenterCreation>('/creations', body),
   refresh: (id: string) => request<PresenterCreation>(`/creations/${encodeURIComponent(id)}/refresh`, {}),
-  consent: (id: string, requestId: string, uploadId?: string) => request<PresenterCreation>(`/creations/${encodeURIComponent(id)}/consent`, { requestId, uploadId }),
-  import: (body: { lookId?: string; creationId?: string; name?: string; voiceId?: string; reviewed: boolean }) => request<ProductionDefaults>('/import', body),
+  consent: (id: string, requestId: string, uploadId?: string, rerouteUrl?: string) => request<PresenterCreation>(`/creations/${encodeURIComponent(id)}/consent`, { requestId, uploadId, rerouteUrl }),
+  import: (body: { lookId?: string; creationId?: string; name?: string; voiceId?: string; reviewed: boolean; authorized?: boolean; makeDefault?: boolean }) => request<ProductionDefaults>('/import', body),
 };

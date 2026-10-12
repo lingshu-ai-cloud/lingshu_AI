@@ -821,7 +821,7 @@ export function buildSocialWorkflowMaterialCandidates(input: {
     }];
   }).sort((left, right) => right.matchScore - left.matchScore
     || left.assetId.localeCompare(right.assetId)
-    || left.segmentId.localeCompare(right.segmentId)).slice(0, 64);
+    || left.segmentId.localeCompare(right.segmentId));
   return { candidates, productPolicy, requestedProductId, requestedProductRef };
 }
 
@@ -1058,6 +1058,7 @@ export async function readSocialTaskDetail(input: {
       referenceShotId: shot.referenceShotId,
       ...(summary.brief.materialRoutingPolicyVersion === 'type-aware.v1' && shot.materialPlan.materialRouting ? {
         plannedDurationSeconds: shot.endSeconds - shot.startSeconds,
+        ...(shot.materialPlan.visualContract ? { visualContract: structuredClone(shot.materialPlan.visualContract) } : {}),
         ...(shot.materialPlan.productSceneReplication ? { productSceneReplication: shot.materialPlan.productSceneReplication } : {}),
         ...(shot.materialPlan.materialRouting ? { materialRouting: structuredClone(shot.materialPlan.materialRouting) } : {}),
       } : {}),

@@ -8,7 +8,7 @@ import { validateHeyGenPresenterRecord } from '../lib/presenterAssetTrust.js';
 import { HeyGenPresenterClient } from '../lib/heygenPresenters.js';
 
 test('presenter creation, consent, import, tenant isolation, pagination and uncertain requests', async () => {
-  const rows = new Map<string, any>(); let seq = 0, failWrites = false, lost = false, approved = false, budgetBlocked = false, trimCalls = 0, frameCalls = 0;
+  const rows = new Map<string, any>(); let seq = 0, failWrites = false, lost = false, approved = false, consentOmitted = false, budgetBlocked = false, trimCalls = 0, frameCalls = 0;
   const store: DataStore = {
     async getById<T>(c: string, id: string) { return structuredClone(rows.get(`${c}/${id}`) || null) as T | null; },
     async create<T>(c: string, value: Record<string, unknown>) { if (failWrites) return null; const row = { ...value, id: `r${++seq}` }; rows.set(`${c}/${row.id}`, structuredClone(row)); return row as T; },
@@ -26,7 +26,7 @@ test('presenter creation, consent, import, tenant isolation, pagination and unce
     else if (url.pathname === '/v3/voices') { data = [{ voice_id: 'voice1', name: 'Sara', language: 'English', type: 'public', preview_audio_url: 'https://files.heygen.ai/s.mp3' }]; meta = { has_more: true, next_token: 'page2' }; }
     else if (url.pathname === '/v3/avatars/looks' && url.searchParams.get('ownership') === 'public') { data = [look]; meta = { has_more: true, next_token: 'page2' }; }
     else if (url.pathname === '/v3/avatars' && init.method === 'POST') { if (lost) throw new Error('response lost'); data = { avatar_group: { id: 'created-group' }, avatar_item: { ...look, id: 'private1', group_id: 'created-group', status: 'processing' } }; }
-    else if (url.pathname === '/v3/avatars/created-group') data = { id: 'created-group', status: 'completed', consent_status: approved ? 'accepted' : 'pending' };
+    else if (url.pathname === '/v3/avatars/created-group') data = { id: 'created-group', status: 'completed', ...(consentOmitted ? {} : { consent_status: approved ? 'accepted' : 'pending' }) };
     else if (url.pathname === '/v3/avatars/looks/private1') data = { ...look, id: 'private1', status: 'completed', group_id: 'created-group' };
     else if (url.pathname === '/v3/avatars/looks/public1') data = look;
     else if (url.pathname === '/v3/avatars/created-group/consent') data = { avatar_group: { id: 'created-group' }, url: 'https://app.heygen.com/consent/test' };
@@ -65,26 +65,32 @@ test('presenter creation, consent, import, tenant isolation, pagination and unce
     const asset = await (await upload('upload1')).json(); assert.ok(asset.id);
     const assetsBeforeRepeat = calls.filter(c => c.url.endsWith('/assets')).length;
     assert.equal((await (await upload('upload1')).json()).id, asset.id); assert.equal(calls.filter(c => c.url.endsWith('/assets')).length, assetsBeforeRepeat);
+    await store.create('studio_presenter_assets', { tenant_id: 'A', kind: 'creation', request_id: 'legacy-mock', payload: { mock: true, sourceDigest: rows.get(`studio_presenter_assets/${asset.id}`).payload.digest, status: 'completed' } });
     const input = { name: 'Our presenter', type: 'photo', voiceId: 'voice1', uploadId: asset.id, requestId: 'creation1', authorized: true, adultConfirmed: true, confirmed: true };
     assert.equal((await request('/creations', { ...input, authorized: false })).status, 400);
     assert.equal((await request('/creations', { ...input, adultConfirmed: false })).status, 400);
     assert.equal((await request('/creations', input, 'B')).status, 400); assert.equal(creates(), 0);
     const pair = await Promise.all([request('/creations', input), request('/creations', input)]); const first = await pair[0].json();
-    assert.equal((await pair[1].json()).id, first.id); assert.equal(creates(), 1); assert.equal(first.status, 'pending_consent');
+    assert.equal((await pair[1].json()).id, first.id); assert.equal(creates(), 1); assert.equal(first.status, 'completed');
     assert.equal(first.uploadId, undefined); assert.equal(first.fingerprint, undefined);
     assert.deepEqual(calls.find(c => c.url === 'https://api.heygen.com/v3/avatars')!.body.file, { type: 'asset_id', asset_id: 'uploaded1' });
     assert.equal((await request('/creations', { ...input, name: 'changed' })).status, 400);
-    assert.equal((await request('/creations', { ...input, requestId: 'duplicate-file' })).status, 400);
+    const repeated = await (await request('/creations', { ...input, requestId: 'duplicate-file' })).json();
+    assert.equal(repeated.id, first.id, 'a repeated action recovers the original paid task');
     const duplicateUpload = await (await upload('same-file-new-upload-id')).json();
-    assert.equal((await request('/creations', { ...input, uploadId: duplicateUpload.id, requestId: 'same-bytes-new-request' })).status, 400);
+    const repeatedUpload = await (await request('/creations', { ...input, uploadId: duplicateUpload.id, requestId: 'same-bytes-new-request' })).json();
+    assert.equal(repeatedUpload.id, first.id, 'the same bytes under a new upload id still recover the original task');
     assert.equal(creates(), 1);
     assert.deepEqual(await (await request('/creations', undefined, 'B')).json(), []);
     assert.equal((await request(`/creations/${first.id}/refresh`, {}, 'B')).status, 400);
     assert.equal((await request(`/creations/${first.id}/consent`, { requestId: 'c1' }, 'B')).status, 400);
     assert.equal((await request(`/creations/${first.id}/consent`, { requestId: 'c1', uploadId: asset.id })).status, 400);
-    const consent = await (await request(`/creations/${first.id}/consent`, { requestId: 'c1' })).json(); assert.match(consent.consentUrl, /heygen.com/); assert.ok(consent.consentRequestedAt);
+    const consent = await (await request(`/creations/${first.id}/consent`, { requestId: 'c1' })).json(); assert.equal(consent.status, 'completed'); assert.equal(consent.consentUrl, undefined);
     const bind = { creationId: first.id, voiceId: 'voice1', authorized: true, reviewed: true };
-    assert.equal((await request('/import', bind)).status, 400);
+    consentOmitted = true;
+    const missingConsent = await (await request(`/creations/${first.id}/refresh`, {})).json();
+    assert.equal(missingConsent.status, 'completed', 'photo avatars use the retained local subject authorization because HeyGen exposes no consent step');
+    consentOmitted = false;
     approved = true;
     const ready = await (await request(`/creations/${first.id}/refresh`, {})).json(); assert.equal(ready.status, 'completed'); assert.equal(ready.consentUrl, undefined); assert.equal(creates(), 1);
     const saved = await (await request('/import', bind)).json(); assert.equal(saved.presenters.length, 1); assert.equal(saved.presenters[0].nativeOrientation, 'portrait'); assert.equal(saved.presenters[0].supportsAlpha, false); assert.equal(saved.presenters[0].creationMode, 'quick');
@@ -93,9 +99,23 @@ test('presenter creation, consent, import, tenant isolation, pagination and unce
     assert.equal((await request('/import', bind, 'B')).status, 400);
     assert.equal((await request('/import', { lookId: 'private-other', authorized: true, reviewed: true })).status, 400);
     const catalog = await (await request('/catalog')).json(); assert.equal(catalog.items[0].id, 'public1'); assert.equal(catalog.nextToken, 'page2');
-    const stock = await (await request('/import', { lookId: 'public1', reviewed: true })).json(); assert.equal(stock.presenters.length, 2);
+    const stock = await (await request('/import', { lookId: 'public1', reviewed: true, makeDefault: true, authorized: true })).json(); assert.equal(stock.presenters.length, 2);
     assert.equal(stock.presenters[1].rightsEvidence.subjectAdultConfirmed, false);
     assert.match(stock.presenters[1].rightsEvidence.authorizationRef, /^license:\/\/heygen\/public-catalog\//);
+    assert.equal(stock.defaultPresenterId, stock.presenters[1].id, 'initial import replaces the previous default with the new asset');
+    const ordinaryImport = await (await request('/import', bind)).json();
+    assert.equal(ordinaryImport.defaultPresenterId, stock.defaultPresenterId, 'ordinary imports preserve the current default');
+    await request('/import', { ...bind, makeDefault: true });
+    const initialSelection = { lookId: 'public1', reviewed: true, makeDefault: true };
+    assert.equal((await request('/import', initialSelection)).status, 400, 'default selection requires explicit usage authorization');
+    const selected = await (await request('/import', { ...initialSelection, authorized: true })).json();
+    assert.equal(selected.defaultPresenterId, stock.presenters[1].id, 'initial selection replaces an existing default');
+    assert.equal(selected.presenters.length, 2, 'selecting an imported asset does not duplicate it');
+    const switchedBack = await (await request('/import', { ...bind, makeDefault: true })).json();
+    assert.equal(switchedBack.defaultPresenterId, saved.presenters[0].id, 'a completed own creation can become default again');
+    failWrites = true;
+    assert.equal((await request('/import', { ...initialSelection, authorized: true })).status, 400, 'failed default persistence never reports success');
+    failWrites = false;
     const previousPrivateTenant = process.env.HEYGEN_PRIVATE_ASSET_TENANT_ID;
     try {
       process.env.HEYGEN_PRIVATE_ASSET_TENANT_ID = 'A';
@@ -108,7 +128,7 @@ test('presenter creation, consent, import, tenant isolation, pagination and unce
       assert.equal(reused.status, 'completed', 'accepted consent on the same group is reused');
       assert.equal(creates(), 2);
       assert.equal(calls.filter(c => c.url === 'https://api.heygen.com/v3/avatars').at(-1)?.body.avatar_group_id, 'created-group');
-      assert.equal(calls.filter(c => c.url.endsWith('/created-group/consent')).length, 1, 'no second HeyGen consent request');
+      assert.equal(calls.filter(c => c.url.endsWith('/created-group/consent')).length, 0, 'photo avatars never call the digital-twin-only HeyGen consent endpoint');
     } finally {
       if (previousPrivateTenant === undefined) delete process.env.HEYGEN_PRIVATE_ASSET_TENANT_ID;
       else process.env.HEYGEN_PRIVATE_ASSET_TENANT_ID = previousPrivateTenant;
@@ -121,7 +141,19 @@ test('presenter creation, consent, import, tenant isolation, pagination and unce
     const uncertain = await (await request('/creations', uncertainInput)).json(); assert.equal(uncertain.status, 'uncertain'); assert.equal(creates(), 3);
     assert.equal((await (await request('/creations', uncertainInput)).json()).id, uncertain.id);
     assert.equal((await request(`/creations/${uncertain.id}/refresh`, {})).status, 400); assert.equal(creates(), 3);
-    assert.equal((await request('/creations', { ...uncertainInput, requestId: 'new-id-same-file' })).status, 400);
+    const uncertainRetry = await (await request('/creations', { ...uncertainInput, requestId: 'new-id-same-file' })).json();
+    assert.equal(uncertainRetry.id, uncertain.id, 'uncertain paid tasks are recovered instead of duplicated');
+    lost = false; approved = false;
+    const twinInput = { ...input, name: 'Digital twin', type: 'digital_twin', uploadId: training.id, requestId: 'digital-twin', voiceId: 'voice1' };
+    const twin = await (await request('/creations', twinInput)).json();
+    assert.equal(twin.status, 'pending_consent');
+    const rerouteUrl = 'https://app.example.test/?page=digitalEmployees&presenterConsentReturn=job';
+    const twinConsentResponse = await fetch(`${root}/creations/${twin.id}/consent`, { method: 'POST', headers: { 'Content-Type': 'application/json', 'x-tenant': 'A', Origin: 'https://app.example.test' }, body: JSON.stringify({ requestId: 'digital-twin-consent', rerouteUrl }) });
+    const twinConsent = await twinConsentResponse.json();
+    assert.equal(twinConsentResponse.status, 200); assert.match(twinConsent.consentUrl, /heygen.com/);
+    assert.equal(calls.filter(c => c.url.endsWith('/created-group/consent')).at(-1)?.body.reroute_url, rerouteUrl);
+    approved = true;
+    assert.equal((await (await request(`/creations/${twin.id}/refresh`, {})).json()).status, 'completed');
     assert.ok(calls.every(c => c.init.redirect === 'error'));
   } finally { await new Promise<void>(resolve => server.close(() => resolve())); }
 });
@@ -130,6 +162,7 @@ test('adapter submits direct consent with an asset source and never exposes upst
   let received: any;
   const client = new HeyGenPresenterClient('secret', (async (_url: string, init: RequestInit) => { received = JSON.parse(String(init.body)); return new Response(JSON.stringify({ data: { avatar_group: { id: 'g' } } })); }) as typeof fetch);
   await client.consent('g', 'req', 'asset'); assert.deepEqual(received, { consent_video: { type: 'asset_id', asset_id: 'asset' } });
+  await client.consent('g', 'req-redirect', undefined, 'https://app.example.test/return'); assert.deepEqual(received, { reroute_url: 'https://app.example.test/return' });
   const denied = new HeyGenPresenterClient('secret', (async () => new Response(JSON.stringify({ error: { message: 'key=secret' } }), { status: 403 })) as typeof fetch);
   await assert.rejects(() => denied.looks(), /403：当前账号未开通此接口权限/);
 });

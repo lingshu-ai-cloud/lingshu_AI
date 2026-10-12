@@ -127,3 +127,8 @@ assert.equal(open.candidates[0]?.enterpriseCommon, true);
 assert.equal(open.candidates[0]?.visualContract.product.source, 'inventory_open');
 
 console.log('social content record material candidate tests passed');
+
+const largeInventory=Array.from({length:80},(_,index)=>analyzedRecord({id:`owned-unlisted-${String(index).padStart(3,'0')}`,type:'video',enterpriseCommon:true}));
+const completePool=buildSocialWorkflowMaterialCandidates({records:largeInventory,tenantId:'tenant-a',voiceoverRows:[{cueId:'line',text:'企业环境'}]});
+assert.equal(new Set(completePool.candidates.map(candidate=>candidate.assetId)).size,80,'every readable tenant asset enters recall before per-shot filtering');
+assert.ok(completePool.candidates.some(candidate=>candidate.assetId==='owned-unlisted-079'),'an unlisted asset beyond the old first page cap remains discoverable');

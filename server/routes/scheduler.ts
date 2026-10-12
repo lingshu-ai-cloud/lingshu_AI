@@ -1450,6 +1450,10 @@ export async function ensureDigitalEmployeeSocialCollectionTask(input: {
 
 // Boot: restore active tasks
 export async function initScheduler() {
+  if (process.env.SCHEDULER_ENABLED === 'false') {
+    console.log('[scheduler] disabled by SCHEDULER_ENABLED=false');
+    return;
+  }
   const authority = schedulerBootstrapAuthority(process.env, localFallbacksEnabled());
   await runWithDataAuthority(authority, async () => {
     await hydrateTasksFromPocketBase();

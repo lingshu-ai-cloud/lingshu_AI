@@ -228,6 +228,31 @@ export function selectPresenterExecutions(input: {
       lipSyncRequired: scene.productionRouting?.needsPreciseLipSync ?? null,
       compositionLockRequired: scene.productionRouting?.needsCameraOrCompositionReconstruction ?? null,
     };
+    // Phrase-level ASR is a measured source track. Intersect it with this
+    // exact visual interval so narration shared across adjacent visual slots
+    // becomes an auditable per-shot speech measurement. It does not claim
+    // gesture, body, or camera CV measurements that were never performed.
+    const verifiedSpeechIntervals = (reference?.spokenLines ?? []).flatMap(line => {
+      if (line.precision !== 'phrase' || !line.provenance.trim()
+        || !Number.isFinite(line.startSeconds) || !Number.isFinite(line.endSeconds)
+        || line.endSeconds <= line.startSeconds || !reference) return [];
+      const start = Math.max(reference.startSeconds, line.startSeconds);
+      const end = Math.min(reference.endSeconds, line.endSeconds);
+      return end > start ? [{ start, end, provenance: line.provenance }] : [];
+    });
+    const verifiedSpeechSeconds = +verifiedSpeechIntervals
+      .reduce((total, interval) => total + interval.end - interval.start, 0).toFixed(3);
+    if (verifiedSpeechSeconds > 0 && governed.sourceFirstFrameRef) {
+      governed.visibleSpeechSeconds = verifiedSpeechSeconds;
+      governed.evidence = [...governed.evidence, ...verifiedSpeechIntervals.map(interval => ({
+        startSeconds: +(interval.start - reference!.startSeconds).toFixed(3),
+        endSeconds: +(interval.end - reference!.startSeconds).toFixed(3),
+        frameRef: governed.sourceFirstFrameRef!,
+        observation: `逐句 ASR 与本镜头画面区间相交 ${verifiedSpeechSeconds.toFixed(3)} 秒（${interval.provenance}）`,
+        fieldName: 'visibleSpeechSeconds' as const,
+        sourceKind: 'verified_asr' as const,
+      }))];
+    }
     let decision = decidePresenterStack(governed, {
       heygen: input.heygenReady, seedance: input.seedancePresenterReady, budget: input.budgetReady,
     });
@@ -235,9 +260,7 @@ export function selectPresenterExecutions(input: {
     // Exact source speech plus the Director's frozen lip-sync requirement is
     // sufficient to select the talking presenter when optional motion CV was
     // not run. This does not infer a gesture or camera route.
-    const verifiedSpeech = Boolean(reference?.spokenLines?.length
-      && reference.spokenLines.every(line => line.precision === 'phrase' && line.provenance.trim()
-        && line.endSeconds > line.startSeconds));
+    const verifiedSpeech = verifiedSpeechSeconds > 0;
     if (decision.route === 'needs_evidence' && scene.productionRouting?.needsPreciseLipSync
       && verifiedSpeech && governed.sourceFirstFrameRef && governed.enterprisePresenterAssetRef) {
       decision = {

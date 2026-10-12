@@ -1,3 +1,4 @@
+import type { ReferenceSemanticPlanning } from './socialContentSemanticConsolidation.js';
 import type { SocialTaskSource, SocialContentThemeId, SocialReferenceReuseBinding } from '../../shared/contracts/socialContentWorkflow.js';
 export type { SocialReferenceReuseBinding } from '../../shared/contracts/socialContentWorkflow.js';
 import type { VerifiedSocialScriptContext } from './socialContentScriptBaseline.js';
@@ -39,7 +40,7 @@ export async function resolveSocialReferenceReuseOnly(input: {
   verifiedContext: VerifiedSocialScriptContext;
   referenceSources: Array<Pick<SocialTaskSource, 'sourceId' | 'sourceRef' | 'sourceVersion' | 'createdAt'>>;
   binding: SocialReferenceReuseBinding;
-  planning?: {targetDurationSeconds: number | null; budgetCny: number; language?: 'en' | 'zh'; callToAction?: string | null};
+  planning?: ReferenceSemanticPlanning;
 }, ports: { readRecord(id: string): Promise<Record<string, unknown> | null> }): Promise<ResolvedSocialTaskReference> {
   const pin = input.binding;
   if (!pin || !socialText(pin.recordId) || !socialText(pin.analysisId)
@@ -51,7 +52,14 @@ export async function resolveSocialReferenceReuseOnly(input: {
   const analysis = socialObject(socialJson(record.aiAnalysis));
   if (!analysis || socialText(analysis.contentSha256) !== pin.contentSha256
     || (record.contentSha256 && record.contentSha256 !== pin.contentSha256)) fail('source_hash_changed');
-  if (socialText(analysis.analysisRunId) !== pin.analysisId || socialRequestHash(analysis) !== pin.analysisHash) fail('analysis_changed');
+  // The trend record also carries mutable queue/retry/preview bookkeeping.
+  // Those fields may change after a task has pinned the same immutable media
+  // and analysis run, and must not invalidate production. A real re-analysis
+  // receives a new analysisRunId; changed source bytes are checked above.
+  // Keep analysisHash in the binding as audit evidence and for compatibility
+  // with existing records, but do not use whole-record metadata drift as a
+  // production gate.
+  if (socialText(analysis.analysisRunId) !== pin.analysisId) fail('analysis_changed');
   const resolved = buildSocialTaskReferencePackage({ record, source: input.referenceSources[0]!,
     themeId: input.themeId, verifiedContext: input.verifiedContext, planning: input.planning });
   if (!resolved) fail('exact_analysis_or_source_match_missing');

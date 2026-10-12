@@ -96,9 +96,7 @@ const localFallback = createSocialProductSceneAdapter({ maximumCostCny: 3, async
     quality: { productIdentitySimilarity: { 'serum-a': 0.96, 'cream-b': 0.95 }, labelOcrExactMatch: true,
       sceneTopologyScore: 0.95, productSlotLayoutScore: 0.95, cameraTrajectoryScore: 0.95, evidenceRefs: ['qa://affine-ssim'] } };
 } });
-const localCompleted = await localFallback.execute(context);assert.ok(localCompleted);
-assert.match(localCompleted.disclosure || '', /本地确定性产品动效/);assert.doesNotMatch(localCompleted.disclosure || '', /AIGC/);
-assert.match(String(localCompleted.asset.segments[0]?.disclosure || ''), /已质检首帧/);
+await assert.rejects(() => localFallback.execute(context), /product_scene_still_image_motion_forbidden/);
 
 fs.rmSync(root, { recursive: true, force: true });
 console.log('social product scene adapter tests passed');

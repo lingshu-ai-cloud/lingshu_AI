@@ -231,6 +231,24 @@ function shotSignals(
     reference?.action?.endState,
     reference?.action?.spatialRelation,
   ].filter(Boolean).join(' ').toLocaleLowerCase();
+  // Boundary states describe continuity with adjacent shots, not the subject
+  // of this shot.  Classify against the current frozen visual contract so a
+  // factory end-state cannot turn the following office/presenter shot into
+  // factory footage.
+  const classificationValues = [
+    shot.requestedDescription,
+    ...(shot.subjects ?? []),
+    shot.interaction,
+    shot.environment,
+    shot.productUsage,
+    visualContract.interaction.description,
+    visualContract.environment.description,
+    visualContract.productUsage.description,
+    visualContract.action.path,
+    ...(reference?.tags.subjects ?? []),
+    ...(reference?.tags.subjectRelations ?? []),
+    ...(reference?.tags.sceneTypes ?? []),
+  ].filter(Boolean).join(' ').toLocaleLowerCase();
   const subjectKinds = new Set(visualContract.subjects.map(subject => subject.kind));
   const hasPerson = subjectKinds.has('person')
     || ['person_talking', 'person_holding_product', 'person_using_product', 'apply_product_to_face', 'person_factory_interaction'].includes(visualContract.interaction.kind)
@@ -250,9 +268,9 @@ function shotSignals(
     personUsesProduct,
     factory: shot.truthSensitiveSubject === 'customer_factory' || subjectKinds.has('factory')
       || visualContract.environment.kind === 'factory' || visualContract.interaction.kind === 'factory_process'
-      || /工厂|车间|产线|生产基地|仓库|灌装|旋盖|包装线|factory|workshop|production line|warehouse|filling|capping/.test(values),
+      || /工厂|车间|产线|生产基地|仓库|灌装|旋盖|包装线|factory|workshop|production line|warehouse|filling|capping/.test(classificationValues),
     customerCase: shot.truthSensitiveSubject === 'customer_case' || subjectKinds.has('customer_case')
-      || /客户案例|客户反馈|合作案例|成交结果|客户成果|customer case|testimonial|client result/.test(values),
+      || /客户案例|客户反馈|合作案例|成交结果|客户成果|customer case|testimonial|client result/.test(classificationValues),
   };
 }
 
@@ -261,19 +279,38 @@ export function buildSocialProductSceneReplicationSpec(input: {
   inventory: Required<SocialAssetInventory>;
   referenceShots?: SocialReferenceShotAnalysis[];
 }): SocialProductSceneReplicationSpec {
-  if (input.shot.productSceneReplication) return structuredClone(input.shot.productSceneReplication);
   const reference = input.referenceShots?.find(item => item.shotId === input.shot.referenceShotId);
   const visualContract = normalizeSceneVisualContract(input.shot.visualContract ?? reference?.visualContract ?? {
     productPolicy: input.shot.productPolicy,
     productRef: input.shot.productRef,
   });
-  const requestedProduct = String(visualContract.product.requestedProductRef
-    || visualContract.productUsage.productRef || input.shot.productRef || '').normalize('NFKC').trim().toLocaleLowerCase();
-  const inventoryGroups = visualContract.product.policy === 'locked' && requestedProduct
+  const normalizedProductIdentity = (value: unknown) => String(value ?? '').normalize('NFKC').trim()
+    .replace(/^product\s*:\s*/i, '').toLocaleLowerCase();
+  // The task-selected product is authoritative. A reference shot can retain
+  // the source video's historic/generic product label in its visual contract;
+  // that label describes composition and must not prevent the current exact
+  // enterprise SKU from filling an otherwise-empty frozen identity contract.
+  const requestedProduct = normalizedProductIdentity(input.shot.productRef
+    || visualContract.product.requestedProductRef || visualContract.productUsage.productRef);
+  // A named product always selects its own packaging, even for a preferred
+  // visual contract. Other catalogue products must never become its identity.
+  const inventoryGroups = requestedProduct
     ? input.inventory.productIdentityGroups.filter(group => (
-      group.productRef.normalize('NFKC').trim().toLocaleLowerCase() === requestedProduct
+      normalizedProductIdentity(group.productRef) === requestedProduct
     ))
     : input.inventory.productIdentityGroups;
+  // A new material-routing pass may carry the prior scene/timing contract while
+  // the exact enterprise product image was registered later. Preserve that
+  // contract, but fill its previously-empty identity slots from the current
+  // exact-SKU inventory. Non-empty frozen identity groups are never replaced.
+  if (input.shot.productSceneReplication) {
+    const existing=structuredClone(input.shot.productSceneReplication);
+    if(existing.productIdentity.groups.length||!inventoryGroups.length)return existing;
+    const groups:SocialProductIdentityGroup[]=inventoryGroups.map(group=>({productRef:group.productRef,referenceImageIds:[...group.imageIds],requiredVisibleElements:['产品轮廓','材质与颜色','Logo','包装标签与可读文字'],forbiddenChanges:['shape','material','color','logo','label_text','packaging_structure']}));
+    existing.productIdentity.groups=groups;
+    existing.sceneLock.productSlots=groups.map((group,index)=>({slotId:`product-slot-${index+1}`,productRef:group.productRef,placement:groups.length===1?'展台视觉中心':`从左到右第 ${index+1} 个固定槽位`,orientation:'正面标签朝向镜头，随运镜保持可识别',scale:groups.length===1?1:.82}));
+    return existing;
+  }
   const groups: SocialProductIdentityGroup[] = inventoryGroups.length
     ? inventoryGroups.map(group => ({
       productRef: group.productRef,
@@ -281,7 +318,7 @@ export function buildSocialProductSceneReplicationSpec(input: {
       requiredVisibleElements: ['产品轮廓', '材质与颜色', 'Logo', '包装标签与可读文字'],
       forbiddenChanges: ['shape', 'material', 'color', 'logo', 'label_text', 'packaging_structure'],
     }))
-    : visualContract.product.policy === 'locked' && requestedProduct ? [] : [{
+    : requestedProduct ? [] : [{
       productRef: 'task-product',
       referenceImageIds: [...input.inventory.productImageIds],
       requiredVisibleElements: ['产品轮廓', '材质与颜色', 'Logo', '包装标签与可读文字'],
@@ -352,9 +389,17 @@ export function classifySocialAssetSupplyMaterialType(shot:SocialAssetSupplyShot
   const affirmative=affirmativeSocialMaterialDescription(shot.requestedDescription);
   if(explicitSocialPresenterRequest(affirmative))return 'talking_head';
   const signals=shotSignals({...shot,requestedDescription:affirmative},referenceShots);
-  const presenter=referenceShot(shot,referenceShots)?.referenceProductionRouting;
+  const reference=referenceShot(shot,referenceShots);
+  const presenter=reference?.referenceProductionRouting;
   if(presenter?.state==='ready'&&presenter.personPresence==='person'&&presenter.observedPresenterRole==='sales_presenter')return 'talking_head';
-  if(signals.hasPerson&&/口播|主讲|讲解|presenter|talking|speaker/i.test(signals.text))return 'talking_head';
+  const visibleDescription=affirmativeSocialMaterialDescription(reference?.visualDescription);
+  const directToCamera=/面向镜头|正对镜头|直视镜头|看向镜头|looking (?:at|into) (?:the )?camera|facing (?:the )?camera/i.test(visibleDescription);
+  const interaction=normalizeSceneVisualContract(shot.visualContract??reference?.visualContract??{subjects:shot.subjects,interaction:shot.interaction,environment:shot.environment,productUsage:shot.productUsage}).interaction.kind;
+  const presenterFunction=['hook','d_to_c','call_to_action'].includes(shot.function)
+    || /\b(?:tell us|contact us|dm me|message us|call us)\b|联系我们|私信|留言|咨询/i.test(reference?.spokenText??'');
+  const visibleSpeechEvidence=Boolean(reference?.spokenText?.trim())&&directToCamera&&presenterFunction
+    && !['person_holding_product','person_using_product','apply_product_to_face','factory_process'].includes(interaction);
+  if(signals.hasPerson&&(visibleSpeechEvidence||/口播|主讲|讲解|presenter|talking|speaker/i.test(signals.text)))return 'talking_head';
   if(signals.factory)return 'factory';
   // Holding or turning a package is a product display, not consumer use.
   const visual=normalizeSceneVisualContract(shot.visualContract??referenceShot(shot,referenceShots)?.visualContract??{subjects:shot.subjects,interaction:shot.interaction,environment:shot.environment,productUsage:shot.productUsage});

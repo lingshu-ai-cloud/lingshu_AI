@@ -83,3 +83,19 @@ export function hasProductPaidStage(context: ProductPaidContext, shotId: string,
   bindProductPaidStage(context, shotId, stage, attempt);
   return true;
 }
+/** Upper-bound money retained for one product shot, including its separately
+ * funded directed retry. Providers in this chain do not return a trustworthy
+ * final invoice, so callers must keep this labelled as estimated/reserved. */
+export function productPaidReservedCostCny(context: ProductPaidContext, shotId: string) {
+  let total = 0;
+  for (const stage of ['first_frame', 'first_frame_qa', 'video', 'video_qa'] as const) {
+    const attempts: readonly number[] = stage === 'video' || stage === 'video_qa' ? [0, 1] : [0];
+    for (const attempt of attempts) {
+      if (!hasProductPaidStage(context, shotId, stage, attempt)) continue;
+      const amount = context.readReservedCny(bindProductPaidStage(context, shotId, stage, attempt).intent.operationId);
+      if (!Number.isFinite(amount) || amount < 0) fail('reservation_missing');
+      total += amount;
+    }
+  }
+  return Math.round(total * 1e6) / 1e6;
+}

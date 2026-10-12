@@ -7,7 +7,7 @@ import {HeyGenClient} from '../lib/heygen.js';
 import {withPaidOperationLock} from '../lib/paidOperationLock.js';
 import {createSocialHeyGenBridgePorts,defaultDownload,type SocialHeyGenBridgeDependencies} from './socialContentHeyGenBridge.js';
 import {readPreparedWholeVoiceScene,type PreparedWholeVoice} from './socialContentPreparedWholeVoice.js';
-import {paidProductionHash,type BoundPaidRoute,type PaidStageRequirement} from './socialContentPaidOperationPlan.js';
+import {paidProductionHash,presenterGroupContractHash,type BoundPaidRoute,type PaidStageRequirement} from './socialContentPaidOperationPlan.js';
 import {productionBillingAccountRef} from './socialContentProductionBudgetRoutes.js';
 import type {SocialTaskBudgetScope} from '../lib/socialContentTaskBudget.js';
 import type {SocialPaidOperationIntent} from '../lib/socialContentTaskBudgetAuthority.js';
@@ -44,7 +44,16 @@ export function createWholeTrackSocialHeyGenBridge(input:{
  };
  const canonical=(request:Pick<DigitalPresenterExecutionRequest,'tenantId'|'taskId'|'shotId'>)=>{
   if(request.tenantId!==funding.scope.tenantId||request.taskId!==funding.scope.taskId)throw Error('whole_track_heygen_scope_changed');
-  const key=`scene:${request.shotId}:authorized_digital_presenter:presenter`;
+  const grouped=funding.requirements.filter(r=>r.presenterGroupId===request.shotId);
+  if(grouped.length>1)throw Error('whole_track_heygen_group_ambiguous');
+  const group=grouped[0];
+  if(group){
+   if(group.key!==`presenter-group:${request.shotId}:presenter`||group.shotId!==null||!group.presenterGroupShotIds?.length
+    ||new Set(group.presenterGroupShotIds).size!==group.presenterGroupShotIds.length||!group.presenterAssetId
+    ||!group.presenterGroupContractHash||group.presenterGroupContractHash!==presenterGroupContractHash({groupId:group.presenterGroupId!,shotIds:group.presenterGroupShotIds,durationSeconds:Number(group.durationSeconds),spokenText:String(group.text),presenterAssetId:group.presenterAssetId}))
+    throw Error('whole_track_heygen_group_contract_changed');
+  }
+  const key=group?.key||`scene:${request.shotId}:authorized_digital_presenter:presenter`;
   const requirements=funding.requirements.filter(r=>r.key===key),requirement=requirements[0],route=funding.routeBindings[key];
   const operationId='paid-plan:'+paidProductionHash({scope:funding.scope,key,attempt:0});
   const intents=funding.intents.filter(i=>i.operationId===operationId),intent=intents[0];
@@ -87,6 +96,7 @@ export function createWholeTrackSocialHeyGenBridge(input:{
  });
  const resolve=async(request:DigitalPresenterExecutionRequest):Promise<WholeTrackPresenterSpeech>=>{
   await funding.assertCurrent();const {requirement,route,intent}=canonical(request);await funding.assertLivePresenter(route,request,keyHash);
+  if(requirement.presenterGroupId&&(request.shotId!==requirement.presenterGroupId||request.presenter.presenterAssetId!==requirement.presenterAssetId||request.script!==requirement.text))throw Error('whole_track_heygen_group_request_changed');
   const frozenDuration=Number(requirement.durationSeconds);
   if(!(frozenDuration>0))throw Error('whole_track_heygen_frozen_window_missing');
   // The reference clip timing describes the source video's edit. Paid scene
@@ -99,7 +109,8 @@ export function createWholeTrackSocialHeyGenBridge(input:{
    durationSeconds:frozenDuration,
    actionPeakSeconds:Math.min(frozenDuration,Math.max(0,frozenDuration*.58)),
   };
-  const clip=await readPreparedWholeVoiceScene({prepared:input.prepared,scope:funding.scope,shotId:request.shotId,spokenText:request.script,assertCurrent:funding.assertCurrent});
+  const clip=await readPreparedWholeVoiceScene({prepared:input.prepared,scope:funding.scope,shotId:request.shotId,spokenText:request.script,
+   ...(requirement.presenterGroupShotIds?{memberShotIds:requirement.presenterGroupShotIds}:{}),assertCurrent:funding.assertCurrent});
   if(Math.abs(clip.durationSeconds-frozenDuration)>.02)throw Error('whole_track_heygen_frozen_window_changed');
   const completedReceiptRef=path.join(root,sha(intent.operationId)+'.completed.json');
   if(fs.existsSync(completedReceiptRef)){

@@ -1,6 +1,7 @@
 import { getScrollBehavior } from "../../lib/usePrefersReducedMotion";
 import {SocialDirectorG5ReviewPanel} from './SocialDirectorG5ReviewPanel';
 import {SocialSceneG4ReviewPanel} from './SocialSceneG4ReviewPanel';
+import {PresenterFirstFrameReviewPanel} from './PresenterFirstFrameReviewPanel';
 import { useCallback, useEffect, useState } from 'react';
 import WeeklyContentProductionView from './WeeklyContentProductionView';
 import { AlertCircle, CheckCircle2, Loader2, RefreshCcw } from 'lucide-react';
@@ -161,6 +162,8 @@ export default function SocialContentWorkspace({
         onRefresh={() => void state.refresh()}
         onNavigate={navigateWithTask}
       />
+
+      {task?.runId&&<PresenterFirstFrameReviewPanel key={`presenter-first-frame:${task.taskId}:${task.runId}`} taskId={task.taskId} runId={task.runId}/>}
 
       {task?.runId&&<SocialDirectorG5ReviewPanel key={`g5:${task.taskId}:${task.runId}`} task={task} onChanged={()=>void state.refresh()}/> }
       {task?.runId&&<SocialSceneG4ReviewPanel key={`${task.taskId}:${task.runId}`} task={task} onChanged={()=>void state.refresh()}/> }

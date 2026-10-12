@@ -50,3 +50,10 @@ test('historical, confirmed and explicit revision scripts never enter new planni
       readDetail: forbidden }), resolved);
   }
 });
+
+test('single-reference route planning keeps source cut points while preparing a three-second product clip', async()=>{
+ const row=task();row.brief.referenceMode='single_source_fidelity';const source=fixture();
+ const result=await planNewSocialMaterialRoutes({repository,tenantId:'tenant',task:row,resolved:source,readDetail:async()=>({assetSupplyPlan:plan}) as never});
+ assert.equal(result.replicationScript.shots[0].startSeconds,0);assert.equal(result.replicationScript.shots[0].endSeconds,8);
+ assert.equal(result.replicationScript.shots[0].materialPlan.productSceneReplication!.cameraLock.durationSeconds,3);
+});

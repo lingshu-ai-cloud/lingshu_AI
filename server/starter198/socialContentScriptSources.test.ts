@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { freezeSocialScriptBaseline, parseStoredSocialScriptBaseline } from './socialContentScriptBaseline.js';
-import { buildSocialTaskReferencePackage, referencePreparationForRecord } from './socialContentScriptSources.js';
+import { buildSocialTaskReferencePackage, normalizeReferenceTimelineBoundaries, referencePreparationForRecord } from './socialContentScriptSources.js';
 import { reviewShotMaterialRefs } from '../lib/referenceShotReview.js';
 import { buildReferenceShotProductionRouting } from '../../shared/referenceShotProductionRouting.js';
 
@@ -463,3 +463,52 @@ for(const [index,shot] of retainedIdentityAnalysis.gemini.scriptDetails15s.entri
 const retainedPackage=buildSocialTaskReferencePackage({record:{...reviewedRecord,aiAnalysis:JSON.stringify(retainedIdentityAnalysis)},source,themeId:'product_value',verifiedContext:{productName:'新产品',facts:[],source:'enterprise_product',confidence:1}});assert.ok(retainedPackage);
 assert.ok(retainedPackage.referenceVideoAnalysis.shots.every(shot=>shot.referenceProductionRouting?.state==='awaiting_automatic_analysis'),'human retime and merge must re-evaluate actual retained ranges instead of copying original ready summaries');
 assert.ok(retainedPackage.referenceVideoAnalysis.shots.every(shot=>!shot.referenceProductionRouting?.identityLock),'old-window person groups cannot bind new retained cuts');
+
+// The entry point must preserve a complete source timeline even when a legacy
+// brief supplies a shorter duration and a ten-yuan production budget.
+const fidelityRows = Array.from({length: 37}, (_, index) => ({
+  ...detailedRows[index % detailedRows.length],
+  time: `${index * 38 / 37}-${(index + 1) * 38 / 37}`,
+}));
+const fidelityRecord = {...longRecord, duration: 38, aiAnalysis: JSON.stringify({
+  analysisMode: 'exact', analysisQuality: 'video', gemini: {scriptDetails15s: fidelityRows},
+})};
+for (const referenceMode of [undefined, 'single_source_fidelity'] as const) {
+  const fidelityPackage = buildSocialTaskReferencePackage({
+    record: fidelityRecord, source, themeId: 'product_value',
+    verifiedContext: {productName: '新产品', facts: [], source: 'enterprise_product', confidence: 1},
+    planning: {referenceMode, targetDurationSeconds: 18, budgetCny: 10},
+  });
+  assert.ok(fidelityPackage);
+  assert.equal(fidelityPackage.replicationScript.shots.length, 37);
+  assert.equal(fidelityPackage.replicationScript.shots.at(-1)?.endSeconds, 38);
+  assert.deepEqual(fidelityPackage.replicationScript.shots.map(shot => [shot.referenceShotId, shot.startSeconds, shot.endSeconds]),
+    fidelityPackage.referenceVideoAnalysis.shots.map(shot => [shot.shotId, shot.startSeconds, shot.endSeconds]));
+  assert.ok(fidelityPackage.replicationScript.shots.every(shot => shot.scriptOrigin !== 'budget_semantic_revision'));
+}
+
+// Real 38-second reference regression: the analyzer emitted 41 sampled rows,
+// including four transition samples shorter than a production slot. The
+// retained 37-slot timeline must use the physical scene cuts and remain whole.
+const v12Bounds = [
+  [0,.4],[.4,4.9],[4.9,5.3],[5.3,5.7],[5.83,6.6],[6.6,6.9],[6.9,7.4],[7.4,8],[8.2,8.9],
+  [8.9,9.9],[9.9,11],[11,12.7],[12.7,14.3],[14.3,15],[15,15.67],[15.67,16.9],[16.9,17.9],
+  [17.9,18.3],[18.3,18.8],[18.8,19.13],[19.13,19.7],[19.7,19.97],[19.97,20.9],[20.9,22.1],
+  [22.23,23.7],[23.7,24.27],[24.27,24.9],[24.9,25.63],[25.63,26.6],[26.6,28.7],[28.7,29.2],
+  [29.2,30.9],[30.9,32],[32,33.8],[33.8,34.3],[34.3,37.1],[37.23,38],
+] as const;
+const v12HardCuts = [4.83,5.83,6.63,6.9,7.47,8,8.9,14.3,18.3,19.13,19.97,22.23,24.27,24.93,25.63,29.2,31.9,34.3,37.23];
+const normalizedV12 = normalizeReferenceTimelineBoundaries(
+  v12Bounds.map(([startSeconds,endSeconds],index)=>({detail:{shotId:`shot-${index+1}`},timing:{startSeconds,endSeconds,durationSeconds:endSeconds-startSeconds}})),
+  [...v12Bounds.map(([startSeconds,endSeconds])=>({startSeconds,endSeconds})),
+    {startSeconds:5.7,endSeconds:5.83},{startSeconds:8,endSeconds:8.2},{startSeconds:22.1,endSeconds:22.23},{startSeconds:37.1,endSeconds:37.23}],
+  v12HardCuts,
+);
+assert.equal(normalizedV12.length,37);
+assert.deepEqual(normalizedV12.slice(3,5).map(row=>[row.timing.startSeconds,row.timing.endSeconds]),[[5.3,5.83],[5.83,6.6]]);
+assert.deepEqual(normalizedV12.slice(7,9).map(row=>[row.timing.startSeconds,row.timing.endSeconds]),[[7.4,8],[8,8.9]]);
+assert.deepEqual(normalizedV12.slice(23,25).map(row=>[row.timing.startSeconds,row.timing.endSeconds]),[[20.9,22.23],[22.23,23.7]]);
+assert.deepEqual(normalizedV12.slice(35,37).map(row=>[row.timing.startSeconds,row.timing.endSeconds]),[[34.3,37.23],[37.23,38]]);
+assert.equal(normalizedV12[0]!.timing.startSeconds,0);
+assert.equal(normalizedV12.at(-1)!.timing.endSeconds,38);
+assert.ok(normalizedV12.slice(1).every((row,index)=>row.timing.startSeconds===normalizedV12[index]!.timing.endSeconds));

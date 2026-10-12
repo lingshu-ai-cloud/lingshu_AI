@@ -1,7 +1,7 @@
 import { parseWorkbook } from './productImport';
 const MAX_TEXT = 80000;
 export function validateProductDiscoveryFileSize(name: string, size: number): void {
-  const limitMB = /\.pdf$/i.test(name) ? 50 : 10;
+  const limitMB = 50;
   if (size > limitMB * 1024 * 1024) throw new Error(`产品文件不能超过 ${limitMB}MB`);
 }
 export async function readProductDiscoveryFile(file: File): Promise<string> {

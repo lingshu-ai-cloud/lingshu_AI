@@ -15,10 +15,15 @@ test('pinned 38-second reference uses actual package builder and a single exact 
  const result=await resolveSocialReferenceReuseOnly(input,{readRecord:async id=>{reads++;assert.equal(id,record.id);return record;}});
  assert.equal(reads,1);assert.equal(result.referenceVideoAnalysis.durationSeconds,38);assert.equal(result.referenceVideoAnalysis.status,'ready');assert.equal(JSON.stringify(record),before);
 });
-test('cache, tenant, hashes, run and active source drift fail explicitly without fallback',async()=>{
- for(const [changed,reason] of [[null,'cache_missing'],[{...record,tenantId:'other'},'tenant_mismatch'],[{...record,aiAnalysis:JSON.stringify({...analysis,contentSha256:'b'.repeat(64)})},'source_hash_changed'],[{...record,aiAnalysis:JSON.stringify({...analysis,analysisRunId:'new-run'})},'analysis_changed'],[{...record,aiAnalysis:JSON.stringify({...analysis,extra:'changed'})},'analysis_changed'],[{...record,sourceUrl:'https://example.com/other'},'exact_analysis_or_source_match_missing']] as const){
+test('cache, tenant, source hash, analysis run and active source drift fail explicitly without fallback',async()=>{
+ for(const [changed,reason] of [[null,'cache_missing'],[{...record,tenantId:'other'},'tenant_mismatch'],[{...record,aiAnalysis:JSON.stringify({...analysis,contentSha256:'b'.repeat(64)})},'source_hash_changed'],[{...record,aiAnalysis:JSON.stringify({...analysis,analysisRunId:'new-run'})},'analysis_changed'],[{...record,sourceUrl:'https://example.com/other'},'exact_analysis_or_source_match_missing']] as const){
   let reads=0;await assert.rejects(resolveSocialReferenceReuseOnly(input,{readRecord:async()=>{reads++;return changed;}}),new RegExp(reason));assert.equal(reads,1);
  }
+});
+test('mutable processing metadata does not invalidate the same media and analysis run',async()=>{
+ const changed={...record,aiAnalysis:JSON.stringify({...analysis,analysisQueueState:'completed',analysisWorkerAttempt:3,previewPersistedAt:'2026-10-12T00:00:00.000Z'})};
+ const result=await resolveSocialReferenceReuseOnly(input,{readRecord:async()=>changed});
+ assert.equal(result.referenceVideoAnalysis.durationSeconds,38);
 });
 test('missing source or malformed pin fails before any storage access',async()=>{
  for(const bad of [{...input,referenceSources:[]},{...input,binding:{...input.binding,analysisHash:'invalid'}}]){

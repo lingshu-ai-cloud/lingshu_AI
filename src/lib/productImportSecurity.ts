@@ -6,7 +6,7 @@ import * as XLSX from 'xlsx';
  * workbook cannot monopolize a tab with ZIP expansion or enormous sparse ranges.
  */
 export const PRODUCT_IMPORT_LIMITS = Object.freeze({
-  maxFileBytes: 10 * 1024 * 1024,
+  maxFileBytes: 50 * 1024 * 1024,
   maxArchiveEntries: 2_048,
   maxArchiveUncompressedBytes: 64 * 1024 * 1024,
   maxArchiveEntryBytes: 32 * 1024 * 1024,
@@ -166,18 +166,31 @@ function assertCsvQuoteStructure(value: string): void {
   if (quoted) throw importError('CSV 文件存在未闭合的引号');
 }
 
-function rangeDimensions(sheet: XLSX.WorkSheet): { rows: number; columns: number; cells: number } {
-  const reference = String(sheet['!fullref'] || sheet['!ref'] || '').trim();
-  if (!reference) return { rows: 0, columns: 0, cells: 0 };
-  if (reference.length > 64 || !/^\$?[A-Z]{1,3}\$?\d{1,7}(?::\$?[A-Z]{1,3}\$?\d{1,7})?$/i.test(reference)) {
-    throw importError('工作表范围格式无效');
+function effectiveDataRange(sheet: XLSX.WorkSheet): XLSX.Range | null {
+  let range: XLSX.Range | null = null;
+  let materializedCells = 0;
+  for (const address of Object.keys(sheet)) {
+    if (address.startsWith('!')) continue;
+    materializedCells += 1;
+    if (materializedCells > PRODUCT_IMPORT_LIMITS.maxCellsPerSheet) {
+      throw importError(`工作表单元格不能超过 ${PRODUCT_IMPORT_LIMITS.maxCellsPerSheet} 个`);
+    }
+    if (!/^\$?[A-Z]{1,3}\$?\d{1,7}$/i.test(address)) throw importError('工作表单元格地址无效');
+    const value = sheet[address]?.v;
+    // WPS and some Excel exporters preserve formatting across thousands of
+    // empty columns and write that inflated span into !ref. Only cells with an
+    // actual value belong to the product-data range.
+    if (value == null || String(value).trim() === '') continue;
+    const cell = XLSX.utils.decode_cell(address.replace(/\$/g, ''));
+    range = range
+      ? { s: { r: Math.min(range.s.r, cell.r), c: Math.min(range.s.c, cell.c) }, e: { r: Math.max(range.e.r, cell.r), c: Math.max(range.e.c, cell.c) } }
+      : { s: { ...cell }, e: { ...cell } };
   }
-  let range: XLSX.Range;
-  try {
-    range = XLSX.utils.decode_range(reference);
-  } catch {
-    throw importError('工作表范围格式无效');
-  }
+  return range;
+}
+
+function rangeDimensions(range: XLSX.Range | null): { rows: number; columns: number; cells: number } {
+  if (!range) return { rows: 0, columns: 0, cells: 0 };
   const rows = range.e.r - range.s.r + 1;
   const columns = range.e.c - range.s.c + 1;
   if (rows <= 0 || columns <= 0 || !Number.isSafeInteger(rows * columns)) {
@@ -202,7 +215,8 @@ function assertWorkbookLimits(workbook: XLSX.WorkBook): void {
   for (const name of workbook.SheetNames) {
     const sheet = workbook.Sheets[name];
     if (!sheet) throw importError(`工作表“${name}”缺少数据`);
-    const dimensions = rangeDimensions(sheet);
+    let effectiveRange = effectiveDataRange(sheet);
+    const dimensions = rangeDimensions(effectiveRange);
     if (dimensions.cells > PRODUCT_IMPORT_LIMITS.maxCellsPerSheet) {
       throw importError(`工作表“${name}”单元格范围不能超过 ${PRODUCT_IMPORT_LIMITS.maxCellsPerSheet} 个`);
     }
@@ -225,7 +239,13 @@ function assertWorkbookLimits(workbook: XLSX.WorkBook): void {
       if (mergedCells > PRODUCT_IMPORT_LIMITS.maxMergedCellsPerWorkbook) {
         throw importError(`工作簿合并单元格展开后不能超过 ${PRODUCT_IMPORT_LIMITS.maxMergedCellsPerWorkbook} 个`);
       }
+      effectiveRange = effectiveRange
+        ? { s: { r: Math.min(effectiveRange.s.r, merge.s.r), c: Math.min(effectiveRange.s.c, merge.s.c) }, e: { r: Math.max(effectiveRange.e.r, merge.e.r), c: Math.max(effectiveRange.e.c, merge.e.c) } }
+        : { s: { ...merge.s }, e: { ...merge.e } };
     }
+    if (effectiveRange) sheet['!ref'] = XLSX.utils.encode_range(effectiveRange);
+    else delete sheet['!ref'];
+    delete sheet['!fullref'];
   }
 }
 

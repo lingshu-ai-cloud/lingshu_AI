@@ -106,7 +106,9 @@ export class HeyGenPresenterClient {
     if (!Array.isArray(result.data)) throw new Error('人物形象列表格式异常');
     return result.data.map(presenterLook);
   }
-  async consent(groupId: string, requestId: string, assetId?: string) {
-    return (await this.call(`avatars/${encodeURIComponent(groupId)}/consent`, assetId ? { consent_video: { type: 'asset_id', asset_id: assetId } } : {}, requestId)).data;
+  async consent(groupId: string, requestId: string, assetId?: string, rerouteUrl?: string) {
+    return (await this.call(`avatars/${encodeURIComponent(groupId)}/consent`, assetId
+      ? { consent_video: { type: 'asset_id', asset_id: assetId } }
+      : { ...(rerouteUrl ? { reroute_url: rerouteUrl } : {}) }, requestId)).data;
   }
 }

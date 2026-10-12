@@ -1,5 +1,6 @@
 import {createWeeklyOwnedProductIdentityRouter} from './weeklyOwnedProductIdentityRouter.js';
 import {createWeeklyOwnedProductIdentityUI} from './weeklyOwnedProductIdentityUI.js';
+import {createPresenterFirstFrameApprovalRouter} from './socialContentPresenterFirstFrameApprovalRouter.js';
 import {createSocialInstagramDeliveryRouter} from './socialInstagramDeliveryRouter.js';import {createSocialInstagramDeliveryService} from './socialInstagramDeliveryService.js';
 import {createSocialWeeklyG6ReviewRouter} from './socialWeeklyG6ReviewRouter.js';import {createSocialWeeklyG6ReviewService} from './socialWeeklyG6ReviewService.js';
 import {createSocialDirectorG5ReviewRouter} from './socialDirectorG5ReviewRouter.js';
@@ -199,6 +200,7 @@ router.use('/tasks/:taskId/runs/:runId/artifacts/:artifactId/g6-reviews',createS
   }
 
   if(repository.dataStore)router.use('/tasks/:taskId/weekly-owned-product-identity',createWeeklyOwnedProductIdentityRouter(createWeeklyOwnedProductIdentityUI(repository.dataStore,{repository,sourceOptions}),authorize));
+  if(repository.dataStore)router.use('/tasks/:taskId/runs/:runId/presenter-first-frame-reviews',createPresenterFirstFrameApprovalRouter({repository,authorize,now}));
 
   function asyncRoute(handler: (req: Request, res: Response) => Promise<void>) {
     return (req: Request, res: Response, _next: NextFunction) => {

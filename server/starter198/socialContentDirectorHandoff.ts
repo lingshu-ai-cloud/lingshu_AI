@@ -92,6 +92,7 @@ export function socialDirectorContentHandoff(plan: StoredSocialDirectorPlan): So
       return {
         sceneId: scene.sceneId,
         order: scene.order,
+        ...(scene.referenceStructure ? { referenceStructure: structuredClone(scene.referenceStructure) } : {}),
         script: scene.script,
         voiceover: scene.voiceover,
         caption: scene.caption,
@@ -116,8 +117,21 @@ export function socialDirectorContentHandoff(plan: StoredSocialDirectorPlan): So
 export function socialDirectorSceneTimingCues(
   handoff: SocialDirectorContentHandoff,
   duration: number,
+  preserveReferenceTimeline = false,
 ): Array<{ start: number; end: number; text: string }> {
   assertHandoffIntegrity(handoff);
+  if (preserveReferenceTimeline) {
+    const cues = handoff.scenes.map(scene => ({
+      start: Number(scene.referenceStructure?.sourceTiming.startSeconds),
+      end: Number(scene.referenceStructure?.sourceTiming.endSeconds), text: scene.caption,
+    }));
+    if (!cues.length || cues.some((cue, index) => !Number.isFinite(cue.start) || !Number.isFinite(cue.end)
+      || cue.end <= cue.start || Math.abs(cue.start - (index ? cues[index - 1]!.end : 0)) > .05)
+      || Math.abs(cues.at(-1)!.end - duration) > .05) {
+      throw new Error('director_revision_required:reference_timeline_missing_or_drifted');
+    }
+    return cues;
+  }
   const exactDuration = Math.max(0.5, Number(duration));
   const weights = handoff.scenes.map(scene => Math.max(1,
     scene.source.type === 'image' ? 2.8 : (scene.source.sourceEnd - scene.source.sourceStart) / 0.82));
@@ -178,14 +192,16 @@ export function socialDirectorRenderTimeline(
   handoff: SocialDirectorContentHandoff,
   duration: number,
   measuredCues?: Array<{ start: number; end: number }>,
+  preserveReferenceTimeline = false,
 ) {
-  const cues = measuredCues?.length === handoff.scenes.length
+  const cues = preserveReferenceTimeline ? socialDirectorSceneTimingCues(handoff, duration, true)
+    : measuredCues?.length === handoff.scenes.length
     && measuredCues.every((cue, index) => Number.isFinite(cue.start) && Number.isFinite(cue.end)
       && cue.end > cue.start && (index === 0 || cue.start >= measuredCues[index - 1]!.end - .05))
     ? measuredCues : socialDirectorSceneTimingCues(handoff, duration);
   const beatEvidence = handoff.effectPlan?.beatSync ? handoff.effectPlan.beatEvidence : null;
   const renderCues = cues.map(cue => ({ start: cue.start, end: cue.end }));
-  if (beatEvidence && beatEvidence.confidence >= .65) {
+  if (!preserveReferenceTimeline && beatEvidence && beatEvidence.confidence >= .65) {
     for (let index = 0; index < renderCues.length - 1; index += 1) {
       const boundary = renderCues[index]!.end;
       const nearest = beatEvidence.beats.slice().sort((left, right) => Math.abs(left - boundary) - Math.abs(right - boundary))[0];
@@ -199,8 +215,8 @@ export function socialDirectorRenderTimeline(
   }
   return handoff.scenes.map((scene, index) => {
     const targetStart = index === 0 ? 0 : renderCues[index]!.start;
-    const targetEnd = index === handoff.scenes.length - 1 ? Math.max(targetStart + .5, duration) : renderCues[index]!.end;
-    const targetDuration = Math.max(0.5, targetEnd - targetStart);
+    const targetEnd = index === handoff.scenes.length - 1 ? duration : renderCues[index]!.end;
+    const targetDuration = preserveReferenceTimeline ? targetEnd - targetStart : Math.max(0.5, targetEnd - targetStart);
     if (scene.source.type === 'image') {
       if (targetDuration > 4.2) throw new Error('director_revision_required:单张图片的锁定停留时长过长');
       return { name: scene.source.assetName, type: 'image' as const, url: scene.source.renderUrl, targetStart, targetEnd, targetDuration };
@@ -225,16 +241,17 @@ export function socialDirectorRenderTimeline(
   });
 }
 
-export function socialDirectorCoverTimestamp(handoff: SocialDirectorContentHandoff, duration: number, measuredCues?: Array<{ start: number; end: number }>): number {
-  const cues = measuredCues?.length === handoff.scenes.length ? measuredCues : socialDirectorSceneTimingCues(handoff, duration);
+export function socialDirectorCoverTimestamp(handoff: SocialDirectorContentHandoff, duration: number, measuredCues?: Array<{ start: number; end: number }>, preserveReferenceTimeline = false): number {
+  const cues = preserveReferenceTimeline ? socialDirectorSceneTimingCues(handoff, duration, true)
+    : measuredCues?.length === handoff.scenes.length ? measuredCues : socialDirectorSceneTimingCues(handoff, duration);
   const index = handoff.scenes.findIndex(scene => scene.sceneId === handoff.coverIntent.sceneId);
   if (index < 0) throw new SocialContentWorkflowError('social_content_director_handoff_lineage_invalid', 503);
   const cue = cues[index]!;
   return roundSeconds(cue.start + (cue.end - cue.start) / 2);
 }
 
-export function socialDirectorScriptText(handoff: SocialDirectorContentHandoff, duration: number): string {
-  const cues = socialDirectorSceneTimingCues(handoff, duration);
+export function socialDirectorScriptText(handoff: SocialDirectorContentHandoff, duration: number, preserveReferenceTimeline = false): string {
+  const cues = socialDirectorSceneTimingCues(handoff, duration, preserveReferenceTimeline);
   return handoff.scenes.map((scene, index) => {
     const cue = cues[index]!;
     return `[${cue.start.toFixed(2)}-${cue.end.toFixed(2)}s]\n镜头功能：${scene.script.shotFunction}\n画面：使用“${scene.source.assetName}”的已锁定片段 ${scene.source.sourceStart.toFixed(2)}-${scene.source.sourceEnd.toFixed(2)}s\n口播：${scene.voiceover}\n字幕：${scene.caption}`;
