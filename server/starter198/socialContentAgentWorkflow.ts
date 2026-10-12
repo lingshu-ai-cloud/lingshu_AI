@@ -794,6 +794,9 @@ function executionScene(input: {
       : input.supply.materialRouting.policy === 'authorized_presenter' ? capability('authorized_digital_presenter')
         : input.supply.materialRouting.policy === 'local_first_product_i2v'
           ? capability('aigc_product_scene_replication')
+          : input.supply.materialRouting.policy === 'local_only'
+            && ['motion_graphics', 'verified_fact_card'].includes(input.supply.sourceStrategy)
+            ? capability(input.supply.sourceStrategy)
           : undefined
     : undefined;
   const preferred = input.supply.materialRouting ? typedPreferred : identityLockedPresenter ? capability('authorized_digital_presenter')
