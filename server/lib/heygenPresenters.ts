@@ -20,6 +20,23 @@ export function asianPresenterLook(look: PresenterLook): boolean {
   return /(?:^|[ _-])(asian|east[ _-]?asian|chinese|japanese|korean)(?:$|[ _-])|亚洲|东亚|中国|日本|韩国/i.test([look.ethnicity, ...(look.tags || [])].filter(Boolean).join(' '));
 }
 
+export class HeyGenRequestError extends Error {
+  constructor(message: string, public readonly status: number, public readonly definitive: boolean) {
+    super(message);
+    this.name = 'HeyGenRequestError';
+  }
+}
+
+function providerErrorMessage(result: any): string {
+  const candidate = [result?.error?.message, result?.error?.detail, result?.message, result?.detail]
+    .find(value => typeof value === 'string' && value.trim());
+  if (!candidate) return '';
+  const clean = candidate.trim().replace(/[\r\n\t]+/g, ' ').replace(/\s{2,}/g, ' ').slice(0, 240);
+  // Do not surface upstream identifiers, URLs, keys, or opaque debug dumps.
+  if (/https?:\/\/|api[_ -]?key|authorization|bearer|stack|traceback|[A-Za-z0-9_-]{48,}/i.test(clean)) return '';
+  return clean;
+}
+
 /** Defaults to public assets. Private catalogs require an explicit tenant binding in the router. */
 export class HeyGenPresenterClient {
   constructor(private key: string, private transport: typeof fetch = fetch) {}
@@ -49,8 +66,9 @@ export class HeyGenPresenterClient {
     if (!response) throw new Error('HeyGen 网络连接失败，请稍后刷新原任务');
     const result = await response.json().catch(() => null);
     if (!response.ok || result?.error) {
-      const hint = response.status === 401 ? '密钥无效或已过期' : response.status === 403 ? '当前账号未开通此接口权限' : response.status === 429 ? '调用频率受限，请稍后刷新' : '请求失败';
-      throw new Error(`HeyGen ${response.status}：${hint}`);
+      const upstream = providerErrorMessage(result);
+      const hint = response.status === 401 ? '密钥无效或已过期' : response.status === 403 ? '当前账号未开通此接口权限' : response.status === 429 ? '调用频率受限，请稍后刷新' : upstream || '请求未被受理，请检查素材是否符合官方要求';
+      throw new HeyGenRequestError(`HeyGen ${response.status}：${hint}`, response.status, response.status >= 400 && response.status < 500 && response.status !== 408 && response.status !== 429);
     }
     if (!result || !('data' in result)) throw new Error('HeyGen 返回结果不完整，请刷新原任务核实');
     return result;

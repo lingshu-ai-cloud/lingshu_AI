@@ -7,7 +7,7 @@ import { objectStorageUpload, objectStorageHead } from '../storage/objectStorage
 import { Router, raw } from 'express';
 import { createHash } from 'node:crypto';
 import type { DataStore } from '../storage/datastore.js';
-import { HeyGenPresenterClient, asianPresenterLook, mediaUrl, presenterLook } from '../lib/heygenPresenters.js';
+import { HeyGenPresenterClient, HeyGenRequestError, asianPresenterLook, mediaUrl, presenterLook } from '../lib/heygenPresenters.js';
 import type { PresenterCreation, PresenterLook } from '../../src/lib/presenterAssets.js';
 import type { ProductionDefaults, PresenterAsset } from '../../src/lib/shotProduction.js';
 import { EMPTY_DEFAULTS } from '../../src/lib/shotProduction.js';
@@ -113,6 +113,13 @@ export function createPresenterAssetsRouter(store: DataStore, exclusive: Exclusi
       createdAt: p.createdAt, updatedAt: p.updatedAt };
   };
   const refresh = async (row: Row) => {
+    // Older builds recorded every provider 400 as "uncertain" even though an
+    // HTTP 400 is a definitive rejection and no remote task was accepted.
+    // Reconcile those retained rows on the user's explicit refresh without
+    // issuing another paid create call.
+    if (!row.payload.groupId && row.payload.status === 'uncertain' && /^HeyGen 400[：:]/.test(String(row.payload.error || ''))) {
+      return write(row, { status: 'failed', error: 'HeyGen 未受理这次人物创建。请返回修改素材后重新提交' });
+    }
     if (!row.payload.groupId) throw new Error('提交结果尚未核实，请管理员核对原任务；刷新不会重新创建或计费');
     const group = await client().group(row.payload.groupId);
     const looks = row.payload.look?.id ? [await client().look(row.payload.look.id)] : await client().groupLooks(row.payload.groupId);
@@ -327,7 +334,11 @@ export function createPresenterAssetsRouter(store: DataStore, exclusive: Exclusi
       const result = await store.list<Row>(COLLECTION, { where: { tenant_id: res.locals.tenantId, kind: 'creation' }, perPage: 100 });
       // Legacy local-preview rows are intentionally excluded: they have no
       // provider-backed identity or consent evidence and cannot become assets.
-      res.json(result.items.filter(row => row.tenant_id === res.locals.tenantId && row.payload.mock !== true).map(publicJob));
+      const rows = result.items.filter(row => row.tenant_id === res.locals.tenantId && row.payload.mock !== true);
+      const jobs = await Promise.all(rows.map(row => !row.payload.groupId && row.payload.status === 'uncertain' && /^HeyGen 400[：:]/.test(String(row.payload.error || ''))
+        ? write(row, { status: 'failed', error: 'HeyGen 未受理这次人物创建。请返回修改素材后重新提交' })
+        : publicJob(row)));
+      res.json(jobs);
     } catch { res.status(503).json({ error: '企业人物任务读取失败，请检查人物资产数据表' }); }
   });
   // Auth is inherited from studioRouter, before buffering a bounded binary body.
@@ -423,7 +434,13 @@ export function createPresenterAssetsRouter(store: DataStore, exclusive: Exclusi
           if (!groupId) throw new Error('创建结果未返回人物组，需管理员核对原任务');
           if (reuseGroupId && groupId !== reuseGroupId) throw new Error('HeyGen 返回的人物组与原授权人物不一致，需核对原任务');
           await write(row, { groupId, look, status: 'processing' });
-        } catch (e) { return write(row, { status: 'uncertain', error: `${message(e)}；请核实原任务，不要重复创建` }); }
+        } catch (e) {
+          if (e instanceof HeyGenRequestError && e.definitive) {
+            if (!options.reserve) await creationBudget(b.type).releaseRejected('heygen', `presenter:${row.id}`);
+            return write(row, { status: 'failed', error: `${message(e)}。人物任务未创建，请修改素材后重新提交` });
+          }
+          return write(row, { status: 'uncertain', error: `${message(e)}；请核实原任务，不要重复创建` });
+        }
         try { return await refresh(row); } catch (e) { return write(row, { error: message(e) }); }
       });
       res.json(result);
