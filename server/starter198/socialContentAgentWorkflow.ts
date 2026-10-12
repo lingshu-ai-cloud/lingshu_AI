@@ -705,7 +705,10 @@ function capabilityCandidates(input: {
       if (typed) {
         if (typed.localMatch.state === 'matched' && typed.policy !== 'authorized_presenter') return candidate.kind === 'asset'
           && candidate.sourceStrategy === 'customer_real_asset' && Boolean(candidate.sourceRef && typed.localMatch.sourceRefs.includes(candidate.sourceRef));
-        if (typed.policy === 'local_only') return false;
+        if (typed.policy === 'local_only') return candidate.kind === 'capability'
+          && candidate.dataTransfer === 'local_only'
+          && ['motion_graphics', 'verified_fact_card'].includes(candidate.sourceStrategy)
+          && candidate.sourceStrategy === input.supply.sourceStrategy;
         return candidate.kind === 'capability' && (typed.policy === 'authorized_presenter'
           ? candidate.sourceStrategy === 'authorized_digital_presenter'
           : candidate.sourceStrategy === 'aigc_product_scene_replication');
