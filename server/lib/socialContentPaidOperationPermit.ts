@@ -45,7 +45,8 @@ export function createSocialContentPaidOperationPermit(input:{scope:SocialTaskBu
    if((['provider','model','accountRef','stage','shotId','inputContractHash'] as const).some(k=>request[k]!==intent[k])
     ||(['provider','model','accountRef','stage','shotId'] as const).some(k=>op[k]!==intent[k]))fail('request_binding_changed');
    const actual=Object.keys(request.actualUnits).sort(),maximum=Object.keys(intent.maximumUnits).sort();
-   if(!actual.length||JSON.stringify(actual)!==JSON.stringify(maximum)||actual.some(k=>!Number.isFinite(request.actualUnits[k])||request.actualUnits[k]!<0||!Number.isFinite(intent.maximumUnits[k])||request.actualUnits[k]!>intent.maximumUnits[k]!))fail('usage_exceeds_bound');
+   if(!actual.length||JSON.stringify(actual)!==JSON.stringify(maximum)||actual.some(k=>!Number.isFinite(request.actualUnits[k])||request.actualUnits[k]!<0||!Number.isFinite(intent.maximumUnits[k])||request.actualUnits[k]!>intent.maximumUnits[k]!))
+    fail(`usage_exceeds_bound:${intent.stage}:actual=${JSON.stringify(request.actualUnits)}:maximum=${JSON.stringify(intent.maximumUnits)}`);
    const e=entry(request.operationId),prior=read(request.operationId);
    if(prior||['accepted','unknown','completed'].includes(e.status))fail('receipt_recovery_required');
    if(e.status!=='reserved')fail('reservation_not_submittable');
