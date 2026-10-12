@@ -1,0 +1,41 @@
+<view class="page-shell">
+  <view class="ambient"></view>
+  <view class="top-safe"></view>
+  <view class="identity-bar">
+    <view class="identity-copy"><text class="organization">{{organization}}</text><view class="edition" bindtap="openEdition">{{edition}}⌄</view></view>
+    <button class="message-button" bindtap="openMessages" aria-label="消息"><view class="bell"></view><text wx:if="{{unread}}" class="badge">{{unread}}</text></button>
+  </view>
+
+  <view class="content">
+    <view wx:if="{{error}}" class="notice error">{{error}}<text bindtap="refresh">重试</text></view>
+    <view class="week-card">
+      <view class="week-heading"><text data-offset="-1" bindtap="changeWeek">上一周</text><text class="week-range">{{week.start}} — {{week.end}}</text><text data-offset="1" bindtap="changeWeek">下一周</text></view>
+      <view class="days"><view wx:for="{{days}}" wx:key="date" class="day {{item.selected ? 'selected' : ''}}" data-date="{{item.date}}" bindtap="selectDay"><text class="weekday">{{item.label}}</text><text class="day-number">{{item.number}}</text><view wx:if="{{item.count}}" class="day-indicator"></view></view></view>
+    </view>
+
+    <view class="metric-band">
+      <view class="metric" data-key="pending" bindtap="openMetric"><text class="metric-value">{{counts.pending}}</text><text class="metric-label">待处理</text></view>
+      <view class="metric" data-key="shooting" bindtap="openMetric"><text class="metric-value">{{counts.shooting}}</text><text class="metric-label">待拍摄</text></view>
+      <view class="metric" data-key="confirmation" bindtap="openMetric"><text class="metric-value">{{counts.confirmation}}</text><text class="metric-label">待确认</text></view>
+    </view>
+
+    <view class="primary-actions">
+      <view class="primary-action shoot" bindtap="openShooting"><view class="action-icon frame"><view></view></view><view><text class="action-title">我的待拍</text><text class="action-note">{{counts.shooting === '—' ? '数据未同步' : counts.shooting + ' 项素材任务'}}</text></view></view>
+      <view class="primary-action inquiry" bindtap="openInquiries"><view class="action-icon chat-icon"><view></view></view><view><text class="action-title">我的询盘</text><text class="action-note">待确认与待跟进</text></view></view>
+    </view>
+
+    <view class="section-heading"><view><text class="section-title">今日卡点任务</text><text class="section-note">只显示需要你介入的 Agent 任务</text></view><text class="section-count">{{blockers.length}} 项</text></view>
+    <view wx:if="{{loading && !loaded}}" class="state-card">正在同步真实工作数据…</view>
+    <view wx:elif="{{!scheduleAvailable}}" class="state-card"><view><text class="state-title">Agent 排期暂未同步</text><text class="state-note">请稍后刷新，不会把未同步状态算作运行正常</text></view></view>
+    <view wx:elif="{{!blockers.length}}" class="state-card success"><view class="check">✓</view><view><text class="state-title">今日运行正常</text><text class="state-note">当前没有需要人工介入的 Agent 卡点</text></view></view>
+    <view wx:else class="blocker-list">
+      <view wx:for="{{blockers}}" wx:key="id" class="blocker-card" data-id="{{item.id}}" bindtap="openBlocker">
+        <view class="blocker-top"><text class="blocker-title">{{item.title}}</text><text class="status">需介入</text></view>
+        <text class="blocker-agent">{{item.agent}} · {{item.time}}</text>
+        <text class="blocker-reason">{{item.blocker}}</text>
+        <view class="blocker-action"><text>{{item.next}}</text><text>›</text></view>
+      </view>
+    </view>
+  </view>
+  <operator-nav active="work"></operator-nav>
+</view>

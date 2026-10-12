@@ -106,3 +106,5 @@ module.exports.chat = messages => new Promise((resolve, reject) => {
 })
 
 module.exports.command = body => request('starter-198/commands', 'POST', body);
+module.exports.customers = () => request('customers')
+module.exports.sendCustomerMessage = (customerId, body, requestId) => request('customers/' + encodeURIComponent(customerId) + '/outbox', 'POST', { body, requestId })
