@@ -1,6 +1,6 @@
 import test from 'node:test';import assert from 'node:assert/strict';
 import {createHash} from 'node:crypto';
-import {createSocialContentPublishedTariffReader,parseOfficialQwenPublishedPrices,isVerifiedPublishedTariff} from './socialContentPublishedTariffs.js';
+import {createSocialContentPublishedTariffReader,parseOfficialQwenPublishedPrices,isVerifiedPublishedTariff,QWEN_PUBLISHED_TARIFF_VALIDITY_MS} from './socialContentPublishedTariffs.js';
 import {createSocialContentTaskBudgetAuthority,type SocialPaidOperationIntent} from './socialContentTaskBudgetAuthority.js';
 const hash=(v:string)=>createHash('sha256').update(v).digest('hex');
 const model='qwen3-vl-plus',baseUrl='https://dashscope.aliyuncs.com/compatible-mode/v1',credentialSha256='1'.repeat(64),accountRef=`qwen:${hash(JSON.stringify({baseUrl,credentialSha256}))}`;
@@ -11,7 +11,15 @@ function reader(bodyText=body()){return createSocialContentPublishedTariffReader
 test('server automatically parses the exact official China region and undiscounted maximum tiers',async()=>{
  const parsed=parseOfficialQwenPublishedPrices(body(),model);assert.equal(parsed?.inputPriceCnyPerMillion,3);assert.equal(parsed?.outputPriceCnyPerMillion,30);
  const tariff=await reader().read(intent);assert.ok(tariff);assert.equal(tariff.verifiedAccountPrice,false);assert.equal(tariff.pricingBasis,'published_undiscounted_ceiling');assert.equal(isVerifiedPublishedTariff(tariff),true);assert.equal(tariff.publicPricingEvidence.sourceResponseSha256,hash(body()));
- assert.equal(Date.parse(tariff.validUntil)-Date.parse(tariff.checkedAt),6*3600000);
+ assert.equal(Date.parse(tariff.validUntil)-Date.parse(tariff.checkedAt),QWEN_PUBLISHED_TARIFF_VALIDITY_MS);
+});
+test('durable conservative catalogue remains valid between periodic refreshes',async()=>{
+ const tariff=await reader().read(intent);assert.ok(tariff);
+ const afterThirtyDays=new Date(Date.parse(tariff.checkedAt)+30*24*3600000).toISOString();
+ assert.ok(Date.parse(tariff.validUntil)>Date.parse(afterThirtyDays));
+ assert.equal(isVerifiedPublishedTariff(tariff),true);
+ const tooLong=structuredClone(tariff);tooLong.validUntil=new Date(Date.parse(tooLong.checkedAt)+QWEN_PUBLISHED_TARIFF_VALIDITY_MS+1).toISOString();tooLong.publicPricingEvidence.validUntil=tooLong.validUntil;
+ assert.equal(isVerifiedPublishedTariff(tooLong),false);
 });
 test('published prices qualify whole-task budget without claiming negotiated account verification',async()=>{
  const tariff=await reader().read(intent);const scope={tenantId:'tenant',taskId:'task',runId:'run',planHash:'3'.repeat(64)};
