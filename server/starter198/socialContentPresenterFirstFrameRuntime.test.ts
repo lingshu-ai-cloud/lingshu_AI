@@ -19,10 +19,11 @@ test('real runtime validates the authorized default presenter and stops before a
  await assert.rejects(runtime.preparePresenterMotherFirstFrames!({scope,grouping,groups:[group],paidStatic}),/presenter_first_frame_paid_static_executor_missing/);assert.equal(calls,1);
 });
 
-test('real runtime rejects a non-default presenter before first-frame work',async()=>{
- const store={list:async()=>({totalItems:1,items:[{payload:{defaultPresenterId:'presenter-2',presenters:[]}}]})} as never;
+test('real runtime keeps the task-frozen authorized presenter when the account default changes',async()=>{
+ const presenter={id:'presenter-1',authorized:true,assetVersion:2,avatarId:'avatar-1',voiceId:'voice-1',rightsEvidence:{authorizationRef:'rights://1',consentRef:'consent://1',grantedAt:'2026-01-01T00:00:00.000Z',subjectAdultConfirmed:true,permittedProviders:['heygen','volcengine_ark','dashscope'],permittedUses:['digital_presenter','voice_synthesis','person_replacement','quality_inspection'],providerScopes:[{provider:'dashscope',uses:['quality_inspection']}]}};
+ const store={list:async()=>({totalItems:1,items:[{payload:{defaultPresenterId:'presenter-2',presenters:[presenter]}}]})} as never;
  const runtime=createPresenterFirstFrameProductionRuntime(store);
- await assert.rejects(runtime.preparePresenterMotherFirstFrames!({scope,grouping,groups:[group],paidStatic}),/presenter_first_frame_default_presenter_changed/);
+ await assert.rejects(runtime.preparePresenterMotherFirstFrames!({scope,grouping,groups:[group],paidStatic}),/presenter_first_frame_paid_static_executor_missing/);
 });
 
 test('static executor submits exactly the frozen Seedream and Qwen operations and persists real supplier evidence',async()=>{

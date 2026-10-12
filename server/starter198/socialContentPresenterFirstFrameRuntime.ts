@@ -111,7 +111,10 @@ export function createPresenterFirstFrameProductionRuntime(store: DataStore, exe
     if (!defaultPresenterId) throw new Error('presenter_first_frame_default_presenter_missing');
     const presenters=new Map<string,StoredPresenter>();
     for (const group of input.groups) {
-      if (group.presenterAssetId !== defaultPresenterId) throw new Error(`presenter_first_frame_default_presenter_changed:${group.groupId}`);
+      // The approved task freezes the exact presenter asset. A later change to
+      // the account default must not rewrite or strand that in-flight task; the
+      // locked asset still has to exist and pass the full rights/version checks
+      // below before any supplier request is allowed.
       if (!group.compositions.length || group.compositions.some(value => !value.referenceShotId.trim() || !value.referenceFirstFrameUrl.trim() || !value.background.trim() || !value.framing.trim() || !value.camera.trim() || !value.composition.trim())) throw new Error(`presenter_first_frame_reference_composition_incomplete:${group.groupId}`);
       const matches = (payload.presenters || []).filter(item => String(item.id || '').trim() === group.presenterAssetId);
       if (matches.length !== 1) throw new Error(`presenter_first_frame_presenter_asset_not_unique:${group.groupId}`);
