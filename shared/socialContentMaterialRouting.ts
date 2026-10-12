@@ -41,6 +41,8 @@ const {shot,inventory,materialType,referenceVisualContract,presenterRefs,buildPr
         instruction:'真人口播使用当前账号授权数字人视频，锁定人物、声音与明确口播文案；能力缺失时停止，不用库存人物或图文替代。'};
       if (refs.length) return {strategy:'customer_real_asset',refs,materialRouting,
         instruction:'按当前镜头语义采用已匹配的本地真实视频；保持原主体及产品事实，不调用画面生成，匹配失败必须停止并保留缺口。'};
+      if (materialType === 'general') return {strategy:'motion_graphics',refs:[],materialRouting,
+        instruction:'使用本地确定性图形与任务已确认的人物头像制作片尾联系卡；不调用产品图缩放、产品 I2V 或付费视频生成。'};
       if (materialType !== 'product') return {strategy:'customer_real_asset',refs:[],materialRouting,blocked:true,
         instruction:materialType==='factory'?'工厂镜头仅匹配本地真实工厂素材；无合格片段时停止，不生成虚构工厂。':materialType==='consumer_demo'?'consumer_demo 仅匹配本地真实消费者使用或生活场景；缺口停止，不生成消费者场景或改成数字人口播。':'素材类型或镜头语义未明确，仅允许合格本地匹配；缺口停止，不因账号有产品图或人物资产擅自改走生成。'};
       const spec=buildProductSpec();

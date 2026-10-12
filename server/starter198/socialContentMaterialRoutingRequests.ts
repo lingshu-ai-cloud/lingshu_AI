@@ -5,7 +5,8 @@ import type { SocialWorkflowMaterialClipCandidate } from './socialContentRecords
 import { socialRequestHash } from './socialContentValidation.js';
 
 const actionRequirements = [
-  /旋转|转圈|晃|摇|rotat|shake|wobbl/i,
+  // Camera wording such as "横向摇移" is not a required subject action.
+  /旋转|转圈|晃一圈|晃动|摇动|摇晃|rotat|shake|wobbl/i,
   /滚动|滚落|roll|tumble/i,
   /输送|流水线|传送带|conveyor/i,
   /灌装|注液|fill|dispens/i,
@@ -98,7 +99,7 @@ export function materialRoutingRequests(input: {
         // Consumer b-roll preserves the real hand/person-use function while the
         // reference's set dressing may differ. The role exclusions above keep
         // factory and presenter footage out of this bounded fallback.
-        : materialType === 'consumer_demo' ? 0.65 : 0.72;
+        : materialType === 'consumer_demo' ? 0.6 : 0.72;
       return required.every(pattern => pattern.test(observed)) && visualScore >= minimumVisualScore;
     }).sort((a, b) => (materialType === 'consumer_demo' ? consumerSemanticScore(expected, b) - consumerSemanticScore(expected, a)
       : scoreSceneVisualCompatibility(expected, b.visualContract) - scoreSceneVisualCompatibility(expected, a.visualContract))

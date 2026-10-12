@@ -385,8 +385,25 @@ export function buildSocialProductSceneReplicationSpec(input: {
 }
 
 export function classifySocialAssetSupplyMaterialType(shot:SocialAssetSupplyShotRequest,referenceShots?:SocialReferenceShotAnalysis[]):BenchmarkMaterialType {
-  if(shot.materialType)return shot.materialType;
   const affirmative=affirmativeSocialMaterialDescription(shot.requestedDescription);
+  // Older analyzed reference packages projected the task product into every
+  // person/environment contract and then froze those scenes as `product`.
+  // Respect an explicit classification unless the visible contract itself
+  // proves that this is DTC/customer b-roll with no product-display action.
+  // This correction is deterministic and never promotes an untyped scene to
+  // a paid route.
+  if(shot.materialType){
+    if(shot.materialType!=='product')return shot.materialType;
+    const frozenVisual=normalizeSceneVisualContract(shot.visualContract??referenceShot(shot,referenceShots)?.visualContract??{subjects:shot.subjects,interaction:shot.interaction,environment:shot.environment,productUsage:shot.productUsage});
+    const explicitDtc=/消费者|顾客|挑选|选购|浏览商品|(?:人物|男士|女士|多人|一群人).{0,48}(交谈|洽谈|商务)|围坐.{0,20}(品茶|交谈|洽谈)|consumer|customer|lifestyle/i.test(affirmative);
+    const productDisplay=['person_holding_product','person_using_product','apply_product_to_face'].includes(frozenVisual.interaction.kind);
+    if(explicitDtc&&!productDisplay)return 'consumer_demo';
+    return shot.materialType;
+  }
+  const preliminaryVisual=normalizeSceneVisualContract(shot.visualContract??referenceShot(shot,referenceShots)?.visualContract??{subjects:shot.subjects,interaction:shot.interaction,environment:shot.environment,productUsage:shot.productUsage});
+  if(/contact\s*me|联系我|联系方式/i.test(affirmative)
+    && /(头像|圆形头像|图标|爱心|飞机)|(?:avatar|icon|heart)/i.test(affirmative)
+    && !preliminaryVisual.subjects.some(subject=>subject.kind==='product'))return 'general';
   if(explicitSocialPresenterRequest(affirmative))return 'talking_head';
   const signals=shotSignals({...shot,requestedDescription:affirmative},referenceShots);
   const reference=referenceShot(shot,referenceShots);
@@ -404,7 +421,12 @@ export function classifySocialAssetSupplyMaterialType(shot:SocialAssetSupplyShot
   // Holding or turning a package is a product display, not consumer use.
   const visual=normalizeSceneVisualContract(shot.visualContract??referenceShot(shot,referenceShots)?.visualContract??{subjects:shot.subjects,interaction:shot.interaction,environment:shot.environment,productUsage:shot.productUsage});
   const consumerUse=['person_using_product','apply_product_to_face'].includes(visual.interaction.kind)
-    || /消费者.{0,20}(使用|试用|生活)|用户.{0,20}(使用|试用)|涂抹|上脸|consumer.?demo|consumer.{0,20}use|customer.{0,20}use|apply.{0,20}(face|skin)|lifestyle/i.test(signals.text);
+    // DTC b-roll is broader than a literal application demo. Shopping,
+    // browsing and customer/business interaction shots are still real-person
+    // lifestyle supply and must be matched against owned footage. Treating
+    // them as product-only previously sent people-filled scenes into the
+    // product replacement generator merely because the task had a product.
+    || /消费者.{0,48}(使用|试用|生活|挑选|选购|浏览|交流)|顾客.{0,48}(使用|试用|挑选|选购|浏览|交谈)|用户.{0,20}(使用|试用)|(?:人物|男士|女士|多人|一群人).{0,48}(交谈|洽谈|商务)|围坐.{0,20}(品茶|交谈|洽谈)|涂抹|上脸|consumer.?demo|consumer.{0,48}(?:use|shop|browse)|customer.{0,48}(?:use|shop|browse|talk)|lifestyle/i.test(signals.text);
   if(consumerUse)return 'consumer_demo';
   return signals.hasProduct?'product':'unknown';
 }

@@ -157,12 +157,13 @@ export function bindCanonicalTypeAwareRouting<T extends NonNullable<ProductionTa
     const authority=canonicalById.get(shot.shotId);
     if(!authority?.materialRouting)throw Error(`type_aware_canonical_routing_missing:${shot.shotId}`);
     if(authority.materialRouting.materialType==='product'&&!authority.productSceneReplication)throw Error(`type_aware_canonical_product_spec_missing:${shot.shotId}`);
-    return {...structuredClone(shot),materialRouting:structuredClone(authority.materialRouting),
+    const {productSceneReplication:_staleProductSpec,...approvedShot}=structuredClone(shot);
+    return {...approvedShot,materialRouting:structuredClone(authority.materialRouting),
       ...(authority.materialRouting.materialType==='product'?{productSceneReplication:structuredClone(authority.productSceneReplication!)}:{})};
   });
   if(shots.some(shot=>!shot.materialRouting))throw Error('type_aware_frozen_routing_incomplete');
-  if(shots.filter(shot=>shot.materialRouting?.materialType==='product').length!==21
-    ||shots.filter(shot=>shot.materialRouting?.materialType==='product'&&shot.productSceneReplication).length!==21)throw Error('type_aware_frozen_product_contract_incomplete');
+  if(shots.some(shot=>shot.materialRouting?.materialType==='product'&&!shot.productSceneReplication)
+    ||shots.some(shot=>shot.materialRouting?.materialType!=='product'&&shot.productSceneReplication))throw Error('type_aware_frozen_product_contract_incomplete');
   return {...structuredClone(approved),materialRoutingPolicyVersion:'type-aware.v1',shots} as T;
 }
 
@@ -171,9 +172,10 @@ export function assertCompleteTypeAwareExecutionPlan(plan: NonNullable<Productio
   const missingRoute=plan.shots.find(shot=>!shot.materialRouting);
   if(missingRoute)throw Error(`type_aware_execution_routing_missing:${missingRoute.shotId}`);
   const products=plan.shots.filter(shot=>shot.materialRouting?.materialType==='product');
-  if(products.length!==21)throw Error('type_aware_execution_product_count_invalid');
   const missingSpec=products.find(shot=>!shot.productSceneReplication);
   if(missingSpec)throw Error(`type_aware_execution_product_spec_missing:${missingSpec.shotId}`);
+  const staleSpec=plan.shots.find(shot=>shot.materialRouting?.materialType!=='product'&&shot.productSceneReplication);
+  if(staleSpec)throw Error(`type_aware_execution_product_spec_unexpected:${staleSpec.shotId}`);
 }
 
 export type SocialGeneratedShotArchiveCandidate = {
