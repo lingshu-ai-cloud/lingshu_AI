@@ -5,6 +5,26 @@
     "pages/action/index",
     "pages/action/connect"
   ],
+  "subPackages": [
+    {
+      "root": "packages/operator",
+      "name": "operator",
+      "pages": [
+        "home/index",
+        "assistant/index",
+        "messages/index",
+        "profile/index",
+        "shooting/index",
+        "inquiries/index",
+        "conversation/index"
+      ]
+    },
+    {
+      "root": "packages/management",
+      "name": "management",
+      "pages": ["home/index"]
+    }
+  ],
   "window": {
     "navigationBarTitleText": "灵枢工作",
     "navigationBarBackgroundColor": "#FFFFFF",

@@ -4,7 +4,7 @@ const mobileAssistant = require('../../lib/assistant');
 const agentSchedule = require('../../lib/agentSchedule');
 Page({
     data: { loggedIn: false, email: '', password: '', userName: '', tab: 'work', loading: false, error: '', week: model.week(), selectedDay: model.day(new Date().toISOString()), overview: {}, tasks: [], agents: [], agentScheduleGroups: [], agentScheduleItems: [], posts: [], calendarItems: [], matters: [], snoozed: [], activeMatter: null, cardX: 0, swipeDirection: '', swipeReady: false, swipeLabel: '', metrics: [], dayPosts: [], sheet: null, sheetItems: [], detail: null, processing: false, assistantMode: 'chat', messages: [], input: '', sending: false, recording: false, transcribing: false, offline: false, suggestions: ['本周最需要我决定的 3 件事是什么？', '哪些任务会影响本周发布目标？', '哪条内容卡在素材、制作或验收？', '今天有哪些高意向询盘要跟进？', '4 个 Agent 现在分别在做什么？'], notifications: [], assistantPreview: null, assistantReceipts: [], assistantLinks: [], assistantActions: [], assistantLoading: false, assistantConfirming: false, chatAnchor: '' },
-    onLoad() { this.networkListener = r => this.setData({ offline: !r.isConnected }); if (wx.onNetworkStatusChange) wx.onNetworkStatusChange(this.networkListener); if (wx.getNetworkType) wx.getNetworkType({success:r=>this.setData({offline:r.networkType === 'none'})}); if (api.token())
+    onLoad(options = {}) { this.initialTab = ['todo','assistant'].includes(options.tab) ? options.tab : 'work'; this.setData({tab:this.initialTab}); this.networkListener = r => this.setData({ offline: !r.isConnected }); if (wx.onNetworkStatusChange) wx.onNetworkStatusChange(this.networkListener); if (wx.getNetworkType) wx.getNetworkType({success:r=>this.setData({offline:r.networkType === 'none'})}); if (api.token())
         this.restore(); },
     onShow() { if (!api.token()) { if (this.data.loggedIn) this.signOut(); return; } if (this.data.loggedIn) { this.startSync(); this.refresh(); if (this.assistantController) this.assistantController.poll(); } },
     startSync() { if (this.syncTimer) clearInterval(this.syncTimer); this.syncTimer = setInterval(() => { if (this.data.loggedIn && !this.data.processing && !this.data.recording && !this.data.sending && !this.refreshing) this.refresh(); }, 30000); },
@@ -24,6 +24,7 @@ Page({
         if (epoch !== (this.epoch || 0) || this.disposed) return;
         this.session(s);
         await this.refresh();
+        wx.reLaunch({ url: '/packages/operator/home/index' });
     }
     catch (e) {
         if (epoch === (this.epoch || 0)) this.setData({ error: e.message });
@@ -31,12 +32,13 @@ Page({
     finally {
         if (!this.disposed && (epoch === (this.epoch || 0) || this.data.loggedIn)) this.setData({ loading: false });
     } },
-    session(s) { this.epoch = (this.epoch || 0) + 1; this.setData({tab:'work', detail:null, sheet:null, messages:[], matters:[], snoozed:[], activeMatter:null, tasks:[], agents:[], agentScheduleGroups:[], agentScheduleItems:[], metrics:[], notifications:[], calendarItems:[], posts:[], dayPosts:[], input:'', processing:false, sending:false, transcribing:false}); this.sessionProfile = s; const user = s.user || {}; this.scope = String(user.tenantId || user.tenant_id || '') + ':' + String(user.id || user.email || ''); this.chatKey = 'mobile-chat:' + this.scope; this.snoozes = {}; this.setData({ loggedIn: true, userName: user.name || user.email || '', password: '', messages: [], suggestions: [], assistantPreview:null, assistantReceipts:[], assistantLinks:[], assistantActions:[] }); this.initializeAssistant(); this.startSync(); },
+    session(s) { this.epoch = (this.epoch || 0) + 1; this.setData({tab:this.initialTab || 'work', detail:null, sheet:null, messages:[], matters:[], snoozed:[], activeMatter:null, tasks:[], agents:[], agentScheduleGroups:[], agentScheduleItems:[], metrics:[], notifications:[], calendarItems:[], posts:[], dayPosts:[], input:'', processing:false,sending:false,transcribing:false}); this.sessionProfile = s; const user = s.user || {}; this.scope = String(user.tenantId || user.tenant_id || '') + ':' + String(user.id || user.email || ''); this.chatKey = 'mobile-chat:' + this.scope; this.snoozes = {}; this.setData({ loggedIn: true, userName: user.name || user.email || '', password: '', messages: [], suggestions: [], assistantPreview:null, assistantReceipts:[], assistantLinks:[], assistantActions:[] }); this.initializeAssistant(); this.startSync(); },
     async restore() { const epoch = this.epoch || 0; try {
         const s = await api.me();
         if (epoch !== (this.epoch || 0) || this.disposed) return;
         this.session(s);
         await this.refresh();
+        if ((this.initialTab || 'work') === 'work') wx.reLaunch({ url: '/packages/operator/home/index' });
     }
     catch (e) {
         if (epoch === (this.epoch || 0)) this.setData({ error: e.message, loggedIn: false });

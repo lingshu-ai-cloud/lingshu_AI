@@ -1,0 +1,1 @@
+page{background:#f6f7fa}.simple-page{padding:34rpx 32rpx 160rpx}.page-title{font-size:40rpx;font-weight:650}.empty{margin-top:28rpx;padding:70rpx 32rpx;border-radius:24rpx;background:#fff;text-align:center}.empty-title{display:block;font-size:29rpx;font-weight:600}.empty-note{display:block;margin-top:8rpx;color:var(--ls-text-tertiary);font-size:23rpx}

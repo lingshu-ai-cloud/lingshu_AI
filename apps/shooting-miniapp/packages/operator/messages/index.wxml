@@ -1,0 +1,1 @@
+<view class="simple-page"><text class="page-title">消息</text><view class="empty"><text class="empty-title">暂无新消息</text><text class="empty-note">任务结果和业务通知会统一出现在这里</text></view></view><operator-nav active="messages"></operator-nav>
