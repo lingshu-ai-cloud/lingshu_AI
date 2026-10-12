@@ -13,6 +13,7 @@ import {
 import {
   admitContentExecutionJob,
   bindPristineContentExecutionCheckpoint,
+  refreshUnspentContentExecutionCheckpoint,
   DurableContentExecutionWorker,
   controlContentExecutionJob,
   readContentExecutionJob,
@@ -188,6 +189,18 @@ test('historic executor binding is allowed only before any durable execution or 
 
   const started = await admitContentExecutionJob({ dataStore: store, tenantId: 'tenant-bind', userId: 'user-a', taskId: 'task-started', runId: 'run-started', taskType: 'social_content_weekly', initialCheckpoints: { 'runtime.retry': checkpoint } });
   await assert.rejects(bindPristineContentExecutionCheckpoint({ dataStore: store, tenantId: started.tenantId, jobId: started.id, runId: started.runId, checkpointKey: 'social.executor', checkpoint }), /pristine_binding_not_allowed/);
+});
+
+test('an unspent blocked admission may refresh only its executor binding', async () => {
+  const store = new MemoryStore();
+  const old = { version:'1', inputHash:'a'.repeat(64), payload:{executor:'langgraph'}, updatedAt:new Date().toISOString() };
+  const fresh = { ...old, inputHash:'b'.repeat(64) };
+  const job = await admitContentExecutionJob({dataStore:store,tenantId:'tenant-refresh',userId:'user-a',taskId:'task-a',runId:'run-a',taskType:'social',initialCheckpoints:{'social.executor':old}});
+  await store.update(CONTENT_EXECUTION_JOB_COLLECTION,job.id,{status:'blocked',checkpoints:{...job.checkpoints,'runtime.retry':{...old,inputHash:job.id}}});
+  const refreshed=await refreshUnspentContentExecutionCheckpoint({dataStore:store,tenantId:job.tenantId,jobId:job.id,runId:job.runId,checkpointKey:'social.executor',checkpoint:fresh});
+  assert.equal(refreshed.checkpoints['social.executor'].inputHash,fresh.inputHash);
+  await store.update(CONTENT_EXECUTION_JOB_COLLECTION,job.id,{provider_state:'accepted'});
+  await assert.rejects(refreshUnspentContentExecutionCheckpoint({dataStore:store,tenantId:job.tenantId,jobId:job.id,runId:job.runId,checkpointKey:'social.executor',checkpoint:old}),/refresh_not_allowed/);
 });
 
 test('explicit customer pause replaces a workflow review wait without losing its receipts', async () => {

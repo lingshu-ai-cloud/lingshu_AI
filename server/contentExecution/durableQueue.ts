@@ -782,3 +782,35 @@ export async function bindPristineContentExecutionCheckpoint(input: {
     await releaseDurableOperationLease({ dataStore: input.dataStore, lease }).catch(() => undefined);
   }
 }
+
+/** Replace an executor binding after a pre-provider admission failure. This is
+ * limited to blocked, unspent jobs whose only other evidence is the explicit
+ * retry marker; any phase/provider evidence makes the binding immutable. */
+export async function refreshUnspentContentExecutionCheckpoint(input: {
+  dataStore: DataStore; tenantId: string; jobId: string; runId: string;
+  checkpointKey: string; checkpoint: ContentExecutionCheckpoints[string];
+}): Promise<ContentExecutionJob> {
+  const tenantId = requiredIdentity(input.tenantId, 'tenant'), jobId = requiredIdentity(input.jobId, 'job');
+  const runId = requiredIdentity(input.runId, 'run'), checkpointKey = requiredIdentity(input.checkpointKey, 'checkpoint');
+  const lease = await acquireDurableOperationLease({ dataStore: input.dataStore, tenantId, subjectId: jobId,
+    scope: 'content_execution_control', ownerId: `content-binding-refresh:${randomUUID()}`, leaseDurationMs: 30_000 });
+  if (!lease) throw new Error('content_execution_job_control_busy');
+  try {
+    const row = await input.dataStore.getById<JobRow>(CONTENT_EXECUTION_JOB_COLLECTION, jobId);
+    if (!row) throw new Error('content_execution_job_not_found');
+    const current = jobFromRow(row), keys = Object.keys(current.checkpoints);
+    if (current.tenantId !== tenantId || current.runId !== runId) throw new Error('content_execution_job_not_found');
+    if (current.status !== 'blocked' || current.providerState !== 'none' || current.providerReceipts.length || current.completedAt
+      || keys.some(key => key !== checkpointKey && key !== 'runtime.retry'))
+      throw new Error('content_execution_unspent_binding_refresh_not_allowed');
+    const checkpoints = { ...current.checkpoints, [checkpointKey]: input.checkpoint };
+    if (!await input.dataStore.update(CONTENT_EXECUTION_JOB_COLLECTION, current.id, { checkpoints, updated_at: new Date().toISOString() }))
+      throw new Error('content_execution_unspent_binding_refresh_failed');
+    const saved = await input.dataStore.getById<JobRow>(CONTENT_EXECUTION_JOB_COLLECTION, current.id);
+    if (!saved) throw new Error('content_execution_unspent_binding_refresh_readback_failed');
+    const refreshed = jobFromRow(saved);
+    if (refreshed.checkpoints[checkpointKey]?.inputHash !== input.checkpoint.inputHash)
+      throw new Error('content_execution_unspent_binding_refresh_readback_failed');
+    return refreshed;
+  } finally { await releaseDurableOperationLease({ dataStore: input.dataStore, lease }).catch(() => undefined); }
+}
