@@ -172,7 +172,12 @@ export async function executeSocialProductionGraph(input: { repository: Starter1
   const binding = socialObject(job.checkpoints['social.executor']?.payload);
   const approvedContext = socialObject(binding?.approvedContext) as unknown as SocialGraphApprovedContext | null;
   if (!approvedContext?.agentWorkflow || !approvedContext.version) throw new Error('user_input_required:graph_approved_context_missing');
-  const detail = await readSocialProductionGraphDetail({ repository, tenantId: job.tenantId, taskId: job.taskId }, approvedContext);
+  let detail: Detail | null;
+  try {
+    detail = await readSocialProductionGraphDetail({ repository, tenantId: job.tenantId, taskId: job.taskId }, approvedContext);
+  } catch (error) {
+    throw new Error(`${error instanceof Error ? error.message : String(error)}:initial_detail`);
+  }
   if (!detail) throw new Error('user_input_required:graph_task_missing');
   const current = socialProductionGraphInput(detail, approvedContext);
   if (binding?.inputHash !== current.inputHash || binding?.planVersion !== current.planVersion)
@@ -189,7 +194,12 @@ export async function executeSocialProductionGraph(input: { repository: Starter1
   const resume = job.checkpoints['social.graph_review'] ? await approval() : null;
   const phase = async (graphPhase: 'assets' | 'render' | 'quality') => {
     await assertCurrentContentExecutionActive();
-    const latest = await readSocialProductionGraphDetail({ repository, tenantId: job.tenantId, taskId: job.taskId }, approvedContext);
+    let latest: Detail | null;
+    try {
+      latest = await readSocialProductionGraphDetail({ repository, tenantId: job.tenantId, taskId: job.taskId }, approvedContext);
+    } catch (error) {
+      throw new Error(`${error instanceof Error ? error.message : String(error)}:${graphPhase}_detail`);
+    }
     if (!latest || socialProductionGraphInput(latest, approvedContext).inputHash !== current.inputHash) throw new Error('user_input_required:graph_production_plan_changed:phase_input');
     await runSocialContentAutoProduction({ repository, tenantId: job.tenantId, userId: job.userId,
       taskId: job.taskId, runId: job.runId, graphPhase, runtime: input.runtime,
