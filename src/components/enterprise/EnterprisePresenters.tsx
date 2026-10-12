@@ -113,6 +113,6 @@ export default function EnterprisePresenters({ contentProduction = false, initia
       </details>}
     </fieldset>
     {message && <p role="status" className="mt-3 text-xs text-text-secondary">{message}</p>}
-    {showHeyGenManager && <PresenterManager initialConfiguration={initialConfiguration} onClose={() => setShowHeyGenManager(false)} onSynced={next => setValue(next)} onSaved={next => { setValue(next); setShowHeyGenManager(false); setMessage(initialConfiguration ? '人物授权已确认，已设为后续真人口播的默认人物与声音' : '人物已同步到企业资产');if(initialConfiguration&&next.defaultPresenterId)onInitialSelection?.(); }} />}
+    {showHeyGenManager && <PresenterManager reusePresenterId={initialConfiguration ? value.defaultPresenterId || undefined : undefined} initialConfiguration={initialConfiguration} onClose={() => setShowHeyGenManager(false)} onSynced={next => setValue(next)} onSaved={next => { setValue(next); setShowHeyGenManager(false); setMessage(initialConfiguration ? '人物授权已确认，已设为后续真人口播的默认人物与声音' : '人物已同步到企业资产');if(initialConfiguration&&next.defaultPresenterId)onInitialSelection?.(); }} />}
   </section>;
 }

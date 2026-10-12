@@ -873,8 +873,8 @@ function OnboardingPanel({
   const [profileLoading, setProfileLoading] = useState(mode === "first");
   const [profileSaving, setProfileSaving] = useState(false);
   const [profileError, setProfileError] = useState("");
-  const [profileConfirmed, setProfileConfirmed] = useState(mode !== "first");
-  const [productConfirmed, setProductConfirmed] = useState(mode !== "first");
+  const [profileConfirmed, setProfileConfirmed] = useState(mode !== "first" || new URLSearchParams(window.location.search).has("presenterConsentReturn"));
+  const [productConfirmed, setProductConfirmed] = useState(mode !== "first" || new URLSearchParams(window.location.search).has("presenterConsentReturn"));
   const [brandName, setBrandName] = useState("");
   const [knowledgeProducts, setKnowledgeProducts] = useState<Array<Record<string, any>>>([]);
   const [productsLoading, setProductsLoading] = useState(mode === "first");
@@ -884,7 +884,7 @@ function OnboardingPanel({
   const [productImporting, setProductImporting] = useState(false);
   const [productImportMessage, setProductImportMessage] = useState("");
   const [contentStage, setContentStage] = useState<SocialContentStageId>();
-  const [stageConfirmed, setStageConfirmed] = useState(mode !== "first");
+  const [stageConfirmed, setStageConfirmed] = useState(mode !== "first" || new URLSearchParams(window.location.search).has("presenterConsentReturn"));
   const [stageSaving, setStageSaving] = useState(false);
   const [stageError, setStageError] = useState("");
   const [recommendedPlanOpen, setRecommendedPlanOpen] = useState(false);
@@ -3795,7 +3795,7 @@ export default function DigitalEmployeePage({
   }), []);
 
   const [navigationNotice, setNavigationNotice] = useState("");
-  const [applicationGuideOpen, setApplicationGuideOpen] = useState(false);
+  const [applicationGuideOpen, setApplicationGuideOpen] = useState(() => new URLSearchParams(window.location.search).has('presenterConsentReturn'));
   const [onboardingWelcomeOpen, setOnboardingWelcomeOpen] = useState(false);
   const [weeklyPlanOpen, setWeeklyPlanOpen] = useState(false);
   const [weeklyPlanDetailsOpen, setWeeklyPlanDetailsOpen] = useState(false);

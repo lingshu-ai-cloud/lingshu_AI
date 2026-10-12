@@ -1,3 +1,4 @@
+import { normalizePresenterAudio } from './presenterVideo.js';
 import type { PresenterLook, PresenterPage, PresenterVoice } from '../../src/lib/presenterAssets.js';
 
 export function mediaUrl(value: unknown): string | undefined {
@@ -89,27 +90,32 @@ export class HeyGenPresenterClient {
     return { id: String(voice.voice_id || ''), name: String(voice.name || ''), language: String(voice.language || ''), status: String(voice.status || ''), previewUrl: mediaUrl(voice.preview_audio_url), type: String(voice.type || '') };
   }
   async cloneVoice(name: string, bytes: Buffer, mime: string, language: string, requestId: string): Promise<string> {
-    const result = await this.call('voices/clone', { voice_name: name, audio: { type: 'base64', media_type: mime, data: bytes.toString('base64') }, ...(language ? { language } : {}) }, requestId);
+    const mp3 = await normalizePresenterAudio(bytes);
+    const result = await this.call('voices/clone', { voice_name: name, audio: { type: 'base64', media_type: 'audio/mpeg', data: mp3.toString('base64') }, ...(language ? { language } : {}) }, requestId);
     const id = String(result.data?.voice_clone_id || '');
     if (!id) throw new Error('HeyGen 已受理录音但未返回音色任务 ID，请核查原任务');
     return id;
   }
-  async upload(bytes: Buffer, mime: string, requestId: string): Promise<string> {
+  async upload(bytes: Buffer, mime: string, requestId: string, onStage?: (stage: string, remoteAssetId?: string) => Promise<void>): Promise<string> {
     const ext = { 'image/png': 'png', 'image/jpeg': 'jpg', 'video/mp4': 'mp4', 'video/quicktime': 'mov', 'video/webm': 'webm' }[mime];
     if (!ext || !bytes.length || bytes.length > 200 * 1024 * 1024) throw new Error('请上传 200MB 以内的 JPG、PNG、MP4、MOV 或 WebM 文件');
     if (bytes.length > 32 * 1024 * 1024) {
+      await onStage?.('preparing_direct_upload');
       const init = (await this.call('assets/direct-uploads', { filename: `presenter.${ext}`, content_type: mime, size_bytes: bytes.length }, requestId)).data;
       const url = mediaUrl(init?.upload_url);
       if (!init?.asset_id || !url || !/(^|\.)(amazonaws\.com|heygen\.ai|heygen\.com|storage\.googleapis\.com|blob\.core\.windows\.net)$/.test(new URL(url).hostname)) throw new Error('供应商直传地址无效，未发送素材');
       const headers = init.upload_headers && typeof init.upload_headers === 'object' ? init.upload_headers : {};
       if (Object.keys(headers).some(key => ['x-api-key', 'authorization', 'cookie'].includes(key.toLowerCase()))) throw new Error('供应商直传头无效');
+      await onStage?.('uploading_to_provider', String(init.asset_id));
       const response = await this.transport(url, { method: 'PUT', headers, body: new Uint8Array(bytes), redirect: 'error', signal: AbortSignal.timeout(180000) });
       if (!response.ok) throw new Error('人物素材直传未完成，请核对原上传');
+      await onStage?.('confirming_upload', String(init.asset_id));
       const completed = await this.call(`assets/${encodeURIComponent(init.asset_id)}/complete`, {}, `${requestId}:complete`);
       if (completed.data?.asset_id !== init.asset_id) throw new Error('供应商素材尚未完成登记');
       return String(init.asset_id);
     }
     const form = new FormData(); form.append('file', new Blob([new Uint8Array(bytes)], { type: mime }), `presenter.${ext}`);
+    await onStage?.('uploading_to_provider');
     const result = await this.call('assets', form, requestId, 180000);
     if (!result.data?.asset_id) throw new Error('素材上传结果未知，请重新选择文件');
     return String(result.data.asset_id);
