@@ -218,7 +218,13 @@ export async function prepareSocialContentProductionBudget(input: ProductionBudg
         const operations = operationIds.map(id => status.entries.find(entry => entry.operationId === id)!);
         const paidPermit = createSocialContentPaidOperationPermit({scope,operations,intents:frozenPlan.paidOperations,
           ledger,root:path.join(input.ports?.ledgerRoot || process.env.SOCIAL_CONTENT_TASK_BUDGET_DIR || 'data/social-content-task-budget','.permits'),assertCurrent});
-        const recoveryPresenterGroups=frozenPlan.presenterGroups||[];
+        const recoveryPresenterGroups=frozenPlan.presenterGroups?.length ? frozenPlan.presenterGroups : requirements
+          .filter(requirement => requirement.stage === 'presenter_video' && requirement.presenterGroupId
+            && requirement.presenterGroupShotIds?.length && requirement.presenterAssetId
+            && requirement.presenterGroupContractHash && requirement.durationSeconds && requirement.text)
+          .map(requirement => ({groupId: requirement.presenterGroupId!, shotIds: [...requirement.presenterGroupShotIds!],
+            durationSeconds: requirement.durationSeconds!, spokenText: requirement.text!,
+            presenterAssetId: requirement.presenterAssetId!, contractHash: requirement.presenterGroupContractHash!}));
         await input.ports?.preparePresenterFirstFrameReviews?.({scope,groups:recoveryPresenterGroups,requirements,intents:frozenPlan.paidOperations,paidPermit});
         const approvalReader=input.ports?.readConfirmedPresenterFirstFrame??(async({scope,group}:{scope:SocialTaskBudgetScope;group:FrozenPresenterGroup})=>readConfirmedPresenterFirstFrameApproval(store,{scope,groupId:group.groupId,presenterGroupContractHash:group.contractHash,presenterAssetId:group.presenterAssetId}));
         for(const group of recoveryPresenterGroups)if(!await approvalReader({scope,group}))return error(`presenter_first_frame_confirmation_missing:${group.groupId}`);

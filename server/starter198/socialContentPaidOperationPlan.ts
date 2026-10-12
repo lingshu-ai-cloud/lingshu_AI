@@ -322,6 +322,7 @@ export function createSocialContentPaidOperationPlanner(ports: PaidOperationPlan
                 gap('frozen_production_changed');
             if (gaps.length)
                 return { plan: null, requirements, gaps };
-            return { plan: { scope, authorizationRef: input.authorization.ref, maximumCny: Math.min(10, input.authorization.maximumCny), paidOperations: operations }, requirements, gaps };
+            return { plan: { scope, authorizationRef: input.authorization.ref, maximumCny: Math.min(10, input.authorization.maximumCny), paidOperations: operations,
+                ...(presenterGroups.length ? {presenterGroups: structuredClone(presenterGroups)} : {}) }, requirements, gaps };
         } };
 }
