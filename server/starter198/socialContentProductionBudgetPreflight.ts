@@ -326,6 +326,26 @@ export async function prepareSocialContentProductionBudget(input: ProductionBudg
       return model?{provider:'qwen',model,baseUrl:b.baseUrl,credentialSha256:b.credentialSha256}:null;
     }});
     const authority = createSocialContentTaskBudgetAuthority({ ledgerRoot: ports?.ledgerRoot, ports: { assertCurrent, readApprovedPlan: async () => { await assertCurrent(); return planned.plan!; }, readVerifiedTariff: async intent=>await ports?.readTariff?.(intent)||await reader.read(intent)||(['tts','voice_asr','voice_alignment'].includes(intent.stage)?await readNativeVoicePublishedTariff(intent):intent.provider==='seedream'?await readSeedreamPublishedTariff(intent,{baseUrl:process.env.SEEDREAM_BASE_URL||process.env.SEEDANCE_BASE_URL||'https://ark.cn-beijing.volces.com/api/v3',credentialSha256:createHash('sha256').update((process.env.SEEDREAM_API_KEY||process.env.SEEDANCE_API_KEY||'').trim()).digest('hex')}):intent.provider==='wan'?await readWanPublishedTariff(intent,getQwenProviderBinding()):intent.provider==='heygen'?await readHeyGenPublishedTariff(intent,{readBinding:async operation=>[...presenterBindings.values()].find(binding=>binding.accountRef===operation.accountRef)||null}):await publishedReader.read(intent)), verifyRejection: async () => false } });
+    // Quote the complete frozen plan before mutating the task ledger.  Besides
+    // keeping over-budget retries free, the stage breakdown is durable in the
+    // graph node failure reason and makes the degradation decision auditable.
+    const preview = await authority.prepare(scope);
+    const previewItems = planned.plan.paidOperations.map(intent => ({
+      operationId: intent.operationId,
+      stage: intent.stage,
+      shotId: intent.shotId,
+      provider: intent.provider,
+      model: intent.model,
+      upperBoundCny: preview.quotes.get(intent.operationId)?.upperBoundCny ?? 0,
+    }));
+    const previewUpperBoundCny = previewItems.reduce((sum, item) => sum + item.upperBoundCny, 0);
+    if (previewUpperBoundCny > planned.plan.maximumCny || previewUpperBoundCny > 10) {
+      const stageTotals = Object.entries(previewItems.reduce<Record<string, number>>((totals, item) => {
+        totals[item.stage] = (totals[item.stage] || 0) + item.upperBoundCny;
+        return totals;
+      }, {})).sort(([left], [right]) => left.localeCompare(right));
+      return error(`formal_paid_route_budget_exceeded:${previewUpperBoundCny.toFixed(6)}:${JSON.stringify(stageTotals)}`);
+    }
     const reserved = await authority.prepareAndReserve(scope);
     const formalPaidRouteUpperBoundCny=Object.values(reserved.quotes).reduce((sum,quote)=>sum+quote.upperBoundCny,0);
     if(formalPaidRouteUpperBoundCny>planned.plan.maximumCny||formalPaidRouteUpperBoundCny>10)
