@@ -141,3 +141,44 @@ test('consumer semantic scoring ignores only projected task identity on a produc
   const identified={...candidate,assetId:'wrong-product',sourceRef:'wrong-product',productId:'OTHER-SKU',productRef:'其他品牌'};
   assert.equal(materialRoutingRequests({...input,candidates:[identified] as never})[0]!.localVideoMatch,undefined);
 });
+
+test('customer shopping and business scenes stay on the local DTC route instead of product generation', () => {
+  for (const [shotId, description] of [
+    ['shopping', '从背后拍摄两位女性顾客在美妆店挑选产品，货架上摆满化妆品'],
+    ['meeting', '一群人围坐在茶桌旁品茶并进行商务洽谈'],
+  ] as const) {
+    const result = materialRoutingRequests({policyVersion:'type-aware.v1',tenantId:'tenant',productRef:'product:SKU-1',candidates:[],
+      shots:[{shotId,function:'value',requestedDescription:description,visualContract:normalizeSceneVisualContract({
+        subjects:['person','product'],interaction:{kind:'other',description},productRef:'参考商品',productPolicy:'preferred',action:{path:description},
+      })}]})[0]!;
+    assert.equal(result.materialType,'consumer_demo');
+    assert.equal(result.localVideoMatch,undefined);
+  }
+});
+
+test('stale frozen product classification cannot override visible customer DTC evidence', () => {
+  for (const description of ['两位女性顾客在美妆店挑选产品','一位男士与两位女士在货架前交谈']) {
+    const result=materialRoutingRequests({policyVersion:'type-aware.v1',tenantId:'tenant',productRef:'product:SKU-1',candidates:[],shots:[{
+      shotId:'stale',function:'value',materialType:'product',requestedDescription:description,visualContract:normalizeSceneVisualContract({
+        subjects:['person','environment'],interaction:{kind:'other',description},action:{path:description},productRef:'参考商品',productPolicy:'preferred',
+      }),
+    }]})[0]!;
+    assert.equal(result.materialType,'consumer_demo');
+  }
+  const holding=materialRoutingRequests({policyVersion:'type-aware.v1',tenantId:'tenant',productRef:'product:SKU-1',candidates:[],shots:[{
+    shotId:'holding',function:'value',materialType:'product',requestedDescription:'顾客手持产品包装展示',visualContract:normalizeSceneVisualContract({
+      subjects:['person','product'],interaction:{kind:'person_holding_product',description:'手持产品包装'},action:{path:'手持产品包装'},productRef:'product:SKU-1',productPolicy:'locked',
+    }),
+  }]})[0]!;
+  assert.equal(holding.materialType,'product');
+});
+
+test('contact end card without a visible product is general graphics, never product I2V', () => {
+  const description='黑色背景，中间是女主圆形头像，周围有 CONTACT ME 字样、飞机图标和粉色爱心';
+  const result=materialRoutingRequests({policyVersion:'type-aware.v1',tenantId:'tenant',productRef:'product:SKU-1',candidates:[],shots:[{
+    shotId:'end-card',function:'call_to_action',requestedDescription:description,visualContract:normalizeSceneVisualContract({
+      subjects:['environment'],interaction:{kind:'other',description},action:{path:description},
+    }),
+  }]})[0]!;
+  assert.equal(result.materialType,'general');
+});
