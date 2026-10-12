@@ -13,7 +13,7 @@ assert.match(page, /productionRangeRef\.current = nextRange;[\s\S]{0,120}setData
 assert.match(page, /overviewRangeBusy=\{busy === "overview-range"\}[\s\S]{0,120}onOverviewRangeChange=\{changeOverviewDateRange\}/, 'the health range control must receive the real request state and handler');
 assert.match(overview, /title="四领域评分口径覆盖结构"[\s\S]{0,180}horizontal stacked unit="项"/, 'criteria coverage must use the shared stacked data chart');
 assert.match(overview, /title="四领域评分口径覆盖结构"[\s\S]{0,260}showDataTable=\{false\}/, 'the criteria chart must omit the redundant visible data-table disclosure');
-assert.match(overview, /title="经营健康度与完善目标"[\s\S]{0,700}showDataTable=\{false\}/, 'the health-target chart must omit the redundant visible data-table disclosure');
+assert.doesNotMatch(overview, /经营健康度与完善目标|各账号当前健康度/, 'the removed health comparison charts must stay absent');
 assert.match(overview, /label: '已评分'[\s\S]{0,280}label: '待数据'[\s\S]{0,280}label: '不适用'/, 'the chart must distinguish scored, pending and inapplicable criteria');
 assert.match(overview, /评分证据覆盖 \$\{totals\.scored\}\/\$\{totals\.applicable\} 项/, 'coverage progress must expose its real numerator and applicable denominator');
 assert.doesNotMatch(overview, /health-actions-title|优先补齐|const prioritized/, 'the redundant priority-fill rail must be removed');

@@ -1,3 +1,5 @@
+import BusinessAnnouncementBar from './smartBusiness/BusinessAnnouncementBar';
+import BusinessHealthOverview from './smartBusiness/BusinessHealthOverview';
 import { labels as sharedTaskLabels, day as shanghaiDay } from '../../shared/mobile-domain.mjs';
 import WeeklyPlanCalendar from './smartBusiness/WeeklyPlanCalendar';
 import { socialOperatingProfile } from '../../shared/contracts/socialOperatingProfile';
@@ -37,7 +39,7 @@ import { defaultMatrixPlan } from '../lib/weeklyMatrix';
 import DeliveryBoard from "./DeliveryBoard";
 import ProductionTaskScene from "./ProductionTaskScene";
 import AgentDecisionCard, { type AgentDecisionKind } from "./AgentDecisionCard";
-import SmartBusinessDashboard, { WeeklyCommandCenter } from "./SmartBusinessDashboard";
+import SmartBusinessDashboard, { WeeklyCommandCenter, BusinessInterpretation } from "./SmartBusinessDashboard";
 import WeeklyProductionStudioEntry from "./smartBusiness/WeeklyProductionStudioEntry";
 import SmartOperationsAccountRail, { type SmartOperationsAccount } from "./SmartOperationsAccountRail";
 import PlanHistoryDialog from "./PlanHistoryDialog";
@@ -108,6 +110,8 @@ import type { SocialCrawlStrategy } from '../../shared/contracts/socialContentWo
 import EnterpriseProductMultiSelect, { splitSelectedProducts } from './EnterpriseProductMultiSelect';
 // EnterpriseProductMultiSelect owns the searchable listbox contract: aria-multiselectable="true" · 搜索企业知识库产品或型号.
 import { heuristicProductMapping, mapRowToProduct, parseWorkbook, prepareSheet } from "../lib/productImport";
+import { parseProductDocument, productsFromLabeledText, type DocumentProductDraft } from "../lib/productDocumentImport";
+import { readProductDiscoveryFile } from "../lib/productDiscoveryFile";
 import {
   buildTaskDeepLink,
   agentCursorPercent,
@@ -1190,14 +1194,27 @@ function OnboardingPanel({
   const importProductFile = async (file: File | null) => {
     if (!file || productImporting) return;
     setProductImporting(true); setProductImportMessage(""); setProductError("");
+    const temporaryUrls: string[] = [];
     try {
-      const sheets = await parseWorkbook(file);
-      const selectedSheet = sheets.slice().sort((a, b) => b.rowCount - a.rowCount)[0];
-      if (!selectedSheet) throw new Error("文件中没有可读取的表格");
-      const prepared = prepareSheet(selectedSheet);
-      const mapping = heuristicProductMapping(prepared.headers);
-      const decoded = prepared.dataRows
-        .map((row) => mapRowToProduct(row, mapping))
+      let importedProducts: DocumentProductDraft[];
+      let sourceLabel = "表格字段识别";
+      if (/\.(pdf|docx)$/i.test(file.name)) {
+        const documentResult = await parseProductDocument(file);
+        importedProducts = documentResult.products;
+        sourceLabel = documentResult.sourceLabel;
+        temporaryUrls.push(...documentResult.unassignedImages.map(image => image.url));
+      } else if (/\.txt$/i.test(file.name)) {
+        importedProducts = productsFromLabeledText(await readProductDiscoveryFile(file));
+        sourceLabel = "TXT 字段识别";
+      } else {
+        const sheets = await parseWorkbook(file);
+        const selectedSheet = sheets.slice().sort((a, b) => b.rowCount - a.rowCount)[0];
+        if (!selectedSheet) throw new Error("文件中没有可读取的表格");
+        const prepared = prepareSheet(selectedSheet);
+        const mapping = heuristicProductMapping(prepared.headers);
+        importedProducts = prepared.dataRows.map((row) => mapRowToProduct(row, mapping));
+      }
+      const decoded = importedProducts
         .filter((item) => item.name || item.sku)
         .map((item, index) => ({
           id: `import-${Date.now()}-${index}`,
@@ -1228,9 +1245,12 @@ function OnboardingPanel({
       if (!response.ok) throw new Error(result.message || "产品资料写入企业知识库失败");
       setKnowledgeProducts(next);
       setRecommendedProducts(recommendFocusProducts(next));
-      setProductImportMessage(`已从“${file.name}”识别并写入 ${decoded.length} 个产品，可以直接确认产品表。`);
+      setProductImportMessage(`已通过${sourceLabel}从“${file.name}”识别并写入 ${decoded.length} 个产品，可以直接确认产品表。`);
     } catch (error) { setProductError(error instanceof Error ? error.message : "产品文件解析失败"); }
-    finally { setProductImporting(false); }
+    finally {
+      temporaryUrls.forEach(url => URL.revokeObjectURL(url));
+      setProductImporting(false);
+    }
   };
   const confirmProductTable = async () => {
     if (!knowledgeProducts.length || productSaving) return;
@@ -1400,8 +1420,8 @@ function OnboardingPanel({
     >
     <section id="onboarding-focus-products" className="scroll-mt-24 rounded-lg border border-slate-200 bg-white p-6">
       {productsLoading ? <div role="status" className="mt-6 flex items-center gap-2 rounded-lg bg-slate-50 p-5 text-sm text-slate-500"><Loader2 size={16} className="animate-spin" />正在读取企业知识库产品…</div> : <>
-        <div className="flex flex-wrap items-center justify-between gap-3"><p className="text-sm font-semibold text-slate-900">企业知识库产品表</p><label className={`inline-flex items-center gap-2 rounded-lg border border-slate-200 px-4 py-2 text-xs font-bold text-slate-700 ${productImporting?"cursor-wait opacity-60":"cursor-pointer hover:bg-slate-50"}`}>{productImporting?<Loader2 size={14} className="animate-spin"/>:<FileSpreadsheet size={14}/>}上传产品表<input type="file" accept=".xlsx,.xls,.csv" className="hidden" disabled={productImporting} onChange={e=>{void importProductFile(e.currentTarget.files?.[0]??null);e.currentTarget.value="";}} /></label></div>
-        <p className="mt-2 text-[11px] text-slate-500">支持 Excel（.xlsx/.xls）和 CSV。系统自动识别产品名称、SKU、规格、价格、MOQ、材质、图片链接和卖点，并直接写入企业知识库。</p>
+        <div className="flex flex-wrap items-center justify-between gap-3"><p className="text-sm font-semibold text-slate-900">企业知识库产品表</p><label className={`inline-flex items-center gap-2 rounded-lg border border-slate-200 px-4 py-2 text-xs font-bold text-slate-700 ${productImporting?"cursor-wait opacity-60":"cursor-pointer hover:bg-slate-50"}`}>{productImporting?<Loader2 size={14} className="animate-spin"/>:<FileSpreadsheet size={14}/>}上传产品资料<input type="file" accept=".xlsx,.xls,.csv,.pdf,.docx,.txt" className="hidden" disabled={productImporting} onChange={e=>{void importProductFile(e.currentTarget.files?.[0]??null);e.currentTarget.value="";}} /></label></div>
+        <p className="mt-2 text-[11px] leading-relaxed text-slate-500">支持 Excel（.xlsx/.xls）、CSV、PDF、Word（.docx）和 TXT。系统自动识别表格或“产品名称：…”等结构化字段，包括 SKU、规格、价格、MOQ、材质、图片链接和卖点，并写入企业知识库。单个文件最大 50MB。</p>
         {productImportMessage&&<p role="status" className="mt-3 rounded-lg border border-emerald-200 bg-emerald-50 px-4 py-3 text-xs font-semibold text-emerald-800">{productImportMessage}</p>}
         {!knowledgeProducts.length ? <div className="mt-4 rounded-lg border border-dashed border-slate-300 p-8 text-center"><p className="font-bold text-slate-800">企业知识库尚未录入产品</p><p className="mt-2 text-xs text-slate-500">请上传产品表后继续。</p></div> : <div className="mt-4 grid gap-3 md:grid-cols-2 lg:grid-cols-3">{knowledgeProducts.map((product,index)=>{const name=productName(product);const details=[product.category,product.sku || product.attributes?.model].filter(Boolean).join(" · ");return <div key={String(product.id||`${name}-${index}`)} className="rounded-lg border border-slate-200 p-4 text-left"><div className="flex items-start justify-between gap-2"><p className="font-bold text-slate-900">{name}</p><CheckCircle2 size={17} className="shrink-0 text-emerald-600" /></div><p className="mt-1 text-xs text-slate-500">{details||"暂无型号与类别"}</p><p className="mt-3 line-clamp-2 text-[11px] leading-relaxed text-slate-500">{product.description||product.highlights||"详细资料可稍后在企业中心完善"}</p></div>})}</div>}
         {productError&&<p role="alert" className="mt-4 rounded-lg bg-red-50 px-4 py-3 text-xs text-red-700">{productError}</p>}
@@ -4740,7 +4760,8 @@ export default function DigitalEmployeePage({
       {!weeklyPlanOpen && <div className="h-full overflow-y-auto bg-white">
         <div className="mx-auto w-full px-2 py-3 sm:px-3">
           <h1 className="sr-only">{PAGE_REGISTRY.digitalEmployees.canonicalTitle}</h1>
-          <div aria-label="当前周计划">
+          <BusinessAnnouncementBar/>
+          <div className="grid grid-cols-1 overflow-hidden rounded-2xl border border-border bg-white xl:grid-cols-[minmax(0,1.7fr)_minmax(360px,1fr)]"><div aria-label="当前周计划" className="min-w-0">
             {goal ? <WeeklyCommandCenter
               data={data}
               statusLabel={currentPlanStatusLabel}
@@ -4751,6 +4772,7 @@ export default function DigitalEmployeePage({
                 : undefined}
             /> : <><section className="overflow-hidden rounded-lg border border-border bg-white"><div className="flex flex-wrap items-start justify-between gap-4 px-5 py-4"><div><p className="text-xs font-semibold text-accent">周经营计划</p><p className="mt-1 text-sm font-bold text-slate-800">本周还没有可执行计划</p><p className="mt-1 text-xs text-slate-500">点击“开始周任务”确定平台、账号、视频产量和预算，再选择产品并确认工作排期。</p></div><div aria-label="智能经营控制" className="flex max-w-full flex-wrap items-center justify-end gap-2">{weeklyPlanControls}</div></div></section>{weeklyActionFeedback && <div className="border-b border-border px-4 py-2.5">{weeklyActionFeedback}</div>}</>}
           </div>
+          <aside aria-label="企业经营分" className="min-w-0 border-t border-border xl:border-l xl:border-t-0 [&_section]:rounded-none [&_section]:border-0"><BusinessHealthOverview summaryOnly data={data} selectedAccountId={selectedAccountId} overviewRangeBusy={busy === "overview-range"} onOverviewRangeChange={changeOverviewDateRange}/></aside><BusinessInterpretation data={data} onViewReview={() => setWorkspaceView("review")}/></div>
           <Tabs className="mt-3" aria-label="智能经营视图" activeKey={workspaceView === "live" || workspaceView === "overview" ? "review" : workspaceView} onChange={key => {setWorkspaceView(key as WorkspaceView); setSelectedContentItemId("");}} items={views.map(view => ({key: view.id, label: view.label}))}/>
           <div className="grid grid-cols-1 gap-4 pb-6 pt-2">
             <main className="min-w-0">

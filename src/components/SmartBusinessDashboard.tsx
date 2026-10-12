@@ -353,8 +353,8 @@ export function WeeklyCommandCenter({
   const budgetMin = operatingContext?.budget.totalMinCny ?? packagePlans.reduce((sum, plan) => sum + Number(plan.estimatedCostRange?.minCny || 0), 0);
   const budgetMax = operatingContext?.budget.totalMaxCny ?? packagePlans.reduce((sum, plan) => sum + Number(plan.estimatedCostRange?.maxCny || 0), 0);
 
-  return <section className={`overflow-hidden bg-white ${className}`.trim()} aria-label="本周任务驾驶舱">
-    <div className="flex flex-wrap items-start justify-between gap-3 border-b border-border px-4 py-3 text-text-primary">
+  return <section className={`flex flex-col overflow-hidden bg-white ${className}`.trim()} aria-label="本周任务驾驶舱">
+    <div className="flex flex-wrap items-start justify-between gap-3 px-6 pb-4 pt-5 text-text-primary xl:min-h-[112px]">
       <div className="min-w-0 flex-1">
         <div className="flex flex-wrap items-center gap-2">
           <h2 className="text-xl font-semibold">周经营计划</h2>
@@ -375,7 +375,7 @@ export function WeeklyCommandCenter({
       {actions && <div aria-label="智能经营控制" className="flex max-w-full flex-wrap items-center justify-end gap-2">{actions}</div>}
     </div>
     {feedback && <div aria-label="周任务操作反馈" className="border-b border-border bg-white px-4 py-2.5">{feedback}</div>}
-    <div className="grid gap-px bg-slate-100 sm:grid-cols-3 lg:grid-cols-6">
+    <div className="grid auto-rows-[112px] gap-x-6 gap-y-6 bg-white px-6 pb-6 pt-3 sm:grid-cols-3">
       {[
         { label: "待验收成片", value: `${display.totals.waitingReviewCount} 条`, color: "var(--color-accent)" },
         { label: "本周计划视频", value: `${plannedOutputCount} 条`, color: "var(--color-visual-lavender)" },
@@ -383,9 +383,36 @@ export function WeeklyCommandCenter({
         { label: "本周成本范围", value: budgetMax > 0 ? `¥${budgetMin.toFixed(0)}–${budgetMax.toFixed(0)}` : "待核算", color: "var(--color-visual-pink)" },
         { label: "预计制作成本", value: estimatedContentCost > 0 ? `¥${estimatedContentCost.toFixed(2)}` : "待核算", color: "var(--color-text-primary)" },
         { label: "已结算成本", value: settledContentCost > 0 ? `¥${settledContentCost.toFixed(2)}` : "暂无结算", color: "var(--color-text-primary)" },
-      ].map(item => <article key={item.label} className="bg-white px-4 py-4"><Statistic title={item.label} value={item.value} styles={{ content: { color: item.color } }}/></article>)}
+      ].map(item => <article key={item.label} className="min-w-0 bg-white"><Statistic title={item.label} value={item.value} styles={{ title: { fontSize: 16, lineHeight: "24px", fontWeight: 400, color: "var(--color-text-secondary)", marginBottom: 12 }, content: { color: "var(--color-text-primary)", fontSize: 28, fontWeight: 600, lineHeight: "36px" } }}/></article>)}
     </div>
     {notice && <div className="flex flex-wrap items-center gap-2 border-t border-slate-100 bg-slate-50/70 px-5 py-3">{notice}</div>}
+  </section>;
+}
+
+export function BusinessInterpretation({ data, onViewReview }: { data: DigitalEmployeeOverview; onViewReview: () => void }) {
+  const [expanded, setExpanded] = useState(true);
+  const display = buildSmartBusinessDisplayModel(data);
+  const weeklyItems = (data.contentQueue?.items || []).filter(item => item.origin === 'weekly_plan');
+  const videoPlans = data.plan?.businessPackage?.tasks.find(task => task.templateId === 'production')?.videoPlans || [];
+  const estimatedCost = weeklyItems.reduce((sum, item) => sum + Number(item.estimatedCostCny || 0), 0)
+    || videoPlans.reduce((sum, plan) => sum + Number(plan.estimatedCost || 0), 0);
+  const settledCost = weeklyItems.reduce((sum, item) => sum + Number(item.settledCostCny || 0), 0);
+  const summary = data.review?.status === 'generated' ? data.review.summary : null;
+  return <section aria-label="经营解读" className="col-span-full mx-5 mb-5 mt-2 rounded-xl bg-neutral-50 px-5 py-4">
+    <header className="flex flex-wrap items-center justify-between gap-3">
+      <div className="flex flex-wrap items-center gap-3"><h2 className="flex items-center gap-2 text-base font-semibold text-text-primary"><TrendingUp size={18}/>经营解读</h2><span className="text-xs text-text-muted">{summary ? '基于本周经营复盘' : '基于当前周计划与执行记录'}</span></div>
+      <div className="flex items-center gap-2"><Button type="link" onClick={onViewReview}>查看复盘</Button><Button type="text" onClick={() => setExpanded(value => !value)} aria-expanded={expanded}>{expanded ? '收起' : '展开'}</Button></div>
+    </header>
+    {expanded && <div className="mt-3 space-y-2 text-sm leading-7 text-text-primary">
+      <p><strong>当前进展：</strong>{data.goal ? `本周计划制作 ${display.totals.versionCount} 条视频，共 ${display.totals.durationSeconds} 秒；已完成 ${display.totals.completedCount} 条，待验收 ${display.totals.waitingReviewCount} 条。` : '尚未建立周经营计划，请先确定本周的视频产量与预算。'}</p>
+      <ul className="list-disc space-y-1 pl-5">
+        <li><strong>成本：</strong>{estimatedCost > 0 ? `已排期内容预计制作成本 ¥${estimatedCost.toFixed(2)}。` : '制作成本尚未核算。'}{settledCost > 0 ? `已结算 ¥${settledCost.toFixed(2)}。` : '当前暂无已结算成本。'}</li>
+        <li><strong>执行：</strong>{display.totals.blockedCount > 0 ? `${display.totals.blockedCount} 条内容待处理，建议先进入制作工作台补齐条件。` : display.totals.waitingReviewCount > 0 ? '有成片等待验收，建议优先确认后续发布。' : '按周排期推进制作，并在成片生成后完成验收与发布确认。'}</li>
+        {summary?.highlights.slice(0, 3).map((highlight, index) => <li key={index}>{highlight}</li>)}
+        {summary?.nextGoalSuggestion && <li><strong>建议：</strong>{summary.nextGoalSuggestion}</li>}
+      </ul>
+      {!summary && <p className="text-xs text-text-muted">本周复盘尚未生成；暂不提供涨跌趋势或经营效果判断。</p>}
+    </div>}
   </section>;
 }
 
@@ -762,7 +789,7 @@ function PlanDataSourceBadge({ source }: { source: DisplayMetricSource }) {
 
 function HomeView({ data, onNavigate, selectedAccountId = "", overviewRangeBusy = false, onOverviewRangeChange }: { data: DigitalEmployeeOverview; onNavigate?: (page: Page) => void; selectedAccountId?: string; overviewRangeBusy?: boolean; onOverviewRangeChange?: (range: BusinessHealthOverviewRange) => void }) {
   return <div className="space-y-6">
-    <BusinessHealthOverview data={data} selectedAccountId={selectedAccountId} overviewRangeBusy={overviewRangeBusy} onOverviewRangeChange={onOverviewRangeChange} onNavigate={onNavigate}/>
+    <BusinessHealthOverview detailsOnly data={data} selectedAccountId={selectedAccountId} overviewRangeBusy={overviewRangeBusy} onOverviewRangeChange={onOverviewRangeChange} onNavigate={onNavigate}/>
     <NextRoundRecommendationsSection summary={data.review?.status === "generated" ? data.review.summary : undefined} industryTrends={data.industryTrends} onOpen={page => onNavigate?.(page as Page)}/>
   </div>;
 }
