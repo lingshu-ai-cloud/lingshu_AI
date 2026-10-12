@@ -247,7 +247,13 @@ export async function createEnvironmentProductReplacementPorts(input: Input, con
     const expected = String(record.contentSha256 || record.contentHash || '').toLowerCase();
     if (!/^[a-f0-9]{64}$/.test(expected)) throw Error('product_replacement_registered_bytes_missing');
     let bytes: Buffer | undefined;
-    if (key) bytes = (await (context.download || objectStorageDownload)(key))?.buf;
+    if (key) {
+      const mediaRoot = path.resolve(process.env.SOCIAL_CONTENT_MEDIA_ROOT || 'data/media');
+      const localCandidate = record.videoFileId ? path.resolve(mediaRoot, key) : null;
+      if (localCandidate && fs.existsSync(localCandidate)
+        && fs.realpathSync(localCandidate).startsWith(fs.realpathSync(mediaRoot) + path.sep)) bytes = fs.readFileSync(localCandidate);
+      else bytes = (await (context.download || objectStorageDownload)(key))?.buf;
+    }
     else if (typeof record.url === 'string' && /^\/api\/overseas\/starter-198\/social-content\/files\/[A-Za-z0-9_-]{1,180}$/.test(record.url)) {
       const fileId = record.url.slice(record.url.lastIndexOf('/') + 1);
       if (context.readRegisteredFile) bytes = await context.readRegisteredFile({tenantId: input.tenantId, fileId, expectedSha256: expected});

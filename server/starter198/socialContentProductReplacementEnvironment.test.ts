@@ -64,6 +64,13 @@ test('default reader rejects structural-only public pixels before downloads or p
   await assert.rejects(ports.composition(f.input), /pixels_usage_missing/); assert.equal(f.downloads(), 0);
   f.task.tenant_id = 'other'; await assert.rejects(ports.assertCurrent(), /task_changed/);
 });
+test('registered local reference video resolves inside the configured media root', async () => {
+  const f=await fixture();const mediaRoot=path.join(f.root,'media');fs.mkdirSync(mediaRoot);fs.copyFileSync(path.join(f.root,'source.mp4'),path.join(mediaRoot,'source-key'));
+  const get=f.context.dataStore!.getById!.bind(f.context.dataStore);f.context.dataStore!.getById=(async(table:string,id:string)=>table==='trend_videos'?{tenantId:'tenant',sourceUrl:f.handoff.source.sourceUrl,videoFileId:'source-key',contentSha256:sha(f.video)}:get(table,id)) as any;
+  const old=process.env.SOCIAL_CONTENT_MEDIA_ROOT;process.env.SOCIAL_CONTENT_MEDIA_ROOT=mediaRoot;
+  try {const composition=await (await createEnvironmentProductReplacementPorts(f.input,f.context)).composition(f.input);assert.ok(composition);assert.equal(f.downloads(),0);}
+  finally {if(old===undefined)delete process.env.SOCIAL_CONTENT_MEDIA_ROOT;else process.env.SOCIAL_CONTENT_MEDIA_ROOT=old;}
+});
 test('timestamp-only duplicate grants resolve deterministically while conflicting grants stay ambiguous', async () => {
   const f = await fixture();
   const originalList = f.context.dataStore!.list.bind(f.context.dataStore);
