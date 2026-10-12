@@ -337,11 +337,12 @@ export function assetSupplyPlanWithExecutionSelections(
 
 type BudgetRouteCandidate = NonNullable<SocialContentTaskDetail['agentWorkflow']>['executionPlan']['scenes'][number]['candidates'][number];
 
-function localProductFallbackRank(candidate: BudgetRouteCandidate, requestedProductRef: string) {
+function localProductFallbackRank(candidate: BudgetRouteCandidate, requestedProductRef: string, minimumDurationSeconds: number) {
   const segment=candidate.materialSegments?.[0];
   if (candidate.kind !== 'asset' || candidate.dataTransfer !== 'local_only' || !candidate.sourceRef || !segment
     || !segment.segmentId?.trim() || !Number.isFinite(segment.startSeconds) || !Number.isFinite(segment.endSeconds)
-    || segment.startSeconds < 0 || segment.endSeconds <= segment.startSeconds) return null;
+    || segment.startSeconds < 0 || segment.endSeconds <= segment.startSeconds
+    || segment.endSeconds-segment.startSeconds+1e-6<minimumDurationSeconds) return null;
   const roles = new Set(candidate.materialRoles ?? []);
   const normalizedProduct = String(candidate.productRef || candidate.productId || '').normalize('NFKC').trim().toLocaleLowerCase();
   const exactProduct = Boolean(requestedProductRef && normalizedProduct === requestedProductRef);
@@ -366,6 +367,8 @@ export function applyPresenterFirstBudgetDegradation(input: {
 }): SocialAssetSupplyPlan {
   const maximumCny = Math.max(0, Math.min(10, Number(input.maximumCny) || 0));
   const scenes = new Map(input.workflow.executionPlan.scenes.map(scene => [scene.sceneId, scene]));
+  const durationByScene=new Map(input.workflow.directorBrief.scenes.map(scene=>[scene.sceneId,
+    Math.max(0.001,scene.duration.endSeconds-scene.duration.startSeconds)]));
   const calculatedFixedNonProductCost = input.workflow.executionPlan.scenes
     .filter(scene => input.plan.shots.find(shot=>shot.shotId===scene.sceneId)?.materialRouting?.materialType !== 'product')
     .reduce((sum, scene) => sum + Math.max(0, Number(scene.estimatedCostCny) || 0), 0);
@@ -376,9 +379,7 @@ export function applyPresenterFirstBudgetDegradation(input: {
   // floor until those formal quotes are available to this earlier planner.
   const fixedNonProductCost=Math.max(calculatedFixedNonProductCost,hasPresenter?8.5:0);
   let remaining = Math.max(0, maximumCny - fixedNonProductCost);
-  const allLocalCandidates = input.workflow.executionPlan.scenes.flatMap(scene=>scene.candidates)
-    .map(candidate=>localProductFallbackRank(candidate,''))
-    .filter((value): value is NonNullable<typeof value> => Boolean(value));
+  const allLocalCandidates = input.workflow.executionPlan.scenes.flatMap(scene=>scene.candidates);
   return {
     ...structuredClone(input.plan),
     shots: input.plan.shots.map(original => {
@@ -388,10 +389,12 @@ export function applyPresenterFirstBudgetDegradation(input: {
       if (!scene) return shot;
       const requestedProductRef = String(shot.productSceneReplication?.productIdentity.groups[0]?.productRef
         || shot.materialRouting.generation?.productImageRefs[0] || '').normalize('NFKC').trim().toLocaleLowerCase();
-      const sceneLocal = scene.candidates.map(candidate => localProductFallbackRank(candidate, requestedProductRef))
+      const requiredDuration=durationByScene.get(shot.shotId)??Math.max(0.001,Number(shot.materialRouting.generation?.durationSeconds)||3);
+      const sceneLocal = scene.candidates.map(candidate => localProductFallbackRank(candidate, requestedProductRef,requiredDuration))
         .filter((value): value is NonNullable<typeof value> => Boolean(value))
         .sort((a,b)=>a.tier-b.tier||b.score-a.score||a.candidate.candidateId.localeCompare(b.candidate.candidateId));
-      const local = sceneLocal.length ? sceneLocal : [...allLocalCandidates]
+      const local = sceneLocal.length ? sceneLocal : allLocalCandidates.map(candidate=>localProductFallbackRank(candidate,'',requiredDuration))
+        .filter((value):value is NonNullable<typeof value>=>Boolean(value))
         .sort((a,b)=>a.tier-b.tier||b.score-a.score||a.candidate.candidateId.localeCompare(b.candidate.candidateId));
       const exact = sceneLocal.find(value => value.tier === 0);
       const paid = scene.candidates.find(candidate => candidate.kind === 'capability'

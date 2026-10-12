@@ -22,7 +22,7 @@ function fixture(candidatesByShot:Record<string,any[]>,presenterCost=4){
   const scenes=ids.map(id=>({sceneId:id,selectedSourceStrategy:id==='PRES'?'authorized_digital_presenter':'aigc_product_scene_replication',
     estimatedCostCny:id==='PRES'?presenterCost:2,candidates:id==='PRES'?[]:candidatesByShot[id]}));
   return {plan:{planVersion:'v',creationMode:'viral_replication',productionRoute:'mixed',managementMode:'automatic',shots} as any,
-    workflow:{executionPlan:{executionPlanId:'exec',scenes}} as any};
+    workflow:{directorBrief:{scenes:ids.map(sceneId=>({sceneId,duration:{startSeconds:0,endSeconds:3}}))},executionPlan:{executionPlanId:'exec',scenes}} as any};
 }
 
 test('keeps presenter spend first and degrades product scenes without dropping the 37-shot plan',()=>{
@@ -56,6 +56,13 @@ test('local assets without a verified material segment are not executable budget
   const result=applyPresenterFirstBudgetDegradation({...f,maximumCny:10});
   assert.equal(result.shots[1]!.sourceRefs[0],'verified-other');
   assert.equal(result.shots[1]!.materialRouting!.localMatch.sourceTier,'other_local');
+});
+
+test('local fallback segment must cover the frozen scene duration',()=>{
+  const short=asset('short',['product'],'sku');short.materialSegments[0].endSeconds=.5;
+  const f=fixture({S1:[paid('paid',2),short],S2:[asset('long-factory',['factory'],null)]},10);
+  const result=applyPresenterFirstBudgetDegradation({...f,maximumCny:10});
+  assert.equal(result.shots[1]!.sourceRefs[0],'long-factory');
 });
 
 test('formal product floor keeps at most two three-second I2V shots after conservative presenter bundle reserve',()=>{
