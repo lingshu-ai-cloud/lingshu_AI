@@ -8879,7 +8879,20 @@ export async function synthesizeStudioVoiceForAutomation(input: {
       const joined = path.join(dir, randomUUID() + '.wav');
       const postSpeed = ttsPostProcessingSpeed(audio.source, speed);
       await execFileAsync(ffmpegStatic || 'ffmpeg', ['-y', '-i', source, '-af', 'atempo=' + postSpeed + ',highpass=f=60,loudnorm=I=-16:TP=-1.5:LRA=7,alimiter=limit=0.95,apad=pad_dur=0.15', '-ar', '24000', '-ac', '1', '-c:a', 'pcm_s16le', joined], 30000);
-      const duration = wavDurationFromBytes(fs.readFileSync(joined));
+      let duration = wavDurationFromBytes(fs.readFileSync(joined));
+      // The provider may return a track a few hundred milliseconds longer
+      // than the frozen film. Fit that performance locally before ASR/align so
+      // metered seconds stay inside the whole-film reservation and the final
+      // word is preserved instead of being cut off by the renderer.
+      const frozenDuration = Number(input.targetDuration);
+      if (Number.isFinite(frozenDuration) && frozenDuration > .15 && duration > frozenDuration + .02) {
+        const fitted = joined + '.fitted.wav';
+        const ratio = duration / frozenDuration;
+        if (ratio > 2) return { ok: false, source: audio.source, error: '口播明显超过成片时长，请调整脚本。' };
+        await execFileAsync(ffmpegStatic || 'ffmpeg', ['-y', '-i', joined, '-af', `atempo=${ratio},atrim=duration=${frozenDuration}`, '-ar', '24000', '-ac', '1', '-c:a', 'pcm_s16le', fitted], 30000);
+        fs.renameSync(fitted, joined);
+        duration = wavDurationFromBytes(fs.readFileSync(joined));
+      }
       if (!(duration > .15)) return { ok: false, error: '无法测量实际配音时长' };
       const spokenDuration = Math.max(.15, duration - .15);
       const weights = lines.map(line => Math.max(1, [...line.replace(/[\s，,。.!！?？；;：:、]/g, '')].length));
