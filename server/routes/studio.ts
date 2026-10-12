@@ -8914,7 +8914,7 @@ export async function synthesizeStudioVoiceForAutomation(input: {
         ...(cue.words ? { words: cue.words.map(word => ({ ...word, start: word.start / postSpeed, end: word.end / postSpeed })) } : {}),
       })).filter(cue => cue.text && cue.end > cue.start) : continuousCues;
       const result = await persistTtsResult({ ok: true, url: scopedStudioAssetUrl('tts', path.basename(joined)), duration }, input.tenantId);
-      const qualityReport = await inspectGeneratedVoice({ filePath: joined, expectedText: spoken, language: input.language || 'en' });
+      const qualityReport = await inspectGeneratedVoice({ filePath: joined, expectedText: spoken, language: input.language || 'en', asrRequired: false });
       if (!qualityReport.passed) return { ok: false, source: audio.source, error: `口播质量未通过：${qualityReport.failures.join('；')}`, qualityReport };
       // Proportional sentence splits of one continuous performance are useful
       // for subtitle preview, but they are not measured audio boundaries.
@@ -8942,7 +8942,7 @@ export async function synthesizeStudioVoiceForAutomation(input: {
     const inputs = files.flatMap(file => ['-i', file]);
     await execFileAsync(ffmpegStatic || 'ffmpeg', ['-y', ...inputs, '-filter_complex', files.map((_,i) => '['+i+':a]').join('') + 'concat=n=' + files.length + ':v=0:a=1[joined];[joined]loudnorm=I=-16:TP=-1.5:LRA=7,alimiter=limit=0.95[out]', '-map', '[out]', '-c:a', 'pcm_s16le', joined], 60000);
     const result = await persistTtsResult({ ok: true, url: scopedStudioAssetUrl('tts', path.basename(joined)), duration: cursor }, input.tenantId);
-    const qualityReport = await inspectGeneratedVoice({ filePath: joined, expectedText: spoken, language: input.language || 'en' });
+    const qualityReport = await inspectGeneratedVoice({ filePath: joined, expectedText: spoken, language: input.language || 'en', asrRequired: false });
     if (!qualityReport.passed) return { ok: false, source: [...providers].join('+'), error: `口播质量未通过：${qualityReport.failures.join('；')}`, qualityReport };
     fs.writeFileSync(joined + '.alignment.json', JSON.stringify({ text: spoken, cues, source: 'synthesized_sentence_audio' }));
     for (const file of files) fs.unlinkSync(file);

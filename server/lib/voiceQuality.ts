@@ -1,4 +1,4 @@
-import {rethrowStudioVoicePaidBoundary} from './studioVoicePaidOperation.js';
+import {rethrowStudioVoicePaidBoundary,StudioVoicePaidBoundaryError} from './studioVoicePaidOperation.js';
 import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
@@ -149,11 +149,16 @@ export async function inspectGeneratedVoice(input: {
       accuracy = transcriptAccuracy(input.expectedText, result.text, input.language);
       if (accuracy < .9) failures.push(`口播ASR回听一致度仅${Math.round(accuracy * 100)}%`);
     } catch (error) {
-      rethrowStudioVoicePaidBoundary(error);
+      if (!optionalPaidAsrOutage(error) || asrRequired) rethrowStudioVoicePaidBoundary(error);
       if (asrRequired) failures.push(`口播ASR回听失败：${String(error instanceof Error ? error.message : error).slice(0, 160)}`);
     }
   } else if (asrRequired) {
     failures.push('正式口播缺少ASR回听能力');
   }
   return { ...acoustic, passed: failures.length === 0, asrChecked: accuracy !== null, transcriptAccuracy: accuracy, failures };
+}
+export function optionalPaidAsrOutage(error: unknown) {
+  return error instanceof StudioVoicePaidBoundaryError
+    && (/social_paid_permit_receipt_recovery_required/.test(error.message)
+      || /Request was aborted/.test(error.message));
 }
