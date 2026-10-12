@@ -64,6 +64,21 @@ test('default reader rejects structural-only public pixels before downloads or p
   await assert.rejects(ports.composition(f.input), /pixels_usage_missing/); assert.equal(f.downloads(), 0);
   f.task.tenant_id = 'other'; await assert.rejects(ports.assertCurrent(), /task_changed/);
 });
+test('timestamp-only duplicate grants resolve deterministically while conflicting grants stay ambiguous', async () => {
+  const f = await fixture();
+  const originalList = f.context.dataStore!.list.bind(f.context.dataStore);
+  f.context.dataStore!.list = (async (table: string, options: unknown) => {
+    if (table !== 'starter_social_inspiration_handoff_versions') return originalList(table, options as never);
+    const older = structuredClone(f.handoff) as any;older.rights.confirmedAt='2026-10-12T00:00:00Z';
+    const newer = structuredClone(f.handoff) as any;newer.rights.confirmedAt='2026-10-12T00:01:00Z';
+    return {items:[{id:'older',tenant_id:'tenant',payload:older,record_hash:socialRequestHash(older),created_at:older.rights.confirmedAt},{id:'newer',tenant_id:'tenant',payload:newer,record_hash:socialRequestHash(newer),created_at:newer.rights.confirmedAt}],totalItems:2};
+  }) as NonNullable<ProductReplacementEnvironmentContext['dataStore']>['list'];
+  const composition=await (await createEnvironmentProductReplacementPorts(f.input,f.context)).composition(f.input);
+  assert.ok(composition);
+  assert.match(composition.usageEvidenceRef,/^newer:/);
+  const prior=f.context.dataStore!.list.bind(f.context.dataStore);f.context.dataStore!.list=(async(table:string,options:unknown)=>{const result=await prior(table,options as never);if(table==='starter_social_inspiration_handoff_versions'){const row=result.items[0] as any;row.payload.authorization={scope:'different'};row.record_hash=socialRequestHash(row.payload);}return result;}) as any;
+  await assert.rejects((await createEnvironmentProductReplacementPorts(f.input,f.context)).composition(f.input),/missing_or_ambiguous/);
+});
 test('canonical frozen materialPlan and actual composition/product bytes are read; missing exact quote blocks paid preparation', async () => {
   const f = await fixture(), ports = await createEnvironmentProductReplacementPorts(f.input, f.context);
   const composition = await ports.composition(f.input); assert.ok(composition); assert.match(composition.usageEvidenceRef, /^handoff:/);
