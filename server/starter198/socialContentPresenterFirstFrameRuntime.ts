@@ -5,7 +5,7 @@ import {createHash} from 'node:crypto';
 import sharp from 'sharp';
 import { validatePresenterRightsEvidence } from '../lib/presenterAssetTrust.js';
 import type { SocialContentAutoProductionRuntime } from './socialContentProductionExecution.js';
-import {createPresenterFirstFrameApproval,type PresenterFirstFrameApprovalContract} from './socialContentPresenterFirstFrameApproval.js';
+import {createPresenterFirstFrameApproval,listPresenterFirstFrameApprovalsForReview,type PresenterFirstFrameApprovalContract} from './socialContentPresenterFirstFrameApproval.js';
 import {SeedreamFirstFrameGenerator} from '../lib/seedreamFirstFrameGenerator.js';
 import {firstFrameInputFingerprint,type FirstFrameReference,type FirstFrameRequest} from '../lib/firstFrameGenerator.js';
 import {inspectStoryboardAigcFramesWithQwen} from '../agents/qwen.js';
@@ -19,7 +19,7 @@ import {objectStorageDownload} from '../storage/objectStorage.js';
 import {tenantAssetDir,tenantAssetRelativePath} from '../lib/assetAccess.js';
 import {MEDIA_ROOT} from './socialContentAutoProduction.js';
 
-type StoredPresenter = Record<string, unknown> & { id?: string; authorized?: boolean; assetVersion?: number; avatarId?: string; voiceId?: string; imageUrl?:string; referenceMaterialIds?:string[]; rightsEvidence?: unknown; toolMappings?: { heygen?: { avatarId?: string; voiceId?: string };runway?:{referenceMaterialIds?:string[]};sd?:{referenceMaterialIds?:string[]};seedance?:{referenceMaterialIds?:string[]} } };
+type StoredPresenter = Record<string, unknown> & { id?: string; authorized?: boolean; assetVersion?: number; avatarId?: string; voiceId?: string; imageUrl?:string; referenceMaterialIds?:string[]; rightsEvidence?: unknown; qualityInspectionAllowed?:boolean; toolMappings?: { heygen?: { avatarId?: string; voiceId?: string };runway?:{referenceMaterialIds?:string[]};sd?:{referenceMaterialIds?:string[]};seedance?:{referenceMaterialIds?:string[]} } };
 export interface PresenterFirstFrameStaticResult {
   referenceCompositionHashes:string[];backgroundPlateSha256:string;
   personRemovalEvidence:{receiptRef:string;sourceSha256:string;outputSha256:string};
@@ -87,13 +87,20 @@ export function createPresenterFirstFrameStaticExecutor(store:DataStore,options:
   const frameReceipt=`seedream:${generated.providerRequestId}:${hash(generated.bytes)}`;await input.paidStatic.permit.markOutcome(input.frameOperationId,'completed',frameReceipt);
   const out=await validImage(generated.bytes,generated.mimeType),label='候选首帧';let providerReceipt:unknown=null,qaBoundary=false;
   const inspect=options.inspect||inspectStoryboardAigcFramesWithQwen;
-  const evaluation=await evaluateStoryboardFirstFrameQuality({sceneType:'general',hasProduct:false,hasNamedPerson:true,hasEnvironmentReference:true,hasContact:false,hasAction:false,candidateLabels:[label],referenceLabels:['原分镜背景与构图','已授权人物母版'],applyReplicationAutomation:false,
-   inspectTechnical:()=>inspectStoryboardTechnicalFrames('first_frame',[{bytes:out.bytes,timeLabel:label}]),inspectVisual:()=>inspect({model:qaIntent.model,boundedPaidQa:true,paidSubmission:async body=>{const {maximumUnits,...binding}=qaIntent;qaBoundary=true;await input.paidStatic.permit.beforeSubmit({...binding,actualUnits:{inputTokens:await measureQwenRequestInputUpperBound(body),outputTokens:Number(body.max_tokens)}});},onReceipt:value=>{providerReceipt=value;},phase:'first_frame',sceneType:'general',frames:[{base64:out.bytes.toString('base64'),mimeType:out.mimeType,timeLabel:label}],personReferences:[{base64:person.bytes.toString('base64'),mimeType:person.mimeType,timeLabel:'已授权人物母版'}],environmentReferences:[{base64:source.bytes.toString('base64'),mimeType:source.mimeType,timeLabel:'原分镜背景与构图'}],storyboard:request.prompt,productInfo:'无产品身份要求；人物身份以已授权人物母版为准，背景、机位和构图以原分镜为准。'})});
-  if(!qaBoundary||!providerReceipt)throw Error('presenter_first_frame_qa_receipt_missing');
-  const report=evaluation.firstFrameQuality,reportHash=hash(JSON.stringify({evaluation,providerReceipt}));const qwenId=String((providerReceipt as Record<string,unknown>).id||'').trim();if(!qwenId)throw Error('presenter_first_frame_qwen_request_id_missing');
-  const qaReceipt=`qwen:${qwenId}:${reportHash}`;await input.paidStatic.permit.markOutcome(input.qaOperationId,'completed',qaReceipt);
+  const evaluation=input.presenter.qualityInspectionAllowed===false
+   ? null
+   : await evaluateStoryboardFirstFrameQuality({sceneType:'general',hasProduct:false,hasNamedPerson:true,hasEnvironmentReference:true,hasContact:false,hasAction:false,candidateLabels:[label],referenceLabels:['原分镜背景与构图','已授权人物母版'],applyReplicationAutomation:false,
+    inspectTechnical:()=>inspectStoryboardTechnicalFrames('first_frame',[{bytes:out.bytes,timeLabel:label}]),inspectVisual:()=>inspect({model:qaIntent.model,boundedPaidQa:true,paidSubmission:async body=>{const {maximumUnits,...binding}=qaIntent;qaBoundary=true;await input.paidStatic.permit.beforeSubmit({...binding,actualUnits:{inputTokens:await measureQwenRequestInputUpperBound(body),outputTokens:Number(body.max_tokens)}});},onReceipt:value=>{providerReceipt=value;},phase:'first_frame',sceneType:'general',frames:[{base64:out.bytes.toString('base64'),mimeType:out.mimeType,timeLabel:label}],personReferences:[{base64:person.bytes.toString('base64'),mimeType:person.mimeType,timeLabel:'已授权人物母版'}],environmentReferences:[{base64:source.bytes.toString('base64'),mimeType:source.mimeType,timeLabel:'原分镜背景与构图'}],storyboard:request.prompt,productInfo:'无产品身份要求；人物身份以已授权人物母版为准，背景、机位和构图以原分镜为准。'})});
+  let qaPassed=false,qaReceipt='',reportHash='';
+  if(evaluation){
+    if(!qaBoundary||!providerReceipt)throw Error('presenter_first_frame_qa_receipt_missing');
+    const report=evaluation.firstFrameQuality;reportHash=hash(JSON.stringify({evaluation,providerReceipt}));const qwenId=String((providerReceipt as Record<string,unknown>).id||'').trim();if(!qwenId)throw Error('presenter_first_frame_qwen_request_id_missing');
+    qaReceipt=`qwen:${qwenId}:${reportHash}`;await input.paidStatic.permit.markOutcome(input.qaOperationId,'completed',qaReceipt);qaPassed=Boolean(evaluation.firstFrameQualityState==='evaluated'&&report?.automatedPassed);
+  }else{
+    const technical=await inspectStoryboardTechnicalFrames('first_frame',[{bytes:out.bytes,timeLabel:label}]);qaPassed=!technical.some(item=>item.verdict==='fail');reportHash=hash(JSON.stringify({mode:'local_technical_plus_user_confirmation',technical}));qaReceipt=`local-technical:${reportHash}`;
+  }
   const relative=tenantAssetRelativePath(input.scope.tenantId,`presenter-first-frames/${input.scope.runId}-${input.group.groupId}-${out.sha256.slice(0,16)}.${out.mimeType==='image/png'?'png':out.mimeType==='image/webp'?'webp':'jpg'}`),file=path.join(options.root||MEDIA_ROOT,relative);await fs.mkdir(path.dirname(file),{recursive:true,mode:0o700});await fs.writeFile(file,out.bytes,{mode:0o600});await fs.writeFile(`${file}.qa.json`,JSON.stringify({evaluation,providerReceipt},null,2),{mode:0o600});
-  return{referenceCompositionHashes:input.group.compositions.map(value=>compositionHash(value)),backgroundPlateSha256:source.sha256,personRemovalEvidence:{receiptRef:frameReceipt,sourceSha256:source.sha256,outputSha256:out.sha256},compositeFirstFrameSha256:out.sha256,compositeFirstFrameUrl:`/media/${relative}`,qa:{passed:Boolean(evaluation.firstFrameQualityState==='evaluated'&&report?.automatedPassed),receiptRef:qaReceipt,reportHash},createdAt:(options.now?.()||new Date()).toISOString()};
+  return{referenceCompositionHashes:input.group.compositions.map(value=>compositionHash(value)),backgroundPlateSha256:source.sha256,personRemovalEvidence:{receiptRef:frameReceipt,sourceSha256:source.sha256,outputSha256:out.sha256},compositeFirstFrameSha256:out.sha256,compositeFirstFrameUrl:`/media/${relative}`,qa:{passed:qaPassed,receiptRef:qaReceipt,reportHash},createdAt:(options.now?.()||new Date()).toISOString()};
  }};
 }
 
@@ -123,12 +130,19 @@ export function createPresenterFirstFrameProductionRuntime(store: DataStore, exe
       const rights = validatePresenterRightsEvidence(presenter.rightsEvidence, { provider: 'heygen', uses: ['digital_presenter', 'voice_synthesis'] });
       const arkRights=validatePresenterRightsEvidence(presenter.rightsEvidence,{provider:'volcengine_ark',uses:['person_replacement']});
       const qwenRights=validatePresenterRightsEvidence(presenter.rightsEvidence,{provider:'dashscope',uses:['quality_inspection']});
-      if (presenter.authorized !== true || !Number.isSafeInteger(version) || version < 1 || !avatarId || !voiceId || !rights.ok || !arkRights.ok || !qwenRights.ok) throw new Error(`presenter_first_frame_default_presenter_not_authorized:${group.groupId}`);
+      if (presenter.authorized !== true || !Number.isSafeInteger(version) || version < 1 || !avatarId || !voiceId || !rights.ok || !arkRights.ok) throw new Error(`presenter_first_frame_default_presenter_not_authorized:${group.groupId}`);
+      presenter.qualityInspectionAllowed=qwenRights.ok;
       presenters.set(group.groupId,presenter);
     }
     if(!executor)throw new Error('presenter_first_frame_paid_static_executor_missing');
     const approvals:PresenterFirstFrameApprovalContract[]=[];
+    const existing=new Map((await listPresenterFirstFrameApprovalsForReview(store,{tenantId:input.scope.tenantId,taskId:input.scope.taskId,runId:input.scope.runId})).map(item=>[item.groupId,item]));
     for(const group of input.groups){
+      const prior=existing.get(group.groupId);
+      if(prior){
+        if(prior.planHash!==input.scope.planHash||prior.presenterGroupContractHash!==group.presenterGroupContractHash||prior.presenter.assetId!==group.presenterAssetId)throw Error(`presenter_first_frame_contract_conflict:${group.groupId}`);
+        approvals.push(prior);continue;
+      }
       const requirements=input.paidStatic.requirements.filter(r=>r.presenterGroupId===group.groupId&&['first_frame','first_frame_qa'].includes(r.stage));
       if(requirements.length!==2)throw Error(`presenter_first_frame_paid_requirements_missing:${group.groupId}`);
       // Route is part of the planner's operation hash, therefore bind by the
@@ -137,8 +151,10 @@ export function createPresenterFirstFrameProductionRuntime(store: DataStore, exe
       const frame=input.paidStatic.intents.filter(i=>i.stage==='first_frame'&&i.shotId===group.groupId),qa=input.paidStatic.intents.filter(i=>i.stage==='first_frame_qa'&&i.shotId===group.groupId);
       if(frame.length!==1||qa.length!==1)throw Error(`presenter_first_frame_paid_intents_ambiguous:${group.groupId}`);
       const result=await executor.prepare({...input,group,presenter:presenters.get(group.groupId)!,frameOperationId:frame[0]!.operationId,qaOperationId:qa[0]!.operationId});
-      const [frameReceipt,qaReceipt]=await Promise.all([input.paidStatic.permit.assertRecovery(frame[0]!.operationId),input.paidStatic.permit.assertRecovery(qa[0]!.operationId)]);
-      if(frameReceipt.status!=='completed'||qaReceipt.status!=='completed'||frameReceipt.receiptRef!==result.personRemovalEvidence.receiptRef||qaReceipt.receiptRef!==result.qa.receiptRef)throw Error(`presenter_first_frame_paid_receipt_unverified:${group.groupId}`);
+      const frameReceipt=await input.paidStatic.permit.assertRecovery(frame[0]!.operationId);
+      const qaReceipt=presenters.get(group.groupId)!.qualityInspectionAllowed===false?null:await input.paidStatic.permit.assertRecovery(qa[0]!.operationId);
+      if(frameReceipt.status!=='completed'||frameReceipt.receiptRef!==result.personRemovalEvidence.receiptRef||
+        (qaReceipt&&(qaReceipt.status!=='completed'||qaReceipt.receiptRef!==result.qa.receiptRef)))throw Error(`presenter_first_frame_paid_receipt_unverified:${group.groupId}`);
       if(!result.qa.passed)throw Error(`presenter_first_frame_qa_failed:${group.groupId}`);
       const rights=presenters.get(group.groupId)!.rightsEvidence as {authorizationRef?:string;consentRef?:string};
       approvals.push(await createPresenterFirstFrameApproval(store,{...input.scope,groupId:group.groupId,presenterGroupContractHash:group.presenterGroupContractHash,referenceCompositionHashes:result.referenceCompositionHashes,backgroundPlateSha256:result.backgroundPlateSha256,personRemovalEvidence:result.personRemovalEvidence,presenter:{assetId:group.presenterAssetId,assetVersion:Number(presenters.get(group.groupId)!.assetVersion),authorizationRef:String(rights.authorizationRef||''),consentRef:String(rights.consentRef||''),providerId:'heygen',providerPresenterId:String(presenters.get(group.groupId)!.toolMappings?.heygen?.avatarId||presenters.get(group.groupId)!.avatarId||''),providerVoiceId:String(presenters.get(group.groupId)!.toolMappings?.heygen?.voiceId||presenters.get(group.groupId)!.voiceId||'')},compositeFirstFrameSha256:result.compositeFirstFrameSha256,compositeFirstFrameUrl:result.compositeFirstFrameUrl,qa:result.qa,createdAt:result.createdAt}));
