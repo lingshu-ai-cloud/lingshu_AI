@@ -5,7 +5,7 @@ import type { ProductionDefaults } from '../../lib/shotProduction';
 
 const statusText = (job: PresenterCreation) => job.status === 'pending_consent'
   ? job.consentRequestedAt ? '授权入口已生成 · 待 HeyGen 确认' : '待发起本人授权'
-  : ({ submitting: '正在提交', processing: '处理中', completed: '可用', failed: '处理失败', uncertain: '提交结果待核实' } as const)[job.status];
+  : ({ submitting: '正在提交', processing: '处理中', completed: '可用', failed: '创建未受理', uncertain: '提交结果待核实' } as const)[job.status];
 const field = 'w-full rounded-lg border border-border bg-white p-2 text-sm';
 const button = 'rounded-lg border border-border px-3 py-2 text-sm disabled:opacity-40';
 type PresenterLookGroup = { id: string; name: string; representative: PresenterLook; looks: PresenterLook[] };
@@ -101,7 +101,7 @@ export default function PresenterManager({ onClose, onSaved, onSynced, reusePres
   }, []);
   useEffect(() => { if (initialConfiguration && !looks.length && !inFlight.current) void loadCatalog(); }, [initialConfiguration]);
   useEffect(() => {
-    const pending = jobs.filter(j => ['processing', 'pending_consent'].includes(j.status));
+    const pending = jobs.filter(j => ['processing', 'pending_consent', 'uncertain'].includes(j.status));
     if (!pending.length) return;
     let live = true;
     const timer = window.setTimeout(async () => {
@@ -111,6 +111,7 @@ export default function PresenterManager({ onClose, onSaved, onSynced, reusePres
       const updated = results.flatMap(result => result.status === 'fulfilled' ? [result.value] : []);
       setJobs(current => current.map(job => updated.find(item => item.id === job.id) || job));
       if (results.some(r => r.status === 'rejected')) setError('人物状态刷新暂时失败，可点击“刷新状态”重试');
+      else if (updated.length) { setError(''); setActionError(''); }
     }, 15000);
     return () => { live = false; window.clearTimeout(timer); };
   }, [jobs]);
@@ -215,6 +216,15 @@ export default function PresenterManager({ onClose, onSaved, onSynced, reusePres
     setActionError(message);
     window.requestAnimationFrame(() => { actionFeedback.current?.scrollIntoView({ behavior: 'smooth', block: 'center' }); actionFeedback.current?.focus(); });
   });
+  const editFailedCreation = (job: PresenterCreation) => {
+    setName(job.name);
+    setWizardStep(1);
+    setTab('create');
+    setActionError(job.error || '请重新选择符合 HeyGen 官方要求的人物素材后提交。');
+    setSubmitStage('idle');
+    attempt.current = undefined;
+    window.requestAnimationFrame(() => actionFeedback.current?.scrollIntoView({ behavior: 'smooth', block: 'center' }));
+  };
   const voice = voices.find(item => item.id === voiceId);
   const refreshVoiceClone = async () => {
     if (!voiceCloneJob || voicePollInFlight.current) return;
@@ -398,13 +408,18 @@ export default function PresenterManager({ onClose, onSaved, onSynced, reusePres
         })}</div>
         <button className={button} type="button" disabled={busy} onClick={() => void loadCatalog()}>{lookToken ? '加载更多人物' : '刷新人物列表'}</button>
       </div>}
-      {(!initialConfiguration || tab === 'create') && <section ref={authorizationSection} className="scroll-mt-24 space-y-3 border-t border-border pt-4"><div className="flex items-center justify-between"><div><h3 className="font-bold">人物授权状态</h3><p className="mt-1 text-xs text-text-muted">照片人物保留本页的本人授权声明；视频数字分身还需由本人在 HeyGen 官方页面完成验证。验证通过后才能保存为企业默认人物。</p></div><button disabled={busy} className={button} onClick={() => void run(async () => setJobs(await presenterApi.creations()))}>刷新状态</button></div>
+      {(!initialConfiguration || tab === 'create') && <section ref={authorizationSection} className="scroll-mt-24 space-y-3 border-t border-border pt-4"><div className="flex items-center justify-between"><div><h3 className="font-bold">人物授权状态</h3><p className="mt-1 text-xs text-text-muted">照片人物保留本页的本人授权声明；视频数字分身还需由本人在 HeyGen 官方页面完成验证。验证通过后才能保存为企业默认人物。</p></div><button disabled={busy} className={button} onClick={() => void run(async () => { setJobs(await presenterApi.creations()); setActionError(''); })}>刷新状态</button></div>
         {!jobs.length && <p className="text-sm text-text-muted">暂无创建任务。提交后进度会保存在这里，关闭页面也不会丢失。</p>}
         {jobs.map(job => <div key={job.id} className="space-y-2 rounded-lg border border-border p-3"><div className="flex flex-wrap items-center gap-3"><span className="relative flex h-14 w-14 items-center justify-center overflow-hidden rounded bg-surface-2 font-bold text-text-secondary">{job.name.slice(0, 1)}{job.look?.imageUrl && <img alt={job.name} src={job.look.imageUrl} className="absolute inset-0 h-full w-full object-cover" onError={event => { event.currentTarget.style.display = 'none'; }} />}</span><strong className="text-sm">{job.name}</strong><span className="text-xs">{statusText(job)}</span>
           <button disabled={busy} className={button} onClick={() => void run(async () => updateJob(await presenterApi.refresh(job.id)))}>刷新状态</button>
           {job.status === 'completed' && job.look && <button disabled={busy} className={button} onClick={() => { setTab('import'); choose(job.look!, job); }}>授权已通过，继续保存</button>}
           {job.status === 'pending_consent' && !job.consentUrl && <button disabled={busy} className={`${button} bg-gradient-to-r from-blue-600 to-violet-600 text-white`} onClick={() => void beginOfficialConsent(job)}>前往 HeyGen 完成本人授权</button>}
-        </div><p className={`rounded-lg p-2 text-xs ${job.status === 'completed' ? 'bg-emerald-50 text-emerald-800' : 'bg-amber-50 text-amber-900'}`}>官方授权状态：{job.status === 'completed' ? '已通过' : job.consentStatus || '未通过'}{job.status !== 'completed' && '。完成授权并等待官方确认后，才可继续保存。'}</p>{job.error && <p className="text-xs text-amber-700">{job.error}</p>}
+          {job.status === 'failed' && <button disabled={busy} className={button} onClick={() => editFailedCreation(job)}>返回修改素材</button>}
+        </div>{job.status === 'failed'
+          ? <p className="rounded-lg bg-red-50 p-2 text-xs text-red-800">人物创建未被 HeyGen 受理，不需要继续授权。请按下方原因修改素材后重新提交。</p>
+          : job.status === 'uncertain'
+            ? <p className="rounded-lg bg-amber-50 p-2 text-xs text-amber-900">提交结果尚未核实。请刷新原任务，系统不会重复创建。</p>
+            : <p className={`rounded-lg p-2 text-xs ${job.status === 'completed' ? 'bg-emerald-50 text-emerald-800' : 'bg-amber-50 text-amber-900'}`}>官方授权状态：{job.status === 'completed' ? '已通过' : job.consentStatus || '未通过'}{job.status !== 'completed' && '。完成授权并等待官方确认后，才可继续保存。'}</p>}{job.error && <p className={`text-xs ${job.status === 'failed' ? 'text-red-700' : 'text-amber-700'}`}>{job.error}</p>}
           {job.type === 'digital_twin' && job.groupId && <p className="break-all text-xs text-text-muted">绑定的 HeyGen 人物组：{job.groupId}</p>}
           {job.status === 'processing' && <p role="status" className="rounded-lg bg-sky-50 p-3 text-xs text-sky-950">人物处理中，完成后即可选择。</p>}
           {job.consentUrl && <div className="rounded-lg bg-amber-50 p-3 text-sm"><a className="font-bold text-emerald-700 underline" href={job.consentUrl} target="_blank" rel="noopener noreferrer">前往 HeyGen 完成本人授权</a><span className="ml-2 text-xs text-amber-900">请由人物本人在 HeyGen 页面完成验证；完成后返回此处点击“刷新状态”。</span></div>}
