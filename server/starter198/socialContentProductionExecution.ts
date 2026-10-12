@@ -171,10 +171,10 @@ export function assertCompleteTypeAwareExecutionPlan(plan: NonNullable<Productio
   if(plan.shots.length!==37||new Set(plan.shots.map(shot=>shot.shotId)).size!==37)throw Error('type_aware_execution_scene_set_invalid');
   const missingRoute=plan.shots.find(shot=>!shot.materialRouting);
   if(missingRoute)throw Error(`type_aware_execution_routing_missing:${missingRoute.shotId}`);
-  const products=plan.shots.filter(shot=>shot.materialRouting?.materialType==='product');
-  const missingSpec=products.find(shot=>!shot.productSceneReplication);
+  const generatedProducts=plan.shots.filter(shot=>shot.sourceStrategy==='aigc_product_scene_replication');
+  const missingSpec=generatedProducts.find(shot=>shot.materialRouting?.materialType!=='product'||!shot.productSceneReplication);
   if(missingSpec)throw Error(`type_aware_execution_product_spec_missing:${missingSpec.shotId}`);
-  const staleSpec=plan.shots.find(shot=>shot.materialRouting?.materialType!=='product'&&shot.productSceneReplication);
+  const staleSpec=plan.shots.find(shot=>shot.sourceStrategy!=='aigc_product_scene_replication'&&shot.productSceneReplication);
   if(staleSpec)throw Error(`type_aware_execution_product_spec_unexpected:${staleSpec.shotId}`);
 }
 

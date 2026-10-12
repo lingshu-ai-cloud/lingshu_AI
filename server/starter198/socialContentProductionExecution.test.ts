@@ -49,6 +49,11 @@ const detail: any = {
   const schedulerOverlay=structuredClone(approved);
   const finalAfterAllOverlays=bindCanonicalTypeAwareRouting(schedulerOverlay,canonical);
   assert.doesNotThrow(()=>assertCompleteTypeAwareExecutionPlan(finalAfterAllOverlays));
+  const localProductFallback=structuredClone(finalAfterAllOverlays);
+  Object.assign(localProductFallback.shots[0],{sourceStrategy:'customer_real_asset',sourceRefs:['local-product'],selectedMaterialSegment:{sourceRef:'local-product',segmentId:'cut',startSeconds:0,endSeconds:3}});
+  delete localProductFallback.shots[0].productSceneReplication;
+  delete localProductFallback.shots[0].materialRouting.generation;
+  assert.doesNotThrow(()=>assertCompleteTypeAwareExecutionPlan(localProductFallback));
   assert.throws(()=>assertCompleteTypeAwareExecutionPlan(schedulerOverlay),/execution_routing_missing:replication-reference-shot-1/);
   assert.throws(()=>bindCanonicalTypeAwareRouting({...approved,shots:approved.shots.slice(1)},canonical),/scene_set_changed/);
 }
