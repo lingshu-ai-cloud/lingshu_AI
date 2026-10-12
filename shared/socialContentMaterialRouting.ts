@@ -48,12 +48,13 @@ const {shot,inventory,materialType,referenceVisualContract,presenterRefs,buildPr
       if(shot.productSceneReplication&&!shortSource&&shot.plannedDurationSeconds!==undefined&&(!Number.isFinite(shot.plannedDurationSeconds)||Math.abs(shot.plannedDurationSeconds-spec.cameraLock.durationSeconds)>0.000001))throw Error(`material_frozen_duration_changed:${shot.shotId}`);
       if(!shot.productSceneReplication){if(shot.plannedDurationSeconds!==undefined&&(!Number.isFinite(shot.plannedDurationSeconds)||shot.plannedDurationSeconds<=0))throw Error(`material_planned_duration_invalid:${shot.shotId}`);spec.cameraLock.durationSeconds=shot.plannedDurationSeconds??3;}
       const productImageRefs=[...new Set(spec.productIdentity.groups.flatMap(group=>group.referenceImageIds))];
-      // Public benchmark media is analysis input by default, not licensed
-      // production pixels. Rebuild the observed composition from the frozen
-      // scene contract and the tenant's exact product images; never preserve a
-      // legacy original-pixel route merely because the benchmark has a shot id.
-      const method='enterprise_authored_product_first_frame_i2v' as const;
-      materialRouting.generation={...(shot.materialRouting?.generation ? {videoProvider:shot.materialRouting.generation.videoProvider,videoModel:shot.materialRouting.generation.videoModel,qaModel:shot.materialRouting.generation.qaModel}:{videoProvider:'wan' as const,videoModel:'wan2.6-i2v-flash' as const,qaModel:'qwen3-vl-plus' as const}),method,firstFrameOrigin:'enterprise_authored_storyboard',durationSeconds:spec.cameraLock.durationSeconds,durationOrigin:shortSource?'default_short_shot':shot.productSceneReplication?'explicit_frozen':shot.plannedDurationSeconds!==undefined?'planned_timeline':'default_short_shot',productImageRefs,referenceShotId:spec.referenceShotId,referenceSourceId:spec.referenceSourceId??null};
+      // Original pixels remain disabled by default. A previously frozen exact
+      // replacement route represents a separately persisted task-level rights
+      // decision and must survive plan refresh; the runtime independently
+      // verifies the matching immutable handoff before reading any pixels.
+      const exactReplacement=shot.materialRouting?.generation?.method==='reference_first_frame_product_replacement_i2v';
+      const method=exactReplacement?'reference_first_frame_product_replacement_i2v' as const:'enterprise_authored_product_first_frame_i2v' as const;
+      materialRouting.generation={...(shot.materialRouting?.generation ? {videoProvider:shot.materialRouting.generation.videoProvider,videoModel:shot.materialRouting.generation.videoModel,qaModel:shot.materialRouting.generation.qaModel}:{videoProvider:'wan' as const,videoModel:'wan2.6-i2v-flash' as const,qaModel:'qwen3-vl-plus' as const}),method,...(exactReplacement?{}:{firstFrameOrigin:'enterprise_authored_storyboard' as const}),durationSeconds:spec.cameraLock.durationSeconds,durationOrigin:shortSource?'default_short_shot':shot.productSceneReplication?'explicit_frozen':shot.plannedDurationSeconds!==undefined?'planned_timeline':'default_short_shot',productImageRefs,referenceShotId:spec.referenceShotId,referenceSourceId:spec.referenceSourceId??null};
       return {strategy:'aigc_product_scene_replication',refs:productImageRefs,materialRouting,productSceneReplication:spec,blocked:!productImageRefs.length,
         instruction:'先按镜头语义匹配本地真实产品视频；无合格片段时，用企业知识库对应实际产品图替换参考分镜首帧中的产品，再图生视频，默认3秒短镜头。保持实物标签、结构与事实；参考像素与产品素材用途权利未通过时停止，不直生、不用图片缩放替代。'};
 }

@@ -105,13 +105,13 @@ test('explicit free edits retain a verified exact video window without enabling 
  assert.equal(plan({...shot,localVideoMatch:{...shot.localVideoMatch,evidenceRef:''}},{productionApproach:'material_cut'}).selectedMaterialSegment,undefined);
 });
 
-test('normal plan refresh migrates legacy original-pixel routes to KB-authored frames',()=>{
+test('normal plan refresh preserves an explicitly frozen original-pixel replacement route',()=>{
  const shot:any={shotId:'p',function:'demonstration',materialType:'product',productRef:'own-product',productPolicy:'locked'};
  const fresh=plan(shot);assert.equal(fresh.materialRouting?.generation?.firstFrameOrigin,'enterprise_authored_storyboard');
  const frozen=structuredClone(fresh.materialRouting!);frozen.generation!.method='reference_first_frame_product_replacement_i2v';delete frozen.generation!.firstFrameOrigin;
  const refreshed=plan({...shot,productSceneReplication:fresh.productSceneReplication,materialRouting:frozen});
- assert.equal(refreshed.materialRouting?.generation?.method,'enterprise_authored_product_first_frame_i2v');
- assert.equal(refreshed.materialRouting?.generation?.firstFrameOrigin,'enterprise_authored_storyboard');
+ assert.equal(refreshed.materialRouting?.generation?.method,'reference_first_frame_product_replacement_i2v');
+ assert.equal(refreshed.materialRouting?.generation?.firstFrameOrigin,undefined);
 });
 
 test('new generation freezes Wan while refresh cannot switch existing unspecified provider',()=>{const request={shotId:'p',function:'demonstration',materialType:'product',productRef:'own-product'};const fresh=plan(request);assert.equal(fresh.materialRouting?.generation?.videoProvider,'wan');assert.equal(fresh.materialRouting?.generation?.videoModel,'wan2.6-i2v-flash');assert.equal(fresh.materialRouting?.generation?.qaModel,'qwen3-vl-plus');const old=structuredClone(fresh.materialRouting!);delete old.generation!.videoProvider;delete old.generation!.videoModel;delete old.generation!.qaModel;const refresh=plan({...request,materialRouting:old,productSceneReplication:fresh.productSceneReplication});assert.equal(refresh.materialRouting?.generation?.videoProvider,undefined);assert.equal(refresh.materialRouting?.generation?.videoModel,undefined);assert.equal(refresh.materialRouting?.generation?.qaModel,undefined);});

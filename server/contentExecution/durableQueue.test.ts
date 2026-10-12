@@ -4,6 +4,7 @@ import { currentDataAuthority, runWithDataAuthority } from '../storage/dataAutho
 import type { DataStore, ListQuery, ListResult } from '../storage/datastore.js';
 import {
   CONTENT_EXECUTION_JOB_COLLECTION,
+  parseContentExecutionCheckpoints,
   readCurrentContentExecutionCheckpoint,
   recordCurrentContentExecutionCheckpoint,
   recordCurrentContentProviderReceipt,
@@ -96,6 +97,24 @@ const env = {
   CONTENT_SYSTEM_MAX_ATTEMPTS: '3',
   CONTENT_RECONCILIATION_MAX_ATTEMPTS: '12',
 } as NodeJS.ProcessEnv;
+
+test('frozen 37-shot executor checkpoints fit the durable map envelope', () => {
+  const accepted = parseContentExecutionCheckpoints({
+    'social.executor': {
+      version: '1', inputHash: 'a'.repeat(64),
+      payload: { approvedContext: { frozenPlan: 'x'.repeat(3_000_000) } },
+      updatedAt: '2026-10-11T00:00:00.000Z',
+    },
+  });
+  assert.equal((accepted['social.executor'].payload as any).approvedContext.frozenPlan.length, 3_000_000);
+  assert.deepEqual(parseContentExecutionCheckpoints({
+    'social.executor': {
+      version: '1', inputHash: 'a'.repeat(64),
+      payload: { approvedContext: { frozenPlan: 'x'.repeat(4_300_000) } },
+      updatedAt: '2026-10-11T00:00:00.000Z',
+    },
+  }), {}, 'oversized individual checkpoints remain rejected');
+});
 
 test('retry policy separates balance, rejection, network, system and provider reconciliation', () => {
   assert.equal(classifyContentExecutionFailure(new Error('余额不足'), { attempt: 1, env }).failureClass, 'insufficient_balance');

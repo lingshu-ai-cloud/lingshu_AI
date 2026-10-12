@@ -115,7 +115,12 @@ async function productionArtifact(repository: Starter198Repository, job: Content
 }
 
 function artifactEvidence(row: StarterRecord) {
-  return { artifactId: socialText(row.artifact_id), contentHash: socialRequestHash(socialJson(row.content)), version: socialText(row.version) };
+  const content = socialJson(row.content);
+  const source = socialObject(socialObject(content)?.productionWorkspaceSource);
+  const outputSha256 = socialText(source?.outputSha256);
+  if (outputSha256 && !/^[a-f0-9]{64}$/.test(outputSha256)) throw new Error('graph_production_artifact_sha_invalid');
+  return { artifactId: socialText(row.artifact_id), contentHash: socialRequestHash(content),
+    version: socialText(row.version), outputSha256: outputSha256 || null };
 }
 
 /** Read the canonical business decision and its completed operation. A graph
@@ -182,7 +187,8 @@ export async function executeSocialProductionGraph(input: { repository: Starter1
       const evidence = artifactEvidence(artifact);
       await recordCurrentContentExecutionCheckpoint({ stage: 'social.graph_review', version: '1', inputHash: current.inputHash,
         payload: { ...evidence, runId: job.runId } });
-      return { artifactRefs: [evidence.artifactId], inputHash: current.inputHash, metadata: { contentHash: evidence.contentHash } };
+      return { artifactRefs: [evidence.artifactId], inputHash: current.inputHash,
+        metadata: { contentHash: evidence.contentHash, ...(evidence.outputSha256 ? { outputSha256: evidence.outputSha256 } : {}) } };
     }
     const actual = await refreshedJob();
     const checkpoint = actual.checkpoints[graphPhase === 'assets' ? 'social.asset_supply' : 'social.graph_render'];
@@ -195,6 +201,7 @@ export async function executeSocialProductionGraph(input: { repository: Starter1
         const accepted = await approval();
         if (!accepted) throw new Error('user_input_required:graph_delivery_review_required');
         const artifact = await productionArtifact(repository, job);
+        const evidence = artifactEvidence(artifact);
         const task = await readSocialProductionGraphDetail({ repository, tenantId: job.tenantId, taskId: job.taskId }, approvedContext);
         if (!task) throw new Error('graph_task_missing');
         if (socialProductionGraphInput(task, approvedContext).inputHash !== current.inputHash)
@@ -208,7 +215,8 @@ export async function executeSocialProductionGraph(input: { repository: Starter1
           extra: { artifactId: socialText(artifact.artifact_id), approvalReceipt: accepted.receiptRef, externalPublishPerformed: false } });
         return { artifactRefs: [socialText(artifact.artifact_id), packaged.deliveryPackage.packageId], inputHash: current.inputHash,
           metadata: { artifactId: socialText(artifact.artifact_id), packageId: packaged.deliveryPackage.packageId,
-            approvalReceipt: accepted.receiptRef, externalPublishPerformed: false } };
+            approvalReceipt: accepted.receiptRef, externalPublishPerformed: false,
+            ...(evidence.outputSha256 ? { outputSha256: evidence.outputSha256 } : {}) } };
       } },
     review: { loadApproval: approval, verifyResume: async proposed => {
       const accepted = await approval();

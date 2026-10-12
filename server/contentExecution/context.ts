@@ -110,7 +110,10 @@ function checkpointKey(value: unknown): string {
 function safeCheckpointPayload<T>(value: T): T {
   const serialized = JSON.stringify(value);
   if (serialized === undefined) throw new Error('content_execution_checkpoint_payload_invalid');
-  if (Buffer.byteLength(serialized, 'utf8') > 2_097_152) {
+  // A frozen 37-shot social executor binding contains the reviewed director
+  // plan, per-shot candidates and supply contract. Keep one checkpoint within
+  // the same durable 4 MiB envelope enforced for the complete checkpoint map.
+  if (Buffer.byteLength(serialized, 'utf8') > 4_194_304) {
     throw new Error('content_execution_checkpoint_payload_too_large');
   }
   return JSON.parse(serialized) as T;
@@ -231,6 +234,13 @@ export function currentContentProviderReceipt(input: {
   const current = executionContext.getStore();
   if (!current) return null;
   return current.receipts.find(item => item.provider === input.provider && item.requestId === input.requestId) ?? null;
+}
+
+/** Compact read-only projection used by durable node evidence. Provider
+ * receipt writes remain owned by recordCurrentContentProviderReceipt. */
+export function currentContentProviderReceipts(): ContentProviderReceipt[] {
+  const current = executionContext.getStore();
+  return current ? structuredClone(current.receipts) : [];
 }
 
 /**
