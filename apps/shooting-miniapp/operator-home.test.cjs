@@ -24,7 +24,7 @@ test('operator home projects execution counts and only intervention schedule ite
     },
     {
       matters:[{id:'task:blocked',source:{entityId:'blocked'},type:'approval',interventionType:'decision',title:'确认素材'}],
-      shooting:[{id:'s1',title:'待拍'}, {id:'s2',title:'完成',uploadedMaterialIds:['m1']}]
+      shooting:[{id:'s1',title:'待拍',shotBrief:'拍摄产品特写',ratio:'9:16'}, {id:'s2',title:'完成',uploadedMaterialIds:['m1']}]
     },
     '2026-10-12'
   )
@@ -32,6 +32,9 @@ test('operator home projects execution counts and only intervention schedule ite
   assert.equal(result.counts.pending, 1)
   assert.equal(result.counts.shooting, 1)
   assert.equal(result.counts.confirmation, 1)
+  assert.equal(result.counts.pendingShots, 1)
+  assert.equal(result.todayShots.length, 1)
+  assert.equal(result.todayShots[0].requirement, '拍摄产品特写')
   assert.equal(result.blockers.length, 1)
   assert.equal(result.blockers[0].title, '素材卡点')
 })

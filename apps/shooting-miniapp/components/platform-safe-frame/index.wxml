@@ -1,0 +1,9 @@
+<cover-view class="safe-layer safe-layer-{{platform}}" aria-label="{{platform === 'facebook' ? 'Facebook Reels' : 'TikTok'}} 内容安全区">
+  <cover-view class="safe-edge safe-edge-top"></cover-view>
+  <cover-view class="safe-edge safe-edge-right"></cover-view>
+  <cover-view class="safe-edge safe-edge-bottom"></cover-view>
+  <cover-view class="safe-edge safe-edge-left"></cover-view>
+  <cover-view class="safe-outline">
+    <cover-view class="safe-label">{{platform === 'facebook' ? 'FB' : 'TK'}} SAFE</cover-view>
+  </cover-view>
+</cover-view>

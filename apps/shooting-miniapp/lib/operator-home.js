@@ -34,16 +34,41 @@ function project(profile = {}, overview = {}, queue = {}, selectedDay = '') {
     }))
   const pendingShots = shooting.filter(item => !(item.uploadedMaterialIds || []).length)
   const pendingConfirmations = matters.filter(item => item.type === 'approval' || /confirm|approval|decision|确认|审核/.test(String(item.interventionType || item.type || item.reason || '')))
+  const taskItems = Array.isArray(overview.taskDrilldown?.items) ? overview.taskDrilldown.items : []
+  const contentItems = Array.isArray(overview.contentSchedule?.items) ? overview.contentSchedule.items : []
+  const plannedFilms = overview.contentSchedule?.availability === 'unavailable' ? '—' : contentItems.length
+  const acceptanceTasks = taskItems.filter(item => /waiting_review|handed_off|待验收|验收|review/i.test([item.status, item.title, item.stage].filter(Boolean).join(' ')))
+  const acceptanceApprovals = (Array.isArray(queue.approvals) ? queue.approvals : []).filter(item => /成片|验收|review|film|video/i.test([item.title, item.action_summary, item.reason].filter(Boolean).join(' ')))
+  const deliveryItems = Array.isArray(overview.deliveries) ? overview.deliveries : null
+  const exportedPendingAcceptance = deliveryItems && deliveryItems.filter(item => item && item.kind === '内容成片'
+    && Array.isArray(item.artifacts) && item.artifacts.some(artifact => artifact && artifact.kind === 'video' && artifact.url)
+    && item.contentApproval?.approved !== true)
+  const pendingAcceptance = exportedPendingAcceptance
+    ? exportedPendingAcceptance.length
+    : new Set([...acceptanceTasks.map(item => String(item.id)), ...acceptanceApprovals.map(item => String(item.task_id || item.id))]).size
+  const todayShots = pendingShots.filter(item => {
+    const date = String(item.dueAt || item.plannedAt || item.scheduledAt || item.createdAt || '').slice(0, 10)
+    return !selectedDay || !date || date === selectedDay
+  }).map(item => ({
+    ...item,
+    date: String(item.dueAt || item.plannedAt || item.scheduledAt || item.createdAt || '').slice(0, 10),
+    title: item.title || '待拍镜头',
+    requirement: item.shotBrief || item.requirements || item.description || '按分镜要求完成拍摄',
+    durationText: item.durationText || (item.duration ? `${item.duration} 秒` : '时长不限'),
+    ratioText: item.ratio || '9:16', soundText: item.soundText || item.soundMode || '按任务要求'
+  }))
   return {
     organization: organization(profile, overview),
     counts: {
       pending: matters.length,
       shooting: pendingShots.length,
-      confirmation: pendingConfirmations.length
+      confirmation: pendingConfirmations.length,
+      plannedFilms, pendingAcceptance, pendingShots: pendingShots.length
     },
     blockers,
     matters,
     pendingShots,
+    todayShots,
     scheduleAvailable: overview.agentSchedule?.availability !== 'unavailable'
   }
 }

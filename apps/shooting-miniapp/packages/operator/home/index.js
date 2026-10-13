@@ -6,7 +6,7 @@ Page({
   data: {
     loading: true, error: '', organization: '灵枢工作台', edition: '运营版', unread: 0,
     week: model.week(), selectedDay: model.day(new Date().toISOString()), days: [],
-    counts: { pending: '—', shooting: '—', confirmation: '—' }, blockers: [], scheduleAvailable: true, loaded: false
+    counts: { plannedFilms: '—', pendingAcceptance: '—', pendingShots: '—' }, blockers: [], todayShots: [], pendingShots: [], scheduleAvailable: true, loaded: false
   },
   onLoad() { this.updateDays(); this.restore() },
   onShow() { if (this.loaded && api.token()) this.refresh() },
@@ -21,10 +21,11 @@ Page({
     try {
       const results = await Promise.allSettled([
         api.request('mobile-workbench/overview?weekStart=' + encodeURIComponent(this.data.week.start)),
-        api.request('mobile-workbench/queue')
+        api.request('mobile-workbench/queue'),
+        api.request('digital-employees/overview')
       ])
       if (results[0].status !== 'fulfilled') throw results[0].reason
-      const overview = results[0].value
+      const overview = { ...results[0].value, deliveries: results[2].status === 'fulfilled' ? results[2].value.deliveries : undefined }
       const queue = results[1].status === 'fulfilled' ? results[1].value : {}
       const view = operatorHome.project(this.profile, overview, queue, this.data.selectedDay)
       this.overview = overview; this.queue = queue; this.loaded = true
@@ -34,8 +35,8 @@ Page({
     finally { this.refreshing = false }
   },
   updateDays() {
-    const blockers = this.data.blockers || []
-    this.setData({ days: this.data.week.days.map(day => ({ ...day, selected: day.date === this.data.selectedDay, count: blockers.filter(item => item.date === day.date).length })) })
+    const shots = this.data.pendingShots || []
+    this.setData({ days: this.data.week.days.map(day => ({ ...day, selected: day.date === this.data.selectedDay, count: shots.filter(item => String(item.dueAt || item.plannedAt || item.scheduledAt || item.createdAt || '').startsWith(day.date)).length })) })
   },
   changeWeek(e) {
     this.weekOffset = (this.weekOffset || 0) + Number(e.currentTarget.dataset.offset)
@@ -45,7 +46,7 @@ Page({
   selectDay(e) {
     const selectedDay = e.currentTarget.dataset.date
     const view = operatorHome.project(this.profile, this.overview || {}, this.queue || {}, selectedDay)
-    this.setData({ selectedDay, blockers: view.blockers }); this.updateDays()
+    this.setData({ selectedDay, blockers: view.blockers, todayShots: view.todayShots }); this.updateDays()
   },
   openMessages() { wx.navigateTo({ url: '/packages/operator/messages/index' }) },
   openEdition() { wx.navigateTo({ url: '/packages/management/home/index' }) },
@@ -56,6 +57,19 @@ Page({
   },
   openShooting() { wx.navigateTo({ url: '/packages/operator/shooting/index' }) },
   openInquiries() { wx.navigateTo({ url: '/packages/operator/inquiries/index' }) },
+  shotTouchStart(e) { this.shotTouchX = e.touches && e.touches[0] ? e.touches[0].clientX : 0 },
+  shotTouchEnd(e) {
+    const x = e.changedTouches && e.changedTouches[0] ? e.changedTouches[0].clientX : this.shotTouchX
+    if (x - this.shotTouchX > 52) { this.ignoreNextShotTap = true; this.navigateShot(e) }
+  },
+  openShot(e) {
+    if (this.ignoreNextShotTap) { this.ignoreNextShotTap = false; return }
+    this.navigateShot(e)
+  },
+  navigateShot(e) {
+    const id = e.currentTarget.dataset.id
+    if (id) wx.navigateTo({ url: '/packages/operator/shooting/index?taskId=' + encodeURIComponent(id) + '&autoShoot=1' })
+  },
   openBlocker(e) {
     const item = this.data.blockers.find(entry => String(entry.id) === String(e.currentTarget.dataset.id))
     if (!item) return

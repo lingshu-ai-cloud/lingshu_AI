@@ -10,6 +10,11 @@ function base() {
 
 function token() { return wx.getStorageSync(TOKEN_KEY) || '' }
 function clearToken() { wx.removeStorageSync(TOKEN_KEY) }
+function assetUrl(value) {
+  const url = String(value || '')
+  if (/^https:\/\//.test(url)) return url
+  return url.startsWith('/') ? base() + url : url
+}
 
 function request(path, method = 'GET', data, authorized = true) {
   const requestToken = authorized ? token() : ''
@@ -84,7 +89,7 @@ function uploadVideo(file, onProgress) {
 }
 
 module.exports = {
-  token, clearToken, login, uploadVideo,
+  token, clearToken, login, uploadVideo, assetUrl,
   me: () => request('auth/me'),
   products: async () => {
     const profile = await request('enterprise/profile')

@@ -1,0 +1,6 @@
+{
+  "navigationStyle": "custom",
+  "usingComponents": {
+    "platform-safe-frame": "/components/platform-safe-frame/index"
+  }
+}

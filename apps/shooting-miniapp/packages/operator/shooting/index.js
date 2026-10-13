@@ -77,7 +77,11 @@ Page({
     } catch (e) { this.setData({ message: e.message }) }
     finally { this.setData({ loading: false }) }
   },
-  shoot() { this.choose(['camera']) },
+  shoot() {
+    const task = this.data.selected
+    if (!task || !this.canLeaveTask()) return
+    wx.navigateTo({ url: '/packages/operator/camera/index?taskId=' + encodeURIComponent(task.id) })
+  },
   chooseExisting() { this.choose(['album']) },
   choose(sourceType) {
     if (!this.canLeaveTask()) return

@@ -1,0 +1,30 @@
+<view class="camera-page">
+  <camera class="camera" mode="normal" device-position="{{devicePosition}}" flash="{{flash}}" binderror="handleCameraError"></camera>
+  <platform-safe-frame platform="{{platform}}"></platform-safe-frame>
+
+  <cover-view class="top-bar">
+    <cover-view class="round-action" bindtap="back">‹</cover-view>
+    <cover-view class="platform-switch">
+      <cover-view class="platform-option {{platform === 'facebook' ? 'platform-active' : ''}}" data-platform="facebook" bindtap="choosePlatform">FB</cover-view>
+      <cover-view class="platform-option {{platform === 'tiktok' ? 'platform-active' : ''}}" data-platform="tiktok" bindtap="choosePlatform">TK</cover-view>
+    </cover-view>
+    <cover-view class="round-action" bindtap="toggleFlash">{{flash === 'off' ? '闪' : '关'}}</cover-view>
+  </cover-view>
+
+  <cover-view wx:if="{{task}}" class="requirement-card">
+    <cover-view class="requirement-label">拍摄要求</cover-view>
+    <cover-view class="requirement-text">{{task.shotBrief || task.title}}</cover-view>
+    <cover-view class="requirement-meta">{{task.durationText}} · {{task.ratio || '竖屏 9:16'}} · {{task.soundText}}</cover-view>
+  </cover-view>
+
+  <cover-view class="bottom-bar">
+    <cover-view class="side-action" bindtap="switchCamera">翻转</cover-view>
+    <cover-view class="record-wrap {{recording ? 'record-wrap-active' : ''}}" bindtap="toggleRecord">
+      <cover-view class="record-button {{recording ? 'record-button-active' : ''}}"></cover-view>
+    </cover-view>
+    <cover-view class="time">{{recording ? elapsed + 's' : '拍摄'}}</cover-view>
+  </cover-view>
+
+  <cover-view wx:if="{{busy}}" class="saving">正在保存并关联任务…</cover-view>
+  <cover-view wx:if="{{message}}" class="camera-message">{{message}}</cover-view>
+</view>

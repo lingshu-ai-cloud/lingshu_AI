@@ -79,12 +79,12 @@ test('uploaded material completes the selected task and keeps recovery state on 
   assert.equal(page.data.completedCount, 1)
 })
 
-test('task deep link can open camera immediately', async () => {
-  let sourceTypes
+test('task deep link can open guided camera immediately', async () => {
+  let cameraUrl
   const api = { token: () => '', tasks: async () => [{ id: 'shoot', uploadedMaterialIds: [] }] }
-  const page = pageWith(api, { chooseMedia(options) { sourceTypes = options.sourceType } })
+  const page = pageWith(api, { navigateTo(options) { cameraUrl = options.url } })
   page.onLoad({ taskId: 'shoot', autoShoot: '1' })
   await page.refresh()
   assert.equal(page.data.selected.id, 'shoot')
-  assert.deepEqual(Array.from(sourceTypes), ['camera'])
+  assert.equal(cameraUrl, '/packages/operator/camera/index?taskId=shoot')
 })
