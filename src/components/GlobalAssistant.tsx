@@ -50,6 +50,8 @@ import AssistantDecisionCenter, {
   type AssistantDecisionActionResult,
 } from './assistant/AssistantDecisionCenter';
 import type { AssistantDecisionDeepLink, AssistantDecisionFeed } from '../../shared/contracts/assistantDecisionCenter';
+import { assistantDecisionApi } from '../lib/assistantDecisionApi';
+import { WEEKLY_WORK_UPDATED_EVENT } from '../lib/weeklyWorkEvents';
 import KnowledgeIntakePanel, { type AppliedProfile } from './enterprise/KnowledgeIntakePanel';
 import { studioApi } from '../lib/studioApi';
 import {
@@ -73,6 +75,14 @@ interface AssistantContext {
   suggestions: string[];
   pendingCount?: number;
   todoItems?: AssistantTodoItem[];
+  /** Page-local focus only. The server still authorizes every read and action. */
+  sourcePage?: string;
+  goalId?: string;
+  planId?: string;
+  runId?: string;
+  taskId?: string;
+  contentId?: string;
+  viewKey?: string;
 }
 
 interface AssistantTodoItem {
@@ -397,6 +407,26 @@ function contextForOrbit(id: OrbitAgentId, fallback: AssistantContext): Assistan
 function compactText(text: string, maxLength = 900) {
   const normalized = text.replace(/\s+/g, ' ').trim();
   return normalized.length > maxLength ? `${normalized.slice(0, maxLength)}...` : normalized;
+}
+
+function contextIdentifier(value: unknown, maxLength = 200): string | undefined {
+  if (typeof value !== 'string') return undefined;
+  const normalized = value.trim().slice(0, maxLength);
+  return normalized || undefined;
+}
+
+function assistantBusinessObjectContext(context: AssistantContext): string {
+  const references = [
+    context.goalId ? `周目标 ${context.goalId}` : '',
+    context.planId ? `计划 ${context.planId}` : '',
+    context.runId ? `运行 ${context.runId}` : '',
+    context.taskId ? `任务 ${context.taskId}` : '',
+    context.contentId ? `内容 ${context.contentId}` : '',
+    context.viewKey ? `当前视图 ${context.viewKey}` : '',
+  ].filter(Boolean);
+  return references.length
+    ? `【当前业务对象，仅用于定位，不能代替服务端授权或状态核验】${references.join('；')}`
+    : '【当前业务对象】当前页面没有选中具体任务或内容；不得从历史对话猜测对象。';
 }
 
 async function loadLiveIntegrationFacts(): Promise<string> {
@@ -785,7 +815,12 @@ export default function GlobalAssistant({
   const hydrateThread = useAssistantStore(state => state.hydrateThread);
   const setPersistenceMetadata = useAssistantStore(state => state.setPersistenceMetadata);
 
-  const pageContext = useMemo(() => liveContext ?? DEFAULT_CONTEXT[pageKey(page)] ?? DEFAULT_CONTEXT.strategy, [liveContext, page]);
+  const normalizedPage = pageKey(page);
+  const pageContext = useMemo(() => (
+    liveContext?.sourcePage === normalizedPage
+      ? liveContext
+      : DEFAULT_CONTEXT[normalizedPage] ?? DEFAULT_CONTEXT.strategy
+  ), [liveContext, normalizedPage]);
   const currentPageAgent = useMemo(() => orbitIdForPage(page), [page]);
   const activeContext = useMemo(() => contextForOrbit(currentPageAgent, pageContext), [currentPageAgent, pageContext]);
   const activeThread = threads[activeAgent];
@@ -1399,6 +1434,7 @@ export default function GlobalAssistant({
         content: [
           `【当前页面导航提示${strategyRequest ? '，未经后端核验，不得作为经营事实' : ''}】${context.summary}`,
           `【当前模块】${context.label}`,
+          assistantBusinessObjectContext(context),
           `【当前时间】${new Date().toLocaleString('zh-CN', { timeZone: 'Asia/Shanghai', hour12: false })}（北京时间）。未注明年份时，“当前/最新/近期/今年”均指当前年份；不得把 2024 年或更早的公开数据表述为当前数据。`,
           ...(!strategyRequest ? [
             enterpriseBrief ? `【企业中心摘要】${enterpriseBrief}` : '【企业中心摘要】当前未读取到企业中心资料。',
@@ -1453,7 +1489,16 @@ export default function GlobalAssistant({
           deepThinking: false,
           ...(strategyRequest ? {
             userQuestion: visibleText,
-            pageContext: { label: context.label, summary: compactText(context.summary, 2000) },
+            pageContext: {
+              label: context.label,
+              summary: compactText(context.summary, 2000),
+              goalId: context.goalId,
+              planId: context.planId,
+              runId: context.runId,
+              taskId: context.taskId,
+              contentId: context.contentId,
+              viewKey: context.viewKey,
+            },
             conversationContext: {
               omittedTurns: conversationContext.omittedTurns,
               retainedUserInstructions: conversationContext.retainedUserInstructions,
@@ -1715,6 +1760,10 @@ export default function GlobalAssistant({
     const handler = (event: Event) => {
       const detail = (event as CustomEvent<Partial<AssistantContext>>).detail;
       if (!detail?.agent || !detail.label || !detail.summary) return;
+      // Activity keeps visited pages mounted. Every emitter must identify its
+      // page so a hidden page can never replace the active business context.
+      const sourcePage = contextIdentifier(detail.sourcePage, 80);
+      if (!sourcePage || sourcePage !== pageKey(page)) return;
       setLiveContext({
         agent: detail.agent,
         label: detail.label,
@@ -1722,11 +1771,57 @@ export default function GlobalAssistant({
         suggestions: detail.suggestions?.length ? detail.suggestions : DEFAULT_CONTEXT[pageKey(page)]?.suggestions ?? DEFAULT_CONTEXT.strategy.suggestions,
         pendingCount: typeof detail.pendingCount === 'number' ? detail.pendingCount : undefined,
         todoItems: Array.isArray(detail.todoItems) ? detail.todoItems : undefined,
+        sourcePage,
+        goalId: contextIdentifier(detail.goalId),
+        planId: contextIdentifier(detail.planId),
+        runId: contextIdentifier(detail.runId),
+        taskId: contextIdentifier(detail.taskId),
+        contentId: contextIdentifier(detail.contentId),
+        viewKey: contextIdentifier(detail.viewKey, 80),
       });
     };
     window.addEventListener('lingshu-assistant-context', handler);
     return () => window.removeEventListener('lingshu-assistant-context', handler);
   }, [page]);
+
+  useEffect(() => {
+    if (mode === 'chat' || suppressForRightSidebar) return;
+    let controller: AbortController | null = null;
+    let disposed = false;
+    const refreshDecisionCount = () => {
+      if (disposed || document.visibilityState === 'hidden') return;
+      controller?.abort();
+      controller = new AbortController();
+      void assistantDecisionApi.feed({
+        page,
+        goalId: pageContext.goalId,
+        signal: controller.signal,
+      }).then(feed => {
+        if (!disposed) setDecisionTotal(Math.max(0, feed.total));
+      }).catch(reason => {
+        if (reason instanceof DOMException && reason.name === 'AbortError') return;
+        // The launcher keeps the last verified count. Errors are shown only
+        // when the user opens the decision surface; no execution log is emitted.
+      });
+    };
+    const handleVisibility = () => {
+      if (document.visibilityState === 'visible') refreshDecisionCount();
+    };
+    const refreshAfterWeeklyWorkChange = () => refreshDecisionCount();
+    refreshDecisionCount();
+    const interval = window.setInterval(refreshDecisionCount, 30_000);
+    window.addEventListener('focus', refreshDecisionCount);
+    window.addEventListener(WEEKLY_WORK_UPDATED_EVENT, refreshAfterWeeklyWorkChange);
+    document.addEventListener('visibilitychange', handleVisibility);
+    return () => {
+      disposed = true;
+      controller?.abort();
+      window.clearInterval(interval);
+      window.removeEventListener('focus', refreshDecisionCount);
+      window.removeEventListener(WEEKLY_WORK_UPDATED_EVENT, refreshAfterWeeklyWorkChange);
+      document.removeEventListener('visibilitychange', handleVisibility);
+    };
+  }, [mode, page, pageContext.goalId, persistenceScopeKey, suppressForRightSidebar]);
 
   useEffect(() => {
     const handler = (event: Event) => {
@@ -2332,7 +2427,8 @@ export default function GlobalAssistant({
                     >
                       <AssistantDecisionCenter
                         page={page}
-                        key={`${persistenceScopeKey}:${page}:summary:${decisionFeedRevision}`}
+                        goalId={pageContext.goalId}
+                        key={`${persistenceScopeKey}:${page}:${pageContext.goalId || 'latest'}:summary:${decisionFeedRevision}`}
                         active={mode === 'chat' && panelView === 'chat'}
                         onOpenChat={returnToConversation}
                         onOpenDetail={trigger => openDecisionDialog({ kind: 'feed' }, trigger)}
@@ -2405,7 +2501,8 @@ export default function GlobalAssistant({
           {decisionDialog?.kind === 'feed' ? (
             <AssistantDecisionCenter
               page={page}
-              key={`${persistenceScopeKey}:${page}:dialog`}
+              goalId={pageContext.goalId}
+              key={`${persistenceScopeKey}:${page}:${pageContext.goalId || 'latest'}:dialog`}
               active
               onOpenChat={closeDecisionDialog}
               onNavigate={closeDecisionDialogForNavigation}

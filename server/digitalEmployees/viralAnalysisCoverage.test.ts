@@ -7,9 +7,12 @@ const plan = (id: string, referenceId = '') => ({
   contentId: id, contentFamilyId: id, masterContentId: id, productionRole: 'master',
   route: 'clone', referenceId,
 }) as VideoCreationPlan;
-const evidence = (id: string, visual = `画面 ${id}`) => ({ id, aiAnalysis: {
-  analysisMode: 'exact', analysisQuality: 'video', gemini: {
-    scriptDetails15s: [{ time: '0-3s', visual }],
+const evidence = (id: string, visual = `画面 ${id}`) => ({ id, duration: 3, updatedAt: '2026-10-12T00:00:00.000Z', aiAnalysis: {
+  analysisMode: 'exact', analysisQuality: 'video', geminiStatus: 'analyzed', gemini: {
+    scriptDetails15s: [{
+      time: '0-3s', visual, materialType: 'product', narrativeRole: 'hook',
+      classificationEvidence: '画面明确展示产品包装', analysisGranularity: 'shot',
+    }],
   },
 } });
 
@@ -43,6 +46,24 @@ test('truthy but unparseable gemini envelope is not accepted', () => {
   assert.equal(result.ready, false);
   assert.deepEqual(result.invalidReferenceIds, ['bad']);
   assert.match(result.blockedReason, /指定参考尚无可解析精确分析/);
+});
+
+test('analysis completion uses the same strict admission rule as production', () => {
+  const base = evidence('reference-1');
+  const unknownType = structuredClone(base);
+  unknownType.aiAnalysis.gemini.scriptDetails15s[0]!.materialType = 'unknown';
+  assert.equal(hasParseableExactVideoAnalysis(unknownType), false);
+
+  const reviewWindow = structuredClone(base);
+  reviewWindow.aiAnalysis.gemini.scriptDetails15s[0]!.analysisGranularity = 'observation_window';
+  assert.equal(hasParseableExactVideoAnalysis(reviewWindow), false);
+
+  const reviewStatus = structuredClone(base);
+  reviewStatus.aiAnalysis.analysisQuality = 'video_review_required';
+  assert.equal(hasParseableExactVideoAnalysis(reviewStatus), false);
+
+  const incompleteTimeline = { ...structuredClone(base), duration: 8 };
+  assert.equal(hasParseableExactVideoAnalysis(incompleteTimeline), false);
 });
 
 test('every clone master requires independent parseable evidence', () => {

@@ -1,6 +1,10 @@
 import type { DigitalEmployeeOverview } from './digitalEmployees';
 import { buildWeeklyContentProgress, type WeeklyContentProgressProject } from './weeklyContentProgress';
 
+const object = (value: unknown): Record<string, unknown> => value && typeof value === 'object' && !Array.isArray(value)
+  ? value as Record<string, unknown> : {};
+const text = (value: unknown): string => typeof value === 'string' ? value.trim() : '';
+
 /** One read-only snapshot. Never reconcile, retry, start work, or infer progress. */
 export async function readWeeklyContentProgressSnapshot(input: {
   data: DigitalEmployeeOverview;
@@ -37,8 +41,26 @@ export async function readWeeklyContentProgressSnapshot(input: {
       throw new Error('制作记录的目标、计划或运行已变化，请同步当前计划。');
     }
     // A newly created project can be discovered even if the previous snapshot had none.
-    const ids = new Set(buildWeeklyContentProgress(data, input.contentId).projectIds);
-    return { data, projects: projects.filter(project => ids.has(project.id)), receivedAt: new Date().toISOString() };
+    const progress = buildWeeklyContentProgress(data, input.contentId);
+    const ids = new Set(progress.projectIds);
+    const scopedProjects = projects.filter(project => ids.has(project.id));
+    const queueItem = data.contentQueue?.items.find(item => item.id === progress.queueItemId);
+    const directTaskId = queueItem?.socialContentTaskId === input.contentId ? queueItem.socialContentTaskId : '';
+    const projectsWithExecutions = directTaskId ? await Promise.all(scopedProjects.map(async project => {
+      if (text(object(project.spec).socialContentTaskId) !== directTaskId) return project;
+      try {
+        const executions = await read(`/api/overseas/studio/production/executions?${new URLSearchParams({ projectId: project.id })}`);
+        if (!Array.isArray(executions)) throw new Error('数字人执行回执格式无效');
+        return { ...project, executions, executionsStatus: 'available' as const };
+      } catch (error) {
+        // The project and its other receipts remain useful even when the optional
+        // provider ledger is temporarily unavailable. Abort/timeout must still
+        // cancel the whole snapshot so the UI never commits a partial poll.
+        if (controller.signal.aborted) throw controller.signal.reason instanceof Error ? controller.signal.reason : error;
+        return { ...project, executions: [], executionsStatus: 'unavailable' as const };
+      }
+    })) : scopedProjects;
+    return { data, projects: projectsWithExecutions, receivedAt: new Date().toISOString() };
   } finally {
     clearTimeout(timeout);
     input.signal?.removeEventListener('abort', abort);

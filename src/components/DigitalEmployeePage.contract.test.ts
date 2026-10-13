@@ -119,6 +119,17 @@ const controlWeeklyWorkSource = pageSource.slice(
   pageSource.indexOf('const weeklyControlLabel', pageSource.indexOf('const controlWeeklyWork')),
 );
 
+const assistantContextSource = pageSource.slice(
+  pageSource.indexOf("const selectedContentItem = selectedContentItemId"),
+  pageSource.indexOf('const requestOverviewRange', pageSource.indexOf("const selectedContentItem = selectedContentItemId")),
+);
+assert.match(assistantContextSource, /sourcePage: 'digitalEmployees'/, '数字员工必须显式标记灵小枢上下文来源，避免隐藏页面覆盖当前对象');
+for (const reference of ['goalId', 'planId', 'runId', 'taskId', 'contentId', 'viewKey']) {
+  assert.match(assistantContextSource, new RegExp(`${reference}:`), `数字员工上下文必须同步 ${reference}`);
+}
+assert.match(assistantContextSource, /selectedContentItem[\s\S]{0,240}内容制作进度/, '打开日历内容时必须把灵小枢切到该内容的制作进度上下文');
+assert.match(assistantContextSource, /viewGoalId \? '历史' : '本周'/, '查看历史周时必须明确历史目标，不能继续显示当前周任务');
+
 const factRebuildDetails = {
   expectedGoalVersion: 4,
   sourcePlanId: 'source-plan-a',
@@ -212,7 +223,7 @@ assert.match(assistantSource, /const threadAgent = PRIMARY_ASSISTANT_THREAD/, '�
 assert.doesNotMatch(assistantSource, /const SKILL_AGENTS|策略助手|唤醒助手|统筹 Agent/, '灵小枢不应恢复旧助手、放射式 Agent 入口或重复的统筹 Agent');
 assert.match(assistantStoreSource, /\['business', 'director', 'content', 'customer'\]/, '灵小枢应只维护四个现有子 Agent 的独立会话');
 assert.match(assistantSource, /const currentPageAgent = useMemo\(\(\) => orbitIdForPage\(page\)/, '灵小枢必须根据当前工作区选择内部专业 Agent 上下文');
-assert.match(assistantSource, /<AssistantDecisionCenter[\s\S]{0,420}page=\{page\}[\s\S]{0,420}variant="summary"/, '灵小枢默认对话必须展示当前页面真实待办的概要气泡');
+assert.match(assistantSource, /<AssistantDecisionCenter[\s\S]{0,420}page=\{page\}[\s\S]{0,700}variant="summary"/, '灵小枢默认对话必须展示当前页面真实待办的概要气泡');
 assert.match(assistantSource, /openAgent\(currentPageAgent, 'chat'\)/, '点击灵小枢应直接进入单列对话，不恢复 Agent 选择器或强制打开详情');
 assert.match(pageSource, /weeklyPlanNavigation\?: \{ goalId: string; planId: string; requestId: number \}/, '周计划导航必须携带准确目标和重复点击序号');
 assert.match(pageSource, /next\.goal\?\.id !== target\.goalId \|\| next\.plan\?\.id !== target\.planId/, '打开编辑器前必须同时核对目标与计划编号');

@@ -32,6 +32,35 @@ test('read-only snapshot discovers new projects and refreshes the run alongside 
   }
 });
 
+test('direct content snapshot loads provider executions without turning a missing optional ledger into completion', async () => {
+  const direct = overview(['project']);
+  Object.assign(direct.contentQueue!.items[0]!, {
+    id: 'social:direct-task',
+    contentId: 'direct-task',
+    socialContentTaskId: 'direct-task',
+    origin: 'manual',
+  });
+  const urls: string[] = [];
+  const snapshot = await readWeeklyContentProgressSnapshot({ data: direct, contentId: 'direct-task', headers: {}, fetcher: async url => {
+    const value = String(url); urls.push(value);
+    if (value.includes('/overview?')) return response(direct);
+    if (value.includes('/production/executions?')) return response([{ id: 'execution', projectId: 'project', state: 'pending', externalTaskId: 'provider-task' }]);
+    return response([{ id: 'project', spec: { socialContentTaskId: 'direct-task', presentationMode: 'avatar' } }]);
+  } });
+  assert.equal(urls.length, 3);
+  assert.equal(snapshot.projects[0]?.executionsStatus, 'available');
+  assert.deepEqual(snapshot.projects[0]?.executions?.map(item => item.id), ['execution']);
+
+  const unavailable = await readWeeklyContentProgressSnapshot({ data: direct, contentId: 'direct-task', headers: {}, fetcher: async url => {
+    const value = String(url);
+    if (value.includes('/overview?')) return response(direct);
+    if (value.includes('/production/executions?')) return new Response('', { status: 503 });
+    return response([{ id: 'project', spec: { socialContentTaskId: 'direct-task', presentationMode: 'avatar' } }]);
+  } });
+  assert.equal(unavailable.projects[0]?.executionsStatus, 'unavailable');
+  assert.deepEqual(unavailable.projects[0]?.executions, []);
+});
+
 test('new run can appear after starting the same scoped plan', async () => {
   const before = overview(); before.run = null;
   const snapshot = await readWeeklyContentProgressSnapshot({ data: before, contentId: 'content', headers: {}, fetcher: fetchSnapshot(overview()) });

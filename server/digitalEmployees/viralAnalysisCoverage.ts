@@ -1,6 +1,14 @@
 import type { VideoCreationPlan } from '../../shared/contracts/videoCreationPlan.js';
+import { buildBenchmarkAnalysis } from '../../shared/benchmarkAnalysis.js';
+import { productionReferenceAdmission } from '../../shared/productionReferenceAdmission.js';
 
-type TrendVideoEvidence = { id: string; aiAnalysis?: unknown };
+type TrendVideoEvidence = {
+  id: string;
+  aiAnalysis?: unknown;
+  duration?: unknown;
+  updatedAt?: unknown;
+  updated_at?: unknown;
+};
 
 export type ViralAnalysisCoverage = {
   ready: boolean;
@@ -25,17 +33,15 @@ function object(value: unknown): Record<string, unknown> {
  */
 export function hasParseableExactVideoAnalysis(record: TrendVideoEvidence): boolean {
   const analysis = object(record.aiAnalysis);
-  const gemini = object(analysis.gemini);
-  const details = Array.isArray(gemini.scriptDetails15s) ? gemini.scriptDetails15s : [];
-  return analysis.analysisMode === 'exact'
-    && ['video', 'video_review_required'].includes(String(analysis.analysisQuality || ''))
-    && details.length > 0
-    && details.every(raw => {
-      const shot = object(raw);
-      const time = String(shot.time || shot.timestamp || '').trim();
-      const visual = String(shot.visual || '').trim();
-      return /\d+(?:\.\d+)?\s*(?:s|秒)?\s*[-–—~至]\s*\d+(?:\.\d+)?/i.test(time) && Boolean(visual);
-    });
+  const duration = Number(record.duration);
+  const evidenceRevision = String(record.updatedAt || record.updated_at || analysis.analysisRunId || `analysis:${record.id}`).trim();
+  const normalized = buildBenchmarkAnalysis({
+    analysis,
+    videoId: record.id,
+    duration: Number.isFinite(duration) && duration > 0 ? duration : undefined,
+    evidenceRevision,
+  });
+  return productionReferenceAdmission(normalized).ready;
 }
 
 function cloneMasters(plans: VideoCreationPlan[]): VideoCreationPlan[] {

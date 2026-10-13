@@ -13,7 +13,9 @@ import {
   admitContentExecutionJob,
   DurableContentExecutionWorker,
   controlContentExecutionJob,
+  pauseContentExecutionJobsForRun,
   readContentExecutionJob,
+  resumeContentExecutionJobsForRun,
   setContentExecutionLimit,
 } from './durableQueue.js';
 import { classifyContentExecutionFailure } from './retryPolicy.js';
@@ -166,6 +168,68 @@ test('explicit customer pause replaces a workflow review wait without losing its
   assert.deepEqual(manual.providerReceipts, review.providerReceipts);
   const lateReview = await controlContentExecutionJob({ dataStore: store, tenantId: job.tenantId, jobId: job.id, action: 'pause', pauseOrigin: 'workflow_review' });
   assert.equal((lateReview.checkpoints['runtime.pause'].payload as { origin: string }).origin, 'manual', 'a late graph wait cannot undo an explicit pause');
+});
+
+test('run lifecycle controls pause and resume only their own non-terminal production jobs', async () => {
+  const store = new MemoryStore();
+  const base = { dataStore: store, tenantId: 'tenant-run-control', userId: 'user-a', runId: 'run-a', taskType: 'social_content_weekly' };
+  const owned = await admitContentExecutionJob({ ...base, taskId: 'owned', initialCheckpoints: {
+    'production.stage': { version: '1', inputHash: 'stage-input', payload: { stage: 'voice' }, updatedAt: '2026-10-12T00:00:00.000Z' },
+  } });
+  const manuallyPaused = await admitContentExecutionJob({ ...base, taskId: 'manual' });
+  const reviewPaused = await admitContentExecutionJob({ ...base, taskId: 'review' });
+  const blocked = await admitContentExecutionJob({ ...base, taskId: 'blocked' });
+  const terminal = await admitContentExecutionJob({ ...base, taskId: 'terminal' });
+  const sibling = await admitContentExecutionJob({ ...base, taskId: 'sibling', runId: 'run-b' });
+  await store.update(CONTENT_EXECUTION_JOB_COLLECTION, owned.id, { provider_receipts: [{
+    provider: 'seedance', requestId: 'existing-request', state: 'accepted', providerTaskId: 'provider-task', metadata: {},
+    firstRecordedAt: '2026-10-12T00:00:00.000Z', updatedAt: '2026-10-12T00:00:00.000Z',
+  }] });
+  await controlContentExecutionJob({ dataStore: store, tenantId: base.tenantId, jobId: manuallyPaused.id, action: 'pause' });
+  await controlContentExecutionJob({ dataStore: store, tenantId: base.tenantId, jobId: reviewPaused.id, action: 'pause', pauseOrigin: 'workflow_review' });
+  await store.update(CONTENT_EXECUTION_JOB_COLLECTION, blocked.id, { status: 'blocked', last_error: 'avatar_required' });
+  await store.update(CONTENT_EXECUTION_JOB_COLLECTION, terminal.id, { status: 'succeeded', completed_at: '2026-10-12T00:01:00.000Z' });
+
+  const paused = await pauseContentExecutionJobsForRun({ dataStore: store, tenantId: base.tenantId, runId: base.runId, origin: 'workflow_run_pause' });
+  assert.deepEqual(paused.affectedJobIds, [owned.id]);
+  assert.deepEqual(paused.preservedJobIds.sort(), [manuallyPaused.id, reviewPaused.id, blocked.id].sort());
+  assert.deepEqual(paused.terminalJobIds, [terminal.id]);
+  const replay = await pauseContentExecutionJobsForRun({ dataStore: store, tenantId: base.tenantId, runId: base.runId, origin: 'workflow_run_pause' });
+  assert.deepEqual(replay.affectedJobIds, [owned.id], 'a repeated run pause is an idempotent repair');
+
+  const controlled = await readContentExecutionJob(store, base.tenantId, owned.taskId, base.runId);
+  assert.equal(controlled?.status, 'paused');
+  assert.equal((controlled?.checkpoints['runtime.pause'].payload as { origin: string }).origin, 'workflow_run_pause');
+  assert.deepEqual(controlled?.checkpoints['production.stage'].payload, { stage: 'voice' });
+  assert.equal(controlled?.providerReceipts[0]?.providerTaskId, 'provider-task');
+
+  const resumed = await resumeContentExecutionJobsForRun({ dataStore: store, tenantId: base.tenantId, runId: base.runId, origin: 'workflow_run_pause' });
+  assert.deepEqual(resumed.affectedJobIds, [owned.id]);
+  assert.equal((await readContentExecutionJob(store, base.tenantId, owned.taskId, base.runId))?.status, 'reconciling');
+  assert.equal((await readContentExecutionJob(store, base.tenantId, manuallyPaused.taskId, base.runId))?.status, 'paused');
+  assert.equal((await readContentExecutionJob(store, base.tenantId, reviewPaused.taskId, base.runId))?.status, 'paused');
+  assert.equal((await readContentExecutionJob(store, base.tenantId, blocked.taskId, base.runId))?.status, 'blocked', 'run resume cannot bypass a domain blocker');
+  assert.equal((await readContentExecutionJob(store, base.tenantId, sibling.taskId, sibling.runId))?.status, 'queued');
+});
+
+test('run resume is all-or-none while an original controlled worker is still settling', async () => {
+  const store = new MemoryStore();
+  const base = { dataStore: store, tenantId: 'tenant-handoff', userId: 'user-a', runId: 'run-handoff', taskType: 'social_content_weekly' };
+  const first = await admitContentExecutionJob({ ...base, taskId: 'first' });
+  const second = await admitContentExecutionJob({ ...base, taskId: 'second' });
+  await pauseContentExecutionJobsForRun({ dataStore: store, tenantId: base.tenantId, runId: base.runId, origin: 'workflow_handoff' });
+  await store.update(CONTENT_EXECUTION_JOB_COLLECTION, second.id, { worker_id: 'settling-worker', lease_expires_at: '2026-10-12T00:05:00.000Z' });
+  await assert.rejects(
+    resumeContentExecutionJobsForRun({ dataStore: store, tenantId: base.tenantId, runId: base.runId, origin: 'workflow_handoff' }),
+    /content_execution_original_worker_not_settled/,
+  );
+  assert.equal((await readContentExecutionJob(store, base.tenantId, first.taskId, base.runId))?.status, 'paused', 'preflight prevents a partial resume');
+  assert.equal((await readContentExecutionJob(store, base.tenantId, second.taskId, base.runId))?.status, 'paused');
+  await store.update(CONTENT_EXECUTION_JOB_COLLECTION, second.id, { worker_id: '', lease_expires_at: '' });
+  const resumed = await resumeContentExecutionJobsForRun({ dataStore: store, tenantId: base.tenantId, runId: base.runId, origin: 'workflow_handoff' });
+  assert.deepEqual(resumed.affectedJobIds.sort(), [first.id, second.id].sort());
+  assert.equal((await readContentExecutionJob(store, base.tenantId, first.taskId, base.runId))?.status, 'queued');
+  assert.equal((await readContentExecutionJob(store, base.tenantId, second.taskId, base.runId))?.status, 'queued');
 });
 
 test('versioned checkpoints survive a new execution context and stale workers are fenced', async () => {

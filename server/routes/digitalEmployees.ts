@@ -45,7 +45,12 @@ import { contentAcceptanceHash, contentAccepted } from '../digitalEmployees/cont
 import { buildDeliveryResources } from '../digitalEmployees/deliveryResources.js';
 import { buildContentQueueProjection } from '../digitalEmployees/contentQueue.js';
 import { buildContentExecutionRuntime, unavailableContentExecutionRuntime } from '../digitalEmployees/contentExecutionRuntime.js';
-import { controlContentExecutionJob, type ContentExecutionControlAction } from '../contentExecution/durableQueue.js';
+import {
+  controlContentExecutionJob,
+  pauseContentExecutionJobsForRun,
+  resumeContentExecutionJobsForRun,
+  type ContentExecutionControlAction,
+} from '../contentExecution/durableQueue.js';
 import { buildTaskDeepLink, type WorkflowTask } from '../../src/lib/digitalEmployees.js';
 import { Router, type Request, type Response } from 'express';
 import fs from 'node:fs';
@@ -98,6 +103,7 @@ import {
 import { buildPublishingApprovalPackage, createPublishingCalendarEntries, type PublishingApprovalPackage } from '../digitalEmployees/publishingExecution.js';
 import { beijingDate, followupScheduleFromCadence, latestDueReviewSlot, socialScheduleFromCadence } from '../digitalEmployees/runtimeSchedule.js';
 import { withDigitalEmployeeRunLock } from '../digitalEmployees/runControl.js';
+import { planWorkflowHandoffAdmission, planWorkflowHandoffReturn, type ActiveWorkflowHandoff } from '../digitalEmployees/workflowHandoffPolicy.js';
 import { cancelDigitalEmployeeRun as cancelDigitalEmployeeRunApplication } from '../digitalEmployees/runCancellation.js';
 import { buildAssistantDecisionFeed, AssistantDecisionValidationError, executeAssistantDecisionCommand, mergeAssistantDecisionFeeds, starterDecisionCards, approvalDecisionVersion, taskWithAssistantProductionInput, weeklyPlanDecisionVersion, workflowTaskDecisionVersion } from '../digitalEmployees/assistantDecisionCenter.js';
 import { normalizeAssistantDecisionPage, normalizeAssistantDecisionExecutionReceipt, type AssistantDecisionExecutionReceipt, type AssistantDecisionActionId, type AssistantDecisionFeed, type AssistantDecisionPage, type AssistantDecisionCard } from '../../shared/contracts/assistantDecisionCenter.js';
@@ -299,6 +305,31 @@ function publicGoal(record: GoalRecord): WeeklyGoalInput & { id: string; status:
 async function first<T extends StoredRecord>(collection: string, where: Record<string, string | number | boolean>, sort = '-created_at'): Promise<T | null> {
   const result = await store.list<T>(collection, { where, sort, page: 1, perPage: 1 });
   return result.items[0] ?? null;
+}
+
+function handoffPolicyIdentity(handoff: HandoffRecord): ActiveWorkflowHandoff {
+  return {
+    id: handoff.id,
+    taskId: handoff.task_id,
+    takenBy: handoff.taken_by,
+    startedAt: handoff.started_at,
+  };
+}
+
+async function activeWorkflowHandoffsForRun(tenantId: string, runId: string): Promise<HandoffRecord[]> {
+  const items: HandoffRecord[] = [];
+  let page = 1;
+  while (true) {
+    const result = await store.list<HandoffRecord>(COLLECTION.handoffs, {
+      where: { tenant_id: tenantId, run_id: runId, status: 'active' },
+      sort: 'started_at',
+      page,
+      perPage: 500,
+    });
+    items.push(...result.items);
+    if (page >= result.totalPages) return items;
+    page += 1;
+  }
 }
 
 async function tenantRecord<T extends StoredRecord & { tenant_id: string }>(collection: string, id: string, tenantId: string): Promise<T | null> {
@@ -2863,35 +2894,54 @@ async function takeOverWorkflowTask(input: { tenantId: string; userId: string; t
     } else {
       assertAssistantDecisionVersion(input.decision, workflowTaskDecisionVersion(task));
     }
-    if (task.status === 'handed_off' && task.owner_id === input.userId) return;
     const run = await tenantRecord<RunRecord>(COLLECTION.runs, task.run_id, input.tenantId);
     if (!run || !['waiting_external', 'waiting_approval', 'running', 'paused', 'waiting_human'].includes(run.status)) {
       throw new AssistantDecisionCommandError('run_not_handoff_ready', 409);
+    }
+    const activeHandoffs = await activeWorkflowHandoffsForRun(input.tenantId, run.id);
+    const admission = planWorkflowHandoffAdmission(activeHandoffs.map(handoffPolicyIdentity), {
+      taskId: task.id,
+      userId: input.userId,
+    });
+    if (admission.kind === 'conflict') {
+      throw new AssistantDecisionCommandError(admission.code, 409, {
+        activeTaskIds: admission.activeHandoffs.map(handoff => handoff.taskId),
+      });
+    }
+    if (task.status === 'handed_off' && task.owner_id === input.userId) {
+      if (admission.kind !== 'reuse') throw new AssistantDecisionCommandError('handoff_context_missing', 409);
+      await pauseContentExecutionJobsForRun({ dataStore: store, tenantId: input.tenantId, runId: run.id, origin: 'workflow_handoff' });
+      return;
     }
     if (!['waiting_external', 'waiting_approval', 'running', 'failed', 'pending'].includes(task.status)) {
       throw new AssistantDecisionCommandError('task_not_handoff_ready', 409);
     }
     const now = new Date().toISOString();
-    const session = await requiredCreate<HandoffRecord>(COLLECTION.handoffs, {
-      tenant_id: input.tenantId,
-      run_id: run.id,
-      task_id: task.id,
-      status: 'active',
-      taken_by: input.userId,
-      snapshot: {
-        taskStatus: task.status,
-        taskOutput: jsonObject(task.output, {}),
-        blockedReason: task.blocked_reason,
-        externalActionsPerformed: false,
-        constraints: ['接管期间 Agent 停止外部写入与费用消耗'],
-      },
-      started_at: now,
-      returned_at: '',
-    });
-    await Promise.all([
-      store.update(COLLECTION.tasks, task.id, { status: 'handed_off', owner_id: input.userId, blocked_reason: '人工完整接管', updated_at: now }),
-      store.update(COLLECTION.runs, run.id, { status: 'waiting_human', current_controller: input.userId, pause_reason: '人工完整接管' }),
-    ]);
+    const existingSession = admission.kind === 'reuse'
+      ? activeHandoffs.find(handoff => handoff.id === admission.handoff.id) || null
+      : null;
+    const session = existingSession || await requiredCreate<HandoffRecord>(COLLECTION.handoffs, {
+        tenant_id: input.tenantId,
+        run_id: run.id,
+        task_id: task.id,
+        status: 'active',
+        taken_by: input.userId,
+        snapshot: {
+          taskStatus: task.status,
+          taskOutput: jsonObject(task.output, {}),
+          blockedReason: task.blocked_reason,
+          runStatus: run.status,
+          runController: run.current_controller,
+          runPauseReason: run.pause_reason,
+          externalActionsPerformed: false,
+          constraints: ['接管期间 Agent 停止外部写入与费用消耗'],
+        },
+        started_at: now,
+        returned_at: '',
+      });
+    await store.update(COLLECTION.runs, run.id, { status: 'waiting_human', current_controller: input.userId, pause_reason: '人工完整接管' });
+    await pauseContentExecutionJobsForRun({ dataStore: store, tenantId: input.tenantId, runId: run.id, origin: 'workflow_handoff', now: new Date(now) });
+    await store.update(COLLECTION.tasks, task.id, { status: 'handed_off', owner_id: input.userId, blocked_reason: '人工完整接管', updated_at: now });
     await appendEvent({ tenantId: input.tenantId, runId: run.id, taskId: task.id, type: 'handoff.started', level: 'warning', summary: `${task.title} 已由人工完整接管`, payload: { handoffId: session.id } });
     await appendAudit({ tenantId: input.tenantId, userId: input.userId, action: 'handoff.started', targetType: 'workflow_task', targetId: task.id, metadata: { runId: run.id, handoffId: session.id } });
   });
@@ -5353,30 +5403,49 @@ digitalEmployeesRouter.post('/tasks/:taskId/handoff', async (req, res) => {
   const task = await tenantRecord<TaskRecord>(COLLECTION.tasks, req.params.taskId, tenantId);
   if (!task) { res.status(404).json({ error: 'task_not_found' }); return; }
   const run = await tenantRecord<RunRecord>(COLLECTION.runs, task.run_id, tenantId);
-  if (task.status === 'handed_off' && task.owner_id === userId) { res.json(await buildOverview(tenantId)); return; }
   if (!run || !['waiting_external', 'waiting_approval', 'running', 'paused', 'waiting_human'].includes(run.status)) { res.status(409).json({ error: 'run_not_handoff_ready' }); return; }
+  const activeHandoffs = await activeWorkflowHandoffsForRun(tenantId, run.id);
+  const admission = planWorkflowHandoffAdmission(activeHandoffs.map(handoffPolicyIdentity), { taskId: task.id, userId });
+  if (admission.kind === 'conflict') {
+    res.status(409).json({ error: admission.code, activeTaskIds: admission.activeHandoffs.map(handoff => handoff.taskId) });
+    return;
+  }
+  if (task.status === 'handed_off' && task.owner_id === userId) {
+    if (admission.kind !== 'reuse') { res.status(409).json({ error: 'handoff_context_missing' }); return; }
+    await pauseContentExecutionJobsForRun({ dataStore: store, tenantId, runId: run.id, origin: 'workflow_handoff' });
+    res.json(await buildOverview(tenantId));
+    return;
+  }
   if (!['waiting_external', 'waiting_approval', 'running', 'failed', 'pending'].includes(task.status)) { res.status(409).json({ error: 'task_not_handoff_ready' }); return; }
   const now = new Date().toISOString();
-  const session = await requiredCreate<HandoffRecord>(COLLECTION.handoffs, {
-    tenant_id: tenantId,
-    run_id: run.id,
-    task_id: task.id,
-    status: 'active',
-    taken_by: userId,
-    snapshot: {
-      taskStatus: task.status,
-      taskOutput: jsonObject(task.output, {}),
-      blockedReason: task.blocked_reason,
-      externalActionsPerformed: false,
-      constraints: ['接管期间 Agent 停止外部写入与费用消耗'],
-    },
-    started_at: now,
-    returned_at: '',
-  });
-  await Promise.all([
-    store.update(COLLECTION.tasks, task.id, { status: 'handed_off', owner_id: userId, blocked_reason: '人工完整接管', updated_at: now }),
-    store.update(COLLECTION.runs, run.id, { status: 'waiting_human', current_controller: userId, pause_reason: '人工完整接管' }),
-  ]);
+  const existingSession = admission.kind === 'reuse'
+    ? activeHandoffs.find(handoff => handoff.id === admission.handoff.id) || null
+    : null;
+  const session = existingSession || await requiredCreate<HandoffRecord>(COLLECTION.handoffs, {
+      tenant_id: tenantId,
+      run_id: run.id,
+      task_id: task.id,
+      status: 'active',
+      taken_by: userId,
+      snapshot: {
+        taskStatus: task.status,
+        taskOutput: jsonObject(task.output, {}),
+        blockedReason: task.blocked_reason,
+        runStatus: run.status,
+        runController: run.current_controller,
+        runPauseReason: run.pause_reason,
+        externalActionsPerformed: false,
+        constraints: ['接管期间 Agent 停止外部写入与费用消耗'],
+      },
+      started_at: now,
+      returned_at: '',
+    });
+  // Persist the fail-closed run state before touching individual jobs. If a
+  // later job update fails, a replay repairs it while every provider boundary
+  // remains blocked by waiting_human.
+  await store.update(COLLECTION.runs, run.id, { status: 'waiting_human', current_controller: userId, pause_reason: '人工完整接管' });
+  await pauseContentExecutionJobsForRun({ dataStore: store, tenantId, runId: run.id, origin: 'workflow_handoff', now: new Date(now) });
+  await store.update(COLLECTION.tasks, task.id, { status: 'handed_off', owner_id: userId, blocked_reason: '人工完整接管', updated_at: now });
   await appendEvent({ tenantId, runId: run.id, taskId: task.id, type: 'handoff.started', level: 'warning', summary: `${task.title} 已由人工完整接管`, payload: { handoffId: session.id } });
   await appendAudit({ tenantId, userId, action: 'handoff.started', targetType: 'workflow_task', targetId: task.id, metadata: { runId: run.id, handoffId: session.id } });
   res.json(await buildOverview(tenantId));
@@ -5391,19 +5460,57 @@ digitalEmployeesRouter.post('/tasks/:taskId/return-to-agent', async (req, res) =
   const task = await tenantRecord<TaskRecord>(COLLECTION.tasks, req.params.taskId, tenantId);
   if (!task || task.status !== 'handed_off') { res.status(409).json({ error: 'task_not_handed_off' }); return; }
   const run = await tenantRecord<RunRecord>(COLLECTION.runs, task.run_id, tenantId);
-  const handoff = await first<HandoffRecord>(COLLECTION.handoffs, { tenant_id: tenantId, task_id: task.id, status: 'active' }, '-started_at');
+  const activeHandoffs = run ? await activeWorkflowHandoffsForRun(tenantId, run.id) : [];
+  const handoff = activeHandoffs.filter(item => item.task_id === task.id).at(-1) || null;
   if (!run || !handoff) { res.status(409).json({ error: 'handoff_context_missing' }); return; }
   if (run.status !== 'waiting_human') { res.status(409).json({ error: 'run_not_handed_off' }); return; }
   const note = String(req.body?.note || '').trim().slice(0, 1000);
   const now = new Date().toISOString();
+  const handoffSnapshot = jsonObject<Record<string, unknown>>(handoff.snapshot, {});
+  const restorePausedRun = String(handoffSnapshot.runStatus || '') === 'paused';
+  const nextRunStatus = restorePausedRun ? 'paused' : task.requires_approval ? 'waiting_approval' : 'running';
+  const nextController = restorePausedRun
+    ? String(handoffSnapshot.runController || 'human')
+    : task.requires_approval ? 'human' : 'agent';
+  const nextPauseReason = restorePausedRun ? String(handoffSnapshot.runPauseReason || '人工暂停') : '';
+  const returnPlan = planWorkflowHandoffReturn(activeHandoffs.map(handoffPolicyIdentity), handoff.id);
   await Promise.all([
-    store.update(COLLECTION.handoffs, handoff.id, { status: 'returned', returned_at: now, snapshot: { ...jsonObject<Record<string, unknown>>(handoff.snapshot, {}), returnNote: note } }),
+    store.update(COLLECTION.handoffs, handoff.id, { status: 'returned', returned_at: now, snapshot: { ...handoffSnapshot, returnNote: note } }),
     store.update(COLLECTION.tasks, task.id, { status: task.requires_approval ? 'waiting_approval' : 'pending', owner_id: '', blocked_reason: task.requires_approval ? '等待负责人审批' : '', updated_at: now }),
-    store.update(COLLECTION.runs, run.id, { status: task.requires_approval ? 'waiting_approval' : 'running', current_controller: 'agent', pause_reason: '' }),
   ]);
-  await appendEvent({ tenantId, runId: run.id, taskId: task.id, type: 'handoff.returned', level: 'success', summary: `${task.title} 已交还数字员工`, payload: { note, externalActionsPerformed: false } });
-  await appendAudit({ tenantId, userId, action: 'handoff.returned', targetType: 'workflow_task', targetId: task.id, metadata: { runId: run.id, handoffId: handoff.id } });
-  if (!task.requires_approval) await advanceRun(tenantId, run.id);
+  // Re-read after closing the selected session. Historical data may contain
+  // more than one active handoff for a run; no production pause is released
+  // until the final active session has been returned.
+  const remainingActiveHandoffs = await activeWorkflowHandoffsForRun(tenantId, run.id);
+  const verifiedReturnPlan = planWorkflowHandoffReturn(remainingActiveHandoffs.map(handoffPolicyIdentity), handoff.id);
+  if (verifiedReturnPlan.canResumeRun) {
+    // The run is still waiting_human while the handoff-owned job pause is
+    // released, so provider boundaries remain fail-closed during transition.
+    await resumeContentExecutionJobsForRun({ dataStore: store, tenantId, runId: run.id, origin: 'workflow_handoff', now: new Date(now) });
+    await store.update(COLLECTION.runs, run.id, { status: nextRunStatus, current_controller: nextController, pause_reason: nextPauseReason });
+  } else {
+    await store.update(COLLECTION.runs, run.id, {
+      status: 'waiting_human',
+      current_controller: verifiedReturnPlan.remainingController || returnPlan.remainingController || 'human',
+      pause_reason: '人工完整接管',
+    });
+  }
+  const stillHandedOff = verifiedReturnPlan.remainingActiveHandoffs.length;
+  await appendEvent({
+    tenantId,
+    runId: run.id,
+    taskId: task.id,
+    type: 'handoff.returned',
+    level: 'success',
+    summary: stillHandedOff ? `${task.title} 已交还，另有 ${stillHandedOff} 项人工接管仍在进行` : `${task.title} 已交还数字员工`,
+    payload: {
+      note,
+      externalActionsPerformed: false,
+      remainingActiveHandoffIds: verifiedReturnPlan.remainingActiveHandoffs.map(item => item.id),
+    },
+  });
+  await appendAudit({ tenantId, userId, action: 'handoff.returned', targetType: 'workflow_task', targetId: task.id, metadata: { runId: run.id, handoffId: handoff.id, remainingActiveHandoffIds: verifiedReturnPlan.remainingActiveHandoffs.map(item => item.id) } });
+  if (verifiedReturnPlan.canResumeRun && !task.requires_approval && !restorePausedRun) await advanceRun(tenantId, run.id);
   res.json(await buildOverview(tenantId));
   });
 });
@@ -5414,9 +5521,15 @@ digitalEmployeesRouter.post('/runs/:runId/pause', async (req, res) => {
   const run = await tenantRecord<RunRecord>(COLLECTION.runs, req.params.runId, tenantId);
   if (!run) { res.status(404).json({ error: 'run_not_found' }); return; }
   if (['running', 'waiting_external', 'waiting_approval'].includes(run.status)) {
+    const now = new Date();
     await store.update(COLLECTION.runs, run.id, { status: 'paused', pause_reason: String(req.body?.reason || '人工暂停').slice(0, 500), current_controller: 'human' });
+    await pauseContentExecutionJobsForRun({ dataStore: store, tenantId, runId: run.id, origin: 'workflow_run_pause', now });
     await appendEvent({ tenantId, runId: run.id, type: 'workflow.paused', level: 'warning', summary: '运行已由人工暂停' });
     await appendAudit({ tenantId, userId, action: 'workflow.paused', targetType: 'workflow_run', targetId: run.id });
+  } else if (run.status === 'paused') {
+    // Idempotent replay repairs jobs if a previous request persisted the
+    // fail-closed run state but was interrupted before finishing the batch.
+    await pauseContentExecutionJobsForRun({ dataStore: store, tenantId, runId: run.id, origin: 'workflow_run_pause' });
   }
   res.json(await buildOverview(tenantId));
   });
@@ -5429,6 +5542,7 @@ digitalEmployeesRouter.post('/runs/:runId/resume', async (req, res) => {
   if (!run) { res.status(404).json({ error: 'run_not_found' }); return; }
   if (run.status === 'paused') {
     const pendingApproval = await first<ApprovalRecord>(COLLECTION.approvals, { tenant_id: tenantId, run_id: run.id, status: 'pending' });
+    await resumeContentExecutionJobsForRun({ dataStore: store, tenantId, runId: run.id, origin: 'workflow_run_pause' });
     await store.update(COLLECTION.runs, run.id, { status: pendingApproval ? 'waiting_approval' : 'running', pause_reason: '', current_controller: pendingApproval ? 'human' : 'agent' });
     await appendEvent({ tenantId, runId: run.id, type: 'workflow.resumed', level: 'success', summary: pendingApproval ? '运行已恢复，继续等待审批' : '运行已恢复' });
     await appendAudit({ tenantId, userId, action: 'workflow.resumed', targetType: 'workflow_run', targetId: run.id });

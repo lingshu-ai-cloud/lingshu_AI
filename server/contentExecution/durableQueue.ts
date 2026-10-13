@@ -650,6 +650,18 @@ export async function readContentExecutionJob(
 }
 
 export type ContentExecutionControlAction = 'pause' | 'cancel' | 'resume' | 'retry';
+export type ContentExecutionPauseOrigin =
+  | 'manual'
+  | 'workflow_review'
+  | 'workflow_run_pause'
+  | 'workflow_handoff';
+
+export interface ContentExecutionRunControlResult {
+  runId: string;
+  affectedJobIds: string[];
+  preservedJobIds: string[];
+  terminalJobIds: string[];
+}
 
 /**
  * Applies customer-visible controls to the durable job itself. A running paid
@@ -663,7 +675,7 @@ async function applyContentExecutionControl(input: {
   jobId: string;
   action: ContentExecutionControlAction;
   /** Server-owned review waits may auto-resume; a customer pause never may. */
-  pauseOrigin?: 'workflow_review';
+  pauseOrigin?: ContentExecutionPauseOrigin;
   now?: Date;
 }): Promise<ContentExecutionJob> {
   const tenantId = requiredIdentity(input.tenantId, 'tenant');
@@ -678,7 +690,12 @@ async function applyContentExecutionControl(input: {
     if (['succeeded', 'cancelled'].includes(current.status)) throw new Error('content_execution_job_not_pauseable');
     const origin = input.pauseOrigin ?? 'manual';
     const priorOrigin = (current.checkpoints['runtime.pause']?.payload as { origin?: string } | undefined)?.origin;
-    if (current.status === 'paused' && origin === 'workflow_review' && priorOrigin === 'manual') return current;
+    // An existing pause belongs to the controller that created it. Automated
+    // run/handoff controls must never relabel a customer pause (or each other),
+    // otherwise a later resume could restart work the customer still expects
+    // to remain stopped. The explicit per-job customer pause remains the sole
+    // exception: it may replace an automated review wait.
+    if (current.status === 'paused' && origin !== 'manual' && priorOrigin !== origin) return current;
     if (current.status === 'paused' && priorOrigin === origin) return current;
     patch = { status: 'paused', next_attempt_at: '', updated_at: now, checkpoints: {
       ...current.checkpoints,
@@ -739,4 +756,103 @@ export async function controlContentExecutionJob(input: Parameters<typeof applyC
   if (!lease) throw new Error('content_execution_job_control_busy');
   try { return await applyContentExecutionControl(input); }
   finally { await releaseDurableOperationLease({ dataStore: input.dataStore, lease }).catch(() => undefined); }
+}
+
+function pauseOrigin(job: ContentExecutionJob): string {
+  return String((job.checkpoints['runtime.pause']?.payload as { origin?: unknown } | undefined)?.origin || '');
+}
+
+async function jobsForRun(input: {
+  dataStore: DataStore;
+  tenantId: string;
+  runId: string;
+}): Promise<ContentExecutionJob[]> {
+  const tenantId = requiredIdentity(input.tenantId, 'tenant');
+  const runId = requiredIdentity(input.runId, 'run');
+  return (await listAll<JobRow>(input.dataStore, CONTENT_EXECUTION_JOB_COLLECTION, {
+    where: { tenant_id: tenantId, run_id: runId }, sort: 'created_at',
+  })).map(jobFromRow);
+}
+
+/**
+ * Stop every non-terminal production job owned by one workflow run. The run
+ * lifecycle lock is held by the caller; individual durable-job leases fence a
+ * concurrent worker/control request. Replays are safe and repair a partial
+ * prior attempt without changing terminal jobs or a differently owned pause.
+ */
+export async function pauseContentExecutionJobsForRun(input: {
+  dataStore: DataStore;
+  tenantId: string;
+  runId: string;
+  origin: Exclude<ContentExecutionPauseOrigin, 'manual' | 'workflow_review'>;
+  now?: Date;
+}): Promise<ContentExecutionRunControlResult> {
+  const jobs = await jobsForRun(input);
+  const affectedJobIds: string[] = [];
+  const preservedJobIds: string[] = [];
+  const terminalJobIds: string[] = [];
+  for (const job of jobs) {
+    if (['succeeded', 'cancelled', 'dead_letter'].includes(job.status)) {
+      terminalJobIds.push(job.id);
+      continue;
+    }
+    // A domain blocker is not an actively executing queue state. Relabeling
+    // it as a lifecycle pause would let a later run resume turn it into queued
+    // work and bypass the original input/budget/policy blocker.
+    if (job.status === 'blocked') {
+      preservedJobIds.push(job.id);
+      continue;
+    }
+    if (job.status === 'paused' && pauseOrigin(job) !== input.origin) {
+      preservedJobIds.push(job.id);
+      continue;
+    }
+    await controlContentExecutionJob({
+      dataStore: input.dataStore,
+      tenantId: input.tenantId,
+      jobId: job.id,
+      action: 'pause',
+      pauseOrigin: input.origin,
+      now: input.now,
+    });
+    affectedJobIds.push(job.id);
+  }
+  return { runId: input.runId, affectedJobIds, preservedJobIds, terminalJobIds };
+}
+
+/**
+ * Resume only jobs paused by the matching run-level control. A preflight over
+ * every candidate prevents a half-resume while an original paid worker is
+ * still settling. Provider receipts, checkpoints and the durable job identity
+ * are preserved by controlContentExecutionJob.
+ */
+export async function resumeContentExecutionJobsForRun(input: {
+  dataStore: DataStore;
+  tenantId: string;
+  runId: string;
+  origin: Exclude<ContentExecutionPauseOrigin, 'manual' | 'workflow_review'>;
+  now?: Date;
+}): Promise<ContentExecutionRunControlResult> {
+  const jobs = await jobsForRun(input);
+  const candidates = jobs.filter(job => job.status === 'paused' && pauseOrigin(job) === input.origin);
+  if (candidates.some(job => job.workerId !== null || job.leaseExpiresAt !== null)) {
+    throw new Error('content_execution_original_worker_not_settled');
+  }
+  const affectedJobIds: string[] = [];
+  for (const job of candidates) {
+    await controlContentExecutionJob({
+      dataStore: input.dataStore,
+      tenantId: input.tenantId,
+      jobId: job.id,
+      action: 'resume',
+      now: input.now,
+    });
+    affectedJobIds.push(job.id);
+  }
+  return {
+    runId: input.runId,
+    affectedJobIds,
+    preservedJobIds: jobs.filter(job => job.status === 'paused' && pauseOrigin(job) !== input.origin).map(job => job.id),
+    terminalJobIds: jobs.filter(job => ['succeeded', 'cancelled', 'dead_letter'].includes(job.status)).map(job => job.id),
+  };
 }

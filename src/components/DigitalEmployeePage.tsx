@@ -4187,6 +4187,68 @@ export default function DigitalEmployeePage({
     if (weeklyPlanOpen) setWeeklyPlanOpen(false);
   }, [activeRun, newGoal, weeklyPlanOpen]);
 
+  const selectedContentItem = selectedContentItemId
+    ? data?.contentQueue?.items.find(item => item.id === selectedContentItemId)
+    : undefined;
+  useEffect(() => {
+    const visibleGoalId = viewGoalId || goal?.id || '';
+    const explicitlySelectedTask = selectedTaskId && selectedTask?.id === selectedTaskId ? selectedTask : undefined;
+    const viewLabel = workspaceView === 'today'
+      ? '经营总览'
+      : workspaceView === 'matrix'
+        ? '数字员工排期'
+        : workspaceView === 'rules'
+          ? 'Agent 设置'
+          : workspaceView === 'review'
+            ? '数据复盘'
+            : workspaceView === 'live' && selectedContentItem
+              ? '内容制作进度'
+              : '任务运行状态';
+    const focusSummary = selectedContentItem
+      ? `当前打开内容“${selectedContentItem.title}”，制作状态为${selectedContentItem.stage || selectedContentItem.status}。优先回答这条内容的进度、缺项与恢复方式。`
+      : explicitlySelectedTask
+        ? `当前查看任务“${explicitlySelectedTask.title}”，状态为${statusLabel[explicitlySelectedTask.status] || explicitlySelectedTask.status}。优先回答该任务的下一步。`
+        : goal
+          ? `当前查看${viewGoalId ? '历史' : '本周'}计划“${goal.title}”的${viewLabel}。`
+          : `当前在${viewLabel}，尚未选中周计划。`;
+    window.dispatchEvent(new CustomEvent('lingshu-assistant-context', {
+      detail: {
+        sourcePage: 'digitalEmployees',
+        agent: 'strategy',
+        label: viewLabel,
+        summary: focusSummary,
+        suggestions: selectedContentItem
+          ? ['这条内容现在做到哪一步', '还缺什么才能继续', '从当前节点继续制作']
+          : explicitlySelectedTask
+            ? ['这个任务为什么停住', '告诉我下一步怎么处理', '核对当前真实状态']
+            : ['查看当前经营重点', '核对本周计划范围', '查看需要我处理的事项'],
+        goalId: visibleGoalId,
+        planId: data?.plan?.id || '',
+        runId: data?.run?.id || '',
+        taskId: explicitlySelectedTask?.id || selectedContentItem?.taskId || '',
+        contentId: selectedContentItem?.contentId || selectedContentItem?.id || '',
+        viewKey: workspaceView,
+      },
+    }));
+  }, [
+    data?.plan?.id,
+    data?.run?.id,
+    goal?.id,
+    goal?.title,
+    selectedContentItem?.contentId,
+    selectedContentItem?.id,
+    selectedContentItem?.stage,
+    selectedContentItem?.status,
+    selectedContentItem?.taskId,
+    selectedContentItem?.title,
+    selectedTask?.id,
+    selectedTask?.status,
+    selectedTask?.title,
+    selectedTaskId,
+    viewGoalId,
+    workspaceView,
+  ]);
+
   const requestOverviewRange = (nextRange: ReturnType<typeof overviewRange>, period?: OverviewPeriod) => {
     const version = ++overviewRequestVersionRef.current;
     productionRangeLoadingRef.current = true;

@@ -931,6 +931,7 @@ export default function App() {
             <Activity mode={page === 'traffic' ? 'visible' : 'hidden'}>
             <TrafficPage
               key="legacy-traffic"
+              sourcePage="traffic"
               onEnterConversation={enterConversation}
               onLeaveConversation={leaveConversation}
               isInConversation={conversation?.agent === 'traffic'}
@@ -954,6 +955,7 @@ export default function App() {
             <Activity mode={page === 'socialInspiration' ? 'visible' : 'hidden'}>
             <TrafficPage
               key="social-inspiration"
+              sourcePage="socialInspiration"
               onEnterConversation={enterConversation}
               onLeaveConversation={leaveConversation}
               isInConversation={false}
@@ -981,6 +983,7 @@ export default function App() {
               ) : (
                 <TrafficPage
                   key={`smart-assets-${smartAssetsInstanceKey}`}
+                  sourcePage="smartAssets"
                   onEnterConversation={enterConversation}
                   onLeaveConversation={leaveConversation}
                   isInConversation={false}
@@ -1007,6 +1010,7 @@ export default function App() {
             <Activity mode={page === 'socialMonitoring' ? 'visible' : 'hidden'}>
             <TrafficPage
               key="social-monitoring-accounts"
+              sourcePage="socialMonitoring"
               onEnterConversation={enterConversation}
               onLeaveConversation={leaveConversation}
               isInConversation={false}
