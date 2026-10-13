@@ -20,8 +20,8 @@
     </view>
 
     <view class="primary-actions">
-      <view class="primary-action shoot" bindtap="openShooting"><view class="action-icon frame"><view></view></view><view><text class="action-title">我的待拍</text><text class="action-note">{{counts.shooting === '—' ? '数据未同步' : counts.shooting + ' 项素材任务'}}</text></view></view>
-      <view class="primary-action inquiry" bindtap="openInquiries"><view class="action-icon chat-icon"><view></view></view><view><text class="action-title">我的询盘</text><text class="action-note">待确认与待跟进</text></view></view>
+      <view class="primary-action shoot" bindtap="openShooting"><text class="action-title">我的待拍</text></view>
+      <view class="primary-action inquiry" bindtap="openInquiries"><text class="action-title">我的询盘</text></view>
     </view>
 
     <view class="section-heading"><view><text class="section-title">今日卡点任务</text><text class="section-note">只显示需要你介入的 Agent 任务</text></view><text class="section-count">{{blockers.length}} 项</text></view>
