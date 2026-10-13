@@ -1,1 +1,1 @@
-Page({data:{},openWorkbench(){wx.navigateTo({url:'/pages/workbench/index?tab=assistant'})}})
+Page({data:{},openWorkbench(){wx.navigateTo({url:'/packages/operator/assistant/index'})}})

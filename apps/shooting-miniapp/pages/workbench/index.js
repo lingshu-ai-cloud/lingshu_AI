@@ -3,7 +3,7 @@ const model = require('../../lib/workbench');
 const mobileAssistant = require('../../lib/assistant');
 const agentSchedule = require('../../lib/agentSchedule');
 Page({
-    data: { loggedIn: false, email: '', password: '', userName: '', tab: 'work', loading: false, error: '', week: model.week(), selectedDay: model.day(new Date().toISOString()), overview: {}, tasks: [], agents: [], agentScheduleGroups: [], agentScheduleItems: [], expandedAgentRole: '', posts: [], calendarItems: [], matters: [], snoozed: [], activeMatter: null, cardX: 0, swipeDirection: '', swipeReady: false, swipeLabel: '', metrics: [], dayPosts: [], sheet: null, sheetItems: [], detail: null, processing: false, assistantMode: 'chat', messages: [], input: '', sending: false, recording: false, transcribing: false, offline: false, suggestions: ['本周最需要我决定的 3 件事是什么？', '哪些任务会影响本周发布目标？', '哪条内容卡在素材、制作或验收？', '今天有哪些高意向询盘要跟进？', '4 个 Agent 现在分别在做什么？'], notifications: [], assistantPreview: null, assistantReceipts: [], assistantLinks: [], assistantActions: [], assistantLoading: false, assistantConfirming: false, chatAnchor: '' },
+    data: { loggedIn: false, email: '', password: '', userName: '', tab: 'work', loading: false, error: '', week: model.week(), selectedDay: model.day(new Date().toISOString()), overview: {}, tasks: [], agents: [], agentScheduleGroups: [], agentScheduleItems: [], expandedAgentRole: '', posts: [], calendarItems: [], matters: [], snoozed: [], activeMatter: null, cardX: 0, swipeDirection: '', swipeReady: false, swipeLabel: '', metrics: [], dayPosts: [], sheet: null, sheetItems: [], detail: null, processing: false, assistantMode: 'chat', composerMode: 'text', messages: [], input: '', sending: false, recording: false, transcribing: false, offline: false, suggestions: ['本周最需要我决定的 3 件事是什么？', '哪些任务会影响本周发布目标？', '哪条内容卡在素材、制作或验收？', '今天有哪些高意向询盘要跟进？', '4 个 Agent 现在分别在做什么？'], notifications: [], assistantPreview: null, assistantReceipts: [], assistantLinks: [], assistantActions: [], assistantLoading: false, assistantConfirming: false, chatAnchor: '' },
     onLoad(options = {}) { this.initialTab = ['todo','assistant'].includes(options.tab) ? options.tab : 'work'; this.setData({tab:this.initialTab}); this.networkListener = r => this.setData({ offline: !r.isConnected }); if (wx.onNetworkStatusChange) wx.onNetworkStatusChange(this.networkListener); if (wx.getNetworkType) wx.getNetworkType({success:r=>this.setData({offline:r.networkType === 'none'})}); if (api.token())
         this.restore(); },
     onShow() { if (!api.token()) { if (this.data.loggedIn) this.signOut(); return; } if (this.data.loggedIn) { this.startSync(); this.refresh(); if (this.assistantController) this.assistantController.poll(); } },
@@ -429,13 +429,17 @@ Page({
             return false;
         }
     },
+    switchComposerMode(e) { if (this.data.recording) this.cancelRecording(); this.setData({composerMode:e.currentTarget.dataset.mode || 'text'}); },
+    holdVoiceStart(e) { if (this.data.transcribing || this.data.sending) return; this.voiceStartY = e.touches?.[0]?.clientY || 0; this.voiceHolding = true; this.stopVoiceAfterStart = false; this.toggleVoice(); },
+    holdVoiceMove(e) { const y = e.touches?.[0]?.clientY || this.voiceStartY; if (this.voiceHolding && this.voiceStartY - y > 60) this.cancelRecording(); },
+    holdVoiceEnd() { this.voiceHolding = false; if (this.data.recording && this.recorder) this.recorder.stop(); else this.stopVoiceAfterStart = true; },
     async toggleVoice() { if (this.data.transcribing)
         return; if (this.data.recording) {
         this.recorder.stop();
         return;
     } if (!await this.ensureRecordPermission()) return; if (!this.recorder) {
         this.recorder = wx.getRecorderManager();
-        this.recorder.onStart(() => { if (this.voiceEpoch === (this.epoch || 0) && !this.disposed) this.setData({ recording: true }); });
+        this.recorder.onStart(() => { if (this.voiceEpoch === (this.epoch || 0) && !this.disposed) { this.setData({ recording: true }); if (this.stopVoiceAfterStart || !this.voiceHolding) { this.cancelVoice = true; this.recorder.stop(); } } });
         this.recorder.onError(() => { if (this.voiceEpoch === (this.epoch || 0) && !this.disposed) this.setData({ recording: false, error: '无法录音，请允许麦克风权限或使用文字输入' }); });
         this.recorder.onStop(async (r) => { if (this.voiceEpoch !== (this.epoch || 0) || this.disposed) return; this.setData({ recording: false }); if (this.cancelVoice) {
             this.cancelVoice = false;
@@ -455,7 +459,7 @@ Page({
                 this.setData({ transcribing: false });
         } });
     } this.voiceEpoch = this.epoch || 0; this.cancelVoice = false; this.recorder.start({ duration: 60000, format: 'mp3', sampleRate: 16000, numberOfChannels: 1, encodeBitRate: 48000 }); },
-    cancelRecording() { this.cancelVoice = true; if (this.recorder)
+    cancelRecording() { this.voiceHolding = false; this.stopVoiceAfterStart = true; this.cancelVoice = true; if (this.recorder)
         this.recorder.stop(); },
     showAgents() { this.setData({ sheet: 'Agent 工作状态', sheetItems: this.data.agents.map(a => ({ id: a.role, title: a.label, subtitle: a.statusLabel + ' · ' + (a.currentTask || '当前无活跃任务') })) }); }
 });

@@ -2,7 +2,7 @@ const api = require('../../../lib/api')
 const assistant = require('../../../lib/assistant')
 
 Page({
-  data: { loading: true, sending: false, recording: false, transcribing: false, error: '', messages: [], suggestions: [], input: '', anchor: '', preview: null, receipts: [], actions: [], confirming: false },
+  data: { loading: true, sending: false, recording: false, transcribing: false, inputMode: 'text', error: '', messages: [], suggestions: [], input: '', anchor: '', preview: null, receipts: [], actions: [], confirming: false },
   async onLoad() {
     if (!api.token()) { wx.redirectTo({ url: '/pages/workbench/index' }); return }
     try {
@@ -27,6 +27,7 @@ Page({
     })
   },
   inputText(e) { this.setData({ input: e.detail.value }); this.controller?.setInput(e.detail.value) },
+  switchInputMode(e) { if (this.data.recording) this.cancelRecording(); this.setData({inputMode:e.currentTarget.dataset.mode || 'text'}) },
   ask(e) { this.setData({ input: e.currentTarget.dataset.text }); this.send() },
   async send() { const value = this.data.input.trim(); if (!value || this.data.sending) return; try { await this.controller.send(value) } catch (error) { this.setData({ error:error.message, input:value }) } },
   async ensureRecordPermission() {
@@ -41,7 +42,7 @@ Page({
     if (!await this.ensureRecordPermission() || !wx.getRecorderManager) return
     if (!this.recorder) {
       this.recorder = wx.getRecorderManager()
-      this.recorder.onStart(()=>this.setData({recording:true,error:''}))
+      this.recorder.onStart(()=>{ this.setData({recording:true,error:''}); if (this.stopVoiceAfterStart || !this.voiceHolding) { this.cancelVoice=true; this.recorder.stop() } })
       this.recorder.onError(()=>this.setData({recording:false,error:'无法录音，请允许麦克风权限或使用文字输入'}))
       this.recorder.onStop(async result=>{
         this.setData({recording:false})
@@ -57,7 +58,10 @@ Page({
     }
     this.cancelVoice=false; this.recorder.start({duration:60000,format:'mp3',sampleRate:16000,numberOfChannels:1,encodeBitRate:48000})
   },
-  cancelRecording() { this.cancelVoice=true; this.recorder?.stop() },
+  holdVoiceStart(e) { if (this.data.transcribing || this.data.sending) return; this.voiceStartY=e.touches?.[0]?.clientY || 0; this.voiceHolding=true; this.stopVoiceAfterStart=false; this.toggleVoice() },
+  holdVoiceMove(e) { const y=e.touches?.[0]?.clientY || this.voiceStartY; if (this.voiceHolding && this.voiceStartY-y>60) this.cancelRecording() },
+  holdVoiceEnd() { this.voiceHolding=false; if (this.data.recording && this.recorder) this.recorder.stop(); else this.stopVoiceAfterStart=true },
+  cancelRecording() { this.voiceHolding=false; this.stopVoiceAfterStart=true; this.cancelVoice=true; this.recorder?.stop() },
   async previewAction(e) { const action = this.data.actions[Number(e.currentTarget.dataset.index)]; if (action) try { await this.controller.preview(action.action || action) } catch (error) { this.setData({error:error.message}) } },
   dismissPreview() { this.controller?.dismissPreview() },
   async confirmAction() { if (!this.data.preview || this.data.confirming) return; try { await this.controller.confirm(this.data.preview.previewId) } catch (error) { this.setData({error:error.message}) } }
