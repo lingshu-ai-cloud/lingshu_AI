@@ -4,7 +4,7 @@ Component({
     items: [
       { key: 'work', label: '工作', path: '/packages/operator/home/index' },
       { key: 'todo', label: '待处理', path: '/pages/workbench/index?tab=todo' },
-      { key: 'assistant', label: '灵小枢', path: '/packages/operator/assistant/index' }
+      { key: 'assistant', label: '经营 Agent', path: '/packages/operator/assistant/index' }
     ]
   },
   methods: {
