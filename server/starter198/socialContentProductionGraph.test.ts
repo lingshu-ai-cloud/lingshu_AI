@@ -36,6 +36,9 @@ test('frozen hash tolerates derived projection versions but rejects human plan/d
   const projected=structuredClone(original);projected.version='9';
   projected.agentWorkflow!.executionPlan.version='9';projected.agentWorkflow!.directorBrief.version='9';
   projected.agentWorkflow!.executionPlanReview.version='9';
+  const director=projected.agentWorkflow!.directorBrief as any;
+  if(director.replicationJobRef){director.replicationJobRef.version='9';director.replicationJobRef.factorSpecVersion='9';}
+  for(const scene of director.scenes||[])for(const factor of scene.replicationFactors||[])factor.factorSpecVersion='9';
   assert.equal(socialProductionGraphInput(projected,frozen).inputHash,binding.inputHash);
   for(const section of ['executionPlan','directorBrief','executionPlanReview'] as const){
     const edited=structuredClone(original);

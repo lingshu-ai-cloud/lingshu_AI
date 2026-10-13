@@ -8,7 +8,7 @@ import { CONTENT_GRAPH_VERSION, type ProductionGraphIdentity } from './langgraph
 
 const identity: ProductionGraphIdentity = {tenantId:'tenant-a',taskId:'task-a',runId:'run-a',jobId:'job-a',planVersion:'1',inputHash:'input-a',graphVersion:CONTENT_GRAPH_VERSION};
 function fixture() {
-  const job: Record<string,unknown> = {id:'job-a',tenant_id:'tenant-a',task_id:'task-a',run_id:'run-a',worker_id:'worker-a',attempt:1,status:'running',checkpoints:{}};
+  const job: Record<string,unknown> = {id:'job-a',tenant_id:'tenant-a',task_id:'task-a',run_id:'run-a',worker_id:'worker-a',attempt:1,status:'running',checkpoints:{},provider_receipts:[]};
   let active = true;
   const dataStore = {
     getById: async (_collection:string,id:string) => id===job.id ? structuredClone(job) : null,
@@ -23,7 +23,7 @@ function fixture() {
   };
   const phases = { assets:makePhase('assets'),render:makePhase('render'),quality:makePhase('quality'),delivery:makePhase('delivery') };
   const input:LangGraphProductionInput={identity,dataStore,assertActive,phases,review:{loadApproval:async()=>approval,verifyResume:async token=>token==='canonical-receipt'&&approval?.approved===true}};
-  const run = (resume?:unknown)=>runWithContentExecutionContext({dataStore,jobId:'job-a',checkpoints:job.checkpoints,expectedWorkerId:'worker-a',expectedAttempt:1,executionStillOwned:()=>active,action:()=>runLangGraphProduction({...input,...(resume===undefined?{}:{resume})})});
+  const run = (resume?:unknown)=>runWithContentExecutionContext({dataStore,jobId:'job-a',checkpoints:job.checkpoints,providerReceipts:job.provider_receipts,expectedWorkerId:'worker-a',expectedAttempt:1,executionStillOwned:()=>active,action:()=>runLangGraphProduction({...input,...(resume===undefined?{}:{resume})})});
   return {job,dataStore,counts,input,run,setApproval:()=>{approval={approved:true,receiptRef:'canonical-receipt',subjectVersion:'1',contentHash:'artifact-hash'};},loseLease:()=>{active=false;}};
 }
 test('actual graph persists interrupt and resumes with a new saver without rerunning finished phases',async()=>{
@@ -42,7 +42,34 @@ test('failure keeps completed stage writes and resumes only failed work',async()
   const original=f.input.phases.render;
   f.input.phases.render=async state=>{if(fail)throw Error('controlled-render-failure');return original(state);};
   await assert.rejects(f.run(),/controlled-render-failure/);assert.equal(f.counts.assets,1);
+  const failed=(f.job.checkpoints as any)['langgraph.node.render'];
+  assert.equal(failed.version,'1');assert.equal(failed.payload.status,'failed');assert.equal(failed.payload.attempt,1);
+  assert.equal(failed.payload.failureCode,'controlled-render-failure');assert.equal(failed.payload.failureReason,'controlled-render-failure');
+  assert.ok(failed.payload.startedAt);assert.ok(failed.payload.endedAt);assert.ok(failed.payload.durationMs>=0);
   fail=false;await f.run();assert.equal(f.counts.assets,1);assert.equal(f.counts.render,1);
+  const recovered=(f.job.checkpoints as any)['langgraph.node.render'].payload;
+  assert.equal(recovered.status,'completed');assert.equal(recovered.attempt,2);assert.equal(recovered.failureReason,null);
+});
+test('node evidence persists output, provider receipts and cost without full provider payloads',async()=>{
+  const f=fixture();
+  f.job.provider_receipts=[{provider:'seedance',requestId:'visual-request',state:'completed',providerTaskId:'provider-task',metadata:{reservedCny:1.25,actualCostCny:1.1},firstRecordedAt:new Date().toISOString(),updatedAt:new Date().toISOString()}];
+  f.input.phases.assets=async()=>{
+    return {artifactRefs:['asset'],inputHash:'input-a',metadata:{outputSha256:'a'.repeat(64),providerReceiptRefs:['receipt:file'],reservedCny:1.25,actualCostCny:1.1}};
+  };
+  await f.run();
+  const value=(f.job.checkpoints as any)['langgraph.node.assets'].payload;
+  assert.equal(value.status,'completed');assert.equal(value.attempt,1);assert.equal(value.outputSha256,'a'.repeat(64));
+  assert.deepEqual(value.providerReceiptRefs,['receipt:file','seedance:visual-request']);
+  assert.equal(value.reservedCny,1.25);assert.equal(value.actualCostCny,1.1);
+  assert.equal(JSON.stringify(value).includes('provider-task'),false);
+});
+test('node evidence rejects malformed output hashes and negative cost',async()=>{
+  for (const metadata of [{outputSha256:'not-a-sha'}, {reservedCny:-1}, {actualCostCny:-1}]) {
+    const f=fixture();f.input.phases.assets=async()=>({artifactRefs:['asset'],inputHash:'input-a',metadata});
+    await assert.rejects(f.run(),/content_graph_phase_metadata_invalid/);
+    const value=(f.job.checkpoints as any)['langgraph.node.assets'].payload;
+    assert.equal(value.status,'failed');assert.equal(value.failureCode,'content_graph_phase_metadata_invalid');
+  }
 });
 test('tenant/version mismatch and lost lease reject before side effects',async()=>{
   const f=fixture();await f.run();

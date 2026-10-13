@@ -4,7 +4,13 @@ import { AsyncLocalStorageProviderSingleton } from 'langsmith/singletons/traceab
 import { withRunTree } from 'langsmith/traceable';
 import { RunTree } from 'langsmith/run_trees';
 import { LocalOnlyContentGraphCallbacks } from './langgraphTracing.js';
-import { assertCurrentContentExecutionJobContext } from './context.js';
+import { createHash } from 'node:crypto';
+import {
+  assertCurrentContentExecutionJobContext,
+  currentContentProviderReceipts,
+  readCurrentContentExecutionCheckpoint,
+  recordCurrentContentExecutionCheckpoint,
+} from './context.js';
 import type { DataStore } from '../storage/datastore.js';
 import { ContentJobCheckpointSaver, createJobGraphCheckpointPort, type ContentGraphCheckpointPort } from './langgraphCheckpoint.js';
 import { assertGraphJobScope, graphIdentityHash, graphThreadId, type ProductionGraphIdentity } from './langgraphIdentity.js';
@@ -14,6 +20,25 @@ export interface PhaseEvidence {
   inputHash: string;
   metadata?: Record<string, unknown>;
 }
+export type ProductionGraphNodeEvidence = {
+  node: ProductionGraphPhase;
+  nodeVersion: string;
+  graphVersion: string;
+  planVersion: string;
+  inputHash: string;
+  startedAt: string;
+  endedAt: string | null;
+  durationMs: number | null;
+  status: 'running' | 'completed' | 'failed';
+  attempt: number;
+  failureCode: string | null;
+  failureReason: string | null;
+  outputSha256: string | null;
+  providerReceiptRefs: string[];
+  reservedCny: number | null;
+  actualCostCny: number | null;
+};
+const NODE_EVIDENCE_VERSION = '1';
 export interface GraphApproval {
   approved: boolean;
   receiptRef: string;
@@ -58,8 +83,11 @@ function evidence(value: PhaseEvidence): PhaseEvidence {
   // Only compact business projections enter graph state; full provider results,
   // prompts, credentials and filesystem paths remain in their existing stores.
   const allowedMetadata = new Set(['contentHash','checkpointStage','approvalReceipt','externalPublishPerformed',
-    'artifactId','packageId','sceneCount','durationSeconds','qualityPassed','outputSha256','providerReceiptRefs']);
+    'artifactId','packageId','sceneCount','durationSeconds','qualityPassed','outputSha256','providerReceiptRefs',
+    'reservedCny','actualCostCny']);
   if (value.metadata && Object.entries(value.metadata).some(([key,item]) => !allowedMetadata.has(key)
+    || key === 'outputSha256' && (typeof item !== 'string' || !/^[a-f0-9]{64}$/.test(item))
+    || ['reservedCny','actualCostCny'].includes(key) && (typeof item !== 'number' || !Number.isFinite(item) || item < 0)
     || !(typeof item === 'boolean' || typeof item === 'number' && Number.isFinite(item)
       || typeof item === 'string' && item.length <= 512 && !/^(?:\/|[a-z]:\\)/i.test(item)
       || key === 'providerReceiptRefs' && Array.isArray(item) && item.length <= 100
@@ -84,9 +112,61 @@ export async function runLangGraphProduction(input: LangGraphProductionInput): P
   };
   const phase = (name: ProductionGraphPhase) => async (state: ProductionGraphState) => {
     await active(state);
-    const result = evidence(await input.phases[name](state));
-    await active(state);
-    return { evidence: { [name]: result }, ...(name === 'delivery' ? { completed: true } : {}) };
+    const nodeInputHash = createHash('sha256').update(`${identityHash}\0${name}`).digest('hex');
+    const stage = `langgraph.node.${name}`;
+    const previous = readCurrentContentExecutionCheckpoint<ProductionGraphNodeEvidence>({
+      stage, version: NODE_EVIDENCE_VERSION, inputHash: nodeInputHash,
+    });
+    const attempt = Math.max(0, Number(previous?.attempt) || 0) + 1;
+    const startedAt = new Date().toISOString();
+    const receiptEvidence = () => {
+      const receipts = currentContentProviderReceipts();
+      const amount = (key: 'reservedCny' | 'actualCostCny') => {
+        const values = receipts.map(row => Number(row.metadata[key])).filter(value => Number.isFinite(value) && value >= 0);
+        return values.length ? values.reduce((sum, value) => sum + value, 0) : null;
+      };
+      return {
+        providerReceiptRefs: receipts.map(row => `${row.provider}:${row.requestId}`).sort(),
+        reservedCny: amount('reservedCny'), actualCostCny: amount('actualCostCny'),
+      };
+    };
+    const base = (): ProductionGraphNodeEvidence => ({
+      node: name, nodeVersion: NODE_EVIDENCE_VERSION, graphVersion: input.identity.graphVersion,
+      planVersion: input.identity.planVersion, inputHash: input.identity.inputHash,
+      startedAt, endedAt: null, durationMs: null, status: 'running', attempt,
+      failureCode: null, failureReason: null, outputSha256: null, ...receiptEvidence(),
+    });
+    await recordCurrentContentExecutionCheckpoint({ stage, version: NODE_EVIDENCE_VERSION,
+      inputHash: nodeInputHash, payload: base() });
+    try {
+      const result = evidence(await input.phases[name](state));
+      await active(state);
+      const endedAt = new Date().toISOString();
+      const completed: ProductionGraphNodeEvidence = {
+        ...base(), ...receiptEvidence(), endedAt,
+        durationMs: Math.max(0, Date.parse(endedAt) - Date.parse(startedAt)), status: 'completed',
+        outputSha256: typeof result.metadata?.outputSha256 === 'string' ? result.metadata.outputSha256 : null,
+        providerReceiptRefs: Array.isArray(result.metadata?.providerReceiptRefs)
+          ? [...new Set([...receiptEvidence().providerReceiptRefs, ...result.metadata.providerReceiptRefs as string[]])].sort()
+          : receiptEvidence().providerReceiptRefs,
+        reservedCny: typeof result.metadata?.reservedCny === 'number' ? result.metadata.reservedCny : receiptEvidence().reservedCny,
+        actualCostCny: typeof result.metadata?.actualCostCny === 'number' ? result.metadata.actualCostCny : receiptEvidence().actualCostCny,
+      };
+      await recordCurrentContentExecutionCheckpoint({ stage, version: NODE_EVIDENCE_VERSION,
+        inputHash: nodeInputHash, payload: completed });
+      return { evidence: { [name]: result }, ...(name === 'delivery' ? { completed: true } : {}) };
+    } catch (error) {
+      const endedAt = new Date().toISOString();
+      const reason = String(error instanceof Error ? error.message : error || 'content_graph_node_failed').slice(0, 2000);
+      const explicitCode = error && typeof error === 'object' && typeof (error as {code?:unknown}).code === 'string'
+        ? String((error as {code:string}).code) : reason.split(':', 1)[0] || '';
+      const failureCode = explicitCode.trim().slice(0, 120).replace(/[^a-zA-Z0-9_.-]+/g, '_') || 'content_graph_node_failed';
+      await recordCurrentContentExecutionCheckpoint({ stage, version: NODE_EVIDENCE_VERSION,
+        inputHash: nodeInputHash, payload: { ...base(), ...receiptEvidence(), endedAt,
+          durationMs: Math.max(0, Date.parse(endedAt) - Date.parse(startedAt)), status: 'failed',
+          failureCode, failureReason: reason } satisfies ProductionGraphNodeEvidence });
+      throw error;
+    }
   };
   // withRunTree uses a no-op ALS until LangSmith is initialized. Initialize its
   // public singleton with a real Node ALS so tracing=false reaches core callbacks.

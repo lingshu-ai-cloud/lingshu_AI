@@ -129,7 +129,13 @@ export function createSocialContentTaskBudgetAuthority(input: {
                         .some(key => prior[key] !== operation[key])) fail('existing_operation_changed');
                 quotes.set(intent.operationId, {upperBoundCny: prior.reservedMicros / 1e6,
                     quoteRef: prior.quoteRef, validUntil: '9999-12-31T23:59:59.999Z'});
-            } else quotes.set(intent.operationId, price(intent, await ports.readVerifiedTariff(intent)));
+            } else {
+                try { quotes.set(intent.operationId, price(intent, await ports.readVerifiedTariff(intent))); }
+                catch (error) {
+                    const reason = error instanceof Error ? error.message : String(error);
+                    throw Error(`${reason}:${intent.provider}:${intent.model}:${intent.stage}`);
+                }
+            }
         }
         await ports.assertCurrent(scope);
         const current = await ports.readApprovedPlan(scope);

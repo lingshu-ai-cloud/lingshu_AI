@@ -4,6 +4,7 @@ import { currentDataAuthority, runWithDataAuthority } from '../storage/dataAutho
 import type { DataStore, ListQuery, ListResult } from '../storage/datastore.js';
 import {
   CONTENT_EXECUTION_JOB_COLLECTION,
+  parseContentExecutionCheckpoints,
   readCurrentContentExecutionCheckpoint,
   recordCurrentContentExecutionCheckpoint,
   recordCurrentContentProviderReceipt,
@@ -11,6 +12,8 @@ import {
 } from './context.js';
 import {
   admitContentExecutionJob,
+  bindPristineContentExecutionCheckpoint,
+  refreshUnspentContentExecutionCheckpoint,
   DurableContentExecutionWorker,
   controlContentExecutionJob,
   pauseContentExecutionJobsForRun,
@@ -98,6 +101,24 @@ const env = {
   CONTENT_RECONCILIATION_MAX_ATTEMPTS: '12',
 } as NodeJS.ProcessEnv;
 
+test('frozen 37-shot executor checkpoints fit the durable map envelope', () => {
+  const accepted = parseContentExecutionCheckpoints({
+    'social.executor': {
+      version: '1', inputHash: 'a'.repeat(64),
+      payload: { approvedContext: { frozenPlan: 'x'.repeat(3_000_000) } },
+      updatedAt: '2026-10-11T00:00:00.000Z',
+    },
+  });
+  assert.equal((accepted['social.executor'].payload as any).approvedContext.frozenPlan.length, 3_000_000);
+  assert.deepEqual(parseContentExecutionCheckpoints({
+    'social.executor': {
+      version: '1', inputHash: 'a'.repeat(64),
+      payload: { approvedContext: { frozenPlan: 'x'.repeat(4_300_000) } },
+      updatedAt: '2026-10-11T00:00:00.000Z',
+    },
+  }), {}, 'oversized individual checkpoints remain rejected');
+});
+
 test('retry policy separates balance, rejection, network, system and provider reconciliation', () => {
   assert.equal(classifyContentExecutionFailure(new Error('余额不足'), { attempt: 1, env }).failureClass, 'insufficient_balance');
   assert.equal(classifyContentExecutionFailure(new Error('Qwen Image 422: content rejected'), { attempt: 1, env }).failureClass, 'content_rejected');
@@ -155,6 +176,33 @@ test('executor selection is visible atomically at admission and cannot change on
   const historicReplay = await admitContentExecutionJob({ ...base, runId: 'historic-run', initialCheckpoints: { 'social.executor': checkpoint('langgraph') } });
   assert.deepEqual(historic.checkpoints, {});
   assert.deepEqual(historicReplay.checkpoints, {}, 'historic jobs remain on the legacy executor');
+});
+
+test('historic executor binding is allowed only before any durable execution or provider evidence', async () => {
+  const store = new MemoryStore();
+  const checkpoint = { version: '1', inputHash: 'a'.repeat(64), payload: { executor: 'langgraph', inputHash: 'a'.repeat(64), planVersion: '1' }, updatedAt: '2026-10-11T00:00:00.000Z' };
+  const pristine = await admitContentExecutionJob({ dataStore: store, tenantId: 'tenant-bind', userId: 'user-a', taskId: 'task-bind', runId: 'run-bind', taskType: 'social_content_weekly' });
+  const bound = await bindPristineContentExecutionCheckpoint({ dataStore: store, tenantId: pristine.tenantId, jobId: pristine.id, runId: pristine.runId, checkpointKey: 'social.executor', checkpoint });
+  assert.equal(bound.id, pristine.id);
+  assert.equal(bound.runId, pristine.runId);
+  assert.equal((bound.checkpoints['social.executor'].payload as { executor: string }).executor, 'langgraph');
+  const replay = await bindPristineContentExecutionCheckpoint({ dataStore: store, tenantId: pristine.tenantId, jobId: pristine.id, runId: pristine.runId, checkpointKey: 'social.executor', checkpoint });
+  assert.equal(replay.checkpoints['social.executor'].inputHash, checkpoint.inputHash);
+
+  const started = await admitContentExecutionJob({ dataStore: store, tenantId: 'tenant-bind', userId: 'user-a', taskId: 'task-started', runId: 'run-started', taskType: 'social_content_weekly', initialCheckpoints: { 'runtime.retry': checkpoint } });
+  await assert.rejects(bindPristineContentExecutionCheckpoint({ dataStore: store, tenantId: started.tenantId, jobId: started.id, runId: started.runId, checkpointKey: 'social.executor', checkpoint }), /pristine_binding_not_allowed/);
+});
+
+test('an unspent blocked admission may refresh only its executor binding', async () => {
+  const store = new MemoryStore();
+  const old = { version:'1', inputHash:'a'.repeat(64), payload:{executor:'langgraph'}, updatedAt:new Date().toISOString() };
+  const fresh = { ...old, inputHash:'b'.repeat(64) };
+  const job = await admitContentExecutionJob({dataStore:store,tenantId:'tenant-refresh',userId:'user-a',taskId:'task-a',runId:'run-a',taskType:'social',initialCheckpoints:{'social.executor':old}});
+  await store.update(CONTENT_EXECUTION_JOB_COLLECTION,job.id,{status:'blocked',checkpoints:{...job.checkpoints,'runtime.retry':{...old,inputHash:job.id}}});
+  const refreshed=await refreshUnspentContentExecutionCheckpoint({dataStore:store,tenantId:job.tenantId,jobId:job.id,runId:job.runId,checkpointKey:'social.executor',checkpoint:fresh});
+  assert.equal(refreshed.checkpoints['social.executor'].inputHash,fresh.inputHash);
+  await store.update(CONTENT_EXECUTION_JOB_COLLECTION,job.id,{provider_state:'accepted'});
+  await assert.rejects(refreshUnspentContentExecutionCheckpoint({dataStore:store,tenantId:job.tenantId,jobId:job.id,runId:job.runId,checkpointKey:'social.executor',checkpoint:old}),/refresh_not_allowed/);
 });
 
 test('explicit customer pause replaces a workflow review wait without losing its receipts', async () => {

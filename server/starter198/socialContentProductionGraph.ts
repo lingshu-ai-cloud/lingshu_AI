@@ -23,6 +23,18 @@ function graphAuthority(workflow: NonNullable<Detail['agentWorkflow']>) {
   const plan = structuredClone(workflow.executionPlan) as unknown as Record<string, unknown>;
   const review = structuredClone(workflow.executionPlanReview) as unknown as Record<string, unknown>;
   delete director.version;
+  const replicationJobRef = director.replicationJobRef as Record<string, unknown> | undefined;
+  if (replicationJobRef) {
+    delete replicationJobRef.version;
+    delete replicationJobRef.factorSpecVersion;
+  }
+  // Task status projection increments the task version and re-stamps every
+  // derived factor without changing its frozen value. Ignore that projection
+  // stamp while retaining the factor id, value, source and confidence so a
+  // business edit still invalidates the admitted graph.
+  for (const scene of (director.scenes ?? []) as Array<Record<string, unknown>>) {
+    for (const factor of (scene.replicationFactors ?? []) as Array<Record<string, unknown>>) delete factor.factorSpecVersion;
+  }
   for (const key of ['version', 'directorBriefVersion']) delete plan[key];
   for (const key of ['version', 'executionPlanVersion', 'directorBriefVersion', 'reviewId']) delete review[key];
   const scenes = plan.scenes as Array<Record<string, unknown>>;
@@ -36,11 +48,39 @@ function graphAuthority(workflow: NonNullable<Detail['agentWorkflow']>) {
   return { director, plan, review };
 }
 
+function firstAuthorityDifference(left: unknown, right: unknown, path = 'root'): string | null {
+  if (Object.is(left, right)) return null;
+  if (Array.isArray(left) && Array.isArray(right)) {
+    if (left.length !== right.length) return `${path}.length`;
+    for (let index = 0; index < left.length; index += 1) {
+      const difference = firstAuthorityDifference(left[index], right[index], `${path}[${index}]`);
+      if (difference) return difference;
+    }
+    return null;
+  }
+  if (left && right && typeof left === 'object' && typeof right === 'object') {
+    const leftRecord = left as Record<string, unknown>, rightRecord = right as Record<string, unknown>;
+    const keys = [...new Set([...Object.keys(leftRecord), ...Object.keys(rightRecord)])].sort();
+    for (const key of keys) {
+      if (!Object.hasOwn(leftRecord, key) || !Object.hasOwn(rightRecord, key)) return `${path}.${key}`;
+      const difference = firstAuthorityDifference(leftRecord[key], rightRecord[key], `${path}.${key}`);
+      if (difference) return difference;
+    }
+    return null;
+  }
+  return path;
+}
+
 export function socialProductionGraphInput(detail: Detail, approvedContext?: SocialGraphApprovedContext) {
   const approved = approvedContext ?? detail;
   if (!approved.agentWorkflow) throw new Error('user_input_required:production_execution_plan_missing');
-  if (approvedContext && (!detail.agentWorkflow || socialRequestHash(graphAuthority(detail.agentWorkflow)) !== socialRequestHash(graphAuthority(approved.agentWorkflow))))
-    throw new Error('user_input_required:graph_production_plan_changed');
+  if (approvedContext && !detail.agentWorkflow) throw new Error('user_input_required:graph_production_plan_changed:business_authority_missing');
+  if (approvedContext && detail.agentWorkflow) {
+    const liveAuthority = graphAuthority(detail.agentWorkflow), admittedAuthority = graphAuthority(approved.agentWorkflow);
+    if (socialRequestHash(liveAuthority) !== socialRequestHash(admittedAuthority)) throw new Error(
+      `user_input_required:graph_production_plan_changed:business_authority:${firstAuthorityDifference(liveAuthority, admittedAuthority) || 'hash'}`,
+    );
+  }
   return {
     planVersion: String(approved.agentWorkflow.executionPlan.version),
     inputHash: socialRequestHash({ brief: detail.brief, executionPlan: approved.agentWorkflow.executionPlan,
@@ -115,7 +155,12 @@ async function productionArtifact(repository: Starter198Repository, job: Content
 }
 
 function artifactEvidence(row: StarterRecord) {
-  return { artifactId: socialText(row.artifact_id), contentHash: socialRequestHash(socialJson(row.content)), version: socialText(row.version) };
+  const content = socialJson(row.content);
+  const source = socialObject(socialObject(content)?.productionWorkspaceSource);
+  const outputSha256 = socialText(source?.outputSha256);
+  if (outputSha256 && !/^[a-f0-9]{64}$/.test(outputSha256)) throw new Error('graph_production_artifact_sha_invalid');
+  return { artifactId: socialText(row.artifact_id), contentHash: socialRequestHash(content),
+    version: socialText(row.version), outputSha256: outputSha256 || null };
 }
 
 /** Read the canonical business decision and its completed operation. A graph
@@ -155,11 +200,16 @@ export async function executeSocialProductionGraph(input: { repository: Starter1
   const binding = socialObject(job.checkpoints['social.executor']?.payload);
   const approvedContext = socialObject(binding?.approvedContext) as unknown as SocialGraphApprovedContext | null;
   if (!approvedContext?.agentWorkflow || !approvedContext.version) throw new Error('user_input_required:graph_approved_context_missing');
-  const detail = await readSocialProductionGraphDetail({ repository, tenantId: job.tenantId, taskId: job.taskId }, approvedContext);
+  let detail: Detail | null;
+  try {
+    detail = await readSocialProductionGraphDetail({ repository, tenantId: job.tenantId, taskId: job.taskId }, approvedContext);
+  } catch (error) {
+    throw new Error(`${error instanceof Error ? error.message : String(error)}:initial_detail`);
+  }
   if (!detail) throw new Error('user_input_required:graph_task_missing');
   const current = socialProductionGraphInput(detail, approvedContext);
   if (binding?.inputHash !== current.inputHash || binding?.planVersion !== current.planVersion)
-    throw new Error('user_input_required:graph_production_plan_changed');
+    throw new Error('user_input_required:graph_production_plan_changed:executor_binding');
   const identity = { tenantId: job.tenantId, taskId: job.taskId, runId: job.runId, jobId: job.id,
     ...current, graphVersion: 'content-production.v1' as const };
   const refreshedJob = async () => {
@@ -172,8 +222,13 @@ export async function executeSocialProductionGraph(input: { repository: Starter1
   const resume = job.checkpoints['social.graph_review'] ? await approval() : null;
   const phase = async (graphPhase: 'assets' | 'render' | 'quality') => {
     await assertCurrentContentExecutionActive();
-    const latest = await readSocialProductionGraphDetail({ repository, tenantId: job.tenantId, taskId: job.taskId }, approvedContext);
-    if (!latest || socialProductionGraphInput(latest, approvedContext).inputHash !== current.inputHash) throw new Error('user_input_required:graph_production_plan_changed');
+    let latest: Detail | null;
+    try {
+      latest = await readSocialProductionGraphDetail({ repository, tenantId: job.tenantId, taskId: job.taskId }, approvedContext);
+    } catch (error) {
+      throw new Error(`${error instanceof Error ? error.message : String(error)}:${graphPhase}_detail`);
+    }
+    if (!latest || socialProductionGraphInput(latest, approvedContext).inputHash !== current.inputHash) throw new Error('user_input_required:graph_production_plan_changed:phase_input');
     await runSocialContentAutoProduction({ repository, tenantId: job.tenantId, userId: job.userId,
       taskId: job.taskId, runId: job.runId, graphPhase, runtime: input.runtime,
       assetSupplyAdapters: input.assetSupplyAdapters, assetSupplyRecoveryOnly: input.assetSupplyRecoveryOnly, materialEvidencePorts: input.materialEvidencePorts, graphApprovedContext: approvedContext });
@@ -182,7 +237,8 @@ export async function executeSocialProductionGraph(input: { repository: Starter1
       const evidence = artifactEvidence(artifact);
       await recordCurrentContentExecutionCheckpoint({ stage: 'social.graph_review', version: '1', inputHash: current.inputHash,
         payload: { ...evidence, runId: job.runId } });
-      return { artifactRefs: [evidence.artifactId], inputHash: current.inputHash, metadata: { contentHash: evidence.contentHash } };
+      return { artifactRefs: [evidence.artifactId], inputHash: current.inputHash,
+        metadata: { contentHash: evidence.contentHash, ...(evidence.outputSha256 ? { outputSha256: evidence.outputSha256 } : {}) } };
     }
     const actual = await refreshedJob();
     const checkpoint = actual.checkpoints[graphPhase === 'assets' ? 'social.asset_supply' : 'social.graph_render'];
@@ -195,10 +251,11 @@ export async function executeSocialProductionGraph(input: { repository: Starter1
         const accepted = await approval();
         if (!accepted) throw new Error('user_input_required:graph_delivery_review_required');
         const artifact = await productionArtifact(repository, job);
+        const evidence = artifactEvidence(artifact);
         const task = await readSocialProductionGraphDetail({ repository, tenantId: job.tenantId, taskId: job.taskId }, approvedContext);
         if (!task) throw new Error('graph_task_missing');
         if (socialProductionGraphInput(task, approvedContext).inputHash !== current.inputHash)
-          throw new Error('user_input_required:graph_production_plan_changed');
+          throw new Error('user_input_required:graph_production_plan_changed:delivery_input');
         const packaged = await createSocialDeliveryPackage({ repository, tenantId: job.tenantId, userId: job.userId,
           taskId: job.taskId, idempotencyKey: `graph-delivery:${job.id}:${accepted.contentHash}`,
           backendFilePort: input.runtime?.backendFilePort,
@@ -208,7 +265,8 @@ export async function executeSocialProductionGraph(input: { repository: Starter1
           extra: { artifactId: socialText(artifact.artifact_id), approvalReceipt: accepted.receiptRef, externalPublishPerformed: false } });
         return { artifactRefs: [socialText(artifact.artifact_id), packaged.deliveryPackage.packageId], inputHash: current.inputHash,
           metadata: { artifactId: socialText(artifact.artifact_id), packageId: packaged.deliveryPackage.packageId,
-            approvalReceipt: accepted.receiptRef, externalPublishPerformed: false } };
+            approvalReceipt: accepted.receiptRef, externalPublishPerformed: false,
+            ...(evidence.outputSha256 ? { outputSha256: evidence.outputSha256 } : {}) } };
       } },
     review: { loadApproval: approval, verifyResume: async proposed => {
       const accepted = await approval();

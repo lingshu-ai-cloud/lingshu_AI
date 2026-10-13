@@ -136,3 +136,26 @@ test('five presenter scenes use three hashed mother-segment paid operations',asy
  const changed=structuredClone(f.input);changed.presenterGroups![0]!.durationSeconds+=1;changed.approval.sourceHash=paidProductionApprovalHash(changed);changed.recordHash=paidProductionRecordHash(changed);f.ports.readFrozenProduction=async()=>changed;
  const rejected=await f.planner.plan(scope);assert.deepEqual(rejected.gaps,['presenter_group_contract_invalid']);
 });
+test('whole-track presenter continuation shots inherit frozen mother speech without requiring duplicate lines', async () => {
+    const f = fixture();
+    f.input.shots[0] = { shotId: 'S01', sourceStrategy: 'authorized_digital_presenter', fallbackSourceStrategy: null, sourceRefs: ['presenter-1'], digitalHumanPlan: { presenterAssetIds: ['presenter-1'] } } as any;
+    f.input.scenes[0] = { shotId: 'S01', durationSeconds: 2, spokenText: 'Exact hook', presenterSpeech: 'whole_track' };
+    f.input.shots.push({ shotId: 'S02', sourceStrategy: 'authorized_digital_presenter', fallbackSourceStrategy: null, sourceRefs: ['presenter-1'], digitalHumanPlan: { presenterAssetIds: ['presenter-1'] } } as any);
+    f.input.scenes.push({ shotId: 'S02', durationSeconds: 1, spokenText: '', presenterSpeech: 'whole_track' });
+    const group = { groupId: 'presenter-mother-1', shotIds: ['S01', 'S02'], durationSeconds: 3, spokenText: 'Exact hook ', presenterAssetId: 'presenter-1', contractHash: '' };
+    group.contractHash = presenterGroupContractHash(group);
+    f.input.presenterGroups = [group];
+    f.input.voice = { mode: 'continuous', lines: ['Exact hook'], requiresClone: false, allowFallback: false, requiresAsr: false, requiresAlignment: true, reuseReceiptRef: null };
+    f.ports.resolveBoundRoute = async r => ({ provider: 'actual-provider', model: 'actual-model', accountRef: 'verified-account', routeEvidenceRef: 'bound-route', usageBoundRef: 'bound-usage', maximumAttempts: 1, maximumUnits: { inputTokens: 50000, outputTokens: 1000, ...(r.durationSeconds ? { providerSeconds: r.durationSeconds } : {}), ...(r.frameCount ? { frames: r.frameCount } : {}), ...(r.text ? { characters: [...r.text].length } : {}) } });
+    f.seal();
+    const result = await f.planner.plan(scope);
+    assert.deepEqual(result.gaps, []);
+    assert.equal(result.plan!.paidOperations.filter(operation => operation.stage === 'presenter_video').length, 1);
+    assert.equal(result.requirements.find(operation => operation.stage === 'presenter_video')?.presenterGroupId, group.groupId);
+
+    f.input.presenterGroups[0]!.spokenText = ' ';
+    f.input.scenes[0]!.spokenText = '';
+    f.input.voice.lines = [];
+    f.seal();
+    assert.ok((await f.planner.plan(scope)).gaps.includes('presenter_group_contract_invalid'));
+});

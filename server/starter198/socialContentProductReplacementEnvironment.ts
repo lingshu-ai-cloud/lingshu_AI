@@ -247,7 +247,13 @@ export async function createEnvironmentProductReplacementPorts(input: Input, con
     const expected = String(record.contentSha256 || record.contentHash || '').toLowerCase();
     if (!/^[a-f0-9]{64}$/.test(expected)) throw Error('product_replacement_registered_bytes_missing');
     let bytes: Buffer | undefined;
-    if (key) bytes = (await (context.download || objectStorageDownload)(key))?.buf;
+    if (key) {
+      const mediaRoot = path.resolve(process.env.SOCIAL_CONTENT_MEDIA_ROOT || 'data/media');
+      const localCandidate = record.videoFileId ? path.resolve(mediaRoot, key) : null;
+      if (localCandidate && fs.existsSync(localCandidate)
+        && fs.realpathSync(localCandidate).startsWith(fs.realpathSync(mediaRoot) + path.sep)) bytes = fs.readFileSync(localCandidate);
+      else bytes = (await (context.download || objectStorageDownload)(key))?.buf;
+    }
     else if (typeof record.url === 'string' && /^\/api\/overseas\/starter-198\/social-content\/files\/[A-Za-z0-9_-]{1,180}$/.test(record.url)) {
       const fileId = record.url.slice(record.url.lastIndexOf('/') + 1);
       if (context.readRegisteredFile) bytes = await context.readRegisteredFile({tenantId: input.tenantId, fileId, expectedSha256: expected});
@@ -307,7 +313,18 @@ export async function createEnvironmentProductReplacementPorts(input: Input, con
         return r.tenant_id === input.tenantId && h?.source?.sourceUrl === sourceUrl && h.taskContext?.taskId === input.taskId
           && h.rights?.mayUseOriginalMedia === true && h.rights?.mayAdapt === true && socialRequestHash(h) === r.record_hash;
       });
-      if (matches.length !== 1) throw Error('product_reference_pixels_usage_missing_or_ambiguous');
+      if (!matches.length) throw Error('product_reference_pixels_usage_missing_or_ambiguous');
+      const semanticHashes = new Set(matches.map(row => {
+        const payload = structuredClone(json(row.payload));
+        if (payload?.rights) delete payload.rights.confirmedAt;
+        return socialRequestHash(payload);
+      }));
+      if (semanticHashes.size !== 1) throw Error('product_reference_pixels_usage_missing_or_ambiguous');
+      // Concurrent persistence of the same explicit user grant can create
+      // timestamp-only duplicates. They carry identical authority; select the
+      // newest immutable record deterministically while conflicting grants
+      // remain fail-closed above.
+      matches.sort((left, right) => String(right.created_at || right.created || '').localeCompare(String(left.created_at || left.created || '')) || String(right.id).localeCompare(String(left.id)));
       usageAuthority = {id: matches[0]!.id, hash: matches[0]!.record_hash};
       const bytes = await readBytes(source);
       fs.mkdirSync(input.outputDirectory, {recursive: true, mode: 0o700});
@@ -316,7 +333,7 @@ export async function createEnvironmentProductReplacementPorts(input: Input, con
       fs.writeFileSync(sourceFile, bytes, {mode: 0o600});
       const extracted = await runVisualFfmpeg(['-ss', String(input.spec.referenceStartSeconds || 0), '-i', sourceFile, '-frames:v', '1', '-y', image], false, {timeoutMs: 120000});
       if (!extracted.ok || !fs.existsSync(image)) throw Error('product_reference_actual_frame_extraction_failed');
-      return {reference: imageReference(fs.readFileSync(image), 'source_composition'), usageEvidenceRef: `${matches[0]!.id}:${matches[0]!.record_hash}`};
+      return {reference: imageReference(fs.readFileSync(image), 'source_composition'), usageEvidenceRef: `${usageAuthority.id}:${usageAuthority.hash}`};
     },
     products: async () => {
       await assertCurrent();

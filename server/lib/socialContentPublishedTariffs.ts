@@ -7,6 +7,13 @@ export interface PublishedPricingEvidence {
 }
 export type PublishedAccountTariff=SocialVerifiedAccountTariff&{pricingBasis:'published_undiscounted_ceiling';publicPricingEvidence:PublishedPricingEvidence};
 const sha=(s:string)=>createHash('sha256').update(s).digest('hex');
+/**
+ * Published prices are copied into the tenant's durable tariff catalogue and
+ * used as a conservative ceiling. Production must not depend on reloading the
+ * vendor documentation for every film. Ninety days keeps the catalogue useful
+ * across normal production while still requiring periodic evidence refresh.
+ */
+export const QWEN_PUBLISHED_TARIFF_VALIDITY_MS=90*24*3600000;
 const text=(s:string)=>s.replace(/<[^>]*>/g,'').replace(/&nbsp;|&#160;/g,' ').replace(/&amp;/g,'&').replace(/\s+/g,'').trim();
 const valid=(n:number)=>Number.isFinite(n)&&n>0;
 /** Parse the official model page's JSON data, never execute vendor scripts.
@@ -43,7 +50,7 @@ export function isVerifiedPublishedTariff(t:SocialVerifiedAccountTariff):boolean
  const p=t as PublishedAccountTariff,e=p.publicPricingEvidence;if(!/^qwen3-vl-(?:flash|plus)$|^qwen-vl-max$/.test(p.model)||p.pricingBasis!=='published_undiscounted_ceiling'||p.verifiedAccountPrice!==false||p.currency!=='CNY'||!e||e.schemaVersion!==1||e.basis!==p.pricingBasis||e.provider!==p.provider||e.model!==p.model||e.accountRef!==p.accountRef||e.region!=='cn-beijing'||e.checkedAt!==p.checkedAt||e.validUntil!==p.validUntil||e.sourceUrl!==`https://help.aliyun.com/zh/model-studio/${p.model}`||sha(e.sourceBody)!==e.sourceResponseSha256||!e.providerBinding)return false;
  const b=e.providerBinding,u=new URL(b.baseUrl);if(u.protocol!=='https:'||u.hostname!=='dashscope.aliyuncs.com'||u.pathname.replace(/\/+$/,'')!=='/compatible-mode/v1'||u.username||u.password||u.search||u.hash||! /^[a-f0-9]{64}$/.test(b.credentialSha256))return false;
  const account=`qwen:${sha(JSON.stringify({baseUrl:b.baseUrl.replace(/\/+$/,''),credentialSha256:b.credentialSha256}))}`;if(account!==p.accountRef)return false;
- const parsed=parseOfficialQwenPublishedPrices(e.sourceBody,p.model);if(!parsed||parsed.sourceContentSha256!==e.sourceContentSha256||parsed.inputPriceCnyPerMillion!==e.inputPriceCnyPerMillion||parsed.outputPriceCnyPerMillion!==e.outputPriceCnyPerMillion||p.evidenceRef!==`official-public-tariff:${sha(JSON.stringify(e))}`||Date.parse(e.validUntil)-Date.parse(e.checkedAt)>6*3600000)return false;
+ const parsed=parseOfficialQwenPublishedPrices(e.sourceBody,p.model);if(!parsed||parsed.sourceContentSha256!==e.sourceContentSha256||parsed.inputPriceCnyPerMillion!==e.inputPriceCnyPerMillion||parsed.outputPriceCnyPerMillion!==e.outputPriceCnyPerMillion||p.evidenceRef!==`official-public-tariff:${sha(JSON.stringify(e))}`||Date.parse(e.validUntil)-Date.parse(e.checkedAt)>QWEN_PUBLISHED_TARIFF_VALIDITY_MS)return false;
  if(Object.keys(p.meters).sort().join(',')!=='inputTokens,outputTokens')return false;
  return ['inputTokens','outputTokens'].every(unit=>{const m=p.meters[unit];return m&&m.priceCny===(unit==='inputTokens'?e.inputPriceCnyPerMillion:e.outputPriceCnyPerMillion)&&m.unitsPerPrice===1000000&&m.minimumUnits===0&&m.increment===1;});
  }catch{return false;}
@@ -63,7 +70,7 @@ export function createSocialContentPublishedTariffReader(ports:{
   let source:{url:string;status:number;body:string};try{source=await fetchOfficial(url);}catch{return null;}
   if(source.url!==url||source.status!==200)return null;
   const extracted=parseOfficialQwenPublishedPrices(source.body,intent.model);if(!extracted)return null;
-  const checkedAt=(ports.now?.()||new Date()).toISOString(),validUntil=new Date(Date.parse(checkedAt)+6*3600000).toISOString();
+  const checkedAt=(ports.now?.()||new Date()).toISOString(),validUntil=new Date(Date.parse(checkedAt)+QWEN_PUBLISHED_TARIFF_VALIDITY_MS).toISOString();
   const evidence:PublishedPricingEvidence={schemaVersion:1,basis:'published_undiscounted_ceiling',provider:'qwen',model:intent.model,region:'cn-beijing',accountRef,sourceUrl:url,sourceBody:source.body,providerBinding:{baseUrl:binding.baseUrl,credentialSha256:binding.credentialSha256},sourceResponseSha256:sha(source.body),...extracted,checkedAt,validUntil};
   return{provider:intent.provider,model:intent.model,accountRef,stage:intent.stage,currency:'CNY',verifiedAccountPrice:false,pricingBasis:'published_undiscounted_ceiling',publicPricingEvidence:evidence,evidenceRef:`official-public-tariff:${sha(JSON.stringify(evidence))}`,checkedAt,validUntil,meters:{inputTokens:{priceCny:extracted.inputPriceCnyPerMillion,unitsPerPrice:1000000,minimumUnits:0,increment:1},outputTokens:{priceCny:extracted.outputPriceCnyPerMillion,unitsPerPrice:1000000,minimumUnits:0,increment:1}}};
  }};

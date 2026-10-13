@@ -159,6 +159,7 @@ export function createSocialContentPaidOperationPlanner(ports: PaidOperationPlan
                     ||presenterIds.some(ids=>ids.length!==1||ids[0]!==group.presenterAssetId)
                     ||Math.abs(scenes.reduce((sum,scene)=>sum+(scene?.durationSeconds||0),0)-group.durationSeconds)>1e-9
                     ||scenes.map(scene=>scene?.spokenText||'').join(' ')!==group.spokenText
+                    ||!group.spokenText.trim()
                     ||indexes[0]!<=previousGroupLastIndex||(indexes[0]===previousGroupLastIndex+1&&group.presenterAssetId===previousGroupPresenter)
                     ||group.shotIds.some(id=>presenterGroupByShot.has(id))){
                     return {plan:null,requirements,gaps:['presenter_group_contract_invalid']};
@@ -245,7 +246,11 @@ export function createSocialContentPaidOperationPlanner(ports: PaidOperationPlan
                             add(`${key}:${stage}`, stage, shot.shotId, null, stage === 'video' || stage === 'video_qa' ? scene.durationSeconds : null, null, stage === 'first_frame_qa' ? bounds.firstFrameMaximumFrames : stage === 'video_qa' ? bounds.videoMaximumFrames : null);
                     }
                     else if (route === 'authorized_digital_presenter') {
-                        if (!scene.spokenText.trim() || !scene.presenterSpeech)
+                        // A whole-track presenter group owns one continuous speech
+                        // request. Visual continuation shots may intentionally have
+                        // no independent line; the frozen group text was validated
+                        // above and is what the provider receives.
+                        if ((!presenterGroupByShot.has(shot.shotId) && !scene.spokenText.trim()) || !scene.presenterSpeech)
                             gap('presenter_speech_route_missing');
                         if (!presenterGroupByShot.has(shot.shotId)) add(`${key}:presenter`, 'presenter_video', shot.shotId, null, scene.durationSeconds, scene.spokenText, null);
                         if (scene.presenterSpeech === 'reused' && (!text(scene.presenterSpeechReceiptRef) || !await local(make(`${key}:speech-reuse`, 'presenter_audio_reuse', shot.shotId, scene.presenterSpeechReceiptRef || null, scene.durationSeconds, scene.spokenText, null), ['existing_audio'])))
