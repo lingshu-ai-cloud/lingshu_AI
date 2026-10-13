@@ -11,11 +11,6 @@
   <block wx:else>
     <view wx:if="{{!selected}}">
       <view class="header">
-        <view>
-          <view class="eyebrow">运营版</view>
-          <view class="page-title">我的待拍</view>
-          <view class="muted">{{userName}}</view>
-        </view>
         <view class="header-action" bindtap="signOut">退出</view>
       </view>
 

@@ -8,7 +8,7 @@
 .primary, .secondary { border-radius: 20rpx; font-weight: 650; }
 .primary { margin-top: 26rpx; background: #3468f5; color: #fff; }
 .secondary { background: #fff; color: #315fd7; border: 1rpx solid #cfdaef; }
-.header { display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 26rpx; }
+.header { display: flex; justify-content: flex-end; margin-bottom: 16rpx; }
 .header-action { padding: 14rpx 20rpx; color: #61708b; background: #e9eef7; border-radius: 24rpx; font-size: 25rpx; }
 .summary { display: flex; align-items: center; padding: 28rpx 32rpx; margin-bottom: 34rpx; }
 .summary > view:not(.summary-divider) { flex: 1; display: flex; align-items: baseline; gap: 14rpx; }

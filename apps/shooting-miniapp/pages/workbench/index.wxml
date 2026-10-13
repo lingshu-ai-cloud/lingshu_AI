@@ -14,19 +14,12 @@
       <view class="section-head agent-schedule-head"><view><view class="section-title">Agent 排期</view><view class="muted">当前安排 · 随工作台实时更新</view></view></view>
       <view class="agent-schedule panel">
         <view wx:for="{{agentScheduleGroups}}" wx:for-item="group" wx:key="role" class="schedule-group">
-          <view class="schedule-group-heading"><view class="agent-avatar">枢</view><text class="strong">{{group.label}}</text><text class="muted schedule-group-count">{{group.items.length ? group.items.length + ' 项安排' : group.unavailable ? '未同步' : '空闲'}}</text></view>
-          <view wx:for="{{group.items}}" wx:key="id" class="schedule-assignment" data-id="{{item.id}}" bindtap="openAgentAssignment">
-            <view class="schedule-dot {{item.blockedLabel ? 'schedule-dot-blocked' : ''}}"></view>
-            <view class="schedule-time">{{item.timeLabel}}<text wx:if="{{item.dueLabel}}"> · {{item.dueLabel}}</text></view>
-            <view class="schedule-title-row"><text class="strong">{{item.title}}</text><text class="agent-status">{{item.statusLabel}}</text></view>
-            <view class="schedule-node">当前节点 · {{item.stageLabel}}</view>
-            <view class="muted">负责 · {{item.ownerLabel}}</view>
-            <view wx:if="{{item.blockedLabel}}" class="schedule-blocked">阻塞 · {{item.blockedLabel}}</view>
-            <view wx:if="{{item.lastEventLabel}}" class="muted">最近进展 · {{item.lastEventLabel}}</view>
-            <view class="schedule-next">下一步 · {{item.nextLabel}}</view>
-            <view class="schedule-footer"><text class="muted">{{item.observedLabel}}</text><text class="link">{{item.needsIntervention ? '需要你处理 ›' : '查看进展 ›'}}</text></view>
+          <view class="schedule-group-heading" data-role="{{group.role}}" bindtap="toggleAgentGroup"><view class="agent-avatar">枢</view><text class="strong">{{group.label}}</text><text class="muted schedule-group-count">{{group.items.length ? group.items.length + ' 项安排' : group.unavailable ? '未同步' : '空闲'}}</text><text class="schedule-chevron">{{expandedAgentRole === group.role ? '⌃' : '⌄'}}</text></view>
+          <view wx:if="{{expandedAgentRole === group.role}}" wx:for="{{group.items}}" wx:key="id" class="schedule-assignment" data-id="{{item.id}}" bindtap="openAgentAssignment">
+            <view class="schedule-dot"></view>
+            <view class="schedule-title-row"><text class="strong">{{item.title}}</text><text class="link">›</text></view>
           </view>
-          <view wx:if="{{!group.items.length}}" class="schedule-idle muted">{{group.unavailable ? '排期未成功同步，请刷新重试' : '当前没有安排任务'}}</view>
+          <view wx:if="{{expandedAgentRole === group.role && !group.items.length}}" class="schedule-idle muted">{{group.unavailable ? '排期未成功同步，请刷新重试' : '当前没有安排任务'}}</view>
         </view>
         <view wx:if="{{!agentScheduleGroups.length && !loading}}" class="empty">{{error ? 'Agent 排期未成功同步，请刷新重试' : '当前没有 Agent 排期'}}</view>
       </view>
