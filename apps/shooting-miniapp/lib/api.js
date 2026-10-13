@@ -100,6 +100,7 @@ module.exports = {
   },
   createTask: data => request('studio/shooting-tasks', 'POST', data),
   tasks: () => request('studio/shooting-tasks'),
+  studioProject: id => request('studio/projects/' + encodeURIComponent(id)),
   attach: (id, materialId) => request('studio/shooting-tasks/' + encodeURIComponent(id) + '/uploads', 'POST', { uploadedMaterialIds: [materialId] })
 }
 

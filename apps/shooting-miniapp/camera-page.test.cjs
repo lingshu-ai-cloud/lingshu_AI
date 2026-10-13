@@ -58,6 +58,12 @@ test('camera uses one 9:16 capture stage for camera, guidance and reusable FB/TK
   assert.match(cameraStyles, /\.capture-stage[^}]*height:\s*177\.7778vw/)
   assert.match(markup, /requirement-card/)
   assert.match(markup, /requirement-recording/)
+  const pendingRequirementStyle = cameraStyles.match(/\.requirement-text\s*\{([^}]*)\}/)[1]
+  const recordingRequirementStyle = cameraStyles.match(/\.requirement-recording \.requirement-text\s*\{([^}]*)\}/)[1]
+  assert.doesNotMatch(pendingRequirementStyle, /max-height|overflow:\s*hidden/)
+  assert.match(pendingRequirementStyle, /white-space:\s*normal/)
+  assert.match(recordingRequirementStyle, /max-height:\s*60rpx/)
+  assert.match(recordingRequirementStyle, /overflow:\s*hidden/)
   assert.match(markup, /platform-safe-frame/)
   assert.match(frame, /共同内容安全框/)
   assert.match(frame, /交互风险/)

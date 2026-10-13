@@ -1,10 +1,10 @@
 const api = require('../../../lib/api')
 const { shootingTaskPresentation } = require('../../../lib/shootingWorkflow')
 const { materialSourceCategoryOf, materialThemeTagsOf, MATERIAL_SOURCE_LABELS, MATERIAL_THEME_LABELS } = require('../../../lib/materialTaxonomy')
-const { groupShootingTasks } = require('../../../lib/shootingList')
+const { groupShootingTasks, referencePreview } = require('../../../lib/shootingList')
 
 Page({
-  data: { loggedIn: false, loading: false, email: '', password: '', userName: '', tasks: [], taskGroups: [], pendingCount: 0, completedCount: 0, selected: null, busy: false, progress: 0, progressStep: '', message: '', uploadedMaterialSummary: '', pendingMaterialId: '' },
+  data: { loggedIn: false, loading: false, referenceLoading: false, referencePreview: null, email: '', password: '', userName: '', tasks: [], taskGroups: [], pendingCount: 0, completedCount: 0, selected: null, busy: false, progress: 0, progressStep: '', message: '', uploadedMaterialSummary: '', pendingMaterialId: '' },
   onLoad(options) {
     this.initialTaskId = options && options.taskId
     this.initialAutoShoot = !!(options && (options.autoShoot === true || options.autoShoot === '1'))
@@ -52,12 +52,32 @@ Page({
     const displayTasks = tasks.map(task => this.displayTask(task))
     return { tasks: displayTasks, taskGroups: groupShootingTasks(displayTasks, new Date()), pendingCount: displayTasks.filter(task => !task.done).length, completedCount: displayTasks.filter(task => task.done).length }
   },
-  selectTask(e) {
+  async selectTask(e) {
     if (!this.canLeaveTask()) return
     const task = this.data.tasks.find(item => String(item.id) === String(e.currentTarget.dataset.id))
-    if (task) this.setData({ selected: task, message: '', uploadedMaterialSummary: '', pendingMaterialId: '' })
+    if (!task) return
+    this.setData({ selected: task, referencePreview: null, message: '', uploadedMaterialSummary: '', pendingMaterialId: '' })
+    await this.loadReferencePreview(task)
   },
-  back() { if (this.canLeaveTask()) this.setData({ selected: null, message: '', uploadedMaterialSummary: '', pendingMaterialId: '' }) },
+  async loadReferencePreview(task) {
+    if (!task.sourceProjectId || this.data.referenceLoading) return
+    this.setData({ referenceLoading: true })
+    try {
+      const project = await api.studioProject(task.sourceProjectId)
+      if (!this.data.selected || String(this.data.selected.id) !== String(task.id)) return
+      const preview = referencePreview(task, project)
+      this.setData({ referencePreview: preview ? { ...preview, url: api.assetUrl(preview.url), poster: api.assetUrl(preview.poster) } : null })
+    } catch (_) { /* Reference is optional; task execution remains available. */ }
+    finally { this.setData({ referenceLoading: false }) }
+  },
+  referenceTimeUpdate(e) {
+    const preview = this.data.referencePreview
+    if (!preview || preview.end === null || Number(e.detail.currentTime) < preview.end) return
+    const player = wx.createVideoContext('reference-preview', this)
+    player.pause()
+    player.seek(preview.start || 0)
+  },
+  back() { if (this.canLeaveTask()) this.setData({ selected: null, referencePreview: null, message: '', uploadedMaterialSummary: '', pendingMaterialId: '' }) },
   async refresh() {
     this.setData({ loading: true })
     try {
@@ -69,6 +89,7 @@ Page({
         this.initialTaskId = ''
         this.initialAutoShoot = false
         this.setData({ selected })
+        if (selected) await this.loadReferencePreview(selected)
         if (selected && autoShoot) this.shoot()
         else if (!selected) this.setData({ message: '没有找到对应的待拍任务，请刷新后重试' })
       } else if (this.data.selected) {

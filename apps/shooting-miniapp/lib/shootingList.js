@@ -22,4 +22,30 @@ function groupShootingTasks(tasks, nowValue) {
   })
   return groups
 }
-module.exports = { groupShootingTasks, taskDate }
+function plain(value) { return value && typeof value === 'object' && !Array.isArray(value) ? value : {} }
+function finite(value) { const number = Number(value); return Number.isFinite(number) && number >= 0 ? number : null }
+function referencePreview(task, project) {
+  const spec = plain(project && project.spec)
+  const slotId = String(task && (task.sourceStoryboardSlotId || task.sourceShotId) || '')
+  if (!slotId || !task || String(project && project.id || '') !== String(task.sourceProjectId || '')) return null
+  const slots = Array.isArray(spec.shootingSlots) ? spec.shootingSlots : []
+  const slot = slots.find(item => item && (String(item.slotId || '') === slotId || String(item.id || '') === String(task.sourceShotId || '')))
+  if (!slot) return null
+  const assignments = plain(spec.storyboardAssignments)
+  const materialId = String(assignments[String(slot.slotId || '')] || assignments[String(slot.id || '')] || '')
+  const materials = Array.isArray(spec.materialSnapshots) ? spec.materialSnapshots : []
+  const material = materials.find(item => item && String(item.id || '') === materialId)
+  if (!material || !materialId || String(material.type || '') !== 'video' || !String(material.url || '')) return null
+  const edit = plain(plain(spec.clipEdits)[String(slot.slotId || slotId) + ':' + materialId])
+  const start = finite(edit.trimStart)
+  const end = finite(edit.trimEnd)
+  return {
+    materialId,
+    url: String(material.url),
+    poster: String(material.poster || ''),
+    start: start === null ? 0 : start,
+    end: end !== null && end > (start === null ? 0 : start) ? end : null,
+    rangeText: end !== null && end > (start === null ? 0 : start) ? (start === null ? 0 : start).toFixed(1) + '–' + end.toFixed(1) + ' 秒' : '完整参考素材',
+  }
+}
+module.exports = { groupShootingTasks, taskDate, referencePreview }

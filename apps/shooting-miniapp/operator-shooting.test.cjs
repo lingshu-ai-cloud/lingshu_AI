@@ -45,6 +45,44 @@ test('my shooting groups tasks chronologically and keeps completed cards in plac
   assert.equal(groups[1].tasks[0].id, 'late')
 })
 
+test('reference preview requires exact project, shot assignment and video material', () => {
+  const task = { sourceProjectId: 'project', sourceStoryboardSlotId: 'slot-1', sourceShotId: 'shot-1' }
+  const project = { id: 'project', spec: {
+    shootingSlots: [{ id: 'shot-1', slotId: 'slot-1' }],
+    storyboardAssignments: { 'slot-1': 'video-1' },
+    materialSnapshots: [{ id: 'video-1', type: 'video', url: '/video.mp4', poster: '/poster.jpg' }],
+    clipEdits: { 'slot-1:video-1': { trimStart: 1.25, trimEnd: 4.5 } },
+  } }
+  assert.deepEqual(JSON.parse(JSON.stringify(list.referencePreview(task, project))), {
+    materialId: 'video-1', url: '/video.mp4', poster: '/poster.jpg', start: 1.25, end: 4.5, rangeText: '1.3–4.5 秒',
+  })
+  assert.equal(list.referencePreview(task, { ...project, id: 'other' }), null)
+  assert.equal(list.referencePreview(task, { ...project, spec: { ...project.spec, storyboardAssignments: { 'slot-1': 'missing' } } }), null)
+})
+
+test('shooting detail resolves signed reference assets from the project projection', async () => {
+  const task = { id: 'task', sourceProjectId: 'project', sourceStoryboardSlotId: 'slot-1', sourceShotId: 'shot-1', uploadedMaterialIds: [] }
+  const api = {
+    studioProject: async () => ({ id: 'project', spec: { shootingSlots: [{ id: 'shot-1', slotId: 'slot-1' }], storyboardAssignments: { 'slot-1': 'video' }, materialSnapshots: [{ id: 'video', type: 'video', url: '/media/video.mp4', poster: '/media/poster.jpg' }], clipEdits: {} } }),
+    assetUrl: value => 'https://local.test' + value,
+  }
+  const page = pageWith(api)
+  page.data.tasks = [task]
+  await page.selectTask({ currentTarget: { dataset: { id: 'task' } } })
+  assert.equal(page.data.referencePreview.url, 'https://local.test/media/video.mp4')
+  assert.equal(page.data.referencePreview.poster, 'https://local.test/media/poster.jpg')
+})
+
+test('reference playback stops at the assigned trim end and returns to its start', () => {
+  const calls = []
+  const page = pageWith({}, { createVideoContext() { return { pause() { calls.push('pause') }, seek(value) { calls.push('seek:' + value) } } } })
+  page.data.referencePreview = { start: 1.25, end: 4.5 }
+  page.referenceTimeUpdate({ detail: { currentTime: 4.49 } })
+  assert.equal(calls.length, 0)
+  page.referenceTimeUpdate({ detail: { currentTime: 4.5 } })
+  assert.equal(calls.join(','), 'pause,seek:1.25')
+})
+
 test('operator shooting presents pending totals and never exposes task creation', () => {
   const page = pageWith({})
   const state = page.present([

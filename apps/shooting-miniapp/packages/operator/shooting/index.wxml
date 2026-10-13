@@ -56,14 +56,28 @@
           <view><text class="fact-label">声音</text><text>{{selected.soundText}}</text></view>
         </view>
       </view>
-      <view class="surface detail-block">
-        <view class="section-title">画面与动作</view>
-        <view class="detail-text">{{selected.shotBrief}}</view>
-      </view>
-      <view class="surface detail-block">
-        <view class="section-title">声音与口播</view>
-        <view class="detail-text">{{selected.soundInstructions}}</view>
-        <view wx:if="{{selected.expectedNarration}}" class="narration">{{selected.expectedNarration}}</view>
+      <view class="detail-columns">
+        <view class="surface detail-guidance">
+          <view class="section-title">画面与动作</view>
+          <view class="detail-text">{{selected.shotBrief}}</view>
+          <view class="guidance-divider"></view>
+          <view class="section-title">声音与口播</view>
+          <view class="detail-text">{{selected.soundInstructions}}</view>
+          <view wx:if="{{selected.expectedNarration}}" class="narration">{{selected.expectedNarration}}</view>
+        </view>
+        <view class="surface reference-panel">
+          <view class="section-title">对标素材再现</view>
+          <block wx:if="{{referencePreview}}">
+            <video id="reference-preview" class="reference-video" src="{{referencePreview.url}}" poster="{{referencePreview.poster}}" initial-time="{{referencePreview.start}}" controls object-fit="cover" show-center-play-btn bindtimeupdate="referenceTimeUpdate"></video>
+            <view class="reference-range">参考区间 {{referencePreview.rangeText}}</view>
+            <view class="muted">按左侧要求再现镜头语言，不复制原素材中的品牌或产品。</view>
+          </block>
+          <view wx:elif="{{referenceLoading}}" class="reference-empty">正在读取对标素材…</view>
+          <view wx:else class="reference-empty">
+            <view class="reference-empty-title">暂无对标素材</view>
+            <view class="muted">该分镜尚未绑定可播放的参考片段</view>
+          </view>
+        </view>
       </view>
       <view wx:if="{{selected.done}}" class="surface uploads">
         <view class="section-title">已上传素材</view>
