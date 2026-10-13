@@ -128,14 +128,11 @@ export function assistantDecisionExecutionFeedback(
 
 function dispatchDeepLink(link?: AssistantDecisionDeepLink): void {
   if (!link || typeof window === 'undefined') return;
-  const opensEnterprisePresenters = link.page === 'enterprise'
-    && link.businessRef?.enterpriseView === 'presenters';
-  if (opensEnterprisePresenters) {
+  const opensPresenterOnboarding = link.page === 'digitalEmployees'
+    && link.businessRef?.taskKey === 'presenter_setup_required';
+  if (opensPresenterOnboarding) {
     try {
-      window.localStorage.setItem('lingshu:enterprise:initial-view', 'presenters');
-      if (link.businessRef?.taskKey === 'presenter_setup_required' && link.businessRef.entityId) {
-        window.localStorage.setItem('lingshu:enterprise:presenter-focus', String(link.businessRef.entityId));
-      }
+      window.sessionStorage.setItem('lingshu:open-digital-employee-guide', 'presenter');
     } catch {
       /* The live event below still handles browsers with storage disabled. */
     }
@@ -146,17 +143,13 @@ function dispatchDeepLink(link?: AssistantDecisionDeepLink): void {
     ...(link.taskId ? { workflowTaskId: link.taskId } : {}),
   };
   window.dispatchEvent(new CustomEvent('lingshu:navigate', { detail }));
-  if (opensEnterprisePresenters) {
-    const revealPresenters = () => {
-      window.dispatchEvent(new CustomEvent('lingshu:enterprise-view', { detail: { view: 'presenters' } }));
-      if (link.businessRef?.taskKey === 'presenter_setup_required' && link.businessRef.entityId) {
-        window.dispatchEvent(new CustomEvent('lingshu:enterprise-presenter-focus', {
-          detail: { presenterId: String(link.businessRef.entityId) },
-        }));
-      }
-    };
-    revealPresenters();
-    window.requestAnimationFrame?.(revealPresenters);
+  if (opensPresenterOnboarding) {
+    const openGuide = () => window.dispatchEvent(new CustomEvent(
+      'lingshu:open-digital-employee-guide',
+      { detail: { step: 'presenter' } },
+    ));
+    openGuide();
+    window.requestAnimationFrame?.(openGuide);
   }
 }
 

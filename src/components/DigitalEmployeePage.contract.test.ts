@@ -638,11 +638,11 @@ assert.doesNotMatch(enterpriseFactsRecoverySource, /digitalEmployeeApi\.(?:saveP
 assert.match(mutationActionSource, /catch \(actionError\)[\s\S]{0,180}recoverEnterpriseFactsChanged\(actionError, actionGoal\)[\s\S]{0,80}return null/, 'mutations must stop after handled fact recovery instead of replaying the original action');
 assert.match(confirmWeeklyPlanSource, /catch \(actionError\)[\s\S]{0,180}recoverEnterpriseFactsChanged\(actionError, goal\)[\s\S]{0,40}return/, 'plan confirmation must stop after rebuilding and must not auto-start the replacement plan');
 assert.doesNotMatch(pageSource, /经营包未保存，请检查页面提示后重试|未能启动，请检查账号、资料和授权范围后重试/, 'a handled rebuild must not be replaced by the legacy red save or launch blocker');
-assert.match(pageSource, /OnboardingGuideFrame[\s\S]{0,180}step=\{4\}[\s\S]{0,180}title="选择出镜人物和声音（可选）"[\s\S]{0,600}<EnterprisePresenters initialConfiguration/, 'presenter configuration must be the fourth guided step');
-assert.match(pageSource, /applicationGuideSteps[\s\S]{0,120}企业与品牌[\s\S]{0,120}产品表[\s\S]{0,120}社媒经营阶段[\s\S]{0,120}人物与声音/, 'Ant Steps must expose the four guided steps in their required order');
+assert.match(pageSource, /OnboardingGuideFrame[\s\S]{0,180}step=\{4\}[\s\S]{0,180}title="完成数字人接入（可选）"[\s\S]{0,600}<EnterprisePresenters initialConfiguration/, 'the unified HeyGen and Ark setup must be the fourth guided step');
+assert.match(pageSource, /applicationGuideSteps[\s\S]{0,120}企业与品牌[\s\S]{0,120}产品表[\s\S]{0,120}社媒经营阶段[\s\S]{0,120}数字人接入/, 'Ant Steps must expose the four guided steps in their required order');
 assert.match(onboardingGuideFrameSource, /<LsFlowDialog[\s\S]{0,600}steps=\{applicationGuideSteps\.map/, 'the beginner guide must use the shared flow dialog and Ant Steps contract');
 assert.match(onboardingGuideFrameSource, /footer=\{\[[\s\S]{0,900}<LsBrandAction/, 'the guide must keep a single branded primary action in the fixed modal footer');
-assert.match(onboardingGuideFrameSource, /function OnboardingStepVisual[\s\S]{0,1200}企业与品牌关系图[\s\S]{0,300}产品资料入库流程图[\s\S]{0,300}社媒经营阶段选择图[\s\S]{0,300}人物与声音配置图/, 'every guided step must provide a step-specific, non-fabricated visual diagram');
+assert.match(onboardingGuideFrameSource, /function OnboardingStepVisual[\s\S]{0,1200}企业与品牌关系图[\s\S]{0,300}产品资料入库流程图[\s\S]{0,300}社媒经营阶段选择图[\s\S]{0,300}数字人统一接入图/, 'every guided step must provide a step-specific, non-fabricated visual diagram');
 assert.doesNotMatch(onboardingGuideFrameSource, /<aside\b|#7C3AED|values:\s*applicationGuideSteps|title=\{null\}/, 'the guide must not simulate an app sidebar or use fabricated chart progress');
 assert.match(pageSource, /applicationGuideOpen && \([\s\S]{0,700}restartFromBeginning[\s\S]{0,300}dismissible/, 'configured users must reopen the shared guide as a dismissible flow dialog');
 assert.doesNotMatch(pageSource, /<Drawer\b/, 'the application guide must not retain the legacy drawer container');

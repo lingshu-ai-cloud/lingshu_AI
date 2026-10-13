@@ -721,7 +721,7 @@ const applicationGuideSteps = [
   { index: 1, label: "企业与品牌" },
   { index: 2, label: "产品表" },
   { index: 3, label: "社媒经营阶段" },
-  { index: 4, label: "人物与声音" },
+  { index: 4, label: "数字人接入" },
 ] as const;
 
 function OnboardingStepVisual({ step }: { step: 1 | 2 | 3 | 4 }) {
@@ -729,7 +729,7 @@ function OnboardingStepVisual({ step }: { step: 1 | 2 | 3 | 4 }) {
     1: { icon: Settings2, label: "企业与品牌关系图", nodes: ["企业主体", "品牌名称"] },
     2: { icon: FileSpreadsheet, label: "产品资料入库流程图", nodes: ["产品表", "企业知识库"] },
     3: { icon: TrendingUp, label: "社媒经营阶段选择图", nodes: ["起步验证", "增长进阶", "品牌增长"] },
-    4: { icon: Users, label: "人物与声音配置图", nodes: ["出镜人物", "声音资产"] },
+    4: { icon: Users, label: "数字人统一接入图", nodes: ["HeyGen 口播", "方舟人物认证"] },
   } as const;
   const visual = visuals[step];
   const Icon = visual.icon;
@@ -820,6 +820,7 @@ function OnboardingPanel({
   mode = "first",
   activeRun = false,
   restartFromBeginning = false,
+  initialStep = "start",
   dismissible = false,
   allowInitialPlan = true,
   onClose,
@@ -833,6 +834,7 @@ function OnboardingPanel({
   mode?: "first" | "rules";
   activeRun?: boolean;
   restartFromBeginning?: boolean;
+  initialStep?: "start" | "presenter";
   dismissible?: boolean;
   allowInitialPlan?: boolean;
   onClose?: () => void;
@@ -873,8 +875,8 @@ function OnboardingPanel({
   const [profileLoading, setProfileLoading] = useState(mode === "first");
   const [profileSaving, setProfileSaving] = useState(false);
   const [profileError, setProfileError] = useState("");
-  const [profileConfirmed, setProfileConfirmed] = useState(mode !== "first");
-  const [productConfirmed, setProductConfirmed] = useState(mode !== "first");
+  const [profileConfirmed, setProfileConfirmed] = useState(mode !== "first" || initialStep === "presenter");
+  const [productConfirmed, setProductConfirmed] = useState(mode !== "first" || initialStep === "presenter");
   const [brandName, setBrandName] = useState("");
   const [knowledgeProducts, setKnowledgeProducts] = useState<Array<Record<string, any>>>([]);
   const [productsLoading, setProductsLoading] = useState(mode === "first");
@@ -884,7 +886,7 @@ function OnboardingPanel({
   const [productImporting, setProductImporting] = useState(false);
   const [productImportMessage, setProductImportMessage] = useState("");
   const [contentStage, setContentStage] = useState<SocialContentStageId>();
-  const [stageConfirmed, setStageConfirmed] = useState(mode !== "first");
+  const [stageConfirmed, setStageConfirmed] = useState(mode !== "first" || initialStep === "presenter");
   const [stageSaving, setStageSaving] = useState(false);
   const [stageError, setStageError] = useState("");
   const [recommendedPlanOpen, setRecommendedPlanOpen] = useState(false);
@@ -926,6 +928,11 @@ function OnboardingPanel({
     return next;
   }, [knowledgeProducts.length, profileConfirmed, readiness]);
   useEffect(() => setForm(completeConfig(initial)), [initial]);
+  useEffect(() => {
+    if (mode === "first" && initialStep === "presenter") {
+      setProfileConfirmed(true); setProductConfirmed(true); setStageConfirmed(true);
+    }
+  }, [initialStep, mode]);
   useEffect(() => {
     let active = true;
     void socialDiscoveryApi.getScope().then(({ scope }) => {
@@ -1458,19 +1465,19 @@ function OnboardingPanel({
   if (mode === "first" && profileConfirmed && productConfirmed && stageConfirmed) return (
     <OnboardingGuideFrame
       step={4}
-      title="选择出镜人物和声音（可选）"
+      title="完成数字人接入（可选）"
       busy={stageSaving || busy}
       dismissible={dismissible}
       onClose={onClose}
       onBack={() => setStageConfirmed(false)}
       onSkip={() => void completeMinimalOnboarding()}
-      skipLabel="稍后设置人物与声音"
+      skipLabel="稍后设置数字人"
       primaryLabel={allowInitialPlan ? "生成推荐计划" : "完成引导并保存"}
       primaryId={allowInitialPlan ? recommendedPlanTriggerId : undefined}
       onPrimary={() => void openRecommendedPlan()}
     >
-      <section className="rounded-lg border border-slate-200 bg-white p-5" aria-label="初始配置人物授权与声音">
-        <EnterprisePresenters initialConfiguration onInitialSelection={() => { if (allowInitialPlan) void openRecommendedPlan(); }} />
+      <section className="rounded-lg border border-slate-200 bg-white p-5" aria-label="数字人接入配置">
+        <EnterprisePresenters initialConfiguration />
         {stageError && <p role="alert" className="mt-4 rounded-lg bg-red-50 px-4 py-3 text-xs font-semibold text-red-700">{stageError}</p>}
       </section>
     </OnboardingGuideFrame>
@@ -3796,6 +3803,7 @@ export default function DigitalEmployeePage({
 
   const [navigationNotice, setNavigationNotice] = useState("");
   const [applicationGuideOpen, setApplicationGuideOpen] = useState(false);
+  const [applicationGuideEntry, setApplicationGuideEntry] = useState<"start" | "presenter">("start");
   const [onboardingWelcomeOpen, setOnboardingWelcomeOpen] = useState(false);
   const [weeklyPlanOpen, setWeeklyPlanOpen] = useState(false);
   const [weeklyPlanDetailsOpen, setWeeklyPlanDetailsOpen] = useState(false);
@@ -3811,12 +3819,18 @@ export default function DigitalEmployeePage({
   const handledWeeklyPlanNavigation = useRef<number | null>(null);
 
   useEffect(() => {
-    const openGuide = () => setApplicationGuideOpen(true);
+    const openGuide = (event?: Event) => {
+      const requested = (event as CustomEvent<{ step?: string }> | undefined)?.detail?.step === 'presenter' ? 'presenter' : 'start';
+      setApplicationGuideEntry(requested);
+      setApplicationGuideOpen(true);
+    };
     window.addEventListener('lingshu:open-digital-employee-guide', openGuide);
     try {
-      if (sessionStorage.getItem('lingshu:open-digital-employee-guide') === 'true') {
+      const requested = sessionStorage.getItem('lingshu:open-digital-employee-guide');
+      if (requested === 'true' || requested === 'presenter') {
         sessionStorage.removeItem('lingshu:open-digital-employee-guide');
-        openGuide();
+        setApplicationGuideEntry(requested === 'presenter' ? 'presenter' : 'start');
+        setApplicationGuideOpen(true);
       }
     } catch { /* storage can be unavailable */ }
     return () => window.removeEventListener('lingshu:open-digital-employee-guide', openGuide);
@@ -4861,13 +4875,14 @@ export default function DigitalEmployeePage({
           readiness={data.businessSnapshot?.readiness || []}
           busy={Boolean(busy)}
           allowInitialPlan={false}
-          restartFromBeginning
+          restartFromBeginning={applicationGuideEntry === "start"}
+          initialStep={applicationGuideEntry}
           dismissible
-          onClose={() => setApplicationGuideOpen(false)}
+          onClose={() => { setApplicationGuideOpen(false); setApplicationGuideEntry("start"); }}
           onOpenReadiness={openReadiness}
           onSave={async config => {
             const saved = await saveConfig(config);
-            if (saved) setApplicationGuideOpen(false);
+            if (saved) { setApplicationGuideOpen(false); setApplicationGuideEntry("start"); }
             return saved;
           }}
         />

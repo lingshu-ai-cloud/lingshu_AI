@@ -154,6 +154,14 @@ test('presenter creation, consent, import, tenant isolation, pagination and unce
     assert.equal(calls.filter(c => c.url.endsWith('/created-group/consent')).at(-1)?.body.reroute_url, rerouteUrl);
     approved = true;
     assert.equal((await (await request(`/creations/${twin.id}/refresh`, {})).json()).status, 'completed');
+    assert.equal((await request('/revoke', { presenterId: saved.presenters[0].id }, 'B')).status, 400, 'another tenant cannot revoke the presenter');
+    const revoked = await (await request('/revoke', { presenterId: saved.presenters[0].id })).json();
+    assert.equal(revoked.presenters.some((item: any) => item.id === saved.presenters[0].id), false);
+    assert.notEqual(revoked.defaultPresenterId, saved.presenters[0].id);
+    const revocationAudit = [...rows.values()].find(row => row.kind === 'revocation' && row.tenant_id === 'A');
+    assert.equal(revocationAudit.payload.presenterId, saved.presenters[0].id);
+    assert.ok(revocationAudit.payload.revokedAt);
+    assert.deepEqual(await (await request('/revoke', { presenterId: saved.presenters[0].id })).json(), revoked, 'repeated cancellation is idempotent');
     assert.ok(calls.every(c => c.init.redirect === 'error'));
   } finally { await new Promise<void>(resolve => server.close(() => resolve())); }
 });

@@ -44,4 +44,5 @@ export const presenterApi = {
   refresh: (id: string) => request<PresenterCreation>(`/creations/${encodeURIComponent(id)}/refresh`, {}),
   consent: (id: string, requestId: string, uploadId?: string, rerouteUrl?: string) => request<PresenterCreation>(`/creations/${encodeURIComponent(id)}/consent`, { requestId, uploadId, rerouteUrl }),
   import: (body: { lookId?: string; creationId?: string; name?: string; voiceId?: string; reviewed: boolean; authorized?: boolean; makeDefault?: boolean }) => request<ProductionDefaults>('/import', body),
+  revoke: (presenterId: string) => request<ProductionDefaults>('/revoke', { presenterId }),
 };

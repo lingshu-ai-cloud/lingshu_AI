@@ -42,12 +42,12 @@ test('deep-link navigation explicitly notifies the owning shell before dispatch'
   assert.doesNotMatch(navigationBranch, /\.focus\(/, 'a closing navigation dialog must not steal focus back from the destination page');
 });
 
-test('digital-human recovery lands on the enterprise presenter assets instead of a generic facts page', () => {
+test('digital-human recovery opens the unified presenter onboarding step', () => {
   const dispatchSource = source.slice(source.indexOf('function dispatchDeepLink'), source.indexOf('function factTone'));
-  assert.match(dispatchSource, /link\.page === 'enterprise'[\s\S]*enterpriseView === 'presenters'/, 'the assistant recognizes the presenter recovery destination');
-  assert.match(dispatchSource, /localStorage\.setItem\('lingshu:enterprise:initial-view', 'presenters'\)/, 'a newly mounted enterprise page receives the presenter initial view');
-  assert.match(dispatchSource, /CustomEvent\([\s\S]*'lingshu:enterprise-view'[\s\S]*view: 'presenters'/, 'an already-mounted enterprise page is switched to presenter assets');
-  assert.match(dispatchSource, /requestAnimationFrame\?\.\(revealPresenters\)/, 'the presenter selection is repeated after the destination render commits');
+  assert.match(dispatchSource, /link\.page === 'digitalEmployees'[\s\S]*taskKey === 'presenter_setup_required'/, 'the assistant recognizes the shared presenter onboarding destination');
+  assert.match(dispatchSource, /sessionStorage\.setItem\('lingshu:open-digital-employee-guide', 'presenter'\)/, 'a newly mounted Digital Employee page receives the fourth-step entry');
+  assert.match(dispatchSource, /CustomEvent\([\s\S]*'lingshu:open-digital-employee-guide'[\s\S]*step: 'presenter'/, 'an already-mounted page opens the presenter step immediately');
+  assert.match(dispatchSource, /requestAnimationFrame\?\.\(openGuide\)/, 'the guide event is repeated after the destination render commits');
 });
 
 test('assistant uses shared Ant controls and the single branded primary action', () => {

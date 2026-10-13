@@ -248,13 +248,13 @@ export function taskWithAssistantProductionInput(
   };
 }
 
-function enterprisePresenterDeepLink(task: TaskRecord, runId: string, presenterId = ''): DigitalEmployeeDeepLink {
+function presenterOnboardingDeepLink(task: TaskRecord, runId: string, presenterId = ''): DigitalEmployeeDeepLink {
   const existing = workflowDeepLink(task, runId);
   const { view: _view, studioPanel: _studioPanel, ...base } = existing;
   return {
     ...base,
-    page: 'enterprise',
-    businessRef: { ...existing.businessRef, enterpriseView: 'presenters', taskKey: 'presenter_setup_required', ...(presenterId ? { entityId: presenterId } : {}) },
+    page: 'digitalEmployees',
+    businessRef: { ...existing.businessRef, taskKey: 'presenter_setup_required', ...(presenterId ? { entityId: presenterId } : {}) },
   };
 }
 
@@ -414,7 +414,7 @@ function attentionCard(task: TaskRecord, run: RunRecord, now: string): Assistant
         : []),
       { id: 'open_workspace', label: '前往处理', mode: 'navigate', emphasis: DEFAULT },
     ],
-    deepLink: presenterRequired ? enterprisePresenterDeepLink(task, run.id, presenterInput.presenterId) : workflowDeepLink(task, run.id),
+    deepLink: presenterRequired ? presenterOnboardingDeepLink(task, run.id, presenterInput.presenterId) : workflowDeepLink(task, run.id),
     createdAt: text(task.updated_at || task.created_at) || now,
   };
 }

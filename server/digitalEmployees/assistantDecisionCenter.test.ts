@@ -118,8 +118,8 @@ test('a missing enterprise presenter becomes an actionable assistant card while 
   assert.equal(card.actions[0]?.id, 'open_workspace');
   assert.equal(card.actions[0]?.label, '添加数字人形象');
   assert.ok(card.actions.some(action => action.id === 'take_over'));
-  assert.equal(card.deepLink?.page, 'enterprise');
-  assert.equal(card.deepLink?.businessRef?.enterpriseView, 'presenters');
+  assert.equal(card.deepLink?.page, 'digitalEmployees');
+  assert.equal(card.deepLink?.businessRef?.taskKey, 'presenter_setup_required');
   assert.doesNotMatch(JSON.stringify(card), /providerLog/);
 });
 
@@ -175,8 +175,8 @@ test('an added presenter is no longer described as missing when replication setu
   assert.equal(card.title, '请补齐数字人的制作条件');
   assert.equal(card.actions[0]?.label, '补齐制作条件');
   assert.match(card.summary, /已添加.*人物参考图.*方舟/);
-  assert.equal(card.deepLink?.page, 'enterprise');
-  assert.equal(card.deepLink?.businessRef?.enterpriseView, 'presenters');
+  assert.equal(card.deepLink?.page, 'digitalEmployees');
+  assert.equal(card.deepLink?.businessRef?.taskKey, 'presenter_setup_required');
   assert.equal(card.deepLink?.businessRef?.entityId, 'presenter-dante');
 });
 

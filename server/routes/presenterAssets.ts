@@ -543,5 +543,49 @@ export function createPresenterAssetsRouter(store: DataStore, exclusive: Exclusi
       res.json(result);
     } catch (e) { res.status(400).json({ error: message(e) }); }
   });
+  router.post('/revoke', async (req, res) => {
+    try {
+      const tenant = res.locals.tenantId as string;
+      const presenterId = String(req.body?.presenterId || '');
+      if (!validId(presenterId)) throw new Error('人物标识无效');
+      const result = await exclusive(`defaults:${tenant}`, async () => {
+        const row = (await store.list<Row>('studio_production_defaults', { where: { tenant_id: tenant }, perPage: 1 })).items[0];
+        if (!row) throw new Error('企业人物资料不存在');
+        const defaults = row.payload as ProductionDefaults;
+        const presenter = defaults.presenters.find(item => item.id === presenterId);
+        if (!presenter) return defaults;
+        const revokedAt = new Date().toISOString();
+        const requestId = `revoke:${presenterId}:${Math.max(1, presenter.assetVersion || 1)}`;
+        const previous = await find(tenant, 'revocation', requestId);
+        if (!previous) {
+          const audit = await store.create<Row>(COLLECTION, {
+            tenant_id: tenant,
+            kind: 'revocation',
+            request_id: requestId,
+            payload: {
+              presenterId,
+              presenterName: presenter.name,
+              assetVersion: Math.max(1, presenter.assetVersion || 1),
+              rightsEvidence: presenter.rightsEvidence ? { ...presenter.rightsEvidence, revokedAt } : undefined,
+              revokedAt,
+            },
+          });
+          if (!audit) throw new Error('人物授权取消记录保存失败');
+        }
+        const presenters = defaults.presenters.filter(item => item.id !== presenterId);
+        const next: ProductionDefaults = {
+          ...defaults,
+          presenters,
+          defaultPresenterId: defaults.defaultPresenterId === presenterId ? presenters[0]?.id || '' : defaults.defaultPresenterId,
+          presenterRoutes: (defaults.presenterRoutes || []).map(route => route.presenterId === presenterId
+            ? { ...route, presenterId: '', voiceId: '' }
+            : route),
+        };
+        if (!await store.update('studio_production_defaults', row.id, { payload: next })) throw new Error('人物授权取消失败，请刷新后重试');
+        return next;
+      });
+      res.json(result);
+    } catch (e) { res.status(400).json({ error: message(e) }); }
+  });
   return router;
 }
