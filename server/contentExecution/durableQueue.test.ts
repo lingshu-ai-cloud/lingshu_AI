@@ -205,6 +205,50 @@ test('an unspent blocked admission may refresh only its executor binding', async
   await assert.rejects(refreshUnspentContentExecutionCheckpoint({dataStore:store,tenantId:job.tenantId,jobId:job.id,runId:job.runId,checkpointKey:'social.executor',checkpoint:old}),/refresh_not_allowed/);
 });
 
+test('an unspent pre-provider graph failure may be discarded when refreshing its executor binding', async () => {
+  const store = new MemoryStore();
+  const old = { version:'1', inputHash:'a'.repeat(64), payload:{executor:'langgraph'}, updatedAt:new Date().toISOString() };
+  const fresh = { ...old, inputHash:'b'.repeat(64) };
+  const retry = { ...old, inputHash:'retry'.padEnd(64, '0'), payload:{attempt:2} };
+  const graph = { version:'langgraph-checkpoints.v1', inputHash:'c'.repeat(64), updatedAt:new Date().toISOString(), payload:{
+    format:'langgraph-checkpoints.v1', identityHash:'c'.repeat(64), checkpoints:[], writes:{},
+  }};
+  const failedNode = { version:'1', inputHash:'d'.repeat(64), updatedAt:new Date().toISOString(), payload:{
+    node:'assets', status:'failed', outputSha256:null, providerReceiptRefs:[], reservedCny:null, actualCostCny:0,
+    failureCode:'budget_preflight_failed', failureReason:'budget_preflight_failed',
+  }};
+  const job = await admitContentExecutionJob({dataStore:store,tenantId:'tenant-graph-refresh',userId:'user-a',taskId:'task-a',runId:'run-a',taskType:'social',initialCheckpoints:{'social.executor':old}});
+  await store.update(CONTENT_EXECUTION_JOB_COLLECTION,job.id,{status:'blocked',checkpoints:{
+    ...job.checkpoints,'runtime.retry':retry,'langgraph.v1':graph,'langgraph.node.assets':failedNode,
+  }});
+  const refreshed=await refreshUnspentContentExecutionCheckpoint({dataStore:store,tenantId:job.tenantId,jobId:job.id,runId:job.runId,checkpointKey:'social.executor',checkpoint:fresh});
+  assert.equal(refreshed.checkpoints['social.executor'].inputHash,fresh.inputHash);
+  assert.equal(refreshed.checkpoints['runtime.retry'].inputHash,retry.inputHash);
+  assert.equal(refreshed.checkpoints['langgraph.v1'],undefined);
+  assert.equal(refreshed.checkpoints['langgraph.node.assets'],undefined);
+});
+
+test('graph binding refresh rejects any provider, cost, output, completed, or ambiguous graph evidence', async () => {
+  const unsafeNodes = [
+    {status:'running',outputSha256:null,providerReceiptRefs:[],reservedCny:null,actualCostCny:null},
+    {status:'completed',outputSha256:null,providerReceiptRefs:[],reservedCny:null,actualCostCny:null},
+    {status:'failed',outputSha256:'e'.repeat(64),providerReceiptRefs:[],reservedCny:null,actualCostCny:null},
+    {status:'failed',outputSha256:null,providerReceiptRefs:['qwen:request-1'],reservedCny:null,actualCostCny:null},
+    {status:'failed',outputSha256:null,providerReceiptRefs:[],reservedCny:0.01,actualCostCny:null},
+    {status:'failed',outputSha256:null,providerReceiptRefs:[],reservedCny:null,actualCostCny:0.01},
+  ];
+  for (const [index,payload] of unsafeNodes.entries()) {
+    const store = new MemoryStore();
+    const old = {version:'1',inputHash:'a'.repeat(64),payload:{executor:'langgraph'},updatedAt:new Date().toISOString()};
+    const job = await admitContentExecutionJob({dataStore:store,tenantId:`tenant-unsafe-${index}`,userId:'user-a',taskId:'task-a',runId:'run-a',taskType:'social',initialCheckpoints:{'social.executor':old}});
+    await store.update(CONTENT_EXECUTION_JOB_COLLECTION,job.id,{status:'blocked',checkpoints:{...job.checkpoints,
+      'langgraph.v1':{version:'langgraph-checkpoints.v1',inputHash:'c'.repeat(64),updatedAt:new Date().toISOString(),payload:{format:'langgraph-checkpoints.v1',identityHash:'c'.repeat(64),checkpoints:[],writes:{}}},
+      'langgraph.node.assets':{version:'1',inputHash:'d'.repeat(64),updatedAt:new Date().toISOString(),payload},
+    }});
+    await assert.rejects(refreshUnspentContentExecutionCheckpoint({dataStore:store,tenantId:job.tenantId,jobId:job.id,runId:job.runId,checkpointKey:'social.executor',checkpoint:{...old,inputHash:'b'.repeat(64)}}),/refresh_not_allowed/);
+  }
+});
+
 test('explicit customer pause replaces a workflow review wait without losing its receipts', async () => {
   const store = new MemoryStore();
   const job = await admitContentExecutionJob({ dataStore: store, tenantId: 'tenant-pause', userId: 'user-a', taskId: 'task-pause', runId: 'run-pause', taskType: 'social_content_weekly' });

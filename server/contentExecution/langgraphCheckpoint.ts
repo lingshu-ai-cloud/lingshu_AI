@@ -28,14 +28,16 @@ export interface ContentGraphCheckpointPort {
 }
 /** Uses the existing context's ordered write chain, never a competing checkpoints update. */
 export function createJobGraphCheckpointPort(input: {
-  dataStore: DataStore; identity: ProductionGraphIdentity; assertActive: () => Promise<void>;
+  dataStore: DataStore; identity: ProductionGraphIdentity; assertActive: () => Promise<void>; correctionHash?: string;
 }): ContentGraphCheckpointPort {
   const identityHash = graphIdentityHash(input.identity);
+  if(input.correctionHash && !/^[a-f0-9]{64}$/.test(input.correctionHash)) throw Error('content_graph_correction_identity_invalid');
+  const stage=input.correctionHash?`lg.fix.${input.correctionHash}.v1`:STAGE;
   const read = async () => {
     const job = await assertGraphJobScope(input.dataStore, input.identity);
-    const stored = parseContentExecutionCheckpoints(job.checkpoints)[STAGE];
+    const stored = parseContentExecutionCheckpoints(job.checkpoints)[stage];
     if (!stored) {
-      if (job.checkpoints && typeof job.checkpoints === 'object' && Object.hasOwn(job.checkpoints, STAGE)) throw new Error('content_graph_checkpoint_corrupt');
+      if (job.checkpoints && typeof job.checkpoints === 'object' && Object.hasOwn(job.checkpoints, stage)) throw new Error('content_graph_checkpoint_corrupt');
       return null;
     }
     if (stored.version !== FORMAT || stored.inputHash !== identityHash) throw new Error('content_graph_checkpoint_version_changed');
@@ -47,7 +49,7 @@ export function createJobGraphCheckpointPort(input: {
     write: async document => {
       await input.assertActive();
       await assertGraphJobScope(input.dataStore, input.identity);
-      await recordCurrentContentExecutionCheckpoint({ stage: STAGE, version: FORMAT, inputHash: identityHash, payload: document });
+      await recordCurrentContentExecutionCheckpoint({ stage, version: FORMAT, inputHash: identityHash, payload: document });
       // Context persistence intentionally no-ops outside a job. Fail closed instead
       // of treating a missing context as a production checkpointer.
       if (JSON.stringify(await read()) !== JSON.stringify(document)) throw new Error('content_graph_checkpoint_not_persisted');

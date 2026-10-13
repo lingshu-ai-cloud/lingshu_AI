@@ -281,7 +281,7 @@ function directionFor(input: {
     },
     subtitles: {
       mode: 'director_locked',
-      fontScale: clamp(Number(configured?.subtitles?.fontScale ?? 1), 0.75, 1.5),
+      fontScale: clamp(Number(configured?.subtitles?.fontScale ?? 1.45), 0.75, 1.5),
       bottomRatio: clamp(Number(configured?.subtitles?.bottomRatio ?? 0.18), 0.08, 0.35),
     },
   };
@@ -815,6 +815,7 @@ export function parseStoredSocialDirectorPlan(value: unknown): StoredSocialDirec
 export {
   publicSocialDirectorPlanSummary,
   socialDirectorContentHandoff,
+  socialDirectorHandoffWithBoundVoice,
   socialDirectorCoverTimestamp,
   socialDirectorRenderTimeline,
   socialDirectorSceneTimingCues,

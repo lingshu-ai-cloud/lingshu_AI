@@ -65,6 +65,10 @@ export interface SocialHeyGenBridgeDependencies {
     resolve(input: import('./socialContentDigitalPresenterAdapter.js').DigitalPresenterExecutionRequest): Promise<import('./socialContentDigitalPresenterAdapter.js').VerifiedPresenterSpeechAudio>;
     verify(input: import('./socialContentDigitalPresenterAdapter.js').DigitalPresenterExecutionRequest, audio: import('./socialContentDigitalPresenterAdapter.js').VerifiedPresenterSpeechAudio): Promise<boolean>;
   };
+  approvedFirstFrame?: {
+    resolve(input: import('./socialContentDigitalPresenterAdapter.js').DigitalPresenterExecutionRequest): Promise<{imageAssetId:string;sha256:string;approvalRecordHash:string}>;
+    verify(input: import('./socialContentDigitalPresenterAdapter.js').DigitalPresenterExecutionRequest, value:{imageAssetId:string;sha256:string;approvalRecordHash:string}): Promise<boolean>;
+  };
   client: Pick<HeyGenClient, 'create' | 'status'>;
   budget: Pick<StudioPaidBudget, 'status' | 'reserve'>;
   storageReady: () => boolean;
@@ -321,12 +325,22 @@ export function createSocialHeyGenBridgePorts(deps: SocialHeyGenBridgeDependenci
         if (!deps.speechAudio || !await deps.speechAudio.verify(input, input.speechAudio))
           return { status: 'uncertain', error: 'digital_presenter_audio_receipt_unverified' };
       }
+      if(!deps.approvedFirstFrame)return {status:'uncertain',error:'digital_presenter_approved_first_frame_port_missing'};
+      const approvedFirstFrame=await deps.approvedFirstFrame.resolve(input);
+      if(!await deps.approvedFirstFrame.verify(input,approvedFirstFrame))return {status:'uncertain',error:'digital_presenter_approved_first_frame_unverified'};
       if (record && socialRequestHash(record.visual_control?.speechAudio ?? null) !== socialRequestHash(input.speechAudio ?? null))
         return { status: 'uncertain', error: 'digital_presenter_audio_binding_changed' };
 
       if(record && socialRequestHash(record.visual_control?.accountPlaybookConstraints??null)!==socialRequestHash(input.accountPlaybookConstraints??null))return {status:'uncertain',error:'digital_presenter_account_constraints_changed'};
+      if(record&&socialRequestHash(record.visual_control?.approvedFirstFrame??null)!==socialRequestHash({...input.approvedFirstFrame,imageAssetId:approvedFirstFrame.imageAssetId}))return {status:'uncertain',error:'digital_presenter_approved_first_frame_binding_changed'};
       let providerTaskId = String(record?.provider_task_id || '').trim();
       if(deps.wholeBudget && record)providerTaskId=await deps.wholeBudget.recover(input,record);
+      // Empty recovery is permitted only by the whole-plan gate proving that
+      // no write-ahead paid claim exists. Retain the earlier audit row.
+      if(deps.wholeBudget&&record&&!providerTaskId&&!input.recoveryOnly) {
+        await deps.store.update('studio_social_presenter_jobs',record.id,{request_id:record.request_id+':unsubmitted:'+record.id,status:'not_submitted',updated_at:new Date().toISOString()});
+        record=undefined;
+      }
       if (input.recoveryOnly && (!record || !providerTaskId)) return { status: 'uncertain', error: 'accepted_provider_job_required_for_recovery' };
       if (input.recoveryOnly && (record.task_id !== input.taskId || record.shot_id !== input.shotId
         || record.presenter_asset_id !== input.presenter.presenterAssetId || record.provider !== 'heygen'))
@@ -338,7 +352,7 @@ export function createSocialHeyGenBridgePorts(deps: SocialHeyGenBridgeDependenci
           provider: 'heygen', presenter_asset_id: input.presenter.presenterAssetId, authorization_ref: input.presenter.authorizationRef,
           consent_ref: input.presenter.consentRef, social_account_id: input.presenter.socialAccountId || '',
           presenter_profile_id: input.presenter.presenterProfileId || '', presenter_profile_version: input.presenter.presenterProfileVersion || '',
-          presenter_consistency_key: input.presenter.consistencyKey || '', visual_control: {...input.visualControl,...(input.speechAudio ? { speechAudio: structuredClone(input.speechAudio) } : {}),...(input.accountPlaybookConstraints?{accountPlaybookConstraints:structuredClone(input.accountPlaybookConstraints)}:{})},
+          presenter_consistency_key: input.presenter.consistencyKey || '', visual_control: {...input.visualControl,approvedFirstFrame:{...structuredClone(input.approvedFirstFrame),imageAssetId:approvedFirstFrame.imageAssetId},...(input.speechAudio ? { speechAudio: structuredClone(input.speechAudio) } : {}),...(input.accountPlaybookConstraints?{accountPlaybookConstraints:structuredClone(input.accountPlaybookConstraints)}:{})},
           created_at: new Date().toISOString(), updated_at: new Date().toISOString() });
         if (!record) return { status: 'uncertain', error: 'provider_job_claim_failed' };
         try {
@@ -346,7 +360,7 @@ export function createSocialHeyGenBridgePorts(deps: SocialHeyGenBridgeDependenci
             provider: 'heygen', requestId: input.idempotencyKey, state: 'submitting',
             metadata: { reservationRef: input.reservationRef },
           });
-          providerTaskId = await deps.client.create({ avatarId: input.presenter.providerPresenterId,
+          providerTaskId = await deps.client.create({ avatarId: '',imageAssetId:approvedFirstFrame.imageAssetId,
             ...(input.speechAudio ? { voiceId: '', script: '', audioAssetId: input.speechAudio.audioAssetId, engine: 'avatar_iv' as const } : { voiceId: input.presenter.providerVoiceId, script: input.script }), ratio: input.aspectRatio,
             transparent: false, title: `灵枢社媒镜头 ${input.shotId}` }, input.idempotencyKey);
           await deps.store.update('studio_social_presenter_jobs', record.id, { provider_task_id: providerTaskId,
@@ -395,6 +409,7 @@ export function createSocialHeyGenBridgePorts(deps: SocialHeyGenBridgeDependenci
       const bytes = await deps.download(completed.url);
       const contentHash = createHash('sha256').update(bytes).digest('hex');
       const filename = `social-presenter-${createHash('sha256').update(input.idempotencyKey).digest('hex').slice(0, 24)}.mp4`;
+      fs.mkdirSync(input.outputDirectory,{recursive:true,mode:0o700});
       const localPath = path.join(input.outputDirectory, filename);
       fs.writeFileSync(localPath, bytes, { mode: 0o600 });
       const objectKey = materialAssetObjectKey(input.tenantId, filename);

@@ -5,7 +5,9 @@ import {
   publicSocialDirectorPlanSummary,
   reviseSocialDirectorPlanForVoiceoverFit,
   socialDirectorContentHandoff,
+  socialDirectorHandoffWithBoundVoice,
   socialDirectorCoverTimestamp,
+  socialDirectorFrozenDirection,
   socialDirectorRenderTimeline,
   socialDirectorSceneTimingCues,
   socialDirectorVoiceAlignedCaptionCues,
@@ -83,6 +85,8 @@ const asset = {
 };
 const productionPlan = buildSocialProductionPlan({ baseline, assets: [asset] });
 assert.equal(productionPlan.ok, true, productionPlan.message);
+assert.equal(socialDirectorFrozenDirection({ baseline, duration: 38 }).subtitles.fontScale, 1.45,
+  'unconfigured production uses the mobile-readable subtitle scale');
 
 const bgmSelection: SocialDirectorBgmSelection = {
   primary: {
@@ -167,6 +171,11 @@ assert.match(publicSummary?.shotRhythmSummary ?? '', /明快节奏/);
 assert.doesNotMatch(JSON.stringify(publicSummary), /admin\.product-director|private-formula-record/);
 
 const handoff = socialDirectorContentHandoff(directorPlan);
+const reboundVoiceHandoff=socialDirectorHandoffWithBoundVoice(handoff,'bound-voice-test');
+assert.deepEqual(socialDirectorSceneTimingCues(reboundVoiceHandoff,reboundVoiceHandoff.outputSpec.maximumDurationSeconds).length,handoff.scenes.length);
+assert.notEqual(reboundVoiceHandoff,handoff);
+assert.equal(reboundVoiceHandoff.direction.voiceover.voice,'bound-voice-test');
+assert.equal(handoff.direction.voiceover.voice,directorPlan.direction.voiceover.voice);
 assert.equal(handoff.narration, directorPlan.scenes.map(scene => scene.voiceover).join(''));
 assert.deepEqual(handoff.scenes.map(item => item.caption), directorPlan.scenes.map(scene => scene.caption));
 assert.equal(handoff.outputSpec.aspectRatio, directorPlan.outputSpec.aspectRatio);

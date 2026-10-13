@@ -25,6 +25,7 @@ try {
   assert.equal(result.reuseRiskEvidence.find(item => item.kind === 'consecutive_frame_similarity')?.status, 'available');
   assert.equal(result.reuseRiskEvidence.find(item => item.kind === 'audio_fingerprint_similarity')?.status, 'available');
   assert.equal(result.factorEvidence[0]?.factorId, 'motion-1');
+  assert.equal(result.factorEvidence[0]?.outcome, 'unknown', 'whole-film motion cannot decide one scene');
   assert.ok(result.limitations.some(item => item.includes('身份')));
 } finally {
   fs.rmSync(root, { recursive: true, force: true });

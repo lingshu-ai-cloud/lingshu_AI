@@ -9,7 +9,7 @@ export interface HeyGenPricingBinding {
   billingCurrency: 'USD'; billingEvidenceRef: string;
 }
 export interface HeyGenPublishedPricingEvidence extends HeyGenPricingBinding {
-  schemaVersion: 1; basis: 'published_fx_estimate'; engine: 'avatar_iv';
+  schemaVersion: 1; basis: 'published_fx_estimate'; engine: 'avatar_iv' | 'starfish';
   nativeCurrency: 'USD'; usdPerMinute: number; estimatedCnyPerUsd: number;
   pricingSourceUrl: string; pricingSourceBody: string; pricingSourceSha256: string;
   fxSourceUrl: string; fxSourceBody: string; fxSourceSha256: string; fxDate: string;
@@ -53,6 +53,24 @@ export function parseHeyGenPublishedPrice(body: string, avatarType: HeyGenAvatar
     return found.length === 1 ? found[0]! : null;
   } catch { return null; }
 }
+export function parseHeyGenPublishedSpeechPrice(body: string): number | null {
+  try {
+    if (Buffer.byteLength(body) > 2 * 1024 * 1024) return null;
+    const script = body.match(/<script\b[^>]*id="__NEXT_DATA__"[^>]*>([\s\S]*?)<\/script>/);
+    if (!script) return null;
+    const article = JSON.parse(script[1]!).props.pageProps.articleContent;
+    if (article.articleId !== '10060327' || !Array.isArray(article.blocks)) return null;
+    const prices: number[] = [];
+    for (const block of article.blocks) for (const row of block.rows || []) {
+      const cells: string[] = (row.cells || []).map(plain);
+      if (cells[0] !== 'Speech — Starfish' || cells.length !== 3) continue;
+      const match = cells[1]?.match(/^\$(\d+(?:\.\d+)?)$/);
+      if (!match || !(Number(match[1]) > 0)) return null;
+      prices.push(Number(match[1]));
+    }
+    return prices.length === 1 ? prices[0]! : null;
+  } catch { return null; }
+}
 export function parseEcbUsdCny(body: string, now = new Date()) {
   if (Buffer.byteLength(body) > 256 * 1024 || !body.includes('http://www.ecb.int/vocabulary/2002-08-01/eurofxref')) return null;
   const days = [...body.matchAll(/<Cube\b[^>]*time=['"](\d{4}-\d{2}-\d{2})['"][^>]*>([\s\S]*?)<\/Cube>/g)];
@@ -70,16 +88,17 @@ export function verifyHeyGenPublishedTariff(t: SocialVerifiedAccountTariff): boo
   try {
     const e = t.publicPricingEvidence as HeyGenPublishedPricingEvidence;
     const fx = parseEcbUsdCny(e.fxSourceBody, new Date(e.checkedAt));
-    const meter = t.meters.providerSeconds;
-    return t.provider === 'heygen' && t.model === 'avatar_iv' && t.stage === 'presenter_video'
+    const speech = t.model === 'starfish' && t.stage === 'tts';
+    const meter = t.meters[speech ? 'audioSeconds' : 'providerSeconds'];
+    return t.provider === 'heygen' && (speech || (t.model === 'avatar_iv' && t.stage === 'presenter_video'))
       && t.currency === 'CNY' && t.verifiedAccountPrice === false && t.pricingBasis === 'published_fx_estimate'
-      && e.schemaVersion === 1 && e.basis === 'published_fx_estimate' && e.engine === 'avatar_iv'
+      && e.schemaVersion === 1 && e.basis === 'published_fx_estimate' && e.engine === (speech ? 'starfish' : 'avatar_iv')
       && e.nativeCurrency === 'USD' && e.billingCurrency === 'USD' && !!e.billingEvidenceRef
       && /^[a-f0-9]{64}$/.test(e.credentialSha256) && e.accountRef === t.accountRef
-      && e.accountRef === 'heygen:' + sha(JSON.stringify({ baseUrl: 'https://api.heygen.com/v3/videos', credentialSha256: e.credentialSha256 }))
+      && e.accountRef === 'heygen:' + sha(JSON.stringify({ baseUrl: speech ? 'https://api.heygen.com/v3/voices/speech' : 'https://api.heygen.com/v3/videos', credentialSha256: e.credentialSha256 }))
       && e.pricingSourceUrl === HEYGEN_PRICE_URL && e.fxSourceUrl === ECB_FX_URL
       && sha(e.pricingSourceBody) === e.pricingSourceSha256 && sha(e.fxSourceBody) === e.fxSourceSha256
-      && parseHeyGenPublishedPrice(e.pricingSourceBody, e.avatarType) === e.usdPerMinute
+      && (speech ? parseHeyGenPublishedSpeechPrice(e.pricingSourceBody) : parseHeyGenPublishedPrice(e.pricingSourceBody, e.avatarType)) === e.usdPerMinute
       && fx?.date === e.fxDate && fx?.cnyPerUsd === e.estimatedCnyPerUsd
       && Object.keys(t.meters).length === 1 && meter?.priceCny === e.usdPerMinute * e.estimatedCnyPerUsd
       && meter.unitsPerPrice === 60 && meter.minimumUnits === 0 && meter.increment === 0.001
@@ -92,8 +111,9 @@ export async function readHeyGenPublishedTariff(intent: SocialPaidOperationInten
   fetchOfficial?: (url: string) => Promise<{ url: string; status: number; body: string }>;
   now?: () => Date;
 }): Promise<SocialVerifiedAccountTariff | null> {
-  if (intent.provider !== 'heygen' || intent.model !== 'avatar_iv' || intent.stage !== 'presenter_video'
-    || Object.keys(intent.maximumUnits).join() !== 'providerSeconds') return null;
+  const speech = intent.model === 'starfish' && intent.stage === 'tts';
+  if (intent.provider !== 'heygen' || (!speech && (intent.model !== 'avatar_iv' || intent.stage !== 'presenter_video'))
+    || Object.keys(intent.maximumUnits).join() !== (speech ? 'audioSeconds' : 'providerSeconds')) return null;
   const binding = await input.readBinding(intent); if (!binding || binding.accountRef !== intent.accountRef) return null;
   const fetchOfficial = input.fetchOfficial || (async (url: string) => {
     const r = await fetch(url, { redirect: 'error', signal: AbortSignal.timeout(20000) });
@@ -107,15 +127,15 @@ export async function readHeyGenPublishedTariff(intent: SocialPaidOperationInten
   let price, rates;
   try { [price, rates] = await Promise.all([fetchOfficial(HEYGEN_PRICE_URL), fetchOfficial(ECB_FX_URL)]); } catch { return null; }
   if (price.url !== HEYGEN_PRICE_URL || rates.url !== ECB_FX_URL || price.status !== 200 || rates.status !== 200) return null;
-  const now = input.now?.() || new Date(), usdPerMinute = parseHeyGenPublishedPrice(price.body, binding.avatarType), fx = parseEcbUsdCny(rates.body, now);
+  const now = input.now?.() || new Date(), usdPerMinute = speech ? parseHeyGenPublishedSpeechPrice(price.body) : parseHeyGenPublishedPrice(price.body, binding.avatarType), fx = parseEcbUsdCny(rates.body, now);
   if (!usdPerMinute || !fx) return null;
   const checkedAt = now.toISOString(), validUntil = new Date(now.getTime() + 6 * 3600000).toISOString();
-  const e: HeyGenPublishedPricingEvidence = { ...binding, schemaVersion: 1, basis: 'published_fx_estimate', engine: 'avatar_iv', nativeCurrency: 'USD',
+  const e: HeyGenPublishedPricingEvidence = { ...binding, schemaVersion: 1, basis: 'published_fx_estimate', engine: speech ? 'starfish' : 'avatar_iv', nativeCurrency: 'USD',
     usdPerMinute, estimatedCnyPerUsd: fx.cnyPerUsd, fxDate: fx.date, pricingSourceUrl: price.url, pricingSourceBody: price.body,
     pricingSourceSha256: sha(price.body), fxSourceUrl: rates.url, fxSourceBody: rates.body, fxSourceSha256: sha(rates.body), checkedAt, validUntil };
-  const tariff: SocialVerifiedAccountTariff = { provider: 'heygen', model: 'avatar_iv', accountRef: intent.accountRef, stage: intent.stage,
+  const tariff: SocialVerifiedAccountTariff = { provider: 'heygen', model: intent.model, accountRef: intent.accountRef, stage: intent.stage,
     currency: 'CNY', verifiedAccountPrice: false, pricingBasis: 'published_fx_estimate', publicPricingEvidence: e,
     evidenceRef: 'heygen-usd-fx-estimate:' + sha(JSON.stringify(e)), checkedAt, validUntil,
-    meters: { providerSeconds: { priceCny: usdPerMinute * fx.cnyPerUsd, unitsPerPrice: 60, minimumUnits: 0, increment: 0.001 } } };
+    meters: { [speech ? 'audioSeconds' : 'providerSeconds']: { priceCny: usdPerMinute * fx.cnyPerUsd, unitsPerPrice: 60, minimumUnits: 0, increment: 0.001 } } };
   return verifyHeyGenPublishedTariff(tariff) ? tariff : null;
 }

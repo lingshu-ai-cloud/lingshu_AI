@@ -6,7 +6,7 @@ import path from 'node:path';
 import {createHash} from 'node:crypto';
 import {execFileSync} from 'node:child_process';
 import ffmpeg from 'ffmpeg-static';
-import {prepareSocialContentWholeVoice,readPreparedWholeVoiceScene} from './socialContentPreparedWholeVoice.js';
+import {prepareSocialContentWholeVoice,readPreparedWholeVoiceScene,verifiedHeyGenNativeTiming} from './socialContentPreparedWholeVoice.js';
 import {resolveStudioVoiceExecutionPlan} from '../routes/studio.js';
 import {withStudioVoicePaidContext,submitStudioVoicePaidRequest} from '../lib/studioVoicePaidOperation.js';
 import {alignQwenFile} from '../integrations/qwenAlignment.js';
@@ -80,3 +80,11 @@ test('one guarded full track and real alignment feed measured scene clips and re
   await assert.rejects(readPreparedWholeVoiceScene({prepared,scope,shotId:'s1',spokenText:'Different speech.',assertCurrent:async()=>{}}),/scene_not_frozen/);
  } finally {global.fetch=originalFetch;for(const key of keys){if(old[key]===undefined)delete process.env[key];else process.env[key]=old[key];}fs.rmSync(root,{recursive:true,force:true});}
 });
+
+ test('HeyGen native words preserve measured pauses after speed conversion and reject changed copy or track',()=>{
+ const response={duration:4,word_timestamps:[{word:'<start>',start:0,end:0},{word:'Hello',start:.5,end:1},{word:'world.',start:2,end:3.8},{word:'<end>',start:4,end:4}]};
+ const timing=verifiedHeyGenNativeTiming(response,'Hello world.',2,5,2.15);
+ assert.deepEqual(timing.cues,[{start:.25,end:.5,text:'Hello'},{start:1,end:1.9,text:'world.'}]);
+ assert.throws(()=>verifiedHeyGenNativeTiming(response,'Different world.',2,5,2.15),/口播文本不一致/);
+ assert.throws(()=>verifiedHeyGenNativeTiming(response,'Hello world.',2,5,3),/transform_changed/);
+ });

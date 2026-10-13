@@ -28,3 +28,45 @@ test('duration gate fails closed when video EOF cannot be measured', async () =>
   assert.equal(report.quality.passed, false);
   assert.equal(report.measuredDurationSeconds, 0);
 });
+
+test('quality gate persists BGM input, normalized mix and final-track audibility evidence', async () => {
+  const report = await executeSocialQualityStage({
+    outputPath: '/local/output.mp4', duration: 3, scenes: [], expectedUniqueScenes: 1,
+    checkpointEnabled: false, expectedBgm: { source: '/local/bgm.mp3', sourceHash: 'a'.repeat(64), volume: 18 },
+    inspectVisuals: async () => ({ passed: true, failures: [], metrics: {} as never, evidenceFrames: [] }),
+    inspectScenes: async () => ({ passed: true, checkedScenes: 1, issues: [] } as never),
+    runFfmpeg: async args => {
+      if (!args.some(value => value.includes('volumedetect'))) return { ok: true, stdout: Buffer.alloc(0), stderr: '' };
+      const normalized = args.some(value => value.includes('loudnorm='));
+      const source = args.includes('/local/bgm.mp3');
+      const mean = normalized ? -32.5 : source ? -47.9 : -19.1;
+      const max = normalized ? -20.6 : source ? -36 : -3.1;
+      return { ok: true, stdout: Buffer.alloc(0), stderr: `mean_volume: ${mean} dB\nmax_volume: ${max} dB` };
+    },
+  });
+  assert.equal(report.quality.passed, true);
+  assert.deepEqual(report.audio.bgm, {
+    required: true, configuredVolume: 18,
+    inputMeanDb: -47.9, inputMaxDb: -36,
+    normalizedMeanDb: -32.5, normalizedMaxDb: -20.6,
+    finalMixMeanDb: -19.1, finalMixMaxDb: -3.1,
+    passed: true, failure: null,
+  });
+});
+
+test('quality gate fails when the frozen BGM remains inaudible after normalized gain', async () => {
+  const report = await executeSocialQualityStage({
+    outputPath: '/local/output.mp4', duration: 3, scenes: [], expectedUniqueScenes: 1,
+    checkpointEnabled: false, expectedBgm: { source: '/local/bgm.mp3', sourceHash: 'b'.repeat(64), volume: 18 },
+    inspectVisuals: async () => ({ passed: true, failures: [], metrics: {} as never, evidenceFrames: [] }),
+    inspectScenes: async () => ({ passed: true, checkedScenes: 1, issues: [] } as never),
+    runFfmpeg: async args => {
+      if (!args.some(value => value.includes('volumedetect'))) return { ok: true, stdout: Buffer.alloc(0), stderr: '' };
+      const normalized = args.some(value => value.includes('loudnorm='));
+      return { ok: true, stdout: Buffer.alloc(0), stderr: `mean_volume: ${normalized ? -55 : -47} dB\nmax_volume: ${normalized ? -44 : -36} dB` };
+    },
+  });
+  assert.equal(report.quality.passed, false);
+  assert.equal(report.audio.bgm?.passed, false);
+  assert.match(report.audio.bgm?.failure || '', /不可闻/);
+});

@@ -3,7 +3,8 @@ import test from 'node:test';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { dashscopeCredentialConfigured, evaluateVoicePcm, transcriptAccuracy } from './voiceQuality.js';
+import { dashscopeCredentialConfigured, evaluateVoicePcm, optionalPaidAsrOutage, transcriptAccuracy } from './voiceQuality.js';
+import {StudioVoicePaidBoundaryError} from './studioVoicePaidOperation.js';
 
 function tone(seconds: number, amplitude: number, sampleRate = 16_000): Buffer {
   const buffer = Buffer.alloc(Math.floor(seconds * sampleRate) * 2);
@@ -34,4 +35,11 @@ test('ASR readiness accepts the supported key-file configuration', () => {
   } finally {
     fs.rmSync(directory, { recursive: true, force: true });
   }
+});
+
+test('only an already-claimed ASR outage can use acoustic-only degradation', () => {
+  assert.equal(optionalPaidAsrOutage(new StudioVoicePaidBoundaryError('Request was aborted.')), true);
+  assert.equal(optionalPaidAsrOutage(new StudioVoicePaidBoundaryError('social_paid_permit_receipt_recovery_required')), true);
+  assert.equal(optionalPaidAsrOutage(new StudioVoicePaidBoundaryError('social_paid_permit_request_binding_changed')), false);
+  assert.equal(optionalPaidAsrOutage(new Error('Request was aborted.')), false);
 });

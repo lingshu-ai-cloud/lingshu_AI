@@ -899,9 +899,41 @@ export async function bindPristineContentExecutionCheckpoint(input: {
   }
 }
 
-/** Replace an executor binding after a pre-provider admission failure. This is
- * limited to blocked, unspent jobs whose only other evidence is the explicit
- * retry marker; any phase/provider evidence makes the binding immutable. */
+function zeroOrNull(value: unknown): boolean {
+  return value === null || value === undefined || value === 0;
+}
+
+/** A failed graph node is removable only when its durable evidence proves that
+ * it stopped before provider submission. Missing/partial evidence is treated as
+ * unknown and therefore remains immutable. */
+function isFailedPreProviderGraphNode(checkpoint: ContentExecutionCheckpoints[string]): boolean {
+  const payload = checkpoint?.payload;
+  if (!payload || typeof payload !== 'object' || Array.isArray(payload)) return false;
+  const row = payload as Record<string, unknown>;
+  return row.status === 'failed'
+    && row.outputSha256 === null
+    && Array.isArray(row.providerReceiptRefs) && row.providerReceiptRefs.length === 0
+    && zeroOrNull(row.reservedCny) && zeroOrNull(row.actualCostCny);
+}
+
+function removablePreProviderGraphKeys(checkpoints: ContentExecutionCheckpoints, checkpointKey: string): Set<string> | null {
+  const extra = Object.keys(checkpoints).filter(key => key !== checkpointKey && key !== 'runtime.retry');
+  if (!extra.length) return new Set();
+  const nodeKeys = extra.filter(key => /^langgraph\.node\.(?:assets|render|quality|delivery)$/.test(key));
+  if (!extra.includes('langgraph.v1') || nodeKeys.length === 0
+    || extra.some(key => key !== 'langgraph.v1' && !nodeKeys.includes(key))
+    || nodeKeys.some(key => !isFailedPreProviderGraphNode(checkpoints[key]!))) return null;
+  const graph = checkpoints['langgraph.v1'];
+  const document = graph?.payload as Record<string, unknown> | undefined;
+  if (graph?.version !== 'langgraph-checkpoints.v1' || !document
+    || document.format !== 'langgraph-checkpoints.v1' || typeof document.identityHash !== 'string'
+    || !Array.isArray(document.checkpoints) || !document.writes || typeof document.writes !== 'object') return null;
+  return new Set(extra);
+}
+
+/** Replace an executor binding after a pre-provider admission failure. Failed
+ * graph attempts may also be discarded when every durable node proves that no
+ * provider request, cost, or output exists. The retry marker is preserved. */
 export async function refreshUnspentContentExecutionCheckpoint(input: {
   dataStore: DataStore; tenantId: string; jobId: string; runId: string;
   checkpointKey: string; checkpoint: ContentExecutionCheckpoints[string];
@@ -914,12 +946,14 @@ export async function refreshUnspentContentExecutionCheckpoint(input: {
   try {
     const row = await input.dataStore.getById<JobRow>(CONTENT_EXECUTION_JOB_COLLECTION, jobId);
     if (!row) throw new Error('content_execution_job_not_found');
-    const current = jobFromRow(row), keys = Object.keys(current.checkpoints);
+    const current = jobFromRow(row);
     if (current.tenantId !== tenantId || current.runId !== runId) throw new Error('content_execution_job_not_found');
+    const removable = removablePreProviderGraphKeys(current.checkpoints, checkpointKey);
     if (current.status !== 'blocked' || current.providerState !== 'none' || current.providerReceipts.length || current.completedAt
-      || keys.some(key => key !== checkpointKey && key !== 'runtime.retry'))
+      || removable === null)
       throw new Error('content_execution_unspent_binding_refresh_not_allowed');
-    const checkpoints = { ...current.checkpoints, [checkpointKey]: input.checkpoint };
+    const checkpoints = Object.fromEntries(Object.entries(current.checkpoints).filter(([key]) => !removable.has(key)));
+    checkpoints[checkpointKey] = input.checkpoint;
     if (!await input.dataStore.update(CONTENT_EXECUTION_JOB_COLLECTION, current.id, { checkpoints, updated_at: new Date().toISOString() }))
       throw new Error('content_execution_unspent_binding_refresh_failed');
     const saved = await input.dataStore.getById<JobRow>(CONTENT_EXECUTION_JOB_COLLECTION, current.id);

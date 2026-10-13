@@ -34,6 +34,37 @@ test('local product match retains its action evidence, SKU and exact analyzed se
   assert.deepEqual(result.localVideoMatch?.sourceRefs, ['own-video']);
   assert.match(result.localVideoMatch?.evidenceRef ?? '', /^material-visual-match:tenant:/);
   assert.deepEqual(result.selectedMaterialSegment, { sourceRef: 'own-video', segmentId: 'seg-1', startSeconds: 2, endSeconds: 6 });
+  assert.equal(result.localVideoMatch?.sourceTier, 'product_high_fidelity_local');
+});
+test('multi-shot routing uses distinct assets and segments before repeating either', () => {
+  const shots = Array.from({length: 5}, (_, index) => ({...shot, shotId: `S${index + 1}`}));
+  const candidates = [
+    candidate({assetId:'asset-a',sourceRef:'asset-a',segmentId:'a-1'}),
+    candidate({assetId:'asset-a',sourceRef:'asset-a',segmentId:'a-2',timeRange:{startSeconds:6,endSeconds:10}}),
+    candidate({assetId:'asset-b',sourceRef:'asset-b',segmentId:'b-1'}),
+  ];
+  const result=materialRoutingRequests({policyVersion:'type-aware.v1',tenantId:'tenant',productRef:'SKU-1',shots,candidates:candidates as never[]});
+  assert.deepEqual(result.map(item=>item.selectedMaterialSegment?.sourceRef),['asset-a','asset-b','asset-a','asset-b','asset-a']);
+  assert.deepEqual(result.filter(item=>item.selectedMaterialSegment?.sourceRef==='asset-a').map(item=>item.selectedMaterialSegment?.segmentId),['a-1','a-2','a-1']);
+});
+test('budget exhaustion degrades product generation through product, factory, then other readable-video candidates', () => {
+  const degraded = (candidates: never[]) => materialRoutingRequests({policyVersion:'type-aware.v1',tenantId:'tenant',
+    productRef:'SKU-1',shots:[shot],candidates,productGenerationAllowed:false})[0]!;
+  const weak = visual('产品静止展示');
+  const other = candidate({assetId:'other',sourceRef:'other',productRef:null,productId:null,materialRoles:['other'],visualContract:weak});
+  const factory = candidate({assetId:'factory',sourceRef:'factory',productRef:null,productId:null,materialRoles:['factory'],visualContract:weak});
+  const product = candidate({assetId:'product',sourceRef:'product',materialRoles:['product'],visualContract:weak});
+  for (const [items, ref, tier] of [
+    [[other, factory, product], 'product', 'product_local'],
+    [[other, factory], 'factory', 'factory_local'],
+    [[other], 'other', 'other_local'],
+  ] as const) {
+    const result=degraded([...items] as never[]);
+    assert.deepEqual(result.localVideoMatch?.sourceRefs,[ref]);
+    assert.equal(result.localVideoMatch?.sourceTier,tier);
+    assert.equal(result.selectedMaterialSegment?.sourceRef,ref);
+  }
+  assert.equal(degraded([candidate({mediaType:'image'}),candidate({synthetic:true}),candidate({timeRange:null})]).localVideoMatch,undefined);
 });
 test('inventory presence, wrong product, still image and missing movement are not verified matches', () => {
   for (const item of [candidate({ productRef: 'other' }), candidate({ mediaType: 'image' }),
@@ -140,4 +171,45 @@ test('consumer semantic scoring ignores only projected task identity on a produc
   assert.deepEqual(materialRoutingRequests({...input,candidates:[candidate] as never})[0]!.localVideoMatch?.sourceRefs,['owned-generic']);
   const identified={...candidate,assetId:'wrong-product',sourceRef:'wrong-product',productId:'OTHER-SKU',productRef:'其他品牌'};
   assert.equal(materialRoutingRequests({...input,candidates:[identified] as never})[0]!.localVideoMatch,undefined);
+});
+
+test('customer shopping and business scenes stay on the local DTC route instead of product generation', () => {
+  for (const [shotId, description] of [
+    ['shopping', '从背后拍摄两位女性顾客在美妆店挑选产品，货架上摆满化妆品'],
+    ['meeting', '一群人围坐在茶桌旁品茶并进行商务洽谈'],
+  ] as const) {
+    const result = materialRoutingRequests({policyVersion:'type-aware.v1',tenantId:'tenant',productRef:'product:SKU-1',candidates:[],
+      shots:[{shotId,function:'value',requestedDescription:description,visualContract:normalizeSceneVisualContract({
+        subjects:['person','product'],interaction:{kind:'other',description},productRef:'参考商品',productPolicy:'preferred',action:{path:description},
+      })}]})[0]!;
+    assert.equal(result.materialType,'consumer_demo');
+    assert.equal(result.localVideoMatch,undefined);
+  }
+});
+
+test('stale frozen product classification cannot override visible customer DTC evidence', () => {
+  for (const description of ['两位女性顾客在美妆店挑选产品','一位男士与两位女士在货架前交谈']) {
+    const result=materialRoutingRequests({policyVersion:'type-aware.v1',tenantId:'tenant',productRef:'product:SKU-1',candidates:[],shots:[{
+      shotId:'stale',function:'value',materialType:'product',requestedDescription:description,visualContract:normalizeSceneVisualContract({
+        subjects:['person','environment'],interaction:{kind:'other',description},action:{path:description},productRef:'参考商品',productPolicy:'preferred',
+      }),
+    }]})[0]!;
+    assert.equal(result.materialType,'consumer_demo');
+  }
+  const holding=materialRoutingRequests({policyVersion:'type-aware.v1',tenantId:'tenant',productRef:'product:SKU-1',candidates:[],shots:[{
+    shotId:'holding',function:'value',materialType:'product',requestedDescription:'顾客手持产品包装展示',visualContract:normalizeSceneVisualContract({
+      subjects:['person','product'],interaction:{kind:'person_holding_product',description:'手持产品包装'},action:{path:'手持产品包装'},productRef:'product:SKU-1',productPolicy:'locked',
+    }),
+  }]})[0]!;
+  assert.equal(holding.materialType,'product');
+});
+
+test('contact end card without a visible product is general graphics, never product I2V', () => {
+  const description='黑色背景，中间是女主圆形头像，周围有 CONTACT ME 字样、飞机图标和粉色爱心';
+  const result=materialRoutingRequests({policyVersion:'type-aware.v1',tenantId:'tenant',productRef:'product:SKU-1',candidates:[],shots:[{
+    shotId:'end-card',function:'call_to_action',requestedDescription:description,visualContract:normalizeSceneVisualContract({
+      subjects:['environment'],interaction:{kind:'other',description},action:{path:description},
+    }),
+  }]})[0]!;
+  assert.equal(result.materialType,'general');
 });

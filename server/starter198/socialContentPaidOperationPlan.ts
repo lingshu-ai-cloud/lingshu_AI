@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import type { SocialTaskBudgetScope } from '../lib/socialContentTaskBudget.js';
+import type { SocialTaskBudgetScope, SocialTaskCorrectionBudgetAuthorization } from '../lib/socialContentTaskBudget.js';
 import type { SocialApprovedBudgetPlan, SocialPaidOperationIntent } from '../lib/socialContentTaskBudgetAuthority.js';
 import type { SocialAssetSupplyShotPlan } from '../../shared/contracts/socialContentReplication.js';
 export interface FrozenPaidProduction {
@@ -47,6 +47,7 @@ export interface FrozenPaidProduction {
         analysisBatchFrameCounts: number[] | null;
     }>;
     voice: {
+        presenterBinding?: import('./socialContentBoundPresenterVoice.js').BoundPresenterVoice | null;
         mode: 'none' | 'reuse' | 'continuous' | 'sentences';
         lines: string[];
         requiresClone: boolean;
@@ -121,6 +122,45 @@ export function paidProductionRecordHash(input: Omit<FrozenPaidProduction, 'reco
 const text = (v: unknown) => typeof v === 'string' && v.trim() === v && v.length > 0 && v.length <= 512;
 const hash = (v: unknown) => typeof v === 'string' && /^[a-f0-9]{64}$/.test(v);
 const potentiallyLocalRoutes = new Set(['customer_real_asset', 'licensed_stock_asset', 'customer_product_image_animation', 'motion_graphics', 'verified_fact_card']);
+/** Appends exactly one new paid identity for each of the three presenter groups
+ * affected by the historical first-frame consumption defect. Original attempt
+ * zero operations and receipts remain part of the same plan and ledger. */
+export function appendPresenterFirstFrameCorrectionAttempts(input:{scope:SocialTaskBudgetScope;requirements:PaidStageRequirement[];routeBindings:Record<string,BoundPaidRoute>;intents:SocialPaidOperationIntent[];authorization:SocialTaskCorrectionBudgetAuthorization;rejectedCorrectionOperationIds?:string[]}){
+    const grant=input.authorization,groups=[...grant.affectedPresenterGroupIds];
+    if(grant.runId!==input.scope.runId||grant.planHash!==input.scope.planHash||grant.tenantId!==input.scope.tenantId||grant.taskId!==input.scope.taskId
+        ||grant.maximumCny>(grant.correctionCause==='approved_first_frame_not_consumed'?16.5:20)||groups.length!==3||new Set(groups).size!==3)throw Error('presenter_correction_authorization_invalid');
+    const additions:SocialPaidOperationIntent[]=[];
+    for(const groupId of groups){
+        const requirements=input.requirements.filter(r=>r.stage==='presenter_video'&&r.presenterGroupId===groupId),requirement=requirements[0];
+        if(requirements.length!==1||!requirement)throw Error('presenter_correction_group_invalid');
+        const route=input.routeBindings[requirement.key],approval=grant.presenterApprovalBindings.find(item=>item.groupId===groupId);
+        if(!route||!approval)throw Error('presenter_correction_binding_missing');
+        const originalId=`paid-plan:${paidProductionHash({scope:input.scope,key:requirement.key,attempt:0})}`;
+        const originals=input.intents.filter(intent=>intent.operationId===originalId&&intent.stage==='presenter_video');
+        if(originals.length!==1)throw Error('presenter_correction_original_missing');
+        const first={attempt:1 as const,kind:'presenter_video' as const,cause:grant.correctionCause,authorizationRef:grant.authorizationRef,presenterGroupId:groupId,approvalRecordHash:approval.approvalRecordHash};
+        const firstId=`paid-plan:${paidProductionHash({scope:input.scope,key:requirement.key,attempt:1,correction:first})}`;
+        const rejected=input.rejectedCorrectionOperationIds?.includes(firstId)===true;
+        const attempt=rejected?2 as const:1 as const;
+        const correction={...first,attempt};
+        additions.push({operationId:`paid-plan:${paidProductionHash({scope:input.scope,key:requirement.key,attempt,correction})}`,provider:route.provider,model:route.model,accountRef:route.accountRef,stage:'presenter_video',shotId:null,inputContractHash:paidProductionHash({requirement,route,attempt,correction}),maximumUnits:{...route.maximumUnits},correction});
+    }
+    if(additions.some(add=>input.intents.some(intent=>intent.operationId===add.operationId&&paidProductionHash(intent)!==paidProductionHash(add))))throw Error('presenter_correction_operation_conflict');
+    if(grant.correctionCause==='approved_first_frame_not_consumed_and_bound_voice_mismatch'){
+        if(!grant.selectedVoiceId||!grant.selectedVoiceFingerprint)throw Error('presenter_correction_voice_binding_missing');
+        const voiceStages=['tts',...(input.requirements.some(r=>r.stage==='voice_alignment')?['voice_alignment']:[])] as const;
+        for(const stage of voiceStages){
+            const matches=input.requirements.filter(r=>r.stage===stage),requirement=matches[0];
+            if(matches.length!==1||!requirement)throw Error(`presenter_correction_${stage}_requirement_invalid`);
+            const route=input.routeBindings[requirement.key];
+            if(!route||(stage==='tts'&&(route.provider!=='heygen'||route.model!=='starfish')))throw Error(`presenter_correction_${stage}_route_invalid`);
+            const correction={attempt:1 as const,kind:(stage==='tts'?'voice_tts':'voice_alignment') as 'voice_tts'|'voice_alignment',cause:grant.correctionCause,authorizationRef:grant.authorizationRef,selectedVoiceId:grant.selectedVoiceId,selectedVoiceFingerprint:grant.selectedVoiceFingerprint};
+            additions.push({operationId:`paid-plan:${paidProductionHash({scope:input.scope,key:requirement.key,attempt:1,correction})}`,provider:route.provider,model:route.model,accountRef:route.accountRef,stage:requirement.stage,shotId:requirement.shotId,inputContractHash:paidProductionHash({requirement,route,attempt:1,correction}),maximumUnits:{...route.maximumUnits},correction});
+        }
+    }
+    if(additions.some(add=>input.intents.some(intent=>intent.operationId===add.operationId&&paidProductionHash(intent)!==paidProductionHash(add))))throw Error('presenter_correction_operation_conflict');
+    return [...input.intents,...additions.filter(add=>!input.intents.some(intent=>intent.operationId===add.operationId))];
+}
 /** Enumerates actual dependencies, not client-provided paid operations. Unknown
  * executable routes/batch sizes/fallbacks are blockers; no model/account guesses. */
 export function createSocialContentPaidOperationPlanner(ports: PaidOperationPlannerPorts) {
@@ -232,7 +272,7 @@ export function createSocialContentPaidOperationPlanner(ports: PaidOperationPlan
                     if (potentiallyLocalRoutes.has(route)) {
                         const selected = make(key, 'local_supply_selection', shot.shotId, null, scene.durationSeconds, scene.spokenText, null);
                         if (!await local(selected, ['existing_media', 'local_render']))
-                            gap(`supply_route_execution_unverified:${route}`);
+                            gap(`supply_route_execution_unverified:${route}:${shot.shotId}`);
                         continue;
                     }
                     if (route === 'aigc_product_scene_replication' && ['reference_first_frame_product_replacement_i2v', 'enterprise_authored_product_first_frame_i2v'].includes(shot.materialRouting?.generation?.method || '')) {
@@ -322,6 +362,7 @@ export function createSocialContentPaidOperationPlanner(ports: PaidOperationPlan
                 gap('frozen_production_changed');
             if (gaps.length)
                 return { plan: null, requirements, gaps };
-            return { plan: { scope, authorizationRef: input.authorization.ref, maximumCny: Math.min(10, input.authorization.maximumCny), paidOperations: operations }, requirements, gaps };
+            return { plan: { scope, authorizationRef: input.authorization.ref, maximumCny: Math.min(10, input.authorization.maximumCny), paidOperations: operations,
+                ...(presenterGroups.length ? {presenterGroups: structuredClone(presenterGroups)} : {}) }, requirements, gaps };
         } };
 }

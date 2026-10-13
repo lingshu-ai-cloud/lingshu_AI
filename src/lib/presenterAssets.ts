@@ -19,6 +19,7 @@ export interface PresenterCreation {
   id: string; name: string; type: 'photo' | 'digital_twin'; voiceId?: string;
   status: 'submitting' | 'processing' | 'pending_consent' | 'completed' | 'failed' | 'uncertain';
   look?: PresenterLook; groupId?: string; error?: string; consentUrl?: string;
+  failureCategory?: 'capacity' | 'material';
   consentStatus?: string;
   consentRequestedAt?: string;
   arkPreparation?: ArkPresenterPreparation;

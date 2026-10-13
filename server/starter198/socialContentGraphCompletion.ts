@@ -1,3 +1,6 @@
+import {SocialContentTaskBudget} from '../lib/socialContentTaskBudget.js';
+import {readGraphContextSnapshot} from './socialContentGraphContextSnapshots.js';
+import {matchesAuthorizedCorrectionContext} from './socialContentProductionGraph.js';
 import type { ContentExecutionJob } from '../contentExecution/durableQueue.js';
 import { readContentExecutionJob } from '../contentExecution/durableQueue.js';
 import { graphIdentityHash, graphThreadId, CONTENT_GRAPH_VERSION } from '../contentExecution/langgraphIdentity.js';
@@ -18,9 +21,17 @@ export async function completeSocialContentGraphRun(repository: Starter198Reposi
   const checkpoint = job.checkpoints['social.graph_completion'];
   const receipt = socialObject(checkpoint?.payload);
   const binding = socialObject(job.checkpoints['social.executor']?.payload);
+  const correctedContext=readGraphContextSnapshot(socialObject(job.checkpoints['social.corrected_executor']?.payload));
+  const ledger=new SocialContentTaskBudget(undefined,{authorization:async()=>{throw Error('read_only')},quote:async()=>{throw Error('read_only')},assertCurrent:async()=>{},verifyRejection:async()=>false});
+  const grant=binding?.inputHash?ledger.status({tenantId:job.tenantId,taskId:job.taskId,runId:job.runId,planHash:String(binding.inputHash)})?.correctionAuthorization:null;
+  const correctionHash=grant?socialRequestHash({grantHash:grant.recordHash,policyVersion:'bound-voice-measured-captions.v2'}):null;
+  const correctedPayload=socialObject(job.checkpoints['social.corrected_executor']?.payload);
+  const validCorrection=!!receipt&&!!correctedContext&&!!grant&&matchesAuthorizedCorrectionContext(job,correctedContext,String(binding?.inputHash),grant.recordHash)&&receipt.correctionHash===grant.recordHash&&receipt.correctionRuntimeHash===correctionHash&&receipt.financialPlanHash===binding?.inputHash;
+  const expectedInputHash=validCorrection?socialRequestHash({originalInputHash:correctedPayload?.graphInputHash,correctionHash}):binding?.inputHash;
+  const expectedPlanVersion=validCorrection?String(correctedContext!.agentWorkflow!.executionPlan.version):binding?.planVersion;
   if (!receipt || checkpoint?.version !== '1' || binding?.executor !== 'langgraph'
-    || checkpoint.inputHash !== binding.inputHash || receipt.inputHash !== binding.inputHash
-    || receipt.planVersion !== binding.planVersion || receipt.graphVersion !== CONTENT_GRAPH_VERSION
+    || checkpoint.inputHash !== expectedInputHash || receipt.inputHash !== expectedInputHash
+    || receipt.planVersion !== expectedPlanVersion || receipt.graphVersion !== CONTENT_GRAPH_VERSION
     || receipt.tenantId !== job.tenantId || receipt.taskId !== job.taskId || receipt.runId !== job.runId || receipt.jobId !== job.id) {
     throw new Error('content_graph_completion_receipt_invalid');
   }
@@ -28,7 +39,7 @@ export async function completeSocialContentGraphRun(repository: Starter198Reposi
     planVersion: String(receipt.planVersion), inputHash: String(receipt.inputHash), graphVersion: CONTENT_GRAPH_VERSION };
   graphIdentityHash(identity);
   const saver = new ContentJobCheckpointSaver(identity, createJobGraphCheckpointPort({
-    dataStore: repository.dataStore, identity, assertActive: async () => undefined,
+    dataStore: repository.dataStore, identity,...(validCorrection?{correctionHash:correctionHash!}:{}), assertActive: async () => undefined,
   }));
   const terminal = await saver.getTuple({ configurable: { thread_id: graphThreadId(identity) } });
   const state = terminal?.checkpoint.channel_values;

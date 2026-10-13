@@ -14,7 +14,7 @@ const sha=(bytes:Buffer|string)=>createHash('sha256').update(bytes).digest('hex'
 const normalized=(text:string)=>text.normalize('NFKC').toLowerCase().replace(/[^\p{L}\p{N}]/gu,'');
 export interface WholeTrackPresenterSpeech extends Omit<PresenterHookSpeechAudio,'operationRole'> {
  operationRole:'production_scene';runId:string;planHash:string;wholeTrackSha256:string;
- frozenSceneDurationSeconds:number;nativeVoice:{provider:'qwen'|'minimax';model:string;physicalVoiceId:string};
+ frozenSceneDurationSeconds:number;nativeVoice:{provider:'qwen'|'minimax'|'heygen';model:string;physicalVoiceId:string};
  sourceReceiptRef:string;sourceReceiptSha256:string;alignmentReceiptRef:string;alignmentReceiptSha256:string;
 }
 /** Visual cuts share one continuous voice performance. Words and sentences

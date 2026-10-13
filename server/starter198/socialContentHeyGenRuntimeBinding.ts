@@ -18,9 +18,17 @@ export interface HeyGenRuntimeBindingPorts {
 }
 function key(ports: HeyGenRuntimeBindingPorts) { const value = (ports.env?.() || process.env).HEYGEN_API_KEY?.trim(); if (!value) throw Error('heygen_runtime_account_missing'); return value; }
 const defaultRead = async (url: string, credential: string) => {
-  const response = await fetch(url, { method: 'GET', redirect: 'error', headers: { 'x-api-key': credential }, signal: AbortSignal.timeout(45000) });
-  if (!response.ok) throw Error('heygen_runtime_read_' + response.status);
-  return response.json();
+  for(let attempt=0;attempt<3;attempt++) {
+    try {
+      const response = await fetch(url, { method: 'GET', redirect: 'error', headers: { 'x-api-key': credential }, signal: AbortSignal.timeout(20000) });
+      if (!response.ok) {if([502,503,504].includes(response.status)&&attempt<2)continue;throw Error('heygen_runtime_read_' + response.status);}
+      return await response.json();
+    } catch(error) {
+      if(attempt===2||String(error).includes('heygen_runtime_read_'))throw error;
+      await new Promise(resolve=>setTimeout(resolve,250*(attempt+1)));
+    }
+  }
+  throw Error('heygen_runtime_read_unavailable');
 };
 /** Tenant record + original supplier GET metadata establish actual IV price
  * class and USD wallet. This does not confer approval or call generation. */

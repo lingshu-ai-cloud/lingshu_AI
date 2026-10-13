@@ -63,7 +63,7 @@ test('customer image animation, motion graphics and licensed stock cannot claim 
     f.ports.readVerifiedLocalExecution = async () => null;
     const result = await f.planner.plan(scope);
     assert.equal(result.plan, null);
-    assert.ok(result.gaps.includes(`supply_route_execution_unverified:${strategy}`));
+    assert.ok(result.gaps.includes(`supply_route_execution_unverified:${strategy}:S01`), `${strategy}: ${result.gaps.join(',')}`);
 } });
 test('presenter and render reused audio require real scope/input bound receipts and cannot hide clone/fallback', async () => { const f = fixture(); f.input.shots[0]!.sourceStrategy = 'authorized_digital_presenter'; f.input.scenes[0]!.spokenText = 'Exact line'; f.input.scenes[0]!.presenterSpeech = 'reused'; f.input.voice = { mode: 'reuse', lines: ['Exact line'], requiresClone: true, allowFallback: true, requiresAsr: false, reuseReceiptRef: 'real-audio' }; f.seal(); f.ports.readVerifiedLocalExecution = async () => null; const result = await f.planner.plan(scope); assert.equal(result.plan, null); assert.ok(result.gaps.includes('presenter_speech_reuse_receipt_missing')); assert.ok(result.gaps.includes('voice_reuse_receipt_missing')); assert.ok(result.gaps.includes('voice_reuse_route_inconsistent')); });
 test('product QA extraction bounds cannot be guessed or borrowed from a different shot contract', async () => { const f = fixture(); f.ports.readProductFrameBounds = async () => null; assert.ok((await f.planner.plan(scope)).gaps.includes('product_frame_extract_bound_missing')); f.ports.readProductFrameBounds = async () => ({ inputContractHash: 'f'.repeat(64), evidenceRef: 'other-shot', firstFrameMaximumFrames: 1, videoMaximumFrames: 3 }); assert.equal((await f.planner.plan(scope)).plan, null); });
@@ -127,6 +127,7 @@ test('five presenter scenes use three hashed mother-segment paid operations',asy
  f.input.voice={mode:'continuous',lines:f.input.scenes.map(scene=>scene.spokenText),requiresClone:false,allowFallback:false,requiresAsr:false,requiresAlignment:true,reuseReceiptRef:null};
  f.seal();
  const result=await f.planner.plan(scope);assert.deepEqual(result.gaps,[]);assert.ok(result.plan);
+ assert.deepEqual(result.plan!.presenterGroups,f.input.presenterGroups);
  const requirements=result.requirements.filter(item=>item.stage==='presenter_video');
  assert.equal(requirements.length,3);assert.deepEqual(requirements.map(item=>item.durationSeconds),[3,3,9]);assert.ok(requirements.every(item=>item.shotId===null&&item.presenterGroupId&&item.presenterGroupShotIds?.length));
  assert.equal(result.plan!.paidOperations.filter(item=>item.stage==='presenter_video').length,3);

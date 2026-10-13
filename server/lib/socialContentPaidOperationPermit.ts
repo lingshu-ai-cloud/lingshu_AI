@@ -22,7 +22,13 @@ export function createSocialContentPaidOperationPermit(input:{scope:SocialTaskBu
  const entry=(id:string)=>{const {op}=bound(id);const entries=input.ledger.status(scope)?.entries.filter(e=>e.operationId===id)||[];if(entries.length!==1)fail('reservation_missing');const e=entries[0]!;if(e.runId!==scope.runId||e.planHash!==scope.planHash||(['operationId','fingerprint','provider','model','accountRef','stage','shotId'] as const).some(k=>e[k]!==op[k]))fail('reservation_changed');return e;};
  const assertWholePlanReserved=()=>{
   const status=input.ledger.status(scope);
-  if(!status||!Number.isFinite(status.limitCny)||status.limitCny>10||status.retainedCny>status.limitCny||status.retainedCny>10)fail('whole_plan_budget_invalid');
+  const correction=status?.correctionAuthorization;
+  const validCorrection=Boolean(correction&&correction.tenantId===scope.tenantId&&correction.taskId===scope.taskId
+   &&correction.runId===scope.runId&&correction.planHash===scope.planHash&&correction.reason==='provider_correction'
+   &&['approved_first_frame_not_consumed','approved_first_frame_not_consumed_and_bound_voice_mismatch'].includes(correction.correctionCause)&&correction.affectedPresenterGroupIds.length===3
+   &&correction.maximumCny===status?.limitCny&&correction.maximumCny<=(correction.correctionCause==='approved_first_frame_not_consumed'?16.5:20));
+  const maximum=validCorrection?correction!.maximumCny:10;
+  if(!status||!Number.isFinite(status.limitCny)||status.limitCny>maximum||status.retainedCny>status.limitCny||status.retainedCny>maximum)fail('whole_plan_budget_invalid');
   const current=status!;
   for(const op of operations){
    const entries=current.entries.filter(e=>e.operationId===op.operationId);
@@ -32,7 +38,10 @@ export function createSocialContentPaidOperationPermit(input:{scope:SocialTaskBu
     ||(['operationId','fingerprint','provider','model','accountRef','stage','shotId'] as const).some(k=>e[k]!==op[k]))fail('whole_plan_reservation_changed');
   }
  };
- return {
+ const result = {
+  isProvenUnsubmitted:(async(operationId:string)=>withPaidOperationLock(path.join(root,'.locks'),key(operationId),async()=>{
+   await input.assertCurrent(scope);return entry(operationId).status==='reserved'&&!read(operationId);
+  })) as ((operationId:string)=>Promise<boolean>)|undefined,
   async assertRecovery(operationId:string){return withPaidOperationLock(path.join(root,'.locks'),key(operationId),async()=>{
    await input.assertCurrent(scope);const e=entry(operationId),prior=read(operationId);
    if(!prior||!['unknown','accepted','completed'].includes(e.status))fail('recovery_original_receipt_missing');
@@ -45,7 +54,8 @@ export function createSocialContentPaidOperationPermit(input:{scope:SocialTaskBu
    if((['provider','model','accountRef','stage','shotId','inputContractHash'] as const).some(k=>request[k]!==intent[k])
     ||(['provider','model','accountRef','stage','shotId'] as const).some(k=>op[k]!==intent[k]))fail('request_binding_changed');
    const actual=Object.keys(request.actualUnits).sort(),maximum=Object.keys(intent.maximumUnits).sort();
-   if(!actual.length||JSON.stringify(actual)!==JSON.stringify(maximum)||actual.some(k=>!Number.isFinite(request.actualUnits[k])||request.actualUnits[k]!<0||!Number.isFinite(intent.maximumUnits[k])||request.actualUnits[k]!>intent.maximumUnits[k]!))fail('usage_exceeds_bound');
+   if(!actual.length||JSON.stringify(actual)!==JSON.stringify(maximum)||actual.some(k=>!Number.isFinite(request.actualUnits[k])||request.actualUnits[k]!<0||!Number.isFinite(intent.maximumUnits[k])||request.actualUnits[k]!>intent.maximumUnits[k]!))
+    fail(`usage_exceeds_bound:${intent.stage}:actual=${JSON.stringify(request.actualUnits)}:maximum=${JSON.stringify(intent.maximumUnits)}`);
    const e=entry(request.operationId),prior=read(request.operationId);
    if(prior||['accepted','unknown','completed'].includes(e.status))fail('receipt_recovery_required');
    if(e.status!=='reserved')fail('reservation_not_submittable');
@@ -65,4 +75,5 @@ export function createSocialContentPaidOperationPermit(input:{scope:SocialTaskBu
    write(operationId,{...prior,status,receiptRef});
   });},
  };
+ return result as Omit<typeof result,"isProvenUnsubmitted"> & Partial<Pick<typeof result,"isProvenUnsubmitted">>;
 }

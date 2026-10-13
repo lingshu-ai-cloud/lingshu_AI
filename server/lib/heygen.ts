@@ -25,7 +25,7 @@ export class HeyGenClient {
     if (input.engine && input.engine !== 'avatar_iv') throw new Error('HeyGen受控音频镜头仅允许Avatar IV');
     const image = input.imageAssetId ? { type: 'asset_id', asset_id: input.imageAssetId } : input.imageUrl ? { type: 'url', url: input.imageUrl } : null;
     const request = { ...(image ? { type: 'image', image } : { type: 'avatar', avatar_id: input.avatarId }), ...(input.audioAssetId ? { audio_asset_id: input.audioAssetId } : { voice_id: input.voiceId, script: input.script }),
-      ...(input.engine ? { engine: { type: input.engine } } : {}), aspect_ratio: input.ratio, resolution: '720p', title: input.title, output_format: input.transparent ? 'webm' : 'mp4' };
+      ...(!image && input.engine ? { engine: { type: input.engine } } : {}), aspect_ratio: input.ratio, resolution: '720p', title: input.title, output_format: input.transparent ? 'webm' : 'mp4' };
     await this.paidSubmission?.beforeSubmit(structuredClone(request),requestId);
     const data=await this.call('',request,requestId);
     if (typeof data.video_id !== 'string') throw new Error('提交结果未知：未返回video_id，请检查供应商任务，不要重复付费提交');

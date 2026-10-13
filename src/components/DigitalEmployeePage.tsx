@@ -3802,8 +3802,9 @@ export default function DigitalEmployeePage({
   }), []);
 
   const [navigationNotice, setNavigationNotice] = useState("");
-  const [applicationGuideOpen, setApplicationGuideOpen] = useState(false);
-  const [applicationGuideEntry, setApplicationGuideEntry] = useState<"start" | "presenter">("start");
+  const presenterConsentReturnRequested = Boolean(new URLSearchParams(window.location.search).get('presenterConsentReturn')?.trim());
+  const [applicationGuideOpen, setApplicationGuideOpen] = useState(presenterConsentReturnRequested);
+  const [applicationGuideEntry, setApplicationGuideEntry] = useState<"start" | "presenter">(presenterConsentReturnRequested ? "presenter" : "start");
   const [onboardingWelcomeOpen, setOnboardingWelcomeOpen] = useState(false);
   const [weeklyPlanOpen, setWeeklyPlanOpen] = useState(false);
   const [weeklyPlanDetailsOpen, setWeeklyPlanDetailsOpen] = useState(false);

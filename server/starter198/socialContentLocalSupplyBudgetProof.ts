@@ -39,6 +39,29 @@ export function createSocialContentLocalSupplyBudgetProofReader(input: {
     const scene = frozen.baseline.scenes.find(item => item.sceneId === requirement.shotId);
     const selected = shot?.selectedMaterialSegment;
     const route = shot?.materialRouting;
+    if (shot && scene && ['motion_graphics','verified_fact_card'].includes(shot.sourceStrategy)
+      && requirement.key === `scene:${shot.shotId}:${shot.sourceStrategy}`
+      && /^[a-f0-9]{64}$/.test(requirement.inputContractHash)) {
+      const adapter=existingAssetSupplyAdapters().find(item=>item.sourceStrategies.includes(shot.sourceStrategy));
+      if(!adapter)throw new Error('local_supply_executor_missing');
+      const outputDirectory=await mkdtemp(path.join(os.tmpdir(),'social-local-graphics-proof-'));
+      try{
+        const result=await adapter.execute({tenantId:frozen.scope.tenantId,taskId:frozen.scope.taskId,
+          outputDirectory,shot,baselineScene:scene,availableAssets:[]});
+        if(!result?.synthetic||result.providerId!==adapter.adapterId||result.sourceStrategy!==shot.sourceStrategy
+          ||result.asset.type!=='video'||!result.asset.localPath||!result.asset.contentHash
+          ||!Number.isFinite(result.asset.duration)||requirement.durationSeconds===null
+          ||result.asset.duration+1e-6<requirement.durationSeconds)return null;
+        const outputSha256=createHash('sha256').update(await readFile(result.asset.localPath)).digest('hex');
+        if(outputSha256!==result.asset.contentHash)return null;
+        await input.assertCurrent(frozen.scope);
+        const sourceSha256=paidProductionHash({executor:adapter.adapterId,scope:frozen.scope,
+          inputContractHash:requirement.inputContractHash,shot,scene});
+        return{kind:'local_render',scopeHash:paidProductionHash(frozen.scope),inputContractHash:requirement.inputContractHash,
+          sourceSha256,sourceRef:shot.shotId,receiptRef:`local_render:${paidProductionHash({executor:adapter.adapterId,
+            inputContractHash:requirement.inputContractHash,sourceSha256,outputSha256,duration:result.asset.duration})}`};
+      }finally{await rm(outputDirectory,{recursive:true,force:true});}
+    }
     if (shot && scene && shot.sourceStrategy === 'customer_product_image_animation'
       && requirement.key === `scene:${shot.shotId}:customer_product_image_animation`
       && /^[a-f0-9]{64}$/.test(requirement.inputContractHash)) {

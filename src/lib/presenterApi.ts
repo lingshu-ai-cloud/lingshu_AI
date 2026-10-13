@@ -33,12 +33,27 @@ export const presenterApi = {
     const response = await fetch(`${root}/photo-materials?mime=${encodeURIComponent(file.type)}&name=${encodeURIComponent(name)}`, {method:'POST', headers:{...authHeader(),'Content-Type':'application/octet-stream'},body:file});
     const result = await response.json().catch(() => ({})); if (!response.ok) throw new Error(result.error || '人物照片上传失败'); return result;
   },
-  async upload(file: File, requestId: string, trimSeconds?: 7, frameAtSeconds?: number, trainingVideo = false): Promise<{ id: string; processedDurationSeconds?: number; extractedFrame?: boolean; trainingInfo?: { duration: number; width: number; height: number; fps: number; hasAudio: boolean } }> {
+  uploadStatus: (requestId: string) => request<{ id?: string; status: string; stage: string; error?: string }>(`/uploads/status?requestId=${encodeURIComponent(requestId)}`),
+  async upload(file: File, requestId: string, trimSeconds?: 7, frameAtSeconds?: number, trainingVideo = false, onProgress?: (percent: number) => void): Promise<{ id: string; processedDurationSeconds?: number; extractedFrame?: boolean; trainingInfo?: { duration: number; width: number; height: number; fps: number; hasAudio: boolean } }> {
     if (!['image/jpeg', 'image/png', 'video/mp4', 'video/quicktime', 'video/webm'].includes(file.type) || !file.size || file.size > 200 * 1024 * 1024) throw new Error('请选择 200MB 以内的 JPG、PNG、MP4、MOV 或 WebM 文件');
-    const response = await fetch(`${root}/uploads?mime=${encodeURIComponent(file.type)}&requestId=${encodeURIComponent(requestId)}${trimSeconds ? `&trimSeconds=${trimSeconds}` : ''}${frameAtSeconds != null ? `&frameAtSeconds=${frameAtSeconds}` : ''}${trainingVideo ? '&trainingVideo=true' : ''}`, { method: 'POST', headers: { ...authHeader(), 'Content-Type': 'application/octet-stream' }, body: file });
-    const data = await response.json().catch(() => ({}));
-    if (!response.ok) throw new Error(data.error || `人物素材上传失败 (${response.status})`);
-    return data;
+    const url = `${root}/uploads?mime=${encodeURIComponent(file.type)}&requestId=${encodeURIComponent(requestId)}${trimSeconds ? `&trimSeconds=${trimSeconds}` : ''}${frameAtSeconds != null ? `&frameAtSeconds=${frameAtSeconds}` : ''}${trainingVideo ? '&trainingVideo=true' : ''}`;
+    return new Promise((resolve, reject) => {
+      const xhr = new XMLHttpRequest();
+      xhr.open('POST', url);
+      xhr.timeout = 420_000;
+      for (const [key, value] of Object.entries({ ...authHeader(), 'Content-Type': 'application/octet-stream' })) xhr.setRequestHeader(key, value);
+      xhr.upload.onprogress = event => { if (event.lengthComputable) onProgress?.(Math.round(event.loaded / event.total * 100)); };
+      xhr.upload.onload = () => onProgress?.(100);
+      xhr.onload = () => {
+        let data;
+        try { data = JSON.parse(xhr.responseText); } catch { reject(new Error('人物素材服务未返回有效结果，请保持文件不变后核对原请求')); return; }
+        if (xhr.status < 200 || xhr.status >= 300) reject(new Error(data.error || `人物素材上传失败 (${xhr.status})`));
+        else resolve(data);
+      };
+      xhr.ontimeout = () => reject(new Error('人物素材上传等待超时，尚未提交人物创建。请保持名称和文件不变后重试，以核对原上传请求'));
+      xhr.onerror = () => reject(new Error('人物素材上传连接中断，尚未提交人物创建。请保持名称和文件不变后核对原上传请求'));
+      xhr.send(file);
+    });
   },
   create: (body: { name: string; type: 'photo' | 'digital_twin'; voiceId?: string; uploadId: string; requestId: string; authorized: boolean; adultConfirmed: boolean; confirmed: boolean; reusePresenterId?: string; samePersonConfirmed?: boolean; arkPreparation?: ArkPresenterPreparation }) => request<PresenterCreation>('/creations', body),
   refresh: (id: string) => request<PresenterCreation>(`/creations/${encodeURIComponent(id)}/refresh`, {}),

@@ -97,3 +97,16 @@ test('corrupt stored checkpoint is rejected instead of silently starting paid wo
   const f=fixture();f.job.checkpoints={'langgraph.v1':{version:'bad'}};
   await assert.rejects(f.run(),/checkpoint_corrupt/);assert.equal(f.counts.assets,0);
 });
+
+test('authorized correction has an independent graph and preserves the old review history while retries reuse new phases',async()=>{
+ const f=fixture();await f.run();const original=JSON.stringify((f.job.checkpoints as Record<string,any>)['langgraph.v1']);
+ const correctionHash='d'.repeat(64);
+ const correctedInput={...f.input,identity:{...f.input.identity,inputHash:'corrected-input-a'},correctionHash};
+ const corrected=()=>runWithContentExecutionContext({dataStore:f.dataStore,jobId:'job-a',checkpoints:f.job.checkpoints,providerReceipts:f.job.provider_receipts,expectedWorkerId:'worker-a',expectedAttempt:1,executionStillOwned:()=>true,action:()=>runLangGraphProduction(correctedInput)});
+ assert.equal((await corrected()).status,'waiting_review');
+ assert.deepEqual(f.counts,{assets:2,render:2,quality:2,delivery:0});
+ assert.equal(JSON.stringify((f.job.checkpoints as Record<string,any>)['langgraph.v1']),original);
+ assert.ok((f.job.checkpoints as Record<string,any>)[`lg.fix.${correctionHash}.v1`]);
+ assert.ok((f.job.checkpoints as Record<string,any>)[`lg.fix.${correctionHash}.assets`]);
+ await corrected();assert.deepEqual(f.counts,{assets:2,render:2,quality:2,delivery:0});
+});

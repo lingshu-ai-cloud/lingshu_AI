@@ -4,8 +4,8 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { executeSocialAssetSupplyPlan, type SocialAssetSupplyProviderAdapter } from './socialContentAssetSupplyExecution.js';
-import { createSocialDigitalPresenterAdapter, type SocialDigitalPresenterBridgePorts } from './socialContentDigitalPresenterAdapter.js';
-import type { SocialAssetSupplyPlan } from '../../shared/contracts/socialContentWorkflow.js';
+import { createSocialDigitalPresenterAdapter, type ApprovedPresenterFirstFrame, type SocialDigitalPresenterBridgePorts } from './socialContentDigitalPresenterAdapter.js';
+import type { SocialAssetSupplyPlan, SocialAssetSupplyShotPlan } from '../../shared/contracts/socialContentWorkflow.js';
 import type { StoredSocialScriptBaseline } from './socialContentScriptBaseline.js';
 
 const root = fs.mkdtempSync(path.join(os.tmpdir(), 'social-presenter-adapter-'));
@@ -31,6 +31,7 @@ const plan: SocialAssetSupplyPlan = {
   customerActions: [], systemActions: [], optionalEnhancements: [], accountPresenterLock: presenterLock,
   shots: [{
     shotId: 'shot-1', function: 'hook', requestedDescription: '口播', sourceStrategy: 'authorized_digital_presenter',
+    approvedFirstFrame: { approvalRecordId:'approval:1',approvalRecordHash:'a'.repeat(64),presenterGroupContractHash:'b'.repeat(64),url:'/media/approved.jpg',localPath:path.join(root,'approved.jpg'),sha256:'c'.repeat(64) },
     sourceRefs: ['presenter-1'], fallbackSourceStrategy: 'motion_graphics', productionInstruction: '授权人物口播',
     truthBoundary: { subject: 'none', syntheticVisualAllowed: true, customerEvidenceRequired: false,
       customerEvidenceRefs: [], confirmedFactRefs: [], mustNotImplyCustomerReality: true,
@@ -40,7 +41,7 @@ const plan: SocialAssetSupplyPlan = {
     digitalHumanPlan: { workflow: 'material_processing', method: 'talking', presenterAssetIds: ['presenter-1'],
       referenceMaterialIds: [], referenceRequired: false, candidateTools: ['heygen'], executionState: 'ready_for_capability_check',
       accountPresenterLock: presenterLock },
-  }],
+  } as SocialAssetSupplyShotPlan & {approvedFirstFrame:ApprovedPresenterFirstFrame}],
 };
 
 let executeCount = 0;
