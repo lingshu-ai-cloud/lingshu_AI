@@ -65,6 +65,27 @@ test('assistant pages use mutually exclusive text and hold-to-talk modes without
     assert.doesNotMatch(markup, /assistant-avatar|class="avatar">枢|同步对话/)
   }
 })
+test('operator assistant recovers denied microphone permission without leaving a page-level error', async () => {
+  let definition, modal, opened = 0
+  const wx = {
+    getSetting: options => options.success({ authSetting: { 'scope.record': false } }),
+    showModal: options => { modal = options },
+    openSetting: options => { opened++; options.success({ authSetting: { 'scope.record': true } }) }
+  }
+  vm.runInNewContext(fs.readFileSync(__dirname + '/packages/operator/assistant/index.js', 'utf8'), {
+    Page: value => { definition = value },
+    require: id => id.endsWith('/api') ? {} : { createAssistantController() {} },
+    wx
+  })
+  const page = { ...definition, data: { ...definition.data, error: '未获得麦克风权限' }, setData(patch) { Object.assign(this.data, patch) } }
+  const pending = page.ensureRecordPermission()
+  await new Promise(resolve => setImmediate(resolve))
+  assert.equal(opened, 0)
+  modal.success({ confirm: true })
+  assert.equal(await pending, true)
+  assert.equal(opened, 1)
+  assert.equal(page.data.error, '')
+})
 test('late response cannot contaminate a new account', async () => {
   let finish
   const { controller } = fixture(path => path.endsWith('/query') ? new Promise(resolve => { finish = resolve }) : undefined)

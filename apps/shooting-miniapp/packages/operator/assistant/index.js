@@ -2,14 +2,22 @@ const api = require('../../../lib/api')
 const assistant = require('../../../lib/assistant')
 
 Page({
-  data: { loading: true, sending: false, recording: false, transcribing: false, inputMode: 'text', error: '', messages: [], suggestions: [], input: '', anchor: '', preview: null, receipts: [], actions: [], confirming: false },
+  data: { loading: true, sending: false, recording: false, transcribing: false, inputMode: 'text', error: '', messages: [], suggestions: [], input: '', anchor: '', preview: null, receipts: [], actions: [], confirming: false, statusBarHeight: 24, headerHeight: 48, contentTop: 72 },
   async onLoad() {
+    this.configureHeader()
     if (!api.token()) { wx.redirectTo({ url: '/pages/workbench/index' }); return }
     try {
       const profile = await api.me(); const user = profile.user || {}
       this.scope = String(user.tenantId || user.tenant_id || '') + ':' + String(user.id || user.email || '')
       this.createController(); await this.controller.restore(this.scope)
     } catch (error) { this.setData({ loading: false, error: error.message }) }
+  },
+  configureHeader() {
+    const info = wx.getWindowInfo ? wx.getWindowInfo() : wx.getSystemInfoSync ? wx.getSystemInfoSync() : {}
+    const statusBarHeight = Number(info.statusBarHeight) || 24
+    const menu = wx.getMenuButtonBoundingClientRect ? wx.getMenuButtonBoundingClientRect() : null
+    const headerHeight = menu && menu.bottom > statusBarHeight ? menu.bottom - statusBarHeight + Math.max(0, menu.top - statusBarHeight) : 48
+    this.setData({ statusBarHeight, headerHeight, contentTop: statusBarHeight + headerHeight })
   },
   onShow() { if (this.controller) this.controller.poll() },
   onHide() { if (this.controller) this.controller.pause(); if (this.data.recording && this.recorder) { this.cancelVoice = true; this.recorder.stop() } },
@@ -27,14 +35,38 @@ Page({
     })
   },
   inputText(e) { this.setData({ input: e.detail.value }); this.controller?.setInput(e.detail.value) },
-  switchInputMode(e) { if (this.data.recording) this.cancelRecording(); this.setData({inputMode:e.currentTarget.dataset.mode || 'text'}) },
+  switchInputMode(e) {
+    if (this.data.recording) this.cancelRecording()
+    const inputMode = e.currentTarget.dataset.mode || 'text'
+    const error = /麦克风|录音/.test(this.data.error || '') ? '' : this.data.error
+    this.setData({ inputMode, error })
+  },
   ask(e) { this.setData({ input: e.currentTarget.dataset.text }); this.send() },
   async send() { const value = this.data.input.trim(); if (!value || this.data.sending) return; try { await this.controller.send(value) } catch (error) { this.setData({ error:error.message, input:value }) } },
   async ensureRecordPermission() {
     const setting = await new Promise(resolve => wx.getSetting ? wx.getSetting({ success: resolve, fail: () => resolve({authSetting:{}}) }) : resolve({authSetting:{}}))
-    if (setting.authSetting?.['scope.record'] === false) { this.setData({error:'未获得麦克风权限，可以继续使用文字输入。'}); return false }
-    if (setting.authSetting?.['scope.record'] !== true && wx.authorize) try { await new Promise((resolve,reject)=>wx.authorize({scope:'scope.record',success:resolve,fail:reject})) } catch (_) { this.setData({error:'未获得麦克风权限，可以继续使用文字输入。'}); return false }
+    if (setting.authSetting?.['scope.record'] === false) return this.recoverRecordPermission()
+    if (setting.authSetting?.['scope.record'] !== true && wx.authorize) try {
+      await new Promise((resolve,reject)=>wx.authorize({scope:'scope.record',success:resolve,fail:reject}))
+    } catch (_) { return this.recoverRecordPermission() }
     return true
+  },
+  async recoverRecordPermission() {
+    this.setData({ error: '' })
+    if (!wx.showModal || !wx.openSetting) return false
+    const choice = await new Promise(resolve => wx.showModal({
+      title: '开启麦克风权限',
+      content: '语音输入需要麦克风权限。请在设置中允许使用麦克风。',
+      confirmText: '去设置',
+      cancelText: '暂不用',
+      success: result => resolve(Boolean(result.confirm)),
+      fail: () => resolve(false)
+    }))
+    if (!choice) { this.setData({ inputMode: 'text' }); return false }
+    const result = await new Promise(resolve => wx.openSetting({ success: resolve, fail: () => resolve({authSetting:{}}) }))
+    const allowed = result.authSetting?.['scope.record'] === true
+    if (!allowed) this.setData({ inputMode: 'text' })
+    return allowed
   },
   async toggleVoice() {
     if (this.data.transcribing) return
@@ -43,7 +75,10 @@ Page({
     if (!this.recorder) {
       this.recorder = wx.getRecorderManager()
       this.recorder.onStart(()=>{ this.setData({recording:true,error:''}); if (this.stopVoiceAfterStart || !this.voiceHolding) { this.cancelVoice=true; this.recorder.stop() } })
-      this.recorder.onError(()=>this.setData({recording:false,error:'无法录音，请允许麦克风权限或使用文字输入'}))
+      this.recorder.onError(()=>{
+        this.setData({recording:false,inputMode:'text',error:''})
+        wx.showToast?.({title:'录音未启动，请检查麦克风权限',icon:'none'})
+      })
       this.recorder.onStop(async result=>{
         this.setData({recording:false})
         if (this.cancelVoice) { this.cancelVoice=false; return }
