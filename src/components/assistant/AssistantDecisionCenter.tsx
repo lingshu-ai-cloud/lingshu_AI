@@ -29,6 +29,7 @@ import {
   type WeeklyWorkUpdatedDetail,
 } from '../../lib/weeklyWorkEvents';
 import { digitalEmployeeApi } from '../../lib/digitalEmployeeApi';
+import { PRESENTER_ASSETS_UPDATED_EVENT } from '../../lib/presenterAssetsUpdated';
 import { normalizeAssistantDecisionExecutionReceipt } from '../../../shared/contracts/assistantDecisionCenter';
 import { LsBrandAction } from '../ui/LsExperiencePrimitives';
 import './assistantDecisionCenter.css';
@@ -395,6 +396,16 @@ export default function AssistantDecisionCenter({
     window.addEventListener(WEEKLY_WORK_UPDATED_EVENT, refreshAfterWeeklyWorkChange);
     return () => window.removeEventListener(WEEKLY_WORK_UPDATED_EVENT, refreshAfterWeeklyWorkChange);
   }, [active, goalId, load]);
+
+  useEffect(() => {
+    if (!active) return;
+    const refreshPresenterDecision = () => {
+      if (actionPending.current) return;
+      void load(undefined, true);
+    };
+    window.addEventListener(PRESENTER_ASSETS_UPDATED_EVENT, refreshPresenterDecision);
+    return () => window.removeEventListener(PRESENTER_ASSETS_UPDATED_EVENT, refreshPresenterDecision);
+  }, [active, load]);
 
   useEffect(() => {
     if (!active || variant !== 'summary') return;

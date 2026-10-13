@@ -20,6 +20,7 @@ import type {
   TaskRecord,
 } from '../routes/digitalEmployeeRecords.js';
 import { customerApprovalRequestHash } from './customerTaskApprovalNavigation.js';
+import type { ManagedReplicationPresenterReadiness } from './replicationContentProduction.js';
 
 type DecisionCenterSource = {
   page: AssistantDecisionPage;
@@ -149,8 +150,33 @@ export function workflowTaskDecisionVersion(task: TaskRecord): string {
 }
 
 export function workflowTaskNeedsEnterprisePresenter(task: TaskRecord): boolean {
-  const evidence = `${text(task.blocked_reason, 2_000)} ${JSON.stringify(parseJson(task.output, {})).slice(0, 12_000)}`;
+  const output = parseJson<Record<string, unknown>>(task.output, {});
+  const assistantInput = parseJson<Record<string, unknown>>(output.assistantInput, {});
+  const assistantCode = text(assistantInput.code, 100);
+  if (assistantCode === 'presenter_ready') return false;
+  if (['presenter_authorization_required', 'presenter_setup_required'].includes(assistantCode)) return true;
+  const evidence = `${text(task.blocked_reason, 2_000)} ${JSON.stringify(output).slice(0, 12_000)}`;
   return /avatar_required|presenter_authorization_required|尚未录入可用企业数字人|请先添加(?:并授权)?企业数字人|缺少(?:已授权)?企业数字人/i.test(evidence);
+}
+
+type AssistantPresenterInputCode = 'avatar_required' | 'presenter_authorization_required'
+  | 'presenter_setup_required' | 'presenter_ready';
+
+function workflowTaskPresenterInput(task: TaskRecord): {
+  code: AssistantPresenterInputCode | '';
+  message: string;
+  presenterName: string;
+} {
+  const output = parseJson<Record<string, unknown>>(task.output, {});
+  const assistantInput = parseJson<Record<string, unknown>>(output.assistantInput, {});
+  const code = text(assistantInput.code, 100);
+  return {
+    code: ['avatar_required', 'presenter_authorization_required', 'presenter_setup_required', 'presenter_ready'].includes(code)
+      ? code as AssistantPresenterInputCode
+      : '',
+    message: text(assistantInput.message, 500),
+    presenterName: text(assistantInput.presenterName, 100),
+  };
 }
 
 type AssistantStudioProject = { id: string; spec?: unknown; status?: unknown };
@@ -189,6 +215,9 @@ function projectNeedsEnterprisePresenter(project: AssistantStudioProject): boole
 export function taskWithAssistantProductionInput(
   task: TaskRecord,
   projects: AssistantStudioProject[],
+  presenterReadiness: ManagedReplicationPresenterReadiness = {
+    state: 'missing', presenterCount: 0, presenterName: '',
+  },
 ): TaskRecord {
   if (task.task_key !== 'content_production') return task;
   const referencedIds = productionProjectIds(task);
@@ -197,13 +226,20 @@ export function taskWithAssistantProductionInput(
     .map(project => project.id);
   if (!blockedProjectIds.length) return task;
   const output = parseJson<Record<string, unknown>>(task.output, {});
+  const input = presenterReadiness.state === 'ready'
+    ? { code: 'presenter_ready', message: '已检测到可用于当前逐镜制作的企业数字人', presenterName: presenterReadiness.presenterName }
+    : presenterReadiness.state === 'production_setup_required'
+      ? { code: 'presenter_setup_required', message: '企业数字人已添加，但当前逐镜复刻还需要绑定人物参考图、人物替换授权和 Active 方舟图片资产', presenterName: presenterReadiness.presenterName }
+      : presenterReadiness.state === 'authorization_required'
+        ? { code: 'presenter_authorization_required', message: '企业数字人已添加，但本人授权或企业使用授权尚未完成', presenterName: presenterReadiness.presenterName }
+        : { code: 'avatar_required', message: '人物镜头缺少可用且已授权的企业数字人形象', presenterName: '' };
   return {
     ...task,
     output: {
       ...output,
       assistantInput: {
-        code: 'avatar_required',
-        message: '人物镜头缺少可用且已授权的企业数字人形象',
+        ...input,
+        presenterCount: presenterReadiness.presenterCount,
         projectCount: blockedProjectIds.length,
       },
     },
@@ -329,23 +365,44 @@ function approvalCard(approval: ApprovalRecord, task: TaskRecord, run: RunRecord
 
 function attentionCard(task: TaskRecord, run: RunRecord, now: string): AssistantDecisionCard {
   const failed = task.status === 'failed';
+  const presenterInput = workflowTaskPresenterInput(task);
   const presenterRequired = workflowTaskNeedsEnterprisePresenter(task);
+  const presenterReady = presenterInput.code === 'presenter_ready';
+  const presenterSetupRequired = presenterInput.code === 'presenter_setup_required';
+  const presenterAuthorizationRequired = presenterInput.code === 'presenter_authorization_required';
+  const presenterTitle = presenterReady
+    ? '数字人已就绪，请继续生产'
+    : presenterSetupRequired
+      ? '请补齐数字人的制作条件'
+      : presenterAuthorizationRequired
+        ? '请完成数字人授权'
+        : '请添加企业数字人形象';
+  const presenterSummary = presenterReady
+    ? `${presenterInput.presenterName ? `${presenterInput.presenterName} 已就绪。` : '企业数字人已就绪。'}旧任务仍停在数字人节点；继续生产后会复用已完成镜头和回执。`
+    : presenterInput.message || '人物镜头已停在数字人生成前；其他已完成镜头和生产回执会保留。补齐后可从当前节点继续。';
   return {
     id: `task:${task.id}`,
-    kind: 'input_required',
-    priority: failed ? 650 : 600,
+    kind: presenterReady ? 'next_step' : 'input_required',
+    priority: presenterReady ? 550 : failed ? 650 : 600,
     status: 'pending',
-    title: presenterRequired ? '请添加企业数字人形象' : text(task.title) || '需要你处理',
-    summary: presenterRequired
-      ? '人物镜头已停在数字人生成前；其他已完成镜头和生产回执会保留。添加并授权后，可从当前节点继续。'
+    title: presenterRequired || presenterReady ? presenterTitle : text(task.title) || '需要你处理',
+    summary: presenterRequired || presenterReady
+      ? presenterSummary
       : text(task.blocked_reason) || (failed ? '任务失败，需要你选择处理方式。' : '任务正在等待必要资料或人工决定。'),
     facts: [
-      { label: '当前状态', value: presenterRequired ? '待补充数字人' : failed ? '失败' : '等待用户', tone: presenterRequired ? 'warning' : failed ? 'danger' : 'warning' },
+      { label: '当前状态', value: presenterReady ? '数字人已就绪' : presenterSetupRequired ? '待补制作条件' : presenterAuthorizationRequired ? '待完成授权' : presenterRequired ? '待补充数字人' : failed ? '失败' : '等待用户', tone: presenterReady ? 'info' : presenterRequired ? 'warning' : failed ? 'danger' : 'warning' },
       ...(task.destination ? [{ label: '处理位置', value: text(task.destination) }] : []),
     ],
-    subject: { type: 'workflow_task', id: task.id, version: workflowTaskDecisionVersion(task) },
-    actions: presenterRequired ? [
-      { id: 'open_workspace', label: '添加数字人形象', mode: 'navigate', emphasis: PRIMARY },
+    subject: { type: 'workflow_task', id: task.id, version: presenterInput.code
+      ? `${workflowTaskDecisionVersion(task)}|presenter:${presenterInput.code}`
+      : workflowTaskDecisionVersion(task) },
+    actions: presenterReady ? [
+      { id: 'open_workspace', label: '查看并继续生产', mode: 'navigate', emphasis: PRIMARY },
+      ...(!['handed_off', 'cancelled', 'succeeded', 'skipped'].includes(task.status)
+        ? [{ id: 'take_over', label: '人工接管当前任务', mode: 'command', emphasis: DEFAULT } as const]
+        : []),
+    ] : presenterRequired ? [
+      { id: 'open_workspace', label: presenterSetupRequired ? '补齐制作条件' : presenterAuthorizationRequired ? '完成数字人授权' : '添加数字人形象', mode: 'navigate', emphasis: PRIMARY },
       ...(!['handed_off', 'cancelled', 'succeeded', 'skipped'].includes(task.status)
         ? [{ id: 'take_over', label: '人工接管当前任务', mode: 'command', emphasis: DEFAULT } as const]
         : []),

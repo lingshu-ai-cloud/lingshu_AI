@@ -149,8 +149,56 @@ test('a linked production project can surface the avatar requirement without lea
   assert.deepEqual((enriched.output as any).assistantInput, {
     code: 'avatar_required',
     message: '人物镜头缺少可用且已授权的企业数字人形象',
+    presenterName: '',
+    presenterCount: 0,
     projectCount: 1,
   });
+});
+
+test('an added presenter is no longer described as missing when replication setup is incomplete', () => {
+  const waiting = {
+    ...task('task-avatar-setup', 'content_production', 'waiting_external'),
+    blocked_reason: '第 1 镜尚未录入可用企业数字人',
+    business_refs: [{ type: 'studio_project', id: 'project-avatar-setup' }],
+  } as TaskRecord;
+  const enriched = taskWithAssistantProductionInput(waiting, [{
+    id: 'project-avatar-setup',
+    spec: { automatedReplicationShots: [
+      { shotId: 'one', kind: 'blocked', intendedKind: 'person', blockerCode: 'presenter_authorization_required' },
+    ] },
+  }], { state: 'production_setup_required', presenterCount: 1, presenterName: 'Dante Office 2' });
+  const card = buildAssistantDecisionFeed({
+    page: 'digitalEmployees', goal: null, plan: null, run: { ...run, status: 'paused' },
+    tasks: [enriched], approvals: [], now,
+  }).items[0]!;
+  assert.equal(card.title, '请补齐数字人的制作条件');
+  assert.equal(card.actions[0]?.label, '补齐制作条件');
+  assert.match(card.summary, /已添加.*人物参考图.*方舟/);
+  assert.equal(card.deepLink?.page, 'enterprise');
+  assert.equal(card.deepLink?.businessRef?.enterpriseView, 'presenters');
+});
+
+test('a newly ready presenter replaces the stale add-person prompt with continuation', () => {
+  const waiting = {
+    ...task('task-avatar-ready', 'content_production', 'waiting_external'),
+    blocked_reason: '第 1 镜尚未录入可用企业数字人',
+    business_refs: [{ type: 'studio_project', id: 'project-avatar-ready' }],
+  } as TaskRecord;
+  const enriched = taskWithAssistantProductionInput(waiting, [{
+    id: 'project-avatar-ready',
+    spec: { automatedReplicationShots: [
+      { shotId: 'one', kind: 'blocked', intendedKind: 'person', blockerCode: 'presenter_authorization_required' },
+    ] },
+  }], { state: 'ready', presenterCount: 1, presenterName: '企业主讲人' });
+  const card = buildAssistantDecisionFeed({
+    page: 'digitalEmployees', goal: null, plan: null, run: { ...run, status: 'paused' },
+    tasks: [enriched], approvals: [], now,
+  }).items[0]!;
+  assert.equal(card.kind, 'next_step');
+  assert.equal(card.title, '数字人已就绪，请继续生产');
+  assert.equal(card.actions[0]?.label, '查看并继续生产');
+  assert.match(card.summary, /企业主讲人 已就绪/);
+  assert.notEqual(card.deepLink?.page, 'enterprise');
 });
 
 test('starter decisions remain available through the unified queue without exposing workspace telemetry', () => {

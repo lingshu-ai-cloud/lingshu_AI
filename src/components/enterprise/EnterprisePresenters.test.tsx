@@ -1,7 +1,10 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 import { renderToStaticMarkup } from 'react-dom/server';
 import EnterprisePresenters from './EnterprisePresenters.js';
+
+const source = readFileSync(new URL('./EnterprisePresenters.tsx', import.meta.url), 'utf8');
 
 test('presenter settings request a separate DashScope quality-inspection consent', () => {
   const html=renderToStaticMarkup(<EnterprisePresenters />);
@@ -27,4 +30,9 @@ test('initial configuration only exposes the person and voice entry point', () =
   assert.match(html, /企业默认人物/);
   assert.match(html, /选择或创建人物/);
   assert.doesNotMatch(html, /默认出镜偏好|新分镜默认布局|添加授权人物/);
+});
+
+test('saving or importing a presenter invalidates assistant decisions immediately', () => {
+  assert.match(source, /notifyPresenterAssetsUpdated\(\)/);
+  assert.match(source, /onSaved=\{next => \{ setValue\(next\); notifyPresenterAssetsUpdated\(\)/);
 });

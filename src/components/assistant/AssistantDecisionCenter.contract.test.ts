@@ -80,6 +80,13 @@ test('refresh keeps the current card and late requests cannot replace newer stat
   assert.ok(antSelectorLines.length > 0 && antSelectorLines.every(line => line.includes('.ls-assistant-decision-dialog')), 'Ant internals may only be scoped below the owned external dialog class');
 });
 
+test('presenter changes immediately refresh the authoritative decision card', () => {
+  assert.match(source, /PRESENTER_ASSETS_UPDATED_EVENT/);
+  const presenterRefresh = source.slice(source.indexOf('const refreshPresenterDecision'), source.indexOf("if (!active || variant !== 'summary')"));
+  assert.match(presenterRefresh, /void load\(undefined, true\)/, 'the assistant re-reads backend state instead of editing the stale card locally');
+  assert.match(presenterRefresh, /addEventListener\(PRESENTER_ASSETS_UPDATED_EVENT/);
+});
+
 test('weekly start feedback is receipt-backed and refreshes every mounted decision surface', () => {
   assert.match(source, /action\.id === 'approve_and_start'[\s\S]{0,180}!next\.execution \|\| next\.execution\.goalId !== first\.subject\.id/, 'a start result must match the selected goal');
   assert.match(source, /assistantDecisionExecutionFeedback\(next\.execution\)[\s\S]{0,260}notifyWeeklyWorkUpdated\(\{ source: 'assistant'/, 'verified execution drives feedback and the shared refresh event');

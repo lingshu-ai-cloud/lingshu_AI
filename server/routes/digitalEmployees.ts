@@ -71,7 +71,7 @@ import { readTenantEnterpriseProfile, updateTenantEnterpriseProfile, type Enterp
 import { buildBusinessSnapshot as defaultBuildBusinessSnapshot, type BusinessSnapshot } from '../digitalEmployees/businessSnapshot.js';
 const buildBusinessSnapshot: typeof defaultBuildBusinessSnapshot = (tenantId, range) => currentExecutionAdapters()?.snapshot?.(tenantId, range) ?? defaultBuildBusinessSnapshot(tenantId, range);
 import { freezeStoryboardNarration, CONTENT_SCRIPT_QUALITY_RULE_VERSION, advanceAutomatedContentProduction, collectProductionAssets, generateDirectorScriptContracts, productIdentity, resolveEnterpriseAssetLocation, resumeContentProjectForTaskControl } from '../digitalEmployees/contentProduction.js';
-import { managedReplicationFailureState } from '../digitalEmployees/replicationContentProduction.js';
+import { managedReplicationFailureState, managedReplicationPresenterReadiness } from '../digitalEmployees/replicationContentProduction.js';
 import { assessStoryboardMaterialReadiness, resolveMaterialProductAssociation } from '../digitalEmployees/materialProductionReadiness.js';
 import { contentProjectLineageFields } from '../digitalEmployees/contentProjectLineage.js';
 import { buildContentBatchPlan, contentPlanCoverage, enterpriseAssetStableId, type ContentBatchPlanDraft, type ContentOrder } from '../digitalEmployees/contentBatchPlan.js';
@@ -2826,11 +2826,22 @@ async function buildDigitalEmployeeAssistantFeed(
       .map(ref => String(ref.id || ref.entityId || '').trim())
       .filter(Boolean);
   }))];
-  const productionProjects = await Promise.all(productionProjectIds.map(projectId =>
-    tenantRecord<StoredRecord & { tenant_id: string }>('studio_projects', projectId, tenantId)));
+  const [productionProjects, productionDefaults] = await Promise.all([
+    Promise.all(productionProjectIds.map(projectId =>
+      tenantRecord<StoredRecord & { tenant_id: string }>('studio_projects', projectId, tenantId))),
+    store.list<StoredRecord>('studio_production_defaults', {
+      where: { tenant_id: tenantId }, page: 1, perPage: 2,
+    }),
+  ]);
+  const presenterReadiness = productionDefaults.items.length === 1
+    ? managedReplicationPresenterReadiness(jsonObject<Record<string, unknown>>(productionDefaults.items[0]!.payload, {}))
+    : productionDefaults.items.length === 0
+      ? managedReplicationPresenterReadiness({})
+      : { state: 'production_setup_required' as const, presenterCount: 0, presenterName: '' };
   const assistantTasks = taskResult.items.map(task => taskWithAssistantProductionInput(
     task,
     productionProjects.filter((project): project is StoredRecord & { tenant_id: string } => Boolean(project)),
+    presenterReadiness,
   ));
   return buildAssistantDecisionFeed({ page, goal, plan, run, tasks: assistantTasks, approvals: approvalResult.items, limit });
 }
