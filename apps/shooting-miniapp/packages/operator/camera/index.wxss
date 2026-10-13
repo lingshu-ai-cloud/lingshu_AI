@@ -2,19 +2,19 @@
 .capture-stage { position: absolute; top: 50%; left: 50%; width: 100vw; height: 177.7778vw; transform: translate(-50%, -50%); overflow: hidden; background: #11151c; }
 .camera { position: absolute; top: 0; right: 0; bottom: 0; left: 0; width: 100%; height: 100%; }
 .top-bar { position: absolute; z-index: 10; top: calc(24rpx + env(safe-area-inset-top)); left: 24rpx; right: 24rpx; display: flex; align-items: center; justify-content: space-between; }
-.round-action { display: flex; align-items: center; justify-content: center; width: 72rpx; height: 72rpx; border-radius: 50%; background: rgba(8,12,20,.46); color: #fff; font-size: 30rpx; }
+.round-action { display: flex; align-items: center; justify-content: center; width: 88rpx; height: 88rpx; border-radius: 50%; background: rgba(8,12,20,.56); color: #fff; font-size: 30rpx; }
 .platform-switch { display: flex; align-items: center; padding: 6rpx; border-radius: 30rpx; background: rgba(8,12,20,.42); }
-.platform-option { display: flex; align-items: center; justify-content: center; min-width: 68rpx; height: 52rpx; border-radius: 24rpx; color: rgba(255,255,255,.72); font-size: 22rpx; font-weight: 650; }
+.platform-option { display: flex; align-items: center; justify-content: center; min-width: 88rpx; height: 88rpx; border-radius: 24rpx; color: rgba(255,255,255,.76); font-size: 22rpx; font-weight: 650; }
 .platform-active { background: rgba(255,255,255,.92); color: #151922; }
-.requirement-card { position: absolute; z-index: 8; top: 43%; left: 50%; width: 76%; padding: 20rpx 24rpx; transform: translate(-50%, -50%); border: 1rpx solid rgba(255,255,255,.20); border-radius: 18rpx; background: rgba(8,12,20,.42); text-align: center; box-sizing: border-box; }
-.requirement-label { margin-bottom: 7rpx; color: rgba(255,255,255,.68); font-size: 19rpx; letter-spacing: 2rpx; }
+.requirement-card { position: absolute; z-index: 8; top: 43%; left: 50%; width: 76%; padding: 20rpx 24rpx; transform: translate(-50%, -50%); border: 1rpx solid rgba(255,255,255,.28); border-radius: 16rpx; background: rgba(8,12,20,.48); text-align: center; box-sizing: border-box; }
+.requirement-label { margin-bottom: 7rpx; color: rgba(255,255,255,.68); font-size: 22rpx; letter-spacing: 2rpx; }
 .requirement-text { color: #fff; font-size: 24rpx; font-weight: 650; line-height: 1.5; white-space: normal; word-break: break-word; }
-.requirement-meta { margin-top: 8rpx; color: rgba(255,255,255,.72); font-size: 20rpx; }
+.requirement-meta { margin-top: 8rpx; color: rgba(255,255,255,.72); font-size: 22rpx; }
 .requirement-recording { top: 14%; width: 68%; padding: 10rpx 18rpx; transform: translate(-50%, 0); border-radius: 14rpx; background: rgba(8,12,20,.34); }
 .requirement-recording .requirement-label, .requirement-recording .requirement-meta { display: none; }
-.requirement-recording .requirement-text { max-height: 60rpx; overflow: hidden; font-size: 21rpx; line-height: 1.42; font-weight: 550; }
+.requirement-recording .requirement-text { max-height: 60rpx; overflow: hidden; font-size: 22rpx; line-height: 1.42; font-weight: 550; }
 .bottom-bar { position: absolute; z-index: 10; left: 64rpx; right: 64rpx; bottom: calc(48rpx + env(safe-area-inset-bottom)); display: flex; align-items: center; justify-content: space-between; }
-.side-action, .time { display: flex; align-items: center; justify-content: center; width: 96rpx; height: 64rpx; color: rgba(255,255,255,.86); font-size: 23rpx; }
+.side-action, .time { display: flex; align-items: center; justify-content: center; width: 120rpx; min-height: 88rpx; color: rgba(255,255,255,.9); font-size: 23rpx; text-align:center; }
 .record-wrap { display: flex; align-items: center; justify-content: center; width: 116rpx; height: 116rpx; border: 5rpx solid rgba(255,255,255,.92); border-radius: 50%; }
 .record-button { width: 92rpx; height: 92rpx; border-radius: 50%; background: #f14444; transition: all .18s ease; }
 .record-wrap-active { border-color: rgba(255,255,255,.68); }

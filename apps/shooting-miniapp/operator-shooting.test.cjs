@@ -96,6 +96,8 @@ test('operator shooting presents pending totals and never exposes task creation'
   const markup = fs.readFileSync(require.resolve('./packages/operator/shooting/index.wxml'), 'utf8')
   assert.doesNotMatch(source, /createTask|create-form|api\.products/)
   assert.doesNotMatch(markup, /我要创建|全部任务|已上传[^素]/)
+  assert.match(markup, /shot-media[\s\S]*分镜/)
+  assert.match(markup, /收音要求/)
 })
 
 test('uploaded material completes the selected task and keeps recovery state on attach failure', async () => {

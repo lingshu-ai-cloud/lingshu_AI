@@ -2,7 +2,7 @@ const api = require('../../../lib/api')
 const assistant = require('../../../lib/assistant')
 
 Page({
-  data: { loading: true, sending: false, recording: false, transcribing: false, inputMode: 'text', error: '', messages: [], suggestions: [], input: '', anchor: '', preview: null, receipts: [], actions: [], confirming: false, statusBarHeight: 24, headerHeight: 48, contentTop: 72 },
+  data: { loading: true, sending: false, recording: false, transcribing: false, inputMode: 'text', error: '', messages: [], suggestions: [], showSuggestions: false, input: '', anchor: '', preview: null, receipts: [], actions: [], confirming: false, statusBarHeight: 24, headerHeight: 48, contentTop: 72 },
   async onLoad() {
     this.configureHeader()
     if (!api.token()) { wx.redirectTo({ url: '/pages/workbench/index' }); return }
@@ -35,13 +35,14 @@ Page({
     })
   },
   inputText(e) { this.setData({ input: e.detail.value }); this.controller?.setInput(e.detail.value) },
+  toggleSuggestions() { this.setData({ showSuggestions: !this.data.showSuggestions }) },
   switchInputMode(e) {
     if (this.data.recording) this.cancelRecording()
     const inputMode = e.currentTarget.dataset.mode || 'text'
     const error = /麦克风|录音/.test(this.data.error || '') ? '' : this.data.error
     this.setData({ inputMode, error })
   },
-  ask(e) { this.setData({ input: e.currentTarget.dataset.text }); this.send() },
+  ask(e) { this.setData({ input: e.currentTarget.dataset.text, showSuggestions: false }); this.send() },
   async send() { const value = this.data.input.trim(); if (!value || this.data.sending) return; try { await this.controller.send(value) } catch (error) { this.setData({ error:error.message, input:value }) } },
   async ensureRecordPermission() {
     const setting = await new Promise(resolve => wx.getSetting ? wx.getSetting({ success: resolve, fail: () => resolve({authSetting:{}}) }) : resolve({authSetting:{}}))

@@ -1,5 +1,4 @@
 <view class="page-shell">
-  <view class="ambient"></view>
   <view class="top-safe"></view>
   <view class="identity-bar">
     <view class="identity-copy"><text class="organization">{{organization}}</text><view class="edition" bindtap="openEdition">{{edition}}⌄</view></view>
@@ -9,7 +8,7 @@
   <view class="content">
     <view wx:if="{{error}}" class="notice error">{{error}}<text bindtap="refresh">重试</text></view>
     <view class="week-card">
-      <view class="week-heading"><text data-offset="-1" bindtap="changeWeek">上一周</text><text class="week-range">{{week.start}} — {{week.end}}</text><text data-offset="1" bindtap="changeWeek">下一周</text></view>
+      <view class="week-heading"><view class="week-action" data-offset="-1" bindtap="changeWeek">上一周</view><text class="week-range">{{week.start}} — {{week.end}}</text><view class="week-action" data-offset="1" bindtap="changeWeek">下一周</view></view>
       <view class="days"><view wx:for="{{days}}" wx:key="date" class="day {{item.selected ? 'selected' : ''}}" data-date="{{item.date}}" bindtap="selectDay"><text class="weekday">{{item.label}}</text><text class="day-number">{{item.number}}</text><view wx:if="{{item.count}}" class="day-indicator"></view></view></view>
     </view>
 

@@ -23,12 +23,15 @@
       <view wx:for="{{taskGroups}}" wx:for-item="group" wx:key="key" class="date-section">
         <view class="date-heading"><text>{{group.label}}</text><text class="date-text">{{group.dateText}}</text></view>
         <view wx:for="{{group.tasks}}" wx:for-item="item" wx:key="id" class="shoot-card surface {{item.done ? 'shoot-card-done' : ''}}" data-id="{{item.id}}" bindtap="selectTask">
-          <view class="completion {{item.done ? 'completion-done' : ''}}">{{item.done ? '✓' : ''}}</view>
+          <view class="shot-media {{item.done ? 'shot-media-done' : ''}}">
+            <text class="shot-media-label">{{item.done ? '已拍' : '分镜'}}</text>
+            <text class="shot-media-ratio">{{item.ratio || '9:16'}}</text>
+          </view>
           <view class="shoot-content">
             <view class="shoot-top"><text class="shoot-title">{{item.title}}</text><text class="status {{item.done ? 'status-done' : ''}}">{{item.done ? '已完成' : '待拍'}}</text></view>
             <view class="shoot-context">{{item.productLabel || item.themeTitle || '拍摄素材任务'}}</view>
             <view class="shoot-brief">{{item.shotBrief}}</view>
-            <view class="shoot-meta"><text>{{item.timeText}}</text><text>{{item.durationText}}</text><text>{{item.ratio || '比例不限'}}</text></view>
+            <view class="shoot-meta"><text>{{item.timeText}}</text><text>{{item.durationText}}</text><text>{{item.soundText}}</text></view>
           </view>
           <view class="chevron">›</view>
         </view>
@@ -53,7 +56,7 @@
         <view class="detail-facts">
           <view><text class="fact-label">建议时长</text><text>{{selected.durationText}}</text></view>
           <view><text class="fact-label">画面比例</text><text>{{selected.ratio || '不限'}}</text></view>
-          <view><text class="fact-label">声音</text><text>{{selected.soundText}}</text></view>
+          <view><text class="fact-label">收音要求</text><text>{{selected.soundText}}</text></view>
         </view>
       </view>
       <view class="detail-columns">

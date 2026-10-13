@@ -12,7 +12,7 @@
 
   <cover-view class="top-bar">
     <cover-view class="round-action" bindtap="back">‹</cover-view>
-    <cover-view class="platform-switch">
+    <cover-view class="platform-switch" aria-label="选择发布平台安全区">
       <cover-view class="platform-option {{platform === 'facebook' ? 'platform-active' : ''}}" data-platform="facebook" bindtap="choosePlatform">FB</cover-view>
       <cover-view class="platform-option {{platform === 'tiktok' ? 'platform-active' : ''}}" data-platform="tiktok" bindtap="choosePlatform">TK</cover-view>
     </cover-view>
@@ -20,7 +20,7 @@
   </cover-view>
 
   <cover-view class="bottom-bar">
-    <cover-view class="side-action" bindtap="switchCamera">翻转</cover-view>
+    <cover-view class="side-action" bindtap="switchCamera">翻转镜头</cover-view>
     <cover-view class="record-wrap {{recording ? 'record-wrap-active' : ''}}" bindtap="toggleRecord">
       <cover-view class="record-button {{recording ? 'record-button-active' : ''}}"></cover-view>
     </cover-view>

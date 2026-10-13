@@ -21,10 +21,14 @@ test('review queue only projects exported film deliveries and keeps acceptance s
 
 test('review page exposes queue and full-height vertical feed modes', () => {
   const markup = fs.readFileSync(require.resolve('./packages/operator/review/index.wxml'), 'utf8')
+  const styles = fs.readFileSync(require.resolve('./packages/operator/review/index.wxss'), 'utf8')
   const nav = fs.readFileSync(require.resolve('./components/operator-nav/index.js'), 'utf8')
   assert.match(markup, /swiper wx:else vertical/)
   assert.match(markup, /data-view="queue"/)
   assert.match(markup, /data-view="feed"/)
+  assert.match(markup, /class="media-frame"/)
+  assert.match(styles, /padding-bottom:56\.25%/)
+  assert.doesNotMatch(styles, /box-shadow|backdrop-filter/)
   assert.match(nav, /待验收成片/)
   assert.doesNotMatch(nav, /label: '待处理'/)
 })

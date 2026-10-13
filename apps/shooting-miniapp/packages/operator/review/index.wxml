@@ -1,6 +1,6 @@
 <view class="review-page {{view === 'feed' ? 'feed-page' : ''}}">
   <view class="review-header">
-    <view><view class="title">待验收成片</view><view class="subtitle">{{items.length}} 条已导出成片</view></view>
+    <view class="heading"><view class="title">待验收成片</view><view class="subtitle">{{items.length}} 条已导出成片</view></view>
     <view class="view-switch" aria-label="切换展示方式">
       <view class="switch-item {{view === 'queue' ? 'selected' : ''}}" data-view="queue" bindtap="setView">队列</view>
       <view class="switch-item {{view === 'feed' ? 'selected' : ''}}" data-view="feed" bindtap="setView">信息流</view>
@@ -9,15 +9,17 @@
 
   <scroll-view wx:if="{{view === 'queue'}}" scroll-y class="queue" refresher-enabled refresher-triggered="{{loading}}" bindrefresherrefresh="refresh">
     <view wx:for="{{items}}" wx:key="id" class="film-card">
-      <video class="queue-video" src="{{item.videoUrl}}" controls object-fit="cover" show-center-play-btn enable-progress-gesture/>
+      <view class="media-frame">
+        <video class="queue-video" src="{{item.videoUrl}}" controls object-fit="contain" show-center-play-btn enable-progress-gesture/>
+      </view>
       <view class="film-info">
         <view class="film-heading"><text class="film-title">{{item.title}}</text><text class="badge {{item.status}}">{{item.statusLabel}}</text></view>
         <view class="film-subject">{{item.subject}}</view>
         <view class="film-time">{{item.deliveredLabel}}</view>
       </view>
     </view>
-    <view wx:if="{{!loading && !items.length && !error}}" class="empty"><view class="empty-mark">✓</view><view class="empty-title">暂无待验收成片</view><view>成片导出后会自动进入这里</view></view>
-    <view wx:if="{{error}}" class="error">{{error}}<button size="mini" bindtap="refresh">重新读取</button></view>
+    <view wx:if="{{!loading && !items.length && !error}}" class="empty"><view class="empty-title">暂无待验收成片</view><view>成片导出后会自动进入这里</view></view>
+    <view wx:if="{{error}}" class="error"><text>{{error}}</text><button bindtap="refresh">重新读取</button></view>
     <view class="queue-bottom"></view>
   </scroll-view>
 

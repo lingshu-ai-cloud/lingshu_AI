@@ -65,6 +65,15 @@ test('assistant pages use mutually exclusive text and hold-to-talk modes without
     assert.doesNotMatch(markup, /assistant-avatar|class="avatar">枢|同步对话/)
   }
 })
+test('operator assistant keeps suggested questions collapsed on the empty conversation', () => {
+  const markup = fs.readFileSync(__dirname + '/packages/operator/assistant/index.wxml', 'utf8')
+  const script = fs.readFileSync(__dirname + '/packages/operator/assistant/index.js', 'utf8')
+  const styles = fs.readFileSync(__dirname + '/packages/operator/assistant/index.wxss', 'utf8')
+  assert.match(markup, /wx:if="{{showSuggestions}}" class="suggestions"/)
+  assert.match(markup, /bindtap="toggleSuggestions"/)
+  assert.match(script, /showSuggestions: false/)
+  assert.doesNotMatch(styles, /box-shadow/)
+})
 test('operator assistant recovers denied microphone permission without leaving a page-level error', async () => {
   let definition, modal, opened = 0
   const wx = {
