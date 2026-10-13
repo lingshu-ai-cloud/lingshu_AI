@@ -6,10 +6,13 @@ import {
   enterpriseBuyerText,
   hasIncompleteReferenceAnalysis,
   isUnverifiedLegacyCoverTitle,
+  studioReferenceAnalysisBlockers,
   validateStudioTimeline,
   scriptQualityFailure,
   withStudioTimeout,
 } from './AiCreateStudio.js';
+import { buildBenchmarkAnalysis, recordOf } from '../../shared/benchmarkAnalysis.js';
+import { benchmarkVideoFixture } from '../../tests/fixtures/benchmarkVideo.js';
 
 assert.equal(
   enterpriseBuyerText(['工厂厂长', ' 采购与供应链负责人 ', '']),
@@ -39,10 +42,35 @@ assert.equal(isUnverifiedLegacyCoverTitle('气动输送线'), false, '企业产�
 const completeReference = {
   video: { duration: 10 },
   referenceAnalysis: { details: [{ time: '0-5' }, { time: '5-10' }] },
-} as Parameters<typeof hasIncompleteReferenceAnalysis>[0];
+} as NonNullable<Parameters<typeof hasIncompleteReferenceAnalysis>[0]>;
 assert.equal(hasIncompleteReferenceAnalysis(completeReference), false, '完整连续的原片切点应可用于创作');
 assert.equal(hasIncompleteReferenceAnalysis({ ...completeReference!, video: { duration: 0 } } as Parameters<typeof hasIncompleteReferenceAnalysis>[0]), true, '缺少原片时长时不能声称已覆盖全片');
 assert.equal(hasIncompleteReferenceAnalysis({ ...completeReference!, referenceAnalysis: { details: [{ time: '0-5' }, { time: '待确认' }] } } as Parameters<typeof hasIncompleteReferenceAnalysis>[0]), true, '缺少时间码的镜头不能被静默忽略');
+
+const canonicalReadyReference = {
+  ...completeReference,
+  referenceAnalysis: {
+    ...completeReference.referenceAnalysis,
+    benchmarkAnalysis: buildBenchmarkAnalysis({ analysis: benchmarkVideoFixture(), videoId: 'reference', duration: 9, evidenceRevision: 'v1' }),
+  },
+} as Parameters<typeof studioReferenceAnalysisBlockers>[0];
+assert.deepEqual(studioReferenceAnalysisBlockers(canonicalReadyReference), [], '生产准入应复用灵感中心的规范化逐镜证据');
+const reviewFixture = benchmarkVideoFixture();
+const reviewShots = recordOf(reviewFixture.gemini).scriptDetails15s;
+assert.ok(Array.isArray(reviewShots));
+(reviewShots as Record<string, unknown>[])[1]!.materialType = 'unknown';
+(reviewShots as Record<string, unknown>[])[1]!.needsReview = true;
+const canonicalBlockedReference = {
+  ...completeReference,
+  referenceAnalysis: {
+    ...completeReference.referenceAnalysis,
+    benchmarkAnalysis: buildBenchmarkAnalysis({ analysis: reviewFixture, videoId: 'reference', duration: 9, evidenceRevision: 'v1' }),
+  },
+} as Parameters<typeof studioReferenceAnalysisBlockers>[0];
+assert.ok(
+  studioReferenceAnalysisBlockers(canonicalBlockedReference).some(item => item.includes('第 2 镜') && item.includes('类型未确认')),
+  '规范证据中的逐镜缺项必须原样成为可操作阻断原因',
+);
 
 const rejectionIssues = Array.from({ length: 6 }, (_, index) => `可操作问题${index + 1}`);
 const rejection = scriptQualityFailure({ script: '', qualityStatus: 'rejected', validationIssues: rejectionIssues }, '失败');
@@ -87,6 +115,9 @@ assert.doesNotMatch(workbenchSource, /<footer className="sticky bottom-0/, '底�
 assert.match(studioSource, /index > 0 && socialViralTask && hasIncompleteReferenceAnalysis\(videoKickoff\)/, '参考视频缺少可用切点时不得进入后续制作步骤');
 assert.match(studioSource, /const generateSetupScriptAndContinue = async[^]*?if \(socialViralTask\)[^]*?hasIncompleteReferenceAnalysis\(videoKickoff\)/, '自动口播交接同样必须拦截缺少完整切点的原片');
 assert.match(studioSource, /ranges\.length !== details\.length/, '逐镜分析不能忽略缺少时间码的镜头');
+assert.match(studioSource, /socialSourceShotIds\.length === slots\.length \? socialSourceShotIds : referenceShotIds/, '社媒任务应优先把正式制作 shot ID 写入 Studio 分镜身份');
+assert.match(studioSource, /resolveStudioSocialShot\(storyboardSlots, \{ shotId, shotIndex \}\)/, '社媒任务的素材绑定必须通过稳定镜头身份解析');
+assert.doesNotMatch(studioSource, /storyboardSlots\.find\(item => item\.id === shotId\) \|\| storyboardSlots\[shotIndex\]/, '现代任务不得在 shot ID 不匹配时静默回退到数组位置');
 assert.match(studioSource, /inherited \|\| selectedProductIds\[0\] \|\| ''/, '多个参考产品位应默认映射到同一企业产品');
 assert.doesNotMatch(studioSource, /selectedProductOptions\.length !== referenceProducts\.length/, '产品位数量不能强迫用户选择同样数量的不同产品');
 assert.match(studioSource, /blockReason: frozenStudioSpecRef\.current[^\n]+threeStepWorkflow && step === 'preview' \? previewRenderBlockers\[0\][^\n]+primaryActionBlockedReason/, '必须保留真实的主操作阻断原因');

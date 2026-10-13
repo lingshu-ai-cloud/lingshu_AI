@@ -59,7 +59,7 @@ import { createScriptGapTask, readScriptGapTasks, SCRIPT_GAP_QUEUE_EVENT, type S
 import { isSocialArtifactMediaSourceEligible } from '../lib/socialContentArtifactMedia';
 import { contentCreationDemoMaterialIds, contentCreationTestBypassEnabled } from '../lib/contentCreationTestBypass';
 import { useStudioSocialArtifactSubmission } from './socialContent/useStudioSocialArtifactSubmission';
-import { useStudioSocialTaskHydration, socialTaskProductionPreview, socialTaskReferenceKickoff, socialTaskShotMaterialBindings, type StudioSocialShotMaterialBinding, type StudioSocialTaskProductionPreview, type StudioSocialTaskSeed } from './socialContent/useStudioSocialTaskHydration';
+import { useStudioSocialTaskHydration, socialTaskProductionPreview, socialTaskReferenceKickoff, socialTaskShotMaterialBindings, socialTaskStudioShotIds, type StudioSocialShotMaterialBinding, type StudioSocialTaskProductionPreview, type StudioSocialTaskSeed } from './socialContent/useStudioSocialTaskHydration';
 import { reconcileShootingSlots, shootingRefillTarget, storyboardTimelineFromShootingSlots, transcriptMatches, type ShootingSlot } from '../lib/shootingWorkflow';
 import { matchStoryboardEnvironmentImage, retainStoryboardReferenceImages } from '../lib/storyboardEnvironmentReference';
 import { storyboardFactoryReferenceRequired } from '../../shared/storyboardFactoryReference';
@@ -100,6 +100,10 @@ import { shotKeyframeCues } from '../lib/shotKeyframes';
 import { CoverFace, ProjectFirstFrameThumb, RealThumb, Thumb, coverArtCss } from './StudioMediaPreviews';
 import { Field, Pill, SectionTitle } from './StudioFormPrimitives';
 import { GENERATED_MATERIAL_KIND_FILTERS, generatedMaterialKindLabel, matchesGeneratedMaterialKind, type GeneratedMaterialKindFilter } from '../lib/generatedMaterial';
+import { normalizeBenchmarkAnalysisSnapshot, type BenchmarkAnalysis } from '../../shared/benchmarkAnalysis';
+import { productionReferenceAdmission } from '../../shared/productionReferenceAdmission';
+import { reconcileStudioProductionSpec } from '../../shared/studioProductionContract';
+import { attachStudioSocialShotIdentities, normalizeStudioSocialShotId, resolveStudioSocialShot } from '../lib/studioSocialShotIdentity';
 export { StudioRequestTimeoutError, waitForStudioMediaReady, withStudioTimeout } from './studio/studioAuthenticatedMedia';
 // AI 生成内容工作台：创作设置 → 脚本与声音 → 成片制作。
 const STUDIO_ACCENT = 'var(--color-accent)';
@@ -374,6 +378,8 @@ function mergeClipLists(primary: Clip[], fallback: Clip[]): Clip[] {
 
 interface StoryboardSlot {
   id: string;
+  /** Immutable source-task identity; unlike `id`, it survives Studio reordering. */
+  sourceShotId?: string;
   time: string;
   start: number;
   end: number;
@@ -1611,6 +1617,9 @@ export interface VideoKickoff {
   actionContext?: { source?: string; recommendation?: string; workflowRunId?: string; workflowTaskId?: string };
   referenceAnalysis?: {
     narrationProducts?: string[]; narrationBrands?: string[];
+    /** Canonical Director handoff. New Inspiration entries must carry this
+     * snapshot so Studio evaluates the exact same evidence and shot rules. */
+    benchmarkAnalysis?: BenchmarkAnalysis;
     title?: string;
     narrationSourceStatus?: 'asr_aligned' | 'missing_source_asr';
     visualStyle?: string;
@@ -2198,22 +2207,34 @@ function referenceAnalysisEnd(kickoff: VideoKickoff | null): number {
   }, 0);
 }
 
-export function hasIncompleteReferenceAnalysis(kickoff: VideoKickoff | null): boolean {
+export function studioReferenceAnalysisBlockers(kickoff: VideoKickoff | null): string[] {
+  const canonical = normalizeBenchmarkAnalysisSnapshot(kickoff?.referenceAnalysis?.benchmarkAnalysis);
+  if (canonical) return productionReferenceAdmission(canonical).blockers;
   const sourceDuration = Number(kickoff?.video?.duration || 0);
   const analyzedUntil = referenceAnalysisEnd(kickoff);
   const details = kickoff?.referenceAnalysis?.details || [];
-  if (!details.length || !Number.isFinite(sourceDuration) || sourceDuration <= 0) return true;
+  const blockers: string[] = [];
+  if (!details.length) blockers.push('参考视频缺少逐镜分析');
+  if (!Number.isFinite(sourceDuration) || sourceDuration <= 0) blockers.push('参考视频时长尚未确认');
+  if (blockers.length) return blockers;
   const ranges = details
     .map(item => parseCueRange(item.time))
     .filter((item): item is { start: number; end: number } => Boolean(item))
     .sort((a, b) => a.start - b.start || a.end - b.end);
-  if (ranges.length !== details.length || ranges[0]!.start > 0.75) return true;
-  if (sourceDuration > 0 && analyzedUntil + 1 < sourceDuration) return true;
-  return ranges.some((range, index) => {
+  if (ranges.length !== details.length) blockers.push('有镜头缺少有效起止时间');
+  if (ranges[0]?.start != null && ranges[0].start > 0.75) blockers.push('开场时间线未覆盖');
+  if (sourceDuration > 0 && analyzedUntil + 1 < sourceDuration) blockers.push('逐镜分析没有覆盖完整原片');
+  if (ranges.some((range, index) => {
     const next = ranges[index + 1];
     return Boolean(next && next.start - range.end > 0.75)
       || Boolean(next && range.end - next.start > 0.75);
-  }) || details.some(item => /分析超时|缺少真实片段/.test(`${item.note || ''} ${item.visual || ''}`));
+  })) blockers.push('逐镜时间线存在缺口或重叠');
+  if (details.some(item => /分析超时|缺少真实片段/.test(`${item.note || ''} ${item.visual || ''}`))) blockers.push('有镜头缺少真实片段证据');
+  return [...new Set(blockers)];
+}
+
+export function hasIncompleteReferenceAnalysis(kickoff: VideoKickoff | null): boolean {
+  return studioReferenceAnalysisBlockers(kickoff).length > 0;
 }
 
 type MigrationMode = 'fidelity' | 'structure' | 'mechanism';
@@ -3633,6 +3654,7 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onLaunc
   };
   const [projectTitle, setProjectTitle] = useState('未命名草稿');
   const [socialShotMaterialBindings, setSocialShotMaterialBindings] = useState<StudioSocialShotMaterialBinding[]>([]);
+  const [socialSourceShotIds, setSocialSourceShotIds] = useState<string[]>([]);
   const rememberSocialShotMaterialBindings = (bindings: StudioSocialShotMaterialBinding[]) => {
     setSocialShotMaterialBindings(current => JSON.stringify(current) === JSON.stringify(bindings) ? current : bindings);
   };
@@ -3647,6 +3669,7 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onLaunc
       setSceneReworkTask(task);
       setAgentTaskProductionPreview(socialTaskProductionPreview(task));
       rememberSocialShotMaterialBindings(socialTaskShotMaterialBindings(task));
+      setSocialSourceShotIds(socialTaskStudioShotIds(task));
       const reference = socialTaskReferenceKickoff(task);
       if (reference) setVideoKickoff(reference);
       const failure = task.referencePreparation;
@@ -3665,6 +3688,7 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onLaunc
       setSocialTaskProductReference(seed.productReference);
       setAgentTaskProductionPreview(seed.productionPreview);
       rememberSocialShotMaterialBindings(seed.shotMaterialBindings);
+      setSocialSourceShotIds(seed.sourceShotIds);
       const localStoryboardScript = localGateBypass && seed.creationMode === 'clone'
         ? buildReferenceSpeechPlan(seed.reference).script
         : '';
@@ -3903,12 +3927,19 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onLaunc
   const materialCoverageReady = effectiveSelectedDuration >= Math.max(1, duration * 0.85);
   const matNames = selectedClips.map(c => c.name);
   const storyboardSlots = useMemo(() => {
-    if(boundProductionSnapshot?.projectId===projectId)return boundProductionSnapshot.slots;
+    const referenceShotIds = (videoKickoff?.referenceAnalysis?.details || []).map(detail => detail.shotId);
+    const attachTaskIdentity = (slots: StoryboardSlot[]) => attachStudioSocialShotIdentities(
+      slots,
+      socialSourceShotIds.length === slots.length ? socialSourceShotIds : referenceShotIds,
+    );
+    if(boundProductionSnapshot?.projectId===projectId) {
+      return attachTaskIdentity(boundProductionSnapshot.slots);
+    }
     const parsedFromScript = parseStoryboardSlots(script, duration);
     const persistedReplicationShots = mode === 'clone' && shootingSlotsRef.current.length > parsedFromScript.length
       ? storyboardTimelineFromShootingSlots(shootingSlotsRef.current)
       : [];
-    const parsed = persistedReplicationShots.length ? persistedReplicationShots : parsedFromScript;
+    const parsed = attachTaskIdentity(persistedReplicationShots.length ? persistedReplicationShots : parsedFromScript);
     const activeAudioDuration = voiceoverMode === 'ai'
       ? voiceoverAudios[activeVoiceLang]?.duration || 0
       : voiceoverMode === 'upload' ? voiceoverDur : 0;
@@ -3938,7 +3969,7 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onLaunc
       new Map(materials.filter(item=>item.type==='video').map(item=>[item.id,item.duration])), activeAssemblyId,
       Object.fromEntries(shootingSlotsRef.current.map(item => [item.slotId, item.id])),
       new Set(materials.filter(item => item.type === 'video' && ['heygen', 'digital-human-sentence-video', 'digital_human'].includes(item.sourceType || '')).map(item => item.id)));
-  }, [boundProductionSnapshot, projectId, activeVoiceLang, duration, script, videoKickoff, voiceoverAudios, voiceoverDur, voiceoverMode, storyboardAssignments, shotProductions, materials, activeAssemblyId]);
+  }, [boundProductionSnapshot, projectId, activeVoiceLang, duration, script, videoKickoff, voiceoverAudios, voiceoverDur, voiceoverMode, storyboardAssignments, shotProductions, materials, activeAssemblyId, socialSourceShotIds]);
   useEffect(() => {
     if (!socialShotMaterialBindings.length || !storyboardSlots.length) return;
     const materialIds = socialShotMaterialBindings.map(item => item.materialId);
@@ -3946,17 +3977,36 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onLaunc
     setStoryboardAssignments(current => {
       let changed = false;
       const next = { ...current };
-      socialShotMaterialBindings.forEach(({ shotIndex, materialId }) => {
-        const slot = storyboardSlots[shotIndex];
-        if (!slot || next[slot.id]) return;
-        next[slot.id] = materialId;
-        changed = true;
+      const stableAssignments = new Map<string, string>();
+      socialShotMaterialBindings.forEach(({ shotId, shotIndex, materialId }) => {
+        const slot = resolveStudioSocialShot(storyboardSlots, { shotId, shotIndex });
+        if (slot) stableAssignments.set(slot.id, materialId);
       });
+      // Task bindings are authoritative: if a storyboard is reordered, move the
+      // bound material with its immutable source shot instead of leaving the old
+      // slot assignment in place.
+      const taskMaterialIds = new Set(stableAssignments.values());
+      for (const [slotId, materialId] of Object.entries(next)) {
+        if (taskMaterialIds.has(materialId) && stableAssignments.get(slotId) !== materialId) {
+          delete next[slotId];
+          changed = true;
+        }
+      }
+      for (const [slotId, materialId] of stableAssignments) {
+        if (next[slotId] === materialId) continue;
+        next[slotId] = materialId;
+        changed = true;
+      }
       return changed ? next : current;
     });
   }, [socialShotMaterialBindings, storyboardSlots]);
   const referencePresenterForSlot = (slot: StoryboardSlot) => {
     const details = videoKickoff?.referenceAnalysis?.details || [];
+    const sourceIdentity = normalizeStudioSocialShotId(slot.sourceShotId);
+    if (sourceIdentity) {
+      const stable = details.find(detail => normalizeStudioSocialShotId(detail.shotId) === sourceIdentity);
+      if (stable) return stable;
+    }
     const visual = (storyboardSlotScript(slot.detail).visual || slot.title).replace(/\s/g, '');
     const exact = details.filter(detail => { const text = (detail.visual || '').replace(/\s/g, ''); return visual.length >= 12 && text.length >= 12 && (text.includes(visual) || visual.includes(text) || text.startsWith(visual.slice(0, 24))); });
     if (exact.length === 1) return exact[0];
@@ -4016,8 +4066,8 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onLaunc
     const shot = newShotProduction(storyboardSlotScript(slot.detail).voice, salesPresenterId || productionDefaults.defaultPresenterId, productionDefaults);
     if (mode === 'clone' && requestedPresenterId && !requestedPresenter) shot.presenterId = '';
     const requirements = newDigitalHumanRequirements();
-    const agentPlan = socialDigitalHumanPlans.find(item => item.shotId === slot.id)
-      ?? socialDigitalHumanPlans.find(item => item.shotIndex === storyboardSlots.findIndex(candidate => candidate.id === slot.id));
+    const agentPlan = socialDigitalHumanPlans.find(item =>
+      resolveStudioSocialShot(storyboardSlots, item)?.id === slot.id);
     if (agentPlan) {
       shot.source = 'avatar';
       shot.sound = 'source';
@@ -4130,7 +4180,7 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onLaunc
     setShotProductions(current => {
       let next = current;
       for (const plan of socialDigitalHumanPlans) {
-        const slot = storyboardSlots.find(item => item.id === plan.shotId) || storyboardSlots[plan.shotIndex];
+        const slot = resolveStudioSocialShot(storyboardSlots, plan);
         if (!slot) continue;
         const key = productionKey(slot.id);
         if (!next[key]) next = { ...next, [key]: newProductionFor(slot) };
@@ -6376,8 +6426,8 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onLaunc
     const assignments: Record<string, string> = {};
     // Explicit task bindings remain authoritative, including an already
     // generated presenter shot. All other shots are matched to distinct assets.
-    socialShotMaterialBindings.forEach(({ shotIndex, materialId }) => {
-      const slot = storyboardSlots[shotIndex];
+    socialShotMaterialBindings.forEach(({ shotId, shotIndex, materialId }) => {
+      const slot = resolveStudioSocialShot(storyboardSlots, { shotId, shotIndex });
       if (slot && materialById.has(materialId)) assignments[slot.id] = materialId;
     });
     const boundMaterialIds = new Set(Object.values(assignments));
@@ -6410,7 +6460,7 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onLaunc
     Object.assign(assignments, fallbackAssignments);
     const fallbackSlotIds = new Set(Object.keys(fallbackAssignments));
     const boundSlotIds = new Set(socialShotMaterialBindings
-      .map(({ shotIndex }) => storyboardSlots[shotIndex]?.id)
+      .map(({ shotId, shotIndex }) => resolveStudioSocialShot(storyboardSlots, { shotId, shotIndex })?.id)
       .filter((id): id is string => Boolean(id)));
     const preferredSet = new Set(preferredMaterialIds);
     const forcedPreferredSlotIds = new Set<string>();
@@ -6732,9 +6782,9 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onLaunc
     if (!preferredIds.length) return;
     const signature = [
       projectId || socialContentTaskId || 'unsaved',
-      storyboardSlots.map(slot => slot.id).join(','),
+      storyboardSlots.map(slot => `${slot.id}:${slot.sourceShotId || ''}`).join(','),
       materials.filter(item => item.type !== 'audio').map(item => item.id).join(','),
-      socialShotMaterialBindings.map(item => `${item.shotIndex}:${item.materialId}`).join(','),
+      socialShotMaterialBindings.map(item => `${item.shotId || item.shotIndex}:${item.materialId}`).join(','),
     ].join('|');
     if (localDemoFillSignatureRef.current === signature) return;
     localDemoFillSignatureRef.current = signature;
@@ -7064,8 +7114,8 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onLaunc
       return false;
     }
     if (hasIncompleteReferenceAnalysis(videoKickoff)) {
-      const analyzedUntil = referenceAnalysisEnd(videoKickoff);
-      setModeNotice(`已停止生成：当前逐镜结构覆盖到 ${analyzedUntil.toFixed(1)} 秒，但时间线存在明显缺口、重叠或未分析片段。请返回灵感中心补全原片证据。`);
+      const blockers = studioReferenceAnalysisBlockers(videoKickoff);
+      setModeNotice(`已停止生成：${blockers.slice(0, 3).join('；')}。请返回灵感中心补全或复核对应镜头。`);
       return false;
     }
     const cloneProductInfo = activeProductInfo.trim()
@@ -9005,7 +9055,7 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onLaunc
   const collectSpec = () => {
     let savedShotProductions = shotProductions;
     for (const plan of socialDigitalHumanPlans) {
-      const slot = storyboardSlots.find(item => item.id === plan.shotId) || storyboardSlots[plan.shotIndex];
+      const slot = resolveStudioSocialShot(storyboardSlots, plan);
       if (!slot) continue;
       const key = productionKey(slot.id);
       if (!savedShotProductions[key]) savedShotProductions = { ...savedShotProductions, [key]: newProductionFor(slot) };
@@ -9022,7 +9072,7 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onLaunc
         slots: storyboardSlots,
         script,
         assignments: storyboardAssignments,
-        sourcePlans: storyboardSourcePlans,
+        sourcePlans: persistedStoryboardSourcePlans,
         assemblies: assembliesForSave,
       },
       voiceover: {
@@ -9067,10 +9117,13 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onLaunc
     storyboardVideoVersions, productVideoVersions,
     variationStrategy, variationPeople, variationScenes, variationLanguages, variationHooks, variationMax,
     shootingSlots, shotProductions: savedShotProductions, shotProductionContext, socialDigitalHumanPlans,
+    socialSourceShotIds, socialShotMaterialBindings,
     analysisResults,
     posterDraft, leadContentPackage, posterJsonText, posterImageUrl,
     });
-    return frozenStudioSpecRef.current ? { ...currentSpec, ...structuredClone(frozenStudioSpecRef.current) } : currentSpec;
+    return reconcileStudioProductionSpec(frozenStudioSpecRef.current
+      ? { ...currentSpec, ...structuredClone(frozenStudioSpecRef.current) }
+      : currentSpec);
   };
 
   const applySpec = (savedSpec: Record<string, unknown>) => {
@@ -9114,6 +9167,9 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onLaunc
     setShootingIdentityEpoch(current => current + 1);
     setShotProductions(s.shotProductions && typeof s.shotProductions === 'object' ? Object.fromEntries(Object.entries(s.shotProductions as Record<string, ShotProduction>).map(([key, shot]) => [key, normalizeMaterialAudio(shot)])) : {});
     setSocialDigitalHumanPlans(Array.isArray(s.socialDigitalHumanPlans) ? s.socialDigitalHumanPlans as StudioSocialTaskSeed['digitalHumanShotPlans'] : []);
+    setSocialSourceShotIds(Array.isArray(s.socialSourceShotIds) ? s.socialSourceShotIds.map(String).filter(Boolean) : []);
+    rememberSocialShotMaterialBindings(Array.isArray(s.socialShotMaterialBindings)
+      ? s.socialShotMaterialBindings as StudioSocialShotMaterialBinding[] : []);
     setVoiceoverStaleLangs(Array.isArray(s.voiceoverStaleLangs) ? s.voiceoverStaleLangs as string[] : []);
     const restoredVoiceDrafts = s.voiceDrafts && typeof s.voiceDrafts === 'object'
       ? s.voiceDrafts as Record<string, string>
@@ -14234,7 +14290,7 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onLaunc
         status: videoKickoff && !hasIncompleteReferenceAnalysis(videoKickoff) ? (selectedVisualClips.length ? 'ready' : 'adjustable') : 'blocked',
         title: videoKickoff ? (hasIncompleteReferenceAnalysis(videoKickoff) ? '参考逐镜结构待复核' : '参考结构已准备') : '缺少参考视频',
         detail: videoKickoff && hasIncompleteReferenceAnalysis(videoKickoff)
-          ? `已带入 ${(videoKickoff.referenceAnalysis?.details || []).length} 段分析线索；请到灵感中心核对分镜、逐句口播及交接证据。`
+          ? `${studioReferenceAnalysisBlockers(videoKickoff).slice(0, 3).join('；')}。请到灵感中心补全或复核对应镜头。`
           : selectedVisualClips.length
             ? `参考结构 + ${selectedVisualClips.length} 项企业素材；将优先使用真实画面。`
             : '可先生成脚本，成片前再从当前账号素材库匹配画面。',
@@ -15525,7 +15581,7 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onLaunc
     : primaryGeneratesSetupScript && socialViralTask && referenceSpeechPlan.error
     ? referenceSpeechPlan.error
     : (primaryGeneratesSetupScript || primaryGeneratesStoryboard) && mode === 'clone' && !socialViralTask && hasIncompleteReferenceAnalysis(videoKickoff)
-    ? referenceRecoveryMessage || '参考视频时间线仍有缺口，请等待编导 Agent 自动补齐镜头证据。'
+    ? referenceRecoveryMessage || `${studioReferenceAnalysisBlockers(videoKickoff).slice(0, 3).join('；')}。请返回灵感中心处理。`
     : step === 'script' && scriptStageTab !== 'theme' && !hasTimestampScript
       ? '请先生成并确认分镜脚本。'
     : primaryGeneratesCopy && !hasTimestampScript
@@ -16989,8 +17045,8 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onLaunc
           savedPlan={productionPlans.find(item => item.projectId === projectId && `${item.assemblyId}:${item.shotId}` === productionKey(productionEditorSlot.id)
             && item.fingerprint === productionFingerprint(productionEditorSlot)
             && item.presenterAssetVersion === Math.max(1, productionDefaults.presenters.find(presenter => presenter.id === productionFor(productionEditorSlot).presenterId)?.assetVersion || 1))}
-          sourcePlan={socialDigitalHumanPlans.find(item => item.shotId === productionEditorSlot.id)
-            ?? socialDigitalHumanPlans.find(item => item.shotIndex === storyboardSlots.findIndex(candidate => candidate.id === productionEditorSlot.id))}
+          sourcePlan={socialDigitalHumanPlans.find(item =>
+            resolveStudioSocialShot(storyboardSlots, item)?.id === productionEditorSlot.id)}
           executions={productionExecutions.filter(item => `${item.assemblyId}:${item.shotId}` === productionKey(productionEditorSlot.id)
             && item.fingerprint === productionFingerprint(productionEditorSlot)
             && item.presenterAssetVersion === Math.max(1, productionDefaults.presenters.find(presenter => presenter.id === productionFor(productionEditorSlot).presenterId)?.assetVersion || 1))}

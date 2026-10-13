@@ -3,6 +3,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { execFileSync } from 'node:child_process';
+import { createHash } from 'node:crypto';
 import ffmpegStatic from 'ffmpeg-static';
 import {
   assetRenderUrl,
@@ -14,6 +15,8 @@ import {
   listTenantContentProjects,
   contentProjectBlockIsSemanticallyUnchanged,
   deterministicClosedWorldStoryboard,
+  frozenDirectorScriptForProduction,
+  MAX_FROZEN_DIRECTOR_SCRIPT_LENGTH,
   buildRouteSourcePlans,
   containsInternalContentMarker,
   contentFingerprint,
@@ -81,6 +84,34 @@ assert.equal(resolveFrozenOrderProduct(frozenCatalog, { productId: '', productNa
 assert.equal(resolveFrozenOrderProduct([{ id: 'one', name: 'Same' }, { id: 'two', name: 'Same' }], { productName: 'Same' }), undefined, 'ambiguous legacy names must fail closed');
 assert.deepEqual(immutableContentOrderBlockers({ readinessBlockers: ['参考视频尚无有效精确分析', '指定产品不在当前冻结产品资料中'] }), [], 'reference/product readiness must be recomputed so the same task can continue after evidence is supplied');
 assert.deepEqual(immutableContentOrderBlockers({ readinessBlockers: ['第 2 条：指定内容路径未在 Agent 配置中开启'] }), ['第 2 条：指定内容路径未在 Agent 配置中开启'], 'frozen route scope remains a hard order-local boundary');
+
+const confirmedScriptBody = '[0-4s]\n画面：真实产品\n台词：已确认脚本';
+const confirmedScriptHash = createHash('sha256').update(JSON.stringify(confirmedScriptBody)).digest('hex');
+assert.deepEqual(frozenDirectorScriptForProduction({
+  script: '旧的项目顶层脚本',
+  contentOrder: { contractVersion: 1, scripts: { en: {
+    version: 1, body: confirmedScriptBody, hash: confirmedScriptHash, language: 'en', status: 'confirmed',
+    generatedBy: 'director_agent', generatedAt: '2026-10-13T00:00:00.000Z', source: 'llm', degradedReason: '',
+  } } },
+}, 'en'), { script: confirmedScriptBody, blocker: '', source: 'frozen_contract' }, '生产必须使用内容订单冻结的编导脚本，而不是旧的顶层副本');
+assert.match(frozenDirectorScriptForProduction({
+  script: '旧的项目顶层脚本',
+  contentOrder: { contractVersion: 1, scripts: { en: {
+    version: 1, body: confirmedScriptBody, hash: 'stale-hash', language: 'en', status: 'confirmed',
+    generatedBy: 'director_agent', generatedAt: '2026-10-13T00:00:00.000Z', source: 'llm', degradedReason: '',
+  } } },
+}, 'en').blocker, /缺少编导已确认脚本版本/, '冻结脚本哈希不一致时必须在供应商调用前失败关闭');
+const oversizedConfirmedScript = 'x'.repeat(MAX_FROZEN_DIRECTOR_SCRIPT_LENGTH + 1);
+const oversizedAdmission = frozenDirectorScriptForProduction({
+  contentOrder: { contractVersion: 1, scripts: { en: {
+    version: 1, body: oversizedConfirmedScript,
+    hash: createHash('sha256').update(JSON.stringify(oversizedConfirmedScript)).digest('hex'),
+    language: 'en', status: 'confirmed', generatedBy: 'director_agent',
+    generatedAt: '2026-10-13T00:00:00.000Z', source: 'llm', degradedReason: '',
+  } } },
+}, 'en');
+assert.equal(oversizedAdmission.script, '', '超长冻结脚本不得截断后继续生产');
+assert.match(oversizedAdmission.blocker, new RegExp(`超过 ${MAX_FROZEN_DIRECTOR_SCRIPT_LENGTH} 字符支持上限`), '超长冻结脚本必须返回明确阻断原因');
 
 const asset = (partial: Partial<AssetCandidate> & Pick<AssetCandidate, 'id' | 'name'>): AssetCandidate => ({
   type: 'image', duration: 0, observations: ['产品置于桌面'], visualObservations: ['产品置于桌面'],

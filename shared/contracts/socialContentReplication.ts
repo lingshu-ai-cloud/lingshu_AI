@@ -589,6 +589,9 @@ export interface SocialThreeSecondHook {
 export interface SocialReferenceVideoAnalysis {
   narrationProducts?: string[];
   narrationBrands?: string[];
+  /** Frozen cross-surface admission evidence. Studio must consume this
+   * snapshot instead of re-interpreting the legacy social timeline. */
+  benchmarkAnalysis?: import('../benchmarkAnalysis.js').BenchmarkAnalysis;
   analysisId: string;
   /** Incrementing analysis version. Optional only on historic records. */
   version?: string;

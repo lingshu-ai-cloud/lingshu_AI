@@ -10,6 +10,8 @@ export function frozenStudioProject(spec:Record<string,unknown>):FrozenStudioPro
 }
 export function restoreStudioSpec(saved:Record<string,unknown>):Record<string,unknown>{
  if(frozenStudioProject(saved))return structuredClone(saved);
+ const productionContract=saved.studioProductionContract as Record<string,unknown>|undefined;
+ if(productionContract?.schemaVersion==='studio-production-contract.v1'&&productionContract.authority==='project_spec')return structuredClone(saved);
  const analysis=saved.analysisResults as Record<string,any>|undefined,b=analysis?.storyboard??{},v=analysis?.voiceover??{},shots=analysis?.shots??{};
  return{...(b.script!==undefined?{script:b.script}:{}),...(b.assignments!==undefined?{storyboardAssignments:b.assignments}:{}),...(b.clipEdits!==undefined?{clipEdits:b.clipEdits}:{}),...(b.sourcePlans!==undefined?{storyboardSourcePlans:b.sourcePlans}:{}),...(b.assemblies!==undefined?{storyboardAssemblies:b.assemblies}:{}),...(v.text!==undefined?{voiceoverLines:v.text}:{}),...(v.drafts!==undefined?{voiceDrafts:v.drafts}:{}),...(v.audios!==undefined?{voiceoverAudios:v.audios}:{}),...(v.alignedCuesByLang!==undefined?{alignedCuesByLang:v.alignedCuesByLang}:{}),...(shots.shootingSlots!==undefined?{shootingSlots:shots.shootingSlots}:{}),...(shots.productions!==undefined?{shotProductions:shots.productions}:{}),...saved};
 }

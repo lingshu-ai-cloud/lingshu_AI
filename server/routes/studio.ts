@@ -24,11 +24,11 @@ import { materialRoleFromFolder, safeMaterialScenes, safeMaterialVoicePlan } fro
 import { productIdentity } from '../digitalEmployees/contentProduction.js';
 import { enterpriseAssetStableId } from '../digitalEmployees/contentBatchPlan.js';
 import { resolveMaterialProductAssociation } from '../digitalEmployees/materialProductionReadiness.js';
-import { requestMaterialAnalysis, waitForMaterialAnalysis, isMaterialAnalysisActive, saveMaterialSegmentsWithScriptAnalysis, startPendingLocalMaterialAnalyses } from '../lib/materialLibraryAnalysis.js';
+import { requestMaterialAnalysis, waitForMaterialAnalysis, isMaterialAnalysisActive, saveMaterialSegmentsWithScriptAnalysis } from '../lib/materialLibraryAnalysis.js';
 import { readMaterialLibrary, readLocalMaterials, saveLocalMaterials, updateLocalMaterial } from '../lib/materialLibrary.js';
 import { filterMyGeneratedMaterials, projectGeneratedMaterial } from '../../src/lib/generatedMaterial.js';
 import { ASSET_GENERATION_KINDS } from '../../shared/contracts/generatedMaterial.js';
-import { currentDataAuthority } from '../storage/dataAuthority.js';
+import { reconcileStudioProductionSpec, studioProductionSnapshotIssues } from '../../shared/studioProductionContract.js';
 import { mixedStoryboardRules, mixedStoryboardIssues } from './mixedStoryboardContract.js';
 import { alignQwenFile } from '../integrations/qwenAlignment.js';
 import { contentLibraryRouter } from './contentLibrary.js';
@@ -6793,9 +6793,9 @@ studioRouter.get('/materials', async (req, res) => {
     readMaterialLibrary(tenantId),
     readTenantEnterpriseProfile(tenantId),
   ]);
-  // Legacy local imports wrote materials.json directly. Start their visual
-  // indexing when the owner opens the library; the response stays immediate.
-  if (currentDataAuthority() === 'local') startPendingLocalMaterialAnalyses(tenantId, inventory.items);
+  // Listing the library is read-only. Analysis is started only by an explicit
+  // selected-material action below; opening a page must never scan every local
+  // video, call a provider or consume a production budget.
   let list = [...new Map([
     ...enterpriseProductMaterials(tenantId, enterpriseProfile),
     ...inventory.items as Material[],
@@ -9711,6 +9711,17 @@ studioRouter.post('/projects', async (req, res) => {
   const { id, title, status = 'draft', spec: rawSpec = {}, thumbSeed, baseUpdatedAt } = req.body ?? {};
   const socialTaskId = socialProjectTaskId(res.locals);
   let spec = normalizeFreeCreationProjectSpec(studioProjectSpecForStorage(bindSocialProjectSpec(rawSpec, socialTaskId)));
+  const productionSnapshotIssues = studioProductionSnapshotIssues(spec);
+  if (productionSnapshotIssues.length) {
+    res.status(409).json({
+      ok: false,
+      code: 'STUDIO_PRODUCTION_CONTRACT_CONFLICT',
+      error: '当前草稿的脚本、分镜或生产结果存在不一致版本，已停止保存以避免使用旧数据生产。请刷新后重试。',
+      reasons: productionSnapshotIssues,
+    });
+    return;
+  }
+  spec = reconcileStudioProductionSpec(spec);
   if (!id && spec.resolvedStudioContract) { res.status(403).json({ok:false,code:'studio_frozen_contract_server_owned',error:'冻结制作计划只能由受信任业务流程绑定'}); return; }
   const automation = spec.automation && typeof spec.automation === 'object' && !Array.isArray(spec.automation)
     ? spec.automation as Record<string, unknown> : {};
