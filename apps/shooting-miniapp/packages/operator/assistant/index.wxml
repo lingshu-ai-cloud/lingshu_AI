@@ -3,13 +3,14 @@
   <view class="assistant-header"><view><text class="title">经营 Agent</text><view class="online"><view></view><text>企业工作助手</text></view></view><view class="status">在线</view></view>
   <view wx:if="{{error}}" class="error">{{error}}</view>
   <scroll-view scroll-y class="conversation" scroll-into-view="{{anchor}}">
-    <view wx:if="{{!messages.length && !loading}}" class="welcome"><view class="avatar">枢</view><text class="welcome-title">今天想推进什么？</text><text class="welcome-note">我会基于真实任务、询盘与执行状态回答</text><scroll-view scroll-x class="suggestions"><view class="suggestion-row"><view wx:for="{{suggestions}}" wx:key="*this" class="suggestion" data-text="{{item}}" bindtap="ask">{{item}}</view></view></scroll-view></view>
+    <view wx:if="{{!messages.length && !loading}}" class="welcome"><text class="welcome-title">今天想推进什么？</text><text class="welcome-note">我会基于真实任务、询盘与执行状态回答</text><scroll-view scroll-x class="suggestions"><view class="suggestion-row"><view wx:for="{{suggestions}}" wx:key="*this" class="suggestion" data-text="{{item}}" bindtap="ask">{{item}}</view></view></scroll-view></view>
     <view wx:for="{{messages}}" wx:key="id" id="{{item.id}}" class="message {{item.role}}"><text class="speaker">{{item.role === 'user' ? '你' : '经营 Agent'}}</text><text user-select class="message-text">{{item.content}}</text></view>
     <view wx:if="{{sending}}" class="thinking">正在整理真实工作信息…</view>
     <view wx:for="{{actions}}" wx:key="id" class="action-card" data-index="{{index}}" bindtap="previewAction"><text>{{item.label || '查看操作方案'}}</text><text>›</text></view>
     <view wx:if="{{preview}}" class="preview-card"><text class="preview-title">执行前确认 · {{preview.target.title}}</text><text class="preview-impact">{{preview.impact}}</text><view wx:for="{{preview.steps}}" wx:key="*this" class="step">{{index + 1}}. {{item}}</view><view class="preview-buttons"><button bindtap="dismissPreview">取消</button><button class="confirm" loading="{{confirming}}" bindtap="confirmAction">确认执行</button></view></view>
     <view wx:if="{{receipts.length}}" class="receipts"><text class="receipt-heading">执行记录</text><view wx:for="{{receipts}}" wx:key="id" class="receipt"><text>{{item.statusLabel}}</text><text>{{item.acceptedAt}}</text></view></view>
   </scroll-view>
-  <view class="composer"><input value="{{input}}" bindinput="inputText" confirm-type="send" bindconfirm="send" placeholder="输入你想推进的工作"/><button disabled="{{!input || sending}}" bindtap="send">发送</button></view>
+  <view class="composer {{recording ? 'recording' : ''}}"><button class="voice" disabled="{{transcribing || sending}}" bindtap="toggleVoice">{{recording ? '■' : transcribing ? '…' : '🎙'}}</button><input value="{{input}}" bindinput="inputText" confirm-type="send" bindconfirm="send" placeholder="输入消息，或点击麦克风说话"/><button wx:if="{{input}}" class="send" disabled="{{recording || transcribing || sending}}" bindtap="send">↑</button></view>
+  <view wx:if="{{recording || transcribing}}" class="voice-status"><text>{{recording ? '正在聆听，再点一次结束' : '正在识别…'}}</text><text wx:if="{{recording}}" bindtap="cancelRecording">取消</text></view>
   <operator-nav active="assistant"></operator-nav>
 </view>

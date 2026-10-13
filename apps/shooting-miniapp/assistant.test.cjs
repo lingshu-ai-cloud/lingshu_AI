@@ -53,6 +53,15 @@ test('voice is editable draft and failure preserves draft without sending', asyn
   assert.equal(controller.getState().input, '帮我查看进度')
   assert.equal(calls.length, 0)
 })
+test('assistant pages use a persistent text and voice composer without redundant avatar or sync button', () => {
+  const workbench = fs.readFileSync(__dirname + '/pages/workbench/index.wxml', 'utf8')
+  const assistant = fs.readFileSync(__dirname + '/packages/operator/assistant/index.wxml', 'utf8')
+  for (const markup of [workbench, assistant]) {
+    assert.match(markup, /bindtap="toggleVoice"/)
+    assert.match(markup, /输入消息，或点击麦克风说话/)
+    assert.doesNotMatch(markup, /assistant-avatar|class="avatar">枢|同步对话/)
+  }
+})
 test('late response cannot contaminate a new account', async () => {
   let finish
   const { controller } = fixture(path => path.endsWith('/query') ? new Promise(resolve => { finish = resolve }) : undefined)
