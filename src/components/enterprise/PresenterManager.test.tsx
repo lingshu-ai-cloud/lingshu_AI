@@ -7,11 +7,11 @@ import PresenterManager from './PresenterManager.js';
 const props = { onClose: () => {}, onSaved: () => {} };
 const source = fs.readFileSync('src/components/enterprise/PresenterManager.tsx', 'utf8');
 
-test('presenter onboarding exposes one material upload instead of technical creation modes', () => {
+test('presenter onboarding keeps the existing single-source editor and adds unified onboarding reuse', () => {
   const html = renderToStaticMarkup(<PresenterManager {...props} />);
   assert.match(html, /人物素材/);
   assert.match(html, /Digital Twin 视频须为 30 秒至 5 分钟/);
-  assert.match(html, /提交人物并继续官方授权/);
+  assert.match(html, /提交资料并继续本人授权/);
   assert.match(source, /选择已有声音/);
   assert.match(source, /录入本人声音/);
   assert.match(source, /直接录音（推荐）/);
@@ -39,8 +39,12 @@ test('presenter onboarding exposes one material upload instead of technical crea
   assert.doesNotMatch(source, /模拟官方授权|mockConsentCompletionAvailable|mockComplete/);
   assert.match(source, /邀请您创建属于自己的口播角色/);
   assert.match(source, /或上传本人录音/);
-  assert.match(source, /先按 HeyGen 官方顺序创建人物并完成人像授权/);
+  assert.match(source, /同一套照片和视频会自动继续方舟认证/);
+  assert.match(source, /productionApi\.uploadArkMaterial\(photoFile, 'image'\)/);
+  assert.match(source, /productionApi\.uploadArkMaterial\(videoFile, 'video'\)/);
   assert.match(source, /presenterApi\.create\(\{ name: name\.trim\(\), type: videoSource \? 'digital_twin' : 'photo', uploadId:/);
+  assert.match(source, /arkPreparation/);
+  assert.match(source, /digitalTwinReservationCny/);
   assert.doesNotMatch(source, /presenterApi\.create\(\{[^\n]*voiceId:/);
   assert.match(source, /声音任务已留档但尚未确认可用/);
   assert.doesNotMatch(source, /recordingSeconds < 15/);
@@ -49,8 +53,11 @@ test('presenter onboarding exposes one material upload instead of technical crea
 
 test('initial onboarding communicates the official-consent gate and default-person outcome', () => {
   const html = renderToStaticMarkup(<PresenterManager {...props} initialConfiguration />);
-  assert.match(html, /录入人物资产/);
+  assert.match(html, /一次录入人物资料/);
   assert.match(html, /官方本人授权/);
   assert.match(html, /配置声音并保存/);
   assert.match(html, /选择已授权人物/);
+  assert.match(source, /统一人物正面照片/);
+  assert.match(source, /统一人物本人视频/);
+  assert.match(source, /HeyGen 与方舟处理/);
 });

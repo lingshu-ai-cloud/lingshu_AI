@@ -7,16 +7,18 @@ import EnterprisePresenters from './EnterprisePresenters.js';
 const source = readFileSync(new URL('./EnterprisePresenters.tsx', import.meta.url), 'utf8');
 const enterprisePageSource = readFileSync(new URL('../EnterprisePage.tsx', import.meta.url), 'utf8');
 
-test('initial configuration presents HeyGen and Ark at the same onboarding level', () => {
+test('initial configuration presents one unified presenter onboarding instead of duplicate provider forms', () => {
   const html = renderToStaticMarkup(<EnterprisePresenters initialConfiguration />);
   assert.match(html, /数字人统一接入/);
-  assert.match(html, /HeyGen 口播接入/);
-  assert.match(html, /方舟人物认证/);
-  assert.match(html, /配置 HeyGen/);
-  assert.match(html, /先完成左侧人物和声音接入/);
+  assert.match(html, /人物、声音与本人认证/);
+  assert.match(html, /开始统一接入/);
+  assert.doesNotMatch(html, /HeyGen 口播接入/);
+  assert.doesNotMatch(html, /方舟人物认证/);
   assert.match(source, /<ArkPresenterEnrollmentPanel/);
   assert.match(source, /productionApi\.startArkEnrollment/);
   assert.match(source, /productionApi\.uploadArkMaterial/);
+  assert.match(source, /finishUnifiedPresenterSetup/);
+  assert.match(source, /initialPhotoMaterialId=\{preparedArk\?\.photoMaterialId\}/);
 });
 
 test('enterprise presenter page is limited to editing and revoking existing people', () => {
@@ -42,6 +44,7 @@ test('content production redirects setup to the shared beginner guide', () => {
 
 test('all presenter mutations invalidate assistant decisions immediately', () => {
   assert.match(source, /notifyPresenterAssetsUpdated\(\)/);
-  assert.match(source, /onSaved=\{next => \{ setValue\(next\); notifyPresenterAssetsUpdated\(\)/);
+  assert.match(source, /setValue\(next\); notifyPresenterAssetsUpdated\(\); setShowHeyGenManager/);
+  assert.match(source, /onSaved=\{\(next, context\) => finishUnifiedPresenterSetup\(next, context\)\}/);
   assert.match(source, /setValue\(next\); notifyPresenterAssetsUpdated\(\); setMessage\('人物授权已取消/);
 });

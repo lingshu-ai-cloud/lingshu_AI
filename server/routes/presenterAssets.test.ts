@@ -36,7 +36,7 @@ test('presenter creation, consent, import, tenant isolation, pagination and unce
   const locks = new Map<string, Promise<unknown>>();
   const exclusive = async <T>(key: string, fn: () => Promise<T>): Promise<T> => { const next = (locks.get(key) || Promise.resolve()).catch(() => {}).then(fn); locks.set(key, next); return next; };
   const app = express(); app.use(express.json()); app.use((req, res, next) => { res.locals.tenantId = req.headers['x-tenant'] || 'A'; next(); });
-  app.use(createPresenterAssetsRouter(store, exclusive, { client, configured: () => true, enabled: () => true, directConsent: () => false, reserve: async () => { if (budgetBlocked) throw new Error('预算不足'); }, trimVideo: async (_bytes, seconds) => { trimCalls++; assert.equal(seconds, 7); return Buffer.from([0,0,0,0,102,116,121,112,1,2,3,4]); }, extractFrame: async (_bytes, seconds) => { frameCalls++; assert.equal(seconds, 1); return Buffer.from([255,216,255,224,0,16,74,70,73,70,0,1,255,217]); }, inspectVideo: async () => ({ duration: 60, width: 1080, height: 1920, fps: 30, hasAudio: true }) }));
+  app.use(createPresenterAssetsRouter(store, exclusive, { client, configured: () => true, enabled: () => true, directConsent: () => false, reserve: async () => { if (budgetBlocked) throw new Error('预算不足'); }, trimVideo: async (_bytes, seconds) => { trimCalls++; assert.equal(seconds, 7); return Buffer.from([0,0,0,0,102,116,121,112,1,2,3,4]); }, extractFrame: async (_bytes, seconds) => { frameCalls++; assert.equal(seconds, 1); return Buffer.from([255,216,255,224,0,16,74,70,73,70,0,1,255,217]); }, inspectVideo: async () => ({ duration: 60, width: 1080, height: 1920, fps: 30, hasAudio: true }), materialBelongs: (tenant, id, type) => tenant === 'A' && id === `ark-${type}` }));
   const server = app.listen(0, '127.0.0.1'); await new Promise<void>(r => server.once('listening', r));
   const root = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
   const request = (url: string, body?: any, tenant = 'A') => fetch(root + url, { method: body === undefined ? 'GET' : 'POST', headers: { 'Content-Type': 'application/json', 'x-tenant': tenant }, ...(body === undefined ? {} : { body: JSON.stringify(body) }) });
@@ -66,12 +66,14 @@ test('presenter creation, consent, import, tenant isolation, pagination and unce
     const assetsBeforeRepeat = calls.filter(c => c.url.endsWith('/assets')).length;
     assert.equal((await (await upload('upload1')).json()).id, asset.id); assert.equal(calls.filter(c => c.url.endsWith('/assets')).length, assetsBeforeRepeat);
     await store.create('studio_presenter_assets', { tenant_id: 'A', kind: 'creation', request_id: 'legacy-mock', payload: { mock: true, sourceDigest: rows.get(`studio_presenter_assets/${asset.id}`).payload.digest, status: 'completed' } });
-    const input = { name: 'Our presenter', type: 'photo', voiceId: 'voice1', uploadId: asset.id, requestId: 'creation1', authorized: true, adultConfirmed: true, confirmed: true };
+    const input = { name: 'Our presenter', type: 'photo', voiceId: 'voice1', uploadId: asset.id, requestId: 'creation1', authorized: true, adultConfirmed: true, confirmed: true,
+      arkPreparation: { photoMaterialId: 'ark-image', videoMaterialId: 'ark-video', processingAuthorized: true } };
     assert.equal((await request('/creations', { ...input, authorized: false })).status, 400);
     assert.equal((await request('/creations', { ...input, adultConfirmed: false })).status, 400);
     assert.equal((await request('/creations', input, 'B')).status, 400); assert.equal(creates(), 0);
     const pair = await Promise.all([request('/creations', input), request('/creations', input)]); const first = await pair[0].json();
     assert.equal((await pair[1].json()).id, first.id); assert.equal(creates(), 1); assert.equal(first.status, 'completed');
+    assert.deepEqual(first.arkPreparation, input.arkPreparation, 'one-time Ark preparation survives the HeyGen consent round trip');
     assert.equal(first.uploadId, undefined); assert.equal(first.fingerprint, undefined);
     assert.deepEqual(calls.find(c => c.url === 'https://api.heygen.com/v3/avatars')!.body.file, { type: 'asset_id', asset_id: 'uploaded1' });
     assert.equal((await request('/creations', { ...input, name: 'changed' })).status, 400);

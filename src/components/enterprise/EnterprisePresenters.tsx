@@ -6,9 +6,10 @@ import { EMPTY_DEFAULTS, type ProductionDefaults, type PresenterAsset } from '..
 import { fetchMaterialLibrary, type Material } from '../../lib/studioApi';
 import { presenterApi } from '../../lib/presenterApi';
 import { notifyPresenterAssetsUpdated } from '../../lib/presenterAssetsUpdated';
+import type { ArkPresenterPreparation } from '../../lib/presenterAssets';
 import { LsBrandAction } from '../ui/LsExperiencePrimitives';
 import ArkPresenterEnrollmentPanel from '../studio/ArkPresenterEnrollmentPanel';
-import PresenterManager from './PresenterManager';
+import PresenterManager, { type PresenterSaveContext } from './PresenterManager';
 
 function heyGenReady(presenter?: PresenterAsset): boolean {
   return Boolean(presenter?.authorized && (presenter.toolMappings?.heygen?.avatarId || presenter.avatarId)
@@ -46,6 +47,7 @@ export default function EnterprisePresenters({
   const [error, setError] = useState('');
   const [showArkSetup, setShowArkSetup] = useState(false);
   const [showHeyGenManager, setShowHeyGenManager] = useState(false);
+  const [preparedArk, setPreparedArk] = useState<ArkPresenterPreparation>();
   const [editingId, setEditingId] = useState('');
   const [editingName, setEditingName] = useState('');
 
@@ -118,6 +120,33 @@ export default function EnterprisePresenters({
     });
   };
 
+  const finishUnifiedPresenterSetup = async (next: ProductionDefaults, context?: PresenterSaveContext) => {
+    setValue(next); notifyPresenterAssetsUpdated(); setShowHeyGenManager(false); setError('');
+    const preparation = context?.arkPreparation;
+    if (!preparation) {
+      setShowArkSetup(true);
+      setMessage('人物与声音已保存。这个人物还没有可复用的方舟认证资料，只需再补充一次照片和本人视频。');
+      return;
+    }
+    setPreparedArk(preparation);
+    try {
+      const enrollment = await startArkEnrollment({
+        name: '',
+        photoMaterialId: preparation.photoMaterialId,
+        videoMaterialId: preparation.videoMaterialId,
+        requestId: `unified-${context?.creationId || next.defaultPresenterId}`,
+      });
+      setShowArkSetup(true);
+      setMessage(enrollment.state === 'needs_verification'
+        ? '人物与声音已保存，同一套照片和视频已自动提交方舟。请完成人验证。'
+        : '人物与声音已保存，同一套资料已自动进入方舟认证。');
+    } catch (cause) {
+      setShowArkSetup(true);
+      setMessage('人物、声音和复用资料均已保存，不需要再次上传。');
+      setError(`方舟认证暂未启动：${cause instanceof Error ? cause.message : String(cause)}`);
+    }
+  };
+
   const saveName = async () => {
     const name = editingName.trim();
     if (!editingId || !name) return;
@@ -158,27 +187,23 @@ export default function EnterprisePresenters({
     </div>
     {error && <Alert type="error" showIcon title={error} />}
     {message && <Alert type="success" showIcon title={message} />}
-    <div className="grid gap-3 md:grid-cols-2">
-      <section className={`rounded-lg border p-4 ${selectedHeyGenReady ? 'border-emerald-200 bg-emerald-50/60' : 'border-border bg-white'}`} aria-label="HeyGen 口播接入">
-        <div className="flex items-start justify-between gap-3"><div><p className="text-sm font-semibold text-text-primary">HeyGen 口播接入</p><p className="mt-1 text-xs text-text-muted">选择或创建人物，完成本人授权并配置声音。</p></div>{selectedHeyGenReady ? <Tag color="success">已完成</Tag> : <Tag>待配置</Tag>}</div>
-        {selectedPresenter && <p className="mt-3 text-xs text-text-secondary">当前人物：<strong>{selectedPresenter.name}</strong></p>}
-        <LsBrandAction className="mt-4" onClick={() => setShowHeyGenManager(true)}>{selectedHeyGenReady ? '更换 HeyGen 人物' : '配置 HeyGen'}</LsBrandAction>
-      </section>
-      <section className={`rounded-lg border p-4 ${selectedArkReady ? 'border-emerald-200 bg-emerald-50/60' : 'border-border bg-white'}`} aria-label="方舟人物认证">
-        <div className="flex items-start justify-between gap-3"><div><p className="text-sm font-semibold text-text-primary">方舟人物认证</p><p className="mt-1 text-xs text-text-muted">上传本人照片和视频，完成人证核验并自动绑定图片资产。</p></div>{selectedArkReady ? <Tag color="success">已完成</Tag> : <Tag>{selectedHeyGenReady ? '待配置' : '等待人物'}</Tag>}</div>
-        <Button className="mt-4" disabled={!selectedHeyGenReady} onClick={() => setShowArkSetup(current => !current)}>{selectedArkReady ? '查看方舟认证' : '配置方舟认证'}</Button>
-        {!selectedHeyGenReady && <p className="mt-2 text-[11px] text-text-muted">先完成左侧人物和声音接入，再认证同一人物。</p>}
-      </section>
-    </div>
+    <section className={`rounded-lg border p-4 ${selectedHeyGenReady && selectedArkReady ? 'border-emerald-200 bg-emerald-50/60' : 'border-border bg-white'}`} aria-label="统一人物接入状态">
+      <div className="flex flex-wrap items-start justify-between gap-4"><div><p className="text-sm font-semibold text-text-primary">人物、声音与本人认证</p>{selectedPresenter && <p className="mt-2 text-xs text-text-secondary">当前人物：<strong>{selectedPresenter.name}</strong></p>}<div className="mt-3 flex flex-wrap gap-2"><Tag color={selectedHeyGenReady ? 'success' : 'default'}>口播人物与声音 {selectedHeyGenReady ? '已完成' : '待配置'}</Tag><Tag color={selectedArkReady ? 'success' : 'default'}>人物替换认证 {selectedArkReady ? '已完成' : selectedHeyGenReady ? '待继续' : '等待人物'}</Tag></div></div>
+        {!selectedHeyGenReady ? <LsBrandAction onClick={() => setShowHeyGenManager(true)}>开始统一接入</LsBrandAction> : !selectedArkReady ? <LsBrandAction onClick={() => setShowArkSetup(current => !current)}>{showArkSetup ? '收起认证状态' : '继续人物认证'}</LsBrandAction> : <Button onClick={() => setShowHeyGenManager(true)}>更换人物</Button>}
+      </div>
+    </section>
     {showArkSetup && selectedPresenter && <ArkPresenterEnrollmentPanel
       presenterId={selectedPresenter.id}
       photos={materials.filter(item => item.type === 'image').map(item => ({ id: item.id, name: item.name }))}
       videos={materials.filter(item => item.type === 'video').map(item => ({ id: item.id, name: item.name }))}
+      initialPhotoMaterialId={preparedArk?.photoMaterialId}
+      initialVideoMaterialId={preparedArk?.videoMaterialId}
+      authorizationConfirmed={preparedArk?.processingAuthorized === true}
       onStart={startArkEnrollment}
       onReady={async () => { await refresh('方舟人物认证已完成，当前人物可以用于人物替换。'); onInitialSelection?.(); }}
     />}
     {selectedHeyGenReady && selectedArkReady && <div className="flex items-center gap-2 rounded-lg bg-emerald-50 px-4 py-3 text-xs font-semibold text-emerald-800"><CheckCircle2 size={16} />数字人口播与人物替换条件均已准备完成。</div>}
-    {showHeyGenManager && <PresenterManager initialConfiguration onClose={() => setShowHeyGenManager(false)} onSynced={next => { setValue(next); notifyPresenterAssetsUpdated(); }} onSaved={next => { setValue(next); notifyPresenterAssetsUpdated(); setShowHeyGenManager(false); setMessage('HeyGen 人物与声音已保存。可继续完成右侧方舟人物认证。'); }} />}
+    {showHeyGenManager && <PresenterManager initialConfiguration onClose={() => setShowHeyGenManager(false)} onSynced={next => { setValue(next); notifyPresenterAssetsUpdated(); }} onSaved={(next, context) => finishUnifiedPresenterSetup(next, context)} />}
   </section>;
 
   return <section className="rounded-lg border border-border bg-white p-5" aria-label={contentProduction ? '内容制作人物管理' : '人物与出镜'}>

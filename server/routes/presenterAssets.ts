@@ -8,7 +8,7 @@ import { Router, raw } from 'express';
 import { createHash } from 'node:crypto';
 import type { DataStore } from '../storage/datastore.js';
 import { HeyGenPresenterClient, HeyGenRequestError, asianPresenterLook, mediaUrl, presenterLook } from '../lib/heygenPresenters.js';
-import type { PresenterCreation, PresenterLook } from '../../src/lib/presenterAssets.js';
+import type { ArkPresenterPreparation, PresenterCreation, PresenterLook } from '../../src/lib/presenterAssets.js';
 import type { ProductionDefaults, PresenterAsset } from '../../src/lib/shotProduction.js';
 import { EMPTY_DEFAULTS } from '../../src/lib/shotProduction.js';
 import { StudioPaidBudget } from '../lib/studioPaidBudget.js';
@@ -46,6 +46,7 @@ export function createPresenterAssetsRouter(store: DataStore, exclusive: Exclusi
   trimVideo?: (bytes: Buffer, seconds: number) => Promise<Buffer>;
   extractFrame?: (bytes: Buffer, seconds: number) => Promise<Buffer>;
   inspectVideo?: (bytes: Buffer) => Promise<PresenterVideoInfo>;
+  materialBelongs?: (tenantId: string, materialId: string, type: 'image' | 'video') => boolean;
 } = {}) {
   const router = Router();
   const client = () => options.client || new HeyGenPresenterClient(process.env.HEYGEN_API_KEY || '');
@@ -110,6 +111,7 @@ export function createPresenterAssetsRouter(store: DataStore, exclusive: Exclusi
       groupId: p.groupId, error: p.error, consentUrl: p.consentUrl,
       consentStatus: p.consentStatus,
       consentRequestedAt: p.consentRequestedAt || (p.consentUrl ? p.updatedAt : undefined),
+      arkPreparation: p.arkPreparation,
       createdAt: p.createdAt, updatedAt: p.updatedAt };
   };
   const refresh = async (row: Row) => {
@@ -392,7 +394,18 @@ export function createPresenterAssetsRouter(store: DataStore, exclusive: Exclusi
       if (!validId(b.requestId) || !['photo', 'digital_twin'].includes(b.type) || typeof b.name !== 'string' || !b.name.trim() || b.name.length > 100 || b.authorized !== true || b.adultConfirmed !== true || b.confirmed !== true) throw new Error('请填写人物名称，并确认肖像授权、主体已成年与创建费用');
       const result = await exclusive(`presenter:${tenant}`, async () => {
         const reusePresenterId = String(b.reusePresenterId || '');
-        const fingerprint = hash(JSON.stringify([b.type, b.name.trim(), b.uploadId, b.voiceId, reusePresenterId]));
+        let arkPreparation: ArkPresenterPreparation | undefined;
+        if (b.arkPreparation) {
+          const photoMaterialId = String(b.arkPreparation.photoMaterialId || '');
+          const videoMaterialId = String(b.arkPreparation.videoMaterialId || '');
+          if (!validId(photoMaterialId) || !validId(videoMaterialId) || b.arkPreparation.processingAuthorized !== true) throw new Error('方舟复用资料缺少照片、视频或处理授权');
+          const materials = readLocalMaterials();
+          const ownsMaterial = (id: string, type: 'image' | 'video') => options.materialBelongs?.(tenant, id, type)
+            ?? materials.some(item => item.id === id && item.tenantId === tenant && item.scope === 'own' && item.type === type);
+          if (!ownsMaterial(photoMaterialId, 'image') || !ownsMaterial(videoMaterialId, 'video')) throw new Error('方舟复用资料不属于当前企业或类型不匹配');
+          arkPreparation = { photoMaterialId, videoMaterialId, processingAuthorized: true };
+        }
+        const fingerprint = hash(JSON.stringify([b.type, b.name.trim(), b.uploadId, b.voiceId, reusePresenterId, arkPreparation]));
         const previous = await find(tenant, 'creation', b.requestId);
         if (previous) { if (previous.payload.fingerprint !== fingerprint) throw new Error('请求标识已用于其他人物'); return publicJob(previous); }
         if (!enabled()) throw new Error('管理员尚未启用人物创建');
@@ -420,10 +433,12 @@ export function createPresenterAssetsRouter(store: DataStore, exclusive: Exclusi
         // A repeated click, refresh, or a newly generated browser request id must
         // recover the existing paid provider task instead of creating another
         // task or leaving the user at an unrecoverable duplicate-file error.
-        if (sameSource) return publicJob(sameSource);
+        if (sameSource) return arkPreparation
+          ? write(sameSource, { arkPreparation })
+          : publicJob(sameSource);
         if (b.voiceId && (!validId(b.voiceId) || (!validVoice(b.voiceId) && !(privateCatalog(tenant) && await privateVoice(b.voiceId))))) throw new Error('请重新加载声音列表后选择可用声音');
         const row = await store.create<Row>(COLLECTION, { tenant_id: tenant, kind: 'creation', request_id: b.requestId,
-          payload: { name: b.name.trim(), type: b.type, voiceId: b.voiceId, uploadId: b.uploadId, sourceDigest: upload.payload.digest, fingerprint, authorizationDeclared: true, authorized: false, subjectAdultConfirmed: true, ...(reusePresenterId ? { reusePresenterId } : {}), status: 'submitting', consentStatus: 'pending', createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() } });
+          payload: { name: b.name.trim(), type: b.type, voiceId: b.voiceId, uploadId: b.uploadId, sourceDigest: upload.payload.digest, fingerprint, authorizationDeclared: true, authorized: false, subjectAdultConfirmed: true, ...(arkPreparation ? { arkPreparation } : {}), ...(reusePresenterId ? { reusePresenterId } : {}), status: 'submitting', consentStatus: 'pending', createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() } });
         if (!row) throw new Error('人物任务登记失败，未创建人物');
         try { await (options.reserve ? options.reserve(`presenter:${row.id}`) : creationBudget(b.type).reserve('heygen', `presenter:${row.id}`)); }
         catch (e) { await write(row, { status: 'failed', error: message(e) }); throw e; }

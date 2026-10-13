@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { presenterApi } from '../../lib/presenterApi';
-import type { PresenterCapabilities, PresenterCreation, PresenterLook, PresenterVoice } from '../../lib/presenterAssets';
+import { productionApi } from '../../lib/productionApi';
+import type { ArkPresenterPreparation, PresenterCapabilities, PresenterCreation, PresenterLook, PresenterVoice } from '../../lib/presenterAssets';
 import type { ProductionDefaults } from '../../lib/shotProduction';
 
 const statusText = (job: PresenterCreation) => job.status === 'pending_consent'
@@ -23,7 +24,8 @@ export const groupPresenterLooks = (looks: PresenterLook[]): PresenterLookGroup[
     return { id, name: commonName, representative, looks: groupLooks };
   });
 };
-export default function PresenterManager({ onClose, onSaved, onSynced, reusePresenterId, initialConfiguration = false }: { onClose: () => void; onSaved: (value: ProductionDefaults) => void | Promise<void>; onSynced?: (value: ProductionDefaults) => void | Promise<void>; /** @deprecated 素材类型现在由上传文件自动识别。 */ initialMode?: 'quick' | 'expert'; /** @deprecated 创建流程已统一。 */ fixedMode?: boolean; reusePresenterId?: string; initialConfiguration?: boolean }) {
+export type PresenterSaveContext = { creationId?: string; arkPreparation?: ArkPresenterPreparation };
+export default function PresenterManager({ onClose, onSaved, onSynced, reusePresenterId, initialConfiguration = false }: { onClose: () => void; onSaved: (value: ProductionDefaults, context?: PresenterSaveContext) => void | Promise<void>; onSynced?: (value: ProductionDefaults) => void | Promise<void>; /** @deprecated 素材类型现在由上传文件自动识别。 */ initialMode?: 'quick' | 'expert'; /** @deprecated 创建流程已统一。 */ fixedMode?: boolean; reusePresenterId?: string; initialConfiguration?: boolean }) {
   const dialog = useRef<HTMLDialogElement>(null);
   const [tab, setTab] = useState<'create' | 'import'>(initialConfiguration ? 'import' : 'create');
   const [wizardStep, setWizardStep] = useState<1 | 2 | 3>(1);
@@ -50,9 +52,15 @@ export default function PresenterManager({ onClose, onSaved, onSynced, reusePres
   const voicePollInFlight = useRef(false);
   const resumeSaveAfterVoice = useRef(false);
   const [name, setName] = useState('');
-  const selectedCreationEnabled = cap?.photoCreationEnabled ?? cap?.creationEnabled;
-  const selectedCreationReason = cap?.photoCreationReason;
-  const [file, setFile] = useState<File>(); const [voiceId, setVoiceId] = useState('');
+  const [file, setFile] = useState<File>();
+  const [photoFile, setPhotoFile] = useState<File>();
+  const [videoFile, setVideoFile] = useState<File>();
+  const heyGenSource = initialConfiguration ? videoFile || photoFile : file;
+  const heyGenVideoSource = Boolean(heyGenSource && (heyGenSource.type.startsWith('video/') || /\.(mp4|mov|webm)$/i.test(heyGenSource.name)));
+  const selectedCreationEnabled = heyGenVideoSource ? cap?.digitalTwinCreationEnabled : cap?.photoCreationEnabled ?? cap?.creationEnabled;
+  const selectedCreationReason = heyGenVideoSource ? cap?.digitalTwinCreationReason : cap?.photoCreationReason;
+  const selectedReservationCny = heyGenVideoSource ? cap?.digitalTwinReservationCny : cap?.photoReservationCny ?? cap?.reservationCny;
+  const [voiceId, setVoiceId] = useState('');
   const [authorized, setAuthorized] = useState(false); const [adultConfirmed, setAdultConfirmed] = useState(false); const [confirmed, setConfirmed] = useState(false);
   const [reuseGroup, setReuseGroup] = useState(true);
   const [samePersonConfirmed, setSamePersonConfirmed] = useState(false);
@@ -67,7 +75,7 @@ export default function PresenterManager({ onClose, onSaved, onSynced, reusePres
   const [catalogScope, setCatalogScope] = useState<'public' | 'private'>('public');
   const [favoritesSynced, setFavoritesSynced] = useState(false);
   const favoriteSyncStarted = useRef(false);
-  const attempt = useRef<{ requestId: string; uploadRequestId: string; uploadId?: string; signature?: string } | undefined>(undefined);
+  const attempt = useRef<{ requestId: string; uploadRequestId: string; uploadId?: string; arkPhotoMaterialId?: string; arkVideoMaterialId?: string; signature?: string } | undefined>(undefined);
   const inFlight = useRef(false);
   const updateJob = (job: PresenterCreation) => setJobs(current => [job, ...current.filter(item => item.id !== job.id)]);
   const run = async (operation: () => Promise<void>, onError?: (message: string) => void) => {
@@ -160,7 +168,7 @@ export default function PresenterManager({ onClose, onSaved, onSynced, reusePres
       }
       if (initialConfiguration && updated.voiceId) {
         const defaults = await presenterApi.import({ lookId: updated.look.id, creationId: updated.id, voiceId: updated.voiceId, reviewed: true, authorized: true, makeDefault: true });
-        await onSaved(defaults);
+        await onSaved(defaults, { creationId: updated.id, arkPreparation: updated.arkPreparation });
         return;
       }
       choose(updated.look, updated);
@@ -185,20 +193,31 @@ export default function PresenterManager({ onClose, onSaved, onSynced, reusePres
   };
   const create = () => run(async () => {
     setActionError('');
-    if (!file) throw new Error('请先选择人物素材');
-    const videoSource = file.type.startsWith('video/') || /\.(mp4|mov|webm)$/i.test(file.name);
+    if (!heyGenSource) throw new Error('请先选择人物素材');
+    if (initialConfiguration && (!photoFile || !videoFile)) throw new Error('请同时上传清晰正面照片和本人视频，两路人物服务会复用这套资料');
+    const videoSource = heyGenVideoSource;
     const sourceType = videoSource ? 'digital_twin' : 'photo';
     const reuseId = cap?.privateCatalog && reuseGroup ? reusePresenterId : undefined;
-    const signature = `${sourceType}:${name.trim()}:${file.name}:${file.size}:${file.lastModified}:${reuseId || ''}`;
+    const signature = `${sourceType}:${name.trim()}:${heyGenSource.name}:${heyGenSource.size}:${heyGenSource.lastModified}:${photoFile?.name || ''}:${photoFile?.size || 0}:${videoFile?.name || ''}:${videoFile?.size || 0}:${reuseId || ''}`;
     if (attempt.current?.signature && attempt.current.signature !== signature) throw new Error('上次提交结果尚未核实，请先刷新任务列表');
     attempt.current ||= { requestId: crypto.randomUUID(), uploadRequestId: crypto.randomUUID(), signature };
+    if (initialConfiguration && photoFile && videoFile) {
+      setSubmitStage('upload');
+      try {
+        attempt.current.arkPhotoMaterialId ||= (await productionApi.uploadArkMaterial(photoFile, 'image')).id;
+        attempt.current.arkVideoMaterialId ||= (await productionApi.uploadArkMaterial(videoFile, 'video')).id;
+      } catch (e) { attempt.current = undefined; throw e; }
+    }
     if (!attempt.current.uploadId) {
       setSubmitStage('upload');
-      try { attempt.current.uploadId = (await presenterApi.upload(file, attempt.current.uploadRequestId, undefined, undefined, videoSource)).id; }
+      try { attempt.current.uploadId = (await presenterApi.upload(heyGenSource, attempt.current.uploadRequestId, undefined, undefined, videoSource)).id; }
       catch (e) { attempt.current = undefined; throw e; }
     }
     setSubmitStage('create');
-    const job = await presenterApi.create({ name: name.trim(), type: videoSource ? 'digital_twin' : 'photo', uploadId: attempt.current.uploadId, requestId: attempt.current.requestId, authorized, adultConfirmed, confirmed, ...(reuseId ? { reusePresenterId: reuseId, samePersonConfirmed } : {}) });
+    const arkPreparation = attempt.current.arkPhotoMaterialId && attempt.current.arkVideoMaterialId
+      ? { photoMaterialId: attempt.current.arkPhotoMaterialId, videoMaterialId: attempt.current.arkVideoMaterialId, processingAuthorized: true as const }
+      : undefined;
+    const job = await presenterApi.create({ name: name.trim(), type: videoSource ? 'digital_twin' : 'photo', uploadId: attempt.current.uploadId, requestId: attempt.current.requestId, authorized, adultConfirmed, confirmed, arkPreparation, ...(reuseId ? { reusePresenterId: reuseId, samePersonConfirmed } : {}) });
     updateJob(job); attempt.current = undefined;
     if (job.status === 'uncertain' || job.status === 'failed') {
       setActionError(job.error || '人物任务结果尚未确认，请在下方刷新原任务，勿重复提交。');
@@ -206,10 +225,10 @@ export default function PresenterManager({ onClose, onSaved, onSynced, reusePres
       window.requestAnimationFrame(() => authorizationSection.current?.scrollIntoView({ behavior: 'smooth', block: 'start' }));
       return;
     }
-    setFile(undefined); setConfirmed(false); setAuthorized(false); setAdultConfirmed(false); setSamePersonConfirmed(false);
+    setFile(undefined); setPhotoFile(undefined); setVideoFile(undefined); setConfirmed(false); setAuthorized(false); setAdultConfirmed(false); setSamePersonConfirmed(false);
     if (job.status === 'completed' && job.look) choose(job.look, job);
     else if (initialConfiguration) { setWizardStep(2); setSubmitStage('authorization'); }
-    setNotice(videoSource ? '人物素材已提交。请在下方前往 HeyGen 完成本人授权。' : '照片人物已提交；照片人物由灵枢保留本人授权记录，无需重复进入 HeyGen 授权页。');
+    setNotice(videoSource ? '人物资料已提交。HeyGen 授权完成后，同一套照片和视频会自动继续方舟认证，无需再次上传。' : '照片人物已提交；灵枢已保留本人授权记录。');
     window.requestAnimationFrame(() => authorizationSection.current?.scrollIntoView({ behavior: 'smooth', block: 'start' }));
   }, message => {
     setSubmitStage('idle');
@@ -335,7 +354,8 @@ export default function PresenterManager({ onClose, onSaved, onSynced, reusePres
     }
     if (!selectedVoiceId) throw new Error('请选择或录入人物声音');
     const value = await presenterApi.import({ lookId: selected.look.id, creationId: selected.creationId, voiceId: selectedVoiceId, reviewed: true, authorized, makeDefault: initialConfiguration });
-    await onSaved(value);
+    const creation = selected.creationId ? jobs.find(job => job.id === selected.creationId) : undefined;
+    await onSaved(value, { creationId: selected.creationId, arkPreparation: creation?.arkPreparation });
     setSubmitStage('idle');
     setNotice(initialConfiguration ? '已保存为默认口播人物。' : '人物已添加到企业资产。');
     setSelected(undefined);
@@ -363,28 +383,28 @@ export default function PresenterManager({ onClose, onSaved, onSynced, reusePres
   const ownVoiceReady = Boolean(voiceCloneJob || (voiceName.trim() && voiceConsent && (voiceFile || recordingState === 'recording' || recordingState === 'paused')));
   const enrollmentVoiceReady = voiceEntry === 'existing' ? Boolean(voiceId) : ownVoiceReady;
   return <dialog ref={dialog} onCancel={event => { if (busy) event.preventDefault(); else onClose(); }} aria-labelledby="presenter-manager-title" className="m-auto max-h-[90vh] w-[min(900px,94vw)] overflow-y-auto rounded-2xl border border-border bg-white p-0 text-text-primary shadow-xl backdrop:bg-black/35">
-    <header className="sticky top-0 z-10 flex items-center justify-between border-b border-border bg-white p-5"><div><h2 id="presenter-manager-title" className="font-bold">{initialConfiguration ? '选择人物与声音' : '企业人物资产'}</h2></div><button type="button" disabled={busy} onClick={onClose} className={button} aria-label="关闭人物管理">关闭</button></header>
+    <header className="sticky top-0 z-10 flex items-center justify-between border-b border-border bg-white p-5"><div><h2 id="presenter-manager-title" className="font-bold">{initialConfiguration ? '接入数字人物与声音' : '企业人物资产'}</h2></div><button type="button" disabled={busy} onClick={onClose} className={button} aria-label="关闭人物管理">关闭</button></header>
     <div className="space-y-5 p-5">
       {cap?.reason && <p className="rounded-lg bg-amber-50 p-3 text-sm">{cap.reason}</p>}
       {cap && !selectedCreationEnabled && selectedCreationReason && selectedCreationReason !== cap.reason && tab === 'create' && <p role="status" className="rounded-lg bg-amber-50 p-3 text-sm">当前创建方式暂不可用：{selectedCreationReason}</p>}
       {error && <p role="alert" className="rounded-lg bg-red-50 p-3 text-sm text-red-700">{error}</p>}
       {notice && <p role="status" className="rounded-lg bg-green-50 p-3 text-sm">{notice}</p>}
-      {initialConfiguration && <ol className="grid grid-cols-3 gap-2" aria-label="人物配置步骤">{['录入人物资产','官方本人授权','配置声音并保存'].map((label, index) => <li key={label} className={`rounded-lg border px-2 py-2 text-center text-xs ${wizardStep === index + 1 ? 'border-accent bg-accent/5 font-bold text-text-primary' : wizardStep > index + 1 ? 'border-border text-text-secondary' : 'border-border text-text-muted'}`}>{index + 1}. {label}</li>)}</ol>}
+      {initialConfiguration && <ol className="grid grid-cols-3 gap-2" aria-label="人物配置步骤">{['一次录入人物资料','官方本人授权','配置声音并保存'].map((label, index) => <li key={label} className={`rounded-lg border px-2 py-2 text-center text-xs ${wizardStep === index + 1 ? 'border-accent bg-accent/5 font-bold text-text-primary' : wizardStep > index + 1 ? 'border-border text-text-secondary' : 'border-border text-text-muted'}`}>{index + 1}. {label}</li>)}</ol>}
       {(!initialConfiguration || wizardStep === 1) && <div className="grid grid-cols-2 gap-2"><button className={`${button} ${tab === 'import' ? 'border-accent bg-accent/5 font-bold text-text-primary' : ''}`} disabled={busy} onClick={() => { setTab('import'); if (!looks.length) void loadCatalog(); if (!initialConfiguration && !favoritesSynced) void syncFavorites(); }}>选择已授权人物</button><button className={`${button} ${tab === 'create' ? 'border-accent bg-accent/5 font-bold text-text-primary' : ''}`} disabled={busy} onClick={() => { setTab('create'); setSelected(undefined); setAuthorized(false); }}>录入新人物</button></div>}
       {tab === 'create' && (!initialConfiguration || wizardStep === 1) && <fieldset disabled={busy || !selectedCreationEnabled} className="space-y-4 disabled:opacity-60">
         <label className="block text-sm">人物名称<input aria-label="人物名称" className={field} value={name} maxLength={100} onChange={e => setName(e.target.value)} placeholder="例如：品牌主理人、销售顾问" /></label>
-        <label className="block text-sm">人物素材<input key={file ? 'selected' : 'empty'} aria-label="人物素材" type="file" accept=".jpg,.jpeg,.png,.mp4,.mov,.webm,image/jpeg,image/png,video/mp4,video/quicktime,video/webm" onChange={e => setFile(e.target.files?.[0])} className={field} /><span className="mt-1 block text-xs text-text-muted">{file ? `已选择：${file.name}。${file.type.startsWith('video/') || /\.(mp4|mov|webm)$/i.test(file.name) ? '视频将创建 Digital Twin，并进入 HeyGen 官方本人授权。' : '照片将创建照片人物，由灵枢保存本人授权记录。'}` : '照片支持 JPG/PNG；Digital Twin 视频须为 30 秒至 5 分钟、至少 720p/24fps并包含清晰人声。'}</span></label>
-        <p className="rounded-lg bg-sky-50 p-3 text-sm text-sky-900">先按 HeyGen 官方顺序创建人物并完成人像授权。授权通过后，再选择或录入用于口播的声音。</p>
-        <label className="flex gap-2 text-sm"><input type="checkbox" checked={authorized} onChange={e => setAuthorized(e.target.checked)} />我已取得此人物的肖像及素材使用授权，同意将素材提交给 HeyGen 处理</label>
+        {initialConfiguration ? <section className="space-y-3 rounded-lg border border-border p-4" aria-label="统一人物资料"><div><p className="text-sm font-semibold">人物照片与本人视频</p><p className="mt-1 text-xs text-text-muted">只需上传一次：视频用于 HeyGen 人物创建，照片和同一段视频会自动复用到方舟本人认证。</p></div><label className="block text-sm">清晰正面照片<input aria-label="统一人物正面照片" type="file" accept=".jpg,.jpeg,.png,image/jpeg,image/png" onChange={event => setPhotoFile(event.target.files?.[0])} className={field} /><span className="mt-1 block text-xs text-text-muted">JPG 或 PNG，正脸清晰、无遮挡。</span></label><label className="block text-sm">本人视频<input aria-label="统一人物本人视频" type="file" accept=".mp4,.mov,.webm,video/mp4,video/quicktime,video/webm" onChange={event => setVideoFile(event.target.files?.[0])} className={field} /><span className="mt-1 block text-xs text-text-muted">30 秒至 5 分钟、至少 720p/24fps，并包含本人清晰说话音频。</span></label></section> : <label className="block text-sm">人物素材<input key={file ? 'selected' : 'empty'} aria-label="人物素材" type="file" accept=".jpg,.jpeg,.png,.mp4,.mov,.webm,image/jpeg,image/png,video/mp4,video/quicktime,video/webm" onChange={e => setFile(e.target.files?.[0])} className={field} /><span className="mt-1 block text-xs text-text-muted">{file ? `已选择：${file.name}。${file.type.startsWith('video/') || /\.(mp4|mov|webm)$/i.test(file.name) ? '视频将创建 Digital Twin，并进入 HeyGen 官方本人授权。' : '照片将创建照片人物，由灵枢保存本人授权记录。'}` : '照片支持 JPG/PNG；Digital Twin 视频须为 30 秒至 5 分钟、至少 720p/24fps并包含清晰人声。'}</span></label>}
+        <p className="rounded-lg bg-sky-50 p-3 text-sm text-sky-900">提交后先完成 HeyGen 官方本人授权；返回灵枢并保存声音后，系统会用同一套资料继续方舟认证。</p>
+        <label className="flex gap-2 text-sm"><input type="checkbox" checked={authorized} onChange={e => setAuthorized(e.target.checked)} />我已取得此人物的肖像及素材使用授权，同意将素材提交给 HeyGen 与方舟处理</label>
         <label className="flex gap-2 text-sm"><input type="checkbox" checked={adultConfirmed} onChange={e => setAdultConfirmed(e.target.checked)} />我已核验画面主体为成年人</label>
         {cap?.privateCatalog && reusePresenterId && <div className="space-y-2 rounded-lg border border-emerald-200 p-3 text-sm"><label className="flex gap-2"><input type="checkbox" checked={reuseGroup} onChange={e => { setReuseGroup(e.target.checked); setSamePersonConfirmed(false); }} />沿用当前人物的 HeyGen 人物组授权</label>{reuseGroup && <label className="flex gap-2"><input type="checkbox" checked={samePersonConfirmed} onChange={e => setSamePersonConfirmed(e.target.checked)} />确认新增素材与当前已授权人物为同一人</label>}<p className="text-xs text-text-muted">若是另一位人物，取消沿用后创建独立人物组，由本人完成所需验证。</p></div>}
-        <label className="flex gap-2 text-sm"><input type="checkbox" checked={confirmed} onChange={e => setConfirmed(e.target.checked)} />确认创建人物{Number(cap?.photoReservationCny ?? cap?.reservationCny) > 0 ? `并接受供应商计费（本次预算预留 ¥${cap?.photoReservationCny ?? cap?.reservationCny}）` : ''}</label>
-        <div className="flex gap-2"><button type="button" disabled={busy || !name.trim() || !file || !authorized || !adultConfirmed || !confirmed || Boolean(cap?.privateCatalog && reusePresenterId && reuseGroup && !samePersonConfirmed)} onClick={() => void create()} className={`${button} bg-gradient-to-r from-blue-600 to-violet-600 text-white`}>{busy ? (submitStage === 'upload' ? '正在上传人物素材…' : '正在创建人物任务…') : '提交人物并继续官方授权'}</button></div>
+        <label className="flex gap-2 text-sm"><input type="checkbox" checked={confirmed} onChange={e => setConfirmed(e.target.checked)} />确认创建人物{Number(selectedReservationCny) > 0 ? `并接受供应商计费（本次安全预留上限 ¥${selectedReservationCny}，以实际账单为准）` : ''}</label>
+        <div className="flex gap-2"><button type="button" disabled={busy || !name.trim() || (initialConfiguration ? !photoFile || !videoFile : !file) || !authorized || !adultConfirmed || !confirmed || Boolean(cap?.privateCatalog && reusePresenterId && reuseGroup && !samePersonConfirmed)} onClick={() => void create()} className={`${button} bg-gradient-to-r from-blue-600 to-violet-600 text-white`}>{busy ? (submitStage === 'upload' ? '正在安全入库并复用人物资料…' : '正在创建人物任务…') : '提交资料并继续本人授权'}</button></div>
         <div ref={actionFeedback} tabIndex={-1} className="outline-none">
-          {busy && <p role="status" className="rounded-lg bg-sky-50 p-3 text-sm text-sky-900">{submitStage === 'upload' ? '第 1 步：正在上传人物素材…' : '第 2 步：正在创建人物；完成后将进入官方本人授权。'}</p>}
+          {busy && <p role="status" className="rounded-lg bg-sky-50 p-3 text-sm text-sky-900">{submitStage === 'upload' ? '第 1 步：正在将同一套人物资料安全入库…' : '第 2 步：正在创建人物；完成后将进入官方本人授权。'}</p>}
           {actionError && <div role="alert" className="space-y-2 rounded-lg bg-red-50 p-3 text-sm text-red-700"><strong className="block">本次提交未完成</strong><p>{actionError}</p><p className="text-xs">已填写内容会保留。请按提示处理后，在这里继续。</p></div>}
         </div>
-        {(!name.trim() || !file || !authorized || !adultConfirmed || !confirmed) && <p role="status" className="rounded-lg bg-surface-2 p-3 text-xs text-text-secondary">还需完成：{[!name.trim() && '填写人物名称', !file && '上传人物素材', !authorized && '确认肖像及素材授权', !adultConfirmed && '确认人物已成年', !confirmed && '确认创建人物'].filter(Boolean).join('、')}。</p>}
+        {(!name.trim() || (initialConfiguration ? !photoFile || !videoFile : !file) || !authorized || !adultConfirmed || !confirmed) && <p role="status" className="rounded-lg bg-surface-2 p-3 text-xs text-text-secondary">还需完成：{[!name.trim() && '填写人物名称', initialConfiguration && !photoFile && '上传正面照片', initialConfiguration && !videoFile && '上传本人视频', !initialConfiguration && !file && '上传人物素材', !authorized && '确认肖像及素材授权', !adultConfirmed && '确认人物已成年', !confirmed && '确认创建人物'].filter(Boolean).join('、')}。</p>}
         {attempt.current && <p className="text-xs">如提交未返回结果，保持名称和文件不变后重试，将继续核对同一请求。</p>}
       </fieldset>}
       {tab === 'import' && (!initialConfiguration || wizardStep === 1) && <div className="space-y-3">
