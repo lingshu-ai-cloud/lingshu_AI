@@ -2837,7 +2837,7 @@ async function buildDigitalEmployeeAssistantFeed(
     ? managedReplicationPresenterReadiness(jsonObject<Record<string, unknown>>(productionDefaults.items[0]!.payload, {}))
     : productionDefaults.items.length === 0
       ? managedReplicationPresenterReadiness({})
-      : { state: 'production_setup_required' as const, presenterCount: 0, presenterName: '' };
+      : { state: 'production_setup_required' as const, presenterCount: 0, presenterId: '', presenterName: '' };
   const assistantTasks = taskResult.items.map(task => taskWithAssistantProductionInput(
     task,
     productionProjects.filter((project): project is StoredRecord & { tenant_id: string } => Boolean(project)),

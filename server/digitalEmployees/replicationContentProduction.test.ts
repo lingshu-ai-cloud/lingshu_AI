@@ -193,15 +193,15 @@ test('managed replication requires a recorded usable enterprise person and never
   assert.equal(selectManagedReplicationPresenter({ presenters: [{ ...active, arkCertification: { ...active.arkCertification, materialId: 'different-photo' } }] }), undefined);
   assert.equal(selectManagedReplicationPresenter({ presenters: [{ ...active, rightsEvidence: { ...rightsEvidence, revokedAt: '2026-10-01T00:00:00Z' } }] }), undefined);
   assert.deepEqual(managedReplicationPresenterReadiness({ presenters: [] }), {
-    state: 'missing', presenterCount: 0, presenterName: '',
+    state: 'missing', presenterCount: 0, presenterId: '', presenterName: '',
   });
   assert.deepEqual(managedReplicationPresenterReadiness({ defaultPresenterId: 'draft', presenters: [{ id: 'draft', name: '待授权人物', authorized: false }] }), {
-    state: 'authorization_required', presenterCount: 1, presenterName: '待授权人物',
+    state: 'authorization_required', presenterCount: 1, presenterId: 'draft', presenterName: '待授权人物',
   });
   assert.deepEqual(managedReplicationPresenterReadiness({ defaultPresenterId: 'uncertified', presenters: [{ ...placeholder, name: '已添加口播人物' }] }), {
-    state: 'production_setup_required', presenterCount: 1, presenterName: '已添加口播人物',
+    state: 'production_setup_required', presenterCount: 1, presenterId: 'uncertified', presenterName: '已添加口播人物',
   });
   assert.deepEqual(managedReplicationPresenterReadiness({ defaultPresenterId: 'active', presenters: [{ ...active, name: '企业主讲人' }] }), {
-    state: 'ready', presenterCount: 1, presenterName: '企业主讲人',
+    state: 'ready', presenterCount: 1, presenterId: 'active', presenterName: '企业主讲人',
   });
 });

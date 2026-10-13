@@ -75,6 +75,7 @@ export function selectManagedReplicationPresenter(defaults: Record<string, any>,
 export type ManagedReplicationPresenterReadiness = {
   state: 'missing' | 'authorization_required' | 'production_setup_required' | 'ready';
   presenterCount: number;
+  presenterId: string;
   presenterName: string;
 };
 
@@ -96,19 +97,20 @@ export function managedReplicationPresenterReadiness(
     ? presenters.find((item: any) => item.id === selectedId || item.avatarId === selectedId)
     : presenters.length === 1 ? presenters[0] : undefined;
   const presenterName = String(selected?.name || '').trim();
-  if (!presenters.length) return { state: 'missing', presenterCount: 0, presenterName: '' };
+  if (!presenters.length) return { state: 'missing', presenterCount: 0, presenterId: '', presenterName: '' };
   if (!presenters.some((item: any) => item.authorized === true)) {
-    return { state: 'authorization_required', presenterCount: presenters.length, presenterName };
+    return { state: 'authorization_required', presenterCount: presenters.length, presenterId: String(selected?.id || ''), presenterName };
   }
   const ready = selectManagedReplicationPresenter(defaults, requested);
   if (ready) {
     return {
       state: 'ready',
       presenterCount: presenters.length,
+      presenterId: String(ready.id || ''),
       presenterName: String(ready.name || '').trim(),
     };
   }
-  return { state: 'production_setup_required', presenterCount: presenters.length, presenterName };
+  return { state: 'production_setup_required', presenterCount: presenters.length, presenterId: String(selected?.id || ''), presenterName };
 }
 
 export interface ManagedReplicationPorts {

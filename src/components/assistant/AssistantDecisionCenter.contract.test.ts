@@ -82,16 +82,17 @@ test('refresh keeps the current card and late requests cannot replace newer stat
 
 test('presenter changes immediately refresh the authoritative decision card', () => {
   assert.match(source, /PRESENTER_ASSETS_UPDATED_EVENT/);
-  const presenterRefresh = source.slice(source.indexOf('const refreshPresenterDecision'), source.indexOf("if (!active || variant !== 'summary')"));
-  assert.match(presenterRefresh, /void load\(undefined, true\)/, 'the assistant re-reads backend state instead of editing the stale card locally');
-  assert.match(presenterRefresh, /addEventListener\(PRESENTER_ASSETS_UPDATED_EVENT/);
+  assert.match(source, /const refreshPresenterDecision[\s\S]{0,220}void load\(undefined, true\)/, 'the assistant re-reads backend state instead of editing the stale card locally');
+  assert.match(source, /addEventListener\(PRESENTER_ASSETS_UPDATED_EVENT/);
+  assert.match(source, /subscribeAssistantStateInvalidations\(\(\) => \{[\s\S]{0,160}void load\(undefined, true\)/, 'all domain mutations re-read the authoritative feed');
+  assert.match(source, /window\.setInterval\(refreshVisibleFeed, variant === 'summary' \? 15_000 : 5_000\)/, 'the open assistant must also reconcile asynchronous backend state');
 });
 
 test('weekly start feedback is receipt-backed and refreshes every mounted decision surface', () => {
   assert.match(source, /action\.id === 'approve_and_start'[\s\S]{0,180}!next\.execution \|\| next\.execution\.goalId !== first\.subject\.id/, 'a start result must match the selected goal');
   assert.match(source, /assistantDecisionExecutionFeedback\(next\.execution\)[\s\S]{0,260}notifyWeeklyWorkUpdated\(\{ source: 'assistant'/, 'verified execution drives feedback and the shared refresh event');
   assert.match(source, /onActionResult\?\.\(\{ action, card: first, response: next \}\)/, 'the shell receives one result callback from the completed command');
-  const refreshEffect = source.slice(source.indexOf('const refreshAfterWeeklyWorkChange'), source.indexOf("if (!active || variant !== 'summary')"));
+  const refreshEffect = source.slice(source.indexOf('const refreshAfterWeeklyWorkChange'), source.indexOf('const refreshPresenterDecision'));
   assert.match(refreshEffect, /void load\(\)/, 'page and assistant mutations refresh the authoritative pending feed');
   assert.match(source, /status === 'failed'[\s\S]{0,180}kind: 'error'/, 'a created but failed run is never shown as green success');
   assert.match(source, /status === 'cancelled'[\s\S]{0,180}kind: 'warning'/, 'a cancelled run remains distinct from success');

@@ -149,6 +149,7 @@ test('a linked production project can surface the avatar requirement without lea
   assert.deepEqual((enriched.output as any).assistantInput, {
     code: 'avatar_required',
     message: '人物镜头缺少可用且已授权的企业数字人形象',
+    presenterId: '',
     presenterName: '',
     presenterCount: 0,
     projectCount: 1,
@@ -166,7 +167,7 @@ test('an added presenter is no longer described as missing when replication setu
     spec: { automatedReplicationShots: [
       { shotId: 'one', kind: 'blocked', intendedKind: 'person', blockerCode: 'presenter_authorization_required' },
     ] },
-  }], { state: 'production_setup_required', presenterCount: 1, presenterName: 'Dante Office 2' });
+  }], { state: 'production_setup_required', presenterCount: 1, presenterId: 'presenter-dante', presenterName: 'Dante Office 2' });
   const card = buildAssistantDecisionFeed({
     page: 'digitalEmployees', goal: null, plan: null, run: { ...run, status: 'paused' },
     tasks: [enriched], approvals: [], now,
@@ -176,6 +177,7 @@ test('an added presenter is no longer described as missing when replication setu
   assert.match(card.summary, /已添加.*人物参考图.*方舟/);
   assert.equal(card.deepLink?.page, 'enterprise');
   assert.equal(card.deepLink?.businessRef?.enterpriseView, 'presenters');
+  assert.equal(card.deepLink?.businessRef?.entityId, 'presenter-dante');
 });
 
 test('a newly ready presenter replaces the stale add-person prompt with continuation', () => {
@@ -189,7 +191,7 @@ test('a newly ready presenter replaces the stale add-person prompt with continua
     spec: { automatedReplicationShots: [
       { shotId: 'one', kind: 'blocked', intendedKind: 'person', blockerCode: 'presenter_authorization_required' },
     ] },
-  }], { state: 'ready', presenterCount: 1, presenterName: '企业主讲人' });
+  }], { state: 'ready', presenterCount: 1, presenterId: 'presenter-ready', presenterName: '企业主讲人' });
   const card = buildAssistantDecisionFeed({
     page: 'digitalEmployees', goal: null, plan: null, run: { ...run, status: 'paused' },
     tasks: [enriched], approvals: [], now,

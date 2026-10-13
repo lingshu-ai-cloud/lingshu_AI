@@ -1,12 +1,14 @@
 import { authHeader } from './auth';
 import type { PresenterCapabilities, PresenterCreation, PresenterLook, PresenterPage, PresenterVoice } from './presenterAssets';
 import type { ProductionDefaults } from './shotProduction';
+import { notifyAssistantStateInvalidated } from './assistantStateInvalidation';
 const root = '/api/overseas/studio/production/presenters';
 async function request<T>(path: string, body?: unknown): Promise<T> {
   const response = await fetch(root + path, { method: body === undefined ? 'GET' : 'POST', headers: { ...authHeader(), 'Content-Type': 'application/json' }, ...(body === undefined ? {} : { body: JSON.stringify(body) }) });
   const data = await response.json().catch(() => null);
   if (!data) throw new Error(`人物服务暂时未返回有效响应 (${response.status})，请刷新后重试`);
   if (!response.ok) throw new Error(data.error || '人物服务请求失败');
+  if (body !== undefined) notifyAssistantStateInvalidated({ domain: 'presenter-assets', source: path });
   return data;
 }
 export const presenterApi = {

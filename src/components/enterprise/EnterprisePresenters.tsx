@@ -23,9 +23,30 @@ export default function EnterprisePresenters({ contentProduction = false, initia
   const [materials, setMaterials] = useState<Material[]>([]); const [materialStatus, setMaterialStatus] = useState('正在读取人物素材…');
   const [loaded, setLoaded] = useState(false); const [busy, setBusy] = useState(false); const [message, setMessage] = useState('');
   const [portraitPreview, setPortraitPreview] = useState('');
-  const [showHeyGenManager, setShowHeyGenManager] = useState(() => typeof window !== 'undefined' && new URLSearchParams(window.location.search).has('presenterConsentReturn'));
+  const [showHeyGenManager, setShowHeyGenManager] = useState(() => typeof window !== 'undefined'
+    && Boolean(new URLSearchParams(window.location.search).get('presenterConsentReturn')?.trim()));
   const [creationJobs, setCreationJobs] = useState<PresenterCreation[]>([]);
-  useEffect(() => { let live = true; void productionApi.defaults().then(result => { if (live) { setValue(result); setLoaded(true); } }).catch(error => { if (live) setMessage(String(error)); }); return () => { live = false; }; }, []);
+  const focusPresenter = (presenterId: string, source = value) => {
+    const presenter = source.presenters.find(item => item.id === presenterId);
+    if (!presenter) return;
+    setEditingId(presenter.id); setDraft(structuredClone(presenter));
+    window.requestAnimationFrame?.(() => document.querySelector<HTMLElement>('[data-presenter-editor="true"]')?.scrollIntoView({ behavior: 'smooth', block: 'start' }));
+  };
+  useEffect(() => { let live = true; void productionApi.defaults().then(result => { if (live) {
+    setValue(result); setLoaded(true);
+    try {
+      const target = localStorage.getItem('lingshu:enterprise:presenter-focus') || '';
+      if (target) { localStorage.removeItem('lingshu:enterprise:presenter-focus'); focusPresenter(target, result); }
+    } catch { /* optional deep-link focus */ }
+  } }).catch(error => { if (live) setMessage(String(error)); }); return () => { live = false; }; }, []);
+  useEffect(() => {
+    const handler = (event: Event) => {
+      const presenterId = String((event as CustomEvent<{ presenterId?: string }>).detail?.presenterId || '');
+      if (presenterId) focusPresenter(presenterId);
+    };
+    window.addEventListener('lingshu:enterprise-presenter-focus', handler);
+    return () => window.removeEventListener('lingshu:enterprise-presenter-focus', handler);
+  }, [value]);
   useEffect(() => { let live = true; void fetchMaterialLibrary().then(result => { if (!live) return; setMaterials(result.items.filter(item => item.type === 'image' || item.type === 'video')); setMaterialStatus(result.status === 'ready' ? '' : '部分素材源暂不可用，仅显示当前可用素材'); }).catch(() => { if (live) setMaterialStatus(contentProduction ? '人物素材暂不可用，请返回当前分镜的上传区重试' : '人物素材库暂不可用，请先到素材库上传并稍后重试'); }); return () => { live = false; }; }, [contentProduction]);
   useEffect(() => { if (contentProduction) return; let live = true; void presenterApi.creations().then(items => { if (live) setCreationJobs(items); }).catch(() => {}); return () => { live = false; }; }, [contentProduction]);
   const save = async (next: ProductionDefaults) => { if (!loaded || busy) return false; setBusy(true); setMessage(''); try { setValue(await productionApi.saveDefaults(next)); notifyPresenterAssetsUpdated(); setMessage(initialConfiguration ? '已保存为企业默认人物，后续真人口播会继承' : '已保存到企业，新的创作草稿会继承'); if(initialConfiguration && next.defaultPresenterId)onInitialSelection?.(); return true; } catch (error) { setMessage(String(error)); return false; } finally { setBusy(false); } };
@@ -50,7 +71,7 @@ export default function EnterprisePresenters({ contentProduction = false, initia
         <button type="button" onClick={() => setVoiceEditingId(current => current === presenter.id ? '' : presenter.id)}>{voiceEditingId === presenter.id ? '收起音色' : '管理音色'}</button>
         {voiceEditingId === presenter.id && <div className="basis-full"><PresenterVoiceBinding presenterId={presenter.id} currentVoiceId={presenter.voiceId} onBound={async () => { const next = await productionApi.defaults(); setValue(next); notifyPresenterAssetsUpdated(); if (editingId === presenter.id) setDraft(next.presenters.find(item => item.id === presenter.id) || draft); setMessage('音色已绑定到企业人物资产'); }} /></div>}
         <button type="button" onClick={() => void save({ ...value, defaultPresenterId: presenter.id })}>{value.defaultPresenterId === presenter.id ? '默认人物' : '设为默认'}</button></div>)}
-      {(!initialConfiguration && (!contentProduction || editingId)) && <details open={Boolean(editingId)}><summary className="cursor-pointer text-xs font-bold">{editingId ? '编辑授权人物' : '添加授权人物'}</summary><div className="mt-2 grid gap-2 sm:grid-cols-2">{(['name', 'avatarId'] as const).map(field => contentProduction && field === 'avatarId' ? <p key={field} className="rounded-lg border p-2 text-xs text-text-muted">HeyGen 形象由已导入资产绑定：{draft.avatarId || '无'}</p> : <input key={field} aria-label={field} value={draft[field]} placeholder={{ name: '人物名称', avatarId: 'HeyGen人物/Look ID' }[field]} onChange={event => setDraft(current => ({ ...current, [field]: event.target.value }))} className="rounded-lg border p-2 text-xs" />)}</div>
+      {(!initialConfiguration && (!contentProduction || editingId)) && <details data-presenter-editor="true" open={Boolean(editingId)}><summary className="cursor-pointer text-xs font-bold">{editingId ? '编辑授权人物' : '添加授权人物'}</summary><div className="mt-2 grid gap-2 sm:grid-cols-2">{(['name', 'avatarId'] as const).map(field => contentProduction && field === 'avatarId' ? <p key={field} className="rounded-lg border p-2 text-xs text-text-muted">HeyGen 形象由已导入资产绑定：{draft.avatarId || '无'}</p> : <input key={field} aria-label={field} value={draft[field]} placeholder={{ name: '人物名称', avatarId: 'HeyGen人物/Look ID' }[field]} onChange={event => setDraft(current => ({ ...current, [field]: event.target.value }))} className="rounded-lg border p-2 text-xs" />)}</div>
         <fieldset className="mt-3 rounded-lg border border-border p-3"><legend className="px-1 text-xs font-bold">企业人物参考资产</legend>
           <p className="text-xs text-text-muted">选择已取得授权的清晰正脸图片或人物视频。Runway、SD 等参考人物技术共用这些资产，生成时仍按具体工具能力选择。</p>
           {materialStatus && <p role="status" className="mt-2 text-xs text-amber-700">{materialStatus}</p>}

@@ -165,6 +165,7 @@ type AssistantPresenterInputCode = 'avatar_required' | 'presenter_authorization_
 function workflowTaskPresenterInput(task: TaskRecord): {
   code: AssistantPresenterInputCode | '';
   message: string;
+  presenterId: string;
   presenterName: string;
 } {
   const output = parseJson<Record<string, unknown>>(task.output, {});
@@ -175,6 +176,7 @@ function workflowTaskPresenterInput(task: TaskRecord): {
       ? code as AssistantPresenterInputCode
       : '',
     message: text(assistantInput.message, 500),
+    presenterId: text(assistantInput.presenterId, 200),
     presenterName: text(assistantInput.presenterName, 100),
   };
 }
@@ -216,7 +218,7 @@ export function taskWithAssistantProductionInput(
   task: TaskRecord,
   projects: AssistantStudioProject[],
   presenterReadiness: ManagedReplicationPresenterReadiness = {
-    state: 'missing', presenterCount: 0, presenterName: '',
+    state: 'missing', presenterCount: 0, presenterId: '', presenterName: '',
   },
 ): TaskRecord {
   if (task.task_key !== 'content_production') return task;
@@ -227,12 +229,12 @@ export function taskWithAssistantProductionInput(
   if (!blockedProjectIds.length) return task;
   const output = parseJson<Record<string, unknown>>(task.output, {});
   const input = presenterReadiness.state === 'ready'
-    ? { code: 'presenter_ready', message: '已检测到可用于当前逐镜制作的企业数字人', presenterName: presenterReadiness.presenterName }
+    ? { code: 'presenter_ready', message: '已检测到可用于当前逐镜制作的企业数字人', presenterId: presenterReadiness.presenterId, presenterName: presenterReadiness.presenterName }
     : presenterReadiness.state === 'production_setup_required'
-      ? { code: 'presenter_setup_required', message: '企业数字人已添加，但当前逐镜复刻还需要绑定人物参考图、人物替换授权和 Active 方舟图片资产', presenterName: presenterReadiness.presenterName }
+      ? { code: 'presenter_setup_required', message: `${presenterReadiness.presenterName ? `${presenterReadiness.presenterName} 已添加，但` : '企业数字人已添加，但'}当前逐镜复刻还需要绑定人物参考图、人物替换授权和 Active 方舟图片资产`, presenterId: presenterReadiness.presenterId, presenterName: presenterReadiness.presenterName }
       : presenterReadiness.state === 'authorization_required'
-        ? { code: 'presenter_authorization_required', message: '企业数字人已添加，但本人授权或企业使用授权尚未完成', presenterName: presenterReadiness.presenterName }
-        : { code: 'avatar_required', message: '人物镜头缺少可用且已授权的企业数字人形象', presenterName: '' };
+        ? { code: 'presenter_authorization_required', message: '企业数字人已添加，但本人授权或企业使用授权尚未完成', presenterId: presenterReadiness.presenterId, presenterName: presenterReadiness.presenterName }
+        : { code: 'avatar_required', message: '人物镜头缺少可用且已授权的企业数字人形象', presenterId: '', presenterName: '' };
   return {
     ...task,
     output: {
@@ -246,13 +248,13 @@ export function taskWithAssistantProductionInput(
   };
 }
 
-function enterprisePresenterDeepLink(task: TaskRecord, runId: string): DigitalEmployeeDeepLink {
+function enterprisePresenterDeepLink(task: TaskRecord, runId: string, presenterId = ''): DigitalEmployeeDeepLink {
   const existing = workflowDeepLink(task, runId);
   const { view: _view, studioPanel: _studioPanel, ...base } = existing;
   return {
     ...base,
     page: 'enterprise',
-    businessRef: { ...existing.businessRef, enterpriseView: 'presenters', reason: 'avatar_required' },
+    businessRef: { ...existing.businessRef, enterpriseView: 'presenters', taskKey: 'presenter_setup_required', ...(presenterId ? { entityId: presenterId } : {}) },
   };
 }
 
@@ -412,7 +414,7 @@ function attentionCard(task: TaskRecord, run: RunRecord, now: string): Assistant
         : []),
       { id: 'open_workspace', label: '前往处理', mode: 'navigate', emphasis: DEFAULT },
     ],
-    deepLink: presenterRequired ? enterprisePresenterDeepLink(task, run.id) : workflowDeepLink(task, run.id),
+    deepLink: presenterRequired ? enterprisePresenterDeepLink(task, run.id, presenterInput.presenterId) : workflowDeepLink(task, run.id),
     createdAt: text(task.updated_at || task.created_at) || now,
   };
 }

@@ -30,6 +30,7 @@ import {
 } from '../../lib/weeklyWorkEvents';
 import { digitalEmployeeApi } from '../../lib/digitalEmployeeApi';
 import { PRESENTER_ASSETS_UPDATED_EVENT } from '../../lib/presenterAssetsUpdated';
+import { subscribeAssistantStateInvalidations } from '../../lib/assistantStateInvalidation';
 import { normalizeAssistantDecisionExecutionReceipt } from '../../../shared/contracts/assistantDecisionCenter';
 import { LsBrandAction } from '../ui/LsExperiencePrimitives';
 import './assistantDecisionCenter.css';
@@ -132,6 +133,9 @@ function dispatchDeepLink(link?: AssistantDecisionDeepLink): void {
   if (opensEnterprisePresenters) {
     try {
       window.localStorage.setItem('lingshu:enterprise:initial-view', 'presenters');
+      if (link.businessRef?.taskKey === 'presenter_setup_required' && link.businessRef.entityId) {
+        window.localStorage.setItem('lingshu:enterprise:presenter-focus', String(link.businessRef.entityId));
+      }
     } catch {
       /* The live event below still handles browsers with storage disabled. */
     }
@@ -143,10 +147,14 @@ function dispatchDeepLink(link?: AssistantDecisionDeepLink): void {
   };
   window.dispatchEvent(new CustomEvent('lingshu:navigate', { detail }));
   if (opensEnterprisePresenters) {
-    const revealPresenters = () => window.dispatchEvent(new CustomEvent(
-      'lingshu:enterprise-view',
-      { detail: { view: 'presenters' } },
-    ));
+    const revealPresenters = () => {
+      window.dispatchEvent(new CustomEvent('lingshu:enterprise-view', { detail: { view: 'presenters' } }));
+      if (link.businessRef?.taskKey === 'presenter_setup_required' && link.businessRef.entityId) {
+        window.dispatchEvent(new CustomEvent('lingshu:enterprise-presenter-focus', {
+          detail: { presenterId: String(link.businessRef.entityId) },
+        }));
+      }
+    };
     revealPresenters();
     window.requestAnimationFrame?.(revealPresenters);
   }
@@ -408,7 +416,14 @@ export default function AssistantDecisionCenter({
   }, [active, load]);
 
   useEffect(() => {
-    if (!active || variant !== 'summary') return;
+    if (!active) return;
+    return subscribeAssistantStateInvalidations(() => {
+      if (!actionPending.current) void load(undefined, true);
+    });
+  }, [active, load]);
+
+  useEffect(() => {
+    if (!active) return;
     const refreshVisibleFeed = () => {
       if (document.visibilityState === 'hidden' || actionPending.current) return;
       void load(undefined, true);
@@ -416,7 +431,7 @@ export default function AssistantDecisionCenter({
     const handleVisibility = () => {
       if (document.visibilityState === 'visible') refreshVisibleFeed();
     };
-    const interval = window.setInterval(refreshVisibleFeed, 15_000);
+    const interval = window.setInterval(refreshVisibleFeed, variant === 'summary' ? 15_000 : 5_000);
     window.addEventListener('focus', refreshVisibleFeed);
     document.addEventListener('visibilitychange', handleVisibility);
     return () => {

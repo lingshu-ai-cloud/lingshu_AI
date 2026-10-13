@@ -35,4 +35,7 @@ test('initial configuration only exposes the person and voice entry point', () =
 test('saving or importing a presenter invalidates assistant decisions immediately', () => {
   assert.match(source, /notifyPresenterAssetsUpdated\(\)/);
   assert.match(source, /onSaved=\{next => \{ setValue\(next\); notifyPresenterAssetsUpdated\(\)/);
+  assert.match(source, /lingshu:enterprise-presenter-focus/);
+  assert.match(source, /data-presenter-editor="true"/);
+  assert.match(source, /get\('presenterConsentReturn'\)\?\.trim\(\)/, 'an empty OAuth return marker must not reopen the presenter wizard');
 });
