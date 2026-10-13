@@ -1,12 +1,13 @@
 import { normalizeTodo } from '../../src/lib/reviewTodos.js';
 import { normalizeAssessment, maturityProfiles, taskGuidance } from '../../shared/contracts/operatingMaturity.js';
 import { normalizeVideoPlan, videoSchedulingErrors } from '../../shared/contracts/videoCreationPlan.js';
-import { defaultMatrixPlan, fillMatrixVideos, normalizeMatrixPlan, matrixScopeIssues } from '../../src/lib/weeklyMatrix.js';
+import { defaultMatrixPlan, fillMatrixVideos, linkMatrixVersionsToMasters, normalizeMatrixPlan, matrixScopeIssues } from '../../src/lib/weeklyMatrix.js';
 import { LEGACY_TASK_TEMPLATE_IDS, TASK_TEMPLATES, packageIssues, type WeeklyPackage, type PackageTask, type TemplateId, type WeeklyOperatingContext } from '../../src/lib/weeklyPackage.js';
 import { defaultDirectorPlan, normalizeDirectorPlan } from '../../src/lib/contentDirector.js';
-import { connectedAccountIssues, socialOperatingProfile } from '../../shared/contracts/socialOperatingProfile.js';
+import { connectedAccountIssues } from '../../shared/contracts/socialOperatingProfile.js';
 import { MASTER_VIDEO_COST_MAX_CNY, MASTER_VIDEO_COST_MIN_CNY, MASTER_VIDEO_COST_POINT_CNY } from '../../shared/contracts/contentCostModel.js';
 import { buildWeeklyPlan, type DigitalEmployeeConfig, type WeeklyGoalInput, type WeeklyPlanDraft } from './domain.js';
+import { scheduleWeeklyVideos } from '../../src/lib/weeklyGoalSchedule.js';
 
 const splitMarkets = (value: string): string[] => [...new Set(value.split(/[、，,；;\n]/).map(item => item.trim()).filter(Boolean))];
 
@@ -98,9 +99,10 @@ export function recommendPackage(goal: WeeklyGoalInput, config: DigitalEmployeeC
   }));
   const matrixPlan = goal.businessLine === 'customer_conversion' ? [] : defaultMatrixPlan(config, goal.contentPlatforms, goal.objective);
   const baseContentCount = tasks.find(t => t.templateId === 'production')?.videoPlans?.length || 0;
-  const profile = socialOperatingProfile(config.socialOperatingProfile);
   const platformVersionTarget = matrixPlan.reduce((sum, row) => sum + row.weeklyCount, 0) || baseContentCount;
-  const originalTarget = Math.min(platformVersionTarget, matrixPlan.length ? profile.weeklyTargets.baseVideoOriginals : baseContentCount);
+  // One planned video is one independently generated and charged deliverable.
+  // Cross-platform reuse must never reduce the actual production quantity.
+  const originalTarget = platformVersionTarget;
   const initialDirectorPlan = defaultDirectorPlan(originalTarget, platformVersionTarget, platformVersionTarget);
   initialDirectorPlan.productionBudgetMin = originalTarget * MASTER_VIDEO_COST_MIN_CNY;
   initialDirectorPlan.productionBudget = originalTarget * MASTER_VIDEO_COST_POINT_CNY;
@@ -150,7 +152,7 @@ export function normalizePackage(raw: WeeklyPackage): WeeklyPackage {
   }
   const a = raw.authorization;
   const detail = raw.detailGeneration;
-  return {
+  const normalized: WeeklyPackage = {
     ...(raw.directorPlan !== undefined ? { directorPlan: normalizeDirectorPlan(raw.directorPlan) } : {}),
     ...(raw.matrixPlan !== undefined ? { matrixPlan: normalizeMatrixPlan(raw.matrixPlan) } : {}),
     ...(Array.isArray(raw.reviewTodos) ? { reviewTodos: raw.reviewTodos.slice(0, 50).map(t => normalizeTodo(t)) } : {}),
@@ -176,6 +178,105 @@ export function normalizePackage(raw: WeeklyPackage): WeeklyPackage {
     tasks: currentTasks.map(t => ({ templateId: t.templateId as TemplateId, title: clean(t.title, 160), ownerId: clean(t.ownerId, 160), ownerName: clean(t.ownerName, 160), dueAt: clean(t.dueAt, 10), notes: clean(t.notes, 1000), sourceProjectIds: ids(t.sourceProjectIds), ...(t.templateId === 'production' ? { videoPlans: (t.videoPlans || []).slice(0, 30).map(normalizeVideoPlan) } : {}) })),
     authorization: { mode: a?.mode === 'bounded' ? 'bounded' : 'each', accountIds: ids(a?.accountIds), customerIds: ids(a?.customerIds), maxPublishItems: Math.min(100, Math.max(0, Math.floor(Number(a?.maxPublishItems) || 0))), maxCustomerMessages: Math.min(100, Math.max(0, Math.floor(Number(a?.maxCustomerMessages) || 0))) },
   };
+  return repairCollapsedWeeklyVideoProduction(normalized);
+}
+
+/**
+ * Repairs the historic cross-platform slot collision without adding, removing,
+ * or renaming any planned video. The migration is deliberately narrow: it only
+ * applies when the saved director target already says every planned video must
+ * be independently produced.
+ */
+export function repairCollapsedWeeklyVideoProduction(pack: WeeklyPackage): WeeklyPackage {
+  const production = pack.tasks.find(task => task.templateId === 'production');
+  const plans = production?.videoPlans || [];
+  const cycle = pack.operatingContext?.cycle;
+  if (production && cycle && plans.length && plans.some(plan => !plan.plannedPublishAt)) {
+    const scheduledPlans = scheduleWeeklyVideos(plans, cycle.startsAt, cycle.endsAt);
+    return repairCollapsedWeeklyVideoProduction({
+      ...pack,
+      tasks: pack.tasks.map(task => task === production ? { ...task, videoPlans: scheduledPlans } : task),
+    });
+  }
+  const independentCount = plans.filter(plan => plan.productionRole !== 'platform_adaptation').length;
+  // Repair only the known historic slot-linking defect: the saved director
+  // explicitly requested one independent production per planned video, but
+  // plans from different platforms were accidentally collapsed into one
+  // family. Historic packages that intentionally requested fewer independent
+  // productions keep their lineage unchanged.
+  if (pack.directorPlan && plans.length > 0
+    && pack.directorPlan.originalTarget === plans.length) {
+    // Some drafts were already relinked by the matrix synchronizer before
+    // being persisted, but still retained the old one-video cost envelope.
+    // Canonicalize both lineage and cost here so every read/start path sees
+    // the same number of independently produced videos and the same budget.
+    const relinkedPlans = independentCount === plans.length
+      ? plans
+      : linkMatrixVersionsToMasters(plans, plans.length);
+    const repairedPlans = relinkedPlans.map(plan => normalizeVideoPlan({
+      ...plan,
+      estimatedCost: Math.max(Number(plan.estimatedCost || 0), MASTER_VIDEO_COST_POINT_CNY),
+      estimatedCostRange: {
+        minCny: Math.max(Number(plan.estimatedCostRange?.minCny || 0), MASTER_VIDEO_COST_MIN_CNY),
+        maxCny: Math.max(Number(plan.estimatedCostRange?.maxCny || 0), MASTER_VIDEO_COST_MAX_CNY),
+        basis: 'blended_master',
+      },
+    }));
+    const repairedDirector = {
+      ...pack.directorPlan,
+      originalTarget: repairedPlans.length,
+      platformVersionTarget: repairedPlans.length,
+      productionBudgetMin: Math.max(pack.directorPlan.productionBudgetMin, repairedPlans.length * MASTER_VIDEO_COST_MIN_CNY),
+      productionBudget: Math.max(pack.directorPlan.productionBudget, repairedPlans.length * MASTER_VIDEO_COST_POINT_CNY),
+      productionBudgetMax: Math.max(pack.directorPlan.productionBudgetMax, repairedPlans.length * MASTER_VIDEO_COST_MAX_CNY),
+    };
+    const paidMediaCny = Number(pack.operatingContext?.budget.paidMediaCny || repairedDirector.paidMediaBudget || 0);
+    const accountWeight = Math.max(1, pack.operatingContext?.accounts.reduce((sum, account) => sum + Math.max(1, account.contentCount), 0) || 1);
+    const operatingContext = pack.operatingContext ? {
+      ...pack.operatingContext,
+      accounts: pack.operatingContext.accounts.map(account => ({
+        ...account,
+        budgetCny: Math.round((repairedDirector.productionBudget * Math.max(1, account.contentCount) / accountWeight) * 100) / 100,
+      })),
+      budget: {
+        ...pack.operatingContext.budget,
+        productionCny: repairedDirector.productionBudget,
+        productionMinCny: repairedDirector.productionBudgetMin,
+        productionMaxCny: repairedDirector.productionBudgetMax,
+        totalCny: Math.round((repairedDirector.productionBudget + paidMediaCny) * 100) / 100,
+        totalMinCny: Math.round((repairedDirector.productionBudgetMin + paidMediaCny) * 100) / 100,
+        totalMaxCny: Math.round((repairedDirector.productionBudgetMax + paidMediaCny) * 100) / 100,
+      },
+      outputs: {
+        ...pack.operatingContext.outputs,
+        count: repairedPlans.length,
+        originalCount: repairedPlans.length,
+        platformVersionCount: repairedPlans.length,
+      },
+    } : undefined;
+    const plansChanged = independentCount !== plans.length
+      || plans.some(plan => Number(plan.estimatedCost || 0) < MASTER_VIDEO_COST_POINT_CNY
+        || Number(plan.estimatedCostRange?.minCny || 0) < MASTER_VIDEO_COST_MIN_CNY
+        || Number(plan.estimatedCostRange?.maxCny || 0) < MASTER_VIDEO_COST_MAX_CNY);
+    const budgetChanged = pack.directorPlan.platformVersionTarget !== repairedPlans.length
+      || pack.directorPlan.productionBudgetMin < repairedPlans.length * MASTER_VIDEO_COST_MIN_CNY
+      || pack.directorPlan.productionBudget < repairedPlans.length * MASTER_VIDEO_COST_POINT_CNY
+      || pack.directorPlan.productionBudgetMax < repairedPlans.length * MASTER_VIDEO_COST_MAX_CNY
+      || Boolean(pack.operatingContext && (
+        Number(pack.operatingContext.budget.productionMinCny || 0) < repairedDirector.productionBudgetMin
+        || Number(pack.operatingContext.budget.productionCny || 0) < repairedDirector.productionBudget
+        || Number(pack.operatingContext.budget.productionMaxCny || 0) < repairedDirector.productionBudgetMax
+        || pack.operatingContext.outputs.count !== repairedPlans.length
+      ));
+    if (!plansChanged && !budgetChanged) return pack;
+    return {
+      ...pack,
+      tasks: pack.tasks.map(task => task === production ? { ...task, videoPlans: repairedPlans } : task),
+      directorPlan: repairedDirector,
+      ...(operatingContext ? { operatingContext } : {}),
+    };
+  }
+  return pack;
 }
 
 export function validatePackage(pack: WeeklyPackage, goal: WeeklyGoalInput, config?: DigitalEmployeeConfig): string[] {
@@ -278,7 +379,9 @@ export function criticalBusinessConfigChanges(before: DigitalEmployeeConfig, aft
   if (before.customerProfile !== after.customerProfile) changed.push('audience');
   if (stable(before.videoLanguages) !== stable(after.videoLanguages)) changed.push('languages');
   if (stable(before.publishingTargets.map(item => item.platform)) !== stable(after.publishingTargets.map(item => item.platform))) changed.push('platforms');
-  if (stable(before.publishingTargets.map(item => `${item.platform}:${item.accountId}`)) !== stable(after.publishingTargets.map(item => `${item.platform}:${item.accountId}`))) changed.push('accounts');
+  const accountScopeChanged = stable(before.publishingTargets.map(item => `${item.platform}:${item.accountId}`)) !== stable(after.publishingTargets.map(item => `${item.platform}:${item.accountId}`));
+  if (accountScopeChanged) changed.push('accounts');
+  if (!accountScopeChanged && stable(before.publishingTargets.map(item => `${item.platform}:${item.accountId}:${item.weeklyCount ?? 'legacy'}`)) !== stable(after.publishingTargets.map(item => `${item.platform}:${item.accountId}:${item.weeklyCount ?? 'legacy'}`))) changed.push('weeklyPublishingQuota');
   if (before.allowRealPublishing !== after.allowRealPublishing) changed.push('realPublishingPermission');
   return changed;
 }

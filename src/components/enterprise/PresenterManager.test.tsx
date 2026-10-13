@@ -39,11 +39,14 @@ test('presenter onboarding keeps the existing single-source editor and adds unif
   assert.doesNotMatch(source, /模拟官方授权|mockConsentCompletionAvailable|mockComplete/);
   assert.match(source, /邀请您创建属于自己的口播角色/);
   assert.match(source, /或上传本人录音/);
-  assert.match(source, /同一套照片和视频会自动继续方舟认证/);
+  assert.match(source, /需要高级人物替换时再单独进行方舟认证/);
   assert.match(source, /productionApi\.uploadArkMaterial\(photoFile, 'image'\)/);
   assert.match(source, /productionApi\.uploadArkMaterial\(videoFile, 'video'\)/);
   assert.match(source, /presenterApi\.create\(\{ name: name\.trim\(\), type: videoSource \? 'digital_twin' : 'photo', uploadId:/);
   assert.match(source, /arkPreparation/);
+  assert.match(source, /processingAuthorized: false/);
+  assert.match(source, /filePickerActive/);
+  assert.match(source, /onCancel=\{event => \{ event\.preventDefault\(\)/);
   assert.match(source, /digitalTwinReservationCny/);
   assert.doesNotMatch(source, /presenterApi\.create\(\{[^\n]*voiceId:/);
   assert.match(source, /声音任务已留档但尚未确认可用/);
@@ -51,13 +54,36 @@ test('presenter onboarding keeps the existing single-source editor and adds unif
   assert.doesNotMatch(html, /照片形象|视频分身|专家模式|生成 10 个场景/);
 });
 
-test('initial onboarding communicates the official-consent gate and default-person outcome', () => {
+test('initial onboarding starts with only the two source choices and keeps the self form minimal', () => {
   const html = renderToStaticMarkup(<PresenterManager {...props} initialConfiguration />);
-  assert.match(html, /一次录入人物资料/);
-  assert.match(html, /官方本人授权/);
-  assert.match(html, /配置声音并保存/);
-  assert.match(html, /选择已授权人物/);
+  assert.match(html, /选择 HeyGen 已有人物/);
+  assert.match(html, /使用本人素材/);
+  assert.match(html, />推荐</);
+  assert.match(html, /上传本人图片和视频，创建专属数字人/);
+  assert.match(html, /从已授权人物库中直接选择并使用/);
+  assert.match(html, /选择数字人接入方式/);
+  assert.doesNotMatch(html, /人物名称/);
+  assert.doesNotMatch(html, /aria-label="统一人物正面照片"/);
+  assert.doesNotMatch(html, /aria-label="统一人物本人视频"/);
+  assert.doesNotMatch(html, /前往企业知识库认证/);
+  assert.doesNotMatch(html, />完成</);
   assert.match(source, /统一人物正面照片/);
   assert.match(source, /统一人物本人视频/);
-  assert.match(source, /HeyGen 与方舟处理/);
+  assert.match(source, /本人图片/);
+  assert.match(source, /本人视频/);
+  assert.match(source, /前往企业知识库认证/);
+  assert.match(source, /方舟认证为可选功能/);
+  assert.match(source, /initialConfiguration \? 'choose' : 'create'/);
+  assert.doesNotMatch(html, /提交后需要在 HeyGen 官方页面完成本人授权/);
+  assert.doesNotMatch(html, /我已取得此人物的肖像及素材使用授权/);
+  assert.doesNotMatch(html, /我已核验画面主体为成年人/);
+  assert.doesNotMatch(html, /确认创建人物并接受供应商计费/);
+  assert.doesNotMatch(html, /还需完成：/);
+  assert.doesNotMatch(html, /人物授权状态/);
+  assert.match(source, /initialConfiguration \|\| authorized/);
+  assert.match(source, /initialConfiguration \|\| adultConfirmed/);
+  assert.match(source, /initialConfiguration \|\| confirmed/);
+  assert.match(source, /initialConfiguration \? '完成' : '提交资料并继续本人授权'/);
+  assert.match(source, /<CheckCircle2 size=\{15\} \/>已完成/);
+  assert.match(source, /await requestOfficialConsent\(job\)/);
 });

@@ -42,6 +42,10 @@ test('Ark enrollment keeps consent, liveness, image approval and tenant binding 
   const server = app.listen(0, '127.0.0.1'); await new Promise<void>(resolve => server.once('listening', resolve));
   const base = `http://127.0.0.1:${(server.address() as AddressInfo).port}/presenters`;
   try {
+    const capabilities = await (await fetch(`${base}/ark-enrollments/capabilities`)).json();
+    assert.equal(capabilities.ready, true);
+    assert.deepEqual(capabilities.missing, []);
+    assert.equal(capabilities.reason, '');
     const uploadedPhoto = await fetch(`${base}/ark-enrollments/materials?type=image&mime=image/png`, { method: 'POST',
       headers: { 'Content-Type': 'application/octet-stream' },
       body: await sharp({ create: { width: 32, height: 32, channels: 3, background: '#777777' } }).png().toBuffer() });

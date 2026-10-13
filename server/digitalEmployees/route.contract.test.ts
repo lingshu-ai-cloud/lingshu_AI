@@ -54,6 +54,13 @@ assert.match(packageDetailsRoute, /status: 'blocked'/, 'a failed detail generati
 const packageUpdateRoute = routeBlock("digitalEmployeesRouter.put('/goals/:goalId/package'");
 assert.match(packageUpdateRoute, /delete pack\.detailGeneration/, 'editing an outline must invalidate stale pre-production status');
 assert.match(packageUpdateRoute, /delete videoPlan\.preproduction/, 'editing an outline must invalidate every stale task preview');
+const publicationScheduleRoute = routeBlock("digitalEmployeesRouter.patch('/goals/:goalId/publication-schedule/:contentId'");
+assert.match(publicationScheduleRoute, /beijingDate\(new Date\(scheduledAt\)\)/, 'manual publishing moves must use the explicit Beijing calendar date');
+assert.match(publicationScheduleRoute, /publication_schedule_outside_cycle/, 'manual publishing moves must remain inside the current weekly cycle');
+assert.match(publicationScheduleRoute, /publication_schedule_locked/, 'approved or executing publications must not be silently rescheduled');
+assert.match(publicationScheduleRoute, /compareAndSwap/, 'manual publishing moves must update the weekly plan with optimistic concurrency');
+assert.match(publicationScheduleRoute, /ContentBatchPlanRecord/, 'manual publishing moves must keep the frozen production handoff aligned');
+assert.match(publicationScheduleRoute, /weekly_publication\.rescheduled/, 'manual publishing moves must enter the audit log');
 
 const goalApprovalRoute = routeBlock("digitalEmployeesRouter.post('/goals/:goalId/approve'");
 assert.match(goalApprovalRoute, /approveGoalForReview/, 'manual approval must call the same validated activation as review scheduling');

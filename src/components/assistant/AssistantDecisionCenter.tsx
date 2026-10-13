@@ -54,6 +54,8 @@ const actionIcon: Partial<Record<AssistantDecisionActionId, typeof ArrowRight>> 
   adjust_plan: CalendarRange,
   approve: CheckCircle2,
   reject: RefreshCw,
+  retry_task: RefreshCw,
+  replan_task: CalendarRange,
   take_over: UserRoundCheck,
   open_workspace: ArrowRight,
 };

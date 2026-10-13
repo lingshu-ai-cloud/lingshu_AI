@@ -56,14 +56,14 @@ export function createSocialWeeklyPlanningAdapter(dataStore: DataStore): SocialW
     if (coverage) {
       try { assertWeeklyPlanningCoverage(plan, coverage, plan.userConfirmation.selectedSlotIds); }
       catch (error) { if (error instanceof SocialProgramError) return blocked(error.code, error.message); throw error; }
-      if (JSON.stringify(plan.detailedSchedule.coverage) !== JSON.stringify(coverage)) return blocked('weekly_partial_coverage_changed', '实际派单与确认排期的母版范围不一致。');
+      if (JSON.stringify(plan.detailedSchedule.coverage) !== JSON.stringify(coverage)) return blocked('weekly_partial_coverage_changed', '实际派单与确认排期的视频范围不一致。');
       if (task.publicationTaskId && (!plan.skeleton.slots.some(slot => coverage.selectedSlotIds.includes(slot.slotId) && slot.publicationTaskIds.includes(task.publicationTaskId!)) || !plan.dispatch.scheduleItems.some(item => item.publicationTaskId === task.publicationTaskId))) return blocked('weekly_slot_not_dispatched', '此条目尚未确认派单，保留原来源配额等待补齐。');
     }
     const motherId = String(task.inputSnapshot.motherContentId ?? '');
     if ('referenceSourcePolicy' in task.inputSnapshot && (!task.inputSnapshot.referenceSourcePolicy || JSON.stringify(task.inputSnapshot.referenceSourcePolicy) !== JSON.stringify(plan.referenceSourcePolicy) || JSON.stringify(plan.referenceSourcePolicy) !== JSON.stringify(pkg.referenceSourcePolicy))) return blocked('reference_source_policy_required', '本任务参考来源配额尚未明确冻结或与计划版本不一致。');
     const slots = plan.skeleton.slots.filter(slot => (!coverage || coverage.selectedSlotIds.includes(slot.slotId)) && (!motherId || slot.motherContentId === motherId) && (!task.accountId || slot.accountIds.includes(task.accountId)));
     const analyses = plan.directorAnalyses.filter(analysis => slots.some(slot => slot.slotId === analysis.slotId));
-    if (task.inputSnapshot.referenceSource && slots.some(slot => slot.referenceSource !== task.inputSnapshot.referenceSource)) return blocked('reference_source_allocation_mismatch', '母版来源与冻结任务不一致，不能用外部参考替换自有配额。');
+    if (task.inputSnapshot.referenceSource && slots.some(slot => slot.referenceSource !== task.inputSnapshot.referenceSource)) return blocked('reference_source_allocation_mismatch', '视频来源与冻结任务不一致，不能用外部参考替换自有配额。');
     if (plan.referenceSourcePolicy?.profile === 'b2b_cold_start' && slots.some(slot => slot.referenceSource === 'owned')) return blocked('cold_start_external_reference_required', '零基础首周仅允许外部参考。');
     if (['benchmark_scoring', 'director_analysis'].includes(step) && slots.some(slot => slot.referenceSource === 'owned' && !analyses.some(analysis => analysis.slotId === slot.slotId && ownedDiagnosisReady(analysis) && JSON.stringify(analysis.ownedReferenceDiagnosis!.policy) === JSON.stringify(plan.referenceSourcePolicy)))) return blocked('owned_reference_diagnosis_pending', '自有参考需完整播放、赞转评和冻结调性分析；缺项保留待诊断，不改成外部。');
     if (!slots.length || (task.accountId && !slots.some(slot => slot.accountIds.includes(task.accountId!)))) {

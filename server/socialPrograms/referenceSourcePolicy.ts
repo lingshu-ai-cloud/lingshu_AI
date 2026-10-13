@@ -14,7 +14,7 @@ export function referenceSourcePolicy(value: unknown, route: unknown): WeeklyRef
     || Number(policy.ownedPercent) + Number(policy.externalPercent) !== 100
     || (cold && policy.ownedPercent !== 0)
     || (route === 'cold_start' && !cold) || (route === 'account_repair' && cold)) {
-    throw new SocialProgramError('reference_source_policy_invalid', 400, '来源须按母版分配且合计 100%；零基础须全部外部，有基础须使用对应画像配置。');
+    throw new SocialProgramError('reference_source_policy_invalid', 400, '来源须按独立视频分配且合计 100%；零基础须全部外部，有基础须使用对应画像配置。');
   }
   return { profile: policy.profile as WeeklyReferenceSourcePolicy['profile'], ownedPercent: policy.ownedPercent as number, externalPercent: policy.externalPercent as number, allocationUnit: 'mother_content' };
 }

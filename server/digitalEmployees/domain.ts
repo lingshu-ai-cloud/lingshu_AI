@@ -11,6 +11,7 @@ import {
 } from '../../shared/contracts/socialOperatingProfile.js';
 import { automaticExecutionAllowed, resolveRuntimePolicy } from './runtimePolicy.js';
 import type { Starter198ConfirmedOperatingPlan } from '../../shared/contracts/starter198.js';
+import { hydrateWeeklyPublishingTargets } from '../../shared/contracts/weeklyPublishingTargets.js';
 
 export type AutonomyMode = 'suggest' | 'collaborate' | 'managed' | 'automatic';
 /** The five user-facing roles. Legacy persisted `industry` values are mapped at the read boundary. */
@@ -21,6 +22,8 @@ export interface PublishingTarget {
   accountId: string;
   accountLabel: string;
   timezone?: string;
+  /** Frozen account-level share of the user-confirmed weekly platform quota. */
+  weeklyCount?: number;
 }
 export type WeeklyGoalStatus = 'draft' | 'pending_approval' | 'active' | 'paused' | 'completed' | 'cancelled';
 export type WorkflowTaskStatus =
@@ -199,17 +202,19 @@ export function normalizeDigitalEmployeeConfig(input: Partial<DigitalEmployeeCon
     ? input.enabledWorkflows.filter((item): item is DigitalEmployeeConfig['enabledWorkflows'][number] => allowedWorkflows.has(item as DigitalEmployeeConfig['enabledWorkflows'][number]))
     : [];
   const allowedPublishingPlatforms = new Set<PublishingPlatform>(['facebook', 'instagram', 'tiktok', 'youtube']);
-  const publishingTargets: PublishingTarget[] = Array.isArray(input.publishingTargets)
+  const socialCadence = text(input.socialCadence, 1000) || 'YouTube、TikTok、Instagram、Facebook；公开行业关键词与已确认对标账号；近 7 天；每天 09:00；每次最多 20 条；按链接与标题去重 30 天；每周生成 5 条发布草稿，发布前人工审批';
+  const publishingTargets: PublishingTarget[] = hydrateWeeklyPublishingTargets(Array.isArray(input.publishingTargets)
     ? input.publishingTargets
       .map(item => ({
         platform: String(item?.platform || '') as PublishingPlatform,
         accountId: text(item?.accountId, 160),
         accountLabel: text(item?.accountLabel, 200),
         ...(item?.timezone ? { timezone: text(item.timezone, 100) } : {}),
+        ...(Number.isFinite(Number(item?.weeklyCount)) ? { weeklyCount: Math.min(30, Math.max(0, Math.floor(Number(item.weeklyCount)))) } : {}),
       }))
       .filter((item): item is PublishingTarget => allowedPublishingPlatforms.has(item.platform) && Boolean(item.accountId))
       .filter((item, index, items) => items.findIndex(candidate => candidate.platform === item.platform && candidate.accountId === item.accountId) === index)
-    : [];
+    : [], socialCadence);
   // External publication, bulk outreach, and commercial commitments are hard
   // human-approval boundaries. They cannot be relaxed by a stale client or a
   // higher autonomy selection.
@@ -246,7 +251,7 @@ export function normalizeDigitalEmployeeConfig(input: Partial<DigitalEmployeeCon
     enabledWorkflows: Array.isArray(input.enabledWorkflows)
       ? [...new Set(enabledWorkflows)]
       : ['scheduled_social', 'viral_clone', 'product_content', 'content_publish', 'customer_segmentation', 'batch_followup'],
-    socialCadence: text(input.socialCadence, 1000) || 'YouTube、TikTok、Instagram、Facebook；公开行业关键词与已确认对标账号；近 7 天；每天 09:00；每次最多 20 条；按链接与标题去重 30 天；每周生成 5 条发布草稿，发布前人工审批',
+    socialCadence,
     followupCadence: text(input.followupCadence, 500) || '每周五 09:00 生成分层跟进草稿；17:00 前审批；仅在客户当地工作日 09:00–18:00 发送；同一客户 7 天最多 1 次',
     reviewSchedule: text(input.reviewSchedule, 300) || '周五 17:30（北京时间）；数据截止 17:00；通知审批负责人；仅生成复盘和下周任务草稿',
     publishingTargets,
@@ -345,7 +350,7 @@ export function buildWeeklyPlan(goal: WeeklyGoalInput, config: DigitalEmployeeCo
     {
       key: 'goal_decomposition',
       title: '拆解本周目标与成功标准',
-      description: `经营 Agent 将“${goal.objective}”按${businessLineName}主线拆解，并绑定指标 ${goal.metric}；当前采用“${operatingProfile.name}”，明确区分 ${operatingProfile.weeklyTargets.baseVideoOriginals + operatingProfile.weeklyTargets.baseNonVideoOriginals} 份原创、${operatingProfile.weeklyTargets.adaptationVersions} 份平台改编和 ${operatingProfile.weeklyTargets.publicationTasks} 个发布任务。`,
+      description: `经营 Agent 将“${goal.objective}”按${businessLineName}主线拆解，并绑定指标 ${goal.metric}；当前采用“${operatingProfile.name}”。实际视频数量以已保存的账号矩阵为准，每条计划视频独立制作，发布动作单独排期。`,
       agentRole: 'business', backgroundCapability: 'planner', kind: 'planning', sequence: 2, priority: 'high', requiresApproval: false, dependsOn: ['context_readiness'], expectedMinutes: 4,
       businessDomain: 'foundation', capabilityKey: 'workflow.plan', destination: 'digitalEmployees', statusSource: 'weekly_plans', executionMode: 'internal', externalEffect: 'none',
     },

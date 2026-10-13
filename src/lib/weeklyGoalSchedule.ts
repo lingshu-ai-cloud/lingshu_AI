@@ -1,19 +1,22 @@
 import type { VideoCreationPlan } from './videoCreationPlan';
-import { publishDateForAccountSlot } from '../../shared/contracts/weeklyPublishSchedule';
+import { balancedWeeklyPublishSlots } from '../../shared/contracts/weeklyPublishSchedule';
 
 export function scheduleWeeklyVideos(plans: VideoCreationPlan[], startsAt: string, endsAt: string): VideoCreationPlan[] {
-  const groups = new Map<string, VideoCreationPlan[]>();
-  for (const plan of plans) {
-    const key = `${plan.platform}:${plan.matrix?.accountId || 'planned'}`;
-    groups.set(key, [...(groups.get(key) || []), plan]);
-  }
-  const indices = new Map<string, number>();
-  return plans.map(plan => {
-    const key = `${plan.platform}:${plan.matrix?.accountId || 'planned'}`;
-    const index = indices.get(key) || 0;
-    indices.set(key, index + 1);
-    return { ...plan, plannedPublishDate: plan.plannedPublishDate && plan.plannedPublishDate >= startsAt && plan.plannedPublishDate <= endsAt ? plan.plannedPublishDate : publishDateForAccountSlot(startsAt, endsAt, index, groups.get(key)!.length) };
+  const hasCompleteExplicitSchedule = plans.length > 0 && plans.every(plan => {
+    if (!plan.plannedPublishAt || !Number.isFinite(Date.parse(plan.plannedPublishAt))) return false;
+    return Boolean(plan.plannedPublishDate && plan.plannedPublishDate >= startsAt && plan.plannedPublishDate <= endsAt);
   });
+  if (hasCompleteExplicitSchedule) return plans.map(plan => ({ ...plan }));
+  const slots = balancedWeeklyPublishSlots(
+    startsAt,
+    endsAt,
+    plans.map(plan => `${plan.platform}:${plan.matrix?.accountId || 'planned'}`),
+  );
+  return plans.map((plan, index) => ({
+    ...plan,
+    plannedPublishDate: slots[index]?.date || '',
+    plannedPublishAt: slots[index]?.scheduledAt || '',
+  }));
 }
 export function weeklyPipelineCards(startsAt: string, endsAt: string, count: number) {
   return [

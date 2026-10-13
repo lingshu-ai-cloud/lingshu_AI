@@ -1,6 +1,6 @@
 import { useEffect, useId, useMemo, useRef, useState, type ReactNode } from 'react';
 import { Alert, App, Button, Drawer, Input, Segmented, Spin, Tag } from 'antd';
-import { ChevronLeft, ChevronRight, ImageOff, RefreshCw } from 'lucide-react';
+import { ChevronLeft, ChevronRight, ImageOff, RefreshCw, UserRound } from 'lucide-react';
 import FullCalendar, { type CalendarRef, type DatesSetInfo, type EventInput } from '@fullcalendar/react';
 import dayGridPlugin from '@fullcalendar/react/daygrid';
 import timeGridPlugin from '@fullcalendar/react/timegrid';
@@ -12,10 +12,11 @@ import zhLocale from '@fullcalendar/react/locales/zh-cn';
 import '@fullcalendar/react/skeleton.css';
 import '@fullcalendar/react/themes/classic/theme.css';
 import '@fullcalendar/react/themes/classic/palette.css';
-import { calendarDateTimeValue, calendarDayKey, calendarInstant, calendarMovedInstant, calendarStatusLabels, type LsCalendarEvent } from '../../lib/calendarModel';
+import { calendarDateTimeValue, calendarDayKey, calendarInstant, calendarMovedInstant, calendarStatusLabels, type LsCalendarEvent, type LsCalendarIdentity } from '../../lib/calendarModel';
 import { authHeader } from '../../lib/auth';
 import { usePrefersReducedMotion } from '../../lib/usePrefersReducedMotion';
 import { SocialPlatformIcon, socialBrandLabel } from '../SocialPlatformIcon';
+import AgentRoleIcon, { AGENT_ROLE_PALETTE, type AgentVisualRole } from './AgentRoleIcon';
 import { LsMediaStateFrame } from './LsExperiencePrimitives';
 import './calendar.css';
 
@@ -51,6 +52,8 @@ type Props = {
   onMoveEvent?: (event: LsCalendarEvent, start: string) => Promise<void>;
   detailsTitle?: string;
   detailsMedia?: 'large' | 'compact';
+  detailsLayout?: 'standard' | 'custom';
+  workspaceMode?: 'bounded' | 'expanded';
   renderDetails?: (event: LsCalendarEvent, closeDetails: () => void) => ReactNode;
 };
 
@@ -142,8 +145,21 @@ function CalendarThumbnail({ src, title, large = false, card = false, compact = 
   </div>;
 }
 
+const humanIdentity = { color: '#BE123C', tint: '#FFF1F2' };
+
+function CalendarIdentityMark({ identity }: { identity: LsCalendarIdentity }) {
+  if (identity.kind === 'platform') {
+    return <span className="ls-calendar-event-identity" role="img" aria-label={`${socialBrandLabel(identity.platform)} 平台`}><SocialPlatformIcon platform={identity.platform} size={21}/></span>;
+  }
+  if (identity.role === 'human') {
+    return <span className="ls-calendar-event-identity" role="img" aria-label="人工处理" style={{ color: humanIdentity.color, backgroundColor: humanIdentity.tint, borderColor: humanIdentity.color }}><UserRound size={18}/></span>;
+  }
+  const role = identity.role as AgentVisualRole;
+  return <span className="ls-calendar-event-identity" style={{ backgroundColor: AGENT_ROLE_PALETTE[role].tint, borderColor: AGENT_ROLE_PALETTE[role].color }}><AgentRoleIcon role={role} size="sm" label="负责 Agent"/></span>;
+}
+
 /** Standard plugins only: all calendar pages share the same events, timezone and accessible detail path. */
-export function LsCalendar({ events, label, initialDate, initialView = 'dayGridMonth', view: controlledView, firstDay = 1, eventCardMode = 'compact', dateOnly = false, showAllEvents = false, density = 'default', flush = false, date, timeZone = 'Asia/Shanghai', loading, timeGridHeight = 'clamp(320px, calc(100dvh - 280px), 720px)', fixedHeight, primaryAction, filters, onRefresh, onDatesSet, onDateClick, onEventClick, onExternalDrop, onMoveEvent, detailsTitle = '排期详情', detailsMedia = 'large', renderDetails }: Props) {
+export function LsCalendar({ events, label, initialDate, initialView = 'dayGridMonth', view: controlledView, firstDay = 1, eventCardMode = 'compact', dateOnly = false, showAllEvents = false, density = 'default', flush = false, date, timeZone = 'Asia/Shanghai', loading, timeGridHeight = 'clamp(320px, calc(100dvh - 280px), 720px)', fixedHeight, primaryAction, filters, onRefresh, onDatesSet, onDateClick, onEventClick, onExternalDrop, onMoveEvent, detailsTitle = '排期详情', detailsMedia = 'large', detailsLayout = 'standard', workspaceMode = 'bounded', renderDetails }: Props) {
   const calendarRef = useRef<CalendarRef>(null);
   const hostRef = useRef<HTMLDivElement>(null);
   const revealObserverRef = useRef<IntersectionObserver | null>(null);
@@ -244,7 +260,7 @@ export function LsCalendar({ events, label, initialDate, initialView = 'dayGridM
     revealObserverRef.current?.unobserve(element);
   };
   const showDateOnlyTimeRail = (dateOnly || eventCardMode === 'media') && ['dayGridWeek', 'dayGridDay'].includes(view);
-  return <div className={`ls-calendar${eventCardMode === 'media' ? ' ls-calendar-media-cards' : ''}${compact ? ' ls-calendar-compact' : ''}${flush ? ' ls-calendar-flush' : ''}`} ref={hostRef} aria-label={label} onFocusCapture={event => {
+  return <div className={`ls-calendar ls-calendar-view-${view}${eventCardMode === 'media' ? ' ls-calendar-media-cards' : ''}${compact ? ' ls-calendar-compact' : ''}${flush ? ' ls-calendar-flush' : ''}${workspaceMode === 'expanded' ? ' ls-calendar-expanded' : ''}`} ref={hostRef} aria-label={label} onFocusCapture={event => {
     const eventElement = (event.target as HTMLElement).closest<HTMLElement>('.ls-calendar-event-reveal');
     if (eventElement) revealEventElement(eventElement);
   }}>
@@ -283,17 +299,17 @@ export function LsCalendar({ events, label, initialDate, initialView = 'dayGridM
           const item = info.event.extendedProps.item as LsCalendarEvent;
           if (info.view.type.startsWith('timeGrid') && info.event.allDay) {
             return <div className="ls-calendar-event-content ls-calendar-event-content-all-day">
-              <CalendarThumbnail src={item.thumbnailUrl} title={item.title}/>
-              <div className="ls-calendar-event-copy"><div className="ls-calendar-event-meta">{item.platform && <SocialPlatformIcon platform={item.platform} size={13}/>}<span>{item.accountName || item.ownerAgent || '待绑定账号'}</span></div><strong>{item.title}</strong></div>
+              {item.identity ? <CalendarIdentityMark identity={item.identity}/> : <CalendarThumbnail src={item.thumbnailUrl} title={item.title}/>}
+              <div className="ls-calendar-event-copy"><div className="ls-calendar-event-meta">{item.platform && item.identity?.kind !== 'platform' && <SocialPlatformIcon platform={item.platform} size={13}/>}<span>{item.accountName || item.ownerAgent || '待绑定账号'}</span></div><strong>{item.title}</strong></div>
             </div>;
           }
           if (info.view.type.startsWith('timeGrid') && !info.event.allDay) {
             // v7 measures each rendered segment before setting isShort, including
             // clipped multi-day events. Only sufficiently tall slots get media.
             return <div className={`ls-calendar-event-content ls-calendar-event-content-timed${info.isShort ? ' is-short' : ''}`}>
-              <CalendarThumbnail src={item.thumbnailUrl} title={item.title}/>
+              {item.identity ? <CalendarIdentityMark identity={item.identity}/> : <CalendarThumbnail src={item.thumbnailUrl} title={item.title}/>}
               <div className="ls-calendar-event-copy">
-                {!info.isShort && <div className="ls-calendar-event-meta">{item.platform && <SocialPlatformIcon platform={item.platform} size={13}/>}<span>{item.accountName || item.ownerAgent || '待绑定账号'}</span></div>}
+                {!info.isShort && <div className="ls-calendar-event-meta">{item.platform && item.identity?.kind !== 'platform' && <SocialPlatformIcon platform={item.platform} size={13}/>}<span>{item.accountName || item.ownerAgent || '待绑定账号'}</span></div>}
                 <strong>{item.title}</strong><span className="ls-calendar-event-time">{info.timeText}</span>
               </div>
             </div>;
@@ -313,8 +329,8 @@ export function LsCalendar({ events, label, initialDate, initialView = 'dayGridM
           }
           const showMedia = info.view.type !== 'dayGridMonth' && info.view.type !== 'multiMonthYear';
           return <div className="ls-calendar-event-content">
-            {showMedia && <CalendarThumbnail src={item.thumbnailUrl} title={item.title}/>}
-            <div className="ls-calendar-event-copy"><div className="ls-calendar-event-meta">{item.platform && <SocialPlatformIcon platform={item.platform} size={13}/>}<span>{item.accountName || item.ownerAgent || info.timeText}</span></div><strong>{item.title}</strong>{(item.eventType !== 'publish' || item.status !== 'planned') && <span>{info.timeText && `${info.timeText} · `}{item.statusLabel || calendarStatusLabels[item.status]}</span>}</div>
+            {showMedia && (item.identity ? <CalendarIdentityMark identity={item.identity}/> : <CalendarThumbnail src={item.thumbnailUrl} title={item.title}/>)}
+            <div className="ls-calendar-event-copy"><div className="ls-calendar-event-meta">{item.platform && item.identity?.kind !== 'platform' && <SocialPlatformIcon platform={item.platform} size={13}/>}<span>{item.accountName || item.ownerAgent || info.timeText}</span></div><strong>{item.title}</strong>{(item.eventType !== 'publish' || item.status !== 'planned') && <span>{info.timeText && `${info.timeText} · `}{item.statusLabel || calendarStatusLabels[item.status]}</span>}</div>
           </div>;
         }}
         eventClick={info => {
@@ -365,7 +381,7 @@ export function LsCalendar({ events, label, initialDate, initialView = 'dayGridM
     </div>
     <Drawer title={detailsTitle} open={Boolean(selected)} onClose={() => setSelectedId(null)} size={520} destroyOnHidden>
       {selected && <div className="space-y-5">
-        <div className={detailsMedia === 'compact' ? 'flex items-start gap-4' : 'space-y-4'}>
+        {detailsLayout === 'standard' && <><div className={detailsMedia === 'compact' ? 'flex items-start gap-4' : 'space-y-4'}>
           {['content', 'publish', 'shooting'].includes(selected.eventType) && <CalendarThumbnail src={selected.thumbnailUrl} title={selected.title} large={detailsMedia === 'large'} compact={detailsMedia === 'compact'}/>}
           <div className="min-w-0"><Tag>{selected.statusLabel || calendarStatusLabels[selected.status]}</Tag><h3 className="mt-3 ls-type-title-medium text-text-primary">{selected.title}</h3>{selected.description && <p className="mt-2 ls-type-body-medium text-text-secondary">{selected.description}</p>}</div>
         </div>
@@ -374,7 +390,7 @@ export function LsCalendar({ events, label, initialDate, initialView = 'dayGridM
           {selected.platform && <div><dt>平台账号</dt><dd className="flex items-center gap-2"><SocialPlatformIcon platform={selected.platform} size={16}/>{socialBrandLabel(selected.platform)} · {selected.accountName || '待绑定账号'}</dd></div>}
           {selected.ownerAgent && <div><dt>责任 Agent</dt><dd>{selected.ownerAgent}</dd></div>}
           {selected.costEstimate !== undefined && <div><dt>预计成本</dt><dd>¥{selected.costEstimate.toFixed(2)}</dd></div>}
-        </dl>
+        </dl></>}
         {renderDetails?.(selected, () => setSelectedId(null))}
         {selected.editable && onMoveEvent && <div className="space-y-3 border-t border-border pt-4"><label className="block text-sm text-text-secondary" htmlFor={moveInputId}>移动到日期 / 时间（{selected.timeZone}）</label><Input id={moveInputId} type="datetime-local" value={moveValue} onChange={event => setMoveValue(event.target.value)}/><Button loading={moving} onClick={async () => { setMoving(true); try { await move(selected, calendarInstant(moveValue, selected.timeZone).toISOString()); void message.success('排期已更新'); } catch (error) { void message.error(error instanceof Error ? error.message : '排期更新失败'); } finally { setMoving(false); } }}>确认移动</Button><Alert type="info" title="跨日调整需要再次确认；已锁定或发布中的内容不可移动。"/></div>}
       </div>}

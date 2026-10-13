@@ -16,3 +16,58 @@ export function publishDateForAccountSlot(startsAt: string, endsAt: string, slot
   return new Date(start + offset * 86_400_000).toISOString().slice(0, 10);
 }
 
+export type WeeklyPublishSlot = { date: string; scheduledAt: string };
+
+/**
+ * Spread the complete weekly output, not each account in isolation. Accounts
+ * are round-robined before dates are assigned, so singleton accounts no longer
+ * collapse onto the same middle day. Times are explicit Beijing instants.
+ */
+export function balancedWeeklyPublishSlots(
+  startsAt: string,
+  endsAt: string,
+  groupKeys: string[],
+  localTime = '18:00',
+): WeeklyPublishSlot[] {
+  const start = Date.parse(`${startsAt}T00:00:00Z`);
+  const end = Date.parse(`${endsAt}T00:00:00Z`);
+  if (!Number.isFinite(start) || !Number.isFinite(end) || end < start || !groupKeys.length) return [];
+  const days = Math.max(1, Math.floor((end - start) / 86_400_000) + 1);
+  const groups = new Map<string, number[]>();
+  groupKeys.forEach((key, index) => groups.set(key, [...(groups.get(key) || []), index]));
+  const order: number[] = [];
+  const maxGroupSize = Math.max(...[...groups.values()].map(indices => indices.length));
+  for (let position = 0; position < maxGroupSize; position += 1) {
+    for (const indices of groups.values()) if (indices[position] !== undefined) order.push(indices[position]!);
+  }
+  const result: WeeklyPublishSlot[] = Array.from({ length: groupKeys.length });
+  const usedOffsets = new Map<string, Set<number>>();
+  order.forEach((originalIndex, position) => {
+    const groupKey = groupKeys[originalIndex]!;
+    const groupUsed = usedOffsets.get(groupKey) || new Set<number>();
+    const desiredOffset = order.length === 1
+      ? Math.min(1, days - 1)
+      : Math.min(days - 1, Math.floor((position + 0.5) * days / order.length));
+    let offset = desiredOffset;
+    if (groupUsed.has(offset) && groupUsed.size < days) {
+      for (let distance = 1; distance < days; distance += 1) {
+        const later = desiredOffset + distance;
+        const earlier = desiredOffset - distance;
+        if (later < days && !groupUsed.has(later)) {
+          offset = later;
+          break;
+        }
+        if (earlier >= 0 && !groupUsed.has(earlier)) {
+          offset = earlier;
+          break;
+        }
+      }
+    }
+    groupUsed.add(offset);
+    usedOffsets.set(groupKey, groupUsed);
+    const date = new Date(start + offset * 86_400_000).toISOString().slice(0, 10);
+    result[originalIndex] = { date, scheduledAt: `${date}T${localTime}:00+08:00` };
+  });
+  return result;
+}
+

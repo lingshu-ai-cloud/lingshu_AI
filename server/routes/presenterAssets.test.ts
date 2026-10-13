@@ -74,6 +74,10 @@ test('presenter creation, consent, import, tenant isolation, pagination and unce
     const pair = await Promise.all([request('/creations', input), request('/creations', input)]); const first = await pair[0].json();
     assert.equal((await pair[1].json()).id, first.id); assert.equal(creates(), 1); assert.equal(first.status, 'completed');
     assert.deepEqual(first.arkPreparation, input.arkPreparation, 'one-time Ark preparation survives the HeyGen consent round trip');
+    const optionalArkInput = { ...input, requestId: 'creation-without-ark-consent', uploadId: asset.id,
+      arkPreparation: { ...input.arkPreparation, processingAuthorized: false } };
+    const optionalArk = await (await request('/creations', optionalArkInput)).json();
+    assert.equal(optionalArk.arkPreparation.processingAuthorized, false, 'saving reusable materials does not imply Ark processing consent');
     assert.equal(first.uploadId, undefined); assert.equal(first.fingerprint, undefined);
     assert.deepEqual(calls.find(c => c.url === 'https://api.heygen.com/v3/avatars')!.body.file, { type: 'asset_id', asset_id: 'uploaded1' });
     assert.equal((await request('/creations', { ...input, name: 'changed' })).status, 400);

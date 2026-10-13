@@ -198,7 +198,7 @@ function unguardedPlanningAuthority(dataStore: DataStore, beforeAppend: () => Pr
       const outcomes = await Promise.allSettled(analysisSlots.map(async (slot) => {
         const targetAccountPlaybooks=(await Promise.all(slot.accountIds.map(accountId=>freezeWeeklyTargetAccountPlaybook(dataStore,input.tenantId,input.programId,accountId)))).filter((value): value is NonNullable<typeof value>=>value!==null);
         const own = slot.referenceSource === 'owned' ? ownedPairs.filter(pair => slot.accountIds.includes(pair.account.accountId)) : [];
-        if (slot.referenceSource === 'owned' && !own.length) throw new SocialProgramError('owned_reference_account_required', 409, '该母版目标账号缺少已核验的自有参考，需补齐或明确修订配额。');
+        if (slot.referenceSource === 'owned' && !own.length) throw new SocialProgramError('owned_reference_account_required', 409, '该独立视频目标账号缺少已核验的自有参考，需补齐或明确修订配额。');
         if(slot.referenceSource!=='owned'&&!pairs.length)throw new SocialProgramError('benchmark_account_video_link_required',409,'该外部条目缺少可核验的账号与视频关联，暂不能继续。');
         const previousOwned=input.preserveOwnedReferences&&slot.referenceSource==='owned'?current.directorAnalyses.find(x=>x.slotId===slot.slotId):undefined;
         const frozenOwned=previousOwned?own.find(pair=>previousOwned.benchmarkVideoRefs.length===1&&previousOwned.benchmarkVideoRefs[0]!.id===pair.video.candidateId&&previousOwned.benchmarkVideoRefs[0]!.version===pair.video.evidenceVersion&&previousOwned.benchmarkAccountRefs.length===1&&previousOwned.benchmarkAccountRefs[0]!.id===pair.account.accountId&&previousOwned.benchmarkAccountRefs[0]!.version===pair.account.version):undefined;
@@ -251,7 +251,7 @@ function unguardedPlanningAuthority(dataStore: DataStore, beforeAppend: () => Pr
       if(!analyses.length&&directorGaps.length&&!input.selectedSlotIds){const first=directorGaps[0]!;throw new SocialProgramError(first.referenceSource==='owned'&&!ownedPairs.length?'owned_reference_evidence_required':first.code,409,first.message);}
       analyses.push(...current.directorAnalyses.filter(a=>!analysisCoverage.selectedSlotIds.includes(a.slotId)));
       directorGaps.push(...(current.directorGaps??[]).filter(g=>!analysisCoverage.selectedSlotIds.includes(g.slotId)));
-      for(const slot of current.skeleton.slots)if(!analyses.some(a=>a.slotId===slot.slotId)&&!directorGaps.some(g=>g.slotId===slot.slotId))directorGaps.push({slotId:slot.slotId,referenceSource:slot.referenceSource??'unknown',code:'director_slot_analysis_pending',message:'该母版仍需完成其原来源分析，不改为另一来源。',observedAt:now});
+      for(const slot of current.skeleton.slots)if(!analyses.some(a=>a.slotId===slot.slotId)&&!directorGaps.some(g=>g.slotId===slot.slotId))directorGaps.push({slotId:slot.slotId,referenceSource:slot.referenceSource??'unknown',code:'director_slot_analysis_pending',message:'该独立视频仍需完成其原来源分析，不改为另一来源。',observedAt:now});
       return guardedAppend(input.tenantId, {
         ...current,
         version: current.version + 1,
@@ -359,7 +359,7 @@ function unguardedPlanningAuthority(dataStore: DataStore, beforeAppend: () => Pr
       requirePlanningVersion(current, input.expectedPlanningVersion);
       await verifyWeeklyPlanningPlaybooks(dataStore,input.tenantId,input.programId,current.directorAnalyses);
       assertWeeklyDetailedCoverage(current);
-      if(current.detailedSchedule?.coverage){assertWeeklyPlanningCoverage(current,current.detailedSchedule.coverage,input.selectedSlotIds);if(current.userConfirmation&&JSON.stringify(current.userConfirmation.selectedSlotIds)!==JSON.stringify(current.detailedSchedule.coverage.selectedSlotIds))throw new SocialProgramError('weekly_partial_confirmation_changed',409,'确认的母版范围与详细排期不一致。');}
+      if(current.detailedSchedule?.coverage){assertWeeklyPlanningCoverage(current,current.detailedSchedule.coverage,input.selectedSlotIds);if(current.userConfirmation&&JSON.stringify(current.userConfirmation.selectedSlotIds)!==JSON.stringify(current.detailedSchedule.coverage.selectedSlotIds))throw new SocialProgramError('weekly_partial_confirmation_changed',409,'确认的视频范围与详细排期不一致。');}
       if (current.dispatch) return current;
       if (current.status !== 'confirmed' || !current.detailedSchedule || !current.userConfirmation) {
         throw new SocialProgramError('confirmed_detailed_schedule_required', 409, '用户确认详细排期后才能派给内容 Agent。');

@@ -87,7 +87,15 @@ export async function bindPublishingTargets(
     }
     if (!targets.some(target => target.platform === account.platform && target.accountId === account.accountId)) {
       if (requestedTarget.timezone && !validTimeZone(requestedTarget.timezone)) throw new Error('invalid_publishing_timezone');
-      targets.push({ platform: account.platform, accountId: account.accountId, accountLabel: account.accountLabel, ...(requestedTarget.timezone ? { timezone: requestedTarget.timezone } : {}) });
+      targets.push({
+        platform: account.platform,
+        accountId: account.accountId,
+        accountLabel: account.accountLabel,
+        ...(requestedTarget.timezone ? { timezone: requestedTarget.timezone } : {}),
+        ...(Number.isInteger(requestedTarget.weeklyCount) && Number(requestedTarget.weeklyCount) >= 0 && Number(requestedTarget.weeklyCount) <= 30
+          ? { weeklyCount: Number(requestedTarget.weeklyCount) }
+          : {}),
+      });
     }
   }
   return { targets, invalidAccountIds: invalidAccountIds.filter(Boolean) };

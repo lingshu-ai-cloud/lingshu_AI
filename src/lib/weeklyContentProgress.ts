@@ -672,13 +672,13 @@ export function buildWeeklyContentProgress(data: DigitalEmployeeOverview, conten
   const base: WeeklyContentProgress = {
     contentId, masterContentId: master?.contentId || '', isAdaptation, sharedMaster: isAdaptation && Boolean(master),
     queueItemId: null, taskId: null, projectIds: [], status: 'pending', statusLabel: '未开始',
-    summary: '尚未启动此内容的生产。', stages: master ? preparation(master) : definitions.map(([key]) => stage(key, 'unavailable', '当前计划中缺少可核验的内容或母版关联。')),
+    summary: '尚未启动此内容的生产。', stages: master ? preparation(master) : definitions.map(([key]) => stage(key, 'unavailable', '当前计划中缺少可核验的视频关联。')),
     shots: [], blockingReasons: [], nextAction: null,
   };
   const finish = (status: StageStatus, summary: string, statusLabel = labels[status]) => ({ ...base, status, statusLabel, summary });
   if (!selected || !master || !data.goal || !data.plan) {
     base.nextAction = { kind: 'refresh', label: '同步当前计划' };
-    return finish('unavailable', '内容或母版关联不完整，无法显示其他内容的生产状态。');
+    return finish('unavailable', '视频关联不完整，无法显示其他内容的生产状态。');
   }
   const scopedItems = (data.contentQueue?.items || []).filter(item => item.origin === 'weekly_plan' && item.lineage.goalId === data.goal!.id && item.lineage.planId === data.plan!.id && item.contentId === master.contentId);
   const item = scopedItems.length === 1 ? scopedItems[0] : undefined;
@@ -783,6 +783,6 @@ export function buildWeeklyContentProgress(data: DigitalEmployeeOverview, conten
   }
   if (task.status === 'succeeded' || run.status === 'succeeded') return finish('unavailable', '任务已结束，但此内容的成片与质检回执尚不完整；暂不标记制作完成。');
   if (queue?.status === 'waiting_review' || queue?.status === 'completed') return finish('waiting', '队列报告成片待验收或已验收；详细产物回执尚未同步。', '同步产物中');
-  if (task.status === 'running' || queue?.status === 'producing') return finish('running', isAdaptation ? '此平台版本复用对应母版的生产进度；平台交付不等于已发布。' : '生产任务已启动，以下阶段按实际产物与执行回执更新。', '生产中');
+  if (task.status === 'running' || queue?.status === 'producing') return finish('running', isAdaptation ? '此发布版本沿用已验收视频的生产进度；平台交付不等于已发布。' : '生产任务已启动，以下阶段按实际产物与执行回执更新。', '生产中');
   return finish('ready', '周任务已创建，此内容等待执行；尚未开始的阶段不会标记完成。', '已排队');
 }

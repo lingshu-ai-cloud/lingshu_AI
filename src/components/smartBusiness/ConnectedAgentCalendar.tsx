@@ -306,7 +306,7 @@ export default function ConnectedAgentCalendar({accountBindingTasks=[],startsAt,
         <option value="">请选择周任务包</option>
         {packages.map(item => <option key={identity(item)} value={identity(item)}>{item.weekStart} · v{item.version} · {item.objective}</option>)}
       </select>
-      {pkg?.referenceSourcePolicy && <span>自有 {pkg.referenceSourcePolicy.ownedPercent}% / 外部 {pkg.referenceSourcePolicy.externalPercent}% · 按母版</span>}
+      {pkg?.referenceSourcePolicy && <span>自有 {pkg.referenceSourcePolicy.ownedPercent}% / 外部 {pkg.referenceSourcePolicy.externalPercent}% · 按独立视频</span>}
     </div>
     {loading && <p className="p-6 text-xs text-slate-500">正在读取真实执行排期…</p>}
     {error && <p role="alert" className="m-6 rounded-xl bg-red-50 p-3 text-xs text-red-700">{error}</p>}

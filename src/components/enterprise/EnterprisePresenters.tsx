@@ -48,6 +48,7 @@ export default function EnterprisePresenters({
   const [showArkSetup, setShowArkSetup] = useState(false);
   const [showHeyGenManager, setShowHeyGenManager] = useState(false);
   const [preparedArk, setPreparedArk] = useState<ArkPresenterPreparation>();
+  const [certifyingPresenterId, setCertifyingPresenterId] = useState('');
   const [editingId, setEditingId] = useState('');
   const [editingName, setEditingName] = useState('');
 
@@ -65,18 +66,22 @@ export default function EnterprisePresenters({
   }, [load]);
 
   useEffect(() => {
-    if (!initialConfiguration) return;
     let live = true;
     void fetchMaterialLibrary().then(result => {
       if (live) setMaterials(result.items.filter(item => item.type === 'image' || item.type === 'video'));
     }).catch(() => { if (live) setError('人物素材暂时无法读取，请稍后重试。'); });
     return () => { live = false; };
-  }, [initialConfiguration]);
+  }, []);
 
   const selectedPresenter = useMemo(() => value.presenters.find(item => item.id === value.defaultPresenterId)
     || value.presenters[0], [value.defaultPresenterId, value.presenters]);
   const selectedHeyGenReady = heyGenReady(selectedPresenter);
   const selectedArkReady = arkReady(selectedPresenter);
+
+  const openPresenterManager = () => {
+    setShowArkSetup(false);
+    setShowHeyGenManager(true);
+  };
 
   const refresh = async (successMessage?: string) => {
     const next = await load();
@@ -92,9 +97,10 @@ export default function EnterprisePresenters({
     photoMaterialId?: string;
     videoMaterialId?: string;
     requestId: string;
-  }) => {
+  }, targetPresenterId?: string) => {
     const current = await productionApi.defaults();
-    const presenter = current.presenters.find(item => item.id === current.defaultPresenterId) || current.presenters[0];
+    const presenter = (targetPresenterId ? current.presenters.find(item => item.id === targetPresenterId) : undefined)
+      || current.presenters.find(item => item.id === current.defaultPresenterId) || current.presenters[0];
     if (!presenter || !heyGenReady(presenter)) throw new Error('请先在左侧完成 HeyGen 人物和声音接入。');
     const photoMaterialId = input.photo
       ? (await productionApi.uploadArkMaterial(input.photo, 'image')).id
@@ -123,28 +129,25 @@ export default function EnterprisePresenters({
   const finishUnifiedPresenterSetup = async (next: ProductionDefaults, context?: PresenterSaveContext) => {
     setValue(next); notifyPresenterAssetsUpdated(); setShowHeyGenManager(false); setError('');
     const preparation = context?.arkPreparation;
-    if (!preparation) {
-      setShowArkSetup(true);
-      setMessage('人物与声音已保存。这个人物还没有可复用的方舟认证资料，只需再补充一次照片和本人视频。');
-      return;
+    if (preparation) {
+      const presenter = next.presenters.find(item => item.id === next.defaultPresenterId) || next.presenters[0];
+      if (presenter) {
+        const referenceMaterialIds = [...new Set([...(presenter.referenceMaterialIds || []), preparation.photoMaterialId, preparation.videoMaterialId])];
+        const saved = await productionApi.saveDefaults({
+          ...next,
+          defaultPresenterId: presenter.id,
+          presenters: next.presenters.map(item => item.id === presenter.id ? { ...item, referenceMaterialIds } : item),
+        });
+        setValue(saved);
+        notifyPresenterAssetsUpdated();
+      }
+      setPreparedArk(preparation);
     }
-    setPreparedArk(preparation);
-    try {
-      const enrollment = await startArkEnrollment({
-        name: '',
-        photoMaterialId: preparation.photoMaterialId,
-        videoMaterialId: preparation.videoMaterialId,
-        requestId: `unified-${context?.creationId || next.defaultPresenterId}`,
-      });
-      setShowArkSetup(true);
-      setMessage(enrollment.state === 'needs_verification'
-        ? '人物与声音已保存，同一套照片和视频已自动提交方舟。请完成人验证。'
-        : '人物与声音已保存，同一套资料已自动进入方舟认证。');
-    } catch (cause) {
-      setShowArkSetup(true);
-      setMessage('人物、声音和复用资料均已保存，不需要再次上传。');
-      setError(`方舟认证暂未启动：${cause instanceof Error ? cause.message : String(cause)}`);
-    }
+    setShowArkSetup(false);
+    setMessage(preparation
+      ? '口播人物与声音已保存，现在即可使用。照片和视频也已保留；需要高级人物替换时，再点击“完善人物替换认证”单独授权。'
+      : '口播人物与声音已保存，现在即可使用。高级人物替换为可选功能，可稍后在企业知识库补充认证。');
+    onInitialSelection?.();
   };
 
   const saveName = async () => {
@@ -183,13 +186,16 @@ export default function EnterprisePresenters({
   if (initialConfiguration) return <section className="space-y-4" aria-label="数字人统一接入">
     <div>
       <h3 className="text-base font-semibold text-text-primary">数字人接入</h3>
-      <p className="mt-1 text-xs leading-5 text-text-muted">在这里一次完成口播人物、声音和人物替换认证。以后企业资料只用于修改人物或取消授权。</p>
+      <p className="mt-1 text-xs leading-5 text-text-muted">选择 HeyGen 已有人物，或上传本人资料创建。人物替换认证是可选能力，不影响 HeyGen 口播。</p>
     </div>
     {error && <Alert type="error" showIcon title={error} />}
     {message && <Alert type="success" showIcon title={message} />}
     <section className={`rounded-lg border p-4 ${selectedHeyGenReady && selectedArkReady ? 'border-emerald-200 bg-emerald-50/60' : 'border-border bg-white'}`} aria-label="统一人物接入状态">
-      <div className="flex flex-wrap items-start justify-between gap-4"><div><p className="text-sm font-semibold text-text-primary">人物、声音与本人认证</p>{selectedPresenter && <p className="mt-2 text-xs text-text-secondary">当前人物：<strong>{selectedPresenter.name}</strong></p>}<div className="mt-3 flex flex-wrap gap-2"><Tag color={selectedHeyGenReady ? 'success' : 'default'}>口播人物与声音 {selectedHeyGenReady ? '已完成' : '待配置'}</Tag><Tag color={selectedArkReady ? 'success' : 'default'}>人物替换认证 {selectedArkReady ? '已完成' : selectedHeyGenReady ? '待继续' : '等待人物'}</Tag></div></div>
-        {!selectedHeyGenReady ? <LsBrandAction onClick={() => setShowHeyGenManager(true)}>开始统一接入</LsBrandAction> : !selectedArkReady ? <LsBrandAction onClick={() => setShowArkSetup(current => !current)}>{showArkSetup ? '收起认证状态' : '继续人物认证'}</LsBrandAction> : <Button onClick={() => setShowHeyGenManager(true)}>更换人物</Button>}
+      <div className="flex flex-wrap items-start justify-between gap-4"><div><p className="text-sm font-semibold text-text-primary">人物、声音与本人认证</p>{selectedPresenter && <p className="mt-2 text-xs text-text-secondary">当前人物：<strong>{selectedPresenter.name}</strong></p>}<div className="mt-3 flex flex-wrap gap-2"><Tag color={selectedHeyGenReady ? 'success' : 'default'}>口播人物与声音 {selectedHeyGenReady ? '已完成' : '待配置'}</Tag><Tag color={selectedArkReady ? 'success' : 'default'}>人物替换认证 {selectedArkReady ? '已完成' : selectedHeyGenReady ? '可选' : '等待人物'}</Tag></div></div>
+        <div className="flex flex-wrap gap-2">
+          {selectedHeyGenReady ? <Button onClick={openPresenterManager}>更换数字人</Button> : <LsBrandAction onClick={openPresenterManager}>设置数字人</LsBrandAction>}
+          {selectedHeyGenReady && !selectedArkReady && <LsBrandAction onClick={() => setShowArkSetup(current => !current)}>{showArkSetup ? '收起人物替换认证' : '完善人物替换认证'}</LsBrandAction>}
+        </div>
       </div>
     </section>
     {showArkSetup && selectedPresenter && <ArkPresenterEnrollmentPanel
@@ -208,22 +214,38 @@ export default function EnterprisePresenters({
 
   return <section className="rounded-lg border border-border bg-white p-5" aria-label={contentProduction ? '内容制作人物管理' : '人物与出镜'}>
     <div className="flex flex-wrap items-start justify-between gap-3">
-      <div><h3 className="text-base font-semibold text-text-primary">人物与出镜</h3><p className="mt-1 text-xs text-text-muted">这里只维护已接入人物。新增人物、声音和认证统一在数字员工新手引导中完成。</p></div>
+      <div><h3 className="text-base font-semibold text-text-primary">人物与出镜</h3><p className="mt-1 text-xs text-text-muted">这里可以修改已接入人物、补充可选的人物替换认证，或取消授权。</p></div>
       {contentProduction && <Button onClick={openDigitalHumanOnboarding}>打开数字人接入</Button>}
     </div>
     {error && <Alert className="mt-4" type="error" showIcon title={error} />}
     {message && <Alert className="mt-4" type="success" showIcon title={message} />}
     {!loaded ? <p role="status" className="mt-5 text-sm text-text-muted">正在读取已授权人物…</p> : !value.presenters.length ? <div className="mt-5 rounded-lg border border-dashed border-border p-8 text-center"><UserRound className="mx-auto text-text-muted" /><p className="mt-3 text-sm font-semibold">暂无已授权人物</p><p className="mt-1 text-xs text-text-muted">请前往数字员工新手引导完成首次接入。</p><Button className="mt-4" onClick={openDigitalHumanOnboarding}>打开数字人接入</Button></div> : <div className="mt-5 divide-y divide-border rounded-lg border border-border">
-      {value.presenters.map(presenter => <article key={presenter.id} className="p-4">
+      {value.presenters.map(presenter => {
+        const referenceIds = presenter.referenceMaterialIds || [];
+        const initialPhotoMaterialId = materials.find(item => item.type === 'image' && referenceIds.includes(item.id))?.id;
+        const initialVideoMaterialId = materials.find(item => item.type === 'video' && referenceIds.includes(item.id))?.id;
+        const certificationOpen = certifyingPresenterId === presenter.id;
+        return <article key={presenter.id} className="p-4">
         <div className="flex flex-wrap items-center justify-between gap-4">
           <div className="flex min-w-0 items-center gap-3">
             <span className="relative flex h-12 w-12 shrink-0 items-center justify-center overflow-hidden rounded-lg bg-surface-2 text-sm font-semibold text-text-secondary">{presenter.name.slice(0, 1)}{presenter.imageUrl && <img src={presenter.imageUrl} alt="" className="absolute inset-0 h-full w-full object-cover" />}</span>
             <div className="min-w-0"><p className="truncate text-sm font-semibold text-text-primary">{presenter.name}</p><div className="mt-1 flex flex-wrap gap-1.5"><Tag color={heyGenReady(presenter) ? 'success' : 'default'}>HeyGen {heyGenReady(presenter) ? '已接入' : '未接入'}</Tag><Tag color={arkReady(presenter) ? 'success' : 'default'}>方舟 {arkReady(presenter) ? '已认证' : '未认证'}</Tag>{value.defaultPresenterId === presenter.id && <Tag color="blue">当前默认</Tag>}</div></div>
           </div>
-          <div className="flex gap-2"><Button disabled={busy} onClick={() => { setEditingId(presenter.id); setEditingName(presenter.name); }}>修改人物</Button><Button danger disabled={busy} onClick={() => revoke(presenter)}>取消授权</Button></div>
+          <div className="flex flex-wrap gap-2"><Button disabled={busy} onClick={() => { setEditingId(presenter.id); setEditingName(presenter.name); }}>修改人物</Button>{heyGenReady(presenter) && !arkReady(presenter) && <Button disabled={busy} onClick={() => setCertifyingPresenterId(current => current === presenter.id ? '' : presenter.id)}>{certificationOpen ? '收起认证' : '人物替换认证'}</Button>}<Button danger disabled={busy} onClick={() => revoke(presenter)}>取消授权</Button></div>
         </div>
         {editingId === presenter.id && <div className="mt-4 flex flex-wrap items-end gap-2 rounded-lg bg-surface-2 p-3"><label className="min-w-56 flex-1 text-xs font-semibold text-text-secondary">人物显示名称<input autoFocus value={editingName} maxLength={100} onChange={event => setEditingName(event.target.value)} className="mt-1 w-full rounded-lg border border-border bg-white px-3 py-2 text-sm text-text-primary" /></label><LsBrandAction loading={busy} disabled={!editingName.trim()} onClick={() => void saveName()}>保存修改</LsBrandAction><Button disabled={busy} onClick={() => { setEditingId(''); setEditingName(''); }}>取消</Button></div>}
-      </article>)}
+        {certificationOpen && <div className="mt-4"><ArkPresenterEnrollmentPanel
+          presenterId={presenter.id}
+          photos={materials.filter(item => item.type === 'image').map(item => ({ id: item.id, name: item.name }))}
+          videos={materials.filter(item => item.type === 'video').map(item => ({ id: item.id, name: item.name }))}
+          initialPhotoMaterialId={initialPhotoMaterialId}
+          initialVideoMaterialId={initialVideoMaterialId}
+          authorizationConfirmed={false}
+          onStart={input => startArkEnrollment(input, presenter.id)}
+          onReady={async () => { await refresh('方舟人物认证已完成，当前人物可以用于人物替换。'); setCertifyingPresenterId(''); }}
+        /></div>}
+      </article>;
+      })}
     </div>}
     {contentProduction && <p className="mt-3 flex items-center gap-2 rounded-lg bg-surface-2 px-3 py-2 text-xs text-text-muted"><ShieldCheck size={14} />制作页面不再重复承载人物供应商配置。</p>}
   </section>;

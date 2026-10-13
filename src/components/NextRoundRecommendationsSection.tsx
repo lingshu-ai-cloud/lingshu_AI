@@ -1,4 +1,5 @@
-import { ArrowRight, ArrowUpRight, Hash, ImageOff, Radar, RefreshCw, ShieldCheck } from 'lucide-react';
+import { Empty } from 'antd';
+import { ArrowRight, ArrowUpRight, Hash, Radar, RefreshCw, ShieldCheck } from 'lucide-react';
 import { useEffect, useMemo, useState } from 'react';
 import type { BusinessDestination, WeeklyReviewSummary } from '../lib/digitalEmployees';
 import { buildNextRoundRecommendationCards, type NextRoundRecommendationCard, type NextRoundRecommendationKind } from '../lib/nextRoundRecommendations';
@@ -37,12 +38,20 @@ function CoverImage({ sources, alt }: { sources: Array<string | undefined>; alt:
     }).catch(() => { if (active) setIndex(current => current + 1); }).finally(() => window.clearTimeout(timeout));
     return () => { active = false; controller.abort(); window.clearTimeout(timeout); if (objectUrl) URL.revokeObjectURL(objectUrl); };
   }, [src]);
-  return <LsMediaStateFrame state={!src ? 'error' : ready ? 'ready' : 'loading'} label={!src ? '暂无可用封面' : undefined} className="h-full w-full">
+  return <LsMediaStateFrame state={!src ? 'error' : ready ? 'ready' : 'loading'} label={!src ? '封面加载失败' : undefined} className="h-full w-full">
     {resolved && <LsProgressiveMedia src={resolved} alt={alt} preview={false} width="100%" height="100%" style={{ objectFit: 'contain' }} onLoad={() => setReady(true)} onError={() => setIndex(current => current + 1)}/>}
   </LsMediaStateFrame>;
 }
 
 function ContentInheritanceVisual({ card }: { card: NextRoundRecommendationCard }) {
+  const hasPublishedContent = card.status === 'ready'
+    || Boolean(card.sourceContentId || card.thumbnailUrl || card.links.length);
+  if (!hasPublishedContent) return <div className="flex min-h-[244px] items-center justify-center rounded-lg border border-dashed border-border bg-surface-2 px-5 py-8">
+    <Empty
+      image={Empty.PRESENTED_IMAGE_SIMPLE}
+      description={<div className="mx-auto max-w-[260px] text-center"><p className="text-sm font-semibold text-text-primary">暂无可继承的优秀内容</p><p className="mt-1 text-xs leading-5 text-text-secondary">完成首轮内容发布并回收真实播放、互动或询盘后，这里才会展示封面、有效钩子和内容框架。</p></div>}
+    />
+  </div>;
   const media = <div className="relative aspect-video overflow-hidden rounded-lg bg-zinc-50">
     <CoverImage sources={[card.thumbnailUrl, card.sourceContentId ? `/api/overseas/videos/${encodeURIComponent(card.sourceContentId)}/thumbnail` : undefined]} alt={card.conclusion}/>
     <span className="absolute left-2 top-2 rounded-full bg-black/65 px-2 py-1 text-xs font-semibold text-white">{card.links[0]?.meta || '本期优秀内容'}</span>

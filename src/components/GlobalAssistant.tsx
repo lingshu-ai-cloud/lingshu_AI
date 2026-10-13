@@ -15,6 +15,7 @@ import {
   ArrowDown,
   ArrowRight,
   Bot,
+  CalendarRange,
   CheckCircle2,
   Loader2,
   Pause,
@@ -83,6 +84,7 @@ interface AssistantContext {
   taskId?: string;
   contentId?: string;
   viewKey?: string;
+  workflowStage?: 'setup_required' | 'unplanned' | 'planned' | 'running' | 'history';
 }
 
 interface AssistantTodoItem {
@@ -582,6 +584,11 @@ function focusedNaturalLanguageActionId(text: string): AssistantActionId | undef
   return matches.length === 1 ? matches[0][0] : undefined;
 }
 
+function isWeeklyPlanKickoffRequest(text: string): boolean {
+  const normalized = text.trim().replace(/[。！!]+$/u, '').replace(/\s+/gu, '');
+  return /^(?:(?:请|请帮我|帮我|现在|立即|马上))*(?:开始|启动|制定|生成|创建)(?:(?:本周|这周))?(?:生产|制作|周计划|计划|周任务)$/u.test(normalized);
+}
+
 function focusedNaturalLanguageActionInput(
   card: AssistantTaskCard | null | undefined,
   actionId: AssistantActionId,
@@ -747,6 +754,7 @@ export default function GlobalAssistant({
   const [performanceHidden, setPerformanceHidden] = useState(false);
   const [performanceLineIndex, setPerformanceLineIndex] = useState(0);
   const [speechBubble, setSpeechBubble] = useState<AssistantSpeech | null>(null);
+  const [weeklyPlanPromptDismissed, setWeeklyPlanPromptDismissed] = useState(false);
   const [loading, setLoading] = useState(false);
   const [assistantThreadHydrated, setAssistantThreadHydrated] = useState(false);
   const [welcomeBubbleVisible, setWelcomeBubbleVisible] = useState(false);
@@ -823,6 +831,15 @@ export default function GlobalAssistant({
   ), [liveContext, normalizedPage]);
   const currentPageAgent = useMemo(() => orbitIdForPage(page), [page]);
   const activeContext = useMemo(() => contextForOrbit(currentPageAgent, pageContext), [currentPageAgent, pageContext]);
+  const weeklyPlanKickoffAvailable = normalizedPage === 'digitalEmployees'
+    && pageContext.workflowStage === 'unplanned';
+  const openWeeklyPlanFromAssistant = useCallback(() => {
+    setWeeklyPlanPromptDismissed(true);
+    setMode('breathing');
+    window.dispatchEvent(new CustomEvent('lingshu:open-weekly-plan', {
+      detail: { source: 'assistant' },
+    }));
+  }, []);
   const activeThread = threads[activeAgent];
   const focusedTaskCard = activeThread.focusedTaskId
     ? activeThread.taskCards[activeThread.focusedTaskId] ?? null
@@ -1556,6 +1573,19 @@ export default function GlobalAssistant({
     const draft = activeThread.draftInput;
     const files = [...pendingAttachments];
     if (!draft.trim() && !files.length) return;
+    if (!files.length && weeklyPlanKickoffAvailable && isWeeklyPlanKickoffRequest(draft)) {
+      const current = useAssistantStore.getState().threads[activeAgent].messages;
+      setDraftInput(activeAgent, '');
+      setMessages(activeAgent, [
+        ...current,
+        { role: 'user', content: draft.trim() },
+        { role: 'assistant', content: '可以。我先为你生成一份可预览的周计划；你核对平台、产量、预算和排期并确认后，数字员工才会开始生产。' },
+      ]);
+      setFollowingLatest(activeAgent, true);
+      persistThread(activeAgent);
+      openWeeklyPlanFromAssistant();
+      return;
+    }
     if (!files.length) {
       void send(draft);
       return;
@@ -1598,7 +1628,7 @@ export default function GlobalAssistant({
       setAttachmentError(error instanceof Error ? error.message : '附件上传失败，请重试。');
       setAttachmentUploading(false);
     }
-  }, [activeThread.draftInput, attachmentUploading, currentPageAgent, loading, pendingAttachments, send]);
+  }, [activeAgent, activeThread.draftInput, attachmentUploading, currentPageAgent, loading, openWeeklyPlanFromAssistant, pendingAttachments, persistThread, send, setDraftInput, setFollowingLatest, setMessages, weeklyPlanKickoffAvailable]);
 
   const handleTaskCardAction = useCallback(async (
     card: AssistantTaskCard,
@@ -1778,11 +1808,16 @@ export default function GlobalAssistant({
         taskId: contextIdentifier(detail.taskId),
         contentId: contextIdentifier(detail.contentId),
         viewKey: contextIdentifier(detail.viewKey, 80),
+        workflowStage: detail.workflowStage,
       });
     };
     window.addEventListener('lingshu-assistant-context', handler);
     return () => window.removeEventListener('lingshu-assistant-context', handler);
   }, [page]);
+
+  useEffect(() => {
+    setWeeklyPlanPromptDismissed(false);
+  }, [normalizedPage, pageContext.workflowStage]);
 
   useEffect(() => {
     if (mode === 'chat' || suppressForRightSidebar) return;
@@ -2156,7 +2191,45 @@ export default function GlobalAssistant({
       </AnimatePresence>
 
       <AnimatePresence>
-        {mode === 'breathing' && (!performance || performanceHidden || !shouldNotifyAssistant(performance.reason)) && !speechBubble && featureGuide && (
+        {mode === 'breathing' && (!performance || performanceHidden || !shouldNotifyAssistant(performance.reason)) && !speechBubble && weeklyPlanKickoffAvailable && !weeklyPlanPromptDismissed && (
+          <motion.div
+            key="weekly-plan-kickoff"
+            data-assistant-surface="floating-reminder"
+            data-lingshu-weekly-plan-prompt="true"
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={fadeExit}
+            transition={fadeTransition}
+            className="absolute bottom-0 right-[calc(100%+8px)] z-30 w-[264px] max-w-[calc(100vw-176px)] rounded-lg border border-border bg-surface p-3 shadow-lg"
+            style={{
+              width: Math.min(264, viewport.width - 104),
+              maxWidth: 'calc(100vw - 176px)',
+            }}
+          >
+            <button
+              type="button"
+              onClick={() => setWeeklyPlanPromptDismissed(true)}
+              className="absolute right-2 top-2 rounded-md p-1 text-text-muted transition hover:bg-surface-2 hover:text-text-primary"
+              aria-label="暂时关闭周计划提示"
+            >
+              <X size={13} />
+            </button>
+            <p className="ls-type-label-medium pr-6 text-accent">先制定本周计划</p>
+            <p className="ls-type-body-small mt-1 text-text-secondary">我会先整理平台、产量、预算和排期，给你预览；你确认后才开始生产。</p>
+            <button
+              type="button"
+              onClick={openWeeklyPlanFromAssistant}
+              className="ls-type-label-medium mt-2 inline-flex items-center gap-1.5 text-accent hover:text-accent-dim focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent"
+            >
+              制定周计划 <ArrowRight size={13} aria-hidden="true" />
+            </button>
+            <span className="absolute -right-2 bottom-5 h-4 w-4 rotate-45 border-r border-t border-border bg-surface" />
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      <AnimatePresence>
+        {mode === 'breathing' && (!performance || performanceHidden || !shouldNotifyAssistant(performance.reason)) && !speechBubble && (!weeklyPlanKickoffAvailable || weeklyPlanPromptDismissed) && featureGuide && (
           <motion.div
             key={featureGuide.id}
             data-assistant-surface="floating-reminder"
@@ -2415,6 +2488,28 @@ export default function GlobalAssistant({
                           </span>
                           <ArrowRight className="assistant-decision-summary__arrow" size={18} aria-hidden="true" />
                         </button>
+                      </div>
+                    )}
+
+                    {weeklyPlanKickoffAvailable && (
+                      <div
+                        className="ls-assistant-summary-bubble-enter flex items-start gap-2"
+                        data-assistant-bubble="weekly-plan-kickoff"
+                        style={assistantBubbleStyle(activeThread.messages.length + (welcomeBubbleVisible ? 3 : 2))}
+                      >
+                        <div className="mt-0.5 flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-text-primary text-white"><Bot size={13} /></div>
+                        <div className="ls-messenger-bubble ls-messenger-bubble--inbound min-w-0 flex-1">
+                          <p className="font-semibold text-text-primary">先制定本周计划</p>
+                          <p className="mt-1 text-text-secondary">我会先整理本周目标、平台、产量、预算和排期给你预览。你确认后，数字员工才会开始生产。</p>
+                          <Button
+                            type="primary"
+                            className="mt-3"
+                            icon={<CalendarRange size={14} />}
+                            onClick={openWeeklyPlanFromAssistant}
+                          >
+                            制定周计划
+                          </Button>
+                        </div>
                       </div>
                     )}
 

@@ -347,7 +347,7 @@ function positiveInteger(value: unknown, fallback: number, maximum: number): num
   if (value === undefined || value === null || value === '') return fallback;
   const result = Number(value);
   if (!Number.isSafeInteger(result) || result < 1 || result > maximum) {
-    throw new SocialProgramError('original_content_target_invalid', 400, `母内容数必须是 1—${maximum} 的整数。`);
+    throw new SocialProgramError('original_content_target_invalid', 400, `独立视频数必须是 1—${maximum} 的整数。`);
   }
   return result;
 }
@@ -454,7 +454,7 @@ export function packageFromInput(args: {
   const generationMotherTarget = positiveInteger(requestedMotherTarget === 0 ? 1 : requestedMotherTarget, Math.min(10, publicationTaskTarget), publicationTaskTarget);
   const tasks = publicationTasks(plans, generationMotherTarget, args.input);
   const population = weeklyProductionPopulation(tasks);
-  if (requestedMotherTarget === 0 && population.productionPublications.length) throw new SocialProgramError('weekly_new_mother_target_required',400,'含新制作内容的排期不能使用零新增母版配额，请明确新制作计划。');
+  if (requestedMotherTarget === 0 && population.productionPublications.length) throw new SocialProgramError('weekly_new_mother_target_required',400,'含新制作内容的排期不能使用零新增独立视频配额，请明确新制作计划。');
   const originalContentTarget = population.newMotherContentTarget;
   const status = 'draft' as const;
   const timestamp = args.createdAt ?? at();

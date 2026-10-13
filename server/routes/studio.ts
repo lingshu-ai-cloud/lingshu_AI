@@ -147,7 +147,7 @@ export {
   unconfirmedEnterpriseProductFields,
   unsupportedNumericClaims,
 } from '../lib/studioGenerationTruthfulness.js';
-import { canAppearInSharedLibrary, isReferenceOnlyMaterial, materialUsage, type MaterialUsage } from '../lib/materialPolicy.js';
+import { canAppearInSharedLibrary, isReferenceOnlyMaterial, isWorkflowInternalMaterial, materialUsage, type MaterialUsage } from '../lib/materialPolicy.js';
 import { cloudMaterialView, createCloudMaterial, deleteOwnedCloudMaterial, fetchCloudMaterial, getCloudMaterialRecord, getOwnedCloudMaterialRecord, listCloudMaterials, updateCloudMaterial, upsertTenantUploadCloudMaterial } from '../lib/cloudMaterials.js';
 import { analyzeVideo } from '../agents/gemini.js';
 import {
@@ -6785,7 +6785,8 @@ export function productionAnalysisSegments(id: string, duration: number, analysi
 }
 
 // GET /studio/materials?scope=shared|own&purpose=library|reference|all&origin=generated
-// 素材库是统一使用边界：所有已入库视觉素材都可进入创作。
+// User-facing libraries exclude durable workflow intermediates. Production
+// routes use purpose=all when they need to resume from those internal assets.
 studioRouter.get('/materials', async (req, res) => {
   const { tenantId } = res.locals as AuthLocals;
   const scope = req.query.scope as string | undefined;
@@ -6812,8 +6813,8 @@ studioRouter.get('/materials', async (req, res) => {
   });
   if (scope === 'shared') list = list.filter(canAppearInSharedLibrary);
   else if (scope === 'own') list = list.filter(m => (m.scope ?? 'own') === 'own');
-  if (purpose === 'reference') list = list.filter(isReferenceOnlyMaterial);
-  else if (purpose !== 'all') list = list.filter(m => !isReferenceOnlyMaterial(m));
+  if (purpose === 'reference') list = list.filter(m => isReferenceOnlyMaterial(m) && !isWorkflowInternalMaterial(m));
+  else if (purpose !== 'all') list = list.filter(m => !isReferenceOnlyMaterial(m) && !isWorkflowInternalMaterial(m));
   const origin = String(req.query.origin || '');
   const assetGenerationKind = String(req.query.assetGenerationKind || '');
   const qualityState = String(req.query.qualityState || '');

@@ -78,6 +78,10 @@
 .ls-calendar-event-content-timed.is-short .ls-calendar-event-meta { display: none; }
 .ls-calendar-event-content-all-day { width: 100%; max-height: 44px; align-items: center; overflow: hidden; box-sizing: border-box; }
 .ls-calendar-event-content-all-day .ls-calendar-thumb { width: 28px; height: 28px; }
+.ls-calendar-event-identity { display: inline-flex; width: 40px; height: 40px; flex: 0 0 40px; align-items: center; justify-content: center; overflow: hidden; border: 1px solid var(--color-border, #e4e4e7); border-radius: 10px; background: #fff; }
+.ls-calendar-event-identity > span { border: 0 !important; background: transparent !important; }
+.ls-calendar-event-content-all-day .ls-calendar-event-identity,
+.ls-calendar-event-content-timed.is-short .ls-calendar-event-identity { width: 28px; height: 28px; flex-basis: 28px; border-radius: 8px; }
 @container ls-calendar-slot (max-height: 32px) { .ls-calendar-event-content-timed .ls-calendar-event-time { display: none; } }
 .ls-calendar-event-meta { display: flex; align-items: center; gap: 4px; font-size: var(--ls-type-body-small-size); line-height: var(--ls-type-body-small-line); }
 .ls-calendar-event-meta span { overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
@@ -101,6 +105,8 @@
 .ls-calendar-event-content-media .ls-calendar-event-copy strong { display: -webkit-box; overflow: hidden; -webkit-box-orient: vertical; -webkit-line-clamp: 2; line-height: var(--ls-type-body-small-line); }
 .ls-calendar-event-content-media .ls-calendar-event-summary { display: -webkit-box; margin-top: 2px; overflow: hidden; -webkit-box-orient: vertical; -webkit-line-clamp: 2; color: #52525b; line-height: var(--ls-type-body-small-line); }
 .ls-calendar-media-cards .fc-daygrid-day-frame { min-height: 560px; }
+.ls-calendar-expanded.ls-calendar-view-dayGridWeek .fc-daygrid-day-frame,
+.ls-calendar-expanded.ls-calendar-view-dayGridDay .fc-daygrid-day-frame { min-height: clamp(420px, calc(100dvh - 260px), 760px); }
 .ls-calendar-media-cards .fc-daygrid-day-events { gap: 6px; margin: 0 4px 4px; }
 .ls-calendar-compact .ls-calendar-event { container-type: inline-size; container-name: ls-calendar-card; }
 .ls-calendar-compact .ls-calendar-event-content-media .ls-calendar-event-copy { min-height: 35px; padding: 4px 2px 1px; }

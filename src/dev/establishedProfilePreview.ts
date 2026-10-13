@@ -14,7 +14,7 @@ export function establishedProfilePreviewTasks(ownedPercent: 20 | 40) {
         .replaceAll('自有高表现视频 A/B', '自有候选视频 A')
         .replaceAll('自有迭代 A/B', '自有迭代 A').replaceAll('外部增量参考 C/D/E', '外部增量参考 B/C/D/E')
         .replaceAll('外部探索 C/D/E', '外部探索 B/C/D/E')
-        .replaceAll('2 条母版', '1 条母版').replaceAll('3 条母版', '4 条母版');
+        .replaceAll('2 条独立视频', '1 条独立视频').replaceAll('3 条独立视频', '4 条独立视频');
       return result;
     };
     const workloadFactor = ownedPercent===20 ? ['h-task-1','h-task-8'].includes(task.id) ? 0.5 : ['h-task-4','h-task-9'].includes(task.id) ? 4/3 : 1 : 1;

@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { canSkipCollectionForExplicitReferences, evaluateViralAnalysisCoverage, hasParseableExactVideoAnalysis, reusableExplicitReferenceIds, viralCoverageBypassAllowed } from './viralAnalysisCoverage.js';
+import { canSkipCollectionForExplicitReferences, evaluatePlannedReferenceReuse, evaluateViralAnalysisCoverage, hasParseableExactVideoAnalysis, reusableExplicitReferenceIds, usedViralReferenceIdsFromBatches, viralCoverageBypassAllowed } from './viralAnalysisCoverage.js';
 import type { VideoCreationPlan } from '../../shared/contracts/videoCreationPlan.js';
 
 const plan = (id: string, referenceId = '') => ({
@@ -118,6 +118,38 @@ test('collection skip accepts only fully analyzed user-explicit references', () 
   const automatic = { ...explicit, planningEvidence: { generatedFrom: 'matrix_viral' } } as VideoCreationPlan;
   assert.equal(canSkipCollectionForExplicitReferences([automatic], [evidence('explicit-reference')]), false);
   assert.equal(canSkipCollectionForExplicitReferences([explicit], [{ id: 'explicit-reference', aiAnalysis: { analysisMode: 'exact' } }]), false);
+});
+
+test('persisted production handoffs consume automatic references but exclude the active run', () => {
+  const used = usedViralReferenceIdsFromBatches([
+    { run_id: 'older-run', orders: JSON.stringify([{ videoPlan: { referenceId: 'used-master' }, deliveryVariants: [{ referenceId: 'used-variant' }], evidenceRefs: [{ type: 'exact_analysis', id: 'used-legacy-evidence' }] }]) },
+    { run_id: 'active-run', orders: [{ videoPlan: { referenceId: 'active-reference' } }] },
+  ], 'active-run');
+  assert.deepEqual(used.sort(), ['used-legacy-evidence', 'used-master', 'used-variant']);
+});
+
+test('weekly inventory accepts unused exact references and preserves deliberate explicit reuse', () => {
+  const automatic = {
+    ...plan('master-auto', 'automatic-reference'),
+    planningEvidence: { generatedFrom: 'matrix_viral' },
+  } as VideoCreationPlan;
+  const explicit = plan('master-explicit', 'explicit-reference');
+  const records = [evidence('automatic-reference'), evidence('explicit-reference')];
+  assert.equal(evaluatePlannedReferenceReuse([automatic, explicit], records, []).ready, true);
+  const consumedAutomatic = evaluatePlannedReferenceReuse([automatic, explicit], records, ['automatic-reference', 'explicit-reference']);
+  assert.equal(consumedAutomatic.ready, false);
+  assert.equal(consumedAutomatic.reusableCount, 1, 'the explicit user selection remains intentionally reusable');
+  assert.deepEqual(consumedAutomatic.selectedReferenceIds, ['explicit-reference']);
+});
+
+test('one library reference cannot satisfy two independent weekly videos', () => {
+  const first = { ...plan('master-1', 'same-reference'), planningEvidence: { generatedFrom: 'matrix_viral' } } as VideoCreationPlan;
+  const second = { ...plan('master-2', 'same-reference'), planningEvidence: { generatedFrom: 'matrix_viral' } } as VideoCreationPlan;
+  const result = evaluatePlannedReferenceReuse([first, second], [evidence('same-reference')], []);
+  assert.equal(result.ready, false);
+  assert.equal(result.requiredCount, 2);
+  assert.equal(result.reusableCount, 1);
+  assert.equal(result.missingCount, 1);
 });
 
 test('viral analysis cannot be skipped or manually completed before coverage', () => {

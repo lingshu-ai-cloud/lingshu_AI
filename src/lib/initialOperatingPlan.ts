@@ -13,7 +13,8 @@ export function initialPlanMatrixRows(plan:InitialOperatingPlan, config:DigitalE
 export function initialPlanVideoPlans(plan:InitialOperatingPlan, config:DigitalEmployeeConfig){
   const preset=weeklyTaskPackagePreset(plan.stage==='b2b_launch'?'b2b_starting':plan.stage==='b2b_growth'?'b2b_growing':'dtc_sales');
   const adjusted={...config,targetMarkets:plan.market,focusProducts:plan.products.join('、'),videoDefaults:{...config.videoDefaults,language:plan.language}};
-  return linkMatrixVersionsToMasters(buildPresetMatrixVideoPlans({preset:{...preset,weeklyOutput:plan.count},productName:plan.products[0]||'',focus:plan.products.join('、'),defaults:adjusted.videoDefaults,platforms:plan.platforms,matrixRows:initialPlanMatrixRows(plan,adjusted)}),plan.count);
+  const videos=buildPresetMatrixVideoPlans({preset:{...preset,weeklyOutput:plan.count},productName:plan.products[0]||'',focus:plan.products.join('、'),defaults:adjusted.videoDefaults,platforms:plan.platforms,matrixRows:initialPlanMatrixRows(plan,adjusted)});
+  return linkMatrixVersionsToMasters(videos,videos.length);
 }
 function canonicalInitialPlanValue(value: unknown): string {
   if (Array.isArray(value)) return `[${value.map(canonicalInitialPlanValue).join(',')}]`;

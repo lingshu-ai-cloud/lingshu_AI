@@ -157,7 +157,7 @@ export function assessStoryboardMaterialReadiness(input: {
     };
   });
   if (!structure.length && input.presenter !== 'avatar' && !input.assets.length) {
-    return { decisions, blockers: ['本条母版缺少该产品的可用图片或视频'] };
+    return { decisions, blockers: ['本条独立视频缺少该产品的可用图片或视频'] };
   }
   return { decisions, blockers: [...new Set(decisions.map(item => item.blocker).filter(Boolean))] };
 }

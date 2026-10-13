@@ -430,12 +430,12 @@ export function createPresenterAssetsRouter(store: DataStore, exclusive: Exclusi
         if (b.arkPreparation) {
           const photoMaterialId = String(b.arkPreparation.photoMaterialId || '');
           const videoMaterialId = String(b.arkPreparation.videoMaterialId || '');
-          if (!validId(photoMaterialId) || !validId(videoMaterialId) || b.arkPreparation.processingAuthorized !== true) throw new Error('方舟复用资料缺少照片、视频或处理授权');
+          if (!validId(photoMaterialId) || !validId(videoMaterialId)) throw new Error('方舟复用资料缺少照片或视频');
           const materials = readLocalMaterials();
           const ownsMaterial = (id: string, type: 'image' | 'video') => options.materialBelongs?.(tenant, id, type)
             ?? materials.some(item => item.id === id && item.tenantId === tenant && item.scope === 'own' && item.type === type);
           if (!ownsMaterial(photoMaterialId, 'image') || !ownsMaterial(videoMaterialId, 'video')) throw new Error('方舟复用资料不属于当前企业或类型不匹配');
-          arkPreparation = { photoMaterialId, videoMaterialId, processingAuthorized: true };
+          arkPreparation = { photoMaterialId, videoMaterialId, processingAuthorized: b.arkPreparation.processingAuthorized === true };
         }
         const fingerprint = hash(JSON.stringify([b.type, b.name.trim(), b.uploadId, b.voiceId, reusePresenterId, arkPreparation]));
         const previous = await find(tenant, 'creation', b.requestId);

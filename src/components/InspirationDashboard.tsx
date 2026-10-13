@@ -3492,7 +3492,7 @@ export default function InspirationDashboard({ onScriptPanelOpen, onScriptPanelC
   const refreshMaterials = async (page = materialPage): Promise<Material[]> => {
     if (!localMaterials.length) setMaterialsLoading(true);
     try {
-      const inventory = await studioApi.listMaterialLibrary('all', {
+      const inventory = await studioApi.listMaterialLibrary('library', {
         ...(materialSource !== 'all' ? { sourceCategory: materialSource } : {}),
         ...(materialTheme !== 'all' ? { theme: materialTheme } : {}),
         ...(materialSearch.trim() ? { query: materialSearch.trim() } : {}),

@@ -12,6 +12,7 @@ import {
   type WorkflowTask,
 } from '../../src/lib/digitalEmployees.js';
 import type { WeeklyPackage } from '../../src/lib/weeklyPackage.js';
+import { repairCollapsedWeeklyVideoProduction } from './weeklyPackage.js';
 import type {
   ApprovalRecord,
   GoalRecord,
@@ -77,6 +78,8 @@ export function validateAssistantDecisionCommand(
 export type AssistantDecisionCommandHandlers = {
   approveAndStart(card: AssistantDecisionCard): Promise<void>;
   decideApproval(card: AssistantDecisionCard, decision: 'approved' | 'rejected', note: string): Promise<void>;
+  retryTask(card: AssistantDecisionCard): Promise<void>;
+  replanTask(card: AssistantDecisionCard): Promise<void>;
   takeOver(card: AssistantDecisionCard): Promise<void>;
   decideStarter(card: AssistantDecisionCard, decision: 'approved' | 'rejected', note: string): Promise<void>;
 };
@@ -101,6 +104,14 @@ export async function executeAssistantDecisionCommand(input: {
   }
   if (input.card.subject.type === 'approval_request' && ['approve', 'reject'].includes(input.actionId)) {
     await input.handlers.decideApproval(input.card, input.actionId === 'approve' ? 'approved' : 'rejected', note);
+    return 'completed';
+  }
+  if (input.card.subject.type === 'workflow_task' && input.actionId === 'retry_task') {
+    await input.handlers.retryTask(input.card);
+    return 'completed';
+  }
+  if (input.card.subject.type === 'workflow_task' && input.actionId === 'replan_task') {
+    await input.handlers.replanTask(input.card);
     return 'completed';
   }
   if ((input.card.subject.type === 'workflow_task' || input.card.subject.type === 'approval_request')
@@ -133,7 +144,7 @@ function planBody(plan: PlanRecord | null): Record<string, unknown> {
 
 function packageForPlan(plan: PlanRecord | null): WeeklyPackage | null {
   const pack = planBody(plan).businessPackage;
-  return pack && typeof pack === 'object' ? pack as WeeklyPackage : null;
+  return pack && typeof pack === 'object' ? repairCollapsedWeeklyVideoProduction(pack as WeeklyPackage) : null;
 }
 
 export function weeklyPlanDecisionVersion(goal: GoalRecord, plan: PlanRecord): string {
@@ -367,6 +378,13 @@ function approvalCard(approval: ApprovalRecord, task: TaskRecord, run: RunRecord
 
 function attentionCard(task: TaskRecord, run: RunRecord, now: string): AssistantDecisionCard {
   const failed = task.status === 'failed';
+  const output = parseJson<Record<string, unknown>>(task.output, {});
+  const inventory = parseJson<Record<string, unknown>>(output.inventoryPreflight, {});
+  const sourceCollection = task.task_key === 'scheduled_source_collection';
+  const inventorySummary = text(output.inventorySummary, 500);
+  const sourceCollectionSummary = sourceCollection
+    ? `${inventorySummary || '系统已先检查现有爆款库。'}${failed ? ` 本次缺口采集没有完成：${text(task.blocked_reason) || '采集步骤执行失败'}。` : ''} 你可以从当前节点重试，或重新规划本周任务；已经完成的结果会保留。`
+    : '';
   const presenterInput = workflowTaskPresenterInput(task);
   const presenterRequired = workflowTaskNeedsEnterprisePresenter(task);
   const presenterReady = presenterInput.code === 'presenter_ready';
@@ -390,9 +408,10 @@ function attentionCard(task: TaskRecord, run: RunRecord, now: string): Assistant
     title: presenterRequired || presenterReady ? presenterTitle : text(task.title) || '需要你处理',
     summary: presenterRequired || presenterReady
       ? presenterSummary
-      : text(task.blocked_reason) || (failed ? '任务失败，需要你选择处理方式。' : '任务正在等待必要资料或人工决定。'),
+      : sourceCollectionSummary || text(task.blocked_reason) || (failed ? '任务失败，需要你选择处理方式。' : '任务正在等待必要资料或人工决定。'),
     facts: [
       { label: '当前状态', value: presenterReady ? '数字人已就绪' : presenterSetupRequired ? '待补制作条件' : presenterAuthorizationRequired ? '待完成授权' : presenterRequired ? '待补充数字人' : failed ? '失败' : '等待用户', tone: presenterReady ? 'info' : presenterRequired ? 'warning' : failed ? 'danger' : 'warning' },
+      ...(sourceCollection && Number(inventory.requiredCount || 0) > 0 ? [{ label: '爆款库存', value: `可用 ${Number(inventory.reusableCount || 0)}/${Number(inventory.requiredCount || 0)} 条${Number(inventory.missingCount || 0) ? `，缺 ${Number(inventory.missingCount)} 条` : ''}`, tone: Number(inventory.missingCount || 0) ? 'warning' as const : 'info' as const }] : []),
       ...(task.destination ? [{ label: '处理位置', value: text(task.destination) }] : []),
     ],
     subject: { type: 'workflow_task', id: task.id, version: presenterInput.code
@@ -409,10 +428,18 @@ function attentionCard(task: TaskRecord, run: RunRecord, now: string): Assistant
         ? [{ id: 'take_over', label: '人工接管当前任务', mode: 'command', emphasis: DEFAULT } as const]
         : []),
     ] : [
-      ...(!['handed_off', 'cancelled', 'succeeded', 'skipped'].includes(task.status)
-        ? [{ id: 'take_over', label: '人工接管', mode: 'command', emphasis: PRIMARY } as const]
-        : []),
+      ...(!['handed_off', 'cancelled', 'succeeded', 'skipped'].includes(task.status) && sourceCollection
+        ? [
+          { id: 'retry_task', label: '从当前节点重试', mode: 'command', emphasis: PRIMARY } as const,
+          { id: 'replan_task', label: '重新规划本周任务', mode: 'command', emphasis: DEFAULT } as const,
+        ]
+        : !['handed_off', 'cancelled', 'succeeded', 'skipped'].includes(task.status)
+          ? [{ id: 'take_over', label: '人工接管', mode: 'command', emphasis: PRIMARY } as const]
+          : []),
       { id: 'open_workspace', label: '前往处理', mode: 'navigate', emphasis: DEFAULT },
+      ...(!['handed_off', 'cancelled', 'succeeded', 'skipped'].includes(task.status) && sourceCollection
+        ? [{ id: 'take_over', label: '人工接管', mode: 'command', emphasis: DEFAULT } as const]
+        : []),
     ],
     deepLink: presenterRequired ? presenterOnboardingDeepLink(task, run.id, presenterInput.presenterId) : workflowDeepLink(task, run.id),
     createdAt: text(task.updated_at || task.created_at) || now,

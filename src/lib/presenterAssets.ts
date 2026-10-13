@@ -13,7 +13,8 @@ export interface PresenterPage<T> { items: T[]; nextToken: string }
 export interface ArkPresenterPreparation {
   photoMaterialId: string;
   videoMaterialId: string;
-  processingAuthorized: true;
+  /** True only after the user separately consents to Ark processing. */
+  processingAuthorized: boolean;
 }
 export interface PresenterCreation {
   id: string; name: string; type: 'photo' | 'digital_twin'; voiceId?: string;

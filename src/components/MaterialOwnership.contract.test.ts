@@ -83,7 +83,8 @@ assert.match(taxonomySource, /<Select[^]*?aria-label="素材来源"[^]*?<Select[
 assert.doesNotMatch(inspirationSource, /系统已按创作主题整理素材|项可匹配|主题待确认/, '素材库不得残留旧主题卡片和派生主题标签');
 assert.doesNotMatch(inspirationSource, /任务中上传的图片、视频和音频也会归入这里/, '上传入口不得再使用大段说明文字');
 assert.match(inspirationSource, /<span className="text-xs font-bold">音频素材<\/span>/, '音频素材必须用专属占位画面识别，不得继续误标为图片');
-assert.match(inspirationSource, /studioApi\.listMaterialLibrary\('all'/, '我的素材必须通过统一素材库读取账号下可编辑素材和采集参考素材');
+assert.match(inspirationSource, /studioApi\.listMaterialLibrary\('library'/, '我的素材必须只读取用户可管理的正式素材，不得混入工作流中间产物');
+assert.doesNotMatch(inspirationSource, /studioApi\.listMaterialLibrary\('all'/, '我的素材不得绕过服务端的正式素材边界');
 assert.doesNotMatch(inspirationSource, /enterMaterialSmartGeneration[\s\S]*?material\.usage === 'reference_only'/, '所有进入素材库的视觉素材都必须可以进入创作链路');
 assert.doesNotMatch(inspirationSource, /pinnedMaterialVideos/, '素材库内容不得反向混入爆款视频列表');
 assert.doesNotMatch(inspirationSource, /<MaterialAnalysisStatus material=\{material\}/, '我的素材卡片不得展示内部分析进度和区间标注');

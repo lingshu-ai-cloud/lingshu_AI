@@ -224,6 +224,26 @@ test('approval decision versions freeze evidence as well as subject and content'
   assert.throws(() => validateAssistantDecisionCommand(card, 'approve', approvalDecisionVersion(original)), (error: unknown) => error instanceof AssistantDecisionValidationError && error.status === 409);
 });
 
+test('failed source collection explains the viral-library gap and offers direct recovery', () => {
+  const collection = {
+    ...task('task-collection', 'scheduled_source_collection', 'failed'),
+    blocked_reason: '平台采集任务返回服务错误',
+    output: {
+      inventorySummary: '爆款库可直接使用 1/2 条，还缺 1 条；只采集并分析缺口。',
+      inventoryPreflight: { requiredCount: 2, reusableCount: 1, missingCount: 1 },
+    },
+  } as TaskRecord;
+  const card = buildAssistantDecisionFeed({
+    page: 'digitalEmployees', goal: null, plan: null, run: { ...run, status: 'waiting_human' },
+    tasks: [collection], approvals: [], now,
+  }).items[0]!;
+  assert.match(card.summary, /可直接使用 1\/2 条.*缺 1 条/);
+  assert.match(card.summary, /平台采集任务返回服务错误/);
+  assert.equal(card.facts.find(fact => fact.label === '爆款库存')?.value, '可用 1/2 条，缺 1 条');
+  assert.deepEqual(card.actions.slice(0, 2).map(action => action.id), ['retry_task', 'replan_task']);
+  assert.equal(card.actions[0]?.label, '从当前节点重试');
+});
+
 test('decision commands delegate only to the selected persisted-domain action', async () => {
   const calls: string[] = [];
   const handlers = {
@@ -231,6 +251,8 @@ test('decision commands delegate only to the selected persisted-domain action', 
     async decideApproval(card: { subject: { id: string } }, decision: string, note: string) {
       calls.push(`approval:${card.subject.id}:${decision}:${note}`);
     },
+    async retryTask(card: { subject: { id: string } }) { calls.push(`retry:${card.subject.id}`); },
+    async replanTask(card: { subject: { id: string } }) { calls.push(`replan:${card.subject.id}`); },
     async takeOver(card: { subject: { id: string } }) { calls.push(`handoff:${card.subject.id}`); },
     async decideStarter(card: { subject: { id: string } }, decision: string, note: string) {
       calls.push(`starter:${card.subject.id}:${decision}:${note}`);
@@ -266,6 +288,21 @@ test('decision commands delegate only to the selected persisted-domain action', 
     card: starterCard, actionId: 'approve', expectedVersion: starterCard.subject.version, handlers,
   }), 'completed');
 
+  const collection = {
+    ...task('task-collection', 'scheduled_source_collection', 'failed'),
+    output: { inventoryPreflight: { requiredCount: 2, reusableCount: 1, missingCount: 1 } },
+  } as TaskRecord;
+  const collectionCard = buildAssistantDecisionFeed({
+    page: 'digitalEmployees', goal: null, plan: null, run: { ...run, status: 'waiting_human' },
+    tasks: [collection], approvals: [], now,
+  }).items[0]!;
+  assert.equal(await executeAssistantDecisionCommand({
+    card: collectionCard, actionId: 'retry_task', expectedVersion: collectionCard.subject.version, handlers,
+  }), 'completed');
+  assert.equal(await executeAssistantDecisionCommand({
+    card: collectionCard, actionId: 'replan_task', expectedVersion: collectionCard.subject.version, handlers,
+  }), 'completed');
+
   const beforeNavigation = calls.length;
   assert.equal(await executeAssistantDecisionCommand({
     card: planCard, actionId: 'adjust_plan', expectedVersion: planCard.subject.version, handlers,
@@ -284,5 +321,7 @@ test('decision commands delegate only to the selected persisted-domain action', 
     'approval:approval-publish:rejected:请补充证据',
     'handoff:approval-publish',
     'starter:quote:quote-1:approved:',
+    'retry:task-collection',
+    'replan:task-collection',
   ]);
 });

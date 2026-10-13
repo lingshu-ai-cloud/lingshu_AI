@@ -340,14 +340,14 @@ const build = (data = overview(), projects: WeeklyContentProgressProject[] = [])
   const data = overview();
   const complete = project({ renderOutputPath: '/video.mp4' }, { stage: 'completed', quality: { passed: true } });
   data.contentQueue!.items[0]!.status = 'completed';
-  data.tasks[0] = task({ status: 'failed', blocked_reason: '另一母版素材缺失' });
+  data.tasks[0] = task({ status: 'failed', blocked_reason: '另一独立视频素材缺失' });
   data.run!.status = 'failed';
   assert.equal(build(data, [complete]).status, 'completed', 'a failed sibling must not overwrite this completed content');
   data.contentQueue!.items[0]!.status = 'producing';
   const stopped = build(data, [project({}, { stage: 'render' })]);
   assert.equal(stopped.status, 'waiting');
   assert.equal(stopped.blockingReasons.length, 0, 'shared task blocker is not attributed to every content');
-  data.contentQueue!.items[0] = queue({ projectIds: [], status: 'blocked', reason: '另一母版素材缺失' });
+  data.contentQueue!.items[0] = queue({ projectIds: [], status: 'blocked', reason: '另一独立视频素材缺失' });
   assert.equal(build(data).status, 'waiting', 'an uncreated order inherits shared task errors but has not individually failed');
   assert.equal(build(data).blockingReasons.length, 0);
 }

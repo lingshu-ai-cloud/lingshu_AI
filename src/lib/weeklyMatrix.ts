@@ -7,6 +7,8 @@ import {
   type SocialAccountRole,
 } from '../../shared/contracts/socialOperatingProfile';
 import type { DigitalEmployeeConfig } from './digitalEmployees';
+import { hydrateWeeklyPublishingTargets } from '../../shared/contracts/weeklyPublishingTargets';
+import { MASTER_VIDEO_COST_MAX_CNY, MASTER_VIDEO_COST_MIN_CNY, MASTER_VIDEO_COST_POINT_CNY } from '../../shared/contracts/contentCostModel';
 
 export interface MatrixAccountPlan {
   accountId: string;
@@ -44,21 +46,27 @@ export interface MatrixAccountReview {
  * publishing authorization is granted.
  */
 export function defaultMatrixPlan(
-  config: Pick<DigitalEmployeeConfig, 'socialOperatingProfile' | 'publishingTargets' | 'customerProfile' | 'focusProducts' | 'videoDefaults'>,
+  config: Pick<DigitalEmployeeConfig, 'socialOperatingProfile' | 'publishingTargets' | 'customerProfile' | 'focusProducts' | 'videoDefaults'> & Partial<Pick<DigitalEmployeeConfig, 'socialCadence'>>,
   platforms: VideoCreationPlan['platform'][],
   objective: string,
 ): MatrixAccountPlan[] {
   const profile = socialOperatingProfile(config.socialOperatingProfile);
+  const publishingTargets = hydrateWeeklyPublishingTargets(config.publishingTargets, config.socialCadence);
   const usedByPlatform = new Map<VideoCreationPlan['platform'], number>();
   const productName = config.focusProducts.split(/[、，,；;\n]/).map(item => item.trim()).filter(Boolean)[0] || '';
   const rows: MatrixAccountPlan[] = [];
   for (const platform of platforms) {
     const candidates = profile.accounts.filter(item => item.platform === platform);
-    const targets = config.publishingTargets.filter(target => target.platform === platform);
-    const count = Math.max(candidates.length, targets.length);
+    const targets = publishingTargets.filter(target => target.platform === platform);
+    const hasStructuredQuota = targets.some(target => target.weeklyCount !== undefined);
+    const count = hasStructuredQuota ? targets.length : Math.max(candidates.length, targets.length);
     for (let index = 0; index < count; index += 1) {
       const target = targets[index];
       const strategy = candidates[index % Math.max(1, candidates.length)];
+      const weeklyCount = hasStructuredQuota
+        ? Math.max(0, Math.floor(Number(target?.weeklyCount) || 0))
+        : Math.max(1, strategy?.weeklyVideoCount || 1);
+      if (weeklyCount === 0) continue;
       const used = usedByPlatform.get(platform) || 0;
       usedByPlatform.set(platform, used + 1);
       rows.push({
@@ -73,7 +81,7 @@ export function defaultMatrixPlan(
         objective: objective || strategy?.purpose || '验证本周内容方向并获得有效询盘',
         contentDirection: strategy?.purpose || '围绕买家问题展示产品证据与采购价值',
         cta: SOCIAL_PLATFORM_EXECUTION_RULES[platform].ctaRule,
-        weeklyCount: Math.max(1, strategy?.weeklyVideoCount || 1),
+        weeklyCount,
         sourceProjectIds: [],
       });
     }
@@ -102,22 +110,18 @@ export function bindMatrixVideo(plan: VideoCreationPlan, row?: MatrixAccountPlan
     matrix: row ? { accountId: row.accountId, audience: row.audience, objective: row.objective, cta: row.cta, accountRole: row.accountRole || 'brand_combined', formats: row.formats || [] } : { accountId: '', audience: '', objective: '', cta: '', accountRole: 'brand_combined', formats: [] } });
 }
 
-/**
- * Connect every publish slot to one of the weekly originals. A single account
- * never receives the same family twice, so reuse only happens across platforms.
+/** Internal lineage compatibility for historic adapted plans. New weekly plans
+ * pass one production target per video slot, which makes every slot independent.
  */
 export function linkMatrixVersionsToMasters(plans: VideoCreationPlan[], originalTarget: number): VideoCreationPlan[] {
   const target = Math.max(1, Math.min(plans.length || 1, Math.floor(originalTarget) || plans.length || 1));
-  const platformSlots = new Map<VideoCreationPlan['platform'], number>();
   const staged = plans.map((source, index) => {
     const plan = normalizeVideoPlan(source);
-    const slot = platformSlots.get(plan.platform) || 0;
-    platformSlots.set(plan.platform, slot + 1);
     const contentId = plan.contentId || crypto.randomUUID();
     return normalizeVideoPlan({
       ...plan,
       contentId,
-      contentFamilyId: `weekly-master-${(slot % target) + 1}`,
+      contentFamilyId: `weekly-video-${(index % target) + 1}`,
     });
   });
   const masterByFamily = new Map<string, string>();
@@ -158,12 +162,23 @@ export function fillMatrixVideos(pack: WeeklyPackage, defaults: Partial<VideoCre
       plans.push(bindMatrixVideo(normalizeVideoPlan({ ...defaults, contentId: crypto.randomUUID(), route: 'clone', theme, buyerProblem: '', directorStatus: 'candidate', plannedPublishDate: '' }), row));
     }
   }
-  const linkedPlans = linkMatrixVersionsToMasters(plans, pack.directorPlan?.originalTarget || plans.length);
+  const linkedPlans = linkMatrixVersionsToMasters(plans, plans.length);
   const production = existing ? { ...existing, videoPlans: linkedPlans } : { templateId: 'production' as const, title: '制作产品视频', ownerId: '', ownerName: '', dueAt, notes: '', sourceProjectIds: [], videoPlans: linkedPlans };
   const projects = [...new Set(rows.flatMap(row => row.sourceProjectIds))];
   let tasks = pack.tasks.map(task => task.templateId === 'production' ? production : task.templateId === 'publishing' ? { ...task, sourceProjectIds: projects } : task);
   if (!existing && plans.length) tasks = [...tasks, production];
-  return { ...pack, tasks };
+  const videoTarget = linkedPlans.length;
+  const publishTarget = rows.reduce((sum, row) => sum + row.weeklyCount, 0) || videoTarget;
+  const directorPlan = pack.directorPlan ? {
+    ...pack.directorPlan,
+    originalTarget: videoTarget,
+    platformVersionTarget: videoTarget,
+    publishTarget,
+    productionBudgetMin: Math.max(pack.directorPlan.productionBudgetMin || 0, videoTarget * MASTER_VIDEO_COST_MIN_CNY),
+    productionBudget: Math.max(pack.directorPlan.productionBudget || 0, videoTarget * MASTER_VIDEO_COST_POINT_CNY),
+    productionBudgetMax: Math.max(pack.directorPlan.productionBudgetMax || 0, videoTarget * MASTER_VIDEO_COST_MAX_CNY),
+  } : pack.directorPlan;
+  return { ...pack, ...(directorPlan ? { directorPlan } : {}), tasks };
 }
 export function matrixScopeIssues(pack: WeeklyPackage, targets: Array<{ accountId: string; platform: string }>, platforms: string[]): string[] {
   return pack.matrixPlan?.some(row => !platforms.includes(row.platform) || (row.connected !== false && !targets.some(target => target.accountId === row.accountId && target.platform === row.platform))) ? ['矩阵账号必须属于本计划及本周平台范围'] : [];
@@ -202,13 +217,13 @@ export function matrixIssues(pack: WeeklyPackage): string[] {
     productIds.add(productId);
     productIdsByFamily.set(familyId, productIds);
   }
-  if ([...productIdsByFamily.values()].some(productIds => productIds.size > 1)) issues.push('同一母版的平台版本必须使用同一产品');
+  if ([...productIdsByFamily.values()].some(productIds => productIds.size > 1)) issues.push('同一内容系列的发布版本必须使用同一产品');
   for (const platform of [...new Set(rows.map(row => row.platform))]) {
     const families = plans.filter(plan => plan.platform === platform).map(plan => plan.contentFamilyId).filter(Boolean);
-    if (new Set(families).size !== families.length) issues.push(`${platform} 平台存在重复母版，请调整内容分配，确保同平台不发布相似内容`);
+    if (new Set(families).size !== families.length) issues.push(`${platform} 平台存在重复内容，请调整内容分配，确保同平台不发布相似内容`);
   }
   const originals = plans.filter(plan => plan.productionRole !== 'platform_adaptation');
-  if (pack.directorPlan && originals.length !== pack.directorPlan.originalTarget) issues.push('原创母版数量与本周目标不一致，请重新同步账号矩阵');
+  if (pack.directorPlan && originals.length !== pack.directorPlan.originalTarget) issues.push('实际制作视频数量与本周目标不一致，请重新同步账号矩阵');
   if (plans.some(plan => plan.matrix?.accountId && !rows.some(row => row.accountId === plan.matrix?.accountId))) issues.push('视频绑定的账号已从矩阵移除，请重新选择账号');
   const sources = pack.tasks.find(t => t.templateId === 'publishing')?.sourceProjectIds || [];
   if (publishing && (sources.some(id => !rows.some(row => row.sourceProjectIds.includes(id))) || rows.some(row => row.sourceProjectIds.some(id => !sources.includes(id))))) issues.push('已有作品的账号安排与发布任务不一致，请同步视频计划');

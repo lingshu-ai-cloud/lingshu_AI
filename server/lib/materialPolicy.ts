@@ -15,6 +15,22 @@ export interface MaterialPolicyInput {
 
 export type MaterialUsage = 'editable' | 'reference_only';
 
+const WORKFLOW_INTERNAL_SOURCE_TYPES = new Set([
+  'ai-storyboard-first-frame',
+  'digital-human-qwen-first-frame-draft',
+  'digital-human-target-first-frame',
+  'viral-sentence-first-frame',
+]);
+
+/**
+ * Intermediate frames are durable workflow evidence, not reusable library
+ * assets. They stay readable through purpose=all so the originating production
+ * task can resume, but must never leak into the user-facing material library.
+ */
+export function isWorkflowInternalMaterial(material: MaterialPolicyInput): boolean {
+  return WORKFLOW_INTERNAL_SOURCE_TYPES.has(String(material.sourceType || '').trim().toLowerCase());
+}
+
 /**
  * Legacy crawled videos predate explicit usage metadata. Keep them available for
  * competitor analysis, but never expose them as downloadable editing assets.

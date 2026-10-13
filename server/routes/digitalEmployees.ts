@@ -33,7 +33,7 @@ import type { ReviewTodoBoard } from '../../src/lib/reviewTodos.js';
 import { nextTaskFailure, taskRetryDue, type TaskFailure } from '../digitalEmployees/taskRetry.js';
 import { analysisWait, basicTaskWait, collectionWait, followupComplete, followupWait, postFullyPublished, publishingPlatformsCovered, publishingWait, waitState } from '../digitalEmployees/executionDiagnostics.js';
 import { listTenantEmployees } from './auth.js';
-import { recommendPackage, normalizePackage, validatePackage, validatePackageForStart, compilePackage, packageConfig, packageTaskForKey, grantCovers, criticalBusinessConfigChanges } from '../digitalEmployees/weeklyPackage.js';
+import { recommendPackage, normalizePackage, repairCollapsedWeeklyVideoProduction, validatePackage, validatePackageForStart, compilePackage, packageConfig, packageTaskForKey, grantCovers, criticalBusinessConfigChanges } from '../digitalEmployees/weeklyPackage.js';
 import { TASK_TEMPLATES, type WeeklyPackage } from '../../src/lib/weeklyPackage.js';
 import { fillMatrixVideos } from '../../src/lib/weeklyMatrix.js';
 import { applyDirectorDecision, DIRECTOR_DECISION_LABELS, DIRECTOR_REASON_LABELS, type DirectorDecision, type DirectorDecisionReason } from '../../src/lib/directorDecision.js';
@@ -92,7 +92,7 @@ import { dispatchFollowupBatch, recoverStaleFollowupSending, followupDispatchPre
 import { bindPublishingTargets, listConnectedPublishingAccounts, localPublishingAccountMocksEnabled, publishingTargetPlatforms } from '../digitalEmployees/publishingTargets.js';
 import { digitalEmployeeOperatingGoals, isDigitalEmployeeOperatingGoal } from '../digitalEmployees/overviewGoalScope.js';
 import { directorAnalysisReferenceIds, liveDirectorAnalysisTasks, projectDirectorAnalysisStatus } from '../digitalEmployees/liveDirectorAnalyses.js';
-import { canSkipCollectionForExplicitReferences, evaluateViralAnalysisCoverage, hasParseableExactVideoAnalysis, reusableExplicitReferenceIds, viralCoverageBypassAllowed } from '../digitalEmployees/viralAnalysisCoverage.js';
+import { evaluatePlannedReferenceReuse, evaluateViralAnalysisCoverage, hasParseableExactVideoAnalysis, reusableExplicitReferenceIds, usedViralReferenceIdsFromBatches, viralCoverageBypassAllowed } from '../digitalEmployees/viralAnalysisCoverage.js';
 import { mustInvalidateContentDownstream } from '../digitalEmployees/dependencyInvalidation.js';
 import { canonicalScheduledCollectionRecords, evaluateScheduledDiscoveryRuns, mustReobserveSucceededCollection, type DiscoveryRunRecord } from '../digitalEmployees/scheduledCollectionProof.js';
 import {
@@ -210,11 +210,15 @@ async function resolveCurrentConfiguration(
   const enterpriseProfile = await readTenantEnterpriseProfile(tenantId);
   if (localPublishingAccountMocksEnabled()) {
     const accounts = await listConnectedPublishingAccounts(tenantId, enterpriseProfile.company.name);
-    config.publishingTargets = accounts.map(account => ({
-      platform: account.platform,
-      accountId: account.accountId,
-      accountLabel: account.accountLabel,
-    }));
+    const connectedById = new Map(accounts.map(account => [account.accountId, account]));
+    // Local preview exposes mock accounts through /publishing-accounts, but it
+    // must never replace the user's saved platform selection or weekly quota.
+    config.publishingTargets = config.publishingTargets.flatMap(target => {
+      const connected = connectedById.get(target.accountId);
+      return connected && connected.platform === target.platform
+        ? [{ ...target, accountLabel: connected.accountLabel }]
+        : [];
+    });
   }
   return resolveDigitalEmployeeConfiguration({
     config,
@@ -586,11 +590,12 @@ async function recommendPackageWithTenantEvidence(
   frozenProfile?: EnterpriseProfile,
 ): Promise<WeeklyPackage> {
   const pack = recommendPackage(goal, config, ownerId, ownerName);
-  const [videos, benchmarks, enterpriseProfile, routingEvidence] = await Promise.all([
+  const [videos, benchmarks, enterpriseProfile, routingEvidence, priorBatches] = await Promise.all([
     store.list<StoredRecord>('trend_videos', { where: { tenantId }, sort: '-updatedAt', perPage: 500 }).catch(() => ({ items: [] })),
     store.list<StoredRecord>('competitor_accounts', { where: { tenantId }, sort: '-createdAt', perPage: 200 }).catch(() => ({ items: [] })),
     frozenProfile ? Promise.resolve(structuredClone(frozenProfile)) : readTenantEnterpriseProfile(tenantId),
     contentRoutingEvidence(tenantId, config, frozenProfile),
+    store.list<ContentBatchPlanRecord>(COLLECTION.contentBatchPlans, { where: { tenant_id: tenantId }, perPage: 500 }).catch(() => ({ items: [] })),
   ]);
   const enabledRoutes = enterpriseProfile.socialStrategy?.enabledRoutes || [];
   const enterprisePrimaryCta = enabledRoutes
@@ -603,7 +608,118 @@ async function recommendPackageWithTenantEvidence(
     ? fillMatrixVideos({ ...pack, matrixPlan }, config.videoDefaults || {}, goal.endsAt)
     : pack;
   const productBound = bindDefaultProductsToPackage(matrixBound, routingEvidence.products);
-  return enrichPackageWithContentSignals({ pack: productBound, goal, config, videos: videos.items, benchmarks: benchmarks.items });
+  const usedReferenceIds = new Set(usedViralReferenceIdsFromBatches(priorBatches.items));
+  const unusedAnalyzedVideos = videos.items.filter(video => !usedReferenceIds.has(video.id));
+  return enrichPackageWithContentSignals({ pack: productBound, goal, config, videos: unusedAnalyzedVideos, benchmarks: benchmarks.items });
+}
+
+function clearAutomaticViralReferences(pack: WeeklyPackage): WeeklyPackage {
+  return {
+    ...pack,
+    tasks: pack.tasks.map(task => task.templateId !== 'production' ? task : {
+      ...task,
+      videoPlans: task.videoPlans?.map(video => video.planningEvidence?.generatedFrom ? {
+        ...video,
+        referenceId: '',
+        benchmarkAnalysis: undefined,
+        preproduction: undefined,
+      } : video),
+    }),
+  };
+}
+
+async function bindUnusedViralLibraryToWeeklyPackage(input: {
+  tenantId: string;
+  run: RunRecord;
+  goal: GoalRecord;
+  plan: PlanRecord | null;
+  config: DigitalEmployeeConfig;
+  pack: WeeklyPackage;
+}): Promise<{ pack: WeeklyPackage; inventory: ReturnType<typeof evaluatePlannedReferenceReuse>; changed: boolean }> {
+  const production = input.pack.tasks.find(task => task.templateId === 'production');
+  const plans = production?.videoPlans || [];
+  const [library, batches] = await Promise.all([
+    store.list<StoredRecord>('trend_videos', { where: { tenantId: input.tenantId }, sort: '-updatedAt', perPage: 500 }),
+    store.list<ContentBatchPlanRecord>(COLLECTION.contentBatchPlans, { where: { tenant_id: input.tenantId }, perPage: 500 }),
+  ]);
+  const usedReferenceIds = usedViralReferenceIdsFromBatches(batches.items, input.run.id);
+  const currentInventory = evaluatePlannedReferenceReuse(plans, library.items, usedReferenceIds);
+  if (currentInventory.ready) return { pack: input.pack, inventory: currentInventory, changed: false };
+  const explicitReferenceIds = new Set(reusableExplicitReferenceIds(plans));
+  const candidates = library.items.filter(item => explicitReferenceIds.has(item.id) || !usedReferenceIds.includes(item.id));
+  const benchmarks = await store.list<StoredRecord>('competitor_accounts', { where: { tenantId: input.tenantId }, sort: '-createdAt', perPage: 200 }).catch(() => ({ items: [] }));
+  const cleared = clearAutomaticViralReferences(input.pack);
+  const rebound = enrichPackageWithContentSignals({
+    pack: cleared,
+    goal: goalInput(input.goal),
+    config: input.config,
+    videos: candidates,
+    benchmarks: benchmarks.items,
+  });
+  const originalByContentId = new Map(plans.map(video => [video.contentId, video]));
+  const preserved: WeeklyPackage = {
+    ...rebound,
+    tasks: rebound.tasks.map(task => task.templateId !== 'production' ? task : {
+      ...task,
+      videoPlans: task.videoPlans?.map(video => {
+        const original = originalByContentId.get(video.contentId);
+        return original?.referenceId && original.referenceId === video.referenceId && original.preproduction
+          ? { ...video, preproduction: original.preproduction }
+          : video;
+      }),
+    }),
+  };
+  const reboundPlans = preserved.tasks.find(task => task.templateId === 'production')?.videoPlans || [];
+  const inventory = evaluatePlannedReferenceReuse(reboundPlans, library.items, usedReferenceIds);
+  const changed = JSON.stringify(preserved) !== JSON.stringify(input.pack);
+  if (changed && input.plan) {
+    const body = jsonObject<Record<string, unknown>>(input.plan.plan, {});
+    const nextBody = { ...body, businessPackage: preserved, viralInventoryBoundAt: new Date().toISOString() };
+    await store.update(COLLECTION.plans, input.plan.id, { plan: nextBody });
+    input.plan.plan = nextBody;
+    await appendAudit({
+      tenantId: input.tenantId,
+      userId: input.goal.owner_id || 'digital_employee_agent',
+      action: 'weekly_viral_inventory.bound',
+      targetType: 'weekly_plan',
+      targetId: input.plan.id,
+      metadata: {
+        runId: input.run.id,
+        reusableReferenceIds: inventory.selectedReferenceIds,
+        missingCount: inventory.missingCount,
+      },
+    });
+  }
+  return { pack: preserved, inventory, changed };
+}
+
+function collectionLimitForInventoryGap(task: TaskRecord, fallback: number): number {
+  const output = jsonObject<Record<string, unknown>>(task.output, {});
+  const inventory = jsonObject<Record<string, unknown>>(output.inventoryPreflight, {});
+  const missingCount = Number(inventory.missingCount);
+  return Number.isSafeInteger(missingCount) && missingCount > 0
+    ? Math.max(1, Math.min(fallback, missingCount))
+    : fallback;
+}
+
+function sourceCollectionFailureReason(error: unknown): string {
+  const message = error instanceof Error ? error.message : String(error || '');
+  if (/source.?quote|evidence.?quote|keyword.*(?:source|evidence)|关键词.*(?:来源|证据)/i.test(message)) {
+    return '采集关键词的来源证据格式不完整。计划和库存结果已经保留；从当前节点重试会自动修复格式后继续。';
+  }
+  if (/(?:401|403|unauthori[sz]ed|forbidden|credential|token expired|授权.*失效)/i.test(message)) {
+    return '平台采集授权当前不可用。请检查采集账号或密钥后，从当前节点重试。';
+  }
+  if (/(?:429|rate.?limit|quota|额度|频率限制)/i.test(message)) {
+    return '平台采集额度或调用频率已受限。稍后从当前节点重试，或重新规划本周任务。';
+  }
+  if (/(?:timeout|timed out|超时)/i.test(message)) {
+    return '平台采集本轮等待超时。现有库存和已完成结果不会丢失，可以从当前节点重试。';
+  }
+  if (/(?:network|fetch failed|browser closed|connection|网络|连接)/i.test(message)) {
+    return '平台采集连接中断。现有库存和已完成结果不会丢失，可以从当前节点重试。';
+  }
+  return '平台采集本轮没有返回可用结果。现有库存和已完成结果不会丢失，可以从当前节点重试或重新规划。';
 }
 
 function publicPreviewUrl(value: unknown): string {
@@ -713,7 +829,7 @@ async function generateWeeklyTaskPreviews(input: {
 
   const preflight = draft.orders.map(order => {
     const plan = order.videoPlan || masterPlans.find(item => item.contentId === order.videoPlan?.contentId);
-    if (!plan) throw new Error(`生产订单 ${order.id} 缺少原创母版`);
+    if (!plan) throw new Error(`生产订单 ${order.id} 缺少独立制作视频`);
     const reference = references.items.find(row => row.id === plan.referenceId);
     const analysis = jsonObject<Record<string, unknown>>(reference?.aiAnalysis, {});
     const benchmarkAnalysis = plan.benchmarkAnalysis || (reference ? buildBenchmarkAnalysis({
@@ -756,7 +872,7 @@ async function generateWeeklyTaskPreviews(input: {
       ...videoPlanErrors(plan),
       ...materialBlockers,
       selectedAssets.some(asset => asset.authorization.status === 'unknown') ? '素材授权范围未确认' : '',
-      unresolvedShootTasks.length ? `本条母版有 ${unresolvedShootTasks.length} 个待拍任务尚未回填素材` : '',
+      unresolvedShootTasks.length ? `本条独立视频有 ${unresolvedShootTasks.length} 个待拍任务尚未回填素材` : '',
       budgetExceeded ? '本周预计制作成本超过生产预算' : '',
       plan.route === 'clone' && !references.items.some(item => item.id === plan.referenceId) ? '爆款参考不存在或已失效' : '',
     ].filter(Boolean);
@@ -1254,6 +1370,9 @@ async function buildOverview(tenantId: string, requestedGoalId = '', requestedRa
   const normalizedTasks = taskItems.map(task => ({ ...task, agent_role: visibleAgentRole(task.agent_role, task.task_key) }));
   const publicTasks = normalizedTasks.map(task => ({ ...task, business_refs: jsonObject(task.business_refs, []), depends_on: jsonObject(task.depends_on, []), output: jsonObject(task.output, {}) })) as WorkflowTask[];
   const planBody = plan ? jsonObject<Record<string, unknown>>(plan.plan, {}) : {};
+  const overviewPlanBody = planBody.businessPackage
+    ? { ...planBody, businessPackage: repairCollapsedWeeklyVideoProduction(planBody.businessPackage as WeeklyPackage) }
+    : planBody;
   const [deliveryData, contentQueue, executionRuntime, industryTrends, directorAnalyses] = await Promise.all([
     buildDeliveryResources(tenantId, publicTasks, goal.title)
       .then(deliveries => ({ deliveries, deliveryNotice: '' }))
@@ -1261,7 +1380,7 @@ async function buildOverview(tenantId: string, requestedGoalId = '', requestedRa
     buildContentQueueProjection({
       tenantId,
       runId,
-      planBody,
+      planBody: overviewPlanBody,
       tasks: publicTasks,
       planId: plan?.id || '',
       goal: { id: goal.id, objective: goal.objective, startsAt: goal.starts_at, endsAt: goal.ends_at, version: Number(goal.version || 1) },
@@ -1277,7 +1396,7 @@ async function buildOverview(tenantId: string, requestedGoalId = '', requestedRa
       .catch(() => traceableIndustryTrends([])),
     liveDirectorAnalysisTasks(store, tenantId, {
       goalId: goal.id, runId, includeUnscoped: !requestedGoalId,
-      referenceVideoIds: directorAnalysisReferenceIds(planBody, publicTasks),
+      referenceVideoIds: directorAnalysisReferenceIds(overviewPlanBody, publicTasks),
     }).catch(() => []),
   ]);
   return {
@@ -1286,7 +1405,7 @@ async function buildOverview(tenantId: string, requestedGoalId = '', requestedRa
     goals: operatingGoals.map(publicGoal),
     goal: publicGoal(goal),
     plan: plan ? (() => {
-      const body = planBody;
+      const body = overviewPlanBody;
       const publicTasks = Array.isArray(body.tasks)
         ? body.tasks.map(item => {
           const task = jsonObject<Record<string, unknown>>(item, {});
@@ -1302,7 +1421,9 @@ async function buildOverview(tenantId: string, requestedGoalId = '', requestedRa
         ...body,
         tasks: publicTasks,
         ...(configSnapshot ? { configSnapshot } : {}),
-        businessPackage: body.businessPackage || (resolvedConfiguration ? { ...recommendPackage(goalInput(goal), configSnapshotForPlan(plan, resolvedConfiguration.config), goal.owner_id), revision: 0 } : undefined),
+        businessPackage: body.businessPackage
+          ? repairCollapsedWeeklyVideoProduction(body.businessPackage as WeeklyPackage)
+          : (resolvedConfiguration ? { ...recommendPackage(goalInput(goal), configSnapshotForPlan(plan, resolvedConfiguration.config), goal.owner_id), revision: 0 } : undefined),
       };
     })() : null,
     run,
@@ -1795,7 +1916,7 @@ async function observeTaskProof(tenantId: string, run: RunRecord, task: TaskReco
       const runIds = scopedValues(item, ['workflowRunId', 'workflow_run_id', 'runId', 'run_id', 'digitalEmployeeRunId']);
       const taskIds = scopedValues(item, ['workflowTaskId', 'workflow_task_id', 'taskId', 'task_id', 'digitalEmployeeTaskId']);
       const currentRunEvidence = runIds.includes(run.id) && taskIds.some(id => scope.taskIds.has(id));
-      return currentRunEvidence || explicitReferences.has(item.id);
+      return currentRunEvidence || scope.refIds.has(item.id) || explicitReferences.has(item.id);
     });
     const coverage = evaluateViralAnalysisCoverage(videoPlans, candidates, { explicitReferenceIds: explicitReferences });
     return {
@@ -1973,10 +2094,12 @@ async function prepareObserveBusinessResource(input: {
   if (browserExecutionEnabled() && input.task.task_key === 'scheduled_source_collection'
     && !jsonObject<Array<Record<string, unknown>>>(input.task.business_refs, []).some(ref => ref.type === 'scheduled_task')) {
     const schedule = socialScheduleFromCadence(input.config.socialCadence);
+    const collectionLimit = collectionLimitForInventoryGap(input.task, schedule.limit);
     const ensured = await ensureDigitalEmployeeSocialCollectionTask({ tenantId: input.tenantId,
       workflowRunId: input.run.id, workflowTaskId: input.task.id,
       keywords: input.config.focusProducts || goalInput(input.goal).scope || input.config.primaryBusiness,
       ...schedule,
+      limit: collectionLimit,
       confirmedWeeklyBoundary: {
         businessGoal: goalInput(input.goal).objective,
         products: input.config.focusProducts.split(/[、，,；;\n]/).map(value => value.trim()).filter(Boolean),
@@ -1985,7 +2108,7 @@ async function prepareObserveBusinessResource(input: {
         audience: input.config.customerProfile,
         platforms: schedule.platforms,
         lookbackDays: schedule.dateWindowDays,
-        resultLimit: schedule.limit,
+        resultLimit: collectionLimit,
         approvedBy: input.goal.owner_id,
         workflowRunId: input.run.id,
         workflowTaskId: input.task.id,
@@ -2033,6 +2156,7 @@ async function prepareObserveBusinessResourceDirect(input: {
   };
   if (task.task_key === 'scheduled_source_collection') {
     const collectionSchedule = socialScheduleFromCadence(config.socialCadence);
+    const collectionLimit = collectionLimitForInventoryGap(task, collectionSchedule.limit);
     const ensured = await ensureDigitalEmployeeSocialCollectionTask({
       tenantId,
       workflowRunId: run.id,
@@ -2041,7 +2165,7 @@ async function prepareObserveBusinessResourceDirect(input: {
       cronExpr: collectionSchedule.cronExpr,
       cronLabel: collectionSchedule.cronLabel,
       platforms: collectionSchedule.platforms,
-      limit: collectionSchedule.limit,
+      limit: collectionLimit,
       dateWindowDays: collectionSchedule.dateWindowDays,
       dedupeWindowDays: collectionSchedule.dedupeWindowDays,
       confirmedWeeklyBoundary: {
@@ -2052,7 +2176,7 @@ async function prepareObserveBusinessResourceDirect(input: {
         audience: config.customerProfile,
         platforms: collectionSchedule.platforms,
         lookbackDays: collectionSchedule.dateWindowDays,
-        resultLimit: collectionSchedule.limit,
+        resultLimit: collectionLimit,
         approvedBy: actorId,
         workflowRunId: run.id,
         workflowTaskId: task.id,
@@ -2258,8 +2382,8 @@ async function advanceRunUnlocked(tenantId: string, runId: string): Promise<void
   if (!goal || !tenantConfig) throw new Error('run_context_missing');
   const config = executionConfigForPlan(plan, tenantConfig);
   const packageBody = plan ? jsonObject<Record<string, unknown>>(plan.plan, {}) : {};
-  const businessPackage = packageBody.businessPackage as WeeklyPackage | undefined;
-  const videoTask = businessPackage?.tasks.find(t => t.templateId === 'production');
+  let businessPackage = packageBody.businessPackage as WeeklyPackage | undefined;
+  let videoTask = businessPackage?.tasks.find(t => t.templateId === 'production');
   if (videoTask?.videoPlans) goal.scope = { description: goalInput(goal).scope, videoPlans: videoTask.videoPlans };
 
   let reopened = false;
@@ -2329,19 +2453,39 @@ async function advanceRunUnlocked(tenantId: string, runId: string): Promise<void
     const previousFailure = jsonObject<Record<string, unknown>>(task.output, {}).executionFailure as TaskFailure | undefined;
     if (!taskRetryDue(previousFailure)) continue;
     try {
-    // An explicitly selected, fully analyzed reference is already collected.
-    // Do not require creating a new recurring crawler for a one-off remake.
-    if (task.task_key === 'scheduled_source_collection' && videoTask?.videoPlans?.length
-      && videoTask.videoPlans.every(video => video.route === 'clone' && video.referenceId)) {
-      const referenceIds = reusableExplicitReferenceIds(videoTask.videoPlans);
-      const references = await Promise.all(referenceIds.map(id => store.getById<StoredRecord>('trend_videos', id)));
-      if (canSkipCollectionForExplicitReferences(videoTask.videoPlans, references.filter((reference): reference is StoredRecord => Boolean(reference && reference.tenantId === tenantId)))) {
-        const output = { dataStatus: 'not_required', summary: '本轮已选择采集并完成精确分析的灵感视频，无需新增定时采集。', referenceIds };
-        await store.update(COLLECTION.tasks, task.id, { status: 'skipped', output, blocked_reason: '', updated_at: new Date().toISOString() });
-        task.status = 'skipped'; task.output = output; task.blocked_reason = '';
-        await appendEvent({ tenantId, runId: run.id, taskId: task.id, type: 'task.not_required', summary: output.summary, payload: { referenceIds } });
+    // Inventory is checked before any crawler is created. A reference is
+    // reusable when it is tenant-owned, production-ready, bound one-to-one to
+    // this week's clone masters and has not entered another run's production
+    // handoff. User-explicit references remain intentionally reusable.
+    if (task.task_key === 'scheduled_source_collection' && videoTask?.videoPlans?.length) {
+      const rebound = await bindUnusedViralLibraryToWeeklyPackage({ tenantId, run, goal, plan, config, pack: businessPackage! });
+      businessPackage = rebound.pack;
+      packageBody.businessPackage = rebound.pack;
+      videoTask = rebound.pack.tasks.find(item => item.templateId === 'production');
+      if (videoTask?.videoPlans) goal.scope = { description: goalInput(goal).scope, videoPlans: videoTask.videoPlans };
+      const inventory = rebound.inventory;
+      const inventoryPreflight = {
+        requiredCount: inventory.requiredCount,
+        reusableCount: inventory.reusableCount,
+        missingCount: inventory.missingCount,
+        selectedReferenceIds: inventory.selectedReferenceIds,
+        checkedAt: new Date().toISOString(),
+        source: 'tenant_viral_library_exact_analysis_minus_prior_production_handoffs',
+      };
+      if (inventory.ready) {
+        const refs = inventory.selectedReferenceIds.map(id => ({ type: 'trend_video', id, reuse: 'unused_exact_library' }));
+        const output = { dataStatus: 'not_required', summary: `爆款库已有 ${inventory.reusableCount} 条未使用且完成精确分析的参考，本周已直接锁定，无需重新采集。`, inventoryPreflight, referenceIds: inventory.selectedReferenceIds };
+        await store.update(COLLECTION.tasks, task.id, { status: 'skipped', output, business_refs: refs, blocked_reason: '', updated_at: new Date().toISOString() });
+        task.status = 'skipped'; task.output = output; task.business_refs = refs; task.blocked_reason = '';
+        await appendEvent({ tenantId, runId: run.id, taskId: task.id, type: 'task.inventory_reused', summary: output.summary, payload: inventoryPreflight });
         continue;
       }
+      const previousOutput = jsonObject<Record<string, unknown>>(task.output, {});
+      const summary = inventory.requiredCount
+        ? `爆款库可直接使用 ${inventory.reusableCount}/${inventory.requiredCount} 条，还缺 ${inventory.missingCount} 条；只采集并分析缺口。`
+        : '本周计划没有需要爆款参考的独立视频；将按已确认的社媒采集目标继续。';
+      task.output = { ...previousOutput, inventoryPreflight, inventorySummary: summary };
+      await store.update(COLLECTION.tasks, task.id, { output: task.output, updated_at: new Date().toISOString() });
     }
     if (task.task_key === 'viral_analysis' && videoTask?.videoPlans?.length && videoTask.videoPlans.every(video => video.route !== 'clone')) {
       const output = { dataStatus: 'not_required', summary: '本轮视频均未指定爆款裂变，无需等待参考分析。' };
@@ -2437,6 +2581,13 @@ async function advanceRunUnlocked(tenantId: string, runId: string): Promise<void
     }
     if (metadata.executionMode === 'observe' || metadata.executionMode === 'draft_executor') {
       businessSnapshot ||= await buildBusinessSnapshot(tenantId, { startsAt: goal.starts_at, endsAt: goal.ends_at });
+      if (task.task_key === 'viral_analysis' && businessPackage && videoTask?.videoPlans?.length) {
+        const rebound = await bindUnusedViralLibraryToWeeklyPackage({ tenantId, run, goal, plan, config, pack: businessPackage });
+        businessPackage = rebound.pack;
+        packageBody.businessPackage = rebound.pack;
+        videoTask = rebound.pack.tasks.find(item => item.templateId === 'production');
+        if (videoTask?.videoPlans) goal.scope = { description: goalInput(goal).scope, videoPlans: videoTask.videoPlans };
+      }
       const createdResource = task.task_key === 'customer_segmentation' && businessSnapshot.customer.total.value === 0 ? false : metadata.executionMode === 'draft_executor'
         ? await prepareObserveBusinessResource({ tenantId, goal, run, task, config, snapshot: businessSnapshot })
         : await prepareObserveBusinessResource({ tenantId, goal, run, task, config, snapshot: businessSnapshot });
@@ -2592,7 +2743,7 @@ async function advanceRunUnlocked(tenantId: string, runId: string): Promise<void
       // Do not automatically repeat uncertain writes or external effects.
       const failure = nextTaskFailure(previousFailure, metadata.externalEffect === 'none' && metadata.executionMode !== 'draft_executor');
       const failed = productionFailureState(error, failure.retryAt);
-      const reason = failed.reason;
+      const reason = task.task_key === 'scheduled_source_collection' ? sourceCollectionFailureReason(error) : failed.reason;
       const output = { ...jsonObject<Record<string, unknown>>(task.output, {}), dataStatus: 'execution_failed', executionFailure: failure, waitState: waitState(failed.kind, reason), availableActions: availableTaskActions(task) };
       await store.update(COLLECTION.tasks, task.id, { status: failed.status, output, blocked_reason: reason, updated_at: new Date().toISOString() });
       task.status = failed.status; task.output = output; task.blocked_reason = reason;
@@ -3015,7 +3166,7 @@ digitalEmployeesRouter.post('/goals/:goalId/initial-preparation',async(req,res)=
  try{await withLocalQueue(goalApprovalQueues,`${tenantId}:initial-confirm:${goalId}`,async()=>{
  const goal=await tenantRecord<GoalRecord>(COLLECTION.goals,goalId,tenantId);const plan=await first<PlanRecord>(COLLECTION.plans,{tenant_id:tenantId,goal_id:goalId});if(!goal||!plan)throw Error('原计划不存在');
  if(!await weeklyGoalFactRebuildTargetCommitted(tenantId,goal))throw Error('最新事实周目标尚未完成安全替换');
- const body=jsonObject<Record<string,unknown>>(plan.plan,{});if(plan.status!=='draft'||hasWeeklyGoalFactRebuildPlanFence(body))throw Error('原计划正在发生状态变更');const existing=body.initialPreparation as InitialPreparation|undefined;const pack=body.businessPackage as WeeklyPackage;
+ const body=jsonObject<Record<string,unknown>>(plan.plan,{});if(plan.status!=='draft'||hasWeeklyGoalFactRebuildPlanFence(body))throw Error('原计划正在发生状态变更');const existing=body.initialPreparation as InitialPreparation|undefined;const pack=repairCollapsedWeeklyVideoProduction(body.businessPackage as WeeklyPackage);
  if(req.body?.resume&&existing){await resumeInitialPreparationPlan(tenantId,goalId,true);return;}
  const sourceScope=()=>initialPreparationSourcesFromPersisted({goalPlatforms:jsonObject(goal.content_platforms,[]),businessPackage:pack,config:body.configSnapshot,profile:frozenEnterpriseProfileForPlan(plan,false)},{historyAccounts:req.body?.historyAccounts,historyCollectionRequestId:req.body?.historyCollectionRequestId});
  if(existing){if(existing.requestId!==String(req.body?.requestId))throw Error('已确认原计划，请查询或恢复原请求');if(JSON.stringify(existing.sources.map(({jobId,...source})=>source))!==JSON.stringify(sourceScope()))throw Error('确认范围变化，请修订计划');return;}
@@ -3121,6 +3272,38 @@ digitalEmployeesRouter.post('/assistant/decision-center/:decisionId/actions', as
             expectedRequestHash: customerApprovalRequestHash({ ...approval }),
             ...(/^[a-f0-9]{64}$/.test(String(approval.content_hash || '')) ? { expectedContentHash: String(approval.content_hash) } : {}),
           });
+        },
+        retryTask: async selected => {
+          const task = await tenantRecord<TaskRecord>(COLLECTION.tasks, selected.subject.id, identity.tenantId);
+          if (!task) throw new AssistantDecisionCommandError('task_not_found', 404);
+          assertAssistantDecisionVersion(selected, workflowTaskDecisionVersion(task));
+          const result = await applyTaskControl({
+            tenantId: identity.tenantId,
+            userId: identity.userId,
+            taskId: task.id,
+            expectedTaskVersion: String(task.task_version ?? task.updated_at ?? '').trim(),
+            action: 'retry',
+            scope: 'one_off',
+            instruction: '从当前节点重试；先复用未使用且已完成精确分析的爆款素材，只补采仍缺少的数量。',
+            rerunDownstream: true,
+          });
+          await advanceRun(identity.tenantId, result.runId);
+        },
+        replanTask: async selected => {
+          const task = await tenantRecord<TaskRecord>(COLLECTION.tasks, selected.subject.id, identity.tenantId);
+          if (!task) throw new AssistantDecisionCommandError('task_not_found', 404);
+          assertAssistantDecisionVersion(selected, workflowTaskDecisionVersion(task));
+          const result = await applyTaskControl({
+            tenantId: identity.tenantId,
+            userId: identity.userId,
+            taskId: task.id,
+            expectedTaskVersion: String(task.task_version ?? task.updated_at ?? '').trim(),
+            action: 'replan',
+            scope: 'one_off',
+            instruction: '保留已经完成的结果，按当前账号、产量和爆款库存重新规划本周任务。',
+            rerunDownstream: true,
+          });
+          await advanceRun(identity.tenantId, result.runId);
         },
         takeOver: async selected => {
           let taskId = selected.subject.id;
@@ -3542,7 +3725,7 @@ digitalEmployeesRouter.post('/goals/:goalId/package/details', async (req, res) =
     if (plan.status !== 'draft' || hasWeeklyGoalFactRebuildPlanFence(planBody)) {
       res.status(409).json({ error: 'package_locked', message: '计划正在发生状态变更，请刷新后重试。' }); return;
     }
-    const pack = planBody.businessPackage as WeeklyPackage | undefined;
+    const pack = planBody.businessPackage ? repairCollapsedWeeklyVideoProduction(planBody.businessPackage as WeeklyPackage) : undefined;
     if (!pack) { res.status(409).json({ error: 'weekly_package_missing', message: '请先制定本周目标和视频计划。' }); return; }
     const configRecord = await configForTenant(tenantId);
     const currentConfig = publicConfig(configRecord);
@@ -3714,6 +3897,76 @@ digitalEmployeesRouter.put('/goals/:goalId/package', async (req, res) => {
     }
     await appendAudit({ tenantId, userId, action: 'weekly_package.updated', targetType: 'weekly_plan', targetId: plan.id, metadata: { revision: pack.revision, tasks: pack.tasks } });
     res.json(await buildOverview(tenantId, goal.id));
+  });
+});
+
+digitalEmployeesRouter.patch('/goals/:goalId/publication-schedule/:contentId', async (req, res) => {
+  const { tenantId, userId } = res.locals as AuthLocals;
+  const goalId = String(req.params.goalId || '').trim();
+  const contentId = String(req.params.contentId || '').trim();
+  const scheduledAt = String(req.body?.scheduledAt || '').trim();
+  if (!contentId || contentId.length > 160 || !/(?:Z|[+-]\d{2}:\d{2})$/.test(scheduledAt) || !Number.isFinite(Date.parse(scheduledAt))) {
+    res.status(400).json({ error: 'publication_schedule_invalid', message: '请选择有效的发布日期和时间。' }); return;
+  }
+  await withLocalQueue(goalApprovalQueues, `${tenantId}:publication-schedule:${goalId}`, async () => {
+    const goal = await tenantRecord<GoalRecord>(COLLECTION.goals, goalId, tenantId);
+    const plan = await first<PlanRecord>(COLLECTION.plans, { tenant_id: tenantId, goal_id: goalId });
+    if (!goal || !plan) { res.status(404).json({ error: 'weekly_plan_not_found', message: '没有找到对应的周计划。' }); return; }
+    const publishDate = beijingDate(new Date(scheduledAt));
+    if (publishDate < goal.starts_at || publishDate > goal.ends_at) {
+      res.status(400).json({ error: 'publication_schedule_outside_cycle', message: `发布时间必须在本周周期 ${goal.starts_at} 至 ${goal.ends_at} 内。` }); return;
+    }
+    const run = await first<RunRecord>(COLLECTION.runs, { tenant_id: tenantId, goal_id: goalId });
+    if (run) {
+      const workflow = await store.list<TaskRecord>(COLLECTION.tasks, { where: { tenant_id: tenantId, run_id: run.id }, page: 1, perPage: 200 });
+      const locked = workflow.items.find(task => ['content_release_approval', 'publishing_calendar', 'platform_publish'].includes(task.task_key)
+        && !['pending', 'skipped', 'cancelled'].includes(task.status));
+      if (locked) {
+        res.status(409).json({ error: 'publication_schedule_locked', message: '这条内容已经进入发布审批或平台执行，请到发布与渠道中调整，避免重复发布。' }); return;
+      }
+    }
+    const body = jsonObject<Record<string, unknown>>(plan.plan, {});
+    const pack = body.businessPackage ? repairCollapsedWeeklyVideoProduction(body.businessPackage as WeeklyPackage) : undefined;
+    const production = pack?.tasks.find(task => task.templateId === 'production');
+    const matches = production?.videoPlans?.filter(video => video.contentId === contentId) || [];
+    if (!pack || !production || matches.length !== 1) {
+      res.status(404).json({ error: 'publication_content_not_found', message: '没有找到这条内容的发布安排，请刷新后重试。' }); return;
+    }
+    const nextPlans = production.videoPlans!.map(video => video.contentId === contentId
+      ? normalizeVideoPlan({ ...video, plannedPublishDate: publishDate, plannedPublishAt: scheduledAt })
+      : video);
+    const nextPack: WeeklyPackage = {
+      ...pack,
+      tasks: pack.tasks.map(task => task === production ? { ...task, videoPlans: nextPlans } : task),
+    };
+    const nextBody = { ...body, businessPackage: nextPack };
+    if (!store.compareAndSwap || !await store.compareAndSwap(COLLECTION.plans, plan.id, {
+      tenant_id: tenantId, goal_id: goalId, plan: plan.plan,
+    }, { plan: nextBody })) {
+      res.status(409).json({ error: 'publication_schedule_changed', message: '周计划刚刚发生变化，请刷新后再调整。' }); return;
+    }
+    const scope = jsonObject<Record<string, unknown>>(goal.scope, { description: typeof goal.scope === 'string' ? goal.scope : '' });
+    const goalPlans = Array.isArray(scope.videoPlans) ? scope.videoPlans as VideoCreationPlan[] : [];
+    if (goalPlans.some(video => video.contentId === contentId)) {
+      await store.update(COLLECTION.goals, goal.id, {
+        scope: { ...scope, videoPlans: goalPlans.map(video => video.contentId === contentId ? normalizeVideoPlan({ ...video, plannedPublishDate: publishDate, plannedPublishAt: scheduledAt }) : video) },
+        updated_at: new Date().toISOString(),
+      });
+    }
+    if (run) {
+      const batch = await first<ContentBatchPlanRecord>(COLLECTION.contentBatchPlans, { tenant_id: tenantId, run_id: run.id });
+      if (batch) {
+        const orders = jsonObject<ContentOrder[]>(batch.orders, []);
+        const nextOrders = orders.map(order => ({
+          ...order,
+          ...(order.videoPlan?.contentId === contentId ? { videoPlan: normalizeVideoPlan({ ...order.videoPlan, plannedPublishDate: publishDate, plannedPublishAt: scheduledAt }) } : {}),
+          ...(order.deliveryVariants?.some(variant => variant.contentId === contentId) ? { deliveryVariants: order.deliveryVariants.map(variant => variant.contentId === contentId ? { ...variant, plannedPublishDate: publishDate, plannedPublishAt: scheduledAt } : variant) } : {}),
+        }));
+        await store.update(COLLECTION.contentBatchPlans, batch.id, { orders: nextOrders, updated_at: new Date().toISOString() });
+      }
+    }
+    await appendAudit({ tenantId, userId, action: 'weekly_publication.rescheduled', targetType: 'weekly_content', targetId: contentId, metadata: { goalId, planId: plan.id, scheduledAt, publishDate, timeZone: 'Asia/Shanghai' } });
+    res.json(await buildOverview(tenantId, goalId));
   });
 });
 
@@ -4281,7 +4534,7 @@ export async function approveGoalForReview(tenantId: string, userId: string, goa
   const config = executionConfigForPlan(existingPlan, currentConfig);
   // Account and delivery readiness are checked by the affected task at runtime.
   // Do not clear the content production platforms when no publishing account exists.
-  let pack = savedBody.businessPackage as WeeklyPackage | undefined;
+  let pack = savedBody.businessPackage ? repairCollapsedWeeklyVideoProduction(savedBody.businessPackage as WeeklyPackage) : undefined;
   let managedPublishingGrantId = String(savedBody.managedPublishingGrantId || '');
   if (pack && !managedPublishingGrantId) {
     const authorized = applyManagedPublishingGrant(pack, currentConfig, goal.ends_at);
@@ -4998,7 +5251,8 @@ async function applyTaskControl(input: {
       validatedInputRefs.push(validated);
     }
     if (run.status === 'cancelled') throw new TaskControlError(409, 'run_cancelled', { message: '已取消的运行不能再纠偏。' });
-    if (run.status === 'paused') throw new TaskControlError(409, 'run_controlled_by_human', { message: '请先恢复运行。' });
+    const resumePausedRun = run.status === 'paused' && ['retry', 'replan'].includes(input.action);
+    if (run.status === 'paused' && !resumePausedRun) throw new TaskControlError(409, 'run_controlled_by_human', { message: '请先恢复运行。' });
     if (allTasks.items.some(item => item.id === task.id && item.status === 'handed_off')) {
       throw new TaskControlError(409, 'task_handed_off', { message: '请先将人工接管任务交还数字员工。' });
     }
@@ -5010,7 +5264,7 @@ async function applyTaskControl(input: {
       const coverage = await observeTaskProof(input.tenantId, run, task, snapshot, allTasks.items);
       if (!viralCoverageBypassAllowed(task.task_key, input.action, coverage.ready)) {
         throw new TaskControlError(409, 'viral_analysis_exact_coverage_required', {
-          message: '本周复刻原创母版的精确分析尚未覆盖完整，不能跳过或人工完成该节点。',
+          message: '本周复刻独立制作视频的精确分析尚未覆盖完整，不能跳过或人工完成该节点。',
           proof: coverage.proof,
         });
       }
@@ -5175,6 +5429,16 @@ async function applyTaskControl(input: {
           status: 'succeeded', output, business_refs: businessRefs, blocked_reason: '', owner_id: input.userId, correction_version: version, updated_at: now,
         });
       }
+    }
+
+    if (resumePausedRun) {
+      await resumeContentExecutionJobsForRun({
+        dataStore: store,
+        tenantId: input.tenantId,
+        runId: run.id,
+        origin: 'workflow_run_pause',
+        now: new Date(now),
+      });
     }
 
     await Promise.all([

@@ -5,13 +5,16 @@ import { renderToStaticMarkup } from 'react-dom/server';
 import EnterprisePresenters from './EnterprisePresenters.js';
 
 const source = readFileSync(new URL('./EnterprisePresenters.tsx', import.meta.url), 'utf8');
+const arkPanelSource = readFileSync(new URL('../studio/ArkPresenterEnrollmentPanel.tsx', import.meta.url), 'utf8');
 const enterprisePageSource = readFileSync(new URL('../EnterprisePage.tsx', import.meta.url), 'utf8');
 
 test('initial configuration presents one unified presenter onboarding instead of duplicate provider forms', () => {
   const html = renderToStaticMarkup(<EnterprisePresenters initialConfiguration />);
   assert.match(html, /数字人统一接入/);
   assert.match(html, /人物、声音与本人认证/);
-  assert.match(html, /开始统一接入/);
+  assert.match(html, /设置数字人/);
+  assert.match(source, /更换数字人/);
+  assert.match(source, /完善人物替换认证/);
   assert.doesNotMatch(html, /HeyGen 口播接入/);
   assert.doesNotMatch(html, /方舟人物认证/);
   assert.match(source, /<ArkPresenterEnrollmentPanel/);
@@ -19,13 +22,20 @@ test('initial configuration presents one unified presenter onboarding instead of
   assert.match(source, /productionApi\.uploadArkMaterial/);
   assert.match(source, /finishUnifiedPresenterSetup/);
   assert.match(source, /initialPhotoMaterialId=\{preparedArk\?\.photoMaterialId\}/);
+  assert.match(source, /需要高级人物替换时，再点击“完善人物替换认证”单独授权/);
+  assert.match(source, /authorizationConfirmed=\{false\}/);
+  assert.doesNotMatch(source, /arkCapability = await productionApi\.arkEnrollmentCapabilities/);
+  assert.match(arkPanelSource, /if \(!capability\.ready\)/);
+  assert.match(arkPanelSource, /不影响当前 HeyGen 口播人物/);
+  assert.match(arkPanelSource, /管理员还需配置/);
 });
 
-test('enterprise presenter page is limited to editing and revoking existing people', () => {
+test('enterprise presenter page supports editing, optional certification and revoking existing people', () => {
   const html = renderToStaticMarkup(<EnterprisePresenters />);
   assert.match(html, /人物与出镜/);
-  assert.match(html, /只维护已接入人物/);
+  assert.match(html, /补充可选的人物替换认证/);
   assert.match(source, />修改人物</);
+  assert.match(source, /certificationOpen \? '收起认证' : '人物替换认证'/);
   assert.match(source, />取消授权</);
   assert.match(source, /presenterApi\.revoke/);
   assert.doesNotMatch(source, /默认出镜偏好|新分镜默认声音|新分镜默认布局|主体授权证据|方舟控制台人工核验|渠道与出镜策略/);
