@@ -25,7 +25,8 @@ export function materialUsage(material: MaterialPolicyInput): MaterialUsage {
   if (material.usage === 'editable' && material.commercialUseApproved === true
     && material.derivativesApproved === true && material.rawLibraryUseApproved === true
     && material.mayUseInProduction === true) return 'editable';
-  if (/^(youtube|facebook|instagram|tiktok)$/i.test(String(material.sourceType || ''))) return 'reference_only';
+  if (/^(?:youtube|facebook|instagram|tiktok)(?:[_-]reference)?$/i.test(String(material.sourceType || ''))
+    || /^(?:trend|viral)[_-]reference$/i.test(String(material.sourceType || ''))) return 'reference_only';
   if (/youtube\.com|youtu\.be|facebook\.com|instagram\.com|tiktok\.com/i.test(String(material.sourceUrl || ''))) return 'reference_only';
   if (material.folder === 'hot' && /爆款[·・](?:YouTube|Facebook|Instagram|TikTok)/i.test(String(material.name || ''))) {
     return 'reference_only';

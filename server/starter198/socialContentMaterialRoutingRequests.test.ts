@@ -36,6 +36,17 @@ test('local product match retains its action evidence, SKU and exact analyzed se
   assert.deepEqual(result.selectedMaterialSegment, { sourceRef: 'own-video', segmentId: 'seg-1', startSeconds: 2, endSeconds: 6 });
   assert.equal(result.localVideoMatch?.sourceTier, 'product_high_fidelity_local');
 });
+test('multi-shot routing uses distinct assets and segments before repeating either', () => {
+  const shots = Array.from({length: 5}, (_, index) => ({...shot, shotId: `S${index + 1}`}));
+  const candidates = [
+    candidate({assetId:'asset-a',sourceRef:'asset-a',segmentId:'a-1'}),
+    candidate({assetId:'asset-a',sourceRef:'asset-a',segmentId:'a-2',timeRange:{startSeconds:6,endSeconds:10}}),
+    candidate({assetId:'asset-b',sourceRef:'asset-b',segmentId:'b-1'}),
+  ];
+  const result=materialRoutingRequests({policyVersion:'type-aware.v1',tenantId:'tenant',productRef:'SKU-1',shots,candidates:candidates as never[]});
+  assert.deepEqual(result.map(item=>item.selectedMaterialSegment?.sourceRef),['asset-a','asset-b','asset-a','asset-b','asset-a']);
+  assert.deepEqual(result.filter(item=>item.selectedMaterialSegment?.sourceRef==='asset-a').map(item=>item.selectedMaterialSegment?.segmentId),['a-1','a-2','a-1']);
+});
 test('budget exhaustion degrades product generation through product, factory, then other readable-video candidates', () => {
   const degraded = (candidates: never[]) => materialRoutingRequests({policyVersion:'type-aware.v1',tenantId:'tenant',
     productRef:'SKU-1',shots:[shot],candidates,productGenerationAllowed:false})[0]!;

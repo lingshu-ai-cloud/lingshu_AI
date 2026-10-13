@@ -5,7 +5,7 @@ import type {SocialPaidOperationIntent} from './socialContentTaskBudgetAuthority
 import type {createSocialContentPaidOperationPermit} from './socialContentPaidOperationPermit.js';
 export interface StudioVoicePaidRequest {
   stage: 'tts' | 'tts_fallback' | 'voice_clone' | 'voice_asr' | 'voice_alignment';
-  provider: 'minimax' | 'qwen'; model: string; voiceId: string | null;
+  provider: 'minimax' | 'qwen' | 'heygen'; model: string; voiceId: string | null;
   endpoint?: string; accountKeyHash?: string;
   request: Record<string,unknown>; audioSha256?: string; audioSeconds?: number;
 }
@@ -18,7 +18,7 @@ export interface StudioVoicePaidCall {
 }
 export interface StudioVoicePaidContext {
  /** Read from the actual frozen native voice resolver, never from HTTP input. */
- primaryProvider:'minimax'|'qwen';
+ primaryProvider:'minimax'|'qwen'|'heygen';
  persistAudioCacheProof?(input:{tenantId:string;text:string;logicalVoice:string;language:string;provider:string;audioSha256:string;durationSeconds:number}):Promise<void>;
  verifyCachedAudio?(input:{tenantId:string;text:string;logicalVoice:string;language:string;provider:string;audioSha256:string;durationSeconds:number}):Promise<boolean>;
  forRequest(request:StudioVoicePaidRequest):Promise<StudioVoicePaidCall>;

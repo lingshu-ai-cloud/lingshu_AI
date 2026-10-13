@@ -32,12 +32,21 @@ export interface PresenterHookSpeechAudio {
 
 export type VerifiedPresenterSpeechAudio = PresenterHookSpeechAudio | WholeTrackPresenterSpeech;
 
+export interface ApprovedPresenterFirstFrame {
+  approvalRecordId: string;
+  approvalRecordHash: string;
+  presenterGroupContractHash: string;
+  url: string;
+  localPath: string;
+  sha256: string;
+}
+
 export function assertPresenterSpeechAudio(request: Pick<DigitalPresenterExecutionRequest, 'tenantId' | 'taskId' | 'shotId' | 'script' | 'presenter'>, audio: VerifiedPresenterSpeechAudio): void {
   if (!audio || audio.tenantId !== request.tenantId || audio.taskId !== request.taskId || audio.shotId !== request.shotId
     || !audio.taskVersion || audio.presenterAssetId !== request.presenter.presenterAssetId
     || audio.presenterAssetVersion !== request.presenter.assetVersion || audio.providerAvatarId !== request.presenter.providerPresenterId
     || audio.engine !== 'avatar_iv'
-    || (audio.operationRole==='hook' ? audio.voiceId!==request.presenter.providerVoiceId : audio.operationRole!=='production_scene'||audio.voiceId!==audio.nativeVoice.physicalVoiceId||!audio.runId||!audio.planHash||!/^[a-f0-9]{64}$/.test(audio.wholeTrackSha256)||!audio.sourceReceiptRef||!audio.alignmentReceiptRef)
+    || (audio.operationRole==='hook' ? audio.voiceId!==request.presenter.providerVoiceId : audio.operationRole!=='production_scene'||audio.voiceId!==request.presenter.providerVoiceId||audio.nativeVoice.provider!=='heygen'||audio.voiceId!==audio.nativeVoice.physicalVoiceId||!audio.runId||!audio.planHash||!/^[a-f0-9]{64}$/.test(audio.wholeTrackSha256)||!audio.sourceReceiptRef||!audio.alignmentReceiptRef)
     || audio.scriptSha256 !== createHash('sha256').update(request.script).digest('hex')
     || !/^[a-f0-9]{64}$/.test(audio.clipSha256) || !/^[a-f0-9]{64}$/.test(audio.receiptHash)
     || !audio.receiptRef || !audio.audioAssetId || !Number.isFinite(audio.durationSeconds)
@@ -51,6 +60,9 @@ export interface DigitalPresenterExecutionRequest {
   shotId: string;
   idempotencyKey: string;
   presenter: AuthorizedDigitalPresenter;
+  /** Immutable, user-confirmed image that the dynamic presenter request must
+   * actually animate. A confirmation gate without this binding is invalid. */
+  approvedFirstFrame: ApprovedPresenterFirstFrame;
   script: string;
   /** Server-only recovery gate: never submit a new provider job. */
   recoveryOnly?: true;
@@ -157,6 +169,7 @@ function stableKey(input: {
   accountConstraintHash?:string;
   shotId: string;
   presenter: AuthorizedDigitalPresenter;
+  approvedFirstFrame: ApprovedPresenterFirstFrame;
   script: string;
   visualControl: DigitalPresenterVisualControl;
   speechAudio?: VerifiedPresenterSpeechAudio;
@@ -173,6 +186,7 @@ function stableKey(input: {
     presenterProfileVersion: input.presenter.presenterProfileVersion || null,
     consistencyKey: input.presenter.consistencyKey || null,
     providerId: input.presenter.providerId,
+    approvedFirstFrame: input.approvedFirstFrame,
     script: input.script,
     visualControl: input.visualControl,
     aspectRatio: '9:16',
@@ -367,10 +381,14 @@ export function createSocialDigitalPresenterAdapter(
       const legacyScript = String(context.baselineScene.script || context.baselineScene.caption || '').trim();
       const requestScript = script || legacyScript;
       if (!requestScript) throw new Error('digital_presenter_spoken_text_required');
+      const approvedFirstFrame=(context.shot as typeof context.shot & {approvedFirstFrame?:ApprovedPresenterFirstFrame}).approvedFirstFrame;
+      if(!approvedFirstFrame||!approvedFirstFrame.approvalRecordId||!/^[a-f0-9]{64}$/.test(approvedFirstFrame.approvalRecordHash)
+        ||!/^[a-f0-9]{64}$/.test(approvedFirstFrame.presenterGroupContractHash)||!/^[a-f0-9]{64}$/.test(approvedFirstFrame.sha256)
+        ||!approvedFirstFrame.url||!approvedFirstFrame.localPath)throw new Error('digital_presenter_approved_first_frame_required');
       let idempotencyKey = stableKey({ tenantId: context.tenantId, taskId: context.taskId,
-        operationId: context.operationId,accountConstraintHash:context.accountPlaybookConstraints?.constraintHash, shotId: context.shot.shotId, presenter, script: requestScript, visualControl: control });
+        operationId: context.operationId,accountConstraintHash:context.accountPlaybookConstraints?.constraintHash, shotId: context.shot.shotId, presenter, approvedFirstFrame,script: requestScript, visualControl: control });
       const request: DigitalPresenterExecutionRequest = { tenantId: context.tenantId, taskId: context.taskId,
-        shotId: context.shot.shotId, idempotencyKey, presenter, script: requestScript, aspectRatio: '9:16',
+        shotId: context.shot.shotId, idempotencyKey, presenter, approvedFirstFrame,script: requestScript, aspectRatio: '9:16',
         outputDirectory: context.outputDirectory, maximumCostCny, visualControl: control,
         ...(context.accountPlaybookConstraints ? { accountPlaybookConstraints: structuredClone(context.accountPlaybookConstraints) } : {}) };
       let reservationRef: string | undefined;
@@ -390,7 +408,7 @@ export function createSocialDigitalPresenterAdapter(
             assertPresenterSpeechAudio(request, audio);
             request.speechAudio = audio;
             idempotencyKey = stableKey({ tenantId: request.tenantId, taskId: request.taskId, operationId: context.operationId,
-              accountConstraintHash: context.accountPlaybookConstraints?.constraintHash, shotId: request.shotId, presenter,
+              accountConstraintHash: context.accountPlaybookConstraints?.constraintHash, shotId: request.shotId, presenter,approvedFirstFrame,
               script, visualControl: control, speechAudio: audio });
             request.idempotencyKey = idempotencyKey;
           }

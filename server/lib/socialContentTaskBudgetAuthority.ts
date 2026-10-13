@@ -16,6 +16,7 @@ export interface SocialPaidOperationIntent {
     shotId: string | null;
     inputContractHash: string;
     maximumUnits: Record<string, number>;
+    correction?: {attempt:1|2;kind:'presenter_video'|'voice_tts'|'voice_alignment';cause:'approved_first_frame_not_consumed'|'approved_first_frame_not_consumed_and_bound_voice_mismatch';authorizationRef:string;presenterGroupId?:string;approvalRecordHash?:string;selectedVoiceId?:string;selectedVoiceFingerprint?:string};
 }
 export interface SocialApprovedBudgetPlan {
     scope: SocialTaskBudgetScope;
@@ -66,12 +67,13 @@ const finite = (n: number) => Number.isFinite(n) && n >= 0;
 const nonempty = (s: string) => typeof s === 'string' && s.trim() === s && s.length > 0 && s.length <= 512;
 function sameScope(a: SocialTaskBudgetScope, b: SocialTaskBudgetScope) { return ['tenantId', 'taskId', 'runId', 'planHash'].every(k => a[k as keyof typeof a] === b[k as keyof typeof b]); }
 function canonicalUnits(units: Record<string, number>) { return Object.fromEntries(Object.entries(units).sort(([a], [b]) => a.localeCompare(b))); }
-function intentOperation(scope: SocialTaskBudgetScope, intent: SocialPaidOperationIntent): SocialTaskBudgetOperation {
+export function socialPaidIntentOperation(scope: SocialTaskBudgetScope, intent: SocialPaidOperationIntent): SocialTaskBudgetOperation {
     if (![intent.operationId, intent.provider, intent.model, intent.accountRef, intent.stage].every(nonempty) || (intent.shotId !== null && !nonempty(intent.shotId)) || !/^[a-f0-9]{64}$/.test(intent.inputContractHash) || !intent.maximumUnits || !Object.keys(intent.maximumUnits).length || Object.entries(intent.maximumUnits).some(([k, v]) => !nonempty(k) || !finite(v)))
         fail('intent_invalid');
     return { operationId: intent.operationId, provider: intent.provider, model: intent.model, accountRef: intent.accountRef, stage: intent.stage, shotId: intent.shotId,
         fingerprint: digest({ scope, operationId: intent.operationId, provider: intent.provider, model: intent.model, accountRef: intent.accountRef, stage: intent.stage, shotId: intent.shotId, inputContractHash: intent.inputContractHash, maximumUnits: canonicalUnits(intent.maximumUnits) }) };
 }
+const intentOperation=socialPaidIntentOperation;
 function price(intent: SocialPaidOperationIntent, tariff: SocialVerifiedAccountTariff | null): SocialTaskBudgetQuote {
     const now = Date.now();
     if (!tariff || !((tariff.verifiedAccountPrice===true&&(!tariff.pricingBasis||tariff.pricingBasis==='negotiated_verified_account'))||isVerifiedPublishedTariff(tariff)||verifyNativeVoicePublishedTariff(tariff)||verifyWanPublishedTariff(tariff)||verifySeedreamPublishedTariff(tariff)||verifyHeyGenPublishedTariff(tariff)) || tariff.currency !== 'CNY' || !nonempty(tariff.evidenceRef) || ['provider', 'model', 'accountRef', 'stage'].some(k => tariff[k as 'provider'] !== intent[k as 'provider']) || !Number.isFinite(Date.parse(tariff.checkedAt)) || Date.parse(tariff.checkedAt) > now || !Number.isFinite(Date.parse(tariff.validUntil)) || Date.parse(tariff.validUntil) <= now)
@@ -94,8 +96,10 @@ function price(intent: SocialPaidOperationIntent, tariff: SocialVerifiedAccountT
     if (!Number.isSafeInteger(amountMicros) || amountMicros <= 0)
         fail('paid_quote_invalid');
     const fxEvidence = tariff.pricingBasis === 'published_fx_estimate' ? tariff.publicPricingEvidence as HeyGenPublishedPricingEvidence : null;
-    return { ...(fxEvidence ? { nativePricing: { basis: 'published_fx_estimate' as const, currency: 'USD' as const, usdPerMinute: fxEvidence.usdPerMinute, maximumProviderSeconds: intent.maximumUnits.providerSeconds!, estimatedCnyPerUsd: fxEvidence.estimatedCnyPerUsd, fxDate: fxEvidence.fxDate, pricingSourceSha256: fxEvidence.pricingSourceSha256, fxSourceSha256: fxEvidence.fxSourceSha256 } } : {}), upperBoundCny: amountMicros / 1e6, quoteRef: `tariff:${digest({ evidenceRef: tariff.evidenceRef, tariff, intent })}`, validUntil: tariff.validUntil };
+    return { ...(fxEvidence ? { nativePricing: { basis: 'published_fx_estimate' as const, currency: 'USD' as const, usdPerMinute: fxEvidence.usdPerMinute, maximumProviderSeconds: (intent.maximumUnits.providerSeconds ?? intent.maximumUnits.audioSeconds)!, estimatedCnyPerUsd: fxEvidence.estimatedCnyPerUsd, fxDate: fxEvidence.fxDate, pricingSourceSha256: fxEvidence.pricingSourceSha256, fxSourceSha256: fxEvidence.fxSourceSha256 } } : {}), upperBoundCny: amountMicros / 1e6, quoteRef: `tariff:${digest({ evidenceRef: tariff.evidenceRef, tariff, intent })}`, validUntil: tariff.validUntil };
 }
+/** Shared validator for correction quotes: identical evidence and rounding rules. */
+export function quoteSocialPaidOperationTariff(intent: SocialPaidOperationIntent, tariff: SocialVerifiedAccountTariff | null): SocialTaskBudgetQuote { return price(intent, tariff); }
 /** No environment price defaults and no manual output-hash quote files. The
  * frozen input envelope makes all-stage quotes available BEFORE first paid POST.
  * Missing trusted pricing is an explicit blocker, not an estimated authorization. */
@@ -175,7 +179,11 @@ export function createSocialContentTaskBudgetAuthority(input: {
             verifyRejection: ports.verifyRejection,
         });
         const status = ledger.status(scope);
-        if (!status || status.retainedCny > Math.min(10, plan.maximumCny)) fail('recovery_budget_missing');
+        if (!status || status.retainedCny > status.limitCny
+            || (status.limitCny > Math.min(10, plan.maximumCny)
+                && (!status.correctionAuthorization
+                    || status.correctionAuthorization.runId !== scope.runId
+                    || status.correctionAuthorization.planHash !== scope.planHash))) fail('recovery_budget_missing');
         const entries = operationIds.map(id => {
             const operation = operations.find(candidate => candidate.operationId === id);
             const entry = status.entries.find(candidate => candidate.operationId === id);

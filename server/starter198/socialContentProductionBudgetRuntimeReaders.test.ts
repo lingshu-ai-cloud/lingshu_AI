@@ -70,3 +70,11 @@ test('ASR and alignment quotes use the frozen film duration instead of the provi
  assert.equal(alignment?.maximumUnits.audioSeconds,38);
  assert.equal(asr?.maximumUnits.audioSeconds,38);
 });
+
+test('selected presenter overrides generic narrator and reserves the exact HeyGen speech route by seconds', async()=>{
+ const binding={presenters:[{id:'sales',assetVersion:4,avatarId:'avatar',voiceId:'bound-sales'}],provider:'heygen' as const,voiceId:'bound-sales',logicalVoice:'heygen:bound-sales:registry-version-hash',fingerprint:'registry-version-hash'};
+ const readers=createProductionBudgetRuntimeReaders({tenantId:'tenant',frozenTrackSeconds:45,readPresenterVoice:async()=>binding,env:{HEYGEN_API_KEY:'fixture',DASHSCOPE_API_KEY:'fixture',MINIMAX_API_KEY:'fixture',TTS_ASR_QA_ENABLED:'false'}});
+ const voice=await readers.readVoicePlan!(baseline);assert.ok(voice);assert.equal(voice.presenterBinding?.voiceId,'bound-sales');assert.equal(voice.allowFallback,false);
+ const route=await readers.resolveBoundRoute!({key:'voice:0:tts',stage:'tts',shotId:null,sourceRef:null,durationSeconds:null,text:voice.lines.join(' '),frameCount:null,inputContractHash:'a'.repeat(64)});
+ assert.equal(route?.provider,'heygen');assert.equal(route?.model,'starfish');assert.deepEqual(route?.maximumUnits,{audioSeconds:90});assert.equal(route?.maximumAttempts,1);
+});

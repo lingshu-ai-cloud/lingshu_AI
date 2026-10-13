@@ -66,6 +66,8 @@ export interface LangGraphProductionInput {
     verifyResume: (resume: unknown, identity: ProductionGraphIdentity) => Promise<boolean>;
   };
   resume?: unknown;
+  /** Server-owned correction authorization hash; preserves the original graph history. */
+  correctionHash?: string;
   /** Isolated tests may supply an independent durable port; production uses job context. */
   checkpointPort?: ContentGraphCheckpointPort;
 }
@@ -101,6 +103,7 @@ function evidence(value: PhaseEvidence): PhaseEvidence {
 /** Actual graph nodes call separately recoverable stages; no provider retry loop is added here. */
 export async function runLangGraphProduction(input: LangGraphProductionInput): Promise<LangGraphProductionResult> {
   const identityHash = graphIdentityHash(input.identity);
+  if(input.correctionHash && !/^[a-f0-9]{64}$/.test(input.correctionHash)) throw Error('content_graph_correction_identity_invalid');
   if (!input.checkpointPort) await assertCurrentContentExecutionJobContext(input.identity.jobId);
   await assertGraphJobScope(input.dataStore, input.identity);
   await input.assertActive();
@@ -113,7 +116,7 @@ export async function runLangGraphProduction(input: LangGraphProductionInput): P
   const phase = (name: ProductionGraphPhase) => async (state: ProductionGraphState) => {
     await active(state);
     const nodeInputHash = createHash('sha256').update(`${identityHash}\0${name}`).digest('hex');
-    const stage = `langgraph.node.${name}`;
+    const stage = input.correctionHash?`lg.fix.${input.correctionHash}.${name}`:`langgraph.node.${name}`;
     const previous = readCurrentContentExecutionCheckpoint<ProductionGraphNodeEvidence>({
       stage, version: NODE_EVIDENCE_VERSION, inputHash: nodeInputHash,
     });

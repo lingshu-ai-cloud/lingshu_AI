@@ -1,3 +1,6 @@
+import {readGraphContextSnapshot,compactGraphContextSnapshot} from './socialContentGraphContextSnapshots.js';
+import {readBoundPresenterVoice} from './socialContentBoundPresenterVoice.js';
+import {SocialContentTaskBudget} from '../lib/socialContentTaskBudget.js';
 import type { DataStore } from '../storage/datastore.js';
 import type { ContentExecutionJob } from '../contentExecution/durableQueue.js';
 import { controlContentExecutionJob } from '../contentExecution/durableQueue.js';
@@ -101,14 +104,15 @@ export async function readSocialProductionGraphDetail(input: { repository: Start
   }
   const admittedRefs = new Set<string>([
     ...(approvedContext.agentWorkflow?.executionPlan.scenes.flatMap(scene => scene.candidates.map(candidate => candidate.sourceRef).filter(Boolean)) ?? []),
-    ...(approvedContext.assetSupplyPlan?.inventoryAudit?.records.map(record => record.id) ?? []),
+    ...(approvedContext.assetSupplyPlan?.shots.flatMap(shot=>shot.sourceRefs || []) ?? []),
+    ...(approvedContext.agentWorkflow?.executionPlan.productionOptions?.flatMap(option=>option.selectedMaterialIds) ?? []),
   ].filter((ref): ref is string => typeof ref === 'string' && Boolean(ref)));
   const task = await requireSocialTask(input);
   const canonical = input.repository.dataStore && task.run_id ? await readCanonicalGraphRuntimeMedia({dataStore:input.repository.dataStore,tenantId:input.tenantId,taskId:input.taskId,runId:String(task.run_id),approvedContext}) : [];
   const library = input.repository.materialLibrary;
   const repository: Starter198Repository = library ? { ...input.repository, materialLibrary: async (...args) => {
     const result = await library(...args);
-    return { ...result, items: result.items.filter(item => graphRuntimeInventoryVisible(item,{tenantId:input.tenantId,taskId:input.taskId,admittedRefs,canonical})) };
+    return { ...result, items: result.items.filter(item => graphRuntimeInventoryVisible(item,{tenantId:input.tenantId,taskId:input.taskId,admittedRefs,canonical,freezeToAdmitted:true})) };
   } } : input.repository;
   return readSocialTaskDetail({ ...input, repository });
 }
@@ -193,12 +197,54 @@ export async function loadSocialProductionGraphApproval(repository: Starter198Re
   return { approved: true, receiptRef, subjectVersion: evidence.version, contentHash: evidence.contentHash };
 }
 
+/** A server-owned correction plan may update local material ranking, never
+ * narration, timing, people, paid visual routes or the original financial scope. */
+export async function prepareAuthorizedSocialCorrectionContext(input:{repository:Starter198Repository;dataStore:DataStore;jobId:string;tenantId:string}) {
+ const row=await input.dataStore.getById<StarterRecord>('content_execution_jobs',input.jobId);
+ if(!row||row.tenant_id!==input.tenantId||row.worker_id||row.lease_expires_at||!['paused','blocked','retry_wait','dead_letter'].includes(String(row.status)))throw Error('correction_context_job_not_settled');
+ const checkpoints=socialObject(row.checkpoints)||{},binding=socialObject(socialObject(checkpoints['social.executor'])?.payload);
+ const original=readGraphContextSnapshot(binding);const originalInputHash=String(binding?.inputHash||'');
+ if(!original?.agentWorkflow||!/^[a-f0-9]{64}$/.test(originalInputHash))throw Error('correction_context_original_missing');
+ const scope={tenantId:input.tenantId,taskId:String(row.task_id),runId:String(row.run_id),planHash:originalInputHash};
+ const ledger=new SocialContentTaskBudget(undefined,{authorization:async()=>{throw Error('read_only')},quote:async()=>{throw Error('read_only')},assertCurrent:async()=>{},verifyRejection:async()=>false});
+ const grant=ledger.status(scope)?.correctionAuthorization;
+ if(!grant||grant.correctionCause!=='approved_first_frame_not_consumed_and_bound_voice_mismatch')throw Error('correction_context_authorization_missing');
+ const prior=socialObject(socialObject(checkpoints['social.corrected_executor'])?.payload);
+ if(prior&&socialObject(checkpoints['social.corrected_executor'])?.inputHash===grant.recordHash){
+  const compactParent=compactGraphContextSnapshot(binding!),compactPrior=compactGraphContextSnapshot(prior);
+  if(!input.dataStore.compareAndSwap||!await input.dataStore.compareAndSwap('content_execution_jobs',row.id,{status:row.status,checkpoints:row.checkpoints,worker_id:row.worker_id,lease_expires_at:row.lease_expires_at},{checkpoints:{...checkpoints,'social.executor':{...socialObject(checkpoints['social.executor']),payload:compactParent},'social.corrected_executor':{...socialObject(checkpoints['social.corrected_executor']),payload:compactPrior}},updated_at:new Date().toISOString()}))throw Error('correction_context_write_conflict');
+  return compactPrior;
+ }
+ const live=await readSocialProductionGraphDetail({repository:input.repository,tenantId:scope.tenantId,taskId:scope.taskId},original);
+ if(!live?.agentWorkflow||!live.assetSupplyPlan||!original.assetSupplyPlan)throw Error('correction_context_live_missing');
+ if(socialRequestHash(graphAuthority(live.agentWorkflow).director)!==socialRequestHash(graphAuthority(original.agentWorkflow).director))throw Error('correction_context_director_changed');
+ const originalShots=new Map(original.assetSupplyPlan.shots.map(shot=>[shot.shotId,shot]));
+ if(originalShots.size!==live.assetSupplyPlan.shots.length)throw Error('correction_context_scene_set_changed');
+ for(const shot of live.assetSupplyPlan.shots){const old=originalShots.get(shot.shotId);if(!old||old.sourceStrategy!==shot.sourceStrategy)throw Error('correction_context_route_changed');
+  if(!['owned_exact_local_video','customer_real_asset','customer_product_image_animation','motion_graphics','verified_fact_card'].includes(shot.sourceStrategy)&&socialRequestHash({sourceRefs:old.sourceRefs,digitalHumanPlan:old.digitalHumanPlan,productSceneReplication:old.productSceneReplication})!==socialRequestHash({sourceRefs:shot.sourceRefs,digitalHumanPlan:shot.digitalHumanPlan,productSceneReplication:shot.productSceneReplication}))throw Error('correction_context_paid_route_changed');}
+ const ids=live.assetSupplyPlan.shots.filter(shot=>shot.sourceStrategy==='authorized_digital_presenter').flatMap(shot=>shot.digitalHumanPlan?.presenterAssetIds?.length?shot.digitalHumanPlan.presenterAssetIds:shot.sourceRefs);
+ const voice=await readBoundPresenterVoice(input.dataStore,scope.tenantId,ids);
+ if(voice?.voiceId!==grant.selectedVoiceId||voice?.fingerprint!==grant.selectedVoiceFingerprint)throw Error('correction_context_voice_changed');
+ const approvedContext:SocialGraphApprovedContext={version:live.version,agentWorkflow:structuredClone(live.agentWorkflow),assetSupplyPlan:structuredClone(live.assetSupplyPlan),...(original.revisionPlanHash?{revisionPlanHash:original.revisionPlanHash}:{})};
+ const payload=compactGraphContextSnapshot({originalInputHash,originalApprovedContextHash:socialRequestHash(original),approvedContext,graphInputHash:socialProductionGraphInput(live,approvedContext).inputHash,authorizationRef:grant.authorizationRef});
+ if(!input.dataStore.compareAndSwap||!await input.dataStore.compareAndSwap('content_execution_jobs',row.id,{status:row.status,checkpoints:row.checkpoints,worker_id:row.worker_id,lease_expires_at:row.lease_expires_at},{checkpoints:{...checkpoints,'social.executor':{...socialObject(checkpoints['social.executor']),payload:compactGraphContextSnapshot(binding!)},'social.corrected_executor':{version:'1',inputHash:grant.recordHash,payload,updatedAt:new Date().toISOString()}},updated_at:new Date().toISOString()}))throw Error('correction_context_write_conflict');
+ return payload;
+}
+export function matchesAuthorizedCorrectionContext(job:ContentExecutionJob,context:SocialGraphApprovedContext,financialPlanHash:string,grantHash:string|undefined,graphInputHash?:string){
+ const entry=job.checkpoints['social.corrected_executor'],payload=socialObject(entry?.payload),parent=socialObject(job.checkpoints['social.executor']?.payload);
+ return (graphInputHash===undefined||payload?.graphInputHash===graphInputHash)&&!!grantHash&&entry?.inputHash===grantHash&&payload?.originalInputHash===financialPlanHash&&parent?.inputHash===financialPlanHash&&payload?.originalApprovedContextHash===socialRequestHash(readGraphContextSnapshot(parent))&&socialRequestHash(readGraphContextSnapshot(payload))===socialRequestHash(context);
+}
+
 export async function executeSocialProductionGraph(input: { repository: Starter198Repository; dataStore: DataStore; job: ContentExecutionJob;
   runtime?: SocialContentAutoProductionRuntime; assetSupplyAdapters?: SocialAssetSupplyProviderAdapter[]; assetSupplyRecoveryOnly?: boolean;
   materialEvidencePorts?: Parameters<typeof runSocialContentAutoProduction>[0]['materialEvidencePorts']; }) {
   const { repository, dataStore, job } = input;
   const binding = socialObject(job.checkpoints['social.executor']?.payload);
-  const approvedContext = socialObject(binding?.approvedContext) as unknown as SocialGraphApprovedContext | null;
+  const parentContext = readGraphContextSnapshot(binding);
+  const correctionLedger=new SocialContentTaskBudget(undefined,{authorization:async()=>{throw Error('read_only')},quote:async()=>{throw Error('read_only')},assertCurrent:async()=>{},verifyRejection:async()=>false});
+  const graphCorrection=correctionLedger.status({tenantId:job.tenantId,taskId:job.taskId,runId:job.runId,planHash:String(binding?.inputHash||'')})?.correctionAuthorization || null;
+  const corrected=readGraphContextSnapshot(socialObject(job.checkpoints['social.corrected_executor']?.payload));
+  const approvedContext=corrected&&matchesAuthorizedCorrectionContext(job,corrected,String(binding?.inputHash||''),graphCorrection?.recordHash)?corrected:parentContext;
   if (!approvedContext?.agentWorkflow || !approvedContext.version) throw new Error('user_input_required:graph_approved_context_missing');
   let detail: Detail | null;
   try {
@@ -208,10 +254,12 @@ export async function executeSocialProductionGraph(input: { repository: Starter1
   }
   if (!detail) throw new Error('user_input_required:graph_task_missing');
   const current = socialProductionGraphInput(detail, approvedContext);
-  if (binding?.inputHash !== current.inputHash || binding?.planVersion !== current.planVersion)
+  if(corrected&&matchesAuthorizedCorrectionContext(job,corrected,String(binding?.inputHash||''),graphCorrection?.recordHash)&&!matchesAuthorizedCorrectionContext(job,corrected,String(binding?.inputHash||''),graphCorrection?.recordHash,current.inputHash))throw Error('user_input_required:graph_corrected_context_changed');
+  if (!matchesAuthorizedCorrectionContext(job,approvedContext,String(binding?.inputHash||''),graphCorrection?.recordHash,current.inputHash)&&(binding?.inputHash !== current.inputHash || binding?.planVersion !== current.planVersion))
     throw new Error('user_input_required:graph_production_plan_changed:executor_binding');
+  const correctionRuntimeHash=graphCorrection?socialRequestHash({grantHash:graphCorrection.recordHash,policyVersion:'bound-voice-strict-approved-intro.v4'}):null;
   const identity = { tenantId: job.tenantId, taskId: job.taskId, runId: job.runId, jobId: job.id,
-    ...current, graphVersion: 'content-production.v1' as const };
+    ...current,...(graphCorrection?{inputHash:socialRequestHash({originalInputHash:current.inputHash,correctionHash:correctionRuntimeHash})}:{}), graphVersion: 'content-production.v1' as const };
   const refreshedJob = async () => {
     const { readContentExecutionJob } = await import('../contentExecution/durableQueue.js');
     const actual = await readContentExecutionJob(dataStore, job.tenantId, job.taskId, job.runId);
@@ -219,7 +267,8 @@ export async function executeSocialProductionGraph(input: { repository: Starter1
     return actual;
   };
   const approval = () => refreshedJob().then(actual => loadSocialProductionGraphApproval(repository, actual));
-  const resume = job.checkpoints['social.graph_review'] ? await approval() : null;
+  const newCorrectionGraph=graphCorrection&&!job.checkpoints[`lg.fix.${correctionRuntimeHash}.v1`];
+  const resume = !newCorrectionGraph&&job.checkpoints['social.graph_review'] ? await approval() : null;
   const phase = async (graphPhase: 'assets' | 'render' | 'quality') => {
     await assertCurrentContentExecutionActive();
     let latest: Detail | null;
@@ -231,7 +280,7 @@ export async function executeSocialProductionGraph(input: { repository: Starter1
     if (!latest || socialProductionGraphInput(latest, approvedContext).inputHash !== current.inputHash) throw new Error('user_input_required:graph_production_plan_changed:phase_input');
     await runSocialContentAutoProduction({ repository, tenantId: job.tenantId, userId: job.userId,
       taskId: job.taskId, runId: job.runId, graphPhase, runtime: input.runtime,
-      assetSupplyAdapters: input.assetSupplyAdapters, assetSupplyRecoveryOnly: input.assetSupplyRecoveryOnly, materialEvidencePorts: input.materialEvidencePorts, graphApprovedContext: approvedContext });
+      assetSupplyAdapters: input.assetSupplyAdapters, assetSupplyRecoveryOnly: input.assetSupplyRecoveryOnly, materialEvidencePorts: input.materialEvidencePorts, graphApprovedContext: approvedContext,...(graphCorrection?{graphCorrectionHash:correctionRuntimeHash!}:{}) });
     if (graphPhase === 'quality') {
       const artifact = await productionArtifact(repository, job);
       const evidence = artifactEvidence(artifact);
@@ -245,7 +294,7 @@ export async function executeSocialProductionGraph(input: { repository: Starter1
     return { artifactRefs: [], inputHash: checkpoint?.inputHash || current.inputHash,
       metadata: { checkpointStage: graphPhase === 'assets' ? 'social.asset_supply' : 'social.graph_render' } };
   };
-  const result = await runLangGraphProduction({ identity, dataStore, assertActive: assertCurrentContentExecutionActive,
+  const result = await runLangGraphProduction({ identity, dataStore,...(graphCorrection?{correctionHash:correctionRuntimeHash!}:{}), assertActive: assertCurrentContentExecutionActive,
     phases: { assets: () => phase('assets'), render: () => phase('render'), quality: () => phase('quality'),
       delivery: async () => {
         const accepted = await approval();
@@ -290,8 +339,8 @@ export async function executeSocialProductionGraph(input: { repository: Starter1
     const delivery = result.state.evidence.delivery;
     const metadata = socialObject(delivery?.metadata);
     if (!metadata?.artifactId || !metadata.packageId || !result.state.approval) throw new Error('graph_completion_business_evidence_missing');
-    await recordCurrentContentExecutionCheckpoint({ stage: 'social.graph_completion', version: '1', inputHash: current.inputHash,
-      payload: { ...identity, approval: result.state.approval, artifactIds: [metadata.artifactId], packageIds: [metadata.packageId], externalPublishPerformed: false } });
+    await recordCurrentContentExecutionCheckpoint({ stage: 'social.graph_completion', version: '1', inputHash: identity.inputHash,
+      payload: { ...identity,...(graphCorrection?{financialPlanHash:String(binding?.inputHash),correctionHash:graphCorrection.recordHash,correctionRuntimeHash}:{}), approval: result.state.approval, artifactIds: [metadata.artifactId], packageIds: [metadata.packageId], externalPublishPerformed: false } });
   }
   return result;
 }
@@ -312,9 +361,12 @@ export async function resumeApprovedSocialProductionGraph(input: {
   if (pause?.origin !== 'workflow_review' || expected?.waitingReview !== true || expected.artifactId !== input.artifactId
     || !await loadSocialProductionGraphApproval(input.repository, job)) return null;
   const binding = socialObject(job.checkpoints['social.executor']?.payload);
-  const approvedContext = socialObject(binding?.approvedContext) as unknown as SocialGraphApprovedContext | undefined;
+  const ledger=new SocialContentTaskBudget(undefined,{authorization:async()=>{throw Error('read_only')},quote:async()=>{throw Error('read_only')},assertCurrent:async()=>{},verifyRejection:async()=>false});
+  const grant=ledger.status({tenantId:job.tenantId,taskId:job.taskId,runId:job.runId,planHash:String(binding?.inputHash)})?.correctionAuthorization;
+  const corrected=readGraphContextSnapshot(socialObject(job.checkpoints['social.corrected_executor']?.payload));
+  const approvedContext=corrected&&matchesAuthorizedCorrectionContext(job,corrected,String(binding?.inputHash),grant?.recordHash)?corrected:readGraphContextSnapshot(binding);
   const detail = approvedContext?.agentWorkflow ? await readSocialProductionGraphDetail(input, approvedContext) : null;
-  if (!detail || !approvedContext?.agentWorkflow || socialProductionGraphInput(detail, approvedContext).inputHash !== binding?.inputHash) throw new Error('user_input_required:graph_production_plan_changed');
+  if (!detail || !approvedContext?.agentWorkflow || (socialProductionGraphInput(detail, approvedContext).inputHash !== binding?.inputHash&&!matchesAuthorizedCorrectionContext(job,approvedContext,String(binding?.inputHash),grant?.recordHash,socialProductionGraphInput(detail,approvedContext).inputHash))) throw new Error('user_input_required:graph_production_plan_changed');
   if (job.workerId !== null || job.leaseExpiresAt !== null) return null;
   const resumed = await withStarter198RunMutationLease({ dataStore, tenantId: job.tenantId, runId: job.runId, action: async () => {
     const run = await input.repository.get(STARTER_COLLECTIONS.runs, job.tenantId, job.runId);

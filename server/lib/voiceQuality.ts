@@ -134,13 +134,15 @@ export async function inspectGeneratedVoice(input: {
   expectedText: string;
   language: string;
   asrRequired?: boolean;
+  /** A separately metered file alignment will verify this exact audio. */
+  deferAsrToAlignment?: boolean;
 }): Promise<VoiceQualityReport> {
   if (!fs.existsSync(input.filePath)) throw new Error('口播质检文件不存在');
   const pcm = await decodePcm(input.filePath);
   const acoustic = evaluateVoicePcm(pcm);
   const failures = [...acoustic.failures];
   const asrConfigured = dashscopeCredentialConfigured();
-  const asrEnabled = process.env.TTS_ASR_QA_ENABLED !== 'false' && asrConfigured;
+  const asrEnabled = !input.deferAsrToAlignment && process.env.TTS_ASR_QA_ENABLED !== 'false' && asrConfigured;
   const asrRequired = input.asrRequired ?? (process.env.TTS_ASR_QA_REQUIRED === 'true' || process.env.NODE_ENV === 'production');
   let accuracy: number | null = null;
   if (asrEnabled) {

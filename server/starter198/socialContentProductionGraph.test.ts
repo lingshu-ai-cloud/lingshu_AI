@@ -75,3 +75,15 @@ test('approval requires exact artifact version/hash and successful individual or
     assert.equal((await store.getById<Record<string,unknown>>('content_execution_jobs',job.id))!.status,'paused');
   }finally{rmSync(folder,{recursive:true,force:true});}
 });
+
+test('corrected execution context requires exact grant, parent plan and persisted context',async()=>{
+ const {matchesAuthorizedCorrectionContext}=await import('./socialContentProductionGraph.js');
+ const parent=createSocialProductionExecutorCheckpoint(detail(),{SOCIAL_CONTENT_EXECUTOR:'langgraph'});
+ const context=structuredClone(parent.payload.approvedContext!);context.version='2';
+ const grantHash='d'.repeat(64);
+ const job={checkpoints:{'social.executor':parent,'social.corrected_executor':{inputHash:grantHash,payload:{originalInputHash:parent.inputHash,originalApprovedContextHash:socialRequestHash(parent.payload.approvedContext),approvedContext:context}}}} as any;
+ assert.equal(matchesAuthorizedCorrectionContext(job,context,parent.inputHash,grantHash),true);
+ assert.equal(matchesAuthorizedCorrectionContext(job,context,parent.inputHash,'e'.repeat(64)),false);
+ assert.equal(matchesAuthorizedCorrectionContext(job,context,'f'.repeat(64),grantHash),false);
+ assert.equal(matchesAuthorizedCorrectionContext(job,{...context,version:'3'},parent.inputHash,grantHash),false);
+});

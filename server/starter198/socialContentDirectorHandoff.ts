@@ -57,6 +57,13 @@ function assertHandoffIntegrity(handoff: SocialDirectorContentHandoff): void {
   }
 }
 
+export function socialDirectorHandoffWithBoundVoice(handoff:SocialDirectorContentHandoff,voice:SocialDirectorContentHandoff['direction']['voiceover']['voice']):SocialDirectorContentHandoff{
+  assertHandoffIntegrity(handoff);
+  const {handoffHash:_previousHash,...rest}=handoff;
+  const payload={...rest,direction:{...rest.direction,voiceover:{...rest.direction.voiceover,voice}}};
+  return {...payload,handoffHash:socialRequestHash(payload)};
+}
+
 /** Exact immutable execution contract handed to Content Agent. No prompt,
  * brief, raw assets or generative/rewrite input exists in this object. */
 export function socialDirectorSpokenNarration(scenes: ReadonlyArray<{voiceover: string}>, language: string): string {
@@ -161,31 +168,9 @@ export function socialDirectorVoiceAlignedCaptionCues(
     .filter(cue => Number.isFinite(cue.start) && Number.isFinite(cue.end) && cue.end > cue.start && cue.text.trim())
     .sort((left, right) => left.start - right.start);
   if (!cues.length) return socialDirectorSceneTimingCues(handoff, limit);
-  const units = (value: string) => Math.max(1, [...value.normalize('NFKC')].filter(char => /[\p{L}\p{N}]/u.test(char)).length);
-  const cueUnits = cues.map(cue => units(cue.text));
-  const cueTotal = cueUnits.reduce((sum, value) => sum + value, 0);
-  const spokenScenes = handoff.scenes.filter(scene => scene.voiceover.trim() || scene.caption.trim());
-  const sceneUnits = spokenScenes.map(scene => units(scene.voiceover || scene.caption));
-  const sceneTotal = sceneUnits.reduce((sum, value) => sum + value, 0);
-  const timeAt = (position: number): number => {
-    let consumed = 0;
-    for (let index = 0; index < cues.length; index += 1) {
-      const next = consumed + cueUnits[index]!;
-      if (position <= next || index === cues.length - 1) {
-        const ratio = Math.max(0, Math.min(1, (position - consumed) / cueUnits[index]!));
-        return cues[index]!.start + (cues[index]!.end - cues[index]!.start) * ratio;
-      }
-      consumed = next;
-    }
-    return cues.at(-1)!.end;
-  };
-  let sceneCursor = 0;
-  return spokenScenes.map((scene, index) => {
-    const start = index === 0 ? cues[0]!.start : timeAt(cueTotal * sceneCursor / sceneTotal);
-    sceneCursor += sceneUnits[index]!;
-    const end = index === spokenScenes.length - 1 ? cues.at(-1)!.end : timeAt(cueTotal * sceneCursor / sceneTotal);
-    return { start: roundSeconds(start), end: roundSeconds(Math.max(start + .05, end)), text: scene.caption };
-  });
+  // Measured transcript boundaries are the master timeline. Caption styling
+  // may wrap within a cue; scene text length must never move its audio time.
+  return cues;
 }
 
 export function socialDirectorRenderTimeline(

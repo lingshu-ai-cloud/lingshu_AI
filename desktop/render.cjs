@@ -361,7 +361,7 @@ function cuesToAss(cues, width, height, disclaimer = '', duration = 0, style = {
   const outlineColor = assColor(style.outlineColor, '&HAA000000&');
   // Scale from the short edge so a 1080px-wide portrait and 1080px-high
   // landscape render use the same perceived subtitle size.
-  const fontSize = Math.round(Math.min(width, height) / 18 * Math.max(.7, Math.min(1.4, Number(style.fontScale) || 1.2)));
+  const fontSize = Math.round(Math.min(width, height) / 18 * Math.max(.7, Math.min(1.5, Number(style.fontScale) || 1.45)));
   const marginX = Math.round(width * .085);
   const rawCues = Array.isArray(cues) ? cues : [];
   const normalizedCues = [
@@ -735,9 +735,10 @@ async function composite(manifest, onProgress = () => {}, outDir) {
     // Do not run loudnorm against looped inputs: it can keep the filter graph
     // open after the one-shot render interval. Source tracks are already
     // attenuated by the configured mix volume.
-    const musicNormalize = bgmFile && !localClips.some(clip => clip.production?.sound)
-      ? 'loudnorm=I=-16:TP=-2:LRA=11,'
-      : '';
+    // Catalog and tenant tracks have very different mastering levels. Always
+    // normalize an actual music input before applying the Director's frozen
+    // mix percentage; scene sound policy controls muting, not track loudness.
+    const musicNormalize = bgmFile ? 'loudnorm=I=-16:TP=-2:LRA=11,' : '';
     const rawBgmVol = Number(spec.bgmVol);
     const rawVoiceVol = Number(spec.voiceVol);
     const vol = Math.min(1, Math.max(0, (Number.isFinite(rawBgmVol) ? rawBgmVol : 35) / 100));

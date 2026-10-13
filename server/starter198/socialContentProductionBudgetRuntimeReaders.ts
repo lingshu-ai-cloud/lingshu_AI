@@ -1,3 +1,4 @@
+import type { BoundPresenterVoice } from './socialContentBoundPresenterVoice.js';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -17,6 +18,7 @@ import {getQwenProviderBinding} from '../agents/qwen.js';
  * different formula cannot be replaced by a speculative voice selection. */
 export function createProductionBudgetRuntimeReaders(input: {
     tenantId?: string;
+    readPresenterVoice?: () => Promise<BoundPresenterVoice | null>;
     requiresMeasuredAlignment?: boolean;
     frozenTrackSeconds?: number;
     formula?: InternalSocialContentFormula | null;
@@ -36,7 +38,7 @@ export function createProductionBudgetRuntimeReaders(input: {
                 const p=voicePlan?.primary;if(!p)return null;
                 const index=Number(requirement.key.match(/^voice:(\d+):tts$/)?.[1]);
                 if(!Number.isSafeInteger(index)||voicePlan?.texts[index]!==requirement.text||!p.texts[index])return null;
-                return {provider:p.provider,model:p.model,accountRef:productionBillingAccountRef(p.provider,p.endpoint,p.accountKeyHash),routeEvidenceRef:'studio-native:'+paidProductionHash(p),usageBoundRef:'actual-native-prepared-text:'+paidProductionHash({text:p.texts[index],voiceId:p.voiceId}),maximumAttempts:1,maximumUnits:{characters:nativeVoiceBillableCharacters(p.texts[index])}} satisfies BoundPaidRoute;
+                return {provider:p.provider,model:p.model,accountRef:productionBillingAccountRef(p.provider,p.endpoint,p.accountKeyHash),routeEvidenceRef:'studio-native:'+paidProductionHash(p),usageBoundRef:'actual-native-prepared-text:'+paidProductionHash({text:p.texts[index],voiceId:p.voiceId}),maximumAttempts:1,maximumUnits:p.provider==='heygen'?{audioSeconds:frozenTrackSeconds*2}:{characters:nativeVoiceBillableCharacters(p.texts[index])}} satisfies BoundPaidRoute;
             }
             if(requirement.stage==='voice_alignment'&&voicePlan?.asrConfigured) {
                 let b:ReturnType<typeof getQwenProviderBinding>;try{b=getQwenProviderBinding();}catch{return null;}
@@ -60,15 +62,15 @@ export function createProductionBudgetRuntimeReaders(input: {
             const direction = socialDirectorFrozenDirection({ baseline, formula: input.formula, duration: 0 });
             const text = socialDirectorSpokenNarration(baseline.scenes.map(scene => ({ voiceover: scene.voiceover || scene.narration })), baseline.language);
             if(!input.tenantId)return null;
-            voicePlan=resolveStudioVoiceExecutionPlan({tenantId:input.tenantId,text,voice:direction.voiceover.voice,language:baseline.language,style:{preset:direction.voiceover.preset,speed:direction.voiceover.speed,pauseStyle:direction.voiceover.pauseStyle},env});
+            voicePlan=resolveStudioVoiceExecutionPlan({tenantId:input.tenantId,text,voice:(await input.readPresenterVoice?.())?.logicalVoice || direction.voiceover.voice,language:baseline.language,style:{preset:direction.voiceover.preset,speed:direction.voiceover.speed,pauseStyle:direction.voiceover.pauseStyle},env});
             // Select a supported native CNY route while creating a new paid plan;
             // freeze this choice in canonical routes. Existing execution never
             // changes provider implicitly after an accepted request.
-            if(!voicePlan.custom&&voicePlan.primary?.provider==='minimax'&&new URL(voicePlan.primary.endpoint).hostname==='api.minimax.io'&&(env.QWEN_TTS_MODEL||'qwen3-tts-flash')==='qwen3-tts-flash') {
-                const qwenPlan=resolveStudioVoiceExecutionPlan({tenantId:input.tenantId,text,voice:direction.voiceover.voice,language:baseline.language,style:{preset:direction.voiceover.preset,speed:direction.voiceover.speed,pauseStyle:direction.voiceover.pauseStyle},env,nativeProvider:'qwen'});
+            if(!voicePlan.logicalVoice.startsWith('heygen:')&&!voicePlan.custom&&voicePlan.primary?.provider==='minimax'&&new URL(voicePlan.primary.endpoint).hostname==='api.minimax.io'&&(env.QWEN_TTS_MODEL||'qwen3-tts-flash')==='qwen3-tts-flash') {
+                const qwenPlan=resolveStudioVoiceExecutionPlan({tenantId:input.tenantId,text,voice:(await input.readPresenterVoice?.())?.logicalVoice || direction.voiceover.voice,language:baseline.language,style:{preset:direction.voiceover.preset,speed:direction.voiceover.speed,pauseStyle:direction.voiceover.pauseStyle},env,nativeProvider:'qwen'});
                 if(qwenPlan.primary&&qwenPlan.primary.endpoint==='https://dashscope.aliyuncs.com/api/v1/services/aigc/multimodal-generation/generation')voicePlan=qwenPlan;
             }
-            return {mode:voicePlan.mode,lines:voicePlan.mode==='continuous'?voicePlan.texts:voicePlan.lines,requiresClone:Boolean(voicePlan.custom?.requiresClone||voicePlan.custom?.requiresActivation),allowFallback:false,requiresAsr:voicePlan.asrConfigured,requiresAlignment:input.requiresMeasuredAlignment===true,reuseReceiptRef:null};
+            return {mode:voicePlan.mode,lines:voicePlan.mode==='continuous'?voicePlan.texts:voicePlan.lines,requiresClone:Boolean(voicePlan.custom?.requiresClone||voicePlan.custom?.requiresActivation),allowFallback:false,requiresAsr:voicePlan.asrConfigured,requiresAlignment:input.requiresMeasuredAlignment===true,reuseReceiptRef:null,presenterBinding:await input.readPresenterVoice?.() || null};
         },
         async readAnalysisFrames(asset) {
             if (asset.type !== 'video' || !asset.localPath || (env.VIDEO_ANALYSIS_PROVIDER || 'qwen').trim().toLowerCase() !== 'qwen')

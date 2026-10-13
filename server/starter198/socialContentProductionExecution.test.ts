@@ -1,10 +1,13 @@
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
 import {
   buildSocialShootingPlanArtifactContent,
   archiveSocialGeneratedShots,
   socialGeneratedShotArchiveCandidates,
   bindCanonicalTypeAwareRouting,
+  rebindDivergentLocalRoutesFromApprovedContext,
   assertCompleteTypeAwareExecutionPlan,
   SOCIAL_SHOOTING_PLAN_SCHEMA,
 } from './socialContentProductionExecution.js';
@@ -38,7 +41,7 @@ const detail: any = {
 };
 
 {
-  const shots=Array.from({length:37},(_,i)=>({shotId:`replication-reference-shot-${i+1}`,sourceStrategy:i<21?'aigc_product_scene_replication':'customer_real_asset',sourceRefs:[],truthBoundary:{},materialRouting:{schemaVersion:'social-material-routing.v1',materialType:i<21?'product':'factory',policy:i<21?'local_first_product_i2v':'local_only',localMatch:{state:i<21?'missing':'matched',sourceRefs:i<21?[]:['local'],evidenceRef:i<21?null:'evidence'},...(i<21?{generation:{method:'reference_first_frame_product_replacement_i2v',durationSeconds:3,productImageRefs:['RS-001']}}:{})},...(i<21?{productSceneReplication:{schemaVersion:'social-product-scene-replication.v1',sceneTemplateKey:`scene-${i}`,productIdentity:{groups:[]}}}:{})}));
+  const shots=Array.from({length:37},(_,i)=>({shotId:`replication-reference-shot-${i+1}`,sourceStrategy:i<21?'aigc_product_scene_replication':'customer_real_asset',sourceRefs:i<21?[]:['local'],fallbackSourceStrategy:null,truthBoundary:{},materialRouting:{schemaVersion:'social-material-routing.v1',materialType:i<21?'product':'factory',policy:i<21?'local_first_product_i2v':'local_only',localMatch:{state:i<21?'missing':'matched',sourceRefs:i<21?[]:['local'],evidenceRef:i<21?null:'evidence'},...(i<21?{generation:{method:'reference_first_frame_product_replacement_i2v',durationSeconds:3,productImageRefs:['RS-001']}}:{})},...(i<21?{productSceneReplication:{schemaVersion:'social-product-scene-replication.v1',sceneTemplateKey:`scene-${i}`,productIdentity:{groups:[]}}}:{})}));
   const canonical:any={planVersion:'27',materialRoutingPolicyVersion:'type-aware.v1',shots};
   const approved:any={...structuredClone(canonical),shots:canonical.shots.map((shot:any)=>{const copy=structuredClone(shot);delete copy.materialRouting;delete copy.productSceneReplication;return copy})};
   const rebound=bindCanonicalTypeAwareRouting(approved,canonical);
@@ -49,6 +52,12 @@ const detail: any = {
   const schedulerOverlay=structuredClone(approved);
   const finalAfterAllOverlays=bindCanonicalTypeAwareRouting(schedulerOverlay,canonical);
   assert.doesNotThrow(()=>assertCompleteTypeAwareExecutionPlan(finalAfterAllOverlays));
+  const staleRealAsset=structuredClone(approved);
+  Object.assign(staleRealAsset.shots[21],{sourceStrategy:'aigc_product_scene_replication',sourceRefs:['stale'],fallbackSourceStrategy:'motion_graphics'});
+  const restoredRealAsset=bindCanonicalTypeAwareRouting(staleRealAsset,canonical).shots[21];
+  assert.equal(restoredRealAsset.sourceStrategy,'customer_real_asset');
+  assert.deepEqual(restoredRealAsset.sourceRefs,canonical.shots[21].sourceRefs);
+  assert.equal(restoredRealAsset.fallbackSourceStrategy,canonical.shots[21].fallbackSourceStrategy);
   const localProductFallback=structuredClone(finalAfterAllOverlays);
   Object.assign(localProductFallback.shots[0],{sourceStrategy:'customer_real_asset',sourceRefs:['local-product'],selectedMaterialSegment:{sourceRef:'local-product',segmentId:'cut',startSeconds:0,endSeconds:3}});
   delete localProductFallback.shots[0].productSceneReplication;
@@ -56,6 +65,23 @@ const detail: any = {
   assert.doesNotThrow(()=>assertCompleteTypeAwareExecutionPlan(localProductFallback));
   assert.throws(()=>assertCompleteTypeAwareExecutionPlan(schedulerOverlay),/execution_routing_missing:replication-reference-shot-1/);
   assert.throws(()=>bindCanonicalTypeAwareRouting({...approved,shots:approved.shots.slice(1)},canonical),/scene_set_changed/);
+}
+
+{
+  const dir=fs.mkdtempSync(path.join(os.tmpdir(),'approved-local-route-'));
+  try{
+    const file=path.join(dir,'owned.mp4');fs.writeFileSync(file,'verified-local-video');
+    const stale:any={shotId:'shot-16',sourceStrategy:'customer_real_asset',sourceRefs:['missing'],fallbackSourceStrategy:null,
+      truthBoundary:{subject:'customer_factory'},materialRouting:{schemaVersion:'social-material-routing.v1',materialType:'factory',policy:'local_only',localMatch:{state:'matched',sourceRefs:['missing'],evidenceRef:'old-proof'}}};
+    const approved:any={...stale,sourceRefs:['owned-video'],materialRouting:{...stale.materialRouting,localMatch:{state:'matched',sourceRefs:['owned-video'],evidenceRef:'approved-proof'}}};
+    const asset:any={id:'owned-video',sourceId:'library-owned',type:'video',localPath:file,contentHash:'a'.repeat(64)};
+    const result=rebindDivergentLocalRoutesFromApprovedContext({plan:{shots:[stale]} as any,approved:{shots:[approved]} as any,assets:[asset]});
+    assert.deepEqual(result.plan.shots[0]?.sourceRefs,['owned-video']);
+    assert.equal(result.rebindings[0]?.approvalEvidenceRef,'approved-proof');
+    assert.deepEqual(rebindDivergentLocalRoutesFromApprovedContext({plan:{shots:[stale]} as any,approved:{shots:[approved]} as any,assets:[]}).rebindings,[]);
+    const thirdParty={...approved,sourceRefs:['unowned-video'],materialRouting:{...approved.materialRouting,localMatch:{state:'matched',sourceRefs:['unowned-video'],evidenceRef:'approved-proof'}}};
+    assert.deepEqual(rebindDivergentLocalRoutesFromApprovedContext({plan:{shots:[stale]} as any,approved:{shots:[thirdParty]} as any,assets:[{...asset,id:'unowned-video'}]}).rebindings,[]);
+  }finally{fs.rmSync(dir,{recursive:true,force:true});}
 }
 
 const content: any = buildSocialShootingPlanArtifactContent(detail);
@@ -89,8 +115,10 @@ const wholeFilmBudget=source.indexOf('const productionBudget = await prepareSoci
 const presenterProvider=source.indexOf('motherSupply=await preparePresenterMotherSupply(');
 assert.ok(wholeFilmBudget>0&&presenterPrepare>wholeFilmBudget&&presenterPause>presenterPrepare&&presenterProvider>presenterPause,
   'whole-film admission must prepare and persist review nodes before any mother provider invocation');
-assert.match(source,/preparePresenterFirstFrameReviews:async[\s\S]*?await input\.runtime\.preparePresenterMotherFirstFrames[\s\S]*?status:'awaiting_explicit_user_confirmation'/,
-  'preflight callback must checkpoint inspectable review nodes before explicit confirmation is read');
+assert.match(source,/preparePresenterFirstFrameReviews:async[\s\S]*?await input\.runtime\.preparePresenterMotherFirstFrames[\s\S]*?automaticallyConfirmPresenterFirstFrameApproval[\s\S]*?status:'automatically_confirmed_after_static_qa'/,
+  'preflight callback must automatically confirm QA-passed review nodes with the trusted system actor');
+assert.doesNotMatch(source,/awaiting_explicit_user_confirmation|presenter_first_frames_pending_confirmation/,
+  'production must never pause for a user confirmation after static first-frame QA passes');
 assert.match(source,/if\(!input\.runtime\?\.evaluatePresenterMotherDynamicQa\)throw Error\('presenter_mother_dynamic_qa_port_missing'\)[\s\S]*?await input\.runtime!\.evaluatePresenterMotherDynamicQa!/,
   'dynamic presenter output must pass the bound identity and lip-sync QA port before crop receipts');
 assert.match(source,/const frozenReviewedSupplyPlan = reviewedSupplyPlan \? structuredClone\(reviewedSupplyPlan\) : null;[\s\S]*?frozenSupplyPlan: frozenReviewedSupplyPlan![\s\S]*?planHash:socialRequestHash\(frozenReviewedSupplyPlan\)/,

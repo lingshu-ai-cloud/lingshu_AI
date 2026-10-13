@@ -204,6 +204,8 @@ export function alignSocialAssetSupplyPlanToBaseline(input: {
       if (!original.materialRouting) {
         delete shot.materialRouting;
       }
+      const approvedFirstFrame=(original as typeof original & {approvedFirstFrame?:unknown}).approvedFirstFrame;
+      if(approvedFirstFrame)(shot as typeof shot & {approvedFirstFrame?:unknown}).approvedFirstFrame=structuredClone(approvedFirstFrame);
       // Versioned material routing is a reviewed production decision. Keep it
       // intact rather than letting legacy reference/capability inference replan it.
       if (original.materialRouting) {
@@ -217,6 +219,13 @@ export function alignSocialAssetSupplyPlanToBaseline(input: {
           && routing.localMatch.state === 'missing'
           && routing.generation) {
           preserved.sourceRefs = [...routing.generation.productImageRefs];
+        }
+        if(routing.policy==='local_only'&&routing.localMatch.state==='matched'){
+          preserved.sourceStrategy='customer_real_asset';
+          preserved.sourceRefs=[...routing.localMatch.sourceRefs];
+          preserved.fallbackSourceStrategy=null;
+          if(preserved.selectedMaterialSegment&&!preserved.sourceRefs.includes(preserved.selectedMaterialSegment.sourceRef))
+            delete preserved.selectedMaterialSegment;
         }
         return preserved;
       }
@@ -323,7 +332,8 @@ function materialStrategyOrder(shot: SocialAssetSupplyShotPlan): SocialShotSourc
   if (['factory', 'consumer_demo', 'general', 'unknown'].includes(routing.materialType)) {
     if (routing.policy !== 'local_only' || routing.generation || !matched
       || shot.sourceStrategy !== 'customer_real_asset' || shot.fallbackSourceStrategy !== null
-      || !shot.sourceRefs.length || shot.sourceRefs.some(ref => !local.sourceRefs.includes(ref))) fail('local_real_video_required');
+      || !shot.sourceRefs.length || shot.sourceRefs.some(ref => !local.sourceRefs.includes(ref)))
+      fail(`local_real_video_required:policy=${routing.policy}:generation=${Boolean(routing.generation)}:matched=${matched}:strategy=${shot.sourceStrategy}:fallback=${String(shot.fallbackSourceStrategy)}:refs=${shot.sourceRefs.length}:refMatch=${shot.sourceRefs.every(ref=>local.sourceRefs.includes(ref))}`);
     return ['customer_real_asset'];
   }
   if (routing.materialType === 'product') {
@@ -461,7 +471,8 @@ export async function executeSocialAssetSupplyPlan(input: {
             availableAssets: input.availableAssets,
           });
           if (!candidate) {
-            attempts.push({ sourceStrategy: strategy, adapterId: adapter.adapterId, status: 'unavailable', reason: null });
+            attempts.push({ sourceStrategy: strategy, adapterId: adapter.adapterId, status: 'unavailable', reason: adapter.adapterId==='existing_customer_asset.v1'
+              ?`refs=${shot.sourceRefs.join(',')};segment=${shot.selectedMaterialSegment?.segmentId??'none'};available=${input.availableAssets.filter(asset=>shot.sourceRefs.includes(asset.id)||shot.sourceRefs.includes(asset.sourceId)).map(asset=>asset.id).join(',')}`:null });
             continue;
           }
           if (candidate.sourceStrategy !== strategy) {

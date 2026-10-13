@@ -89,3 +89,14 @@ test('a product scene without a direct match borrows the best local candidate fr
   assert.equal(result.shots[1]!.sourceRefs[0],'whole-library-factory');
   assert.ok(typeAwareRequiredMaterialIds(result).includes('whole-library-factory'));
 });
+
+test('budget degradation exhausts distinct local assets and segments before reuse',()=>{
+  const a1=asset('a-1',['product'],'other',.9),a2=asset('a-2',['product'],'other',.8),b1=asset('b-1',['product'],'other',.7);
+  a2.sourceRef='asset-a';a2.materialSegments[0].segmentId='segment-a-2';
+  a1.sourceRef='asset-a';a1.materialSegments[0].segmentId='segment-a-1';
+  b1.sourceRef='asset-b';b1.materialSegments[0].segmentId='segment-b-1';
+  const f=fixture({S1:[a1,a2,b1],S2:[a1,a2,b1],S3:[a1,a2,b1]},10);
+  const result=applyPresenterFirstBudgetDegradation({...f,maximumCny:10});
+  assert.deepEqual(result.shots.slice(1).map((item:any)=>item.sourceRefs[0]),['asset-a','asset-b','asset-a']);
+  assert.deepEqual(result.shots.slice(1).map((item:any)=>item.selectedMaterialSegment.segmentId),['segment-a-1','segment-b-1','segment-a-2']);
+});

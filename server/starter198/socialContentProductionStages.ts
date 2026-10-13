@@ -35,6 +35,64 @@ export interface SocialRenderStageReceipt {
   inputHash: string;
 }
 
+export interface SocialBgmAudibilityEvidence {
+  required: boolean;
+  configuredVolume: number;
+  inputMeanDb: number | null;
+  inputMaxDb: number | null;
+  normalizedMeanDb: number | null;
+  normalizedMaxDb: number | null;
+  finalMixMeanDb: number | null;
+  finalMixMaxDb: number | null;
+  passed: boolean;
+  failure: string | null;
+}
+
+function volumeReading(stderr: string): { meanDb: number | null; maxDb: number | null } {
+  const read = (label: string) => {
+    const match = stderr.match(new RegExp(`${label}:\\s*(-?(?:\\d+(?:\\.\\d+)?|inf))\\s*dB`, 'i'));
+    const value = match ? Number(match[1]) : Number.NaN;
+    return Number.isFinite(value) ? value : null;
+  };
+  return { meanDb: read('mean_volume'), maxDb: read('max_volume') };
+}
+
+async function inspectBgmAudibility(input: {
+  source: string;
+  volume: number;
+  outputPath: string;
+  runFfmpeg: NonNullable<SocialContentAutoProductionRuntime['runFfmpeg']>;
+}): Promise<SocialBgmAudibilityEvidence> {
+  const volume = Math.max(0, Math.min(100, Number(input.volume) || 0));
+  const base = { required: true, configuredVolume: volume };
+  const source = await input.runFfmpeg(['-i', input.source, '-map', '0:a:0', '-af', 'volumedetect', '-f', 'null', '-'], false, { logLevel: 'info' });
+  const normalized = await input.runFfmpeg(['-i', input.source, '-map', '0:a:0', '-af', `loudnorm=I=-16:TP=-2:LRA=11,volume=${(volume / 100).toFixed(2)},volumedetect`, '-f', 'null', '-'], false, { logLevel: 'info' });
+  const mixed = await input.runFfmpeg(['-i', input.outputPath, '-map', '0:a:0', '-af', 'volumedetect', '-f', 'null', '-'], false, { logLevel: 'info' });
+  const sourceLevel = volumeReading(source.stderr);
+  const normalizedLevel = volumeReading(normalized.stderr);
+  const mixedLevel = volumeReading(mixed.stderr);
+  const failure = !source.ok || sourceLevel.meanDb === null || sourceLevel.maxDb === null || sourceLevel.maxDb < -80
+    ? '配乐输入为空、静音或无法测量'
+    : volume <= 0
+      ? '编导方案的配乐音量为零'
+      : !normalized.ok || normalizedLevel.meanDb === null || normalizedLevel.maxDb === null || normalizedLevel.meanDb < -42
+        ? '配乐按冻结音量混合后不可闻'
+        : !mixed.ok || mixedLevel.meanDb === null || mixedLevel.maxDb === null || mixedLevel.meanDb < -50
+          ? '成片最终混合音轨不可闻'
+          : null;
+  return {
+    ...base,
+    inputMeanDb: sourceLevel.meanDb,
+    inputMaxDb: sourceLevel.maxDb,
+    normalizedMeanDb: normalizedLevel.meanDb,
+    normalizedMaxDb: normalizedLevel.maxDb,
+    finalMixMeanDb: mixedLevel.meanDb,
+    finalMixMaxDb: mixedLevel.maxDb,
+    passed: failure === null,
+    failure,
+  };
+}
+
 /** Director records retain immutable semantic lineage. OS workspace locations
  * are rehydrated only from the same verified asset identity and content bytes. */
 export async function rebindSocialGraphRenderSources(handoff: SocialDirectorContentHandoff, assets: ProductionAsset[]): Promise<SocialDirectorContentHandoff> {
@@ -109,16 +167,25 @@ export async function executeSocialQualityStage(input: {
   runFfmpeg: NonNullable<SocialContentAutoProductionRuntime['runFfmpeg']>;
   checkpointEnabled?: boolean;
   verifyDuration?: boolean;
+  expectedBgm?: { source: string; sourceHash: string; volume: number };
 }) {
   const sha256 = input.checkpointEnabled === false ? '' : await mediaHash(input.outputPath);
-  const inputHash = socialRequestHash({ sha256, duration: input.duration, scenes: input.scenes, expectedUniqueScenes: input.expectedUniqueScenes, verifyDuration: input.verifyDuration === true });
-  type Report = { quality: Awaited<ReturnType<typeof input.inspectVisuals>>; sceneQuality: Awaited<ReturnType<typeof input.inspectScenes>>; audio: { ok: boolean }; measuredDurationSeconds?: number };
+  const inputHash = socialRequestHash({ sha256, duration: input.duration, scenes: input.scenes, expectedUniqueScenes: input.expectedUniqueScenes, verifyDuration: input.verifyDuration === true,
+    expectedBgm: input.expectedBgm ? { sourceHash: input.expectedBgm.sourceHash, volume: input.expectedBgm.volume } : null });
+  type Report = { quality: Awaited<ReturnType<typeof input.inspectVisuals>>; sceneQuality: Awaited<ReturnType<typeof input.inspectScenes>>; audio: { ok: boolean; bgm?: SocialBgmAudibilityEvidence }; measuredDurationSeconds?: number };
   const saved = input.checkpointEnabled === false ? null : readCurrentContentExecutionCheckpoint<Report>({ stage: 'social.graph_quality', version: '1', inputHash });
   if (input.checkpointEnabled !== false) await assertCurrentContentExecutionActive();
   if (saved) return saved;
   const quality = await input.inspectVisuals({ outputPath: input.outputPath, expectedDuration: input.duration, expectedUniqueScenes: input.expectedUniqueScenes });
   const sceneQuality = await input.inspectScenes({ outputPath: input.outputPath, scenes: input.scenes, requireDistinct: true });
   const audio = await input.runFfmpeg(['-i', input.outputPath, '-map', '0:a:0', '-t', String(Math.min(2, input.duration)), '-f', 'null', '-']);
+  const bgm = input.expectedBgm
+    ? await inspectBgmAudibility({ source: input.expectedBgm.source, volume: input.expectedBgm.volume, outputPath: input.outputPath, runFfmpeg: input.runFfmpeg })
+    : undefined;
+  if (bgm && !bgm.passed) {
+    quality.passed = false;
+    quality.failures.push(bgm.failure || '配乐可闻性检查失败');
+  }
   let measuredDurationSeconds: number | undefined;
   if (input.verifyDuration) {
     // Decode the video stream through EOF: container/audio duration cannot prove
@@ -132,7 +199,7 @@ export async function executeSocialQualityStage(input: {
       quality.failures.push(`实际视频时长 ${measuredDurationSeconds.toFixed(3)} 秒与锁定 ${input.duration.toFixed(3)} 秒不一致`);
     }
   }
-  const report: Report = { quality, sceneQuality, audio: { ok: audio.ok }, ...(input.verifyDuration ? { measuredDurationSeconds } : {}) };
+  const report: Report = { quality, sceneQuality, audio: { ok: audio.ok, ...(bgm ? { bgm } : {}) }, ...(input.verifyDuration ? { measuredDurationSeconds } : {}) };
   if (input.checkpointEnabled !== false) await recordCurrentContentExecutionCheckpoint({ stage: 'social.graph_quality', version: '1', inputHash, payload: report });
   return report;
 }
