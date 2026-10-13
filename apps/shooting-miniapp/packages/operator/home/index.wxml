@@ -14,7 +14,7 @@
     </view>
 
     <view class="metric-band">
-      <view class="metric"><text class="metric-value">{{counts.plannedFilms}}</text><text class="metric-label">本周计划生产成片数量</text></view>
+      <view class="metric"><text class="metric-value">{{counts.plannedFilms}}</text><text class="metric-label">本周计划生产数量</text></view>
       <view class="metric"><text class="metric-value">{{counts.pendingAcceptance}}</text><text class="metric-label">待验收成片数量</text></view>
       <view class="metric" data-key="shooting" bindtap="openMetric"><text class="metric-value">{{counts.pendingShots}}</text><text class="metric-label">待拍镜头数量</text></view>
     </view>
