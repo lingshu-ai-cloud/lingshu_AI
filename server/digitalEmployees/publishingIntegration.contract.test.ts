@@ -12,6 +12,8 @@ assert.match(route, /get\('\/publishing-accounts'[\s\S]*listConnectedPublishingA
 assert.match(route, /bindPublishingTargets\(tenantId, submittedConfig\.publishingTargets\)/, 'onboarding must not trust browser-provided account metadata');
 assert.match(route, /packageAccountsValid = packageAccountIds\.length > 0 && packageAccountIds\.every\(accountId => connectedIds\.has\(accountId\)\)/, 'runtime publishing preflight must validate every frozen account against current tenant connections');
 assert.match(route, /key: 'selected_publishing_accounts',[\s\S]{0,160}ready: packageAccountsValid/, 'runtime publishing preflight must expose disconnected selected accounts without preventing independent tasks from starting');
+assert.match(route, /migrateLegacyPublishingBindingsForRun\(tenantId, run, plan, taskResult\.items\)/, 'a waiting run must safely rebind legacy local placeholders after real accounts connect');
+assert.match(route, /packageGrantWasInvalidatedAfterApproval\(body\)/, 'a migrated account binding must never inherit automatic publishing authority');
 assert.match(route, /publishing_approval_package/, 'content approval must carry its itemized immutable package');
 assert.match(approvalDecision, /publishingPackage\.contentHash !== text\(approval\.content_hash\)/, 'changed content must invalidate approval in the shared decision authority');
 assert.match(approvalDecision, /await dependencies\.listConnectedPublishingAccounts\(input\.tenantId\)/, 'the selected accounts must still be connected when the approval is decided');

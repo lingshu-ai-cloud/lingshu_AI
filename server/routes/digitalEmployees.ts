@@ -44,6 +44,7 @@ import {
 import { weeklyAuthorizationRecoveryDecision } from '../digitalEmployees/weeklyAuthorizationRecovery.js';
 import { missingPublishingOAuthConfiguration, publishingAccountConnectionMessage, publishingOAuthConfigurationMessage, type PublishingOAuthPlatform, type PublishingReadinessSnapshot } from '../digitalEmployees/publishingOAuthReadiness.js';
 import { readTenantPublishingReadiness } from '../digitalEmployees/publishingRuntimeReadiness.js';
+import { migrateLegacyPublishingPlanAccountBindings, packageGrantWasInvalidatedAfterApproval } from '../digitalEmployees/publishingPlanAccountMigration.js';
 import { getTenantAwareGoogleOAuthClient, getTenantAwareInstagramOAuthClient, getTenantAwareMetaOAuthClient, getTenantAwareTikTokOAuthClient } from '../lib/oauthConfig.js';
 import { reviseContent } from '../digitalEmployees/contentRevision.js';
 import { automationBgmCatalog } from './studio.js';
@@ -2524,7 +2525,7 @@ async function applyPackageGrant(tenantId: string, goal: GoalRecord, run: RunRec
   const body = plan ? jsonObject<Record<string, unknown>>(plan.plan, {}) : {};
   const pack = body.businessPackage as WeeklyPackage | undefined;
   const actor = String(body.packageApprovedBy || '');
-  if (!pack || !actor || pack.authorization.mode !== 'bounded' || beijingDate(new Date()) < goal.starts_at) return false;
+  if (!pack || !actor || packageGrantWasInvalidatedAfterApproval(body) || pack.authorization.mode !== 'bounded' || beijingDate(new Date()) < goal.starts_at) return false;
   const recurringGrantId = String(body.managedPublishingGrantId || '');
   if (recurringGrantId) {
     const latest = await resolveCurrentConfiguration(tenantId, await configForTenant(tenantId));
@@ -2595,6 +2596,79 @@ export async function reconcileDigitalEmployeeRun(tenantId: string, runId: strin
   await advanceRun(tenantId, runId);
 }
 
+async function migrateLegacyPublishingBindingsForRun(
+  tenantId: string,
+  run: RunRecord,
+  plan: PlanRecord | null,
+  tasks: TaskRecord[],
+): Promise<boolean> {
+  if (!plan) return false;
+  const approvalTask = tasks.find(task => task.task_key === 'content_release_approval'
+    && task.status === 'waiting_human'
+    && jsonObject<Record<string, unknown>>(task.output, {}).dataStatus === 'preflight_blocked');
+  if (!approvalTask) return false;
+  const planBody = jsonObject<Record<string, unknown>>(plan.plan, {});
+  const snapshot = normalizeDigitalEmployeeConfig(jsonObject(planBody.configSnapshot, {}));
+  const targetPlatforms = publishingTargetPlatforms(snapshot.publishingTargets
+    .filter(target => target.weeklyCount === undefined || Number(target.weeklyCount) > 0));
+  if (!targetPlatforms.length) return false;
+  const readiness = await readTenantPublishingReadiness(tenantId, true, targetPlatforms);
+  if (!readiness.snapshot.ready) return false;
+  const now = new Date().toISOString();
+  const migration = migrateLegacyPublishingPlanAccountBindings(planBody, readiness.connectedAccounts, now);
+  if (!migration.changed) return false;
+  const updated = store.compareAndSwap
+    ? await store.compareAndSwap(COLLECTION.plans, plan.id, { tenant_id: tenantId, goal_id: run.goal_id, plan: plan.plan }, { plan: migration.plan })
+    : await store.update(COLLECTION.plans, plan.id, { plan: migration.plan });
+  if (!updated) return false;
+  plan.plan = migration.plan;
+  const approvals = await store.list<ApprovalRecord>(COLLECTION.approvals, {
+    where: { tenant_id: tenantId, task_id: approvalTask.id, status: 'pending' }, perPage: 100,
+  });
+  for (const approval of approvals.items) {
+    await store.update(COLLECTION.approvals, approval.id, {
+      status: 'superseded',
+      decision_note: '发布账号已从历史本地占位记录迁移到真实连接，需要重新确认发布审批。',
+      decided_at: now,
+    });
+  }
+  const output = {
+    ...jsonObject<Record<string, unknown>>(approvalTask.output, {}),
+    dataStatus: 'preflight_retry',
+    waitState: undefined,
+    publishingAccountBindingMigration: { version: 1, migratedAt: now, replacements: migration.replacements },
+  };
+  await store.update(COLLECTION.tasks, approvalTask.id, {
+    status: 'pending',
+    task_version: Number(approvalTask.task_version || 1) + 1,
+    output,
+    blocked_reason: '',
+    updated_at: now,
+  });
+  approvalTask.status = 'pending';
+  approvalTask.task_version = Number(approvalTask.task_version || 1) + 1;
+  approvalTask.output = output;
+  approvalTask.blocked_reason = '';
+  await appendEvent({
+    tenantId,
+    runId: run.id,
+    taskId: approvalTask.id,
+    type: 'publishing.account_bindings_migrated',
+    level: 'warning',
+    summary: '已将历史本地占位账号安全迁移到唯一真实连接，正在重新核验发布审批',
+    payload: { replacements: migration.replacements, packageRevision: migration.plan.businessPackage?.revision },
+  });
+  await appendAudit({
+    tenantId,
+    userId: 'digital_employee_runtime',
+    action: 'publishing.account_bindings_migrated',
+    targetType: 'weekly_plan',
+    targetId: plan.id,
+    metadata: { runId: run.id, taskId: approvalTask.id, replacements: migration.replacements },
+  });
+  return true;
+}
+
 async function advanceRunUnlocked(tenantId: string, runId: string): Promise<void> {
   const run = await tenantRecord<RunRecord>(COLLECTION.runs, runId, tenantId);
   if (!run || ['paused', 'cancelled', 'failed'].includes(run.status)) return;
@@ -2613,6 +2687,7 @@ async function advanceRunUnlocked(tenantId: string, runId: string): Promise<void
     && ['input', 'manual'].includes(String(jsonObject<Record<string, unknown>>(jsonObject<Record<string, unknown>>(task.output, {}).waitState, {}).kind || '')));
   await restoreExecutionOnlyInvalidatedAuthorization(tenantId, goal, run, plan);
   if (run.status === 'waiting_human' && !recoverableApprovalFailure && !reobservableUserInputWait) return;
+  await migrateLegacyPublishingBindingsForRun(tenantId, run, plan, taskResult.items);
   const config = executionConfigForPlan(plan, tenantConfig);
   const packageBody = plan ? jsonObject<Record<string, unknown>>(plan.plan, {}) : {};
   let businessPackage = packageBody.businessPackage as WeeklyPackage | undefined;
