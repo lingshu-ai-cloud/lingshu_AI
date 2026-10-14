@@ -387,6 +387,15 @@ export interface BusinessSnapshot {
     note: string;
     latestReportedAt: string | null;
     spendByCurrency: Array<{ currency: string; amount: number; rows: number }>;
+    performance?: {
+      impressions: BusinessMetric;
+      clicks: BusinessMetric;
+      conversions: BusinessMetric;
+      attributedRevenue: BusinessMetric;
+      targetConversions: number | null;
+      targetCpa: number | null;
+      targetRoas: number | null;
+    };
   };
   running?: SnapshotTaskReference[];
   needsDecision?: SnapshotTaskReference[];

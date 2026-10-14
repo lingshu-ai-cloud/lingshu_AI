@@ -6,6 +6,7 @@ import type { WeeklyPackage } from './weeklyPackage';
 import type { DirectorDecision, DirectorDecisionReason } from './directorDecision';
 import type { DigitalEmployeeConfig, DigitalEmployeeOverview, EnterpriseFactsRebuildInput, FollowupDispatchResponse, PublishingTarget, RunEvent, WeeklyGoal } from './digitalEmployees';
 import { hydrateWeeklyPublishingTargets } from '../../shared/contracts/weeklyPublishingTargets';
+import { applySmartBusinessShowcaseData } from '../dev/smartBusinessShowcaseData';
 
 const BASE = "/api/overseas/digital-employees";
 
@@ -85,7 +86,7 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   // Keep new clients correct while a local or rolling server still returns the
   // legacy cadence-only shape. The server also persists this migration, so the
   // compatibility bridge is deterministic rather than a second source of truth.
-  return hydrateWeeklyPublishingConfiguration(body);
+  return applySmartBusinessShowcaseData(hydrateWeeklyPublishingConfiguration(body));
 }
 
 function rebuildGoalFromLatestFacts(

@@ -1,0 +1,71 @@
+import assert from 'node:assert/strict';
+import test from 'node:test';
+import type { DigitalEmployeeOverview } from '../lib/digitalEmployees';
+import {
+  applySmartBusinessShowcaseData,
+  isSmartBusinessShowcaseEnabled,
+  smartBusinessShowcaseAds,
+  smartBusinessShowcaseChannels,
+  smartBusinessShowcasePerformance,
+} from './smartBusinessShowcaseData';
+
+function overview(): DigitalEmployeeOverview {
+  return {
+    config: {
+      companyName: 'Aurelia 澄光美研有限公司',
+      publishingTargets: [
+        { platform: 'facebook', accountId: 'facebook-account', accountLabel: '本地演示企业', weeklyCount: 1 },
+        { platform: 'tiktok', accountId: 'tiktok-account', accountLabel: '本地演示企业', weeklyCount: 1 },
+        { platform: 'instagram', accountId: 'instagram-account', accountLabel: '本地演示企业', weeklyCount: 0 },
+        { platform: 'youtube', accountId: 'youtube-account', accountLabel: '本地演示企业', weeklyCount: 0 },
+      ],
+    },
+    goal: { startsAt: '2026-10-13', endsAt: '2026-10-19', videoPlans: [] },
+    plan: null,
+    agents: [],
+    businessSnapshot: null,
+    contentQueue: { generatedAt: '', sourceStatus: 'available', sourceNote: '', items: [] },
+  } as unknown as DigitalEmployeeOverview;
+}
+
+test('showcase data is fail-closed away from local preview and can be explicitly disabled', () => {
+  assert.equal(isSmartBusinessShowcaseEnabled({ dev: false, hostname: 'app.example.com' }), false);
+  assert.equal(isSmartBusinessShowcaseEnabled({ dev: false, hostname: '127.0.0.1' }), true);
+  assert.equal(isSmartBusinessShowcaseEnabled({ dev: true, hostname: 'localhost', setting: 'off' }), false);
+});
+
+test('one local dataset fills every Smart Business domain with aligned account identities', () => {
+  const transformed = applySmartBusinessShowcaseData(overview(), true);
+  const snapshot = transformed.businessSnapshot!;
+  assert.equal(snapshot.dataGaps.length, 0);
+  assert.equal(snapshot.readiness.every(item => item.status === 'ready'), true);
+  assert.equal(snapshot.social.views.value, 215_800);
+  assert.equal(snapshot.social.dailyTrend.reduce((sum, item) => sum + (item.interactions || 0), 0), 18_746);
+  assert.equal(snapshot.customer.total.value, 148);
+  assert.equal(snapshot.content.publishedPosts.value, 6);
+  assert.equal(snapshot.ads?.performance?.conversions.value, 38);
+  assert.equal(transformed.review?.status, 'generated');
+  assert.equal(transformed.review?.summary.nextRoundRecommendations?.contentInheritance.status, 'ready');
+  assert.equal(transformed.config?.publishingTargets[0].accountLabel, 'Aurelia 澄光美研有限公司 · Facebook');
+
+  const performance = smartBusinessShowcasePerformance(transformed, true)!;
+  assert.equal(performance.accounts.length, 4);
+  assert.equal(performance.unavailable.length, 0);
+  assert.equal(performance.contents.filter(item => item.publishedAt.slice(0, 10) >= '2026-10-13').reduce((sum, item) => sum + (item.metrics.views || 0), 0), 215_800);
+
+  const channels = smartBusinessShowcaseChannels(transformed, true)!;
+  assert.equal(channels.whatsappConnected, true);
+  assert.equal(channels.messengerPages[0].id, 'facebook-account');
+
+  const ads = smartBusinessShowcaseAds('2026-10-13', '2026-10-19', true)!;
+  assert.equal(ads.tasks.length, 2);
+  assert.equal(ads.entries.reduce((sum, item) => sum + (item.report?.spend || 0), 0), 1_680);
+  assert.equal(ads.entries.flatMap(item => item.report?.daily || []).reduce((sum, item) => sum + (item.impressions || 0), 0), 284_000);
+  assert.equal(ads.entries.flatMap(item => item.report?.daily || []).reduce((sum, item) => sum + (item.clicks || 0), 0), 6_840);
+  assert.doesNotMatch(JSON.stringify({ snapshot, performance, ads }), /模拟数据|mock data/i);
+});
+
+test('non-overview responses are not altered', () => {
+  const response = { items: [{ id: 'one' }] };
+  assert.equal(applySmartBusinessShowcaseData(response, true), response);
+});
