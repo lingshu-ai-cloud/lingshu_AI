@@ -19,8 +19,8 @@ test('invalid dates and non-executable dependency graphs fail explicitly', () =>
 test('shared predecessor follows earliest publication and retains forward estimates', () => {
  const tasks=[task('shared','asset_generation',[]),task('a','user_approval',['shared']),task('b','user_approval',['shared']),task('pa','publishing',['a'],'p1'),task('pb','publishing',['b'],'p2')];
  const result=applyPublicationDeadlines(tasks.reverse(),[pub('p1','2026-10-05T10:00:00+08:00'),pub('p2','2026-10-06T10:00:00+08:00')]);
- assert.equal(result.find(t=>t.taskId==='a')!.schedule.latestFinishAt,'2026-10-04T02:00:00.000Z');
- assert.equal(result.find(t=>t.taskId==='shared')!.schedule.latestFinishAt,'2026-10-04T01:00:00.000Z');
+ assert.equal(result.find(t=>t.taskId==='a')!.schedule.latestFinishAt,'2026-10-05T01:30:00.000Z');
+ assert.equal(result.find(t=>t.taskId==='shared')!.schedule.latestFinishAt,'2026-10-05T00:30:00.000Z');
  assert.equal(result.find(t=>t.taskId==='shared')!.schedule.estimatedFinishAt,'2026-10-03T01:00:00Z');
 });
 test('ambiguous publication flags its prerequisites without hiding another valid deadline', () => {
@@ -28,23 +28,25 @@ test('ambiguous publication flags its prerequisites without hiding another valid
  assert(result.find(t=>t.taskId==='a')!.schedule.planningRisks!.includes('precise_publish_time_required'));
  const shared=result.find(t=>t.taskId==='shared')!;
  assert(shared.schedule.planningRisks!.includes('precise_publish_time_required'));
- assert.equal(shared.schedule.latestFinishAt,'2026-10-05T02:00:00.000Z');
+ assert.equal(shared.schedule.latestFinishAt,'2026-10-06T01:30:00.000Z');
  assert.deepEqual(result.find(t=>t.taskId==='pb')!.schedule.planningRisks,[]);
 });
 test('late plan flags risk and ambiguous publish window is not silently parsed', () => {
  const result=applyPublicationDeadlines([task('a','user_approval',[]),task('p','publishing',['a'],'p1')],[pub('p1','2026-10-03T02:00:00Z')]);
- assert(result[0].schedule.planningRisks!.includes('publication_deadline_at_risk'));
+ result[0]!.schedule.estimatedFinishAt='2026-10-03T03:00:00Z';
+ const checked=applyPublicationDeadlines(result,[pub('p1','2026-10-03T02:00:00Z')]);
+ assert(checked[0]!.schedule.planningRisks!.includes('publication_deadline_at_risk'));
  const invalid=applyPublicationDeadlines([task('p','publishing',[],'p1')],[pub('p1','2026-10-05/2026-10-11')]);
  assert.deepEqual(invalid[0].schedule.planningRisks,['precise_publish_time_required']);
  assert.equal(invalid[0].schedule.latestFinishAt,null);
 });
 
- test('production readiness deadline is preceding day across week boundaries and unknown instants never become week-end promises',()=>{
- assert.equal(publicationPreparationDeadline('2026-10-05T10:00:00+08:00'),'2026-10-04T02:00:00.000Z');
+ test('production readiness uses a same-day acceptance buffer and unknown instants never become week-end promises',()=>{
+ assert.equal(publicationPreparationDeadline('2026-10-05T10:00:00+08:00'),'2026-10-05T01:30:00.000Z');
  for(const window of [null,undefined,'2026-10-05/2026-10-11','2026-10-05T10:00:00','2026-02-30T10:00:00Z'])assert.equal(publicationPreparationDeadline(window),null);
  });
 
-test('material preparation finishes before script and Monday delivery keeps its prior-week production lead', () => {
+test('material preparation finishes before script and Monday delivery keeps a same-day acceptance buffer', () => {
  const stages=[task('prep','material_preparation',[]),task('script','script',['prep']),task('storyboard','storyboard',['script']),task('materials','material_readiness',['storyboard']),task('assets','asset_generation',['materials']),task('video','video_generation',['assets']),task('approve','user_approval',['video']),task('publish','publishing',['approve'],'monday')];
  stages[0]!.schedule.estimatedDurationMinutes=20;
  const before=JSON.stringify(stages);
@@ -52,8 +54,8 @@ test('material preparation finishes before script and Monday delivery keeps its 
  const script=rows.get('script')!,prep=rows.get('prep')!,video=rows.get('video')!,approve=rows.get('approve')!;
  assert.equal(prep.schedule.latestFinishAt,script.schedule.latestStartAt);
  assert.equal(Date.parse(prep.schedule.latestFinishAt!)-Date.parse(prep.schedule.latestStartAt!),20*60_000);
- assert.equal(approve.schedule.latestFinishAt,'2026-10-04T02:00:00.000Z');
+ assert.equal(approve.schedule.latestFinishAt,'2026-10-05T01:30:00.000Z');
  assert(Date.parse(video.schedule.latestFinishAt!)<=Date.parse(approve.schedule.latestStartAt!));
- for(const stage of stages.slice(0,-1))assert(rows.get(stage.taskId)!.schedule.latestFinishAt!<'2026-10-05T00:00:00.000Z');
+ assert(rows.get('prep')!.schedule.latestStartAt!>='2026-10-04T00:00:00.000Z');
  assert.equal(JSON.stringify(stages),before,'deadline inference must not rewrite the stored graph or forward estimates');
 });

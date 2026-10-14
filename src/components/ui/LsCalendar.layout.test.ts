@@ -53,6 +53,11 @@ assert.equal(evaluate(expression('eventShortHeight'), {}), 68);
 assert.equal(attributes.get('eventOrder')?.initializer?.getText(file), '"start,id"', 'FullCalendar owns a deterministic start-time and stable-id event order');
 assert.ok(attributes.has('eventOrderStrict'), 'event-card order must not be rearranged to improve visual compaction');
 assert.equal(evaluate(expression('slotEventOverlap'), {}), false, 'time-grid cards must never overlap');
+assert.match(source, /item\.cardLines \? ' ls-calendar-event-three-row'/, 'Agent hour cards opt into one stable three-row treatment');
+assert.match(source, /item\.planPlaceholder \? ' ls-calendar-event-placeholder'/, 'planned cadence slots remain visually distinct from persisted tasks');
+assert.match(source, /item\.status === 'done' && !item\.planPlaceholder/, 'only a persisted completed task receives the green completion check');
+assert.match(css, /\.ls-calendar-event-content-three-row\s*\{[^}]*grid-template-rows:\s*repeat\(3, minmax\(0, 1fr\)\)/, 'short and long Agent tasks use exactly three stable rows');
+assert.match(css, /\.ls-calendar-event-placeholder\s*\{[^}]*border-style:\s*dashed !important/, 'planned cadence slots cannot masquerade as executable task cards');
 assert.ok(inputsInitializer, 'calendar inputs should be derived inside the shared component');
 {
   const originalEvents = [

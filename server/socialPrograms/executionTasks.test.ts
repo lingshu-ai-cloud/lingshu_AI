@@ -144,14 +144,14 @@ test('preparation can precede the operating week and publication follows its zon
 
 test('weekly execution tasks freeze the full worker contract and aggregate real state', async () => {
   const { packages, execution, program, draft } = await fixture();
-  assert.equal(draft.executionSummary!.total, 41);
-  assert.equal(draft.executionSummary!.byStatus.pending_activation, 41);
+  assert.equal(draft.executionSummary!.total, 46);
+  assert.equal(draft.executionSummary!.byStatus.pending_activation, 46);
   assert.ok(draft.executionTaskRefs!.every(ref => ref.type === 'weekly_execution_task'));
   const active = await packages.activate('tenant-a', 'owner', program.programId, draft.packageId, {
     expectedVersion: 1, expectedProgramVersion: 1,
   });
   assert.equal(active.executionSummary!.byStatus.queued, 1);
-  assert.equal(active.executionSummary!.byStatus.blocked, 40);
+  assert.equal(active.executionSummary!.byStatus.blocked, 45);
   const tasks = await execution.list('tenant-a', program.programId, draft.packageId, 1);
   assert.ok(tasks.every(task => task.tenantId === 'tenant-a' && task.packageVersion === 1));
   assert.ok(tasks.every(task => task.idempotencyKey && task.inputSnapshot && task.budget && task.upstreamVersionRefs.length === 3));
@@ -187,7 +187,9 @@ test('weekly execution tasks freeze the full worker contract and aggregate real 
     assert.equal(tasks.find(task => task.taskId === approval.dependsOnTaskIds[0])?.schedule.stepKind, 'quality_check');
   }
   assert.ok(preparationTask&&scriptTask?.dependsOnTaskIds.includes(preparationTask.taskId));
-  assert.ok(scheduleTask&&preparationTask?.dependsOnTaskIds.includes(scheduleTask.taskId));
+  assert.ok(preparationTask?.dependsOnTaskIds.includes(tasks.find(task=>task.schedule.stepKind==='business_outline')!.taskId));
+  assert.ok(!preparationTask?.dependsOnTaskIds.includes(scheduleTask!.taskId),'shared material preparation may start before the daily directing window');
+  assert.ok(scriptTask?.dependsOnTaskIds.includes(scheduleTask!.taskId),'the script must consume the same-day directing result');
   assert.ok(scheduleTask?.dependsOnTaskIds.includes(tasks.find(task => task.schedule.stepKind === 'director_analysis')!.taskId));
   assert.ok(scheduleTask && materialTask?.dependsOnTaskIds.includes(scheduleTask.taskId));
   assert.ok(materialTask && assetTask?.dependsOnTaskIds.includes(materialTask.taskId));
@@ -209,7 +211,7 @@ test('weekly execution tasks freeze the full worker contract and aggregate real 
     assert.equal(validation.status, 'blocked');
   }
   const firstTask = (await packages.get('tenant-a', program.programId, draft.packageId)).executionSummary!;
-  assert.equal(firstTask.total, 41);
+  assert.equal(firstTask.total, 46);
 });
 
 test('cold-start Z and established H generate distinct executable chain identities, inputs and dependencies', async () => {
@@ -249,7 +251,7 @@ test('cold-start Z and established H generate distinct executable chain identiti
   assert.equal(historical.find(task=>task.schedule.stepKind==='performance_monitoring')?.chainTaskCode,'H-M8');
 });
 
-test('real Z and H five-day graphs fit confirmed Agent calendars and finish every video before the preceding-day cutoff',async()=>{
+test('real Z and H five-day graphs fit confirmed Agent calendars and finish every video inside its daily rolling window',async()=>{
  const {draft}=await fixture(),prototype=draft.socialContentPackage.publicationTasks[0]!;
  const schedule=(profile:'b2b_cold_start'|'b2b_established')=>{
   const pkg=structuredClone(draft);pkg.referenceSourcePolicy=profile==='b2b_cold_start'
@@ -265,7 +267,23 @@ test('real Z and H five-day graphs fit confirmed Agent calendars and finish ever
   const constraints=Object.fromEntries(tasks.map(t=>[t.taskId,{resourceKey:t.schedule.responsibleActor,remainingMinutes:t.schedule.estimatedDurationMinutes,remainingCostCny:0,bufferMinutes:t.schedule.stepKind==='publishing'?0:5,availableAt:'2026-10-01T00:00:00Z'}]));
   return {pkg,tasks,plan:planWeeklyBackwardSchedule({tasks,now:'2026-10-01T00:00:00Z',remainingBudgetCny:0,resources,constraints,frozenOperationalWeek:{weekStart:'2026-10-05',weekEnd:'2026-10-11'}})};
  };
- for(const profile of ['b2b_cold_start','b2b_established'] as const){const result=schedule(profile);assert.equal(result.plan.publicationGap,0,`${profile} ${JSON.stringify(result.plan.publications)} ${JSON.stringify(result.plan.assignments.filter(row=>row.reasons.length))}`);assert.equal(result.plan.unscheduledTaskIds.length,0,profile);const rows=new Map(result.plan.assignments.map(row=>[row.taskId,row])),preparations=result.tasks.filter(t=>t.schedule.stepKind==='material_preparation'),barriers=preparations.filter(t=>t.inputSnapshot.sharedMaterialBarrier);assert.equal(barriers.length,1,profile);assert.equal((barriers[0]!.inputSnapshot.sharedMaterialBarrier as {requestId:string}).requestId,`${profile}-shared-request`);assert.ok(preparations.every(task=>task.taskId===barriers[0]!.taskId||barriers[0]!.dependsOnTaskIds.includes(task.taskId)));assert.ok(result.tasks.filter(t=>t.schedule.stepKind==='script').every(task=>task.dependsOnTaskIds.includes(barriers[0]!.taskId)));assert.ok(new Set(result.plan.agentDailyLoads.filter(load=>load.responsibleActor==='content_agent').map(load=>load.localDate)).size>=4,`${profile} content Agent load is spread over actual confirmed days`);for(const publication of result.pkg.socialContentPackage.publicationTasks){const video=result.tasks.find(t=>t.publicationTaskId===publication.publicationTaskId&&t.schedule.stepKind==='video_generation')!;assert(Date.parse(rows.get(video.taskId)!.finishAt!)<=Date.parse(publication.publishWindow!)-86_400_000,`${profile}:${publication.publicationTaskId}`);}}
+ for(const profile of ['b2b_cold_start','b2b_established'] as const){const result=schedule(profile);assert.equal(result.plan.publicationGap,0,`${profile} ${JSON.stringify(result.plan.publications)} ${JSON.stringify(result.plan.assignments.filter(row=>row.reasons.length))}`);assert.equal(result.plan.unscheduledTaskIds.length,0,profile);const rows=new Map(result.plan.assignments.map(row=>[row.taskId,row])),preparations=result.tasks.filter(t=>t.schedule.stepKind==='material_preparation'),barriers=preparations.filter(t=>t.inputSnapshot.sharedMaterialBarrier);assert.equal(barriers.length,1,profile);assert.equal((barriers[0]!.inputSnapshot.sharedMaterialBarrier as {requestId:string}).requestId,`${profile}-shared-request`);assert.ok(preparations.every(task=>task.taskId===barriers[0]!.taskId||barriers[0]!.dependsOnTaskIds.includes(task.taskId)));assert.ok(result.tasks.filter(t=>t.schedule.stepKind==='script').every(task=>task.dependsOnTaskIds.includes(barriers[0]!.taskId)));assert.ok(new Set(result.plan.agentDailyLoads.filter(load=>load.responsibleActor==='content_agent').map(load=>load.localDate)).size>=4,`${profile} content Agent load is spread over actual confirmed days`);for(const publication of result.pkg.socialContentPackage.publicationTasks){const video=result.tasks.find(t=>t.publicationTaskId===publication.publicationTaskId&&t.schedule.stepKind==='video_generation')!,finish=Date.parse(rows.get(video.taskId)!.finishAt!),publishAt=Date.parse(publication.publishWindow!);assert(finish<=publishAt-30*60_000,`${profile}:${publication.publicationTaskId}`);assert.equal(new Date(finish).toISOString().slice(0,10),new Date(publishAt).toISOString().slice(0,10),`${profile}:${publication.publicationTaskId}`);}}
+});
+
+test('each publication day receives fresh incremental discovery and its own feedback task',async()=>{
+  const {draft}=await fixture();
+  draft.socialContentPackage.publicationTasks[1]!.motherContentId=draft.socialContentPackage.publicationTasks[0]!.motherContentId;
+  const tasks=planWeeklyExecutionTasks('tenant-a',draft,'2026-10-01T00:00:00Z');
+  const discovery=tasks.filter(task=>task.schedule.stepKind==='benchmark_collection');
+  assert.deepEqual(discovery.map(task=>task.inputSnapshot.rollingDate).sort(),['2026-10-06','2026-10-07']);
+  assert.ok(discovery.every(task=>task.inputSnapshot.rollingCadence==='daily_incremental'&&task.inputSnapshot.freshnessPolicy==='created_or_updated_since_previous_successful_collection'));
+  assert.deepEqual(discovery.map(task=>task.schedule.estimatedStartAt).sort(),['2026-10-06T00:30:00.000Z','2026-10-07T00:30:00.000Z']);
+  const directing=tasks.filter(task=>task.schedule.stepKind==='director_analysis');
+  assert.deepEqual(directing.map(task=>task.inputSnapshot.rollingDate).sort(),['2026-10-06','2026-10-07'],'one mother reused on two days still needs two daily directing decisions');
+  assert.equal(new Set(directing.map(task=>task.taskId)).size,2);
+  const feedback=tasks.filter(task=>task.schedule.stepKind==='performance_monitoring');
+  assert.equal(feedback.length,draft.socialContentPackage.publicationTasks.length);
+  assert.ok(feedback.every(task=>task.publicationTaskId&&task.inputSnapshot.rollingCadence==='daily_feedback'&&task.inputSnapshot.feedsNextDailyCollection===true));
 });
 
 test('worker leases, retries, dead letters and explicit recovery are durable', async () => {

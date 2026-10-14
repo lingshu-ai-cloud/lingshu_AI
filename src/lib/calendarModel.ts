@@ -25,6 +25,10 @@ export type LsCalendarEvent = {
   editable?: boolean;
   statusLabel?: string;
   description?: string;
+  /** Stable three-row copy used by the Agent hourly workspace. */
+  cardLines?: readonly [string, string, string];
+  /** Distinguishes a cadence slot from a persisted executable task. */
+  planPlaceholder?: boolean;
   data?: unknown;
 };
 

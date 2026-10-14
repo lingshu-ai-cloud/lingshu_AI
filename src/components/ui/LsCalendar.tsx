@@ -294,7 +294,7 @@ export function LsCalendar({ events, label, initialDate, initialView = 'dayGridM
         dayCellClass={info => [info.isToday ? 'ls-calendar-today' : '', [0, 6].includes(info.dow) ? 'ls-calendar-weekend' : ''].join(' ')}
         dayCellDidMount={info => { info.el.dataset.calendarDate = calendarDayKey(info.date, timeZone); }}
         dayLaneDidMount={info => { info.el.dataset.calendarDate = calendarDayKey(info.date, timeZone); }}
-        eventClass={info => `ls-calendar-event ls-calendar-event-${(info.event.extendedProps.item as LsCalendarEvent).status} ls-calendar-event-reveal${reducedMotion || revealedEventIdsRef.current.has(info.event.id) ? ' is-revealed' : ''}`}
+        eventClass={info => { const item = info.event.extendedProps.item as LsCalendarEvent; return `ls-calendar-event ls-calendar-event-${item.status} ls-calendar-event-reveal${item.cardLines ? ' ls-calendar-event-three-row' : ''}${item.planPlaceholder ? ' ls-calendar-event-placeholder' : ''}${reducedMotion || revealedEventIdsRef.current.has(info.event.id) ? ' is-revealed' : ''}`; }}
         eventContent={info => {
           const item = info.event.extendedProps.item as LsCalendarEvent;
           if (info.view.type.startsWith('timeGrid') && info.event.allDay) {
@@ -304,6 +304,12 @@ export function LsCalendar({ events, label, initialDate, initialView = 'dayGridM
             </div>;
           }
           if (info.view.type.startsWith('timeGrid') && !info.event.allDay) {
+            if (item.cardLines) return <div className="ls-calendar-event-content ls-calendar-event-content-three-row">
+              <span className="ls-calendar-event-row ls-calendar-event-row-owner">{item.cardLines[0]}</span>
+              <strong className="ls-calendar-event-row ls-calendar-event-row-title" title={item.cardLines[1]}>{item.cardLines[1]}</strong>
+              <span className="ls-calendar-event-row ls-calendar-event-row-state">{item.cardLines[2]}</span>
+              {item.status === 'done' && !item.planPlaceholder ? <span className="ls-calendar-event-completed-check" aria-label="已完成">✓</span> : null}
+            </div>;
             // v7 measures each rendered segment before setting isShort, including
             // clipped multi-day events. Only sufficiently tall slots get media.
             return <div className={`ls-calendar-event-content ls-calendar-event-content-timed${info.isShort ? ' is-short' : ''}`}>

@@ -17,6 +17,7 @@ import { hasTemplateCalendarTarget, type TemplateCalendarTarget } from '../socia
 import { hasReviewCalendarTarget, type ReviewCalendarTarget } from '../socialProgram/reviewCalendarNavigation';
 import { hasPlanningCalendarTarget, type PlanningCalendarTarget } from '../socialProgram/planningCalendarNavigation';
 import { calendarDayKey, calendarInstant, type LsCalendarEvent } from '../../lib/calendarModel';
+import { hourCalendarCard } from './agentHourCalendarPolicy';
 import { projectCalendarDeliverables } from './calendarDeliverables';
 import AgentRoleIcon, { AGENT_ROLE_PALETTE, type AgentVisualRole } from '../ui/AgentRoleIcon';
 import {agentCalendarTaskType,buildAgentCalendarSummaries,taskHasDeliverableOrWorkspace,type AgentCalendarSummary} from './agentCalendarGroups';
@@ -239,14 +240,21 @@ export default function RestoredAgentWorkCalendar({
       ownerAgent: `计划占位 · ${agentLabels[owner]} · ${summary.progress}`,
       sourceId: summary.key,
       description: summary.progress,
+      cardLines: [
+        `计划时段 · ${agentLabels[owner]}`,
+        summary.title,
+        `${summary.startTime} · ${summary.progress}`,
+      ],
+      planPlaceholder: true,
       identity: {kind: 'agent', role: owner},
       data: {kind:'summary',summary} satisfies SummaryEventData,
     });});
-    const taskEvents = independentTasks.filter(task => visibleIndependentIds.has(task.id)).map(task => {
+    const taskEvents: LsCalendarEvent[] = independentTasks.filter(task => visibleIndependentIds.has(task.id)).map(task => {
     const overdue = !demo && taskIsOverdue(task, now);
     const allDay = taskIsAllDay(task);
     const start = allDay ? task.date : taskInstant(task);
     const duration = Math.max(30, task.minutes ?? 60) * 60_000;
+    const card = hourCalendarCard(task, now);
     return {
       id: task.id,
       title: task.title,
@@ -261,6 +269,8 @@ export default function RestoredAgentWorkCalendar({
       platform: task.platform,
       sourceId: task.productionTaskId || task.id,
       description: task.context,
+      cardLines: card.lines,
+      planPlaceholder: false,
       identity: task.platform ? { kind: 'platform', platform: task.platform } : { kind: 'agent', role: task.agent },
       data: task,
     };
