@@ -25,5 +25,7 @@ assert.deepEqual(director?.internalNodes?.map(task => task.id), ['goal-goal-sche
 assert.equal(director?.internalNodes?.[0]?.context, 'scheduler.social_collection · 状态来源：crawl_jobs');
 assert.ok(calendar.find(task => task.id === 'goal-goal-publishing')?.internalNodes?.some(task => task.id.endsWith('platform_publish')));
 assert.ok(calendar.find(task => task.id === 'goal-goal-review')?.internalNodes?.some(task => task.id.endsWith('weekly_review')));
-assert.equal(calendar.find(task => task.id === 'goal-goal-publish-video')?.date, '2026-10-13');
+const publication = calendar.find(task => task.id === 'goal-goal-publish-video');
+assert.equal(publication?.date, '2026-10-13');
+assert.equal(publication?.platform, 'tiktok');
 console.log('Weekly goal calendar projects persisted task capabilities and status sources');

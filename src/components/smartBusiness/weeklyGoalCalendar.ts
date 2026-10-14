@@ -51,7 +51,7 @@ export function projectWeeklyGoalCalendar(data: DigitalEmployeeOverview): AgentC
   });
   const publications: AgentCalendarTask[] = scheduleWeeklyVideos(plans, goal.startsAt, goal.endsAt).map((plan, index) => ({
     id: `${prefix}publish-${plan.contentId || index}`, date: plan.plannedPublishDate!, time: '18:00', agent: 'business',
-    title: `${plan.platform} · 发布第 ${index + 1} 条`, output: plan.theme || '按已确认目标产出平台视频',
+    platform: plan.platform, title: `${plan.platform} · 发布第 ${index + 1} 条`, output: plan.theme || '按已确认目标产出平台视频',
     context: `${plan.matrix?.accountId || '待接入账号'} · 计划发布日，需先通过制作验收与账号授权`, minutes: null,
     status: 'planned', dependsOn: [prefix + 'production', prefix + 'accounts'],
   }));

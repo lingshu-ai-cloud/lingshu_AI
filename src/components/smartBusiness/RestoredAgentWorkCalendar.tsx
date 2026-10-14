@@ -175,9 +175,10 @@ export default function RestoredAgentWorkCalendar({
       statusLabel: overdue ? `交付已逾期 · ${calendarOverdueDuration(task, now)}` : task.deliveryTiming === 'late' ? '已完成 · 晚交付' : task.deliveryTiming === 'on_time' ? '已完成 · 按时' : statusLabels[task.status],
       eventType: task.agent === 'customer' ? 'follow_up' : 'agent_task',
       ownerAgent: task.assignee || agentLabels[task.agent],
+      platform: task.platform,
       sourceId: task.productionTaskId || task.id,
       description: task.context,
-      identity: { kind: 'agent', role: task.agent },
+      identity: task.platform ? { kind: 'platform', platform: task.platform } : { kind: 'agent', role: task.agent },
       data: task,
     };
   }), [deliverables, agentRole, demo, now, timeZone]);

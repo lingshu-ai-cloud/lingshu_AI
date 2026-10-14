@@ -29,4 +29,8 @@ const cards = weeklyPipelineCards('2026-10-12', '2026-10-18', 16);
 assert.equal(cards.length, 8);
 assert.deepEqual(cards.find(card => card.id === 'publishing')?.dependsOn, ['production', 'accounts']);
 assert.deepEqual(cards.find(card => card.id === 'production')?.dependsOn, ['director']);
+assert.equal(cards.find(card => card.id === 'production')?.title, '批量制作成片');
+assert.match(cards.find(card => card.id === 'production')?.output || '', /16 条.*待验收成片/);
+assert.equal(cards.find(card => card.id === 'publishing')?.title, '按平台排期分发');
+assert.match(cards.find(card => card.id === 'publishing')?.output || '', /下方.*平台.*账号.*时间/);
 console.log('Weekly 16-video quotas, per-account cadence and pipeline dependencies passed');

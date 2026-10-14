@@ -25,6 +25,7 @@ export type AgentCalendarTask = {
   executionStep?: string;
   calendarInternal?: boolean;
   accountBindingTarget?: {platform:string;accountId:string|null;consumerIds:string[]};
+  platform?: string;
   enterpriseFactExceptionId?:string;
   internalNodes?: AgentCalendarTask[];
   date: string;
