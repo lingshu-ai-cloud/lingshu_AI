@@ -99,6 +99,31 @@ function eventStatus(task: AgentCalendarTask, overdue: boolean): LsCalendarEvent
   return 'planned';
 }
 
+function taskEndInstant(task: AgentCalendarTask): number {
+  const start = Date.parse(taskInstant(task));
+  return Number.isFinite(start) ? start + Math.max(30, task.minutes ?? 60) * 60_000 : Number.NaN;
+}
+
+/** A passed calendar slot is overdue unless the persisted task has a terminal result. */
+export function isPastUnfinishedCalendarTask(task: AgentCalendarTask, now: number): boolean {
+  return !['completed', 'cancelled', 'no_data'].includes(task.status) && taskEndInstant(task) < now;
+}
+
+function taskIsOverdue(task: AgentCalendarTask, now: number): boolean {
+  return isCalendarTaskOverdue(task, now) || isPastUnfinishedCalendarTask(task, now);
+}
+
+function taskOverdueLabel(task: AgentCalendarTask, now: number): string {
+  if (task.dueAt && Number.isFinite(Date.parse(task.dueAt))) return calendarOverdueDuration(task, now);
+  const minutes = Math.max(1, Math.floor((now - taskEndInstant(task)) / 60_000));
+  return minutes >= 1440 ? `${Math.floor(minutes / 1440)} 天 ${Math.floor(minutes % 1440 / 60)} 小时` : minutes >= 60 ? `${Math.floor(minutes / 60)} 小时 ${minutes % 60} 分钟` : `${minutes} 分钟`;
+}
+
+function calendarCardOwner(task: AgentCalendarTask, overdue: boolean): string {
+  const state = task.status === 'completed' ? '✓' : overdue ? '逾期' : statusLabels[task.status];
+  return `${agentCalendarTaskType(task)} · ${agentLabels[task.agent]} · ${state}`;
+}
+
 type SummaryEventData = { kind: 'summary'; summary: AgentCalendarSummary };
 function isSummaryEventData(value: unknown): value is SummaryEventData {
   return Boolean(value && typeof value === 'object' && (value as SummaryEventData).kind === 'summary');
@@ -120,6 +145,13 @@ function summaryStatus(summary: AgentCalendarSummary): LsCalendarEvent['status']
   if (summary.children.some(task => task.status === 'active')) return 'working';
   if (summary.children.length && summary.children.every(task => ['completed','cancelled','no_data'].includes(task.status))) return 'done';
   return 'planned';
+}
+
+function summaryAgent(summary: AgentCalendarSummary): Exclude<AgentCalendarTask['agent'], 'human'> {
+  if (summary.group === 'directing') return 'director';
+  if (summary.group === 'production' || summary.group === 'quality') return 'content';
+  if (summary.group === 'inquiries') return 'customer';
+  return 'business';
 }
 
 type Props = {
@@ -193,6 +225,7 @@ export default function RestoredAgentWorkCalendar({
   const events = useMemo<LsCalendarEvent[]>(() => {
     const summaryEvents: LsCalendarEvent[] = summaries.map(summary => {
       const start = calendarInstant(`${summary.date}T${summary.startTime}`, timeZone).toISOString();
+      const owner = summaryAgent(summary);
       return ({
       id: `summary:${summary.key}`,
       title: summary.title,
@@ -203,14 +236,14 @@ export default function RestoredAgentWorkCalendar({
       status: summaryStatus(summary),
       statusLabel: summary.progress,
       eventType: 'agent_task',
-      ownerAgent: summary.progress,
+      ownerAgent: `计划占位 · ${agentLabels[owner]} · ${summary.progress}`,
       sourceId: summary.key,
       description: summary.progress,
-      identity: {kind: 'agent', role: summary.group === 'directing' ? 'director' : summary.group === 'production' ? 'content' : summary.group === 'inquiries' ? 'customer' : 'business'},
+      identity: {kind: 'agent', role: owner},
       data: {kind:'summary',summary} satisfies SummaryEventData,
     });});
     const taskEvents = independentTasks.filter(task => visibleIndependentIds.has(task.id)).map(task => {
-    const overdue = !demo && isCalendarTaskOverdue(task, now);
+    const overdue = !demo && taskIsOverdue(task, now);
     const allDay = taskIsAllDay(task);
     const start = allDay ? task.date : taskInstant(task);
     const duration = Math.max(30, task.minutes ?? 60) * 60_000;
@@ -222,9 +255,9 @@ export default function RestoredAgentWorkCalendar({
       allDay,
       timeZone: task.calendarClock?.timeZone || timeZone,
       status: eventStatus(task, overdue),
-      statusLabel: overdue ? `交付已逾期 · ${calendarOverdueDuration(task, now)}` : task.deliveryTiming === 'late' ? '已完成 · 晚交付' : task.deliveryTiming === 'on_time' ? '已完成 · 按时' : statusLabels[task.status],
+      statusLabel: overdue ? `交付已逾期 · ${taskOverdueLabel(task, now)}` : task.deliveryTiming === 'late' ? '已完成 · 晚交付' : task.deliveryTiming === 'on_time' ? '已完成 · 按时' : statusLabels[task.status],
       eventType: task.agent === 'customer' ? 'follow_up' : 'agent_task',
-      ownerAgent: `${agentCalendarTaskType(task)}${task.assignee ? ` · ${task.assignee}` : ''}`,
+      ownerAgent: calendarCardOwner(task, overdue),
       platform: task.platform,
       sourceId: task.productionTaskId || task.id,
       description: task.context,
@@ -237,7 +270,7 @@ export default function RestoredAgentWorkCalendar({
 
   const renderDetails = (event: LsCalendarEvent, closeDetails: () => void) => {
     const task = event.data as AgentCalendarTask;
-    const overdue = !demo && isCalendarTaskOverdue(task, now);
+    const overdue = !demo && taskIsOverdue(task, now);
     const workflowNodes = task.internalNodes?.length ? task.internalNodes : [task];
     const assistantRoles = agentRoleOrder.filter(role => role !== task.agent && role !== 'human' && workflowNodes.some(node => node.agent === role));
     const deliveryTime = task.dueAt
@@ -276,7 +309,7 @@ export default function RestoredAgentWorkCalendar({
         <div className="min-w-0"><dt className="text-xs text-text-secondary">交付形式</dt><dd className="mt-1 break-words text-sm font-medium text-text-primary">{deliveryFormLabel(task)}</dd></div>
       </dl>
       <section aria-label="当前进度" className="rounded-lg bg-surface-2 p-4"><div className="mb-3 flex items-center justify-between gap-3"><h4 className="text-sm font-semibold text-text-primary">当前进度</h4><span className="text-xs text-text-secondary">{workflowNodes.filter(node => ['completed', 'cancelled', 'no_data'].includes(node.status)).length}/{workflowNodes.length} 步完成</span></div><Steps direction="vertical" size="small" current={Math.max(0, workflowNodes.findIndex(node => !['completed', 'cancelled', 'no_data'].includes(node.status)))} items={workflowNodes.map(node => ({ status: stepStatus(node.status), title: node.title, description: <span className="text-xs text-text-secondary">{agentLabels[node.agent]} · {statusLabels[node.status]} · {node.date} {node.time}{node.reason ? <><br/><span className="text-amber-700">{node.reason}</span></> : null}</span> }))}/></section>
-      {overdue && <Alert type="error" showIcon title={`交付已逾期 · ${calendarOverdueDuration(task, now)}`} description={`负责人：${task.assignee || agentLabels[task.agent]}；原因：${task.reason || '截止前尚未取得本任务核验交付'}；受影响发布：${task.affectedPublicationIds?.join('、') || '待核对真实下游依赖'}`}/>}
+      {overdue && <Alert type="error" showIcon title={`交付已逾期 · ${taskOverdueLabel(task, now)}`} description={`负责人：${task.assignee || agentLabels[task.agent]}；原因：${task.reason || '截止前尚未取得本任务核验交付'}；受影响发布：${task.affectedPublicationIds?.join('、') || '待核对真实下游依赖'}`}/>}
       {task.deadlineRecovery && <Alert type="warning" showIcon title={`经营 Agent 补救评估 · ${task.deadlineRecovery.status === 'blocked' ? '评估受阻' : '已评估，方案未生效'}`} description={`${task.deadlineRecovery.assessmentId} · ${calendarTimestampLabel(task.deadlineRecovery.assessedAt, task.calendarClock)}；受影响发布：${task.deadlineRecovery.affectedPublicationIds.join('、') || '无已绑定发布'}`}/>}
       {task.reason && !overdue && <Alert type="warning" showIcon title="当前卡点" description={task.reason}/>}
       {action ? <Button type="primary" onClick={action.run}>{action.label}</Button> : <p className="rounded-lg bg-surface-2 p-3 text-xs text-text-secondary">{demo ? '示例任务仅用于验收日历与详情。' : '此任务尚无可打开的真实业务对象；执行状态以后台记录为准。'}</p>}

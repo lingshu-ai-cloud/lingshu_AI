@@ -4,6 +4,7 @@ export type AgentCalendarSummaryGroup =
   | 'foundation'
   | 'directing'
   | 'production'
+  | 'quality'
   | 'publishing'
   | 'inquiries'
   | 'review';
@@ -19,12 +20,13 @@ export type AgentCalendarSummary = {
   children: AgentCalendarTask[];
 };
 
-const GROUP_META: Record<AgentCalendarSummaryGroup, { title: string; cadence: 'monday' | 'operating' | 'sunday'; startTime: string; durationMinutes: number }> = {
-  foundation: { title: '经营目标与执行准备', cadence: 'monday', startTime: '09:00', durationMinutes: 60 },
-  directing: { title: '对标采集与编导方案', cadence: 'monday', startTime: '10:00', durationMinutes: 120 },
-  production: { title: '成片生产', cadence: 'operating', startTime: '09:00', durationMinutes: 360 },
-  publishing: { title: '发布与平台分发', cadence: 'operating', startTime: '17:30', durationMinutes: 30 },
-  inquiries: { title: '询盘承接与跟进', cadence: 'operating', startTime: '18:00', durationMinutes: 60 },
+const GROUP_META: Record<AgentCalendarSummaryGroup, { title: string; cadence: 'monday' | 'daily' | 'sunday'; startTime: string; durationMinutes: number }> = {
+  foundation: { title: '经营目标与执行准备', cadence: 'monday', startTime: '08:00', durationMinutes: 30 },
+  directing: { title: '每日增量采集与编导', cadence: 'daily', startTime: '08:30', durationMinutes: 75 },
+  production: { title: '影片生产', cadence: 'daily', startTime: '10:15', durationMinutes: 45 },
+  quality: { title: '成片质检与验收', cadence: 'daily', startTime: '11:15', durationMinutes: 30 },
+  publishing: { title: '发布与平台分发', cadence: 'daily', startTime: '17:30', durationMinutes: 30 },
+  inquiries: { title: '询盘反馈与数据回收', cadence: 'daily', startTime: '18:15', durationMinutes: 45 },
   review: { title: '数据追踪与周复盘', cadence: 'sunday', startTime: '16:00', durationMinutes: 60 },
 };
 
@@ -32,7 +34,8 @@ const STEP_GROUP: Record<string, AgentCalendarSummaryGroup> = {
   business_outline: 'foundation',
   benchmark_collection: 'directing', benchmark_scoring: 'directing', director_analysis: 'directing', business_schedule: 'directing',
   material_preparation: 'production', material_readiness: 'production', script: 'production', storyboard: 'production',
-  asset_generation: 'production', video_generation: 'production', quality_check: 'production', rework: 'production', user_approval: 'production',
+  asset_generation: 'production', video_generation: 'production', rework: 'production',
+  quality_check: 'quality', user_approval: 'quality',
   publishing: 'publishing',
   customer_channel_readiness: 'inquiries', customer_inquiry_handoff: 'inquiries',
   performance_monitoring: 'review', weekly_review: 'review', template_extraction: 'review', template_performance_validation: 'review',
@@ -77,15 +80,22 @@ export function agentCalendarTaskType(task: AgentCalendarTask): string {
   const group = agentCalendarTaskGroup(task);
   if (group === 'directing') return '编导任务';
   if (group === 'production') return '制片任务';
+  if (group === 'quality') return '验收任务';
   if (group === 'publishing') return '发布任务';
   return '经营任务';
 }
 
 function progress(children: AgentCalendarTask[]): string {
-  if (!children.length) return '尚未生成独立任务';
+  if (!children.length) return '等待真实任务';
   const completed = children.filter(task => task.status === 'completed').length;
   const attention = children.filter(task => ['blocked', 'failed'].includes(task.status)).length;
   return `${completed}/${children.length} 已完成${attention ? ` · ${attention} 项需处理` : ''}`;
+}
+
+function summaryTitle(metaTitle: string, children: AgentCalendarTask[]): string {
+  if (!children.length) return metaTitle;
+  if (children.length === 1) return children[0]!.title;
+  return `${children[0]!.title} 等 ${children.length} 项`;
 }
 
 export function buildAgentCalendarSummaries(tasks: AgentCalendarTask[], dates: string[]): AgentCalendarSummary[] {
@@ -93,16 +103,15 @@ export function buildAgentCalendarSummaries(tasks: AgentCalendarTask[], dates: s
   const weekday = (date:string) => new Date(`${date}T12:00:00Z`).getUTCDay();
   const monday = dates.find(date=>weekday(date)===1) ?? dates[0]!;
   const sunday = dates.find(date=>weekday(date)===0) ?? dates[6]!;
-  const operatingDates = dates.filter(date=>date!==sunday);
   const children = tasks.filter(taskHasDeliverableOrWorkspace);
   const summaries: AgentCalendarSummary[] = [];
   for (const group of Object.keys(GROUP_META) as AgentCalendarSummaryGroup[]) {
     const meta = GROUP_META[group];
     const groupTasks = children.filter(task => agentCalendarTaskGroup(task) === group);
-    const targetDates = meta.cadence === 'monday' ? [monday] : meta.cadence === 'sunday' ? [sunday] : operatingDates;
+    const targetDates = meta.cadence === 'monday' ? [monday] : meta.cadence === 'sunday' ? [sunday] : dates;
     for (const date of targetDates) {
-      const scoped = meta.cadence === 'operating' ? groupTasks.filter(task => task.date === date) : groupTasks;
-      summaries.push({ key: `${date}:${group}`, group, date, title: meta.title, progress: progress(scoped), startTime: meta.startTime, durationMinutes: meta.durationMinutes, children: scoped });
+      const scoped = meta.cadence === 'daily' ? groupTasks.filter(task => task.date === date) : groupTasks;
+      summaries.push({ key: `${date}:${group}`, group, date, title: summaryTitle(meta.title, scoped), progress: progress(scoped), startTime: meta.startTime, durationMinutes: meta.durationMinutes, children: scoped });
     }
   }
   return summaries;

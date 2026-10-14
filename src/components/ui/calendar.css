@@ -71,11 +71,13 @@
 .ls-calendar-event-copy > span { display: block; color: #52525b; font-size: var(--ls-type-body-small-size); }
 .ls-calendar-time-inner { display: flex; min-width: 0; overflow: hidden; container-type: size; container-name: ls-calendar-slot; }
 .ls-calendar-event-content-timed { width: 100%; min-height: 0; padding: 2px 4px; overflow: hidden; box-sizing: border-box; }
+.ls-calendar-event-done .ls-calendar-event-content-timed { position: relative; padding-inline-end: 24px; }
+.ls-calendar-event-done .ls-calendar-event-content-timed::after { position: absolute; inset-block-start: 3px; inset-inline-end: 5px; display: grid; width: 16px; height: 16px; place-items: center; border-radius: 50%; background: #168568; color: #fff; content: '✓'; font-size: 11px; font-weight: 700; line-height: 1; }
 .ls-calendar-event-content-timed .ls-calendar-event-copy strong,
 .ls-calendar-event-content-timed .ls-calendar-event-copy > span { overflow: hidden; white-space: nowrap; text-overflow: ellipsis; line-height: var(--ls-type-body-small-line); }
 .ls-calendar-event-content-timed.is-short { align-items: center; }
 .ls-calendar-event-content-timed.is-short .ls-calendar-thumb { width: 24px; height: 24px; }
-.ls-calendar-event-content-timed.is-short .ls-calendar-event-meta { display: none; }
+.ls-calendar-event-content-timed.is-short .ls-calendar-event-meta { display: flex; }
 .ls-calendar-event-content-all-day { width: 100%; max-height: 44px; align-items: center; overflow: hidden; box-sizing: border-box; }
 .ls-calendar-event-content-all-day .ls-calendar-thumb { width: 28px; height: 28px; }
 .ls-calendar-event-identity { display: inline-flex; width: 40px; height: 40px; flex: 0 0 40px; align-items: center; justify-content: center; overflow: hidden; border: 1px solid var(--color-border, #e4e4e7); border-radius: 10px; background: #fff; }
