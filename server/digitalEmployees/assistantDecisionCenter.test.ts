@@ -281,8 +281,10 @@ test('a user-input blocker is not mislabeled as an external wait or offered a po
     tasks: [waiting], approvals: [], now,
   }).items[0]!;
   assert.equal(card.facts[0]?.value, '等待用户');
+  assert.equal(card.facts.find(fact => fact.label === '处理位置')?.value, 'accountManagement');
   assert.deepEqual(card.actions.map(action => action.id), ['open_workspace']);
-  assert.equal(card.actions[0]?.label, '前往处理');
+  assert.equal(card.actions[0]?.label, '配置发布账号');
+  assert.equal(card.deepLink?.page, 'accountManagement');
 });
 
 test('a production node still processing is not presented as a user decision', () => {

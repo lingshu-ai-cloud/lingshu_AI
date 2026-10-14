@@ -42,6 +42,8 @@ import {
   taskCorrectionInvalidatesWeeklyAuthorization,
 } from '../digitalEmployees/weeklyAuthorizationInvalidation.js';
 import { weeklyAuthorizationRecoveryDecision } from '../digitalEmployees/weeklyAuthorizationRecovery.js';
+import { missingPublishingOAuthConfiguration, publishingAccountConnectionMessage, publishingOAuthConfigurationMessage, type PublishingOAuthPlatform } from '../digitalEmployees/publishingOAuthReadiness.js';
+import { getTenantAwareGoogleOAuthClient, getTenantAwareInstagramOAuthClient, getTenantAwareMetaOAuthClient, getTenantAwareTikTokOAuthClient } from '../lib/oauthConfig.js';
 import { reviseContent } from '../digitalEmployees/contentRevision.js';
 import { automationBgmCatalog } from './studio.js';
 import { normalizeVideoPlan, spokenLanguageMatches, videoPlanErrors, type VideoCreationPlan, type VideoPreproductionPreview } from '../../shared/contracts/videoCreationPlan.js';
@@ -1590,14 +1592,44 @@ async function approvalPreflight(
     );
     const goal = await tenantRecord<GoalRecord>(COLLECTION.goals, run.goal_id, tenantId);
     if (goal) {
+      const connectedAccounts = await listConnectedPublishingAccounts(tenantId);
+      const connectedIds = new Set(connectedAccounts.map(account => account.accountId));
+      const targetPlatforms = goalInput(goal).contentPlatforms;
+      const connectedPlatforms = connectedAccounts.map(account => account.platform);
+      const [metaClient, instagramClient, tiktokClient, googleClient] = await Promise.all([
+        getTenantAwareMetaOAuthClient(tenantId),
+        getTenantAwareInstagramOAuthClient(tenantId),
+        getTenantAwareTikTokOAuthClient(tenantId),
+        getTenantAwareGoogleOAuthClient(tenantId),
+      ]);
+      const oauthConfigurationGaps = missingPublishingOAuthConfiguration({
+        targetPlatforms,
+        connectedPlatforms,
+        clients: { meta: Boolean(metaClient), instagram: Boolean(instagramClient), tiktok: Boolean(tiktokClient), google: Boolean(googleClient) },
+      });
+      const connectedPlatformSet = new Set(connectedPlatforms);
+      const missingAccountPlatforms = targetPlatforms
+        .filter((platform): platform is PublishingOAuthPlatform => ['facebook', 'instagram', 'tiktok', 'youtube'].includes(platform))
+        .filter(platform => !connectedPlatformSet.has(platform));
+      checks.push({
+        key: 'publishing_oauth_configuration',
+        ready: oauthConfigurationGaps.length === 0,
+        detail: publishingOAuthConfigurationMessage(oauthConfigurationGaps),
+      });
+      checks.push({
+        key: 'publishing_account_connections',
+        ready: missingAccountPlatforms.length === 0,
+        detail: publishingAccountConnectionMessage(missingAccountPlatforms),
+      });
       try {
         const publishingPackage = await publishingApprovalPackage(tenantId, goal, run, task, tasks);
-        const connectedAccounts = await listConnectedPublishingAccounts(tenantId);
-        const connectedIds = new Set(connectedAccounts.map(account => account.accountId));
         const packageAccountIds = [...new Set(publishingPackage.items.flatMap(item => item.accountIds))];
-        const platformCoverage = publishingPlatformsCovered(goalInput(goal).contentPlatforms, publishingPackage.items);
+        const packageAccountsValid = packageAccountIds.length > 0 && packageAccountIds.every(accountId => connectedIds.has(accountId));
+        const platformCoverage = publishingPlatformsCovered(targetPlatforms, publishingPackage.items)
+          && missingAccountPlatforms.length === 0
+          && packageAccountsValid;
         checks.push({ key: 'publishing_platform_coverage', ready: platformCoverage,
-          detail: platformCoverage ? '本周目标平台均有已选择的发布账号' : '部分目标平台尚未选择发布账号，请补齐后再审批发布' });
+          detail: platformCoverage ? '本周目标平台均有已连接的发布账号' : '部分目标平台缺少有效发布账号，请重新连接并更新周计划' });
         checks.push({
           key: 'publishable_outputs',
           ready: publishingPackage.items.length > 0,
@@ -1605,8 +1637,8 @@ async function approvalPreflight(
         });
         checks.push({
           key: 'selected_publishing_accounts',
-          ready: packageAccountIds.length > 0 && packageAccountIds.every(accountId => connectedIds.has(accountId)),
-          detail: packageAccountIds.length && packageAccountIds.every(accountId => connectedIds.has(accountId)) ? `已核验 ${packageAccountIds.length} 个本期发布账号` : '本期选择的发布账号已断开或不再属于当前企业',
+          ready: packageAccountsValid,
+          detail: packageAccountsValid ? `已核验 ${packageAccountIds.length} 个本期发布账号` : '本期选择的发布账号已断开或不再属于当前企业',
         });
       } catch (error) {
         const detail = error instanceof Error && error.message.includes('IANA')
@@ -1632,9 +1664,13 @@ async function approvalPreflight(
     if (batch) businessRefs.push({ type: 'followup_batch', id: batch.id, version: batch.version, contentHash: batch.content_hash, safeDraftCount: safeDrafts.length });
   }
   const failed = checks.filter(check => !check.ready);
+  const reasonChecks = task.task_key === 'content_release_approval'
+    && failed.some(check => check.key === 'publishing_account_connections')
+    ? failed.filter(check => !['social_accounts', 'publishing_platform_coverage', 'selected_publishing_accounts'].includes(check.key))
+    : failed;
   return {
     ready: failed.length === 0,
-    reason: failed.length ? `审批前资源预检未通过：${failed.map(check => check.detail).join('；')}` : '',
+    reason: failed.length ? `审批前资源预检未通过：${reasonChecks.map(check => check.detail).join('；')}` : '',
     checks,
     businessRefs,
   };

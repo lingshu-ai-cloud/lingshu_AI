@@ -279,6 +279,12 @@ function workflowDeepLink(task: TaskRecord, runId: string) {
   } as WorkflowTask, undefined, runId);
 }
 
+function publishingAccountDeepLink(task: TaskRecord, runId: string): DigitalEmployeeDeepLink {
+  const existing = workflowDeepLink(task, runId);
+  const { view: _view, studioPanel: _studioPanel, ...base } = existing;
+  return { ...base, page: 'accountManagement', businessRef: { ...existing.businessRef, taskKey: 'publishing_account_setup' } };
+}
+
 function planFacts(goal: GoalRecord, plan: PlanRecord): AssistantDecisionCard['facts'] {
   const pack = packageForPlan(plan);
   const context = pack?.operatingContext;
@@ -394,6 +400,8 @@ function attentionCard(task: TaskRecord, run: RunRecord, now: string): Assistant
   const presenterReady = presenterInput.code === 'presenter_ready';
   const presenterSetupRequired = presenterInput.code === 'presenter_setup_required';
   const presenterAuthorizationRequired = presenterInput.code === 'presenter_authorization_required';
+  const publishingAccountRequired = task.task_key === 'content_release_approval'
+    && /发布账号|授权服务尚未配置|平台应用与回调地址/.test(text(task.blocked_reason, 1_000));
   const presenterTitle = presenterReady
     ? '数字人已就绪，请继续生产'
     : presenterSetupRequired
@@ -411,7 +419,7 @@ function attentionCard(task: TaskRecord, run: RunRecord, now: string): Assistant
     kind: presenterReady ? 'next_step' : 'input_required',
     priority: presenterReady ? 550 : failed ? 650 : 600,
     status: 'pending',
-    title: presenterRequired || presenterReady ? presenterTitle : text(task.title) || '需要你处理',
+    title: presenterRequired || presenterReady ? presenterTitle : publishingAccountRequired ? '配置并连接发布账号' : text(task.title) || '需要你处理',
     summary: presenterRequired || presenterReady
       ? presenterSummary
       : viralAnalysis ? viralAnalysisSummary
@@ -420,7 +428,7 @@ function attentionCard(task: TaskRecord, run: RunRecord, now: string): Assistant
       { label: '当前状态', value: presenterReady ? '数字人已就绪' : presenterSetupRequired ? '待补制作条件' : presenterAuthorizationRequired ? '待完成授权' : presenterRequired ? '待补充数字人' : viralAnalysis ? failed ? '分析失败' : '分析未完成' : failed ? '失败' : '等待用户', tone: presenterReady ? 'info' : presenterRequired || viralAnalysis && !failed ? 'warning' : failed ? 'danger' : 'warning' },
       ...(viralAnalysis && requiredAnalyses > 0 ? [{ label: '分析进度', value: `${completedAnalyses}/${requiredAnalyses} 条通过`, tone: completedAnalyses >= requiredAnalyses ? 'info' as const : 'warning' as const }] : []),
       ...(sourceCollection && Number(inventory.requiredCount || 0) > 0 ? [{ label: '爆款库存', value: `可用 ${Number(inventory.reusableCount || 0)}/${Number(inventory.requiredCount || 0)} 条${Number(inventory.missingCount || 0) ? `，缺 ${Number(inventory.missingCount)} 条` : ''}`, tone: Number(inventory.missingCount || 0) ? 'warning' as const : 'info' as const }] : []),
-      ...(task.destination ? [{ label: '处理位置', value: text(task.destination) }] : []),
+      ...(publishingAccountRequired ? [{ label: '处理位置', value: 'accountManagement' }] : task.destination ? [{ label: '处理位置', value: text(task.destination) }] : []),
     ],
     subject: { type: 'workflow_task', id: task.id, version: presenterInput.code
       ? `${workflowTaskDecisionVersion(task)}|presenter:${presenterInput.code}`
@@ -441,9 +449,11 @@ function attentionCard(task: TaskRecord, run: RunRecord, now: string): Assistant
         : retryableBlockedTask
           ? [{ id: 'retry_task', label: '重试当前节点', mode: 'command', emphasis: PRIMARY } as const]
           : []),
-      { id: 'open_workspace', label: '前往处理', mode: 'navigate', emphasis: sourceCollection || retryableBlockedTask ? DEFAULT : PRIMARY },
+      { id: 'open_workspace', label: publishingAccountRequired ? '配置发布账号' : '前往处理', mode: 'navigate', emphasis: sourceCollection || retryableBlockedTask ? DEFAULT : PRIMARY },
     ],
-    deepLink: presenterRequired ? presenterOnboardingDeepLink(task, run.id, presenterInput.presenterId) : workflowDeepLink(task, run.id),
+    deepLink: presenterRequired ? presenterOnboardingDeepLink(task, run.id, presenterInput.presenterId)
+      : publishingAccountRequired ? publishingAccountDeepLink(task, run.id)
+        : workflowDeepLink(task, run.id),
     createdAt: text(task.updated_at || task.created_at) || now,
   };
 }
