@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { existsSync } from 'node:fs';
 import test from 'node:test';
 import type { DigitalEmployeeOverview } from '../lib/digitalEmployees';
 import {
@@ -51,7 +52,17 @@ test('one local dataset fills every Smart Business domain with aligned account i
   const performance = smartBusinessShowcasePerformance(transformed, true)!;
   assert.equal(performance.accounts.length, 4);
   assert.equal(performance.unavailable.length, 0);
+  assert.equal(performance.contents.every(item => item.thumbnailUrl?.startsWith('/demo/')), true);
+  assert.equal(performance.contents.every(item => item.platformUrl?.startsWith('http://127.0.0.1:5177/demo/')), true);
+  assert.equal(performance.contents.every(item => existsSync(new URL(`../../public${item.thumbnailUrl}`, import.meta.url))), true);
   assert.equal(performance.contents.filter(item => item.publishedAt.slice(0, 10) >= '2026-10-13').reduce((sum, item) => sum + (item.metrics.views || 0), 0), 215_800);
+
+  const trends = transformed.industryTrends!;
+  assert.equal(trends.status, 'available');
+  assert.equal(trends.signals.length, 3);
+  assert.equal(trends.signals.every(item => item.thumbnailUrl?.startsWith('/demo/')), true);
+  assert.equal(trends.signals.every(item => existsSync(new URL(`../../public${item.thumbnailUrl}`, import.meta.url))), true);
+  assert.equal(trends.signals.every(item => item.sourceUrl.startsWith('http://127.0.0.1:5177/demo/')), true);
 
   const channels = smartBusinessShowcaseChannels(transformed, true)!;
   assert.equal(channels.whatsappConnected, true);

@@ -66,6 +66,7 @@ test('progressive media reveals successful and fallback images and resets only f
   const props = { src: '/first.jpg', onLoad: () => { loadCalls += 1; }, onError: () => { errorCalls += 1; } };
   let image = h.render(props);
   assert.equal(image.props.style.opacity, 0);
+  assert.equal(image.props.placeholder, undefined, 'Ant Design progress placeholders require caller-owned progress and must not replace the image indefinitely');
   image.props.onLoad({}); image = h.render(props);
   assert.equal(image.props.style.opacity, 1); assert.equal(loadCalls, 1);
   image = h.render({ ...props, src: '/missing.jpg' });

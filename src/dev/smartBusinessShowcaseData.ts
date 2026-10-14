@@ -3,6 +3,7 @@ import type {
   BusinessMetric,
   BusinessSnapshot,
   DigitalEmployeeOverview,
+  NextRoundRecommendations,
   PublishingPlatform,
 } from '../lib/digitalEmployees';
 import type { PlatformAdTask } from '../lib/platformAds';
@@ -18,6 +19,40 @@ const PLATFORM_LABELS: Record<PublishingPlatform, string> = {
   tiktok: 'TikTok',
   youtube: 'YouTube',
 };
+
+const SHOWCASE_THUMBNAILS = [
+  '/demo/feishu-viral-remix-final.jpg',
+  '/demo/thumbs/7654315226526977288.jpg',
+  '/demo/thumbs/7654672409370348814.jpg',
+  '/demo/thumbs/7654680467647630605.jpg',
+  '/demo/thumbs/7655363874128022806.jpg',
+  '/demo/thumbs/7655425971251694855.jpg',
+  '/demo/thumbs/7655426562682014989.jpg',
+  '/demo/thumbs/7655435142575475981.jpg',
+  '/demo/thumbs/7655436089930403086.jpg',
+  '/demo/thumbs/7655440791376039182.jpg',
+  '/demo/thumbs/7655750764610014472.jpg',
+  '/demo/thumbs/7655873660401601805.jpg',
+  '/demo/thumbs/7656627545248517406.jpg',
+  '/demo/thumbs/7656661163404528910.jpg',
+] as const;
+
+const SHOWCASE_VIDEOS = [
+  '/demo/feishu-viral-remix-final.mp4',
+  '/demo/feishu-20260929-final.mp4',
+  '/demo/img2video.mp4',
+] as const;
+
+function showcaseAssetHref(path: string): string {
+  const origin = typeof window !== 'undefined' && window.location?.origin
+    ? window.location.origin
+    : 'http://127.0.0.1:5177';
+  return new URL(path, `${origin}/`).toString();
+}
+
+function showcaseAssetIndex(id: string, length: number): number {
+  return [...id].reduce((sum, character) => sum + character.codePointAt(0)!, 0) % length;
+}
 
 const disabled = (value: unknown) => ['0', 'false', 'no', 'off'].includes(String(value ?? '').trim().toLowerCase());
 
@@ -256,6 +291,46 @@ function normalizeVisibleAccountLabels(data: DigitalEmployeeOverview): Pick<Digi
   return { config, plan, contentQueue };
 }
 
+function showcaseIndustryTrends(endsAt: string): NextRoundRecommendations['industryTrends'] {
+  const signals = [
+    {
+      id: 'showcase-trend-factory-process',
+      title: '工厂生产全过程：从灌装到成品检验',
+      platform: 'TikTok',
+      summary: '工厂直供与生产透明度',
+      sourceUrl: showcaseAssetHref(SHOWCASE_VIDEOS[0]),
+      observedAt: `${endsAt}T16:20:00+08:00`,
+      tags: ['beautysupplier', 'cosmeticfactory', 'factoryprocess'],
+      thumbnailUrl: SHOWCASE_THUMBNAILS[4],
+    },
+    {
+      id: 'showcase-trend-packaging',
+      title: '包装打样实拍：高辨识度色彩与材质组合',
+      platform: 'Instagram',
+      summary: '包装与品类创新',
+      sourceUrl: showcaseAssetHref(SHOWCASE_VIDEOS[1]),
+      observedAt: `${endsAt}T15:05:00+08:00`,
+      tags: ['privatelabel', 'packaging', 'beautybrand'],
+      thumbnailUrl: SHOWCASE_THUMBNAILS[8],
+    },
+    {
+      id: 'showcase-trend-low-moq',
+      title: '低 MOQ 定制流程：小批量订单如何快速落地',
+      platform: 'Facebook',
+      summary: '小单起订与快速响应',
+      sourceUrl: showcaseAssetHref(SHOWCASE_VIDEOS[2]),
+      observedAt: `${endsAt}T13:40:00+08:00`,
+      tags: ['lowmoq', 'oemodm', 'b2bbeauty'],
+      thumbnailUrl: SHOWCASE_THUMBNAILS[11],
+    },
+  ];
+  return {
+    status: 'available',
+    signals,
+    systemActions: ['把本地可复核视频写入下一周编导参考池', '仅将带完整素材的行业信号用于内容方向判断'],
+  };
+}
+
 export function applySmartBusinessShowcaseData<T>(value: T, enabled = isSmartBusinessShowcaseEnabled()): T {
   if (!enabled || !value || typeof value !== 'object') return value;
   const data = value as T & Partial<DigitalEmployeeOverview>;
@@ -263,6 +338,7 @@ export function applySmartBusinessShowcaseData<T>(value: T, enabled = isSmartBus
   const overview = data as T & DigitalEmployeeOverview;
   const normalized = normalizeVisibleAccountLabels(overview);
   const range = currentRange({ ...overview, ...normalized });
+  const industryTrends = showcaseIndustryTrends(range.endsAt);
   const inheritedContentId = overview.goal?.videoPlans?.find(item => item.platform === 'tiktok')?.contentId || 'tiktok-proof-1';
   const review = {
     id: 'showcase-weekly-review',
@@ -313,17 +389,14 @@ export function applySmartBusinessShowcaseData<T>(value: T, enabled = isSmartBus
           requiresConfirmation: true,
           systemActions: ['把新增 Tag 写入下周候选，不直接覆盖产品事实', '由编导在新脚本中验证低 MOQ 与工厂过程表达'],
         },
-        industryTrends: overview.industryTrends || {
-          status: 'waiting',
-          signals: [],
-          systemActions: ['继续收集带原始链接的行业信号'],
-        },
+        industryTrends,
       },
     },
   } satisfies NonNullable<DigitalEmployeeOverview['review']>;
   return {
     ...overview,
     ...normalized,
+    industryTrends,
     businessSnapshot: buildSnapshot({ ...overview, ...normalized }),
     review,
   } as T;
@@ -337,6 +410,8 @@ function content(
   publishedAt: string,
   metrics: ConnectedSocialPerformanceContent['metrics'],
 ): ConnectedSocialPerformanceContent {
+  const assetIndex = showcaseAssetIndex(id, SHOWCASE_THUMBNAILS.length);
+  const videoIndex = showcaseAssetIndex(id, SHOWCASE_VIDEOS.length);
   return {
     id: `${platform}:${account.id}:${id}`,
     accountId: account.id,
@@ -344,8 +419,8 @@ function content(
     platform,
     title,
     publishedAt,
-    thumbnailUrl: '',
-    platformUrl: '',
+    thumbnailUrl: SHOWCASE_THUMBNAILS[assetIndex],
+    platformUrl: showcaseAssetHref(SHOWCASE_VIDEOS[videoIndex]),
     metrics,
   };
 }
