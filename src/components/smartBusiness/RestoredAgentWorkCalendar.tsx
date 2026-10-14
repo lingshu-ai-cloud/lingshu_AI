@@ -16,7 +16,7 @@ import { calendarClock, calendarTimestampLabel } from '../socialProgram/calendar
 import { hasTemplateCalendarTarget, type TemplateCalendarTarget } from '../socialProgram/templateCalendarNavigation';
 import { hasReviewCalendarTarget, type ReviewCalendarTarget } from '../socialProgram/reviewCalendarNavigation';
 import { hasPlanningCalendarTarget, type PlanningCalendarTarget } from '../socialProgram/planningCalendarNavigation';
-import { calendarDayKey, calendarInstant, calendarWeekday, type LsCalendarEvent } from '../../lib/calendarModel';
+import { calendarDayKey, calendarInstant, type LsCalendarEvent } from '../../lib/calendarModel';
 import { projectCalendarDeliverables } from './calendarDeliverables';
 import AgentRoleIcon, { AGENT_ROLE_PALETTE, type AgentVisualRole } from '../ui/AgentRoleIcon';
 import {agentCalendarTaskType,buildAgentCalendarSummaries,taskHasDeliverableOrWorkspace,type AgentCalendarSummary} from './agentCalendarGroups';
@@ -106,9 +106,11 @@ function isSummaryEventData(value: unknown): value is SummaryEventData {
 function weekDates(anchor: string): string[] {
   const parsed = new Date(`${anchor.slice(0, 10)}T12:00:00Z`);
   if (!Number.isFinite(parsed.getTime())) return [];
+  const monday = new Date(parsed);
+  monday.setUTCDate(parsed.getUTCDate() - ((parsed.getUTCDay() + 6) % 7));
   return Array.from({length: 7}, (_, index) => {
-    const date = new Date(parsed);
-    date.setUTCDate(parsed.getUTCDate() + index);
+    const date = new Date(monday);
+    date.setUTCDate(monday.getUTCDate() + index);
     return date.toISOString().slice(0, 10);
   });
 }
@@ -184,16 +186,19 @@ export default function RestoredAgentWorkCalendar({
   const timeZone = tasks.find(task => task.calendarClock?.timeZone)?.calendarClock?.timeZone || 'Asia/Shanghai';
   const scopedDeliverables = useMemo(() => deliverables.filter(task => !agentRole || task.agent === agentRole || task.agent === 'human'), [deliverables, agentRole]);
   const pendingReferences = demo ? [] : calendarPendingReferences(scopedDeliverables, now);
-  const dates = useMemo(() => weekDates(startsAt || scopedDeliverables[0]?.date || calendarDate), [startsAt, scopedDeliverables, calendarDate]);
+  const dates = useMemo(() => weekDates(calendarDate), [calendarDate]);
   const summaries = useMemo(() => buildAgentCalendarSummaries(scopedDeliverables, dates), [scopedDeliverables, dates]);
   const independentTasks = useMemo(() => scopedDeliverables.filter(taskHasDeliverableOrWorkspace), [scopedDeliverables]);
   const visibleIndependentIds = useMemo(() => new Set(summaries.flatMap(summary => showAllIndependent || expandedSummaries.has(summary.key) ? summary.children.map(task => task.id) : [])), [summaries, showAllIndependent, expandedSummaries]);
   const events = useMemo<LsCalendarEvent[]>(() => {
-    const summaryEvents: LsCalendarEvent[] = summaries.map(summary => ({
+    const summaryEvents: LsCalendarEvent[] = summaries.map(summary => {
+      const start = calendarInstant(`${summary.date}T${summary.startTime}`, timeZone).toISOString();
+      return ({
       id: `summary:${summary.key}`,
       title: summary.title,
-      start: summary.date,
-      allDay: true,
+      start,
+      end: new Date(Date.parse(start) + summary.durationMinutes * 60_000).toISOString(),
+      allDay: false,
       timeZone,
       status: summaryStatus(summary),
       statusLabel: summary.progress,
@@ -203,7 +208,7 @@ export default function RestoredAgentWorkCalendar({
       description: summary.progress,
       identity: {kind: 'agent', role: summary.group === 'directing' ? 'director' : summary.group === 'production' ? 'content' : summary.group === 'inquiries' ? 'customer' : 'business'},
       data: {kind:'summary',summary} satisfies SummaryEventData,
-    }));
+    });});
     const taskEvents = independentTasks.filter(task => visibleIndependentIds.has(task.id)).map(task => {
     const overdue = !demo && isCalendarTaskOverdue(task, now);
     const allDay = taskIsAllDay(task);
@@ -302,8 +307,8 @@ export default function RestoredAgentWorkCalendar({
         date={calendarDate}
         view={calendarView}
         initialView={calendarView}
-        onDatesSet={info => { const next = calendarDayKey(info.view.currentStart, timeZone); setCalendarDate(next); setCalendarView(info.view.type as LsCalendarView); }}
-        firstDay={startsAt || tasks[0]?.date ? calendarWeekday(startsAt || tasks[0]!.date, timeZone) : 1}
+        onDatesSet={info => { const next = calendarDayKey(info.view.calendar.getDate(), timeZone); setCalendarDate(next); setCalendarView(info.view.type as LsCalendarView); }}
+        firstDay={1}
         timeZone={timeZone}
         timeGridHeight="clamp(420px, calc(100dvh - 260px), 760px)"
         detailsLayout="custom"

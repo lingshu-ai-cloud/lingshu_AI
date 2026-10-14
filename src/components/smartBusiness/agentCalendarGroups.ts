@@ -14,16 +14,18 @@ export type AgentCalendarSummary = {
   date: string;
   title: string;
   progress: string;
+  startTime: string;
+  durationMinutes: number;
   children: AgentCalendarTask[];
 };
 
-const GROUP_META: Record<AgentCalendarSummaryGroup, { title: string; cadence: 'monday' | 'operating' | 'sunday' }> = {
-  foundation: { title: '经营目标与执行准备', cadence: 'monday' },
-  directing: { title: '对标采集与编导方案', cadence: 'monday' },
-  production: { title: '成片生产', cadence: 'operating' },
-  publishing: { title: '发布与平台分发', cadence: 'operating' },
-  inquiries: { title: '询盘承接与跟进', cadence: 'operating' },
-  review: { title: '数据追踪与周复盘', cadence: 'sunday' },
+const GROUP_META: Record<AgentCalendarSummaryGroup, { title: string; cadence: 'monday' | 'operating' | 'sunday'; startTime: string; durationMinutes: number }> = {
+  foundation: { title: '经营目标与执行准备', cadence: 'monday', startTime: '09:00', durationMinutes: 60 },
+  directing: { title: '对标采集与编导方案', cadence: 'monday', startTime: '10:00', durationMinutes: 120 },
+  production: { title: '成片生产', cadence: 'operating', startTime: '09:00', durationMinutes: 360 },
+  publishing: { title: '发布与平台分发', cadence: 'operating', startTime: '17:30', durationMinutes: 30 },
+  inquiries: { title: '询盘承接与跟进', cadence: 'operating', startTime: '18:00', durationMinutes: 60 },
+  review: { title: '数据追踪与周复盘', cadence: 'sunday', startTime: '16:00', durationMinutes: 60 },
 };
 
 const STEP_GROUP: Record<string, AgentCalendarSummaryGroup> = {
@@ -100,7 +102,7 @@ export function buildAgentCalendarSummaries(tasks: AgentCalendarTask[], dates: s
     const targetDates = meta.cadence === 'monday' ? [monday] : meta.cadence === 'sunday' ? [sunday] : operatingDates;
     for (const date of targetDates) {
       const scoped = meta.cadence === 'operating' ? groupTasks.filter(task => task.date === date) : groupTasks;
-      summaries.push({ key: `${date}:${group}`, group, date, title: meta.title, progress: progress(scoped), children: scoped });
+      summaries.push({ key: `${date}:${group}`, group, date, title: meta.title, progress: progress(scoped), startTime: meta.startTime, durationMinutes: meta.durationMinutes, children: scoped });
     }
   }
   return summaries;
