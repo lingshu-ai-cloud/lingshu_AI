@@ -18,12 +18,15 @@ import { useEffect, useState } from 'react';
 import { flushSync } from 'react-dom';
 import {agentCalendarAuthIdentity,captureAgentCalendarReturnContext,readAgentCalendarReturnContext,restoreAgentCalendarReturnContext} from '../../lib/agentCalendarReturnContext';
 import { ArrowLeft, ArrowRight, CheckCircle2, Clock3, X } from 'lucide-react';
+import type {AgentCalendarSummaryGroup} from './agentCalendarGroups';
 
 export type AgentCalendarTask = {
   id: string;
   deliverableGroup?: string;
   executionStep?: string;
   calendarInternal?: boolean;
+  calendarSummaryOnly?: boolean;
+  summaryGroup?: AgentCalendarSummaryGroup;
   accountBindingTarget?: {platform:string;accountId:string|null;consumerIds:string[]};
   platform?: string;
   enterpriseFactExceptionId?:string;

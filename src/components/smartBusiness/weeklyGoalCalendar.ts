@@ -43,7 +43,7 @@ export function projectWeeklyGoalCalendar(data: DigitalEmployeeOverview): AgentC
         dependsOn: task.dependsOn.map(key => `${prefix}${key}`),
       };
     });
-    return { id: prefix + card.id, date: card.date, time: `${String(9 + index).padStart(2, '0')}:00`, agent: card.agent, title: card.title,
+    return { id: prefix + card.id, date: card.date, time: '00:00', agent: card.agent, title: card.title, calendarSummaryOnly: true,
       output: card.output, context: `${goal.title} · ${goal.startsAt} 至 ${goal.endsAt} · 计划阶段，实际执行以任务回执为准`, minutes: null,
       status, ...(failed || blocked ? { reason: failed?.blocked_reason || blocked?.blocked_reason || (failed ? '执行失败，请查看任务记录后重试' : '等待前置处理或人工确认') } : {}), dependsOn: card.dependsOn.map(id => prefix + id), assignee: card.owner,
       ...(internalNodes.length ? { internalNodes } : {}),

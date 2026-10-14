@@ -19,6 +19,7 @@ import { hasPlanningCalendarTarget, type PlanningCalendarTarget } from '../socia
 import { calendarDayKey, calendarInstant, calendarWeekday, type LsCalendarEvent } from '../../lib/calendarModel';
 import { projectCalendarDeliverables } from './calendarDeliverables';
 import AgentRoleIcon, { AGENT_ROLE_PALETTE, type AgentVisualRole } from '../ui/AgentRoleIcon';
+import {agentCalendarTaskType,buildAgentCalendarSummaries,taskHasDeliverableOrWorkspace,type AgentCalendarSummary} from './agentCalendarGroups';
 
 const LsCalendar = typeof document === 'undefined'
   ? function ServerCalendar({ events, label }: { events: LsCalendarEvent[]; label: string }) {
@@ -98,6 +99,29 @@ function eventStatus(task: AgentCalendarTask, overdue: boolean): LsCalendarEvent
   return 'planned';
 }
 
+type SummaryEventData = { kind: 'summary'; summary: AgentCalendarSummary };
+function isSummaryEventData(value: unknown): value is SummaryEventData {
+  return Boolean(value && typeof value === 'object' && (value as SummaryEventData).kind === 'summary');
+}
+function weekDates(anchor: string): string[] {
+  const parsed = new Date(`${anchor.slice(0, 10)}T12:00:00Z`);
+  if (!Number.isFinite(parsed.getTime())) return [];
+  const monday = new Date(parsed);
+  monday.setUTCDate(parsed.getUTCDate() - ((parsed.getUTCDay() + 6) % 7));
+  return Array.from({length: 7}, (_, index) => {
+    const date = new Date(monday);
+    date.setUTCDate(monday.getUTCDate() + index);
+    return date.toISOString().slice(0, 10);
+  });
+}
+function summaryStatus(summary: AgentCalendarSummary): LsCalendarEvent['status'] {
+  if (summary.children.some(task => task.status === 'failed')) return 'failed';
+  if (summary.children.some(task => task.status === 'blocked')) return 'needs_action';
+  if (summary.children.some(task => task.status === 'active')) return 'working';
+  if (summary.children.length && summary.children.every(task => ['completed','cancelled','no_data'].includes(task.status))) return 'done';
+  return 'planned';
+}
+
 type Props = {
   startsAt?: string;
   tasks: AgentCalendarTask[];
@@ -151,15 +175,38 @@ export default function RestoredAgentWorkCalendar({
     restoreAgentCalendarReturnContext();
   }, [positionKey]);
   const [now, setNow] = useState(() => Date.now());
+  const [showAllIndependent, setShowAllIndependent] = useState(false);
+  const [expandedSummaries, setExpandedSummaries] = useState<Set<string>>(() => new Set());
   useEffect(() => {
     const timer = window.setInterval(() => setNow(Date.now()), 10_000);
     return () => window.clearInterval(timer);
   }, []);
 
   const deliverables = useMemo(() => projectCalendarDeliverables(tasks), [tasks]);
-  const pendingReferences = demo ? [] : calendarPendingReferences(deliverables, now);
   const timeZone = tasks.find(task => task.calendarClock?.timeZone)?.calendarClock?.timeZone || 'Asia/Shanghai';
-  const events = useMemo<LsCalendarEvent[]>(() => deliverables.filter(task => !agentRole || task.agent === agentRole || task.agent === "human").map(task => {
+  const scopedDeliverables = useMemo(() => deliverables.filter(task => !agentRole || task.agent === agentRole || task.agent === 'human'), [deliverables, agentRole]);
+  const pendingReferences = demo ? [] : calendarPendingReferences(scopedDeliverables, now);
+  const dates = useMemo(() => weekDates(startsAt || scopedDeliverables[0]?.date || calendarDate), [startsAt, scopedDeliverables, calendarDate]);
+  const summaries = useMemo(() => buildAgentCalendarSummaries(scopedDeliverables, dates), [scopedDeliverables, dates]);
+  const independentTasks = useMemo(() => scopedDeliverables.filter(taskHasDeliverableOrWorkspace), [scopedDeliverables]);
+  const visibleIndependentIds = useMemo(() => new Set(summaries.flatMap(summary => showAllIndependent || expandedSummaries.has(summary.key) ? summary.children.map(task => task.id) : [])), [summaries, showAllIndependent, expandedSummaries]);
+  const events = useMemo<LsCalendarEvent[]>(() => {
+    const summaryEvents: LsCalendarEvent[] = summaries.map(summary => ({
+      id: `summary:${summary.key}`,
+      title: summary.title,
+      start: summary.date,
+      allDay: true,
+      timeZone,
+      status: summaryStatus(summary),
+      statusLabel: summary.progress,
+      eventType: 'agent_task',
+      ownerAgent: summary.progress,
+      sourceId: summary.key,
+      description: summary.progress,
+      identity: {kind: 'agent', role: summary.group === 'directing' ? 'director' : summary.group === 'production' ? 'content' : summary.group === 'inquiries' ? 'customer' : 'business'},
+      data: {kind:'summary',summary} satisfies SummaryEventData,
+    }));
+    const taskEvents = independentTasks.filter(task => visibleIndependentIds.has(task.id)).map(task => {
     const overdue = !demo && isCalendarTaskOverdue(task, now);
     const allDay = taskIsAllDay(task);
     const start = allDay ? task.date : taskInstant(task);
@@ -174,14 +221,16 @@ export default function RestoredAgentWorkCalendar({
       status: eventStatus(task, overdue),
       statusLabel: overdue ? `交付已逾期 · ${calendarOverdueDuration(task, now)}` : task.deliveryTiming === 'late' ? '已完成 · 晚交付' : task.deliveryTiming === 'on_time' ? '已完成 · 按时' : statusLabels[task.status],
       eventType: task.agent === 'customer' ? 'follow_up' : 'agent_task',
-      ownerAgent: task.assignee || agentLabels[task.agent],
+      ownerAgent: `${agentCalendarTaskType(task)}${task.assignee ? ` · ${task.assignee}` : ''}`,
       platform: task.platform,
       sourceId: task.productionTaskId || task.id,
       description: task.context,
       identity: task.platform ? { kind: 'platform', platform: task.platform } : { kind: 'agent', role: task.agent },
       data: task,
     };
-  }), [deliverables, agentRole, demo, now, timeZone]);
+    });
+    return [...summaryEvents, ...taskEvents];
+  }, [summaries, independentTasks, visibleIndependentIds, demo, now, timeZone]);
 
   const renderDetails = (event: LsCalendarEvent, closeDetails: () => void) => {
     const task = event.data as AgentCalendarTask;
@@ -237,14 +286,15 @@ export default function RestoredAgentWorkCalendar({
         <h3 className="ls-type-title-large text-text-primary">{demo ? 'B2B 零基础 · 首周任务日历' : 'Agent 周任务日历'}</h3>
         <div className="flex flex-wrap gap-2">{Object.entries(agentLabels).map(([agent, label]) => <Tag key={agent}>{label}</Tag>)}</div>
       </div>
-      <p className="mt-1 text-xs text-text-secondary">{demo ? '参考预览会持续标记；真实任务以执行回执为准。' : `${deliverables.length} 项真实交付 · ${calendarDurationLabel(deliverables)}`}</p>
+      <div className="mt-2 flex flex-wrap items-center justify-between gap-3"><p className="text-xs text-text-secondary">{demo ? '参考预览会持续标记；真实任务以执行回执为准。' : `${independentTasks.length} 项独立任务 · ${calendarDurationLabel(independentTasks)}`}</p><Button size="small" aria-pressed={showAllIndependent} onClick={()=>{setShowAllIndependent(value=>!value);setExpandedSummaries(new Set());}}>{showAllIndependent?'隐藏所有独立卡':'显示所有独立卡'}</Button></div>
     </div>
     {!demo && tasks.length === 0 && <Alert className="m-4" type="info" showIcon title="尚无 Agent 执行排期" description="发布计划不会自动视为制作任务；生成执行排期后将在此显示。"/>}
-    {pendingReferences.length > 0 && <Alert className="m-4" type="error" showIcon title={`当前待处理 · ${pendingReferences.length} 项原任务（按各任务冻结时区）`} description={<div><p>引用原任务，原计划卡保留；不计为新增交付。</p><p className="mt-1">{pendingReferences.map(task => `${task.title} · 原计划 ${task.date} · 逾期 ${calendarOverdueDuration(task, now)}`).join('；')}</p></div>}/>}
+    {pendingReferences.length > 0 && <Alert className="m-4" type="error" showIcon title={`当前待处理 · ${pendingReferences.length} 项原任务（按各任务冻结时区）`} description={<div><p>引用原任务，原计划卡保留；不计为新增交付。</p><p className="mt-1">{pendingReferences.map(task => `${task.title} · 原计划 ${task.date} · 逾期 ${calendarOverdueDuration(task, now)}${task.affectedPublicationIds?.length ? ` · 受影响发布 ${task.affectedPublicationIds.join('、')}` : ''}`).join('；')}</p></div>}/>}
     {demo && <Alert className="m-4" type="warning" showIcon title="参考排期" description="任务、工时与执行状态为参考预览，异常副链路仅用于验收。"/>}
     <ul className="sr-only">{events.map(event => {
+      if(isSummaryEventData(event.data))return <li key={event.id}>{event.title} · {event.statusLabel}</li>;
       const task = event.data as AgentCalendarTask;
-      return <li key={event.id}>{event.title} · {event.statusLabel}{task.affectedPublicationIds?.length ? ` · 受影响发布 ${task.affectedPublicationIds.join('、')}` : ''}</li>;
+      return <li key={event.id}>{agentCalendarTaskType(task)} · {event.title} · {event.statusLabel}{task.affectedPublicationIds?.length ? ` · 受影响发布 ${task.affectedPublicationIds.join('、')}` : ''}</li>;
     })}</ul>
     {<Suspense fallback={<p className="p-5 text-xs text-text-secondary">正在加载日历…</p>}><LsCalendar
         key={positionKey}
@@ -260,6 +310,7 @@ export default function RestoredAgentWorkCalendar({
         timeGridHeight="clamp(420px, calc(100dvh - 260px), 760px)"
         detailsLayout="custom"
         renderDetails={renderDetails}
+        onEventClick={event=>{if(!isSummaryEventData(event.data))return false;const key=event.data.summary.key;if(showAllIndependent){setShowAllIndependent(false);setExpandedSummaries(new Set([key]));}else setExpandedSummaries(current=>{const next=new Set(current);if(next.has(key))next.delete(key);else next.add(key);return next;});return true;}}
       /></Suspense>}
   </section>;
 }
