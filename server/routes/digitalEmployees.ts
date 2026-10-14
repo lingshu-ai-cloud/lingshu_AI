@@ -42,7 +42,8 @@ import {
   taskCorrectionInvalidatesWeeklyAuthorization,
 } from '../digitalEmployees/weeklyAuthorizationInvalidation.js';
 import { weeklyAuthorizationRecoveryDecision } from '../digitalEmployees/weeklyAuthorizationRecovery.js';
-import { buildPublishingReadinessSnapshot, missingPublishingOAuthConfiguration, publishingAccountConnectionMessage, publishingOAuthConfigurationMessage, type PublishingOAuthPlatform, type PublishingReadinessSnapshot } from '../digitalEmployees/publishingOAuthReadiness.js';
+import { missingPublishingOAuthConfiguration, publishingAccountConnectionMessage, publishingOAuthConfigurationMessage, type PublishingOAuthPlatform, type PublishingReadinessSnapshot } from '../digitalEmployees/publishingOAuthReadiness.js';
+import { readTenantPublishingReadiness } from '../digitalEmployees/publishingRuntimeReadiness.js';
 import { getTenantAwareGoogleOAuthClient, getTenantAwareInstagramOAuthClient, getTenantAwareMetaOAuthClient, getTenantAwareTikTokOAuthClient } from '../lib/oauthConfig.js';
 import { reviseContent } from '../digitalEmployees/contentRevision.js';
 import { automationBgmCatalog } from './studio.js';
@@ -249,27 +250,7 @@ async function publishingReadinessForOverview(
   required: boolean,
   targetPlatforms: string[],
 ): Promise<PublishingReadinessSnapshot> {
-  if (!required) {
-    return buildPublishingReadinessSnapshot({
-      required: false,
-      targetPlatforms,
-      connectedPlatforms: [],
-      clients: { meta: false, instagram: false, tiktok: false, google: false },
-    });
-  }
-  const [connectedAccounts, metaClient, instagramClient, tiktokClient, googleClient] = await Promise.all([
-    listConnectedPublishingAccounts(tenantId),
-    getTenantAwareMetaOAuthClient(tenantId),
-    getTenantAwareInstagramOAuthClient(tenantId),
-    getTenantAwareTikTokOAuthClient(tenantId),
-    getTenantAwareGoogleOAuthClient(tenantId),
-  ]);
-  return buildPublishingReadinessSnapshot({
-    required: true,
-    targetPlatforms,
-    connectedPlatforms: connectedAccounts.map(account => account.platform),
-    clients: { meta: Boolean(metaClient), instagram: Boolean(instagramClient), tiktok: Boolean(tiktokClient), google: Boolean(googleClient) },
-  });
+  return (await readTenantPublishingReadiness(tenantId, required, targetPlatforms)).snapshot;
 }
 
 function configSnapshotForPlan(plan: PlanRecord | null, fallback: DigitalEmployeeConfig): DigitalEmployeeConfig {
