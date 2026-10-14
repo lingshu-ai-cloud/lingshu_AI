@@ -52,6 +52,7 @@ assert.match(planDetails, /thumbnailUrlWithSourceFallback\(reference\.thumbnailU
 assert.doesNotMatch(commandCenter, /本周计划爆款依据|计划依据 · 爆款参考/, '经营首页不得展开爆款依据，避免挤占主视图');
 assert.match(planDetails, /title="本周计划"[\s\S]{0,160}aria-label="详细周计划"/, '详细周计划必须通过可随时关闭的抽屉查看');
 assert.match(planDetails, /内容与发布时间[\s\S]{0,1200}本周计划爆款依据/, '详细周计划必须同时展示内容排期和对应爆款依据');
+assert.doesNotMatch(planDetails, /发布账号尚未就绪|发布准备状态暂时无法核验|配置发布账号/, '详细周计划不得重复展示发布账号准备警告');
 assert.doesNotMatch(commandCenter, /note:|item\.note|当前没有待验收成片|发布任务 ·|逐镜生成与重试费用待核算|按当前周计划与供应商报价估算|仅统计供应商对账回执/, '六项周计划指标不得保留解释性小字');
 assert.doesNotMatch(commandCenter, /已包含本周全部视频制作/, '费用未核算前不得承诺覆盖本周全部视频制作');
 assert.match(source, /durationSeconds: contents\.reduce\(\(sum, item\) => sum \+ item\.duration, 0\)/, '视频总时长必须按本周全部计划视频合计');

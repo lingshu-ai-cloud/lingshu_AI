@@ -4933,7 +4933,6 @@ export default function DigitalEmployeePage({
         data={data}
         open={weeklyPlanDetailsOpen}
         onClose={()=>setWeeklyPlanDetailsOpen(false)}
-        onOpenPublishingSetup={openPublishingAccountSetup}
         onBudgetModeChange={async mode => {
           const pack = data.plan?.businessPackage;
           if (!pack) throw new Error("周计划尚未生成完整");

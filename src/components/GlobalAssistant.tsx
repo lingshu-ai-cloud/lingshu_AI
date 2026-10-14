@@ -1,5 +1,3 @@
-import { useAssistantDecisionMemory } from '../lib/useAssistantDecisionMemory';
-import AssistantDecisionMemoryPanel, { AssistantDecisionSaveButton } from './AssistantDecisionMemoryPanel';
 import {
   useCallback,
   useEffect,
@@ -791,7 +789,6 @@ export default function GlobalAssistant({
     userId: persistenceScope.userId.trim(),
   }), [persistenceScope.tenantId, persistenceScope.userId]);
   const persistenceScopeKey = `${stablePersistenceScope.tenantId}\u0000${stablePersistenceScope.userId}`;
-  const decisionMemory = useAssistantDecisionMemory(persistenceScopeKey, responseErrorMessage);
   const welcomeBubbleStorageKey = `${ASSISTANT_CONVERSATION_WELCOME_SEEN_KEY}:${encodeURIComponent(stablePersistenceScope.tenantId)}:${encodeURIComponent(stablePersistenceScope.userId)}`;
   const persistenceFenceRef = useRef({ scopeKey: persistenceScopeKey, active: true });
   if (persistenceFenceRef.current.scopeKey !== persistenceScopeKey) {
@@ -2411,7 +2408,6 @@ export default function GlobalAssistant({
               </div>
             ) : (
               <>
-                <AssistantDecisionMemoryPanel memory={decisionMemory} />
                 <div
                   ref={messageScrollRef}
                   data-assistant-surface="conversation"
@@ -2453,7 +2449,7 @@ export default function GlobalAssistant({
                           : 'ls-messenger-bubble ls-messenger-bubble--inbound'}>
                           {msg.role === 'assistant'
                             ? (msg.content ? <AgentReply content={msg.content} sources={msg.sources} onAction={onAction} /> : <span className="opacity-40">...</span>)
-                            : <>{msg.content}<AssistantDecisionSaveButton memory={decisionMemory} text={msg.content} /></>}
+                            : msg.content}
                         </div>
                       </div>
                     ))}
