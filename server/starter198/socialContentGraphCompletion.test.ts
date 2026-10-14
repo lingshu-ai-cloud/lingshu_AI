@@ -13,6 +13,17 @@ import { completeSocialContentGraphRun, recoverSocialContentGraphCompletions } f
 import { writeExecutionStage } from './socialContentProductionRuntimeSupport.js';
 import { AUTO_TASK_KEY } from './socialContentAutoProduction.js';
 import { socialRequestHash } from './socialContentValidation.js';
+import { SOCIAL_CONTENT_CORRECTION_POLICY_VERSION, socialContentCorrectionRuntimeHash } from './socialContentProductionGraph.js';
+
+test('single-scene correction execution and crash recovery share one versioned identity', () => {
+  const grantHash = 'b'.repeat(64);
+  assert.equal(SOCIAL_CONTENT_CORRECTION_POLICY_VERSION, 'bound-voice-strict-approved-intro.v4');
+  assert.equal(socialContentCorrectionRuntimeHash(grantHash), socialRequestHash({
+    grantHash,
+    policyVersion: SOCIAL_CONTENT_CORRECTION_POLICY_VERSION,
+  }));
+  assert.throws(() => socialContentCorrectionRuntimeHash('untrusted-client-value'), /correction_identity_invalid/);
+});
 
 async function fixture(terminal=true){
   const folder=mkdtempSync(path.join(tmpdir(),'graph-completion-'));const store=new LangGraphTestStore(path.join(folder,'db.json'));

@@ -30,6 +30,14 @@ test('admission binds graph or legacy once, rejects damaged bindings',async()=>{
     assert.throws(()=>socialProductionExecutor({...job,checkpoints:{'langgraph.v1':first}}),/binding_invalid/);
   } finally {rmSync(folder,{recursive:true,force:true});}
 });
+test('formal weekly production always freezes the LangGraph executor while manual tasks retain rollout control',()=>{
+  const weekly={...detail(),mode:'weekly' as const};
+  assert.equal(createSocialProductionExecutorCheckpoint(weekly,{}).payload.executor,'langgraph');
+  assert.equal(createSocialProductionExecutorCheckpoint(weekly,{SOCIAL_CONTENT_EXECUTOR:'legacy'}).payload.executor,'langgraph');
+  const shooting={...detail(),mode:'weekly' as const};shooting.brief={...shooting.brief,productionApproach:'shooting_plan'} as typeof shooting.brief;
+  assert.equal(createSocialProductionExecutorCheckpoint(shooting,{SOCIAL_CONTENT_EXECUTOR:'langgraph'}).payload.executor,'legacy');
+  assert.equal(createSocialProductionExecutorCheckpoint({...detail(),mode:'instant' as const},{}).payload.executor,'legacy');
+});
 test('frozen hash tolerates derived projection versions but rejects human plan/director/review edits',()=>{
   const original=detail();const binding=createSocialProductionExecutorCheckpoint(original,{SOCIAL_CONTENT_EXECUTOR:'langgraph'});
   const frozen=binding.payload.approvedContext!;
