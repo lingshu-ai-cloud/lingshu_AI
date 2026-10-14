@@ -1,5 +1,5 @@
 import type { AgentCalendarTask } from "./smartBusiness/AgentWeeklyCalendar";
-import { Alert, Button, Drawer, Empty, Segmented, Select, Statistic, Table, Tabs, Tag, Timeline } from "antd";
+import { Alert, Button, Drawer, Empty, Radio, Segmented, Select, Statistic, Table, Tabs, Tag, Timeline } from "antd";
 import LsDataChart from "./ui/LsDataChart";
 import { LsGradientProgress } from "./ui/LsExperiencePrimitives";
 import { useEffect, useMemo, useState, type CSSProperties, type ReactNode } from "react";
@@ -416,6 +416,146 @@ export function WeeklyCommandCenter({
     </div>
     {notice && <div className="flex flex-wrap items-center gap-2 border-t border-slate-100 bg-slate-50/70 px-5 py-3">{notice}</div>}
   </section>;
+}
+
+export function WeeklyPlanDetailsDrawer({
+  data,
+  open,
+  onClose,
+  onBudgetModeChange,
+}: {
+  data: DigitalEmployeeOverview;
+  open: boolean;
+  onClose: () => void;
+  onBudgetModeChange?: (mode: "protected" | "economy") => Promise<void>;
+}) {
+  const display = buildSmartBusinessDisplayModel(data);
+  const director = data.plan?.businessPackage?.directorPlan;
+  const savedBudgetMode = director?.productionBudgetMode === "economy" ? "economy" : "protected";
+  const [budgetMode, setBudgetMode] = useState<"protected" | "economy">(savedBudgetMode);
+  const [budgetBusy, setBudgetBusy] = useState(false);
+  useEffect(() => setBudgetMode(savedBudgetMode), [savedBudgetMode, open]);
+  const budgetMin = Number(director?.productionBudgetMin || 0);
+  const budgetMax = Number(director?.productionBudgetMax || 0);
+  const masterPlans = data.plan?.businessPackage?.tasks.find(task => task.templateId === "production")?.videoPlans?.filter(item => item.productionRole !== "platform_adaptation") || [];
+  const reliableBudgetReady = masterPlans.length > 0 && masterPlans.every(item => item.route !== "clone"
+    || item.estimatedCostRange?.basis === "verified_storyboard_provider_envelope");
+  const canEditBudget = Boolean(onBudgetModeChange && data.goal?.status === "draft" && !data.run && reliableBudgetReady);
+  const saveBudgetMode = async () => {
+    if (!onBudgetModeChange || budgetMode === savedBudgetMode) return;
+    setBudgetBusy(true);
+    try { await onBudgetModeChange(budgetMode); }
+    finally { setBudgetBusy(false); }
+  };
+  const weeklyReferences = [...new Map(display.masters.flatMap(item => {
+    const reference = item.inspirationReference;
+    if (!reference) return [];
+    const identity = reference.referenceId || reference.sourceUrl || reference.title;
+    return [[identity, { item, reference }] as const];
+  })).values()];
+  const missingReferenceCount = display.masters.filter(item => !item.inspirationReference).length;
+  const formatPublishTime = (item: UnifiedPlanContent) => {
+    const parsed = item.plannedPublishAt ? new Date(item.plannedPublishAt) : null;
+    if (parsed && !Number.isNaN(parsed.getTime())) {
+      return parsed.toLocaleString('zh-CN', {
+        timeZone: 'Asia/Shanghai',
+        month: '2-digit',
+        day: '2-digit',
+        hour: '2-digit',
+        minute: '2-digit',
+        hour12: false,
+      });
+    }
+    return item.plannedPublishDate || '待排期';
+  };
+
+  return <Drawer open={open} title="本周计划" size={720} onClose={onClose} destroyOnHidden>
+    <div className="space-y-6" aria-label="详细周计划">
+      <section>
+        <div className="flex flex-wrap items-start justify-between gap-3">
+          <div className="min-w-0">
+            <h2 className="text-lg font-semibold text-text-primary">{data.goal?.title || '本周经营计划'}</h2>
+            {data.goal?.objective && <p className="mt-2 text-sm leading-6 text-text-secondary">{data.goal.objective}</p>}
+          </div>
+          {data.goal && <WeeklyRangeVisual startsAt={data.goal.startsAt} endsAt={data.goal.endsAt}/>}
+        </div>
+        <dl className="mt-5 grid gap-4 border-y border-border py-4 sm:grid-cols-3">
+          <div><dt className="text-xs text-text-muted">计划内容</dt><dd className="mt-1 text-base font-semibold text-text-primary">{display.totals.versionCount} 条</dd></div>
+          <div><dt className="text-xs text-text-muted">视频总时长</dt><dd className="mt-1 text-base font-semibold text-text-primary">{display.totals.durationSeconds > 0 ? `${display.totals.durationSeconds} 秒` : '待确认'}</dd></div>
+          <div><dt className="text-xs text-text-muted">目标平台</dt><dd className="mt-1 text-base font-semibold text-text-primary">{display.platforms.filter(item => item.plannedCount > 0).map(item => platformLabels[item.platform]).join('、') || '待确认'}</dd></div>
+        </dl>
+      </section>
+
+      <section aria-label="开工预算方案" className="border-t border-border pt-5">
+        <div className="flex flex-wrap items-start justify-between gap-3">
+          <div>
+            <h3 className="text-base font-semibold text-text-primary">开工预算方案</h3>
+            <p className="mt-1 text-xs leading-5 text-text-secondary">费用按已确认分镜、480p 供应商价格和首帧调用次数预估；开始生产即授权所选上限，执行中不再逐镜询问预算。</p>
+          </div>
+          {reliableBudgetReady && <Tag color={savedBudgetMode === "economy" ? "warning" : "success"}>{savedBudgetMode === "economy" ? "精简预算" : "完整保障"}</Tag>}
+        </div>
+        {!reliableBudgetReady ? <Alert className="mt-3" type="warning" showIcon title="可靠预算尚未生成" description="请先完成周计划详情准备；系统不会在预算未知时启动生产。" /> : <>
+          <Radio.Group className="mt-3 block w-full" value={budgetMode} disabled={!canEditBudget || budgetBusy} onChange={event => setBudgetMode(event.target.value)}>
+            <div className="divide-y divide-border border-y border-border">
+              <label className="flex cursor-pointer items-start gap-3 py-3">
+                <Radio value="protected" />
+                <span className="min-w-0 flex-1"><span className="block text-sm font-semibold text-text-primary">完整保障（推荐） · 上限 ¥{budgetMax.toFixed(2)}</span><span className="mt-1 block text-xs leading-5 text-text-secondary">覆盖全部分镜的一次生成，并预留每镜一次付费重做；确认后按该上限连续生产。</span></span>
+              </label>
+              <label className="flex cursor-pointer items-start gap-3 py-3">
+                <Radio value="economy" />
+                <span className="min-w-0 flex-1"><span className="block text-sm font-semibold text-text-primary">精简预算 · 上限 ¥{budgetMin.toFixed(2)}</span><span className="mt-1 block text-xs leading-5 text-text-secondary">固定 480p、每镜一次生成，不预留付费重做；质检不通过时需重新确认追加预算。</span></span>
+              </label>
+            </div>
+          </Radio.Group>
+          {canEditBudget && budgetMode !== savedBudgetMode && <div className="mt-3 flex justify-end"><Button type="primary" loading={budgetBusy} onClick={() => void saveBudgetMode()}>应用预算方案</Button></div>}
+          {!canEditBudget && <p className="mt-3 text-xs text-text-muted">{data.run ? "生产已开始，本次预算授权已冻结。" : "历史计划仅供查看，不能修改预算。"}</p>}
+        </>}
+      </section>
+
+      <section aria-label="周计划内容与排期">
+        <h3 className="text-base font-semibold text-text-primary">内容与发布时间</h3>
+        <div className="mt-3 divide-y divide-border border-y border-border">
+          {display.contents.map(item => <article key={item.id} className="flex min-w-0 items-start gap-3 py-3">
+            <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-md bg-surface-2" aria-hidden="true"><SocialPlatformIcon platform={item.platform} size={18}/></span>
+            <div className="min-w-0 flex-1">
+              <p className="text-sm font-semibold text-text-primary">{item.title}</p>
+              <p className="mt-1 text-xs text-text-secondary">{item.productName} · {platformLabels[item.platform]} · {formatPublishTime(item)}</p>
+            </div>
+          </article>)}
+          {display.contents.length === 0 && <p className="py-4 text-sm text-text-secondary">计划内容正在生成，完成后会在这里显示。</p>}
+        </div>
+      </section>
+
+      <section aria-label="本周计划爆款依据" className="border-t border-border pt-5">
+        <div className="flex flex-wrap items-start justify-between gap-3">
+          <div><h3 className="text-base font-semibold text-text-primary">计划依据 · 爆款参考</h3><p className="mt-1 text-xs text-text-secondary">这里记录本周选题实际绑定的爆款视频；点击可回到爆款库查看原素材与分析。</p></div>
+          <Tag color={missingReferenceCount > 0 ? 'warning' : 'success'}>{weeklyReferences.length} 条已绑定{missingReferenceCount > 0 ? ` · ${missingReferenceCount} 条待补` : ''}</Tag>
+        </div>
+        {weeklyReferences.length > 0 ? <div className="mt-3 grid gap-3 sm:grid-cols-2">
+          {weeklyReferences.map(({ item, reference }) => <button
+            key={reference.referenceId || reference.sourceUrl || reference.title}
+            type="button"
+            onClick={() => window.dispatchEvent(new CustomEvent("lingshu:navigate", { detail: inspirationReferenceNavigationDetail(reference, item.contentId) }))}
+            className="group overflow-hidden rounded-lg border border-border bg-white text-left transition-[border-color,box-shadow,transform] hover:-translate-y-0.5 hover:border-accent/40 hover:shadow-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent"
+          >
+            <span className="relative flex aspect-video w-full items-center justify-center overflow-hidden bg-surface-2">
+              {reference.thumbnailUrl ? <img
+                src={thumbnailUrlWithSourceFallback(reference.thumbnailUrl, reference.sourceUrl)}
+                alt={`${reference.title || item.title} 视频缩略图`}
+                className="h-full w-full object-cover transition-transform duration-200 motion-safe:group-hover:scale-[1.02]"
+              /> : <SocialPlatformIcon platform={reference.platform} size={32}/>}
+              <span className="absolute left-2 top-2 flex h-7 w-7 items-center justify-center rounded-md bg-white/90 shadow-sm" aria-hidden="true"><SocialPlatformIcon platform={reference.platform} size={16}/></span>
+              <span className="absolute bottom-2 right-2 rounded-full bg-black/65 px-2 py-1 text-[10px] font-semibold text-white">查看原视频</span>
+            </span>
+            <span className="flex min-w-0 items-center gap-3 px-3 py-3">
+              <span className="min-w-0 flex-1"><span className="block line-clamp-2 text-sm font-semibold text-text-primary">{reference.title || item.title}</span><span className="mt-1 block truncate text-xs text-text-secondary">用于：{item.productName} · {platformLabels[item.platform]}</span></span>
+              <Eye size={16} className="shrink-0 text-accent" aria-hidden="true"/>
+            </span>
+          </button>)}
+        </div> : <p className="mt-3 text-sm text-text-secondary">当前计划尚未绑定可核验的爆款参考；系统不会用虚构素材填充。</p>}
+      </section>
+    </div>
+  </Drawer>;
 }
 
 export function BusinessInterpretation({ data, onViewReview }: { data: DigitalEmployeeOverview; onViewReview: () => void }) {

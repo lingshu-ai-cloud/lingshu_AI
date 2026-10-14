@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { canSkipCollectionForExplicitReferences, evaluatePlannedReferenceReuse, evaluateViralAnalysisCoverage, hasParseableExactVideoAnalysis, reusableExplicitReferenceIds, usedViralReferenceIdsFromBatches, viralCoverageBypassAllowed } from './viralAnalysisCoverage.js';
+import { canSkipCollectionForExplicitReferences, evaluatePlannedReferenceReuse, evaluateViralAnalysisCoverage, hasParseableExactVideoAnalysis, reusableExplicitReferenceIds, viralCoverageBypassAllowed } from './viralAnalysisCoverage.js';
 import type { VideoCreationPlan } from '../../shared/contracts/videoCreationPlan.js';
 
 const plan = (id: string, referenceId = '') => ({
@@ -86,6 +86,28 @@ test('duplicate family rows and duplicate evidence do not inflate coverage', () 
   assert.equal(result.ready, true);
 });
 
+test('different record ids for the same video count as one weekly reference', () => {
+  const first = evidence('duplicate-a');
+  Object.assign(first.aiAnalysis.gemini, {
+    theme: '私有品牌美妆产品一站式代工服务',
+    hooks: ['Need a private label beauty product?'],
+    audioTranscript: { rawText: 'Need a private label beauty product? We support packaging formula and design in one place. MOQ starts from ten thousand pieces.' },
+  });
+  const reencoded = structuredClone(first);
+  reencoded.id = 'duplicate-b';
+  delete (reencoded.aiAnalysis.gemini as Record<string, unknown>).audioTranscript;
+  Object.assign(reencoded.aiAnalysis.gemini.scriptDetails15s[0]!, {
+    dialogue: 'Need a private label beauty product? We support packaging formula and design in one place. MOQ starts from 10, 000 pieces.',
+  });
+  const result = evaluateViralAnalysisCoverage(
+    [plan('master-1', 'duplicate-a'), plan('master-2', 'duplicate-b')],
+    [first, reencoded],
+  );
+  assert.equal(result.ready, false);
+  assert.equal(result.completedCount, 1);
+  assert.match(result.blockedReason, /还缺 1 条/);
+});
+
 test('automatically recommended old reference is not explicit reuse authority', () => {
   const automatic = {
     ...plan('master-1', 'old-reference'),
@@ -120,15 +142,7 @@ test('collection skip accepts only fully analyzed user-explicit references', () 
   assert.equal(canSkipCollectionForExplicitReferences([explicit], [{ id: 'explicit-reference', aiAnalysis: { analysisMode: 'exact' } }]), false);
 });
 
-test('persisted production handoffs consume automatic references but exclude the active run', () => {
-  const used = usedViralReferenceIdsFromBatches([
-    { run_id: 'older-run', orders: JSON.stringify([{ videoPlan: { referenceId: 'used-master' }, deliveryVariants: [{ referenceId: 'used-variant' }], evidenceRefs: [{ type: 'exact_analysis', id: 'used-legacy-evidence' }] }]) },
-    { run_id: 'active-run', orders: [{ videoPlan: { referenceId: 'active-reference' } }] },
-  ], 'active-run');
-  assert.deepEqual(used.sort(), ['used-legacy-evidence', 'used-master', 'used-variant']);
-});
-
-test('weekly inventory accepts unused exact references and preserves deliberate explicit reuse', () => {
+test('weekly inventory rejects an automatic current-week collision and preserves deliberate explicit reuse', () => {
   const automatic = {
     ...plan('master-auto', 'automatic-reference'),
     planningEvidence: { generatedFrom: 'matrix_viral' },

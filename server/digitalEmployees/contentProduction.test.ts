@@ -29,12 +29,14 @@ import {
   resolveEnterpriseAssetLocation,
   sceneIntent,
   repairFrozenOrderProductBinding,
+  refreshExpandedContentOrderContract,
   resumeContentProjectForTaskControl,
   resolveFrozenOrderProduct,
   selectExplicitFocusProducts,
   selectContentProjectsForTick,
   proportionalCues,
   splitSubtitleUnits,
+  storyboardVoiceLines,
   subtitleCuesAreSafe,
   type AssetCandidate,
 } from './contentProduction.js';
@@ -42,6 +44,7 @@ import { enterpriseAssetObjectKey, enterpriseAssetTenantKey } from '../storage/e
 import { assessScriptQualityV2, hardScriptSafetyIssues } from '../lib/studioScriptQualityV2.js';
 import { inspectRenderedVisuals } from '../lib/renderVisualQuality.js';
 import { store } from '../storage/index.js';
+import { spokenLanguageMatches } from '../../shared/contracts/videoCreationPlan.js';
 
 const partialQueue = [{ id: 'project-a', spec: { contentOrderId: 'order-a' } }];
 assert.deepEqual(contentOrderCoverage(partialQueue, ['order-a', 'order-b']).missing, ['order-b']);
@@ -51,6 +54,20 @@ assert.equal(contentOrderCoverage(repairedQueue, ['order-a', 'order-b']).complet
 assert.deepEqual(contentOrderCoverage(repairedQueue, ['order-a', 'order-b']).missing, [], 'a retried queue must not recreate existing orders');
 assert.equal(contentOrderCoverage([...repairedQueue, partialQueue[0]!], ['order-a', 'order-b']).complete, false);
 assert.equal(contentOrderCoverage(repairedQueue, ['order-b']).complete, false, 'obsolete orders must not be silently approved');
+const refreshedExpandedOrder = refreshExpandedContentOrderContract({
+  id: 'content-order-1::en', sourceContentOrderId: 'content-order-1', masterContentOrderId: 'content-order-1::en', masterLanguage: 'en',
+  route: 'clone', platform: 'facebook', productId: 'product-a', productName: 'Product A', evidenceRefs: [],
+  videoPlan: { language: 'en' } as any, contractVersion: 1,
+  scripts: { en: { version: 1, body: 'old', hash: 'old', language: 'en', status: 'confirmed', generatedBy: 'director_agent', generatedAt: '2026-10-01T00:00:00.000Z', source: 'llm', degradedReason: '' } },
+}, {
+  id: 'content-order-1', route: 'clone', platform: 'facebook', productId: 'product-a', productName: 'Product A', evidenceRefs: [],
+  videoPlan: { language: 'en' } as any, contractVersion: 1,
+  scripts: { en: { version: 1, body: 'new', hash: 'new', language: 'en', status: 'confirmed', generatedBy: 'director_agent', generatedAt: '2026-10-14T00:00:00.000Z', source: 'deterministic_closed_world_fallback', degradedReason: '' } },
+}, 'en');
+assert.equal(refreshedExpandedOrder.id, 'content-order-1::en');
+assert.equal(refreshedExpandedOrder.sourceContentOrderId, 'content-order-1');
+assert.equal(refreshedExpandedOrder.masterContentOrderId, 'content-order-1::en');
+assert.equal(refreshedExpandedOrder.scripts?.en?.hash, 'new', 'legacy project copies must receive the repaired base-order script');
 const originalList = store.list;
 try {
   const pages: number[] = [];
@@ -69,6 +86,11 @@ const evidence = {
   productNames: ['Product A'],
   assetIds: ['asset-1'],
 };
+assert.equal(
+  isLlmUnavailableError(new Error('400 Access denied: overdue-payment')),
+  true,
+  'provider billing or access outages must use the closed-world fallback instead of blocking production',
+);
 assert.equal(
   sceneIntent('[0.00-4.00s]\n环境：室内工作台\n镜头功能：观察元件\n画面：绿色电路板与连接器\n台词：test\n\n[4.00-8.00s]\n环境：板面\n画面：银色焊点', 0, 4),
   '环境：室内工作台；镜头功能：观察元件；画面：绿色电路板与连接器',
@@ -359,6 +381,13 @@ const fallbackQuality = assessScriptQualityV2({
 });
 assert.notEqual(fallbackQuality.qualityStatus, 'rejected', `fallback must pass hard factual safety: ${fallbackQuality.hardIssues.join('；')}`);
 assert.notEqual(fallbackQuality.qualityStatus, 'needs_material', `fallback must remain executable with the bound real asset: ${fallbackQuality.warnings.join('；')}`);
+const englishFallbackScript = deterministicClosedWorldStoryboard({
+  productFacts: '产品：真实产品；MOQ：100 bottles',
+  assets: fallbackAssets,
+  language: 'en',
+});
+assert.equal(spokenLanguageMatches(storyboardVoiceLines(englishFallbackScript).join(' '), 'en'), true, 'an English order must never receive Chinese fallback narration');
+assert.match(englishFallbackScript, /Product:|MOQ:/);
 
 const enterpriseAssetRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'enterprise-asset-render-'));
 try {

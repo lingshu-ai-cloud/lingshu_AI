@@ -157,6 +157,10 @@ export const digitalEmployeeApi = {
     references: Array<{ id: string; name: string; platform: string; thumbnailUrl: string; sourceUrl: string; views: string; account: string }>;
   }>("/planning-options"),
   savePackage: (goalId: string, pack: WeeklyPackage) => request<DigitalEmployeeOverview>(`/goals/${encodeURIComponent(goalId)}/package`, { method: "PUT", body: JSON.stringify(pack) }),
+  setProductionBudgetMode: (goalId: string, packageRevision: number, mode: "protected" | "economy") => request<DigitalEmployeeOverview>(
+    `/goals/${encodeURIComponent(goalId)}/production-budget-mode`,
+    { method: "PATCH", body: JSON.stringify({ packageRevision, mode }) },
+  ),
   reschedulePublication: (goalId: string, contentId: string, scheduledAt: string) => request<DigitalEmployeeOverview>(
     `/goals/${encodeURIComponent(goalId)}/publication-schedule/${encodeURIComponent(contentId)}`,
     { method: "PATCH", body: JSON.stringify({ scheduledAt }) },

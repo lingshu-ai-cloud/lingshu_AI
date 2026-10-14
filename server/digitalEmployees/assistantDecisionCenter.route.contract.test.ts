@@ -45,8 +45,10 @@ assert.match(postRoute, /started\.tasks\.filter\(task => task\.run_id === run\.i
 assert.match(postRoute, /plan_start_unconfirmed/, 'missing execution evidence cannot return a completed start');
 assert.match(postRoute, /execution \? \{ execution \}/, 'the validated receipt must reach the assistant transport');
 assert.match(postRoute, /assistantDecisionFeedForRequest\(req, identity, page, goalId\)\.catch/, 'a secondary feed refresh cannot erase a persisted activation receipt');
-assert.match(postRoute, /if \(!execution\) throw error/, 'feed fallback is only permitted after a verified start');
-assert.match(postRoute, /fullFeed\.items\.filter\(item => item\.id !== card\.id\)/, 'fallback only retires the decision confirmed by the start receipt');
+assert.match(postRoute, /commandPersisted = outcome === 'completed'/, 'a completed handler must record that its mutation is already durable');
+assert.match(postRoute, /if \(!commandPersisted\) throw error/, 'feed fallback is only permitted after a persisted command');
+assert.match(postRoute, /fullFeed\.items\.filter\(item => item\.id !== card\.id\)/, 'fallback only retires the decision confirmed by the command');
+assert.match(postRoute, /queueDigitalEmployeeRunAdvance\(identity\.tenantId, result\.runId\)/, 'task recovery must acknowledge the durable command before long workflow execution');
 assert.match(postRoute, /decideDigitalEmployeeApprovalUseCase/, 'advanced approval must use the persisted approval application service');
 assert.match(postRoute, /assertAssistantDecisionVersion\(selected, approvalDecisionVersion\(approval\)\)/, 'the loaded approval must still match the displayed frozen request');
 assert.match(postRoute, /expectedRequestHash: customerApprovalRequestHash/, 'weekly customer approvals retain canonical frozen request verification');

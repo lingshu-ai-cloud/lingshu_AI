@@ -10,6 +10,7 @@ const assistantStylesSource = fs.readFileSync(new URL('./assistant/assistantDeci
 const conversationContextSource = fs.readFileSync(new URL('../lib/assistantConversationContext.ts', import.meta.url), 'utf8');
 const assistantGuidesSource = fs.readFileSync(new URL('../lib/assistantGuides.ts', import.meta.url), 'utf8');
 const globalStylesSource = fs.readFileSync(new URL('../index.css', import.meta.url), 'utf8');
+const layoutSource = fs.readFileSync(new URL('./Layout.tsx', import.meta.url), 'utf8');
 
 function sourceSection(startMarker: string, endMarker: string, label: string) {
   const start = source.indexOf(startMarker);
@@ -29,6 +30,8 @@ const launcherMarkup = sourceSection('<Badge count={decisionTotal ?? pendingCoun
 assert.match(launcherClickSource, /openCurrentPageAgent\(\)/, '主入口点击灵小枢必须直接进入当前工作对话');
 assert.doesNotMatch(launcherClickSource, /setMode\('expanded'\)|quick-actions|SKILL_AGENTS/, '点击灵小枢不得打开四助手快捷轮盘');
 assert.match(source, /data-global-assistant="root"[\s\S]{0,350}fixed right-4[\s\S]{0,350}bottom-\[calc\(env\(safe-area-inset-bottom\)\+1rem\)\]/, '灵小枢入口必须固定在页面右下角并避让设备安全区');
+assert.match(source, /page === 'smartAssets' \|\| page === 'digitalEmployees'[\s\S]{0,120}5\.5rem\)\] md:bottom-5/, '制作页只在移动端避让底部操作区，桌面端不得留下大块底部空白');
+assert.match(source, /assistantUsesMobileClearance[\s\S]{0,240}viewport\.height - \(assistantUsesMobileClearance \? 160 : 96\)/, '移动端抬高入口时必须同步收紧对话高度，不能把面板顶部裁掉');
 assert.match(source, /data-global-assistant="launcher"[\s\S]{0,300}aria-label=\{mode === 'chat' \? '收起灵小枢对话' : '询问灵小枢'\}/, '右下角入口必须以清晰文本直接打开或收起对话');
 assert.match(launcherMarkup, /shape="round"/, '灵小枢入口必须采用紧凑胶囊形态');
 assert.match(launcherMarkup, /!h-11/, '灵小枢入口必须保留 44px 触控高度');
@@ -40,7 +43,9 @@ assert.doesNotMatch(globalStylesSource, /data-lingshu-assistant-clearance="botto
 assert.match(source, /id="global-assistant-panel"[\s\S]{0,720}bottom-14 right-0/, '灵小枢弹窗必须锚定在右下角入口上方');
 assert.match(source, /max-h-\[calc\(100dvh-env\(safe-area-inset-bottom\)-96px\)\]/, '灵小枢弹窗高度必须避让移动设备底部安全区');
 assert.match(source, /role="dialog"[\s\S]{0,160}aria-modal="false"[\s\S]{0,160}aria-labelledby="global-assistant-panel-title"[\s\S]{0,160}aria-describedby="global-assistant-panel-description"/, '灵小枢必须以有名称和说明的非模态对话浮层呈现');
-assert.match(source, /mode !== 'chat'\) return;[\s\S]{0,200}getElementById\('global-assistant-panel'\)\?\.focus\(\)/, '打开弹窗后必须把焦点移入对话区域');
+assert.match(source, /mode !== 'chat'\) return;[\s\S]{0,300}panel\?\.focus\(\{ preventScroll: true \}\)/, '打开弹窗后必须在不滚动页面的前提下把焦点移入对话区域');
+assert.match(source, /appMain\?\.scrollTop[\s\S]{0,80}appMain\.scrollTop = 0/, '打开助手时必须修正历史滚动偏移，避免页面底部出现空白');
+assert.match(layoutSource, /<main className="app-main[^\n]*overflow-clip"/, '应用主容器不得成为可被焦点程序滚动的隐藏滚动容器');
 assert.match(source, /setMode\('breathing'\);\s*window\.requestAnimationFrame\(\(\) => launcherButtonRef\.current\?\.focus\(\)\)/, '关闭弹窗后必须把焦点归还右下角入口');
 assert.match(appSource, /<GlobalAssistant[\s\S]{0,650}compactMode=\{starterMode \|\| isAgentProductionSession\(\)\}/, '制作会话保留紧凑的灵小枢审批和聊天入口');
 assert.match(source, /useState<AssistantPanelView>\('chat'\)/, '灵小枢默认页必须是单列对话');
@@ -137,6 +142,17 @@ assert.match(source, /workflowStage === 'unplanned'/, '灵小枢必须识别尚�
 assert.match(source, /data-lingshu-weekly-plan-prompt="true"[\s\S]{0,900}先制定本周计划[\s\S]{0,500}制定周计划/, '关闭态灵小枢必须主动说明先预览计划再生产');
 assert.match(source, /data-assistant-bubble="weekly-plan-kickoff"[\s\S]{0,900}确认后，数字员工才会开始生产[\s\S]{0,500}制定周计划/, '打开灵小枢后必须提供同一条计划制定入口');
 assert.match(source, /openWeeklyPlanFromAssistant[\s\S]{0,300}lingshu:open-weekly-plan[\s\S]{0,120}source: 'assistant'/, '灵小枢计划按钮必须派发明确来源的页面动作');
+assert.match(source, /workflowStage === 'running'[\s\S]{0,160}activeContext\.suggestions\.slice\(0, 3\)/, '生产开始后必须从当前页面上下文提供三个推荐问题');
+assert.match(source, /data-assistant-surface="production-suggestions"[\s\S]{0,700}send\(suggestion, currentPageAgent\)/, '推荐问题必须能直接进入当前生产上下文对话');
+const productionSuggestionSource = sourceSection(
+  '{productionSuggestions.length > 0 && (',
+  '<AssistantComposer',
+  '生产快捷问题',
+);
+assert.match(productionSuggestionSource, /role="group"[\s\S]{0,80}aria-label="生产快捷问题"/, '生产快捷问题应保留无障碍分组名称');
+assert.doesNotMatch(productionSuggestionSource, />推荐问题</, '生产快捷问题不应重复显示说明标题');
+assert.doesNotMatch(productionSuggestionSource, /border-t|<section/, '生产快捷问题不应使用硬边框分区');
+assert.match(productionSuggestionSource, /suggestion === '查看周计划'[\s\S]{0,100}openWeeklyPlanFromAssistant\(\)/, '点击查看周计划必须直接打开当前计划详情');
 
 const decisionActionResultSource = sourceSection(
   'const handleDecisionActionResult',

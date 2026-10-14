@@ -9,7 +9,6 @@ import {
   RefreshCw,
   Send,
   ShieldCheck,
-  UserRoundCheck,
 } from 'lucide-react';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
@@ -56,7 +55,6 @@ const actionIcon: Partial<Record<AssistantDecisionActionId, typeof ArrowRight>> 
   reject: RefreshCw,
   retry_task: RefreshCw,
   replan_task: CalendarRange,
-  take_over: UserRoundCheck,
   open_workspace: ArrowRight,
 };
 
@@ -453,6 +451,28 @@ export default function AssistantDecisionCenter({
     reconciliationInFlight.current = true;
     reconciliationAttempts.current += 1;
     try {
+      if (pending.action.id !== 'approve_and_start') {
+        const latestFeed = await client.feed({ page, goalId });
+        if (!mounted.current) return;
+        const originalStillPending = latestFeed.items.some(item => (
+          item.id === pending.card.id
+          && item.subject.version === pending.card.subject.version
+        ));
+        if (originalStillPending) return;
+        const response: AssistantDecisionActionResponse = {
+          ...latestFeed,
+          ok: true,
+          outcome: 'completed',
+        };
+        requestSequence.current += 1;
+        setLoading(false);
+        setFeed(latestFeed);
+        setError('');
+        setStartReconciliation(null);
+        void message.success(pending.action.id === 'retry_task' ? '重试指令已生效，任务正在恢复' : '重新规划已生效');
+        onActionResult?.({ action: pending.action, card: pending.card, response });
+        return;
+      }
       const overview = await digitalEmployeeApi.overview(pending.card.subject.id);
       if (!mounted.current) return;
       const run = overview.run;
@@ -597,17 +617,20 @@ export default function AssistantDecisionCenter({
         await load();
       } else {
         const failure = reason instanceof Error ? reason.message : '操作失败，请重试';
-        const shouldReconcile = action.id === 'approve_and_start'
+        const recoverableCommand = ['approve_and_start', 'retry_task', 'replan_task'].includes(action.id);
+        const shouldReconcile = recoverableCommand
           && (reason instanceof TypeError
             || (reason instanceof AssistantDecisionApiError
               && (reason.status >= 500
                 || reason.code === 'decision_timeout'
                 || reason.code === 'plan_start_unconfirmed')));
         const visibleFailure = shouldReconcile
-          ? `${failure}；结果尚未确认，正在核对真实运行状态，请勿重复提交。`
+          ? action.id === 'approve_and_start'
+            ? `${failure}；结果尚未确认，正在核对真实运行状态，请勿重复提交。`
+            : '恢复指令已提交，正在等待当前步骤安全结束并核对最新状态；请勿重复提交。'
           : failure;
         setError(visibleFailure);
-        if (action.id === 'approve_and_start') {
+        if (recoverableCommand) {
           void message.open({
             key: feedbackKey,
             type: shouldReconcile ? 'warning' : 'error',
@@ -640,7 +663,7 @@ export default function AssistantDecisionCenter({
         {error ? (
           <Alert
             className="assistant-decision-center__error assistant-decision-center__error--summary"
-            type="error"
+            type={startReconciliation ? 'warning' : 'error'}
             showIcon
             message={error}
             action={<Button disabled={loading} onClick={() => void load()} icon={<RefreshCw size={14} />}>重新加载</Button>}
@@ -667,9 +690,9 @@ export default function AssistantDecisionCenter({
       ) : null}
 
       {error ? (
-        <Alert
+          <Alert
           className="assistant-decision-center__error"
-          type="error"
+            type={startReconciliation ? 'warning' : 'error'}
           showIcon
           message={error}
           action={<Button disabled={loading || Boolean(busyAction)} onClick={() => void load()} icon={<RefreshCw size={14} />}>重新加载</Button>}

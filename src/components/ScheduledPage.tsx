@@ -111,15 +111,17 @@ interface VideoAnalysisItem {
   platform: string;
   thumbnailUrl?: string;
   duration?: number;
-  status: 'analyzing' | 'analyzed' | 'failed' | 'paused' | 'cancelled';
+  status: 'analyzing' | 'analyzed' | 'strategy' | 'review' | 'failed' | 'paused' | 'cancelled';
   analysisMode?: string;
   updatedAt?: string;
   error?: string;
   statusReason?: string;
   recoveryAction?: string;
-  failureCode?: 'gemini_missing' | 'qwen_timeout' | 'candidate_hidden' | 'source_unavailable' | 'analysis_failed' | 'none';
+  failureCode?: 'gemini_missing' | 'qwen_timeout' | 'candidate_hidden' | 'source_unavailable' | 'downloader_missing' | 'analysis_failed' | 'none';
   provider?: 'Gemini' | 'Qwen' | 'AI';
   visibility?: 'visible' | 'hidden';
+  productionReady?: boolean;
+  productionBlockers?: string[];
 }
 
 interface VideoStatsPayload {
@@ -147,6 +149,7 @@ interface VideoStatsPayload {
       byStatus?: Record<string, number>;
       pendingRecords?: number;
       analyzedRecords?: number;
+      strategyRecords?: number;
       failedRecords?: number;
       hiddenRecords?: number;
       providerStatus?: {
@@ -879,7 +882,8 @@ export default function ScheduledPage({ onAction }: { onAction?: AgentAction }) 
   const analysisStatusRows = [
     { label: 'AI 分析队列', value: analysisQueue.queued ?? 0, desc: '已入队 / 执行中' },
     { label: '待处理素材', value: analysisQueue.pendingRecords ?? 0, desc: '已入库但未完成分析' },
-    { label: '已分析素材', value: analysisQueue.analyzedRecords ?? 0, desc: '可进入灵感大屏/素材库' },
+    { label: '生产可用素材', value: analysisQueue.analyzedRecords ?? 0, desc: '已通过逐镜生产校验' },
+    { label: '策略分析素材', value: analysisQueue.strategyRecords ?? 0, desc: '仅供灵感浏览，未进入生产' },
     { label: '失败素材', value: analysisQueue.failedRecords ?? 0, desc: '需要重试或排查源文件' },
   ];
   const analysisStatusEntries = Object.entries(analysisQueue.byStatus ?? {});
@@ -1598,7 +1602,7 @@ export default function ScheduledPage({ onAction }: { onAction?: AgentAction }) 
                     <span className="text-2xl font-semibold text-gray-900">{analysisQueue.queued ?? 0}</span>
                     <span className="text-xs text-gray-500 pb-1">AI 分析队列</span>
                   </div>
-                  <p className="text-xs text-gray-500 mt-2">已分析 {analysisQueue.analyzedRecords ?? 0} · 待处理 {analysisQueue.pendingRecords ?? 0} · 失败 {analysisQueue.failedRecords ?? 0} · 候选隐藏 {analysisQueue.hiddenRecords ?? 0}</p>
+                  <p className="text-xs text-gray-500 mt-2">生产可用 {analysisQueue.analyzedRecords ?? 0} · 策略分析 {analysisQueue.strategyRecords ?? 0} · 待处理/复核 {analysisQueue.pendingRecords ?? 0} · 失败 {analysisQueue.failedRecords ?? 0}</p>
                 </div>
 
                 <section className="rounded-xl border border-gray-200 bg-white p-4">
@@ -1662,7 +1666,11 @@ export default function ScheduledPage({ onAction }: { onAction?: AgentAction }) 
                             const statusMeta = item.status === 'analyzing'
                               ? { label: '分析中', style: 'bg-blue-50 text-blue-700' }
                               : item.status === 'analyzed'
-                                ? { label: '已分析', style: 'bg-green-50 text-green-700' }
+                                ? { label: '已完成，可生产', style: 'bg-green-50 text-green-700' }
+                                : item.status === 'strategy'
+                                  ? { label: '策略分析已完成', style: 'bg-blue-50 text-blue-700' }
+                                : item.status === 'review'
+                                  ? { label: '分析完成，待生产复核', style: 'bg-amber-50 text-amber-700' }
                                 : item.status === 'failed'
                                   ? { label: '分析失败', style: 'bg-red-50 text-red-700' }
                                   : item.status === 'cancelled'
@@ -1688,6 +1696,9 @@ export default function ScheduledPage({ onAction }: { onAction?: AgentAction }) 
                                   {item.error && <p className="mt-1 text-[11px] leading-4 text-red-500">{item.error}</p>}
                                   {item.statusReason && <p className="mt-1 text-[11px] leading-4 text-amber-700">状态原因：{item.statusReason}</p>}
                                   {item.recoveryAction && <p className="mt-1 text-[11px] leading-4 text-gray-500">人工恢复：{item.recoveryAction}</p>}
+                                  {item.status === 'review' && item.productionBlockers?.length ? (
+                                    <p className="mt-1 text-[11px] leading-4 text-amber-700">尚未进入生产：{item.productionBlockers.join('；')}</p>
+                                  ) : null}
                                 </div>
                                 <span className={`flex-shrink-0 rounded-full px-2.5 py-1 text-[11px] font-medium ${statusMeta.style}`}>{statusMeta.label}</span>
                                 <div className="flex flex-shrink-0 items-center gap-2">
@@ -1718,7 +1729,7 @@ export default function ScheduledPage({ onAction }: { onAction?: AgentAction }) 
                                       type="button"
                                       aria-label={`恢复分析 ${item.title}`}
                                       disabled={actionPending}
-                                      onClick={() => void updateVideoAnalysis(item, 'resume')}
+                                      onClick={() => void updateVideoAnalysis(item, item.status === 'failed' ? 'reanalyze' : 'resume')}
                                       className="rounded-lg border border-green-200 bg-white px-2.5 py-1.5 text-[11px] text-green-700 hover:bg-green-50 disabled:opacity-50"
                                     >
                                       {actionPending ? '提交中…' : item.status === 'failed' ? '重试' : '恢复'}
@@ -1735,7 +1746,7 @@ export default function ScheduledPage({ onAction }: { onAction?: AgentAction }) 
                                       取消
                                     </button>
                                   )}
-                                  {item.status === 'analyzed' && (
+                                  {item.status === 'review' && (
                                     <button
                                       type="button"
                                       aria-label={`重新分析 ${item.title}`}
@@ -1743,7 +1754,7 @@ export default function ScheduledPage({ onAction }: { onAction?: AgentAction }) 
                                       onClick={() => void updateVideoAnalysis(item, 'reanalyze')}
                                       className="rounded-lg border border-green-200 bg-white px-2.5 py-1.5 text-[11px] text-green-700 hover:bg-green-50 disabled:opacity-50"
                                     >
-                                      {actionPending ? '提交中…' : '重新分析'}
+                                      {actionPending ? '提交中…' : '补全生产分析'}
                                     </button>
                                   )}
                                 </div>

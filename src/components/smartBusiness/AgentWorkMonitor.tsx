@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Button, Spin, Table, Tag, type TableColumnsType } from 'antd';
 import type { AgentStatus, ContentQueueItem, ContentQueueStep, PlanTask, WorkflowTask } from '../../lib/digitalEmployees';
+import { taskNeedsAttention, type TaskWaitState } from '../../lib/taskExecutionState';
 import { LsGradientProgress } from '../ui/LsExperiencePrimitives';
 
 type AgentRole = 'business' | 'director' | 'content' | 'customer';
@@ -73,8 +74,36 @@ type AgentWorkMonitorSources = {
   agentStatuses?: AgentStatus[];
 };
 
-const activeWorkflowStatuses = new Set(['running', 'active', 'planning', 'waiting_external']);
+const activeWorkflowStatuses = new Set(['running', 'active', 'planning']);
 const queuedWorkflowStatuses = new Set(['pending', 'queued', 'planned', 'waiting_approval']);
+
+function workflowWaitState(task: WorkflowTask): TaskWaitState | undefined {
+  return task.output && typeof task.output === 'object' && !Array.isArray(task.output)
+    ? (task.output as Record<string, unknown>).waitState as TaskWaitState | undefined
+    : undefined;
+}
+
+function workflowNeedsAttention(task: WorkflowTask): boolean {
+  return taskNeedsAttention({
+    status: task.status,
+    blocked_reason: task.blocked_reason,
+    output: task.output && typeof task.output === 'object' && !Array.isArray(task.output)
+      ? task.output as Record<string, unknown>
+      : undefined,
+  });
+}
+
+function workflowIsActive(task: WorkflowTask): boolean {
+  if (activeWorkflowStatuses.has(task.status)) return true;
+  const wait = workflowWaitState(task);
+  return task.status === 'waiting_external'
+    && (workflowNeedsAttention(task) || wait?.kind === 'processing' && wait.requiresAttention === false);
+}
+
+function workflowIsQueued(task: WorkflowTask): boolean {
+  return queuedWorkflowStatuses.has(task.status)
+    || task.status === 'waiting_external' && !workflowIsActive(task);
+}
 
 function roleMatches(role: WorkflowTask['agent_role'] | AgentStatus['role'], agent: AgentRole): boolean {
   return role === agent || agent === 'business' && role === 'orchestrator';
@@ -92,26 +121,33 @@ function workflowAssignment(task: WorkflowTask, expectedMinutes: number): AgentW
     actualStartedAt: null,
     elapsedMinutes: null,
     updatedAt: task.updated_at,
-    blockedReason: task.blocked_reason,
+    blockedReason: workflowNeedsAttention(task) ? task.blocked_reason : '',
     openable: false,
   };
 }
 
 export function projectAgentWorkMonitor(items: ContentQueueItem[], now = Date.now(), sources: AgentWorkMonitorSources = {}): AgentWorkMonitorRow[] {
   return agents.map(agent => {
+    const planByKey = new Map((sources.planTasks ?? []).map(task => [task.key, task.expectedMinutes]));
+    const workflow = (sources.workflowTasks ?? []).filter(task => roleMatches(task.agent_role, agent.role));
+    const workflowByTaskId = new Map(workflow.map(task => [task.id, task]));
     const contentActive = items.flatMap(item => item.steps
       .filter(step => step.state === 'active' && matchesAgent(step, agent.name))
-      .map(step => assignment(item, step, now)));
+      .map(step => {
+        const current = assignment(item, step, now);
+        const workflowTask = workflowByTaskId.get(item.taskId);
+        return workflowTask && workflowIsActive(workflowTask) && !workflowNeedsAttention(workflowTask)
+          ? { ...current, blockedReason: '' }
+          : current;
+      }));
     const contentQueued = items.flatMap(item => item.steps
       .filter(step => step.state === 'pending' && matchesAgent(step, agent.name))
       .map(step => assignment(item, step, now)));
-    const planByKey = new Map((sources.planTasks ?? []).map(task => [task.key, task.expectedMinutes]));
-    const workflow = (sources.workflowTasks ?? []).filter(task => roleMatches(task.agent_role, agent.role));
-    const active = [...contentActive, ...workflow.filter(task => activeWorkflowStatuses.has(task.status)).map(task => workflowAssignment(task, planByKey.get(task.task_key) ?? 0))];
-    const queued = [...contentQueued, ...workflow.filter(task => queuedWorkflowStatuses.has(task.status)).map(task => workflowAssignment(task, planByKey.get(task.task_key) ?? 0))];
+    const active = [...contentActive, ...workflow.filter(workflowIsActive).map(task => workflowAssignment(task, planByKey.get(task.task_key) ?? 0))];
+    const queued = [...contentQueued, ...workflow.filter(workflowIsQueued).map(task => workflowAssignment(task, planByKey.get(task.task_key) ?? 0))];
     active.sort((left, right) => (validTimestamp(right.actualStartedAt) ?? validTimestamp(right.updatedAt) ?? 0) - (validTimestamp(left.actualStartedAt) ?? validTimestamp(left.updatedAt) ?? 0));
     const reported = sources.agentStatuses?.find(item => roleMatches(item.role, agent.role));
-    const reportedWorking = Boolean(reported && activeWorkflowStatuses.has(reported.status));
+    const reportedWorking = Boolean(reported && (activeWorkflowStatuses.has(reported.status) || reported.status === 'waiting_external'));
     const status: AgentMonitorStatus = active.some(item => item.blockedReason)
       ? 'needs_action'
       : active.length > 0 || reportedWorking

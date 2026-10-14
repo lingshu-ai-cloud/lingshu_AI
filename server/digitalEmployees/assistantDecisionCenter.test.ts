@@ -117,7 +117,7 @@ test('a missing enterprise presenter becomes an actionable assistant card while 
   assert.equal(card.title, '请添加企业数字人形象');
   assert.equal(card.actions[0]?.id, 'open_workspace');
   assert.equal(card.actions[0]?.label, '添加数字人形象');
-  assert.ok(card.actions.some(action => action.id === 'take_over'));
+  assert.ok(card.actions.every(action => action.id !== 'take_over'));
   assert.equal(card.deepLink?.page, 'digitalEmployees');
   assert.equal(card.deepLink?.businessRef?.taskKey, 'presenter_setup_required');
   assert.doesNotMatch(JSON.stringify(card), /providerLog/);
@@ -244,6 +244,83 @@ test('failed source collection explains the viral-library gap and offers direct 
   assert.equal(card.actions[0]?.label, '从当前节点重试');
 });
 
+test('a failed production node remains retryable without exposing human takeover', () => {
+  const failed = task('task-routing', 'content_mode_routing', 'failed');
+  const card = buildAssistantDecisionFeed({
+    page: 'digitalEmployees', goal: null, plan: null, run: { ...run, status: 'waiting_human' },
+    tasks: [failed], approvals: [], now,
+  }).items[0]!;
+  assert.equal(card.actions[0]?.id, 'retry_task');
+  assert.equal(card.actions[0]?.label, '重试当前节点');
+  assert.ok(card.actions.every(action => action.id !== 'take_over'));
+});
+
+test('a production node waiting on a recovered service can retry in place', () => {
+  const waiting = {
+    ...task('task-production', 'content_production', 'waiting_external'),
+    blocked_reason: '爆款复刻需要当前分镜可读取的原片首帧',
+  } as TaskRecord;
+  const card = buildAssistantDecisionFeed({
+    page: 'digitalEmployees', goal: null, plan: null, run: { ...run, status: 'waiting_human' },
+    tasks: [waiting], approvals: [], now,
+  }).items[0]!;
+  assert.equal(card.actions[0]?.id, 'retry_task');
+  assert.equal(card.actions[0]?.label, '重试当前节点');
+  assert.equal(card.actions[1]?.id, 'open_workspace');
+  assert.ok(card.actions.every(action => action.id !== 'take_over'));
+});
+
+test('a production node still processing is not presented as a user decision', () => {
+  const processing = {
+    ...task('task-production-processing', 'content_production', 'waiting_external'),
+    blocked_reason: '内容任务正在推进，等待制作或质检结果回写。',
+    output: {
+      waitState: {
+        kind: 'processing',
+        message: '内容任务正在推进，等待制作或质检结果回写。',
+        requiresAttention: false,
+      },
+    },
+  } as TaskRecord;
+  const feed = buildAssistantDecisionFeed({
+    page: 'smartAssets', goal: null, plan: null, run, tasks: [processing], approvals: [], now,
+  });
+  assert.equal(feed.total, 0);
+  assert.deepEqual(feed.items, []);
+});
+
+test('viral analysis remains visibly blocked until exact evidence is complete', () => {
+  const analysis = {
+    ...task('task-analysis', 'viral_analysis', 'waiting_external'),
+    blocked_reason: '本周 2 条视频需要 2 条独立精确分析，当前仅完成 1 条，还缺 1 条',
+    output: { proof: { value: 1, requiredValue: 2, status: 'pending' } },
+  } as TaskRecord;
+  const card = buildAssistantDecisionFeed({
+    page: 'digitalEmployees', goal: null, plan: null, run, tasks: [analysis], approvals: [], now,
+  }).items[0]!;
+  assert.match(card.summary, /当前仅完成 1 条.*还缺 1 条/);
+  assert.match(card.summary, /不会把“已排队”当作“已完成”/);
+  assert.equal(card.facts.find(fact => fact.label === '当前状态')?.value, '分析未完成');
+  assert.equal(card.facts.find(fact => fact.label === '分析进度')?.value, '1/2 条通过');
+  assert.equal(card.actions[0]?.label, '查看分析进度');
+});
+
+test('queued workflow work never claims that evidence is ready to continue', () => {
+  const queued = task('task-queued', 'scheduled_source_collection', 'pending');
+  queued.depends_on = [];
+  const card = buildAssistantDecisionFeed({
+    page: 'digitalEmployees', goal: null, plan: null, run, tasks: [queued], approvals: [], now,
+  }).items[0]!;
+  assert.equal(card.facts[0]?.value, '已排队');
+  assert.doesNotMatch(card.summary, /可以继续/);
+  assert.equal(card.actions[0]?.label, '查看真实进度');
+
+  const blocked = { ...task('task-blocked', 'viral_analysis', 'pending'), depends_on: ['scheduled_source_collection'] } as TaskRecord;
+  assert.equal(buildAssistantDecisionFeed({
+    page: 'digitalEmployees', goal: null, plan: null, run, tasks: [blocked], approvals: [], now,
+  }).items.length, 0, 'a dependency-blocked task must not be advertised as the next actionable step');
+});
+
 test('decision commands delegate only to the selected persisted-domain action', async () => {
   const calls: string[] = [];
   const handlers = {
@@ -275,9 +352,7 @@ test('decision commands delegate only to the selected persisted-domain action', 
     card: approvalCard, actionId: 'reject', expectedVersion: approvalCard.subject.version,
     note: '  请补充证据  ', handlers,
   }), 'completed');
-  assert.equal(await executeAssistantDecisionCommand({
-    card: approvalCard, actionId: 'take_over', expectedVersion: approvalCard.subject.version, handlers,
-  }), 'completed');
+  assert.ok(approvalCard.actions.every(action => action.id !== 'take_over'), 'Lingxiaoshu never exposes a human-takeover button');
 
   const starterCard = starterDecisionCards([{
     id: 'quote:quote-1', type: 'quotation', title: '报价待审批', summary: '请确认报价', riskLevel: 'L2',
@@ -319,7 +394,6 @@ test('decision commands delegate only to the selected persisted-domain action', 
   assert.deepEqual(calls, [
     `plan:${goal.id}`,
     'approval:approval-publish:rejected:请补充证据',
-    'handoff:approval-publish',
     'starter:quote:quote-1:approved:',
     'retry:task-collection',
     'replan:task-collection',

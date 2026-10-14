@@ -131,3 +131,41 @@ export function managedContentProjectIsReviewable(project: Record<string, unknow
     && automation?.synthetic !== true
     && text(spec?.source) !== 'demo_data';
 }
+
+/** A managed project must be scoped by its immutable indexed lineage. Task
+ * business refs are mutable projections and may still contain a historical
+ * draft; trusting them would keep a completed run falsely "in progress". */
+export function managedContentProjectBelongsToWorkflowScope(
+  project: Record<string, unknown>,
+  runId: string,
+  taskIds: ReadonlySet<string>,
+): boolean | null {
+  const spec = object(project.spec);
+  const automation = object(spec?.automation);
+  if (text(automation?.managedBy) !== 'digital_employee') return null;
+  try {
+    const lineage = requireIndexedContentProjectLineage(project);
+    return lineage.runId === runId && taskIds.has(lineage.taskId);
+  } catch {
+    return false;
+  }
+}
+
+/** Studio drafts can be opened from an upstream routing screen and carry that
+ * screen's run/task ids. Once any explicit workflow identity is present, only
+ * a production-task identity can make the draft production evidence. */
+export function contentProjectExplicitWorkflowScope(
+  project: Record<string, unknown>,
+  runId: string,
+  taskIds: ReadonlySet<string>,
+): boolean | null {
+  const spec = object(project.spec);
+  if (!spec || !text(spec.contentMode)) return null;
+  const explicitRunId = identity(spec.workflowRunId);
+  const explicitTaskId = identity(spec.workflowTaskId);
+  const explicitTaskKey = identity(spec.workflowTaskKey);
+  if (!explicitRunId && !explicitTaskId && !explicitTaskKey) return null;
+  return explicitRunId === runId
+    && taskIds.has(explicitTaskId)
+    && DIGITAL_EMPLOYEE_CONTENT_TASK_KEYS.has(explicitTaskKey);
+}

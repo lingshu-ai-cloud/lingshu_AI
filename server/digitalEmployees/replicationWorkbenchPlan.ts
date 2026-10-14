@@ -175,6 +175,7 @@ export function buildReplicationWorkbenchSpec(input: ReplicationWorkbenchInput):
             ? { code: 'reference_composition_missing' as const, message: `第 ${shot.index} 镜${compositionIssue}` }
             : null;
     const fallbackReasons = [
+      ...(!observedPerson && !referenceModelInputAuthorized ? ['原片未授权作为模型输入，仅使用企业产品素材生成'] : []),
       ...(shot.granularity !== 'shot' ? ['未确认物理切镜，仅保留时间窗口'] : []),
       ...(shot.materialType === 'unknown' ? ['镜头类型待复核'] : []),
       ...(!shot.visual.trim() ? ['原片画面事实不足'] : []),
@@ -195,7 +196,10 @@ export function buildReplicationWorkbenchSpec(input: ReplicationWorkbenchInput):
       ...(evidenceBlocker ? { locked: true, blocker: evidenceBlocker.message } : {}) });
     const sourceFirstFrameUrl = referenceFirstFrameUrl;
     details.push({ ...shot, shotId: slotId,
-      ...(referenceModelInputAuthorized && !safeFallback ? { firstFrameRef: sourceFirstFrameUrl } : {}),
+      // buildBenchmarkAnalysis retains the extracted frame URL for review.
+      // Do not let that field leak into a generation contract when the source
+      // was not authorized as model input or this shot uses the safe fallback.
+      firstFrameRef: referenceModelInputAuthorized && !safeFallback ? sourceFirstFrameUrl : '',
       observedPresenterRole: observedPerson ? 'sales_presenter' : 'none',
       startState: typeof raw.startState === 'string' ? raw.startState : '',
       endState: typeof raw.endState === 'string' ? raw.endState : '',
@@ -237,7 +241,7 @@ export function buildReplicationWorkbenchSpec(input: ReplicationWorkbenchInput):
     automatedShots.push({ shotId, slotId, kind: person ? 'person' : 'nonperson', start, end, required: true, productionState: 'ready', fingerprintContext,
       ...(person ? { referenceShotId, referenceFirstFrameUrl, referenceComposition } : {}),
       ...(!person ? { firstFrameRequest: { projectId: input.projectId, shotId, requestId: `auto-frame-${hash([input.projectId, revision, shot.index]).slice(0, 32)}`,
-        mode: 'replication', sceneType, shotDescription: detail,
+        mode: safeFallback ? 'free_creation' : 'replication', sceneType, shotDescription: detail,
         startSeconds: start, endSeconds: end, ratio, productIds,
         ...(referenceModelInputAuthorized && !safeFallback ? { sourceFirstFrameUrl } : {}),
         ...(!safeFallback && action ? { action } : {}),
@@ -256,7 +260,20 @@ export function buildReplicationWorkbenchSpec(input: ReplicationWorkbenchInput):
   const previousSourcePlans = recordOf(input.spec.storyboardSourcePlans);
   const migratedSourcePlans = Object.fromEntries(Object.entries(sourcePlans).map(([slotId, next]) => {
     const previous = recordOf(previousSourcePlans[slotId]);
-    return [slotId, previous.mode && previous.mode !== 'blocked' ? previous : next];
+    if (!previous.mode || previous.mode === 'blocked') return [slotId, next];
+    const merged = { ...recordOf(next), ...previous };
+    // Safety routing belongs to the current reference authorization state, not
+    // to an old editable source-plan snapshot. Preserve the user's other
+    // source choices while applying (or removing) the current safe fallback.
+    if (recordOf(next).fallbackMode) {
+      merged.fallbackMode = recordOf(next).fallbackMode;
+      merged.fallbackReasons = recordOf(next).fallbackReasons;
+      merged.sceneType = recordOf(next).sceneType;
+    } else {
+      delete merged.fallbackMode;
+      delete merged.fallbackReasons;
+    }
+    return [slotId, merged];
   }));
   const assignments = recordOf(input.spec.storyboardAssignments);
   const selected = Array.isArray(input.spec.selected) ? input.spec.selected : [];

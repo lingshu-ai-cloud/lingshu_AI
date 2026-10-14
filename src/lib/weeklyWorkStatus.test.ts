@@ -72,7 +72,7 @@ test('persisted runs map to queued, running, blocked, paused and finished states
 test('external waits and unknown states never masquerade as active production', () => {
   const waiting = weeklyWorkStatus(overview({ run: run('waiting_external'), tasks: [task('waiting_external', { blocked_reason: '等待平台回执' })] }));
   assert.equal(waiting?.phase, 'queued');
-  assert.match(waiting?.title || '', /等待外部服务/);
+  assert.match(waiting?.title || '', /等待业务结果/);
   assert.doesNotMatch(waiting?.title || '', /正在生产/);
 
   const runningRunWaitingOnProvider = weeklyWorkStatus(overview({
@@ -80,12 +80,26 @@ test('external waits and unknown states never masquerade as active production', 
     tasks: [task('waiting_external', { blocked_reason: '等待视频供应商回写' })],
   }));
   assert.equal(runningRunWaitingOnProvider?.phase, 'queued');
-  assert.match(runningRunWaitingOnProvider?.title || '', /等待外部服务/);
+  assert.match(runningRunWaitingOnProvider?.title || '', /等待业务结果/);
   assert.doesNotMatch(runningRunWaitingOnProvider?.title || '', /正在生产/);
 
   const unknown = weeklyWorkStatus(overview({ run: run('provider_specific_state'), tasks: [] }));
   assert.equal(unknown?.phase, 'unknown');
   assert.match(unknown?.title || '', /待确认/);
+});
+
+test('a persisted automatic recovery is shown as system work rather than a user blocker', () => {
+  const status = weeklyWorkStatus(overview({
+    run: run('waiting_external'),
+    tasks: [task('waiting_external', {
+      blocked_reason: '首帧质检服务暂不可用',
+      output: { waitState: { kind: 'processing', message: '系统正在复检已生成首帧', requiresAttention: false } },
+    })],
+  }));
+  assert.equal(status?.phase, 'running');
+  assert.match(status?.title || '', /自动恢复/);
+  assert.match(status?.description || '', /复检已生成首帧/);
+  assert.doesNotMatch(status?.title || '', /等待处理|失败/);
 });
 
 test('an initializing run with no scoped tasks reports initialization, not production', () => {

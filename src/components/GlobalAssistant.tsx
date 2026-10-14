@@ -833,6 +833,10 @@ export default function GlobalAssistant({
   const activeContext = useMemo(() => contextForOrbit(currentPageAgent, pageContext), [currentPageAgent, pageContext]);
   const weeklyPlanKickoffAvailable = normalizedPage === 'digitalEmployees'
     && pageContext.workflowStage === 'unplanned';
+  const productionSuggestions = normalizedPage === 'digitalEmployees'
+    && pageContext.workflowStage === 'running'
+    ? activeContext.suggestions.slice(0, 3)
+    : [];
   const openWeeklyPlanFromAssistant = useCallback(() => {
     setWeeklyPlanPromptDismissed(true);
     setMode('breathing');
@@ -861,7 +865,9 @@ export default function GlobalAssistant({
   const panelSubtitle = assistantTool === 'knowledge-intake'
     ? '当前：智能客服规范'
     : isCustomerTodoView ? '当前：我的客户' : `当前：${activeContext.label}`;
-  const assistantPanelHeight = Math.max(120, Math.min(720, viewport.height - 96));
+  const assistantUsesMobileClearance = viewport.width < 768
+    && (page === 'conversion' || page === 'smartAssets' || page === 'digitalEmployees');
+  const assistantPanelHeight = Math.max(120, Math.min(720, viewport.height - (assistantUsesMobileClearance ? 160 : 96)));
   const assistantPanelWidth = Math.min(assistantTool === 'knowledge-intake' ? 560 : 420, viewport.width - 32);
   const performanceLines = PERFORMANCE_LINES[performance?.phase || 'default'] || PERFORMANCE_LINES.default;
   const performanceMessage = performance?.message || performanceLines[performanceLineIndex % performanceLines.length];
@@ -2014,7 +2020,14 @@ export default function GlobalAssistant({
 
   useEffect(() => {
     if (mode !== 'chat') return;
-    const frame = window.requestAnimationFrame(() => document.getElementById('global-assistant-panel')?.focus());
+    const frame = window.requestAnimationFrame(() => {
+      const panel = document.getElementById('global-assistant-panel');
+      panel?.focus({ preventScroll: true });
+      // An absolutely positioned assistant must never scroll the app shell itself.
+      // Otherwise the page surface moves up and leaves a blank strip below it.
+      const appMain = panel?.closest<HTMLElement>('.app-main');
+      if (appMain?.scrollTop) appMain.scrollTop = 0;
+    });
     return () => window.cancelAnimationFrame(frame);
   }, [mode]);
 
@@ -2131,7 +2144,7 @@ export default function GlobalAssistant({
       className={`fixed right-4 z-[75] md:right-5 ${page === 'conversion'
         ? 'bottom-[calc(env(safe-area-inset-bottom)+8rem)]'
         : page === 'smartAssets' || page === 'digitalEmployees'
-          ? 'bottom-[calc(env(safe-area-inset-bottom)+5.5rem)]'
+          ? 'bottom-[calc(env(safe-area-inset-bottom)+5.5rem)] md:bottom-5'
           : 'bottom-[calc(env(safe-area-inset-bottom)+1rem)] md:bottom-5'}`}
     >
       <AnimatePresence>
@@ -2549,6 +2562,29 @@ export default function GlobalAssistant({
                     >
                       <ArrowDown size={12} /> 回到最新消息
                     </button>
+                  </div>
+                )}
+
+                {productionSuggestions.length > 0 && (
+                  <div
+                    className="flex shrink-0 flex-wrap gap-2 bg-surface px-4 pt-3"
+                    role="group"
+                    aria-label="生产快捷问题"
+                    data-assistant-surface="production-suggestions"
+                  >
+                    {productionSuggestions.map(suggestion => (
+                      <button
+                        key={suggestion}
+                        type="button"
+                        disabled={loading}
+                        onClick={() => suggestion === '查看周计划'
+                          ? openWeeklyPlanFromAssistant()
+                          : void send(suggestion, currentPageAgent)}
+                        className="ls-type-label-medium min-h-9 rounded-full border border-border bg-surface-2 px-3 text-text-secondary transition-colors hover:border-accent/40 hover:bg-accent-glow hover:text-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent disabled:cursor-not-allowed disabled:opacity-50"
+                      >
+                        {suggestion}
+                      </button>
+                    ))}
                   </div>
                 )}
 

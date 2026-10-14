@@ -5,7 +5,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { createHash } from 'node:crypto';
 import { shotFingerprint } from '../../src/lib/shotProduction.js';
-import { finishReplicationWorkbench, replicationNarrationPreflightIssue, type ReplicationFinishDependencies } from './replicationWorkbenchFinish.js';
+import { finishReplicationWorkbench, preflightReplicationNarrationProvider, replicationNarrationPreflightIssue, type ReplicationFinishDependencies } from './replicationWorkbenchFinish.js';
 
 const bytes = Buffer.from('real-video-fixture-loaded-by-injected-reader');
 const hash = createHash('sha256').update(bytes).digest('hex');
@@ -88,6 +88,50 @@ test('narration preflight rejects lost words and half-sentence synthesis, but ac
   spec.shotProductions['a:one'].narration = 'Our verified product';
   spec.shotProductions['a:two'].narration = 'Discover more';
   assert.equal(replicationNarrationPreflightIssue(spec), null, 'do not require arbitrary punctuation on independently frozen lines');
+});
+
+test('non-person visual cuts use complete timestamped narration instead of split shot fragments', async () => {
+  const f = fixture('nonperson');
+  const { execFileSync } = await import('node:child_process');
+  const ffmpeg = (await import('ffmpeg-static')).default!;
+  const audio = path.join(f.root, 'continuous.wav');
+  execFileSync(ffmpeg, ['-hide_banner', '-loglevel', 'error', '-f', 'lavfi', '-i', 'sine=frequency=660:sample_rate=24000', '-t', '1', '-c:a', 'pcm_s16le', '-y', audio]);
+  f.spec.script = '[0-2s]\n台词：A complete verified sentence.';
+  f.spec.shotProductions['a:s'].narration = 'A complete ver';
+  f.deps.synthesize = async input => ({ ok: true, text: input.text, duration: 1, localPath: audio,
+    cues: [{ start: 0, end: .9, text: input.text }], alignmentSource: 'synthesized_sentence_audio',
+    source: 'injected_test_tts', qualityReport: { passed: true } as any });
+  try {
+    assert.equal(replicationNarrationPreflightIssue(f.spec), null);
+    const result = await finishReplicationWorkbench({ tenantId: 'tenant', projectId: 'continuous', spec: f.spec }, f.deps);
+    assert.equal(f.manifest().timeline[0].production.sound, 'voiceover');
+    assert.ok(f.manifest().voiceover.url.startsWith('data:audio/wav;base64,'));
+    assert.equal(result.alignedCuesByLang.en[0].text, 'A complete verified sentence.');
+  } finally { fs.rmSync(f.root, { recursive: true, force: true }); }
+});
+
+test('exact first narration is synthesized before visual spend and reused by final assembly', async () => {
+  const f = fixture('nonperson');
+  const { execFileSync } = await import('node:child_process');
+  const ffmpeg = (await import('ffmpeg-static')).default!;
+  const audio = path.join(f.root, 'preflight.wav');
+  execFileSync(ffmpeg, ['-hide_banner', '-loglevel', 'error', '-f', 'lavfi', '-i',
+    'sine=frequency=720:sample_rate=24000', '-t', '1', '-c:a', 'pcm_s16le', '-y', audio]);
+  f.spec.script = '[0-2s]\n台词：A complete verified sentence.';
+  f.spec.shotProductions['a:s'].narration = '';
+  let calls = 0;
+  f.deps.synthesize = async input => { calls += 1; return { ok: true, text: input.text, duration: 1,
+    localPath: audio, cues: [{ start: 0, end: .9, text: input.text }],
+    alignmentSource: 'synthesized_sentence_audio', source: 'qwen_tts', qualityReport: { passed: true } as any }; };
+  try {
+    const preflight = await preflightReplicationNarrationProvider({ tenantId: 'tenant', projectId: 'preflight', spec: f.spec }, f.deps);
+    assert.equal(preflight.prepared, true);
+    assert.equal(preflight.source, 'qwen_tts');
+    assert.equal(calls, 1);
+    await preflightReplicationNarrationProvider({ tenantId: 'tenant', projectId: 'preflight', spec: f.spec }, f.deps);
+    await finishReplicationWorkbench({ tenantId: 'tenant', projectId: 'preflight', spec: f.spec }, f.deps);
+    assert.equal(calls, 1, 'provider preflight audio is the final assembly receipt, not a second paid request');
+  } finally { fs.rmSync(f.root, { recursive: true, force: true }); }
 });
 
 test('hard visual failure does not emit a successful completion', async () => {

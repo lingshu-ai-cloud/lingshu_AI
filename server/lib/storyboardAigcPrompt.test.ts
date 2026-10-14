@@ -52,3 +52,9 @@ const oneViewSpec = compileStoryboardShotSpec({ shotId: 'single-view', mode: 'fr
     version: 'v1', source: 'knowledge_base' }] });
 assert.match(buildStoryboardFirstFramePrompt({ ...base, spec: oneViewSpec }), /do not invent unseen sides/);
 assert.match(buildStoryboardVideoActionPrompt(oneViewSpec), /Do not reveal an unseen back or side/);
+const repairedPrompt = buildStoryboardFirstFramePrompt({ ...base,
+  qualityRepairReasonCodes: ['PRODUCT_IDENTITY_FAILED', 'LAYOUT_FAILED', 'UNRECOGNIZED_CODE'] });
+assert.match(repairedPrompt, /QUALITY REPAIR/);
+assert.match(repairedPrompt, /Match the enterprise product reference exactly/);
+assert.match(repairedPrompt, /Follow the layout contract exactly/);
+assert.doesNotMatch(repairedPrompt, /UNRECOGNIZED_CODE/);

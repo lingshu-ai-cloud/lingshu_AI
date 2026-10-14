@@ -209,6 +209,10 @@ assert.match(matrixScheduleSource, /Agent 任务看板/, 'the overview schedule 
 assert.doesNotMatch(matrixScheduleSource, /<LsCalendar|发布日历/, 'the publishing calendar must not be duplicated inside the Agent task board');
 assert.doesNotMatch(weeklyCommandCenterSource, /<LsCalendar|WeeklyContentProgressPanel|本周发布日历/, 'the weekly-plan metrics must not duplicate the publishing calendar');
 assert.match(digitalEmployeeWorkspaceSource, /aria-label="数字员工视图"[\s\S]{0,300}员工排期[\s\S]{0,200}发布日历/, 'the Digital Employee tab must expose employee scheduling and publishing as two switchable views');
+assert.match(digitalEmployeeWorkspaceSource, /状态随当前周任务回执实时更新/, '员工卡必须说明状态来自当前周任务的实时回执');
+assert.match(digitalEmployeeWorkspaceSource, /data-agent-running=\{working \? 'true'/, '执行中的员工必须暴露稳定的运行态语义');
+assert.match(digitalEmployeeWorkspaceSource, /LoaderCircle[\s\S]{0,160}motion-safe:animate-spin/, '执行中的员工必须显示遵守减少动态偏好的旋转状态标识');
+assert.match(pageSource, /!\["live", "matrix"\]\.includes\(workspaceView\)[\s\S]{0,700}setInterval\(reconcile, 15_000\)/, '任务执行与员工排期都必须用实时流加低频权威回读校准状态');
 assert.match(digitalEmployeeWorkspaceSource, /\{workspaceView === 'agents' && onOpenAgentSettings && <Button[\s\S]{0,180}onClick=\{onOpenAgentSettings\}>Agent 设置<\/Button>\}/, 'Agent settings must live at the upper right of the employee-schedule view only');
 assert.match(matrixViewSource, /publishingCalendar=\{<WeeklyPublishingCalendar data=\{data\} onRefresh=\{onRefresh\}\/>\}/, 'the publishing calendar must be injected into the Digital Employee workspace');
 assert.match(matrixViewSource, /<DigitalEmployeeWorkspace[^>]*onOpenAgentSettings=\{onOpenAgentSettings\}/, 'the Digital Employee workspace must receive the settings action');
@@ -236,6 +240,9 @@ assert.match(assistantStoreSource, /\['business', 'director', 'content', 'custom
 assert.match(assistantSource, /const currentPageAgent = useMemo\(\(\) => orbitIdForPage\(page\)/, '灵小枢必须根据当前工作区选择内部专业 Agent 上下文');
 assert.match(assistantSource, /<AssistantDecisionCenter[\s\S]{0,420}page=\{page\}[\s\S]{0,700}variant="summary"/, '灵小枢默认对话必须展示当前页面真实待办的概要气泡');
 assert.match(assistantSource, /openAgent\(currentPageAgent, 'chat'\)/, '点击灵小枢应直接进入单列对话，不恢复 Agent 选择器或强制打开详情');
+for (const question of ['查看当前进度', '查看周计划', '查看需要我处理的任务']) {
+  assert.match(assistantContextSource, new RegExp(question), `生产中的灵小枢上下文必须提供推荐问题：${question}`);
+}
 assert.match(pageSource, /weeklyPlanNavigation\?: \{ goalId: string; planId: string; requestId: number \}/, '周计划导航必须携带准确目标和重复点击序号');
 assert.match(pageSource, /next\.goal\?\.id !== target\.goalId \|\| next\.plan\?\.id !== target\.planId/, '打开编辑器前必须同时核对目标与计划编号');
 assert.match(pageSource, /目标周计划已更新或不再是当前计划/, '计划不匹配必须明确提示，不能回退打开别的计划');
@@ -298,12 +305,13 @@ for (const label of ['参考估算', '真实回传']) assert.match(smartBusiness
 assert.match(weeklyCommandCenterSource, /buildSmartBusinessDisplayModel\(data\)/, 'the weekly command center must derive account, video and cost counts from the shared weekly-plan model');
 assert.doesNotMatch(smartBusinessSource, /演示数据/, 'the product UI must not expose the deprecated demo-data wording');
 assert.doesNotMatch(pageSource, /id: "live", label: "周计划"/, 'the repetitive standalone weekly-plan tab must be removed');
+assert.doesNotMatch(pageSource, /删除旧任务/, 'the weekly command center must not expose a destructive old-task action');
 assert.match(layoutSource, /\{accountMenuOpen && \([\s\S]{0,1800}新手引导/, 'the beginner guide must live in the expanded user menu');
 assert.doesNotMatch(layoutSource, /aria-label="主导航"[\s\S]{0,900}新手引导/, 'the beginner guide must not remain in the primary navigation');
 assert.match(layoutSource, /lingshu:open-digital-employee-guide/, 'the user-menu guide entry must open the Digital Employee guide');
 assert.match(pageSource, /addEventListener\('lingshu:open-digital-employee-guide'/, 'Smart Business must respond to the sidebar guide entry');
 assert.doesNotMatch(pageSource, /SMART OPERATIONS/, 'the redundant Smart Operations masthead must be removed');
-assert.doesNotMatch(weeklyPlanControlsSource, /查看本周计划/, 'the redundant weekly-plan viewer must not remain in the current-plan controls');
+assert.match(weeklyPlanControlsSource, /setWeeklyPlanDetailsOpen\(true\)[\s\S]{0,100}查看周计划/, 'the current-plan controls must keep the detailed weekly plan available at any time');
 assert.doesNotMatch(weeklyPlanControlsSource, /Agent 设置/, 'Agent settings must not remain in the weekly-plan header');
 assert.match(weeklyPlanControlsSource, /历史计划[\s\S]{0,1500}weeklyControlLabel/, 'the current-plan controls must retain history and the primary execution action');
 assert.match(currentPlanSource, /actions=\{weeklyPlanControls\}/, 'the current-plan header must receive the weekly-plan controls');
@@ -330,6 +338,9 @@ for (const removedCopy of ['本周计划详情', '确认本周视频计划', '�
   assert.doesNotMatch(pageSource, new RegExp(removedCopy), `the removed weekly-plan detail flow must not retain: ${removedCopy}`);
 }
 assert.match(pageSource, /aria-label="周计划生成"/, 'new and next-week goals may retain a dedicated editing flow');
+assert.match(pageSource, /WeeklyPlanDetailsDrawer\s+data=\{data\}\s+open=\{weeklyPlanDetailsOpen\}/, 'the current or historical weekly plan must open in a dedicated read-only drawer');
+assert.match(pageSource, /setWeeklyPlanOpen\(false\);[\s\S]{0,100}setWeeklyPlanDetailsOpen\(true\)/, 'the assistant weekly-plan action must open existing plan details instead of only scrolling the summary');
+assert.doesNotMatch(pageSource, /BusinessAnnouncementBar/, 'the Smart Business home must not retain the deleted announcement bar');
 assert.match(pageSource, /const openWeeklyPlan = \(\) => \{[\s\S]{0,320}setNewGoal\(true\)[\s\S]{0,120}setWeeklyPlanOpen\(true\)[\s\S]{0,520}addEventListener\('lingshu:open-weekly-plan'/, 'the assistant entry must open the same weekly-plan composer as the page action');
 assert.match(assistantContextSource, /workflowStage: weeklyPlanningStage/, 'the page must tell Lingxiaoshu whether weekly work is unplanned, planned, running, setup-only, or historical');
 assert.match(pageSource, /const weeklyControlLabel = busy === ["']confirm-weekly-plan["'][\s\S]{0,100}正在启动生产…/, 'the primary control must name its real production-start loading state');
@@ -353,7 +364,8 @@ assert.match(pageSource, /<WeeklyStartConflictAlert[\s\S]{0,220}openConflictingR
 assert.doesNotMatch(pageSource, /WeeklyWorkStatusAlert|currentWeeklyWorkStatus|weeklyStatusSlot/, 'the entire persistent home run-status banner must be removed for every runtime state');
 assert.match(weeklyWorkStatusSource, /制作准备已完成，尚未开始生产/, 'generated details without a persisted run must never be labelled as production');
 assert.match(weeklyWorkStatusSource, /run\.goal_id !== data\.goal\.id[\s\S]{0,300}运行与页面周目标不一致/, 'a run for another goal must not be presented as current production');
-assert.match(weeklyWorkStatusSource, /run\.status === 'waiting_external'[\s\S]{0,900}本周任务已启动，等待外部服务/, 'waiting for an external service must not be described as active production');
+assert.match(weeklyWorkStatusSource, /externalAutoRecovery[\s\S]{0,900}本周任务正在自动恢复/, 'a machine-recoverable service retry must be distinguished from a user blocker');
+assert.match(weeklyWorkStatusSource, /run\.status === 'waiting_external'[\s\S]{0,1400}本周任务已启动，等待业务结果/, 'a non-recovering external wait must retain a truthful business-result state');
 assert.match(weeklyWorkStatusSource, /else if \(run\.status === 'running'\) phase = 'running';[\s\S]{0,80}else phase = 'unknown'/, 'an unrecognized run status must remain unknown rather than defaulting to running');
 assert.doesNotMatch(weeklyWorkStatusSource, /COMPLETED_TASK_STATUSES = new Set\([^\n]*(?:cancelled|skipped)/, 'cancelled or skipped tasks must not inflate the completed-output count');
 assert.match(weeklyWorkEventsSource, /WEEKLY_WORK_UPDATED_EVENT = 'lingshu:weekly-work-updated'/, 'the page and assistant must share one weekly-work refresh event');
@@ -366,7 +378,7 @@ assert.match(pageSource, /const weeklyActionFeedback = \(weeklyStartConflict && 
 assert.match(currentPlanSource, /feedback=\{weeklyActionFeedback\}/, 'explicit action failure feedback must remain separate from persisted runtime state');
 assert.match(pageSource, /\{error && <Alert type="error" showIcon title=\{error\}/, 'start failure feedback must remain visible without restoring the run-status banner');
 assert.doesNotMatch(pageSource, /\{error && <Alert className="mt-5"/, 'the page must not duplicate launch errors below the large calendar');
-for (const label of ['执行失败', '已取消', '已暂停', '等待外部服务', '待处理', '准备中', '已完成', '执行中']) assert.match(pageSource, new RegExp(label), `the command header must expose the persisted run state: ${label}`);
+for (const label of ['执行失败', '已取消', '已暂停', '等待业务结果', '自动恢复中', '待处理', '准备中', '已完成', '执行中']) assert.match(pageSource, new RegExp(label), `the command header must expose the persisted run state: ${label}`);
 assert.doesNotMatch(pageSource, /按发布时间查看内容，检查产品与参考依据后确认排期。|确定各平台账号的产量、总产量和预计成本。/, 'the weekly-plan page title must not repeat an explanatory subtitle');
 assert.match(pageSource, /<Tabs[^>]+aria-label="智能经营视图"/, 'Smart Operations must use accessible shared Ant tabs');
 const outlineFlowSource = pageSource.slice(pageSource.indexOf('const createWeeklyOutline'), pageSource.indexOf('const generateCurrentPlanDetails'));

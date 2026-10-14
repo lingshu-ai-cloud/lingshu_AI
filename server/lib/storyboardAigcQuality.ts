@@ -214,6 +214,46 @@ export function automaticStoryboardFrameAdmission(provenance: Record<string, any
   return applyStoryboardReplicationAutomation(provenance.firstFrameQuality).passed;
 }
 
+/** A managed clone may deliberately fall back to an enterprise-product-only
+ * scene when the reference frame is not authorized as model input.  The frame
+ * is still eligible for automatic admission, but only after the caller has
+ * verified the current server-owned source plan.  Keeping the plan argument
+ * outside provenance prevents an arbitrary free-creation request from
+ * promoting itself into the automated production path. */
+export function automaticManagedFallbackFrameAdmission(
+  provenance: Record<string, any> | undefined,
+  currentSourcePlan: Record<string, any> | undefined,
+): boolean {
+  const spec = provenance?.shotSpec;
+  if (currentSourcePlan?.fallbackMode !== 'enterprise_product_display'
+    || currentSourcePlan?.mode !== 'ai'
+    || provenance?.mode !== 'free_creation'
+    || spec?.mode !== 'free_creation'
+    || spec?.constraints?.includes('person_identity')
+    || !spec?.constraints?.includes('product_identity')
+    || provenance?.firstFrameQualityState !== 'evaluated'
+    || !provenance?.firstFrameQuality) return false;
+  return applyStoryboardReplicationAutomation(provenance.firstFrameQuality).passed;
+}
+
+/** The same server-owned fallback contract also applies to the generated
+ * video.  It is intentionally separate from the frame check so a passing
+ * first frame can never stand in for real video QA evidence. */
+export function automaticManagedFallbackVideoAdmission(
+  provenance: Record<string, any> | undefined,
+  currentSourcePlan: Record<string, any> | undefined,
+): boolean {
+  const spec = provenance?.shotSpec;
+  const report = provenance?.storyboardQualityReport as StoryboardQaReport | undefined;
+  if (currentSourcePlan?.fallbackMode !== 'enterprise_product_display'
+    || currentSourcePlan?.mode !== 'ai'
+    || spec?.mode !== 'free_creation'
+    || spec?.constraints?.includes('person_identity')
+    || !spec?.constraints?.includes('product_identity')
+    || report?.phase !== 'video') return false;
+  return applyStoryboardReplicationAutomation(report).passed;
+}
+
 export function reviewStoryboardQaReport(report: StoryboardQaReport, input: { decision: 'accept' | 'reject'; reviewedBy: string; reviewedAt?: string }): StoryboardQaReport {
   if (report.status !== 'needs_review' || report.findings.some(item => item.severity === 'hard_failure')) {
     throw new Error('存在硬失败项，不能人工通过；请重做首帧、视频或补充素材');

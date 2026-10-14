@@ -33,6 +33,16 @@ assert.match(source, /critical_business_change/, 'critical product, market, audi
 assert.match(source, /本周预算、产品、市场或发布授权范围已变更/, 'authorization invalidation must explicitly warn about budget and business-boundary changes');
 assert.match(source, /appendAuthorizationRequiredEvent/, 'weekly-package changes must emit a visible reauthorization event');
 assert.match(source, /invalidatePublishingAuthorizationForRun/, 'weekly-package changes must pause already materialized work that has no provider receipt');
+assert.match(source, /task\.requires_approval && task\.status === 'failed'[\s\S]{0,500}dataStatus === 'execution_failed'/,
+  'an approval preflight exception must be safely re-observed instead of remaining a terminal workflow failure');
+assert.match(source, /run\.status === 'waiting_human' && !recoverableApprovalFailure/,
+  'a run paused by a recoverable approval preflight exception must be allowed to reconcile');
+assert.match(source, /error\.message\.includes\('IANA'\)[\s\S]{0,220}发布账号尚未配置有效时区/,
+  'a missing publishing timezone must become an actionable approval preflight result instead of an execution exception');
+assert.match(source, /dataStatus: 'preflight_blocked',[\s\S]{0,220}waitState: waitState\('input', preflight\.reason\)/,
+  'approval configuration gaps must be presented as explicit user input, not a vague external-service wait');
+assert.match(source, /const needsHumanInput = remaining\.find[\s\S]{0,400}'waiting_human'/,
+  'a run with an actionable input gap must be owned by the user rather than labeled as an external wait');
 const socialContentBridgeGoal = { id: 'social-bridge', metric: 'approved_social_content_artifacts', scope: { socialTaskId: 'socialtask-1' } };
 const weeklyOperatingGoal = { id: 'weekly-operating', metric: 'qualified_leads', scope: { description: '本周经营范围' } };
 assert.equal(isDigitalEmployeeOperatingGoal(socialContentBridgeGoal), false, 'a social-content execution bridge is not a Digital Employee weekly goal');
@@ -171,6 +181,15 @@ assert.match(correctionRoute, /status:\s*['"]skipped['"]/, 'skip must change the
 for (const suffix of ['retry', 'skip', 'complete']) {
   assert.match(source, new RegExp(`digitalEmployeesRouter\\.post\\('/tasks/:taskId/${suffix}'`), `missing ${suffix} task-control endpoint`);
 }
+const productionBudgetRecovery = routeBlock("digitalEmployeesRouter.post('/tasks/:taskId/production-budget-reforecast'");
+assert.match(productionBudgetRecovery, /withDigitalEmployeeRunLock/, 'legacy budget recovery must serialize with the active production run');
+assert.match(productionBudgetRecovery, /verifiedStoryboardProviderCostRange/, 'legacy budget recovery must reprice the exact frozen storyboard');
+assert.match(productionBudgetRecovery, /productionBudgetMode:[\s\S]*maxAigcRetries:/, 'the reviewed protected or economy choice must freeze the runtime retry policy');
+assert.match(productionBudgetRecovery, /contentBatchPlans[\s\S]*studio_projects/, 'the plan, frozen handoff and existing projects must receive one consistent ceiling');
+assert.match(productionBudgetRecovery, /legacyRepairProjects/, 'the recovery route must refuse to rewrite unrelated production blockers');
+assert.match(productionBudgetRecovery, /managedReplicationPlanHasExecutionGraph/, 'a version-only legacy replication shell must be recognized as incomplete');
+assert.match(productionBudgetRecovery, /hasFrozenSpeechEvidence/, 'legacy script repair must protect frozen person speech receipts while allowing narration-only repair to preserve paid visual receipts');
+assert.match(productionBudgetRecovery, /appendEvent[\s\S]*appendAudit/, 'a historical budget repair must be visible and auditable');
 assert.match(source, /digitalEmployeesRouter\.post\('\/tasks\/:taskId\/evidence'/, 'current-run tasks need an explicit tenant-validated business evidence link');
 assert.match(source, /canonicalEvidenceRef/, 'attached evidence must be resolved against tenant-owned records');
 

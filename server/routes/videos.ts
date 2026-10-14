@@ -11,7 +11,7 @@ import { produceReferenceProductionRouting } from '../lib/referenceProductionRou
 import { AnalysisAlreadyRunningError, AnalysisLeaseRegistry } from '../lib/analysisLease.js';
 import { DownloadBudget, RecordWorkRegistry, terminalDownloadFailure } from '../lib/downloadExecution.js';
 import { Router, type Request, type Response } from 'express';
-import { execFile } from 'child_process';
+import { execFile, spawnSync } from 'child_process';
 import { promisify } from 'util';
 import fs from 'fs';
 import path from 'path';
@@ -25,7 +25,7 @@ import { store } from '../storage/index.js';
 import { attachFile, fetchFile } from '../storage/files.js';
 import { objectStorageEnabled, objectStorageDownload, objectStorageGetObject, objectStorageHead, objectStorageUpload } from '../storage/objectStorage.js';
 import { analyzeImagePostEvidenceWithGemini, analyzeVideo, analyzeYouTubeUrl } from '../agents/gemini.js';
-import { analyzeImagePostEvidenceWithQwen, analyzeVideoFramesWithQwen, analyzeVideoTimelineDetailsWithQwen, inspectVideoOpeningFrameWithQwen, transcribeAudioWithQwen, type ImagePostEvidenceAnalysis, type QwenTimelinePlan } from '../agents/qwen.js';
+import { analyzeImagePostEvidenceWithQwen, analyzeVideoFramesWithQwen, analyzeVideoTimelineDetailsWithQwen, inspectVideoOpeningFrameWithQwen, repairVideoShotClassificationsWithQwen, transcribeAudioWithQwen, type ImagePostEvidenceAnalysis, type QwenTimelinePlan } from '../agents/qwen.js';
 import { inspectOpeningHookMotionWithGemini } from '../agents/geminiHookMotion.js';
 import type { Platform, VideoAiAnalysis, VideoStatus } from '../types/index.js';
 import type { SocialDiscoveryMode } from '../../shared/contracts/socialContentWorkflow.js';
@@ -46,7 +46,9 @@ import { resolvePublicVideoSource, validatePublicVideoSourceUrl, type ValidatedP
 import { fetchCloudMaterial, getCloudMaterialRecord } from '../lib/cloudMaterials.js';
 import { localFallbacksEnabled } from '../lib/localFallbackPolicy.js';
 import { currentDataAuthority, runWithDataAuthority } from '../storage/dataAuthority.js';
-import { analysisTimelineQualityError, canPromoteExistingAnalysisToExact, exactVideoReviewReasons, hasCompleteVideoGeminiAnalysis, hasCompletedExactVideoEvidence, isAutoSeededVideo, isVideoLevelAnalysis, parseAnalysisTimeRange, serializeImagePostAnalysis, videoAnalysisOf } from '../lib/videoAnalysisCodec.js';
+import { analysisTimelineQualityError, canPromoteExistingAnalysisToExact, exactVideoClassificationQualityError, exactVideoReviewReasons, hasCompleteVideoGeminiAnalysis, hasCompletedExactVideoEvidence, isAutoSeededVideo, isVideoLevelAnalysis, parseAnalysisTimeRange, serializeImagePostAnalysis, videoAnalysisOf } from '../lib/videoAnalysisCodec.js';
+import { benchmarkAnalysisForRecord } from '../lib/benchmarkAnalysis.js';
+import { productionReferenceAdmission } from '../../shared/productionReferenceAdmission.js';
 import { applyOpeningHookMotionEvidence, firstSubstantiveOpeningShot, reconcileStoredOpeningHookMotionEvidence } from './hookMotionEvidence.js';
 import { isDiscoveryVideoEligible, youtubeShortUrl } from '../../shared/contracts/discoveryVideoPolicy.js';
 import {
@@ -79,12 +81,24 @@ const MAX_DOWNLOAD_JOBS = Number(process.env.VIDEO_DOWNLOAD_CONCURRENCY || 3);
 const pendingVisibleBackfillJobs = new Set<string>();
 const pocketBaseBackfillFailures = new Map<string, number>();
 
+let verifiedYtDlpPython = '';
 function ytDlpPythonPath(): string {
-  const configured = String(process.env.YT_DLP_PYTHON || '').trim();
-  if (configured) return configured;
+  if (verifiedYtDlpPython) return verifiedYtDlpPython;
   const bundled = path.join(os.homedir(), '.cache/codex-runtimes/codex-primary-runtime/dependencies/python/bin/python3');
-  if (fs.existsSync(bundled)) return bundled;
-  return process.env.PYTHON || 'python3';
+  const candidates = [...new Set([
+    String(process.env.YT_DLP_PYTHON || '').trim(),
+    fs.existsSync(bundled) ? bundled : '',
+    String(process.env.PYTHON || '').trim(),
+    'python3',
+  ].filter(Boolean))];
+  for (const candidate of candidates) {
+    const check = spawnSync(candidate, ['-c', 'import yt_dlp'], { stdio: 'ignore', timeout: 5_000 });
+    if (!check.error && check.status === 0) {
+      verifiedYtDlpPython = candidate;
+      return candidate;
+    }
+  }
+  throw new Error('video_downloader_not_installed: Python yt-dlp module is required');
 }
 
 function crawlerCosKey(record: Record<string, unknown>, role: string, extension: string): string {
@@ -393,6 +407,63 @@ export function queuedVideoAnalysisFailurePatch(
   };
 }
 
+export type VideoAnalysisRetryQueueKind = 'material' | 'stored_video' | 'source_url' | 'classification_repair';
+
+/** A retry is a new durable run. Terminal fields from the previous run must
+ * not keep the new run projected as failed while it is queued or running. */
+export function videoAnalysisRetryQueuePatch(
+  previous: Record<string, unknown>,
+  input: {
+    analysisMode: 'exact' | 'strategy';
+    analysisRunId: string;
+    queueKind: VideoAnalysisRetryQueueKind;
+    queuedAt: string;
+    userId: string;
+  },
+): Record<string, unknown> {
+  const sourceQueue = input.queueKind === 'source_url';
+  return {
+    ...previous,
+    requestedAnalysisMode: input.analysisMode,
+    analysisRunId: input.analysisRunId,
+    analysisRunMode: input.analysisMode,
+    analysisQueueKind: input.queueKind,
+    analysisQueueState: 'queued',
+    analysisQueuedAt: input.queuedAt,
+    analysisStage: 'queued',
+    analysisStageUpdatedAt: input.queuedAt,
+    reanalyzeQueuedAt: input.queuedAt,
+    geminiStatus: sourceQueue ? 'waiting_for_video' : 'queued',
+    downloadStatus: sourceQueue ? 'ops_queued' : input.queueKind === 'material' ? 'analyzing' : 'uploaded',
+    videoFetchStatus: sourceQueue ? 'ops_queued' : 'fetched',
+    analysisPausedAt: undefined,
+    analysisPausedBy: undefined,
+    analysisCancelledAt: undefined,
+    analysisCancelledBy: undefined,
+    analysisCompletedAt: undefined,
+    analysisFailedAt: undefined,
+    analysisRetryable: undefined,
+    analysisError: undefined,
+    downloadError: undefined,
+    videoLevelFailureStatus: undefined,
+    manualRequiredReason: undefined,
+    adminOnlyVideoFailure: undefined,
+    crawlerOpsLastError: undefined,
+    crawlerOpsReason: sourceQueue ? 'explicit_reanalyze_started' : 'explicit_reanalyze_uses_local_file',
+    crawlerOpsStatus: sourceQueue ? 'queued' : 'resolved',
+    crawlerOpsAttempt: 0,
+    crawlerOpsRetryResetAt: input.queuedAt,
+    crawlerOpsRetryResetBy: input.userId,
+  };
+}
+
+export function queuedMaterialFailureRequiresSourceFallback(analysis: Record<string, unknown>): boolean {
+  const evidence = [analysis.analysisError, analysis.videoLevelFailureStatus, analysis.manualRequiredReason]
+    .map(value => String(value || ''))
+    .join(' ');
+  return /queued_(?:cloud_)?material_(?:not_found|unreadable)|queued_local_material_missing/i.test(evidence);
+}
+
 function compareCrawledAtDesc(a: Record<string, unknown>, b: Record<string, unknown>): number {
   const aTime = Date.parse(String(a.crawledAt || ''));
   const bTime = Date.parse(String(b.crawledAt || ''));
@@ -581,6 +652,7 @@ function compactVideoPipelineError(message: unknown, max = 900): string {
 function publicVideoPipelineError(message: unknown): string {
   const text = compactVideoPipelineError(message, 500);
   if (!text) return '视频分析失败，请稍后重试。';
+  if (/video_downloader_not_installed|No module named yt_dlp/i.test(text)) return '视频读取组件未安装，请管理员补齐 yt-dlp 后重新分析。';
   if (/GEMINI_API_KEY\s+is\s+not\s+set|gemini[^\n]*(?:not configured|missing api)/i.test(text)) return 'Gemini 未配置，请联系管理员配置后重新分析，或切换到已配置的 Qwen。';
   if (/video_analysis_hard_timeout|exact_chunk_timeout|qwen[^\n]*(?:timeout|timed out|超时)/i.test(text)) return 'Qwen 分析超时，可点击重新分析；连续超时时请改用策略分析或缩短视频。';
   if (/404|not found|unable to download|download webpage|unsupported url/i.test(text)) return '源视频暂时无法获取，请确认链接有效后重新分析。';
@@ -591,7 +663,7 @@ function publicVideoPipelineError(message: unknown): string {
 }
 
 export type VideoAnalysisRecovery = {
-  code: 'gemini_missing' | 'qwen_timeout' | 'candidate_hidden' | 'source_unavailable' | 'analysis_failed' | 'none';
+  code: 'downloader_missing' | 'gemini_missing' | 'qwen_timeout' | 'candidate_hidden' | 'source_unavailable' | 'analysis_failed' | 'none';
   reason: string;
   recoveryAction: string;
   provider: 'Gemini' | 'Qwen' | 'AI';
@@ -615,6 +687,14 @@ export function describeVideoAnalysisRecovery(
   const provider: VideoAnalysisRecovery['provider'] = /qwen|dashscope/.test(`${source} ${rawError}`)
     ? 'Qwen'
     : /gemini/.test(`${source} ${rawError}`) ? 'Gemini' : 'AI';
+
+  if (/video_downloader_not_installed|No module named yt_dlp/i.test(rawError)) {
+    return {
+      code: 'downloader_missing', provider, hidden,
+      reason: '视频读取组件未安装，重复点击不会完成分析。',
+      recoveryAction: '请管理员安装 yt-dlp；组件就绪后再点击“重新分析”。',
+    };
+  }
 
   if (/GEMINI_API_KEY\s+is\s+not\s+set|gemini[^\n]*(?:not configured|missing api)/i.test(rawError)) {
     return {
@@ -1875,8 +1955,11 @@ async function findTenantReferenceByHash(tenantId: string, sha256: string): Prom
 
 export function shouldResumeReferenceAnalysis(analysis: Record<string, unknown>, duration = 0): boolean {
   if (hasCompletedExactVideoEvidence(analysis)) {
+    const gemini = analysis.gemini && typeof analysis.gemini === 'object'
+      ? analysis.gemini as VideoAiAnalysis
+      : parseJsonRecord<VideoAiAnalysis>(analysis.gemini, {} as VideoAiAnalysis);
+    if (exactVideoClassificationQualityError(gemini)) return true;
     if (duration <= 0) return false;
-    const gemini = parseJsonRecord<VideoAiAnalysis>(analysis.gemini, {} as VideoAiAnalysis);
     return Boolean(analysisTimelineQualityError(gemini, duration, 'exact'));
   }
   const status = String(analysis.geminiStatus || '');
@@ -1884,6 +1967,21 @@ export function shouldResumeReferenceAnalysis(analysis: Record<string, unknown>,
     && ['queued', 'waiting_for_video', 'analyzing'].includes(status)
     && !analysis.analysisError;
   return !activelyRunning;
+}
+
+export function canRepairStoredExactClassification(
+  record: Record<string, unknown>,
+  analysis: Record<string, unknown>,
+): boolean {
+  const gemini = analysis.gemini && typeof analysis.gemini === 'object'
+    ? analysis.gemini as VideoAiAnalysis
+    : parseJsonRecord<VideoAiAnalysis>(analysis.gemini, {} as VideoAiAnalysis);
+  if (!['video', 'video_review_required'].includes(String(analysis.analysisQuality || ''))
+    || !canPromoteExistingAnalysisToExact(gemini, Number(record.duration || 0))) return false;
+  const admission = productionReferenceAdmission(benchmarkAnalysisForRecord(record, analysis));
+  return !admission.ready && admission.blockers.length > 0 && admission.blockers.every(blocker => (
+    /镜头类型未确认|画面、用途或分类依据待复核/.test(blocker)
+  ));
 }
 
 async function recoverExistingReferenceImport(input: {
@@ -3273,29 +3371,30 @@ videosRouter.post('/:id/analysis-resume', async (req, res) => {
     : String(previous.analysisRunMode || previous.analysisMode) === 'strategy' ? 'strategy' : 'exact';
   const analysisRunId = randomUUID();
   const queuedAt = new Date().toISOString();
-  const analysisQueueKind = materialId ? 'material' : fileId ? 'stored_video' : 'source_url';
+  const missingMaterial = queuedMaterialFailureRequiresSourceFallback(previous);
+  const analysisQueueKind: VideoAnalysisRetryQueueKind = fileId
+    ? 'stored_video'
+    : materialId && !missingMaterial ? 'material'
+      : 'source_url';
+  if (analysisQueueKind === 'source_url' && !/^https?:\/\//i.test(sourceUrl)) {
+    res.status(409).json({ error: '原素材已不存在，请重新上传可读的原视频后再分析' });
+    return;
+  }
+  resetCrawlerOpsTaskForExplicitRetry({
+    recordId: req.params.id,
+    tenantId: String(record.tenantId || tenantId),
+    userId,
+    usesSourceQueue: analysisQueueKind === 'source_url',
+    now: queuedAt,
+  });
   const nextAnalysis = {
-    ...previous,
-    requestedAnalysisMode: analysisMode,
-    analysisRunId,
-    analysisRunMode: analysisMode,
-    analysisQueueKind,
-    analysisQueueState: 'queued',
-    analysisQueuedAt: queuedAt,
-    analysisStage: 'queued',
-    analysisStageUpdatedAt: queuedAt,
-    reanalyzeQueuedAt: queuedAt,
-    geminiStatus: fileId || materialId ? 'queued' : 'waiting_for_video',
-    analysisPausedAt: undefined,
-    analysisPausedBy: undefined,
-    analysisCancelledAt: undefined,
-    analysisCancelledBy: undefined,
-    analysisError: undefined,
-    downloadError: undefined,
+    ...videoAnalysisRetryQueuePatch(previous, {
+      analysisMode, analysisRunId, queueKind: analysisQueueKind, queuedAt, userId,
+    }),
     analysisResumedAt: queuedAt,
     analysisResumedBy: userId,
   };
-  const queuedRecord = { ...record, aiAnalysis: JSON.stringify(nextAnalysis) };
+  const queuedRecord = { ...record, status: 'pending' as VideoStatus, aiAnalysis: JSON.stringify(nextAnalysis) };
   await store.update(COL, req.params.id, { status: 'pending' as VideoStatus, aiAnalysis: queuedRecord.aiAnalysis });
   if (analysisQueueKind === 'source_url') await queueAnalyzeSource(queuedRecord);
   else if (!analysisRunsInWorkerProcess()) startQueuedLocalAnalysis(req.params.id);
@@ -3365,6 +3464,15 @@ videosRouter.post('/material-exact-analysis', async (req, res) => {
       id: String(existing.id),
       analysisRunId: existingAnalysis.analysisRunId,
       deduplicated: true,
+    });
+    return;
+  }
+  if (existing && productionReferenceAdmission(benchmarkAnalysisForRecord(existing, existingAnalysis)).ready) {
+    res.json({
+      status: 'analyzed',
+      id: String(existing.id),
+      analysisRunId: existingAnalysis.analysisRunId,
+      reused: true,
     });
     return;
   }
@@ -3453,9 +3561,26 @@ videosRouter.patch('/:id/reanalyze', async (req, res) => {
   const recordTenantId = String(record.tenantId || tenantId);
   if (analysisMode === 'exact'
     && req.body?.force !== true
+    && canRepairStoredExactClassification(record, previous)) {
+    const queuedAt = new Date().toISOString();
+    resetCrawlerOpsTaskForExplicitRetry({ recordId: req.params.id, tenantId: recordTenantId, userId, usesSourceQueue: false, now: queuedAt });
+    await store.update(COL, req.params.id, {
+      status: 'pending' as VideoStatus,
+      aiAnalysis: JSON.stringify(videoAnalysisRetryQueuePatch(previous, {
+        analysisMode, analysisRunId, queueKind: 'classification_repair', queuedAt, userId,
+      })),
+    });
+    if (!analysisRunsInWorkerProcess()) startQueuedLocalAnalysis(req.params.id);
+    res.status(202).json({ status: 'pending', analysisRunId, repair: 'classification_only' });
+    return;
+  }
+  if (analysisMode === 'exact'
+    && req.body?.force !== true
     && Boolean(fileId)
     && ['video', 'video_review_required'].includes(String(previous.analysisQuality || ''))
-    && canPromoteExistingAnalysisToExact(previous.gemini, Number(record.duration || 0))) {
+    && canPromoteExistingAnalysisToExact(previous.gemini, Number(record.duration || 0))
+    && !exactVideoClassificationQualityError(previous.gemini as VideoAiAnalysis)
+    && !exactVideoReviewReasons(previous.gemini as VideoAiAnalysis, Number(record.duration || 0)).length) {
     const localReference = localReferenceVideoPath(String(fileId), String(record.tenantId || tenantId));
     const sourceSha256 = localReference && fs.existsSync(localReference)
       ? createHash('sha256').update(fs.readFileSync(localReference)).digest('hex') : '';
@@ -3494,41 +3619,31 @@ videosRouter.patch('/:id/reanalyze', async (req, res) => {
     return;
   }
   if (!fileId) {
-    if (previous.materialId) {
+    const sourceUrl = String(record.sourceUrl || '').trim();
+    const materialUnavailable = queuedMaterialFailureRequiresSourceFallback(previous);
+    if (previous.materialId && !materialUnavailable) {
       const retryResetAt = new Date().toISOString();
       await store.update(COL, req.params.id, {
         status: 'pending' as VideoStatus,
-        aiAnalysis: JSON.stringify({
-          ...previous,
-          requestedAnalysisMode: analysisMode,
-          analysisRunId,
-          analysisRunMode: analysisMode,
-          analysisQueueKind: 'material',
-          analysisQueueState: 'queued',
-          analysisQueuedAt: retryResetAt,
-          analysisStage: 'queued',
-          analysisStageUpdatedAt: retryResetAt,
-          reanalyzeQueuedAt: retryResetAt,
-          geminiStatus: 'queued',
-          analysisPausedAt: undefined,
-          analysisPausedBy: undefined,
-          analysisCancelledAt: undefined,
-          analysisCancelledBy: undefined,
-          analysisError: undefined,
-        }),
+        aiAnalysis: JSON.stringify(videoAnalysisRetryQueuePatch(previous, {
+          analysisMode, analysisRunId, queueKind: 'material', queuedAt: retryResetAt, userId,
+        })),
       });
       if (!analysisRunsInWorkerProcess()) startQueuedLocalAnalysis(req.params.id);
       res.status(202).json({ status: 'pending', analysisRunId });
       return;
     }
-    const sourceUrl = String(record.sourceUrl || '').trim();
     if (!/^https?:\/\//i.test(sourceUrl)) {
-      res.status(400).json({ error: 'No video file or public sourceUrl attached to this record' });
+      res.status(materialUnavailable ? 409 : 400).json({ error: materialUnavailable
+        ? '原素材已不存在，请重新上传可读的原视频后再分析'
+        : 'No video file or public sourceUrl attached to this record' });
       return;
     }
     const retryResetAt = new Date().toISOString();
     resetCrawlerOpsTaskForExplicitRetry({ recordId: req.params.id, tenantId: recordTenantId, userId, usesSourceQueue: true, now: retryResetAt });
-    const queuedRecord = { ...record, aiAnalysis: JSON.stringify({ ...previous, requestedAnalysisMode: analysisMode, analysisRunId, analysisRunMode: analysisMode, analysisQueueKind: 'source_url', analysisQueueState: 'queued', analysisStage: 'queued', analysisStageUpdatedAt: retryResetAt, analysisQueuedAt: retryResetAt, analysisPausedAt: undefined, analysisPausedBy: undefined, analysisCancelledAt: undefined, analysisCancelledBy: undefined, analysisError: undefined, downloadError: undefined, crawlerOpsLastError: undefined, crawlerOpsReason: 'explicit_reanalyze_started', crawlerOpsStatus: 'queued', crawlerOpsAttempt: 0, crawlerOpsRetryResetAt: retryResetAt, crawlerOpsRetryResetBy: userId }) };
+    const queuedRecord = { ...record, status: 'pending' as VideoStatus, aiAnalysis: JSON.stringify(videoAnalysisRetryQueuePatch(previous, {
+      analysisMode, analysisRunId, queueKind: 'source_url', queuedAt: retryResetAt, userId,
+    })) };
     await store.update(COL, req.params.id, { aiAnalysis: queuedRecord.aiAnalysis });
     await queueAnalyzeSource(queuedRecord);
     res.json({ status: 'pending', analysisRunId });
@@ -3539,7 +3654,9 @@ videosRouter.patch('/:id/reanalyze', async (req, res) => {
   resetCrawlerOpsTaskForExplicitRetry({ recordId: req.params.id, tenantId: recordTenantId, userId, usesSourceQueue: false, now: retryResetAt });
   await store.update(COL, req.params.id, {
     status: 'pending',
-    aiAnalysis: JSON.stringify({ ...previous, requestedAnalysisMode: analysisMode, analysisRunId, analysisRunMode: analysisMode, analysisQueueKind: 'stored_video', analysisQueueState: 'queued', analysisQueuedAt: retryResetAt, analysisStage: 'queued', analysisStageUpdatedAt: retryResetAt, geminiStatus: 'queued', analysisError: undefined, downloadError: undefined, crawlerOpsLastError: undefined, crawlerOpsReason: 'explicit_reanalyze_uses_local_file', crawlerOpsStatus: 'resolved', crawlerOpsAttempt: 0, analysisPausedAt: undefined, analysisPausedBy: undefined, analysisCancelledAt: undefined, analysisCancelledBy: undefined, reanalyzeQueuedAt: retryResetAt, crawlerOpsRetryResetAt: retryResetAt, crawlerOpsRetryResetBy: userId }),
+    aiAnalysis: JSON.stringify(videoAnalysisRetryQueuePatch(previous, {
+      analysisMode, analysisRunId, queueKind: 'stored_video', queuedAt: retryResetAt, userId,
+    })),
   });
   if (!analysisRunsInWorkerProcess()) startQueuedLocalAnalysis(req.params.id);
 
@@ -3906,7 +4023,10 @@ export async function queueExactSourceAnalysisForTenant(input: {
   const record = await store.getById<Record<string, unknown>>(COL, input.recordId);
   if (!record || String(record.tenantId || '') !== input.tenantId) throw new Error('Trend video not found');
   const previous = videoAnalysisOf(record);
-  if (hasCompletedExactVideoEvidence(previous)) {
+  const admission = hasCompletedExactVideoEvidence(previous)
+    ? productionReferenceAdmission(benchmarkAnalysisForRecord(record, previous))
+    : null;
+  if (admission?.ready) {
     // An earlier queue attempt could mark a local:// upload as
     // waiting_for_video before failing public-URL validation. Restore the
     // completed exact evidence in place; keep its run id and source hash so
@@ -3946,7 +4066,11 @@ export async function queueExactSourceAnalysisForTenant(input: {
     status: 'pending' as VideoStatus,
     aiAnalysis: JSON.stringify(nextAnalysis),
   });
-  await queueAnalyzeSource({ ...record, aiAnalysis: JSON.stringify(nextAnalysis) });
+  if (record.videoFileId) {
+    if (!analysisRunsInWorkerProcess()) startQueuedLocalAnalysis(input.recordId);
+  } else {
+    await queueAnalyzeSource({ ...record, aiAnalysis: JSON.stringify(nextAnalysis) });
+  }
   return 'queued';
 }
 
@@ -5520,6 +5644,7 @@ async function executeQueuedLocalAnalysisRecord(recordId: string): Promise<boole
     if (!analysis.requestedAnalysisMode || ['paused', 'cancelled', 'completed'].includes(queueState)) return false;
     const analysisRunId = String(analysis.analysisRunId || randomUUID());
     const analysisMode = analysis.requestedAnalysisMode === 'strategy' ? 'strategy' : 'exact';
+    const queueKind = String(analysis.analysisQueueKind || '');
     const workerStartedAt = new Date().toISOString();
     await store.update(COL, recordId, {
       status: 'pending' as VideoStatus,
@@ -5529,14 +5654,38 @@ async function executeQueuedLocalAnalysisRecord(recordId: string): Promise<boole
         analysisRunMode: analysisMode,
         analysisQueueState: 'running',
         analysisWorkerStartedAt: workerStartedAt,
-        analysisStage: 'downloading',
+        analysisStage: queueKind === 'classification_repair' ? 'repairing_classification' : 'downloading',
         analysisStageUpdatedAt: workerStartedAt,
         analysisWorkerAttempt: Number(analysis.analysisWorkerAttempt || 0) + 1,
         geminiStatus: 'analyzing',
       }),
     });
     try {
-      if (String(analysis.analysisQueueKind || '') === 'material' || (!record.videoFileId && analysis.materialId)) {
+      if (queueKind === 'classification_repair') {
+        const gemini = analysis.gemini && typeof analysis.gemini === 'object'
+          ? analysis.gemini as VideoAiAnalysis
+          : parseJsonRecord<VideoAiAnalysis>(analysis.gemini, {} as VideoAiAnalysis);
+        const repaired = await repairVideoShotClassificationsWithQwen(gemini);
+        const latest = await store.getById<Record<string, unknown>>(COL, recordId);
+        const previous = parseJsonRecord<Record<string, unknown>>(latest?.aiAnalysis, {});
+        if (String(previous.analysisRunId || '') !== analysisRunId) return false;
+        await store.update(COL, recordId, {
+          status: 'analyzed' as VideoStatus,
+          aiAnalysis: JSON.stringify({
+            ...previous,
+            ...videoLevelSuccessPatch({
+              analysis: repaired,
+              source: `${String(analysis.analysisSource || 'video')}-classification-repair`,
+              videoFetchStatus: String(analysis.videoFetchStatus || 'fetched'),
+              extra: {
+                analysisMode: 'exact',
+                requestedAnalysisMode: undefined,
+                classificationRepairedAt: new Date().toISOString(),
+              },
+            }),
+          }),
+        });
+      } else if (queueKind === 'material' || (!record.videoFileId && analysis.materialId)) {
         const resolved = await materialForQueuedAnalysis(record, analysis);
         try {
           await analyzeDownloadedMaterial(recordId, resolved.filePath, resolved.material, analysisMode, analysisRunId);
@@ -7737,6 +7886,10 @@ export async function analyzeDownloadedVideoWithFallback(opts: {
       ? groupExactObservationWindows(observationAnalysis, detectedSceneCuts)
       : observationAnalysis;
     analysis = lockReferenceSpeechTimeline(analysis, transcript, { duration: Number(opts.duration), fps: sourceClock.fps ?? undefined });
+    if (opts.analysisMode === 'exact' && (exactVideoClassificationQualityError(analysis)
+      || (analysis.scriptDetails15s || []).some(shot => shot.needsReview === true))) {
+      analysis = await repairVideoShotClassificationsWithQwen(analysis);
+    }
     let hookReviewReasons: string[] = [];
     if (opts.analysisMode === 'exact') {
       const hookIndex = firstSubstantiveOpeningShot(analysis);
@@ -9886,7 +10039,7 @@ export async function runQueuedLocalAnalysisWorkerOnce(options: { recoverInterru
       if (!analysis.requestedAnalysisMode) return false;
       const kind = String(analysis.analysisQueueKind || '');
       if (kind === 'source_url') return false;
-      if (!['material', 'stored_video'].includes(kind) && !record.videoFileId && !analysis.materialId) return false;
+      if (!['material', 'stored_video', 'classification_repair'].includes(kind) && !record.videoFileId && !analysis.materialId) return false;
       const state = String(analysis.analysisQueueState || 'queued');
       if (state === 'queued') return true;
       if (state !== 'running') return false;
@@ -10356,16 +10509,22 @@ export async function getVideoPipelineStats(tenantId?: string): Promise<Record<s
     const analysis = parseJsonRecord<Record<string, unknown>>(record.aiAnalysis, {});
     const gemini = String(analysis.geminiStatus || '');
     const fetchStatus = String(analysis.downloadStatus || analysis.videoFetchStatus || '');
+    const queueState = String(analysis.analysisQueueState || '');
     const paused = Boolean(analysis.analysisPausedAt) || gemini === 'paused';
     const cancelled = Boolean(analysis.analysisCancelledAt) || gemini === 'cancelled' || analysis.analysisQueueState === 'cancelled';
     const failed = String(record.status || '') === 'failed'
       || Boolean(analysis.analysisError || analysis.videoLevelFailureStatus)
       || ['video_failed', 'analysis_retryable', 'ops_failed', 'url_failed', 'unavailable'].includes(gemini)
       || ['ops_failed', 'url_failed', 'unavailable'].includes(fetchStatus);
-    const analyzing = Boolean(analysis.requestedAnalysisMode)
+    const analyzing = !['failed', 'cancelled', 'paused', 'completed'].includes(queueState) && (Boolean(analysis.requestedAnalysisMode)
       || ['queued', 'analyzing', 'waiting_for_video', 'downloading', 'download_retrying'].includes(gemini)
-      || ['queued', 'downloading', 'download_retrying', 'ops_queued', 'ops_processing'].includes(fetchStatus);
-    const itemStatus = cancelled ? 'cancelled' : paused ? 'paused' : failed ? 'failed' : analyzing ? 'analyzing' : 'analyzed';
+      || ['queued', 'downloading', 'download_retrying', 'ops_queued', 'ops_processing'].includes(fetchStatus));
+    const requestedMode = String(analysis.requestedAnalysisMode || analysis.analysisMode || 'strategy');
+    const admission = requestedMode === 'exact' && !cancelled && !paused && !analyzing && !failed
+      ? productionReferenceAdmission(benchmarkAnalysisForRecord(record, analysis))
+      : null;
+    const itemStatus = cancelled ? 'cancelled' : paused ? 'paused' : analyzing ? 'analyzing' : failed ? 'failed'
+      : requestedMode !== 'exact' ? 'strategy' : admission && !admission.ready ? 'review' : 'analyzed';
     const recovery = describeVideoAnalysisRecovery(analysis, String(record.status || ''));
     return {
       id: String(record.id || ''),
@@ -10374,7 +10533,9 @@ export async function getVideoPipelineStats(tenantId?: string): Promise<Record<s
       thumbnailUrl: recordThumbnailUrl(String(record.id || '')),
       duration: Number(record.duration || 0),
       status: itemStatus,
-      analysisMode: String(analysis.requestedAnalysisMode || analysis.analysisMode || 'strategy'),
+      analysisMode: requestedMode,
+      productionReady: admission?.ready,
+      productionBlockers: admission?.blockers.slice(0, 3) || [],
       updatedAt: String(record.updated || record.crawledAt || ''),
       error: failed ? publicVideoPipelineError(analysis.analysisError || analysis.videoLevelFailureStatus) : '',
       statusReason: cancelled ? '任务已取消，旧运行结果不会再写回。'
@@ -10413,8 +10574,9 @@ export async function getVideoPipelineStats(tenantId?: string): Promise<Record<s
         acc[item.status] = (acc[item.status] || 0) + 1;
         return acc;
       }, {}),
-      pendingRecords: analysisItems.filter(item => item.status === 'analyzing' || item.status === 'paused').length,
+      pendingRecords: analysisItems.filter(item => item.status === 'analyzing' || item.status === 'paused' || item.status === 'review').length,
       analyzedRecords: analysisItems.filter(item => item.status === 'analyzed').length,
+      strategyRecords: analysisItems.filter(item => item.status === 'strategy').length,
       failedRecords: analysisItems.filter(item => item.status === 'failed').length,
       hiddenRecords: analysisItems.filter(item => item.visibility === 'hidden').length,
       providerStatus: {

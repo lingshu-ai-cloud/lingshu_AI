@@ -1,6 +1,6 @@
+import './loadEnvironment.js';
 import { mountWhatsAppOAuthRoutes } from './routes/whatsappParentMount.js';
 import { mobileWorkbenchRouter } from './routes/mobileWorkbench.js';
-import './loadEnvironment.js';
 import { startMessengerContextTagRecovery } from './messenger/conversations.js';
 import path from 'path';
 import { fileURLToPath } from 'url';

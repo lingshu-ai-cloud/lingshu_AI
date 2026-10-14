@@ -3,6 +3,25 @@ import test from 'node:test';
 import { createHash, createHmac } from 'node:crypto';
 import { VolcengineArkAssets } from './volcengineArkAssets.js';
 
+test('Ark readiness reads credentials after environment initialization', () => {
+  const previousAccessKey = process.env.VOLCENGINE_ACCESS_KEY_ID;
+  const previousSecretKey = process.env.VOLCENGINE_SECRET_ACCESS_KEY;
+  try {
+    delete process.env.VOLCENGINE_ACCESS_KEY_ID;
+    delete process.env.VOLCENGINE_SECRET_ACCESS_KEY;
+    const client = new VolcengineArkAssets();
+    assert.equal(client.configured(), false);
+    process.env.VOLCENGINE_ACCESS_KEY_ID = 'late-access-key';
+    process.env.VOLCENGINE_SECRET_ACCESS_KEY = 'late-secret-key';
+    assert.equal(client.configured(), true, 'router construction must not freeze a pre-dotenv unavailable state');
+  } finally {
+    if (previousAccessKey === undefined) delete process.env.VOLCENGINE_ACCESS_KEY_ID;
+    else process.env.VOLCENGINE_ACCESS_KEY_ID = previousAccessKey;
+    if (previousSecretKey === undefined) delete process.env.VOLCENGINE_SECRET_ACCESS_KEY;
+    else process.env.VOLCENGINE_SECRET_ACCESS_KEY = previousSecretKey;
+  }
+});
+
 test('Ark client uses the documented validation, image creation and status actions', async () => {
   const original = globalThis.fetch; const calls: Array<{ action: string; body: any }> = [];
   const responses: Record<string, unknown> = {

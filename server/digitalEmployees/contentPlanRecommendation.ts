@@ -7,6 +7,8 @@ import { buildBenchmarkAnalysis, type BenchmarkAnalysis } from '../../shared/ben
 import { includedAdaptationCostRange, masterVideoCostRange, MASTER_VIDEO_COST_POINT_CNY } from '../../shared/contracts/contentCostModel.js';
 import { isDiscoveryVideoEligible } from '../../shared/contracts/discoveryVideoPolicy.js';
 import { productionReferenceAdmission, type ProductionReferenceAdmission } from '../../shared/productionReferenceAdmission.js';
+import { referenceContentIdentity, sameReferenceContent, type ReferenceContentIdentity } from './referenceContentIdentity.js';
+import { estimateSeedanceCostCny } from '../lib/seedanceBudget.js';
 
 type EvidenceRecord = { id: string; [key: string]: unknown };
 type BenchmarkAccount = {
@@ -35,6 +37,7 @@ export interface RankedContentReference {
   score: number;
   factors: string[];
   analysis: BenchmarkAnalysis;
+  contentIdentity: ReferenceContentIdentity;
 }
 
 const text = (value: unknown, limit = 500) => String(value ?? '').trim().slice(0, limit);
@@ -51,6 +54,32 @@ const record = (value: unknown): Record<string, any> => {
 export function estimateHighestTierVideoCostCny(duration: number): number {
   void duration;
   return MASTER_VIDEO_COST_POINT_CNY;
+}
+
+const money = (value: number) => Math.round(value * 100) / 100;
+
+/** Pre-production authorization envelope derived from the exact frozen
+ * storyboard and the same provider rates used by the native executor. The
+ * lower value covers one 480p attempt; the upper value reserves one paid
+ * regeneration for every generated shot. Two first-frame calls per shot are
+ * reserved conservatively so product-composite shots cannot exceed approval. */
+export function verifiedStoryboardProviderCostRange(analysis: BenchmarkAnalysis | undefined): {
+  minCny: number;
+  maxCny: number;
+  basis: 'verified_storyboard_provider_envelope';
+} | null {
+  const shots = analysis?.shots || [];
+  if (!analysis?.timelineComplete || !shots.length || shots.some(shot => shot.start === null || shot.end === null)) return null;
+  const firstFrameCny = Number(process.env.STORYBOARD_AIGC_FIRST_FRAME_ESTIMATED_CNY || 0.3);
+  const geometryEnabled = process.env.STORYBOARD_CLONE_GEOMETRY_QWEN_ENABLED === 'true';
+  const geometryCny = geometryEnabled ? Number(process.env.STORYBOARD_AIGC_CLONE_GEOMETRY_ESTIMATED_CNY || 0.1) : 0;
+  if (!Number.isFinite(firstFrameCny) || firstFrameCny <= 0 || !Number.isFinite(geometryCny) || geometryCny < 0) return null;
+  const oneAttempt = shots.reduce((sum, shot) => {
+    const duration = Math.max(4, Math.ceil(Number(shot.end) - Number(shot.start)));
+    return sum + firstFrameCny * 2 + geometryCny + estimateSeedanceCostCny(duration, '480p');
+  }, 0);
+  const minCny = money(oneAttempt);
+  return { minCny, maxCny: money(oneAttempt * 2), basis: 'verified_storyboard_provider_envelope' };
 }
 
 function tokens(...values: unknown[]): string[] {
@@ -158,18 +187,24 @@ export function rankContentReferences(input: {
   return input.videos.flatMap(video => {
     const platform = text(video.platform) as VideoCreationPlan['platform'];
     if (!['facebook', 'instagram', 'tiktok', 'youtube'].includes(platform)) return [];
-    const sourceUrl = previewUrl(video.sourceUrl, video.videoUrl, video.url);
-    if (!isDiscoveryVideoEligible({ platform, duration: Number(video.duration || 0), sourceUrl })) return [];
     const analysis = record(video.aiAnalysis);
     const gemini = record(analysis.gemini);
+    const sourceUrl = previewUrl(video.sourceUrl, video.videoUrl, video.url);
+    const storedSource = text(video.videoFileId || analysis.videoObjectKey || analysis.videoFileId, 2_000);
+    const exact = analysis.analysisMode === 'exact'
+      && ['video', 'video_review_required'].includes(String(analysis.analysisQuality || ''))
+      && Object.keys(gemini).length > 0;
+    // A tenant-owned video with durable stored bytes is a valid library
+    // candidate even when it was uploaded locally and therefore has no public
+    // discovery URL. Public crawl policy still applies to records without
+    // owned bytes so metadata-only rows cannot enter production.
+    if (!isDiscoveryVideoEligible({ platform, duration: Number(video.duration || 0), sourceUrl })
+      && !(exact && storedSource)) return [];
     const candidate = record(analysis.candidateEvidence);
     const relevance = text(record(candidate.relevance).level);
     const transferability = text(record(candidate.transferability).level);
     const momentum = text(record(candidate.momentum).level);
     const exactReviewRequired = analysis.analysisMode === 'exact' && analysis.analysisQuality === 'video_review_required';
-    const exact = analysis.analysisMode === 'exact'
-      && ['video', 'video_review_required'].includes(String(analysis.analysisQuality || ''))
-      && Object.keys(gemini).length > 0;
     const benchmarkAnalysis = buildBenchmarkAnalysis({
       analysis,
       videoId: video.id,
@@ -186,7 +221,14 @@ export function rankContentReferences(input: {
     const sellingPoints = Array.isArray(gemini.sellingPoints) ? gemini.sellingPoints.map((item: unknown) => text(item)).filter(Boolean) : [];
     const haystack = new Set(tokens(title, theme, analysis.caption, hooks.join(' '), sellingPoints.join(' ')));
     const overlap = desiredTokens.filter(item => haystack.has(item)).length;
-    const contentRelevant = overlap > 0 || ['high', 'medium'].includes(relevance);
+    const contentRelevant = overlap > 0
+      || ['high', 'medium'].includes(relevance)
+      // Older exact analyses predate the candidate-relevance envelope. When
+      // their normalized production evidence is ready, keep them usable as
+      // structural references instead of forcing a new crawl solely because
+      // that optional classifier field is absent. An explicit low relevance
+      // decision remains authoritative and is never overridden.
+      || (!relevance && admission.ready && Boolean(theme));
     const factors: string[] = [];
     let score = 0;
     if (platform === input.platform) { score += 24; factors.push('同平台'); }
@@ -221,6 +263,7 @@ export function rankContentReferences(input: {
       score: Math.max(0, Math.min(100, Math.round(score))),
       factors: [...new Set(factors)].slice(0, 8),
       analysis: benchmarkAnalysis,
+      contentIdentity: referenceContentIdentity(video),
     }];
   }).sort((left, right) => right.score - left.score || numericViews(right.views) - numericViews(left.views) || left.id.localeCompare(right.id));
 }
@@ -250,7 +293,9 @@ export function enrichPackageWithContentSignals(input: {
     current.push({ plan, index });
     groups.set(familyId, current);
   });
-  const used = new Set<string>();
+  const used: RankedContentReference[] = [];
+  const unused = (candidate: RankedContentReference) => !used.some(existing =>
+    sameReferenceContent(existing.contentIdentity, candidate.contentIdentity));
   const enriched = new Map<number, VideoCreationPlan>();
   const publishSlots = balancedWeeklyPublishSlots(
     input.goal.startsAt,
@@ -274,9 +319,9 @@ export function enrichPackageWithContentSignals(input: {
     // Preserve an explicit/frozen reference; do not silently replace it while
     // enriching its visible diagnostics. Only new picks require full admission.
     const reference = existingReferenceId ? ranked.find(item => item.id === existingReferenceId)
-      : ranked.find(item => item.productionReady && item.contentRelevant && !used.has(item.id));
-    const awaitingReview = ranked.find(item => item.exact && !item.productionReady && !used.has(item.id));
-    if (reference) used.add(reference.id);
+      : ranked.find(item => item.productionReady && item.contentRelevant && unused(item));
+    const awaitingReview = ranked.find(item => item.exact && !item.productionReady && unused(item));
+    if (reference) used.push(reference);
     const mayClone = input.config.enabledWorkflows.includes('viral_clone');
     const angle = contentAngles[familyIndex % contentAngles.length];
     const matrixTheme = anchorRow
@@ -294,6 +339,11 @@ export function enrichPackageWithContentSignals(input: {
         && (plan.theme === '介绍产品的用途与特点' || /待编导确认/.test(plan.theme));
       const theme = placeholder ? reference?.theme || matrixTheme : plan.theme;
       const master = plan.productionRole !== 'platform_adaptation';
+      const effectiveRoute = placeholder && mayClone ? 'clone' : plan.route;
+      const providerRange = master && effectiveRoute === 'clone'
+        ? verifiedStoryboardProviderCostRange(reference?.analysis || plan.benchmarkAnalysis)
+        : null;
+      const costRange = master ? providerRange || masterVideoCostRange() : includedAdaptationCostRange();
       enriched.set(index, normalizeVideoPlan({
         ...plan,
         contentId: plan.contentId || `weekly-${input.goal.startsAt}-${index + 1}`,
@@ -304,10 +354,10 @@ export function enrichPackageWithContentSignals(input: {
         evidenceRequirement: plan.evidenceRequirement || reference?.evidenceRequirement || '必须使用企业资料或素材库中的可核验事实与画面',
         theme,
         // Preserve explicit historic routes; only new placeholders enter clone.
-        route: placeholder && mayClone ? 'clone' : plan.route,
+        route: effectiveRoute,
         referenceId: mayClone && reference ? reference.id : plan.referenceId,
-        estimatedCost: master ? MASTER_VIDEO_COST_POINT_CNY : 0,
-        estimatedCostRange: master ? masterVideoCostRange() : includedAdaptationCostRange(),
+        estimatedCost: master ? costRange.minCny : 0,
+        estimatedCostRange: costRange,
         publication: publicationCopyForPlan({ plan, reference, productName: plan.productName, theme }),
         ...(mayClone && reference && plan.referenceId && plan.referenceId !== reference.id ? { preproduction: undefined } : {}),
         planningEvidence: {
@@ -336,13 +386,14 @@ export function enrichPackageWithContentSignals(input: {
     });
   });
   const plans = normalized.map((plan, index) => enriched.get(index) || plan);
-  const productionBudget = Math.round(plans.reduce((sum, plan) => sum + Number(plan.estimatedCost || 0), 0) * 100) / 100;
+  const budgetMode = input.pack.directorPlan?.productionBudgetMode === 'economy' ? 'economy' : 'protected';
   const productionBudgetMin = Math.round(plans.reduce((sum, plan) => sum + Number(plan.estimatedCostRange?.minCny || 0), 0) * 100) / 100;
   const productionBudgetMax = Math.round(plans.reduce((sum, plan) => sum + Number(plan.estimatedCostRange?.maxCny || 0), 0) * 100) / 100;
+  const productionBudget = budgetMode === 'economy' ? productionBudgetMin : productionBudgetMax;
   const result: WeeklyPackage = {
     ...input.pack,
     directorPlan: input.pack.directorPlan
-      ? { ...input.pack.directorPlan, productionBudget, productionBudgetMin, productionBudgetMax }
+      ? { ...input.pack.directorPlan, productionBudgetMode: budgetMode, productionBudget, productionBudgetMin, productionBudgetMax }
       : input.pack.directorPlan,
     tasks: input.pack.tasks.map(task => task.templateId === 'production' ? { ...task, videoPlans: plans } : task),
   };

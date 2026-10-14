@@ -1,4 +1,3 @@
-import BusinessAnnouncementBar from './smartBusiness/BusinessAnnouncementBar';
 import BusinessHealthOverview from './smartBusiness/BusinessHealthOverview';
 import { labels as sharedTaskLabels, day as shanghaiDay } from '../../shared/mobile-domain.mjs';
 import WeeklyPlanCalendar from './smartBusiness/WeeklyPlanCalendar';
@@ -45,7 +44,7 @@ import { defaultMatrixPlan } from '../lib/weeklyMatrix';
 import DeliveryBoard from "./DeliveryBoard";
 import ProductionTaskScene from "./ProductionTaskScene";
 import AgentDecisionCard, { type AgentDecisionKind } from "./AgentDecisionCard";
-import SmartBusinessDashboard, { WeeklyCommandCenter, BusinessInterpretation } from "./SmartBusinessDashboard";
+import SmartBusinessDashboard, { WeeklyCommandCenter, WeeklyPlanDetailsDrawer, BusinessInterpretation } from "./SmartBusinessDashboard";
 import WeeklyProductionStudioEntry from "./smartBusiness/WeeklyProductionStudioEntry";
 import SmartOperationsAccountRail, { type SmartOperationsAccount } from "./SmartOperationsAccountRail";
 import PlanHistoryDialog from "./PlanHistoryDialog";
@@ -96,7 +95,6 @@ import {
   ShieldCheck,
   Sparkles,
   Target,
-  Trash2,
   X,
   XCircle,
 } from "lucide-react";
@@ -471,7 +469,7 @@ const weeklyRunHeaderLabel: Record<string, string> = {
   failed: "执行失败",
   cancelled: "已取消",
   paused: "已暂停",
-  waiting_external: "等待外部服务",
+  waiting_external: "等待业务结果",
   waiting_approval: "待处理",
   waiting_human: "待处理",
   blocked: "待处理",
@@ -3867,7 +3865,7 @@ export default function DigitalEmployeePage({
     return () => window.removeEventListener(WEEKLY_WORK_UPDATED_EVENT, refreshFromAssistant);
   }, [viewGoalId, data?.goal?.id]);
 
-  useEffect(()=>{let authorization=authHeader().Authorization;const clear=()=>{const next=authHeader().Authorization;if(next===authorization)return;authorization=next;overviewRequestVersionRef.current+=1;initialLoadRef.current=null;setData(null);setWeeklyStartConflict(null);setSelectedTaskId('');setSelectedContentItemId('');setSelectedAccountId('');setWeeklyPlanOpen(false);setPlanHistoryOpen(false);setWorkspaceView('today');setBusinessLine('full_funnel');setContentPlatform('all');setViewGoalId('');productionRangeRef.current=undefined;setLoading(true);initialLoadRef.current=load('');};window.addEventListener(AUTH_TOKEN_CHANGED_EVENT,clear);window.addEventListener('storage',clear);return()=>{window.removeEventListener(AUTH_TOKEN_CHANGED_EVENT,clear);window.removeEventListener('storage',clear);};},[]);
+  useEffect(()=>{let authorization=authHeader().Authorization;const clear=()=>{const next=authHeader().Authorization;if(next===authorization)return;authorization=next;overviewRequestVersionRef.current+=1;initialLoadRef.current=null;setData(null);setWeeklyStartConflict(null);setSelectedTaskId('');setSelectedContentItemId('');setSelectedAccountId('');setWeeklyPlanOpen(false);setWeeklyPlanDetailsOpen(false);setPlanHistoryOpen(false);setWorkspaceView('today');setBusinessLine('full_funnel');setContentPlatform('all');setViewGoalId('');productionRangeRef.current=undefined;setLoading(true);initialLoadRef.current=load('');};window.addEventListener(AUTH_TOKEN_CHANGED_EVENT,clear);window.addEventListener('storage',clear);return()=>{window.removeEventListener(AUTH_TOKEN_CHANGED_EVENT,clear);window.removeEventListener('storage',clear);};},[]);
 
   useEffect(() => {
     const businessScope = consumeBusinessPageContext("production");
@@ -3985,7 +3983,7 @@ export default function DigitalEmployeePage({
     const run = data?.run;
     if (
       !data?.config ||
-      workspaceView !== "live" ||
+      !["live", "matrix"].includes(workspaceView) ||
       viewGoalId ||
       !run ||
       ["succeeded", "failed", "cancelled", "paused"].includes(run.status)
@@ -4003,7 +4001,7 @@ export default function DigitalEmployeePage({
           /* SSE remains the primary live channel */
         });
     };
-    const timer = window.setInterval(reconcile, 25_000);
+    const timer = window.setInterval(reconcile, 15_000);
     return () => window.clearInterval(timer);
   }, [data?.run?.id, data?.run?.status, viewGoalId, workspaceView]);
 
@@ -4213,11 +4211,7 @@ export default function DigitalEmployeePage({
       }
       setNewGoal(false);
       setWeeklyPlanOpen(false);
-      setWorkspaceView("today");
-      window.requestAnimationFrame(() => document.querySelector('[aria-label="当前周计划"]')?.scrollIntoView({
-        behavior: getScrollBehavior(),
-        block: "start",
-      }));
+      setWeeklyPlanDetailsOpen(true);
     };
     window.addEventListener('lingshu:open-weekly-plan', openWeeklyPlan);
     return () => window.removeEventListener('lingshu:open-weekly-plan', openWeeklyPlan);
@@ -4259,7 +4253,9 @@ export default function DigitalEmployeePage({
             ? ['这个任务为什么停住', '告诉我下一步怎么处理', '核对当前真实状态']
             : weeklyPlanningStage === 'unplanned'
               ? ['帮我制定本周计划', '计划里会包含什么', '开始前还缺什么']
-              : ['查看当前经营重点', '核对本周计划范围', '查看需要我处理的事项'],
+              : weeklyPlanningStage === 'running'
+                ? ['查看当前进度', '查看周计划', '查看需要我处理的任务']
+                : ['查看当前经营重点', '核对本周计划范围', '查看需要我处理的事项'],
         workflowStage: weeklyPlanningStage,
         goalId: visibleGoalId,
         planId: data?.plan?.id || '',
@@ -4742,10 +4738,13 @@ export default function DigitalEmployeePage({
       setSelectedTaskId(next.tasks.find((task) => ["running", "waiting_external", "waiting_approval", "waiting_human", "failed"].includes(task.status))?.id || next.tasks[0]?.id || "");
       setWorkspaceView("live");
     };
+    const projectedWeeklyStatus = weeklyWorkStatus(data);
     const currentPlanStatusLabel = viewGoalId
       ? "历史计划"
       : data.run
-        ? weeklyRunHeaderLabel[data.run.status] || "状态待确认"
+        ? projectedWeeklyStatus?.title.includes("自动恢复")
+          ? "自动恢复中"
+          : weeklyRunHeaderLabel[data.run.status] || "状态待确认"
         : goal?.status === "draft"
           ? "待确认"
           : goal?.status === "completed"
@@ -4849,15 +4848,8 @@ export default function DigitalEmployeePage({
       </div>
     ) : undefined;
     const weeklyPlanControls = <>
+      {goal && <Button onClick={()=>setWeeklyPlanDetailsOpen(true)} icon={<FileCheck2 size={15}/>}>查看周计划</Button>}
       <Button onClick={()=>setPlanHistoryOpen(true)} icon={<History size={15}/>}>历史计划</Button>
-      {data.run && !viewGoalId && !['cancelled', 'succeeded', 'failed'].includes(data.run.status) && <Button danger icon={<Trash2 size={15}/>} onClick={() => {
-        Modal.confirm({
-          title: '删除当前周任务？',
-          content: '经营 Agent 将正式取消当前任务及未完成的下游执行。历史记录会保留用于审计，取消后可以重新建立任务。',
-          okText: '删除旧任务', cancelText: '保留任务', okButtonProps: { danger: true },
-          onOk: async () => { const next = await act('cancel', () => digitalEmployeeApi.cancelRun(data.run!.id)); if (next) publishWeeklyWorkUpdate(next); },
-        });
-      }}>删除旧任务</Button>}
       <Button type="primary" loading={Boolean(busy)} onClick={()=>void controlWeeklyWork()} icon={!activeRun && (!goal || canCreateNextGoal) ? <CalendarRange size={15}/> : activeRun && !recoverableProductionTask && data.run?.status !== "paused" ? <Pause size={15}/> : <Play size={15}/>}>{weeklyControlLabel}</Button>
     </>;
     return (
@@ -4866,7 +4858,6 @@ export default function DigitalEmployeePage({
       {!weeklyPlanOpen && <div className="h-full overflow-y-auto bg-white">
         <div className="mx-auto w-full px-2 py-3 sm:px-3">
           <h1 className="sr-only">{PAGE_REGISTRY.digitalEmployees.canonicalTitle}</h1>
-          <BusinessAnnouncementBar/>
           <div className="grid grid-cols-1 overflow-hidden rounded-2xl border border-border bg-white xl:grid-cols-[minmax(0,1.7fr)_minmax(360px,1fr)]"><div aria-label="当前周计划" className="min-w-0">
             {goal ? <WeeklyCommandCenter
               data={data}
@@ -4931,6 +4922,18 @@ export default function DigitalEmployeePage({
           </div>
         </section>
       </div>}
+      {goal && <WeeklyPlanDetailsDrawer
+        data={data}
+        open={weeklyPlanDetailsOpen}
+        onClose={()=>setWeeklyPlanDetailsOpen(false)}
+        onBudgetModeChange={async mode => {
+          const pack = data.plan?.businessPackage;
+          if (!pack) throw new Error("周计划尚未生成完整");
+          const next = await act(`production-budget:${mode}`, () => digitalEmployeeApi.setProductionBudgetMode(goal.id, pack.revision, mode), true);
+          if (!next) throw new Error("预算方案保存失败");
+          showActionSuccess("预算方案已更新", mode === "protected" ? "已按完整保障上限冻结，开工后将连续执行。" : "已切换精简预算，开工后按降级方案执行。");
+        }}
+      />}
       {planHistoryOpen&&<PlanHistoryDialog goals={data.goals} onClose={()=>setPlanHistoryOpen(false)}/>}
       {onboardingWelcomeOpen && <OnboardingWelcome onClose={()=>setOnboardingWelcomeOpen(false)} />}
       </>

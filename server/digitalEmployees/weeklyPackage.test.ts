@@ -71,10 +71,10 @@ assert.equal(new Set(repairedHistoricPlans.map(plan => plan.contentFamilyId)).si
 assert.equal(repairedHistoricPlans.reduce((sum, plan) => sum + Number(plan.estimatedCost || 0), 0), 25, 'historic repair must restore one full production estimate per video');
 assert.ok((repairedHistoricPackage.directorPlan?.productionBudgetMin || 0) >= 20, 'historic repair must show the full cost range before confirmation');
 const repairedHistoricProjection = repairCollapsedWeeklyVideoProduction(collapsedHistoricPackage);
-assert.equal(repairedHistoricProjection.operatingContext?.budget.productionCny, 25, 'the pending-plan summary must expose the two-video point estimate');
+assert.equal(repairedHistoricProjection.operatingContext?.budget.productionCny, 30, 'the pending-plan summary must expose the approved protected ceiling for two videos');
 assert.equal(repairedHistoricProjection.operatingContext?.budget.totalMinCny, 20, 'the pending-plan summary must expose the two-video minimum estimate');
 assert.equal(repairedHistoricProjection.operatingContext?.outputs.originalCount, 2, 'the pending-plan summary must report two actual productions');
-assert.equal(repairedHistoricProjection.operatingContext?.accounts.reduce((sum, account) => sum + (account.budgetCny || 0), 0), 25, 'account allocations must add up to the repaired production budget');
+assert.equal(repairedHistoricProjection.operatingContext?.accounts.reduce((sum, account) => sum + (account.budgetCny || 0), 0), 30, 'account allocations must add up to the approved protected production ceiling');
 const staleCostPackage = structuredClone(twoPlatformQuotaPackage);
 const staleCostPlans = staleCostPackage.tasks.find(task => task.templateId === 'production')!.videoPlans!;
 staleCostPlans[1] = { ...staleCostPlans[1], estimatedCost: 0, estimatedCostRange: { minCny: 0, maxCny: 0, basis: 'included_platform_adaptation' } };

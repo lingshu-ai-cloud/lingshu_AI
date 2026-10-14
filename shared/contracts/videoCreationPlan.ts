@@ -20,7 +20,7 @@ export interface VideoCreationPlan {
   estimatedCostRange?: {
     minCny: number;
     maxCny: number;
-    basis: 'blended_master' | 'included_platform_adaptation';
+    basis: 'blended_master' | 'included_platform_adaptation' | 'verified_storyboard_provider_envelope';
   };
   /** Frozen publication copy produced together with the video brief. */
   publication?: {
@@ -180,7 +180,11 @@ export function normalizeVideoPlan(value: Partial<VideoCreationPlan>): VideoCrea
     ...(value.estimatedCostRange && typeof value.estimatedCostRange === 'object' ? { estimatedCostRange: {
       minCny: Math.max(0, Math.round((Number(value.estimatedCostRange.minCny) || 0) * 100) / 100),
       maxCny: Math.max(0, Math.round((Number(value.estimatedCostRange.maxCny) || 0) * 100) / 100),
-      basis: value.estimatedCostRange.basis === 'included_platform_adaptation' ? 'included_platform_adaptation' as const : 'blended_master' as const,
+      basis: value.estimatedCostRange.basis === 'included_platform_adaptation'
+        ? 'included_platform_adaptation' as const
+        : value.estimatedCostRange.basis === 'verified_storyboard_provider_envelope'
+          ? 'verified_storyboard_provider_envelope' as const
+          : 'blended_master' as const,
     } } : {}),
     ...(value.publication && typeof value.publication === 'object' ? { publication: {
       title: String(value.publication.title || '').trim().slice(0, 300),

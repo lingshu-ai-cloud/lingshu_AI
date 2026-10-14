@@ -58,6 +58,25 @@ export function analysisTimelineQualityError(analysis: VideoAiAnalysis, duration
   const analyzedUntil = details.at(-1)!.range.end;
   if (duration > 0 && analyzedUntil + boundaryTolerance < duration) return `timeline_ends_at_${analyzedUntil.toFixed(2)}s_of_${duration.toFixed(2)}s`;
   if (duration > 0 && analyzedUntil - boundaryTolerance > duration) return `timeline_exceeds_${analyzedUntil.toFixed(2)}s_of_${duration.toFixed(2)}s`;
+  if (mode === 'exact') {
+    const classificationError = exactVideoClassificationQualityError(analysis);
+    if (classificationError) return classificationError;
+  }
+  return null;
+}
+
+/** Exact analysis is only complete when every server-owned shot can cross the
+ * same classification contract consumed by production. A provider returning
+ * a valid timeline but omitting these fields is a partial response, not a
+ * successful analysis. */
+export function exactVideoClassificationQualityError(analysis: VideoAiAnalysis): string | null {
+  const details = analysis.scriptDetails15s || [];
+  for (let index = 0; index < details.length; index += 1) {
+    const detail = details[index]!;
+    if (!detail.materialType || detail.materialType === 'unknown') return `shot_${index + 1}_material_type_missing`;
+    if (!detail.narrativeRole || detail.narrativeRole === 'unknown') return `shot_${index + 1}_narrative_role_missing`;
+    if (!String(detail.classificationEvidence || '').trim()) return `shot_${index + 1}_classification_evidence_missing`;
+  }
   return null;
 }
 

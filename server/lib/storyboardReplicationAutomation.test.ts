@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { applyStoryboardReplicationAutomation, automaticStoryboardFrameAdmission, buildStoryboardQaReport } from './storyboardAigcQuality.js';
+import { applyStoryboardReplicationAutomation, automaticManagedFallbackFrameAdmission, automaticManagedFallbackVideoAdmission, automaticStoryboardFrameAdmission, buildStoryboardQaReport } from './storyboardAigcQuality.js';
 const base={phase:'first_frame' as const,sceneType:'product' as const,hasProduct:true,hasNamedPerson:false,hasEnvironmentReference:true,hasContact:true,hasAction:false,evidenceFrameLabels:['候选首帧']};
 const original=buildStoryboardQaReport({...base,observations:[{key:'environment_fidelity',verdict:'fail',note:'背景不同'},{key:'product_identity',verdict:'uncertain',note:'文字不可确认'}]});
 const automated=applyStoryboardReplicationAutomation(original);
@@ -21,6 +21,30 @@ assert.equal(automaticStoryboardFrameAdmission({...p,shotSpec:{mode:'free_creati
 assert.equal(automaticStoryboardFrameAdmission({...p,shotSpec:{mode:'replication',constraints:['person_identity']}}),false,'person path is handled separately');
 assert.equal(automaticStoryboardFrameAdmission({...p,firstFrameQuality:undefined}),false,'missing QA is not execution evidence');
 assert.equal(automated.reviewedBy,undefined);assert.equal(automated.reviewDecision,undefined);
+
+const fallbackPass = buildStoryboardQaReport({ ...base, hasEnvironmentReference: false, hasContact: false,
+  observations: ['product_identity', 'layout', 'visual_integrity'].map(key => ({ key, verdict: 'pass', evidenceFrames: ['候选首帧'], note: '真实抽帧通过' })) });
+const fallbackProvenance = { mode: 'free_creation', firstFrameQualityState: 'evaluated',
+  shotSpec: { mode: 'free_creation', constraints: ['product_identity'] }, firstFrameQuality: fallbackPass };
+assert.equal(automaticManagedFallbackFrameAdmission(fallbackProvenance,
+  { mode: 'ai', fallbackMode: 'enterprise_product_display' }), true,
+'a current server-owned enterprise-product fallback may reuse its all-pass frame');
+assert.equal(automaticManagedFallbackFrameAdmission(fallbackProvenance,
+  { mode: 'ai' }), false, 'ordinary free creation cannot promote itself into automation');
+assert.equal(automaticManagedFallbackFrameAdmission({ ...fallbackProvenance,
+  shotSpec: { mode: 'free_creation', constraints: ['product_identity', 'person_identity'] } },
+{ mode: 'ai', fallbackMode: 'enterprise_product_display' }), false, 'person identity never uses fallback auto-admission');
+
+const fallbackVideoPass = buildStoryboardQaReport({ ...base, phase: 'video', hasEnvironmentReference: false, hasContact: false,
+  evidenceFrameLabels: ['0s', '3.5s'],
+  observations: ['product_identity', 'layout_continuity', 'visual_integrity'].map(key => ({ key, verdict: 'pass', evidenceFrames: ['0s', '3.5s'], note: '真实视频抽帧通过' })) });
+const fallbackVideoProvenance = { shotSpec: { mode: 'free_creation', constraints: ['product_identity'] },
+  storyboardQualityReport: fallbackVideoPass };
+assert.equal(automaticManagedFallbackVideoAdmission(fallbackVideoProvenance,
+  { mode: 'ai', fallbackMode: 'enterprise_product_display' }), true,
+'verified enterprise-product fallback video may proceed only after its own all-pass QA');
+assert.equal(automaticManagedFallbackVideoAdmission(fallbackVideoProvenance,
+  { mode: 'ai' }), false, 'ordinary free-creation video is never auto-admitted');
 
 const factoryBase = { phase: 'video' as const, sceneType: 'factory' as const, hasProduct: false, hasNamedPerson: false, hasEnvironmentReference: true, hasContact: false, hasAction: false, evidenceFrameLabels: ['视频0s', '视频4s'] };
 const factoryChecks = ['environment_fidelity', 'layout_continuity', 'visual_integrity'];

@@ -59,6 +59,10 @@ test('startup and both current env files retain explicit empty/false values and 
 test('imports exact provider and budget keys, excludes storage, DB, auth, VITE, publishing and workers', t => {
   const f = fixture(t);
   fs.appendFileSync(f.source, [
+    'VOLCENGINE_ACCESS_KEY_ID=test-ark-access-key',
+    'VOLCENGINE_SECRET_ACCESS_KEY=test-ark-secret-key',
+    'VOLCENGINE_ARK_ASSET_REGION=cn-beijing',
+    'VOLCENGINE_ARK_PROJECT_NAME=test-ark-project',
     'STUDIO_PAID_BUDGET_CNY=12', 'STUDIO_PAID_OPENING_USED_CNY=2',
     'STUDIO_HEYGEN_RESERVE_CNY=3', 'STUDIO_ASR_RESERVE_CNY=1',
     'SEEDANCE_TENANT_MONTHLY_BUDGET_CNY=8', 'DIGITAL_HUMAN_REFERENCE_MAX_CNY_PER_SHOT=1',
@@ -75,6 +79,10 @@ test('imports exact provider and budget keys, excludes storage, DB, auth, VITE, 
   assert.equal(providerEnv.STUDIO_PAID_OPENING_USED_CNY, '2');
   assert.equal(providerEnv.SEEDANCE_TENANT_MONTHLY_BUDGET_CNY, '8');
   assert.equal(providerEnv.DIGITAL_HUMAN_REFERENCE_MAX_CNY_PER_SHOT, '1');
+  assert.equal(providerEnv.VOLCENGINE_ACCESS_KEY_ID, 'test-ark-access-key');
+  assert.equal(providerEnv.VOLCENGINE_SECRET_ACCESS_KEY, 'test-ark-secret-key');
+  assert.equal(providerEnv.VOLCENGINE_ARK_ASSET_REGION, 'cn-beijing');
+  assert.equal(providerEnv.VOLCENGINE_ARK_PROJECT_NAME, 'test-ark-project');
   assert.equal(providerEnv.SEEDREAM_API_KEY, undefined);
   assert.deepEqual(loadedKeys, Object.keys(providerEnv));
   assert.ok(loadedKeys.every(key => PREVIEW_PROVIDER_ENV_KEYS.includes(key)));
