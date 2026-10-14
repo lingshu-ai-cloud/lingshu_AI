@@ -74,6 +74,7 @@ test('initial onboarding starts with only the two source choices and keeps the s
   assert.match(source, /前往企业知识库认证/);
   assert.match(source, /方舟认证为可选功能/);
   assert.match(source, /initialConfiguration \? 'choose' : 'create'/);
+  assert.match(source, /const heyGenVideoSource = initialConfiguration \|\| Boolean/, 'the unified video onboarding must use Digital Twin capability before files are selected');
   assert.doesNotMatch(html, /提交后需要在 HeyGen 官方页面完成本人授权/);
   assert.doesNotMatch(html, /我已取得此人物的肖像及素材使用授权/);
   assert.doesNotMatch(html, /我已核验画面主体为成年人/);
