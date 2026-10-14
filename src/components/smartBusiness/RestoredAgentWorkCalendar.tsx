@@ -239,9 +239,9 @@ export default function RestoredAgentWorkCalendar({
       sourceId: summary.key,
       description: summary.progress,
       cardLines: [
-        `${agentLabels[owner]} · 计划`,
+        `${agentLabels[owner].replace(' Agent', '')} · 计划`,
         summary.title,
-        `${summary.startTime} · 待排真实任务`,
+        `${summary.startTime} · 待排`,
       ],
       planPlaceholder: true,
       identity: {kind: 'agent', role: owner},

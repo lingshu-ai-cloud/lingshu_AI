@@ -58,6 +58,7 @@ assert.match(source, /item\.cardLines \? ' ls-calendar-event-three-row'/, 'Agent
 assert.match(source, /item\.planPlaceholder \? ' ls-calendar-event-placeholder'/, 'planned cadence slots remain visually distinct from persisted tasks');
 assert.match(source, /item\.status === 'done' && !item\.planPlaceholder/, 'only a persisted completed task receives the green completion check');
 assert.match(css, /\.ls-calendar-event-content-three-row\s*\{[^}]*grid-template-rows:\s*repeat\(3, minmax\(0, 1fr\)\)/, 'short and long Agent tasks use exactly three stable rows');
+assert.match(css, /\.fc-timegrid-event-harness\.ls-calendar-time-vertical-flow\s*\{[^}]*inset-inline:\s*2px 2px !important;[^}]*translateY\(var\(--ls-calendar-visual-offset, 0\)\)/, 'timed Agent cards retain full column width and use a vertical presentation-only offset');
 assert.match(css, /\.ls-calendar-event-placeholder\s*\{[^}]*border-style:\s*dashed !important/, 'planned cadence slots cannot masquerade as executable task cards');
 assert.match(css, /\.ls-calendar-event-row\s*\{[^}]*font-size:\s*12px/, 'calendar business copy must not fall below the design-system body minimum');
 assert.ok(inputsInitializer, 'calendar inputs should be derived inside the shared component');
@@ -88,6 +89,20 @@ assert.ok(inputsInitializer, 'calendar inputs should be derived inside the share
   }) as Array<{ id: string }>;
   assert.equal(fullWeekInputs.length, 18, 'the fixed weekly calendar must retain all 18 scheduled cards');
   assert.equal(new Set(Array.from(fullWeekInputs, item => item.id)).size, 18, 'each scheduled card keeps its stable FullCalendar key');
+
+  const simultaneous = [
+    { id: 'task-a', title: '任务 A', start: '2026-10-14T10:00:00+08:00', end: '2026-10-14T10:30:00+08:00', status: 'planned', cardLines: ['编导', '任务 A', '10:00'] },
+    { id: 'task-b', title: '任务 B', start: '2026-10-14T10:00:00+08:00', end: '2026-10-14T10:30:00+08:00', status: 'planned', cardLines: ['内容', '任务 B', '10:00'] },
+    { id: 'task-c', title: '任务 C', start: '2026-10-14T10:30:00+08:00', end: '2026-10-14T11:00:00+08:00', status: 'planned', cardLines: ['经营', '任务 C', '10:30'] },
+  ];
+  const simultaneousInputs = evaluate(inputsInitializer, {
+    events: simultaneous,
+    onMoveEvent: undefined,
+    useMemo: (factory: () => unknown) => factory(),
+  }) as Array<{ start: string; extendedProps: { visualOffsetPx: number; item: { start: string } } }>;
+  assert.equal(Array.from(simultaneousInputs, input => input.extendedProps.visualOffsetPx).join(','), '0,48,48', 'same-time cards and following cards flow downward instead of splitting the day column');
+  assert.equal(Array.from(simultaneousInputs, input => input.start).join(','), simultaneous.map(event => event.start).join(','), 'vertical presentation offsets must never rewrite authoritative business time');
+  assert.equal(Array.from(simultaneousInputs, input => input.extendedProps.item.start).join(','), simultaneous.map(event => event.start).join(','), 'details and persistence retain the original scheduled time');
 }
 assert.equal(evaluate(expression('dayMaxEvents'), { showAllEvents: false, eventCardMode: 'media', view: 'dayGridWeek' }), false, 'the weekly media-card flow must keep every scheduled card visible');
 assert.equal(evaluate(expression('dayMaxEvents'), { showAllEvents: false, eventCardMode: 'compact', view: 'dayGridMonth' }), 3, 'compact month views retain their native overflow control');

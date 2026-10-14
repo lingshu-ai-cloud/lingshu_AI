@@ -222,20 +222,40 @@ export function LsCalendar({ events, label, initialDate, initialView = 'dayGridM
     revealObserverRef.current = null;
     mountedEventElementsRef.current.clear();
   }, []);
-  const inputs = useMemo<EventInput[]>(() => [...events]
-    .sort((left, right) => {
+  const inputs = useMemo<EventInput[]>(() => {
+    const ordered = [...events].sort((left, right) => {
       const leftInstant = new Date(left.start).getTime();
       const rightInstant = new Date(right.start).getTime();
       const startOrder = Number.isFinite(leftInstant) && Number.isFinite(rightInstant)
         ? leftInstant - rightInstant
         : left.start.localeCompare(right.start);
       return startOrder || left.id.localeCompare(right.id);
-    })
-    .map(event => ({
+    });
+    // FullCalendar normally solves overlapping timed events by splitting the
+    // day column horizontally. Agent cards need their key task line to keep
+    // the whole column width, so calculate a presentation-only vertical
+    // offset. The authoritative start/end values remain untouched and are
+    // still used in the card copy, details drawer and drag persistence.
+    const visualCursorByDay = new Map<string, number>();
+    return ordered.map(event => {
+      const actualStart = new Date(event.start).getTime();
+      const actualEnd = event.end ? new Date(event.end).getTime() : Number.NaN;
+      const isVerticalTimedCard = Boolean(event.cardLines && !event.allDay && Number.isFinite(actualStart));
+      const dayKey = event.start.slice(0, 10);
+      const visualCursor = visualCursorByDay.get(dayKey) ?? Number.NEGATIVE_INFINITY;
+      const visualStart = isVerticalTimedCard ? Math.max(actualStart, visualCursor) : actualStart;
+      const visualDuration = Number.isFinite(actualEnd) && actualEnd > actualStart
+        ? Math.max(actualEnd - actualStart, 30 * 60_000)
+        : 30 * 60_000;
+      if (isVerticalTimedCard) visualCursorByDay.set(dayKey, visualStart + visualDuration);
+      const visualOffsetPx = isVerticalTimedCard ? Math.max(0, (visualStart - actualStart) / 60_000 * 1.6) : 0;
+      return {
       id: event.id, title: event.title, start: event.start, end: event.end, allDay: event.allDay,
       startEditable: Boolean(event.editable && onMoveEvent), durationEditable: false,
-      interactive: true, extendedProps: { item: event },
-    })), [events, Boolean(onMoveEvent)]);
+      interactive: true, extendedProps: { item: event, visualOffsetPx, isVerticalTimedCard },
+      };
+    });
+  }, [events, Boolean(onMoveEvent)]);
 
   const move = async (event: LsCalendarEvent, newStart: string) => {
     if (!event.editable || !moveRef.current) throw new Error('当前事件不允许调整排期');
@@ -351,6 +371,13 @@ export function LsCalendar({ events, label, initialDate, initialView = 'dayGridM
         eventDidMount={info => {
           const item = info.event.extendedProps.item as LsCalendarEvent;
           const element = info.el as HTMLElement;
+          if (info.event.extendedProps.isVerticalTimedCard && !info.event.allDay) {
+            const harness = element.closest<HTMLElement>('.fc-timegrid-event-harness');
+            if (harness) {
+              harness.classList.add('ls-calendar-time-vertical-flow');
+              harness.style.setProperty('--ls-calendar-visual-offset', `${Number(info.event.extendedProps.visualOffsetPx) || 0}px`);
+            }
+          }
           element.dataset.calendarRevealId = info.event.id;
           element.setAttribute('aria-label', `${item.title}，${info.timeText || (item.allDay ? '全天，具体时刻待定' : '')}，${item.accountName || item.ownerAgent || ''}，${item.statusLabel || calendarStatusLabels[item.status]}，查看详情`);
           mountedEventElementsRef.current.add(element);

@@ -81,14 +81,16 @@ export function hourCalendarCard(task: AgentCalendarTask, now = Date.now()): Hou
   const [hour = 0, minute = 0] = task.time.split(':').map(Number);
   const endMinutes = hour * 60 + minute + Math.max(30, task.minutes ?? 60);
   const end = task.minutes === null ? '' : `–${String(Math.floor(endMinutes / 60) % 24).padStart(2, '0')}:${String(endMinutes % 60).padStart(2, '0')}`;
-  const stateLabel = temporalState === 'completed' ? '已完成'
+  const stateLabel = temporalState === 'completed' ? '完成'
     : temporalState === 'overdue' ? '逾期'
-    : temporalState === 'current' ? '进行中'
-    : temporalState === 'cancelled' ? '已取消'
-    : '待执行';
+    : temporalState === 'current' ? '进行'
+    : temporalState === 'cancelled' ? '取消'
+    : '待办';
+  const taskType = agentCalendarTaskType(task).replace(/任务$/, '').replace(/处理$/, '');
+  const agent = task.agent === 'human' ? '人工' : task.agent === 'business' ? '经营' : task.agent === 'director' ? '编导' : task.agent === 'content' ? '内容' : '客服';
   return {
     lines: [
-      `${agentCalendarTaskType(task)} · ${task.agent === 'human' ? '人工' : `${task.agent === 'business' ? '经营' : task.agent === 'director' ? '编导' : task.agent === 'content' ? '内容' : '客服'} Agent`}`,
+      taskType === agent ? taskType : `${taskType} · ${agent}`,
       task.title,
       `${task.time}${end} · ${stateLabel}`,
     ],
