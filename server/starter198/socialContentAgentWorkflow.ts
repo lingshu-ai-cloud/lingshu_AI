@@ -699,13 +699,29 @@ function capabilityCandidates(input: {
       retryPolicy: { maxAttempts: 3, fallbackStrategies: input.scene.referenceProductionRouting ? [] : [...capability.fallbackStrategies] },
       provenance: { origin: capability.strategy === 'licensed_stock_asset' ? 'licensed_library' : 'system_capability', inputVersion: input.taskVersion, authorizationRef: capability.rightsStatus === 'confirmed' ? `capability:${capability.strategy}` : null, executionRecordId: null },
     }));
-  return [...actualAssets, ...capabilityRows]
+  const ranked = [...actualAssets, ...capabilityRows]
     .filter(candidate => {
       const typed = input.supply.materialRouting;
       if (typed) {
-        if (typed.localMatch.state === 'matched' && typed.policy !== 'authorized_presenter') return candidate.kind === 'asset'
-          && candidate.sourceStrategy === 'customer_real_asset' && Boolean(candidate.sourceRef && typed.localMatch.sourceRefs.includes(candidate.sourceRef));
-        if (typed.policy === 'local_only') return false;
+        if (typed.localMatch.state === 'matched' && typed.policy !== 'authorized_presenter') {
+          if (candidate.kind !== 'asset' || candidate.sourceStrategy !== 'customer_real_asset' || !candidate.sourceRef) return false;
+          if (typed.localMatch.sourceRefs.includes(candidate.sourceRef)) return true;
+          const roles = new Set(candidate.materialRoles ?? []);
+          if (typed.materialType === 'factory') return roles.has('factory');
+          if (typed.materialType === 'consumer_demo') return roles.has('person_usage') && !roles.has('factory') && !roles.has('presenter');
+          if (typed.materialType === 'product') {
+            const requested = String(input.supply.productSceneReplication?.productIdentity.groups[0]?.productRef
+              ?? typed.generation?.productImageRefs[0] ?? '')
+              .normalize('NFKC').trim().toLocaleLowerCase().replace(/^product:/, '');
+            const actual = String(candidate.productRef ?? candidate.productId ?? '').normalize('NFKC').trim().toLocaleLowerCase().replace(/^product:/, '');
+            return roles.has('product') && Boolean(requested && actual === requested);
+          }
+          return false;
+        }
+        if (typed.policy === 'local_only') return candidate.kind === 'capability'
+          && candidate.dataTransfer === 'local_only'
+          && ['motion_graphics', 'verified_fact_card'].includes(candidate.sourceStrategy)
+          && candidate.sourceStrategy === input.supply.sourceStrategy;
         return candidate.kind === 'capability' && (typed.policy === 'authorized_presenter'
           ? candidate.sourceStrategy === 'authorized_digital_presenter'
           : candidate.sourceStrategy === 'aigc_product_scene_replication');
@@ -725,8 +741,22 @@ function capabilityCandidates(input: {
       }
       return true;
     })
-    .sort((left, right) => right.semanticScore - left.semanticScore || right.estimatedSuccessRate - left.estimatedSuccessRate)
-    .slice(0, 20);
+    .sort((left, right) => right.semanticScore - left.semanticScore || right.estimatedSuccessRate - left.estimatedSuccessRate);
+  if (input.supply.materialRouting?.localMatch.state !== 'matched') return ranked.slice(0, 20);
+  // Keep several distinct eligible assets in the frozen execution plan. The
+  // task-level allocator can then avoid repeating one source across adjacent
+  // shots, while retaining a second analyzed segment for bounded reuse after
+  // all distinct assets have been consumed.
+  const perAsset = new Map<string, number>(), diversified: SocialExecutionCandidate[] = [];
+  for (const candidate of ranked) {
+    const key = candidate.kind === 'asset' && candidate.sourceRef ? candidate.sourceRef : candidate.candidateId;
+    const count = perAsset.get(key) ?? 0;
+    if (count >= 2) continue;
+    perAsset.set(key, count + 1);
+    diversified.push(candidate);
+    if (diversified.length >= 20) break;
+  }
+  return diversified;
 }
 
 function executionScene(input: {
@@ -791,6 +821,9 @@ function executionScene(input: {
       : input.supply.materialRouting.policy === 'authorized_presenter' ? capability('authorized_digital_presenter')
         : input.supply.materialRouting.policy === 'local_first_product_i2v'
           ? capability('aigc_product_scene_replication')
+          : input.supply.materialRouting.policy === 'local_only'
+            && ['motion_graphics', 'verified_fact_card'].includes(input.supply.sourceStrategy)
+            ? capability(input.supply.sourceStrategy)
           : undefined
     : undefined;
   const preferred = input.supply.materialRouting ? typedPreferred : identityLockedPresenter ? capability('authorized_digital_presenter')

@@ -39,8 +39,23 @@ export function materialRoutingRequests(input: {
   candidates: SocialWorkflowMaterialClipCandidate[];
   referenceShots?: SocialReferenceShotAnalysis[];
   productRef: string | null;
+  /** False only after task-level budget allocation reserves presenter cost and
+   * determines that this product shot cannot afford packaging-first-frame I2V. */
+  productGenerationAllowed?: boolean;
 }): SocialAssetSupplyShotRequest[] {
   if (input.policyVersion !== 'type-aware.v1') return input.shots;
+  const assetUseCount = new Map<string, number>();
+  const segmentUseCount = new Map<string, number>();
+  const usage = (candidate: SocialWorkflowMaterialClipCandidate) => ({
+    asset: assetUseCount.get(candidate.assetId) ?? 0,
+    segment: segmentUseCount.get(`${candidate.assetId}:${candidate.segmentId}`) ?? 0,
+  });
+  const recordUse = (candidate: SocialWorkflowMaterialClipCandidate | undefined) => {
+    if (!candidate) return;
+    assetUseCount.set(candidate.assetId, (assetUseCount.get(candidate.assetId) ?? 0) + 1);
+    const key = `${candidate.assetId}:${candidate.segmentId}`;
+    segmentUseCount.set(key, (segmentUseCount.get(key) ?? 0) + 1);
+  };
   return input.shots.map(original => {
     // Re-evaluate evidence against this inventory; a prior plan's proof is not current evidence.
     const { localVideoMatch: _priorMatch, selectedMaterialSegment: _priorSegment, ...current } = original;
@@ -101,15 +116,38 @@ export function materialRoutingRequests(input: {
         // factory and presenter footage out of this bounded fallback.
         : materialType === 'consumer_demo' ? 0.6 : 0.72;
       return required.every(pattern => pattern.test(observed)) && visualScore >= minimumVisualScore;
-    }).sort((a, b) => (materialType === 'consumer_demo' ? consumerSemanticScore(expected, b) - consumerSemanticScore(expected, a)
+    }).sort((a, b) => usage(a).asset - usage(b).asset || usage(a).segment - usage(b).segment
+      || (materialType === 'consumer_demo' ? consumerSemanticScore(expected, b) - consumerSemanticScore(expected, a)
       : scoreSceneVisualCompatibility(expected, b.visualContract) - scoreSceneVisualCompatibility(expected, a.visualContract))
       || a.assetId.localeCompare(b.assetId));
-    const match = candidates[0];
+    let match = candidates[0];
+    let sourceTier: NonNullable<NonNullable<SocialAssetSupplyShotRequest['localVideoMatch']>['sourceTier']> | undefined
+      = materialType === 'product' && match ? 'product_high_fidelity_local' : undefined;
+    if (materialType === 'product' && !match && input.productGenerationAllowed === false) {
+      const identity = (value: unknown) => String(value ?? '').normalize('NFKC').trim().toLocaleLowerCase().replace(/^product:/, '');
+      const executable = input.candidates.filter(candidate => candidate.origin === 'my_materials'
+        && candidate.mediaType === 'video' && !candidate.synthetic && candidate.timeRange
+        && candidate.timeRange.endSeconds - candidate.timeRange.startSeconds + 0.001 >= requiredDuration);
+      const tiered = executable.map(candidate => {
+        const exactProduct = Boolean(shot.productRef && [candidate.productId, candidate.productRef]
+          .map(identity).filter(Boolean).includes(identity(shot.productRef)));
+        const tier = exactProduct && candidate.materialRoles.includes('product') ? 3
+          : candidate.materialRoles.includes('factory') ? 4 : 5;
+        return { candidate, tier, score: scoreSceneVisualCompatibility(expected, candidate.visualContract) };
+      }).sort((a, b) => a.tier - b.tier || usage(a.candidate).asset - usage(b.candidate).asset
+        || usage(a.candidate).segment - usage(b.candidate).segment || b.score - a.score
+        || a.candidate.assetId.localeCompare(b.candidate.assetId));
+      match = tiered[0]?.candidate;
+      sourceTier = tiered[0]?.tier === 3 ? 'product_local' : tiered[0]?.tier === 4 ? 'factory_local'
+        : tiered[0] ? 'other_local' : undefined;
+    }
     if (!match?.timeRange) return { ...plannedShot, materialType };
+    recordUse(match);
     const segment = { sourceRef: match.sourceRef, segmentId: match.segmentId,
       startSeconds: match.timeRange.startSeconds, endSeconds: match.timeRange.endSeconds };
     return { ...plannedShot, materialType, selectedMaterialSegment: segment,
       localVideoMatch: { sourceRefs: [match.sourceRef], semanticMatch: 'verified' as const,
+        ...(sourceTier ? { sourceTier } : {}),
         productRef: match.productRef,
         evidenceRef: `material-visual-match:${input.tenantId}:${socialRequestHash({ shotId: shot.shotId, expected,
           sourceRef: match.sourceRef, segment, visual: match.visualContract })}` } };

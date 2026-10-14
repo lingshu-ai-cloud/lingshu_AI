@@ -40,7 +40,10 @@ export interface SocialAssetInventory {
 export interface SocialAssetSupplyShotRequest {
   materialType?: BenchmarkMaterialType;
   /** Supplied only after the Content Agent checks this exact shot against tenant-visible video. */
-  localVideoMatch?: { sourceRefs: string[]; semanticMatch: 'verified'; evidenceRef: string; productRef?: string | null };
+  localVideoMatch?: { sourceRefs: string[]; semanticMatch: 'verified'; evidenceRef: string; productRef?: string | null;
+    /** Frozen source priority used when the task budget cannot fund product I2V. */
+    sourceTier?: 'product_high_fidelity_local' | 'product_packaging_first_frame_i2v'
+      | 'product_local' | 'factory_local' | 'other_local' };
   selectedMaterialSegment?: SocialAssetSupplyShotPlan['selectedMaterialSegment'];
   plannedDurationSeconds?: number;
   /** Existing frozen routing is retained; new plans author enterprise-owned frames. */

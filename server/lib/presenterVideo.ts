@@ -82,3 +82,38 @@ export async function presenterVideoFrame(bytes: Buffer, atSeconds = 1): Promise
     await fs.rm(dir, { recursive: true, force: true });
   }
 }
+
+export class PresenterAudioPreparationError extends Error {}
+
+/** Normalize browser containers to actual MP3 before declaring the MIME to HeyGen. */
+export async function normalizePresenterAudio(bytes: Buffer): Promise<Buffer> {
+  if (!ffmpegStatic) throw new PresenterAudioPreparationError('本地录音转换组件不可用，未提交声音克隆');
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'lingshu-presenter-audio-'));
+  try {
+    const input = path.join(dir, 'source');
+    const output = path.join(dir, 'voice.mp3');
+    await fs.writeFile(input, bytes);
+    await run(String(ffmpegStatic), ['-hide_banner', '-loglevel', 'error', '-y', '-i', input, '-vn', '-ac', '1', '-ar', '44100', '-c:a', 'libmp3lame', '-b:a', '128k', output], { timeout: 60_000, maxBuffer: 1024 * 1024 });
+    const mp3 = await fs.readFile(output);
+    if (mp3.length < 10000 || mp3.length > 10 * 1024 * 1024 || mp3.toString('ascii', 0, 3) !== 'ID3') throw new Error('invalid_audio');
+    return mp3;
+  } catch {
+    throw new PresenterAudioPreparationError('录音无法转换为有效 MP3，未提交声音克隆；请重新录音或上传有效音频');
+  } finally {
+    await fs.rm(dir, { recursive: true, force: true });
+  }
+}
+
+/** Keep full training footage and speech, exporting MOV to the supported MP4 container. */
+export async function normalizePresenterTrainingVideo(bytes: Buffer): Promise<Buffer> {
+  if (!ffmpegStatic) throw new Error('本地视频转换组件不可用，未上传到 HeyGen');
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'lingshu-presenter-training-'));
+  try {
+    const input = path.join(dir, 'source');
+    const output = path.join(dir, 'training.mp4');
+    await fs.writeFile(input, bytes);
+    await run(String(ffmpegStatic), ['-hide_banner', '-loglevel', 'error', '-y', '-i', input, '-map', '0:v:0', '-map', '0:a:0', '-c:v', 'libx264', '-preset', 'veryfast', '-crf', '18', '-maxrate', '3M', '-bufsize', '6M', '-pix_fmt', 'yuv420p', '-c:a', 'aac', '-b:a', '192k', '-movflags', '+faststart', output], { timeout: 120_000, maxBuffer: 1024 * 1024 });
+    return await fs.readFile(output);
+  } catch { throw new Error('无法将人物视频转换为 MP4，未上传到 HeyGen；请上传有效的视频'); }
+  finally { await fs.rm(dir, { recursive: true, force: true }); }
+}

@@ -107,7 +107,7 @@ test('default presenter route prices static review work before preparation and r
   const frozenPlan={scope:result.scope,authorizationRef:'frozen-task-budget',maximumCny:10,paidOperations:result.reserved.intents};
   const frozenCheckpoint={version:'1',inputHash:result.scope.planHash,updatedAt:new Date().toISOString(),payload:{scopeHash:paidProductionHash(result.scope),baselineHash:socialRequestHash(f.baseline),operationIds:result.reserved.operations.map(operation=>operation.operationId),requirements:result.requirements,routeBindings:result.routeBindings,quotes:result.reserved.quotes,plan:frozenPlan}};
   const rawJob=await f.store.getById<any>('content_execution_jobs',f.job.id);await f.store.update('content_execution_jobs',f.job.id,{checkpoints:{...(rawJob?.checkpoints||{}),'social.whole_film_budget':frozenCheckpoint}});
-  let requotes=0;const recovered=await prepareSocialContentProductionBudget({...f,supplyPlan,assets:[],ports:{ledgerRoot:path.join(f.root,'task-budget'),readTariff:async()=>{requotes++;return null;}}});
+  let requotes=0;const recovered=await prepareSocialContentProductionBudget({...f,supplyPlan,assets:[],ports:{ledgerRoot:path.join(f.root,'task-budget'),readTariff:async()=>{requotes++;return null;},preparePresenterFirstFrameReviews:async()=>{},readConfirmedPresenterFirstFrame:async()=>({approval:{},decision:{}} as never)}});
   assert.equal(recovered.status,'reserved');assert.equal(requotes,0);
   const presenterRequirements=result.requirements.filter(r=>r.stage==='presenter_video');
   assert.equal(presenterRequirements.length,1);assert.ok(presenterRequirements.every(r=>r.sourceRef===null));

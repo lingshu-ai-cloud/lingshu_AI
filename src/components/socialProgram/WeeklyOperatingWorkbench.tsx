@@ -282,7 +282,7 @@ export default function WeeklyOperatingWorkbench({ pkg, loading, error, selected
   return <section ref={materialSurface} aria-label="统一周工作台" className="space-y-4">
     {pkg && <section className="rounded-xl border border-border bg-white p-5">
       <h3 className="text-sm font-bold">本周复刻来源配额</h3>
-      <p className="mt-2 text-xs text-text-secondary">{pkg.referenceSourcePolicy ? `自有 ${pkg.referenceSourcePolicy.ownedPercent}% / 外部 ${pkg.referenceSourcePolicy.externalPercent}% · 按母版计数` : '尚未确认来源配额'}</p>
+      <p className="mt-2 text-xs text-text-secondary">{pkg.referenceSourcePolicy ? `自有 ${pkg.referenceSourcePolicy.ownedPercent}% / 外部 ${pkg.referenceSourcePolicy.externalPercent}% · 按独立视频计数` : '尚未确认来源配额'}</p>
       {planning && <p className="mt-1 text-xs text-text-muted">实际分配：自有 {planning.skeleton.slots.filter(slot => slot.referenceSource === 'owned').length} 条 / 外部 {planning.skeleton.slots.filter(slot => slot.referenceSource === 'external').length} 条；未标来源 {planning.skeleton.slots.filter(slot => !slot.referenceSource).length} 条。</p>}
       {planning?.directorAnalyses.filter(item => item.benchmarkAccountRefs.some(ref => ref.type === 'owned_social_account')).map(item => <p key={item.analysisId} className="mt-2 rounded-lg bg-surface-2 p-3 text-xs text-text-secondary">
         自有参考 {item.benchmarkVideoRefs.map(ref => ref.id).join('、')}：{item.historicalPerformance ? `播放 ${item.historicalPerformance.metrics.views ?? '未知'} · 赞 ${item.historicalPerformance.metrics.likes ?? '未知'} · 转 ${item.historicalPerformance.metrics.shares ?? '未知'} · 评 ${item.historicalPerformance.metrics.comments ?? '未知'}；采集 ${item.historicalPerformance.capturedAt}，来源 ${item.historicalPerformance.source}` : '尚无匹配的播放和赞转评快照'}

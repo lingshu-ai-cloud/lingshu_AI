@@ -24,6 +24,7 @@ export interface ContentOrder extends Partial<DirectorScriptContract> {
     accountId: string;
     accountLabel: string;
     plannedPublishDate: string;
+    plannedPublishAt?: string;
     adaptationMode: 'master' | 'platform_light';
     publication?: VideoCreationPlan['publication'];
   }>;
@@ -179,6 +180,7 @@ export function buildContentBatchPlan(input: {
           accountId: target?.accountId || variant.matrix?.accountId || '',
           accountLabel: target?.accountLabel || (enabled.has('content_publish') ? '发布前待绑定账号' : '仅内容生产，不分发'),
           plannedPublishDate: variant.plannedPublishDate || '',
+          plannedPublishAt: variant.plannedPublishAt || '',
           adaptationMode: variant.productionRole === 'platform_adaptation' ? 'platform_light' : 'master',
           ...(variant.publication ? { publication: variant.publication } : {}),
         };
@@ -198,7 +200,7 @@ export function buildContentBatchPlan(input: {
         route: plan.route, videoPlan: frozenVideoPlan, deliveryVariants, configurationSnapshot: input.versions, cta: plan.matrix?.cta || ctaFor(input.config.primaryGoal),
         constraints: [...new Set([...input.config.constraints, ...input.goal.constraints, ...reviewConstraints,
           ...familyVariants.flatMap(variant => platformExecutionConstraints(variant.platform).map(rule => `${variant.platform} 平台改编：${rule}`)),
-          `本订单只生产 1 条原创母版；${deliveryVariants.length} 个平台发布版本共用母版，不得重复提交完整 AIGC 生成`,
+          `本订单只生产 1 条独立制作视频；${deliveryVariants.length} 个平台发布版本共用独立视频，不得重复提交完整 AIGC 生成`,
           ...(plan.buyerProblem ? [`必须回答的买家问题：${plan.buyerProblem}`] : []),
           ...(plan.evidenceRequirement ? [`必须呈现并核验的证据：${plan.evidenceRequirement}`] : []),
           ...(plan.matrix?.objective ? [`账号本周目标：${plan.matrix.objective}`] : []),
@@ -224,7 +226,7 @@ export function buildContentBatchPlan(input: {
       coverage: contentPlanCoverage(input.config, input.goal, orders.length),
       status: orders.length ? 'planned' : 'blocked',
       orders,
-      blocker: orders.length ? '' : '周视频计划中没有可执行的原创母版',
+      blocker: orders.length ? '' : '周视频计划中没有可执行的独立制作视频',
       eligibleRoutes: [...new Set(orders.filter(order => !order.readinessBlockers?.length).map(order => order.route))],
       disabledRoutes: [...disabledRoutes, ...routeBlockers],
     };

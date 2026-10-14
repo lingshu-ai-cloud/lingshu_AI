@@ -1,28 +1,33 @@
 import { useEffect, useState } from 'react';
+import { Alert } from 'antd';
 import { productionApi } from '../../lib/productionApi';
 
 type Enrollment = Awaited<ReturnType<typeof productionApi.refreshArkEnrollment>>;
+type ArkEnrollmentCapability = Awaited<ReturnType<typeof productionApi.arkEnrollmentCapabilities>>;
 export default function ArkPresenterEnrollmentPanel(props: {
   presenterId: string;
   onStarted?: (presenterId: string) => void;
   photos: Array<{ id: string; name: string }>;
   videos: Array<{ id: string; name: string }>;
+  initialPhotoMaterialId?: string;
+  initialVideoMaterialId?: string;
+  authorizationConfirmed?: boolean;
   onStart: (input: { name: string; photo?: File; video?: File; photoMaterialId?: string; videoMaterialId?: string; requestId: string }) => Promise<Enrollment>;
   onReady: () => Promise<void>;
 }) {
   const [photo, setPhoto] = useState<File>(); const [video, setVideo] = useState<File>();
-  const [photoMaterialId, setPhotoMaterialId] = useState(''); const [videoMaterialId, setVideoMaterialId] = useState('');
-  const [consent, setConsent] = useState(false); const [busy, setBusy] = useState(false);
+  const [photoMaterialId, setPhotoMaterialId] = useState(props.initialPhotoMaterialId || ''); const [videoMaterialId, setVideoMaterialId] = useState(props.initialVideoMaterialId || '');
+  const [consent, setConsent] = useState(props.authorizationConfirmed === true); const [busy, setBusy] = useState(false);
   const [name, setName] = useState('');
-  const [capability, setCapability] = useState<{ ready: boolean; reason: string }>();
+  const [capability, setCapability] = useState<ArkEnrollmentCapability>();
   const [error, setError] = useState(''); const [enrollment, setEnrollment] = useState<Enrollment>();
-  useEffect(() => { let live = true; productionApi.arkEnrollmentCapabilities().then(value => { if (live) setCapability(value); }).catch(cause => { if (live) setCapability({ ready: false, reason: cause instanceof Error ? cause.message : '认证服务暂时不可用' }); }); return () => { live = false; }; }, []);
+  useEffect(() => { let live = true; productionApi.arkEnrollmentCapabilities().then(value => { if (live) setCapability(value); }).catch(cause => { if (live) setCapability({ ready: false, reason: cause instanceof Error ? cause.message : '认证服务暂时不可用', missing: [] }); }); return () => { live = false; }; }, []);
   useEffect(() => {
     let live = true;
-    setEnrollment(undefined); setError(''); setPhoto(undefined); setVideo(undefined); setPhotoMaterialId(''); setVideoMaterialId(''); setConsent(false);
+    setEnrollment(undefined); setError(''); setPhoto(undefined); setVideo(undefined); setPhotoMaterialId(props.initialPhotoMaterialId || ''); setVideoMaterialId(props.initialVideoMaterialId || ''); setConsent(props.authorizationConfirmed === true);
     if (props.presenterId) productionApi.arkEnrollments(props.presenterId).then(items => { if (live) setEnrollment(items[0]); }).catch(() => {});
     return () => { live = false; };
-  }, [props.presenterId]);
+  }, [props.presenterId, props.initialPhotoMaterialId, props.initialVideoMaterialId, props.authorizationConfirmed]);
   useEffect(() => {
     if (!enrollment || !['needs_verification', 'processing'].includes(enrollment.state)) return;
     let live = true;
@@ -47,18 +52,41 @@ export default function ArkPresenterEnrollmentPanel(props: {
     } catch (cause) { setError(cause instanceof Error ? cause.message : '人物认证提交失败'); }
     finally { setBusy(false); }
   };
-  return <section aria-label="人物认证与方舟图片入库" className="space-y-2 rounded-lg border border-amber-200 bg-amber-50 p-3 text-xs">
-    <p className="font-bold">人物照片认证 · {enrollment?.state === 'ready' ? '可用于 Seedance' : enrollment?.state === 'processing' ? '方舟审核中' : enrollment?.state === 'needs_verification' ? '等待本人验证' : '待提交'}</p>
-    <p>首次使用请上传本人视频和清晰正面照片，确认授权后在灵枢打开一次本人验证。方舟图片资产由系统自动创建和绑定；已有素材可直接选择。</p>
-    {capability && !capability.ready && <p role="status" className="rounded bg-white p-2 text-amber-800">当前暂不能开始认证：{capability.reason}</p>}
+  const reusedMaterials = Boolean(!photo && !video
+    && props.initialPhotoMaterialId && props.initialVideoMaterialId
+    && photoMaterialId === props.initialPhotoMaterialId && videoMaterialId === props.initialVideoMaterialId);
+  if (!capability) return <section aria-label="人物认证与方舟图片入库" className="rounded-lg border border-border bg-white p-4">
+    <p className="text-sm font-semibold text-text-primary">人物替换认证（可选）</p>
+    <p role="status" className="mt-2 text-xs text-text-muted">正在检查人物替换能力…</p>
+  </section>;
+  if (!capability.ready) {
+    const missingLabels = capability.missing.map(item => ({
+      provider_credentials: '方舟服务',
+      public_asset_delivery: '公网 HTTPS 素材存储',
+      verification_return_url: 'HTTPS 验证回跳地址',
+    }[item]));
+    return <section aria-label="人物认证与方舟图片入库" className="rounded-lg border border-border bg-white p-4">
+      <p className="text-sm font-semibold text-text-primary">人物替换认证（可选）</p>
+      <Alert
+        className="mt-3"
+        type="warning"
+        showIcon
+        title="人物替换功能暂不可用"
+        description={<span>不影响当前 HeyGen 口播人物。{missingLabels.length ? `管理员还需配置：${missingLabels.join('、')}。` : '管理员完成方舟服务配置后即可启用。'}</span>}
+      />
+    </section>;
+  }
+  return <section aria-label="人物认证与方舟图片入库" className="space-y-2 rounded-lg border border-border bg-white p-4 text-xs">
+    <p className="font-bold">人物替换认证 · {enrollment?.state === 'ready' ? '可用于 Seedance' : enrollment?.state === 'processing' ? '方舟审核中' : enrollment?.state === 'needs_verification' ? '等待本人验证' : '待提交'}</p>
+    <p>{reusedMaterials ? '已复用统一接入时上传的照片和本人视频，不需要再次录入。' : '仅旧人物缺少认证资料时需要在这里补充一次照片和本人视频。'}</p>
     {!enrollment || enrollment.state === 'failed' ? <div className="space-y-2">
       {!props.presenterId && <label className="block">人物名称<input aria-label="认证人物名称" value={name} onChange={event => setName(event.target.value)} className="mt-1 w-full rounded border p-2" /></label>}
-      <label className="block">本人视频<input aria-label="人物认证视频" type="file" accept="video/mp4,video/quicktime,video/webm,.mp4,.mov,.webm" onChange={event => { setVideo(event.target.files?.[0]); setVideoMaterialId(''); }} className="mt-1 block w-full" /></label>
-      {!!props.videos.length && <select aria-label="选择已有本人人物视频" value={videoMaterialId} onChange={event => { setVideoMaterialId(event.target.value); setVideo(undefined); }} className="w-full rounded border p-2"><option value="">或选择已上传视频</option>{props.videos.map(item => <option key={item.id} value={item.id}>{item.name}</option>)}</select>}
-      <label className="block">清晰正面照片<input aria-label="人物认证照片" type="file" accept="image/jpeg,image/png,image/heic,image/heif,.jpg,.jpeg,.png,.heic" onChange={event => { setPhoto(event.target.files?.[0]); setPhotoMaterialId(''); }} className="mt-1 block w-full" /></label>
-      {!!props.photos.length && <select aria-label="选择已有本人人物照片" value={photoMaterialId} onChange={event => { setPhotoMaterialId(event.target.value); setPhoto(undefined); }} className="w-full rounded border p-2"><option value="">或选择已上传照片</option>{props.photos.map(item => <option key={item.id} value={item.id}>{item.name}</option>)}</select>}
-      <label className="flex gap-2"><input type="checkbox" checked={consent} onChange={event => setConsent(event.target.checked)} />我确认出镜人为成年人，已取得本人同意：由方舟进行真人验证、处理照片并用于数字人制作</label>
-      <button type="button" disabled={busy || capability?.ready !== true || !consent || (!props.presenterId && !name.trim()) || !(photo || photoMaterialId) || !(video || videoMaterialId)} onClick={() => void start()} className="rounded bg-accent px-3 py-2 font-bold text-white disabled:opacity-40">{busy ? '正在提交…' : '提交人物资料并开始认证'}</button>
+      {!reusedMaterials && <><label className="block">本人视频<input aria-label="人物认证视频" type="file" accept="video/mp4,video/quicktime,video/webm,.mp4,.mov,.webm" onChange={event => { setVideo(event.target.files?.[0]); setVideoMaterialId(''); }} className="mt-1 block w-full" /></label>
+        {!!props.videos.length && <select aria-label="选择已有本人人物视频" value={videoMaterialId} onChange={event => { setVideoMaterialId(event.target.value); setVideo(undefined); }} className="w-full rounded border p-2"><option value="">或选择已上传视频</option>{props.videos.map(item => <option key={item.id} value={item.id}>{item.name}</option>)}</select>}
+        <label className="block">清晰正面照片<input aria-label="人物认证照片" type="file" accept="image/jpeg,image/png,image/heic,image/heif,.jpg,.jpeg,.png,.heic" onChange={event => { setPhoto(event.target.files?.[0]); setPhotoMaterialId(''); }} className="mt-1 block w-full" /></label>
+        {!!props.photos.length && <select aria-label="选择已有本人人物照片" value={photoMaterialId} onChange={event => { setPhotoMaterialId(event.target.value); setPhoto(undefined); }} className="w-full rounded border p-2"><option value="">或选择已上传照片</option>{props.photos.map(item => <option key={item.id} value={item.id}>{item.name}</option>)}</select>}</>}
+      {props.authorizationConfirmed ? <p className="rounded bg-white p-2 text-emerald-800">成年人及人物处理授权已在统一接入时确认。</p> : <label className="flex gap-2"><input type="checkbox" checked={consent} onChange={event => setConsent(event.target.checked)} />我确认出镜人为成年人，已取得本人同意：由方舟进行真人验证、处理照片并用于数字人制作</label>}
+      <button type="button" disabled={busy || !consent || (!props.presenterId && !name.trim()) || !(photo || photoMaterialId) || !(video || videoMaterialId)} onClick={() => void start()} className="rounded bg-accent px-3 py-2 font-bold text-white disabled:opacity-40">{busy ? '正在提交…' : '提交人物资料并开始认证'}</button>
     </div> : null}
     {enrollment?.state === 'needs_verification' && <a href={enrollment.verificationUrl} target="_blank" rel="noreferrer" className="inline-block rounded bg-accent px-3 py-2 font-bold text-white">打开本人验证</a>}
     {enrollment?.state === 'processing' && <p role="status">本人验证已完成，正在等待方舟图片审核；完成后会自动用于当前人物。</p>}

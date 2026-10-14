@@ -1,6 +1,9 @@
 import { Temporal } from 'temporal-polyfill';
 
 export type LsCalendarStatus = 'planned' | 'queued' | 'working' | 'needs_action' | 'failed' | 'done';
+export type LsCalendarIdentity =
+  | { kind: 'agent'; role: 'business' | 'director' | 'content' | 'customer' | 'human' }
+  | { kind: 'platform'; platform: string };
 export type LsCalendarEvent = {
   id: string;
   title: string;
@@ -13,6 +16,8 @@ export type LsCalendarEvent = {
   accountId?: string;
   accountName?: string;
   thumbnailUrl?: string;
+  /** Stable task identity shown in compact calendar cards instead of a media placeholder. */
+  identity?: LsCalendarIdentity;
   ownerAgent?: string;
   sourceId?: string;
   costEstimate?: number;

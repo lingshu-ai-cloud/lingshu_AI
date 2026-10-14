@@ -63,10 +63,152 @@ const build = (data = overview(), projects: WeeklyContentProgressProject[] = [])
   })];
   const result = buildWeeklyContentProgress(data,'socialtask-real');
   assert.equal(result.taskId,'socialtask-real');
-  assert.equal(result.statusLabel,'待验收');
+  assert.equal(result.statusLabel,'回执待同步');
   assert.equal(get(result,'script').status,'completed');
-  assert.equal(get(result,'render').status,'completed');
-  assert.equal(get(result,'quality').status,'running');
+  assert.equal(get(result,'voice').status,'pending');
+  assert.equal(get(result,'presenter').status,'pending');
+  assert.equal(get(result,'render').status,'pending');
+  assert.equal(get(result,'quality').status,'pending');
+  assert.match(result.summary, /未将其显示为制作完成/);
+
+  const voiceAndMaterialProject: WeeklyContentProgressProject = {
+    id: 'studio-real',
+    spec: {
+      socialContentTaskId: 'socialtask-real',
+      voiceoverMode: 'ai',
+      voiceoverAudios: { en: { url: '/voice.wav', duration: 18, cues: [{ start: 0, end: 18, text: 'voice' }], alignmentSource: 'audio_ai' } },
+      presentationMode: 'material',
+    },
+    executions: [],
+    executionsStatus: 'available',
+  };
+  const withVoice = buildWeeklyContentProgress(data, 'socialtask-real', { projects: [voiceAndMaterialProject], projectsStatus: 'available' });
+  assert.equal(get(withVoice, 'voice').status, 'completed', 'voice requires its own audio and alignment receipt');
+  assert.equal(get(withVoice, 'presenter').status, 'not_applicable', 'an explicit material-only project does not invent a digital-human step');
+  assert.equal(get(withVoice, 'render').status, 'pending');
+
+  const renderProject: WeeklyContentProgressProject = {
+    ...voiceAndMaterialProject,
+    spec: {
+      ...voiceAndMaterialProject.spec as Record<string, unknown>,
+      languageRenderOutputs: { en: { status: 'done', path: '/final-en.mp4' } },
+    },
+  };
+  const withRender = buildWeeklyContentProgress(data, 'socialtask-real', { projects: [renderProject], projectsStatus: 'available' });
+  assert.equal(get(withRender, 'render').status, 'completed', 'a real render output receipt completes only render');
+  assert.equal(get(withRender, 'quality').status, 'pending', 'render output does not prove quality passed');
+  const retainedOldRender = buildWeeklyContentProgress(data, 'socialtask-real', { projects: [{
+    ...voiceAndMaterialProject,
+    spec: {
+      ...voiceAndMaterialProject.spec as Record<string, unknown>,
+      renderOutputPath: '/previous-attempt.mp4',
+      automation: { stage: 'rendering', status: 'processing', renderOutputPath: '/previous-attempt.mp4' },
+    },
+  }], projectsStatus: 'available' });
+  assert.equal(get(retainedOldRender, 'render').status, 'running', 'a retained path from an earlier attempt must not complete the current render');
+  const terminalDirectRender = buildWeeklyContentProgress(data, 'socialtask-real', { projects: [{
+    ...voiceAndMaterialProject,
+    spec: {
+      ...voiceAndMaterialProject.spec as Record<string, unknown>,
+      renderOutputPath: '/current-attempt.mp4',
+      automation: { stage: 'completed', status: 'completed' },
+    },
+  }], projectsStatus: 'available' });
+  assert.equal(get(terminalDirectRender, 'render').status, 'completed', 'a terminal direct attempt may use its bound render output path');
+  const staleQuality = buildWeeklyContentProgress(data, 'socialtask-real', { projects: [{
+    ...renderProject,
+    spec: { ...renderProject.spec as Record<string, unknown>, automation: { stage: 'rendering', renderOutputPath: '/final-en.mp4', quality: { passed: true } } },
+  }], projectsStatus: 'available' });
+  assert.equal(get(staleQuality, 'quality').status, 'pending', 'a stale quality flag detached from a completed render attempt is not a current receipt');
+
+  const qualityProject: WeeklyContentProgressProject = {
+    ...renderProject,
+    spec: {
+      ...renderProject.spec as Record<string, unknown>,
+      activeProjectQualityRecordId: 'quality-current',
+      projectQualityRecords: [{ id: 'quality-current', qualityStatus: 'passed', publishable: true, renderPath: '/final-en.mp4' }],
+    },
+  };
+  const verified = buildWeeklyContentProgress(data, 'socialtask-real', { projects: [qualityProject], projectsStatus: 'available' });
+  assert.equal(get(verified, 'quality').status, 'completed');
+  assert.equal(verified.statusLabel, '待验收');
+
+  const providerPendingProject: WeeklyContentProgressProject = {
+    id: 'studio-real',
+    spec: {
+      socialContentTaskId: 'socialtask-real',
+      presentationMode: 'avatar',
+      shotProductions: { 'shot-1': { source: 'avatar' } },
+    },
+    executions: [{ id: 'execution-1', projectId: 'studio-real', assemblyId: 'video-1', shotId: 'shot-1', state: 'pending', submissionOutcome: 'created', externalTaskId: 'provider-task-1', updatedAt: '2026-10-12T00:00:00Z' }],
+    executionsStatus: 'available',
+  };
+  const providerPending = buildWeeklyContentProgress(data, 'socialtask-real', { projects: [providerPendingProject], projectsStatus: 'available' });
+  assert.equal(get(providerPending, 'presenter').status, 'waiting');
+  assert.equal(get(providerPending, 'presenter').statusLabel, '供应商处理中');
+  assert.notEqual(get(providerPending, 'presenter').status, 'completed', 'provider acceptance is not a generated presenter video');
+
+  const providerUnavailable = buildWeeklyContentProgress(data, 'socialtask-real', {
+    projects: [{ ...providerPendingProject, executions: [], executionsStatus: 'unavailable' }],
+    projectsStatus: 'available',
+  });
+  assert.equal(get(providerUnavailable, 'presenter').status, 'unavailable');
+
+  const stalePresenterReceipt: WeeklyContentProgressProject = {
+    ...providerPendingProject,
+    spec: {
+      socialContentTaskId: 'socialtask-real',
+      presentationMode: 'avatar',
+      shotProductions: { 'new-assembly:new-shot': { source: 'avatar' } },
+    },
+    executions: [{ id: 'old-execution', projectId: 'studio-real', assemblyId: 'old-assembly', shotId: 'new-shot', state: 'completed', materialId: 'old-avatar-video', updatedAt: '2026-10-11T00:00:00Z' }],
+  };
+  const stalePresenter = buildWeeklyContentProgress(data, 'socialtask-real', { projects: [stalePresenterReceipt], projectsStatus: 'available' });
+  assert.equal(get(stalePresenter, 'presenter').status, 'pending', 'a completed execution from an old shot scope must not complete the current digital-human step');
+
+  const currentPresenter = buildWeeklyContentProgress(data, 'socialtask-real', {
+    projects: [{
+      ...stalePresenterReceipt,
+      executions: [{ id: 'current-execution', projectId: 'studio-real', assemblyId: 'new-assembly', shotId: 'new-shot', state: 'completed', materialId: 'current-avatar-video', updatedAt: '2026-10-12T00:00:00Z' }],
+    }],
+    projectsStatus: 'available',
+  });
+  assert.equal(get(currentPresenter, 'presenter').status, 'completed', 'a current-scope provider output remains valid completion evidence');
+
+  const planOnlyPresenter: WeeklyContentProgressProject = {
+    id: 'studio-real',
+    spec: {
+      socialContentTaskId: 'socialtask-real',
+      presentationMode: 'avatar',
+      activeAssemblyId: 'current-assembly',
+      shootingSlots: [{ id: 'persisted-shot', slotId: 'agent-shot' }],
+      socialDigitalHumanPlans: [{ shotId: 'agent-shot', shotIndex: 0 }],
+    },
+    executions: [{ id: 'old-plan-execution', projectId: 'studio-real', assemblyId: 'old-assembly', shotId: 'persisted-shot', state: 'completed', materialId: 'old-avatar-video', updatedAt: '2026-10-11T00:00:00Z' }],
+    executionsStatus: 'available',
+  };
+  const stalePlanOnlyPresenter = buildWeeklyContentProgress(data, 'socialtask-real', { projects: [planOnlyPresenter], projectsStatus: 'available' });
+  assert.equal(get(stalePlanOnlyPresenter, 'presenter').status, 'pending', 'plan-only progress must not read a completed execution from a historical assembly');
+
+  const currentPlanOnlyPresenter = buildWeeklyContentProgress(data, 'socialtask-real', { projects: [{
+    ...planOnlyPresenter,
+    executions: [
+      ...(planOnlyPresenter.executions || []),
+      { id: 'current-plan-execution', projectId: 'studio-real', assemblyId: 'current-assembly', shotId: 'persisted-shot', state: 'completed', materialId: 'current-avatar-video', updatedAt: '2026-10-12T00:00:00Z' },
+    ],
+  }], projectsStatus: 'available' });
+  assert.equal(get(currentPlanOnlyPresenter, 'presenter').status, 'completed', 'plan-only progress accepts an execution bound to the current assembly and persisted shot');
+
+  const unbindablePlanOnlyPresenter = buildWeeklyContentProgress(data, 'socialtask-real', { projects: [{
+    ...planOnlyPresenter,
+    spec: {
+      socialContentTaskId: 'socialtask-real',
+      presentationMode: 'avatar',
+      socialDigitalHumanPlans: [{ shotId: 'agent-shot', shotIndex: 0 }],
+    },
+    executions: [{ id: 'foreign-history', projectId: 'studio-real', assemblyId: 'some-assembly', shotId: 'some-shot', state: 'completed', materialId: 'foreign-video', updatedAt: '2026-10-12T00:00:00Z' }],
+  }], projectsStatus: 'available' });
+  assert.equal(get(unbindablePlanOnlyPresenter, 'presenter').status, 'pending', 'an unbindable plan must stay conservative instead of reading all historical project executions');
 }
 
 {
@@ -198,14 +340,14 @@ const build = (data = overview(), projects: WeeklyContentProgressProject[] = [])
   const data = overview();
   const complete = project({ renderOutputPath: '/video.mp4' }, { stage: 'completed', quality: { passed: true } });
   data.contentQueue!.items[0]!.status = 'completed';
-  data.tasks[0] = task({ status: 'failed', blocked_reason: '另一母版素材缺失' });
+  data.tasks[0] = task({ status: 'failed', blocked_reason: '另一独立视频素材缺失' });
   data.run!.status = 'failed';
   assert.equal(build(data, [complete]).status, 'completed', 'a failed sibling must not overwrite this completed content');
   data.contentQueue!.items[0]!.status = 'producing';
   const stopped = build(data, [project({}, { stage: 'render' })]);
   assert.equal(stopped.status, 'waiting');
   assert.equal(stopped.blockingReasons.length, 0, 'shared task blocker is not attributed to every content');
-  data.contentQueue!.items[0] = queue({ projectIds: [], status: 'blocked', reason: '另一母版素材缺失' });
+  data.contentQueue!.items[0] = queue({ projectIds: [], status: 'blocked', reason: '另一独立视频素材缺失' });
   assert.equal(build(data).status, 'waiting', 'an uncreated order inherits shared task errors but has not individually failed');
   assert.equal(build(data).blockingReasons.length, 0);
 }

@@ -54,6 +54,13 @@ assert.match(packageDetailsRoute, /status: 'blocked'/, 'a failed detail generati
 const packageUpdateRoute = routeBlock("digitalEmployeesRouter.put('/goals/:goalId/package'");
 assert.match(packageUpdateRoute, /delete pack\.detailGeneration/, 'editing an outline must invalidate stale pre-production status');
 assert.match(packageUpdateRoute, /delete videoPlan\.preproduction/, 'editing an outline must invalidate every stale task preview');
+const publicationScheduleRoute = routeBlock("digitalEmployeesRouter.patch('/goals/:goalId/publication-schedule/:contentId'");
+assert.match(publicationScheduleRoute, /beijingDate\(new Date\(scheduledAt\)\)/, 'manual publishing moves must use the explicit Beijing calendar date');
+assert.match(publicationScheduleRoute, /publication_schedule_outside_cycle/, 'manual publishing moves must remain inside the current weekly cycle');
+assert.match(publicationScheduleRoute, /publication_schedule_locked/, 'approved or executing publications must not be silently rescheduled');
+assert.match(publicationScheduleRoute, /compareAndSwap/, 'manual publishing moves must update the weekly plan with optimistic concurrency');
+assert.match(publicationScheduleRoute, /ContentBatchPlanRecord/, 'manual publishing moves must keep the frozen production handoff aligned');
+assert.match(publicationScheduleRoute, /weekly_publication\.rescheduled/, 'manual publishing moves must enter the audit log');
 
 const goalApprovalRoute = routeBlock("digitalEmployeesRouter.post('/goals/:goalId/approve'");
 assert.match(goalApprovalRoute, /approveGoalForReview/, 'manual approval must call the same validated activation as review scheduling');
@@ -125,10 +132,20 @@ assert.ok(approvalApplication.indexOf('approvalRunBlockedReason') < approvalAppl
 for (const control of ['pause', 'resume']) {
   assert.match(routeBlock(`digitalEmployeesRouter.post('/runs/:runId/${control}'`), /withDigitalEmployeeRunLock/, `${control} must share the execution lock`);
 }
+assert.match(routeBlock("digitalEmployeesRouter.post('/runs/:runId/pause'"), /pauseContentExecutionJobsForRun[\s\S]*workflow_run_pause/, 'pausing a workflow must durably pause its production jobs');
+assert.match(routeBlock("digitalEmployeesRouter.post('/runs/:runId/resume'"), /resumeContentExecutionJobsForRun[\s\S]*workflow_run_pause/, 'resuming a workflow must resume only its own controlled production jobs');
 assert.match(source, /cancelDigitalEmployeeRunApplication/, 'the cancel route must use the shared lifecycle application service');
 assert.match(cancellationApplication, /withDigitalEmployeeRunLock/, 'cancel must share the execution lock');
 assert.match(cancellationApplication, /status: 'superseded'/, 'cancellation must invalidate pending approvals');
 assert.match(routeBlock("digitalEmployeesRouter.post('/tasks/:taskId/handoff'"), /withDigitalEmployeeRunLock/, 'handoff must serialize with external actions');
+assert.match(routeBlock("digitalEmployeesRouter.post('/tasks/:taskId/handoff'"), /pauseContentExecutionJobsForRun[\s\S]*workflow_handoff/, 'human handoff must stop every production job under the run');
+assert.match(routeBlock("digitalEmployeesRouter.post('/tasks/:taskId/handoff'"), /planWorkflowHandoffAdmission/, 'page takeover must enforce the one-active-handoff-per-run policy');
+const returnToAgentRoute = routeBlock("digitalEmployeesRouter.post('/tasks/:taskId/return-to-agent'");
+assert.match(returnToAgentRoute, /remainingActiveHandoffs[\s\S]*verifiedReturnPlan\.canResumeRun[\s\S]*resumeContentExecutionJobsForRun[\s\S]*workflow_handoff/, 'returning to Agent must resume jobs only after verifying that no active handoff remains');
+assert.match(returnToAgentRoute, /else[\s\S]*status:\s*['"]waiting_human['"]/, 'historical extra handoffs must keep the run fail-closed');
+const assistantHandoff = source.slice(source.indexOf('async function takeOverWorkflowTask'), source.indexOf("digitalEmployeesRouter.get('/overview'"));
+assert.match(assistantHandoff, /pauseContentExecutionJobsForRun[\s\S]*workflow_handoff/, 'Lingxiaoshu human takeover must use the same durable production stop as the page control');
+assert.match(assistantHandoff, /planWorkflowHandoffAdmission/, 'Lingxiaoshu takeover must share the one-active-handoff-per-run policy');
 
 const correctionStart = source.indexOf('async function applyTaskControl');
 const correctionEnd = source.indexOf("\ndigitalEmployeesRouter.post('/tasks/:taskId/handoff'", correctionStart);

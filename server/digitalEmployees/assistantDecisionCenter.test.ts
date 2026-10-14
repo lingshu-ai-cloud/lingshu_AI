@@ -118,8 +118,8 @@ test('a missing enterprise presenter becomes an actionable assistant card while 
   assert.equal(card.actions[0]?.id, 'open_workspace');
   assert.equal(card.actions[0]?.label, '添加数字人形象');
   assert.ok(card.actions.some(action => action.id === 'take_over'));
-  assert.equal(card.deepLink?.page, 'enterprise');
-  assert.equal(card.deepLink?.businessRef?.enterpriseView, 'presenters');
+  assert.equal(card.deepLink?.page, 'digitalEmployees');
+  assert.equal(card.deepLink?.businessRef?.taskKey, 'presenter_setup_required');
   assert.doesNotMatch(JSON.stringify(card), /providerLog/);
 });
 
@@ -149,8 +149,58 @@ test('a linked production project can surface the avatar requirement without lea
   assert.deepEqual((enriched.output as any).assistantInput, {
     code: 'avatar_required',
     message: '人物镜头缺少可用且已授权的企业数字人形象',
+    presenterId: '',
+    presenterName: '',
+    presenterCount: 0,
     projectCount: 1,
   });
+});
+
+test('an added presenter is no longer described as missing when replication setup is incomplete', () => {
+  const waiting = {
+    ...task('task-avatar-setup', 'content_production', 'waiting_external'),
+    blocked_reason: '第 1 镜尚未录入可用企业数字人',
+    business_refs: [{ type: 'studio_project', id: 'project-avatar-setup' }],
+  } as TaskRecord;
+  const enriched = taskWithAssistantProductionInput(waiting, [{
+    id: 'project-avatar-setup',
+    spec: { automatedReplicationShots: [
+      { shotId: 'one', kind: 'blocked', intendedKind: 'person', blockerCode: 'presenter_authorization_required' },
+    ] },
+  }], { state: 'production_setup_required', presenterCount: 1, presenterId: 'presenter-dante', presenterName: 'Dante Office 2' });
+  const card = buildAssistantDecisionFeed({
+    page: 'digitalEmployees', goal: null, plan: null, run: { ...run, status: 'paused' },
+    tasks: [enriched], approvals: [], now,
+  }).items[0]!;
+  assert.equal(card.title, '请补齐数字人的制作条件');
+  assert.equal(card.actions[0]?.label, '补齐制作条件');
+  assert.match(card.summary, /已添加.*人物参考图.*方舟/);
+  assert.equal(card.deepLink?.page, 'digitalEmployees');
+  assert.equal(card.deepLink?.businessRef?.taskKey, 'presenter_setup_required');
+  assert.equal(card.deepLink?.businessRef?.entityId, 'presenter-dante');
+});
+
+test('a newly ready presenter replaces the stale add-person prompt with continuation', () => {
+  const waiting = {
+    ...task('task-avatar-ready', 'content_production', 'waiting_external'),
+    blocked_reason: '第 1 镜尚未录入可用企业数字人',
+    business_refs: [{ type: 'studio_project', id: 'project-avatar-ready' }],
+  } as TaskRecord;
+  const enriched = taskWithAssistantProductionInput(waiting, [{
+    id: 'project-avatar-ready',
+    spec: { automatedReplicationShots: [
+      { shotId: 'one', kind: 'blocked', intendedKind: 'person', blockerCode: 'presenter_authorization_required' },
+    ] },
+  }], { state: 'ready', presenterCount: 1, presenterId: 'presenter-ready', presenterName: '企业主讲人' });
+  const card = buildAssistantDecisionFeed({
+    page: 'digitalEmployees', goal: null, plan: null, run: { ...run, status: 'paused' },
+    tasks: [enriched], approvals: [], now,
+  }).items[0]!;
+  assert.equal(card.kind, 'next_step');
+  assert.equal(card.title, '数字人已就绪，请继续生产');
+  assert.equal(card.actions[0]?.label, '查看并继续生产');
+  assert.match(card.summary, /企业主讲人 已就绪/);
+  assert.notEqual(card.deepLink?.page, 'enterprise');
 });
 
 test('starter decisions remain available through the unified queue without exposing workspace telemetry', () => {
@@ -174,6 +224,26 @@ test('approval decision versions freeze evidence as well as subject and content'
   assert.throws(() => validateAssistantDecisionCommand(card, 'approve', approvalDecisionVersion(original)), (error: unknown) => error instanceof AssistantDecisionValidationError && error.status === 409);
 });
 
+test('failed source collection explains the viral-library gap and offers direct recovery', () => {
+  const collection = {
+    ...task('task-collection', 'scheduled_source_collection', 'failed'),
+    blocked_reason: '平台采集任务返回服务错误',
+    output: {
+      inventorySummary: '爆款库可直接使用 1/2 条，还缺 1 条；只采集并分析缺口。',
+      inventoryPreflight: { requiredCount: 2, reusableCount: 1, missingCount: 1 },
+    },
+  } as TaskRecord;
+  const card = buildAssistantDecisionFeed({
+    page: 'digitalEmployees', goal: null, plan: null, run: { ...run, status: 'waiting_human' },
+    tasks: [collection], approvals: [], now,
+  }).items[0]!;
+  assert.match(card.summary, /可直接使用 1\/2 条.*缺 1 条/);
+  assert.match(card.summary, /平台采集任务返回服务错误/);
+  assert.equal(card.facts.find(fact => fact.label === '爆款库存')?.value, '可用 1/2 条，缺 1 条');
+  assert.deepEqual(card.actions.slice(0, 2).map(action => action.id), ['retry_task', 'replan_task']);
+  assert.equal(card.actions[0]?.label, '从当前节点重试');
+});
+
 test('decision commands delegate only to the selected persisted-domain action', async () => {
   const calls: string[] = [];
   const handlers = {
@@ -181,6 +251,8 @@ test('decision commands delegate only to the selected persisted-domain action', 
     async decideApproval(card: { subject: { id: string } }, decision: string, note: string) {
       calls.push(`approval:${card.subject.id}:${decision}:${note}`);
     },
+    async retryTask(card: { subject: { id: string } }) { calls.push(`retry:${card.subject.id}`); },
+    async replanTask(card: { subject: { id: string } }) { calls.push(`replan:${card.subject.id}`); },
     async takeOver(card: { subject: { id: string } }) { calls.push(`handoff:${card.subject.id}`); },
     async decideStarter(card: { subject: { id: string } }, decision: string, note: string) {
       calls.push(`starter:${card.subject.id}:${decision}:${note}`);
@@ -216,6 +288,21 @@ test('decision commands delegate only to the selected persisted-domain action', 
     card: starterCard, actionId: 'approve', expectedVersion: starterCard.subject.version, handlers,
   }), 'completed');
 
+  const collection = {
+    ...task('task-collection', 'scheduled_source_collection', 'failed'),
+    output: { inventoryPreflight: { requiredCount: 2, reusableCount: 1, missingCount: 1 } },
+  } as TaskRecord;
+  const collectionCard = buildAssistantDecisionFeed({
+    page: 'digitalEmployees', goal: null, plan: null, run: { ...run, status: 'waiting_human' },
+    tasks: [collection], approvals: [], now,
+  }).items[0]!;
+  assert.equal(await executeAssistantDecisionCommand({
+    card: collectionCard, actionId: 'retry_task', expectedVersion: collectionCard.subject.version, handlers,
+  }), 'completed');
+  assert.equal(await executeAssistantDecisionCommand({
+    card: collectionCard, actionId: 'replan_task', expectedVersion: collectionCard.subject.version, handlers,
+  }), 'completed');
+
   const beforeNavigation = calls.length;
   assert.equal(await executeAssistantDecisionCommand({
     card: planCard, actionId: 'adjust_plan', expectedVersion: planCard.subject.version, handlers,
@@ -234,5 +321,7 @@ test('decision commands delegate only to the selected persisted-domain action', 
     'approval:approval-publish:rejected:请补充证据',
     'handoff:approval-publish',
     'starter:quote:quote-1:approved:',
+    'retry:task-collection',
+    'replan:task-collection',
   ]);
 });

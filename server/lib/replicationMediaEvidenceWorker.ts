@@ -57,15 +57,17 @@ export async function inspectReplicationMediaEvidence(input: {
   for (const factor of input.factors ?? []) {
     if (factor.policy === 'free' || factor.policy === 'replace_identity' || factor.policy === 'prohibit_reuse') continue;
     if (['rhythm', 'camera', 'interaction'].includes(factor.category)) {
-      const motionPass = metrics.temporalMotionDifference <= 8 && metrics.freezeMismatchRatio <= 0.2;
+      // This inspector samples the entire film. Applying one global motion
+      // number to every scene invents scene-level failures or passes. Preserve
+      // the measurement as a review item until a scene-window detector exists.
       factorEvidence.push({
         factorId: factor.factorId,
         sceneId: factor.sceneId,
-        outcome: motionPass ? 'pass' : 'fail',
+        outcome: 'unknown',
         actual: metrics.temporalMotionDifference,
-        confidence: metrics.comparedFrames >= 3 ? 0.75 : 0.4,
+        confidence: null,
         evidenceRefs,
-        explanation: `时序运动差 ${metrics.temporalMotionDifference.toFixed(3)}，冻结状态不一致比例 ${metrics.freezeMismatchRatio.toFixed(3)}。仅验证运动代理，不解释动作语义。`,
+        explanation: `全片时序运动差 ${metrics.temporalMotionDifference.toFixed(3)}，冻结状态不一致比例 ${metrics.freezeMismatchRatio.toFixed(3)}；尚无逐镜测量，不能据此判断本镜头。`,
         provenance,
       });
     }

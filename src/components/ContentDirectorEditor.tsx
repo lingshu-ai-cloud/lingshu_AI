@@ -18,8 +18,10 @@ export default function ContentDirectorEditor({ value, onChange }: { value?: Con
         <label className="text-xs font-semibold text-text-secondary">生产已用<input className={field} type="number" min="0" step="0.01" value={plan.productionSpent} onChange={e => patch({ productionSpent: Number(e.target.value) })}/></label>
         <label className="text-xs font-semibold text-text-secondary">执行中预占<input className={field} type="number" min="0" step="0.01" value={plan.productionReserved} onChange={e => patch({ productionReserved: Number(e.target.value) })}/></label>
         <div className="rounded-md bg-surface-2 px-3 py-2 text-xs text-text-secondary"><span className="block font-semibold">剩余可分配</span><strong className="mt-2 block text-base text-accent">{plan.currency} {remaining.toLocaleString()}</strong></div>
-        <label className="text-xs font-semibold text-text-secondary">原创内容目标<input className={field} type="number" min="0" max="100" value={plan.originalTarget} onChange={e => patch({ originalTarget: Number(e.target.value) })}/></label>
-        <label className="text-xs font-semibold text-text-secondary">平台版本目标<input className={field} type="number" min="0" max="100" value={plan.platformVersionTarget} onChange={e => patch({ platformVersionTarget: Number(e.target.value) })}/></label>
+        <label className="text-xs font-semibold text-text-secondary">本周计划视频数<input className={field} type="number" min="0" max="100" value={plan.platformVersionTarget} onChange={e => {
+          const target = Number(e.target.value);
+          patch({ originalTarget: target, platformVersionTarget: target });
+        }}/><span className="mt-1 block font-normal text-text-muted">每条计划都会独立制作，不会因跨平台发布减少实际生成数量。</span></label>
         <label className="text-xs font-semibold text-text-secondary">成功发布目标<input className={field} type="number" min="0" max="100" value={plan.publishTarget} onChange={e => patch({ publishTarget: Number(e.target.value) })}/></label>
       </div>
     </section>

@@ -14,9 +14,9 @@ import { hasOnCameraSpeechEvidence } from '../lib/salesPresenterReview.js';
 import { untrustedPromptData } from '../lib/untrustedPromptData.js';
 import type { StoryboardQaPhase, StoryboardQaScene, StoryboardQaObservation } from '../lib/storyboardAigcQuality.js';
 
-const QWEN_VL_MODEL = () => (process.env.QWEN_VL_MODEL ?? 'qwen-vl-max').trim();
-const QWEN_EXACT_VL_MODEL = () => (process.env.QWEN_EXACT_VL_MODEL ?? 'qwen3-vl-flash').trim();
-const BASE_URL = () => (process.env.DASHSCOPE_BASE_URL ?? 'https://dashscope.aliyuncs.com/compatible-mode/v1').trim();
+const QWEN_VL_MODEL = (env: NodeJS.ProcessEnv = process.env) => (env.QWEN_VL_MODEL ?? 'qwen-vl-max').trim();
+const QWEN_EXACT_VL_MODEL = (env: NodeJS.ProcessEnv = process.env) => (env.QWEN_EXACT_VL_MODEL ?? 'qwen3-vl-flash').trim();
+const BASE_URL = (env: NodeJS.ProcessEnv = process.env) => (env.DASHSCOPE_BASE_URL ?? 'https://dashscope.aliyuncs.com/compatible-mode/v1').trim();
 
 /** Keep these evidence fields explicit in every per-shot Qwen schema. The
  * shared benchmark contract defines their semantics, while the concrete list
@@ -24,10 +24,10 @@ const BASE_URL = () => (process.env.DASHSCOPE_BASE_URL ?? 'https://dashscope.ali
 export const QWEN_SHOT_CLASSIFICATION_FIELDS = ['materialType', 'narrativeRole', 'classificationEvidence'] as const;
 const QWEN_SHOT_CLASSIFICATION_FIELD_TEXT = QWEN_SHOT_CLASSIFICATION_FIELDS.join('、');
 
-export function dashscopeApiKey(): string {
-  const envKey = process.env.DASHSCOPE_API_KEY?.trim();
+export function dashscopeApiKey(env: NodeJS.ProcessEnv = process.env): string {
+  const envKey = env.DASHSCOPE_API_KEY?.trim();
   if (envKey) return envKey;
-  const keyFile = (process.env.DASHSCOPE_API_KEY_FILE || path.join(os.homedir(), '.config/lingshu/dashscope.key')).trim();
+  const keyFile = (env.DASHSCOPE_API_KEY_FILE || path.join(os.homedir(), '.config/lingshu/dashscope.key')).trim();
   try {
     const fileKey = fs.readFileSync(keyFile, 'utf8').trim();
     if (fileKey) return fileKey;
@@ -36,8 +36,8 @@ export function dashscopeApiKey(): string {
 }
 
 /** Exact live SDK configuration for trusted account readers; never expose keys. */
-export function getQwenProviderBinding(){return {baseUrl:BASE_URL(),credentialSha256:createHash('sha256').update(dashscopeApiKey()).digest('hex'),
- materialModel:(process.env.QWEN_MATERIAL_VL_MODEL||QWEN_EXACT_VL_MODEL()).trim(),imageModel:QWEN_VL_MODEL()};}
+export function getQwenProviderBinding(env: NodeJS.ProcessEnv = process.env){return {baseUrl:BASE_URL(env),credentialSha256:createHash('sha256').update(dashscopeApiKey(env)).digest('hex'),
+ materialModel:(env.QWEN_MATERIAL_VL_MODEL||QWEN_EXACT_VL_MODEL(env)).trim(),imageModel:QWEN_VL_MODEL(env)};}
 function client(): OpenAI {
   const apiKey = dashscopeApiKey();
   return new OpenAI({

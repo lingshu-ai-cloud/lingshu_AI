@@ -1,11 +1,15 @@
+import {readGraphContextSnapshot} from './socialContentGraphContextSnapshots.js';
+import {SocialContentTaskBudget} from '../lib/socialContentTaskBudget.js';
+import {matchesAuthorizedCorrectionContext} from './socialContentProductionGraph.js';
 import type {DataStore} from '../storage/datastore.js';
 import {readContentExecutionJob} from '../contentExecution/durableQueue.js';
 import {socialObject,socialRequestHash,socialText} from './socialContentValidation.js';
 import type {SocialGraphApprovedContext} from './socialContentProductionExecution.js';
 export interface CanonicalRuntimeMedia {providerTaskId:string;sha256:string}
 /** Only removes new runtime candidates from the live planning view; never deletes the material. */
-export function graphRuntimeInventoryVisible(item:Record<string,any>,input:{tenantId:string;taskId:string;admittedRefs:Set<string>;canonical:CanonicalRuntimeMedia[]}){
+export function graphRuntimeInventoryVisible(item:Record<string,any>,input:{tenantId:string;taskId:string;admittedRefs:Set<string>;canonical:CanonicalRuntimeMedia[];freezeToAdmitted?:boolean}){
  if(input.admittedRefs.has(socialText(item.id)))return true;
+ if(input.freezeToAdmitted)return false;
  const sourceTask=socialText(socialObject(item.lineage)?.sourceTaskId||item.sourceTaskId||item.taskId);
  if(sourceTask&&sourceTask!==input.taskId)return true;
  if(sourceTask===input.taskId)return false;
@@ -15,7 +19,12 @@ export function graphRuntimeInventoryVisible(item:Record<string,any>,input:{tena
 export async function readCanonicalGraphRuntimeMedia(input:{dataStore:DataStore;tenantId:string;taskId:string;runId:string;approvedContext:SocialGraphApprovedContext}):Promise<CanonicalRuntimeMedia[]>{
  const job=await readContentExecutionJob(input.dataStore,input.tenantId,input.taskId,input.runId);
  const binding=socialObject(job?.checkpoints['social.executor']?.payload);
- if(!job||binding?.executor!=='langgraph'||socialRequestHash(binding.approvedContext)!==socialRequestHash(input.approvedContext))throw Error('graph_runtime_inventory_binding_changed');
+ if(!job||binding?.executor!=='langgraph')throw Error('graph_runtime_inventory_binding_changed');
+ if(socialRequestHash(readGraphContextSnapshot(binding))!==socialRequestHash(input.approvedContext)){
+  const ledger=new SocialContentTaskBudget(undefined,{authorization:async()=>{throw Error('read_only')},quote:async()=>{throw Error('read_only')},assertCurrent:async()=>{},verifyRejection:async()=>false});
+  const grant=ledger.status({tenantId:input.tenantId,taskId:input.taskId,runId:input.runId,planHash:String(binding.inputHash)})?.correctionAuthorization;
+  if(!matchesAuthorizedCorrectionContext(job,input.approvedContext,String(binding.inputHash),grant?.recordHash))throw Error('graph_runtime_inventory_binding_changed');
+ }
  const {createPersistedStudioReceiptAdoptionAdapter}=await import('./socialContentStudioAdoption.js');
  const adapter=createPersistedStudioReceiptAdoptionAdapter({dataStore:input.dataStore,scope:{tenantId:input.tenantId,taskId:input.taskId,runId:input.runId,jobId:job.id}}),proofs:CanonicalRuntimeMedia[]=[];
  for(const shot of input.approvedContext.assetSupplyPlan?.shots??[]){

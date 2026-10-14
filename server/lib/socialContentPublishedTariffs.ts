@@ -5,7 +5,13 @@ export interface PublishedPricingEvidence {
  sourceUrl:string;sourceBody:string;sourceResponseSha256:string;sourceContentSha256:string;checkedAt:string;validUntil:string;providerBinding:{baseUrl:string;credentialSha256:string};
  inputPriceCnyPerMillion:number;outputPriceCnyPerMillion:number;
 }
+export interface LocalPublishedPricingEvidence {
+ schemaVersion:2;basis:'published_undiscounted_ceiling';provider:'qwen';model:string;region:'cn-beijing';accountRef:string;
+ catalogVersion:string;sourceUrl:string;sourceUpdatedAt:string;catalogValidForMs:number;catalogEntrySha256:string;checkedAt:string;validUntil:string;
+ providerBinding:{baseUrl:string;credentialSha256:string};inputPriceCnyPerMillion:number;outputPriceCnyPerMillion:number;
+}
 export type PublishedAccountTariff=SocialVerifiedAccountTariff&{pricingBasis:'published_undiscounted_ceiling';publicPricingEvidence:PublishedPricingEvidence};
+export type LocalPublishedAccountTariff=SocialVerifiedAccountTariff&{pricingBasis:'published_undiscounted_ceiling';publicPricingEvidence:LocalPublishedPricingEvidence};
 const sha=(s:string)=>createHash('sha256').update(s).digest('hex');
 /**
  * Published prices are copied into the tenant's durable tariff catalogue and
@@ -14,6 +20,13 @@ const sha=(s:string)=>createHash('sha256').update(s).digest('hex');
  * across normal production while still requiring periodic evidence refresh.
  */
 export const QWEN_PUBLISHED_TARIFF_VALIDITY_MS=90*24*3600000;
+export const QWEN_LOCAL_TARIFF_CATALOG_VERSION='qwen-cn-beijing-2026-10-12-v1';
+const QWEN_LOCAL_TARIFF_CATALOG_UPDATED_AT='2026-10-12T00:00:00.000Z';
+const QWEN_LOCAL_TARIFF_CATALOG={
+ 'qwen3-vl-flash':{inputPriceCnyPerMillion:.6,outputPriceCnyPerMillion:6,sourceUrl:'https://help.aliyun.com/zh/model-studio/qwen3-vl-flash'},
+ 'qwen3-vl-plus':{inputPriceCnyPerMillion:3,outputPriceCnyPerMillion:30,sourceUrl:'https://help.aliyun.com/zh/model-studio/qwen3-vl-plus'},
+} as const;
+const canonicalCatalogEntry=(model:keyof typeof QWEN_LOCAL_TARIFF_CATALOG)=>JSON.stringify({catalogVersion:QWEN_LOCAL_TARIFF_CATALOG_VERSION,model,region:'cn-beijing',sourceUpdatedAt:QWEN_LOCAL_TARIFF_CATALOG_UPDATED_AT,catalogValidForMs:QWEN_PUBLISHED_TARIFF_VALIDITY_MS,...QWEN_LOCAL_TARIFF_CATALOG[model]});
 const text=(s:string)=>s.replace(/<[^>]*>/g,'').replace(/&nbsp;|&#160;/g,' ').replace(/&amp;/g,'&').replace(/\s+/g,'').trim();
 const valid=(n:number)=>Number.isFinite(n)&&n>0;
 /** Parse the official model page's JSON data, never execute vendor scripts.
@@ -47,13 +60,32 @@ export function parseOfficialQwenPublishedPrices(body:string,model:string){
  * cannot qualify as published account-bound evidence. */
 export function isVerifiedPublishedTariff(t:SocialVerifiedAccountTariff):boolean{
  try{
- const p=t as PublishedAccountTariff,e=p.publicPricingEvidence;if(!/^qwen3-vl-(?:flash|plus)$|^qwen-vl-max$/.test(p.model)||p.pricingBasis!=='published_undiscounted_ceiling'||p.verifiedAccountPrice!==false||p.currency!=='CNY'||!e||e.schemaVersion!==1||e.basis!==p.pricingBasis||e.provider!==p.provider||e.model!==p.model||e.accountRef!==p.accountRef||e.region!=='cn-beijing'||e.checkedAt!==p.checkedAt||e.validUntil!==p.validUntil||e.sourceUrl!==`https://help.aliyun.com/zh/model-studio/${p.model}`||sha(e.sourceBody)!==e.sourceResponseSha256||!e.providerBinding)return false;
+ const p=t as PublishedAccountTariff|LocalPublishedAccountTariff,e=p.publicPricingEvidence;if(!/^qwen3-vl-(?:flash|plus)$|^qwen-vl-max$/.test(p.model)||p.pricingBasis!=='published_undiscounted_ceiling'||p.verifiedAccountPrice!==false||p.currency!=='CNY'||!e||![1,2].includes(e.schemaVersion)||e.basis!==p.pricingBasis||e.provider!==p.provider||e.model!==p.model||e.accountRef!==p.accountRef||e.region!=='cn-beijing'||e.checkedAt!==p.checkedAt||e.validUntil!==p.validUntil||e.sourceUrl!==`https://help.aliyun.com/zh/model-studio/${p.model}`||!e.providerBinding)return false;
  const b=e.providerBinding,u=new URL(b.baseUrl);if(u.protocol!=='https:'||u.hostname!=='dashscope.aliyuncs.com'||u.pathname.replace(/\/+$/,'')!=='/compatible-mode/v1'||u.username||u.password||u.search||u.hash||! /^[a-f0-9]{64}$/.test(b.credentialSha256))return false;
  const account=`qwen:${sha(JSON.stringify({baseUrl:b.baseUrl.replace(/\/+$/,''),credentialSha256:b.credentialSha256}))}`;if(account!==p.accountRef)return false;
- const parsed=parseOfficialQwenPublishedPrices(e.sourceBody,p.model);if(!parsed||parsed.sourceContentSha256!==e.sourceContentSha256||parsed.inputPriceCnyPerMillion!==e.inputPriceCnyPerMillion||parsed.outputPriceCnyPerMillion!==e.outputPriceCnyPerMillion||p.evidenceRef!==`official-public-tariff:${sha(JSON.stringify(e))}`||Date.parse(e.validUntil)-Date.parse(e.checkedAt)>QWEN_PUBLISHED_TARIFF_VALIDITY_MS)return false;
+ if(e.schemaVersion===1){const parsed=parseOfficialQwenPublishedPrices(e.sourceBody,p.model);if(!parsed||parsed.sourceContentSha256!==e.sourceContentSha256||parsed.inputPriceCnyPerMillion!==e.inputPriceCnyPerMillion||parsed.outputPriceCnyPerMillion!==e.outputPriceCnyPerMillion||p.evidenceRef!==`official-public-tariff:${sha(JSON.stringify(e))}`||Date.parse(e.validUntil)-Date.parse(e.checkedAt)>QWEN_PUBLISHED_TARIFF_VALIDITY_MS)return false;}
+ else {const model=p.model as keyof typeof QWEN_LOCAL_TARIFF_CATALOG,entry=QWEN_LOCAL_TARIFF_CATALOG[model];if(!entry||e.catalogVersion!==QWEN_LOCAL_TARIFF_CATALOG_VERSION||e.sourceUpdatedAt!==QWEN_LOCAL_TARIFF_CATALOG_UPDATED_AT||e.catalogValidForMs!==QWEN_PUBLISHED_TARIFF_VALIDITY_MS||e.catalogEntrySha256!==sha(canonicalCatalogEntry(model))||e.sourceUrl!==entry.sourceUrl||e.inputPriceCnyPerMillion!==entry.inputPriceCnyPerMillion||e.outputPriceCnyPerMillion!==entry.outputPriceCnyPerMillion||e.checkedAt!==e.sourceUpdatedAt||Date.parse(e.validUntil)-Date.parse(e.sourceUpdatedAt)!==QWEN_PUBLISHED_TARIFF_VALIDITY_MS||p.evidenceRef!==`local-official-tariff-catalog:${e.catalogEntrySha256}`)return false;}
  if(Object.keys(p.meters).sort().join(',')!=='inputTokens,outputTokens')return false;
  return ['inputTokens','outputTokens'].every(unit=>{const m=p.meters[unit];return m&&m.priceCny===(unit==='inputTokens'?e.inputPriceCnyPerMillion:e.outputPriceCnyPerMillion)&&m.unitsPerPrice===1000000&&m.minimumUnits===0&&m.increment===1;});
  }catch{return false;}
+}
+/** Runtime reader for the reviewed local catalogue. It is intentionally
+ * network-free; createSocialContentPublishedTariffReader remains the periodic
+ * maintenance/import tool used to refresh the reviewed catalogue. */
+export function createSocialContentLocalPublishedTariffReader(ports:{
+ readProviderBinding(intent:SocialPaidOperationIntent):Promise<{provider:string;model:string;baseUrl:string;credentialSha256:string}|null>;now?:()=>Date;
+}){
+ return {async read(intent:SocialPaidOperationIntent):Promise<LocalPublishedAccountTariff|null>{
+  const binding=await ports.readProviderBinding(intent),entry=QWEN_LOCAL_TARIFF_CATALOG[intent.model as keyof typeof QWEN_LOCAL_TARIFF_CATALOG];
+  if(!binding||!entry||binding.provider!=='qwen'||intent.provider!=='qwen'||binding.model!==intent.model||!/^[a-f0-9]{64}$/.test(binding.credentialSha256)||Object.keys(intent.maximumUnits).sort().join(',')!=='inputTokens,outputTokens')return null;
+  let api:URL;try{api=new URL(binding.baseUrl);}catch{return null;}if(api.protocol!=='https:'||api.hostname!=='dashscope.aliyuncs.com'||api.pathname.replace(/\/+$/,'')!=='/compatible-mode/v1'||api.username||api.password||api.search||api.hash)return null;
+  const normalizedBaseUrl=binding.baseUrl.replace(/\/+$/,''),accountRef=`qwen:${sha(JSON.stringify({baseUrl:normalizedBaseUrl,credentialSha256:binding.credentialSha256}))}`;if(accountRef!==intent.accountRef)return null;
+  const checkedAt=QWEN_LOCAL_TARIFF_CATALOG_UPDATED_AT,validUntil=new Date(Date.parse(checkedAt)+QWEN_PUBLISHED_TARIFF_VALIDITY_MS).toISOString();if((ports.now?.()||new Date()).getTime()>=Date.parse(validUntil))return null;
+  const catalogEntrySha256=sha(canonicalCatalogEntry(intent.model as keyof typeof QWEN_LOCAL_TARIFF_CATALOG));
+  const evidence:LocalPublishedPricingEvidence={schemaVersion:2,basis:'published_undiscounted_ceiling',provider:'qwen',model:intent.model,region:'cn-beijing',accountRef,catalogVersion:QWEN_LOCAL_TARIFF_CATALOG_VERSION,sourceUpdatedAt:QWEN_LOCAL_TARIFF_CATALOG_UPDATED_AT,catalogValidForMs:QWEN_PUBLISHED_TARIFF_VALIDITY_MS,catalogEntrySha256,checkedAt,validUntil,providerBinding:{baseUrl:binding.baseUrl,credentialSha256:binding.credentialSha256},...entry};
+  const tariff:LocalPublishedAccountTariff={provider:intent.provider,model:intent.model,accountRef,stage:intent.stage,currency:'CNY',verifiedAccountPrice:false,pricingBasis:'published_undiscounted_ceiling',publicPricingEvidence:evidence,evidenceRef:`local-official-tariff-catalog:${catalogEntrySha256}`,checkedAt,validUntil,meters:{inputTokens:{priceCny:entry.inputPriceCnyPerMillion,unitsPerPrice:1000000,minimumUnits:0,increment:1},outputTokens:{priceCny:entry.outputPriceCnyPerMillion,unitsPerPrice:1000000,minimumUnits:0,increment:1}}};
+  return isVerifiedPublishedTariff(tariff)?tariff:null;
+ }};
 }
 export function createSocialContentPublishedTariffReader(ports:{
  readProviderBinding(intent:SocialPaidOperationIntent):Promise<{provider:string;model:string;baseUrl:string;credentialSha256:string}|null>;

@@ -1,30 +1,60 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 import { renderToStaticMarkup } from 'react-dom/server';
 import EnterprisePresenters from './EnterprisePresenters.js';
 
-test('presenter settings request a separate DashScope quality-inspection consent', () => {
-  const html=renderToStaticMarkup(<EnterprisePresenters />);
-  assert.match(html,/允许阿里云百炼接收人物图和候选采样帧/);
-  assert.match(html,/未勾选时不会向百炼外发人物图/);
-  assert.match(html,/身份、产品／品牌／文字项目保留为人工验收/);
-  assert.match(html,/允许阿里云百炼使用授权人物图生成构图草稿/);
-  assert.match(html,/产生生图费用/);
-  assert.match(html,/控制台显示状态为 Active/);
-  assert.match(html,/该资产与上方选中的本地照片属于同一位授权人物/);
-  assert.match(html,/保存人工核验结果/);
-  assert.match(html,/没有 Assets API 权限的 Entry 流程/);
-});
+const source = readFileSync(new URL('./EnterprisePresenters.tsx', import.meta.url), 'utf8');
+const arkPanelSource = readFileSync(new URL('../studio/ArkPresenterEnrollmentPanel.tsx', import.meta.url), 'utf8');
+const enterprisePageSource = readFileSync(new URL('../EnterprisePage.tsx', import.meta.url), 'utf8');
 
-test('content production manages people without asking users to copy a HeyGen look ID', () => {
-  const html = renderToStaticMarkup(<EnterprisePresenters contentProduction />);
-  assert.match(html, /选择或创建人物/);
-  assert.doesNotMatch(html, /HeyGen人物\/Look ID|添加授权人物/);
-});
-
-test('initial configuration only exposes the person and voice entry point', () => {
+test('initial configuration presents one unified presenter onboarding instead of duplicate provider forms', () => {
   const html = renderToStaticMarkup(<EnterprisePresenters initialConfiguration />);
-  assert.match(html, /企业默认人物/);
-  assert.match(html, /选择或创建人物/);
-  assert.doesNotMatch(html, /默认出镜偏好|新分镜默认布局|添加授权人物/);
+  assert.match(html, /数字人统一接入/);
+  assert.match(html, /人物、声音与本人认证/);
+  assert.match(html, /设置数字人/);
+  assert.match(source, /更换数字人/);
+  assert.match(source, /完善人物替换认证/);
+  assert.doesNotMatch(html, /HeyGen 口播接入/);
+  assert.doesNotMatch(html, /方舟人物认证/);
+  assert.match(source, /<ArkPresenterEnrollmentPanel/);
+  assert.match(source, /productionApi\.startArkEnrollment/);
+  assert.match(source, /productionApi\.uploadArkMaterial/);
+  assert.match(source, /finishUnifiedPresenterSetup/);
+  assert.match(source, /initialPhotoMaterialId=\{preparedArk\?\.photoMaterialId\}/);
+  assert.match(source, /需要高级人物替换时，再点击“完善人物替换认证”单独授权/);
+  assert.match(source, /authorizationConfirmed=\{false\}/);
+  assert.doesNotMatch(source, /arkCapability = await productionApi\.arkEnrollmentCapabilities/);
+  assert.match(arkPanelSource, /if \(!capability\.ready\)/);
+  assert.match(arkPanelSource, /不影响当前 HeyGen 口播人物/);
+  assert.match(arkPanelSource, /管理员还需配置/);
+});
+
+test('enterprise presenter page supports editing, optional certification and revoking existing people', () => {
+  const html = renderToStaticMarkup(<EnterprisePresenters />);
+  assert.match(html, /人物与出镜/);
+  assert.match(html, /补充可选的人物替换认证/);
+  assert.match(source, />修改人物</);
+  assert.match(source, /certificationOpen \? '收起认证' : '人物替换认证'/);
+  assert.match(source, />取消授权</);
+  assert.match(source, /presenterApi\.revoke/);
+  assert.doesNotMatch(source, /默认出镜偏好|新分镜默认声音|新分镜默认布局|主体授权证据|方舟控制台人工核验|渠道与出镜策略/);
+  assert.match(enterprisePageSource, /enterpriseArea !== 'appearance' && <section[^>]+aria-label="企业资料完整度"/);
+  assert.match(enterprisePageSource, /enterpriseArea !== 'appearance' && <div className=\{`rounded-lg border p-4/);
+  assert.doesNotMatch(enterprisePageSource, /<EnterprisePresenterRouting/);
+});
+
+test('content production redirects setup to the shared beginner guide', () => {
+  const html = renderToStaticMarkup(<EnterprisePresenters contentProduction />);
+  assert.match(html, /打开数字人接入/);
+  assert.match(html, /制作页面不再重复承载人物供应商配置/);
+  assert.match(source, /lingshu:open-digital-employee-guide/);
+  assert.match(source, /step: 'presenter'/);
+});
+
+test('all presenter mutations invalidate assistant decisions immediately', () => {
+  assert.match(source, /notifyPresenterAssetsUpdated\(\)/);
+  assert.match(source, /setValue\(next\); notifyPresenterAssetsUpdated\(\); setShowHeyGenManager/);
+  assert.match(source, /onSaved=\{\(next, context\) => finishUnifiedPresenterSetup\(next, context\)\}/);
+  assert.match(source, /setValue\(next\); notifyPresenterAssetsUpdated\(\); setMessage\('人物授权已取消/);
 });

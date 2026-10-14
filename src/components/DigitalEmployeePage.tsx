@@ -3,6 +3,12 @@ import BusinessHealthOverview from './smartBusiness/BusinessHealthOverview';
 import { labels as sharedTaskLabels, day as shanghaiDay } from '../../shared/mobile-domain.mjs';
 import WeeklyPlanCalendar from './smartBusiness/WeeklyPlanCalendar';
 import { socialOperatingProfile } from '../../shared/contracts/socialOperatingProfile';
+import {
+  allocateWeeklyPublishingTargets,
+  MAX_WEEKLY_PUBLISHING_ITEMS,
+  platformWeeklyCountsFromCadence,
+  weeklyPublishingPlatforms,
+} from '../../shared/contracts/weeklyPublishingTargets';
 import WeeklyGoalScheduleCards from './smartBusiness/WeeklyGoalScheduleCards';
 import { scheduleWeeklyVideos } from '../lib/weeklyGoalSchedule';
 import { getScrollBehavior } from "../lib/usePrefersReducedMotion";
@@ -90,9 +96,7 @@ import {
   ShieldCheck,
   Sparkles,
   Target,
-  TrendingUp,
   Trash2,
-  Users,
   X,
   XCircle,
 } from "lucide-react";
@@ -637,11 +641,15 @@ function primaryEnterpriseLanguage(value: unknown): string {
   return first || "英语";
 }
 
-function platformCountsFromCadence(cadence: string, fallback: number): Record<(typeof publishingPlatforms)[number], number> {
+function platformCountsFromCadence(cadence: string, fallback: number, targets: PublishingTarget[] = []): Record<(typeof publishingPlatforms)[number], number> {
   const perPlatform = Math.max(0, Math.ceil(fallback / publishingPlatforms.length));
+  const legacyCounts = platformWeeklyCountsFromCadence(cadence);
   return Object.fromEntries(publishingPlatforms.map((platform) => {
-    const matched = cadence.match(new RegExp(`${platform}=(\\d+)`, "i"));
-    return [platform, matched ? Number(matched[1]) : perPlatform];
+    const platformTargets = targets.filter(target => target.platform === platform);
+    const structured = platformTargets.length && platformTargets.every(target => target.weeklyCount !== undefined)
+      ? platformTargets.reduce((sum, target) => sum + Math.max(0, Number(target.weeklyCount) || 0), 0)
+      : undefined;
+    return [platform, structured ?? legacyCounts[platform] ?? perPlatform];
   })) as Record<(typeof publishingPlatforms)[number], number>;
 }
 
@@ -721,34 +729,8 @@ const applicationGuideSteps = [
   { index: 1, label: "企业与品牌" },
   { index: 2, label: "产品表" },
   { index: 3, label: "社媒经营阶段" },
-  { index: 4, label: "人物与声音" },
+  { index: 4, label: "数字人接入" },
 ] as const;
-
-function OnboardingStepVisual({ step }: { step: 1 | 2 | 3 | 4 }) {
-  const visuals = {
-    1: { icon: Settings2, label: "企业与品牌关系图", nodes: ["企业主体", "品牌名称"] },
-    2: { icon: FileSpreadsheet, label: "产品资料入库流程图", nodes: ["产品表", "企业知识库"] },
-    3: { icon: TrendingUp, label: "社媒经营阶段选择图", nodes: ["起步验证", "增长进阶", "品牌增长"] },
-    4: { icon: Users, label: "人物与声音配置图", nodes: ["出镜人物", "声音资产"] },
-  } as const;
-  const visual = visuals[step];
-  const Icon = visual.icon;
-  return (
-    <div role="img" aria-label={visual.label} className="flex min-h-48 flex-col justify-center rounded-lg border border-border bg-surface-2 p-5">
-      <span className="mx-auto flex h-12 w-12 items-center justify-center rounded-lg bg-accent-glow text-accent">
-        <Icon size={22} />
-      </span>
-      <div className="mt-5 flex flex-wrap items-center justify-center gap-2">
-        {visual.nodes.map((node, index) => (
-          <div key={node} className="contents">
-            {index > 0 && <ArrowRight size={14} className="text-text-muted" aria-hidden="true" />}
-            <span className="rounded-md border border-border bg-white px-3 py-2 text-xs font-semibold text-text-primary">{node}</span>
-          </div>
-        ))}
-      </div>
-    </div>
-  );
-}
 
 function OnboardingGuideFrame({
   step,
@@ -801,14 +783,11 @@ function OnboardingGuideFrame({
         <LsBrandAction key="primary" id={primaryId} loading={busy} disabled={primaryDisabled} onClick={onPrimary}>{primaryLabel}</LsBrandAction>,
       ].filter(Boolean)}
     >
-      <div className="grid gap-6 md:grid-cols-[220px_minmax(0,1fr)] md:items-start">
-        <OnboardingStepVisual step={step} />
-        <section aria-labelledby={`onboarding-step-${step}-title`}>
-          <p className="ls-type-body-small font-semibold text-accent">第 {step} 步，共 4 步</p>
-          <h2 id={`onboarding-step-${step}-title`} className="ls-type-title-large mt-2 text-text-primary">{title}</h2>
-          <div className="mt-5">{children}</div>
-        </section>
-      </div>
+      <section aria-labelledby={`onboarding-step-${step}-title`}>
+        <p className="ls-type-body-small font-semibold text-accent">第 {step} 步，共 4 步</p>
+        <h2 id={`onboarding-step-${step}-title`} className="ls-type-title-large mt-2 text-text-primary">{title}</h2>
+        <div className="mt-5">{children}</div>
+      </section>
     </LsFlowDialog>
   );
 }
@@ -820,6 +799,7 @@ function OnboardingPanel({
   mode = "first",
   activeRun = false,
   restartFromBeginning = false,
+  initialStep = "start",
   dismissible = false,
   allowInitialPlan = true,
   onClose,
@@ -833,6 +813,7 @@ function OnboardingPanel({
   mode?: "first" | "rules";
   activeRun?: boolean;
   restartFromBeginning?: boolean;
+  initialStep?: "start" | "presenter";
   dismissible?: boolean;
   allowInitialPlan?: boolean;
   onClose?: () => void;
@@ -856,10 +837,10 @@ function OnboardingPanel({
   const [discoveryScopeNotice, setDiscoveryScopeNotice] = useState("");
   const [publishCount, setPublishCount] = useState(restoredRules.publishCount);
   const [selectedPublishPlatforms, setSelectedPublishPlatforms] = useState<Array<PublishingTarget["platform"]>>(() => {
-    const savedPlatforms = [...new Set(initial.publishingTargets.map((target) => target.platform))];
+    const savedPlatforms = weeklyPublishingPlatforms(initial.publishingTargets, initial.socialCadence);
     return savedPlatforms.length ? savedPlatforms : publishingPlatforms.slice();
   });
-  const [platformPublishCounts, setPlatformPublishCounts] = useState(() => platformCountsFromCadence(initial.socialCadence, restoredRules.publishCount));
+  const [platformPublishCounts, setPlatformPublishCounts] = useState(() => platformCountsFromCadence(initial.socialCadence, restoredRules.publishCount, initial.publishingTargets));
   const [connectedPublishingAccounts, setConnectedPublishingAccounts] = useState<PublishingTarget[]>([]);
   const [publishingAccountsLoading, setPublishingAccountsLoading] = useState(true);
   const [publishingAccountsError, setPublishingAccountsError] = useState("");
@@ -873,8 +854,8 @@ function OnboardingPanel({
   const [profileLoading, setProfileLoading] = useState(mode === "first");
   const [profileSaving, setProfileSaving] = useState(false);
   const [profileError, setProfileError] = useState("");
-  const [profileConfirmed, setProfileConfirmed] = useState(mode !== "first");
-  const [productConfirmed, setProductConfirmed] = useState(mode !== "first");
+  const [profileConfirmed, setProfileConfirmed] = useState(mode !== "first" || initialStep === "presenter");
+  const [productConfirmed, setProductConfirmed] = useState(mode !== "first" || initialStep === "presenter");
   const [brandName, setBrandName] = useState("");
   const [knowledgeProducts, setKnowledgeProducts] = useState<Array<Record<string, any>>>([]);
   const [productsLoading, setProductsLoading] = useState(mode === "first");
@@ -884,7 +865,7 @@ function OnboardingPanel({
   const [productImporting, setProductImporting] = useState(false);
   const [productImportMessage, setProductImportMessage] = useState("");
   const [contentStage, setContentStage] = useState<SocialContentStageId>();
-  const [stageConfirmed, setStageConfirmed] = useState(mode !== "first");
+  const [stageConfirmed, setStageConfirmed] = useState(mode !== "first" || initialStep === "presenter");
   const [stageSaving, setStageSaving] = useState(false);
   const [stageError, setStageError] = useState("");
   const [recommendedPlanOpen, setRecommendedPlanOpen] = useState(false);
@@ -927,6 +908,11 @@ function OnboardingPanel({
   }, [knowledgeProducts.length, profileConfirmed, readiness]);
   useEffect(() => setForm(completeConfig(initial)), [initial]);
   useEffect(() => {
+    if (mode === "first" && initialStep === "presenter") {
+      setProfileConfirmed(true); setProductConfirmed(true); setStageConfirmed(true);
+    }
+  }, [initialStep, mode]);
+  useEffect(() => {
     let active = true;
     void socialDiscoveryApi.getScope().then(({ scope }) => {
       if (!active) return;
@@ -944,7 +930,7 @@ function OnboardingPanel({
     setCollectionLimit(restoredRules.collectionLimit);
     setCollectionTime(restoredRules.collectionTime);
     setPublishCount(restoredRules.publishCount);
-    setPlatformPublishCounts(platformCountsFromCadence(initial.socialCadence, restoredRules.publishCount));
+    setPlatformPublishCounts(platformCountsFromCadence(initial.socialCadence, restoredRules.publishCount, initial.publishingTargets));
     setFollowupGenerateAt(restoredRules.followupGenerateAt);
     setFollowupApproveBy(restoredRules.followupApproveBy);
     setFollowupWindow(restoredRules.followupWindow);
@@ -998,7 +984,7 @@ function OnboardingPanel({
         const savedFocusProducts = String(profile.strategy?.focusProducts || "").split(/[、，,]/).map((item: string) => item.trim()).filter(Boolean);
         setRecommendedProducts(savedFocusProducts.length ? savedFocusProducts : recommendFocusProducts(loadedProducts));
         const loadedStage = socialContentStageProfile(profile.socialStrategy?.contentStage);
-        if (loadedStage) {
+        if (loadedStage && loadedStage.id !== "d2c_brand") {
           setContentStage(loadedStage.id);
           if (!restartFromBeginning) setStageConfirmed(true);
         }
@@ -1022,14 +1008,22 @@ function OnboardingPanel({
     return () => { cancelled = true; };
   }, [mode, restartFromBeginning]);
   const selectedPublishingTargets = form.publishingTargets.filter((target) => selectedPublishPlatforms.includes(target.platform));
-  const publishingConfigured = selectedPublishPlatforms.length > 0 && selectedPublishingTargets.length > 0;
+  const weeklyPublishingTotal = selectedPublishPlatforms.reduce((sum, platform) => sum + Math.max(0, Math.floor(platformPublishCounts[platform] || 0)), 0);
+  const invalidWeeklyPublishingQuota = selectedPublishPlatforms.some(platform => !Number.isInteger(platformPublishCounts[platform]) || platformPublishCounts[platform] < 1)
+    || weeklyPublishingTotal > MAX_WEEKLY_PUBLISHING_ITEMS;
+  const missingSelectedPublishingAccount = selectedPublishPlatforms.some(platform => !selectedPublishingTargets.some(target => target.platform === platform));
+  const publishingConfigured = selectedPublishPlatforms.length > 0 && !missingSelectedPublishingAccount && !invalidWeeklyPublishingQuota;
   const validationForm = publishingConfigured ? { ...form, publishingTargets: selectedPublishingTargets } : {
     ...form,
     enabledWorkflows: form.enabledWorkflows.filter((workflow) => workflow !== "content_publish"),
     publishingTargets: [],
     allowRealPublishing: false,
   };
-  const errors = configErrors(validationForm);
+  const errors = {
+    ...configErrors(validationForm),
+    ...(selectedPublishPlatforms.length && missingSelectedPublishingAccount ? { publishingTargets: "每个已选平台都需要选择一个发布账号" } : {}),
+    ...(selectedPublishPlatforms.length && invalidWeeklyPublishingQuota ? { weeklyPublishingQuota: `每个平台至少 1 条，合计不超过 ${MAX_WEEKLY_PUBLISHING_ITEMS} 条` } : {}),
+  };
   const errorLabels: Record<string, string> = {
     companyName: "企业名称",
     industry: "所属行业",
@@ -1044,6 +1038,7 @@ function OnboardingPanel({
     contentPublish: "内容发布设置",
     batchFollowup: "客户跟进设置",
     publishingTargets: "发布平台与账号",
+    weeklyPublishingQuota: "每周平台产量",
   };
   const missingConfigLabels = Object.keys(errors).map((key) => errorLabels[key] || key);
   const goToFirstMissingConfig = () => {
@@ -1338,7 +1333,8 @@ function OnboardingPanel({
     const enabledWorkflows = publishingConfigured
       ? [...new Set([...contentWorkflows, "content_publish" as DigitalEmployeeWorkflow])]
       : contentWorkflows.filter((workflow) => workflow !== "content_publish");
-    const publishingTargets = selectedPublishingTargets;
+    const publishingTargets = allocateWeeklyPublishingTargets(selectedPublishingTargets, platformPublishCounts);
+    const effectivePublishCount = selectedPublishPlatforms.length ? weeklyPublishingTotal : Math.max(0, Math.floor(publishCount || 0));
     const platformCounts = selectedPublishPlatforms.map((platform) => `${platform}=${platformPublishCounts[platform]}`).join(",");
     const completed = {
       ...form,
@@ -1346,7 +1342,7 @@ function OnboardingPanel({
       enabledWorkflows,
       allowRealPublishing: publishingConfigured && form.allowRealPublishing,
       team: ["planner", "knowledge", "risk", "review", ...(enabledWorkflows.some((item) => contentCreationWorkflows.includes(item)) ? ["content"] : []), ...(enabledWorkflows.some((item) => ["customer_segmentation", "batch_followup"].includes(item)) ? ["customer"] : [])],
-      socialCadence: `${collectionPlatforms}；${collectionSources}；关键词：${collectionKeywords || form.focusProducts || form.primaryBusiness}；关键词语言：${collectionLanguage}；近 ${collectionLookback} 天；${collectionTime}；每次最多 ${collectionLimit} 条；按链接与标题去重 30 天；每周生成 ${publishCount} 条发布草稿；发布平台：${selectedPublishPlatforms.join("、")}；各平台条数：${platformCounts}；账号范围：${publishingTargets.map(target => `${target.platform}/${target.accountLabel}`).join("、") || "未确认"}；发布节奏按视频矩阵执行`,
+      socialCadence: `${collectionPlatforms}；${collectionSources}；关键词：${collectionKeywords || form.focusProducts || form.primaryBusiness}；关键词语言：${collectionLanguage}；近 ${collectionLookback} 天；${collectionTime}；每次最多 ${collectionLimit} 条；按链接与标题去重 30 天；每周生成 ${effectivePublishCount} 条发布草稿；发布平台：${selectedPublishPlatforms.join("、")}；各平台条数：${platformCounts}；账号范围：${publishingTargets.map(target => `${target.platform}/${target.accountLabel}`).join("、") || "未确认"}；发布节奏按视频矩阵执行`,
       followupCadence: [followupGenerateAt, followupApproveBy, followupWindow, followupFrequency].every((value, index) => value === [restoredRules.followupGenerateAt, restoredRules.followupApproveBy, restoredRules.followupWindow, restoredRules.followupFrequency][index]) ? initial.followupCadence : `${followupGenerateAt}生成分层跟进草稿；${followupApproveBy}审批；${followupWindow}发送；${followupFrequency}`,
       reviewSchedule: reviewTimezone === restoredRules.reviewTimezone && reviewCutoff === restoredRules.reviewCutoff ? initial.reviewSchedule : `周五 17:30（${reviewTimezone}）；数据截止 ${reviewCutoff}；通知审批负责人；仅生成复盘和下周任务草稿`,
     };
@@ -1458,19 +1454,19 @@ function OnboardingPanel({
   if (mode === "first" && profileConfirmed && productConfirmed && stageConfirmed) return (
     <OnboardingGuideFrame
       step={4}
-      title="选择出镜人物和声音（可选）"
+      title="完成数字人接入（可选）"
       busy={stageSaving || busy}
       dismissible={dismissible}
       onClose={onClose}
       onBack={() => setStageConfirmed(false)}
       onSkip={() => void completeMinimalOnboarding()}
-      skipLabel="稍后设置人物与声音"
+      skipLabel="稍后设置数字人"
       primaryLabel={allowInitialPlan ? "生成推荐计划" : "完成引导并保存"}
       primaryId={allowInitialPlan ? recommendedPlanTriggerId : undefined}
       onPrimary={() => void openRecommendedPlan()}
     >
-      <section className="rounded-lg border border-slate-200 bg-white p-5" aria-label="初始配置人物授权与声音">
-        <EnterprisePresenters initialConfiguration onInitialSelection={() => { if (allowInitialPlan) void openRecommendedPlan(); }} />
+      <section className="rounded-lg border border-slate-200 bg-white p-5" aria-label="数字人接入配置">
+        <EnterprisePresenters initialConfiguration />
         {stageError && <p role="alert" className="mt-4 rounded-lg bg-red-50 px-4 py-3 text-xs font-semibold text-red-700">{stageError}</p>}
       </section>
     </OnboardingGuideFrame>
@@ -1552,11 +1548,11 @@ function OnboardingPanel({
         </section>}
         {activeRuleAgent === "business" && <section className="rounded-lg border border-slate-200 p-4">
           <div className="flex flex-wrap items-start justify-between gap-3"><div><p className="text-sm font-bold text-slate-900">周草稿、发布平台与具体账号</p><p className="mt-1 text-xs text-slate-500">默认向所有已连接账号和平台发布，具体节奏沿用视频矩阵。</p></div><div className="flex flex-wrap items-center gap-3"><Button htmlType="button" onClick={()=>{setSelectedPublishPlatforms([]);set("publishingTargets",[]);set("allowRealPublishing",false);}} className="!h-auto min-h-9 !whitespace-normal text-xs font-bold text-slate-600 hover:text-slate-950">本周暂不发布，仅生成内容</Button><Button htmlType="button" onClick={()=>onOpenReadiness({key:"social_accounts",label:"社媒账号",status:"empty",count:connectedPublishingAccounts.length,page:"accountManagement",note:"管理发布账号"})} className="!h-auto min-h-9 !whitespace-normal inline-flex items-center gap-1 text-xs font-bold text-blue-700">管理账号 <ExternalLink size={12}/></Button></div></div>
-          <div className="mt-4"><Field label="每周生成的草稿条数"><input className={inputClass} type="number" min={0} value={publishCount} onChange={event=>setPublishCount(Number(event.target.value))} /><p className="mt-1 text-[10px] text-slate-500">当前值从旧站发布条数恢复，用户可以直接修改。</p></Field></div>
-          <div className="mt-4 space-y-3">{publishingPlatforms.map(platform => { const selected=selectedPublishPlatforms.includes(platform); const accounts=connectedPublishingAccounts.filter(account=>account.platform===platform); return <div key={platform} className={`rounded-lg border p-3 ${selected?'border-violet-200 bg-violet-50/35':'border-slate-200 bg-slate-50'}`}><div className="flex flex-wrap items-center gap-3"><label className="flex min-w-36 items-center gap-2 text-xs font-semibold text-slate-900"><input type="checkbox" checked={selected} onChange={event=>setSelectedPublishPlatforms(current=>event.target.checked?[...new Set([...current,platform])]:current.filter(item=>item!==platform))}/>{contentPlatformLabel[platform]}</label><label className="ml-auto flex items-center gap-2 text-[11px] font-bold text-slate-600">每周发布<input type="number" min={0} disabled={!selected} value={platformPublishCounts[platform]} onChange={event=>setPlatformPublishCounts(current=>({...current,[platform]:Number(event.target.value)}))} className="w-20 rounded-lg border border-slate-200 bg-white px-2 py-1.5 text-right text-xs" />条</label></div><div className="mt-2 flex flex-wrap gap-2">{publishingAccountsLoading?<span className="text-[10px] text-slate-400">正在读取账号…</span>:accounts.length?accounts.map(account=>{const checked=form.publishingTargets.some(target=>target.accountId===account.accountId);return <label key={account.accountId} className={`flex items-center gap-1.5 rounded-lg border px-2.5 py-1.5 text-[10px] font-bold ${checked&&selected?'border-violet-200 bg-white text-violet-800':'border-slate-200 bg-white text-slate-400'}`}><input type="checkbox" disabled={!selected} checked={checked&&selected} onChange={()=>set('publishingTargets',checked?form.publishingTargets.filter(target=>target.accountId!==account.accountId):[...form.publishingTargets,account])}/>{account.accountLabel}</label>}):<span className="text-[10px] text-amber-700">尚未连接该平台账号</span>}</div></div>; })}</div>
+          {!selectedPublishPlatforms.length && <div className="mt-4"><Field label="仅生成内容时的每周草稿数"><input className={inputClass} type="number" min={0} max={MAX_WEEKLY_PUBLISHING_ITEMS} value={publishCount} onChange={event=>setPublishCount(Math.min(MAX_WEEKLY_PUBLISHING_ITEMS, Math.max(0, Math.floor(Number(event.target.value) || 0))))} /><p className="mt-1 text-xs text-slate-500">未选择发布平台时，只按这里生成内容草稿。</p></Field></div>}
+          <div className="mt-4 space-y-3">{publishingPlatforms.map(platform => { const selected=selectedPublishPlatforms.includes(platform); const accounts=connectedPublishingAccounts.filter(account=>account.platform===platform); return <div key={platform} className={`rounded-lg border p-3 ${selected?'border-violet-200 bg-violet-50/35':'border-slate-200 bg-slate-50'}`}><div className="flex flex-wrap items-center gap-3"><label className="flex min-w-36 items-center gap-2 text-xs font-semibold text-slate-900"><input type="checkbox" checked={selected} onChange={event=>setSelectedPublishPlatforms(current=>event.target.checked?[...new Set([...current,platform])]:current.filter(item=>item!==platform))}/>{contentPlatformLabel[platform]}</label><label className="ml-auto flex items-center gap-2 text-xs font-semibold text-slate-600">每周发布<input type="number" min={1} max={MAX_WEEKLY_PUBLISHING_ITEMS} disabled={!selected} value={platformPublishCounts[platform]} onChange={event=>setPlatformPublishCounts(current=>({...current,[platform]:Math.min(MAX_WEEKLY_PUBLISHING_ITEMS,Math.max(0,Math.floor(Number(event.target.value)||0)))}))} className="w-20 rounded-lg border border-slate-200 bg-white px-2 py-1.5 text-right text-sm" />条</label></div><div className="mt-2 flex flex-wrap gap-2">{publishingAccountsLoading?<span className="text-xs text-slate-500">正在读取账号…</span>:accounts.length?accounts.map(account=>{const checked=form.publishingTargets.some(target=>target.accountId===account.accountId);return <label key={account.accountId} className={`flex items-center gap-1.5 rounded-lg border px-2.5 py-1.5 text-xs font-semibold ${checked&&selected?'border-violet-200 bg-white text-violet-800':'border-slate-200 bg-white text-slate-500'}`}><input type="checkbox" disabled={!selected} checked={checked&&selected} onChange={()=>set('publishingTargets',checked?form.publishingTargets.filter(target=>target.accountId!==account.accountId):[...form.publishingTargets,account])}/>{account.accountLabel}</label>}):<span className="text-xs text-amber-700">尚未连接该平台账号</span>}</div></div>; })}</div>
           {publishingAccountsError&&<p className="mt-3 text-[10px] text-red-600">{publishingAccountsError}</p>}
           <label className="mt-4 flex items-start gap-3 rounded-lg border border-slate-200 bg-white p-3"><input type="checkbox" className="mt-0.5" checked={form.allowRealPublishing} onChange={event=>set("allowRealPublishing",event.target.checked)}/><span><span className="block text-xs font-semibold text-slate-900">审批通过后允许真实发布</span><span className="mt-0.5 block text-[10px] leading-5 text-slate-500">关闭时只生成发布草稿和排期，不会发送到社媒平台。</span></span></label>
-          <p className="mt-4 rounded-lg bg-slate-50 p-3 text-xs leading-5 text-slate-600">已选平台 {selectedPublishPlatforms.length} 个；发布时按各平台条数和所选账号进入视频矩阵排期。</p>
+          <p className={`mt-4 rounded-lg p-3 text-xs leading-5 ${invalidWeeklyPublishingQuota?'bg-red-50 text-red-700':'bg-slate-50 text-slate-600'}`}>{selectedPublishPlatforms.length ? `本周总计 ${weeklyPublishingTotal} 条；按各平台条数和所选账号进入同一份视频矩阵排期。` : '本周不安排发布，只生成内容草稿。'}{invalidWeeklyPublishingQuota ? ` 每个平台至少 1 条，合计不超过 ${MAX_WEEKLY_PUBLISHING_ITEMS} 条。` : ''}</p>
         </section>}
         {activeRuleAgent === "customer" && <details className="rounded-lg border border-emerald-100 bg-emerald-50/45 p-4">
           <summary className="cursor-pointer text-sm font-bold text-emerald-950">客服知识与接待信息（按需展开）</summary>
@@ -1612,7 +1608,10 @@ function GoalPanel({
   contentPlatform: ContentPlatform;
   onOpenSettings?: () => void;
 }) {
-  const configuredPlatforms = [...new Set([...socialOperatingProfile(config.socialOperatingProfile).accounts.map(account => account.platform), ...config.publishingTargets.map(target => target.platform)])];
+  const configuredTargetPlatforms = weeklyPublishingPlatforms(config.publishingTargets, config.socialCadence);
+  const configuredPlatforms = configuredTargetPlatforms.length
+    ? configuredTargetPlatforms
+    : [...new Set(socialOperatingProfile(config.socialOperatingProfile).accounts.map(account => account.platform))];
   const initialPlatforms = contentPlatform !== "all" && configuredPlatforms.includes(contentPlatform)
     ? [contentPlatform]
     : config.enabledWorkflows.includes("content_publish") ? configuredPlatforms : [configuredPlatforms[0]];
@@ -3795,7 +3794,9 @@ export default function DigitalEmployeePage({
   }), []);
 
   const [navigationNotice, setNavigationNotice] = useState("");
-  const [applicationGuideOpen, setApplicationGuideOpen] = useState(false);
+  const presenterConsentReturnRequested = Boolean(new URLSearchParams(window.location.search).get('presenterConsentReturn')?.trim());
+  const [applicationGuideOpen, setApplicationGuideOpen] = useState(presenterConsentReturnRequested);
+  const [applicationGuideEntry, setApplicationGuideEntry] = useState<"start" | "presenter">(presenterConsentReturnRequested ? "presenter" : "start");
   const [onboardingWelcomeOpen, setOnboardingWelcomeOpen] = useState(false);
   const [weeklyPlanOpen, setWeeklyPlanOpen] = useState(false);
   const [weeklyPlanDetailsOpen, setWeeklyPlanDetailsOpen] = useState(false);
@@ -3811,12 +3812,18 @@ export default function DigitalEmployeePage({
   const handledWeeklyPlanNavigation = useRef<number | null>(null);
 
   useEffect(() => {
-    const openGuide = () => setApplicationGuideOpen(true);
+    const openGuide = (event?: Event) => {
+      const requested = (event as CustomEvent<{ step?: string }> | undefined)?.detail?.step === 'presenter' ? 'presenter' : 'start';
+      setApplicationGuideEntry(requested);
+      setApplicationGuideOpen(true);
+    };
     window.addEventListener('lingshu:open-digital-employee-guide', openGuide);
     try {
-      if (sessionStorage.getItem('lingshu:open-digital-employee-guide') === 'true') {
+      const requested = sessionStorage.getItem('lingshu:open-digital-employee-guide');
+      if (requested === 'true' || requested === 'presenter') {
         sessionStorage.removeItem('lingshu:open-digital-employee-guide');
-        openGuide();
+        setApplicationGuideEntry(requested === 'presenter' ? 'presenter' : 'start');
+        setApplicationGuideOpen(true);
       }
     } catch { /* storage can be unavailable */ }
     return () => window.removeEventListener('lingshu:open-digital-employee-guide', openGuide);
@@ -3913,7 +3920,7 @@ export default function DigitalEmployeePage({
         setSelectedContentItemId("");
         setWorkspaceView("today");
         setWeeklyPlanOpen(false);
-        showActionSuccess("已定位本周计划", "可直接点击“开始周任务”启动生产，不再进入单独的计划详情页。");
+        showActionSuccess("已定位本周计划", "请先核对平台、产量、预算和排期，再确认开始生产。");
         handledWeeklyPlanNavigation.current = target.requestId;
       } catch (reason) {
         if (!active || requestVersion !== overviewRequestVersionRef.current || authorization !== authHeader().Authorization) return;
@@ -4063,7 +4070,7 @@ export default function DigitalEmployeePage({
         setWeeklyPlanOpen(false);
         showActionSuccess(
           "计划已按最新企业资料重建",
-          "新版周计划已回到智能经营。请再次点击“开始周任务”确认启动；原保存、批准或启动操作没有自动重试。",
+          "新版周计划已回到智能经营。请重新核对计划并确认开始生产；原保存、批准或启动操作没有自动重试。",
         );
       } catch (rebuildError) {
         if (authorization !== authHeader().Authorization) return;
@@ -4172,6 +4179,15 @@ export default function DigitalEmployeePage({
       (["completed", "cancelled"].includes(goal.status) || terminal) &&
       (!data?.run || terminal),
   );
+  const weeklyPlanningStage = !data?.config
+    ? 'setup_required'
+    : viewGoalId
+      ? 'history'
+      : activeRun
+        ? 'running'
+        : goal
+          ? 'planned'
+          : 'unplanned';
   const operatingState = !data?.config
       ? "首次配置中"
       : data.review?.status === "generated"
@@ -4186,6 +4202,92 @@ export default function DigitalEmployeePage({
     if (newGoal) setNewGoal(false);
     if (weeklyPlanOpen) setWeeklyPlanOpen(false);
   }, [activeRun, newGoal, weeklyPlanOpen]);
+
+  useEffect(() => {
+    const openWeeklyPlan = () => {
+      setError("");
+      if (!goal || canCreateNextGoal) {
+        setNewGoal(true);
+        setWeeklyPlanOpen(true);
+        return;
+      }
+      setNewGoal(false);
+      setWeeklyPlanOpen(false);
+      setWorkspaceView("today");
+      window.requestAnimationFrame(() => document.querySelector('[aria-label="当前周计划"]')?.scrollIntoView({
+        behavior: getScrollBehavior(),
+        block: "start",
+      }));
+    };
+    window.addEventListener('lingshu:open-weekly-plan', openWeeklyPlan);
+    return () => window.removeEventListener('lingshu:open-weekly-plan', openWeeklyPlan);
+  }, [canCreateNextGoal, goal?.id]);
+
+  const selectedContentItem = selectedContentItemId
+    ? data?.contentQueue?.items.find(item => item.id === selectedContentItemId)
+    : undefined;
+  useEffect(() => {
+    const visibleGoalId = viewGoalId || goal?.id || '';
+    const explicitlySelectedTask = selectedTaskId && selectedTask?.id === selectedTaskId ? selectedTask : undefined;
+    const viewLabel = workspaceView === 'today'
+      ? '经营总览'
+      : workspaceView === 'matrix'
+        ? '数字员工排期'
+        : workspaceView === 'rules'
+          ? 'Agent 设置'
+          : workspaceView === 'review'
+            ? '数据复盘'
+            : workspaceView === 'live' && selectedContentItem
+              ? '内容制作进度'
+              : '任务运行状态';
+    const focusSummary = selectedContentItem
+      ? `当前打开内容“${selectedContentItem.title}”，制作状态为${selectedContentItem.stage || selectedContentItem.status}。优先回答这条内容的进度、缺项与恢复方式。`
+      : explicitlySelectedTask
+        ? `当前查看任务“${explicitlySelectedTask.title}”，状态为${statusLabel[explicitlySelectedTask.status] || explicitlySelectedTask.status}。优先回答该任务的下一步。`
+        : goal
+          ? `当前查看${viewGoalId ? '历史' : '本周'}计划“${goal.title}”的${viewLabel}。`
+          : `当前在${viewLabel}，本周还没有计划。应先帮助用户制定并预览周计划，确认后才能开始生产。`;
+    window.dispatchEvent(new CustomEvent('lingshu-assistant-context', {
+      detail: {
+        sourcePage: 'digitalEmployees',
+        agent: 'strategy',
+        label: viewLabel,
+        summary: focusSummary,
+        suggestions: selectedContentItem
+          ? ['这条内容现在做到哪一步', '还缺什么才能继续', '从当前节点继续制作']
+          : explicitlySelectedTask
+            ? ['这个任务为什么停住', '告诉我下一步怎么处理', '核对当前真实状态']
+            : weeklyPlanningStage === 'unplanned'
+              ? ['帮我制定本周计划', '计划里会包含什么', '开始前还缺什么']
+              : ['查看当前经营重点', '核对本周计划范围', '查看需要我处理的事项'],
+        workflowStage: weeklyPlanningStage,
+        goalId: visibleGoalId,
+        planId: data?.plan?.id || '',
+        runId: data?.run?.id || '',
+        taskId: explicitlySelectedTask?.id || selectedContentItem?.taskId || '',
+        contentId: selectedContentItem?.contentId || selectedContentItem?.id || '',
+        viewKey: workspaceView,
+      },
+    }));
+  }, [
+    data?.plan?.id,
+    data?.run?.id,
+    goal?.id,
+    goal?.title,
+    selectedContentItem?.contentId,
+    selectedContentItem?.id,
+    selectedContentItem?.stage,
+    selectedContentItem?.status,
+    selectedContentItem?.taskId,
+    selectedContentItem?.title,
+    selectedTask?.id,
+    selectedTask?.status,
+    selectedTask?.title,
+    selectedTaskId,
+    viewGoalId,
+    weeklyPlanningStage,
+    workspaceView,
+  ]);
 
   const requestOverviewRange = (nextRange: ReturnType<typeof overviewRange>, period?: OverviewPeriod) => {
     const version = ++overviewRequestVersionRef.current;
@@ -4320,9 +4422,9 @@ export default function DigitalEmployeePage({
           tasks: draftPackage.tasks.map(task => task.templateId === "production" ? { ...task, videoPlans } : task),
           directorPlan: {
             ...draftPackage.directorPlan,
-            originalTarget: plan.count,
-            platformVersionTarget: plan.count * plan.platforms.length,
-            publishTarget: plan.count * plan.platforms.length,
+            originalTarget: videoPlans.length,
+            platformVersionTarget: videoPlans.length,
+            publishTarget: videoPlans.length,
             productionBudget: plan.budgetCapCny,
             productionBudgetMax: plan.budgetCapCny,
             productionBudgetMin: Math.min(draftPackage.directorPlan.productionBudgetMin || 0, plan.budgetCapCny),
@@ -4376,7 +4478,7 @@ export default function DigitalEmployeePage({
   };
 
   const createWeeklyOutline = async (goalInput: GoalDraft) => {
-    setBusy("confirm-weekly-plan");
+    setBusy("create-weekly-plan");
     setError("");
     try {
       const created = await digitalEmployeeApi.createGoal(goalInput);
@@ -4386,7 +4488,7 @@ export default function DigitalEmployeePage({
       setNewGoal(false);
       setWeeklyPlanOpen(false);
       setWorkspaceView("today");
-      showActionSuccess("周目标已生成", "计划已回到智能经营；点击“开始周任务”即可编排并启动生产。");
+      showActionSuccess("周计划已生成", "计划已显示在智能经营首页。核对平台、产量、预算和排期后，再确认开始生产。");
     } catch (actionError) {
       setError(actionError instanceof Error ? actionError.message : "周目标生成失败");
       await load();
@@ -4401,7 +4503,7 @@ export default function DigitalEmployeePage({
     if (!next) return;
     const detail = next.plan?.businessPackage?.detailGeneration;
     if (detail?.status === 'ready') showActionSuccess("任务详情已生成", detail.blockedCount
-      ? `${detail.readyCount} 条母版可以开始；${detail.blockedCount} 条只在缺少动态产品/工厂视频等对应镜头处等待，不影响其他内容。`
+      ? `${detail.readyCount} 条视频可以开始；${detail.blockedCount} 条只在缺少动态产品/工厂视频等对应镜头处等待，不影响其他内容。`
       : "爆款参考、素材组合和编导分镜已经保存，刷新页面也不会丢失。");
     else showActionSuccess("制作准备已完成", `有 ${detail?.blockedCount || 0} 条任务需要先补素材、授权或预算。`);
   };
@@ -4692,7 +4794,11 @@ export default function DigitalEmployeePage({
         ? busy ? "正在恢复生产…" : "继续生产"
       : activeRun
         ? data.run?.status === "paused" ? "继续周任务" : "暂停周任务"
-        : canCreateNextGoal ? "开始下一周任务" : "开始周任务";
+        : !goal
+          ? "制定周计划"
+          : canCreateNextGoal
+            ? "制定下一周计划"
+            : "确认并开始生产";
     const openContentProduction = (taskId?: string, socialContentTaskId?: string, projectId?: string) => {
       if (projectId) {
         const contentProductionTask = data.tasks.find(item => item.run_id === data.run?.id && item.task_key === "content_production")
@@ -4752,7 +4858,7 @@ export default function DigitalEmployeePage({
           onOk: async () => { const next = await act('cancel', () => digitalEmployeeApi.cancelRun(data.run!.id)); if (next) publishWeeklyWorkUpdate(next); },
         });
       }}>删除旧任务</Button>}
-      <Button type="primary" loading={Boolean(busy)} onClick={()=>void controlWeeklyWork()} icon={activeRun && !recoverableProductionTask && data.run?.status !== "paused" ? <Pause size={15}/> : <Play size={15}/>}>{weeklyControlLabel}</Button>
+      <Button type="primary" loading={Boolean(busy)} onClick={()=>void controlWeeklyWork()} icon={!activeRun && (!goal || canCreateNextGoal) ? <CalendarRange size={15}/> : activeRun && !recoverableProductionTask && data.run?.status !== "paused" ? <Pause size={15}/> : <Play size={15}/>}>{weeklyControlLabel}</Button>
     </>;
     return (
       <>
@@ -4770,7 +4876,7 @@ export default function DigitalEmployeePage({
               notice={!activeRun && !viewGoalId && (missingReferenceMasters.length > 0 || missingProductMasters.length > 0 || detailGeneration?.status === "blocked")
                 ? <p className="mr-auto text-xs text-text-secondary">可直接开始任务；{detailGeneration?.blockedCount || missingReferenceMasters.length || missingProductMasters.length} 条内容的待补资料将在对应制作步骤提示，不阻止其他内容推进。账号连接与发布授权在正式发布前核验。</p>
                 : undefined}
-            /> : <><section className="overflow-hidden rounded-lg border border-border bg-white"><div className="flex flex-wrap items-start justify-between gap-4 px-5 py-4"><div><p className="text-xs font-semibold text-accent">周经营计划</p><p className="mt-1 text-sm font-bold text-slate-800">本周还没有可执行计划</p><p className="mt-1 text-xs text-slate-500">点击“开始周任务”确定平台、账号、视频产量和预算，再选择产品并确认工作排期。</p></div><div aria-label="智能经营控制" className="flex max-w-full flex-wrap items-center justify-end gap-2">{weeklyPlanControls}</div></div></section>{weeklyActionFeedback && <div className="border-b border-border px-4 py-2.5">{weeklyActionFeedback}</div>}</>}
+            /> : <><section className="overflow-hidden rounded-lg border border-border bg-white"><div className="flex flex-wrap items-start justify-between gap-4 px-5 py-4"><div className="max-w-2xl"><p className="text-xs font-semibold text-accent">周经营计划</p><p className="mt-1 text-sm font-bold text-slate-800">本周还没有计划</p><p className="mt-1 text-xs leading-5 text-slate-500">先制定并预览周计划。计划会说明本周做什么、在哪些平台生产、产量、预计预算和工作排期；确认前不会开始生产。</p></div><div aria-label="智能经营控制" className="flex max-w-full flex-wrap items-center justify-end gap-2">{weeklyPlanControls}</div></div></section>{weeklyActionFeedback && <div className="border-b border-border px-4 py-2.5">{weeklyActionFeedback}</div>}</>}
           </div>
           <aside aria-label="企业经营分" className="min-w-0 border-t border-border xl:border-l xl:border-t-0 [&_section]:rounded-none [&_section]:border-0"><BusinessHealthOverview summaryOnly data={data} selectedAccountId={selectedAccountId} overviewRangeBusy={busy === "overview-range"} onOverviewRangeChange={changeOverviewDateRange}/></aside><BusinessInterpretation data={data} onViewReview={() => setWorkspaceView("review")}/></div>
           <Tabs className="mt-3" aria-label="智能经营视图" activeKey={workspaceView === "live" || workspaceView === "overview" ? "review" : workspaceView} onChange={key => {setWorkspaceView(key as WorkspaceView); setSelectedContentItemId("");}} items={views.map(view => ({key: view.id, label: view.label}))}/>
@@ -4799,13 +4905,14 @@ export default function DigitalEmployeePage({
           readiness={data.businessSnapshot?.readiness || []}
           busy={Boolean(busy)}
           allowInitialPlan={false}
-          restartFromBeginning
+          restartFromBeginning={applicationGuideEntry === "start"}
+          initialStep={applicationGuideEntry}
           dismissible
-          onClose={() => setApplicationGuideOpen(false)}
+          onClose={() => { setApplicationGuideOpen(false); setApplicationGuideEntry("start"); }}
           onOpenReadiness={openReadiness}
           onSave={async config => {
             const saved = await saveConfig(config);
-            if (saved) setApplicationGuideOpen(false);
+            if (saved) { setApplicationGuideOpen(false); setApplicationGuideEntry("start"); }
             return saved;
           }}
         />

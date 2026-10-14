@@ -1910,6 +1910,7 @@ export default function ConversionPage({ onLeaveConversation: _onLeaveConversati
     window.dispatchEvent(new CustomEvent('lingshu-assistant-context', {
       detail: {
         agent: 'conversion',
+        sourcePage: 'conversion',
         label: viewLabel,
         summary,
         pendingCount: customerPendingCount,

@@ -1,3 +1,4 @@
+import {synthesizeBoundHeyGenVoice} from '../lib/studioBoundHeyGenVoice.js';
 import {submitStudioVoicePaidRequest, studioVoicePaidContext, StudioVoicePaidBoundaryError, withStudioVoicePaidContext, rethrowStudioVoicePaidBoundary, type StudioVoicePaidContext} from '../lib/studioVoicePaidOperation.js';
 import { submitStoryboardSeedance } from '../lib/storyboardSeedanceSubmission.js';
 import { mvpBudgetAdmission } from '../lib/mvpBudgetAdmission.js';
@@ -24,11 +25,11 @@ import { materialRoleFromFolder, safeMaterialScenes, safeMaterialVoicePlan } fro
 import { productIdentity } from '../digitalEmployees/contentProduction.js';
 import { enterpriseAssetStableId } from '../digitalEmployees/contentBatchPlan.js';
 import { resolveMaterialProductAssociation } from '../digitalEmployees/materialProductionReadiness.js';
-import { requestMaterialAnalysis, waitForMaterialAnalysis, isMaterialAnalysisActive, saveMaterialSegmentsWithScriptAnalysis, startPendingLocalMaterialAnalyses } from '../lib/materialLibraryAnalysis.js';
+import { requestMaterialAnalysis, waitForMaterialAnalysis, isMaterialAnalysisActive, saveMaterialSegmentsWithScriptAnalysis } from '../lib/materialLibraryAnalysis.js';
 import { readMaterialLibrary, readLocalMaterials, saveLocalMaterials, updateLocalMaterial } from '../lib/materialLibrary.js';
 import { filterMyGeneratedMaterials, projectGeneratedMaterial } from '../../src/lib/generatedMaterial.js';
 import { ASSET_GENERATION_KINDS } from '../../shared/contracts/generatedMaterial.js';
-import { currentDataAuthority } from '../storage/dataAuthority.js';
+import { reconcileStudioProductionSpec, studioProductionSnapshotIssues } from '../../shared/studioProductionContract.js';
 import { mixedStoryboardRules, mixedStoryboardIssues } from './mixedStoryboardContract.js';
 import { alignQwenFile } from '../integrations/qwenAlignment.js';
 import { contentLibraryRouter } from './contentLibrary.js';
@@ -146,7 +147,7 @@ export {
   unconfirmedEnterpriseProductFields,
   unsupportedNumericClaims,
 } from '../lib/studioGenerationTruthfulness.js';
-import { canAppearInSharedLibrary, isReferenceOnlyMaterial, materialUsage, type MaterialUsage } from '../lib/materialPolicy.js';
+import { canAppearInSharedLibrary, isReferenceOnlyMaterial, isWorkflowInternalMaterial, materialUsage, type MaterialUsage } from '../lib/materialPolicy.js';
 import { cloudMaterialView, createCloudMaterial, deleteOwnedCloudMaterial, fetchCloudMaterial, getCloudMaterialRecord, getOwnedCloudMaterialRecord, listCloudMaterials, updateCloudMaterial, upsertTenantUploadCloudMaterial } from '../lib/cloudMaterials.js';
 import { analyzeVideo } from '../agents/gemini.js';
 import {
@@ -6784,7 +6785,8 @@ export function productionAnalysisSegments(id: string, duration: number, analysi
 }
 
 // GET /studio/materials?scope=shared|own&purpose=library|reference|all&origin=generated
-// 素材库是统一使用边界：所有已入库视觉素材都可进入创作。
+// User-facing libraries exclude durable workflow intermediates. Production
+// routes use purpose=all when they need to resume from those internal assets.
 studioRouter.get('/materials', async (req, res) => {
   const { tenantId } = res.locals as AuthLocals;
   const scope = req.query.scope as string | undefined;
@@ -6793,9 +6795,9 @@ studioRouter.get('/materials', async (req, res) => {
     readMaterialLibrary(tenantId),
     readTenantEnterpriseProfile(tenantId),
   ]);
-  // Legacy local imports wrote materials.json directly. Start their visual
-  // indexing when the owner opens the library; the response stays immediate.
-  if (currentDataAuthority() === 'local') startPendingLocalMaterialAnalyses(tenantId, inventory.items);
+  // Listing the library is read-only. Analysis is started only by an explicit
+  // selected-material action below; opening a page must never scan every local
+  // video, call a provider or consume a production budget.
   let list = [...new Map([
     ...enterpriseProductMaterials(tenantId, enterpriseProfile),
     ...inventory.items as Material[],
@@ -6811,8 +6813,8 @@ studioRouter.get('/materials', async (req, res) => {
   });
   if (scope === 'shared') list = list.filter(canAppearInSharedLibrary);
   else if (scope === 'own') list = list.filter(m => (m.scope ?? 'own') === 'own');
-  if (purpose === 'reference') list = list.filter(isReferenceOnlyMaterial);
-  else if (purpose !== 'all') list = list.filter(m => !isReferenceOnlyMaterial(m));
+  if (purpose === 'reference') list = list.filter(m => isReferenceOnlyMaterial(m) && !isWorkflowInternalMaterial(m));
+  else if (purpose !== 'all') list = list.filter(m => !isReferenceOnlyMaterial(m) && !isWorkflowInternalMaterial(m));
   const origin = String(req.query.origin || '');
   const assetGenerationKind = String(req.query.assetGenerationKind || '');
   const qualityState = String(req.query.qualityState || '');
@@ -8384,7 +8386,7 @@ function studioNativeTtsCacheKey(tenantId:string,spoken:string,voice:string,lang
 function readStudioNativeTtsCache(tenantId:string,text:string,voice:string,language:string,style:TtsStyleOptions) {
  const key=studioNativeTtsCacheKey(tenantId,text,voice,language,style),dir=tenantAssetDir(TTS_ROOT,tenantId),file=path.join(dir,`sentence-${key}.json`);
  try {const cached=JSON.parse(fs.readFileSync(file,'utf8'));const audio=path.join(dir,path.basename(new URL(cached.url,'http://local').pathname));
-  if(!cached.ok || !['qwen_tts','minimax'].includes(cached.source) || !fs.existsSync(audio) || !fs.realpathSync(audio).startsWith(fs.realpathSync(dir)+path.sep))return null;
+  if(!cached.ok || !['qwen_tts','minimax','heygen'].includes(cached.source) || !fs.existsSync(audio) || !fs.realpathSync(audio).startsWith(fs.realpathSync(dir)+path.sep))return null;
   const bytes=fs.readFileSync(audio);if(bytes.length<=44)return null;
   return {cacheKey:key,provider:cached.source as string,audioSha256:createHash('sha256').update(bytes).digest('hex'),durationSeconds:Number(cached.duration),measuredWavDurationSeconds:wavDurationFromBytes(bytes),receiptVerificationRequired:true};
  } catch {return null;}
@@ -8399,7 +8401,7 @@ async function generateTtsAudio(spoken: string, voice: string, language = 'zh', 
   try {
     const cached = JSON.parse(fs.readFileSync(cacheFile,'utf8')) as CachedTtsResult;
     const file = cached.url ? path.join(dir,path.basename(new URL(cached.url,'http://local').pathname)) : '';
-    if (cached.ok && ['qwen_tts','minimax'].includes(cached.source) && file && fs.existsSync(file) && fs.statSync(file).size > 44) {
+    if (cached.ok && ['qwen_tts','minimax','heygen'].includes(cached.source) && file && fs.existsSync(file) && fs.statSync(file).size > 44) {
       const context=studioVoicePaidContext();
       if(context && !await context.verifyCachedAudio?.({tenantId,text:spoken,logicalVoice:voice,language,provider:cached.source,audioSha256:createHash('sha256').update(fs.readFileSync(file)).digest('hex'),durationSeconds:Number(cached.duration)})) throw new StudioVoicePaidBoundaryError('voice_existing_cache_requires_canonical_receipt_verification');
       return cached;
@@ -8407,7 +8409,7 @@ async function generateTtsAudio(spoken: string, voice: string, language = 'zh', 
   } catch(error) { rethrowStudioVoicePaidBoundary(error); /* missing/invalid cache is regenerated */ }
   const existing = inFlightTts.get(key); if(existing) {if(studioVoicePaidContext())throw new StudioVoicePaidBoundaryError('voice_existing_submission_requires_original_receipt');return existing;}
   const pending = generateTtsAudioUncached(spoken,voice,language,style,requireNatural).then(async result=>{
-    if(result.ok && ['qwen_tts','minimax'].includes(result.source)) {
+    if(result.ok && ['qwen_tts','minimax','heygen'].includes(result.source)) {
       const context=studioVoicePaidContext();
       if(context?.persistAudioCacheProof && result.url) {const audioFile=path.join(dir,path.basename(new URL(result.url,'http://local').pathname));if(fs.existsSync(audioFile)) await context.persistAudioCacheProof({tenantId,text:spoken,logicalVoice:voice,language,provider:result.source,audioSha256:createHash('sha256').update(fs.readFileSync(audioFile)).digest('hex'),durationSeconds:Number(result.duration)});}
       fs.mkdirSync(dir,{recursive:true});const tmp=cacheFile+'.tmp';fs.writeFileSync(tmp,JSON.stringify(result),{mode:0o600});fs.renameSync(tmp,cacheFile);
@@ -8418,6 +8420,11 @@ async function generateTtsAudio(spoken: string, voice: string, language = 'zh', 
 }
 
 async function generateTtsAudioUncached(spoken: string, voice: string, language = 'zh', style: TtsStyleOptions = {}, requireNatural = false): Promise<{ ok: boolean; source: string; url?: string; duration?: number; error?: string; customVoiceStatus?: 'activated'; cues?: AlignedCue[]; alignmentSource?: 'minimax_native' }> {
+  if (voice.startsWith('heygen:')) {
+    const output = path.join(scopedStudioAssetDir(TTS_ROOT), randomUUID() + '.wav');
+    const result = await synthesizeBoundHeyGenVoice({ text: spoken, voiceId: voice.split(':')[1] || '', language, output });
+    return { ok: true, source: 'heygen', url: scopedStudioAssetUrl('tts', path.basename(output)), duration: result.duration };
+  }
   if (spoken.length > 5000) return { ok: false, source: 'text_too_long', error: '口播超过 5000 字符，请拆分视频；配音不会截断正文。' };
   if (!(normalizeTtsLanguage(language) in VIDEO_LANGUAGES)) return { ok: false, source: 'unsupported_language', error: '当前不支持此配音语言，请重新选择；不会改用中文。' };
   if (String(voice || '').startsWith('custom:')) {
@@ -8821,7 +8828,7 @@ export function splitStudioNarrationSentences(spoken: string): string[] {
 
 /** Read-only view of the exact native selection policy used below. Physical
  * voices and prepared paid text are resolved before supplier pricing. */
-export function resolveStudioVoiceExecutionPlan(input:{tenantId:string;text:string;voice?:string;language?:string;style?:TtsStyleOptions;sentenceLines?:string[];measuredSentenceTiming?:boolean;env?:NodeJS.ProcessEnv;nativeProvider?:'qwen'|'minimax'}) {
+export function resolveStudioVoiceExecutionPlan(input:{tenantId:string;text:string;voice?:string;language?:string;style?:TtsStyleOptions;sentenceLines?:string[];measuredSentenceTiming?:boolean;env?:NodeJS.ProcessEnv;nativeProvider?:'qwen'|'minimax'|'heygen'}) {
  return studioTenantContext.run(input.tenantId,()=>{
   const env=input.env||process.env;
   const spoken=String(input.text||'').trim(),voice=input.voice||'v1',language=input.language||'en';
@@ -8836,6 +8843,13 @@ export function resolveStudioVoiceExecutionPlan(input:{tenantId:string;text:stri
   const expressive=env.TTS_PREFER_EXPRESSIVE_PROVIDER!=='false'&&minimaxConfigured&&Boolean(style.preset||style.emotion||style.pauseStyle||style.pronunciations?.length);
   const account=(provider:'minimax'|'qwen')=>createHash('sha256').update(provider==='minimax'?env.MINIMAX_API_KEY||env.MINIMAX_API_TOKEN||'':env.DASHSCOPE_API_KEY||'').digest('hex');
   const native=(provider:'minimax'|'qwen')=>({provider,model:provider==='minimax'?env.MINIMAX_TTS_MODEL||'speech-2.8-hd':env.QWEN_TTS_MODEL||'qwen3-tts-flash',accountKeyHash:account(provider),endpoint:provider==='minimax'?minimaxEndpoint('/v1/t2a_v2',env):env.DASHSCOPE_TTS_ENDPOINT||'https://dashscope.aliyuncs.com/api/v1/services/aigc/multimodal-generation/generation',voiceId:provider==='minimax'?minimaxVoiceFor(voice,language,env):env[`QWEN_TTS_VOICE_${voice.toUpperCase()}`]||QWEN_TTS_VOICE_MAP[voice]||'Cherry',texts:texts.map(text=>provider==='minimax'?minimaxSpeechText(text,style).slice(0,5000):text.slice(0,5000))});
+  if (voice.startsWith('heygen:')) {
+   const voiceId = voice.split(':')[1];
+   if (!voiceId || !env.HEYGEN_API_KEY?.trim()) throw Error('selected_presenter_heygen_voice_unavailable');
+   if (spoken.length > 5000) throw Error('selected_presenter_voice_text_exceeds_provider_limit');
+   if (input.nativeProvider && input.nativeProvider !== 'heygen') throw Error('selected_presenter_frozen_voice_provider_mismatch');
+   return {mode:!spoken?'none' as const:'continuous' as const,lines,texts:[spoken],logicalVoice:voice,language,custom:null,primary:{provider:'heygen' as const,model:'starfish',accountKeyHash:createHash('sha256').update(env.HEYGEN_API_KEY.trim()).digest('hex'),endpoint:'https://api.heygen.com/v3/voices/speech',voiceId,texts:[spoken]},fallback:null,cacheCandidates:[],asrConfigured:env.TTS_ASR_QA_ENABLED!=='false'&&dashscopeCredentialConfigured(env)};
+  }
   if(voice.startsWith('custom:')) {
    const sample=voiceSamplePathFromId(voice);const key=sample?minimaxVoiceCacheKey(voice,sample):null;
    const cached=key?readMinimaxVoiceCache()[key]:null;
@@ -8873,13 +8887,26 @@ export async function synthesizeStudioVoiceForAutomation(input: {
     if (!input.measuredSentenceTiming && lines.length > 1 && lines.length <= 100 && spoken.length <= 5000) {
       const audio = await generateTtsAudio(spoken, input.voice || 'v1', input.language || 'en', normalizeTtsStyle(input.style || { preset: 'authentic_review' }), true);
       if (!audio.ok || !audio.url) return { ok: false, error: audio.error || '配音生成失败' };
-      const trustedProvider = ['qwen_tts', 'minimax', 'xtts_clone'].includes(audio.source);
+      const trustedProvider = ['qwen_tts', 'minimax', 'xtts_clone', 'heygen'].includes(audio.source);
       if (!trustedProvider) return { ok: false, source: audio.source, error: audio.error || '自然人声服务暂不可用，已停止使用系统机械音色；请检查语音服务或录入个人声音' };
       const source = path.join(dir, path.basename(new URL(audio.url, 'http://local').pathname));
       const joined = path.join(dir, randomUUID() + '.wav');
       const postSpeed = ttsPostProcessingSpeed(audio.source, speed);
       await execFileAsync(ffmpegStatic || 'ffmpeg', ['-y', '-i', source, '-af', 'atempo=' + postSpeed + ',highpass=f=60,loudnorm=I=-16:TP=-1.5:LRA=7,alimiter=limit=0.95,apad=pad_dur=0.15', '-ar', '24000', '-ac', '1', '-c:a', 'pcm_s16le', joined], 30000);
-      const duration = wavDurationFromBytes(fs.readFileSync(joined));
+      let duration = wavDurationFromBytes(fs.readFileSync(joined));
+      // The provider may return a track a few hundred milliseconds longer
+      // than the frozen film. Fit that performance locally before ASR/align so
+      // metered seconds stay inside the whole-film reservation and the final
+      // word is preserved instead of being cut off by the renderer.
+      const frozenDuration = Number(input.targetDuration);
+      if (Number.isFinite(frozenDuration) && frozenDuration > .15 && duration > frozenDuration + .02) {
+        const fitted = joined + '.fitted.wav';
+        const ratio = duration / frozenDuration;
+        if (ratio > 2) return { ok: false, source: audio.source, error: '口播明显超过成片时长，请调整脚本。' };
+        await execFileAsync(ffmpegStatic || 'ffmpeg', ['-y', '-i', joined, '-af', `atempo=${ratio},atrim=duration=${frozenDuration}`, '-ar', '24000', '-ac', '1', '-c:a', 'pcm_s16le', fitted], 30000);
+        fs.renameSync(fitted, joined);
+        duration = wavDurationFromBytes(fs.readFileSync(joined));
+      }
       if (!(duration > .15)) return { ok: false, error: '无法测量实际配音时长' };
       const spokenDuration = Math.max(.15, duration - .15);
       const weights = lines.map(line => Math.max(1, [...line.replace(/[\s，,。.!！?？；;：:、]/g, '')].length));
@@ -8901,7 +8928,8 @@ export async function synthesizeStudioVoiceForAutomation(input: {
         ...(cue.words ? { words: cue.words.map(word => ({ ...word, start: word.start / postSpeed, end: word.end / postSpeed })) } : {}),
       })).filter(cue => cue.text && cue.end > cue.start) : continuousCues;
       const result = await persistTtsResult({ ok: true, url: scopedStudioAssetUrl('tts', path.basename(joined)), duration }, input.tenantId);
-      const qualityReport = await inspectGeneratedVoice({ filePath: joined, expectedText: spoken, language: input.language || 'en' });
+      const qualityReport = await inspectGeneratedVoice({ filePath: joined, expectedText: spoken, language: input.language || 'en', asrRequired: false,
+        deferAsrToAlignment: audio.source === 'heygen' && Boolean(input.paidContext) });
       if (!qualityReport.passed) return { ok: false, source: audio.source, error: `口播质量未通过：${qualityReport.failures.join('；')}`, qualityReport };
       // Proportional sentence splits of one continuous performance are useful
       // for subtitle preview, but they are not measured audio boundaries.
@@ -8913,7 +8941,7 @@ export async function synthesizeStudioVoiceForAutomation(input: {
     for (const line of lines) {
       const audio = await generateTtsAudio(line, input.voice || 'v1', input.language || 'en', normalizeTtsStyle(input.style || { preset: 'authentic_review' }), true);
       if (!audio.ok || !audio.url) return { ok: false, error: audio.error || '配音生成失败' };
-      const trustedProvider = ['qwen_tts', 'minimax', 'xtts_clone'].includes(audio.source);
+      const trustedProvider = ['qwen_tts', 'minimax', 'xtts_clone', 'heygen'].includes(audio.source);
       if (!trustedProvider) return { ok: false, source: audio.source, error: audio.error || '自然人声服务暂不可用，已停止使用系统机械音色；请检查语音服务或录入个人声音' };
       providers.add(audio.source);
       const source = path.join(dir, path.basename(new URL(audio.url, 'http://local').pathname));
@@ -8929,7 +8957,7 @@ export async function synthesizeStudioVoiceForAutomation(input: {
     const inputs = files.flatMap(file => ['-i', file]);
     await execFileAsync(ffmpegStatic || 'ffmpeg', ['-y', ...inputs, '-filter_complex', files.map((_,i) => '['+i+':a]').join('') + 'concat=n=' + files.length + ':v=0:a=1[joined];[joined]loudnorm=I=-16:TP=-1.5:LRA=7,alimiter=limit=0.95[out]', '-map', '[out]', '-c:a', 'pcm_s16le', joined], 60000);
     const result = await persistTtsResult({ ok: true, url: scopedStudioAssetUrl('tts', path.basename(joined)), duration: cursor }, input.tenantId);
-    const qualityReport = await inspectGeneratedVoice({ filePath: joined, expectedText: spoken, language: input.language || 'en' });
+    const qualityReport = await inspectGeneratedVoice({ filePath: joined, expectedText: spoken, language: input.language || 'en', asrRequired: false });
     if (!qualityReport.passed) return { ok: false, source: [...providers].join('+'), error: `口播质量未通过：${qualityReport.failures.join('；')}`, qualityReport };
     fs.writeFileSync(joined + '.alignment.json', JSON.stringify({ text: spoken, cues, source: 'synthesized_sentence_audio' }));
     for (const file of files) fs.unlinkSync(file);
@@ -9711,6 +9739,17 @@ studioRouter.post('/projects', async (req, res) => {
   const { id, title, status = 'draft', spec: rawSpec = {}, thumbSeed, baseUpdatedAt } = req.body ?? {};
   const socialTaskId = socialProjectTaskId(res.locals);
   let spec = normalizeFreeCreationProjectSpec(studioProjectSpecForStorage(bindSocialProjectSpec(rawSpec, socialTaskId)));
+  const productionSnapshotIssues = studioProductionSnapshotIssues(spec);
+  if (productionSnapshotIssues.length) {
+    res.status(409).json({
+      ok: false,
+      code: 'STUDIO_PRODUCTION_CONTRACT_CONFLICT',
+      error: '当前草稿的脚本、分镜或生产结果存在不一致版本，已停止保存以避免使用旧数据生产。请刷新后重试。',
+      reasons: productionSnapshotIssues,
+    });
+    return;
+  }
+  spec = reconcileStudioProductionSpec(spec);
   if (!id && spec.resolvedStudioContract) { res.status(403).json({ok:false,code:'studio_frozen_contract_server_owned',error:'冻结制作计划只能由受信任业务流程绑定'}); return; }
   const automation = spec.automation && typeof spec.automation === 'object' && !Array.isArray(spec.automation)
     ? spec.automation as Record<string, unknown> : {};

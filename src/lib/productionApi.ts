@@ -1,16 +1,21 @@
 import { authHeader } from './auth';
 import type { AvatarJob, ProductionDefaults, ShotProduction, PresenterAsset } from './shotProduction';
 import type { DigitalHumanExecutionRecord, DigitalHumanPlanRecord } from './digitalHumanPlan';
+import { notifyAssistantStateInvalidated } from './assistantStateInvalidation';
 async function request<T>(path: string, body?: unknown): Promise<T> {
   const response = await fetch(`/api/overseas/studio/production${path}`, { method: body === undefined ? 'GET' : 'POST', headers: { 'Content-Type': 'application/json', ...authHeader() }, ...(body === undefined ? {} : { body: JSON.stringify(body) }) });
   const value = await response.json();
   if (!response.ok) throw new Error(value.error || `服务请求失败 (${response.status})`);
+  if (body !== undefined) notifyAssistantStateInvalidated({
+    domain: /^\/presenters|^\/defaults/.test(path) ? 'presenter-assets' : 'content-production',
+    source: path,
+  });
   return value;
 }
 export const productionApi = {
   avatarSourceCaptions: (body: { projectId: string; assemblyId: string; shotId: string; slotId: string; materialId: string; confirmedPaidAsr?: boolean }) =>
     request<{ materialId: string; transcript: string; cues: Array<{ text: string; start: number; end: number }>; provenance: string; sourceHash?: string; cached: boolean }>('/avatar-source-captions', body),
-  arkEnrollmentCapabilities: () => request<{ ready: boolean; reason: string }>('/presenters/ark-enrollments/capabilities'),
+  arkEnrollmentCapabilities: () => request<{ ready: boolean; reason: string; missing: Array<'provider_credentials' | 'public_asset_delivery' | 'verification_return_url'> }>('/presenters/ark-enrollments/capabilities'),
   uploadArkMaterial: async (file: File, type: 'image' | 'video') => {
     const fallbackMime = type === 'video' ? /\.mov$/i.test(file.name) ? 'video/quicktime' : /\.webm$/i.test(file.name) ? 'video/webm' : 'video/mp4' : 'application/octet-stream';
     const response = await fetch(`/api/overseas/studio/production/presenters/ark-enrollments/materials?type=${type}&mime=${encodeURIComponent(file.type || fallbackMime)}`, {
@@ -18,6 +23,7 @@ export const productionApi = {
     });
     const value = await response.json().catch(() => ({}));
     if (!response.ok) throw new Error(value.error || '人物资料上传失败');
+    notifyAssistantStateInvalidated({ domain: 'presenter-assets', source: 'ark-material-upload' });
     return value as { id: string; type: 'image' | 'video'; name: string };
   },
   startArkEnrollment: (value: { requestId: string; presenterId: string; videoMaterialId: string; photoMaterialId: string; subjectAdultConfirmed: true; arkProcessingAuthorized: true }) => request<{ id: string; presenterId: string; state: string; verificationUrl: string; error: string; assetUri: string }>('/presenters/ark-enrollments', value),

@@ -29,6 +29,8 @@ import {
   type WeeklyWorkUpdatedDetail,
 } from '../../lib/weeklyWorkEvents';
 import { digitalEmployeeApi } from '../../lib/digitalEmployeeApi';
+import { PRESENTER_ASSETS_UPDATED_EVENT } from '../../lib/presenterAssetsUpdated';
+import { subscribeAssistantStateInvalidations } from '../../lib/assistantStateInvalidation';
 import { normalizeAssistantDecisionExecutionReceipt } from '../../../shared/contracts/assistantDecisionCenter';
 import { LsBrandAction } from '../ui/LsExperiencePrimitives';
 import './assistantDecisionCenter.css';
@@ -52,6 +54,8 @@ const actionIcon: Partial<Record<AssistantDecisionActionId, typeof ArrowRight>> 
   adjust_plan: CalendarRange,
   approve: CheckCircle2,
   reject: RefreshCw,
+  retry_task: RefreshCw,
+  replan_task: CalendarRange,
   take_over: UserRoundCheck,
   open_workspace: ArrowRight,
 };
@@ -126,11 +130,11 @@ export function assistantDecisionExecutionFeedback(
 
 function dispatchDeepLink(link?: AssistantDecisionDeepLink): void {
   if (!link || typeof window === 'undefined') return;
-  const opensEnterprisePresenters = link.page === 'enterprise'
-    && link.businessRef?.enterpriseView === 'presenters';
-  if (opensEnterprisePresenters) {
+  const opensPresenterOnboarding = link.page === 'digitalEmployees'
+    && link.businessRef?.taskKey === 'presenter_setup_required';
+  if (opensPresenterOnboarding) {
     try {
-      window.localStorage.setItem('lingshu:enterprise:initial-view', 'presenters');
+      window.sessionStorage.setItem('lingshu:open-digital-employee-guide', 'presenter');
     } catch {
       /* The live event below still handles browsers with storage disabled. */
     }
@@ -141,13 +145,13 @@ function dispatchDeepLink(link?: AssistantDecisionDeepLink): void {
     ...(link.taskId ? { workflowTaskId: link.taskId } : {}),
   };
   window.dispatchEvent(new CustomEvent('lingshu:navigate', { detail }));
-  if (opensEnterprisePresenters) {
-    const revealPresenters = () => window.dispatchEvent(new CustomEvent(
-      'lingshu:enterprise-view',
-      { detail: { view: 'presenters' } },
+  if (opensPresenterOnboarding) {
+    const openGuide = () => window.dispatchEvent(new CustomEvent(
+      'lingshu:open-digital-employee-guide',
+      { detail: { step: 'presenter' } },
     ));
-    revealPresenters();
-    window.requestAnimationFrame?.(revealPresenters);
+    openGuide();
+    window.requestAnimationFrame?.(openGuide);
   }
 }
 
@@ -397,7 +401,24 @@ export default function AssistantDecisionCenter({
   }, [active, goalId, load]);
 
   useEffect(() => {
-    if (!active || variant !== 'summary') return;
+    if (!active) return;
+    const refreshPresenterDecision = () => {
+      if (actionPending.current) return;
+      void load(undefined, true);
+    };
+    window.addEventListener(PRESENTER_ASSETS_UPDATED_EVENT, refreshPresenterDecision);
+    return () => window.removeEventListener(PRESENTER_ASSETS_UPDATED_EVENT, refreshPresenterDecision);
+  }, [active, load]);
+
+  useEffect(() => {
+    if (!active) return;
+    return subscribeAssistantStateInvalidations(() => {
+      if (!actionPending.current) void load(undefined, true);
+    });
+  }, [active, load]);
+
+  useEffect(() => {
+    if (!active) return;
     const refreshVisibleFeed = () => {
       if (document.visibilityState === 'hidden' || actionPending.current) return;
       void load(undefined, true);
@@ -405,7 +426,7 @@ export default function AssistantDecisionCenter({
     const handleVisibility = () => {
       if (document.visibilityState === 'visible') refreshVisibleFeed();
     };
-    const interval = window.setInterval(refreshVisibleFeed, 15_000);
+    const interval = window.setInterval(refreshVisibleFeed, variant === 'summary' ? 15_000 : 5_000);
     window.addEventListener('focus', refreshVisibleFeed);
     document.addEventListener('visibilitychange', handleVisibility);
     return () => {

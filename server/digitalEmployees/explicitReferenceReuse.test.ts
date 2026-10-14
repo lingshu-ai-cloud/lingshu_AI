@@ -34,7 +34,7 @@ for (const task of tasks) task.status = 'succeeded';
 review.status = 'pending'; review.depends_on = ['never-ready'];
 const selectedVideo = { route: 'clone', referenceId: 'previously-collected', preproduction: { benchmark: { status: 'ready' } } };
 records.weekly_plans[0].plan = { ...plan, businessPackage: { tasks: [{ templateId: 'production', videoPlans: [selectedVideo] }], authorization: { mode: 'each', accountIds: [], customerIds: [] } } };
-records.trend_videos = [{ id: 'previously-collected', tenantId: tenant, aiAnalysis: { analysisMode: 'exact', analysisQuality: 'video', gemini: { scriptDetails15s: [{ time: '0-3s', visual: 'Tenant-owned cotton shirt close-up' }] } } }];
+records.trend_videos = [{ id: 'previously-collected', tenantId: tenant, duration: 3, updatedAt: '2026-10-12T00:00:00.000Z', aiAnalysis: { analysisMode: 'exact', analysisQuality: 'video', geminiStatus: 'analyzed', gemini: { scriptDetails15s: [{ time: '0-3s', visual: 'Tenant-owned cotton shirt close-up', materialType: 'product', narrativeRole: 'hook', classificationEvidence: '画面明确展示棉质衬衫', analysisGranularity: 'shot' }] } } }];
 try {
   await withExecutionAdapters({ materials: () => [] }, async () => {
     run.status = 'running'; collection.status = 'pending'; analysis.status = 'pending';
@@ -53,8 +53,8 @@ try {
     records.trend_videos[0].aiAnalysis.analysisQuality = 'video_review_required';
     run.status = 'running'; collection.status = 'pending'; analysis.status = 'pending';
     await reconcileDigitalEmployeeRun(tenant, run.id);
-    assert.equal(collection.status, 'skipped', 'an exact reference with review diagnostics still waives duplicate collection');
-    assert.equal(analysis.status, 'succeeded', 'review diagnostics do not block the selected exact reference from automatic handoff');
+    assert.notEqual(collection.status, 'skipped', 'a reference that requires review cannot waive the detailed-analysis prerequisite');
+    assert.notEqual(analysis.status, 'succeeded', 'review-required evidence cannot enter production as a completed exact analysis');
   });
   console.log('Explicit reference reuse, tenant ownership and review gate tests passed');
 } finally { Object.assign(store, original); globalThis.fetch = originalFetch; }

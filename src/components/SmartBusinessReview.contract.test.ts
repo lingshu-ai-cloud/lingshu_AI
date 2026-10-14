@@ -19,6 +19,9 @@ for (const label of ['优秀内容继承', 'Tag 与卖点调整', '行业热点�
 }
 assert.match(recommendations, /card\.systemActions/, 'recommendation cards retain actionable next steps without another explanatory heading');
 assert.match(recommendations, /target="_blank" rel="noreferrer noopener"/, 'industry signals must open a safe, traceable source link');
+assert.match(recommendations, /const hasPublishedContent = card\.status === 'ready'/, 'content inheritance must distinguish a real published winner from the no-data state');
+assert.match(recommendations, /暂无可继承的优秀内容/, 'content inheritance must render a clear empty state instead of a failed cover when no published content exists');
+assert.doesNotMatch(recommendations, /label=\{!src \? '暂无可用封面'/, 'missing inheritance evidence must not masquerade as a broken media asset');
 for (const visual of ['首镜钩子', '内容框架', '可验证卖点候选', '行业变化']) {
   assert.match(recommendations, new RegExp(visual), `recommendations must visualize ${visual}`);
 }

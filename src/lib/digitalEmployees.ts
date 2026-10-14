@@ -19,6 +19,8 @@ export interface PublishingTarget {
   accountId: string;
   accountLabel: string;
   timezone?: string;
+  /** Frozen account-level share of the user-confirmed weekly platform quota. */
+  weeklyCount?: number;
 }
 
 export type DigitalEmployeeWorkflow =

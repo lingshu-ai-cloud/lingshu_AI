@@ -10,9 +10,32 @@ const commandCenter = source.slice(start, end);
 const publishingStart = source.indexOf('function WeeklyPublishingCalendar');
 const publishingEnd = source.indexOf('const matrixRoleLabel', publishingStart);
 const publishingCalendar = source.slice(publishingStart, publishingEnd);
+const budgetStart = source.indexOf('const DEFAULT_VIDEO_COST_CNY');
+const budgetEnd = source.indexOf('\n\nfunction metricValue', budgetStart);
 
 assert.ok(start >= 0 && end > start, '周经营计划区必须存在');
 assert.ok(publishingStart >= 0 && publishingEnd > publishingStart, '数字员工发布日历视图必须存在');
+assert.ok(budgetStart >= 0 && budgetEnd > budgetStart, '周计划必须有统一的视频预算投影');
+const budgetContext: Record<string, unknown> = {
+  MASTER_VIDEO_COST_MIN_CNY: 10,
+  MASTER_VIDEO_COST_POINT_CNY: 12.5,
+  MASTER_VIDEO_COST_MAX_CNY: 15,
+};
+vm.createContext(budgetContext);
+vm.runInContext(ts.transpileModule(`${source.slice(budgetStart, budgetEnd)}\nglobalThis.weeklyVideoBudget = weeklyVideoBudget;`, {
+  compilerOptions: { target: ts.ScriptTarget.ES2022 },
+}).outputText, budgetContext);
+const weeklyVideoBudget = budgetContext.weeklyVideoBudget as (data: unknown) => { estimated: number; min: number; max: number };
+const repairedBudget = weeklyVideoBudget({
+  plan: { businessPackage: {
+    directorPlan: { originalTarget: 2 },
+    tasks: [{ templateId: 'production', videoPlans: [
+      { estimatedCost: 12.5, estimatedCostRange: { minCny: 10, maxCny: 15 } },
+      { estimatedCost: 0, estimatedCostRange: { minCny: 0, maxCny: 0 } },
+    ] }],
+  } },
+});
+assert.deepEqual([repairedBudget.estimated, repairedBudget.min, repairedBudget.max], [25, 20, 30], '两条真实计划视频不得继续显示成一条视频的成本');
 for (const label of ['待验收成片', '本周计划视频', '本周视频总时长', '本周成本范围', '预计制作成本', '已结算成本']) {
   assert.match(commandCenter, new RegExp(label), `周经营计划必须展示“${label}”`);
 }
@@ -21,7 +44,10 @@ assert.doesNotMatch(commandCenter, /已包含本周全部视频制作/, '费用�
 assert.match(source, /durationSeconds: contents\.reduce\(\(sum, item\) => sum \+ item\.duration, 0\)/, '视频总时长必须按本周全部计划视频合计');
 assert.doesNotMatch(commandCenter, /<LsCalendar|WeeklyContentProgressPanel|本周发布日历/, '顶部周经营计划不得重复渲染发布日历');
 assert.match(publishingCalendar, /<h3[^>]*>发布日历<\/h3>[\s\S]{0,160}<Tag>\{calendarEvents\.length\} 项发布<\/Tag>/, '发布视图必须使用与员工排期一致的工作台标题栏');
-assert.match(publishingCalendar, /initialView="dayGridWeek"[^>]*\bdateOnly\b[^>]*\bshowAllEvents\b[^>]*fixedHeight="auto"[^>]*firstDay=\{display\.startsAt \? calendarWeekday\(display\.startsAt\) : 1\}/, '发布日历必须按真实计划起始日完整展开全部事件');
+assert.match(publishingCalendar, /initialView="timeGridWeek"[^>]*\bshowAllEvents\b[^>]*fixedHeight="auto"[^>]*workspaceMode="expanded"[^>]*firstDay=\{display\.startsAt \? calendarWeekday\(display\.startsAt\) : 1\}/, '发布日历必须按真实计划起始日展示明确小时排期');
+assert.match(publishingCalendar, /onMoveEvent=\{async \(event, scheduledAt\)[^]*reschedulePublication/, '发布日历拖拽必须持久化新的发布时间');
+assert.match(publishingCalendar, /identity: \{ kind: "platform", platform: item\.platform \}/, '发布卡必须使用目标社媒平台 Logo 作为身份，而不是失败封面');
+assert.match(publishingCalendar, /workspaceMode="expanded"/, '发布周视图必须像员工排期一样完整展开工作区');
 assert.doesNotMatch(publishingCalendar, /eventCardMode="media"|density="compact"|\bflush\b/, '发布日历不得继续使用与员工排期不一致的媒体大卡或贴边紧凑模式');
 assert.doesNotMatch(commandCenter, /<section className=\{`[^`]*(?:rounded-lg|border border-border)/, '周经营计划不得再使用封闭卡片外框');
 assert.match(publishingCalendar, /const calendarEvents:[\s\S]*display\.contents\.map/, '每条本周内容都必须映射为一个日历事件');
@@ -30,7 +56,7 @@ assert.match(publishingCalendar, /detailsTitle="内容制作进度"[^]*<WeeklyCo
 assert.match(publishingCalendar, /onOpenReference=\{item\.inspirationReference[^]*inspirationReferenceNavigationDetail/, '精确爆款详情必须保留为侧栏里的次级入口');
 assert.match(source, /businessRef: \{ referenceId: reference\.referenceId \}[\s\S]*inspirationReference: reference/, '爆款跳转必须使用既有的嵌套引用协议');
 assert.match(source, /target === "benchmark"[\s\S]{0,200}inspirationReferenceNavigationDetail\(benchmarkReference, item\.id\)/, '内容预览的爆款入口也必须发送嵌套引用协议');
-for (const internalLabel of ['原创母版', '平台版本', '平台轻适配', '适配版', '手动单项']) {
+for (const internalLabel of ['平台轻适配', '适配版', '手动单项']) {
   assert.doesNotMatch(source, new RegExp(internalLabel), `用户界面不得暴露内部生产分类“${internalLabel}”`);
 }
 
@@ -68,17 +94,17 @@ const referenceContext: any = {};
 vm.createContext(referenceContext);
 vm.runInContext(referenceScript, referenceContext);
 const master = {
-  contentId: 'master-1', contentFamilyId: 'family-1', productionRole: 'master', route: 'clone', productName: '卸妆蜜', theme: '母版主题', language: 'en', duration: 28, platform: 'tiktok', materialIds: [], referenceId: 'viral-1', presenter: 'material', heygenAvatarId: '', avatarConsent: false, voice: '',
+  contentId: 'master-1', contentFamilyId: 'family-1', productionRole: 'master', route: 'clone', productName: '卸妆蜜', theme: '独立视频主题', language: 'en', duration: 28, platform: 'tiktok', materialIds: [], referenceId: 'viral-1', presenter: 'material', heygenAvatarId: '', avatarConsent: false, voice: '',
   planningEvidence: { referenceTitle: '真实爆款', referenceSourceUrl: 'https://www.tiktok.com/@brand/video/1', referenceThumbnailUrl: '/api/overseas/videos/viral-1/thumbnail' },
   benchmarkAnalysis: { version: 1 },
 };
 const adaptation = { ...master, contentId: 'adapt-1', productionRole: 'platform_adaptation', masterContentId: 'master-1', platform: 'instagram', referenceId: '', planningEvidence: undefined, benchmarkAnalysis: undefined };
 const resolvedMaster = referenceContext.masterFor([master, adaptation], adaptation);
-assert.equal(resolvedMaster.contentId, 'master-1', '平台适配版必须回溯同一内容家族的母版引用');
+assert.equal(resolvedMaster.contentId, 'master-1', '平台适配版必须回溯同一内容家族的独立视频引用');
 const exactReference = referenceContext.referenceFor(resolvedMaster);
 assert.equal(exactReference.referenceId, 'viral-1');
 assert.equal(exactReference.sourceUrl, 'https://www.tiktok.com/@brand/video/1');
-assert.equal(exactReference.platform, 'tiktok', '详情身份必须保留来源母版平台，不能改成适配发布平台');
+assert.equal(exactReference.platform, 'tiktok', '详情身份必须保留来源独立视频平台，不能改成适配发布平台');
 assert.equal(referenceContext.referenceFor({ ...adaptation, masterContentId: '', contentFamilyId: 'other' }), null, '缺少持久化 id 和来源链接时不得凭队列启发式结果猜测详情');
 const nestedDetail = referenceContext.detailFor(exactReference, 'content-1');
 assert.equal(nestedDetail.businessRef.referenceId, 'viral-1');

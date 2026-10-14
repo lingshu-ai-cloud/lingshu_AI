@@ -212,8 +212,12 @@ assert.match(studio, /setVideoKickoff\(seed\.reference\); setCanvasView\('creati
   '爆款复刻任务默认必须进入新建视频工作台');
 assert.match(studio, /loadProject\(project\);\s*setCanvasView\('creation'\);/,
   '恢复已保存的爆款任务时也必须默认回到新建视频工作台');
-assert.match(studio, /socialShotMaterialBindings\.forEach\(\(\{ shotIndex, materialId \}\)/,
-  '任务已绑定素材必须按分镜序号回填到 Studio');
+assert.match(studio, /socialSourceShotIds\.length === slots\.length \? socialSourceShotIds : referenceShotIds/,
+  'Studio 应优先把任务的正式制作镜头 ID 固化到分镜身份');
+assert.match(studio, /resolveStudioSocialShot\(storyboardSlots, \{ shotId, shotIndex \}\)/,
+  'Studio 应按稳定镜头身份应用任务素材映射');
+assert.doesNotMatch(studio, /storyboardSlots\.find\(item => item\.id === shotId\) \|\| storyboardSlots\[shotIndex\]/,
+  '有 shot ID 的任务不得静默回退到数组位置');
 for (const field of ['estimatedTotalCostCny', 'estimatedSuccessRate', 'budgetLimitCny', 'executionPlanReview']) {
   assert.match(generationConfirmation, new RegExp(field));
 }

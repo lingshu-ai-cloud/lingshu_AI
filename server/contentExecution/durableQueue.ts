@@ -650,6 +650,18 @@ export async function readContentExecutionJob(
 }
 
 export type ContentExecutionControlAction = 'pause' | 'cancel' | 'resume' | 'retry';
+export type ContentExecutionPauseOrigin =
+  | 'manual'
+  | 'workflow_review'
+  | 'workflow_run_pause'
+  | 'workflow_handoff';
+
+export interface ContentExecutionRunControlResult {
+  runId: string;
+  affectedJobIds: string[];
+  preservedJobIds: string[];
+  terminalJobIds: string[];
+}
 
 /**
  * Applies customer-visible controls to the durable job itself. A running paid
@@ -663,7 +675,7 @@ async function applyContentExecutionControl(input: {
   jobId: string;
   action: ContentExecutionControlAction;
   /** Server-owned review waits may auto-resume; a customer pause never may. */
-  pauseOrigin?: 'workflow_review';
+  pauseOrigin?: ContentExecutionPauseOrigin;
   now?: Date;
 }): Promise<ContentExecutionJob> {
   const tenantId = requiredIdentity(input.tenantId, 'tenant');
@@ -678,7 +690,12 @@ async function applyContentExecutionControl(input: {
     if (['succeeded', 'cancelled'].includes(current.status)) throw new Error('content_execution_job_not_pauseable');
     const origin = input.pauseOrigin ?? 'manual';
     const priorOrigin = (current.checkpoints['runtime.pause']?.payload as { origin?: string } | undefined)?.origin;
-    if (current.status === 'paused' && origin === 'workflow_review' && priorOrigin === 'manual') return current;
+    // An existing pause belongs to the controller that created it. Automated
+    // run/handoff controls must never relabel a customer pause (or each other),
+    // otherwise a later resume could restart work the customer still expects
+    // to remain stopped. The explicit per-job customer pause remains the sole
+    // exception: it may replace an automated review wait.
+    if (current.status === 'paused' && origin !== 'manual' && priorOrigin !== origin) return current;
     if (current.status === 'paused' && priorOrigin === origin) return current;
     patch = { status: 'paused', next_attempt_at: '', updated_at: now, checkpoints: {
       ...current.checkpoints,
@@ -741,6 +758,105 @@ export async function controlContentExecutionJob(input: Parameters<typeof applyC
   finally { await releaseDurableOperationLease({ dataStore: input.dataStore, lease }).catch(() => undefined); }
 }
 
+function pauseOrigin(job: ContentExecutionJob): string {
+  return String((job.checkpoints['runtime.pause']?.payload as { origin?: unknown } | undefined)?.origin || '');
+}
+
+async function jobsForRun(input: {
+  dataStore: DataStore;
+  tenantId: string;
+  runId: string;
+}): Promise<ContentExecutionJob[]> {
+  const tenantId = requiredIdentity(input.tenantId, 'tenant');
+  const runId = requiredIdentity(input.runId, 'run');
+  return (await listAll<JobRow>(input.dataStore, CONTENT_EXECUTION_JOB_COLLECTION, {
+    where: { tenant_id: tenantId, run_id: runId }, sort: 'created_at',
+  })).map(jobFromRow);
+}
+
+/**
+ * Stop every non-terminal production job owned by one workflow run. The run
+ * lifecycle lock is held by the caller; individual durable-job leases fence a
+ * concurrent worker/control request. Replays are safe and repair a partial
+ * prior attempt without changing terminal jobs or a differently owned pause.
+ */
+export async function pauseContentExecutionJobsForRun(input: {
+  dataStore: DataStore;
+  tenantId: string;
+  runId: string;
+  origin: Exclude<ContentExecutionPauseOrigin, 'manual' | 'workflow_review'>;
+  now?: Date;
+}): Promise<ContentExecutionRunControlResult> {
+  const jobs = await jobsForRun(input);
+  const affectedJobIds: string[] = [];
+  const preservedJobIds: string[] = [];
+  const terminalJobIds: string[] = [];
+  for (const job of jobs) {
+    if (['succeeded', 'cancelled', 'dead_letter'].includes(job.status)) {
+      terminalJobIds.push(job.id);
+      continue;
+    }
+    // A domain blocker is not an actively executing queue state. Relabeling
+    // it as a lifecycle pause would let a later run resume turn it into queued
+    // work and bypass the original input/budget/policy blocker.
+    if (job.status === 'blocked') {
+      preservedJobIds.push(job.id);
+      continue;
+    }
+    if (job.status === 'paused' && pauseOrigin(job) !== input.origin) {
+      preservedJobIds.push(job.id);
+      continue;
+    }
+    await controlContentExecutionJob({
+      dataStore: input.dataStore,
+      tenantId: input.tenantId,
+      jobId: job.id,
+      action: 'pause',
+      pauseOrigin: input.origin,
+      now: input.now,
+    });
+    affectedJobIds.push(job.id);
+  }
+  return { runId: input.runId, affectedJobIds, preservedJobIds, terminalJobIds };
+}
+
+/**
+ * Resume only jobs paused by the matching run-level control. A preflight over
+ * every candidate prevents a half-resume while an original paid worker is
+ * still settling. Provider receipts, checkpoints and the durable job identity
+ * are preserved by controlContentExecutionJob.
+ */
+export async function resumeContentExecutionJobsForRun(input: {
+  dataStore: DataStore;
+  tenantId: string;
+  runId: string;
+  origin: Exclude<ContentExecutionPauseOrigin, 'manual' | 'workflow_review'>;
+  now?: Date;
+}): Promise<ContentExecutionRunControlResult> {
+  const jobs = await jobsForRun(input);
+  const candidates = jobs.filter(job => job.status === 'paused' && pauseOrigin(job) === input.origin);
+  if (candidates.some(job => job.workerId !== null || job.leaseExpiresAt !== null)) {
+    throw new Error('content_execution_original_worker_not_settled');
+  }
+  const affectedJobIds: string[] = [];
+  for (const job of candidates) {
+    await controlContentExecutionJob({
+      dataStore: input.dataStore,
+      tenantId: input.tenantId,
+      jobId: job.id,
+      action: 'resume',
+      now: input.now,
+    });
+    affectedJobIds.push(job.id);
+  }
+  return {
+    runId: input.runId,
+    affectedJobIds,
+    preservedJobIds: jobs.filter(job => job.status === 'paused' && pauseOrigin(job) !== input.origin).map(job => job.id),
+    terminalJobIds: jobs.filter(job => ['succeeded', 'cancelled', 'dead_letter'].includes(job.status)).map(job => job.id),
+  };
+}
+
 /** Attach a frozen executor binding to a historic job only while there is
  * durable proof that execution has never crossed a provider or checkpoint
  * boundary. This is intentionally narrower than normal checkpoint writes:
@@ -783,9 +899,41 @@ export async function bindPristineContentExecutionCheckpoint(input: {
   }
 }
 
-/** Replace an executor binding after a pre-provider admission failure. This is
- * limited to blocked, unspent jobs whose only other evidence is the explicit
- * retry marker; any phase/provider evidence makes the binding immutable. */
+function zeroOrNull(value: unknown): boolean {
+  return value === null || value === undefined || value === 0;
+}
+
+/** A failed graph node is removable only when its durable evidence proves that
+ * it stopped before provider submission. Missing/partial evidence is treated as
+ * unknown and therefore remains immutable. */
+function isFailedPreProviderGraphNode(checkpoint: ContentExecutionCheckpoints[string]): boolean {
+  const payload = checkpoint?.payload;
+  if (!payload || typeof payload !== 'object' || Array.isArray(payload)) return false;
+  const row = payload as Record<string, unknown>;
+  return row.status === 'failed'
+    && row.outputSha256 === null
+    && Array.isArray(row.providerReceiptRefs) && row.providerReceiptRefs.length === 0
+    && zeroOrNull(row.reservedCny) && zeroOrNull(row.actualCostCny);
+}
+
+function removablePreProviderGraphKeys(checkpoints: ContentExecutionCheckpoints, checkpointKey: string): Set<string> | null {
+  const extra = Object.keys(checkpoints).filter(key => key !== checkpointKey && key !== 'runtime.retry');
+  if (!extra.length) return new Set();
+  const nodeKeys = extra.filter(key => /^langgraph\.node\.(?:assets|render|quality|delivery)$/.test(key));
+  if (!extra.includes('langgraph.v1') || nodeKeys.length === 0
+    || extra.some(key => key !== 'langgraph.v1' && !nodeKeys.includes(key))
+    || nodeKeys.some(key => !isFailedPreProviderGraphNode(checkpoints[key]!))) return null;
+  const graph = checkpoints['langgraph.v1'];
+  const document = graph?.payload as Record<string, unknown> | undefined;
+  if (graph?.version !== 'langgraph-checkpoints.v1' || !document
+    || document.format !== 'langgraph-checkpoints.v1' || typeof document.identityHash !== 'string'
+    || !Array.isArray(document.checkpoints) || !document.writes || typeof document.writes !== 'object') return null;
+  return new Set(extra);
+}
+
+/** Replace an executor binding after a pre-provider admission failure. Failed
+ * graph attempts may also be discarded when every durable node proves that no
+ * provider request, cost, or output exists. The retry marker is preserved. */
 export async function refreshUnspentContentExecutionCheckpoint(input: {
   dataStore: DataStore; tenantId: string; jobId: string; runId: string;
   checkpointKey: string; checkpoint: ContentExecutionCheckpoints[string];
@@ -798,12 +946,14 @@ export async function refreshUnspentContentExecutionCheckpoint(input: {
   try {
     const row = await input.dataStore.getById<JobRow>(CONTENT_EXECUTION_JOB_COLLECTION, jobId);
     if (!row) throw new Error('content_execution_job_not_found');
-    const current = jobFromRow(row), keys = Object.keys(current.checkpoints);
+    const current = jobFromRow(row);
     if (current.tenantId !== tenantId || current.runId !== runId) throw new Error('content_execution_job_not_found');
+    const removable = removablePreProviderGraphKeys(current.checkpoints, checkpointKey);
     if (current.status !== 'blocked' || current.providerState !== 'none' || current.providerReceipts.length || current.completedAt
-      || keys.some(key => key !== checkpointKey && key !== 'runtime.retry'))
+      || removable === null)
       throw new Error('content_execution_unspent_binding_refresh_not_allowed');
-    const checkpoints = { ...current.checkpoints, [checkpointKey]: input.checkpoint };
+    const checkpoints = Object.fromEntries(Object.entries(current.checkpoints).filter(([key]) => !removable.has(key)));
+    checkpoints[checkpointKey] = input.checkpoint;
     if (!await input.dataStore.update(CONTENT_EXECUTION_JOB_COLLECTION, current.id, { checkpoints, updated_at: new Date().toISOString() }))
       throw new Error('content_execution_unspent_binding_refresh_failed');
     const saved = await input.dataStore.getById<JobRow>(CONTENT_EXECUTION_JOB_COLLECTION, current.id);

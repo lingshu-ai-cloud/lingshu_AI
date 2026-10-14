@@ -350,8 +350,12 @@ export interface SocialMaterialRouting {
   schemaVersion: 'social-material-routing.v1';
   materialType: import('../benchmarkAnalysis').BenchmarkMaterialType;
   policy: 'local_only' | 'local_first_product_i2v' | 'authorized_presenter';
-  localMatch: { state: 'matched' | 'missing'; sourceRefs: string[]; evidenceRef: string | null };
+  localMatch: { state: 'matched' | 'missing'; sourceRefs: string[]; evidenceRef: string | null;
+    /** Frozen budget-degradation tier. Historic plans omit it. */
+    sourceTier?: 'product_high_fidelity_local' | 'product_packaging_first_frame_i2v'
+      | 'product_local' | 'factory_local' | 'other_local' };
   generation?: {
+    sourceTier?: 'product_packaging_first_frame_i2v';
     method: 'reference_first_frame_product_replacement_i2v' | 'enterprise_authored_product_first_frame_i2v';
     firstFrameOrigin?: 'original_reference_pixels' | 'enterprise_authored_storyboard';
     /** Frozen choice; absence preserves the historic Seedance route. */
@@ -589,6 +593,9 @@ export interface SocialThreeSecondHook {
 export interface SocialReferenceVideoAnalysis {
   narrationProducts?: string[];
   narrationBrands?: string[];
+  /** Frozen cross-surface admission evidence. Studio must consume this
+   * snapshot instead of re-interpreting the legacy social timeline. */
+  benchmarkAnalysis?: import('../benchmarkAnalysis.js').BenchmarkAnalysis;
   analysisId: string;
   /** Incrementing analysis version. Optional only on historic records. */
   version?: string;

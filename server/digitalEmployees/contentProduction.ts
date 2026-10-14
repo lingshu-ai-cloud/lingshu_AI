@@ -90,6 +90,40 @@ const json = <T>(value: unknown, fallback: T): T => {
 
 const stableHash = (value: unknown): string => crypto.createHash('sha256').update(JSON.stringify(value)).digest('hex');
 
+export const MAX_FROZEN_DIRECTOR_SCRIPT_LENGTH = 30_000;
+
+export function frozenDirectorScriptForProduction(
+  spec: Record<string, unknown>,
+  language: string,
+): { script: string; blocker: string; source: 'frozen_contract' | 'legacy_project' } {
+  const contract = json<ContentProductionOrderInput | undefined>(spec.contentOrder, undefined);
+  if (contract?.contractVersion !== 1) {
+    const script = typeof spec.script === 'string' ? spec.script.trim() : '';
+    return {
+      script: script.length <= MAX_FROZEN_DIRECTOR_SCRIPT_LENGTH ? script : '',
+      blocker: !script
+        ? '当前内容缺少已确认脚本，未调用制作供应商'
+        : script.length > MAX_FROZEN_DIRECTOR_SCRIPT_LENGTH
+          ? `当前内容脚本超过 ${MAX_FROZEN_DIRECTOR_SCRIPT_LENGTH} 字符支持上限，未调用制作供应商`
+          : '',
+      source: 'legacy_project',
+    };
+  }
+  const frozen = contract.scripts?.[language];
+  const frozenBody = typeof frozen?.body === 'string' ? frozen.body : '';
+  const oversized = frozenBody.length > MAX_FROZEN_DIRECTOR_SCRIPT_LENGTH;
+  const valid = frozen?.status === 'confirmed'
+    && frozen.generatedBy === 'director_agent'
+    && Boolean(frozenBody.trim())
+    && !oversized
+    && frozen.hash === stableHash(frozen.body);
+  return valid
+    ? { script: frozenBody, blocker: '', source: 'frozen_contract' }
+    : { script: '', blocker: oversized
+      ? `内容订单的编导已确认脚本超过 ${MAX_FROZEN_DIRECTOR_SCRIPT_LENGTH} 字符支持上限，未调用制作供应商`
+      : '内容订单缺少编导已确认脚本版本，未调用制作供应商', source: 'frozen_contract' };
+}
+
 export function productIdentity(product: NonNullable<EnterpriseProfile['products']['items']>[number], index: number): string {
   return enterpriseProductIdentity(product, index);
 }
@@ -1147,9 +1181,12 @@ export async function advanceOneProject(input: {
   // Clone has its own real per-shot pipeline. Never send it into the generic
   // catalog/script/matching renderer, even when the bridge reports a blocker.
   if (String(route) === 'clone') {
-    const contract = json<Record<string, any>>(spec.contentOrder, {});
-    const language = text(spec.lang) || input.config.videoDefaults?.language || 'en';
-    const script = text(spec.script || contract.scripts?.[language]?.body, 30_000);
+    const cloneOrder = json<ContentProductionOrderInput | undefined>(spec.contentOrder, undefined);
+    const language = text(spec.lang)
+      || normalizeVideoPlan(cloneOrder?.videoPlan || input.config.videoDefaults || {}).language
+      || 'en';
+    const scriptAdmission = frozenDirectorScriptForProduction(spec, language);
+    const script = scriptAdmission.script;
     const cloneRoutePlan = json<RouteSourcePlan>(automation.routePlan, { route: 'clone', assetIds: [], platform: '', platformBrief: '' });
     const productId = text(cloneRoutePlan.productId);
     const cloneAssets = cloneRoutePlan.assetIds.map(id => input.assets.find(asset => asset.id === id)).filter((asset): asset is AssetCandidate => Boolean(asset));
@@ -1159,7 +1196,8 @@ export async function advanceOneProject(input: {
       narrationEvidenceForProduct(cloneAssets, productId),
     );
     return advanceManagedReplication({ tenantId: input.tenantId, projectId: input.record.id,
-      store, references: input.analyses, preflightBlocker: issues.length ? issues.join('；') : undefined });
+      store, references: input.analyses,
+      preflightBlocker: scriptAdmission.blocker || (issues.length ? issues.join('；') : undefined) });
   }
   const legacyAssetIds = Array.isArray(spec.selectedMaterialIds) ? spec.selectedMaterialIds.map(String) : [];
   const legacyAssets = legacyAssetIds.map(id => input.assets.find(asset => asset.id === id)).filter((asset): asset is AssetCandidate => Boolean(asset));

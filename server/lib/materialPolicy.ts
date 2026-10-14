@@ -15,6 +15,22 @@ export interface MaterialPolicyInput {
 
 export type MaterialUsage = 'editable' | 'reference_only';
 
+const WORKFLOW_INTERNAL_SOURCE_TYPES = new Set([
+  'ai-storyboard-first-frame',
+  'digital-human-qwen-first-frame-draft',
+  'digital-human-target-first-frame',
+  'viral-sentence-first-frame',
+]);
+
+/**
+ * Intermediate frames are durable workflow evidence, not reusable library
+ * assets. They stay readable through purpose=all so the originating production
+ * task can resume, but must never leak into the user-facing material library.
+ */
+export function isWorkflowInternalMaterial(material: MaterialPolicyInput): boolean {
+  return WORKFLOW_INTERNAL_SOURCE_TYPES.has(String(material.sourceType || '').trim().toLowerCase());
+}
+
 /**
  * Legacy crawled videos predate explicit usage metadata. Keep them available for
  * competitor analysis, but never expose them as downloadable editing assets.
@@ -25,7 +41,8 @@ export function materialUsage(material: MaterialPolicyInput): MaterialUsage {
   if (material.usage === 'editable' && material.commercialUseApproved === true
     && material.derivativesApproved === true && material.rawLibraryUseApproved === true
     && material.mayUseInProduction === true) return 'editable';
-  if (/^(youtube|facebook|instagram|tiktok)$/i.test(String(material.sourceType || ''))) return 'reference_only';
+  if (/^(?:youtube|facebook|instagram|tiktok)(?:[_-]reference)?$/i.test(String(material.sourceType || ''))
+    || /^(?:trend|viral)[_-]reference$/i.test(String(material.sourceType || ''))) return 'reference_only';
   if (/youtube\.com|youtu\.be|facebook\.com|instagram\.com|tiktok\.com/i.test(String(material.sourceUrl || ''))) return 'reference_only';
   if (material.folder === 'hot' && /爆款[·・](?:YouTube|Facebook|Instagram|TikTok)/i.test(String(material.name || ''))) {
     return 'reference_only';

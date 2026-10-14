@@ -31,6 +31,67 @@ export function assertGenericSearchTerms(terms: string[], source: string): void 
     if (titles.some(title => compact(title) === compact(term))) throw new Error('搜索词照搬商品全名，请改用通用品类词');
   }
 }
+
+function compactEvidence(value: string): string {
+  return value.normalize('NFKC').toLowerCase().replace(/[^\p{L}\p{N}]+/gu, '');
+}
+
+function sourceEvidenceSegments(source: string): string[] {
+  const segments = source.split(/\n+/).flatMap(line => {
+    const trimmed = line.trim();
+    return [trimmed, ...trimmed.split(/[。；;、]+/u).map(part => part.trim())];
+  });
+  return [...new Set(segments.filter(segment => segment.length >= 2 && segment.length <= 100))];
+}
+
+function evidenceSimilarity(left: string, right: string): number {
+  const a = compactEvidence(left);
+  const b = compactEvidence(right);
+  if (!a || !b) return 0;
+  if (a.includes(b) || b.includes(a)) return Math.min(a.length, b.length) / Math.max(a.length, b.length) + 0.5;
+  const grams = (value: string) => new Set(Array.from({ length: Math.max(0, value.length - 1) }, (_, index) => value.slice(index, index + 2)));
+  const aGrams = grams(a);
+  const bGrams = grams(b);
+  if (!aGrams.size || !bGrams.size) return a === b ? 1 : 0;
+  const overlap = [...aGrams].filter(gram => bGrams.has(gram)).length;
+  return 2 * overlap / (aGrams.size + bGrams.size);
+}
+
+/**
+ * LLMs occasionally wrap an exact product title with punctuation or a label.
+ * Repair only that formatting defect by replacing it with a close substring
+ * that actually exists in the source. Keyword and hierarchy validation remains
+ * strict, so this cannot turn an invented product into accepted evidence.
+ */
+export function repairProductKeywordSourceQuotes(raw: string, source: string): string {
+  const cleaned = raw.trim().replace(/^```(?:json)?\s*/, '').replace(/\s*```$/, '');
+  let data: Record<string, unknown>;
+  try { data = JSON.parse(cleaned) as Record<string, unknown>; }
+  catch { return raw; }
+  const sourceCompact = source.replace(/\s+/g, '').normalize('NFKC');
+  const candidates = sourceEvidenceSegments(source);
+  const repairRows = (value: unknown) => Array.isArray(value) ? value.map(item => {
+    if (!item || typeof item !== 'object') return item;
+    const row = item as Record<string, unknown>;
+    if (typeof row.sourceQuote !== 'string') return item;
+    const parts = row.sourceQuote.split(/\n+/).map(part => part.trim()).filter(Boolean);
+    if (parts.length && parts.every(part => sourceCompact.includes(part.replace(/\s+/g, '').normalize('NFKC')))) return item;
+    const repaired = parts.map(part => {
+      const embedded = candidates.filter(candidate => compactEvidence(part).includes(compactEvidence(candidate)));
+      if (embedded.length) return embedded.sort((left, right) => right.length - left.length)[0]!;
+      const ranked = candidates.map(candidate => ({ candidate, score: evidenceSimilarity(part, candidate) }))
+        .sort((left, right) => right.score - left.score || right.candidate.length - left.candidate.length);
+      return ranked[0]?.score >= 0.55 ? ranked[0].candidate : '';
+    }).filter(Boolean);
+    return repaired.length === parts.length ? { ...row, sourceQuote: [...new Set(repaired)].join('\n') } : item;
+  }) : value;
+  return JSON.stringify({
+    ...data,
+    broadTerms: repairRows(data.broadTerms),
+    mediumTerms: repairRows(data.mediumTerms),
+  });
+}
+
 export function parseProductKeywords(raw: string, source: string, perspective: ProductKeywordRecommendation['perspective'], sourceName: string): ProductKeywordRecommendation {
   const data = JSON.parse(raw.trim().replace(/^```(?:json)?\s*/, '').replace(/\s*```$/, ''));
   const compact = (value: string) => value.replace(/\s+/g, '').normalize('NFKC');
@@ -72,7 +133,7 @@ export async function generateProductKeywords(input: { source: string; sourceNam
   let failure = '';
   for (let attempt = 0; attempt < 2; attempt++) {
     const raw = await generate(JSON.stringify({ market: input.market, language: input.language, focus: input.focus, document: input.source, correction: failure, hierarchyHint }), { backend: 'qwen', timeoutMs: 45000, systemPrompt });
-    try { return parseProductKeywords(raw, input.source, input.perspective, input.sourceName); }
+    try { return parseProductKeywords(repairProductKeywordSourceQuotes(raw, input.source), input.source, input.perspective, input.sourceName); }
     catch (error) { failure = error instanceof Error ? error.message : '格式无效'; }
   }
   throw new Error(`未生成符合要求的5个词：${failure}。请缩小产品方向后重试。`);

@@ -1,6 +1,8 @@
 import assert from 'node:assert/strict';
 import type { SocialContentTaskDetail } from '../../../shared/contracts/socialContentWorkflow.js';
-import { socialTaskProductionPreview, socialTaskShotMaterialBindings, socialTaskToStudioSeed, socialThemeToStudioTheme } from './useStudioSocialTaskHydration.js';
+import type { BenchmarkAnalysis } from '../../../shared/benchmarkAnalysis.js';
+import { productionReferenceAdmission } from '../../../shared/productionReferenceAdmission.js';
+import { socialTaskBenchmarkAnalysis, socialTaskProductionPreview, socialTaskShotMaterialBindings, socialTaskStudioShotIds, socialTaskToStudioSeed, socialThemeToStudioTheme } from './useStudioSocialTaskHydration.js';
 import { createSocialAssetSupplyPlan } from '../../../shared/socialContentAssetSupply.js';
 
 const task = {
@@ -31,6 +33,7 @@ assert.match(seed.factVerificationNotice, /未作为已确认企业事实导入/
 assert.doesNotMatch(seed.productInfo, /户外便携储能电源|容量与认证|不得承诺/);
 assert.equal(seed.audience, '户外露营家庭；目标市场：德国、法国');
 assert.deepEqual(seed.shotMaterialBindings, []);
+assert.deepEqual(seed.sourceShotIds, []);
 
 const shotMaterialTask = {
   ...task,
@@ -40,13 +43,15 @@ const shotMaterialTask = {
   ],
 } as unknown as SocialContentTaskDetail;
 assert.deepEqual(socialTaskShotMaterialBindings(shotMaterialTask), [
-  { shotIndex: 0, materialId: 'material-first' },
-  { shotIndex: 1, materialId: 'material-second' },
+  { shotId: 'shot-1', shotIndex: 0, materialId: 'material-first' },
+  { shotId: 'shot-2', shotIndex: 1, materialId: 'material-second' },
 ]);
 assert.deepEqual(socialTaskToStudioSeed(shotMaterialTask).shotMaterialBindings, [
-  { shotIndex: 0, materialId: 'material-first' },
-  { shotIndex: 1, materialId: 'material-second' },
+  { shotId: 'shot-1', shotIndex: 0, materialId: 'material-first' },
+  { shotId: 'shot-2', shotIndex: 1, materialId: 'material-second' },
 ]);
+assert.deepEqual(socialTaskStudioShotIds(shotMaterialTask), ['shot-1', 'shot-2']);
+assert.deepEqual(socialTaskToStudioSeed(shotMaterialTask).sourceShotIds, ['shot-1', 'shot-2']);
 
 const poster = socialTaskToStudioSeed({ ...task, brief: { ...task.brief, formats: ['image_post'], languages: ['未支持语言'], platforms: ['instagram'], aspectRatio: null }, sources: [] });
 assert.equal(poster.contentMode, 'poster');
@@ -150,6 +155,45 @@ assert.deepEqual(socialTaskToStudioSeed(speechTask).reference?.referenceAnalysis
   referenceText: '旧品牌口播', draftText: '新品牌口播', sourceStartSeconds: 0.2, sourceEndSeconds: 2.8,
   sourcePrecision: 'coarse', sourceProvenance: 'reference_asr', replacedEntityTypes: ['brand'], narrationOwnerShotId: 'replication-ref-1', visualShotIds: ['replication-ref-1'],
 }]);
+
+const legacyProjectedBenchmark = socialTaskBenchmarkAnalysis(speechTask.referenceVideoAnalysis);
+assert.ok(legacyProjectedBenchmark, 'social reference analysis must always enter Studio through the canonical admission shape');
+assert.ok(
+  productionReferenceAdmission(legacyProjectedBenchmark).blockers.some(item => item.includes('镜头类型未确认')),
+  'legacy timeline data without typed shot evidence must be blocked instead of falling through Studio timeline checks',
+);
+assert.equal(
+  socialTaskToStudioSeed(speechTask).reference?.referenceAnalysis?.benchmarkAnalysis?.schemaVersion,
+  1,
+  'Studio kickoff must carry canonical benchmark analysis even for historic social tasks',
+);
+
+const canonicalBenchmark = {
+  schemaVersion: 1,
+  source: {
+    videoId: 'trend_videos_reference_speech', analysisRunId: 'analysis-run-1', evidenceRevision: 'revision-1',
+    correctionVersion: 0, analyzedAt: '2026-10-13T08:00:00.000Z', analysisMode: 'exact',
+  },
+  status: 'ready', gaps: [], hookShotId: 'canonical-shot-1', totalShots: 1, timelineComplete: true,
+  shots: [{
+    shotId: 'canonical-shot-1', index: 1, time: '0-3s', start: 0, end: 3,
+    materialType: 'product', narrativeRole: 'hook', classificationSource: 'model',
+    classificationEvidence: '逐镜模型确认产品实拍和开场作用', visual: '产品置于干净台面并转动展示',
+    dialogue: '', onScreenText: '', purpose: '展示产品开场', firstFrameRef: null, clipRef: null,
+    needsReview: false, granularity: 'shot', environment: '产品台面', framing: '近景', camera: '固定',
+    audio: '轻音乐', authenticity: '原片可见产品', effectivenessHypothesis: '首帧直接展示产品', detailedAnalysis: {},
+  }],
+  materialCounts: { talking_head: 0, factory: 0, product: 1, consumer_demo: 0, general: 0, unknown: 0 },
+  structure: [{ materialType: 'product', narrativeRole: 'hook', shotIds: ['canonical-shot-1'] }],
+  speechGroups: [],
+} satisfies BenchmarkAnalysis;
+const canonicalTask = {
+  ...speechTask,
+  referenceVideoAnalysis: { ...speechTask.referenceVideoAnalysis!, benchmarkAnalysis: canonicalBenchmark },
+} as SocialContentTaskDetail;
+const hydratedCanonical = socialTaskToStudioSeed(canonicalTask).reference?.referenceAnalysis?.benchmarkAnalysis;
+assert.deepEqual(hydratedCanonical, canonicalBenchmark, 'server-frozen canonical evidence must cross the social-task/Studio boundary unchanged');
+assert.equal(productionReferenceAdmission(hydratedCanonical).ready, true, 'Studio receives evidence accepted by the shared strict admission rule');
 
 const completedProductionTask = {
   ...speechTask,

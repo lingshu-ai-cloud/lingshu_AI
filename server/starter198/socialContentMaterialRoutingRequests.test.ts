@@ -34,6 +34,37 @@ test('local product match retains its action evidence, SKU and exact analyzed se
   assert.deepEqual(result.localVideoMatch?.sourceRefs, ['own-video']);
   assert.match(result.localVideoMatch?.evidenceRef ?? '', /^material-visual-match:tenant:/);
   assert.deepEqual(result.selectedMaterialSegment, { sourceRef: 'own-video', segmentId: 'seg-1', startSeconds: 2, endSeconds: 6 });
+  assert.equal(result.localVideoMatch?.sourceTier, 'product_high_fidelity_local');
+});
+test('multi-shot routing uses distinct assets and segments before repeating either', () => {
+  const shots = Array.from({length: 5}, (_, index) => ({...shot, shotId: `S${index + 1}`}));
+  const candidates = [
+    candidate({assetId:'asset-a',sourceRef:'asset-a',segmentId:'a-1'}),
+    candidate({assetId:'asset-a',sourceRef:'asset-a',segmentId:'a-2',timeRange:{startSeconds:6,endSeconds:10}}),
+    candidate({assetId:'asset-b',sourceRef:'asset-b',segmentId:'b-1'}),
+  ];
+  const result=materialRoutingRequests({policyVersion:'type-aware.v1',tenantId:'tenant',productRef:'SKU-1',shots,candidates:candidates as never[]});
+  assert.deepEqual(result.map(item=>item.selectedMaterialSegment?.sourceRef),['asset-a','asset-b','asset-a','asset-b','asset-a']);
+  assert.deepEqual(result.filter(item=>item.selectedMaterialSegment?.sourceRef==='asset-a').map(item=>item.selectedMaterialSegment?.segmentId),['a-1','a-2','a-1']);
+});
+test('budget exhaustion degrades product generation through product, factory, then other readable-video candidates', () => {
+  const degraded = (candidates: never[]) => materialRoutingRequests({policyVersion:'type-aware.v1',tenantId:'tenant',
+    productRef:'SKU-1',shots:[shot],candidates,productGenerationAllowed:false})[0]!;
+  const weak = visual('产品静止展示');
+  const other = candidate({assetId:'other',sourceRef:'other',productRef:null,productId:null,materialRoles:['other'],visualContract:weak});
+  const factory = candidate({assetId:'factory',sourceRef:'factory',productRef:null,productId:null,materialRoles:['factory'],visualContract:weak});
+  const product = candidate({assetId:'product',sourceRef:'product',materialRoles:['product'],visualContract:weak});
+  for (const [items, ref, tier] of [
+    [[other, factory, product], 'product', 'product_local'],
+    [[other, factory], 'factory', 'factory_local'],
+    [[other], 'other', 'other_local'],
+  ] as const) {
+    const result=degraded([...items] as never[]);
+    assert.deepEqual(result.localVideoMatch?.sourceRefs,[ref]);
+    assert.equal(result.localVideoMatch?.sourceTier,tier);
+    assert.equal(result.selectedMaterialSegment?.sourceRef,ref);
+  }
+  assert.equal(degraded([candidate({mediaType:'image'}),candidate({synthetic:true}),candidate({timeRange:null})]).localVideoMatch,undefined);
 });
 test('inventory presence, wrong product, still image and missing movement are not verified matches', () => {
   for (const item of [candidate({ productRef: 'other' }), candidate({ mediaType: 'image' }),

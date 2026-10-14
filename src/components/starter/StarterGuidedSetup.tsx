@@ -256,7 +256,7 @@ export function buildGuidedStartInput(draft: GuidedSetupDraft, limits: GuidedPla
     `请按我确认的新手推荐计划开始制作：主推产品“${plan.primaryProduct}”`,
     `目标市场“${plan.market}”，内容语言 ${plan.language}`,
     accountSchedule,
-    `本周制作 ${plan.weeklyMasterCount} 条母版并形成 ${plan.weeklyVariantCount} 条平台版本`,
+    `本周制作 ${plan.weeklyMasterCount} 条独立视频并安排 ${plan.weeklyVariantCount} 条平台发布`,
     `按选题与参考匹配、脚本和结构素材、制作与质检、交付发布包的顺序推进`,
     `计划成本范围 ¥${plan.estimatedCostCny.min}–${plan.estimatedCostCny.max}，预算上限 ¥${plan.budgetCny}，预计计划窗口 ${plan.deliveryDays} 天`,
     '账号连接、外部服务和素材权利必须在执行前按真实状态核验；缺失时暂停并明确告诉我，不得伪造完成。',
@@ -537,8 +537,8 @@ export default function StarterGuidedSetup({
           <div className="p-4 sm:p-5">
             <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
               <div className="rounded-lg border border-border bg-surface-2 p-3"><div className="flex items-center gap-2 text-[10px] font-bold text-text-muted"><PackageOpen size={13} />主推产品 / 市场 / 语言</div><p className="mt-2 text-sm font-bold text-text-primary">{plan.primaryProduct || '待补充主推产品'}</p><p className="mt-1 text-xs text-text-secondary">{plan.market || '待补充目标市场'} · {plan.language || '待补充语言'}</p></div>
-              <div className="rounded-lg border border-border bg-surface-2 p-3"><div className="flex items-center gap-2 text-[10px] font-bold text-text-muted"><Users2 size={13} />本周内容计划</div><p className="mt-2 text-sm font-bold text-text-primary">{plan.weeklyMasterCount} 条母版 · {plan.weeklyVariantCount} 条平台版本</p><p className="mt-1 text-xs text-text-secondary">按账号稳定分布，不要求机械地每天一条</p></div>
-              <div className="rounded-lg border border-border bg-surface-2 p-3"><div className="flex items-center gap-2 text-[10px] font-bold text-text-muted"><WalletCards size={13} />费用范围 / 预算上限</div><p className="mt-2 text-sm font-bold text-text-primary">¥{plan.estimatedCostCny.min}–{plan.estimatedCostCny.max}</p><p className="mt-1 text-xs text-text-secondary">¥10–15 / 母版为规划基线；预算上限 ¥{plan.budgetCny}，实际结算以费用回执为准</p></div>
+              <div className="rounded-lg border border-border bg-surface-2 p-3"><div className="flex items-center gap-2 text-[10px] font-bold text-text-muted"><Users2 size={13} />本周内容计划</div><p className="mt-2 text-sm font-bold text-text-primary">{plan.weeklyMasterCount} 条独立制作视频 · {plan.weeklyVariantCount} 条平台发布</p><p className="mt-1 text-xs text-text-secondary">按账号稳定分布，不要求机械地每天一条</p></div>
+              <div className="rounded-lg border border-border bg-surface-2 p-3"><div className="flex items-center gap-2 text-[10px] font-bold text-text-muted"><WalletCards size={13} />费用范围 / 预算上限</div><p className="mt-2 text-sm font-bold text-text-primary">¥{plan.estimatedCostCny.min}–{plan.estimatedCostCny.max}</p><p className="mt-1 text-xs text-text-secondary">¥10–15 / 独立制作视频为规划基线；预算上限 ¥{plan.budgetCny}，实际结算以费用回执为准</p></div>
               <div className="rounded-lg border border-border bg-surface-2 p-3"><div className="flex items-center gap-2 text-[10px] font-bold text-text-muted"><Clock3 size={13} />预计交付时间</div><p className="mt-2 text-sm font-bold text-text-primary">{plan.deliveryDays} 天计划窗口</p><p className="mt-1 text-xs text-text-secondary">用于工作排期，不是供应商 SLA 承诺</p></div>
             </div>
 
@@ -559,7 +559,7 @@ export default function StarterGuidedSetup({
                 {[
                   ['1', '选题与参考匹配', '核验爆款参考、产品和账号事实'],
                   ['2', '脚本与结构素材', '生成标题、Tag、脚本和逐镜素材需求'],
-                  ['3', '制作与质检', '制作母版、平台适配并完成质量检查'],
+                  ['3', '制作与质检', '制作独立视频、完成发布适配和质量检查'],
                   ['4', '交付发布包', '内容确认后生成自助发布包；不自动发布'],
                 ].map(item => (
                   <div key={item[0]} className="bg-white p-3"><span className="text-[10px] font-bold text-accent">{item[0]}</span><p className="mt-1 text-xs font-bold text-text-primary">{item[1]}</p><p className="mt-1 text-[10px] leading-relaxed text-text-muted">{item[2]}</p></div>
@@ -581,7 +581,7 @@ export default function StarterGuidedSetup({
                     return <button key={platform.id} type="button" disabled={unavailable} title={unavailable ? `当前最多选择 ${maxPlatforms} 个平台` : undefined} onClick={() => togglePlatform(platform.id)} className={`rounded-full border px-2.5 py-1.5 text-xs font-semibold disabled:cursor-not-allowed disabled:opacity-50 ${selected ? 'border-accent bg-white text-accent' : 'border-border bg-white text-text-muted'}`}>{platform.label}</button>;
                   })}</div>
                 </div>
-                <label className="grid content-start gap-1 text-[11px] font-bold text-text-secondary">母版视频数（最多 {maxMasterCount} 条）<input type="number" min={maxMasterCount > 0 ? 1 : 0} max={maxMasterCount} value={draft.weeklyMasterCount} disabled={maxMasterCount === 0} onChange={event => update('weeklyMasterCount', Math.max(1, Math.min(maxMasterCount, Number(event.target.value) || 1)))} className={inputClass} /></label>
+                <label className="grid content-start gap-1 text-[11px] font-bold text-text-secondary">独立制作视频数（最多 {maxMasterCount} 条）<input type="number" min={maxMasterCount > 0 ? 1 : 0} max={maxMasterCount} value={draft.weeklyMasterCount} disabled={maxMasterCount === 0} onChange={event => update('weeklyMasterCount', Math.max(1, Math.min(maxMasterCount, Number(event.target.value) || 1)))} className={inputClass} /></label>
                 <label className="grid content-start gap-1 text-[11px] font-bold text-text-secondary"><span className="flex items-center gap-1"><Languages size={12} />内容语言</span><select value={draft.primaryLanguage} onChange={event => update('primaryLanguage', event.target.value)} className={inputClass}>{LANGUAGE_OPTIONS.map(language => <option key={language.id} value={language.id}>{language.label}</option>)}</select></label>
                 <div className="lg:col-span-4">
                   <p className="text-[11px] font-bold text-text-secondary">每个账号本周条数</p>

@@ -19,7 +19,7 @@ export function nativeStudioVoiceReceiptPath(scope:SocialTaskBudgetScope,operati
  * Studio voices. No body supplied pricing, routes, account or receipt paths. */
 export function createNativeStudioVoicePaidContext(input:{scope:SocialTaskBudgetScope;requirements:PaidStageRequirement[];routeBindings:Record<string,BoundPaidRoute>;intents:SocialPaidOperationIntent[];permit:ReturnType<typeof createSocialContentPaidOperationPermit>;voiceInput:VoiceInput;assertCurrent:()=>Promise<void>;root?:string}):StudioVoicePaidContext {
  const nativeRoute=input.routeBindings['voice:0:tts'];
- const selectedProvider:'qwen'|'minimax'|undefined=nativeRoute?.provider==='qwen'||nativeRoute?.provider==='minimax'?nativeRoute.provider:undefined;
+ const selectedProvider:'qwen'|'minimax'|'heygen'|undefined=nativeRoute?.provider==='qwen'||nativeRoute?.provider==='minimax'||nativeRoute?.provider==='heygen'?nativeRoute.provider:undefined;
  const voiceInput={...input.voiceInput,...(selectedProvider?{nativeProvider:selectedProvider}:{})};
  const plan=resolveStudioVoiceExecutionPlan(voiceInput);
  if(!plan.primary)throw Error('native_voice_route_requires_exact_clone_or_provider_plan');
@@ -43,6 +43,7 @@ export function createNativeStudioVoicePaidContext(input:{scope:SocialTaskBudget
   primaryProvider:primary.provider,
   async forRequest(request){
    await input.assertCurrent();
+   if(request.stage==='voice_asr'&&input.intents.some(intent=>intent.correction?.cause==='approved_first_frame_not_consumed_and_bound_voice_mismatch'))throw Error('corrected_bound_voice_forbids_legacy_asr');
    // Fallback candidates in the resolver are configuration, not same-voice
    // permission. Only a separately frozen exact route may add that in future.
    if(request.stage==='tts_fallback')throw Error('same_voice_fallback_route_not_frozen');
@@ -54,9 +55,13 @@ export function createNativeStudioVoicePaidContext(input:{scope:SocialTaskBudget
    const requirement=requirements[0],route=input.routeBindings[key];
    if(requirements.length!==1 || !requirement || !route)throw Error('native_voice_canonical_requirement_route_missing');
    if(request.stage==='tts' && requirement.text!==plan.texts[index])throw Error('director_voice_text_changed_requires_budget_replan');
-   const operationId='paid-plan:'+paidProductionHash({scope:input.scope,key,attempt:0});
+   const corrections=input.intents.filter(i=>i.correction&&i.stage===request.stage&&i.correction.kind===(request.stage==='tts'?'voice_tts':'voice_alignment'));
+   if(corrections.length>1)throw Error('native_voice_correction_ambiguous');
+   const correction=corrections[0]?.correction;
+   const operationId=correction?'paid-plan:'+paidProductionHash({scope:input.scope,key,attempt:1,correction}):'paid-plan:'+paidProductionHash({scope:input.scope,key,attempt:0});
    const intents=input.intents.filter(i=>i.operationId===operationId),intent=intents[0];
-   if(intents.length!==1||!intent||intent.inputContractHash!==paidProductionHash({requirement,route,attempt:0})||intent.provider!==route.provider||intent.model!==route.model||intent.accountRef!==route.accountRef||intent.stage!==requirement.stage||intent.shotId!==requirement.shotId||paidProductionHash(intent.maximumUnits)!==paidProductionHash(route.maximumUnits))throw Error('native_voice_canonical_intent_changed');
+   const expected=correction?paidProductionHash({requirement,route,attempt:1,correction}):paidProductionHash({requirement,route,attempt:0});
+   if(intents.length!==1||!intent||intent.inputContractHash!==expected||intent.provider!==route.provider||intent.model!==route.model||intent.accountRef!==route.accountRef||intent.stage!==requirement.stage||intent.shotId!==requirement.shotId||paidProductionHash(intent.maximumUnits)!==paidProductionHash(route.maximumUnits))throw Error('native_voice_canonical_intent_changed');
    return {
     intent,permit:input.permit,
     async assertProviderBinding(actual){

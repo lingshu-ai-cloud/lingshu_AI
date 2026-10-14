@@ -224,7 +224,11 @@ export async function assertCurrentContentExecutionActive(): Promise<void> {
     ?? await current.dataStore.getById<Record<string, unknown>>(CONTENT_EXECUTION_JOB_COLLECTION, current.jobId);
   if (!job || job.id !== current.jobId || !compact(job.tenant_id) || !compact(job.run_id) || !['queued', 'running', 'retry_wait', 'reconciling'].includes(String(job.status))) throw new ContentExecutionStoppedError();
   const run = await current.dataStore.getById<Record<string, unknown>>('workflow_runs', String(job.run_id || ''));
-  if (!run || run.id !== job.run_id || run.tenant_id !== job.tenant_id || ['paused', 'pausing', 'cancelling', 'cancelled', 'failed', 'completed', 'succeeded', 'dead_letter'].includes(String(run.status))) throw new ContentExecutionStoppedError();
+  if (!run
+    || run.id !== job.run_id
+    || run.tenant_id !== job.tenant_id
+    || ['paused', 'pausing', 'waiting_human', 'cancelling', 'cancelled', 'failed', 'completed', 'succeeded', 'dead_letter'].includes(String(run.status))
+    || String(run.current_controller || '') === 'human') throw new ContentExecutionStoppedError();
 }
 
 export function currentContentProviderReceipt(input: {

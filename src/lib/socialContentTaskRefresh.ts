@@ -1,3 +1,5 @@
+import { notifyAssistantStateInvalidated } from './assistantStateInvalidation';
+
 export const SOCIAL_CONTENT_TASK_REFRESH_EVENT = 'lingshu:social-content-task-refresh' as const;
 
 export type SocialContentTaskRefreshDetail = { taskId?: string };
@@ -9,6 +11,7 @@ export function notifySocialContentTaskChanged(taskId?: string): void {
     SOCIAL_CONTENT_TASK_REFRESH_EVENT,
     { detail: taskId ? { taskId } : {} },
   ));
+  notifyAssistantStateInvalidated({ domain: 'social-content', source: 'task-mutation', ...(taskId ? { entityId: taskId } : {}) });
 }
 
 export function socialContentTaskIdFromApiPath(path: string): string | undefined {

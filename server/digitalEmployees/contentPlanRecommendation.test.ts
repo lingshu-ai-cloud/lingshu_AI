@@ -31,6 +31,12 @@ const videos = [
   video('viral-3', '工厂采购避坑', '采购经理如何识别关键风险？', '860K'),
   video('viral-4', '产品精度怎么验证', '不要只看参数表，现场这样验证精度', '720K'),
   video('viral-5', '供应商交付能力判断', '交付前先看这三个工厂证据', '650K'),
+  ...Array.from({ length: 11 }, (_, index) => video(
+    `viral-${index + 6}`,
+    `工业设备采购证据 ${index + 6}`,
+    `采购负责人还要核对哪项证据 ${index + 6}？`,
+    `${600 - index * 20}K`,
+  )),
 ];
 const benchmarks = [{ id: 'benchmark-1', platform: 'tiktok', accountUrl: 'https://tiktok.com/@benchmark', accountName: 'Benchmark Factory', handle: '@benchmark' }];
 
@@ -51,6 +57,15 @@ const uncertainPack = enrichPackageWithContentSignals({ pack: recommendPackage(g
 assert.ok(uncertainPack.tasks.find(task => task.templateId === 'production')!.videoPlans!.every(plan => !plan.referenceId),
   'an unresolved exact analysis is not auto-selected for a new production plan');
 assert.ok(uncertainPack.tasks.find(task => task.templateId === 'production')!.videoPlans!.some(plan => plan.planningEvidence?.factors.some(reason => reason.includes('待复核'))));
+const irrelevant = video('irrelevant-video', '舞蹈穿搭分享', '今天试三套周末造型', '12M');
+irrelevant.aiAnalysis.candidateEvidence.relevance.level = 'low';
+irrelevant.aiAnalysis.gemini.sellingPoints = ['服装颜色与搭配'];
+const irrelevantRank = rankContentReferences({ videos: [irrelevant], benchmarks, platform: 'tiktok', productName: '工业检测设备', audience: '工厂采购负责人', direction: '采购教育' })[0]!;
+assert.equal(irrelevantRank.productionReady, true);
+assert.equal(irrelevantRank.contentRelevant, false);
+const irrelevantPack = enrichPackageWithContentSignals({ pack: recommendPackage(goal, config), goal, config, videos: [irrelevant], benchmarks });
+assert.ok(irrelevantPack.tasks.find(task => task.templateId === 'production')!.videoPlans!.every(plan => !plan.referenceId),
+  'a fully analyzed but irrelevant viral video must not be consumed by the weekly plan');
 const frozenPack = recommendPackage(goal, config);
 const frozenProduction = frozenPack.tasks.find(task => task.templateId === 'production')!;
 frozenProduction.videoPlans = frozenProduction.videoPlans!.map(plan => ({ ...plan, referenceId: 'review-video' }));
@@ -79,6 +94,7 @@ assert.equal(enriched.directorPlan?.productionBudget, plans.reduce((sum, plan) =
 assert.equal(enriched.operatingContext?.budget.productionCny, enriched.directorPlan?.productionBudget, 'weekly goal and account allocation must read the same production budget');
 assert.ok(plans[0]?.buyerProblem);
 assert.ok(plans[0]?.plannedPublishDate);
+assert.ok(plans.every(plan => plan.plannedPublishAt?.endsWith('T18:00:00+08:00')), 'recommendations must include an explicit 18:00 Beijing publish instant');
 assert.deepEqual(
   Array.from({ length: 5 }, (_, index) => publishDateForAccountSlot('2026-09-28', '2026-10-04', index, 5)),
   ['2026-09-28', '2026-09-30', '2026-10-01', '2026-10-03', '2026-10-04'],
@@ -109,7 +125,7 @@ assert.ok(new Set(familyProducts.values()).size > 1, 'separate content families 
 
 const fourPlatformConfig = normalizeDigitalEmployeeConfig({
   ...config,
-  socialCadence: '每周生成 5 条原创母版',
+  socialCadence: '每周生成 5 条独立制作视频',
   publishingTargets: [
     { platform: 'youtube', accountId: 'yt-1', accountLabel: '海拓装备 YouTube' },
     { platform: 'tiktok', accountId: 'tt-1', accountLabel: '海拓装备 TikTok' },
@@ -131,26 +147,22 @@ const fourPlatformPlans = enrichPackageWithContentSignals({
 }).tasks.find(task => task.templateId === 'production')?.videoPlans || [];
 const fourPlatformMasters = fourPlatformPlans.filter(plan => plan.productionRole === 'master');
 assert.equal(fourPlatformPlans.length, 16, 'four accounts keep 16 distinct publish versions');
-assert.equal(fourPlatformMasters.length, 5, '16 publish versions must collapse into five paid original masters');
+assert.equal(fourPlatformMasters.length, 16, 'all 16 planned videos must remain independently produced and charged deliverables');
 assert.deepEqual(Object.fromEntries(['youtube', 'tiktok', 'instagram', 'facebook'].map(platform => [platform, fourPlatformPlans.filter(plan => plan.platform === platform).length])), { youtube: 3, tiktok: 5, instagram: 3, facebook: 5 });
 for (const platform of ['youtube', 'tiktok', 'instagram', 'facebook']) {
   const platformPlans = fourPlatformPlans.filter(plan => plan.platform === platform);
   assert.equal(new Set(platformPlans.map(plan => plan.contentFamilyId)).size, platformPlans.length, `${platform} must not publish the same master twice`);
   assert.equal(new Set(platformPlans.map(plan => plan.plannedPublishDate)).size, platformPlans.length, `${platform} must not publish its whole weekly quota on one day`);
 }
-assert.equal(
-  new Set(fourPlatformPlans.filter(plan => plan.plannedPublishDate === fourPlatformGoal.startsAt).map(plan => plan.matrix?.accountId)).size,
-  4,
-  'all four accounts must begin operating in parallel on the same weekly axis',
-);
-assert.equal(new Set(fourPlatformMasters.map(plan => plan.referenceId)).size, 5, 'the five originals use five distinct viral references');
+assert.equal(new Set(fourPlatformPlans.map(plan => plan.plannedPublishDate)).size, 7, 'the complete output must be balanced across the full week rather than scheduled independently into the same days');
+assert.equal(new Set(fourPlatformMasters.map(plan => plan.referenceId)).size, 16, 'each planned video uses its own executable viral reference');
 for (const master of fourPlatformMasters) {
   const family = fourPlatformPlans.filter(plan => plan.contentFamilyId === master.contentFamilyId);
   assert.ok(family.every(plan => plan.referenceId === master.referenceId), 'cross-platform variants inherit the same benchmark and normalized structure');
 }
-assert.equal(fourPlatformPlans.reduce((sum, plan) => sum + Number(plan.estimatedCost || 0), 0), 62.5);
-assert.equal(fourPlatformPlans.reduce((sum, plan) => sum + Number(plan.estimatedCostRange?.minCny || 0), 0), 50);
-assert.equal(fourPlatformPlans.reduce((sum, plan) => sum + Number(plan.estimatedCostRange?.maxCny || 0), 0), 75);
+assert.equal(fourPlatformPlans.reduce((sum, plan) => sum + Number(plan.estimatedCost || 0), 0), 200);
+assert.equal(fourPlatformPlans.reduce((sum, plan) => sum + Number(plan.estimatedCostRange?.minCny || 0), 0), 160);
+assert.equal(fourPlatformPlans.reduce((sum, plan) => sum + Number(plan.estimatedCostRange?.maxCny || 0), 0), 240);
 const fourPlatformBatch = buildContentBatchPlan({
   goalId: 'four-platform-goal',
   goal: { ...fourPlatformGoal, videoPlans: fourPlatformPlans },
@@ -159,8 +171,8 @@ const fourPlatformBatch = buildContentBatchPlan({
   versions: { configVersion: 1, policyVersion: '1', factsVersion: '1' },
 });
 assert.equal(fourPlatformBatch.status, 'planned', fourPlatformBatch.blocker);
-assert.equal(fourPlatformBatch.orders.length, 5, 'production receives five orders instead of resubmitting all 16 versions');
-assert.equal(fourPlatformBatch.orders.flatMap(order => order.deliveryVariants || []).length, 16, 'five production orders retain every platform delivery destination');
+assert.equal(fourPlatformBatch.orders.length, 16, 'production receives one real order for every planned video');
+assert.equal(fourPlatformBatch.orders.flatMap(order => order.deliveryVariants || []).length, 16, 'each production order retains its platform delivery destination');
 
 // Exercise the actual recommendation order: matrix defaults are created first,
 // enterprise products are then bound by master family, and viral references are
@@ -195,9 +207,9 @@ const multiProduct = enrichPackageWithContentSignals({
 const multiProductPlans = multiProduct.tasks.find(task => task.templateId === 'production')!.videoPlans!;
 const multiProductMasters = multiProductPlans.filter(plan => plan.productionRole === 'master');
 assert.equal(multiProductPlans.length, 16, 'the latest four-platform profile retains sixteen delivery versions');
-assert.equal(multiProductMasters.length, 5);
-assert.equal(new Set(multiProductMasters.map(plan => plan.productId)).size, 5, 'five original families must retain five independently selected products');
-assert.equal(new Set(multiProductMasters.map(plan => plan.referenceId)).size, 5);
+assert.equal(multiProductMasters.length, 16);
+assert.equal(new Set(multiProductMasters.map(plan => plan.productId)).size, 5, 'sixteen videos must retain the five independently selected products assigned across them');
+assert.equal(new Set(multiProductMasters.map(plan => plan.referenceId)).size, 16);
 assert.deepEqual(multiProductPlans.map(identity), boundIdentities, 'reference enrichment must preserve selected products, materials and master-family identity');
 assert.deepEqual(matrixIssues(multiProduct), [], 'a valid multi-product recommendation must pass the same matrix guard used when starting a week');
 assert.deepEqual(validatePackage(multiProduct, fourPlatformGoal, staleProductConfig), [], 'the complete generated package must pass backend approval validation without rewriting all products to the stale account default');
@@ -212,7 +224,7 @@ for (const master of multiProductMasters) {
 const synchronizedMultiProduct = fillMatrixVideos(multiProduct, staleProductConfig.videoDefaults || {}, fourPlatformGoal.endsAt);
 const synchronizedPlans = synchronizedMultiProduct.tasks.find(task => task.templateId === 'production')!.videoPlans!;
 assert.deepEqual(synchronizedPlans.map(identity), boundIdentities, 'repeated matrix synchronization must not clear materials or replace explicitly bound products with account defaults');
-assert.deepEqual(synchronizedPlans.map(plan => plan.referenceId), multiProductPlans.map(plan => plan.referenceId), 'matrix synchronization must retain all five frozen references and their platform adaptations');
+assert.deepEqual(synchronizedPlans.map(plan => plan.referenceId), multiProductPlans.map(plan => plan.referenceId), 'matrix synchronization must retain all frozen references and their platform assignments');
 assert.deepEqual(matrixIssues(synchronizedMultiProduct), []);
 assert.deepEqual(validatePackage(synchronizedMultiProduct, fourPlatformGoal, staleProductConfig), []);
 const multiProductBatch = buildContentBatchPlan({
@@ -221,18 +233,26 @@ const multiProductBatch = buildContentBatchPlan({
   versions: { configVersion: 1, policyVersion: '1', factsVersion: '1' },
 });
 assert.equal(multiProductBatch.status, 'planned', multiProductBatch.blocker);
-assert.equal(multiProductBatch.orders.length, 5, 'the recommendation-to-approval path must still produce exactly five paid master orders');
+assert.equal(multiProductBatch.orders.length, 16, 'the recommendation-to-approval path must produce one paid order per planned video');
 assert.equal(multiProductBatch.orders.flatMap(order => order.deliveryVariants || []).length, 16);
 assert.deepEqual(multiProductBatch.orders.map(order => order.productId), multiProductMasters.map(plan => plan.productId));
-// Both products and their materials are individually valid, but an adaptation
-// cannot silently become a different product while still sharing its master.
+// Historic shared-family data must still reject a sibling that silently changes
+// product while claiming to reuse the first video's production identity.
 const inconsistentFamily = structuredClone(multiProduct);
-const mismatchedAdaptation = inconsistentFamily.tasks.find(task => task.templateId === 'production')!.videoPlans!
-  .find(plan => plan.productionRole === 'platform_adaptation')!;
-const anotherValidProduct = confirmedProducts.find(product => product.id !== mismatchedAdaptation.productId)!;
-Object.assign(mismatchedAdaptation, { productId: anotherValidProduct.id, productName: anotherValidProduct.name, materialIds: [...anotherValidProduct.materialIds] });
-assert.ok(matrixIssues(inconsistentFamily).includes('同一母版的平台版本必须使用同一产品'), 'valid individual product IDs must not bypass shared-master product identity');
-assert.ok(validatePackage(inconsistentFamily, fourPlatformGoal, staleProductConfig).includes('同一母版的平台版本必须使用同一产品'), 'backend package approval must retain the same cross-platform family guard');
+const inconsistentPlans = inconsistentFamily.tasks.find(task => task.templateId === 'production')!.videoPlans!;
+const baseFamilyPlan = inconsistentPlans[0]!;
+const mismatchedAdaptation = inconsistentPlans[1]!;
+const anotherValidProduct = confirmedProducts.find(product => product.id !== baseFamilyPlan.productId)!;
+Object.assign(mismatchedAdaptation, {
+  contentFamilyId: baseFamilyPlan.contentFamilyId,
+  productionRole: 'platform_adaptation',
+  masterContentId: baseFamilyPlan.contentId,
+  productId: anotherValidProduct.id,
+  productName: anotherValidProduct.name,
+  materialIds: [...anotherValidProduct.materialIds],
+});
+assert.ok(matrixIssues(inconsistentFamily).includes('同一内容系列的发布版本必须使用同一产品'), 'valid individual product IDs must not bypass shared-master product identity');
+assert.ok(validatePackage(inconsistentFamily, fourPlatformGoal, staleProductConfig).includes('同一内容系列的发布版本必须使用同一产品'), 'backend package approval must retain the same cross-platform family guard');
 
 console.log('content plan recommendation tests passed');
 

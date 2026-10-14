@@ -28,6 +28,26 @@ export interface SocialTaskBudgetAuthorization {
     maximumCny: number;
     authorizationRef: string;
 }
+export interface SocialTaskCorrectionBudgetAuthorization {
+    schemaVersion: 1;
+    tenantId: string;
+    taskId: string;
+    runId: string;
+    planHash: string;
+    previousMaximumCny: number;
+    maximumCny: number;
+    reason: 'provider_correction';
+    correctionCause: 'approved_first_frame_not_consumed'|'approved_first_frame_not_consumed_and_bound_voice_mismatch';
+    affectedPresenterGroupIds: [string, string, string];
+    presenterApprovalBindings: [{groupId:string;approvalRecordHash:string},{groupId:string;approvalRecordHash:string},{groupId:string;approvalRecordHash:string}];
+    selectedVoiceId?:string;
+    selectedVoiceFingerprint?:string;
+    supersedes?:{recordHash:string;authorizationRef:string};
+    authorizedBy: string;
+    authorizationRef: string;
+    issuedAt: string;
+    recordHash: string;
+}
 /** These ports read canonical server records, never request-body claims. */
 export interface SocialTaskBudgetPorts {
     authorization(scope: SocialTaskBudgetScope): Promise<SocialTaskBudgetAuthorization>;
@@ -49,11 +69,17 @@ interface Ledger {
     taskId: string;
     limitMicros: number;
     authorizationRefs: string[];
+    correctionAuthorization?: SocialTaskCorrectionBudgetAuthorization;
+    correctionAuthorizationHistory?: SocialTaskCorrectionBudgetAuthorization[];
     entries: Record<string, SocialTaskBudgetEntry>;
 }
 function fail(code: string): never { throw Error(`social_task_budget_${code}`); }
 const text = (s: string) => typeof s === 'string' && s.trim() === s && s.length > 0 && s.length <= 512;
 const hash = (s: string) => createHash('sha256').update(s).digest('hex');
+const correctionHash = (value: Omit<SocialTaskCorrectionBudgetAuthorization, 'recordHash'>) => hash(JSON.stringify(value));
+export function sealSocialTaskCorrectionBudgetAuthorization(value: Omit<SocialTaskCorrectionBudgetAuthorization, 'recordHash'>): SocialTaskCorrectionBudgetAuthorization {
+    return { ...value, recordHash: correctionHash(value) };
+}
 const micros = (n: number) => { const m = Math.round(n * 1e6); if (!Number.isFinite(n) || n <= 0 || !Number.isSafeInteger(m) || m <= 0)
     fail('amount_invalid'); return m; };
 function scopeCheck(s: SocialTaskBudgetScope) { if (![s.tenantId, s.taskId, s.runId].every(text) || !/^[a-f0-9]{64}$/.test(s.planHash))
@@ -79,8 +105,30 @@ export class SocialContentTaskBudget {
         catch {
             return fail('ledger_corrupt');
         }
-        if (l.schemaVersion !== 1 || l.tenantId !== s.tenantId || l.taskId !== s.taskId || !Number.isSafeInteger(l.limitMicros) || l.limitMicros <= 0 || l.limitMicros > 10e6 || !Array.isArray(l.authorizationRefs) || !l.authorizationRefs.every(text) || !l.entries || typeof l.entries !== 'object' || Array.isArray(l.entries))
+        if (l.schemaVersion !== 1 || l.tenantId !== s.tenantId || l.taskId !== s.taskId || !Number.isSafeInteger(l.limitMicros) || l.limitMicros <= 0 || l.limitMicros > 20e6 || !Array.isArray(l.authorizationRefs) || !l.authorizationRefs.every(text) || !l.entries || typeof l.entries !== 'object' || Array.isArray(l.entries))
             fail('ledger_corrupt');
+        if (l.limitMicros > 10e6) {
+            const grant = l.correctionAuthorization;
+            if (!grant) fail('ledger_corrupt');
+            const { recordHash, ...body } = grant;
+            if (grant.schemaVersion !== 1 || grant.tenantId !== l.tenantId || grant.taskId !== l.taskId
+                || !text(grant.runId) || !/^[a-f0-9]{64}$/.test(grant.planHash)
+                || grant.reason !== 'provider_correction' || !['approved_first_frame_not_consumed','approved_first_frame_not_consumed_and_bound_voice_mismatch'].includes(grant.correctionCause)
+                || !Array.isArray(grant.affectedPresenterGroupIds) || grant.affectedPresenterGroupIds.length !== 3
+                || new Set(grant.affectedPresenterGroupIds).size !== 3 || !grant.affectedPresenterGroupIds.every(text)
+                || !Array.isArray(grant.presenterApprovalBindings) || grant.presenterApprovalBindings.length !== 3
+                || grant.presenterApprovalBindings.some(item=>!item||!text(item.groupId)||!/^[a-f0-9]{64}$/.test(item.approvalRecordHash))
+                || JSON.stringify(grant.presenterApprovalBindings.map(item=>item.groupId).sort())!==JSON.stringify([...grant.affectedPresenterGroupIds].sort())
+                || !text(grant.authorizedBy) || !text(grant.authorizationRef)
+                || !Number.isFinite(Date.parse(grant.issuedAt)) || grant.previousMaximumCny !== 10
+                || (grant.correctionCause==='approved_first_frame_not_consumed_and_bound_voice_mismatch'&&(!text(grant.selectedVoiceId!)||!/^[a-f0-9]{64}$/.test(grant.selectedVoiceFingerprint!)||!grant.supersedes||!/^[a-f0-9]{64}$/.test(grant.supersedes.recordHash)||!text(grant.supersedes.authorizationRef)))
+                || micros(grant.maximumCny) !== l.limitMicros || grant.maximumCny > (grant.correctionCause==='approved_first_frame_not_consumed'?16.5:20)
+                || recordHash !== correctionHash(body)) fail('ledger_corrupt');
+            if(grant.correctionCause==='approved_first_frame_not_consumed_and_bound_voice_mismatch'){
+                const history=l.correctionAuthorizationHistory;
+                if(!Array.isArray(history)||history.length!==1||history[0]?.recordHash!==grant.supersedes?.recordHash||history[0]?.authorizationRef!==grant.supersedes.authorizationRef)fail('ledger_corrupt');
+            }
+        }
         for (const [id, e] of Object.entries(l.entries)) {
             operationCheck(e);
             if (id !== hash(e.operationId) || !text(e.runId) || !/^[a-f0-9]{64}$/.test(e.planHash) || !text(e.quoteRef) || !Number.isSafeInteger(e.reservedMicros) || e.reservedMicros <= 0 || !['reserved', 'accepted', 'unknown', 'completed', 'rejected'].includes(e.status) || (e.receiptRef !== null && !text(e.receiptRef)))
@@ -111,7 +159,51 @@ export class SocialContentTaskBudget {
         if (fs.existsSync(temp))
             fs.unlinkSync(temp);
     } }
-    status(scope: SocialTaskBudgetScope) { scopeCheck(scope); const l = this.read(scope); return l ? { limitCny: l.limitMicros / 1e6, retainedCny: used(l) / 1e6, remainingCny: Math.max(0, l.limitMicros - used(l)) / 1e6, entries: structuredClone(Object.values(l.entries)) } : null; }
+    status(scope: SocialTaskBudgetScope) { scopeCheck(scope); const l = this.read(scope); if (!l) return null; const retainedMicros=used(l), correction=l.correctionAuthorization, correctionMatches=correction?.runId===scope.runId&&correction.planHash===scope.planHash; const limitMicros=correctionMatches?l.limitMicros:Math.min(l.limitMicros,10e6); return { limitCny: limitMicros / 1e6, retainedCny: retainedMicros / 1e6, remainingCny: Math.max(0, limitMicros - retainedMicros) / 1e6, correctionAuthorization: correctionMatches ? structuredClone(correction) : null, entries: structuredClone(Object.values(l.entries)) }; }
+    /** Applies a server-authored, scope-bound correction grant. This is not
+     * exposed as a client budget setter: it may only extend an existing ¥10
+     * ledger for the exact run and plan that incurred the defective spend. */
+    async authorizeCorrection(scope: SocialTaskBudgetScope, grant: SocialTaskCorrectionBudgetAuthorization) {
+        scopeCheck(scope);
+        return withPaidOperationLock(path.join(this.root, '.locks'), JSON.stringify([scope.tenantId, scope.taskId]), async () => {
+            await this.ports.assertCurrent(scope);
+            const ledger = this.read(scope);
+            const { recordHash, ...body } = grant;
+            if (grant.schemaVersion !== 1 || grant.tenantId !== scope.tenantId || grant.taskId !== scope.taskId
+                || grant.runId !== scope.runId || grant.planHash !== scope.planHash
+                || grant.previousMaximumCny !== 10 || grant.reason !== 'provider_correction'
+                || !['approved_first_frame_not_consumed','approved_first_frame_not_consumed_and_bound_voice_mismatch'].includes(grant.correctionCause)
+                || !Array.isArray(grant.affectedPresenterGroupIds) || grant.affectedPresenterGroupIds.length !== 3
+                || new Set(grant.affectedPresenterGroupIds).size !== 3 || !grant.affectedPresenterGroupIds.every(text)
+                || !Array.isArray(grant.presenterApprovalBindings) || grant.presenterApprovalBindings.length !== 3
+                || grant.presenterApprovalBindings.some(item=>!item||!text(item.groupId)||!/^[a-f0-9]{64}$/.test(item.approvalRecordHash))
+                || JSON.stringify(grant.presenterApprovalBindings.map(item=>item.groupId).sort())!==JSON.stringify([...grant.affectedPresenterGroupIds].sort())
+                || !text(grant.authorizedBy) || !text(grant.authorizationRef)
+                || !Number.isFinite(Date.parse(grant.issuedAt)) || Date.parse(grant.issuedAt) > Date.now() + 60_000
+                || (grant.correctionCause==='approved_first_frame_not_consumed_and_bound_voice_mismatch'&&(!text(grant.selectedVoiceId!)||!/^[a-f0-9]{64}$/.test(grant.selectedVoiceFingerprint!)||!grant.supersedes||!/^[a-f0-9]{64}$/.test(grant.supersedes.recordHash)||!text(grant.supersedes.authorizationRef)))
+                || !Number.isFinite(grant.maximumCny) || grant.maximumCny <= 10 || grant.maximumCny > (grant.correctionCause==='approved_first_frame_not_consumed'?16.5:20)
+                || recordHash !== correctionHash(body)) fail('correction_authorization_invalid');
+            if (!ledger) fail('correction_original_budget_missing');
+            if (ledger.correctionAuthorization) {
+                const prior=ledger.correctionAuthorization;
+                if (prior.recordHash === grant.recordHash) return this.status(scope)!;
+                if(grant.correctionCause!=='approved_first_frame_not_consumed_and_bound_voice_mismatch'||prior.correctionCause!=='approved_first_frame_not_consumed'
+                    ||grant.maximumCny!==20||grant.supersedes?.recordHash!==prior.recordHash||grant.supersedes.authorizationRef!==prior.authorizationRef
+                    ||JSON.stringify(grant.affectedPresenterGroupIds)!==JSON.stringify(prior.affectedPresenterGroupIds)
+                    ||JSON.stringify(grant.presenterApprovalBindings)!==JSON.stringify(prior.presenterApprovalBindings))fail('correction_authorization_conflict');
+                ledger.limitMicros=micros(grant.maximumCny);ledger.correctionAuthorizationHistory=[structuredClone(prior)];ledger.correctionAuthorization=structuredClone(grant);
+                if(!ledger.authorizationRefs.includes(grant.authorizationRef))ledger.authorizationRefs.push(grant.authorizationRef);
+                await this.ports.assertCurrent(scope);this.write(scope,ledger);return this.status(scope)!;
+            }
+            if (ledger.limitMicros !== 10e6) fail('correction_original_budget_missing');
+            ledger.limitMicros = micros(grant.maximumCny);
+            ledger.correctionAuthorization = structuredClone(grant);
+            if (!ledger.authorizationRefs.includes(grant.authorizationRef)) ledger.authorizationRefs.push(grant.authorizationRef);
+            await this.ports.assertCurrent(scope);
+            this.write(scope, ledger);
+            return this.status(scope)!;
+        });
+    }
     async reserveBatch(scope: SocialTaskBudgetScope, operations: SocialTaskBudgetOperation[]) {
         scopeCheck(scope);
         if (!operations.length)
@@ -124,9 +216,13 @@ export class SocialContentTaskBudget {
             const a = await this.ports.authorization(scope);
             if (!text(a.authorizationRef))
                 fail('authorization_missing');
-            const cap = Math.min(10e6, micros(a.maximumCny));
-            const l = this.read(scope) || { schemaVersion: 1 as const, tenantId: scope.tenantId, taskId: scope.taskId, limitMicros: cap, authorizationRefs: [], entries: {} };
-            l.limitMicros = Math.min(l.limitMicros, cap);
+            const baseCap = Math.min(10e6, micros(a.maximumCny));
+            const l = this.read(scope) || { schemaVersion: 1 as const, tenantId: scope.tenantId, taskId: scope.taskId, limitMicros: baseCap, authorizationRefs: [], entries: {} };
+            const correction = l.correctionAuthorization;
+            const correctionMatches = correction?.tenantId === scope.tenantId && correction.taskId === scope.taskId
+                && correction.runId === scope.runId && correction.planHash === scope.planHash;
+            const cap = correctionMatches ? l.limitMicros : baseCap;
+            if (!correctionMatches) l.limitMicros = Math.min(l.limitMicros, baseCap);
             if (!l.authorizationRefs.includes(a.authorizationRef))
                 l.authorizationRefs.push(a.authorizationRef);
             for (const o of operations) {
@@ -161,7 +257,7 @@ export class SocialContentTaskBudget {
     }
     async releaseRejected(scope: SocialTaskBudgetScope, operationId: string, receiptRef: string) {
         return this.mutate(scope, operationId, async e => {
-            if (e.status !== 'reserved' || !text(receiptRef) || !await this.ports.verifyRejection(scope, e, receiptRef)) fail('rejection_not_proven');
+            if (!['reserved','unknown'].includes(e.status) || !text(receiptRef) || !await this.ports.verifyRejection(scope, e, receiptRef)) fail('rejection_not_proven');
             e.status = 'rejected';
             e.receiptRef = receiptRef;
         });

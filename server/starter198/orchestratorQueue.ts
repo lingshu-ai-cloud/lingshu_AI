@@ -170,7 +170,7 @@ function starterTasks(operatingPlan?: DigitalEmployeeConfig['confirmedOperatingP
     task({
       key: 'starter_content_production', title: '生成首发内容与一次优化版',
       description: operatingPlan
-        ? `灵小图先推进首条内容的脚本、素材、标题、Tag、成片与版本记录；本周期确认上限为 ${operatingPlan.weeklyMasterCount} 条母版、${operatingPlan.weeklyVariantCount} 条平台版本，后续批次须按真实任务继续创建，不把上限伪装为已执行。`
+        ? `灵小图先推进首条内容的脚本、素材、标题、Tag、成片与版本记录；本周期确认上限为 ${operatingPlan.weeklyMasterCount} 条独立视频、${operatingPlan.weeklyVariantCount} 条平台版本，后续批次须按真实任务继续创建，不把上限伪装为已执行。`
         : '灵小图完成脚本、素材、标题、Tag、基础成片与版本记录；不直接发布。',
       agentRole: 'content', kind: 'production', requiresApproval: false, dependsOn: ['starter_content_research'],
       businessDomain: 'content', capabilityKey: 'workflow.standard.run', destination: 'smartAssets', destinationView: 'create',

@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { buildDownloadedReferenceMaterial } from './downloadedReferenceMaterial.js';
-import { isReferenceOnlyMaterial } from './materialPolicy.js';
+import { isReferenceOnlyMaterial, isWorkflowInternalMaterial } from './materialPolicy.js';
 
 test('downloaded competitor media retains tenant-scoped reference access without production rights', () => {
   const material = buildDownloadedReferenceMaterial({
@@ -32,4 +32,13 @@ test('locally imported video requires every production right before joining edit
     derivativesApproved: true, rawLibraryUseApproved: true, mayUseInProduction: true };
   assert.equal(isReferenceOnlyMaterial(imported), false);
   assert.equal(isReferenceOnlyMaterial({ ...imported, derivativesApproved: false }), true);
+});
+
+test('workflow first frames remain production evidence instead of user library assets', () => {
+  assert.equal(isWorkflowInternalMaterial({ sourceType: 'ai-storyboard-first-frame' }), true);
+  assert.equal(isWorkflowInternalMaterial({ sourceType: 'digital-human-qwen-first-frame-draft' }), true);
+  assert.equal(isWorkflowInternalMaterial({ sourceType: 'digital-human-target-first-frame' }), true);
+  assert.equal(isWorkflowInternalMaterial({ sourceType: 'viral-sentence-first-frame' }), true);
+  assert.equal(isWorkflowInternalMaterial({ sourceType: 'ai-storyboard-video' }), false,
+    '完成的视频仍可作为用户素材，不应随首帧草稿一起隐藏');
 });

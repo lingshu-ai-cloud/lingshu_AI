@@ -46,6 +46,12 @@ function recordError(error: unknown): Record<string, unknown> {
   return error && typeof error === 'object' ? error as Record<string, unknown> : {};
 }
 
+function managedPlanHasPresenterInputBlock(spec: Record<string, any>): boolean {
+  return (Array.isArray(spec.automatedReplicationShots) ? spec.automatedReplicationShots : [])
+    .some((shot: Record<string, any>) => shot.kind === 'blocked'
+      && ['avatar_required', 'presenter_authorization_required'].includes(String(shot.blockerCode || '')));
+}
+
 export function selectManagedReplicationPresenter(defaults: Record<string, any>, requested?: string): Record<string, any> | undefined {
   const presenters = (Array.isArray(defaults.presenters) ? defaults.presenters : []).filter((item: any) => item.authorized === true);
   const seedanceReady = (item: any) => {
@@ -64,6 +70,47 @@ export function selectManagedReplicationPresenter(defaults: Record<string, any>,
   if (selectedId) return presenters.find((item: any) => (item.id === selectedId || item.avatarId === selectedId) && seedanceReady(item));
   const ready = presenters.filter(seedanceReady);
   return ready.length === 1 ? ready[0] : undefined;
+}
+
+export type ManagedReplicationPresenterReadiness = {
+  state: 'missing' | 'authorization_required' | 'production_setup_required' | 'ready';
+  presenterCount: number;
+  presenterId: string;
+  presenterName: string;
+};
+
+/**
+ * Classifies the enterprise-person state using the same gate as the managed
+ * replication executor.  "Added" is deliberately separate from "ready": a
+ * HeyGen talking avatar may be valid for ordinary talking-head work while the
+ * current reference-shot replacement route still needs a bound portrait,
+ * person-replacement rights and an Active Ark image asset.
+ */
+export function managedReplicationPresenterReadiness(
+  defaults: Record<string, any>,
+  requested?: string,
+): ManagedReplicationPresenterReadiness {
+  const presenters = (Array.isArray(defaults.presenters) ? defaults.presenters : [])
+    .filter((item: any) => Boolean(String(item?.id || '').trim()));
+  const selectedId = String(requested || defaults.defaultPresenterId || '').trim();
+  const selected = selectedId
+    ? presenters.find((item: any) => item.id === selectedId || item.avatarId === selectedId)
+    : presenters.length === 1 ? presenters[0] : undefined;
+  const presenterName = String(selected?.name || '').trim();
+  if (!presenters.length) return { state: 'missing', presenterCount: 0, presenterId: '', presenterName: '' };
+  if (!presenters.some((item: any) => item.authorized === true)) {
+    return { state: 'authorization_required', presenterCount: presenters.length, presenterId: String(selected?.id || ''), presenterName };
+  }
+  const ready = selectManagedReplicationPresenter(defaults, requested);
+  if (ready) {
+    return {
+      state: 'ready',
+      presenterCount: presenters.length,
+      presenterId: String(ready.id || ''),
+      presenterName: String(ready.name || '').trim(),
+    };
+  }
+  return { state: 'production_setup_required', presenterCount: presenters.length, presenterId: String(selected?.id || ''), presenterName };
 }
 
 export interface ManagedReplicationPorts {
@@ -115,18 +162,36 @@ export async function advanceManagedReplication(input: {
   };
   try {
     if (input.preflightBlocker) throw Error(input.preflightBlocker);
+    const currentPlanVersion = Number(object(spec.automatedReplicationPlan).version || 0);
+    let currentDefaults: Record<string, any> | undefined;
+    let refreshedPresenter: Record<string, any> | undefined;
+    if (currentPlanVersion >= MANAGED_REPLICATION_PLAN_VERSION && managedPlanHasPresenterInputBlock(spec)) {
+      const defaultsRecord = (await input.store.list<any>('studio_production_defaults', { where: { tenant_id: input.tenantId }, perPage: 1 })).items[0];
+      currentDefaults = object(defaultsRecord?.payload);
+      refreshedPresenter = selectManagedReplicationPresenter(currentDefaults, spec.contentOrder?.videoPlan?.heygenAvatarId);
+    }
+    const refreshPresenterInputs = Boolean(refreshedPresenter);
     if (!spec.automatedReplicationPlan
-      || Number(object(spec.automatedReplicationPlan).version || 0) < MANAGED_REPLICATION_PLAN_VERSION) {
+      || currentPlanVersion < MANAGED_REPLICATION_PLAN_VERSION
+      || refreshPresenterInputs) {
       const migratingExistingPlan = Boolean(spec.automatedReplicationPlan);
       const referenceId = String(spec.automation?.referenceAnalysisId || spec.automation?.routePlan?.referenceAnalysisId || '');
       const reference = input.references.find(item => item.id === referenceId);
       if (!reference) throw Error('经营复刻订单缺少指定的精确参考分析，不能改用普通剪辑');
-      const defaultsRecord = (await input.store.list<any>('studio_production_defaults', { where: { tenant_id: input.tenantId }, perPage: 1 })).items[0];
-      const defaults = object(defaultsRecord?.payload);
+      if (!currentDefaults) {
+        const defaultsRecord = (await input.store.list<any>('studio_production_defaults', { where: { tenant_id: input.tenantId }, perPage: 1 })).items[0];
+        currentDefaults = object(defaultsRecord?.payload);
+      }
       const requested = spec.contentOrder?.videoPlan?.heygenAvatarId;
-      const presenter = selectManagedReplicationPresenter(defaults, requested);
+      const presenter = refreshedPresenter || selectManagedReplicationPresenter(currentDefaults, requested);
       const assets = await ports.materials(input.tenantId);
-      const initialized = ports.initialize({ tenantId: input.tenantId, projectId: input.projectId, spec,
+      // Re-run the existing v1->v2 migration when a previously missing person
+      // has become usable. The plan builder preserves receipts/progress while
+      // replacing only the soft presenter blockers with executable shots.
+      const initializationSpec = refreshPresenterInputs
+        ? { ...spec, automatedReplicationPlan: { ...object(spec.automatedReplicationPlan), version: MANAGED_REPLICATION_PLAN_VERSION - 1 } }
+        : spec;
+      const initialized = ports.initialize({ tenantId: input.tenantId, projectId: input.projectId, spec: initializationSpec,
         reference, assets, presenterId: presenter?.id,
         productIds: spec.automation?.routePlan?.productId ? [spec.automation.routePlan.productId] : undefined });
       await persist({ ...initialized, automation: { ...spec.automation, stage: 'material_match', status: 'processing',

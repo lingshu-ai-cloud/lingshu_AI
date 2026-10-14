@@ -121,7 +121,7 @@ export function packageIssues(pack: WeeklyPackage, startsAt: string, endsAt: str
   const videoPlans = pack.tasks.find(task => task.templateId === 'production')?.videoPlans || [];
   if (pack.directorPlan && pack.tasks.some(task => task.templateId === 'production')) {
     const originals = videoPlans.filter(plan => plan.productionRole !== 'platform_adaptation');
-    if (originals.length !== pack.directorPlan.originalTarget) issues.push(`原创母版计划为 ${originals.length} 条，与编导目标 ${pack.directorPlan.originalTarget} 条不一致`);
+    if (originals.length !== pack.directorPlan.originalTarget) issues.push(`实际制作视频为 ${originals.length} 条，与本周目标 ${pack.directorPlan.originalTarget} 条不一致`);
     if (videoPlans.length !== pack.directorPlan.platformVersionTarget) issues.push(`平台交付版本为 ${videoPlans.length} 条，与编导目标 ${pack.directorPlan.platformVersionTarget} 条不一致`);
     const estimated = videoPlans.reduce((sum, plan) => sum + Number(plan.estimatedCost || 0), 0);
     if (estimated + pack.directorPlan.productionSpent > (pack.directorPlan.productionBudgetMax || pack.directorPlan.productionBudget)) issues.push('内容计划预计费用与已用金额超过生产预算');

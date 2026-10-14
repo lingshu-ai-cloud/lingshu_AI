@@ -16,7 +16,9 @@ import {
   refreshUnspentContentExecutionCheckpoint,
   DurableContentExecutionWorker,
   controlContentExecutionJob,
+  pauseContentExecutionJobsForRun,
   readContentExecutionJob,
+  resumeContentExecutionJobsForRun,
   setContentExecutionLimit,
 } from './durableQueue.js';
 import { classifyContentExecutionFailure } from './retryPolicy.js';
@@ -203,6 +205,50 @@ test('an unspent blocked admission may refresh only its executor binding', async
   await assert.rejects(refreshUnspentContentExecutionCheckpoint({dataStore:store,tenantId:job.tenantId,jobId:job.id,runId:job.runId,checkpointKey:'social.executor',checkpoint:old}),/refresh_not_allowed/);
 });
 
+test('an unspent pre-provider graph failure may be discarded when refreshing its executor binding', async () => {
+  const store = new MemoryStore();
+  const old = { version:'1', inputHash:'a'.repeat(64), payload:{executor:'langgraph'}, updatedAt:new Date().toISOString() };
+  const fresh = { ...old, inputHash:'b'.repeat(64) };
+  const retry = { ...old, inputHash:'retry'.padEnd(64, '0'), payload:{attempt:2} };
+  const graph = { version:'langgraph-checkpoints.v1', inputHash:'c'.repeat(64), updatedAt:new Date().toISOString(), payload:{
+    format:'langgraph-checkpoints.v1', identityHash:'c'.repeat(64), checkpoints:[], writes:{},
+  }};
+  const failedNode = { version:'1', inputHash:'d'.repeat(64), updatedAt:new Date().toISOString(), payload:{
+    node:'assets', status:'failed', outputSha256:null, providerReceiptRefs:[], reservedCny:null, actualCostCny:0,
+    failureCode:'budget_preflight_failed', failureReason:'budget_preflight_failed',
+  }};
+  const job = await admitContentExecutionJob({dataStore:store,tenantId:'tenant-graph-refresh',userId:'user-a',taskId:'task-a',runId:'run-a',taskType:'social',initialCheckpoints:{'social.executor':old}});
+  await store.update(CONTENT_EXECUTION_JOB_COLLECTION,job.id,{status:'blocked',checkpoints:{
+    ...job.checkpoints,'runtime.retry':retry,'langgraph.v1':graph,'langgraph.node.assets':failedNode,
+  }});
+  const refreshed=await refreshUnspentContentExecutionCheckpoint({dataStore:store,tenantId:job.tenantId,jobId:job.id,runId:job.runId,checkpointKey:'social.executor',checkpoint:fresh});
+  assert.equal(refreshed.checkpoints['social.executor'].inputHash,fresh.inputHash);
+  assert.equal(refreshed.checkpoints['runtime.retry'].inputHash,retry.inputHash);
+  assert.equal(refreshed.checkpoints['langgraph.v1'],undefined);
+  assert.equal(refreshed.checkpoints['langgraph.node.assets'],undefined);
+});
+
+test('graph binding refresh rejects any provider, cost, output, completed, or ambiguous graph evidence', async () => {
+  const unsafeNodes = [
+    {status:'running',outputSha256:null,providerReceiptRefs:[],reservedCny:null,actualCostCny:null},
+    {status:'completed',outputSha256:null,providerReceiptRefs:[],reservedCny:null,actualCostCny:null},
+    {status:'failed',outputSha256:'e'.repeat(64),providerReceiptRefs:[],reservedCny:null,actualCostCny:null},
+    {status:'failed',outputSha256:null,providerReceiptRefs:['qwen:request-1'],reservedCny:null,actualCostCny:null},
+    {status:'failed',outputSha256:null,providerReceiptRefs:[],reservedCny:0.01,actualCostCny:null},
+    {status:'failed',outputSha256:null,providerReceiptRefs:[],reservedCny:null,actualCostCny:0.01},
+  ];
+  for (const [index,payload] of unsafeNodes.entries()) {
+    const store = new MemoryStore();
+    const old = {version:'1',inputHash:'a'.repeat(64),payload:{executor:'langgraph'},updatedAt:new Date().toISOString()};
+    const job = await admitContentExecutionJob({dataStore:store,tenantId:`tenant-unsafe-${index}`,userId:'user-a',taskId:'task-a',runId:'run-a',taskType:'social',initialCheckpoints:{'social.executor':old}});
+    await store.update(CONTENT_EXECUTION_JOB_COLLECTION,job.id,{status:'blocked',checkpoints:{...job.checkpoints,
+      'langgraph.v1':{version:'langgraph-checkpoints.v1',inputHash:'c'.repeat(64),updatedAt:new Date().toISOString(),payload:{format:'langgraph-checkpoints.v1',identityHash:'c'.repeat(64),checkpoints:[],writes:{}}},
+      'langgraph.node.assets':{version:'1',inputHash:'d'.repeat(64),updatedAt:new Date().toISOString(),payload},
+    }});
+    await assert.rejects(refreshUnspentContentExecutionCheckpoint({dataStore:store,tenantId:job.tenantId,jobId:job.id,runId:job.runId,checkpointKey:'social.executor',checkpoint:{...old,inputHash:'b'.repeat(64)}}),/refresh_not_allowed/);
+  }
+});
+
 test('explicit customer pause replaces a workflow review wait without losing its receipts', async () => {
   const store = new MemoryStore();
   const job = await admitContentExecutionJob({ dataStore: store, tenantId: 'tenant-pause', userId: 'user-a', taskId: 'task-pause', runId: 'run-pause', taskType: 'social_content_weekly' });
@@ -214,6 +260,68 @@ test('explicit customer pause replaces a workflow review wait without losing its
   assert.deepEqual(manual.providerReceipts, review.providerReceipts);
   const lateReview = await controlContentExecutionJob({ dataStore: store, tenantId: job.tenantId, jobId: job.id, action: 'pause', pauseOrigin: 'workflow_review' });
   assert.equal((lateReview.checkpoints['runtime.pause'].payload as { origin: string }).origin, 'manual', 'a late graph wait cannot undo an explicit pause');
+});
+
+test('run lifecycle controls pause and resume only their own non-terminal production jobs', async () => {
+  const store = new MemoryStore();
+  const base = { dataStore: store, tenantId: 'tenant-run-control', userId: 'user-a', runId: 'run-a', taskType: 'social_content_weekly' };
+  const owned = await admitContentExecutionJob({ ...base, taskId: 'owned', initialCheckpoints: {
+    'production.stage': { version: '1', inputHash: 'stage-input', payload: { stage: 'voice' }, updatedAt: '2026-10-12T00:00:00.000Z' },
+  } });
+  const manuallyPaused = await admitContentExecutionJob({ ...base, taskId: 'manual' });
+  const reviewPaused = await admitContentExecutionJob({ ...base, taskId: 'review' });
+  const blocked = await admitContentExecutionJob({ ...base, taskId: 'blocked' });
+  const terminal = await admitContentExecutionJob({ ...base, taskId: 'terminal' });
+  const sibling = await admitContentExecutionJob({ ...base, taskId: 'sibling', runId: 'run-b' });
+  await store.update(CONTENT_EXECUTION_JOB_COLLECTION, owned.id, { provider_receipts: [{
+    provider: 'seedance', requestId: 'existing-request', state: 'accepted', providerTaskId: 'provider-task', metadata: {},
+    firstRecordedAt: '2026-10-12T00:00:00.000Z', updatedAt: '2026-10-12T00:00:00.000Z',
+  }] });
+  await controlContentExecutionJob({ dataStore: store, tenantId: base.tenantId, jobId: manuallyPaused.id, action: 'pause' });
+  await controlContentExecutionJob({ dataStore: store, tenantId: base.tenantId, jobId: reviewPaused.id, action: 'pause', pauseOrigin: 'workflow_review' });
+  await store.update(CONTENT_EXECUTION_JOB_COLLECTION, blocked.id, { status: 'blocked', last_error: 'avatar_required' });
+  await store.update(CONTENT_EXECUTION_JOB_COLLECTION, terminal.id, { status: 'succeeded', completed_at: '2026-10-12T00:01:00.000Z' });
+
+  const paused = await pauseContentExecutionJobsForRun({ dataStore: store, tenantId: base.tenantId, runId: base.runId, origin: 'workflow_run_pause' });
+  assert.deepEqual(paused.affectedJobIds, [owned.id]);
+  assert.deepEqual(paused.preservedJobIds.sort(), [manuallyPaused.id, reviewPaused.id, blocked.id].sort());
+  assert.deepEqual(paused.terminalJobIds, [terminal.id]);
+  const replay = await pauseContentExecutionJobsForRun({ dataStore: store, tenantId: base.tenantId, runId: base.runId, origin: 'workflow_run_pause' });
+  assert.deepEqual(replay.affectedJobIds, [owned.id], 'a repeated run pause is an idempotent repair');
+
+  const controlled = await readContentExecutionJob(store, base.tenantId, owned.taskId, base.runId);
+  assert.equal(controlled?.status, 'paused');
+  assert.equal((controlled?.checkpoints['runtime.pause'].payload as { origin: string }).origin, 'workflow_run_pause');
+  assert.deepEqual(controlled?.checkpoints['production.stage'].payload, { stage: 'voice' });
+  assert.equal(controlled?.providerReceipts[0]?.providerTaskId, 'provider-task');
+
+  const resumed = await resumeContentExecutionJobsForRun({ dataStore: store, tenantId: base.tenantId, runId: base.runId, origin: 'workflow_run_pause' });
+  assert.deepEqual(resumed.affectedJobIds, [owned.id]);
+  assert.equal((await readContentExecutionJob(store, base.tenantId, owned.taskId, base.runId))?.status, 'reconciling');
+  assert.equal((await readContentExecutionJob(store, base.tenantId, manuallyPaused.taskId, base.runId))?.status, 'paused');
+  assert.equal((await readContentExecutionJob(store, base.tenantId, reviewPaused.taskId, base.runId))?.status, 'paused');
+  assert.equal((await readContentExecutionJob(store, base.tenantId, blocked.taskId, base.runId))?.status, 'blocked', 'run resume cannot bypass a domain blocker');
+  assert.equal((await readContentExecutionJob(store, base.tenantId, sibling.taskId, sibling.runId))?.status, 'queued');
+});
+
+test('run resume is all-or-none while an original controlled worker is still settling', async () => {
+  const store = new MemoryStore();
+  const base = { dataStore: store, tenantId: 'tenant-handoff', userId: 'user-a', runId: 'run-handoff', taskType: 'social_content_weekly' };
+  const first = await admitContentExecutionJob({ ...base, taskId: 'first' });
+  const second = await admitContentExecutionJob({ ...base, taskId: 'second' });
+  await pauseContentExecutionJobsForRun({ dataStore: store, tenantId: base.tenantId, runId: base.runId, origin: 'workflow_handoff' });
+  await store.update(CONTENT_EXECUTION_JOB_COLLECTION, second.id, { worker_id: 'settling-worker', lease_expires_at: '2026-10-12T00:05:00.000Z' });
+  await assert.rejects(
+    resumeContentExecutionJobsForRun({ dataStore: store, tenantId: base.tenantId, runId: base.runId, origin: 'workflow_handoff' }),
+    /content_execution_original_worker_not_settled/,
+  );
+  assert.equal((await readContentExecutionJob(store, base.tenantId, first.taskId, base.runId))?.status, 'paused', 'preflight prevents a partial resume');
+  assert.equal((await readContentExecutionJob(store, base.tenantId, second.taskId, base.runId))?.status, 'paused');
+  await store.update(CONTENT_EXECUTION_JOB_COLLECTION, second.id, { worker_id: '', lease_expires_at: '' });
+  const resumed = await resumeContentExecutionJobsForRun({ dataStore: store, tenantId: base.tenantId, runId: base.runId, origin: 'workflow_handoff' });
+  assert.deepEqual(resumed.affectedJobIds.sort(), [first.id, second.id].sort());
+  assert.equal((await readContentExecutionJob(store, base.tenantId, first.taskId, base.runId))?.status, 'queued');
+  assert.equal((await readContentExecutionJob(store, base.tenantId, second.taskId, base.runId))?.status, 'queued');
 });
 
 test('versioned checkpoints survive a new execution context and stale workers are fenced', async () => {

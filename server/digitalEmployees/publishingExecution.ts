@@ -30,6 +30,7 @@ export interface PublishingApprovalItem {
   scheduledAt: string;
   sourceClaim: FrozenPublishSourceClaim;
   plannedPublishDate?: string;
+  plannedPublishAt?: string;
 }
 
 export interface PublishingApprovalPackage {
@@ -299,6 +300,7 @@ export function buildPublishingApprovalPackage(input: {
             tags: Array.isArray(publication.tags) ? publication.tags.map(text).filter(Boolean).slice(0, 20) : [], videoPath,
             scheduledAt: nextDailySlot(items.length, now), sourceClaim,
             ...(text(videoPlan.plannedPublishDate) ? { plannedPublishDate: text(videoPlan.plannedPublishDate) } : {}),
+            ...(text(videoPlan.plannedPublishAt) ? { plannedPublishAt: text(videoPlan.plannedPublishAt) } : {}),
           });
         }
       }
@@ -314,7 +316,10 @@ export function buildPublishingApprovalPackage(input: {
       const slots = boundedPublishingSlots({ ...input.scheduling, timezone, count: own.length, now });
       own.forEach((item, index) => {
         const requested = item.plannedPublishDate;
-        item.scheduledAt = requested && requested >= input.scheduling!.startsAt && requested <= input.scheduling!.endsAt ? new Date(`${requested}T20:00:00+08:00`).toISOString() : slots[index];
+        const requestedAt = item.plannedPublishAt;
+        item.scheduledAt = requested && requested >= input.scheduling!.startsAt && requested <= input.scheduling!.endsAt
+          ? Number.isFinite(Date.parse(requestedAt || '')) ? new Date(requestedAt!).toISOString() : new Date(`${requested}T18:00:00+08:00`).toISOString()
+          : slots[index];
       });
     }
     items.splice(0, items.length, ...expanded);

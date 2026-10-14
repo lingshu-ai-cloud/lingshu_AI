@@ -15,6 +15,7 @@ import {
   ArrowDown,
   ArrowRight,
   Bot,
+  CalendarRange,
   CheckCircle2,
   Loader2,
   Pause,
@@ -50,6 +51,8 @@ import AssistantDecisionCenter, {
   type AssistantDecisionActionResult,
 } from './assistant/AssistantDecisionCenter';
 import type { AssistantDecisionDeepLink, AssistantDecisionFeed } from '../../shared/contracts/assistantDecisionCenter';
+import { assistantDecisionApi } from '../lib/assistantDecisionApi';
+import { WEEKLY_WORK_UPDATED_EVENT } from '../lib/weeklyWorkEvents';
 import KnowledgeIntakePanel, { type AppliedProfile } from './enterprise/KnowledgeIntakePanel';
 import { studioApi } from '../lib/studioApi';
 import {
@@ -73,6 +76,15 @@ interface AssistantContext {
   suggestions: string[];
   pendingCount?: number;
   todoItems?: AssistantTodoItem[];
+  /** Page-local focus only. The server still authorizes every read and action. */
+  sourcePage?: string;
+  goalId?: string;
+  planId?: string;
+  runId?: string;
+  taskId?: string;
+  contentId?: string;
+  viewKey?: string;
+  workflowStage?: 'setup_required' | 'unplanned' | 'planned' | 'running' | 'history';
 }
 
 interface AssistantTodoItem {
@@ -399,6 +411,26 @@ function compactText(text: string, maxLength = 900) {
   return normalized.length > maxLength ? `${normalized.slice(0, maxLength)}...` : normalized;
 }
 
+function contextIdentifier(value: unknown, maxLength = 200): string | undefined {
+  if (typeof value !== 'string') return undefined;
+  const normalized = value.trim().slice(0, maxLength);
+  return normalized || undefined;
+}
+
+function assistantBusinessObjectContext(context: AssistantContext): string {
+  const references = [
+    context.goalId ? `周目标 ${context.goalId}` : '',
+    context.planId ? `计划 ${context.planId}` : '',
+    context.runId ? `运行 ${context.runId}` : '',
+    context.taskId ? `任务 ${context.taskId}` : '',
+    context.contentId ? `内容 ${context.contentId}` : '',
+    context.viewKey ? `当前视图 ${context.viewKey}` : '',
+  ].filter(Boolean);
+  return references.length
+    ? `【当前业务对象，仅用于定位，不能代替服务端授权或状态核验】${references.join('；')}`
+    : '【当前业务对象】当前页面没有选中具体任务或内容；不得从历史对话猜测对象。';
+}
+
 async function loadLiveIntegrationFacts(): Promise<string> {
   const readItems = async (path: string): Promise<Record<string, unknown>[] | null> => {
     try {
@@ -550,6 +582,11 @@ function focusedNaturalLanguageActionId(text: string): AssistantActionId | undef
   const normalized = text.trim().replace(/\s+/g, ' ');
   const matches = FOCUSED_MUTATION_PATTERNS.filter(([, pattern]) => pattern.test(normalized));
   return matches.length === 1 ? matches[0][0] : undefined;
+}
+
+function isWeeklyPlanKickoffRequest(text: string): boolean {
+  const normalized = text.trim().replace(/[。！!]+$/u, '').replace(/\s+/gu, '');
+  return /^(?:(?:请|请帮我|帮我|现在|立即|马上))*(?:开始|启动|制定|生成|创建)(?:(?:本周|这周))?(?:生产|制作|周计划|计划|周任务)$/u.test(normalized);
 }
 
 function focusedNaturalLanguageActionInput(
@@ -717,6 +754,7 @@ export default function GlobalAssistant({
   const [performanceHidden, setPerformanceHidden] = useState(false);
   const [performanceLineIndex, setPerformanceLineIndex] = useState(0);
   const [speechBubble, setSpeechBubble] = useState<AssistantSpeech | null>(null);
+  const [weeklyPlanPromptDismissed, setWeeklyPlanPromptDismissed] = useState(false);
   const [loading, setLoading] = useState(false);
   const [assistantThreadHydrated, setAssistantThreadHydrated] = useState(false);
   const [welcomeBubbleVisible, setWelcomeBubbleVisible] = useState(false);
@@ -785,9 +823,23 @@ export default function GlobalAssistant({
   const hydrateThread = useAssistantStore(state => state.hydrateThread);
   const setPersistenceMetadata = useAssistantStore(state => state.setPersistenceMetadata);
 
-  const pageContext = useMemo(() => liveContext ?? DEFAULT_CONTEXT[pageKey(page)] ?? DEFAULT_CONTEXT.strategy, [liveContext, page]);
+  const normalizedPage = pageKey(page);
+  const pageContext = useMemo(() => (
+    liveContext?.sourcePage === normalizedPage
+      ? liveContext
+      : DEFAULT_CONTEXT[normalizedPage] ?? DEFAULT_CONTEXT.strategy
+  ), [liveContext, normalizedPage]);
   const currentPageAgent = useMemo(() => orbitIdForPage(page), [page]);
   const activeContext = useMemo(() => contextForOrbit(currentPageAgent, pageContext), [currentPageAgent, pageContext]);
+  const weeklyPlanKickoffAvailable = normalizedPage === 'digitalEmployees'
+    && pageContext.workflowStage === 'unplanned';
+  const openWeeklyPlanFromAssistant = useCallback(() => {
+    setWeeklyPlanPromptDismissed(true);
+    setMode('breathing');
+    window.dispatchEvent(new CustomEvent('lingshu:open-weekly-plan', {
+      detail: { source: 'assistant' },
+    }));
+  }, []);
   const activeThread = threads[activeAgent];
   const focusedTaskCard = activeThread.focusedTaskId
     ? activeThread.taskCards[activeThread.focusedTaskId] ?? null
@@ -1399,6 +1451,7 @@ export default function GlobalAssistant({
         content: [
           `【当前页面导航提示${strategyRequest ? '，未经后端核验，不得作为经营事实' : ''}】${context.summary}`,
           `【当前模块】${context.label}`,
+          assistantBusinessObjectContext(context),
           `【当前时间】${new Date().toLocaleString('zh-CN', { timeZone: 'Asia/Shanghai', hour12: false })}（北京时间）。未注明年份时，“当前/最新/近期/今年”均指当前年份；不得把 2024 年或更早的公开数据表述为当前数据。`,
           ...(!strategyRequest ? [
             enterpriseBrief ? `【企业中心摘要】${enterpriseBrief}` : '【企业中心摘要】当前未读取到企业中心资料。',
@@ -1453,7 +1506,16 @@ export default function GlobalAssistant({
           deepThinking: false,
           ...(strategyRequest ? {
             userQuestion: visibleText,
-            pageContext: { label: context.label, summary: compactText(context.summary, 2000) },
+            pageContext: {
+              label: context.label,
+              summary: compactText(context.summary, 2000),
+              goalId: context.goalId,
+              planId: context.planId,
+              runId: context.runId,
+              taskId: context.taskId,
+              contentId: context.contentId,
+              viewKey: context.viewKey,
+            },
             conversationContext: {
               omittedTurns: conversationContext.omittedTurns,
               retainedUserInstructions: conversationContext.retainedUserInstructions,
@@ -1511,6 +1573,19 @@ export default function GlobalAssistant({
     const draft = activeThread.draftInput;
     const files = [...pendingAttachments];
     if (!draft.trim() && !files.length) return;
+    if (!files.length && weeklyPlanKickoffAvailable && isWeeklyPlanKickoffRequest(draft)) {
+      const current = useAssistantStore.getState().threads[activeAgent].messages;
+      setDraftInput(activeAgent, '');
+      setMessages(activeAgent, [
+        ...current,
+        { role: 'user', content: draft.trim() },
+        { role: 'assistant', content: '可以。我先为你生成一份可预览的周计划；你核对平台、产量、预算和排期并确认后，数字员工才会开始生产。' },
+      ]);
+      setFollowingLatest(activeAgent, true);
+      persistThread(activeAgent);
+      openWeeklyPlanFromAssistant();
+      return;
+    }
     if (!files.length) {
       void send(draft);
       return;
@@ -1553,7 +1628,7 @@ export default function GlobalAssistant({
       setAttachmentError(error instanceof Error ? error.message : '附件上传失败，请重试。');
       setAttachmentUploading(false);
     }
-  }, [activeThread.draftInput, attachmentUploading, currentPageAgent, loading, pendingAttachments, send]);
+  }, [activeAgent, activeThread.draftInput, attachmentUploading, currentPageAgent, loading, openWeeklyPlanFromAssistant, pendingAttachments, persistThread, send, setDraftInput, setFollowingLatest, setMessages, weeklyPlanKickoffAvailable]);
 
   const handleTaskCardAction = useCallback(async (
     card: AssistantTaskCard,
@@ -1715,6 +1790,10 @@ export default function GlobalAssistant({
     const handler = (event: Event) => {
       const detail = (event as CustomEvent<Partial<AssistantContext>>).detail;
       if (!detail?.agent || !detail.label || !detail.summary) return;
+      // Activity keeps visited pages mounted. Every emitter must identify its
+      // page so a hidden page can never replace the active business context.
+      const sourcePage = contextIdentifier(detail.sourcePage, 80);
+      if (!sourcePage || sourcePage !== pageKey(page)) return;
       setLiveContext({
         agent: detail.agent,
         label: detail.label,
@@ -1722,11 +1801,62 @@ export default function GlobalAssistant({
         suggestions: detail.suggestions?.length ? detail.suggestions : DEFAULT_CONTEXT[pageKey(page)]?.suggestions ?? DEFAULT_CONTEXT.strategy.suggestions,
         pendingCount: typeof detail.pendingCount === 'number' ? detail.pendingCount : undefined,
         todoItems: Array.isArray(detail.todoItems) ? detail.todoItems : undefined,
+        sourcePage,
+        goalId: contextIdentifier(detail.goalId),
+        planId: contextIdentifier(detail.planId),
+        runId: contextIdentifier(detail.runId),
+        taskId: contextIdentifier(detail.taskId),
+        contentId: contextIdentifier(detail.contentId),
+        viewKey: contextIdentifier(detail.viewKey, 80),
+        workflowStage: detail.workflowStage,
       });
     };
     window.addEventListener('lingshu-assistant-context', handler);
     return () => window.removeEventListener('lingshu-assistant-context', handler);
   }, [page]);
+
+  useEffect(() => {
+    setWeeklyPlanPromptDismissed(false);
+  }, [normalizedPage, pageContext.workflowStage]);
+
+  useEffect(() => {
+    if (mode === 'chat' || suppressForRightSidebar) return;
+    let controller: AbortController | null = null;
+    let disposed = false;
+    const refreshDecisionCount = () => {
+      if (disposed || document.visibilityState === 'hidden') return;
+      controller?.abort();
+      controller = new AbortController();
+      void assistantDecisionApi.feed({
+        page,
+        goalId: pageContext.goalId,
+        signal: controller.signal,
+      }).then(feed => {
+        if (!disposed) setDecisionTotal(Math.max(0, feed.total));
+      }).catch(reason => {
+        if (reason instanceof DOMException && reason.name === 'AbortError') return;
+        // The launcher keeps the last verified count. Errors are shown only
+        // when the user opens the decision surface; no execution log is emitted.
+      });
+    };
+    const handleVisibility = () => {
+      if (document.visibilityState === 'visible') refreshDecisionCount();
+    };
+    const refreshAfterWeeklyWorkChange = () => refreshDecisionCount();
+    refreshDecisionCount();
+    const interval = window.setInterval(refreshDecisionCount, 30_000);
+    window.addEventListener('focus', refreshDecisionCount);
+    window.addEventListener(WEEKLY_WORK_UPDATED_EVENT, refreshAfterWeeklyWorkChange);
+    document.addEventListener('visibilitychange', handleVisibility);
+    return () => {
+      disposed = true;
+      controller?.abort();
+      window.clearInterval(interval);
+      window.removeEventListener('focus', refreshDecisionCount);
+      window.removeEventListener(WEEKLY_WORK_UPDATED_EVENT, refreshAfterWeeklyWorkChange);
+      document.removeEventListener('visibilitychange', handleVisibility);
+    };
+  }, [mode, page, pageContext.goalId, persistenceScopeKey, suppressForRightSidebar]);
 
   useEffect(() => {
     const handler = (event: Event) => {
@@ -2061,7 +2191,45 @@ export default function GlobalAssistant({
       </AnimatePresence>
 
       <AnimatePresence>
-        {mode === 'breathing' && (!performance || performanceHidden || !shouldNotifyAssistant(performance.reason)) && !speechBubble && featureGuide && (
+        {mode === 'breathing' && (!performance || performanceHidden || !shouldNotifyAssistant(performance.reason)) && !speechBubble && weeklyPlanKickoffAvailable && !weeklyPlanPromptDismissed && (
+          <motion.div
+            key="weekly-plan-kickoff"
+            data-assistant-surface="floating-reminder"
+            data-lingshu-weekly-plan-prompt="true"
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={fadeExit}
+            transition={fadeTransition}
+            className="absolute bottom-0 right-[calc(100%+8px)] z-30 w-[264px] max-w-[calc(100vw-176px)] rounded-lg border border-border bg-surface p-3 shadow-lg"
+            style={{
+              width: Math.min(264, viewport.width - 104),
+              maxWidth: 'calc(100vw - 176px)',
+            }}
+          >
+            <button
+              type="button"
+              onClick={() => setWeeklyPlanPromptDismissed(true)}
+              className="absolute right-2 top-2 rounded-md p-1 text-text-muted transition hover:bg-surface-2 hover:text-text-primary"
+              aria-label="暂时关闭周计划提示"
+            >
+              <X size={13} />
+            </button>
+            <p className="ls-type-label-medium pr-6 text-accent">先制定本周计划</p>
+            <p className="ls-type-body-small mt-1 text-text-secondary">我会先整理平台、产量、预算和排期，给你预览；你确认后才开始生产。</p>
+            <button
+              type="button"
+              onClick={openWeeklyPlanFromAssistant}
+              className="ls-type-label-medium mt-2 inline-flex items-center gap-1.5 text-accent hover:text-accent-dim focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent"
+            >
+              制定周计划 <ArrowRight size={13} aria-hidden="true" />
+            </button>
+            <span className="absolute -right-2 bottom-5 h-4 w-4 rotate-45 border-r border-t border-border bg-surface" />
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      <AnimatePresence>
+        {mode === 'breathing' && (!performance || performanceHidden || !shouldNotifyAssistant(performance.reason)) && !speechBubble && (!weeklyPlanKickoffAvailable || weeklyPlanPromptDismissed) && featureGuide && (
           <motion.div
             key={featureGuide.id}
             data-assistant-surface="floating-reminder"
@@ -2323,6 +2491,28 @@ export default function GlobalAssistant({
                       </div>
                     )}
 
+                    {weeklyPlanKickoffAvailable && (
+                      <div
+                        className="ls-assistant-summary-bubble-enter flex items-start gap-2"
+                        data-assistant-bubble="weekly-plan-kickoff"
+                        style={assistantBubbleStyle(activeThread.messages.length + (welcomeBubbleVisible ? 3 : 2))}
+                      >
+                        <div className="mt-0.5 flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-text-primary text-white"><Bot size={13} /></div>
+                        <div className="ls-messenger-bubble ls-messenger-bubble--inbound min-w-0 flex-1">
+                          <p className="font-semibold text-text-primary">先制定本周计划</p>
+                          <p className="mt-1 text-text-secondary">我会先整理本周目标、平台、产量、预算和排期给你预览。你确认后，数字员工才会开始生产。</p>
+                          <Button
+                            type="primary"
+                            className="mt-3"
+                            icon={<CalendarRange size={14} />}
+                            onClick={openWeeklyPlanFromAssistant}
+                          >
+                            制定周计划
+                          </Button>
+                        </div>
+                      </div>
+                    )}
+
                     <div
                       key={`decision-feed-${decisionFeedRevision}`}
                       className="ls-assistant-summary-bubble-enter pl-9"
@@ -2332,7 +2522,8 @@ export default function GlobalAssistant({
                     >
                       <AssistantDecisionCenter
                         page={page}
-                        key={`${persistenceScopeKey}:${page}:summary:${decisionFeedRevision}`}
+                        goalId={pageContext.goalId}
+                        key={`${persistenceScopeKey}:${page}:${pageContext.goalId || 'latest'}:summary:${decisionFeedRevision}`}
                         active={mode === 'chat' && panelView === 'chat'}
                         onOpenChat={returnToConversation}
                         onOpenDetail={trigger => openDecisionDialog({ kind: 'feed' }, trigger)}
@@ -2405,7 +2596,8 @@ export default function GlobalAssistant({
           {decisionDialog?.kind === 'feed' ? (
             <AssistantDecisionCenter
               page={page}
-              key={`${persistenceScopeKey}:${page}:dialog`}
+              goalId={pageContext.goalId}
+              key={`${persistenceScopeKey}:${page}:${pageContext.goalId || 'latest'}:dialog`}
               active
               onOpenChat={closeDecisionDialog}
               onNavigate={closeDecisionDialogForNavigation}

@@ -233,6 +233,11 @@ try {
     id: 'shared-reference-only', type: 'video', scope: 'shared', usage: 'reference_only', commercialUseApproved: true,
     derivativesApproved: true, licenseEvidence: 'license-record-2',
   } as never, 'tenant-a'), false, 'analysis-only reference media must never enter production output');
+  for (const sourceType of ['tiktok_reference','trend-reference','viral_reference']) {
+    assert.equal(automaticSocialMaterialEligible({id:`reference-${sourceType}`,type:'video',tenantId:'tenant-a',sourceType} as never,'tenant-a'),false);
+    assert.equal(automaticSocialMaterialEligible({id:`authorized-${sourceType}`,type:'video',tenantId:'tenant-a',sourceType,
+      usage:'editable',commercialUseApproved:true,derivativesApproved:true,rawLibraryUseApproved:true,mayUseInProduction:true} as never,'tenant-a'),true);
+  }
 
   const associationBrief = {
     title: forbiddenUserText, objective: forbiddenUserText, productRef: 'Meno Moso 损伤发质洗护', audience: null,

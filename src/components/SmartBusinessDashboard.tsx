@@ -32,6 +32,7 @@ import type { WeeklyPackage } from "../lib/weeklyPackage";
 import { defaultMatrixPlan, fillMatrixVideos } from "../lib/weeklyMatrix";
 import type { VideoCreationPlan } from "../lib/videoCreationPlan";
 import { SOCIAL_PLATFORM_EXECUTION_RULES, socialOperatingProfile } from "../../shared/contracts/socialOperatingProfile";
+import { MASTER_VIDEO_COST_MAX_CNY, MASTER_VIDEO_COST_MIN_CNY, MASTER_VIDEO_COST_POINT_CNY } from "../../shared/contracts/contentCostModel";
 import { loadConnectedSocialPerformance, type ConnectedSocialPerformance } from "../lib/socialPerformance";
 import { starterWorkspaceApi, type StarterAgentRole } from "../lib/starterWorkspace";
 import { authHeader } from "../lib/auth";
@@ -44,6 +45,7 @@ import { LsCalendar, calendarDayKey, type LsCalendarEvent } from "./ui/LsCalenda
 import { calendarWeekday, thumbnailUrlWithSourceFallback } from "../lib/calendarModel";
 import WeeklyContentProgressPanel from "./smartBusiness/WeeklyContentProgressPanel";
 import WeeklyProductionStudioEntry from "./smartBusiness/WeeklyProductionStudioEntry";
+import { projectWeeklyGoalCalendar } from "./smartBusiness/weeklyGoalCalendar";
 
 export type SmartBusinessView = "home" | "matrix" | "production" | "review";
 
@@ -85,6 +87,31 @@ const platformLabels: Record<Platform, string> = {
 };
 
 const runningStatuses = new Set(["running", "active", "planning", "waiting_external"]);
+
+const DEFAULT_VIDEO_COST_CNY = {
+  min: MASTER_VIDEO_COST_MIN_CNY,
+  point: MASTER_VIDEO_COST_POINT_CNY,
+  max: MASTER_VIDEO_COST_MAX_CNY,
+} as const;
+
+function weeklyVideoBudget(data: DigitalEmployeeOverview) {
+  const pack = data.plan?.businessPackage;
+  const plans = pack?.tasks.find(task => task.templateId === "production")?.videoPlans || [];
+  const everyPlanIsProduction = Boolean(plans.length && pack?.directorPlan?.originalTarget === plans.length);
+  const estimated = plans.reduce((sum, plan) => sum + Math.max(
+    Number(plan.estimatedCost || 0),
+    everyPlanIsProduction ? DEFAULT_VIDEO_COST_CNY.point : 0,
+  ), 0);
+  const min = plans.reduce((sum, plan) => sum + Math.max(
+    Number(plan.estimatedCostRange?.minCny || 0),
+    everyPlanIsProduction ? DEFAULT_VIDEO_COST_CNY.min : 0,
+  ), 0);
+  const max = plans.reduce((sum, plan) => sum + Math.max(
+    Number(plan.estimatedCostRange?.maxCny || 0),
+    everyPlanIsProduction ? DEFAULT_VIDEO_COST_CNY.max : 0,
+  ), 0);
+  return { plans, estimated, min, max };
+}
 
 function metricValue(value: number | null | undefined, suffix = "") {
   return value === null || value === undefined ? "—" : `${value.toLocaleString("zh-CN")}${suffix}`;
@@ -343,15 +370,17 @@ export function WeeklyCommandCenter({
   const display = buildSmartBusinessDisplayModel(data);
   const contentQueue = data.contentQueue?.items || [];
   const operatingContext = data.plan?.businessPackage?.operatingContext;
-  const packagePlans = data.plan?.businessPackage?.tasks.find(task => task.templateId === "production")?.videoPlans || [];
+  const packageBudget = weeklyVideoBudget(data);
   const weeklyQueue = contentQueue.filter(item => item.origin === "weekly_plan");
   const plannedOutputCount = display.totals.versionCount;
   const plannedDurationSeconds = display.totals.durationSeconds;
-  const estimatedContentCost = weeklyQueue.reduce((sum, item) => sum + Number(item.estimatedCostCny || 0), 0)
-    || packagePlans.reduce((sum, plan) => sum + Number(plan.estimatedCost || 0), 0);
+  const estimatedContentCost = Math.max(
+    weeklyQueue.reduce((sum, item) => sum + Number(item.estimatedCostCny || 0), 0),
+    packageBudget.estimated,
+  );
   const settledContentCost = weeklyQueue.reduce((sum, item) => sum + Number(item.settledCostCny || 0), 0);
-  const budgetMin = operatingContext?.budget.totalMinCny ?? packagePlans.reduce((sum, plan) => sum + Number(plan.estimatedCostRange?.minCny || 0), 0);
-  const budgetMax = operatingContext?.budget.totalMaxCny ?? packagePlans.reduce((sum, plan) => sum + Number(plan.estimatedCostRange?.maxCny || 0), 0);
+  const budgetMin = Math.max(operatingContext?.budget.totalMinCny || 0, packageBudget.min);
+  const budgetMax = Math.max(operatingContext?.budget.totalMaxCny || 0, packageBudget.max);
 
   return <section className={`flex flex-col overflow-hidden bg-white ${className}`.trim()} aria-label="本周任务驾驶舱">
     <div className="flex flex-wrap items-start justify-between gap-3 px-6 pb-4 pt-5 text-text-primary xl:min-h-[112px]">
@@ -393,9 +422,11 @@ export function BusinessInterpretation({ data, onViewReview }: { data: DigitalEm
   const [expanded, setExpanded] = useState(true);
   const display = buildSmartBusinessDisplayModel(data);
   const weeklyItems = (data.contentQueue?.items || []).filter(item => item.origin === 'weekly_plan');
-  const videoPlans = data.plan?.businessPackage?.tasks.find(task => task.templateId === 'production')?.videoPlans || [];
-  const estimatedCost = weeklyItems.reduce((sum, item) => sum + Number(item.estimatedCostCny || 0), 0)
-    || videoPlans.reduce((sum, plan) => sum + Number(plan.estimatedCost || 0), 0);
+  const packageBudget = weeklyVideoBudget(data);
+  const estimatedCost = Math.max(
+    weeklyItems.reduce((sum, item) => sum + Number(item.estimatedCostCny || 0), 0),
+    packageBudget.estimated,
+  );
   const settledCost = weeklyItems.reduce((sum, item) => sum + Number(item.settledCostCny || 0), 0);
   const summary = data.review?.status === 'generated' ? data.review.summary : null;
   return <section aria-label="经营解读" className="col-span-full mx-5 mb-5 mt-2 rounded-xl bg-neutral-50 px-5 py-4">
@@ -431,6 +462,7 @@ type UnifiedPlanContent = {
   accountId: string;
   accountLabel: string;
   plannedPublishDate: string;
+  plannedPublishAt: string;
   duration: number;
   inspirationReference: WeeklyInspirationReference | null;
   productionRole: "master" | "platform_adaptation";
@@ -638,6 +670,7 @@ function buildSmartBusinessDisplayModel(data: DigitalEmployeeOverview, selectedA
       accountId,
       accountLabel: account?.accountLabel || target?.accountLabel || `${data.config?.companyName || "企业"} · ${platformLabels[plan.platform]}`,
       plannedPublishDate: plan.plannedPublishDate || data.goal?.endsAt || "",
+      plannedPublishAt: plan.plannedPublishAt || (plan.plannedPublishDate ? `${plan.plannedPublishDate}T18:00:00+08:00` : ""),
       duration: Number(plan.duration || 0),
       inspirationReference: inspirationReferenceForPlan(referencePlan),
       productionRole: plan.productionRole === "platform_adaptation" ? "platform_adaptation" : "master",
@@ -663,6 +696,7 @@ function buildSmartBusinessDisplayModel(data: DigitalEmployeeOverview, selectedA
       accountId: item.accountId || `manual-${item.platform}`,
       accountLabel: item.accountLabel || `${data.config?.companyName || '企业'} · ${platformLabels[item.platform]}`,
       plannedPublishDate: item.plannedPublishDate || data.goal?.endsAt || '',
+      plannedPublishAt: item.plannedPublishDate ? `${item.plannedPublishDate}T18:00:00+08:00` : '',
       duration: item.outputSummary.durationSeconds || 0,
       inspirationReference: null,
       productionRole: 'master',
@@ -815,9 +849,10 @@ function WeeklyPublishingCalendar({ data, onRefresh }: { data: DigitalEmployeeOv
   const calendarEvents: LsCalendarEvent[] = display.contents.map((item): LsCalendarEvent => ({
     id: `weekly-publish-${item.id}`,
     title: item.title,
-    start: item.plannedPublishDate || display.startsAt,
+    start: item.plannedPublishAt || (item.plannedPublishDate ? `${item.plannedPublishDate}T18:00:00+08:00` : `${display.startsAt}T18:00:00+08:00`),
     timeZone: "Asia/Shanghai",
-    allDay: true,
+    allDay: false,
+    editable: Boolean(data.goal?.id && item.contentId && item.plannedPublishDate),
     status: calendarStatus[item.status],
     statusLabel: calendarStatusLabel[item.status],
     eventType: "publish",
@@ -825,6 +860,7 @@ function WeeklyPublishingCalendar({ data, onRefresh }: { data: DigitalEmployeeOv
     accountId: item.accountId,
     accountName: item.accountLabel,
     thumbnailUrl: item.thumbnailUrl,
+    identity: { kind: "platform", platform: item.platform },
     sourceId: item.inspirationReference?.referenceId || item.contentId,
     description: `${item.productName} · ${item.caption || "发布文案待完善"}`,
     data: item,
@@ -837,7 +873,12 @@ function WeeklyPublishingCalendar({ data, onRefresh }: { data: DigitalEmployeeOv
         <Tag>{calendarEvents.length} 项发布</Tag>
       </div>
     </div>
-    <LsCalendar events={calendarEvents} label="本周发布日历" initialDate={display.startsAt ? calendarDayKey(display.startsAt) : undefined} date={display.startsAt ? calendarDayKey(display.startsAt) : undefined} initialView="dayGridWeek" dateOnly showAllEvents fixedHeight="auto" firstDay={display.startsAt ? calendarWeekday(display.startsAt) : 1} detailsTitle="内容制作进度" detailsMedia="compact" renderDetails={(event, closeDetails) => {
+    <LsCalendar events={calendarEvents} label="本周发布日历" initialDate={display.startsAt ? calendarDayKey(display.startsAt) : undefined} date={display.startsAt ? calendarDayKey(display.startsAt) : undefined} initialView="timeGridWeek" showAllEvents fixedHeight="auto" workspaceMode="expanded" firstDay={display.startsAt ? calendarWeekday(display.startsAt) : 1} onMoveEvent={async (event, scheduledAt) => {
+      const item = event.data as UnifiedPlanContent;
+      if (!data.goal?.id || !item.contentId) throw new Error("当前内容缺少可调整的排期标识");
+      await digitalEmployeeApi.reschedulePublication(data.goal.id, item.contentId, scheduledAt);
+      onRefresh?.();
+    }} detailsTitle="内容制作进度" detailsMedia="compact" renderDetails={(event, closeDetails) => {
       const item = event.data as UnifiedPlanContent;
       return <WeeklyContentProgressPanel key={item.contentId} data={data} contentId={item.contentId} onRefresh={onRefresh}
         onOpenWorkbench={closeDetails}
@@ -904,7 +945,8 @@ const matrixScheduleStages = [
 
 
 function MatrixView({ calendarTasks, calendarDemo, data, onRefresh, onOpenContent, onOpenAgentSettings }: { calendarTasks?: AgentCalendarTask[]; calendarDemo?: boolean; data: DigitalEmployeeOverview; onRefresh?: () => void; onNavigate?: (page: Page) => void; onGeneratePlan?: () => void; selectedAccountId?: string; onOpenContent?: (taskId?: string, socialContentTaskId?: string, projectId?: string) => void; onOpenAgentSettings?: () => void; onOpenProductionProgress?: (taskId: string, contentItemId: string, projectId?: string) => void; onRetryTask?: (taskId: string) => Promise<boolean> }) {
-  return <DigitalEmployeeWorkspace data={data} calendarTasks={calendarTasks} calendarDemo={calendarDemo} onRefresh={onRefresh} onOpenContent={onOpenContent} onOpenAgentSettings={onOpenAgentSettings} publishingCalendar={<WeeklyPublishingCalendar data={data} onRefresh={onRefresh}/>}/>;
+  const effectiveCalendarTasks = calendarTasks ?? (data.run ? projectWeeklyGoalCalendar(data) : undefined);
+  return <DigitalEmployeeWorkspace data={data} calendarTasks={effectiveCalendarTasks} calendarDemo={calendarDemo} onRefresh={onRefresh} onOpenContent={onOpenContent} onOpenAgentSettings={onOpenAgentSettings} publishingCalendar={<WeeklyPublishingCalendar data={data} onRefresh={onRefresh}/>}/>;
 }
 
 function openTaskPreviewPage(item: ContentQueueItem, target: "benchmark" | "materials", onNavigate?: (page: Page) => void) {

@@ -150,6 +150,7 @@ type PublishAccount = {
 };
 
 interface Props {
+  sourcePage: Page;
   onEnterConversation: (ctx: ConversationContext) => void;
   onLeaveConversation: () => void;
   isInConversation: boolean;
@@ -217,6 +218,7 @@ function platformTitle(platform: PublishPlatform, copy?: PlatformCopy, fallback 
 }
 
 export default function TrafficPage({
+  sourcePage,
   onNavigate,
   restore,
   kickoff,
@@ -343,11 +345,12 @@ export default function TrafficPage({
     window.dispatchEvent(new CustomEvent('lingshu-assistant-context', {
       detail: {
         agent: 'traffic',
+        sourcePage,
         label: showModeTabs ? `${pageTitle} · ${TRAFFIC_MODE_META[viewMode].label}阶段` : pageTitle,
         ...contextByMode[viewMode],
       },
     }));
-  }, [pageTitle, showModeTabs, viewMode]);
+  }, [pageTitle, showModeTabs, sourcePage, viewMode]);
 
   const handleEnterWorkflow = async (payload: unknown) => {
     try {

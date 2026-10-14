@@ -80,7 +80,12 @@ function projectHasAcceptedRender(project: StudioProject): boolean {
 }
 
 function projectPreviewUrl(project: StudioProject): string {
-  return projectHasAcceptedRender(project) || project.status === 'ready_for_approval' || project.status === 'published'
+  // A server-owned production artifact remains safe to preview while creative
+  // QA requests a revision. Review status controls approval and publishing;
+  // it must not send the user back into the legacy creation wizard or hide the
+  // exact media that QA evaluated.
+  return socialOutputOwnedReviewMedia(project) || projectHasAcceptedRender(project)
+    || project.status === 'ready_for_approval' || project.status === 'published'
     ? rawProjectPreviewUrl(project) : '';
 }
 

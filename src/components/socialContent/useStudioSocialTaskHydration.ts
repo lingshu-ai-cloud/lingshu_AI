@@ -1,6 +1,14 @@
 import { useEffect, useRef } from 'react';
 import type { VideoKickoff } from '../AiCreateStudio';
-import type { SocialAccountPresenterLock, SocialContentTaskDetail } from '../../../shared/contracts/socialContentWorkflow';
+import type {
+  SocialAccountPresenterLock,
+  SocialContentTaskDetail,
+  SocialReferenceVideoAnalysis,
+} from '../../../shared/contracts/socialContentWorkflow';
+import {
+  normalizeBenchmarkAnalysisSnapshot,
+  type BenchmarkAnalysis,
+} from '../../../shared/benchmarkAnalysis';
 import { socialContentApi } from '../../lib/socialContentApi';
 import { localReferenceMediaUrl } from '../studio/studioReferenceMedia';
 import { AUTH_TOKEN_CHANGED_EVENT, getToken } from '../../lib/auth';
@@ -26,6 +34,9 @@ export interface StudioSocialTaskSeed {
   themeTopic: string;
   factVerificationNotice: string;
   selectedMaterialIds: string[];
+  /** Ordered IDs from the approved task script. Studio binds materials and
+   * presenter plans to these production shots, not to reference-shot IDs. */
+  sourceShotIds: string[];
   shotMaterialBindings: StudioSocialShotMaterialBinding[];
   unsupportedLanguages: string[];
   digitalHumanShotPlans: Array<{
@@ -71,6 +82,9 @@ export interface StudioSocialTaskProductionPreview {
 }
 
 export interface StudioSocialShotMaterialBinding {
+  /** Stable task shot identity. `shotIndex` is retained only for historic
+   * tasks whose Studio storyboard predates shot IDs. */
+  shotId: string;
   shotIndex: number;
   materialId: string;
 }
@@ -131,6 +145,81 @@ function finite(value: unknown): number {
   return Number.isFinite(parsed) ? parsed : 0;
 }
 
+function missingCanonicalBenchmark(
+  analysis: SocialReferenceVideoAnalysis,
+  reason = '社媒任务缺少规范逐镜快照，请回到灵感中心补充或重新分析参考视频',
+): BenchmarkAnalysis {
+  const shots: BenchmarkAnalysis['shots'] = (analysis.shots ?? []).map((shot, offset) => {
+    const start = typeof shot.startSeconds === 'number' && Number.isFinite(shot.startSeconds) && shot.startSeconds >= 0
+      ? shot.startSeconds : null;
+    const end = start !== null && typeof shot.endSeconds === 'number' && Number.isFinite(shot.endSeconds) && shot.endSeconds > start
+      ? shot.endSeconds : null;
+    return {
+      shotId: clean(shot.shotId) || `social-shot-${offset + 1}`,
+      index: offset + 1,
+      time: start !== null && end !== null ? `${start}-${end}s` : '',
+      start,
+      end,
+      materialType: 'unknown',
+      narrativeRole: 'unknown',
+      classificationSource: 'missing',
+      classificationEvidence: '',
+      visual: clean(shot.visualDescription),
+      dialogue: clean(shot.spokenText),
+      onScreenText: clean(shot.captionText),
+      purpose: '',
+      firstFrameRef: null,
+      clipRef: null,
+      needsReview: true,
+      granularity: 'observation_window',
+      environment: '',
+      framing: '',
+      camera: '',
+      audio: clean(shot.audioDescription),
+      authenticity: '',
+      effectivenessHypothesis: '',
+      detailedAnalysis: {},
+    };
+  });
+  return {
+    schemaVersion: 1,
+    source: {
+      videoId: clean(analysis.referenceRecordId) || clean(analysis.referenceSourceId),
+      analysisRunId: clean(analysis.analysisId) || null,
+      evidenceRevision: clean(analysis.version) || null,
+      correctionVersion: 0,
+      analyzedAt: clean(analysis.createdAt) || null,
+      analysisMode: 'missing_canonical_snapshot',
+    },
+    status: 'pending',
+    gaps: [reason],
+    hookShotId: null,
+    shots,
+    totalShots: null,
+    timelineComplete: false,
+    materialCounts: {
+      talking_head: 0, factory: 0, product: 0, consumer_demo: 0, general: 0, unknown: shots.length,
+    },
+    structure: [],
+    speechGroups: [],
+  };
+}
+
+/** Canonical bridge between the social task and Studio. A malformed supplied
+ * snapshot is never allowed to fall through to Studio's permissive timeline
+ * compatibility check. */
+export function socialTaskBenchmarkAnalysis(
+  analysis: SocialReferenceVideoAnalysis | null | undefined,
+): BenchmarkAnalysis | undefined {
+  if (!analysis) return undefined;
+  if (analysis.benchmarkAnalysis !== undefined) {
+    const normalized = normalizeBenchmarkAnalysisSnapshot(analysis.benchmarkAnalysis);
+    if (normalized) return normalized;
+    return missingCanonicalBenchmark(analysis, '社媒任务携带的规范逐镜快照无效，请重新分析参考视频');
+  }
+  return missingCanonicalBenchmark(analysis);
+}
+
 /**
  * Project only persisted task evidence into the demo surface. It deliberately
  * does not manufacture TTS URLs: completed task audio is played from the real
@@ -180,8 +269,19 @@ export function socialTaskShotMaterialBindings(
       ...shot.generatedAssetIds,
       ...shot.licensedAssetIds,
     ].map(clean).find(Boolean);
-    return materialId ? [{ shotIndex, materialId }] : [];
+    return materialId ? [{ shotId: clean(shot.shotId), shotIndex, materialId }] : [];
   });
+}
+
+export function socialTaskStudioShotIds(
+  task: Pick<SocialContentTaskDetail, 'replicationScript' | 'assetSupplyPlan' | 'shotMaterialMap'>,
+): string[] {
+  const candidates = [
+    task.replicationScript?.shots?.map(shot => clean(shot.shotId)),
+    task.assetSupplyPlan?.shots?.map(shot => clean(shot.shotId)),
+    task.shotMaterialMap?.map(shot => clean(shot.shotId)),
+  ];
+  return candidates.find(ids => ids?.length && ids.every(Boolean)) || [];
 }
 
 export function socialTaskReferenceKickoff(task: SocialContentTaskDetail): VideoKickoff | null {
@@ -198,12 +298,14 @@ export function socialTaskReferenceKickoff(task: SocialContentTaskDetail): Video
   const narrationLines = replication?.narrationLines || [];
   const storedReferenceUrl = analysis?.referenceRecordId
     ? localReferenceMediaUrl(`local://${analysis.referenceRecordId}`) : '';
+  const benchmarkAnalysis = socialTaskBenchmarkAnalysis(analysis);
   return {
     source: 'inspiration_analysis', scriptType: 'storyboard',
     video: { title: source.label, sourceUrl: source.sourceRef, referenceRecordId: analysis?.referenceRecordId || undefined,
       videoUrl: storedReferenceUrl || localReferenceMediaUrl(source.sourceRef) || undefined,
       contentFormat: 'video', duration: analysis?.durationSeconds || undefined },
     ...(analysis?.status === 'ready' ? { referenceAnalysis: { title: source.label,
+      ...(benchmarkAnalysis ? { benchmarkAnalysis } : {}),
       narrationProducts: analysis.narrationProducts, narrationBrands: analysis.narrationBrands,
       narrationSourceStatus: replication?.narrationSourceStatus || 'missing_source_asr',
       details: analysis.shots.map(shot => ({
@@ -267,6 +369,7 @@ export function socialTaskToStudioSeed(task: SocialContentTaskDetail): StudioSoc
       ? `${pendingFacts.join('和')}未作为已确认企业事实导入；请在企业中心选择并核对产品资料后再生成。`
       : '',
     selectedMaterialIds,
+    sourceShotIds: socialTaskStudioShotIds(task),
     shotMaterialBindings: socialTaskShotMaterialBindings(task),
     unsupportedLanguages: languagePairs.filter(item => !item.code).map(item => item.language),
     digitalHumanShotPlans,

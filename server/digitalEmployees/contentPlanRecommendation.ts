@@ -1,4 +1,4 @@
-import { publishDateForAccountSlot } from '../../shared/contracts/weeklyPublishSchedule.js';
+import { balancedWeeklyPublishSlots, publishDateForAccountSlot } from '../../shared/contracts/weeklyPublishSchedule.js';
 import { normalizeVideoPlan, type VideoCreationPlan } from '../../shared/contracts/videoCreationPlan.js';
 import type { DigitalEmployeeConfig, WeeklyGoalInput } from './domain.js';
 import { buildWeeklyOperatingContext } from './weeklyPackage.js';
@@ -30,6 +30,7 @@ export interface RankedContentReference {
   benchmarkAccount: string;
   exact: boolean;
   productionReady: boolean;
+  contentRelevant: boolean;
   admission: ProductionReferenceAdmission;
   score: number;
   factors: string[];
@@ -185,6 +186,7 @@ export function rankContentReferences(input: {
     const sellingPoints = Array.isArray(gemini.sellingPoints) ? gemini.sellingPoints.map((item: unknown) => text(item)).filter(Boolean) : [];
     const haystack = new Set(tokens(title, theme, analysis.caption, hooks.join(' '), sellingPoints.join(' ')));
     const overlap = desiredTokens.filter(item => haystack.has(item)).length;
+    const contentRelevant = overlap > 0 || ['high', 'medium'].includes(relevance);
     const factors: string[] = [];
     let score = 0;
     if (platform === input.platform) { score += 24; factors.push('同平台'); }
@@ -214,6 +216,7 @@ export function rankContentReferences(input: {
       benchmarkAccount: benchmark ? text(benchmark.accountName || benchmark.handle || benchmark.accountUrl, 300) : text(analysis.sourceAccountName || analysis.author, 300),
       exact,
       productionReady: exact && admission.ready,
+      contentRelevant,
       admission,
       score: Math.max(0, Math.min(100, Math.round(score))),
       factors: [...new Set(factors)].slice(0, 8),
@@ -249,6 +252,11 @@ export function enrichPackageWithContentSignals(input: {
   });
   const used = new Set<string>();
   const enriched = new Map<number, VideoCreationPlan>();
+  const publishSlots = balancedWeeklyPublishSlots(
+    input.goal.startsAt,
+    input.goal.endsAt,
+    normalized.map(plan => `${plan.platform}:${plan.matrix?.accountId || 'planned'}`),
+  );
   [...groups.entries()].forEach(([familyId, members], familyIndex) => {
     const anchor = members.find(item => item.plan.platform === 'tiktok')
       || members.find(item => item.plan.productionRole !== 'platform_adaptation')
@@ -266,7 +274,7 @@ export function enrichPackageWithContentSignals(input: {
     // Preserve an explicit/frozen reference; do not silently replace it while
     // enriching its visible diagnostics. Only new picks require full admission.
     const reference = existingReferenceId ? ranked.find(item => item.id === existingReferenceId)
-      : ranked.find(item => item.productionReady && !used.has(item.id));
+      : ranked.find(item => item.productionReady && item.contentRelevant && !used.has(item.id));
     const awaitingReview = ranked.find(item => item.exact && !item.productionReady && !used.has(item.id));
     if (reference) used.add(reference.id);
     const mayClone = input.config.enabledWorkflows.includes('viral_clone');
@@ -290,7 +298,8 @@ export function enrichPackageWithContentSignals(input: {
         ...plan,
         contentId: plan.contentId || `weekly-${input.goal.startsAt}-${index + 1}`,
         contentFamilyId: familyId,
-        plannedPublishDate: publishDateForAccountSlot(input.goal.startsAt, input.goal.endsAt, slot - 1, requiredCount),
+        plannedPublishDate: publishSlots[index]?.date || publishDateForAccountSlot(input.goal.startsAt, input.goal.endsAt, slot - 1, requiredCount),
+        plannedPublishAt: publishSlots[index]?.scheduledAt || '',
         buyerProblem: plan.buyerProblem || reference?.hook || matrixTheme,
         evidenceRequirement: plan.evidenceRequirement || reference?.evidenceRequirement || '必须使用企业资料或素材库中的可核验事实与画面',
         theme,
@@ -313,13 +322,13 @@ export function enrichPackageWithContentSignals(input: {
           benchmarkAccount: reference?.benchmarkAccount || '',
           matchScore: reference?.score || 0,
           factors: [
-            `原创母版 ${familyIndex + 1}/${groups.size} · 本账号发布位 ${slot}/${requiredCount}`,
+            `独立制作视频 ${familyIndex + 1}/${groups.size} · 本账号发布位 ${slot}/${requiredCount}`,
             ...(reference?.factors || []),
             reference?.productionReady ? '参考内容已具备可执行精确分析'
               : reference ? `制作前待复核：${reference.admission.blockers.slice(0, 3).join('；')}`
                 : awaitingReview ? `参考分析待复核：${awaitingReview.admission.blockers.slice(0, 3).join('；')}`
                   : '爆款视频数量不足，补齐后才能确认周计划',
-            master ? '原创母版承担一次生产成本' : '跨平台轻适配包含在母版成本中',
+            master ? '独立制作视频承担一次生产成本' : '跨平台轻适配包含在完整制作成本中',
           ],
         },
         ...(reference?.analysis ? { benchmarkAnalysis: reference.analysis } : {}),

@@ -24,7 +24,7 @@ function preparationStatus(data) {
     runId: '',
     title: ready ? '制作准备已完成，尚未开始生产' : '周计划尚未开始生产',
     description: ready
-      ? `${readyCount} 条母版的内容准备已完成${blockedCount ? `，另有 ${blockedCount} 条仍需补齐资料` : ''}；点击“开始周任务”后才会建立真实运行，实际生成还需生产服务可用。`
+      ? `${readyCount} 条独立视频的内容准备已完成${blockedCount ? `，另有 ${blockedCount} 条仍需补齐资料` : ''}；点击“开始周任务”后才会建立真实运行，实际生成还需生产服务可用。`
       : detail?.status === 'blocked'
         ? `可以开始周任务；${blockedCount || '若干'} 条内容的缺失项将在各自制作步骤提示，不阻止其他内容推进。`
         : '点击“开始周任务”后，系统依次完成脚本分析、素材匹配、生成与合成；正式发布前再验收和授权。',

@@ -3,6 +3,8 @@ import fs from 'node:fs';
 
 const source = fs.readFileSync(new URL('./GlobalAssistant.tsx', import.meta.url), 'utf8');
 const appSource = fs.readFileSync(new URL('../App.tsx', import.meta.url), 'utf8');
+const conversionPageSource = fs.readFileSync(new URL('./ConversionPage.tsx', import.meta.url), 'utf8');
+const trafficPageSource = fs.readFileSync(new URL('./TrafficPage.tsx', import.meta.url), 'utf8');
 const composerSource = fs.readFileSync(new URL('./assistant/AssistantComposer.tsx', import.meta.url), 'utf8');
 const assistantStylesSource = fs.readFileSync(new URL('./assistant/assistantDecisionCenter.css', import.meta.url), 'utf8');
 const conversationContextSource = fs.readFileSync(new URL('../lib/assistantConversationContext.ts', import.meta.url), 'utf8');
@@ -59,6 +61,7 @@ const decisionFeedSummarySource = sourceSection(
 );
 assert.match(decisionFeedSummarySource, /onOpenDetail=\{[\s\S]*openDecisionDialog\(/, '权威待办概要必须打开统一外部决策弹窗');
 assert.doesNotMatch(decisionFeedSummarySource, /setPanelView\('approvals'\)/, '权威待办详情不得再渲染在助手内部');
+assert.match(decisionFeedSummarySource, /goalId=\{pageContext\.goalId\}/, '权威待办概要必须读取当前数字员工周目标，而不是默认最新目标');
 
 const assistantPanelSource = sourceSection(
   'id="global-assistant-panel"',
@@ -75,6 +78,7 @@ assert.match(externalDecisionDialogSource, /data-global-assistant="decision-dial
 assert.match(externalDecisionDialogSource, /open=\{Boolean\(decisionDialog\)\}/, '外部 Modal 只能由独立决策弹窗状态控制');
 assert.match(externalDecisionDialogSource, /onCancel=\{closeDecisionDialog\}/, '关闭外部 Modal 必须走统一关闭流程');
 assert.match(externalDecisionDialogSource, /decisionDialog\?\.kind === 'feed'[\s\S]*variant="detail"/, '权威待办详情必须在外部 Modal 重新读取');
+assert.match(externalDecisionDialogSource, /goalId=\{pageContext\.goalId\}/, '权威待办详情必须与概要使用同一个当前周目标');
 assert.match(externalDecisionDialogSource, /decisionDialog\?\.kind === 'task'[\s\S]*dialogTaskCard/, '普通任务详情必须使用同一外部 Modal');
 assert.doesNotMatch(externalDecisionDialogSource, /getContainer=\{false\}/, '外部 Modal 不得被挂载回灵小枢面板内');
 const closeExternalDecisionDialogSource = sourceSection(
@@ -101,6 +105,38 @@ assert.match(externalDecisionDialogSource, /href=\{dialogTaskCard\.workspace\.hr
 assert.match(appSource, /suppressForRightSidebar=\{page !== 'digitalEmployees' && \(/, '智能经营页必须保留入口，其他页仍遵守右侧栏避让规则');
 assert.match(source, /width: assistantPanelWidth,\s*maxWidth: 'calc\(100vw - 32px\)'/, '灵小枢面板必须用视口宽度约束，不能被零宽定位根节点压缩');
 assert.match(source, /assistantTool === 'knowledge-intake' \? 560 : 420/, '灵小枢对话面板必须保持 420px 基准宽度，外部详情不得挤压对话宽度');
+
+const closedDecisionCountSource = sourceSection(
+  "if (mode === 'chat' || suppressForRightSidebar) return;",
+  "window.addEventListener('lingshu-assistant-card'",
+  '灵小枢关闭时的待办数量刷新',
+);
+assert.match(closedDecisionCountSource, /assistantDecisionApi\.feed\(\{[\s\S]{0,180}goalId: pageContext\.goalId/, '关闭助手时仍必须按当前周目标轻量读取真实待办数量');
+assert.match(closedDecisionCountSource, /setInterval\(refreshDecisionCount, 30_000\)/, '关闭态数量刷新必须低频轮询，不能充当运行监控台');
+assert.doesNotMatch(closedDecisionCountSource, /events|executionLog|providerLog|console\./, '关闭态刷新不得读取或展示执行日志');
+
+const liveContextSource = sourceSection(
+  'const detail = (event as CustomEvent<Partial<AssistantContext>>).detail;',
+  "if (mode === 'chat' || suppressForRightSidebar) return;",
+  '灵小枢页面对象上下文',
+);
+assert.match(liveContextSource, /const sourcePage = contextIdentifier\(detail\.sourcePage, 80\);[\s\S]{0,100}if \(!sourcePage \|\| sourcePage !== pageKey\(page\)\) return;/, '所有页面上下文事件都必须显式标记来源页面');
+assert.doesNotMatch(liveContextSource, /contextIdentifier\(detail\.sourcePage, 80\) \?\? pageKey\(page\)/, '缺失 sourcePage 的事件不得默认归属当前页');
+assert.match(conversionPageSource, /agent: 'conversion',[\s\S]{0,80}sourcePage: 'conversion'/, '客户转化页必须绑定自己的页面来源');
+assert.match(trafficPageSource, /agent: 'traffic',[\s\S]{0,80}sourcePage,/, '社媒共享页必须发送由路由传入的准确页面来源');
+for (const [key, sourcePage] of [['legacy-traffic', 'traffic'], ['social-inspiration', 'socialInspiration'], ['smart-assets-', 'smartAssets'], ['social-monitoring-accounts', 'socialMonitoring']]) {
+  assert.match(appSource, new RegExp(`key=[^\\n]*${key}[\\s\\S]{0,160}sourcePage=["']${sourcePage}["']`), `${key} 必须标记准确的助手上下文来源`);
+}
+for (const reference of ['goalId', 'planId', 'runId', 'taskId', 'contentId', 'viewKey']) {
+  assert.match(liveContextSource, new RegExp(`${reference}: contextIdentifier\\(detail\\.${reference}`), `页面上下文必须安全绑定 ${reference}`);
+}
+assert.match(liveContextSource, /workflowStage: detail\.workflowStage/, '灵小枢必须接收当前周计划阶段，不能只依赖已有待办');
+assert.match(source, /assistantBusinessObjectContext\(context\)/, '问答请求必须携带当前选中的业务对象边界');
+assert.match(source, /liveContext\?\.sourcePage === normalizedPage/, '切换页面后不得继续使用上一页的任务上下文');
+assert.match(source, /workflowStage === 'unplanned'/, '灵小枢必须识别尚未制定周计划的真实空白状态');
+assert.match(source, /data-lingshu-weekly-plan-prompt="true"[\s\S]{0,900}先制定本周计划[\s\S]{0,500}制定周计划/, '关闭态灵小枢必须主动说明先预览计划再生产');
+assert.match(source, /data-assistant-bubble="weekly-plan-kickoff"[\s\S]{0,900}确认后，数字员工才会开始生产[\s\S]{0,500}制定周计划/, '打开灵小枢后必须提供同一条计划制定入口');
+assert.match(source, /openWeeklyPlanFromAssistant[\s\S]{0,300}lingshu:open-weekly-plan[\s\S]{0,120}source: 'assistant'/, '灵小枢计划按钮必须派发明确来源的页面动作');
 
 const decisionActionResultSource = sourceSection(
   'const handleDecisionActionResult',
@@ -164,7 +200,7 @@ assert.match(source, /welcomeBubbleVisible && !activeThread\.messages\.length/, 
 assert.doesNotMatch(welcomeBubbleSource, /\b(?:sticky|fixed|absolute)\b/, '欢迎语不得置顶、固定或脱离消息滚动流');
 
 assert.match(source, /function assistantBubbleStyle\(index: number\)[\s\S]*Math\.min\(Math\.max\(0, index\), 6\)[\s\S]*--assistant-bubble-delay': `\$\{boundedIndex \* 15\}ms`/, '气泡进入顺序必须使用 15ms 间隔并在第 6 项封顶');
-for (const bubble of ['welcome', 'loading', 'task-summary', 'decision-summary']) {
+for (const bubble of ['welcome', 'loading', 'task-summary', 'weekly-plan-kickoff', 'decision-summary']) {
   assert.match(source, new RegExp(`data-assistant-bubble=["']${bubble}["']`), `${bubble} 必须具有稳定的气泡语义标记`);
 }
 assert.match(source, /data-assistant-bubble=\{msg\.role\}[\s\S]{0,180}ls-assistant-bubble-enter|ls-assistant-bubble-enter[\s\S]{0,180}data-assistant-bubble=\{msg\.role\}/, '用户与助手消息必须使用统一气泡进入动效');
@@ -203,8 +239,10 @@ assert.match(
 assert.match(sendSource, /selectAssistantConversationContext\(mergeConsecutiveAssistant\(thread\.messages\)\)/, '长对话必须按完整轮次和预算选择上下文');
 assert.match(sendSource, /renderAssistantConversationBoundary\(conversationContext\)/, '被裁剪的较早对话必须向模型声明范围边界');
 assert.match(sendSource, /strategyRequest \? '' : await loadLiveIntegrationFacts\(\)/, '经营主对话必须使用服务端核验事实而不是客户端汇总作为权威依据');
-assert.match(sendSource, /userQuestion: visibleText[\s\S]{0,260}retainedUserInstructions/, '经营主对话必须把当前问题与有界历史约束交给服务端组装上下文');
+assert.match(sendSource, /userQuestion: visibleText[\s\S]{0,700}retainedUserInstructions/, '经营主对话必须把当前问题、当前业务对象与有界历史约束交给服务端组装上下文');
 assert.match(sendSource, /requestToken === getToken\(\)/, '身份切换后旧请求的异步响应必须被丢弃');
+assert.match(source, /function isWeeklyPlanKickoffRequest[\s\S]{0,500}开始\|启动\|制定\|生成\|创建[\s\S]{0,220}生产\|制作\|周计划\|计划\|周任务/, '空白周计划必须识别用户对灵小枢发出的明确开工或制定计划请求');
+assert.match(sendSource, /weeklyPlanKickoffAvailable && isWeeklyPlanKickoffRequest\(draft\)[\s\S]{0,650}可预览的周计划[\s\S]{0,400}openWeeklyPlanFromAssistant\(\)/, '灵小枢收到明确开工请求时必须先打开计划预览，不能绕过用户确认直接生产');
 
 assert.match(source, /<AssistantDecisionMemoryPanel memory=\{decisionMemory\}/, '统一主对话保留已确认的经营决策管理');
 assert.match(source, /<AssistantDecisionSaveButton memory=\{decisionMemory\} text=\{msg.content\}/, '保存用户原话必须显式确认');

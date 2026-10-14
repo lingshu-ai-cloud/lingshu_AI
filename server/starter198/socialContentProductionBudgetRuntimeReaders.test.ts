@@ -60,3 +60,21 @@ test('Chinese continuous narration uses the exact shared Studio request text ins
  const req={key:'voice:0:tts',stage:'tts',shotId:null,sourceRef:null,durationSeconds:null,text:voice.lines.join(' '),frameCount:null,inputContractHash:'a'.repeat(64)};
  assert.ok(await readers.resolveBoundRoute!(req));assert.equal(await readers.resolveBoundRoute!({...req,text:'欢迎了解。 联系我们。'}),null);
 });
+
+test('ASR and alignment quotes use the frozen film duration instead of the provider 300 second ceiling',async()=>{
+ const readers=createProductionBudgetRuntimeReaders({tenantId:'tenant',frozenTrackSeconds:38,requiresMeasuredAlignment:true,
+  env:{DASHSCOPE_API_KEY:'controlled-only',TTS_ASR_QA_ENABLED:'true'}});
+ await readers.readVoicePlan!(baseline);
+ const alignment=await readers.resolveBoundRoute!({key:'voice:alignment',stage:'voice_alignment',shotId:null,sourceRef:null,durationSeconds:null,text:'Meet GUIANFA. DM us.',frameCount:null,inputContractHash:'a'.repeat(64)});
+ const asr=await readers.resolveBoundRoute!({key:'voice:asr',stage:'voice_asr',shotId:null,sourceRef:null,durationSeconds:null,text:'Meet GUIANFA. DM us.',frameCount:null,inputContractHash:'b'.repeat(64)});
+ assert.equal(alignment?.maximumUnits.audioSeconds,38);
+ assert.equal(asr?.maximumUnits.audioSeconds,38);
+});
+
+test('selected presenter overrides generic narrator and reserves the exact HeyGen speech route by seconds', async()=>{
+ const binding={presenters:[{id:'sales',assetVersion:4,avatarId:'avatar',voiceId:'bound-sales'}],provider:'heygen' as const,voiceId:'bound-sales',logicalVoice:'heygen:bound-sales:registry-version-hash',fingerprint:'registry-version-hash'};
+ const readers=createProductionBudgetRuntimeReaders({tenantId:'tenant',frozenTrackSeconds:45,readPresenterVoice:async()=>binding,env:{HEYGEN_API_KEY:'fixture',DASHSCOPE_API_KEY:'fixture',MINIMAX_API_KEY:'fixture',TTS_ASR_QA_ENABLED:'false'}});
+ const voice=await readers.readVoicePlan!(baseline);assert.ok(voice);assert.equal(voice.presenterBinding?.voiceId,'bound-sales');assert.equal(voice.allowFallback,false);
+ const route=await readers.resolveBoundRoute!({key:'voice:0:tts',stage:'tts',shotId:null,sourceRef:null,durationSeconds:null,text:voice.lines.join(' '),frameCount:null,inputContractHash:'a'.repeat(64)});
+ assert.equal(route?.provider,'heygen');assert.equal(route?.model,'starfish');assert.deepEqual(route?.maximumUnits,{audioSeconds:90});assert.equal(route?.maximumAttempts,1);
+});

@@ -27,7 +27,7 @@ export default function ReferenceSourcePolicySetup({ pkg, route, onRevision }: {
     finally { if (current.current === identity) setBusy(false); }
   }
   return <div className="mt-3 space-y-3 text-xs">
-    <p>{policy ? `当前冻结配额：自有 ${policy.ownedPercent}% / 外部 ${policy.externalPercent}%` : '当前周包尚未确认来源配额'} · 按母版计数</p>
+    <p>{policy ? `当前冻结配额：自有 ${policy.ownedPercent}% / 外部 ${policy.externalPercent}%` : '当前周包尚未确认来源配额'} · 按独立视频计数</p>
     {pkg.agentPlanning?.directorAnalyses.filter(analysis => analysis.ownedReferenceDiagnosis).map(analysis => {
       const diagnosis = analysis.ownedReferenceDiagnosis!;
       return <div key={analysis.analysisId} className="rounded-lg bg-stone-50 p-3"><p>自有参考：{analysis.benchmarkVideoRefs.map(ref => ref.id).join('、')}</p><p className="mt-1">播放 {diagnosis.observedMetrics.views ?? '未观测'} · 赞 {diagnosis.observedMetrics.likes ?? '未观测'} · 转 {diagnosis.observedMetrics.shares ?? '未观测'} · 评 {diagnosis.observedMetrics.comments ?? '未观测'}</p><p className="mt-1 text-stone-600">调性{diagnosis.toneStatus === 'verified' ? '已核验' : '待核验'} · 获客效果未测量{diagnosis.missingMetrics.length ? ` · 缺少 ${diagnosis.missingMetrics.join('、')}` : ''}</p></div>;

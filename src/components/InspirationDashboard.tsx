@@ -7,7 +7,7 @@ import { canExplicitlySubmitReferenceAsr, referenceAsrAvailabilityLabel, canRefr
 import { hasExactReferenceReview, parseExactReferenceReview, loadExactReferenceReview, exactReferenceReviewErrorMessage } from '../lib/exactReferenceReview';
 import BenchmarkAnalysisSections from './inspiration/BenchmarkAnalysisSections';
 import ReferenceSpeechAlignmentPanel from './inspiration/ReferenceSpeechAlignmentPanel';
-import { buildBenchmarkAnalysis } from '../../shared/benchmarkAnalysis';
+import { buildBenchmarkAnalysis, type BenchmarkAnalysis } from '../../shared/benchmarkAnalysis';
 import { productionReferenceAdmission } from '../../shared/productionReferenceAdmission';
 import MaterialLibraryStatus from './studio/MaterialLibraryStatus';
 import { useState, useEffect, useMemo, useRef } from 'react';
@@ -1867,6 +1867,7 @@ interface ScriptPanelProps {
       title?: string;
       visualStyle?: string;
       coreEmotion?: string;
+      benchmarkAnalysis?: BenchmarkAnalysis;
       details?: { time: string; shot: string; camera: string; visual: string; subtitle?: string; audio?: string; note?: string }[];
     };
   }) => void;
@@ -2105,6 +2106,18 @@ function ScriptPanel({ video, activePanelTab, onClose, onRetry, onExactAnalysis,
     onEnterWorkflow?.({ source: 'seedance_video', script: result, video, scriptType, language, productInfo, generatedVideo: videoResult });
   };
 
+  const benchmarkForStudio = (confirmedAnalysis: ScriptAnalysis) => buildBenchmarkAnalysis({
+    analysis: {
+      ...(video.aiAnalysis || {}),
+      gemini: {
+        ...(video.aiAnalysis?.gemini || {}),
+        scriptDetails15s: confirmedAnalysis.scriptDetails15s,
+      },
+    },
+    videoId: video.recordId || video.id,
+    duration: video.duration,
+  });
+
   const enterQuickCutFromAnalysis = (confirmedAnalysis?: ScriptAnalysis) => {
     const realAnalysis = confirmedAnalysis || getAnalysis(video);
     setRefinementSyncError('');
@@ -2118,6 +2131,7 @@ function ScriptPanel({ video, activePanelTab, onClose, onRetry, onExactAnalysis,
         title: video.title,
         visualStyle: realAnalysis.scriptSummary15s.visualStyle,
         coreEmotion: realAnalysis.scriptSummary15s.coreEmotion,
+        benchmarkAnalysis: benchmarkForStudio(realAnalysis),
         details: realAnalysis.scriptDetails15s,
       } : undefined,
     });
@@ -2155,6 +2169,7 @@ function ScriptPanel({ video, activePanelTab, onClose, onRetry, onExactAnalysis,
         title: video.title,
         visualStyle: realAnalysis.scriptSummary15s.visualStyle,
         coreEmotion: realAnalysis.scriptSummary15s.coreEmotion,
+        benchmarkAnalysis: benchmarkForStudio(realAnalysis),
         details: realAnalysis.scriptDetails15s,
       } : undefined,
     });
@@ -3241,6 +3256,7 @@ interface InspirationDashboardProps {
       title?: string;
       visualStyle?: string;
       coreEmotion?: string;
+      benchmarkAnalysis?: BenchmarkAnalysis;
       details?: { time: string; shot: string; camera: string; visual: string; subtitle?: string; audio?: string; note?: string }[];
     };
   }) => void;
@@ -3476,7 +3492,7 @@ export default function InspirationDashboard({ onScriptPanelOpen, onScriptPanelC
   const refreshMaterials = async (page = materialPage): Promise<Material[]> => {
     if (!localMaterials.length) setMaterialsLoading(true);
     try {
-      const inventory = await studioApi.listMaterialLibrary('all', {
+      const inventory = await studioApi.listMaterialLibrary('library', {
         ...(materialSource !== 'all' ? { sourceCategory: materialSource } : {}),
         ...(materialTheme !== 'all' ? { theme: materialTheme } : {}),
         ...(materialSearch.trim() ? { query: materialSearch.trim() } : {}),

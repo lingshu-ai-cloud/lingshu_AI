@@ -35,9 +35,13 @@ export function createPresenterArkEnrollmentRouter(store: DataStore, exclusive: 
     row.payload = payload; return row;
   };
   router.get('/ark-enrollments/capabilities', (_req, res) => {
-    const missing = [!ark.configured() && '方舟真人资产服务尚未配置', !supplierReady() && '照片存储尚不能通过公网 HTTPS 交付方舟',
-      !/^https:\/\/[^/]+/.test(String(process.env.PUBLIC_BASE_URL || process.env.PUBLIC_APP_URL || '')) && '本人验证回跳地址尚未配置'].filter(Boolean);
-    res.json({ ready: missing.length === 0, reason: missing.join('；') });
+    const missing = [
+      !ark.configured() && { code: 'provider_credentials', label: '方舟真人资产服务尚未配置' },
+      !supplierReady() && { code: 'public_asset_delivery', label: '照片存储尚不能通过公网 HTTPS 交付方舟' },
+      !/^https:\/\/[^/]+/.test(String(process.env.PUBLIC_BASE_URL || process.env.PUBLIC_APP_URL || ''))
+        && { code: 'verification_return_url', label: '本人验证回跳地址尚未配置' },
+    ].filter((item): item is { code: 'provider_credentials' | 'public_asset_delivery' | 'verification_return_url'; label: string } => Boolean(item));
+    res.json({ ready: missing.length === 0, missing: missing.map(item => item.code), reason: missing.map(item => item.label).join('；') });
   });
   router.post('/ark-enrollments/materials', raw({ type: 'application/octet-stream', limit: '100mb' }), async (req, res) => {
     try {

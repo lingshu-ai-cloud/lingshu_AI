@@ -22,12 +22,13 @@ export function projectWeeklyGoalCalendar(data: DigitalEmployeeOverview): AgentC
     const keys = workflowKeys[card.id] || [];
     const planned = (data.plan?.tasks || []).filter(task => keys.includes(task.key));
     const tasks = data.tasks.filter(task => keys.includes(task.task_key));
-    const blocked = tasks.find(task => task.blocked_reason || ['failed', 'waiting_approval', 'waiting_external'].includes(task.status));
-    const status: AgentCalendarTask['status'] = blocked ? 'blocked' : tasks.some(task => task.status === 'running') ? 'active' : tasks.length && tasks.every(task => task.status === 'succeeded') ? 'completed' : 'planned';
+    const failed = tasks.find(task => task.status === 'failed');
+    const blocked = tasks.find(task => task.blocked_reason || ['waiting_approval', 'waiting_external'].includes(task.status));
+    const status: AgentCalendarTask['status'] = failed ? 'failed' : blocked ? 'blocked' : tasks.some(task => task.status === 'running') ? 'active' : tasks.length && tasks.every(task => task.status === 'succeeded') ? 'completed' : 'planned';
     const internalNodes: AgentCalendarTask[] = planned.map(task => {
       const execution = tasks.find(item => item.task_key === task.key);
-      const nodeBlocked = Boolean(execution?.blocked_reason || execution && ['failed', 'waiting_approval', 'waiting_external'].includes(execution.status));
-      const nodeStatus: AgentCalendarTask['status'] = nodeBlocked ? 'blocked' : execution?.status === 'running' ? 'active' : execution?.status === 'succeeded' ? 'completed' : 'planned';
+      const nodeBlocked = Boolean(execution?.blocked_reason || execution && ['waiting_approval', 'waiting_external'].includes(execution.status));
+      const nodeStatus: AgentCalendarTask['status'] = execution?.status === 'failed' ? 'failed' : nodeBlocked ? 'blocked' : execution?.status === 'running' ? 'active' : execution?.status === 'succeeded' ? 'completed' : 'planned';
       return {
         id: `${prefix}${task.key}`,
         date: card.date,
@@ -38,13 +39,13 @@ export function projectWeeklyGoalCalendar(data: DigitalEmployeeOverview): AgentC
         context: `${task.capabilityKey || 'workflow'} · 状态来源：${task.statusSource || '计划任务'}`,
         minutes: task.expectedMinutes,
         status: nodeStatus,
-        ...(nodeBlocked ? { reason: execution?.blocked_reason || '等待前置处理或人工确认' } : {}),
+        ...(nodeBlocked || execution?.status === 'failed' ? { reason: execution?.blocked_reason || '执行失败，请查看任务记录后重试' } : {}),
         dependsOn: task.dependsOn.map(key => `${prefix}${key}`),
       };
     });
     return { id: prefix + card.id, date: card.date, time: `${String(9 + index).padStart(2, '0')}:00`, agent: card.agent, title: card.title,
       output: card.output, context: `${goal.title} · ${goal.startsAt} 至 ${goal.endsAt} · 计划阶段，实际执行以任务回执为准`, minutes: null,
-      status, ...(blocked ? { reason: blocked.blocked_reason || '等待前置处理或人工确认' } : {}), dependsOn: card.dependsOn.map(id => prefix + id), assignee: card.owner,
+      status, ...(failed || blocked ? { reason: failed?.blocked_reason || blocked?.blocked_reason || (failed ? '执行失败，请查看任务记录后重试' : '等待前置处理或人工确认') } : {}), dependsOn: card.dependsOn.map(id => prefix + id), assignee: card.owner,
       ...(internalNodes.length ? { internalNodes } : {}),
     };
   });

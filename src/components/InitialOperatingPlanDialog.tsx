@@ -136,11 +136,11 @@ export default function InitialOperatingPlanDialog({
         <p className="mt-1 text-xs text-text-secondary">制作无需先绑定发布账号；待发布时再处理账号绑定。</p>
       </header>
       <div className="grid gap-3 sm:grid-cols-2">
-        <label>用户画像<select value={plan.stage} onChange={event => set('stage', event.target.value as InitialOperatingPlan['stage'])} className="block w-full rounded-lg border border-border p-2"><option value="b2b_launch">B2B 零基础</option><option value="b2b_growth">B2B 有基础</option><option value="d2c_brand">B2C</option></select></label>
+        <label>用户画像<select value={plan.stage} onChange={event => set('stage', event.target.value as InitialOperatingPlan['stage'])} className="block w-full rounded-lg border border-border p-2"><option value="b2b_launch">B2B 零基础</option><option value="b2b_growth">B2B 有基础</option></select></label>
         <label>主推产品<input disabled={!editing} value={plan.products.join('、')} onChange={event => set('products', event.target.value.split(/[、，,]/).map(value => value.trim()).filter(Boolean))} className="block w-full rounded-lg border border-border p-2"/></label>
         <label>目标市场<input disabled={!editing} value={plan.market} onChange={event => set('market', event.target.value)} className="block w-full rounded-lg border border-border p-2"/></label>
         <label>语言<input disabled={!editing} value={plan.language} onChange={event => set('language', event.target.value)} className="block w-full rounded-lg border border-border p-2"/></label>
-        <label>本周母版数<input disabled={!editing} type="number" min={1} max={30} value={plan.count} onChange={event => set('count', Number(event.target.value))} className="block w-full rounded-lg border border-border p-2"/></label>
+        <label>每个平台制作视频数<input disabled={!editing} type="number" min={1} max={30} value={plan.count} onChange={event => set('count', Number(event.target.value))} className="block w-full rounded-lg border border-border p-2"/></label>
         <label>预算上限（元）<input type="number" min={1} value={plan.budgetCapCny} onChange={event => set('budgetCapCny', Number(event.target.value))} className="block w-full rounded-lg border border-border p-2"/></label>
         <label>预计成片交付<input disabled={!editing} type="date" value={plan.deliveryDate} onChange={event => set('deliveryDate', event.target.value)} className="block w-full rounded-lg border border-border p-2"/></label>
         <p className="rounded-lg bg-surface-2 p-3 text-sm text-text-secondary">预计费用：{cost > 0 ? `约 ¥${Math.floor(cost)}–${Math.ceil(cost * 1.3)}` : '待根据真实参考与逐镜路线核算'}<br/>超出预算停止新生成并显示原因。</p>
@@ -149,13 +149,13 @@ export default function InitialOperatingPlanDialog({
         <h3 className="font-bold text-text-primary">平台、账号与本周发布量</h3>
         {platforms.map(platform => <label key={platform} className="flex flex-wrap items-center gap-2 border-b border-border py-2 last:border-0">
           <input type="checkbox" disabled={!editing} checked={plan.platforms.includes(platform)} onChange={event => set('platforms', event.target.checked ? [...plan.platforms, platform] : plan.platforms.filter(value => value !== platform))}/>
-          {platform} · {config.publishingTargets.find(account => account.platform === platform && (!plan.accountIds?.[platform] || account.accountId === plan.accountIds[platform]))?.accountLabel || '待绑定账号'} · {plan.platforms.includes(platform) ? `${plan.count} 条（母版适配）` : '未选'}
+          {platform} · {config.publishingTargets.find(account => account.platform === platform && (!plan.accountIds?.[platform] || account.accountId === plan.accountIds[platform]))?.accountLabel || '待绑定账号'} · {plan.platforms.includes(platform) ? `${plan.count} 条独立视频` : '未选'}
           {editing && config.publishingTargets.some(account => account.platform === platform) && <select aria-label={`${platform}发布账号`} value={plan.accountIds?.[platform] || config.publishingTargets.find(account => account.platform === platform)?.accountId || ''} onChange={event => set('accountIds', { ...plan.accountIds, [platform]: event.target.value })}>{config.publishingTargets.filter(account => account.platform === platform).map(account => <option key={account.accountId} value={account.accountId}>{account.accountLabel}</option>)}</select>}
         </label>)}
       </section>
       <section className="rounded-lg border border-border p-4">
         <h3 className="font-bold text-text-primary">Agent 工作排期</h3>
-        <p className="mt-2 text-sm text-text-secondary">经营 Agent 确认目标 → 编导 Agent 分析参考和分镜 → 内容 Agent 完成数字人与关键镜头生成 → 自动质检及编导验收 → {plan.deliveryDate} 交付 {plan.count} 条母版</p>
+        <p className="mt-2 text-sm text-text-secondary">经营 Agent 确认目标 → 编导 Agent 分析参考和分镜 → 内容 Agent 完成数字人与关键镜头生成 → 自动质检及编导验收 → {plan.deliveryDate} 交付 {plan.count * plan.platforms.length} 条视频</p>
         <p className="mt-1 text-xs text-text-muted">具体倒排节点位于每条产出卡详情；发布安排在成片交付至少一天后。</p>
       </section>
       {plan.stage === 'b2b_growth' && <section className="rounded-lg border border-border p-3">
