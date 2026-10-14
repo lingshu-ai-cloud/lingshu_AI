@@ -245,12 +245,10 @@ export function LsCalendar({ events, label, initialDate, initialView = 'dayGridM
       const dayKey = event.start.slice(0, 10);
       const visualCursor = visualCursorByDay.get(dayKey) ?? Number.NEGATIVE_INFINITY;
       const visualStart = isVerticalTimedCard ? Math.max(actualStart, visualCursor) : actualStart;
-      // Agent cards use one compact half-hour presentation slot. Their three
-      // rows fit the existing 48px time-grid row, while the authoritative
-      // start/end remain on `extendedProps.item` for copy, details and moves.
-      // Keeping the presentation slot fixed prevents long task estimates from
-      // stretching the whole week and pushing later cards far below the fold.
-      const visualDuration = event.cardLines ? 30 * 60_000
+      // Agent cards keep a complete three-row hour slot. The authoritative
+      // start/end remain on `extendedProps.item` for copy, details and moves;
+      // longer estimates do not stretch the visual card beyond one hour.
+      const visualDuration = event.cardLines ? 60 * 60_000
         : Number.isFinite(actualEnd) && actualEnd > actualStart
           ? Math.max(actualEnd - actualStart, 30 * 60_000)
           : 30 * 60_000;

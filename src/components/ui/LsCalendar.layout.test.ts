@@ -100,7 +100,7 @@ assert.ok(inputsInitializer, 'calendar inputs should be derived inside the share
     onMoveEvent: undefined,
     useMemo: (factory: () => unknown) => factory(),
   }) as Array<{ start: string; extendedProps: { item: { start: string } } }>;
-  assert.equal(Array.from(simultaneousInputs, input => input.start).join(','), '2026-10-14T02:00:00.000Z,2026-10-14T02:30:00.000Z,2026-10-14T03:00:00.000Z', 'same-time cards use compact non-overlapping half-hour presentation slots so the week stays readable without excessive vertical scrolling');
+  assert.equal(Array.from(simultaneousInputs, input => input.start).join(','), '2026-10-14T02:00:00.000Z,2026-10-14T03:00:00.000Z,2026-10-14T04:00:00.000Z', 'same-time cards use non-overlapping full-hour presentation slots so all three information rows remain visible');
   assert.equal(Array.from(simultaneousInputs, input => input.extendedProps.item.start).join(','), simultaneous.map(event => event.start).join(','), 'details and persistence retain the original scheduled time');
 }
 assert.equal(evaluate(expression('dayMaxEvents'), { showAllEvents: false, eventCardMode: 'media', view: 'dayGridWeek' }), false, 'the weekly media-card flow must keep every scheduled card visible');

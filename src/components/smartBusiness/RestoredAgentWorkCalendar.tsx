@@ -373,7 +373,7 @@ export default function RestoredAgentWorkCalendar({
         onDatesSet={info => { const next = calendarDayKey(info.view.calendar.getDate(), timeZone); setCalendarDate(next); setCalendarView(info.view.type as LsCalendarView); }}
         firstDay={1}
         timeZone={timeZone}
-        timeGridHeight="clamp(420px, calc(100dvh - 260px), 760px)"
+        timeGridHeight="clamp(420px, calc(100dvh - 380px), 560px)"
         detailsLayout="custom"
         renderDetails={renderDetails}
       /></Suspense>}
