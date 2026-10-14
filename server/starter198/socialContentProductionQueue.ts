@@ -34,6 +34,7 @@ import {
   DurableContentExecutionWorker,
   type ContentExecutionJob,
 } from '../contentExecution/durableQueue.js';
+import { admitProductionGraphJob } from '../contentExecution/productionGraphBridge.js';
 import { createSocialContentArtifact } from './socialContentOutputs.js';
 import {
   inspectTransientSocialContentFile,
@@ -316,7 +317,8 @@ export async function enqueueSocialContentAutoProduction(input: {
     const detail = await readSocialTaskDetail(input);
     if (!detail) throw new Error('social_content_task_not_found');
     const executorCheckpoint = createSocialProductionExecutorCheckpoint(detail, process.env, socialText(socialObject(socialObject(socialJson(record.brief))?._productionRevision)?.planHash) || undefined);
-    let job = await admitContentExecutionJob({
+    const executorPayload = socialObject(executorCheckpoint.payload);
+    let job = executorPayload?.executor === 'langgraph' ? await admitProductionGraphJob({
       dataStore,
       tenantId: input.tenantId,
       userId: input.userId,
@@ -324,6 +326,11 @@ export async function enqueueSocialContentAutoProduction(input: {
       runId: input.runId,
       accountId: task.brief.targetAccountRef?.id,
       taskType: `social_content_${task.mode}`,
+      planVersion: socialText(executorPayload.planVersion), inputHash: executorCheckpoint.inputHash,
+      initialCheckpoints: { 'social.executor': executorCheckpoint },
+    }) : await admitContentExecutionJob({
+      dataStore, tenantId: input.tenantId, userId: input.userId, taskId: input.taskId, runId: input.runId,
+      accountId: task.brief.targetAccountRef?.id, taskType: `social_content_${task.mode}`,
       initialCheckpoints: { 'social.executor': executorCheckpoint },
     });
     // Historic admissions predate the executor binding. They may be upgraded

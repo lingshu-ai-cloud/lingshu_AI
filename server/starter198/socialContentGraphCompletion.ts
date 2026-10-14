@@ -10,6 +10,7 @@ import { loadSocialProductionGraphApproval } from './socialContentProductionGrap
 import { socialJson, socialObject, socialRequestHash, socialText } from './socialContentValidation.js';
 import { withStarter198RunMutationLease } from './runMutationLease.js';
 import { writeExecutionStage } from './socialContentProductionRuntimeSupport.js';
+import { assertProductionGraphCompletionBoundary, PRODUCTION_GRAPH_BRIDGE_CHECKPOINT } from '../contentExecution/productionGraphBridge.js';
 
 /** A graph terminal checkpoint does not replace business completion evidence.
  * Project only after the durable worker settles success; this function is safe
@@ -29,6 +30,12 @@ export async function completeSocialContentGraphRun(repository: Starter198Reposi
   const validCorrection=!!receipt&&!!correctedContext&&!!grant&&matchesAuthorizedCorrectionContext(job,correctedContext,String(binding?.inputHash),grant.recordHash)&&receipt.correctionHash===grant.recordHash&&receipt.correctionRuntimeHash===correctionHash&&receipt.financialPlanHash===binding?.inputHash;
   const expectedInputHash=validCorrection?socialRequestHash({originalInputHash:correctedPayload?.graphInputHash,correctionHash}):binding?.inputHash;
   const expectedPlanVersion=validCorrection?String(correctedContext!.agentWorkflow!.executionPlan.version):binding?.planVersion;
+  // Historical graph jobs predate the bridge checkpoint and retain their
+  // existing detailed terminal validation below. Every newly admitted graph
+  // job must additionally cross the unified queue/identity boundary.
+  if (job.checkpoints[PRODUCTION_GRAPH_BRIDGE_CHECKPOINT]) assertProductionGraphCompletionBoundary(
+    job, { planVersion: String(expectedPlanVersion), inputHash: String(expectedInputHash) },
+  );
   if (!receipt || checkpoint?.version !== '1' || binding?.executor !== 'langgraph'
     || checkpoint.inputHash !== expectedInputHash || receipt.inputHash !== expectedInputHash
     || receipt.planVersion !== expectedPlanVersion || receipt.graphVersion !== CONTENT_GRAPH_VERSION
