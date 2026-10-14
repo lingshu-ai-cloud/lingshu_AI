@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { analysisWait, collectionWait, postFullyPublished, publishingPlatformsCovered, publishingWait, followupComplete, followupOutcome, followupWait, waitState, basicTaskWait } from './executionDiagnostics.js';
+import { analysisWait, collectionWait, postFullyPublished, publishingPlatformsCovered, publishingWait, followupComplete, followupOutcome, followupWait, waitState, basicTaskWait, workflowStatusForWait } from './executionDiagnostics.js';
 import { taskNeedsAttention } from '../../src/lib/taskExecutionState.js';
 const now = Date.parse('2026-09-06T10:00:00Z');
 assert.equal(collectionWait([{status:'queued',createdAt:new Date(now-60_000).toISOString()}],now).requiresAttention,false);
@@ -7,6 +7,11 @@ assert.equal(collectionWait([{status:'queued',createdAt:new Date(now-360_000).to
 assert.equal(collectionWait([{status:'running',leasedUntil:new Date(now-1).toISOString()}],now).kind,'service');
 assert.equal(collectionWait([{status:'failed'}],now).kind,'service');
 assert.equal(collectionWait([{status:'done'}],now).kind,'input');
+assert.equal(workflowStatusForWait(waitState('input','connect an account')),'waiting_human');
+assert.equal(workflowStatusForWait(waitState('manual','verify a receipt')),'waiting_human');
+assert.equal(workflowStatusForWait(waitState('approval','approve')),'waiting_approval');
+assert.equal(workflowStatusForWait(waitState('processing','running')),'waiting_external');
+assert.equal(workflowStatusForWait(waitState('service','provider outage')),'waiting_external');
 const delivered = {status:'published',platformPostId:'receipt-1'};
 const partial = {stats:{status:'partial',targetAccountIds:['a','b'],publishResults:{a:delivered,b:{status:'failed'}}}};
 assert.equal(postFullyPublished(partial),false);

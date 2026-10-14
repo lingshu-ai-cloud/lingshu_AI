@@ -31,6 +31,7 @@ export type WorkflowTaskStatus =
   | 'running'
   | 'waiting_external'
   | 'waiting_approval'
+  | 'waiting_human'
   | 'handed_off'
   | 'skipped'
   | 'succeeded'

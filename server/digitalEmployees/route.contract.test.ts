@@ -45,7 +45,7 @@ assert.match(source, /task\.requires_approval && task\.status === 'failed'[\s\S]
   'an approval preflight exception must be safely re-observed instead of remaining a terminal workflow failure');
 assert.match(source, /run\.status === 'waiting_human' && !recoverableApprovalFailure/,
   'a run paused by a recoverable approval preflight exception must be allowed to reconcile');
-assert.match(source, /const reobservableUserInputWait = taskResult\.items\.some[\s\S]{0,420}waitState[\s\S]{0,160}=== 'input'/,
+assert.match(source, /const reobservableUserInputWait = taskResult\.items\.some[\s\S]{0,420}\['input', 'manual'\]\.includes[\s\S]{0,160}waitState/,
   'an actionable input wait must be re-observed so completing the requested setup resumes automatically');
 assert.match(source, /error\.message\.includes\('IANA'\)[\s\S]{0,220}发布账号尚未配置有效时区/,
   'a missing publishing timezone must become an actionable approval preflight result instead of an execution exception');
@@ -55,6 +55,16 @@ assert.match(source, /dataStatus: 'preflight_blocked',[\s\S]{0,220}waitState: wa
   'approval configuration gaps must be presented as explicit user input, not a vague external-service wait');
 assert.match(source, /const needsHumanInput = remaining\.find[\s\S]{0,400}'waiting_human'/,
   'a run with an actionable input gap must be owned by the user rather than labeled as an external wait');
+assert.match(source, /status: 'waiting_human', output, business_refs: preflight\.businessRefs/,
+  'approval preflight inputs such as missing account authorization must be persisted as human work, not an external-service wait');
+assert.match(source, /const waitStatus = workflowStatusForWait\(diagnostic\)/,
+  'every diagnostic wait must map input, approval and provider states to distinct workflow statuses');
+assert.match(source, /const active = agentTasks\.find[\s\S]{0,180}'waiting_human'/,
+  'an Agent waiting for user input must remain visible in the live employee status instead of appearing idle');
+assert.match(source, /const shouldResetTask = \['waiting_external', 'waiting_approval', 'waiting_human', 'pending'\]/,
+  'attaching the requested evidence must reset a human-input task so the run can continue');
+assert.match(source, /const shouldReconcile = !\['succeeded', 'failed', 'cancelled', 'paused'\]\.includes\(run\.status\)/,
+  'a waiting-human run must reconcile immediately after the requested evidence is attached');
 const socialContentBridgeGoal = { id: 'social-bridge', metric: 'approved_social_content_artifacts', scope: { socialTaskId: 'socialtask-1' } };
 const weeklyOperatingGoal = { id: 'weekly-operating', metric: 'qualified_leads', scope: { description: '本周经营范围' } };
 assert.equal(isDigitalEmployeeOperatingGoal(socialContentBridgeGoal), false, 'a social-content execution bridge is not a Digital Employee weekly goal');
@@ -209,7 +219,7 @@ assert.match(source, /runReviewSummary/, 'active workflow runs must expose a liv
 assert.match(source, /liveReview/, 'overview must return a live review before the run is terminal');
 assert.match(source, /recordBelongsToTask/, 'business evidence must be scoped to the workflow run and task lineage');
 assert.match(source, /const canonicalBusinessRefs = observation\.businessRefs\.length[\s\S]{0,180}task\.business_refs/, 'observe reconciliation must preserve business refs prepared earlier in the same tick');
-assert.match(source, /status: (?:'waiting_external'|waitingStatus)[\s\S]{0,180}business_refs: canonicalBusinessRefs/, 'waiting or input-blocked tasks must persist canonical prepared/observed business refs');
+assert.match(source, /const taskUpdate = \{ status: waitStatus[\s\S]{0,180}business_refs: canonicalBusinessRefs/, 'waiting or input-blocked tasks must persist canonical prepared/observed business refs');
 assert.match(source, /status: 'succeeded'[\s\S]{0,180}business_refs: canonicalBusinessRefs/, 'successful tasks must persist the same canonical business refs contract');
 assert.match(source, /runScheduledTaskNow/, 'the first scheduled collection must reuse the real scheduler execution entry point');
 assert.match(source, /ensureContentBatchPlan/, 'content mode routing must persist a real content batch plan');

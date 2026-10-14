@@ -31,7 +31,7 @@ import { reviewTodoService } from '../digitalEmployees/reviewTodos.js';
 import { applyReviewTodoPlan, sameTodoRequirements } from '../digitalEmployees/reviewTodoPlan.js';
 import type { ReviewTodoBoard } from '../../src/lib/reviewTodos.js';
 import { nextTaskFailure, taskRetryDue, type TaskFailure } from '../digitalEmployees/taskRetry.js';
-import { analysisWait, basicTaskWait, collectionWait, followupComplete, followupWait, postFullyPublished, publishingPlatformsCovered, publishingWait, waitState } from '../digitalEmployees/executionDiagnostics.js';
+import { analysisWait, basicTaskWait, collectionWait, followupComplete, followupWait, postFullyPublished, publishingPlatformsCovered, publishingWait, waitState, workflowStatusForWait } from '../digitalEmployees/executionDiagnostics.js';
 import { listTenantEmployees } from './auth.js';
 import { recommendPackage, normalizePackage, repairCollapsedWeeklyVideoProduction, validatePackage, validatePackageForStart, compilePackage, packageConfig, packageTaskForKey, grantCovers, criticalBusinessConfigChanges } from '../digitalEmployees/weeklyPackage.js';
 import { TASK_TEMPLATES, type WeeklyPackage } from '../../src/lib/weeklyPackage.js';
@@ -504,7 +504,7 @@ function goalInput(record: GoalRecord): WeeklyGoalInput {
 function publicAgentStatuses(tasks: Array<TaskRecord & { agent_role: VisibleAgentRole }>) {
   return VISIBLE_AGENT_ROLES.map(role => {
     const agentTasks = tasks.filter(task => task.agent_role === role);
-    const active = agentTasks.find(task => ['running', 'waiting_external', 'waiting_approval', 'handed_off'].includes(task.status));
+    const active = agentTasks.find(task => ['running', 'waiting_external', 'waiting_approval', 'waiting_human', 'handed_off'].includes(task.status));
     return {
       role,
       status: active?.status || (agentTasks.length > 0 && agentTasks.every(task => ['succeeded', 'skipped'].includes(task.status)) ? 'completed' : 'idle'),
@@ -1395,7 +1395,7 @@ export function runReviewSummary(run: RunRecord, tasks: TaskRecord[], businessSn
         const upstream = byKey.get(key);
         return !upstream || !['succeeded', 'skipped'].includes(upstream.status);
       });
-      if (!['waiting_external', 'waiting_approval', 'handed_off', 'failed'].includes(task.status) && !(task.status === 'pending' && waitingOn.length)) return null;
+      if (!['waiting_external', 'waiting_approval', 'waiting_human', 'handed_off', 'failed'].includes(task.status) && !(task.status === 'pending' && waitingOn.length)) return null;
       return {
         taskId: task.id,
         taskKey: task.task_key,
@@ -2545,8 +2545,8 @@ async function advanceRunUnlocked(tenantId: string, runId: string): Promise<void
   const recoverableApprovalFailure = taskResult.items.some(task => task.requires_approval
     && task.status === 'failed'
     && jsonObject<Record<string, unknown>>(task.output, {}).dataStatus === 'execution_failed');
-  const reobservableUserInputWait = taskResult.items.some(task => task.status === 'waiting_external'
-    && String(jsonObject<Record<string, unknown>>(jsonObject<Record<string, unknown>>(task.output, {}).waitState, {}).kind || '') === 'input');
+  const reobservableUserInputWait = taskResult.items.some(task => ['waiting_external', 'waiting_human'].includes(task.status)
+    && ['input', 'manual'].includes(String(jsonObject<Record<string, unknown>>(jsonObject<Record<string, unknown>>(task.output, {}).waitState, {}).kind || '')));
   await restoreExecutionOnlyInvalidatedAuthorization(tenantId, goal, run, plan);
   if (run.status === 'waiting_human' && !recoverableApprovalFailure && !reobservableUserInputWait) return;
   const config = executionConfigForPlan(plan, tenantConfig);
@@ -2628,7 +2628,7 @@ async function advanceRunUnlocked(tenantId: string, runId: string): Promise<void
       // is later downgraded (for example, a scheduled collection whose real
       // provider run finished failed). Return it to dependency-pending so the
       // actual upstream failure remains the primary card and pause reason.
-      if (task.status === 'waiting_external') {
+      if (['waiting_external', 'waiting_human', 'waiting_approval'].includes(task.status)) {
         const output = { ...jsonObject<Record<string, unknown>>(task.output, {}), dataStatus: 'dependency_pending', waitState: undefined };
         await store.update(COLLECTION.tasks, task.id, { status: 'pending', output, blocked_reason: '', updated_at: new Date().toISOString() });
         task.status = 'pending'; task.output = output; task.blocked_reason = '';
@@ -2637,8 +2637,8 @@ async function advanceRunUnlocked(tenantId: string, runId: string): Promise<void
     }
     if (task.task_key.startsWith('review_todo_')) {
       const reason = '请按本任务的执行要求完成业务操作，并提交验收记录；尚未自动完成。';
-      await store.update(COLLECTION.tasks, task.id, { status: 'waiting_external', blocked_reason: reason, output: { waitState: { kind: 'manual', message: reason, requiresAttention: true } }, updated_at: new Date().toISOString() });
-      task.status = 'waiting_external';
+      await store.update(COLLECTION.tasks, task.id, { status: 'waiting_human', blocked_reason: reason, output: { waitState: { kind: 'manual', message: reason, requiresAttention: true } }, updated_at: new Date().toISOString() });
+      task.status = 'waiting_human';
       continue;
     }
     const metadata = taskExecutionMetadata(task, plan);
@@ -2719,13 +2719,14 @@ async function advanceRunUnlocked(tenantId: string, runId: string): Promise<void
         dataStatus: 'autonomy_blocked',
         autonomyMode: config.autonomyMode,
         policySource: metadata.policySource,
+        waitState: waitState('input', reason),
         availableActions: availableTaskActions(task),
       };
-      await store.update(COLLECTION.tasks, task.id, { status: 'waiting_external', output, blocked_reason: reason, updated_at: new Date().toISOString() });
-      if (task.status !== 'waiting_external' || task.blocked_reason !== reason) {
+      await store.update(COLLECTION.tasks, task.id, { status: 'waiting_human', output, blocked_reason: reason, updated_at: new Date().toISOString() });
+      if (task.status !== 'waiting_human' || task.blocked_reason !== reason) {
         await appendEvent({ tenantId, runId: run.id, taskId: task.id, type: 'policy.autonomy_blocked', level: 'warning', summary: `${task.title}：${reason}`, payload: { autonomyMode: config.autonomyMode, externalEffect: metadata.externalEffect, policySource: metadata.policySource } });
       }
-      task.status = 'waiting_external';
+      task.status = 'waiting_human';
       task.output = output;
       task.blocked_reason = reason;
       continue;
@@ -2746,12 +2747,12 @@ async function advanceRunUnlocked(tenantId: string, runId: string): Promise<void
           availableActions: availableTaskActions(task),
         };
         await store.update(COLLECTION.tasks, task.id, {
-          status: 'waiting_external', output, business_refs: preflight.businessRefs, blocked_reason: preflight.reason, updated_at: new Date().toISOString(),
+          status: 'waiting_human', output, business_refs: preflight.businessRefs, blocked_reason: preflight.reason, updated_at: new Date().toISOString(),
         });
-        if (task.status !== 'waiting_external' || task.blocked_reason !== preflight.reason) {
+        if (task.status !== 'waiting_human' || task.blocked_reason !== preflight.reason) {
           await appendEvent({ tenantId, runId: run.id, taskId: task.id, type: 'approval.preflight_blocked', level: 'warning', summary: `${task.title}：${preflight.reason}`, payload: { checks: preflight.checks, businessRefs: preflight.businessRefs, destination: metadata.destination } });
         }
-        task.status = 'waiting_external';
+        task.status = 'waiting_human';
         task.output = output;
         task.business_refs = preflight.businessRefs;
         task.blocked_reason = preflight.reason;
@@ -2857,15 +2858,15 @@ async function advanceRunUnlocked(tenantId: string, runId: string): Promise<void
           : task.task_key === 'followup_dispatch'
           ? '真实发送预检：尚未取得可核验的发送条件或渠道回执'
           : `等待真实业务结果，请前往「${destinationLabel(metadata.destination)}」完成或检查该节点`);
-        const needsInput = diagnostic.kind === 'input' && ['content_production', 'content_quality_gate'].includes(task.task_key);
-        if (needsInput) output.dataStatus = 'input_required';
-        const taskUpdate = needsInput ? { status: 'failed' as const, output, business_refs: canonicalBusinessRefs, blocked_reason: blockedReason, updated_at: new Date().toISOString() } : { status: 'waiting_external' as const, output, business_refs: canonicalBusinessRefs, blocked_reason: blockedReason, updated_at: new Date().toISOString() };
+        const waitStatus = workflowStatusForWait(diagnostic);
+        if (waitStatus === 'waiting_human') output.dataStatus = 'input_required';
+        const taskUpdate = { status: waitStatus, output, business_refs: canonicalBusinessRefs, blocked_reason: blockedReason, updated_at: new Date().toISOString() };
         await Promise.all([
           store.update(COLLECTION.tasks, task.id, taskUpdate),
-          store.update(COLLECTION.runs, run.id, { status: needsInput ? 'waiting_human' : 'waiting_external', current_controller: needsInput ? 'human' : 'agent', pause_reason: blockedReason }),
+          store.update(COLLECTION.runs, run.id, { status: waitStatus, current_controller: waitStatus === 'waiting_external' ? 'agent' : 'human', pause_reason: blockedReason }),
         ]);
         if (task.status !== taskUpdate.status) {
-          await appendEvent({ tenantId, runId: run.id, taskId: task.id, type: needsInput ? 'task.input_required' : 'task.waiting_external', level: 'warning', summary: needsInput ? `${task.title}：${blockedReason}` : `${task.title}：等待业务工作台真实回写`, payload: { destination: metadata.destination, statusSource: metadata.statusSource, proof: observation.proof, businessRefs: canonicalBusinessRefs } });
+          await appendEvent({ tenantId, runId: run.id, taskId: task.id, type: waitStatus === 'waiting_human' ? 'task.input_required' : waitStatus === 'waiting_approval' ? 'approval.requested' : 'task.waiting_external', level: 'warning', summary: waitStatus === 'waiting_human' ? `${task.title}：${blockedReason}` : waitStatus === 'waiting_approval' ? `${task.title}：等待负责人审批` : `${task.title}：等待业务工作台真实回写`, payload: { destination: metadata.destination, statusSource: metadata.statusSource, proof: observation.proof, businessRefs: canonicalBusinessRefs } });
         }
         task.status = taskUpdate.status;
         task.output = output;
@@ -2891,11 +2892,11 @@ async function advanceRunUnlocked(tenantId: string, runId: string): Promise<void
         const reason = prepared.draft.blocker || '内容生产条件尚未满足';
         const previous = jsonObject<Record<string, unknown>>(task.output, {});
         const priorCheck = jsonObject<Record<string, unknown>>(previous.routingCheck, {});
-        const sameWait = task.status === 'waiting_external' && priorCheck.reason === reason;
+        const sameWait = task.status === 'waiting_human' && priorCheck.reason === reason;
         const checks = sameWait ? Number(priorCheck.count || 0) + 1 : 1;
         const output = { ...previous, dataStatus: 'blocked', routingCheck: { reason, count: checks, checkedAt: new Date().toISOString() }, waitState: { kind: 'input', message: reason, requiresAttention: true } };
-        await store.update(COLLECTION.tasks, task.id, { status: 'waiting_external', output, blocked_reason: reason, updated_at: new Date().toISOString() });
-        task.status = 'waiting_external'; task.output = output; task.blocked_reason = reason;
+        await store.update(COLLECTION.tasks, task.id, { status: 'waiting_human', output, blocked_reason: reason, updated_at: new Date().toISOString() });
+        task.status = 'waiting_human'; task.output = output; task.blocked_reason = reason;
         if (!sameWait) await appendEvent({ tenantId, runId: run.id, taskId: task.id, type: 'task.routing_waiting', level: 'warning', summary: `等待内容生产条件：${reason}` });
         continue;
       }
@@ -2905,11 +2906,13 @@ async function advanceRunUnlocked(tenantId: string, runId: string): Promise<void
       const refs = [{ type: 'content_batch_plan', id: batch.record.id, orderCount: batch.draft.orders.length }, ...batch.draft.orders.map(order => ({ type: 'content_order', id: order.id, batchPlanId: batch.record.id, route: order.route, platform: order.platform, productId: order.productId }))];
       const output = { ...buildTaskOutput(task.task_key, goalInput(goal), config), batchPlanId: batch.record.id, orders: batch.draft.orders, coverage: batch.draft.coverage, routing: { eligibleRoutes: batch.draft.eligibleRoutes, disabledRoutes: batch.draft.disabledRoutes }, dataStatus: batch.draft.status };
       if (batch.draft.status === 'blocked') {
+        const blocker = batch.draft.blocker || '内容生产条件尚未满足';
+        const blockedOutput = { ...output, waitState: waitState('input', blocker), dataStatus: 'input_required' };
         await Promise.all([
-          store.update(COLLECTION.tasks, task.id, { status: 'waiting_external', output, business_refs: refs, blocked_reason: batch.draft.blocker, updated_at: new Date().toISOString() }),
-          store.update(COLLECTION.runs, run.id, { status: 'waiting_external', pause_reason: batch.draft.blocker }),
+          store.update(COLLECTION.tasks, task.id, { status: 'waiting_human', output: blockedOutput, business_refs: refs, blocked_reason: blocker, updated_at: new Date().toISOString() }),
+          store.update(COLLECTION.runs, run.id, { status: 'waiting_human', current_controller: 'human', pause_reason: blocker }),
         ]);
-        task.status = 'waiting_external'; task.output = output; task.business_refs = refs; task.blocked_reason = batch.draft.blocker;
+        task.status = 'waiting_human'; task.output = blockedOutput; task.business_refs = refs; task.blocked_reason = blocker;
         continue;
       }
       await store.update(COLLECTION.tasks, task.id, { status: 'succeeded', output, business_refs: refs, blocked_reason: '', updated_at: new Date().toISOString() });
@@ -2955,7 +2958,7 @@ async function advanceRunUnlocked(tenantId: string, runId: string): Promise<void
   if (remaining.length) {
     const handedOff = remaining.find(task => task.status === 'handed_off');
     const waitingApproval = remaining.find(task => task.status === 'waiting_approval');
-    const directBlocks = remaining.filter(task => ['waiting_external', 'waiting_approval', 'handed_off', 'failed', 'cancelled'].includes(task.status));
+    const directBlocks = remaining.filter(task => ['waiting_external', 'waiting_approval', 'waiting_human', 'handed_off', 'failed', 'cancelled'].includes(task.status));
     const dependencyBlocks = remaining
       .filter(task => task.status === 'pending')
       .map(task => {
@@ -2970,7 +2973,7 @@ async function advanceRunUnlocked(tenantId: string, runId: string): Promise<void
       ...dependencyBlocks,
     ])];
     const failedTask = remaining.find(task => task.status === 'failed' && !jsonObject<Record<string, any>>(task.output, {}).executionFailure?.retryAt);
-    const needsHumanInput = remaining.find(task => task.status === 'waiting_external'
+    const needsHumanInput = remaining.find(task => ['waiting_external', 'waiting_human'].includes(task.status)
       && ['input', 'manual'].includes(String(jsonObject<Record<string, unknown>>(jsonObject<Record<string, unknown>>(task.output, {}).waitState, {}).kind || '')));
     const status = handedOff || failedTask || needsHumanInput ? 'waiting_human' : waitingApproval ? 'waiting_approval' : 'waiting_external';
     await store.update(COLLECTION.runs, run.id, {
@@ -3277,7 +3280,7 @@ async function takeOverWorkflowTask(input: { tenantId: string; userId: string; t
       await pauseContentExecutionJobsForRun({ dataStore: store, tenantId: input.tenantId, runId: run.id, origin: 'workflow_handoff' });
       return;
     }
-    if (!['waiting_external', 'waiting_approval', 'running', 'failed', 'pending'].includes(task.status)) {
+    if (!['waiting_external', 'waiting_approval', 'waiting_human', 'running', 'failed', 'pending'].includes(task.status)) {
       throw new AssistantDecisionCommandError('task_not_handoff_ready', 409);
     }
     const now = new Date().toISOString();
@@ -6191,8 +6194,8 @@ digitalEmployeesRouter.post('/tasks/:taskId/evidence', async (req, res) => {
   }
   const existing = jsonObject<Array<Record<string, unknown>>>(task.business_refs, []);
   const merged = [...new Map([...existing, ...canonical].map(ref => [`${String(ref.type || '')}:${String(ref.id || '')}`, ref])).values()];
-  const shouldResetTask = ['waiting_external', 'waiting_approval', 'pending'].includes(task.status);
-  const shouldReconcile = !['succeeded', 'failed', 'cancelled', 'paused', 'waiting_human'].includes(run.status);
+  const shouldResetTask = ['waiting_external', 'waiting_approval', 'waiting_human', 'pending'].includes(task.status);
+  const shouldReconcile = !['succeeded', 'failed', 'cancelled', 'paused'].includes(run.status);
   await Promise.all([
     store.update(COLLECTION.tasks, task.id, { business_refs: merged, ...(shouldResetTask ? { status: 'pending', blocked_reason: '' } : {}), task_version: Number(task.task_version || 1) + 1, updated_at: now }),
     shouldReconcile ? store.update(COLLECTION.runs, run.id, { status: 'running', current_controller: 'agent', pause_reason: '', completed_at: '' }) : Promise.resolve(false),
@@ -6225,7 +6228,7 @@ digitalEmployeesRouter.post('/tasks/:taskId/handoff', async (req, res) => {
     res.json(await buildOverview(tenantId));
     return;
   }
-  if (!['waiting_external', 'waiting_approval', 'running', 'failed', 'pending'].includes(task.status)) { res.status(409).json({ error: 'task_not_handoff_ready' }); return; }
+  if (!['waiting_external', 'waiting_approval', 'waiting_human', 'running', 'failed', 'pending'].includes(task.status)) { res.status(409).json({ error: 'task_not_handoff_ready' }); return; }
   const now = new Date().toISOString();
   const existingSession = admission.kind === 'reuse'
     ? activeHandoffs.find(handoff => handoff.id === admission.handoff.id) || null

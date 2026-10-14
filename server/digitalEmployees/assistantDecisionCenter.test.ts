@@ -270,6 +270,21 @@ test('a production node waiting on a recovered service can retry in place', () =
   assert.ok(card.actions.every(action => action.id !== 'take_over'));
 });
 
+test('a user-input blocker is not mislabeled as an external wait or offered a pointless retry', () => {
+  const waiting = {
+    ...task('task-release', 'content_release_approval', 'waiting_human'),
+    blocked_reason: '审批前资源预检未通过：尚未连接发布账号',
+    output: { waitState: { kind: 'input', message: '尚未连接发布账号', requiresAttention: true } },
+  } as TaskRecord;
+  const card = buildAssistantDecisionFeed({
+    page: 'digitalEmployees', goal: null, plan: null, run: { ...run, status: 'waiting_human' },
+    tasks: [waiting], approvals: [], now,
+  }).items[0]!;
+  assert.equal(card.facts[0]?.value, '等待用户');
+  assert.deepEqual(card.actions.map(action => action.id), ['open_workspace']);
+  assert.equal(card.actions[0]?.label, '前往处理');
+});
+
 test('a production node still processing is not presented as a user decision', () => {
   const processing = {
     ...task('task-production-processing', 'content_production', 'waiting_external'),

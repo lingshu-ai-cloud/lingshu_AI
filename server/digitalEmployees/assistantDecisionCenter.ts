@@ -498,7 +498,7 @@ export function buildAssistantDecisionFeed(source: DecisionCenterSource): Assist
 
     const pendingApprovalTaskIds = new Set(source.approvals.filter(item => item.status === 'pending').map(item => item.task_id));
     source.tasks
-      .filter(task => ['waiting_external', 'failed'].includes(task.status)
+      .filter(task => ['waiting_external', 'waiting_human', 'failed'].includes(task.status)
         && !pendingApprovalTaskIds.has(task.id)
         && taskNeedsAttention({
           status: task.status,
