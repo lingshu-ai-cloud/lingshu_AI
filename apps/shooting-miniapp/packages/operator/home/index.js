@@ -5,7 +5,7 @@ const operatorHome = require('../../../lib/operator-home')
 Page({
   data: {
     loading: true, error: '', organization: '灵枢工作台', edition: '运营版', unread: 0,
-    week: model.week(), selectedDay: model.day(new Date().toISOString()), days: [],
+    week: model.week(), selectedDay: model.day(new Date().toISOString()), days: [], calendarExpanded: false,
     counts: { plannedFilms: '—', pendingAcceptance: '—', pendingShots: '—' }, blockers: [], todayShots: [], pendingShots: [], scheduleAvailable: true, loaded: false
   },
   onLoad() { this.updateDays(); this.restore() },
@@ -43,6 +43,7 @@ Page({
     const week = model.week(Date.now(), this.weekOffset)
     this.setData({ week, selectedDay: week.start, blockers: [] }); this.updateDays(); this.refresh()
   },
+  toggleCalendar() { this.setData({ calendarExpanded: !this.data.calendarExpanded }) },
   selectDay(e) {
     const selectedDay = e.currentTarget.dataset.date
     const view = operatorHome.project(this.profile, this.overview || {}, this.queue || {}, selectedDay)

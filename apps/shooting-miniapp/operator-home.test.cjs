@@ -63,3 +63,13 @@ test('operator home follows the mobile visual baseline', () => {
   assert.match(navStyles, /\.nav-item\{[^}]*min-height:88rpx/)
   assert.doesNotMatch(navStyles, /backdrop-filter/)
 })
+
+test('operator calendar is collapsed by default and expands on demand', () => {
+  const script = fs.readFileSync(__dirname + '/packages/operator/home/index.js', 'utf8')
+  const markup = fs.readFileSync(__dirname + '/packages/operator/home/index.wxml', 'utf8')
+  assert.match(script, /calendarExpanded:\s*false/)
+  assert.match(script, /toggleCalendar\(\)/)
+  assert.match(markup, /bindtap="toggleCalendar"/)
+  assert.match(markup, /wx:if="\{\{calendarExpanded\}\}" class="days"/)
+  assert.match(markup, /catchtap="changeWeek"/)
+})

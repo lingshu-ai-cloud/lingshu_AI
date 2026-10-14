@@ -7,9 +7,9 @@
 
   <view class="content">
     <view wx:if="{{error}}" class="notice error">{{error}}<text bindtap="refresh">重试</text></view>
-    <view class="week-card">
-      <view class="week-heading"><view class="week-action" data-offset="-1" bindtap="changeWeek">上一周</view><text class="week-range">{{week.start}} — {{week.end}}</text><view class="week-action" data-offset="1" bindtap="changeWeek">下一周</view></view>
-      <view class="days"><view wx:for="{{days}}" wx:key="date" class="day {{item.selected ? 'selected' : ''}}" data-date="{{item.date}}" bindtap="selectDay"><text class="weekday">{{item.label}}</text><text class="day-number">{{item.number}}</text><view wx:if="{{item.count}}" class="day-indicator"></view></view></view>
+    <view class="week-card {{calendarExpanded ? 'expanded' : 'collapsed'}}">
+      <view class="week-heading" bindtap="toggleCalendar" aria-role="button" aria-label="{{calendarExpanded ? '收起周日历' : '展开周日历'}}" aria-expanded="{{calendarExpanded}}"><view class="week-action" data-offset="-1" catchtap="changeWeek">上一周</view><view class="week-summary"><text class="week-range">{{week.start}} — {{week.end}}</text><text class="week-chevron">{{calendarExpanded ? '⌃' : '⌄'}}</text></view><view class="week-action" data-offset="1" catchtap="changeWeek">下一周</view></view>
+      <view wx:if="{{calendarExpanded}}" class="days"><view wx:for="{{days}}" wx:key="date" class="day {{item.selected ? 'selected' : ''}}" data-date="{{item.date}}" bindtap="selectDay"><text class="weekday">{{item.label}}</text><text class="day-number">{{item.number}}</text><view wx:if="{{item.count}}" class="day-indicator"></view></view></view>
     </view>
 
     <view class="metric-band">
