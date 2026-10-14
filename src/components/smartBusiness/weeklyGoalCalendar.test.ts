@@ -32,4 +32,19 @@ const publication = calendar.find(task => task.id === 'goal-goal-publish-video')
 assert.equal(publication?.date, '2026-10-13');
 assert.equal(publication?.platform, 'tiktok');
 assert.equal(publication?.agent, 'content');
+
+const midweekOverview = {
+  ...overview,
+  goal: { ...overview.goal, startsAt: '2026-10-14', endsAt: '2026-10-18' },
+  plan: {
+    ...overview.plan,
+    tasks: [
+      ...overview.plan!.tasks,
+      { key: 'content_mode_routing', title: '制定详细选题与排期', description: '冻结本周排期', agentRole: 'business', expectedMinutes: 30, dependsOn: ['viral_analysis'], capabilityKey: 'planning.content_routing', statusSource: 'weekly_plan' },
+    ],
+  },
+} as unknown as DigitalEmployeeOverview;
+const midweekCalendar = projectWeeklyGoalCalendar(midweekOverview);
+const scheduleNode = midweekCalendar.flatMap(task => task.internalNodes || []).find(task => task.executionStep === 'content_mode_routing');
+assert.equal(scheduleNode?.date, '2026-10-12');
 console.log('Weekly goal calendar projects persisted task capabilities and status sources');

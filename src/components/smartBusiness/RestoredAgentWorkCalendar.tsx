@@ -155,7 +155,7 @@ function summaryStatus(summary: AgentCalendarSummary): LsCalendarEvent['status']
 
 function summaryAgent(summary: AgentCalendarSummary): Exclude<AgentCalendarTask['agent'], 'human'> {
   if (summary.group === 'directing') return 'director';
-  if (summary.group === 'production' || summary.group === 'quality') return 'content';
+  if (summary.group === 'production' || summary.group === 'quality' || summary.group === 'publishing') return 'content';
   if (summary.group === 'inquiries') return 'customer';
   return 'business';
 }

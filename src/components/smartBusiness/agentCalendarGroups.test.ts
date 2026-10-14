@@ -66,14 +66,25 @@ test('independent cards require a deliverable or workspace and use the confirmed
   assert.equal(taskHasDeliverableOrWorkspace({...production,output:'',productionTaskId:'content-real'}),true);
 });
 
-test('display placeholders never duplicate real task groups and repeat at most once per empty group',()=>{
+test('daily production placeholders form a weekday loop and real tasks replace only the same day and stage',()=>{
   const realProduction=task('video',dates[2],'video_generation','content');
   const summaries=buildAgentCalendarSummaries([realProduction],dates);
   const placeholders=calendarDisplayPlaceholders(summaries,dates[2]);
-  assert.equal(placeholders.some(item=>item.group==='production'),false);
-  assert.equal(placeholders.filter(item=>item.group==='directing').length,1);
-  assert.equal(placeholders.find(item=>item.group==='directing')?.date,dates[2]);
+  const dailyGroups=['directing','production','quality','publishing'] as const;
+  for(const group of dailyGroups){
+    const expectedDates=dates.slice(0,5).filter(date=>!(group==='production'&&date===dates[2]));
+    assert.deepEqual(placeholders.filter(item=>item.group===group).map(item=>item.date),expectedDates);
+  }
+  assert.equal(placeholders.filter(item=>item.group==='inquiries').length,1);
+  assert.equal(placeholders.find(item=>item.group==='inquiries')?.date,dates[2]);
   assert.ok(placeholders.every(item=>item.children.length===0));
+});
+
+test('weekend dates do not receive synthetic daily production placeholders',()=>{
+  const placeholders=calendarDisplayPlaceholders(buildAgentCalendarSummaries([],dates));
+  for(const group of ['directing','production','quality','publishing'] as const){
+    assert.deepEqual(placeholders.filter(item=>item.group===group).map(item=>item.date),dates.slice(0,5));
+  }
 });
 
 test('workflow responsibility corrects legacy generic business ownership',()=>{

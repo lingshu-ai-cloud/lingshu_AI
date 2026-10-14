@@ -36,9 +36,13 @@ export function projectWeeklyGoalCalendar(data: DigitalEmployeeOverview): AgentC
       const execution = tasks.find(item => item.task_key === task.key);
       const nodeBlocked = Boolean(execution?.blocked_reason || execution && ['waiting_approval', 'waiting_external'].includes(execution.status));
       const nodeStatus: AgentCalendarTask['status'] = execution?.status === 'failed' ? 'failed' : nodeBlocked ? 'blocked' : execution?.status === 'running' ? 'active' : execution?.status === 'succeeded' ? 'completed' : 'planned';
+      // The detailed operating schedule is a weekly setup decision. Keep it on
+      // Monday even when the goal was created later in the week; daily source,
+      // production and review work is represented by the rolling calendar loop.
+      const nodeDate = isWeeklyFoundation || task.key === 'content_mode_routing' ? monday : cardDate;
       return {
         id: `${prefix}${task.key}`,
-        date: cardDate,
+        date: nodeDate,
         time: `${String(9 + index).padStart(2, '0')}:00`,
         agent: agentCalendarResponsibleAgent(task.key, task.agentRole === 'orchestrator' ? 'business' : task.agentRole),
         executionStep: task.key,
