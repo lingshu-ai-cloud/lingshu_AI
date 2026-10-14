@@ -80,8 +80,9 @@
 .ls-calendar-event-content-timed.is-short .ls-calendar-event-meta { display: flex; }
 .ls-calendar .ls-calendar-event-three-row { min-height: 46px; }
 .ls-calendar .fc-timegrid-event-harness.ls-calendar-time-vertical-flow {
-  inset-inline: 2px 2px !important;
-  transform: translateY(var(--ls-calendar-visual-offset, 0));
+  left: 2px !important;
+  right: 2px !important;
+  width: auto !important;
   z-index: 2 !important;
 }
 .ls-calendar .fc-timegrid-event-harness.ls-calendar-time-vertical-flow:hover,

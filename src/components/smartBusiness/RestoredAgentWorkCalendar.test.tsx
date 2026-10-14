@@ -1,8 +1,9 @@
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 import test from 'node:test';
 import { createElement } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
-import Calendar, {isPastUnfinishedCalendarTask} from './RestoredAgentWorkCalendar';
+import Calendar, {agentCalendarDetailKind,isPastUnfinishedCalendarTask} from './RestoredAgentWorkCalendar';
 import type { AgentCalendarTask } from './AgentWeeklyCalendar';
 const base: AgentCalendarTask = {id:'business',date:'2026-10-12',time:'10:00',agent:'business',title:'冻结经营任务',output:'经营交付',context:'实际范围',minutes:30,status:'planned',dueAt:'2026-10-12T10:00:00+08:00'};
 test('Agent filtering shows real cards directly without duplicate summary cards', () => {
@@ -19,4 +20,18 @@ test('a passed unfinished slot is overdue while completed work keeps its termina
   const now=Date.parse('2026-10-12T12:00:00+08:00');
   assert.equal(isPastUnfinishedCalendarTask({...base,dueAt:undefined,status:'planned'},now),true);
   assert.equal(isPastUnfinishedCalendarTask({...base,dueAt:undefined,status:'completed'},now),false);
+});
+test('calendar clicks route persisted tasks to task details and placeholders to an explanation',()=>{
+  assert.equal(agentCalendarDetailKind({data:base}),'task');
+  assert.equal(agentCalendarDetailKind({data:{kind:'summary',summary:{
+    key:'2026-10-12:production',group:'production',date:'2026-10-12',title:'影片生产',
+    startTime:'10:15',durationMinutes:45,progress:'等待真实任务',children:[],
+  }}}),'placeholder');
+});
+
+test('calendar leaves task and placeholder clicks to the shared details drawer',()=>{
+  const source=readFileSync(new URL('./RestoredAgentWorkCalendar.tsx',import.meta.url),'utf8');
+  assert.doesNotMatch(source,/onEventClick=\{event=>isSummaryEventData/);
+  assert.match(source,/等待真实任务/);
+  assert.match(source,/运行层生成真实任务后/);
 });

@@ -44,10 +44,18 @@ test('every hour-calendar card has exactly three stable rows', () => {
   const card = hourCalendarCard(base, Date.parse('2026-10-14T08:00:00+08:00'));
   assert.equal(card.lines.length, 3);
   assert.equal(card.lines[1], base.title);
-  assert.equal(card.lines[0], '制片 · 内容');
+  assert.equal(card.lines[0], '内容智能体');
   assert.match(card.lines[2], /09:00–09:45 · 待办/);
   assert.ok(card.lines[0].length < card.lines[1].length, '第一行应当弱化并短于关键内容标题');
   assert.ok(card.lines[2].length <= 16, '第三行只保留时间与短状态');
+});
+
+test('the first row always names the responsible intelligent agent', () => {
+  const expected: Array<[AgentCalendarTask['agent'], string]> = [
+    ['business', '经营智能体'], ['director', '编导智能体'], ['content', '内容智能体'],
+    ['customer', '客服智能体'], ['human', '人工处理'],
+  ];
+  for (const [agent, label] of expected) assert.equal(hourCalendarCard({ ...base, agent }).lines[0], label);
 });
 
 test('same agent tasks must be staggered while different agents may execute concurrently', () => {

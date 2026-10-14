@@ -233,9 +233,10 @@ export function LsCalendar({ events, label, initialDate, initialView = 'dayGridM
     });
     // FullCalendar normally solves overlapping timed events by splitting the
     // day column horizontally. Agent cards need their key task line to keep
-    // the whole column width, so calculate a presentation-only vertical
-    // offset. The authoritative start/end values remain untouched and are
-    // still used in the card copy, details drawer and drag persistence.
+    // the whole column width, so feed FullCalendar non-overlapping visual
+    // instants while keeping the authoritative event in `extendedProps.item`.
+    // Card copy, details and persistence therefore continue to use the real
+    // schedule, while simultaneous cards are laid out one below another.
     const visualCursorByDay = new Map<string, number>();
     return ordered.map(event => {
       const actualStart = new Date(event.start).getTime();
@@ -248,11 +249,15 @@ export function LsCalendar({ events, label, initialDate, initialView = 'dayGridM
         ? Math.max(actualEnd - actualStart, 30 * 60_000)
         : 30 * 60_000;
       if (isVerticalTimedCard) visualCursorByDay.set(dayKey, visualStart + visualDuration);
-      const visualOffsetPx = isVerticalTimedCard ? Math.max(0, (visualStart - actualStart) / 60_000 * 1.6) : 0;
+      const visualEnd = visualStart + visualDuration;
       return {
-      id: event.id, title: event.title, start: event.start, end: event.end, allDay: event.allDay,
+      id: event.id,
+      title: event.title,
+      start: isVerticalTimedCard ? new Date(visualStart).toISOString() : event.start,
+      end: isVerticalTimedCard ? new Date(visualEnd).toISOString() : event.end,
+      allDay: event.allDay,
       startEditable: Boolean(event.editable && onMoveEvent), durationEditable: false,
-      interactive: true, extendedProps: { item: event, visualOffsetPx, isVerticalTimedCard },
+      interactive: true, extendedProps: { item: event, isVerticalTimedCard },
       };
     });
   }, [events, Boolean(onMoveEvent)]);
@@ -375,7 +380,16 @@ export function LsCalendar({ events, label, initialDate, initialView = 'dayGridM
             const harness = element.closest<HTMLElement>('.fc-timegrid-event-harness');
             if (harness) {
               harness.classList.add('ls-calendar-time-vertical-flow');
-              harness.style.setProperty('--ls-calendar-visual-offset', `${Number(info.event.extendedProps.visualOffsetPx) || 0}px`);
+              // FullCalendar writes physical `left`/`right` values inline when
+              // it detects simultaneous events. Logical inset CSS alone does
+              // not reliably win that positioning calculation, which leaves
+              // the cards split into narrow columns. Reset the physical
+              // coordinates on the harness itself so every card owns the full
+              // day column. The event input already uses presentation-only
+              // non-overlapping instants, while `item` keeps the real time.
+              harness.style.setProperty('left', '2px', 'important');
+              harness.style.setProperty('right', '2px', 'important');
+              harness.style.setProperty('width', 'auto', 'important');
             }
           }
           element.dataset.calendarRevealId = info.event.id;

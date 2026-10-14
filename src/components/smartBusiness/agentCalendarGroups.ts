@@ -85,6 +85,15 @@ export function agentCalendarTaskType(task: AgentCalendarTask): string {
   return '经营任务';
 }
 
+/** User-facing owner identity used as the first line of every calendar card. */
+export function agentCalendarIdentityLabel(agent: AgentCalendarTask['agent']): string {
+  if (agent === 'human') return '人工处理';
+  if (agent === 'business') return '经营智能体';
+  if (agent === 'director') return '编导智能体';
+  if (agent === 'content') return '内容智能体';
+  return '客服智能体';
+}
+
 function progress(children: AgentCalendarTask[]): string {
   if (!children.length) return '等待真实任务';
   const completed = children.filter(task => task.status === 'completed').length;

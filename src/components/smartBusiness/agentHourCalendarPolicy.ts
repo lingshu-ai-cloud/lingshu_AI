@@ -1,5 +1,5 @@
 import type { AgentCalendarTask } from './AgentWeeklyCalendar';
-import { agentCalendarTaskType, taskHasDeliverableOrWorkspace } from './agentCalendarGroups';
+import { agentCalendarIdentityLabel, taskHasDeliverableOrWorkspace } from './agentCalendarGroups';
 
 export type HourCalendarItemKind = 'real_task' | 'plan_placeholder';
 export type HourCalendarTemporalState = 'completed' | 'overdue' | 'current' | 'future' | 'cancelled';
@@ -86,11 +86,9 @@ export function hourCalendarCard(task: AgentCalendarTask, now = Date.now()): Hou
     : temporalState === 'current' ? '进行'
     : temporalState === 'cancelled' ? '取消'
     : '待办';
-  const taskType = agentCalendarTaskType(task).replace(/任务$/, '').replace(/处理$/, '');
-  const agent = task.agent === 'human' ? '人工' : task.agent === 'business' ? '经营' : task.agent === 'director' ? '编导' : task.agent === 'content' ? '内容' : '客服';
   return {
     lines: [
-      taskType === agent ? taskType : `${taskType} · ${agent}`,
+      agentCalendarIdentityLabel(task.agent),
       task.title,
       `${task.time}${end} · ${stateLabel}`,
     ],

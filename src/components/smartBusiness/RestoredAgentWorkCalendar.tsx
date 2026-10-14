@@ -20,7 +20,7 @@ import { calendarDayKey, calendarInstant, type LsCalendarEvent } from '../../lib
 import { hourCalendarCard } from './agentHourCalendarPolicy';
 import { projectCalendarDeliverables } from './calendarDeliverables';
 import AgentRoleIcon, { AGENT_ROLE_PALETTE, type AgentVisualRole } from '../ui/AgentRoleIcon';
-import {agentCalendarTaskType,buildAgentCalendarSummaries,calendarDisplayPlaceholders,taskHasDeliverableOrWorkspace,type AgentCalendarSummary} from './agentCalendarGroups';
+import {agentCalendarIdentityLabel,agentCalendarTaskType,buildAgentCalendarSummaries,calendarDisplayPlaceholders,taskHasDeliverableOrWorkspace,type AgentCalendarSummary} from './agentCalendarGroups';
 
 const LsCalendar = typeof document === 'undefined'
   ? function ServerCalendar({ events, label }: { events: LsCalendarEvent[]; label: string }) {
@@ -30,10 +30,10 @@ const LsCalendar = typeof document === 'undefined'
 
 const agentLabels: Record<AgentCalendarTask['agent'], string> = {
   human: '人工处理',
-  business: '经营 Agent',
-  director: '编导 Agent',
-  content: '内容 Agent',
-  customer: '客服 Agent',
+  business: '经营智能体',
+  director: '编导智能体',
+  content: '内容智能体',
+  customer: '客服智能体',
 };
 
 const statusLabels: Record<AgentCalendarTask['status'], string> = {
@@ -128,6 +128,11 @@ function calendarCardOwner(task: AgentCalendarTask, overdue: boolean): string {
 type SummaryEventData = { kind: 'summary'; summary: AgentCalendarSummary };
 function isSummaryEventData(value: unknown): value is SummaryEventData {
   return Boolean(value && typeof value === 'object' && (value as SummaryEventData).kind === 'summary');
+}
+
+/** Keep placeholder clicks separate from persisted task details. */
+export function agentCalendarDetailKind(event: Pick<LsCalendarEvent, 'data'>): 'placeholder' | 'task' {
+  return isSummaryEventData(event.data) ? 'placeholder' : 'task';
 }
 function weekDates(anchor: string): string[] {
   const parsed = new Date(`${anchor.slice(0, 10)}T12:00:00Z`);
@@ -239,7 +244,7 @@ export default function RestoredAgentWorkCalendar({
       sourceId: summary.key,
       description: summary.progress,
       cardLines: [
-        `${agentLabels[owner].replace(' Agent', '')} · 计划`,
+        agentCalendarIdentityLabel(owner),
         summary.title,
         `${summary.startTime} · 待排`,
       ],
@@ -277,6 +282,23 @@ export default function RestoredAgentWorkCalendar({
   }, [placeholders, independentTasks, demo, now, timeZone]);
 
   const renderDetails = (event: LsCalendarEvent, closeDetails: () => void) => {
+    if (agentCalendarDetailKind(event) === 'placeholder') {
+      const { summary } = event.data as SummaryEventData;
+      const owner = summaryAgent(summary);
+      return <div className="space-y-5">
+        <div>
+          <Tag>待排计划环节</Tag>
+          <h3 className="mt-2 ls-type-title-medium text-text-primary">{summary.title}</h3>
+          <p className="mt-2 text-sm text-text-secondary">这个时间段用于提示本周流程仍缺少真实执行任务，不代表已经创建或执行了 Agent 任务。</p>
+        </div>
+        <AgentIdentityCard role={owner} relation="主 Agent"/>
+        <dl className="grid gap-3 rounded-lg border border-border bg-white p-4 sm:grid-cols-2">
+          <div><dt className="text-xs text-text-secondary">计划时间</dt><dd className="mt-1 text-sm font-medium text-text-primary">{summary.date} {summary.startTime}</dd></div>
+          <div><dt className="text-xs text-text-secondary">当前状态</dt><dd className="mt-1 text-sm font-medium text-text-primary">{summary.progress}</dd></div>
+        </dl>
+        <Alert type="info" showIcon title="等待真实任务" description="运行层生成真实任务后，此占位会被对应任务卡替换；届时点击任务卡可查看交付内容、负责 Agent、进度与业务入口。"/>
+      </div>;
+    }
     const task = event.data as AgentCalendarTask;
     const overdue = !demo && taskIsOverdue(task, now);
     const workflowNodes = task.internalNodes?.length ? task.internalNodes : [task];
@@ -354,7 +376,6 @@ export default function RestoredAgentWorkCalendar({
         timeGridHeight="clamp(420px, calc(100dvh - 260px), 760px)"
         detailsLayout="custom"
         renderDetails={renderDetails}
-        onEventClick={event=>isSummaryEventData(event.data)}
       /></Suspense>}
   </section>;
 }
