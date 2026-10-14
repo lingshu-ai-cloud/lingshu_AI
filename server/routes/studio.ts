@@ -5,6 +5,7 @@ import { mvpBudgetAdmission } from '../lib/mvpBudgetAdmission.js';
 import { isTrustedSocialOutputWorkspace, socialOutputWorkspaceClientWriteBlocked } from '../starter198/socialContentProductionWorkspace.js';
 import { MINIMAX_ENGLISH_PRESETS, ttsPostProcessingSpeed } from '../lib/studioVoiceSelection.js';
 import { parseMiniMaxSubtitleTiming } from '../lib/minimaxSubtitleTiming.js';
+import { credentialFingerprint, DurableCredentialQuarantine } from '../lib/providerCredentialQuarantine.js';
 import { wavDurationFromBytes } from '../lib/wavDuration';
 import { finalizeMaterialScript } from '../lib/materialScriptFinalizer.js';
 import { createShootingTasksRouter } from './shootingTasks.js';
@@ -7714,6 +7715,9 @@ function writeVoiceSampleIndex(items: StoredVoiceSample[]): void {
 function minimaxVoiceCacheFile(): string {
   return path.join(scopedStudioAssetDir(VOICE_SAMPLES_ROOT), 'minimax-voice-cache.json');
 }
+function minimaxCredentialQuarantineFile(): string {
+  return path.join(scopedStudioAssetDir(VOICE_SAMPLES_ROOT), 'minimax-credential-quarantine.json');
+}
 
 type TtsPreset = 'tiktok_excited' | 'authentic_review' | 'professional_b2b' | 'warm_story' | 'urgent_cta';
 interface TtsStyleOptions {
@@ -8072,6 +8076,7 @@ async function minimaxFetchJson(pathname: string, body: Record<string, unknown>,
   if (statusCode !== 0) {
     throw new Error(`MiniMax ${statusCode}: ${String(json?.base_resp?.status_msg || 'request failed')}`);
   }
+  forgetRejectedMinimaxCredential();
   return json;
   };
   if (pathname === '/v1/t2a_v2' || pathname === '/v1/voice_clone') return submitStudioVoicePaidRequest({stage:pathname === '/v1/voice_clone'?'voice_clone':'tts',provider:'minimax',endpoint:minimaxEndpoint(pathname),accountKeyHash:createHash('sha256').update(apiKey).digest('hex'),model:String(body.model||''),voiceId:String((body.voice_setting as any)?.voice_id || body.voice_id || ''),request:body},send);
@@ -8416,10 +8421,10 @@ function friendlyTtsProviderError(value: unknown, provider = '语音服务'): st
 // this process; rotating the key changes the fingerprint and automatically
 // re-enables the provider. Account balance failures are deliberately not
 // cached here because a recharge must become usable without a restart.
-const rejectedMinimaxCredentialHashes = new Set<string>();
+const rejectedMinimaxCredentials = new DurableCredentialQuarantine(minimaxCredentialQuarantineFile);
 function currentMinimaxCredentialHash(): string {
   const key = String(process.env.MINIMAX_API_KEY || process.env.MINIMAX_API_TOKEN || '').trim();
-  return key ? createHash('sha256').update(key).digest('hex') : '';
+  return credentialFingerprint(key);
 }
 function minimaxCredentialRejected(value: unknown): boolean {
   const message = String(value instanceof Error ? value.message : value || '');
@@ -8428,11 +8433,14 @@ function minimaxCredentialRejected(value: unknown): boolean {
 function rememberRejectedMinimaxCredential(value: unknown): void {
   if (!minimaxCredentialRejected(value)) return;
   const fingerprint = currentMinimaxCredentialHash();
-  if (fingerprint) rejectedMinimaxCredentialHashes.add(fingerprint);
+  rejectedMinimaxCredentials.remember(fingerprint);
+}
+function forgetRejectedMinimaxCredential(): void {
+  rejectedMinimaxCredentials.clear(currentMinimaxCredentialHash());
 }
 function minimaxCredentialUsable(): boolean {
   const fingerprint = currentMinimaxCredentialHash();
-  return Boolean(fingerprint) && !rejectedMinimaxCredentialHashes.has(fingerprint);
+  return Boolean(fingerprint) && !rejectedMinimaxCredentials.isRejected(fingerprint);
 }
 
 async function generateQwenTts(text: string, voice: string, language: string): Promise<{ url: string; duration: number; source: string } | null> {
