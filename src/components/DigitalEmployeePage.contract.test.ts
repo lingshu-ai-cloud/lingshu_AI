@@ -323,7 +323,9 @@ assert.match(weeklyCommandCenterSource, /周经营计划[\s\S]{0,500}<WeeklyRang
 assert.match(publishingCalendarSource, /initialView="timeGridWeek"[^>]*\bshowAllEvents\b[^>]*fixedHeight="auto"[^>]*workspaceMode="expanded"[^>]*firstDay=\{display\.startsAt \? calendarWeekday\(display\.startsAt\) : 1\}/, 'the weekly publishing calendar must use the same hourly workspace as employee scheduling');
 assert.doesNotMatch(smartBusinessSource, />各平台计划与完成</, 'the overview must not add a low-value platform summary chart');
 assert.match(currentPlanSource, /WeeklyCommandCenter/, 'the full weekly command center must replace the simplified current-plan summary');
-assert.match(currentPlanSource, /notice=\{!activeRun[\s\S]{0,1200}detailGeneration\?\.blockedCount/, 'the weekly-plan header must retain actionable readiness and generation blockers');
+assert.match(currentPlanSource, /notice=\{publishingSetupRequired[\s\S]{0,1200}配置发布账号[\s\S]{0,1200}detailGeneration\?\.blockedCount/, 'the weekly-plan header must surface publishing setup before the existing content-readiness fallback');
+assert.match(pageSource, /publishingSetupRequired[\s\S]{0,900}内容生产可以继续，系统不会把未连接账号当成已就绪/, 'publishing readiness must warn early without falsely blocking independent content production');
+assert.match(pageSource, /WeeklyPlanDetailsDrawer[\s\S]{0,500}onOpenPublishingSetup=\{openPublishingAccountSetup\}/, 'the detailed weekly plan must retain the account-setup recovery action');
 for (const label of ['制定周计划', '确认并开始生产', '暂停周任务', '继续周任务']) assert.match(pageSource, new RegExp(label), `the merged weekly control must support ${label}`);
 assert.match(currentPlanSource, /本周还没有计划[\s\S]{0,260}先制定并预览周计划[\s\S]{0,260}确认前不会开始生产/, 'the blank weekly state must explain what a plan contains before offering production');
 assert.doesNotMatch(currentPlanSource, /本周还没有可执行计划[\s\S]{0,240}开始周任务/, 'the blank weekly state must not label plan creation as starting production');

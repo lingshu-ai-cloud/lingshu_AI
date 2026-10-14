@@ -423,11 +423,13 @@ export function WeeklyPlanDetailsDrawer({
   open,
   onClose,
   onBudgetModeChange,
+  onOpenPublishingSetup,
 }: {
   data: DigitalEmployeeOverview;
   open: boolean;
   onClose: () => void;
   onBudgetModeChange?: (mode: "protected" | "economy") => Promise<void>;
+  onOpenPublishingSetup?: () => void;
 }) {
   const display = buildSmartBusinessDisplayModel(data);
   const director = data.plan?.businessPackage?.directorPlan;
@@ -484,6 +486,14 @@ export function WeeklyPlanDetailsDrawer({
           <div><dt className="text-xs text-text-muted">视频总时长</dt><dd className="mt-1 text-base font-semibold text-text-primary">{display.totals.durationSeconds > 0 ? `${display.totals.durationSeconds} 秒` : '待确认'}</dd></div>
           <div><dt className="text-xs text-text-muted">目标平台</dt><dd className="mt-1 text-base font-semibold text-text-primary">{display.platforms.filter(item => item.plannedCount > 0).map(item => platformLabels[item.platform]).join('、') || '待确认'}</dd></div>
         </dl>
+        {data.publishingReadiness?.required && !data.publishingReadiness.ready && <Alert
+          className="mt-4"
+          type="warning"
+          showIcon
+          title={data.publishingReadiness.status === 'unavailable' ? '发布准备状态暂时无法核验' : '发布账号尚未就绪'}
+          description={`${data.publishingReadiness.summary}。这不会阻止独立内容制作，但正式发布前必须完成。`}
+          action={onOpenPublishingSetup ? <Button onClick={onOpenPublishingSetup}>配置发布账号</Button> : undefined}
+        />}
       </section>
 
       <section aria-label="开工预算方案" className="border-t border-border pt-5">

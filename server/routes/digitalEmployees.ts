@@ -42,7 +42,7 @@ import {
   taskCorrectionInvalidatesWeeklyAuthorization,
 } from '../digitalEmployees/weeklyAuthorizationInvalidation.js';
 import { weeklyAuthorizationRecoveryDecision } from '../digitalEmployees/weeklyAuthorizationRecovery.js';
-import { missingPublishingOAuthConfiguration, publishingAccountConnectionMessage, publishingOAuthConfigurationMessage, type PublishingOAuthPlatform } from '../digitalEmployees/publishingOAuthReadiness.js';
+import { buildPublishingReadinessSnapshot, missingPublishingOAuthConfiguration, publishingAccountConnectionMessage, publishingOAuthConfigurationMessage, type PublishingOAuthPlatform, type PublishingReadinessSnapshot } from '../digitalEmployees/publishingOAuthReadiness.js';
 import { getTenantAwareGoogleOAuthClient, getTenantAwareInstagramOAuthClient, getTenantAwareMetaOAuthClient, getTenantAwareTikTokOAuthClient } from '../lib/oauthConfig.js';
 import { reviseContent } from '../digitalEmployees/contentRevision.js';
 import { automationBgmCatalog } from './studio.js';
@@ -242,6 +242,34 @@ function publicConfigurationMetadata(resolved: ResolvedDigitalEmployeeConfigurat
     knowledgeBinding: resolved.knowledgeBinding,
     runtimePolicy: resolved.runtimePolicy,
   };
+}
+
+async function publishingReadinessForOverview(
+  tenantId: string,
+  required: boolean,
+  targetPlatforms: string[],
+): Promise<PublishingReadinessSnapshot> {
+  if (!required) {
+    return buildPublishingReadinessSnapshot({
+      required: false,
+      targetPlatforms,
+      connectedPlatforms: [],
+      clients: { meta: false, instagram: false, tiktok: false, google: false },
+    });
+  }
+  const [connectedAccounts, metaClient, instagramClient, tiktokClient, googleClient] = await Promise.all([
+    listConnectedPublishingAccounts(tenantId),
+    getTenantAwareMetaOAuthClient(tenantId),
+    getTenantAwareInstagramOAuthClient(tenantId),
+    getTenantAwareTikTokOAuthClient(tenantId),
+    getTenantAwareGoogleOAuthClient(tenantId),
+  ]);
+  return buildPublishingReadinessSnapshot({
+    required: true,
+    targetPlatforms,
+    connectedPlatforms: connectedAccounts.map(account => account.platform),
+    clients: { meta: Boolean(metaClient), instagram: Boolean(instagramClient), tiktok: Boolean(tiktokClient), google: Boolean(googleClient) },
+  });
 }
 
 function configSnapshotForPlan(plan: PlanRecord | null, fallback: DigitalEmployeeConfig): DigitalEmployeeConfig {
@@ -1455,7 +1483,7 @@ async function buildOverview(tenantId: string, requestedGoalId = '', requestedRa
         .catch(() => traceableIndustryTrends([])),
       liveDirectorAnalysisTasks(store, tenantId, { includeUnscoped: !requestedGoalId }).catch(() => []),
     ]);
-    return { config: resolvedConfiguration?.config || null, configuration: publicConfigurationMetadata(resolvedConfiguration), goals: [], goal: null, plan: null, run: null, tasks: [], contentQueue, executionRuntime, industryTrends, events: [], approvals: [], handoffs: [], review: null, liveReview: null, agents: projectDirectorAnalysisStatus(publicAgentStatuses([]), directorAnalyses), businessSnapshot };
+    return { config: resolvedConfiguration?.config || null, configuration: publicConfigurationMetadata(resolvedConfiguration), goals: [], goal: null, plan: null, run: null, tasks: [], contentQueue, executionRuntime, industryTrends, events: [], approvals: [], handoffs: [], review: null, liveReview: null, agents: projectDirectorAnalysisStatus(publicAgentStatuses([]), directorAnalyses), businessSnapshot, publishingReadiness: null };
   }
   const [plan, run, businessSnapshot] = await Promise.all([
     first<PlanRecord>(COLLECTION.plans, { tenant_id: tenantId, goal_id: goal.id }),
@@ -1477,7 +1505,23 @@ async function buildOverview(tenantId: string, requestedGoalId = '', requestedRa
   const overviewPlanBody = planBody.businessPackage
     ? { ...planBody, businessPackage: repairCollapsedWeeklyVideoProduction(planBody.businessPackage as WeeklyPackage) }
     : planBody;
-  const [deliveryData, contentQueue, executionRuntime, industryTrends, directorAnalyses] = await Promise.all([
+  const planTasks = Array.isArray(overviewPlanBody.tasks) ? overviewPlanBody.tasks.map(item => jsonObject<Record<string, unknown>>(item, {})) : [];
+  // The compiled workflow, not the generic package template list, decides
+  // whether this week actually contains a publishing branch.
+  const publishingRequired = planTasks.some(item => String(item.key || '') === 'content_release_approval');
+  const publishingTargetPlatforms = publishingRequired ? goalInput(goal).contentPlatforms : [];
+  const publishingReadinessFallback: PublishingReadinessSnapshot = {
+    required: publishingRequired,
+    ready: false,
+    status: 'unavailable',
+    targetPlatforms: publishingTargetPlatforms.filter((platform): platform is PublishingOAuthPlatform => ['facebook', 'instagram', 'tiktok', 'youtube'].includes(platform)),
+    connectedPlatforms: [],
+    missingOAuthPlatforms: [],
+    missingAccountPlatforms: [],
+    summary: '发布准备状态暂时无法核验，请刷新后再确认；不会因此重复启动生产',
+    actionPage: 'accountManagement',
+  };
+  const [deliveryData, contentQueue, executionRuntime, industryTrends, directorAnalyses, publishingReadiness] = await Promise.all([
     buildDeliveryResources(tenantId, publicTasks, goal.title)
       .then(deliveries => ({ deliveries, deliveryNotice: '' }))
       .catch(() => ({ deliveries: undefined, deliveryNotice: '业务产物暂时无法读取，当前展示任务记录。请刷新重试。' })),
@@ -1502,6 +1546,8 @@ async function buildOverview(tenantId: string, requestedGoalId = '', requestedRa
       goalId: goal.id, runId, includeUnscoped: !requestedGoalId,
       referenceVideoIds: directorAnalysisReferenceIds(overviewPlanBody, publicTasks),
     }).catch(() => []),
+    publishingReadinessForOverview(tenantId, publishingRequired, publishingTargetPlatforms)
+      .catch(() => publishingReadinessFallback),
   ]);
   return {
     config: resolvedConfiguration?.config || null,
@@ -1550,6 +1596,7 @@ async function buildOverview(tenantId: string, requestedGoalId = '', requestedRa
     liveReview: run ? runReviewSummary(run, taskItems, businessSnapshot) : null,
     agents: projectDirectorAnalysisStatus(publicAgentStatuses(normalizedTasks), directorAnalyses),
     businessSnapshot,
+    publishingReadiness,
   };
 }
 

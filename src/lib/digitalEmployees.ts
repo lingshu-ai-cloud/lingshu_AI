@@ -806,6 +806,17 @@ export interface DigitalEmployeeOverview {
   liveReview?: LiveWeeklyReview | null;
   agents: AgentStatus[];
   businessSnapshot: BusinessSnapshot | null;
+  publishingReadiness?: {
+    required: boolean;
+    ready: boolean;
+    status: "not_required" | "ready" | "action_required" | "unavailable";
+    targetPlatforms: Array<"facebook" | "instagram" | "tiktok" | "youtube">;
+    connectedPlatforms: Array<"facebook" | "instagram" | "tiktok" | "youtube">;
+    missingOAuthPlatforms: Array<"facebook" | "instagram" | "tiktok" | "youtube">;
+    missingAccountPlatforms: Array<"facebook" | "instagram" | "tiktok" | "youtube">;
+    summary: string;
+    actionPage: "accountManagement";
+  } | null;
 }
 
 export interface FollowupDispatchResponse {

@@ -4686,6 +4686,11 @@ export default function DigitalEmployeePage({
     const missingReferenceMasters = currentMasterPlans.filter(plan => !plan.referenceId);
     const missingProductMasters = currentMasterPlans.filter(plan => !plan.productName);
     const detailGeneration = data.plan?.businessPackage?.detailGeneration;
+    const publishingReadiness = data.publishingReadiness;
+    const publishingSetupRequired = !activeRun && !viewGoalId && Boolean(publishingReadiness?.required && !publishingReadiness.ready);
+    const openPublishingAccountSetup = () => window.dispatchEvent(new CustomEvent("lingshu:navigate", {
+      detail: { page: "accountManagement", businessRef: { taskKey: "publishing_account_setup" } },
+    }));
     const currentMatrix = data.plan?.businessPackage?.matrixPlan || [];
     const plannedAccountTaskCounts = currentVideoPlans.reduce<Record<string, number>>((counts, plan) => {
       const accountId = plan.matrix?.accountId;
@@ -4864,7 +4869,9 @@ export default function DigitalEmployeePage({
               statusLabel={currentPlanStatusLabel}
               actions={weeklyPlanControls}
               feedback={weeklyActionFeedback}
-              notice={!activeRun && !viewGoalId && (missingReferenceMasters.length > 0 || missingProductMasters.length > 0 || detailGeneration?.status === "blocked")
+              notice={publishingSetupRequired
+                ? <><p className="mr-auto text-xs leading-5 text-text-secondary"><strong className="text-warning">发布准备待完成：</strong>{publishingReadiness?.summary}。内容生产可以继续，系统不会把未连接账号当成已就绪。</p><Button size="small" onClick={openPublishingAccountSetup}>配置发布账号</Button></>
+                : !activeRun && !viewGoalId && (missingReferenceMasters.length > 0 || missingProductMasters.length > 0 || detailGeneration?.status === "blocked")
                 ? <p className="mr-auto text-xs text-text-secondary">可直接开始任务；{detailGeneration?.blockedCount || missingReferenceMasters.length || missingProductMasters.length} 条内容的待补资料将在对应制作步骤提示，不阻止其他内容推进。账号连接与发布授权在正式发布前核验。</p>
                 : undefined}
             /> : <><section className="overflow-hidden rounded-lg border border-border bg-white"><div className="flex flex-wrap items-start justify-between gap-4 px-5 py-4"><div className="max-w-2xl"><p className="text-xs font-semibold text-accent">周经营计划</p><p className="mt-1 text-sm font-bold text-slate-800">本周还没有计划</p><p className="mt-1 text-xs leading-5 text-slate-500">先制定并预览周计划。计划会说明本周做什么、在哪些平台生产、产量、预计预算和工作排期；确认前不会开始生产。</p></div><div aria-label="智能经营控制" className="flex max-w-full flex-wrap items-center justify-end gap-2">{weeklyPlanControls}</div></div></section>{weeklyActionFeedback && <div className="border-b border-border px-4 py-2.5">{weeklyActionFeedback}</div>}</>}
@@ -4926,6 +4933,7 @@ export default function DigitalEmployeePage({
         data={data}
         open={weeklyPlanDetailsOpen}
         onClose={()=>setWeeklyPlanDetailsOpen(false)}
+        onOpenPublishingSetup={openPublishingAccountSetup}
         onBudgetModeChange={async mode => {
           const pack = data.plan?.businessPackage;
           if (!pack) throw new Error("周计划尚未生成完整");

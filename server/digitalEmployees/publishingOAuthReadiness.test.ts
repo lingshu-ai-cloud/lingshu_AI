@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { missingPublishingOAuthConfiguration, publishingAccountConnectionMessage, publishingOAuthConfigurationMessage } from './publishingOAuthReadiness.js';
+import { buildPublishingReadinessSnapshot, missingPublishingOAuthConfiguration, publishingAccountConnectionMessage, publishingOAuthConfigurationMessage } from './publishingOAuthReadiness.js';
 
 test('only unconnected target platforms require administrator OAuth configuration', () => {
   const missing = missingPublishingOAuthConfiguration({
@@ -28,7 +28,34 @@ test('Instagram may connect through either Instagram Login or the Meta applicati
 
 test('unknown or already connected platforms never create a false configuration blocker', () => {
   assert.deepEqual(missingPublishingOAuthConfiguration({
-    targetPlatforms: ['facebook', 'unknown'], connectedPlatforms: ['facebook'],
+    targetPlatforms: ['facebook', 'unknown', 'toString'], connectedPlatforms: ['facebook'],
     clients: { meta: false, instagram: false, tiktok: false, google: false },
   }), []);
+});
+
+test('the pre-start snapshot warns without pretending that content production is blocked', () => {
+  const readiness = buildPublishingReadinessSnapshot({
+    required: true,
+    targetPlatforms: ['tiktok', 'facebook'],
+    connectedPlatforms: [],
+    clients: { meta: false, instagram: false, tiktok: false, google: false },
+  });
+  assert.equal(readiness.status, 'action_required');
+  assert.equal(readiness.ready, false);
+  assert.deepEqual(readiness.missingOAuthPlatforms, ['tiktok', 'facebook']);
+  assert.deepEqual(readiness.missingAccountPlatforms, ['tiktok', 'facebook']);
+  assert.match(readiness.summary, /TikTok、Facebook 授权服务尚未配置/);
+  assert.match(readiness.summary, /TikTok、Facebook 尚未连接真实发布账号/);
+});
+
+test('a content-only week does not require publishing setup', () => {
+  const readiness = buildPublishingReadinessSnapshot({
+    required: false,
+    targetPlatforms: ['tiktok'],
+    connectedPlatforms: [],
+    clients: { meta: false, instagram: false, tiktok: false, google: false },
+  });
+  assert.equal(readiness.status, 'not_required');
+  assert.equal(readiness.ready, true);
+  assert.deepEqual(readiness.missingAccountPlatforms, []);
 });
