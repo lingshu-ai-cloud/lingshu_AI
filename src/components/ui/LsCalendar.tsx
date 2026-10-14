@@ -245,15 +245,15 @@ export function LsCalendar({ events, label, initialDate, initialView = 'dayGridM
       const dayKey = event.start.slice(0, 10);
       const visualCursor = visualCursorByDay.get(dayKey) ?? Number.NEGATIVE_INFINITY;
       const visualStart = isVerticalTimedCard ? Math.max(actualStart, visualCursor) : actualStart;
-      // Three-row Agent cards need a complete hour of visual space in the
-      // hourly grid. A 30-minute segment is clipped by FullCalendar's timed
-      // harness even when the card itself has a CSS min-height, which hides
-      // the owner or state row. This is presentation-only: details, drag
-      // persistence and the labels below continue to read `item.start/end`.
-      const minimumVisualDuration = event.cardLines ? 60 * 60_000 : 30 * 60_000;
-      const visualDuration = Number.isFinite(actualEnd) && actualEnd > actualStart
-        ? Math.max(actualEnd - actualStart, minimumVisualDuration)
-        : minimumVisualDuration;
+      // Agent cards use one compact half-hour presentation slot. Their three
+      // rows fit the existing 48px time-grid row, while the authoritative
+      // start/end remain on `extendedProps.item` for copy, details and moves.
+      // Keeping the presentation slot fixed prevents long task estimates from
+      // stretching the whole week and pushing later cards far below the fold.
+      const visualDuration = event.cardLines ? 30 * 60_000
+        : Number.isFinite(actualEnd) && actualEnd > actualStart
+          ? Math.max(actualEnd - actualStart, 30 * 60_000)
+          : 30 * 60_000;
       if (isVerticalTimedCard) visualCursorByDay.set(dayKey, visualStart + visualDuration);
       const visualEnd = visualStart + visualDuration;
       return {
@@ -399,7 +399,8 @@ export function LsCalendar({ events, label, initialDate, initialView = 'dayGridM
             }
           }
           element.dataset.calendarRevealId = info.event.id;
-          element.setAttribute('aria-label', `${item.title}，${info.timeText || (item.allDay ? '全天，具体时刻待定' : '')}，${item.accountName || item.ownerAgent || ''}，${item.statusLabel || calendarStatusLabels[item.status]}，查看详情`);
+          const accessibleTime = item.cardLines?.[2] || info.timeText || (item.allDay ? '全天，具体时刻待定' : '');
+          element.setAttribute('aria-label', `${item.title}，${accessibleTime}，${item.accountName || item.ownerAgent || ''}，${item.statusLabel || calendarStatusLabels[item.status]}，查看详情`);
           mountedEventElementsRef.current.add(element);
           if (reducedMotion || info.isMirror || revealedEventIdsRef.current.has(info.event.id) || typeof IntersectionObserver === 'undefined') {
             revealEventElement(element);
