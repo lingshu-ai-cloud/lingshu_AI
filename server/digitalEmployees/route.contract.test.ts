@@ -37,8 +37,12 @@ assert.match(source, /task\.requires_approval && task\.status === 'failed'[\s\S]
   'an approval preflight exception must be safely re-observed instead of remaining a terminal workflow failure');
 assert.match(source, /run\.status === 'waiting_human' && !recoverableApprovalFailure/,
   'a run paused by a recoverable approval preflight exception must be allowed to reconcile');
+assert.match(source, /const reobservableUserInputWait = taskResult\.items\.some[\s\S]{0,420}waitState[\s\S]{0,160}=== 'input'/,
+  'an actionable input wait must be re-observed so completing the requested setup resumes automatically');
 assert.match(source, /error\.message\.includes\('IANA'\)[\s\S]{0,220}发布账号尚未配置有效时区/,
   'a missing publishing timezone must become an actionable approval preflight result instead of an execution exception');
+assert.match(source, /error\.message === 'bounded_authorization_actor_missing'[\s\S]{0,220}重新确认周计划/,
+  'an invalidated bounded publishing grant must explain the required re-authorization instead of reporting a generic failure');
 assert.match(source, /dataStatus: 'preflight_blocked',[\s\S]{0,220}waitState: waitState\('input', preflight\.reason\)/,
   'approval configuration gaps must be presented as explicit user input, not a vague external-service wait');
 assert.match(source, /const needsHumanInput = remaining\.find[\s\S]{0,400}'waiting_human'/,

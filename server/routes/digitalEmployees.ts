@@ -1528,6 +1528,8 @@ async function approvalPreflight(
       } catch (error) {
         const detail = error instanceof Error && error.message.includes('IANA')
           ? '发布账号尚未配置有效时区，请在账号设置中补充后再审批发布'
+          : error instanceof Error && error.message === 'bounded_authorization_actor_missing'
+          ? '本周发布授权已因计划或成片变更失效，请重新确认周计划后再审批发布'
           : error instanceof Error && error.message.includes('无法安排')
           ? error.message
           : '发布审批包尚未满足生成条件，请检查账号、排期和成片设置';
@@ -2460,7 +2462,9 @@ async function advanceRunUnlocked(tenantId: string, runId: string): Promise<void
   const recoverableApprovalFailure = taskResult.items.some(task => task.requires_approval
     && task.status === 'failed'
     && jsonObject<Record<string, unknown>>(task.output, {}).dataStatus === 'execution_failed');
-  if (run.status === 'waiting_human' && !recoverableApprovalFailure) return;
+  const reobservableUserInputWait = taskResult.items.some(task => task.status === 'waiting_external'
+    && String(jsonObject<Record<string, unknown>>(jsonObject<Record<string, unknown>>(task.output, {}).waitState, {}).kind || '') === 'input');
+  if (run.status === 'waiting_human' && !recoverableApprovalFailure && !reobservableUserInputWait) return;
   const config = executionConfigForPlan(plan, tenantConfig);
   const packageBody = plan ? jsonObject<Record<string, unknown>>(plan.plan, {}) : {};
   let businessPackage = packageBody.businessPackage as WeeklyPackage | undefined;
