@@ -657,6 +657,9 @@ assert.doesNotMatch(pageSource, /经营包未保存，请检查页面提示后�
 assert.match(pageSource, /OnboardingGuideFrame[\s\S]{0,180}step=\{4\}[\s\S]{0,180}title="完成数字人接入（可选）"[\s\S]{0,600}<EnterprisePresenters initialConfiguration/, 'the unified HeyGen and Ark setup must be the fourth guided step');
 assert.match(pageSource, /applicationGuideSteps[\s\S]{0,120}企业与品牌[\s\S]{0,120}产品表[\s\S]{0,120}社媒经营阶段[\s\S]{0,120}数字人接入/, 'Ant Steps must expose the four guided steps in their required order');
 assert.match(onboardingGuideFrameSource, /<LsFlowDialog[\s\S]{0,600}steps=\{applicationGuideSteps\.map/, 'the beginner guide must use the shared flow dialog and Ant Steps contract');
+assert.match(pageSource, /active && applicationGuideOpen/, 'the onboarding modal must not mount while the retained digital employee Activity is hidden');
+assert.match(pageSource, /deferredOpen = window\.setTimeout\([\s\S]{0,300}setApplicationGuideOpen\(true\)/, 'a retained page must defer the modal until Activity effect reconnection has completed');
+assert.match(appSource, /<DigitalEmployeePage active=\{page === 'digitalEmployees'\}/, 'the shell must tell the retained page when it is visible');
 assert.match(onboardingGuideFrameSource, /footer=\{\[[\s\S]{0,900}<LsBrandAction/, 'the guide must keep a single branded primary action in the fixed modal footer');
 assert.doesNotMatch(onboardingGuideFrameSource, /OnboardingStepVisual|企业与品牌关系图|产品资料入库流程图|社媒经营阶段选择图|数字人统一接入图/, 'the beginner guide must not reserve space for redundant explanatory diagrams');
 assert.match(onboardingGuideFrameSource, /<section aria-labelledby=\{`onboarding-step-\$\{step\}-title`\}>/, 'the current onboarding form must use the full dialog content width');

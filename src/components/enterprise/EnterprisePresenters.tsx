@@ -23,11 +23,10 @@ function arkReady(presenter?: PresenterAsset): boolean {
 
 function openDigitalHumanOnboarding(): void {
   try { window.sessionStorage.setItem('lingshu:open-digital-employee-guide', 'presenter'); } catch { /* optional */ }
+  // DigitalEmployeePage is retained in a hidden React Activity. Its effects
+  // reconnect after navigation and consume this persisted request. Opening an
+  // Ant modal from the hidden page crashes rc-dialog while it restores focus.
   window.dispatchEvent(new CustomEvent('lingshu:navigate', { detail: { page: 'digitalEmployees' } }));
-  window.requestAnimationFrame?.(() => window.dispatchEvent(new CustomEvent(
-    'lingshu:open-digital-employee-guide',
-    { detail: { step: 'presenter' } },
-  )));
 }
 
 export default function EnterprisePresenters({
