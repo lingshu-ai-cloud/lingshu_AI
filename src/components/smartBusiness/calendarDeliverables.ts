@@ -1,4 +1,5 @@
 import type {AgentCalendarTask} from './AgentWeeklyCalendar';
+import {agentCalendarResponsibleAgent} from './agentCalendarGroups';
 
 const productionSteps = new Set(['material_preparation','material_readiness','script','storyboard','asset_generation','video_generation','quality_check','rework']);
 
@@ -11,7 +12,7 @@ export function projectCalendarDeliverables(tasks: AgentCalendarTask[]): AgentCa
   const directIds = new Set(tasks.filter(task => !task.calendarSummaryOnly).map(task => task.id));
   const expanded = tasks.flatMap(task => task.calendarSummaryOnly && task.internalNodes?.length
     ? task.internalNodes.filter(node => !directIds.has(node.id))
-    : [task]);
+    : [task]).map(task => ({...task, agent: agentCalendarResponsibleAgent(task.executionStep, task.agent)}));
   const groups = new Map<string, AgentCalendarTask[]>();
   for (const task of expanded) {
     if (!task.deliverableGroup || task.agent === 'human' || !productionSteps.has(task.executionStep || '')) continue;

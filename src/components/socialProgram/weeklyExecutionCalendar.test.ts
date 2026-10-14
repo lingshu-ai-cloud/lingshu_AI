@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import type { WeeklyExecutionTask, WeeklyProductionStepKind } from '../../../shared/contracts/socialProgram';
 import { projectExecutionCalendar } from './weeklyExecutionCalendar';
+import type {AgentCalendarTask} from '../smartBusiness/AgentWeeklyCalendar';
 const labels = { video_generation: '生成成片' } as Record<WeeklyProductionStepKind, string>;
 const task = (status: WeeklyExecutionTask['status'], finish = '2026-10-06T12:00:00Z'): WeeklyExecutionTask => ({
   taskId: status, packageId: 'week-1', publicationTaskId: 'video-1', accountId: 'account-1', status,
@@ -85,6 +86,13 @@ test('a verified continuation opens its original production while pending and bl
   assert.equal(projectExecutionCalendar([continued], labels)[0].productionTaskId, undefined);
 });
 test('persisted planning cards retain exact scope while review and ordinary production keep their own entries',()=>{const kinds=['business_outline','benchmark_collection','benchmark_scoring','director_analysis','business_schedule','weekly_review','video_generation'] as WeeklyProductionStepKind[];const actual=kinds.map((stepKind,index)=>({...task('queued'),taskId:`real-${index}`,tenantId:'tenant',programId:'program',packageId:'week',packageVersion:4,schedule:{...task('queued').schedule,stepKind}}));const rows=projectExecutionCalendar(actual,labels);assert.deepEqual(rows.slice(0,5).map(r=>r.planningTarget?.stepKind),kinds.slice(0,5));for(const row of rows.slice(0,5)){assert.equal(row.planningTarget?.taskId,row.id);assert.equal(row.planningTarget?.packageVersion,4);assert.equal(row.planningTarget?.tenantId,'tenant');}assert.equal(rows[5].planningTarget,undefined);assert.equal(rows[6].planningTarget,undefined);assert.equal(projectExecutionCalendar([{...actual[0],packageVersion:0}],labels)[0].planningTarget,undefined);});
+test('weekly business outline is displayed on the frozen package Monday while retaining its persisted deadline',()=>{
+ const actual={...task('queued'),tenantId:'tenant',programId:'program',packageId:'week-1',packageVersion:2,schedule:{...task('queued').schedule,stepKind:'business_outline' as const,estimatedFinishAt:'2026-10-14T04:00:00Z',latestFinishAt:'2026-10-14T05:00:00Z'}};
+ const pkg={programId:'program',packageId:'week-1',version:2,weekStart:'2026-10-12',weekEnd:'2026-10-18',socialContentPackage:{publicationTasks:[]}} as unknown as import('../../../shared/contracts/socialProgram').WeeklyOperatingPackage;
+ const card=projectExecutionCalendar([actual],labels,Date.parse('2026-10-14T00:00:00Z'),{pkg})[0]!;
+ assert.equal(card.date,'2026-10-12');
+ assert.equal(card.dueAt,'2026-10-14T05:00:00Z');
+});
 test('actual monitoring/review cards open scoped social evidence instead of planning or inferred production',()=>{const actual=['performance_monitoring','weekly_review'].map(stepKind=>({...task('queued'),tenantId:'tenant',programId:'program',packageId:'week',packageVersion:2,schedule:{...task('queued').schedule,stepKind:stepKind as WeeklyProductionStepKind},resultRefs:[{type:'starter_social_content_task',id:'unrelated-content',version:1}]}));const rows=projectExecutionCalendar(actual,labels);assert.deepEqual(rows.map(r=>r.reviewTarget?.stepKind),['performance_monitoring','weekly_review']);assert.ok(rows.every(r=>r.planningTarget===undefined&&r.productionTaskId===undefined));});
 test('real readable deliverable keeps production identity, verified completion and continuation without inventing templates',()=>{const pub={publicationTaskId:'video-1',motherContentId:'mother',accountId:'account-1',platform:'youtube',accountPositioning:'Industrial buyer'};const pkg={programId:'program',packageId:'week-1',version:2,weekStart:'2026-10-05',weekEnd:'2026-10-11',socialContentPackage:{publicationTasks:[pub]},agentPlanning:{packageId:'week-1',packageVersion:2,skeleton:{slots:[{motherContentId:'mother',referenceSource:'external'}]},dispatch:{dispatchId:'real-dispatch',packageId:'week-1',packageVersion:2,scheduleItems:[{scheduleItemId:'real-item',publicationTaskId:'video-1',accountId:'account-1',platform:'youtube',topic:'采购前检查接口尺寸'}]}}}as unknown as import('../../../shared/contracts/socialProgram').WeeklyOperatingPackage;const actual={...task('succeeded'),tenantId:'tenant',programId:'program',packageVersion:2,inputSnapshot:{publicationTask:pub},resultRefs:[{type:'weekly_execution_continuation',id:'verified-receipt',version:1}],continuationObservation:{status:'ready' as const,sourceVersion:1,sourceTaskId:'original',contentTaskId:'original-content'}};const rows=projectExecutionCalendar([actual],labels,Date.parse('2026-10-09T12:00:00Z'),{pkg,profile:'account_repair'});assert.equal(rows.length,1);assert.equal(rows[0].status,'completed');assert.equal(rows[0].productionTaskId,'original-content');assert.match(rows[0].title,/采购前检查接口尺寸/);assert.match(rows[0].context,/YouTube · Industrial buyer/);assert.match(rows[0].output,/已核验承接原 v1/);assert.match(rows[0].chain!,/H-M5/);assert.match(rows[0].chain!,/H-S9/);assert.doesNotMatch(rows[0].chain!,/S6/);});
 
@@ -142,3 +150,15 @@ test('foreign package timezone cannot alter scoped execution date',()=>{
 });
 test('inventory approval links the frozen binding instead of inventing a production task',()=>{const actual={...task('queued'),workflowKind:'content' as const,tenantId:'tenant',programId:'program',packageVersion:2,inputSnapshot:{publicationTask:{publicationTaskId:'video-1',inventoryReuseRef:{type:'weekly_inventory_binding',id:'actual-binding',version:1}}},schedule:{...task('queued').schedule,stepKind:'user_approval' as const,responsibleActor:'user' as const}};const card=projectExecutionCalendar([actual],{...labels,user_approval:'本周库存审批'})[0];assert.deepEqual(card.inventoryTarget,{tenantId:'tenant',programId:'program',packageId:'week-1',packageVersion:2,bindingId:'actual-binding',publicationTaskId:'video-1',taskId:'queued'});assert.equal(card.productionTaskId,undefined);});
 test('publishing card links exact publication execution instead of generic content production',()=>{const actual={...task('blocked'),tenantId:'tenant',programId:'program',packageVersion:2,workflowKind:'publishing' as const,accountId:'account-1',schedule:{...task('blocked').schedule,stepKind:'publishing' as const},resultRefs:[{type:'starter_social_content_task',id:'content-wrong-entry',version:1}]};const card=projectExecutionCalendar([actual],{...labels,publishing:'发布'})[0];assert.deepEqual(card.publicationExecutionTarget,{tenantId:'tenant',programId:'program',packageId:'week-1',packageVersion:2,taskId:'blocked',publicationTaskId:'video-1',accountId:'account-1'});assert.equal(card.productionTaskId,undefined);});
+
+test('step contract assigns the visible intelligent agent when legacy scheduler actor is generic business',()=>{
+  const expected: Array<[WeeklyProductionStepKind, AgentCalendarTask['agent']]> = [
+    ['business_outline','business'], ['director_analysis','director'], ['script','director'],
+    ['video_generation','content'], ['quality_check','content'],
+    ['customer_inquiry_handoff','customer'], ['publishing','content'], ['user_approval','human'],
+  ];
+  for (const [stepKind, owner] of expected) {
+    const actual={...task('queued'),taskId:`owner-${stepKind}`,inputSnapshot:{customerChannel:'whatsapp'},schedule:{...task('queued').schedule,stepKind,responsibleActor:'business_agent' as const}};
+    assert.equal(projectExecutionCalendar([actual],{...labels,[stepKind]:stepKind})[0]?.agent,owner,stepKind);
+  }
+});

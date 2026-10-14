@@ -57,7 +57,7 @@ assert.equal(evaluate(expression('slotEventOverlap'), {}), false, 'time-grid car
 assert.match(source, /item\.cardLines \? ' ls-calendar-event-three-row'/, 'Agent hour cards opt into one stable three-row treatment');
 assert.match(source, /item\.planPlaceholder \? ' ls-calendar-event-placeholder'/, 'planned cadence slots remain visually distinct from persisted tasks');
 assert.match(source, /item\.status === 'done' && !item\.planPlaceholder/, 'only a persisted completed task receives the green completion check');
-assert.match(css, /\.ls-calendar-event-content-three-row\s*\{[^}]*grid-template-rows:\s*repeat\(3, minmax\(0, 1fr\)\)/, 'short and long Agent tasks use exactly three stable rows');
+assert.match(css, /\.ls-calendar-event-content-three-row\s*\{[^}]*height:\s*100%;[^}]*grid-template-rows:\s*repeat\(3, 14px\)/, 'Agent task cards reserve three complete, stable text rows');
 assert.match(css, /\.fc-timegrid-event-harness\.ls-calendar-time-vertical-flow\s*\{[^}]*left:\s*2px !important;[^}]*right:\s*2px !important;[^}]*width:\s*auto !important/, 'timed Agent cards override FullCalendar physical columns and retain the full day width');
 assert.match(css, /\.ls-calendar-event-placeholder\s*\{[^}]*border-style:\s*dashed !important/, 'planned cadence slots cannot masquerade as executable task cards');
 assert.match(css, /\.ls-calendar-event-row\s*\{[^}]*font-size:\s*12px/, 'calendar business copy must not fall below the design-system body minimum');
@@ -100,7 +100,7 @@ assert.ok(inputsInitializer, 'calendar inputs should be derived inside the share
     onMoveEvent: undefined,
     useMemo: (factory: () => unknown) => factory(),
   }) as Array<{ start: string; extendedProps: { item: { start: string } } }>;
-  assert.equal(Array.from(simultaneousInputs, input => input.start).join(','), '2026-10-14T02:00:00.000Z,2026-10-14T02:30:00.000Z,2026-10-14T03:00:00.000Z', 'same-time cards and following cards receive non-overlapping visual instants');
+  assert.equal(Array.from(simultaneousInputs, input => input.start).join(','), '2026-10-14T02:00:00.000Z,2026-10-14T03:00:00.000Z,2026-10-14T04:00:00.000Z', 'same-time cards and following cards receive non-overlapping full-hour visual instants so all three rows remain visible');
   assert.equal(Array.from(simultaneousInputs, input => input.extendedProps.item.start).join(','), simultaneous.map(event => event.start).join(','), 'details and persistence retain the original scheduled time');
 }
 assert.equal(evaluate(expression('dayMaxEvents'), { showAllEvents: false, eventCardMode: 'media', view: 'dayGridWeek' }), false, 'the weekly media-card flow must keep every scheduled card visible');

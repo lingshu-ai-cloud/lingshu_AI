@@ -245,9 +245,15 @@ export function LsCalendar({ events, label, initialDate, initialView = 'dayGridM
       const dayKey = event.start.slice(0, 10);
       const visualCursor = visualCursorByDay.get(dayKey) ?? Number.NEGATIVE_INFINITY;
       const visualStart = isVerticalTimedCard ? Math.max(actualStart, visualCursor) : actualStart;
+      // Three-row Agent cards need a complete hour of visual space in the
+      // hourly grid. A 30-minute segment is clipped by FullCalendar's timed
+      // harness even when the card itself has a CSS min-height, which hides
+      // the owner or state row. This is presentation-only: details, drag
+      // persistence and the labels below continue to read `item.start/end`.
+      const minimumVisualDuration = event.cardLines ? 60 * 60_000 : 30 * 60_000;
       const visualDuration = Number.isFinite(actualEnd) && actualEnd > actualStart
-        ? Math.max(actualEnd - actualStart, 30 * 60_000)
-        : 30 * 60_000;
+        ? Math.max(actualEnd - actualStart, minimumVisualDuration)
+        : minimumVisualDuration;
       if (isVerticalTimedCard) visualCursorByDay.set(dayKey, visualStart + visualDuration);
       const visualEnd = visualStart + visualDuration;
       return {

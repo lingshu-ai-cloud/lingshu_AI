@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import {agentCalendarTaskGroup,agentCalendarTaskType,buildAgentCalendarSummaries,calendarDisplayPlaceholders,taskHasDeliverableOrWorkspace} from './agentCalendarGroups';
+import {agentCalendarResponsibleAgent,agentCalendarTaskGroup,agentCalendarTaskType,buildAgentCalendarSummaries,calendarDisplayPlaceholders,taskHasDeliverableOrWorkspace} from './agentCalendarGroups';
 import type {AgentCalendarTask} from './AgentWeeklyCalendar';
 
 const dates=['2026-10-12','2026-10-13','2026-10-14','2026-10-15','2026-10-16','2026-10-17','2026-10-18'];
@@ -74,4 +74,13 @@ test('display placeholders never duplicate real task groups and repeat at most o
   assert.equal(placeholders.filter(item=>item.group==='directing').length,1);
   assert.equal(placeholders.find(item=>item.group==='directing')?.date,dates[2]);
   assert.ok(placeholders.every(item=>item.children.length===0));
+});
+
+test('workflow responsibility corrects legacy generic business ownership',()=>{
+  assert.equal(agentCalendarResponsibleAgent('director_analysis','business'),'director');
+  assert.equal(agentCalendarResponsibleAgent('video_generation','business'),'content');
+  assert.equal(agentCalendarResponsibleAgent('customer_inquiry_handoff','business'),'customer');
+  assert.equal(agentCalendarResponsibleAgent('publishing','business'),'content');
+  assert.equal(agentCalendarResponsibleAgent('user_approval','business'),'human');
+  assert.equal(agentCalendarResponsibleAgent(undefined,'director'),'director');
 });

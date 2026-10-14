@@ -21,7 +21,7 @@ test('blocked internal node is visible on deliverable, completed final evidence 
 });
 test('missing final delivery and unscoped nodes stay visible instead of silently disappearing',()=>{
  const script=card('script','script');const unscoped={...card('legacy','video_generation'),deliverableGroup:undefined};
- assert.deepEqual(projectCalendarDeliverables([script,unscoped]),[script,unscoped]);
+ assert.deepEqual(projectCalendarDeliverables([script,unscoped]),[{...script,agent:'director'},unscoped]);
 });
 test('weekly goal summaries expand their Monday business workflow into independent cards',()=>{
  const mondayNodes:AgentCalendarTask[]=[

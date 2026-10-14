@@ -94,6 +94,24 @@ export function agentCalendarIdentityLabel(agent: AgentCalendarTask['agent']): s
   return '客服智能体';
 }
 
+/**
+ * Resolve the owner from the persisted workflow contract. Some older weekly
+ * packages stored `business_agent` as a generic scheduler owner even when the
+ * concrete step belongs to directing, production or customer service. The
+ * step is the stronger responsibility signal; human actions stay human.
+ */
+export function agentCalendarResponsibleAgent(
+  step: string | null | undefined,
+  fallback: AgentCalendarTask['agent'],
+): AgentCalendarTask['agent'] {
+  if (fallback === 'human' || step === 'user_approval') return 'human';
+  if (['benchmark_collection', 'benchmark_scoring', 'director_analysis', 'script', 'storyboard', 'template_extraction'].includes(step || '')) return 'director';
+  if (['material_preparation', 'material_readiness', 'asset_generation', 'video_generation', 'quality_check', 'rework', 'publishing', 'platform_publish'].includes(step || '')) return 'content';
+  if (['customer_channel_readiness', 'customer_inquiry_handoff'].includes(step || '')) return 'customer';
+  if (['business_outline', 'business_schedule', 'performance_monitoring', 'weekly_review', 'template_performance_validation'].includes(step || '')) return 'business';
+  return fallback;
+}
+
 function progress(children: AgentCalendarTask[]): string {
   if (!children.length) return '等待真实任务';
   const completed = children.filter(task => task.status === 'completed').length;
