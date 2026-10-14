@@ -88,14 +88,16 @@ function progress(children: AgentCalendarTask[]): string {
 
 export function buildAgentCalendarSummaries(tasks: AgentCalendarTask[], dates: string[]): AgentCalendarSummary[] {
   if (dates.length !== 7) return [];
-  const monday = dates[0]!;
-  const sunday = dates[6]!;
+  const weekday = (date:string) => new Date(`${date}T12:00:00Z`).getUTCDay();
+  const monday = dates.find(date=>weekday(date)===1) ?? dates[0]!;
+  const sunday = dates.find(date=>weekday(date)===0) ?? dates[6]!;
+  const operatingDates = dates.filter(date=>date!==sunday);
   const children = tasks.filter(taskHasDeliverableOrWorkspace);
   const summaries: AgentCalendarSummary[] = [];
   for (const group of Object.keys(GROUP_META) as AgentCalendarSummaryGroup[]) {
     const meta = GROUP_META[group];
     const groupTasks = children.filter(task => agentCalendarTaskGroup(task) === group);
-    const targetDates = meta.cadence === 'monday' ? [monday] : meta.cadence === 'sunday' ? [sunday] : dates.slice(0, 6);
+    const targetDates = meta.cadence === 'monday' ? [monday] : meta.cadence === 'sunday' ? [sunday] : operatingDates;
     for (const date of targetDates) {
       const scoped = meta.cadence === 'operating' ? groupTasks.filter(task => task.date === date) : groupTasks;
       summaries.push({ key: `${date}:${group}`, group, date, title: meta.title, progress: progress(scoped), children: scoped });

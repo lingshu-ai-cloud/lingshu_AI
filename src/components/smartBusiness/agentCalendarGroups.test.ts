@@ -21,6 +21,14 @@ test('summary cadence follows Monday, six operating days and Sunday without trea
   assert.equal(summaries.filter(item=>item.group==='production'&&item.date===dates[1])[0]?.progress,'尚未生成独立任务');
 });
 
+test('a Wednesday-to-Tuesday operating cycle still places setup on its Monday and review on its Sunday',()=>{
+  const cycle=['2026-10-14','2026-10-15','2026-10-16','2026-10-17','2026-10-18','2026-10-19','2026-10-20'];
+  const summaries=buildAgentCalendarSummaries([],cycle);
+  assert.deepEqual(summaries.filter(item=>['foundation','directing'].includes(item.group)).map(item=>item.date),['2026-10-19','2026-10-19']);
+  assert.deepEqual(summaries.filter(item=>item.group==='review').map(item=>item.date),['2026-10-18']);
+  assert.deepEqual([...new Set(summaries.filter(item=>item.group==='production').map(item=>item.date))],cycle.filter(date=>date!=='2026-10-18'));
+});
+
 test('independent cards require a deliverable or workspace and use the confirmed task labels',()=>{
   const production=task('video',dates[1],'video_generation','content');
   assert.equal(taskHasDeliverableOrWorkspace(production),true);

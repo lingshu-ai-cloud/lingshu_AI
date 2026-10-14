@@ -106,11 +106,9 @@ function isSummaryEventData(value: unknown): value is SummaryEventData {
 function weekDates(anchor: string): string[] {
   const parsed = new Date(`${anchor.slice(0, 10)}T12:00:00Z`);
   if (!Number.isFinite(parsed.getTime())) return [];
-  const monday = new Date(parsed);
-  monday.setUTCDate(parsed.getUTCDate() - ((parsed.getUTCDay() + 6) % 7));
   return Array.from({length: 7}, (_, index) => {
-    const date = new Date(monday);
-    date.setUTCDate(monday.getUTCDate() + index);
+    const date = new Date(parsed);
+    date.setUTCDate(parsed.getUTCDate() + index);
     return date.toISOString().slice(0, 10);
   });
 }
