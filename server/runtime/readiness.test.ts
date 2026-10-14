@@ -147,6 +147,12 @@ try {
   process.env.DASHSCOPE_API_KEY = 'configured-for-test';
   assert.equal(runtimeCapabilities('web').text_generation.ready, true, 'Qwen readiness requires the DashScope key');
   assert.equal(runtimeCapabilities('web').qwen_generation.ready, true, 'core Qwen-only workflows require the DashScope key');
+  delete process.env.MINIMAX_API_KEY;
+  delete process.env.MINIMAX_API_TOKEN;
+  delete process.env.PIPER_BIN;
+  delete process.env.XTTS_BIN;
+  assert.equal(runtimeCapabilities('web').tts.ready, true,
+    'a verified DashScope credential must satisfy TTS readiness without optional MiniMax or local engines');
   process.env.OVERSEAS_LLM_BACKEND = 'unsupported-provider';
   assert.deepEqual(runtimeCapabilities('web').text_generation, {
     ready: false,
