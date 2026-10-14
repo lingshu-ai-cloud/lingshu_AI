@@ -116,3 +116,25 @@ export function buildAgentCalendarSummaries(tasks: AgentCalendarTask[], dates: s
   }
   return summaries;
 }
+
+/**
+ * Calendar summaries describe the operating cadence; they are not extra work.
+ * The visual calendar therefore keeps real children as the source of truth and
+ * shows at most one lightweight empty slot per group when the whole week has no
+ * real task for that group.
+ */
+export function calendarDisplayPlaceholders(
+  summaries: AgentCalendarSummary[],
+  preferredDate?: string,
+): AgentCalendarSummary[] {
+  const groups = new Map<AgentCalendarSummaryGroup, AgentCalendarSummary[]>();
+  for (const summary of summaries) groups.set(summary.group, [...(groups.get(summary.group) || []), summary]);
+  return [...groups.values()].flatMap(groupSummaries => {
+    if (groupSummaries.some(summary => summary.children.length > 0)) return [];
+    const sorted = [...groupSummaries].sort((left, right) => left.date.localeCompare(right.date));
+    const preferred = preferredDate
+      ? sorted.find(summary => summary.date >= preferredDate) || sorted.at(-1)
+      : sorted[0];
+    return preferred ? [preferred] : [];
+  });
+}

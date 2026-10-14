@@ -287,7 +287,7 @@ export function LsCalendar({ events, label, initialDate, initialView = 'dayGridM
         // Every view shares a bounded FullCalendar content window. FullCalendar
         // owns the sole internal scroller; the surrounding page stays stable.
         headerToolbar={false} contentHeight={fixedHeight === 'auto' && showAllEvents && !['dayGridWeek', 'dayGridDay'].includes(view) ? timeGridHeight : fixedHeight ?? timeGridHeight} events={inputs} eventOrder="start,id" eventOrderStrict slotEventOverlap={false} editable={Boolean(onMoveEvent)} eventDurationEditable={false} eventInteractive dayMaxEvents={(showAllEvents || eventCardMode === 'media') && ['dayGridWeek', 'dayGridDay'].includes(view) ? false : 3} nowIndicator expandRows tableHeaderSticky
-        allDaySlot={eventCardMode === 'media' ? false : inputs.some(event => event.allDay)} noEventsText="当前周期没有排期" slotMinTime="08:00:00" slotMaxTime="22:00:00" slotDuration="01:00:00" slotHeaderInterval="02:00:00" scrollTime="08:00:00" scrollTimeReset slotHeaderFormat={{ hour: '2-digit', minute: '2-digit', hour12: false }} eventTimeFormat={{ hour: '2-digit', minute: '2-digit', hour12: false }}
+        allDaySlot={eventCardMode === 'media' ? false : inputs.some(event => event.allDay)} noEventsText="当前周期没有排期" slotMinTime="08:00:00" slotMaxTime="22:00:00" slotDuration="00:30:00" slotHeaderInterval="02:00:00" scrollTime="08:00:00" scrollTimeReset slotHeaderFormat={{ hour: '2-digit', minute: '2-digit', hour12: false }} eventTimeFormat={{ hour: '2-digit', minute: '2-digit', hour12: false }}
         eventMinHeight={24} eventShortHeight={68} columnEventInnerClass="ls-calendar-time-inner"
         datesSet={info => { setTitle(info.view.title); setView(info.view.type as LsCalendarView); onDatesSet?.(info); }}
         dateClick={info => onDateClick?.(info.dateStr, info.allDay)}
@@ -305,9 +305,9 @@ export function LsCalendar({ events, label, initialDate, initialView = 'dayGridM
           }
           if (info.view.type.startsWith('timeGrid') && !info.event.allDay) {
             if (item.cardLines) return <div className="ls-calendar-event-content ls-calendar-event-content-three-row">
-              <span className="ls-calendar-event-row ls-calendar-event-row-owner">{item.cardLines[0]}</span>
+              <span className="ls-calendar-event-row ls-calendar-event-row-owner" title={item.cardLines[0]}>{item.cardLines[0]}</span>
               <strong className="ls-calendar-event-row ls-calendar-event-row-title" title={item.cardLines[1]}>{item.cardLines[1]}</strong>
-              <span className="ls-calendar-event-row ls-calendar-event-row-state">{item.cardLines[2]}</span>
+              <span className="ls-calendar-event-row ls-calendar-event-row-state" title={item.cardLines[2]}>{item.cardLines[2]}</span>
               {item.status === 'done' && !item.planPlaceholder ? <span className="ls-calendar-event-completed-check" aria-label="已完成">✓</span> : null}
             </div>;
             // v7 measures each rendered segment before setting isShort, including

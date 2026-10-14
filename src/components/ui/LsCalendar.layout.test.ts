@@ -41,6 +41,7 @@ assert.equal(evaluate(expression('contentHeight'), { view: 'dayGridMonth', fixed
 assert.equal(attributes.get('scrollTime')?.initializer?.getText(file), '"08:00:00"');
 assert.equal(attributes.get('slotMinTime')?.initializer?.getText(file), '"08:00:00"');
 assert.equal(attributes.get('slotMaxTime')?.initializer?.getText(file), '"22:00:00"');
+assert.equal(attributes.get('slotDuration')?.initializer?.getText(file), '"00:30:00"', 'half-hour rows give 30-minute three-line cards enough physical height without falsifying their duration');
 assert.equal(attributes.get('slotHeaderInterval')?.initializer?.getText(file), '"02:00:00"', 'the left time axis must stay concise');
 assert.ok(attributes.has('scrollTimeReset'));
 assert.equal(evaluate(expression('allDaySlot'), { eventCardMode: 'compact', inputs: [{ allDay: false }] }), false, 'the empty all-day lane must not create a nested-looking calendar layer');
@@ -58,6 +59,7 @@ assert.match(source, /item\.planPlaceholder \? ' ls-calendar-event-placeholder'/
 assert.match(source, /item\.status === 'done' && !item\.planPlaceholder/, 'only a persisted completed task receives the green completion check');
 assert.match(css, /\.ls-calendar-event-content-three-row\s*\{[^}]*grid-template-rows:\s*repeat\(3, minmax\(0, 1fr\)\)/, 'short and long Agent tasks use exactly three stable rows');
 assert.match(css, /\.ls-calendar-event-placeholder\s*\{[^}]*border-style:\s*dashed !important/, 'planned cadence slots cannot masquerade as executable task cards');
+assert.match(css, /\.ls-calendar-event-row\s*\{[^}]*font-size:\s*12px/, 'calendar business copy must not fall below the design-system body minimum');
 assert.ok(inputsInitializer, 'calendar inputs should be derived inside the shared component');
 {
   const originalEvents = [

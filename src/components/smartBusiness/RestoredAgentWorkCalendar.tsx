@@ -20,7 +20,7 @@ import { calendarDayKey, calendarInstant, type LsCalendarEvent } from '../../lib
 import { hourCalendarCard } from './agentHourCalendarPolicy';
 import { projectCalendarDeliverables } from './calendarDeliverables';
 import AgentRoleIcon, { AGENT_ROLE_PALETTE, type AgentVisualRole } from '../ui/AgentRoleIcon';
-import {agentCalendarTaskType,buildAgentCalendarSummaries,taskHasDeliverableOrWorkspace,type AgentCalendarSummary} from './agentCalendarGroups';
+import {agentCalendarTaskType,buildAgentCalendarSummaries,calendarDisplayPlaceholders,taskHasDeliverableOrWorkspace,type AgentCalendarSummary} from './agentCalendarGroups';
 
 const LsCalendar = typeof document === 'undefined'
   ? function ServerCalendar({ events, label }: { events: LsCalendarEvent[]; label: string }) {
@@ -208,8 +208,6 @@ export default function RestoredAgentWorkCalendar({
     restoreAgentCalendarReturnContext();
   }, [positionKey]);
   const [now, setNow] = useState(() => Date.now());
-  const [showAllIndependent, setShowAllIndependent] = useState(false);
-  const [expandedSummaries, setExpandedSummaries] = useState<Set<string>>(() => new Set());
   useEffect(() => {
     const timer = window.setInterval(() => setNow(Date.now()), 10_000);
     return () => window.clearInterval(timer);
@@ -222,9 +220,9 @@ export default function RestoredAgentWorkCalendar({
   const dates = useMemo(() => weekDates(calendarDate), [calendarDate]);
   const summaries = useMemo(() => buildAgentCalendarSummaries(scopedDeliverables, dates), [scopedDeliverables, dates]);
   const independentTasks = useMemo(() => scopedDeliverables.filter(taskHasDeliverableOrWorkspace), [scopedDeliverables]);
-  const visibleIndependentIds = useMemo(() => new Set(summaries.flatMap(summary => showAllIndependent || expandedSummaries.has(summary.key) ? summary.children.map(task => task.id) : [])), [summaries, showAllIndependent, expandedSummaries]);
+  const placeholders = useMemo(() => calendarDisplayPlaceholders(summaries, calendarDate), [summaries, calendarDate]);
   const events = useMemo<LsCalendarEvent[]>(() => {
-    const summaryEvents: LsCalendarEvent[] = summaries.map(summary => {
+    const summaryEvents: LsCalendarEvent[] = placeholders.map(summary => {
       const start = calendarInstant(`${summary.date}T${summary.startTime}`, timeZone).toISOString();
       const owner = summaryAgent(summary);
       return ({
@@ -241,15 +239,15 @@ export default function RestoredAgentWorkCalendar({
       sourceId: summary.key,
       description: summary.progress,
       cardLines: [
-        `计划时段 · ${agentLabels[owner]}`,
+        `${agentLabels[owner]} · 计划`,
         summary.title,
-        `${summary.startTime} · ${summary.progress}`,
+        `${summary.startTime} · 待排真实任务`,
       ],
       planPlaceholder: true,
       identity: {kind: 'agent', role: owner},
       data: {kind:'summary',summary} satisfies SummaryEventData,
     });});
-    const taskEvents: LsCalendarEvent[] = independentTasks.filter(task => visibleIndependentIds.has(task.id)).map(task => {
+    const taskEvents: LsCalendarEvent[] = independentTasks.map(task => {
     const overdue = !demo && taskIsOverdue(task, now);
     const allDay = taskIsAllDay(task);
     const start = allDay ? task.date : taskInstant(task);
@@ -276,7 +274,7 @@ export default function RestoredAgentWorkCalendar({
     };
     });
     return [...summaryEvents, ...taskEvents];
-  }, [summaries, independentTasks, visibleIndependentIds, demo, now, timeZone]);
+  }, [placeholders, independentTasks, demo, now, timeZone]);
 
   const renderDetails = (event: LsCalendarEvent, closeDetails: () => void) => {
     const task = event.data as AgentCalendarTask;
@@ -332,7 +330,7 @@ export default function RestoredAgentWorkCalendar({
         <h3 className="ls-type-title-large text-text-primary">{demo ? 'B2B 零基础 · 首周任务日历' : 'Agent 周任务日历'}</h3>
         <div className="flex flex-wrap gap-2">{Object.entries(agentLabels).map(([agent, label]) => <Tag key={agent}>{label}</Tag>)}</div>
       </div>
-      <div className="mt-2 flex flex-wrap items-center justify-between gap-3"><p className="text-xs text-text-secondary">{demo ? '参考预览会持续标记；真实任务以执行回执为准。' : `${independentTasks.length} 项独立任务 · ${calendarDurationLabel(independentTasks)}`}</p><Button size="small" aria-pressed={showAllIndependent} onClick={()=>{setShowAllIndependent(value=>!value);setExpandedSummaries(new Set());}}>{showAllIndependent?'隐藏所有独立卡':'显示所有独立卡'}</Button></div>
+      <div className="mt-2 flex flex-wrap items-center justify-between gap-3"><p className="text-xs text-text-secondary">{demo ? '参考预览会持续标记；真实任务以执行回执为准。' : `${independentTasks.length} 项真实任务${placeholders.length ? ` · ${placeholders.length} 个待排计划环节` : ''} · ${calendarDurationLabel(independentTasks)}`}</p></div>
     </div>
     {!demo && tasks.length === 0 && <Alert className="m-4" type="info" showIcon title="尚无 Agent 执行排期" description="发布计划不会自动视为制作任务；生成执行排期后将在此显示。"/>}
     {pendingReferences.length > 0 && <Alert className="m-4" type="error" showIcon title={`当前待处理 · ${pendingReferences.length} 项原任务（按各任务冻结时区）`} description={<div><p>引用原任务，原计划卡保留；不计为新增交付。</p><p className="mt-1">{pendingReferences.map(task => `${task.title} · 原计划 ${task.date} · 逾期 ${calendarOverdueDuration(task, now)}${task.affectedPublicationIds?.length ? ` · 受影响发布 ${task.affectedPublicationIds.join('、')}` : ''}`).join('；')}</p></div>}/>}
@@ -356,7 +354,7 @@ export default function RestoredAgentWorkCalendar({
         timeGridHeight="clamp(420px, calc(100dvh - 260px), 760px)"
         detailsLayout="custom"
         renderDetails={renderDetails}
-        onEventClick={event=>{if(!isSummaryEventData(event.data))return false;const key=event.data.summary.key;if(showAllIndependent){setShowAllIndependent(false);setExpandedSummaries(new Set([key]));}else setExpandedSummaries(current=>{const next=new Set(current);if(next.has(key))next.delete(key);else next.add(key);return next;});return true;}}
+        onEventClick={event=>isSummaryEventData(event.data)}
       /></Suspense>}
   </section>;
 }

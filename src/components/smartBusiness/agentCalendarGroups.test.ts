@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import {agentCalendarTaskGroup,agentCalendarTaskType,buildAgentCalendarSummaries,taskHasDeliverableOrWorkspace} from './agentCalendarGroups';
+import {agentCalendarTaskGroup,agentCalendarTaskType,buildAgentCalendarSummaries,calendarDisplayPlaceholders,taskHasDeliverableOrWorkspace} from './agentCalendarGroups';
 import type {AgentCalendarTask} from './AgentWeeklyCalendar';
 
 const dates=['2026-10-12','2026-10-13','2026-10-14','2026-10-15','2026-10-16','2026-10-17','2026-10-18'];
@@ -64,4 +64,14 @@ test('independent cards require a deliverable or workspace and use the confirmed
   assert.equal(agentCalendarTaskType(task('business',dates[0],'business_outline')),'经营任务');
   assert.equal(taskHasDeliverableOrWorkspace({...production,output:'待交付:',calendarSummaryOnly:true}),false);
   assert.equal(taskHasDeliverableOrWorkspace({...production,output:'',productionTaskId:'content-real'}),true);
+});
+
+test('display placeholders never duplicate real task groups and repeat at most once per empty group',()=>{
+  const realProduction=task('video',dates[2],'video_generation','content');
+  const summaries=buildAgentCalendarSummaries([realProduction],dates);
+  const placeholders=calendarDisplayPlaceholders(summaries,dates[2]);
+  assert.equal(placeholders.some(item=>item.group==='production'),false);
+  assert.equal(placeholders.filter(item=>item.group==='directing').length,1);
+  assert.equal(placeholders.find(item=>item.group==='directing')?.date,dates[2]);
+  assert.ok(placeholders.every(item=>item.children.length===0));
 });
