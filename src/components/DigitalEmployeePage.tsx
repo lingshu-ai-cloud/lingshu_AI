@@ -1386,7 +1386,7 @@ function OnboardingPanel({
       onClose={onClose}
       onSkip={dismissible ? onClose : undefined}
       skipLabel="稍后继续"
-      primaryLabel="保存企业档案"
+      primaryLabel="确认企业信息"
       primaryDisabled={Boolean(missingProfileFields.length)}
       onPrimary={() => void saveEnterpriseProfile()}
     >
