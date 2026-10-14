@@ -37,6 +37,11 @@ import { recommendPackage, normalizePackage, repairCollapsedWeeklyVideoProductio
 import { TASK_TEMPLATES, type WeeklyPackage } from '../../src/lib/weeklyPackage.js';
 import { fillMatrixVideos } from '../../src/lib/weeklyMatrix.js';
 import { applyDirectorDecision, DIRECTOR_DECISION_LABELS, DIRECTOR_REASON_LABELS, type DirectorDecision, type DirectorDecisionReason } from '../../src/lib/directorDecision.js';
+import {
+  directorDecisionInvalidatesWeeklyAuthorization,
+  taskCorrectionInvalidatesWeeklyAuthorization,
+} from '../digitalEmployees/weeklyAuthorizationInvalidation.js';
+import { weeklyAuthorizationRecoveryDecision } from '../digitalEmployees/weeklyAuthorizationRecovery.js';
 import { reviseContent } from '../digitalEmployees/contentRevision.js';
 import { automationBgmCatalog } from './studio.js';
 import { normalizeVideoPlan, spokenLanguageMatches, videoPlanErrors, type VideoCreationPlan, type VideoPreproductionPreview } from '../../shared/contracts/videoCreationPlan.js';
@@ -1196,6 +1201,84 @@ async function appendAuthorizationRequiredEvent(input: {
       action: 'review_weekly_package',
     },
   });
+}
+
+async function listAllRecords<T extends StoredRecord>(collection: string, where: Record<string, string | number | boolean>, sort?: string): Promise<T[]> {
+  const items: T[] = [];
+  let page = 1;
+  while (true) {
+    const result = await store.list<T>(collection, { where, ...(sort ? { sort } : {}), page, perPage: 500 });
+    items.push(...result.items);
+    if (page >= result.totalPages) return items;
+    page += 1;
+  }
+}
+
+async function restoreExecutionOnlyInvalidatedAuthorization(
+  tenantId: string,
+  goal: GoalRecord,
+  run: RunRecord,
+  plan: PlanRecord | null,
+): Promise<boolean> {
+  if (!plan) return false;
+  const planBody = jsonObject<Record<string, unknown>>(plan.plan, {});
+  if (String(planBody.packageApprovedBy || '').trim()
+    || !String(planBody.packageApprovedAt || '').trim()
+    || !String(planBody.packageGrantInvalidatedAt || '').trim()) return false;
+  const [audits, events] = await Promise.all([
+    listAllRecords<StoredRecord>('audit_logs', { tenantId }, 'createdAt'),
+    listAllRecords<EventRecord>(COLLECTION.events, { tenant_id: tenantId, run_id: run.id, type: 'authorization_required' }, 'occurred_at'),
+  ]);
+  const decision = weeklyAuthorizationRecoveryDecision({
+    goalId: goal.id,
+    planId: plan.id,
+    runId: run.id,
+    approvedAt: planBody.packageApprovedAt,
+    approvedBy: planBody.packageApprovedBy,
+    invalidatedAt: planBody.packageGrantInvalidatedAt,
+    audits: audits.map(audit => ({
+      action: audit.action,
+      actorUserId: audit.actorUserId,
+      targetType: audit.targetType,
+      targetId: audit.targetId,
+      metadata: audit.metadata,
+      createdAt: audit.createdAt,
+    })),
+    events: events.map(event => ({ type: event.type, payload: event.payload, occurred_at: event.occurred_at })),
+  });
+  if (!decision.restore) return false;
+  const restoredAt = new Date().toISOString();
+  const restoredPlan = {
+    ...planBody,
+    packageApprovedBy: decision.actorUserId,
+    packageAuthorizationRecoveredAt: restoredAt,
+    packageAuthorizationRecoveredFrom: decision.invalidatedAt,
+    packageGrantInvalidatedAt: '',
+  };
+  const restored = await store.compareAndSwap?.(COLLECTION.plans, plan.id, {
+    tenant_id: tenantId,
+    goal_id: goal.id,
+    plan: plan.plan,
+  }, { plan: restoredPlan });
+  if (!restored) return false;
+  plan.plan = restoredPlan;
+  await appendAudit({
+    tenantId,
+    userId: decision.actorUserId,
+    action: 'weekly_package.authorization_recovered',
+    targetType: 'weekly_plan',
+    targetId: plan.id,
+    metadata: { runId: run.id, approvedAt: decision.approvedAt, invalidatedAt: decision.invalidatedAt, reason: 'execution_only_retry_invalidation' },
+  });
+  await appendEvent({
+    tenantId,
+    runId: run.id,
+    type: 'authorization_restored',
+    level: 'success',
+    summary: '已核对原审核凭证：此前仅因内部任务重试误撤销，现已恢复原预算与发布范围授权。',
+    payload: { reason: 'execution_only_retry_invalidation', approvedAt: decision.approvedAt, invalidatedAt: decision.invalidatedAt },
+  });
+  return true;
 }
 
 agentBrowserSessions.setTelemetry(async (scope, action) => {
@@ -2464,6 +2547,7 @@ async function advanceRunUnlocked(tenantId: string, runId: string): Promise<void
     && jsonObject<Record<string, unknown>>(task.output, {}).dataStatus === 'execution_failed');
   const reobservableUserInputWait = taskResult.items.some(task => task.status === 'waiting_external'
     && String(jsonObject<Record<string, unknown>>(jsonObject<Record<string, unknown>>(task.output, {}).waitState, {}).kind || '') === 'input');
+  await restoreExecutionOnlyInvalidatedAuthorization(tenantId, goal, run, plan);
   if (run.status === 'waiting_human' && !recoverableApprovalFailure && !reobservableUserInputWait) return;
   const config = executionConfigForPlan(plan, tenantConfig);
   const packageBody = plan ? jsonObject<Record<string, unknown>>(plan.plan, {}) : {};
@@ -5510,7 +5594,7 @@ async function applyTaskControl(input: {
         businessRefs: jsonObject(item.business_refs, []),
       })),
     };
-    if (savedPackage && plan) {
+    if (savedPackage && plan && taskCorrectionInvalidatesWeeklyAuthorization(input.action)) {
       const priorBody = jsonObject<Record<string, unknown>>(plan.plan, {});
       await store.update(COLLECTION.plans, plan.id, { plan: { ...priorBody, packageApprovedBy: '', packageGrantInvalidatedAt: now } });
       await invalidatePublishingAuthorizationForRun(input.tenantId, run.id);
@@ -5740,10 +5824,13 @@ digitalEmployeesRouter.post('/tasks/:taskId/director-decision', async (req, res)
   try {
     const now = new Date().toISOString();
     const applied = applyDirectorDecision({ pack, contentId, decision, ...(decision !== 'continue' ? { reason } : {}), applyToSimilar: req.body?.applyToSimilar === true, now });
-    await store.update(COLLECTION.plans, plan.id, { plan: { ...original, businessPackage: applied.pack, packageApprovedBy: '', packageGrantInvalidatedAt: now } });
+    const invalidatesAuthorization = directorDecisionInvalidatesWeeklyAuthorization(decision);
+    await store.update(COLLECTION.plans, plan.id, { plan: {
+      ...original,
+      businessPackage: applied.pack,
+      ...(invalidatesAuthorization ? { packageApprovedBy: '', packageGrantInvalidatedAt: now } : {}),
+    } });
     if (decision === 'continue') {
-      await invalidatePublishingAuthorizationForRun(tenantId, task.run_id);
-      await appendAuthorizationRequiredEvent({ tenantId, runId: task.run_id, taskId: task.id, reason: 'package_adjusted', changedFields: ['directorDecision'] });
       await appendEvent({ tenantId, runId: task.run_id, taskId: task.id, type: 'director.continue', level: 'info', summary: `${task.title}：人工选择继续当前内容方向`, payload: { contentId, affectedContentIds: applied.affectedContentIds } });
       await appendAudit({ tenantId, userId, action: 'director_direction.continue', targetType: 'workflow_task', targetId: task.id, metadata: { runId: task.run_id, contentId, affectedContentIds: applied.affectedContentIds } });
       await advanceRun(tenantId, task.run_id);
@@ -5756,6 +5843,8 @@ digitalEmployeesRouter.post('/tasks/:taskId/director-decision', async (req, res)
     if (!routingTask) throw new Error('director_routing_task_missing');
     const result = await applyTaskControl({ tenantId, userId, taskId: routingTask.id, action: 'retry', scope: 'one_off', instruction, rerunDownstream: true });
     taskControlApplied = true;
+    await invalidatePublishingAuthorizationForRun(tenantId, task.run_id);
+    await appendAuthorizationRequiredEvent({ tenantId, runId: task.run_id, taskId: task.id, reason: 'package_adjusted', changedFields: ['directorDecision'] });
     await appendAudit({ tenantId, userId, action: `director_direction.${decision}`, targetType: 'weekly_content', targetId: contentId, metadata: { runId: task.run_id, taskId: task.id, routingTaskId: routingTask.id, reason, applyToSimilar: req.body?.applyToSimilar === true, affectedContentIds: applied.affectedContentIds, replacementContentId: applied.replacementContentId } });
     await advanceRun(tenantId, result.runId);
     res.json(await buildOverview(tenantId, result.goalId));

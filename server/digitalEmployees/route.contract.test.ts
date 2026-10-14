@@ -33,6 +33,14 @@ assert.match(source, /critical_business_change/, 'critical product, market, audi
 assert.match(source, /本周预算、产品、市场或发布授权范围已变更/, 'authorization invalidation must explicitly warn about budget and business-boundary changes');
 assert.match(source, /appendAuthorizationRequiredEvent/, 'weekly-package changes must emit a visible reauthorization event');
 assert.match(source, /invalidatePublishingAuthorizationForRun/, 'weekly-package changes must pause already materialized work that has no provider receipt');
+assert.match(source, /savedPackage && plan && taskCorrectionInvalidatesWeeklyAuthorization\(input\.action\)/,
+  'an execution-only retry must retain the weekly budget and publishing boundary already approved before production');
+assert.match(source, /const invalidatesAuthorization = directorDecisionInvalidatesWeeklyAuthorization\(decision\)/,
+  'director decisions must invalidate the weekly authorization only when they actually change the frozen direction');
+assert.match(source, /restoreExecutionOnlyInvalidatedAuthorization\(tenantId, goal, run, plan\)/,
+  'a previously approved weekly boundary must be recoverable only through its durable approval and invalidation evidence');
+assert.match(source, /weekly_package\.authorization_recovered/,
+  'an automatic authorization restoration must leave an explicit audit receipt');
 assert.match(source, /task\.requires_approval && task\.status === 'failed'[\s\S]{0,500}dataStatus === 'execution_failed'/,
   'an approval preflight exception must be safely re-observed instead of remaining a terminal workflow failure');
 assert.match(source, /run\.status === 'waiting_human' && !recoverableApprovalFailure/,
