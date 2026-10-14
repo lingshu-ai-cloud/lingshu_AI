@@ -4,7 +4,9 @@ const TOKEN_KEY = 'overseas_token'
 
 function base() {
   const value = String(apiBase || '').replace(/\/$/, '')
-  if (!/^https:\/\//.test(value)) throw new Error('请先配置现有服务的 HTTPS 地址')
+  const secure = /^https:\/\//.test(value)
+  const loopback = /^http:\/\/(?:127\.0\.0\.1|localhost)(?::\d+)?$/.test(value)
+  if (!secure && !loopback) throw new Error('请配置 HTTPS 服务地址；本地联调仅允许 127.0.0.1 或 localhost')
   return value
 }
 
