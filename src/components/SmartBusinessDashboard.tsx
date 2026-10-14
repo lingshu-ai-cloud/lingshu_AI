@@ -46,6 +46,7 @@ import { calendarWeekday, thumbnailUrlWithSourceFallback } from "../lib/calendar
 import WeeklyContentProgressPanel from "./smartBusiness/WeeklyContentProgressPanel";
 import WeeklyProductionStudioEntry from "./smartBusiness/WeeklyProductionStudioEntry";
 import { projectWeeklyGoalCalendar } from "./smartBusiness/weeklyGoalCalendar";
+import { isSmartBusinessShowcaseEnabled, SMART_BUSINESS_SHOWCASE_WEEKLY_TOTALS } from "../dev/smartBusinessShowcaseData";
 
 export type SmartBusinessView = "home" | "matrix" | "production" | "review";
 
@@ -721,6 +722,7 @@ function contentThumbnailUrl(plan: VideoCreationPlan, queueItem: ContentQueueIte
 }
 
 function buildSmartBusinessDisplayModel(data: DigitalEmployeeOverview, selectedAccountId = ""): SmartBusinessDisplayModel {
+  const showcaseTotals = isSmartBusinessShowcaseEnabled() ? SMART_BUSINESS_SHOWCASE_WEEKLY_TOTALS : null;
   // Older model responses sometimes persisted a structured title or its accidental
   // string coercion. Only named text fields are displayable; never stringify facts.
   const displayText = (value: unknown, depth = 0): string => {
@@ -947,7 +949,11 @@ function buildSmartBusinessDisplayModel(data: DigitalEmployeeOverview, selectedA
     totals: {
       accountCount: accounts.length,
       originalCount: operatingContext?.outputs.originalCount ?? masters.length,
-      versionCount: contents.length || operatingContext?.outputs.platformVersionCount || operatingContext?.outputs.count || 0,
+      versionCount: showcaseTotals?.plannedVideoCount
+        ?? (contents.length
+          || operatingContext?.outputs.platformVersionCount
+          || operatingContext?.outputs.count
+          || 0),
       durationSeconds: contents.reduce((sum, item) => sum + item.duration, 0)
         || operatingContext?.outputs.totalDurationSeconds
         || 0,
@@ -955,7 +961,8 @@ function buildSmartBusinessDisplayModel(data: DigitalEmployeeOverview, selectedA
       budgetMaxCny: normalizedMax,
       budgetMidCny: fallbackBudget || (normalizedMin + normalizedMax) / 2,
       completedCount: contents.filter(item => item.status === "completed").length,
-      waitingReviewCount: contents.filter(item => item.status === "waiting_review").length,
+      waitingReviewCount: showcaseTotals?.waitingReviewCount
+        ?? contents.filter(item => item.status === "waiting_review").length,
       blockedCount: contents.filter(item => item.status === "blocked").length,
       views,
       interactions,

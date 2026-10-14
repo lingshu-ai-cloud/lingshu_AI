@@ -13,6 +13,11 @@ import type {
 } from '../lib/socialPerformance';
 
 const DAY_MS = 86_400_000;
+export const SMART_BUSINESS_SHOWCASE_WEEKLY_TOTALS = {
+  plannedVideoCount: 26,
+  waitingReviewCount: 3,
+} as const;
+
 const PLATFORM_LABELS: Record<PublishingPlatform, string> = {
   facebook: 'Facebook',
   instagram: 'Instagram',

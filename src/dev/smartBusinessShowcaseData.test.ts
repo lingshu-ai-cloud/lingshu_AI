@@ -5,6 +5,7 @@ import type { DigitalEmployeeOverview } from '../lib/digitalEmployees';
 import {
   applySmartBusinessShowcaseData,
   isSmartBusinessShowcaseEnabled,
+  SMART_BUSINESS_SHOWCASE_WEEKLY_TOTALS,
   smartBusinessShowcaseAds,
   smartBusinessShowcaseChannels,
   smartBusinessShowcasePerformance,
@@ -33,6 +34,10 @@ test('showcase data is fail-closed away from local preview and can be explicitly
   assert.equal(isSmartBusinessShowcaseEnabled({ dev: false, hostname: 'app.example.com' }), false);
   assert.equal(isSmartBusinessShowcaseEnabled({ dev: false, hostname: '127.0.0.1' }), true);
   assert.equal(isSmartBusinessShowcaseEnabled({ dev: true, hostname: 'localhost', setting: 'off' }), false);
+});
+
+test('local weekly command center uses the requested showcase counts', () => {
+  assert.deepEqual(SMART_BUSINESS_SHOWCASE_WEEKLY_TOTALS, { plannedVideoCount: 26, waitingReviewCount: 3 });
 });
 
 test('one local dataset fills every Smart Business domain with aligned account identities', () => {
