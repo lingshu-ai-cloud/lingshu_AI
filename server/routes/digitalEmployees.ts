@@ -6471,7 +6471,10 @@ digitalEmployeesRouter.post('/runs/:runId/pause', async (req, res) => {
   await withDigitalEmployeeRunLock(tenantId, req.params.runId, async () => {
   const run = await tenantRecord<RunRecord>(COLLECTION.runs, req.params.runId, tenantId);
   if (!run) { res.status(404).json({ error: 'run_not_found' }); return; }
-  if (['running', 'waiting_external', 'waiting_approval'].includes(run.status)) {
+  // A run that is waiting for human input is still active work. Operators
+  // must be able to stop it before publication without discarding completed
+  // production or quality results.
+  if (['running', 'waiting_external', 'waiting_approval', 'waiting_human'].includes(run.status)) {
     const now = new Date();
     await store.update(COLLECTION.runs, run.id, { status: 'paused', pause_reason: String(req.body?.reason || '人工暂停').slice(0, 500), current_controller: 'human' });
     await pauseContentExecutionJobsForRun({ dataStore: store, tenantId, runId: run.id, origin: 'workflow_run_pause', now });

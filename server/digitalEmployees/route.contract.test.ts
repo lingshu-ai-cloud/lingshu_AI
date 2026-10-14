@@ -165,6 +165,11 @@ for (const control of ['pause', 'resume']) {
   assert.match(routeBlock(`digitalEmployeesRouter.post('/runs/:runId/${control}'`), /withDigitalEmployeeRunLock/, `${control} must share the execution lock`);
 }
 assert.match(routeBlock("digitalEmployeesRouter.post('/runs/:runId/pause'"), /pauseContentExecutionJobsForRun[\s\S]*workflow_run_pause/, 'pausing a workflow must durably pause its production jobs');
+assert.match(
+  routeBlock("digitalEmployeesRouter.post('/runs/:runId/pause'"),
+  /\['running', 'waiting_external', 'waiting_approval', 'waiting_human'\]\.includes\(run\.status\)/,
+  'a run waiting for human input must still be pausable before publication',
+);
 assert.match(routeBlock("digitalEmployeesRouter.post('/runs/:runId/resume'"), /resumeContentExecutionJobsForRun[\s\S]*workflow_run_pause/, 'resuming a workflow must resume only its own controlled production jobs');
 assert.match(source, /cancelDigitalEmployeeRunApplication/, 'the cancel route must use the shared lifecycle application service');
 assert.match(cancellationApplication, /withDigitalEmployeeRunLock/, 'cancel must share the execution lock');
