@@ -1,0 +1,4 @@
+import type {WeeklyTaskWorkspace} from '../../shared/contracts/weeklyTaskWorkspace';
+import {authHeader,getToken} from './auth';
+export type WeeklyTaskWorkspaceScope={programId:string;packageId:string;packageVersion:number;executionTaskId:string};
+export async function readWeeklyTaskWorkspace(scope:WeeklyTaskWorkspaceScope):Promise<WeeklyTaskWorkspace>{const token=getToken();if(!token)throw Error('请登录后读取任务生产现场。');const response=await fetch(`/api/overseas/social-programs/${encodeURIComponent(scope.programId)}/operating-packages/${encodeURIComponent(scope.packageId)}/execution-tasks/${encodeURIComponent(scope.executionTaskId)}/workspace?version=${scope.packageVersion}`,{headers:authHeader(),cache:'no-store',redirect:'error'});const body=await response.json();if(getToken()!==token)throw Error('登录身份变化，请重新打开任务生产现场。');if(!response.ok)throw Error(body?.message??'任务生产现场读取失败。');return body.item as WeeklyTaskWorkspace;}

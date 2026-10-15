@@ -13,6 +13,7 @@ import {
 import {
   admitContentExecutionJob,
   bindPristineContentExecutionCheckpoint,
+  bindPristineContentExecutionCheckpoints,
   refreshUnspentContentExecutionCheckpoint,
   DurableContentExecutionWorker,
   controlContentExecutionJob,
@@ -191,6 +192,18 @@ test('historic executor binding is allowed only before any durable execution or 
 
   const started = await admitContentExecutionJob({ dataStore: store, tenantId: 'tenant-bind', userId: 'user-a', taskId: 'task-started', runId: 'run-started', taskType: 'social_content_weekly', initialCheckpoints: { 'runtime.retry': checkpoint } });
   await assert.rejects(bindPristineContentExecutionCheckpoint({ dataStore: store, tenantId: started.tenantId, jobId: started.id, runId: started.runId, checkpointKey: 'social.executor', checkpoint }), /pristine_binding_not_allowed/);
+});
+
+test('a pristine historical job upgrades its executor and graph bridge atomically',async()=>{
+  const store=new MemoryStore(),executor={version:'1',inputHash:'a'.repeat(64),payload:{executor:'langgraph'},updatedAt:new Date().toISOString()};
+  const bridge={version:'1',inputHash:'a'.repeat(64),payload:{schemaVersion:'content-production-bridge.v1'},updatedAt:new Date().toISOString()};
+  const pristine=await admitContentExecutionJob({dataStore:store,tenantId:'tenant-atomic',userId:'owner',taskId:'task',runId:'run',taskType:'social_content_weekly'});
+  const bound=await bindPristineContentExecutionCheckpoints({dataStore:store,tenantId:pristine.tenantId,jobId:pristine.id,runId:pristine.runId,checkpoints:{'social.executor':executor,'content.production_bridge':bridge}});
+  assert.deepEqual(Object.keys(bound.checkpoints).sort(),['content.production_bridge','social.executor']);
+  const replay=await bindPristineContentExecutionCheckpoints({dataStore:store,tenantId:pristine.tenantId,jobId:pristine.id,runId:pristine.runId,checkpoints:{'social.executor':executor,'content.production_bridge':bridge}});
+  assert.equal(replay.id,pristine.id);
+  const started=await admitContentExecutionJob({dataStore:store,tenantId:'tenant-atomic',userId:'owner',taskId:'started',runId:'started',taskType:'social_content_weekly',initialCheckpoints:{'runtime.retry':executor}});
+  await assert.rejects(bindPristineContentExecutionCheckpoints({dataStore:store,tenantId:started.tenantId,jobId:started.id,runId:started.runId,checkpoints:{'social.executor':executor,'content.production_bridge':bridge}}),/pristine_binding_not_allowed/);
 });
 
 test('an unspent blocked admission may refresh only its executor binding', async () => {

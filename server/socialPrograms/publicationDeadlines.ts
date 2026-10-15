@@ -16,7 +16,7 @@ export function publicationInstant(window: string | null | undefined): number | 
  * publication instants remain unknown rather than falling back to week end. */
 export function publicationPreparationDeadline(window: string | null | undefined): string | null {
   const instant = publicationInstant(window);
-  return instant === null ? null : new Date(instant - 86_400_000).toISOString();
+  return instant === null ? null : new Date(instant - 30 * 60_000).toISOString();
 }
 
 /** Attach latest feasible deadlines without disguising forward-plan capacity or elapsed time. */
@@ -57,8 +57,9 @@ export function applyPublicationDeadlines(tasks: WeeklyExecutionTask[], publicat
       continue;
     }
     setEarlier(publishing.taskId, instant + publishing.schedule.estimatedDurationMinutes * 60_000);
-    // Conservative rolling 24h lead guarantees readiness on the preceding local day.
-    for (const parent of publishing.dependsOnTaskIds) setEarlier(parent, instant - 86_400_000);
+    // Daily rolling production keeps the final acceptance buffer explicit
+    // without forcing every item to be completed on the preceding day.
+    for (const parent of publishing.dependsOnTaskIds) setEarlier(parent, instant - 30 * 60_000);
   }
   // Iterate independently of input order; each predecessor must finish before successor starts.
   for (let pass = 0; pass < tasks.length; pass++) {

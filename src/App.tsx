@@ -905,7 +905,7 @@ export default function App() {
           <Activity key={pagePreferenceScope(session)} mode={page === 'digitalEmployees' ? 'visible' : 'hidden'}>
             {starterMode
               ? <StarterWorkspacePage onNavigate={handleNavigate} onNavigateWithTask={handleSocialContentNavigate} />
-              : <DigitalEmployeePage weeklyPlanNavigation={weeklyPlanNavigation?.identity === productionNavigationIdentity() ? weeklyPlanNavigation : null} onViewResults={() => handleNavigate('strategy')} onNavigate={handleNavigate} onOpenMonitor={() => handleNavigate('agentMonitor')} />}
+              : <DigitalEmployeePage active={page === 'digitalEmployees'} weeklyPlanNavigation={weeklyPlanNavigation?.identity === productionNavigationIdentity() ? weeklyPlanNavigation : null} onViewResults={() => handleNavigate('strategy')} onNavigate={handleNavigate} onOpenMonitor={() => handleNavigate('agentMonitor')} />}
           </Activity>
           {(page === 'agentMonitor' || mountedPages.has('agentMonitor')) && <Activity key={`monitor-${pagePreferenceScope(session)}`} mode={page === 'agentMonitor' ? 'visible' : 'hidden'}><AgentMonitorPage onBack={requestProductionBack} /></Activity>}
           {(page === 'strategy' || mountedPages.has('strategy')) && (

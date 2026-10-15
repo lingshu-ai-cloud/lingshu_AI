@@ -21,6 +21,7 @@ import {readWeeklyCancellationSettlements} from '../socialPrograms/weeklyCancell
 import {recheckWeeklyRequiredMaterials} from '../socialPrograms/weeklyRequiredMaterialRecovery.js';
 import {readWeeklyContentNavigation} from '../socialPrograms/weeklyContentNavigation.js';
 import {readWeeklyReferenceReviewNavigation} from '../socialPrograms/weeklyReferenceReviewNavigation.js';
+import {backfillWeeklyTaskWorkspaces,readWeeklyTaskWorkspace} from '../socialPrograms/weeklyTaskWorkspaces.js';
 import { createWeeklyOperatingPackageService } from '../socialPrograms/weeklyOperatingPackages.js';
 import { createSocialOperatingOrchestrationService, weeklyAuthorityFromResolution } from '../socialOperating/orchestration.js';
 import { SocialOperatingDecisionError } from '../socialOperating/service.js';
@@ -382,6 +383,21 @@ export function createSocialProgramsRouter(dataStore: DataStore = store, authent
     const packageVersion = Number(req.query.version);
     if (!Number.isSafeInteger(packageVersion) || packageVersion < 1) throw new SocialProgramError('package_version_invalid', 400, '周包版本无效。');
     res.json({item: await readWeeklyContentNavigation(dataStore, {tenantId, programId: String(req.params.programId), packageId: String(req.params.packageId), packageVersion, executionTaskId: String(req.params.taskId)})});
+  }));
+
+  router.get('/:programId/operating-packages/:packageId/execution-tasks/:taskId/workspace', asyncRoute(async (req, res) => {
+    const {tenantId}=res.locals as AuthLocals;const packageVersion=Number(req.query.version);
+    if(!Number.isSafeInteger(packageVersion)||packageVersion<1)throw new SocialProgramError('package_version_invalid',400,'周包版本无效。');
+    res.setHeader('Cache-Control','private, no-store');
+    res.json({item:await readWeeklyTaskWorkspace(dataStore,{tenantId,programId:String(req.params.programId),packageId:String(req.params.packageId),packageVersion,executionTaskId:String(req.params.taskId)})});
+  }));
+
+  router.post('/:programId/operating-packages/:packageId/task-workspaces/backfill', asyncRoute(async (req, res) => {
+    const {tenantId}=res.locals as AuthLocals;const packageVersion=Number(req.body?.packageVersion);
+    if(!Number.isSafeInteger(packageVersion)||packageVersion<1||Object.keys(req.body??{}).some(key=>key!=='packageVersion'))throw new SocialProgramError('weekly_task_workspace_backfill_input_invalid',400,'生产现场补建参数无效。');
+    await service.getProgram(tenantId,String(req.params.programId));
+    res.setHeader('Cache-Control','private, no-store');
+    res.json(await backfillWeeklyTaskWorkspaces(dataStore,{tenantId,programId:String(req.params.programId),packageId:String(req.params.packageId),packageVersion}));
   }));
 
   router.get('/:programId/operating-packages/:packageId/execution-tasks', asyncRoute(async (req, res) => {

@@ -5,6 +5,28 @@
     "pages/action/index",
     "pages/action/connect"
   ],
+  "subPackages": [
+    {
+      "root": "packages/operator",
+      "name": "operator",
+      "pages": [
+        "home/index",
+        "assistant/index",
+        "messages/index",
+        "profile/index",
+        "shooting/index",
+        "camera/index",
+        "review/index",
+        "inquiries/index",
+        "conversation/index"
+      ]
+    },
+    {
+      "root": "packages/management",
+      "name": "management",
+      "pages": ["home/index"]
+    }
+  ],
   "window": {
     "navigationBarTitleText": "灵枢工作",
     "navigationBarBackgroundColor": "#FFFFFF",
@@ -12,6 +34,9 @@
     "backgroundColor": "#FFFFFF"
   },
   "permission": {
+    "scope.camera": {
+      "desc": "用于完成待拍镜头任务并上传拍摄素材"
+    },
     "scope.record": {
       "desc": "用于将你主动录制的语音转成可编辑的工作指令"
     }

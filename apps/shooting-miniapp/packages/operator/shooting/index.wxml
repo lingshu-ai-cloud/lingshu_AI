@@ -1,0 +1,105 @@
+<view class="page">
+  <view wx:if="{{!loggedIn}}" class="login surface">
+    <view class="eyebrow">运营工作台</view>
+    <view class="page-title">登录灵枢</view>
+    <view class="muted">使用与网页端相同的账号</view>
+    <input class="field" type="text" placeholder="邮箱或账号" value="{{email}}" bindinput="inputEmail" />
+    <input class="field" type="password" password placeholder="密码" value="{{password}}" bindinput="inputPassword" />
+    <button class="primary" loading="{{loading}}" bindtap="signIn">登录</button>
+  </view>
+
+  <block wx:else>
+    <view wx:if="{{!selected}}">
+      <view class="header">
+        <view class="header-action" bindtap="signOut">退出</view>
+      </view>
+
+      <view class="summary surface">
+        <view><text class="summary-value">{{pendingCount}}</text><text class="summary-label">待完成</text></view>
+        <view class="summary-divider"></view>
+        <view><text class="summary-value summary-complete">{{completedCount}}</text><text class="summary-label">已完成</text></view>
+      </view>
+
+      <view wx:for="{{taskGroups}}" wx:for-item="group" wx:key="key" class="date-section">
+        <view class="date-heading"><text>{{group.label}}</text><text class="date-text">{{group.dateText}}</text></view>
+        <view wx:for="{{group.tasks}}" wx:for-item="item" wx:key="id" class="shoot-card surface {{item.done ? 'shoot-card-done' : ''}}" data-id="{{item.id}}" bindtap="selectTask">
+          <view class="shot-media {{item.done ? 'shot-media-done' : ''}}">
+            <text class="shot-media-label">{{item.done ? '已拍' : '分镜'}}</text>
+            <text class="shot-media-ratio">{{item.ratio || '9:16'}}</text>
+          </view>
+          <view class="shoot-content">
+            <view class="shoot-top"><text class="shoot-title">{{item.title}}</text><text class="status {{item.done ? 'status-done' : ''}}">{{item.done ? '已完成' : '待拍'}}</text></view>
+            <view class="shoot-context">{{item.productLabel || item.themeTitle || '拍摄素材任务'}}</view>
+            <view class="shoot-brief">{{item.shotBrief}}</view>
+            <view class="shoot-meta"><text>{{item.timeText}}</text><text>{{item.durationText}}</text><text>{{item.soundText}}</text></view>
+          </view>
+          <view class="chevron">›</view>
+        </view>
+      </view>
+
+      <view wx:if="{{!taskGroups.length && !loading}}" class="empty surface">
+        <view class="empty-check">✓</view>
+        <view class="empty-title">没有待拍任务</view>
+        <view class="muted">新的拍摄任务会由网页端或 Agent 排期生成</view>
+      </view>
+      <button class="refresh" loading="{{loading}}" bindtap="refresh">刷新任务</button>
+    </view>
+
+    <view wx:else class="detail-page">
+      <view class="detail-header">
+        <view class="back" bindtap="back">‹ 返回</view>
+        <view class="detail-status {{selected.done ? 'detail-status-done' : ''}}">{{selected.done ? '✓ 已完成' : '待拍摄'}}</view>
+      </view>
+      <view class="surface detail-hero">
+        <view class="eyebrow">{{selected.productLabel || selected.themeTitle || '拍摄任务'}}</view>
+        <view class="page-title">{{selected.title}}</view>
+        <view class="detail-facts">
+          <view><text class="fact-label">建议时长</text><text>{{selected.durationText}}</text></view>
+          <view><text class="fact-label">画面比例</text><text>{{selected.ratio || '不限'}}</text></view>
+          <view><text class="fact-label">收音要求</text><text>{{selected.soundText}}</text></view>
+        </view>
+      </view>
+      <view class="detail-columns">
+        <view class="surface detail-guidance">
+          <view class="section-title">画面与动作</view>
+          <view class="detail-text">{{selected.shotBrief}}</view>
+          <view class="guidance-divider"></view>
+          <view class="section-title">声音与口播</view>
+          <view class="detail-text">{{selected.soundInstructions}}</view>
+          <view wx:if="{{selected.expectedNarration}}" class="narration">{{selected.expectedNarration}}</view>
+        </view>
+        <view class="surface reference-panel">
+          <view class="section-title">对标素材再现</view>
+          <block wx:if="{{referencePreview}}">
+            <video id="reference-preview" class="reference-video" src="{{referencePreview.url}}" poster="{{referencePreview.poster}}" initial-time="{{referencePreview.start}}" controls object-fit="cover" show-center-play-btn bindtimeupdate="referenceTimeUpdate"></video>
+            <view class="reference-range">参考区间 {{referencePreview.rangeText}}</view>
+            <view class="muted">按左侧要求再现镜头语言，不复制原素材中的品牌或产品。</view>
+          </block>
+          <view wx:elif="{{referenceLoading}}" class="reference-empty">正在读取对标素材…</view>
+          <view wx:else class="reference-empty">
+            <view class="reference-empty-title">暂无对标素材</view>
+            <view class="muted">该分镜尚未绑定可播放的参考片段</view>
+          </view>
+        </view>
+      </view>
+      <view wx:if="{{selected.done}}" class="surface uploads">
+        <view class="section-title">已上传素材</view>
+        <view class="upload-row" wx:for="{{selected.uploadedMaterialIds}}" wx:key="*this">
+          <view class="upload-icon">✓</view><view><view>素材 {{index + 1}}</view><view class="muted">已保存并关联任务</view></view>
+        </view>
+        <view class="binding">{{selected.bindingText}}</view>
+      </view>
+      <view wx:if="{{uploadedMaterialSummary}}" class="latest-upload">本次素材：{{uploadedMaterialSummary}}</view>
+      <view wx:if="{{busy}}" class="upload-progress surface">
+        <view class="progress-head"><text>{{progressStep}}</text><text>{{progress}}%</text></view>
+        <view class="progress-track"><view class="progress-fill" style="width: {{progress}}%"></view></view>
+      </view>
+      <button wx:if="{{pendingMaterialId && !busy}}" class="secondary" bindtap="retryAttach">重新关联已保存素材</button>
+      <view class="detail-actions">
+        <button class="secondary action-button" disabled="{{busy}}" bindtap="chooseExisting">从相册选择</button>
+        <button class="primary action-button" disabled="{{busy}}" bindtap="shoot">{{selected.done ? '追加拍摄' : '打开相机'}}</button>
+      </view>
+    </view>
+  </block>
+  <view wx:if="{{message}}" class="message">{{message}}</view>
+</view>

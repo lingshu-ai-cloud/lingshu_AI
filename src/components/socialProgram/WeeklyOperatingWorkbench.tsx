@@ -49,7 +49,7 @@ const STEP_DETAIL: Record<WeeklyProductionStepKind, string> = {
   benchmark_collection: '按 TikTok 主阵地、中词主供给采集候选。',
   benchmark_scoring: '按 B2B 匹配、证据完整度和可迁移性筛选。',
   director_analysis: '输出对标账号、具体视频、结构、风格和迁移边界。',
-  business_schedule: '经营 Agent 把编导结论合并成数量、账号、日期和预算均明确的排期。',
+  business_schedule: '经营 Agent 根据当天编导结论，确定今日成片主题、账号与发布时间。',
   material_preparation: '在脚本启动前准备真实素材、产品事实与授权；提交和核验使用原素材任务，不提前启动制作。',
   material_readiness: '在分镜完成后复核原素材申请、实际来源版本与消费者核验；缺少必需输入时等待补齐。',
   script: '编导 Agent 对照爆款原脚本与企业已确认事实，生成可核对的适配脚本。',
@@ -329,7 +329,7 @@ export default function WeeklyOperatingWorkbench({ pkg, loading, error, selected
 
     <section className="rounded-lg border border-border bg-white p-5 sm:p-6">
       <div className="flex flex-wrap items-start justify-between gap-4">
-        <div><p className="text-[11px] font-black uppercase tracking-[.14em] text-accent">Two-step planning</p><h3 className="mt-1 text-base font-bold text-text-primary">任务生成分两步，用户确认后才生产</h3><p className="mt-1 text-xs leading-5 text-text-muted">编导 Agent 分析爆款并负责原脚本拆解、企业适配脚本和分镜；经营 Agent 据此制定详细选题、账号、日期和预算排期；内容 Agent 只执行正式派单。</p></div>
+        <div><p className="text-[11px] font-black uppercase tracking-[.14em] text-accent">Daily planning loop</p><h3 className="mt-1 text-base font-bold text-text-primary">每天根据新增爆款确定当天主题</h3><p className="mt-1 text-xs leading-5 text-text-muted">编导 Agent 每天采集并分析新增爆款；经营 Agent 据此确定当天成片主题、账号和发布时间；内容 Agent 只执行当天正式派单。</p></div>
         {planningAction && <button type="button" disabled={planningBusy} onClick={() => void advancePlanning()} className="btn-primary inline-flex items-center gap-2 disabled:opacity-50">{planningBusy&&<Loader2 size={14} className="animate-spin"/>}{planningAction}<ArrowUpRight size={14}/></button>}
       </div>
       <div className="mt-4 grid gap-3 lg:grid-cols-2">

@@ -5,6 +5,7 @@ import {executionCalendarPresentation,type ExecutionCalendarPresentationOptions}
 import {isPlanningCalendarStep} from './planningCalendarNavigation';
 import type { WeeklyExecutionTask, WeeklyProductionStepKind } from '../../../shared/contracts/socialProgram';
 import type { AgentCalendarTask } from '../smartBusiness/AgentWeeklyCalendar';
+import {agentCalendarResponsibleAgent} from '../smartBusiness/agentCalendarGroups';
 
 /** Project persisted execution data; no inferred production tasks or completion. */
 export function projectExecutionCalendar(tasks: WeeklyExecutionTask[], labels: Record<WeeklyProductionStepKind, string>, now = Date.now(),options:ExecutionCalendarPresentationOptions={}): AgentCalendarTask[] {
@@ -35,9 +36,19 @@ export function projectExecutionCalendar(tasks: WeeklyExecutionTask[], labels: R
     const frozenFields = [task.schedule,task.inputSnapshot,task.inputSnapshot?.publicationTask,scopedPackage].filter(Boolean) as Array<{timeZone?:unknown;timezone?:unknown}>;
     const clock = frozenCalendarClock(frozenFields.flatMap(value=>[value.timeZone,value.timezone]),publication ?? task.schedule.estimatedFinishAt,publication?'publication_offset':'schedule_offset');
     const planned = calendarDateTime(task.schedule.estimatedFinishAt,clock);
+    // The outline and the merged business schedule are weekly planning
+    // contracts. A package can be created or re-run midweek, but displaying
+    // either contract on that run date makes the calendar read as if planning
+    // started midweek. Keep the persisted dueAt below as exact scheduling
+    // evidence; only their calendar projection uses the frozen week start.
+    const weeklyPlanningContract = ['business_outline', 'business_schedule'].includes(task.schedule.stepKind);
+    const displayDate = weeklyPlanningContract && scopedPackage?.weekStart
+      ? scopedPackage.weekStart
+      : planned.date;
     const presentation=executionCalendarPresentation(task,labels[task.schedule.stepKind]||'阶段交付',options);
     const actor = task.schedule.responsibleActor;
-    const agent: AgentCalendarTask['agent'] = actor === 'director_agent' ? 'director' : actor === 'content_agent' || actor === 'quality_agent' ? 'content' : actor === 'customer_agent' ? 'customer' : actor === 'user' ? 'human' : 'business';
+    const actorAgent: AgentCalendarTask['agent'] = actor === 'director_agent' ? 'director' : actor === 'content_agent' || actor === 'quality_agent' ? 'content' : actor === 'customer_agent' ? 'customer' : actor === 'user' ? 'human' : 'business';
+    const agent = agentCalendarResponsibleAgent(task.schedule.stepKind, actorAgent);
     const status: AgentCalendarTask['status'] = task.status === 'succeeded' ? 'completed' : task.status === 'leased' ? 'active' : task.status === 'cancelled' ? 'cancelled' : task.status === 'dead_letter' ? 'failed' : task.status === 'blocked' ? 'blocked' : 'planned';
     const terminal = ['succeeded','cancelled'].includes(task.status);
     const latestStart = Date.parse(task.schedule.latestStartAt || '');
@@ -55,10 +66,11 @@ export function projectExecutionCalendar(tasks: WeeklyExecutionTask[], labels: R
     const inventoryTarget = executionInventoryApprovalTarget(task);
     return [{
       id: task.taskId,
+      workspaceTarget:{programId:task.programId,packageId:task.packageId,packageVersion:task.packageVersion,executionTaskId:task.taskId},
       executionStep: task.schedule.stepKind,
       calendarInternal: task.schedule.responsibleActor !== 'user' && ['material_preparation','material_readiness'].includes(task.schedule.stepKind),
       deliverableGroup: task.publicationTaskId ? bindingKey(task) : undefined,
-      date: planned.date,
+      date: displayDate,
       time: planned.time,
       calendarClock: clock,
       deadlineRecovery: task.deadlineRecovery,

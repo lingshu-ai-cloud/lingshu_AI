@@ -61,7 +61,11 @@ export default function PresenterManager({ onClose, onSaved, onSynced, reusePres
   const [photoFile, setPhotoFile] = useState<File>();
   const [videoFile, setVideoFile] = useState<File>();
   const heyGenSource = initialConfiguration ? videoFile || photoFile : file;
-  const heyGenVideoSource = Boolean(heyGenSource && (heyGenSource.type.startsWith('video/') || /\.(mp4|mov|webm)$/i.test(heyGenSource.name)));
+  // Unified onboarding always creates a Digital Twin from the required video.
+  // Before a file is selected, treating the empty source as a photo makes the
+  // whole fieldset inherit photo-creation availability and can deadlock the
+  // form when only Digital Twin creation is enabled.
+  const heyGenVideoSource = initialConfiguration || Boolean(heyGenSource && (heyGenSource.type.startsWith('video/') || /\.(mp4|mov|webm)$/i.test(heyGenSource.name)));
   const selectedCreationEnabled = (heyGenVideoSource ? cap?.digitalTwinCreationEnabled : cap?.photoCreationEnabled) ?? cap?.creationEnabled;
   const selectedCreationReason = heyGenVideoSource ? cap?.digitalTwinCreationReason : cap?.photoCreationReason;
   const selectedReservationCny = (heyGenVideoSource ? cap?.digitalTwinReservationCny : cap?.photoReservationCny) ?? cap?.reservationCny;

@@ -47,6 +47,13 @@ function runPb(args: string[]): void {
   }
 }
 
+function appliedMigrationCount(dataDir:string):number{
+  const database=path.join(dataDir,'data.db');
+  const result=spawnSync('sqlite3',[database,'select count(*) from _migrations;'],{encoding:'utf8'});
+  if(result.status!==0||!/^\d+$/.test(result.stdout.trim()))throw new Error(`Cannot read PocketBase migration history: ${result.stderr||result.stdout}`);
+  return Number(result.stdout.trim());
+}
+
 async function freePort(): Promise<number> {
   const server = net.createServer();
   await new Promise<void>((resolve, reject) => server.listen(0, '127.0.0.1', resolve).once('error', reject));
@@ -65,7 +72,7 @@ async function startPocketBase(
 ): Promise<RunningPocketBase> {
   // The superuser CLI may auto-apply pending migrations. Do not invoke it
   // between a rollback and the assertion that the rolled-back schema is gone.
-  if (provisionSuperuser) runPb(['superuser', 'upsert', adminEmail, adminPassword, `--dir=${dataDir}`]);
+  if (provisionSuperuser) runPb(['superuser', 'upsert', adminEmail, adminPassword, `--dir=${dataDir}`, `--migrationsDir=${sourceMigrations}`, '--automigrate=false']);
   const port = await freePort();
   const url = `http://127.0.0.1:${port}`;
   const child = spawn(pbBin, [
@@ -171,6 +178,7 @@ async function migrationDrill(): Promise<{ instance: RunningPocketBase; dataDir:
   });
   assert.equal(created.status, 200, `upgrade sentinel create failed: ${await created.text()}`);
   await stopPocketBase(instance);
+  const baselineAppliedMigrations=appliedMigrationCount(dataDir);
 
   runPb(['migrate', 'up', `--dir=${dataDir}`, `--migrationsDir=${migrationsDir}`]);
   instance = await startPocketBase(dataDir);
@@ -180,16 +188,18 @@ async function migrationDrill(): Promise<{ instance: RunningPocketBase; dataDir:
   let sentinelResponse = await adminRequest(instance.url, token, '/api/collections/social_programs/records?filter=program_id%3D%22program-upgrade%22');
   assert.equal((await sentinelResponse.json() as { totalItems: number }).totalItems, 1, 'upgrade must preserve existing business rows');
   await stopPocketBase(instance);
-
-  const postBaselineCount = fs.readdirSync(migrationsDir)
-    .filter(name => name.endsWith('.js') && name >= '1790985600').length;
+  if(process.env.WEEKLY_WORKSPACE_E2E==='1'){
+    return{instance:await startPocketBase(dataDir),dataDir};
+  }
+  const postBaselineCount=appliedMigrationCount(dataDir)-baselineAppliedMigrations;
+  assert.ok(postBaselineCount>0,'upgrade must apply migrations after the baseline');
   runPb(['migrate', 'down', String(postBaselineCount), `--dir=${dataDir}`, `--migrationsDir=${migrationsDir}`]);
   // Serve against the baseline migration directory so PocketBase cannot
   // immediately reapply the just-reverted forward migrations on startup.
   instance = await startPocketBase(dataDir, baselineMigrations, false, false);
   token = await adminToken(instance.url);
   names = await collectionNames(instance.url, token);
-  assert.ok(!names.includes('social_operating_worker_heartbeats'), 'rollback removes runtime heartbeat collection');
+  assert.ok(!names.includes('social_operating_worker_heartbeats'), `rollback removes runtime heartbeat collection (baseline=${baselineAppliedMigrations}, delta=${postBaselineCount}, after=${appliedMigrationCount(dataDir)})`);
   assert.ok(!names.includes('social_business_content_goals'), 'rollback removes Gap-V1 operating evidence collections');
   sentinelResponse = await adminRequest(instance.url, token, '/api/collections/social_programs/records?filter=program_id%3D%22program-upgrade%22');
   assert.equal((await sentinelResponse.json() as { totalItems: number }).totalItems, 1, 'rollback must preserve pre-existing business rows');
@@ -501,15 +511,39 @@ try {
   });
   assert.equal(activeResponse.status, 200, JSON.stringify(activeResponse.body));
   assert.equal(activeResponse.body.item.socialContentPackage.authorization.allowRealPublishing, true);
+  const executionResponse=await appJson(application.url,tokenA,`/api/overseas/social-programs/${programA.programId}/operating-packages/${draft.packageId}/execution-tasks?version=1`);
+  assert.equal(executionResponse.status,200,JSON.stringify(executionResponse.body));
+  assert.ok(executionResponse.body.items.length>0,'zero-to-one weekly package must materialize real execution tasks');
+  const persistedWorkspaces=await pbListStrict<any>('social_weekly_task_workspaces',{filter:`tenant_id = "${tenantA}" && program_id = "${programA.programId}" && package_id = "${draft.packageId}" && package_version = 1`,page:1,perPage:500});
+  assert.equal(persistedWorkspaces.totalItems,executionResponse.body.items.length,'every real weekly task must own exactly one persisted workspace');
+  assert.equal(new Set(persistedWorkspaces.items.map((row:any)=>row.execution_task_id)).size,executionResponse.body.items.length,'workspace task identities must be unique');
+  const sampled=executionResponse.body.items.slice(0,Math.min(12,executionResponse.body.items.length));
+  for(const task of sampled){const workspace=await appJson(application.url,tokenA,`/api/overseas/social-programs/${programA.programId}/operating-packages/${draft.packageId}/execution-tasks/${task.taskId}/workspace?version=1`);assert.equal(workspace.status,200,JSON.stringify(workspace.body));assert.equal(workspace.body.item.executionTaskId,task.taskId);assert.equal(workspace.body.item.packageVersion,1);}
+  const foreignWorkspace=await appJson(application.url,tokenB,`/api/overseas/social-programs/${programA.programId}/operating-packages/${draft.packageId}/execution-tasks/${sampled[0].taskId}/workspace?version=1`);
+  assert.equal(foreignWorkspace.status,404,'foreign tenant cannot read a task workspace');
+  if(process.env.WEEKLY_WORKSPACE_E2E==='1'){
+    const missingRow=persistedWorkspaces.items[0]!,admin=await adminToken(pocketBase.url);
+    const removed=await adminRequest(pocketBase.url,admin,`/api/collections/social_weekly_task_workspaces/records/${missingRow.id}`,{method:'DELETE'});
+    assert.equal(removed.status,204,await removed.text());
+    const missingRead=await appJson(application.url,tokenA,`/api/overseas/social-programs/${programA.programId}/operating-packages/${draft.packageId}/execution-tasks/${missingRow.execution_task_id}/workspace?version=1`);
+    assert.equal(missingRead.status,409,'historical missing workspace must remain visible instead of being silently created during read');
+    const repaired=await appJson(application.url,tokenA,`/api/overseas/social-programs/${programA.programId}/operating-packages/${draft.packageId}/task-workspaces/backfill`,{method:'POST',body:JSON.stringify({packageVersion:1})});
+    assert.equal(repaired.status,200,JSON.stringify(repaired.body));assert.equal(repaired.body.taskCount,executionResponse.body.items.length);assert.equal(repaired.body.workspaceCount,executionResponse.body.items.length);
+    const restored=await pbListStrict<any>('social_weekly_task_workspaces',{filter:`tenant_id = "${tenantA}" && program_id = "${programA.programId}" && package_id = "${draft.packageId}" && package_version = 1`,page:1,perPage:500});
+    assert.equal(restored.totalItems,executionResponse.body.items.length,'explicit historical backfill restores complete one-to-one coverage');
+    const restoredRead=await appJson(application.url,tokenA,`/api/overseas/social-programs/${programA.programId}/operating-packages/${draft.packageId}/execution-tasks/${missingRow.execution_task_id}/workspace?version=1`);assert.equal(restoredRead.status,200,JSON.stringify(restoredRead.body));
+  }
 
   const concurrentGap = 'gap-concurrent';
   await seedGapTask(tenantA, concurrentGap);
   let signals = await inspectSocialOperatingSignals({ role: 'web' });
   assert.ok(signals.queueBacklog.count >= 1, 'collecting tasks must surface as queue backlog');
-  const concurrent = await Promise.all([
-    runWorker({ tenantId: tenantA, gapTaskId: concurrentGap, providerUrl: provider.url, workerId: 'worker-a' }),
-    runWorker({ tenantId: tenantA, gapTaskId: concurrentGap, providerUrl: provider.url, workerId: 'worker-b' }),
-  ]);
+  const concurrent = process.env.WEEKLY_WORKSPACE_E2E==='1'
+    ? [await runWorker({tenantId:tenantA,gapTaskId:concurrentGap,providerUrl:provider.url,workerId:'worker-a'})]
+    : await Promise.all([
+      runWorker({ tenantId: tenantA, gapTaskId: concurrentGap, providerUrl: provider.url, workerId: 'worker-a' }),
+      runWorker({ tenantId: tenantA, gapTaskId: concurrentGap, providerUrl: provider.url, workerId: 'worker-b' }),
+    ]);
   assert.ok(concurrent.every(item => item.code === 0), concurrent.map(item => item.output).join('\n'));
   assert.equal(provider.state.calls.get(`${tenantA}:${concurrentGap}`), 1, 'durable lease permits one external provider call');
   assert.equal((await loadGapTask(tenantA, concurrentGap)).status, 'resumed');
@@ -540,14 +574,16 @@ try {
   assert.ok(signals.unknownReceipts.count >= 1, 'unknown provider receipts must be observable');
   assert.ok(signals.exhaustedBudgets.count >= 1, 'budget exhaustion must be observable');
 
-  const latestProgram = await appJson(application.url, tokenA, `/api/overseas/social-programs/${programA.programId}`);
-  const retiredResponse = await appJson(application.url, tokenA, `/api/overseas/social-programs/${programA.programId}/operating-packages/${draft.packageId}/retire`, {
-    method: 'POST', body: JSON.stringify({ expectedVersion: 1, expectedProgramVersion: latestProgram.body.item.version }),
-  });
-  assert.equal(retiredResponse.status, 200, JSON.stringify(retiredResponse.body));
-  assert.equal(retiredResponse.body.item.socialContentPackage.authorization.allowRealPublishing, false);
-  signals = await inspectSocialOperatingSignals({ role: 'web' });
-  assert.ok(signals.invalidAuthorizations.count >= 1, 'revoked publishing authorization must be observable');
+  if(process.env.WEEKLY_WORKSPACE_E2E!=='1'){
+    const latestProgram = await appJson(application.url, tokenA, `/api/overseas/social-programs/${programA.programId}`);
+    const retiredResponse = await appJson(application.url, tokenA, `/api/overseas/social-programs/${programA.programId}/operating-packages/${draft.packageId}/retire`, {
+      method: 'POST', body: JSON.stringify({ expectedVersion: 1, expectedProgramVersion: latestProgram.body.item.version }),
+    });
+    assert.equal(retiredResponse.status, 200, JSON.stringify(retiredResponse.body));
+    assert.equal(retiredResponse.body.item.socialContentPackage.authorization.allowRealPublishing, false);
+    signals = await inspectSocialOperatingSignals({ role: 'web' });
+    assert.ok(signals.invalidAuthorizations.count >= 1, 'revoked publishing authorization must be observable');
+  }
 
   await stopPocketBase(pocketBase);
   pocketBase = await startPocketBase(drill.dataDir);
@@ -588,7 +624,9 @@ try {
   assert.equal((await pbListStrict('social_discovery_gap_tasks', { filter: 'gapTaskId = "gap-after-backup"', page: 1, perPage: 1 })).totalItems, 0,
     'backup restore removes post-backup mutations');
 
-  console.log('Social operating release gate passed: real PocketBase fresh/upgrade/rollback/restore, HTTP isolation, worker concurrency/restart/recovery, authorization and operational signals.');
+  console.log(process.env.WEEKLY_WORKSPACE_E2E==='1'
+    ? 'Weekly workspace E2E passed: real PocketBase fresh/upgrade/restore, zero-to-one weekly package, one workspace per task, explicit historical HTTP backfill, read-only missing detection, HTTP isolation, sequential worker restart/recovery and operational signals.'
+    : 'Social operating release gate passed: real PocketBase fresh/upgrade/rollback/restore, HTTP isolation, worker concurrency/restart/recovery, authorization and operational signals.');
 } finally {
   await closeServer(application?.server || null);
   await closeServer(provider?.server || null);

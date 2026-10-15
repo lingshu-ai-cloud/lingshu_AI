@@ -1,11 +1,20 @@
 import type {AgentCalendarTask} from './AgentWeeklyCalendar';
+import {agentCalendarResponsibleAgent} from './agentCalendarGroups';
 
 const productionSteps = new Set(['material_preparation','material_readiness','script','storyboard','asset_generation','video_generation','quality_check','rework']);
 
 /** Collapse persisted production nodes only within an explicit, scoped delivery identity. */
 export function projectCalendarDeliverables(tasks: AgentCalendarTask[]): AgentCalendarTask[] {
+  // Weekly goal cards are section summaries. Their persisted workflow nodes are
+  // the actual independently actionable work and must remain separate calendar
+  // cards (especially Monday's operating setup), rather than being represented
+  // by one synthetic summary card.
+  const directIds = new Set(tasks.filter(task => !task.calendarSummaryOnly).map(task => task.id));
+  const expanded = tasks.flatMap(task => task.calendarSummaryOnly && task.internalNodes?.length
+    ? task.internalNodes.filter(node => !directIds.has(node.id))
+    : [task]).map(task => ({...task, agent: agentCalendarResponsibleAgent(task.executionStep, task.agent)}));
   const groups = new Map<string, AgentCalendarTask[]>();
-  for (const task of tasks) {
+  for (const task of expanded) {
     if (!task.deliverableGroup || task.agent === 'human' || !productionSteps.has(task.executionStep || '')) continue;
     const group = groups.get(task.deliverableGroup) || [];
     group.push(task);
@@ -15,7 +24,7 @@ export function projectCalendarDeliverables(tasks: AgentCalendarTask[]): AgentCa
   const replacements = new Map<string, AgentCalendarTask>();
   for (const nodes of groups.values()) {
     const ancestors = new Map(nodes.map(node=>[node.id,node]));
-    const visit=(node:AgentCalendarTask)=>{for(const id of node.dependsOn||[]){const upstream=tasks.find(t=>t.id===id);if(upstream?.calendarInternal&&!ancestors.has(id)){ancestors.set(id,upstream);visit(upstream);}}};
+    const visit=(node:AgentCalendarTask)=>{for(const id of node.dependsOn||[]){const upstream=expanded.find(t=>t.id===id);if(upstream?.calendarInternal&&!ancestors.has(id)){ancestors.set(id,upstream);visit(upstream);}}};
     nodes.forEach(visit);
     const ordered = [...ancestors.values()].sort((a,b)=>`${a.date}T${a.time}`.localeCompare(`${b.date}T${b.time}`));
     // Retain the real quality task identity for navigation and delivery evidence.
@@ -40,5 +49,5 @@ export function projectCalendarDeliverables(tasks: AgentCalendarTask[]): AgentCa
       productionTaskId: productionNode?.productionTaskId,
     });
   }
-  return tasks.filter(task=>!hidden.has(task.id)&&!task.calendarInternal).map(task=>replacements.get(task.id)||task);
+  return expanded.filter(task=>!hidden.has(task.id)&&!task.calendarInternal).map(task=>replacements.get(task.id)||task);
 }

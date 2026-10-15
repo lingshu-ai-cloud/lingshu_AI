@@ -1,0 +1,40 @@
+<cover-view class="safe-layer safe-layer-{{platform}} {{recording ? 'safe-layer-recording' : ''}}" aria-label="主体安全区和{{platform === 'facebook' ? 'Facebook Reels' : 'TikTok'}}界面风险带">
+  <cover-view class="safe-outline">
+    <cover-view class="safe-label">主体安全区</cover-view>
+  </cover-view>
+  <cover-view class="risk-band risk-top"><cover-view class="risk-label risk-label-top">{{platform === 'facebook' ? 'FB 标题风险' : ''}}</cover-view></cover-view>
+  <cover-view class="risk-band risk-right"><cover-view class="risk-label risk-label-right">{{platform === 'facebook' ? 'FB 操作风险' : 'TK 交互风险'}}</cover-view></cover-view>
+  <cover-view class="risk-band risk-bottom"><cover-view class="risk-label risk-label-bottom">{{platform === 'facebook' ? 'FB 说明风险' : 'TK 文案 / CTA 风险'}}</cover-view></cover-view>
+
+  <cover-view wx:if="{{platform === 'tiktok'}}" class="publish-preview publish-preview-tiktok">
+      <cover-view class="preview-top">关注　　推荐</cover-view>
+    <cover-view class="preview-actions">
+      <cover-view class="preview-action"><cover-view class="preview-avatar"></cover-view><cover-view class="preview-action-label">头像</cover-view></cover-view>
+      <cover-view class="preview-action"><cover-view class="preview-dot"></cover-view><cover-view class="preview-action-label">赞</cover-view></cover-view>
+      <cover-view class="preview-action"><cover-view class="preview-dot"></cover-view><cover-view class="preview-action-label">评</cover-view></cover-view>
+      <cover-view class="preview-action"><cover-view class="preview-dot"></cover-view><cover-view class="preview-action-label">藏</cover-view></cover-view>
+      <cover-view class="preview-action"><cover-view class="preview-dot"></cover-view><cover-view class="preview-action-label">转</cover-view></cover-view>
+    </cover-view>
+    <cover-view class="preview-copy">
+      <cover-view class="preview-account">@ 账号</cover-view>
+      <cover-view class="preview-line preview-line-wide">标题 / 配文</cover-view>
+      <cover-view class="preview-line">♫ 音乐</cover-view>
+    </cover-view>
+      <cover-view class="preview-bottom">首页　　朋友　　＋　　消息　　我</cover-view>
+  </cover-view>
+
+  <cover-view wx:else class="publish-preview publish-preview-facebook">
+    <cover-view class="preview-top preview-top-facebook">Reels　　　　　　　　　相机</cover-view>
+    <cover-view class="preview-actions preview-actions-facebook">
+      <cover-view class="preview-action"><cover-view class="preview-dot"></cover-view><cover-view class="preview-action-label">赞</cover-view></cover-view>
+      <cover-view class="preview-action"><cover-view class="preview-dot"></cover-view><cover-view class="preview-action-label">评</cover-view></cover-view>
+      <cover-view class="preview-action"><cover-view class="preview-dot"></cover-view><cover-view class="preview-action-label">转</cover-view></cover-view>
+    </cover-view>
+    <cover-view class="preview-copy preview-copy-facebook">
+      <cover-view class="preview-account"><cover-view class="preview-avatar preview-avatar-inline"></cover-view>账号　·　关注</cover-view>
+      <cover-view class="preview-line preview-line-wide">标题 / 配文</cover-view>
+      <cover-view class="preview-line">♫ 音乐</cover-view>
+    </cover-view>
+    <cover-view class="preview-bottom preview-bottom-facebook">CTA　·　底部导航</cover-view>
+  </cover-view>
+</cover-view>

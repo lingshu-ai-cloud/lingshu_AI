@@ -31,6 +31,8 @@ import { createStarter198Repository } from '../starter198/repository.js';
 import { socialJson } from '../starter198/socialContentValidation.js';
 import { validateContentArtifact } from '../runtime/socialWeeklyResultValidation.js';
 import { decideSocialContentArtifact } from '../starter198/socialContentOutputs.js';
+import { weeklyReviewWindowBounds } from '../socialReview/weeklyReviewTiming.js';
+import {ensureWeeklyTaskWorkspaces} from './weeklyTaskWorkspaces.js';
 import {
   acquireDurableOperationLease,
   releaseDurableOperationLease,
@@ -260,6 +262,25 @@ function publicationBlockers(item: SocialWeeklyPublicationTask): string[] {
   ].filter((value): value is string => Boolean(value));
 }
 
+const publicationLocalDate = (item: SocialWeeklyPublicationTask): string => (
+  publicationInstant(item.publishWindow) === null || !item.publishWindow ? '' : item.publishWindow.slice(0, 10)
+);
+
+/**
+ * A weekly package freezes capacity and delivery targets, but discovery is a
+ * daily input. Keep the calendar date carried by the zoned publication window
+ * so that a later day's script cannot silently consume a Monday-only crawl.
+ */
+const rollingDayForItems = (items: SocialWeeklyPublicationTask[]): string => (
+  items.map(publicationLocalDate).filter(Boolean).sort()[0] ?? ''
+);
+
+const DAILY_ROLLING_LEAD_MS = 9.5 * 60 * 60_000;
+const dailyRollingStart = (items: SocialWeeklyPublicationTask[]): number | null => {
+  const instants = items.map(item => publicationInstant(item.publishWindow)).filter((value): value is number => value !== null);
+  return instants.length ? Math.min(...instants) - DAILY_ROLLING_LEAD_MS : null;
+};
+
 /** A repeated immutable request id is the only authority for treating material
  * as shared. Descriptions are deliberately ignored: similar prose does not
  * prove that the bytes, rights or review request are the same. Each consumer
@@ -307,43 +328,63 @@ export function planWeeklyExecutionTasks(
   });
 
   const accountIds = [...new Set(publications.map(item => item.accountId))];
-  const discovery = accountIds.filter(accountId=>publications.some(p=>p.accountId===accountId&&!p.inventoryReuseRef)).map(accountId => add({
-    workflowKind: 'discovery', scope: 'account', subjectId: accountId,
+  const discoveryKeys = [...new Set(publications.filter(item => !item.inventoryReuseRef).map(item => `${item.accountId}:${publicationLocalDate(item)}`))]
+    .filter(key => !key.endsWith(':'));
+  const discovery = discoveryKeys.map(key => {
+    const separator = key.lastIndexOf(':');
+    const accountId = key.slice(0, separator);
+    const rollingDate = key.slice(separator + 1);
+    const dayPublications = publications.filter(item => item.accountId === accountId && publicationLocalDate(item) === rollingDate && !item.inventoryReuseRef);
+    return add({
+    notBeforeAt: dailyRollingStart(dayPublications),
+    workflowKind: 'discovery', scope: 'account', subjectId: `${accountId}:${rollingDate}`,
     accountId, publicationTaskId: null, dependsOnTaskIds: [readiness.taskId],
-    inputSnapshot: { accountId, weekStart: pkg.weekStart, objective: pkg.objective },
-    budget: { category: 'discovery', limitCny: moneyShare(pkg.discoveryBudgetCny, accountIds.length) },
+    inputSnapshot: {
+      accountId, weekStart: pkg.weekStart, objective: pkg.objective,
+      rollingCadence: 'daily_incremental', rollingDate,
+      publicationTaskIds: dayPublications.map(item => item.publicationTaskId),
+      deduplication: 'source_identity_and_content_fingerprint',
+      freshnessPolicy: 'created_or_updated_since_previous_successful_collection',
+    },
+    budget: { category: 'discovery', limitCny: moneyShare(pkg.discoveryBudgetCny, discoveryKeys.length) },
     ownBlockingReasons: [],
     stepKind: 'benchmark_collection', responsibleActor: 'director_agent', estimatedDurationMinutes: 60,
-  }));
+  });});
 
   const byMother = new Map<string, SocialWeeklyPublicationTask[]>();
-  for (const item of publications.filter(p=>!p.inventoryReuseRef)) byMother.set(item.motherContentId, [...(byMother.get(item.motherContentId) ?? []), item]);
+  for (const item of publications.filter(p=>!p.inventoryReuseRef)) {
+    const key = `${item.motherContentId}:${publicationLocalDate(item)}`;
+    byMother.set(key, [...(byMother.get(key) ?? []), item]);
+  }
   const sourceAllocation = allocateWeeklyReferenceSources(publications.filter(p=>!p.inventoryReuseRef), pkg.referenceSourcePolicy);
   const productionBudget = moneyShare(pkg.socialContentPackage.weeklyBudgetCny, publications.filter(p=>!p.inventoryReuseRef).length);
   const directingByMother = new Map<string, WeeklyExecutionTask>();
   const scheduleByMother = new Map<string, WeeklyExecutionTask>();
   const storyboardByPublication = new Map<string, WeeklyExecutionTask>();
-  for (const [motherContentId, items] of byMother) {
+  for (const [motherDayKey, items] of byMother) {
+    const motherContentId = items[0]!.motherContentId;
     const referenceSource=sourceAllocation.get(motherContentId);
+    const rollingDate = rollingDayForItems(items);
     const scoring = add({
-      workflowKind: 'directing', scope: 'content', subjectId: `${motherContentId}:benchmark-scoring`,
+      notBeforeAt: dailyRollingStart(items),
+      workflowKind: 'directing', scope: 'content', subjectId: `${motherContentId}:${rollingDate}:benchmark-scoring`,
       accountId: null, publicationTaskId: null,
-      dependsOnTaskIds: referenceSource === 'owned' ? [readiness.taskId] : discovery.filter(task => items.some(item => item.accountId === task.accountId)).map(task => task.taskId),
-      inputSnapshot: { motherContentId, referenceSource, referenceWork: referenceSource === 'owned' ? 'owned_history_metrics_diagnosis' : 'external_benchmark_scoring', candidatePolicy: 'server_score_required' }, budget: noBudget,
+      dependsOnTaskIds: referenceSource === 'owned' ? [readiness.taskId] : discovery.filter(task => task.inputSnapshot.rollingDate === rollingDate && items.some(item => item.accountId === task.accountId)).map(task => task.taskId),
+      inputSnapshot: { motherContentId, referenceSource, rollingCadence: 'daily_incremental', rollingDate, referenceWork: referenceSource === 'owned' ? 'owned_history_metrics_diagnosis' : 'external_benchmark_scoring', candidatePolicy: 'server_score_required' }, budget: noBudget,
       ownBlockingReasons: [], stepKind: 'benchmark_scoring', responsibleActor: 'director_agent', estimatedDurationMinutes: 20,
     });
     const directing = add({
-      workflowKind: 'directing', scope: 'content', subjectId: motherContentId,
+      workflowKind: 'directing', scope: 'content', subjectId: `${motherContentId}:${rollingDate}`,
       accountId: null, publicationTaskId: null, dependsOnTaskIds: [scoring.taskId],
-      inputSnapshot: { motherContentId, referenceSource, referenceWork: referenceSource === 'owned' ? 'owned_tone_inheritance' : 'external_structure_adaptation', variants: items }, budget: noBudget,
+      inputSnapshot: { motherContentId, referenceSource, rollingCadence: 'daily_incremental', rollingDate, referenceWork: referenceSource === 'owned' ? 'owned_tone_inheritance' : 'external_structure_adaptation', variants: items }, budget: noBudget,
       ownBlockingReasons: [...new Set(items.flatMap(publicationBlockers))],
       stepKind: 'director_analysis', responsibleActor: 'director_agent', estimatedDurationMinutes: 45,
     });
-    directingByMother.set(motherContentId, directing);
-    scheduleByMother.set(motherContentId, add({
-      workflowKind: 'directing', scope: 'content', subjectId: `${motherContentId}:business-schedule`,
+    directingByMother.set(motherDayKey, directing);
+    scheduleByMother.set(motherDayKey, add({
+      workflowKind: 'directing', scope: 'content', subjectId: `${motherContentId}:${rollingDate}:business-schedule`,
       accountId: null, publicationTaskId: null, dependsOnTaskIds: [directing.taskId],
-      inputSnapshot: { motherContentId, referenceSource, directorTaskId: directing.taskId, variants: items }, budget: noBudget,
+      inputSnapshot: { motherContentId, referenceSource, directorTaskId: directing.taskId, rollingCadence: 'daily_incremental', rollingDate, decisionScope: 'today_content_theme', variants: items }, budget: noBudget,
       ownBlockingReasons: [], stepKind: 'business_schedule', responsibleActor: 'business_agent', estimatedDurationMinutes: 15,
     }));
     items.forEach(item => {
@@ -352,13 +393,13 @@ export function planWeeklyExecutionTasks(
       const base = `${item.publicationTaskId}:${mode}`;
       const preparation = (pkg.executionGraphVersion??1)>=2 ? add({
         workflowKind:'content',scope,subjectId:`${base}:material-preparation`,accountId:item.accountId,publicationTaskId:item.publicationTaskId,
-        dependsOnTaskIds:[scheduleByMother.get(motherContentId)!.taskId],
+        dependsOnTaskIds:[readiness.taskId],
         inputSnapshot:{publicationTask:item,motherContentId,mode,referenceSource},budget:noBudget,ownBlockingReasons:[],
         stepKind:'material_preparation',responsibleActor:'content_agent',estimatedDurationMinutes:20,
       }):null;
       const script = add({
         workflowKind: 'directing', scope, subjectId: `${base}:script`, accountId: item.accountId, publicationTaskId: item.publicationTaskId,
-        dependsOnTaskIds: [preparation?.taskId??scheduleByMother.get(motherContentId)!.taskId],
+        dependsOnTaskIds: [scheduleByMother.get(motherDayKey)!.taskId, ...(preparation ? [preparation.taskId] : [])],
         inputSnapshot: { publicationTask: item, motherContentId, mode, referenceSource, source: 'director_analysis_and_enterprise_facts' },
         budget: { category: 'production', limitCny: productionBudget }, ownBlockingReasons: [],
         stepKind: 'script', responsibleActor: 'director_agent', estimatedDurationMinutes: 30,
@@ -374,7 +415,8 @@ export function planWeeklyExecutionTasks(
   }
 
   const approvalByPublication = new Map<string, WeeklyExecutionTask>();
-  for (const [motherContentId, items] of byMother) {
+  for (const [motherDayKey, items] of byMother) {
+    const motherContentId = items[0]!.motherContentId;
     const referenceSource=sourceAllocation.get(motherContentId);
     const original = items.find(item => item.adaptationOfPublicationTaskId === null) ?? items[0]!;
     let originalQualityTask: WeeklyExecutionTask | null = null;
@@ -385,7 +427,7 @@ export function planWeeklyExecutionTasks(
       const storyboard = storyboardByPublication.get(item.publicationTaskId)!;
       const material = add({
         workflowKind: 'content', scope, subjectId: `${base}:material-readiness`, accountId: item.accountId, publicationTaskId: item.publicationTaskId,
-        dependsOnTaskIds: [scheduleByMother.get(motherContentId)!.taskId, storyboard.taskId, ...(mode === 'adaptation' && originalQualityTask ? [originalQualityTask.taskId] : [])],
+        dependsOnTaskIds: [scheduleByMother.get(motherDayKey)!.taskId, storyboard.taskId, ...(mode === 'adaptation' && originalQualityTask ? [originalQualityTask.taskId] : [])],
         inputSnapshot: { publicationTask: item, motherContentId, mode, referenceSource, qualityTier: 'premium' },
         budget: noBudget, ownBlockingReasons: ['business_dispatch_required'],
         stepKind: 'material_readiness', responsibleActor: 'content_agent', estimatedDurationMinutes: 20,
@@ -481,21 +523,35 @@ export function planWeeklyExecutionTasks(
     });
   });
 
-  const engagement = accountIds.map(accountId => add({
-    workflowKind: 'engagement', scope: 'account', subjectId: accountId,
-    accountId, publicationTaskId: null,
+  const engagement = publications.map(publication => add({
+    workflowKind: 'engagement', scope: 'publication', subjectId: `${publication.publicationTaskId}:daily-feedback`,
+    accountId: publication.accountId, publicationTaskId: publication.publicationTaskId,
     dependsOnTaskIds: [
-      ...publishing.filter(item => item.accountId === accountId).map(item => item.taskId),
-      ...customerHandoffs.filter(item => item.accountId === accountId).map(item => item.taskId),
+      publishing.find(item => item.publicationTaskId === publication.publicationTaskId)!.taskId,
+      ...customerHandoffs.filter(item => item.publicationTaskId === publication.publicationTaskId).map(item => item.taskId),
     ],
-    inputSnapshot: { accountId, weekStart: pkg.weekStart, weekEnd: pkg.weekEnd, profileWork: pkg.referenceSourcePolicy?.profile==='b2b_established'?'existing_customer_and_dual_source_attribution':'new_inquiry_and_first_baseline_attribution' },
+    inputSnapshot: { accountId: publication.accountId, publicationTaskId: publication.publicationTaskId, rollingCadence: 'daily_feedback', rollingDate: publicationLocalDate(publication), feedsNextDailyCollection: true, weekStart: pkg.weekStart, weekEnd: pkg.weekEnd, profileWork: pkg.referenceSourcePolicy?.profile==='b2b_established'?'existing_customer_and_dual_source_attribution':'new_inquiry_and_first_baseline_attribution' },
     budget: noBudget, ownBlockingReasons: [],
-    stepKind: 'performance_monitoring', responsibleActor: 'business_agent', estimatedDurationMinutes: 60,
+    stepKind: 'performance_monitoring', responsibleActor: 'business_agent', estimatedDurationMinutes: 30,
   }));
+  const reviewWindow = weeklyReviewWindowBounds(pkg);
+  const sundayReviewNotBeforeAt = Date.parse(reviewWindow.endsAt);
   const review = add({
+    // The card belongs to Sunday evening in the product calendar. Actual
+    // execution still waits for every publication and monitoring dependency,
+    // so a late data receipt moves the task later instead of fabricating an
+    // early completed review.
+    notBeforeAt: sundayReviewNotBeforeAt,
     workflowKind: 'review', scope: 'package', subjectId: pkg.packageId,
-    accountId: null, publicationTaskId: null, dependsOnTaskIds: engagement.map(item => item.taskId),
-    inputSnapshot: { objective: pkg.objective, successCriteria: pkg.successCriteria, profileWork: pkg.referenceSourcePolicy?.profile==='b2b_established'?'dual_source_performance_and_quota_review':'cold_start_baseline_and_profile_upgrade_review' },
+    accountId: null, publicationTaskId: null,
+    dependsOnTaskIds: [...new Set([...publishing.map(item => item.taskId), ...engagement.map(item => item.taskId)])],
+    inputSnapshot: {
+      objective: pkg.objective,
+      successCriteria: pkg.successCriteria,
+      reviewWindow,
+      waitsForAllWeeklyProductionAndPublishing: true,
+      profileWork: pkg.referenceSourcePolicy?.profile==='b2b_established'?'dual_source_performance_and_quota_review':'cold_start_baseline_and_profile_upgrade_review',
+    },
     budget: noBudget, ownBlockingReasons: [],
     stepKind: 'weekly_review', responsibleActor: 'business_agent', estimatedDurationMinutes: 45,
   });
@@ -593,7 +649,9 @@ export async function materializeWeeklyExecutionTasks(
       if(ref||refs.length){if(scheduleHash(ref)!==scheduleHash(record.ref)||refs.length!==1||scheduleHash(refs[0])!==scheduleHash(record.ref))throw new SocialProgramError('weekly_execution_continuation_ref_changed',409,'承接引用与真实冻结凭据不一致。');continue;}
       await assert();await writeWeeklyExecutionTask(dataStore,row,{...actual,inputSnapshot:{...actual.inputSnapshot,weeklyContinuationRef:record.ref},upstreamVersionRefs:[...actual.upstreamVersionRefs,record.ref]});
     }
-    return listWeeklyExecutionTasks(dataStore,tenantId,pkg.programId,pkg.packageId,pkg.version);
+    const tasks=await listWeeklyExecutionTasks(dataStore,tenantId,pkg.programId,pkg.packageId,pkg.version);
+    await ensureWeeklyTaskWorkspaces(dataStore,tasks);
+    return tasks;
   };
   if (existing.length && ((pkg as WeeklyScheduledPackage).scheduleRevisionRef || (pkg as WeeklyOperatingPackage&{templateApplicationRef?:VersionedSocialRef}).templateApplicationRef)) {
     const expectedByKey=new Map(planned.map(t=>[t.idempotencyKey,t]));
@@ -606,6 +664,7 @@ export async function materializeWeeklyExecutionTasks(
     if (existing.length !== planned.length || existing.some(item => !expected.has(item.idempotencyKey)||scheduleHash(item.dependsOnTaskIds)!==scheduleHash(planned.find(p=>p.idempotencyKey===item.idempotencyKey)!.dependsOnTaskIds))) {
       throw new SocialProgramError('weekly_execution_task_integrity_violation', 409, '周包执行任务集与当前版本不一致。');
     }
+    await ensureWeeklyTaskWorkspaces(dataStore,existing);
     return existing;
   }
   const created: WeeklyExecutionTaskRow[] = [];

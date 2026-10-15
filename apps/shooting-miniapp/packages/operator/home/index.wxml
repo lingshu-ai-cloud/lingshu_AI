@@ -1,0 +1,36 @@
+<view class="page-shell">
+  <view class="top-safe"></view>
+  <view class="identity-bar">
+    <view class="identity-copy"><text class="organization">{{organization}}</text><view class="edition" bindtap="openEdition">{{edition}}⌄</view></view>
+    <button class="message-button" bindtap="openMessages" aria-label="消息"><view class="bell"></view><text wx:if="{{unread}}" class="badge">{{unread}}</text></button>
+  </view>
+
+  <view class="content">
+    <view wx:if="{{error}}" class="notice error">{{error}}<text bindtap="refresh">重试</text></view>
+    <view class="week-card {{calendarExpanded ? 'expanded' : 'collapsed'}}">
+      <view class="week-heading" bindtap="toggleCalendar" aria-role="button" aria-label="{{calendarExpanded ? '收起周日历' : '展开周日历'}}" aria-expanded="{{calendarExpanded}}"><view class="week-action" data-offset="-1" catchtap="changeWeek">上一周</view><view class="week-summary"><text class="week-range">{{week.start}} — {{week.end}}</text><text class="week-chevron">{{calendarExpanded ? '⌃' : '⌄'}}</text></view><view class="week-action" data-offset="1" catchtap="changeWeek">下一周</view></view>
+      <view wx:if="{{calendarExpanded}}" class="days"><view wx:for="{{days}}" wx:key="date" class="day {{item.selected ? 'selected' : ''}}" data-date="{{item.date}}" bindtap="selectDay"><text class="weekday">{{item.label}}</text><text class="day-number">{{item.number}}</text><view wx:if="{{item.count}}" class="day-indicator"></view></view></view>
+    </view>
+
+    <view class="metric-band">
+      <view class="metric"><text class="metric-value">{{counts.plannedFilms}}</text><text class="metric-label">本周计划生产数量</text></view>
+      <view class="metric"><text class="metric-value">{{counts.pendingAcceptance}}</text><text class="metric-label">待验收成片数量</text></view>
+      <view class="metric" data-key="shooting" bindtap="openMetric"><text class="metric-value">{{counts.pendingShots}}</text><text class="metric-label">待拍镜头数量</text></view>
+    </view>
+
+    <view class="section-heading"><view><text class="section-title">今日待拍任务</text><text class="section-note">点击或右滑分镜卡片，直接开始拍摄</text></view><text class="section-count">{{todayShots.length}} 项</text></view>
+    <view wx:if="{{loading && !loaded}}" class="state-card">正在同步真实工作数据…</view>
+    <view wx:elif="{{!todayShots.length}}" class="state-card success"><view class="check">✓</view><view><text class="state-title">今天没有待拍镜头</text><text class="state-note">新的拍摄任务会由网页端或 Agent 排期生成</text></view></view>
+    <view wx:else class="shot-list">
+      <view wx:for="{{todayShots}}" wx:key="id" class="shot-card" data-id="{{item.id}}" bindtap="openShot" bindtouchstart="shotTouchStart" bindtouchend="shotTouchEnd">
+        <view class="shot-index">{{index + 1}}</view>
+        <view class="shot-content">
+          <view class="shot-top"><text class="shot-title">{{item.title}}</text><text class="status">待拍</text></view>
+          <text class="shot-requirement">{{item.requirement}}</text>
+          <view class="shot-meta"><text>{{item.durationText}}</text><text>{{item.ratioText}}</text><text>{{item.soundText}}</text></view>
+        </view><text class="shot-arrow">›</text>
+      </view>
+    </view>
+  </view>
+  <operator-nav active="work"></operator-nav>
+</view>

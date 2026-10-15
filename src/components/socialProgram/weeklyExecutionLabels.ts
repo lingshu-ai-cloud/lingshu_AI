@@ -5,7 +5,7 @@ export const STEP_LABEL: Record<WeeklyProductionStepKind, string> = {
   benchmark_collection: '2. 采集对标账号与视频',
   benchmark_scoring: '3. 服务端评分与筛选',
   director_analysis: '4. 编导拆解对标结论',
-  business_schedule: '5. 合并详细内容排期',
+  business_schedule: '5. 确定今日成片主题与排期',
   material_preparation: '制作前准备素材与授权',
   material_readiness: '分镜后复核素材与授权',
   script: '7. 生成口播与脚本',

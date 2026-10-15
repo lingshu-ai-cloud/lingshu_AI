@@ -1,5 +1,6 @@
 const { taskExecutionStatus } = require('./generated/weekly-work-status');
-const { labels, roles, day, time, week, sortUrgency, scheduleNextAction } = require('./generated/mobile-domain');
+const { labels, roles: sharedRoles, day, time, week, sortUrgency, scheduleNextAction } = require('./generated/mobile-domain');
+const roles = { ...sharedRoles, orchestrator: '经营 Agent' };
 function swipe(dx, dy) { return Math.abs(dx) >= 85 && Math.abs(dx) > Math.abs(dy) * 1.4 ? dx > 0 ? 'process' : 'later' : ''; }
 function taskView(t) { const execution = taskExecutionStatus(t); return { ...t, execution, statusLabel: execution.statusLabel, agentLabel: roles[t.agent_role] || t.agent_role || '未指定', reason: t.blocked_reason || t.description || '', date: day(t.due_at || t.output?.scheduledAt) }; }
 function first(...values) { return values.find(value => value !== undefined && value !== null && value !== ''); }

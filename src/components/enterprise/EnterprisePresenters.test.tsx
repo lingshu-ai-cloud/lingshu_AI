@@ -30,6 +30,12 @@ test('initial configuration presents one unified presenter onboarding instead of
   assert.match(arkPanelSource, /管理员还需配置/);
 });
 
+test('enterprise presenter recovery persists its intent and lets the visible digital employee page open the dialog', () => {
+  assert.match(source, /sessionStorage\.setItem\('lingshu:open-digital-employee-guide', 'presenter'\)/);
+  assert.match(source, /CustomEvent\('lingshu:navigate', \{ detail: \{ page: 'digitalEmployees' \} \}\)/);
+  assert.doesNotMatch(source, /requestAnimationFrame|setTimeout/);
+});
+
 test('enterprise presenter page supports editing, optional certification and revoking existing people', () => {
   const html = renderToStaticMarkup(<EnterprisePresenters />);
   assert.match(html, /人物与出镜/);
@@ -49,7 +55,7 @@ test('content production redirects setup to the shared beginner guide', () => {
   assert.match(html, /打开数字人接入/);
   assert.match(html, /制作页面不再重复承载人物供应商配置/);
   assert.match(source, /lingshu:open-digital-employee-guide/);
-  assert.match(source, /step: 'presenter'/);
+  assert.match(source, /setItem\('lingshu:open-digital-employee-guide', 'presenter'\)/);
 });
 
 test('all presenter mutations invalidate assistant decisions immediately', () => {

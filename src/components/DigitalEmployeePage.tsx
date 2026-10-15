@@ -1384,7 +1384,7 @@ function OnboardingPanel({
       onClose={onClose}
       onSkip={dismissible ? onClose : undefined}
       skipLabel="稍后继续"
-      primaryLabel="保存企业档案"
+      primaryLabel="确认企业信息"
       primaryDisabled={Boolean(missingProfileFields.length)}
       onPrimary={() => void saveEnterpriseProfile()}
     >
@@ -3749,11 +3749,13 @@ function OnboardingWelcome({ onClose }: { onClose: () => void }) {
 }
 
 export default function DigitalEmployeePage({
+  active = true,
   onNavigate,
   onOpenMonitor,
   onViewResults,
   weeklyPlanNavigation,
 }: {
+  active?: boolean;
   onNavigate?: (page: Page) => void;
   onOpenMonitor?: () => void;
   onViewResults?: () => void;
@@ -3810,22 +3812,31 @@ export default function DigitalEmployeePage({
   const handledWeeklyPlanNavigation = useRef<number | null>(null);
 
   useEffect(() => {
+    let deferredOpen: number | undefined;
     const openGuide = (event?: Event) => {
       const requested = (event as CustomEvent<{ step?: string }> | undefined)?.detail?.step === 'presenter' ? 'presenter' : 'start';
       setApplicationGuideEntry(requested);
       setApplicationGuideOpen(true);
     };
     window.addEventListener('lingshu:open-digital-employee-guide', openGuide);
-    try {
+    if (active) try {
       const requested = sessionStorage.getItem('lingshu:open-digital-employee-guide');
       if (requested === 'true' || requested === 'presenter') {
         sessionStorage.removeItem('lingshu:open-digital-employee-guide');
-        setApplicationGuideEntry(requested === 'presenter' ? 'presenter' : 'start');
-        setApplicationGuideOpen(true);
+        // React Activity reconnects passive effects before rc-dialog has a
+        // stable focus handle. Open in the next task, after the retained page
+        // has fully reconnected, so Ant never focuses its motion controller.
+        deferredOpen = window.setTimeout(() => {
+          setApplicationGuideEntry(requested === 'presenter' ? 'presenter' : 'start');
+          setApplicationGuideOpen(true);
+        }, 0);
       }
     } catch { /* storage can be unavailable */ }
-    return () => window.removeEventListener('lingshu:open-digital-employee-guide', openGuide);
-  }, []);
+    return () => {
+      window.removeEventListener('lingshu:open-digital-employee-guide', openGuide);
+      if (deferredOpen !== undefined) window.clearTimeout(deferredOpen);
+    };
+  }, [active]);
 
   const load = async (goalId = viewGoalId) => {
     const requestVersion = ++overviewRequestVersionRef.current;
@@ -4897,7 +4908,7 @@ export default function DigitalEmployeePage({
           </div>
         </div>
       </div>}
-      {applicationGuideOpen && (
+      {active && applicationGuideOpen && (
         <OnboardingPanel
           initial={data.config}
           readiness={data.businessSnapshot?.readiness || []}

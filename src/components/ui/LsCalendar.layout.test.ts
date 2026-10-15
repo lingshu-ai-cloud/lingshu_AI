@@ -41,6 +41,7 @@ assert.equal(evaluate(expression('contentHeight'), { view: 'dayGridMonth', fixed
 assert.equal(attributes.get('scrollTime')?.initializer?.getText(file), '"08:00:00"');
 assert.equal(attributes.get('slotMinTime')?.initializer?.getText(file), '"08:00:00"');
 assert.equal(attributes.get('slotMaxTime')?.initializer?.getText(file), '"22:00:00"');
+assert.equal(attributes.get('slotDuration')?.initializer?.getText(file), '"00:30:00"', 'half-hour rows give 30-minute three-line cards enough physical height without falsifying their duration');
 assert.equal(attributes.get('slotHeaderInterval')?.initializer?.getText(file), '"02:00:00"', 'the left time axis must stay concise');
 assert.ok(attributes.has('scrollTimeReset'));
 assert.equal(evaluate(expression('allDaySlot'), { eventCardMode: 'compact', inputs: [{ allDay: false }] }), false, 'the empty all-day lane must not create a nested-looking calendar layer');
@@ -53,6 +54,13 @@ assert.equal(evaluate(expression('eventShortHeight'), {}), 68);
 assert.equal(attributes.get('eventOrder')?.initializer?.getText(file), '"start,id"', 'FullCalendar owns a deterministic start-time and stable-id event order');
 assert.ok(attributes.has('eventOrderStrict'), 'event-card order must not be rearranged to improve visual compaction');
 assert.equal(evaluate(expression('slotEventOverlap'), {}), false, 'time-grid cards must never overlap');
+assert.match(source, /item\.cardLines \? ' ls-calendar-event-three-row'/, 'Agent hour cards opt into one stable three-row treatment');
+assert.match(source, /item\.planPlaceholder \? ' ls-calendar-event-placeholder'/, 'planned cadence slots remain visually distinct from persisted tasks');
+assert.match(source, /item\.status === 'done' && !item\.planPlaceholder/, 'only a persisted completed task receives the green completion check');
+assert.match(css, /\.ls-calendar-event-content-three-row\s*\{[^}]*height:\s*100%;[^}]*grid-template-rows:\s*repeat\(3, 14px\)/, 'Agent task cards reserve three complete, stable text rows');
+assert.match(css, /\.fc-timegrid-event-harness\.ls-calendar-time-vertical-flow\s*\{[^}]*left:\s*2px !important;[^}]*right:\s*2px !important;[^}]*width:\s*auto !important/, 'timed Agent cards override FullCalendar physical columns and retain the full day width');
+assert.match(css, /\.ls-calendar-event-placeholder\s*\{[^}]*border-style:\s*dashed !important/, 'planned cadence slots cannot masquerade as executable task cards');
+assert.match(css, /\.ls-calendar-event-row\s*\{[^}]*font-size:\s*12px/, 'calendar business copy must not fall below the design-system body minimum');
 assert.ok(inputsInitializer, 'calendar inputs should be derived inside the shared component');
 {
   const originalEvents = [
@@ -81,6 +89,19 @@ assert.ok(inputsInitializer, 'calendar inputs should be derived inside the share
   }) as Array<{ id: string }>;
   assert.equal(fullWeekInputs.length, 18, 'the fixed weekly calendar must retain all 18 scheduled cards');
   assert.equal(new Set(Array.from(fullWeekInputs, item => item.id)).size, 18, 'each scheduled card keeps its stable FullCalendar key');
+
+  const simultaneous = [
+    { id: 'task-a', title: '任务 A', start: '2026-10-14T10:00:00+08:00', end: '2026-10-14T10:30:00+08:00', status: 'planned', cardLines: ['编导', '任务 A', '10:00'] },
+    { id: 'task-b', title: '任务 B', start: '2026-10-14T10:00:00+08:00', end: '2026-10-14T10:30:00+08:00', status: 'planned', cardLines: ['内容', '任务 B', '10:00'] },
+    { id: 'task-c', title: '任务 C', start: '2026-10-14T10:30:00+08:00', end: '2026-10-14T11:00:00+08:00', status: 'planned', cardLines: ['经营', '任务 C', '10:30'] },
+  ];
+  const simultaneousInputs = evaluate(inputsInitializer, {
+    events: simultaneous,
+    onMoveEvent: undefined,
+    useMemo: (factory: () => unknown) => factory(),
+  }) as Array<{ start: string; extendedProps: { item: { start: string } } }>;
+  assert.equal(Array.from(simultaneousInputs, input => input.start).join(','), '2026-10-14T02:00:00.000Z,2026-10-14T03:00:00.000Z,2026-10-14T04:00:00.000Z', 'same-time cards use non-overlapping full-hour presentation slots so all three information rows remain visible');
+  assert.equal(Array.from(simultaneousInputs, input => input.extendedProps.item.start).join(','), simultaneous.map(event => event.start).join(','), 'details and persistence retain the original scheduled time');
 }
 assert.equal(evaluate(expression('dayMaxEvents'), { showAllEvents: false, eventCardMode: 'media', view: 'dayGridWeek' }), false, 'the weekly media-card flow must keep every scheduled card visible');
 assert.equal(evaluate(expression('dayMaxEvents'), { showAllEvents: false, eventCardMode: 'compact', view: 'dayGridMonth' }), 3, 'compact month views retain their native overflow control');
@@ -191,6 +212,10 @@ assert.match(source, /const revealObserverRef = useRef<IntersectionObserver \| n
 assert.match(source, /revealedEventIdsRef\.current\.has\(info\.event\.id\)/, 'stable event ids prevent replay after refresh or remount');
 assert.match(source, /eventWillUnmount=\{info => \{[\s\S]*?\.unobserve\(element\)[\s\S]*?mountedEventElementsRef\.current\.delete\(element\)/, 'unmounted cards must be detached from reveal observation');
 assert.match(css, /\.ls-calendar \.ls-calendar-event-reveal\s*\{[^}]*opacity:\s*0;[^}]*translateY\(8px\)[^}]*var\(--ls-motion-enter\)[^}]*var\(--ls-ease-enter\)/, 'scroll reveal must use the shared restrained enter motion');
+assert.match(source, /ls-calendar-event-aggregate-/, 'aggregate workflow cards expose their summary role to the calendar surface');
+assert.match(css, /#agent-weekly-calendar \.ls-calendar-event-aggregate/, 'summary styling stays scoped to the Agent weekly calendar');
+assert.match(source, /slotLaneClass=\{\(info: \{date: Date\}\) => slotClassNames\(info\.date\)\}/, 'Agent calendars can compact time rows that are empty across the whole visible week');
+assert.match(css, /#agent-weekly-calendar \.fc-timegrid-slot\.ls-calendar-slot-collapsed/, 'empty time compression stays scoped to the Agent weekly calendar');
 assert.match(css, /@media \(prefers-reduced-motion: reduce\)[^{]*\{[^}]*\.ls-calendar \.ls-calendar-event-reveal[^}]*opacity:\s*1 !important;[^}]*transform:\s*none !important;[^}]*transition:\s*none !important/, 'reduced motion must reveal every card immediately');
 assert.doesNotMatch(css, /\.ls-calendar[^}]*transition-delay/, 'calendar cards must never use a staggered reveal');
 console.log('Calendar bounded workspace, truthful time axis, scroll reveal and compact event layout tests passed');

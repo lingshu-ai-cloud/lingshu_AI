@@ -371,8 +371,8 @@ export function buildWeeklyPlan(goal: WeeklyGoalInput, config: DigitalEmployeeCo
     },
     {
       key: 'content_mode_routing',
-      title: '经营 Agent 制定详细选题与排期',
-      description: '经营 Agent 读取编导 Agent 的爆款分析、脚本与分镜结论，在内容数量、生产预算和交期内确定每条内容的选题、产品、参考视频、账号、平台与发布时间，并形成内容 Agent 可执行的派单。',
+      title: '经营 Agent 确定今日成片主题与排期',
+      description: '经营 Agent 读取当天编导 Agent 的新增爆款分析，只确定当天成片的主题、产品、参考视频、账号、平台与发布时间，并形成内容 Agent 可执行的派单；周计划只约束总量、预算与平台节奏。',
       agentRole: 'business', backgroundCapability: 'planner', kind: 'planning', sequence: 5, priority: 'high', requiresApproval: false, dependsOn: ['viral_analysis'], expectedMinutes: 3,
       businessDomain: 'content', capabilityKey: 'studio.mode_routing', destination: 'scriptLibrary', statusSource: 'content_batch_plans.orders', executionMode: 'internal', externalEffect: 'draft',
     },

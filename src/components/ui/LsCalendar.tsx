@@ -40,6 +40,7 @@ type Props = {
   timeZone?: string;
   loading?: boolean;
   timeGridHeight?: number | string;
+  collapseEmptyTimeRanges?: boolean;
   fixedHeight?: number | string;
   primaryAction?: ReactNode;
   filters?: ReactNode;
@@ -159,7 +160,7 @@ function CalendarIdentityMark({ identity }: { identity: LsCalendarIdentity }) {
 }
 
 /** Standard plugins only: all calendar pages share the same events, timezone and accessible detail path. */
-export function LsCalendar({ events, label, initialDate, initialView = 'dayGridMonth', view: controlledView, firstDay = 1, eventCardMode = 'compact', dateOnly = false, showAllEvents = false, density = 'default', flush = false, date, timeZone = 'Asia/Shanghai', loading, timeGridHeight = 'clamp(320px, calc(100dvh - 280px), 720px)', fixedHeight, primaryAction, filters, onRefresh, onDatesSet, onDateClick, onEventClick, onExternalDrop, onMoveEvent, detailsTitle = '排期详情', detailsMedia = 'large', detailsLayout = 'standard', workspaceMode = 'bounded', renderDetails }: Props) {
+export function LsCalendar({ events, label, initialDate, initialView = 'dayGridMonth', view: controlledView, firstDay = 1, eventCardMode = 'compact', dateOnly = false, showAllEvents = false, density = 'default', flush = false, date, timeZone = 'Asia/Shanghai', loading, timeGridHeight = 'clamp(320px, calc(100dvh - 280px), 720px)', collapseEmptyTimeRanges = false, fixedHeight, primaryAction, filters, onRefresh, onDatesSet, onDateClick, onEventClick, onExternalDrop, onMoveEvent, detailsTitle = '排期详情', detailsMedia = 'large', detailsLayout = 'standard', workspaceMode = 'bounded', renderDetails }: Props) {
   const calendarRef = useRef<CalendarRef>(null);
   const hostRef = useRef<HTMLDivElement>(null);
   const revealObserverRef = useRef<IntersectionObserver | null>(null);
@@ -222,20 +223,71 @@ export function LsCalendar({ events, label, initialDate, initialView = 'dayGridM
     revealObserverRef.current = null;
     mountedEventElementsRef.current.clear();
   }, []);
-  const inputs = useMemo<EventInput[]>(() => [...events]
-    .sort((left, right) => {
+  const inputs = useMemo<EventInput[]>(() => {
+    const ordered = [...events].sort((left, right) => {
       const leftInstant = new Date(left.start).getTime();
       const rightInstant = new Date(right.start).getTime();
       const startOrder = Number.isFinite(leftInstant) && Number.isFinite(rightInstant)
         ? leftInstant - rightInstant
         : left.start.localeCompare(right.start);
       return startOrder || left.id.localeCompare(right.id);
-    })
-    .map(event => ({
-      id: event.id, title: event.title, start: event.start, end: event.end, allDay: event.allDay,
+    });
+    // FullCalendar normally solves overlapping timed events by splitting the
+    // day column horizontally. Agent cards need their key task line to keep
+    // the whole column width, so feed FullCalendar non-overlapping visual
+    // instants while keeping the authoritative event in `extendedProps.item`.
+    // Card copy, details and persistence therefore continue to use the real
+    // schedule, while simultaneous cards are laid out one below another.
+    const visualCursorByDay = new Map<string, number>();
+    return ordered.map(event => {
+      const actualStart = new Date(event.start).getTime();
+      const actualEnd = event.end ? new Date(event.end).getTime() : Number.NaN;
+      const isVerticalTimedCard = Boolean(event.cardLines && !event.allDay && Number.isFinite(actualStart));
+      const dayKey = event.start.slice(0, 10);
+      const visualCursor = visualCursorByDay.get(dayKey) ?? Number.NEGATIVE_INFINITY;
+      const visualStart = isVerticalTimedCard ? Math.max(actualStart, visualCursor) : actualStart;
+      // Agent cards keep a complete three-row hour slot. The authoritative
+      // start/end remain on `extendedProps.item` for copy, details and moves;
+      // longer estimates do not stretch the visual card beyond one hour.
+      const visualDuration = event.cardLines ? 60 * 60_000
+        : Number.isFinite(actualEnd) && actualEnd > actualStart
+          ? Math.max(actualEnd - actualStart, 30 * 60_000)
+          : 30 * 60_000;
+      if (isVerticalTimedCard) visualCursorByDay.set(dayKey, visualStart + visualDuration);
+      const visualEnd = visualStart + visualDuration;
+      return {
+      id: event.id,
+      title: event.title,
+      start: isVerticalTimedCard ? new Date(visualStart).toISOString() : event.start,
+      end: isVerticalTimedCard ? new Date(visualEnd).toISOString() : event.end,
+      allDay: event.allDay,
       startEditable: Boolean(event.editable && onMoveEvent), durationEditable: false,
-      interactive: true, extendedProps: { item: event },
-    })), [events, Boolean(onMoveEvent)]);
+      interactive: true, extendedProps: { item: event, isVerticalTimedCard },
+      };
+    });
+  }, [events, Boolean(onMoveEvent)]);
+  const occupiedTimeSlots = useMemo(() => {
+    if (!collapseEmptyTimeRanges) return new Set<string>();
+    const formatter = new Intl.DateTimeFormat('en-GB', { timeZone, hour: '2-digit', minute: '2-digit', hourCycle: 'h23' });
+    const minuteOfDay = (value: Date) => {
+      const parts = formatter.formatToParts(value);
+      const hour = Number(parts.find(part => part.type === 'hour')?.value || 0);
+      const minute = Number(parts.find(part => part.type === 'minute')?.value || 0);
+      return hour * 60 + minute;
+    };
+    const slots = new Set<string>();
+    for (const input of inputs) {
+      if (input.allDay || !input.start) continue;
+      const start = new Date(String(input.start));
+      const end = input.end ? new Date(String(input.end)) : new Date(start.getTime() + 30 * 60_000);
+      if (!Number.isFinite(start.getTime()) || !Number.isFinite(end.getTime())) continue;
+      const first = Math.floor(minuteOfDay(start) / 30) * 30;
+      const last = Math.max(first + 30, Math.ceil(minuteOfDay(end) / 30) * 30);
+      for (let minute = first; minute < last; minute += 30) slots.add(String(minute));
+    }
+    return slots;
+  }, [collapseEmptyTimeRanges, inputs, timeZone]);
+  const slotClassNames = (date: Date) => collapseEmptyTimeRanges && !occupiedTimeSlots.has(String(date.getHours() * 60 + date.getMinutes())) ? 'ls-calendar-slot-collapsed' : '';
 
   const move = async (event: LsCalendarEvent, newStart: string) => {
     if (!event.editable || !moveRef.current) throw new Error('当前事件不允许调整排期');
@@ -287,14 +339,15 @@ export function LsCalendar({ events, label, initialDate, initialView = 'dayGridM
         // Every view shares a bounded FullCalendar content window. FullCalendar
         // owns the sole internal scroller; the surrounding page stays stable.
         headerToolbar={false} contentHeight={fixedHeight === 'auto' && showAllEvents && !['dayGridWeek', 'dayGridDay'].includes(view) ? timeGridHeight : fixedHeight ?? timeGridHeight} events={inputs} eventOrder="start,id" eventOrderStrict slotEventOverlap={false} editable={Boolean(onMoveEvent)} eventDurationEditable={false} eventInteractive dayMaxEvents={(showAllEvents || eventCardMode === 'media') && ['dayGridWeek', 'dayGridDay'].includes(view) ? false : 3} nowIndicator expandRows tableHeaderSticky
-        allDaySlot={eventCardMode === 'media' ? false : inputs.some(event => event.allDay)} noEventsText="当前周期没有排期" slotMinTime="08:00:00" slotMaxTime="22:00:00" slotDuration="01:00:00" slotHeaderInterval="02:00:00" scrollTime="08:00:00" scrollTimeReset slotHeaderFormat={{ hour: '2-digit', minute: '2-digit', hour12: false }} eventTimeFormat={{ hour: '2-digit', minute: '2-digit', hour12: false }}
+        allDaySlot={eventCardMode === 'media' ? false : inputs.some(event => event.allDay)} noEventsText="当前周期没有排期" slotMinTime="08:00:00" slotMaxTime="22:00:00" slotDuration="00:30:00" slotHeaderInterval="02:00:00" scrollTime="08:00:00" scrollTimeReset slotHeaderFormat={{ hour: '2-digit', minute: '2-digit', hour12: false }} eventTimeFormat={{ hour: '2-digit', minute: '2-digit', hour12: false }}
+        slotLaneClass={(info: {date: Date}) => slotClassNames(info.date)}
         eventMinHeight={24} eventShortHeight={68} columnEventInnerClass="ls-calendar-time-inner"
         datesSet={info => { setTitle(info.view.title); setView(info.view.type as LsCalendarView); onDatesSet?.(info); }}
         dateClick={info => onDateClick?.(info.dateStr, info.allDay)}
         dayCellClass={info => [info.isToday ? 'ls-calendar-today' : '', [0, 6].includes(info.dow) ? 'ls-calendar-weekend' : ''].join(' ')}
         dayCellDidMount={info => { info.el.dataset.calendarDate = calendarDayKey(info.date, timeZone); }}
         dayLaneDidMount={info => { info.el.dataset.calendarDate = calendarDayKey(info.date, timeZone); }}
-        eventClass={info => `ls-calendar-event ls-calendar-event-${(info.event.extendedProps.item as LsCalendarEvent).status} ls-calendar-event-reveal${reducedMotion || revealedEventIdsRef.current.has(info.event.id) ? ' is-revealed' : ''}`}
+        eventClass={info => { const item = info.event.extendedProps.item as LsCalendarEvent; const aggregateGroup = item.data && typeof item.data === 'object' && (item.data as {kind?: string}).kind === 'aggregate' ? (item.data as {group?: string}).group : ''; return `ls-calendar-event ls-calendar-event-${item.status} ls-calendar-event-reveal${item.cardLines ? ' ls-calendar-event-three-row' : ''}${item.planPlaceholder ? ' ls-calendar-event-placeholder' : ''}${aggregateGroup ? ` ls-calendar-event-aggregate ls-calendar-event-aggregate-${aggregateGroup}` : ''}${reducedMotion || revealedEventIdsRef.current.has(info.event.id) ? ' is-revealed' : ''}`; }}
         eventContent={info => {
           const item = info.event.extendedProps.item as LsCalendarEvent;
           if (info.view.type.startsWith('timeGrid') && info.event.allDay) {
@@ -304,6 +357,12 @@ export function LsCalendar({ events, label, initialDate, initialView = 'dayGridM
             </div>;
           }
           if (info.view.type.startsWith('timeGrid') && !info.event.allDay) {
+            if (item.cardLines) return <div className="ls-calendar-event-content ls-calendar-event-content-three-row">
+              <span className="ls-calendar-event-row ls-calendar-event-row-owner" title={item.cardLines[0]}>{item.cardLines[0]}</span>
+              <strong className="ls-calendar-event-row ls-calendar-event-row-title" title={item.cardLines[1]}>{item.cardLines[1]}</strong>
+              <span className="ls-calendar-event-row ls-calendar-event-row-state" title={item.cardLines[2]}>{item.cardLines[2]}</span>
+              {item.status === 'done' && !item.planPlaceholder ? <span className="ls-calendar-event-completed-check" aria-label="已完成">✓</span> : null}
+            </div>;
             // v7 measures each rendered segment before setting isShort, including
             // clipped multi-day events. Only sufficiently tall slots get media.
             return <div className={`ls-calendar-event-content ls-calendar-event-content-timed${info.isShort ? ' is-short' : ''}`}>
@@ -345,8 +404,25 @@ export function LsCalendar({ events, label, initialDate, initialView = 'dayGridM
         eventDidMount={info => {
           const item = info.event.extendedProps.item as LsCalendarEvent;
           const element = info.el as HTMLElement;
+          if (info.event.extendedProps.isVerticalTimedCard && !info.event.allDay) {
+            const harness = element.closest<HTMLElement>('.fc-timegrid-event-harness');
+            if (harness) {
+              harness.classList.add('ls-calendar-time-vertical-flow');
+              // FullCalendar writes physical `left`/`right` values inline when
+              // it detects simultaneous events. Logical inset CSS alone does
+              // not reliably win that positioning calculation, which leaves
+              // the cards split into narrow columns. Reset the physical
+              // coordinates on the harness itself so every card owns the full
+              // day column. The event input already uses presentation-only
+              // non-overlapping instants, while `item` keeps the real time.
+              harness.style.setProperty('left', '2px', 'important');
+              harness.style.setProperty('right', '2px', 'important');
+              harness.style.setProperty('width', 'auto', 'important');
+            }
+          }
           element.dataset.calendarRevealId = info.event.id;
-          element.setAttribute('aria-label', `${item.title}，${info.timeText || (item.allDay ? '全天，具体时刻待定' : '')}，${item.accountName || item.ownerAgent || ''}，${item.statusLabel || calendarStatusLabels[item.status]}，查看详情`);
+          const accessibleTime = item.cardLines?.[2] || info.timeText || (item.allDay ? '全天，具体时刻待定' : '');
+          element.setAttribute('aria-label', `${item.title}，${accessibleTime}，${item.accountName || item.ownerAgent || ''}，${item.statusLabel || calendarStatusLabels[item.status]}，查看详情`);
           mountedEventElementsRef.current.add(element);
           if (reducedMotion || info.isMirror || revealedEventIdsRef.current.has(info.event.id) || typeof IntersectionObserver === 'undefined') {
             revealEventElement(element);

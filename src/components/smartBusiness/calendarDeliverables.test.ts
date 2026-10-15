@@ -21,5 +21,22 @@ test('blocked internal node is visible on deliverable, completed final evidence 
 });
 test('missing final delivery and unscoped nodes stay visible instead of silently disappearing',()=>{
  const script=card('script','script');const unscoped={...card('legacy','video_generation'),deliverableGroup:undefined};
- assert.deepEqual(projectCalendarDeliverables([script,unscoped]),[script,unscoped]);
+ assert.deepEqual(projectCalendarDeliverables([script,unscoped]),[{...script,agent:'director'},unscoped]);
+});
+test('weekly goal summaries expand their Monday business workflow into independent cards',()=>{
+ const mondayNodes:AgentCalendarTask[]=[
+  {...card('goal','business_outline',undefined),agent:'business',date:'2026-10-12',time:'09:00',title:'拆解本周经营目标'},
+  {...card('context','context_readiness',undefined),agent:'business',date:'2026-10-12',time:'10:00',title:'核验企业上下文'},
+  {...card('accounts','publishing_calendar',undefined),agent:'business',date:'2026-10-12',time:'11:00',title:'核验发布账号'},
+ ];
+ const summary:AgentCalendarTask={...mondayNodes[0],id:'goal-week-goal',title:'经营目标与执行准备',calendarSummaryOnly:true,output:'周目标摘要',internalNodes:mondayNodes};
+ const result=projectCalendarDeliverables([summary]);
+ assert.deepEqual(result.map(task=>task.id),['goal','context','accounts']);
+ assert.ok(result.every(task=>task.calendarSummaryOnly!==true));
+});
+
+test('a direct persisted task wins over a duplicate node embedded in a weekly summary',()=>{
+ const direct={...card('goal','business_outline',undefined),agent:'business' as const,title:'真实执行任务'};
+ const summary:AgentCalendarTask={...direct,id:'summary',calendarSummaryOnly:true,internalNodes:[{...direct,title:'旧摘要节点'}]};
+ assert.deepEqual(projectCalendarDeliverables([summary,direct]).map(task=>task.title),['真实执行任务']);
 });

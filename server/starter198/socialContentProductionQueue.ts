@@ -30,10 +30,11 @@ import { createAgentNotification } from '../notifications/agentNotifications.js'
 import { enqueueBullJob, selectedQueueBackend, startBullWorker } from '../queues/bullmq.js';
 import {
   admitContentExecutionJob,
-  bindPristineContentExecutionCheckpoint,
+  bindPristineContentExecutionCheckpoints,
   DurableContentExecutionWorker,
   type ContentExecutionJob,
 } from '../contentExecution/durableQueue.js';
+import { admitProductionGraphJob, createProductionGraphBridgeCheckpoint, productionGraphIdentityFromJob, PRODUCTION_GRAPH_BRIDGE_CHECKPOINT } from '../contentExecution/productionGraphBridge.js';
 import { createSocialContentArtifact } from './socialContentOutputs.js';
 import {
   inspectTransientSocialContentFile,
@@ -128,6 +129,14 @@ export async function runSocialContentAutoProductionWithRetry(input: {
   // The durable queue owns retry classification and delay. Keeping retries in
   // one layer prevents one paid failure from multiplying across nested loops.
   await runSocialContentAutoProduction(input);
+}
+
+export function assertWeeklyProductionGraphJob(input:{taskMode:string;requestedExecutor:unknown;job:ContentExecutionJob}):void{
+  if(input.taskMode!=='weekly')return;
+  if(input.requestedExecutor!=='langgraph')throw new Error('weekly_production_graph_executor_required');
+  const historicalExecutor=socialObject(input.job.checkpoints['social.executor']?.payload)?.executor;
+  if(input.job.checkpoints[PRODUCTION_GRAPH_BRIDGE_CHECKPOINT])productionGraphIdentityFromJob(input.job);
+  else if(!(historicalExecutor==='legacy'&&input.job.lastStartedAt))throw new Error('weekly_production_graph_bridge_required');
 }
 
 let productionWorker: DurableContentExecutionWorker | null = null;
@@ -316,7 +325,9 @@ export async function enqueueSocialContentAutoProduction(input: {
     const detail = await readSocialTaskDetail(input);
     if (!detail) throw new Error('social_content_task_not_found');
     const executorCheckpoint = createSocialProductionExecutorCheckpoint(detail, process.env, socialText(socialObject(socialObject(socialJson(record.brief))?._productionRevision)?.planHash) || undefined);
-    let job = await admitContentExecutionJob({
+    const executorPayload = socialObject(executorCheckpoint.payload);
+    const executorPlanVersion = socialText(executorPayload?.planVersion);
+    let job = executorPayload?.executor === 'langgraph' ? await admitProductionGraphJob({
       dataStore,
       tenantId: input.tenantId,
       userId: input.userId,
@@ -324,14 +335,29 @@ export async function enqueueSocialContentAutoProduction(input: {
       runId: input.runId,
       accountId: task.brief.targetAccountRef?.id,
       taskType: `social_content_${task.mode}`,
+      planVersion: executorPlanVersion, inputHash: executorCheckpoint.inputHash,
+      initialCheckpoints: { 'social.executor': executorCheckpoint },
+    }) : await admitContentExecutionJob({
+      dataStore, tenantId: input.tenantId, userId: input.userId, taskId: input.taskId, runId: input.runId,
+      accountId: task.brief.targetAccountRef?.id, taskType: `social_content_${task.mode}`,
       initialCheckpoints: { 'social.executor': executorCheckpoint },
     });
     // Historic admissions predate the executor binding. They may be upgraded
-    // in place only before any durable execution/provider evidence exists.
+    // in place only before any durable execution/provider evidence exists. The
+    // executor and bridge identities are written atomically.
     if (!job.checkpoints['social.executor'] && executorCheckpoint.payload && (executorCheckpoint.payload as { executor?: unknown }).executor === 'langgraph') {
-      job = await bindPristineContentExecutionCheckpoint({ dataStore, tenantId: input.tenantId,
-        jobId: job.id, runId: input.runId, checkpointKey: 'social.executor', checkpoint: executorCheckpoint });
+      job = await bindPristineContentExecutionCheckpoints({ dataStore, tenantId: input.tenantId,
+        jobId: job.id, runId: input.runId, checkpoints: {
+          'social.executor': executorCheckpoint,
+          [PRODUCTION_GRAPH_BRIDGE_CHECKPOINT]: createProductionGraphBridgeCheckpoint({
+            planVersion: executorPlanVersion, inputHash: executorCheckpoint.inputHash,
+          }),
+        } });
     }
+    // Weekly production is the formal Agent handoff. It may never fall back to
+    // the historical direct executor because that would create two competing
+    // completion authorities for the same weekly item.
+    assertWeeklyProductionGraphJob({taskMode:task.mode ?? 'weekly',requestedExecutor:executorPayload?.executor,job});
     if (job.status === 'queued' && !job.lastStartedAt) {
       await writeExecutionStage({
         repository: input.repository,

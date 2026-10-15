@@ -4,12 +4,19 @@ const TOKEN_KEY = 'overseas_token'
 
 function base() {
   const value = String(apiBase || '').replace(/\/$/, '')
-  if (!/^https:\/\//.test(value)) throw new Error('请先配置现有服务的 HTTPS 地址')
+  const secure = /^https:\/\//.test(value)
+  const loopback = /^http:\/\/(?:127\.0\.0\.1|localhost)(?::\d+)?$/.test(value)
+  if (!secure && !loopback) throw new Error('请配置 HTTPS 服务地址；本地联调仅允许 127.0.0.1 或 localhost')
   return value
 }
 
 function token() { return wx.getStorageSync(TOKEN_KEY) || '' }
 function clearToken() { wx.removeStorageSync(TOKEN_KEY) }
+function assetUrl(value) {
+  const url = String(value || '')
+  if (/^https:\/\//.test(url)) return url
+  return url.startsWith('/') ? base() + url : url
+}
 
 function request(path, method = 'GET', data, authorized = true) {
   const requestToken = authorized ? token() : ''
@@ -84,7 +91,7 @@ function uploadVideo(file, onProgress) {
 }
 
 module.exports = {
-  token, clearToken, login, uploadVideo,
+  token, clearToken, login, uploadVideo, assetUrl,
   me: () => request('auth/me'),
   products: async () => {
     const profile = await request('enterprise/profile')
@@ -95,6 +102,7 @@ module.exports = {
   },
   createTask: data => request('studio/shooting-tasks', 'POST', data),
   tasks: () => request('studio/shooting-tasks'),
+  studioProject: id => request('studio/projects/' + encodeURIComponent(id)),
   attach: (id, materialId) => request('studio/shooting-tasks/' + encodeURIComponent(id) + '/uploads', 'POST', { uploadedMaterialIds: [materialId] })
 }
 
@@ -106,3 +114,5 @@ module.exports.chat = messages => new Promise((resolve, reject) => {
 })
 
 module.exports.command = body => request('starter-198/commands', 'POST', body);
+module.exports.customers = () => request('customers')
+module.exports.sendCustomerMessage = (customerId, body, requestId) => request('customers/' + encodeURIComponent(customerId) + '/outbox', 'POST', { body, requestId })
