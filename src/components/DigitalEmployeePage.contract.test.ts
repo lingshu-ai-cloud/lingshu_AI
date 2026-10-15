@@ -240,7 +240,7 @@ assert.match(assistantStoreSource, /\['business', 'director', 'content', 'custom
 assert.match(assistantSource, /const currentPageAgent = useMemo\(\(\) => orbitIdForPage\(page\)/, '灵小枢必须根据当前工作区选择内部专业 Agent 上下文');
 assert.match(assistantSource, /<AssistantDecisionCenter[\s\S]{0,420}page=\{page\}[\s\S]{0,700}variant="summary"/, '灵小枢默认对话必须展示当前页面真实待办的概要气泡');
 assert.match(assistantSource, /openAgent\(currentPageAgent, 'chat'\)/, '点击灵小枢应直接进入单列对话，不恢复 Agent 选择器或强制打开详情');
-for (const question of ['查看当前进度', '查看周计划', '查看需要我处理的任务']) {
+for (const question of ['查看当前进度', '查看数字员工排期', '查看需要我处理的任务']) {
   assert.match(assistantContextSource, new RegExp(question), `生产中的灵小枢上下文必须提供推荐问题：${question}`);
 }
 assert.match(pageSource, /weeklyPlanNavigation\?: \{ goalId: string; planId: string; requestId: number \}/, '周计划导航必须携带准确目标和重复点击序号');
@@ -311,7 +311,7 @@ assert.doesNotMatch(layoutSource, /aria-label="主导航"[\s\S]{0,900}新手引�
 assert.match(layoutSource, /lingshu:open-digital-employee-guide/, 'the user-menu guide entry must open the Digital Employee guide');
 assert.match(pageSource, /addEventListener\('lingshu:open-digital-employee-guide'/, 'Smart Business must respond to the sidebar guide entry');
 assert.doesNotMatch(pageSource, /SMART OPERATIONS/, 'the redundant Smart Operations masthead must be removed');
-assert.match(weeklyPlanControlsSource, /setWeeklyPlanDetailsOpen\(true\)[\s\S]{0,100}查看周计划/, 'the current-plan controls must keep the detailed weekly plan available at any time');
+assert.doesNotMatch(weeklyPlanControlsSource, /查看周计划|setWeeklyPlanDetailsOpen/, 'the current-plan controls must not retain the removed weekly-plan details action');
 assert.doesNotMatch(weeklyPlanControlsSource, /Agent 设置/, 'Agent settings must not remain in the weekly-plan header');
 assert.match(weeklyPlanControlsSource, /历史计划[\s\S]{0,1500}weeklyControlLabel/, 'the current-plan controls must retain history and the primary execution action');
 assert.match(currentPlanSource, /actions=\{weeklyPlanControls\}/, 'the current-plan header must receive the weekly-plan controls');
@@ -340,8 +340,8 @@ for (const removedCopy of ['本周计划详情', '确认本周视频计划', '�
   assert.doesNotMatch(pageSource, new RegExp(removedCopy), `the removed weekly-plan detail flow must not retain: ${removedCopy}`);
 }
 assert.match(pageSource, /aria-label="周计划生成"/, 'new and next-week goals may retain a dedicated editing flow');
-assert.match(pageSource, /WeeklyPlanDetailsDrawer\s+data=\{data\}\s+open=\{weeklyPlanDetailsOpen\}/, 'the current or historical weekly plan must open in a dedicated read-only drawer');
-assert.match(pageSource, /setWeeklyPlanOpen\(false\);[\s\S]{0,100}setWeeklyPlanDetailsOpen\(true\)/, 'the assistant weekly-plan action must open existing plan details instead of only scrolling the summary');
+assert.doesNotMatch(pageSource, /WeeklyPlanDetailsDrawer|weeklyPlanDetailsOpen|setWeeklyPlanDetailsOpen/, 'the removed weekly-plan details drawer and its state must not remain on the page');
+assert.match(pageSource, /setWeeklyPlanOpen\(false\);[\s\S]{0,200}setWorkspaceView\("today"\)[\s\S]{0,300}aria-label=\"当前周计划\"/, 'the assistant weekly-plan action must focus the inline current-plan summary without restoring the removed drawer');
 assert.doesNotMatch(pageSource, /BusinessAnnouncementBar/, 'the Smart Business home must not retain the deleted announcement bar');
 assert.match(pageSource, /const openWeeklyPlan = \(\) => \{[\s\S]{0,320}setNewGoal\(true\)[\s\S]{0,120}setWeeklyPlanOpen\(true\)[\s\S]{0,520}addEventListener\('lingshu:open-weekly-plan'/, 'the assistant entry must open the same weekly-plan composer as the page action');
 assert.match(assistantContextSource, /workflowStage: weeklyPlanningStage/, 'the page must tell Lingxiaoshu whether weekly work is unplanned, planned, running, setup-only, or historical');
