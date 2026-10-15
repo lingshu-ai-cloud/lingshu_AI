@@ -48,6 +48,19 @@ test('weekly calendar exposes focused filters and shows all daily work by defaul
   assert.match(source,/需我处理/);
   assert.match(source,/隐藏已完成/);
   assert.match(source,/dateOnly[\s\S]*taskBoard[\s\S]*showAllEvents/);
+  assert.match(source,/const allDay = true/);
+  assert.match(source,/visualVariant="agent"/);
+  assert.doesNotMatch(source,/06:00 起|T\$\{resident\?'00:00':'06:00'/);
+});
+
+test('task details route specialized business targets before the generic execution fallback',()=>{
+  const source=readFileSync(new URL('./RestoredAgentWorkCalendar.tsx',import.meta.url),'utf8');
+  const routing=source.slice(source.indexOf('const openSource='),source.indexOf('const channelLabel='));
+  assert.ok(routing.indexOf('hasCalendarProductionBinding(source)')<routing.indexOf('if(onEnterExecution)return enterSource(source)'));
+  assert.ok(routing.indexOf('source.customerExecutionTarget')<routing.indexOf('if(onEnterExecution)return enterSource(source)'));
+  assert.match(source,/const open = \(action:[^]*?source = task\)[^]*?action\(source\)/);
+  assert.match(routing,/open\(onOpenProduction,source\)/);
+  assert.match(source,/data-daily-execution-id=\{source.id\}[^]*?onClick=\{\(\)=>openSource\(source\)\}/);
 });
 
 test('connected calendars never render synthetic cadence summaries as tasks',()=>{

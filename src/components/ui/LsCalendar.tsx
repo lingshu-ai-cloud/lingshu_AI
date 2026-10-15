@@ -1,6 +1,6 @@
 import { useEffect, useId, useMemo, useRef, useState, type ReactNode } from 'react';
 import { Alert, App, Button, Drawer, Input, Segmented, Spin, Tag } from 'antd';
-import { ChevronLeft, ChevronRight, ImageOff, RefreshCw, UserRound } from 'lucide-react';
+import { ChevronLeft, ChevronRight, ImageOff, RefreshCw, UserRound, CircleAlert, CircleCheck } from 'lucide-react';
 import FullCalendar, { type CalendarRef, type DatesSetInfo, type EventInput } from '@fullcalendar/react';
 import dayGridPlugin from '@fullcalendar/react/daygrid';
 import timeGridPlugin from '@fullcalendar/react/timegrid';
@@ -30,6 +30,8 @@ type Props = {
   view?: LsCalendarView;
   firstDay?: number;
   eventCardMode?: 'compact' | 'media';
+  visualVariant?: 'default' | 'agent';
+  narrowView?: LsCalendarView;
   /** Keep week/day navigation on date columns when events have no verified time. */
   dateOnly?: boolean;
   taskBoard?: boolean;
@@ -162,7 +164,7 @@ function CalendarIdentityMark({ identity }: { identity: LsCalendarIdentity }) {
 }
 
 /** Standard plugins only: all calendar pages share the same events, timezone and accessible detail path. */
-export function LsCalendar({ events, label, initialDate, initialView = 'dayGridMonth', view: controlledView, firstDay = 1, eventCardMode = 'compact', dateOnly = false, taskBoard = false, showAllEvents = false, density = 'default', flush = false, date, timeZone = 'Asia/Shanghai', loading, timeGridHeight = 'clamp(320px, calc(100dvh - 280px), 720px)', collapseEmptyTimeRanges = false, fixedHeight, primaryAction, filters, onRefresh, onDatesSet, onDateClick, onEventClick, onExternalDrop, onMoveEvent, detailsTitle = '排期详情', onDetailsClose, detailsMedia = 'large', detailsLayout = 'standard', workspaceMode = 'bounded', renderDetails }: Props) {
+export function LsCalendar({ events, label, initialDate, initialView = 'dayGridMonth', view: controlledView, firstDay = 1, eventCardMode = 'compact', visualVariant = 'default', narrowView = 'listWeek', dateOnly = false, taskBoard = false, showAllEvents = false, density = 'default', flush = false, date, timeZone = 'Asia/Shanghai', loading, timeGridHeight = 'clamp(320px, calc(100dvh - 280px), 720px)', collapseEmptyTimeRanges = false, fixedHeight, primaryAction, filters, onRefresh, onDatesSet, onDateClick, onEventClick, onExternalDrop, onMoveEvent, detailsTitle = '排期详情', onDetailsClose, detailsMedia = 'large', detailsLayout = 'standard', workspaceMode = 'bounded', renderDetails }: Props) {
   const calendarRef = useRef<CalendarRef>(null);
   const hostRef = useRef<HTMLDivElement>(null);
   const revealObserverRef = useRef<IntersectionObserver | null>(null);
@@ -172,7 +174,7 @@ export function LsCalendar({ events, label, initialDate, initialView = 'dayGridM
   eventsRef.current = events;
   const reducedMotion = usePrefersReducedMotion();
   const { modal, message } = App.useApp();
-  const [view, setView] = useState<LsCalendarView>(() => typeof window !== 'undefined' && window.innerWidth < 640 ? 'listWeek' : initialView);
+  const [view, setView] = useState<LsCalendarView>(() => typeof window !== 'undefined' && window.innerWidth < 640 ? narrowView : initialView);
   const [title, setTitle] = useState('');
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const selected = events.find(event => event.id === selectedId);
@@ -202,14 +204,18 @@ export function LsCalendar({ events, label, initialDate, initialView = 'dayGridM
       if (entry.contentRect.width <= 0) return;
       const narrow = entry.contentRect.width < 640;
       if (narrow && !previousWidth.current) {
-        calendarRef.current?.getApi().changeView('listWeek');
-        setView('listWeek');
+        calendarRef.current?.getApi().changeView(narrowView);
+        setView(narrowView);
+      } else if (!narrow && previousWidth.current) {
+        const restored = controlledView || initialView;
+        calendarRef.current?.getApi().changeView(restored);
+        setView(restored);
       }
       previousWidth.current = narrow;
     });
     observer.observe(hostRef.current);
     return () => observer.disconnect();
-  }, []);
+  }, [controlledView, initialView, narrowView]);
   useEffect(() => {
     if (!reducedMotion) return;
     revealObserverRef.current?.disconnect();
@@ -314,7 +320,7 @@ export function LsCalendar({ events, label, initialDate, initialView = 'dayGridM
     revealObserverRef.current?.unobserve(element);
   };
   const showDateOnlyTimeRail = !taskBoard && (dateOnly || eventCardMode === 'media') && ['dayGridWeek', 'dayGridDay'].includes(view);
-return <div className={`ls-calendar ls-calendar-view-${view}${taskBoard ? ' ls-calendar-task-board' : ''}${eventCardMode === 'media' ? ' ls-calendar-media-cards' : ''}${compact ? ' ls-calendar-compact' : ''}${flush ? ' ls-calendar-flush' : ''}${workspaceMode === 'expanded' ? ' ls-calendar-expanded' : ''}`} ref={hostRef} aria-label={label} onFocusCapture={event => {
+return <div className={`ls-calendar ls-calendar-view-${view}${taskBoard ? ' ls-calendar-task-board' : ''}${visualVariant === 'agent' ? ' ls-calendar-agent-view' : ''}${eventCardMode === 'media' ? ' ls-calendar-media-cards' : ''}${compact ? ' ls-calendar-compact' : ''}${flush ? ' ls-calendar-flush' : ''}${workspaceMode === 'expanded' ? ' ls-calendar-expanded' : ''}`} ref={hostRef} aria-label={label} onFocusCapture={event => {
     const eventElement = (event.target as HTMLElement).closest<HTMLElement>('.ls-calendar-event-reveal');
     if (eventElement) revealEventElement(eventElement);
   }}>
@@ -352,7 +358,7 @@ headerToolbar={false} contentHeight={fixedHeight === 'auto' && showAllEvents && 
         eventClass={info => { const item = info.event.extendedProps.item as LsCalendarEvent; const aggregateGroup = item.data && typeof item.data === 'object' && (item.data as {kind?: string}).kind === 'aggregate' ? (item.data as {group?: string}).group : ''; return `ls-calendar-event ls-calendar-event-${item.status}${taskBoard && item.identity?.kind === 'agent' ? ` ls-calendar-agent-${item.identity.role}` : ''} ls-calendar-event-reveal${item.cardLines ? ' ls-calendar-event-three-row' : ''}${item.planPlaceholder ? ' ls-calendar-event-placeholder' : ''}${aggregateGroup ? ` ls-calendar-event-aggregate ls-calendar-event-aggregate-${aggregateGroup}` : ''}${reducedMotion || revealedEventIdsRef.current.has(info.event.id) ? ' is-revealed' : ''}`; }}
         eventContent={info => {
           const item = info.event.extendedProps.item as LsCalendarEvent;
-          if (taskBoard && item.cardLines) return <div className="ls-calendar-event-content ls-calendar-task-board-card"><span className="ls-calendar-event-row ls-calendar-event-row-owner" title={item.cardLines[0]}>{item.cardLines[0]}</span><strong className="ls-calendar-event-row ls-calendar-event-row-title" title={item.title}>{item.title}</strong><span className="ls-calendar-event-row ls-calendar-event-row-state" title={item.cardLines[2]}>{item.cardLines[2]}</span></div>;
+          if (taskBoard && item.cardLines) return <div className="ls-calendar-event-content ls-calendar-task-board-card"><span className="ls-calendar-event-row ls-calendar-event-row-owner" title={item.cardLines[0]}>{item.cardLines[0]}</span><strong className="ls-calendar-event-row ls-calendar-event-row-title" title={item.title}>{item.title}</strong><span className="ls-calendar-event-row ls-calendar-event-row-state" title={item.cardLines[2]}>{item.cardLines[2]}</span>{['needs_action','failed'].includes(item.status)?<span className="ls-calendar-task-status-mark is-missing" aria-label="缺少执行条件"><CircleAlert size={17}/></span>:item.status==='done'?<span className="ls-calendar-task-status-mark is-complete" aria-label="已完成交付"><CircleCheck size={17}/></span>:null}</div>;
           if (info.view.type.startsWith('timeGrid') && info.event.allDay) {
             return <div className="ls-calendar-event-content ls-calendar-event-content-all-day">
               {item.identity ? <CalendarIdentityMark identity={item.identity}/> : <CalendarThumbnail src={item.thumbnailUrl} title={item.title}/>}
