@@ -6,6 +6,10 @@ import {createSocialProgramService,SocialProgramError} from './service.js';
 import {listWeeklyExecutionTasks,recomputePackageExecution} from './executionTasks.js';
 import {WEEKLY_INDEPENDENT_ADMISSIONS,independentAdmissionId,readIndependentAdmission,type IndependentAdmission} from './weeklyIndependentAdmission.js';
 import {auditWeeklyTasks} from './weeklyTaskAudit.js';
+import {adoptWeeklyAutomationTemplate,readWeeklyAutomationTemplate} from './weeklyAutomationTemplate.js';
+import {latestPackageRow,PACKAGES} from './weeklyOperatingPackageSupport.js';
+import {readWeeklyCustomerSettings,updateWeeklyCustomerSettings} from './weeklyCustomerSettings.js';
+import {readTenantEnterpriseProfile} from '../routes/enterprise.js';
 import {executionPackageFrozen,withExecutionPackageGate} from './weeklyExecutionGate.js';
 import {readWeeklyReviewActor} from './weeklyReviewEvidence.js';
 import {currentDataAuthority} from '../storage/dataAuthority.js';
@@ -46,6 +50,27 @@ export function createWeeklyExecutionPipelineService(store:DataStore,ports:{work
  }
  return {
   read:inspect,
+  async readCustomerSettings(a:Scope){await context(a);return (await readWeeklyCustomerSettings(store,a.tenantId)).public;},
+  async updateCustomerSettings(a:Scope,input:{expectedConfigVersion:number;enabled:boolean;allowRealCustomerMessages:boolean}){return withExecutionPackageGate(store,a,async assert=>{const {pkg}=await context(a);if(!['draft','active'].includes(pkg.status)||await executionPackageFrozen(store,a))throw new SocialProgramError('weekly_pipeline_not_executable',409,'原周版本已冻结或停用。');const profile=await readTenantEnterpriseProfile(a.tenantId);await assert();return updateWeeklyCustomerSettings(store,a.tenantId,a.actorUserId,input,profile);});},
+  async authorizePublishing(a:Scope){
+   return withExecutionPackageGate(store,a,async assert=>{
+    const {pkg}=await context(a);
+    if(pkg.status!=='active'||await executionPackageFrozen(store,a)||pkg.agentPlanning?.status!=='dispatched')throw new SocialProgramError('weekly_publishing_scope_not_active',409,'请先完成本周真实排期与派单；草稿不能取得发布许可。');
+    const row=await latestPackageRow(store,a.tenantId,a.programId,a.packageId);
+    if(!row||row.payload.version!==a.packageVersion)throw new SocialProgramError('weekly_pipeline_version_conflict',409,'周包已变化，请重新读取发布范围。');
+    const existing=pkg.socialContentPackage.authorization;
+    const items=pkg.socialContentPackage.publicationTasks;
+    if(!items.length||!Number.isSafeInteger(pkg.socialContentPackage.publicationTaskTarget)||pkg.socialContentPackage.publicationTaskTarget<1||items.some(item=>!existing.accountIds.includes(item.accountId)))throw new SocialProgramError('weekly_publishing_scope_invalid',409,'当前发布任务超出周包账号范围。');
+    if(existing.allowRealPublishing&&existing.authorizedBy&&existing.authorizedAt&&!existing.revokedAt)return existing;
+    const authorization={...existing,mode:'bounded' as const,maxPublishItems:pkg.socialContentPackage.publicationTaskTarget,allowRealPublishing:true,authorizedBy:a.actorUserId,authorizedAt:new Date().toISOString(),revokedBy:null,revokedAt:null};
+    await assert();
+    const saved=await store.update(PACKAGES,row.id,{payload:{...row.payload,socialContentPackage:{...row.payload.socialContentPackage,authorization},updatedAt:authorization.authorizedAt},updated_at:authorization.authorizedAt});
+    if(!saved)throw new SocialProgramError('weekly_publishing_authorization_write_failed',503,'发布许可未能保存。');
+    return authorization;
+   });
+  },
+  async readTemplate(a:Scope){await context(a);return readWeeklyAutomationTemplate(store,a);},
+  async adoptTemplate(a:Scope){return withExecutionPackageGate(store,a,async assert=>{const {pkg}=await context(a);if(!['draft','active'].includes(pkg.status)||await executionPackageFrozen(store,a))throw new SocialProgramError('weekly_pipeline_not_executable',409,'该周版本已冻结或停用。');await assert();return adoptWeeklyAutomationTemplate(store,a,a.actorUserId);});},
   async audit(a:Scope){const {tasks}=await context(a);return auditWeeklyTasks(store,tasks);},
   async startIndependent(a:Scope){
    // Local opt-in only. Business confirmation and outbound authorization are
@@ -56,6 +81,7 @@ export function createWeeklyExecutionPipelineService(store:DataStore,ports:{work
     if(!['draft','active'].includes(pkg.status)||await executionPackageFrozen(store,a))throw new SocialProgramError('weekly_pipeline_not_executable',409,'该周版本已停用或冻结。');
     if(!runtime.started||!runtime.configuredEnabled||runtime.state==='failed')throw new SocialProgramError('weekly_execution_worker_not_started',409,'请先接入当前周版本的真实本地消费者。');
     const previous=await readIndependentAdmission(store,a);
+    await adoptWeeklyAutomationTemplate(store,a,a.actorUserId);
     if(!previous){
      const payload:IndependentAdmission={...a,admittedAt:new Date().toISOString(),mode:'independent_branches',authorizePublishing:false,authorizeMessaging:false};
      await assert();
@@ -91,6 +117,7 @@ export function createWeeklyExecutionPipelineService(store:DataStore,ports:{work
     if(JSON.stringify(selected)!==JSON.stringify(confirmed))throw new SocialProgramError('weekly_pipeline_scope_changed',409,'启动范围与真实用户确认不一致，未扩展或缩减已批准范围。');
     // A replay is a read of the already active graph, never another dispatch or activation.
     if(state.started)return {item:pkg,pipeline:state};
+    await adoptWeeklyAutomationTemplate(store,a,a.actorUserId);
     await assert();
     if(plan.status==='confirmed')await packages.dispatchAgentSchedule(a.tenantId,a.programId,a.packageId,{expectedPackageVersion:a.packageVersion,expectedPlanningVersion:plan.version,selectedSlotIds:selected});
     await assert();

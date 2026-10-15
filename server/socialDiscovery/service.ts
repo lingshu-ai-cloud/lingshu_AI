@@ -1,4 +1,5 @@
 import {socialRequestHash,socialObject,socialJson} from '../starter198/socialContentValidation.js';
+import {reserveDailyCollection} from './dailyCollectionQuota.js';
 import { store } from '../storage/index.js';
 import { crawlVideosForTenant, inferPlatformFromUrl } from '../routes/videos.js';
 import { dueDiscoveryModes, nextDiscoveryRunAt, validateDiscoveryBrief } from './domain.js';
@@ -164,6 +165,7 @@ export async function executeApprovedDiscoveryRun(input: {
 
   const startedAt = new Date().toISOString();
   let completeEmptyVerified=true;
+  let dailyLimitReached=false;
   const runId = originalId??`discovery_run_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
   const queryBasis = Object.fromEntries(requestedModes.map(mode => [mode, mode === 'account' ? brief.competitorAccounts : modeRefs(scope, mode)])) as Partial<Record<SocialDiscoveryMode, string[]>>;
   const initial: SocialInspirationCollectionRun & { tenant_id: string } = {
@@ -219,7 +221,11 @@ export async function executeApprovedDiscoveryRun(input: {
         ? configuredPlatformRemaining
         : /^https?:\/\//i.test(target.ref) && configuredPlatformRemaining === 0 ? 1 : 0;
       if (platformRemaining <= 0) continue;
-      const perSourceLimit = Math.min(platformRemaining, Math.max(1, Math.ceil(remaining / Math.max(1, targets.length - index))));
+      const requestedLimit = Math.min(platformRemaining, Math.max(1, Math.ceil(remaining / Math.max(1, targets.length - index))));
+      let perSourceLimit:number;
+      try{perSourceLimit=await reserveDailyCollection(dependencies.dataStore,{tenantId:input.tenantId,runId,requestKey:`${mode}:${target.platform}:${target.ref}`,requested:requestedLimit});}
+      catch(cause){completeEmptyVerified=false;const message=cause instanceof Error?cause.message:'daily_collection_quota_unavailable';stats.failed++;error=message;failureDetails.push({mode,platform:target.platform,queryRef:target.ref,error:message});break;}
+      if(!perSourceLimit){dailyLimitReached=true;completeEmptyVerified=false;break;}
       remainingPlatformQuota.set(target.platform, configuredPlatformRemaining - perSourceLimit);
       stats.requested += perSourceLimit;
       platformStats[target.platform] ??= emptyStats();
@@ -240,6 +246,7 @@ export async function executeApprovedDiscoveryRun(input: {
           discoveryContext: { runId, scopeId: scope.id, scopeVersion: scope.version, mode, queryRef: target.ref },
         });
         if(input.originalRun&&(!Array.isArray(result.items)||!Array.isArray(result.candidateIds)||!Number.isSafeInteger(result.total)||result.total<0))throw Error('weekly_discovery_source_incomplete');
+        if((result.items?.length??0)>perSourceLimit||(result.candidateIds?.length??0)>perSourceLimit)throw Error('daily_collection_provider_limit_exceeded');
         if(result.total!==0||result.items?.length!==0||result.candidateIds?.length!==0)completeEmptyVerified=false;
         stats.fetched += Number(result.total || 0);
         stats.deduplicated += Number(result.skippedExisting || 0);
@@ -296,7 +303,7 @@ export async function executeApprovedDiscoveryRun(input: {
   const failureSummary = [...new Set(failureDetails.map(item => `${item.platform}/${item.queryRef}: ${item.error}`))].join('；');
   const run: SocialInspirationCollectionRun = {
     ...initial, ...(input.originalRun?{scopeSnapshot:{...initial.scopeSnapshot,weeklyProducer:{inputHash:originalHash,key:input.originalRun.key,completeEmptyVerified:completeEmptyVerified&&failed===0&&Object.values(modeStats).every(s=>(s?.requested??0)>0)}} as typeof initial.scopeSnapshot}:{}), status, modeStats, platformStats, keywordTierStats, evidenceOutcomes, sourceRunRefs, failureDetails,
-    stopReason: status === 'failed' ? 'source_failed' : status === 'stopped' ? 'no_valid_results' : 'completed', finishedAt, error: failureSummary || error,
+    stopReason: dailyLimitReached?'daily_collection_limit_reached':status === 'failed' ? 'source_failed' : status === 'stopped' ? 'no_valid_results' : 'completed', finishedAt, error: failureSummary || error,
   };
   const saved = await dependencies.dataStore.update(DISCOVERY_RUN_COLLECTION, created.id, { status, scopeSnapshot:run.scopeSnapshot, modeStats, platformStats, keywordTierStats, evidenceOutcomes, sourceRunRefs, failureDetails, stopReason: run.stopReason, finishedAt, error: run.error });
   if (!saved) throw new Error('discovery_run_storage_unavailable');

@@ -22,6 +22,8 @@ test('pipeline reads real graph and rejects missing capacity or consumer without
  await assert.rejects(service.start(scope,{expectedPackageVersion:pkg.version,expectedPlanningVersion:status.planningVersion,expectedProgramVersion:status.programVersion,selectedSlotIds:pkg.agentPlanning?.skeleton.slots.map(s=>s.slotId)??['slot'],authorizePublishing:false}),/执行器/);
  const after=await createWeeklyOperatingPackageService(f.store).get('t','p',pkg.packageId);
  assert.equal(after.status,before.status);assert.equal(after.agentPlanning?.version,before.agentPlanning?.version);
+ await assert.rejects(service.authorizePublishing(scope),/草稿/);
+ assert.equal((await createWeeklyOperatingPackageService(f.store).get('t','p',pkg.packageId)).socialContentPackage.authorization.allowRealPublishing,false);
  await assert.rejects(service.read({...scope,packageVersion:pkg.version+1}),/更新/);
  await assert.rejects(service.read({...scope,tenantId:'foreign'}));
 });
@@ -58,4 +60,11 @@ test('actual confirmed capacity and planning dispatch then activate durable task
  assert.equal(result.item.status,'active');assert.equal(result.item.agentPlanning?.status,'dispatched');assert.equal(result.item.socialContentPackage.authorization.allowRealPublishing,false);
  const tasks=await listWeeklyExecutionTasks(f.store,'t','p',pkg.packageId,pkg.version);assert(tasks.some(t=>t.status==='queued'||t.status==='blocked'));assert(!tasks.some(t=>t.status==='succeeded'));
  const replay=await service.start(scope,{...input,expectedPlanningVersion:result.pipeline.planningVersion,expectedProgramVersion:result.pipeline.programVersion});assert.equal(replay.pipeline.planningVersion,result.pipeline.planningVersion);
+ await assert.rejects(service.authorizePublishing({...scope,packageVersion:pkg.version+1}),/更新/);
+ await assert.rejects(service.authorizePublishing({...scope,actorUserId:'foreign'}));
+ const grant=await service.authorizePublishing(scope),same=await service.authorizePublishing(scope);
+ assert.equal(grant.allowRealPublishing,true);assert.equal(grant.authorizedBy,'owner');assert.equal(grant.authorizedAt,same.authorizedAt);
+ assert.deepEqual(grant.accountIds,result.item.socialContentPackage.authorization.accountIds);
+ assert.equal(grant.maxPublishItems,result.item.socialContentPackage.publicationTaskTarget);
+ assert(!(await listWeeklyExecutionTasks(f.store,'t','p',pkg.packageId,pkg.version)).some(task=>task.status==='succeeded'));
 });

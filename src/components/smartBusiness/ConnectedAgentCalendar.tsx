@@ -1,7 +1,9 @@
 import { agentCalendarAuthIdentity, captureAgentCalendarReturnContext, readAgentCalendarReturnContext, registerAgentCalendarReturnState } from '../../lib/agentCalendarReturnContext';
 import {openAccountBindingNavigation} from '../../lib/accountBindingNavigation';
 import {openCustomerCalendarTask,type CustomerCalendarProjection} from '../socialProgram/CustomerWeeklyCalendar';
-import {readWeeklyContentNavigation,weeklyContentNavigationDetail} from '../../lib/weeklyContentNavigationApi';
+import {readWeeklyContentNavigation,weeklyContentNavigationDetail,weeklyPublishingNavigationDetail} from '../../lib/weeklyContentNavigationApi';
+import WeeklyCustomerRunBinding from '../socialProgram/WeeklyCustomerRunBinding';
+import WeeklyCustomerSettings from '../socialProgram/WeeklyCustomerSettings';
 import {parseWeeklyProfileCreation,type WeeklyProfileUpgrade,type WeeklyProfileCreationIntent} from '../../lib/weeklyProfileUpgradeApi';
 import WeeklyInventoryReusePanel from '../socialProgram/WeeklyInventoryReusePanel';
 import WeeklyProfileUpgradePanel from '../socialProgram/WeeklyProfileUpgradePanel';
@@ -62,7 +64,7 @@ import { projectWeeklySupplementRequests, supplementPanelRequestId } from '../so
 import type { WeeklySupplementRequest } from '../../../shared/contracts/weeklySupplementRequests';
 import {enterpriseFactTarget,openWeeklyEnterpriseFactTarget,readWeeklyEnterpriseFactExceptions,type WeeklyEnterpriseFactException} from '../../lib/weeklyEnterpriseFactNavigation';
 import {projectWeeklyEnterpriseFactExceptions} from '../socialProgram/weeklyEnterpriseFactCalendar';
-import {projectSocialContentTaskCalendar} from './socialContentTaskCalendar';
+import {projectSocialContentTaskCalendar,standaloneCalendarContentTasks} from './socialContentTaskCalendar';
 
 const identity = (pkg: WeeklyOperatingPackage) => JSON.stringify([pkg.packageId, pkg.version]);
 export default function ConnectedAgentCalendar({accountBindingTasks=[],startsAt,agentRole="",currentRunId}:{accountBindingTasks?:AgentCalendarTask[];startsAt?:string;agentRole?:AgentCalendarTask["agent"]|"";currentRunId?:string}={}) {
@@ -121,11 +123,28 @@ export default function ConnectedAgentCalendar({accountBindingTasks=[],startsAt,
   const loading = packagesLoading || tasksLoading;
   useEffect(()=>{
     let active=true;
-    setStandaloneLoading(true);setStandaloneError('');
-    void socialContentApi.listTasks(1,100).then(page=>{if(active)setStandaloneContentTasks(page.items);})
-      .catch(cause=>{if(active){setStandaloneContentTasks([]);setStandaloneError(cause instanceof Error?cause.message:'真实内容任务读取失败');}})
-      .finally(()=>{if(active)setStandaloneLoading(false);});
-    return()=>{active=false;};
+    let reading=false;
+    setStandaloneContentTasks([]);setStandaloneLoading(true);setStandaloneError('');
+    const read=async()=>{
+      if(!active||reading)return;
+      reading=true;
+      try{
+        const first=await socialContentApi.listTasks(1,100);
+        const items=[...first.items];
+        for(let page=2;page<=first.totalPages&&active;page++)items.push(...(await socialContentApi.listTasks(page,100)).items);
+        if(active&&authIdentity===agentCalendarAuthIdentity()){
+          setStandaloneContentTasks([...new Map(items.map(item=>[item.taskId,item])).values()]);setStandaloneError('');
+        }
+      }catch(cause){if(active)setStandaloneError(cause instanceof Error?cause.message:'真实内容任务读取失败');}
+      finally{reading=false;if(active)setStandaloneLoading(false);}
+    };
+    const refresh=()=>{if(document.visibilityState==='visible')void read();};
+    void read();
+    const timer=window.setInterval(refresh,10_000);
+    window.addEventListener('lingshu:agent-business-refresh',refresh);
+    window.addEventListener('lingshu:weekly-work-updated',refresh);
+    document.addEventListener('visibilitychange',refresh);
+    return()=>{active=false;window.clearInterval(timer);window.removeEventListener('lingshu:agent-business-refresh',refresh);window.removeEventListener('lingshu:weekly-work-updated',refresh);document.removeEventListener('visibilitychange',refresh);};
   },[authIdentity,program?.programId]);
   currentSelection.current=JSON.stringify([authIdentity,program?.programId,selected]);
   useEffect(()=>{sceneReadGeneration.current++;setSceneChoices(null);setSceneUpstream(null);setSceneReading(null);},[authIdentity,program?.programId,selected]);
@@ -184,7 +203,9 @@ export default function ConnectedAgentCalendar({accountBindingTasks=[],startsAt,
   // must not hide real tasks materialized for this package revision.
   const scopedTasks=tasks.filter(item=>item.programId===pkg?.programId&&item.packageId===pkg?.packageId&&item.packageVersion===pkg?.version);
   const packageContentTaskIds=new Set(scopedTasks.flatMap(task=>[task.continuationObservation?.status==='ready'?task.continuationObservation.contentTaskId:null,task.productionProgress?.contentTaskId,...task.resultRefs.filter(ref=>['starter_social_content_task','starter_social_content_script_baseline','starter_social_content_director_plan','starter_social_content_material_demand','starter_social_owned_product_identity_demand','starter_social_material_preparation'].includes(ref.type)).map(ref=>ref.id)].filter((value):value is string=>Boolean(value))));
-  const standaloneCards=projectSocialContentTaskCalendar(standaloneContentTasks.filter(task=>(!currentRunId||task.runId===currentRunId)&&!packageContentTaskIds.has(task.taskId)));
+  // Independently requested work shares the calendar, but need not belong to
+  // the legacy weekly run. Deduplicate only against actual package bindings.
+  const standaloneCards=projectSocialContentTaskCalendar(standaloneCalendarContentTasks(standaloneContentTasks,{programId:program?.programId,packageContentTaskIds}));
   const recoveryTenants=[...new Set(scopedTasks.map(task=>task.tenantId))];
   const recoveryTenant=recoveryTenants.length===1?recoveryTenants[0]:null;
   const recoveryToken=getToken();
@@ -329,10 +350,9 @@ export default function ConnectedAgentCalendar({accountBindingTasks=[],startsAt,
     if(card.customerExecutionTarget){
       const projection=await socialProgramApi.readCustomerCalendar(pkg.programId,pkg.packageId,pkg.version);
       if(!current())throw Error('登录身份或周版本已变化，请重新打开任务。');
-      if(!projection.binding||!projection.tasks.length)throw Error('本周尚未绑定真实客服运行。当前只有渠道配置与任务记录，没有可进入的逐客自动执行管线。');
+      if(!projection.binding||!projection.tasks.length){await openCustomerExecution(actual);return;}
       openCustomerCalendarTask(projection.binding.runId,projection.tasks[0]!);return;
     }
-    if(card.publicationExecutionTarget)throw Error('当前发布入口仅实现 assignment/attempt 的只读核验，尚无从此任务直达可操作发布管线的入口；不能把发布信息页当成生产界面。');
     if(card.reviewTarget){
       const actualReview=revealWeeklyReviewTask({pkg,tasks:scopedTasks,task:card});
       if(!current())throw Error('登录身份或周版本已变化，请重新打开任务。');
@@ -346,7 +366,7 @@ export default function ConnectedAgentCalendar({accountBindingTasks=[],startsAt,
     const binding=await readWeeklyContentNavigation({tenantId:actual.tenantId,programId:actual.programId,packageId:actual.packageId,packageVersion:actual.packageVersion,executionTaskId:actual.taskId});
     if(!current())throw Error('登录身份或周版本已变化，请重新打开任务。');
     if(binding.publicationTaskId!==actual.publicationTaskId)throw Error('生产对象与当前任务不一致。');
-    window.dispatchEvent(new CustomEvent('lingshu:navigate',{detail:weeklyContentNavigationDetail(binding)}));
+    window.dispatchEvent(new CustomEvent('lingshu:navigate',{detail:['user_approval','publishing'].includes(actual.schedule.stepKind)?weeklyPublishingNavigationDetail(binding):weeklyContentNavigationDetail(binding)}));
   }
   if (!program) {
     const realTasks=[...standaloneCards,...accountBindingTasks];
@@ -365,7 +385,7 @@ export default function ConnectedAgentCalendar({accountBindingTasks=[],startsAt,
       if(!actual)return <p role="alert">真实客服执行目标已变化，请刷新任务日历。</p>;
       return <><h3 className="font-bold">{STEP_LABEL[actual.schedule.stepKind]} · {String(actual.inputSnapshot.customerChannel)}</h3><p className="mt-2 text-xs">真实任务：{actual.taskId} · 发布：{actual.publicationTaskId} · 周包 v{actual.packageVersion}</p><p className="mt-2 text-sm">当前状态：{actual.status}</p>{actual.ownBlockingReasons.map(reason=><p key={reason} className="text-sm text-amber-800">{reason}</p>)}{actual.lastError&&<p role="alert" className="text-sm text-red-700">{actual.lastError.message}</p>}<p className="mt-2 text-xs">真实结果引用：{actual.resultRefs.length?actual.resultRefs.map(ref=>JSON.stringify(ref)).join('、'):'尚无核验交付'}</p><p className="mt-2 text-xs text-slate-500">客服运行的逐客草稿、审批和回执，请从下方本周已绑定运行的对应步骤进入。</p>{selectedCustomerRun?.selection===currentSelection.current&&selectedCustomerRun.token===getToken()&&selectedCustomerRun.taskId===actual.taskId?(selectedCustomerRun.projection.binding?selectedCustomerRun.projection.tasks.map(task=><button type="button" key={task.taskId} className="mt-2 block rounded border px-3 py-2 text-xs" onClick={()=>{const bound=selectedCustomerRun.projection.binding;if(selectedCustomerRun.selection!==currentSelection.current||getToken()!==selectedCustomerRun.token||!bound){setBindingContext(currentSelection.current);setBindingError('客服运行绑定已变化，请刷新。');return;}openCustomerCalendarTask(bound.runId,task);}}>{task.title} · {task.status} · 进入真实客服运行步骤</button>):<p role="alert" className="mt-2 text-sm text-amber-800">本周尚未绑定真实客服运行，暂无法进入逐客生产实况。</p>):<p className="mt-2 text-xs">正在核验本周客服运行绑定；读取失败时请根据错误提示刷新。</p>}</>;
     })()}</section>}
-<WeeklyCustomerChannelScopePanel programId={pkg.programId} packageId={pkg.packageId} packageVersion={pkg.version}/></Drawer>}
+<WeeklyCustomerSettings programId={pkg.programId} packageId={pkg.packageId} packageVersion={pkg.version}/><WeeklyCustomerRunBinding programId={pkg.programId} packageId={pkg.packageId} packageVersion={pkg.version} profile={program.route==='cold_start'?'b2b_cold_start':'b2b_established'}/><WeeklyCustomerChannelScopePanel programId={pkg.programId} packageId={pkg.packageId} packageVersion={pkg.version}/></Drawer>}
     {pkg&&recoveryScope&&selectedPublicationExecution?.selection===currentSelection.current&&<Drawer title="发布任务执行" open onClose={()=>setSelectedPublicationExecution(null)} size={960} destroyOnHidden><WeeklyPublicationExecutionPanel {...recoveryScope} taskId={selectedPublicationExecution.taskId}/></Drawer>}
     {pkg&&bindingContext===currentSelection.current&&bindingError&&<p role="alert" className="mx-6 my-3 rounded-lg bg-amber-50 p-3 text-xs text-amber-800">{bindingError}</p>}
     <Drawer title={auxiliaryPanel?.kind==='material'?'素材任务执行':auxiliaryPanel?.kind==='sales'?'销售交接任务执行':'任务执行'} open={Boolean(pkg&&auxiliaryPanel?.selection===currentSelection.current&&auxiliaryPanel.token===getToken())} onClose={()=>setAuxiliaryPanel(null)} size={720} destroyOnHidden>

@@ -1,4 +1,5 @@
 import {readTemplateCarryoverPlans,explicitlyConfirmedTemplatePlans} from '../../lib/weeklyTemplateCarryoverConfirmation';
+import {WEEKLY_AUTOMATION_TEMPLATE} from '../../../shared/weeklyAutomationTemplate';
 import { useEffect, useRef, useState } from 'react';
 import type { WeeklyExecutionTask } from '../../../shared/contracts/socialProgram';
 import type { WeeklyRecoveryAssessment, RecoveryResource, RecoveryTaskConstraint } from '../../../server/socialPrograms/weeklyRecoveryAssessment';
@@ -100,7 +101,7 @@ export function buildBackwardScenario(scenario:WeeklyRecoveryScenario,tasks:Week
 export function assertTargetGraphCapacity(graph:WeeklyScheduleTargetGraph,input:Omit<WeeklyRecoveryScenario,'changedTaskIds'>){for(const binding of graph.bindings.filter(b=>b.origin==='new_planned')){const c=input.constraints[binding.planningTaskId];if(!c||![c.remainingMinutes,c.remainingCostCny,c.bufferMinutes].every(v=>typeof v==='number'&&Number.isFinite(v)&&v>=0)||!c.availableAt||!input.resources[c.resourceKey])throw Error('新增素材前置需逐项明确工时、费用、缓冲、实际产能和可开始时间。');}}
 export default function WeeklyRecoveryPanel({mode='recovery',tasks,packageVersion,onAssess,onPlanBackward,weekStart,onPropose,onConfirm,onPreviewTarget,onReadProposal,onReadConfirmation}:WeeklyRecoveryPanelProps) {
   const [targetGraph,setTargetGraph]=useState<WeeklyScheduleTargetGraph|null>(null);
-  const [budget,setBudget]=useState('');
+  const budget=String(new Set(tasks.map(task=>task.publicationTaskId).filter(Boolean)).size*WEEKLY_AUTOMATION_TEMPLATE.perFinishedVideoMaxCny);
   const [changed,setChanged]=useState<string[]>([]);
   const [work,setWork]=useState<Record<string,WorkDraft>>({});
   const [resources,setResources]=useState<ResourceDraft[]>([]);
@@ -117,7 +118,7 @@ export default function WeeklyRecoveryPanel({mode='recovery',tasks,packageVersio
   const identity=tasks[0] ? `${tasks[0].tenantId}/${tasks[0].programId}/${tasks[0].packageId}/${packageVersion}` : `empty/${packageVersion}`;
   const evidence=JSON.stringify(tasks);
   useEffect(()=>{generation.current++;setTargetGraph(null);setResult(null);setBackward(null);setProposal(null);setTemplateConsent([]);setConfirmation(null);setError('');setBusy(false);return ()=>{generation.current++;};},[evidence]);
-  useEffect(()=>{setBudget('');setChanged([]);setWork({});setResources([]);setOperational({});},[identity]);
+  useEffect(()=>{setChanged([]);setWork({});setResources([]);setOperational({});},[identity]);
   const invalidate=()=> { generation.current++;setResult(null);setBackward(null);setProposal(null);setTemplateConsent([]);setConfirmation(null);setError('');setBusy(false); };
   const assess=async()=> {
     const requestId=++generation.current;
@@ -161,7 +162,7 @@ export default function WeeklyRecoveryPanel({mode='recovery',tasks,packageVersio
   return <section className="rounded-xl border border-border bg-white p-5 sm:p-6">
     <h3 className="text-base font-bold text-text-primary">{mode==='initial'?'首次容量排期 · 未执行草稿':'异常影响与补救评估'}</h3>
     <p className="mt-1 text-xs leading-5 text-text-muted">{mode==='initial'?'任务估时仅作辅助。请明确每项工时、成本、产能与工作窗口，系统核验后保存新草稿；不要求先撤回未执行的原草稿，不自动激活或生产。':'使用当前版本真实任务和依赖；下方工时、费用与产能由你明确填写。结果是条件预测，修改任务后需重新评估。'}</p>
-    <label className="mt-4 block max-w-xs text-xs font-semibold">剩余预算（元）<input aria-label="剩余预算（元）" type="number" min="0" value={budget} onChange={event=>{invalidate();setBudget(event.target.value);}} className={`${inputClass} mt-1`} /></label>
+    <p className="mt-4 text-xs">默认每条成片费用不超过 ¥15，按当前成片范围自动计算容量测算边界 ¥{budget}，无需单独确认整周预算；实际付费执行仍受原成本与资源校验约束。</p>
     <div className="mt-4"><p className="text-xs font-semibold">高级评估：容量假设与工作时段</p><p className="mt-1 text-xs text-text-muted">共用同一供应商或人工时使用相同产能名称；同名可添加多个工作窗口。时间必须包含时区。</p>
       {resources.map((resource,index)=><div key={index} className="mt-2 grid gap-2 sm:grid-cols-4">{(['key','concurrency','startAt','finishAt'] as const).map(field=><label key={field} className="text-[11px] text-text-muted">{{key:'产能名称',concurrency:'实际并发',startAt:'窗口开始（带时区）',finishAt:'窗口结束（带时区）'}[field]}<input value={resource[field]} type={field==='concurrency'?'number':'text'} onChange={event=>{invalidate();setResources(rows=>rows.map((row,i)=>i===index?{...row,[field]:event.target.value}:row));}} className={`${inputClass} mt-1`} /></label>)}</div>)}
       <button type="button" onClick={()=>{invalidate();setResources(rows=>[...rows,{key:'',concurrency:'',startAt:'',finishAt:''}]);}} className="mt-2 rounded-lg border border-border px-3 py-2 text-xs font-semibold">添加工作窗口</button>

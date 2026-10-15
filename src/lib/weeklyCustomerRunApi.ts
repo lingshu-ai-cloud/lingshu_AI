@@ -11,6 +11,8 @@ async function request<T>(url: string, body?: unknown): Promise<T> {
   return result as T;
 }
 export const weeklyCustomerRunApi = {
+  settings:async(programId:string,packageId:string,version:number)=>(await request<{item:{configVersion:number;enabled:boolean;allowRealCustomerMessages:boolean}}>(`${path(programId,packageId)}/execution-pipeline/customer-settings?version=${version}`)).item,
+  saveSettings:async(programId:string,packageId:string,version:number,input:{expectedConfigVersion:number;enabled:boolean;allowRealCustomerMessages:boolean})=>(await request<{item:{configVersion:number;enabled:boolean;allowRealCustomerMessages:boolean}}>(`${path(programId,packageId)}/execution-pipeline/customer-settings`,{expectedPackageVersion:version,...input})).item,
   candidates: async (programId:string,packageId:string,packageVersion:number) => {
     const result = await request<{items:WeeklyCustomerRunCandidate[];boundRunId:string|null}>(`${path(programId,packageId)}/customer-run-candidates?version=${packageVersion}`);
     if (!Array.isArray(result.items) || !result.items.every(item => typeof item.runId === 'string' && item.runId && typeof item.goalId === 'string' && Array.isArray(item.customerTaskKeys)) || !(result.boundRunId === null || typeof result.boundRunId === 'string')) throw new Error('客服接口缺少真实运行列表，请检查本地服务。');

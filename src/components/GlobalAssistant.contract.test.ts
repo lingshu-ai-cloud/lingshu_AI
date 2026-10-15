@@ -263,15 +263,15 @@ assert.match(source, /persistThread\(activeAgent\)/, '关闭前必须保留任�
 const sendSource = sourceSection('const send = useCallback', 'const handleTaskCardAction', '自然语言发送流程');
 assert.match(sendSource, /const threadAgent = PRIMARY_ASSISTANT_THREAD/, '发送消息必须写入 business 主线程');
 assert.match(source, /function assistantProductionIntent[\s\S]*hasProductionVerb[\s\S]*hasProductionArtifact/, '明确的脚本、视频与分镜生产指令必须被识别为生产任务');
-assert.match(sendSource, /assistantProductionIntent\(visibleText\)[\s\S]*socialContentApi\.createTask\(/, '生产指令必须创建真实内容 Agent 任务，不得交给模型生成长文本');
-assert.match(sendSource, /resolveAssistantEnterpriseProduct\(productionIntent\.productQuery\)[\s\S]*studioApi\.script\([\s\S]*selectedProductId: productionProduct\.id[\s\S]*scriptType: 'storyboard'/, '助手必须用企业中心已确认产品调用现有内容制作能力生成真实口播分镜');
-assert.match(sendSource, /if \(!productionDraft\.script\?\.trim\(\)\)[\s\S]*throw new Error/, '口播生成失败时不得跳入空白生产页');
-assert.ok(sendSource.indexOf('studioApi.script') < sendSource.indexOf('socialContentApi.createTask'), '必须先生成有效口播再创建周任务，避免留下空白孤儿任务');
+assert.match(sendSource, /assistantProductionIntent\(visibleText\)[\s\S]*socialContentApi\.createAssistantAction\(/, '生产指令必须创建真实周任务并调用后端生产入口');
+assert.match(sendSource, /resolveAssistantEnterpriseProduct\(productionIntent\.productQuery\)/, '生产指令必须解析真实企业产品');
+assert.match(sendSource, /dueAt: confirmedDueAt/, '生产任务必须带明确的交付截止时间');
+assert.match(sendSource, /upsertTaskCard\(threadAgent,[\s\S]*taskId: `social-content:\$\{productionTask\.taskId\}`/, '自然语言生产回执也必须保留真实任务入口');
+assert.doesNotMatch(sendSource, /agentTaskDemo: true/, '真实执行不得进入演示页面');
 assert.match(sendSource, /productId: productionProduct\.id[\s\S]*productRef: productionProduct\.label/, '周任务必须绑定企业中心的真实产品身份');
-assert.match(sendSource, /initialProductionScript: productionDraft\.script/, '现有三栏生产页必须接收已经生成的口播分镜');
 assert.match(sendSource, /setAssistantTool\(null\)[\s\S]*setMode\('breathing'\)[\s\S]*page: 'smartAssets'/, '进入生产页前必须收起灵小枢对话窗口');
 assert.match(sendSource, /page: 'smartAssets'[\s\S]*socialContentTaskId: productionTask\.taskId/, '任务创建后必须定位到该任务的生产页面');
-assert.ok(sendSource.indexOf('socialContentApi.createTask') < sendSource.indexOf('fetch(API_PATH[agentForOrbit(routeAgent)]'), '生产任务分流必须发生在千问文本生成请求之前');
+assert.ok(sendSource.indexOf('socialContentApi.createAssistantAction') < sendSource.indexOf('fetch(API_PATH[agentForOrbit(routeAgent)]'), '生产任务分流必须发生在千问文本生成请求之前');
 assert.match(sendSource, /fetch\(API_PATH\[agentForOrbit\(routeAgent\)\]/, 'business 主线程聚合不得丢失当前页面的内部能力路由');
 assert.doesNotMatch(sendSource, /setPaused\(targetAgent,\s*false\)/, '发送普通消息不得擅自把任务恢复为运行中');
 assert.match(sendSource, /focusedNaturalLanguageActionInput\(focusedCard, focusedMutationActionId\)/, '自然语言确定性操作必须从当前卡片读取后端签发输入');
@@ -385,9 +385,10 @@ const quickExecutionSource = sourceSection(
   'const handleTaskCardAction',
   '快捷执行入口',
 );
-assert.match(quickExecutionSource, /planQuickExecution\(/, '快捷执行必须先应用分级确认策略');
-assert.match(quickExecutionSource, /executeQuickExecution\(threadAgent, plan\)/, '确认完成后必须进入真实 Agent 动作接口');
-assert.match(quickExecutionSource, /presentActionResponse\(threadAgent, plan\.request, response\)/, '真实执行回执必须投影为任务卡片');
+assert.match(quickExecutionSource, /if \(!confirmations\)/, '生产任务启动前必须确认');
+assert.match(quickExecutionSource, /startAssistantAction\(entry\.taskId, entry\.expectedVersion, executionRequestId\)/, '确认完成后必须向真实任务提交对象版本和幂等键');
+assert.match(quickExecutionSource, /upsertTaskCard\(PRIMARY_ASSISTANT_THREAD/, '真实执行回执必须投影为任务卡片');
+assert.match(source, /destination\.origin === window\.location\.origin[\s\S]*socialContentTaskId: productionTaskId, socialContentPage: 'smartAssets', directStudio: true/, '生产回执链接必须原子恢复指定任务而非刷新成空制作页');
 assert.match(source, /<AssistantQuickEntries[\s\S]*onQuestion=\{entry => void send\(entry\.prompt, currentPageAgent\)\}[\s\S]*onExecute=\{entry => void runQuickExecution\(entry\)\}/, '输入框上方必须同时接通页面问答与快捷执行');
 assert.match(hydrationSource, /threads\[PRIMARY_ASSISTANT_THREAD\]\s*!==\s*threadBeforeRequest/, '旧线程快照不得覆盖请求期间产生的本地输入');
 assert.match(hydrationSource, /threads\[PRIMARY_ASSISTANT_THREAD\]\s*!==\s*hydratedThread/, '过期重签结果不得覆盖请求期间产生的新卡片或焦点');

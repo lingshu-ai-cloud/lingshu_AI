@@ -52,7 +52,8 @@ export function readWeeklyContentNavigationTarget(historyState: unknown): Weekly
   if (!['tenantId','programId','packageId','executionTaskId'].every(key => typeof scope[key] === 'string' && String(scope[key]).trim()) || typeof scope.packageVersion !== 'number') return null;
   try {
     const target = parseWeeklyContentNavigation(value, {tenantId: String(scope.tenantId), programId: String(scope.programId), packageId: String(scope.packageId), packageVersion: scope.packageVersion, executionTaskId: String(scope.executionTaskId)});
-    if (readSocialContentNavigationTaskId('smartAssets', historyState) !== target.contentTaskId) return null;
+    const publishing=detail.page==='traffic'&&detail.view==='publish';
+    if (readSocialContentNavigationTaskId(publishing?'traffic':'smartAssets', historyState) !== target.contentTaskId) return null;
     return target;
   } catch { return null; }
 }

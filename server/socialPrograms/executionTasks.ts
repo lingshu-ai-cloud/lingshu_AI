@@ -902,7 +902,7 @@ export function createWeeklyExecutionTaskService(dataStore: DataStore) {
         };
       });
     },
-    async approve(tenantId: string, programId: string, packageId: string, taskId: string, userId: string) {
+    async approve(tenantId: string, programId: string, packageId: string, taskId: string, userId: string, expectedArtifactRef?:VersionedSocialRef) {
       return mutate(tenantId, programId, packageId, taskId, async (task, now) => {
         if (task.schedule.stepKind !== 'user_approval' || task.schedule.responsibleActor !== 'user') {
           throw new SocialProgramError('weekly_execution_task_not_user_approval', 409, '该节点不是用户审批节点。');
@@ -952,6 +952,7 @@ export function createWeeklyExecutionTaskService(dataStore: DataStore) {
         // A resolved revision has its own independent G4/G5 evidence. Preserve the
         // original quality task history and select the child only from sealed server records.
         const upstreamArtifactRef = creativeRepair?.artifactRef ?? uniqueArtifactRefs[0]!;
+        if(expectedArtifactRef&&(expectedArtifactRef.type!=='starter_social_content_artifact'||expectedArtifactRef.id!==upstreamArtifactRef.id||expectedArtifactRef.version!==upstreamArtifactRef.version))throw new SocialProgramError('weekly_production_approval_artifact_changed',409,'预览成片与当前待验收版本不一致，请重新预览后验收。');
         const artifacts = await dataStore.list<any>('starter_social_content_artifacts', {
           where: { tenant_id: tenantId, task_id: binding.task_id, artifact_id: upstreamArtifactRef.id }, page: 1, perPage: 2,
         });

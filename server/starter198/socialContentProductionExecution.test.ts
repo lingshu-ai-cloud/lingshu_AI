@@ -63,8 +63,32 @@ const detail: any = {
   delete localProductFallback.shots[0].productSceneReplication;
   delete localProductFallback.shots[0].materialRouting.generation;
   assert.doesNotThrow(()=>assertCompleteTypeAwareExecutionPlan(localProductFallback));
+  const ownedProductCanonical=structuredClone(canonical);
+  Object.assign(ownedProductCanonical.shots[0],{sourceStrategy:'customer_real_asset',sourceRefs:['owned-product']});
+  delete ownedProductCanonical.shots[0].productSceneReplication;
+  delete ownedProductCanonical.shots[0].materialRouting.generation;
+  ownedProductCanonical.shots[0].materialRouting.localMatch={state:'matched',sourceRefs:['owned-product'],evidenceRef:'owned-proof'};
+  const ownedRebound=bindCanonicalTypeAwareRouting(ownedProductCanonical,ownedProductCanonical);
+  assert.doesNotThrow(()=>assertCompleteTypeAwareExecutionPlan(ownedRebound));
+  const missingGeneratedProduct=structuredClone(canonical);delete missingGeneratedProduct.shots[0].productSceneReplication;
+  assert.throws(()=>bindCanonicalTypeAwareRouting(approved,missingGeneratedProduct),/canonical_product_spec_missing/);
   assert.throws(()=>assertCompleteTypeAwareExecutionPlan(schedulerOverlay),/execution_routing_missing:replication-reference-shot-1/);
   assert.throws(()=>bindCanonicalTypeAwareRouting({...approved,shots:approved.shots.slice(1)},canonical),/scene_set_changed/);
+  // Scene count belongs to the approved task, not a particular 37-shot
+  // reference fixture. Ordinary short productions retain the same exact-ID
+  // admission boundary and all per-shot routing/product requirements.
+  for(const count of [1,4,37]) {
+    const current={...canonical,shots:structuredClone(canonical.shots.slice(0,count))};
+    const frozen={...approved,shots:structuredClone(approved.shots.slice(0,count))};
+    const rebound=bindCanonicalTypeAwareRouting(frozen,current);
+    const ids=current.shots.map((shot:any)=>shot.shotId);
+    assert.doesNotThrow(()=>assertCompleteTypeAwareExecutionPlan(rebound,ids));
+    assert.throws(()=>bindCanonicalTypeAwareRouting({...frozen,shots:[...frozen.shots,{...frozen.shots[0]}]},current),/scene_set_changed/);
+    assert.throws(()=>bindCanonicalTypeAwareRouting({...frozen,shots:frozen.shots.map((shot:any,index:number)=>index?shot:{...shot,shotId:'different'})},current),/scene_set_changed/);
+    assert.throws(()=>assertCompleteTypeAwareExecutionPlan({...rebound,shots:rebound.shots.slice(1)},ids),/scene_set_invalid/);
+  }
+  assert.throws(()=>bindCanonicalTypeAwareRouting({...approved,shots:[]},{...canonical,shots:[]}),/scene_set_changed/);
+  assert.throws(()=>bindCanonicalTypeAwareRouting({...approved,shots:[approved.shots[0],approved.shots[0]]},{...canonical,shots:[canonical.shots[0],canonical.shots[0]]}),/scene_set_changed/);
 }
 
 {

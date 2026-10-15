@@ -13,14 +13,14 @@ const expectedPages = [
   'plugins',
 ];
 
-test('first release exposes page-local mixed quick entries on the requested surfaces', () => {
+test('static suggestions only expose questions; execution requires backend capability', () => {
   assert.deepEqual([...ASSISTANT_QUICK_ENTRY_PAGES].sort(), [...expectedPages].sort());
   for (const page of expectedPages) {
     const entries = assistantQuickEntriesForPage(page as Parameters<typeof assistantQuickEntriesForPage>[0]);
-    assert.ok(entries.length >= 4 && entries.length <= 5, `${page} should expose four or five entries`);
+    assert.equal(entries.length, 2);
     assert.equal(new Set(entries.map(entry => entry.id)).size, entries.length, `${page} entry ids must be unique`);
     const executions = entries.filter(entry => entry.kind === 'execute');
-    assert.ok(executions.length >= 2 && executions.length <= 3, `${page} should mix in two or three executions`);
+    assert.equal(executions.length, 0, `${page} must not advertise unsupported execution`);
     assert.ok(entries.some(entry => entry.kind === 'question'), `${page} should retain quick questions`);
   }
 });
@@ -29,14 +29,12 @@ test('excluded order and scheduler pages do not expose quick entries', () => {
   assert.deepEqual(assistantQuickEntriesForPage('scheduled'), []);
 });
 
-test('outbound and destructive actions carry the strongest confirmation tier', () => {
+test('outbound actions are not offered without a real signed object', () => {
   const publishing = assistantQuickEntriesForPage('traffic');
   const publish = publishing.find(entry => entry.id === 'publishing-publish');
-  assert.equal(publish?.kind, 'execute');
-  if (publish?.kind === 'execute') assert.equal(publish.confirmation, 'double');
+  assert.equal(publish, undefined);
 
   const conversation = assistantQuickEntriesForPage('conversion');
   const send = conversation.find(entry => entry.id === 'conversation-send');
-  assert.equal(send?.kind, 'execute');
-  if (send?.kind === 'execute') assert.equal(send.confirmation, 'double');
+  assert.equal(send, undefined);
 });

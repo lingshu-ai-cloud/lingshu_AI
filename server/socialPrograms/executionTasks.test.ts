@@ -468,6 +468,7 @@ test('weekly user approval rejects missing binding/media and accepts an actual r
   });
   await assert.rejects(approve());
   await fs.writeFile(filePath, bytes);
+  await assert.rejects(execution.approve('tenant-a',program.programId,draft.packageId,approval.taskId,'owner',{type:'starter_social_content_artifact',id:'foreign-artifact',version:1}),/预览成片/);
   const accepted = await approve();
   const approved = accepted.find(task => task.taskId === approval.taskId)!;
   assert.equal(approved.status, 'succeeded');

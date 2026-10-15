@@ -205,7 +205,7 @@ export interface SocialDiscoveryModePolicy {
 }
 
 export type SocialCollectionRunStatus = 'queued' | 'running' | 'succeeded' | 'partial' | 'failed' | 'stopped';
-export type SocialCollectionStopReason = 'completed' | 'duplicate_limit' | 'no_valid_results' | 'budget_limited' | 'source_failed' | 'manual';
+export type SocialCollectionStopReason = 'completed' | 'duplicate_limit' | 'no_valid_results' | 'budget_limited' | 'source_failed' | 'daily_collection_limit_reached' | 'manual';
 
 export interface SocialDiscoveryModeRunStats {
   requested: number;

@@ -154,12 +154,14 @@ export const SOCIAL_SHOOTING_PLAN_SCHEMA = 'social-content.shooting-plan.v1';
 export function bindCanonicalTypeAwareRouting<T extends NonNullable<ProductionTaskDetail['assetSupplyPlan']>>(approved: T, canonical: T): T {
   const canonicalById=new Map(canonical.shots.map(shot=>[shot.shotId,shot]));
   const approvedIds=approved.shots.map(shot=>shot.shotId),canonicalIds=canonical.shots.map(shot=>shot.shotId);
-  if(approvedIds.length!==37||canonicalIds.length!==37||new Set(approvedIds).size!==37
+  if(!canonicalIds.length||approvedIds.length!==canonicalIds.length||new Set(approvedIds).size!==approvedIds.length
+    ||new Set(canonicalIds).size!==canonicalIds.length||canonicalIds.some(id=>!id)
     || socialRequestHash([...approvedIds].sort())!==socialRequestHash([...canonicalIds].sort()))throw Error('type_aware_frozen_scene_set_changed');
   const shots=approved.shots.map(shot=>{
     const authority=canonicalById.get(shot.shotId);
     if(!authority?.materialRouting)throw Error(`type_aware_canonical_routing_missing:${shot.shotId}`);
-    if(authority.materialRouting.materialType==='product'&&!authority.productSceneReplication)throw Error(`type_aware_canonical_product_spec_missing:${shot.shotId}`);
+    const generatesProduct=authority.sourceStrategy==='aigc_product_scene_replication';
+    if(generatesProduct&&!authority.productSceneReplication)throw Error(`type_aware_canonical_product_spec_missing:${shot.shotId}`);
     const {productSceneReplication:_staleProductSpec,...approvedShot}=structuredClone(shot);
     const realLocalRoute=authority.materialRouting.policy==='local_only'&&authority.materialRouting.materialType!=='product';
     const matchedRefs=realLocalRoute?authority.materialRouting.localMatch.sourceRefs:[];
@@ -169,16 +171,19 @@ export function bindCanonicalTypeAwareRouting<T extends NonNullable<ProductionTa
       ...(realLocalRoute?{sourceStrategy:'customer_real_asset' as const,sourceRefs:[...matchedRefs],
         fallbackSourceStrategy:null,selectedMaterialSegment:matchedSegment}:{}),
       materialRouting:structuredClone(authority.materialRouting),
-      ...(authority.materialRouting.materialType==='product'?{productSceneReplication:structuredClone(authority.productSceneReplication!)}:{})};
+      ...(generatesProduct?{productSceneReplication:structuredClone(authority.productSceneReplication!)}:{})};
   });
   if(shots.some(shot=>!shot.materialRouting))throw Error('type_aware_frozen_routing_incomplete');
-  if(shots.some(shot=>shot.materialRouting?.materialType==='product'&&!shot.productSceneReplication)
-    ||shots.some(shot=>shot.materialRouting?.materialType!=='product'&&shot.productSceneReplication))throw Error('type_aware_frozen_product_contract_incomplete');
+  if(shots.some(shot=>shot.sourceStrategy==='aigc_product_scene_replication'&&!shot.productSceneReplication)
+    ||shots.some(shot=>shot.sourceStrategy!=='aigc_product_scene_replication'&&shot.productSceneReplication))throw Error('type_aware_frozen_product_contract_incomplete');
   return {...structuredClone(approved),materialRoutingPolicyVersion:'type-aware.v1',shots} as T;
 }
 
-export function assertCompleteTypeAwareExecutionPlan(plan: NonNullable<ProductionTaskDetail['assetSupplyPlan']>) {
-  if(plan.shots.length!==37||new Set(plan.shots.map(shot=>shot.shotId)).size!==37)throw Error('type_aware_execution_scene_set_invalid');
+export function assertCompleteTypeAwareExecutionPlan(plan: NonNullable<ProductionTaskDetail['assetSupplyPlan']>, expectedShotIds?: readonly string[]) {
+  const actualIds=plan.shots.map(shot=>shot.shotId);
+  if(!actualIds.length||actualIds.some(id=>!id)||new Set(actualIds).size!==actualIds.length
+    ||(expectedShotIds&&(expectedShotIds.length!==actualIds.length||new Set(expectedShotIds).size!==expectedShotIds.length
+      ||socialRequestHash([...expectedShotIds].sort())!==socialRequestHash([...actualIds].sort()))))throw Error('type_aware_execution_scene_set_invalid');
   const missingRoute=plan.shots.find(shot=>!shot.materialRouting);
   if(missingRoute)throw Error(`type_aware_execution_routing_missing:${missingRoute.shotId}`);
   const generatedProducts=plan.shots.filter(shot=>shot.sourceStrategy==='aigc_product_scene_replication');
@@ -610,7 +615,12 @@ export async function runSocialContentAutoProduction(input: {
   if(admissionAuthority||String(admissionRow.create_idempotency_key??'').startsWith('weekly-production:')){if(!admissionAuthority)throw new SocialContentWorkflowError('weekly_production_start_authority_invalid',409);if(!input.repository.dataStore)throw new SocialContentWorkflowError('weekly_production_planning_missing',409);const pkg=socialObject(admissionAuthority.weeklyPackage) as unknown as import('../../shared/contracts/socialProgram.js').WeeklyOperatingPackage,publication=socialObject(admissionAuthority.publicationTask);if(!pkg||!publication?.publicationTaskId)throw new SocialContentWorkflowError('weekly_production_start_authority_invalid',409);await assertStoredWeeklyProductionCoverage({store:input.repository.dataStore,tenantId:input.tenantId,package:pkg,publicationTaskId:String(publication.publicationTaskId),frozenPlanning:pkg.agentPlanning});}
   let detail = await readSocialTaskDetail(input);
   if (!detail) throw new Error('社媒内容任务不存在');
-  const canonicalTypeAwareSupplyPlan=detail.brief.materialRoutingPolicyVersion==='type-aware.v1'?detail.assetSupplyPlan:null;
+  // The planner authors per-material routing only for ai_enhanced. Other
+  // approaches carry the policy version for lineage but use their own
+  // existing material/shooting-plan strategies and have no such contracts.
+  const usesTypeAwareRouting=detail.brief.materialRoutingPolicyVersion==='type-aware.v1'
+    &&(detail.brief.productionApproach??'ai_enhanced')==='ai_enhanced';
+  const canonicalTypeAwareSupplyPlan=usesTypeAwareRouting?detail.assetSupplyPlan:null;
   if (input.graphPhase && input.graphApprovedContext) {
     detail = { ...detail, ...structuredClone(input.graphApprovedContext) };
   }
@@ -623,7 +633,7 @@ export async function runSocialContentAutoProduction(input: {
   // Graph and weekly scheduler snapshots are applied above. Bind authoritative
   // type-aware routing last so neither older snapshot can erase the planner's
   // per-shot route/product contract before reviewedSupplyPlan is created.
-  if(detail.brief.materialRoutingPolicyVersion==='type-aware.v1'){
+  if(usesTypeAwareRouting){
     if(!detail.assetSupplyPlan||!canonicalTypeAwareSupplyPlan)throw Error('type_aware_frozen_plan_missing');
     detail.assetSupplyPlan=bindCanonicalTypeAwareRouting(detail.assetSupplyPlan,canonicalTypeAwareSupplyPlan);
   }
@@ -971,9 +981,9 @@ export async function runSocialContentAutoProduction(input: {
           JSON.stringify({...evidence,evidenceHash:socialRequestHash(evidence)},null,2),{mode:0o600});
       }
     }
-    if(detail.brief.materialRoutingPolicyVersion==='type-aware.v1'){
+    if(usesTypeAwareRouting){
       if(!reviewedSupplyPlan)throw Error('type_aware_execution_plan_missing');
-      assertCompleteTypeAwareExecutionPlan(reviewedSupplyPlan);
+      assertCompleteTypeAwareExecutionPlan(reviewedSupplyPlan,canonicalTypeAwareSupplyPlan?.shots.map(shot=>shot.shotId));
     }
 	  // Budget preparation and later alignment may project or normalize the plan.
 	  // Product generation must retain the exact reviewed routing/spec snapshot
@@ -1311,7 +1321,10 @@ export async function runSocialContentAutoProduction(input: {
     }
   }
   let plan = buildSocialProductionPlan({ baseline: activeBaseline, assets, themeId: detail.theme?.themeId ?? null,
-    ...(assetSupplyExecution?{routedSceneAssets:assetSupplyExecution.shots.map(shot=>({sceneId:shot.sceneId,assetId:shot.assetId}))}:{}), });
+    ...(assetSupplyExecution?{routedSceneAssets:assetSupplyExecution.shots.map(shot=>{
+      const scene=agentWorkflow.directorBrief.scenes.find(scene=>scene.sceneId===shot.sceneId);
+      return {sceneId:shot.sceneId,assetId:shot.assetId,durationSeconds:scene?scene.duration.endSeconds-scene.duration.startSeconds:undefined};
+    })}:{}), });
   if(!plan.ok&&assetSupplyExecution)throw new Error(`asset_supply_scene_binding_invalid:${plan.reasonCode}:${plan.message}`);
   if (!plan.ok && productionApproach !== 'material_cut') {
     if (productionMode === 'social_ready' && rawAssets.length === 0 && !assetSupplyExecution) {
@@ -1347,7 +1360,7 @@ export async function runSocialContentAutoProduction(input: {
     && explanationOnlyRoute) {
     throw new Error('production_input_required:当前方案只能生成说明卡片，无法达到爆款裂变的画面预期。请补充客户产品视频/图片，或明确改为“概念样片”后再生成。');
   }
-  if (assetSupplyExecution) plan = applyZeroAssetTruthSafeNarration(plan);
+  if (explanationOnlyRoute) plan = applyZeroAssetTruthSafeNarration(plan);
   if (reviewDirective) plan = applySocialReviewRevision(plan, reviewDirective);
   const adaptation = productionAdaptation(plan, assets.length);
   const directorCheckpointInputHash = socialRequestHash({

@@ -91,6 +91,31 @@ export function createSocialProgramsRouter(dataStore: DataStore = store, authent
   }), createSocialWeeklyProducerEvidenceRouter(dataStore));
   const weeklyPackages = createWeeklyOperatingPackageService(dataStore);
   const pipeline=createWeeklyExecutionPipelineService(dataStore);
+  router.get('/:programId/operating-packages/:packageId/execution-pipeline/customer-settings',asyncRoute(async(req,res)=>{
+    const {tenantId,userId}=res.locals as AuthLocals,packageVersion=Number(req.query.version);
+    if(!Number.isSafeInteger(packageVersion)||packageVersion<1)throw new SocialProgramError('weekly_pipeline_input_invalid',400,'请指定当前周包版本。');
+    res.json({item:await pipeline.readCustomerSettings({tenantId,actorUserId:userId,programId:req.params.programId,packageId:req.params.packageId,packageVersion})});
+  }));
+  router.post('/:programId/operating-packages/:packageId/execution-pipeline/customer-settings',asyncRoute(async(req,res)=>{
+    const {tenantId,userId}=res.locals as AuthLocals,b=routeBody(req.body);
+    if(!b||Object.keys(b).some(k=>!['expectedPackageVersion','expectedConfigVersion','enabled','allowRealCustomerMessages'].includes(k))||![b.expectedPackageVersion,b.expectedConfigVersion].every(v=>Number.isSafeInteger(v)&&Number(v)>0)||typeof b.enabled!=='boolean'||typeof b.allowRealCustomerMessages!=='boolean')throw new SocialProgramError('weekly_pipeline_input_invalid',400,'请明确当前版本、客服启用与真实消息许可。');
+    res.json({item:await pipeline.updateCustomerSettings({tenantId,actorUserId:userId,programId:req.params.programId,packageId:req.params.packageId,packageVersion:Number(b.expectedPackageVersion)},{expectedConfigVersion:Number(b.expectedConfigVersion),enabled:b.enabled,allowRealCustomerMessages:b.allowRealCustomerMessages})});
+  }));
+  router.post('/:programId/operating-packages/:packageId/execution-pipeline/publishing-authorization',asyncRoute(async(req,res)=>{
+    const {tenantId,userId}=res.locals as AuthLocals,body=routeBody(req.body);
+    if(!body||Object.keys(body).some(k=>!['expectedPackageVersion','authorizePublishing'].includes(k))||body.authorizePublishing!==true||!Number.isSafeInteger(body.expectedPackageVersion)||Number(body.expectedPackageVersion)<1)throw new SocialProgramError('weekly_pipeline_input_invalid',400,'请明确确认当前周包的有界发布许可。');
+    res.json({item:await pipeline.authorizePublishing({tenantId,actorUserId:userId,programId:req.params.programId,packageId:req.params.packageId,packageVersion:Number(body.expectedPackageVersion)})});
+  }));
+  router.get('/:programId/operating-packages/:packageId/execution-pipeline/template',asyncRoute(async(req,res)=>{
+    const {tenantId,userId}=res.locals as AuthLocals,packageVersion=Number(req.query.version);
+    if(!Number.isSafeInteger(packageVersion)||packageVersion<1)throw new SocialProgramError('weekly_pipeline_input_invalid',400,'请指定当前周包版本。');
+    res.json({item:await pipeline.readTemplate({tenantId,actorUserId:userId,programId:req.params.programId,packageId:req.params.packageId,packageVersion})});
+  }));
+  router.post('/:programId/operating-packages/:packageId/execution-pipeline/template',asyncRoute(async(req,res)=>{
+    const {tenantId,userId}=res.locals as AuthLocals,body=routeBody(req.body);
+    if(!body||Object.keys(body).some(k=>k!=='expectedPackageVersion')||!Number.isSafeInteger(body.expectedPackageVersion)||Number(body.expectedPackageVersion)<1)throw new SocialProgramError('weekly_pipeline_input_invalid',400,'只允许采用当前服务端模板，不接受审批或模板对象注入。');
+    res.json({item:await pipeline.adoptTemplate({tenantId,actorUserId:userId,programId:req.params.programId,packageId:req.params.packageId,packageVersion:Number(body.expectedPackageVersion)})});
+  }));
   router.get('/:programId/operating-packages/:packageId/execution-pipeline/task-audit',asyncRoute(async(req,res)=>{
     const {tenantId,userId}=res.locals as AuthLocals,packageVersion=Number(req.query.version);
     if(!Number.isSafeInteger(packageVersion)||packageVersion<1)throw new SocialProgramError('weekly_pipeline_input_invalid',400,'请指定当前周包版本。');
@@ -605,8 +630,11 @@ export function createSocialProgramsRouter(dataStore: DataStore = store, authent
 
   router.post('/:programId/operating-packages/:packageId/execution-tasks/:taskId/approve', asyncRoute(async (req, res) => {
     const { tenantId, userId } = res.locals as AuthLocals;
+    const body=routeBody(req.body),ref=body?.expectedArtifactRef as {type?:unknown;id?:unknown;version?:unknown}|undefined;
+    if(!body||Object.keys(body).some(key=>key!=='expectedArtifactRef')||ref!==undefined&&(!ref||typeof ref!=='object'||Array.isArray(ref)||Object.keys(ref).some(key=>!['type','id','version'].includes(key))||ref.type!=='starter_social_content_artifact'||typeof ref.id!=='string'||!ref.id.trim()||!Number.isSafeInteger(ref.version)||Number(ref.version)<1))throw new SocialProgramError('weekly_production_approval_input_invalid',400,'请提交当前预览成片的确切版本。');
     res.json({ items: await executionTasks.approve(
       tenantId, String(req.params.programId || ''), String(req.params.packageId || ''), String(req.params.taskId || ''), userId,
+      ref as import('../../shared/contracts/socialProgram.js').VersionedSocialRef|undefined,
     ) });
   }));
 

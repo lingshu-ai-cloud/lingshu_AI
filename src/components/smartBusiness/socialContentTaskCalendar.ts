@@ -1,12 +1,26 @@
 import type { SocialContentTaskSummary } from '../../../shared/contracts/socialContentWorkflow';
 import type { AgentCalendarTask } from './AgentWeeklyCalendar';
+import {businessDate} from '../../../shared/naturalWeek';
 
 const completedStatuses = new Set(['delivered', 'awaiting_publish', 'awaiting_metrics', 'reviewed']);
 const activeStatuses = new Set(['plan_review', 'producing', 'asset_review', 'packaging']);
-const blockedStatuses = new Set(['needs_input', 'attention']);
+const blockedStatuses = new Set(['needs_input', 'attention', 'paused']);
+
+/** Package-owned work is projected from its execution graph, never relabelled
+ * as an independent card in another program/package revision. Unbound work
+ * remains visible even when the old digital-employee run differs. */
+export function standaloneCalendarContentTasks(tasks:SocialContentTaskSummary[],scope:{programId?:string;packageContentTaskIds:ReadonlySet<string>}):SocialContentTaskSummary[]{
+  return tasks.filter(task=>{
+    if(scope.packageContentTaskIds.has(task.taskId))return false;
+    const programId=task.brief.programRef?.id;
+    if(!programId)return true;
+    if(programId!==scope.programId)return false;
+    return !task.weeklyPlanId;
+  });
+}
 
 function calendarStatus(task: SocialContentTaskSummary): AgentCalendarTask['status'] {
-  if (completedStatuses.has(task.status)) return 'completed';
+  if (completedStatuses.has(task.status)) return task.artifactCount > 0 ? 'completed' : 'blocked';
   if (activeStatuses.has(task.status)) return 'active';
   if (blockedStatuses.has(task.status)) return 'blocked';
   return 'planned';
@@ -18,9 +32,10 @@ function instant(value: string | null | undefined, fallback: string) {
 }
 
 function point(value: Date) {
+  const clock=new Intl.DateTimeFormat('en-GB',{timeZone:'Asia/Shanghai',hour:'2-digit',minute:'2-digit',hourCycle:'h23'}).format(value);
   return {
-    date: `${value.getFullYear()}-${String(value.getMonth() + 1).padStart(2, '0')}-${String(value.getDate()).padStart(2, '0')}`,
-    time: `${String(value.getHours()).padStart(2, '0')}:${String(value.getMinutes()).padStart(2, '0')}`,
+    date: businessDate(value),
+    time: clock,
   };
 }
 
@@ -42,7 +57,7 @@ export function projectSocialContentTaskCalendar(tasks: SocialContentTaskSummary
     const productionReady = task.artifactCount > 0;
     const qualityPassed = task.approvedArtifactCount > 0;
     const needs = task.readiness.missing;
-    const reason = needs.length ? needs.join('；') : undefined;
+    const reason = [task.status==='paused'?'任务已暂停':null,completedStatuses.has(task.status)&&!task.artifactCount?'交付状态尚无产物记录，请核验原任务':null,...needs].filter(Boolean).join('；') || undefined;
     const nodes: AgentCalendarTask[] = [
       {
         id: `${task.taskId}:business`, date: createdPoint.date, time: createdPoint.time,
@@ -83,7 +98,7 @@ export function projectSocialContentTaskCalendar(tasks: SocialContentTaskSummary
       dueAt: task.brief.dueAt || undefined,
       agent: 'content',
       title: task.brief.title || '完成视频成片',
-      output: productionReady ? `真实成片与制作记录 · ${task.artifactCount} 项产物` : '交付可审核的视频成片',
+      output: productionReady ? `已回收 ${task.artifactCount} 项产物 · ${task.approvedArtifactCount} 项审核通过` : '等待生产任务回收交付物',
       context: [task.brief.productRef, task.brief.platforms.join(' / '), task.brief.languages.join(' / ')].filter(Boolean).join(' · ') || task.brief.objective,
       minutes: null,
       status,

@@ -10,7 +10,7 @@ class MemoryStore implements DataStore {
   async getById<T>(collection: string, id: string): Promise<T | null> { return (this.rows.get(collection) ?? []).find(row => row.id === id) as T ?? null; }
   async create<T>(collection: string, data: Record<string, unknown>): Promise<T> { const row = { id: `${collection}-${(this.rows.get(collection) ?? []).length + 1}`, ...data }; this.rows.set(collection, [...(this.rows.get(collection) ?? []), row]); return row as T; }
   async update(collection: string, id: string, data: Record<string, unknown>): Promise<boolean> { const rows = this.rows.get(collection) ?? []; const index = rows.findIndex(row => row.id === id); if (index < 0) return false; rows[index] = { ...rows[index], ...data }; return true; }
-  async delete(): Promise<boolean> { return false; }
+  async delete(collection:string,id:string): Promise<boolean> { const rows=this.rows.get(collection)??[];const next=rows.filter(r=>r.id!==id);this.rows.set(collection,next);return rows.length!==next.length; }
   async list<T>(collection: string, query: ListQuery = {}): Promise<ListResult<T>> {
     const items = (this.rows.get(collection) ?? []).filter(row => Object.entries(query.where ?? {}).every(([key, value]) => row[key] === value));
     return { items: items as T[], totalItems: items.length, totalPages: items.length ? 1 : 0, page: 1, perPage: query.perPage ?? 500 };
@@ -55,7 +55,7 @@ test('approved collection calls CandidateEvidence worker and fills quota with qu
     candidateEvidenceAdapter: { async toEvidenceWorkItems(input) { return [{ tenantId: input.tenantId, candidateId: input.result.candidateIds![0]!, discoveryPath: ['keyword', 'performance'], evidenceRefs: ['source'], g1: { runId: input.runId, queryRef: input.queryRef, discoveryMode: input.mode, sourceUrl: 'source' } }]; } },
     async runCandidateEvidence(items) { workerCalls += 1; return { accepted: items.map(accepted), suggestions: [], failed: [] }; },
   });
-  assert.equal(crawlCalls, 2, 'ten imported rows from the first source must not fill a two-evidence quota');
+  assert.equal(crawlCalls, 2, `ten imported rows from the first source must not fill a two-evidence quota: ${JSON.stringify(result.run?.failureDetails)}`);
   assert.equal(workerCalls, 2);
   assert.equal(result.run?.modeStats.momentum?.accepted, 2);
   assert.deepEqual(result.run?.evidenceOutcomes?.momentum?.acceptedCandidateIds, ['candidate-1', 'candidate-2']);

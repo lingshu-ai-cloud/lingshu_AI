@@ -18,7 +18,7 @@ export default function WeeklyGoalAuditPanel({pkg,tasks,mode}:{pkg:WeeklyOperati
    {key:'week',label:'经营周',children:`${pkg.weekStart} — ${pkg.weekEnd} · v${pkg.version}`},
    {key:'objective',label:'本周目标',children:pkg.objective},
    {key:'criteria',label:'验收标准',children:pkg.successCriteria.length?<ul className="list-disc pl-4">{pkg.successCriteria.map((criterion,index)=><li key={index}>{criterion}{!goal?' · 待按真实证据核对':''}</li>)}</ul>:'当前周包未定义验收标准'},
-   {key:'budget',label:'预算边界',children:`制作预算 ¥${pkg.socialContentPackage.weeklyBudgetCny??'未明确'}；采集预算 ¥${pkg.discoveryBudgetCny??'未明确'}（不是已结算成本）`},
+   {key:'budget',label:'默认费用规则',children:'每条成片费用不超过 ¥15；采集每天最多10条，不另设采集金额上限，不要求单独确认整周预算。'},
    {key:'delivery',label:'本周交付',children:`计划 ${audit.planned} 条 · 成片 ${audit.video} · 已验收 ${audit.accepted} · 发布 ${audit.published} · 指标回流 ${audit.metrics}`},
   ]}/>
   <details><summary className="cursor-pointer text-sm font-medium">逐发布项交付核验 · {audit.planned} 条</summary><Table size="small" pagination={false} rowKey="publicationTaskId" scroll={{x:650}} dataSource={audit.rows} columns={[

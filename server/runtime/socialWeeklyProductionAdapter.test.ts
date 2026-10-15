@@ -66,6 +66,11 @@ test('existing running identity is polled without starting another paid run; mis
   assert.equal((await f.adapter.execute(f.task)).status,'pending');
   assert.equal(f.starts(),0);
 });
+test('adopted per-video template refuses an existing over-cap production instead of restarting it',async()=>{
+ const f=await fixture();const {adoptWeeklyAutomationTemplate}=await import('../socialPrograms/weeklyAutomationTemplate.js');
+ await adoptWeeklyAutomationTemplate(f.store,f.task,'owner');f.set({brief:{...f.brief,productRef:null,audience:null,aspectRatio:null,cadence:null,dueAt:null,brandNotes:null,callToAction:'Contact us',perItemBudgetCny:30}});
+ const result=await f.adapter.execute(f.task);assert.equal(result.status,'blocked');assert.equal(result.status==='blocked'?result.code:'','weekly_existing_production_budget_exceeds_template');assert.equal(f.starts(),0);
+});
 test('legacy generic readiness cannot prove frozen material admission even with a running identity',async()=>{
   const f=await fixture();f.task.schedule.stepKind='material_readiness';
   const legacy=await f.adapter.execute(f.task);

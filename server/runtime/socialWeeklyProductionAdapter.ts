@@ -1,4 +1,5 @@
 import {readWeeklyProductionStartAttempt} from './weeklyProductionStartAttempt.js';
+import {readWeeklyAutomationTemplate} from '../socialPrograms/weeklyAutomationTemplate.js';
 import {assessWeeklyOwnedProductIdentity,type WeeklyOwnedProductIdentityPorts} from './weeklyOwnedProductIdentityDemand.js';
 import {createExactShotMaterializationService} from '../lib/referenceExactShotMaterialization.js';
 import { weeklyProductionAdmissionMessage } from './weeklyProductionAdmissionMessage.js';
@@ -137,10 +138,13 @@ export function createSocialWeeklyProductionAdapter(dataStore: DataStore, ports:
     }
     try{assertWeeklyProductionCoverage(pkg,planning,task.publicationTaskId!);}catch(error){return blocked(error instanceof Error&&'code' in error?String(error.code):'weekly_production_coverage_invalid','实际确认、派单范围或来源配额不一致，未开始生产。');}
     if (publication.accountId !== task.accountId || item.accountId !== publication.accountId) return blocked('weekly_production_account_mismatch', '排期账号身份不一致。');
-    if (!publication.businessProposition || !publication.cta || !publication.factRefs.length || !item.topic) {
+    const adopted=await readWeeklyAutomationTemplate(dataStore,task);
+    const callToAction=adopted?.template.callToAction??publication.cta;
+    const perItemBudgetCny=adopted?Math.min(Number.isFinite(pkg.socialContentPackage.perItemBudgetCny)&&pkg.socialContentPackage.perItemBudgetCny!==null?pkg.socialContentPackage.perItemBudgetCny:adopted.template.perFinishedVideoMaxCny,adopted.template.perFinishedVideoMaxCny):pkg.socialContentPackage.perItemBudgetCny;
+    if (!publication.businessProposition || !callToAction || !publication.factRefs.length || !item.topic) {
       return blocked('weekly_production_inputs_required', '经营主张、事实凭据、行动指引及排期主题必须完整。');
     }
-    if (pkg.socialContentPackage.perItemBudgetCny === null || pkg.socialContentPackage.perItemBudgetCny < 0) {
+    if (perItemBudgetCny === null || !Number.isFinite(perItemBudgetCny) || perItemBudgetCny < 0) {
       return blocked('weekly_production_budget_required', '生产预算尚未明确，不能开始供应商生成。');
     }
     const classification = await checkWeeklyMaterialClassification({store:dataStore,tenantId:task.tenantId,programId:task.programId,packageId:pkg.packageId,packageVersion:pkg.version,item,analysis:planning.directorAnalyses?.find(analysis=>analysis.analysisId===item.directorAnalysisRef?.id)});
@@ -151,6 +155,7 @@ export function createSocialWeeklyProductionAdapter(dataStore: DataStore, ports:
     if (existing.totalItems > 1) return blocked('weekly_production_binding_ambiguous', '内容生产任务绑定不唯一。');
     let detail: SocialContentTaskDetail | null = existing.items[0]
       ? await read({ repository, tenantId: task.tenantId, taskId: String(existing.items[0].task_id) }) : null;
+    if(adopted&&detail&&Number(detail.brief.perItemBudgetCny)>adopted.template.perFinishedVideoMaxCny)return blocked('weekly_existing_production_budget_exceeds_template','原生产任务预算高于15元，需在真实生产页面核对原费用后继续，不会重建任务掩盖费用。');
     let scriptEvidence: VersionedSocialRef | null = null;
     let storyboardEvidence: VersionedSocialRef | null = null;
     let automaticMaterialEvidence:VersionedSocialRef|null=null;
@@ -164,11 +169,11 @@ export function createSocialWeeklyProductionAdapter(dataStore: DataStore, ports:
         if (!goal || goal.status !== 'ready' || programRows.totalItems !== 1 || accountRows.totalItems !== 1) return blocked('weekly_production_authority_required', '经营目标、计划身份或账号身份缺少有效依据。');
         const value: CreateSocialContentTaskInput = {
           title: item.topic, objective: goal.objective, productRef: goal.products[0], audience: goal.audiences[0], markets: goal.markets, customTopic: item.topic,
-          callToAction: publication.cta, platforms: [publication.platform], languages: goal.languages,
+          callToAction, platforms: [publication.platform], languages: goal.languages,
           formats: ['short_video'], requestedOutputCount: 1, dueAt: publicationPreparationDeadline(publication.publishWindow),
           weeklyPlanId: pkg.packageId, mode: 'weekly', creationMode:'viral_replication', themeId:'product_value', managementMode: 'one_click_managed', productionApproach: 'ai_enhanced', productionMode: 'social_ready',
-          weeklyBudgetCny: pkg.socialContentPackage.weeklyBudgetCny,
-          perItemBudgetCny: pkg.socialContentPackage.perItemBudgetCny,
+          weeklyBudgetCny: pkg.socialContentPackage.weeklyBudgetCny??(perItemBudgetCny*pkg.socialContentPackage.publicationTasks.length),
+          perItemBudgetCny,
           programRef: { objectType: 'social_program', id: task.programId, version: String(programRows.items[0].payload.version) },
           targetAccountRef: { objectType: 'social_owned_account', id: publication.accountId, version: String(accountRows.items[0].payload.version) },
           specialRequirements: [item.topic, ...item.materialRequirements, `事实凭据：${publication.factRefs.map(ref => `${ref.type}:${ref.id}@${ref.version}`).join('，')}`].join('\n'),

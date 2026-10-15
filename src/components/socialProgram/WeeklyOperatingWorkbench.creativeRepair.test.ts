@@ -37,12 +37,14 @@ test('blank repair budgets cannot become explicit zero-cost authority',()=>{
 });
 
 
-test('approval response cannot overwrite a newly selected weekly package',()=>{
+test('acceptance enters the exact publication production page and cannot overwrite another weekly package',()=>{
   const approval=source.slice(source.indexOf('  const approveTask = async'),source.indexOf('\n\n  if (loading'));
   assert.match(source,/useEffect\(\(\) => \{ setPlanningBusy\(false\); setPlanningError\(''\); \}, \[packageIdentity\]\)/);
   assert.match(approval,/task\.packageVersion !== pkg\.version/);
   assert.match(approval,/const scope = pkg, identity = packageIdentity/);
-  assert.match(approval,/if \(packageIdentityRef\.current !== identity\) return;\s+setExecutionTasks\(tasks\)/);
+  assert.match(approval,/if\(packageIdentityRef\.current!==identity\|\|getToken\(\)!==token\)return;/);
+  assert.match(approval,/weeklyPublishingNavigationDetail\(binding\)/);
+  assert.doesNotMatch(approval,/approveExecutionTask|setExecutionTasks\(tasks\)/);
   assert.match(approval,/if \(packageIdentityRef\.current === identity\) setPlanningError/);
   assert.match(approval,/if \(packageIdentityRef\.current === identity\) setPlanningBusy\(false\)/);
 });

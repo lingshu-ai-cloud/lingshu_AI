@@ -76,6 +76,7 @@ import { PageLoading, WorkspaceErrorBoundary } from './AppPageBoundary';
 const InspirationDashboard = lazy(() => import('./InspirationDashboard'));
 const AiCreateStudio = lazy(() => import('./AiCreateStudio'));
 const WeeklyContentProductionView = lazy(() => import('./socialContent/WeeklyContentProductionView'));
+const WeeklyPublishingWorkspace = lazy(() => import('./socialContent/WeeklyPublishingWorkspace'));
 const AccountActivity = lazy(() => import('./AccountActivity'));
 const CalendarPlanner = lazy(() => import('./publishing/CalendarPlanner').then(module => ({ default: module.CalendarPlanner })));
 
@@ -556,7 +557,7 @@ export default function TrafficPage({
                 </motion.div>
               ) : viewMode === 'create' ? null : viewMode === 'publish' ? (
                 <motion.div key="publish" id="traffic-panel-publish" role={showModeTabs ? 'tabpanel' : undefined} aria-labelledby={showModeTabs ? 'traffic-tab-publish' : undefined} initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="h-full overflow-y-auto">
-                  <SocialPublishPanel onNavigate={onNavigate} draft={publishDraft} onReturnToPreview={handleReturnToPreview} workflowContext={workflowContext || undefined} storageScope={storageScope} />
+                  {weeklyTargetState.present ? weeklyTarget ? <WeeklyPublishingWorkspace key={JSON.stringify(weeklyTarget)} target={weeklyTarget}/> : <p role="alert">周任务发布目标与当前内容任务不一致，请返回原任务重新打开。</p> : <SocialPublishPanel onNavigate={onNavigate} draft={publishDraft} onReturnToPreview={handleReturnToPreview} workflowContext={workflowContext || undefined} storageScope={storageScope} />}
                 </motion.div>
               ) : (
                 <motion.div key="accounts" id="traffic-panel-accounts" role={showModeTabs ? 'tabpanel' : undefined} aria-labelledby={showModeTabs ? 'traffic-tab-accounts' : undefined} initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="h-full overflow-y-auto">
