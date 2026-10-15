@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Alert, Button, Modal, Tag } from 'antd';
 import { CheckCircle2, ShieldCheck, UserRound } from 'lucide-react';
 import { productionApi } from '../../lib/productionApi';
@@ -7,7 +7,7 @@ import { fetchMaterialLibrary, type Material } from '../../lib/studioApi';
 import { presenterApi } from '../../lib/presenterApi';
 import { notifyPresenterAssetsUpdated } from '../../lib/presenterAssetsUpdated';
 import type { ArkPresenterPreparation } from '../../lib/presenterAssets';
-import { LsBrandAction } from '../ui/LsExperiencePrimitives';
+import { LsBrandAction, LsLoadingState } from '../ui/LsExperiencePrimitives';
 import ArkPresenterEnrollmentPanel from '../studio/ArkPresenterEnrollmentPanel';
 import PresenterManager, { type PresenterSaveContext } from './PresenterManager';
 
@@ -46,21 +46,30 @@ export default function EnterprisePresenters({
   const [error, setError] = useState('');
   const [showArkSetup, setShowArkSetup] = useState(false);
   const [showHeyGenManager, setShowHeyGenManager] = useState(false);
-  const [preparedArk, setPreparedArk] = useState<ArkPresenterPreparation>();
+  const [showVoiceRecorder, setShowVoiceRecorder] = useState(false);
+  const [preparedArk, setPreparedArk] = useState<(ArkPresenterPreparation & { presenterId: string })>();
+  const [creationPreparations, setCreationPreparations] = useState<Record<string, ArkPresenterPreparation>>({});
   const [certifyingPresenterId, setCertifyingPresenterId] = useState('');
   const [editingId, setEditingId] = useState('');
   const [editingName, setEditingName] = useState('');
+  const [loadError, setLoadError] = useState('');
+  const initialReadyNotified = useRef(false);
 
   const load = useCallback(async () => {
-    const next = await productionApi.defaults();
+    const [next, creations] = await Promise.all([
+      productionApi.defaults(),
+      presenterApi.creations().catch(() => []),
+    ]);
     setValue({ ...EMPTY_DEFAULTS, ...next, presenterRoutes: next.presenterRoutes || [] });
+    setCreationPreparations(Object.fromEntries(creations.flatMap(item => item.arkPreparation ? [[item.id, item.arkPreparation]] : [])));
+    setLoadError('');
     setLoaded(true);
     return next;
   }, []);
 
   useEffect(() => {
     let live = true;
-    void load().catch(cause => { if (live) setError(cause instanceof Error ? cause.message : String(cause)); });
+    void load().catch(cause => { if (live) setLoadError(cause instanceof Error ? cause.message : String(cause)); });
     return () => { live = false; };
   }, [load]);
 
@@ -76,10 +85,36 @@ export default function EnterprisePresenters({
     || value.presenters[0], [value.defaultPresenterId, value.presenters]);
   const selectedHeyGenReady = heyGenReady(selectedPresenter);
   const selectedArkReady = arkReady(selectedPresenter);
+  const selectedReferenceMaterials = useMemo(() => [...(selectedPresenter?.referenceMaterialIds || [])]
+    .reverse()
+    .map(id => materials.find(item => item.id === id))
+    .filter((item): item is Material => Boolean(item)), [materials, selectedPresenter]);
+  const selectedCreationId = selectedPresenter?.rightsEvidence?.authorizationRef
+    ?.match(/^document:\/\/studio_presenter_assets\/([^/]+)\//)?.[1];
+  const selectedPreparedArk = (preparedArk?.presenterId === selectedPresenter?.id ? preparedArk : undefined)
+    || (selectedCreationId ? creationPreparations[selectedCreationId] : undefined);
+  const reusablePhotoMaterialId = selectedPreparedArk?.photoMaterialId
+    || selectedReferenceMaterials.find(item => item.type === 'image')?.id;
+  const reusableVideoMaterialId = selectedPreparedArk?.videoMaterialId
+    || selectedReferenceMaterials.find(item => item.type === 'video')?.id;
+
+  useEffect(() => {
+    if (initialConfiguration && loaded && selectedHeyGenReady && !initialReadyNotified.current) {
+      initialReadyNotified.current = true;
+      onInitialSelection?.();
+    }
+  }, [initialConfiguration, loaded, onInitialSelection, selectedHeyGenReady]);
 
   const openPresenterManager = () => {
     setShowArkSetup(false);
+    setShowVoiceRecorder(false);
     setShowHeyGenManager(true);
+  };
+
+  const openVoiceRecorder = () => {
+    setShowArkSetup(false);
+    setShowHeyGenManager(false);
+    setShowVoiceRecorder(true);
   };
 
   const refresh = async (successMessage?: string) => {
@@ -126,7 +161,7 @@ export default function EnterprisePresenters({
   };
 
   const finishUnifiedPresenterSetup = async (next: ProductionDefaults, context?: PresenterSaveContext) => {
-    setValue(next); notifyPresenterAssetsUpdated(); setShowHeyGenManager(false); setError('');
+    setValue(next); notifyPresenterAssetsUpdated(); setShowHeyGenManager(false); setShowVoiceRecorder(false); setError('');
     const preparation = context?.arkPreparation;
     if (preparation) {
       const presenter = next.presenters.find(item => item.id === next.defaultPresenterId) || next.presenters[0];
@@ -140,7 +175,7 @@ export default function EnterprisePresenters({
         setValue(saved);
         notifyPresenterAssetsUpdated();
       }
-      setPreparedArk(preparation);
+      if (presenter) setPreparedArk({ ...preparation, presenterId: presenter.id });
     }
     setShowArkSetup(false);
     setMessage(preparation
@@ -185,30 +220,42 @@ export default function EnterprisePresenters({
   if (initialConfiguration) return <section className="space-y-4" aria-label="数字人统一接入">
     <div>
       <h3 className="text-base font-semibold text-text-primary">数字人接入</h3>
-      <p className="mt-1 text-xs leading-5 text-text-muted">选择 HeyGen 已有人物，或上传本人资料创建。人物替换认证是可选能力，不影响 HeyGen 口播。</p>
+      <p className="mt-1 text-xs leading-5 text-text-muted">选择 HeyGen 已有人物，或上传本人资料创建；保存前可选择已有声音，也可直接录入本人声音。人物替换认证是可选能力，不影响 HeyGen 口播。</p>
     </div>
-    {error && <Alert type="error" showIcon title={error} />}
-    {message && <Alert type="success" showIcon title={message} />}
-    <section className={`rounded-lg border p-4 ${selectedHeyGenReady && selectedArkReady ? 'border-emerald-200 bg-emerald-50/60' : 'border-border bg-white'}`} aria-label="统一人物接入状态">
-      <div className="flex flex-wrap items-start justify-between gap-4"><div><p className="text-sm font-semibold text-text-primary">人物、声音与本人认证</p>{selectedPresenter && <p className="mt-2 text-xs text-text-secondary">当前人物：<strong>{selectedPresenter.name}</strong></p>}<div className="mt-3 flex flex-wrap gap-2"><Tag color={selectedHeyGenReady ? 'success' : 'default'}>口播人物与声音 {selectedHeyGenReady ? '已完成' : '待配置'}</Tag><Tag color={selectedArkReady ? 'success' : 'default'}>人物替换认证 {selectedArkReady ? '已完成' : selectedHeyGenReady ? '可选' : '等待人物'}</Tag></div></div>
-        <div className="flex flex-wrap gap-2">
-          {selectedHeyGenReady ? <Button onClick={openPresenterManager}>更换数字人</Button> : <LsBrandAction onClick={openPresenterManager}>设置数字人</LsBrandAction>}
-          {selectedHeyGenReady && !selectedArkReady && <LsBrandAction onClick={() => setShowArkSetup(current => !current)}>{showArkSetup ? '收起人物替换认证' : '完善人物替换认证'}</LsBrandAction>}
+    {!loaded ? loadError
+      ? <Alert
+        type="error"
+        showIcon
+        title="数字人配置读取失败"
+        description={loadError}
+        action={<Button className="min-h-11 text-xs" onClick={() => { setLoadError(''); void load().catch(cause => setLoadError(cause instanceof Error ? cause.message : String(cause))); }}>重新读取</Button>}
+      />
+      : <LsLoadingState loading label="正在读取数字人配置"><span /></LsLoadingState>
+    : <>
+      {error && <Alert type="error" showIcon title={error} />}
+      {message && <Alert type="success" showIcon title={message} />}
+      <section className={`rounded-lg border p-4 ${selectedHeyGenReady && selectedArkReady ? 'border-green/30 bg-green/5' : 'border-border bg-surface'}`} aria-label="统一人物接入状态">
+        <div className="flex flex-wrap items-start justify-between gap-4"><div><p className="text-sm font-semibold text-text-primary">人物、声音与本人认证</p>{selectedPresenter && <p className="mt-2 text-xs text-text-secondary">当前人物：<strong>{selectedPresenter.name}</strong></p>}<div className="mt-3 flex flex-wrap gap-2"><Tag color={selectedHeyGenReady ? 'success' : 'default'}>口播人物与声音 {selectedHeyGenReady ? '已完成' : '待配置'}</Tag><Tag color={selectedArkReady ? 'success' : 'default'}>人物替换认证 {selectedArkReady ? '已完成' : selectedHeyGenReady ? '可选' : '等待人物'}</Tag></div></div>
+          <div className="flex flex-wrap gap-2">
+            {selectedHeyGenReady ? <><Button className="min-h-11 text-xs" onClick={openPresenterManager}>更换数字人</Button><Button className="min-h-11 text-xs" onClick={openVoiceRecorder}>录入本人声音</Button></> : <LsBrandAction className="min-h-11 text-xs" onClick={openPresenterManager}>设置人物与声音</LsBrandAction>}
+            {selectedHeyGenReady && !selectedArkReady && <LsBrandAction className="min-h-11 text-xs" onClick={() => setShowArkSetup(current => !current)}>{showArkSetup ? '收起人物替换认证' : '完善人物替换认证'}</LsBrandAction>}
+          </div>
         </div>
-      </div>
-    </section>
-    {showArkSetup && selectedPresenter && <ArkPresenterEnrollmentPanel
-      presenterId={selectedPresenter.id}
-      photos={materials.filter(item => item.type === 'image').map(item => ({ id: item.id, name: item.name }))}
-      videos={materials.filter(item => item.type === 'video').map(item => ({ id: item.id, name: item.name }))}
-      initialPhotoMaterialId={preparedArk?.photoMaterialId}
-      initialVideoMaterialId={preparedArk?.videoMaterialId}
-      authorizationConfirmed={preparedArk?.processingAuthorized === true}
-      onStart={startArkEnrollment}
-      onReady={async () => { await refresh('方舟人物认证已完成，当前人物可以用于人物替换。'); onInitialSelection?.(); }}
-    />}
-    {selectedHeyGenReady && selectedArkReady && <div className="flex items-center gap-2 rounded-lg bg-emerald-50 px-4 py-3 text-xs font-semibold text-emerald-800"><CheckCircle2 size={16} />数字人口播与人物替换条件均已准备完成。</div>}
-    {showHeyGenManager && <PresenterManager initialConfiguration onClose={() => setShowHeyGenManager(false)} onSynced={next => { setValue(next); notifyPresenterAssetsUpdated(); }} onSaved={(next, context) => finishUnifiedPresenterSetup(next, context)} />}
+      </section>
+      {showArkSetup && selectedPresenter && <ArkPresenterEnrollmentPanel
+        presenterId={selectedPresenter.id}
+        photos={materials.filter(item => item.type === 'image').map(item => ({ id: item.id, name: item.name }))}
+        videos={materials.filter(item => item.type === 'video').map(item => ({ id: item.id, name: item.name }))}
+        initialPhotoMaterialId={reusablePhotoMaterialId}
+        initialVideoMaterialId={reusableVideoMaterialId}
+        authorizationConfirmed={selectedPreparedArk?.processingAuthorized === true}
+        onStart={startArkEnrollment}
+        onReady={async () => { await refresh('方舟人物认证已完成，当前人物可以用于人物替换。'); onInitialSelection?.(); }}
+      />}
+      {selectedHeyGenReady && selectedArkReady && <div className="flex items-center gap-2 rounded-lg bg-green/10 px-4 py-3 text-xs font-semibold text-green"><CheckCircle2 size={16} />数字人口播与人物替换条件均已准备完成。</div>}
+      {showHeyGenManager && <PresenterManager initialConfiguration onClose={() => setShowHeyGenManager(false)} onSynced={next => { setValue(next); notifyPresenterAssetsUpdated(); }} onSaved={(next, context) => finishUnifiedPresenterSetup(next, context)} />}
+      {showVoiceRecorder && selectedPresenter && <PresenterManager initialConfiguration voiceOnlyPresenter={selectedPresenter} onClose={() => setShowVoiceRecorder(false)} onSaved={next => finishUnifiedPresenterSetup(next)} />}
+    </>}
   </section>;
 
   return <section className="rounded-lg border border-border bg-white p-5" aria-label={contentProduction ? '内容制作人物管理' : '人物与出镜'}>

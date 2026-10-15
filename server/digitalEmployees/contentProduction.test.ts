@@ -23,6 +23,7 @@ import {
   detectContentDuplication,
   isLlmUnavailableError,
   immutableContentOrderBlockers,
+  legacyManagedPaidSubmissionBlocker,
   matchSceneSources,
   platformCreativeBrief,
   productionTiming,
@@ -106,6 +107,11 @@ assert.equal(resolveFrozenOrderProduct(frozenCatalog, { productId: '', productNa
 assert.equal(resolveFrozenOrderProduct([{ id: 'one', name: 'Same' }, { id: 'two', name: 'Same' }], { productName: 'Same' }), undefined, 'ambiguous legacy names must fail closed');
 assert.deepEqual(immutableContentOrderBlockers({ readinessBlockers: ['参考视频尚无有效精确分析', '指定产品不在当前冻结产品资料中'] }), [], 'reference/product readiness must be recomputed so the same task can continue after evidence is supplied');
 assert.deepEqual(immutableContentOrderBlockers({ readinessBlockers: ['第 2 条：指定内容路径未在 Agent 配置中开启'] }), ['第 2 条：指定内容路径未在 Agent 配置中开启'], 'frozen route scope remains a hard order-local boundary');
+assert.deepEqual(immutableContentOrderBlockers({ readinessBlockers: ['第 1 条：固定路径编译失败：时间线存在空洞'] }), ['第 1 条：固定路径编译失败：时间线存在空洞'], 'a frozen fixed-yield compiler failure cannot disappear inside the legacy runner');
+assert.match(legacyManagedPaidSubmissionBlocker({ route: 'product', stage: 'script' }), /不能新建付费配音/, 'legacy product plans must stop before a paid provider call');
+assert.match(legacyManagedPaidSubmissionBlocker({ route: 'material', stage: 'heygen', voiceoverUrl: '/tts/existing.wav' }), /没有冻结的数字人供应商任务/, 'legacy material plans cannot create a new HeyGen job');
+assert.equal(legacyManagedPaidSubmissionBlocker({ route: 'material', stage: 'render', voiceoverUrl: '/tts/existing.wav' }), '', 'legacy work may finish from already-created local artifacts');
+assert.equal(legacyManagedPaidSubmissionBlocker({ route: 'clone', stage: 'voice_subtitles' }), '', 'clone execution remains owned by its frozen paid-operation bridge');
 
 const confirmedScriptBody = '[0-4s]\n画面：真实产品\n台词：已确认脚本';
 const confirmedScriptHash = createHash('sha256').update(JSON.stringify(confirmedScriptBody)).digest('hex');

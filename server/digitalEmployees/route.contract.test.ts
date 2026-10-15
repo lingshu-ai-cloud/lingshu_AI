@@ -81,6 +81,8 @@ assert.match(packageDetailsRoute, /assertDurableOperationLease/, 'only the activ
 assert.match(packageDetailsRoute, /releaseDurableOperationLease/, 'completed detail generation must release its database lease');
 assert.match(packageDetailsRoute, /detailGeneration\?\.status === 'ready'/, 'a repeated request must reuse an already persisted ready preview');
 assert.match(packageDetailsRoute, /status: 'generating'/, 'detail generation must persist an in-progress checkpoint before calling Agents');
+assert.match(packageDetailsRoute, /readServerProductionOnboardingReadiness/, 'detail generation must verify authoritative production inputs before acquiring paid work');
+assert.match(packageDetailsRoute, /production_onboarding_preflight_blocked/, 'detail generation must return actionable onboarding blockers before calling Agents');
 assert.match(packageDetailsRoute, /generateWeeklyTaskPreviews/, 'step 2 must run the Director and Content pre-production analysis');
 assert.match(packageDetailsRoute, /status: 'blocked'/, 'a failed detail generation must preserve a retryable blocked state');
 const packageUpdateRoute = routeBlock("digitalEmployeesRouter.put('/goals/:goalId/package'");
@@ -113,8 +115,11 @@ assert.match(approveGoal, /correction_version:\s*0/, 'new workflow tasks must st
 assert.doesNotMatch(approveGoal, /missingGoalResources/, 'missing delivery resources must not block independent branches from starting');
 assert.doesNotMatch(approveGoal, /missing_required_resources|publishing_accounts_invalid/, 'delivery checks belong to runtime tasks, not whole-plan activation');
 assert.match(approveGoal, /active_goal_exists/, 'a tenant must not start overlapping active weekly goals');
-assert.match(approveGoal, /validatePackageForStart/, 'activation must use the structural start validator and defer per-content readiness');
-assert.doesNotMatch(approveGoal, /package_details_blocked|preproduction\?\.readiness\.canStart/, 'preview readiness must not block the whole operating run');
+assert.match(approveGoal, /validatePackageForStart/, 'activation must retain structural plan validation');
+assert.match(approveGoal, /preproduction\?\.readiness\.canStart[\s\S]{0,600}package_details_blocked/, 'every independently produced video must pass persisted preparation before the run exists');
+assert.match(approveGoal, /readServerProductionOnboardingReadiness/, 'activation must recompute readiness from authoritative server records');
+assert.match(approveGoal, /production_onboarding_preflight_blocked/, 'activation must return exact remediation without creating a run');
+assert.ok(approveGoal.indexOf('readServerProductionOnboardingReadiness') < approveGoal.indexOf('compareAndSwap?.(COLLECTION.plans'), 'zero-cost readiness must run before plan, goal or run mutations');
 assert.match(source, /const activeProjects = projectAutomationStates\.filter/, 'content observation must distinguish runnable siblings from item-local blockers');
 assert.match(source, /const blocker = activeProjects\.length \? ''/, 'one blocked content item must not pause other runnable content');
 assert.match(approveGoal, /savedFactsVersion !== canonicalFactsVersion/, 'a new run must compare the draft fact label with the canonical enterprise fact version');

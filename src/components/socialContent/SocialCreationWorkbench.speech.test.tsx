@@ -6,14 +6,16 @@ import SocialCreationWorkbench, { parseFreeCreationScript, serializeFreeCreation
 
 const html = renderToStaticMarkup(<SocialCreationWorkbench
   mode="viral_replication"
-  seed={{ referenceTitle: '参考视频', referenceShots: [{ time: '0–1s', dialogue: 'Hello, boss!', visual: '产品展示' }] }}
+  seed={{ draftTitle: '10月爆款复刻草稿', referenceTitle: '参考视频', referenceShots: [{ time: '0–1s', dialogue: 'Hello, boss!', visual: '产品展示' }] }}
   onOpenChooser={() => {}} onShowCreations={() => {}} onGenerate={() => {}}
 />);
-assert.ok(html.includes('aria-label="内容制作步骤"'));
-assert.ok(html.includes('ant-steps'), 'three-step navigation uses the shared Ant Steps interaction');
-assert.ok(html.includes('口播替换与确认'));
-assert.ok(html.includes('分镜匹配与制作'));
-assert.ok(html.includes('成片渲染和导出'));
+assert.ok(!html.includes('aria-label="内容制作步骤"'));
+assert.ok(!html.includes('ant-steps'), 'workbench must not duplicate the production workflow as a three-step header');
+assert.ok(html.includes('aria-label="草稿名称"'));
+assert.ok(html.includes('value="10月爆款复刻草稿"'));
+assert.ok(!html.includes('画面预览'));
+assert.ok(!html.includes('当前对应第 1 句口播'));
+assert.ok(!html.includes('原片仅供分析'));
 assert.ok(html.includes('生成口播'));
 assert.ok(!html.includes('第 1 句新口播'), '生成前不应提前展示可编辑的替换结果');
 assert.ok(!html.includes('试听新口播'));
@@ -40,9 +42,16 @@ const freeHtml = renderToStaticMarkup(<SocialCreationWorkbench
   mode="material_processing"
   onOpenChooser={() => {}} onShowCreations={() => {}} onGenerate={() => {}}
 />);
-assert.ok(freeHtml.includes('创意与口播确认'));
+assert.ok(freeHtml.includes('aria-label="草稿名称"'));
+assert.ok(!freeHtml.includes('aria-label="内容制作步骤"'));
+assert.ok(freeHtml.includes('更换开场方式'));
 assert.ok(freeHtml.includes('主推产品 · 多选'));
 const workbenchSource = fs.readFileSync(new URL('./SocialCreationWorkbench.tsx', import.meta.url), 'utf8');
+const planningSource = fs.readFileSync(new URL('./SocialContentPlanningPage.tsx', import.meta.url), 'utf8');
+assert.match(planningSource, /draftTitle:\s*request\.prefill\?\.title/);
+assert.match(planningSource, /!initialCreateRequest \|\| initialCreateRequest\.replicationStep \|\| !projectId/,
+  'an explicit workbench step must not be overwritten by the background resume lookup');
+assert.match(workbenchSource, /title:\s*draftTitle\.trim\(\)/);
 assert.match(workbenchSource, /选择开场方式/);
 assert.match(workbenchSource, /'暂不指定'/);
 assert.match(workbenchSource, /'上传素材'/);
@@ -53,6 +62,7 @@ assert.match(workbenchSource, /确认费用并生成/);
 assert.match(workbenchSource, /Seedream 首帧/);
 assert.match(workbenchSource, /Seedance 4 秒 480p/);
 assert.doesNotMatch(workbenchSource, /AI 钩子将在第二页生成/);
+assert.doesNotMatch(workbenchSource, /\{generationNotice && <p role="alert"/, '内容制作底部不得渲染生成提示');
 assert.match(workbenchSource, /draggable onDragStart=/, 'free creation shot cards must support direct drag sorting');
 assert.match(workbenchSource, /事实来源：/, 'each free creation shot card must expose its enterprise fact source');
 assert.ok(freeHtml.includes('Gemini 生成逐句口播与分镜'));

@@ -337,6 +337,12 @@ function materialStrategyOrder(shot: SocialAssetSupplyShotPlan): SocialShotSourc
     return ['customer_real_asset'];
   }
   if (routing.materialType === 'product') {
+    if (routing.policy === 'local_only') {
+      if (routing.generation || !matched || shot.sourceStrategy !== 'customer_real_asset'
+        || shot.fallbackSourceStrategy !== null || !shot.sourceRefs.length
+        || shot.sourceRefs.some(ref => !local.sourceRefs.includes(ref))) fail('product_local_video_required');
+      return ['customer_real_asset'];
+    }
     if (routing.policy !== 'local_first_product_i2v' || shot.fallbackSourceStrategy !== null) fail('product_policy');
     if (matched) {
       if (shot.sourceStrategy !== 'customer_real_asset' || !shot.sourceRefs.length

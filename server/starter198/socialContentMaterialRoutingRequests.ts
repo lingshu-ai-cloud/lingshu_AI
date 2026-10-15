@@ -3,6 +3,14 @@ import { normalizeSceneVisualContract, scoreSceneVisualCompatibility, type Socia
 import type { SocialReferenceShotAnalysis } from '../../shared/contracts/socialContentWorkflow.js';
 import type { SocialWorkflowMaterialClipCandidate } from './socialContentRecords.js';
 import { socialRequestHash } from './socialContentValidation.js';
+import { classifyFixedYieldArchetype, fixedYieldCandidateMatches } from '../../shared/fixedYieldMaterialRegistry.js';
+import type { BenchmarkMaterialType } from '../../shared/benchmarkAnalysis.js';
+import {
+  evaluateLocalMaterialSegmentProfile,
+  inferLocalMaterialSegmentType,
+  type LocalMaterialSegmentRejection,
+  type LocalMaterialSegmentRejectionReason,
+} from '../../shared/contracts/localMaterialSegmentProfile.js';
 
 const actionRequirements = [
   // Camera wording such as "横向摇移" is not a required subject action.
@@ -31,16 +39,22 @@ function consumerSemanticScore(expected: SocialSceneVisualContract, candidate: S
   return scoreSceneVisualCompatibility(withoutProductIdentity(expected), withoutProductIdentity(candidate.visualContract));
 }
 
+function candidateMaterialType(candidate: SocialWorkflowMaterialClipCandidate): BenchmarkMaterialType {
+  return inferLocalMaterialSegmentType({ materialRoles: candidate.materialRoles, visualContract: candidate.visualContract });
+}
+
 /** Uses analyzed, tenant-scoped segments rather than treating inventory presence as a match. */
 export function materialRoutingRequests(input: {
   policyVersion?: 'type-aware.v1';
   tenantId: string;
   shots: SocialAssetSupplyShotRequest[];
   candidates: SocialWorkflowMaterialClipCandidate[];
+  /** Inventory segments excluded before semantic ranking (rights/version/edit gates). */
+  rejectedSegments?: LocalMaterialSegmentRejection[];
   referenceShots?: SocialReferenceShotAnalysis[];
   productRef: string | null;
-  /** False only after task-level budget allocation reserves presenter cost and
-   * determines that this product shot cannot afford packaging-first-frame I2V. */
+  /** @deprecated Retained only so old callers can be read. V2 product routing
+   * never changes when this value changes and never creates an I2V fallback. */
   productGenerationAllowed?: boolean;
 }): SocialAssetSupplyShotRequest[] {
   if (input.policyVersion !== 'type-aware.v1') return input.shots;
@@ -75,6 +89,9 @@ export function materialRoutingRequests(input: {
     });
     const description = affirmative([shot.requestedDescription, expected.action.path,
       expected.interaction.description].filter(Boolean).join('；'));
+    const fixedYieldArchetypeId = shot.fixedYieldArchetypeId ?? classifyFixedYieldArchetype({
+      materialType, visual: expected, description, function: shot.function,
+    });
     // Preserve the planned contract used to match the source. The Director
     // otherwise has no subjects for non-reference baselines and cannot review
     // the same match against the actual material contract.
@@ -89,19 +106,44 @@ export function materialRoutingRequests(input: {
     const requiredDuration = Number.isFinite(shot.plannedDurationSeconds) && Number(shot.plannedDurationSeconds) > 0
       ? Number(shot.plannedDurationSeconds)
       : Number.isFinite(evidenceDuration) && evidenceDuration > 0 ? evidenceDuration : 3;
+    const rejected: LocalMaterialSegmentRejection[] = structuredClone(input.rejectedSegments ?? []);
+    const reject = (candidate: SocialWorkflowMaterialClipCandidate, values: LocalMaterialSegmentRejectionReason[]) => {
+      const reasons = [...new Set(values)];
+      if (!reasons.length) return false;
+      rejected.push({ assetId: candidate.assetId, segmentId: candidate.segmentId,
+        sourceRevision: candidate.segmentProfile?.sourceRevision ?? null, reasons });
+      return true;
+    };
     const candidates = input.candidates.filter(candidate => {
-      if (candidate.synthetic || candidate.origin !== 'my_materials' || candidate.mediaType !== 'video' || !candidate.timeRange
-        || candidate.timeRange.endSeconds - candidate.timeRange.startSeconds + 0.001 < requiredDuration) return false;
-      if (materialType === 'talking_head' || materialType === 'unknown') return false;
-      if (materialType === 'factory' && !candidate.materialRoles.includes('factory')) return false;
-      if (materialType === 'consumer_demo' && (!candidate.materialRoles.includes('person_usage')
-        || candidate.materialRoles.includes('factory') || candidate.materialRoles.includes('presenter'))) return false;
-      if (materialType === 'consumer_demo' && (candidate.productId || candidate.productRef) && shot.productRef) {
-        const identity = (value: unknown) => String(value ?? '').normalize('NFKC').trim().toLocaleLowerCase().replace(/^product:/, '');
-        if (![candidate.productId, candidate.productRef].map(identity).filter(Boolean).includes(identity(shot.productRef))) return false;
+      if (!fixedYieldArchetypeId || materialType === 'talking_head' || materialType === 'unknown') return false;
+      const profileReasons = evaluateLocalMaterialSegmentProfile({
+        profile: candidate.segmentProfile,
+        tenantId: input.tenantId,
+        assetId: candidate.assetId,
+        segmentId: candidate.segmentId,
+        targetMaterialType: materialType,
+        targetArchetypeId: fixedYieldArchetypeId,
+        requestedProductRef: shot.productRef,
+        requiredDurationSeconds: requiredDuration,
+        alreadyUsed: segmentUseCount.has(`${candidate.assetId}:${candidate.segmentId}`),
+      });
+      if (candidate.synthetic && !profileReasons.includes('synthetic_source')) profileReasons.push('synthetic_source');
+      if (candidate.origin !== 'my_materials' && !profileReasons.includes('local_ownership_missing')) profileReasons.push('local_ownership_missing');
+      if (candidate.mediaType !== 'video' && !profileReasons.includes('non_video_source')) profileReasons.push('non_video_source');
+      if (!candidate.timeRange && !profileReasons.includes('invalid_time_range')) profileReasons.push('invalid_time_range');
+      if (reject(candidate, profileReasons)) return false;
+      const fixedMatch = fixedYieldCandidateMatches({
+        archetypeId: fixedYieldArchetypeId,
+        candidateMaterialType: candidateMaterialType(candidate),
+        candidateRoles: candidate.materialRoles,
+        candidateVisual: candidate.visualContract,
+        requestedProductRef: shot.productRef,
+        candidateProductRefs: [candidate.productId, candidate.productRef],
+      });
+      if (!fixedMatch.accepted) {
+        reject(candidate, [fixedMatch.reason as LocalMaterialSegmentRejectionReason]);
+        return false;
       }
-      if (materialType === 'product' && (!shot.productRef || String(candidate.productRef ?? '').trim().toLocaleLowerCase()
-        !== shot.productRef.trim().toLocaleLowerCase())) return false;
       const visual = candidate.visualContract;
       const observed = affirmative([visual.action.path, visual.interaction.description,
         ...visual.subjects.map(subject => subject.description)].join('；'));
@@ -115,41 +157,31 @@ export function materialRoutingRequests(input: {
         // reference's set dressing may differ. The role exclusions above keep
         // factory and presenter footage out of this bounded fallback.
         : materialType === 'consumer_demo' ? 0.6 : 0.72;
-      return required.every(pattern => pattern.test(observed)) && visualScore >= minimumVisualScore;
+      const semanticReasons: LocalMaterialSegmentRejectionReason[] = [];
+      if (!required.every(pattern => pattern.test(observed))) semanticReasons.push('required_action_missing');
+      if (visualScore < minimumVisualScore) semanticReasons.push('semantic_similarity_insufficient');
+      return !reject(candidate, semanticReasons);
     }).sort((a, b) => usage(a).asset - usage(b).asset || usage(a).segment - usage(b).segment
       || (materialType === 'consumer_demo' ? consumerSemanticScore(expected, b) - consumerSemanticScore(expected, a)
       : scoreSceneVisualCompatibility(expected, b.visualContract) - scoreSceneVisualCompatibility(expected, a.visualContract))
       || a.assetId.localeCompare(b.assetId));
-    let match = candidates[0];
-    let sourceTier: NonNullable<NonNullable<SocialAssetSupplyShotRequest['localVideoMatch']>['sourceTier']> | undefined
+    const match = candidates[0];
+    const sourceTier: NonNullable<NonNullable<SocialAssetSupplyShotRequest['localVideoMatch']>['sourceTier']> | undefined
       = materialType === 'product' && match ? 'product_high_fidelity_local' : undefined;
-    if (materialType === 'product' && !match && input.productGenerationAllowed === false) {
-      const identity = (value: unknown) => String(value ?? '').normalize('NFKC').trim().toLocaleLowerCase().replace(/^product:/, '');
-      const executable = input.candidates.filter(candidate => candidate.origin === 'my_materials'
-        && candidate.mediaType === 'video' && !candidate.synthetic && candidate.timeRange
-        && candidate.timeRange.endSeconds - candidate.timeRange.startSeconds + 0.001 >= requiredDuration);
-      const tiered = executable.map(candidate => {
-        const exactProduct = Boolean(shot.productRef && [candidate.productId, candidate.productRef]
-          .map(identity).filter(Boolean).includes(identity(shot.productRef)));
-        const tier = exactProduct && candidate.materialRoles.includes('product') ? 3
-          : candidate.materialRoles.includes('factory') ? 4 : 5;
-        return { candidate, tier, score: scoreSceneVisualCompatibility(expected, candidate.visualContract) };
-      }).sort((a, b) => a.tier - b.tier || usage(a.candidate).asset - usage(b.candidate).asset
-        || usage(a.candidate).segment - usage(b.candidate).segment || b.score - a.score
-        || a.candidate.assetId.localeCompare(b.candidate.assetId));
-      match = tiered[0]?.candidate;
-      sourceTier = tiered[0]?.tier === 3 ? 'product_local' : tiered[0]?.tier === 4 ? 'factory_local'
-        : tiered[0] ? 'other_local' : undefined;
-    }
-    if (!match?.timeRange) return { ...plannedShot, materialType };
+    const localMaterialRejections = rejected.slice(0, 20);
+    if (!match?.timeRange || !fixedYieldArchetypeId) return { ...plannedShot, materialType,
+      ...(fixedYieldArchetypeId ? { fixedYieldArchetypeId } : {}),
+      ...(localMaterialRejections.length ? { localMaterialRejections } : {}) };
     recordUse(match);
     const segment = { sourceRef: match.sourceRef, segmentId: match.segmentId,
       startSeconds: match.timeRange.startSeconds, endSeconds: match.timeRange.endSeconds };
-    return { ...plannedShot, materialType, selectedMaterialSegment: segment,
+    return { ...plannedShot, materialType, fixedYieldArchetypeId, selectedMaterialSegment: segment,
+      ...(localMaterialRejections.length ? { localMaterialRejections } : {}),
       localVideoMatch: { sourceRefs: [match.sourceRef], semanticMatch: 'verified' as const,
+        archetypeId: fixedYieldArchetypeId,
         ...(sourceTier ? { sourceTier } : {}),
         productRef: match.productRef,
         evidenceRef: `material-visual-match:${input.tenantId}:${socialRequestHash({ shotId: shot.shotId, expected,
-          sourceRef: match.sourceRef, segment, visual: match.visualContract })}` } };
+          sourceRef: match.sourceRef, segment, segmentProfile: match.segmentProfile, visual: match.visualContract })}` } };
   });
 }

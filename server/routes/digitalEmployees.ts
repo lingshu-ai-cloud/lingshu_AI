@@ -83,6 +83,7 @@ import { freezeStoryboardNarration, CONTENT_SCRIPT_QUALITY_RULE_VERSION, advance
 import { managedReplicationFailureState, managedReplicationPlanHasExecutionGraph, managedReplicationPresenterReadiness } from '../digitalEmployees/replicationContentProduction.js';
 import { assessStoryboardMaterialReadiness, resolveMaterialProductAssociation } from '../digitalEmployees/materialProductionReadiness.js';
 import { contentProjectExplicitWorkflowScope, contentProjectLineageFields, managedContentProjectBelongsToWorkflowScope } from '../digitalEmployees/contentProjectLineage.js';
+import { readServerProductionOnboardingReadiness, referenceCoveredByProductionEvidence } from '../digitalEmployees/productionOnboardingPreflight.js';
 import { buildContentBatchPlan, contentPlanCoverage, enterpriseAssetStableId, type ContentBatchPlanDraft, type ContentOrder } from '../digitalEmployees/contentBatchPlan.js';
 import { bindDefaultProductsToPackage, enrichPackageWithContentSignals, publicationCopyForPlan, verifiedStoryboardProviderCostRange } from '../digitalEmployees/contentPlanRecommendation.js';
 import { MATERIAL_TYPE_LABELS, SHOT_ROLE_LABELS, buildBenchmarkAnalysis } from '../../shared/benchmarkAnalysis.js';
@@ -102,6 +103,7 @@ import { bindPublishingTargets, listConnectedPublishingAccounts, localPublishing
 import { digitalEmployeeOperatingGoals, isDigitalEmployeeOperatingGoal } from '../digitalEmployees/overviewGoalScope.js';
 import { directorAnalysisReferenceIds, liveDirectorAnalysisTasks, projectDirectorAnalysisStatus } from '../digitalEmployees/liveDirectorAnalyses.js';
 import { evaluatePlannedReferenceReuse, evaluateViralAnalysisCoverage, hasParseableExactVideoAnalysis, reusableExplicitReferenceIds, viralCoverageBypassAllowed } from '../digitalEmployees/viralAnalysisCoverage.js';
+import { referenceContentIdentity } from '../digitalEmployees/referenceContentIdentity.js';
 import { mustInvalidateContentDownstream } from '../digitalEmployees/dependencyInvalidation.js';
 import { canonicalScheduledCollectionRecords, evaluateScheduledDiscoveryRuns, mustReobserveSucceededCollection, scheduledCollectionFailureCanRetry, shouldRunScheduledCollection, type DiscoveryRunRecord } from '../digitalEmployees/scheduledCollectionProof.js';
 import {
@@ -588,6 +590,10 @@ async function contentRoutingEvidence(tenantId: string, config: DigitalEmployeeC
       };
     }),
     exactAnalysisIds: analyses.items.filter(exactVideoAnalysis).map(item => item.id),
+    referenceIdentities: Object.fromEntries(analyses.items.map(item => [item.id, referenceContentIdentity(item)])),
+    referenceAnalyses: Object.fromEntries(analyses.items.map(item => [item.id,
+      benchmarkAnalysisForRecord(item, jsonObject<Record<string, unknown>>(item.aiAnalysis, {})),
+    ])),
     referenceAdmissions: Object.fromEntries(analyses.items.map(item => [item.id,
       productionReferenceAdmission(benchmarkAnalysisForRecord(item, jsonObject<Record<string, unknown>>(item.aiAnalysis, {}))),
     ])),
@@ -624,11 +630,27 @@ async function recommendPackageWithTenantEvidence(
     ? fillMatrixVideos({ ...pack, matrixPlan }, config.videoDefaults || {}, goal.endsAt)
     : pack;
   const productBound = bindDefaultProductsToPackage(matrixBound, routingEvidence.products);
+  const productionEvidence = await readServerProductionOnboardingReadiness({
+    store,
+    tenantId,
+    profile: enterpriseProfile,
+    preferences: config.productionOnboarding,
+    plans: [],
+    budgetConfirmed: true,
+  });
+  const producibleReferences = videos.items.filter(item => {
+    if (!hasParseableExactVideoAnalysis(item)) return false;
+    return referenceCoveredByProductionEvidence({
+      analysis: benchmarkAnalysisForRecord(item, jsonObject<Record<string, unknown>>(item.aiAnalysis, {})),
+      preferences: config.productionOnboarding,
+      evidence: productionEvidence.evidence,
+    });
+  });
   // A reference is unique inside one weekly package, not permanently spent.
   // Keeping the full analyzed library lets a later week reuse a proven content
   // logic after real performance review, while package enrichment still
   // prevents the same source from occupying two slots in the current week.
-  return enrichPackageWithContentSignals({ pack: productBound, goal, config, videos: videos.items, benchmarks: benchmarks.items });
+  return enrichPackageWithContentSignals({ pack: productBound, goal, config, videos: producibleReferences, benchmarks: benchmarks.items });
 }
 
 function clearAutomaticViralReferences(pack: WeeklyPackage): WeeklyPackage {
@@ -657,13 +679,32 @@ async function bindWeeklyViralLibraryToPackage(input: {
   const production = input.pack.tasks.find(task => task.templateId === 'production');
   const plans = production?.videoPlans || [];
   const library = await store.list<StoredRecord>('trend_videos', { where: { tenantId: input.tenantId }, sort: '-updatedAt', perPage: 500 });
+  const profile = (input.plan ? frozenEnterpriseProfileForPlan(input.plan, false) : null)
+    || await readTenantEnterpriseProfile(input.tenantId);
+  const productionEvidence = await readServerProductionOnboardingReadiness({
+    store,
+    tenantId: input.tenantId,
+    profile,
+    preferences: input.config.productionOnboarding,
+    plans: [],
+    budgetConfirmed: true,
+  });
+  const coveredReferenceIds = new Set(library.items.filter(item => hasParseableExactVideoAnalysis(item)
+    && referenceCoveredByProductionEvidence({
+      analysis: benchmarkAnalysisForRecord(item, jsonObject<Record<string, unknown>>(item.aiAnalysis, {})),
+      preferences: input.config.productionOnboarding,
+      evidence: productionEvidence.evidence,
+    })).map(item => item.id));
   // Cross-week use is allowed. The evaluator receives only the current weekly
   // selection and therefore enforces one-content-one-slot for this week.
   const usedReferenceIds: string[] = [];
   const currentInventory = evaluatePlannedReferenceReuse(plans, library.items, usedReferenceIds);
-  if (currentInventory.ready) return { pack: input.pack, inventory: currentInventory, changed: false };
+  const selectedReferencesCovered = plans.every(plan => plan.route !== 'clone'
+    || Boolean(plan.referenceId && coveredReferenceIds.has(plan.referenceId)));
+  if (currentInventory.ready && selectedReferencesCovered) return { pack: input.pack, inventory: currentInventory, changed: false };
   const explicitReferenceIds = new Set(reusableExplicitReferenceIds(plans));
-  const candidates = library.items.filter(item => explicitReferenceIds.has(item.id) || hasParseableExactVideoAnalysis(item));
+  const candidates = library.items.filter(item => coveredReferenceIds.has(item.id)
+    && (explicitReferenceIds.has(item.id) || hasParseableExactVideoAnalysis(item)));
   const benchmarks = await store.list<StoredRecord>('competitor_accounts', { where: { tenantId: input.tenantId }, sort: '-createdAt', perPage: 200 }).catch(() => ({ items: [] }));
   const cleared = clearAutomaticViralReferences(input.pack);
   const rebound = enrichPackageWithContentSignals({
@@ -1014,7 +1055,7 @@ async function generateWeeklyTaskPreviews(input: {
   return {
     ...input.pack,
     detailGeneration: {
-      status: readyCount > 0 ? 'ready' : 'blocked', startedAt: generatedAt, generatedAt,
+      status: readyCount > 0 && readyCount === masterPlans.length ? 'ready' : 'blocked', startedAt: generatedAt, generatedAt,
       estimatedMinutes: Math.max(2, Math.ceil(masterPlans.length / 2) * 2), usageCostCny: null,
       readyCount, blockedCount: blocked.length, blockers: allBlockers,
     },
@@ -4095,7 +4136,42 @@ digitalEmployeesRouter.post('/goals/:goalId/package/details', async (req, res) =
     }
     const currentPlans = pack.tasks.find(task => task.templateId === 'production')?.videoPlans || [];
     const currentMasterPlans = currentPlans.filter(item => item.productionRole !== 'platform_adaptation');
-    if (pack.detailGeneration?.status === 'ready' && currentMasterPlans.some(item => item.preproduction?.readiness.canStart)) {
+    const productionProfile = frozenEnterpriseProfileForPlan(plan, false)
+      || (resolvedConfiguration ? enterpriseProfileFromKnowledgeBinding(resolvedConfiguration.knowledgeBinding) as EnterpriseProfile | null : null);
+    if (!productionProfile) {
+      res.status(409).json({ error: 'enterprise_fact_snapshot_missing', message: '企业事实快照缺失，请重新确认企业与产品资料后再生成制作详情。' });
+      return;
+    }
+    let preparationReadiness: Awaited<ReturnType<typeof readServerProductionOnboardingReadiness>>;
+    try {
+      preparationReadiness = await readServerProductionOnboardingReadiness({
+        store,
+        tenantId,
+        profile: productionProfile,
+        preferences: config.productionOnboarding,
+        plans: currentMasterPlans,
+        // Budget is finalized after the storyboard quote. This first gate checks
+        // only zero-cost enterprise, presenter and local-material prerequisites.
+        budgetConfirmed: true,
+      });
+    } catch (error) {
+      res.status(503).json({
+        error: 'production_onboarding_preflight_unavailable',
+        message: `${error instanceof Error ? error.message : '生产资料预检暂时不可用'}；本次未调用制作服务，请稍后重试。`,
+      });
+      return;
+    }
+    if (!preparationReadiness.ready) {
+      res.status(409).json({
+        error: 'production_onboarding_preflight_blocked',
+        message: `制作详情尚未生成：${preparationReadiness.blockers.map(item => item.message).join('；')}`,
+        blockers: preparationReadiness.blockers,
+        requiredArchetypes: preparationReadiness.requiredArchetypes,
+      });
+      return;
+    }
+    if (pack.detailGeneration?.status === 'ready' && currentMasterPlans.length > 0
+      && currentMasterPlans.every(item => item.preproduction?.readiness.canStart)) {
       res.json(await buildOverview(tenantId, goal.id));
       return;
     }
@@ -4946,6 +5022,18 @@ export async function approveGoalForReview(tenantId: string, userId: string, goa
     if (packageRevision !== pack.revision) { return { status: 409, body: { error: 'package_changed', message: '请查看并确认最新版本的经营包。' } }; }
     if (pack.tasks.some(t => t.ownerId && !members.some(m => m.id === t.ownerId))) { return { status: 409, body: { error: 'owner_unavailable', message: '计划中的负责人已不可用，请重新分配任务。' } }; }
     const masterPlans = pack.tasks.find(task => task.templateId === 'production')?.videoPlans?.filter(item => item.productionRole !== 'platform_adaptation') || [];
+    if (masterPlans.length && (pack.detailGeneration?.status !== 'ready'
+      || masterPlans.some(item => !item.preproduction?.readiness.canStart))) {
+      const blockers = [...new Set([
+        ...(pack.detailGeneration?.blockers || []),
+        ...masterPlans.flatMap(item => item.preproduction?.readiness.blockers || ['制作详情尚未生成']),
+      ].filter(Boolean))];
+      return { status: 409, body: {
+        error: 'package_details_blocked',
+        message: `制作条件尚未全部满足：${blockers.join('；') || '请先生成并确认每条内容的制作详情'}`,
+        blockers,
+      } };
+    }
     const cloneWithoutVerifiedBudget = masterPlans.find(item => item.route === 'clone'
       && item.estimatedCostRange?.basis !== 'verified_storyboard_provider_envelope');
     if (cloneWithoutVerifiedBudget) {
@@ -4964,6 +5052,34 @@ export async function approveGoalForReview(tenantId: string, userId: string, goa
     if (installationCeiling !== null && (!Number.isFinite(installationCeiling) || installationCeiling <= 0
       || selectedCaps.some(value => value > installationCeiling + 0.000001))) {
       return { status: 409, body: { error: 'production_budget_installation_ceiling', message: `系统单条制作上限不足以执行已选方案（当前上限 ¥${Number.isFinite(installationCeiling) ? installationCeiling.toFixed(2) : '0.00'}），请在开工前调整系统额度或选择精简预算。` } };
+    }
+    if (masterPlans.length) {
+      const productionProfile = frozenEnterpriseProfileForPlan(existingPlan, false)
+        || enterpriseProfileFromKnowledgeBinding(resolvedConfiguration.knowledgeBinding) as EnterpriseProfile | null;
+      if (!productionProfile) {
+        return { status: 409, body: { error: 'enterprise_fact_snapshot_missing', message: '企业事实快照缺失，请重新确认企业与产品资料后再开工。' } };
+      }
+      try {
+        const readiness = await readServerProductionOnboardingReadiness({
+          store,
+          tenantId,
+          profile: productionProfile,
+          preferences: config.productionOnboarding,
+          plans: masterPlans,
+          budgetConfirmed: Boolean(pack.directorPlan && approvedTotal > 0),
+        });
+        if (!readiness.ready) return { status: 409, body: {
+          error: 'production_onboarding_preflight_blocked',
+          message: `周任务未启动：${readiness.blockers.map(item => item.message).join('；')}`,
+          blockers: readiness.blockers,
+          requiredArchetypes: readiness.requiredArchetypes,
+        } };
+      } catch (error) {
+        return { status: 503, body: {
+          error: 'production_onboarding_preflight_unavailable',
+          message: `${error instanceof Error ? error.message : '生产资料预检暂时不可用'}；本次未创建运行，请稍后重试。`,
+        } };
+      }
     }
     const issues = validatePackageForStart(pack, goalInput(goal), configSnapshotForPlan(existingPlan, currentConfig));
     if (issues.length) { return { status: 400, body: { error: 'package_invalid', message: issues.join('；') } }; }

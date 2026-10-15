@@ -161,12 +161,12 @@
 
 .ls-conversation-workspace {
   display: grid;
-  grid-template-columns: minmax(196px, 232px) minmax(360px, 1fr) minmax(252px, 288px);
+  grid-template-columns: minmax(196px, 232px) minmax(360px, 1fr) minmax(224px, 248px);
   grid-template-rows: minmax(0, 1fr);
   min-height: 0;
   overflow: hidden;
-  border: 1px solid var(--ls-border-secondary);
-  border-radius: 12px;
+  border: 0;
+  border-radius: 0;
   background: var(--ls-bg);
 }
 .ls-conversation-workspace__pane { min-width: 0; min-height: 0; overflow: hidden; background: var(--ls-bg); }
@@ -239,6 +239,17 @@
 .app-shell :where(main, section, article, aside, header, footer, form, fieldset) { min-width: 0; max-width: 100%; }
 .app-shell :where(.truncate, .line-clamp-1, .line-clamp-2, .line-clamp-3) { min-width: 0; }
 .app-shell :where(table, [role='table']) { font-variant-numeric: tabular-nums; }
+.ls-design-system .ls-replication-draft-title.ant-input-affix-wrapper {
+  font-size: var(--ls-type-title-large-size);
+  line-height: var(--ls-type-title-large-line);
+  font-weight: var(--ls-type-title-large-weight);
+}
+.ls-design-system .ls-replication-draft-title.ant-input-affix-wrapper > .ant-input {
+  font-size: inherit;
+  line-height: inherit;
+  font-weight: inherit;
+  color: inherit;
+}
 @media (prefers-reduced-motion: reduce) {
   .ls-design-system *, .ls-design-system *::before, .ls-design-system *::after { animation-duration: .01ms !important; animation-iteration-count: 1 !important; transition-duration: .01ms !important; scroll-behavior: auto !important; }
   .ls-invitation-beam::after { display: none; }

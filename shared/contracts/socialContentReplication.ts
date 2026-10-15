@@ -5,6 +5,7 @@ import type {
   SocialSceneProductionAdmission,
   SocialSceneVisualContract,
 } from '../sceneVisualContract.js';
+import type { FixedYieldArchetypeId } from '../fixedYieldMaterialRegistry.js';
 import type { PresenterShotMeasurements } from './presenterStackPolicy.js';
 
 export const SOCIAL_CONTENT_TASK_STATUSES = [
@@ -351,9 +352,14 @@ export interface SocialMaterialRouting {
   materialType: import('../benchmarkAnalysis').BenchmarkMaterialType;
   policy: 'local_only' | 'local_first_product_i2v' | 'authorized_presenter';
   localMatch: { state: 'matched' | 'missing'; sourceRefs: string[]; evidenceRef: string | null;
+    /** Frozen fixed-yield archetype used for deterministic local matching. */
+    archetypeId?: FixedYieldArchetypeId;
     /** Frozen budget-degradation tier. Historic plans omit it. */
     sourceTier?: 'product_high_fidelity_local' | 'product_packaging_first_frame_i2v'
-      | 'product_local' | 'factory_local' | 'other_local' };
+      | 'product_local' | 'factory_local' | 'other_local';
+    /** Segment-level failures retained so the material gap remains actionable. */
+    rejections?: import('./localMaterialSegmentProfile.js').LocalMaterialSegmentRejection[];
+  };
   generation?: {
     sourceTier?: 'product_packaging_first_frame_i2v';
     method: 'reference_first_frame_product_replacement_i2v' | 'enterprise_authored_product_first_frame_i2v';

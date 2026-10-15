@@ -9,8 +9,6 @@ import { useDeliveryHandoff } from "../hooks/useDeliveryHandoff";
 import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   AlertTriangle,
-  Bell,
-  BellOff,
   Bot,
   BrainCircuit,
   Check,
@@ -21,7 +19,6 @@ import {
   List,
   MessageSquare,
   Search,
-  Share2,
   Power,
   RefreshCw,
   Send,
@@ -136,6 +133,10 @@ const STAGE_LABEL: Record<CustomerStage, string> = {
   silent30: '沉默30天',
   silent60: '沉默60天',
 };
+
+function customerDisplayName(customer: Pick<CustomerProfile, 'name'>): string {
+  return customer.name.replace(/模拟客户/g, '客户').replace(/模拟/g, '').replace(/\s{2,}/g, ' ').trim();
+}
 
 const STAGE_META: Record<CustomerStage, { color: string; bg: string }> = {
   lead: { color: 'var(--color-accent)', bg: 'var(--color-accent-glow)' },
@@ -554,6 +555,8 @@ function CompactCustomerList({
   }, [activeFilterCount, list, onVisibleSelectionChange, selectedId]);
   const renderCustomer = (customer: CustomerProfile) => {
     const lastMessage = customer.timeline[customer.timeline.length - 1];
+    const lastMessagePreview = (lastMessage?.translatedBody || lastMessage?.body || lastMessage?.title || '暂无消息').replace(/\s+/g, ' ').trim();
+    const displayName = customerDisplayName(customer);
     const statusColor = HANDLING_COLOR[customer.handlingMode];
     const hasUnread = Boolean(customer.hasUnread);
     return (
@@ -573,9 +576,10 @@ function CompactCustomerList({
           <div className="min-w-0 flex-1">
             <div className="flex items-start justify-between gap-3">
               <div className="min-w-0">
-                <p className="truncate text-[13px] font-semibold leading-5 text-text-primary" title={customer.name}>{customer.name}</p>
+                <p className="truncate text-[13px] font-semibold leading-5 text-text-primary" title={displayName}>{displayName}</p>
+                <p dir="auto" className="mt-0.5 line-clamp-2 text-left text-xs leading-[18px] text-text-muted" title={lastMessagePreview}>{lastMessagePreview}</p>
                 <div className="mt-1 flex flex-wrap items-center gap-1.5">
-                  <Tag className="!m-0 !text-[9px]">{customer.isHistorical ? '历史会话' : customer.isMock ? '模拟客户' : '真实客户'}</Tag>
+                  {customer.isHistorical && <Tag className="!m-0 !text-[9px]">历史会话</Tag>}
                   {customer.simulation?.warning && <span className="rounded bg-red-600 px-1.5 py-0.5 text-[9px] font-semibold text-white">大单预警</span>}
                   <SourceIcon source={customer.source} size={11} />
                 </div>
@@ -796,7 +800,7 @@ function ChatThread({
   const templatePlan = null;
   const chips = customer && composerState === 'idle' ? sceneChips(customer) : [];
   const conversationPeople = customer ? [
-    { id: customer.id, name: customer.name, color: '#E8C7EC' },
+    { id: customer.id, name: customerDisplayName(customer), color: '#E8C7EC' },
     { id: 'lingshu-customer-agent', name: '客服 Agent', icon: <Bot size={15}/>, color: '#EAF6F2' },
   ] : [];
 
@@ -857,8 +861,10 @@ function ChatThread({
           <Avatar size={40} className="shrink-0" style={{ background: '#E8C7EC', color: '#6F3E7A', minWidth: 40 }}>{customer.avatar || customer.name.slice(0, 1)}</Avatar>
           <div className="min-w-0">
           <div className="flex min-w-0 items-center gap-2">
-            <p className="truncate text-base font-semibold text-text-primary">{customer.name}</p>
-            <Tag className="!m-0 !text-[10px]">{customer.isHistorical ? '历史会话 · 只读' : customer.isMock ? '模拟客户 · 不对外发送' : channelReady ? '真实客户 · 通道已连接' : '真实客户 · 通道未连接'}</Tag>
+            <p className="truncate text-base font-semibold text-text-primary">{customerDisplayName(customer)}</p>
+            {customer.isHistorical
+              ? <Tag className="!m-0 !text-[10px]">历史会话 · 只读</Tag>
+              : !customer.isMock && <Tag className="!m-0 !text-[10px]">{channelReady ? '通道已连接' : '通道未连接'}</Tag>}
           </div>
           <div className="mt-0.5 flex items-center gap-1.5 text-[11px] text-text-muted">
             <span>{STAGE_LABEL[customer.stage]}</span>
@@ -881,11 +887,11 @@ function ChatThread({
         <div className="mx-auto max-w-3xl space-y-4">
           {customer.isMock && (
             <form onSubmit={event => { event.preventDefault(); const value = mockInput.trim(); if (!value) return; onMockBuyerMessage(value); setMockInput(''); }} className="rounded-lg border border-accent/20 bg-accent-glow p-4">
-              <div className="flex items-center gap-2 text-xs font-bold text-accent"><UserRound size={14} />模拟客户输入</div>
-              <p className="mt-1 text-[11px] text-text-secondary">输入客户接下来会说的话，只在演示沙盘里推进，不会发送到真实平台。</p>
+              <div className="flex items-center gap-2 text-xs font-bold text-accent"><UserRound size={14} />客户消息输入</div>
+              <p className="mt-1 text-[11px] text-text-secondary">输入客户接下来会说的话，用于继续当前会话。</p>
               <div className="mt-3 flex gap-2">
                 <input value={mockInput} onChange={event => setMockInput(event.target.value)} placeholder={customer.simulation?.editable ? '例如：我们想改造一条装配线，怎么开始？' : '输入下一条客户消息…'} className="ui-field min-w-0 flex-1 !rounded-md px-3 py-2 text-sm" />
-                <Button type="primary" htmlType="submit" disabled={!mockInput.trim()} className="!h-auto min-h-9 !whitespace-normal rounded-md bg-accent px-4 py-2 text-xs font-bold text-white hover:bg-accent-dim disabled:opacity-40">模拟发送</Button>
+                <Button type="primary" htmlType="submit" disabled={!mockInput.trim()} className="!h-auto min-h-9 !whitespace-normal rounded-md bg-accent px-4 py-2 text-xs font-bold text-white hover:bg-accent-dim disabled:opacity-40">添加客户消息</Button>
               </div>
             </form>
           )}
@@ -1438,17 +1444,6 @@ function CustomerInfoRail({
   onInsertQuoteReply: (text: string) => void;
   onQuoteCardSent: (summary: string, providerMessageId?: string) => void;
 }) {
-  const [quickPanel, setQuickPanel] = useState<'share' | 'profile' | 'notifications' | 'search' | null>(null);
-  const [messageSearch, setMessageSearch] = useState('');
-  const [notificationsMuted, setNotificationsMuted] = useState(false);
-
-  useEffect(() => {
-    setQuickPanel(null);
-    setMessageSearch('');
-    if (!customer) { setNotificationsMuted(false); return; }
-    setNotificationsMuted(localStorage.getItem(`lingshu:customer:notifications-muted:${customer.id}`) === 'true');
-  }, [customer?.id]);
-
   if (!customer) {
     return (
       <aside className="flex h-full w-full lg:w-64 shrink-0 items-center justify-center border-l border-border bg-slate-50 px-6 text-center xl:w-[272px] 2xl:w-72">
@@ -1457,24 +1452,13 @@ function CustomerInfoRail({
     );
   }
 
-  const searchResults = messageSearch.trim()
-    ? customer.timeline.filter(event => `${event.title} ${event.body}`.toLowerCase().includes(messageSearch.trim().toLowerCase())).slice(-6).reverse()
-    : [];
-  const openQuickPanel = (panel: NonNullable<typeof quickPanel>) => setQuickPanel(current => current === panel ? null : panel);
-  const quickActions = [
-    { id: 'share' as const, label: '分享', icon: Share2 },
-    { id: 'profile' as const, label: '客户主页', icon: UserRound },
-    { id: 'notifications' as const, label: notificationsMuted ? '恢复通知' : '关闭通知', icon: notificationsMuted ? Bell : BellOff },
-    { id: 'search' as const, label: '搜索', icon: Search },
-  ];
-
   return (
     <aside data-testid="customer-info-rail" className="min-h-0 w-full shrink-0 self-stretch overflow-y-auto overscroll-contain border-l border-border bg-surface-2 [scrollbar-gutter:stable] lg:w-72 xl:w-[320px] 2xl:w-[336px]">
       <div className="border-b border-border p-3">
         <div className="rounded-2xl bg-white px-3 py-5 shadow-sm">
           <div className="flex flex-col items-center text-center">
             <Avatar size={72} style={{ background: '#E8C7EC', color: '#6F3E7A', fontSize: 28 }}>{customer.avatar || customer.name.slice(0, 1)}</Avatar>
-            <h2 className="mt-3 line-clamp-2 text-lg font-semibold leading-6 text-text-primary" title={customer.name}>{customer.name}</h2>
+            <h2 className="mt-3 line-clamp-2 text-lg font-semibold leading-6 text-text-primary" title={customerDisplayName(customer)}>{customerDisplayName(customer)}</h2>
             <div className="mt-1 flex min-w-0 flex-wrap items-center justify-center gap-x-1.5 gap-y-1 text-[11px] text-text-secondary">
               <span className="max-w-full truncate" title={customer.countryName}>{customer.countryName || '—'}</span>
               <span className="text-border-bright">·</span>
@@ -1483,22 +1467,6 @@ function CustomerInfoRail({
               <span><LiveLocalTime timeZone={customer.timeZone}/></span>
             </div>
           </div>
-          <div className="mt-5 grid grid-cols-4 gap-1" aria-label="客户快捷操作">
-            {quickActions.map(action => {
-              const Icon = action.icon;
-              const active = quickPanel === action.id;
-              return <button key={action.id} type="button" aria-pressed={active} onClick={() => openQuickPanel(action.id)} className={`group flex min-w-0 flex-col items-center gap-1.5 rounded-lg px-1 py-1.5 text-[10px] font-medium transition ${active ? 'bg-accent-glow text-accent' : 'text-text-secondary hover:bg-surface-2 hover:text-text-primary'}`}>
-                <span className={`flex h-9 w-9 items-center justify-center rounded-full ${active ? 'bg-white text-accent' : 'bg-surface-2 text-text-primary group-hover:bg-white'}`}><Icon size={17}/></span>
-                <span className="w-full truncate">{action.label}</span>
-              </button>;
-            })}
-          </div>
-          {quickPanel && <div role="region" aria-label="客户快捷详情" className="mt-3 rounded-lg border border-border bg-surface-2 p-3 text-[11px] leading-5 text-text-secondary">
-            {quickPanel === 'share' && <div><p className="font-semibold text-text-primary">分享客户摘要</p><p className="mt-1">{customer.name} · {customer.product || '产品待确认'} · {STAGE_LABEL[customer.stage]} · 意向 {customer.intentScore}</p><Button size="small" className="mt-2" onClick={() => void navigator.clipboard.writeText(`${customer.name}\n${customer.countryName} · ${customer.language}\n${customer.product}\n${customer.summary}`).then(() => onToast('客户摘要已复制')).catch(() => onToast('复制失败，请稍后重试'))}>复制摘要</Button></div>}
-            {quickPanel === 'profile' && <dl className="grid grid-cols-[72px_minmax(0,1fr)] gap-x-2 gap-y-1"><dt>来源</dt><dd className="flex items-center gap-1 font-medium text-text-primary"><SourceIcon source={customer.source} size={12}/>{sourceLabel(customer.source)}</dd><dt>产品</dt><dd className="font-medium text-text-primary">{customer.product || '待确认'}</dd><dt>阶段</dt><dd className="font-medium text-text-primary">{STAGE_LABEL[customer.stage]}</dd><dt>预计价值</dt><dd className="font-medium text-text-primary">{customer.estimatedValue || '待评估'}</dd><dt>下一步</dt><dd className="font-medium text-text-primary">{customer.nextStep || '待安排'}</dd></dl>}
-            {quickPanel === 'notifications' && <div className="flex items-center justify-between gap-3"><div><p className="font-semibold text-text-primary">会话通知</p><p className="mt-1">{notificationsMuted ? '当前客户已静音，仍会保留未读记录。' : '当前客户的重要消息会正常提醒。'}</p></div><Switch size="small" checked={!notificationsMuted} onChange={enabled => { const muted = !enabled; setNotificationsMuted(muted); localStorage.setItem(`lingshu:customer:notifications-muted:${customer.id}`, String(muted)); onToast(muted ? '已关闭当前客户通知' : '已恢复当前客户通知'); }}/></div>}
-            {quickPanel === 'search' && <div><Input allowClear size="small" value={messageSearch} onChange={event => setMessageSearch(event.target.value)} placeholder="搜索当前会话" prefix={<Search size={13}/>} />{messageSearch.trim() ? <div className="mt-2 space-y-1.5">{searchResults.length ? searchResults.map(event => <div key={event.id} className="rounded-md bg-white px-2 py-1.5"><p className="font-semibold text-text-primary">{event.title} · {event.time}</p><p className="line-clamp-2">{event.body}</p></div>) : <p className="py-2 text-center text-text-muted">没有匹配消息</p>}</div> : <p className="mt-2 text-text-muted">输入关键词查看当前客户的消息记录。</p>}</div>}
-          </div>}
         </div>
         <div className="mt-3"><CustomerInsightDisclosure customer={customer} /></div>
       </div>
@@ -2426,7 +2394,6 @@ export default function ConversionPage({ onLeaveConversation: _onLeaveConversati
   return (
     <div className="flex h-full min-h-0 min-w-0 flex-col overflow-hidden">
     <h1 className="sr-only">{PAGE_REGISTRY.conversion.canonicalTitle}</h1>
-    {includeMockCustomers && <div className="shrink-0 border-b border-emerald-200 bg-emerald-50 px-4 py-2 text-xs text-emerald-900"><strong>本地模拟 · 外贸客户全流程</strong>　收件箱、潜客、成交客户和沉默客户均已加入多语言工厂采购场景。</div>}
     {deliveryHandoff?.runId&&deliveryError&&<p role="alert" className="mx-4 mt-3 text-sm text-red-700">{deliveryError}</p>}
     {deliveryHandoff?.runId && <div className="max-h-[35%] shrink-0 overflow-y-auto"><CustomerWorkflowPanel handoff={deliveryHandoff} customers={customers} /></div>}
     {deliveryHandoff && !deliveryHandoff.runId && <section className="mx-4 mt-3 shrink-0 border-l-2 border-accent bg-accent-glow p-3">
@@ -2436,7 +2403,7 @@ export default function ConversionPage({ onLeaveConversation: _onLeaveConversati
         <p className="mt-2 text-[11px] text-slate-500">此处展示所属批次的草稿。批次审核请返回交付看板；会话中的回复操作独立处理。</p>
       </> : <p className="mt-2 text-xs text-slate-500">没有对应的草稿记录，请返回交付看板选择具体客户任务。</p>}
     </section>}
-    <div className="flex min-h-0 min-w-0 flex-1 flex-col bg-ink p-0 lg:p-3" data-lingshu-guide="customer-workbench">
+    <div className="flex min-h-0 min-w-0 flex-1 flex-col" data-lingshu-guide="customer-workbench">
       <nav aria-label="移动端会话导航" className="grid h-12 shrink-0 grid-cols-3 border-b border-border bg-white md:hidden">
         {([
           { id: 'list' as const, label: '会话列表', icon: List },

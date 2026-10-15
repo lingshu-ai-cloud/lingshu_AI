@@ -157,12 +157,13 @@ async function verifyAdmission(cachedReference: boolean) {
       const analysis = buildMaterialScriptAnalysis({materialId: scene.sceneId, name: scene.subject,
         sourceRevision: 'fixture-v1', duration: scene.duration, productRef: 'SKU-1',
         segments: [{id: scene.sceneId, start: 0, end: scene.duration, confidence: .99,
+          boundaryConfidence: .99, cleanEntry: true, cleanExit: true,
           subject: [scene.subject], action: scene.action, observedFacts: [scene.subject, scene.action, scene.voiceover, scene.narration], visualContract: visual}]});
       analysis.shots[0]!.visualContract = visual;
       analysis.shots[0]!.materialRoles = [scene.type as never];
       materials.push({id: scene.sceneId, tenantId, type: 'video', sourceType: 'social_task_upload',
         name: scene.subject, url: file, duration: scene.duration, productRef: 'SKU-1', productName: 'SKU-1',
-        scriptAnalysis: analysis, rightsStatus: 'owned', width: 160, height: 284,
+        sourceRevision: 'fixture-v1', scriptAnalysis: analysis, rightsStatus: 'owned', width: 160, height: 284,
         contentSha256: createHash('sha256').update(fs.readFileSync(file)).digest('hex'),
         commercialUseApproved: true, licenseEvidence: `fixture-owned:${scene.sceneId}`});
     }

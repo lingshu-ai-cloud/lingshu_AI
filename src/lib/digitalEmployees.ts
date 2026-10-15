@@ -8,6 +8,7 @@ import type { WeeklyPackage } from "./weeklyPackage";
 import { normalizeVideoPlan, type VideoCreationPlan } from './videoCreationPlan';
 import type { DirectorDecision, DirectorDecisionReason } from './directorDecision';
 import type { SocialOperatingProfileId } from '../../shared/contracts/socialOperatingProfile';
+import type { ProductionOnboardingPreferences } from '../../shared/contracts/productionOnboarding';
 
 export type AutonomyMode = "suggest" | "collaborate" | "managed" | "automatic";
 export type DigitalEmployeeAgentRole = "orchestrator" | "business" | "director" | "content" | "customer";
@@ -35,6 +36,7 @@ export type DigitalEmployeeWorkflow =
 export type DataAvailability = "available" | "pending" | "unavailable";
 
 export interface DigitalEmployeeConfig {
+  productionOnboarding?: ProductionOnboardingPreferences;
   managedPublishingGrant?: ManagedPublishingGrant;
   continuationPolicy?: ContinuationPolicy;
   operatingMaturity?: "starting" | "growing" | "established";

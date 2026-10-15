@@ -19,7 +19,7 @@ test('presenter onboarding keeps the existing single-source editor and adds unif
   assert.doesNotMatch(source, />提交本人声音</);
   assert.match(source, /人像授权通过后，可在保存人物时一并录入本人声音/);
   assert.match(source, /也可直接提交较短的有效录音/);
-  assert.match(source, /已完成并选中/);
+  assert.match(source, /已完成，可继续绑定/);
   assert.match(source, /presenterConsentReturn/);
   assert.match(source, /window\.location\.assign\(updated\.consentUrl\)/);
   assert.match(source, /voicePollInFlight/);
@@ -56,6 +56,10 @@ test('presenter onboarding keeps the existing single-source editor and adds unif
 
 test('initial onboarding starts with only the two source choices and keeps the self form minimal', () => {
   const html = renderToStaticMarkup(<PresenterManager {...props} initialConfiguration />);
+  const consentReturnFlow = source.slice(
+    source.indexOf("const jobId = new URLSearchParams(window.location.search).get('presenterConsentReturn')"),
+    source.indexOf('const submitOwnVoiceRaw'),
+  );
   assert.match(html, /选择 HeyGen 已有人物/);
   assert.match(html, /使用本人素材/);
   assert.match(html, />推荐</);
@@ -87,4 +91,20 @@ test('initial onboarding starts with only the two source choices and keeps the s
   assert.match(source, /initialConfiguration \? '完成' : '提交资料并继续本人授权'/);
   assert.match(source, /<CheckCircle2 size=\{15\} \/>已完成/);
   assert.match(source, /await requestOfficialConsent\(job\)/);
+  assert.match(consentReturnFlow, /choose\(updated\.look, updated\)/);
+  assert.match(consentReturnFlow, /人物原配声音已预选/);
+  assert.match(consentReturnFlow, /录入本人声音/);
+  assert.doesNotMatch(consentReturnFlow, /presenterApi\.import/);
+});
+
+test('existing onboarding presenter can record and bind a new voice without duplicating the person', () => {
+  assert.match(source, /voiceOnlyPresenter\?: PresenterAsset/);
+  assert.match(source, /voiceOnlyPresenter \? ownVoiceRecorder : voicePicker/);
+  assert.match(source, /presenterApi\.bindVoice\(voiceOnlyPresenter\.id, selectedVoiceId\)/);
+  assert.match(source, /voiceOnlyPresenter \? '保存本人声音'/);
+  assert.match(source, /storedVoiceCloneJob\(voiceOnlyLook\?\.id \|\| ''\)/);
+  assert.match(source, /voiceCloneJob\?\.status === 'uncertain'/);
+  assert.match(source, /\['submitting', 'processing', 'completed'\]\.includes\(voiceCloneJob\.status\)/);
+  assert.match(source, /window\.sessionStorage\.removeItem\(`presenter-voice-job:/);
+  assert.match(source, /重新录入声音/);
 });

@@ -15,6 +15,8 @@ import {
   Bot,
   CalendarRange,
   CheckCircle2,
+  ChevronLeft,
+  ChevronRight,
   Loader2,
   Pause,
   Play,
@@ -113,6 +115,16 @@ const GUIDE_VISIBLE_MS = 6_000;
 const ENTERPRISE_GUIDE_MEMORY_ID = '__enterprise-guide-shown__';
 const ASSISTANT_PRIMARY_ENTRY_SEEN_KEY = 'lingshu-assistant-primary-entry-seen-v1';
 const ASSISTANT_CONVERSATION_WELCOME_SEEN_KEY = 'lingshu-assistant-conversation-welcome-seen-v1';
+const ASSISTANT_LAUNCHER_RETRACTED_KEY = 'lingshu-assistant-launcher-retracted-v1';
+
+function readLauncherRetractedPreference() {
+  if (typeof window === 'undefined') return false;
+  try {
+    return window.localStorage.getItem(ASSISTANT_LAUNCHER_RETRACTED_KEY) === 'true';
+  } catch {
+    return false;
+  }
+}
 
 type AssistantPerformance = { phase: string; message?: string; reason: AssistantNotificationReason };
 type AssistantSpeech = { id: number; message: string };
@@ -738,6 +750,7 @@ export default function GlobalAssistant({
   const fadeExit = { opacity: 0, transition: { duration: (reduceMotion ? lsMotion.duration.instant : lsMotion.duration.exit) / 1000, ease: lsMotion.ease.exit } };
   const spatialTransition = reduceMotion ? { duration: 0 } : { ...lsMotion.spring.standard, opacity: fadeTransition };
   const [mode, setMode] = useState<'breathing' | 'chat'>('breathing');
+  const [launcherRetracted, setLauncherRetracted] = useState(readLauncherRetractedPreference);
   const [panelView, setPanelView] = useState<AssistantPanelView>('chat');
   const [decisionDialog, setDecisionDialog] = useState<AssistantDecisionDialog>(null);
   const [decisionFeedRevision, setDecisionFeedRevision] = useState(0);
@@ -772,6 +785,7 @@ export default function GlobalAssistant({
   const messageScrollRef = useRef<HTMLDivElement>(null);
   const assistantInputRef = useRef<HTMLTextAreaElement>(null);
   const launcherButtonRef = useRef<HTMLAnchorElement | HTMLButtonElement>(null);
+  const edgeLauncherButtonRef = useRef<HTMLAnchorElement | HTMLButtonElement>(null);
   const decisionDialogTriggerRef = useRef<HTMLButtonElement | null>(null);
   const decisionDialogKindRef = useRef<Exclude<AssistantDecisionDialog, null>['kind'] | null>(null);
   const decisionDialogRestoreFocusRef = useRef(true);
@@ -795,6 +809,25 @@ export default function GlobalAssistant({
     persistenceFenceRef.current.active = false;
     persistenceFenceRef.current = { scopeKey: persistenceScopeKey, active: true };
   }
+
+  const persistLauncherRetraction = useCallback((retracted: boolean) => {
+    setLauncherRetracted(retracted);
+    try {
+      window.localStorage.setItem(ASSISTANT_LAUNCHER_RETRACTED_KEY, String(retracted));
+    } catch {
+      // The explicit control remains usable when storage is unavailable.
+    }
+  }, []);
+
+  const retractLauncher = useCallback(() => {
+    persistLauncherRetraction(true);
+    window.requestAnimationFrame(() => edgeLauncherButtonRef.current?.focus());
+  }, [persistLauncherRetraction]);
+
+  const restoreLauncher = useCallback(() => {
+    persistLauncherRetraction(false);
+    window.requestAnimationFrame(() => launcherButtonRef.current?.focus());
+  }, [persistLauncherRetraction]);
 
   useEffect(() => {
     const fence = persistenceFenceRef.current;
@@ -2061,8 +2094,11 @@ export default function GlobalAssistant({
     setDecisionDialog(null);
     setWelcomeBubbleVisible(false);
     setMode('breathing');
-    window.requestAnimationFrame(() => launcherButtonRef.current?.focus());
-  }, [activeAgent, persistThread]);
+    window.requestAnimationFrame(() => {
+      if (launcherRetracted) edgeLauncherButtonRef.current?.focus();
+      else launcherButtonRef.current?.focus();
+    });
+  }, [activeAgent, launcherRetracted, persistThread]);
 
   const returnToConversation = useCallback(() => {
     const thread = useAssistantStore.getState().threads[activeAgent];
@@ -2138,14 +2174,10 @@ export default function GlobalAssistant({
   return (
     <div
       data-global-assistant="root"
-      className={`fixed right-4 z-[75] md:right-5 ${page === 'conversion'
-        ? 'bottom-[calc(env(safe-area-inset-bottom)+8rem)]'
-        : page === 'smartAssets' || page === 'digitalEmployees'
-          ? 'bottom-[calc(env(safe-area-inset-bottom)+5.5rem)] md:bottom-5'
-          : 'bottom-[calc(env(safe-area-inset-bottom)+1rem)] md:bottom-5'}`}
+      className={`fixed bottom-[calc(env(safe-area-inset-bottom)+1rem)] z-[75] md:bottom-5 ${launcherRetracted && mode === 'breathing' ? 'right-0 md:right-0' : 'right-4 md:right-5'}`}
     >
       <AnimatePresence>
-        {mode === 'breathing' && performance && shouldNotifyAssistant(performance.reason) && !performanceHidden && (
+        {!launcherRetracted && mode === 'breathing' && performance && shouldNotifyAssistant(performance.reason) && !performanceHidden && (
           <motion.div
             key={`performance-${performance.phase}`}
             data-assistant-surface="floating-reminder"
@@ -2178,7 +2210,7 @@ export default function GlobalAssistant({
       </AnimatePresence>
 
       <AnimatePresence>
-        {mode === 'breathing' && (!performance || performanceHidden || !shouldNotifyAssistant(performance.reason)) && speechBubble && (
+        {!launcherRetracted && mode === 'breathing' && (!performance || performanceHidden || !shouldNotifyAssistant(performance.reason)) && speechBubble && (
           <motion.div
             key={`speech-${speechBubble.id}`}
             data-assistant-surface="floating-reminder"
@@ -2201,7 +2233,7 @@ export default function GlobalAssistant({
       </AnimatePresence>
 
       <AnimatePresence>
-        {mode === 'breathing' && (!performance || performanceHidden || !shouldNotifyAssistant(performance.reason)) && !speechBubble && weeklyPlanKickoffAvailable && !weeklyPlanPromptDismissed && (
+        {!launcherRetracted && mode === 'breathing' && (!performance || performanceHidden || !shouldNotifyAssistant(performance.reason)) && !speechBubble && weeklyPlanKickoffAvailable && !weeklyPlanPromptDismissed && (
           <motion.div
             key="weekly-plan-kickoff"
             data-assistant-surface="floating-reminder"
@@ -2239,7 +2271,7 @@ export default function GlobalAssistant({
       </AnimatePresence>
 
       <AnimatePresence>
-        {mode === 'breathing' && (!performance || performanceHidden || !shouldNotifyAssistant(performance.reason)) && !speechBubble && (!weeklyPlanKickoffAvailable || weeklyPlanPromptDismissed) && featureGuide && (
+        {!launcherRetracted && mode === 'breathing' && (!performance || performanceHidden || !shouldNotifyAssistant(performance.reason)) && !speechBubble && (!weeklyPlanKickoffAvailable || weeklyPlanPromptDismissed) && featureGuide && (
           <motion.div
             key={featureGuide.id}
             data-assistant-surface="floating-reminder"
@@ -2278,7 +2310,7 @@ export default function GlobalAssistant({
       </AnimatePresence>
 
       <AnimatePresence>
-        {page === 'enterprise' && mode === 'breathing' && enterpriseGuideSeen && !featureGuide && !speechBubble && (
+        {!launcherRetracted && page === 'enterprise' && mode === 'breathing' && enterpriseGuideSeen && !featureGuide && !speechBubble && (
           <motion.button
             type="button"
             initial={{ opacity: 0 }}
@@ -2740,29 +2772,61 @@ export default function GlobalAssistant({
         </div>
       </Modal>
 
-      <Badge count={decisionTotal ?? pendingCount} overflowCount={9} size="small">
-        <Button
-          ref={launcherButtonRef}
-          htmlType="button"
-          shape="round"
-          size="large"
-          data-global-assistant="launcher"
-          aria-label={mode === 'chat' ? '收起灵小枢对话' : '询问灵小枢'}
-          aria-haspopup="dialog"
-          aria-expanded={mode === 'chat'}
-          aria-controls="global-assistant-panel"
-          onClick={handleLauncherClick}
-          icon={(
-            <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full text-white shadow-sm" style={{ background: 'var(--ls-action-gradient)' }} aria-hidden="true">
-              <Bot size={15} />
-            </span>
+      {launcherRetracted && mode === 'breathing' ? (
+        <Badge count={decisionTotal ?? pendingCount} overflowCount={9} size="small">
+          <Button
+            ref={edgeLauncherButtonRef}
+            htmlType="button"
+            shape="circle"
+            size="large"
+            data-global-assistant="edge-launcher"
+            aria-label="展开灵小枢入口"
+            onClick={restoreLauncher}
+            icon={<ChevronLeft size={18} aria-hidden="true" />}
+            className="!flex !h-11 !w-11 !items-center !justify-center !rounded-l-full !rounded-r-none !border-border !border-r-transparent !bg-white !text-accent shadow-sm transition-colors hover:!border-accent/40 hover:!bg-accent-glow active:!bg-white focus-visible:!bg-white focus-visible:!outline-none focus-visible:!ring-2 focus-visible:!ring-accent focus-visible:!ring-offset-2"
+            title="展开灵小枢入口"
+          />
+        </Badge>
+      ) : (
+        <div className="flex items-center gap-2">
+          <Badge count={decisionTotal ?? pendingCount} overflowCount={9} size="small">
+            <Button
+              ref={launcherButtonRef}
+              htmlType="button"
+              shape="round"
+              size="large"
+              data-global-assistant="launcher"
+              aria-label={mode === 'chat' ? '收起灵小枢对话' : '询问灵小枢'}
+              aria-haspopup="dialog"
+              aria-expanded={mode === 'chat'}
+              aria-controls="global-assistant-panel"
+              onClick={handleLauncherClick}
+              icon={(
+                <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full text-white shadow-sm" style={{ background: 'var(--ls-action-gradient)' }} aria-hidden="true">
+                  <Bot size={15} />
+                </span>
+              )}
+              className="!flex !h-11 !w-11 !gap-0 !border-border !bg-white !px-2 !text-text-primary shadow-sm transition-colors hover:!border-accent/40 hover:!bg-accent-glow active:!bg-white focus-visible:!bg-white focus-visible:!outline-none focus-visible:!ring-2 focus-visible:!ring-accent focus-visible:!ring-offset-2 sm:!w-auto sm:!gap-2 sm:!px-3.5"
+              title={mode === 'chat' ? '收起灵小枢对话' : '询问灵小枢'}
+            >
+              <span className="ls-type-label-large hidden whitespace-nowrap sm:inline">询问灵小枢</span>
+            </Button>
+          </Badge>
+          {mode === 'breathing' && (
+            <Button
+              htmlType="button"
+              shape="circle"
+              size="large"
+              data-global-assistant="retract-control"
+              aria-label="收起灵小枢入口到右侧"
+              onClick={retractLauncher}
+              icon={<ChevronRight size={18} aria-hidden="true" />}
+              className="!flex !h-11 !w-11 !items-center !justify-center !border-border !bg-surface !text-text-secondary shadow-sm transition-colors hover:!border-accent/40 hover:!bg-accent-glow hover:!text-accent focus-visible:!outline-none focus-visible:!ring-2 focus-visible:!ring-accent focus-visible:!ring-offset-2"
+              title="收起灵小枢入口到右侧"
+            />
           )}
-          className="!flex !h-11 !w-11 !gap-0 !border-border !bg-surface !px-2 !text-text-primary shadow-sm transition-colors hover:!border-accent/40 hover:!bg-accent-glow focus-visible:!outline-none focus-visible:!ring-2 focus-visible:!ring-accent focus-visible:!ring-offset-2 sm:!w-auto sm:!gap-2 sm:!px-3.5"
-          title={mode === 'chat' ? '收起灵小枢对话' : '询问灵小枢'}
-        >
-          <span className="ls-type-label-large hidden whitespace-nowrap sm:inline">询问灵小枢</span>
-        </Button>
-      </Badge>
+        </div>
+      )}
     </div>
   );
 }

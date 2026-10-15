@@ -175,7 +175,7 @@ export default function InspirationVideoAnalysisTabs({ benchmark, gemini, pendin
     setActiveTab(tabs[next]!.id);
     document.getElementById(`${id}-${tabs[next]!.id}-tab`)?.focus();
   };
-  return <section className="mt-4" aria-label="视频分析详情">
+  return <section aria-label="视频分析详情">
     {pending && benchmark.shots.length > 0 && <p role="status" className="mb-3 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-[11px] leading-5 text-amber-900">新的导演级分析正在进行；下方仅展示上次分析结果，不能作为本次爆款复刻的当前依据。</p>}
     <div className="overflow-x-auto border-b border-border"><div role="tablist" aria-label="视频分析维度" className="flex min-w-max gap-1">
       {tabs.map(tab => <button key={tab.id} id={`${id}-${tab.id}-tab`} type="button" role="tab" aria-selected={activeTab === tab.id} aria-controls={`${id}-${tab.id}-panel`} tabIndex={activeTab === tab.id ? 0 : -1} onClick={() => setActiveTab(tab.id)} onKeyDown={event => onTabKeyDown(event, tab.id)} className={`min-h-11 whitespace-nowrap border-b-2 px-3 text-xs font-semibold transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/30 ${activeTab === tab.id ? 'border-accent text-accent' : 'border-transparent text-text-muted hover:text-text-primary'}`}>{tab.label}</button>)}

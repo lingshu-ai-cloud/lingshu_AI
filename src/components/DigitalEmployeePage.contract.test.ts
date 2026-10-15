@@ -493,9 +493,14 @@ assert.match(pageSource, /statusSourceLabel\[task\.statusSource\]/, 'plan previe
 assert.match(pageSource, /\/api\/overseas\/enterprise\/profile/, 'the onboarding product table must be loaded from the tenant enterprise knowledge profile');
 assert.match(firstOnboardingSource, /label="企业名称"[\s\S]*label="品牌名称"/, 'first onboarding step must ask only for enterprise and brand names');
 assert.doesNotMatch(firstOnboardingSource, /label="(?:所属行业|目标市场|核心客户|经营目标|重点产品|Agent 设置)"/, 'first onboarding step must not ask for operating assumptions');
-assert.match(productTableOnboardingSource, /primaryLabel="确认产品表，下一步"[\s\S]*上传产品资料/, 'second onboarding step must only import or confirm the product table');
+assert.match(productTableOnboardingSource, /primaryLabel="确认产品表，下一步"/, 'second onboarding step must confirm the product table before continuing');
+assert.match(productTableOnboardingSource, /headerAction=\{[\s\S]{0,1200}<Upload[\s\S]{0,700}上传产品资料/, 'product upload must live in the step header');
+assert.match(productTableOnboardingSource, /return Upload\.LIST_IGNORE/, 'the product file picker must not post to an implicit upload endpoint');
 assert.match(productTableOnboardingSource, /accept="\.xlsx,\.xls,\.csv,\.pdf,\.docx,\.txt"/, 'product onboarding must accept spreadsheet, PDF, DOCX and TXT files');
-assert.match(productTableOnboardingSource, /支持 Excel（\.xlsx\/\.xls）、CSV、PDF、Word（\.docx）和 TXT/, 'product onboarding must explain every supported mainstream format');
+assert.doesNotMatch(productTableOnboardingSource, /支持 Excel（\.xlsx\/\.xls）、CSV、PDF、Word（\.docx）和 TXT|系统自动识别表格|单个文件最大 50MB/, 'product onboarding must not retain the removed format explanation');
+assert.doesNotMatch(productTableOnboardingSource, /企业知识库产品表/, 'product onboarding must not retain the redundant product-table heading row');
+assert.match(pageSource, /xlsx\?\|csv\|pdf\|docx\|txt[\s\S]{0,300}请选择 Excel、CSV、PDF、Word 或 TXT 文件/, 'product onboarding must validate supported file types after removing the explanation');
+assert.match(pageSource, /file\.size > 50 \* 1024 \* 1024[\s\S]{0,220}文件不能超过 50MB/, 'product onboarding must validate the documented file-size limit');
 assert.match(pageSource, /parseProductDocument\(file\)/, 'product onboarding must parse PDF and DOCX through the document importer');
 assert.match(pageSource, /productsFromLabeledText\(await readProductDiscoveryFile\(file\)\)/, 'product onboarding must parse labeled TXT product fields');
 assert.doesNotMatch(productTableOnboardingSource, /确认重点产品|按资料完整度推荐产品|本期暂无产品，先继续|快速添加产品|Agent 设置/, 'product-table onboarding must only accept an imported or existing table, without focus-product or Agent setup');
@@ -644,7 +649,7 @@ assert.match(pageSource, /setWorkspaceView\(launchedStatus\?\.phase === ["']runn
 assert.match(pageSource, /scrollIntoView\([\s\S]{0,120}behavior:\s*getScrollBehavior\(\)/, 'first-run transitions must focus the next required panel while respecting reduced-motion preferences');
 assert.match(pageSource, /digitalEmployeeOnboarding:\s*\{\s*profileConfirmedAt:/, 'the first-step confirmation must be persisted instead of living only in component memory');
 assert.match(pageSource, /setProductConfirmed\(true\)/, 'confirming the product table must advance to the social-stage step');
-assert.match(pageSource, /<OnboardingGuideFrame[\s\S]{0,160}step=\{3\}[\s\S]{0,160}title="选择社媒经营阶段"[\s\S]{0,400}primaryLabel="确认阶段，下一步"/, 'the social operating stage must be the third guided step');
+assert.match(pageSource, /<OnboardingGuideFrame[\s\S]{0,160}step=\{3\}[\s\S]{0,160}title="你的社媒经营目前到了哪一步？"[\s\S]{0,400}primaryLabel="确认阶段，下一步"/, 'the social operating stage must be the third guided step');
 assert.match(pageSource, /saveSocialContentStage\(stageId\)[\s\S]{0,180}!savedStage\.synced[\s\S]{0,180}setContentStage\(savedStage\.profile\.id\)[\s\S]{0,120}setStageConfirmed\(true\)/, 'the third step may advance only after its social stage is confirmed by persistence');
 assert.match(pageSource, /completeMinimalOnboarding[\s\S]{0,200}!stageConfirmed\s*\|\|\s*!contentStage[\s\S]{0,2200}minimalOnboarding:\s*true/, 'minimal onboarding may complete only after a persisted social stage exists');
 assert.match(pageSource, /profile\.digitalEmployeeOnboarding\?\.profileConfirmedAt[\s\S]{0,120}loadedProfile\.companyName[\s\S]{0,120}loadedProfile\.brandName[\s\S]{0,80}setProfileConfirmed\(true\)/, 'persisted onboarding progress may restore step two only after both names exist');
@@ -668,8 +673,28 @@ assert.doesNotMatch(enterpriseFactsRecoverySource, /digitalEmployeeApi\.(?:saveP
 assert.match(mutationActionSource, /catch \(actionError\)[\s\S]{0,180}recoverEnterpriseFactsChanged\(actionError, actionGoal\)[\s\S]{0,80}return null/, 'mutations must stop after handled fact recovery instead of replaying the original action');
 assert.match(confirmWeeklyPlanSource, /catch \(actionError\)[\s\S]{0,180}recoverEnterpriseFactsChanged\(actionError, goal\)[\s\S]{0,40}return/, 'plan confirmation must stop after rebuilding and must not auto-start the replacement plan');
 assert.doesNotMatch(pageSource, /经营包未保存，请检查页面提示后重试|未能启动，请检查账号、资料和授权范围后重试/, 'a handled rebuild must not be replaced by the legacy red save or launch blocker');
-assert.match(pageSource, /OnboardingGuideFrame[\s\S]{0,180}step=\{4\}[\s\S]{0,180}title="完成数字人接入（可选）"[\s\S]{0,600}<EnterprisePresenters initialConfiguration/, 'the unified HeyGen and Ark setup must be the fourth guided step');
-assert.match(pageSource, /applicationGuideSteps[\s\S]{0,120}企业与品牌[\s\S]{0,120}产品表[\s\S]{0,120}社媒经营阶段[\s\S]{0,120}数字人接入/, 'Ant Steps must expose the four guided steps in their required order');
+assert.match(pageSource, /OnboardingGuideFrame[\s\S]{0,180}step=\{4\}[\s\S]{0,180}title="最后，确认这轮视频怎么制作"/, 'the production contract must remain the fourth guided step');
+const enterpriseStepIndex = pageSource.indexOf('title="先告诉我们你的企业和品牌"');
+const publicContactIndex = pageSource.indexOf('你想用哪种联系方式让客户找到你？');
+const productStepIndex = pageSource.indexOf('title="这次想重点推广哪些产品？"');
+assert.ok(enterpriseStepIndex >= 0 && enterpriseStepIndex < publicContactIndex && publicContactIndex < productStepIndex, 'public contact and CTA must live in the first enterprise-and-brand step');
+assert.equal(pageSource.match(/你想用哪种联系方式让客户找到你？/g)?.length, 1, 'public contact and CTA must not remain duplicated in the production step');
+assert.doesNotMatch(firstOnboardingSource, /公开联系方式与行动号召|只填写允许公开出现在视频里的信息/, 'the first step must not retain the removed internal-facing contact copy');
+assert.doesNotMatch(pageSource, /title="(?:填写企业与品牌|导入或确认产品表|选择社媒经营阶段|确认生产资料与数字人)"/, 'onboarding titles must stay user-facing');
+assert.match(pageSource, /本轮人物策略[\s\S]*<EnterprisePresenters initialConfiguration/, 'the fourth step must retain only the production presenter decision and setup');
+assert.match(pageSource, /<Form[^>]+layout="vertical"[^>]+aria-label="企业与品牌资料"/, 'enterprise-and-brand onboarding must use the themed Ant form contract');
+assert.match(pageSource, /<Form[^>]+layout="vertical"[^>]+aria-label="生产开工资料"/, 'production onboarding must use the themed Ant form contract');
+const enterpriseOnboardingFormTag = firstOnboardingSource.match(/<Form\b[^>]*aria-label="企业与品牌资料"[^>]*>/)?.[0] ?? '';
+assert.ok(enterpriseOnboardingFormTag, 'enterprise-and-brand onboarding form must remain present');
+assert.doesNotMatch(enterpriseOnboardingFormTag, /rounded-lg|\bborder\b|bg-surface|\bp-5\b/, 'enterprise onboarding must not recreate the removed outer card');
+assert.match(pageSource, /<Select[\s\S]{0,220}id="production-contact-kind"/, 'public contact kind must use the accessible Ant Select');
+assert.match(pageSource, /<Input[\s\S]{0,160}id="production-contact-value"[\s\S]{0,320}aria-required=/, 'public contact value must expose semantic required state');
+assert.match(pageSource, /const invalidProductionContact[\s\S]{0,180}productionContactValue\.trim\(\)[\s\S]{0,80}productionCta\.trim\(\)[\s\S]{0,180}saveEnterpriseProfile[\s\S]{0,120}invalidProductionContact/, 'the first-step save must enforce complete public contact and CTA values when display is enabled');
+assert.match(pageSource, /<AntRadio\.Group[\s\S]{0,300}aria-labelledby="onboarding-presenter-title"/, 'presenter policy must use the themed Ant radio group with an accessible name');
+assert.doesNotMatch(pageSource, /<select[^>]+value=\{productionContactKind\}|<input[^>]+name="production-presenter-policy"/, 'production onboarding must not reintroduce parallel native controls');
+assert.match(pageSource, /onSkip=\{\(\) => \{\s*void completeMinimalOnboarding\(undefined, "local_video_only"\);\s*\}\}/, 'choosing local-only production must preserve the contact preference already confirmed with enterprise and brand details');
+assert.match(pageSource, /applicationGuideSteps[\s\S]{0,160}label: "企业信息"[\s\S]{0,120}label: "推广产品"[\s\S]{0,120}label: "经营阶段"[\s\S]{0,120}label: "视频制作"/, 'Ant Steps must expose the four guided steps in their required order');
+assert.match(pageSource, /productionOnboarding[\s\S]{0,900}allowGeneratedVisuals:\s*false/, 'first-run production preferences must persist while legacy free visual generation remains disabled');
 assert.match(onboardingGuideFrameSource, /<LsFlowDialog[\s\S]{0,600}steps=\{applicationGuideSteps\.map/, 'the beginner guide must use the shared flow dialog and Ant Steps contract');
 assert.match(pageSource, /active && applicationGuideOpen/, 'the onboarding modal must not mount while the retained digital employee Activity is hidden');
 assert.match(pageSource, /deferredOpen = window\.setTimeout\([\s\S]{0,300}setApplicationGuideOpen\(true\)/, 'a retained page must defer the modal until Activity effect reconnection has completed');
@@ -677,6 +702,7 @@ assert.match(appSource, /<DigitalEmployeePage active=\{page === 'digitalEmployee
 assert.match(onboardingGuideFrameSource, /footer=\{\[[\s\S]{0,900}<LsBrandAction/, 'the guide must keep a single branded primary action in the fixed modal footer');
 assert.doesNotMatch(onboardingGuideFrameSource, /OnboardingStepVisual|企业与品牌关系图|产品资料入库流程图|社媒经营阶段选择图|数字人统一接入图/, 'the beginner guide must not reserve space for redundant explanatory diagrams');
 assert.match(onboardingGuideFrameSource, /<section aria-labelledby=\{`onboarding-step-\$\{step\}-title`\}>/, 'the current onboarding form must use the full dialog content width');
+assert.match(onboardingGuideFrameSource, /justify-between[\s\S]{0,300}<h2[\s\S]{0,300}\{headerAction\}/, 'optional step actions must share the responsive title row');
 assert.match(socialContentStageOnboardingSource, /SOCIAL_CONTENT_STAGE_PROFILES\.filter\(\(profile\) => profile\.id !== 'd2c_brand'\)/, 'the beginner guide must expose only the supported B2B operating stages');
 assert.doesNotMatch(initialOperatingPlanSource, /<option value="d2c_brand">/, 'the recommended plan must not reintroduce the removed D2C onboarding choice');
 assert.match(pageSource, /loadedStage && loadedStage\.id !== "d2c_brand"/, 'a legacy D2C selection must return to the supported stage choice instead of silently skipping it');
@@ -731,7 +757,8 @@ assert.match(pageSource, /dispatch\?\.blocked_reason/, 'the follow-up truth pane
 assert.match(pageSource, /manualFollowupSendAllowed/, 'the manual send CTA must be gated by the tenant/provider authorization facts');
 assert.match(pageSource, /真实发送未就绪/, 'the UI must state that real sending is unavailable instead of implying it only waits for time or receipt');
 assert.doesNotMatch(pageSource, /sticky top-2 z-40/, 'workspace navigation must scroll with the page instead of covering operating data');
-assert.match(assistantSource, /data-global-assistant="root"[\s\S]{0,350}fixed right-4[\s\S]{0,350}bottom-\[calc\(env\(safe-area-inset-bottom\)\+1rem\)\]/, 'the assistant must retain its bottom-right entry while allowing the conversation composer offset');
+assert.match(assistantSource, /data-global-assistant="root"[\s\S]{0,240}fixed[\s\S]{0,160}bottom-\[calc\(env\(safe-area-inset-bottom\)\+1rem\)\]/, 'the assistant must retain a fixed entry that clears the device safe area');
+assert.match(assistantSource, /launcherRetracted && mode === 'breathing' \? 'right-0 md:right-0' : 'right-4 md:right-5'/, 'the expanded assistant entry must keep its bottom-right page inset');
 
 const fingerprintConfig: DigitalEmployeeConfig = {
   companyName: '灵枢', industry: '制造', primaryBusiness: '设备', targetMarkets: '美国', customerProfile: '经销商',

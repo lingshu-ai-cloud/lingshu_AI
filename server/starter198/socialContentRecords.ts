@@ -62,6 +62,13 @@ import { materialRoutingRequests } from './socialContentMaterialRoutingRequests.
 import { ownedProductReferenceImageIds } from './socialContentProductReferenceInventory.js';
 import type { SocialShotFunction } from '../../shared/contracts/socialContentReplication.js';
 import {
+  buildLocalMaterialSegmentProfile,
+  inferLocalMaterialSegmentType,
+  usableLocalMaterialRightsEvidence,
+  type LocalMaterialSegmentProfile,
+  type LocalMaterialSegmentRejectionReason,
+} from '../../shared/contracts/localMaterialSegmentProfile.js';
+import {
   parseStoredSocialReferenceVideoAnalysis,
   parseStoredSocialReplicationScript,
   parseStoredSocialShotMaterialMap,
@@ -70,6 +77,7 @@ import { buildSocialAgentWorkflow, type SocialWorkflowMaterialCandidate } from '
 import { buildSocialReferenceReviewHandoff } from './socialReferenceReviewHandoff.js';
 import { validateHeyGenPresenterRecord } from '../lib/presenterAssetTrust.js';
 import { readMaterialLibrary, type MaterialRecord } from '../lib/materialLibrary.js';
+import { isSyntheticMaterial } from '../lib/materialTruthfulness.js';
 import {
   AUTO_TASK_KEY,
   automaticMaterialScore,
@@ -606,10 +614,14 @@ export interface SocialWorkflowMaterialClipCandidate extends SocialWorkflowMater
   materialRoles: SocialMaterialRole[];
   visualContract: SocialSceneVisualContract;
   timeRange: { startSeconds: number; endSeconds: number } | null;
+  /** Versioned segment-level admission evidence consumed by fixed-yield V2. */
+  segmentProfile: LocalMaterialSegmentProfile | null;
+  segmentProfileRejectionReasons: LocalMaterialSegmentRejectionReason[];
 }
 
 export interface SocialWorkflowMaterialCandidateSet {
   candidates: SocialWorkflowMaterialClipCandidate[];
+  rejectedSegments: import('../../shared/contracts/localMaterialSegmentProfile.js').LocalMaterialSegmentRejection[];
   productPolicy: SocialProductPolicy;
   requestedProductId: string | null;
   requestedProductRef: string | null;
@@ -683,6 +695,92 @@ function sameProduct(
   return Boolean(candidateRef && requestedRef && candidateRef === requestedRef);
 }
 
+function materialRightsEvidenceRefs(record: MaterialRecord): string[] {
+  return usableLocalMaterialRightsEvidence([
+    record.rightsEvidenceRef,
+    record.licenseEvidence,
+    record.consentRef,
+    ...(Array.isArray(record.rightsEvidenceRefs) ? record.rightsEvidenceRefs : []),
+    record.provenance?.rightsEvidenceRef,
+    record.provenance?.authorizationRef,
+  ]);
+}
+
+function materialSourceRevision(record: MaterialRecord, shot: MaterialScriptShot): { analysis: string; current: string } {
+  const stored = socialObject(record.scriptAnalysis);
+  const analysis = socialText(stored?.sourceRevision)
+    || socialText(record.analysisSourceRevision)
+    || socialText(record.sourceRevision)
+    || `material:${socialText(record.id)}`;
+  const current = socialText(record.analysisSourceRevision)
+    || socialText(record.sourceRevision)
+    || socialText(record.contentSha256)
+    || socialText(record.sha256)
+    || analysis;
+  return { analysis, current };
+}
+
+function segmentProfile(input: {
+  record: MaterialRecord;
+  shot: MaterialScriptShot;
+  tenantId: string;
+  assetId: string;
+  mediaType: 'video' | 'image';
+  materialRoles: SocialMaterialRole[];
+  identity: { productId: string | null; productRef: string | null };
+}): ReturnType<typeof buildLocalMaterialSegmentProfile> {
+  const { record, shot } = input;
+  const sourceTenantId = materialTenantId(record);
+  const origin = sourceTenantId === input.tenantId ? 'my_materials' as const : 'shared_library' as const;
+  const sourceRevision = materialSourceRevision(record, shot);
+  const rightsEvidenceRefs = materialRightsEvidenceRefs(record);
+  const rightsStatus = socialText(record.rightsStatus).toLocaleLowerCase();
+  const commercialUseApproved = record.commercialUseApproved === true;
+  // Old tenant-owned rows can prove local editing rights with an explicit
+  // owned/authorized status plus commercial approval. Shared rows still need
+  // the dedicated derivatives flag; mere visibility is not production proof.
+  const derivativeUseAllowed = record.derivativeUseAllowed === true
+    || record.derivativesApproved === true
+    || (origin === 'my_materials' && commercialUseApproved && ['owned', 'authorized'].includes(rightsStatus));
+  const authorizationScopes: string[] = Array.isArray(record.provenance?.authorizationScopes)
+    ? record.provenance.authorizationScopes.map(socialText) : [];
+  const modelInputAllowed = record.modelInputAllowed === true
+    || (record.rawLibraryUseApproved === true && authorizationScopes.some((scope: string) => /model|provider|enterprise-video/i.test(scope)));
+  const materialType = inferLocalMaterialSegmentType({ materialRoles: input.materialRoles, visualContract: shot.visualContract });
+  return buildLocalMaterialSegmentProfile({
+    tenantId: input.tenantId,
+    sourceTenantId: sourceTenantId || null,
+    origin,
+    assetId: input.assetId,
+    segmentId: shot.segmentId,
+    sourceRevision: sourceRevision.analysis,
+    currentSourceRevision: sourceRevision.current,
+    mediaType: input.mediaType,
+    synthetic: isSyntheticMaterial(record),
+    startSeconds: Number.isFinite(shot.startSeconds) ? shot.startSeconds : null,
+    endSeconds: Number.isFinite(shot.endSeconds) ? shot.endSeconds : null,
+    materialType,
+    materialRoles: input.materialRoles,
+    productId: input.identity.productId,
+    productRef: input.identity.productRef,
+    visualContract: shot.visualContract,
+    observedActionTags: [...shot.editorial.actions, shot.visualContract.action.path,
+      shot.visualContract.action.startState, shot.visualContract.action.peakState, shot.visualContract.action.endState],
+    framingTags: [...shot.editorial.shotLanguage, shot.visualContract.camera.shotSize,
+      shot.visualContract.camera.angle, shot.visualContract.camera.composition],
+    cameraMovementTags: [shot.visualContract.camera.movement],
+    entityAndTextTags: [...shot.editorial.subjects, ...shot.observedEvidence, ...shot.matchTags],
+    rightsEvidenceRefs,
+    commercialUseApproved,
+    modelInputAllowed,
+    derivativeUseAllowed,
+    confidence: shot.confidence,
+    needsReview: shot.needsReview,
+    cleanEntry: shot.editorial.trim.cleanEntry,
+    cleanExit: shot.editorial.trim.cleanExit,
+  });
+}
+
 export function buildSocialWorkflowMaterialCandidates(input: {
   records: MaterialRecord[];
   tenantId: string;
@@ -708,8 +806,6 @@ export function buildSocialWorkflowMaterialCandidates(input: {
         };
         const startSeconds = Number(shot.startSeconds);
         const endSeconds = Number(shot.endSeconds);
-        if (shot.needsReview || !Number.isFinite(shot.confidence) || shot.confidence < 0.6) return [];
-        if (mediaType === 'video' && (!Number.isFinite(startSeconds) || !Number.isFinite(endSeconds) || endSeconds <= startSeconds)) return [];
         const observed = [
           ...shot.observedEvidence,
           ...shot.matchTags,
@@ -725,6 +821,8 @@ export function buildSocialWorkflowMaterialCandidates(input: {
           ...inferMaterialRoles(shot.visualContract),
           ...(Array.isArray(record.materialRoles) ? record.materialRoles.map(socialText) : []),
         ].filter(role => ['factory', 'customer_case', 'product', 'person_usage', 'presenter', 'environment', 'general'].includes(role)))] as SocialMaterialRole[];
+        const profileAssessment = segmentProfile({ record, shot, tenantId: input.tenantId, assetId,
+          mediaType, materialRoles, identity: shotIdentity });
         return [{
           record,
           shot,
@@ -733,6 +831,8 @@ export function buildSocialWorkflowMaterialCandidates(input: {
           identity: shotIdentity,
           enterpriseCommon,
           materialRoles,
+          segmentProfile: profileAssessment.profile,
+          segmentProfileRejectionReasons: profileAssessment.rejectionReasons,
           cueScores,
           baseScore: Math.max(0, ...cueScores.map(item => item.score)) * 100
             + automaticMaterialScore({
@@ -764,7 +864,16 @@ export function buildSocialWorkflowMaterialCandidates(input: {
     || inferred?.identity.productRef || null;
   const productPolicy: SocialProductPolicy = hasExplicitProduct ? 'locked' : inferred ? 'preferred' : 'open';
   const requested = { productId: requestedProductId, productRef: requestedProductRef };
+  const rejectedSegments = raw.flatMap(item => item.mediaType === 'video' && !item.segmentProfile?.productionEligible
+    ? [{ assetId: item.assetId, segmentId: item.shot.segmentId,
+      sourceRevision: item.segmentProfile?.sourceRevision ?? null,
+      reasons: item.segmentProfileRejectionReasons }]
+    : []);
   const candidates = raw.flatMap(item => {
+    // Images remain available to historic product-identity flows. Fixed-yield
+    // local video routes only receive segments whose version, rights and edit
+    // boundaries passed the server-owned profile gate.
+    if (item.mediaType === 'video' && !item.segmentProfile?.productionEligible) return [];
     const productCompatibility = resolveProductCompatibility({
       policy: productPolicy,
       requestedProductId,
@@ -818,11 +927,13 @@ export function buildSocialWorkflowMaterialCandidates(input: {
       materialRoles: item.materialRoles,
       visualContract,
       timeRange,
+      segmentProfile: item.segmentProfile,
+      segmentProfileRejectionReasons: item.segmentProfileRejectionReasons,
     }];
   }).sort((left, right) => right.matchScore - left.matchScore
     || left.assetId.localeCompare(right.assetId)
     || left.segmentId.localeCompare(right.segmentId));
-  return { candidates, productPolicy, requestedProductId, requestedProductRef };
+  return { candidates, rejectedSegments, productPolicy, requestedProductId, requestedProductRef };
 }
 
 export async function readSocialTaskDetail(input: {
@@ -1049,7 +1160,8 @@ export async function readSocialTaskDetail(input: {
     presenterSelectionConfirmed: Boolean(summary.brief.presenterAssetId && presenterInventory.assetIds.length === 1),
     referenceShots: referenceVideoAnalysis?.shots,
     shots: materialRoutingRequests({ policyVersion: summary.brief.materialRoutingPolicyVersion,
-      tenantId: input.tenantId, candidates: materialCandidates, referenceShots: referenceVideoAnalysis?.shots,
+      tenantId: input.tenantId, candidates: materialCandidates, rejectedSegments: candidateSet.rejectedSegments,
+      referenceShots: referenceVideoAnalysis?.shots,
       productRef: primaryProductRef, shots: replicationScript?.shots.map(shot => ({
       shotId: shot.shotId,
       function: shot.purpose,

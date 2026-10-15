@@ -14,10 +14,10 @@ function analyzedRecord(input: {
   segments?: Array<Record<string, unknown>>;
 }) {
   const duration = input.type === 'video' ? 12 : 0;
-  const segments = input.segments ?? (input.type === 'image' ? [] : [{
+  const segments = (input.segments ?? (input.type === 'image' ? [] : [{
     id: `${input.id}-segment`, start: 1, end: 4, confidence: 0.92,
     subject: ['办公环境'], environment: '办公室', action: '平稳横移',
-  }]);
+  }])).map(segment => ({boundaryConfidence:.9,cleanEntry:true,cleanExit:true,...segment}));
   return {
     id: input.id,
     tenantId: 'tenant-a',
@@ -27,6 +27,8 @@ function analyzedRecord(input: {
     productId: input.productId,
     productRef: input.productRef,
     enterpriseCommon: input.enterpriseCommon,
+    sourceRevision: `revision:${input.id}`,
+    rightsStatus: 'owned', commercialUseApproved: true, licenseEvidence: `rights:${input.id}`,
     visualObservations: input.type === 'image' ? ['产品瓶身与包装清晰展示'] : [],
     segments,
     scriptAnalysis: buildMaterialScriptAnalysis({
@@ -84,8 +86,9 @@ assert.ok(locked.candidates.some(candidate => candidate.assetId === 'factory-b' 
   'real factory clips remain usable regardless of their product association');
 assert.ok(locked.candidates.some(candidate => candidate.assetId === 'customer-case' && candidate.materialRoles.includes('customer_case')));
 assert.ok(!locked.candidates.some(candidate => candidate.assetId === 'whole-video'), 'unanalyzed whole videos must not become generic candidates');
-assert.deepEqual(locked.candidates.find(candidate => candidate.assetId === 'segment-only')?.timeRange,
-  { startSeconds: 4, endSeconds: 8 }, 'analyzed segments remain usable even before a persisted scriptAnalysis projection exists');
+assert.equal(locked.candidates.some(candidate => candidate.assetId === 'segment-only'), false,
+  'segments without production rights and verified edit boundaries remain indexed but never enter production recall');
+assert.ok(locked.rejectedSegments.find(candidate => candidate.assetId === 'segment-only')?.reasons.includes('rights_evidence_missing'));
 assert.ok(locked.candidates.every(candidate => candidate.productPolicy === 'locked'
   && candidate.visualContract.product.policy === 'locked'));
 const factoryClip = locked.candidates.find(candidate => candidate.assetId === 'factory-b') as SocialWorkflowMaterialClipCandidate;
@@ -93,6 +96,8 @@ assert.deepEqual(factoryClip.timeRange, { startSeconds: 2, endSeconds: 6 });
 assert.deepEqual(factoryClip.visualContract.evidence.sourceRange, factoryClip.timeRange);
 assert.equal(factoryClip.segmentId, 'factory-filling');
 assert.equal(factoryClip.productId, 'product-id-b');
+assert.equal(factoryClip.segmentProfile?.productionEligible, true);
+assert.equal(factoryClip.segmentProfile?.segmentProfileVersion, 'fixed-yield-material-segment.v2');
 assert.deepEqual(factoryClip.matchedVoiceoverCueIds, ['line-1']);
 
 const preferred = buildSocialWorkflowMaterialCandidates({

@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { materialAssetBadge, materialAssetTabOf } from './InspirationDashboard.js';
+import { generatedMaterialOriginLabel, materialAssetBadge, materialAssetTabOf } from './InspirationDashboard.js';
 
 test('企业知识库和内容工作台上传归入同一个企业上传素材 Tab', () => {
   assert.equal(materialAssetTabOf({ sourceType: 'enterprise-knowledge-upload', folder: 'product', scope: 'own' }), 'enterprise');
@@ -14,4 +14,10 @@ test('AI 生成与平台公共云爆款保持独立资产分类', () => {
   assert.equal(materialAssetTabOf({ sourceType: 'ai-seedance', folder: 'upload', scope: 'own' }), 'ai');
   assert.equal(materialAssetTabOf({ sourceType: 'official-viral', folder: 'hot', scope: 'shared' }), 'cloud');
   assert.equal(materialAssetTabOf({ sourceType: 'licensed-stock', folder: 'social', scope: 'shared' }), 'cloud');
+});
+
+test('AI 生成素材明确显示来自内容制作的具体阶段', () => {
+  assert.equal(generatedMaterialOriginLabel({ sourceType: 'ai-seedance', provenance: { storyboardAigc: true, shotId: 'slot-9' } }), '内容制作 · 分镜 9');
+  assert.equal(generatedMaterialOriginLabel({ sourceType: 'ai-free-creation-hook-video', provenance: { freeCreationHook: true } }), '内容制作 · 自由创作');
+  assert.equal(generatedMaterialOriginLabel({ sourceType: 'local-upload', provenance: {} }), '');
 });

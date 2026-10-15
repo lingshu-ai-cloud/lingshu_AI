@@ -1,7 +1,7 @@
-import { Button, Input, Segmented, Steps } from 'antd';
+import { Button, Segmented } from 'antd';
 import { StoryboardFirstFrame } from './StoryboardFirstFrame';
 import ReplicationWorkbenchHeader from '../socialContent/ReplicationWorkbenchHeader';
-import { useEffect, useId, useState, type ReactNode } from 'react';
+import { useEffect, useState, type ReactNode } from 'react';
 import {
   AlertCircle,
   Check,
@@ -44,7 +44,7 @@ export type StudioWorkbenchAction = {
   disabled?: boolean;
   loading?: boolean;
   loadingLabel?: string;
-  /** Shown immediately above the action when the next step is unavailable. */
+  /** Kept as machine-readable action metadata when the next step is unavailable. */
   blockReason?: string;
   icon?: ReactNode;
   type?: 'button' | 'submit';
@@ -52,21 +52,18 @@ export type StudioWorkbenchAction = {
 
 export type StudioWorkbenchFrameProps = {
   replicationWorkflow?: boolean;
-  replicationStepLabels?: readonly string[];
   replicationActiveStep?: number;
-  onReplicationStepChange?: (step: number) => void;
-  replicationNavigationDisabled?: boolean;
+  showPanelHeadings?: boolean;
+  showHeaderSaveStatus?: boolean;
   projectTitle: string;
   projectSubtitle?: string;
   onProjectTitleChange?: (title: string) => void;
+  onProjectTitleCommit?: () => void;
   projectTitlePlaceholder?: string;
   saveStatus: StudioSaveStatus;
   headerActions?: ReactNode;
   onSave?: () => void;
-  steps?: StudioWorkbenchStep[];
   activeStepId: StudioWorkbenchStep['id'];
-  onStepChange?: (stepId: StudioWorkbenchStep['id']) => void;
-  allowForwardStepNavigation?: boolean;
   objectTitle?: string;
   objectDescription?: string;
   objectPanel: ReactNode;
@@ -76,7 +73,6 @@ export type StudioWorkbenchFrameProps = {
   propertyTitle?: string;
   propertyDescription?: string;
   propertyAction?: ReactNode;
-  actionTodos?: ReactNode;
   propertyPanel: ReactNode;
   timelineTitle?: string;
   timelineDescription?: string;
@@ -132,15 +128,10 @@ export type StudioStoryboardListProps = {
   onMore?: (id: string) => void;
   onPresenterDecision?: (id: string, decision: boolean | undefined) => void;
   emptyState?: ReactNode;
+  previewOnly?: boolean;
 };
 
 type MobilePanel = 'objects' | 'canvas' | 'properties';
-
-const defaultSteps: StudioWorkbenchStep[] = [
-  { id: 'settings', label: '创作设置' },
-  { id: 'script', label: '脚本与声音' },
-  { id: 'production', label: '成片制作' },
-];
 
 const joinClassNames = (...values: Array<string | false | null | undefined>) => values.filter(Boolean).join(' ');
 
@@ -180,30 +171,6 @@ function SaveStatusView({ status, compact = false }: { status: StudioSaveStatus;
   return <span className={className}>{content}</span>;
 }
 
-export function StudioStepProgress({
-  steps = defaultSteps,
-  activeStepId,
-  onStepChange,
-  allowForwardStepNavigation = false,
-}: Pick<StudioWorkbenchFrameProps, 'steps' | 'activeStepId' | 'onStepChange' | 'allowForwardStepNavigation'>) {
-  const activeIndex = Math.max(0, steps.findIndex(step => step.id === activeStepId));
-
-  return (
-    <nav aria-label="内容创作步骤" className="w-full min-w-0">
-      <Steps
-        size="small"
-        current={activeIndex}
-        onChange={onStepChange ? index => onStepChange(steps[index].id) : undefined}
-        items={steps.map((step, index) => ({
-          title: step.shortLabel || step.label,
-          status: step.status === 'blocked' ? 'error' : step.status === 'complete' || index < activeIndex ? 'finish' : step.id === activeStepId ? 'process' : 'wait',
-          disabled: !onStepChange || step.status === 'blocked' || (!allowForwardStepNavigation && (step.status === 'upcoming' || index > activeIndex)),
-        }))}
-      />
-    </nav>
-  );
-}
-
 function MobilePanelTabs({ active, onChange }: { active: MobilePanel; onChange: (panel: MobilePanel) => void }) {
   const items: Array<{ id: MobilePanel; label: string; icon: ReactNode }> = [
     { id: 'objects', label: '分镜脚本', icon: <ListTree size={15} /> },
@@ -211,7 +178,7 @@ function MobilePanelTabs({ active, onChange }: { active: MobilePanel; onChange: 
     { id: 'properties', label: '步骤设置', icon: <Settings2 size={15} /> },
   ];
   return (
-    <div className="border-b border-border bg-surface p-2 xl:hidden">
+    <div className="border-b border-border bg-surface p-2 md:hidden">
       <Segmented block value={active} onChange={value => onChange(value as MobilePanel)}
         options={items.map(item => ({ value: item.id, label: item.label, icon: item.icon }))} aria-label="工作台面板" />
     </div>
@@ -234,19 +201,16 @@ export function StudioWorkbenchFrame({
   projectTitle,
   projectSubtitle,
   onProjectTitleChange,
+  onProjectTitleCommit,
   projectTitlePlaceholder = '未命名项目',
   replicationWorkflow = false,
-  replicationStepLabels,
   replicationActiveStep = 1,
-  onReplicationStepChange,
-  replicationNavigationDisabled = false,
+  showPanelHeadings = true,
+  showHeaderSaveStatus = true,
   saveStatus,
   headerActions,
   onSave,
-  steps = defaultSteps,
   activeStepId,
-  onStepChange,
-  allowForwardStepNavigation = false,
   objectTitle = '创作内容',
   objectDescription,
   objectPanel,
@@ -256,7 +220,6 @@ export function StudioWorkbenchFrame({
   propertyTitle = '当前属性',
   propertyDescription,
   propertyAction,
-  actionTodos,
   propertyPanel,
   timelineTitle = '内容时间轨',
   timelineDescription,
@@ -270,7 +233,6 @@ export function StudioWorkbenchFrame({
   const [timelineExpanded, setTimelineExpanded] = useState(activeStepId === 'preview' || replicationWorkflow && replicationActiveStep === 2);
   useEffect(() => { if (activeStepId === 'preview' || replicationWorkflow && replicationActiveStep === 2) setTimelineExpanded(true); }, [activeStepId, replicationWorkflow, replicationActiveStep]);
   const [mobilePanel, setMobilePanel] = useState<MobilePanel>('properties');
-  const blockReasonId = useId();
   const projectTitleIsEditable = Boolean(onProjectTitleChange);
 
   return (
@@ -282,35 +244,17 @@ export function StudioWorkbenchFrame({
       )}
       aria-label="内容创作工作台"
     >
-      {replicationWorkflow ? <ReplicationWorkbenchHeader activeStep={replicationActiveStep} stepLabels={replicationStepLabels} onStepChange={onReplicationStepChange} navigationDisabled={replicationNavigationDisabled} title={projectTitle} actions={<>{headerActions}<SaveStatusView status={saveStatus} compact />{onSave && <Button onClick={onSave} loading={saveStatus.state === 'saving'} icon={<Save size={14} />}>保存草稿</Button>}</>} /> : <>      <header className="grid shrink-0 items-center gap-3 border-b border-border bg-surface px-4 py-2.5 xl:grid-cols-[minmax(180px,1fr)_minmax(320px,460px)_minmax(160px,1fr)] xl:px-5">
-        <div className="min-w-0">
-          {projectTitleIsEditable ? (
-            <Input
-              value={projectTitle}
-              onChange={event => onProjectTitleChange?.(event.target.value)}
-              placeholder={projectTitlePlaceholder}
-              aria-label="项目名称"
-              className="h-8 w-full max-w-xl truncate rounded-md border border-transparent bg-transparent px-1.5 text-sm font-semibold text-text-primary outline-none transition hover:border-border hover:bg-surface-2 focus:border-accent focus:bg-surface"
-            />
-          ) : (
-            <h1 className="truncate px-1.5 text-sm font-semibold text-text-primary">{projectTitle || projectTitlePlaceholder}</h1>
-          )}
-          {projectSubtitle && <p className="truncate px-1.5 text-[10px] text-text-muted">{projectSubtitle}</p>}
-        </div>
-        <div className="hidden min-w-0 xl:block">
-          <StudioStepProgress steps={steps} activeStepId={activeStepId} onStepChange={onStepChange} allowForwardStepNavigation={allowForwardStepNavigation} />
-        </div>
-        <div className="flex items-center gap-3 justify-self-end">
-          {headerActions}
-          {onSave && <Button onClick={onSave} loading={saveStatus.state === 'saving'} icon={<Save size={14} />}>保存草稿</Button>}
-        </div>
-      </header>
-
-      <div className="border-b border-border bg-surface px-3 py-2 xl:hidden">
-        <StudioStepProgress steps={steps} activeStepId={activeStepId} onStepChange={onStepChange} allowForwardStepNavigation={allowForwardStepNavigation} />
-      </div>
-
-</>}
+      <ReplicationWorkbenchHeader
+        activeStep={replicationWorkflow ? replicationActiveStep : 0}
+        compact
+        showTaskIdentity
+        title={projectTitle || projectTitlePlaceholder}
+        subtitle={projectSubtitle}
+        editableTitle={projectTitleIsEditable}
+        onTitleChange={onProjectTitleChange}
+        onTitleCommit={onProjectTitleCommit}
+        actions={<>{headerActions}{showHeaderSaveStatus && <SaveStatusView status={saveStatus} compact />}{onSave && <Button onClick={onSave} loading={saveStatus.state === 'saving'} icon={<Save size={14} />}>保存草稿</Button>}</>}
+      />
 
       <MobilePanelTabs active={mobilePanel} onChange={setMobilePanel} />
 
@@ -319,11 +263,11 @@ export function StudioWorkbenchFrame({
           role="tabpanel"
           aria-label="分镜与脚本"
           className={joinClassNames(
-            'min-h-0 flex-col border-border bg-surface xl:flex xl:border-r',
+            'min-h-0 flex-col border-border bg-surface md:flex md:border-r',
             mobilePanel === 'objects' ? 'flex' : 'hidden',
           )}
         >
-          <PanelHeading title={objectTitle} description={objectDescription} />
+          {showPanelHeadings && <PanelHeading title={objectTitle} description={objectDescription} />}
           <div className="min-h-0 flex-1 overflow-y-auto px-3 py-3">{objectPanel}</div>
         </aside>
 
@@ -331,12 +275,12 @@ export function StudioWorkbenchFrame({
           role="tabpanel"
           aria-label="创作画布"
           className={joinClassNames(
-            'min-h-0 flex-col bg-surface-2 xl:flex',
+            'min-h-0 flex-col bg-surface-2 md:flex',
             mobilePanel === 'canvas' ? 'flex' : 'hidden',
           )}
         >
-          {canvasTitle ? <PanelHeading title={canvasTitle} action={canvasToolbar} /> : canvasToolbar ? <div className="flex min-h-12 shrink-0 items-center justify-end border-b border-border/80 px-4 py-2.5">{canvasToolbar}</div> : null}
-          <div className="flex min-h-[420px] flex-1 items-stretch justify-stretch overflow-x-hidden overflow-y-auto overscroll-contain p-2.5 pb-4 sm:p-3 sm:pb-4 xl:min-h-0">{children}</div>
+          {showPanelHeadings && canvasTitle ? <PanelHeading title={canvasTitle} action={canvasToolbar} /> : canvasToolbar ? <div className="flex min-h-12 shrink-0 items-center justify-end border-b border-border/80 px-4 py-2.5">{canvasToolbar}</div> : null}
+          <div className="flex min-h-[420px] flex-1 items-stretch justify-stretch overflow-x-hidden overflow-y-auto overscroll-contain p-2.5 pb-4 sm:p-3 sm:pb-4 md:min-h-0">{children}</div>
           {replicationWorkflow && timelinePanel && <section className="shrink-0 border-t border-border bg-white" aria-label={timelineTitle}>
             <div className="flex h-10 items-center justify-between gap-2 px-4"><button type="button" aria-expanded={timelineExpanded} onClick={() => setTimelineExpanded(value => !value)} className="text-xs font-bold text-text-secondary">{timelineExpanded ? '收起' : '展开'}时间轴</button>{timelineToolbar}</div>
             <div hidden={!timelineExpanded} className="h-20 overflow-x-auto overflow-y-hidden px-4 pb-2">{timelinePanel}</div>
@@ -348,11 +292,11 @@ export function StudioWorkbenchFrame({
           role="tabpanel"
           aria-label="步骤和属性设置"
           className={joinClassNames(
-            'min-h-0 flex-col border-border bg-surface xl:flex xl:border-l',
+            'min-h-0 flex-col border-border bg-surface md:flex md:border-l',
             mobilePanel === 'properties' ? 'flex' : 'hidden',
           )}
         >
-          <PanelHeading title={propertyTitle} description={propertyDescription} action={propertyAction} />
+          {showPanelHeadings && <PanelHeading title={propertyTitle} description={propertyDescription} action={propertyAction} />}
           <div className="min-h-0 flex-1 overflow-y-auto px-3 py-3">{propertyPanel}</div>
         </aside>
       </div>
@@ -371,8 +315,7 @@ export function StudioWorkbenchFrame({
       )}
 
       <footer className="relative z-20 shrink-0 border-t border-border bg-surface px-4 py-2.5 sm:px-5">
-        {actionTodos}
-        <div className="grid items-center gap-3 sm:grid-cols-[1fr_auto_1fr]">
+        <div className="flex items-center justify-between gap-3">
           <div className="flex min-w-0 items-center gap-3">
             {previousAction && (
               <Button disabled={previousAction.disabled} loading={previousAction.loading} onClick={previousAction.onClick} icon={previousAction.icon || <ChevronLeft size={15} />}>
@@ -380,14 +323,6 @@ export function StudioWorkbenchFrame({
               </Button>
             )}
             <div className="hidden min-w-0 sm:block"><SaveStatusView status={saveStatus} /></div>
-          </div>
-
-          <div className="hidden items-center justify-center text-center sm:flex">
-            {primaryAction.blockReason && (
-              <p id={blockReasonId} className="max-w-sm text-[11px] font-medium leading-4 text-amber-700">
-                {primaryAction.blockReason}
-              </p>
-            )}
           </div>
 
           <div className="flex items-center justify-end gap-2">
@@ -398,14 +333,10 @@ export function StudioWorkbenchFrame({
             )}
             <Button type="primary" htmlType={primaryAction.type || 'button'} data-agent-action="studio-primary"
               data-agent-block-reason={primaryAction.blockReason || undefined} disabled={primaryAction.disabled}
-              loading={primaryAction.loading} onClick={primaryAction.onClick} icon={primaryAction.icon}
-              aria-describedby={primaryAction.blockReason ? blockReasonId : undefined}>
+              loading={primaryAction.loading} onClick={primaryAction.onClick} icon={primaryAction.icon}>
               {primaryAction.loading ? primaryAction.loadingLabel || `${primaryAction.label}中` : primaryAction.label}
             </Button>
           </div>
-          {primaryAction.blockReason && (
-            <p className="text-center text-[11px] font-medium leading-4 text-amber-700 sm:hidden">{primaryAction.blockReason}</p>
-          )}
         </div>
       </footer>
     </section>
@@ -465,7 +396,7 @@ function StoryboardStatus({ status = 'idle', label }: { status?: StudioStoryboar
   return <span className={joinClassNames('rounded-full px-2 py-0.5 text-[9px] font-bold', styles[status])}>{label || fallback[status]}</span>;
 }
 
-export function StudioStoryboardList({ items, selectedId, onSelect, onMore, onPresenterDecision, emptyState }: StudioStoryboardListProps) {
+export function StudioStoryboardList({ items, selectedId, onSelect, onMore, onPresenterDecision, emptyState, previewOnly = false }: StudioStoryboardListProps) {
   if (!items.length) {
     return emptyState || (
       <div className="rounded-lg border border-dashed border-border bg-surface-2 p-5 text-center">
@@ -502,15 +433,15 @@ export function StudioStoryboardList({ items, selectedId, onSelect, onMore, onPr
                     <span className="line-clamp-1 text-[11px] font-semibold text-text-primary">{item.title || `分镜 ${String(item.index).padStart(2, '0')}`}</span>
                     {item.duration && <span className="shrink-0 text-[9px] font-bold text-text-muted">{item.duration}</span>}
                   </span>
-                  {item.topicLabel && <span className="mt-1 inline-flex rounded-full bg-emerald-50 px-2 py-0.5 text-[9px] font-bold text-emerald-800">题材：{item.topicLabel}</span>}
-                  {item.frameLabel && <span className="mt-1 block text-[9px] text-text-muted">{item.frameLabel}</span>}
-                  {item.presenterCandidate && <span className="mt-1 block text-[10px] font-bold text-amber-700">人物待确认 · 暂不生成数字人</span>}
-                  {item.livePresenter && <span className="mt-1 block text-[10px] font-bold text-red-600">销售人物已确认 · 数字人复刻</span>}
+                  {!previewOnly && item.topicLabel && <span className="mt-1 inline-flex rounded-full bg-emerald-50 px-2 py-0.5 text-[9px] font-bold text-emerald-800">题材：{item.topicLabel}</span>}
+                  {!previewOnly && item.frameLabel && <span className="mt-1 block text-[9px] text-text-muted">{item.frameLabel}</span>}
+                  {!previewOnly && item.presenterCandidate && <span className="mt-1 block text-[10px] font-bold text-amber-700">人物待确认 · 暂不生成数字人</span>}
+                  {!previewOnly && item.livePresenter && <span className="mt-1 block text-[10px] font-bold text-red-600">销售人物已确认 · 数字人复刻</span>}
                   <span className="mt-1 line-clamp-3 text-[10px] leading-[15px] text-text-secondary">{item.voiceover || '尚未添加口播文案'}</span>
-                  <span className="mt-1 inline-flex"><StoryboardStatus status={item.status} label={item.statusLabel} /></span>
+                  {!previewOnly && <span className="mt-1 inline-flex"><StoryboardStatus status={item.status} label={item.statusLabel} /></span>}
                 </span>
               </button>
-              {onPresenterDecision && (item.livePresenter || item.presenterCandidate || item.presenterDecision === false) && <label className="mt-2 flex items-center gap-2 border-t border-border pt-2 text-[10px] text-text-muted">人物识别<select aria-label={`分镜 ${item.index} 人物识别`} value={item.presenterDecision === undefined ? 'auto' : item.presenterDecision ? 'sales' : 'other'} onChange={event => onPresenterDecision(item.id, event.target.value === 'auto' ? undefined : event.target.value === 'sales')} className="min-w-0 flex-1 rounded border border-border bg-white p-1">
+              {!previewOnly && onPresenterDecision && (item.livePresenter || item.presenterCandidate || item.presenterDecision === false) && <label className="mt-2 flex items-center gap-2 border-t border-border pt-2 text-[10px] text-text-muted">人物识别<select aria-label={`分镜 ${item.index} 人物识别`} value={item.presenterDecision === undefined ? 'auto' : item.presenterDecision ? 'sales' : 'other'} onChange={event => onPresenterDecision(item.id, event.target.value === 'auto' ? undefined : event.target.value === 'sales')} className="min-w-0 flex-1 rounded border border-border bg-white p-1">
                 <option value="auto">按分析证据识别</option><option value="sales">确认：固定销售主讲人物</option><option value="other">排除：路人／其他人物</option>
               </select></label>}
               {onMore && (

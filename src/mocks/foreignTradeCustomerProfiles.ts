@@ -421,7 +421,7 @@ export function createForeignTradeMockCustomers(): CustomerProfile[] {
     },
     {
       id: 'mock-free-sandbox',
-      name: '空白海外模拟客户',
+      name: '空白海外客户',
       avatar: '+',
       countryName: '阿联酋·迪拜',
       language: '英语',

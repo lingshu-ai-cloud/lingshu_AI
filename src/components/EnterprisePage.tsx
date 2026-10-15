@@ -1,7 +1,6 @@
 import { getScrollBehavior } from "../lib/usePrefersReducedMotion";
 import { cloneElement, isValidElement, useState, useEffect, useId, useRef } from 'react';
 import { Alert, Button, Checkbox, Form, Input, Modal, Pagination, Select, Tabs, Upload as AntUpload } from 'antd';
-import LsPageHeader from './ui/LsPageHeader';
 import { LsGradientProgress } from './ui/LsExperiencePrimitives';
 import EnterprisePresenters from './enterprise/EnterprisePresenters';
 import { Building2, Package, Megaphone, BookOpen, Save, CheckCircle2, Loader2, Compass, Zap, MessageSquare, RotateCcw, Plus, Upload, X, Image, FileText, FileSpreadsheet, Bell, ChevronDown, ChevronLeft, ChevronRight, Globe2, ShieldCheck, ArrowRight, Users, type LucideIcon } from 'lucide-react';
@@ -1786,9 +1785,6 @@ export default function EnterprisePage() {
         <Field label="成立年份">
           <Input className={inputCls} value={profile.company.founded} onChange={e => set('company')('founded', e.target.value)} placeholder="2018" />
         </Field>
-        <Field label="海外平台经验">
-          <OptionSelector value={profile.company.socialPlatformExperience ?? ''} options={['做过', '没做过', '正在准备']} multiple={false} onChange={value => set('company')('socialPlatformExperience', value)} placeholder="选择海外平台经验" />
-        </Field>
       </div>
       <Field label="公司简介">
         <Input.TextArea className={textareaCls} rows={4} value={profile.company.description} onChange={e => set('company')('description', e.target.value)} placeholder="介绍公司背景、主营品类、供应链优势、交付能力和海外服务经验。" />
@@ -1904,23 +1900,22 @@ export default function EnterprisePage() {
     <div className="flex h-full flex-col bg-white" data-lingshu-guide="enterprise-center">
       {weeklyFactTarget&&<section id="weekly-enterprise-fact-target" tabIndex={-1} data-exception={weeklyFactTarget.exceptionId} data-consumer={weeklyFactTarget.consumerTaskId} data-package={weeklyFactTarget.packageId} data-version={weeklyFactTarget.packageVersion} className="mx-4 mt-4 rounded-xl border border-emerald-300 bg-emerald-50 p-4 text-xs text-emerald-950 sm:mx-6"><p className="font-black">本周任务需要补齐企业事实</p><p className="mt-1">补齐请求 {weeklyFactTarget.exceptionId} · 原任务 {weeklyFactTarget.consumerTaskId} · 发布项 {weeklyFactTarget.publicationTaskId} · 周包 {weeklyFactTarget.packageId} v{weeklyFactTarget.packageVersion}</p><p className="mt-1">冻结企业版本 {weeklyFactTarget.enterpriseProfileRef?`${weeklyFactTarget.enterpriseProfileRef.id} v${weeklyFactTarget.enterpriseProfileRef.version}`:'原周包未冻结企业资料版本'} · 事实版本 {weeklyFactTarget.factRefs.map(ref=>`${ref.id} v${ref.version}`).join('、')||'缺少冻结事实引用'}</p><p className="mt-1">需核对字段：公司名称、产品类目、具体产品名称。保存后仍由原周任务复核事实版本，不会在本页直接解锁生产。</p><button type="button" className="mt-2 rounded border border-emerald-400 bg-white px-3 py-1.5 font-bold" onClick={()=>{setEnterpriseArea('facts');setKnowledgeView('products');}}>查看并补齐产品字段</button></section>}
       <div className="shrink-0 border-b border-border bg-surface px-4 pt-5 sm:px-6">
-        <LsPageHeader title="企业知识库" description={enterpriseArea === 'appearance' ? '查看已授权人物；新增人物、声音和认证统一在数字员工新手引导完成。' : hasUnsavedChanges ? '资料有未保存修改，保存后供内容制作、客服和报价统一使用。' : '统一管理已确认的企业事实、产品资料和沟通规则。'}
-          extra={enterpriseArea === 'appearance' ? undefined : <Button type="primary" onClick={handleSave} loading={saving} disabled={!hasUnsavedChanges}
-            icon={saveError ? <X size={14} /> : !hasUnsavedChanges ? <CheckCircle2 size={14} /> : <Save size={14} />}>
-            {saveError ? '重试保存' : !hasUnsavedChanges ? '已保存' : '保存资料'}
-          </Button>} />
-        {saveError && <Alert className="mb-3" type="error" showIcon title={saveError} />}
+        <h1 className="sr-only">企业知识库</h1>
         <Tabs activeKey={enterpriseArea} onChange={key => {
           const area = key as EnterpriseArea;
           setEnterpriseArea(area);
           setKnowledgeView(area === 'facts' ? 'company' : area === 'social' ? 'socialStrategy' : area === 'appearance' ? 'presenters' : 'bizRules');
           if (area === 'service') openKnowledgeIntakeOnce();
-        }} items={[
+        }} tabBarExtraContent={enterpriseArea === 'appearance' ? undefined : { right: <Button type="primary" onClick={handleSave} loading={saving} disabled={!hasUnsavedChanges}
+          icon={saveError ? <X size={14} /> : !hasUnsavedChanges ? <CheckCircle2 size={14} /> : <Save size={14} />}>
+          {saveError ? '重试保存' : !hasUnsavedChanges ? '已保存' : '保存资料'}
+        </Button> }} items={[
           { key: 'facts', label: '企业真实资料', icon: <Building2 size={16} /> },
           { key: 'social', label: '社媒策略', icon: <Megaphone size={16} /> },
           { key: 'appearance', label: '人物与出镜', icon: <Users size={16} /> },
           { key: 'service', label: '智能客服规范', icon: <MessageSquare size={16} /> },
         ]} />
+        {saveError && <Alert className="mb-3" type="error" showIcon title={saveError} />}
       </div>
 
       <div className="flex-1 overflow-y-auto">
@@ -1930,7 +1925,7 @@ export default function EnterprisePage() {
               <div className="flex items-center gap-3">
                 <span className="text-2xl font-semibold tabular-nums text-accent">{profileCompleteness.percentage}%</span>
                 <div>
-                  <div className="flex flex-wrap items-center gap-2"><h2 className="text-sm font-semibold text-text-primary">企业资料完整度</h2>{profile.factVersion && <span className="rounded-full bg-white px-2 py-1 text-[10px] font-bold text-emerald-700">事实版本 v{profile.factVersion.revision}</span>}</div>
+                  <h2 className="text-sm font-semibold text-text-primary">企业资料完整度</h2>
                   <p className="mt-1 text-xs text-text-muted">产品图、价格、证书和市场信息统一供内容、客服、报价、投放与数字员工使用。</p>
                 </div>
               </div>
@@ -1988,7 +1983,6 @@ export default function EnterprisePage() {
                 <OptionSelector value={profile.products.certifications} options={CERTIFICATION_OPTIONS} onChange={value => set('products')('certifications', value)} placeholder="选择认证资质" />
               </Field>
             </div>
-            <p className="mb-4 rounded-lg border border-violet-100 bg-violet-50/60 px-3 py-2 text-[11px] leading-5 text-violet-800">社媒发现范围不在企业中心重复维护。这里保存真实产品资料；产品、市场和沟通对象会在“灵感中心”组合成可追溯的发现范围。</p>
             <Field label="产品核心优势">
               <Input.TextArea className={textareaCls} rows={2} value={profile.products.highlights} onChange={e => set('products')('highlights', e.target.value)} placeholder="工厂直供、支持 OEM/ODM、备货稳定" />
             </Field>

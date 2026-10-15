@@ -26,11 +26,18 @@ assert.doesNotMatch(source, /data-assistant-surface=["']quick-actions["']|SKILL_
 assert.equal(source.match(/data-global-assistant=["']root["']/g)?.length, 1, '页面只能渲染一个灵小枢根入口');
 
 const launcherClickSource = sourceSection('const handleLauncherClick', '\n  useEffect(', '灵小枢点击处理');
-const launcherMarkup = sourceSection('<Badge count={decisionTotal ?? pendingCount}', '</Button>', '灵小枢右下角入口');
+const launcherMarkup = sourceSection('ref={launcherButtonRef}', '</Button>', '灵小枢右下角入口');
+const edgeLauncherMarkup = sourceSection('ref={edgeLauncherButtonRef}', 'title="展开灵小枢入口"', '灵小枢贴边入口');
+const retractControlMarkup = sourceSection('data-global-assistant="retract-control"', 'title="收起灵小枢入口到右侧"', '灵小枢收起控件');
+const assistantRootMarkup = sourceSection('data-global-assistant="root"', '<AnimatePresence>', '灵小枢根定位容器');
 assert.match(launcherClickSource, /openCurrentPageAgent\(\)/, '主入口点击灵小枢必须直接进入当前工作对话');
 assert.doesNotMatch(launcherClickSource, /setMode\('expanded'\)|quick-actions|SKILL_AGENTS/, '点击灵小枢不得打开四助手快捷轮盘');
-assert.match(source, /data-global-assistant="root"[\s\S]{0,350}fixed right-4[\s\S]{0,350}bottom-\[calc\(env\(safe-area-inset-bottom\)\+1rem\)\]/, '灵小枢入口必须固定在页面右下角并避让设备安全区');
-assert.match(source, /page === 'smartAssets' \|\| page === 'digitalEmployees'[\s\S]{0,120}5\.5rem\)\] md:bottom-5/, '制作页只在移动端避让底部操作区，桌面端不得留下大块底部空白');
+assert.match(assistantRootMarkup, /fixed/, '灵小枢完整入口必须使用固定定位');
+assert.match(assistantRootMarkup, /z-\[75\]/, '灵小枢完整入口必须保持在页面操作层之上');
+assert.match(assistantRootMarkup, /bottom-\[calc\(env\(safe-area-inset-bottom\)\+1rem\)\]/, '灵小枢完整入口必须避让设备安全区');
+assert.match(assistantRootMarkup, /launcherRetracted && mode === 'breathing'[\s\S]*right-0 md:right-0[\s\S]*right-4 md:right-5/, '灵小枢收起后必须贴右边，展开时恢复页面内边距');
+assert.match(assistantRootMarkup, /bottom-\[calc\(env\(safe-area-inset-bottom\)\+1rem\)\][\s\S]*md:bottom-5/, '灵小枢入口必须使用统一安全区基准，桌面端不得留下大块底部空白');
+assert.doesNotMatch(assistantRootMarkup, /5\.5rem/, '制作页不得通过额外抬高灵小枢入口制造底部空白');
 assert.match(source, /assistantUsesMobileClearance[\s\S]{0,240}viewport\.height - \(assistantUsesMobileClearance \? 160 : 96\)/, '移动端抬高入口时必须同步收紧对话高度，不能把面板顶部裁掉');
 assert.match(source, /data-global-assistant="launcher"[\s\S]{0,300}aria-label=\{mode === 'chat' \? '收起灵小枢对话' : '询问灵小枢'\}/, '右下角入口必须以清晰文本直接打开或收起对话');
 assert.match(launcherMarkup, /shape="round"/, '灵小枢入口必须采用紧凑胶囊形态');
@@ -38,7 +45,14 @@ assert.match(launcherMarkup, /!h-11/, '灵小枢入口必须保留 44px 触控�
 assert.match(source, /aria-expanded=\{mode === 'chat'\}[\s\S]{0,80}aria-controls="global-assistant-panel"/, '入口必须暴露弹窗展开关系');
 assert.match(launcherMarkup, /aria-haspopup="dialog"/, '灵小枢入口必须声明它会打开对话浮层');
 assert.match(launcherMarkup, /var\(--ls-action-gradient\)/, '灵小枢入口图标必须复用全局主操作渐变 Token');
-assert.doesNotMatch(source, /handlePointerDown|ASSISTANT_POSITION_KEY|data-global-assistant="edge-launcher"|setLauncherRetracted/, '右下角入口不得再保留拖动、旧坐标或自动缩边交互');
+assert.match(retractControlMarkup, /aria-label="收起灵小枢入口到右侧"[\s\S]*onClick=\{retractLauncher\}[\s\S]*!h-11 !w-11/, '必须提供独立、可键盘操作的 44px 收起控件');
+assert.match(edgeLauncherMarkup, /shape="circle"[\s\S]*data-global-assistant="edge-launcher"[\s\S]*aria-label="展开灵小枢入口"[\s\S]*onClick=\{restoreLauncher\}[\s\S]*!h-11 !w-11[\s\S]*!rounded-l-full !rounded-r-none/, '收起后必须保留贴右边的 44px 恢复入口');
+assert.match(source, /launcherRetracted && mode === 'breathing'[\s\S]{0,180}<Badge count=\{decisionTotal \?\? pendingCount\}/, '贴边入口必须继续显示权威待办 Badge');
+assert.match(source, /ASSISTANT_LAUNCHER_RETRACTED_KEY[\s\S]*localStorage\.getItem\(ASSISTANT_LAUNCHER_RETRACTED_KEY\)[\s\S]*localStorage\.setItem\(ASSISTANT_LAUNCHER_RETRACTED_KEY, String\(retracted\)\)/, '用户手动收起偏好必须跨刷新保存');
+assert.match(source, /const retractLauncher[\s\S]{0,260}edgeLauncherButtonRef\.current\?\.focus\(\)/, '收起后焦点必须交给贴边恢复入口');
+assert.match(source, /const restoreLauncher[\s\S]{0,260}launcherButtonRef\.current\?\.focus\(\)/, '恢复后焦点必须交回完整入口');
+assert.match(source, /\{!launcherRetracted && mode === 'breathing' && performance[\s\S]*\{!launcherRetracted && mode === 'breathing'[\s\S]*speechBubble[\s\S]*\{!launcherRetracted && mode === 'breathing'[\s\S]*weeklyPlanKickoffAvailable[\s\S]*\{!launcherRetracted && mode === 'breathing'[\s\S]*featureGuide/, '收起态不得显示任何横向提示气泡');
+assert.doesNotMatch(source, /handlePointerDown|ASSISTANT_POSITION_KEY/, '右下角入口不得恢复拖动、旧坐标或自动缩边交互');
 assert.doesNotMatch(globalStylesSource, /data-lingshu-assistant-clearance="bottom-navigation"/, '灵小枢入口不得依赖已经失效的旧底部导航标记');
 assert.match(source, /id="global-assistant-panel"[\s\S]{0,720}bottom-14 right-0/, '灵小枢弹窗必须锚定在右下角入口上方');
 assert.match(source, /max-h-\[calc\(100dvh-env\(safe-area-inset-bottom\)-96px\)\]/, '灵小枢弹窗高度必须避让移动设备底部安全区');
@@ -46,7 +60,7 @@ assert.match(source, /role="dialog"[\s\S]{0,160}aria-modal="false"[\s\S]{0,160}a
 assert.match(source, /mode !== 'chat'\) return;[\s\S]{0,300}panel\?\.focus\(\{ preventScroll: true \}\)/, '打开弹窗后必须在不滚动页面的前提下把焦点移入对话区域');
 assert.match(source, /appMain\?\.scrollTop[\s\S]{0,80}appMain\.scrollTop = 0/, '打开助手时必须修正历史滚动偏移，避免页面底部出现空白');
 assert.match(layoutSource, /<main className="app-main[^\n]*overflow-clip"/, '应用主容器不得成为可被焦点程序滚动的隐藏滚动容器');
-assert.match(source, /setMode\('breathing'\);\s*window\.requestAnimationFrame\(\(\) => launcherButtonRef\.current\?\.focus\(\)\)/, '关闭弹窗后必须把焦点归还右下角入口');
+assert.match(source, /setMode\('breathing'\);\s*window\.requestAnimationFrame\(\(\) => \{\s*if \(launcherRetracted\) edgeLauncherButtonRef\.current\?\.focus\(\);\s*else launcherButtonRef\.current\?\.focus\(\)/, '关闭弹窗后必须按用户偏好把焦点归还完整或贴边入口');
 assert.match(appSource, /<GlobalAssistant[\s\S]{0,650}compactMode=\{starterMode \|\| isAgentProductionSession\(\)\}/, '制作会话保留紧凑的灵小枢审批和聊天入口');
 assert.match(source, /useState<AssistantPanelView>\('chat'\)/, '灵小枢默认页必须是单列对话');
 assert.match(source, /openAgent\(currentPageAgent, 'chat'\)/, '入口必须直接打开单列对话而不是强制进入审批详情');

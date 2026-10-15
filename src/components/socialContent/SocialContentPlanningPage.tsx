@@ -26,6 +26,7 @@ function seedFromRequest(request?: SocialContentCreateRequest | null): SocialCre
     continueTaskId: request.continueTaskId,
     continueProjectId: request.continueProjectId,
     presenterAssetId: request.presenterAssetId,
+    draftTitle: request.prefill?.title,
     referenceTitle: request.sourceContext?.referenceTitle,
     referenceThumbnail: request.sourceContext?.referenceThumbnail,
     referenceMediaUrl: request.sourceContext?.referenceMediaUrl,
@@ -64,7 +65,8 @@ export default function SocialContentPlanningPage({
   } : null);
   const [seed, setSeed] = useState<SocialCreationWorkbenchSeed | undefined>(() => seedFromRequest(initialCreateRequest));
   const [sourceRequest, setSourceRequest] = useState<SocialContentCreateRequest | null>(initialCreateRequest || null);
-  const [resumeChecking, setResumeChecking] = useState(() => Boolean(initialCreateRequest?.continueProjectId
+  const [resumeChecking, setResumeChecking] = useState(() => Boolean(!initialCreateRequest?.replicationStep
+    && initialCreateRequest?.continueProjectId
     && creationPathFromRequest(initialCreateRequest) === 'viral_replication'));
 
   useEffect(() => {
@@ -89,7 +91,7 @@ export default function SocialContentPlanningPage({
 
   useEffect(() => {
     const projectId = String(initialCreateRequest?.continueProjectId || '').trim();
-    if (!initialCreateRequest || !projectId || creationPathFromRequest(initialCreateRequest) !== 'viral_replication') {
+    if (!initialCreateRequest || initialCreateRequest.replicationStep || !projectId || creationPathFromRequest(initialCreateRequest) !== 'viral_replication') {
       setResumeChecking(false);
       return undefined;
     }

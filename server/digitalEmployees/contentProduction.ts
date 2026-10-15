@@ -168,6 +168,49 @@ function dimensions(record: Record<string, unknown>): { width?: number; height?:
   };
 }
 
+function authoritativeMaterialRights(record: Record<string, unknown>): Partial<Pick<AssetCandidate,
+  'rightsEvidenceRefs' | 'commercialUseApproved' | 'commercialUseApprovalEvidenceRefs'
+  | 'modelInputAllowed' | 'derivativeUseAllowed' | 'sourceRevision' | 'currentSourceRevision' | 'segmentProfiles'>> {
+  const provenance = record.provenance && typeof record.provenance === 'object' && !Array.isArray(record.provenance)
+    ? record.provenance as Record<string, unknown> : {};
+  const rightsEvidenceRefs = [...new Set([
+    record.rightsEvidenceRef,
+    record.licenseEvidence,
+    record.consentRef,
+    ...(Array.isArray(record.rightsEvidenceRefs) ? record.rightsEvidenceRefs : []),
+    provenance.rightsEvidenceRef,
+    provenance.authorizationRef,
+  ].map(value => text(value, 500)).filter(value => value && !/(?:unverified|unknown|missing|pending|待确认|未确认)/i.test(value)))];
+  const commercialUseApprovalEvidenceRefs = [...new Set([
+    ...(Array.isArray(record.commercialUseApprovalEvidenceRefs) ? record.commercialUseApprovalEvidenceRefs : []),
+    record.commercialUseApprovalEvidenceRef,
+    provenance.commercialUseApprovalEvidenceRef,
+  ].map(value => text(value, 500)).filter(value => value && !/(?:unverified|unknown|missing|pending|待确认|未确认)/i.test(value)))];
+  const sourceRevision = text(record.analysisSourceRevision || record.sourceRevision, 500);
+  const currentSourceRevision = text(record.sourceRevision || record.contentSha256 || record.sha256 || record.analysisSourceRevision, 500);
+  return {
+    ...(rightsEvidenceRefs.length ? { rightsEvidenceRefs } : {}),
+    ...(typeof record.commercialUseApproved === 'boolean'
+      ? { commercialUseApproved: record.commercialUseApproved }
+      : {}),
+    // A rights receipt may double as the commercial-use approval receipt only
+    // when the source row explicitly records commercial approval.
+    ...(record.commercialUseApproved === true ? {
+      commercialUseApprovalEvidenceRefs: commercialUseApprovalEvidenceRefs.length
+        ? commercialUseApprovalEvidenceRefs : rightsEvidenceRefs,
+    } : {}),
+    ...(typeof record.modelInputAllowed === 'boolean' ? { modelInputAllowed: record.modelInputAllowed } : {}),
+    ...(typeof record.derivativeUseAllowed === 'boolean'
+      ? { derivativeUseAllowed: record.derivativeUseAllowed }
+      : typeof record.derivativesApproved === 'boolean'
+        ? { derivativeUseAllowed: record.derivativesApproved }
+        : {}),
+    ...(sourceRevision ? { sourceRevision } : {}),
+    ...(currentSourceRevision ? { currentSourceRevision } : {}),
+    ...(Array.isArray(record.segmentProfiles) ? { segmentProfiles: record.segmentProfiles } : {}),
+  };
+}
+
 export function assetAuthorization(record: Record<string, unknown>, source: AssetCandidate['source']): AssetCandidate['authorization'] {
   const license = text(record.licenseEvidence || record.license, 500);
   if (license) return { status: 'licensed', scope: source === 'licensed_shared_material' ? 'shared' : 'tenant', evidence: license };
@@ -472,6 +515,7 @@ function localMaterials(tenantId: string, records: Array<Record<string, unknown>
       ...(localPath && fs.existsSync(localPath) ? { localPath } : {}), ...(objectKey ? { objectKey } : {}), duration: Math.max(0, Number(record.duration || 0)),
       observations: visualObservations, visualObservations, segments: Array.isArray(record.segments) ? record.segments as Array<Record<string, unknown>> : [],
       ...(record.scriptAnalysis ? { scriptAnalysis: record.scriptAnalysis as MaterialScriptAnalysis } : {}),
+      ...authoritativeMaterialRights(record),
       ...(association ? { productId: association.productId, productName: association.productName } : {}),
       authorization: assetAuthorization(record, source), synthetic: isSyntheticMaterial(record), ...dimensions(record),
       tags: stringList(record.tags), source,
@@ -554,6 +598,7 @@ export async function collectProductionAssets(tenantId: string, profile: Enterpr
       url: text(record.url, 2_000), cloudRecordId: text(record.id).replace(/^pb-/, ''), duration: Math.max(0, Number(record.duration || 0)),
       observations: observationsForMaterial(record), visualObservations: observationsForMaterial(record), segments: Array.isArray(record.segments) ? record.segments as Array<Record<string, unknown>> : [],
       ...(record.scriptAnalysis ? { scriptAnalysis: record.scriptAnalysis as MaterialScriptAnalysis } : {}),
+      ...authoritativeMaterialRights(record),
       ...(association ? { productId: association.productId, productName: association.productName } : {}),
       authorization: assetAuthorization(record, String(record.scope || 'own') === 'shared' ? 'licensed_shared_material' : 'tenant_material'),
       synthetic: isSyntheticMaterial(record), ...dimensions(record), tags: stringList(record.tags),
@@ -605,7 +650,35 @@ function frozenOrderProductItems(profile: EnterpriseProfile, orders: ContentProd
  * allowed to survive as a frozen runtime blocker. */
 export function immutableContentOrderBlockers(order: Pick<ContentProductionOrderInput, 'readinessBlockers'>): string[] {
   return (order.readinessBlockers || []).filter(reason =>
-    /指定内容路径未在 Agent 配置中开启|制作平台不在本周目标范围中/.test(reason));
+    /指定内容路径未在 Agent 配置中开启|制作平台不在本周目标范围中|固定路径编译失败|制作前编导交接待复核/.test(reason));
+}
+
+/**
+ * Product/material were historical whole-video routes. In the fixed-yield
+ * design they are shot-level local material classes inside a reference clone,
+ * not independent routes that may open a fresh TTS/HeyGen charge. Existing
+ * projects may still finish from already-created provider artifacts, but a
+ * worker must never create new paid work without the frozen per-operation
+ * budget authority used by the clone executor.
+ */
+export function legacyManagedPaidSubmissionBlocker(input: {
+  route: ContentProductionRoute;
+  productionContractVersion?: unknown;
+  voiceoverUrl?: unknown;
+  stage?: unknown;
+  heygenJobId?: unknown;
+}): string {
+  if (input.route === 'clone') return '';
+  if (String(input.productionContractVersion || 'legacy.v1') !== 'legacy.v1') return '';
+  const stage = String(input.stage || 'script');
+  const hasVoiceArtifact = Boolean(String(input.voiceoverUrl || '').trim());
+  if (!hasVoiceArtifact && ['script', 'material_match', 'voice_subtitles'].includes(stage)) {
+    return '该旧版独立产品/素材路线不能新建付费配音；请重新生成固定参考视频计划，产品与工厂镜头将按时间线匹配企业本地素材';
+  }
+  if (stage === 'heygen' && !String(input.heygenJobId || '').trim()) {
+    return '该旧版路线没有冻结的数字人供应商任务，不能新建付费提交；请重新生成固定参考视频计划';
+  }
+  return '';
 }
 
 function confirmedProductSpecification(value: unknown): string {
@@ -1283,6 +1356,20 @@ export async function advanceOneProject(input: {
     return { changed: !semanticRepeat, blocker: reason };
   };
 
+  const legacyPaidSubmissionBlocker = legacyManagedPaidSubmissionBlocker({
+    route,
+    productionContractVersion: spec.productionContractVersion,
+    voiceoverUrl: spec.voiceoverUrl,
+    stage,
+    heygenJobId: automation.heygenJobId,
+  });
+  if (legacyPaidSubmissionBlocker) {
+    return block(stage, legacyPaidSubmissionBlocker, {
+      retryPolicy: 'input_required',
+      blockerCode: 'legacy_paid_route_replan_required',
+    });
+  }
+
   try {
     const replicationBlocker = legacyReplicationBlocker({ route, creationPath: spec.creationPath, stage, heygenJobId: automation.heygenJobId });
     if (replicationBlocker) return block('material_match', replicationBlocker, { retryPolicy: 'input_required' });
@@ -1612,7 +1699,11 @@ export async function advanceOneProject(input: {
     }
     if (stage === 'heygen') {
       const job = await ensureHeygenAutomationJob({ tenantId: input.tenantId, projectId: input.record.id, avatarId: brief.heygenAvatarId,
-        consent: brief.avatarConsent, voiceoverUrl: text(spec.voiceoverUrl, 2000), script: text(automation.spokenText, 30000), language: brief.language });
+        consent: brief.avatarConsent, voiceoverUrl: text(spec.voiceoverUrl, 2000), script: text(automation.spokenText, 30000), language: brief.language,
+        // The historical runner may only reconcile a provider task that was
+        // already submitted. New paid HeyGen work belongs to the frozen clone
+        // executor and its durable whole-plan permit.
+        providerPollOnly: true });
       // Build the complete review copy before requesting final human approval.
       if (!['review', 'completed'].includes(job.status)) {
         await updateProject(input.record, { ...spec, presenterMode: 'digital', automation: stagePatch(automation, 'heygen', { heygenJobId: job.id, blocker: job.status === 'review' ? 'HeyGen 成片已生成，请进入内容工作台预览并确认人物、口型与声音' : job.errorMessage || 'HeyGen 正在生成数字人视频' }) });
@@ -2062,6 +2153,9 @@ export async function advanceAutomatedContentProduction(input: {
       const spec = {
         mode: route, contentMode: 'video', platform: routePlan.platform, platformBrief: routePlan.platformBrief, ratio: '9:16', exportSpec: { ratio: '9:16', resolution: '1080p', fps: 30 }, duration: normalizeVideoPlan(frozenOrder?.videoPlan || input.config.videoDefaults || {}).duration, lang: normalizeVideoPlan(frozenOrder?.videoPlan || input.config.videoDefaults || {}).language,
         workflowRunId: input.runId, workflowTaskId: input.taskId, workflowTaskKey: 'content_production', productInfo: productFacts(profile, input.config, routePlan.productId),
+        productionContractVersion: frozenOrder?.productionContractVersion || (frozenOrder?.fixedYieldTimeline ? 'fixed-yield.v2-preflight' : 'legacy.v1'),
+        fixedYieldExecutionState: frozenOrder?.fixedYieldTimeline ? 'preflight_only_legacy_stage_runner' : 'not_applicable',
+        ...(frozenOrder?.fixedYieldTimeline ? { fixedYieldTimeline: frozenOrder.fixedYieldTimeline } : {}),
         ...(input.batchPlanId ? { batchPlanId: input.batchPlanId } : {}), ...(frozenOrder?.id ? { contentOrderId: frozenOrder.id, contentOrder: frozenOrder } : {}),
         presenterMode: Boolean(frozenOrder?.videoPlan && usesDigitalPresenter(frozenOrder.videoPlan)) ? 'digital' : 'real',
         audience: input.config.customerProfile, selectedMaterialIds: [], script: '', subtitlesOn: true,

@@ -12,6 +12,10 @@ import {
 import { automaticExecutionAllowed, resolveRuntimePolicy } from './runtimePolicy.js';
 import type { Starter198ConfirmedOperatingPlan } from '../../shared/contracts/starter198.js';
 import { hydrateWeeklyPublishingTargets } from '../../shared/contracts/weeklyPublishingTargets.js';
+import {
+  normalizeProductionOnboardingPreferences,
+  type ProductionOnboardingPreferences,
+} from '../../shared/contracts/productionOnboarding.js';
 
 export type AutonomyMode = 'suggest' | 'collaborate' | 'managed' | 'automatic';
 /** The five user-facing roles. Legacy persisted `industry` values are mapped at the read boundary. */
@@ -39,6 +43,7 @@ export type WorkflowTaskStatus =
   | 'cancelled';
 
 export interface DigitalEmployeeConfig {
+  productionOnboarding?: ProductionOnboardingPreferences;
   managedPublishingGrant?: ManagedPublishingGrant;
   continuationPolicy?: ContinuationPolicy;
   operatingMaturity?: "starting" | "growing" | "established";
@@ -228,7 +233,9 @@ export function normalizeDigitalEmployeeConfig(input: Partial<DigitalEmployeeCon
     .filter(code => code in VIDEO_LANGUAGES)
     .slice(0, 5);
   const confirmedOperatingPlan = normalizeConfirmedOperatingPlan(input.confirmedOperatingPlan);
+  const productionOnboarding = normalizeProductionOnboardingPreferences(input.productionOnboarding);
   return {
+    ...(productionOnboarding ? { productionOnboarding } : {}),
     managedPublishingGrant: normalizeManagedPublishingGrant(input.managedPublishingGrant),
     continuationPolicy: normalizeContinuationPolicy(input.continuationPolicy),
     operatingMaturity: ["starting", "growing", "established"].includes(String(input.operatingMaturity)) ? input.operatingMaturity : "growing",

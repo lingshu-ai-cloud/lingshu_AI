@@ -6459,14 +6459,14 @@ async function finalizeDigitalHumanOutput(job: DigitalHumanJob, outputUrl: strin
   });
 }
 
-async function refreshDigitalHumanJob(jobId: string, req?: Request): Promise<DigitalHumanJob> {
+async function refreshDigitalHumanJob(jobId: string, req?: Request, options: { providerPollOnly?: boolean } = {}): Promise<DigitalHumanJob> {
   const existingRefresh = digitalHumanRefreshes.get(jobId);
   if (existingRefresh) return existingRefresh;
   const task = (async () => {
     let job = loadDigitalHumanJobs().find(item => item.id === jobId);
     if (!job) throw new Error('digital human job not found');
     if (['completed', 'review', 'failed', 'cancelled'].includes(job.status)) return job;
-    if (job.provider === 'heygen') return advanceHeygenJob(job);
+    if (job.provider === 'heygen') return advanceHeygenJob(job, options.providerPollOnly === true);
     const { baseUrl, provider } = digitalHumanConfig();
     if (!baseUrl) return updateDigitalHumanJob(job.id, { status: 'failed', stage: 'configuration', errorCode: 'PROVIDER_NOT_CONFIGURED', errorMessage: '数字人推理服务尚未配置。' });
 
@@ -6533,8 +6533,9 @@ function validDigitalHumanVoiceoverUrl(value: unknown): string {
   return '';
 }
 
-async function advanceHeygenJob(job: DigitalHumanJob): Promise<DigitalHumanJob> {
+async function advanceHeygenJob(job: DigitalHumanJob, providerPollOnly = false): Promise<DigitalHumanJob> {
   if (!job.providerTaskId) {
+    if (providerPollOnly) throw new Error('heygen_paid_submission_authorization_missing');
     const audioPath = path.join(tenantAssetDir(TTS_ROOT, job.tenantId), path.basename(new URL(job.voiceoverUrl, 'http://local').pathname));
     const providerTaskId = await submitHeygenVideo({ id: job.id, avatarId: job.heygenAvatarId!, audioPath, title: '数字人口播' });
     job = updateDigitalHumanJob(job.id, { providerTaskId, status: 'processing', stage: 'heygen_rendering', progress: 10 });
@@ -6563,17 +6564,18 @@ async function advanceHeygenJob(job: DigitalHumanJob): Promise<DigitalHumanJob> 
 export function heygenOutputPath(tenantId: string, jobId: string): string { return path.join(tenantAssetDir(MEDIA_DIR, tenantId), `${jobId}.mp4`); }
 
 const heygenCreationQueues = new Map<string, Promise<unknown>>();
-export async function ensureHeygenAutomationJob(input: { tenantId: string; projectId: string; avatarId: string; consent: boolean; voiceoverUrl: string; script: string; language: string }): Promise<DigitalHumanJob> {
+export async function ensureHeygenAutomationJob(input: { tenantId: string; projectId: string; avatarId: string; consent: boolean; voiceoverUrl: string; script: string; language: string; providerPollOnly?: boolean }): Promise<DigitalHumanJob> {
   const key = input.tenantId;
   const previous = heygenCreationQueues.get(key) || Promise.resolve();
   const next = previous.catch(() => undefined).then(() => ensureHeygenJobLocked(input));
   heygenCreationQueues.set(key, next);
   try { return await next; } finally { if (heygenCreationQueues.get(key) === next) heygenCreationQueues.delete(key); }
 }
-async function ensureHeygenJobLocked(input: { tenantId: string; projectId: string; avatarId: string; consent: boolean; voiceoverUrl: string; script: string; language: string }): Promise<DigitalHumanJob> {
+async function ensureHeygenJobLocked(input: { tenantId: string; projectId: string; avatarId: string; consent: boolean; voiceoverUrl: string; script: string; language: string; providerPollOnly?: boolean }): Promise<DigitalHumanJob> {
   if (!input.consent || !input.avatarId) throw Error('请选择 HeyGen 人物并确认使用权');
   let job = loadDigitalHumanJobs().slice().reverse().find(item => item.tenantId === input.tenantId && item.projectId === input.projectId && item.provider === 'heygen' && item.scriptSnapshot === input.script && item.heygenAvatarId === input.avatarId && item.voiceoverUrl === input.voiceoverUrl);
   if (!job) {
+    if (input.providerPollOnly) throw new Error('heygen_paid_submission_authorization_missing');
     if (loadDigitalHumanJobs().filter(item => item.tenantId === input.tenantId && ['queued', 'submitting', 'processing', 'quality_check'].includes(item.status)).length >= 2) throw Error('当前已有 2 个数字人任务在运行，请稍后再试');
     const avatar = (await listHeygenAvatars()).find(item => item.id === input.avatarId);
     if (!avatar) throw Error('所选 HeyGen 人物不可用，请重新选择');
@@ -6582,7 +6584,7 @@ async function ensureHeygenJobLocked(input: { tenantId: string; projectId: strin
       voiceoverUrl: input.voiceoverUrl, scriptSnapshot: input.script, language: input.language, mode: 'quality', consentConfirmed: true, commercialRightsStatus: 'cleared', provider: 'heygen', status: 'queued', stage: 'queued', progress: 0, versionNumber: 1, createdAt: now, updatedAt: now };
     persistDigitalHumanJobs([...loadDigitalHumanJobs(), job]);
   }
-  return refreshDigitalHumanJob(job.id);
+  return refreshDigitalHumanJob(job.id, undefined, { providerPollOnly: input.providerPollOnly === true });
 }
 
 studioRouter.get('/digital-human/avatars', async (_req, res) => {
