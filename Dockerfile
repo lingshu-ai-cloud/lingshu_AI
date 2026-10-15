@@ -15,7 +15,7 @@ COPY shared ./shared
 COPY src ./src
 COPY server ./server
 COPY desktop ./desktop
-COPY scripts/bootstrap-workbench-admin.mjs scripts/gemini-video-worker.mjs scripts/render-task-report-pdf.py scripts/rekey-tenant-transfer.mjs scripts/check-runtime-readiness.mjs scripts/sync-mobile-shared.mjs ./scripts/
+COPY scripts/bootstrap-workbench-admin.mjs scripts/gemini-video-worker.mjs scripts/render-task-report-pdf.py scripts/rekey-tenant-transfer.mjs scripts/check-runtime-readiness.mjs scripts/sync-mobile-shared.mjs scripts/generate-design-tokens.mjs scripts/sync-mobile-domain.mjs scripts/generate-miniapp-request-policy.mjs scripts/generate-miniapp-action-form.mjs scripts/generate-miniapp-work-status.mjs scripts/generate-miniapp-material-shooting.mjs ./scripts/
 COPY scripts/person-replacement-qa-requirements.txt scripts/person_replacement_visual_qa.py scripts/validate-syncnet.py ./scripts/
 RUN pnpm run build \
   && pnpm prune --prod
