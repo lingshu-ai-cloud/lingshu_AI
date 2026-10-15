@@ -1,5 +1,15 @@
 /// <reference path="../pb_data/types.d.ts" />
 migrate((app) => {
+  // Some long-lived installations already created this collection before the
+  // migration file was added. Treat the matching collection id as applied so
+  // PocketBase can record the migration without failing on the unique id.
+  try {
+    app.findCollectionByNameOrId("pbc_1768849972");
+    return;
+  } catch (_) {
+    // Collection is absent; create it below.
+  }
+
   const collection = new Collection({
     "createRule": null,
     "deleteRule": null,
