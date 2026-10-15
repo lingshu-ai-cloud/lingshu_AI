@@ -3,9 +3,20 @@ import { readFileSync } from 'node:fs';
 import test from 'node:test';
 import { createElement } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
-import Calendar, {calendarTaskPresentation,isPastUnfinishedCalendarTask,taskProgressPercent} from './RestoredAgentWorkCalendar';
+import Calendar, {calendarExecutionMark,calendarTaskPresentation,isPastUnfinishedCalendarTask,taskProgressPercent} from './RestoredAgentWorkCalendar';
 import type { AgentCalendarTask } from './AgentWeeklyCalendar';
 const base: AgentCalendarTask = {id:'business',date:'2026-10-12',time:'10:00',agent:'business',title:'冻结经营任务',output:'经营交付',context:'实际范围',minutes:30,status:'planned',dueAt:'2026-10-12T10:00:00+08:00'};
+test('only unfinished work before today receives an overdue exclamation mark',()=>{
+ const today='2026-10-15';
+ assert.equal(calendarExecutionMark({...base,date:'2026-10-14',status:'blocked'},today),'missing');
+ assert.equal(calendarExecutionMark({...base,date:'2026-10-14',status:'planned'},today),'missing');
+ assert.equal(calendarExecutionMark({...base,date:today,status:'blocked'},today),undefined);
+ assert.equal(calendarExecutionMark({...base,date:'2026-10-16',status:'failed'},today),undefined);
+ assert.equal(calendarExecutionMark({...base,date:'2026-10-14',status:'active'},today),'missing');
+ assert.equal(calendarExecutionMark({...base,date:'2026-10-14',status:'completed'},today),'complete');
+ assert.equal(calendarExecutionMark({...base,date:'2026-10-14',status:'no_data'},today),undefined);
+ assert.equal(calendarExecutionMark({...base,date:'2026-10-14',status:'cancelled'},today),undefined);
+});
 test('weekly board is Monday through Sunday and direct execution never substitutes a status workspace',()=>{
  const source=readFileSync(new URL('./RestoredAgentWorkCalendar.tsx',import.meta.url),'utf8');
  const connected=readFileSync(new URL('./ConnectedAgentCalendar.tsx',import.meta.url),'utf8');

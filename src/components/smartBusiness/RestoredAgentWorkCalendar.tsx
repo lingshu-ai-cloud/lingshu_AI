@@ -99,6 +99,13 @@ function taskIsAllDay(task: AgentCalendarTask): boolean {
 }
 
 const terminalTaskStatuses = new Set<AgentCalendarTask['status']>(['completed', 'cancelled', 'no_data']);
+export function calendarExecutionMark(task:AgentCalendarTask,today:string):LsCalendarEvent['executionMark']{
+ const sources=task.dailyTaskGroup?.tasks??task.customerServiceSummary?.sourceTasks??[task];
+ if(sources.length&&sources.every(source=>source.status==='completed'))return 'complete';
+ if(task.date>=today)return undefined;
+ if(sources.some(source=>!terminalTaskStatuses.has(source.status)))return 'missing';
+ return undefined;
+}
 
 export function calendarTaskPresentation(task: AgentCalendarTask, today: string): Pick<LsCalendarEvent, 'status' | 'statusLabel' | 'muted'> {
   const terminal = terminalTaskStatuses.has(task.status);
@@ -282,6 +289,7 @@ export default function RestoredAgentWorkCalendar({
       allDay,
       timeZone: task.calendarClock?.timeZone || timeZone,
       status: presentation.status,
+      executionMark: calendarExecutionMark(task, todayKey),
       statusLabel: presentation.statusLabel,
       eventType: task.agent === 'customer' ? 'follow_up' : 'agent_task',
       ownerAgent: calendarCardOwner(task, overdue),
@@ -318,6 +326,7 @@ export default function RestoredAgentWorkCalendar({
     const entryTarget=primarySource??task.customerServiceSummary?.sourceTasks.find(source=>source.customerExecutionTarget)??task;
     const enterSource=(source:AgentCalendarTask)=>{if(!onEnterExecution)return;entryController.current?.abort();const controller=new AbortController();entryController.current=controller;const id=task.id;setEntryState({id,busy:true,error:''});void onEnterExecution(source,controller.signal).then(()=>{if(controller.signal.aborted)return;setEntryState(null);closeDetails();}).catch(cause=>{if(!controller.signal.aborted)setEntryState({id,busy:false,error:cause instanceof Error?cause.message:'真实执行入口不可用'});});};
     const openSource=(source:AgentCalendarTask)=>{
+      if(['user_approval','publishing'].includes(source.executionStep??'')&&onEnterExecution)return enterSource(source);
       if(source.enterpriseFactExceptionId&&onOpenEnterpriseFacts)return open(onOpenEnterpriseFacts,source);
       if(source.accountBindingTarget&&onBindAccount)return open(onBindAccount,source);
       if(source.customerExecutionTarget&&onOpenCustomerExecution)return open(onOpenCustomerExecution,source);

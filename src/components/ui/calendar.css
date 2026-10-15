@@ -88,7 +88,7 @@
 .ls-calendar-agent-view .fc-col-header-cell-cushion { padding: 10px 6px; color: #52525b; font-size: 12px; font-weight: 650; }
 .ls-calendar-agent-view .fc-daygrid-day-frame { min-height: clamp(420px, calc(100dvh - 320px), 680px); }
 .ls-calendar-agent-view .fc-daygrid-day-events { gap: 5px; margin: 5px; }
-.ls-calendar-agent-view .ls-calendar-event { border-width: 1px; border-inline-start-width: 3px; border-radius: 6px; box-shadow: 0 1px 2px rgb(24 24 27 / 5%); }
+.ls-calendar-agent-view .ls-calendar-event { position: relative; border-width: 1px; border-inline-start-width: 3px; border-radius: 6px; box-shadow: 0 1px 2px rgb(24 24 27 / 5%); }
 .ls-calendar-agent-view .ls-calendar-event-progress { position: relative; }
 .ls-calendar-agent-view .ls-calendar-event-progress::before { position: absolute; z-index: 3; inset-inline: 0; inset-block-start: clamp(4px, var(--ls-task-progress, 0%), calc(100% - 4px)); height: 2px; background: #ef4444; box-shadow: 0 0 0 1px rgb(255 255 255 / 70%); content: ''; pointer-events: none; }
 .ls-calendar-agent-view .ls-calendar-event-progress::after { position: absolute; z-index: 4; inset-inline-start: -1px; inset-block-start: calc(clamp(4px, var(--ls-task-progress, 0%), calc(100% - 4px)) - 2px); width: 6px; height: 6px; border-radius: 999px; background: #ef4444; content: ''; pointer-events: none; }
@@ -134,10 +134,10 @@
 .ls-calendar-event-placeholder .ls-calendar-event-row-state { color: #71717a; font-weight: 400; }
 .ls-calendar-event-placeholder .ls-calendar-event-row-title { color: #52525b; font-weight: 500; }
 .ls-calendar-event-completed-check { position: absolute; inset-block-start: 5px; inset-inline-end: 5px; display: grid; width: 16px; height: 16px; place-items: center; border-radius: 50%; background: #168568; color: #fff; font-size: 11px; font-weight: 800; line-height: 1; }
-.ls-calendar-task-status-mark { position:absolute; inset-block-start:6px; inset-inline-end:6px; display:grid; width:18px; height:18px; place-items:center; background:var(--ant-color-bg-container); }
+.ls-calendar-task-status-mark { position:absolute; z-index:5; inset-block-start:5px; inset-inline-end:5px; display:grid; width:18px; height:18px; place-items:center; border-radius:50%; background:var(--ant-color-bg-container); }
 .ls-calendar-task-status-mark.is-missing { color:var(--ant-color-error); }
 .ls-calendar-task-status-mark.is-complete { color:var(--ant-color-success); }
-.ls-calendar-task-board-card { position:relative; padding-inline-end:28px; }
+.ls-calendar-task-board-card { position:static; padding-inline-end:28px; }
 #agent-weekly-calendar .ls-calendar-event-done { border-color: #b7dfcf; border-inline-start-color: #2f9b75; background: #eaf8f2; color: #3f5f53; }
 #agent-weekly-calendar .ls-calendar-event-done .ls-calendar-event-row-title { color: #52525b; font-weight: 600; }
 #agent-weekly-calendar .ls-calendar-event-done .ls-calendar-event-row-owner,
