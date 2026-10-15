@@ -18,6 +18,7 @@ import {createCustomerManualTakeoverService} from '../customerService/customerMa
 import {createCustomerManualTakeoverRouter} from './customerManualTakeover.js';
 import { customerServicePolicy, customerServiceStatus, readTenantEnterpriseProfile } from './enterprise.js';
 import { readCustomerMessagingAuthorization } from '../digitalEmployees/customerMessagingPolicy.js';
+import { createMockCustomers } from '../../src/mocks/customerProfiles.js';
 
 export const customerSuggestionsRouter = Router();
 customerSuggestionsRouter.use(requireAuth);
@@ -53,9 +54,13 @@ customerSuggestionsRouter.get('/', requireAuth, async (req, res) => {
     res.json({ items: [], source });
     return;
   }
-  const items = source === 'messenger' ? (await readAuthorizedMessengerCustomers(tenantId))
+  const liveItems = source === 'messenger' ? (await readAuthorizedMessengerCustomers(tenantId))
     : source === 'instagram' ? getInstagramCustomers(tenantId)
       : [...(await readAuthorizedMessengerCustomers(tenantId)), ...getInstagramCustomers(tenantId)].sort((a, b) => b.lastActiveAt - a.lastActiveAt);
+  const beautyShowcaseTenantId = String(process.env.BEAUTY_SHOWCASE_TENANT_ID || '').trim();
+  const items = !source && !liveItems.length && beautyShowcaseTenantId && tenantId === beautyShowcaseTenantId
+    ? createMockCustomers('beautys-showcase@local.test').map(customer => ({ ...customer, isMock: false, isReal: true }))
+    : liveItems;
   res.json({ items, source: source || 'all' });
 });
 

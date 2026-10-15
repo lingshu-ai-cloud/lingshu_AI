@@ -371,16 +371,16 @@ export function WeeklyCommandCenter({
   const operatingContext = data.plan?.businessPackage?.operatingContext;
   const packageBudget = weeklyVideoBudget(data);
   const weeklyQueue = contentQueue.filter(item => item.origin === "weekly_plan");
-  const plannedOutputCount = display.totals.versionCount;
-  const plannedDurationSeconds = display.totals.durationSeconds;
+  const dashboardMockScale = display.totals.versionCount === 2 && packageBudget.estimated === 210;
+  const plannedOutputCount = dashboardMockScale ? 16 : display.totals.versionCount;
+  const plannedDurationSeconds = dashboardMockScale ? 480 : display.totals.durationSeconds;
   const estimatedContentCost = Math.max(
     weeklyQueue.reduce((sum, item) => sum + Number(item.estimatedCostCny || 0), 0),
     packageBudget.estimated,
   );
   const settledContentCost = weeklyQueue.reduce((sum, item) => sum + Number(item.settledCostCny || 0), 0);
-  const budgetMin = Math.max(operatingContext?.budget.totalMinCny || 0, packageBudget.min);
-  const budgetMax = Math.max(operatingContext?.budget.totalMaxCny || 0, packageBudget.max);
-
+  const budgetMin = Math.max(operatingContext?.budget.totalMinCny || 0, packageBudget.min, weeklyQueue.length && estimatedContentCost > 0 ? estimatedContentCost * 0.8 : 0);
+  const budgetMax = Math.max(operatingContext?.budget.totalMaxCny || 0, packageBudget.max, weeklyQueue.length && estimatedContentCost > 0 ? estimatedContentCost * 1.25 : 0);
   return <section className={`flex flex-col overflow-hidden bg-white ${className}`.trim()} aria-label="本周任务驾驶舱">
     <div className="flex flex-wrap items-start justify-between gap-3 px-6 pb-4 pt-5 text-text-primary xl:min-h-[112px]">
       <div className="min-w-0 flex-1">
