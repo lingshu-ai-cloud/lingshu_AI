@@ -37,6 +37,21 @@ function request(path, method = 'GET', data, authorized = true) {
   })
 }
 
+function download(path, filename) {
+  return new Promise((resolve, reject) => wx.request({
+    url: base() + '/api/overseas/' + path,
+    method: 'GET', responseType: 'arraybuffer',
+    header: { Authorization: 'Bearer ' + token() },
+    success(res) {
+      if (res.statusCode === 401) clearToken()
+      if (res.statusCode < 200 || res.statusCode >= 300) return reject(new Error('报价卡片生成失败（HTTP ' + res.statusCode + '）'))
+      const filePath = wx.env.USER_DATA_PATH + '/' + filename
+      wx.getFileSystemManager().writeFile({ filePath, data: res.data, success: () => resolve(filePath), fail: err => reject(new Error(err.errMsg || '报价卡片保存失败')) })
+    },
+    fail(err) { reject(new Error(err.errMsg || '报价卡片下载失败')) }
+  }))
+}
+
 async function login(email, password) {
   const result = await request('auth/login', 'POST', { email, password }, false)
   if (!result.token) throw new Error('登录失败')
@@ -116,6 +131,22 @@ module.exports.chat = messages => new Promise((resolve, reject) => {
 module.exports.command = body => request('starter-198/commands', 'POST', body);
 module.exports.customers = () => request('customers')
 module.exports.sendCustomerMessage = (customerId, body, requestId) => request('customers/' + encodeURIComponent(customerId) + '/outbox', 'POST', { body, requestId })
+module.exports.quoteAvailability = () => request('quote-skill/availability')
+module.exports.quoteCatalog = () => request('quote-skill/catalog')
+module.exports.latestCustomerQuote = customerId => request('quote-skill/customers/' + encodeURIComponent(customerId) + '/latest')
+module.exports.createCustomerQuote = (customer, clonePrevious) => request('quote-skill/drafts', 'POST', {
+  customerId: customer.id,
+  customerLanguage: customer.language || '',
+  customerWhatsAppName: customer.whatsappProfileName || customer.name || '',
+  productHint: customer.product || customer.outboundProduct || customer.productHint || '',
+  messages: (customer.timeline || []).filter(item => !item.actor || item.actor === 'buyer').map(item => String(item.body || item.text || item.content || '').trim()).filter(Boolean).slice(-12),
+  clonePrevious: Boolean(clonePrevious)
+})
+module.exports.updateCustomerQuote = (id, expectedRevision, patch) => request('quote-skill/drafts/' + encodeURIComponent(id), 'PATCH', { ...patch, expectedRevision })
+module.exports.confirmCustomerQuote = (id, expectedRevision) => request('quote-skill/drafts/' + encodeURIComponent(id) + '/confirm', 'POST', { expectedRevision })
+module.exports.customerQuoteReply = id => request('quote-skill/drafts/' + encodeURIComponent(id) + '/reply', 'POST')
+module.exports.customerQuoteCard = id => download('quote-skill/drafts/' + encodeURIComponent(id) + '/card', 'quote-' + id + '.png')
+module.exports.sendCustomerQuoteCard = id => request('quote-skill/drafts/' + encodeURIComponent(id) + '/send-card', 'POST')
 module.exports.translateText = (text, source, target) => request('plugins/translate/run', 'POST', { text, source, target })
 module.exports.translateCustomerReply = (text, target) => module.exports.translateText(text, '简体中文', target)
 module.exports.recommendCustomerReply = (customer, instruction) => request('agents/conversion/draft', 'POST', {
