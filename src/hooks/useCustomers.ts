@@ -121,7 +121,11 @@ export function useCustomers(refreshKey = 0, includeMockCustomers = false, mockC
           .then(resp => resp.ok ? resp.json() : null);
         const items = Array.isArray(data?.items) ? data.items : [];
         if (!alive) return;
-        const liveCustomers = items.map((item: CustomerProfile) => cloneCustomer({ ...item, isReal: true, isMock: false }));
+        const liveCustomers = items.map((item: CustomerProfile) => cloneCustomer({
+          ...item,
+          isReal: item.isHistorical ? false : item.isReal ?? true,
+          isMock: item.isMock ?? false,
+        }));
         const storedMocks = includeMockCustomers && scopedMockStorageKey
           ? await storedMockCustomers(scopedMockStorageKey)
           : [];

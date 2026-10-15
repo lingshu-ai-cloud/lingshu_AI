@@ -18,10 +18,18 @@ import {createCustomerManualTakeoverService} from '../customerService/customerMa
 import {createCustomerManualTakeoverRouter} from './customerManualTakeover.js';
 import { customerServicePolicy, customerServiceStatus, readTenantEnterpriseProfile } from './enterprise.js';
 import { readCustomerMessagingAuthorization } from '../digitalEmployees/customerMessagingPolicy.js';
-import { createMockCustomers } from '../../src/mocks/customerProfiles.js';
+import { readHistoricalCustomers } from '../customerService/historicalConversations.js';
 
 export const customerSuggestionsRouter = Router();
 customerSuggestionsRouter.use(requireAuth);
+// Archived identities must never enter live mutation or channel-send handlers.
+customerSuggestionsRouter.use('/:id', (req, res, next) => {
+  if (!['GET', 'HEAD', 'OPTIONS'].includes(req.method) && String(req.params.id).startsWith('history_')) {
+    res.status(403).json({ error: 'historical_conversation_read_only' });
+    return;
+  }
+  next();
+});
 
 const manualTakeoverService=createCustomerManualTakeoverService(store);
 
@@ -57,10 +65,8 @@ customerSuggestionsRouter.get('/', requireAuth, async (req, res) => {
   const liveItems = source === 'messenger' ? (await readAuthorizedMessengerCustomers(tenantId))
     : source === 'instagram' ? getInstagramCustomers(tenantId)
       : [...(await readAuthorizedMessengerCustomers(tenantId)), ...getInstagramCustomers(tenantId)].sort((a, b) => b.lastActiveAt - a.lastActiveAt);
-  const beautyShowcaseTenantId = String(process.env.BEAUTY_SHOWCASE_TENANT_ID || '').trim();
-  const items = !source && !liveItems.length && beautyShowcaseTenantId && tenantId === beautyShowcaseTenantId
-    ? createMockCustomers('beautys-showcase@local.test').map(customer => ({ ...customer, isMock: false, isReal: true }))
-    : liveItems;
+  const items = source ? liveItems : [...liveItems, ...readHistoricalCustomers(tenantId)]
+    .sort((a, b) => Number(b.lastActiveAt || 0) - Number(a.lastActiveAt || 0));
   res.json({ items, source: source || 'all' });
 });
 
