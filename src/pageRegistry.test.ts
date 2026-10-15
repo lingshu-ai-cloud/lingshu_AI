@@ -1,4 +1,6 @@
 import assert from 'node:assert/strict';
+import fs from 'node:fs';
+import { availableProductPage } from './config/productSurfaceFlags.js';
 import {
   PAGE_IDS,
   PAGE_REGISTRY,
@@ -56,3 +58,13 @@ assert.equal(PAGE_REGISTRY.channels.navParent, 'plugins');
 assert.equal(PAGE_REGISTRY.accountManagement.navParent, 'socialMonitoring');
 
 console.log('Page registry tests passed');
+
+for (const retired of ['orders', 'scheduled'] as const) {
+  assert.equal(resolvePage(retired), 'digitalEmployees');
+  assert.equal(resolveNavigationPage(retired), 'digitalEmployees');
+  assert.equal(availableProductPage(retired), 'digitalEmployees');
+  const layout = fs.readFileSync(new URL('./components/Layout.tsx', import.meta.url), 'utf8');
+  assert.ok(!layout.includes(`navItem('${retired}'`), `${retired} must not appear in navigation`);
+}
+const app = fs.readFileSync(new URL('./App.tsx', import.meta.url), 'utf8');
+assert.doesNotMatch(app, /OrderManagementPage|ScheduledPage/, 'retired pages must not be loaded or rendered');

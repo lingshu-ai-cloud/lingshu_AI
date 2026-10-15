@@ -53,7 +53,6 @@ const CUSTOMER_NAV: NavSection = {
   label: '客户管理',
   items: [
     navItem('conversion', <DuotoneGlyph kind="customers" />),
-    navItem('orders', <DuotoneGlyph kind="orders" />),
   ],
 };
 
@@ -62,7 +61,6 @@ const AGENT_NAV: NavSection = {
   items: [
     navItem('enterprise', <DuotoneGlyph kind="enterprise" />),
     navItem('agentMemory', <DuotoneGlyph kind="memory" />),
-    navItem('scheduled', <DuotoneGlyph kind="schedule" />),
   ],
 };
 

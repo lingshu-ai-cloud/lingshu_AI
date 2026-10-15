@@ -98,6 +98,9 @@ export function isPage(value: unknown): value is Page {
  */
 export function resolvePage(value: unknown): Page | null {
   if (!isPage(value)) return null;
+  // Removed product pages: keep persisted links compatible, without mounting
+  // either page or changing the underlying order/scheduler services.
+  if (value === 'orders' || value === 'scheduled') return 'digitalEmployees';
   if (value === 'socialWorkspace' || value === 'socialSetup' || value === 'socialPlanning') return 'smartAssets';
   if (value === 'socialAccounts') return 'digitalEmployees';
   if (value === 'retention') return 'conversion';
