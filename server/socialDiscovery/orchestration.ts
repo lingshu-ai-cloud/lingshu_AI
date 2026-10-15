@@ -255,8 +255,15 @@ export function completeProductionGapResume(task: ProductionGapTask, now = new D
 
 export async function saveProductionGapTask(task: ProductionGapTask): Promise<void> {
   const existing = await store.list<{ id: string }>(DISCOVERY_GAP_TASK_COLLECTION, { where: { tenant_id: task.tenantId, gapTaskId: task.gapTaskId }, page: 1, perPage: 1 });
+  const {tenantId,...persistedTask}=task;
   const payload = {
-    ...task,
+    ...persistedTask,
+    // PocketBase normalizes optional text nulls to an empty string. Persist
+    // that canonical form so the strict read-after-write verification does
+    // not report a successful update as unavailable.
+    stopReason: task.stopReason ?? '',
+    lastError: task.lastError ?? '',
+    lastAttemptAt: task.lastAttemptAt ?? '',
     // Compatibility projections for rows created before the authoritative gap contract.
     productionGap: task.taskGap.description,
     budgetLimitCny: task.budget.limitCny,

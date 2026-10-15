@@ -195,6 +195,17 @@ test('weekly execution tasks freeze the full worker contract and aggregate real 
   assert.ok(materialTask && assetTask?.dependsOnTaskIds.includes(materialTask.taskId));
   assert.ok(tasks.some(task => task.scope === 'adaptation'));
   const review = tasks.find(task => task.schedule.stepKind === 'weekly_review')!;
+  const publishingTasks = tasks.filter(task => task.schedule.stepKind === 'publishing');
+  const monitoringTasks = tasks.filter(task => task.schedule.stepKind === 'performance_monitoring');
+  assert.ok(publishingTasks.every(task => review.dependsOnTaskIds.includes(task.taskId)), 'weekly review directly waits for every real publication');
+  assert.ok(monitoringTasks.every(task => review.dependsOnTaskIds.includes(task.taskId)), 'weekly review waits for every post-publication data collection');
+  assert.ok(Date.parse(review.schedule.estimatedStartAt) >= Date.parse('2026-10-11T12:00:00.000Z'));
+  assert.deepEqual(review.inputSnapshot.reviewWindow, {
+    startsAt: '2026-10-04T16:00:00.000Z',
+    endsAt: '2026-10-11T12:00:00.000Z',
+  });
+  assert.equal(review.inputSnapshot.waitsForAllWeeklyProductionAndPublishing, true);
+  assert.ok(review.dependsOnTaskIds.every(id => Date.parse(tasks.find(task => task.taskId === id)!.schedule.estimatedFinishAt) <= Date.parse(review.schedule.estimatedStartAt)));
   const extractions = tasks.filter(task => task.schedule.stepKind === 'template_extraction');
   assert.equal(extractions.length, draft.socialContentPackage.publicationTasks.length);
   for (const extraction of extractions) {

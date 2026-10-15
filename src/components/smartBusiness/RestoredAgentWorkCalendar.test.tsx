@@ -29,9 +29,32 @@ test('calendar clicks route persisted tasks to task details and placeholders to 
   }}}),'placeholder');
 });
 
-test('calendar leaves task and placeholder clicks to the shared details drawer',()=>{
+test('calendar consumes aggregate clicks while leaving task details in the shared drawer',()=>{
   const source=readFileSync(new URL('./RestoredAgentWorkCalendar.tsx',import.meta.url),'utf8');
-  assert.doesNotMatch(source,/onEventClick=\{event=>isSummaryEventData/);
+  assert.match(source,/isAggregateEventData\(event\.data\)/);
+  assert.match(source,/setExpandedGroups/);
   assert.match(source,/等待真实任务/);
   assert.match(source,/运行层生成真实任务后/);
+});
+
+test('weekly calendar exposes focused filters and hides completed work by default',()=>{
+  const source=readFileSync(new URL('./RestoredAgentWorkCalendar.tsx',import.meta.url),'utf8');
+  assert.match(source,/useState\(true\)/);
+  assert.match(source,/需我处理/);
+  assert.match(source,/隐藏已完成/);
+  assert.match(source,/今日内容生产/);
+  assert.match(source,/今日内容发布/);
+  assert.match(source,/本周经营准备/);
+  assert.match(source,/本周数据复盘/);
+  assert.match(source,/aggregate === 'weekly-start' \? dates\[0\]/);
+  assert.match(source,/aggregate === 'weekly-review' \? dates\[6\]/);
+  assert.match(source,/date === dates\[0\] \? mondayContentStart/);
+  assert.match(source,/lastBusinessFinish \+ 30/);
+  assert.match(source,/collapseEmptyTimeRanges/);
+});
+
+test('connected calendars never render synthetic cadence placeholders as tasks',()=>{
+  const source=readFileSync(new URL('./RestoredAgentWorkCalendar.tsx',import.meta.url),'utf8');
+  assert.match(source,/demo \? calendarDisplayPlaceholders\(summaries, calendarDate\) : \[\]/);
+  assert.match(source,/missing work is a contract\/blocker problem/);
 });

@@ -72,6 +72,7 @@ export type AgentCalendarTask = {
   productionTaskId?: string;
   /** Exact persisted weekly execution task that owns the production binding. */
   productionExecutionTaskId?: string;
+  workspaceTarget?: {programId:string;packageId:string;packageVersion:number;executionTaskId:string};
   materialRequestId?: string;
   materialAction?: 'upload' | 'verification';
   materialConsumerTaskIds?: string[];

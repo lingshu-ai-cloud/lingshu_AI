@@ -40,6 +40,7 @@ type Props = {
   timeZone?: string;
   loading?: boolean;
   timeGridHeight?: number | string;
+  collapseEmptyTimeRanges?: boolean;
   fixedHeight?: number | string;
   primaryAction?: ReactNode;
   filters?: ReactNode;
@@ -159,7 +160,7 @@ function CalendarIdentityMark({ identity }: { identity: LsCalendarIdentity }) {
 }
 
 /** Standard plugins only: all calendar pages share the same events, timezone and accessible detail path. */
-export function LsCalendar({ events, label, initialDate, initialView = 'dayGridMonth', view: controlledView, firstDay = 1, eventCardMode = 'compact', dateOnly = false, showAllEvents = false, density = 'default', flush = false, date, timeZone = 'Asia/Shanghai', loading, timeGridHeight = 'clamp(320px, calc(100dvh - 280px), 720px)', fixedHeight, primaryAction, filters, onRefresh, onDatesSet, onDateClick, onEventClick, onExternalDrop, onMoveEvent, detailsTitle = '排期详情', detailsMedia = 'large', detailsLayout = 'standard', workspaceMode = 'bounded', renderDetails }: Props) {
+export function LsCalendar({ events, label, initialDate, initialView = 'dayGridMonth', view: controlledView, firstDay = 1, eventCardMode = 'compact', dateOnly = false, showAllEvents = false, density = 'default', flush = false, date, timeZone = 'Asia/Shanghai', loading, timeGridHeight = 'clamp(320px, calc(100dvh - 280px), 720px)', collapseEmptyTimeRanges = false, fixedHeight, primaryAction, filters, onRefresh, onDatesSet, onDateClick, onEventClick, onExternalDrop, onMoveEvent, detailsTitle = '排期详情', detailsMedia = 'large', detailsLayout = 'standard', workspaceMode = 'bounded', renderDetails }: Props) {
   const calendarRef = useRef<CalendarRef>(null);
   const hostRef = useRef<HTMLDivElement>(null);
   const revealObserverRef = useRef<IntersectionObserver | null>(null);
@@ -265,6 +266,28 @@ export function LsCalendar({ events, label, initialDate, initialView = 'dayGridM
       };
     });
   }, [events, Boolean(onMoveEvent)]);
+  const occupiedTimeSlots = useMemo(() => {
+    if (!collapseEmptyTimeRanges) return new Set<string>();
+    const formatter = new Intl.DateTimeFormat('en-GB', { timeZone, hour: '2-digit', minute: '2-digit', hourCycle: 'h23' });
+    const minuteOfDay = (value: Date) => {
+      const parts = formatter.formatToParts(value);
+      const hour = Number(parts.find(part => part.type === 'hour')?.value || 0);
+      const minute = Number(parts.find(part => part.type === 'minute')?.value || 0);
+      return hour * 60 + minute;
+    };
+    const slots = new Set<string>();
+    for (const input of inputs) {
+      if (input.allDay || !input.start) continue;
+      const start = new Date(String(input.start));
+      const end = input.end ? new Date(String(input.end)) : new Date(start.getTime() + 30 * 60_000);
+      if (!Number.isFinite(start.getTime()) || !Number.isFinite(end.getTime())) continue;
+      const first = Math.floor(minuteOfDay(start) / 30) * 30;
+      const last = Math.max(first + 30, Math.ceil(minuteOfDay(end) / 30) * 30);
+      for (let minute = first; minute < last; minute += 30) slots.add(String(minute));
+    }
+    return slots;
+  }, [collapseEmptyTimeRanges, inputs, timeZone]);
+  const slotClassNames = (date: Date) => collapseEmptyTimeRanges && !occupiedTimeSlots.has(String(date.getHours() * 60 + date.getMinutes())) ? 'ls-calendar-slot-collapsed' : '';
 
   const move = async (event: LsCalendarEvent, newStart: string) => {
     if (!event.editable || !moveRef.current) throw new Error('当前事件不允许调整排期');
@@ -317,13 +340,14 @@ export function LsCalendar({ events, label, initialDate, initialView = 'dayGridM
         // owns the sole internal scroller; the surrounding page stays stable.
         headerToolbar={false} contentHeight={fixedHeight === 'auto' && showAllEvents && !['dayGridWeek', 'dayGridDay'].includes(view) ? timeGridHeight : fixedHeight ?? timeGridHeight} events={inputs} eventOrder="start,id" eventOrderStrict slotEventOverlap={false} editable={Boolean(onMoveEvent)} eventDurationEditable={false} eventInteractive dayMaxEvents={(showAllEvents || eventCardMode === 'media') && ['dayGridWeek', 'dayGridDay'].includes(view) ? false : 3} nowIndicator expandRows tableHeaderSticky
         allDaySlot={eventCardMode === 'media' ? false : inputs.some(event => event.allDay)} noEventsText="当前周期没有排期" slotMinTime="08:00:00" slotMaxTime="22:00:00" slotDuration="00:30:00" slotHeaderInterval="02:00:00" scrollTime="08:00:00" scrollTimeReset slotHeaderFormat={{ hour: '2-digit', minute: '2-digit', hour12: false }} eventTimeFormat={{ hour: '2-digit', minute: '2-digit', hour12: false }}
+        slotLaneClass={(info: {date: Date}) => slotClassNames(info.date)}
         eventMinHeight={24} eventShortHeight={68} columnEventInnerClass="ls-calendar-time-inner"
         datesSet={info => { setTitle(info.view.title); setView(info.view.type as LsCalendarView); onDatesSet?.(info); }}
         dateClick={info => onDateClick?.(info.dateStr, info.allDay)}
         dayCellClass={info => [info.isToday ? 'ls-calendar-today' : '', [0, 6].includes(info.dow) ? 'ls-calendar-weekend' : ''].join(' ')}
         dayCellDidMount={info => { info.el.dataset.calendarDate = calendarDayKey(info.date, timeZone); }}
         dayLaneDidMount={info => { info.el.dataset.calendarDate = calendarDayKey(info.date, timeZone); }}
-        eventClass={info => { const item = info.event.extendedProps.item as LsCalendarEvent; return `ls-calendar-event ls-calendar-event-${item.status} ls-calendar-event-reveal${item.cardLines ? ' ls-calendar-event-three-row' : ''}${item.planPlaceholder ? ' ls-calendar-event-placeholder' : ''}${reducedMotion || revealedEventIdsRef.current.has(info.event.id) ? ' is-revealed' : ''}`; }}
+        eventClass={info => { const item = info.event.extendedProps.item as LsCalendarEvent; const aggregateGroup = item.data && typeof item.data === 'object' && (item.data as {kind?: string}).kind === 'aggregate' ? (item.data as {group?: string}).group : ''; return `ls-calendar-event ls-calendar-event-${item.status} ls-calendar-event-reveal${item.cardLines ? ' ls-calendar-event-three-row' : ''}${item.planPlaceholder ? ' ls-calendar-event-placeholder' : ''}${aggregateGroup ? ` ls-calendar-event-aggregate ls-calendar-event-aggregate-${aggregateGroup}` : ''}${reducedMotion || revealedEventIdsRef.current.has(info.event.id) ? ' is-revealed' : ''}`; }}
         eventContent={info => {
           const item = info.event.extendedProps.item as LsCalendarEvent;
           if (info.view.type.startsWith('timeGrid') && info.event.allDay) {

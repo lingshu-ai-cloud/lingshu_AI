@@ -31,6 +31,8 @@ import { createStarter198Repository } from '../starter198/repository.js';
 import { socialJson } from '../starter198/socialContentValidation.js';
 import { validateContentArtifact } from '../runtime/socialWeeklyResultValidation.js';
 import { decideSocialContentArtifact } from '../starter198/socialContentOutputs.js';
+import { weeklyReviewWindowBounds } from '../socialReview/weeklyReviewTiming.js';
+import {ensureWeeklyTaskWorkspaces} from './weeklyTaskWorkspaces.js';
 import {
   acquireDurableOperationLease,
   releaseDurableOperationLease,
@@ -382,7 +384,7 @@ export function planWeeklyExecutionTasks(
     scheduleByMother.set(motherDayKey, add({
       workflowKind: 'directing', scope: 'content', subjectId: `${motherContentId}:${rollingDate}:business-schedule`,
       accountId: null, publicationTaskId: null, dependsOnTaskIds: [directing.taskId],
-      inputSnapshot: { motherContentId, referenceSource, directorTaskId: directing.taskId, variants: items }, budget: noBudget,
+      inputSnapshot: { motherContentId, referenceSource, directorTaskId: directing.taskId, rollingCadence: 'daily_incremental', rollingDate, decisionScope: 'today_content_theme', variants: items }, budget: noBudget,
       ownBlockingReasons: [], stepKind: 'business_schedule', responsibleActor: 'business_agent', estimatedDurationMinutes: 15,
     }));
     items.forEach(item => {
@@ -532,10 +534,24 @@ export function planWeeklyExecutionTasks(
     budget: noBudget, ownBlockingReasons: [],
     stepKind: 'performance_monitoring', responsibleActor: 'business_agent', estimatedDurationMinutes: 30,
   }));
+  const reviewWindow = weeklyReviewWindowBounds(pkg);
+  const sundayReviewNotBeforeAt = Date.parse(reviewWindow.endsAt);
   const review = add({
+    // The card belongs to Sunday evening in the product calendar. Actual
+    // execution still waits for every publication and monitoring dependency,
+    // so a late data receipt moves the task later instead of fabricating an
+    // early completed review.
+    notBeforeAt: sundayReviewNotBeforeAt,
     workflowKind: 'review', scope: 'package', subjectId: pkg.packageId,
-    accountId: null, publicationTaskId: null, dependsOnTaskIds: engagement.map(item => item.taskId),
-    inputSnapshot: { objective: pkg.objective, successCriteria: pkg.successCriteria, profileWork: pkg.referenceSourcePolicy?.profile==='b2b_established'?'dual_source_performance_and_quota_review':'cold_start_baseline_and_profile_upgrade_review' },
+    accountId: null, publicationTaskId: null,
+    dependsOnTaskIds: [...new Set([...publishing.map(item => item.taskId), ...engagement.map(item => item.taskId)])],
+    inputSnapshot: {
+      objective: pkg.objective,
+      successCriteria: pkg.successCriteria,
+      reviewWindow,
+      waitsForAllWeeklyProductionAndPublishing: true,
+      profileWork: pkg.referenceSourcePolicy?.profile==='b2b_established'?'dual_source_performance_and_quota_review':'cold_start_baseline_and_profile_upgrade_review',
+    },
     budget: noBudget, ownBlockingReasons: [],
     stepKind: 'weekly_review', responsibleActor: 'business_agent', estimatedDurationMinutes: 45,
   });
@@ -633,7 +649,9 @@ export async function materializeWeeklyExecutionTasks(
       if(ref||refs.length){if(scheduleHash(ref)!==scheduleHash(record.ref)||refs.length!==1||scheduleHash(refs[0])!==scheduleHash(record.ref))throw new SocialProgramError('weekly_execution_continuation_ref_changed',409,'承接引用与真实冻结凭据不一致。');continue;}
       await assert();await writeWeeklyExecutionTask(dataStore,row,{...actual,inputSnapshot:{...actual.inputSnapshot,weeklyContinuationRef:record.ref},upstreamVersionRefs:[...actual.upstreamVersionRefs,record.ref]});
     }
-    return listWeeklyExecutionTasks(dataStore,tenantId,pkg.programId,pkg.packageId,pkg.version);
+    const tasks=await listWeeklyExecutionTasks(dataStore,tenantId,pkg.programId,pkg.packageId,pkg.version);
+    await ensureWeeklyTaskWorkspaces(dataStore,tasks);
+    return tasks;
   };
   if (existing.length && ((pkg as WeeklyScheduledPackage).scheduleRevisionRef || (pkg as WeeklyOperatingPackage&{templateApplicationRef?:VersionedSocialRef}).templateApplicationRef)) {
     const expectedByKey=new Map(planned.map(t=>[t.idempotencyKey,t]));
@@ -646,6 +664,7 @@ export async function materializeWeeklyExecutionTasks(
     if (existing.length !== planned.length || existing.some(item => !expected.has(item.idempotencyKey)||scheduleHash(item.dependsOnTaskIds)!==scheduleHash(planned.find(p=>p.idempotencyKey===item.idempotencyKey)!.dependsOnTaskIds))) {
       throw new SocialProgramError('weekly_execution_task_integrity_violation', 409, '周包执行任务集与当前版本不一致。');
     }
+    await ensureWeeklyTaskWorkspaces(dataStore,existing);
     return existing;
   }
   const created: WeeklyExecutionTaskRow[] = [];

@@ -61,15 +61,15 @@ dataStore.push('starter_publication_packages', {
   manifest: { contentId: 'content-a', operatingLineage: { operatingPackageRef: { id: 'weekly-a', version: 1 }, weeklyPublicationTaskRef: { id: 'publication-task-a', version: 1 } } },
   evidence: { verificationStatus: 'verified', verificationReceiptHash: 'receipt-a', sourceReceiptHash: 'source-receipt-a' },
 });
-dataStore.push('social_metric_snapshots', { tenant_id: 'tenant-a', platform: 'tiktok', account_id: 'account-a', content_id: 'content-a', captured_at: '2026-09-21T00:00:00Z', value_kind: 'cumulative', metrics: { views: 100 } });
-dataStore.push('social_metric_snapshots', { tenant_id: 'tenant-a', platform: 'tiktok', account_id: 'account-a', content_id: 'content-a', captured_at: '2026-09-27T12:00:00Z', value_kind: 'cumulative', metrics: { views: 280 } });
-dataStore.push('social_interaction_writebacks', { id: 'interaction-a', tenant_id: 'tenant-a', accountId: 'account-a', contentId: 'content-a', occurredAt: '2026-09-27T13:00:00Z', source_confidence: 'confirmed' });
-dataStore.push('social_sales_qualifications', { id: 'qualification-a', tenant_id: 'tenant-a', interaction_id: 'interaction-a', status: 'qualified', authority: 'sales', confirmed_at: '2026-09-27T14:00:00Z' });
+dataStore.push('social_metric_snapshots', { tenant_id: 'tenant-a', platform: 'tiktok', account_id: 'account-a', content_id: 'content-a', captured_at: '2026-09-20T16:00:00Z', value_kind: 'cumulative', metrics: { views: 100 } });
+dataStore.push('social_metric_snapshots', { tenant_id: 'tenant-a', platform: 'tiktok', account_id: 'account-a', content_id: 'content-a', captured_at: '2026-09-27T11:30:00Z', value_kind: 'cumulative', metrics: { views: 280 } });
+dataStore.push('social_interaction_writebacks', { id: 'interaction-a', tenant_id: 'tenant-a', accountId: 'account-a', contentId: 'content-a', occurredAt: '2026-09-27T11:40:00Z', source_confidence: 'confirmed' });
+dataStore.push('social_sales_qualifications', { id: 'qualification-a', tenant_id: 'tenant-a', interaction_id: 'interaction-a', status: 'qualified', authority: 'sales', confirmed_at: '2026-09-27T11:50:00Z' });
 dataStore.push('social_programs', { tenant_id: 'tenant-a', program_id: 'program-a', payload: { programId: 'program-a', version: 1 } });
 dataStore.push('social_owned_accounts', { tenant_id: 'tenant-a', program_id: 'program-a', payload: { accountId: 'account-a', programId: 'program-a', platform: 'tiktok', displayName: 'A', businessRole: 'sampling', audiencePromise: '', contentPromise: '', status: 'active', connectionId: null, connectionCapabilities: [], playbookRef: null, conversionRoute: null, version: 1, createdAt: '', updatedAt: '' } });
 
-assert.equal(weeklyReviewScheduleDecision(weekly, new Date('2026-09-27T23:59:59Z')).status, 'not_due');
-const first = await runWeeklyReviewForPackage({ dataStore, row, now: new Date('2026-09-28T00:01:00Z'), minimumOwnedContent: 1 });
+assert.equal(weeklyReviewScheduleDecision(weekly, new Date('2026-09-27T11:59:59Z')).status, 'not_due');
+const first = await runWeeklyReviewForPackage({ dataStore, row, now: new Date('2026-09-27T12:01:00Z'), minimumOwnedContent: 1 });
 assert.equal(first.status, 'completed');
 assert.equal(first.snapshot?.sampleSufficiency.status, 'sufficient');
 assert.equal(first.snapshot?.contents[0]?.salesQualifiedCount, 1, 'trusted sales confirmation enters the immutable review');

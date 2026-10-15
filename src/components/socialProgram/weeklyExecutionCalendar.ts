@@ -66,6 +66,7 @@ export function projectExecutionCalendar(tasks: WeeklyExecutionTask[], labels: R
     const inventoryTarget = executionInventoryApprovalTarget(task);
     return [{
       id: task.taskId,
+      workspaceTarget:{programId:task.programId,packageId:task.packageId,packageVersion:task.packageVersion,executionTaskId:task.taskId},
       executionStep: task.schedule.stepKind,
       calendarInternal: task.schedule.responsibleActor !== 'user' && ['material_preparation','material_readiness'].includes(task.schedule.stepKind),
       deliverableGroup: task.publicationTaskId ? bindingKey(task) : undefined,

@@ -65,7 +65,7 @@ export function agentCalendarTaskGroup(task: AgentCalendarTask): AgentCalendarSu
 
 export function taskHasDeliverableOrWorkspace(task: AgentCalendarTask): boolean {
   const hasWorkspace = Boolean(
-    task.productionTaskId || task.productionExecutionTaskId || task.planningTarget || task.reviewTarget || task.templateTarget
+    task.workspaceTarget || task.productionTaskId || task.productionExecutionTaskId || task.planningTarget || task.reviewTarget || task.templateTarget
     || task.customerExecutionTarget || task.publicationExecutionTarget || task.inventoryTarget || task.accountBindingTarget
     || task.enterpriseFactExceptionId || task.supplementTarget || task.salesTarget || task.materialRequestId
     || task.customerRunId || task.sendRecoveryTarget || task.nativeRecoveryTarget || task.publicationRecoveryTarget

@@ -100,6 +100,21 @@
 .ls-calendar-event-placeholder .ls-calendar-event-row-state { color: #71717a; font-weight: 400; }
 .ls-calendar-event-placeholder .ls-calendar-event-row-title { color: #52525b; font-weight: 500; }
 .ls-calendar-event-completed-check { position: absolute; inset-block-start: 5px; inset-inline-end: 5px; display: grid; width: 16px; height: 16px; place-items: center; border-radius: 50%; background: #168568; color: #fff; font-size: 11px; font-weight: 800; line-height: 1; }
+#agent-weekly-calendar .ls-calendar-event-done { border-color: #e4e4e7; border-inline-start-color: #86a99d; background: #fafafa; color: #52525b; }
+#agent-weekly-calendar .ls-calendar-event-done .ls-calendar-event-row-title { color: #52525b; font-weight: 600; }
+#agent-weekly-calendar .ls-calendar-event-done .ls-calendar-event-row-owner,
+#agent-weekly-calendar .ls-calendar-event-done .ls-calendar-event-row-state { color: #a1a1aa; }
+#agent-weekly-calendar .ls-calendar-event-aggregate { border-style: solid !important; border-color: #dbe5f4 !important; border-inline-start-width: 4px; background: #f4f8ff !important; }
+#agent-weekly-calendar .ls-calendar-event-aggregate-weekly-start,
+#agent-weekly-calendar .ls-calendar-event-aggregate-weekly-review { border-color: #e5ddc9 !important; border-inline-start-color: #9a6b16 !important; background: #fffaf0 !important; }
+#agent-weekly-calendar .ls-calendar-event-aggregate-production-chain { border-inline-start-color: #6d5bd0 !important; background: #f7f5ff !important; }
+#agent-weekly-calendar .ls-calendar-event-aggregate-publishing { border-inline-start-color: #2563eb !important; background: #f3f7ff !important; }
+#agent-weekly-calendar .ls-calendar-event-aggregate .ls-calendar-event-row-owner { font-size: 9px; font-weight: 500; }
+#agent-weekly-calendar .ls-calendar-event-aggregate .ls-calendar-event-row-title { font-size: 13px; font-weight: 750; }
+#agent-weekly-calendar .ls-calendar-event-aggregate .ls-calendar-event-content-three-row { grid-template-rows: 14px 18px; align-content: center; }
+#agent-weekly-calendar .ls-calendar-event-aggregate .ls-calendar-event-row-state { display: none; }
+#agent-weekly-calendar .fc-timegrid-slot.ls-calendar-slot-collapsed { height: 10px; border-top-style: dashed; border-top-color: #eef0f3; }
+#agent-weekly-calendar tr:has(.fc-timegrid-slot.ls-calendar-slot-collapsed) .fc-timegrid-slot-label { color: transparent; font-size: 0; }
 .ls-calendar-event-content-all-day { width: 100%; max-height: 44px; align-items: center; overflow: hidden; box-sizing: border-box; }
 .ls-calendar-event-content-all-day .ls-calendar-thumb { width: 28px; height: 28px; }
 .ls-calendar-event-identity { display: inline-flex; width: 40px; height: 40px; flex: 0 0 40px; align-items: center; justify-content: center; overflow: hidden; border: 1px solid var(--color-border, #e4e4e7); border-radius: 10px; background: #fff; }

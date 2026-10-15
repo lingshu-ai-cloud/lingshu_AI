@@ -212,6 +212,10 @@ assert.match(source, /const revealObserverRef = useRef<IntersectionObserver \| n
 assert.match(source, /revealedEventIdsRef\.current\.has\(info\.event\.id\)/, 'stable event ids prevent replay after refresh or remount');
 assert.match(source, /eventWillUnmount=\{info => \{[\s\S]*?\.unobserve\(element\)[\s\S]*?mountedEventElementsRef\.current\.delete\(element\)/, 'unmounted cards must be detached from reveal observation');
 assert.match(css, /\.ls-calendar \.ls-calendar-event-reveal\s*\{[^}]*opacity:\s*0;[^}]*translateY\(8px\)[^}]*var\(--ls-motion-enter\)[^}]*var\(--ls-ease-enter\)/, 'scroll reveal must use the shared restrained enter motion');
+assert.match(source, /ls-calendar-event-aggregate-/, 'aggregate workflow cards expose their summary role to the calendar surface');
+assert.match(css, /#agent-weekly-calendar \.ls-calendar-event-aggregate/, 'summary styling stays scoped to the Agent weekly calendar');
+assert.match(source, /slotLaneClass=\{\(info: \{date: Date\}\) => slotClassNames\(info\.date\)\}/, 'Agent calendars can compact time rows that are empty across the whole visible week');
+assert.match(css, /#agent-weekly-calendar \.fc-timegrid-slot\.ls-calendar-slot-collapsed/, 'empty time compression stays scoped to the Agent weekly calendar');
 assert.match(css, /@media \(prefers-reduced-motion: reduce\)[^{]*\{[^}]*\.ls-calendar \.ls-calendar-event-reveal[^}]*opacity:\s*1 !important;[^}]*transform:\s*none !important;[^}]*transition:\s*none !important/, 'reduced motion must reveal every card immediately');
 assert.doesNotMatch(css, /\.ls-calendar[^}]*transition-delay/, 'calendar cards must never use a staggered reveal');
 console.log('Calendar bounded workspace, truthful time axis, scroll reveal and compact event layout tests passed');

@@ -45,7 +45,6 @@ import { LsCalendar, calendarDayKey, type LsCalendarEvent } from "./ui/LsCalenda
 import { calendarWeekday, thumbnailUrlWithSourceFallback } from "../lib/calendarModel";
 import WeeklyContentProgressPanel from "./smartBusiness/WeeklyContentProgressPanel";
 import WeeklyProductionStudioEntry from "./smartBusiness/WeeklyProductionStudioEntry";
-import { projectWeeklyGoalCalendar } from "./smartBusiness/weeklyGoalCalendar";
 
 export type SmartBusinessView = "home" | "matrix" | "production" | "review";
 
@@ -945,8 +944,7 @@ const matrixScheduleStages = [
 
 
 function MatrixView({ calendarTasks, calendarDemo, data, onRefresh, onOpenContent, onOpenAgentSettings }: { calendarTasks?: AgentCalendarTask[]; calendarDemo?: boolean; data: DigitalEmployeeOverview; onRefresh?: () => void; onNavigate?: (page: Page) => void; onGeneratePlan?: () => void; selectedAccountId?: string; onOpenContent?: (taskId?: string, socialContentTaskId?: string, projectId?: string) => void; onOpenAgentSettings?: () => void; onOpenProductionProgress?: (taskId: string, contentItemId: string, projectId?: string) => void; onRetryTask?: (taskId: string) => Promise<boolean> }) {
-  const effectiveCalendarTasks = calendarTasks ?? (data.run ? projectWeeklyGoalCalendar(data) : undefined);
-  return <DigitalEmployeeWorkspace data={data} calendarTasks={effectiveCalendarTasks} calendarDemo={calendarDemo} onRefresh={onRefresh} onOpenContent={onOpenContent} onOpenAgentSettings={onOpenAgentSettings} publishingCalendar={<WeeklyPublishingCalendar data={data} onRefresh={onRefresh}/>}/>;
+  return <DigitalEmployeeWorkspace data={data} calendarTasks={calendarTasks} calendarDemo={calendarDemo} onRefresh={onRefresh} onOpenContent={onOpenContent} onOpenAgentSettings={onOpenAgentSettings} publishingCalendar={<WeeklyPublishingCalendar data={data} onRefresh={onRefresh}/>}/>;
 }
 
 function openTaskPreviewPage(item: ContentQueueItem, target: "benchmark" | "materials", onNavigate?: (page: Page) => void) {
