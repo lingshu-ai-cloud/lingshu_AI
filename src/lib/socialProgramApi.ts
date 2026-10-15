@@ -1,4 +1,5 @@
 import { getToken } from './auth';
+import type {WeeklyPipelineStartInput,WeeklyPipelineStatus} from '../../shared/contracts/weeklyExecutionPipeline';
 import type { WeeklyScheduleTargetGraph, WeeklyScheduleCapacityInput, WeeklyScheduleProposal, WeeklyScheduleConfirmation } from '../../shared/contracts/socialWeeklyScheduleRevision';
 import type {WeeklyProductionRepairCase} from '../../shared/contracts/weeklyProductionRepairCase';
 import type {UnplannedSocialDeliveryCard,WeeklyDeliveryCard} from '../../shared/contracts/weeklyDeliveryCard';
@@ -195,6 +196,11 @@ export const socialProgramApi = {
   async dispatchAgentSchedule(programId: string, packageId: string, versions: WeeklyAgentPlanningMutation): Promise<WeeklyAgentPlanningState> {
     return (await request<{ item: WeeklyAgentPlanningState }>(`/${encodeURIComponent(programId)}/operating-packages/${encodeURIComponent(packageId)}/agent-planning/dispatch`, { method: 'POST', ...json(versions) })).item;
   },
+  async readExecutionPipeline(programId:string,packageId:string,version:number):Promise<WeeklyPipelineStatus>{return (await request<{item:WeeklyPipelineStatus}>(`/${encodeURIComponent(programId)}/operating-packages/${encodeURIComponent(packageId)}/execution-pipeline?version=${version}`)).item;},
+  async connectLocalWeeklyConsumer(programId:string,packageId:string,version:number):Promise<void>{await request(`/${encodeURIComponent(programId)}/operating-packages/${encodeURIComponent(packageId)}/execution-pipeline/connect-local-consumer`,{method:'POST',...json({expectedPackageVersion:version})});},
+  async startIndependentWeeklyBranches(programId:string,packageId:string,version:number):Promise<{pipeline:WeeklyPipelineStatus}>{return request(`/${encodeURIComponent(programId)}/operating-packages/${encodeURIComponent(packageId)}/execution-pipeline/start-independent`,{method:'POST',...json({expectedPackageVersion:version})});},
+  async prepareExecutionAuthority(programId:string,packageId:string,version:number):Promise<{item:WeeklyOperatingPackage|null;resolution:OperatingPlanningResolution|null}>{return request(`/${encodeURIComponent(programId)}/operating-packages/${encodeURIComponent(packageId)}/execution-pipeline/prepare-authority`,{method:'POST',...json({expectedPackageVersion:version})});},
+  async startExecutionPipeline(programId:string,packageId:string,input:WeeklyPipelineStartInput):Promise<{item:WeeklyOperatingPackage;pipeline:WeeklyPipelineStatus}>{return request(`/${encodeURIComponent(programId)}/operating-packages/${encodeURIComponent(packageId)}/execution-pipeline/start`,{method:'POST',...json(input)});},
   async readCancellation(programId: string, packageId: string, version: number): Promise<WeeklyCancellationSummary | null> {
     const result = await request<{ item: WeeklyCancellationSummary | null }>(`/${encodeURIComponent(programId)}/operating-packages/${encodeURIComponent(packageId)}/cancellation?version=${version}`);
     return parseWeeklyCancellationSummary(result.item);

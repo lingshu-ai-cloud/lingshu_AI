@@ -1,4 +1,5 @@
 import { createHash } from 'node:crypto';
+import {naturalWeek} from '../../shared/naturalWeek.js';
 import type {
   BusinessGoalBuildInput,
   ConversionRouteInput,
@@ -82,7 +83,7 @@ function validateWeekStart(value: unknown): string {
   if (!/^\d{4}-\d{2}-\d{2}$/.test(date) || Number.isNaN(parsed.getTime()) || parsed.toISOString().slice(0, 10) !== date) {
     throw new SocialOperatingDecisionError('week_start_invalid', 400, '周起始日期必须使用 YYYY-MM-DD。');
   }
-  return date;
+  return naturalWeek(date).start;
 }
 
 export function createSocialOperatingOrchestrationService(
@@ -147,6 +148,7 @@ export function createSocialOperatingOrchestrationService(
 
     async resolve(tenantId: string, userId: string, programId: string, request: OperatingPlanningRequest, producerOriginal?:{key:string;recoveryOnly?:boolean}): Promise<OperatingPlanningResolution> {
       const weekStart = validateWeekStart(request.weekStart);
+      request={...request,weekStart};
       const producerHash=producerOriginal?deterministicFingerprint({tenantId,userId,programId,request}):null;
       if(producerOriginal){
         if(!producerOriginal.key)throw Error('weekly_outline_original_key_required');

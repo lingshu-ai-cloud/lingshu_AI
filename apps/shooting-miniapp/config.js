@@ -1,2 +1,2 @@
-// 用户确认：正式服 app.lingshu.site；测试服 lingshu.site；售前 preview.lingshu.site。
-module.exports = { apiBase: 'https://app.lingshu.site' }
+// 本地微信开发者工具联调：由本机 API 服务访问本地 PocketBase。
+module.exports = { apiBase: 'http://127.0.0.1:8788' }

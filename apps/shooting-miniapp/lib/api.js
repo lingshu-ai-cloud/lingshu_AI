@@ -116,3 +116,15 @@ module.exports.chat = messages => new Promise((resolve, reject) => {
 module.exports.command = body => request('starter-198/commands', 'POST', body);
 module.exports.customers = () => request('customers')
 module.exports.sendCustomerMessage = (customerId, body, requestId) => request('customers/' + encodeURIComponent(customerId) + '/outbox', 'POST', { body, requestId })
+module.exports.translateText = (text, source, target) => request('plugins/translate/run', 'POST', { text, source, target })
+module.exports.translateCustomerReply = (text, target) => module.exports.translateText(text, '简体中文', target)
+module.exports.recommendCustomerReply = (customer, instruction) => request('agents/conversion/draft', 'POST', {
+  customerId: customer.id,
+  language: customer.language || 'English',
+  stage: customer.stage || '',
+  timeline: customer.timeline || [],
+  message: customer.preview || '',
+  intent: 'reply',
+  instruction: instruction || '',
+  manualRequest: true
+})

@@ -6,6 +6,19 @@ import { renderToStaticMarkup } from 'react-dom/server';
 import Calendar, {isPastUnfinishedCalendarTask} from './RestoredAgentWorkCalendar';
 import type { AgentCalendarTask } from './AgentWeeklyCalendar';
 const base: AgentCalendarTask = {id:'business',date:'2026-10-12',time:'10:00',agent:'business',title:'冻结经营任务',output:'经营交付',context:'实际范围',minutes:30,status:'planned',dueAt:'2026-10-12T10:00:00+08:00'};
+test('weekly board is Monday through Sunday and direct execution never substitutes a status workspace',()=>{
+ const source=readFileSync(new URL('./RestoredAgentWorkCalendar.tsx',import.meta.url),'utf8');
+ const connected=readFileSync(new URL('./ConnectedAgentCalendar.tsx',import.meta.url),'utf8');
+ const bridge=readFileSync(new URL('../socialProgram/WeeklyCustomerCalendar.tsx',import.meta.url),'utf8');
+ assert.match(source,/firstDay=\{1\}/);
+ assert.match(source,/交付物与当前受阻原因/);assert.match(source,/executionBlockers/);assert.match(source,/executionResultRefs/);
+ assert.match(source,/onEnterExecution\(source,controller.signal\)/);assert.match(source,/进入真实执行界面/);
+ assert.match(bridge,/onEnterExecution=\{onEnterExecution\}/);assert.match(connected,/onEnterExecution=\{enterExecution\}/);
+ const handler=connected.slice(connected.indexOf('async function enterExecution'),connected.indexOf('if (!program)',connected.indexOf('async function enterExecution')));
+ assert.match(handler,/readWeeklyContentNavigation/);assert.match(handler,/weeklyContentNavigationDetail\(binding\)/);
+ assert.doesNotMatch(handler,/openWorkspace|readOrRepairWeeklyTaskWorkspace/,'a status snapshot is not a real production destination');
+ assert.match(handler,/projection.binding/);assert.match(handler,/currentSelection.current===captured/);
+});
 test('Agent filtering shows real cards directly without duplicate summary cards', () => {
   const tasks = [base, {...base,id:'content',agent:'content' as const,title:'冻结内容任务'}, {...base,id:'human',agent:'human' as const,title:'冻结人工交接'}];
   const html = renderToStaticMarkup(createElement(Calendar,{startsAt:base.date,tasks,agentRole:'business'}));

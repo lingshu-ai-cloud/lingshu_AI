@@ -7,6 +7,7 @@ import { runWeeklyHumanMaterialRecoveryScan } from './weeklyHumanMaterialRecover
 import { materializeWeeklyCustomerChannelAuthorizationException, runWeeklyCustomerChannelAuthorizationExceptionScan } from './weeklyCustomerChannelAuthorizationExceptions.js';
 import { materializeWeeklySupplementException, runWeeklySupplementExceptionScan } from './weeklySupplementExceptionMaterializer.js';
 import {weeklyExecutionObservation} from './weeklyExecutionObservation.js';
+import {weeklyScopeMatches,type WeeklyScanScope} from './weeklyScanScope.js';
 import { runWeeklyDeadlineRecoveryScan, type DeadlineRecoveryEvidenceReader } from './socialWeeklyDeadlineRecovery.js';
 import { randomUUID } from 'node:crypto';
 import { SocialProgramError } from '../socialPrograms/service.js';
@@ -24,6 +25,7 @@ import { createWeeklyExecutionContinuationService } from '../socialPrograms/week
 import type { SocialWeeklyExecutionAdapter, WeeklyExecutionAdapterResult } from './socialWeeklyExecutionAdapter.js';
 
 import {TEMPLATE_EXECUTION_INPUT_BLOCKERS} from '../socialPrograms/templateExecutionBlockingCodes.js';
+import {readIndependentAdmission} from '../socialPrograms/weeklyIndependentAdmission.js';
 
 export const WEEKLY_PREPRODUCTION_STEPS: WeeklyProductionStepKind[] = ['business_outline', 'benchmark_collection', 'benchmark_scoring', 'director_analysis', 'business_schedule'];
 
@@ -33,6 +35,10 @@ export function createSocialWeeklyPlanningAdapter(dataStore: DataStore): SocialW
     const packages = await dataStore.list<PackageRow>(PACKAGES, { where: { tenant_id: task.tenantId, program_id: task.programId, package_id: task.packageId, version: task.packageVersion }, page: 1, perPage: 1 });
     const pkg = packages.items[0]?.payload;
     if (!pkg || !['draft', 'active'].includes(pkg.status) || pkg.packageId !== task.packageId || pkg.version !== task.packageVersion) return { status: 'blocked', code: 'weekly_package_not_executable', message: '本周任务包已被替代、停用或不存在。' };
+    if(['business_outline','benchmark_collection'].includes(task.schedule.stepKind)){
+      const producer=await readWeeklyPreproductionExecutionGate(dataStore,task);
+      if(producer.ready)return {status:'succeeded',resultRefs:producer.resultRefs};
+    }
     if(task.schedule.stepKind==='business_outline'&&pkg.socialContentPackage?.publicationTasks?.length&&pkg.socialContentPackage.publicationTasks.every(p=>p.inventoryReuseRef)){
       try{const {readWeeklyInventoryOutlineEvidence}=await import('./weeklyInventoryOutlineEvidence.js');const result=await readWeeklyInventoryOutlineEvidence(dataStore,task);return {status:'succeeded',resultRefs:result.resultRefs};}
       catch(error){if(error instanceof SocialProgramError)return {status:'blocked',code:error.code,message:error.message};throw error;}
@@ -90,19 +96,20 @@ export async function runSocialWeeklyExecutionScan(input: {
   maxTasksPerTenant?: number;
   leaseDurationMs?: number;
   now?: Date;
+  scope?:WeeklyScanScope;
   readRecoveryEvidence?: DeadlineRecoveryEvidenceReader;
   humanMaterialPorts?: WeeklyMaterialPorts;
   preproductionPorts?: Omit<Parameters<typeof runWeeklyPreproductionProducerScan>[0], 'store' | 'now'>;
   metricRecoveryPorts?: Omit<Parameters<typeof runWeeklyMetricCollectionRecoveryScan>[0], 'store' | 'now'>;
 }) {
   const dataStore = input.dataStore ?? store;
-  const preproduction = await runWeeklyPreproductionProducerScan({ ...input.preproductionPorts, store: dataStore, now: input.now });
-  const metricRecovery = await runWeeklyMetricCollectionRecoveryScan({ ...input.metricRecoveryPorts, store: dataStore, now: input.now });
-  const templateRecovery = await runWeeklyTemplateExtractionRecoveryScan({ store: dataStore, now: input.now });
-  const deadlineRecovery = await runWeeklyDeadlineRecoveryScan({ dataStore, now: input.now, readEvidence: input.readRecoveryEvidence });
-  const supplementRecovery = await runWeeklySupplementExceptionScan({ store: dataStore, now: input.now });
-  const customerAuthorizationRecovery = await runWeeklyCustomerChannelAuthorizationExceptionScan({ store: dataStore, now: input.now });
-  const humanMaterialRecovery = await runWeeklyHumanMaterialRecoveryScan({ store: dataStore, now: input.now, materialPorts: input.humanMaterialPorts });
+  const preproduction = await runWeeklyPreproductionProducerScan({ ...input.preproductionPorts, store: dataStore, now: input.now,scope:input.scope });
+  const metricRecovery = await runWeeklyMetricCollectionRecoveryScan({ ...input.metricRecoveryPorts, store: dataStore, now: input.now,scope:input.scope });
+  const templateRecovery = await runWeeklyTemplateExtractionRecoveryScan({ store: dataStore, now: input.now,scope:input.scope });
+  const deadlineRecovery = await runWeeklyDeadlineRecoveryScan({ dataStore, now: input.now, readEvidence: input.readRecoveryEvidence,scope:input.scope });
+  const supplementRecovery = await runWeeklySupplementExceptionScan({ store: dataStore, now: input.now,scope:input.scope });
+  const customerAuthorizationRecovery = await runWeeklyCustomerChannelAuthorizationExceptionScan({ store: dataStore, now: input.now,scope:input.scope });
+  const humanMaterialRecovery = await runWeeklyHumanMaterialRecoveryScan({ store: dataStore, now: input.now, materialPorts: input.humanMaterialPorts,scope:input.scope });
   const worker = createSocialWeeklyExecutionWorker(dataStore);
   const planningAuthority = createSocialWeeklyPlanningAdapter(dataStore);
   const workerId = input.workerId ?? `weekly-execution-${process.pid}-${randomUUID()}`;
@@ -111,14 +118,17 @@ export async function runSocialWeeklyExecutionScan(input: {
   for (const status of ['queued', 'leased']) {
     for (let page = 1; ; page++) {
       const rows = await dataStore.list<WeeklyExecutionTaskRow>(WEEKLY_EXECUTION_TASKS, { where: { status }, page, perPage: 500 });
-      for (const row of rows.items) if (row.tenant_id && row.payload?.tenantId === row.tenant_id) tenants.add(row.tenant_id);
+      for (const row of rows.items) if (row.tenant_id && row.payload?.tenantId === row.tenant_id&&weeklyScopeMatches(input.scope,row.payload)) tenants.add(row.tenant_id);
       if (page >= rows.totalPages || !rows.items.length) break;
     }
   }
-  const report = { claimed: 0, succeeded: 0, pending: 0, blocked: 0, failed: 0 };
+  const report = { claimed: 0, succeeded: 0, pending: 0, blocked: 0, failed: 0, projectionFailed:0 };
   for (const tenantId of tenants) {
     for (let count = 0; count < (input.maxTasksPerTenant ?? 25); count++) {
-      let claim = await worker.claimNext({ tenantId, workerId, now: input.now, leaseDurationMs: input.leaseDurationMs ?? 120_000 });
+      // Local JSON reads resolve synchronously; a long chain of resolved
+      // promises otherwise starves HTTP/health timers while scanning a week.
+      await new Promise<void>(resolve=>setImmediate(resolve));
+      let claim = await worker.claimNext({ tenantId, workerId, now: input.now, leaseDurationMs: input.leaseDurationMs ?? 120_000,scope:input.scope });
       if (!claim) break;
       report.claimed++;
       let lostLease: unknown;
@@ -134,7 +144,22 @@ export async function runSocialWeeklyExecutionScan(input: {
         const adapter = input.adapters[claim.task.schedule.stepKind];
         let dispatchGate:WeeklyExecutionAdapterResult;
         let inventoryGateReady=false;
-        try{const {readWeeklyInventoryExecutionGate}=await import('./weeklyInventoryOutlineEvidence.js');const inventoryGate=await readWeeklyInventoryExecutionGate(dataStore,claim.task);inventoryGateReady=Boolean(inventoryGate);dispatchGate=inventoryGate?{status:'succeeded',resultRefs:inventoryGate.resultRefs}:await planningAuthority.execute({ ...claim.task, accountId: null, inputSnapshot: {}, schedule: { ...claim.task.schedule, stepKind: 'business_outline' } });}
+        try{
+          if(['customer_channel_readiness','customer_inquiry_handoff'].includes(claim.task.schedule.stepKind)){
+            const rows=await dataStore.list<PackageRow>(PACKAGES,{where:{tenant_id:claim.task.tenantId,program_id:claim.task.programId,package_id:claim.task.packageId,version:claim.task.packageVersion},perPage:2});
+            const pkg=rows.items[0]?.payload;
+            const independent=pkg?.status==='draft'&&await readIndependentAdmission(dataStore,claim.task);
+            dispatchGate=rows.totalItems===1&&(pkg?.status==='active'||independent)?{status:'succeeded',resultRefs:[]}:{status:'blocked',code:'weekly_package_not_executable',message:'客服任务所属周包尚未启用或已停用。'};
+          }else{
+            const {readWeeklyInventoryExecutionGate}=await import('./weeklyInventoryOutlineEvidence.js');const inventoryGate=await readWeeklyInventoryExecutionGate(dataStore,claim.task);inventoryGateReady=Boolean(inventoryGate);dispatchGate=inventoryGate?{status:'succeeded',resultRefs:inventoryGate.resultRefs}:await planningAuthority.execute({ ...claim.task, accountId: null, inputSnapshot: {}, schedule: { ...claim.task.schedule, stepKind: 'business_outline' } });
+            // Bound, verified preproduction is necessarily before formal
+            // dispatch. Do not make collection wait for its own downstream.
+            if(!inventoryGateReady&&['business_outline','benchmark_collection'].includes(claim.task.schedule.stepKind)){
+              const producer=await readWeeklyPreproductionExecutionGate(dataStore,claim.task);
+              if(producer.ready)dispatchGate={status:'succeeded',resultRefs:producer.resultRefs};
+            }
+          }
+        }
         catch(error){if(error instanceof SocialProgramError)dispatchGate={status:'blocked',code:error.code,message:error.message};else throw error;}
         if (dispatchGate.status === 'succeeded' && WEEKLY_ENTERPRISE_FACT_STEPS.has(claim.task.schedule.stepKind)) {
           const facts = await checkWeeklyEnterpriseFactSupplement({ store: dataStore, task: claim.task, now: input.now });
@@ -168,11 +193,13 @@ export async function runSocialWeeklyExecutionScan(input: {
         if (result.status === 'succeeded') { validatingCompletion = true; await worker.complete(claim, result.resultRefs, input.now); report.succeeded++; }
         else {
           await worker.defer(claim, { now: input.now, code: result.code, message: result.message, progress: result.progress, retryDelayMs: result.status === 'pending' ? result.retryDelayMs : undefined, blockingReason: result.status === 'blocked' ? result.code : undefined });
-          if (result.status === 'blocked') {
-            await materializeWeeklySupplementException({ store: dataStore, task: claim.task, gapCode: result.code, now: input.now });
-            await materializeWeeklyCustomerChannelAuthorizationException({ store: dataStore, task: claim.task, gapCode: result.code, now: input.now });
-          }
           report[result.status]++;
+          if (result.status === 'blocked') {
+            // The durable task was already deferred. An auxiliary exception
+            // projection must not re-fail that settled lease or hide its block.
+            // Recovery scans retry projections from the preserved exact gap.
+            for(const materialize of [materializeWeeklySupplementException,materializeWeeklyCustomerChannelAuthorizationException])try{await materialize({ store: dataStore, task: claim.task, gapCode: result.code, now: input.now });}catch{report.projectionFailed++;}
+          }
         }
       } catch (error) {
         clearInterval(timer);
@@ -186,7 +213,7 @@ export async function runSocialWeeklyExecutionScan(input: {
       } finally { clearInterval(timer); }
     }
   }
-  const humanMaterialAfterExecution = await runWeeklyHumanMaterialRecoveryScan({ store: dataStore, now: input.now, materialPorts: input.humanMaterialPorts });
+  const humanMaterialAfterExecution = await runWeeklyHumanMaterialRecoveryScan({ store: dataStore, now: input.now, materialPorts: input.humanMaterialPorts,scope:input.scope });
   return { ...report, preproduction, metricRecovery, templateRecovery, deadlineRecovery, supplementRecovery, customerAuthorizationRecovery, humanMaterialRecovery, humanMaterialAfterExecution };
 }
 

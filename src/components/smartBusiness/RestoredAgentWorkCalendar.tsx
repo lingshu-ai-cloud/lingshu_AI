@@ -18,11 +18,12 @@ import { hasReviewCalendarTarget, type ReviewCalendarTarget } from '../socialPro
 import { hasPlanningCalendarTarget, type PlanningCalendarTarget } from '../socialProgram/planningCalendarNavigation';
 import { calendarDayKey, calendarInstant, type LsCalendarEvent } from '../../lib/calendarModel';
 import { hourCalendarCard } from './agentHourCalendarPolicy';
-import { projectCalendarDeliverables, projectDailyCustomerServiceCards, isAlwaysOnCalendarTask, orderDailyCalendarTasks, mergeDailyTaskCards } from './calendarDeliverables';
+import { projectCalendarDeliverables, projectDailyCustomerServiceCards, isAlwaysOnCalendarTask, orderDailyCalendarTasks, projectDailyMilestones, conciseCalendarTitle } from './calendarDeliverables';
 import AgentRoleIcon, { AGENT_ROLE_PALETTE, type AgentVisualRole } from '../ui/AgentRoleIcon';
 import {agentCalendarTaskType,taskHasDeliverableOrWorkspace} from './agentCalendarGroups';
 import {readOrRepairWeeklyTaskWorkspace} from '../../lib/weeklyTaskWorkspaceApi';
 import type {WeeklyTaskWorkspace} from '../../../shared/contracts/weeklyTaskWorkspace';
+import {socialProgramApi} from '../../lib/socialProgramApi';
 
 const LsCalendar = typeof document === 'undefined'
   ? function ServerCalendar({ events, label }: { events: LsCalendarEvent[]; label: string }) {
@@ -62,6 +63,8 @@ function AgentIdentityCard({ role, relation }: { role: AgentCalendarTask['agent'
 }
 
 function deliveryFormLabel(task: AgentCalendarTask): string {
+  if(task.executionStep==='weekly_review')return '目标交付核验清单与冻结周报';
+  if(task.executionStep==='business_outline')return '周目标、验收标准与规划确认回执';
   if (task.publicationExecutionTarget || task.publicationRecoveryTarget) return '社媒发布与回执';
   if (task.customerExecutionTarget || task.agent === 'customer') return '客户承接与跟进';
   if (task.agent === 'director') return '脚本、分镜或审核结论';
@@ -134,6 +137,7 @@ type Props = {
   tasks: AgentCalendarTask[];
   demo?: boolean;
   onOpenProduction?: (task: AgentCalendarTask) => void;
+  onEnterExecution?: (task:AgentCalendarTask,signal?:AbortSignal)=>Promise<void>;
   agentRole?: AgentCalendarTask["agent"] | "";
   onOpenEnterpriseFacts?: (task: AgentCalendarTask) => void;
   onOpenPlanning?: (task: AgentCalendarTask) => void;
@@ -153,6 +157,7 @@ export default function RestoredAgentWorkCalendar({
   tasks,
   demo = false,
   onOpenProduction,
+  onEnterExecution,
   onOpenPlanning,
   onOpenReview,
   onOpenSupplement,
@@ -162,7 +167,7 @@ export default function RestoredAgentWorkCalendar({
   scopeKey,
   canOpenContentTask,
 }: Props) {
-  const positionKey = JSON.stringify([agentCalendarAuthIdentity(),scopeKey,startsAt,demo]);
+  const positionKey = JSON.stringify([agentCalendarAuthIdentity(),scopeKey,startsAt,demo,'milestones-monday-v2']);
   const stateKey = `restoredAgentCalendar:${positionKey}`;
   const saved = readAgentCalendarReturnContext();
   const previous = saved?.calendar.positionKey === positionKey ? saved.states[stateKey] as {date?: string; view?: LsCalendarView} | undefined : undefined;
@@ -179,9 +184,25 @@ export default function RestoredAgentWorkCalendar({
     const state = context?.calendar.positionKey === positionKey ? context.states[stateKey] as typeof viewport.current | undefined : undefined;
     setCalendarDate(state?.date || startsAt || tasks[0]?.date || calendarDayKey(new Date()));
     setCalendarView('dayGridWeek');
-    restoreAgentCalendarReturnContext();
+    if(context?.calendar.positionKey===positionKey)restoreAgentCalendarReturnContext(context);
   }, [positionKey]);
   const [now, setNow] = useState(() => Date.now());
+  const [entryState,setEntryState]=useState<{id:string;busy:boolean;error:string}|null>(null);
+  const entryController=useRef<AbortController|null>(null);
+  useEffect(()=>{entryController.current?.abort();setEntryState(null);return()=>entryController.current?.abort();},[positionKey]);
+  const [executionRuntime,setExecutionRuntime]=useState<'checking'|'disabled'|'ready'|'unavailable'>('checking');
+  const runtimeScopes=[...new Set(tasks.flatMap(t=>t.workspaceTarget?[JSON.stringify([t.workspaceTarget.programId,t.workspaceTarget.packageId,t.workspaceTarget.packageVersion])]:[]))];
+  const runtimeScopeKey=runtimeScopes.length===1?runtimeScopes[0]!:null;
+  useEffect(()=>{
+    if(demo)return;
+    setExecutionRuntime('checking');
+    if(!runtimeScopeKey){setExecutionRuntime('unavailable');return;}
+    const [programId,packageId,version]=JSON.parse(runtimeScopeKey) as [string,string,number];
+    const controller=new AbortController();let reading=false;
+    const refresh=async()=>{if(reading||controller.signal.aborted)return;reading=true;try{const result=await socialProgramApi.readExecutionPipeline(programId,packageId,version);const runtime=result.worker;if(!controller.signal.aborted)setExecutionRuntime(runtime.configuredEnabled&&runtime.started&&runtime.state!=='failed'?'ready':runtime.configuredEnabled===false||runtime.started===false?'disabled':'unavailable');}catch{if(!controller.signal.aborted)setExecutionRuntime('unavailable');}finally{reading=false;}};
+    void refresh();const timer=window.setInterval(()=>{if(!document.hidden)void refresh();},30000);
+    return()=>{controller.abort();window.clearInterval(timer);};
+  },[demo,positionKey,runtimeScopeKey]);
   const [activeFilter, setActiveFilter] = useState<'attention' | AgentCalendarTask['agent'] | 'all'>(agentRole || 'all');
   const [hideCompleted, setHideCompleted] = useState(false);
   const [taskWorkspace,setTaskWorkspace]=useState<{task:AgentCalendarTask;item:WeeklyTaskWorkspace|null;error:string;loading:boolean}|null>(null);
@@ -205,14 +226,15 @@ export default function RestoredAgentWorkCalendar({
     return () => window.clearInterval(timer);
   }, []);
 
-  const deliverables = useMemo(() => mergeDailyTaskCards(projectDailyCustomerServiceCards(projectCalendarDeliverables(tasks, true), startsAt)), [tasks, startsAt]);
+  const deliverables = useMemo(() => projectDailyMilestones(projectDailyCustomerServiceCards(projectCalendarDeliverables(tasks, true), startsAt)), [tasks, startsAt]);
   const timeZone = tasks.find(task => task.calendarClock?.timeZone)?.calendarClock?.timeZone || 'Asia/Shanghai';
-  const attentionCount = useMemo(() => deliverables.filter(task => ['blocked', 'failed'].includes(task.status) || task.agent === 'human' || taskIsOverdue(task, now)).length, [deliverables, now]);
+  const attentionIds = useMemo(() => new Set(deliverables.filter(task => ['blocked', 'failed'].includes(task.status) || task.agent === 'human' || task.dailyTaskGroup?.tasks.some(source=>source.agent==='human'||['blocked','failed'].includes(source.status)) || taskIsOverdue(task, now)).map(task=>task.id)), [deliverables, now]);
+  const attentionCount=attentionIds.size;
   const scopedDeliverables = useMemo(() => deliverables.filter(task => {
     if (activeFilter === 'all') return true;
-    if (activeFilter === 'attention') return ['blocked', 'failed'].includes(task.status) || task.agent === 'human' || taskIsOverdue(task, now);
-    return task.agent === activeFilter || task.agent === 'human';
-  }), [deliverables, activeFilter, now]);
+    if (activeFilter === 'attention') return attentionIds.has(task.id);
+    return task.agent === activeFilter || task.agent === 'human' || task.dailyTaskGroup?.tasks.some(source=>source.agent==='human');
+  }), [deliverables, activeFilter, attentionIds]);
   const independentTasks = useMemo(() => scopedDeliverables.filter(taskHasDeliverableOrWorkspace), [scopedDeliverables]);
   const events = useMemo<LsCalendarEvent[]>(() => {
     return orderDailyCalendarTasks(independentTasks)
@@ -258,7 +280,18 @@ export default function RestoredAgentWorkCalendar({
       flushSync(closeDetails);
       action(task);
     };
-    const action = !demo && task.workspaceTarget
+    const primarySource=task.dailyTaskGroup?.tasks.find(source=>source.executionStep===task.executionStep)??task.dailyTaskGroup?.tasks[0];
+    const executionSources=task.dailyTaskGroup?.tasks??task.customerServiceSummary?.sourceTasks??[task];
+    const blockerLabels:Record<string,string>={weekly_package_pending_activation:'周任务包仍为草稿，尚未启用执行',business_goal_unavailable:'经营目标未就绪：需要已验证的客户转化入口',capacity_plan_unavailable:'容量决策尚未通过校验',automation_policy_unavailable:'自动化策略尚未就绪',weekly_initial_capacity_schedule_required:'首次容量排期尚未确认',business_dispatch_required:'等待排期确认及正式派单'};
+    const blockers=[...new Set([...(executionRuntime==='disabled'?['周任务自动执行器未启动，不会自动消费任务队列']:executionRuntime==='unavailable'?['自动执行器状态无法核验，不能确认管线已启动']:[]),...executionSources.flatMap(source=>source.executionBlockers??(source.reason?[source.reason]:[]))])];
+    const resultRefs=[...new Map(executionSources.flatMap(source=>source.executionResultRefs??[]).map(ref=>[JSON.stringify(ref),ref])).values()];
+    const entryTarget=primarySource??task.customerServiceSummary?.sourceTasks.find(source=>source.customerExecutionTarget)??task;
+    const enterSource=(source:AgentCalendarTask)=>{if(!onEnterExecution)return;entryController.current?.abort();const controller=new AbortController();entryController.current=controller;const id=task.id;setEntryState({id,busy:true,error:''});void onEnterExecution(source,controller.signal).then(()=>{if(controller.signal.aborted)return;setEntryState(null);closeDetails();}).catch(cause=>{if(!controller.signal.aborted)setEntryState({id,busy:false,error:cause instanceof Error?cause.message:'真实执行入口不可用'});});};
+    const action = !demo && onEnterExecution && (task.dailyTaskGroup||task.customerServiceSummary||task.workspaceTarget)
+      ? {label:'进入真实执行界面',run:()=>enterSource(entryTarget)}
+      : !demo && primarySource?.workspaceTarget
+      ? {label:'进入对应生产现场',run:()=>{flushSync(closeDetails);openWorkspace(primarySource);}}
+      : !demo && task.workspaceTarget
       ? {label:'进入任务生产现场',run:()=>{flushSync(closeDetails);openWorkspace(task);}}
       : !demo && task.enterpriseFactExceptionId && onOpenEnterpriseFacts
       ? { label: "进入企业知识库补齐原任务事实", run: () => open(onOpenEnterpriseFacts) }
@@ -289,15 +322,16 @@ export default function RestoredAgentWorkCalendar({
         <div className="min-w-0"><dt className="text-xs text-text-secondary">交付内容</dt><dd className="mt-1 break-words text-sm font-medium text-text-primary">{task.output}</dd></div>
         <div className="min-w-0"><dt className="text-xs text-text-secondary">交付形式</dt><dd className="mt-1 break-words text-sm font-medium text-text-primary">{deliveryFormLabel(task)}</dd></div>
       </dl>
-      {summary&&<section aria-label="常驻客服任务详情" className="rounded-lg border border-border bg-white p-4"><h4 className="text-sm font-semibold text-text-primary">渠道运行状态</h4><div className="mt-3 flex flex-wrap gap-2">{summary.channels.map(item=><Tag key={item.channel} color={item.status==='failed'?'error':item.status==='blocked'?'warning':item.status==='active'?'processing':item.status==='completed'?'success':'default'}>{channelLabel[item.channel]} · {statusLabels[item.status]}</Tag>)}</div><dl className="mt-4 grid gap-3 sm:grid-cols-3"><div><dt className="text-xs text-text-secondary">关联运行记录</dt><dd className="mt-1 text-lg font-semibold">{summary.sourceTaskCount}</dd></div><div><dt className="text-xs text-text-secondary">已完成核验</dt><dd className="mt-1 text-lg font-semibold">{summary.completedCount}</dd></div><div><dt className="text-xs text-text-secondary">需要处理</dt><dd className="mt-1 text-lg font-semibold">{summary.attentionCount}</dd></div></dl><p className="mt-3 text-xs text-text-secondary">常驻卡片是每日客服入口；真实客户会话、审批、交接和渠道回执仍以后台持久化记录为准。</p></section>}
-      {summary&&<section aria-label="客服真实任务与生产线程" className="space-y-2"><h4 className="text-sm font-semibold">客服真实任务与生产线程</h4>{summary.channels.map(({channel})=><details key={channel} className="rounded-lg border border-border p-3"><summary className="cursor-pointer text-sm font-medium">{channelLabel[channel]} · {summary.sourceTasks.filter(source=>source.customerExecutionTarget?.channel===channel).length} 项真实任务</summary><div className="mt-2 space-y-2">{summary.sourceTasks.filter(source=>source.customerExecutionTarget?.channel===channel).map(source=><Button key={source.id} data-customer-execution-id={source.id} block className="!h-auto !whitespace-normal !text-left" onClick={()=>{flushSync(closeDetails);openWorkspace(source);}}>{source.date} · {source.title} · {statusLabels[source.status]}</Button>)}</div></details>)}</section>}
-      {task.dailyTaskGroup&&<section aria-label="同日合并的真实任务" className="space-y-2"><h4 className="text-sm font-semibold">包含 {task.dailyTaskGroup.tasks.length} 项真实任务</h4>{task.dailyTaskGroup.tasks.map((source,index)=><Button key={source.id} data-daily-execution-id={source.id} block className="!h-auto !whitespace-normal !text-left" onClick={()=>{flushSync(closeDetails);openWorkspace(source);}}>{index+1}. {source.title} · {statusLabels[source.status]}<span className="block text-xs text-text-secondary">{source.context}</span></Button>)}</section>}
+      <section aria-label="交付物与当前受阻原因" className="rounded-lg border border-border p-4"><h4 className="text-sm font-semibold">交付物与当前受阻原因</h4><p className="mt-2 text-sm">预期交付：{task.output}</p><p className="mt-2 text-sm">实际结果：{resultRefs.length?`已有 ${resultRefs.length} 项后端结果凭据；不等同于整个节点已交付`:'尚无后端结果凭据，未生成可核验交付物'}</p>{resultRefs.length>0&&<details className="mt-2 text-xs"><summary>查看真实结果引用</summary>{resultRefs.map(ref=><p key={JSON.stringify(ref)} className="break-all">{ref.type} · {ref.id} · v{ref.version}</p>)}</details>}<h5 className="mt-3 text-xs font-semibold">当前受阻原因</h5>{blockers.length?<ul className="mt-2 list-disc space-y-1 pl-4 text-sm text-amber-800">{blockers.map(code=><li key={code}>{blockerLabels[code]??code}</li>)}</ul>:<p className="mt-2 text-xs text-text-secondary">后端暂无独立阻塞记录；不代表任务已启动或完成。</p>}{entryState?.id===task.id&&entryState.error&&<Alert className="mt-3" showIcon type="warning" title="真实执行入口未就绪" description={entryState.error}/>}</section>
+{summary&&<section aria-label="常驻客服任务详情" className="rounded-lg border border-border bg-white p-4"><h4 className="text-sm font-semibold text-text-primary">渠道运行状态</h4><div className="mt-3 flex flex-wrap gap-2">{summary.channels.map(item=><Tag key={item.channel} color={item.status==='failed'?'error':item.status==='blocked'?'warning':item.status==='active'?'processing':item.status==='completed'?'success':'default'}>{channelLabel[item.channel]} · {statusLabels[item.status]}</Tag>)}</div><dl className="mt-4 grid gap-3 sm:grid-cols-3"><div><dt className="text-xs text-text-secondary">关联运行记录</dt><dd className="mt-1 text-lg font-semibold">{summary.sourceTaskCount}</dd></div><div><dt className="text-xs text-text-secondary">已完成核验</dt><dd className="mt-1 text-lg font-semibold">{summary.completedCount}</dd></div><div><dt className="text-xs text-text-secondary">需要处理</dt><dd className="mt-1 text-lg font-semibold">{summary.attentionCount}</dd></div></dl><p className="mt-3 text-xs text-text-secondary">常驻卡片是每日客服入口；真实客户会话、审批、交接和渠道回执仍以后台持久化记录为准。</p></section>}
+      {summary&&<section aria-label="客服真实任务与生产线程" className="space-y-2"><h4 className="text-sm font-semibold">客服真实任务与生产线程</h4>{summary.channels.map(({channel})=><details key={channel} className="rounded-lg border border-border p-3"><summary className="cursor-pointer text-sm font-medium">{channelLabel[channel]} · {summary.sourceTasks.filter(source=>source.customerExecutionTarget?.channel===channel).length} 项真实任务</summary><div className="mt-2 space-y-2">{summary.sourceTasks.filter(source=>source.customerExecutionTarget?.channel===channel).map(source=><Button key={source.id} data-customer-execution-id={source.id} block className="!h-auto !whitespace-normal !text-left" onClick={()=>{if(onEnterExecution){enterSource(source);return;}flushSync(closeDetails);openWorkspace(source);}}>{source.date} · {source.title} · {statusLabels[source.status]}</Button>)}</div></details>)}</section>}
+      {task.dailyTaskGroup&&<details aria-label="同日合并的真实任务" className="space-y-2"><summary className="cursor-pointer text-sm font-semibold">包含 {task.dailyTaskGroup.tasks.length} 项真实生产步骤与对象</summary>{task.dailyTaskGroup.tasks.map(source=><Button key={source.id} data-daily-execution-id={source.id} block className="!h-auto !whitespace-normal !text-left" onClick={()=>{if(onEnterExecution){enterSource(source);return;}flushSync(closeDetails);openWorkspace(source);}}>{conciseCalendarTitle(source.title)} · {statusLabels[source.status]}<span className="block text-xs text-text-secondary">{source.context}</span></Button>)}</details>}
       {!summary&&!task.dailyTaskGroup&&<section aria-label="当前进度" className="rounded-lg bg-surface-2 p-4"><div className="mb-3 flex items-center justify-between gap-3"><h4 className="text-sm font-semibold text-text-primary">当前进度</h4><span className="text-xs text-text-secondary">{workflowNodes.filter(node => ['completed', 'cancelled', 'no_data'].includes(node.status)).length}/{workflowNodes.length} 步完成</span></div><Steps direction="vertical" size="small" current={Math.max(0, workflowNodes.findIndex(node => !['completed', 'cancelled', 'no_data'].includes(node.status)))} items={workflowNodes.map(node => ({ status: stepStatus(node.status), title: node.title, description: <span className="text-xs text-text-secondary">{agentLabels[node.agent]} · {statusLabels[node.status]} · {node.date} {node.time}{node.reason ? <><br/><span className="text-amber-700">{node.reason}</span></> : null}</span> }))}/></section>}
-      {!summary&&task.dependsOn?.length ? <section aria-label="真实上游依赖" className="space-y-2"><h4 className="text-sm font-semibold">真实上游依赖</h4>{task.dependsOn.map(id=>{const source=tasks.find(candidate=>candidate.id===id);return source?.workspaceTarget?<Button key={id} block className="!h-auto !whitespace-normal !text-left" onClick={()=>{flushSync(closeDetails);openWorkspace(source);}}>{source.title} · {statusLabels[source.status]}</Button>:<p key={id} className="text-xs text-text-secondary">{source?.title||id}</p>;})}</section>:null}
+      {!summary&&task.dependsOn?.length ? <section aria-label="真实上游依赖" className="space-y-2"><h4 className="text-sm font-semibold">真实上游依赖</h4>{task.dependsOn.map(id=>{const source=tasks.find(candidate=>candidate.id===id);return source?.workspaceTarget?<Button key={id} block className="!h-auto !whitespace-normal !text-left" onClick={()=>{if(onEnterExecution){enterSource(source);return;}flushSync(closeDetails);openWorkspace(source);}}>{source.title} · {statusLabels[source.status]}</Button>:<p key={id} className="text-xs text-text-secondary">{source?.title||id}</p>;})}</section>:null}
       {overdue && <Alert type="error" showIcon title={`交付已逾期 · ${taskOverdueLabel(task, now)}`}/>}
       {task.deadlineRecovery && <Alert type="warning" showIcon title={`经营 Agent 补救评估 · ${task.deadlineRecovery.status === 'blocked' ? '评估受阻' : '已评估，方案未生效'}`} description={`${task.deadlineRecovery.assessmentId} · ${calendarTimestampLabel(task.deadlineRecovery.assessedAt, task.calendarClock)}；受影响发布：${task.deadlineRecovery.affectedPublicationIds.join('、') || '无已绑定发布'}`}/>}
       {task.reason && !overdue && <Alert type="warning" showIcon title="当前卡点" description={task.reason}/>}
-      {action ? <Button type="primary" onClick={action.run}>{action.label}</Button> : !summary&&!task.dailyTaskGroup&&<p className="rounded-lg bg-surface-2 p-3 text-xs text-text-secondary">{demo ? '示例任务仅用于验收日历与详情。' : '此任务尚无可打开的真实业务对象；执行状态以后台记录为准。'}</p>}
+      {action ? <Button type="primary" loading={entryState?.id===task.id&&entryState.busy} onClick={action.run}>{action.label}</Button> : !summary&&!task.dailyTaskGroup&&<p className="rounded-lg bg-surface-2 p-3 text-xs text-text-secondary">{demo ? '示例任务仅用于验收日历与详情。' : '此任务尚无可打开的真实业务对象；执行状态以后台记录为准。'}</p>}
     </div>;
   };
 
@@ -318,6 +352,7 @@ export default function RestoredAgentWorkCalendar({
         </div>
       </div>
       <div className="mt-2 flex flex-wrap items-center justify-between gap-3"><p className="text-xs text-text-secondary">{`${independentTasks.length} 张任务卡 · ${calendarDurationLabel(independentTasks)}`}</p></div>
+      {startsAt&&<p className="mt-2 text-xs text-text-secondary">当前周视图：周一至周日 · 任务包有效期：{startsAt.slice(0,10)} 至 {new Date(Date.parse(`${startsAt.slice(0,10)}T12:00:00Z`)+6*86400000).toISOString().slice(0,10)} · 有效期外不补造任务</p>}
     </div>
     {!demo && tasks.length === 0 && <Alert className="m-4" type="info" showIcon title="尚无 Agent 执行排期" description="发布计划不会自动视为制作任务；生成执行排期后将在此显示。"/>}
     {demo && <Alert className="m-4" type="warning" showIcon title="参考排期" description="任务、工时与执行状态为参考预览，异常副链路仅用于验收。"/>}
@@ -337,10 +372,11 @@ export default function RestoredAgentWorkCalendar({
         taskBoard
         showAllEvents
         detailsTitle="任务详情"
+        onDetailsClose={()=>{entryController.current?.abort();setEntryState(null);}}
         onDatesSet={info => { const next = calendarDayKey(info.view.calendar.getDate(), timeZone); setCalendarDate(next); setCalendarView(info.view.type as LsCalendarView); }}
         firstDay={1}
         timeZone={timeZone}
-        timeGridHeight="clamp(420px, calc(100dvh - 380px), 560px)"
+        timeGridHeight="clamp(680px, calc(100dvh - 120px), 800px)"
         collapseEmptyTimeRanges
         detailsLayout="custom"
         renderDetails={renderDetails}

@@ -234,7 +234,7 @@ function makeTask(tenantId: string, pkg: WeeklyOperatingPackage, seed: TaskSeed,
     ...chainIdentity(pkg,seed),
     dependsOnTaskIds: seed.dependsOnTaskIds,
     upstreamVersionRefs: authorityRefs(pkg),
-    inputSnapshot: structuredClone({ ...seed.inputSnapshot, referenceSourcePolicy: pkg.referenceSourcePolicy ?? null }),
+    inputSnapshot: structuredClone({ ...seed.inputSnapshot, calendarAssignmentDate: typeof seed.inputSnapshot.rollingDate==='string'?seed.inputSnapshot.rollingDate:['weekly_review','template_extraction','template_performance_validation'].includes(seed.stepKind)?pkg.weekEnd:pkg.socialContentPackage.publicationTasks.find(p=>p.publicationTaskId===seed.publicationTaskId)?publicationLocalDate(pkg.socialContentPackage.publicationTasks.find(p=>p.publicationTaskId===seed.publicationTaskId)!):pkg.weekStart, referenceSourcePolicy: pkg.referenceSourcePolicy ?? null }),
     idempotencyKey,
     budget: seed.budget,
     schedule: {
@@ -731,6 +731,7 @@ function recompute(tasks: WeeklyExecutionTask[], now: string, activatePending: b
     if (task.status === 'pending_activation' && !activatePending) return task;
     const inherited = task.dependsOnTaskIds.filter(id => byId.get(id)?.status !== 'succeeded');
     const status: WeeklyExecutionTaskStatus = task.ownBlockingReasons.length || inherited.length ? 'blocked' : 'queued';
+    if(status===task.status&&inherited.length===task.inheritedBlockingTaskIds.length&&inherited.every((id,index)=>id===task.inheritedBlockingTaskIds[index]))return task;
     return { ...task, status, inheritedBlockingTaskIds: inherited, updatedAt: now };
   });
 }
@@ -761,8 +762,11 @@ export async function recomputePackageExecution(
   if (!lease) throw new SocialProgramError('weekly_execution_package_busy', 409, '周包执行状态正在聚合，请重试。');
   try {
     const current = await listWeeklyExecutionTasks(dataStore, tenantId, programId, packageId, packageVersion);
-    let next = current;
-    for (let pass = 0; pass < current.length; pass += 1) next = recompute(next, now, activatePending);
+    // Recompute never changes succeeded membership. Every dependency therefore
+    // sees the same completion set; one pass suffices, regardless of DAG order.
+    // Preserve timestamps on unchanged nodes to avoid rewriting the full graph
+    // on each worker settlement (327 local JSON writes per task previously).
+    const next = recompute(current, now, activatePending);
     const changed = next.filter((task, index) => JSON.stringify(task) !== JSON.stringify(current[index]));
     if (changed.length) {
       const rows = await taskRows(dataStore, tenantId, changed.map(task => task.taskId));

@@ -3,8 +3,9 @@ import {weeklyPlanningPanelId,weeklyPlanningTaskId,isPlanningCalendarStep,PLANNI
 import { useEffect,useRef, useState } from 'react';
 import type { WeeklyOperatingPackage, WeeklyExecutionTask } from '../../../shared/contracts/socialProgram';
 import { socialProgramApi } from '../../lib/socialProgramApi';
+import WeeklyPipelineControls from './WeeklyPipelineControls';
 
-export default function WeeklyAgentPlanningPanel({ pkg, tasks, onChanged }: { pkg: WeeklyOperatingPackage; tasks: WeeklyExecutionTask[]; onChanged(next: WeeklyOperatingPackage): void | Promise<void> }) {
+export default function WeeklyAgentPlanningPanel({ pkg, tasks, onChanged, onRevision }: { pkg: WeeklyOperatingPackage; tasks: WeeklyExecutionTask[]; onChanged(next: WeeklyOperatingPackage): void | Promise<void>;onRevision?(next:WeeklyOperatingPackage):void }) {
   const identity = JSON.stringify([pkg.programId, pkg.packageId, pkg.version, pkg.agentPlanning?.version]);
   const current = useRef(identity); current.current = identity;
   const [busy, setBusy] = useState(false);
@@ -16,7 +17,7 @@ export default function WeeklyAgentPlanningPanel({ pkg, tasks, onChanged }: { pk
   const planningTasks=scopedTasks.filter(t=>isPlanningCalendarStep(t.schedule.stepKind));
   const valid = plan?.programId === pkg.programId && plan.packageId === pkg.packageId && plan.packageVersion === pkg.version && plan.skeleton.packageId===pkg.packageId && plan.skeleton.packageVersion===pkg.version;
   const action = !valid ? null : plan.status === 'outline_ready' ? 'analyze' : plan.status === 'director_analyzing' ? 'merge' : plan.status === 'awaiting_confirmation' ? 'confirm' : plan.status === 'confirmed' ? 'dispatch' : null;
-  const labels = { analyze: '编导分析参考', merge: '仅合并明确所选槽位', confirm: '仅确认同一所选槽位排期', dispatch: '仅派单已确认的同一槽位' };
+  const labels = { analyze: '编导分析参考', merge: '仅合并明确所选槽位', confirm: '仅确认同一所选槽位排期', dispatch: '冻结所选槽位供容量排期（不启动执行）' };
   async function advance(requested:typeof action=action) {
     const action=requested;
     if (!plan || !action || busy||uncertain) return;
@@ -40,7 +41,8 @@ export default function WeeklyAgentPlanningPanel({ pkg, tasks, onChanged }: { pk
   }
   async function recover(){const scope=identity;setBusy(true);try{const actual=await socialProgramApi.getOperatingPackage(pkg.programId,pkg.packageId);if(current.current!==scope)return;if(actual.programId!==pkg.programId||actual.packageId!==pkg.packageId||actual.version!==pkg.version)throw Error('周包版本已改变，请刷新经营项目。');await onChanged(actual);if(current.current===scope){setUncertain(false);setError('');setSelectedSlotIds(actual.agentPlanning?.userConfirmation?.selectedSlotIds??actual.agentPlanning?.detailedSchedule?.coverage?.selectedSlotIds??[]);}}catch(e){if(current.current===scope)setError(e instanceof Error?e.message:String(e));}finally{if(current.current===scope)setBusy(false);}}
   return <section id={weeklyPlanningPanelId(pkg)} data-planning-program={pkg.programId} data-planning-package={pkg.packageId} data-planning-version={String(pkg.version)} tabIndex={-1} className="scroll-mt-6 space-y-3 text-xs">
-    <p className="text-stone-600">编导分析、经营合并、用户确认和正式派单分别操作。确认前请核对每条参考、账号、制作交付与发布时间；派单后的内容制作使用现有生产执行器。</p>
+    <WeeklyPipelineControls pkg={pkg} onChanged={onChanged} onRevision={onRevision}/>
+    <p className="text-stone-600">编导分析、经营合并、用户确认分别操作。正式启动请使用上方真实管线操作；仅派单不会启动执行器。</p>
     {!valid && <p className="text-amber-800">缺少当前周版本的真实规划，请刷新经营项目。</p>}
     {valid && <p>规划版本 {plan.version} · {{ outline_ready: '待编导分析', director_analyzing: '待合并排期', awaiting_confirmation: '待用户确认', confirmed: '已确认待派单', dispatched: '冻结所选槽位已派单' }[plan.status]} · {plan.directorAnalyses.length} 项参考分析</p>}
     <p className="font-semibold">当前经营周：{pkg.weekStart} — {pkg.weekEnd} · 周包 v{pkg.version}</p>

@@ -1,8 +1,21 @@
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
-import {projectCalendarDeliverables,projectDailyCustomerServiceCards,orderDailyCalendarTasks,mergeDailyTaskCards} from './calendarDeliverables';
+import {projectCalendarDeliverables,projectDailyCustomerServiceCards,orderDailyCalendarTasks,mergeDailyTaskCards,projectDailyMilestones,conciseCalendarTitle} from './calendarDeliverables';
 import type {AgentCalendarTask} from './AgentWeeklyCalendar';
 const card=(id:string,step:string,group='tenant:week:videoA'):AgentCalendarTask=>({id,executionStep:step,deliverableGroup:group,date:'2026-10-07',time:step==='quality_check'?'15:00':'10:00',agent:'content',title:'视频 A · 产品 A',output:'实际结果',context:'测试',minutes:20,status:'planned'});
+test('daily milestones retain destinations while weekly goals and review occupy Monday and Sunday only',()=>{
+ const steps=['business_outline','business_schedule','benchmark_collection','benchmark_scoring','director_analysis','material_preparation','script','storyboard','material_readiness','asset_generation','video_generation','quality_check','user_approval','publishing','performance_monitoring','weekly_review','template_extraction'];
+ const sources=steps.map((step,i)=>({...card(String(i),step),workspaceTarget:{programId:'p',packageId:'pkg',packageVersion:1,executionTaskId:String(i)},dependsOn:i?[String(i-1)]:[]}));
+ const duty={...card('customer','customer_always_on'),title:'24小时常驻客服',agent:'customer' as const};
+ const result=orderDailyCalendarTasks(projectDailyMilestones([...sources,duty]));
+ assert.equal(result.length,10);assert.equal(result[0]!.title,'本周目标确认');
+ assert.equal(result[0]!.date,'2026-10-05');assert.equal(result.at(-1)!.title,'周目标验收与复盘');assert.equal(result.at(-1)!.date,'2026-10-11');
+ const ordinary=result.filter(t=>t.date==='2026-10-07');assert.equal(ordinary.length,8);assert.equal(ordinary[0]!.title,'今日经营计划');assert.equal(ordinary[1]!.id,'customer');
+ assert.deepEqual(result.flatMap(t=>t.dailyTaskGroup?.tasks??[t]).map(t=>t.id).sort(),[...sources,duty].map(t=>t.id).sort());
+ for(const source of sources)assert.equal(result.flatMap(t=>t.dailyTaskGroup?.tasks??[]).find(t=>t.id===source.id),source);
+ assert.equal(conciseCalendarTitle('4. 编导拆解 · 待编导明确'),'编导拆解');
+ assert.deepEqual(projectDailyMilestones([]),[],'empty days do not fabricate jobs');
+});
 test('same day duplicate stage merges without losing exact tasks or downstream dependency',()=>{
  const workspaceTarget={programId:'program',packageId:'pkg',packageVersion:2,executionTaskId:'a'};
  const a={...card('a','material_preparation'),workspaceTarget};

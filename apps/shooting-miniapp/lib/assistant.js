@@ -7,6 +7,7 @@ function createAssistantController(options) {
   const emit = options.onChange || (() => {})
   const schedule = options.schedule || ((fn, delay) => setTimeout(fn, delay))
   const cancel = options.cancel || clearTimeout
+  const contextMode = options.contextMode === 'customer_service' ? 'customer_service' : 'operator'
   let epoch = 0, timer = null, scope = '', disposed = false
   let state = { sessionId: '', messages: [], suggestions: [], preview: null, receipts: [], loading: false, sending: false, confirming: false, error: '', input: '', recording: false, transcribing: false }
   const update = patch => { state = { ...state, ...patch }; emit({ ...state }) }
@@ -66,7 +67,7 @@ function createAssistantController(options) {
     if (!pending.message || pending.message.text !== text) { pending.message = { text, idempotencyKey: makeKey() }; save() }
     update({ sending: true, input: text, error: '', preview: null })
     try {
-      const result = await request('mobile-workbench/assistant/query', 'POST', { sessionId: state.sessionId, input: text, idempotencyKey: pending.message.idempotencyKey })
+      const result = await request('mobile-workbench/assistant/query', 'POST', { sessionId: state.sessionId, input: text, idempotencyKey: pending.message.idempotencyKey, contextMode })
       if (!live(ticket)) return
       const history = await request('mobile-workbench/assistant/sessions/' + encodeURIComponent(state.sessionId) + '/messages')
       if (!live(ticket)) return

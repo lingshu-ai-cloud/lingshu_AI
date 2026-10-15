@@ -6,6 +6,16 @@ function task(id: string, step: string, parents: string[], publicationTaskId: st
  return { taskId:id, publicationTaskId, dependsOnTaskIds:parents, schedule:{stepKind:step, estimatedDurationMinutes:60, estimatedStartAt:'2026-10-03T00:00:00Z',estimatedFinishAt:'2026-10-03T01:00:00Z'} } as WeeklyExecutionTask;
 }
 const pub = (id:string, window:string) => ({publicationTaskId:id,publishWindow:window}) as SocialWeeklyPublicationTask;
+test('independent customer channel tasks close at next local midnight without content dependencies',()=>{
+ const ready={...task('channel','customer_channel_readiness',[]),inputSnapshot:{calendarAssignmentDate:'2026-10-15'}};
+ const follow={...task('follow','customer_inquiry_handoff',['channel']),inputSnapshot:{calendarAssignmentDate:'2026-10-15'}};
+ const result=applyPublicationDeadlines([ready,follow],[]);
+ assert.equal(result[1]!.schedule.latestFinishAt,'2026-10-15T16:00:00.000Z');
+ assert.equal(result[0]!.schedule.latestFinishAt,'2026-10-15T15:00:00.000Z');
+ assert.deepEqual(result[0]!.dependsOnTaskIds,[]);assert.deepEqual(result[1]!.dependsOnTaskIds,['channel']);
+ const unknown=applyPublicationDeadlines([{...follow,dependsOnTaskIds:[],inputSnapshot:{calendarAssignmentDate:'2026-02-30'}}],[]);
+ assert.equal(unknown[0]!.schedule.latestFinishAt,null);
+});
 test('invalid dates and non-executable dependency graphs fail explicitly', () => {
  assert.equal(publicationInstant('2026-02-30T10:00:00+08:00'),null);
  assert.equal(publicationInstant('2026-10-05T24:00:00Z'),null);

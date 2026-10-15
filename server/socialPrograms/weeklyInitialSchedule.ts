@@ -7,6 +7,7 @@ import {latestPackageRow} from './weeklyOperatingPackageSupport.js';
 import {listWeeklyExecutionTasks} from './executionTasks.js';
 import {createWeeklyScheduleRevisionService} from './socialWeeklyScheduleRevisions.js';
 import {SocialProgramError} from './service.js';
+import {hasWeeklyInitialExecution} from './weeklyInitialExecution.js';
 interface Scope {tenantId:string;programId:string;packageId:string;packageVersion:number;actorUserId:string;}
 /** First-week planning uses the same durable capacity proof as later revisions.
  * Suggestions are estimates; no resource calendar or cost is invented here. */
@@ -19,7 +20,7 @@ export function createWeeklyInitialScheduleService(store:DataStore,ports:{now?:(
   const pkg=row.payload;
   if(pkg.status!=='draft'||'scheduleRevisionRef' in pkg||pkg.socialContentPackage.authorization.allowRealPublishing)throw new SocialProgramError('weekly_initial_schedule_not_pristine',409,'已开始执行或已确认排期，请使用计划修订入口。');
   const tasks=await listWeeklyExecutionTasks(store,a.tenantId,a.programId,a.packageId,a.packageVersion);
-  if(tasks.some(t=>t.lease||t.attempt>0||t.resultRefs.length||t.schedule.actualStartedAt||t.schedule.actualFinishedAt||t.productionProgress||!['pending_activation','blocked','queued'].includes(t.status)))throw new SocialProgramError('weekly_initial_schedule_already_executed',409,'已有任务执行记录，不能作为首次排期重排。');
+  if(tasks.some(hasWeeklyInitialExecution))throw new SocialProgramError('weekly_initial_schedule_already_executed',409,'已有任务执行记录，不能作为首次排期重排。');
  }
  return {
   async preview(a:Scope):Promise<WeeklyInitialSchedulePreview>{await initial(a);const graph=await scheduling.preview(a);return {graph,authority:'estimated_task_durations_only' as const,requiredInputs:graph.tasks.map(t=>({taskId:t.taskId,estimatedMinutes:t.schedule.estimatedDurationMinutes,suggestedStartAt:t.schedule.latestStartAt??null,suggestedFinishAt:t.schedule.latestFinishAt??null,missing:['remainingMinutes','remainingCostCny','bufferMinutes','resourceKey','availableAt','resourceWorkingWindows'] as const}))};},

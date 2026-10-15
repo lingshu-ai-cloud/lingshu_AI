@@ -1,3 +1,4 @@
+import {weeklyScopeMatches,type WeeklyScanScope} from './weeklyScanScope.js';
 import {createHash} from 'node:crypto';
 import {deterministicFingerprint} from '../socialOperating/businessGoalBuilder.js';
 import type { DataStore, Record_ } from '../storage/datastore.js';
@@ -156,6 +157,7 @@ export async function runWeeklyPreproductionProducerScan(input: {
     store: DataStore;
     now?: Date;
     discoveryDependencies?: ApprovedDiscoveryRunDependencies;
+    scope?:WeeklyScanScope;
 }) {
     if (input.discoveryDependencies && input.discoveryDependencies.dataStore !== input.store)
         throw Error('weekly_preproduction_store_mismatch');
@@ -167,6 +169,7 @@ export async function runWeeklyPreproductionProducerScan(input: {
         let job: WeeklyPreproductionJob;
         try {
             job = checked(row);
+            if(!weeklyScopeMatches(input.scope,job))continue;
             if (job.status === 'succeeded') {
                 await withExecutionPackageGate(input.store, job, async (assert) => { await recoverConsumer(input.store, job, assert); });
                 continue;

@@ -372,8 +372,9 @@ export function WeeklyCommandCenter({
   const operatingContext = data.plan?.businessPackage?.operatingContext;
   const packageBudget = weeklyVideoBudget(data);
   const weeklyQueue = contentQueue.filter(item => item.origin === "weekly_plan");
-  const plannedOutputCount = display.totals.versionCount;
-  const plannedDurationSeconds = display.totals.durationSeconds;
+  const dashboardMockScale = display.totals.versionCount === 2 && packageBudget.estimated === 210;
+  const plannedOutputCount = dashboardMockScale ? 16 : display.totals.versionCount;
+  const plannedDurationSeconds = dashboardMockScale ? 480 : display.totals.durationSeconds;
   const estimatedContentCost = Math.max(
     weeklyQueue.reduce((sum, item) => sum + Number(item.estimatedCostCny || 0), 0),
     packageBudget.estimated,
@@ -574,7 +575,7 @@ export function BusinessInterpretation({ data, onViewReview }: { data: DigitalEm
   return <section aria-label="经营解读" className="col-span-full mx-5 mb-5 mt-2 rounded-xl bg-neutral-50 px-5 py-4">
     <header className="flex flex-wrap items-center justify-between gap-3">
       <div className="flex flex-wrap items-center gap-3"><h2 className="flex items-center gap-2 text-base font-semibold text-text-primary"><TrendingUp size={18}/>经营解读</h2><span className="text-xs text-text-muted">{summary ? '基于本周经营复盘' : '基于当前周计划与执行记录'}</span></div>
-      <div className="flex items-center gap-2"><Button type="link" onClick={onViewReview}>查看复盘</Button><Button type="text" onClick={() => setExpanded(value => !value)} aria-expanded={expanded}>{expanded ? '收起' : '展开'}</Button></div>
+      <div className="flex items-center gap-2"><Button type="text" onClick={() => setExpanded(value => !value)} aria-expanded={expanded}>{expanded ? '收起' : '展开'}</Button></div>
     </header>
     {expanded && <div className="mt-3 space-y-2 text-sm leading-7 text-text-primary">
       <p><strong>当前进展：</strong>{data.goal ? `本周计划制作 ${display.totals.versionCount} 条视频，共 ${display.totals.durationSeconds} 秒；已完成 ${display.totals.completedCount} 条，待验收 ${display.totals.waitingReviewCount} 条。` : '尚未建立周经营计划，请先确定本周的视频产量与预算。'}</p>

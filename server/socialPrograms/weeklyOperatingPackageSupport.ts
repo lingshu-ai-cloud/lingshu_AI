@@ -1,4 +1,5 @@
 import {weeklyProductionPopulation} from './weeklyProductionPopulation.js';
+import {businessDate,naturalWeek} from '../../shared/naturalWeek.js';
 import { createHash, randomUUID } from 'node:crypto';
 import type { DataStore } from '../storage/datastore.js';
 import {
@@ -438,6 +439,7 @@ export function packageFromInput(args: {
   previousPackage?: WeeklyOperatingPackage;
 }): WeeklyOperatingPackage {
   const weekStart = dateOnly(args.input.weekStart, 'week_start_invalid');
+  if(naturalWeek(weekStart).start!==weekStart)throw new SocialProgramError('natural_week_required',409,'周任务包必须为周一至周日；旧滚动周包需明确修订周期及逐条排期，不能静默改日期。');
   const capacity = capacitySnapshot(args.input.capacityPlan);
   const policy = policySnapshot(args.input.automationPolicy);
   const goal = businessGoal(args.input.businessContentGoal, args.programId);
@@ -453,6 +455,7 @@ export function packageFromInput(args: {
   // The generation divisor is an internal placeholder and never a reported production quota.
   const generationMotherTarget = positiveInteger(requestedMotherTarget === 0 ? 1 : requestedMotherTarget, Math.min(10, publicationTaskTarget), publicationTaskTarget);
   const tasks = publicationTasks(plans, generationMotherTarget, args.input);
+  for(const task of tasks){if(task.publishWindow&&Number.isFinite(Date.parse(task.publishWindow))){const day=businessDate(task.publishWindow);if(day<weekStart||day>weekEnd(weekStart))throw new SocialProgramError('publication_outside_natural_week',400,'逐条发布排期必须属于该自然周（Asia/Shanghai），不能把下周任务计入本周。');}}
   const population = weeklyProductionPopulation(tasks);
   if (requestedMotherTarget === 0 && population.productionPublications.length) throw new SocialProgramError('weekly_new_mother_target_required',400,'含新制作内容的排期不能使用零新增独立视频配额，请明确新制作计划。');
   const originalContentTarget = population.newMotherContentTarget;

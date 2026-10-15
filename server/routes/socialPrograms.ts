@@ -23,6 +23,7 @@ import {readWeeklyContentNavigation} from '../socialPrograms/weeklyContentNaviga
 import {readWeeklyReferenceReviewNavigation} from '../socialPrograms/weeklyReferenceReviewNavigation.js';
 import {backfillWeeklyTaskWorkspaces,readWeeklyTaskWorkspace} from '../socialPrograms/weeklyTaskWorkspaces.js';
 import { createWeeklyOperatingPackageService } from '../socialPrograms/weeklyOperatingPackages.js';
+import {createWeeklyExecutionPipelineService} from '../socialPrograms/weeklyExecutionPipeline.js';
 import { createSocialOperatingOrchestrationService, weeklyAuthorityFromResolution } from '../socialOperating/orchestration.js';
 import { SocialOperatingDecisionError } from '../socialOperating/service.js';
 import type { OperatingPlanningRequest } from '../../shared/contracts/socialOperatingDecision.js';
@@ -89,6 +90,39 @@ export function createSocialProgramsRouter(dataStore: DataStore = store, authent
     next();
   }), createSocialWeeklyProducerEvidenceRouter(dataStore));
   const weeklyPackages = createWeeklyOperatingPackageService(dataStore);
+  const pipeline=createWeeklyExecutionPipelineService(dataStore);
+  router.get('/:programId/operating-packages/:packageId/execution-pipeline/task-audit',asyncRoute(async(req,res)=>{
+    const {tenantId,userId}=res.locals as AuthLocals,packageVersion=Number(req.query.version);
+    if(!Number.isSafeInteger(packageVersion)||packageVersion<1)throw new SocialProgramError('weekly_pipeline_input_invalid',400,'请指定当前周包版本。');
+    res.setHeader('Cache-Control','private, no-store');
+    res.json({item:await pipeline.audit({tenantId,actorUserId:userId,programId:req.params.programId,packageId:req.params.packageId,packageVersion})});
+  }));
+  router.post('/:programId/operating-packages/:packageId/execution-pipeline/start-independent',asyncRoute(async(req,res)=>{
+    const {tenantId,userId}=res.locals as AuthLocals,body=routeBody(req.body);
+    if(!body||Object.keys(body).some(k=>k!=='expectedPackageVersion')||!Number.isSafeInteger(body.expectedPackageVersion)||Number(body.expectedPackageVersion)<1)throw new SocialProgramError('weekly_pipeline_input_invalid',400,'只接受当前周包版本，不接受授权或交付物注入。');
+    res.json(await pipeline.startIndependent({tenantId,actorUserId:userId,programId:req.params.programId,packageId:req.params.packageId,packageVersion:Number(body.expectedPackageVersion)}));
+  }));
+  router.post('/:programId/operating-packages/:packageId/execution-pipeline/connect-local-consumer',asyncRoute(async(req,res)=>{
+    const {tenantId,userId}=res.locals as AuthLocals,body=routeBody(req.body);
+    if(!body||Object.keys(body).some(k=>k!=='expectedPackageVersion')||!Number.isSafeInteger(body.expectedPackageVersion)||Number(body.expectedPackageVersion)<1)throw new SocialProgramError('weekly_pipeline_input_invalid',400,'请指定当前周包版本。');
+    res.json({item:await pipeline.connectLocalConsumer({tenantId,actorUserId:userId,programId:req.params.programId,packageId:req.params.packageId,packageVersion:Number(body.expectedPackageVersion)})});
+  }));
+  router.post('/:programId/operating-packages/:packageId/execution-pipeline/prepare-authority',asyncRoute(async(req,res)=>{
+    const {tenantId,userId}=res.locals as AuthLocals,body=routeBody(req.body);
+    if(!body||Object.keys(body).some(k=>k!=='expectedPackageVersion')||!Number.isSafeInteger(body.expectedPackageVersion)||Number(body.expectedPackageVersion)<1)throw new SocialProgramError('weekly_pipeline_input_invalid',400,'请指定当前周包版本。');
+    res.json(await pipeline.prepareAuthority({tenantId,actorUserId:userId,programId:req.params.programId,packageId:req.params.packageId,packageVersion:Number(body.expectedPackageVersion)}));
+  }));
+  router.get('/:programId/operating-packages/:packageId/execution-pipeline',asyncRoute(async(req,res)=>{
+    const {tenantId,userId}=res.locals as AuthLocals;
+    const packageVersion=Number(req.query.version);
+    if(!Number.isSafeInteger(packageVersion)||packageVersion<1)throw new SocialProgramError('weekly_pipeline_input_invalid',400,'请指定周包版本。');
+    res.json({item:await pipeline.read({tenantId,actorUserId:userId,programId:req.params.programId,packageId:req.params.packageId,packageVersion})});
+  }));
+  router.post('/:programId/operating-packages/:packageId/execution-pipeline/start',asyncRoute(async(req,res)=>{
+    const {tenantId,userId}=res.locals as AuthLocals,body=routeBody(req.body);
+    if(!body||Object.keys(body).some(k=>!['expectedPackageVersion','expectedPlanningVersion','expectedProgramVersion','selectedSlotIds','authorizePublishing'].includes(k))||!['expectedPackageVersion','expectedPlanningVersion','expectedProgramVersion'].every(k=>Number.isSafeInteger(body[k])&&Number(body[k])>0)||body.authorizePublishing!==false||!Array.isArray(body.selectedSlotIds)||body.selectedSlotIds.some(id=>typeof id!=='string'||!id.trim()))throw new SocialProgramError('weekly_pipeline_input_invalid',400,'启动参数无效；不包含发布或发送授权。');
+    res.json(await pipeline.start({tenantId,actorUserId:userId,programId:req.params.programId,packageId:req.params.packageId,packageVersion:Number(body.expectedPackageVersion)},{expectedPackageVersion:Number(body.expectedPackageVersion),expectedPlanningVersion:Number(body.expectedPlanningVersion),expectedProgramVersion:Number(body.expectedProgramVersion),selectedSlotIds:body.selectedSlotIds as string[],authorizePublishing:false}));
+  }));
   const operating = createSocialOperatingOrchestrationService(dataStore);
   const executionTasks = createWeeklyExecutionTaskService(dataStore);
   const repairCases=createWeeklyProductionRepairCaseService(dataStore);

@@ -350,6 +350,45 @@ assert.match(hydrationSource, /assistantThreadHydrationStartedRef\.current/, '�
 assert.match(hydrationSource, /version:\s*Number\.isSafeInteger/, '恢复线程时必须同时恢复服务端 CAS 版本');
 assert.match(hydrationSource, /withoutPersistedConversation\(journal\)/, '进入新会话时不得从本地恢复旧消息正文');
 assert.match(hydrationSource, /withoutPersistedConversation\(persistedRemote\)/, '进入新会话时不得从服务端恢复旧消息正文');
+
+const pageConversationResetSource = sourceSection(
+  'const previousPage = conversationPageRef.current',
+  'setLiveContext(null)',
+  '跨页面会话重置',
+);
+assert.match(pageConversationResetSource, /if \(restore \|\| kickoff\) return/, '主动恢复的会话或任务跳转不得被页面切换清空');
+assert.match(pageConversationResetSource, /resetTransientConversation\(\)/, '切换到其他页面时必须清空临时会话');
+assert.match(pageConversationResetSource, /focusTaskCard\(PRIMARY_ASSISTANT_THREAD, null\)/, '切换页面时不得把上一页待决定任务卡带到新页面');
+
+const transientConversationResetSource = sourceSection(
+  'const resetTransientConversation = useCallback',
+  'const openAgent = useCallback',
+  '临时会话清空内容',
+);
+assert.match(transientConversationResetSource, /setMessages\(PRIMARY_ASSISTANT_THREAD, \[\]\)/, '清空临时会话必须清空消息');
+assert.match(transientConversationResetSource, /setDraftInput\(PRIMARY_ASSISTANT_THREAD, ''\)/, '清空临时会话必须清空草稿');
+assert.match(transientConversationResetSource, /setPendingAttachments\(\[\]\)/, '清空临时会话必须清空未发送附件');
+
+const samePageConversationExpirySource = sourceSection(
+  'const openCurrentPageAgent = useCallback',
+  'const handleDecisionFeedChange',
+  '同页关闭会话过期规则',
+);
+assert.match(samePageConversationExpirySource, /closed\.page === page/, '只有同一页面关闭的会话才适用五分钟保留期');
+assert.match(samePageConversationExpirySource, /Date\.now\(\) - closed\.at >= ASSISTANT_CLOSED_CONVERSATION_TTL_MS/, '同页关闭满五分钟后重开必须过期');
+assert.match(samePageConversationExpirySource, /resetTransientConversation\(\)/, '过期后必须开启空会话');
+assert.match(source, /ASSISTANT_CLOSED_CONVERSATION_TTL_MS = 5 \* 60 \* 1000/, '同页会话关闭保留期必须是五分钟');
+assert.match(source, /assistantClosedRef\.current = \{ page, at: Date\.now\(\) \}/, '关闭会话时必须记录当前页面和关闭时间');
+
+const quickExecutionSource = sourceSection(
+  'const runQuickExecution = useCallback',
+  'const handleTaskCardAction',
+  '快捷执行入口',
+);
+assert.match(quickExecutionSource, /planQuickExecution\(/, '快捷执行必须先应用分级确认策略');
+assert.match(quickExecutionSource, /executeQuickExecution\(threadAgent, plan\)/, '确认完成后必须进入真实 Agent 动作接口');
+assert.match(quickExecutionSource, /presentActionResponse\(threadAgent, plan\.request, response\)/, '真实执行回执必须投影为任务卡片');
+assert.match(source, /<AssistantQuickEntries[\s\S]*onQuestion=\{entry => void send\(entry\.prompt, currentPageAgent\)\}[\s\S]*onExecute=\{entry => void runQuickExecution\(entry\)\}/, '输入框上方必须同时接通页面问答与快捷执行');
 assert.match(hydrationSource, /threads\[PRIMARY_ASSISTANT_THREAD\]\s*!==\s*threadBeforeRequest/, '旧线程快照不得覆盖请求期间产生的本地输入');
 assert.match(hydrationSource, /threads\[PRIMARY_ASSISTANT_THREAD\]\s*!==\s*hydratedThread/, '过期重签结果不得覆盖请求期间产生的新卡片或焦点');
 assert.match(hydrationSource, /actionCardToTaskCard\(response\.card, response, CURRENT_STATUS_TASK_ID\)/, '重新签发的动作必须进入专用的权威状态卡');

@@ -1,6 +1,7 @@
 import {createHash} from 'node:crypto';
 import {deterministicFingerprint} from '../socialOperating/businessGoalBuilder.js';
 import {organizationRoleOrNull} from '../lib/organizationRole.js';
+import {readWeeklyReviewActor} from '../socialPrograms/weeklyReviewEvidence.js';
 import type {OperatingAuthoritySnapshot,BusinessContentGoal} from '../../shared/contracts/socialOperatingDecision.js';
 import type {DataStore,Record_} from '../storage/datastore.js';
 import type {WeeklyExecutionTask,WeeklyOperatingPackage,VersionedSocialRef,WeeklyProductionStepKind} from '../../shared/contracts/socialProgram.js';
@@ -26,7 +27,7 @@ export async function checkWeeklyEnterpriseFactSupplement(input:{store:DataStore
  if(!version.id||!Number.isSafeInteger(version.revision)||version.revision<1||!version.confirmedBy?.trim()||['system','legacy_migration'].includes(version.confirmedBy)||!Number.isFinite(Date.parse(version.confirmedAt))||Date.parse(version.confirmedAt)>now.getTime())return unavailable('confirmation_unknown',sourceHash);
  if(version.contentHash!==enterpriseFactContentHash(profile))return unavailable('confirmed_content_hash_changed',sourceHash);
 
- const actor=await store.getById<Record_>('users',version.confirmedBy);if(!actor||actor.tenantId!==task.tenantId||!organizationRoleOrNull(actor.role)||actor.disabled===true||actor.active===false||['disabled','suspended'].includes(String(actor.status)))return unavailable('confirmation_actor_unknown',sourceHash);
+ const actor=await readWeeklyReviewActor(store,task.tenantId,version.confirmedBy);if(!actor||actor.tenantId!==task.tenantId||!organizationRoleOrNull(actor.role)||actor.disabled===true||actor.active===false||['disabled','suspended'].includes(String(actor.status)))return unavailable('confirmation_actor_unknown',sourceHash);
  if(refs.some(r=>r.id!==version.id||r.version!==version.revision)){
   // Canonical generation uses per-statement refs in a frozen operating snapshot,
   // not a profile version ID or a caller-supplied alias.
@@ -35,7 +36,7 @@ export async function checkWeeklyEnterpriseFactSupplement(input:{store:DataStore
   const snapshots=await store.list<Record_>('social_operating_authority_snapshots',{where:{tenant_id:task.tenantId,program_id:task.programId,snapshot_id:ref.id,version:ref.version},perPage:2});if(snapshots.totalItems!==1||snapshots.items.length!==1)return unavailable('operating_snapshot_unknown',sourceHash);
   const stored=snapshots.items[0]!,snapshot=socialObject(socialJson(stored.payload)) as unknown as OperatingAuthoritySnapshot;
   if(stored.tenant_id!==task.tenantId||stored.program_id!==task.programId||stored.snapshot_id!==ref.id||stored.version!==ref.version||!snapshot||snapshot.snapshotId!==ref.id||snapshot.version!==ref.version||snapshot.programId!==task.programId||snapshot.planningWeekStart!==pkg.weekStart||snapshot.inputFingerprint!==stored.input_fingerprint||snapshot.businessContentGoalRef.id!==goalRef.id||snapshot.businessContentGoalRef.version!==goalRef.version)return unavailable('operating_snapshot_scope_changed',sourceHash);
-  const snapshotActor=await store.getById<Record_>('users',snapshot.createdBy);if(stored.created_by!==snapshot.createdBy||!snapshotActor||snapshotActor.tenantId!==task.tenantId||!organizationRoleOrNull(snapshotActor.role)||snapshotActor.disabled===true||snapshotActor.active===false||['disabled','suspended'].includes(String(snapshotActor.status)))return unavailable('operating_snapshot_actor_unknown',sourceHash);
+  const snapshotActor=await readWeeklyReviewActor(store,task.tenantId,snapshot.createdBy);if(stored.created_by!==snapshot.createdBy||!snapshotActor||snapshotActor.tenantId!==task.tenantId||!organizationRoleOrNull(snapshotActor.role)||snapshotActor.disabled===true||snapshotActor.active===false||['disabled','suspended'].includes(String(snapshotActor.status)))return unavailable('operating_snapshot_actor_unknown',sourceHash);
   const goals=await store.list<Record_>('social_business_content_goals',{where:{tenant_id:task.tenantId,program_id:task.programId,goal_id:goalRef.id,version:goalRef.version},perPage:2});const goal=socialObject(socialJson(goals.items[0]?.payload)) as unknown as BusinessContentGoal;
   if(goals.totalItems!==1||goals.items.length!==1||!goal||goal.goalId!==goalRef.id||goal.version!==goalRef.version||goal.programId!==task.programId||goal.status!=='ready'||refs.some(r=>!goal.publicFactRefs.some(g=>g.type===r.type&&g.id===r.id&&g.version===r.version)))return unavailable('business_goal_facts_changed',sourceHash);
   const statements=[profile.company?.description,profile.brand?.usp,profile.products?.highlights,profile.products?.certifications,...(profile.products?.items??[]).flatMap(p=>[p.name,p.highlights,p.certifications])].map(s=>String(s??'').trim().slice(0,1000)).filter(Boolean);

@@ -72,6 +72,13 @@ export async function validateWeeklyExecutionResults(store: DataStore, task: Wee
   if (['template_extraction','template_performance_validation'].includes(String(task.schedule?.stepKind))) {const {createWeeklyContentTemplateService}=await import('../socialPrograms/weeklyContentTemplates.js');await createWeeklyContentTemplateService(store,{now:()=>now.toISOString()}).validateTemplateExecutionEvidence(task,refs);return;}
   if(refs.some(ref=>ref.type==='weekly_inventory_outline')){const {validateWeeklyInventoryOutlineRefs}=await import('./weeklyInventoryOutlineEvidence.js');await validateWeeklyInventoryOutlineRefs(store,task,refs);return;}
   if(refs.some(ref=>ref.type==='weekly_customer_channel_execution')){const {validateWeeklyCustomerChannelExecution}=await import('./socialWeeklyCustomerChannelAdapter.js');await validateWeeklyCustomerChannelExecution(store,task,refs);return;}
+  if(refs.some(ref=>['operating_authority_snapshot','social_discovery_run'].includes(ref.type))){
+    requireResult(['business_outline','benchmark_collection'].includes(task.schedule.stepKind),'weekly_preproduction_step_invalid');
+    const {readWeeklyPreproductionExecutionGate}=await import('./weeklyPreproductionProducer.js');
+    const gate=await readWeeklyPreproductionExecutionGate(store,task);
+    requireResult(gate.ready&&gate.resultRefs.length>0&&socialRequestHash(gate.resultRefs)===socialRequestHash(refs),'weekly_preproduction_result_unverified');
+    return;
+  }
   if (refs.some(ref => ref.type === 'social_metric_snapshot')) {
     const { validateWeeklyPublicationMetricRefs } = await import('./weeklyPublicationMetricEvidence.js');
     await validateWeeklyPublicationMetricRefs(store, task, refs, now);

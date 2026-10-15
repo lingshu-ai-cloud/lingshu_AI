@@ -40,6 +40,16 @@ export function applyPublicationDeadlines(tasks: WeeklyExecutionTask[], publicat
   tasks.forEach(visit);
   const invalid = new Set<string>();
   const setEarlier = (id: string, deadline: number) => latestFinish.set(id, Math.min(latestFinish.get(id) ?? Infinity, deadline));
+  // Always-on customer work has its own operating-day boundary, not a content
+  // delivery dependency. Without it these independent leaf tasks make capacity
+  // confirmation impossible (precise_deadline_required).
+  for(const task of tasks){
+    if(!['customer_channel_readiness','customer_inquiry_handoff'].includes(task.schedule.stepKind))continue;
+    const day=task.inputSnapshot?.calendarAssignmentDate;
+    if(typeof day!=='string'||!/^\d{4}-\d{2}-\d{2}$/.test(day))continue;
+    const start=publicationInstant(`${day}T00:00:00+08:00`);
+    if(start!==null)setEarlier(task.taskId,start+24*60*60_000);
+  }
   for (const publication of publications) {
     const publishing = tasks.find(task => task.publicationTaskId === publication.publicationTaskId && task.schedule.stepKind === 'publishing');
     if (!publishing) continue;

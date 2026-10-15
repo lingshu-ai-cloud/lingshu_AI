@@ -6,6 +6,7 @@ import {isPlanningCalendarStep} from './planningCalendarNavigation';
 import type { WeeklyExecutionTask, WeeklyProductionStepKind } from '../../../shared/contracts/socialProgram';
 import type { AgentCalendarTask } from '../smartBusiness/AgentWeeklyCalendar';
 import {agentCalendarResponsibleAgent} from '../smartBusiness/agentCalendarGroups';
+import {businessDate} from '../../../shared/naturalWeek';
 
 /** Project persisted execution data; no inferred production tasks or completion. */
 export function projectExecutionCalendar(tasks: WeeklyExecutionTask[], labels: Record<WeeklyProductionStepKind, string>, now = Date.now(),options:ExecutionCalendarPresentationOptions={}): AgentCalendarTask[] {
@@ -39,9 +40,11 @@ export function projectExecutionCalendar(tasks: WeeklyExecutionTask[], labels: R
     // Only the weekly outline belongs to the package start. Daily topic
     // confirmations keep their own date after that day's discovery/analysis.
     const weeklyPlanningContract = task.schedule.stepKind === 'business_outline';
-    const displayDate = weeklyPlanningContract && scopedPackage?.weekStart
+    const assignmentDate=typeof task.inputSnapshot?.calendarAssignmentDate==='string'&&/^\d{4}-\d{2}-\d{2}$/.test(task.inputSnapshot.calendarAssignmentDate)?task.inputSnapshot.calendarAssignmentDate:null;
+    const revisedPastPlan=assignmentDate&&task.createdAt&&!task.schedule.actualStartedAt&&assignmentDate<businessDate(task.createdAt);
+    const displayDate = assignmentDate??(weeklyPlanningContract && scopedPackage?.weekStart
       ? scopedPackage.weekStart
-      : planned.date;
+      : planned.date);
     const presentation=executionCalendarPresentation(task,labels[task.schedule.stepKind]||'阶段交付',options);
     const actor = task.schedule.responsibleActor;
     const actorAgent: AgentCalendarTask['agent'] = actor === 'director_agent' ? 'director' : actor === 'content_agent' || actor === 'quality_agent' ? 'content' : actor === 'customer_agent' ? 'customer' : actor === 'user' ? 'human' : 'business';
@@ -64,6 +67,8 @@ export function projectExecutionCalendar(tasks: WeeklyExecutionTask[], labels: R
     return [{
       id: task.taskId,
       workspaceTarget:{programId:task.programId,packageId:task.packageId,packageVersion:task.packageVersion,executionTaskId:task.taskId},
+      executionBlockers:[...(task.status==='pending_activation'?['weekly_package_pending_activation']:[]),...(revisedPastPlan?['计划归属日早于本修订创建日，尚未执行，非历史完成记录']:[]),...(task.schedule.stepKind==='weekly_review'&&typeof (task.inputSnapshot?.reviewWindow as {endsAt?:string}|undefined)?.endsAt==='string'&&Date.parse((task.inputSnapshot.reviewWindow as {endsAt:string}).endsAt)>now?['等待本周统计窗口结束及整周发布、指标回流交付；不提前验收达标']:[]),...task.ownBlockingReasons,...(task.inheritedBlockingTaskIds.length?[`等待 ${task.inheritedBlockingTaskIds.length} 项真实上游交付`]:[]),...(task.lastError?.message?[task.lastError.message]:[])],
+      executionResultRefs:task.resultRefs,
       executionStep: task.schedule.stepKind,
       calendarInternal: task.schedule.responsibleActor !== 'user' && ['material_preparation','material_readiness'].includes(task.schedule.stepKind),
       deliverableGroup: task.publicationTaskId ? bindingKey(task) : undefined,

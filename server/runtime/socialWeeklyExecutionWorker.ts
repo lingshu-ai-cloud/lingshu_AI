@@ -1,4 +1,5 @@
 import {mayReconcileExistingWeeklyPlanning} from './socialWeeklyPlanningReconciliation.js';
+import {weeklyScopeMatches,type WeeklyScanScope} from './weeklyScanScope.js';
 import type { DataStore } from '../storage/datastore.js';
 import type {
   VersionedSocialRef,
@@ -90,10 +91,14 @@ export function createSocialWeeklyExecutionWorker(dataStore: DataStore,validatio
       now?: Date;
       leaseDurationMs?: number;
       reclaimGraceMs?: number;
+      scope?:WeeklyScanScope;
     }): Promise<WeeklyExecutionClaim | null> {
       const now = input.now ?? new Date();
+      let examined=0;
       for (const row of await candidates(dataStore, input.tenantId)) {
+        if(++examined%32===0)await new Promise<void>(resolve=>setImmediate(resolve));
         const task = row.payload;
+        if(!weeklyScopeMatches(input.scope,task))continue;
         if (input.kinds?.length && !input.kinds.includes(task.workflowKind)) continue;
         if (task.schedule?.responsibleActor === 'user') continue;
         if (task.status === 'queued' && Date.parse(task.schedule?.estimatedStartAt || '') > now.getTime() && !await mayReconcileExistingWeeklyPlanning(dataStore,task,now)) continue;
@@ -113,6 +118,7 @@ export function createSocialWeeklyExecutionWorker(dataStore: DataStore,validatio
         try {
           const claimed = await withWeeklyExecutionTaskMutation(dataStore, input.tenantId, task.taskId, async () => {
             const latest = await getWeeklyExecutionTaskRow(dataStore, input.tenantId, task.taskId);
+            if(!weeklyScopeMatches(input.scope,latest.payload))return null;
             if (!['queued', 'leased'].includes(latest.payload.status)) return null;
             if (latest.payload.schedule.responsibleActor === 'user' || latest.payload.ownBlockingReasons.length || latest.payload.inheritedBlockingTaskIds.length) return null;
             if (latest.payload.status === 'queued' && Date.parse(latest.payload.nextAttemptAt || '') > now.getTime()) return null;

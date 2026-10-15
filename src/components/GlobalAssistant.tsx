@@ -46,6 +46,13 @@ import {
 } from '../stores/assistantStore';
 import AgentReply from './AgentReply';
 import AssistantComposer, { assistantAttachmentKind } from './assistant/AssistantComposer';
+import AssistantQuickEntries from './assistant/AssistantQuickEntries';
+import type { AssistantQuickExecution } from '../lib/assistantQuickEntries';
+import {
+  executeQuickExecution,
+  planQuickExecution,
+  type QuickExecutionKind,
+} from '../lib/assistantQuickExecution';
 import AssistantDecisionCenter, {
   assistantDecisionExecutionFeedback,
   type AssistantDecisionActionResult,
@@ -131,6 +138,7 @@ const ASSISTANT_ACTION_TIMEOUT_MS = 12_000;
 const ASSISTANT_CHAT_RESPONSE_TIMEOUT_MS = 20_000;
 const ASSISTANT_CHAT_STREAM_IDLE_TIMEOUT_MS = 30_000;
 const ASSISTANT_UI_WATCHDOG_TIMEOUT_MS = 25_000;
+const ASSISTANT_CLOSED_CONVERSATION_TTL_MS = 5 * 60 * 1000;
 
 class AssistantRequestTimeoutError extends Error {}
 
@@ -943,6 +951,8 @@ export default function GlobalAssistant({
   const handledRestores = useRef(new Set<string>());
   const assistantThreadHydrationStartedRef = useRef(false);
   const initialAssistantPageRef = useRef(page);
+  const conversationPageRef = useRef(page);
+  const assistantClosedRef = useRef<{ page: Page; at: number } | null>(null);
   const assistantThreadSaveQueuesRef = useRef(new Map<OrbitAgentId, AssistantThreadSaveQueue>());
   const uploadedAttachmentCacheRef = useRef(new WeakMap<File, UploadedAssistantAttachment>());
   const welcomeBubbleScopeRef = useRef('');
@@ -1256,6 +1266,19 @@ export default function GlobalAssistant({
     setWelcomeBubbleVisible(!alreadySeen);
   }, [welcomeBubbleStorageKey]);
 
+  const resetTransientConversation = useCallback(() => {
+    abortRef.current?.abort();
+    abortRef.current = null;
+    setLoading(false);
+    setMessages(PRIMARY_ASSISTANT_THREAD, []);
+    setDraftInput(PRIMARY_ASSISTANT_THREAD, '');
+    setScrollPosition(PRIMARY_ASSISTANT_THREAD, 0);
+    setUnreadCount(PRIMARY_ASSISTANT_THREAD, 0);
+    setFollowingLatest(PRIMARY_ASSISTANT_THREAD, true);
+    setPendingAttachments([]);
+    setAttachmentError('');
+  }, [setDraftInput, setFollowingLatest, setMessages, setScrollPosition, setUnreadCount]);
+
   const openAgent = useCallback((routeAgent: OrbitAgentId, preferredView?: AssistantPanelView) => {
     const agentId = PRIMARY_ASSISTANT_THREAD;
     const nextView = preferredView ?? 'chat';
@@ -1268,8 +1291,15 @@ export default function GlobalAssistant({
   }, [persistThread, setUnreadCount]);
 
   const openCurrentPageAgent = useCallback(() => {
+    const closed = assistantClosedRef.current;
+    if (
+      closed
+      && closed.page === page
+      && Date.now() - closed.at >= ASSISTANT_CLOSED_CONVERSATION_TTL_MS
+    ) resetTransientConversation();
+    assistantClosedRef.current = null;
     openAgent(currentPageAgent, 'chat');
-  }, [currentPageAgent, openAgent]);
+  }, [currentPageAgent, openAgent, page, resetTransientConversation]);
 
   const handleDecisionFeedChange = useCallback((feed: AssistantDecisionFeed) => {
     setDecisionTotal(Math.max(0, feed.total));
@@ -1980,6 +2010,108 @@ export default function GlobalAssistant({
     }
   }, [activeAgent, activeThread.draftInput, attachmentUploading, currentPageAgent, loading, openWeeklyPlanFromAssistant, pendingAttachments, persistThread, send, setDraftInput, setFollowingLatest, setMessages, weeklyPlanKickoffAvailable]);
 
+  const runQuickExecution = useCallback(async function executeEntry(
+    entry: AssistantQuickExecution,
+    confirmations = 0,
+    executionRequestId = `quick-${requestId()}`,
+  ) {
+    if (loading) return;
+
+    // The three Smart Business shortcuts operate on the live weekly-work
+    // surface, not the Starter-198 workspace. Sending them through the generic
+    // `start_task` adapter made every click fail for normal (non-Starter)
+    // tenants before it could reach the existing weekly-plan/calendar UI.
+    // Keep these commands on their authoritative page actions so they cannot
+    // manufacture a second run or an invented production destination.
+    if (page === 'digitalEmployees') {
+      const threadAgent = PRIMARY_ASSISTANT_THREAD;
+      const appendLocalReceipt = (content: string) => {
+        const current = useAssistantStore.getState().threads[threadAgent].messages;
+        setMessages(threadAgent, [
+          ...current,
+          { role: 'user', content: entry.label },
+          { role: 'assistant', content },
+        ]);
+        setFollowingLatest(threadAgent, true);
+        persistThread(threadAgent);
+      };
+      if (entry.id === 'business-create-week-plan') {
+        appendLocalReceipt('已打开当前系统的周计划制定流程。确认平台、产量、预算和排期后，才会创建并启动真实 Agent 任务。');
+        openWeeklyPlanFromAssistant();
+        return;
+      }
+      if (entry.id === 'business-retry-blocked') {
+        appendLocalReceipt('已进入现有 Agent 周任务日历。请在标记为“需处理”的真实任务卡中查看阻塞证据并执行对应恢复操作。');
+        setMode('breathing');
+        window.requestAnimationFrame(() => {
+          document.getElementById('agent-weekly-calendar')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+        });
+        return;
+      }
+      if (entry.id === 'business-refresh-data') {
+        setLoading(true);
+        try {
+          await onSessionRefresh?.();
+          appendLocalReceipt('经营数据已从当前真实任务、周排期和业务记录重新读取。');
+        } catch (error) {
+          appendLocalReceipt(error instanceof Error ? error.message : '经营数据刷新失败，请重试。');
+        } finally {
+          setLoading(false);
+        }
+        return;
+      }
+    }
+
+    const kind: QuickExecutionKind = entry.confirmation === 'double'
+      ? (page === 'conversion' ? 'customer_contact' : 'publish')
+      : entry.confirmation === 'preview'
+        ? 'production_task'
+        : 'analysis';
+    const plan = planQuickExecution({
+      id: entry.id,
+      label: entry.label,
+      kind,
+      goal: entry.prompt,
+      page,
+    }, confirmations, executionRequestId);
+    if (plan.status === 'confirmation_required') {
+      Modal.confirm({
+        title: confirmations > 0 ? '再次确认快捷执行' : '确认快捷执行',
+        content: (
+          <div className="space-y-2 text-sm text-text-secondary">
+            <p className="font-semibold text-text-primary">{entry.label}</p>
+            <p>{entry.prompt}</p>
+            <p>{plan.prompt}</p>
+          </div>
+        ),
+        okText: confirmations > 0 ? '再次确认并执行' : '确认并执行',
+        cancelText: '取消',
+        centered: true,
+        onOk: () => executeEntry(entry, confirmations + 1, executionRequestId),
+      });
+      return;
+    }
+
+    const threadAgent = PRIMARY_ASSISTANT_THREAD;
+    const current = useAssistantStore.getState().threads[threadAgent].messages;
+    setMessages(threadAgent, [...current, { role: 'user', content: entry.label }]);
+    setFollowingLatest(threadAgent, true);
+    setLoading(true);
+    try {
+      const response = await executeQuickExecution(threadAgent, plan);
+      presentActionResponse(threadAgent, plan.request, response);
+      persistThread(threadAgent);
+      onSessionRefresh?.();
+    } catch (error) {
+      const message = error instanceof Error ? error.message : '快捷执行未启动，请稍后重试。';
+      const latest = useAssistantStore.getState().threads[threadAgent].messages;
+      setMessages(threadAgent, [...latest, { role: 'assistant', content: message }]);
+      persistThread(threadAgent);
+    } finally {
+      setLoading(false);
+    }
+  }, [loading, onSessionRefresh, openWeeklyPlanFromAssistant, page, persistThread, presentActionResponse, setFollowingLatest, setMessages]);
+
   const handleTaskCardAction = useCallback(async (
     card: AssistantTaskCard,
     action: NonNullable<AssistantTaskCard['primaryAction']>,
@@ -2387,6 +2519,20 @@ export default function GlobalAssistant({
   }, [activeAgent, activeThread.draftInput, mode, panelView]);
 
   useEffect(() => {
+    const previousPage = conversationPageRef.current;
+    if (previousPage === page) return;
+    conversationPageRef.current = page;
+
+    // Ordinary navigation starts a fresh, page-local conversation. Saved
+    // conversations and explicit task kickoffs carry their own content across
+    // navigation and are therefore exempt from this transient reset.
+    if (restore || kickoff) return;
+    assistantClosedRef.current = null;
+    resetTransientConversation();
+    focusTaskCard(PRIMARY_ASSISTANT_THREAD, null);
+  }, [focusTaskCard, kickoff, page, resetTransientConversation, restore]);
+
+  useEffect(() => {
     setLiveContext(null);
     setDecisionTotal(null);
     decisionDialogRestoreFocusRef.current = false;
@@ -2407,6 +2553,7 @@ export default function GlobalAssistant({
 
   const closeAssistant = useCallback(() => {
     persistThread(activeAgent);
+    assistantClosedRef.current = { page, at: Date.now() };
     setAssistantTool(null);
     setPanelView('chat');
     setDecisionDialog(null);
@@ -2416,7 +2563,7 @@ export default function GlobalAssistant({
       if (launcherRetracted) edgeLauncherButtonRef.current?.focus();
       else launcherButtonRef.current?.focus();
     });
-  }, [activeAgent, launcherRetracted, persistThread]);
+  }, [activeAgent, launcherRetracted, page, persistThread]);
 
   const returnToConversation = useCallback(() => {
     const thread = useAssistantStore.getState().threads[activeAgent];
@@ -2934,6 +3081,13 @@ export default function GlobalAssistant({
                     ))}
                   </div>
                 )}
+
+                <AssistantQuickEntries
+                  page={page}
+                  disabled={loading || attachmentUploading}
+                  onQuestion={entry => void send(entry.prompt, currentPageAgent)}
+                  onExecute={entry => void runQuickExecution(entry)}
+                />
 
                 <AssistantComposer
                   ref={assistantInputRef}
