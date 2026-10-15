@@ -92,6 +92,7 @@
 .ls-calendar-agent-view .ls-calendar-event-progress { position: relative; }
 .ls-calendar-agent-view .ls-calendar-event-progress::before { position: absolute; z-index: 3; inset-inline: 0; inset-block-start: clamp(4px, var(--ls-task-progress, 0%), calc(100% - 4px)); height: 2px; background: #ef4444; box-shadow: 0 0 0 1px rgb(255 255 255 / 70%); content: ''; pointer-events: none; }
 .ls-calendar-agent-view .ls-calendar-event-progress::after { position: absolute; z-index: 4; inset-inline-start: -1px; inset-block-start: calc(clamp(4px, var(--ls-task-progress, 0%), calc(100% - 4px)) - 2px); width: 6px; height: 6px; border-radius: 999px; background: #ef4444; content: ''; pointer-events: none; }
+.ls-calendar-agent-view .ls-calendar-event-muted { opacity: .58; filter: saturate(.32); }
 .ls-calendar-agent-view .ls-calendar-task-board-card { height: 68px; min-height: 68px; grid-template-rows: 13px 30px 13px; padding: 5px 7px; }
 .ls-calendar-agent-view .ls-calendar-event:hover { filter: saturate(.94) brightness(.99); box-shadow: 0 2px 5px rgb(24 24 27 / 8%); }
 .ls-calendar-agent-view .ls-calendar-event-row-owner,
@@ -136,7 +137,7 @@
 .ls-calendar-task-status-mark.is-missing { color:var(--ant-color-error); }
 .ls-calendar-task-status-mark.is-complete { color:var(--ant-color-success); }
 .ls-calendar-task-board-card { position:relative; padding-inline-end:28px; }
-#agent-weekly-calendar .ls-calendar-event-done { border-color: #b7dfcf; border-inline-start-color: #2f9b75; background: #eaf8f2; color: #3f5f53; opacity: .62; }
+#agent-weekly-calendar .ls-calendar-event-done { border-color: #b7dfcf; border-inline-start-color: #2f9b75; background: #eaf8f2; color: #3f5f53; }
 #agent-weekly-calendar .ls-calendar-event-done .ls-calendar-event-row-title { color: #52525b; font-weight: 600; }
 #agent-weekly-calendar .ls-calendar-event-done .ls-calendar-event-row-owner,
 #agent-weekly-calendar .ls-calendar-event-done .ls-calendar-event-row-state { color: #a1a1aa; }

@@ -3,7 +3,7 @@ import { readFileSync } from 'node:fs';
 import test from 'node:test';
 import { createElement } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
-import Calendar, {isPastUnfinishedCalendarTask,taskProgressPercent} from './RestoredAgentWorkCalendar';
+import Calendar, {calendarTaskPresentation,isPastUnfinishedCalendarTask,taskProgressPercent} from './RestoredAgentWorkCalendar';
 import type { AgentCalendarTask } from './AgentWeeklyCalendar';
 const base: AgentCalendarTask = {id:'business',date:'2026-10-12',time:'10:00',agent:'business',title:'冻结经营任务',output:'经营交付',context:'实际范围',minutes:30,status:'planned',dueAt:'2026-10-12T10:00:00+08:00'};
 test('weekly board is Monday through Sunday and direct execution never substitutes a status workspace',()=>{
@@ -37,11 +37,18 @@ test('a passed unfinished slot is overdue while completed work keeps its termina
 test('today progress is derived from persisted child states instead of wall-clock time',()=>{
   assert.equal(taskProgressPercent({...base,dailyTaskGroup:{tasks:[{...base,id:'done',status:'completed'},{...base,id:'working',status:'active'},{...base,id:'queued',status:'planned'}]}}),50);
   assert.equal(taskProgressPercent({...base,status:'completed'}),100);
+  assert.equal(taskProgressPercent({...base,status:'active'}),50);
   assert.equal(taskProgressPercent(base),undefined);
+});
+test('day-aware presentation only judges unfinished work after its calendar day',()=>{
+  assert.deepEqual(calendarTaskPresentation({...base,date:'2026-10-14',status:'completed'},'2026-10-15'),{status:'done',statusLabel:'已完成',muted:true});
+  assert.deepEqual(calendarTaskPresentation({...base,date:'2026-10-14',status:'planned'},'2026-10-15'),{status:'needs_action',statusLabel:'结果未完成',muted:true});
+  assert.deepEqual(calendarTaskPresentation({...base,date:'2026-10-15',status:'blocked'},'2026-10-15'),{status:'planned',statusLabel:'今日待执行',muted:false});
+  assert.deepEqual(calendarTaskPresentation({...base,date:'2026-10-16',status:'failed'},'2026-10-15'),{status:'planned',statusLabel:'待执行',muted:false});
 });
 test('calendar renders only independent task events and keeps task details in the shared drawer',()=>{
   const source=readFileSync(new URL('./RestoredAgentWorkCalendar.tsx',import.meta.url),'utf8');
-  assert.match(source,/return orderDailyCalendarTasks\(independentTasks\)/);
+  assert.match(source,/const orderedTasks = orderDailyCalendarTasks\(independentTasks\)/);
   assert.doesNotMatch(source,/AggregateEventData|SummaryEventData|setExpandedGroups|calendarDisplayPlaceholders/);
   assert.match(source,/overdue && <Alert type="error" showIcon title=\{`交付已逾期/);
   assert.doesNotMatch(source,/交付已逾期[^\n]*description=/);

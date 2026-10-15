@@ -31,6 +31,8 @@ export type LsCalendarEvent = {
   planPlaceholder?: boolean;
   /** Verified workflow completion ratio used by task-board progress markers. */
   progress?: number;
+  /** A past-day result remains readable but is visually de-emphasized. */
+  muted?: boolean;
   data?: unknown;
 };
 

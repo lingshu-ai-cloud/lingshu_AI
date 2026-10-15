@@ -98,13 +98,25 @@ function taskIsAllDay(task: AgentCalendarTask): boolean {
   return /^\d{4}-\d{2}-\d{2}$/.test(task.dueAt || '') && (!task.time || task.time === '00:00');
 }
 
-function eventStatus(task: AgentCalendarTask, overdue: boolean): LsCalendarEvent['status'] {
-  if (task.status === 'active') return 'working';
-  if (task.status === 'completed') return 'done';
-  if (task.status === 'cancelled' || task.status === 'no_data') return 'planned';
-  if (overdue || task.status === 'blocked') return 'needs_action';
-  if (task.status === 'failed') return 'failed';
-  return 'planned';
+const terminalTaskStatuses = new Set<AgentCalendarTask['status']>(['completed', 'cancelled', 'no_data']);
+
+export function calendarTaskPresentation(task: AgentCalendarTask, today: string): Pick<LsCalendarEvent, 'status' | 'statusLabel' | 'muted'> {
+  const terminal = terminalTaskStatuses.has(task.status);
+  if (task.date < today) return {
+    status: terminal ? 'done' : 'needs_action',
+    statusLabel: terminal ? statusLabels[task.status] : '结果未完成',
+    muted: true,
+  };
+  if (task.date > today) return {
+    status: terminal ? 'done' : 'planned',
+    statusLabel: terminal ? statusLabels[task.status] : '待执行',
+    muted: false,
+  };
+  return {
+    status: terminal ? 'done' : task.status === 'active' ? 'working' : 'planned',
+    statusLabel: terminal ? statusLabels[task.status] : task.status === 'active' ? '进行中' : '今日待执行',
+    muted: false,
+  };
 }
 
 function taskEndInstant(task: AgentCalendarTask): number {
@@ -115,12 +127,6 @@ function taskEndInstant(task: AgentCalendarTask): number {
 /** A passed calendar slot is overdue unless the persisted task has a terminal result. */
 export function isPastUnfinishedCalendarTask(task: AgentCalendarTask, now: number): boolean {
   return !['completed', 'cancelled', 'no_data'].includes(task.status) && taskEndInstant(task) < now;
-}
-
-function taskIsOverdue(task: AgentCalendarTask, now: number): boolean {
-  if (task.customerServiceSummary || /24\s*小时|全天值守|常驻/.test(task.title)) return false;
-  const dayEnd = calendarInstant(`${task.date}T00:00`,task.calendarClock?.timeZone||'Asia/Shanghai').getTime()+86400000;
-  return !['completed','cancelled','no_data'].includes(task.status) && now>=dayEnd;
 }
 
 function taskOverdueLabel(task: AgentCalendarTask, now: number): string {
@@ -141,8 +147,14 @@ export function taskProgressPercent(task: AgentCalendarTask): number | undefined
     const active = sources.filter(source => source.status === 'active').length;
     return Math.round(((completed + active * 0.5) / sources.length) * 100);
   }
+  if (task.status === 'active') return 50;
   if (['completed', 'no_data'].includes(task.status)) return 100;
   return undefined;
+}
+
+function hasActiveExecution(task: AgentCalendarTask): boolean {
+  const sources = task.dailyTaskGroup?.tasks ?? task.customerServiceSummary?.sourceTasks ?? task.internalNodes;
+  return task.status === 'active' || Boolean(sources?.some(source => source.status === 'active'));
 }
 
 type Props = {
@@ -241,7 +253,8 @@ export default function RestoredAgentWorkCalendar({
 
   const deliverables = useMemo(() => projectDailyMilestones(projectDailyCustomerServiceCards(projectCalendarDeliverables(tasks, true), startsAt)), [tasks, startsAt]);
   const timeZone = tasks.find(task => task.calendarClock?.timeZone)?.calendarClock?.timeZone || 'Asia/Shanghai';
-  const attentionIds = useMemo(() => new Set(deliverables.filter(task => ['blocked', 'failed'].includes(task.status) || task.agent === 'human' || task.dailyTaskGroup?.tasks.some(source=>source.agent==='human'||['blocked','failed'].includes(source.status)) || taskIsOverdue(task, now)).map(task=>task.id)), [deliverables, now]);
+  const todayKey = calendarDayKey(new Date(now), timeZone);
+  const attentionIds = useMemo(() => new Set(deliverables.filter(task => task.date < todayKey && !terminalTaskStatuses.has(task.status)).map(task=>task.id)), [deliverables, todayKey]);
   const attentionCount=attentionIds.size;
   const scopedDeliverables = useMemo(() => deliverables.filter(task => {
     if (activeFilter === 'all') return true;
@@ -250,7 +263,9 @@ export default function RestoredAgentWorkCalendar({
   }), [deliverables, activeFilter, attentionIds]);
   const independentTasks = useMemo(() => scopedDeliverables.filter(taskHasDeliverableOrWorkspace), [scopedDeliverables]);
   const events = useMemo<LsCalendarEvent[]>(() => {
-    return orderDailyCalendarTasks(independentTasks)
+    const orderedTasks = orderDailyCalendarTasks(independentTasks);
+    const currentTaskId = orderedTasks.find(task => task.date === todayKey && !isAlwaysOnCalendarTask(task) && hasActiveExecution(task))?.id;
+    return orderedTasks
     .filter(task => !hideCompleted || !['completed', 'cancelled', 'no_data'].includes(task.status))
     .map(task => {
     const overdue = false;
@@ -258,7 +273,7 @@ export default function RestoredAgentWorkCalendar({
     const resident = isAlwaysOnCalendarTask(task);
     const start = task.date;
     const card = hourCalendarCard(task, now);
-    const today = task.date === calendarDayKey(now, timeZone);
+    const presentation = calendarTaskPresentation(task, todayKey);
     return {
       id: task.id,
       title: task.title,
@@ -266,21 +281,22 @@ export default function RestoredAgentWorkCalendar({
       end: undefined,
       allDay,
       timeZone: task.calendarClock?.timeZone || timeZone,
-      status: eventStatus(task, overdue),
-      statusLabel: statusLabels[task.status],
+      status: presentation.status,
+      statusLabel: presentation.statusLabel,
       eventType: task.agent === 'customer' ? 'follow_up' : 'agent_task',
       ownerAgent: calendarCardOwner(task, overdue),
       platform: task.platform,
       sourceId: task.productionTaskId || task.id,
       description: task.context,
-      cardLines: [card.lines[0], task.title, `${resident?'24小时值守':task.dailyTaskGroup?`${task.dailyTaskGroup.tasks.length} 项任务`:'按流程执行'} · ${statusLabels[task.status]}`],
+      cardLines: [card.lines[0], task.title, `${resident?'24小时值守':task.dailyTaskGroup?`${task.dailyTaskGroup.tasks.length} 项任务`:'按流程执行'} · ${presentation.statusLabel}`],
       planPlaceholder: false,
-      progress: today ? taskProgressPercent(task) : undefined,
+      progress: task.id === currentTaskId ? taskProgressPercent(task) : undefined,
+      muted: presentation.muted,
       identity: { kind: 'agent', role: task.agent },
       data: task,
     };
     });
-  }, [independentTasks, demo, now, timeZone, hideCompleted]);
+  }, [independentTasks, demo, now, timeZone, hideCompleted, todayKey]);
 
   const renderDetails = (event: LsCalendarEvent, closeDetails: () => void) => {
     const task = event.data as AgentCalendarTask;
