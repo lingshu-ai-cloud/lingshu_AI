@@ -1,5 +1,6 @@
 /// <reference path="../pb_data/types.d.ts" />
 migrate((app) => {
+  try { app.findCollectionByNameOrId("pbc_3671779394"); return; } catch (_) {}
   const collection = new Collection({
     "createRule": null,
     "deleteRule": null,
