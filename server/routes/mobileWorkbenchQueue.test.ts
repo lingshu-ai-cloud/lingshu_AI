@@ -11,6 +11,8 @@ test('queue and durable preferences isolate tenants and users; failed writes do 
   put('workflow_tasks',{id:'b',tenant_id:'B',status:'failed',title:'private'});
   put('workflow_tasks',{id:'done',tenant_id:'A',status:'succeeded'});
   put('approval_requests',{id:'approval',tenant_id:'A',status:'pending',task_id:'a'});
+  put('studio_projects',{id:'film-a',tenant_id:'A',title:'本地成片',updated_at:'2026-10-15T08:00:00Z',spec:{renderOutputUrl:'/api/overseas/assets/film.mp4',automation:{stage:'completed',quality:{passed:true}},contentAcceptance:{}}});
+  put('studio_projects',{id:'film-b',tenant_id:'B',title:'其他企业成片',spec:{renderOutputUrl:'/private.mp4',automation:{stage:'completed',quality:{passed:true}}}});
   let failWrite=false; let competingInsert=false;
   const store: DataStore = {
     getById: async <T>(c:string,id:string)=> (records.get(c+'/'+id) || null) as T|null,
@@ -30,7 +32,7 @@ test('queue and durable preferences isolate tenants and users; failed writes do 
     assert.equal((await call('/mobile/queue',undefined,'')).status,401);
     assert.equal((await call('/denied/queue')).status,403);
     assert.equal((await call('/denied/snooze',{matterId:'starter:approval:a',until:Date.now()+3600000})).status,403);
-    const queue=await (await call('/mobile/queue')).json();assert.deepEqual(queue.tasks.map((t:any)=>t.id),['a']);assert.equal(queue.approvals.length,1);
+    const queue=await (await call('/mobile/queue')).json();assert.deepEqual(queue.tasks.map((t:any)=>t.id),['a']);assert.equal(queue.approvals.length,1);assert.deepEqual(queue.films.map((item:any)=>item.id),['film-a']);assert.equal(queue.films[0].approved,false);
     const until=Date.now()+3600000;
     assert.equal((await call('/mobile/snooze',{matterId:'task:b',until})).status,404);
     assert.equal((await call('/mobile/snooze',{matterId:'task:done',until})).status,409);

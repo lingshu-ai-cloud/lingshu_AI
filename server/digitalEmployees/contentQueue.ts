@@ -383,7 +383,9 @@ function manualTaskItem(input: {
     },
     outputSummary: {
       count,
-      durationSeconds: Number.isFinite(Number(brief.durationSeconds)) && Number(brief.durationSeconds) > 0 ? Math.round(Number(brief.durationSeconds) * 10) / 10 : null,
+      durationSeconds: Number.isFinite(Number(brief.durationSeconds)) && Number(brief.durationSeconds) > 0
+        ? Math.round(Number(brief.durationSeconds) * 10) / 10
+        : null,
       formats: formats.length ? formats : ['短视频'],
     },
     confidence: taskConfidence({

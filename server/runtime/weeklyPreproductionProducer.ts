@@ -4,7 +4,7 @@ import type { DataStore, Record_ } from '../storage/datastore.js';
 import type { WeeklyExecutionTask, WeeklyOperatingPackage, VersionedSocialRef } from '../../shared/contracts/socialProgram.js';
 import type { SocialDiscoveryMode } from '../../shared/contracts/socialContentWorkflow.js';
 import { socialJson, socialObject, socialRequestHash } from '../starter198/socialContentValidation.js';
-import { organizationRoleOrNull } from '../lib/organizationRole.js';
+import { organizationRoleOrNull,localTenantMember } from '../lib/organizationRole.js';
 import { supplementConsumerHash } from '../socialPrograms/weeklySupplementRequests.js';
 import { withExecutionPackageGate, executionPackageFrozen } from '../socialPrograms/weeklyExecutionGate.js';
 import { createWeeklyExecutionTaskService } from '../socialPrograms/executionTasks.js';
@@ -57,7 +57,7 @@ async function all(store: DataStore, c: string, where: Record<string, string | n
 } throw Error('weekly_preproduction_scan_limit'); }
 async function unique(store: DataStore, c: string, where: Record<string, string | number>) { const r = await all(store, c, where); if (r.length !== 1)
     throw Error('weekly_preproduction_source_not_unique'); return r[0]!; }
-async function member(store: DataStore, tenant: string, user: string) { const actor = await store.getById<Record_>('users', user); if (!actor || actor.tenantId !== tenant || !organizationRoleOrNull(actor.role) || actor.disabled === true || actor.active === false || ['disabled', 'suspended'].includes(String(actor.status)))
+async function member(store: DataStore, tenant: string, user: string) { const local=localTenantMember(tenant,user);const actor = local===undefined?await store.getById<Record_>('users', user):local as Record_ | null; if (!actor || actor.tenantId !== tenant || !organizationRoleOrNull(actor.role) || actor.disabled === true || actor.active === false || ['disabled', 'suspended'].includes(String(actor.status)))
     throw Error('weekly_preproduction_member_required'); }
 async function scope(store: DataStore, a: {
     tenantId: string;

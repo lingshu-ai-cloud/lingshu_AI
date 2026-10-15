@@ -5010,9 +5010,21 @@ export default function DigitalEmployeePage({
         {error && <Alert type="error" showIcon title={error} closable onClose={() => setError("")} />}
       </div>
     ) : undefined;
+    const openWeeklyTaskCalendar = () => {
+      setSelectedContentItemId("");
+      setWorkspaceView("matrix");
+      window.requestAnimationFrame(() => window.requestAnimationFrame(() => {
+        document.querySelector('[aria-label="数字员工工作排期"]')?.scrollIntoView({
+          behavior: getScrollBehavior(),
+          block: "start",
+        });
+      }));
+    };
     const weeklyPlanControls = <>
       {goal && <Button onClick={()=>setWeeklyPlanDetailsOpen(true)} icon={<FileCheck2 size={15}/>}>查看周计划</Button>}
-      <Button onClick={()=>setPlanHistoryOpen(true)} icon={<History size={15}/>}>历史计划</Button>
+      {activeRun && !viewGoalId
+        ? <Button onClick={openWeeklyTaskCalendar} icon={<CalendarRange size={15}/>}>查看周任务</Button>
+        : <Button onClick={()=>setPlanHistoryOpen(true)} icon={<History size={15}/>}>历史计划</Button>}
       <Button type="primary" loading={Boolean(busy)} onClick={()=>void controlWeeklyWork()} icon={!activeRun && (!goal || canCreateNextGoal) ? <CalendarRange size={15}/> : activeRun && !recoverableProductionTask && data.run?.status !== "paused" ? <Pause size={15}/> : <Play size={15}/>}>{weeklyControlLabel}</Button>
     </>;
     return (

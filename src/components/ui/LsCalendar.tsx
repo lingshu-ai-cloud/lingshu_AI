@@ -32,6 +32,7 @@ type Props = {
   eventCardMode?: 'compact' | 'media';
   /** Keep week/day navigation on date columns when events have no verified time. */
   dateOnly?: boolean;
+  taskBoard?: boolean;
   /** Render every event in date-only week/day views; month/year keep native overflow. */
   showAllEvents?: boolean;
   density?: 'default' | 'compact';
@@ -160,7 +161,7 @@ function CalendarIdentityMark({ identity }: { identity: LsCalendarIdentity }) {
 }
 
 /** Standard plugins only: all calendar pages share the same events, timezone and accessible detail path. */
-export function LsCalendar({ events, label, initialDate, initialView = 'dayGridMonth', view: controlledView, firstDay = 1, eventCardMode = 'compact', dateOnly = false, showAllEvents = false, density = 'default', flush = false, date, timeZone = 'Asia/Shanghai', loading, timeGridHeight = 'clamp(320px, calc(100dvh - 280px), 720px)', collapseEmptyTimeRanges = false, fixedHeight, primaryAction, filters, onRefresh, onDatesSet, onDateClick, onEventClick, onExternalDrop, onMoveEvent, detailsTitle = '排期详情', detailsMedia = 'large', detailsLayout = 'standard', workspaceMode = 'bounded', renderDetails }: Props) {
+export function LsCalendar({ events, label, initialDate, initialView = 'dayGridMonth', view: controlledView, firstDay = 1, eventCardMode = 'compact', dateOnly = false, taskBoard = false, showAllEvents = false, density = 'default', flush = false, date, timeZone = 'Asia/Shanghai', loading, timeGridHeight = 'clamp(320px, calc(100dvh - 280px), 720px)', collapseEmptyTimeRanges = false, fixedHeight, primaryAction, filters, onRefresh, onDatesSet, onDateClick, onEventClick, onExternalDrop, onMoveEvent, detailsTitle = '排期详情', detailsMedia = 'large', detailsLayout = 'standard', workspaceMode = 'bounded', renderDetails }: Props) {
   const calendarRef = useRef<CalendarRef>(null);
   const hostRef = useRef<HTMLDivElement>(null);
   const revealObserverRef = useRef<IntersectionObserver | null>(null);
@@ -242,7 +243,7 @@ export function LsCalendar({ events, label, initialDate, initialView = 'dayGridM
     return ordered.map(event => {
       const actualStart = new Date(event.start).getTime();
       const actualEnd = event.end ? new Date(event.end).getTime() : Number.NaN;
-      const isVerticalTimedCard = Boolean(event.cardLines && !event.allDay && Number.isFinite(actualStart));
+      const isVerticalTimedCard = Boolean(!taskBoard && event.cardLines && !event.allDay && Number.isFinite(actualStart));
       const dayKey = event.start.slice(0, 10);
       const visualCursor = visualCursorByDay.get(dayKey) ?? Number.NEGATIVE_INFINITY;
       const visualStart = isVerticalTimedCard ? Math.max(actualStart, visualCursor) : actualStart;
@@ -262,10 +263,10 @@ export function LsCalendar({ events, label, initialDate, initialView = 'dayGridM
       end: isVerticalTimedCard ? new Date(visualEnd).toISOString() : event.end,
       allDay: event.allDay,
       startEditable: Boolean(event.editable && onMoveEvent), durationEditable: false,
-      interactive: true, extendedProps: { item: event, isVerticalTimedCard },
+      interactive: true, extendedProps: { item: event, isVerticalTimedCard, taskOrder: events.indexOf(event) },
       };
     });
-  }, [events, Boolean(onMoveEvent)]);
+  }, [events, Boolean(onMoveEvent), taskBoard]);
   const occupiedTimeSlots = useMemo(() => {
     if (!collapseEmptyTimeRanges) return new Set<string>();
     const formatter = new Intl.DateTimeFormat('en-GB', { timeZone, hour: '2-digit', minute: '2-digit', hourCycle: 'h23' });
@@ -311,7 +312,7 @@ export function LsCalendar({ events, label, initialDate, initialView = 'dayGridM
     element.classList.add('is-revealed');
     revealObserverRef.current?.unobserve(element);
   };
-  const showDateOnlyTimeRail = (dateOnly || eventCardMode === 'media') && ['dayGridWeek', 'dayGridDay'].includes(view);
+  const showDateOnlyTimeRail = !taskBoard && (dateOnly || eventCardMode === 'media') && ['dayGridWeek', 'dayGridDay'].includes(view);
   return <div className={`ls-calendar ls-calendar-view-${view}${eventCardMode === 'media' ? ' ls-calendar-media-cards' : ''}${compact ? ' ls-calendar-compact' : ''}${flush ? ' ls-calendar-flush' : ''}${workspaceMode === 'expanded' ? ' ls-calendar-expanded' : ''}`} ref={hostRef} aria-label={label} onFocusCapture={event => {
     const eventElement = (event.target as HTMLElement).closest<HTMLElement>('.ls-calendar-event-reveal');
     if (eventElement) revealEventElement(eventElement);
@@ -338,7 +339,7 @@ export function LsCalendar({ events, label, initialDate, initialView = 'dayGridM
       <FullCalendar ref={calendarRef} plugins={[themePlugin, dayGridPlugin, timeGridPlugin, listPlugin, multiMonthPlugin, interactionPlugin]} locale={zhLocale} timeZone={timeZone} firstDay={firstDay} initialView={view} initialDate={initialDate || undefined}
         // Every view shares a bounded FullCalendar content window. FullCalendar
         // owns the sole internal scroller; the surrounding page stays stable.
-        headerToolbar={false} contentHeight={fixedHeight === 'auto' && showAllEvents && !['dayGridWeek', 'dayGridDay'].includes(view) ? timeGridHeight : fixedHeight ?? timeGridHeight} events={inputs} eventOrder="start,id" eventOrderStrict slotEventOverlap={false} editable={Boolean(onMoveEvent)} eventDurationEditable={false} eventInteractive dayMaxEvents={(showAllEvents || eventCardMode === 'media') && ['dayGridWeek', 'dayGridDay'].includes(view) ? false : 3} nowIndicator expandRows tableHeaderSticky
+        headerToolbar={false} contentHeight={fixedHeight === 'auto' && showAllEvents && !['dayGridWeek', 'dayGridDay'].includes(view) ? timeGridHeight : fixedHeight ?? timeGridHeight} events={inputs} eventOrder={taskBoard ? 'start,taskOrder' : 'start,id'} eventOrderStrict slotEventOverlap={false} editable={Boolean(onMoveEvent)} eventDurationEditable={false} eventInteractive dayMaxEvents={taskBoard || (showAllEvents || eventCardMode === 'media') && ['dayGridWeek', 'dayGridDay'].includes(view) ? false : 3} nowIndicator expandRows={!taskBoard} tableHeaderSticky
         allDaySlot={eventCardMode === 'media' ? false : inputs.some(event => event.allDay)} noEventsText="当前周期没有排期" slotMinTime="08:00:00" slotMaxTime="22:00:00" slotDuration="00:30:00" slotHeaderInterval="02:00:00" scrollTime="08:00:00" scrollTimeReset slotHeaderFormat={{ hour: '2-digit', minute: '2-digit', hour12: false }} eventTimeFormat={{ hour: '2-digit', minute: '2-digit', hour12: false }}
         slotLaneClass={(info: {date: Date}) => slotClassNames(info.date)}
         eventMinHeight={24} eventShortHeight={68} columnEventInnerClass="ls-calendar-time-inner"
@@ -350,6 +351,7 @@ export function LsCalendar({ events, label, initialDate, initialView = 'dayGridM
         eventClass={info => { const item = info.event.extendedProps.item as LsCalendarEvent; const aggregateGroup = item.data && typeof item.data === 'object' && (item.data as {kind?: string}).kind === 'aggregate' ? (item.data as {group?: string}).group : ''; return `ls-calendar-event ls-calendar-event-${item.status} ls-calendar-event-reveal${item.cardLines ? ' ls-calendar-event-three-row' : ''}${item.planPlaceholder ? ' ls-calendar-event-placeholder' : ''}${aggregateGroup ? ` ls-calendar-event-aggregate ls-calendar-event-aggregate-${aggregateGroup}` : ''}${reducedMotion || revealedEventIdsRef.current.has(info.event.id) ? ' is-revealed' : ''}`; }}
         eventContent={info => {
           const item = info.event.extendedProps.item as LsCalendarEvent;
+          if (taskBoard && item.cardLines) return <div className="ls-calendar-event-content ls-calendar-task-board-card"><span className="ls-calendar-event-row ls-calendar-event-row-owner" title={item.cardLines[0]}>{item.cardLines[0]}</span><strong className="ls-calendar-event-row ls-calendar-event-row-title" title={item.title}>{item.title}</strong><span className="ls-calendar-event-row ls-calendar-event-row-state" title={item.cardLines[2]}>{item.cardLines[2]}</span></div>;
           if (info.view.type.startsWith('timeGrid') && info.event.allDay) {
             return <div className="ls-calendar-event-content ls-calendar-event-content-all-day">
               {item.identity ? <CalendarIdentityMark identity={item.identity}/> : <CalendarThumbnail src={item.thumbnailUrl} title={item.title}/>}

@@ -108,7 +108,7 @@ try {
     { pbAuth, pbStore },
     { runInDataAuthorityRequestScope, runWithDataAuthority, currentDataAuthority, LocalAuthorityPocketBaseAccessError },
     { pbGetStrict, getTenantIdFromToken },
-    { requestOrganizationRoleStrict },
+    { requestOrganizationRoleStrict,localTenantMember },
     { authRouter },
     { createBrowserReadSession },
     { requireAuth },
@@ -161,6 +161,10 @@ try {
   );
 
   const requestsBeforeLocalRead = pocketBaseRequests;
+  assert.deepEqual(await runWithDataAuthority('local',()=>localTenantMember(account.tenantId,account.userId)),{id:account.userId,tenantId:account.tenantId,role:'customer_service'});
+  assert.equal(await runWithDataAuthority('local',()=>localTenantMember('foreign-tenant',account.userId)),null);
+  assert.equal(await runWithDataAuthority('local',()=>localTenantMember(account.tenantId,'missing-user')),null);
+  assert.equal(localTenantMember(account.tenantId,account.userId),undefined,'remote requests never consult local account membership');
   const localRows = await runInDataAuthorityRequestScope(async () => {
     assert.deepEqual(await pbAuth.verifyToken(`Bearer ${signed}`), {
       userId: account.userId,

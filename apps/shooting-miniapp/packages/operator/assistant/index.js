@@ -2,7 +2,7 @@ const api = require('../../../lib/api')
 const assistant = require('../../../lib/assistant')
 
 Page({
-  data: { loading: true, sending: false, recording: false, transcribing: false, inputMode: 'text', error: '', messages: [], suggestions: [], showSuggestions: false, input: '', anchor: '', preview: null, receipts: [], actions: [], confirming: false, statusBarHeight: 24, headerHeight: 48, contentTop: 72 },
+  data: { loading: true, sending: false, recording: false, transcribing: false, inputMode: 'voice', error: '', messages: [], suggestions: [], showSuggestions: false, input: '', anchor: '', preview: null, receipts: [], actions: [], confirming: false, statusBarHeight: 24, headerHeight: 48, contentTop: 72 },
   async onLoad() {
     this.configureHeader()
     if (!api.token()) { wx.redirectTo({ url: '/pages/workbench/index' }); return }
@@ -87,7 +87,9 @@ Page({
         try {
           const audio = await new Promise((resolve,reject)=>wx.getFileSystemManager().readFile({filePath:result.tempFilePath,encoding:'base64',success:r=>resolve(r.data),fail:reject}))
           const transcript = await api.request('mobile-workbench/transcribe','POST',{audio})
-          this.setData({input:transcript.text || ''}); this.controller?.voiceDraft(transcript.text || '')
+          const text = String(transcript.text || '').trim()
+          this.setData({input:text}); this.controller?.voiceDraft(text)
+          if (text) await this.controller?.send(text)
         } catch (error) { this.setData({error:error.message || '识别失败，请使用文字输入'}) }
         finally { this.setData({transcribing:false}) }
       })

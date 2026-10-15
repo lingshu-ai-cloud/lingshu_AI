@@ -5,7 +5,7 @@ import { assessCustomerRelationship } from '../socialPrograms/customerRelationsh
 import { createHash } from 'node:crypto';
 import type { DataStore, Record_ } from '../storage/datastore.js';
 import { publicationInstant } from '../socialPrograms/publicationDeadlines.js';
-import { organizationRoleOrNull } from '../lib/organizationRole.js';
+import { organizationRoleOrNull, localTenantMember } from '../lib/organizationRole.js';
 import { SocialProgramError } from '../socialPrograms/service.js';
 import { readWeeklyCustomerStep, type WeeklyCustomerAuthority, WEEKLY_CUSTOMER_BINDINGS } from './socialWeeklyCustomerBridge.js';
 import type { WeeklySalesHandoff, WeeklySalesStatus, WeeklySalesSource } from '../../shared/contracts/socialWeeklySalesHandoff.js';
@@ -16,7 +16,7 @@ const object = (v: unknown): Record<string, any> => { if (typeof v === 'string')
 const required = (v: unknown): string => typeof v === 'string' && v.trim() ? v.trim() : fail('sales_handoff_required',400);
 const date = (v: unknown): string => { const s = required(v); if (publicationInstant(s)===null) fail('sales_handoff_time_invalid',400); return s; };
 async function rows(store: DataStore, collection: string, where: Record<string,string|number>) { const all: Record_[]=[];const seen=new Set<string>();let total:number|undefined;for(let page=1;;page++){const r=await store.list<Record_>(collection,{where,page,perPage:250,sort:'id'});if(!Number.isSafeInteger(r.totalPages)||r.totalPages<0||!Number.isSafeInteger(r.totalItems)||r.totalItems<0||total!==undefined&&total!==r.totalItems)fail('sales_handoff_pagination_invalid');total=r.totalItems;for(const row of r.items){if(seen.has(row.id))fail('sales_handoff_pagination_duplicate');seen.add(row.id);all.push(row);}if(page>=r.totalPages){if(all.length!==r.totalItems)fail('sales_handoff_pagination_truncated');return all;}if(!r.items.length)fail('sales_handoff_pagination_truncated');} }
-async function user(store:DataStore, tenant:string,id:string) { const r=await store.getById<Record_>('users',required(id)); if (!r || r.tenantId!==tenant || !organizationRoleOrNull(r.role) || r.disabled===true || r.active===false || ['disabled','suspended'].includes(String(r.status))) fail('sales_handoff_user_forbidden',403); return r; }
+async function user(store:DataStore, tenant:string,id:string) { const local=localTenantMember(tenant,required(id));if(local!==undefined){if(!local)fail('sales_handoff_user_forbidden',403);return local;} const r=await store.getById<Record_>('users',required(id)); if (!r || r.tenantId!==tenant || !organizationRoleOrNull(r.role) || r.disabled===true || r.active===false || ['disabled','suspended'].includes(String(r.status))) fail('sales_handoff_user_forbidden',403); return r; }
 async function interaction(store:DataStore,tenant:string,customer:string,id:string,types:string[]) {
  const found=await rows(store,'whatsapp_interactions',{tenant_id:tenant,customer_id:customer,interaction_id:required(id)}); if(found.length!==1)fail('sales_handoff_conversation_missing'); const p=object(found[0]!.payload);if(!realSalesConversationMessage(found[0]!,tenant,customer,0,Date.now()))fail('sales_handoff_provider_conversation_required');
  if(p.tenantId!==tenant || p.customerId!==customer || p.id!==id || !types.includes(p.type) || !required(p.body) || !Number.isFinite(p.timestamp) || p.timestamp<=0 || p.mock || p.synthetic || p.simulated || object(p.audit).mock || object(p.meta).synthetic)fail('sales_handoff_conversation_invalid'); return p;

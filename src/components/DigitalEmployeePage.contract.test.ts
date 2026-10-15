@@ -216,7 +216,7 @@ assert.match(pageSource, /!\["live", "matrix"\]\.includes\(workspaceView\)[\s\S]
 assert.match(digitalEmployeeWorkspaceSource, /\{workspaceView === 'agents' && onOpenAgentSettings && <Button[\s\S]{0,180}onClick=\{onOpenAgentSettings\}>Agent 设置<\/Button>\}/, 'Agent settings must live at the upper right of the employee-schedule view only');
 assert.match(matrixViewSource, /publishingCalendar=\{<WeeklyPublishingCalendar data=\{data\} onRefresh=\{onRefresh\}\/>\}/, 'the publishing calendar must be injected into the Digital Employee workspace');
 assert.match(matrixViewSource, /<DigitalEmployeeWorkspace[^>]*onOpenAgentSettings=\{onOpenAgentSettings\}/, 'the Digital Employee workspace must receive the settings action');
-assert.match(restoredAgentWorkCalendarSource, /identity: \{ kind: 'agent', role: task\.agent \}/, 'employee schedule cards must use the responsible Agent icon instead of a missing cover');
+assert.match(restoredAgentWorkCalendarSource, /identity: task\.platform \? \{ kind: 'platform', platform: task\.platform \} : \{ kind: 'agent', role: task\.agent \}/, 'platform tasks retain their platform identity and other schedule cards use the responsible Agent instead of a missing cover');
 assert.match(restoredAgentWorkCalendarSource, /detailsLayout="custom"/, 'Agent schedule details must remove the duplicated generic summary');
 for (const label of ['主 Agent', '辅助 Agent', '交付时间', '交付内容', '交付形式', '当前进度']) {
   assert.match(restoredAgentWorkCalendarSource, new RegExp(label), `Agent schedule details must expose ${label}`);
@@ -407,7 +407,11 @@ assert.match(inspirationSource, /receiveReference[\s\S]{0,5000}setSelectedVideo\
 assert.match(inspirationSource, /weekly-plan-snapshot[\s\S]{0,600}setSelectedVideo\(snapshot\)/, 'deleted references must still open the frozen weekly-plan analysis snapshot');
 assert.match(pageSource, /具体缺少/, 'weekly-plan validation must name the missing business fields instead of showing a generic warning');
 assert.match(pageSource, /page === "socialPlanning"[\s\S]{0,160}void controlWeeklyWork\(\)/, 'the account-matrix next step must share the direct-start/new-goal control instead of reopening the removed detail page');
-assert.match(weeklyPlanControlsSource, /历史计划/, 'Smart Business must expose plan history from the weekly-plan header controls');
+assert.match(weeklyPlanControlsSource, /查看周任务/, 'an active weekly plan must expose a direct task-calendar action');
+assert.match(weeklyPlanControlsSource, /onClick=\{openWeeklyTaskCalendar\}/, 'weekly task controls must call the shared navigation handler');
+assert.match(pageSource, /const openWeeklyTaskCalendar = \(\) => \{[\s\S]{0,150}setWorkspaceView\("matrix"\)[\s\S]{0,500}aria-label="数字员工工作排期"/, 'viewing weekly tasks must open and focus the Digital Employee calendar');
+assert.match(weeklyPlanControlsSource, /历史计划/, 'Smart Business must retain plan history outside the active-run controls');
+assert.doesNotMatch(weeklyPlanControlsSource, /删除旧任务/, 'active weekly controls must not expose the destructive legacy cancellation action');
 assert.doesNotMatch(smartBusinessSource, /后台并发与异常中心|Background operations/, 'the overview must not expose the deleted background-operations panel');
 assert.match(planHistorySource, /按周查看[\s\S]{0,200}按月查看/, 'plan history must support weekly and monthly views');
 assert.match(planHistorySource, /completion[\s\S]{0,350}completed/, 'plan history completion must come from persisted task statuses');

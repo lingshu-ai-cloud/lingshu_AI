@@ -17,7 +17,7 @@ import { isReferenceOnlyMaterial } from '../lib/materialPolicy.js';
 import { materializeSocialContentCloudMaterial, type SocialContentCloudMaterialPort } from '../starter198/socialContentMaterialAccess.js';
 import { acquireDurableOperationLease, assertDurableOperationLease, releaseDurableOperationLease } from '../runtime/durableLease.js';
 import { publicationInstant } from './publicationDeadlines.js';
-import { organizationRoleOrNull } from '../lib/organizationRole.js';
+import { organizationRoleOrNull,localTenantMember } from '../lib/organizationRole.js';
 import { SocialProgramError } from './service.js';
 
 export const WEEKLY_MATERIAL_REQUESTS='social_weekly_material_requests';
@@ -62,7 +62,7 @@ export function materialRequestAcceptedConsumers(request:WeeklyMaterialRequest):
 }
 export function createWeeklyMaterialRequestService(store:DataStore,ports:WeeklyMaterialPorts={}) {
   const now=()=>zoned(ports.now?.()??new Date().toISOString());
-  const assertUser=async(tenantId:string,userId:string)=>{text(userId,'指定真人');const user=ports.isTenantUser ? await ports.isTenantUser(tenantId,userId) : await store.getById<Record_>('users',userId).then(row=>Boolean(row&&row.tenantId===tenantId&&organizationRoleOrNull(row.role)&&row.disabled!==true&&row.active!==false&&!['disabled','suspended'].includes(String(row.status||''))));if(!user)fail('weekly_material_user_invalid','指定真人不属于当前租户。',403);};
+  const assertUser=async(tenantId:string,userId:string)=>{text(userId,'指定真人');const local=localTenantMember(tenantId,userId);const user=ports.isTenantUser ? await ports.isTenantUser(tenantId,userId) : local!==undefined?Boolean(local):await store.getById<Record_>('users',userId).then(row=>Boolean(row&&row.tenantId===tenantId&&organizationRoleOrNull(row.role)&&row.disabled!==true&&row.active!==false&&!['disabled','suspended'].includes(String(row.status||''))));if(!user)fail('weekly_material_user_invalid','指定真人不属于当前租户。',403);};
   const read=async(tenantId:string,programId:string,id:string)=> {
     const row=await store.getById<Record_>(WEEKLY_MATERIAL_REQUESTS,id);
     if(!row||row.tenant_id!==tenantId||row.program_id!==programId)fail('weekly_material_not_found','素材任务不存在。',404);

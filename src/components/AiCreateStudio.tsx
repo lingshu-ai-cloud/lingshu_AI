@@ -2975,6 +2975,9 @@ async function runVoiceTranslationWithTimeout<T>(
 export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onLaunchContentStudio, onReturnToContentPlanning, onGoPublish, openProjectsSignal = 0, workflowContext, publishStorageScope, socialContentTaskId: incomingSocialTaskId, studioCreateRequest: incomingCreateRequest }: { onNavigate?: (p: Page) => void; onOpenCreationHome?: (openChooser?: boolean) => void; onLaunchContentStudio?: (request: SocialContentCreateRequest) => void; onReturnToContentPlanning?: (request: SocialContentCreateRequest) => void; onGoPublish?: (payload: StudioPublishPayload) => void; openProjectsSignal?: number; workflowContext?: StudioWorkflowContext; publishStorageScope?: string; socialContentTaskId?: string | null; studioCreateRequest?: SocialContentCreateRequest | null } = {}) {
   const { message, notification } = AntApp.useApp();
   const rawSceneTarget = window.history.state?.productionDetail?.sceneTarget;
+  const initialProductionScript = typeof window.history.state?.productionDetail?.initialProductionScript === 'string'
+    ? window.history.state.productionDetail.initialProductionScript.trim().slice(0, 64 * 1024)
+    : '';
   const sceneTarget = parseScopedSceneTarget(rawSceneTarget);
   const sceneTargetKey = JSON.stringify(rawSceneTarget || null);
   const [sceneNavigationError, setSceneNavigationError] = useState('');
@@ -3254,6 +3257,14 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onLaunc
   const [voice, setVoice] = useState('v1');
   const [voiceCandidates, setVoiceCandidates] = useState<string[]>(['v1']);
   const [scriptLoading, setScriptLoading] = useState(false);
+  const appliedInitialProductionScriptRef = useRef(false);
+  useEffect(() => {
+    if (!initialProductionScript || appliedInitialProductionScriptRef.current) return;
+    appliedInitialProductionScriptRef.current = true;
+    setScript(initialProductionScript);
+    setVoiceoverLines(extractVoiceoverText(initialProductionScript));
+    setStepIdx(0);
+  }, [initialProductionScript]);
   const [voiceoverLines, setVoiceoverLines] = useState('');
   const [voiceLangs, setVoiceLangs] = useState<string[]>([]);
   const [enterpriseVoiceLangs, setEnterpriseVoiceLangs] = useState<string[]>([]);

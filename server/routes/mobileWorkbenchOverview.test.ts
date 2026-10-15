@@ -83,6 +83,7 @@ test('weekly overview has one scoped, fully paginated contract for metrics and d
   assert.equal(result.inquiryDrilldown.items[0].sourceStatus, 'unknown');
   assert.deepEqual(result.contentSchedule.items.map(item => item.id), ['scheduled', 'published']);
   assert.deepEqual(result.contentSchedule.items.find(item => item.id === 'published') && { taskId: result.contentSchedule.items.find(item => item.id === 'published')!.taskId, contentId: result.contentSchedule.items.find(item => item.id === 'published')!.contentId }, { taskId: 'task-000', contentId: 'content-1' });
+  assert.ok(result.contentSchedule.items.every(item => Object.hasOwn(item, 'thumbnailUrl') && Object.hasOwn(item, 'views')));
   assert.equal(result.agents.items.find(item => item.role === 'customer')?.currentTask?.id, 'open-old', 'agent coverage includes tenant open work outside the selected week');
   assert.ok(result.agents.items.every(item => item.updatedAt === null || item.updatedAt.includes('2026-')));
   assert.doesNotMatch(JSON.stringify(result), /private|secret|tenant-b/);

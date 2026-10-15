@@ -59,9 +59,13 @@ test('independent cards require a deliverable or workspace and use the confirmed
   const production=task('video',dates[1],'video_generation','content');
   assert.equal(taskHasDeliverableOrWorkspace(production),true);
   assert.equal(agentCalendarTaskGroup(production),'production');
-  assert.equal(agentCalendarTaskType(production),'制片任务');
-  assert.equal(agentCalendarTaskType(task('quality',dates[1],'quality_check','content')),'验收任务');
-  assert.equal(agentCalendarTaskType(task('business',dates[0],'business_outline')),'经营任务');
+  assert.equal(agentCalendarTaskType(production),'内容制作');
+  assert.equal(agentCalendarTaskType(task('quality',dates[1],'quality_check','content')),'内容制作');
+  assert.equal(agentCalendarTaskType(task('director',dates[1],'director_analysis','director')),'编导采集分析');
+  assert.equal(agentCalendarTaskType(task('publish',dates[1],'publishing','content')),'视频发布');
+  assert.equal(agentCalendarTaskType(task('customer',dates[1],'customer_inquiry_handoff','customer')),'客服跟进');
+  assert.equal(agentCalendarTaskType(task('review',dates[1],'performance_monitoring','business')),'日数据汇总');
+  assert.equal(agentCalendarTaskType(task('business',dates[0],'business_outline')),'周任务准备');
   assert.equal(taskHasDeliverableOrWorkspace({...production,output:'待交付:',calendarSummaryOnly:true}),false);
   assert.equal(taskHasDeliverableOrWorkspace({...production,output:'',productionTaskId:'content-real'}),true);
 });

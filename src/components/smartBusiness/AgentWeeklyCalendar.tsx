@@ -80,6 +80,14 @@ export type AgentCalendarTask = {
   customerWorkflowTaskId?: string;
   customerTaskKey?: string;
   timeSemantics?: 'start' | 'finish';
+  customerServiceSummary?: {
+    channels: Array<{ channel: 'whatsapp' | 'messenger' | 'instagram'; status: AgentCalendarTask['status'] }>;
+    sourceTaskCount: number;
+    completedCount: number;
+    attentionCount: number;
+    sourceTasks: AgentCalendarTask[];
+  };
+  dailyTaskGroup?: { tasks: AgentCalendarTask[] };
 };
 const agents = {
   human: { label: "人工任务", tone: "bg-rose-50 text-rose-800", stripe: "border-t-rose-500" },

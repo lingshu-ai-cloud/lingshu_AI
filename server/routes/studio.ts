@@ -3874,7 +3874,15 @@ studioRouter.post('/script', async (req, res) => {
     return;
   }
   const confirmedProductEnterprise = confirmedEnterpriseContextForProduct(productInfo, confirmedEnterprise);
-  const unconfirmedProductFields = unconfirmedEnterpriseProductFields(productInfo, confirmedEnterprise);
+  // A canonical product selection was already resolved above from the current
+  // tenant profile, and productInfo was rebuilt exclusively from that record.
+  // Re-validating the rebuilt text against the flattened enterprise summary
+  // can reject the same facts solely because their labels differ (for example
+  // `所属类目` versus `类目`). Keep the text validator for free-form callers,
+  // while treating a successfully resolved canonical selection as authoritative.
+  const unconfirmedProductFields = requestedProductIds.length
+    ? []
+    : unconfirmedEnterpriseProductFields(productInfo, confirmedEnterprise);
   if (String(sellingPoints || '').trim()
     && !normalizedFactValue(confirmedProductEnterprise).includes(normalizedFactValue(String(sellingPoints)))) {
     unconfirmedProductFields.push('创作卖点');

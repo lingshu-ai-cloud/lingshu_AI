@@ -69,7 +69,6 @@ const StarterWorkflowContextBar = lazy(loadStarterWorkflowContextBar);
 const DesignPrototype = import.meta.env.DEV ? lazy(() => import('./dev/DesignPrototype')) : null;
 const SocialContentPreview = import.meta.env.DEV ? lazy(() => import('./dev/SocialContentPreview')) : null;
 const SmartBusinessPreview = import.meta.env.DEV ? lazy(() => import('./dev/SmartBusinessPreview')) : null;
-const StartupHubPage = lazy(() => import('./components/StartupHubPage'));
 
 type PageModuleLoader = () => Promise<unknown>;
 const ADS_PAGES: Page[] = [...PLATFORM_ADS_PAGE_IDS];
@@ -146,13 +145,6 @@ export type { AgentAction, AgentType, Conversation, ConversationContext, Kickoff
 export default function App() {
   const publicPath = window.location.pathname.replace(/\/+$/, '') || '/';
   const localForeignTradeMock = isLocalForeignTradeMockEnabled();
-  if (publicPath === '/startup-hub-preview') {
-    return (
-      <Suspense fallback={<PageLoading />}>
-        <StartupHubPage preview />
-      </Suspense>
-    );
-  }
   if (import.meta.env.DEV && DesignPrototype && publicPath === '/design-prototype') {
     return (
       <Suspense fallback={<PageLoading />}>

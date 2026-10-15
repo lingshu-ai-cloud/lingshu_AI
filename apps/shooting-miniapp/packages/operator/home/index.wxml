@@ -1,8 +1,7 @@
 <view class="page-shell">
-  <view class="top-safe"></view>
+  <view class="top-safe" style="height:{{statusBarHeight}}px"></view>
   <view class="identity-bar">
     <view class="identity-copy"><text class="organization">{{organization}}</text><view class="edition" bindtap="openEdition">{{edition}}⌄</view></view>
-    <button class="message-button" bindtap="openMessages" aria-label="消息"><view class="bell"></view><text wx:if="{{unread}}" class="badge">{{unread}}</text></button>
   </view>
 
   <view class="content">
@@ -13,23 +12,54 @@
     </view>
 
     <view class="metric-band">
-      <view class="metric"><text class="metric-value">{{counts.plannedFilms}}</text><text class="metric-label">本周计划生产数量</text></view>
-      <view class="metric"><text class="metric-value">{{counts.pendingAcceptance}}</text><text class="metric-label">待验收成片数量</text></view>
-      <view class="metric" data-key="shooting" bindtap="openMetric"><text class="metric-value">{{counts.pendingShots}}</text><text class="metric-label">待拍镜头数量</text></view>
+      <view class="metric {{activeMetric === 'production' ? 'active' : ''}}" data-key="production" bindtap="openMetric"><view class="metric-fraction"><text class="metric-value">{{counts.pendingProduction}}</text><text class="metric-denominator">/ {{counts.producedFilms}}</text></view><text class="metric-label">本周计划生产数量</text></view>
+      <view class="metric {{activeMetric === 'acceptance' ? 'active' : ''}}" data-key="acceptance" bindtap="openMetric"><view class="metric-fraction"><text class="metric-value">{{counts.pendingAcceptance}}</text><text class="metric-denominator">/ {{counts.acceptedFilms}}</text></view><text class="metric-label">待验收成片数量</text></view>
+      <view class="metric {{activeMetric === 'shooting' ? 'active' : ''}}" data-key="shooting" bindtap="openMetric"><view class="metric-fraction"><text class="metric-value">{{counts.pendingShots}}</text><text class="metric-denominator">/ {{counts.completedShots}}</text></view><text class="metric-label">待拍镜头数量</text></view>
     </view>
 
-    <view class="section-heading"><view><text class="section-title">今日待拍任务</text><text class="section-note">点击或右滑分镜卡片，直接开始拍摄</text></view><text class="section-count">{{todayShots.length}} 项</text></view>
-    <view wx:if="{{loading && !loaded}}" class="state-card">正在同步真实工作数据…</view>
-    <view wx:elif="{{!todayShots.length}}" class="state-card success"><view class="check">✓</view><view><text class="state-title">今天没有待拍镜头</text><text class="state-note">新的拍摄任务会由网页端或 Agent 排期生成</text></view></view>
-    <view wx:else class="shot-list">
-      <view wx:for="{{todayShots}}" wx:key="id" class="shot-card" data-id="{{item.id}}" bindtap="openShot" bindtouchstart="shotTouchStart" bindtouchend="shotTouchEnd">
-        <view class="shot-index">{{index + 1}}</view>
-        <view class="shot-content">
-          <view class="shot-top"><text class="shot-title">{{item.title}}</text><text class="status">待拍</text></view>
-          <text class="shot-requirement">{{item.requirement}}</text>
-          <view class="shot-meta"><text>{{item.durationText}}</text><text>{{item.ratioText}}</text><text>{{item.soundText}}</text></view>
-        </view><text class="shot-arrow">›</text>
-      </view>
+    <view class="content-template">
+      <block wx:if="{{activeMetric === 'shooting'}}">
+        <view class="section-heading"><view><text class="section-title">今日待拍队列</text><text class="section-note">点击分镜卡片，直接开始拍摄</text></view><text class="section-count">{{todayShots.length}} 项</text></view>
+        <view wx:if="{{loading && !loaded}}" class="state-card">正在同步真实工作数据…</view>
+        <view wx:elif="{{!todayShots.length}}" class="state-card success"><view class="check">✓</view><view><text class="state-title">今天没有待拍镜头</text><text class="state-note">新的拍摄任务会由网页端或 Agent 排期生成</text></view></view>
+        <view wx:else class="shot-list">
+          <view wx:for="{{todayShots}}" wx:key="id" class="shot-card" data-id="{{item.id}}" bindtap="openShot">
+            <view class="shot-index">{{index + 1}}</view>
+            <view class="shot-content">
+              <view class="shot-top"><text class="shot-title">{{item.title}}</text><text class="status">待拍</text></view>
+              <text class="shot-requirement">{{item.requirement}}</text>
+              <view class="shot-meta"><text>{{item.durationText}}</text><text>{{item.ratioText}}</text><text>{{item.soundText}}</text></view>
+            </view><text class="shot-arrow">›</text>
+          </view>
+        </view>
+      </block>
+
+      <block wx:elif="{{activeMetric === 'acceptance'}}">
+        <view class="section-heading"><view><text class="section-title">今日待验收队列</text><text class="section-note">等待你确认的成片</text></view><text class="section-count">{{todayAcceptance.length}} 项</text></view>
+        <view wx:if="{{!todayAcceptance.length}}" class="state-card success"><view class="check">✓</view><view><text class="state-title">今天没有待验收成片</text><text class="state-note">新成片交付后会显示在这里</text></view></view>
+        <view wx:else class="acceptance-list">
+          <view wx:for="{{todayAcceptance}}" wx:key="id" class="acceptance-card" data-id="{{item.id}}" bindtap="openAcceptance">
+            <image wx:if="{{item.thumbnailUrl}}" class="acceptance-preview" src="{{item.thumbnailUrl}}" mode="aspectFill"></image>
+            <view wx:else class="acceptance-preview"><text>▶</text></view>
+            <view class="acceptance-copy"><text class="acceptance-title">{{item.title}}</text><text class="acceptance-subject">{{item.subject}}</text></view>
+            <text class="status review">待验收</text>
+          </view>
+        </view>
+      </block>
+
+      <block wx:else>
+        <view class="section-heading"><view><text class="section-title">本周发布视频</text><text class="section-note">本周已发布视频的数据表现</text></view><text class="section-count">{{publishedVideos.length}} 条</text></view>
+        <view wx:if="{{!publishedVideos.length}}" class="state-card"><text class="state-title">本周暂无已发布视频</text><text class="state-note">发布回执同步后会显示封面、平台和浏览量</text></view>
+        <scroll-view wx:else scroll-x enhanced show-scrollbar="false" class="video-scroll">
+          <view class="video-row">
+            <view wx:for="{{publishedVideos}}" wx:key="id" class="video-card">
+              <image wx:if="{{item.thumbnailUrl}}" class="video-cover" src="{{item.thumbnailUrl}}" mode="aspectFill"></image>
+              <view wx:else class="video-cover video-cover-empty"><text>▶</text></view>
+              <view class="video-info"><view class="video-tags"><text class="platform">{{item.platform}}</text><text wx:if="{{item.mock}}" class="mock-tag">Mock</text></view><text class="video-title">{{item.title}}</text><text class="video-views">{{item.views === null ? '浏览量待同步' : item.views + ' 次浏览'}}</text></view>
+            </view>
+          </view>
+        </scroll-view>
+      </block>
     </view>
   </view>
   <operator-nav active="work"></operator-nav>

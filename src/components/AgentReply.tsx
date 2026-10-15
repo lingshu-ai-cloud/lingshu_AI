@@ -1,5 +1,5 @@
 import { useState, type ReactNode } from 'react';
-import { Check, Copy, Zap } from 'lucide-react';
+import { ArrowRight, Check, Copy, Zap } from 'lucide-react';
 import {
   Bar, BarChart, CartesianGrid, Line, LineChart, ResponsiveContainer, Tooltip, XAxis, YAxis,
 } from 'recharts';
@@ -183,12 +183,36 @@ export default function AgentReply({ content, sources, onAction, onSuggest }: {
   const lines = content.split('\n');
   const blocks: ReactNode[] = [];
   let list: { type: 'ul' | 'ol'; items: string[] } | null = null;
+  let lastProse = '';
+
+  const quickReplyCards = (items: string[], key: string) => (
+    <div key={key} className="my-2 grid gap-2" role="group" aria-label="快捷回复">
+      {items.map((item, index) => (
+        <button
+          key={`${key}_${index}`}
+          type="button"
+          onClick={() => onSuggest?.(item)}
+          className="group flex w-full items-center justify-between gap-3 rounded-xl border border-accent/25 bg-white px-3 py-2.5 text-left text-xs font-semibold leading-5 text-text-primary shadow-sm transition hover:border-accent/55 hover:bg-accent-glow active:scale-[0.99]"
+        >
+          <span>{cleanLooseMarkdown(item)}</span>
+          <ArrowRight size={14} className="shrink-0 text-accent transition-transform group-hover:translate-x-0.5" />
+        </button>
+      ))}
+    </div>
+  );
 
   const flush = () => {
     if (!list) return;
     const { type, items } = list;
+    const isPromptedQuickReply = type === 'ul'
+      && Boolean(onSuggest)
+      && items.length >= 2
+      && items.length <= 4
+      && /(?:需要我|要我|可以|请选择|请告诉我|想先|优先帮你|下一步)/.test(lastProse);
     blocks.push(
-      type === 'ol'
+      isPromptedQuickReply
+        ? quickReplyCards(items, `quick_${blocks.length}`)
+        : type === 'ol'
         ? <ol key={`l${blocks.length}`} className="list-decimal pl-5 space-y-1 my-1.5">{items.map((it, i) => <li key={i} className="leading-relaxed">{inline(it, `o${blocks.length}_${i}`)}</li>)}</ol>
         : <ul key={`l${blocks.length}`} className="list-disc pl-5 space-y-1 my-1.5">{items.map((it, i) => <li key={i} className="leading-relaxed">{inline(it, `u${blocks.length}_${i}`)}</li>)}</ul>,
     );
@@ -232,16 +256,7 @@ export default function AgentReply({ content, sources, onAction, onSuggest }: {
       } else if (lang === 'next') {
         const items = body.map(l => l.replace(/^\s*(?:[-*•·]|\d+[.、)])\s*/, '').trim()).filter(Boolean).slice(0, 4);
         if (onSuggest && items.length) {
-          blocks.push(
-            <div key={`next_${i}`} className="my-2 flex flex-wrap gap-1.5">
-              {items.map((item, idx) => (
-                <button key={idx} type="button" onClick={() => onSuggest(item)}
-                  className="rounded-full border border-accent/30 bg-accent-glow px-3 py-1.5 text-xs font-semibold text-accent transition-colors hover:border-accent/60 active:scale-[0.98]">
-                  {item}
-                </button>
-              ))}
-            </div>,
-          );
+          blocks.push(quickReplyCards(items, `next_${i}`));
         }
       } else {
         // 语言标记缺失或是 text/markdown 这类"无信息"标记时，用中文兜底标题，不把 "text" 当标题展示
@@ -335,7 +350,10 @@ export default function AgentReply({ content, sources, onAction, onSuggest }: {
     if (ul) { if (list?.type !== 'ul') { flush(); list = { type: 'ul', items: [] }; } list.items.push(cleanLooseMarkdown(ul[1])); continue; }
     flush();
     const cleanedLine = cleanLooseMarkdown(line);
-    if (cleanedLine) blocks.push(<p key={i} className="leading-relaxed my-1 whitespace-pre-wrap">{inline(cleanedLine, `p_${i}`)}</p>);
+    if (cleanedLine) {
+      lastProse = cleanedLine;
+      blocks.push(<p key={i} className="leading-relaxed my-1 whitespace-pre-wrap">{inline(cleanedLine, `p_${i}`)}</p>);
+    }
   }
   flush();
 

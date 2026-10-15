@@ -25,7 +25,7 @@ function expression(name: string) {
 }
 function evaluate(code: string, bindings: Record<string, unknown>) {
   const compiled = ts.transpileModule(`globalThis.value = (${code});`, { compilerOptions: { target: ts.ScriptTarget.ES2022, jsx: ts.JsxEmit.React } }).outputText;
-  const context = vm.createContext(bindings);
+  const context = vm.createContext({ taskBoard: false, ...bindings });
   vm.runInContext(compiled, context);
   return context.value;
 }
@@ -51,7 +51,8 @@ assert.equal(attributes.has('dayMinWidth'), false, 'dayMinWidth requires scrollg
 assert.doesNotMatch(source, /import.*scrollgrid|import.*resource-time|import.*resource-day/);
 assert.equal(evaluate(expression('eventMinHeight'), {}), 24);
 assert.equal(evaluate(expression('eventShortHeight'), {}), 68);
-assert.equal(attributes.get('eventOrder')?.initializer?.getText(file), '"start,id"', 'FullCalendar owns a deterministic start-time and stable-id event order');
+assert.equal(evaluate(expression('eventOrder'), {}), 'start,id', 'ordinary calendars retain deterministic start-time and stable-id order');
+assert.equal(evaluate(expression('eventOrder'), { taskBoard: true }), 'start,taskOrder', 'task boards retain the dependency order within each day');
 assert.ok(attributes.has('eventOrderStrict'), 'event-card order must not be rearranged to improve visual compaction');
 assert.equal(evaluate(expression('slotEventOverlap'), {}), false, 'time-grid cards must never overlap');
 assert.match(source, /item\.cardLines \? ' ls-calendar-event-three-row'/, 'Agent hour cards opt into one stable three-row treatment');

@@ -36,12 +36,9 @@ export function projectExecutionCalendar(tasks: WeeklyExecutionTask[], labels: R
     const frozenFields = [task.schedule,task.inputSnapshot,task.inputSnapshot?.publicationTask,scopedPackage].filter(Boolean) as Array<{timeZone?:unknown;timezone?:unknown}>;
     const clock = frozenCalendarClock(frozenFields.flatMap(value=>[value.timeZone,value.timezone]),publication ?? task.schedule.estimatedFinishAt,publication?'publication_offset':'schedule_offset');
     const planned = calendarDateTime(task.schedule.estimatedFinishAt,clock);
-    // The outline and the merged business schedule are weekly planning
-    // contracts. A package can be created or re-run midweek, but displaying
-    // either contract on that run date makes the calendar read as if planning
-    // started midweek. Keep the persisted dueAt below as exact scheduling
-    // evidence; only their calendar projection uses the frozen week start.
-    const weeklyPlanningContract = ['business_outline', 'business_schedule'].includes(task.schedule.stepKind);
+    // Only the weekly outline belongs to the package start. Daily topic
+    // confirmations keep their own date after that day's discovery/analysis.
+    const weeklyPlanningContract = task.schedule.stepKind === 'business_outline';
     const displayDate = weeklyPlanningContract && scopedPackage?.weekStart
       ? scopedPackage.weekStart
       : planned.date;

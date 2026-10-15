@@ -67,8 +67,8 @@ assert.match(source, /openAgent\(currentPageAgent, 'chat'\)/, '入口必须直�
 assert.doesNotMatch(source, /aria-label="灵小枢工作视图"/, '单列对话不得保留待办与聊天页签');
 assert.match(source, /const \[decisionDialog,\s*setDecisionDialog\]/, '外部决策弹窗必须使用独立状态，不得复用助手内部分页');
 const taskSummarySource = sourceSection(
-  'data-assistant-summary="task-card"',
-  'data-assistant-summary="decision-feed"',
+  'data-assistant-bubble="task-summary"',
+  'data-assistant-bubble="weekly-plan-kickoff"',
   '普通任务概要气泡',
 );
 assert.match(taskSummarySource, /onClick=\{[\s\S]*openDecisionDialog\(/, '普通任务概要必须打开统一外部决策弹窗');
@@ -81,6 +81,17 @@ const decisionFeedSummarySource = sourceSection(
 assert.match(decisionFeedSummarySource, /onOpenDetail=\{[\s\S]*openDecisionDialog\(/, '权威待办概要必须打开统一外部决策弹窗');
 assert.doesNotMatch(decisionFeedSummarySource, /setPanelView\('approvals'\)/, '权威待办详情不得再渲染在助手内部');
 assert.match(decisionFeedSummarySource, /goalId=\{pageContext\.goalId\}/, '权威待办概要必须读取当前数字员工周目标，而不是默认最新目标');
+assert.ok(
+  source.indexOf('data-assistant-summary="decision-feed"') < source.indexOf('{activeThread.messages.map'),
+  '权威待办概要必须固定在历史对话消息之前',
+);
+assert.match(source, /ASSISTANT_ACTION_TIMEOUT_MS = 12_000[\s\S]*signal: controller\.signal/, '操作路由必须有客户端超时，不能永久保持思考中');
+assert.match(source, /function withAssistantTimeout<T>[\s\S]*reject\(new AssistantRequestTimeoutError/, '超时必须由 Promise 竞速确定性结束，不能只依赖代理响应 abort');
+assert.match(source, /ASSISTANT_CHAT_RESPONSE_TIMEOUT_MS = 20_000[\s\S]*ASSISTANT_CHAT_STREAM_IDLE_TIMEOUT_MS = 30_000[\s\S]*chatTimedOut = true;[\s\S]*setLoading\(false\)/, '模型首响应和流式空闲超时后必须退出思考状态');
+assert.match(source, /ASSISTANT_UI_WATCHDOG_TIMEOUT_MS = 25_000[\s\S]*if \(!loading\) return;[\s\S]*setLoading\(false\)[\s\S]*本次连接在 25 秒内没有返回/, '独立 UI 看门狗必须在网络 Promise 不回调时结束思考状态并解释原因');
+assert.match(source, /if \(!fence\.active \|\| fence\.scopeKey !== persistenceScopeKey\)[\s\S]{0,180}persistenceFenceRef\.current = fence/, 'StrictMode 二次 effect setup 必须恢复当前用户作用域的活动栅栏');
+assert.match(source, /const currentInstance = \(\) => \([\s\S]*persistenceFenceRef\.current === requestFence[\s\S]*const currentScope = currentInstance/, '同一租户用户的令牌轮换不得丢弃回答，身份范围变化仍必须使实例栅栏失效');
+assert.match(source, /finally \{[\s\S]{0,220}setLoading\(false\)/, '请求作用域变化、断线或异常退出时也必须无条件结束当前组件的思考状态');
 
 const assistantPanelSource = sourceSection(
   'id="global-assistant-panel"',
@@ -186,6 +197,7 @@ assert.match(persistThreadSource, /if \(queue\.running\) return/, '同一线程�
 assert.match(persistThreadSource, /expectedVersion/, '每次线程保存必须携带服务端版本前置条件');
 assert.match(persistThreadSource, /response\.status === 409/, '版本冲突必须进入显式合并流程');
 assert.match(persistThreadSource, /mergeAssistantThread\(remote, latestLocal\)/, '冲突恢复必须合并服务端状态与最新本地输入');
+assert.match(source, /messages:\s*local\.messages\.slice\(-MAX_PERSISTED_MESSAGES\)/, '版本冲突只能保留当前会话消息，不得把远端旧历史追加到最新回复后');
 assert.match(persistThreadSource, /queue\.pending = cloneAssistantThread\(merged\)/, '合并后的最新状态必须重新排队保存');
 assert.match(persistThreadSource, /assistantPersistenceRetryDelay\(queue\.retryAttempt\)/, '临时失败必须使用有界指数退避重新保存');
 assert.match(persistThreadSource, /queue\.pending = cloneAssistantThread\(useAssistantStore\.getState\(\)\.threads\[agentId\]\)/, '失败重试必须始终携带最新本地快照');
@@ -250,6 +262,16 @@ assert.match(source, /persistThread\(activeAgent\)/, '关闭前必须保留任�
 
 const sendSource = sourceSection('const send = useCallback', 'const handleTaskCardAction', '自然语言发送流程');
 assert.match(sendSource, /const threadAgent = PRIMARY_ASSISTANT_THREAD/, '发送消息必须写入 business 主线程');
+assert.match(source, /function assistantProductionIntent[\s\S]*hasProductionVerb[\s\S]*hasProductionArtifact/, '明确的脚本、视频与分镜生产指令必须被识别为生产任务');
+assert.match(sendSource, /assistantProductionIntent\(visibleText\)[\s\S]*socialContentApi\.createTask\(/, '生产指令必须创建真实内容 Agent 任务，不得交给模型生成长文本');
+assert.match(sendSource, /resolveAssistantEnterpriseProduct\(productionIntent\.productQuery\)[\s\S]*studioApi\.script\([\s\S]*selectedProductId: productionProduct\.id[\s\S]*scriptType: 'storyboard'/, '助手必须用企业中心已确认产品调用现有内容制作能力生成真实口播分镜');
+assert.match(sendSource, /if \(!productionDraft\.script\?\.trim\(\)\)[\s\S]*throw new Error/, '口播生成失败时不得跳入空白生产页');
+assert.ok(sendSource.indexOf('studioApi.script') < sendSource.indexOf('socialContentApi.createTask'), '必须先生成有效口播再创建周任务，避免留下空白孤儿任务');
+assert.match(sendSource, /productId: productionProduct\.id[\s\S]*productRef: productionProduct\.label/, '周任务必须绑定企业中心的真实产品身份');
+assert.match(sendSource, /initialProductionScript: productionDraft\.script/, '现有三栏生产页必须接收已经生成的口播分镜');
+assert.match(sendSource, /setAssistantTool\(null\)[\s\S]*setMode\('breathing'\)[\s\S]*page: 'smartAssets'/, '进入生产页前必须收起灵小枢对话窗口');
+assert.match(sendSource, /page: 'smartAssets'[\s\S]*socialContentTaskId: productionTask\.taskId/, '任务创建后必须定位到该任务的生产页面');
+assert.ok(sendSource.indexOf('socialContentApi.createTask') < sendSource.indexOf('fetch(API_PATH[agentForOrbit(routeAgent)]'), '生产任务分流必须发生在千问文本生成请求之前');
 assert.match(sendSource, /fetch\(API_PATH\[agentForOrbit\(routeAgent\)\]/, 'business 主线程聚合不得丢失当前页面的内部能力路由');
 assert.doesNotMatch(sendSource, /setPaused\(targetAgent,\s*false\)/, '发送普通消息不得擅自把任务恢复为运行中');
 assert.match(sendSource, /focusedNaturalLanguageActionInput\(focusedCard, focusedMutationActionId\)/, '自然语言确定性操作必须从当前卡片读取后端签发输入');
@@ -263,14 +285,15 @@ assert.match(
 );
 assert.match(
   sendSource,
-  /signedFocusedMutationActionId \? \{ deterministicActionId: signedFocusedMutationActionId \} : undefined/,
+  /\{ deterministicActionId: signedFocusedMutationActionId \}/,
   '明确的自然语言确定性操作必须把动作意图传给操作请求错误处理',
 );
 assert.match(sendSource, /selectAssistantConversationContext\(mergeConsecutiveAssistant\(thread\.messages\)\)/, '长对话必须按完整轮次和预算选择上下文');
 assert.match(sendSource, /renderAssistantConversationBoundary\(conversationContext\)/, '被裁剪的较早对话必须向模型声明范围边界');
 assert.match(sendSource, /strategyRequest \? '' : await loadLiveIntegrationFacts\(\)/, '经营主对话必须使用服务端核验事实而不是客户端汇总作为权威依据');
+assert.match(sendSource, /content: strategyRequest \? visibleText : \[/, '经营主对话不得把前端导航提示和策略规则重复塞入千问上下文');
 assert.match(sendSource, /userQuestion: visibleText[\s\S]{0,700}retainedUserInstructions/, '经营主对话必须把当前问题、当前业务对象与有界历史约束交给服务端组装上下文');
-assert.match(sendSource, /requestToken === getToken\(\)/, '身份切换后旧请求的异步响应必须被丢弃');
+assert.match(sendSource, /requestFence\.active[\s\S]{0,100}persistenceFenceRef\.current === requestFence/, '租户或用户范围切换后旧请求的异步响应必须被丢弃');
 assert.match(source, /function isWeeklyPlanKickoffRequest[\s\S]{0,500}开始\|启动\|制定\|生成\|创建[\s\S]{0,220}生产\|制作\|周计划\|计划\|周任务/, '空白周计划必须识别用户对灵小枢发出的明确开工或制定计划请求');
 assert.match(sendSource, /weeklyPlanKickoffAvailable && isWeeklyPlanKickoffRequest\(draft\)[\s\S]{0,650}可预览的周计划[\s\S]{0,400}openWeeklyPlanFromAssistant\(\)/, '灵小枢收到明确开工请求时必须先打开计划预览，不能绕过用户确认直接生产');
 
@@ -325,6 +348,8 @@ assert.match(hydrationSource, /actionId:\s*'view_status'/, '恢复聚焦卡片�
 assert.match(hydrationSource, /executeAssistantAction\(PRIMARY_ASSISTANT_THREAD, request\)/, '刷新后必须由服务端重新签发可执行动作');
 assert.match(hydrationSource, /assistantThreadHydrationStartedRef\.current/, '线程持久化快照每次挂载只能初始化一次');
 assert.match(hydrationSource, /version:\s*Number\.isSafeInteger/, '恢复线程时必须同时恢复服务端 CAS 版本');
+assert.match(hydrationSource, /withoutPersistedConversation\(journal\)/, '进入新会话时不得从本地恢复旧消息正文');
+assert.match(hydrationSource, /withoutPersistedConversation\(persistedRemote\)/, '进入新会话时不得从服务端恢复旧消息正文');
 assert.match(hydrationSource, /threads\[PRIMARY_ASSISTANT_THREAD\]\s*!==\s*threadBeforeRequest/, '旧线程快照不得覆盖请求期间产生的本地输入');
 assert.match(hydrationSource, /threads\[PRIMARY_ASSISTANT_THREAD\]\s*!==\s*hydratedThread/, '过期重签结果不得覆盖请求期间产生的新卡片或焦点');
 assert.match(hydrationSource, /actionCardToTaskCard\(response\.card, response, CURRENT_STATUS_TASK_ID\)/, '重新签发的动作必须进入专用的权威状态卡');
@@ -393,6 +418,7 @@ assert.match(source, /dialogTaskCard\.secondaryActions\.map/, '外部决策弹�
 assert.match(source, /dialogTaskCard\.workspace\.href/, '外部弹窗中的完整结果必须可以进入工作区');
 assert.match(source, /data-assistant-summary="task-card"[\s\S]{0,1100}openDecisionDialog\([\s\S]{0,120}kind: 'task'/, '任务结果必须先以概要气泡呈现，用户点击后才打开外部详情');
 assert.match(source, /<AssistantComposer/, '灵小枢必须使用统一输入组件');
+assert.match(source, /onSuggest=\{suggestion => void send\(suggestion, currentPageAgent\)\}/, '快捷回复卡片必须点击后直接进入当前灵小枢对话');
 assert.match(composerSource, /rows=\{1\}/, '输入框必须默认只占一行');
 assert.match(composerSource, /maxLength=\{4000\}/, '输入框必须遵守确定性操作接口的长度边界');
 assert.match(composerSource, /max-h-\[88px\]/, '输入框最多只能扩展到三行');
@@ -403,6 +429,7 @@ const composerMarkupEnd = composerSource.indexOf('{error &&', composerMarkupStar
 assert.ok(composerMarkupStart >= 0 && composerMarkupEnd > composerMarkupStart, '无法定位灵小枢输入区');
 const composerMarkup = composerSource.slice(composerMarkupStart, composerMarkupEnd).replace(/\{files\.map\([\s\S]*?\}\)\}/, '');
 assert.match(composerMarkup, /data-assistant-composer-surface="true"/, '输入区必须使用一体化圆角表面承接输入与操作');
+assert.match(assistantStylesSource, /\.ls-assistant-composer__surface\s*\{[\s\S]{0,260}box-shadow:\s*0 0 0 2px var\(--color-accent\)/, '输入区未聚焦时也必须持久展示蓝色边框');
 assert.doesNotMatch(composerMarkup.split('\n', 1)[0], /border(?:-t)?\b|bg-surface-2/, '输入区外层不得保留生硬的分割线或灰底方框');
 assert.match(composerSource, /ls-assistant-composer__input[^"]*outline-none/, '文本框必须移除浏览器默认矩形焦点框');
 assert.match(assistantStylesSource, /\.ls-assistant-composer__surface\s*\{[\s\S]{0,180}border:\s*0;[\s\S]{0,120}border-radius:/, '输入表面不得使用硬描边并必须保持充分圆角');
@@ -419,7 +446,8 @@ assert.match(attachmentSendSource, /if \(!result\.ok \|\| !result\.material\?\.i
 assert.match(attachmentSendSource, /uploadedAttachmentCacheRef\.current\.set/, '部分上传成功后必须缓存真实回执，重试不得重复上传');
 assert.match(attachmentSendSource, /setAttachmentError/, '上传失败必须保留附件并明确提示');
 assert.doesNotMatch(attachmentSendSource, /URL\.createObjectURL|data:/, '不得把本地 blob 或 data URL 伪装成持久化附件');
-assert.match(sendSource, /uploadedAttachments\.length\s*\?\s*null\s*:\s*await executeAssistantAction/, '携带附件的消息不得猜测确定性操作参数');
+assert.match(sendSource, /const actionResponse = signedFocusedMutationActionId\s*\?\s*await executeAssistantAction/, '普通对话必须绕过确定性操作路由并直接进入模型');
+assert.match(sendSource, /const signedFocusedMutationActionId = focusedActionInput \? focusedMutationActionId : undefined/, '只有绑定服务端任务卡与版本的明确操作才可进入确定性操作路由');
 assert.match(sendSource, /附件事实边界/, '对话模型必须获知附件只完成持久化、尚未证明已读取内容');
 
 console.log('global assistant contract tests passed');

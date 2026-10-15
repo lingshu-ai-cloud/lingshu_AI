@@ -7,6 +7,10 @@ function organization(profile = {}, overview = {}) {
   return workspace.name || workspace.title || user.organizationName || user.tenantName || '灵枢工作台'
 }
 
+function platformLabel(value) {
+  return ({ tiktok:'TikTok', instagram:'Instagram', youtube:'YouTube', facebook:'Facebook', x:'X' })[String(value || '').toLowerCase()] || String(value || '平台待同步')
+}
+
 function project(profile = {}, overview = {}, queue = {}, selectedDay = '') {
   const shooting = Array.isArray(queue.shooting) ? queue.shooting : []
   const queueMatters = Array.isArray(queue.matters) ? queue.matters : []
@@ -37,18 +41,68 @@ function project(profile = {}, overview = {}, queue = {}, selectedDay = '') {
   const taskItems = Array.isArray(overview.taskDrilldown?.items) ? overview.taskDrilldown.items : []
   const contentItems = Array.isArray(overview.contentSchedule?.items) ? overview.contentSchedule.items : []
   const plannedFilms = overview.contentSchedule?.availability === 'unavailable' ? '—' : contentItems.length
+  const producedFilms = overview.contentSchedule?.availability === 'unavailable' ? '—' : contentItems.filter(item =>
+    /succeeded|completed|produced|published|delivered|approved/i.test(String(item.status || item.stage || ''))
+    || Boolean(item.completedAt || item.producedAt || item.publishedAt)
+  ).length
+  const pendingProduction = plannedFilms === '—' ? '—' : Math.max(0, plannedFilms - producedFilms)
   const acceptanceTasks = taskItems.filter(item => /waiting_review|handed_off|待验收|验收|review/i.test([item.status, item.title, item.stage].filter(Boolean).join(' ')))
   const acceptanceApprovals = (Array.isArray(queue.approvals) ? queue.approvals : []).filter(item => /成片|验收|review|film|video/i.test([item.title, item.action_summary, item.reason].filter(Boolean).join(' ')))
-  const deliveryItems = Array.isArray(overview.deliveries) ? overview.deliveries : null
+  const databaseFilms = Array.isArray(queue.films) ? queue.films : null
+  const deliveryItems = databaseFilms ? databaseFilms.map(item => ({
+    id: item.id, kind: '内容成片', title: item.title, subject: item.subject, deliveredAt: item.deliveredAt,
+    artifacts: item.videoUrl ? [{ kind: 'video', url: item.videoUrl }] : [], contentApproval: { approved: item.approved === true },
+    thumbnailUrl: item.thumbnailUrl || ''
+  })) : Array.isArray(overview.deliveries) ? overview.deliveries : null
   const exportedPendingAcceptance = deliveryItems && deliveryItems.filter(item => item && item.kind === '内容成片'
     && Array.isArray(item.artifacts) && item.artifacts.some(artifact => artifact && artifact.kind === 'video' && artifact.url)
     && item.contentApproval?.approved !== true)
-  const pendingAcceptance = exportedPendingAcceptance
-    ? exportedPendingAcceptance.length
-    : new Set([...acceptanceTasks.map(item => String(item.id)), ...acceptanceApprovals.map(item => String(item.task_id || item.id))]).size
+  const pendingFilmItems = exportedPendingAcceptance || []
+  const pendingAcceptanceIds = new Set([
+    ...pendingFilmItems.map(item => String(item.id)),
+    ...acceptanceTasks.map(item => String(item.id)),
+    ...acceptanceApprovals.map(item => String(item.task_id || item.id))
+  ])
+  const pendingAcceptance = pendingAcceptanceIds.size
+  const acceptedFilms = deliveryItems
+    ? deliveryItems.filter(item => item && item.kind === '内容成片'
+      && Array.isArray(item.artifacts) && item.artifacts.some(artifact => artifact && artifact.kind === 'video' && artifact.url)
+      && item.contentApproval?.approved === true).length
+    : taskItems.filter(item => /成片|验收|review|film|video/i.test([item.title, item.stage].filter(Boolean).join(' '))
+      && /succeeded|completed|approved|accepted/i.test(String(item.status || ''))).length
+  const completedShots = shooting.length - pendingShots.length
+  const filmAcceptanceItems = (deliveryItems || []).filter(item => item && item.kind === '内容成片'
+    && Array.isArray(item.artifacts) && item.artifacts.some(artifact => artifact && artifact.kind === 'video' && artifact.url)
+    && item.contentApproval?.approved !== true).map(item => {
+      const video = item.artifacts.find(artifact => artifact && artifact.kind === 'video' && artifact.url)
+      return { id: String(item.id || video.id || ''), title: String(item.title || '未命名成片'), subject: String(item.subject || '内容成片'), videoUrl: String(video.url || ''), thumbnailUrl: String(item.thumbnailUrl || ''), deliveredAt: String(item.deliveredAt || item.updatedAt || '') }
+    })
+  const queueTasks = Array.isArray(queue.tasks) ? queue.tasks : []
+  const acceptanceItems = [...filmAcceptanceItems]
+  acceptanceApprovals.forEach(approval => {
+    const taskId = String(approval.task_id || '')
+    if (acceptanceItems.some(item => String(item.id) === taskId || String(item.id) === String(approval.id))) return
+    const task = queueTasks.find(item => String(item.id) === taskId)
+    acceptanceItems.push({
+      id: String(approval.id || taskId), title: String(task?.title || approval.title || '待验收成片'),
+      subject: String(approval.action_summary || approval.reason || '请预览成片并确认验收结果'),
+      videoUrl: String(approval.videoUrl || ''), thumbnailUrl: String(approval.thumbnailUrl || ''), mock: approval.mock === true,
+      deliveredAt: String(approval.created_at || task?.updated_at || '')
+    })
+  })
+  const todayAcceptance = acceptanceItems.filter(item => {
+    const date = String(item.deliveredAt || '').slice(0, 10)
+    return !selectedDay || !date || date <= selectedDay
+  })
+  const publishedVideos = contentItems.filter(item => item && item.publishReceipt === 'verified').map(item => ({
+    id: String(item.id || ''), title: String(item.title || '未命名视频'), platform: platformLabel(item.platform),
+    thumbnailUrl: String(item.thumbnailUrl || ''),
+    views: item.views !== null && item.views !== undefined && item.views !== '' && Number.isFinite(Number(item.views)) ? Number(item.views) : null,
+    mock: item.mock === true,
+  }))
   const todayShots = pendingShots.filter(item => {
     const date = String(item.dueAt || item.plannedAt || item.scheduledAt || item.createdAt || '').slice(0, 10)
-    return !selectedDay || !date || date === selectedDay
+    return !selectedDay || !date || date <= selectedDay
   }).map(item => ({
     ...item,
     date: String(item.dueAt || item.plannedAt || item.scheduledAt || item.createdAt || '').slice(0, 10),
@@ -63,12 +117,18 @@ function project(profile = {}, overview = {}, queue = {}, selectedDay = '') {
       pending: matters.length,
       shooting: pendingShots.length,
       confirmation: pendingConfirmations.length,
-      plannedFilms, pendingAcceptance, pendingShots: pendingShots.length
+      plannedFilms, pendingProduction, producedFilms,
+      pendingAcceptance, acceptedFilms,
+      pendingShots: pendingShots.length, completedShots
     },
     blockers,
     matters,
     pendingShots,
     todayShots,
+    acceptanceItems,
+    todayAcceptance,
+    films: deliveryItems || [],
+    publishedVideos,
     scheduleAvailable: overview.agentSchedule?.availability !== 'unavailable'
   }
 }

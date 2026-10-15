@@ -10,7 +10,12 @@
     <view wx:if="{{preview}}" class="preview-card"><text class="preview-title">执行前确认 · {{preview.target.title}}</text><text class="preview-impact">{{preview.impact}}</text><view wx:for="{{preview.steps}}" wx:key="*this" class="step">{{index + 1}}. {{item}}</view><view class="preview-buttons"><button bindtap="dismissPreview">取消</button><button class="confirm" loading="{{confirming}}" bindtap="confirmAction">确认执行</button></view></view>
     <view wx:if="{{receipts.length}}" class="receipts"><text class="receipt-heading">执行记录</text><view wx:for="{{receipts}}" wx:key="id" class="receipt"><text>{{item.statusLabel}}</text><text>{{item.acceptedAt}}</text></view></view>
   </scroll-view>
-  <view class="composer {{recording ? 'recording' : ''}}"><button class="mode" data-mode="{{inputMode === 'text' ? 'voice' : 'text'}}" bindtap="switchInputMode">{{inputMode === 'text' ? '🎙' : '⌨'}}</button><block wx:if="{{inputMode === 'text'}}"><input value="{{input}}" bindinput="inputText" confirm-type="send" bindconfirm="send" placeholder="输入消息"/><button wx:if="{{input}}" class="send" disabled="{{sending}}" bindtap="send">↑</button></block><button wx:else class="hold-to-talk {{recording ? 'holding' : ''}}" disabled="{{transcribing || sending}}" bindtouchstart="holdVoiceStart" bindtouchmove="holdVoiceMove" bindtouchend="holdVoiceEnd" bindtouchcancel="cancelRecording">{{transcribing ? '正在识别…' : recording ? '松开发送' : '按住说话'}}</button></view>
+  <view wx:if="{{inputMode === 'voice'}}" class="voice-prompt {{recording ? 'recording' : ''}}" bindtouchstart="holdVoiceStart" bindtouchmove="holdVoiceMove" bindtouchend="holdVoiceEnd" bindtouchcancel="cancelRecording">
+    <view class="voice-glyph"><text></text><text></text></view>
+    <view class="voice-copy"><text class="voice-title">{{transcribing ? '正在识别…' : recording ? '松开发送' : '长按问灵小枢'}}</text><text class="voice-note">{{recording ? '上滑取消' : '可按住提问或者派活'}}</text></view>
+    <view class="keyboard-switch" data-mode="text" bindtap="switchInputMode">⌨</view>
+  </view>
+  <view wx:else class="composer"><button class="mode" data-mode="voice" bindtap="switchInputMode">🎙</button><input value="{{input}}" bindinput="inputText" confirm-type="send" bindconfirm="send" placeholder="输入消息"/><button wx:if="{{input}}" class="send" disabled="{{sending}}" bindtap="send">↑</button></view>
   <view wx:if="{{recording}}" class="voice-status"><text>正在聆听，松开发送</text><text>上滑可取消</text></view>
   <operator-nav active="assistant"></operator-nav>
 </view>
