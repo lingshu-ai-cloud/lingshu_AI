@@ -134,6 +134,17 @@ function calendarCardOwner(task: AgentCalendarTask, overdue: boolean): string {
   return `${agentCalendarTaskType(task)} · ${agentLabels[task.agent]} · ${state}`;
 }
 
+export function taskProgressPercent(task: AgentCalendarTask): number | undefined {
+  const sources = task.dailyTaskGroup?.tasks ?? task.customerServiceSummary?.sourceTasks ?? task.internalNodes;
+  if (sources?.length) {
+    const completed = sources.filter(source => ['completed', 'no_data'].includes(source.status)).length;
+    const active = sources.filter(source => source.status === 'active').length;
+    return Math.round(((completed + active * 0.5) / sources.length) * 100);
+  }
+  if (['completed', 'no_data'].includes(task.status)) return 100;
+  return undefined;
+}
+
 type Props = {
   startsAt?: string;
   tasks: AgentCalendarTask[];
@@ -247,6 +258,7 @@ export default function RestoredAgentWorkCalendar({
     const resident = isAlwaysOnCalendarTask(task);
     const start = task.date;
     const card = hourCalendarCard(task, now);
+    const today = task.date === calendarDayKey(now, timeZone);
     return {
       id: task.id,
       title: task.title,
@@ -263,6 +275,7 @@ export default function RestoredAgentWorkCalendar({
       description: task.context,
       cardLines: [card.lines[0], task.title, `${resident?'24小时值守':task.dailyTaskGroup?`${task.dailyTaskGroup.tasks.length} 项任务`:'按流程执行'} · ${statusLabels[task.status]}`],
       planPlaceholder: false,
+      progress: today ? taskProgressPercent(task) : undefined,
       identity: { kind: 'agent', role: task.agent },
       data: task,
     };

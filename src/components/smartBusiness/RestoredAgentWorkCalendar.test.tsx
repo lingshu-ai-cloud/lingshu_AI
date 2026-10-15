@@ -3,7 +3,7 @@ import { readFileSync } from 'node:fs';
 import test from 'node:test';
 import { createElement } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
-import Calendar, {isPastUnfinishedCalendarTask} from './RestoredAgentWorkCalendar';
+import Calendar, {isPastUnfinishedCalendarTask,taskProgressPercent} from './RestoredAgentWorkCalendar';
 import type { AgentCalendarTask } from './AgentWeeklyCalendar';
 const base: AgentCalendarTask = {id:'business',date:'2026-10-12',time:'10:00',agent:'business',title:'冻结经营任务',output:'经营交付',context:'实际范围',minutes:30,status:'planned',dueAt:'2026-10-12T10:00:00+08:00'};
 test('weekly board is Monday through Sunday and direct execution never substitutes a status workspace',()=>{
@@ -33,6 +33,11 @@ test('a passed unfinished slot is overdue while completed work keeps its termina
   const now=Date.parse('2026-10-12T12:00:00+08:00');
   assert.equal(isPastUnfinishedCalendarTask({...base,dueAt:undefined,status:'planned'},now),true);
   assert.equal(isPastUnfinishedCalendarTask({...base,dueAt:undefined,status:'completed'},now),false);
+});
+test('today progress is derived from persisted child states instead of wall-clock time',()=>{
+  assert.equal(taskProgressPercent({...base,dailyTaskGroup:{tasks:[{...base,id:'done',status:'completed'},{...base,id:'working',status:'active'},{...base,id:'queued',status:'planned'}]}}),50);
+  assert.equal(taskProgressPercent({...base,status:'completed'}),100);
+  assert.equal(taskProgressPercent(base),undefined);
 });
 test('calendar renders only independent task events and keeps task details in the shared drawer',()=>{
   const source=readFileSync(new URL('./RestoredAgentWorkCalendar.tsx',import.meta.url),'utf8');

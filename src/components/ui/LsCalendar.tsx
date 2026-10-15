@@ -355,7 +355,7 @@ headerToolbar={false} contentHeight={fixedHeight === 'auto' && showAllEvents && 
         dayCellClass={info => [info.isToday ? 'ls-calendar-today' : '', [0, 6].includes(info.dow) ? 'ls-calendar-weekend' : ''].join(' ')}
         dayCellDidMount={info => { info.el.dataset.calendarDate = calendarDayKey(info.date, timeZone); }}
         dayLaneDidMount={info => { info.el.dataset.calendarDate = calendarDayKey(info.date, timeZone); }}
-        eventClass={info => { const item = info.event.extendedProps.item as LsCalendarEvent; const aggregateGroup = item.data && typeof item.data === 'object' && (item.data as {kind?: string}).kind === 'aggregate' ? (item.data as {group?: string}).group : ''; return `ls-calendar-event ls-calendar-event-${item.status}${taskBoard && item.identity?.kind === 'agent' ? ` ls-calendar-agent-${item.identity.role}` : ''} ls-calendar-event-reveal${item.cardLines ? ' ls-calendar-event-three-row' : ''}${item.planPlaceholder ? ' ls-calendar-event-placeholder' : ''}${aggregateGroup ? ` ls-calendar-event-aggregate ls-calendar-event-aggregate-${aggregateGroup}` : ''}${reducedMotion || revealedEventIdsRef.current.has(info.event.id) ? ' is-revealed' : ''}`; }}
+        eventClass={info => { const item = info.event.extendedProps.item as LsCalendarEvent; const aggregateGroup = item.data && typeof item.data === 'object' && (item.data as {kind?: string}).kind === 'aggregate' ? (item.data as {group?: string}).group : ''; return `ls-calendar-event ls-calendar-event-${item.status}${taskBoard && item.identity?.kind === 'agent' ? ` ls-calendar-agent-${item.identity.role}` : ''}${typeof item.progress === 'number' ? ' ls-calendar-event-progress' : ''} ls-calendar-event-reveal${item.cardLines ? ' ls-calendar-event-three-row' : ''}${item.planPlaceholder ? ' ls-calendar-event-placeholder' : ''}${aggregateGroup ? ` ls-calendar-event-aggregate ls-calendar-event-aggregate-${aggregateGroup}` : ''}${reducedMotion || revealedEventIdsRef.current.has(info.event.id) ? ' is-revealed' : ''}`; }}
         eventContent={info => {
           const item = info.event.extendedProps.item as LsCalendarEvent;
           if (taskBoard && item.cardLines) return <div className="ls-calendar-event-content ls-calendar-task-board-card"><span className="ls-calendar-event-row ls-calendar-event-row-owner" title={item.cardLines[0]}>{item.cardLines[0]}</span><strong className="ls-calendar-event-row ls-calendar-event-row-title" title={item.title}>{item.title}</strong><span className="ls-calendar-event-row ls-calendar-event-row-state" title={item.cardLines[2]}>{item.cardLines[2]}</span>{['needs_action','failed'].includes(item.status)?<span className="ls-calendar-task-status-mark is-missing" aria-label="缺少执行条件"><CircleAlert size={17}/></span>:item.status==='done'?<span className="ls-calendar-task-status-mark is-complete" aria-label="已完成交付"><CircleCheck size={17}/></span>:null}</div>;
@@ -413,6 +413,10 @@ headerToolbar={false} contentHeight={fixedHeight === 'auto' && showAllEvents && 
         eventDidMount={info => {
           const item = info.event.extendedProps.item as LsCalendarEvent;
           const element = info.el as HTMLElement;
+          if (typeof item.progress === 'number') {
+            element.style.setProperty('--ls-task-progress', `${Math.min(100, Math.max(0, item.progress))}%`);
+            element.dataset.taskProgress = String(item.progress);
+          }
           if (info.event.extendedProps.isVerticalTimedCard && !info.event.allDay) {
             const harness = element.closest<HTMLElement>('.fc-timegrid-event-harness');
             if (harness) {
