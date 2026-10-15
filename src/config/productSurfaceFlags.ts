@@ -17,6 +17,7 @@ export const PLATFORM_ADS_PAGE_IDS: readonly Page[] = [
 ];
 
 export function availableProductPage(page: Page): Page {
+  if (page === 'orders' || page === 'scheduled') return 'digitalEmployees';
   return !PLATFORM_ADS_SURFACE_ENABLED && PLATFORM_ADS_PAGE_IDS.includes(page)
     ? 'digitalEmployees'
     : page;

@@ -164,7 +164,7 @@ const HANDLING_COLOR: Record<HandlingMode, string> = {
 };
 
 function filterCustomers(view: CustomerView, customers: CustomerProfile[]) {
-  if (view === 'inbox') return sortCustomersByLatestMessage(customers.filter(customer => customer.inboxReason));
+  if (view === 'inbox') return sortCustomersByLatestMessage(customers.filter(customer => customer.isHistorical || customer.inboxReason));
   if (view === 'leads') return customers.filter(customer => ['lead', 'inquiry', 'quoted'].includes(customer.stage)).sort((a, b) => b.intentScore - a.intentScore);
   if (view === 'won') return customers.filter(customer => customer.stage === 'won');
   return sortCustomersByPriority(customers.filter(customer => customer.stage === 'silent30' || customer.stage === 'silent60'));
@@ -575,7 +575,7 @@ function CompactCustomerList({
               <div className="min-w-0">
                 <p className="truncate text-[13px] font-semibold leading-5 text-text-primary" title={customer.name}>{customer.name}</p>
                 <div className="mt-1 flex flex-wrap items-center gap-1.5">
-                  <Tag className="!m-0 !text-[9px]">{customer.isMock ? '模拟客户' : '真实客户'}</Tag>
+                  <Tag className="!m-0 !text-[9px]">{customer.isHistorical ? '历史会话' : customer.isMock ? '模拟客户' : '真实客户'}</Tag>
                   {customer.simulation?.warning && <span className="rounded bg-red-600 px-1.5 py-0.5 text-[9px] font-semibold text-white">大单预警</span>}
                   <SourceIcon source={customer.source} size={11} />
                 </div>
@@ -858,7 +858,7 @@ function ChatThread({
           <div className="min-w-0">
           <div className="flex min-w-0 items-center gap-2">
             <p className="truncate text-base font-semibold text-text-primary">{customer.name}</p>
-            <Tag className="!m-0 !text-[10px]">{customer.isMock ? '模拟客户 · 不对外发送' : channelReady ? '真实客户 · 通道已连接' : '真实客户 · 通道未连接'}</Tag>
+            <Tag className="!m-0 !text-[10px]">{customer.isHistorical ? '历史会话 · 只读' : customer.isMock ? '模拟客户 · 不对外发送' : channelReady ? '真实客户 · 通道已连接' : '真实客户 · 通道未连接'}</Tag>
           </div>
           <div className="mt-0.5 flex items-center gap-1.5 text-[11px] text-text-muted">
             <span>{STAGE_LABEL[customer.stage]}</span>
@@ -943,7 +943,7 @@ function ChatThread({
               </div>
             );
           })}
-          {draftSuggestion && (
+          {draftSuggestion && !customer.isHistorical && (
             <>
               <SalesDecisionEvidence meta={draftMeta} />
               <DraftSuggestionBar draft={draftSuggestion} isTemplate={false} templatePlan={templatePlan} priceRulesReady={priceRulesReady} knowledgeMiss={knowledgeMiss} bridgeOnly={bridgeOnly} onSend={onSendDraft} onSave={() => onSaveDraft(draftSuggestion)} savingDraft={savingDraft} channelReady={channelReady && !isOutsideWindow} onChangeDraft={onDraftChange} onDismiss={onDismissDraft} onRegenerate={onRegenerateDraft} />
@@ -953,6 +953,7 @@ function ChatThread({
       </div>
       <div className="shrink-0 space-y-2 border-t border-border bg-surface p-3">
         <div className="mx-auto max-w-3xl space-y-2">
+          {customer.isHistorical ? <div className="rounded-lg border border-border bg-surface-2 px-3 py-3 text-xs text-text-secondary">这是迁入的历史会话，仅供查看；未绑定已授权渠道，不能回复或对外发送。</div> : <>
           {isOutsideWindow && <div className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs font-bold text-amber-800">距客户上次互动已超过 24 小时，当前不能直接发送普通 {customer.source === 'instagram' ? 'Instagram' : 'Messenger'} 消息。</div>}
           {composerState === 'idle' && chips.length > 0 && (
             <div className="flex flex-wrap gap-2">
@@ -994,6 +995,7 @@ function ChatThread({
                </LsCompactFieldGroup>
             </div>
           </div>
+          </>}
         </div>
       </div>
     </section>
@@ -1647,10 +1649,10 @@ export default function ConversionPage({ onLeaveConversation: _onLeaveConversati
   const selected = useMemo(() => (
     selectedId ? customers.find(customer => customer.id === selectedId) ?? null : null
   ), [customers, selectedId]);
-  useEffect(()=>{let live=true;setPendingSendIntent(null);if(selected&&!selected.isMock){void readCustomerSendScope(selected.id).then(scope=>{if(live)setPendingSendIntent(readSendIntent(localStorage,scope));}).catch(()=>{});}return()=>{live=false;};},[selected?.id]);
+  useEffect(()=>{let live=true;setPendingSendIntent(null);if(selected&&!selected.isMock&&!selected.isHistorical){void readCustomerSendScope(selected.id).then(scope=>{if(live)setPendingSendIntent(readSendIntent(localStorage,scope));}).catch(()=>{});}return()=>{live=false;};},[selected?.id]);
   const manualHoldIdentity=JSON.stringify([selected?.id,selected?.source,selected?.waNumber,selected?.pageId,selected?.instagramAccountId,authHeader().Authorization]);
   const actualManualIdentity=useRef(manualHoldIdentity);actualManualIdentity.current=manualHoldIdentity;
-  useEffect(()=>{let active=true;setManualHold(null);setManualHoldError(null);setManualHoldUnknown(null);if(selected&&!selected.isMock){void customerManualTakeoverApi.read(selected.id).then(view=>{if(active&&actualManualIdentity.current===manualHoldIdentity)setManualHold({identity:manualHoldIdentity,view});}).catch(error=>{if(active&&actualManualIdentity.current===manualHoldIdentity)setManualHoldError({identity:manualHoldIdentity,message:error instanceof Error?error.message:'接管状态读取失败'});});}return()=>{active=false;};},[manualHoldIdentity,selected?.id]);
+  useEffect(()=>{let active=true;setManualHold(null);setManualHoldError(null);setManualHoldUnknown(null);if(selected&&!selected.isMock&&!selected.isHistorical){void customerManualTakeoverApi.read(selected.id).then(view=>{if(active&&actualManualIdentity.current===manualHoldIdentity)setManualHold({identity:manualHoldIdentity,view});}).catch(error=>{if(active&&actualManualIdentity.current===manualHoldIdentity)setManualHoldError({identity:manualHoldIdentity,message:error instanceof Error?error.message:'接管状态读取失败'});});}return()=>{active=false;};},[manualHoldIdentity,selected?.id]);
   const selectedLatestBuyerId = useMemo(() => (
     selected ? [...selected.timeline].reverse().find(event => (event.type === 'messenger' || event.type === 'instagram' || event.type === 'whatsapp') && event.actor === 'buyer')?.id ?? '' : ''
   ), [selected?.id, selected?.timeline]);
@@ -1659,7 +1661,7 @@ export default function ConversionPage({ onLeaveConversation: _onLeaveConversati
   const partialAutoReplyActive = Boolean(customerServiceStatus?.autoReplyReady && autonomyLevel === 'auto');
   const customerPendingCount = useMemo(() => pendingCount(customers), [customers]);
   const customerTodoItems = useMemo(() => (
-    dailyTodoCustomers(customers).map(customer => {
+    dailyTodoCustomers(customers.filter(customer => !customer.isHistorical)).map(customer => {
       const suggestion = buildPrioritySuggestion(customer);
       const completed = isTodoCompleted(customer);
       return {
@@ -1750,7 +1752,7 @@ export default function ConversionPage({ onLeaveConversation: _onLeaveConversati
 
   useEffect(() => {
     customers.forEach(customer => {
-      if (customer.todoCompletedAt) return;
+      if (customer.isHistorical || customer.todoCompletedAt) return;
       const suggestion = buildPrioritySuggestion(customer);
       if (suggestion.suggestionType !== 'none' && isSuggestionDismissed(customer.id, suggestion.suggestionType)) {
         updateCustomer(customer.id, { todoCompletedAt: new Date().toISOString(), hasUnread: false });
@@ -1853,7 +1855,7 @@ export default function ConversionPage({ onLeaveConversation: _onLeaveConversati
   }, [selectedId]);
 
   useEffect(() => {
-    if (!selected) return;
+    if (!selected || selected.isHistorical) return;
     const untranslated = selected.timeline.filter(event => (event.type === 'messenger' || event.type === 'instagram' || event.type === 'whatsapp') && !/[\u4e00-\u9fff]/.test(event.body) && !event.translatedBody);
     if (!untranslated.length) return;
     let cancelled = false;
@@ -1874,7 +1876,7 @@ export default function ConversionPage({ onLeaveConversation: _onLeaveConversati
   }, [selected?.id, selected?.timeline, updateTimelineEvent]);
 
   useEffect(() => {
-    if (!selected) return;
+    if (!selected || selected.isHistorical) return;
     if (!customerServiceStatus?.enabled) return;
     const lastBuyer = [...selected.timeline].reverse().find(event => (event.type === 'messenger' || event.type === 'instagram' || event.type === 'whatsapp') && event.actor === 'buyer');
     if (!lastBuyer) return;
@@ -1974,7 +1976,7 @@ export default function ConversionPage({ onLeaveConversation: _onLeaveConversati
 
   const persistCustomerPatch = (id: string, patch: Partial<CustomerProfile>) => {
     const current = customers.find(item => item.id === id);
-    if (!current) return;
+    if (!current || current.isHistorical) return;
     const rollback = Object.fromEntries(Object.keys(patch).map(key => [key, current[key as keyof CustomerProfile]])) as Partial<CustomerProfile>;
     updateCustomer(id, patch);
     if (current.isMock) return;
@@ -2070,7 +2072,7 @@ export default function ConversionPage({ onLeaveConversation: _onLeaveConversati
   }, [appendTimelineEvent, isDemo, updateCustomer]);
 
   const updateHandlingMode = (mode: HandlingMode) => {
-    if (!selected) return;
+    if (!selected || selected.isHistorical) return;
     if (mode === 'ai_auto' && !partialAutoReplyActive) {
       if (!ensureCustomerServiceEnabled()) return;
       showToast('当前只给建议，满 3 天并授权后才可部分自动回复');
@@ -2174,6 +2176,10 @@ export default function ConversionPage({ onLeaveConversation: _onLeaveConversati
   };
 
   const queueSend = async (customer: CustomerProfile, body: string, restoreText: string, templatePlan?: TemplatePlan | null, meta?: DraftResult | null) => {
+    if (customer.isHistorical || customer.readOnly || customer.outboundBlocked) {
+      showToast('历史会话仅供查看，不能对外发送');
+      return;
+    }
     if(preparingSendRef.current)return;
     preparingSendRef.current=true;
     let scope:CustomerSendIntent['scope']|null=null;
@@ -2292,7 +2298,7 @@ export default function ConversionPage({ onLeaveConversation: _onLeaveConversati
   };
 
   const generateManualDraft = async (instruction: string, intent: DraftIntent = 'reply') => {
-    if (!selected) return;
+    if (!selected || selected.isHistorical) return;
     if (intent !== 'polish' && isWaitingForHumanQuote(selected)) {
       showToast('客户正在询价，已标记等待人工报价，请由销售亲自回复。');
       return;
@@ -2318,7 +2324,7 @@ export default function ConversionPage({ onLeaveConversation: _onLeaveConversati
   };
 
   const regenerateDraft = async () => {
-    if (!selected) return;
+    if (!selected || selected.isHistorical) return;
     if (isWaitingForHumanQuote(selected)) {
       showToast('报价问题不生成 AI 回复，请由销售亲自回复。');
       return;
@@ -2348,9 +2354,9 @@ export default function ConversionPage({ onLeaveConversation: _onLeaveConversati
     if (translationRequestRef.current === requestId) setTranslatedInput(translation.trim() === input.trim() ? '' : translation);
   }, [input, selected]);
 
-  const refreshManualHold=async()=>{if(!selected||selected.isMock)return;const captured=manualHoldIdentity;try{const view=await customerManualTakeoverApi.read(selected.id);if(actualManualIdentity.current!==captured)return;setManualHold({identity:captured,view});setManualHoldUnknown(null);setManualHoldError(null);}catch(error){if(actualManualIdentity.current===captured)setManualHoldError({identity:captured,message:error instanceof Error?error.message:'真实接管状态尚未恢复'});}};
+  const refreshManualHold=async()=>{if(!selected||selected.isHistorical||selected.isMock)return;const captured=manualHoldIdentity;try{const view=await customerManualTakeoverApi.read(selected.id);if(actualManualIdentity.current!==captured)return;setManualHold({identity:captured,view});setManualHoldUnknown(null);setManualHoldError(null);}catch(error){if(actualManualIdentity.current===captured)setManualHoldError({identity:captured,message:error instanceof Error?error.message:'真实接管状态尚未恢复'});}};
   const reportManualActive = () => {
-    if(!selected||selected.isMock||manualHoldBusy.current||manualHoldUnknown===manualHoldIdentity)return;
+    if(!selected||selected.isHistorical||selected.isMock||manualHoldBusy.current||manualHoldUnknown===manualHoldIdentity)return;
     const cached=manualHold?.identity===manualHoldIdentity?manualHold.view:null;if(cached?.active&&cached.item?.ownerUserId===cached.actorUserId&&Date.parse(cached.item.expiresAt)>Date.now()+60000)return;
     const captured=manualHoldIdentity;manualHoldBusy.current=true;
     void customerManualTakeoverApi.read(selected.id).then(async view=>{if(actualManualIdentity.current!==captured)return;await customerManualTakeoverApi.hold(view,10);if(actualManualIdentity.current!==captured)return;await refreshManualHold();}).catch(error=>{if(actualManualIdentity.current===captured){setManualHoldUnknown(captured);setManualHoldError({identity:captured,message:error instanceof Error?error.message:'接管结果未知，请只读恢复'});}}).finally(()=>{manualHoldBusy.current=false;});
@@ -2467,7 +2473,7 @@ export default function ConversionPage({ onLeaveConversation: _onLeaveConversati
         </div>
         <div className={mobilePanel === 'chat' ? 'ls-conversation-workspace__pane flex min-h-0 min-w-0 flex-1 md:contents' : 'hidden md:contents'}>
         {pendingSendIntent&&pendingSendIntent.scope.customerId===selected?.id&&pendingSendIntent.state!=='accepted'&&<div className="border border-amber-200 bg-amber-50 p-3 text-xs">原发送结果未确认；不会自动重发。{pendingSendIntent.state==='prepared'&&<button type="button" className="ml-2 underline" onClick={()=>{if(undoSend?.eventId===pendingSendIntent.eventId){undoQueuedSend();return;}localStorage.removeItem(sendIntentStorageKey(pendingSendIntent.scope));removeTimelineEvent(pendingSendIntent.scope.customerId,pendingSendIntent.eventId);setPendingSendIntent(null);}}>取消尚未发起的请求</button>}<button type="button" className="ml-2 underline" onClick={()=>{const captured=manualHoldIdentity;void readCustomerSendRequest(pendingSendIntent).then(item=>{if(actualManualIdentity.current!==captured)return;const next=recoverSendIntent(pendingSendIntent,item);saveSendIntent(next);updateTimelineEvent(next.scope.customerId,next.eventId,{sendStatus:next.state==='accepted'?'sent':'unknown',audit:{providerMessageId:item.providerMessageId||undefined}});showToast(next.state==='accepted'?'已读取真实平台发送回执':'平台结果仍未知，请勿重复发送');}).catch(error=>{if(actualManualIdentity.current===captured)showToast(error instanceof Error?error.message:'无法读取发送状态');});}}>读取原发送状态</button></div>}
-        {selected&&!selected.isMock&&<div className="border border-slate-200 bg-slate-50 p-3 text-xs"><strong>真人接管</strong>{manualHold?.identity===manualHoldIdentity&&<span className="ml-2">{manualHold.view.active?`负责人 ${manualHold.view.item?.ownerUserId} · 截止 ${manualHold.view.item?.expiresAt}`:'当前没有有效临时接管'}{manualHold.view.humanHandling?'；客户仍处于持久人工处理状态，到期或释放临时接管不会自动切换 AI。':''}</span>}<button type="button" className="ml-2 underline" onClick={reportManualActive} disabled={manualHoldUnknown===manualHoldIdentity}>明确接管十分钟</button><button type="button" className="ml-2 underline" onClick={()=>void refreshManualHold()}>只读刷新状态</button>{manualHold?.identity===manualHoldIdentity&&manualHold.view.active&&manualHold.view.canRelease&&<button type="button" className="ml-2 underline" disabled={manualHoldUnknown===manualHoldIdentity} onClick={()=>void releaseManualHold()}>明确释放临时接管</button>}{manualHoldError?.identity===manualHoldIdentity&&<p role="alert" className="mt-1 text-amber-800">{manualHoldError.message}</p>}{manualHoldUnknown===manualHoldIdentity&&<p className="mt-1 text-amber-800">操作结果未恢复，禁止重复操作；请先只读刷新实际持久状态。</p>}</div>}
+        {selected&&!selected.isMock&&!selected.isHistorical&&<div className="border border-slate-200 bg-slate-50 p-3 text-xs"><strong>真人接管</strong>{manualHold?.identity===manualHoldIdentity&&<span className="ml-2">{manualHold.view.active?`负责人 ${manualHold.view.item?.ownerUserId} · 截止 ${manualHold.view.item?.expiresAt}`:'当前没有有效临时接管'}{manualHold.view.humanHandling?'；客户仍处于持久人工处理状态，到期或释放临时接管不会自动切换 AI。':''}</span>}<button type="button" className="ml-2 underline" onClick={reportManualActive} disabled={manualHoldUnknown===manualHoldIdentity}>明确接管十分钟</button><button type="button" className="ml-2 underline" onClick={()=>void refreshManualHold()}>只读刷新状态</button>{manualHold?.identity===manualHoldIdentity&&manualHold.view.active&&manualHold.view.canRelease&&<button type="button" className="ml-2 underline" disabled={manualHoldUnknown===manualHoldIdentity} onClick={()=>void releaseManualHold()}>明确释放临时接管</button>}{manualHoldError?.identity===manualHoldIdentity&&<p role="alert" className="mt-1 text-amber-800">{manualHoldError.message}</p>}{manualHoldUnknown===manualHoldIdentity&&<p className="mt-1 text-amber-800">操作结果未恢复，禁止重复操作；请先只读刷新实际持久状态。</p>}</div>}
         <ChatThread
           customer={selected}
           draftSuggestion={draftSuggestion}
@@ -2517,7 +2523,7 @@ export default function ConversionPage({ onLeaveConversation: _onLeaveConversati
         />
         </div>
         <div className={mobilePanel === 'profile' ? 'ls-conversation-workspace__pane flex min-h-0 min-w-0 flex-1 md:contents' : 'hidden md:contents'}>
-        <CustomerInfoRail
+        {selected?.isHistorical ? <div className="p-4 text-xs leading-5 text-text-secondary">历史会话来源：已归档记录。仅保留原始内容供查阅，不代表已连接真实客户渠道；回复、报价和客户操作均不可用。</div> : <CustomerInfoRail
           key={selected?.id || 'no-customer'}
           customer={selected}
           customerServiceStatus={customerServiceStatus}
@@ -2537,7 +2543,7 @@ export default function ConversionPage({ onLeaveConversation: _onLeaveConversati
           onToggleCustomerService={(enabled) => void changeCustomerServiceEnabled(enabled)}
           onEnablePartialAutoReply={() => void decidePartialAutoReply('enabled')}
           onInsertQuoteReply={(text) => {
-            if (!selected) return;
+            if (!selected || selected.isHistorical) return;
             reportManualActive();
             translationRequestRef.current += 1;
             setInput(text);
@@ -2548,7 +2554,7 @@ export default function ConversionPage({ onLeaveConversation: _onLeaveConversati
             setMobilePanel('chat');
           }}
           onQuoteCardSent={(summary, providerMessageId) => {
-            if (!selected) return;
+            if (!selected || selected.isHistorical) return;
             appendTimelineEvent(selected.id, createMessageEvent(selected.id, summary, 'seller', {
               type: 'quote',
               title: '已发送报价卡片',
@@ -2557,7 +2563,7 @@ export default function ConversionPage({ onLeaveConversation: _onLeaveConversati
               audit: { action: 'formal_quote_card_sent', risk: 'L4', providerMessageId },
             }));
           }}
-        />
+        />}
         </div>
       </div>
       <Modal open={Boolean(customerServiceStatus?.shouldAskPartialAutoReply)} title="建议模式已经用了 3 天" width={560} closable={false} keyboard={false} mask={{ closable: false }} footer={<div className="flex flex-wrap justify-end gap-2">
@@ -2568,7 +2574,7 @@ export default function ConversionPage({ onLeaveConversation: _onLeaveConversati
         {customerServiceStatus && customerServiceStatus.approvedFaqCount < 5 && <Alert type="warning" title={`目前已审批 ${customerServiceStatus.approvedFaqCount} 条问答`} description="你可以先开放权限，达到 5 条前系统仍只给建议。"/>}
       </Modal>
       {dailyBriefingOpen && (
-        <DailyBriefing customers={customers} onSelectCustomer={openCustomer} onClose={() => setDailyBriefingOpen(false)} />
+        <DailyBriefing customers={customers.filter(customer => !customer.isHistorical)} onSelectCustomer={openCustomer} onClose={() => setDailyBriefingOpen(false)} />
       )}
       {toast && (
         <div role="status" className="fixed bottom-24 left-1/2 z-[70] flex max-w-[calc(100vw-32px)] -translate-x-1/2 items-center gap-3 rounded-md bg-text-primary px-4 py-2 text-xs font-bold text-white">
