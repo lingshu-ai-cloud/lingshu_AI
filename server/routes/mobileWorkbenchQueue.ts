@@ -1,10 +1,15 @@
 import { createHash } from 'node:crypto';
+import fs from 'node:fs';
+import path from 'node:path';
 import { Router, json, type Request, type Response } from 'express';
 import type { DataStore, Record_, Where } from '../storage/datastore.js';
 import { enforceSupportSessionReadOnly, type AuthLocals } from '../middleware/auth.js';
 import { DIGITAL_EMPLOYEE_COLLECTION as C, jsonObject } from './digitalEmployeeRecords.js';
 import { visibleDigitalEmployeeAgentRole } from '../digitalEmployees/agentRoles.js';
 import { starterWorkspaceQueue, type MobileWorkbenchProductAdapter } from './mobileWorkbenchProductAdapter.js';
+import { contentAccepted } from '../digitalEmployees/contentAcceptance.js';
+import { signAssetUrl } from '../lib/assetAccess.js';
+import { safeDeliveryUrl } from '../../src/lib/delivery.js';
 
 const STATE = 'mobile_workbench_snoozes';
 function queueFailure(res: Response, error: unknown, fallback: string) {
@@ -22,6 +27,39 @@ async function all(store: DataStore, collection: string, where: Where): Promise<
     items.push(...result.items.filter(i => Object.entries(where).every(([key, value]) => i[key] === value)));
     if (page >= result.totalPages) return items;
   }
+}
+
+function localFilm(row: Record_, tenantId: string) {
+  const spec = jsonObject<Record<string, any>>(row.spec, {});
+  const automation = jsonObject<Record<string, any>>(spec.automation, {});
+  const quality = jsonObject<Record<string, any>>(automation.quality, {});
+  const order = jsonObject<Record<string, any>>(spec.contentOrder, {});
+  const theme = jsonObject<Record<string, any>>(order.theme, {});
+  const directUrl = safeDeliveryUrl(automation.renderOutputUrl || spec.renderOutputUrl);
+  const output = String(automation.renderOutputPath || spec.renderOutputPath || '');
+  const root = path.resolve(process.cwd(), 'data', 'publishing-uploads', tenantId.replace(/[^\w.-]+/g, '-'));
+  const resolved = output ? path.resolve(output) : '';
+  const accessible = Boolean(resolved) && path.dirname(resolved) === root && fs.existsSync(resolved) && fs.statSync(resolved).isFile()
+    && fs.existsSync(root) && path.dirname(fs.realpathSync(resolved)) === fs.realpathSync(root);
+  const videoUrl = directUrl || (accessible ? signAssetUrl(`/api/overseas/publishing/local-videos/${encodeURIComponent(path.basename(resolved))}`, tenantId) : '');
+  const ready = Boolean(videoUrl) && quality.passed === true && automation.stage === 'completed';
+  if (!ready) return null;
+  return {
+    id: String(row.id), title: String(order.productName && theme.label ? `${order.productName} · ${theme.label}` : row.title || '内容创作项目'),
+    subject: [order.accountLabel, order.productName, spec.platform].filter(Boolean).map(String).join(' · ') || '内容成片',
+    videoUrl, thumbnailUrl: safeDeliveryUrl(spec.coverImageUrl || automation.thumbnailUrl || spec.thumbnailUrl),
+    approved: contentAccepted(spec), deliveredAt: String(automation.completedAt || row.updated_at || row.updated || ''),
+  };
+}
+
+function approvalMedia(row: Record_, tenantId: string) {
+  const evidence = jsonObject<Record<string, any>>(row.evidence, {});
+  const fileName = String(evidence.localVideoFile || '');
+  if (!fileName || path.basename(fileName) !== fileName) return {};
+  const root = path.resolve(process.cwd(), 'data', 'publishing-uploads', tenantId.replace(/[^\w.-]+/g, '-'));
+  const file = path.resolve(root, fileName);
+  if (path.dirname(file) !== root || !fs.existsSync(file) || !fs.statSync(file).isFile()) return {};
+  return { videoUrl: signAssetUrl(`/api/overseas/publishing/local-videos/${encodeURIComponent(fileName)}`, tenantId), mock: evidence.mock === true };
 }
 // Authentication must be installed by the parent router. Never accept scope from the client.
 export function createMobileWorkbenchQueueRouter(store: DataStore, starterSource?: ((req: Request, res: Response) => Promise<Record<string, any>>) | MobileWorkbenchProductAdapter) {
@@ -43,18 +81,20 @@ export function createMobileWorkbenchQueueRouter(store: DataStore, starterSource
         res.json(productAdapter ? { ...starterWorkspaceQueue(workspace), snoozes } : { workspace, snoozes });
         return;
       }
-      const [tasks, approvals, shoots, states] = await Promise.all([
+      const [tasks, approvals, shoots, projects, states] = await Promise.all([
         all(store, C.tasks, { tenant_id: tenantId }),
         all(store, C.approvals, { tenant_id: tenantId, status: 'pending' }),
         all(store, 'studio_shooting_tasks', { tenant_id: tenantId }),
+        all(store, 'studio_projects', { tenant_id: tenantId }),
         all(store, STATE, { tenant_id: tenantId, user_id: userId }),
       ]);
       const unresolved = tasks.filter(t => !['succeeded', 'cancelled', 'skipped'].includes(String(t.status)));
       const ids = new Set(unresolved.map(t => t.id));
       res.setHeader('Cache-Control', 'private, no-store');
       res.json({ tasks: unresolved.map(t => ({ ...t, output: jsonObject(t.output, {}), agent_role: visibleDigitalEmployeeAgentRole(String(t.agent_role || ''), String(t.task_key || '')) })),
-        approvals: approvals.filter(a => ids.has(String(a.task_id))),
+        approvals: approvals.filter(a => ids.has(String(a.task_id))).map(item => ({ ...item, ...approvalMedia(item, tenantId) })),
         shooting: shoots.map(s => ({ ...jsonObject<Record<string, unknown>>(s.payload, {}), id: s.id })),
+        films: projects.map(project => localFilm(project, tenantId)).filter(Boolean),
         snoozes: Object.fromEntries(states.filter(s => Number(s.until) > Date.now()).map(s => [String(s.matter_id), Number(s.until)])),
         generatedAt: new Date().toISOString(), scope: 'authenticated_tenant',
       });

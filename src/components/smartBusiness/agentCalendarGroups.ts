@@ -78,11 +78,12 @@ export function taskHasDeliverableOrWorkspace(task: AgentCalendarTask): boolean 
 export function agentCalendarTaskType(task: AgentCalendarTask): string {
   if (task.agent === 'human') return '人工处理';
   const group = agentCalendarTaskGroup(task);
-  if (group === 'directing') return '编导任务';
-  if (group === 'production') return '制片任务';
-  if (group === 'quality') return '验收任务';
-  if (group === 'publishing') return '发布任务';
-  return '经营任务';
+  if (group === 'directing') return '编导采集分析';
+  if (group === 'production' || group === 'quality') return '内容制作';
+  if (group === 'publishing') return '视频发布';
+  if (group === 'inquiries') return '客服跟进';
+  if (group === 'review') return '日数据汇总';
+  return '周任务准备';
 }
 
 /** User-facing owner identity used as the first line of every calendar card. */

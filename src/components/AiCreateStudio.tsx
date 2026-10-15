@@ -2927,6 +2927,9 @@ async function runVoiceTranslationWithTimeout<T>(
 export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onLaunchContentStudio, onReturnToContentPlanning, onGoPublish, openProjectsSignal = 0, workflowContext, publishStorageScope, socialContentTaskId: incomingSocialTaskId, studioCreateRequest: incomingCreateRequest }: { onNavigate?: (p: Page) => void; onOpenCreationHome?: (openChooser?: boolean) => void; onLaunchContentStudio?: (request: SocialContentCreateRequest) => void; onReturnToContentPlanning?: (request: SocialContentCreateRequest) => void; onGoPublish?: (payload: StudioPublishPayload) => void; openProjectsSignal?: number; workflowContext?: StudioWorkflowContext; publishStorageScope?: string; socialContentTaskId?: string | null; studioCreateRequest?: SocialContentCreateRequest | null } = {}) {
   const { message, notification } = AntApp.useApp();
   const rawSceneTarget = window.history.state?.productionDetail?.sceneTarget;
+  const initialProductionScript = typeof window.history.state?.productionDetail?.initialProductionScript === 'string'
+    ? window.history.state.productionDetail.initialProductionScript.trim().slice(0, 64 * 1024)
+    : '';
   const sceneTarget = parseScopedSceneTarget(rawSceneTarget);
   const sceneTargetKey = JSON.stringify(rawSceneTarget || null);
   const [sceneNavigationError, setSceneNavigationError] = useState('');
@@ -3217,6 +3220,14 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onLaunc
   const [voice, setVoice] = useState('v1');
   const [voiceCandidates, setVoiceCandidates] = useState<string[]>(['v1']);
   const [scriptLoading, setScriptLoading] = useState(false);
+  const appliedInitialProductionScriptRef = useRef(false);
+  useEffect(() => {
+    if (!initialProductionScript || appliedInitialProductionScriptRef.current) return;
+    appliedInitialProductionScriptRef.current = true;
+    setScript(initialProductionScript);
+    setVoiceoverLines(extractVoiceoverText(initialProductionScript));
+    setStepIdx(0);
+  }, [initialProductionScript]);
   const [voiceoverLines, setVoiceoverLines] = useState('');
   const [voiceLangs, setVoiceLangs] = useState<string[]>([]);
   const [enterpriseVoiceLangs, setEnterpriseVoiceLangs] = useState<string[]>([]);
@@ -16163,6 +16174,7 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onLaunc
             }} className="inline-flex h-8 items-center rounded-md bg-emerald-700 px-3 text-[10px] font-bold text-white disabled:opacity-50">确认修改并生成新版本</button>}
           </>}
           {managedProductionProjectRef.current && <button type="button" onClick={requestProductionBack} className="inline-flex h-8 shrink-0 items-center rounded-md border border-blue-200 bg-blue-50 px-2.5 text-[10px] font-bold text-blue-800 xl:hidden">返回生产现场</button>}
+          <button type="button" onClick={() => openCreationHome(false)} className="inline-flex h-8 shrink-0 items-center gap-1 rounded-md border border-border bg-white px-2.5 text-[10px] font-bold text-text-secondary hover:bg-surface-2 xl:hidden"><ChevronLeft size={13} />返回创作列表</button>
           <div className="hidden items-center gap-1.5 xl:flex">
             {managedProductionProjectRef.current && <button type="button" onClick={requestProductionBack} className="inline-flex h-8 items-center rounded-md border border-blue-200 bg-blue-50 px-2.5 text-[10px] font-bold text-blue-800">返回生产现场</button>}
             <button type="button" onClick={() => openCreationHome(false)} className="inline-flex h-8 items-center gap-1 rounded-md border border-border bg-white px-2.5 text-[10px] font-bold text-text-secondary hover:bg-surface-2"><ChevronLeft size={13} />返回创作列表</button>

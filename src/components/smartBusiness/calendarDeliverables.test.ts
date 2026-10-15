@@ -1,8 +1,29 @@
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
-import {projectCalendarDeliverables} from './calendarDeliverables';
+import {projectCalendarDeliverables,projectDailyCustomerServiceCards,orderDailyCalendarTasks,mergeDailyTaskCards} from './calendarDeliverables';
 import type {AgentCalendarTask} from './AgentWeeklyCalendar';
 const card=(id:string,step:string,group='tenant:week:videoA'):AgentCalendarTask=>({id,executionStep:step,deliverableGroup:group,date:'2026-10-07',time:step==='quality_check'?'15:00':'10:00',agent:'content',title:'视频 A · 产品 A',output:'实际结果',context:'测试',minutes:20,status:'planned'});
+test('same day duplicate stage merges without losing exact tasks or downstream dependency',()=>{
+ const workspaceTarget={programId:'program',packageId:'pkg',packageVersion:2,executionTaskId:'a'};
+ const a={...card('a','material_preparation'),workspaceTarget};
+ const b={...a,id:'b',workspaceTarget:{...workspaceTarget,executionTaskId:'b'}};
+ const next={...card('next','script'),workspaceTarget:{...workspaceTarget,executionTaskId:'next'},dependsOn:['b']};
+ const anotherDay={...a,id:'tomorrow',date:'2026-10-08'};
+ const result=mergeDailyTaskCards([a,b,next,anotherDay]);
+ assert.equal(result.length,3);
+ assert.deepEqual(result[0]!.dailyTaskGroup?.tasks.map(t=>t.id),['a','b']);
+ assert.deepEqual(result[1]!.dependsOn,[result[0]!.id]);
+ assert.equal(result[2]!.id,'tomorrow');
+});
+test('daily board keeps business duty first and follows real dependencies for independent production tasks',()=>{
+ const duty={...card('duty','performance_monitoring'),agent:'business' as const,title:'24小时经营值守'};
+ const render={...card('render','render'),dependsOn:['export']};
+ const exported={...card('export','export'),dependsOn:['video']};
+ const video=card('video','video_generation');
+ const result=orderDailyCalendarTasks([render,exported,video,duty]);
+ assert.deepEqual(result.map(task=>task.id),['duty','video','export','render']);
+ assert.equal(projectCalendarDeliverables([video,card('quality','quality_check')],true).length,2);
+});
 test('one deliverable retains final deadline, real navigation identity and internal nodes',()=>{
  const nodes=[card('script','script'),{...card('video','video_generation'),productionTaskId:'actual-content',productionExecutionTaskId:'video'},card('quality','quality_check')];
  const result=projectCalendarDeliverables(nodes);
@@ -39,4 +60,15 @@ test('a direct persisted task wins over a duplicate node embedded in a weekly su
  const direct={...card('goal','business_outline',undefined),agent:'business' as const,title:'真实执行任务'};
  const summary:AgentCalendarTask={...direct,id:'summary',calendarSummaryOnly:true,internalNodes:[{...direct,title:'旧摘要节点'}]};
  assert.deepEqual(projectCalendarDeliverables([summary,direct]).map(task=>task.title),['真实执行任务']);
+});
+
+test('customer runtime jobs become one daily always-on card for each day of the week',()=>{
+ const whatsapp={...card('wa','customer_channel_readiness',undefined),agent:'customer' as const,date:'2026-10-12',status:'completed' as const,customerExecutionTarget:{tenantId:'t',programId:'p',packageId:'w',packageVersion:1,taskId:'wa',publicationTaskId:'pub',stepKind:'customer_channel_readiness' as const,channel:'whatsapp' as const}};
+ const messenger={...card('msg','customer_inquiry_handoff',undefined),agent:'customer' as const,date:'2026-10-15',status:'blocked' as const,customerExecutionTarget:{tenantId:'t',programId:'p',packageId:'w',packageVersion:1,taskId:'msg',publicationTaskId:'pub',stepKind:'customer_inquiry_handoff' as const,channel:'messenger' as const}};
+ const result=projectDailyCustomerServiceCards([whatsapp,messenger,card('publish','publishing')],'2026-10-12');
+ const customer=result.filter(task=>task.executionStep==='customer_always_on');
+ assert.equal(customer.length,7);assert.equal(customer[0]!.date,'2026-10-12');assert.equal(customer[6]!.date,'2026-10-18');
+ assert.ok(customer.every(task=>task.time==='00:00'&&task.minutes===1440&&task.title==='24小时常驻客服'&&task.status==='blocked'));
+ assert.equal(customer[0]!.customerServiceSummary?.attentionCount,1);
+ assert.deepEqual(result.filter(task=>['customer_channel_readiness','customer_inquiry_handoff'].includes(task.executionStep||'')),[]);
 });

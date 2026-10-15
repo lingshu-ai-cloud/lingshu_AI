@@ -1,4 +1,4 @@
-<view class="operator-nav safe-bottom">
+<view class="operator-nav safe-bottom {{active === 'assistant' ? 'active-assistant' : 'active-work'}}">
   <view wx:for="{{items}}" wx:key="key" class="nav-item {{active === item.key ? 'active' : ''}}" data-key="{{item.key}}" bindtap="select">
     <view class="nav-icon {{item.key}}"></view>
     <text class="nav-label">{{item.label}}</text>

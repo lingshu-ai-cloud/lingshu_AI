@@ -5,7 +5,7 @@
     <button class="primary" loading="{{loading}}" bindtap="signIn">进入工作台</button>
   </view>
   <block wx:else>
-    <view wx:if="{{offline}}" class="warning network-banner">网络已断开 · 显示上次同步结果，操作需联网</view><view class="header"><view><text class="brand">灵枢</text><view class="muted">{{userName}}</view></view><text class="link" bindtap="signOut">退出</text></view>
+    <view wx:if="{{offline}}" class="warning network-banner">网络已断开 · 显示上次同步结果，操作需联网</view><view class="header"><text class="muted">{{userName}}</text><text class="link" bindtap="signOut">退出</text></view>
     <view wx:if="{{tab === 'work'}}">
       <view class="section-head"><view class="title">工作播报</view><text class="link" bindtap="openShooting">＋ 拍摄上传</text></view>
       <view wx:if="{{workspaceNote}}" class="muted">{{workspaceNote}}</view><view class="week-nav"><text class="week-link" data-offset="-1" bindtap="changeWeek">‹ 上周</text><text class="week-link">{{week.start}} — {{week.end}}</text><text class="week-link" data-offset="1" bindtap="changeWeek">下周 ›</text></view>

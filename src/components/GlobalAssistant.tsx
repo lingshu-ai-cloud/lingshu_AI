@@ -55,6 +55,7 @@ import { assistantDecisionApi } from '../lib/assistantDecisionApi';
 import { WEEKLY_WORK_UPDATED_EVENT } from '../lib/weeklyWorkEvents';
 import KnowledgeIntakePanel, { type AppliedProfile } from './enterprise/KnowledgeIntakePanel';
 import { studioApi } from '../lib/studioApi';
+import { socialContentApi } from '../lib/socialContentApi';
 import {
   clearAssistantThreadJournal,
   readAssistantThreadJournal,
@@ -115,6 +116,36 @@ const GUIDE_VISIBLE_MS = 6_000;
 const ENTERPRISE_GUIDE_MEMORY_ID = '__enterprise-guide-shown__';
 const ASSISTANT_PRIMARY_ENTRY_SEEN_KEY = 'lingshu-assistant-primary-entry-seen-v1';
 const ASSISTANT_CONVERSATION_WELCOME_SEEN_KEY = 'lingshu-assistant-conversation-welcome-seen-v1';
+const ASSISTANT_ACTION_TIMEOUT_MS = 12_000;
+const ASSISTANT_CHAT_RESPONSE_TIMEOUT_MS = 20_000;
+const ASSISTANT_CHAT_STREAM_IDLE_TIMEOUT_MS = 30_000;
+const ASSISTANT_UI_WATCHDOG_TIMEOUT_MS = 25_000;
+
+class AssistantRequestTimeoutError extends Error {}
+
+function withAssistantTimeout<T>(
+  promise: Promise<T>,
+  timeoutMs: number,
+  onTimeout: () => void,
+  message: string,
+): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    const timeoutId = window.setTimeout(() => {
+      onTimeout();
+      reject(new AssistantRequestTimeoutError(message));
+    }, timeoutMs);
+    promise.then(
+      value => {
+        window.clearTimeout(timeoutId);
+        resolve(value);
+      },
+      error => {
+        window.clearTimeout(timeoutId);
+        reject(error);
+      },
+    );
+  });
+}
 
 type AssistantPerformance = { phase: string; message?: string; reason: AssistantNotificationReason };
 type AssistantSpeech = { id: number; message: string };
@@ -281,6 +312,23 @@ function emptyAssistantThread(): AgentThreadState {
   };
 }
 
+/**
+ * Conversation text is transient by default. Persisted assistant threads may
+ * restore operational cards and their CAS metadata, but they must not make a
+ * newly opened conversation look like the previous one. Explicitly saved
+ * conversations are restored through the `restore` prop instead.
+ */
+function withoutPersistedConversation(thread: AgentThreadState): AgentThreadState {
+  return {
+    ...thread,
+    messages: [],
+    draftInput: '',
+    scrollPosition: 0,
+    unreadCount: 0,
+    isFollowingLatest: true,
+  };
+}
+
 function assistantBubbleStyle(index: number): CSSProperties {
   const boundedIndex = Math.min(Math.max(0, index), 6);
   return {
@@ -319,18 +367,6 @@ function cloneAssistantThread(thread: AgentThreadState): AgentThreadState {
   };
 }
 
-function mergeAssistantMessages(remote: Message[], local: Message[]): Message[] {
-  let commonPrefix = 0;
-  while (
-    commonPrefix < remote.length
-    && commonPrefix < local.length
-    && JSON.stringify(remote[commonPrefix]) === JSON.stringify(local[commonPrefix])
-  ) commonPrefix += 1;
-  if (commonPrefix === remote.length) return local.slice(-MAX_PERSISTED_MESSAGES);
-  if (commonPrefix === local.length) return remote.slice(-MAX_PERSISTED_MESSAGES);
-  return [...remote, ...local.slice(commonPrefix)].slice(-MAX_PERSISTED_MESSAGES);
-}
-
 function mergeAssistantThread(remote: AgentThreadState, local: AgentThreadState): AgentThreadState {
   const cards = { ...remote.taskCards };
   for (const [taskId, card] of Object.entries(local.taskCards)) {
@@ -352,7 +388,11 @@ function mergeAssistantThread(remote: AgentThreadState, local: AgentThreadState)
     ...local,
     version: remote.version,
     updatedAt: remote.updatedAt,
-    messages: mergeAssistantMessages(remote.messages, local.messages),
+    // Remote messages belong to an earlier, implicitly persisted session.
+    // A CAS conflict after the user sends a new message must never append that
+    // old transcript below the current reply. Explicit saved-conversation
+    // restoration is handled separately through the `restore` prop.
+    messages: local.messages.slice(-MAX_PERSISTED_MESSAGES),
     taskCards,
     focusedTaskId,
   };
@@ -589,6 +629,113 @@ function isWeeklyPlanKickoffRequest(text: string): boolean {
   return /^(?:(?:请|请帮我|帮我|现在|立即|马上))*(?:开始|启动|制定|生成|创建)(?:(?:本周|这周))?(?:生产|制作|周计划|计划|周任务)$/u.test(normalized);
 }
 
+type AssistantProductionIntent = {
+  title: string;
+  objective: string;
+  productQuery: string;
+  platforms: string[];
+  formats: string[];
+  aspectRatio: string | null;
+  targetDurationSeconds: number | null;
+};
+
+function assistantProductionIntent(text: string): AssistantProductionIntent | null {
+  const normalized = text.trim().replace(/\s+/gu, ' ');
+  if (!normalized || /^(?:如何|怎么|为什么|是否|能否|可以(?:怎么|如何)|分析|诊断|建议|介绍)/u.test(normalized)) return null;
+  const hasProductionVerb = /(?:^|[，。；、\s])(?:请|请帮我|帮我|直接|现在|立即|马上)*(?:生成|制作|创作|撰写|写出|产出|做)(?:一份|一个|一条|这份|这个|该)?/u.test(normalized);
+  const hasProductionArtifact = /(?:短视频|视频|竖版|横版|脚本|分镜|口播|广告素材|社媒素材|图文|海报)/iu.test(normalized);
+  if (!hasProductionVerb || !hasProductionArtifact) return null;
+
+  const platforms = [
+    [/TikTok|抖音/iu, 'tiktok'],
+    [/Instagram|\bIG\b/iu, 'instagram'],
+    [/Facebook|\bFB\b/iu, 'facebook'],
+    [/YouTube/iu, 'youtube'],
+  ].filter(([pattern]) => (pattern as RegExp).test(normalized)).map(([, platform]) => platform as string);
+  const durationMatch = normalized.match(/(\d{1,3})\s*秒/u);
+  const duration = durationMatch ? Number(durationMatch[1]) : null;
+  const quotedProduct = normalized.match(/[「“"]([^」”"]{2,80})[」”"]/u)?.[1]?.trim() || '';
+  const titleBody = normalized
+    .replace(/^(?:请|请帮我|帮我|直接|现在|立即|马上)*/u, '')
+    .replace(/^(?:生成|制作|创作|撰写|写出|产出|做)(?:一份|一个|一条|这份|这个|该)?/u, '')
+    .replace(/[。！!]+$/u, '')
+    .trim();
+  return {
+    title: (titleBody || '内容 Agent 生产任务').slice(0, 120),
+    objective: normalized.slice(0, 1_000),
+    productQuery: quotedProduct,
+    platforms,
+    formats: [/(?:短视频|视频|竖版|横版|分镜|口播)/u.test(normalized) ? '短视频' : /(?:图文|海报)/u.test(normalized) ? '图文' : '内容素材'],
+    aspectRatio: /(?:竖版|9\s*[:：]\s*16)/u.test(normalized) ? '9:16' : /(?:横版|16\s*[:：]\s*9)/u.test(normalized) ? '16:9' : null,
+    targetDurationSeconds: duration !== null && duration >= 6 && duration <= 60 ? duration : null,
+  };
+}
+
+type AssistantEnterpriseProduct = { id: string; label: string; info: string };
+
+function assistantComparableProduct(value: string): string {
+  return value.trim().toLocaleLowerCase().replace(/[\s·•・_\-—()（）【】\[\]「」“”'"]/gu, '');
+}
+
+async function resolveAssistantEnterpriseProduct(productQuery: string): Promise<AssistantEnterpriseProduct> {
+  if (!productQuery) throw new Error('请在产品名称外使用「」标明要制作的企业产品。');
+  const response = await fetch('/api/overseas/enterprise/profile', {
+    headers: authHeader(),
+    credentials: 'same-origin',
+  });
+  if (!response.ok) throw new Error('暂时无法读取企业中心产品，请稍后重试。');
+  const result = await response.json() as { profile?: unknown } & Record<string, unknown>;
+  const profile = ((result.profile && typeof result.profile === 'object') ? result.profile : result) as {
+    products?: {
+      categories?: string;
+      priceRange?: string;
+      moq?: string;
+      certifications?: string;
+      highlights?: string;
+      items?: Array<{
+        id?: string;
+        productId?: string;
+        sku?: string;
+        name?: string;
+        category?: string;
+        priceRange?: string;
+        moq?: string;
+        certifications?: string;
+        highlights?: string;
+      }>;
+    };
+    brand?: { usp?: string };
+  };
+  const requested = assistantComparableProduct(productQuery);
+  const items = profile.products?.items || [];
+  const index = items.findIndex(item => {
+    const candidate = assistantComparableProduct(item.name || '');
+    return candidate === requested || (requested.length >= 4 && (candidate.includes(requested) || requested.includes(candidate)));
+  });
+  const item = index >= 0 ? items[index] : undefined;
+  const name = item?.name?.trim() || '';
+  if (!item || !name) throw new Error(`企业中心没有找到已确认产品“${productQuery}”，请先核对产品名称。`);
+  let productId = [item.id, item.productId, item.sku]
+    .map(value => String(value || '').trim().slice(0, 200))
+    .find(Boolean) || '';
+  if (!productId) {
+    const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(name));
+    productId = `product-${Array.from(new Uint8Array(digest)).map(value => value.toString(16).padStart(2, '0')).join('').slice(0, 16)}`;
+  }
+  const lines = [
+    `产品名称：${name}`,
+    item.sku?.trim() ? `产品SKU：${item.sku.trim()}` : '',
+    (item.category || profile.products?.categories)?.trim() ? `所属类目：${(item.category || profile.products?.categories)!.trim()}` : '',
+    (item.highlights || profile.products?.highlights || profile.brand?.usp)?.trim()
+      ? `产品卖点：${(item.highlights || profile.products?.highlights || profile.brand?.usp)!.trim()}` : '',
+    (item.priceRange || profile.products?.priceRange)?.trim() ? `价格区间：${(item.priceRange || profile.products?.priceRange)!.trim()}` : '',
+    (item.moq || profile.products?.moq)?.trim() ? `起订量：${(item.moq || profile.products?.moq)!.trim()}` : '',
+    (item.certifications || profile.products?.certifications)?.trim()
+      ? `认证资质：${(item.certifications || profile.products?.certifications)!.trim()}` : '',
+  ].filter(Boolean);
+  return { id: productId, label: name, info: lines.join('\n') };
+}
+
 function focusedNaturalLanguageActionInput(
   card: AssistantTaskCard | null | undefined,
   actionId: AssistantActionId,
@@ -800,7 +947,16 @@ export default function GlobalAssistant({
   }
 
   useEffect(() => {
-    const fence = persistenceFenceRef.current;
+    // React StrictMode deliberately runs effect setup -> cleanup -> setup in
+    // development. The first cleanup deactivates its instance fence, so the
+    // second setup must install a fresh active fence for the same user scope.
+    // Otherwise every later chat response is mistaken for work from an
+    // unmounted component and is discarded before the model request starts.
+    let fence = persistenceFenceRef.current;
+    if (!fence.active || fence.scopeKey !== persistenceScopeKey) {
+      fence = { scopeKey: persistenceScopeKey, active: true };
+      persistenceFenceRef.current = fence;
+    }
     return () => {
       fence.active = false;
       abortRef.current?.abort();
@@ -865,6 +1021,23 @@ export default function GlobalAssistant({
   const assistantPanelWidth = Math.min(assistantTool === 'knowledge-intake' ? 560 : 420, viewport.width - 32);
   const performanceLines = PERFORMANCE_LINES[performance?.phase || 'default'] || PERFORMANCE_LINES.default;
   const performanceMessage = performance?.message || performanceLines[performanceLineIndex % performanceLines.length];
+
+  useEffect(() => {
+    if (!loading) return;
+    const timeoutId = window.setTimeout(() => {
+      abortRef.current?.abort();
+      abortRef.current = null;
+      setLoading(false);
+      const current = useAssistantStore.getState().threads[PRIMARY_ASSISTANT_THREAD].messages;
+      if (current.at(-1)?.role !== 'user') return;
+      setMessages(PRIMARY_ASSISTANT_THREAD, [
+        ...current,
+        { role: 'assistant', content: '本次连接在 25 秒内没有返回，已停止等待。模型服务已配置，但当前本地对话链路没有及时响应，请重新发送。' },
+      ]);
+      setFollowingLatest(PRIMARY_ASSISTANT_THREAD, true);
+    }, ASSISTANT_UI_WATCHDOG_TIMEOUT_MS);
+    return () => window.clearTimeout(timeoutId);
+  }, [loading, setFollowingLatest, setMessages]);
 
   const persistThread = useCallback((
     agentId: OrbitAgentId,
@@ -1284,12 +1457,23 @@ export default function GlobalAssistant({
         errorCode,
       };
     };
+    const controller = new AbortController();
+    let actionTimedOut = false;
     try {
-      const response = await fetch(`/api/overseas/assistant-threads/${agentId}/actions`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', ...authHeader() },
-        body: JSON.stringify(request),
-      });
+      const response = await withAssistantTimeout(
+        fetch(`/api/overseas/assistant-threads/${agentId}/actions`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', ...authHeader() },
+          body: JSON.stringify(request),
+          signal: controller.signal,
+        }),
+        ASSISTANT_ACTION_TIMEOUT_MS,
+        () => {
+          actionTimedOut = true;
+          controller.abort();
+        },
+        '操作判断超时，已停止等待，请重新发送。',
+      );
       const payload = await response.json().catch(() => null) as (AssistantActionResponse & { error?: string; message?: string }) | null;
       if (payload?.requestId && payload.card && payload.status) return payload;
       if (!response.ok) {
@@ -1304,7 +1488,12 @@ export default function GlobalAssistant({
       // Never make a failed deterministic route look like a successful
       // generic conversation. Only an explicit delegated/not_handled
       // response is allowed to fall through to the normal chat endpoint.
-      return actionFailure(error instanceof Error ? error.message : '助手操作暂时不可用。');
+      return actionFailure(
+        actionTimedOut || error instanceof AssistantRequestTimeoutError
+          ? '操作判断超时，已停止等待，请重新发送。'
+          : error instanceof Error ? error.message : '助手操作暂时不可用。',
+        actionTimedOut || error instanceof AssistantRequestTimeoutError ? 'assistant_action_timeout' : 'assistant_action_unavailable',
+      );
     }
   }, []);
 
@@ -1382,12 +1571,17 @@ export default function GlobalAssistant({
     const userText = text.trim();
     if ((!userText && !uploadedAttachments.length) || loading) return;
     const requestFence = persistenceFenceRef.current;
-    const requestToken = getToken();
-    const currentScope = () => (
+    const currentInstance = () => (
       requestFence.active
       && persistenceFenceRef.current === requestFence
-      && requestToken === getToken()
     );
+    // The fence is bound to tenantId + userId and is invalidated when the
+    // authenticated scope changes. A same-user local-preview token rotation
+    // must not discard an in-flight answer or leave its UI state unresolved.
+    const currentScope = currentInstance;
+    const clearLoadingForCurrentInstance = () => {
+      if (currentInstance()) setLoading(false);
+    };
     const visibleText = userText || '请基于这次附件继续处理。';
     const visibleAttachmentSummary = uploadedAttachments.length
       ? `\n\n附件（已保存到我的素材）：${uploadedAttachments.map(item => item.name).join('、')}`
@@ -1408,6 +1602,87 @@ export default function GlobalAssistant({
     setLoading(true);
     openAgent(routeAgent, 'chat');
 
+    const productionIntent = uploadedAttachments.length ? null : assistantProductionIntent(visibleText);
+    if (productionIntent) {
+      try {
+        const productionProduct = await resolveAssistantEnterpriseProduct(productionIntent.productQuery);
+        if (!currentScope()) return;
+        const productionDraft = await studioApi.script({
+          materials: [],
+          productInfo: productionProduct.info,
+          selectedProductId: productionProduct.id,
+          selectedProductIds: [productionProduct.id],
+          language: 'zh',
+          platform: productionIntent.platforms[0] || 'tiktok',
+          duration: productionIntent.targetDurationSeconds || 15,
+          scriptType: 'storyboard',
+          generationMode: 'product',
+          provider: 'qwen',
+        }, '');
+        if (!productionDraft.script?.trim()) {
+          throw new Error(productionDraft.error || '内容制作服务没有生成可用口播，请重试。');
+        }
+        if (!currentScope()) return;
+        const productionTask = await socialContentApi.createTask({
+          title: productionIntent.title,
+          objective: productionIntent.objective,
+          productId: productionProduct.id,
+          productRef: productionProduct.label,
+          platforms: productionIntent.platforms,
+          formats: productionIntent.formats,
+          aspectRatio: productionIntent.aspectRatio,
+          targetDurationSeconds: productionIntent.targetDurationSeconds,
+          requestedOutputCount: 1,
+          planningMode: 'auto_adjust',
+          specialRequirements: productionIntent.objective,
+          restrictions: [],
+          mode: 'instant',
+          creationMode: 'material_processing',
+          assetAvailability: 'none',
+          managementMode: 'one_click_managed',
+          productionMode: 'social_ready',
+          productionApproach: 'ai_enhanced',
+        }, `assistant-production-${requestId()}`);
+        if (!currentScope()) return;
+        setMessages(threadAgent, [
+          ...useAssistantStore.getState().threads[threadAgent].messages,
+          { role: 'assistant', content: `已创建内容 Agent 任务「${productionTask.brief.title}」，已加入周任务排期。正在进入生产页面。` },
+        ]);
+        setLoading(false);
+        persistThread(threadAgent);
+        onSessionRefresh?.();
+        setAssistantTool(null);
+        setPanelView('chat');
+        setWelcomeBubbleVisible(false);
+        setMode('breathing');
+        window.dispatchEvent(new CustomEvent('lingshu:navigate', {
+          detail: {
+            page: 'smartAssets',
+            view: 'create',
+            directStudio: true,
+            agentTaskDemo: true,
+            socialContentTaskId: productionTask.taskId,
+            socialContentPage: 'smartAssets',
+            initialProductionScript: productionDraft.script,
+          },
+        }));
+      } catch (error) {
+        if (!currentScope()) return;
+        const message = error instanceof Error ? error.message : '内容任务创建失败，请稍后重试。';
+        setMessages(threadAgent, [
+          ...useAssistantStore.getState().threads[threadAgent].messages,
+          { role: 'assistant', content: `没有生成文本脚本：内容 Agent 任务创建失败。${message}` },
+        ]);
+        persistThread(threadAgent);
+      } finally {
+        // Loading belongs to this mounted assistant instance. Even when the
+        // authentication/persistence fence changes while a request is in
+        // flight, every terminal path must release the composer spinner.
+        setLoading(false);
+      }
+      return;
+    }
+
     const focusedCard = thread.focusedTaskId ? thread.taskCards[thread.focusedTaskId] ?? null : null;
     // Attachments deliberately bypass the deterministic action router. The
     // router accepts only server-signed business object/version inputs; a
@@ -1426,14 +1701,22 @@ export default function GlobalAssistant({
       ...(signedFocusedMutationActionId ? { actionId: signedFocusedMutationActionId } : {}),
       ...(focusedActionInput ?? {}),
     };
-    const actionResponse = uploadedAttachments.length
-      ? null
-      : await executeAssistantAction(
+    // Ordinary conversation must reach the chat model directly. Reserve the
+    // deterministic router for an operation that the UI can bind to exactly
+    // one server-authored card, object id and expected version. Routing every
+    // sentence first can misclassify harmless wording as an unsigned mutation
+    // and prevent the Qwen request from starting.
+    const actionResponse = signedFocusedMutationActionId
+      ? await executeAssistantAction(
         threadAgent,
         deterministicRequest,
-        signedFocusedMutationActionId ? { deterministicActionId: signedFocusedMutationActionId } : undefined,
-      );
-    if (!currentScope()) return;
+        { deterministicActionId: signedFocusedMutationActionId },
+      )
+      : null;
+    if (!currentScope()) {
+      clearLoadingForCurrentInstance();
+      return;
+    }
     if (actionResponse && actionResponse.status !== 'delegated' && actionResponse.status !== 'not_handled') {
       presentActionResponse(threadAgent, deterministicRequest, actionResponse);
       setLoading(false);
@@ -1443,12 +1726,20 @@ export default function GlobalAssistant({
     }
 
     const liveIntegrationFacts = strategyRequest ? '' : await loadLiveIntegrationFacts();
-    if (!currentScope()) return;
+    if (!currentScope()) {
+      clearLoadingForCurrentInstance();
+      return;
+    }
     const apiMessages: Message[] = [
       ...historyForApi,
       {
         role: 'user',
-        content: [
+        // The strategy route builds the authoritative tenant grounding and
+        // system policy on the server. Re-sending another large policy block
+        // as user content duplicates context, increases Qwen time-to-first-
+        // token, and blurs the trust boundary between navigation hints and
+        // server-verified facts.
+        content: strategyRequest ? visibleText : [
           `【当前页面导航提示${strategyRequest ? '，未经后端核验，不得作为经营事实' : ''}】${context.summary}`,
           `【当前模块】${context.label}`,
           assistantBusinessObjectContext(context),
@@ -1494,36 +1785,45 @@ export default function GlobalAssistant({
       setMessages(threadAgent, current);
     };
 
+    let chatTimedOut = false;
     try {
       abortRef.current?.abort();
       const controller = new AbortController();
       abortRef.current = controller;
-      const resp = await fetch(API_PATH[agentForOrbit(routeAgent)], {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', ...authHeader() },
-        body: JSON.stringify({
-          messages: apiMessages,
-          deepThinking: false,
-          ...(strategyRequest ? {
-            userQuestion: visibleText,
-            pageContext: {
-              label: context.label,
-              summary: compactText(context.summary, 2000),
-              goalId: context.goalId,
-              planId: context.planId,
-              runId: context.runId,
-              taskId: context.taskId,
-              contentId: context.contentId,
-              viewKey: context.viewKey,
-            },
-            conversationContext: {
-              omittedTurns: conversationContext.omittedTurns,
-              retainedUserInstructions: conversationContext.retainedUserInstructions,
-            },
-          } : {}),
+      const resp = await withAssistantTimeout(
+        fetch(API_PATH[agentForOrbit(routeAgent)], {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', ...authHeader() },
+          body: JSON.stringify({
+            messages: apiMessages,
+            deepThinking: false,
+            ...(strategyRequest ? {
+              userQuestion: visibleText,
+              pageContext: {
+                label: context.label,
+                summary: compactText(context.summary, 2000),
+                goalId: context.goalId,
+                planId: context.planId,
+                runId: context.runId,
+                taskId: context.taskId,
+                contentId: context.contentId,
+                viewKey: context.viewKey,
+              },
+              conversationContext: {
+                omittedTurns: conversationContext.omittedTurns,
+                retainedUserInstructions: conversationContext.retainedUserInstructions,
+              },
+            } : {}),
+          }),
+          signal: controller.signal,
         }),
-        signal: controller.signal,
-      });
+        ASSISTANT_CHAT_RESPONSE_TIMEOUT_MS,
+        () => {
+          chatTimedOut = true;
+          controller.abort();
+        },
+        '模型连接在 20 秒内没有返回响应。',
+      );
       if (!currentScope()) return;
       if (!resp.ok) throw new Error(await responseErrorMessage(resp));
       if (!resp.body) throw new Error('模型响应为空，请稍后重试。');
@@ -1545,7 +1845,16 @@ export default function GlobalAssistant({
         }
       };
       while (true) {
-        const { done, value } = await reader.read();
+        const { done, value } = await withAssistantTimeout(
+          reader.read(),
+          ASSISTANT_CHAT_STREAM_IDLE_TIMEOUT_MS,
+          () => {
+            chatTimedOut = true;
+            controller.abort();
+            void reader.cancel();
+          },
+          '模型流式回答超过 30 秒没有新内容。',
+        );
         if (done) break;
         buffer += decoder.decode(value, { stream: true });
         const lines = buffer.split('\n');
@@ -1555,13 +1864,17 @@ export default function GlobalAssistant({
       if (buffer.trim()) consumeLine(buffer);
     } catch (err: any) {
       if (!currentScope()) return;
-      const message = err?.name === 'AbortError' ? '这次响应已停止。' : (err?.message || '请求失败，请稍后重试。');
+      const message = err instanceof AssistantRequestTimeoutError || chatTimedOut
+        ? `${err instanceof Error ? err.message : '这次回答等待超时。'} 请重新发送。`
+        : err?.name === 'AbortError'
+          ? '这次响应已停止。'
+        : (err?.message || '请求失败，请稍后重试。');
       if (assistantStarted) patchAssistant(msg => ({ ...msg, content: msg.content ? `${msg.content}\n\n${message}` : message }));
       else setMessages(threadAgent, [...useAssistantStore.getState().threads[threadAgent].messages, { role: 'assistant', content: message }]);
     } finally {
+      setLoading(false);
+      abortRef.current = null;
       if (currentScope()) {
-        setLoading(false);
-        abortRef.current = null;
         persistThread(threadAgent);
         onSessionRefresh?.();
       }
@@ -1687,7 +2000,10 @@ export default function GlobalAssistant({
     // A keyed component instance starts from an empty scoped thread, then
     // recovers only the matching tenant + user + agent journal. This prevents
     // Zustand state from a prior login/support scope flashing into this one.
-    hydrateThread(PRIMARY_ASSISTANT_THREAD, journal ?? emptyAssistantThread());
+    hydrateThread(
+      PRIMARY_ASSISTANT_THREAD,
+      journal ? withoutPersistedConversation(journal) : emptyAssistantThread(),
+    );
     const threadBeforeRequest = useAssistantStore.getState().threads[PRIMARY_ASSISTANT_THREAD];
     fetch('/api/overseas/assistant-threads', { headers: authHeader() })
       .then(resp => resp.ok ? resp.json() : null)
@@ -1701,7 +2017,7 @@ export default function GlobalAssistant({
           return;
         }
         const item = data.items.find((candidate: { agentId?: unknown } | null) => candidate?.agentId === PRIMARY_ASSISTANT_THREAD);
-        const remote = item ? persistedAssistantThread({
+        const persistedRemote = item ? persistedAssistantThread({
           version: Number.isSafeInteger(Number(item.version)) ? Number(item.version) : 0,
           updatedAt: typeof item.updatedAt === 'string' ? item.updatedAt : '',
           messages: Array.isArray(item.messages) ? item.messages : [],
@@ -1713,6 +2029,7 @@ export default function GlobalAssistant({
           taskCards: item.taskCards && typeof item.taskCards === 'object' ? item.taskCards : {},
           focusedTaskId: typeof item.focusedTaskId === 'string' ? item.focusedTaskId : null,
         }, emptyAssistantThread()) : null;
+        const remote = persistedRemote ? withoutPersistedConversation(persistedRemote) : null;
         const merged = remote
           ? (journal || localChangedWhileLoading ? mergeAssistantThread(remote, latestLocal) : remote)
           : latestLocal;
@@ -2413,6 +2730,25 @@ export default function GlobalAssistant({
                   }}
                 >
                   <div className="space-y-4">
+                    <div
+                      key={`decision-feed-${decisionFeedRevision}`}
+                      className="ls-assistant-summary-bubble-enter pl-9"
+                      data-assistant-bubble="decision-summary"
+                      data-assistant-summary="decision-feed"
+                      style={assistantBubbleStyle(0)}
+                    >
+                      <AssistantDecisionCenter
+                        page={page}
+                        goalId={pageContext.goalId}
+                        key={`${persistenceScopeKey}:${page}:${pageContext.goalId || 'latest'}:summary:${decisionFeedRevision}`}
+                        active={mode === 'chat' && panelView === 'chat'}
+                        onOpenChat={returnToConversation}
+                        onOpenDetail={trigger => openDecisionDialog({ kind: 'feed' }, trigger)}
+                        onFeedChange={handleDecisionFeedChange}
+                        variant="summary"
+                      />
+                    </div>
+
                     {welcomeBubbleVisible && !activeThread.messages.length && (
                       <div
                         data-assistant-bubble="welcome"
@@ -2439,7 +2775,7 @@ export default function GlobalAssistant({
                           ? 'ls-messenger-bubble ls-messenger-bubble--outbound whitespace-pre-line'
                           : 'ls-messenger-bubble ls-messenger-bubble--inbound'}>
                           {msg.role === 'assistant'
-                            ? (msg.content ? <AgentReply content={msg.content} sources={msg.sources} onAction={onAction} /> : <span className="opacity-40">...</span>)
+                            ? (msg.content ? <AgentReply content={msg.content} sources={msg.sources} onAction={onAction} onSuggest={suggestion => void send(suggestion, currentPageAgent)} /> : <span className="opacity-40">...</span>)
                             : <>{msg.content}<AssistantDecisionSaveButton memory={decisionMemory} text={msg.content} /></>}
                         </div>
                       </div>
@@ -2513,24 +2849,6 @@ export default function GlobalAssistant({
                       </div>
                     )}
 
-                    <div
-                      key={`decision-feed-${decisionFeedRevision}`}
-                      className="ls-assistant-summary-bubble-enter pl-9"
-                      data-assistant-bubble="decision-summary"
-                      data-assistant-summary="decision-feed"
-                      style={assistantBubbleStyle(activeThread.messages.length + (welcomeBubbleVisible ? 3 : 2))}
-                    >
-                      <AssistantDecisionCenter
-                        page={page}
-                        goalId={pageContext.goalId}
-                        key={`${persistenceScopeKey}:${page}:${pageContext.goalId || 'latest'}:summary:${decisionFeedRevision}`}
-                        active={mode === 'chat' && panelView === 'chat'}
-                        onOpenChat={returnToConversation}
-                        onOpenDetail={trigger => openDecisionDialog({ kind: 'feed' }, trigger)}
-                        onFeedChange={handleDecisionFeedChange}
-                        variant="summary"
-                      />
-                    </div>
                   </div>
                 </div>
 

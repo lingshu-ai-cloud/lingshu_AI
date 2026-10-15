@@ -1,4 +1,4 @@
-import { calendarDurationLabel, hasCalendarProductionBinding, isCalendarTaskOverdue, calendarOverdueDuration, calendarPendingReferences, type AgentCalendarTask } from './AgentWeeklyCalendar';
+import { calendarDurationLabel, hasCalendarProductionBinding, isCalendarTaskOverdue, calendarOverdueDuration, type AgentCalendarTask } from './AgentWeeklyCalendar';
 import {agentCalendarAuthIdentity, captureAgentCalendarReturnContext, readAgentCalendarReturnContext, registerAgentCalendarReturnState, restoreAgentCalendarReturnContext} from '../../lib/agentCalendarReturnContext';
 import type {LsCalendarView} from '../ui/LsCalendar';
 import { flushSync } from 'react-dom';
@@ -18,10 +18,10 @@ import { hasReviewCalendarTarget, type ReviewCalendarTarget } from '../socialPro
 import { hasPlanningCalendarTarget, type PlanningCalendarTarget } from '../socialProgram/planningCalendarNavigation';
 import { calendarDayKey, calendarInstant, type LsCalendarEvent } from '../../lib/calendarModel';
 import { hourCalendarCard } from './agentHourCalendarPolicy';
-import { projectCalendarDeliverables } from './calendarDeliverables';
+import { projectCalendarDeliverables, projectDailyCustomerServiceCards, isAlwaysOnCalendarTask, orderDailyCalendarTasks, mergeDailyTaskCards } from './calendarDeliverables';
 import AgentRoleIcon, { AGENT_ROLE_PALETTE, type AgentVisualRole } from '../ui/AgentRoleIcon';
-import {agentCalendarIdentityLabel,agentCalendarTaskGroup,agentCalendarTaskType,buildAgentCalendarSummaries,calendarDisplayPlaceholders,taskHasDeliverableOrWorkspace,type AgentCalendarSummary} from './agentCalendarGroups';
-import {readWeeklyTaskWorkspace} from '../../lib/weeklyTaskWorkspaceApi';
+import {agentCalendarTaskType,taskHasDeliverableOrWorkspace} from './agentCalendarGroups';
+import {readOrRepairWeeklyTaskWorkspace} from '../../lib/weeklyTaskWorkspaceApi';
 import type {WeeklyTaskWorkspace} from '../../../shared/contracts/weeklyTaskWorkspace';
 
 const LsCalendar = typeof document === 'undefined'
@@ -113,7 +113,9 @@ export function isPastUnfinishedCalendarTask(task: AgentCalendarTask, now: numbe
 }
 
 function taskIsOverdue(task: AgentCalendarTask, now: number): boolean {
-  return isCalendarTaskOverdue(task, now) || isPastUnfinishedCalendarTask(task, now);
+  if (task.customerServiceSummary || /24\s*小时|全天值守|常驻/.test(task.title)) return false;
+  const dayEnd = calendarInstant(`${task.date}T00:00`,task.calendarClock?.timeZone||'Asia/Shanghai').getTime()+86400000;
+  return !['completed','cancelled','no_data'].includes(task.status) && now>=dayEnd;
 }
 
 function taskOverdueLabel(task: AgentCalendarTask, now: number): string {
@@ -125,59 +127,6 @@ function taskOverdueLabel(task: AgentCalendarTask, now: number): string {
 function calendarCardOwner(task: AgentCalendarTask, overdue: boolean): string {
   const state = task.status === 'completed' ? '✓' : overdue ? '逾期' : statusLabels[task.status];
   return `${agentCalendarTaskType(task)} · ${agentLabels[task.agent]} · ${state}`;
-}
-
-type SummaryEventData = { kind: 'summary'; summary: AgentCalendarSummary };
-type AggregateEventData = {
-  kind: 'aggregate';
-  group: 'weekly-start' | 'production-chain' | 'publishing' | 'weekly-review';
-  date: string;
-  childIds: string[];
-};
-function isSummaryEventData(value: unknown): value is SummaryEventData {
-  return Boolean(value && typeof value === 'object' && (value as SummaryEventData).kind === 'summary');
-}
-function isAggregateEventData(value: unknown): value is AggregateEventData {
-  return Boolean(value && typeof value === 'object' && (value as AggregateEventData).kind === 'aggregate');
-}
-
-/** Keep placeholder clicks separate from persisted task details. */
-export function agentCalendarDetailKind(event: Pick<LsCalendarEvent, 'data'>): 'placeholder' | 'task' {
-  return isSummaryEventData(event.data) ? 'placeholder' : 'task';
-}
-function weekDates(anchor: string): string[] {
-  const parsed = new Date(`${anchor.slice(0, 10)}T12:00:00Z`);
-  if (!Number.isFinite(parsed.getTime())) return [];
-  const monday = new Date(parsed);
-  monday.setUTCDate(parsed.getUTCDate() - ((parsed.getUTCDay() + 6) % 7));
-  return Array.from({length: 7}, (_, index) => {
-    const date = new Date(monday);
-    date.setUTCDate(monday.getUTCDate() + index);
-    return date.toISOString().slice(0, 10);
-  });
-}
-function summaryStatus(summary: AgentCalendarSummary): LsCalendarEvent['status'] {
-  if (summary.children.some(task => task.status === 'failed')) return 'failed';
-  if (summary.children.some(task => task.status === 'blocked')) return 'needs_action';
-  if (summary.children.some(task => task.status === 'active')) return 'working';
-  if (summary.children.length && summary.children.every(task => ['completed','cancelled','no_data'].includes(task.status))) return 'done';
-  return 'planned';
-}
-
-function summaryAgent(summary: AgentCalendarSummary): Exclude<AgentCalendarTask['agent'], 'human'> {
-  if (summary.group === 'directing') return 'director';
-  if (summary.group === 'production' || summary.group === 'quality' || summary.group === 'publishing') return 'content';
-  if (summary.group === 'inquiries') return 'customer';
-  return 'business';
-}
-
-function clockMinutes(time: string | undefined): number {
-  const [hour, minute] = (time || '00:00').split(':').map(Number);
-  return (Number.isFinite(hour) ? hour : 0) * 60 + (Number.isFinite(minute) ? minute : 0);
-}
-
-function clockLabel(minutes: number): string {
-  return `${String(Math.floor(minutes / 60)).padStart(2, '0')}:${String(minutes % 60).padStart(2, '0')}`;
 }
 
 type Props = {
@@ -218,7 +167,7 @@ export default function RestoredAgentWorkCalendar({
   const saved = readAgentCalendarReturnContext();
   const previous = saved?.calendar.positionKey === positionKey ? saved.states[stateKey] as {date?: string; view?: LsCalendarView} | undefined : undefined;
   const [calendarDate, setCalendarDate] = useState(previous?.date || startsAt || tasks[0]?.date || calendarDayKey(new Date()));
-  const [calendarView, setCalendarView] = useState<LsCalendarView>(previous?.view || 'timeGridWeek');
+  const [calendarView, setCalendarView] = useState<LsCalendarView>('dayGridWeek');
   const viewport = useRef({date:calendarDate,view:calendarView});
   viewport.current = {date:calendarDate,view:calendarView};
   useEffect(() => registerAgentCalendarReturnState(stateKey, {
@@ -229,21 +178,34 @@ export default function RestoredAgentWorkCalendar({
     const context = readAgentCalendarReturnContext();
     const state = context?.calendar.positionKey === positionKey ? context.states[stateKey] as typeof viewport.current | undefined : undefined;
     setCalendarDate(state?.date || startsAt || tasks[0]?.date || calendarDayKey(new Date()));
-    setCalendarView(state?.view || 'timeGridWeek');
+    setCalendarView('dayGridWeek');
     restoreAgentCalendarReturnContext();
   }, [positionKey]);
   const [now, setNow] = useState(() => Date.now());
   const [activeFilter, setActiveFilter] = useState<'attention' | AgentCalendarTask['agent'] | 'all'>(agentRole || 'all');
-  const [hideCompleted, setHideCompleted] = useState(true);
-  const [expandedGroups, setExpandedGroups] = useState<Set<string>>(() => new Set());
+  const [hideCompleted, setHideCompleted] = useState(false);
   const [taskWorkspace,setTaskWorkspace]=useState<{task:AgentCalendarTask;item:WeeklyTaskWorkspace|null;error:string;loading:boolean}|null>(null);
+  const workspaceReadGeneration=useRef(0);
+  useEffect(()=>{workspaceReadGeneration.current++;setTaskWorkspace(null);},[positionKey]);
+  const openWorkspace=(task:AgentCalendarTask)=>{
+    const target=task.workspaceTarget;
+    if(!target)return;
+    const generation=++workspaceReadGeneration.current;
+    captureAgentCalendarReturnContext({positionKey,offset:0,cardId:task.id});
+    setTaskWorkspace({task,item:null,error:'',loading:true});
+    void readOrRepairWeeklyTaskWorkspace(target).then(item=>{
+      if(workspaceReadGeneration.current===generation)setTaskWorkspace(current=>current?.task.id===task.id?{task,item,error:'',loading:false}:current);
+    }).catch(cause=>{
+      if(workspaceReadGeneration.current===generation)setTaskWorkspace(current=>current?.task.id===task.id?{task,item:null,error:cause instanceof Error?cause.message:'任务生产现场读取失败。',loading:false}:current);
+    });
+  };
   useEffect(() => setActiveFilter(agentRole || 'all'), [agentRole]);
   useEffect(() => {
     const timer = window.setInterval(() => setNow(Date.now()), 10_000);
     return () => window.clearInterval(timer);
   }, []);
 
-  const deliverables = useMemo(() => projectCalendarDeliverables(tasks), [tasks]);
+  const deliverables = useMemo(() => mergeDailyTaskCards(projectDailyCustomerServiceCards(projectCalendarDeliverables(tasks, true), startsAt)), [tasks, startsAt]);
   const timeZone = tasks.find(task => task.calendarClock?.timeZone)?.calendarClock?.timeZone || 'Asia/Shanghai';
   const attentionCount = useMemo(() => deliverables.filter(task => ['blocked', 'failed'].includes(task.status) || task.agent === 'human' || taskIsOverdue(task, now)).length, [deliverables, now]);
   const scopedDeliverables = useMemo(() => deliverables.filter(task => {
@@ -251,62 +213,16 @@ export default function RestoredAgentWorkCalendar({
     if (activeFilter === 'attention') return ['blocked', 'failed'].includes(task.status) || task.agent === 'human' || taskIsOverdue(task, now);
     return task.agent === activeFilter || task.agent === 'human';
   }), [deliverables, activeFilter, now]);
-  const pendingReferences = demo ? [] : calendarPendingReferences(scopedDeliverables, now);
-  const dates = useMemo(() => weekDates(calendarDate), [calendarDate]);
-  const mondayContentStart = useMemo(() => {
-    const monday = dates[0];
-    const lastBusinessFinish = deliverables
-      .filter(task => task.date === monday && task.agent === 'business' && agentCalendarTaskGroup(task) === 'foundation')
-      .reduce((latest, task) => Math.max(latest, clockMinutes(task.time) + Math.max(30, task.minutes ?? 60)), 0);
-    // Monday production never begins before lunch. When business work runs
-    // later, leave one half-hour handoff window before directing starts.
-    return clockLabel(Math.max(13 * 60, Math.ceil((lastBusinessFinish + 30) / 30) * 30));
-  }, [dates, deliverables]);
-  const summaries = useMemo(() => buildAgentCalendarSummaries(scopedDeliverables, dates), [scopedDeliverables, dates]);
   const independentTasks = useMemo(() => scopedDeliverables.filter(taskHasDeliverableOrWorkspace), [scopedDeliverables]);
-  // Cadence placeholders are useful only in the explicit demo preview. A
-  // connected weekly package must render persisted backend tasks exclusively:
-  // missing work is a contract/blocker problem and must never look executable.
-  const placeholders = useMemo(
-    () => demo ? calendarDisplayPlaceholders(summaries, calendarDate) : [],
-    [demo, summaries, calendarDate],
-  );
   const events = useMemo<LsCalendarEvent[]>(() => {
-    const summaryEvents: LsCalendarEvent[] = placeholders.map(summary => {
-      const mondayStart = clockMinutes(mondayContentStart);
-      const mondayContentTimes: Partial<Record<AgentCalendarSummary['group'], string>> = { directing: mondayContentStart, production: clockLabel(mondayStart + 75), quality: clockLabel(mondayStart + 135) };
-      const displayTime = summary.date === dates[0] ? mondayContentTimes[summary.group] || summary.startTime : summary.startTime;
-      const start = calendarInstant(`${summary.date}T${displayTime}`, timeZone).toISOString();
-      const owner = summaryAgent(summary);
-      return ({
-      id: `summary:${summary.key}`,
-      title: summary.title,
-      start,
-      end: new Date(Date.parse(start) + summary.durationMinutes * 60_000).toISOString(),
-      allDay: false,
-      timeZone,
-      status: summaryStatus(summary),
-      statusLabel: summary.progress,
-      eventType: 'agent_task',
-      ownerAgent: `计划占位 · ${agentLabels[owner]} · ${summary.progress}`,
-      sourceId: summary.key,
-      description: summary.progress,
-      cardLines: [
-        agentCalendarIdentityLabel(owner),
-        summary.title,
-        `${displayTime} · 待排`,
-      ],
-      planPlaceholder: true,
-      identity: {kind: 'agent', role: owner},
-      data: {kind:'summary',summary} satisfies SummaryEventData,
-    });});
-    const taskEvents: LsCalendarEvent[] = independentTasks
+    return orderDailyCalendarTasks(independentTasks)
     .filter(task => !hideCompleted || !['completed', 'cancelled', 'no_data'].includes(task.status))
     .map(task => {
-    const overdue = !demo && taskIsOverdue(task, now);
-    const allDay = taskIsAllDay(task);
-    const start = allDay ? task.date : taskInstant(task);
-    const duration = Math.max(30, task.minutes ?? 60) * 60_000;
+    const overdue = false;
+    const allDay = false;
+    const resident = isAlwaysOnCalendarTask(task);
+    const start = calendarInstant(`${task.date}T${resident?'00:00':'06:00'}`,timeZone).toISOString();
+    const duration = (resident?1440:1) * 60_000;
     const card = hourCalendarCard(task, now);
     return {
       id: task.id,
@@ -316,107 +232,26 @@ export default function RestoredAgentWorkCalendar({
       allDay,
       timeZone: task.calendarClock?.timeZone || timeZone,
       status: eventStatus(task, overdue),
-      statusLabel: overdue ? `交付已逾期 · ${taskOverdueLabel(task, now)}` : task.deliveryTiming === 'late' ? '已完成 · 晚交付' : task.deliveryTiming === 'on_time' ? '已完成 · 按时' : statusLabels[task.status],
+      statusLabel: statusLabels[task.status],
       eventType: task.agent === 'customer' ? 'follow_up' : 'agent_task',
       ownerAgent: calendarCardOwner(task, overdue),
       platform: task.platform,
       sourceId: task.productionTaskId || task.id,
       description: task.context,
-      cardLines: task.status === 'completed' ? [card.lines[0], card.lines[1], card.lines[2].split(' · ')[0]] : card.lines,
+      cardLines: [card.lines[0], task.title, `${resident?'24小时值守':task.dailyTaskGroup?`${task.dailyTaskGroup.tasks.length} 项任务`:'按流程执行'} · ${statusLabels[task.status]}`],
       planPlaceholder: false,
       identity: task.platform ? { kind: 'platform', platform: task.platform } : { kind: 'agent', role: task.agent },
-      data: task,
+      data: {...task,time:resident?'00:00':'06:00',internalNodes:task.internalNodes?.map(node=>({...node,time:isAlwaysOnCalendarTask(node)?'00:00':'06:00'}))},
     };
     });
-    const rawEvents = [...summaryEvents, ...taskEvents];
-    const productionGroups = new Set(['directing', 'production', 'quality']);
-    const grouped = new Map<string, LsCalendarEvent[]>();
-    const passthrough: LsCalendarEvent[] = [];
-    for (const event of rawEvents) {
-      const summary = isSummaryEventData(event.data) ? event.data.summary : null;
-      const task = !summary ? event.data as AgentCalendarTask : null;
-      const group = summary?.group || (task ? agentCalendarTaskGroup(task) : null);
-      const rawDate = summary?.date || task?.date;
-      const aggregate = group === 'foundation'
-        ? 'weekly-start'
-        : group && productionGroups.has(group)
-          ? 'production-chain'
-          : group === 'publishing'
-            ? 'publishing'
-            : group === 'review'
-              ? 'weekly-review'
-              : null;
-      const date = aggregate === 'weekly-start' ? dates[0] : aggregate === 'weekly-review' ? dates[6] : rawDate;
-      if (!aggregate || !date) { passthrough.push(event); continue; }
-      const key = `${date}:${aggregate}`;
-      grouped.set(key, [...(grouped.get(key) || []), event]);
-    }
-    const aggregateEvents = [...grouped.entries()].flatMap(([key, children]) => {
-      const [date, group] = key.split(':') as [string, AggregateEventData['group']];
-      const expanded = expandedGroups.has(key);
-      const attention = children.some(event => ['needs_action', 'failed'].includes(event.status));
-      const working = children.some(event => event.status === 'working');
-      const allDone = children.length > 0 && children.every(event => event.status === 'done');
-      const status: LsCalendarEvent['status'] = attention ? 'needs_action' : working ? 'working' : allDone ? 'done' : 'planned';
-      const startTime = group === 'weekly-start' ? '08:00' : group === 'production-chain' ? date === dates[0] ? mondayContentStart : '08:30' : group === 'publishing' ? '17:30' : '20:00';
-      const start = calendarInstant(`${date}T${startTime}`, timeZone).toISOString();
-      const title = group === 'weekly-start' ? '本周经营准备' : group === 'production-chain' ? '今日内容生产' : group === 'publishing' ? '今日内容发布' : '本周数据复盘';
-      const label = group === 'weekly-start'
-        ? '目标与排期确认'
-        : group === 'production-chain'
-          ? date === dates[0] ? '经营准备完成后开始' : '编导 → 制作 → 质检'
-          : group === 'publishing'
-            ? `${children.length} 项发布安排`
-            : '内容与发布完成后复盘';
-      const owner = group === 'weekly-start' || group === 'weekly-review' ? 'business' : group === 'production-chain' ? 'director' : 'content';
-      const aggregateEvent: LsCalendarEvent = {
-        id: `aggregate:${key}`,
-        title,
-        start,
-        end: new Date(Date.parse(start) + 60 * 60_000).toISOString(),
-        allDay: false,
-        timeZone,
-        status,
-        statusLabel: expanded ? '点击收起' : '点击展开',
-        eventType: 'agent_task',
-        ownerAgent: group === 'weekly-start' ? '周经营入口' : group === 'production-chain' ? '生产链摘要' : group === 'publishing' ? '内容发布摘要' : '周复盘入口',
-        sourceId: key,
-        description: label,
-        cardLines: [agentCalendarIdentityLabel(owner), title, ''],
-        planPlaceholder: children.every(event => event.planPlaceholder),
-        identity: {kind: 'agent', role: owner},
-        data: {kind: 'aggregate', group, date, childIds: children.map(event => event.id)} satisfies AggregateEventData,
-      };
-      return expanded ? [aggregateEvent, ...children] : [aggregateEvent];
-    });
-    return [...passthrough, ...aggregateEvents];
-  }, [placeholders, independentTasks, demo, now, timeZone, hideCompleted, expandedGroups, dates, mondayContentStart]);
+  }, [independentTasks, demo, now, timeZone, hideCompleted]);
 
   const renderDetails = (event: LsCalendarEvent, closeDetails: () => void) => {
-    if (agentCalendarDetailKind(event) === 'placeholder') {
-      const { summary } = event.data as SummaryEventData;
-      const owner = summaryAgent(summary);
-      return <div className="space-y-5">
-        <div>
-          <Tag>待排计划环节</Tag>
-          <h3 className="mt-2 ls-type-title-medium text-text-primary">{summary.title}</h3>
-          <p className="mt-2 text-sm text-text-secondary">这个时间段用于提示本周流程仍缺少真实执行任务，不代表已经创建或执行了 Agent 任务。</p>
-        </div>
-        <AgentIdentityCard role={owner} relation="主 Agent"/>
-        <dl className="grid gap-3 rounded-lg border border-border bg-white p-4 sm:grid-cols-2">
-          <div><dt className="text-xs text-text-secondary">计划时间</dt><dd className="mt-1 text-sm font-medium text-text-primary">{summary.date} {summary.startTime}</dd></div>
-          <div><dt className="text-xs text-text-secondary">当前状态</dt><dd className="mt-1 text-sm font-medium text-text-primary">{summary.progress}</dd></div>
-        </dl>
-        <Alert type="info" showIcon title="等待真实任务" description="运行层生成真实任务后，此占位会被对应任务卡替换；届时点击任务卡可查看交付内容、负责 Agent、进度与业务入口。"/>
-      </div>;
-    }
     const task = event.data as AgentCalendarTask;
-    const overdue = !demo && taskIsOverdue(task, now);
+    const overdue = false;
     const workflowNodes = task.internalNodes?.length ? task.internalNodes : [task];
     const assistantRoles = agentRoleOrder.filter(role => role !== task.agent && role !== 'human' && workflowNodes.some(node => node.agent === role));
-    const deliveryTime = task.dueAt
-      ? calendarTimestampLabel(task.dueAt, task.calendarClock)
-      : taskIsAllDay(task) ? `${task.date} · 当天事项` : `${task.date} ${task.time} · ${task.calendarClock?.label || '冻结时区未知'}`;
+    const deliveryTime = `${task.date} · ${isAlwaysOnCalendarTask(task)?'00:00 至次日 00:00，24小时值守':'06:00 起，按任务流程连续执行，不指定独立时段'}`;
     const open = (action: ((task: AgentCalendarTask) => void) | undefined) => {
       if (!action) return;
       captureAgentCalendarReturnContext({positionKey,offset:0,cardId:task.id});
@@ -424,7 +259,7 @@ export default function RestoredAgentWorkCalendar({
       action(task);
     };
     const action = !demo && task.workspaceTarget
-      ? {label:'进入任务生产现场',run:()=>{const target=task.workspaceTarget!;captureAgentCalendarReturnContext({positionKey,offset:0,cardId:task.id});flushSync(closeDetails);setTaskWorkspace({task,item:null,error:'',loading:true});void readWeeklyTaskWorkspace(target).then(item=>setTaskWorkspace(current=>current?.task.id===task.id?{task,item,error:'',loading:false}:current)).catch(cause=>setTaskWorkspace(current=>current?.task.id===task.id?{task,item:null,error:cause instanceof Error?cause.message:'任务生产现场读取失败。',loading:false}:current));}}
+      ? {label:'进入任务生产现场',run:()=>{flushSync(closeDetails);openWorkspace(task);}}
       : !demo && task.enterpriseFactExceptionId && onOpenEnterpriseFacts
       ? { label: "进入企业知识库补齐原任务事实", run: () => open(onOpenEnterpriseFacts) }
       : !demo && task.accountBindingTarget && onBindAccount
@@ -443,6 +278,9 @@ export default function RestoredAgentWorkCalendar({
               ? { label: task.publicationExecutionTarget ? '查看真实发布安排与平台尝试' : task.nativeRecoveryTarget ? '核验原生发送异常与真实回执' : task.publicationRecoveryTarget ? '处理发布恢复任务' : task.sendRecoveryTarget ? '核验原发送异常与真实回执' : task.productionTaskId ? '进入这条任务的生产实况' : '核验此任务生产对象与上游', run: () => open(onOpenProduction) }
               : demo && onOpenProduction ? {label: '打开参考生产预览', run: () => open(onOpenProduction)} : null;
 
+    const channelLabel={whatsapp:'WhatsApp',messenger:'Messenger',instagram:'Instagram'} as const;
+    const summary=task.customerServiceSummary;
+
     return <div className="space-y-5">
       <div><div className="flex flex-wrap items-center gap-2"><Tag color={event.status === 'failed' ? 'error' : event.status === 'needs_action' ? 'warning' : event.status === 'working' ? 'processing' : event.status === 'done' ? 'success' : 'default'}>{event.statusLabel || statusLabels[task.status]}</Tag>{task.minutes !== null && <span className="text-xs text-text-secondary">预计 {task.minutes} 分钟</span>}</div><h3 className="mt-2 ls-type-title-medium text-text-primary">{task.title}</h3></div>
       <section aria-label="负责 Agent" className="space-y-2"><div className="flex flex-wrap gap-2"><AgentIdentityCard role={task.agent} relation="主 Agent"/>{assistantRoles.map(role => <AgentIdentityCard key={role} role={role} relation="辅助 Agent"/>)}</div>{assistantRoles.length === 0 && <p className="text-xs text-text-secondary">当前没有记录辅助 Agent；流程只显示已分配的真实责任。</p>}</section>
@@ -451,11 +289,15 @@ export default function RestoredAgentWorkCalendar({
         <div className="min-w-0"><dt className="text-xs text-text-secondary">交付内容</dt><dd className="mt-1 break-words text-sm font-medium text-text-primary">{task.output}</dd></div>
         <div className="min-w-0"><dt className="text-xs text-text-secondary">交付形式</dt><dd className="mt-1 break-words text-sm font-medium text-text-primary">{deliveryFormLabel(task)}</dd></div>
       </dl>
-      <section aria-label="当前进度" className="rounded-lg bg-surface-2 p-4"><div className="mb-3 flex items-center justify-between gap-3"><h4 className="text-sm font-semibold text-text-primary">当前进度</h4><span className="text-xs text-text-secondary">{workflowNodes.filter(node => ['completed', 'cancelled', 'no_data'].includes(node.status)).length}/{workflowNodes.length} 步完成</span></div><Steps direction="vertical" size="small" current={Math.max(0, workflowNodes.findIndex(node => !['completed', 'cancelled', 'no_data'].includes(node.status)))} items={workflowNodes.map(node => ({ status: stepStatus(node.status), title: node.title, description: <span className="text-xs text-text-secondary">{agentLabels[node.agent]} · {statusLabels[node.status]} · {node.date} {node.time}{node.reason ? <><br/><span className="text-amber-700">{node.reason}</span></> : null}</span> }))}/></section>
-      {overdue && <Alert type="error" showIcon title={`交付已逾期 · ${taskOverdueLabel(task, now)}`} description={`负责人：${task.assignee || agentLabels[task.agent]}；原因：${task.reason || '截止前尚未取得本任务核验交付'}；受影响发布：${task.affectedPublicationIds?.join('、') || '待核对真实下游依赖'}`}/>}
+      {summary&&<section aria-label="常驻客服任务详情" className="rounded-lg border border-border bg-white p-4"><h4 className="text-sm font-semibold text-text-primary">渠道运行状态</h4><div className="mt-3 flex flex-wrap gap-2">{summary.channels.map(item=><Tag key={item.channel} color={item.status==='failed'?'error':item.status==='blocked'?'warning':item.status==='active'?'processing':item.status==='completed'?'success':'default'}>{channelLabel[item.channel]} · {statusLabels[item.status]}</Tag>)}</div><dl className="mt-4 grid gap-3 sm:grid-cols-3"><div><dt className="text-xs text-text-secondary">关联运行记录</dt><dd className="mt-1 text-lg font-semibold">{summary.sourceTaskCount}</dd></div><div><dt className="text-xs text-text-secondary">已完成核验</dt><dd className="mt-1 text-lg font-semibold">{summary.completedCount}</dd></div><div><dt className="text-xs text-text-secondary">需要处理</dt><dd className="mt-1 text-lg font-semibold">{summary.attentionCount}</dd></div></dl><p className="mt-3 text-xs text-text-secondary">常驻卡片是每日客服入口；真实客户会话、审批、交接和渠道回执仍以后台持久化记录为准。</p></section>}
+      {summary&&<section aria-label="客服真实任务与生产线程" className="space-y-2"><h4 className="text-sm font-semibold">客服真实任务与生产线程</h4>{summary.channels.map(({channel})=><details key={channel} className="rounded-lg border border-border p-3"><summary className="cursor-pointer text-sm font-medium">{channelLabel[channel]} · {summary.sourceTasks.filter(source=>source.customerExecutionTarget?.channel===channel).length} 项真实任务</summary><div className="mt-2 space-y-2">{summary.sourceTasks.filter(source=>source.customerExecutionTarget?.channel===channel).map(source=><Button key={source.id} data-customer-execution-id={source.id} block className="!h-auto !whitespace-normal !text-left" onClick={()=>{flushSync(closeDetails);openWorkspace(source);}}>{source.date} · {source.title} · {statusLabels[source.status]}</Button>)}</div></details>)}</section>}
+      {task.dailyTaskGroup&&<section aria-label="同日合并的真实任务" className="space-y-2"><h4 className="text-sm font-semibold">包含 {task.dailyTaskGroup.tasks.length} 项真实任务</h4>{task.dailyTaskGroup.tasks.map((source,index)=><Button key={source.id} data-daily-execution-id={source.id} block className="!h-auto !whitespace-normal !text-left" onClick={()=>{flushSync(closeDetails);openWorkspace(source);}}>{index+1}. {source.title} · {statusLabels[source.status]}<span className="block text-xs text-text-secondary">{source.context}</span></Button>)}</section>}
+      {!summary&&!task.dailyTaskGroup&&<section aria-label="当前进度" className="rounded-lg bg-surface-2 p-4"><div className="mb-3 flex items-center justify-between gap-3"><h4 className="text-sm font-semibold text-text-primary">当前进度</h4><span className="text-xs text-text-secondary">{workflowNodes.filter(node => ['completed', 'cancelled', 'no_data'].includes(node.status)).length}/{workflowNodes.length} 步完成</span></div><Steps direction="vertical" size="small" current={Math.max(0, workflowNodes.findIndex(node => !['completed', 'cancelled', 'no_data'].includes(node.status)))} items={workflowNodes.map(node => ({ status: stepStatus(node.status), title: node.title, description: <span className="text-xs text-text-secondary">{agentLabels[node.agent]} · {statusLabels[node.status]} · {node.date} {node.time}{node.reason ? <><br/><span className="text-amber-700">{node.reason}</span></> : null}</span> }))}/></section>}
+      {!summary&&task.dependsOn?.length ? <section aria-label="真实上游依赖" className="space-y-2"><h4 className="text-sm font-semibold">真实上游依赖</h4>{task.dependsOn.map(id=>{const source=tasks.find(candidate=>candidate.id===id);return source?.workspaceTarget?<Button key={id} block className="!h-auto !whitespace-normal !text-left" onClick={()=>{flushSync(closeDetails);openWorkspace(source);}}>{source.title} · {statusLabels[source.status]}</Button>:<p key={id} className="text-xs text-text-secondary">{source?.title||id}</p>;})}</section>:null}
+      {overdue && <Alert type="error" showIcon title={`交付已逾期 · ${taskOverdueLabel(task, now)}`}/>}
       {task.deadlineRecovery && <Alert type="warning" showIcon title={`经营 Agent 补救评估 · ${task.deadlineRecovery.status === 'blocked' ? '评估受阻' : '已评估，方案未生效'}`} description={`${task.deadlineRecovery.assessmentId} · ${calendarTimestampLabel(task.deadlineRecovery.assessedAt, task.calendarClock)}；受影响发布：${task.deadlineRecovery.affectedPublicationIds.join('、') || '无已绑定发布'}`}/>}
       {task.reason && !overdue && <Alert type="warning" showIcon title="当前卡点" description={task.reason}/>}
-      {action ? <Button type="primary" onClick={action.run}>{action.label}</Button> : <p className="rounded-lg bg-surface-2 p-3 text-xs text-text-secondary">{demo ? '示例任务仅用于验收日历与详情。' : '此任务尚无可打开的真实业务对象；执行状态以后台记录为准。'}</p>}
+      {action ? <Button type="primary" onClick={action.run}>{action.label}</Button> : !summary&&!task.dailyTaskGroup&&<p className="rounded-lg bg-surface-2 p-3 text-xs text-text-secondary">{demo ? '示例任务仅用于验收日历与详情。' : '此任务尚无可打开的真实业务对象；执行状态以后台记录为准。'}</p>}
     </div>;
   };
 
@@ -475,14 +317,11 @@ export default function RestoredAgentWorkCalendar({
           <span className="ml-1 inline-flex items-center gap-2 text-xs text-text-secondary"><Switch size="small" checked={hideCompleted} onChange={setHideCompleted}/>隐藏已完成</span>
         </div>
       </div>
-      <div className="mt-2 flex flex-wrap items-center justify-between gap-3"><p className="text-xs text-text-secondary">{demo ? '参考预览会持续标记；真实任务以执行回执为准。' : `${independentTasks.length} 项真实任务${placeholders.length ? ` · ${placeholders.length} 个待排计划环节` : ''} · ${calendarDurationLabel(independentTasks)}`}</p></div>
+      <div className="mt-2 flex flex-wrap items-center justify-between gap-3"><p className="text-xs text-text-secondary">{`${independentTasks.length} 张任务卡 · ${calendarDurationLabel(independentTasks)}`}</p></div>
     </div>
     {!demo && tasks.length === 0 && <Alert className="m-4" type="info" showIcon title="尚无 Agent 执行排期" description="发布计划不会自动视为制作任务；生成执行排期后将在此显示。"/>}
-    {pendingReferences.length > 0 && <Alert className="m-4" type="error" showIcon title={`当前待处理 · ${pendingReferences.length} 项原任务（按各任务冻结时区）`} description={<div><p>引用原任务，原计划卡保留；不计为新增交付。</p><p className="mt-1">{pendingReferences.map(task => `${task.title} · 原计划 ${task.date} · 逾期 ${calendarOverdueDuration(task, now)}${task.affectedPublicationIds?.length ? ` · 受影响发布 ${task.affectedPublicationIds.join('、')}` : ''}`).join('；')}</p></div>}/>}
     {demo && <Alert className="m-4" type="warning" showIcon title="参考排期" description="任务、工时与执行状态为参考预览，异常副链路仅用于验收。"/>}
     <ul className="sr-only">{events.map(event => {
-      if(isAggregateEventData(event.data))return <li key={event.id}>{event.title} · {event.statusLabel}</li>;
-      if(isSummaryEventData(event.data))return <li key={event.id}>{event.title} · {event.statusLabel}</li>;
       const task = event.data as AgentCalendarTask;
       return <li key={event.id}>{agentCalendarTaskType(task)} · {event.title} · {event.statusLabel}{task.affectedPublicationIds?.length ? ` · 受影响发布 ${task.affectedPublicationIds.join('、')}` : ''}</li>;
     })}</ul>
@@ -494,16 +333,10 @@ export default function RestoredAgentWorkCalendar({
         date={calendarDate}
         view={calendarView}
         initialView={calendarView}
-        onEventClick={event => {
-          if (!isAggregateEventData(event.data)) return false;
-          const key = `${event.data.date}:${event.data.group}`;
-          setExpandedGroups(current => {
-            const next = new Set(current);
-            if (next.has(key)) next.delete(key); else next.add(key);
-            return next;
-          });
-          return true;
-        }}
+        dateOnly
+        taskBoard
+        showAllEvents
+        detailsTitle="任务详情"
         onDatesSet={info => { const next = calendarDayKey(info.view.calendar.getDate(), timeZone); setCalendarDate(next); setCalendarView(info.view.type as LsCalendarView); }}
         firstDay={1}
         timeZone={timeZone}

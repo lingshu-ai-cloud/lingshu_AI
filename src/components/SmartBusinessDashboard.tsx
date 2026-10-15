@@ -379,8 +379,11 @@ export function WeeklyCommandCenter({
     packageBudget.estimated,
   );
   const settledContentCost = weeklyQueue.reduce((sum, item) => sum + Number(item.settledCostCny || 0), 0);
-  const budgetMin = Math.max(operatingContext?.budget.totalMinCny || 0, packageBudget.min, weeklyQueue.length && estimatedContentCost > 0 ? estimatedContentCost * 0.8 : 0);
-  const budgetMax = Math.max(operatingContext?.budget.totalMaxCny || 0, packageBudget.max, weeklyQueue.length && estimatedContentCost > 0 ? estimatedContentCost * 1.25 : 0);
+  const budgetMin = Math.max(operatingContext?.budget.totalMinCny || 0, packageBudget.min,
+    weeklyQueue.length && estimatedContentCost > 0 ? estimatedContentCost * 0.8 : 0);
+  const budgetMax = Math.max(operatingContext?.budget.totalMaxCny || 0, packageBudget.max,
+    weeklyQueue.length && estimatedContentCost > 0 ? estimatedContentCost * 1.25 : 0);
+
   return <section className={`flex flex-col overflow-hidden bg-white ${className}`.trim()} aria-label="本周任务驾驶舱">
     <div className="flex flex-wrap items-start justify-between gap-3 px-6 pb-4 pt-5 text-text-primary xl:min-h-[112px]">
       <div className="min-w-0 flex-1">

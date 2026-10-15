@@ -150,8 +150,8 @@ test('weekly execution tasks freeze the full worker contract and aggregate real 
   const active = await packages.activate('tenant-a', 'owner', program.programId, draft.packageId, {
     expectedVersion: 1, expectedProgramVersion: 1,
   });
-  assert.equal(active.executionSummary!.byStatus.queued, 1);
-  assert.equal(active.executionSummary!.byStatus.blocked, 45);
+  assert.equal(active.executionSummary!.byStatus.queued, 1 + draft.socialContentPackage.publicationTasks.length * 3);
+  assert.equal(active.executionSummary!.byStatus.blocked, 45 - draft.socialContentPackage.publicationTasks.length * 3);
   const tasks = await execution.list('tenant-a', program.programId, draft.packageId, 1);
   assert.ok(tasks.every(task => task.tenantId === 'tenant-a' && task.packageVersion === 1));
   assert.ok(tasks.every(task => task.idempotencyKey && task.inputSnapshot && task.budget && task.upstreamVersionRefs.length === 3));
@@ -169,9 +169,11 @@ test('weekly execution tasks freeze the full worker contract and aggregate real 
     const readiness = tasks.filter(task => task.publicationTaskId === publication.publicationTaskId && task.schedule.stepKind === 'customer_channel_readiness');
     const handoffs = tasks.filter(task => task.publicationTaskId === publication.publicationTaskId && task.schedule.stepKind === 'customer_inquiry_handoff');
     assert.deepEqual(new Set(readiness.map(task => task.inputSnapshot.customerChannel)), new Set(['whatsapp','messenger','instagram']));
-    assert.ok(readiness.every(task => publish.dependsOnTaskIds.includes(task.taskId)));
-    assert.ok(readiness.every(task => Date.parse(task.schedule.estimatedFinishAt) <= Date.parse(publish.schedule.estimatedStartAt)));
-    assert.ok(handoffs.every(task => task.dependsOnTaskIds.includes(publish.taskId)));
+    assert.ok(readiness.every(task => task.dependsOnTaskIds.length === 0));
+    assert.ok(readiness.every(task => !publish.dependsOnTaskIds.includes(task.taskId)));
+    assert.ok(handoffs.every(task => task.dependsOnTaskIds.length === 1 && readiness.some(item => item.taskId === task.dependsOnTaskIds[0])));
+    assert.ok(handoffs.every(task => !task.dependsOnTaskIds.includes(publish.taskId)));
+    assert.ok([...readiness,...handoffs].every(task => task.chainContract?.requiredInputKinds.includes('channel_authorization') && !task.chainContract.requiredInputKinds.includes('external_reference_evidence')));
   }
   const scheduleTask = tasks.find(task => task.schedule.stepKind === 'business_schedule');
   const scriptTask = tasks.find(task => task.schedule.stepKind === 'script' && task.scope === 'content');
@@ -235,7 +237,8 @@ test('cold-start Z and established H generate distinct executable chain identiti
   const cold=planWeeklyExecutionTasks('tenant-a',draft,'2026-10-01T00:00:00Z');
   assert.deepEqual(codes(cold),expected('Z'));
   assert.ok(cold.every(task=>task.chainProfile==='b2b_cold_start'&&task.chainTaskCode?.startsWith('Z-')));
-  assert.ok(cold.every(task=>task.chainContract?.requiredInputKinds.includes('external_reference_evidence')));
+  assert.ok(cold.filter(task=>!['customer_channel_readiness','customer_inquiry_handoff'].includes(task.schedule.stepKind)).every(task=>task.chainContract?.requiredInputKinds.includes('external_reference_evidence')));
+  assert.ok(cold.filter(task=>['customer_channel_readiness','customer_inquiry_handoff'].includes(task.schedule.stepKind)).every(task=>task.chainContract?.requiredInputKinds.includes('channel_authorization')));
   assert.ok(cold.filter(task=>task.schedule.stepKind==='benchmark_scoring').every(task=>task.dependsOnTaskIds.some(id=>cold.find(candidate=>candidate.taskId===id)?.schedule.stepKind==='benchmark_collection')));
 
   const established=structuredClone(draft);
@@ -254,8 +257,9 @@ test('cold-start Z and established H generate distinct executable chain identiti
   const readiness=historical.find(task=>task.schedule.stepKind==='business_outline')!;
   assert.ok(scoring.filter(task=>task.inputSnapshot.referenceSource==='owned').every(task=>task.dependsOnTaskIds.length===1&&task.dependsOnTaskIds[0]===readiness.taskId));
   assert.ok(scoring.filter(task=>task.inputSnapshot.referenceSource==='external').every(task=>task.dependsOnTaskIds.some(id=>historical.find(candidate=>candidate.taskId===id)?.schedule.stepKind==='benchmark_collection')));
-  assert.ok(historical.filter(task=>task.inputSnapshot.referenceSource==='owned').every(task=>task.chainContract?.requiredInputKinds.includes('owned_video_metrics_and_tone')));
-  assert.ok(historical.filter(task=>task.inputSnapshot.referenceSource==='external').every(task=>task.chainContract?.requiredInputKinds.includes('external_reference_evidence')));
+  const nonCustomer=historical.filter(task=>!['customer_channel_readiness','customer_inquiry_handoff'].includes(task.schedule.stepKind));
+  assert.ok(nonCustomer.filter(task=>task.inputSnapshot.referenceSource==='owned').every(task=>task.chainContract?.requiredInputKinds.includes('owned_video_metrics_and_tone')));
+  assert.ok(nonCustomer.filter(task=>task.inputSnapshot.referenceSource==='external').every(task=>task.chainContract?.requiredInputKinds.includes('external_reference_evidence')));
   assert.equal(historical.find(task=>task.schedule.stepKind==='performance_monitoring')?.inputSnapshot.profileWork,'existing_customer_and_dual_source_attribution');
   assert.equal(cold.find(task=>task.schedule.stepKind==='performance_monitoring')?.inputSnapshot.profileWork,'new_inquiry_and_first_baseline_attribution');
   assert.equal(cold.find(task=>task.schedule.stepKind==='performance_monitoring')?.chainTaskCode,'Z-M8');
@@ -301,10 +305,10 @@ test('worker leases, retries, dead letters and explicit recovery are durable', a
   const { dataStore, packages, execution, worker, program, draft } = await fixture();
   await packages.activate('tenant-a', 'owner', program.programId, draft.packageId, { expectedVersion: 1, expectedProgramVersion: 1 });
   const start = new Date(Date.now() + 86_400_000);
-  const readiness = await worker.claimNext({ tenantId: 'tenant-a', workerId: 'worker-a', now: start, leaseDurationMs: 30_000 });
+  const readiness = await worker.claimNext({ tenantId: 'tenant-a', workerId: 'worker-a', kinds:['readiness'], now: start, leaseDurationMs: 30_000 });
   assert.ok(readiness);
   assert.equal(readiness.task.workflowKind, 'readiness');
-  assert.equal(await worker.claimNext({ tenantId: 'tenant-a', workerId: 'worker-b', now: new Date(start.getTime() + 1_000) }), null);
+  assert.equal(await worker.claimNext({ tenantId: 'tenant-a', workerId: 'worker-b', kinds:['readiness'], now: new Date(start.getTime() + 1_000) }), null);
   await assert.rejects(worker.complete(readiness, [], new Date(start.getTime() + 2_000)));
   await seedCompleted(dataStore, readiness.task, new Date(start.getTime() + 2_000));
 
@@ -401,7 +405,7 @@ test('unverified completion preserves lease and durable polling does not consume
   const { dataStore, packages, worker, program, draft } = await fixture();
   await packages.activate('tenant-a', 'owner', program.programId, draft.packageId, { expectedVersion: 1, expectedProgramVersion: 1 });
   const now = new Date(Date.now() + 86_400_000);
-  const claim = await worker.claimNext({ tenantId: 'tenant-a', workerId: 'worker', now });
+  const claim = await worker.claimNext({ tenantId: 'tenant-a', workerId: 'worker', kinds:['readiness'], now });
   assert.ok(claim);
   await assert.rejects(worker.complete(claim, [{ type: 'fake', id: 'fake', version: 1 }], now));
   const unchanged = await getWeeklyExecutionTaskRow(dataStore, 'tenant-a', claim.task.taskId);
@@ -410,8 +414,8 @@ test('unverified completion preserves lease and durable polling does not consume
   const deferred = await worker.defer(claim, { code: 'receipt_pending', message: '等待对账', retryDelayMs: 1_000, now });
   assert.equal(deferred.status, 'queued');
   assert.equal(deferred.attempt, 0);
-  assert.equal(await worker.claimNext({ tenantId: 'tenant-a', workerId: 'worker', now }), null);
-  const recovered = await worker.claimNext({ tenantId: 'tenant-a', workerId: 'worker', now: new Date(now.getTime() + 1_000) });
+  assert.equal(await worker.claimNext({ tenantId: 'tenant-a', workerId: 'worker', kinds:['readiness'], now }), null);
+  const recovered = await worker.claimNext({ tenantId: 'tenant-a', workerId: 'worker', kinds:['readiness'], now: new Date(now.getTime() + 1_000) });
   assert.ok(recovered);
   const blocked = await worker.defer(recovered, { code: 'credentials_expired', message: '凭据失效', blockingReason: 'credentials_expired', now: new Date(now.getTime() + 1_000) });
   assert.equal(blocked.status, 'blocked');
@@ -500,7 +504,7 @@ test('weekly user approval is pinned to the artifact completed by the rework dep
   );
 });
 
-test('inventory reuse graph creates independent approval and publishing without new production or template extraction',async()=>{const {draft}=await fixture();const inventory={...draft,referenceSourcePolicy:{profile:'b2b_established' as const,ownedPercent:20 as const,externalPercent:80 as const,allocationUnit:'mother_content' as const},socialContentPackage:{...draft.socialContentPackage,publicationTasks:draft.socialContentPackage.publicationTasks.map(p=>({...p,inventoryReuseRef:{type:'weekly_inventory_binding',id:'actualbinding',version:1}}))}};const tasks=planWeeklyExecutionTasks('tenant-a',inventory);assert.ok(!tasks.some(t=>['script','storyboard','material_readiness','asset_generation','video_generation','quality_check','rework','template_extraction','template_performance_validation','benchmark_collection','benchmark_scoring','director_analysis'].includes(t.schedule.stepKind)));for(const pub of inventory.socialContentPackage.publicationTasks){const approval=tasks.find(t=>t.publicationTaskId===pub.publicationTaskId&&t.schedule.stepKind==='user_approval');const publishing=tasks.find(t=>t.publicationTaskId===pub.publicationTaskId&&t.schedule.stepKind==='publishing');const readiness=tasks.filter(t=>t.publicationTaskId===pub.publicationTaskId&&t.schedule.stepKind==='customer_channel_readiness');assert.ok(approval&&publishing);assert.deepEqual(new Set(publishing.dependsOnTaskIds),new Set([approval.taskId,...readiness.map(task=>task.taskId)]));assert.equal(approval.inputSnapshot.startsProduction,false);assert.equal(approval.inputSnapshot.countsAsNewMotherContent,false);assert.deepEqual(approval.inputSnapshot.inventoryReuseRef,pub.inventoryReuseRef);}assert.throws(()=>planWeeklyExecutionTasks('tenant-a',{...inventory,referenceSourcePolicy:draft.referenceSourcePolicy}),/库存任务/);});
+test('inventory reuse graph creates independent approval and publishing without new production or template extraction',async()=>{const {draft}=await fixture();const inventory={...draft,referenceSourcePolicy:{profile:'b2b_established' as const,ownedPercent:20 as const,externalPercent:80 as const,allocationUnit:'mother_content' as const},socialContentPackage:{...draft.socialContentPackage,publicationTasks:draft.socialContentPackage.publicationTasks.map(p=>({...p,inventoryReuseRef:{type:'weekly_inventory_binding',id:'actualbinding',version:1}}))}};const tasks=planWeeklyExecutionTasks('tenant-a',inventory);assert.ok(!tasks.some(t=>['script','storyboard','material_readiness','asset_generation','video_generation','quality_check','rework','template_extraction','template_performance_validation','benchmark_collection','benchmark_scoring','director_analysis'].includes(t.schedule.stepKind)));for(const pub of inventory.socialContentPackage.publicationTasks){const approval=tasks.find(t=>t.publicationTaskId===pub.publicationTaskId&&t.schedule.stepKind==='user_approval');const publishing=tasks.find(t=>t.publicationTaskId===pub.publicationTaskId&&t.schedule.stepKind==='publishing');const readiness=tasks.filter(t=>t.publicationTaskId===pub.publicationTaskId&&t.schedule.stepKind==='customer_channel_readiness');assert.ok(approval&&publishing);assert.deepEqual(publishing.dependsOnTaskIds,[approval.taskId]);assert.ok(readiness.every(task=>task.dependsOnTaskIds.length===0));assert.equal(approval.inputSnapshot.startsProduction,false);assert.equal(approval.inputSnapshot.countsAsNewMotherContent,false);assert.deepEqual(approval.inputSnapshot.inventoryReuseRef,pub.inventoryReuseRef);}assert.throws(()=>planWeeklyExecutionTasks('tenant-a',{...inventory,referenceSourcePolicy:draft.referenceSourcePolicy}),/库存任务/);});
 
 test('inventory refs cannot be injected into a new package or revised without the real confirmation record',async()=>{const {dataStore,packages,program,draft}=await fixture();await dataStore.create('users',{id:'owner',tenantId:'tenant-a',role:'admin',active:true});const publications=draft.socialContentPackage.publicationTasks.map(p=>({...p,inventoryReuseRef:{type:'weekly_inventory_binding',id:'a'.repeat(15),version:1}}));await assert.rejects(()=>packages.create('tenant-a','owner',program.programId,{weekStart:'2026-10-12',publicationTasks:publications}),{code:'inventory_create_not_revision'});await assert.rejects(()=>packages.revise('tenant-a','owner',program.programId,draft.packageId,{expectedVersion:1,publicationTasks:publications}),{code:'inventory_binding_integrity_invalid'});const actual=await packages.get('tenant-a',program.programId,draft.packageId);assert.equal(actual.version,1);assert.ok(actual.socialContentPackage.publicationTasks.every(p=>!p.inventoryReuseRef));});
 

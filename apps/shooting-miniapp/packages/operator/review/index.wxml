@@ -1,5 +1,5 @@
 <view class="review-page {{view === 'feed' ? 'feed-page' : ''}}">
-  <view class="review-header">
+  <view wx:if="{{view === 'queue'}}" class="review-header">
     <view class="heading"><view class="title">待验收成片</view><view class="subtitle">{{items.length}} 条已导出成片</view></view>
     <view class="view-switch" aria-label="切换展示方式">
       <view class="switch-item {{view === 'queue' ? 'selected' : ''}}" data-view="queue" bindtap="setView">队列</view>
@@ -28,10 +28,11 @@
       <view class="feed-item">
         <video id="feed-video-{{index}}" class="feed-video" src="{{item.videoUrl}}" controls="{{index === activeIndex}}" object-fit="cover" loop show-center-play-btn enable-progress-gesture/>
         <view class="feed-gradient"></view>
-        <view class="feed-copy"><view class="feed-title">{{item.title}}</view><view class="feed-subject">{{item.subject}}</view><view class="feed-meta">{{item.statusLabel}} · {{item.deliveredLabel}}</view></view>
+        <view class="feed-copy"><view class="feed-title">{{item.title}}</view><view class="feed-subject">{{item.subject}}</view><view class="feed-meta">{{item.statusLabel}} · {{item.deliveredLabel}}{{item.mock ? ' · Mock' : ''}}</view></view>
       </view>
     </swiper-item>
   </swiper>
+  <view wx:if="{{view === 'feed'}}" class="feed-back" bindtap="closeFeed" aria-label="返回">‹</view>
   <view wx:if="{{view === 'feed' && !items.length}}" class="feed-empty">{{loading ? '正在读取成片…' : error || '暂无待验收成片'}}</view>
-  <operator-nav active="review"></operator-nav>
+  <operator-nav wx:if="{{view === 'queue'}}" active="review"></operator-nav>
 </view>

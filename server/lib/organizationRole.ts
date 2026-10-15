@@ -35,6 +35,15 @@ function localAuthorityRole(userId: string): OrganizationRole | null | undefined
   return organizationRoleOrNull(account?.role);
 }
 
+/** Local identities must be resolved only inside local authority and the exact tenant. */
+export function localTenantMember(tenantId:string,userId:string): {id:string;tenantId:string;role:OrganizationRole}|null|undefined {
+  if(currentDataAuthority()!=='local')return undefined;
+  const accounts=readLocalAccountRecords(localAccountRecordsFile()).filter(item=>item.userId===userId);
+  if(accounts.length!==1||accounts[0]!.tenantId!==tenantId)return null;
+  const role=organizationRoleOrNull(accounts[0]!.role);
+  return role?{id:userId,tenantId,role}:null;
+}
+
 /** Resolve a role for a security-sensitive action; missing or malformed roles fail closed. */
 export async function requestOrganizationRoleStrict(
   authorization: string | undefined,

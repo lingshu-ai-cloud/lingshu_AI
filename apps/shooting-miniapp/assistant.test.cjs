@@ -61,7 +61,7 @@ test('assistant pages use mutually exclusive text and hold-to-talk modes without
     assert.match(markup, /bindtouchstart="holdVoiceStart"/)
     assert.match(markup, /bindtouchmove="holdVoiceMove"/)
     assert.match(markup, /bindtouchend="holdVoiceEnd"/)
-    assert.match(markup, /按住说话/)
+    assert.match(markup, /按住说话|长按问灵小枢/)
     assert.doesNotMatch(markup, /assistant-avatar|class="avatar">枢|同步对话/)
   }
 })
@@ -72,7 +72,15 @@ test('operator assistant keeps suggested questions collapsed on the empty conver
   assert.match(markup, /wx:if="{{showSuggestions}}" class="suggestions"/)
   assert.match(markup, /bindtap="toggleSuggestions"/)
   assert.match(script, /showSuggestions: false/)
-  assert.doesNotMatch(styles, /box-shadow/)
+  assert.match(styles, /\.voice-prompt\{[^}]*box-shadow:/)
+})
+
+test('operator assistant opens in voice mode with the dispatch prompt above two-tab navigation', () => {
+  const markup = fs.readFileSync(__dirname + '/packages/operator/assistant/index.wxml', 'utf8')
+  const script = fs.readFileSync(__dirname + '/packages/operator/assistant/index.js', 'utf8')
+  assert.match(script, /inputMode: 'voice'/)
+  assert.match(markup, /长按问灵小枢/)
+  assert.match(markup, /可按住提问或者派活/)
 })
 test('operator assistant recovers denied microphone permission without leaving a page-level error', async () => {
   let definition, modal, opened = 0

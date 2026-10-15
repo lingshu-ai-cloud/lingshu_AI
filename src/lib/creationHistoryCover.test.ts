@@ -13,3 +13,20 @@ test('old reference only draft still has a usable video and duplicate sources co
   assert.deepEqual(creationHistoryCoverSources({ videoKickoff: { video: { videoUrl: '/reference.mp4', aiAnalysis: { materialUrl: '/reference.mp4' } } } }), [{ kind: 'video', url: '/reference.mp4', time: 0 }]);
   assert.deepEqual(creationHistoryCoverSources({}), []);
 });
+test('persisted draft covers and timeline posters precede reference media', () => {
+  assert.deepEqual(creationHistoryCoverSources({
+    coverUrl: '/covers/draft.svg',
+    coverVersions: { primary: { coverUrl: '/covers/version.svg' } },
+    timeline: [
+      { type: 'video', url: '/draft.mp4', poster: '/draft-poster.jpg' },
+      { type: 'image', url: '/draft-image.jpg' },
+    ],
+    videoKickoff: { video: { videoUrl: '/reference.mp4' } },
+  }), [
+    { kind: 'image', url: '/covers/draft.svg', time: 0 },
+    { kind: 'image', url: '/covers/version.svg', time: 0 },
+    { kind: 'image', url: '/draft-poster.jpg', time: 0 },
+    { kind: 'image', url: '/draft-image.jpg', time: 0 },
+    { kind: 'video', url: '/reference.mp4', time: 0 },
+  ]);
+});

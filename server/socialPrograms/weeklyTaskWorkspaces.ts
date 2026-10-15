@@ -3,6 +3,7 @@ import type {DataStore,Record_} from '../storage/datastore.js';
 import type {WeeklyExecutionTask,WeeklyProductionStepKind} from '../../shared/contracts/socialProgram.js';
 import {WEEKLY_TASK_WORKSPACE_SCHEMA_VERSION,type WeeklyTaskWorkspace,type WeeklyTaskWorkspaceKind,type WeeklyTaskWorkspacePhase} from '../../shared/contracts/weeklyTaskWorkspace.js';
 import {SocialProgramError} from './service.js';
+import {normalizeCustomerTaskDependencies} from './customerTaskDependencies.js';
 
 export const WEEKLY_TASK_WORKSPACES='social_weekly_task_workspaces';
 type Row=Record_&{tenant_id:string;program_id:string;package_id:string;package_version:number;execution_task_id:string;workspace_id:string;payload:WeeklyTaskWorkspace};
@@ -17,10 +18,12 @@ const kindByStep:Record<WeeklyProductionStepKind,WeeklyTaskWorkspaceKind>={
 function phase(task:WeeklyExecutionTask):WeeklyTaskWorkspacePhase{
  if(task.status==='succeeded')return 'completed';if(task.status==='cancelled')return 'cancelled';if(task.status==='leased')return 'running';
  if(task.schedule.stepKind==='user_approval'&&task.status==='blocked')return 'waiting_human';
+ if(task.ownBlockingReasons.length)return 'blocked';
  if(task.status==='blocked'||task.status==='dead_letter')return task.inheritedBlockingTaskIds.length&&!task.ownBlockingReasons.length?'waiting_upstream':'blocked';
  return task.inheritedBlockingTaskIds.length?'waiting_upstream':'ready';
 }
 function snapshot(task:WeeklyExecutionTask,createdAt:string,now:string):WeeklyTaskWorkspace{
+ task=normalizeCustomerTaskDependencies(task);
  const progress=task.productionProgress;
  return {schemaVersion:WEEKLY_TASK_WORKSPACE_SCHEMA_VERSION,workspaceId:workspaceId(task),tenantId:task.tenantId,programId:task.programId,packageId:task.packageId,packageVersion:task.packageVersion,executionTaskId:task.taskId,taskIdempotencyKey:task.idempotencyKey,stepKind:task.schedule.stepKind,kind:kindByStep[task.schedule.stepKind],phase:phase(task),title:String(task.inputSnapshot?.publicationTask&&typeof task.inputSnapshot.publicationTask==='object'&&(task.inputSnapshot.publicationTask as Record<string,unknown>).businessProposition||task.schedule.stepKind),responsibleActor:task.schedule.responsibleActor,taskStatus:task.status,scheduledStartAt:task.schedule.estimatedStartAt??null,scheduledFinishAt:task.schedule.estimatedFinishAt??null,upstreamTaskIds:[...task.dependsOnTaskIds],blockingCodes:[...new Set([...task.ownBlockingReasons,...task.inheritedBlockingTaskIds.map(id=>`upstream:${id}`),...(task.lastError?.code?[task.lastError.code]:[])])],resultRefs:task.resultRefs.map(ref=>({...ref})),contentTaskId:progress?.contentTaskId??null,runId:progress?.runId??null,accountId:task.accountId??null,publicationTaskId:task.publicationTaskId??null,createdAt,updatedAt:now};
 }
@@ -38,7 +41,14 @@ export async function readWeeklyTaskWorkspace(store:DataStore,scope:{tenantId:st
  if(tasks.totalItems!==1||tasks.items.length!==1)throw new SocialProgramError('weekly_execution_task_not_found',404,'周包执行任务不存在。');const task=tasks.items[0]!.payload;
  const rows=await store.list<Row>(WEEKLY_TASK_WORKSPACES,{where:{tenant_id:scope.tenantId,program_id:scope.programId,package_id:scope.packageId,package_version:scope.packageVersion,execution_task_id:scope.executionTaskId},page:1,perPage:2});
  if(rows.totalItems!==1||rows.items.length!==1)throw new SocialProgramError('weekly_task_workspace_missing',409,'真实执行任务尚未补建生产现场。');assertIdentity(rows.items[0]!.payload,task);
- return snapshot(task,rows.items[0]!.payload.createdAt,rows.items[0]!.payload.updatedAt);
+ const normalized=normalizeCustomerTaskDependencies(task);
+ const unfinished:string[]=[];
+ for(const id of normalized.dependsOnTaskIds){
+  const upstream=await store.list<Record_&{payload:WeeklyExecutionTask}>('social_weekly_execution_tasks',{where:{tenant_id:scope.tenantId,program_id:scope.programId,package_id:scope.packageId,package_version:scope.packageVersion,task_id:id},page:1,perPage:2});
+  if(upstream.totalItems!==1||upstream.items.length!==1)throw new SocialProgramError('weekly_task_workspace_dependency_missing',409,'当前任务的真实上游任务缺失或不唯一。');
+  if(upstream.items[0]!.payload.status!=='succeeded')unfinished.push(id);
+ }
+ return snapshot({...normalized,inheritedBlockingTaskIds:unfinished},rows.items[0]!.payload.createdAt,rows.items[0]!.payload.updatedAt);
 }
 
 export async function backfillWeeklyTaskWorkspaces(store:DataStore,scope:{tenantId:string;programId:string;packageId:string;packageVersion:number},now=new Date().toISOString()):Promise<{taskCount:number;workspaceCount:number;items:WeeklyTaskWorkspace[]}>{

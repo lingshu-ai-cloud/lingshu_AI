@@ -96,7 +96,6 @@ import {
   ShieldCheck,
   Sparkles,
   Target,
-  Trash2,
   X,
   XCircle,
 } from "lucide-react";
@@ -4859,16 +4858,20 @@ export default function DigitalEmployeePage({
         {error && <Alert type="error" showIcon title={error} closable onClose={() => setError("")} />}
       </div>
     ) : undefined;
-    const weeklyPlanControls = <>
-      <Button onClick={()=>setPlanHistoryOpen(true)} icon={<History size={15}/>}>历史计划</Button>
-      {data.run && !viewGoalId && !['cancelled', 'succeeded', 'failed'].includes(data.run.status) && <Button danger icon={<Trash2 size={15}/>} onClick={() => {
-        Modal.confirm({
-          title: '删除当前周任务？',
-          content: '经营 Agent 将正式取消当前任务及未完成的下游执行。历史记录会保留用于审计，取消后可以重新建立任务。',
-          okText: '删除旧任务', cancelText: '保留任务', okButtonProps: { danger: true },
-          onOk: async () => { const next = await act('cancel', () => digitalEmployeeApi.cancelRun(data.run!.id)); if (next) publishWeeklyWorkUpdate(next); },
+    const openWeeklyTaskCalendar = () => {
+      setSelectedContentItemId("");
+      setWorkspaceView("matrix");
+      window.requestAnimationFrame(() => window.requestAnimationFrame(() => {
+        document.querySelector('[aria-label="数字员工工作排期"]')?.scrollIntoView({
+          behavior: getScrollBehavior(),
+          block: "start",
         });
-      }}>删除旧任务</Button>}
+      }));
+    };
+    const weeklyPlanControls = <>
+      {activeRun && !viewGoalId
+        ? <Button onClick={openWeeklyTaskCalendar} icon={<CalendarRange size={15}/>}>查看周任务</Button>
+        : <Button onClick={()=>setPlanHistoryOpen(true)} icon={<History size={15}/>}>历史计划</Button>}
       <Button type="primary" loading={Boolean(busy)} onClick={()=>void controlWeeklyWork()} icon={!activeRun && (!goal || canCreateNextGoal) ? <CalendarRange size={15}/> : activeRun && !recoverableProductionTask && data.run?.status !== "paused" ? <Pause size={15}/> : <Play size={15}/>}>{weeklyControlLabel}</Button>
     </>;
     return (

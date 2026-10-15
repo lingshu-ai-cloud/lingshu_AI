@@ -1,4 +1,5 @@
 import {INITIAL_CAPACITY_SCHEDULE_REQUIRED} from './weeklyInitialScheduleGate.js';
+import {normalizeCustomerTaskDependencies} from './customerTaskDependencies.js';
 import {createWeeklyExecutionContinuationService} from './weeklyExecutionContinuations.js';
 import {withExecutionPackageGate,assertExecutionPackageGate,executionPackageFrozen} from './weeklyExecutionGate.js';
 import {applyFrozenWeeklySchedule,scheduleHash} from './weeklyScheduleSnapshots.js';
@@ -67,7 +68,9 @@ const moneyShare = (total: number | null, count: number): number | null => (
 );
 
 function normalizeExecutionTask(task: WeeklyExecutionTask): WeeklyExecutionTask {
-  if (task.schedule) return task;
+  if (task.schedule) {
+    return normalizeCustomerTaskDependencies(task);
+  }
   const legacy = task as WeeklyExecutionTask & { schedule?: WeeklyExecutionTask['schedule'] };
   const mapping: Record<WeeklyOperatingWorkflowKind, { stepKind: WeeklyProductionStepKind; responsibleActor: WeeklyResponsibleActor; duration: number }> = {
     readiness: { stepKind: 'business_outline', responsibleActor: 'business_agent', duration: 15 },
@@ -195,6 +198,13 @@ function chainIdentity(pkg:WeeklyOperatingPackage,seed:TaskSeed):{
   const chainSupportTaskCodes=(SIDE_CHAIN_BY_STEP[seed.stepKind]??[]).map(index=>`${prefix}-S${index}` as WeeklyAgentChainTaskCode);
   const commonInputs=['frozen_weekly_package','verified_enterprise_facts','confirmed_schedule_scope'];
   const commonOutputs:[string,string]=[`verified_${seed.stepKind}_receipt`,`profile_route:${route}`];
+  if(['customer_channel_readiness','customer_inquiry_handoff'].includes(seed.stepKind))return {
+    chainProfile:profile,chainTaskCode:taskCode,chainSupportTaskCodes,
+    chainContract:{
+      requiredInputKinds:['channel_authorization','customer_runtime_binding','provider_conversation_identity'],
+      deliverableKinds:[...commonOutputs,'continuous_channel_observation','customer_followup_receipt'],
+    },
+  };
   const requiredInputKinds=profile==='b2b_cold_start'
     ?[...commonInputs,'external_reference_evidence','first_week_baseline_gap']
     :[...commonInputs,'historical_account_baseline','confirmed_owned_external_quota',source==='owned'?'owned_video_metrics_and_tone':'external_reference_evidence'];
@@ -488,34 +498,31 @@ export function planWeeklyExecutionTasks(
   const customerChannels = ['whatsapp', 'messenger', 'instagram'] as const;
   const customerReadiness = new Map<string, WeeklyExecutionTask[]>();
   for (const item of publications) {
-    const approval = approvalByPublication.get(item.publicationTaskId)!;
     const tasksForPublication = customerChannels.map(channel => add({
       workflowKind: 'engagement', scope: 'publication',
       subjectId: `${item.publicationTaskId}:customer:${channel}:readiness`,
       accountId: item.accountId, publicationTaskId: item.publicationTaskId,
-      dependsOnTaskIds: [approval.taskId],
+      // Channel observation is an always-on customer-service capability. It
+      // must not wait for directing, content production, approval or publish.
+      dependsOnTaskIds: [],
       inputSnapshot: { publicationTask: item, referenceSource: sourceAllocation.get(item.motherContentId), customerChannel: channel, publicationAccountId: item.accountId },
       budget: noBudget, ownBlockingReasons: [],
       stepKind: 'customer_channel_readiness', responsibleActor: 'customer_agent', estimatedDurationMinutes: 10,
     }));
     customerReadiness.set(item.publicationTaskId, tasksForPublication);
-    const publish = publishing.find(task => task.publicationTaskId === item.publicationTaskId)!;
-    publish.dependsOnTaskIds = [...publish.dependsOnTaskIds, ...tasksForPublication.map(task => task.taskId)];
-    const readinessFinish = Math.max(...tasksForPublication.map(task => Date.parse(task.schedule.estimatedFinishAt)));
-    const publishStart = Math.max(Date.parse(publish.schedule.estimatedStartAt), readinessFinish);
-    publish.schedule.estimatedStartAt = new Date(publishStart).toISOString();
-    publish.schedule.estimatedFinishAt = new Date(publishStart + publish.schedule.estimatedDurationMinutes * 60_000).toISOString();
   }
 
   const customerHandoffs = publications.flatMap(item => {
-    const publish = publishing.find(task => task.publicationTaskId === item.publicationTaskId)!;
     return customerChannels.map(channel => {
       const readiness = customerReadiness.get(item.publicationTaskId)!.find(task => task.inputSnapshot.customerChannel === channel)!;
       return add({
         workflowKind: 'engagement', scope: 'publication',
         subjectId: `${item.publicationTaskId}:customer:${channel}:handoff`,
         accountId: item.accountId, publicationTaskId: item.publicationTaskId,
-        dependsOnTaskIds: [publish.taskId, readiness.taskId],
+        // Inquiry intake follows only the same channel's readiness. Published
+        // content may provide attribution context, but is not an execution
+        // prerequisite for monitoring and responding to inbound messages.
+        dependsOnTaskIds: [readiness.taskId],
         inputSnapshot: { publicationTask: item, referenceSource: sourceAllocation.get(item.motherContentId), customerChannel: channel, publicationAccountId: item.accountId },
         budget: noBudget, ownBlockingReasons: [],
         stepKind: 'customer_inquiry_handoff', responsibleActor: 'customer_agent', estimatedDurationMinutes: 30,
@@ -526,10 +533,7 @@ export function planWeeklyExecutionTasks(
   const engagement = publications.map(publication => add({
     workflowKind: 'engagement', scope: 'publication', subjectId: `${publication.publicationTaskId}:daily-feedback`,
     accountId: publication.accountId, publicationTaskId: publication.publicationTaskId,
-    dependsOnTaskIds: [
-      publishing.find(item => item.publicationTaskId === publication.publicationTaskId)!.taskId,
-      ...customerHandoffs.filter(item => item.publicationTaskId === publication.publicationTaskId).map(item => item.taskId),
-    ],
+    dependsOnTaskIds: [publishing.find(item => item.publicationTaskId === publication.publicationTaskId)!.taskId],
     inputSnapshot: { accountId: publication.accountId, publicationTaskId: publication.publicationTaskId, rollingCadence: 'daily_feedback', rollingDate: publicationLocalDate(publication), feedsNextDailyCollection: true, weekStart: pkg.weekStart, weekEnd: pkg.weekEnd, profileWork: pkg.referenceSourcePolicy?.profile==='b2b_established'?'existing_customer_and_dual_source_attribution':'new_inquiry_and_first_baseline_attribution' },
     budget: noBudget, ownBlockingReasons: [],
     stepKind: 'performance_monitoring', responsibleActor: 'business_agent', estimatedDurationMinutes: 30,

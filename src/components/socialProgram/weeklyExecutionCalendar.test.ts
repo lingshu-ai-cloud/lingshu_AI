@@ -93,11 +93,11 @@ test('weekly business outline is displayed on the frozen package Monday while re
  assert.equal(card.date,'2026-10-12');
  assert.equal(card.dueAt,'2026-10-14T05:00:00Z');
 });
-test('weekly merged business schedule is displayed on Monday without changing persisted dueAt or task identity',()=>{
+test('daily topic confirmation keeps its actual date after discovery instead of being moved to Monday',()=>{
  const actual={...task('queued'),taskId:'real-business-schedule',tenantId:'tenant',programId:'program',packageId:'week-1',packageVersion:2,schedule:{...task('queued').schedule,stepKind:'business_schedule' as const,estimatedFinishAt:'2026-10-14T05:00:00Z',latestFinishAt:'2026-10-14T05:30:00Z'}};
  const pkg={programId:'program',packageId:'week-1',version:2,weekStart:'2026-10-12',weekEnd:'2026-10-18',socialContentPackage:{publicationTasks:[]}} as unknown as import('../../../shared/contracts/socialProgram').WeeklyOperatingPackage;
  const card=projectExecutionCalendar([actual],labels,Date.parse('2026-10-14T00:00:00Z'),{pkg})[0]!;
- assert.equal(card.date,'2026-10-12');
+ assert.equal(card.date,'2026-10-14');
  assert.equal(card.dueAt,'2026-10-14T05:30:00Z');
  assert.equal(card.id,'real-business-schedule');
  assert.deepEqual(card.planningTarget,{tenantId:'tenant',programId:'program',packageId:'week-1',packageVersion:2,taskId:'real-business-schedule',stepKind:'business_schedule'});

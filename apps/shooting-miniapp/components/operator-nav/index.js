@@ -3,7 +3,6 @@ Component({
   data: {
     items: [
       { key: 'work', label: '工作', path: '/packages/operator/home/index' },
-      { key: 'review', label: '待验收成片', path: '/packages/operator/review/index' },
       { key: 'assistant', label: '经营 Agent', path: '/packages/operator/assistant/index' }
     ]
   },

@@ -33,6 +33,10 @@ test('operator home projects execution counts and only intervention schedule ite
   assert.equal(result.counts.shooting, 1)
   assert.equal(result.counts.confirmation, 1)
   assert.equal(result.counts.pendingShots, 1)
+  assert.equal(result.counts.completedShots, 1)
+  assert.equal(result.counts.pendingProduction, 0)
+  assert.equal(result.counts.producedFilms, 0)
+  assert.equal(result.counts.acceptedFilms, 0)
   assert.equal(result.todayShots.length, 1)
   assert.equal(result.todayShots[0].requirement, '拍摄产品特写')
   assert.equal(result.blockers.length, 1)
@@ -44,8 +48,41 @@ test('operator home preserves honest empty and unavailable states', () => {
   assert.equal(result.counts.pending, 0)
   assert.equal(result.counts.shooting, 0)
   assert.equal(result.counts.confirmation, 0)
+  assert.equal(result.counts.pendingProduction, 0)
+  assert.equal(result.counts.completedShots, 0)
   assert.equal(result.scheduleAvailable, false)
   assert.equal(result.blockers.length, 0)
+})
+
+test('operator home projects todays acceptance queue and weekly published video cards', () => {
+  const result = home.project({}, {
+    agentSchedule:{availability:'available',items:[]}, agents:{items:[]},
+    deliveries:[
+      { id:'delivery-today', kind:'内容成片', title:'今日成片', deliveredAt:'2026-10-12T11:00:00+08:00', artifacts:[{kind:'video',url:'/files/today.mp4'}], contentApproval:{approved:false} },
+      { id:'delivery-other', kind:'内容成片', title:'其他日期', deliveredAt:'2026-10-11T11:00:00+08:00', artifacts:[{kind:'video',url:'/files/other.mp4'}], contentApproval:{approved:false} }
+    ],
+    contentSchedule:{availability:'available',items:[
+      { id:'published', title:'秋季新品短片', platform:'tiktok', publishReceipt:'verified', thumbnailUrl:'/files/cover.jpg', views:1280 },
+      { id:'scheduled', title:'尚未发布', platform:'youtube', publishReceipt:'pending' }
+    ]}
+  }, {}, '2026-10-12')
+  assert.equal(result.todayAcceptance.length, 2)
+  assert.equal(result.todayAcceptance[0].title, '今日成片')
+  assert.equal(result.publishedVideos.length, 1)
+  assert.deepEqual({ ...result.publishedVideos[0] }, { id:'published', title:'秋季新品短片', platform:'TikTok', thumbnailUrl:'/files/cover.jpg', views:1280, mock:false })
+})
+
+test('operator home includes overdue local shooting and database approval records in todays queues', () => {
+  const result = home.project({}, { agentSchedule:{availability:'available',items:[]}, agents:{items:[]} }, {
+    tasks:[{id:'film-task',title:'新品功能演示成片验收',updated_at:'2026-10-10T14:20:00+08:00'}],
+    approvals:[{id:'approval-1',task_id:'film-task',action_summary:'预览新品演示成片和质检结果',created_at:'2026-10-10T14:20:00+08:00'}],
+    shooting:[{id:'shot-1',title:'补拍产品接口特写',dueAt:'2026-10-11T12:00:00+08:00'}],
+    films:[]
+  }, '2026-10-15')
+  assert.equal(result.counts.pendingAcceptance, 1)
+  assert.equal(result.todayAcceptance.length, 1)
+  assert.equal(result.todayAcceptance[0].title, '新品功能演示成片验收')
+  assert.equal(result.todayShots.length, 1)
 })
 
 test('operator home follows the mobile visual baseline', () => {
@@ -58,10 +95,15 @@ test('operator home follows the mobile visual baseline', () => {
   assert.match(styles, /\.metric-band\{[^}]*border-top:/)
   assert.match(styles, /\.metric\{[^}]*align-items:flex-start/)
   assert.match(styles, /\.shot-card\{[^}]*border-radius:var\(--ls-radius-panel\)/)
-  assert.doesNotMatch(styles, /box-shadow/)
+  assert.match(markup, /data-key="production"/)
+  assert.match(markup, /data-key="acceptance"/)
+  assert.match(markup, /class="video-scroll"/)
+  assert.match(markup, /本周发布视频/)
   assert.match(navMarkup, /nav-icon \{\{item\.key\}\}/)
-  assert.match(navStyles, /\.nav-item\{[^}]*min-height:88rpx/)
+  assert.match(navStyles, /\.nav-item\{[^}]*min-height:72rpx/)
   assert.doesNotMatch(navStyles, /backdrop-filter/)
+  assert.doesNotMatch(navMarkup, /liquid-slider/)
+  assert.match(navStyles, /grid-template-columns:1fr 1fr/)
 })
 
 test('operator calendar is collapsed by default and expands on demand', () => {
@@ -72,4 +114,11 @@ test('operator calendar is collapsed by default and expands on demand', () => {
   assert.match(markup, /bindtap="toggleCalendar"/)
   assert.match(markup, /wx:if="\{\{calendarExpanded\}\}" class="days"/)
   assert.match(markup, /catchtap="changeWeek"/)
+})
+
+test('operator workbench keeps queue swipe UI removed and review out of primary navigation', () => {
+  const markup = fs.readFileSync(__dirname + '/packages/operator/home/index.wxml', 'utf8')
+  const nav = fs.readFileSync(__dirname + '/components/operator-nav/index.js', 'utf8')
+  assert.doesNotMatch(markup, /queue-deck|queueTouch|左滑|右滑/)
+  assert.doesNotMatch(nav, /key: 'review'/)
 })

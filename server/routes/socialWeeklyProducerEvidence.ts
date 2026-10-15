@@ -3,7 +3,7 @@ import type { WeeklyExecutionTask } from '../../shared/contracts/socialProgram.j
 import { Router, type RequestHandler, type ErrorRequestHandler } from 'express';
 import type { DataStore, Record_ } from '../storage/datastore.js';
 import type { AuthLocals } from '../middleware/auth.js';
-import { organizationRoleOrNull } from '../lib/organizationRole.js';
+import { organizationRoleOrNull,localTenantMember } from '../lib/organizationRole.js';
 import { SocialProgramError } from '../socialPrograms/service.js';
 import { socialJson, socialObject } from '../starter198/socialContentValidation.js';
 import { bindWeeklyPreproductionAuthority, listWeeklyPreproductionJobs } from '../runtime/weeklyPreproductionProducer.js';
@@ -16,7 +16,8 @@ export function createSocialWeeklyProducerEvidenceRouter(store: DataStore) {
   const handle = (bind: boolean): RequestHandler => (req, res, next) => { void (async () => {
     const auth = res.locals as AuthLocals;
     if (!auth.tenantId || !auth.userId) throw new SocialProgramError('weekly_producer_auth_required', 401, '请登录后读取执行证据。');
-    const member = await store.getById<Record_>('users', auth.userId);
+    const local=localTenantMember(auth.tenantId,auth.userId);
+    const member = local===undefined?await store.getById<Record_>('users', auth.userId):local as Record_ | null;
     if (!member || member.tenantId !== auth.tenantId || !organizationRoleOrNull(member.role) || member.active === false || member.disabled === true || ['disabled', 'suspended'].includes(String(member.status))) throw new SocialProgramError('weekly_producer_actor_invalid', 403, '当前用户不能操作此租户周任务。');
     const raw = bind ? req.body?.packageVersion : req.query.version;
     const version = !bind && typeof raw === 'string' && /^[1-9]\d*$/.test(raw) ? Number(raw) : raw;
