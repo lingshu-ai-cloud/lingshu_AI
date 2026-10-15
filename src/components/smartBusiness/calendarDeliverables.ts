@@ -24,7 +24,7 @@ export function projectDailyMilestones(tasks:AgentCalendarTask[]):AgentCalendarT
  for(const card of tasks){for(const task of card.dailyTaskGroup?.tasks??[card]){
   const scope=task.workspaceTarget;
   const step=task.executionStep??'';
-  const stage=stages.find(stage=>stage.steps.includes(step==='business_schedule'&&naturalWeek(task.date).start===task.date?'business_outline':step));
+  const stage=stages.find(stage=>stage.steps.includes(step));
   if(!scope||!stage||isAlwaysOnCalendarTask(task)){retained.push({...task,title:conciseCalendarTitle(task.title)});continue;}
   const week=naturalWeek(task.date);
   const date=stage.step==='business_outline'?week.start:stage.step==='weekly_review'?week.end:task.date;
