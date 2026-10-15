@@ -4,6 +4,12 @@
 // Existing records remain valid; only the importer requires the complete
 // provenance envelope before it creates a new shared/editable material.
 const materialProvenanceFields = [
+  // Legacy production installations may have the original materials
+  // collection without the tenant-scoping fields from the generated schema.
+  // Reconcile those columns before creating the provenance indexes.
+  { id: "text3783197223", name: "tenantId", type: "text", required: false },
+  { id: "text1556616439", name: "sha256", type: "text", required: false },
+  { id: "text11490771", name: "scope", type: "text", required: false },
   { id: "text_mat_product_id", name: "productId", type: "text", required: false },
   { id: "text_mat_product_name", name: "productName", type: "text", required: false },
   { id: "text_mat_source_url", name: "sourceUrl", type: "text", required: false },
