@@ -23,6 +23,12 @@ export function readHistoricalCustomers(tenantId: string, dataFile = DATA_FILE):
         && Array.isArray(item.timeline)))
       .map(item => ({
         ...item,
+        timeline: item.timeline.map(event => {
+          const time = String(event.time || '');
+          return /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}/.test(time)
+            ? { ...event, originalTime: time, time: `${time.slice(5, 10)} ${time.slice(11, 16)}` }
+            : event;
+        }),
         intentSignals: Array.isArray(item.intentSignals) ? item.intentSignals : [],
         orders: Array.isArray(item.orders) ? item.orders : [],
         tags: Array.isArray(item.tags) ? item.tags : [],
