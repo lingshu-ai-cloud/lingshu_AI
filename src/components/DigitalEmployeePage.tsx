@@ -5020,7 +5020,7 @@ export default function DigitalEmployeePage({
             setSelectedContentItemId("");
             setWorkspaceView("matrix");
             window.requestAnimationFrame(() => window.requestAnimationFrame(() => {
-              document.querySelector('[aria-label="数字员工工作排期"]')?.scrollIntoView({ behavior: getScrollBehavior(), block: "start" });
+              document.getElementById("agent-weekly-calendar")?.scrollIntoView({ behavior: getScrollBehavior(), block: "start" });
             }));
           }} icon={<CalendarRange size={15}/>}>查看周任务</Button>
         : <Button onClick={()=>setPlanHistoryOpen(true)} icon={<History size={15}/>}>历史计划</Button>}

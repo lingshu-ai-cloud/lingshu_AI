@@ -408,7 +408,7 @@ assert.match(inspirationSource, /weekly-plan-snapshot[\s\S]{0,600}setSelectedVid
 assert.match(pageSource, /具体缺少/, 'weekly-plan validation must name the missing business fields instead of showing a generic warning');
 assert.match(pageSource, /page === "socialPlanning"[\s\S]{0,160}void controlWeeklyWork\(\)/, 'the account-matrix next step must share the direct-start/new-goal control instead of reopening the removed detail page');
 assert.match(weeklyPlanControlsSource, /查看周任务/, 'an active weekly plan must expose a direct task-calendar action');
-assert.match(weeklyPlanControlsSource, /setWorkspaceView\("matrix"\)[\s\S]{0,500}aria-label="数字员工工作排期"/, 'viewing weekly tasks must open and focus the Digital Employee calendar');
+assert.match(weeklyPlanControlsSource, /setWorkspaceView\("matrix"\)[\s\S]{0,500}getElementById\("agent-weekly-calendar"\)/, 'viewing weekly tasks must open and focus the Agent weekly calendar instead of an earlier duplicate schedule label');
 assert.match(weeklyPlanControlsSource, /历史计划/, 'Smart Business must retain plan history outside the active-run controls');
 assert.doesNotMatch(weeklyPlanControlsSource, /删除旧任务/, 'active weekly controls must not expose the destructive legacy cancellation action');
 assert.doesNotMatch(smartBusinessSource, /后台并发与异常中心|Background operations/, 'the overview must not expose the deleted background-operations panel');

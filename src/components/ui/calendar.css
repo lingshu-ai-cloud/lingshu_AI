@@ -67,7 +67,7 @@
 .ls-calendar .ls-calendar-event-reveal:focus-within { opacity: 1; transform: translateY(0); }
 .ls-calendar-event-content { display: flex; align-items: flex-start; gap: 6px; min-width: 0; max-width: 100%; overflow: hidden; box-sizing: border-box; padding: 5px; font-size: var(--ls-type-body-small-size); line-height: var(--ls-type-body-small-line); white-space: normal; }
 .ls-calendar-event-copy { min-width: 0; flex: 1; }
-.ls-calendar-task-board-card { display: grid; grid-template-rows: 14px 32px 14px; align-content: center; gap: 2px; height: 76px; min-height: 76px; padding: 6px 9px; white-space: normal; }
+.ls-calendar-task-board-card { display: grid; grid-template-rows: 13px 27px; align-content: center; gap: 1px; height: 52px; min-height: 52px; padding: 5px 8px; white-space: normal; }
 .ls-calendar-task-board .ls-calendar-surface { overflow-x: auto; }
 .ls-calendar-task-board .ls-calendar-surface > div { min-width: 1120px; }
 .ls-calendar-task-board-card strong { white-space: normal; overflow: hidden; line-height: 16px; }
@@ -93,7 +93,7 @@
 .ls-calendar-agent-view .ls-calendar-event-progress::before { position: absolute; z-index: 3; inset-inline: 0; inset-block-start: clamp(4px, var(--ls-task-progress, 0%), calc(100% - 4px)); height: 2px; background: #ef4444; box-shadow: 0 0 0 1px rgb(255 255 255 / 70%); content: ''; pointer-events: none; }
 .ls-calendar-agent-view .ls-calendar-event-progress::after { position: absolute; z-index: 4; inset-inline-start: -1px; inset-block-start: calc(clamp(4px, var(--ls-task-progress, 0%), calc(100% - 4px)) - 2px); width: 6px; height: 6px; border-radius: 999px; background: #ef4444; content: ''; pointer-events: none; }
 .ls-calendar-agent-view .ls-calendar-event-muted { opacity: .58; filter: saturate(.32); }
-.ls-calendar-agent-view .ls-calendar-task-board-card { height: 68px; min-height: 68px; grid-template-rows: 13px 30px 13px; padding: 5px 7px; }
+.ls-calendar-agent-view .ls-calendar-task-board-card { height: 50px; min-height: 50px; grid-template-rows: 12px 27px; padding: 4px 7px; }
 .ls-calendar-agent-view .ls-calendar-event:hover { filter: saturate(.94) brightness(.99); box-shadow: 0 2px 5px rgb(24 24 27 / 8%); }
 .ls-calendar-agent-view .ls-calendar-event-row-owner,
 .ls-calendar-agent-view .ls-calendar-event-row-state { font-size: 9px; }
@@ -112,6 +112,7 @@
 .ls-calendar-event-content-timed.is-short .ls-calendar-thumb { width: 24px; height: 24px; }
 .ls-calendar-event-content-timed.is-short .ls-calendar-event-meta { display: flex; }
 .ls-calendar .ls-calendar-event-three-row { height: 100%; min-height: 46px; }
+.ls-calendar .ls-calendar-event-two-row { height: 100%; min-height: 40px; }
 .ls-calendar .fc-timegrid-event-harness.ls-calendar-time-vertical-flow {
   left: 2px !important;
   right: 2px !important;
