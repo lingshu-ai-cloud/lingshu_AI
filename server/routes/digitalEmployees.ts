@@ -1632,6 +1632,7 @@ type ApprovalPreflight = {
 };
 
 function dependenciesReady(task: TaskRecord, tasks: TaskRecord[]): boolean {
+  tasks = tasks.filter(item => !jsonObject<Record<string, unknown>>(item.output, {}).assistantIndependent || item.id === task.id);
   const byKey = new Map(tasks.map(item => [item.task_key, item]));
   return jsonObject<string[]>(task.depends_on, []).every(key => {
     const upstream = byKey.get(key);
@@ -1951,6 +1952,8 @@ function destinationLabel(destination: string): string {
 }
 
 function taskScope(task: TaskRecord, tasks: TaskRecord[]): { taskIds: Set<string>; refIds: Set<string> } {
+  const independent = Boolean(jsonObject<Record<string, unknown>>(task.output, {}).assistantIndependent);
+  tasks = tasks.filter(item => independent ? item.id === task.id : !jsonObject<Record<string, unknown>>(item.output, {}).assistantIndependent);
   const taskIds = new Set([task.id]);
   const keys = new Set([task.task_key]);
   let changed = true;
@@ -1979,6 +1982,7 @@ function taskScope(task: TaskRecord, tasks: TaskRecord[]): { taskIds: Set<string
 }
 
 function contentProjectTaskScope(task: TaskRecord, tasks: TaskRecord[]): { taskIds: Set<string>; refIds: Set<string> } {
+  tasks = tasks.filter(item => !jsonObject<Record<string, unknown>>(item.output, {}).assistantIndependent || item.id === task.id);
   const scope = taskScope(task, tasks);
   const taskIds = task.task_key === 'content_production'
     ? new Set([task.id])
@@ -2067,10 +2071,18 @@ async function publishingApprovalPackage(
   const weeklyPackage = planBody.businessPackage as WeeklyPackage | undefined;
   const scope = contentProjectTaskScope(task, tasks);
   const completed = projects.items.filter(item => recordBelongsToTask(item, run, scope) && studioProjectCompleted(item));
+  const assistantPublicationTargets = jsonObject<Array<Record<string, unknown>>>(task.business_refs, []).filter(ref => ref.type === 'assistant_publication_intent');
+  if (assistantPublicationTargets.length > 1) throw new Error('assistant_publication_target_ambiguous');
+  const assistantPublicationTarget = assistantPublicationTargets[0];
+  if (assistantPublicationTarget) {
+    const selected = completed.filter(project => project.id === assistantPublicationTarget.id);
+    if (selected.length !== 1 || contentAcceptanceHash(jsonObject<Record<string, any>>(selected[0]!.spec, {})) !== assistantPublicationTarget.contentHash) throw new Error('assistant_publication_target_changed');
+  }
   return buildPublishingApprovalPackage({
     tenantId,
     matrixPlan: jsonObject<{ businessPackage?: WeeklyPackage }>(plan?.plan, {}).businessPackage?.matrixPlan,
     projects: completed,
+    ...(assistantPublicationTarget ? { selectedProjectId: String(assistantPublicationTarget.id) } : {}),
     targets: config.publishingTargets,
     goalPlatforms: goalInput(goal).contentPlatforms,
     allowRealPublishing: config.allowRealPublishing,
@@ -2721,6 +2733,18 @@ async function advanceRunUnlocked(tenantId: string, runId: string): Promise<void
     store.list<TaskRecord>(COLLECTION.tasks, { where: { tenant_id: tenantId, run_id: run.id }, sort: 'sequence', perPage: 100 }),
   ]);
   const tenantConfig = publicConfig(configRecord);
+  // Independent insertions own their production project and proof recovery.
+  // Never feed them into batch dependency scopes or run paid batch work for them.
+  const independentTasks = taskResult.items.filter(task => jsonObject<Record<string, unknown>>(task.output, {}).assistantIndependent);
+  if (independentTasks.length) {
+    const { recoverIndependentContentTask } = await import('../assistant/independentWeeklyContent.js');
+    for (const task of independentTasks) {
+      const projectId = String(jsonObject<Record<string, unknown>>(task.output, {}).projectId || '');
+      const project = projectId ? await tenantRecord<StoredRecord & { tenant_id: string }>('studio_projects', projectId, tenantId) : null;
+      if (project) await recoverIndependentContentTask(store, tenantId, task as any, project as any);
+    }
+    taskResult.items = taskResult.items.filter(task => !independentTasks.includes(task));
+  }
   if (!goal || !tenantConfig) throw new Error('run_context_missing');
   const recoverableApprovalFailure = taskResult.items.some(task => task.requires_approval
     && task.status === 'failed'
@@ -3135,7 +3159,7 @@ async function advanceRunUnlocked(tenantId: string, runId: string): Promise<void
     }
   }
 
-  const remaining = taskResult.items.filter(task => !['succeeded', 'skipped'].includes(task.status));
+  const remaining = [...taskResult.items,...independentTasks].filter(task => !['succeeded', 'skipped'].includes(task.status));
   if (remaining.length) {
     const handedOff = remaining.find(task => task.status === 'handed_off');
     const waitingApproval = remaining.find(task => task.status === 'waiting_approval');
@@ -3375,6 +3399,11 @@ async function buildDigitalEmployeeAssistantFeed(
     : productionDefaults.items.length === 0
       ? managedReplicationPresenterReadiness({})
       : { state: 'production_setup_required' as const, presenterCount: 0, presenterId: '', presenterName: '' };
+  const {recoverIndependentContentTask}=await import('../assistant/independentWeeklyContent.js');
+  for(const task of taskResult.items.filter(t=>jsonObject<Record<string,unknown>>(t.output,{}).assistantIndependent)){
+    const project=productionProjects.find(p=>p&&jsonObject<Record<string,unknown>>(p.spec,{}).workflowTaskId===task.id);
+    if(project)await recoverIndependentContentTask(store,tenantId,task as any,project as any);
+  }
   const assistantTasks = taskResult.items.map(task => taskWithAssistantProductionInput(
     task,
     productionProjects.filter((project): project is StoredRecord & { tenant_id: string } => Boolean(project)),

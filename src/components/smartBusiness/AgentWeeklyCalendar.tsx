@@ -70,6 +70,8 @@ export type AgentCalendarTask = {
   crossWeekMaterialTarget?: CrossWeekMaterialTarget;
   customerExceptionTarget?: CustomerExceptionTarget;
   productionTaskId?: string;
+  independentProjectId?: string;
+  independentRunId?: string;
   /** Exact persisted weekly execution task that owns the production binding. */
   productionExecutionTaskId?: string;
   workspaceTarget?: {programId:string;packageId:string;packageVersion:number;executionTaskId:string};

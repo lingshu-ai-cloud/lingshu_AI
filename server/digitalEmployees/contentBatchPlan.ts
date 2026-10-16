@@ -27,6 +27,8 @@ export interface ContentRoutingEvidence {
 }
 
 export interface ContentOrder extends Partial<DirectorScriptContract> {
+  /** Server-controlled: additional production is not covered by a weekly publish grant. */
+  publishMode?: 'draft_only';
   videoPlan?: VideoCreationPlan;
   /** Publish destinations derived from this master without another full render. */
   deliveryVariants?: Array<{

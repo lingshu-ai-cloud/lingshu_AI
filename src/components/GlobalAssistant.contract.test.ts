@@ -297,6 +297,7 @@ assert.match(sendSource, /userQuestion: visibleText[\s\S]{0,700}retainedUserInst
 assert.match(sendSource, /requestFence\.active[\s\S]{0,100}persistenceFenceRef\.current === requestFence/, '租户或用户范围切换后旧请求的异步响应必须被丢弃');
 assert.match(source, /function isWeeklyPlanKickoffRequest[\s\S]{0,500}开始\|启动\|制定\|生成\|创建[\s\S]{0,220}生产\|制作\|周计划\|计划\|周任务/, '空白周计划必须识别用户对灵小枢发出的明确开工或制定计划请求');
 assert.match(sendSource, /weeklyPlanKickoffAvailable && isWeeklyPlanKickoffRequest\(draft\)[\s\S]{0,650}可预览的周计划[\s\S]{0,400}openWeeklyPlanFromAssistant\(\)/, '灵小枢收到明确开工请求时必须先打开计划预览，不能绕过用户确认直接生产');
+assert.match(sendSource, /sameAssistantRequestIdentity\(requestToken, getToken\(\), stablePersistenceScope\)/, '身份切换后丢弃旧响应，同身份令牌刷新不丢弃文字');
 
 assert.doesNotMatch(source, /AssistantDecisionMemoryPanel|AssistantDecisionSaveButton|useAssistantDecisionMemory/, '对话记忆由后台维护，灵小枢首屏不得暴露记忆管理工具');
 assert.match(conversationContextSource, /较早用户原话/, '历史用户约束必须保留原文且不得升级为已核验事实');

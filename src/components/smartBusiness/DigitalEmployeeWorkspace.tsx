@@ -9,6 +9,7 @@ import RestoredAgentWorkCalendar from './RestoredAgentWorkCalendar';
 import ConnectedAgentCalendar from './ConnectedAgentCalendar';
 import { projectAgentWorkMonitor } from './AgentWorkMonitor';
 import { projectAccountBindingCalendar } from './accountBindingCalendar';
+import {projectIndependentContentCalendar} from './independentContentCalendar';
 
 const statusLabels = { working: '执行中', needs_action: '待处理', queued: '待执行', standby: '待命' };
 type DigitalEmployeeWorkspaceView = 'agents' | 'publishing';
@@ -23,7 +24,7 @@ export default function DigitalEmployeeWorkspace({ data, calendarTasks, calendar
   const runTaskIds = new Set(runTasks.map(task => task.id));
   const items = (data.contentQueue?.items || []).filter(item => !currentRunId || !item.taskId || runTaskIds.has(item.taskId));
   const agents = projectAgentWorkMonitor(items, Date.now(), { workflowTasks: runTasks, planTasks: data.plan?.tasks, agentStatuses: data.agents });
-  const bindingTasks = projectAccountBindingCalendar(items, (data.config?.publishingTargets || []).map(account => ({...account, connected: true})));
+  const bindingTasks = [...projectAccountBindingCalendar(items, (data.config?.publishingTargets || []).map(account => ({...account, connected: true}))),...projectIndependentContentCalendar(runTasks,currentRunId||'')];
   useEffect(() => {
     if (workspaceView !== 'publishing' || typeof window === 'undefined') return;
     const frame = window.requestAnimationFrame(() => window.dispatchEvent(new Event('resize')));

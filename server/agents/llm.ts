@@ -305,14 +305,17 @@ async function* streamQwenMessages(
     ...(opts.timeoutMs ? { timeout: opts.timeoutMs } : {}),
   });
   let finishReason: string | null = null;
+  let hasText = false;
   for await (const chunk of stream) {
     const text = chunk.choices[0]?.delta?.content;
+    if (text?.trim()) hasText = true;
     if (text) yield { text };
     finishReason = chunk.choices[0]?.finish_reason ?? finishReason;
   }
   // Let the caller's existing continuation path finish answers cut at the token limit.
   if (finishReason === 'length') throw new Error('QWEN_MAX_TOKENS');
   if (finishReason !== 'stop') throw new Error('模型回答未完整结束，请重试。');
+  if (!hasText) throw new Error('模型回答为空，请重试。');
 }
 
 async function completeQwenMessages(

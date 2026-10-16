@@ -120,11 +120,12 @@ export async function runWeeklyPublicationPackageScan(input: {
   limit?: number;
   tenantId?: string;
   taskId?: string;
+  artifactId?: string;
 } = {}): Promise<WeeklyPublicationWorkerResult> {
   const dataStore = input.dataStore ?? store;
   const limit = Math.min(Math.max(input.limit ?? 100, 1), 500);
   const rows = await dataStore.list<ArtifactRow>('starter_social_content_artifacts', {
-    where: { status: 'approved', ...(input.tenantId ? { tenant_id: input.tenantId } : {}), ...(input.taskId ? { task_id: input.taskId } : {}) }, sort: 'updated_at', page: 1, perPage: limit,
+    where: { status: 'approved', ...(input.tenantId ? { tenant_id: input.tenantId } : {}), ...(input.taskId ? { task_id: input.taskId } : {}), ...(input.artifactId ? { artifact_id: input.artifactId } : {}) }, sort: 'updated_at', page: 1, perPage: limit,
   });
   const result: WeeklyPublicationWorkerResult = { scanned: rows.items.length, createdAssignments: 0, createdPackages: 0, skipped: 0, errors: [] };
   for (const artifact of rows.items) {

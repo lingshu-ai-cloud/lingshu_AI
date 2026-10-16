@@ -120,8 +120,7 @@ function localPreviewBootstrapEnabled(): boolean {
   const env = import.meta.env;
   if (!env?.DEV || env.VITE_LINGSHU_LOCAL_PREVIEW !== '1' || typeof window === 'undefined') return false;
   const configuredOrigin = String(env.VITE_LINGSHU_LOCAL_PREVIEW_ORIGIN || '').trim();
-  const expectedOrigin = configuredOrigin || 'http://127.0.0.1:5177';
-  return window.location.origin === expectedOrigin
+  return (configuredOrigin ? window.location.origin === configuredOrigin : ['5177','5183'].includes(window.location.port))
     && window.location.protocol === 'http:'
     && ['127.0.0.1', 'localhost', '[::1]', '::1'].includes(window.location.hostname);
 }
