@@ -420,8 +420,8 @@ assert.doesNotMatch(conversionSource, /customer\.isMock \? '模拟客户'/,
   'fixture status must not be presented as a customer-facing data label');
 assert.match(conversionSource, /!customer\.isMock && <Tag[\s\S]{0,160}'通道已连接'[\s\S]{0,80}'通道未连接'/,
   'only connected customer channels need a truthful readiness label');
-assert.match(conversionSource, /客户消息输入/,
-  'the local conversation input keeps a neutral product-facing label');
+assert.doesNotMatch(conversionSource, /客户消息输入|输入下一条客户消息|添加客户消息/,
+  'the conversation timeline must not expose the local buyer-message simulator');
 
 const workerSource = readFileSync(new URL('../../scripts/local-crawl-worker.ts', import.meta.url), 'utf8');
 assert.match(workerSource, /CRAWL_WORKER_HEARTBEAT_MS/);

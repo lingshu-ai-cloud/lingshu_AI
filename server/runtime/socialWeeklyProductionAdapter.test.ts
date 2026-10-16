@@ -66,6 +66,22 @@ test('existing running identity is polled without starting another paid run; mis
   assert.equal((await f.adapter.execute(f.task)).status,'pending');
   assert.equal(f.starts(),0);
 });
+test('four platform nodes consume one real frozen original script without restarting production',async()=>{
+ const f=await fixture(),{SOCIAL_SCRIPT_BASELINE_SCHEMA,SOCIAL_SCRIPT_GROUNDING_VERSION}=await import('../starter198/socialContentScriptBaseline.js'),{validateWeeklyExecutionResults}=await import('./socialWeeklyResultValidation.js');
+ const pubs=['tiktok','facebook','instagram','youtube'].map((platform,index)=>({...f.pkg.socialContentPackage.publicationTasks[0]!,publicationTaskId:index?`publication-${index}`:'publication',platform,accountId:index?`account-${index}`:'account',adaptationOfPublicationTaskId:index?'publication':null}));
+ const plan:any=structuredClone(f.planning);plan.skeleton.slots[0].publicationTaskIds=pubs.map(p=>p.publicationTaskId);plan.dispatch.scheduleItems=pubs.map((pub,index)=>({...plan.dispatch.scheduleItems[0],publicationTaskId:pub.publicationTaskId,accountId:pub.accountId,scheduleItemId:`item-${index}`}));plan.dispatch.scheduleItemIds=plan.dispatch.scheduleItems.map((item:any)=>item.scheduleItemId);plan.detailedSchedule.items=structuredClone(plan.dispatch.scheduleItems);
+ const pkg:any={...f.pkg,agentPlanning:plan,socialContentPackage:{...f.pkg.socialContentPackage,productionIdentityVersion:'shared-original.v1',publicationTasks:pubs}};
+ const packageRow=(await f.store.list('social_weekly_operating_packages')).items[0]!,planningRow=(await f.store.list('social_weekly_agent_planning')).items[0]!,content=(await f.store.list('starter_social_content_tasks')).items[0]!;
+ await f.store.update('social_weekly_operating_packages',packageRow.id,{payload:pkg});await f.store.update('social_weekly_agent_planning',planningRow.id,{payload:plan});
+ const baseline={schemaVersion:SOCIAL_SCRIPT_BASELINE_SCHEMA,version:'2',source:'inspiration_script',language:'zh',lockedAt:'2026-10-01T00:00:00Z',createdBeforeMaterialAdaptation:true,groundingVersion:SOCIAL_SCRIPT_GROUNDING_VERSION,match:{strategy:'inspiration',confidence:.9,inspirationReference:{recordId:'safe-reference',confidence:.9},verifiedKnowledgeSource:'enterprise_profile',verifiedFactKeys:['fact'],userTextUsage:'intent_only'},scenes:[{sceneId:'scene',shotFunction:'value',subject:'产品',action:'展示',script:'真实事实',voiceover:'真实事实',caption:'真实事实',narration:'真实事实'}]};
+ await f.store.update('starter_social_content_tasks',content.id,{brief:{...f.brief,programRef:{id:'program'},_weeklyAuthority:{...f.authority,weeklyPackage:pkg,publicationTask:pubs[0]}},script_baseline:baseline});
+ const ref={type:'starter_social_content_script_baseline',id:'content',version:2};const original={...f.task,taskId:'original-script',status:'succeeded',resultRefs:[ref]} as WeeklyExecutionTask;
+ await f.store.create('social_weekly_execution_tasks',{tenant_id:'tenant',program_id:'program',package_id:'package',package_version:2,task_id:original.taskId,payload:original});
+ for(const pub of pubs.slice(1)){const task={...f.task,taskId:`script-${pub.platform}`,publicationTaskId:pub.publicationTaskId,accountId:pub.accountId} as WeeklyExecutionTask;const result=await f.adapter.execute(task);assert.equal(result.status,'succeeded',JSON.stringify(result));if(result.status==='succeeded')await validateWeeklyExecutionResults(f.store,task,result.resultRefs);}
+ assert.equal((await f.store.list('starter_social_content_tasks')).totalItems,1);assert.equal(f.starts(),0);assert.equal((await f.store.list('social_weekly_content_distribution_bindings')).totalItems,4);
+ const alias={...f.task,taskId:'alias',publicationTaskId:pubs[1]!.publicationTaskId,accountId:pubs[1]!.accountId} as WeeklyExecutionTask;
+ await assert.rejects(validateWeeklyExecutionResults(f.store,alias,[{...ref,version:3}]));
+});
 test('adopted per-video template refuses an existing over-cap production instead of restarting it',async()=>{
  const f=await fixture();const {adoptWeeklyAutomationTemplate}=await import('../socialPrograms/weeklyAutomationTemplate.js');
  await adoptWeeklyAutomationTemplate(f.store,f.task,'owner');f.set({brief:{...f.brief,productRef:null,audience:null,aspectRatio:null,cadence:null,dueAt:null,brandNotes:null,callToAction:'Contact us',perItemBudgetCny:30}});

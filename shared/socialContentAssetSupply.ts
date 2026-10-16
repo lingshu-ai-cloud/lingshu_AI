@@ -74,7 +74,7 @@ export interface SocialAssetSupplyShotRequest {
 }
 
 export interface CreateSocialAssetSupplyPlanInput {
-  materialRoutingPolicyVersion?: 'type-aware.v1';
+  materialRoutingPolicyVersion?: 'type-aware.v1' | 'type-aware.v2';
   creationMode: SocialContentCreationMode;
   assetAvailability?: SocialAssetAvailability;
   managementMode?: SocialContentManagementMode;
@@ -448,10 +448,10 @@ function generalStrategy(
   accountPresenterLock: SocialAccountPresenterLock | null | undefined,
   referenceShots?: SocialReferenceShotAnalysis[],
   productionApproach: SocialProductionApproach = 'ai_enhanced',
-  materialRoutingPolicyVersion?: 'type-aware.v1',
+  materialRoutingPolicyVersion?: 'type-aware.v1' | 'type-aware.v2',
 ): { strategy: SocialShotSourceStrategy; refs: string[]; instruction: string; productSceneReplication?: SocialProductSceneReplicationSpec; materialRouting?: SocialMaterialRouting; blocked?: boolean } {
   const signals = shotSignals(shot, referenceShots);
-  if (productionApproach === 'ai_enhanced' && materialRoutingPolicyVersion === 'type-aware.v1') return selectTypeAwareSocialMaterial({shot,inventory,materialType:classifySocialAssetSupplyMaterialType(shot,referenceShots),referenceVisualContract:referenceShot(shot,referenceShots)?.visualContract,presenterRefs:presenterLockReady(accountPresenterLock)?[accountPresenterLock.presenterAssetId]:inventory.presenterAssetIds,buildProductSpec:()=>buildSocialProductSceneReplicationSpec({shot,inventory,referenceShots})});
+  if (productionApproach === 'ai_enhanced' && (materialRoutingPolicyVersion === 'type-aware.v1' || materialRoutingPolicyVersion === 'type-aware.v2')) return selectTypeAwareSocialMaterial({policyVersion:materialRoutingPolicyVersion,shot,inventory,materialType:classifySocialAssetSupplyMaterialType(shot,referenceShots),referenceVisualContract:referenceShot(shot,referenceShots)?.visualContract,presenterRefs:presenterLockReady(accountPresenterLock)?[accountPresenterLock.presenterAssetId]:inventory.presenterAssetIds,buildProductSpec:()=>buildSocialProductSceneReplicationSpec({shot,inventory,referenceShots})});
   const observedReferenceRouting = referenceShot(shot, referenceShots)?.referenceProductionRouting;
   const referenceRouting = observedReferenceRouting?.state === 'ready' && observedReferenceRouting.route !== 'undetermined'
     ? observedReferenceRouting : undefined;
@@ -656,9 +656,9 @@ function planShot(
   referenceShots?: SocialReferenceShotAnalysis[],
   productionApproach: SocialProductionApproach = 'ai_enhanced',
   presenterSelectionConfirmed = false,
-  materialRoutingPolicyVersion?: 'type-aware.v1',
+  materialRoutingPolicyVersion?: 'type-aware.v1' | 'type-aware.v2',
 ): SocialAssetSupplyShotPlan {
-  const subject = shot.truthSensitiveSubject ?? (materialRoutingPolicyVersion==='type-aware.v1'&&shotSignals(shot,referenceShots).factory?'customer_factory':'none');
+  const subject = shot.truthSensitiveSubject ?? ((materialRoutingPolicyVersion==='type-aware.v1'||materialRoutingPolicyVersion==='type-aware.v2')&&shotSignals(shot,referenceShots).factory?'customer_factory':'none');
   const canonicalVisualContract = shot.visualContract ?? referenceShot(shot, referenceShots)?.visualContract;
   const signals = shotSignals(shot, referenceShots);
   const observedReferenceRouting = referenceShot(shot, referenceShots)?.referenceProductionRouting;
@@ -668,7 +668,7 @@ function planShot(
   const hasEvidence = subject !== 'none' && evidenceRefs.length > 0
     && !(subject === 'product_effect' && signals.hasPerson);
 
-  if (hasEvidence && !referenceRouting && !signals.hasPerson && materialRoutingPolicyVersion !== 'type-aware.v1') {
+  if (hasEvidence && !referenceRouting && !signals.hasPerson && materialRoutingPolicyVersion !== 'type-aware.v1' && materialRoutingPolicyVersion !== 'type-aware.v2') {
     const truthBoundary: SocialShotTruthBoundary = {
       subject,
       syntheticVisualAllowed: false,
@@ -726,9 +726,12 @@ function planShot(
   const lockedProductUnavailable = Boolean(selected.productSceneReplication
     && selected.productSceneReplication.productIdentity.groups.length === 0);
   const realFactoryBackgroundMissing=selected.materialRouting?.policy==='authorized_presenter'&&subject==='customer_factory'&&selected.materialRouting.localMatch.state!=='matched';
-  const selectedSegment=selected.materialRouting?.localMatch.state==='matched'?shot.selectedMaterialSegment:materialRoutingPolicyVersion==='type-aware.v1'&&selected.strategy==='customer_real_asset'?selectVerifiedSocialMaterialSegment(shot,selected.refs):undefined;
+  const selectedSegment=selected.materialRouting?.localMatch.state==='matched'?shot.selectedMaterialSegment:(materialRoutingPolicyVersion==='type-aware.v1'||materialRoutingPolicyVersion==='type-aware.v2')&&selected.strategy==='customer_real_asset'?selectVerifiedSocialMaterialSegment(shot,selected.refs):undefined;
+  const awaitingProductBudget=materialRoutingPolicyVersion==='type-aware.v2'&&selected.materialRouting?.materialType==='product'
+    &&selected.materialRouting.productGenerationDecision?.state==='eligible'&&Boolean(selected.productSceneReplication?.productIdentity.groups.length);
   const feasibility = noFreeMaterial || lockedProductUnavailable || selected.blocked || realFactoryBackgroundMissing
     ? 'goal_degraded'
+    : awaitingProductBudget&&!selected.refs.length?'functional_equivalent'
     : selected.strategy === 'customer_real_asset' || selected.strategy === 'customer_product_image_animation'
       || selected.strategy === 'aigc_product_scene_replication'
       ? 'full_fidelity'
@@ -764,7 +767,7 @@ function planShot(
     feasibilityReason: feasibility === 'full_fidelity'
       ? '已有客户素材，可在不改变真实主体的情况下完整实现'
       : feasibility === 'functional_equivalent'
-        ? '可使用当前已入库素材或已配置生成能力完成该镜头'
+        ? awaitingProductBudget?'当前产品镜头仅可进入整片预算与生成能力预检；未获得付费授权，也未产生交付。':'可使用当前已入库素材或已配置生成能力完成该镜头'
         : realFactoryBackgroundMissing
           ? '真人口播仍需绑定真实本地工厂背景；不允许数字人 provider 虚构工厂，无法复合时必须停止'
         : selected.blocked

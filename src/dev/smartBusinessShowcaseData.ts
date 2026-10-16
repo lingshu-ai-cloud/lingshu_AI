@@ -59,7 +59,7 @@ function showcaseAssetIndex(id: string, length: number): number {
   return [...id].reduce((sum, character) => sum + character.codePointAt(0)!, 0) % length;
 }
 
-const disabled = (value: unknown) => ['0', 'false', 'no', 'off'].includes(String(value ?? '').trim().toLowerCase());
+const explicitlyEnabled = (value: unknown) => ['1', 'true', 'yes', 'on'].includes(String(value ?? '').trim().toLowerCase());
 
 export function isSmartBusinessShowcaseEnabled(input: {
   dev?: boolean;
@@ -70,7 +70,8 @@ export function isSmartBusinessShowcaseEnabled(input: {
   const hostname = (input.hostname ?? (typeof window === 'undefined' ? '' : window.location.hostname)).trim().toLowerCase();
   const setting = input.setting ?? import.meta.env?.VITE_SMART_BUSINESS_SHOWCASE;
   const loopback = ['localhost', '127.0.0.1', '::1', '[::1]'].includes(hostname);
-  return (dev || loopback) && !disabled(setting);
+  // Localhost is used for real integration, not consent to invent receipts.
+  return (dev || loopback) && explicitlyEnabled(setting);
 }
 
 function beijingDay(value: string | undefined, fallback: string): string {

@@ -3,9 +3,9 @@ import type {SocialReplicationReferenceMode} from './contracts/socialContentRepl
 import {classifySocialAssetSupplyMaterialType} from './socialContentAssetSupply';
 
 /** Plans a new visual timeline. Original ASR, measured words and narration are never rewritten. */
-export function planTypeAwareProductScriptTiming(input:{policyVersion?:'type-aware.v1';referenceMode?:SocialReplicationReferenceMode;script:SocialReplicationScriptVersion;referenceShots?:SocialReferenceShotAnalysis[];explicitFrozenRevision?:boolean}){
+export function planTypeAwareProductScriptTiming(input:{policyVersion?:'type-aware.v1'|'type-aware.v2';referenceMode?:SocialReplicationReferenceMode;script:SocialReplicationScriptVersion;referenceShots?:SocialReferenceShotAnalysis[];explicitFrozenRevision?:boolean}){
  const unchanged={script:input.script,changedShotIds:[] as string[],protectedShotIds:[] as string[],narrationReviewRequired:false};
- if(input.policyVersion!=='type-aware.v1'||input.explicitFrozenRevision||['confirmed','superseded'].includes(input.script.status))return unchanged;
+ if((input.policyVersion!=='type-aware.v1'&&input.policyVersion!=='type-aware.v2')||input.explicitFrozenRevision||['confirmed','superseded'].includes(input.script.status))return unchanged;
  const fidelity=input.referenceMode==='single_source_fidelity';
  const source=input.script,copy=structuredClone(source),changedShotIds:string[]=[],protectedShotIds:string[]=[];
  const allLines=[...(source.narrationLines??[]),...source.shots.flatMap(shot=>shot.speechLines??[])];

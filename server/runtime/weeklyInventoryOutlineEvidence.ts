@@ -3,7 +3,7 @@ import type {WeeklyExecutionTask,WeeklyOperatingPackage,VersionedSocialRef} from
 import {SocialProgramError} from '../socialPrograms/service.js';
 import {createWeeklyInventoryReuseService} from '../socialPrograms/weeklyInventoryReuse.js';
 import {socialRequestHash} from '../starter198/socialContentValidation.js';
-import {enterpriseFactContentHash,type EnterpriseProfile} from '../routes/enterprise.js';
+import {verifyEnterpriseFactContent,type EnterpriseProfile} from '../routes/enterprise.js';
 import {publicationInstant} from '../socialPrograms/publicationDeadlines.js';
 
 const obj=(v:unknown):any=>{try{const x=typeof v==='string'?JSON.parse(v):v;if(x&&typeof x==='object'&&!Array.isArray(x))return x;}catch{}throw new SocialProgramError('inventory_outline_payload_invalid',409,'库存经营证据损坏。');};
@@ -30,7 +30,7 @@ export async function readWeeklyInventoryOutlineEvidence(store:DataStore,task:We
  const snapshot=obj((await unique(store,'social_operating_authority_snapshots',{tenant_id:task.tenantId,program_id:task.programId,snapshot_id:snapshotRef.id,version:snapshotRef.version})).payload);
  need(snapshot.snapshotId===snapshotRef.id&&snapshot.version===snapshotRef.version&&snapshot.programId===task.programId&&snapshot.status==='ready'&&same(snapshot.businessContentGoalRef,goalRef),'inventory_outline_snapshot_changed');
  const profile=obj((await unique(store,'tenant_profiles',{tenant_id:task.tenantId})).profile) as EnterpriseProfile;
- need(profile.factVersion?.confirmedBy&&publicationInstant(profile.factVersion.confirmedAt)!==null&&Date.parse(profile.factVersion.confirmedAt)<=Date.now()&&profile.factVersion.contentHash===enterpriseFactContentHash(profile),'inventory_outline_enterprise_facts_unconfirmed');
+ need(profile.factVersion?.confirmedBy&&publicationInstant(profile.factVersion.confirmedAt)!==null&&Date.parse(profile.factVersion.confirmedAt)<=Date.now()&&verifyEnterpriseFactContent(profile).verified,'inventory_outline_enterprise_facts_unconfirmed');
  const statements=[profile.company?.description,profile.brand?.usp,profile.products?.highlights,profile.products?.certifications,...(profile.products?.items??[]).flatMap(p=>[p.name,p.highlights,p.certifications])].filter(v=>typeof v==='string'&&v.trim()).map(v=>v!.trim());
  const facts=snapshot.enterprise?.publicFacts;
  need(Array.isArray(facts)&&facts.length>0&&facts.every((f:any)=>f.ref?.type==='enterprise_fact'&&f.ref.version===snapshot.enterprise.ref?.version&&typeof f.statement==='string'&&statements.includes(f.statement.trim())),'inventory_outline_enterprise_facts_changed');

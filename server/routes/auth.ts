@@ -67,11 +67,29 @@ interface LocalLoginResult {
   expiresAt?: string | null;
 }
 
-const LOCAL_PREVIEW_ORIGINS = new Set([
+const DEFAULT_LOCAL_PREVIEW_ORIGINS = [
   'http://127.0.0.1:5177',
   'http://localhost:5177',
   'http://[::1]:5177',
-]);
+];
+
+function localPreviewOrigins(): Set<string> {
+  const configured = String(process.env.LINGSHU_LOCAL_PREVIEW_ORIGINS || '')
+    .split(',')
+    .map(value => value.trim())
+    .filter(Boolean);
+  const origins = configured.length ? configured : DEFAULT_LOCAL_PREVIEW_ORIGINS;
+  return new Set(origins.filter(origin => {
+    try {
+      const url = new URL(origin);
+      return url.protocol === 'http:'
+        && url.origin === origin
+        && ['127.0.0.1', 'localhost', '[::1]'].includes(url.hostname);
+    } catch {
+      return false;
+    }
+  }));
+}
 
 export function isLocalPreviewLoopbackAddress(address: string | undefined): boolean {
   const normalized = String(address || '').trim().toLowerCase();
@@ -84,7 +102,7 @@ export function localPreviewRequestRejection(
   origin: string | undefined,
   remoteAddress: string | undefined,
 ): 'local_preview_origin_required' | 'local_preview_loopback_required' | null {
-  if (!LOCAL_PREVIEW_ORIGINS.has(String(origin || ''))) return 'local_preview_origin_required';
+  if (!localPreviewOrigins().has(String(origin || ''))) return 'local_preview_origin_required';
   if (!isLocalPreviewLoopbackAddress(remoteAddress)) return 'local_preview_loopback_required';
   return null;
 }

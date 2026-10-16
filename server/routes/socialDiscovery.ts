@@ -273,7 +273,7 @@ socialDiscoveryRouter.put('/scope', async (req, res) => {
   (strategy.discoveryBrief as typeof strategy.discoveryBrief & { innovationExperimentShare: number }).innovationExperimentShare = innovationExperimentShare;
   strategy.discoveryBrief.createdBy = 'director_agent';
   strategy.createdBy = 'user';
-  strategy.approval = { status: 'approved', approvedBy: 'user', approvedAt: new Date().toISOString(), scopeVersion: strategy.keywordSet.version };
+  strategy.approval = { status: 'approved', approvedBy: 'user', approvedByUserId: userId, approvedAt: new Date().toISOString(), scopeVersion: strategy.keywordSet.version };
 
   const now = new Date().toISOString();
   const data = {

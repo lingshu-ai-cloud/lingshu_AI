@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import {isDeepStrictEqual} from 'node:util';
 import test from 'node:test';
 import fs from 'node:fs';
 import os from 'node:os';
@@ -8,7 +9,10 @@ import {runVisualFfmpeg} from '../lib/renderVisualQuality.js';
 import type {DataStore, ListQuery, Record_} from '../storage/datastore.js';
 import {createStarter198Repository, STARTER_COLLECTIONS} from './repository.js';
 import {STARTER_198_CAPABILITIES} from '../../shared/contracts/starter198.js';
-import {createSocialContentTask, startSocialContentTask, addSocialTaskSource} from './socialContentTasks.js';
+import {createSocialContentTask, startSocialContentTask, addSocialTaskSource,recoverSocialContentOrderDispatch} from './socialContentTasks.js';
+import {runSocialContentOrderOutboxScan,createSocialContentOrderOutboxRuntime} from '../runtime/socialContentOrderOutboxRuntime.js';
+import {runWithDataAuthority} from '../storage/dataAuthority.js';
+import {admitContentExecutionJob} from '../contentExecution/durableQueue.js';
 import {parseStoredSocialScriptBaseline} from './socialContentScriptBaseline.js';
 import {readSocialTaskDetail} from './socialContentRecords.js';
 import {resolveSocialTaskReferenceScript} from './socialContentScriptResolvers.js';
@@ -19,6 +23,12 @@ import {buildMaterialScriptAnalysis} from '../../shared/materialScriptAnalysis.j
 type Row = Record_ & Record<string, unknown>;
 
 class MemoryStore implements DataStore {
+  supportsAtomicCompareAndSwap(){return true;}
+  async compareAndSwap(collection:string,id:string,expected:Record<string,unknown>,data:Record<string,unknown>){
+    const row=this.rows.get(collection)?.find(item=>item.id===id);
+    if(!row||!Object.entries(expected).every(([key,value])=>isDeepStrictEqual(row[key],value)))return false;
+    Object.assign(row,structuredClone(data));return true;
+  }
   readonly rows = new Map<string, Row[]>();
   private sequence = 0;
 
@@ -41,7 +51,7 @@ class MemoryStore implements DataStore {
           : 'last_operation_id' in data
             ? bucket.some(row => row.tenant_id === data.tenant_id && row.last_operation_id === data.last_operation_id)
             : false;
-    if (duplicate) return null;
+    if (duplicate || (data.id && bucket.some(row=>row.id===data.id))) return null;
     this.sequence += 1;
     const row = { id: String(data.id || `row${String(this.sequence).padStart(12, '0')}`), ...structuredClone(data) } as Row;
     bucket.push(row);
@@ -94,10 +104,11 @@ const limits = {
   agentBudgetCny: { orchestrator: 25, content: 25, traffic: 25, sales: 25 },
 };
 
-async function verifyAdmission(cachedReference: boolean) {
+async function verifyAdmission(cachedReference: boolean,recoverOutbox=false) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'typed-admission-'));
   const tenantId = 'typed-local-tenant';
   const store = new MemoryStore([...Object.values(STARTER_COLLECTIONS), 'durable_operation_leases', 'trend_videos']);
+  await store.create('social_programs',{id:'typed-program',tenant_id:tenantId,program_id:'typed-program'});
   const now = new Date('2026-09-14T08:00:00.000Z');
   await store.create(STARTER_COLLECTIONS.access, {id: 'access', tenant_id: tenantId,
     product_profile: 'starter_198', profile_version: 'starter_198.v1', entitlement_snapshot_id: 'snapshot',
@@ -111,7 +122,7 @@ async function verifyAdmission(cachedReference: boolean) {
       idempotencyKey: 'typed-create', now,
       value: parseCreateSocialTask({title: '本地动作完整覆盖', objective: '制作完整产品内容', mode: 'instant',
         themeId: 'product_value', creationMode: cachedReference ? 'viral_replication' : 'material_processing', productRef: 'SKU-1', perItemBudgetCny: 10})});
-    assert.equal(created.brief.materialRoutingPolicyVersion, 'type-aware.v1');
+    assert.equal(created.brief.materialRoutingPolicyVersion, 'type-aware.v2');
     let currentVersion = created.version;
     let currentDetail = created;
     if (cachedReference) {
@@ -190,8 +201,89 @@ async function verifyAdmission(cachedReference: boolean) {
       expectedVersion: currentVersion, idempotencyKey: 'typed-start', now, orchestratorQueue: actualQueue});
     if (cachedReference) assert.ok(row.replication_script, 'real cached package builder persists the script through source service');
     else assert.equal(row.replication_script ?? '', '', 'normal baseline is tested without a fabricated replication script');
-    assert.equal(admitted.brief.materialRoutingPolicyVersion, 'type-aware.v1');
+    assert.equal(admitted.brief.materialRoutingPolicyVersion, 'type-aware.v2');
     assert.equal(admitted.status, 'producing');
+    assert.equal(admitted.contentOrder?.contentId,created.taskId);
+    assert.equal(admitted.contentOrder?.budgetTaskId,created.taskId);
+    const quotaRows=store.rows.get('social_content_creation_quotas')??[];
+    assert.equal(quotaRows.length,1,'actual start persists the shared weekly allowance before queue admission');
+    const quotaPayload=quotaRows[0]!.payload as any;
+    assert.equal(Object.keys(quotaPayload.orders).length,1);
+    assert.equal(quotaPayload.outbox[0].state,'acknowledged','real scheduler receipt acknowledges dispatch, not film delivery');
+    assert.equal(quotaPayload.orders[created.taskId].state,'reserved');
+    if(recoverOutbox){
+      const frozen=(row.content_order as any).dispatch;
+      assert.ok(frozen?.commandId&&frozen.queueRequest,'actual start froze exact dispatch before quota reservation');
+      const originalRun=String(row.run_id),originalQueue=String(row.orchestrator_item_id);
+      await admitContentExecutionJob({dataStore:store,tenantId,userId:'operator',taskId:created.taskId,runId:originalRun,
+        taskType:'social_content_instant',now});
+      const originalJobs=store.rows.get('content_execution_jobs')??[];
+      assert.ok(originalJobs.length,'controlled production handoff has a real durable admission, without running providers');
+      const startOperation=store.rows.get(STARTER_COLLECTIONS.socialContentOperations)!.find(op=>op.operation_id===frozen.commandId)!;
+      // Controlled crash snapshot: enqueue committed, but task projection and
+      // outbox acknowledgement did not. Keep the real run/job/operation input.
+      const crashBeforeAck=(payload:any)=>{payload.outbox[0].state='pending';
+        delete payload.commands[`${frozen.commandId}:dispatch-ack`];
+        payload.audit=payload.audit.filter((audit:any)=>audit.commandId!==`${frozen.commandId}:dispatch-ack`);
+      };
+      crashBeforeAck(quotaPayload);
+      Object.assign(row,{run_id:'',orchestrator_item_id:'',version:frozen.queueRequest.subject.version,
+        last_operation_id:`${frozen.commandId}:prestart`,status:'plan_review'});
+      startOperation.status='processing';
+      let forbiddenEnqueues=0;
+      const assertRejected=async(expectedCode:string)=>{
+        const failures:string[]=[];
+        const rejected=await runWithDataAuthority('local',()=>runSocialContentOrderOutboxScan({dataStore:store,authority:'local',recover:async item=>{
+          try{return await recoverSocialContentOrderDispatch({repository,orchestratorQueue:{enqueue:async()=>{
+            forbiddenEnqueues++;throw Error('rejected_dispatch_must_not_enqueue');
+          }},tenantId,taskId:item.contentId,commandId:item.commandId,now});}
+          catch(error){failures.push(error instanceof Error?error.message:String(error));throw error;}
+        }}));
+        assert.equal(rejected.recovered,0);assert.equal(rejected.blocked,1);
+        assert.deepEqual(failures,[expectedCode]);assert.equal(forbiddenEnqueues,0);
+        assert.equal((store.rows.get('social_content_creation_quotas')![0]!.payload as any).outbox[0].state,'pending');
+      };
+      startOperation.status='failed';startOperation.http_status=409;startOperation.error_code='business_input_changed';
+      await assertRejected('social_content_order_original_start_required');
+      startOperation.status='processing';startOperation.http_status=0;startOperation.error_code='';
+      for(const stopped of ['paused','cancelled']){row.status=stopped;await assertRejected('social_content_order_dispatch_stopped');}
+      row.status='plan_review';
+      const originalInput=frozen.queueRequest.input;
+      frozen.queueRequest.input=`${originalInput} tampered`;
+      await assertRejected('social_content_order_dispatch_invalid');
+      frozen.queueRequest.input=originalInput;
+      const errors:string[]=[];
+      const recover=async(item:{contentId:string;commandId:string})=>recoverSocialContentOrderDispatch({repository,
+        orchestratorQueue:actualQueue,tenantId,taskId:item.contentId,commandId:item.commandId,now}).catch(error=>{
+          errors.push(error instanceof Error?error.message:String(error));throw error;
+        });
+      const first=await runWithDataAuthority('local',()=>runSocialContentOrderOutboxScan({dataStore:store,authority:'local',recover}));
+      assert.equal(first.recovered,1,JSON.stringify({first,errors}));assert.equal(first.blocked,0);
+      assert.equal(row.run_id,originalRun);assert.equal(row.orchestrator_item_id,originalQueue);
+      assert.equal(store.rows.get(STARTER_COLLECTIONS.runs)!.length,1);
+      assert.equal((store.rows.get('content_execution_jobs')??[]).length,originalJobs.length);
+      // A worker has advanced and an external outcome is unknown. Recovery
+      // acknowledges original queue ownership without enqueue or supplier POST.
+      const currentQuota=(store.rows.get('social_content_creation_quotas')![0]!.payload as any);
+      crashBeforeAck(currentQuota);row.last_operation_id='worker-assets-advanced';
+      originalJobs[0]!.provider_state='unknown';originalJobs[0]!.provider_receipts=[{
+        provider:'controlled-no-submit',requestId:'unknown-original',state:'unknown',providerTaskId:'known-original-provider-id',
+      }];
+      let newEnqueues=0;
+      const second=await runWithDataAuthority('local',()=>runSocialContentOrderOutboxScan({dataStore:store,authority:'local',recover:item=>
+        recoverSocialContentOrderDispatch({repository,orchestratorQueue:{enqueue:async()=>{newEnqueues++;throw Error('must_not_resubmit_unknown');}},
+          tenantId,taskId:item.contentId,commandId:item.commandId,now})}));
+      assert.equal(second.recovered,1,JSON.stringify(second));assert.equal(newEnqueues,0);
+      assert.equal((store.rows.get('social_content_creation_quotas')![0]!.payload as any).outbox[0].state,'acknowledged');
+      const third=await runWithDataAuthority('local',()=>runSocialContentOrderOutboxScan({dataStore:store,authority:'local',recover}));
+      assert.equal(third.pending,0,'restart scanner converges after committed ACK');
+      const runtime=createSocialContentOrderOutboxRuntime({dataStore:store,authority:'local',enabled:()=>true,recover});
+      await runtime.tick();
+      assert.deepEqual(runtime.read().lastProjection,{checked:1,reconciled:1,blocked:0,skipped:0},
+        'registered runtime calls real business projection after ACK, without claiming a queued/unknown film delivered');
+      assert.equal((store.rows.get('social_content_creation_quotas')![0]!.payload as any).orders[created.taskId].state,'reserved');
+      runtime.stop();
+    }
     assert.equal(admitted.agentWorkflow?.executionPlanReview?.approved, true);
     assert.ok(admitted.assetSupplyPlan);
     assert.ok(admitted.assetSupplyPlan.shots.every(shot => shot.sourceStrategy === 'customer_real_asset'));
@@ -209,3 +301,4 @@ async function verifyAdmission(cachedReference: boolean) {
 
 test('normal unaltered product_value baseline admits complete local semantic evidence', () => verifyAdmission(false));
 test('normal cached38 builds matched factory/product/consumer scenes but missing original-reference gates block dispatch', () => verifyAdmission(true));
+test('real outbox recovery reuses original queue/run after crash and never resubmits unknown supplier work',()=>verifyAdmission(false,true));

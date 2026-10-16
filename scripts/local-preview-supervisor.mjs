@@ -192,7 +192,7 @@ function scheduleBackendRestart(reason) {
   }, 800);
 }
 
-for (const directory of ['server', 'shared']) {
+for (const directory of (process.env.LINGSHU_PREVIEW_BACKEND_SOURCE_WATCH === '0' ? [] : ['server', 'shared'])) {
   try {
     fs.watch(path.join(runtimeRoot, directory), { recursive: true }, (_event, filename) => {
       if (!filename || /(?:^|\/)(?:data|dist|node_modules)(?:\/|$)/.test(filename)) return;

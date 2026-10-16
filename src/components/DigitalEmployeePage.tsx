@@ -4616,8 +4616,14 @@ export default function DigitalEmployeePage({
       }
       return true;
     } catch (configError) {
-      if (await recoverEnterpriseFactsChanged(configError, recoveryGoal)) return false;
+      if (await recoverEnterpriseFactsChanged(configError, recoveryGoal)) {
+        if (config.minimalOnboarding) throw configError;
+        return false;
+      }
       setError(configError instanceof Error ? configError.message : createInitialPlan ? "推荐计划制作准备失败" : "设置保存失败");
+      // The flow owns its inline error; don't replace an actionable server
+      // rejection with a boolean and a generic "try later" message.
+      if (config.minimalOnboarding) throw configError;
       return false;
     } finally {
       setBusy("");

@@ -12,6 +12,13 @@ const scope={tenantId:'tenant-a',taskId:'task-a',runId:'run-a',planHash:sha('pla
 const grouping={} as never;
 const group={groupId:'presenter-mother-1',presenterGroupContractHash:sha('group'),presenterAssetId:'presenter-1',compositions:[{referenceShotId:'shot-1',referenceFirstFrameUrl:'/api/overseas/videos/v/shot/1/first-frame',background:'office',framing:'medium',camera:'eye-level',composition:'centered'}]};
 const paidStatic={requirements:[],intents:[],permit:{} as never};
+test('motion-only first frame uses Ark enterprise identity without HeyGen avatar, voice or default selection',async()=>{
+ const presenter={id:'presenter-1',authorized:true,assetVersion:2,referenceMaterialIds:['owned-person-image'],rightsEvidence:{authorizationRef:'rights://1',consentRef:'consent://1',grantedAt:'2026-01-01T00:00:00.000Z',subjectAdultConfirmed:true,permittedProviders:['volcengine_ark'],permittedUses:['digital_presenter','person_replacement']}};
+ const store={list:async()=>({totalItems:1,items:[{payload:{presenters:[presenter]}}]})} as never;
+ const runtime=createPresenterFirstFrameProductionRuntime(store);
+ await assert.rejects(runtime.preparePresenterMotherFirstFrames!({scope,grouping,groups:[{...group,executionKind:'seedance_motion'}],paidStatic}),/presenter_first_frame_paid_static_executor_missing/);
+ await assert.rejects(runtime.preparePresenterMotherFirstFrames!({scope,grouping,groups:[group],paidStatic}),/default_presenter_missing/);
+});
 
 test('real runtime validates the authorized default presenter and stops before an unbudgeted static supplier call',async()=>{
  let calls=0;const store={list:async(collection:string)=>{calls++;assert.equal(collection,'studio_production_defaults');return{totalItems:1,items:[{payload:{defaultPresenterId:'presenter-1',presenters:[{id:'presenter-1',authorized:true,assetVersion:2,avatarId:'avatar-1',voiceId:'voice-1',rightsEvidence:{authorizationRef:'rights://1',consentRef:'consent://1',grantedAt:'2026-01-01T00:00:00.000Z',subjectAdultConfirmed:true,permittedProviders:['heygen','volcengine_ark','dashscope'],permittedUses:['digital_presenter','voice_synthesis','person_replacement','quality_inspection'],providerScopes:[{provider:'dashscope',uses:['quality_inspection']}]}}]}}]};}} as never;

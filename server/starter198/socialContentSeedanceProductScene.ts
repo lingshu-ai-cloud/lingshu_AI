@@ -102,7 +102,7 @@ function productScenePrompt(spec: Parameters<ProductSceneExecutionPorts['execute
 
 export function createEnvironmentSeedanceProductScenePorts(options:{replacementPorts?:ProductReplacementPorts; replacementEnvironment?:ProductReplacementEnvironmentContext; maximumCostCny?:number}={}): ProductSceneExecutionPorts {
   return {
-    maximumCostCny: options.maximumCostCny === undefined ? Math.max(0.5, Number(process.env.SEEDANCE_MAX_SHOT_COST_CNY || 3)) : Math.min(10, options.maximumCostCny, Number(process.env.SEEDANCE_MAX_SHOT_COST_CNY || 10)),
+    maximumCostCny: options.maximumCostCny === undefined ? Math.min(15, Math.max(0.5, Number(process.env.SEEDANCE_MAX_SHOT_COST_CNY || 3))) : Math.min(15, options.maximumCostCny, Number(process.env.SEEDANCE_MAX_SHOT_COST_CNY || 15)),
     async execute(input) {
       if(input.materialRouting){
         if(input.materialRouting.policy!=='local_first_product_i2v')return{status:'failed',error:'material_route_not_product_generation'};

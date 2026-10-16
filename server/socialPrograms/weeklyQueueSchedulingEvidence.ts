@@ -1,4 +1,5 @@
 import type {DataStore,Record_} from '../storage/datastore.js';
+import {canonicalWeeklyProductionPublication} from '../runtime/weeklyContentProductionIdentity.js';
 import type {WeeklyExecutionTask,WeeklyOperatingPackage} from '../../shared/contracts/socialProgram.js';
 import {listContentExecutionLimits,readContentExecutionJob} from '../contentExecution/durableQueue.js';
 import {observeWeeklyQueueResources} from './weeklyObservedQueueResources.js';
@@ -23,9 +24,10 @@ export async function readWeeklyQueueSchedulingEvidence(store:DataStore,tasks:We
  const output:WeeklyQueueSchedulingEvidence={verifiedAt:now.toISOString(),configurationHash:'',inputEvidenceHash:'',pools:{},tasks:{}};
  const putPool=(key:string,pool:WeeklyQueueSchedulingEvidence['pools'][string])=>{const existing=output.pools[key];if(existing&&socialRequestHash(existing)!==socialRequestHash(pool))return fail();output.pools[key]=pool;};
  const groups=new Map<string,WeeklyExecutionTask[]>();
- for(const task of tasks.filter(t=>productionSteps.has(t.schedule.stepKind)&&t.status!=='succeeded')){const key=task.publicationTaskId??task.taskId;groups.set(key,[...(groups.get(key)??[]),task]);}
+ for(const task of tasks.filter(t=>productionSteps.has(t.schedule.stepKind)&&t.status!=='succeeded')){const key=frozenPackage&&task.publicationTaskId?canonicalWeeklyProductionPublication(frozenPackage,task.publicationTaskId).publicationTaskId:task.publicationTaskId??task.taskId;groups.set(key,[...(groups.get(key)??[]),task]);}
  for(const group of groups.values()){
- const first=group[0]!,key=`weekly-production:${first.packageId}:${first.packageVersion}:${first.publicationTaskId}`;
+ const candidate=group[0]!,canonical=frozenPackage&&candidate.publicationTaskId?canonicalWeeklyProductionPublication(frozenPackage,candidate.publicationTaskId):null;
+ const first=canonical?{...candidate,publicationTaskId:canonical.publicationTaskId,accountId:canonical.accountId}:candidate,key=`weekly-production:${first.packageId}:${first.packageVersion}:${first.publicationTaskId}`;
  const result=await store.list<Record_>('starter_social_content_tasks',{where:{tenant_id:tenantId,create_idempotency_key:key},perPage:2});
  const assign=(subject:string|null,keys:string[],reasons:string[])=>{for(const task of group)output.tasks[task.taskId]={taskFingerprint:backwardTaskEvidenceFingerprint(task),productionSubjectId:subject,resourceKeys:keys,reasons};};
  if(!first.publicationTaskId){assign(null,[],['queue_job_identity_required']);continue;}
@@ -35,7 +37,7 @@ export async function readWeeklyQueueSchedulingEvidence(store:DataStore,tasks:We
  // enqueueSocialContentAutoProduction fixes taskType=`social_content_${task.mode}`.
  // This is a planned handler manifest, never an actual job or running reservation.
  const pkg=frozenPackage,publication=pkg?.socialContentPackage.publicationTasks.filter(p=>p.publicationTaskId===first.publicationTaskId);
- if(!pkg||pkg.programId!==first.programId||pkg.packageId!==first.packageId||pkg.version!==first.packageVersion||publication?.length!==1||publication[0]!.inventoryReuseRef||group.some(t=>t.accountId!==publication[0]!.accountId)){assign(null,[],['queue_planned_handler_authority_required']);continue;}
+ if(!pkg||pkg.programId!==first.programId||pkg.packageId!==first.packageId||pkg.version!==first.packageVersion||publication?.length!==1||publication[0]!.inventoryReuseRef||group.some(t=>pkg.socialContentPackage.productionIdentityVersion!=='shared-original.v1'&&t.accountId!==publication[0]!.accountId)){assign(null,[],['queue_planned_handler_authority_required']);continue;}
  const manifest={handler:'weekly_social_content_production.v1',tenantId,programId:first.programId,packageId:first.packageId,packageVersion:first.packageVersion,publicationTaskId:first.publicationTaskId,accountId:publication[0]!.accountId,taskType:'social_content_weekly',publicationHash:socialRequestHash(publication[0])};
  const observation=await observeWeeklyQueueResources(store,{tenantId,accountId:manifest.accountId,taskType:manifest.taskType},limits,now),keys:string[]=[];
  for(const r of observation.resources){keys.push(r.resourceKey);putPool(r.resourceKey,{concurrency:r.configuration.maximumRunning,configurationHash:r.configuration.recordHash,unknownRunningOccupation:r.observation.runningJobCount>0});}

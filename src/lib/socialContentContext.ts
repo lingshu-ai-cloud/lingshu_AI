@@ -42,6 +42,15 @@ export function readSocialContentNavigationTaskId(page: string, historyState: un
   return taskIdFrom(state.productionDetail, page) || taskIdFrom(state, page);
 }
 
+/** Accepts an explicit deep link only for the exact task-aware page in the URL. */
+export function readSocialContentNavigationQueryTaskId(page: string, search: string): string | null {
+  if (!SOCIAL_CONTENT_CONTEXT_PAGES.has(page)) return null;
+  const params = new URLSearchParams(search);
+  if (params.get('page') !== page) return null;
+  const taskId = String(params.get('taskId') || '').trim();
+  return /^[a-z0-9:_-]{1,200}$/i.test(taskId) ? taskId : null;
+}
+
 export function hasWeeklyContentNavigationTarget(historyState:unknown):boolean {const state=record(historyState),detail=record(state.productionDetail);return Object.prototype.hasOwnProperty.call(detail,'weeklyContentTarget')||Object.prototype.hasOwnProperty.call(state,'weeklyContentTarget');}
 
 export function readWeeklyContentNavigationTarget(historyState: unknown): WeeklyContentNavigation | null {
@@ -63,7 +72,8 @@ export function socialContentTaskRequestHeaders(): Record<string, string> {
   if (typeof window === 'undefined') return {};
   const page = new URLSearchParams(window.location.search).get('page') || '';
   if (!SOCIAL_CONTENT_CONTEXT_PAGES.has(page)) return {};
-  const taskId = readSocialContentNavigationTaskId(page, window.history.state);
+  const taskId = readSocialContentNavigationTaskId(page, window.history.state)
+    || readSocialContentNavigationQueryTaskId(page, window.location.search);
   return taskId ? {
     'X-Lingshu-Social-Task-Id': taskId,
     'X-Lingshu-Social-Page': page,

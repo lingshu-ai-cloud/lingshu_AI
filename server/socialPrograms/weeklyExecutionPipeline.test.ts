@@ -9,6 +9,20 @@ import {resolveAutomationPolicy} from '../socialOperating/automationPolicyResolv
 import {setContentExecutionLimit} from '../contentExecution/durableQueue.js';
 import {createWeeklyInitialScheduleService} from './weeklyInitialSchedule.js';
 import {listWeeklyExecutionTasks} from './executionTasks.js';
+import {prepareWeeklyEnterpriseFactFixture} from '../runtime/weeklyEnterpriseFactSupplement.fixture.js';
+
+test('existing fact binding creates a new draft without confirming unknown facts or altering previous task evidence',async t=>{
+ const f=await prepareWeeklyEnterpriseFactFixture(t),packages=createWeeklyOperatingPackageService(f.store);
+ const pkg=await packages.create('tenant-a','owner','program-a',{weekStart:'2026-10-12',objective:'真实现有产品',successCriteria:['真实成片交付'],accountPlans:[{accountId:'account-a',publicationCount:1}],publicationTasks:[{accountId:'account-a',publishWindow:'2026-10-16T18:00:00+08:00',businessProposition:'现有产品资料',cta:'Contact us on WhatsApp to get your free sample.'}]});
+ const service=createWeeklyExecutionPipelineService(f.store),scope={tenantId:'tenant-a',actorUserId:'owner',programId:'program-a',packageId:pkg.packageId,packageVersion:1};
+ const original=await listWeeklyExecutionTasks(f.store,'tenant-a','program-a',pkg.packageId,1);
+ const result=await service.bindExistingFacts(scope);
+ assert.equal(result.item.version,2);assert.equal(result.item.socialContentPackage.authorization.allowRealPublishing,false);
+ assert.deepEqual(result.item.socialContentPackage.publicationTasks[0]!.factRefs,[result.source.ref]);
+ assert.deepEqual(await listWeeklyExecutionTasks(f.store,'tenant-a','program-a',pkg.packageId,1),original);
+ const retry=await service.bindExistingFacts({...scope,packageVersion:2});assert.equal(retry.changed,false);assert.equal(retry.item.version,2);
+ await assert.rejects(service.bindExistingFacts(scope),/更新/);
+});
 
 test('pipeline reads real graph and rejects missing capacity or consumer without activating or completing tasks',async t=>{
  const setup=await prepareWeeklyNonPresenterPlanningFixture(t,{ownedReferenceBytes:true,primaryStructure:true}),{f}=setup;

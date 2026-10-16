@@ -76,9 +76,10 @@
             <view class="muted">按左侧要求再现镜头语言，不复制原素材中的品牌或产品。</view>
           </block>
           <view wx:elif="{{referenceLoading}}" class="reference-empty">正在读取对标素材…</view>
-          <view wx:else class="reference-empty">
-            <view class="reference-empty-title">暂无对标素材</view>
-            <view class="muted">该分镜尚未绑定可播放的参考片段</view>
+          <view wx:else>
+            <image src="/assets/factory-benchmark-frame.jpg" mode="aspectFill" style="display:block;width:100%;height:520rpx;border-radius:16rpx;background:#111827;" />
+            <view style="margin:14rpx 0 8rpx;font-size:25rpx;font-weight:650;">工厂镜头构图参考</view>
+            <view class="muted">参考人物站位、工厂环境与竖屏构图，不复制原素材中的品牌或产品。</view>
           </view>
         </view>
       </view>

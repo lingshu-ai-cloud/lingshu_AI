@@ -64,6 +64,8 @@ const STAGE_BY_STATUS: Record<SocialContentTaskStatus, SocialContentStageId> = {
   reviewed: 'measure',
   paused: 'produce',
   attention: 'produce',
+  cancelling: 'produce',
+  cancelled: 'produce',
 };
 
 const STATUS_LABEL: Record<SocialContentTaskStatus, string> = {
@@ -79,6 +81,8 @@ const STATUS_LABEL: Record<SocialContentTaskStatus, string> = {
   reviewed: '已完成复盘',
   paused: '已暂停',
   attention: '需要处理',
+  cancelling: '正在取消',
+  cancelled: '已取消',
 };
 
 export function socialContentStage(status: SocialContentTaskStatus): SocialContentStageId {
@@ -98,7 +102,7 @@ export function socialContentPrimaryAction(status: SocialContentTaskStatus): Soc
   if (status === 'plan_review') return 'start';
   if (status === 'paused') return 'resume';
   if (status === 'attention') return 'continue_production';
-  if (status === 'producing' || status === 'packaging') return 'view_progress';
+  if (status === 'producing' || status === 'packaging' || status === 'cancelling' || status === 'cancelled') return 'view_progress';
   if (status === 'asset_review') return 'review_assets';
   if (status === 'delivered') return 'download';
   if (status === 'awaiting_publish') return 'register_publication';
@@ -211,6 +215,9 @@ export function socialContentProductionProgress(task: SocialContentProductionTas
   if (task.status === 'plan_review') {
     headline = '制作输入已确认';
     detail = '任务已经准备好，可以开始制作。';
+  } else if (task.status === 'cancelling' || task.status === 'cancelled') {
+    headline = task.status === 'cancelled' ? '任务已取消' : '任务正在取消';
+    detail = '历史运行、已发生费用和交付凭据均保留，不会自动重启生产。';
   } else if (task.status === 'attention') {
     headline = '机器人正在自动重试';
     detail = '已有脚本、素材与生成结果均已保存。';

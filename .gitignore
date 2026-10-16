@@ -11,6 +11,7 @@ lingshu_docx_render_*/
 *.bak.*
 pb_data/
 .local-bin/
+.venv-video-downloader/
 
 # Encrypted production backups and decrypted restore rehearsals are operational
 # state. Keeping both roots ignored also prevents deploy/update.sh's dirty-tree

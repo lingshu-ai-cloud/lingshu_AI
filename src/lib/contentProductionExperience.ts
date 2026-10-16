@@ -109,6 +109,7 @@ function activeProgressIndex(task: TaskLike): number {
 }
 
 function interruption(task: TaskLike): { state: 'blocked' | 'failed'; message: string } | null {
+  if (task.status === 'cancelling' || task.status === 'cancelled') return { state: 'blocked', message: task.status === 'cancelled' ? '任务已取消，历史结果与费用保留' : '正在取消任务，不会启动新的生产步骤' };
   if (!isDetail(task)) return task.status === 'paused' || task.status === 'attention'
     ? { state: 'blocked', message: '任务需要处理，已完成结果会保留' }
     : null;

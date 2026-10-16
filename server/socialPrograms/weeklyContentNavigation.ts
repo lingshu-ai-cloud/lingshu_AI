@@ -1,4 +1,5 @@
 import {isWeeklyContentNavigationExecution} from '../../shared/contracts/weeklyContentNavigation.js';
+import {resolveWeeklyProductionRow,canonicalWeeklyProductionPublication} from '../runtime/weeklyContentProductionIdentity.js';
 import type {WeeklyContentNavigation,WeeklyContentNavigationScope} from '../../shared/contracts/weeklyContentNavigation.js';
 import type {WeeklyExecutionTask,WeeklyOperatingPackage,VersionedSocialRef} from '../../shared/contracts/socialProgram.js';
 import type {DataStore,Record_} from '../storage/datastore.js';
@@ -20,14 +21,14 @@ export async function readWeeklyContentNavigation(store:DataStore,scope:WeeklyCo
  if(task.inputSnapshot?.inventoryReuseRef)fail('inventory_navigation_required');
  const pubs=pkg.socialContentPackage.publicationTasks.filter(p=>p.publicationTaskId===task.publicationTaskId);
  if(pubs.length!==1||pubs[0]!.inventoryReuseRef||pubs[0]!.accountId!==task.accountId)fail('weekly_content_navigation_publication_invalid');
- const bindingKey=`weekly-production:${scope.packageId}:${scope.packageVersion}:${task.publicationTaskId}`;
- const contentRow=await unique('starter_social_content_tasks',{tenant_id:scope.tenantId,create_idempotency_key:bindingKey});
+ const contentRow=await resolveWeeklyProductionRow(store,{tenantId:scope.tenantId,programId:scope.programId,packageId:scope.packageId,packageVersion:scope.packageVersion,publicationTaskId:task.publicationTaskId});if(!contentRow)fail('weekly_content_navigation_identity_ambiguous');
+ const bindingKey=String(contentRow.create_idempotency_key);
  const contentTaskId=contentRow.task_id;
  const brief=socialObject(socialJson(contentRow.brief));
  const programRef=socialObject(brief?.programRef);
  if(typeof contentTaskId!=='string'||!contentTaskId||programRef?.id!==scope.programId)fail('weekly_content_navigation_binding_invalid');
  const authority=socialObject(brief?._weeklyAuthority),weekly=socialObject(authority?.weeklyPackage),publication=socialObject(authority?.publicationTask);
- if(!weekly||weekly.packageId!==scope.packageId||weekly.version!==scope.packageVersion||weekly.programId!==scope.programId||publication?.publicationTaskId!==task.publicationTaskId)fail('weekly_content_navigation_authority_invalid');
+ if(!weekly||weekly.packageId!==scope.packageId||weekly.version!==scope.packageVersion||weekly.programId!==scope.programId||publication?.publicationTaskId!==canonicalWeeklyProductionPublication(pkg,task.publicationTaskId).publicationTaskId)fail('weekly_content_navigation_authority_invalid');
  const refs:VersionedSocialRef[]=task.resultRefs.filter(r=>r.type==='starter_social_content_artifact');
  if(!refs.length){
   const upstream=await store.list<Record_>('social_weekly_execution_tasks',{where:{tenant_id:scope.tenantId,program_id:scope.programId,package_id:scope.packageId,package_version:scope.packageVersion},perPage:500});

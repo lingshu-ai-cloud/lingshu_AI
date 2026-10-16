@@ -1,2 +1,2 @@
-// 本地微信开发者工具联调：由本机 API 服务访问本地 PocketBase。
-module.exports = { apiBase: 'http://127.0.0.1:8788' }
+// 本地真机联调：手机与开发机位于同一 Wi-Fi，通过开发机局域网地址访问 API。
+module.exports = { apiBase: 'http://192.168.0.127:8791' }

@@ -15,6 +15,9 @@ import {readWeeklyReviewActor} from './weeklyReviewEvidence.js';
 import {currentDataAuthority} from '../storage/dataAuthority.js';
 import {localWeeklyExecutionRuntime} from '../runtime/localWeeklyExecutionRuntime.js';
 import {createSocialOperatingOrchestrationService,weeklyAuthorityFromResolution} from '../socialOperating/orchestration.js';
+import {readWeeklyExistingFactSource} from './weeklyExistingFactSource.js';
+import {runWeeklyWhatsAppMock} from './weeklyWhatsAppMock.js';
+import {socialRequestHash} from '../starter198/socialContentValidation.js';
 
 type Scope={tenantId:string;actorUserId:string;programId:string;packageId:string;packageVersion:number};
 type WorkerState=WeeklyPipelineStatus['worker'];
@@ -50,6 +53,14 @@ export function createWeeklyExecutionPipelineService(store:DataStore,ports:{work
  }
  return {
   read:inspect,
+  async runWhatsAppMock(a:Scope,input:{taskId:string}){
+   if(currentDataAuthority()!=='local')throw new SocialProgramError('weekly_whatsapp_mock_local_only',403,'Mock 仅用于本地联调，不代表真实授权或业务交付。');
+   return withExecutionPackageGate(store,a,async assert=>{
+    const {pkg,tasks}=await context(a),task=tasks.find(t=>t.taskId===input.taskId);
+    if(!task||!['draft','active'].includes(pkg.status)||await executionPackageFrozen(store,a))throw new SocialProgramError('weekly_whatsapp_mock_scope_invalid',409,'Mock 只能关联当前可操作任务。');
+    await assert();return runWeeklyWhatsAppMock(store,task,a.actorUserId);
+   });
+  },
   async readCustomerSettings(a:Scope){await context(a);return (await readWeeklyCustomerSettings(store,a.tenantId)).public;},
   async updateCustomerSettings(a:Scope,input:{expectedConfigVersion:number;enabled:boolean;allowRealCustomerMessages:boolean}){return withExecutionPackageGate(store,a,async assert=>{const {pkg}=await context(a);if(!['draft','active'].includes(pkg.status)||await executionPackageFrozen(store,a))throw new SocialProgramError('weekly_pipeline_not_executable',409,'原周版本已冻结或停用。');const profile=await readTenantEnterpriseProfile(a.tenantId);await assert();return updateWeeklyCustomerSettings(store,a.tenantId,a.actorUserId,input,profile);});},
   async authorizePublishing(a:Scope){
@@ -70,6 +81,28 @@ export function createWeeklyExecutionPipelineService(store:DataStore,ports:{work
    });
   },
   async readTemplate(a:Scope){await context(a);return readWeeklyAutomationTemplate(store,a);},
+  async bindExistingFacts(a:Scope){
+   return withExecutionPackageGate(store,a,async assert=>{
+    const {pkg,tasks}=await context(a),source=await readWeeklyExistingFactSource(store,a.tenantId);
+    if(pkg.status!=='draft'||await executionPackageFrozen(store,a))throw new SocialProgramError('weekly_existing_facts_revision_forbidden',409,'只允许在当前未冻结草稿绑定已有事实。');
+    const missing=pkg.socialContentPackage.publicationTasks.filter(p=>!p.factRefs.length||!p.metricTargets.length);
+    if(!missing.length)return {item:pkg,source,changed:false};
+    // Source edits after production/unknown receipts require the full continuation
+    // protocol. Do not duplicate paid work through this convenience operation.
+    if(tasks.some(t=>t.schedule.stepKind!=='customer_channel_readiness'&&(t.attempt>0||t.lease||t.resultRefs.length)))throw new SocialProgramError('weekly_existing_facts_continuation_required',409,'已有生产或未知回执，需通过保留历史的修订流程绑定事实。');
+    await assert();
+    await adoptWeeklyAutomationTemplate(store,a,a.actorUserId);
+    const publicationTasks=pkg.socialContentPackage.publicationTasks.map(p=>({...p,factRefs:p.factRefs.length?p.factRefs:[source.ref],metricTargets:p.metricTargets.length?p.metricTargets:['真实成片交付','真实发布回执（须在生产页验收并授权）','真实数据回收；缺失保持未知，不补造表现']}));
+    const scope={tenantId:a.tenantId,programId:a.programId,packageId:a.packageId,packageVersion:a.packageVersion};
+    const intent={kind:'weekly_existing_facts_binding.v1',scope,targetPackageVersion:a.packageVersion+1,source,sourcePublicationHash:socialRequestHash(pkg.socialContentPackage.publicationTasks),targetPublicationHash:socialRequestHash(publicationTasks),templateSource:'automatic_template',userApproval:null,authorizesProduction:false,authorizesPublishing:false,authorizesCustomerMessages:false,actorUserId:a.actorUserId};
+    const intentId=socialRequestHash(intent).slice(0,15),old=await store.getById<any>('social_weekly_fact_binding_adoptions',intentId);
+    if(old&&socialRequestHash(old.payload)!==socialRequestHash(intent))throw new SocialProgramError('weekly_existing_facts_audit_conflict',409,'事实绑定来源留痕不一致。');
+    if(!old&&!await store.create('social_weekly_fact_binding_adoptions',{id:intentId,tenant_id:a.tenantId,program_id:a.programId,package_id:a.packageId,package_version:a.packageVersion,payload:intent,created_at:new Date().toISOString()}))throw new SocialProgramError('weekly_existing_facts_audit_write_failed',503,'事实绑定来源尚未留痕，未修订周包。');
+    const item=await packages.revise(a.tenantId,a.actorUserId,a.programId,a.packageId,{expectedVersion:a.packageVersion,changeReason:`自动采用已有企业及产品事实 ${source.ref.id}@${source.ref.version}；来源哈希 ${source.sourceHash}；序列化核验 ${source.contentVerification.mode}；绑定审计 ${intentId}；验收指标采用已确认模板；不新增事实确认或发布许可`,publicationTasks});
+    await adoptWeeklyAutomationTemplate(store,{...a,packageVersion:item.version},a.actorUserId);
+    return {item,source,changed:true};
+   });
+  },
   async adoptTemplate(a:Scope){return withExecutionPackageGate(store,a,async assert=>{const {pkg}=await context(a);if(!['draft','active'].includes(pkg.status)||await executionPackageFrozen(store,a))throw new SocialProgramError('weekly_pipeline_not_executable',409,'该周版本已冻结或停用。');await assert();return adoptWeeklyAutomationTemplate(store,a,a.actorUserId);});},
   async audit(a:Scope){const {tasks}=await context(a);return auditWeeklyTasks(store,tasks);},
   async startIndependent(a:Scope){

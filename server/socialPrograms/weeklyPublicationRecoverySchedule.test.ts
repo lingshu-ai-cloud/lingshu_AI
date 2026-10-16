@@ -1,0 +1,36 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import {prepareWeeklyEnterpriseFactFixture} from '../runtime/weeklyEnterpriseFactSupplement.fixture.js';
+import {createWeeklyPublicationRecoveryScheduleService,resolveWeeklyPublicationSchedule,assertWeeklyPublicationRecoveryDue,WEEKLY_PUBLICATION_RECOVERY_SCHEDULES} from './weeklyPublicationRecoverySchedule.js';
+import {listWeeklyExecutionTasks} from './executionTasks.js';
+import type {WeeklyExecutionTask} from '../../shared/contracts/socialProgram.js';
+import type {Record_} from '../storage/datastore.js';
+
+test('same-package immutable recovery preserves production dates/history, gates final sending, and restores task schedules idempotently',async t=>{
+ const f=await prepareWeeklyEnterpriseFactFixture(t),pub=f.pkg.socialContentPackage.publicationTasks[0];
+ pub.publishWindow='2026-10-12T18:00:00+08:00';
+ const packageRow=(await f.store.list<Record_>('social_weekly_operating_packages')).items[0];
+ await f.store.update('social_weekly_operating_packages',packageRow.id,{payload:f.pkg});
+ const tasks:WeeklyExecutionTask[]=['prepare','approve','publish'].map((id,index)=>({...f.task,taskId:id,idempotencyKey:id,workflowKind:index===2?'publishing':'content',scope:'publication',subjectId:id,publicationTaskId:'pub',dependsOnTaskIds:index?[['prepare'],['approve']][index-1]:[],inputSnapshot:{publicationTask:structuredClone(pub)},schedule:{...f.task.schedule,stepKind:index===2?'publishing':index===1?'user_approval':'material_readiness',estimatedDurationMinutes:10,estimatedStartAt:'2026-10-12T06:00:00+08:00',estimatedFinishAt:'2026-10-12T06:10:00+08:00'},status:'blocked'} as WeeklyExecutionTask));
+ for(const task of tasks)await f.store.create('social_weekly_execution_tasks',{tenant_id:task.tenantId,program_id:task.programId,package_id:task.packageId,package_version:1,task_id:task.taskId,status:task.status,idempotency_key:task.idempotencyKey,payload:task});
+ const scope={tenantId:f.task.tenantId,programId:f.task.programId,packageId:f.task.packageId,packageVersion:1,actorUserId:'owner'},service=createWeeklyPublicationRecoveryScheduleService(f.store,{now:()=> '2026-10-16T02:00:00Z'});
+ const before=structuredClone(f.pkg),recovery=await service.adopt(scope,'pub','2026-10-17T18:00:00+08:00');
+ assert.equal(recovery.userApproval,null);assert.equal(recovery.outboundAuthorization,false);assert.equal(recovery.originalPublishWindow,pub.publishWindow);assert.equal(recovery.previousTaskSchedules.length,3);
+ assert.deepEqual((await f.store.getById<Record_>('social_weekly_operating_packages',packageRow.id))?.payload,before);
+ const actual=await listWeeklyExecutionTasks(f.store,scope.tenantId,scope.programId,scope.packageId,1);
+ assert.equal(actual.find(t=>t.taskId==='publish')?.schedule.estimatedStartAt,'2026-10-17T10:00:00.000Z');
+ assert.equal(actual.find(t=>t.taskId==='prepare')?.inputSnapshot.publicationTask&&((actual.find(t=>t.taskId==='prepare')!.inputSnapshot.publicationTask) as typeof pub).publishWindow,pub.publishWindow);
+ assert.equal((await service.adopt(scope,'pub','2026-10-17T18:00:00+08:00')).ref.id,recovery.ref.id);
+ assert.equal((await f.store.list(WEEKLY_PUBLICATION_RECOVERY_SCHEDULES)).totalItems,1);
+ const assignment={tenantId:scope.tenantId,publicationTaskId:'pub',accountId:pub.accountId,publishWindow:pub.publishWindow,lineage:{programRef:{id:scope.programId},operatingPackageRef:{id:scope.packageId,version:1}}};
+ await assert.rejects(assertWeeklyPublicationRecoveryDue(f.store,assignment,new Date('2026-10-16T18:00:00+08:00')),{code:'weekly_publication_recovery_not_due'});
+ assert.equal((await assertWeeklyPublicationRecoveryDue(f.store,assignment,new Date('2026-10-17T18:00:00+08:00')))?.recoveryRef?.id,recovery.ref.id);
+ await f.store.create('social_publication_assignments',{tenant_id:scope.tenantId,operating_package_id:scope.packageId,operating_package_version:1,publication_task_id:'pub',assignment_id:'assignment',status:'package_ready'});
+ await f.store.create('social_publication_attempts',{tenant_id:scope.tenantId,assignment_id:'assignment',status:'unknown',provider_receipt_id:'retain-unknown'});
+ await assert.rejects(service.adopt(scope,'pub','2026-10-18T18:00:00+08:00'),{code:'weekly_publication_recovery_existing_receipt'});
+ assert.equal((await resolveWeeklyPublicationSchedule(f.store,scope.tenantId,f.pkg,pub)).recoveryRef?.id,recovery.ref.id);
+ assert.equal((await f.store.list('social_publication_attempts')).totalItems,1);
+ assert.equal((await f.store.list('content_execution_jobs')).totalItems,0);
+ assert.equal((await f.store.list('social_content_orders')).totalItems,0);
+ await assert.rejects(service.adopt(scope,'pub','2026-10-19T18:00:00+08:00'),{code:'weekly_publication_recovery_outside_week'});
+});

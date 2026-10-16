@@ -47,6 +47,7 @@ import { arrangeShotsWithinNarration, durationForUnfixedNarration, narrationForU
 import { createPresetEffectPlan, type EffectIntensity, type EffectPresetId } from '../../shared/contracts/effectPlan';
 import type { Page } from '../App';
 import type { SocialContentCreateRequest } from './socialContent/SocialContentWorkspace';
+import SocialContentOrderOperations from './socialContent/SocialContentOrderOperations';
 import { completeDemoStep } from '../lib/demoProgress';
 import { authHeader, AUTH_TOKEN_CHANGED_EVENT, getToken } from '../lib/auth';
 import { useDismissibleLayer } from '../hooks/useDismissibleLayer';
@@ -16240,6 +16241,7 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onLaunc
       <p role={replicationConfirmationError || replicationPreparationError ? 'alert' : 'status'} className="max-w-xl text-sm text-text-secondary">{replicationConfirmationError || replicationPreparationError || referenceSpeechPlan.error || modeActionStatus || (studioCreateRequest?.confirmedSpeech?.length ? '正在载入已确认的口播并建立分镜…' : '请在第一页完成口播替换、手动修改与确认。')}</p>
       {replicationPreparationError && <button type="button" disabled={modeActionLoading} onClick={() => void generateSetupScriptAndContinue(replicationConfirmedLinesRef.current)} className="rounded-lg bg-accent px-4 py-2 text-sm font-bold text-white disabled:opacity-50">重试口播与分镜准备</button>}
       <button type="button" onClick={() => void navigateReplicationStep(0)} className="rounded-lg border border-emerald-300 bg-white px-4 py-2 text-sm font-bold text-emerald-800">返回口播替换与确认</button>
+      {socialContentTaskId && <div className="w-full max-w-2xl text-left"><SocialContentOrderOperations taskId={socialContentTaskId} /></div>}
     </div>
   </div>;
 
@@ -16341,6 +16343,8 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onLaunc
           {frozenStudioSpecRef.current?.resolvedStudioContract && <StudioOperationalEvidencePanel contract={{...(frozenStudioSpecRef.current.resolvedStudioContract as Parameters<typeof StudioOperationalEvidencePanel>[0]['contract']),operationalEvidence:frozenOperationalEvidence}} />}
           {socialContentTaskId && <SocialMvpHandoffPanel value={sceneReworkTask?.taskId === socialContentTaskId ? sceneReworkTask.socialMvpHandoff : null}
             expected={{ taskId: socialContentTaskId, runId: sceneReworkTask?.runId || '', version: sceneReworkTask?.version || '', projectId: projectId || '' }} />}
+          {socialContentTaskId && <SocialContentOrderOperations key={socialContentTaskId} taskId={socialContentTaskId}
+            onChanged={() => { void socialContentApi.getTask(socialContentTaskId).then(setSceneReworkTask).catch(() => undefined); }} />}
           {threeStepWorkflow && step === 'preview' ? (
             <section className="space-y-3" aria-label="成片操作">
               {subtitleSourceBlockReason && <div role="alert" className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-xs leading-5">

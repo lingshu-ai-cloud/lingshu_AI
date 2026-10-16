@@ -15,6 +15,7 @@ export interface FrozenPaidProduction {
     authorization: {
         ref: string;
         maximumCny: number;
+        maximumExecutionCny?:number;
     };
     maximumRetries: number;
     /** Product shots with a completed, failed attempt-0 video QA receipt. */
@@ -35,6 +36,7 @@ export interface FrozenPaidProduction {
         spokenText: string;
         presenterAssetId: string;
         contractHash: string;
+        executionKind?: 'seedance_motion';
     }>;
     shots: Array<Pick<SocialAssetSupplyShotPlan, 'shotId' | 'sourceStrategy' | 'fallbackSourceStrategy' | 'materialRouting' | 'sourceRefs' | 'digitalHumanPlan'>>;
     assets: Array<{
@@ -195,17 +197,18 @@ export function createSocialContentPaidOperationPlanner(ports: PaidOperationPlan
                 const presenterIds=shots.map(shot=>[...new Set(shot?.digitalHumanPlan?.presenterAssetIds?.length?shot.digitalHumanPlan.presenterAssetIds:shot?.sourceRefs||[])]);
                 if(!text(group.groupId)||!group.shotIds.length||new Set(group.shotIds).size!==group.shotIds.length||group.contractHash!==presenterGroupContractHash(group)
                     ||indexes.some(i=>i<0)||indexes.some((value,index)=>index>0&&value!==indexes[index-1]!+1)
-                    ||scenes.some(scene=>!scene||scene.presenterSpeech!=='whole_track')||shots.some(shot=>shot?.sourceStrategy!=='authorized_digital_presenter')
+                    ||scenes.some(scene=>!scene||(group.executionKind!=='seedance_motion'&&scene.presenterSpeech!=='whole_track'))||shots.some(shot=>shot?.sourceStrategy!=='authorized_digital_presenter')
                     ||presenterIds.some(ids=>ids.length!==1||ids[0]!==group.presenterAssetId)
                     ||Math.abs(scenes.reduce((sum,scene)=>sum+(scene?.durationSeconds||0),0)-group.durationSeconds)>1e-9
                     ||scenes.map(scene=>scene?.spokenText||'').join(' ')!==group.spokenText
-                    ||!group.spokenText.trim()
-                    ||indexes[0]!<=previousGroupLastIndex||(indexes[0]===previousGroupLastIndex+1&&group.presenterAssetId===previousGroupPresenter)
+                    ||(group.executionKind!=='seedance_motion'&&!group.spokenText.trim())
+                    ||(group.executionKind==='seedance_motion'&&(group.shotIds.length!==1||shots.some(shot=>shot?.digitalHumanPlan?.method!=='reenact'||(shot.digitalHumanPlan as typeof shot.digitalHumanPlan&{silentMotion?:boolean}).silentMotion!==true)))
+                    ||indexes[0]!<=previousGroupLastIndex||(group.executionKind!=='seedance_motion'&&indexes[0]===previousGroupLastIndex+1&&group.presenterAssetId===previousGroupPresenter)
                     ||group.shotIds.some(id=>presenterGroupByShot.has(id))){
                     return {plan:null,requirements,gaps:['presenter_group_contract_invalid']};
                 }
                 group.shotIds.forEach(id=>presenterGroupByShot.set(id,group));
-                previousGroupLastIndex=indexes.at(-1)!;previousGroupPresenter=group.presenterAssetId;
+                previousGroupLastIndex=indexes.at(-1)!;previousGroupPresenter=group.executionKind==='seedance_motion'?'':group.presenterAssetId;
             }
             if(presenterGroups.length&&input.scenes.some(scene=>scene.presenterSpeech==='whole_track'&&input.shots.find(shot=>shot.shotId===scene.shotId)?.sourceStrategy==='authorized_digital_presenter'&&!presenterGroupByShot.has(scene.shotId)))
                 return {plan:null,requirements,gaps:['presenter_group_coverage_invalid']};
@@ -233,6 +236,7 @@ export function createSocialContentPaidOperationPlanner(ports: PaidOperationPlan
                 add(`presenter-group:${group.groupId}:first-frame`,'first_frame',group.groupId,null,null,null,null,group);
                 add(`presenter-group:${group.groupId}:first-frame-qa`,'first_frame_qa',group.groupId,null,null,null,3,group);
                 add(`presenter-group:${group.groupId}:presenter`,'presenter_video',null,null,group.durationSeconds,group.spokenText,null,group);
+                if(group.executionKind==='seedance_motion') add(`presenter-group:${group.groupId}:video-qa`,'video_qa',group.groupId,null,group.durationSeconds,null,4,group);
             }
             for (const asset of input.assets) {
                 if (!text(asset.assetId) || !hash(asset.contentHash)) {
@@ -290,7 +294,8 @@ export function createSocialContentPaidOperationPlanner(ports: PaidOperationPlan
                         // request. Visual continuation shots may intentionally have
                         // no independent line; the frozen group text was validated
                         // above and is what the provider receives.
-                        if ((!presenterGroupByShot.has(shot.shotId) && !scene.spokenText.trim()) || !scene.presenterSpeech)
+                        const motionGroup=presenterGroupByShot.get(shot.shotId)?.executionKind==='seedance_motion';
+                        if (!motionGroup&&((!presenterGroupByShot.has(shot.shotId) && !scene.spokenText.trim()) || !scene.presenterSpeech))
                             gap('presenter_speech_route_missing');
                         if (!presenterGroupByShot.has(shot.shotId)) add(`${key}:presenter`, 'presenter_video', shot.shotId, null, scene.durationSeconds, scene.spokenText, null);
                         if (scene.presenterSpeech === 'reused' && (!text(scene.presenterSpeechReceiptRef) || !await local(make(`${key}:speech-reuse`, 'presenter_audio_reuse', shot.shotId, scene.presenterSpeechReceiptRef || null, scene.durationSeconds, scene.spokenText, null), ['existing_audio'])))
@@ -362,7 +367,7 @@ export function createSocialContentPaidOperationPlanner(ports: PaidOperationPlan
                 gap('frozen_production_changed');
             if (gaps.length)
                 return { plan: null, requirements, gaps };
-            return { plan: { scope, authorizationRef: input.authorization.ref, maximumCny: Math.min(10, input.authorization.maximumCny), paidOperations: operations,
+            return { plan: { scope, authorizationRef: input.authorization.ref, maximumCny: Math.min(15, input.authorization.maximumCny), maximumExecutionCny:input.authorization.maximumExecutionCny,paidOperations: operations,
                 ...(presenterGroups.length ? {presenterGroups: structuredClone(presenterGroups)} : {}) }, requirements, gaps };
         } };
 }

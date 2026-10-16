@@ -9,14 +9,14 @@ function loadApi(wx, apiBase = 'https://example.test') {
   vm.runInNewContext(readFileSync(filename, 'utf8'), { module, exports: module.exports, wx, require: id => id === '../config' ? { apiBase } : id === './request-policy' ? policy.exports : (() => { throw new Error('Unexpected dependency ' + id) })() })
   return module.exports
 }
-test('network base accepts HTTPS and loopback HTTP but rejects remote insecure origins', async () => {
-  for (const apiBase of ['https://app.lingshu.site', 'http://127.0.0.1:8790', 'http://localhost:8790']) {
+test('network base accepts HTTPS and local-development HTTP but rejects remote insecure origins', async () => {
+  for (const apiBase of ['https://app.lingshu.site', 'http://127.0.0.1:8790', 'http://localhost:8790', 'http://192.168.0.127:8788']) {
     let requested = ''
     const api = loadApi({ getStorageSync: () => '', request: options => { requested = options.url; options.success({ statusCode: 200, data: {} }) } }, apiBase)
     await api.me()
     assert.equal(requested, apiBase + '/api/overseas/auth/me')
   }
-  const api = loadApi({ getStorageSync: () => '', request() { throw new Error('must not request') } }, 'http://192.168.1.20:8790')
+  const api = loadApi({ getStorageSync: () => '', request() { throw new Error('must not request') } }, 'http://8.8.8.8:8790')
   await assert.rejects(api.me(), /本地联调仅允许/)
 })
 test('late 401 from a previous account cannot clear the current account token', async () => {

@@ -22,3 +22,12 @@ test('客服工作台从真实会话投影回复、跟进和高意向队列', ()
   assert.equal(result.counts.converted, 1)
   assert.deepEqual(result.highIntent.map(item => item.id), ['a'])
 })
+
+test('客服工作页使用周日历并移除今日询盘组件', () => {
+  const markup = fs.readFileSync(__dirname + '/packages/customer/home/index.wxml', 'utf8')
+  const script = fs.readFileSync(__dirname + '/packages/customer/home/index.js', 'utf8')
+  assert.match(markup, /class="week-card/)
+  assert.match(markup, /本周待回复/)
+  assert.doesNotMatch(markup, /今日询盘/)
+  assert.match(script, /model\.week\(\)/)
+})
