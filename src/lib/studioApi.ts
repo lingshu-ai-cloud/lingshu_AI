@@ -7,6 +7,7 @@ import { fetchMaterialLibrary, type MaterialLibraryPurpose } from './studioDigit
 import type { MaterialScriptAnalysis } from '../../shared/materialScriptAnalysis';
 import { type EffectPlanV1 } from '../../shared/contracts/effectPlan';
 import type { EmphasisPlanV1 } from '../../shared/contracts/emphasisTimeline';
+import type { ProductSceneKind } from '../../shared/contracts/productScenePreparation';
 
 export interface HeyGenAvatarOption {
   id: string;
@@ -852,11 +853,20 @@ export const studioApi = {
   // 素材库
   listMaterialLibrary: fetchMaterialLibrary,
   listMaterials: async (purpose: MaterialLibraryPurpose = 'library'): Promise<Material[]> => (await fetchMaterialLibrary(purpose)).items,
-  uploadMaterial: (b: { name: string; folder?: string; type: 'video' | 'image' | 'audio'; duration?: number; width?: number; height?: number; dataBase64: string; mimeType?: string; sourceType?: string }) =>
+  uploadMaterial: (b: { name: string; folder?: string; type: 'video' | 'image' | 'audio'; duration?: number; width?: number; height?: number; dataBase64: string; mimeType?: string; sourceType?: string; productId?: string; productSceneType?: ProductSceneKind }) =>
     post<{ ok: boolean; material: Material }>('materials', b, { ok: false, material: null as unknown as Material }),
   uploadMaterialFile: async (
     file: File,
-    metadata: { folder?: string; type: 'video' | 'image' | 'audio'; duration?: number; width?: number; height?: number; sourceType?: string },
+    metadata: {
+      folder?: string;
+      type: 'video' | 'image' | 'audio';
+      duration?: number;
+      width?: number;
+      height?: number;
+      sourceType?: string;
+      productId?: string;
+      productSceneType?: ProductSceneKind;
+    },
   ): Promise<{ ok: boolean; material: Material; error?: string }> => {
     const maxBytes = 100 * 1024 * 1024;
     if (!file.size) return { ok: false, material: null as unknown as Material, error: '素材文件为空' };
@@ -871,6 +881,8 @@ export const studioApi = {
       mimeType: file.type || 'application/octet-stream',
       sourceType: metadata.sourceType || '',
     });
+    if (metadata.productId) query.set('productId', metadata.productId);
+    if (metadata.productSceneType) query.set('productSceneType', metadata.productSceneType);
     try {
       const response = await fetch(`/api/overseas/studio/materials/file?${query.toString()}`, {
         method: 'POST',
@@ -904,7 +916,7 @@ export const studioApi = {
     } catch { return { ok: false, error: '片段更新失败' }; }
   },
   materialProducts: () => get<{items:Array<{id:string;name:string}>}>('material-products', {items:[]}),
-  updateMaterial: async (id: string, changes: { name: string; tags?: string; productId?: string; primaryTheme?: import('../../shared/materialTaxonomy').MaterialTheme }): Promise<{ ok: boolean; material?: Material; error?: string }> => {
+  updateMaterial: async (id: string, changes: { name?: string; tags?: string; productId?: string; productSceneType?: ProductSceneKind; primaryTheme?: import('../../shared/materialTaxonomy').MaterialTheme }): Promise<{ ok: boolean; material?: Material; error?: string }> => {
     try {
       const response = await fetch(`/api/overseas/studio/materials/${id}`, {
         method: 'PATCH',
@@ -1073,6 +1085,7 @@ export interface Material {
   tags?: string;
   productId?: string;
   productName?: string;
+  productSceneType?: ProductSceneKind;
   segmentAnalysisStatus?: 'pending' | 'analyzing' | 'completed' | 'failed';
   segmentAnalysisError?: string;
   segments?: MaterialSegment[];

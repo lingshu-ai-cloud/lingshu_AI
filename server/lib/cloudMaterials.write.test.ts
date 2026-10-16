@@ -68,6 +68,48 @@ try {
   assert.deepEqual((entryPatch!.provenance as Record<string, unknown>).sourceEntries, ['studio_workspace', 'enterprise_knowledge']);
   assert.equal(unified.sourceEntry, 'enterprise_knowledge');
   assert.equal(unified.knowledgeEligible, true);
+
+  let scenePatch: Record<string, unknown> | undefined;
+  const rebound = await upsertTenantUploadCloudMaterial({
+    tenantId: 'tenant-a', title: '产品 A 预制素材', folder: 'product-scenes', type: 'video',
+    duration: 2.4, width: 1080, height: 1920, sizeBytes: bytes.length, sha256,
+    sourceEntry: 'studio_workspace', sourceType: 'product-scene-preparation',
+    productId: 'product-a', productName: '产品 A',
+    licenseEvidence: 'tenant_product_scene_upload', commercialUseApproved: true,
+    derivativesApproved: true, rawLibraryUseApproved: true,
+    tags: '产品预制素材', shotFunction: '产品展示',
+    media: { name: 'clip.mp4', path: mediaPath, contentType: 'video/mp4' },
+    provenance: { productScenePreparation: { slotId: 'slot-a', contentSha256: sha256 } },
+    verifiedDeduplicatedUpdate: {
+      title: '产品 A 预制素材', folder: 'product-scenes', type: 'video', duration: 2.4,
+      width: 1080, height: 1920, sourceType: 'product-scene-preparation',
+      productId: 'product-a', productName: '产品 A', tags: '产品预制素材', shotFunction: '产品展示',
+      licenseEvidence: 'tenant_product_scene_upload', commercialUseApproved: true,
+      derivativesApproved: true, rawLibraryUseApproved: true,
+    },
+  }, async (requestPath, options = {}) => {
+    if (requestPath.includes('?')) return Response.json({ items: [{
+      id: 'materialrecord1', tenantId: 'tenant-a', scope: 'own', sha256,
+      title: '旧素材', type: 'video', duration: 0, videoFile: 'clip.mp4', posterFile: 'poster.png',
+      provenance: { sourceEntry: 'studio_workspace' },
+    }] });
+    scenePatch = JSON.parse(String(options.body)) as Record<string, unknown>;
+    return Response.json({
+      id: 'materialrecord1', tenantId: 'tenant-a', scope: 'own', sha256,
+      videoFile: 'clip.mp4', posterFile: 'poster.png',
+      ...scenePatch,
+    });
+  });
+  assert.equal(rebound.id, 'pb-materialrecord1');
+  assert.equal(scenePatch?.duration, 2.4);
+  assert.equal(scenePatch?.productId, 'product-a');
+  assert.equal(scenePatch?.sourceType, 'product-scene-preparation');
+  assert.equal(scenePatch?.licenseEvidence, 'tenant_product_scene_upload');
+  assert.equal(scenePatch?.commercialUseApproved, true);
+  assert.deepEqual(
+    ((scenePatch?.provenance as Record<string, unknown>).productScenePreparation as Record<string, unknown>).contentSha256,
+    sha256,
+  );
   const objectBacked = await createCloudMaterial({
     tenantId: 'tenant-a',
     title: '对象存储镜头',

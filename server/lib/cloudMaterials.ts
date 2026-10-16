@@ -72,6 +72,38 @@ export interface CreateCloudMaterialInput {
   poster?: CloudMaterialFileInput | CloudMaterialObjectInput;
 }
 
+export interface VerifiedDeduplicatedMaterialUpdate {
+  title?: string;
+  folder?: string;
+  type?: 'video' | 'image' | 'audio';
+  duration?: number;
+  width?: number;
+  height?: number;
+  sourceType?: string;
+  sourceName?: string;
+  productId?: string;
+  productName?: string;
+  tags?: string;
+  shotFunction?: string;
+  licenseEvidence?: string;
+  commercialUseApproved?: boolean;
+  derivativesApproved?: boolean;
+  rawLibraryUseApproved?: boolean;
+}
+
+function verifiedDeduplicatedMaterialFields(
+  value: VerifiedDeduplicatedMaterialUpdate | undefined,
+): Record<string, unknown> {
+  if (!value) return {};
+  return Object.fromEntries(([
+    'title', 'folder', 'type', 'duration', 'width', 'height', 'sourceType', 'sourceName',
+    'productId', 'productName', 'tags', 'shotFunction', 'licenseEvidence',
+    'commercialUseApproved', 'derivativesApproved', 'rawLibraryUseApproved',
+  ] satisfies Array<keyof VerifiedDeduplicatedMaterialUpdate>)
+    .filter(key => value[key] !== undefined)
+    .map(key => [key, value[key]]));
+}
+
 const FALLBACK_POSTER_PNG = Buffer.from(
   'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=',
   'base64',
@@ -404,7 +436,15 @@ async function ownedCloudMaterialByHash(
  * entry point, instead of creating competing copies with different ownership.
  */
 export async function upsertTenantUploadCloudMaterial(
-  input: CreateCloudMaterialInput & { sourceEntry: Exclude<MaterialSourceEntry, 'platform_operations'> },
+  input: CreateCloudMaterialInput & {
+    sourceEntry: Exclude<MaterialSourceEntry, 'platform_operations'>;
+    /**
+     * Metadata revalidated by the application server from the uploaded bytes.
+     * It is applied only when hash deduplication reuses an existing row, so a
+     * repeated upload cannot retain stale product binding, duration or rights.
+     */
+    verifiedDeduplicatedUpdate?: VerifiedDeduplicatedMaterialUpdate;
+  },
   request: typeof adminFetch = adminFetch,
 ): Promise<Record<string, unknown>> {
   if (input.scope === 'shared') throw new Error('tenant upload cannot be platform shared');
@@ -425,13 +465,20 @@ export async function upsertTenantUploadCloudMaterial(
     sourceEntry: input.sourceEntry === 'enterprise_knowledge' ? input.sourceEntry : current.sourceEntry || input.sourceEntry,
     sourceEntries,
   };
+  const updateFields = {
+    ...verifiedDeduplicatedMaterialFields(input.verifiedDeduplicatedUpdate),
+    provenance,
+    ...(input.productId ? { productId: input.productId } : {}),
+    ...(input.productName ? { productName: input.productName } : {}),
+  };
+  if (usePostgresMaterials(request)) {
+    const saved = await postgresStore.update('materials', existing.id, updateFields);
+    if (!saved) throw new Error('material entry association update failed');
+    return cloudMaterialView({ ...existing, ...updateFields } as CloudMaterialRecord);
+  }
   const response = await request(`/api/collections/materials/records/${encodeURIComponent(existing.id)}`, {
     method: 'PATCH', headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      provenance,
-      ...(input.productId ? { productId: input.productId } : {}),
-      ...(input.productName ? { productName: input.productName } : {}),
-    }),
+    body: JSON.stringify(updateFields),
   });
   if (!response.ok) throw new Error(`material entry association update failed (${response.status})`);
   const updated = await response.json() as CloudMaterialRecord;

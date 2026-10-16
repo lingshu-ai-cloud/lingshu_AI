@@ -30,6 +30,18 @@ import { requestMaterialAnalysis, waitForMaterialAnalysis, isMaterialAnalysisAct
 import { hideLocalMaterialFromLibrary, materialVisibleForPurpose, readMaterialLibrary, readLocalMaterials, saveLocalMaterials, updateLocalMaterial } from '../lib/materialLibrary.js';
 import { filterMyGeneratedMaterials, projectGeneratedMaterial } from '../../src/lib/generatedMaterial.js';
 import { ASSET_GENERATION_KINDS } from '../../shared/contracts/generatedMaterial.js';
+import {
+  PRODUCT_SCENE_KINDS,
+  PRODUCT_SCENE_PREPARATION_SCHEMA_VERSION,
+  buildProductScenePreparationReadModels,
+  ensureProductScenePreparationPlan,
+  stableProductScenePreparationSlotId,
+  type ProductSceneKind,
+  type ProductScenePreparationMaterialBinding,
+  type ProductScenePreparationReadModel,
+  type ProductScenePreparationStatus,
+} from '../../shared/contracts/productScenePreparation.js';
+import { ProductSceneUploadProbeError, probeProductSceneUploadVideo } from '../lib/productSceneUploadProbe.js';
 import { reconcileStudioProductionSpec, studioProductionSnapshotIssues } from '../../shared/studioProductionContract.js';
 import { mixedStoryboardRules, mixedStoryboardIssues } from './mixedStoryboardContract.js';
 import { alignQwenFile } from '../integrations/qwenAlignment.js';
@@ -6245,6 +6257,7 @@ interface Material {
   tags?: string;
   productId?: string;
   productName?: string;
+  productSceneType?: ProductSceneKind;
   segmentAnalysisStatus?: 'pending' | 'analyzing' | 'completed' | 'failed';
   segmentAnalysisError?: string;
   segments?: MaterialSegment[];
@@ -6736,6 +6749,383 @@ function materialSignedUrlTtlSeconds(): number {
   return Number.isFinite(configured) ? Math.max(60, Math.min(3600, configured)) : 900;
 }
 
+const PRODUCT_SCENE_PROVENANCE_KEY = 'productScenePreparation';
+const PRODUCT_SCENE_UPLOAD_SOURCE = 'product-scene-preparation';
+
+interface ProductSceneUploadIntent {
+  productId: string;
+  productName: string;
+  kind: ProductSceneKind;
+}
+
+class ProductSceneUploadContextError extends Error {
+  readonly status: number;
+
+  constructor(status: number, message: string) {
+    super(message);
+    this.name = 'ProductSceneUploadContextError';
+    this.status = status;
+  }
+}
+
+async function resolveProductSceneUploadIntent(input: {
+  tenantId: string;
+  type: string;
+  sourceType: string;
+  productId: unknown;
+  productSceneType: unknown;
+}): Promise<ProductSceneUploadIntent | undefined> {
+  const productId = String(input.productId || '').trim();
+  const rawKind = String(input.productSceneType || '').trim();
+  const requested = input.sourceType === PRODUCT_SCENE_UPLOAD_SOURCE || Boolean(rawKind);
+  if (!requested) return undefined;
+  if (input.type !== 'video') throw new ProductSceneUploadContextError(400, '预制素材仅支持视频文件');
+  if (!productId || !rawKind) throw new ProductSceneUploadContextError(400, '请从产品详情中选择预制素材位后上传');
+  const kind = rawKind as ProductSceneKind;
+  if (!PRODUCT_SCENE_KINDS.includes(kind)) throw new ProductSceneUploadContextError(400, '预制素材位无效');
+  const profile = await readTenantEnterpriseProfile(input.tenantId);
+  const product = (profile.products.items || []).find((item, index) => productIdentity(item, index) === productId);
+  if (!product) throw new ProductSceneUploadContextError(400, '关联产品不在当前企业资料中');
+  return { productId, productName: String(product.name || product.sku || '').trim(), kind };
+}
+
+async function verifyProductSceneUpload(
+  intent: ProductSceneUploadIntent | undefined,
+  mediaPath: string,
+  contentSha256: string,
+): Promise<VerifiedProductSceneUpload | undefined> {
+  if (!intent) return undefined;
+  const verified = await probeProductSceneUploadVideo(mediaPath);
+  return { ...intent, ...verified, contentSha256: contentSha256.toLowerCase() };
+}
+
+function productSceneUploadErrorResponse(error: unknown): { status: number; message: string } | undefined {
+  if (error instanceof ProductSceneUploadContextError) return { status: error.status, message: error.message };
+  if (error instanceof ProductSceneUploadProbeError) return {
+    status: error.code === 'product_scene_media_probe_unavailable' ? 503 : 422,
+    message: error.message,
+  };
+  return undefined;
+}
+
+export interface VerifiedProductSceneUpload {
+  productId: string;
+  productName: string;
+  kind: ProductSceneKind;
+  durationSeconds: number;
+  width: number;
+  height: number;
+  decodedFrameCount: number;
+  verificationMethod: 'ffmpeg_full_decode';
+  contentSha256: string;
+}
+
+export function productSceneUploadReuseMetadata(context?: VerifiedProductSceneUpload): {
+  licenseEvidence?: string;
+  commercialUseApproved?: boolean;
+  derivativesApproved?: boolean;
+  rawLibraryUseApproved?: boolean;
+  authorizationScopes?: string[];
+} {
+  if (!context
+    || !String(context.productId || '').trim()
+    || !PRODUCT_SCENE_KINDS.includes(context.kind)
+    || context.verificationMethod !== 'ffmpeg_full_decode'
+    || !Number.isFinite(context.durationSeconds)
+    || context.durationSeconds <= 0
+    || !Number.isSafeInteger(context.decodedFrameCount)
+    || context.decodedFrameCount < 1
+    || !/^[a-f0-9]{64}$/i.test(context.contentSha256)) return {};
+  return {
+    licenseEvidence: 'tenant_product_scene_upload',
+    commercialUseApproved: true,
+    derivativesApproved: true,
+    rawLibraryUseApproved: true,
+    authorizationScopes: ['content_reuse', 'model_input', 'enterprise-video'],
+  };
+}
+
+interface ProductSceneMaterialProvenance {
+  schemaVersion: typeof PRODUCT_SCENE_PREPARATION_SCHEMA_VERSION;
+  slotId: string;
+  productId: string;
+  kind: ProductSceneKind;
+  verifiedDurationSeconds: number;
+  verifiedWidth: number;
+  verifiedHeight: number;
+  decodedFrameCount: number;
+  verificationMethod: 'ffmpeg_full_decode';
+  contentSha256: string;
+  boundAt?: string;
+}
+
+function recordObject(value: unknown): Record<string, unknown> {
+  if (value && typeof value === 'object' && !Array.isArray(value)) return value as Record<string, unknown>;
+  if (typeof value === 'string' && value.trim().startsWith('{')) {
+    try {
+      const parsed = JSON.parse(value) as unknown;
+      return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed as Record<string, unknown> : {};
+    } catch { return {}; }
+  }
+  return {};
+}
+
+export function productSceneMaterialProvenanceOf(material: Record<string, unknown>): ProductSceneMaterialProvenance | undefined {
+  const provenance = recordObject(material.provenance);
+  const binding = recordObject(provenance[PRODUCT_SCENE_PROVENANCE_KEY]);
+  const kind = String(binding.kind || '') as ProductSceneKind;
+  const productId = String(binding.productId || '').trim();
+  const verifiedDurationSeconds = Number(binding.verifiedDurationSeconds);
+  const verifiedWidth = Number(binding.verifiedWidth);
+  const verifiedHeight = Number(binding.verifiedHeight);
+  const decodedFrameCount = Number(binding.decodedFrameCount);
+  const verificationMethod = String(binding.verificationMethod || '');
+  const contentSha256 = String(binding.contentSha256 || '').trim().toLowerCase();
+  if (binding.schemaVersion !== PRODUCT_SCENE_PREPARATION_SCHEMA_VERSION
+    || !PRODUCT_SCENE_KINDS.includes(kind)
+    || !productId
+    || verificationMethod !== 'ffmpeg_full_decode'
+    || !Number.isFinite(verifiedDurationSeconds)
+    || verifiedDurationSeconds <= 0
+    || !Number.isSafeInteger(decodedFrameCount)
+    || decodedFrameCount < 1
+    || !/^[a-f0-9]{64}$/.test(contentSha256)) return undefined;
+  let expectedSlotId = '';
+  try { expectedSlotId = stableProductScenePreparationSlotId(productId, kind); }
+  catch { return undefined; }
+  if (String(binding.slotId || '') !== expectedSlotId) return undefined;
+  return {
+    schemaVersion: PRODUCT_SCENE_PREPARATION_SCHEMA_VERSION,
+    slotId: expectedSlotId,
+    productId,
+    kind,
+    verifiedDurationSeconds,
+    verifiedWidth: Number.isFinite(verifiedWidth) && verifiedWidth > 0 ? Math.round(verifiedWidth) : 0,
+    verifiedHeight: Number.isFinite(verifiedHeight) && verifiedHeight > 0 ? Math.round(verifiedHeight) : 0,
+    decodedFrameCount,
+    verificationMethod: 'ffmpeg_full_decode',
+    contentSha256,
+    ...(String(binding.boundAt || '').trim() ? { boundAt: String(binding.boundAt) } : {}),
+  };
+}
+
+function mergedSearchLabels(...values: unknown[]): string {
+  const labels = values.flatMap(value => String(value || '')
+    .split(/[,，、;；|\n]+/)
+    .map(item => item.trim())
+    .filter(Boolean));
+  return Array.from(new Set(labels)).join(',').slice(0, 500);
+}
+
+export function productSceneMaterialBindingChanges(input: {
+  material: Record<string, unknown>;
+  productId: string;
+  productName: string;
+  kind: ProductSceneKind;
+  verification: Pick<VerifiedProductSceneUpload,
+    'durationSeconds' | 'width' | 'height' | 'decodedFrameCount' | 'verificationMethod' | 'contentSha256'>;
+  boundAt?: string;
+}): Record<string, unknown> {
+  if (!PRODUCT_SCENE_KINDS.includes(input.kind)) throw new Error('product_scene_preparation_kind_invalid');
+  const productId = String(input.productId || '').trim();
+  if (!productId) throw new Error('product_scene_preparation_product_id_required');
+  const durationSeconds = Number(input.verification.durationSeconds);
+  const decodedFrameCount = Number(input.verification.decodedFrameCount);
+  const contentSha256 = String(input.verification.contentSha256 || '').trim().toLowerCase();
+  if (input.verification.verificationMethod !== 'ffmpeg_full_decode'
+    || !Number.isFinite(durationSeconds)
+    || durationSeconds <= 0
+    || !Number.isSafeInteger(decodedFrameCount)
+    || decodedFrameCount < 1
+    || !/^[a-f0-9]{64}$/.test(contentSha256)) throw new Error('product_scene_preparation_verification_invalid');
+  const provenance = recordObject(input.material.provenance);
+  const productScenePreparation: ProductSceneMaterialProvenance = {
+    schemaVersion: PRODUCT_SCENE_PREPARATION_SCHEMA_VERSION,
+    slotId: stableProductScenePreparationSlotId(productId, input.kind),
+    productId,
+    kind: input.kind,
+    verifiedDurationSeconds: durationSeconds,
+    verifiedWidth: Math.max(0, Math.round(Number(input.verification.width) || 0)),
+    verifiedHeight: Math.max(0, Math.round(Number(input.verification.height) || 0)),
+    decodedFrameCount,
+    verificationMethod: 'ffmpeg_full_decode',
+    contentSha256,
+    boundAt: input.boundAt || new Date().toISOString(),
+  };
+  return {
+    productId,
+    productName: String(input.productName || '').trim(),
+    provenance: { ...provenance, [PRODUCT_SCENE_PROVENANCE_KEY]: productScenePreparation },
+    tags: mergedSearchLabels('产品预制素材', input.material.tags),
+    shotFunction: mergedSearchLabels('产品展示', input.material.shotFunction),
+  };
+}
+
+export function productSceneMaterialProductAssociationChanges(input: {
+  material: Record<string, unknown>;
+  productId: string;
+  productName: string;
+}): Record<string, unknown> {
+  const productId = String(input.productId || '').trim();
+  const productName = String(input.productName || '').trim();
+  const provenance = recordObject(input.material.provenance);
+  const existingBinding = productSceneMaterialProvenanceOf(input.material);
+  if (!existingBinding || !productId) {
+    const nextProvenance = { ...provenance };
+    delete nextProvenance[PRODUCT_SCENE_PROVENANCE_KEY];
+    return { productId, productName, provenance: nextProvenance };
+  }
+  return productSceneMaterialBindingChanges({
+    material: input.material,
+    productId,
+    productName,
+    kind: existingBinding.kind,
+    verification: {
+      durationSeconds: existingBinding.verifiedDurationSeconds,
+      width: existingBinding.verifiedWidth,
+      height: existingBinding.verifiedHeight,
+      decodedFrameCount: existingBinding.decodedFrameCount,
+      verificationMethod: existingBinding.verificationMethod,
+      contentSha256: existingBinding.contentSha256,
+    },
+  });
+}
+
+function productSceneSourceImageUrl(product: Record<string, unknown>): string {
+  const direct = String(product.imageUrl || '').trim();
+  if (direct) return direct;
+  for (const key of ['images', 'packagingImages', 'sceneImages', 'brandAssets']) {
+    const rows = Array.isArray(product[key]) ? product[key] as Array<Record<string, unknown>> : [];
+    const url = rows.map(row => String(row?.url || '').trim()).find(Boolean);
+    if (url) return url;
+  }
+  return '';
+}
+
+function productSceneMaterialProductionEligible(
+  material: Record<string, unknown>,
+  binding = productSceneMaterialProvenanceOf(material),
+): boolean {
+  const duration = Number(material.duration);
+  const contentSha256 = String(material.sha256 || material.contentSha256 || '').trim().toLowerCase();
+  return material.type === 'video'
+    && Boolean(binding)
+    && Boolean(String(material.id || '').trim())
+    && Boolean(String(material.url || '').trim())
+    && String(material.scope || 'own') !== 'shared'
+    && Number.isFinite(duration)
+    && duration > 0
+    && Math.abs(duration - Number(binding?.verifiedDurationSeconds)) <= 0.05
+    && contentSha256 === binding?.contentSha256
+    && !String(material.libraryRemovedAt || '').trim()
+    && !isSyntheticMaterial(material)
+    && !isReferenceOnlyMaterial(material)
+    && !isWorkflowInternalMaterial(material);
+}
+
+/**
+ * Read-only join used by the materials envelope. Empty preparation slots are
+ * projections of the product plan and are never persisted as material rows.
+ */
+export function buildStudioProductScenePreparationSlots(input: {
+  products: readonly Record<string, unknown>[];
+  materials: readonly Record<string, unknown>[];
+  resolveSourceImageUrl?: (product: Record<string, unknown>, index: number) => string;
+}): ProductScenePreparationReadModel[] {
+  const orderedMaterials = [...input.materials].sort((left, right) => (
+    (Date.parse(String(right.updatedAt || right.createdAt || '')) || 0)
+    - (Date.parse(String(left.updatedAt || left.createdAt || '')) || 0)
+  ));
+  return input.products.flatMap((product, productIndex) => {
+    const productId = productIdentity(product as Parameters<typeof productIdentity>[0], productIndex);
+    const plan = ensureProductScenePreparationPlan(productId, product.productScenePreparation);
+    const associatedImage = orderedMaterials.find(material => material.type === 'image'
+      && String(material.productId || '').trim() === productId
+      && String(material.scope || 'own') !== 'shared'
+      && !String(material.libraryRemovedAt || '').trim()
+      && !isSyntheticMaterial(material)
+      && !isReferenceOnlyMaterial(material)
+      && !isWorkflowInternalMaterial(material)
+      && Boolean(String(material.url || material.poster || '').trim()));
+    const sourceImageUrl = String(input.resolveSourceImageUrl?.(product, productIndex)
+      || productSceneSourceImageUrl(product)
+      || associatedImage?.url
+      || associatedImage?.poster
+      || '').trim();
+    const candidates = orderedMaterials
+      .map(material => ({ material, binding: productSceneMaterialProvenanceOf(material) }))
+      .filter(candidate => candidate.binding?.productId === productId);
+    const statusBySlotId: Record<string, ProductScenePreparationStatus | undefined> = {};
+    const materialBindings: ProductScenePreparationMaterialBinding[] = [];
+    for (const slot of plan.slots) {
+      const claimed = candidates.filter(candidate => candidate.binding?.slotId === slot.slotId);
+      const usable = claimed.find(candidate => (
+        String(candidate.material.productId || '').trim() === productId
+        && productSceneMaterialProductionEligible(candidate.material, candidate.binding)
+      ));
+      if (usable?.binding) {
+        materialBindings.push({
+          slotId: slot.slotId,
+          productId,
+          kind: slot.kind,
+          materialId: String(usable.material.id),
+          materialUrl: String(usable.material.url),
+          ...(String(usable.material.poster || '').trim() ? { posterUrl: String(usable.material.poster) } : {}),
+          ...(String(usable.material.name || '').trim() ? { materialName: String(usable.material.name) } : {}),
+          mediaType: 'video',
+          actualDurationSeconds: usable.binding.verifiedDurationSeconds,
+          productionEligible: true,
+          synthetic: false,
+        });
+      } else if (claimed.length) {
+        statusBySlotId[slot.slotId] = 'needs_replacement';
+      }
+    }
+    return buildProductScenePreparationReadModels({
+      productId,
+      plan,
+      sourceImageUrl,
+      statusBySlotId,
+      materialBindings,
+    });
+  });
+}
+
+export function filterMaterialsByProductAssociation<T extends object>(
+  materials: readonly T[],
+  input: { productId?: unknown; excludeProductAssociated?: boolean },
+): T[] {
+  const productId = String(input.productId || '').trim();
+  if (productId && input.excludeProductAssociated) throw new Error('material_product_filter_conflict');
+  const associatedProductId = (material: T) => String((material as { productId?: unknown }).productId || '').trim();
+  if (productId) return materials.filter(material => associatedProductId(material) === productId);
+  if (input.excludeProductAssociated) return materials.filter(material => !associatedProductId(material));
+  return [...materials];
+}
+
+export function scopeProductSceneProjection<
+  TProduct extends Record<string, unknown>,
+  TMaterial extends object,
+>(input: {
+  products: readonly TProduct[];
+  materials: readonly TMaterial[];
+  productId?: unknown;
+}): { products: TProduct[]; materials: TMaterial[] } {
+  const productId = String(input.productId || '').trim();
+  if (!productId) return { products: [...input.products], materials: [...input.materials] };
+  const products = input.products.flatMap((product, index) => {
+    const canonicalId = productIdentity(product as unknown as Parameters<typeof productIdentity>[0], index);
+    return canonicalId === productId ? [{ ...product, id: canonicalId } as TProduct] : [];
+  });
+  if (!products.length) return { products: [], materials: [] };
+  return {
+    products,
+    materials: input.materials.filter(material => (
+      String((material as { productId?: unknown }).productId || '').trim() === productId
+    )),
+  };
+}
+
 async function materialResponse(material: Material, tenantId: string): Promise<Material & { canManage: boolean }> {
   // Some deterministic local renderers persist a tenant-scoped `file` before
   // object-storage mirroring is available.  The record is still a valid media
@@ -6776,7 +7166,8 @@ async function materialResponse(material: Material, tenantId: string): Promise<M
       analyzedAt: material.createdAt,
     })
     : undefined);
-  return { ...material, url: url || material.url, poster, segments, scriptAnalysis, canManage: material.sourceType !== 'enterprise_product_table' && material.scope !== 'shared' && material.tenantId === tenantId, objectKey: undefined, posterObjectKey: undefined };
+  const productSceneType = productSceneMaterialProvenanceOf(material as unknown as Record<string, unknown>)?.kind;
+  return { ...material, url: url || material.url, poster, segments, scriptAnalysis, ...(productSceneType ? { productSceneType } : {}), canManage: material.sourceType !== 'enterprise_product_table' && material.scope !== 'shared' && material.tenantId === tenantId, objectKey: undefined, posterObjectKey: undefined };
 }
 
 function enterpriseProductMaterials(tenantId: string, profile: Awaited<ReturnType<typeof readTenantEnterpriseProfile>>): Material[] {
@@ -6928,6 +7319,14 @@ studioRouter.get('/materials', async (req, res) => {
     const association = resolveMaterialProductAssociation(material as unknown as Record<string, unknown>, productReferences);
     return association ? { ...material, productId: association.productId, productName: association.productName } : material;
   });
+  const productSceneProjectionMaterials = [...list];
+  const productIdFilter = String(req.query.productId || '').trim();
+  const excludeProductAssociated = req.query.excludeProductAssociated === '1';
+  if (productIdFilter && excludeProductAssociated) {
+    res.status(400).json({ error: '产品筛选条件冲突' });
+    return;
+  }
+  list = filterMaterialsByProductAssociation(list, { productId: productIdFilter, excludeProductAssociated });
   if (scope === 'shared') list = list.filter(canAppearInSharedLibrary);
   else if (scope === 'own') list = list.filter(m => (m.scope ?? 'own') === 'own');
   list = list.filter(material => materialVisibleForPurpose(material, purpose));
@@ -6974,8 +7373,33 @@ studioRouter.get('/materials', async (req, res) => {
     ...(['pending','analyzing'].includes(m.segmentAnalysisStatus || '') && !isMaterialAnalysisActive(tenantId,m.id)
       ? {segmentAnalysisStatus:'failed' as const, segmentAnalysisError:'分析任务已中断，请重试以继续处理原片'} : {}),
   })));
+  const productSceneProjection = req.query.envelope === '1'
+    ? scopeProductSceneProjection({
+      products: (enterpriseProfile.products.items || [])
+        .filter(product => String(product.name || product.sku || '').trim()) as unknown as Record<string, unknown>[],
+      materials: productSceneProjectionMaterials,
+      productId: productIdFilter,
+    })
+    : { products: [], materials: [] as Material[] };
+  const productSceneSlots = req.query.envelope === '1'
+    ? buildStudioProductScenePreparationSlots({
+      products: productSceneProjection.products,
+      materials: await Promise.all(productSceneProjection.materials
+        .filter(material => Boolean(productSceneMaterialProvenanceOf(material as unknown as Record<string, unknown>))
+          || (material.type === 'image' && Boolean(String(material.productId || '').trim())))
+        .map(material => materialResponse(material, tenantId))) as unknown as Record<string, unknown>[],
+      resolveSourceImageUrl: product => {
+        const raw = productSceneSourceImageUrl(product);
+        return /^\/(?:cloud-files|studio-media)\//.test(raw)
+          ? signPathAssetUrl(raw, tenantId, 24 * 60 * 60 * 1000)
+          : /^\/(?:media|api\/overseas\/studio\/materials\/pb)\//.test(raw)
+            ? signAssetUrl(raw, tenantId)
+            : raw;
+      },
+    })
+    : [];
   res.setHeader('Cache-Control', 'private, no-store, max-age=0');
-  if (req.query.envelope === '1') res.status(inventory.status === 'unavailable' ? 503 : 200).json({ ...inventory, items: response, total, page, pageSize, facets });
+  if (req.query.envelope === '1') res.status(inventory.status === 'unavailable' ? 503 : 200).json({ ...inventory, items: response, total, page, pageSize, facets, productSceneSlots });
   else { res.setHeader('X-Material-Library-Status', inventory.status); res.json(response); }
 });
 
@@ -7074,13 +7498,42 @@ async function saveMaterialUploadToDatabase(input: {
   sizeBytes: number;
   sha256: string;
   tempDirectory: string;
+  productScene?: VerifiedProductSceneUpload;
 }): Promise<Material> {
   const requestedUsage: MaterialUsage = 'editable';
+  if (input.productScene && input.productScene.contentSha256 !== input.sha256.toLowerCase()) {
+    throw new Error('product_scene_upload_hash_mismatch');
+  }
+  const productSceneReuse = productSceneUploadReuseMetadata(input.productScene);
+  if (input.productScene && !productSceneReuse.licenseEvidence) {
+    throw new Error('product_scene_upload_verification_invalid');
+  }
+  const sourceType = input.productScene ? PRODUCT_SCENE_UPLOAD_SOURCE : input.sourceType || 'tenant_upload';
+  const duration = input.productScene?.durationSeconds ?? (Number.isFinite(input.duration) ? Math.max(0, input.duration) : 0);
+  const width = input.productScene?.width ?? input.width;
+  const height = input.productScene?.height ?? input.height;
+  const baseProvenance: Record<string, unknown> = {
+    uploadMethod: 'studio_my_materials',
+    sourceEntry: 'studio_workspace',
+    originalName: input.name || input.mediaName,
+    mimeType: input.mimeType,
+    receivedAt: new Date().toISOString(),
+    ...(productSceneReuse.authorizationScopes ? { authorizationScopes: productSceneReuse.authorizationScopes } : {}),
+  };
+  const productSceneChanges = input.productScene
+    ? productSceneMaterialBindingChanges({
+      material: { provenance: baseProvenance },
+      productId: input.productScene.productId,
+      productName: input.productScene.productName,
+      kind: input.productScene.kind,
+      verification: input.productScene,
+    })
+    : {};
   const poster = await createTransientMaterialPoster({
     directory: input.tempDirectory,
     mediaPath: input.mediaPath,
     type: input.type,
-    duration: input.duration,
+    duration,
   });
 
   if (!objectStorageEnabled()) throw new Error('对象存储未配置，素材文件不会写入数据库文件字段');
@@ -7104,25 +7557,47 @@ async function saveMaterialUploadToDatabase(input: {
     title: input.name || input.mediaName,
     folder: input.folder,
     type: input.type,
-    duration: Number.isFinite(input.duration) ? Math.max(0, input.duration) : 0,
-    width: input.width > 0 ? Math.round(input.width) : undefined,
-    height: input.height > 0 ? Math.round(input.height) : undefined,
+    duration,
+    width: width > 0 ? Math.round(width) : undefined,
+    height: height > 0 ? Math.round(height) : undefined,
     sizeBytes: input.sizeBytes,
     sha256: input.sha256,
     scope: 'own',
     usage: requestedUsage,
-    sourceType: input.sourceType || 'tenant_upload',
+    sourceType,
     sourceName: input.name || input.mediaName,
     sourceProvider: 'tenant',
     sourceUrl: input.sourceUrl || undefined,
-    provenance: {
-      uploadMethod: 'studio_my_materials',
-      sourceEntry: 'studio_workspace',
-      originalName: input.name || input.mediaName,
-      mimeType: input.mimeType,
-      receivedAt: new Date().toISOString(),
-    },
+    productId: input.productScene?.productId,
+    productName: input.productScene?.productName,
+    tags: typeof productSceneChanges.tags === 'string' ? productSceneChanges.tags : undefined,
+    shotFunction: typeof productSceneChanges.shotFunction === 'string' ? productSceneChanges.shotFunction : undefined,
+    licenseEvidence: productSceneReuse.licenseEvidence,
+    commercialUseApproved: productSceneReuse.commercialUseApproved,
+    derivativesApproved: productSceneReuse.derivativesApproved,
+    rawLibraryUseApproved: productSceneReuse.rawLibraryUseApproved,
+    provenance: recordObject(productSceneChanges.provenance || baseProvenance),
     sourceEntry: 'studio_workspace',
+    ...(input.productScene ? {
+      verifiedDeduplicatedUpdate: {
+        title: input.name || input.mediaName,
+        folder: input.folder,
+        type: 'video' as const,
+        duration,
+        width: width > 0 ? Math.round(width) : 0,
+        height: height > 0 ? Math.round(height) : 0,
+        sourceType,
+        sourceName: input.name || input.mediaName,
+        productId: input.productScene.productId,
+        productName: input.productScene.productName,
+        tags: typeof productSceneChanges.tags === 'string' ? productSceneChanges.tags : undefined,
+        shotFunction: typeof productSceneChanges.shotFunction === 'string' ? productSceneChanges.shotFunction : undefined,
+        licenseEvidence: productSceneReuse.licenseEvidence,
+        commercialUseApproved: productSceneReuse.commercialUseApproved,
+        derivativesApproved: productSceneReuse.derivativesApproved,
+        rawLibraryUseApproved: productSceneReuse.rawLibraryUseApproved,
+      },
+    } : {}),
     media: { key: objectKey, etag: storedMedia.head.etag, contentType: input.mimeType },
     poster: { key: posterKey, etag: storedPoster.head.etag, contentType: poster.contentType },
   });
@@ -7147,6 +7622,20 @@ studioRouter.post('/materials/file', async (req, res) => {
   const sourceUrl = String(req.query.sourceUrl || '');
   if (!['video', 'image', 'audio'].includes(type)) {
     res.status(400).json({ ok: false, error: 'invalid type' });
+    return;
+  }
+  let productSceneIntent: ProductSceneUploadIntent | undefined;
+  try {
+    productSceneIntent = await resolveProductSceneUploadIntent({
+      tenantId,
+      type,
+      sourceType,
+      productId: req.query.productId,
+      productSceneType: req.query.productSceneType,
+    });
+  } catch (error) {
+    const response = productSceneUploadErrorResponse(error);
+    res.status(response?.status || 503).json({ ok: false, error: response?.message || '产品资料暂不可读取，请稍后重试' });
     return;
   }
 
@@ -7197,11 +7686,22 @@ studioRouter.post('/materials/file', async (req, res) => {
     return;
   }
 
+  const sha256 = digest.digest('hex');
+  let productScene: VerifiedProductSceneUpload | undefined;
+  try {
+    productScene = await verifyProductSceneUpload(productSceneIntent, storedPath, sha256);
+  } catch (error) {
+    fs.rmSync(tempDir, { recursive: true, force: true });
+    const response = productSceneUploadErrorResponse(error);
+    res.status(response?.status || 422).json({ ok: false, error: response?.message || '视频文件校验失败' });
+    return;
+  }
+
   try {
     const material = await saveMaterialUploadToDatabase({
       tenantId, name, folder, type: type as Material['type'], duration, width, height,
       usage, sourceType, sourceUrl, mimeType: contentType, mediaName: file,
-      mediaPath: storedPath, sizeBytes: bytes, sha256: digest.digest('hex'), tempDirectory: tempDir,
+      mediaPath: storedPath, sizeBytes: bytes, sha256, tempDirectory: tempDir, productScene,
     });
     if (['video', 'image'].includes(material.type)) {
       void requestMaterialAnalysis(tenantId, material.id).catch(() => {});
@@ -7218,9 +7718,23 @@ studioRouter.post('/materials/file', async (req, res) => {
 // POST /studio/materials  Body: { name, folder?, type, duration?, dataBase64, mimeType?, scope? } → 上传单个文件
 studioRouter.post('/materials', async (req, res) => {
   const { tenantId } = res.locals as AuthLocals;
-  const { name, folder = 'upload', type, duration = 0, width = 0, height = 0, dataBase64, mimeType, usage, sourceType, sourceUrl } = req.body ?? {};
+  const { name, folder = 'upload', type, duration = 0, width = 0, height = 0, dataBase64, mimeType, usage, sourceType, sourceUrl, productId, productSceneType } = req.body ?? {};
   if (!dataBase64 || !type) { res.status(400).json({ ok: false, error: 'dataBase64 and type required' }); return; }
   if (!['video', 'image', 'audio'].includes(type)) { res.status(400).json({ ok: false, error: 'invalid type' }); return; }
+  let productSceneIntent: ProductSceneUploadIntent | undefined;
+  try {
+    productSceneIntent = await resolveProductSceneUploadIntent({
+      tenantId,
+      type: String(type),
+      sourceType: String(sourceType || ''),
+      productId,
+      productSceneType,
+    });
+  } catch (error) {
+    const response = productSceneUploadErrorResponse(error);
+    res.status(response?.status || 503).json({ ok: false, error: response?.message || '产品资料暂不可读取，请稍后重试' });
+    return;
+  }
 
   const file = materialUploadFileName(type, String(mimeType || ''));
   const buf = Buffer.from(String(dataBase64).replace(/^data:[^,]+,/, ''), 'base64');
@@ -7230,6 +7744,16 @@ studioRouter.post('/materials', async (req, res) => {
   const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'lingshu-material-upload-'));
   const tempFile = path.join(tempDir, file);
   fs.writeFileSync(tempFile, buf, { mode: 0o600 });
+  const sha256 = createHash('sha256').update(buf).digest('hex');
+  let productScene: VerifiedProductSceneUpload | undefined;
+  try {
+    productScene = await verifyProductSceneUpload(productSceneIntent, tempFile, sha256);
+  } catch (error) {
+    fs.rmSync(tempDir, { recursive: true, force: true });
+    const response = productSceneUploadErrorResponse(error);
+    res.status(response?.status || 422).json({ ok: false, error: response?.message || '视频文件校验失败' });
+    return;
+  }
 
   try {
     const material = await saveMaterialUploadToDatabase({
@@ -7237,7 +7761,7 @@ studioRouter.post('/materials', async (req, res) => {
       duration: Number(duration) || 0, width: Number(width) || 0, height: Number(height) || 0,
       usage: String(usage || ''), sourceType: String(sourceType || ''), sourceUrl: String(sourceUrl || ''),
       mimeType: contentType, mediaName: file, mediaPath: tempFile, sizeBytes: buf.length,
-      sha256: createHash('sha256').update(buf).digest('hex'), tempDirectory: tempDir,
+      sha256, tempDirectory: tempDir, productScene,
     });
     if (['video', 'image'].includes(material.type)) {
       void requestMaterialAnalysis(tenantId, material.id).catch(() => {});
@@ -7450,30 +7974,68 @@ studioRouter.patch('/materials/:id', async (req, res) => {
     const inventory = await readMaterialLibrary(tenantId);
     const material = inventory.items.find(item => item.id === req.params.id && item.tenantId === tenantId && item.scope !== 'shared');
     if (!material) { res.status(404).json({ok:false,error:'素材不存在或不可编辑'}); return; }
-    const name = String(req.body?.name ?? '').trim().slice(0,120);
+    const body = recordObject(req.body);
+    const hasName = Object.prototype.hasOwnProperty.call(body, 'name');
+    const name = String(hasName ? body.name : material.name || '').trim().slice(0,120);
     if (!name) { res.status(400).json({ok:false,error:'请填写素材名称'}); return; }
-    const changes: Record<string,unknown> = {name};
-    if ('tags' in (req.body || {})) changes.tags = String(req.body.tags || '').trim().slice(0,500);
-    if ('productId' in (req.body || {})) {
-      const id = String(req.body.productId || '');
+    const changes: Record<string,unknown> = hasName ? {name} : {};
+    if ('tags' in body) changes.tags = String(body.tags || '').trim().slice(0,500);
+    const hasProductSceneType = Object.prototype.hasOwnProperty.call(body, 'productSceneType');
+    const requestedProductId = String('productId' in body ? body.productId || '' : material.productId || '').trim();
+    const existingSceneBinding = productSceneMaterialProvenanceOf(material as unknown as Record<string, unknown>);
+    let product: NonNullable<Awaited<ReturnType<typeof readTenantEnterpriseProfile>>['products']['items']>[number] | undefined;
+    if ('productId' in body || hasProductSceneType) {
       const profile = await readTenantEnterpriseProfile(tenantId);
-      const product = (profile.products.items || []).find((item,index) => productIdentity(item,index) === id);
-      if (id && !product) { res.status(400).json({ok:false,error:'关联产品不在当前企业资料中'}); return; }
-      changes.productId = id; changes.productName = product?.name || '';
+      product = (profile.products.items || []).find((item,index) => productIdentity(item,index) === requestedProductId);
+      if (requestedProductId && !product) { res.status(400).json({ok:false,error:'关联产品不在当前企业资料中'}); return; }
+      if (hasProductSceneType && !product) { res.status(400).json({ok:false,error:'请先选择当前企业资料中的产品'}); return; }
+      Object.assign(changes, 'productId' in body
+        ? productSceneMaterialProductAssociationChanges({
+          material: { ...material, ...changes },
+          productId: requestedProductId,
+          productName: String(product?.name || ''),
+        })
+        : { productId: requestedProductId, productName: product?.name || '' });
     }
-    if ('primaryTheme' in (req.body || {})) {
-      const theme = String(req.body.primaryTheme || '');
+    if ('primaryTheme' in body) {
+      const theme = String(body.primaryTheme || '');
       if (!MATERIAL_THEMES.includes(theme as any)) { res.status(400).json({ok:false,error:'主题标签无效'}); return; }
       changes.primaryTheme = theme;
       changes.themeTags = [theme];
       changes.classificationStatus = 'completed';
       changes.classificationSource = 'user';
     }
+    if (hasProductSceneType) {
+      const kind = String(body.productSceneType || '') as ProductSceneKind;
+      if (!PRODUCT_SCENE_KINDS.includes(kind)) { res.status(400).json({ok:false,error:'产品预制场景类型无效'}); return; }
+      if (!existingSceneBinding) {
+        res.status(409).json({ok:false,error:'请从产品素材详情中上传预制素材，系统需要校验原始视频文件'});
+        return;
+      }
+      if (!productSceneMaterialProductionEligible(material as unknown as Record<string, unknown>, existingSceneBinding)) {
+        res.status(409).json({ok:false,error:'该素材的原始文件校验凭证已失效，请重新上传'});
+        return;
+      }
+      Object.assign(changes, productSceneMaterialBindingChanges({
+        material: { ...material, ...changes },
+        productId: requestedProductId,
+        productName: String(product?.name || ''),
+        kind,
+        verification: {
+          durationSeconds: existingSceneBinding.verifiedDurationSeconds,
+          width: existingSceneBinding.verifiedWidth,
+          height: existingSceneBinding.verifiedHeight,
+          decodedFrameCount: existingSceneBinding.decodedFrameCount,
+          verificationMethod: existingSceneBinding.verificationMethod,
+          contentSha256: existingSceneBinding.contentSha256,
+        },
+      }));
+    }
     const saved = material.id.startsWith('pb-')
-      ? Boolean(await getOwnedCloudMaterialRecord(material.id.slice(3), tenantId)) && await updateCloudMaterial(material.id.slice(3), {...changes,title:name})
+      ? Boolean(await getOwnedCloudMaterialRecord(material.id.slice(3), tenantId)) && await updateCloudMaterial(material.id.slice(3), {...changes,...(hasName ? {title:name} : {})})
       : updateLocalMaterial(material.id,tenantId,changes);
     if (!saved) throw Error('素材修改保存失败');
-    res.json({ok:true,material:await materialResponse({...material,...changes} as Material,tenantId)});
+    res.json({ok:true,material:await materialResponse({...material,...changes,name} as Material,tenantId)});
   } catch (error) { res.status(503).json({ok:false,error:error instanceof Error ? error.message : '素材修改失败'}); }
 });
 

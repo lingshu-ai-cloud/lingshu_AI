@@ -17,6 +17,7 @@ import SupportAccessControl from './SupportAccessControl';
 import EnterpriseProductImportCard, { type ProductApiStatus } from './EnterpriseProductImportCard';
 import type { AppliedProfile } from './enterprise/KnowledgeIntakePanel';
 import {readWeeklyEnterpriseFactTarget} from '../lib/weeklyEnterpriseFactNavigation';
+import type { ProductScenePreparationPlan } from '../../shared/contracts/productScenePreparation';
 
 interface ProductAsset {
   name: string;
@@ -51,6 +52,7 @@ interface ProductItem {
   certificateImages?: ProductAsset[];
   sceneImages?: ProductAsset[];
   brandAssets?: ProductAsset[];
+  productScenePreparation?: ProductScenePreparationPlan;
 }
 
 interface PendingProductImport {

@@ -13,6 +13,7 @@ import {
   type AvatarProps,
   type ButtonProps,
   type ImageProps,
+  type MasonryProps,
   type ModalProps,
   type ProgressProps,
   type StepsProps,
@@ -204,11 +205,13 @@ export function LsMasonryGallery({
   emptyText = '暂无素材',
   className = '',
   layout = 'masonry',
+  columns = { xs: 1, sm: 2, md: 3, lg: 4, xl: 5 },
 }: {
   items: LsMasonryItem[];
   emptyText?: string;
   className?: string;
   layout?: 'masonry' | 'grid';
+  columns?: MasonryProps['columns'];
 }) {
   if (!items.length) return <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description={emptyText} />;
   if (layout === 'grid') return (
@@ -219,7 +222,7 @@ export function LsMasonryGallery({
   return (
     <Masonry
       className={`ls-masonry-gallery ${className}`.trim()}
-      columns={{ xs: 1, sm: 2, md: 3, lg: 4, xl: 5 }}
+      columns={columns}
       gutter={[16, 16]}
       items={items.map(item => ({ key: item.id, data: item, children: item.content }))}
     />

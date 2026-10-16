@@ -1,6 +1,7 @@
 import { authHeader } from './auth';
 import { studioApi, type Material } from './studioApi';
 import type { MaterialSourceCategory, MaterialTheme } from '../../shared/materialTaxonomy';
+import type { ProductScenePreparationReadModel } from '../../shared/contracts/productScenePreparation';
 
 export interface DigitalHumanCapabilities {
   available: boolean;
@@ -79,8 +80,16 @@ export interface DigitalHumanJob {
 
 export type MaterialLibraryPurpose = 'library' | 'reference' | 'all';
 export type MaterialLibraryFacets = { sources: Record<MaterialSourceCategory, number>; themes: Record<MaterialTheme, number> };
-export type MaterialLibraryQuery = { sourceCategory?: MaterialSourceCategory; theme?: MaterialTheme; query?: string; page?: number; pageSize?: number };
-export type MaterialLibraryState = { items?: Material[]; status: 'ready' | 'partial' | 'unavailable'; sources: Array<{ source: string; state: string; message: string }>; total?: number; page?: number; pageSize?: number; facets?: MaterialLibraryFacets };
+export type MaterialLibraryQuery = {
+  sourceCategory?: MaterialSourceCategory;
+  theme?: MaterialTheme;
+  query?: string;
+  productId?: string;
+  excludeProductAssociated?: boolean;
+  page?: number;
+  pageSize?: number;
+};
+export type MaterialLibraryState = { items?: Material[]; status: 'ready' | 'partial' | 'unavailable'; sources: Array<{ source: string; state: string; message: string }>; total?: number; page?: number; pageSize?: number; facets?: MaterialLibraryFacets; productSceneSlots?: ProductScenePreparationReadModel[] };
 let latestMaterialLibraryState: MaterialLibraryState | null = null;
 export const getMaterialLibraryState = () => latestMaterialLibraryState;
 function publishMaterialLibraryState(state: MaterialLibraryState) { latestMaterialLibraryState = state; window.dispatchEvent(new CustomEvent('lingshu:material-library-status', { detail: state })); }
@@ -90,14 +99,17 @@ export async function fetchMaterialLibrary(purpose: MaterialLibraryPurpose = 'li
     if (filters.sourceCategory) query.set('sourceCategory', filters.sourceCategory);
     if (filters.theme) query.set('theme', filters.theme);
     if (filters.query) query.set('query', filters.query);
+    if (filters.productId) query.set('productId', filters.productId);
+    if (filters.excludeProductAssociated) query.set('excludeProductAssociated', '1');
     if (filters.page) query.set('page', String(filters.page));
     if (filters.pageSize) query.set('pageSize', String(filters.pageSize));
     const response = await fetch(`/api/overseas/studio/materials?${query.toString()}`, { headers: authHeader(), cache: 'no-store', signal: AbortSignal.timeout(15000) });
     if (response.status === 401) throw Error('登录已失效，请重新登录后读取素材');
     const data = await response.json();
     if (!response.ok || !Array.isArray(data.items)) throw Error(data.error || '素材库暂时无法读取，请重试');
-    publishMaterialLibraryState(data);
-    return data;
+    const state = { ...data, productSceneSlots: Array.isArray(data.productSceneSlots) ? data.productSceneSlots : [] } as MaterialLibraryState & { items: Material[] };
+    publishMaterialLibraryState(state);
+    return state;
   } catch (error) {
     const message = error instanceof Error ? error.message : '素材库读取失败';
     publishMaterialLibraryState({ status: 'unavailable', sources: [{ source: 'server', state: 'unavailable', message: /timeout|abort|fetch|network/i.test(message) ? '素材库连接中断或超时，请重试' : message }] });
