@@ -304,8 +304,12 @@ export default function EnterprisePresenters({
     {!loaded ? <p role="status" className="mt-5 text-sm text-text-muted">正在读取已授权人物…</p> : !value.presenters.length ? <div className="mt-5 rounded-lg border border-dashed border-border p-8 text-center"><UserRound className="mx-auto text-text-muted" /><p className="mt-3 text-sm font-semibold">暂无已授权人物</p><p className="mt-1 text-xs text-text-muted">请前往数字员工新手引导完成首次接入。</p><Button className="mt-4" onClick={openDigitalHumanOnboarding}>打开数字人接入</Button></div> : <div className="mt-5 divide-y divide-border rounded-lg border border-border">
       {value.presenters.map(presenter => {
         const referenceIds = presenter.referenceMaterialIds || [];
-        const initialPhotoMaterialId = materials.find(item => item.type === 'image' && referenceIds.includes(item.id))?.id;
-        const initialVideoMaterialId = materials.find(item => item.type === 'video' && referenceIds.includes(item.id))?.id;
+        const creationId = presenter.rightsEvidence?.authorizationRef?.match(/^document:\/\/studio_presenter_assets\/([^/]+)\//)?.[1];
+        const creationPreparation = creationId ? creationPreparations[creationId] : undefined;
+        const initialPhotoMaterialId = materials.find(item => item.type === 'image' && referenceIds.includes(item.id))?.id
+          || creationPreparation?.photoMaterialId;
+        const initialVideoMaterialId = materials.find(item => item.type === 'video' && referenceIds.includes(item.id))?.id
+          || creationPreparation?.videoMaterialId;
         const certificationOpen = certifyingPresenterId === presenter.id;
         return <article key={presenter.id} className="p-4">
         <div className="flex flex-wrap items-center justify-between gap-4">

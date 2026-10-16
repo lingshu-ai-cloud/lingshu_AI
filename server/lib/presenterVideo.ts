@@ -85,6 +85,29 @@ export async function presenterVideoFrame(bytes: Buffer, atSeconds = 1): Promise
 
 export class PresenterAudioPreparationError extends Error {}
 
+/** Prepare a reviewable voice sample locally; non-silence is only a screening hint, not speaker verification. */
+export async function extractPresenterVoiceCandidate(bytes: Buffer): Promise<{ audio: Buffer; durationSeconds: number; nonSilentSeconds: number }> {
+  if (!ffmpegStatic) throw new PresenterAudioPreparationError('本地音频提取组件不可用');
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'lingshu-presenter-candidate-'));
+  try {
+    const input = path.join(dir, 'source');
+    const output = path.join(dir, 'candidate.mp3');
+    await fs.writeFile(input, bytes);
+    const { stderr } = await run(String(ffmpegStatic), [
+      '-hide_banner', '-y', '-i', input, '-map', '0:a:0', '-vn', '-ac', '1', '-ar', '44100',
+      '-af', 'silencedetect=noise=-35dB:d=0.3', '-c:a', 'libmp3lame', '-b:a', '96k', output,
+    ], { timeout: 120_000, maxBuffer: 4 * 1024 * 1024 });
+    const audio = await fs.readFile(output);
+    if (audio.length < 10_000 || audio.length > 10 * 1024 * 1024) throw new Error('音频为空或超过 10MB');
+    const durationMatch = stderr.match(/Duration:\s*(\d+):(\d+):(\d+(?:\.\d+)?)/);
+    const durationSeconds = durationMatch ? Number(durationMatch[1]) * 3600 + Number(durationMatch[2]) * 60 + Number(durationMatch[3]) : 0;
+    const silence = [...stderr.matchAll(/silence_duration:\s*(\d+(?:\.\d+)?)/g)].reduce((sum, match) => sum + Number(match[1]), 0);
+    return { audio, durationSeconds, nonSilentSeconds: Math.max(0, Math.round((durationSeconds - silence) * 10) / 10) };
+  } catch {
+    throw new PresenterAudioPreparationError('视频口播提取失败或没有可用音轨，请上传录音或直接补录');
+  } finally { await fs.rm(dir, { recursive: true, force: true }); }
+}
+
 /** Normalize browser containers to actual MP3 before declaring the MIME to HeyGen. */
 export async function normalizePresenterAudio(bytes: Buffer): Promise<Buffer> {
   if (!ffmpegStatic) throw new PresenterAudioPreparationError('本地录音转换组件不可用，未提交声音克隆');

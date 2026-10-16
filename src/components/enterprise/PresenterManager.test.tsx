@@ -17,7 +17,9 @@ test('presenter onboarding keeps the existing single-source editor and adds unif
   assert.match(source, /直接录音（推荐）/);
   assert.match(source, /开始录音/);
   assert.doesNotMatch(source, />提交本人声音</);
-  assert.match(source, /人像授权通过后，可在保存人物时一并录入本人声音/);
+  assert.match(source, /声音素材可先准备；人像授权通过后/);
+  assert.match(source, /voiceCandidateFromVideo\(selectedFile\)/);
+  assert.match(source, /视频口播与补录/);
   assert.match(source, /也可直接提交较短的有效录音/);
   assert.match(source, /已完成，可继续绑定/);
   assert.match(source, /presenterConsentReturn/);
@@ -40,8 +42,9 @@ test('presenter onboarding keeps the existing single-source editor and adds unif
   assert.match(source, /邀请您创建属于自己的口播角色/);
   assert.match(source, /或上传本人录音/);
   assert.match(source, /需要高级人物替换时再单独进行方舟认证/);
-  assert.match(source, /productionApi\.uploadArkMaterial\(photoFile, 'image'\)/);
-  assert.match(source, /productionApi\.uploadArkMaterial\(videoFile, 'video'\)/);
+  assert.match(source, /const retainedPhoto = initialConfiguration && photoFile \? photoFile : await extractPresenterPhoto\(heyGenSource\)/);
+  assert.match(source, /productionApi\.uploadArkMaterial\(retainedPhoto, 'image'\)/);
+  assert.match(source, /productionApi\.uploadArkMaterial\(heyGenSource, 'video'\)/);
   assert.match(source, /presenterApi\.create\(\{ name: name\.trim\(\), type: videoSource \? 'digital_twin' : 'photo', uploadId:/);
   assert.match(source, /arkPreparation/);
   assert.match(source, /processingAuthorized: false/);
@@ -63,7 +66,7 @@ test('initial onboarding starts with only the two source choices and keeps the s
   assert.match(html, /选择 HeyGen 已有人物/);
   assert.match(html, /使用本人素材/);
   assert.match(html, />推荐</);
-  assert.match(html, /上传本人图片和视频，创建专属数字人/);
+  assert.match(html, /上传本人视频，默认抽帧作为照片，可自行替换/);
   assert.match(html, /从已授权人物库中直接选择并使用/);
   assert.match(html, /选择数字人接入方式/);
   assert.doesNotMatch(html, /人物名称/);
@@ -73,6 +76,11 @@ test('initial onboarding starts with only the two source choices and keeps the s
   assert.doesNotMatch(html, />完成</);
   assert.match(source, /统一人物正面照片/);
   assert.match(source, /统一人物本人视频/);
+  assert.match(source, /extractPresenterPhoto\(selectedFile\)/);
+  assert.match(source, /canvas\.toBlob\(resolve, 'image\/jpeg'/);
+  assert.match(source, /上传照片替换此帧/);
+  assert.match(source, /photoSource === 'frame' \? '从本人视频抽取的图片素材帧'/);
+  assert.ok(source.indexOf('aria-label="统一人物本人视频"') < source.indexOf('aria-label="统一人物正面照片"'), 'video input precedes photo override');
   assert.match(source, /本人图片/);
   assert.match(source, /本人视频/);
   assert.match(source, /photoFile && videoFile && <div role="status"/);
@@ -91,7 +99,8 @@ test('initial onboarding starts with only the two source choices and keeps the s
   assert.match(source, /initialConfiguration \|\| confirmed/);
   assert.match(source, /initialConfiguration \? '完成' : '提交资料并继续本人授权'/);
   assert.match(source, /<CheckCircle2 size=\{15\} \/>已完成/);
-  assert.match(source, /await requestOfficialConsent\(job\)/);
+  assert.match(source, /确认前往 HeyGen/);
+  assert.doesNotMatch(source, /setSubmitStage\('authorization'\); await requestOfficialConsent\(job\)/);
   assert.match(consentReturnFlow, /choose\(updated\.look, updated\)/);
   assert.match(consentReturnFlow, /人物原配声音已预选/);
   assert.match(consentReturnFlow, /录入本人声音/);
