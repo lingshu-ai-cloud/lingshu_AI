@@ -48,6 +48,10 @@ import AgentReply from './AgentReply';
 import AssistantComposer, { assistantAttachmentKind } from './assistant/AssistantComposer';
 import AssistantQuickEntries from './assistant/AssistantQuickEntries';
 import { useContentTaskIntake } from './assistant/useContentTaskIntake';
+import { assistantFileIntent, assistantFileMarker } from '../../shared/assistantFileIntent';
+import { createAssistantFile } from '../lib/assistantFilesApi';
+import { assistantWantsDetailedReply } from '../../shared/assistantReadableReply';
+import { AssistantStreamCompletion, appendAssistantStreamFailure } from '../lib/assistantStreamCompletion';
 import type { AssistantQuickExecution } from '../lib/assistantQuickEntries';
 import AssistantDecisionCenter, {
   assistantDecisionExecutionFeedback,
@@ -1031,6 +1035,10 @@ export default function GlobalAssistant({
     && pageContext.workflowStage === 'unplanned';
   const [pipelineEntries, setPipelineEntries] = useState<AssistantQuickExecution[]>([]);
   const [pipelineRefresh, setPipelineRefresh] = useState(0);
+  const [fileGenerating, setFileGenerating] = useState(false);
+  const [replyStreaming, setReplyStreaming] = useState(false);
+  const pendingMapFileRef = useRef(false);
+  useEffect(() => { setFileGenerating(false); }, [persistenceScopeKey]);
   const [contentIntakeEpoch, setContentIntakeEpoch] = useState(0);
   const pipelineInFlightRef = useRef(false);
   const pipelineModalOpenRef = useRef(false);
@@ -1294,6 +1302,7 @@ export default function GlobalAssistant({
   }, [welcomeBubbleStorageKey]);
 
   const resetTransientConversation = useCallback(() => {
+    pendingMapFileRef.current = false;
     setContentIntakeEpoch(value => value + 1);
     abortRef.current?.abort();
     abortRef.current = null;
@@ -1692,7 +1701,7 @@ export default function GlobalAssistant({
     uploadedAttachments: UploadedAssistantAttachment[] = [],
   ) => {
     const userText = text.trim();
-    if ((!userText && !uploadedAttachments.length) || loading) return;
+    if ((!userText && !uploadedAttachments.length) || loading || fileGenerating || replyStreaming) return;
     if (contentIntake.active) {
       if (uploadedAttachments.length) { void uiMessage.warning('请先完成或取消当前任务问答，再发送附件。'); return; }
       contentIntake.answer(userText);
@@ -1731,7 +1740,15 @@ export default function GlobalAssistant({
     setLoading(true);
     openAgent(routeAgent, 'chat');
 
-    const productionIntent = uploadedAttachments.length ? null : assistantProductionIntent(visibleText);
+    const clarifiedDiagram = pendingMapFileRef.current && /(?:业务|路线图|思维导图|流程图|战略)/u.test(visibleText);
+    const fileIntent = assistantFileIntent(visibleText) || (clarifiedDiagram ? { format: 'jpg' as const, diagram: true, needsMapScope: false } : null);
+    if (fileIntent?.needsMapScope) {
+      pendingMapFileRef.current = true;
+      setMessages(threadAgent, [...nextVisible, { role: 'assistant', content: '你需要的是业务路线图，还是地理地图？业务路线图可以导出 JPG；地理地图还需要明确地区、标注内容和可靠地图来源，不能用文字示意图冒充真实地图。' }]);
+      setLoading(false); persistThread(threadAgent); return;
+    }
+    pendingMapFileRef.current = false;
+    const productionIntent = uploadedAttachments.length || fileIntent ? null : assistantProductionIntent(visibleText);
     if (productionIntent && ['smartAssets', 'socialInspiration'].includes(page)) {
       setLoading(false);
       contentIntake.start(productionIntent.objective, productionIntent);
@@ -1833,7 +1850,7 @@ export default function GlobalAssistant({
     // Attachments deliberately bypass the deterministic action router. The
     // router accepts only server-signed business object/version inputs; a
     // newly uploaded material must never be guessed into those parameters.
-    const focusedMutationActionId = uploadedAttachments.length ? undefined : focusedNaturalLanguageActionId(visibleText);
+    const focusedMutationActionId = uploadedAttachments.length || fileIntent ? undefined : focusedNaturalLanguageActionId(visibleText);
     const focusedActionInput = focusedMutationActionId
       ? focusedNaturalLanguageActionInput(focusedCard, focusedMutationActionId)
       : undefined;
@@ -1912,14 +1929,23 @@ export default function GlobalAssistant({
         ].join('\n'),
       },
     ];
+    if (fileIntent) {
+      apiMessages[apiMessages.length - 1].content += `\n【本轮交付格式】用户明确要求${fileIntent.format.toUpperCase()}文件。你仅整理将进入文件的正文，系统随后实际渲染并提供下载。不要声称文件已经生成，不要提供下载链接，不要教用户自行复制导出。正文使用清晰标题、短段落，可完整展开所需双语内容；已知事实、建议、待确认条件分开，不编造日期、承诺或客户数据。${fileIntent.diagram ? '这是业务路线图：按真实先后顺序组织阶段、行动和交付结果，不冒充地理地图。' : ''}`;
+    }
 
     let assistantStarted = false;
+    setReplyStreaming(true);
+    let fileMessageIndex = -1;
+    if (fileIntent) setFileGenerating(true);
+    let fileBody = '';
+    let fileStreamError = '';
     const ensureAssistant = () => {
       if (!currentScope()) return;
       if (assistantStarted) return;
       assistantStarted = true;
       const current = useAssistantStore.getState().threads[threadAgent].messages;
-      setMessages(threadAgent, [...current, { role: 'assistant', content: '' }]);
+      fileMessageIndex = current.length;
+      setMessages(threadAgent, [...current, { role: 'assistant', content: fileIntent ? `正在整理并生成 ${fileIntent.format.toUpperCase()} 文件…` : '' }]);
       setLoading(false);
     };
     const patchAssistant = (patch: (msg: Message) => Message) => {
@@ -1927,7 +1953,9 @@ export default function GlobalAssistant({
       ensureAssistant();
       if (!assistantStarted) return;
       const current = [...useAssistantStore.getState().threads[threadAgent].messages];
-      current[current.length - 1] = patch(current[current.length - 1]);
+      const index = fileMessageIndex;
+      if (index < 0 || current[index]?.role !== 'assistant') return;
+      current[index] = patch(current[index]);
       setMessages(threadAgent, current);
     };
 
@@ -1977,15 +2005,19 @@ export default function GlobalAssistant({
       const reader = resp.body.getReader();
       const decoder = new TextDecoder();
       let buffer = '';
+      const completion = new AssistantStreamCompletion();
       const consumeLine = (line: string) => {
         if (!line.startsWith('data: ')) return;
         const payload = line.slice(6).trim();
-        if (payload === '[DONE]') return;
         try {
-          const obj = JSON.parse(payload) as { text?: string; sources?: { title: string; uri: string }[]; error?: string };
-          if (obj.text) patchAssistant(msg => ({ ...msg, content: msg.content + obj.text }));
+          const obj = completion.accept(payload);
+          if (!obj) return;
+          if (obj.text) {
+            if (fileIntent) fileBody += obj.text;
+            else patchAssistant(msg => ({ ...msg, content: msg.content + obj.text }));
+          }
           else if (obj.sources?.length) patchAssistant(msg => ({ ...msg, sources: obj.sources }));
-          else if (obj.error) patchAssistant(msg => ({ ...msg, content: msg.content || `模型连接断开：${obj.error}` }));
+          else if (obj.error) { fileStreamError = obj.error; }
         } catch {
           // Ignore malformed stream chunks.
         }
@@ -2007,7 +2039,19 @@ export default function GlobalAssistant({
         buffer = lines.pop() ?? '';
         for (const line of lines) consumeLine(line);
       }
+      buffer += decoder.decode();
       if (buffer.trim()) consumeLine(buffer);
+      completion.assertComplete();
+      if (fileIntent) {
+        if (!currentScope()) return;
+        if (fileStreamError || !fileBody.trim()) throw new Error('文件内容未完整生成，请重试。');
+        const file = await withAssistantTimeout(createAssistantFile({
+          title: visibleText.replace(/^(?:请|帮我|生成|导出|制作|给我|想要)+/u, '').trim().slice(0, 100) || '会话文档',
+          content: fileBody, format: fileIntent.format, diagram: fileIntent.diagram,
+        }, controller.signal), 50_000, () => controller.abort(), '文件生成超时，请重试。');
+        if (!currentScope()) return;
+        patchAssistant(msg => ({ ...msg, content: `已生成 ${fileIntent.format.toUpperCase()} 文件，可在下方下载。\n${assistantFileMarker(file.id)}` }));
+      }
     } catch (err: any) {
       if (!currentScope()) return;
       const message = err instanceof AssistantRequestTimeoutError || chatTimedOut
@@ -2015,17 +2059,19 @@ export default function GlobalAssistant({
         : err?.name === 'AbortError'
           ? '这次响应已停止。'
         : (err?.message || '请求失败，请稍后重试。');
-      if (assistantStarted) patchAssistant(msg => ({ ...msg, content: msg.content ? `${msg.content}\n\n${message}` : message }));
+      if (assistantStarted) patchAssistant(msg => ({ ...msg, content: fileIntent ? `文件未生成：${message}` : msg.content ? appendAssistantStreamFailure(msg.content, message) : message }));
       else setMessages(threadAgent, [...useAssistantStore.getState().threads[threadAgent].messages, { role: 'assistant', content: message }]);
     } finally {
       setLoading(false);
+      setFileGenerating(false);
+      setReplyStreaming(false);
       abortRef.current = null;
       if (currentScope()) {
         persistThread(threadAgent);
         onSessionRefresh?.();
       }
     }
-  }, [contentIntake, currentPageAgent, enterpriseContext, executeAssistantAction, loading, modal, uiMessage, onSessionRefresh, openAgent, page, pageContext, persistThread, presentActionResponse, setDraftInput, setFollowingLatest, setMessages, upsertTaskCard]);
+  }, [replyStreaming, fileGenerating, contentIntake, currentPageAgent, enterpriseContext, executeAssistantAction, loading, modal, uiMessage, onSessionRefresh, openAgent, page, pageContext, persistThread, presentActionResponse, setDraftInput, setFollowingLatest, setMessages, upsertTaskCard]);
 
   const sendComposerMessage = useCallback(async () => {
     if (loading || attachmentUploading) return;
@@ -2094,7 +2140,7 @@ export default function GlobalAssistant({
   }, [contentIntake.active, activeAgent, activeThread.draftInput, attachmentUploading, currentPageAgent, loading, openWeeklyPlanFromAssistant, pendingAttachments, persistThread, send, setDraftInput, setFollowingLatest, setMessages, weeklyPlanKickoffAvailable]);
 
   const runQuickExecution = useCallback(async function executeEntry(entry: AssistantQuickExecution, confirmations = 0, executionRequestId = `quick-${requestId()}`, fence = persistenceFenceRef.current) {
-    if (loading || pipelineInFlightRef.current) return;
+    if (loading || fileGenerating || pipelineInFlightRef.current) return;
     const currentScope = () => fence.active && persistenceFenceRef.current === fence;
     if (entry.id === 'business-create-week-plan') { openWeeklyPlanFromAssistant(); return; }
     const openTask = (taskId: string) => {
@@ -2166,7 +2212,7 @@ export default function GlobalAssistant({
     } catch (error) {
       if (currentScope()) recordReceipt(error instanceof Error ? error.message : '生产未启动，请重试。');
     } finally { pipelineInFlightRef.current = false; if (currentScope()) { setLoading(false); setPipelineRefresh(value => value + 1); } }
-  }, [contentIntake, loading, modal, uiMessage, onSessionRefresh, openWeeklyPlanFromAssistant, persistThread, setMessages, upsertTaskCard]);
+  }, [fileGenerating, contentIntake, loading, modal, uiMessage, onSessionRefresh, openWeeklyPlanFromAssistant, persistThread, setMessages, upsertTaskCard]);
 
   const handleTaskCardAction = useCallback(async (
     card: AssistantTaskCard,
@@ -3031,7 +3077,7 @@ export default function GlobalAssistant({
                           ? 'ls-messenger-bubble ls-messenger-bubble--outbound whitespace-pre-line'
                           : 'ls-messenger-bubble ls-messenger-bubble--inbound'}>
                           {msg.role === 'assistant'
-                            ? (msg.content ? <AgentReply content={msg.content} sources={msg.sources} onAction={onAction} onSuggest={suggestion => void send(suggestion, currentPageAgent)} /> : <span className="opacity-40">...</span>)
+                            ? (msg.content ? <AgentReply content={msg.content} sources={msg.sources} onAction={onAction} detailExpanded={assistantWantsDetailedReply(activeThread.messages.slice(0, index).reverse().find(message => message.role === 'user')?.content || '')} onSuggest={suggestion => void send(suggestion, currentPageAgent)} /> : <span className="opacity-40">...</span>)
                             : msg.content}
                         </div>
                       </div>
@@ -3137,7 +3183,7 @@ export default function GlobalAssistant({
                       label: '新建单条内容任务', prompt: '填写产品和内容目标', confirmation: 'preview' as const, operation: 'create' as const }] : []),
                     ...pipelineEntries,
                   ]}
-                  disabled={loading || attachmentUploading}
+                  disabled={loading || fileGenerating || attachmentUploading}
                   onQuestion={entry => void send(entry.prompt, currentPageAgent)}
                   onExecute={entry => void runQuickExecution(entry)}
                 />}
@@ -3146,7 +3192,7 @@ export default function GlobalAssistant({
                   ref={assistantInputRef}
                   draft={activeThread.draftInput}
                   files={pendingAttachments}
-                  disabled={loading || contentIntake.busy}
+                  disabled={loading || replyStreaming || fileGenerating || contentIntake.busy}
                   uploading={attachmentUploading}
                   error={attachmentError}
                   onDraftChange={value => setDraftInput(activeAgent, value)}

@@ -9,8 +9,8 @@ import type { ResolvedSocialTaskReference } from './socialContentScriptSources.j
 import { SOCIAL_WORK_PACKAGE_KINDS } from '../../shared/contracts/socialContentWorkflow.js';
 
 const plan = createSocialAssetSupplyPlan({ creationMode: 'viral_replication', productionApproach: 'ai_enhanced',
-  materialRoutingPolicyVersion: 'type-aware.v1', inventory: { productImageIds: ['KB'] },
-  shots: [{ shotId: 'product', function: 'demonstration', materialType: 'product', requestedDescription: '产品手持晃一圈' }] });
+  materialRoutingPolicyVersion: 'type-aware.v2', inventory: { productImageIds: ['KB'] },
+  shots: [{ shotId: 'product', function: 'demonstration', materialType: 'product', requestedDescription: '产品手持晃一圈',plannedDurationSeconds:8 }] });
 const fixture = () => ({ match: {}, referenceVideoAnalysis: { shots: [] }, shotMaterialMap: [],
   replicationScript: { version: 'draft-1', referenceAnalysisId: 'analysis', status: 'draft', shots: [
     { shotId: 'product', startSeconds: 0, endSeconds: 8, purpose: 'demonstration', visualInstruction: '产品手持晃一圈',
@@ -26,7 +26,7 @@ const forbidden = async () => { throw Error('unexpected mutation'); };
 const repository = { list: async () => ({ items: [task()], totalItems: 1, page: 1, perPage: 2, totalPages: 1 }),
   get: async () => null, create: forbidden, update: forbidden, access: forbidden } as unknown as Starter198Repository;
 
-test('new planning uses a transient canonical row, then returns one typed three-second script for freezing', async () => {
+test('new planning uses transient canonical row and preserves local timeline with an unselected product candidate', async () => {
   const source = fixture(), before = JSON.stringify(source);
   const result = await planNewSocialMaterialRoutes({ repository, tenantId: 'tenant', task: task(), resolved: source,
     readDetail: async input => {
@@ -35,9 +35,10 @@ test('new planning uses a transient canonical row, then returns one typed three-
       assert.equal(rows.items[0]!.replication_script, source.replicationScript);
       return { assetSupplyPlan: plan } as never;
     } });
-  assert.equal(result.replicationScript.shots[0]!.endSeconds, 3);
-  assert.equal(result.replicationScript.shots[0]!.materialPlan.productSceneReplication!.cameraLock.durationSeconds, 3);
-  assert.equal(result.replicationScript.status, 'review_required');
+  assert.equal(result.replicationScript.shots[0]!.endSeconds, 8);
+  assert.equal(result.replicationScript.shots[0]!.materialPlan.productSceneReplication!.cameraLock.durationSeconds, 8);
+  assert.equal(result.replicationScript.shots[0]!.materialPlan.materialRouting?.productGenerationDecision?.state,'eligible');
+  assert.equal(result.replicationScript.status, 'draft');
   assert.equal(JSON.stringify(source), before);
 });
 test('historical, confirmed and explicit revision scripts never enter new planning', async () => {
@@ -51,9 +52,9 @@ test('historical, confirmed and explicit revision scripts never enter new planni
   }
 });
 
-test('single-reference route planning keeps source cut points while preparing a three-second product clip', async()=>{
+test('single-reference route planning preserves cut points and duration before whole-film allocation', async()=>{
  const row=task();row.brief.referenceMode='single_source_fidelity';const source=fixture();
  const result=await planNewSocialMaterialRoutes({repository,tenantId:'tenant',task:row,resolved:source,readDetail:async()=>({assetSupplyPlan:plan}) as never});
  assert.equal(result.replicationScript.shots[0].startSeconds,0);assert.equal(result.replicationScript.shots[0].endSeconds,8);
- assert.equal(result.replicationScript.shots[0].materialPlan.productSceneReplication!.cameraLock.durationSeconds,3);
+ assert.equal(result.replicationScript.shots[0].materialPlan.productSceneReplication!.cameraLock.durationSeconds,8);
 });

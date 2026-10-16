@@ -38,7 +38,8 @@ const requests = (candidates: never[]) => materialRoutingRequests({ policyVersio
 
 test('normal API creation persists the policy while historic briefs remain unmarked', () => {
   const brief = defaultBrief(parseCreateSocialTask({ title: '产品视频', objective: '介绍产品' }));
-  assert.equal(parseSocialTaskBrief(brief).materialRoutingPolicyVersion, 'type-aware.v1');
+  assert.equal(parseSocialTaskBrief(brief).materialRoutingPolicyVersion, 'type-aware.v2');
+  assert.equal(parseSocialTaskBrief({...brief,materialRoutingPolicyVersion:'type-aware.v1'}).materialRoutingPolicyVersion,'type-aware.v1');
   const { materialRoutingPolicyVersion: _, ...legacy } = brief;
   assert.equal(parseSocialTaskBrief(legacy).materialRoutingPolicyVersion, undefined);
   assert.throws(() => parseSocialTaskBrief({ ...brief, materialRoutingPolicyVersion: 'unknown' }), /social_material_routing_policy_invalid/);
@@ -111,14 +112,15 @@ test('negative prompt and evidence prohibitions never become positive local-matc
   assert.deepEqual(result[0]!.localVideoMatch?.sourceRefs,['owned-usage']);
 });
 
-test('new product tasks default to a ten-yuan whole-film ceiling and cannot raise it through creation input', () => {
+test('new product tasks default to a fifteen-yuan whole-film ceiling and retain narrower explicit grants', () => {
   for (const requested of [undefined, null, 600, 10, 4]) {
     const input = parseCreateSocialTask({ title: '预算检查', objective: '产品正常制作', perItemBudgetCny: requested });
-    const expected = requested === 4 ? 4 : 10;
+    const expected = requested === 4 ? 4 : requested === 10 ? 10 : 15;
     assert.equal(input.perItemBudgetCny, expected);
     assert.equal(defaultBrief(input).perItemBudgetCny, expected);
   }
   assert.equal(defaultBrief({ title: '内部创建', objective: '制作', perItemBudgetCny: 600 } as never).perItemBudgetCny, 10);
+  assert.equal(defaultBrief({ title: '新版本内部创建', objective: '制作', materialRoutingPolicyVersion:'type-aware.v2', perItemBudgetCny: 600 } as never).perItemBudgetCny, 15);
 });
 
 test('normal creation and stored brief keep exact cached reference evidence without changing historical updates', () => {

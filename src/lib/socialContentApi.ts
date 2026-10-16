@@ -276,7 +276,7 @@ async function responseJson<T>(response: Response, kind: 'read' | 'write' | 'upl
   }
 }
 
-async function requestJson<T>(path: string, options?: RequestInit, operationKey?: string): Promise<T> {
+export async function requestSocialContentJson<T>(path: string, options?: RequestInit, operationKey?: string): Promise<T> {
   const method = String(options?.method || 'GET').toUpperCase();
   const readOnly = method === 'GET' || method === 'HEAD';
   const init: RequestInit = {
@@ -305,6 +305,8 @@ async function requestJson<T>(path: string, options?: RequestInit, operationKey?
   }
   return result;
 }
+
+const requestJson = requestSocialContentJson;
 
 async function uploadContentFile(taskId: string, file: Blob, name: string, usage: SocialContentFile['usage'], operationKey?: string): Promise<SocialContentUploadResult> {
   const query = new URLSearchParams({ usage, name });

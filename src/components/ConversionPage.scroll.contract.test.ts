@@ -41,6 +41,13 @@ test('conversation workspace gives its internal scrollers a bounded desktop row'
 test('mobile conversation workspace keeps a constrained flex height chain', () => {
   assert.match(
     styles,
-    /@media \(max-width:\s*767px\)[\s\S]*?\.ls-conversation-workspace\s*\{[^}]*display:\s*flex;[^}]*flex-direction:\s*column;/,
+    /@container \(max-width:\s*699px\)[\s\S]*?\.ls-conversation-workspace\s*\{[^}]*display:\s*flex;[^}]*flex-direction:\s*column;/,
   );
+});
+
+test('conversation columns respond to the space left after the application sidebar', () => {
+  assert.match(styles, /\.ls-conversation-container\s*\{[^}]*container-type:\s*inline-size;/s);
+  assert.match(styles, /@container \(max-width:\s*999px\)[\s\S]*?grid-template-columns:\s*minmax\(196px,\s*224px\)\s*minmax\(340px,\s*1fr\)/);
+  assert.match(styles, /@container \(max-width:\s*699px\)[\s\S]*?\.ls-conversation-workspace-nav\s*\{[^}]*display:\s*grid;/);
+  assert.match(page, /ls-conversation-workspace__slot[^`]*\$\{mobilePanel === 'chat' \? ' is-active' : ''\}/);
 });

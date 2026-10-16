@@ -8,6 +8,7 @@ import {currentDataAuthority,runWithDataAuthority} from '../storage/dataAuthorit
 import {prepareWeeklyEnterpriseFactFixture} from './weeklyEnterpriseFactSupplement.fixture.js';
 import {createLocalWeeklyExecutionRuntime,LOCAL_WEEKLY_CONSUMERS} from './localWeeklyExecutionRuntime.js';
 import type {WeeklyScanScope} from './weeklyScanScope.js';
+import {createWeeklySupplementRequestService} from '../socialPrograms/weeklySupplementRequests.js';
 
 test('local consumer persists exact scope, re-enters local authority on restart, fails closed after revision',async t=>{
  const f=await prepareWeeklyEnterpriseFactFixture(t),dir=await mkdtemp(path.join(os.tmpdir(),'local-weekly-consumer-'));
@@ -16,6 +17,11 @@ test('local consumer persists exact scope, re-enters local authority on restart,
  writeLocalAccountRecords(process.env.LOCAL_AUTH_ACCOUNTS_FILE,[{userId:'owner',tenantId:'tenant-a',email:'controlled@example.test',name:'Controlled test operator',accountType:'admin',role:'social_operator',salt:'test-only-unused',passwordHash:'test-only-unused',createdAt:'2026-10-01T00:00:00Z'}]);
  t.after(async()=>{for(const [k,v] of Object.entries(prior))if(v===undefined)delete process.env[k];else process.env[k]=v;await rm(dir,{recursive:true,force:true});});
  const scope={tenantId:'tenant-a',programId:f.task.programId,packageId:f.task.packageId,packageVersion:1,actorUserId:'owner'},seen:string[]=[];
+ const supplements=createWeeklySupplementRequestService(f.store),get=f.store.getById.bind(f.store);
+ f.store.getById=async(c,id)=>{if(c==='users')throw Error('local_identity_must_not_read_formal_users');return get(c,id);};
+ assert.deepEqual(await runWithDataAuthority('local',()=>supplements.list(scope)),[]);
+ await assert.rejects(runWithDataAuthority('local',()=>supplements.list({...scope,tenantId:'foreign'})),{code:'supplement_actor_forbidden'});
+ f.store.getById=get;
  const scan=async(a:WeeklyScanScope)=>{assert.equal(currentDataAuthority(),'local');assert.deepEqual(a,scope);seen.push(a.packageId);return{claimed:0,succeeded:0,pending:0,blocked:0,failed:0};};
  const runtime=createLocalWeeklyExecutionRuntime(f.store,{enabled:()=>true,scan});t.after(()=>runtime.stop());
  await assert.rejects(runWithDataAuthority('pocketbase',()=>runtime.connect(scope)),{code:'local_weekly_consumer_unavailable'});
@@ -23,7 +29,35 @@ test('local consumer persists exact scope, re-enters local authority on restart,
  const actual=await runWithDataAuthority('local',()=>runtime.connect(scope));runtime.stop();
  assert.equal(actual.started,true);assert.equal(actual.state,'idle');assert.equal(actual.dataAuthority,'local');assert(actual.lastScanFinishedAt);assert.equal(actual.lastResult?.succeeded,0);
  assert.equal((await f.store.list(LOCAL_WEEKLY_CONSUMERS)).totalItems,1);
- const resumed=createLocalWeeklyExecutionRuntime(f.store,{enabled:()=>true,scan});t.after(()=>resumed.stop());await resumed.tick();assert.equal(resumed.read(scope).state,'idle');assert(seen.length>=2);
+ const registrationsBefore=await f.store.list(LOCAL_WEEKLY_CONSUMERS);
+ const resumed=createLocalWeeklyExecutionRuntime(f.store,{enabled:()=>true,scan});t.after(()=>resumed.stop());await resumed.start();assert.equal(resumed.read(scope).state,'idle');assert(seen.length>=2);
+ assert.deepEqual(await f.store.list(LOCAL_WEEKLY_CONSUMERS),registrationsBefore,'startup restores existing opt-ins, never registers or upgrades a scope');
+ let blocked=true;
+ const lockRuntime=createLocalWeeklyExecutionRuntime(f.store,{enabled:()=>true,scan:async a=>{if(blocked)throw Error('local_store_atomic_lock_busy_reconciliation_required');return scan(a);}});t.after(()=>lockRuntime.stop());
+ await lockRuntime.start();assert.equal(lockRuntime.health().state,'failed');assert.equal(lockRuntime.health().failedScopes,1);assert.equal(lockRuntime.health().lastErrorCode,'local_store_atomic_lock_busy_reconciliation_required');
+ assert.equal(lockRuntime.read(scope).lastErrorCode,'local_store_atomic_lock_busy_reconciliation_required');
+ blocked=false;await lockRuntime.tick();assert.equal(lockRuntime.health().state,'watching');assert.equal(lockRuntime.health().failedScopes,0);assert.equal(lockRuntime.health().lastErrorCode,null);lockRuntime.stop();
+ let release!:()=>void;const barrier=new Promise<void>(resolve=>{release=resolve;});
+ const slow=createLocalWeeklyExecutionRuntime(f.store,{enabled:()=>true,scan:async a=>{await barrier;return scan(a);}});t.after(()=>slow.stop());
+ const startup=slow.start();await new Promise<void>(resolve=>setImmediate(resolve));
+ assert.equal(slow.health().started,true);assert.equal(slow.health().state,'scanning','long provider work is visible while HTTP bootstrap need not await start');
+ release();await startup;slow.stop();
  const before=seen.length;await f.store.create('social_weekly_operating_packages',{tenant_id:scope.tenantId,program_id:scope.programId,package_id:scope.packageId,version:2,payload:{...f.pkg,version:2}});
  await resumed.tick();assert.equal(seen.length,before);assert.equal(resumed.read(scope).lastErrorCode,'local_weekly_consumer_scope_stale');
+ assert.equal(resumed.health().staleScopes,1);assert.equal(resumed.health().failedScopes,0,'retired opt-ins remain visible but are not an active-scope execution failure');
+});
+test('startup restore failure is observable; disabled preview never scans or registers a package',async t=>{
+ const f=await prepareWeeklyEnterpriseFactFixture(t);
+ const scope={tenantId:'tenant-a',programId:f.task.programId,packageId:f.task.packageId,packageVersion:1};
+ const list=f.store.list.bind(f.store);let scans=0;
+ f.store.list=async(c,q)=>{if(c===LOCAL_WEEKLY_CONSUMERS)throw Error('storage inaccessible');return list(c,q);};
+ const disabled=createLocalWeeklyExecutionRuntime(f.store,{enabled:()=>false,scan:async()=>{scans++;return{claimed:0,succeeded:0,pending:0,blocked:0,failed:0};}});
+ t.after(()=>disabled.stop());await disabled.start();assert.equal(disabled.read(scope).state,'disabled');assert.equal(scans,0);
+ const runtime=createLocalWeeklyExecutionRuntime(f.store,{enabled:()=>true,scan:async()=>{scans++;return{claimed:0,succeeded:0,pending:0,blocked:0,failed:0};}});
+ t.after(()=>runtime.stop());await assert.rejects(runtime.start(),/storage inaccessible/);
+ assert.equal(runtime.read(scope).state,'failed');assert.equal(runtime.read(scope).lastErrorCode,'local_weekly_registration_restore_failed');assert.equal(scans,0);
+ assert.equal(runtime.health().state,'failed');assert.equal(runtime.health().lastErrorCode,'local_weekly_registration_restore_failed');
+ runtime.stop();f.store.list=list;await runtime.start();assert.equal(runtime.read(scope).lastErrorCode,null);assert.equal(scans,0);
+ assert.equal(runtime.health().state,'watching');assert.equal(runtime.health().lastErrorCode,null);
+ assert.equal((await f.store.list(LOCAL_WEEKLY_CONSUMERS)).totalItems,0,'recovery cannot invent registrations');
 });

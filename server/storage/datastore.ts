@@ -38,6 +38,8 @@ export interface ListResult<T = Record_> {
 
 /** CRUD surface every backend must implement. Collection = table name. */
 export interface DataStore {
+  /** Verified atomic aggregate CAS capability in the currently selected domain. */
+  supportsAtomicCompareAndSwap?(): boolean | Promise<boolean>;
   /** Database-arbitrated unique tenant/scope/subject lease support. */
   supportsAtomicOperationLease?(): boolean | Promise<boolean>;
   getById<T = Record_>(collection: string, id: string): Promise<T | null>;

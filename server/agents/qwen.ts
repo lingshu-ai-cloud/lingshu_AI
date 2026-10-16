@@ -2,6 +2,7 @@ import {submitStudioVoicePaidRequest,studioVoicePaidContext} from '../lib/studio
 import {submitMaterialAnalysisPaidRequest,type MaterialAnalysisPaidCall} from '../digitalEmployees/materialAnalysisPaidOperation.js';
 import {directorG5AccountRuleRequirements} from '../../shared/contracts/socialDirectorG5AccountRules.js';
 import OpenAI from 'openai';
+import {exactQwenScope} from './exactQwenScope.js';
 import {createHash} from 'node:crypto';
 import { GoogleGenAI } from '@google/genai';
 import fs from 'node:fs';
@@ -16,7 +17,7 @@ import { untrustedPromptData } from '../lib/untrustedPromptData.js';
 import type { StoryboardQaPhase, StoryboardQaScene, StoryboardQaObservation } from '../lib/storyboardAigcQuality.js';
 
 const QWEN_VL_MODEL = (env: NodeJS.ProcessEnv = process.env) => (env.QWEN_VL_MODEL ?? 'qwen-vl-max').trim();
-const QWEN_EXACT_VL_MODEL = (env: NodeJS.ProcessEnv = process.env) => (env.QWEN_EXACT_VL_MODEL ?? 'qwen3-vl-flash').trim();
+const QWEN_EXACT_VL_MODEL = (env: NodeJS.ProcessEnv = process.env) => (exactQwenScope()?.model ?? env.QWEN_EXACT_VL_MODEL ?? 'qwen3-vl-flash').trim();
 const BASE_URL = (env: NodeJS.ProcessEnv = process.env) => (env.DASHSCOPE_BASE_URL ?? 'https://dashscope.aliyuncs.com/compatible-mode/v1').trim();
 
 /** Keep these evidence fields explicit in every per-shot Qwen schema. The
@@ -41,14 +42,23 @@ export function getQwenProviderBinding(env: NodeJS.ProcessEnv = process.env){ret
  materialModel:(env.QWEN_MATERIAL_VL_MODEL||QWEN_EXACT_VL_MODEL(env)).trim(),imageModel:QWEN_VL_MODEL(env)};}
 function client(): OpenAI {
   const apiKey = dashscopeApiKey();
+  const scoped=exactQwenScope();
+  if(scoped && (scoped.endpoint!==BASE_URL()||scoped.credentialDigest!==createHash('sha256').update(apiKey).digest('hex')))throw Error('weekly_candidate_model_provider_binding_changed');
   return new OpenAI({
     apiKey,
     baseURL: BASE_URL(),
+    ...(scoped?.onProviderReceipt?{fetch:async(input:RequestInfo|URL,init?:RequestInit)=>{
+      const request=new Request(input,init),body=await request.clone().text();
+      const response=await fetch(request);
+      if(response.ok){const payload=await response.clone().json() as Record<string,unknown>;let requestModel:string|null=null;try{requestModel=String(JSON.parse(body).model??'')||null;}catch{}
+       await scoped.onProviderReceipt!({provider:'qwen',responseId:typeof payload.id==='string'?payload.id:null,model:typeof payload.model==='string'?payload.model:null,usage:payload.usage??null,httpStatus:response.status,requestModel,requestHash:createHash('sha256').update(body).digest('hex')});}
+      return response;
+    }}:{}),
     // Exact storyboard JSON is substantially larger than classification output.
     // Keep the transport timeout above the per-chunk deadline so our own abort
     // controller remains the single, observable timeout authority.
     timeout: Math.max(30_000, Number(process.env.QWEN_REQUEST_TIMEOUT_MS || 120_000)),
-    maxRetries: Math.max(0, Math.min(2, Number(process.env.QWEN_MAX_RETRIES || 0))),
+    maxRetries: exactQwenScope() ? 0 : Math.max(0, Math.min(2, Number(process.env.QWEN_MAX_RETRIES || 0))),
   });
 }
 

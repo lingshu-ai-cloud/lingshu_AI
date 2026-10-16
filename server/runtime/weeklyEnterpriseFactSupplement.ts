@@ -5,7 +5,7 @@ import {readWeeklyReviewActor} from '../socialPrograms/weeklyReviewEvidence.js';
 import type {OperatingAuthoritySnapshot,BusinessContentGoal} from '../../shared/contracts/socialOperatingDecision.js';
 import type {DataStore,Record_} from '../storage/datastore.js';
 import type {WeeklyExecutionTask,WeeklyOperatingPackage,VersionedSocialRef,WeeklyProductionStepKind} from '../../shared/contracts/socialProgram.js';
-import {enterpriseFactContentHash,type EnterpriseProfile} from '../routes/enterprise.js';
+import {verifyEnterpriseFactContent,type EnterpriseProfile} from '../routes/enterprise.js';
 import {socialJson,socialObject,socialRequestHash} from '../starter198/socialContentValidation.js';
 export const WEEKLY_ENTERPRISE_FACT_STEPS:ReadonlySet<WeeklyProductionStepKind>=new Set(['material_preparation','material_readiness','script','storyboard','asset_generation','video_generation']);
 export const ENTERPRISE_FACT_GAP='weekly_enterprise_facts_required';
@@ -25,7 +25,7 @@ export async function checkWeeklyEnterpriseFactSupplement(input:{store:DataStore
  const profileRow=profiles.items[0]!,profile=socialObject(socialJson(profileRow.profile)) as unknown as EnterpriseProfile,version=profile?.factVersion;
  if(profileRow.tenant_id!==task.tenantId||!profile||!version)return unavailable('confirmation_unknown',sourceHash);
  if(!version.id||!Number.isSafeInteger(version.revision)||version.revision<1||!version.confirmedBy?.trim()||['system','legacy_migration'].includes(version.confirmedBy)||!Number.isFinite(Date.parse(version.confirmedAt))||Date.parse(version.confirmedAt)>now.getTime())return unavailable('confirmation_unknown',sourceHash);
- if(version.contentHash!==enterpriseFactContentHash(profile))return unavailable('confirmed_content_hash_changed',sourceHash);
+ if(!verifyEnterpriseFactContent(profile).verified)return unavailable('confirmed_content_hash_changed',sourceHash);
 
  const actor=await readWeeklyReviewActor(store,task.tenantId,version.confirmedBy);if(!actor||actor.tenantId!==task.tenantId||!organizationRoleOrNull(actor.role)||actor.disabled===true||actor.active===false||['disabled','suspended'].includes(String(actor.status)))return unavailable('confirmation_actor_unknown',sourceHash);
  if(refs.some(r=>r.id!==version.id||r.version!==version.revision)){

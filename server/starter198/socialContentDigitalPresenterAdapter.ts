@@ -9,8 +9,9 @@ import type { SocialProductionAsset } from './socialContentProductionPlan.js';
 export interface AuthorizedDigitalPresenter {
   presenterAssetId: string;
   providerId: string;
-  providerPresenterId: string;
-  providerVoiceId: string;
+  identityMode?: 'provider_avatar' | 'enterprise_asset_first_frame';
+  providerPresenterId: string | null;
+  providerVoiceId: string | null;
   authorizationRef: string;
   consentRef: string;
   assetVersion: number;
@@ -245,7 +246,11 @@ function visualControl(context: Parameters<SocialAssetSupplyProviderAdapter['exe
     && context.shot.digitalHumanPlan.method === 'talking';
   const interaction: DigitalPresenterVisualControl['interaction'] = talkingReplication ? 'talking' : inferredInteraction;
   const productGroups = context.shot.productSceneReplication?.productIdentity.groups ?? [];
-  const controls = new Set<DigitalPresenterControlCapability>(['scripted_speech', 'timing_control']);
+  // A measured motion-only presenter shot is not a lip-sync operation. The
+  // trusted production router supplies this flag; omission remains strict.
+  const silentMotion = context.shot.digitalHumanPlan?.method === 'reenact'
+    && (context.shot.digitalHumanPlan as typeof context.shot.digitalHumanPlan & { silentMotion?: boolean }).silentMotion === true;
+  const controls = new Set<DigitalPresenterControlCapability>(silentMotion ? ['timing_control'] : ['scripted_speech', 'timing_control']);
   if (context.shot.digitalHumanPlan?.method !== 'talking') controls.add('reference_motion');
   if (!talkingReplication && interaction !== 'talking') controls.add('guided_action');
   if (!talkingReplication && ['person_holds_product', 'person_uses_product', 'product_applied_to_face'].includes(interaction)) controls.add('product_interaction');
@@ -361,23 +366,28 @@ export function createSocialDigitalPresenterAdapter(
         presenterAssetId,
         socialAccountId: plan.accountPresenterLock?.socialAccountId,
       });
+      const assetOnlyMotion=presenter?.providerId==='seedance'&&presenter.identityMode==='enterprise_asset_first_frame'
+        &&plan.method==='reenact'&&plan.silentMotion===true&&presenter.providerPresenterId===null&&presenter.providerVoiceId===null;
       if (!presenter || presenter.authorized !== true || !presenter.authorizationRef || !presenter.consentRef
-        || !presenter.providerPresenterId || !presenter.providerVoiceId) return null;
+        ||presenter.presenterAssetId!==presenterAssetId||!Number.isSafeInteger(presenter.assetVersion)||presenter.assetVersion<1
+        ||(!assetOnlyMotion&&(!presenter.providerPresenterId || !presenter.providerVoiceId))) return null;
       const lock = plan.accountPresenterLock;
       if (lock && (
         presenter.presenterAssetId !== lock.presenterAssetId
         || presenter.socialAccountId !== lock.socialAccountId
         || presenter.presenterProfileId !== lock.presenterProfileId
         || presenter.presenterProfileVersion !== lock.presenterProfileVersion
-        || presenter.providerPresenterId !== lock.avatarId
-        || presenter.providerVoiceId !== lock.voiceProfileId
+        || (!assetOnlyMotion&&presenter.providerPresenterId !== lock.avatarId)
+        || (!assetOnlyMotion&&presenter.providerVoiceId !== lock.voiceProfileId)
         || presenter.consentRef !== lock.consentRef
         || presenter.consistencyKey !== lock.consistencyKey
       )) return null;
       // Visual directions/captions are not speech. Legacy values are used only
       // to locate an already accepted request through a recovery-only port.
       const script = [context.baselineScene.narration, context.baselineScene.voiceover]
-        .find(value => typeof value === 'string' && value.trim())?.trim() ?? '';
+        .find(value => typeof value === 'string' && value.trim())?.trim()
+        ?? (plan.method === 'reenact' && (plan as typeof plan & { silentMotion?: boolean }).silentMotion === true
+          ? JSON.stringify(control.action) : '');
       const legacyScript = String(context.baselineScene.script || context.baselineScene.caption || '').trim();
       const requestScript = script || legacyScript;
       if (!requestScript) throw new Error('digital_presenter_spoken_text_required');

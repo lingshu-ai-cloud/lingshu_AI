@@ -78,6 +78,21 @@ test('history persists and is isolated by tenant and user; client cannot forge a
   } finally {await api.close();}
 });
 
+test('sessions are isolated by edition and archived conversations stay readable', async () => {
+  const {store} = memoryStore(); const api = await serve(store);
+  try {
+    const operator = await api.request('/assistant/sessions', {title:'运营会话',contextMode:'operator'});
+    const service = await api.request('/assistant/sessions', {title:'客服会话',contextMode:'customer_service'});
+    assert.equal((await api.request('/assistant/sessions?contextMode=operator')).body.sessions[0].id, operator.body.session.id);
+    assert.equal((await api.request('/assistant/sessions?contextMode=customer_service')).body.sessions[0].id, service.body.session.id);
+    assert.equal((await api.request(`/assistant/sessions/${service.body.session.id}/archive`, {})).status, 200);
+    assert.equal((await api.request('/assistant/sessions?contextMode=customer_service')).body.sessions.length, 0);
+    const archived = await api.request('/assistant/sessions?contextMode=customer_service&archived=all');
+    assert.equal(archived.body.sessions[0].archivedAt.length > 0, true);
+    assert.equal((await api.request(`/assistant/sessions/${service.body.session.id}/messages`)).status, 200);
+  } finally {await api.close();}
+});
+
 test('support is read-only and command links are verified against authoritative receipts', async () => {
   const {store} = memoryStore({mobile_workbench_action_receipts:[{id:'command-a',tenant_id:'tenant-a',user_id:'user-a',status:'running'},{id:'command-b',tenant_id:'tenant-b',user_id:'user-b',status:'succeeded'}]});
   const api=await serve(store);

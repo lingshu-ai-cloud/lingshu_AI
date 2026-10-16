@@ -168,6 +168,8 @@ async function executePersistedProduction(job: ContentExecutionJob): Promise<voi
     return;
   }
   let record = await requireSocialTask({ repository, tenantId: job.tenantId, taskId: job.taskId });
+  const {reconcileSocialContentOrderProjection}=await import('./socialContentOrderProjection.js');
+  await reconcileSocialContentOrderProjection({repository,tenantId:job.tenantId,taskId:job.taskId});
   const rawJob = await store.getById<StarterRecord>('content_execution_jobs', job.id);
   const explicitRetry = socialObject(socialObject(rawJob?.checkpoints)?.['runtime.retry']);
   if (socialText(record.status) === 'paused'

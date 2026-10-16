@@ -932,6 +932,33 @@ export function enterpriseFactContentHash(profile: EnterpriseProfile): string {
   return createHash('sha256').update(stableFactJson(normalizeProfile(profile))).digest('hex');
 }
 
+/** Verify an existing confirmation without issuing a new confirmation. The old
+ * minimal-onboarding writer explicitly assigned focusProducts: undefined; the
+ * hash serializer encoded it as null, while JSON storage omitted the property.
+ * Replay only that documented write shape and require the ENTIRE old digest to
+ * match. A changed product, company field, or other missing property still fails.
+ */
+export function verifyEnterpriseFactContent(profile: EnterpriseProfile): {
+  verified: boolean;
+  mode: 'exact' | 'legacy_json_omitted_focus_products' | 'mismatch';
+  persistedHash: string;
+  confirmedHash: string;
+  omittedPaths: string[];
+} {
+  const persistedHash = enterpriseFactContentHash(profile);
+  const confirmedHash = profile.factVersion?.contentHash || '';
+  if (confirmedHash && persistedHash === confirmedHash) {
+    return { verified: true, mode: 'exact', persistedHash, confirmedHash, omittedPaths: [] };
+  }
+  if (confirmedHash && profile.strategy && !Object.hasOwn(profile.strategy, 'focusProducts')) {
+    const replay = { ...profile, strategy: { ...profile.strategy, focusProducts: undefined } };
+    if (enterpriseFactContentHash(replay) === confirmedHash) {
+      return { verified: true, mode: 'legacy_json_omitted_focus_products', persistedHash, confirmedHash, omittedPaths: ['strategy.focusProducts'] };
+    }
+  }
+  return { verified: false, mode: 'mismatch', persistedHash, confirmedHash, omittedPaths: [] };
+}
+
 function confirmedFactVersion(
   profile: EnterpriseProfile,
   previous?: EnterpriseProfile | null,
@@ -1132,6 +1159,10 @@ async function readTenantProfile(tenantId: string): Promise<EnterpriseProfile> {
     where: { tenant_id: tenantId }, page: 1, perPage: 1,
   });
   const profile = storedProfile(result.items[0]?.profile);
+  // GET must not manufacture a new member confirmation from changed bytes.
+  // Consumers verify the preserved version (including the proven legacy JSON
+  // omission above); an actual business save is the only new confirmation path.
+  if (profile?.factVersion) return profile;
   if (profile) return withConfirmedFactVersion(
     profile,
     profile,
@@ -1162,8 +1193,9 @@ export async function readTenantEnterpriseProfileStrict(tenantId: string): Promi
   if (row.tenant_id !== tenantId) throw new Error('enterprise_context_tenant_mismatch');
   const profile = storedProfile(row.profile);
   if (!profile) return null;
-  return withConfirmedFactVersion(profile, profile, profile.factVersion?.confirmedBy || 'legacy_migration',
-    new Date(profile.factVersion?.confirmedAt || profile.dataGovernance?.lastSavedAt || 0));
+  if (profile.factVersion) return profile;
+  return withConfirmedFactVersion(profile, profile, 'legacy_migration',
+    new Date(profile.dataGovernance?.lastSavedAt || 0));
 }
 
 export interface ConfirmedEnterpriseFacts {
@@ -1227,7 +1259,7 @@ async function writeTenantProfileUnlocked(
   const existing = result.items[0];
   const previous = storedProfile(existing?.profile);
   if (expectedFactVersion) {
-    const current = withConfirmedFactVersion(
+    const current = previous?.factVersion ? previous : withConfirmedFactVersion(
       previous || ({} as EnterpriseProfile),
       previous,
       previous?.factVersion?.confirmedBy || 'system',
@@ -1237,8 +1269,13 @@ async function writeTenantProfileUnlocked(
       throw new EnterpriseFactVersionConflictError(current.factVersion!);
     }
   }
-  const clean = withConfirmedFactVersion(profile, previous, userId) as EnterpriseProfile & { integrations?: unknown };
-  delete clean.integrations;
+  // Transient connection details are not persisted enterprise facts. Strip them
+  // before hashing, otherwise every later strict consumer sees a stale hash.
+  // Hash the same JSON shape storage will retain. In particular undefined
+  // optional business fields must not be hashed as null and then disappear.
+  const persisted = JSON.parse(JSON.stringify(normalizeProfile(profile))) as EnterpriseProfile & { integrations?: unknown };
+  delete persisted.integrations;
+  const clean = withConfirmedFactVersion(persisted, previous, userId);
   profile.factVersion = clean.factVersion;
   const ok = existing?.id
     ? await store.update('tenant_profiles', String(existing.id), { profile: clean, updated_by: userId })

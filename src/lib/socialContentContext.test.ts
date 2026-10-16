@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import {
   readSocialContentNavigationTaskId,
+  readSocialContentNavigationQueryTaskId,
   socialContentTaskRequestHeaders,
   readWeeklyContentNavigationTarget,hasWeeklyContentNavigationTarget,
 } from './socialContentContext.js';
@@ -24,6 +25,9 @@ assert.equal(readSocialContentNavigationTaskId('smartAssets', {
   socialContentTaskId: '../unsafe',
   socialContentPage: 'smartAssets',
 }), null, 'task ids must stay inside the API identifier contract');
+assert.equal(readSocialContentNavigationQueryTaskId('smartAssets', '?page=smartAssets&taskId=socialtask_1'), 'socialtask_1');
+assert.equal(readSocialContentNavigationQueryTaskId('traffic', '?page=smartAssets&taskId=socialtask_1'), null);
+assert.equal(readSocialContentNavigationQueryTaskId('smartAssets', '?page=smartAssets&taskId=../unsafe'), null);
 
 const originalWindow = globalThis.window;
 try {

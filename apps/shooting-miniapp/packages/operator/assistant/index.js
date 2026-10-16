@@ -2,7 +2,7 @@ const api = require('../../../lib/api')
 const assistant = require('../../../lib/assistant')
 
 Page({
-  data: { loading: true, sending: false, recording: false, transcribing: false, inputMode: 'voice', error: '', messages: [], suggestions: [], showSuggestions: false, input: '', anchor: '', preview: null, receipts: [], actions: [], confirming: false, statusBarHeight: 24, headerHeight: 48, contentTop: 72, serviceMode: false, agentTitle: '编导 Agent', agentNote: '内容编导助手', welcomeTitle: '今天想推进什么？', welcomeNote: '可以询问真实任务、询盘与执行状态' },
+  data: { loading: true, sending: false, recording: false, transcribing: false, inputMode: 'voice', error: '', messages: [], suggestions: [], showSuggestions: false, input: '', anchor: '', preview: null, receipts: [], actions: [], confirming: false, statusBarHeight: 24, headerHeight: 48, contentTop: 72, serviceMode: false, agentTitle: '编导 Agent', agentNote: '内容编导助手', welcomeTitle: '今天想推进什么？', welcomeNote: '可以询问真实任务、询盘与执行状态', showSessions: false, sessionsLoading: false, sessions: [], historySession: null, historyMessages: [] },
   async onLoad(options = {}) {
     const serviceMode = options.edition === 'service'
     if (serviceMode) this.setData({ serviceMode, agentTitle: '客服 Agent', agentNote: '询盘转化助手', welcomeTitle: '今天要回复谁？', welcomeNote: '可以查询真实询盘、生成回复和安排跟进' })
@@ -10,7 +10,7 @@ Page({
     if (!api.token()) { wx.redirectTo({ url: '/pages/workbench/index' }); return }
     try {
       const profile = await api.me(); const user = profile.user || {}
-      this.scope = String(user.tenantId || user.tenant_id || '') + ':' + String(user.id || user.email || '')
+      this.scope = String(user.tenantId || user.tenant_id || '') + ':' + String(user.id || user.email || '') + ':' + (serviceMode ? 'service' : 'operator')
       this.createController(); await this.controller.restore(this.scope)
     } catch (error) { this.setData({ loading: false, error: error.message }) }
   },
@@ -23,7 +23,7 @@ Page({
   },
   onShow() { if (this.controller) this.controller.poll() },
   onHide() { if (this.controller) this.controller.pause(); if (this.data.recording && this.recorder) { this.cancelVoice = true; this.recorder.stop() } },
-  onUnload() { if (this.controller) this.controller.dispose(); if (this.data.recording && this.recorder) { this.cancelVoice = true; this.recorder.stop() } },
+  onUnload() { if (this.controller) { this.controller.archive().catch(() => {}); this.controller.dispose() } if (this.data.recording && this.recorder) { this.cancelVoice = true; this.recorder.stop() } },
   createController() {
     if (this.controller) this.controller.dispose()
     this.controller = assistant.createAssistantController({
@@ -39,6 +39,26 @@ Page({
   },
   inputText(e) { this.setData({ input: e.detail.value }); this.controller?.setInput(e.detail.value) },
   toggleSuggestions() { this.setData({ showSuggestions: !this.data.showSuggestions }) },
+  async openSessions() {
+    this.setData({ showSessions: true, sessionsLoading: true, historySession: null, historyMessages: [] })
+    try {
+      const sessions = await this.controller.listSessions()
+      this.setData({ sessions: sessions.map(item => ({ ...item, displayTitle: item.title === '新对话' ? (item.archivedAt ? '已归档会话' : '当前会话') : item.title, displayTime: String(item.archivedAt || item.updatedAt || item.createdAt || '').replace('T', ' ').slice(0, 16) })) })
+    } catch (error) { this.setData({ error: error.message }) }
+    finally { this.setData({ sessionsLoading: false }) }
+  },
+  closeSessions() { this.setData({ showSessions: false, historySession: null, historyMessages: [] }) },
+  backToSessions() { this.setData({ historySession: null, historyMessages: [] }) },
+  async viewSession(e) {
+    const session = this.data.sessions.find(item => item.id === e.currentTarget.dataset.id)
+    if (!session) return
+    this.setData({ sessionsLoading: true })
+    try {
+      const history = await this.controller.readSession(session.id)
+      this.setData({ historySession: session, historyMessages: (history.messages || []).map(message => ({ ...message, content: message.text || message.content || '' })) })
+    } catch (error) { this.setData({ error: error.message }) }
+    finally { this.setData({ sessionsLoading: false }) }
+  },
   switchInputMode(e) {
     if (this.data.recording) this.cancelRecording()
     const inputMode = e.currentTarget.dataset.mode || 'text'
@@ -89,15 +109,15 @@ Page({
         this.setData({transcribing:true})
         try {
           const audio = await new Promise((resolve,reject)=>wx.getFileSystemManager().readFile({filePath:result.tempFilePath,encoding:'base64',success:r=>resolve(r.data),fail:reject}))
-          const transcript = await api.request('mobile-workbench/transcribe','POST',{audio})
+          const transcript = await api.request('mobile-workbench/transcribe','POST',{audio,audioSeconds:Math.max(1,Math.round(Number(result.duration || 0)/1000))})
           const text = String(transcript.text || '').trim()
           this.setData({input:text}); this.controller?.voiceDraft(text)
-          if (text) await this.controller?.send(text)
+          if (text) { this.setData({inputMode:'text'}); wx.showToast?.({title:'已转成文字，可修改后发送',icon:'none'}) }
         } catch (error) { this.setData({error:error.message || '识别失败，请使用文字输入'}) }
         finally { this.setData({transcribing:false}) }
       })
     }
-    this.cancelVoice=false; this.recorder.start({duration:60000,format:'mp3',sampleRate:16000,numberOfChannels:1,encodeBitRate:48000})
+    this.cancelVoice=false; this.recorder.start({duration:20000,format:'mp3',sampleRate:16000,numberOfChannels:1,encodeBitRate:32000})
   },
   holdVoiceStart(e) { if (this.data.transcribing || this.data.sending) return; this.voiceStartY=e.touches?.[0]?.clientY || 0; this.voiceHolding=true; this.stopVoiceAfterStart=false; this.toggleVoice() },
   holdVoiceMove(e) { const y=e.touches?.[0]?.clientY || this.voiceStartY; if (this.voiceHolding && this.voiceStartY-y>60) this.cancelRecording() },

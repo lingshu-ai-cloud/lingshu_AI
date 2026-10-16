@@ -607,7 +607,10 @@ export default function SocialCreationWorkbench({
     let refreshed = false;
     const load = () => void socialContentApi.getTask(seed.continueTaskId!).then(async initial => {
       let task = initial;
-      if (!refreshed) { refreshed = true; task = await socialContentApi.refreshReference(initial.taskId, initial.version).catch(() => initial); }
+      if (!refreshed && initial.referenceVideoAnalysis?.status !== 'ready') {
+        refreshed = true;
+        task = await socialContentApi.refreshReference(initial.taskId, initial.version).catch(() => initial);
+      }
       if (!active || task.referenceVideoAnalysis?.status !== 'ready') return;
       window.clearInterval(timer);
       setTaskPresenterAssetId(task.brief.presenterAssetId || task.brief.requestedPresenterAssetId || '');
@@ -1034,7 +1037,7 @@ export default function SocialCreationWorkbench({
 
         <main className="flex min-h-[560px] min-w-0 flex-col bg-[#f5f8f5] lg:min-h-0">
           {!isReplication && <div className="flex items-center justify-end border-b border-black/5 px-5 py-3"><Button size="small" htmlType="button" onClick={() => setHookChooserOpen(true)} className="whitespace-nowrap">更换开场方式</Button></div>}
-          <input ref={uploadRef} type="file" accept="video/*,image/*" className="hidden" onChange={event => { setFiles(Array.from(event.currentTarget.files || []).slice(0, 1)); setHookMode('upload'); setFreeScriptText(''); setFreeLines([]); setFreeGeneration(null); setFreeHookMaterial(null); }} />
+          <input ref={uploadRef} type="file" multiple={isReplication} accept="video/*,image/*" className="hidden" onChange={event => { const selected = Array.from(event.currentTarget.files || []).slice(0, isReplication ? 12 : 1); event.currentTarget.value = ''; setFiles(selected); if (!isReplication) { setHookMode('upload'); setFreeScriptText(''); setFreeLines([]); setFreeGeneration(null); setFreeHookMaterial(null); } }} />
           {!isReplication && hookMode === 'library' && <div className="max-h-36 overflow-y-auto border-b border-border p-3">{libraryLoading ? <p className="text-xs text-text-muted">正在读取素材库…</p> : libraryHooks.length ? <div className="grid grid-cols-2 gap-2">{libraryHooks.map(item => <button type="button" key={item.id} onClick={() => { setFreeHookMaterial(item); setFiles([]); }} className={`rounded-lg border p-2 text-left text-[10px] ${freeHookMaterial?.id === item.id ? 'border-blue-500 bg-blue-50' : 'border-border'}`}><span className="line-clamp-2 font-bold">{item.name}</span></button>)}</div> : <p className="text-xs text-text-muted">素材库暂无可用图片或视频，可改用上传或暂不指定。</p>}</div>}
           <div className="flex min-h-0 flex-1 items-center justify-center overflow-hidden p-4 sm:p-5">
             <StudioPreviewStage
@@ -1104,6 +1107,7 @@ export default function SocialCreationWorkbench({
               {!productSlots.length && referenceLines.length > 0 && <p className="text-[10px] leading-4 text-text-muted">原口播未识别到产品词，无需选择企业产品。若识别有遗漏，可补充原词。</p>}
               {referenceLines.length > 0 && <div className="mt-2 flex gap-1.5"><input aria-label="补充原口播产品词" value={newProductTerm} onChange={event => setNewProductTerm(event.target.value)} placeholder="补充未识别的原产品词" className="min-w-0 flex-1 rounded-md border border-border px-2 py-1.5 text-[10px]" /><button type="button" disabled={!newProductTerm.trim()} onClick={() => { const term = newProductTerm.trim(); if (!script.join(' ').toLocaleLowerCase().includes(term.toLocaleLowerCase())) { setGenerationNotice('补充的产品词必须出现在原片口播中。'); return; } if (!productSlots.some(slot => slot.sourceLabel.toLocaleLowerCase() === term.toLocaleLowerCase())) setManualProductTerms(current => [...current, term]); setNewProductTerm(''); setGenerationNotice(''); }} className="rounded-md border border-border bg-white px-2 text-[10px] font-bold disabled:opacity-40">添加</button></div>}
               <div className="mt-3 rounded-lg border border-border bg-surface-2 p-2.5"><p className="text-[10px] font-bold text-text-secondary">企业品牌 · 自动读取</p><p className="mt-1 text-xs text-text-primary">{enterpriseBrandName || '企业知识库尚未填写品牌名称'}</p><p className="mt-1 text-[10px] text-text-muted">新口播使用企业知识库中的品牌信息，无需填写原片品牌名。</p></div>
+              <div className="mt-3 rounded-lg border border-amber-200 bg-amber-50/60 p-3" data-replication-material-supplement><p className="text-[10px] font-bold text-amber-950">本任务商品素材</p><p className="mt-1 text-[10px] leading-4 text-amber-800">上传已选企业产品的包装图片或实拍视频。文件会进入当前制作项目，下一页仍需逐镜确认；不会自动替换第三方包装。</p><button type="button" disabled={submitting} onClick={() => uploadRef.current?.click()} className="mt-2 inline-flex items-center gap-1.5 rounded-lg bg-amber-800 px-3 py-2 text-[10px] font-semibold text-white disabled:opacity-50"><Upload size={12} />{files.length ? '重新选择商品素材' : '上传商品图片或视频'}</button>{files.length > 0 && <ul className="mt-2 space-y-1">{files.map(file => <li key={`${file.name}:${file.size}:${file.lastModified}`} className="truncate text-[10px] text-amber-900">已选择：{file.name}</li>)}</ul>}<p className="mt-2 text-[10px] leading-4 text-amber-800">人物镜头将在下一页绑定已授权人物；没有授权或账号身份锁时只阻塞人物分支。</p></div>
             </div>}
 
             {!isReplication && <div className="mt-4 space-y-3">

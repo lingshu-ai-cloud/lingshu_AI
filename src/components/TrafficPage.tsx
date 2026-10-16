@@ -4,6 +4,7 @@ import { Alert, Button, Checkbox, Drawer, Input, Modal, Segmented, Tabs } from '
 import { LsPageHeader } from './ui/LsPageHeader';
 import SocialAccountStrategies from './socialProgram/SocialAccountStrategies';
 import type { SocialContentCreateRequest } from './socialContent/SocialContentWorkspace';
+import SocialContentOrderOperations from './socialContent/SocialContentOrderOperations';
 import {
   AlertCircle,
   BarChart3,
@@ -560,7 +561,7 @@ export default function TrafficPage({
           <Suspense fallback={<PageLoading />}>
             {(studioMounted || viewMode === 'create') && (
               <div ref={studioRootRef} id="traffic-panel-create" role={showModeTabs ? 'tabpanel' : undefined} aria-labelledby={showModeTabs ? 'traffic-tab-create' : undefined} className={viewMode === 'create' ? 'h-full min-h-0 overflow-hidden' : 'hidden'} aria-hidden={viewMode !== 'create'}>
-                {weeklyTargetState.present ? <div className="h-full overflow-y-auto p-4">{weeklyTarget ? <><WeeklyContentProductionView key={JSON.stringify(weeklyTarget)} target={weeklyTarget}/><button type="button" className="mt-3 rounded-lg border px-3 py-2 text-sm" onClick={()=>attachSocialContentNavigationState(weeklyTarget.contentTaskId,'smartAssets')}>打开该内容任务的当前制作工作区</button></> : <p role="alert">周任务生产目标与当前内容任务不一致，请返回原任务重新打开。</p>}</div> : <AiCreateStudio key={socialContentTaskId || studioCreateRequest?.requestId || 'general-studio'} onNavigate={navigateWithinSocialTask} onOpenCreationHome={onOpenCreationHome} onLaunchContentStudio={onLaunchContentStudio} onReturnToContentPlanning={onReturnToContentPlanning} onGoPublish={handleGoPublish} openProjectsSignal={openProjectsSignal} workflowContext={(workflowContextSignal !== undefined ? workflowContextSignal : workflowContext) || undefined} publishStorageScope={storageScope} socialContentTaskId={socialContentTaskId} studioCreateRequest={studioCreateRequest} />}
+                {weeklyTargetState.present ? <div className="h-full overflow-y-auto p-4">{weeklyTarget ? <><WeeklyContentProductionView key={JSON.stringify(weeklyTarget)} target={weeklyTarget}/><SocialContentOrderOperations key={weeklyTarget.contentTaskId} taskId={weeklyTarget.contentTaskId}/><button type="button" className="mt-3 rounded-lg border px-3 py-2 text-sm" onClick={()=>attachSocialContentNavigationState(weeklyTarget.contentTaskId,'smartAssets')}>打开该内容任务的当前制作工作区</button></> : <p role="alert">周任务生产目标与当前内容任务不一致，请返回原任务重新打开。</p>}</div> : <AiCreateStudio key={socialContentTaskId || studioCreateRequest?.requestId || 'general-studio'} onNavigate={navigateWithinSocialTask} onOpenCreationHome={onOpenCreationHome} onLaunchContentStudio={onLaunchContentStudio} onReturnToContentPlanning={onReturnToContentPlanning} onGoPublish={handleGoPublish} openProjectsSignal={openProjectsSignal} workflowContext={(workflowContextSignal !== undefined ? workflowContextSignal : workflowContext) || undefined} publishStorageScope={storageScope} socialContentTaskId={socialContentTaskId} studioCreateRequest={studioCreateRequest} />}
               </div>
             )}
             <AnimatePresence mode="wait">

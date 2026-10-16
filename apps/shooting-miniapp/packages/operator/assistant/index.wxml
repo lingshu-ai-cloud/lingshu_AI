@@ -1,6 +1,6 @@
 <view class="assistant-page">
   <view class="top-safe" style="height:{{statusBarHeight}}px"></view>
-  <view class="assistant-header" style="height:{{headerHeight}}px"><view><text class="title">{{agentTitle}}</text><view class="online"><view></view><text>{{agentNote}}</text></view></view></view>
+  <view class="assistant-header" style="height:{{headerHeight}}px"><button class="session-entry" bindtap="openSessions">我的会话</button><view><text class="title">{{agentTitle}}</text><view class="online"><view></view><text>{{agentNote}}</text></view></view></view>
   <view wx:if="{{error}}" class="error">{{error}}</view>
   <scroll-view scroll-y class="conversation" style="top:{{contentTop}}px" scroll-into-view="{{anchor}}">
     <view wx:if="{{!messages.length && !loading}}" class="welcome"><view class="welcome-copy"><text class="welcome-title">{{welcomeTitle}}</text><text class="welcome-note">{{welcomeNote}}</text></view><view wx:if="{{suggestions.length}}" class="suggestion-entry" bindtap="toggleSuggestions"><text>常用问题</text><text>{{showSuggestions ? '收起' : '展开'}}</text></view><view wx:if="{{showSuggestions}}" class="suggestions"><view class="suggestion-row"><view wx:for="{{suggestions}}" wx:key="*this" class="suggestion" data-text="{{item}}" bindtap="ask">{{item}}</view></view></view></view>
@@ -18,4 +18,14 @@
   <view wx:else class="composer"><button class="mode" data-mode="voice" bindtap="switchInputMode">🎙</button><input value="{{input}}" bindinput="inputText" confirm-type="send" bindconfirm="send" placeholder="输入消息"/><button wx:if="{{input}}" class="send" disabled="{{sending}}" bindtap="send">↑</button></view>
   <view wx:if="{{recording}}" class="voice-status"><text>正在聆听，松开发送</text><text>上滑可取消</text></view>
   <operator-nav active="assistant" mode="{{serviceMode ? 'service' : 'operator'}}"></operator-nav>
+  <view wx:if="{{showSessions}}" class="session-overlay">
+    <view class="session-sheet">
+      <view class="session-head"><text wx:if="{{historySession}}" class="session-back" bindtap="backToSessions">‹ 会话列表</text><text class="session-title">{{historySession ? historySession.displayTitle : '我的会话'}}</text><text class="session-close" bindtap="closeSessions">关闭</text></view>
+      <scroll-view scroll-y class="session-body">
+        <view wx:if="{{sessionsLoading}}" class="session-empty">正在读取本地账号的会话…</view>
+        <block wx:elif="{{historySession}}"><view wx:for="{{historyMessages}}" wx:key="id" class="history-message {{item.role}}"><text class="history-speaker">{{item.role === 'user' ? '你' : agentTitle}}</text><text user-select>{{item.content}}</text></view><view wx:if="{{!historyMessages.length}}" class="session-empty">该会话还没有消息</view></block>
+        <block wx:else><view wx:for="{{sessions}}" wx:key="id" class="session-row" data-id="{{item.id}}" bindtap="viewSession"><view><text class="session-row-title">{{item.displayTitle}}</text><text class="session-row-time">{{item.displayTime}}</text></view><text>{{item.archivedAt ? '已归档' : '进行中'}} ›</text></view><view wx:if="{{!sessions.length}}" class="session-empty">还没有历史会话</view></block>
+      </scroll-view>
+    </view>
+  </view>
 </view>

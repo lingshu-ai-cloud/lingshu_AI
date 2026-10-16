@@ -61,6 +61,16 @@ assert.equal(selectPresenterExecutions({ detail: backgroundPerson, heygenReady: 
 const motion = route({ specificGestureCount: 1, visibleSpeechSeconds: 0, lipSyncRequired: false });
 assert.equal(motion.decision.route, 'blocked');
 assert.ok(motion.reasonCodes.includes('seedance_capability_unavailable'));
+const motionOnlyDetail = detail({ specificGestureCount: 1, visibleSpeechSeconds: 0, lipSyncRequired: false });
+motionOnlyDetail.agentWorkflow.directorBrief.scenes[0].productionRouting.needsPreciseLipSync = false;
+const registeredMotion = selectPresenterExecutions({ detail: motionOnlyDetail, heygenReady: false,
+  seedancePresenterReady: true, budgetReady: true })[0]!;
+assert.equal(registeredMotion.providerId, 'seedance');
+assert.equal(registeredMotion.executionStatus, 'ready');
+const wrongMotionStrategy = structuredClone(motionOnlyDetail);
+wrongMotionStrategy.agentWorkflow.executionPlan.scenes[0].selectedSourceStrategy = 'aigc_product_scene_replication';
+assert.equal(selectPresenterExecutions({ detail: wrongMotionStrategy, heygenReady: false,
+  seedancePresenterReady: true, budgetReady: true })[0]!.executionStatus, 'blocked');
 const split = route({ specificGestureCount: 1 });
 assert.equal(split.decision.route, 'split_motion_and_speech');
 assert.equal(split.executionStatus, 'blocked');

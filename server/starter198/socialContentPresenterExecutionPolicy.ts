@@ -134,6 +134,7 @@ export async function verifyNamedPresenterLock(input: {
   name?: string | null;
   requestedPresenterAssetId?: string | null;
   selectedEnterprisePresenterAssetId?: string | null;
+  provider?: 'heygen' | 'volcengine_ark';
   lock: NonNullable<SocialContentTaskDetail['agentWorkflow']>['directorBrief']['accountPresenterLock'];
 }): Promise<{ ok: true; presenterAssetId: string; assetVersion: number } | { ok: false; reason: string }> {
   if (!input.lock && !String(input.selectedEnterprisePresenterAssetId || '').trim()) {
@@ -155,7 +156,7 @@ export async function verifyNamedPresenterLock(input: {
   const presenter = matches[0]!;
   const version = Number(presenter.assetVersion);
   const rights = validatePresenterRightsEvidence(presenter.rightsEvidence, {
-    provider: 'heygen', uses: ['digital_presenter', 'voice_synthesis'],
+    provider: input.provider??'heygen', uses: input.provider==='volcengine_ark'?['digital_presenter','person_replacement']:['digital_presenter', 'voice_synthesis'],
   });
   if (!rights.ok) return { ok: false, reason: `named_presenter_rights_invalid:${rights.reasons.join(',')}` };
   // During production setup the enterprise asset is authoritative even before
@@ -164,8 +165,8 @@ export async function verifyNamedPresenterLock(input: {
   // asset ID, immutable version, provider mapping and rights evidence.
   if (!input.lock) {
     if (presenter.authorized !== true || !Number.isSafeInteger(version) || version < 1
-      || !String((presenter.toolMappings as { heygen?: { avatarId?: string; voiceId?: string } } | undefined)?.heygen?.avatarId || presenter.avatarId || '').trim()
-      || !String((presenter.toolMappings as { heygen?: { avatarId?: string; voiceId?: string } } | undefined)?.heygen?.voiceId || presenter.voiceId || '').trim()) {
+      || (input.provider!=='volcengine_ark'&&(!String((presenter.toolMappings as { heygen?: { avatarId?: string; voiceId?: string } } | undefined)?.heygen?.avatarId || presenter.avatarId || '').trim()
+      || !String((presenter.toolMappings as { heygen?: { avatarId?: string; voiceId?: string } } | undefined)?.heygen?.voiceId || presenter.voiceId || '').trim()))) {
       return { ok: false, reason: 'named_enterprise_presenter_not_authorized' };
     }
     return { ok: true, presenterAssetId: String(presenter.id), assetVersion: version };
@@ -181,8 +182,8 @@ export async function verifyNamedPresenterLock(input: {
     || lock.presenterProfileVersion !== presenter.presenterProfileVersion
     || lock.consistencyKey !== presenter.consistencyKey
     || lock.consentRef !== presenter.consentRef
-    || lock.avatarId !== String((presenter.toolMappings as { heygen?: { avatarId?: string } } | undefined)?.heygen?.avatarId || presenter.avatarId || '')
-    || lock.voiceProfileId !== String((presenter.toolMappings as { heygen?: { voiceId?: string } } | undefined)?.heygen?.voiceId || presenter.voiceId || '')) {
+    || (input.provider!=='volcengine_ark'&&(lock.avatarId !== String((presenter.toolMappings as { heygen?: { avatarId?: string } } | undefined)?.heygen?.avatarId || presenter.avatarId || '')
+    || lock.voiceProfileId !== String((presenter.toolMappings as { heygen?: { voiceId?: string } } | undefined)?.heygen?.voiceId || presenter.voiceId || '')))) {
     return { ok: false, reason: 'named_presenter_lock_mismatch' };
   }
   return { ok: true, presenterAssetId: String(presenter.id), assetVersion: version };
@@ -275,11 +276,8 @@ export function selectPresenterExecutions(input: {
     } else if (decision.route === 'heygen_talking' && decision.executable) {
       providerId = 'heygen';
     }
-    if (decision.route === 'seedance_first_frame' && decision.executable) {
-      // No social presenter Seedance executor is registered at present. Keep
-      // this branch explicit so future capability registration is auditable.
-      reasonCodes.push('social_seedance_presenter_executor_not_registered');
-    }
+    if (selected === 'authorized_digital_presenter' && decision.route === 'seedance_first_frame'
+      && decision.executable && input.seedancePresenterReady) providerId = 'seedance';
     if (decision.route === 'no_presenter_stack') reasonCodes.push('presenter_visible_but_no_executable_stack_required');
     return {
       sceneId: scene.sceneId,

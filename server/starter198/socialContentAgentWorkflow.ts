@@ -536,8 +536,21 @@ function buildDirectorBrief(
   };
 }
 
+function eligibleProductBudgetCandidate(supply:SocialAssetSupplyShotPlan,policyVersion?:string){
+ const routing=supply.materialRouting,generation=routing?.generation,spec=supply.productSceneReplication;
+ return policyVersion==='type-aware.v2'&&routing?.materialType==='product'
+   &&routing.productGenerationDecision?.state==='eligible'
+   &&generation?.method==='enterprise_authored_product_first_frame_i2v'
+   &&generation.firstFrameOrigin==='enterprise_authored_storyboard'
+   &&generation.videoProvider==='seedance'&&generation.productImageRefs.length>0
+   &&Boolean(spec?.productIdentity.groups.length)
+   &&spec!.productIdentity.groups.every(group=>group.referenceImageIds.length>0
+     &&group.referenceImageIds.every(ref=>generation.productImageRefs.includes(ref)));
+}
+
 function capabilityCandidates(input: {
   tenantId?: string;
+  policyVersion?:string;
   taskId: string;
   taskVersion: string;
   sceneId: string;
@@ -664,7 +677,7 @@ function capabilityCandidates(input: {
       || (input.supply.digitalHumanPlan !== undefined
         && ['preview_only', 'ready_for_capability_check'].includes(input.supply.digitalHumanPlan.executionState)))
     .filter(capability => capability.strategy !== 'aigc_product_scene_replication'
-      || (input.supply.productSceneReplication !== undefined && input.supply.sourceRefs.length > 0))
+      || (input.supply.productSceneReplication !== undefined && (input.supply.sourceRefs.length > 0||eligibleProductBudgetCandidate(input.supply,input.policyVersion))))
     .filter(capability => capability.strategy !== 'customer_product_image_animation'
       || (input.supply.productSceneReplication !== undefined
         && input.supply.productSceneReplication.productIdentity.groups.length > 0
@@ -705,6 +718,8 @@ function capabilityCandidates(input: {
     .filter(candidate => {
       const typed = input.supply.materialRouting;
       if (typed) {
+        if(eligibleProductBudgetCandidate(input.supply,input.policyVersion)&&candidate.kind==='capability'
+          &&candidate.sourceStrategy==='aigc_product_scene_replication')return true;
         if (typed.localMatch.state === 'matched' && typed.policy !== 'authorized_presenter') {
           if (candidate.kind !== 'asset' || candidate.sourceStrategy !== 'customer_real_asset' || !candidate.sourceRef) return false;
           if (typed.localMatch.sourceRefs.includes(candidate.sourceRef)) return true;
@@ -763,6 +778,7 @@ function capabilityCandidates(input: {
 
 function executionScene(input: {
   tenantId?: string;
+  policyVersion?:string;
   taskId: string;
   taskVersion: string;
   scene: SocialDirectorBriefScene;
@@ -822,7 +838,7 @@ function executionScene(input: {
     ? input.supply.materialRouting.localMatch.state === 'matched' && input.supply.materialRouting.policy !== 'authorized_presenter'
       ? candidates.find(candidate => candidate.kind === 'asset' && candidate.sourceStrategy === 'customer_real_asset' && Boolean(candidate.sourceRef && input.supply.materialRouting!.localMatch.sourceRefs.includes(candidate.sourceRef)))
       : input.supply.materialRouting.policy === 'authorized_presenter' ? capability('authorized_digital_presenter')
-        : input.supply.materialRouting.policy === 'local_first_product_i2v'
+        : input.supply.materialRouting.policy === 'local_first_product_i2v'||eligibleProductBudgetCandidate(input.supply,input.policyVersion)
           ? capability('aigc_product_scene_replication')
           : input.supply.materialRouting.policy === 'local_only'
             && ['motion_graphics', 'verified_fact_card'].includes(input.supply.sourceStrategy)
@@ -892,8 +908,11 @@ function executionScene(input: {
         ...(factor.semanticAdaptation ? { semanticAdaptation: structuredClone(factor.semanticAdaptation) } : {}),
       };
     }),
-    feasibility: preferred ? input.supply.feasibility : 'blocked_for_facts_or_rights',
-    feasibilityReason: preferred ? input.supply.feasibilityReason : '内容 Agent 未找到满足本镜头要求的可执行素材或能力',
+    feasibility: preferred&&eligibleProductBudgetCandidate(input.supply,input.policyVersion)&&preferred.sourceStrategy==='aigc_product_scene_replication'
+      ? 'functional_equivalent' : preferred ? input.supply.feasibility : 'blocked_for_facts_or_rights',
+    feasibilityReason: preferred&&eligibleProductBudgetCandidate(input.supply,input.policyVersion)&&preferred.sourceStrategy==='aigc_product_scene_replication'
+      ? '已有当前产品身份输入和注册生成能力；仅进入整片真实报价预检，尚未获得付费调用授权。'
+      : preferred ? input.supply.feasibilityReason : '内容 Agent 未找到满足本镜头要求的可执行素材或能力',
     candidates,
     recommendedCandidateIds: preferred ? [preferred.candidateId] : [],
     alternativeCandidateGroups: fallback ? [[fallback.candidateId]] : [],
@@ -921,6 +940,7 @@ function buildExecutionPlan(input: BuildSocialAgentWorkflowInput, directorBrief:
       ? ++paidProductSceneCount : 0;
     return supply ? [executionScene({
       tenantId: input.tenantId,
+      policyVersion:input.assetSupplyPlan.materialRoutingPolicyVersion,
       taskId: input.taskId,
       taskVersion: input.taskVersion,
       scene,
@@ -1068,11 +1088,22 @@ function reviewScene(input: {
   plan: SocialContentExecutionScenePlan;
   weekly: boolean;
   rightsMissing: boolean;
+  enforceTruthGates?: boolean;
   conceptPreview: boolean;
 }): SocialExecutionPlanSceneReview {
   const failedCriteria: string[] = [];
   const requiredRevision: string[] = [];
   const reasonCodes: SocialExecutionPlanReviewReason[] = [];
+  if(input.enforceTruthGates&&input.rightsMissing){
+    failedCriteria.push('当前素材或生成输入尚未完成授权核验');
+    requiredRevision.push('补充对应真实授权凭据，不得以预算预检替代授权');
+    reasonCodes.push('rights_missing');
+  }
+  if(input.enforceTruthGates&&input.scene.truthBoundary.customerEvidenceRequired&&!input.scene.truthBoundary.customerEvidenceRefs.length){
+    failedCriteria.push('当前分镜缺少必要的真实业务证据');
+    requiredRevision.push('补充对应真实资料或修改参考，不得生成事实证明替代');
+    reasonCodes.push('facts_missing');
+  }
   if (input.plan.feasibility === 'goal_degraded') {
     failedCriteria.push('当前路线降低了镜头的核心证明强度或经营目标');
     requiredRevision.push('寻找能保持事实强度的替代路线，或显式返回经营 Agent 调整目标');
@@ -1115,7 +1146,8 @@ function reviewScene(input: {
 function buildReview(input: BuildSocialAgentWorkflowInput, directorBrief: SocialDirectorBrief, plan: SocialContentExecutionPlan): SocialExecutionPlanReview {
   const budget = socialExecutionBudgetStatus(plan, directorBrief, input.tenantId);
   const estimatedCost = budget.estimatedCostCny;
-  const budgetExceeded = budget.exceeded;
+  const budgetPreflightRequired=input.assetSupplyPlan.materialRoutingPolicyVersion==='type-aware.v2';
+  const budgetExceeded = budget.exceeded&&!budgetPreflightRequired;
   const planByScene = new Map(plan.scenes.map(scene => [scene.sceneId, scene]));
   const shootingPlanOnly = plan.selectedApproach === 'shooting_plan';
   const sceneResults = directorBrief.scenes.flatMap(scene => {
@@ -1134,6 +1166,7 @@ function buildReview(input: BuildSocialAgentWorkflowInput, directorBrief: Social
       plan: scenePlan,
       weekly: input.mode === 'weekly',
       rightsMissing: input.assetSupplyPlan.status === 'requires_rights_confirmation',
+      enforceTruthGates: input.assetSupplyPlan.materialRoutingPolicyVersion==='type-aware.v2',
       conceptPreview: input.brief.productionMode === 'concept_preview',
     })] : [];
   });
@@ -1167,6 +1200,7 @@ function buildReview(input: BuildSocialAgentWorkflowInput, directorBrief: Social
     ...sceneResults.flatMap(result => result.reasonCodes),
   ]);
   return {
+    ...(budgetPreflightRequired?{budgetPreflight:{state:'required' as const,advisoryEstimatedCostCny:estimatedCost,maximumCny:plan.budgetLimitCny,advisoryExceeded:budget.exceeded}}:{}),
     reviewId: stableId('execution_plan_review', { taskId: input.taskId, taskVersion: input.taskVersion,
       referenceHandoffVersion: input.referenceReviewHandoff?.versionHash ?? null, round: plan.reviewRound }),
     version: input.taskVersion,

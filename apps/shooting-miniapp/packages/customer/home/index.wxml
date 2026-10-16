@@ -3,13 +3,16 @@
   <view class="identity-bar"><view class="identity-copy" bindtap="openEdition"><text class="organization">{{organization}}</text><text class="edition-chevron">⌄</text></view><view class="edition">{{edition}}</view></view>
   <view class="content">
     <view wx:if="{{error}}" class="notice error">{{error}}<text bindtap="refresh">重试</text></view>
-    <view class="focus-strip"><view><text class="focus-title">今日询盘</text><text class="focus-note">优先处理等待最久和高意向客户</text></view><view class="focus-status"><text class="status-dot"></text>实时同步</view></view>
+    <view class="week-card {{calendarExpanded ? 'expanded' : 'collapsed'}}">
+      <view class="week-heading" bindtap="toggleCalendar" aria-role="button" aria-label="{{calendarExpanded ? '收起周日历' : '展开周日历'}}" aria-expanded="{{calendarExpanded}}"><view class="week-action" data-offset="-1" catchtap="changeWeek">上一周</view><view class="week-summary"><text class="week-range">{{week.start}} — {{week.end}}</text><text class="week-chevron">{{calendarExpanded ? '⌃' : '⌄'}}</text></view><view class="week-action" data-offset="1" catchtap="changeWeek">下一周</view></view>
+      <view wx:if="{{calendarExpanded}}" class="days"><view wx:for="{{days}}" wx:key="date" class="day {{item.selected ? 'selected' : ''}}" data-date="{{item.date}}" bindtap="selectDay"><text class="weekday">{{item.label}}</text><text class="day-number">{{item.number}}</text><view wx:if="{{item.count}}" class="day-indicator"></view></view></view>
+    </view>
     <view class="metric-band">
       <view class="metric reply {{activeMetric === 'reply' ? 'active' : ''}}" data-key="reply" bindtap="openMetric"><view><text class="metric-value">{{counts.pendingReply}}</text><text class="metric-denominator">/ {{counts.replied}}</text></view><text class="metric-label">待回复 / 已回复</text></view>
       <view class="metric followup {{activeMetric === 'followup' ? 'active' : ''}}" data-key="followup" bindtap="openMetric"><view><text class="metric-value">{{counts.pendingFollowup}}</text><text class="metric-denominator">/ {{counts.followedUp}}</text></view><text class="metric-label">待跟进 / 已跟进</text></view>
       <view class="metric intent {{activeMetric === 'intent' ? 'active' : ''}}" data-key="intent" bindtap="openMetric"><view><text class="metric-value">{{counts.highIntent}}</text><text class="metric-denominator">/ {{counts.converted}}</text></view><text class="metric-label">高意向 / 已转化</text></view>
     </view>
-    <view class="section-heading"><view><text class="section-title">{{activeMetric === 'reply' ? '今日待回复' : activeMetric === 'followup' ? '今日待跟进' : '高意向客户'}}</text><text class="section-note">{{activeMetric === 'reply' ? '新消息和待确认回复' : activeMetric === 'followup' ? '需要继续推进的客户' : '优先报价与促成转化'}}</text></view><text class="all-link" bindtap="openAll">全部 {{visible.length}} ›</text></view>
+    <view class="section-heading"><view><text class="section-title">{{activeMetric === 'reply' ? '本周待回复' : activeMetric === 'followup' ? '本周待跟进' : '本周高意向客户'}}</text><text class="section-note">{{activeMetric === 'reply' ? '新消息和待确认回复' : activeMetric === 'followup' ? '需要继续推进的客户' : '优先报价与促成转化'}}</text></view><text class="all-link" bindtap="openAll">全部 {{visible.length}} ›</text></view>
     <view wx:if="{{loading && !loaded}}" class="state-card">正在同步真实询盘…</view>
     <view wx:elif="{{!visible.length}}" class="state-card success"><view class="check">✓</view><view><text class="state-title">这一栏已经处理完了</text><text class="state-note">新询盘到达后会显示在这里</text></view></view>
     <view wx:else class="customer-list">

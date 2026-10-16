@@ -45,7 +45,7 @@ function candidateMaterialType(candidate: SocialWorkflowMaterialClipCandidate): 
 
 /** Uses analyzed, tenant-scoped segments rather than treating inventory presence as a match. */
 export function materialRoutingRequests(input: {
-  policyVersion?: 'type-aware.v1';
+  policyVersion?: 'type-aware.v1' | 'type-aware.v2';
   tenantId: string;
   shots: SocialAssetSupplyShotRequest[];
   candidates: SocialWorkflowMaterialClipCandidate[];
@@ -57,7 +57,7 @@ export function materialRoutingRequests(input: {
    * never changes when this value changes and never creates an I2V fallback. */
   productGenerationAllowed?: boolean;
 }): SocialAssetSupplyShotRequest[] {
-  if (input.policyVersion !== 'type-aware.v1') return input.shots;
+  if (input.policyVersion !== 'type-aware.v1' && input.policyVersion !== 'type-aware.v2') return input.shots;
   const assetUseCount = new Map<string, number>();
   const segmentUseCount = new Map<string, number>();
   const usage = (candidate: SocialWorkflowMaterialClipCandidate) => ({

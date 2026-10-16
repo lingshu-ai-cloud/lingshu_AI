@@ -199,7 +199,7 @@ export async function createEnvironmentProductReplacementPorts(input: Input, con
     authorization: async () => {
       const limit = Number(brief.perItemBudgetCny);
       if (!Number.isFinite(limit) || limit <= 0) throw Error('product_whole_film_budget_missing');
-      return {maximumCny: Math.min(10, limit), authorizationRef: 'canonical-task-budget:' + taskIdentity};
+      return {maximumCny: Math.min(brief.materialRoutingPolicyVersion === 'type-aware.v2' ? 15 : 10, limit), authorizationRef: 'canonical-task-budget:' + taskIdentity};
     },
     quote: async (_scope, op) => {
       const q = quote(op.fingerprint, op.provider, op.model);

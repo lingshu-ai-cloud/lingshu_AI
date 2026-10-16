@@ -22,6 +22,9 @@ import {
 assert.equal(socialContentStage('needs_input'), 'prepare');
 assert.equal(socialContentStage('asset_review'), 'review');
 assert.equal(socialContentStage('awaiting_metrics'), 'measure');
+assert.equal(socialContentStage('cancelled'), 'produce');
+assert.equal(socialContentPrimaryAction('cancelled'), 'view_progress');
+assert.equal(socialContentPrimaryAction('cancelling'), 'view_progress');
 assert.equal(socialContentStagesForMode('instant')[0]?.label, '准备信息');
 assert.equal(socialContentStagesForMode('weekly')[0]?.label, '本周设定');
 assert.equal(socialContentPrimaryAction('plan_review'), 'start');

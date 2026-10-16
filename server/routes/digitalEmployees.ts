@@ -3765,7 +3765,10 @@ digitalEmployeesRouter.post('/onboarding/complete', async (req, res) => {
   } : onboardingInput);
   const boundPublishing = await bindPublishingTargets(tenantId, submittedConfig.publishingTargets);
   submittedConfig.publishingTargets = boundPublishing.targets;
-  if (boundPublishing.invalidAccountIds.length) {
+  // Initial production setup may be partial. Invalid legacy account bindings
+  // are NOT authorization: omit them, retain evidence in audit, and recheck at
+  // the actual release gate. Full settings saves remain strict.
+  if (boundPublishing.invalidAccountIds.length && !minimalOnboarding) {
     res.status(409).json({
       error: 'publishing_accounts_invalid',
       message: '部分发布账号不属于当前企业或已断开连接，请重新选择。',
@@ -3907,7 +3910,7 @@ digitalEmployeesRouter.post('/onboarding/complete', async (req, res) => {
       payload: { eventType: 'critical_business_change', changedFields, action: 'review_weekly_package' },
     });
   }
-  await appendAudit({ tenantId, userId, action: 'digital_employee.onboarding.completed', targetType: 'digital_employee_config', targetId: existing?.id || tenantId, metadata: { autonomyMode: resolved.config.autonomyMode, minimalOnboarding, configVersion: resolved.configVersion, policyVersion: resolved.policyVersion, factsVersion: resolved.knowledgeBinding.factsVersion } });
+  await appendAudit({ tenantId, userId, action: 'digital_employee.onboarding.completed', targetType: 'digital_employee_config', targetId: existing?.id || tenantId, metadata: { autonomyMode: resolved.config.autonomyMode, minimalOnboarding, configVersion: resolved.configVersion, policyVersion: resolved.policyVersion, factsVersion: resolved.knowledgeBinding.factsVersion, deferredPublishingAccountIds: boundPublishing.invalidAccountIds } });
   res.json(await buildOverview(tenantId));
 });
 

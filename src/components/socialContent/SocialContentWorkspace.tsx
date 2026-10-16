@@ -4,6 +4,7 @@ import {SocialSceneG4ReviewPanel} from './SocialSceneG4ReviewPanel';
 import {PresenterFirstFrameReviewPanel} from './PresenterFirstFrameReviewPanel';
 import { useCallback, useEffect, useState } from 'react';
 import WeeklyContentProductionView from './WeeklyContentProductionView';
+import SocialContentOrderOperations from './SocialContentOrderOperations';
 import { AlertCircle, CheckCircle2, Loader2, RefreshCcw } from 'lucide-react';
 import type { Page } from '../../App';
 import type {
@@ -101,7 +102,7 @@ export default function SocialContentWorkspace({
   }, [onNavigate, onNavigateWithTask, task]);
 
   if (weeklyTargetPresent&&!weeklyTarget) return <p role="alert">原周任务生产绑定无效，请返回任务日历重新打开。</p>;
-  if (weeklyTarget) return <div className="space-y-3"><WeeklyContentProductionView key={JSON.stringify(weeklyTarget)} target={weeklyTarget}/><button type="button" className="rounded-lg border px-3 py-2 text-sm" onClick={()=>attachSocialContentNavigationState(weeklyTarget.contentTaskId,'smartAssets')}>打开该内容任务的当前制作工作区</button></div>;
+  if (weeklyTarget) return <div className="space-y-3"><WeeklyContentProductionView key={JSON.stringify(weeklyTarget)} target={weeklyTarget}/><SocialContentOrderOperations key={weeklyTarget.contentTaskId} taskId={weeklyTarget.contentTaskId}/><button type="button" className="rounded-lg border px-3 py-2 text-sm" onClick={()=>attachSocialContentNavigationState(weeklyTarget.contentTaskId,'smartAssets')}>打开该内容任务的当前制作工作区</button></div>;
 
   if (state.loading && !state.workspace) {
     return (
@@ -135,6 +136,7 @@ export default function SocialContentWorkspace({
       <h1 id="social-content-workspace-title" className="mb-4 text-lg font-bold text-text-primary">{task?.brief.title || '社媒内容任务'}</h1>
 
       <SocialManagedExecutionNotice task={task} />
+      {task && <SocialContentOrderOperations key={task.taskId} taskId={task.taskId} onChanged={() => { void state.refresh(); }} />}
 
       <SocialTaskOverview
         task={task}
@@ -161,6 +163,7 @@ export default function SocialContentWorkspace({
         }}
         onCreateDeliveryPackage={() => void state.createDeliveryPackage().catch(() => {})}
         onRefresh={() => void state.refresh()}
+        onAttachSourceFiles={files => state.attachSourceFiles(files)}
         onNavigate={navigateWithTask}
       />
 

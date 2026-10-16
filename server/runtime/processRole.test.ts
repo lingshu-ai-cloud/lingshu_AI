@@ -60,5 +60,8 @@ assert.match(
   'the preparation worker must start only after the background-role guard',
 );
 assert.match(backgroundJobsSource, /stopInitialPreparationWorker\(\)/, 'background lifecycle must stop its preparation worker');
+assert.match(serverEntrySource,/stopLocalWeeklyWebRecovery = processRole === 'web'[\s\S]*localWeeklyExecutionRuntime\.start\(\)/,'web preview must reconnect its persisted scoped consumers without invoking global jobs');
+assert.match(serverEntrySource,/stopLocalWeeklyWebRecovery = processRole === 'web'[\s\S]*void localWeeklyExecutionRuntime\.start\(\)/,'initial scoped provider scan runs in background, not in HTTP listen startup critical path');
+assert.match(serverEntrySource,/stop: \[stopBackgroundJobs, stopLocalWeeklyWebRecovery,/,'shutdown stops the isolated web recovery timer');
 
 console.log('process role tests passed');

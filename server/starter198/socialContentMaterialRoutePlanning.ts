@@ -14,7 +14,7 @@ export async function planNewSocialMaterialRoutes(input: {
   readDetail?: typeof readSocialTaskDetail;
 }): Promise<ResolvedSocialTaskReference> {
   const summary = socialTaskSummary(input.task), brief = summary.brief;
-  if (brief.materialRoutingPolicyVersion !== 'type-aware.v1' || brief.productionApproach !== 'ai_enhanced'
+  if ((brief.materialRoutingPolicyVersion !== 'type-aware.v1' && brief.materialRoutingPolicyVersion !== 'type-aware.v2') || brief.productionApproach !== 'ai_enhanced'
     || socialObject(socialJson(input.task.brief))?._productionRevision
     || ['confirmed', 'superseded'].includes(input.resolved.replicationScript.status)) return input.resolved;
   const task = { ...input.task, replication_script: input.resolved.replicationScript,

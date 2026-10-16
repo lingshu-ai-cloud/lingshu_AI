@@ -6,7 +6,8 @@ function base() {
   const value = String(apiBase || '').replace(/\/$/, '')
   const secure = /^https:\/\//.test(value)
   const loopback = /^http:\/\/(?:127\.0\.0\.1|localhost)(?::\d+)?$/.test(value)
-  if (!secure && !loopback) throw new Error('请配置 HTTPS 服务地址；本地联调仅允许 127.0.0.1 或 localhost')
+  const privateLan = /^http:\/\/(?:10(?:\.\d{1,3}){3}|192\.168(?:\.\d{1,3}){2}|172\.(?:1[6-9]|2\d|3[01])(?:\.\d{1,3}){2})(?::\d+)?$/.test(value)
+  if (!secure && !loopback && !privateLan) throw new Error('请配置 HTTPS 服务地址；本地联调仅允许回环或私有局域网地址')
   return value
 }
 

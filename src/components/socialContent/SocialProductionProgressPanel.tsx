@@ -304,6 +304,7 @@ function DirectorAgentHandoff({ task }: { task: TaskListItem }) {
 }
 
 function statusTone(status: SocialContentTaskStatus): string {
+  if (status === 'cancelling' || status === 'cancelled') return 'bg-surface-2 text-text-secondary';
   if (status === 'asset_review') return 'bg-amber-50 text-amber-800';
   if (COMPLETE_STATUSES.has(status)) return 'bg-emerald-50 text-emerald-800';
   if (status === 'attention' || status === 'paused') return 'bg-amber-50 text-amber-800';
@@ -312,6 +313,7 @@ function statusTone(status: SocialContentTaskStatus): string {
 
 function StatusGraphic({ task }: { task: SocialContentTaskDetail }) {
   const counts = taskCounts(task);
+  if (task.status === 'cancelling' || task.status === 'cancelled') return <XCircle size={19} aria-hidden />;
   const active = ACTIVE_STATUSES.has(task.status) || Boolean(task.runId && counts.generated === 0);
   const review = counts.pendingReview > 0 || task.status === 'asset_review';
   const complete = COMPLETE_STATUSES.has(task.status);

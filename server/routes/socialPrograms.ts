@@ -1,4 +1,5 @@
 import { createSocialWeeklyProducerEvidenceRouter } from './socialWeeklyProducerEvidence.js';
+import {createWeeklyAutomaticScheduleRouter} from './weeklyAutomaticSchedule.js';
 import {createSocialWeeklyInventoryReuseRouter} from './socialWeeklyInventoryReuse.js';
 import {createWeeklyInventoryReuseService} from '../socialPrograms/weeklyInventoryReuse.js';
 import {createSocialWeeklyProfileUpgradeRouter} from './socialWeeklyProfileUpgrade.js';
@@ -91,6 +92,7 @@ export function createSocialProgramsRouter(dataStore: DataStore = store, authent
   }), createSocialWeeklyProducerEvidenceRouter(dataStore));
   const weeklyPackages = createWeeklyOperatingPackageService(dataStore);
   const pipeline=createWeeklyExecutionPipelineService(dataStore);
+  router.use('/:programId/operating-packages/:packageId/automatic-schedule',createWeeklyAutomaticScheduleRouter(dataStore));
   router.get('/:programId/operating-packages/:packageId/execution-pipeline/customer-settings',asyncRoute(async(req,res)=>{
     const {tenantId,userId}=res.locals as AuthLocals,packageVersion=Number(req.query.version);
     if(!Number.isSafeInteger(packageVersion)||packageVersion<1)throw new SocialProgramError('weekly_pipeline_input_invalid',400,'请指定当前周包版本。');
@@ -131,6 +133,16 @@ export function createSocialProgramsRouter(dataStore: DataStore = store, authent
     const {tenantId,userId}=res.locals as AuthLocals,body=routeBody(req.body);
     if(!body||Object.keys(body).some(k=>k!=='expectedPackageVersion')||!Number.isSafeInteger(body.expectedPackageVersion)||Number(body.expectedPackageVersion)<1)throw new SocialProgramError('weekly_pipeline_input_invalid',400,'请指定当前周包版本。');
     res.json({item:await pipeline.connectLocalConsumer({tenantId,actorUserId:userId,programId:req.params.programId,packageId:req.params.packageId,packageVersion:Number(body.expectedPackageVersion)})});
+  }));
+  router.post('/:programId/operating-packages/:packageId/execution-pipeline/whatsapp-mock',asyncRoute(async(req,res)=>{
+    const {tenantId,userId}=res.locals as AuthLocals,body=routeBody(req.body);
+    if(!body||Object.keys(body).some(k=>!['expectedPackageVersion','taskId'].includes(k))||!Number.isSafeInteger(body.expectedPackageVersion)||Number(body.expectedPackageVersion)<1||typeof body.taskId!=='string'||!body.taskId.trim())throw new SocialProgramError('weekly_pipeline_input_invalid',400,'请指定当前周包版本及客服任务。');
+    res.json({item:await pipeline.runWhatsAppMock({tenantId,actorUserId:userId,programId:req.params.programId,packageId:req.params.packageId,packageVersion:Number(body.expectedPackageVersion)},{taskId:body.taskId})});
+  }));
+  router.post('/:programId/operating-packages/:packageId/execution-pipeline/bind-existing-facts',asyncRoute(async(req,res)=>{
+    const {tenantId,userId}=res.locals as AuthLocals,body=routeBody(req.body);
+    if(!body||Object.keys(body).some(k=>k!=='expectedPackageVersion')||!Number.isSafeInteger(body.expectedPackageVersion)||Number(body.expectedPackageVersion)<1)throw new SocialProgramError('weekly_pipeline_input_invalid',400,'请指定当前周包版本。');
+    res.json(await pipeline.bindExistingFacts({tenantId,actorUserId:userId,programId:req.params.programId,packageId:req.params.packageId,packageVersion:Number(body.expectedPackageVersion)}));
   }));
   router.post('/:programId/operating-packages/:packageId/execution-pipeline/prepare-authority',asyncRoute(async(req,res)=>{
     const {tenantId,userId}=res.locals as AuthLocals,body=routeBody(req.body);

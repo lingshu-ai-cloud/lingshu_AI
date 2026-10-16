@@ -1,6 +1,7 @@
 import { readTikTokCanonicalAttemptReceipt } from './platformPublisher.js';
 import {weeklyFormalPublicationBoundary,assertWeeklyPublicationStoredScope} from './weeklyFormalPublicationBoundary.js';
 import {publicationInstant} from '../socialPrograms/publicationDeadlines.js';
+import {assertWeeklyPublicationRecoveryDue} from '../socialPrograms/weeklyPublicationRecoverySchedule.js';
 import type { WeeklyOperatingPackage } from '../../shared/contracts/socialProgram.js';
 import type { DataStore, ListQuery } from '../storage/datastore.js';
 import { store } from '../storage/index.js';
@@ -110,6 +111,7 @@ export async function runWeeklyPublicationExecutionScan(input: {
         }
       }
       if(reconciling&&!existing?.provider_receipt_id?.trim()){result.pending++;continue;}
+      if(!reconciling){try{await assertWeeklyPublicationRecoveryDue(dataStore,row.payload,input.now??new Date());}catch(error){if(error instanceof Error&&'code' in error&&error.code==='weekly_publication_recovery_not_due'){result.pending++;continue;}throw error;}}
       if(!reconciling&&await weeklyFormalPublicationBoundary(dataStore,row,weeklyRows.items[0].payload)==='formal'){result.skipped++;continue;}
       const publicationPackage = await readStarterPublicationPackage(row.tenant_id, row.package_id, dataStore);
       if (!publicationPackage) throw new Error('publication_package_not_found');

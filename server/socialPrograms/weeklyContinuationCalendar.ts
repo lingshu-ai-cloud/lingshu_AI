@@ -1,4 +1,5 @@
 import type { WeeklyExecutionTask, VersionedSocialRef } from '../../shared/contracts/socialProgram.js';
+import {resolveWeeklyProductionRow} from '../runtime/weeklyContentProductionIdentity.js';
 import type { DataStore, Record_ } from '../storage/datastore.js';
 import { SocialProgramError } from './service.js';
 import { SocialContentWorkflowError } from '../starter198/socialContentValidation.js';
@@ -18,8 +19,8 @@ export async function projectWeeklyContinuationCalendar(store: DataStore, tasks:
       if (observed.status === 'ready' && observed.sourceTask.productionProgress?.contentTaskId) ids.add(observed.sourceTask.productionProgress.contentTaskId);
       if (observed.status === 'ready' && observed.sourceTask.workflowKind === 'content' && observed.resultRefs.some(item => item.type === 'starter_social_content_artifact')) {
         // Completion clears progress; resolve the already-validated artifact's original production binding.
-        const bindings = await store.list<Record_>('starter_social_content_tasks', { where: { tenant_id: task.tenantId, create_idempotency_key: `weekly-production:${task.packageId}:${observed.detail.sourceVersion}:${observed.sourceTask.publicationTaskId}` }, perPage: 2 });
-        if (bindings.totalItems === 1 && bindings.items.length === 1 && typeof bindings.items[0]!.task_id === 'string') ids.add(bindings.items[0]!.task_id as string);
+        const production=observed.sourceTask.publicationTaskId?await resolveWeeklyProductionRow(store,{tenantId:task.tenantId,programId:task.programId,packageId:task.packageId,packageVersion:observed.detail.sourceVersion,publicationTaskId:observed.sourceTask.publicationTaskId}).catch(()=>null):null;
+        if (typeof production?.task_id === 'string') ids.add(production.task_id);
       }
       return { ...task, continuationObservation: { status: observed.status, code: observed.code, sourceVersion: observed.detail.sourceVersion, sourceTaskId: observed.sourceTask.taskId, ...(observed.status === 'ready' ? { sourceActualFinishedAt: observed.sourceTask.schedule.actualFinishedAt ?? observed.observedCompletedAt ?? null, sourceLatestFinishAt: observed.sourceTask.schedule.latestFinishAt ?? observed.sourceTask.schedule.estimatedFinishAt ?? null } : {}), ...(observed.status === 'ready' && ids.size === 1 ? { contentTaskId: [...ids][0] } : {}) } };
     } catch (error) {

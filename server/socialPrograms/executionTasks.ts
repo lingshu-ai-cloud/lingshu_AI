@@ -1,10 +1,11 @@
 import {INITIAL_CAPACITY_SCHEDULE_REQUIRED} from './weeklyInitialScheduleGate.js';
+import {canonicalWeeklyProductionPublication} from '../runtime/weeklyContentProductionIdentity.js';
 import {normalizeCustomerTaskDependencies} from './customerTaskDependencies.js';
 import {createWeeklyExecutionContinuationService} from './weeklyExecutionContinuations.js';
 import {withExecutionPackageGate,assertExecutionPackageGate,executionPackageFrozen} from './weeklyExecutionGate.js';
 import {applyFrozenWeeklySchedule,scheduleHash} from './weeklyScheduleSnapshots.js';
 import type {WeeklyScheduledPackage} from '../../shared/contracts/socialWeeklyScheduleRevision.js';
-import { applyPublicationDeadlines, publicationInstant } from "./publicationDeadlines.js";
+import { applyPublicationDeadlines, publicationInstant,applyStoredPublicationRecoveryDeadlines } from "./publicationDeadlines.js";
 import { reconcileWeeklyCancellation } from './weeklyCancellation.js';
 import { createHash, randomUUID } from 'node:crypto';
 import type { DataStore } from '../storage/datastore.js';
@@ -310,6 +311,18 @@ function applySharedMaterialPreparation(tasks:WeeklyExecutionTask[],publications
  }
 }
 
+function shareOriginalProductionGraph(pkg:WeeklyOperatingPackage,tasks:WeeklyExecutionTask[]){
+ if(pkg.socialContentPackage.productionIdentityVersion!=='shared-original.v1')return tasks;
+ const productionSteps=new Set(['material_preparation','material_readiness','script','storyboard','asset_generation','video_generation','quality_check','rework','template_extraction','template_performance_validation']);
+ const replacements=new Map<string,string>(),removed=new Set<string>(),conflicts=new Set<string>();
+ for(const pub of pkg.socialContentPackage.publicationTasks.filter(p=>!p.inventoryReuseRef)){
+   const roots=pkg.socialContentPackage.publicationTasks.filter(p=>!p.inventoryReuseRef&&p.motherContentId===pub.motherContentId&&!p.adaptationOfPublicationTaskId);if(roots.length!==1)throw new SocialProgramError('weekly_content_original_identity_ambiguous',409,'同一原创内容必须有唯一生产身份。');const root=roots[0]!;if(root.publicationTaskId===pub.publicationTaskId)continue;
+   try{canonicalWeeklyProductionPublication(pkg,pub.publicationTaskId);}catch(error){if(error instanceof Error&&error.message==='weekly_content_original_contract_conflict')conflicts.add(pub.publicationTaskId);else throw error;}
+   for(const task of tasks.filter(t=>t.publicationTaskId===pub.publicationTaskId&&productionSteps.has(t.schedule.stepKind))){const canonical=tasks.filter(t=>t.publicationTaskId===root.publicationTaskId&&t.schedule.stepKind===task.schedule.stepKind);if(canonical.length!==1)throw new SocialProgramError('weekly_content_original_stage_ambiguous',409,'共享原创缺少唯一生产节点。');replacements.set(task.taskId,canonical[0]!.taskId);removed.add(task.taskId);}
+ }
+ return tasks.filter(t=>!removed.has(t.taskId)).map(task=>({...task,...(task.schedule.stepKind==='user_approval'&&pkg.socialContentPackage.publicationTasks.some(p=>p.publicationTaskId===task.publicationTaskId&&p.adaptationOfPublicationTaskId)?{scope:'adaptation' as const}:{}),dependsOnTaskIds:[...new Set(task.dependsOnTaskIds.map(id=>replacements.get(id)??id))].filter(id=>id!==task.taskId),...(conflicts.has(task.publicationTaskId??'')&&task.schedule.stepKind==='user_approval'?{ownBlockingReasons:[...task.ownBlockingReasons,'weekly_content_original_contract_conflict']}:{}),inputSnapshot:{...task.inputSnapshot,...(typeof task.inputSnapshot.sourceTaskId==='string'?{sourceTaskId:replacements.get(task.inputSnapshot.sourceTaskId)??task.inputSnapshot.sourceTaskId}:{})}}));
+}
+
 /** Convert the seven package summaries into independently durable units. */
 export function planWeeklyExecutionTasks(
   tenantId: string,
@@ -581,8 +594,9 @@ export function planWeeklyExecutionTasks(
   }
   // Legacy immutable graphs have no preparation stage; retain their original
   // dependencies until an explicit revision upgrades them to the current graph.
-  if((pkg.executionGraphVersion??1)>=2)applySharedMaterialPreparation(tasks,publications);
-  return applyPublicationDeadlines(tasks, publications);
+  const productionTasks=shareOriginalProductionGraph(pkg,tasks);
+  if((pkg.executionGraphVersion??1)>=2)applySharedMaterialPreparation(productionTasks,publications.filter(pub=>pkg.socialContentPackage.productionIdentityVersion!=='shared-original.v1'||pub.inventoryReuseRef||!pub.adaptationOfPublicationTaskId));
+  return applyPublicationDeadlines(productionTasks, publications);
 }
 
 function rowData(task: WeeklyExecutionTask): Record<string, unknown> {
@@ -639,7 +653,7 @@ export async function materializeWeeklyExecutionTasks(
 ): Promise<WeeklyExecutionTask[]> {
   return withExecutionPackageGate(dataStore,{tenantId,programId:pkg.programId,packageId:pkg.packageId,packageVersion:pkg.version},async assert=>{
   if(await executionPackageFrozen(dataStore,{tenantId,programId:pkg.programId,packageId:pkg.packageId,packageVersion:pkg.version}))throw new SocialProgramError('weekly_execution_package_frozen',409,'原周版本已冻结，不能新增执行任务。');
-  const planned = await applyFrozenWeeklySchedule(dataStore,tenantId,pkg,planWeeklyExecutionTasks(tenantId, pkg, pkg.createdAt));
+  const planned = await applyStoredPublicationRecoveryDeadlines(dataStore,tenantId,pkg,await applyFrozenWeeklySchedule(dataStore,tenantId,pkg,planWeeklyExecutionTasks(tenantId, pkg, pkg.createdAt)));
   const existing = await listWeeklyExecutionTasks(dataStore, tenantId, pkg.programId, pkg.packageId, pkg.version);
   const stripContinuation=(t:WeeklyExecutionTask)=>{const inputSnapshot={...t.inputSnapshot};delete inputSnapshot.weeklyContinuationRef;return {...t,inputSnapshot,upstreamVersionRefs:t.upstreamVersionRefs.filter(ref=>ref.type!=='weekly_execution_continuation')};};
   const finishContinuations=async()=>{
@@ -668,8 +682,10 @@ export async function materializeWeeklyExecutionTasks(
     if (existing.length !== planned.length || existing.some(item => !expected.has(item.idempotencyKey)||scheduleHash(item.dependsOnTaskIds)!==scheduleHash(planned.find(p=>p.idempotencyKey===item.idempotencyKey)!.dependsOnTaskIds))) {
       throw new SocialProgramError('weekly_execution_task_integrity_violation', 409, '周包执行任务集与当前版本不一致。');
     }
-    await ensureWeeklyTaskWorkspaces(dataStore,existing);
-    return existing;
+    const {refreshWeeklyPublicationRecoveryTaskSchedules}=await import('./weeklyPublicationRecoverySchedule.js');
+    const recovered=await refreshWeeklyPublicationRecoveryTaskSchedules(dataStore,tenantId,pkg);
+    await ensureWeeklyTaskWorkspaces(dataStore,recovered);
+    return recovered;
   }
   const created: WeeklyExecutionTaskRow[] = [];
   try {
@@ -936,11 +952,10 @@ export function createWeeklyExecutionTaskService(dataStore: DataStore) {
           const receipt = await createInventoryUserApproval(dataStore, task, userId, now);
           return { ...task, ...receipt, status: 'succeeded', schedule: { ...task.schedule, actualStartedAt: task.schedule.actualStartedAt ?? now, actualFinishedAt: now }, updatedAt: now };
         }
-        const bindings = await dataStore.list<any>('starter_social_content_tasks', {
-          where: { tenant_id: tenantId, create_idempotency_key: `weekly-production:${packageId}:${task.packageVersion}:${task.publicationTaskId}` }, page: 1, perPage: 2,
-        });
-        const binding = creativeRepair?.contentTask ?? bindings.items[0];
-        if (bindings.totalItems !== 1 || !binding || binding.weekly_plan_id !== packageId) {
+        const {resolveWeeklyProductionRow,currentSharedWeeklyArtifactRef}=await import('../runtime/weeklyContentProductionIdentity.js');
+        const productionScope={tenantId,programId:task.programId,packageId,packageVersion:task.packageVersion,publicationTaskId:task.publicationTaskId!};
+        const binding = creativeRepair?.contentTask ?? await resolveWeeklyProductionRow(dataStore,productionScope);
+        if (!binding || binding.weekly_plan_id !== packageId) {
           throw new SocialProgramError('weekly_production_binding_required', 409, '尚未取得本条内容的真实生产身份，不能验收。');
         }
         const upstreamArtifactRefs = approvalDependencies.flatMap(row => row.payload.resultRefs)
@@ -951,10 +966,10 @@ export function createWeeklyExecutionTaskService(dataStore: DataStore) {
         }
         // A resolved revision has its own independent G4/G5 evidence. Preserve the
         // original quality task history and select the child only from sealed server records.
-        const upstreamArtifactRef = creativeRepair?.artifactRef ?? uniqueArtifactRefs[0]!;
+        const upstreamArtifactRef = creativeRepair?.artifactRef ?? await currentSharedWeeklyArtifactRef(dataStore,productionScope,uniqueArtifactRefs[0]!);
         if(expectedArtifactRef&&(expectedArtifactRef.type!=='starter_social_content_artifact'||expectedArtifactRef.id!==upstreamArtifactRef.id||expectedArtifactRef.version!==upstreamArtifactRef.version))throw new SocialProgramError('weekly_production_approval_artifact_changed',409,'预览成片与当前待验收版本不一致，请重新预览后验收。');
         const artifacts = await dataStore.list<any>('starter_social_content_artifacts', {
-          where: { tenant_id: tenantId, task_id: binding.task_id, artifact_id: upstreamArtifactRef.id }, page: 1, perPage: 2,
+          where: { tenant_id: tenantId, task_id: String(binding.task_id), artifact_id: upstreamArtifactRef.id }, page: 1, perPage: 2,
         });
         const artifact = artifacts.totalItems === 1 ? { ...artifacts.items[0], content: socialJson(artifacts.items[0]?.content) } : null;
         if (artifact && Number(String(artifact.version).replace(/^v/, '')) !== upstreamArtifactRef.version) {
@@ -966,9 +981,10 @@ export function createWeeklyExecutionTaskService(dataStore: DataStore) {
         await validateContentArtifact(dataStore, { ...task, workflowKind: 'content', schedule: { ...task.schedule, stepKind: 'quality_check' } }, {
           type: 'starter_social_content_artifact', id: artifact.artifact_id, version: Number(String(artifact.version).replace(/^v/, '')),
         });
-        const accepted = await decideSocialContentArtifact({
+        const sharedOriginal=(socialJson(binding.brief) as any)?._weeklyAuthority?.weeklyPackage?.socialContentPackage?.productionIdentityVersion==='shared-original.v1';
+        const accepted = sharedOriginal&&artifact.status==='approved'&&!creativeRepair?{artifact:{artifactId:artifact.artifact_id,version:artifact.version}}:await decideSocialContentArtifact({
           repository: createStarter198Repository(dataStore), tenantId, userId,
-          taskId: binding.task_id, artifactId: artifact.artifact_id,
+          taskId: String(binding.task_id), artifactId: artifact.artifact_id,
           idempotencyKey: `weekly-content-approval:${task.taskId}:${artifact.artifact_id}`,
           value: { decision: 'approved', expectedVersion: creativeRepair
             ? `${String(artifact.version).startsWith('v') ? 'v' : ''}${creativeRepair.audit.childArtifactRef.version}`

@@ -1,4 +1,10 @@
 import {createReferenceReviewReadHandlers} from '../lib/referenceReviewReadHandlers.js';
+import {classifyDiscoverySourceFailure} from '../socialDiscovery/sourceFailure.js';
+import {executeExactChunks} from '../lib/exactChunkExecution.js';
+import {exactQwenScope} from '../agents/exactQwenScope.js';
+import {createCandidateContextAssessment,type CandidateContextInput} from '../socialDiscovery/candidateContextAssessment.js';
+import {assessCandidateSemantics} from '../socialDiscovery/candidateSemanticAssessment.js';
+import {resolveCandidateSemanticPaidCall} from '../socialDiscovery/candidateSemanticBudgetResolver.js';
 import {createReferencePhraseAsrHandler} from './referencePhraseAsr.js';
 import {readCachedReferenceNarration} from '../lib/referenceNarration.js';
 import { registerReferenceExactShotMaterializationRoutes } from './referenceExactShotMaterialization.js';
@@ -11,7 +17,8 @@ import { produceReferenceProductionRouting } from '../lib/referenceProductionRou
 import { AnalysisAlreadyRunningError, AnalysisLeaseRegistry } from '../lib/analysisLease.js';
 import { DownloadBudget, RecordWorkRegistry, terminalDownloadFailure } from '../lib/downloadExecution.js';
 import { Router, type Request, type Response } from 'express';
-import { execFile, spawnSync } from 'child_process';
+import { execFile } from 'child_process';
+import { createVideoDownloaderPythonResolver } from '../lib/videoDownloaderPython.js';
 import { promisify } from 'util';
 import fs from 'fs';
 import path from 'path';
@@ -81,25 +88,7 @@ const MAX_DOWNLOAD_JOBS = Number(process.env.VIDEO_DOWNLOAD_CONCURRENCY || 3);
 const pendingVisibleBackfillJobs = new Set<string>();
 const pocketBaseBackfillFailures = new Map<string, number>();
 
-let verifiedYtDlpPython = '';
-function ytDlpPythonPath(): string {
-  if (verifiedYtDlpPython) return verifiedYtDlpPython;
-  const bundled = path.join(os.homedir(), '.cache/codex-runtimes/codex-primary-runtime/dependencies/python/bin/python3');
-  const candidates = [...new Set([
-    String(process.env.YT_DLP_PYTHON || '').trim(),
-    fs.existsSync(bundled) ? bundled : '',
-    String(process.env.PYTHON || '').trim(),
-    'python3',
-  ].filter(Boolean))];
-  for (const candidate of candidates) {
-    const check = spawnSync(candidate, ['-c', 'import yt_dlp'], { stdio: 'ignore', timeout: 5_000 });
-    if (!check.error && check.status === 0) {
-      verifiedYtDlpPython = candidate;
-      return candidate;
-    }
-  }
-  throw new Error('video_downloader_not_installed: Python yt-dlp module is required');
-}
+const ytDlpPythonPath = createVideoDownloaderPythonResolver();
 
 function crawlerCosKey(record: Record<string, unknown>, role: string, extension: string): string {
   const tenantId = String(record.tenantId || 'unknown').replace(/[^a-zA-Z0-9_-]/g, '_');
@@ -1769,6 +1758,20 @@ videosRouter.post('/analyze-source', async (req, res) => {
 videosRouter.post('/:id/analyze-source', async (req, res) => {
   const { sourceUrl, title, platform, async } = req.body as { sourceUrl?: string; title?: string; platform?: Platform; async?: boolean };
   await handleAnalyzeSource(req, res, { id: req.params.id, sourceUrl, title, platform, async });
+});
+
+// Adopts business context for an existing canonical analysis only. No exact
+// analysis, semantic model, collection, quota or production start occurs here.
+videosRouter.post('/:id/context-assessment', async(req,res)=>{
+ const {tenantId,userId}=res.locals as AuthLocals;
+ try{const item=await createCandidateContextAssessment(store,tenantId,userId,req.params.id,req.body as CandidateContextInput,path.resolve(__dirname,'../../data/media'));res.json({ok:true,assessment:item,providerCalled:false,exactAnalysisReused:true});}
+ catch(error){const code=error instanceof Error?error.message:'candidate_context_assessment_failed';res.status(code==='candidate_context_actor_forbidden'?403:409).json({error:code});}
+});
+videosRouter.post('/:id/context-assessment/:assessmentId/evaluate',async(req,res)=>{
+ const {tenantId,userId}=res.locals as AuthLocals;
+ try{const taskId=typeof (req.body as Record<string,unknown>)?.taskId==='string'?String((req.body as Record<string,unknown>).taskId).trim():'';const contextRow=await store.getById<Record<string,unknown>>('social_candidate_context_assessments',req.params.assessmentId),context=contextRow?.payload as import('../socialDiscovery/candidateContextAssessment.js').CandidateContextAssessment|undefined;
+  const result=await assessCandidateSemantics(store,tenantId,userId,req.params.id,req.params.assessmentId,taskId&&context?{paidCall:async()=>resolveCandidateSemanticPaidCall({store,tenantId,taskId,candidateId:req.params.id,context})}:{});res.status(result.state==='blocked'?409:result.state==='unknown'?202:200).json(result);}
+ catch(error){const code=error instanceof Error?error.message:'candidate_semantic_failed';res.status(code==='candidate_semantic_actor_forbidden'?403:409).json({error:code});}
 });
 
 // ─── Internal crawler ops queue ──────────────────────────────────────────────
@@ -5139,9 +5142,9 @@ async function analyzeSourceVideoJobInner(input: {
             crawlerOpsStatus: 'failed',
             crawlerOpsReason: compactReason,
             analysisError: compactError,
-            analysisRetryable: true,
-            analysisFailureKind: 'quality_or_timeout',
-            videoLevelFailureStatus: '全片精确分析失败，可重试',
+            analysisRetryable: classifyDiscoverySourceFailure(e) !== 'model_unavailable',
+            analysisFailureKind: classifyDiscoverySourceFailure(e) === 'model_unavailable' ? 'model_configuration' : 'quality_or_timeout',
+            videoLevelFailureStatus: classifyDiscoverySourceFailure(e) === 'model_unavailable' ? '分析模型不可用，等待配置修复' : '全片精确分析失败，可重试',
             downloadError: compactError,
           }),
         });
@@ -5178,15 +5181,15 @@ async function analyzeSourceVideoJobInner(input: {
           analysisSource: previous.gemini ? previous.analysisSource || 'metadata-fallback' : isRetryableAnalysisFailure(e) ? 'analysis-pending' : 'metadata-fallback',
           analysisQuality: previous.gemini ? previous.analysisQuality || 'metadata' : isRetryableAnalysisFailure(e) ? 'pending' : 'metadata',
           videoAnalysisAttemptedAt: new Date().toISOString(),
-          downloadStatus: 'ops_queued',
-          videoFetchStatus: 'ops_queued',
-          geminiStatus: 'waiting_for_video',
+          downloadStatus: remainsQueued ? 'ops_queued' : 'manual_required',
+          videoFetchStatus: remainsQueued ? 'ops_queued' : previous.contentSha256 ? 'fetched' : 'manual_required',
+          geminiStatus: remainsQueued ? 'waiting_for_video' : 'video_failed',
           crawlerOpsTaskId: opsTask?.id || input.opsTaskId || previous.crawlerOpsTaskId,
           crawlerOpsStatus: opsTask?.status || 'failed',
           crawlerOpsReason: compactReason,
           analysisError: compactError,
           analysisRetryable: isRetryableAnalysisFailure(e),
-          analysisFailureKind: isRetryableAnalysisFailure(e) ? 'quality_or_timeout' : previous.analysisFailureKind,
+          analysisFailureKind: classifyDiscoverySourceFailure(e) === 'model_unavailable' ? 'model_configuration' : isRetryableAnalysisFailure(e) ? 'quality_or_timeout' : previous.analysisFailureKind,
           downloadError: compactError,
           requestedAnalysisMode: remainsQueued ? previous.requestedAnalysisMode : undefined,
           analysisQueueKind: remainsQueued ? 'source_url' : previous.analysisQueueKind,
@@ -6697,6 +6700,8 @@ export async function downloadVideoForAnalysis(input: {
   title: string;
   platform: Platform;
   record?: Record<string, unknown> | null;
+  allowPaidFallback?: boolean;
+  allowCookieFallback?: boolean;
 }, executeDownload = execFileAsync, budget = new DownloadBudget(Math.max(10_000, Number(process.env.VIDEO_ANALYSIS_DOWNLOAD_TIMEOUT_MS || 150_000)))): Promise<{ filePath: string; fileName: string; mimeType: string; size: number }> {
   const source = validatePublicVideoSourceUrl(input.sourceUrl, input.platform);
   if (!source) throw new Error('unsafe_public_video_source');
@@ -6715,7 +6720,7 @@ export async function downloadVideoForAnalysis(input: {
   // Facebook's public page frequently blocks yt-dlp or makes it retry several
   // formats before failing. The configured posts actor already exposes the
   // playable CDN URL, so use it first for an explicit analysis request.
-  if (input.platform === 'facebook' && canUseApifyVideoFallback(tenantId, 'facebook')) {
+  if (input.allowPaidFallback !== false && input.platform === 'facebook' && canUseApifyVideoFallback(tenantId, 'facebook')) {
     try {
       return await downloadFacebookVideoViaApify(input.sourceUrl, tenantId, budget);
     } catch (error) {
@@ -6727,7 +6732,7 @@ export async function downloadVideoForAnalysis(input: {
   // Datacenter YouTube traffic is commonly challenged before yt-dlp can obtain
   // media bytes. A dedicated downloader actor stores one low-res MP4 in Apify
   // KVS, which we immediately copy into our own PocketBase-backed pipeline.
-  if (input.platform === 'youtube' && canUseApifyVideoFallback(tenantId, 'youtube')) {
+  if (input.allowPaidFallback !== false && input.platform === 'youtube' && canUseApifyVideoFallback(tenantId, 'youtube')) {
     try {
       return await downloadYouTubeVideoViaApify(input.sourceUrl, tenantId, budget);
     } catch (error) {
@@ -6771,7 +6776,7 @@ export async function downloadVideoForAnalysis(input: {
       lastError = e;
       budget.record(candidate.label, e);
       if (terminalDownloadFailure(e)) break;
-      if (usesServerCookiesForCrawl(input.platform) && (cookieBrowsers().length > 0 || cookieFiles().length > 0)) {
+      if (input.allowCookieFallback !== false && usesServerCookiesForCrawl(input.platform) && (cookieBrowsers().length > 0 || cookieFiles().length > 0)) {
         try {
           await execYtDlpWithCookieFallback(downloadArgs, input.sourceUrl, budget.remaining(), 4 * 1024 * 1024, budget);
           lastError = null;
@@ -6787,7 +6792,7 @@ export async function downloadVideoForAnalysis(input: {
   }
   if (lastError) {
     cleanupDownloadedFilesById(id, ANALYSIS_DIR);
-    if (input.platform === 'tiktok' && canUseApifyVideoFallback(tenantId, 'tiktok')) {
+    if (input.allowPaidFallback !== false && input.platform === 'tiktok' && canUseApifyVideoFallback(tenantId, 'tiktok')) {
       try {
         console.warn('[videos] TikTok yt-dlp analysis download failed, trying Apify video fallback:', lastError instanceof Error ? lastError.message : lastError);
         return await downloadTikTokVideoViaApify(input.sourceUrl, tenantId, budget);
@@ -6804,7 +6809,7 @@ export async function downloadVideoForAnalysis(input: {
         console.warn('[videos] TikTok public API analysis fallback failed:', publicApiError instanceof Error ? publicApiError.message : publicApiError);
       }
     }
-    if (input.platform === 'instagram' && canUseApifyVideoFallback(tenantId, 'instagram')) {
+    if (input.allowPaidFallback !== false && input.platform === 'instagram' && canUseApifyVideoFallback(tenantId, 'instagram')) {
       try {
         console.warn('[videos] Instagram yt-dlp analysis download failed, trying Apify video fallback:', lastError instanceof Error ? lastError.message : lastError);
         return await downloadInstagramVideoViaApify(input.sourceUrl, tenantId, budget);
@@ -7288,6 +7293,7 @@ function withTimeout<T>(promise: Promise<T>, ms: number, message: string): Promi
 }
 
 function isRetryableAnalysisFailure(error: unknown): boolean {
+  if (classifyDiscoverySourceFailure(error) === 'model_unavailable') return false;
   return /analysis_quality_retryable|analysis_retryable|chunk_quality_failed|video_analysis_hard_timeout|exact_chunk_timeout/i
     .test(error instanceof Error ? error.message : String(error));
 }
@@ -7749,25 +7755,10 @@ async function analyzeExactLongVideoChunks(input: {
       clearTimeout(timeout);
     }
   };
-  const analyzeWithRetry = async (chunk: { start: number; end: number }) => {
-    try {
-      return await runWithTimeout(chunk, primaryFrameLimit, 1);
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      // Changing the frame count cannot repair authentication, quota or
-      // billing failures. Repeating those requests only burns time and can
-      // create ambiguous provider-side usage.
-      if (/\b(?:401|402|403)\b|quota exhausted|insufficient (?:quota|balance|funds)|billing|invalid api key/i.test(message)) throw error;
-      return await runWithTimeout(chunk, retryFrameLimit, 2);
-    }
-  };
-  const settled: PromiseSettledResult<VideoAiAnalysis>[] = [];
   const concurrency = Math.max(1, Math.min(3, Number(process.env.VIDEO_EXACT_CHUNK_CONCURRENCY || 2)));
-  for (let offset = 0; offset < chunks.length; offset += concurrency) {
-    settled.push(...await Promise.allSettled(chunks.slice(offset, offset + concurrency).map(analyzeWithRetry)));
-  }
+  const settled = await executeExactChunks(chunks,exactQwenScope()?1:concurrency,(chunk,attempt)=>runWithTimeout(chunk,attempt===1?primaryFrameLimit:retryFrameLimit,attempt),!exactQwenScope());
   const failure = settled.find((result): result is PromiseRejectedResult => result.status === 'rejected');
-  if (failure) throw new Error(`${input.analysisMode || 'exact'}_analysis_retryable: ${failure.reason instanceof Error ? failure.reason.message : String(failure.reason)}`);
+  if (failure) throw new Error(`${classifyDiscoverySourceFailure(failure.reason) === 'model_unavailable' ? 'model_unavailable' : `${input.analysisMode || 'exact'}_analysis_retryable`}: ${failure.reason instanceof Error ? failure.reason.message : String(failure.reason)}`);
   const results = settled.map(result => (result as PromiseFulfilledResult<VideoAiAnalysis>).value);
   const first = results[0];
   const unique = (values: string[]) => [...new Set(values.filter(Boolean))];
@@ -7922,7 +7913,7 @@ export async function analyzeDownloadedVideoWithFallback(opts: {
     return { analysis: await finishSourceAnalysis({ ...analysis, detectedSceneCuts, hookReviewReasons } as VideoAiAnalysis), source: 'qwen-frame-video' };
   };
 
-  if (shouldUseQwenFirst()) {
+  if (exactQwenScope() || shouldUseQwenFirst()) {
     if (!isQwenConfigured()) throw new Error('DASHSCOPE_API_KEY is not set');
     return withTimeout(runQwen(), videoAnalysisHardTimeoutMs(opts.analysisMode), 'video_analysis_hard_timeout');
   }

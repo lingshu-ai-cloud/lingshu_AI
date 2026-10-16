@@ -8,10 +8,12 @@ import {
   readCurrentContentExecutionCheckpoint,
   recordCurrentContentExecutionCheckpoint,
   recordCurrentContentProviderReceipt,
+  assertCurrentContentExecutionActive,
   runWithContentExecutionContext,
 } from './context.js';
 import {
   admitContentExecutionJob,
+  contentExecutionDefaults,
   bindPristineContentExecutionCheckpoint,
   bindPristineContentExecutionCheckpoints,
   refreshUnspentContentExecutionCheckpoint,
@@ -101,6 +103,64 @@ const env = {
   CONTENT_SYSTEM_MAX_ATTEMPTS: '3',
   CONTENT_RECONCILIATION_MAX_ATTEMPTS: '12',
 } as NodeJS.ProcessEnv;
+
+test('production defaults share three slots while preserving account throttling and explicit overrides', () => {
+  const defaults = contentExecutionDefaults({});
+  assert.equal(defaults.tenantMaxRunning, 3);
+  assert.equal(defaults.taskTypeMaxRunning, 3);
+  assert.equal(defaults.workerConcurrency, 3);
+  assert.equal(defaults.accountMaxRunning, 1);
+  const overridden = contentExecutionDefaults({
+    CONTENT_MAX_RUNNING_PER_TENANT: '2', CONTENT_MAX_RUNNING_PER_ACCOUNT: '1',
+    CONTENT_MAX_RUNNING_PER_TASK_TYPE: '1', CONTENT_EXECUTION_WORKER_CONCURRENCY: '2',
+  });
+  assert.equal(overridden.tenantMaxRunning, 2);
+  assert.equal(overridden.taskTypeMaxRunning, 1);
+  assert.equal(overridden.workerConcurrency, 2);
+  assert.equal(overridden.accountMaxRunning, 1);
+});
+
+test('shared default pool claims three contents, not three per Agent or worker', async () => {
+  const store = new MemoryStore();
+  for (let index = 0; index < 5; index++) await admitContentExecutionJob({
+    dataStore: store, tenantId: 'shared-production', userId: 'owner', taskId: `content-${index}`,
+    runId: `run-${index}`, accountId: `account-${index}`, taskType: index % 2 ? 'social_content_weekly' : 'social_content_workbench',
+  });
+  const started: string[] = [];
+  let release!: () => void;
+  const gate = new Promise<void>(resolve => { release = resolve; });
+  const execute = async (job: { taskId: string }) => { started.push(job.taskId); await gate; };
+  const first = new DurableContentExecutionWorker({ dataStore: store, execute, env: {} });
+  const second = new DurableContentExecutionWorker({ dataStore: store, execute, env: {} });
+  try {
+    await first.drain();
+    await second.drain();
+    assert.equal(started.length, 3);
+    const rows = await store.list<Record<string, unknown>>(CONTENT_EXECUTION_JOB_COLLECTION);
+    assert.equal(rows.items.filter(row => row.status === 'running').length, 3);
+    assert.equal(rows.items.filter(row => row.status === 'queued').length, 2);
+  } finally { first.stop(); second.stop(); release(); }
+});
+
+test('three production slots do not raise a shared account limit or persisted customer limit', async () => {
+  for (const persistedLimit of [false, true]) {
+    const store = new MemoryStore();
+    if (persistedLimit) await setContentExecutionLimit({ dataStore: store, tenantId: 'limited',
+      scope: 'tenant', scopeKey: '*', maxRunning: 1, updatedBy: 'existing-admin' });
+    for (let index = 0; index < 3; index++) await admitContentExecutionJob({
+      dataStore: store, tenantId: 'limited', userId: 'owner', taskId: `limited-${index}`,
+      runId: `run-${index}`, accountId: persistedLimit ? `account-${index}` : 'shared-account',
+      taskType: 'social_content_weekly',
+    });
+    const started: string[] = [];
+    let release!: () => void;
+    const gate = new Promise<void>(resolve => { release = resolve; });
+    const worker = new DurableContentExecutionWorker({ dataStore: store, env: {},
+      execute: async job => { started.push(job.taskId); await gate; } });
+    try { await worker.drain(); assert.equal(started.length, 1); }
+    finally { worker.stop(); release(); }
+  }
+});
 
 test('frozen 37-shot executor checkpoints fit the durable map envelope', () => {
   const accepted = parseContentExecutionCheckpoints({
@@ -443,6 +503,61 @@ test('customer runtime projection explains capacity, queue position and retry wi
   assert.match(retry?.publicReason || '', /分级重试/);
   assert.equal(JSON.stringify(runtime).includes('private socket address'), false);
   assert.equal(JSON.stringify(runtime).includes('private-worker'), false);
+});
+
+test('active child boundary rejects a completed root group fence but preserves accepted unknown provider receipts', async () => {
+ const store=new MemoryStore();
+ await store.create('starter_social_content_tasks',{id:'root',tenant_id:'tenant-a',task_id:'original',status:'completed',content_order:{contentId:'original',budgetTaskId:'original',cancellation:{operationId:'cancel'}}});
+ await store.create('starter_social_content_tasks',{id:'child',tenant_id:'tenant-a',task_id:'child',status:'running',content_order:{contentId:'original',budgetTaskId:'original'}});
+ await store.create('workflow_runs',{id:'run',tenant_id:'tenant-a',status:'running'});
+ const job=await admitContentExecutionJob({dataStore:store,tenantId:'tenant-a',userId:'owner',taskId:'child',runId:'run',taskType:'social_content_weekly'});
+ await runWithContentExecutionContext({dataStore:store,jobId:job.id,action:async()=>{
+   await assert.rejects(assertCurrentContentExecutionActive(),/content_execution_stopped/);
+   await assert.rejects(recordCurrentContentProviderReceipt({provider:'seedance',requestId:'new',state:'submitting'}),/content_execution_stopped/);
+   await recordCurrentContentProviderReceipt({provider:'seedance',requestId:'old',state:'unknown'});
+ }});
+ const saved=await store.getById<any>(CONTENT_EXECUTION_JOB_COLLECTION,job.id);
+ assert.equal(saved.provider_receipts[0].requestId,'old');assert.equal(saved.provider_receipts[0].state,'unknown');
+});
+test('completed original group cancellation fences queued and unknown revision jobs without deleting evidence', async () => {
+  const store = new MemoryStore();
+  await store.create('starter_social_content_tasks', { id: 'root', tenant_id: 'tenant-a', task_id: 'original', status: 'completed',
+    content_order: { contentId: 'original', budgetTaskId: 'original', cancellation: { operationId: 'cancel-group' } } });
+  await store.create('starter_social_content_tasks', { id: 'child', tenant_id: 'tenant-a', task_id: 'revision', status: 'queued',
+    content_order: { contentId: 'original', budgetTaskId: 'original' } });
+  const job = await admitContentExecutionJob({ dataStore: store, tenantId: 'tenant-a', userId: 'owner', taskId: 'revision', runId: 'run', taskType: 'social_content_weekly' });
+  const receipts = [{ operationId: 'original-paid-request', state: 'unknown', requestId: 'provider-request' }];
+  await store.update(CONTENT_EXECUTION_JOB_COLLECTION, job.id, { status: 'reconciling', provider_receipts: receipts });
+  let executions = 0;
+  const worker = new DurableContentExecutionWorker({ dataStore: store, env: {}, execute: async () => { executions += 1; } });
+  try {
+    await worker.drain();
+    assert.equal(executions, 0);
+    const saved = await store.getById<any>(CONTENT_EXECUTION_JOB_COLLECTION, job.id);
+    assert.deepEqual(saved.provider_receipts, receipts);
+    assert.equal(saved.attempt, 0);
+    await assert.rejects(controlContentExecutionJob({ dataStore: store, tenantId: 'tenant-a', jobId: job.id, action: 'retry' }), /order_cancelled_or_replaced/);
+    assert.equal((await store.getById<any>('starter_social_content_tasks', 'root')).status, 'completed');
+  } finally { worker.stop(); }
+});
+
+test('group fence suppresses a late worker success callback and preserves provider history', async () => {
+  const store = new MemoryStore();
+  const root = { id: 'root', tenant_id: 'tenant-a', task_id: 'original', status: 'completed', content_order: { contentId: 'original', budgetTaskId: 'original' } };
+  await store.create('starter_social_content_tasks', root);
+  await store.create('starter_social_content_tasks', { id: 'child', tenant_id: 'tenant-a', task_id: 'revision', status: 'queued', content_order: { contentId: 'original', budgetTaskId: 'original' } });
+  const job = await admitContentExecutionJob({ dataStore: store, tenantId: 'tenant-a', userId: 'owner', taskId: 'revision', runId: 'run', taskType: 'social_content_weekly' });
+  let callbacks = 0, executed = false;
+  const worker = new DurableContentExecutionWorker({ dataStore: store, env: {}, execute: async () => {
+    executed = true;
+    await store.update('starter_social_content_tasks', 'root', { content_order: { ...root.content_order, cancellation: { operationId: 'cancel-group' } } });
+  }, onSucceeded: async () => { callbacks += 1; } });
+  try {
+    await worker.drain();
+    for (let i = 0; i < 30; i += 1) { await new Promise(resolve => setImmediate(resolve)); if (!(await readContentExecutionJob(store, 'tenant-a', 'revision', 'run'))?.workerId) break; }
+    assert.equal(executed, true); assert.equal(callbacks, 0);
+    assert.notEqual((await readContentExecutionJob(store, 'tenant-a', 'revision', 'run'))?.status, 'succeeded');
+  } finally { worker.stop(); }
 });
 
 test('pause, cancel, resume and manual retry preserve the same durable job identity', async () => {

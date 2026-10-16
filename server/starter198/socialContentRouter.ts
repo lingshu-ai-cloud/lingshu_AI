@@ -1,4 +1,5 @@
 import {createWeeklyOwnedProductIdentityRouter} from './weeklyOwnedProductIdentityRouter.js';
+import {createSocialContentOrderOperationsRouter} from './socialContentOrderOperationsRouter.js';
 import {createWeeklyOwnedProductIdentityUI} from './weeklyOwnedProductIdentityUI.js';
 import {createPresenterFirstFrameApprovalRouter} from './socialContentPresenterFirstFrameApprovalRouter.js';
 import {createSocialInstagramDeliveryRouter} from './socialInstagramDeliveryRouter.js';import {createSocialInstagramDeliveryService} from './socialInstagramDeliveryService.js';
@@ -110,6 +111,7 @@ import { refreshSocialTaskReferenceOutputs } from './socialContentTaskSupport.js
 import { createSocialArtifactReevaluationService } from './socialContentArtifactReevaluation.js';
 import { socialContentAssistantAction, socialContentAssistantReceipt } from './socialContentAssistantActions.js';
 import { socialContentReviewAdmissionAllowed } from './socialContentTestBypass.js';
+import { confirmSocialReplicationScript, readSocialReplicationScriptReviewContext } from './socialContentReplicationScriptReview.js';
 
 type AccessLevel = 'read' | 'write' | 'start';
 
@@ -203,6 +205,7 @@ router.use('/tasks/:taskId/runs/:runId/artifacts/:artifactId/g6-reviews',createS
   }
 
   if(repository.dataStore)router.use('/tasks/:taskId/weekly-owned-product-identity',createWeeklyOwnedProductIdentityRouter(createWeeklyOwnedProductIdentityUI(repository.dataStore,{repository,sourceOptions}),authorize));
+  router.use(createSocialContentOrderOperationsRouter({repository,authorize,now}));
   if(repository.dataStore)router.use('/tasks/:taskId/runs/:runId/presenter-first-frame-reviews',createPresenterFirstFrameApprovalRouter({repository,authorize,now}));
 
   function asyncRoute(handler: (req: Request, res: Response) => Promise<void>) {
@@ -449,7 +452,7 @@ router.use('/tasks/:taskId/runs/:runId/artifacts/:artifactId/g6-reviews',createS
     // it does not claim a future scheduler slot or modify a frozen weekly pack.
     const value = { ...parsed, mode: 'weekly' as const };
     const task = await createSocialContentTask({ repository, ...identity,
-      idempotencyKey, value, now: now() });
+      idempotencyKey, value, entry:'assistant', now: now() });
     let current = task;
     if (current.runId) { res.json({ task: current, receipt: await assistantReceipt(identity.tenantId,current) }); return; }
     let blockedReason: string | undefined;
@@ -707,6 +710,29 @@ router.use('/tasks/:taskId/runs/:runId/artifacts/:artifactId/g6-reviews',createS
       idempotencyKey: requireIdempotencyKey(req.headers['idempotency-key']),
       value: parsePackageSelection(req.body),
       now: now(),
+    });
+    res.json({ task });
+  }));
+
+  router.get('/tasks/:taskId/replication-script/review-context', asyncRoute(async (req, res) => {
+    const identity = await authorize(req, res, 'read');
+    res.json(await readSocialReplicationScriptReviewContext({ repository, tenantId: identity.tenantId,
+      taskId: requireSocialId(req.params.taskId) }));
+  }));
+
+  router.post('/tasks/:taskId/replication-script/confirm', asyncRoute(async (req, res) => {
+    const identity = await authorize(req, res, 'write');
+    bodyWithinLimit(req);
+    const source = socialObject(req.body);
+    if (!source || Object.keys(source).some(key => ![
+      'expectedVersion', 'analysisId', 'analysisHash', 'scriptHash', 'sceneDecisions', 'reviewEvidence',
+    ].includes(key))) {
+      throw new SocialContentWorkflowError('social_replication_script_review_invalid', 400);
+    }
+    const task = await confirmSocialReplicationScript({
+      repository, ...identity, taskId: requireSocialId(req.params.taskId),
+      idempotencyKey: requireIdempotencyKey(req.headers['idempotency-key']),
+      value: source as unknown as Parameters<typeof confirmSocialReplicationScript>[0]['value'], now: now(),
     });
     res.json({ task });
   }));

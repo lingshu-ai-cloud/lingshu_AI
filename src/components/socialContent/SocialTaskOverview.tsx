@@ -1,5 +1,5 @@
 import { getScrollBehavior } from "../../lib/usePrefersReducedMotion";
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import {
   BarChart3,
   CheckCircle2,
@@ -90,11 +90,13 @@ interface SocialTaskOverviewProps {
   onBatchDecision: (decision: 'approved' | 'changes_requested') => void;
   onCreateDeliveryPackage: () => void;
   onRefresh: () => void;
+  onAttachSourceFiles: (files: File[]) => Promise<unknown> | void;
   onNavigate: (page: Page) => void;
   createMode?: SocialContentTaskMode;
 }
 
-function ReadinessPanel({ task }: { task: SocialContentTaskDetail }) {
+function ReadinessPanel({ task, busy, onAttachSourceFiles, onOpenWorkbench }: Pick<SocialTaskOverviewProps, 'busy' | 'onAttachSourceFiles'> & { task: SocialContentTaskDetail; onOpenWorkbench: () => void }) {
+  const sourceInput = useRef<HTMLInputElement>(null);
   const sources = task.sources.filter(item => item.status === 'active');
   const hasKnowledge = sources.some(item => item.kind === 'knowledge');
   const hasMaterial = sources.some(item => item.kind === 'material');
@@ -128,12 +130,15 @@ function ReadinessPanel({ task }: { task: SocialContentTaskDetail }) {
     { label: '企业资料', value: sources.filter(item => item.kind === 'knowledge').length, icon: FileText },
     { label: '参考内容', value: Math.max(explicitReferenceCount, analyzedReferenceCount, handoffReferenceCount), icon: ExternalLink },
   ];
+  const missingRequirements = task.materialRequirements?.filter(item => item.required && item.status !== 'satisfied') ?? [];
+  const needsPresenter = missingRequirements.some(item => /人物授权|账号身份锁|人物镜头/.test(item.reason ?? ''));
   return (
     <section className="rounded-lg border border-border bg-white p-5 shadow-none">
       {testBypass && <div className="mb-4 rounded-lg border border-sky-200 bg-sky-50 px-3 py-2 text-[10px] font-semibold leading-4 text-sky-900">本地演示仅允许超出预算后继续；资料完整性、事实、素材权利与成片质量仍严格检查。</div>}
       <div className="flex items-center justify-between gap-3"><div><p className="text-[11px] font-bold text-text-muted">准备情况</p><h3 className="mt-1 text-base font-semibold text-text-primary">{readinessTitle}</h3>{canStart && !hasKnowledge && <p className="mt-1 text-[10px] text-text-muted">企业资料可选；未提供时系统不会编造参数或功效。</p>}{managedWithoutShoot && <p className="mt-1 text-[10px] text-emerald-700">系统已逐镜确认可以完整实现或功能等价实现；补充实拍只作为可选增强。</p>}{task.assetSupplyPlan?.overallFeasibility === 'blocked_for_facts_or_rights' && <p className="mt-1 text-[10px] text-amber-800">部分镜头缺少不可替代的事实或权利信息，系统不会用生成画面冒充真实证据。</p>}</div><span className={`flex h-10 w-10 items-center justify-center rounded-lg ${canStart ? 'bg-emerald-50 text-emerald-700' : 'bg-amber-50 text-amber-700'}`}>{canStart ? <CheckCircle2 size={20} /> : <Clock3 size={20} />}</span></div>
       <div className="mt-4 grid grid-cols-3 gap-2">{sourceStats.map(item => <div key={item.label} className="rounded-lg bg-surface-2 px-3 py-2.5"><item.icon size={14} className="text-text-muted" /><strong className="mt-2 block text-lg text-text-primary">{item.value}</strong><span className="text-[10px] font-semibold text-text-muted">{item.label}</span></div>)}</div>
-      {task.materialRequirements && task.materialRequirements.length > 0 && <div className="mt-4 space-y-2"><div><p className="text-[11px] font-semibold text-text-secondary">可选的拍摄与素材建议</p><p className="mt-1 text-[10px] text-text-muted">不会影响开始制作；编导 Agent 会结合现有素材安排导演方案。</p></div>{task.materialRequirements.map(item => <div key={item.requirementId} className="rounded-lg border border-border bg-white px-3 py-2.5"><div className="flex items-start justify-between gap-3"><div><p className="text-xs font-bold text-text-primary">{item.shotFunction}</p><p className="mt-1 text-[10px] leading-4 text-text-muted">可补充 {item.subject} · {item.action}{item.environment ? ` · ${item.environment}` : ''}</p></div><span className={`shrink-0 rounded-full px-2 py-1 text-[9px] font-semibold ${item.status === 'satisfied' ? 'bg-emerald-50 text-emerald-700' : item.status === 'unusable' ? 'bg-rose-50 text-rose-700' : 'bg-slate-100 text-slate-600'}`}>{item.status === 'satisfied' ? '已有素材' : '可选补充'}</span></div></div>)}</div>}
+      {missingRequirements.length > 0 && <div className="mt-4 rounded-lg border border-amber-200 bg-amber-50/60 p-3" data-material-supplement-entry><p className="text-[11px] font-bold text-amber-950">补充到当前任务</p><p className="mt-1 text-[10px] leading-4 text-amber-800">上传会保留文件哈希和任务来源；上传成功仍需进入制作页逐镜确认，系统不会自动视为已匹配。</p><div className="mt-3 flex flex-wrap gap-2"><input ref={sourceInput} type="file" multiple accept="image/*,video/*" className="hidden" onChange={event => { const files = Array.from(event.currentTarget.files ?? []); event.currentTarget.value = ''; if (files.length) void onAttachSourceFiles(files); }} /><button type="button" disabled={busy} onClick={() => sourceInput.current?.click()} className="inline-flex items-center gap-1.5 rounded-lg bg-amber-800 px-3 py-2 text-[10px] font-semibold text-white disabled:opacity-50"><Image size={12} />上传商品图片或视频</button>{needsPresenter && <button type="button" disabled={busy} onClick={onOpenWorkbench} className="inline-flex items-center gap-1.5 rounded-lg border border-amber-300 bg-white px-3 py-2 text-[10px] font-semibold text-amber-900 disabled:opacity-50"><ExternalLink size={12} />配置已授权人物</button>}<button type="button" disabled={busy} onClick={onOpenWorkbench} className="inline-flex items-center gap-1.5 rounded-lg border border-amber-300 bg-white px-3 py-2 text-[10px] font-semibold text-amber-900 disabled:opacity-50"><ExternalLink size={12} />进入逐镜映射</button></div></div>}
+      {task.materialRequirements && task.materialRequirements.length > 0 && <div className="mt-4 space-y-2"><div><p className="text-[11px] font-semibold text-text-secondary">逐镜素材需求</p><p className="mt-1 text-[10px] text-text-muted">必需项只阻塞对应镜头；已映射并可被制作消费的素材才算满足。</p></div>{task.materialRequirements.map(item => <div key={item.requirementId} className="rounded-lg border border-border bg-white px-3 py-2.5"><div className="flex items-start justify-between gap-3"><div><p className="text-xs font-bold text-text-primary">{item.shotFunction}</p><p className="mt-1 text-[10px] leading-4 text-text-muted">{item.required ? '需要' : '可补充'} {item.subject} · {item.action}{item.environment ? ` · ${item.environment}` : ''}</p>{item.reason && <p className="mt-1 text-[10px] leading-4 text-text-muted">{item.reason}</p>}</div><span className={`shrink-0 rounded-full px-2 py-1 text-[9px] font-semibold ${item.status === 'satisfied' ? 'bg-emerald-50 text-emerald-700' : item.status === 'unusable' || item.required ? 'bg-rose-50 text-rose-700' : 'bg-slate-100 text-slate-600'}`}>{item.status === 'satisfied' ? '已有素材' : item.required ? '必需缺口' : '可选补充'}</span></div></div>)}</div>}
       {!canStart && task.readiness.missing.length > 0 && <ul className="mt-4 space-y-1.5">{task.readiness.missing.filter(item => !item.startsWith('material_requirement:') && item !== 'publish_ready_material' && item !== 'source_material').slice(0, 4).map(item => <li key={item} className="flex items-start gap-2 text-xs text-amber-800"><Circle size={6} fill="currentColor" className="mt-1.5 shrink-0" />{`请补充${READINESS_LABEL[item] || '任务资料'}`}</li>)}</ul>}
     </section>
   );
@@ -252,7 +257,7 @@ export default function SocialTaskOverview(props: SocialTaskOverviewProps) {
         />
         {task.mode === 'weekly' && <SocialWeeklySummary task={task} onEdit={props.onEdit} />}
         <div className={`grid gap-4 ${showDelivery ? 'xl:grid-cols-2' : ''}`}>
-          <ReadinessPanel task={task} />
+          <ReadinessPanel task={task} busy={props.busy} onAttachSourceFiles={props.onAttachSourceFiles} onOpenWorkbench={props.onEdit} />
           {showDelivery && <DeliveryPanel task={task} busy={props.busy} onDownload={props.onDownload} onOpenPublication={props.onOpenPublication} onOpenMetrics={props.onOpenMetrics} />}
         </div>
         <SocialAgentWorkflowPanel task={task} />

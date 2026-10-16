@@ -1,4 +1,5 @@
 import type {WeeklyOwnedProductIdentityPorts} from './weeklyOwnedProductIdentityDemand.js';
+import {weeklyProductionEvidenceTask,currentSharedWeeklyArtifactRef} from './weeklyContentProductionIdentity.js';
 export interface WeeklyExecutionResultValidationPorts {ownedProductIdentity?:WeeklyOwnedProductIdentityPorts}
 import type { VersionedSocialRef, WeeklyExecutionTask, WeeklyOperatingPackage } from '../../shared/contracts/socialProgram.js';
 import {assertWeeklyPublicationStoredScope} from '../publishing/weeklyFormalPublicationBoundary.js';
@@ -54,6 +55,10 @@ async function materialClassification(store: DataStore, task: WeeklyExecutionTas
 
 /** Verify persisted authority, never accept a client-supplied success label. */
 export async function validateWeeklyExecutionResults(store: DataStore, task: WeeklyExecutionTask, refs: VersionedSocialRef[], now = new Date(),ports:WeeklyExecutionResultValidationPorts={}): Promise<void> {
+  if(['material_preparation','material_readiness','script','storyboard','asset_generation','video_generation','quality_check','rework'].includes(task.schedule.stepKind)&&!task.inputSnapshot?.weeklyCreativeRepairRef){
+    const canonical=await weeklyProductionEvidenceTask(store,task);
+    if(canonical.taskId!==task.taskId){const canonicalRefs=await Promise.all(canonical.resultRefs.map(ref=>currentSharedWeeklyArtifactRef(store,{tenantId:task.tenantId,programId:task.programId,packageId:task.packageId,packageVersion:task.packageVersion,publicationTaskId:task.publicationTaskId!},ref)));requireResult(canonical.status==='succeeded'&&socialRequestHash(canonicalRefs)===socialRequestHash(refs),'weekly_shared_original_result_unverified');task=canonical;}
+  }
   requireResult(Array.isArray(refs) && refs.length > 0 && refs.every(ref => text(ref?.type) && text(ref?.id) && Number.isSafeInteger(ref?.version) && ref.version > 0), 'weekly_execution_result_refs_invalid');
   if (task.inputSnapshot?.inventoryReuseRef && task.schedule.stepKind === 'user_approval') {
     requireResult(task.schedule.stepKind === 'user_approval' && task.schedule.responsibleActor === 'user', 'inventory_result_step_unsupported');
@@ -283,6 +288,8 @@ export async function validateWeeklyExecutionResults(store: DataStore, task: Wee
 }
 
 export async function validateContentArtifact(store: DataStore, task: WeeklyExecutionTask, ref: VersionedSocialRef) {
+  ref=await currentSharedWeeklyArtifactRef(store,{tenantId:task.tenantId,programId:task.programId,packageId:task.packageId,packageVersion:task.packageVersion,publicationTaskId:task.publicationTaskId!},ref);
+  task=await weeklyProductionEvidenceTask(store,task);
   const row = await unique(store, 'starter_social_content_artifacts', { tenant_id: task.tenantId, artifact_id: ref.id });
   requireResult(version(row.version) === ref.version && ['draft', 'review_required', 'approved'].includes(String(row.status)));
   const content = object(row.content);

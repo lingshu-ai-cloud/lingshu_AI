@@ -33,7 +33,9 @@ function overview(): DigitalEmployeeOverview {
 
 test('showcase data is fail-closed away from local preview and can be explicitly disabled', () => {
   assert.equal(isSmartBusinessShowcaseEnabled({ dev: false, hostname: 'app.example.com' }), false);
-  assert.equal(isSmartBusinessShowcaseEnabled({ dev: false, hostname: '127.0.0.1' }), true);
+  assert.equal(isSmartBusinessShowcaseEnabled({ dev: false, hostname: '127.0.0.1' }), false);
+  assert.equal(isSmartBusinessShowcaseEnabled({ dev: true, hostname: 'localhost' }), false);
+  assert.equal(isSmartBusinessShowcaseEnabled({ dev: true, hostname: 'localhost', setting: '1' }), true);
   assert.equal(isSmartBusinessShowcaseEnabled({ dev: true, hostname: 'localhost', setting: 'off' }), false);
 });
 

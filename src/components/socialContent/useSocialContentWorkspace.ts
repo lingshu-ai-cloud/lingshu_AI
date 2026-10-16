@@ -354,6 +354,33 @@ export function useSocialContentWorkspace() {
     }, '发布数据已保存');
   }, [workspace?.currentTask, run, applyTask, fileOperationKey]);
 
+  const attachSourceFiles = useCallback(async (files: File[]) => {
+    const task = workspace?.currentTask;
+    if (!task || files.length === 0) return;
+    await run(async () => {
+      let latest = task;
+      for (const file of files) {
+        const fileKey = fileOperationKey(file);
+        const cached = uploadedFiles.current.get(file);
+        const upload = cached?.taskId === task.taskId && cached.usage === 'source'
+          ? cached.upload
+          : await socialContentApi.uploadFile(task.taskId, file, 'source', `social:source-file:${fileKey}`);
+        uploadedFiles.current.set(file, { taskId: task.taskId, usage: 'source', upload });
+        if (!upload.material) throw new Error('素材已上传，但未取得可附加的素材记录；请保留当前页面并重试读取');
+        const attached = await socialContentApi.addSource(task.taskId, {
+          kind: 'material',
+          sourceRef: upload.material.sourceRef,
+          sourceVersion: upload.material.sourceVersion,
+          label: file.name,
+          purpose: '逐镜素材匹配候选；附加后仍需在制作页确认具体镜头映射与使用权',
+        }, `social:source-attach:${fileKey}`);
+        latest = attached.task;
+      }
+      applyTask(latest);
+      return latest;
+    }, files.length === 1 ? '素材已加入原任务，请继续确认对应镜头' : `${files.length} 个素材已加入原任务，请继续确认对应镜头`);
+  }, [workspace?.currentTask, run, applyTask, fileOperationKey]);
+
   return {
     workspace,
     loading,
@@ -372,6 +399,7 @@ export function useSocialContentWorkspace() {
     downloadLatest,
     registerPublication,
     submitMetrics,
+    attachSourceFiles,
     dismissNotice: () => setNotice(''),
   };
 }

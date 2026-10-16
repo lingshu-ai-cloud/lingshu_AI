@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import {isDeepStrictEqual} from 'node:util';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -30,6 +31,12 @@ process.env.PB_URL = 'http://127.0.0.1:1';
 type Row = Record_ & Record<string, unknown>;
 
 class MemoryStore implements DataStore {
+  supportsAtomicCompareAndSwap(){return true;}
+  async compareAndSwap(collection:string,id:string,expected:Record<string,unknown>,data:Record<string,unknown>){
+    const row=this.rows.get(collection)?.find(item=>item.id===id);
+    if(!row||!Object.entries(expected).every(([key,value])=>isDeepStrictEqual(row[key],value)))return false;
+    Object.assign(row,structuredClone(data));return true;
+  }
   readonly rows = new Map<string, Row[]>();
   private sequence = 0;
 
@@ -52,7 +59,7 @@ class MemoryStore implements DataStore {
           : 'last_operation_id' in data
             ? bucket.some(row => row.tenant_id === data.tenant_id && row.last_operation_id === data.last_operation_id)
             : false;
-    if (duplicate) return null;
+    if (duplicate || (data.id && bucket.some(row=>row.id===data.id))) return null;
     this.sequence += 1;
     const row = { id: String(data.id || `row${String(this.sequence).padStart(12, '0')}`), ...structuredClone(data) } as Row;
     bucket.push(row);
@@ -137,6 +144,7 @@ const limits = {
   agentBudgetCny: { orchestrator: 25, content: 25, traffic: 25, sales: 25 },
 };
 for (const tenantId of [tenant, victim]) {
+  await dataStore.create('social_programs',{id:`program-${tenantId}`,tenant_id:tenantId,program_id:`program-${tenantId}`});
   dataStore.rows.get(STARTER_COLLECTIONS.access)!.push({
     id: `access-${tenantId}`,
     tenant_id: tenantId,
@@ -311,6 +319,7 @@ function usePersistedLegacyRouting(taskId: string) {
   const brief = typeof row.brief === 'string' ? JSON.parse(row.brief) : structuredClone(row.brief);
   delete brief.materialRoutingPolicyVersion;
   row.brief = brief;
+  delete row.content_order;
 }
 
 const completeBrief = {

@@ -19,6 +19,16 @@ test('daily milestones retain destinations while weekly goals and review occupy 
  assert.equal(conciseCalendarTitle('4. 编导拆解 · 待编导明确'),'编导拆解');
  assert.deepEqual(projectDailyMilestones([]),[],'empty days do not fabricate jobs');
 });
+test('Monday keeps weekly goal confirmation and the independent daily operating plan',()=>{
+ const workspaceTarget={programId:'p',packageId:'pkg',packageVersion:1,executionTaskId:'goal'};
+ const tasks=[
+  {...card('goal','business_outline'),date:'2026-10-12',agent:'business' as const,workspaceTarget},
+  {...card('schedule','business_schedule'),date:'2026-10-12',agent:'business' as const,workspaceTarget:{...workspaceTarget,executionTaskId:'schedule'}},
+ ];
+ const result=projectDailyMilestones(tasks);
+ assert.deepEqual(result.map(task=>task.title),['本周目标确认','今日经营计划']);
+ assert.deepEqual(result.flatMap(task=>task.dailyTaskGroup?.tasks.map(source=>source.id)??[]),['goal','schedule']);
+});
 test('same day duplicate stage merges without losing exact tasks or downstream dependency',()=>{
  const workspaceTarget={programId:'program',packageId:'pkg',packageVersion:2,executionTaskId:'a'};
  const a={...card('a','material_preparation'),workspaceTarget};

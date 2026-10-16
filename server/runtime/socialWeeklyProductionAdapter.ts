@@ -32,6 +32,8 @@ import { getOwnedCloudMaterialRecord } from '../lib/cloudMaterials.js';
 import { buildNoSharedMaterialDemand, verifiedNoSharedMaterialDemand } from './socialWeeklyMaterialDemand.js';
 import { createHash } from 'node:crypto';
 import { weeklyStoryboardEvidence } from './socialWeeklyStoryboardEvidence.js';
+import {resolveWeeklyProductionRow,canonicalWeeklyProductionPublication,weeklyProductionEvidenceTask,persistWeeklySharedProductionBindings,currentSharedWeeklyArtifactRef,assertWeeklySharedProductionGroupUnsplit} from './weeklyContentProductionIdentity.js';
+import {registerSocialContentWeeklyPlan} from '../starter198/socialContentOrderPlanning.js';
 
 export const WEEKLY_PRODUCTION_STEPS = ['material_preparation', 'material_readiness', 'script', 'storyboard', 'asset_generation', 'video_generation', 'quality_check', 'rework'] as const;
 export function weeklyProductionBindingKey(task: Pick<WeeklyExecutionTask, 'packageId' | 'packageVersion' | 'publicationTaskId'>): string {
@@ -41,11 +43,9 @@ export function weeklyProductionBindingKey(task: Pick<WeeklyExecutionTask, 'pack
 /** The creation receipt is the durable binding; recovery never guesses by title or account. */
 export async function findWeeklyProductionTask(dataStore: DataStore, task: WeeklyExecutionTask): Promise<SocialContentTaskDetail | null> {
   const repository = createStarter198Repository(dataStore);
-  const rows = await repository.list(STARTER_COLLECTIONS.socialContentTasks, task.tenantId, {
-    where: { create_idempotency_key: weeklyProductionBindingKey(task) }, perPage: 2,
-  });
-  if (rows.totalItems > 1) throw new Error('weekly_production_binding_ambiguous');
-  const taskId = rows.items[0]?.task_id;
+  if(!task.publicationTaskId)return null;
+  const row=await resolveWeeklyProductionRow(dataStore,{tenantId:task.tenantId,programId:task.programId,packageId:task.packageId,packageVersion:task.packageVersion,publicationTaskId:task.publicationTaskId});
+  const taskId = row?.task_id;
   return typeof taskId === 'string' ? readSocialTaskDetail({ repository, tenantId: task.tenantId, taskId }) : null;
 }
 
@@ -138,6 +138,17 @@ export function createSocialWeeklyProductionAdapter(dataStore: DataStore, ports:
     }
     try{assertWeeklyProductionCoverage(pkg,planning,task.publicationTaskId!);}catch(error){return blocked(error instanceof Error&&'code' in error?String(error.code):'weekly_production_coverage_invalid','实际确认、派单范围或来源配额不一致，未开始生产。');}
     if (publication.accountId !== task.accountId || item.accountId !== publication.accountId) return blocked('weekly_production_account_mismatch', '排期账号身份不一致。');
+    const canonicalPublication=canonicalWeeklyProductionPublication(pkg,publication.publicationTaskId);
+    if(canonicalPublication.publicationTaskId!==publication.publicationTaskId){
+      // Platform variants observe the original's durable stage; they never
+      // launch a second producer or borrow another platform's publish approval.
+      const canonicalTask=await weeklyProductionEvidenceTask(dataStore,task);
+      if(canonicalTask.status!=='succeeded'||!canonicalTask.resultRefs.length)return pending('weekly_shared_original_stage_pending','等待共享原创视频的对应真实生产节点交付。');
+      const production=await resolveWeeklyProductionRow(dataStore,{tenantId:task.tenantId,programId:task.programId,packageId:task.packageId,packageVersion:task.packageVersion,publicationTaskId:publication.publicationTaskId});
+      if(!production)return pending('weekly_shared_original_stage_pending','共享原创生产身份尚未建立。');
+      await persistWeeklySharedProductionBindings(dataStore,task.tenantId,pkg,production);
+      return {status:'succeeded',resultRefs:await Promise.all(canonicalTask.resultRefs.map(ref=>currentSharedWeeklyArtifactRef(dataStore,{tenantId:task.tenantId,programId:task.programId,packageId:task.packageId,packageVersion:task.packageVersion,publicationTaskId:publication.publicationTaskId},ref)))};
+    }
     const adopted=await readWeeklyAutomationTemplate(dataStore,task);
     const callToAction=adopted?.template.callToAction??publication.cta;
     const perItemBudgetCny=adopted?Math.min(Number.isFinite(pkg.socialContentPackage.perItemBudgetCny)&&pkg.socialContentPackage.perItemBudgetCny!==null?pkg.socialContentPackage.perItemBudgetCny:adopted.template.perFinishedVideoMaxCny,adopted.template.perFinishedVideoMaxCny):pkg.socialContentPackage.perItemBudgetCny;
@@ -151,6 +162,7 @@ export function createSocialWeeklyProductionAdapter(dataStore: DataStore, ports:
     if(!classification.ready)return blocked(classification.code,'真实素材需求尚未明确分类或其来源版本与冻结排期不一致；请修订分析和排期后再生产。');
     if(publication.contentTemplateBindingRef){try{const structure=await readWeeklyTemplateStructure(dataStore,{tenantId:task.tenantId,programId:task.programId,packageId:task.packageId,packageVersion:task.packageVersion,publicationTaskId:task.publicationTaskId!},publication.contentTemplateBindingRef);if(!item.contentTemplateStructure||JSON.stringify(item.contentTemplateStructure)!==JSON.stringify(structure))return blocked('content_template_dispatch_mismatch','实际模板结构与冻结编导派单不一致，未进入生产。');}catch{return blocked('content_template_admission_failed','确认模板缺少实际来源或下一周绑定证据，未进入生产。');}}
     const binding = weeklyProductionBindingKey(task);
+    await assertWeeklySharedProductionGroupUnsplit(dataStore,task.tenantId,pkg,publication.publicationTaskId);
     const existing = await repository.list(STARTER_COLLECTIONS.socialContentTasks, task.tenantId, { where: { create_idempotency_key: binding }, perPage: 2 });
     if (existing.totalItems > 1) return blocked('weekly_production_binding_ambiguous', '内容生产任务绑定不唯一。');
     let detail: SocialContentTaskDetail | null = existing.items[0]
@@ -204,6 +216,8 @@ export function createSocialWeeklyProductionAdapter(dataStore: DataStore, ports:
         await repository.update(STARTER_COLLECTIONS.socialContentTasks, task.tenantId, boundRow.id, { brief: { ...brief, _weeklyAuthority: authority } });
         detail = (await read({ repository, tenantId: task.tenantId, taskId: detail.taskId }))!;
       }
+      await persistWeeklySharedProductionBindings(dataStore,task.tenantId,pkg,{...boundRow,brief:{...brief,_weeklyAuthority:authority}});
+      if(pkg.socialContentPackage.productionIdentityVersion==='shared-original.v1')await registerSocialContentWeeklyPlan({repository,tenantId:task.tenantId,task:{...boundRow,brief:{...brief,_weeklyAuthority:authority}}});
       // Existing owned output is consumed read only; fresh reference admission is
       // reserved for creating or enqueueing production, never retrofitted into a run.
       if (['asset_generation','video_generation','quality_check','rework'].includes(task.schedule.stepKind)) {

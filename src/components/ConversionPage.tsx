@@ -761,7 +761,6 @@ function ChatThread({
   bridgeOnly,
   draftMeta,
   onToast,
-  onMockBuyerMessage,
   sending,
   channelReady,
 }: {
@@ -787,7 +786,6 @@ function ChatThread({
   bridgeOnly?: boolean;
   draftMeta: SalesDecisionMeta | null;
   onToast: (text: string) => void;
-  onMockBuyerMessage: (text: string) => void;
   sending?: boolean;
   channelReady?: boolean;
 }) {
@@ -795,7 +793,6 @@ function ChatThread({
   const [previewOpen, setPreviewOpen] = useState(false);
   const [translationLoading, setTranslationLoading] = useState(false);
   const [emojiOpen, setEmojiOpen] = useState(false);
-  const [mockInput, setMockInput] = useState('');
   const composerState = draftSuggestion ? 'draft' : input.trim() ? 'typing' : 'idle';
   const isOutsideWindow = customer ? timelineEventAgeHours(lastBuyerEvent(customer)) > 24 : false;
   const templatePlan = null;
@@ -884,16 +881,6 @@ function ChatThread({
       </header>
       <div className="min-h-0 flex-1 overflow-y-auto bg-ink px-3 py-5 sm:px-6">
         <div className="mx-auto max-w-3xl space-y-4">
-          {customer.isMock && (
-            <form onSubmit={event => { event.preventDefault(); const value = mockInput.trim(); if (!value) return; onMockBuyerMessage(value); setMockInput(''); }} className="rounded-lg border border-accent/20 bg-accent-glow p-4">
-              <div className="flex items-center gap-2 text-xs font-bold text-accent"><UserRound size={14} />客户消息输入</div>
-              <p className="mt-1 text-[11px] text-text-secondary">输入客户接下来会说的话，用于继续当前会话。</p>
-              <div className="mt-3 flex gap-2">
-                <input value={mockInput} onChange={event => setMockInput(event.target.value)} placeholder={customer.simulation?.editable ? '例如：我们想改造一条装配线，怎么开始？' : '输入下一条客户消息…'} className="ui-field min-w-0 flex-1 !rounded-md px-3 py-2 text-sm" />
-                <Button type="primary" htmlType="submit" disabled={!mockInput.trim()} className="!h-auto min-h-9 !whitespace-normal rounded-md bg-accent px-4 py-2 text-xs font-bold text-white hover:bg-accent-dim disabled:opacity-40">添加客户消息</Button>
-              </div>
-            </form>
-          )}
           {customer.timeline.map(event => {
             if (event.type !== 'messenger' && event.type !== 'instagram' && event.type !== 'whatsapp') {
               return (
@@ -2053,67 +2040,6 @@ export default function ConversionPage({ onLeaveConversation: _onLeaveConversati
     });
   };
 
-  const pushMockBuyerMessage = async (text: string) => {
-    if (!selected?.isMock || !text.trim()) return;
-    const buyerEvent = createMessageEvent(selected.id, text.trim(), 'buyer');
-    const customerWithMessage = { ...selected, timeline: [...selected.timeline, buyerEvent] };
-    appendTimelineEvent(selected.id, buyerEvent);
-    updateCustomer(selected.id, { hasUnread: true, lastActive: '刚刚', lastActiveAt: buyerEvent.timestamp, inboxReason: 'reply', pendingDraft: undefined });
-    if (!customerServiceStatus?.enabled) {
-      updateCustomer(selected.id, { handlingMode: 'human_needed', handlingReason: '智能客服未开启，等待人工回复' });
-      showToast('智能客服未开启，这条消息只进入收件箱');
-      return;
-    }
-    setLastDraftKey(`${selected.id}:${buyerEvent.id}`);
-    setDraftSuggestion(null);
-    setDraftMeta(null);
-    const result = await requestDraft(customerWithMessage);
-    if (result.handoffRequired || !result.draft.trim()) {
-      if (result.safeToSendBeforeHandoff && result.draft.trim()) {
-        const bridgeReply = translateChineseReplyForCustomer(customerWithMessage, result.draft);
-        appendTimelineEvent(selected.id, createMessageEvent(selected.id, bridgeReply, 'ai', { autoSent: true, sendStatus: 'delivered', translatedBody: result.translatedDraft }));
-      }
-      updateCustomer(selected.id, {
-        handlingMode: 'human_needed',
-        handlingReason: result.handlingReason || '该消息需要人工接待',
-        fallbackCount: result.fallbackCount ?? selected.fallbackCount,
-        pendingDraft: undefined,
-      });
-      setDraftMeta(result);
-      showToast(result.safeToSendBeforeHandoff && result.draft.trim()
-        ? 'AI 已先承接客户，并把完整上下文转给人工'
-        : result.handlingReason || '该消息已转人工处理');
-      return;
-    }
-    if (!partialAutoReplyActive) {
-      setDraftSuggestion(result.draft);
-      setDraftMeta(result);
-      updateCustomer(selected.id, {
-        handlingMode: 'ai_draft',
-        handlingReason: 'AI 已生成建议，等待你确认后发送',
-        hasUnread: true,
-        fallbackCount: result.fallbackCount ?? selected.fallbackCount,
-        pendingDraft: result.draft,
-      });
-      showToast('已生成建议回复，确认后再发送');
-      return;
-    }
-    const reply = translateChineseReplyForCustomer(customerWithMessage, result.draft);
-    appendTimelineEvent(selected.id, createMessageEvent(selected.id, reply, 'ai', {
-      autoSent: true,
-      sendStatus: 'delivered',
-      translatedBody: result.translatedDraft,
-    }));
-    updateCustomer(selected.id, {
-      handlingMode: 'ai_auto',
-      handlingReason: 'Mock 智能客服已自动接待',
-      hasUnread: false,
-      aiAutoCount: (selected.aiAutoCount ?? 0) + 1,
-      fallbackCount: result.fallbackCount ?? selected.fallbackCount,
-      pendingDraft: undefined,
-    });
-  };
-
   const buildStyleMemoryPayload = (customer: CustomerProfile, finalZh: string, meta?: DraftResult | null): StyleMemoryPayload | null => {
     const original = meta?.originalDraft || meta?.draft || '';
     const trigger = meta?.buyerMessage || latestBuyerText(customer);
@@ -2402,8 +2328,8 @@ export default function ConversionPage({ onLeaveConversation: _onLeaveConversati
         <p className="mt-2 text-[11px] text-slate-500">此处展示所属批次的草稿。批次审核请返回交付看板；会话中的回复操作独立处理。</p>
       </> : <p className="mt-2 text-xs text-slate-500">没有对应的草稿记录，请返回交付看板选择具体客户任务。</p>}
     </section>}
-    <div className="flex min-h-0 min-w-0 flex-1 flex-col" data-lingshu-guide="customer-workbench">
-      <nav aria-label="移动端会话导航" className="grid h-12 shrink-0 grid-cols-3 border-b border-border bg-white md:hidden">
+    <div className="ls-conversation-container flex min-h-0 min-w-0 flex-1 flex-col" data-lingshu-guide="customer-workbench">
+      <nav aria-label="会话区域导航" className="ls-conversation-workspace-nav h-12 shrink-0 grid-cols-3 border-b border-border bg-white">
         {([
           { id: 'list' as const, label: '会话列表', icon: List },
           { id: 'chat' as const, label: '当前对话', icon: MessageSquare },
@@ -2424,7 +2350,7 @@ export default function ConversionPage({ onLeaveConversation: _onLeaveConversati
         })}
       </nav>
       <div data-testid="conversation-workspace-main" className="ls-conversation-workspace min-h-0 flex-1">
-        <div className={mobilePanel === 'list' ? 'ls-conversation-workspace__pane flex min-h-0 min-w-0 flex-1 md:contents' : 'hidden md:contents'}>
+        <div className={`ls-conversation-workspace__slot ls-conversation-workspace__pane${mobilePanel === 'list' ? ' is-active' : ''}`}>
         <CompactCustomerList
           view={view}
           selectedId={selectedId}
@@ -2437,7 +2363,7 @@ export default function ConversionPage({ onLeaveConversation: _onLeaveConversati
           }}
         />
         </div>
-        <div className={mobilePanel === 'chat' ? 'ls-conversation-workspace__pane flex min-h-0 min-w-0 flex-1 md:contents' : 'hidden md:contents'}>
+        <div className={`ls-conversation-workspace__slot ls-conversation-workspace__pane${mobilePanel === 'chat' ? ' is-active' : ''}`}>
         {pendingSendIntent&&pendingSendIntent.scope.customerId===selected?.id&&pendingSendIntent.state!=='accepted'&&<div className="border border-amber-200 bg-amber-50 p-3 text-xs">原发送结果未确认；不会自动重发。{pendingSendIntent.state==='prepared'&&<button type="button" className="ml-2 underline" onClick={()=>{if(undoSend?.eventId===pendingSendIntent.eventId){undoQueuedSend();return;}localStorage.removeItem(sendIntentStorageKey(pendingSendIntent.scope));removeTimelineEvent(pendingSendIntent.scope.customerId,pendingSendIntent.eventId);setPendingSendIntent(null);}}>取消尚未发起的请求</button>}<button type="button" className="ml-2 underline" onClick={()=>{const captured=manualHoldIdentity;void readCustomerSendRequest(pendingSendIntent).then(item=>{if(actualManualIdentity.current!==captured)return;const next=recoverSendIntent(pendingSendIntent,item);saveSendIntent(next);updateTimelineEvent(next.scope.customerId,next.eventId,{sendStatus:next.state==='accepted'?'sent':'unknown',audit:{providerMessageId:item.providerMessageId||undefined}});showToast(next.state==='accepted'?'已读取真实平台发送回执':'平台结果仍未知，请勿重复发送');}).catch(error=>{if(actualManualIdentity.current===captured)showToast(error instanceof Error?error.message:'无法读取发送状态');});}}>读取原发送状态</button></div>}
         {selected&&!selected.isMock&&!selected.isHistorical&&<div className="border border-slate-200 bg-slate-50 p-3 text-xs"><strong>真人接管</strong>{manualHold?.identity===manualHoldIdentity&&<span className="ml-2">{manualHold.view.active?`负责人 ${manualHold.view.item?.ownerUserId} · 截止 ${manualHold.view.item?.expiresAt}`:'当前没有有效临时接管'}{manualHold.view.humanHandling?'；客户仍处于持久人工处理状态，到期或释放临时接管不会自动切换 AI。':''}</span>}<button type="button" className="ml-2 underline" onClick={reportManualActive} disabled={manualHoldUnknown===manualHoldIdentity}>明确接管十分钟</button><button type="button" className="ml-2 underline" onClick={()=>void refreshManualHold()}>只读刷新状态</button>{manualHold?.identity===manualHoldIdentity&&manualHold.view.active&&manualHold.view.canRelease&&<button type="button" className="ml-2 underline" disabled={manualHoldUnknown===manualHoldIdentity} onClick={()=>void releaseManualHold()}>明确释放临时接管</button>}{manualHoldError?.identity===manualHoldIdentity&&<p role="alert" className="mt-1 text-amber-800">{manualHoldError.message}</p>}{manualHoldUnknown===manualHoldIdentity&&<p className="mt-1 text-amber-800">操作结果未恢复，禁止重复操作；请先只读刷新实际持久状态。</p>}</div>}
         <ChatThread
@@ -2482,13 +2408,12 @@ export default function ConversionPage({ onLeaveConversation: _onLeaveConversati
           knowledgeMiss={Boolean(draftMeta?.knowledgeMiss)}
           bridgeOnly={draftMeta?.replyConfidence?.level === 'bridge_only'}
           draftMeta={draftMeta}
-          onMockBuyerMessage={pushMockBuyerMessage}
           sending={sendingReply}
           channelReady={Boolean((selected?.source === 'messenger' ? customerServiceStatus?.messengerAuthorization : selected?.source === 'instagram' ? customerServiceStatus?.instagramAuthorization : customerServiceStatus?.messagingAuthorization)?.providerReady)}
           onToast={showToast}
         />
         </div>
-        <div className={mobilePanel === 'profile' ? 'ls-conversation-workspace__pane flex min-h-0 min-w-0 flex-1 md:contents' : 'hidden md:contents'}>
+        <div className={`ls-conversation-workspace__slot ls-conversation-workspace__pane${mobilePanel === 'profile' ? ' is-active' : ''}`}>
         {selected?.isHistorical ? <div className="p-4 text-xs leading-5 text-text-secondary">历史会话来源：已归档记录。仅保留原始内容供查阅，不代表已连接真实客户渠道；回复、报价和客户操作均不可用。</div> : <CustomerInfoRail
           key={selected?.id || 'no-customer'}
           customer={selected}

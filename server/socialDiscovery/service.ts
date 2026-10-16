@@ -1,5 +1,8 @@
 import {socialRequestHash,socialObject,socialJson} from '../starter198/socialContentValidation.js';
 import {reserveDailyCollection} from './dailyCollectionQuota.js';
+import {classifyDiscoverySourceFailure} from './sourceFailure.js';
+import {planTerminalDiscoverySourceRetry} from './retryPlan.js';
+import type {RetryGrantScope} from '../runtime/weeklyPreproductionRetryAttempts.js';
 import { store } from '../storage/index.js';
 import { crawlVideosForTenant, inferPlatformFromUrl } from '../routes/videos.js';
 import { dueDiscoveryModes, nextDiscoveryRunAt, validateDiscoveryBrief } from './domain.js';
@@ -96,7 +99,8 @@ export async function executeApprovedDiscoveryRun(input: {
   tenantId: string;
   triggerType: 'scheduled' | 'manual' | 'production_gap';
   requestedModes?: SocialDiscoveryMode[];
-  originalRun?:{key:string;scopeHash:string};
+  originalRun?:{key:string;scopeHash:string;recoveryOnly?:boolean};
+  retry?:{parentRunId:string;parentRunHash:string;sourceSelection:Array<{mode:SocialDiscoveryMode;platform:string;queryRef:string}>;grant:RetryGrantScope};
   expectedScopeId?: string;
   expectedScopeVersion?: number;
   productionGapContext?: {
@@ -119,12 +123,22 @@ export async function executeApprovedDiscoveryRun(input: {
   }
 
   const originalId=input.originalRun?`weekly_discovery_${socialRequestHash({tenantId:input.tenantId,key:input.originalRun.key})}`:null;
-  const originalHash=input.originalRun?socialRequestHash({tenantId:input.tenantId,key:input.originalRun.key,scopeId:input.expectedScopeId,scopeVersion:input.expectedScopeVersion,scopeHash:input.originalRun.scopeHash,modes:input.requestedModes,triggerType:input.triggerType,productionGapContext:input.productionGapContext}):null;
+  if(input.retry){
+    if(!input.originalRun||!input.retry.sourceSelection.length)throw Error('weekly_discovery_retry_identity_required');
+    const parents=await dependencies.dataStore.list<SocialInspirationCollectionRun & {tenant_id:string}>(DISCOVERY_RUN_COLLECTION,{where:{tenant_id:input.tenantId,runId:input.retry.parentRunId},perPage:2});
+    if(parents.totalItems!==1||parents.items.length!==1||socialRequestHash(parents.items[0])!==input.retry.parentRunHash)throw Error('weekly_discovery_retry_parent_changed');
+    const plan=planTerminalDiscoverySourceRetry(parents.items[0]!);
+    if(plan.scopeId!==input.expectedScopeId||plan.scopeVersion!==input.expectedScopeVersion)throw Error('weekly_discovery_retry_scope_changed');
+    if(plan.blockingCodes.length||input.retry.sourceSelection.some(source=>!plan.eligibleSources.some(s=>socialRequestHash(s)===socialRequestHash(source))))throw Error('weekly_discovery_retry_source_unsettled');
+    if(input.retry.grant.parentRunId!==input.retry.parentRunId||input.retry.grant.parentRunHash!==input.retry.parentRunHash)throw Error('weekly_discovery_retry_grant_scope_invalid');
+  }
+  const originalHash=input.originalRun?socialRequestHash({tenantId:input.tenantId,key:input.originalRun.key,scopeId:input.expectedScopeId,scopeVersion:input.expectedScopeVersion,scopeHash:input.originalRun.scopeHash,modes:input.requestedModes,triggerType:input.triggerType,productionGapContext:input.productionGapContext,...(input.retry?{retry:input.retry}:{})}):null;
   if(input.originalRun){
     if(!input.originalRun.key||!input.expectedScopeId||!input.expectedScopeVersion||socialRequestHash(scope.payload)!==input.originalRun.scopeHash)throw Error('weekly_discovery_frozen_scope_changed');
     const prior=await dependencies.dataStore.list<SocialInspirationCollectionRun & {tenant_id:string}>(DISCOVERY_RUN_COLLECTION,{where:{tenant_id:input.tenantId,runId:originalId!},perPage:2});
     if(prior.totalItems>1||prior.items.length!==prior.totalItems)throw Error('weekly_discovery_original_not_unique');
     if(prior.items[0]){const run=prior.items[0],marker=socialObject(socialObject(socialJson(run.scopeSnapshot))?.weeklyProducer);if(run.tenant_id!==input.tenantId||run.discoveryScopeId!==input.expectedScopeId||run.discoveryScopeVersion!==input.expectedScopeVersion||marker?.inputHash!==originalHash)throw Error('weekly_discovery_original_scope_changed');return {run};}
+    if(input.originalRun.recoveryOnly)return {skipped:true,reason:'weekly_discovery_original_write_unknown'};
   }
   const brief = structuredClone(scope.payload.discoveryBrief);
   // The account library is the user's current source of truth. A saved scope
@@ -171,7 +185,7 @@ export async function executeApprovedDiscoveryRun(input: {
   const initial: SocialInspirationCollectionRun & { tenant_id: string } = {
     tenant_id: input.tenantId, runId, planId: brief.discoveryBriefId, keywordSetId: brief.keywordSetId, keywordSetVersion: brief.keywordSetVersion,
     discoveryScopeId: scope.id, discoveryScopeVersion: scope.version, status: 'running', triggerType: input.triggerType,
-    scopeSnapshot: input.originalRun?({...brief,weeklyProducer:{inputHash:originalHash,key:input.originalRun.key}} as typeof brief):brief, modeStats: {}, platformStats: {}, keywordTierStats: {}, evidenceOutcomes: {}, sourceRunRefs: [], queryBasis, market: scope.payload.market || brief.market, language: scope.payload.language || '',
+    scopeSnapshot: input.originalRun?({...brief,weeklyProducer:{inputHash:originalHash,key:input.originalRun.key,...(input.retry?{retry:input.retry}:{})}} as typeof brief):brief, modeStats: {}, platformStats: {}, keywordTierStats: {}, evidenceOutcomes: {}, sourceRunRefs: [], queryBasis, market: scope.payload.market || brief.market, language: scope.payload.language || '',
     stopReason: null, startedAt, finishedAt: null, error: null,
   };
   const created = await dependencies.dataStore.create<SocialInspirationCollectionRun & { id: string }>(DISCOVERY_RUN_COLLECTION, {...(input.originalRun?{id:socialRequestHash({tenantId:input.tenantId,key:input.originalRun.key}).slice(0,15)}:{}), ...initial });
@@ -202,7 +216,7 @@ export async function executeApprovedDiscoveryRun(input: {
         .filter(platform => ['tiktok', 'instagram', 'youtube', 'facebook'].includes(platform))
         .filter(platform => platform !== 'youtube' || tier !== 'broad')
         .map(platform => ({ ref, platform: platform as ReturnType<typeof inferPlatformFromUrl>, tier }));
-    });
+    }).filter(target=>!input.retry||input.retry.sourceSelection.some(source=>source.mode===mode&&source.platform===target.platform&&source.queryRef===target.ref));
     // Scheduled/manual discovery fills accepted-item gaps. A production gap owns its
     // independent budget and is therefore bounded by its explicit mode policy.
     let remaining = input.triggerType === 'production_gap'
@@ -223,7 +237,7 @@ export async function executeApprovedDiscoveryRun(input: {
       if (platformRemaining <= 0) continue;
       const requestedLimit = Math.min(platformRemaining, Math.max(1, Math.ceil(remaining / Math.max(1, targets.length - index))));
       let perSourceLimit:number;
-      try{perSourceLimit=await reserveDailyCollection(dependencies.dataStore,{tenantId:input.tenantId,runId,requestKey:`${mode}:${target.platform}:${target.ref}`,requested:requestedLimit});}
+      try{perSourceLimit=await reserveDailyCollection(dependencies.dataStore,{tenantId:input.tenantId,runId,requestKey:`${mode}:${target.platform}:${target.ref}`,requested:requestedLimit,...(input.retry?{retryGrant:input.retry.grant}:{})});}
       catch(cause){completeEmptyVerified=false;const message=cause instanceof Error?cause.message:'daily_collection_quota_unavailable';stats.failed++;error=message;failureDetails.push({mode,platform:target.platform,queryRef:target.ref,error:message});break;}
       if(!perSourceLimit){dailyLimitReached=true;completeEmptyVerified=false;break;}
       remainingPlatformQuota.set(target.platform, configuredPlatformRemaining - perSourceLimit);
@@ -283,7 +297,7 @@ export async function executeApprovedDiscoveryRun(input: {
         addStats(platformStats[target.platform]!, { failed: 1 });
         addStats(keywordTierStats[target.tier]!, { failed: 1 });
         const causeMessage = cause instanceof Error ? cause.message : '采集来源失败';
-        failureDetails.push({ mode, platform: target.platform, queryRef: target.ref, error: causeMessage });
+        failureDetails.push({ mode, platform: target.platform, queryRef: target.ref, error: causeMessage, errorCode: classifyDiscoverySourceFailure(causeMessage) });
         error = causeMessage;
       }
     }
@@ -302,7 +316,7 @@ export async function executeApprovedDiscoveryRun(input: {
   const finishedAt = new Date().toISOString();
   const failureSummary = [...new Set(failureDetails.map(item => `${item.platform}/${item.queryRef}: ${item.error}`))].join('；');
   const run: SocialInspirationCollectionRun = {
-    ...initial, ...(input.originalRun?{scopeSnapshot:{...initial.scopeSnapshot,weeklyProducer:{inputHash:originalHash,key:input.originalRun.key,completeEmptyVerified:completeEmptyVerified&&failed===0&&Object.values(modeStats).every(s=>(s?.requested??0)>0)}} as typeof initial.scopeSnapshot}:{}), status, modeStats, platformStats, keywordTierStats, evidenceOutcomes, sourceRunRefs, failureDetails,
+    ...initial, ...(input.originalRun?{scopeSnapshot:{...initial.scopeSnapshot,weeklyProducer:{inputHash:originalHash,key:input.originalRun.key,...(input.retry?{retry:input.retry}:{ }),completeEmptyVerified:completeEmptyVerified&&failed===0&&Object.values(modeStats).every(s=>(s?.requested??0)>0)}} as typeof initial.scopeSnapshot}:{}), status, modeStats, platformStats, keywordTierStats, evidenceOutcomes, sourceRunRefs, failureDetails,
     stopReason: dailyLimitReached?'daily_collection_limit_reached':status === 'failed' ? 'source_failed' : status === 'stopped' ? 'no_valid_results' : 'completed', finishedAt, error: failureSummary || error,
   };
   const saved = await dependencies.dataStore.update(DISCOVERY_RUN_COLLECTION, created.id, { status, scopeSnapshot:run.scopeSnapshot, modeStats, platformStats, keywordTierStats, evidenceOutcomes, sourceRunRefs, failureDetails, stopReason: run.stopReason, finishedAt, error: run.error });

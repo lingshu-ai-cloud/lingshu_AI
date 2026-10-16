@@ -1,4 +1,5 @@
 import fs from 'node:fs';
+import {exactQwenScope} from '../agents/exactQwenScope.js';
 import path from 'node:path';
 import { createHash, randomUUID } from 'node:crypto';
 import { execFile } from 'node:child_process';
@@ -61,7 +62,7 @@ export async function produceReferenceCriticalShots(input: {
   }
   const cleanAnalysis = { ...input.analysis, criticalShotSummary: undefined,
     scriptDetails15s: input.analysis.scriptDetails15s?.map(shot => ({ ...shot, criticalShot: undefined })) };
-  const model = (process.env.QWEN_CRITICAL_SHOT_MODEL || 'qwen3-vl-flash').trim();
+  const model = (exactQwenScope()?.model || process.env.QWEN_CRITICAL_SHOT_MODEL || 'qwen3-vl-flash').trim();
   const cacheKey = createHash('sha256').update(JSON.stringify({ version: 1,
     framePolicy: CRITICAL_SHOT_FRAME_POLICY, ruleVersion: REFERENCE_CRITICAL_RULE_VERSION,
     evidenceVersion: REFERENCE_CRITICAL_EVIDENCE_VERSION, model,

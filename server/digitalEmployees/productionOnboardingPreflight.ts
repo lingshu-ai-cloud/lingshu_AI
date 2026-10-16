@@ -20,7 +20,7 @@ import {
 import type { DataStore } from '../storage/datastore.js';
 import { validateHeyGenPresenterRecord } from '../lib/presenterAssetTrust.js';
 import type { EnterpriseProfile } from '../routes/enterprise.js';
-import { enterpriseFactContentHash } from '../routes/enterprise.js';
+import { verifyEnterpriseFactContent } from '../routes/enterprise.js';
 import { collectProductionAssets } from './contentProduction.js';
 import type { AssetCandidate } from './contentProductionContracts.js';
 
@@ -270,7 +270,7 @@ function confirmedEnterpriseFacts(profile: EnterpriseProfile): boolean {
   const version = profile.factVersion;
   return Boolean(version?.id && version.contentHash && version.confirmedBy && version.confirmedBy !== 'system'
     && Number.isFinite(Date.parse(version.confirmedAt)) && Date.parse(version.confirmedAt) <= Date.now()
-    && version.contentHash === enterpriseFactContentHash(profile));
+    && verifyEnterpriseFactContent(profile).verified);
 }
 
 export function enterpriseOnboardingEvidence(

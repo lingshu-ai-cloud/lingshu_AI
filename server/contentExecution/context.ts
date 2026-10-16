@@ -196,6 +196,32 @@ export class ContentExecutionStoppedError extends Error {
   constructor() { super('content_execution_stopped:任务已暂停或撤回，不再提交新的生产工作'); }
 }
 
+/** Root order fence also applies to a completed original with active repairs.
+ * Call only before new work, never before saving an already-issued receipt. */
+export async function assertSocialContentOrderActive(dataStore: DataStore, tenantId: string, taskId: string): Promise<void> {
+  const parse = (value: unknown): Record<string, unknown> | null => {
+    if (typeof value === 'string') { try { value = JSON.parse(value); } catch { throw new ContentExecutionStoppedError(); } }
+    return value && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : null;
+  };
+  const read = async (id: string) => {
+    const rows = await dataStore.list<Record<string, unknown>>('starter_social_content_tasks', { where: { tenant_id: tenantId, task_id: id }, perPage: 2 });
+    if (rows.totalItems > 1) throw new ContentExecutionStoppedError();
+    return rows.items[0];
+  };
+  const stopped = (row: Record<string, unknown> | undefined, binding: Record<string, unknown> | null) => {
+    if (binding?.cancellation || binding?.replacedByContentId || binding?.supersededByContentId || ['cancelled', 'cancelling'].includes(String(row?.status)))
+      throw new ContentExecutionStoppedError();
+  };
+  const row = await read(taskId), binding = parse(row?.content_order);
+  stopped(row, binding);
+  if (binding?.contentId && binding.contentId !== taskId) {
+    const root = await read(String(binding.contentId)), order = parse(root?.content_order);
+    if (!root || !order || order.contentId !== binding.contentId || order.budgetTaskId !== binding.budgetTaskId)
+      throw new ContentExecutionStoppedError();
+    stopped(root, order);
+  }
+}
+
 /** Graph persistence is asynchronous; require its durable context before any
  * node can submit work, rather than discovering a missing context on save. */
 export async function assertCurrentContentExecutionJobContext(jobId: string): Promise<void> {
@@ -223,6 +249,7 @@ export async function assertCurrentContentExecutionActive(): Promise<void> {
   const job = await assertContentExecutionOwnership(current)
     ?? await current.dataStore.getById<Record<string, unknown>>(CONTENT_EXECUTION_JOB_COLLECTION, current.jobId);
   if (!job || job.id !== current.jobId || !compact(job.tenant_id) || !compact(job.run_id) || !['queued', 'running', 'retry_wait', 'reconciling'].includes(String(job.status))) throw new ContentExecutionStoppedError();
+  await assertSocialContentOrderActive(current.dataStore, String(job.tenant_id), String(job.task_id));
   const run = await current.dataStore.getById<Record<string, unknown>>('workflow_runs', String(job.run_id || ''));
   if (!run
     || run.id !== job.run_id

@@ -1,5 +1,6 @@
 import { createDefaultWeeklyExecutionAdapters } from './weeklyExecutionAdapters.js';
 import {localWeeklyExecutionRuntime} from './localWeeklyExecutionRuntime.js';
+import {contentOrderOutboxRuntime,localContentOrderOutboxRuntime} from './socialContentOrderOutboxRuntime.js';
 import { store } from '../storage/index.js';
 import { initSocialWeeklyExecutionRuntime } from './socialWeeklyExecutionRuntime.js';
 import { initDigitalEmployeeRuntime } from '../digitalEmployees/runtimeOrchestrator.js';
@@ -60,16 +61,23 @@ export async function startBackgroundJobs(role: ProcessRole = 'all'): Promise<()
     initSocialWeeklyReviewWorker();
     initialPreparationWorkerStarted = initInitialPreparationWorker();
     initSocialWeeklyExecutionRuntime(createDefaultWeeklyExecutionAdapters(store));
-    localWeeklyExecutionRuntime.start();
+    await localWeeklyExecutionRuntime.start();
+    contentOrderOutboxRuntime.start();
+    localContentOrderOutboxRuntime.start();
     initDigitalEmployeeRuntime();
     markBackgroundJobsReady();
     await startWorkerHeartbeat(role);
     console.log('[runtime] background jobs started');
     return () => {
       localWeeklyExecutionRuntime.stop();
+      contentOrderOutboxRuntime.stop();
+      localContentOrderOutboxRuntime.stop();
       if (initialPreparationWorkerStarted) stopInitialPreparationWorker();
     };
   } catch (error) {
+    localWeeklyExecutionRuntime.stop();
+    contentOrderOutboxRuntime.stop();
+    localContentOrderOutboxRuntime.stop();
     if (initialPreparationWorkerStarted) stopInitialPreparationWorker();
     markBackgroundJobsFailed(error);
     await writeWorkerHeartbeat(role).catch(() => undefined);

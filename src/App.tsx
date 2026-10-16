@@ -16,6 +16,7 @@ import { isSocialTaskContextPage } from './lib/socialTaskContext';
 import {
   SOCIAL_CONTENT_NAVIGATION_EVENT,
   attachSocialContentNavigationState,
+  readSocialContentNavigationQueryTaskId,
   readSocialContentNavigationTaskId,
   setActiveSocialContentTaskId,
   type SocialContentNavigationEventDetail,
@@ -231,7 +232,8 @@ export default function App() {
   } | null>(() => {
     const initialPage = loadPage();
     if (!isSocialTaskContextPage(initialPage)) return null;
-    const taskId = canRestoreProductionHistoryState(window.history.state) ? readSocialContentNavigationTaskId(initialPage, window.history.state) : null;
+    const taskId = (canRestoreProductionHistoryState(window.history.state) ? readSocialContentNavigationTaskId(initialPage, window.history.state) : null)
+      || readSocialContentNavigationQueryTaskId(initialPage, window.location.search);
     return taskId ? { page: initialPage, taskId } : null;
   });
   useEffect(() => {
@@ -305,6 +307,7 @@ export default function App() {
     const detail = canRestoreProductionHistoryState(window.history.state) ? window.history.state?.productionDetail : null;
     return Boolean(
       readSocialContentNavigationTaskId('smartAssets', window.history.state)
+      || readSocialContentNavigationQueryTaskId('smartAssets', window.location.search)
       || window.__agentProductionTarget?.link.page === 'smartAssets'
       || detail?.workflowTaskId
       || detail?.businessRef?.entityId,
@@ -334,8 +337,16 @@ export default function App() {
   });
   const [smartAssetsStudioOpen, setSmartAssetsStudioOpen] = useState(() => {
     const detail = canRestoreProductionHistoryState(window.history.state) ? window.history.state?.productionDetail : null;
-    return Boolean(new URLSearchParams(window.location.search).get('project') || detail?.directStudio);
+    return Boolean(new URLSearchParams(window.location.search).get('project')
+      || readSocialContentNavigationQueryTaskId('smartAssets', window.location.search)
+      || detail?.directStudio);
   });
+
+  useEffect(() => {
+    const taskId = readSocialContentNavigationQueryTaskId(pageRef.current, window.location.search);
+    if (!taskId || !isSocialTaskContextPage(pageRef.current)) return;
+    attachSocialContentNavigationState(taskId, pageRef.current);
+  }, []);
 
   useEffect(() => {
     if (page === 'smartAssets' && (
@@ -385,7 +396,8 @@ export default function App() {
         setAuthLoading(false);
       },
       onRetry: () => {
-        setSessionRefreshError('本地服务正在启动，正在恢复预览会话。');
+        setSessionRefreshError('服务暂时不可用，正在自动重新连接。');
+        if (getToken()) setAuthLoading(false);
       },
       onFailure: () => {
         setSessionRefreshError('暂时无法连接服务，登录状态未被清除。');

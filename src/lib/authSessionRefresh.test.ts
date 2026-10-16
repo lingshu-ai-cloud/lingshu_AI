@@ -209,16 +209,22 @@ assert.deepEqual(cancelledRetries, [2]);
 setToken('retained-session-token');
 let retainedFailure: unknown;
 let retainedSchedules = 0;
+let retainedRetry: (() => void) | undefined;
+let retainedAttempt = 0;
+let recovered = false;
 startInitialAuthSessionRefresh({
-  refresh: async () => { throw new AuthSessionUnavailableError(503); },
+  refresh: async () => { if (!retainedAttempt++) throw new AuthSessionUnavailableError(503); return null; },
   getToken,
-  schedule: () => { retainedSchedules += 1; return retainedSchedules; },
+  schedule: callback => { retainedRetry = callback; retainedSchedules += 1; return retainedSchedules; },
   cancel: () => {},
-  onSuccess: () => { throw new Error('unexpected success'); },
+  onSuccess: () => { recovered = true; },
   onFailure: error => { retainedFailure = error; },
 });
 await flush();
-assert.ok(retainedFailure instanceof AuthSessionUnavailableError);
-assert.equal(retainedSchedules, 0, 'an existing unavailable session must use the retained-session UI instead of bootstrap retries');
+assert.equal(retainedFailure, undefined);
+assert.equal(retainedSchedules, 1, 'retained credentials must retry temporary service outages');
+assert.equal(getToken(), 'retained-session-token');
+retainedRetry!(); await flush();
+assert.equal(recovered, true, 'service recovery must exit the error screen without manual refresh');
 
 console.log('auth session refresh failure semantics passed');

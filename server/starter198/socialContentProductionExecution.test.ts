@@ -41,6 +41,26 @@ const detail: any = {
 };
 
 {
+  const candidate:any={planVersion:'2',materialRoutingPolicyVersion:'type-aware.v2',shots:[{
+    shotId:'product',sourceStrategy:'customer_real_asset',sourceRefs:['sku-local'],fallbackSourceStrategy:null,
+    selectedMaterialSegment:{sourceRef:'sku-local',segmentId:'same-sku',startSeconds:0,endSeconds:3},
+    materialRouting:{schemaVersion:'social-material-routing.v1',materialType:'product',policy:'local_only',
+      localMatch:{state:'matched',sourceRefs:['sku-local'],productRef:'sku-a',evidenceRef:'verified-sku'},
+      productGenerationDecision:{state:'eligible',importance:'critical',reason:'hero'},
+      generation:{productImageRefs:['sku-image'],durationSeconds:3}},
+    productSceneReplication:{productIdentity:{groups:[{productRef:'sku-a',referenceImageIds:['sku-image']}]}}}]};
+  const stale=structuredClone(candidate);
+  stale.shots[0].sourceRefs=['other-sku'];stale.shots[0].selectedMaterialSegment.sourceRef='other-sku';
+  delete stale.shots[0].materialRouting;delete stale.shots[0].productSceneReplication;
+  const restored=bindCanonicalTypeAwareRouting(stale,candidate);
+  assert.equal(restored.materialRoutingPolicyVersion,'type-aware.v2');
+  assert.deepEqual(restored.shots[0].sourceRefs,['sku-local']);
+  assert.equal(restored.shots[0].selectedMaterialSegment.sourceRef,'sku-local');
+  assert.equal(restored.shots[0].materialRouting.productGenerationDecision.state,'eligible');
+  assert.deepEqual(restored.shots[0].productSceneReplication,candidate.shots[0].productSceneReplication);
+}
+
+{
   const shots=Array.from({length:37},(_,i)=>({shotId:`replication-reference-shot-${i+1}`,sourceStrategy:i<21?'aigc_product_scene_replication':'customer_real_asset',sourceRefs:i<21?[]:['local'],fallbackSourceStrategy:null,truthBoundary:{},materialRouting:{schemaVersion:'social-material-routing.v1',materialType:i<21?'product':'factory',policy:i<21?'local_first_product_i2v':'local_only',localMatch:{state:i<21?'missing':'matched',sourceRefs:i<21?[]:['local'],evidenceRef:i<21?null:'evidence'},...(i<21?{generation:{method:'reference_first_frame_product_replacement_i2v',durationSeconds:3,productImageRefs:['RS-001']}}:{})},...(i<21?{productSceneReplication:{schemaVersion:'social-product-scene-replication.v1',sceneTemplateKey:`scene-${i}`,productIdentity:{groups:[]}}}:{})}));
   const canonical:any={planVersion:'27',materialRoutingPolicyVersion:'type-aware.v1',shots};
   const approved:any={...structuredClone(canonical),shots:canonical.shots.map((shot:any)=>{const copy=structuredClone(shot);delete copy.materialRouting;delete copy.productSceneReplication;return copy})};

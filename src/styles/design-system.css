@@ -159,6 +159,12 @@
 .ls-avatar-group .ant-avatar { font-weight: 600; }
 .ls-compact-field-group { width: 100%; }
 
+.ls-conversation-container {
+  container-type: inline-size;
+  min-width: 0;
+  min-height: 0;
+}
+.ls-conversation-workspace-nav { display: none; }
 .ls-conversation-workspace {
   display: grid;
   grid-template-columns: minmax(196px, 232px) minmax(360px, 1fr) minmax(224px, 248px);
@@ -169,6 +175,7 @@
   border-radius: 0;
   background: var(--ls-bg);
 }
+.ls-conversation-workspace__slot { display: contents; }
 .ls-conversation-workspace__pane { min-width: 0; min-height: 0; overflow: hidden; background: var(--ls-bg); }
 .ls-conversation-workspace__pane + .ls-conversation-workspace__pane { border-inline-start: 1px solid var(--ls-border-secondary); }
 .ls-conversation-workspace :where([data-testid='conversation-list'], [data-testid='customer-info-rail']) { width: 100% !important; }
@@ -262,13 +269,20 @@
   .ls-page-header__actions { width: 100%; }
   .ls-chart { padding: var(--ls-space-16); }
   .ls-metric-strip { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-  .ls-conversation-workspace { display: flex; flex-direction: column; border-radius: 0; border-inline: 0; }
-  .ls-conversation-workspace__pane + .ls-conversation-workspace__pane { border-inline-start: 0; }
   .ls-messenger-bubble { max-width: 86%; }
   .ls-customer-list-scroll { padding: 6px; }
 }
 
-@media (min-width: 768px) and (max-width: 1199px) {
+@container (max-width: 999px) {
   .ls-conversation-workspace { grid-template-columns: minmax(196px, 224px) minmax(340px, 1fr); }
-  .ls-conversation-workspace > :last-child { display: none; }
+  .ls-conversation-workspace__slot:last-child { display: none; }
+}
+
+@container (max-width: 699px) {
+  .ls-conversation-workspace-nav { display: grid; }
+  .ls-conversation-workspace { display: flex; flex-direction: column; border-radius: 0; border-inline: 0; }
+  .ls-conversation-workspace__slot { display: none; min-width: 0; min-height: 0; flex: 1 1 auto; }
+  .ls-conversation-workspace__slot.is-active { display: flex; }
+  .ls-conversation-workspace__slot:last-child.is-active { display: flex; }
+  .ls-conversation-workspace__pane + .ls-conversation-workspace__pane { border-inline-start: 0; }
 }

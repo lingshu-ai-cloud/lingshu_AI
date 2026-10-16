@@ -106,7 +106,9 @@ export function buildAuthoritativeSocialContentWorkflow(input: Omit<BuildSocialA
       callToAction: input.publicationTask.cta,
       dueAt: publicationPreparationDeadline(input.publicationTask.publishWindow),
       weeklyBudgetCny: input.weeklyPackage.socialContentPackage.weeklyBudgetCny,
-      perItemBudgetCny: Math.min(10, input.brief.perItemBudgetCny ?? 10, input.weeklyPackage.socialContentPackage.perItemBudgetCny ?? 10),
+      perItemBudgetCny: Math.min(input.brief.materialRoutingPolicyVersion === 'type-aware.v2' ? 15 : 10,
+        input.brief.perItemBudgetCny ?? (input.brief.materialRoutingPolicyVersion === 'type-aware.v2' ? 15 : 10),
+        input.weeklyPackage.socialContentPackage.perItemBudgetCny ?? (input.brief.materialRoutingPolicyVersion === 'type-aware.v2' ? 15 : 10)),
     },
     factSourceRefs: input.publicationTask.factRefs.map(ref => `${ref.type}:${ref.id}@${ref.version}`),
     authoritativeContext: {
@@ -229,7 +231,8 @@ export function defaultBrief(value: CreateSocialContentTaskInput) {
     cadence: value.cadence ?? null,
     requestedOutputCount: value.mode === 'instant' ? 1 : value.requestedOutputCount ?? null,
     weeklyBudgetCny: value.weeklyBudgetCny ?? null,
-    perItemBudgetCny: Math.min(10, value.perItemBudgetCny ?? 10),
+    perItemBudgetCny: Math.min(value.materialRoutingPolicyVersion === 'type-aware.v2' ? 15 : 10,
+      value.perItemBudgetCny ?? (value.materialRoutingPolicyVersion === 'type-aware.v2' ? 15 : 10)),
     targetDurationSeconds: value.targetDurationSeconds ?? null,
     retryReserveCny: value.retryReserveCny ?? null,
     planningMode: value.planningMode ?? 'auto_adjust',
@@ -298,7 +301,8 @@ export async function refreshSocialTaskReferenceOutputs(input: {
   const verifiedContext = verifiedSocialScriptContext(profile, summary.brief.productId || summary.brief.productRef);
   const planning = {
     targetDurationSeconds: summary.brief.targetDurationSeconds ?? null,
-    budgetCny: Math.min(10, summary.brief.perItemBudgetCny ?? 10),
+    budgetCny: Math.min(summary.brief.materialRoutingPolicyVersion === 'type-aware.v2' ? 15 : 10,
+      summary.brief.perItemBudgetCny ?? (summary.brief.materialRoutingPolicyVersion === 'type-aware.v2' ? 15 : 10)),
     language: summary.brief.languages.some(language => /^en(?:glish)?$/i.test(language)) ? 'en' as const : 'zh' as const,
     callToAction: summary.brief.callToAction ?? null,
   };

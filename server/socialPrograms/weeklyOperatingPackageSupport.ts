@@ -453,7 +453,7 @@ export function packageFromInput(args: {
   const requestedMotherTarget = capacity?.status === 'ready' ? capacity.originalContentTarget : args.input.originalContentTarget;
   // A zero target is meaningful only after all normalized publications prove they use inventory.
   // The generation divisor is an internal placeholder and never a reported production quota.
-  const generationMotherTarget = positiveInteger(requestedMotherTarget === 0 ? 1 : requestedMotherTarget, Math.min(10, publicationTaskTarget), publicationTaskTarget);
+  const generationMotherTarget = positiveInteger(requestedMotherTarget === 0 ? 1 : requestedMotherTarget, Math.min(5, publicationTaskTarget), publicationTaskTarget);
   const tasks = publicationTasks(plans, generationMotherTarget, args.input);
   for(const task of tasks){if(task.publishWindow&&Number.isFinite(Date.parse(task.publishWindow))){const day=businessDate(task.publishWindow);if(day<weekStart||day>weekEnd(weekStart))throw new SocialProgramError('publication_outside_natural_week',400,'逐条发布排期必须属于该自然周（Asia/Shanghai），不能把下周任务计入本周。');}}
   const population = weeklyProductionPopulation(tasks);
@@ -462,6 +462,7 @@ export function packageFromInput(args: {
   const status = 'draft' as const;
   const timestamp = args.createdAt ?? at();
   const contentPackage: SocialWeeklyContentPackage = {
+    ...(!args.previousPackage||args.previousPackage.socialContentPackage.productionIdentityVersion==='shared-original.v1'?{productionIdentityVersion:'shared-original.v1' as const}:{}),
     contentPackageId: args.contentPackageId,
     operatingPackageId: args.packageId,
     version: args.version,

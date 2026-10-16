@@ -86,6 +86,11 @@ import {
   materialTenantId,
 } from './socialContentProductionMaterials.js';
 import { visualEvidenceScore } from '../digitalEmployees/sceneEvidence.js';
+import type { EnterpriseProfile } from '../lib/socialContentLegacyPorts.js';
+import {
+  projectShotMaterialRequirements,
+  resolveSocialEnterpriseProductBinding,
+} from './socialContentTaskEvidenceProjection.js';
 import {
   buildMaterialScriptAnalysis,
   type MaterialScriptAnalysis,
@@ -271,14 +276,14 @@ export function parseSocialTaskBrief(value: unknown): SocialContentTaskBrief {
     || (referenceMode && !SOCIAL_REPLICATION_REFERENCE_MODES.includes(referenceMode as typeof SOCIAL_REPLICATION_REFERENCE_MODES[number]))) {
     throw new SocialContentWorkflowError('social_content_task_record_invalid', 503);
   }
-  if (record.materialRoutingPolicyVersion != null && record.materialRoutingPolicyVersion !== 'type-aware.v1') {
+  if (record.materialRoutingPolicyVersion != null && record.materialRoutingPolicyVersion !== 'type-aware.v1' && record.materialRoutingPolicyVersion !== 'type-aware.v2') {
     throw new SocialContentWorkflowError('social_material_routing_policy_invalid', 503);
   }
   return {
     title,
     objective,
     ...(record.referenceReuse != null ? {referenceReuse: parseSocialReferenceReuse(record.referenceReuse)} : {}),
-    ...(record.materialRoutingPolicyVersion === 'type-aware.v1' ? { materialRoutingPolicyVersion: 'type-aware.v1' as const } : {}),
+    ...(record.materialRoutingPolicyVersion === 'type-aware.v1' || record.materialRoutingPolicyVersion === 'type-aware.v2' ? { materialRoutingPolicyVersion: record.materialRoutingPolicyVersion } : {}),
     productId: nullable(record.productId),
     productRef: nullable(record.productRef),
     requestedPresenterName: nullable(record.requestedPresenterName),
@@ -434,6 +439,8 @@ export function socialTaskSummary(record: StarterRecord): SocialContentTaskSumma
   }
   return {
     taskId,
+    ...(socialObject(socialJson(record.content_order))?.schemaVersion==='social-content-order.v1'
+      ?{contentOrder:structuredClone(socialJson(record.content_order)) as SocialContentTaskSummary['contentOrder']}:{}),
     brief,
     status,
     version,
@@ -978,6 +985,16 @@ export async function readSocialTaskDetail(input: {
   }
   const activeMaterials = activeSources.filter(source => source.kind === 'material');
   const materialInventory = await (input.repository.materialLibrary ?? readMaterialLibrary)(input.tenantId, {dataStore: input.repository.dataStore}).catch(() => {throw new SocialContentWorkflowError('social_content_material_inventory_unavailable',503);});
+  const enterpriseProfile = await (async (): Promise<EnterpriseProfile | null> => {
+    if (!input.repository.dataStore) return null;
+    const profiles = await input.repository.dataStore.list<Record<string, unknown>>('tenant_profiles', {
+      where: { tenant_id: input.tenantId }, page: 1, perPage: 2,
+    });
+    if (profiles.totalItems > 1 || profiles.items.some(row => row.tenant_id !== input.tenantId)) {
+      throw new SocialContentWorkflowError('enterprise_product_inventory_scope_invalid', 503);
+    }
+    return socialObject(socialJson(profiles.items[0]?.profile)) as unknown as EnterpriseProfile | null;
+  })();
   const materialById = new Map(materialInventory.items.map(item => [socialText(item.id), item]));
   const linkedMaterialRows = activeMaterials.flatMap(source => {
     const record = materialById.get(decodeMaterialRef(source.sourceRef));
@@ -990,8 +1007,10 @@ export async function readSocialTaskDetail(input: {
     summary.brief.presenterAssetId,
   );
   const weeklyAuthority = socialObject(socialJson(task.brief))?._weeklyAuthority as Parameters<typeof buildSocialAgentWorkflow>[0]['authoritativeContext'];
+  const enterpriseProductBinding = resolveSocialEnterpriseProductBinding(enterpriseProfile, summary.brief.productId);
   const confirmedFactRefs = [
     ...(weeklyAuthority?.publicationTask.factRefs.map(ref => `${ref.type}:${ref.id}@${ref.version}`) ?? []),
+    ...(enterpriseProductBinding ? [enterpriseProductBinding.enterpriseFactRef] : []),
     ...activeSources.filter(source => source.kind === 'knowledge').map(source => source.sourceId),
     ...(summary.brief.brandNotes ? ['brief:confirmed-facts'] : []),
   ];
@@ -1018,16 +1037,8 @@ export async function readSocialTaskDetail(input: {
   const selectedTaskProductId = socialText(summary.brief.productId) || null;
   const selectedTaskProductRef = socialText(summary.brief.productRef) || null;
   let enterpriseProductImageUrls: string[] = [];
-  if (selectedTaskProductId && input.repository.dataStore) {
-    const profiles = await input.repository.dataStore.list<Record<string, unknown>>('tenant_profiles', {
-      where: { tenant_id: input.tenantId }, page: 1, perPage: 2,
-    });
-    if (profiles.totalItems > 1 || profiles.items.some(row => row.tenant_id !== input.tenantId)) {
-      throw new SocialContentWorkflowError('enterprise_product_inventory_scope_invalid', 503);
-    }
-    const profile = socialObject(socialJson(profiles.items[0]?.profile));
-    const products = socialObject(profile?.products);
-    const items = Array.isArray(products?.items) ? products.items.map(item => socialObject(item)).filter(Boolean) : [];
+  if (selectedTaskProductId && enterpriseProfile) {
+    const items = (enterpriseProfile.products.items ?? []).map(item => socialObject(item)).filter(Boolean);
     const selected = items.find(product => {
       const persisted = [product?.id, product?.productId, product?.sku].map(socialText).find(Boolean);
       return persisted === selectedTaskProductId;
@@ -1051,7 +1062,7 @@ export async function readSocialTaskDetail(input: {
   });
   const materialCandidates: SocialWorkflowMaterialClipCandidate[] = candidateSet.candidates.map(candidate => ({
     ...candidate,
-    ...(summary.brief.materialRoutingPolicyVersion === 'type-aware.v1' ? {
+    ...((summary.brief.materialRoutingPolicyVersion === 'type-aware.v1' || summary.brief.materialRoutingPolicyVersion === 'type-aware.v2') ? {
       synthetic: /ai.generated|seedream|seedance|synthetic|generated/i.test(String(materialById.get(candidate.assetId)?.sourceType || ''))
         || materialById.get(candidate.assetId)?.synthetic === true,
     } : {}),
@@ -1069,7 +1080,7 @@ export async function readSocialTaskDetail(input: {
       || Boolean(candidate.productRef && candidate.productRef === productRows[0]?.productRef))
     : productRows.filter(sameRequestedProduct);
   const productImageIds = [...new Set([...uniqueAssetIds(productFamilyRows),
-    ...(summary.brief.materialRoutingPolicyVersion === 'type-aware.v1' ? ownedProductReferenceImageIds({
+    ...((summary.brief.materialRoutingPolicyVersion === 'type-aware.v1' || summary.brief.materialRoutingPolicyVersion === 'type-aware.v2') ? ownedProductReferenceImageIds({
       records: materialInventory.items, tenantId: input.tenantId,
       productId: selectedTaskProductId, productRef: selectedTaskProductRef,
       enterpriseProductImageUrls,
@@ -1168,7 +1179,7 @@ export async function readSocialTaskDetail(input: {
       requestedDescription: shot.visualInstruction,
       truthSensitiveSubject: shot.materialPlan.truthBoundary.subject,
       referenceShotId: shot.referenceShotId,
-      ...(summary.brief.materialRoutingPolicyVersion === 'type-aware.v1' && shot.materialPlan.materialRouting ? {
+      ...((summary.brief.materialRoutingPolicyVersion === 'type-aware.v1' || summary.brief.materialRoutingPolicyVersion === 'type-aware.v2') && shot.materialPlan.materialRouting ? {
         plannedDurationSeconds: shot.endSeconds - shot.startSeconds,
         ...(shot.materialPlan.visualContract ? { visualContract: structuredClone(shot.materialPlan.visualContract) } : {}),
         ...(shot.materialPlan.productSceneReplication ? { productSceneReplication: shot.materialPlan.productSceneReplication } : {}),
@@ -1300,8 +1311,22 @@ export async function readSocialTaskDetail(input: {
       return await readSocialMvpHandoff(input.repository.dataStore, scope as unknown as import('../../shared/contracts/socialMvpHandoff.js').SocialMvpScope);
     } catch { return {...missing,gaps:['mvp_authoritative_storage_unavailable']}; }
   })();
+  const storedRequirements = summary.theme
+    ? publicMaterialRequirements(parseStoredMaterialRequirements(task.material_requirements)) : [];
+  const shotRequirements = projectShotMaterialRequirements({
+    plan: assetSupplyPlan,
+    shotMaterialMap,
+    themeId: summary.theme?.themeId,
+    aspectRatio: summary.brief.aspectRatio,
+    recalculatedAt: summary.updatedAt,
+  });
+  // Once a concrete shot plan exists it is the authoritative material demand.
+  // The old theme/formula column remains readable only for tasks without shots.
+  const effectiveMaterialRequirements = shotRequirements.length ? shotRequirements : storedRequirements;
   return {
     ...summary,
+    ...(enterpriseProductBinding ? { enterpriseProductBinding } : {}),
+    ...((summary.theme || shotRequirements.length) ? { materialReadiness: materialReadiness(effectiveMaterialRequirements) } : {}),
     socialMvpHandoff,
     ...(referenceRecovery || publishingRecovery ? { managedExecution: {
       ...(referenceRecovery ? { reference: { ...recoveryView(referenceRecovery),
@@ -1321,9 +1346,7 @@ export async function readSocialTaskDetail(input: {
     ...(referenceVideoAnalysis ? { referenceVideoAnalysis } : {}),
     ...(replicationScript ? { replicationScript } : {}),
     ...(shotMaterialMap.length ? { shotMaterialMap } : {}),
-    ...(summary.theme
-      ? { materialRequirements: publicMaterialRequirements(parseStoredMaterialRequirements(task.material_requirements)) }
-      : {}),
+    ...((summary.theme || shotRequirements.length) ? { materialRequirements: effectiveMaterialRequirements } : {}),
   };
 }
 
