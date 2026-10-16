@@ -236,6 +236,7 @@ async function* streamQwenChat(messages: ChatMessage[], opts: LLMCallOptions): A
     }
     return;
   } catch (err) {
+    if (opts.signal?.aborted) throw err;
     const fallbackMessages: OpenAI.Chat.ChatCompletionMessageParam[] = emittedText
       ? [
           ...msgs,
@@ -251,11 +252,6 @@ async function* streamQwenChat(messages: ChatMessage[], opts: LLMCallOptions): A
       if (text) yield { text };
       return;
     } catch {
-      if (emittedText) {
-        const raw = err instanceof Error ? err.message : String(err);
-        yield { text: `\n\n（模型流式连接中断：${raw.slice(0, 120)}。请发送「继续」接着写。）` };
-        return;
-      }
       throw err;
     }
   }
@@ -309,13 +305,17 @@ async function* streamQwenMessages(
     ...(opts.timeoutMs ? { timeout: opts.timeoutMs } : {}),
   });
   let finishReason: string | null = null;
+  let hasText = false;
   for await (const chunk of stream) {
     const text = chunk.choices[0]?.delta?.content;
+    if (text?.trim()) hasText = true;
     if (text) yield { text };
     finishReason = chunk.choices[0]?.finish_reason ?? finishReason;
   }
   // Let the caller's existing continuation path finish answers cut at the token limit.
   if (finishReason === 'length') throw new Error('QWEN_MAX_TOKENS');
+  if (finishReason !== 'stop') throw new Error('模型回答未完整结束，请重试。');
+  if (!hasText) throw new Error('模型回答为空，请重试。');
 }
 
 async function completeQwenMessages(
@@ -336,7 +336,10 @@ async function completeQwenMessages(
     ...(opts.signal ? { signal: opts.signal } : {}),
     ...(opts.timeoutMs ? { timeout: opts.timeoutMs } : {}),
   });
-  return completion.choices[0]?.message?.content ?? '';
+  if (completion.choices[0]?.finish_reason !== 'stop') throw new Error('模型回答未完整结束，请重试。');
+  const text = completion.choices[0]?.message?.content;
+  if (!text?.trim()) throw new Error('模型回答为空，请重试。');
+  return text;
 }
 
 export async function* callLLMChatStream(messages: ChatMessage[], opts: LLMCallOptions = {}): AsyncGenerator<StreamEvent> {

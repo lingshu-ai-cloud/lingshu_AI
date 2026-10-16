@@ -1,4 +1,7 @@
 import { useAssistantDecisionMemory } from '../lib/useAssistantDecisionMemory';
+import { isLegacyUnboundOperationNotice, isUnboundOperationError } from '../lib/assistantOperationNotice';
+import { AssistantStreamCompletion, appendAssistantStreamFailure } from '../lib/assistantStreamCompletion';
+import { sameAssistantRequestIdentity, withAssistantIdleTimeout } from '../lib/assistantRequestLifecycle';
 import AssistantDecisionMemoryPanel, { AssistantDecisionSaveButton } from './AssistantDecisionMemoryPanel';
 import {
   useCallback,
@@ -45,6 +48,7 @@ import {
 } from '../stores/assistantStore';
 import AgentReply from './AgentReply';
 import AssistantComposer, { assistantAttachmentKind } from './assistant/AssistantComposer';
+import AssistantWeeklyActions from './assistant/AssistantWeeklyActions';
 import AssistantDecisionCenter, {
   assistantDecisionExecutionFeedback,
   type AssistantDecisionActionResult,
@@ -401,26 +405,28 @@ function compactText(text: string, maxLength = 900) {
 
 async function loadLiveIntegrationFacts(): Promise<string> {
   const readItems = async (path: string): Promise<Record<string, unknown>[] | null> => {
+    const controller = new AbortController();
     try {
-      const response = await fetch(path, { headers: authHeader() });
+      const response = await withAssistantIdleTimeout(fetch(path, { headers: authHeader(), signal: controller.signal }), controller, 15_000);
       if (!response.ok) return null;
-      const data = await response.json() as { items?: Record<string, unknown>[] };
+      const data = await withAssistantIdleTimeout(response.json(), controller, 15_000) as { items?: Record<string, unknown>[] };
       return Array.isArray(data.items) ? data.items : null;
     } catch {
       return null;
-    }
+    } finally { controller.abort(); }
   };
 
   const readVideoInventory = async (): Promise<number | null> => {
+    const controller = new AbortController();
     try {
-      const response = await fetch('/api/overseas/videos?page=1&perPage=1&contentFormat=video', { headers: authHeader() });
+      const response = await withAssistantIdleTimeout(fetch('/api/overseas/videos?page=1&perPage=1&contentFormat=video', { headers: authHeader(), signal: controller.signal }), controller, 15_000);
       if (!response.ok) return null;
-      const data = await response.json() as { inventoryTotalItems?: number; totalItems?: number };
+      const data = await withAssistantIdleTimeout(response.json(), controller, 15_000) as { inventoryTotalItems?: number; totalItems?: number };
       const count = Number(data.inventoryTotalItems ?? data.totalItems);
       return Number.isFinite(count) && count >= 0 ? count : null;
     } catch {
       return null;
-    }
+    } finally { controller.abort(); }
   };
 
   const [socialAccounts, youtubeAccounts, customers, collectedVideos] = await Promise.all([
@@ -718,6 +724,7 @@ export default function GlobalAssistant({
   const [performanceLineIndex, setPerformanceLineIndex] = useState(0);
   const [speechBubble, setSpeechBubble] = useState<AssistantSpeech | null>(null);
   const [loading, setLoading] = useState(false);
+  const [weeklyActionBusy, setWeeklyActionBusy] = useState(false);
   const [assistantThreadHydrated, setAssistantThreadHydrated] = useState(false);
   const [welcomeBubbleVisible, setWelcomeBubbleVisible] = useState(false);
   const [pendingAttachments, setPendingAttachments] = useState<File[]>([]);
@@ -762,7 +769,13 @@ export default function GlobalAssistant({
   }
 
   useEffect(() => {
+    // StrictMode replays setup after cleanup; create a new fence rather than
+    // reviving the old one and accidentally admitting an obsolete request.
+    if (!persistenceFenceRef.current.active) {
+      persistenceFenceRef.current = { scopeKey: persistenceScopeKey, active: true };
+    }
     const fence = persistenceFenceRef.current;
+    setLoading(false);
     return () => {
       fence.active = false;
       abortRef.current?.abort();
@@ -789,9 +802,10 @@ export default function GlobalAssistant({
   const currentPageAgent = useMemo(() => orbitIdForPage(page), [page]);
   const activeContext = useMemo(() => contextForOrbit(currentPageAgent, pageContext), [currentPageAgent, pageContext]);
   const activeThread = threads[activeAgent];
-  const focusedTaskCard = activeThread.focusedTaskId
+  const focusedCardCandidate = activeThread.focusedTaskId
     ? activeThread.taskCards[activeThread.focusedTaskId] ?? null
     : null;
+  const focusedTaskCard = isLegacyUnboundOperationNotice(focusedCardCandidate) ? null : focusedCardCandidate;
   const dialogTaskCard = decisionDialog?.kind === 'task'
     ? activeThread.taskCards[decisionDialog.taskId] ?? null
     : null;
@@ -1215,6 +1229,7 @@ export default function GlobalAssistant({
     ): AssistantActionResponse => {
       const missingInput = httpStatus === 422 || /(?:^|_)(?:goal|required|missing)(?:_|$)/.test(errorCode);
       const staleAction = httpStatus === 409 || /(?:stale|conflict)/.test(errorCode);
+      const resultUnknown = errorCode === 'assistant_action_result_unknown';
       const status: AssistantActionResponse['status'] = missingInput
         ? 'missing_required_input'
         : staleAction ? 'stale_action' : 'failed';
@@ -1224,21 +1239,24 @@ export default function GlobalAssistant({
         requestId: request.requestId,
         card: {
           kind: missingInput ? 'decision' : 'operation_result',
-          title: missingInput ? '还需要补充信息' : staleAction ? '页面信息已更新' : '操作没有完成',
+          title: resultUnknown ? '操作结果待确认' : missingInput ? '还需要补充信息' : staleAction ? '页面信息已更新' : '操作没有完成',
           summary: message,
-          details: ['原任务和已填写内容均已保留，可以稍后重试。'],
+          details: [resultUnknown ? '请先查看周任务或原任务卡的最新状态，确认结果后再决定下一步。' : '原任务和已填写内容均已保留，可以稍后重试。'],
         },
         notification: { reason: missingInput ? 'missing_required_input' : 'failure', message },
         errorCode,
       };
     };
+    const controller = new AbortController();
     try {
-      const response = await fetch(`/api/overseas/assistant-threads/${agentId}/actions`, {
+      const response = await withAssistantIdleTimeout(fetch(`/api/overseas/assistant-threads/${agentId}/actions`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', ...authHeader() },
         body: JSON.stringify(request),
-      });
-      const payload = await response.json().catch(() => null) as (AssistantActionResponse & { error?: string; message?: string }) | null;
+        signal: controller.signal,
+      }), controller, 20_000);
+      const payload = await withAssistantIdleTimeout(response.json(), controller, 20_000)
+        .catch(error => controller.signal.aborted ? Promise.reject(error) : null) as (AssistantActionResponse & { error?: string; message?: string }) | null;
       if (payload?.requestId && payload.card && payload.status) return payload;
       if (!response.ok) {
         return actionFailure(
@@ -1252,8 +1270,11 @@ export default function GlobalAssistant({
       // Never make a failed deterministic route look like a successful
       // generic conversation. Only an explicit delegated/not_handled
       // response is allowed to fall through to the normal chat endpoint.
-      return actionFailure(error instanceof Error ? error.message : '助手操作暂时不可用。');
-    }
+      return actionFailure(controller.signal.aborted
+        ? '操作结果尚未确认，请先查看原任务状态，不要重复提交。'
+        : error instanceof Error ? error.message : '助手操作暂时不可用。',
+        controller.signal.aborted ? 'assistant_action_result_unknown' : 'assistant_action_unavailable');
+    } finally { controller.abort(); }
   }, []);
 
   const presentActionResponse = useCallback((
@@ -1261,6 +1282,17 @@ export default function GlobalAssistant({
     request: AssistantActionRequest,
     response: AssistantActionResponse,
   ) => {
+    if (isUnboundOperationError(response.errorCode)) {
+      // A rejected, unbound command is a one-off explanation, not a task.
+      const current = useAssistantStore.getState().threads[agentId];
+      setMessages(agentId, [...current.messages, {
+        role: 'assistant',
+        content: response.card.summary,
+      }]);
+      setPanelView('chat');
+      setMode('chat');
+      return;
+    }
     const existingCards = useAssistantStore.getState().threads[agentId].taskCards;
     const stableTaskId = actionResponseCardId(request, response, existingCards);
     const displayResponse = responseWithoutCrossObjectActions(request, response);
@@ -1319,7 +1351,7 @@ export default function GlobalAssistant({
       setSpeechBubble({ id: Date.now(), message: response.notification.message });
     }
     refreshCurrentStatus();
-  }, [executeAssistantAction, focusTaskCard, page, persistThread, setUnreadCount, upsertTaskCard]);
+  }, [executeAssistantAction, focusTaskCard, page, persistThread, setMessages, setUnreadCount, upsertTaskCard]);
 
   const send = useCallback(async (
     text: string,
@@ -1334,7 +1366,7 @@ export default function GlobalAssistant({
     const currentScope = () => (
       requestFence.active
       && persistenceFenceRef.current === requestFence
-      && requestToken === getToken()
+      && sameAssistantRequestIdentity(requestToken, getToken(), stablePersistenceScope)
     );
     const visibleText = userText || '请基于这次附件继续处理。';
     const visibleAttachmentSummary = uploadedAttachments.length
@@ -1381,7 +1413,10 @@ export default function GlobalAssistant({
         deterministicRequest,
         signedFocusedMutationActionId ? { deterministicActionId: signedFocusedMutationActionId } : undefined,
       );
-    if (!currentScope()) return;
+    if (!currentScope()) {
+      if (persistenceFenceRef.current === requestFence) setLoading(false);
+      return;
+    }
     if (actionResponse && actionResponse.status !== 'delegated' && actionResponse.status !== 'not_handled') {
       presentActionResponse(threadAgent, deterministicRequest, actionResponse);
       setLoading(false);
@@ -1391,7 +1426,10 @@ export default function GlobalAssistant({
     }
 
     const liveIntegrationFacts = strategyRequest ? '' : await loadLiveIntegrationFacts();
-    if (!currentScope()) return;
+    if (!currentScope()) {
+      if (persistenceFenceRef.current === requestFence) setLoading(false);
+      return;
+    }
     const apiMessages: Message[] = [
       ...historyForApi,
       {
@@ -1424,28 +1462,31 @@ export default function GlobalAssistant({
     ];
 
     let assistantStarted = false;
+    let assistantMessageIndex = -1;
     const ensureAssistant = () => {
       if (!currentScope()) return;
       if (assistantStarted) return;
       assistantStarted = true;
       const current = useAssistantStore.getState().threads[threadAgent].messages;
+      assistantMessageIndex = current.length;
       setMessages(threadAgent, [...current, { role: 'assistant', content: '' }]);
-      setLoading(false);
     };
     const patchAssistant = (patch: (msg: Message) => Message) => {
       if (!currentScope()) return;
       ensureAssistant();
       if (!assistantStarted) return;
       const current = [...useAssistantStore.getState().threads[threadAgent].messages];
-      current[current.length - 1] = patch(current[current.length - 1]);
+      if (current[assistantMessageIndex]?.role !== 'assistant') return;
+      current[assistantMessageIndex] = patch(current[assistantMessageIndex]);
       setMessages(threadAgent, current);
     };
 
+    let reader: ReadableStreamDefaultReader<Uint8Array> | undefined;
+    const controller = new AbortController();
     try {
       abortRef.current?.abort();
-      const controller = new AbortController();
       abortRef.current = controller;
-      const resp = await fetch(API_PATH[agentForOrbit(routeAgent)], {
+      const resp = await withAssistantIdleTimeout(fetch(API_PATH[agentForOrbit(routeAgent)], {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', ...authHeader() },
         body: JSON.stringify({
@@ -1461,50 +1502,57 @@ export default function GlobalAssistant({
           } : {}),
         }),
         signal: controller.signal,
-      });
+      }), controller);
       if (!currentScope()) return;
       if (!resp.ok) throw new Error(await responseErrorMessage(resp));
       if (!resp.body) throw new Error('模型响应为空，请稍后重试。');
       ensureAssistant();
-      const reader = resp.body.getReader();
+      reader = resp.body.getReader();
       const decoder = new TextDecoder();
       let buffer = '';
+      const completion = new AssistantStreamCompletion();
       const consumeLine = (line: string) => {
         if (!line.startsWith('data: ')) return;
         const payload = line.slice(6).trim();
-        if (payload === '[DONE]') return;
         try {
-          const obj = JSON.parse(payload) as { text?: string; sources?: { title: string; uri: string }[]; error?: string };
+          const obj = completion.accept(payload);
+          if (!obj) return;
           if (obj.text) patchAssistant(msg => ({ ...msg, content: msg.content + obj.text }));
-          else if (obj.sources?.length) patchAssistant(msg => ({ ...msg, sources: obj.sources }));
-          else if (obj.error) patchAssistant(msg => ({ ...msg, content: msg.content || `模型连接断开：${obj.error}` }));
+          if (obj.sources?.length) patchAssistant(msg => ({ ...msg, sources: obj.sources }));
         } catch {
           // Ignore malformed stream chunks.
         }
       };
       while (true) {
-        const { done, value } = await reader.read();
+        const { done, value } = await withAssistantIdleTimeout(reader.read(), controller);
         if (done) break;
         buffer += decoder.decode(value, { stream: true });
         const lines = buffer.split('\n');
         buffer = lines.pop() ?? '';
         for (const line of lines) consumeLine(line);
       }
+      buffer += decoder.decode();
       if (buffer.trim()) consumeLine(buffer);
+      completion.assertComplete();
     } catch (err: any) {
       if (!currentScope()) return;
       const message = err?.name === 'AbortError' ? '这次响应已停止。' : (err?.message || '请求失败，请稍后重试。');
-      if (assistantStarted) patchAssistant(msg => ({ ...msg, content: msg.content ? `${msg.content}\n\n${message}` : message }));
+      if (assistantStarted) patchAssistant(msg => ({ ...msg, content: msg.content ? appendAssistantStreamFailure(msg.content, message) : message }));
       else setMessages(threadAgent, [...useAssistantStore.getState().threads[threadAgent].messages, { role: 'assistant', content: message }]);
     } finally {
-      if (currentScope()) {
-        setLoading(false);
+      // Do not wait on an unresponsive underlying stream during cleanup.
+      if (reader) void reader.cancel().catch(() => {});
+      controller.abort();
+      if (abortRef.current === controller) {
         abortRef.current = null;
+        setLoading(false);
+      }
+      if (currentScope()) {
         persistThread(threadAgent);
         onSessionRefresh?.();
       }
     }
-  }, [currentPageAgent, enterpriseContext, executeAssistantAction, loading, onSessionRefresh, openAgent, page, pageContext, persistThread, presentActionResponse, setDraftInput, setFollowingLatest, setMessages]);
+  }, [currentPageAgent, enterpriseContext, executeAssistantAction, loading, onSessionRefresh, openAgent, page, pageContext, persistThread, presentActionResponse, setDraftInput, setFollowingLatest, setMessages, stablePersistenceScope]);
 
   const sendComposerMessage = useCallback(async () => {
     if (loading || attachmentUploading) return;
@@ -2361,11 +2409,33 @@ export default function GlobalAssistant({
                   </div>
                 )}
 
+                <AssistantWeeklyActions
+                  page={page}
+                  scopeKey={persistenceScopeKey}
+                  disabled={loading || attachmentUploading}
+                  onBusyChange={setWeeklyActionBusy}
+                  onReceipt={receipt => {
+                    const thread = useAssistantStore.getState().threads[activeAgent];
+                    setMessages(activeAgent, [...thread.messages, { role: 'assistant', content: receipt.message }]);
+                    persistThread(activeAgent);
+                    setDecisionFeedRevision(value => value + 1);
+                    onSessionRefresh?.();
+                    window.dispatchEvent(new CustomEvent('lingshu:weekly-tasks-updated', { detail: { programId: receipt.programId, packageId: receipt.packageId, packageVersion: receipt.packageVersion } }));
+                    const navigation = receipt.navigation;
+                    if (navigation?.href && /^\/\?page=(?:smartAssets|digitalEmployees|traffic)(?:&|$)/.test(navigation.href)) {
+                      setMode('breathing');
+                      window.location.assign(navigation.href);
+                    } else if (navigation?.page && ['smartAssets', 'digitalEmployees', 'traffic'].includes(navigation.page)) {
+                      setMode('breathing');
+                      window.dispatchEvent(new CustomEvent('lingshu:navigate', { detail: navigation }));
+                    }
+                  }}
+                />
                 <AssistantComposer
                   ref={assistantInputRef}
                   draft={activeThread.draftInput}
                   files={pendingAttachments}
-                  disabled={loading}
+                  disabled={loading || weeklyActionBusy}
                   uploading={attachmentUploading}
                   error={attachmentError}
                   onDraftChange={value => setDraftInput(activeAgent, value)}

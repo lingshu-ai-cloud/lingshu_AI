@@ -117,7 +117,7 @@ export function startInitialAuthSessionRefresh<TTimer>(ports: {
 function localPreviewBootstrapEnabled(): boolean {
   const env = import.meta.env;
   if (!env?.DEV || env.VITE_LINGSHU_LOCAL_PREVIEW !== '1' || typeof window === 'undefined') return false;
-  return window.location.port === '5177'
+  return ['5177', '5183'].includes(window.location.port)
     && ['127.0.0.1', 'localhost', '[::1]', '::1'].includes(window.location.hostname);
 }
 

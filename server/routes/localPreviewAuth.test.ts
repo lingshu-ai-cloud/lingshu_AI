@@ -64,6 +64,8 @@ assert.equal(isLocalPreviewLoopbackAddress('192.168.1.20'), false);
 assert.equal(isLocalPreviewLoopbackAddress('::ffff:192.168.1.20'), false);
 assert.equal(isLocalPreviewLoopbackAddress(undefined), false);
 assert.equal(localPreviewRequestRejection('http://127.0.0.1:5177', '127.0.0.1'), null);
+assert.equal(localPreviewRequestRejection('http://127.0.0.1:5183', '127.0.0.1'), null);
+assert.equal(localPreviewRequestRejection('http://127.0.0.1:5183', '192.168.1.20'), 'local_preview_loopback_required');
 assert.equal(
   localPreviewRequestRejection('http://127.0.0.1:5177', '192.168.1.20'),
   'local_preview_loopback_required',

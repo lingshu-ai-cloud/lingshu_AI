@@ -1,4 +1,5 @@
 import { agentCalendarAuthIdentity, readAgentCalendarReturnContext, registerAgentCalendarReturnState } from '../../lib/agentCalendarReturnContext';
+import {openIndependentContent} from './independentContentCalendar';
 import {openAccountBindingNavigation} from '../../lib/accountBindingNavigation';
 import {openCustomerCalendarTask,type CustomerCalendarProjection} from '../socialProgram/CustomerWeeklyCalendar';
 import {readWeeklyContentNavigation,weeklyContentNavigationDetail} from '../../lib/weeklyContentNavigationApi';
@@ -261,6 +262,7 @@ export default function ConnectedAgentCalendar({accountBindingTasks=[],startsAt,
   }
   const openMaterial=(requestId:string,action?:'upload'|'verification')=>{if(!pkg)return;if(!openMaterialPanelRequest(materialPanel.current,pkg.programId,pkg.packageId,pkg.version,requestId,action)){setBindingContext(currentSelection.current);setBindingError('对应素材任务仍在加载或尚未关联此版本，请在下方真实素材工作区核验。');}};
   async function openContent(card:AgentCalendarTask,chosen?:ScopedSceneTarget){
+    if(openIndependentContent(card))return;
     if(!pkg)return;
     const selection=currentSelection.current,generation=++sceneReadGeneration.current,token=getToken();const stillCurrent=()=>currentSelection.current===selection&&sceneReadGeneration.current===generation&&getToken()===token;
     setBindingContext(selection);setBindingError('');setSceneChoices(null);setSceneUpstream(null);setSceneReading(selection);
@@ -295,7 +297,7 @@ export default function ConnectedAgentCalendar({accountBindingTasks=[],startsAt,
     return <div>
       {standaloneLoading&&<p role="status" className="p-6 text-xs text-slate-500">正在读取真实内容生产任务…</p>}
       {standaloneError&&<p role="alert" className="mx-6 mt-5 rounded-lg bg-amber-50 p-3 text-xs text-amber-800">{standaloneError}</p>}
-      {!standaloneLoading&&<AgentWeeklyCalendar tasks={realTasks} startsAt={startsAt || standaloneCards[0]?.date || accountBindingTasks[0]?.date} agentRole={agentRole} onBindAccount={openAccountBindingNavigation} onOpenProduction={card=>{if(!card.productionTaskId)return;window.dispatchEvent(new CustomEvent('lingshu:navigate',{detail:{page:'smartAssets',view:'create',directStudio:true,agentTaskDemo:true,socialContentTaskId:card.productionTaskId,socialContentPage:'smartAssets'}}));}}/>}
+      {!standaloneLoading&&<AgentWeeklyCalendar tasks={realTasks} startsAt={startsAt || standaloneCards[0]?.date || accountBindingTasks[0]?.date} agentRole={agentRole} onBindAccount={openAccountBindingNavigation} onOpenProduction={card=>{if(openIndependentContent(card))return;if(!card.productionTaskId)return;window.dispatchEvent(new CustomEvent('lingshu:navigate',{detail:{page:'smartAssets',view:'create',directStudio:true,agentTaskDemo:true,socialContentTaskId:card.productionTaskId,socialContentPage:'smartAssets'}}));}}/>}
       {!standaloneLoading&&!standaloneError&&realTasks.length===0&&<p className="p-6 text-xs text-slate-500">当前账号尚无真实生产任务；创建单条视频任务或确认经营周包后将在此显示。</p>}
     </div>;
   }
@@ -338,7 +340,7 @@ export default function ConnectedAgentCalendar({accountBindingTasks=[],startsAt,
     {!loading&&!error&&pkg&&<div className="px-6 pb-6"><WeeklySupplementRequestsPanel pkg={pkg} tasks={scopedTasks} onExecutionResume={reloadAfterEvidenceResume} onChanged={items=>{if(items.some(item=>item.programId!==pkg.programId||item.packageId!==pkg.packageId||item.packageVersion!==pkg.version||!scopedTasks.some(task=>task.taskId===item.consumerTaskId&&task.tenantId===item.tenantId)))throw Error('补齐任务与实际周包执行身份不一致。');setSupplements({selection:currentSelection.current,items});}}/></div>}
     {!loading&&!error&&pkg&&<div className="px-6 pb-6"><WeeklyReviewEvidencePanel pkg={pkg} tasks={scopedTasks} taskId={selectedReview?.selection===currentSelection.current?selectedReview.taskId:undefined}/></div>}
     {!loading&&!error&&pkg&&<div className="px-6 pb-6"><WeeklyContentTemplatesPanel pkg={pkg} tasks={scopedTasks} taskId={selectedTemplate?.selection===currentSelection.current?selectedTemplate.taskId:undefined} onExecutionResume={reloadAfterEvidenceResume} onTemplateRevision={selectTemplateRevision}/></div>}
-    {!loading && !error && !pkg && <AgentWeeklyCalendar agentRole={agentRole} tasks={[...standaloneCards,...accountBindingTasks]} startsAt={startsAt || standaloneCards[0]?.date || accountBindingTasks[0]?.date} onBindAccount={openAccountBindingNavigation} onOpenProduction={card=>{if(!card.productionTaskId)return;window.dispatchEvent(new CustomEvent('lingshu:navigate',{detail:{page:'smartAssets',view:'create',directStudio:true,agentTaskDemo:true,socialContentTaskId:card.productionTaskId,socialContentPage:'smartAssets'}}));}}/>}
+    {!loading && !error && !pkg && <AgentWeeklyCalendar agentRole={agentRole} tasks={[...standaloneCards,...accountBindingTasks]} startsAt={startsAt || standaloneCards[0]?.date || accountBindingTasks[0]?.date} onBindAccount={openAccountBindingNavigation} onOpenProduction={card=>{if(openIndependentContent(card))return;if(!card.productionTaskId)return;window.dispatchEvent(new CustomEvent('lingshu:navigate',{detail:{page:'smartAssets',view:'create',directStudio:true,agentTaskDemo:true,socialContentTaskId:card.productionTaskId,socialContentPage:'smartAssets'}}));}}/>}
     {!loading && !error && !pkg && <p className="p-6 text-xs text-slate-500">当前项目尚无执行周包；已显示未绑定周包的真实内容任务。</p>}
   </div>;
 }

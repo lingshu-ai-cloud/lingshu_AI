@@ -10,6 +10,22 @@ const base = {
   now: new Date('2026-09-04T02:00:00.000Z'),
 };
 const manual = buildPublishingApprovalPackage(base);
+const isolatedSelected = buildPublishingApprovalPackage({ ...base, projects: [...base.projects, { ...base.projects[0]!, id: 'another-previous-output' }], selectedProjectId: 'project-1' });
+assert.deepEqual(isolatedSelected.items.map(item => item.sourceProjectId), ['project-1'], 'explicit assistant task scope cannot re-publish sibling outputs');
+assert.throws(() => buildPublishingApprovalPackage({ ...base, selectedProjectId: 'missing-project' }), /selected_publishing_project_unavailable/);
+const draftOnly = { ...base.projects[0]!, spec: { ...base.projects[0]!.spec, contentOrder: { ...base.projects[0]!.spec.contentOrder, publishMode: 'draft_only' } } };
+assert.deepEqual(buildPublishingApprovalPackage({ ...base, allowRealPublishing: true, projects: [draftOnly] }).items, [], 'production-only add-on never inherits configured publishing accounts');
+assert.deepEqual(buildPublishingApprovalPackage({ ...base, allowRealPublishing: true, projects: [draftOnly], matrixPlan: [] }).items, [], 'matrix fan-out cannot publish a production-only add-on');
+const explicitAt = '2026-09-05T07:15:00.000Z';
+const converted = { ...base.projects[0]!, spec: { ...base.projects[0]!.spec, contentOrder: { ...base.projects[0]!.spec.contentOrder, explicitPublishingIntent: { accountId: 'account-1', platform: 'facebook', publishAt: explicitAt, confirmedBy: 'user-1' } } } };
+const convertedPackage = buildPublishingApprovalPackage({ ...base, allowRealPublishing: true, projects: [converted], targets: [...base.targets, { platform: 'facebook', accountId: 'not-authorized-for-item', accountLabel: '其他账号' }] });
+assert.equal(convertedPackage.items.length, 1);
+assert.deepEqual(convertedPackage.items[0]!.accountIds, ['account-1'], 'explicit add-on conversion never fans out to sibling accounts');
+assert.equal(convertedPackage.items[0]!.scheduledAt, explicitAt, 'explicit timestamp survives default daily slots');
+const convertedOutsideMatrix = { ...converted, spec: { ...converted.spec, contentOrder: { ...converted.spec.contentOrder, explicitPublishingIntent: { ...converted.spec.contentOrder.explicitPublishingIntent, accountId: 'new-explicit-account' } } } };
+const explicitOnly = buildPublishingApprovalPackage({ ...base, allowRealPublishing: true, projects: [convertedOutsideMatrix], matrixPlan: [] });
+assert.deepEqual(explicitOnly.items[0]!.accountIds, ['new-explicit-account'], 'explicit one-item destination does not depend on the old global matrix or expand it');
+assert.equal(explicitOnly.items[0]!.scheduledAt, explicitAt);
 assert.equal(manual.items.length, 1);
 assert.deepEqual(manual.items[0]?.accountLabels, ['主页一']);
 assert.equal(manual.items[0]?.title, '未来发布标题');

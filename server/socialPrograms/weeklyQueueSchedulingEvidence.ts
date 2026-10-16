@@ -5,6 +5,7 @@ import {observeWeeklyQueueResources} from './weeklyObservedQueueResources.js';
 import {socialObject,socialJson,socialRequestHash} from '../starter198/socialContentValidation.js';
 import {backwardTaskEvidenceFingerprint} from './weeklyBackwardSchedule.js';
 import {SocialProgramError} from './service.js';
+import type {WeeklyScheduleTargetGraph} from '../../shared/contracts/socialWeeklyScheduleRevision.js';
 export interface WeeklyQueueSchedulingEvidence {
  verifiedAt:string;configurationHash:string;inputEvidenceHash:string;
  pools:Record<string,{concurrency:number;configurationHash:string;unknownRunningOccupation:boolean}>;
@@ -17,9 +18,10 @@ const fail=():never=>{throw new SocialProgramError('weekly_queue_schedule_identi
 /** Server-only: real queued production identity and all three persisted limits.
  * Running jobs have no verified ETA, so their affected pools remain unavailable
  * for a future promise, regardless of snapshot free slots or lease expiry. */
-export async function readWeeklyQueueSchedulingEvidence(store:DataStore,tasks:WeeklyExecutionTask[],now:Date,frozenPackage?:WeeklyOperatingPackage):Promise<WeeklyQueueSchedulingEvidence>{
+export async function readWeeklyQueueSchedulingEvidence(store:DataStore,tasks:WeeklyExecutionTask[],now:Date,frozenPackage?:WeeklyOperatingPackage,target?:{pkg:WeeklyOperatingPackage;graph:WeeklyScheduleTargetGraph}):Promise<WeeklyQueueSchedulingEvidence>{
  const scopes=new Set(tasks.map(t=>socialRequestHash([t.tenantId,t.programId,t.packageId,t.packageVersion])));if(scopes.size!==1||!Number.isFinite(now.getTime()))return fail();
  const tenantId=tasks[0]!.tenantId,limits=await listContentExecutionLimits(store,tenantId);
+ if(target){const first=tasks[0]!,p=target.pkg,g=target.graph;if(!frozenPackage||g.tenantId!==tenantId||g.programId!==first.programId||g.packageId!==first.packageId||g.sourceVersion!==first.packageVersion||g.targetVersion!==first.packageVersion+1||p.programId!==g.programId||p.packageId!==g.packageId||p.version!==g.targetVersion||p.previousVersion!==g.sourceVersion||frozenPackage.version!==g.sourceVersion||socialRequestHash(g.tasks)!==socialRequestHash(tasks))return fail();}
  const output:WeeklyQueueSchedulingEvidence={verifiedAt:now.toISOString(),configurationHash:'',inputEvidenceHash:'',pools:{},tasks:{}};
  const putPool=(key:string,pool:WeeklyQueueSchedulingEvidence['pools'][string])=>{const existing=output.pools[key];if(existing&&socialRequestHash(existing)!==socialRequestHash(pool))return fail();output.pools[key]=pool;};
  const groups=new Map<string,WeeklyExecutionTask[]>();
@@ -34,9 +36,13 @@ export async function readWeeklyQueueSchedulingEvidence(store:DataStore,tasks:We
  // The actual weekly producer's CreateSocialContentTaskInput fixes mode='weekly';
  // enqueueSocialContentAutoProduction fixes taskType=`social_content_${task.mode}`.
  // This is a planned handler manifest, never an actual job or running reservation.
- const pkg=frozenPackage,publication=pkg?.socialContentPackage.publicationTasks.filter(p=>p.publicationTaskId===first.publicationTaskId);
- if(!pkg||pkg.programId!==first.programId||pkg.packageId!==first.packageId||pkg.version!==first.packageVersion||publication?.length!==1||publication[0]!.inventoryReuseRef||group.some(t=>t.accountId!==publication[0]!.accountId)){assign(null,[],['queue_planned_handler_authority_required']);continue;}
- const manifest={handler:'weekly_social_content_production.v1',tenantId,programId:first.programId,packageId:first.packageId,packageVersion:first.packageVersion,publicationTaskId:first.publicationTaskId,accountId:publication[0]!.accountId,taskType:'social_content_weekly',publicationHash:socialRequestHash(publication[0])};
+ let pkg=frozenPackage;
+ // Only newly planned graph bindings may borrow the verified target package.
+ // Existing jobs and existing source publications always retain source authority.
+ if(target&&!frozenPackage?.socialContentPackage.publicationTasks.some(p=>p.publicationTaskId===first.publicationTaskId)&&group.every(t=>target.graph.bindings.some(b=>b.planningTaskId===t.taskId&&b.origin==='new_planned'&&b.sourceTaskId===null)))pkg=target.pkg;
+ const publication=pkg?.socialContentPackage.publicationTasks.filter(p=>p.publicationTaskId===first.publicationTaskId);
+ if(!pkg||pkg.programId!==first.programId||pkg.packageId!==first.packageId||(pkg!==target?.pkg&&pkg.version!==first.packageVersion)||publication?.length!==1||publication[0]!.inventoryReuseRef||group.some(t=>t.accountId!==publication[0]!.accountId)){assign(null,[],['queue_planned_handler_authority_required']);continue;}
+ const manifest={handler:'weekly_social_content_production.v1',tenantId,programId:first.programId,packageId:first.packageId,packageVersion:pkg.version,publicationTaskId:first.publicationTaskId,accountId:publication[0]!.accountId,taskType:'social_content_weekly',publicationHash:socialRequestHash(publication[0])};
  const observation=await observeWeeklyQueueResources(store,{tenantId,accountId:manifest.accountId,taskType:manifest.taskType},limits,now),keys:string[]=[];
  for(const r of observation.resources){keys.push(r.resourceKey);putPool(r.resourceKey,{concurrency:r.configuration.maximumRunning,configurationHash:r.configuration.recordHash,unknownRunningOccupation:r.observation.runningJobCount>0});}
  assign(`planned-handler:${socialRequestHash(manifest)}`,keys,observation.missingScopes.map(s=>`persisted_${s}_queue_limit_missing`));continue;

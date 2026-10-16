@@ -23,6 +23,9 @@ export type WeeklyBackwardScheduleInput = Pick<WeeklyRecoveryInput, 'tasks' | 'n
   observedReservations?:Record<string,BackwardObservedReservation>;
   /** Server-read independent queue dimensions, never client free-slot assumptions. */
   queueCapacityEvidence?:WeeklyQueueSchedulingEvidence;
+  /** Server-derived from verified new_planned graph bindings only. This is a
+   * future review assumption, never authority to clear the stored task gate. */
+  conditionalPlanningGateTaskIds?:string[];
 };
 import type { WeeklyBackwardSchedule } from '../../shared/contracts/socialWeeklyCapacity.js';
 export type { WeeklyBackwardSchedule } from '../../shared/contracts/socialWeeklyCapacity.js';
@@ -147,9 +150,11 @@ export function planWeeklyBackwardSchedule(input: WeeklyBackwardScheduleInput): 
     if (task.status === 'cancelled' || task.status === 'dead_letter') { row.reasons.push('task_requires_explicit_recovery'); continue; }
     // Capacity confirmation is the purpose of this forecast; its own admission
     // blocker remains on the stored task until the resulting snapshot is applied.
-    const unresolvedOwnReasons=task.ownBlockingReasons?.filter(reason=>reason!==INITIAL_CAPACITY_SCHEDULE_REQUIRED)??[];
+    const futurePlanningReview=input.conditionalPlanningGateTaskIds?.includes(task.taskId)&&task.schedule.stepKind==='material_readiness'&&task.schedule.responsibleActor==='content_agent'&&task.ownBlockingReasons?.includes('business_dispatch_required')&&task.ownBlockingReasons.every(reason=>reason==='business_dispatch_required'||reason===INITIAL_CAPACITY_SCHEDULE_REQUIRED)&&!task.lease&&!task.attempt;
+    if(futurePlanningReview)row.reasons.push('business_dispatch_review_required');
+    const unresolvedOwnReasons=task.ownBlockingReasons?.filter(reason=>reason!==INITIAL_CAPACITY_SCHEDULE_REQUIRED&&!(futurePlanningReview&&reason==='business_dispatch_required'))??[];
     if (unresolvedOwnReasons.length) { row.reasons.push(...unresolvedOwnReasons); continue; }
-    if (task.status === 'blocked' && !task.inheritedBlockingTaskIds?.length && !task.ownBlockingReasons?.includes(INITIAL_CAPACITY_SCHEDULE_REQUIRED)) { row.reasons.push('blocking_state_requires_verification'); continue; }
+    if (task.status === 'blocked' && !task.inheritedBlockingTaskIds?.length && !task.ownBlockingReasons?.includes(INITIAL_CAPACITY_SCHEDULE_REQUIRED)&&!futurePlanningReview) { row.reasons.push('blocking_state_requires_verification'); continue; }
     if(['performance_monitoring','weekly_review','template_extraction','template_performance_validation'].includes(task.schedule.stepKind)&&!task.schedule.latestFinishAt&&!operationalDeadlines.has(task.taskId)){row.reasons.push('operational_deadline_required');continue;}
     if (!constraint) { row.reasons.push('remaining_work_evidence_required'); continue; }
     if ([constraint.remainingMinutes,constraint.bufferMinutes,constraint.remainingCostCny].some(value => !Number.isFinite(value) || value < 0)) throw new Error('Invalid backward remaining work');
@@ -192,9 +197,9 @@ export function planWeeklyBackwardSchedule(input: WeeklyBackwardScheduleInput): 
     const ancestors=new Set<string>();
     const collect=(id:string)=>{if(ancestors.has(id))return;ancestors.add(id);tasks.get(id)!.dependsOnTaskIds.forEach(collect);}; collect(task.taskId);
     const reasons=[...new Set([...ancestors].flatMap(id=>assignments.get(id)!.reasons))];
-    return {publicationId:task.publicationTaskId!,conditionallyReachable:reasons.every(reason=>['human_completion_not_verified','running_lease_renewal_required'].includes(reason)),reasons};
+    return {publicationId:task.publicationTaskId!,conditionallyReachable:reasons.every(reason=>['human_completion_not_verified','running_lease_renewal_required','business_dispatch_review_required'].includes(reason)),reasons};
   });
   const reachable=publications.filter(publication=>publication.conditionallyReachable).length;
-  const unscheduledTaskIds=[...assignments.values()].filter(row=>!row.startAt||!row.finishAt||row.reasons.some(reason=>!['human_completion_not_verified','running_lease_renewal_required'].includes(reason))).map(row=>row.taskId);
+  const unscheduledTaskIds=[...assignments.values()].filter(row=>!row.startAt||!row.finishAt||row.reasons.some(reason=>!['human_completion_not_verified','running_lease_renewal_required','business_dispatch_review_required'].includes(reason))).map(row=>row.taskId);
   return {...(vector?{queueConfigurationHash:vector.configurationHash,queueCapacityEvidenceHash:vector.inputEvidenceHash}:{}),assignments:[...assignments.values()],publications,targetPublicationCount:publications.length,conditionallyReachableCount:reachable,publicationGap:publications.length-reachable,reservedCostCny,confirmationRequired:input.tasks.some(task=>task.status!=='succeeded'),fullGraphConditionallyReachable:unscheduledTaskIds.length===0,unscheduledTaskIds,crossWeekOperationalTaskIds:crossWeekOperationalTaskIds.sort(),agentDailyLoads:[...agentDailyLoad.values()].sort((a,b)=>a.responsibleActor.localeCompare(b.responsibleActor)||a.localDate.localeCompare(b.localDate)),revisionApplied:false};
 }

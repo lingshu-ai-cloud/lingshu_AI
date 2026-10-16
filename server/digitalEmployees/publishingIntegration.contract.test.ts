@@ -12,6 +12,9 @@ assert.match(route, /get\('\/publishing-accounts'[\s\S]*listConnectedPublishingA
 assert.match(route, /bindPublishingTargets\(tenantId, submittedConfig\.publishingTargets\)/, 'onboarding must not trust browser-provided account metadata');
 assert.match(route, /key: 'selected_publishing_accounts'[\s\S]*packageAccountIds.every\(accountId => connectedIds.has\(accountId\)\)/, 'runtime publishing preflight must reject missing or disconnected selected accounts without preventing independent tasks from starting');
 assert.match(route, /publishing_approval_package/, 'content approval must carry its itemized immutable package');
+assert.match(route, /assistantPublicationTargets = [\s\S]*?task\.business_refs[\s\S]*?assistant_publication_intent/, 'selected assistant publication scope must come from the stored task, not the request body');
+assert.match(route, /contentAcceptanceHash\([\s\S]*?assistantPublicationTarget\.contentHash/, 'selected source must retain its exact accepted version');
+assert.match(route, /buildPublishingApprovalPackage\([\s\S]*?selectedProjectId: String\(assistantPublicationTarget\.id\)/, 'the stored single-project marker must actually reach the production publishing builder');
 assert.match(approvalDecision, /publishingPackage\.contentHash !== text\(approval\.content_hash\)/, 'changed content must invalidate approval in the shared decision authority');
 assert.match(approvalDecision, /await dependencies\.listConnectedPublishingAccounts\(input\.tenantId\)/, 'the selected accounts must still be connected when the approval is decided');
 assert.match(approvalDecision, /await dependencies\.createPublishingCalendarEntries\(/, 'approved content must enter the publishing calendar');

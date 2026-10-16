@@ -71,6 +71,11 @@ const LOCAL_PREVIEW_ORIGINS = new Set([
   'http://127.0.0.1:5177',
   'http://localhost:5177',
   'http://[::1]:5177',
+  // Isolated development preview; still requires loopback transport and the
+  // explicit non-production local-preview flag below.
+  'http://127.0.0.1:5183',
+  'http://localhost:5183',
+  'http://[::1]:5183',
 ]);
 
 export function isLocalPreviewLoopbackAddress(address: string | undefined): boolean {

@@ -204,7 +204,7 @@ assert.match(sendSource, /selectAssistantConversationContext\(mergeConsecutiveAs
 assert.match(sendSource, /renderAssistantConversationBoundary\(conversationContext\)/, '被裁剪的较早对话必须向模型声明范围边界');
 assert.match(sendSource, /strategyRequest \? '' : await loadLiveIntegrationFacts\(\)/, '经营主对话必须使用服务端核验事实而不是客户端汇总作为权威依据');
 assert.match(sendSource, /userQuestion: visibleText[\s\S]{0,260}retainedUserInstructions/, '经营主对话必须把当前问题与有界历史约束交给服务端组装上下文');
-assert.match(sendSource, /requestToken === getToken\(\)/, '身份切换后旧请求的异步响应必须被丢弃');
+assert.match(sendSource, /sameAssistantRequestIdentity\(requestToken, getToken\(\), stablePersistenceScope\)/, '身份切换后丢弃旧响应，同身份令牌刷新不丢弃文字');
 
 assert.match(source, /<AssistantDecisionMemoryPanel memory=\{decisionMemory\}/, '统一主对话保留已确认的经营决策管理');
 assert.match(source, /<AssistantDecisionSaveButton memory=\{decisionMemory\} text=\{msg.content\}/, '保存用户原话必须显式确认');

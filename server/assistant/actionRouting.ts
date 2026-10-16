@@ -402,6 +402,9 @@ export function extractAssistantIntent(request: AssistantActionRequest): Assista
     parameters: { text: input },
   });
   const normalized = input.trim().replace(/[。.！!]+$/u, '').replace(/\s+/gu, ' ');
+  // Continuing an explanation is not resuming a production task. Anchor the
+  // whole phrase so a compound instruction cannot bypass write protection.
+  if (/^(?:(?:请|麻烦你)?\s*)?(?:继续(?:说|讲|解释|分析)(?:下去|一下)?|重新解释(?:一下)?|换个说法|展开说(?:说)?|说具体(?:一)?点|解释清楚(?:一)?点)$/u.test(normalized)) return delegate();
   const scheduleChange = normalized.match(/^(?:请(?:你)?|麻烦(?:你)?|请?帮我)?\s*把\s*周([一二三四五六日天])\s*(TikTok|YouTube|Instagram|Facebook)\s*(?:的)?\s*([一二两三四五六七八九十\d]+)\s*条(?:待发布)?视频\s*(?:(?:改(?:期)?|移(?:动)?|调整|调|挪|重排)(?:到|至))\s*周([一二三四五六日天])(?:发布)?$/iu);
   if (scheduleChange) {
     const weekdays: Record<string, number> = { 日: 0, 天: 0, 一: 1, 二: 2, 三: 3, 四: 4, 五: 5, 六: 6 };
@@ -490,9 +493,10 @@ export function extractAssistantIntent(request: AssistantActionRequest): Assista
   ];
   const matches = rules.filter(([pattern]) => pattern.test(input));
   if (matches.length !== 1) {
-    return safeForReadOnlyDelegation(normalized)
-      ? delegate()
-      : { ...delegate(), requiresSignedAction: true };
+    // Conversation is open-ended, not an allowlist of greetings/questions.
+    // Actual write keywords and imperative structures were fenced above.
+    // An unrecognized remark must not fabricate a pending task operation.
+    return delegate();
   }
   return {
     actionId: matches[0][1],

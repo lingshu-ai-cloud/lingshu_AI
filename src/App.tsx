@@ -23,6 +23,8 @@ import {
 import { StarterWorkspaceRequestError, shouldBypassStarter198Probe, starterWorkspaceApi } from './lib/starterWorkspace';
 import { PAGE_REGISTRY, resolveNavigationPage, resolvePage, type LegacyTrafficView, type Page } from './pageRegistry';
 import { SocialProgramProvider } from './contexts/SocialProgramContext';
+import { readAssistantWeeklyNavigation } from './lib/assistantWeeklyNavigation';
+import { readLegacyWeeklyPlanNavigation } from './lib/assistantLegacyWeeklyNavigation';
 import { PageErrorBoundary, PageLoading } from './components/AppPageBoundary';
 import type { SocialContentCreateRequest } from './components/socialContent/SocialContentWorkspace';
 import RuntimeVersionBanner from './components/RuntimeVersionBanner';
@@ -61,6 +63,7 @@ const ScheduledPage = lazy(loadScheduledPage);
 const AdminDashboard = lazy(loadAdminDashboard);
 const AdminDeliveryPage = lazy(loadAdminDeliveryPage);
 const GlobalAssistant = lazy(loadGlobalAssistant);
+const AssistantWeeklyProductionView = lazy(() => import('./components/assistant/AssistantWeeklyProductionView'));
 const AgentMemoryPage = lazy(() => loadWorkspaceManagementPages().then(module => ({ default: module.AgentMemoryPage })));
 const OrganizationPermissionsPage = lazy(() => loadWorkspaceManagementPages().then(module => ({ default: module.OrganizationPermissionsPage })));
 const ScriptLibraryPage = lazy(() => loadWorkspaceManagementPages().then(module => ({ default: module.ScriptLibraryPage })));
@@ -189,7 +192,10 @@ export default function App() {
   const [page, setPage] = useState<Page>(() => availableProductPage(loadPage()));
   const [weeklyPlanNavigation, setWeeklyPlanNavigation] = useState<{
     goalId: string; planId: string; requestId: number; identity: string;
-  } | null>(null);
+  } | null>(() => {
+    const target = readLegacyWeeklyPlanNavigation(window.location.search);
+    return target ? { ...target, requestId: 1, identity: productionNavigationIdentity() } : null;
+  });
   const pageRef = useRef(page);
   pageRef.current = page;
   const [mountedPages, setMountedPages] = useState<Set<Page>>(() => new Set<Page>(['digitalEmployees', loadPage()]));
@@ -271,6 +277,8 @@ export default function App() {
     const authChanged = () => {
       const nextAuthority = productionNavigationIdentity();if(nextAuthority===navigationAuthority)return;navigationAuthority=nextAuthority;
       const cleanUrl=new URL(window.location.href);cleanUrl.searchParams.set('page','digitalEmployees');
+      cleanUrl.searchParams.delete('goalId');cleanUrl.searchParams.delete('planId');
+      setWeeklyPlanNavigation(null);
       window.history.replaceState(stampProductionHistoryState({productionPage:'digitalEmployees',productionDepth:0}), '',cleanUrl);
       try { sessionStorage.removeItem('digitalEmployee.businessDeepLink'); sessionStorage.removeItem('digitalEmployee.returnContext'); } catch { /* optional storage */ }
       restoreAgentCalendarReturnContext(null);
@@ -903,7 +911,9 @@ export default function App() {
         <PageErrorBoundary page={page} onNavigateHome={() => handleNavigate('digitalEmployees')}>
           <Suspense fallback={<PageLoading />}>
           <Activity key={pagePreferenceScope(session)} mode={page === 'digitalEmployees' ? 'visible' : 'hidden'}>
-            {starterMode
+            {readAssistantWeeklyNavigation(window.location.search)
+              ? <AssistantWeeklyProductionView key={`${session.tenant?.id || session.user.tenantId}:${session.user.id}`} target={readAssistantWeeklyNavigation(window.location.search)!} />
+              : starterMode
               ? <StarterWorkspacePage onNavigate={handleNavigate} onNavigateWithTask={handleSocialContentNavigate} />
               : <DigitalEmployeePage weeklyPlanNavigation={weeklyPlanNavigation?.identity === productionNavigationIdentity() ? weeklyPlanNavigation : null} onViewResults={() => handleNavigate('strategy')} onNavigate={handleNavigate} onOpenMonitor={() => handleNavigate('agentMonitor')} />}
           </Activity>
