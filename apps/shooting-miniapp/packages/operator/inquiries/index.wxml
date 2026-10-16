@@ -1,0 +1,27 @@
+<view class="page">
+  <view class="summary">
+    <view class="total">{{customers.length}}<text>个会话</text></view>
+  </view>
+  <view class="segmented">
+    <view class="segment {{active === 'confirm' ? 'active' : ''}}" data-tab="confirm" bindtap="switchTab">待确认</view>
+    <view class="segment {{active === 'followup' ? 'active' : ''}}" data-tab="followup" bindtap="switchTab">待跟进</view>
+  </view>
+  <view class="search-row">
+    <view class="search"><text class="search-icon">⌕</text><input placeholder="搜索客户或消息" value="{{query}}" bindinput="inputQuery"/></view>
+    <button class="filter-button {{filterOpen ? 'selected' : ''}}" bindtap="toggleFilters">筛选</button>
+  </view>
+  <view class="filter-panel" wx:if="{{filterOpen}}">
+    <view class="filter-title">快速筛选</view>
+    <view class="chips"><view class="chip {{unreadOnly ? 'selected' : ''}}" bindtap="toggleUnread">只看未读</view><view class="chip {{channel === '' ? 'selected' : ''}}" data-channel="" bindtap="setChannel">全部渠道</view><view class="chip {{channel === 'Messenger' ? 'selected' : ''}}" data-channel="Messenger" bindtap="setChannel">Messenger</view><view class="chip {{channel === 'Instagram' ? 'selected' : ''}}" data-channel="Instagram" bindtap="setChannel">Instagram</view></view>
+  </view>
+  <view class="state" wx:if="{{loading}}">正在同步客户会话…</view>
+  <view class="state error" wx:elif="{{error}}"><text>{{error}}</text><button bindtap="load">重新加载</button></view>
+  <view class="conversation-list" wx:elif="{{visible.length}}">
+    <view class="conversation-card" wx:for="{{visible}}" wx:key="id" data-id="{{item.id}}" bindtap="openConversation">
+      <view class="avatar">{{item.initial}}<view class="unread-dot" wx:if="{{item.unread}}"></view></view>
+      <view class="conversation-main"><view class="conversation-head"><text class="name">{{item.name}}</text><text class="time">{{item.timeLabel}}</text></view><view class="preview">{{item.preview}}</view><view class="metadata"><text class="channel">{{item.channel}}</text><text wx:if="{{item.country}}">{{item.country}}</text><text wx:if="{{item.language}}">{{item.language}}</text><text class="status">{{item.statusLabel}}</text></view></view>
+      <text class="chevron">›</text>
+    </view>
+  </view>
+  <view class="empty" wx:else><view class="empty-mark">✓</view><view class="section-title">这一栏已经处理完了</view><view class="muted">新询盘到达后会显示在这里</view></view>
+</view>

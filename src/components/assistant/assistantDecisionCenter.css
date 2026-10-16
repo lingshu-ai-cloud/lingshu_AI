@@ -35,7 +35,7 @@
   border: 0;
   border-radius: 22px;
   background: var(--color-surface);
-  box-shadow: none;
+  box-shadow: 0 0 0 2px var(--color-accent);
   transition:
     background-color var(--ls-motion-fast) var(--ls-ease-standard),
     box-shadow var(--ls-motion-fast) var(--ls-ease-standard);
@@ -252,7 +252,7 @@
 }
 
 .assistant-decision-card__secondary-actions { display: flex; flex: 1 1 auto; flex-wrap: wrap; gap: 8px; }
-.assistant-decision-card__action { min-height: 44px; height: auto; white-space: normal; }
+.assistant-decision-card__action { min-height: 44px; height: auto; white-space: nowrap; }
 
 .assistant-decision-center__empty {
   display: grid;

@@ -9,6 +9,7 @@ const overview = {
   },
   plan: {
     tasks: [
+      { key: 'goal_decomposition', title: '拆解本周经营目标', description: '确认目标与成功标准', agentRole: 'business', expectedMinutes: 20, dependsOn: [], capabilityKey: 'planning.goal_decomposition', statusSource: 'weekly_plan' },
       { key: 'scheduled_source_collection', title: '真实采集', description: '创建采集任务', agentRole: 'director', expectedMinutes: 4, dependsOn: ['goal_decomposition'], capabilityKey: 'scheduler.social_collection', statusSource: 'crawl_jobs' },
       { key: 'viral_analysis', title: '真实分析', description: '分析采集结果', agentRole: 'director', expectedMinutes: 8, dependsOn: ['scheduled_source_collection'], capabilityKey: 'inspiration.exact_analysis', statusSource: 'trend_videos.aiAnalysis' },
       { key: 'platform_publish', title: '真实发布', description: '等待发布回执', agentRole: 'business', expectedMinutes: 5, dependsOn: ['publishing_calendar'], capabilityKey: 'publishing.delivery', statusSource: 'publishResults' },
@@ -25,5 +26,54 @@ assert.deepEqual(director?.internalNodes?.map(task => task.id), ['goal-goal-sche
 assert.equal(director?.internalNodes?.[0]?.context, 'scheduler.social_collection · 状态来源：crawl_jobs');
 assert.ok(calendar.find(task => task.id === 'goal-goal-publishing')?.internalNodes?.some(task => task.id.endsWith('platform_publish')));
 assert.ok(calendar.find(task => task.id === 'goal-goal-review')?.internalNodes?.some(task => task.id.endsWith('weekly_review')));
-assert.equal(calendar.find(task => task.id === 'goal-goal-publish-video')?.date, '2026-10-13');
+assert.equal(calendar.find(task => task.id === 'goal-goal-goal')?.date, '2026-10-12');
+assert.ok(calendar.find(task => task.id === 'goal-goal-goal')?.internalNodes?.every(task => task.date === '2026-10-12'));
+const publication = calendar.find(task => task.id === 'goal-goal-publish-video');
+assert.equal(publication?.date, '2026-10-13');
+assert.equal(publication?.platform, 'tiktok');
+assert.equal(publication?.agent, 'content');
+
+const midweekOverview = {
+  ...overview,
+  goal: { ...overview.goal, startsAt: '2026-10-14', endsAt: '2026-10-18' },
+  plan: {
+    ...overview.plan,
+    tasks: [
+      ...overview.plan!.tasks,
+      { key: 'content_mode_routing', title: '制定详细选题与排期', description: '冻结本周排期', agentRole: 'business', expectedMinutes: 30, dependsOn: ['viral_analysis'], capabilityKey: 'planning.content_routing', statusSource: 'weekly_plan' },
+    ],
+  },
+} as unknown as DigitalEmployeeOverview;
+const midweekCalendar = projectWeeklyGoalCalendar(midweekOverview);
+const scheduleNode = midweekCalendar.flatMap(task => task.internalNodes || []).find(task => task.executionStep === 'content_mode_routing');
+assert.equal(scheduleNode?.date, '2026-10-12');
+
+const productionPlanTasks = [
+  { key: 'content_production', title: '制作成片', description: '完成素材与成片生产', agentRole: 'content', expectedMinutes: 30, dependsOn: ['content_mode_routing'], capabilityKey: 'studio.production', statusSource: 'studio_projects' },
+  { key: 'content_quality_gate', title: '完成质量门', description: '完成质量验收', agentRole: 'content', expectedMinutes: 8, dependsOn: ['content_production'], capabilityKey: 'studio.quality_gate', statusSource: 'studio_projects' },
+];
+const processingOverview = {
+  ...overview,
+  plan: { ...overview.plan, tasks: [...overview.plan!.tasks, ...productionPlanTasks] },
+  tasks: [{
+    task_key: 'content_production', status: 'waiting_external', blocked_reason: '内容任务正在推进，等待制作或质检结果回写。',
+    output: { waitState: { kind: 'processing', message: '正在推进', requiresAttention: false } },
+  }],
+} as unknown as DigitalEmployeeOverview;
+const processingProduction = projectWeeklyGoalCalendar(processingOverview).find(task => task.id === 'goal-goal-production');
+assert.equal(processingProduction?.status, 'active', 'background processing must render as in progress instead of an error');
+assert.equal(processingProduction?.reason, undefined, 'a non-actionable processing message must not become a blocker');
+assert.equal(processingProduction?.internalNodes?.[0]?.status, 'active');
+assert.equal(processingProduction?.internalNodes?.[0]?.reason, undefined);
+
+const inputOverview = {
+  ...processingOverview,
+  tasks: [{
+    task_key: 'content_production', status: 'waiting_external', blocked_reason: '请补充人物素材',
+    output: { waitState: { kind: 'input', message: '请补充人物素材', requiresAttention: true } },
+  }],
+} as unknown as DigitalEmployeeOverview;
+const blockedProduction = projectWeeklyGoalCalendar(inputOverview).find(task => task.id === 'goal-goal-production');
+assert.equal(blockedProduction?.status, 'blocked', 'real user input blockers must retain the error state');
+assert.equal(blockedProduction?.internalNodes?.[0]?.status, 'blocked');
 console.log('Weekly goal calendar projects persisted task capabilities and status sources');

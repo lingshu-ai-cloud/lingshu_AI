@@ -8,6 +8,7 @@ import type { WeeklyPackage } from "./weeklyPackage";
 import { normalizeVideoPlan, type VideoCreationPlan } from './videoCreationPlan';
 import type { DirectorDecision, DirectorDecisionReason } from './directorDecision';
 import type { SocialOperatingProfileId } from '../../shared/contracts/socialOperatingProfile';
+import type { ProductionOnboardingPreferences } from '../../shared/contracts/productionOnboarding';
 
 export type AutonomyMode = "suggest" | "collaborate" | "managed" | "automatic";
 export type DigitalEmployeeAgentRole = "orchestrator" | "business" | "director" | "content" | "customer";
@@ -19,6 +20,8 @@ export interface PublishingTarget {
   accountId: string;
   accountLabel: string;
   timezone?: string;
+  /** Frozen account-level share of the user-confirmed weekly platform quota. */
+  weeklyCount?: number;
 }
 
 export type DigitalEmployeeWorkflow =
@@ -33,6 +36,7 @@ export type DigitalEmployeeWorkflow =
 export type DataAvailability = "available" | "pending" | "unavailable";
 
 export interface DigitalEmployeeConfig {
+  productionOnboarding?: ProductionOnboardingPreferences;
   managedPublishingGrant?: ManagedPublishingGrant;
   continuationPolicy?: ContinuationPolicy;
   operatingMaturity?: "starting" | "growing" | "established";
@@ -385,6 +389,15 @@ export interface BusinessSnapshot {
     note: string;
     latestReportedAt: string | null;
     spendByCurrency: Array<{ currency: string; amount: number; rows: number }>;
+    performance?: {
+      impressions: BusinessMetric;
+      clicks: BusinessMetric;
+      conversions: BusinessMetric;
+      attributedRevenue: BusinessMetric;
+      targetConversions: number | null;
+      targetCpa: number | null;
+      targetRoas: number | null;
+    };
   };
   running?: SnapshotTaskReference[];
   needsDecision?: SnapshotTaskReference[];
@@ -804,6 +817,17 @@ export interface DigitalEmployeeOverview {
   liveReview?: LiveWeeklyReview | null;
   agents: AgentStatus[];
   businessSnapshot: BusinessSnapshot | null;
+  publishingReadiness?: {
+    required: boolean;
+    ready: boolean;
+    status: "not_required" | "ready" | "action_required" | "unavailable";
+    targetPlatforms: Array<"facebook" | "instagram" | "tiktok" | "youtube">;
+    connectedPlatforms: Array<"facebook" | "instagram" | "tiktok" | "youtube">;
+    missingOAuthPlatforms: Array<"facebook" | "instagram" | "tiktok" | "youtube">;
+    missingAccountPlatforms: Array<"facebook" | "instagram" | "tiktok" | "youtube">;
+    summary: string;
+    actionPage: "accountManagement";
+  } | null;
 }
 
 export interface FollowupDispatchResponse {

@@ -38,6 +38,15 @@ assert.deepEqual(validateDigitalEmployeeConfig(config), []);
 assert.equal(config.allowGeneratedVisuals, false, 'generated visuals require explicit consent');
 assert.deepEqual(config.videoLanguages, ['en'], 'legacy configuration keeps one autonomous output language');
 assert.deepEqual(normalizeDigitalEmployeeConfig({ ...config, videoLanguages: ['zh', 'en', 'zh', 'invalid'] }).videoLanguages, ['zh', 'en']);
+const migratedWeeklyQuota = normalizeDigitalEmployeeConfig({
+  ...config,
+  socialCadence: '每周生成 2 条发布草稿；发布平台：facebook、tiktok；各平台条数：facebook=1,tiktok=1',
+  publishingTargets: [
+    { platform: 'facebook', accountId: 'facebook-account-1', accountLabel: 'Facebook' },
+    { platform: 'tiktok', accountId: 'tiktok-account-1', accountLabel: 'TikTok' },
+  ],
+});
+assert.deepEqual(migratedWeeklyQuota.publishingTargets.map(target => [target.platform, target.weeklyCount]), [['facebook', 1], ['tiktok', 1]], 'legacy text quotas must migrate into the structured configuration');
 assert.deepEqual(config.team, ['orchestrator', 'business', 'director', 'content', 'customer'], 'the public team must expose exactly the five product Agents');
 assert.deepEqual(validateDigitalEmployeeConfig({ ...config, companyName: '', approvalOwner: '' }), ['企业名称', '审批负责人']);
 

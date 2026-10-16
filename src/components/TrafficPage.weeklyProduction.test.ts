@@ -19,7 +19,7 @@ function render(historyState:unknown,taskId='content'){
   const internals=(React as unknown as {__CLIENT_INTERNALS_DO_NOT_USE_OR_WARN_USERS_THEY_CANNOT_UPGRADE:{H:unknown}}).__CLIENT_INTERNALS_DO_NOT_USE_OR_WARN_USERS_THEY_CANNOT_UPGRADE;
   const previous=internals.H;
   internals.H={useState:(initial:unknown)=>[typeof initial==='function'?initial():initial,()=>{}],useRef:(current:unknown)=>({current}),useEffect:()=>{},useCallback:(callback:unknown)=>callback};
-  try{return elements(TrafficPage({initialView:'create',showModeTabs:false,socialContentTaskId:taskId,onEnterConversation:()=>{},onLeaveConversation:()=>{},isInConversation:false}));}
+  try{return elements(TrafficPage({sourcePage:'smartAssets',initialView:'create',showModeTabs:false,socialContentTaskId:taskId,onEnterConversation:()=>{},onLeaveConversation:()=>{},isInConversation:false}));}
   finally{internals.H=previous;if(originalWindow===undefined)delete globals.window;else globals.window=originalWindow;}
 }
 const studio=(nodes:Element[])=>nodes.filter(node=>typeof node.props.onGoPublish==='function'&&node.props.socialContentTaskId==='content');

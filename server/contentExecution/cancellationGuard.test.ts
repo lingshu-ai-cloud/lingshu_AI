@@ -46,10 +46,12 @@ test('cancellation between paid stages stops a new submission but preserves acce
   const receipts=rows.get(`${CONTENT_EXECUTION_JOB_COLLECTION}:job`)!.provider_receipts as any[];
   assert.equal(receipts.length,1);assert.equal(receipts[0].state,'completed');assert.equal(receipts[0].providerTaskId,'actual-provider-task');
 });
-test('cancelled run, paused job, missing run and cross-tenant run each fail closed before new work',async()=>{
-  for (const condition of ['cancelled_run','paused_job','missing_run','other_tenant']) {
+test('cancelled or human-controlled run, paused job, missing run and cross-tenant run each fail closed before new work',async()=>{
+  for (const condition of ['cancelled_run','waiting_human','human_controller','paused_job','missing_run','other_tenant']) {
     const {rows,store}=fixture();
     if(condition==='cancelled_run') rows.get('workflow_runs:run')!.status='cancelling';
+    if(condition==='waiting_human') rows.get('workflow_runs:run')!.status='waiting_human';
+    if(condition==='human_controller') rows.get('workflow_runs:run')!.current_controller='human';
     if(condition==='paused_job') rows.get(`${CONTENT_EXECUTION_JOB_COLLECTION}:job`)!.status='paused';
     if(condition==='missing_run') rows.delete('workflow_runs:run');
     if(condition==='other_tenant') rows.get('workflow_runs:run')!.tenant_id='other';

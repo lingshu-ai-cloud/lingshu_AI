@@ -1,0 +1,4 @@
+# Official PyPI wheel, Python >=3.10. Minimal downloader only (no browser,
+# cookies, paid provider, global package install or automatic self-update).
+# https://pypi.org/pypi/yt-dlp/2026.8.19/json
+yt-dlp==2026.8.19 --hash=sha256:1d57897e94c6665a0a6f9bc54b34e584284e32c034ffab3a7df25d8f7b24eedf

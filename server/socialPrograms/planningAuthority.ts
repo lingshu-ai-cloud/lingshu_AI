@@ -1,4 +1,9 @@
 import {freezeWeeklyTargetAccountPlaybook,verifyWeeklyPlanningPlaybooks} from './weeklyTargetAccountPlaybook.js';
+import {verifiedWeeklyPlanningTemplateAdoption,weeklyPlanningAnalysisHash,weeklyPlanningExecutionSelection} from './weeklyPlanningTemplateAdoption.js';
+import {adoptWeeklyAutomationTemplate} from './weeklyAutomationTemplate.js';
+import {assertWeeklyScheduleActor} from './weeklyScheduleActor.js';
+import {withExecutionPackageGate,executionPackageFrozen} from './weeklyExecutionGate.js';
+import {latestPackageRow} from './weeklyOperatingPackageSupport.js';
 import {weeklyProductionPopulation} from './weeklyProductionPopulation.js';
 import {selectWeeklyPlanningCoverage,assertWeeklyPlanningCoverage,assertWeeklyDetailedCoverage,type WeeklyDirectorSlotGap} from './weeklyPlanningCoverage.js';
 import {SocialContentWorkflowError} from '../starter198/socialContentValidation.js';
@@ -198,7 +203,7 @@ function unguardedPlanningAuthority(dataStore: DataStore, beforeAppend: () => Pr
       const outcomes = await Promise.allSettled(analysisSlots.map(async (slot) => {
         const targetAccountPlaybooks=(await Promise.all(slot.accountIds.map(accountId=>freezeWeeklyTargetAccountPlaybook(dataStore,input.tenantId,input.programId,accountId)))).filter((value): value is NonNullable<typeof value>=>value!==null);
         const own = slot.referenceSource === 'owned' ? ownedPairs.filter(pair => slot.accountIds.includes(pair.account.accountId)) : [];
-        if (slot.referenceSource === 'owned' && !own.length) throw new SocialProgramError('owned_reference_account_required', 409, '该母版目标账号缺少已核验的自有参考，需补齐或明确修订配额。');
+        if (slot.referenceSource === 'owned' && !own.length) throw new SocialProgramError('owned_reference_account_required', 409, '该独立视频目标账号缺少已核验的自有参考，需补齐或明确修订配额。');
         if(slot.referenceSource!=='owned'&&!pairs.length)throw new SocialProgramError('benchmark_account_video_link_required',409,'该外部条目缺少可核验的账号与视频关联，暂不能继续。');
         const previousOwned=input.preserveOwnedReferences&&slot.referenceSource==='owned'?current.directorAnalyses.find(x=>x.slotId===slot.slotId):undefined;
         const frozenOwned=previousOwned?own.find(pair=>previousOwned.benchmarkVideoRefs.length===1&&previousOwned.benchmarkVideoRefs[0]!.id===pair.video.candidateId&&previousOwned.benchmarkVideoRefs[0]!.version===pair.video.evidenceVersion&&previousOwned.benchmarkAccountRefs.length===1&&previousOwned.benchmarkAccountRefs[0]!.id===pair.account.accountId&&previousOwned.benchmarkAccountRefs[0]!.version===pair.account.version):undefined;
@@ -251,7 +256,7 @@ function unguardedPlanningAuthority(dataStore: DataStore, beforeAppend: () => Pr
       if(!analyses.length&&directorGaps.length&&!input.selectedSlotIds){const first=directorGaps[0]!;throw new SocialProgramError(first.referenceSource==='owned'&&!ownedPairs.length?'owned_reference_evidence_required':first.code,409,first.message);}
       analyses.push(...current.directorAnalyses.filter(a=>!analysisCoverage.selectedSlotIds.includes(a.slotId)));
       directorGaps.push(...(current.directorGaps??[]).filter(g=>!analysisCoverage.selectedSlotIds.includes(g.slotId)));
-      for(const slot of current.skeleton.slots)if(!analyses.some(a=>a.slotId===slot.slotId)&&!directorGaps.some(g=>g.slotId===slot.slotId))directorGaps.push({slotId:slot.slotId,referenceSource:slot.referenceSource??'unknown',code:'director_slot_analysis_pending',message:'该母版仍需完成其原来源分析，不改为另一来源。',observedAt:now});
+      for(const slot of current.skeleton.slots)if(!analyses.some(a=>a.slotId===slot.slotId)&&!directorGaps.some(g=>g.slotId===slot.slotId))directorGaps.push({slotId:slot.slotId,referenceSource:slot.referenceSource??'unknown',code:'director_slot_analysis_pending',message:'该独立视频仍需完成其原来源分析，不改为另一来源。',observedAt:now});
       return guardedAppend(input.tenantId, {
         ...current,
         version: current.version + 1,
@@ -353,15 +358,35 @@ function unguardedPlanningAuthority(dataStore: DataStore, beforeAppend: () => Pr
       });
     },
 
+    async confirmAutomaticTemplate(input:{tenantId:string;programId:string;packageId:string;packageVersion:number;expectedPlanningVersion:number;actorUserId:string;selectedSlotIds:string[];now?:Date}):Promise<WeeklyAgentPlanningState>{
+      await assertWeeklyScheduleActor(dataStore,input);
+      const row=await latestPackageRow(dataStore,input.tenantId,input.programId,input.packageId);
+      if(!row||row.payload.version!==input.packageVersion||!['draft','active'].includes(row.payload.status)||await executionPackageFrozen(dataStore,input))throw new SocialProgramError('weekly_template_planning_scope_invalid',409,'原周包已变化，未自动采用新的范围。');
+      const current=await this.get(input.tenantId,input.programId,input.packageId,input.packageVersion);
+      requirePlanningVersion(current,input.expectedPlanningVersion);
+      if(current.userConfirmation)throw new SocialProgramError('weekly_template_manual_confirmation_preserved',409,'已有人工范围确认，保留原记录。');
+      if(current.automaticTemplateAdoption){verifiedWeeklyPlanningTemplateAdoption(current);return current;}
+      if(current.status!=='awaiting_confirmation'||!current.detailedSchedule?.coverage)throw new SocialProgramError('weekly_template_real_analysis_required',409,'真实编导分析和详细排期尚未完成。');
+      await verifyWeeklyPlanningPlaybooks(dataStore,input.tenantId,input.programId,current.directorAnalyses);
+      assertWeeklyDetailedCoverage(current);assertWeeklyPlanningCoverage(current,current.detailedSchedule.coverage,input.selectedSlotIds);
+      const adoption=await adoptWeeklyAutomationTemplate(dataStore,input,input.actorUserId);
+      const payload={source:'automatic_template' as const,templateVersion:'weekly-automation.v2' as const,adoptedAt:(input.now??new Date()).toISOString(),actorUserId:input.actorUserId,userApproval:null,selectedSlotIds:[...input.selectedSlotIds],analysisEvidenceHash:weeklyPlanningAnalysisHash(current),detailedScheduleHash:socialRequestHash(current.detailedSchedule),authorizesPublishing:false as const,authorizesContentAcceptance:false as const,authorizesCustomerMessages:false as const};
+      if(adoption.template.version!==payload.templateVersion)throw new SocialProgramError('weekly_template_version_conflict',409,'默认模板版本已变化。');
+      const next={...current,version:current.version+1,status:'confirmed' as const,userConfirmation:null,automaticTemplateAdoption:{...payload,recordHash:socialRequestHash(payload)},updatedAt:payload.adoptedAt};
+      verifiedWeeklyPlanningTemplateAdoption(next);return guardedAppend(input.tenantId,next);
+    },
+
     async dispatch(input: { tenantId: string; programId: string; packageId: string; packageVersion: number; expectedPlanningVersion: number; actor: 'business_agent'; selectedSlotIds?:string[]; now?: Date }): Promise<WeeklyAgentPlanningState> {
       if (input.actor !== 'business_agent') throw new SocialProgramError('business_dispatch_authority_required', 403, '只有经营 Agent 可以向内容 Agent 派单。');
       const current = await this.get(input.tenantId, input.programId, input.packageId, input.packageVersion);
       requirePlanningVersion(current, input.expectedPlanningVersion);
       await verifyWeeklyPlanningPlaybooks(dataStore,input.tenantId,input.programId,current.directorAnalyses);
       assertWeeklyDetailedCoverage(current);
-      if(current.detailedSchedule?.coverage){assertWeeklyPlanningCoverage(current,current.detailedSchedule.coverage,input.selectedSlotIds);if(current.userConfirmation&&JSON.stringify(current.userConfirmation.selectedSlotIds)!==JSON.stringify(current.detailedSchedule.coverage.selectedSlotIds))throw new SocialProgramError('weekly_partial_confirmation_changed',409,'确认的母版范围与详细排期不一致。');}
+      if(current.detailedSchedule?.coverage){assertWeeklyPlanningCoverage(current,current.detailedSchedule.coverage,input.selectedSlotIds);if(current.userConfirmation&&JSON.stringify(current.userConfirmation.selectedSlotIds)!==JSON.stringify(current.detailedSchedule.coverage.selectedSlotIds))throw new SocialProgramError('weekly_partial_confirmation_changed',409,'确认的视频范围与详细排期不一致。');}
       if (current.dispatch) return current;
-      if (current.status !== 'confirmed' || !current.detailedSchedule || !current.userConfirmation) {
+      const automaticAdoption=verifiedWeeklyPlanningTemplateAdoption(current);
+      if(automaticAdoption&&JSON.stringify(weeklyPlanningExecutionSelection(current))!==JSON.stringify(current.detailedSchedule?.coverage?.selectedSlotIds))throw new SocialProgramError('weekly_template_dispatch_range_changed',409,'默认模板采用范围已变化。');
+      if (current.status !== 'confirmed' || !current.detailedSchedule || (!current.userConfirmation&&!automaticAdoption)) {
         throw new SocialProgramError('confirmed_detailed_schedule_required', 409, '用户确认详细排期后才能派给内容 Agent。');
       }
       const now = (input.now ?? new Date()).toISOString();
@@ -414,6 +439,7 @@ export function createWeeklyPlanningAuthority(dataStore: DataStore) {
     runDirectorAnalysis: (input: Parameters<typeof reader.runDirectorAnalysis>[0]) => mutate(input.tenantId, input.programId, input.packageId, input.packageVersion, authority => authority.runDirectorAnalysis(input)),
     mergeDetailedSchedule: (input: Parameters<typeof reader.mergeDetailedSchedule>[0]) => mutate(input.tenantId, input.programId, input.package.packageId, input.package.version, authority => authority.mergeDetailedSchedule(input)),
     confirm: (input: Parameters<typeof reader.confirm>[0]) => mutate(input.tenantId, input.programId, input.packageId, input.packageVersion, authority => authority.confirm(input)),
+    confirmAutomaticTemplate: (input: Parameters<typeof reader.confirmAutomaticTemplate>[0]) => withExecutionPackageGate(dataStore,input,()=>mutate(input.tenantId,input.programId,input.packageId,input.packageVersion,authority=>authority.confirmAutomaticTemplate(input))),
     dispatch: (input: Parameters<typeof reader.dispatch>[0]) => mutate(input.tenantId, input.programId, input.packageId, input.packageVersion, authority => authority.dispatch(input)),
   };
 }

@@ -1,6 +1,9 @@
 import { Temporal } from 'temporal-polyfill';
 
 export type LsCalendarStatus = 'planned' | 'queued' | 'working' | 'needs_action' | 'failed' | 'done';
+export type LsCalendarIdentity =
+  | { kind: 'agent'; role: 'business' | 'director' | 'content' | 'customer' | 'human' }
+  | { kind: 'platform'; platform: string };
 export type LsCalendarEvent = {
   id: string;
   title: string;
@@ -13,6 +16,8 @@ export type LsCalendarEvent = {
   accountId?: string;
   accountName?: string;
   thumbnailUrl?: string;
+  /** Stable task identity shown in compact calendar cards instead of a media placeholder. */
+  identity?: LsCalendarIdentity;
   ownerAgent?: string;
   sourceId?: string;
   costEstimate?: number;
@@ -20,6 +25,16 @@ export type LsCalendarEvent = {
   editable?: boolean;
   statusLabel?: string;
   description?: string;
+  /** Stable three-row copy used by the Agent hourly workspace. */
+  cardLines?: readonly [string, string, string];
+  /** Distinguishes a cadence slot from a persisted executable task. */
+  planPlaceholder?: boolean;
+  /** Verified workflow completion ratio used by task-board progress markers. */
+  progress?: number;
+  /** A past-day result remains readable but is visually de-emphasized. */
+  muted?: boolean;
+  /** Execution evidence, independent from past/future day presentation. */
+  executionMark?: 'missing' | 'complete';
   data?: unknown;
 };
 

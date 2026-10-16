@@ -79,6 +79,17 @@ assert.equal(capturedVisualControl.interaction, 'talking');
 assert.match(capturedVisualControl.action.path, /口播说明/);
 assert.deepEqual(capturedVisualControl.requiredCapabilities, ['scripted_speech', 'timing_control']);
 const originalKey = capturedKey;
+const motionShot=structuredClone(plan.shots[0]!);
+motionShot.digitalHumanPlan={...motionShot.digitalHumanPlan!,method:'reenact',silentMotion:true};
+motionShot.fallbackSourceStrategy=null;
+const assetIdentity={...(await ports.resolvePresenter({tenantId:'tenant-a',presenterAssetId:'presenter-1'}))!,providerId:'seedance',identityMode:'enterprise_asset_first_frame' as const,providerPresenterId:null,providerVoiceId:null};
+const motionPorts:SocialDigitalPresenterBridgePorts={...ports,capabilities:{methods:['reenact'],controls:['reference_motion','guided_action','environment_control','camera_control','timing_control']},resolvePresenter:async()=>assetIdentity,
+  execute:async request=>{assert.equal(request.presenter.providerVoiceId,null);assert.equal(request.presenter.providerPresenterId,null);assert.ok(!request.visualControl.requiredCapabilities.includes('scripted_speech'));return{status:'completed',providerTaskId:'seedance-motion-real-controlled',localPath:output,contentHash:'controlled-motion-hash',duration:3};}};
+const motionAdapter=createSocialDigitalPresenterAdapter(motionPorts);
+const motionResult=await motionAdapter.execute({tenantId:'tenant-a',taskId:'task-a',outputDirectory:root,shot:motionShot,baselineScene:{...baseline.scenes[0]!,narration:'',voiceover:''},availableAssets:[]});
+assert.equal(motionResult?.providerId,'seedance');
+assert.equal(motionResult?.asset.providerTaskId,'seedance-motion-real-controlled');
+assert.equal(await createSocialDigitalPresenterAdapter({...motionPorts,resolvePresenter:async()=>({...assetIdentity,presenterAssetId:'wrong-person'})}).execute({tenantId:'tenant-a',taskId:'task-a',outputDirectory:root,shot:motionShot,baselineScene:baseline.scenes[0]!,availableAssets:[]}),null);
 const repairInput = { tenantId: 'tenant-a', taskId: 'task-a', outputDirectory: root,
   operationId: `scene_rework_${'b'.repeat(24)}`, plan, baseline, availableAssets: [],
   adapters: [createSocialDigitalPresenterAdapter(ports)] };

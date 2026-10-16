@@ -18,13 +18,17 @@ import { useEffect, useState } from 'react';
 import { flushSync } from 'react-dom';
 import {agentCalendarAuthIdentity,captureAgentCalendarReturnContext,readAgentCalendarReturnContext,restoreAgentCalendarReturnContext} from '../../lib/agentCalendarReturnContext';
 import { ArrowLeft, ArrowRight, CheckCircle2, Clock3, X } from 'lucide-react';
+import type {AgentCalendarSummaryGroup} from './agentCalendarGroups';
 
 export type AgentCalendarTask = {
   id: string;
   deliverableGroup?: string;
   executionStep?: string;
   calendarInternal?: boolean;
+  calendarSummaryOnly?: boolean;
+  summaryGroup?: AgentCalendarSummaryGroup;
   accountBindingTarget?: {platform:string;accountId:string|null;consumerIds:string[]};
+  platform?: string;
   enterpriseFactExceptionId?:string;
   internalNodes?: AgentCalendarTask[];
   date: string;
@@ -70,6 +74,9 @@ export type AgentCalendarTask = {
   independentRunId?: string;
   /** Exact persisted weekly execution task that owns the production binding. */
   productionExecutionTaskId?: string;
+  workspaceTarget?: {programId:string;packageId:string;packageVersion:number;executionTaskId:string};
+  executionBlockers?: string[];
+  executionResultRefs?: Array<{type:string;id:string;version:number}>;
   materialRequestId?: string;
   materialAction?: 'upload' | 'verification';
   materialConsumerTaskIds?: string[];
@@ -77,6 +84,14 @@ export type AgentCalendarTask = {
   customerWorkflowTaskId?: string;
   customerTaskKey?: string;
   timeSemantics?: 'start' | 'finish';
+  customerServiceSummary?: {
+    channels: Array<{ channel: 'whatsapp' | 'messenger' | 'instagram'; status: AgentCalendarTask['status'] }>;
+    sourceTaskCount: number;
+    completedCount: number;
+    attentionCount: number;
+    sourceTasks: AgentCalendarTask[];
+  };
+  dailyTaskGroup?: { tasks: AgentCalendarTask[] };
 };
 const agents = {
   human: { label: "人工任务", tone: "bg-rose-50 text-rose-800", stripe: "border-t-rose-500" },
@@ -152,7 +167,7 @@ export default function AgentWeeklyCalendar({ startsAt, tasks, demo = false, onO
   const earlierTasks = deliverables.filter(task => task.date < key(days[0]));
   return <div id="agent-weekly-calendar" data-agent-calendar-position-key={positionKey} className="scroll-mt-4 p-5 sm:p-6">
     <div className="mb-5 flex flex-wrap items-center justify-between gap-4">
-      <div><h3 className="text-lg font-black text-slate-950">{demo ? establishedDemo ? "B2B 有基础 · 增长周任务日历" : "B2B 零基础 · 首周任务日历" : "Agent 周任务日历"}</h3><p className="mt-1 text-xs text-slate-500">{demo ? establishedDemo ? `${demoSourceAllocation} · 按播放与赞转评诊断 · H 主链路与副链路` : "外部参考 100% · 3 条母版 / 6 个平台版本 · 主链路与按需触发的副链路" : "按每日交付展示已生成的任务、主负责 Agent 和上游依赖"}</p></div>
+      <div><h3 className="text-lg font-black text-slate-950">{demo ? establishedDemo ? "B2B 有基础 · 增长周任务日历" : "B2B 零基础 · 首周任务日历" : "Agent 周任务日历"}</h3><p className="mt-1 text-xs text-slate-500">{demo ? establishedDemo ? `${demoSourceAllocation} · 按播放与赞转评诊断 · H 主链路与副链路` : "外部参考 100% · 6 条独立视频 · 主链路与按需触发的副链路" : "按每日交付展示已生成的任务、主负责 Agent 和上游依赖"}</p></div>
       <div className="flex items-center gap-2"><button type="button" aria-label="上一周" onClick={() => changeOffset(offset - 1)} className="rounded-lg border border-slate-200 p-2"><ArrowLeft size={14}/></button><span className="text-xs font-bold text-slate-700">{days[0].toLocaleDateString('zh-CN', { month: 'numeric', day: 'numeric' })} — {days[6].toLocaleDateString('zh-CN', { month: 'numeric', day: 'numeric' })}</span><button type="button" aria-label="下一周" onClick={() => changeOffset(offset + 1)} className="rounded-lg border border-slate-200 p-2"><ArrowRight size={14}/></button><button type="button" onClick={() => changeOffset(0)} className="rounded-lg bg-slate-100 px-3 py-2 text-xs font-bold">本周</button></div>
     </div>
     <div className="mb-4 flex flex-wrap items-center gap-3 text-[10px] font-bold">{Object.values(agents).map(agent => <span key={agent.label} className={`rounded-full px-2.5 py-1 ${agent.tone}`}>{agent.label}</span>)}<span className="ml-auto text-slate-400">{weekTasks.length} 项交付{demo ? ' · 示例排期' : ''}</span></div>

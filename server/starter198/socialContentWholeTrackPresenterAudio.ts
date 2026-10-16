@@ -80,6 +80,7 @@ export function createWholeTrackPresenterAudioPort(input:{
     if(!audioAssetId)throw Error('presenter_scene_upload_asset_missing');
     prior={identityHash:key,clipSha256,audioAssetId,status:'uploaded'};persist(stateFile,prior);
    }
+   if(!request.presenter.providerPresenterId)throw Error('presenter_scene_avatar_mapping_required');
    const audio:WholeTrackPresenterSpeech={tenantId:request.tenantId,taskId:request.taskId,taskVersion:input.taskVersion,runId:input.scope.runId,planHash:input.scope.planHash,shotId:request.shotId,presenterAssetId:request.presenter.presenterAssetId,presenterAssetVersion:request.presenter.assetVersion,providerAvatarId:request.presenter.providerPresenterId,voiceId:input.nativeVoice.physicalVoiceId,scriptSha256:sha(request.script),clipSha256,durationSeconds,frozenSceneDurationSeconds:scene.durationSeconds,wholeTrackSha256:input.wholeTrackSha256,nativeVoice:input.nativeVoice,sourceReceiptRef:input.sourceReceiptRef,alignmentReceiptRef:input.alignmentReceiptRef,...evidence,receiptRef:stateFile,receiptHash:sha(fs.readFileSync(stateFile)),audioAssetId:prior.audioAssetId,engine:'avatar_iv',operationRole:'production_scene'};
    resolved.set(audio.audioAssetId,audio);return audio;
   });

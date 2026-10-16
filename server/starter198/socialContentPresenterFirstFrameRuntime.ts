@@ -135,8 +135,8 @@ export function createPresenterFirstFrameStaticExecutor(store:DataStore,options:
   const inspect=options.inspect||inspectStoryboardAigcFramesWithQwen;
   const evaluation=input.presenter.qualityInspectionAllowed===false
    ? null
-   : await evaluateStoryboardFirstFrameQuality({sceneType:'general',hasProduct:false,hasNamedPerson:true,hasEnvironmentReference:true,hasContact:false,hasAction:false,candidateLabels:[label],referenceLabels:['原分镜背景与构图','已授权人物母版'],applyReplicationAutomation:false,
-    inspectTechnical:()=>inspectStoryboardTechnicalFrames('first_frame',[{bytes:out.bytes,timeLabel:label}]),inspectVisual:()=>inspect({model:qaIntent.model,boundedPaidQa:true,paidSubmission:async body=>{const {maximumUnits,...binding}=qaIntent;qaBoundary=true;await input.paidStatic.permit.beforeSubmit({...binding,actualUnits:{inputTokens:await measureQwenRequestInputUpperBound(body),outputTokens:Number(body.max_tokens)}});},onReceipt:value=>{providerReceipt=value;},phase:'first_frame',sceneType:'general',frames:[{base64:out.bytes.toString('base64'),mimeType:out.mimeType,timeLabel:label}],personReferences:[{base64:person.bytes.toString('base64'),mimeType:person.mimeType,timeLabel:'已授权人物母版'}],environmentReferences:[{base64:source.bytes.toString('base64'),mimeType:source.mimeType,timeLabel:'原分镜背景与构图'}],storyboard:request.prompt,productInfo:'无产品身份要求；人物身份以已授权人物母版为准，背景、机位和构图以原分镜为准。'})});
+   : await evaluateStoryboardFirstFrameQuality({sceneType:'general',hasProduct:false,hasNamedPerson:true,hasEnvironmentReference:true,hasContact:false,hasAction:false,candidateLabels:[label],referenceLabels:['原分镜背景与构图','已授权人物参考图'],applyReplicationAutomation:false,
+    inspectTechnical:()=>inspectStoryboardTechnicalFrames('first_frame',[{bytes:out.bytes,timeLabel:label}]),inspectVisual:()=>inspect({model:qaIntent.model,boundedPaidQa:true,paidSubmission:async body=>{const {maximumUnits,...binding}=qaIntent;qaBoundary=true;await input.paidStatic.permit.beforeSubmit({...binding,actualUnits:{inputTokens:await measureQwenRequestInputUpperBound(body),outputTokens:Number(body.max_tokens)}});},onReceipt:value=>{providerReceipt=value;},phase:'first_frame',sceneType:'general',frames:[{base64:out.bytes.toString('base64'),mimeType:out.mimeType,timeLabel:label}],personReferences:[{base64:person.bytes.toString('base64'),mimeType:person.mimeType,timeLabel:'已授权人物参考图'}],environmentReferences:[{base64:source.bytes.toString('base64'),mimeType:source.mimeType,timeLabel:'原分镜背景与构图'}],storyboard:request.prompt,productInfo:'无产品身份要求；人物身份以已授权人物参考图为准，背景、机位和构图以原分镜为准。'})});
   let qaPassed=false,qaReceipt='',reportHash='';
   if(evaluation){
     if(!qaBoundary||!providerReceipt)throw Error('presenter_first_frame_qa_receipt_missing');
@@ -183,7 +183,7 @@ export function createPresenterFirstFrameProductionRuntime(store: DataStore, exe
     const defaults = await store.list<{payload?: {defaultPresenterId?: string; presenters?: StoredPresenter[]}}>('studio_production_defaults', { where: { tenant_id: input.scope.tenantId }, perPage: 2 });
     if (defaults.totalItems !== 1 || defaults.items.length !== 1) throw new Error('presenter_first_frame_default_presenter_store_not_unique');
     const payload = defaults.items[0]!.payload || {}, defaultPresenterId = String(payload.defaultPresenterId || '').trim();
-    if (!defaultPresenterId) throw new Error('presenter_first_frame_default_presenter_missing');
+    if (!defaultPresenterId&&input.groups.some(group=>group.executionKind!=='seedance_motion')) throw new Error('presenter_first_frame_default_presenter_missing');
     const presenters=new Map<string,StoredPresenter>();
     for (const group of input.groups) {
       // The approved task freezes the exact presenter asset. A later change to
@@ -198,7 +198,9 @@ export function createPresenterFirstFrameProductionRuntime(store: DataStore, exe
       const rights = validatePresenterRightsEvidence(presenter.rightsEvidence, { provider: 'heygen', uses: ['digital_presenter', 'voice_synthesis'] });
       const arkRights=validatePresenterRightsEvidence(presenter.rightsEvidence,{provider:'volcengine_ark',uses:['person_replacement']});
       const qwenRights=validatePresenterRightsEvidence(presenter.rightsEvidence,{provider:'dashscope',uses:['quality_inspection']});
-      if (presenter.authorized !== true || !Number.isSafeInteger(version) || version < 1 || !avatarId || !voiceId || !rights.ok || !arkRights.ok) throw new Error(`presenter_first_frame_default_presenter_not_authorized:${group.groupId}`);
+      const motionOnly=group.executionKind==='seedance_motion';
+      const motionRights=validatePresenterRightsEvidence(presenter.rightsEvidence,{provider:'volcengine_ark',uses:['digital_presenter','person_replacement']});
+      if (presenter.authorized !== true || !Number.isSafeInteger(version) || version < 1 || (!motionOnly&&(!avatarId || !voiceId || !rights.ok)) || !arkRights.ok || (motionOnly&&!motionRights.ok)) throw new Error(`presenter_first_frame_default_presenter_not_authorized:${group.groupId}`);
       presenter.qualityInspectionAllowed=qwenRights.ok;
       presenters.set(group.groupId,presenter);
     }
@@ -225,7 +227,8 @@ export function createPresenterFirstFrameProductionRuntime(store: DataStore, exe
         (qaReceipt&&(qaReceipt.status!=='completed'||qaReceipt.receiptRef!==result.qa.receiptRef)))throw Error(`presenter_first_frame_paid_receipt_unverified:${group.groupId}`);
       if(!result.qa.passed)throw Error(`presenter_first_frame_qa_failed:${group.groupId}`);
       const rights=presenters.get(group.groupId)!.rightsEvidence as {authorizationRef?:string;consentRef?:string};
-      approvals.push(await createPresenterFirstFrameApproval(store,{...input.scope,groupId:group.groupId,presenterGroupContractHash:group.presenterGroupContractHash,referenceCompositionHashes:result.referenceCompositionHashes,backgroundPlateSha256:result.backgroundPlateSha256,personRemovalEvidence:result.personRemovalEvidence,presenter:{assetId:group.presenterAssetId,assetVersion:Number(presenters.get(group.groupId)!.assetVersion),authorizationRef:String(rights.authorizationRef||''),consentRef:String(rights.consentRef||''),providerId:'heygen',providerPresenterId:String(presenters.get(group.groupId)!.toolMappings?.heygen?.avatarId||presenters.get(group.groupId)!.avatarId||''),providerVoiceId:String(presenters.get(group.groupId)!.toolMappings?.heygen?.voiceId||presenters.get(group.groupId)!.voiceId||'')},compositeFirstFrameSha256:result.compositeFirstFrameSha256,compositeFirstFrameUrl:result.compositeFirstFrameUrl,qa:result.qa,createdAt:result.createdAt}));
+      const motionOnly=group.executionKind==='seedance_motion';
+      approvals.push(await createPresenterFirstFrameApproval(store,{...input.scope,groupId:group.groupId,presenterGroupContractHash:group.presenterGroupContractHash,referenceCompositionHashes:result.referenceCompositionHashes,backgroundPlateSha256:result.backgroundPlateSha256,personRemovalEvidence:result.personRemovalEvidence,presenter:{assetId:group.presenterAssetId,assetVersion:Number(presenters.get(group.groupId)!.assetVersion),authorizationRef:String(rights.authorizationRef||''),consentRef:String(rights.consentRef||''),providerId:motionOnly?'seedance':'heygen',...(motionOnly?{identityMode:'enterprise_asset_first_frame' as const}:{}),providerPresenterId:motionOnly?null:String(presenters.get(group.groupId)!.toolMappings?.heygen?.avatarId||presenters.get(group.groupId)!.avatarId||''),providerVoiceId:motionOnly?null:String(presenters.get(group.groupId)!.toolMappings?.heygen?.voiceId||presenters.get(group.groupId)!.voiceId||'')},compositeFirstFrameSha256:result.compositeFirstFrameSha256,compositeFirstFrameUrl:result.compositeFirstFrameUrl,qa:result.qa,createdAt:result.createdAt}));
     }
     return approvals;
   } };

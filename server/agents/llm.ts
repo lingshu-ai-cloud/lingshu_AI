@@ -336,9 +336,9 @@ async function completeQwenMessages(
     ...(opts.signal ? { signal: opts.signal } : {}),
     ...(opts.timeoutMs ? { timeout: opts.timeoutMs } : {}),
   });
-  if (completion.choices[0]?.finish_reason !== 'stop') throw new Error('模型回答未完整结束，请重试。');
+  if (completion.choices[0]?.finish_reason !== 'stop') throw new Error('模型续写未完整结束，请重试。');
   const text = completion.choices[0]?.message?.content;
-  if (!text?.trim()) throw new Error('模型回答为空，请重试。');
+  if (!text?.trim()) throw new Error('模型续写为空，请重试。');
   return text;
 }
 

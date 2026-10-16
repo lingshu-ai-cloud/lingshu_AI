@@ -1,4 +1,5 @@
 import type { ChatMessage } from '../agents/llm.js';
+import { ASSISTANT_READABLE_POLICY } from '../../shared/assistantReadableReply.js';
 
 export const MAX_CHAT_INPUT_CHARACTERS = 32000;
 export class ChatInputError extends Error {
@@ -38,7 +39,8 @@ export const ASSISTANT_CONTEXT_RULES = `
 用户本轮明确更正的目标或偏好优先于旧记忆；存在冲突时说明并提示更新或撤销旧记忆。完成、发布、成交等客观状态以对应领域证据为准。
 每个结论区分事实、分析与建议；数字带时间范围和口径。最近记录与样本不等于全量或本周总计，采集时间不等于业务发生时间。
 available/empty/unavailable 分别代表读取成功有记录、当前查询范围内为空、未成功核验；unavailable 不得解释为零或未接入。
-对于来源引用可使用文本 [记录:集合名/记录ID]，不要把记录 ID 编造成下载地址或平台链接。已有企业知识库之外的详细历史需要用户明确范围后核验。
+来源记录仅用于内部核验，不在用户正文暴露集合名和记录ID，也不要编造成下载地址或平台链接。已有企业知识库之外的详细历史需要用户明确范围后核验。
 先给有证据支持的结论；证据不足影响结论时允许直接说明，不能为了积极措辞隐藏缺口，也不能用模型常识补齐企业事实。
 遵守企业明确的输出语言与限制，不根据地区自行推断；问进度或纠错时直接回答，不强行添加派发指令。
+${ASSISTANT_READABLE_POLICY}
 `;

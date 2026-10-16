@@ -4,6 +4,7 @@ import {WEEKLY_PRODUCTION_REPAIR_CASES} from '../socialPrograms/weeklyProduction
 import {WEEKLY_CREATIVE_REPAIR_CONFIGURATIONS,type CreativeRepairConfiguration} from '../socialPrograms/weeklyCreativeRepairConfiguration.js';
 import {readWeeklyCancellationReceipt} from '../socialPrograms/weeklyCancellation.js';
 import {socialJson,socialObject,socialRequestHash,SocialContentWorkflowError} from '../starter198/socialContentValidation.js';
+import {weeklyProductionRowMatches} from './weeklyContentProductionIdentity.js';
 
 export interface WeeklyCreativeRepairProof {
  type:'weekly_creative_repair_authority';version:1;tenantId:string;caseId:string;caseRecordHash:string;
@@ -25,7 +26,10 @@ async function source(input:{store:DataStore;tenantId:string;caseId:string;now:D
  if(await readWeeklyCancellationReceipt({dataStore:input.store,tenantId:input.tenantId,programId:item.programId,packageId:item.packageId,packageVersion:item.packageVersion}))fail();
  const packageRow=await exact(input.store,'social_weekly_operating_packages',{tenant_id:input.tenantId,program_id:item.programId,package_id:item.packageId,version:item.packageVersion}),pkg=socialObject(socialJson(packageRow.payload));if(pkg?.programId!==item.programId||pkg.packageId!==item.packageId||pkg.version!==item.packageVersion||pkg.status!=='active'||pkg.executionGraphVersion!==3)fail();
  const parent=await exact(input.store,'starter_social_content_tasks',{tenant_id:input.tenantId,task_id:item.parent.taskId});
- const authorityRaw=socialObject(socialObject(socialJson(parent.brief))?._weeklyAuthority);if(!authorityRaw||parent.run_id!==item.parent.runId||parent.weekly_plan_id!==item.packageId||parent.create_idempotency_key!==`weekly-production:${item.packageId}:${item.packageVersion}:${item.publicationTaskId}`)return fail();const authority=authorityRaw;
+ const parentMatches=socialObject(pkg?.socialContentPackage)?.productionIdentityVersion==='shared-original.v1'
+  ?await weeklyProductionRowMatches(input.store,{tenantId:input.tenantId,programId:item.programId,packageId:item.packageId,packageVersion:item.packageVersion,publicationTaskId:item.publicationTaskId},parent)
+  :parent.create_idempotency_key===`weekly-production:${item.packageId}:${item.packageVersion}:${item.publicationTaskId}`;
+ const authorityRaw=socialObject(socialObject(socialJson(parent.brief))?._weeklyAuthority);if(!authorityRaw||parent.run_id!==item.parent.runId||parent.weekly_plan_id!==item.packageId||!parentMatches)return fail();const authority=authorityRaw;
  const frozen=socialObject(authority.weeklyPackage),publication=socialObject(authority.publicationTask);if(frozen?.programId!==item.programId||frozen.packageId!==item.packageId||frozen.version!==item.packageVersion||publication?.publicationTaskId!==item.publicationTaskId)fail();
  const artifact=await exact(input.store,'starter_social_content_artifacts',{tenant_id:input.tenantId,task_id:item.parent.taskId,artifact_id:item.parent.artifactRef.id}),content=socialObject(socialJson(artifact.content));
  if(!content||artifact.content_hash!==item.parent.artifactHash||artifact.content_hash!==socialRequestHash({resourceRef:artifact.resource_ref,content})||artifact.status!=='changes_requested'||artifact.last_operation_id!==trigger.operationId)fail();

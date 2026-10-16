@@ -21,7 +21,10 @@ let backendRestartTimer;
 let repositoryRevision = '';
 const startupGraceMs = Number(process.env.LINGSHU_PREVIEW_STARTUP_GRACE_MS || 120_000);
 const healthCheckTimeoutMs = Number(process.env.LINGSHU_PREVIEW_HEALTH_TIMEOUT_MS || 20_000);
-const maxConsecutiveHealthFailures = Number(process.env.LINGSHU_PREVIEW_HEALTH_FAILURE_LIMIT || 5);
+// Exact video analysis can keep the combined local worker busy for several
+// minutes while provider chunks complete. A crashed child still restarts from
+// its exit event; this larger probe window prevents killing healthy paid work.
+const maxConsecutiveHealthFailures = Number(process.env.LINGSHU_PREVIEW_HEALTH_FAILURE_LIMIT || 12);
 const forceOptimizeDependencies = process.env.LINGSHU_PREVIEW_FORCE_OPTIMIZE === '1';
 const localPreviewAuthEmail = String(
   process.env.LINGSHU_PREVIEW_AUTH_EMAIL || 'beauty-showcase@local.test',
@@ -189,7 +192,7 @@ function scheduleBackendRestart(reason) {
   }, 800);
 }
 
-for (const directory of ['server', 'shared']) {
+for (const directory of (process.env.LINGSHU_PREVIEW_BACKEND_SOURCE_WATCH === '0' ? [] : ['server', 'shared'])) {
   try {
     fs.watch(path.join(runtimeRoot, directory), { recursive: true }, (_event, filename) => {
       if (!filename || /(?:^|\/)(?:data|dist|node_modules)(?:\/|$)/.test(filename)) return;

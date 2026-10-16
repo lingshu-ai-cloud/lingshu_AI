@@ -6,6 +6,7 @@ import {assertExecutionPackageGate,withExecutionPackageGate} from './weeklyExecu
 import {scheduleHash,readScheduleSnapshot} from './weeklyScheduleSnapshots.js';
 import type {WeeklyScheduledPackage} from '../../shared/contracts/socialWeeklyScheduleRevision.js';
 import { randomUUID } from 'node:crypto';
+import {naturalWeek} from '../../shared/naturalWeek.js';
 import type { DataStore } from '../storage/datastore.js';
 import {
   type VersionedSocialRef,
@@ -355,6 +356,7 @@ export function createWeeklyOperatingPackageService(dataStore: DataStore) {
       return findProfileUpgradeCreation(dataStore,{tenantId,programId,packageId:input.sourcePackageId,packageVersion:input.sourcePackageVersion},userId,input.id,input.creationRequestId);
     },
     async create(tenantId: string, userId: string, programId: string, input: Record<string, unknown>): Promise<WeeklyOperatingPackage> {
+      input={...input,weekStart:naturalWeek(dateOnly(input.weekStart,'week_start_invalid')).start};
       rejectClientAuthorityObjects(input);
       if(Array.isArray(input.publicationTasks)&&input.publicationTasks.some(p=>p&&typeof p==='object'&&(p as Record<string,unknown>).inventoryReuseRef!==undefined))throw new SocialProgramError('inventory_create_not_revision',400,'库存确认只能绑定原发布目标的下一次修订。');
       if(input.profileUpgradeRef && typeof input.profileUpgradeRef==='object'&&!Array.isArray(input.profileUpgradeRef)){

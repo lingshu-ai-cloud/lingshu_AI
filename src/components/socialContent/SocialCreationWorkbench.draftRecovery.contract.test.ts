@@ -15,5 +15,7 @@ assert.match(source, /presenterAssetId = isReplication \? seed\?\.presenterAsset
   'replication must preserve the presenter selected by the product workflow');
 assert.match(source, /draftProjectId: isReplication \? seed\?\.continueProjectId : resolvedDraftProjectId/,
   'replication must continue the task-bound Studio project');
+assert.match(source, /!refreshed && initial\.referenceVideoAnalysis\?\.status !== 'ready'/,
+  'opening a task whose canonical reference is already ready must not issue a mutating refresh');
 
 console.log('free creation draft recovery contract tests passed');

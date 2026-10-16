@@ -1,0 +1,42 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import {prepareWeeklyEnterpriseFactFixture} from '../runtime/weeklyEnterpriseFactSupplement.fixture.js';
+import {reserveDailyCollection,collectionBusinessDate} from './dailyCollectionQuota.js';
+import {readCollectionRetryGrant} from './dailyCollectionQuota.js';
+import {socialRequestHash} from '../starter198/socialContentValidation.js';
+import {COLLECTION_RETRY_GRANTS} from './collectionRetryGrant.js';
+test('daily ceiling spans runs and sources, retains failed/unknown reservations and uses Shanghai midnight',async t=>{
+ const {store}=await prepareWeeklyEnterpriseFactFixture(t),now=new Date('2026-10-15T12:00:00Z');
+ const reserve=(runId:string,requestKey:string,requested:number,tenantId='tenant-a')=>reserveDailyCollection(store,{tenantId,runId,requestKey,requested,now});
+ assert.equal(await reserve('a','q1',4),4);assert.equal(await reserve('b','q2',4),4);assert.equal(await reserve('c','q3',8),2);assert.equal(await reserve('d','q4',1),0);
+ await assert.rejects(reserve('a','q1',4),/already_reserved/);
+ assert.equal(await reserve('a','q1',10,'foreign'),10);
+ assert.equal(collectionBusinessDate(new Date('2026-10-15T16:00:00Z')),'2026-10-16');
+ assert.equal(await reserveDailyCollection(store,{tenantId:'tenant-a',runId:'tomorrow',requestKey:'q',requested:10,now:new Date('2026-10-15T16:00:00Z')}),10);
+});
+test('one-time extra quota is sealed, source scoped, capped and separate from normal daily quota',async t=>{
+ const {store}=await prepareWeeklyEnterpriseFactFixture(t),now=new Date('2026-10-16T03:00:00Z');
+ const scope={tenantId:'tenant-a',programId:'program-a',packageId:'package-a',packageVersion:1,taskId:'task-a',parentRunId:'failed-original',parentRunHash:'original-hash'};
+ const grantId=socialRequestHash(scope),grant:any={...scope,grantId,count:10,businessDate:'2026-10-16',actorUserId:'user-a',authorizedAt:now.toISOString(),source:'explicit_user_authorization',authorizationRef:'test-human-consent',authorizationText:'one-time extra 10',recordHash:''};grant.recordHash=socialRequestHash(grant);
+ await store.create(COLLECTION_RETRY_GRANTS,{id:grantId,tenant_id:scope.tenantId,record_hash:grant.recordHash,payload:grant});
+ const {tenantId,...rest}=scope,ref={...rest,grantId},attempt:any={jobId:'retry',originalRunKey:'root:retry:retry',retry:{grant:ref,parentRunHash:scope.parentRunHash,sourceSelection:[{mode:'momentum',platform:'tiktok',queryRef:'cleanser'},{mode:'momentum',platform:'facebook',queryRef:'cleanser'}]},recordHash:''};attempt.recordHash=socialRequestHash(attempt);
+ await store.create('social_weekly_preproduction_retry_attempts',{id:'retry',tenant_id:tenantId,package_id:scope.packageId,package_version:1,task_id:scope.taskId,record_hash:attempt.recordHash,payload:attempt});
+ const runId=`weekly_discovery_${socialRequestHash({tenantId,key:attempt.originalRunKey})}`;
+ const reserve=(requestKey:string,requested:number,retryGrant=ref)=>reserveDailyCollection(store,{tenantId,runId,requestKey,requested,retryGrant,now});
+ assert.equal(await reserveDailyCollection(store,{tenantId,runId:'base',requestKey:'base',requested:10,now}),10);
+ await assert.rejects(reserve('momentum:instagram:cleanser',1),/attempt_unverified/);
+ await assert.rejects(reserve('momentum:tiktok:cleanser',1,{...ref,packageVersion:2}),/scope_invalid/);
+ assert.equal(await reserve('momentum:tiktok:cleanser',6),6);
+ assert.equal(await reserve('momentum:facebook:cleanser',10),4);
+ assert.deepEqual(await readCollectionRetryGrant(store,scope),{grantId,remainingCount:0,businessDate:'2026-10-16'});
+ assert.equal(await reserveDailyCollection(store,{tenantId,runId:'another-base',requestKey:'q',requested:1,now}),0);
+ await assert.rejects(reserveDailyCollection(store,{tenantId,runId,requestKey:'q',requested:1,retryGrant:ref,now:new Date('2026-10-17T03:00:00Z')}),/scope_invalid/);
+ assert.equal(await readCollectionRetryGrant(store,{...scope,tenantId:'foreign'}),null);
+});
+test('preexisting same-day collection consumes quota without double counting ledger-backed runs',async t=>{
+ const {store}=await prepareWeeklyEnterpriseFactFixture(t),now=new Date('2026-10-15T12:00:00Z');
+ await store.create('social_discovery_runs',{tenant_id:'tenant-a',runId:'legacy',startedAt:now.toISOString(),modeStats:{momentum:{requested:7}}});
+ assert.equal(await reserveDailyCollection(store,{tenantId:'tenant-a',runId:'new',requestKey:'q',requested:10,now}),3);
+ await store.create('social_discovery_runs',{tenant_id:'tenant-a',runId:'new',startedAt:now.toISOString(),modeStats:{momentum:{requested:3}}});
+ assert.equal(await reserveDailyCollection(store,{tenantId:'tenant-a',runId:'next',requestKey:'q',requested:1,now}),0);
+});

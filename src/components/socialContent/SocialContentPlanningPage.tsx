@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { ImagePlus } from 'lucide-react';
+import { ImagePlus, Loader2 } from 'lucide-react';
 import { Button } from 'antd';
 import LsPageHeader from '../ui/LsPageHeader';
 import type { Page } from '../../App';
@@ -11,6 +11,8 @@ import SocialCreationWorkbench, {
 } from './SocialCreationWorkbench';
 import SocialContentHistoryHome from './SocialContentHistoryHome';
 import { loadSocialContentStage, readSocialContentStage, type SocialContentStageProfile } from '../../lib/socialContentStage';
+import { studioApi } from '../../lib/studioApi';
+import { replicationResumeStep } from '../../lib/socialContentReplicationResume';
 
 type PlanningView = 'workbench' | 'creations';
 
@@ -24,6 +26,7 @@ function seedFromRequest(request?: SocialContentCreateRequest | null): SocialCre
     continueTaskId: request.continueTaskId,
     continueProjectId: request.continueProjectId,
     presenterAssetId: request.presenterAssetId,
+    draftTitle: request.prefill?.title,
     referenceTitle: request.sourceContext?.referenceTitle,
     referenceThumbnail: request.sourceContext?.referenceThumbnail,
     referenceMediaUrl: request.sourceContext?.referenceMediaUrl,
@@ -62,6 +65,9 @@ export default function SocialContentPlanningPage({
   } : null);
   const [seed, setSeed] = useState<SocialCreationWorkbenchSeed | undefined>(() => seedFromRequest(initialCreateRequest));
   const [sourceRequest, setSourceRequest] = useState<SocialContentCreateRequest | null>(initialCreateRequest || null);
+  const [resumeChecking, setResumeChecking] = useState(() => Boolean(!initialCreateRequest?.replicationStep
+    && initialCreateRequest?.continueProjectId
+    && creationPathFromRequest(initialCreateRequest) === 'viral_replication'));
 
   useEffect(() => {
     if (taskOnly) return;
@@ -82,6 +88,27 @@ export default function SocialContentPlanningPage({
     setChooserOpen(false);
     setView('workbench');
   }, [initialCreateRequest]);
+
+  useEffect(() => {
+    const projectId = String(initialCreateRequest?.continueProjectId || '').trim();
+    if (!initialCreateRequest || initialCreateRequest.replicationStep || !projectId || creationPathFromRequest(initialCreateRequest) !== 'viral_replication') {
+      setResumeChecking(false);
+      return undefined;
+    }
+    let disposed = false;
+    setResumeChecking(true);
+    void studioApi.getProject(projectId).then(project => {
+      if (disposed) return;
+      const resumeStep = replicationResumeStep(project);
+      if (!resumeStep) return;
+      onLaunchStudio({ ...initialCreateRequest, replicationStep: resumeStep });
+    }).catch(() => {
+      // Keep the editable speech step available if the authoritative project cannot be read.
+    }).finally(() => {
+      if (!disposed) setResumeChecking(false);
+    });
+    return () => { disposed = true; };
+  }, [initialCreateRequest, onLaunchStudio]);
 
   useEffect(() => {
     if (taskOnly) return undefined;
@@ -165,6 +192,17 @@ export default function SocialContentPlanningPage({
 
   if (taskOnly) {
     return <SocialContentWorkspace onNavigate={onNavigate} onNavigateWithTask={onNavigateWithTask} />;
+  }
+
+  if (resumeChecking) {
+    return (
+      <div className="flex h-full min-h-0 items-center justify-center bg-white" role="status" aria-live="polite">
+        <div className="flex items-center gap-3 rounded-lg border border-border bg-white px-5 py-4 text-sm font-semibold text-text-secondary">
+          <Loader2 size={18} className="animate-spin text-blue-600" aria-hidden="true" />
+          正在恢复真实制作进度…
+        </div>
+      </div>
+    );
   }
 
   return (

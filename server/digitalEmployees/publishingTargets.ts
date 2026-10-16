@@ -27,7 +27,12 @@ export interface ConnectedPublishingAccount extends PublishingTarget {
 const text = (value: unknown): string => String(value ?? '').trim();
 
 export function localPublishingAccountMocksEnabled(env: NodeJS.ProcessEnv = process.env): boolean {
-  return currentDataAuthority() === 'local' || env.LINGSHU_LOCAL_PREVIEW === '1';
+  // Local preview is also used for real end-to-end production rehearsals. It
+  // must not silently fabricate connected publishing accounts, otherwise the
+  // weekly preflight passes and the workflow only fails at the release gate.
+  // Tests/demos that intentionally need placeholders must opt in explicitly.
+  return env.LINGSHU_LOCAL_PUBLISHING_ACCOUNT_MOCKS === '1'
+    && (currentDataAuthority() === 'local' || env.LINGSHU_LOCAL_PREVIEW === '1');
 }
 
 export async function listConnectedPublishingAccounts(tenantId: string, companyName = ''): Promise<ConnectedPublishingAccount[]> {
@@ -87,7 +92,15 @@ export async function bindPublishingTargets(
     }
     if (!targets.some(target => target.platform === account.platform && target.accountId === account.accountId)) {
       if (requestedTarget.timezone && !validTimeZone(requestedTarget.timezone)) throw new Error('invalid_publishing_timezone');
-      targets.push({ platform: account.platform, accountId: account.accountId, accountLabel: account.accountLabel, ...(requestedTarget.timezone ? { timezone: requestedTarget.timezone } : {}) });
+      targets.push({
+        platform: account.platform,
+        accountId: account.accountId,
+        accountLabel: account.accountLabel,
+        ...(requestedTarget.timezone ? { timezone: requestedTarget.timezone } : {}),
+        ...(Number.isInteger(requestedTarget.weeklyCount) && Number(requestedTarget.weeklyCount) >= 0 && Number(requestedTarget.weeklyCount) <= 30
+          ? { weeklyCount: Number(requestedTarget.weeklyCount) }
+          : {}),
+      });
     }
   }
   return { targets, invalidAccountIds: invalidAccountIds.filter(Boolean) };

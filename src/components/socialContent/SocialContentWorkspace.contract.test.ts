@@ -11,6 +11,7 @@ const commandPanel = fs.readFileSync(new URL('./SocialTaskCommandPanel.tsx', imp
 const actions = fs.readFileSync(new URL('./SocialTaskActionDialogs.tsx', import.meta.url), 'utf8');
 const starterWorkspace = fs.readFileSync(new URL('../starter/StarterWorkspacePage.tsx', import.meta.url), 'utf8');
 const studio = fs.readFileSync(new URL('../AiCreateStudio.tsx', import.meta.url), 'utf8');
+const creationWorkbench = fs.readFileSync(new URL('./SocialCreationWorkbench.tsx', import.meta.url), 'utf8');
 const preview = fs.readFileSync(new URL('./SocialArtifactPreviewDialog.tsx', import.meta.url), 'utf8');
 const presentation = fs.readFileSync(new URL('./socialContentUi.ts', import.meta.url), 'utf8');
 const planning = fs.readFileSync(new URL('./SocialContentPlanningPage.tsx', import.meta.url), 'utf8');
@@ -99,8 +100,19 @@ assert.doesNotMatch(landing, /SOCIAL_THEME_OPTIONS|选好视频主题|这条视�
 assert.doesNotMatch(landing, /VALUE_POINTS|3 步发起任务|从产品卖点开始/,
   '顶部引导应保持为一句话，不再堆叠卖点和入口');
 assert.match(themeCards, /SOCIAL_THEME_OPTIONS\.map/);
-assert.match(overview, /可选的拍摄与素材建议/);
-assert.match(overview, /编导 Agent 会结合现有素材安排导演方案/);
+assert.match(overview, /逐镜素材需求/);
+assert.match(overview, /已映射并可被制作消费的素材才算满足/);
+assert.match(overview, /data-material-supplement-entry/);
+assert.match(overview, /上传商品图片或视频/);
+assert.match(overview, /配置已授权人物/);
+assert.match(overview, /进入逐镜映射/);
+assert.match(hook, /socialContentApi\.uploadFile\(task\.taskId, file, 'source'/);
+assert.match(hook, /socialContentApi\.addSource\(task\.taskId/);
+assert.match(hook, /逐镜素材匹配候选；附加后仍需在制作页确认具体镜头映射与使用权/);
+assert.match(workspace, /onAttachSourceFiles=\{files => state\.attachSourceFiles\(files\)\}/);
+assert.match(creationWorkbench, /data-replication-material-supplement/);
+assert.match(creationWorkbench, /上传已选企业产品的包装图片或实拍视频/);
+assert.match(creationWorkbench, /没有授权或账号身份锁时只阻塞人物分支/);
 assert.doesNotMatch(starterWorkspace, /我会统筹今天的经营任务|系统会主动推进|<StarterWorkflowOverview|socialTaskHeadline/, 'the home must open directly on task progress instead of an explanatory hero or agent map');
 assert.doesNotMatch(workspace, />灵小枢<[^]*?>社媒内容工作台</, 'the social workspace must not repeat a large explanatory heading above the task');
 assert.match(studio, /item\.id === 'kickoff-product' \|\| item\.id\.startsWith\('social-task-product:'\)/);
@@ -212,8 +224,12 @@ assert.match(studio, /setVideoKickoff\(seed\.reference\); setCanvasView\('creati
   '爆款复刻任务默认必须进入新建视频工作台');
 assert.match(studio, /loadProject\(project\);\s*setCanvasView\('creation'\);/,
   '恢复已保存的爆款任务时也必须默认回到新建视频工作台');
-assert.match(studio, /socialShotMaterialBindings\.forEach\(\(\{ shotIndex, materialId \}\)/,
-  '任务已绑定素材必须按分镜序号回填到 Studio');
+assert.match(studio, /socialSourceShotIds\.length === slots\.length \? socialSourceShotIds : referenceShotIds/,
+  'Studio 应优先把任务的正式制作镜头 ID 固化到分镜身份');
+assert.match(studio, /resolveStudioSocialShot\(storyboardSlots, \{ shotId, shotIndex \}\)/,
+  'Studio 应按稳定镜头身份应用任务素材映射');
+assert.doesNotMatch(studio, /storyboardSlots\.find\(item => item\.id === shotId\) \|\| storyboardSlots\[shotIndex\]/,
+  '有 shot ID 的任务不得静默回退到数组位置');
 for (const field of ['estimatedTotalCostCny', 'estimatedSuccessRate', 'budgetLimitCny', 'executionPlanReview']) {
   assert.match(generationConfirmation, new RegExp(field));
 }

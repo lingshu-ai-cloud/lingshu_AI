@@ -153,6 +153,16 @@ export interface CustomerProfile {
   hasUnread?: boolean;
   isReal?: boolean;
   isMock?: boolean;
+  isHistorical?: boolean;
+  readOnly?: boolean;
+  outboundBlocked?: boolean;
+  provenance?: {
+    kind: 'historical_local_mock';
+    importedAt: string;
+    originalTenantId: string;
+    originalId: string;
+    originalSource: string;
+  };
   simulation?: CustomerSimulationScenario;
   waNumber?: string;
   messengerUserId?: string;

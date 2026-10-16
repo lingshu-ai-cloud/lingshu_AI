@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import {
   activeAnalysisRequest,
   buildYtDlpArgs,
+  canRepairStoredExactClassification,
   describeVideoAnalysisRecovery,
   exactAnalysisDuration,
   exactSourceClockDuration,
@@ -12,6 +13,8 @@ import {
   selectPendingCrawlerOpsTasks,
   shouldResumeReferenceAnalysis,
   terminalizeExhaustedCrawlerOpsTask,
+  queuedMaterialFailureRequiresSourceFallback,
+  videoAnalysisRetryQueuePatch,
 } from './videos.js';
 import { analysisTimelineQualityError } from '../lib/videoAnalysisCodec.js';
 
@@ -35,6 +38,12 @@ assert.equal(geminiMissing.code, 'gemini_missing');
 assert.equal(geminiMissing.provider, 'Gemini');
 assert.match(geminiMissing.recoveryAction, /GEMINI_API_KEY/);
 
+const downloaderMissing = describeVideoAnalysisRecovery({
+  analysisError: 'python3: No module named yt_dlp', userVisible: false,
+});
+assert.equal(downloaderMissing.code, 'downloader_missing');
+assert.match(downloaderMissing.reason, /重复点击不会完成/);
+
 const qwenTimeout = describeVideoAnalysisRecovery({
   analysisSource: 'qwen-frame-video',
   analysisError: 'video_analysis_hard_timeout',
@@ -55,6 +64,23 @@ assert.equal(activeAnalysisRequest({
 assert.equal(activeAnalysisRequest({
   requestedAnalysisMode: undefined, analysisQueueState: 'paused', geminiStatus: 'paused',
 }), false, 'a paused analysis must be resumable instead of being deduplicated as active');
+
+const cleanRetry = videoAnalysisRetryQueuePatch({
+  geminiStatus: 'analysis_retryable', analysisQueueState: 'failed', analysisError: 'old failure',
+  videoLevelFailureStatus: '后台分析中断，可重试或恢复', manualRequiredReason: 'old blocker',
+  crawlerOpsAttempt: 5, crawlerOpsStatus: 'failed', analysisFailedAt: '2026-10-09T00:00:00.000Z',
+}, {
+  analysisMode: 'exact', analysisRunId: 'run-new', queueKind: 'source_url',
+  queuedAt: '2026-10-14T01:00:00.000Z', userId: 'owner',
+});
+assert.equal(cleanRetry.analysisQueueState, 'queued');
+assert.equal(cleanRetry.geminiStatus, 'waiting_for_video');
+assert.equal(cleanRetry.videoLevelFailureStatus, undefined, 'a new run must not inherit terminal failure projection');
+assert.equal(cleanRetry.manualRequiredReason, undefined);
+assert.equal(cleanRetry.analysisError, undefined);
+assert.equal(cleanRetry.crawlerOpsAttempt, 0, 'explicit retry restores the bounded source retry budget');
+assert.equal(queuedMaterialFailureRequiresSourceFallback({ analysisError: 'queued_material_not_found' }), true);
+assert.equal(queuedMaterialFailureRequiresSourceFallback({ analysisError: 'provider timeout' }), false);
 
 const opsTasks = [
   { id: 'ops-a', recordId: 'video-a', tenantId: 'tenant-a', platform: 'youtube' as const, sourceUrl: 'https://youtube.com/watch?v=a', title: 'A', status: 'queued' as const, reason: 'retry', attempts: 1, createdAt: '', updatedAt: '' },
@@ -133,8 +159,20 @@ assert.equal(shouldResumeReferenceAnalysis({
 assert.equal(shouldResumeReferenceAnalysis({
   analysisMode: 'exact',
   analysisQuality: 'video',
-  gemini: { scriptDetails15s: [{ time: '0-5', visual: '产品开场' }] },
+  gemini: { scriptDetails15s: [{ time: '0-5', visual: '产品开场', materialType: 'product', narrativeRole: 'hook', classificationEvidence: '画面可见产品开场' }] },
 }), false, '已有完整精准证据时不得无谓重跑');
+assert.equal(shouldResumeReferenceAnalysis({
+  analysisMode: 'exact',
+  analysisQuality: 'video',
+  gemini: { scriptDetails15s: [{ time: '0-5', visual: '产品开场' }] },
+}), true, '只有时间线但缺少生产分类的旧记录必须补全一次，不能伪装为可生产结果');
+assert.equal(canRepairStoredExactClassification({ id: 'video-1', duration: 5, status: 'analyzed' }, {
+  analysisMode: 'exact', analysisQuality: 'video', geminiStatus: 'analyzed',
+  gemini: { theme: '产品演示', firstTenSeconds: { atmosphere: '明亮', audioVisual: '同步', camera: '固定', visuals: '产品' }, coarseStructure: [{ time: '0-5', description: '产品展示' }], scriptDetails15s: [
+    { time: '0-2.5', visual: '产品开场', materialType: 'unknown', narrativeRole: 'unknown', classificationEvidence: '', analysisGranularity: 'scene_cut_estimated' },
+    { time: '2.5-5', visual: '产品展示', materialType: 'product', narrativeRole: 'product_intro', classificationEvidence: '画面可见产品', analysisGranularity: 'scene_cut_estimated' },
+  ] },
+}), true, '已完成视觉分析但只缺生产分类时必须走文本修复，不能再次分析视频');
 assert.equal(shouldResumeReferenceAnalysis({
   analysisMode: 'exact',
   analysisQuality: 'video',

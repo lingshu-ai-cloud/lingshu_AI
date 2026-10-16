@@ -27,6 +27,8 @@ export type AssistantDecisionActionId =
   | 'adjust_plan'
   | 'approve'
   | 'reject'
+  | 'retry_task'
+  | 'replan_task'
   | 'take_over'
   | 'open_workspace';
 

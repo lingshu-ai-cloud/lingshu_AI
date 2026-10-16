@@ -1,0 +1,51 @@
+:host { position: absolute; z-index: 4; top: 0; right: 0; bottom: 0; left: 0; pointer-events: none; }
+.safe-layer { position: absolute; top: 0; right: 0; bottom: 0; left: 0; color: rgba(255,255,255,.86); }
+.safe-outline { position: absolute; top: 12%; right: 8%; bottom: 22%; left: 8%; border: 1rpx solid rgba(255,255,255,.42); border-radius: 8rpx; }
+.safe-label { position: absolute; top: 10rpx; left: 12rpx; padding: 4rpx 9rpx; border-radius: 7rpx; background: rgba(8,12,22,.28); color: rgba(255,255,255,.72); font-size: 22rpx; }
+.risk-band { position: absolute; background: rgba(255, 177, 77, .055); border-color: rgba(255, 205, 120, .26); }
+.risk-top { display: none; top: 0; left: 0; right: 0; height: 12%; border-bottom-width: 1rpx; border-bottom-style: dashed; }
+.risk-right { right: 0; border-left-width: 1rpx; border-left-style: dashed; }
+.risk-bottom { left: 0; right: 0; bottom: 0; border-top-width: 1rpx; border-top-style: dashed; }
+.safe-layer-tiktok .risk-right { top: 8%; bottom: 22%; width: 16%; }
+.safe-layer-tiktok .risk-bottom { height: 22%; }
+.safe-layer-facebook .risk-top { display: block; }
+.safe-layer-facebook .risk-right { top: 12%; bottom: 22%; width: 12%; }
+.safe-layer-facebook .risk-bottom { height: 22%; }
+.risk-label { position: absolute; color: rgba(255,255,255,.72); font-size: 22rpx; white-space: nowrap; }
+.risk-label-top { right: 18rpx; bottom: 9rpx; }
+.risk-label-right { top: 50%; right: 8rpx; transform: rotate(90deg) translateX(50%); transform-origin: right center; }
+.risk-label-bottom { top: 10rpx; right: 18rpx; }
+.safe-layer-recording .risk-band { background: rgba(255, 177, 77, .055); border-color: rgba(255, 205, 120, .24); }
+.safe-layer-recording .risk-label, .safe-layer-recording .safe-label { opacity: .58; }
+.publish-preview { position: absolute; z-index: 3; top: 0; right: 0; bottom: 0; left: 0; color: rgba(255,255,255,.54); font-size: 22rpx; }
+.preview-top { position: absolute; top: 5.5%; left: 50%; transform: translateX(-50%); padding: 6rpx 13rpx; border-radius: 12rpx; background: rgba(8,12,22,.2); white-space: nowrap; }
+.preview-actions { position: absolute; z-index: 2; right: 2.6%; bottom: 27%; display: flex; flex-direction: column; align-items: center; gap: 15rpx; }
+.social-rail { padding: 12rpx 8rpx; border-radius: 34rpx; background: rgba(5,8,15,.1); }
+.social-action { position: relative; display: flex; flex-direction: column; align-items: center; justify-content: center; width: 58rpx; min-height: 58rpx; }
+.social-icon { display: flex; align-items: center; justify-content: center; width: 44rpx; height: 44rpx; color: rgba(255,255,255,.82); font-size: 43rpx; font-weight: 700; line-height: 44rpx; text-align: center; text-shadow: 0 2rpx 7rpx rgba(0,0,0,.5); box-sizing: border-box; }
+.social-action-label { margin-top: 2rpx; color: rgba(255,255,255,.62); font-size: 20rpx; font-weight: 600; line-height: 24rpx; text-shadow: 0 1rpx 5rpx rgba(0,0,0,.7); }
+.preview-avatar { position: relative; width: 48rpx; height: 48rpx; overflow: hidden; border: 3rpx solid rgba(255,255,255,.72); border-radius: 50%; background: rgba(8,12,22,.34); box-sizing: border-box; }
+.profile-head { position: absolute; top: 8rpx; left: 15rpx; width: 13rpx; height: 13rpx; border-radius: 50%; background: rgba(255,255,255,.66); }
+.profile-body { position: absolute; left: 9rpx; bottom: 5rpx; width: 25rpx; height: 16rpx; border-radius: 15rpx 15rpx 6rpx 6rpx; background: rgba(255,255,255,.66); }
+.profile-follow { position: absolute; left: 50%; bottom: -3rpx; width: 22rpx; height: 22rpx; margin-left: -11rpx; border-radius: 50%; background: rgba(254,44,85,.82); color: rgba(255,255,255,.95); font-size: 20rpx; font-weight: 700; line-height: 21rpx; text-align: center; }
+.social-profile { margin-bottom: 5rpx; }
+.icon-heart { color: rgba(255,255,255,.84); font-family: Arial, sans-serif; }
+.icon-comment { position: relative; width: 38rpx; height: 34rpx; margin: 5rpx 3rpx; border: 4rpx solid rgba(255,255,255,.79); border-radius: 50%; }
+.comment-tail { position: absolute; right: 0; bottom: -6rpx; width: 10rpx; height: 10rpx; border-right: 4rpx solid rgba(255,255,255,.79); transform: rotate(35deg); }
+.icon-bookmark { width: 31rpx; height: 39rpx; margin: 2rpx 7rpx 3rpx; overflow: hidden; border: 4rpx solid rgba(255,255,255,.79); border-radius: 4rpx; color: transparent; transform: scaleX(.78) rotate(45deg); }
+.icon-share, .icon-facebook-share { padding-bottom: 4rpx; font-size: 39rpx; transform: rotate(-35deg); }
+.icon-facebook-like { font-size: 41rpx; }
+.social-more { flex-direction: row; gap: 5rpx; min-height: 38rpx; }
+.more-dot { width: 7rpx; height: 7rpx; border-radius: 50%; background: rgba(255,255,255,.78); box-shadow: 0 1rpx 4rpx rgba(0,0,0,.55); }
+.preview-copy { position: absolute; z-index: 2; left: 4%; right: 20%; bottom: 12.5%; padding: 10rpx 12rpx; border-radius: 10rpx; background: rgba(8,12,22,.13); }
+.preview-account { display: flex; align-items: center; height: 30rpx; font-size: 22rpx; font-weight: 600; }
+.preview-line { margin-top: 7rpx; color: rgba(255,255,255,.48); font-size: 22rpx; }
+.preview-line-wide { width: 82%; padding-bottom: 5rpx; border-bottom: 1rpx solid rgba(255,255,255,.28); }
+.preview-bottom { position: absolute; left: 0; right: 0; bottom: 2.5%; padding: 12rpx 18rpx; border-top: 1rpx solid rgba(255,255,255,.22); background: rgba(8,12,22,.14); text-align: center; white-space: nowrap; }
+.preview-top-facebook { left: 5%; right: 5%; transform: none; text-align: left; }
+.preview-actions-facebook { right: 2.8%; bottom: 29%; gap: 18rpx; }
+.preview-copy-facebook { right: 15%; bottom: 12%; }
+.preview-avatar-inline { display: inline-block; width: 26rpx; height: 26rpx; margin-right: 8rpx; border-width: 2rpx; }
+.preview-bottom-facebook { bottom: 2.5%; }
+.safe-layer-recording .publish-preview { opacity: .46; }
+.safe-layer-recording .safe-outline { border-color: rgba(255,255,255,.26); }

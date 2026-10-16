@@ -68,7 +68,7 @@ async function seedCompleted(dataStore: DataStore, task: import('../../shared/co
   await recomputePackageExecution(dataStore, task.tenantId, task.programId, task.packageId, task.packageVersion, now.toISOString(), true);
 }
 
-async function fixture() {
+async function fixture(sharedFourPlatforms=false,independentOriginals=false) {
   const dataStore = memoryStore();
   const programs = createSocialProgramService(dataStore);
   const packages = createWeeklyOperatingPackageService(dataStore);
@@ -80,6 +80,7 @@ async function fixture() {
   const account = await programs.createAccount('tenant-a', 'owner', program.programId, {
     platform: 'tiktok', displayName: 'main', businessRole: '主账号', audiencePromise: '采购', contentPromise: '工厂证据',
   });
+  const accounts=[account];if(sharedFourPlatforms)for(const platform of ['facebook','instagram','youtube'] as const)accounts.push(await programs.createAccount('tenant-a','owner',program.programId,{platform,displayName:platform,businessRole:'主账号',audiencePromise:'采购',contentPromise:'工厂证据'}));
   const fact = { type: 'fact', id: 'fact-1', version: 1 };
   const repository = createSocialOperatingRepository(dataStore);
   const goalRef = { type: 'business_content_goal', id: 'goal-1', version: 1 };
@@ -99,8 +100,8 @@ async function fixture() {
   await repository.saveDecision('tenant-a', program.programId, {
     decisionId: capacityRef.id, decisionType: 'capacity_plan', subjectRef: goalRef, version: 1, outcome: 'accepted',
     ruleVersion: 'capacity-planner/1.0.0', inputRefs: [goalRef], inputFingerprint: 'capacity-fp', evidence: [], blockers: [],
-    output: { status: 'ready', originalContentQuota: 1, adaptationQuota: 1, publicationQuota: 2,
-      accountQuotas: [{ accountId: account.accountId, publicationQuota: 2 }], estimatedCostCny: 200, limitingFactors: [] },
+    output: { status: 'ready', originalContentQuota: independentOriginals?2:1, adaptationQuota: sharedFourPlatforms?3:independentOriginals?0:1, publicationQuota: sharedFourPlatforms?4:2,
+      accountQuotas: accounts.map(a=>({accountId:a.accountId,publicationQuota:sharedFourPlatforms?1:2})), estimatedCostCny: 200, limitingFactors: [] },
     operator: { type: 'agent', id: 'owner' }, decidedAt: goal.createdAt,
   } as any);
   const policyRef = { type: 'automation_policy', id: 'policy-1', version: 1 };
@@ -115,16 +116,16 @@ async function fixture() {
     accountPlans: [{ accountId: account.accountId, publicationCount: 2 }], originalContentTarget: 1,
     businessContentGoalRef: goalRef, capacityPlanRef: capacityRef, automationPolicyRef: policyRef,
     discoveryBudgetCny: 20, weeklyBudgetCny: 200,
-    publicationTasks: [0, 1].map(index => ({
-      accountId: account.accountId,
-      businessProposition: `proposition-${index}`,
-      cta: `cta-${index}`,
+    publicationTasks: (sharedFourPlatforms?[0,1,2,3]:[0, 1]).map(index => ({
+      accountId: sharedFourPlatforms?accounts[index]!.accountId:account.accountId,
+      businessProposition: sharedFourPlatforms?'one original proposition':`proposition-${index}`,
+      cta: sharedFourPlatforms?'Contact WhatsApp for a free sample':`cta-${index}`,
       factRefs: [fact],
       metricTargets: ['qualified_inquiry>=1'],
       publishWindow: `2026-10-0${6 + index}T10:00:00Z`,
     })),
   });
-  return { dataStore, programs, packages, execution, worker, program, account, draft };
+  return { dataStore, programs, packages, execution, worker, program, account, accounts, draft };
 }
 
 test('preparation can precede the operating week and publication follows its zoned release time', async () => {
@@ -144,14 +145,14 @@ test('preparation can precede the operating week and publication follows its zon
 
 test('weekly execution tasks freeze the full worker contract and aggregate real state', async () => {
   const { packages, execution, program, draft } = await fixture();
-  assert.equal(draft.executionSummary!.total, 41);
-  assert.equal(draft.executionSummary!.byStatus.pending_activation, 41);
+  assert.equal(draft.executionSummary!.total, 37);
+  assert.equal(draft.executionSummary!.byStatus.pending_activation, 37);
   assert.ok(draft.executionTaskRefs!.every(ref => ref.type === 'weekly_execution_task'));
   const active = await packages.activate('tenant-a', 'owner', program.programId, draft.packageId, {
     expectedVersion: 1, expectedProgramVersion: 1,
   });
-  assert.equal(active.executionSummary!.byStatus.queued, 1);
-  assert.equal(active.executionSummary!.byStatus.blocked, 40);
+  assert.equal(active.executionSummary!.byStatus.queued, 1 + draft.socialContentPackage.publicationTasks.length * 3);
+  assert.equal(active.executionSummary!.byStatus.blocked, 36 - draft.socialContentPackage.publicationTasks.length * 3);
   const tasks = await execution.list('tenant-a', program.programId, draft.packageId, 1);
   assert.ok(tasks.every(task => task.tenantId === 'tenant-a' && task.packageVersion === 1));
   assert.ok(tasks.every(task => task.idempotencyKey && task.inputSnapshot && task.budget && task.upstreamVersionRefs.length === 3));
@@ -169,9 +170,11 @@ test('weekly execution tasks freeze the full worker contract and aggregate real 
     const readiness = tasks.filter(task => task.publicationTaskId === publication.publicationTaskId && task.schedule.stepKind === 'customer_channel_readiness');
     const handoffs = tasks.filter(task => task.publicationTaskId === publication.publicationTaskId && task.schedule.stepKind === 'customer_inquiry_handoff');
     assert.deepEqual(new Set(readiness.map(task => task.inputSnapshot.customerChannel)), new Set(['whatsapp','messenger','instagram']));
-    assert.ok(readiness.every(task => publish.dependsOnTaskIds.includes(task.taskId)));
-    assert.ok(readiness.every(task => Date.parse(task.schedule.estimatedFinishAt) <= Date.parse(publish.schedule.estimatedStartAt)));
-    assert.ok(handoffs.every(task => task.dependsOnTaskIds.includes(publish.taskId)));
+    assert.ok(readiness.every(task => task.dependsOnTaskIds.length === 0));
+    assert.ok(readiness.every(task => !publish.dependsOnTaskIds.includes(task.taskId)));
+    assert.ok(handoffs.every(task => task.dependsOnTaskIds.length === 1 && readiness.some(item => item.taskId === task.dependsOnTaskIds[0])));
+    assert.ok(handoffs.every(task => !task.dependsOnTaskIds.includes(publish.taskId)));
+    assert.ok([...readiness,...handoffs].every(task => task.chainContract?.requiredInputKinds.includes('channel_authorization') && !task.chainContract.requiredInputKinds.includes('external_reference_evidence')));
   }
   const scheduleTask = tasks.find(task => task.schedule.stepKind === 'business_schedule');
   const scriptTask = tasks.find(task => task.schedule.stepKind === 'script' && task.scope === 'content');
@@ -187,14 +190,27 @@ test('weekly execution tasks freeze the full worker contract and aggregate real 
     assert.equal(tasks.find(task => task.taskId === approval.dependsOnTaskIds[0])?.schedule.stepKind, 'quality_check');
   }
   assert.ok(preparationTask&&scriptTask?.dependsOnTaskIds.includes(preparationTask.taskId));
-  assert.ok(scheduleTask&&preparationTask?.dependsOnTaskIds.includes(scheduleTask.taskId));
+  assert.ok(preparationTask?.dependsOnTaskIds.includes(tasks.find(task=>task.schedule.stepKind==='business_outline')!.taskId));
+  assert.ok(!preparationTask?.dependsOnTaskIds.includes(scheduleTask!.taskId),'shared material preparation may start before the daily directing window');
+  assert.ok(scriptTask?.dependsOnTaskIds.includes(scheduleTask!.taskId),'the script must consume the same-day directing result');
   assert.ok(scheduleTask?.dependsOnTaskIds.includes(tasks.find(task => task.schedule.stepKind === 'director_analysis')!.taskId));
   assert.ok(scheduleTask && materialTask?.dependsOnTaskIds.includes(scheduleTask.taskId));
   assert.ok(materialTask && assetTask?.dependsOnTaskIds.includes(materialTask.taskId));
   assert.ok(tasks.some(task => task.scope === 'adaptation'));
   const review = tasks.find(task => task.schedule.stepKind === 'weekly_review')!;
+  const publishingTasks = tasks.filter(task => task.schedule.stepKind === 'publishing');
+  const monitoringTasks = tasks.filter(task => task.schedule.stepKind === 'performance_monitoring');
+  assert.ok(publishingTasks.every(task => review.dependsOnTaskIds.includes(task.taskId)), 'weekly review directly waits for every real publication');
+  assert.ok(monitoringTasks.every(task => review.dependsOnTaskIds.includes(task.taskId)), 'weekly review waits for every post-publication data collection');
+  assert.ok(Date.parse(review.schedule.estimatedStartAt) >= Date.parse('2026-10-11T12:00:00.000Z'));
+  assert.deepEqual(review.inputSnapshot.reviewWindow, {
+    startsAt: '2026-10-04T16:00:00.000Z',
+    endsAt: '2026-10-11T12:00:00.000Z',
+  });
+  assert.equal(review.inputSnapshot.waitsForAllWeeklyProductionAndPublishing, true);
+  assert.ok(review.dependsOnTaskIds.every(id => Date.parse(tasks.find(task => task.taskId === id)!.schedule.estimatedFinishAt) <= Date.parse(review.schedule.estimatedStartAt)));
   const extractions = tasks.filter(task => task.schedule.stepKind === 'template_extraction');
-  assert.equal(extractions.length, draft.socialContentPackage.publicationTasks.length);
+  assert.equal(extractions.length, draft.socialContentPackage.originalContentTarget);
   for (const extraction of extractions) {
     const video = tasks.find(task => task.taskId === extraction.inputSnapshot.sourceTaskId)!;
     assert.equal(video.schedule.stepKind, 'video_generation');
@@ -209,7 +225,7 @@ test('weekly execution tasks freeze the full worker contract and aggregate real 
     assert.equal(validation.status, 'blocked');
   }
   const firstTask = (await packages.get('tenant-a', program.programId, draft.packageId)).executionSummary!;
-  assert.equal(firstTask.total, 41);
+  assert.equal(firstTask.total, 37);
 });
 
 test('cold-start Z and established H generate distinct executable chain identities, inputs and dependencies', async () => {
@@ -222,7 +238,8 @@ test('cold-start Z and established H generate distinct executable chain identiti
   const cold=planWeeklyExecutionTasks('tenant-a',draft,'2026-10-01T00:00:00Z');
   assert.deepEqual(codes(cold),expected('Z'));
   assert.ok(cold.every(task=>task.chainProfile==='b2b_cold_start'&&task.chainTaskCode?.startsWith('Z-')));
-  assert.ok(cold.every(task=>task.chainContract?.requiredInputKinds.includes('external_reference_evidence')));
+  assert.ok(cold.filter(task=>!['customer_channel_readiness','customer_inquiry_handoff'].includes(task.schedule.stepKind)).every(task=>task.chainContract?.requiredInputKinds.includes('external_reference_evidence')));
+  assert.ok(cold.filter(task=>['customer_channel_readiness','customer_inquiry_handoff'].includes(task.schedule.stepKind)).every(task=>task.chainContract?.requiredInputKinds.includes('channel_authorization')));
   assert.ok(cold.filter(task=>task.schedule.stepKind==='benchmark_scoring').every(task=>task.dependsOnTaskIds.some(id=>cold.find(candidate=>candidate.taskId===id)?.schedule.stepKind==='benchmark_collection')));
 
   const established=structuredClone(draft);
@@ -241,15 +258,16 @@ test('cold-start Z and established H generate distinct executable chain identiti
   const readiness=historical.find(task=>task.schedule.stepKind==='business_outline')!;
   assert.ok(scoring.filter(task=>task.inputSnapshot.referenceSource==='owned').every(task=>task.dependsOnTaskIds.length===1&&task.dependsOnTaskIds[0]===readiness.taskId));
   assert.ok(scoring.filter(task=>task.inputSnapshot.referenceSource==='external').every(task=>task.dependsOnTaskIds.some(id=>historical.find(candidate=>candidate.taskId===id)?.schedule.stepKind==='benchmark_collection')));
-  assert.ok(historical.filter(task=>task.inputSnapshot.referenceSource==='owned').every(task=>task.chainContract?.requiredInputKinds.includes('owned_video_metrics_and_tone')));
-  assert.ok(historical.filter(task=>task.inputSnapshot.referenceSource==='external').every(task=>task.chainContract?.requiredInputKinds.includes('external_reference_evidence')));
+  const nonCustomer=historical.filter(task=>!['customer_channel_readiness','customer_inquiry_handoff'].includes(task.schedule.stepKind));
+  assert.ok(nonCustomer.filter(task=>task.inputSnapshot.referenceSource==='owned').every(task=>task.chainContract?.requiredInputKinds.includes('owned_video_metrics_and_tone')));
+  assert.ok(nonCustomer.filter(task=>task.inputSnapshot.referenceSource==='external').every(task=>task.chainContract?.requiredInputKinds.includes('external_reference_evidence')));
   assert.equal(historical.find(task=>task.schedule.stepKind==='performance_monitoring')?.inputSnapshot.profileWork,'existing_customer_and_dual_source_attribution');
   assert.equal(cold.find(task=>task.schedule.stepKind==='performance_monitoring')?.inputSnapshot.profileWork,'new_inquiry_and_first_baseline_attribution');
   assert.equal(cold.find(task=>task.schedule.stepKind==='performance_monitoring')?.chainTaskCode,'Z-M8');
   assert.equal(historical.find(task=>task.schedule.stepKind==='performance_monitoring')?.chainTaskCode,'H-M8');
 });
 
-test('real Z and H five-day graphs fit confirmed Agent calendars and finish every video before the preceding-day cutoff',async()=>{
+test('real Z and H five-day graphs fit confirmed Agent calendars and finish every video inside its daily rolling window',async()=>{
  const {draft}=await fixture(),prototype=draft.socialContentPackage.publicationTasks[0]!;
  const schedule=(profile:'b2b_cold_start'|'b2b_established')=>{
   const pkg=structuredClone(draft);pkg.referenceSourcePolicy=profile==='b2b_cold_start'
@@ -265,17 +283,33 @@ test('real Z and H five-day graphs fit confirmed Agent calendars and finish ever
   const constraints=Object.fromEntries(tasks.map(t=>[t.taskId,{resourceKey:t.schedule.responsibleActor,remainingMinutes:t.schedule.estimatedDurationMinutes,remainingCostCny:0,bufferMinutes:t.schedule.stepKind==='publishing'?0:5,availableAt:'2026-10-01T00:00:00Z'}]));
   return {pkg,tasks,plan:planWeeklyBackwardSchedule({tasks,now:'2026-10-01T00:00:00Z',remainingBudgetCny:0,resources,constraints,frozenOperationalWeek:{weekStart:'2026-10-05',weekEnd:'2026-10-11'}})};
  };
- for(const profile of ['b2b_cold_start','b2b_established'] as const){const result=schedule(profile);assert.equal(result.plan.publicationGap,0,`${profile} ${JSON.stringify(result.plan.publications)} ${JSON.stringify(result.plan.assignments.filter(row=>row.reasons.length))}`);assert.equal(result.plan.unscheduledTaskIds.length,0,profile);const rows=new Map(result.plan.assignments.map(row=>[row.taskId,row])),preparations=result.tasks.filter(t=>t.schedule.stepKind==='material_preparation'),barriers=preparations.filter(t=>t.inputSnapshot.sharedMaterialBarrier);assert.equal(barriers.length,1,profile);assert.equal((barriers[0]!.inputSnapshot.sharedMaterialBarrier as {requestId:string}).requestId,`${profile}-shared-request`);assert.ok(preparations.every(task=>task.taskId===barriers[0]!.taskId||barriers[0]!.dependsOnTaskIds.includes(task.taskId)));assert.ok(result.tasks.filter(t=>t.schedule.stepKind==='script').every(task=>task.dependsOnTaskIds.includes(barriers[0]!.taskId)));assert.ok(new Set(result.plan.agentDailyLoads.filter(load=>load.responsibleActor==='content_agent').map(load=>load.localDate)).size>=4,`${profile} content Agent load is spread over actual confirmed days`);for(const publication of result.pkg.socialContentPackage.publicationTasks){const video=result.tasks.find(t=>t.publicationTaskId===publication.publicationTaskId&&t.schedule.stepKind==='video_generation')!;assert(Date.parse(rows.get(video.taskId)!.finishAt!)<=Date.parse(publication.publishWindow!)-86_400_000,`${profile}:${publication.publicationTaskId}`);}}
+ for(const profile of ['b2b_cold_start','b2b_established'] as const){const result=schedule(profile);assert.equal(result.plan.publicationGap,0,`${profile} ${JSON.stringify(result.plan.publications)} ${JSON.stringify(result.plan.assignments.filter(row=>row.reasons.length))}`);assert.equal(result.plan.unscheduledTaskIds.length,0,profile);const rows=new Map(result.plan.assignments.map(row=>[row.taskId,row])),preparations=result.tasks.filter(t=>t.schedule.stepKind==='material_preparation'),barriers=preparations.filter(t=>t.inputSnapshot.sharedMaterialBarrier);assert.equal(barriers.length,1,profile);assert.equal((barriers[0]!.inputSnapshot.sharedMaterialBarrier as {requestId:string}).requestId,`${profile}-shared-request`);assert.ok(preparations.every(task=>task.taskId===barriers[0]!.taskId||barriers[0]!.dependsOnTaskIds.includes(task.taskId)));assert.ok(result.tasks.filter(t=>t.schedule.stepKind==='script').every(task=>task.dependsOnTaskIds.includes(barriers[0]!.taskId)));assert.ok(new Set(result.plan.agentDailyLoads.filter(load=>load.responsibleActor==='content_agent').map(load=>load.localDate)).size>=4,`${profile} content Agent load is spread over actual confirmed days`);for(const publication of result.pkg.socialContentPackage.publicationTasks){const video=result.tasks.find(t=>t.publicationTaskId===publication.publicationTaskId&&t.schedule.stepKind==='video_generation')!,finish=Date.parse(rows.get(video.taskId)!.finishAt!),publishAt=Date.parse(publication.publishWindow!);assert(finish<=publishAt-30*60_000,`${profile}:${publication.publicationTaskId}`);assert.equal(new Date(finish).toISOString().slice(0,10),new Date(publishAt).toISOString().slice(0,10),`${profile}:${publication.publicationTaskId}`);}}
+});
+
+test('each publication day receives fresh incremental discovery and its own feedback task',async()=>{
+  const {draft}=await fixture();
+  draft.socialContentPackage.publicationTasks[1]!.motherContentId=draft.socialContentPackage.publicationTasks[0]!.motherContentId;
+  const tasks=planWeeklyExecutionTasks('tenant-a',draft,'2026-10-01T00:00:00Z');
+  const discovery=tasks.filter(task=>task.schedule.stepKind==='benchmark_collection');
+  assert.deepEqual(discovery.map(task=>task.inputSnapshot.rollingDate).sort(),['2026-10-06','2026-10-07']);
+  assert.ok(discovery.every(task=>task.inputSnapshot.rollingCadence==='daily_incremental'&&task.inputSnapshot.freshnessPolicy==='created_or_updated_since_previous_successful_collection'));
+  assert.deepEqual(discovery.map(task=>task.schedule.estimatedStartAt).sort(),['2026-10-06T00:30:00.000Z','2026-10-07T00:30:00.000Z']);
+  const directing=tasks.filter(task=>task.schedule.stepKind==='director_analysis');
+  assert.deepEqual(directing.map(task=>task.inputSnapshot.rollingDate).sort(),['2026-10-06','2026-10-07'],'one mother reused on two days still needs two daily directing decisions');
+  assert.equal(new Set(directing.map(task=>task.taskId)).size,2);
+  const feedback=tasks.filter(task=>task.schedule.stepKind==='performance_monitoring');
+  assert.equal(feedback.length,draft.socialContentPackage.publicationTasks.length);
+  assert.ok(feedback.every(task=>task.publicationTaskId&&task.inputSnapshot.rollingCadence==='daily_feedback'&&task.inputSnapshot.feedsNextDailyCollection===true));
 });
 
 test('worker leases, retries, dead letters and explicit recovery are durable', async () => {
   const { dataStore, packages, execution, worker, program, draft } = await fixture();
   await packages.activate('tenant-a', 'owner', program.programId, draft.packageId, { expectedVersion: 1, expectedProgramVersion: 1 });
   const start = new Date(Date.now() + 86_400_000);
-  const readiness = await worker.claimNext({ tenantId: 'tenant-a', workerId: 'worker-a', now: start, leaseDurationMs: 30_000 });
+  const readiness = await worker.claimNext({ tenantId: 'tenant-a', workerId: 'worker-a', kinds:['readiness'], now: start, leaseDurationMs: 30_000 });
   assert.ok(readiness);
   assert.equal(readiness.task.workflowKind, 'readiness');
-  assert.equal(await worker.claimNext({ tenantId: 'tenant-a', workerId: 'worker-b', now: new Date(start.getTime() + 1_000) }), null);
+  assert.equal(await worker.claimNext({ tenantId: 'tenant-a', workerId: 'worker-b', kinds:['readiness'], now: new Date(start.getTime() + 1_000) }), null);
   await assert.rejects(worker.complete(readiness, [], new Date(start.getTime() + 2_000)));
   await seedCompleted(dataStore, readiness.task, new Date(start.getTime() + 2_000));
 
@@ -302,7 +336,7 @@ test('worker leases, retries, dead letters and explicit recovery are durable', a
 });
 
 test('expired leases are reclaimed with fencing and local blocks do not stop sibling publications', async () => {
-  const { dataStore, packages, execution, worker, program, draft } = await fixture();
+  const { dataStore, packages, execution, worker, program, draft } = await fixture(false,true);
   await packages.activate('tenant-a', 'owner', program.programId, draft.packageId, { expectedVersion: 1, expectedProgramVersion: 1 });
   const start = new Date(Date.now() + 86_400_000);
   const stale = await worker.claimNext({ tenantId: 'tenant-a', workerId: 'worker-a', now: start, leaseDurationMs: 30_000 });
@@ -372,7 +406,7 @@ test('unverified completion preserves lease and durable polling does not consume
   const { dataStore, packages, worker, program, draft } = await fixture();
   await packages.activate('tenant-a', 'owner', program.programId, draft.packageId, { expectedVersion: 1, expectedProgramVersion: 1 });
   const now = new Date(Date.now() + 86_400_000);
-  const claim = await worker.claimNext({ tenantId: 'tenant-a', workerId: 'worker', now });
+  const claim = await worker.claimNext({ tenantId: 'tenant-a', workerId: 'worker', kinds:['readiness'], now });
   assert.ok(claim);
   await assert.rejects(worker.complete(claim, [{ type: 'fake', id: 'fake', version: 1 }], now));
   const unchanged = await getWeeklyExecutionTaskRow(dataStore, 'tenant-a', claim.task.taskId);
@@ -381,8 +415,8 @@ test('unverified completion preserves lease and durable polling does not consume
   const deferred = await worker.defer(claim, { code: 'receipt_pending', message: '等待对账', retryDelayMs: 1_000, now });
   assert.equal(deferred.status, 'queued');
   assert.equal(deferred.attempt, 0);
-  assert.equal(await worker.claimNext({ tenantId: 'tenant-a', workerId: 'worker', now }), null);
-  const recovered = await worker.claimNext({ tenantId: 'tenant-a', workerId: 'worker', now: new Date(now.getTime() + 1_000) });
+  assert.equal(await worker.claimNext({ tenantId: 'tenant-a', workerId: 'worker', kinds:['readiness'], now }), null);
+  const recovered = await worker.claimNext({ tenantId: 'tenant-a', workerId: 'worker', kinds:['readiness'], now: new Date(now.getTime() + 1_000) });
   assert.ok(recovered);
   const blocked = await worker.defer(recovered, { code: 'credentials_expired', message: '凭据失效', blockingReason: 'credentials_expired', now: new Date(now.getTime() + 1_000) });
   assert.equal(blocked.status, 'blocked');
@@ -435,6 +469,7 @@ test('weekly user approval rejects missing binding/media and accepts an actual r
   });
   await assert.rejects(approve());
   await fs.writeFile(filePath, bytes);
+  await assert.rejects(execution.approve('tenant-a',program.programId,draft.packageId,approval.taskId,'owner',{type:'starter_social_content_artifact',id:'foreign-artifact',version:1}),/预览成片/);
   const accepted = await approve();
   const approved = accepted.find(task => task.taskId === approval.taskId)!;
   assert.equal(approved.status, 'succeeded');
@@ -445,6 +480,44 @@ test('weekly user approval rejects missing binding/media and accepts an actual r
   const artifact = (await dataStore.list<Record_>('starter_social_content_artifacts', { where: { tenant_id: 'tenant-a', artifact_id: 'approval-artifact' } })).items[0]!;
   assert.equal(artifact.status, 'approved');
   assert.deepEqual((await approve()).find(task => task.taskId === approval.taskId)!.resultRefs, approved.resultRefs);
+});
+
+test('shared original receives four independent user acceptances and platform packages never inherit approval',async context=>{
+ const {socialRequestHash}=await import('../starter198/socialContentValidation.js');
+ const fs=await import('node:fs/promises'),path=await import('node:path'),{createHash,randomUUID}=await import('node:crypto');
+ const {defaultBrief}=await import('../starter198/socialContentTaskSupport.js'),{SOCIAL_WORK_PACKAGE_KINDS}=await import('../../shared/contracts/socialContentReplication.js');
+ const {persistWeeklySharedProductionBindings,resolveWeeklyProductionRow}=await import('../runtime/weeklyContentProductionIdentity.js');
+ const {validateWeeklyPublicationAcceptance}=await import('../runtime/socialWeeklyResultValidation.js');const {runWeeklyPublicationPackageScan}=await import('../publishing/weeklyPublicationWorker.js');
+ const f=await fixture(true);await f.packages.activate('tenant-a','owner',f.program.programId,f.draft.packageId,{expectedVersion:1,expectedProgramVersion:1});
+ const tasks=await f.execution.list('tenant-a',f.program.programId,f.draft.packageId,1),pubs=f.draft.socialContentPackage.publicationTasks,root=pubs.find(p=>!p.adaptationOfPublicationTaskId)!;
+ for(const step of ['material_preparation','material_readiness','script','storyboard','asset_generation','video_generation','quality_check'])assert.equal(tasks.filter(t=>t.schedule.stepKind===step).length,1,`${step} is one original production, not four platform producers`);
+ assert.equal(tasks.filter(t=>t.schedule.stepKind==='publishing').length,4);
+ const pkgRow=(await f.dataStore.list<any>('social_weekly_operating_packages',{where:{tenant_id:'tenant-a',package_id:f.draft.packageId,version:1}})).items[0]!,pkg=pkgRow.payload;
+ pkg.enterpriseProfileRef={type:'enterprise_profile',id:'controlled-enterprise',version:1};await f.dataStore.update('social_weekly_operating_packages',pkgRow.id,{payload:pkg});
+ const timestamp=new Date().toISOString(),bytes=Buffer.from('controlled shared-original artifact, not provider acceptance'),sha=createHash('sha256').update(bytes).digest('hex'),folder=path.resolve('data/social-content-sources',`shared-approval-${randomUUID()}`),local=path.join(folder,`${sha}.mp4`);await fs.mkdir(folder,{recursive:true});await fs.writeFile(local,bytes);context.after(()=>fs.rm(folder,{recursive:true,force:true}));
+ await f.dataStore.create('workflow_runs',{id:'shared-run',tenant_id:'tenant-a',status:'succeeded'});
+ const weeklyWorkflowTask=pkg.workflowTasks.find((t:any)=>t.kind==='content'),businessGoal=await createSocialOperatingRepository(f.dataStore).getGoal('tenant-a',f.program.programId,pkg.businessContentGoalRef.id,pkg.businessContentGoalRef.version);
+ const brief={...defaultBrief({title:'Shared controlled original',objective:'Verified product',platforms:['tiktok'],languages:['en'],formats:['short_video'],programRef:{objectType:'social_program',id:f.program.programId,version:'1'}}),_weeklyAuthority:{weeklyPackage:pkg,publicationTask:root,programRef:{type:'social_program',id:f.program.programId,version:1},weeklyWorkflowTask,businessGoal,enterpriseProfileRef:pkg.enterpriseProfileRef,referenceSelection:{selectionId:'controlled-reference',version:1,status:'selected',upstreamTaskRef:weeklyWorkflowTask.taskId,selected:[],evidenceVersionRefs:[]},selectedHandoffs:[]}};
+ const producer=await f.dataStore.create<any>('starter_social_content_tasks',{tenant_id:'tenant-a',task_id:'shared-content',weekly_plan_id:pkg.packageId,create_idempotency_key:`weekly-production:${pkg.packageId}:1:${root.publicationTaskId}`,run_id:'shared-run',status:'asset_review',version:'1',task_mode:'weekly',brief,package_selection:SOCIAL_WORK_PACKAGE_KINDS.map(kind=>({kind,packageKey:kind,version:'1',name:kind})),source_count:0,knowledge_source_count:0,material_source_count:0,artifact_count:1,approved_artifact_count:0,delivery_package_count:0,publication_count:0,metric_submission_count:0,created_at:timestamp,updated_at:timestamp});
+ await persistWeeklySharedProductionBindings(f.dataStore,'tenant-a',pkg,producer);
+ await f.dataStore.create('starter_social_content_files',{tenant_id:'tenant-a',task_id:'shared-content',file_id:'shared-file',usage:'artifact_media',name:'video.mp4',mime_type:'video/mp4',byte_size:bytes.length,content_sha256:sha,storage_kind:'local',storage_key:path.relative(path.resolve('data/social-content-sources'),local),created_at:timestamp});
+ await f.dataStore.create('starter_social_content_artifacts',{tenant_id:'tenant-a',task_id:'shared-content',artifact_id:'shared-artifact',artifact_kind:'short_video',origin:'agent',status:'review_required',version:'1',resource_ref:'socialfile:shared-file',content:{render:{completed:true},mediaStorage:{video:{fileId:'shared-file',sha256:sha,url:'/api/overseas/files/controlled.mp4'}},productionResult:{productionResultId:'shared-production',version:'1',status:'asset_review',createdAt:timestamp,technicalReview:{approved:true},creativeReview:{approved:true}}},created_at:timestamp,updated_at:timestamp});
+ // Isolate real acceptance/packaging from provider production: these are
+ // explicit predecessor fixtures, not supplier or real publication receipts.
+ for(const task of tasks.filter(t=>t.schedule.stepKind!=='user_approval'&&t.workflowKind!=='publishing'&&!['review','engagement'].includes(t.workflowKind))){const row=await getWeeklyExecutionTaskRow(f.dataStore,'tenant-a',task.taskId);await writeWeeklyExecutionTask(f.dataStore,row,{...row.payload,status:'succeeded',lease:null,resultRefs:['quality_check','rework'].includes(task.schedule.stepKind)?[{type:'starter_social_content_artifact',id:'shared-artifact',version:1}]:row.payload.resultRefs});}
+ await recomputePackageExecution(f.dataStore,'tenant-a',f.program.programId,pkg.packageId,1,timestamp,true);
+ const approvalTasks=tasks.filter(t=>t.schedule.stepKind==='user_approval');assert.equal(approvalTasks.length,4);
+ const first=approvalTasks.find(t=>t.publicationTaskId===root.publicationTaskId)!;await f.execution.approve('tenant-a',f.program.programId,pkg.packageId,first.taskId,'owner');
+ for(const pub of pubs.filter(p=>p.publicationTaskId!==root.publicationTaskId))await assert.rejects(validateWeeklyPublicationAcceptance(f.dataStore,{...first,publicationTaskId:pub.publicationTaskId,accountId:pub.accountId},'shared-production'),{code:'weekly_production_approval_ambiguous'});
+ for(const task of approvalTasks.filter(t=>t.taskId!==first.taskId))await f.execution.approve('tenant-a',f.program.programId,pkg.packageId,task.taskId,'owner');
+ for(const pub of pubs){await validateWeeklyPublicationAcceptance(f.dataStore,{...first,publicationTaskId:pub.publicationTaskId,accountId:pub.accountId},'shared-production');assert.equal((await resolveWeeklyProductionRow(f.dataStore,{tenantId:'tenant-a',programId:f.program.programId,packageId:pkg.packageId,packageVersion:1,publicationTaskId:pub.publicationTaskId}))?.task_id,'shared-content');}
+ const artifact=(await f.dataStore.list<any>('starter_social_content_artifacts')).items[0]!;assert.equal(Number(artifact.version),2,'platform acceptance does not mutate the original four times');
+ const lineage:any={schemaVersion:'social-content-authority-lineage.v1',lineageId:'shared-lineage',version:'1',programRef:{type:'social_program',id:f.program.programId,version:1},packageRef:{type:'weekly_operating_package',id:pkg.packageId,version:1},weeklyTaskRef:{type:'weekly_workflow_task',id:'shared-workflow',version:1},publicationTaskRef:{type:'weekly_publication_task',id:root.publicationTaskId,version:1},businessGoalRef:pkg.businessContentGoalRef,enterpriseProfileRef:{type:'enterprise_profile',id:'fixture-profile',version:1},enterpriseFactRefs:root.factRefs,referenceSelectionRef:{type:'reference_selection',id:'fixture-reference',version:1},candidateEvidenceRefs:[],inspirationHandoffRefs:[],directorBriefRef:{type:'director_brief',id:'fixture-director',version:1},productionResultRef:{type:'production_result',id:'shared-production',version:1},upstreamFingerprint:'c'.repeat(64),invalidation:{status:'valid',affectedObjects:[],affectedSceneIds:[],reasons:[]},createdAt:timestamp};lineage.recordHash=socialRequestHash(lineage);
+ await f.dataStore.create('starter_social_content_lineage',{tenant_id:'tenant-a',production_result_id:'shared-production',payload:lineage,record_hash:lineage.recordHash});
+ const scan=await runWeeklyPublicationPackageScan({dataStore:f.dataStore,tenantId:'tenant-a',taskId:'shared-content'});
+ assert.equal(scan.createdAssignments,3,JSON.stringify(scan));assert.equal(scan.createdPackages,3,JSON.stringify(scan));assert.ok(scan.errors.length===1&&scan.errors[0]!.code.includes('instagram'),'missing Instagram adaptation proof blocks only that distribution');
+ const replay=await runWeeklyPublicationPackageScan({dataStore:f.dataStore,tenantId:'tenant-a',taskId:'shared-content'});assert.equal(replay.createdAssignments,0);assert.equal(replay.createdPackages,0);
+ assert.equal((await f.dataStore.list('starter_social_content_tasks')).totalItems,1);assert.equal((await f.dataStore.list('social_publication_attempts')).totalItems,0,'packaging never publishes or fabricates platform receipts');
 });
 
 test('weekly user approval is pinned to the artifact completed by the rework dependency', async () => {
@@ -471,7 +544,7 @@ test('weekly user approval is pinned to the artifact completed by the rework dep
   );
 });
 
-test('inventory reuse graph creates independent approval and publishing without new production or template extraction',async()=>{const {draft}=await fixture();const inventory={...draft,referenceSourcePolicy:{profile:'b2b_established' as const,ownedPercent:20 as const,externalPercent:80 as const,allocationUnit:'mother_content' as const},socialContentPackage:{...draft.socialContentPackage,publicationTasks:draft.socialContentPackage.publicationTasks.map(p=>({...p,inventoryReuseRef:{type:'weekly_inventory_binding',id:'actualbinding',version:1}}))}};const tasks=planWeeklyExecutionTasks('tenant-a',inventory);assert.ok(!tasks.some(t=>['script','storyboard','material_readiness','asset_generation','video_generation','quality_check','rework','template_extraction','template_performance_validation','benchmark_collection','benchmark_scoring','director_analysis'].includes(t.schedule.stepKind)));for(const pub of inventory.socialContentPackage.publicationTasks){const approval=tasks.find(t=>t.publicationTaskId===pub.publicationTaskId&&t.schedule.stepKind==='user_approval');const publishing=tasks.find(t=>t.publicationTaskId===pub.publicationTaskId&&t.schedule.stepKind==='publishing');const readiness=tasks.filter(t=>t.publicationTaskId===pub.publicationTaskId&&t.schedule.stepKind==='customer_channel_readiness');assert.ok(approval&&publishing);assert.deepEqual(new Set(publishing.dependsOnTaskIds),new Set([approval.taskId,...readiness.map(task=>task.taskId)]));assert.equal(approval.inputSnapshot.startsProduction,false);assert.equal(approval.inputSnapshot.countsAsNewMotherContent,false);assert.deepEqual(approval.inputSnapshot.inventoryReuseRef,pub.inventoryReuseRef);}assert.throws(()=>planWeeklyExecutionTasks('tenant-a',{...inventory,referenceSourcePolicy:draft.referenceSourcePolicy}),/库存任务/);});
+test('inventory reuse graph creates independent approval and publishing without new production or template extraction',async()=>{const {draft}=await fixture();const inventory={...draft,referenceSourcePolicy:{profile:'b2b_established' as const,ownedPercent:20 as const,externalPercent:80 as const,allocationUnit:'mother_content' as const},socialContentPackage:{...draft.socialContentPackage,publicationTasks:draft.socialContentPackage.publicationTasks.map(p=>({...p,inventoryReuseRef:{type:'weekly_inventory_binding',id:'actualbinding',version:1}}))}};const tasks=planWeeklyExecutionTasks('tenant-a',inventory);assert.ok(!tasks.some(t=>['script','storyboard','material_readiness','asset_generation','video_generation','quality_check','rework','template_extraction','template_performance_validation','benchmark_collection','benchmark_scoring','director_analysis'].includes(t.schedule.stepKind)));for(const pub of inventory.socialContentPackage.publicationTasks){const approval=tasks.find(t=>t.publicationTaskId===pub.publicationTaskId&&t.schedule.stepKind==='user_approval');const publishing=tasks.find(t=>t.publicationTaskId===pub.publicationTaskId&&t.schedule.stepKind==='publishing');const readiness=tasks.filter(t=>t.publicationTaskId===pub.publicationTaskId&&t.schedule.stepKind==='customer_channel_readiness');assert.ok(approval&&publishing);assert.deepEqual(publishing.dependsOnTaskIds,[approval.taskId]);assert.ok(readiness.every(task=>task.dependsOnTaskIds.length===0));assert.equal(approval.inputSnapshot.startsProduction,false);assert.equal(approval.inputSnapshot.countsAsNewMotherContent,false);assert.deepEqual(approval.inputSnapshot.inventoryReuseRef,pub.inventoryReuseRef);}assert.throws(()=>planWeeklyExecutionTasks('tenant-a',{...inventory,referenceSourcePolicy:draft.referenceSourcePolicy}),/库存任务/);});
 
 test('inventory refs cannot be injected into a new package or revised without the real confirmation record',async()=>{const {dataStore,packages,program,draft}=await fixture();await dataStore.create('users',{id:'owner',tenantId:'tenant-a',role:'admin',active:true});const publications=draft.socialContentPackage.publicationTasks.map(p=>({...p,inventoryReuseRef:{type:'weekly_inventory_binding',id:'a'.repeat(15),version:1}}));await assert.rejects(()=>packages.create('tenant-a','owner',program.programId,{weekStart:'2026-10-12',publicationTasks:publications}),{code:'inventory_create_not_revision'});await assert.rejects(()=>packages.revise('tenant-a','owner',program.programId,draft.packageId,{expectedVersion:1,publicationTasks:publications}),{code:'inventory_binding_integrity_invalid'});const actual=await packages.get('tenant-a',program.programId,draft.packageId);assert.equal(actual.version,1);assert.ok(actual.socialContentPackage.publicationTasks.every(p=>!p.inventoryReuseRef));});
 

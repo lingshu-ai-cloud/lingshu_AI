@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { bindMatrixVideo, defaultMatrixPlan, fillMatrixVideos, matrixIssues, matrixScopeIssues, normalizeMatrixPlan, type MatrixAccountPlan } from '../../src/lib/weeklyMatrix.js';
+import { bindMatrixVideo, defaultMatrixPlan, fillMatrixVideos, linkMatrixVersionsToMasters, matrixIssues, matrixScopeIssues, normalizeMatrixPlan, type MatrixAccountPlan } from '../../src/lib/weeklyMatrix.js';
 import { normalizeVideoPlan } from '../../src/lib/videoCreationPlan.js';
 import type { WeeklyPackage } from '../../src/lib/weeklyPackage.js';
 import { normalizePackage, validatePackage } from './weeklyPackage.js';
@@ -53,13 +53,35 @@ const familyPack = { ...multiProductPack, matrixPlan: [rows[0], instagramRow], t
 assert.deepEqual(matrixIssues(familyPack), [], 'versions in one family may use different display names when their stable product id is unchanged');
 const wrongProductSibling = normalizeVideoPlan({ ...familySibling, productId: 'product-c', productName: '产品 C' });
 const mixedProductFamilyPack = { ...familyPack, tasks: familyPack.tasks.map(task => task.templateId === 'production' ? { ...productionTask, videoPlans: [independentlyBound, wrongProductSibling] } : task) };
-assert.ok(matrixIssues(mixedProductFamilyPack).includes('同一母版的平台版本必须使用同一产品'), 'one content family must not mix two stable product ids');
+assert.ok(matrixIssues(mixedProductFamilyPack).includes('同一内容系列的发布版本必须使用同一产品'), 'one content family must not mix two stable product ids');
 assert.ok(matrixIssues({ ...multiProductPack, matrixPlan: [row('a', { cta: '填写表单' }), rows[1]] }).includes('账号策略已修改，请同步视频计划后再执行'), 'an explicit product selection must not hide a changed account CTA');
 assert.ok(matrixIssues(withFirstPlan(normalizeVideoPlan({ ...plans[0], productId: '', productName: '产品 B' }))).includes('账号策略已修改，请同步视频计划后再执行'), 'legacy videos without a product id must still match the account default product');
 assert.ok(matrixIssues(withFirstPlan(normalizeVideoPlan({ ...plans[0], productId: 'product-b', productName: '' }))).includes('账号策略已修改，请同步视频计划后再执行'), 'a product id without a product name is not a complete independent product selection');
 assert.equal(bindMatrixVideo(edited).matrix?.accountId, '', 'unbinding explicitly makes content production-only');
 
 const config = normalizeDigitalEmployeeConfig({ companyName: '测试公司', focusProducts: '产品 A', enabledWorkflows: ['viral_clone', 'content_publish'], publishingTargets: targets, videoLanguages: ['en', 'zh'], socialCadence: '' });
+const twoItemConfig = normalizeDigitalEmployeeConfig({
+  ...config,
+  socialCadence: '每周生成 2 条发布草稿；发布平台：facebook、tiktok；各平台条数：facebook=1,tiktok=1',
+  publishingTargets: [
+    { platform: 'facebook', accountId: 'facebook-one', accountLabel: 'Facebook', weeklyCount: 1 },
+    { platform: 'tiktok', accountId: 'tiktok-one', accountLabel: 'TikTok', weeklyCount: 1 },
+  ],
+});
+const twoItemRows = defaultMatrixPlan(twoItemConfig, ['facebook', 'tiktok'], '验证两平台内容');
+assert.deepEqual(twoItemRows.map(item => [item.platform, item.weeklyCount]), [['facebook', 1], ['tiktok', 1]], 'structured Agent settings must override the 5/5/3/3 profile defaults');
+assert.equal(twoItemRows.reduce((sum, item) => sum + item.weeklyCount, 0), 2, 'Facebook 1 + TikTok 1 must create exactly two weekly slots');
+const twoPlatformPlans = linkMatrixVersionsToMasters([
+  normalizeVideoPlan({ contentId: 'facebook-video', platform: 'facebook', matrix: { accountId: 'facebook-one', audience: '', objective: '', cta: '' } }),
+  normalizeVideoPlan({ contentId: 'tiktok-video', platform: 'tiktok', matrix: { accountId: 'tiktok-one', audience: '', objective: '', cta: '' } }),
+], 2);
+assert.deepEqual(twoPlatformPlans.map(plan => plan.productionRole), ['master', 'master'], 'one slot on each platform must remain two independently produced videos');
+assert.equal(new Set(twoPlatformPlans.map(plan => plan.contentFamilyId)).size, 2, 'platform-local slot numbers must never collapse different planned videos into one family');
+const legacyTwoItemRows = defaultMatrixPlan({
+  ...twoItemConfig,
+  publishingTargets: twoItemConfig.publishingTargets.map(({ weeklyCount: _weeklyCount, ...target }) => target),
+}, ['facebook', 'tiktok'], '验证旧配置迁移');
+assert.deepEqual(legacyTwoItemRows.map(item => [item.platform, item.weeklyCount]), [['facebook', 1], ['tiktok', 1]], 'legacy cadence-only settings must also produce exactly two weekly slots');
 const planningOnly = defaultMatrixPlan({ ...config, publishingTargets: [] }, ['tiktok'], '验证短视频需求');
 assert.equal(planningOnly.length, 1, 'the video matrix must still produce a planning row before an account is connected');
 assert.equal(planningOnly[0]?.weeklyCount, 5, 'planning rows must use the real matrix weekly cadence');
@@ -85,7 +107,10 @@ const publishing = buildPublishingApprovalPackage(input);
 assert.deepEqual(publishing.items.map(p => [p.sourceProjectId, p.accountIds]), [['project-0', ['a']], ['project-1', ['b']]], 'two accounts on one platform must not cross-publish');
 assert.equal(publishing.items[0].scheduledAt, publishing.items[1].scheduledAt, 'each account has an independent calendar');
 const datedProjects = [{ ...projects[0], spec: { ...projects[0].spec, contentOrder: { ...(projects[0].spec as any).contentOrder, videoPlan: { ...plans[0], plannedPublishDate: '2026-09-18' } } } }];
-assert.equal(buildPublishingApprovalPackage({ ...input, projects: datedProjects, matrixPlan: [rows[0]] }).items[0].scheduledAt, '2026-09-18T12:00:00.000Z', 'confirmed matrix date must reach the publishing approval subject');
+assert.equal(buildPublishingApprovalPackage({ ...input, projects: datedProjects, matrixPlan: [rows[0]] }).items[0].scheduledAt, '2026-09-18T10:00:00.000Z', 'a confirmed date without a manual time must use the 18:00 Beijing default');
+const manuallyTimedProjects = [{ ...projects[0], spec: { ...projects[0].spec, contentOrder: { ...(projects[0].spec as any).contentOrder, videoPlan: { ...plans[0], plannedPublishDate: '2026-09-18', plannedPublishAt: '2026-09-18T20:30:00+08:00' } } } }];
+assert.equal(buildPublishingApprovalPackage({ ...input, projects: manuallyTimedProjects, matrixPlan: [rows[0]] }).items[0].scheduledAt, '2026-09-18T12:30:00.000Z', 'a manually dragged publish time must reach the publishing approval subject unchanged');
+assert.equal(buildPublishingApprovalPackage({ ...input, projects: manuallyTimedProjects, matrixPlan: [rows[0]], scheduling: { ...input.scheduling, timezone: 'account' } }).items[0].scheduledAt, '2026-09-18T12:30:00.000Z', 'a frozen absolute publish time must not require an otherwise unused account timezone');
 assert.equal(buildPublishingApprovalPackage({ ...input, targets: [] }).items.length, 0);
 assert.equal(buildPublishingApprovalPackage({ ...input, projects: [{ id: 'unassigned', spec: { renderOutputPath: '/final.mp4' } }] }).items.length, 0, 'unassigned works must never be broadcast in matrix mode');
 const reused = { id: 'existing', status: 'completed', spec: { renderOutputPath: '/existing.mp4' } };

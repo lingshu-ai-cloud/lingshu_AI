@@ -8,15 +8,20 @@ import {
   readCurrentContentExecutionCheckpoint,
   recordCurrentContentExecutionCheckpoint,
   recordCurrentContentProviderReceipt,
+  assertCurrentContentExecutionActive,
   runWithContentExecutionContext,
 } from './context.js';
 import {
   admitContentExecutionJob,
+  contentExecutionDefaults,
   bindPristineContentExecutionCheckpoint,
+  bindPristineContentExecutionCheckpoints,
   refreshUnspentContentExecutionCheckpoint,
   DurableContentExecutionWorker,
   controlContentExecutionJob,
+  pauseContentExecutionJobsForRun,
   readContentExecutionJob,
+  resumeContentExecutionJobsForRun,
   setContentExecutionLimit,
 } from './durableQueue.js';
 import { classifyContentExecutionFailure } from './retryPolicy.js';
@@ -98,6 +103,64 @@ const env = {
   CONTENT_SYSTEM_MAX_ATTEMPTS: '3',
   CONTENT_RECONCILIATION_MAX_ATTEMPTS: '12',
 } as NodeJS.ProcessEnv;
+
+test('production defaults share three slots while preserving account throttling and explicit overrides', () => {
+  const defaults = contentExecutionDefaults({});
+  assert.equal(defaults.tenantMaxRunning, 3);
+  assert.equal(defaults.taskTypeMaxRunning, 3);
+  assert.equal(defaults.workerConcurrency, 3);
+  assert.equal(defaults.accountMaxRunning, 1);
+  const overridden = contentExecutionDefaults({
+    CONTENT_MAX_RUNNING_PER_TENANT: '2', CONTENT_MAX_RUNNING_PER_ACCOUNT: '1',
+    CONTENT_MAX_RUNNING_PER_TASK_TYPE: '1', CONTENT_EXECUTION_WORKER_CONCURRENCY: '2',
+  });
+  assert.equal(overridden.tenantMaxRunning, 2);
+  assert.equal(overridden.taskTypeMaxRunning, 1);
+  assert.equal(overridden.workerConcurrency, 2);
+  assert.equal(overridden.accountMaxRunning, 1);
+});
+
+test('shared default pool claims three contents, not three per Agent or worker', async () => {
+  const store = new MemoryStore();
+  for (let index = 0; index < 5; index++) await admitContentExecutionJob({
+    dataStore: store, tenantId: 'shared-production', userId: 'owner', taskId: `content-${index}`,
+    runId: `run-${index}`, accountId: `account-${index}`, taskType: index % 2 ? 'social_content_weekly' : 'social_content_workbench',
+  });
+  const started: string[] = [];
+  let release!: () => void;
+  const gate = new Promise<void>(resolve => { release = resolve; });
+  const execute = async (job: { taskId: string }) => { started.push(job.taskId); await gate; };
+  const first = new DurableContentExecutionWorker({ dataStore: store, execute, env: {} });
+  const second = new DurableContentExecutionWorker({ dataStore: store, execute, env: {} });
+  try {
+    await first.drain();
+    await second.drain();
+    assert.equal(started.length, 3);
+    const rows = await store.list<Record<string, unknown>>(CONTENT_EXECUTION_JOB_COLLECTION);
+    assert.equal(rows.items.filter(row => row.status === 'running').length, 3);
+    assert.equal(rows.items.filter(row => row.status === 'queued').length, 2);
+  } finally { first.stop(); second.stop(); release(); }
+});
+
+test('three production slots do not raise a shared account limit or persisted customer limit', async () => {
+  for (const persistedLimit of [false, true]) {
+    const store = new MemoryStore();
+    if (persistedLimit) await setContentExecutionLimit({ dataStore: store, tenantId: 'limited',
+      scope: 'tenant', scopeKey: '*', maxRunning: 1, updatedBy: 'existing-admin' });
+    for (let index = 0; index < 3; index++) await admitContentExecutionJob({
+      dataStore: store, tenantId: 'limited', userId: 'owner', taskId: `limited-${index}`,
+      runId: `run-${index}`, accountId: persistedLimit ? `account-${index}` : 'shared-account',
+      taskType: 'social_content_weekly',
+    });
+    const started: string[] = [];
+    let release!: () => void;
+    const gate = new Promise<void>(resolve => { release = resolve; });
+    const worker = new DurableContentExecutionWorker({ dataStore: store, env: {},
+      execute: async job => { started.push(job.taskId); await gate; } });
+    try { await worker.drain(); assert.equal(started.length, 1); }
+    finally { worker.stop(); release(); }
+  }
+});
 
 test('frozen 37-shot executor checkpoints fit the durable map envelope', () => {
   const accepted = parseContentExecutionCheckpoints({
@@ -191,6 +254,18 @@ test('historic executor binding is allowed only before any durable execution or 
   await assert.rejects(bindPristineContentExecutionCheckpoint({ dataStore: store, tenantId: started.tenantId, jobId: started.id, runId: started.runId, checkpointKey: 'social.executor', checkpoint }), /pristine_binding_not_allowed/);
 });
 
+test('a pristine historical job upgrades its executor and graph bridge atomically',async()=>{
+  const store=new MemoryStore(),executor={version:'1',inputHash:'a'.repeat(64),payload:{executor:'langgraph'},updatedAt:new Date().toISOString()};
+  const bridge={version:'1',inputHash:'a'.repeat(64),payload:{schemaVersion:'content-production-bridge.v1'},updatedAt:new Date().toISOString()};
+  const pristine=await admitContentExecutionJob({dataStore:store,tenantId:'tenant-atomic',userId:'owner',taskId:'task',runId:'run',taskType:'social_content_weekly'});
+  const bound=await bindPristineContentExecutionCheckpoints({dataStore:store,tenantId:pristine.tenantId,jobId:pristine.id,runId:pristine.runId,checkpoints:{'social.executor':executor,'content.production_bridge':bridge}});
+  assert.deepEqual(Object.keys(bound.checkpoints).sort(),['content.production_bridge','social.executor']);
+  const replay=await bindPristineContentExecutionCheckpoints({dataStore:store,tenantId:pristine.tenantId,jobId:pristine.id,runId:pristine.runId,checkpoints:{'social.executor':executor,'content.production_bridge':bridge}});
+  assert.equal(replay.id,pristine.id);
+  const started=await admitContentExecutionJob({dataStore:store,tenantId:'tenant-atomic',userId:'owner',taskId:'started',runId:'started',taskType:'social_content_weekly',initialCheckpoints:{'runtime.retry':executor}});
+  await assert.rejects(bindPristineContentExecutionCheckpoints({dataStore:store,tenantId:started.tenantId,jobId:started.id,runId:started.runId,checkpoints:{'social.executor':executor,'content.production_bridge':bridge}}),/pristine_binding_not_allowed/);
+});
+
 test('an unspent blocked admission may refresh only its executor binding', async () => {
   const store = new MemoryStore();
   const old = { version:'1', inputHash:'a'.repeat(64), payload:{executor:'langgraph'}, updatedAt:new Date().toISOString() };
@@ -258,6 +333,68 @@ test('explicit customer pause replaces a workflow review wait without losing its
   assert.deepEqual(manual.providerReceipts, review.providerReceipts);
   const lateReview = await controlContentExecutionJob({ dataStore: store, tenantId: job.tenantId, jobId: job.id, action: 'pause', pauseOrigin: 'workflow_review' });
   assert.equal((lateReview.checkpoints['runtime.pause'].payload as { origin: string }).origin, 'manual', 'a late graph wait cannot undo an explicit pause');
+});
+
+test('run lifecycle controls pause and resume only their own non-terminal production jobs', async () => {
+  const store = new MemoryStore();
+  const base = { dataStore: store, tenantId: 'tenant-run-control', userId: 'user-a', runId: 'run-a', taskType: 'social_content_weekly' };
+  const owned = await admitContentExecutionJob({ ...base, taskId: 'owned', initialCheckpoints: {
+    'production.stage': { version: '1', inputHash: 'stage-input', payload: { stage: 'voice' }, updatedAt: '2026-10-12T00:00:00.000Z' },
+  } });
+  const manuallyPaused = await admitContentExecutionJob({ ...base, taskId: 'manual' });
+  const reviewPaused = await admitContentExecutionJob({ ...base, taskId: 'review' });
+  const blocked = await admitContentExecutionJob({ ...base, taskId: 'blocked' });
+  const terminal = await admitContentExecutionJob({ ...base, taskId: 'terminal' });
+  const sibling = await admitContentExecutionJob({ ...base, taskId: 'sibling', runId: 'run-b' });
+  await store.update(CONTENT_EXECUTION_JOB_COLLECTION, owned.id, { provider_receipts: [{
+    provider: 'seedance', requestId: 'existing-request', state: 'accepted', providerTaskId: 'provider-task', metadata: {},
+    firstRecordedAt: '2026-10-12T00:00:00.000Z', updatedAt: '2026-10-12T00:00:00.000Z',
+  }] });
+  await controlContentExecutionJob({ dataStore: store, tenantId: base.tenantId, jobId: manuallyPaused.id, action: 'pause' });
+  await controlContentExecutionJob({ dataStore: store, tenantId: base.tenantId, jobId: reviewPaused.id, action: 'pause', pauseOrigin: 'workflow_review' });
+  await store.update(CONTENT_EXECUTION_JOB_COLLECTION, blocked.id, { status: 'blocked', last_error: 'avatar_required' });
+  await store.update(CONTENT_EXECUTION_JOB_COLLECTION, terminal.id, { status: 'succeeded', completed_at: '2026-10-12T00:01:00.000Z' });
+
+  const paused = await pauseContentExecutionJobsForRun({ dataStore: store, tenantId: base.tenantId, runId: base.runId, origin: 'workflow_run_pause' });
+  assert.deepEqual(paused.affectedJobIds, [owned.id]);
+  assert.deepEqual(paused.preservedJobIds.sort(), [manuallyPaused.id, reviewPaused.id, blocked.id].sort());
+  assert.deepEqual(paused.terminalJobIds, [terminal.id]);
+  const replay = await pauseContentExecutionJobsForRun({ dataStore: store, tenantId: base.tenantId, runId: base.runId, origin: 'workflow_run_pause' });
+  assert.deepEqual(replay.affectedJobIds, [owned.id], 'a repeated run pause is an idempotent repair');
+
+  const controlled = await readContentExecutionJob(store, base.tenantId, owned.taskId, base.runId);
+  assert.equal(controlled?.status, 'paused');
+  assert.equal((controlled?.checkpoints['runtime.pause'].payload as { origin: string }).origin, 'workflow_run_pause');
+  assert.deepEqual(controlled?.checkpoints['production.stage'].payload, { stage: 'voice' });
+  assert.equal(controlled?.providerReceipts[0]?.providerTaskId, 'provider-task');
+
+  const resumed = await resumeContentExecutionJobsForRun({ dataStore: store, tenantId: base.tenantId, runId: base.runId, origin: 'workflow_run_pause' });
+  assert.deepEqual(resumed.affectedJobIds, [owned.id]);
+  assert.equal((await readContentExecutionJob(store, base.tenantId, owned.taskId, base.runId))?.status, 'reconciling');
+  assert.equal((await readContentExecutionJob(store, base.tenantId, manuallyPaused.taskId, base.runId))?.status, 'paused');
+  assert.equal((await readContentExecutionJob(store, base.tenantId, reviewPaused.taskId, base.runId))?.status, 'paused');
+  assert.equal((await readContentExecutionJob(store, base.tenantId, blocked.taskId, base.runId))?.status, 'blocked', 'run resume cannot bypass a domain blocker');
+  assert.equal((await readContentExecutionJob(store, base.tenantId, sibling.taskId, sibling.runId))?.status, 'queued');
+});
+
+test('run resume is all-or-none while an original controlled worker is still settling', async () => {
+  const store = new MemoryStore();
+  const base = { dataStore: store, tenantId: 'tenant-handoff', userId: 'user-a', runId: 'run-handoff', taskType: 'social_content_weekly' };
+  const first = await admitContentExecutionJob({ ...base, taskId: 'first' });
+  const second = await admitContentExecutionJob({ ...base, taskId: 'second' });
+  await pauseContentExecutionJobsForRun({ dataStore: store, tenantId: base.tenantId, runId: base.runId, origin: 'workflow_handoff' });
+  await store.update(CONTENT_EXECUTION_JOB_COLLECTION, second.id, { worker_id: 'settling-worker', lease_expires_at: '2026-10-12T00:05:00.000Z' });
+  await assert.rejects(
+    resumeContentExecutionJobsForRun({ dataStore: store, tenantId: base.tenantId, runId: base.runId, origin: 'workflow_handoff' }),
+    /content_execution_original_worker_not_settled/,
+  );
+  assert.equal((await readContentExecutionJob(store, base.tenantId, first.taskId, base.runId))?.status, 'paused', 'preflight prevents a partial resume');
+  assert.equal((await readContentExecutionJob(store, base.tenantId, second.taskId, base.runId))?.status, 'paused');
+  await store.update(CONTENT_EXECUTION_JOB_COLLECTION, second.id, { worker_id: '', lease_expires_at: '' });
+  const resumed = await resumeContentExecutionJobsForRun({ dataStore: store, tenantId: base.tenantId, runId: base.runId, origin: 'workflow_handoff' });
+  assert.deepEqual(resumed.affectedJobIds.sort(), [first.id, second.id].sort());
+  assert.equal((await readContentExecutionJob(store, base.tenantId, first.taskId, base.runId))?.status, 'queued');
+  assert.equal((await readContentExecutionJob(store, base.tenantId, second.taskId, base.runId))?.status, 'queued');
 });
 
 test('versioned checkpoints survive a new execution context and stale workers are fenced', async () => {
@@ -366,6 +503,61 @@ test('customer runtime projection explains capacity, queue position and retry wi
   assert.match(retry?.publicReason || '', /分级重试/);
   assert.equal(JSON.stringify(runtime).includes('private socket address'), false);
   assert.equal(JSON.stringify(runtime).includes('private-worker'), false);
+});
+
+test('active child boundary rejects a completed root group fence but preserves accepted unknown provider receipts', async () => {
+ const store=new MemoryStore();
+ await store.create('starter_social_content_tasks',{id:'root',tenant_id:'tenant-a',task_id:'original',status:'completed',content_order:{contentId:'original',budgetTaskId:'original',cancellation:{operationId:'cancel'}}});
+ await store.create('starter_social_content_tasks',{id:'child',tenant_id:'tenant-a',task_id:'child',status:'running',content_order:{contentId:'original',budgetTaskId:'original'}});
+ await store.create('workflow_runs',{id:'run',tenant_id:'tenant-a',status:'running'});
+ const job=await admitContentExecutionJob({dataStore:store,tenantId:'tenant-a',userId:'owner',taskId:'child',runId:'run',taskType:'social_content_weekly'});
+ await runWithContentExecutionContext({dataStore:store,jobId:job.id,action:async()=>{
+   await assert.rejects(assertCurrentContentExecutionActive(),/content_execution_stopped/);
+   await assert.rejects(recordCurrentContentProviderReceipt({provider:'seedance',requestId:'new',state:'submitting'}),/content_execution_stopped/);
+   await recordCurrentContentProviderReceipt({provider:'seedance',requestId:'old',state:'unknown'});
+ }});
+ const saved=await store.getById<any>(CONTENT_EXECUTION_JOB_COLLECTION,job.id);
+ assert.equal(saved.provider_receipts[0].requestId,'old');assert.equal(saved.provider_receipts[0].state,'unknown');
+});
+test('completed original group cancellation fences queued and unknown revision jobs without deleting evidence', async () => {
+  const store = new MemoryStore();
+  await store.create('starter_social_content_tasks', { id: 'root', tenant_id: 'tenant-a', task_id: 'original', status: 'completed',
+    content_order: { contentId: 'original', budgetTaskId: 'original', cancellation: { operationId: 'cancel-group' } } });
+  await store.create('starter_social_content_tasks', { id: 'child', tenant_id: 'tenant-a', task_id: 'revision', status: 'queued',
+    content_order: { contentId: 'original', budgetTaskId: 'original' } });
+  const job = await admitContentExecutionJob({ dataStore: store, tenantId: 'tenant-a', userId: 'owner', taskId: 'revision', runId: 'run', taskType: 'social_content_weekly' });
+  const receipts = [{ operationId: 'original-paid-request', state: 'unknown', requestId: 'provider-request' }];
+  await store.update(CONTENT_EXECUTION_JOB_COLLECTION, job.id, { status: 'reconciling', provider_receipts: receipts });
+  let executions = 0;
+  const worker = new DurableContentExecutionWorker({ dataStore: store, env: {}, execute: async () => { executions += 1; } });
+  try {
+    await worker.drain();
+    assert.equal(executions, 0);
+    const saved = await store.getById<any>(CONTENT_EXECUTION_JOB_COLLECTION, job.id);
+    assert.deepEqual(saved.provider_receipts, receipts);
+    assert.equal(saved.attempt, 0);
+    await assert.rejects(controlContentExecutionJob({ dataStore: store, tenantId: 'tenant-a', jobId: job.id, action: 'retry' }), /order_cancelled_or_replaced/);
+    assert.equal((await store.getById<any>('starter_social_content_tasks', 'root')).status, 'completed');
+  } finally { worker.stop(); }
+});
+
+test('group fence suppresses a late worker success callback and preserves provider history', async () => {
+  const store = new MemoryStore();
+  const root = { id: 'root', tenant_id: 'tenant-a', task_id: 'original', status: 'completed', content_order: { contentId: 'original', budgetTaskId: 'original' } };
+  await store.create('starter_social_content_tasks', root);
+  await store.create('starter_social_content_tasks', { id: 'child', tenant_id: 'tenant-a', task_id: 'revision', status: 'queued', content_order: { contentId: 'original', budgetTaskId: 'original' } });
+  const job = await admitContentExecutionJob({ dataStore: store, tenantId: 'tenant-a', userId: 'owner', taskId: 'revision', runId: 'run', taskType: 'social_content_weekly' });
+  let callbacks = 0, executed = false;
+  const worker = new DurableContentExecutionWorker({ dataStore: store, env: {}, execute: async () => {
+    executed = true;
+    await store.update('starter_social_content_tasks', 'root', { content_order: { ...root.content_order, cancellation: { operationId: 'cancel-group' } } });
+  }, onSucceeded: async () => { callbacks += 1; } });
+  try {
+    await worker.drain();
+    for (let i = 0; i < 30; i += 1) { await new Promise(resolve => setImmediate(resolve)); if (!(await readContentExecutionJob(store, 'tenant-a', 'revision', 'run'))?.workerId) break; }
+    assert.equal(executed, true); assert.equal(callbacks, 0);
+    assert.notEqual((await readContentExecutionJob(store, 'tenant-a', 'revision', 'run'))?.status, 'succeeded');
+  } finally { worker.stop(); }
 });
 
 test('pause, cancel, resume and manual retry preserve the same durable job identity', async () => {

@@ -1,6 +1,6 @@
 import {SocialContentTaskBudget} from '../lib/socialContentTaskBudget.js';
 import {readGraphContextSnapshot} from './socialContentGraphContextSnapshots.js';
-import {matchesAuthorizedCorrectionContext} from './socialContentProductionGraph.js';
+import {matchesAuthorizedCorrectionContext, socialContentCorrectionRuntimeHash} from './socialContentProductionGraph.js';
 import type { ContentExecutionJob } from '../contentExecution/durableQueue.js';
 import { readContentExecutionJob } from '../contentExecution/durableQueue.js';
 import { graphIdentityHash, graphThreadId, CONTENT_GRAPH_VERSION } from '../contentExecution/langgraphIdentity.js';
@@ -10,6 +10,7 @@ import { loadSocialProductionGraphApproval } from './socialContentProductionGrap
 import { socialJson, socialObject, socialRequestHash, socialText } from './socialContentValidation.js';
 import { withStarter198RunMutationLease } from './runMutationLease.js';
 import { writeExecutionStage } from './socialContentProductionRuntimeSupport.js';
+import { assertProductionGraphCompletionBoundary, PRODUCTION_GRAPH_BRIDGE_CHECKPOINT } from '../contentExecution/productionGraphBridge.js';
 
 /** A graph terminal checkpoint does not replace business completion evidence.
  * Project only after the durable worker settles success; this function is safe
@@ -24,11 +25,17 @@ export async function completeSocialContentGraphRun(repository: Starter198Reposi
   const correctedContext=readGraphContextSnapshot(socialObject(job.checkpoints['social.corrected_executor']?.payload));
   const ledger=new SocialContentTaskBudget(undefined,{authorization:async()=>{throw Error('read_only')},quote:async()=>{throw Error('read_only')},assertCurrent:async()=>{},verifyRejection:async()=>false});
   const grant=binding?.inputHash?ledger.status({tenantId:job.tenantId,taskId:job.taskId,runId:job.runId,planHash:String(binding.inputHash)})?.correctionAuthorization:null;
-  const correctionHash=grant?socialRequestHash({grantHash:grant.recordHash,policyVersion:'bound-voice-measured-captions.v2'}):null;
+  const correctionHash=grant?socialContentCorrectionRuntimeHash(grant.recordHash):null;
   const correctedPayload=socialObject(job.checkpoints['social.corrected_executor']?.payload);
   const validCorrection=!!receipt&&!!correctedContext&&!!grant&&matchesAuthorizedCorrectionContext(job,correctedContext,String(binding?.inputHash),grant.recordHash)&&receipt.correctionHash===grant.recordHash&&receipt.correctionRuntimeHash===correctionHash&&receipt.financialPlanHash===binding?.inputHash;
   const expectedInputHash=validCorrection?socialRequestHash({originalInputHash:correctedPayload?.graphInputHash,correctionHash}):binding?.inputHash;
   const expectedPlanVersion=validCorrection?String(correctedContext!.agentWorkflow!.executionPlan.version):binding?.planVersion;
+  // Historical graph jobs predate the bridge checkpoint and retain their
+  // existing detailed terminal validation below. Every newly admitted graph
+  // job must additionally cross the unified queue/identity boundary.
+  if (job.checkpoints[PRODUCTION_GRAPH_BRIDGE_CHECKPOINT]) assertProductionGraphCompletionBoundary(
+    job, { planVersion: String(expectedPlanVersion), inputHash: String(expectedInputHash) },
+  );
   if (!receipt || checkpoint?.version !== '1' || binding?.executor !== 'langgraph'
     || checkpoint.inputHash !== expectedInputHash || receipt.inputHash !== expectedInputHash
     || receipt.planVersion !== expectedPlanVersion || receipt.graphVersion !== CONTENT_GRAPH_VERSION

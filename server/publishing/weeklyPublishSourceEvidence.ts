@@ -1,4 +1,5 @@
 import {weeklyFormalPublicationBoundary} from './weeklyFormalPublicationBoundary.js';
+import {canonicalWeeklyProductionPublication,weeklyProductionRowMatches} from '../runtime/weeklyContentProductionIdentity.js';
 import type {WeeklyExecutionTask,WeeklyOperatingPackage} from '../../shared/contracts/socialProgram.js';
 import type {StoredPublicationAssignment} from './weeklyLineage.js';
 import {readStarterPublicationPackage} from './starterPublicationPackage.js';
@@ -26,9 +27,10 @@ export async function verifyWeeklyPublishSourceEvidence(store:DataStore,assignme
  if(pub.inventoryReuseRef){const binding=await createWeeklyInventoryReuseService(store).readVerifiedBinding({...target,accountId:assignment.accountId,inputSnapshot:{publicationTask:pkg.socialContentPackage.publicationTasks.find(p=>p.publicationTaskId===target.publicationTaskId)!}});assert(binding.item.source.sourceContentTaskId===artifact.task_id&&binding.item.source.artifactRef.id===artifact.artifact_id&&binding.item.source.artifactHash===artifact.content_hash);}else {
  const {resolveWeeklyCreativeRepairApprovalEvidence}=await import('../socialPrograms/weeklyCreativeRepairApprovalEvidence.js');
  const repair=await resolveWeeklyCreativeRepairApprovalEvidence(store,target);
- assert(frozen.programId===target.programId&&frozen.packageId===target.packageId&&frozen.version===target.packageVersion&&obj(authority.publicationTask).publicationTaskId===target.publicationTaskId&&socialRequestHash({...pub,status:undefined})===socialRequestHash({...obj(authority.publicationTask),status:undefined}));
+ const canonical=canonicalWeeklyProductionPublication(pkg,target.publicationTaskId);
+ assert(frozen.programId===target.programId&&frozen.packageId===target.packageId&&frozen.version===target.packageVersion&&obj(authority.publicationTask).publicationTaskId===canonical.publicationTaskId&&socialRequestHash({...canonical,status:undefined})===socialRequestHash({...obj(authority.publicationTask),status:undefined}));
  if(repair)assert(repair.contentTask.task_id===artifact.task_id&&repair.artifactRef.id===artifact.artifact_id&&repair.artifact.content_hash===artifact.content_hash&&repair.artifact.status==='approved');
- else assert(task.create_idempotency_key===`weekly-production:${target.packageId}:${target.packageVersion}:${target.publicationTaskId}`);
+ else assert(await weeklyProductionRowMatches(store,target,task));
  const {validateWeeklyPublicationAcceptance}=await import('../runtime/socialWeeklyResultValidation.js');
  const approvalScope={...target,accountId:assignment.accountId} as WeeklyExecutionTask;
  await validateWeeklyPublicationAcceptance(store,approvalScope,String(production.productionResultId));

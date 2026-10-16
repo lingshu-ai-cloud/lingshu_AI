@@ -41,15 +41,15 @@ export function createProductionBudgetRuntimeReaders(input: {
                 return {provider:p.provider,model:p.model,accountRef:productionBillingAccountRef(p.provider,p.endpoint,p.accountKeyHash),routeEvidenceRef:'studio-native:'+paidProductionHash(p),usageBoundRef:'actual-native-prepared-text:'+paidProductionHash({text:p.texts[index],voiceId:p.voiceId}),maximumAttempts:1,maximumUnits:p.provider==='heygen'?{audioSeconds:frozenTrackSeconds*2}:{characters:nativeVoiceBillableCharacters(p.texts[index])}} satisfies BoundPaidRoute;
             }
             if(requirement.stage==='voice_alignment'&&voicePlan?.asrConfigured) {
-                let b:ReturnType<typeof getQwenProviderBinding>;try{b=getQwenProviderBinding();}catch{return null;}
-                const base=(process.env.DASHSCOPE_ASR_BASE_URL||'https://dashscope.aliyuncs.com/api/v1').replace(/\/$/,'');
+                let b:ReturnType<typeof getQwenProviderBinding>;try{b=getQwenProviderBinding(env);}catch{return null;}
+                const base=(env.DASHSCOPE_ASR_BASE_URL||'https://dashscope.aliyuncs.com/api/v1').replace(/\/$/,'');
                 if(base!=='https://dashscope.aliyuncs.com/api/v1')return null;
                 const endpoint=base+'/services/audio/asr/transcription';
                 return {provider:'qwen',model:'qwen3-asr-flash-filetrans',accountRef:productionBillingAccountRef('qwen',endpoint,b.credentialSha256),routeEvidenceRef:'sdk-native-alignment:'+paidProductionHash({endpoint,credentialSha256:b.credentialSha256}),usageBoundRef:`frozen-native-track-${frozenTrackSeconds}-seconds`,maximumAttempts:1,maximumUnits:{audioSeconds:frozenTrackSeconds}} satisfies BoundPaidRoute;
             }
             if(requirement.stage==='voice_asr'&&voicePlan?.asrConfigured) {
-                let binding:ReturnType<typeof getQwenProviderBinding>;try{binding=getQwenProviderBinding();}catch{return null;}
-                const model=process.env.QWEN_ASR_MODEL||'qwen3-asr-flash';
+                let binding:ReturnType<typeof getQwenProviderBinding>;try{binding=getQwenProviderBinding(env);}catch{return null;}
+                const model=env.QWEN_ASR_MODEL||'qwen3-asr-flash';
                 if(model!=='qwen3-asr-flash'||binding.baseUrl!=='https://dashscope.aliyuncs.com/compatible-mode/v1')return null;
                 return {provider:'qwen',model,accountRef:productionBillingAccountRef('qwen',binding.baseUrl,binding.credentialSha256),routeEvidenceRef:'sdk-native-asr:'+paidProductionHash({binding,frozenTrackSeconds}),usageBoundRef:`frozen-native-track-${frozenTrackSeconds}-seconds`,maximumAttempts:1,maximumUnits:{audioSeconds:frozenTrackSeconds}} satisfies BoundPaidRoute;
             }

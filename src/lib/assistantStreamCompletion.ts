@@ -15,6 +15,7 @@ export class AssistantStreamCompletion {
     if (!this.done) throw new Error('回答传输中断，已保留收到的部分。请发送“继续”或重新提问。');
   }
 }
+
 export function appendAssistantStreamFailure(content: string, message: string) {
   const fences = content.split('\n').filter(line => /^\s*```/.test(line)).length;
   return `${content}${fences % 2 ? '\n```' : ''}\n\n${message}`;

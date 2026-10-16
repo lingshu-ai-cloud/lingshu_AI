@@ -1,5 +1,7 @@
 import type { WeeklyExecutionTask, SocialWeeklyPublicationTask } from '../../shared/contracts/socialProgram.js';
 import { SocialProgramError } from './service.js';
+import type {DataStore} from '../storage/datastore.js';
+import type {WeeklyOperatingPackage} from '../../shared/contracts/socialProgram.js';
 
 export function publicationInstant(window: string | null | undefined): number | null {
   if (!window || !/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(?::\d{2}(?:\.\d+)?)?(?:Z|[+-]\d{2}:\d{2})$/.test(window)) return null;
@@ -16,7 +18,7 @@ export function publicationInstant(window: string | null | undefined): number | 
  * publication instants remain unknown rather than falling back to week end. */
 export function publicationPreparationDeadline(window: string | null | undefined): string | null {
   const instant = publicationInstant(window);
-  return instant === null ? null : new Date(instant - 86_400_000).toISOString();
+  return instant === null ? null : new Date(instant - 30 * 60_000).toISOString();
 }
 
 /** Attach latest feasible deadlines without disguising forward-plan capacity or elapsed time. */
@@ -40,6 +42,16 @@ export function applyPublicationDeadlines(tasks: WeeklyExecutionTask[], publicat
   tasks.forEach(visit);
   const invalid = new Set<string>();
   const setEarlier = (id: string, deadline: number) => latestFinish.set(id, Math.min(latestFinish.get(id) ?? Infinity, deadline));
+  // Always-on customer work has its own operating-day boundary, not a content
+  // delivery dependency. Without it these independent leaf tasks make capacity
+  // confirmation impossible (precise_deadline_required).
+  for(const task of tasks){
+    if(!['customer_channel_readiness','customer_inquiry_handoff'].includes(task.schedule.stepKind))continue;
+    const day=task.inputSnapshot?.calendarAssignmentDate;
+    if(typeof day!=='string'||!/^\d{4}-\d{2}-\d{2}$/.test(day))continue;
+    const start=publicationInstant(`${day}T00:00:00+08:00`);
+    if(start!==null)setEarlier(task.taskId,start+24*60*60_000);
+  }
   for (const publication of publications) {
     const publishing = tasks.find(task => task.publicationTaskId === publication.publicationTaskId && task.schedule.stepKind === 'publishing');
     if (!publishing) continue;
@@ -57,8 +69,9 @@ export function applyPublicationDeadlines(tasks: WeeklyExecutionTask[], publicat
       continue;
     }
     setEarlier(publishing.taskId, instant + publishing.schedule.estimatedDurationMinutes * 60_000);
-    // Conservative rolling 24h lead guarantees readiness on the preceding local day.
-    for (const parent of publishing.dependsOnTaskIds) setEarlier(parent, instant - 86_400_000);
+    // Daily rolling production keeps the final acceptance buffer explicit
+    // without forcing every item to be completed on the preceding day.
+    for (const parent of publishing.dependsOnTaskIds) setEarlier(parent, instant - 30 * 60_000);
   }
   // Iterate independently of input order; each predecessor must finish before successor starts.
   for (let pass = 0; pass < tasks.length; pass++) {
@@ -84,4 +97,25 @@ export function applyPublicationDeadlines(tasks: WeeklyExecutionTask[], publicat
       planningRisks: issues,
     } };
   });
+}
+
+/** Only distribution deadlines use a recovery window. Original publication
+ * dates remain the identity for collection, production, assignments and costs. */
+export async function applyStoredPublicationRecoveryDeadlines(store:DataStore,tenantId:string,pkg:WeeklyOperatingPackage,tasks:WeeklyExecutionTask[]):Promise<WeeklyExecutionTask[]>{
+ const {resolveWeeklyPublicationSchedule}=await import('./weeklyPublicationRecoverySchedule.js');
+ const resolved=await Promise.all(pkg.socialContentPackage.publicationTasks.map(async pub=>({pub,schedule:await resolveWeeklyPublicationSchedule(store,tenantId,pkg,pub)})));
+ if(!resolved.some(row=>row.schedule.recoveryRef))return tasks;
+ const bound=await store.list<{id:string;task_id?:string}>('social_weekly_preproduction_jobs',{where:{tenant_id:tenantId,program_id:pkg.programId,package_id:pkg.packageId,package_version:pkg.version},perPage:1000});
+ if(bound.totalItems!==bound.items.length)throw new SocialProgramError('weekly_publication_recovery_preproduction_scan_truncated',409,'已有采集绑定无法完整核验。');
+ const boundIds=new Set(bound.items.map(row=>row.task_id));
+ const projected=applyPublicationDeadlines(tasks,resolved.map(({pub,schedule})=>({...pub,publishWindow:schedule.plannedSendAt})));
+ return projected.map(task=>{
+  const original=tasks.find(t=>t.taskId===task.taskId)!;
+  // Never reinterpret actual timestamps, leases, work or receipt history.
+  if(boundIds.has(original.taskId)||original.attempt||original.lease||original.resultRefs.length||original.schedule.actualStartedAt||original.schedule.actualFinishedAt||original.productionProgress)return original;
+  const recovery=resolved.find(row=>row.pub.publicationTaskId===task.publicationTaskId)?.schedule;
+  if(task.schedule.stepKind!=='publishing'||!recovery?.recoveryRef||!recovery.plannedSendAt)return task;
+  const start=publicationInstant(recovery.plannedSendAt)!;
+  return {...task,inputSnapshot:{...task.inputSnapshot,publicationRecoveryScheduleRef:recovery.recoveryRef},upstreamVersionRefs:[...task.upstreamVersionRefs.filter(ref=>ref.type!=='weekly_publication_recovery_schedule'),recovery.recoveryRef],nextAttemptAt:new Date(start).toISOString(),schedule:{...task.schedule,estimatedStartAt:new Date(start).toISOString(),estimatedFinishAt:new Date(start+task.schedule.estimatedDurationMinutes*60000).toISOString()}};
+ });
 }

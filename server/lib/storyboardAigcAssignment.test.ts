@@ -60,3 +60,22 @@ assert.equal(storyboardAigcAssignmentIssues({ ...autoInput, materials: [autoFram
 assert.equal(storyboardAigcAssignmentIssues({ ...autoInput, tenantId: 'foreign-tenant' }).length, 1);
 assert.equal(storyboardAigcAssignmentIssues({ ...autoInput, materials: [{ ...autoFrame, provenance: { ...autoFrame.provenance, projectShotFingerprint: 'stale' } }, autoVideo] }).length, 1);
 assert.equal(storyboardAigcAssignmentIssues({ ...autoInput, materials: [{ ...autoFrame, provenance: { ...autoFrame.provenance, fingerprint: 'wrong-hash' } }, autoVideo] }).length, 1);
+
+const fallbackShotSpec = { ...shotSpec, mode: 'free_creation', constraints: ['product_identity'] };
+const fallbackSpec = { ...spec, storyboardSourcePlans: { 'shot-a': { productIds: ['product-a'], mode: 'ai', fallbackMode: 'enterprise_product_display' } } };
+const fallbackFrame = { ...firstFrame, provenance: { ...firstFrame.provenance, confirmed: false, mode: 'free_creation',
+  projectShotFingerprint: storyboardProjectShotInput(fallbackSpec, 'shot-a')!.fingerprint,
+  firstFrameQualityState: 'evaluated', firstFrameQuality: buildStoryboardQaReport({ ...qaBase, phase: 'first_frame', observations: provenObservations }), shotSpec: fallbackShotSpec } };
+const fallbackVideo = { ...video, provenance: { ...video.provenance,
+  storyboardQualityReport: buildStoryboardQaReport({ ...qaBase, phase: 'video', observations: provenObservations }), shotSpec: fallbackShotSpec } };
+assert.deepEqual(storyboardAigcAssignmentIssues({ ...input, spec: fallbackSpec, materials: [fallbackFrame, fallbackVideo] }), [],
+  'server-owned enterprise-product fallback accepts complete frame and video QA without a human review click');
+const controlledFrame = { ...fallbackFrame, sourceType: 'storyboard-controlled-product-source-frame' };
+const controlledVideo = { ...fallbackVideo, sourceType: 'controlled-product-image-animation', provenance: {
+  ...fallbackVideo.provenance, controlledProductImageAnimation: true } };
+assert.deepEqual(storyboardAigcAssignmentIssues({ ...input, spec: fallbackSpec, materials: [controlledFrame, controlledVideo] }), [],
+  'a deterministic authorized product-image animation still requires and can satisfy complete managed QA');
+assert.equal(storyboardAigcAssignmentIssues({ ...input, spec: fallbackSpec, materials: [fallbackFrame, controlledVideo] }).length, 1,
+  'controlled motion provenance cannot be paired with a generative first frame');
+assert.equal(storyboardAigcAssignmentIssues({ ...input, spec: { ...fallbackSpec, storyboardSourcePlans: { 'shot-a': { mode: 'ai' } } }, materials: [fallbackFrame, fallbackVideo] }).length, 1,
+  'ordinary free creation cannot acquire managed fallback admission');

@@ -18,9 +18,19 @@ import {createCustomerManualTakeoverService} from '../customerService/customerMa
 import {createCustomerManualTakeoverRouter} from './customerManualTakeover.js';
 import { customerServicePolicy, customerServiceStatus, readTenantEnterpriseProfile } from './enterprise.js';
 import { readCustomerMessagingAuthorization } from '../digitalEmployees/customerMessagingPolicy.js';
+import { readHistoricalCustomers } from '../customerService/historicalConversations.js';
+import { appendLocalCustomerMessage, readLocalCustomerConversations } from '../customerService/localConversations.js';
 
 export const customerSuggestionsRouter = Router();
 customerSuggestionsRouter.use(requireAuth);
+// Archived identities must never enter live mutation or channel-send handlers.
+customerSuggestionsRouter.use('/:id', (req, res, next) => {
+  if (!['GET', 'HEAD', 'OPTIONS'].includes(req.method) && String(req.params.id).startsWith('history_')) {
+    res.status(403).json({ error: 'historical_conversation_read_only' });
+    return;
+  }
+  next();
+});
 
 const manualTakeoverService=createCustomerManualTakeoverService(store);
 
@@ -53,9 +63,12 @@ customerSuggestionsRouter.get('/', requireAuth, async (req, res) => {
     res.json({ items: [], source });
     return;
   }
-  const items = source === 'messenger' ? (await readAuthorizedMessengerCustomers(tenantId))
+  const liveItems = source === 'messenger' ? (await readAuthorizedMessengerCustomers(tenantId))
     : source === 'instagram' ? getInstagramCustomers(tenantId)
       : [...(await readAuthorizedMessengerCustomers(tenantId)), ...getInstagramCustomers(tenantId)].sort((a, b) => b.lastActiveAt - a.lastActiveAt);
+  const localItems = source ? [] : readLocalCustomerConversations(tenantId).filter(local => !liveItems.some(live => live.id === local.id));
+  const items = source ? liveItems : [...liveItems, ...localItems, ...readHistoricalCustomers(tenantId)]
+    .sort((a, b) => Number(b.lastActiveAt || 0) - Number(a.lastActiveAt || 0));
   res.json({ items, source: source || 'all' });
 });
 
@@ -183,6 +196,11 @@ customerSuggestionsRouter.post('/:id/outbox', requireAuth, async (req, res) => {
   if(!/^[a-zA-Z0-9_-]{8,120}$/.test(requestId)){res.status(400).json({error:'channel_send_request_id_required'});return;}
   if (!customerId || !body) {
     res.status(400).json({ error: 'customer_id_and_body_required' });
+    return;
+  }
+  const localReceipt = appendLocalCustomerMessage(tenantId, customerId, body, requestId);
+  if (localReceipt) {
+    res.json({ ok: true, localPreview: true, outboxId: localReceipt.id, requestId, status: 'sent', sentAt: new Date(Number(localReceipt.timestamp)).toISOString() });
     return;
   }
   const channel = await customerChannel(tenantId, customerId);

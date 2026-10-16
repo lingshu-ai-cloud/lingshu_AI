@@ -9,7 +9,6 @@ import {
   RefreshCw,
   Send,
   ShieldCheck,
-  UserRoundCheck,
 } from 'lucide-react';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
@@ -29,6 +28,8 @@ import {
   type WeeklyWorkUpdatedDetail,
 } from '../../lib/weeklyWorkEvents';
 import { digitalEmployeeApi } from '../../lib/digitalEmployeeApi';
+import { PRESENTER_ASSETS_UPDATED_EVENT } from '../../lib/presenterAssetsUpdated';
+import { subscribeAssistantStateInvalidations } from '../../lib/assistantStateInvalidation';
 import { normalizeAssistantDecisionExecutionReceipt } from '../../../shared/contracts/assistantDecisionCenter';
 import { LsBrandAction } from '../ui/LsExperiencePrimitives';
 import './assistantDecisionCenter.css';
@@ -52,7 +53,8 @@ const actionIcon: Partial<Record<AssistantDecisionActionId, typeof ArrowRight>> 
   adjust_plan: CalendarRange,
   approve: CheckCircle2,
   reject: RefreshCw,
-  take_over: UserRoundCheck,
+  retry_task: RefreshCw,
+  replan_task: CalendarRange,
   open_workspace: ArrowRight,
 };
 
@@ -126,11 +128,11 @@ export function assistantDecisionExecutionFeedback(
 
 function dispatchDeepLink(link?: AssistantDecisionDeepLink): void {
   if (!link || typeof window === 'undefined') return;
-  const opensEnterprisePresenters = link.page === 'enterprise'
-    && link.businessRef?.enterpriseView === 'presenters';
-  if (opensEnterprisePresenters) {
+  const opensPresenterOnboarding = link.page === 'digitalEmployees'
+    && link.businessRef?.taskKey === 'presenter_setup_required';
+  if (opensPresenterOnboarding) {
     try {
-      window.localStorage.setItem('lingshu:enterprise:initial-view', 'presenters');
+      window.sessionStorage.setItem('lingshu:open-digital-employee-guide', 'presenter');
     } catch {
       /* The live event below still handles browsers with storage disabled. */
     }
@@ -141,13 +143,13 @@ function dispatchDeepLink(link?: AssistantDecisionDeepLink): void {
     ...(link.taskId ? { workflowTaskId: link.taskId } : {}),
   };
   window.dispatchEvent(new CustomEvent('lingshu:navigate', { detail }));
-  if (opensEnterprisePresenters) {
-    const revealPresenters = () => window.dispatchEvent(new CustomEvent(
-      'lingshu:enterprise-view',
-      { detail: { view: 'presenters' } },
+  if (opensPresenterOnboarding) {
+    const openGuide = () => window.dispatchEvent(new CustomEvent(
+      'lingshu:open-digital-employee-guide',
+      { detail: { step: 'presenter' } },
     ));
-    revealPresenters();
-    window.requestAnimationFrame?.(revealPresenters);
+    openGuide();
+    window.requestAnimationFrame?.(openGuide);
   }
 }
 
@@ -397,7 +399,24 @@ export default function AssistantDecisionCenter({
   }, [active, goalId, load]);
 
   useEffect(() => {
-    if (!active || variant !== 'summary') return;
+    if (!active) return;
+    const refreshPresenterDecision = () => {
+      if (actionPending.current) return;
+      void load(undefined, true);
+    };
+    window.addEventListener(PRESENTER_ASSETS_UPDATED_EVENT, refreshPresenterDecision);
+    return () => window.removeEventListener(PRESENTER_ASSETS_UPDATED_EVENT, refreshPresenterDecision);
+  }, [active, load]);
+
+  useEffect(() => {
+    if (!active) return;
+    return subscribeAssistantStateInvalidations(() => {
+      if (!actionPending.current) void load(undefined, true);
+    });
+  }, [active, load]);
+
+  useEffect(() => {
+    if (!active) return;
     const refreshVisibleFeed = () => {
       if (document.visibilityState === 'hidden' || actionPending.current) return;
       void load(undefined, true);
@@ -405,7 +424,7 @@ export default function AssistantDecisionCenter({
     const handleVisibility = () => {
       if (document.visibilityState === 'visible') refreshVisibleFeed();
     };
-    const interval = window.setInterval(refreshVisibleFeed, 15_000);
+    const interval = window.setInterval(refreshVisibleFeed, variant === 'summary' ? 15_000 : 5_000);
     window.addEventListener('focus', refreshVisibleFeed);
     document.addEventListener('visibilitychange', handleVisibility);
     return () => {
@@ -432,6 +451,28 @@ export default function AssistantDecisionCenter({
     reconciliationInFlight.current = true;
     reconciliationAttempts.current += 1;
     try {
+      if (pending.action.id !== 'approve_and_start') {
+        const latestFeed = await client.feed({ page, goalId });
+        if (!mounted.current) return;
+        const originalStillPending = latestFeed.items.some(item => (
+          item.id === pending.card.id
+          && item.subject.version === pending.card.subject.version
+        ));
+        if (originalStillPending) return;
+        const response: AssistantDecisionActionResponse = {
+          ...latestFeed,
+          ok: true,
+          outcome: 'completed',
+        };
+        requestSequence.current += 1;
+        setLoading(false);
+        setFeed(latestFeed);
+        setError('');
+        setStartReconciliation(null);
+        void message.success(pending.action.id === 'retry_task' ? '重试指令已生效，任务正在恢复' : '重新规划已生效');
+        onActionResult?.({ action: pending.action, card: pending.card, response });
+        return;
+      }
       const overview = await digitalEmployeeApi.overview(pending.card.subject.id);
       if (!mounted.current) return;
       const run = overview.run;
@@ -576,17 +617,20 @@ export default function AssistantDecisionCenter({
         await load();
       } else {
         const failure = reason instanceof Error ? reason.message : '操作失败，请重试';
-        const shouldReconcile = action.id === 'approve_and_start'
+        const recoverableCommand = ['approve_and_start', 'retry_task', 'replan_task'].includes(action.id);
+        const shouldReconcile = recoverableCommand
           && (reason instanceof TypeError
             || (reason instanceof AssistantDecisionApiError
               && (reason.status >= 500
                 || reason.code === 'decision_timeout'
                 || reason.code === 'plan_start_unconfirmed')));
         const visibleFailure = shouldReconcile
-          ? `${failure}；结果尚未确认，正在核对真实运行状态，请勿重复提交。`
+          ? action.id === 'approve_and_start'
+            ? `${failure}；结果尚未确认，正在核对真实运行状态，请勿重复提交。`
+            : '恢复指令已提交，正在等待当前步骤安全结束并核对最新状态；请勿重复提交。'
           : failure;
         setError(visibleFailure);
-        if (action.id === 'approve_and_start') {
+        if (recoverableCommand) {
           void message.open({
             key: feedbackKey,
             type: shouldReconcile ? 'warning' : 'error',
@@ -619,7 +663,7 @@ export default function AssistantDecisionCenter({
         {error ? (
           <Alert
             className="assistant-decision-center__error assistant-decision-center__error--summary"
-            type="error"
+            type={startReconciliation ? 'warning' : 'error'}
             showIcon
             message={error}
             action={<Button disabled={loading} onClick={() => void load()} icon={<RefreshCw size={14} />}>重新加载</Button>}
@@ -646,9 +690,9 @@ export default function AssistantDecisionCenter({
       ) : null}
 
       {error ? (
-        <Alert
+          <Alert
           className="assistant-decision-center__error"
-          type="error"
+            type={startReconciliation ? 'warning' : 'error'}
           showIcon
           message={error}
           action={<Button disabled={loading || Boolean(busyAction)} onClick={() => void load()} icon={<RefreshCw size={14} />}>重新加载</Button>}

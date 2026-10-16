@@ -3,7 +3,17 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { LangGraphTestStore } from '../../scripts/langgraphTestStore.js';
+import { LangGraphTestStore as SequentialDiskStore } from '../../scripts/langgraphTestStore.js';
+// This suite runs each isolated disk store in one process; its synchronous
+// compare-and-write is atomic within this controlled fixture only. Do not
+// advertise the sequential subprocess helper as a production CAS backend.
+class LangGraphTestStore extends SequentialDiskStore {
+  supportsAtomicCompareAndSwap(){return true;}
+  override async create<T = import('../storage/datastore.js').Record_>(collection:string,data:Record<string,unknown>):Promise<T|null>{
+    if(collection===STARTER_COLLECTIONS.access)await super.create('social_programs',{id:`program-${data.tenant_id}`,tenant_id:data.tenant_id,program_id:`program-${data.tenant_id}`});
+    return super.create<T>(collection,data);
+  }
+}
 import { createStarter198Repository, STARTER_COLLECTIONS } from './repository.js';
 import { STARTER_198_CAPABILITIES } from '../../shared/contracts/starter198.js';
 import { STARTER_198_DEFAULT_LIMITS } from './provisioning.js';
@@ -95,6 +105,15 @@ test('default presenter route prices static review work before preparation and r
   const readers=createProductionBudgetRuntimeReaders({tenantId:f.tenantId,requiresMeasuredAlignment:true,env:{...process.env,MINIMAX_API_KEY:'',MINIMAX_API_TOKEN:''}});
   const admissionOrder:string[]=[];
   const staticTariff=async(intent:any)=>['first_frame','first_frame_qa'].includes(intent.stage)?{provider:intent.provider,model:intent.model,accountRef:intent.accountRef,stage:intent.stage,currency:'CNY' as const,verifiedAccountPrice:true,pricingBasis:'negotiated_verified_account' as const,evidenceRef:`controlled:${intent.operationId}`,checkedAt:new Date(Date.now()-1000).toISOString(),validUntil:new Date(Date.now()+3600000).toISOString(),meters:Object.fromEntries(Object.keys(intent.maximumUnits).map(key=>[key,{priceCny:key==='outputImages'?.12:.000001,unitsPerPrice:1,minimumUnits:0,increment:1}]))}:null;
+  const quoteRoot=path.join(f.root,'readonly-task-budget');
+  const quoted=await prepareSocialContentProductionBudget({...f,supplyPlan,assets:[],quoteOnly:true,ports:{...readers,ledgerRoot:quoteRoot,readTariff:staticTariff,
+    preparePresenterFirstFrameReviews:async()=>{throw Error('readonly_quote_must_not_generate');},readConfirmedPresenterFirstFrame:async()=>{throw Error('readonly_quote_must_not_confirm');}}});
+  assert.equal(quoted.status,'quoted');assert.ok(quoted.status==='quoted');
+  assert.ok(quoted.items.length>0&&quoted.items.every(item=>item.quoteRef));
+  assert.ok(quoted.wholeTaskUpperBoundCny>0);assert.equal(quoted.maximumCny,10);
+  assert.equal(fs.existsSync(quoteRoot),false);
+  const quoteJob=await f.store.getById<any>('content_execution_jobs',f.job.id);
+  assert.equal(Boolean(quoteJob?.checkpoints?.['social.whole_film_budget']),false);
   await assert.rejects(prepareSocialContentProductionBudget({...f,supplyPlan,assets:[],ports:{...readers,ledgerRoot:path.join(f.root,'unapproved-task-budget'),
     preparePresenterFirstFrameReviews:async({groups})=>{admissionOrder.push(`prepare:${groups.length}`);},
     readConfirmedPresenterFirstFrame:async()=>{admissionOrder.push('confirm');return null;},

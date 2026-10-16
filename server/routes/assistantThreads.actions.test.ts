@@ -205,7 +205,7 @@ test('assistant thread state persists bounded task cards and rejects malformed o
     taskId: 'run:one',
     title: '确认本周计划',
     conclusion: '四个平台将稳定更新。',
-    details: ['5 条母版', '18 条平台版本', '预算 50–75 元'],
+    details: ['5 条独立视频', '18 条平台版本', '预算 50–75 元'],
     status: 'approval',
     notificationReason: 'approval_required',
     primaryAction: {

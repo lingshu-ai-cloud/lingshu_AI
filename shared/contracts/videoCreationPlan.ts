@@ -11,6 +11,8 @@ export interface VideoCreationPlan {
   masterContentId?: string;
   adaptationMode?: 'master' | 'platform_light';
   plannedPublishDate?: string;
+  /** Explicit publish instant. The calendar defaults generated plans to 18:00 Asia/Shanghai. */
+  plannedPublishAt?: string;
   buyerProblem?: string;
   evidenceRequirement?: string;
   directorStatus?: 'candidate' | 'script_draft' | 'script_approved' | 'in_production' | 'review' | 'approved' | 'blocked';
@@ -18,7 +20,7 @@ export interface VideoCreationPlan {
   estimatedCostRange?: {
     minCny: number;
     maxCny: number;
-    basis: 'blended_master' | 'included_platform_adaptation';
+    basis: 'blended_master' | 'included_platform_adaptation' | 'verified_storyboard_provider_envelope';
   };
   /** Frozen publication copy produced together with the video brief. */
   publication?: {
@@ -170,6 +172,7 @@ export function normalizeVideoPlan(value: Partial<VideoCreationPlan>): VideoCrea
     masterContentId: String(value.masterContentId || '').trim().slice(0, 120),
     adaptationMode: value.adaptationMode === 'platform_light' ? 'platform_light' : 'master',
     plannedPublishDate: /^\d{4}-\d{2}-\d{2}$/.test(String(value.plannedPublishDate || '')) ? String(value.plannedPublishDate) : '',
+    plannedPublishAt: /(?:Z|[+-]\d{2}:\d{2})$/.test(String(value.plannedPublishAt || '')) && Number.isFinite(Date.parse(String(value.plannedPublishAt))) ? String(value.plannedPublishAt) : '',
     buyerProblem: String(value.buyerProblem || '').trim().slice(0, 500),
     evidenceRequirement: String(value.evidenceRequirement || '').trim().slice(0, 1000),
     directorStatus: ['candidate', 'script_draft', 'script_approved', 'in_production', 'review', 'approved', 'blocked'].includes(String(value.directorStatus)) ? value.directorStatus : 'candidate',
@@ -177,7 +180,11 @@ export function normalizeVideoPlan(value: Partial<VideoCreationPlan>): VideoCrea
     ...(value.estimatedCostRange && typeof value.estimatedCostRange === 'object' ? { estimatedCostRange: {
       minCny: Math.max(0, Math.round((Number(value.estimatedCostRange.minCny) || 0) * 100) / 100),
       maxCny: Math.max(0, Math.round((Number(value.estimatedCostRange.maxCny) || 0) * 100) / 100),
-      basis: value.estimatedCostRange.basis === 'included_platform_adaptation' ? 'included_platform_adaptation' as const : 'blended_master' as const,
+      basis: value.estimatedCostRange.basis === 'included_platform_adaptation'
+        ? 'included_platform_adaptation' as const
+        : value.estimatedCostRange.basis === 'verified_storyboard_provider_envelope'
+          ? 'verified_storyboard_provider_envelope' as const
+          : 'blended_master' as const,
     } } : {}),
     ...(value.publication && typeof value.publication === 'object' ? { publication: {
       title: String(value.publication.title || '').trim().slice(0, 300),

@@ -42,7 +42,7 @@ export default function WeeklyPlanCalendar({ startsAt, endsAt, plans, masterPlan
       accountId: account?.accountId, accountName: account?.accountLabel || '待绑定账号', platform: plan.platform,
       thumbnailUrl: referenceThumbnail(master), sourceId: master.referenceId,
       ownerAgent: '内容 Agent', costEstimate: master.estimatedCost,
-      description: `${master.productName || '待选择产品'} · ${plan.productionRole === 'platform_adaptation' ? '平台适配' : '原创母版'}`,
+      description: `${master.productName || '待选择产品'} · ${plan.productionRole === 'platform_adaptation' ? '已有视频发布适配' : '独立制作视频'}`,
       data: { plan, master },
     };
   });
@@ -52,10 +52,10 @@ export default function WeeklyPlanCalendar({ startsAt, endsAt, plans, masterPlan
       {missingReferences > 0 && onRefreshReferences && <Button disabled={busy} icon={<RefreshCcw size={14}/>} onClick={onRefreshReferences}>补齐 {missingReferences} 条爆款</Button>}
     </header>
     <details className="border-b border-border bg-surface-2">
-      <summary className="cursor-pointer px-4 py-3 text-sm text-text-secondary">制作产品：{selectedProducts.join('、') || '待选择'} · 调整母版产品</summary>
+      <summary className="cursor-pointer px-4 py-3 text-sm text-text-secondary">制作产品：{selectedProducts.join('、') || '待选择'} · 调整每条视频的产品</summary>
       <div className="grid gap-3 border-t border-border p-4 sm:grid-cols-2 lg:grid-cols-3">
-        {masterPlans.map((plan, index) => <label key={familyKey(plan) || index} className="min-w-0 text-xs text-text-secondary">母版 {index + 1}
-          <Select className="mt-1 w-full" aria-label={`母版 ${index + 1} 的产品`} value={plan.productName || undefined} disabled={busy} placeholder="请选择产品" onChange={value => onChangeProduct(index, value)} options={products.map(product => ({ value: product.name, label: `${product.name} · ${product.materialIds.length} 项素材` }))}/>
+        {masterPlans.map((plan, index) => <label key={familyKey(plan) || index} className="min-w-0 text-xs text-text-secondary">视频 {index + 1}
+          <Select className="mt-1 w-full" aria-label={`视频 ${index + 1} 的产品`} value={plan.productName || undefined} disabled={busy} placeholder="请选择产品" onChange={value => onChangeProduct(index, value)} options={products.map(product => ({ value: product.name, label: `${product.name} · ${product.materialIds.length} 项素材` }))}/>
         </label>)}
       </div>
     </details>

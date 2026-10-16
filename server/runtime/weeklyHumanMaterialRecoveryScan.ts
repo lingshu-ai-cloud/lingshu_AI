@@ -1,3 +1,4 @@
+import {weeklyScopeMatches,type WeeklyScanScope} from './weeklyScanScope.js';
 import type {DataStore,Record_} from '../storage/datastore.js';
 import type {WeeklyExecutionTask,WeeklyOperatingPackage} from '../../shared/contracts/socialProgram.js';
 import type {WeeklyMaterialPorts} from '../socialPrograms/weeklyMaterialRequests.js';
@@ -12,11 +13,11 @@ async function rows(store:DataStore,collection:string,where:Record<string,string
 function identity(task:WeeklyExecutionTask,requirement:unknown){return socialRequestHash({consumer:supplementConsumerHash(task),upstreamVersionRefs:task.upstreamVersionRefs,dueAt:task.schedule.latestStartAt||task.schedule.estimatedStartAt,responsibleActor:task.schedule.responsibleActor,requirement});}
 async function writeOnce(store:DataStore,id:string,tenantId:string,exceptionId:string,version:number,value:Record<string,unknown>){const sealed={...value,recordHash:socialRequestHash(value)};const verify=(row:Record_|null)=>{const p=row&&parsed<Record<string,unknown>>(row.payload);if(!row||row.id!==id||row.tenant_id!==tenantId||row.request_id!==exceptionId||row.version!==version||!p)throw Error('human_material_receipt_invalid');const {recordHash,...body}=p;if(recordHash!==socialRequestHash(body))throw Error('human_material_receipt_invalid');const {createdAt:_old,...semantic}=body;const {createdAt:_new,...expected}=value;if(socialRequestHash(semantic)!==socialRequestHash(expected))throw Error('human_material_receipt_conflict');return p;};const old=await store.getById<Record_>(SUPPLEMENT_EVENTS,id);if(old)return verify(old);try{const created=await store.create<Record_>(SUPPLEMENT_EVENTS,{id,tenant_id:tenantId,request_id:exceptionId,version,payload:sealed});if(created)return verify(created);}catch{/* Unknown write outcome: exact readback only, never another create. */}return verify(await store.getById<Record_>(SUPPLEMENT_EVENTS,id));}
 /** Durable, per-consumer recovery. It never adds consumers, approves material or completes production. */
-export async function runWeeklyHumanMaterialRecoveryScan(input:{store:DataStore;tenantIds?:string[];materialPorts?:WeeklyMaterialPorts;now?:Date}){
+export async function runWeeklyHumanMaterialRecoveryScan(input:{store:DataStore;tenantIds?:string[];materialPorts?:WeeklyMaterialPorts;now?:Date;scope?:WeeklyScanScope}){
  const report={status:'no_data' as 'no_data'|'processed',examined:0,materialized:0,resumed:0,blocked:0,failed:0};
  const admission=createWeeklyRequiredMaterialAdmission(input.store,input.materialPorts);
  for(const row of await rows(input.store,'social_weekly_execution_tasks',{})){
-  const task=parsed<WeeklyExecutionTask>(row.payload);if(!task||input.tenantIds&&!input.tenantIds.includes(task.tenantId)||task.status!=='blocked'||!reasons.has(task.lastError?.code??'')||task.schedule?.stepKind!=='material_readiness')continue;
+  const task=parsed<WeeklyExecutionTask>(row.payload);if(!weeklyScopeMatches(input.scope,task))continue;if(!task||input.tenantIds&&!input.tenantIds.includes(task.tenantId)||task.status!=='blocked'||!reasons.has(task.lastError?.code??'')||task.schedule?.stepKind!=='material_readiness')continue;
   report.status='processed';report.examined++;
   try{await withExecutionPackageGate(input.store,task,async assert=>{
    const fresh=await rows(input.store,'social_weekly_execution_tasks',{tenant_id:task.tenantId,program_id:task.programId,task_id:task.taskId});

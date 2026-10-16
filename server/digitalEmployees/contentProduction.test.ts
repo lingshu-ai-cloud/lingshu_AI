@@ -3,6 +3,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { execFileSync } from 'node:child_process';
+import { createHash } from 'node:crypto';
 import ffmpegStatic from 'ffmpeg-static';
 import {
   assetRenderUrl,
@@ -14,24 +15,29 @@ import {
   listTenantContentProjects,
   contentProjectBlockIsSemanticallyUnchanged,
   deterministicClosedWorldStoryboard,
+  frozenDirectorScriptForProduction,
+  MAX_FROZEN_DIRECTOR_SCRIPT_LENGTH,
   buildRouteSourcePlans,
   containsInternalContentMarker,
   contentFingerprint,
   detectContentDuplication,
   isLlmUnavailableError,
   immutableContentOrderBlockers,
+  legacyManagedPaidSubmissionBlocker,
   matchSceneSources,
   platformCreativeBrief,
   productionTiming,
   resolveEnterpriseAssetLocation,
   sceneIntent,
   repairFrozenOrderProductBinding,
+  refreshExpandedContentOrderContract,
   resumeContentProjectForTaskControl,
   resolveFrozenOrderProduct,
   selectExplicitFocusProducts,
   selectContentProjectsForTick,
   proportionalCues,
   splitSubtitleUnits,
+  storyboardVoiceLines,
   subtitleCuesAreSafe,
   type AssetCandidate,
 } from './contentProduction.js';
@@ -39,6 +45,7 @@ import { enterpriseAssetObjectKey, enterpriseAssetTenantKey } from '../storage/e
 import { assessScriptQualityV2, hardScriptSafetyIssues } from '../lib/studioScriptQualityV2.js';
 import { inspectRenderedVisuals } from '../lib/renderVisualQuality.js';
 import { store } from '../storage/index.js';
+import { spokenLanguageMatches } from '../../shared/contracts/videoCreationPlan.js';
 
 const partialQueue = [{ id: 'project-a', spec: { contentOrderId: 'order-a' } }];
 assert.deepEqual(contentOrderCoverage(partialQueue, ['order-a', 'order-b']).missing, ['order-b']);
@@ -48,6 +55,20 @@ assert.equal(contentOrderCoverage(repairedQueue, ['order-a', 'order-b']).complet
 assert.deepEqual(contentOrderCoverage(repairedQueue, ['order-a', 'order-b']).missing, [], 'a retried queue must not recreate existing orders');
 assert.equal(contentOrderCoverage([...repairedQueue, partialQueue[0]!], ['order-a', 'order-b']).complete, false);
 assert.equal(contentOrderCoverage(repairedQueue, ['order-b']).complete, false, 'obsolete orders must not be silently approved');
+const refreshedExpandedOrder = refreshExpandedContentOrderContract({
+  id: 'content-order-1::en', sourceContentOrderId: 'content-order-1', masterContentOrderId: 'content-order-1::en', masterLanguage: 'en',
+  route: 'clone', platform: 'facebook', productId: 'product-a', productName: 'Product A', evidenceRefs: [],
+  videoPlan: { language: 'en' } as any, contractVersion: 1,
+  scripts: { en: { version: 1, body: 'old', hash: 'old', language: 'en', status: 'confirmed', generatedBy: 'director_agent', generatedAt: '2026-10-01T00:00:00.000Z', source: 'llm', degradedReason: '' } },
+}, {
+  id: 'content-order-1', route: 'clone', platform: 'facebook', productId: 'product-a', productName: 'Product A', evidenceRefs: [],
+  videoPlan: { language: 'en' } as any, contractVersion: 1,
+  scripts: { en: { version: 1, body: 'new', hash: 'new', language: 'en', status: 'confirmed', generatedBy: 'director_agent', generatedAt: '2026-10-14T00:00:00.000Z', source: 'deterministic_closed_world_fallback', degradedReason: '' } },
+}, 'en');
+assert.equal(refreshedExpandedOrder.id, 'content-order-1::en');
+assert.equal(refreshedExpandedOrder.sourceContentOrderId, 'content-order-1');
+assert.equal(refreshedExpandedOrder.masterContentOrderId, 'content-order-1::en');
+assert.equal(refreshedExpandedOrder.scripts?.en?.hash, 'new', 'legacy project copies must receive the repaired base-order script');
 const originalList = store.list;
 try {
   const pages: number[] = [];
@@ -67,6 +88,11 @@ const evidence = {
   assetIds: ['asset-1'],
 };
 assert.equal(
+  isLlmUnavailableError(new Error('400 Access denied: overdue-payment')),
+  true,
+  'provider billing or access outages must use the closed-world fallback instead of blocking production',
+);
+assert.equal(
   sceneIntent('[0.00-4.00s]\n环境：室内工作台\n镜头功能：观察元件\n画面：绿色电路板与连接器\n台词：test\n\n[4.00-8.00s]\n环境：板面\n画面：银色焊点', 0, 4),
   '环境：室内工作台；镜头功能：观察元件；画面：绿色电路板与连接器',
   'decimal timestamp formatting must not erase scene intent',
@@ -81,6 +107,39 @@ assert.equal(resolveFrozenOrderProduct(frozenCatalog, { productId: '', productNa
 assert.equal(resolveFrozenOrderProduct([{ id: 'one', name: 'Same' }, { id: 'two', name: 'Same' }], { productName: 'Same' }), undefined, 'ambiguous legacy names must fail closed');
 assert.deepEqual(immutableContentOrderBlockers({ readinessBlockers: ['参考视频尚无有效精确分析', '指定产品不在当前冻结产品资料中'] }), [], 'reference/product readiness must be recomputed so the same task can continue after evidence is supplied');
 assert.deepEqual(immutableContentOrderBlockers({ readinessBlockers: ['第 2 条：指定内容路径未在 Agent 配置中开启'] }), ['第 2 条：指定内容路径未在 Agent 配置中开启'], 'frozen route scope remains a hard order-local boundary');
+assert.deepEqual(immutableContentOrderBlockers({ readinessBlockers: ['第 1 条：固定路径编译失败：时间线存在空洞'] }), ['第 1 条：固定路径编译失败：时间线存在空洞'], 'a frozen fixed-yield compiler failure cannot disappear inside the legacy runner');
+assert.match(legacyManagedPaidSubmissionBlocker({ route: 'product', stage: 'script' }), /不能新建付费配音/, 'legacy product plans must stop before a paid provider call');
+assert.match(legacyManagedPaidSubmissionBlocker({ route: 'material', stage: 'heygen', voiceoverUrl: '/tts/existing.wav' }), /没有冻结的数字人供应商任务/, 'legacy material plans cannot create a new HeyGen job');
+assert.equal(legacyManagedPaidSubmissionBlocker({ route: 'material', stage: 'render', voiceoverUrl: '/tts/existing.wav' }), '', 'legacy work may finish from already-created local artifacts');
+assert.equal(legacyManagedPaidSubmissionBlocker({ route: 'clone', stage: 'voice_subtitles' }), '', 'clone execution remains owned by its frozen paid-operation bridge');
+
+const confirmedScriptBody = '[0-4s]\n画面：真实产品\n台词：已确认脚本';
+const confirmedScriptHash = createHash('sha256').update(JSON.stringify(confirmedScriptBody)).digest('hex');
+assert.deepEqual(frozenDirectorScriptForProduction({
+  script: '旧的项目顶层脚本',
+  contentOrder: { contractVersion: 1, scripts: { en: {
+    version: 1, body: confirmedScriptBody, hash: confirmedScriptHash, language: 'en', status: 'confirmed',
+    generatedBy: 'director_agent', generatedAt: '2026-10-13T00:00:00.000Z', source: 'llm', degradedReason: '',
+  } } },
+}, 'en'), { script: confirmedScriptBody, blocker: '', source: 'frozen_contract' }, '生产必须使用内容订单冻结的编导脚本，而不是旧的顶层副本');
+assert.match(frozenDirectorScriptForProduction({
+  script: '旧的项目顶层脚本',
+  contentOrder: { contractVersion: 1, scripts: { en: {
+    version: 1, body: confirmedScriptBody, hash: 'stale-hash', language: 'en', status: 'confirmed',
+    generatedBy: 'director_agent', generatedAt: '2026-10-13T00:00:00.000Z', source: 'llm', degradedReason: '',
+  } } },
+}, 'en').blocker, /缺少编导已确认脚本版本/, '冻结脚本哈希不一致时必须在供应商调用前失败关闭');
+const oversizedConfirmedScript = 'x'.repeat(MAX_FROZEN_DIRECTOR_SCRIPT_LENGTH + 1);
+const oversizedAdmission = frozenDirectorScriptForProduction({
+  contentOrder: { contractVersion: 1, scripts: { en: {
+    version: 1, body: oversizedConfirmedScript,
+    hash: createHash('sha256').update(JSON.stringify(oversizedConfirmedScript)).digest('hex'),
+    language: 'en', status: 'confirmed', generatedBy: 'director_agent',
+    generatedAt: '2026-10-13T00:00:00.000Z', source: 'llm', degradedReason: '',
+  } } },
+}, 'en');
+assert.equal(oversizedAdmission.script, '', '超长冻结脚本不得截断后继续生产');
+assert.match(oversizedAdmission.blocker, new RegExp(`超过 ${MAX_FROZEN_DIRECTOR_SCRIPT_LENGTH} 字符支持上限`), '超长冻结脚本必须返回明确阻断原因');
 
 const asset = (partial: Partial<AssetCandidate> & Pick<AssetCandidate, 'id' | 'name'>): AssetCandidate => ({
   type: 'image', duration: 0, observations: ['产品置于桌面'], visualObservations: ['产品置于桌面'],
@@ -328,6 +387,13 @@ const fallbackQuality = assessScriptQualityV2({
 });
 assert.notEqual(fallbackQuality.qualityStatus, 'rejected', `fallback must pass hard factual safety: ${fallbackQuality.hardIssues.join('；')}`);
 assert.notEqual(fallbackQuality.qualityStatus, 'needs_material', `fallback must remain executable with the bound real asset: ${fallbackQuality.warnings.join('；')}`);
+const englishFallbackScript = deterministicClosedWorldStoryboard({
+  productFacts: '产品：真实产品；MOQ：100 bottles',
+  assets: fallbackAssets,
+  language: 'en',
+});
+assert.equal(spokenLanguageMatches(storyboardVoiceLines(englishFallbackScript).join(' '), 'en'), true, 'an English order must never receive Chinese fallback narration');
+assert.match(englishFallbackScript, /Product:|MOQ:/);
 
 const enterpriseAssetRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'enterprise-asset-render-'));
 try {

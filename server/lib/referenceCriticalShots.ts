@@ -117,11 +117,11 @@ export async function classifyReferenceCriticalShots(input: ClassificationInput,
 } = {}): Promise<VideoAiAnalysis> {
   const details = input.analysis.scriptDetails15s || [];
   if (!details.length || !input.frames.length || input.frames.length > 80) fail('missing_or_oversized_input');
-  const provider = options.provider || (process.env.REFERENCE_CRITICAL_PROVIDER === 'gemini' ? 'gemini' : 'qwen');
-  const model = options.model || (provider === 'gemini'
+  const provider = exactQwenScope() ? 'qwen' : options.provider || (process.env.REFERENCE_CRITICAL_PROVIDER === 'gemini' ? 'gemini' : 'qwen');
+  const model = exactQwenScope()?.model || options.model || (provider === 'gemini'
     ? process.env.GEMINI_CRITICAL_SHOT_MODEL || process.env.GEMINI_MODEL || 'gemini-2.5-flash'
     : process.env.QWEN_CRITICAL_SHOT_MODEL || 'qwen3-vl-flash');
-  const base = (options.baseUrl || (provider === 'gemini'
+  const base = (exactQwenScope()?.endpoint || options.baseUrl || (provider === 'gemini'
     ? 'https://generativelanguage.googleapis.com/v1beta/openai'
     : process.env.DASHSCOPE_BASE_URL || 'https://dashscope.aliyuncs.com/compatible-mode/v1')).trim().replace(/\/+$/, '');
   const frames = input.frames.filter(frame => {
@@ -181,3 +181,4 @@ export function restoreReferenceCriticalResponse(input: ClassificationInput,
     usage: providerResponse.usage, validationWarnings: checked.validationWarnings };
   return { ...input.analysis, scriptDetails15s: checked.details, criticalShotSummary: summary };
 }
+import {exactQwenScope} from '../agents/exactQwenScope.js';

@@ -21,6 +21,8 @@ services:
     depends_on:
       pocketbase:
         condition: service_healthy
+      redis:
+        condition: service_healthy
     expose:
       - "8788"
     ports:
@@ -52,6 +54,22 @@ services:
     depends_on:
       pocketbase:
         condition: service_healthy
+      redis:
+        condition: service_healthy
+
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    command: ["redis-server", "--appendonly", "yes"]
+    volumes:
+      - redis_data:/data
+    expose:
+      - "6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
 
   pocketbase:
     build:
@@ -101,3 +119,4 @@ volumes:
     name: ${PB_DATA_VOLUME_NAME:?PB_DATA_VOLUME_NAME must be set in the production env file}
   caddy_data:
   caddy_config:
+  redis_data:

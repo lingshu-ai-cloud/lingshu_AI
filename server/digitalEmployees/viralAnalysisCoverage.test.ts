@@ -1,15 +1,18 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { canSkipCollectionForExplicitReferences, evaluateViralAnalysisCoverage, hasParseableExactVideoAnalysis, reusableExplicitReferenceIds, viralCoverageBypassAllowed } from './viralAnalysisCoverage.js';
+import { canSkipCollectionForExplicitReferences, evaluatePlannedReferenceReuse, evaluateViralAnalysisCoverage, hasParseableExactVideoAnalysis, reusableExplicitReferenceIds, viralCoverageBypassAllowed } from './viralAnalysisCoverage.js';
 import type { VideoCreationPlan } from '../../shared/contracts/videoCreationPlan.js';
 
 const plan = (id: string, referenceId = '') => ({
   contentId: id, contentFamilyId: id, masterContentId: id, productionRole: 'master',
   route: 'clone', referenceId,
 }) as VideoCreationPlan;
-const evidence = (id: string, visual = `画面 ${id}`) => ({ id, aiAnalysis: {
-  analysisMode: 'exact', analysisQuality: 'video', gemini: {
-    scriptDetails15s: [{ time: '0-3s', visual }],
+const evidence = (id: string, visual = `画面 ${id}`) => ({ id, duration: 3, updatedAt: '2026-10-12T00:00:00.000Z', aiAnalysis: {
+  analysisMode: 'exact', analysisQuality: 'video', geminiStatus: 'analyzed', gemini: {
+    scriptDetails15s: [{
+      time: '0-3s', visual, materialType: 'product', narrativeRole: 'hook',
+      classificationEvidence: '画面明确展示产品包装', analysisGranularity: 'shot',
+    }],
   },
 } });
 
@@ -45,6 +48,24 @@ test('truthy but unparseable gemini envelope is not accepted', () => {
   assert.match(result.blockedReason, /指定参考尚无可解析精确分析/);
 });
 
+test('analysis completion uses the same strict admission rule as production', () => {
+  const base = evidence('reference-1');
+  const unknownType = structuredClone(base);
+  unknownType.aiAnalysis.gemini.scriptDetails15s[0]!.materialType = 'unknown';
+  assert.equal(hasParseableExactVideoAnalysis(unknownType), false);
+
+  const reviewWindow = structuredClone(base);
+  reviewWindow.aiAnalysis.gemini.scriptDetails15s[0]!.analysisGranularity = 'observation_window';
+  assert.equal(hasParseableExactVideoAnalysis(reviewWindow), false);
+
+  const reviewStatus = structuredClone(base);
+  reviewStatus.aiAnalysis.analysisQuality = 'video_review_required';
+  assert.equal(hasParseableExactVideoAnalysis(reviewStatus), false);
+
+  const incompleteTimeline = { ...structuredClone(base), duration: 8 };
+  assert.equal(hasParseableExactVideoAnalysis(incompleteTimeline), false);
+});
+
 test('every clone master requires independent parseable evidence', () => {
   const result = evaluateViralAnalysisCoverage(
     [plan('master-1', 'reference-1'), plan('master-2', 'reference-2')],
@@ -63,6 +84,28 @@ test('duplicate family rows and duplicate evidence do not inflate coverage', () 
   assert.equal(result.requiredCount, 1);
   assert.equal(result.completedCount, 1);
   assert.equal(result.ready, true);
+});
+
+test('different record ids for the same video count as one weekly reference', () => {
+  const first = evidence('duplicate-a');
+  Object.assign(first.aiAnalysis.gemini, {
+    theme: '私有品牌美妆产品一站式代工服务',
+    hooks: ['Need a private label beauty product?'],
+    audioTranscript: { rawText: 'Need a private label beauty product? We support packaging formula and design in one place. MOQ starts from ten thousand pieces.' },
+  });
+  const reencoded = structuredClone(first);
+  reencoded.id = 'duplicate-b';
+  delete (reencoded.aiAnalysis.gemini as Record<string, unknown>).audioTranscript;
+  Object.assign(reencoded.aiAnalysis.gemini.scriptDetails15s[0]!, {
+    dialogue: 'Need a private label beauty product? We support packaging formula and design in one place. MOQ starts from 10, 000 pieces.',
+  });
+  const result = evaluateViralAnalysisCoverage(
+    [plan('master-1', 'duplicate-a'), plan('master-2', 'duplicate-b')],
+    [first, reencoded],
+  );
+  assert.equal(result.ready, false);
+  assert.equal(result.completedCount, 1);
+  assert.match(result.blockedReason, /还缺 1 条/);
 });
 
 test('automatically recommended old reference is not explicit reuse authority', () => {
@@ -97,6 +140,30 @@ test('collection skip accepts only fully analyzed user-explicit references', () 
   const automatic = { ...explicit, planningEvidence: { generatedFrom: 'matrix_viral' } } as VideoCreationPlan;
   assert.equal(canSkipCollectionForExplicitReferences([automatic], [evidence('explicit-reference')]), false);
   assert.equal(canSkipCollectionForExplicitReferences([explicit], [{ id: 'explicit-reference', aiAnalysis: { analysisMode: 'exact' } }]), false);
+});
+
+test('weekly inventory rejects an automatic current-week collision and preserves deliberate explicit reuse', () => {
+  const automatic = {
+    ...plan('master-auto', 'automatic-reference'),
+    planningEvidence: { generatedFrom: 'matrix_viral' },
+  } as VideoCreationPlan;
+  const explicit = plan('master-explicit', 'explicit-reference');
+  const records = [evidence('automatic-reference'), evidence('explicit-reference')];
+  assert.equal(evaluatePlannedReferenceReuse([automatic, explicit], records, []).ready, true);
+  const consumedAutomatic = evaluatePlannedReferenceReuse([automatic, explicit], records, ['automatic-reference', 'explicit-reference']);
+  assert.equal(consumedAutomatic.ready, false);
+  assert.equal(consumedAutomatic.reusableCount, 1, 'the explicit user selection remains intentionally reusable');
+  assert.deepEqual(consumedAutomatic.selectedReferenceIds, ['explicit-reference']);
+});
+
+test('one library reference cannot satisfy two independent weekly videos', () => {
+  const first = { ...plan('master-1', 'same-reference'), planningEvidence: { generatedFrom: 'matrix_viral' } } as VideoCreationPlan;
+  const second = { ...plan('master-2', 'same-reference'), planningEvidence: { generatedFrom: 'matrix_viral' } } as VideoCreationPlan;
+  const result = evaluatePlannedReferenceReuse([first, second], [evidence('same-reference')], []);
+  assert.equal(result.ready, false);
+  assert.equal(result.requiredCount, 2);
+  assert.equal(result.reusableCount, 1);
+  assert.equal(result.missingCount, 1);
 });
 
 test('viral analysis cannot be skipped or manually completed before coverage', () => {

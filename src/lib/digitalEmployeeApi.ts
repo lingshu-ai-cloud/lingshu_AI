@@ -5,6 +5,8 @@ import type { ReviewTodoBoard } from './reviewTodos';
 import type { WeeklyPackage } from './weeklyPackage';
 import type { DirectorDecision, DirectorDecisionReason } from './directorDecision';
 import type { DigitalEmployeeConfig, DigitalEmployeeOverview, EnterpriseFactsRebuildInput, FollowupDispatchResponse, PublishingTarget, RunEvent, WeeklyGoal } from './digitalEmployees';
+import { hydrateWeeklyPublishingTargets } from '../../shared/contracts/weeklyPublishingTargets';
+import { applySmartBusinessShowcaseData } from '../dev/smartBusinessShowcaseData';
 
 const BASE = "/api/overseas/digital-employees";
 
@@ -23,6 +25,18 @@ export class DigitalEmployeeApiError extends Error {
 }
 
 const rebuildGoalRequests = new Map<string, Promise<DigitalEmployeeOverview>>();
+
+function hydrateWeeklyPublishingConfiguration<T>(body: T): T {
+  const value = body as T & { config?: DigitalEmployeeConfig | null };
+  if (!value?.config || !Array.isArray(value.config.publishingTargets)) return body;
+  return {
+    ...value,
+    config: {
+      ...value.config,
+      publishingTargets: hydrateWeeklyPublishingTargets(value.config.publishingTargets, value.config.socialCadence),
+    },
+  };
+}
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const response = await fetch(`${BASE}${path}`, {
@@ -69,7 +83,10 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
         : { response: rawBody },
     );
   }
-  return body;
+  // Keep new clients correct while a local or rolling server still returns the
+  // legacy cadence-only shape. The server also persists this migration, so the
+  // compatibility bridge is deterministic rather than a second source of truth.
+  return applySmartBusinessShowcaseData(hydrateWeeklyPublishingConfiguration(body));
 }
 
 function rebuildGoalFromLatestFacts(
@@ -141,6 +158,14 @@ export const digitalEmployeeApi = {
     references: Array<{ id: string; name: string; platform: string; thumbnailUrl: string; sourceUrl: string; views: string; account: string }>;
   }>("/planning-options"),
   savePackage: (goalId: string, pack: WeeklyPackage) => request<DigitalEmployeeOverview>(`/goals/${encodeURIComponent(goalId)}/package`, { method: "PUT", body: JSON.stringify(pack) }),
+  setProductionBudgetMode: (goalId: string, packageRevision: number, mode: "protected" | "economy") => request<DigitalEmployeeOverview>(
+    `/goals/${encodeURIComponent(goalId)}/production-budget-mode`,
+    { method: "PATCH", body: JSON.stringify({ packageRevision, mode }) },
+  ),
+  reschedulePublication: (goalId: string, contentId: string, scheduledAt: string) => request<DigitalEmployeeOverview>(
+    `/goals/${encodeURIComponent(goalId)}/publication-schedule/${encodeURIComponent(contentId)}`,
+    { method: "PATCH", body: JSON.stringify({ scheduledAt }) },
+  ),
   linkTaskProject: (runId: string, taskId: string, projectId: string) => request<DigitalEmployeeOverview>(`/runs/${encodeURIComponent(runId)}/tasks/${encodeURIComponent(taskId)}/link-project`, { method: "POST", body: JSON.stringify({ projectId }) }),
   packageOptions: () => request<{ members: Array<{ id: string; name: string }>; projects: Array<{ id: string; title: string }>; customers: Array<{ id: string; name: string }> }>("/package-options"),
   approveGoal: (goalId: string, packageRevision?: number) =>

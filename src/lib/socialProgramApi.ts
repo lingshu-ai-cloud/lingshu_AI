@@ -1,4 +1,5 @@
 import { getToken } from './auth';
+import type {WeeklyPipelineStartInput,WeeklyPipelineStatus} from '../../shared/contracts/weeklyExecutionPipeline';
 import type { WeeklyScheduleTargetGraph, WeeklyScheduleCapacityInput, WeeklyScheduleProposal, WeeklyScheduleConfirmation } from '../../shared/contracts/socialWeeklyScheduleRevision';
 import type {WeeklyProductionRepairCase} from '../../shared/contracts/weeklyProductionRepairCase';
 import type {UnplannedSocialDeliveryCard,WeeklyDeliveryCard} from '../../shared/contracts/weeklyDeliveryCard';
@@ -195,6 +196,14 @@ export const socialProgramApi = {
   async dispatchAgentSchedule(programId: string, packageId: string, versions: WeeklyAgentPlanningMutation): Promise<WeeklyAgentPlanningState> {
     return (await request<{ item: WeeklyAgentPlanningState }>(`/${encodeURIComponent(programId)}/operating-packages/${encodeURIComponent(packageId)}/agent-planning/dispatch`, { method: 'POST', ...json(versions) })).item;
   },
+  async readExecutionPipeline(programId:string,packageId:string,version:number):Promise<WeeklyPipelineStatus>{return (await request<{item:WeeklyPipelineStatus}>(`/${encodeURIComponent(programId)}/operating-packages/${encodeURIComponent(packageId)}/execution-pipeline?version=${version}`)).item;},
+  async readWeeklyTemplate(programId:string,packageId:string,version:number):Promise<{adoptedAt:string}|null>{return (await request<{item:{adoptedAt:string}|null}>(`/${encodeURIComponent(programId)}/operating-packages/${encodeURIComponent(packageId)}/execution-pipeline/template?version=${version}`)).item;},
+  async authorizeWeeklyPublishing(programId:string,packageId:string,version:number):Promise<void>{await request(`/${encodeURIComponent(programId)}/operating-packages/${encodeURIComponent(packageId)}/execution-pipeline/publishing-authorization`,{method:'POST',...json({expectedPackageVersion:version,authorizePublishing:true})});},
+  async adoptWeeklyTemplate(programId:string,packageId:string,version:number):Promise<{adoptedAt:string}>{return (await request<{item:{adoptedAt:string}}>(`/${encodeURIComponent(programId)}/operating-packages/${encodeURIComponent(packageId)}/execution-pipeline/template`,{method:'POST',...json({expectedPackageVersion:version})})).item;},
+  async connectLocalWeeklyConsumer(programId:string,packageId:string,version:number):Promise<void>{await request(`/${encodeURIComponent(programId)}/operating-packages/${encodeURIComponent(packageId)}/execution-pipeline/connect-local-consumer`,{method:'POST',...json({expectedPackageVersion:version})});},
+  async startIndependentWeeklyBranches(programId:string,packageId:string,version:number):Promise<{pipeline:WeeklyPipelineStatus}>{return request(`/${encodeURIComponent(programId)}/operating-packages/${encodeURIComponent(packageId)}/execution-pipeline/start-independent`,{method:'POST',...json({expectedPackageVersion:version})});},
+  async prepareExecutionAuthority(programId:string,packageId:string,version:number):Promise<{item:WeeklyOperatingPackage|null;resolution:OperatingPlanningResolution|null}>{return request(`/${encodeURIComponent(programId)}/operating-packages/${encodeURIComponent(packageId)}/execution-pipeline/prepare-authority`,{method:'POST',...json({expectedPackageVersion:version})});},
+  async startExecutionPipeline(programId:string,packageId:string,input:WeeklyPipelineStartInput):Promise<{item:WeeklyOperatingPackage;pipeline:WeeklyPipelineStatus}>{return request(`/${encodeURIComponent(programId)}/operating-packages/${encodeURIComponent(packageId)}/execution-pipeline/start`,{method:'POST',...json(input)});},
   async readCancellation(programId: string, packageId: string, version: number): Promise<WeeklyCancellationSummary | null> {
     const result = await request<{ item: WeeklyCancellationSummary | null }>(`/${encodeURIComponent(programId)}/operating-packages/${encodeURIComponent(packageId)}/cancellation?version=${version}`);
     return parseWeeklyCancellationSummary(result.item);
@@ -240,8 +249,8 @@ export const socialProgramApi = {
   async readCustomerStep(programId: string, packageId: string, packageVersion: number, runId: string, step: WeeklyCustomerStep): Promise<WeeklyCustomerStepEvidence> {
     return (await request<{ item: WeeklyCustomerStepEvidence }>(`/${encodeURIComponent(programId)}/operating-packages/${encodeURIComponent(packageId)}/customer-run-binding/${encodeURIComponent(runId)}/steps/${encodeURIComponent(step)}?version=${packageVersion}`)).item;
   },
-  async approveExecutionTask(programId: string, packageId: string, taskId: string): Promise<WeeklyExecutionTask[]> {
-    return (await request<{ items: WeeklyExecutionTask[] }>(`/${encodeURIComponent(programId)}/operating-packages/${encodeURIComponent(packageId)}/execution-tasks/${encodeURIComponent(taskId)}/approve`, { method: 'POST', ...json({}) })).items;
+  async approveExecutionTask(programId: string, packageId: string, taskId: string,expectedArtifactRef?:import('../../shared/contracts/socialProgram').VersionedSocialRef): Promise<WeeklyExecutionTask[]> {
+    return (await request<{ items: WeeklyExecutionTask[] }>(`/${encodeURIComponent(programId)}/operating-packages/${encodeURIComponent(packageId)}/execution-tasks/${encodeURIComponent(taskId)}/approve`, { method: 'POST', ...json(expectedArtifactRef?{expectedArtifactRef}:{}) })).items;
   },
   async recheckRequiredMaterials(programId: string, packageId: string, taskId: string, packageVersion: number): Promise<WeeklyExecutionTask[]> {
     return (await request<{ items: WeeklyExecutionTask[] }>(`/${encodeURIComponent(programId)}/operating-packages/${encodeURIComponent(packageId)}/execution-tasks/${encodeURIComponent(taskId)}/recheck-required-materials`, { method: 'POST', ...json({ expectedPackageVersion: packageVersion }) })).items;

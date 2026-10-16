@@ -24,7 +24,7 @@ function preparationStatus(data) {
     runId: '',
     title: ready ? '制作准备已完成，尚未开始生产' : '周计划尚未开始生产',
     description: ready
-      ? `${readyCount} 条母版的内容准备已完成${blockedCount ? `，另有 ${blockedCount} 条仍需补齐资料` : ''}；点击“开始周任务”后才会建立真实运行，实际生成还需生产服务可用。`
+      ? `${readyCount} 条独立视频的内容准备已完成${blockedCount ? `，另有 ${blockedCount} 条仍需补齐资料` : ''}；点击“开始周任务”后才会建立真实运行，实际生成还需生产服务可用。`
       : detail?.status === 'blocked'
         ? `可以开始周任务；${blockedCount || '若干'} 条内容的缺失项将在各自制作步骤提示，不阻止其他内容推进。`
         : '点击“开始周任务”后，系统依次完成脚本分析、素材匹配、生成与合成；正式发布前再验收和授权。',
@@ -47,6 +47,8 @@ function weeklyWorkStatus(data) {
   const blockedTask = firstTask(tasks, BLOCKED_TASK_STATUSES);
   const runningTask = firstTask(tasks, RUNNING_TASK_STATUSES);
   const externalTask = firstTask(tasks, EXTERNAL_TASK_STATUSES);
+  const externalWaitState = externalTask?.output?.waitState;
+  const externalAutoRecovery = Boolean(externalTask && externalWaitState?.kind === 'processing' && externalWaitState?.requiresAttention === false);
   const pendingTask = [...tasks]
     .sort((left, right) => left.sequence - right.sequence)
     .find((task) => ['pending', 'queued'].includes(task.status));
@@ -74,6 +76,7 @@ function weeklyWorkStatus(data) {
   if (TERMINAL_RUN_STATUSES.has(run.status)) phase = 'finished';
   else if (run.status === 'paused') phase = 'paused';
   else if (!['running', 'waiting_external', ...BLOCKED_RUN_STATUSES, ...QUEUED_RUN_STATUSES].includes(run.status)) phase = 'unknown';
+  else if (externalAutoRecovery) phase = 'running';
   else if (run.status === 'waiting_external' || (!runningTask && externalTask)) phase = 'queued';
   else if (BLOCKED_RUN_STATUSES.has(run.status) || (blockedTask && !runningTask)) phase = 'blocked';
   else if (QUEUED_RUN_STATUSES.has(run.status) || (!runningTask && pendingTask)) phase = 'queued';
@@ -92,9 +95,14 @@ function weeklyWorkStatus(data) {
         title: '运行状态待确认',
         description: `系统返回了未识别的运行状态“${run.status || '空'}”；未将它显示为正在生产，请刷新后核对。`,
       }
+    : externalAutoRecovery
+      ? {
+          title: '本周任务正在自动恢复',
+          description: externalWaitState?.message || blocker || (currentTask ? `${currentTask.title}正在复用已有产物恢复执行。` : '系统正在复用已有结果恢复未完成节点。'),
+        }
     : phase === 'queued' && (run.status === 'waiting_external' || (!runningTask && externalTask))
       ? {
-          title: '本周任务已启动，等待外部服务',
+          title: '本周任务已启动，等待业务结果',
           description: blocker || (currentTask ? `${currentTask.title}正在等待真实业务回写。` : '运行正在等待外部服务或真实业务回写。'),
         }
       : phase === 'queued'
@@ -151,7 +159,7 @@ function weeklyWorkStatus(data) {
 function taskExecutionStatus(task = {}) {
   const status = String(task.status || 'unknown');
   const phases = { initializing: 'queued', pending: 'queued', queued: 'queued', planning: 'running', running: 'running', waiting_external: 'waiting', waiting_approval: 'blocked', waiting_human: 'blocked', handed_off: 'blocked', blocked: 'blocked', paused: 'paused', succeeded: 'finished', completed: 'finished', failed: 'finished', cancelled: 'finished', skipped: 'finished' };
-  const labels = { initializing: '初始化中', pending: '待执行', queued: '排队中', planning: '规划中', running: '执行中', waiting_external: '等待外部结果', waiting_approval: '等待确认', waiting_human: '等待人工处理', handed_off: '需要人工决定', blocked: '受阻', paused: '已暂停', succeeded: '已完成', completed: '已完成', failed: '执行失败', cancelled: '已取消', skipped: '已跳过' };
+  const labels = { initializing: '初始化中', pending: '待执行', queued: '排队中', planning: '规划中', running: '执行中', waiting_external: '等待业务结果', waiting_approval: '等待确认', waiting_human: '等待人工处理', handed_off: '需要人工决定', blocked: '受阻', paused: '已暂停', succeeded: '已完成', completed: '已完成', failed: '执行失败', cancelled: '已取消', skipped: '已跳过' };
   const phase = phases[status] || 'unknown';
   const blocker = typeof task.blocked_reason === 'string' ? task.blocked_reason : '';
   const next = typeof task.next === 'string' ? task.next : '';

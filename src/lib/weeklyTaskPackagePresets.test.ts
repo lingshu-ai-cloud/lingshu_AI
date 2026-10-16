@@ -7,6 +7,7 @@ assert.deepEqual(WEEKLY_TASK_PACKAGE_PRESETS.map(item => item.label), [
   '品牌影响',
   'DTC 直接销售',
 ]);
+assert.deepEqual(WEEKLY_TASK_PACKAGE_PRESETS.filter(item=>item.id.startsWith('b2b_')).map(item=>item.weeklyOutput),[5,5], 'new B2B plans default to five originals, not five per platform');
 for (const preset of WEEKLY_TASK_PACKAGE_PRESETS) {
   const plans = buildPresetVideoPlans({ preset, productName: '测试产品', focus: '验证东南亚采购商反馈' });
   assert.equal(plans.length, preset.weeklyOutput);

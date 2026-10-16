@@ -352,6 +352,7 @@ export interface WeeklyAgentPlanningMutation {
 }
 
 export interface WeeklyAgentPlanningState {
+  automaticTemplateAdoption?: {source:'automatic_template';templateVersion:'weekly-automation.v2';adoptedAt:string;actorUserId:string;userApproval:null;selectedSlotIds:string[];analysisEvidenceHash:string;detailedScheduleHash:string;recordHash:string;authorizesPublishing:false;authorizesContentAcceptance:false;authorizesCustomerMessages:false};
   referenceSourcePolicy?: WeeklyReferenceSourcePolicy | null;
   planningId: string;
   version: number;
@@ -433,6 +434,8 @@ export interface SocialWeeklyPublicationTask {
 }
 
 export interface SocialWeeklyContentPackage {
+  /** New immutable packages share original production; legacy packages retain per-publication runs. */
+  productionIdentityVersion?: 'shared-original.v1';
   contentPackageId: string;
   operatingPackageId: string;
   version: number;

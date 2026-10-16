@@ -1,4 +1,5 @@
 import type { DataStore, Record_ } from '../storage/datastore.js';
+import {weeklyProductionEvidenceTask} from './weeklyContentProductionIdentity.js';
 import type { WeeklyExecutionTask, VersionedSocialRef } from '../../shared/contracts/socialProgram.js';
 import { SocialProgramError } from '../socialPrograms/service.js';
 import { socialObject, socialJson, socialRequestHash } from '../starter198/socialContentValidation.js';
@@ -22,6 +23,7 @@ export function assertNoFrozenTechnicalFailure(content:Record<string,unknown>){
 }
 /** Server-read context only. A pending immutable boolean is never itself a passing receipt. */
 export async function readWeeklyContentQualityAuditContext(store:DataStore,task:WeeklyExecutionTask,ref:VersionedSocialRef){
+ task=await weeklyProductionEvidenceTask(store,task);
  requireAudit(task.workflowKind==='content'&&['quality_check','rework'].includes(task.schedule.stepKind)&&ref.type==='starter_social_content_artifact'&&Number.isSafeInteger(ref.version)&&ref.version>0,'weekly_quality_audit_not_applicable');
  const artifact=await unique(store,'starter_social_content_artifacts',{tenant_id:task.tenantId,artifact_id:ref.id});const content=object(artifact.content);
  requireAudit(Number(String(artifact.version).replace(/^v/,''))===ref.version&&['draft','review_required','approved'].includes(String(artifact.status))&&artifact.artifact_kind==='short_video'&&artifact.origin==='agent'&&content.render&&object(content.render).completed===true,'weekly_quality_audit_artifact_invalid');

@@ -9,7 +9,7 @@ import { Router, raw } from 'express';
 import { createHash } from 'node:crypto';
 import type { DataStore } from '../storage/datastore.js';
 import { HeyGenPresenterClient, HeyGenRequestError, asianPresenterLook, mediaUrl, presenterLook } from '../lib/heygenPresenters.js';
-import type { PresenterCreation, PresenterLook } from '../../src/lib/presenterAssets.js';
+import type { ArkPresenterPreparation, PresenterCreation, PresenterLook } from '../../src/lib/presenterAssets.js';
 import type { ProductionDefaults, PresenterAsset } from '../../src/lib/shotProduction.js';
 import { EMPTY_DEFAULTS } from '../../src/lib/shotProduction.js';
 import { StudioPaidBudget } from '../lib/studioPaidBudget.js';
@@ -48,6 +48,7 @@ export function createPresenterAssetsRouter(store: DataStore, exclusive: Exclusi
   extractFrame?: (bytes: Buffer, seconds: number) => Promise<Buffer>;
   normalizeTrainingVideo?: (bytes: Buffer) => Promise<Buffer>;
   inspectVideo?: (bytes: Buffer) => Promise<PresenterVideoInfo>;
+  materialBelongs?: (tenantId: string, materialId: string, type: 'image' | 'video') => boolean;
 } = {}) {
   const router = Router();
   const client = () => options.client || new HeyGenPresenterClient(process.env.HEYGEN_API_KEY || '');
@@ -112,6 +113,7 @@ export function createPresenterAssetsRouter(store: DataStore, exclusive: Exclusi
       groupId: p.groupId, error: p.error, failureCategory: p.failureCategory, consentUrl: p.consentUrl,
       consentStatus: p.consentStatus,
       consentRequestedAt: p.consentRequestedAt || (p.consentUrl ? p.updatedAt : undefined),
+      arkPreparation: p.arkPreparation,
       createdAt: p.createdAt, updatedAt: p.updatedAt };
   };
   const refresh = async (row: Row) => {
@@ -424,7 +426,18 @@ export function createPresenterAssetsRouter(store: DataStore, exclusive: Exclusi
       if (!validId(b.requestId) || !['photo', 'digital_twin'].includes(b.type) || typeof b.name !== 'string' || !b.name.trim() || b.name.length > 100 || b.authorized !== true || b.adultConfirmed !== true || b.confirmed !== true) throw new Error('请填写人物名称，并确认肖像授权、主体已成年与创建费用');
       const result = await exclusive(`presenter:${tenant}`, async () => {
         const reusePresenterId = String(b.reusePresenterId || '');
-        const fingerprint = hash(JSON.stringify([b.type, b.name.trim(), b.uploadId, b.voiceId, reusePresenterId]));
+        let arkPreparation: ArkPresenterPreparation | undefined;
+        if (b.arkPreparation) {
+          const photoMaterialId = String(b.arkPreparation.photoMaterialId || '');
+          const videoMaterialId = String(b.arkPreparation.videoMaterialId || '');
+          if (!validId(photoMaterialId) || !validId(videoMaterialId)) throw new Error('方舟复用资料缺少照片或视频');
+          const materials = readLocalMaterials();
+          const ownsMaterial = (id: string, type: 'image' | 'video') => options.materialBelongs?.(tenant, id, type)
+            ?? materials.some(item => item.id === id && item.tenantId === tenant && item.scope === 'own' && item.type === type);
+          if (!ownsMaterial(photoMaterialId, 'image') || !ownsMaterial(videoMaterialId, 'video')) throw new Error('方舟复用资料不属于当前企业或类型不匹配');
+          arkPreparation = { photoMaterialId, videoMaterialId, processingAuthorized: b.arkPreparation.processingAuthorized === true };
+        }
+        const fingerprint = hash(JSON.stringify([b.type, b.name.trim(), b.uploadId, b.voiceId, reusePresenterId, arkPreparation]));
         const previous = await find(tenant, 'creation', b.requestId);
         if (previous) { if (previous.payload.fingerprint !== fingerprint) throw new Error('请求标识已用于其他人物'); return publicJob(previous); }
         if (!enabled()) throw new Error('管理员尚未启用人物创建');
@@ -468,10 +481,12 @@ export function createPresenterAssetsRouter(store: DataStore, exclusive: Exclusi
         // A repeated click, refresh, or a newly generated browser request id must
         // recover the existing paid provider task instead of creating another
         // task or leaving the user at an unrecoverable duplicate-file error.
-        if (sameSource) return publicJob(sameSource);
+        if (sameSource) return arkPreparation
+          ? write(sameSource, { arkPreparation })
+          : publicJob(sameSource);
         if (b.voiceId && (!validId(b.voiceId) || (!validVoice(b.voiceId) && !(privateCatalog(tenant) && await privateVoice(b.voiceId))))) throw new Error('请重新加载声音列表后选择可用声音');
         const row = await store.create<Row>(COLLECTION, { tenant_id: tenant, kind: 'creation', request_id: b.requestId,
-          payload: { name: b.name.trim(), type: b.type, voiceId: b.voiceId, uploadId: b.uploadId, sourceDigest: upload.payload.digest, fingerprint, authorizationDeclared: true, authorized: false, subjectAdultConfirmed: true, ...(reusePresenterId ? { reusePresenterId } : {}), status: 'submitting', consentStatus: 'pending', createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() } });
+          payload: { name: b.name.trim(), type: b.type, voiceId: b.voiceId, uploadId: b.uploadId, sourceDigest: upload.payload.digest, fingerprint, authorizationDeclared: true, authorized: false, subjectAdultConfirmed: true, ...(arkPreparation ? { arkPreparation } : {}), ...(reusePresenterId ? { reusePresenterId } : {}), status: 'submitting', consentStatus: 'pending', createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() } });
         if (!row) throw new Error('人物任务登记失败，未创建人物');
         try { await (options.reserve ? options.reserve(`presenter:${row.id}`) : creationBudget(b.type).reserve('heygen', `presenter:${row.id}`)); }
         catch (e) { await write(row, { status: 'failed', error: message(e) }); throw e; }
@@ -588,6 +603,50 @@ export function createPresenterAssetsRouter(store: DataStore, exclusive: Exclusi
         const saved = row ? await store.update('studio_production_defaults', row.id, { payload }) : await store.create('studio_production_defaults', { tenant_id: tenant, payload });
         if (!saved) throw new Error('企业人物保存失败，请重试导入');
         return payload;
+      });
+      res.json(result);
+    } catch (e) { res.status(400).json({ error: message(e) }); }
+  });
+  router.post('/revoke', async (req, res) => {
+    try {
+      const tenant = res.locals.tenantId as string;
+      const presenterId = String(req.body?.presenterId || '');
+      if (!validId(presenterId)) throw new Error('人物标识无效');
+      const result = await exclusive(`defaults:${tenant}`, async () => {
+        const row = (await store.list<Row>('studio_production_defaults', { where: { tenant_id: tenant }, perPage: 1 })).items[0];
+        if (!row) throw new Error('企业人物资料不存在');
+        const defaults = row.payload as ProductionDefaults;
+        const presenter = defaults.presenters.find(item => item.id === presenterId);
+        if (!presenter) return defaults;
+        const revokedAt = new Date().toISOString();
+        const requestId = `revoke:${presenterId}:${Math.max(1, presenter.assetVersion || 1)}`;
+        const previous = await find(tenant, 'revocation', requestId);
+        if (!previous) {
+          const audit = await store.create<Row>(COLLECTION, {
+            tenant_id: tenant,
+            kind: 'revocation',
+            request_id: requestId,
+            payload: {
+              presenterId,
+              presenterName: presenter.name,
+              assetVersion: Math.max(1, presenter.assetVersion || 1),
+              rightsEvidence: presenter.rightsEvidence ? { ...presenter.rightsEvidence, revokedAt } : undefined,
+              revokedAt,
+            },
+          });
+          if (!audit) throw new Error('人物授权取消记录保存失败');
+        }
+        const presenters = defaults.presenters.filter(item => item.id !== presenterId);
+        const next: ProductionDefaults = {
+          ...defaults,
+          presenters,
+          defaultPresenterId: defaults.defaultPresenterId === presenterId ? presenters[0]?.id || '' : defaults.defaultPresenterId,
+          presenterRoutes: (defaults.presenterRoutes || []).map(route => route.presenterId === presenterId
+            ? { ...route, presenterId: '', voiceId: '' }
+            : route),
+        };
+        if (!await store.update('studio_production_defaults', row.id, { payload: next })) throw new Error('人物授权取消失败，请刷新后重试');
+        return next;
       });
       res.json(result);
     } catch (e) { res.status(400).json({ error: message(e) }); }

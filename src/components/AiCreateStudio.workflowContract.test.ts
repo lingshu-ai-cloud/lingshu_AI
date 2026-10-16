@@ -2,8 +2,12 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import {
   followAdoptedDigitalHumanSlotDurations,
+  loadedStudioContinuationStep,
+  loadedStudioProjectTitle,
   resolveStudioWorkflowProjectEntry,
+  safeStudioStepId,
   studioAgentSourceLabel,
+  studioSpecHasCompiledStoryboard,
   studioSpecHasMeaningfulContent,
   studioWorkflowContextFromSpec,
   validateStudioScriptGenerationInput,
@@ -66,6 +70,137 @@ assert.equal(studioSpecHasMeaningfulContent({ workflowRunId: 'run-1', workflowTa
 assert.equal(studioSpecHasMeaningfulContent({ script: '真实创作脚本' }), true);
 assert.equal(studioSpecHasMeaningfulContent({ selected: ['asset-1'] }), true);
 
+const existingDraft = {
+  id: 'draft-1',
+  title: '服务端旧标题',
+  status: 'draft' as const,
+};
+assert.equal(
+  loadedStudioProjectTitle(existingDraft, {
+    continueProjectId: 'draft-1',
+    prefill: { title: '  用户新改的草稿名  ' },
+  }),
+  '用户新改的草稿名',
+  '同一项目续接时必须保留上一步提交的草稿名',
+);
+assert.equal(
+  loadedStudioProjectTitle(existingDraft, {
+    continueProjectId: 'another-draft',
+    prefill: { title: '不相关请求的标题' },
+  }),
+  '服务端旧标题',
+  '正常打开或续接其他项目时仍以已保存项目标题为准',
+);
+assert.equal(
+  loadedStudioProjectTitle(existingDraft, {
+    continueProjectId: 'draft-1',
+    prefill: { title: '   ' },
+  }),
+  '服务端旧标题',
+  '空的续接标题不得清空已保存名称',
+);
+assert.equal(
+  loadedStudioProjectTitle({ ...existingDraft, status: 'template' }, {
+    continueProjectId: 'draft-1',
+    prefill: { title: '不应覆盖模板副本名' },
+  }),
+  '服务端旧标题 · 副本',
+  '模板复用仍应使用明确的副本名称',
+);
+assert.equal(
+  loadedStudioContinuationStep('draft-1', {
+    continueProjectId: 'draft-1',
+    replicationStep: 2,
+    confirmedSpeech: [{ source: 'original', draft: 'replacement', time: '0-3s' }],
+  }),
+  'mode',
+  '新确认口播必须先编译成脚本与分镜，不能直接跳到空的素材匹配页',
+);
+assert.equal(
+  loadedStudioContinuationStep(null, {
+    replicationStep: 2,
+    confirmedSpeech: [{ source: 'original', draft: 'replacement', time: '0-3s' }],
+  }),
+  'mode',
+  '首次创建且没有续接项目时也必须先编译口播与分镜，不能首屏直达空素材页',
+);
+assert.equal(
+  loadedStudioContinuationStep('draft-1', {
+    continueProjectId: 'draft-1',
+    replicationStep: 2,
+  }),
+  'mode',
+  '没有真实分镜的旧请求不能直接打开空素材页',
+);
+assert.equal(
+  loadedStudioContinuationStep('draft-1', {
+    continueProjectId: 'draft-1',
+    replicationStep: 2,
+    confirmedSpeech: [{ source: 'original', draft: 'replacement', time: '0-3s' }],
+  }, true),
+  'mode',
+  '同一草稿的新确认口播必须重建分镜，不能沿用旧版本',
+);
+assert.equal(
+  loadedStudioContinuationStep('draft-1', {
+    continueProjectId: 'draft-1',
+    replicationStep: 2,
+  }, true),
+  'material',
+  '没有新口播且已持久化真实脚本与分镜的续作不得重复编译',
+);
+assert.equal(
+  loadedStudioContinuationStep('draft-1', {
+    continueProjectId: 'draft-1',
+    replicationStep: 3,
+    confirmedSpeech: [{ source: 'original', draft: 'replacement', time: '0-3s' }],
+  }, true),
+  'preview',
+  '明确的成片预览续接不应被口播准备逻辑改写',
+);
+assert.equal(
+  loadedStudioContinuationStep(null, {
+    replicationStep: 3,
+    confirmedSpeech: [{ source: 'original', draft: 'replacement', time: '0-3s' }],
+  }),
+  'mode',
+  '没有持久化分镜的新请求不能直接打开空预览页',
+);
+assert.equal(
+  loadedStudioContinuationStep('draft-1', {
+    continueProjectId: 'another-draft',
+    replicationStep: 2,
+    confirmedSpeech: [{ source: 'original', draft: 'replacement', time: '0-3s' }],
+  }),
+  null,
+  '其他项目的续接请求不得改写当前项目步骤',
+);
+assert.equal(loadedStudioContinuationStep(null, undefined), null,
+  '缺少续接请求时不得解引用空请求或改写当前步骤');
+assert.equal(loadedStudioContinuationStep('draft-1', {
+  continueProjectId: 'draft-1',
+  replicationStep: 1,
+}, true), 'mode', '显式返回口播编辑必须优先于服务端旧的后续步骤');
+assert.equal(
+  studioSpecHasCompiledStoryboard({
+    duration: 10,
+    script: '[0-3s]\n画面：产品展示\n口播：你好',
+  }),
+  true,
+  '真实时间戳脚本本身就是已编译分镜证据',
+);
+assert.equal(
+  studioSpecHasCompiledStoryboard({ script: '只有一段未编译口播' }),
+  false,
+  '普通口播文本不能冒充已经完成的分镜',
+);
+assert.equal(safeStudioStepId([{ id: 'mode' }, { id: 'material' }], -1), 'mode',
+  '旧草稿中的非法负索引必须安全回到第一步');
+assert.equal(safeStudioStepId([{ id: 'mode' }, { id: 'material' }], 99), 'material',
+  '超出当前步骤列表的旧索引必须安全落在最后一步');
+assert.equal(safeStudioStepId([], -1), 'mode',
+  '异常的空步骤表也不能在首屏解引用 undefined');
+
 const durationSlot = { id: 'slot-17', title: '结尾', detail: '口播', time: '0.0s-5.7s', start: 0, end: 5.67 };
 const adoptedShot = { adoptedId: 'candidate-3', candidates: [{ id: 'candidate-3', materialId: 'pipeline-3', source: 'avatar' }] };
 const followedSlots = followAdoptedDigitalHumanSlotDurations(
@@ -101,6 +236,81 @@ assert.deepEqual(parseDigitalEmployeeWorkflowContext(JSON.stringify({ page: 'sma
 }, 'a draft plan preview must retain its task identity without pretending that a run already exists');
 
 const studioSource = readFileSync(new URL('./AiCreateStudio.tsx', import.meta.url), 'utf8');
+assert.match(
+  studioSource,
+  /setProjectTitle\(loadedStudioProjectTitle\(p, incomingCreateRequest\)\)/,
+  '载入项目时必须协调当前续接请求的草稿名',
+);
+assert.match(
+  studioSource,
+  /const continuationStep = loadedStudioContinuationStep\([\s\S]{0,180}studioSpecHasCompiledStoryboard\(p\.spec\)[\s\S]{0,220}setStepIdx\(STEPS\.findIndex\(item => item\.id === continuationStep\)\)/,
+  '载入项目时必须按续接意图选择准备、分镜或预览步骤',
+);
+assert.match(
+  studioSource,
+  /const requestedStep = loadedStudioContinuationStep\(null, studioCreateRequest\) \|\| 'mode'[\s\S]{0,120}setStepIdx\(STEPS\.findIndex\(item => item\.id === requestedStep\)\)/,
+  '首次创建的 step 2 请求也必须复用续接步骤协调器，先完成分镜编译',
+);
+assert.match(
+  studioSource,
+  /savedRequest\?\.creationPath === 'viral_replication'[\s\S]{0,180}studioSpecHasCompiledStoryboard\(p\.spec\)/,
+  '服务端保存的续作步骤也必须以真实脚本和分镜为进入素材页的前提',
+);
+assert.match(
+  studioSource,
+  /restoredStepNeedsStoryboard[\s\S]{0,300}!studioSpecHasCompiledStoryboard\(savedSpec\)[\s\S]{0,260}setStepIdx/,
+  '旧草稿 activeStep 恢复不得绕过分镜先决条件',
+);
+assert.match(
+  studioSource,
+  /requestedStepId[\s\S]{0,450}!studioSpecHasCompiledStoryboard\(project\.spec\)[\s\S]{0,180}\? 'mode'/,
+  '数字员工目标阶段也不得打开未编译的素材或预览页',
+);
+assert.match(
+  studioSource,
+  /const step = safeStudioStepId\(activeSteps, stepIdx\)/,
+  '未知或迁移前的步骤索引不得造成工作台白屏',
+);
+assert.match(
+  studioSource,
+  /confirmedSpeechRequestInFlightRef[\s\S]{0,900}generateSetupScriptAndContinue[\s\S]{0,300}if \(success\) appliedConfirmedSpeechRequestRef\.current = request\.requestId/,
+  '确认口播只能在初始化成功后标记已应用，失败必须允许原请求重试',
+);
+assert.match(
+  studioSource,
+  /if \(freeThreeStep && step === 'mode'\)[\s\S]{0,650}<ReplicationWorkbenchHeader[\s\S]{0,550}editableTitle[\s\S]{0,350}onTitleCommit=/,
+  '自由创作准备页也必须允许修改并保存同一个草稿名称',
+);
+assert.match(
+  studioSource,
+  /if \(socialViralTask && step === 'mode'\)[\s\S]{0,400}<ReplicationWorkbenchHeader[\s\S]{0,450}editableTitle[\s\S]{0,350}onTitleCommit=/,
+  '爆款复刻准备页也必须允许修改并保存同一个草稿名称',
+);
+assert.match(
+  studioSource,
+  /<StudioWorkbenchFrame[\s\S]{0,4500}onProjectTitleChange=[\s\S]{0,260}onProjectTitleCommit=/,
+  '分镜与成片步骤必须延续同一个可编辑草稿名称并在失焦时保存',
+);
+const navigationStart = studioSource.indexOf('const navigateReplicationStep = async');
+const navigationReturnSave = studioSource.indexOf("if (!await saveProject('draft'))", navigationStart);
+const navigationReturnRequest = studioSource.indexOf('const request: SocialContentCreateRequest', navigationReturnSave);
+assert.ok(navigationStart >= 0 && navigationReturnSave > navigationStart && navigationReturnRequest > navigationReturnSave,
+  '返回口播编辑页前必须先保存当前草稿');
+assert.match(studioSource.slice(navigationReturnRequest, navigationReturnRequest + 1_200), /continueProjectId: currentProjectRef\.current \|\| projectId[\s\S]*prefill:[\s\S]*title: projectTitle\.trim\(\)/,
+  '返回口播编辑页时必须携带刚保存的项目身份与当前草稿名称');
+const replicationPreparationStart = studioSource.indexOf('const generateSetupScriptAndContinue');
+const replicationAtomicSave = studioSource.indexOf("const saved = await saveProject('draft', {", replicationPreparationStart);
+const replicationMaterialReveal = studioSource.indexOf('setStepIdx(materialIndex)', replicationAtomicSave);
+assert.ok(replicationPreparationStart >= 0 && replicationAtomicSave > replicationPreparationStart
+  && replicationMaterialReveal > replicationAtomicSave,
+  '口播、分镜与任务上下文保存成功前不得提前展示素材步骤');
+assert.match(studioSource.slice(replicationAtomicSave, replicationMaterialReveal), /activeStepId: 'material'[\s\S]*if \(!saved\)/,
+  '原子保存必须包含目标步骤，并在切换素材页前验证保存成功');
+assert.match(
+  studioSource,
+  /projectHydrationPendingRef\.current[\s\S]{0,180}request\.identityMappings && appliedIdentityRequestRef\.current !== request\.requestId/,
+  '已确认口播只能在项目与产品映射水合完成后自动编译',
+);
 assert.doesNotMatch(
   studioSource,
   /setMode\(m\.id\);[\s\S]{0,220}setProjectTitle/,
@@ -155,8 +365,8 @@ assert.match(studioSource, /presenterApi\.uploadPhotoMaterial\(input\.file, inpu
 assert.match(studioSource, /setProductionDefaults\(saved\);await refreshMaterials\(\)/,'inline completion must refresh enterprise presenters and Studio materials before returning');
 assert.match(studioSource, /defaultPresenterId:productionDefaults\.defaultPresenterId\|\|presenterId/, 'the first inline presenter becomes the enterprise default while remaining selected in the originating shot');
 assert.doesNotMatch(studioSource, /showProjects \|\| linkedProductionContext/, 'a linked Agent task must not hide the three-column Studio behind a status scene');
-assert.match(studioSource, /<details[^>]*>[\s\S]{0,450}<ProductionTaskScene[^>]*embedded/, 'the linked task status must stay collapsible while the Studio workbench remains accessible');
-assert.match(studioSource, /className=\{showProjects \|\| \(rawSceneTarget && !sceneNavigationReceipt\) \? 'hidden' : 'flex min-h-0 flex-1 flex-col'\}/, 'the Studio hides its chooser and unverified scoped navigation until the actual snapshot is verified');
+assert.doesNotMatch(studioSource, /DirectorTaskContext|ProductionTaskScene|ProductionRevisionPanel/, 'the Studio must not embed weekly task details, task progress, or managed-flow revision panels');
+assert.match(studioSource, /className=\{showProjects \? 'hidden' : 'flex min-h-0 flex-1 flex-col'\}/, 'the Studio remains visible while scoped navigation is being verified instead of falling through to a blank page');
 assert.match(studioSource, /digitalHumanJob\?\.status === 'review'[\s\S]{0,180}<video/, 'generated digital-human candidates must be directly previewable before approval');
 assert.match(studioSource, /<RenderedVideoPlayer[^>]+src=\{formalPreviewUrl\}/, 'formal AIGC output must be directly playable in the final preview step');
 assert.match(studioSource, /<DigitalHumanProductionOverview/, 'the production page must retain per-shot digital-human progress and settlement UI');
@@ -204,10 +414,14 @@ assert.match(scheduledSource, /setInterval\([\s\S]{0,220}fetchVideoStats\(false\
 assert.match(scheduledSource, /人工恢复：/);
 
 const conversionSource = readFileSync(new URL('./ConversionPage.tsx', import.meta.url), 'utf8');
-assert.match(conversionSource, /customer\.isMock \? '模拟客户' : '真实客户'/);
-assert.match(conversionSource, /模拟客户 · 不对外发送/);
-assert.match(conversionSource, /真实客户 · 通道未连接/);
-assert.match(conversionSource, /真实客户 · 通道已连接/);
+assert.match(conversionSource, /function customerDisplayName[\s\S]{0,260}replace\(\/模拟客户\/g, '客户'\)/,
+  'customer names must not expose fixture terminology in the product UI');
+assert.doesNotMatch(conversionSource, /customer\.isMock \? '模拟客户'/,
+  'fixture status must not be presented as a customer-facing data label');
+assert.match(conversionSource, /!customer\.isMock && <Tag[\s\S]{0,160}'通道已连接'[\s\S]{0,80}'通道未连接'/,
+  'only connected customer channels need a truthful readiness label');
+assert.doesNotMatch(conversionSource, /客户消息输入|输入下一条客户消息|添加客户消息/,
+  'the conversation timeline must not expose the local buyer-message simulator');
 
 const workerSource = readFileSync(new URL('../../scripts/local-crawl-worker.ts', import.meta.url), 'utf8');
 assert.match(workerSource, /CRAWL_WORKER_HEARTBEAT_MS/);
@@ -226,3 +440,5 @@ assert.equal(reusedDigitalSlots[1]?.start, 3.2, 'the following shot shifts with 
 assert.equal(reusedDigitalSlots[1]?.end, 5.2);
 
 assert.match(studioSource, /generatedSource \? sourceCuesForShot\(source, clip.duration\)/, 'generated speech captions must use measured source timings rather than spreading script text across the shot');
+assert.match(studioSource, /const commitProjectTitle = async[^]*?managedProductionProjectRef\.current[^]*?baseUpdatedAt: current\.updatedAt/, 'managed and frozen production projects must rename through a fresh CAS snapshot without rewriting production data');
+assert.match(studioSource, /onTitleCommit=\{\(\) => \{ void commitProjectTitle\(\); \}\}/, 'all content-production entrances must reuse the same draft-title commit action');

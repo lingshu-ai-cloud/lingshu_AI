@@ -66,10 +66,14 @@ assert.match(componentSource, /<LsMasonryGallery layout="grid"/, '带固定操�
 assert.ok([...componentSource.matchAll(/<LsMasonryGallery layout="grid"/g)].length >= 2, '爆款灵感和我的素材必须共用齐行媒体网格');
 assert.match(videoCardSource, /aspect-\[9\/16\][^]*?flex min-h-52 flex-1 flex-col/, '爆款卡必须使用 9:16 媒体和统一信息区高度');
 assert.match(componentSource, /filteredMaterials\.map[^]*?aspect-\[9\/16\][^]*?flex min-h-52 flex-1 flex-col/, '素材卡必须与爆款卡使用相同媒体比例和信息区高度');
-assert.match(componentSource, /grid-cols-\[160px_[^]*?<Select value=\{platform\}[^]*?<Input allowClear[^]*?aria-label="搜索爆款灵感"/, '发布平台必须位于灵感发现主筛选最左侧');
+assert.match(componentSource, /grid-cols-\[minmax\(240px,2fr\)_[^]*?<Input allowClear[^]*?aria-label="搜索爆款灵感"[^]*?<Select value=\{platform\}/, '搜索框必须位于灵感发现主筛选最左侧');
 const inspirationMoreFilters = componentSource.slice(componentSource.indexOf('id="inspiration-more-filters"'), componentSource.indexOf("innerView === 'inspiration' && videosError"));
 assert.doesNotMatch(inspirationMoreFilters, />发布平台<|aria-label="社媒平台"/, '发布平台不得重复出现在更多筛选');
 assert.doesNotMatch(videoCardSource, /video\.tags\.slice\(0, 2\)/, '爆款卡片与列表首页不得展示 hashtag');
+for (const placeholderTag of ['来源待归类', '相关性待确认', '趋势未知', '迁移性待确认']) {
+  assert.match(videoCardSource, new RegExp(`HIDDEN_DISCOVERY_TAGS[^]*?${placeholderTag}`), `卡片必须隐藏无结论状态：${placeholderTag}`);
+}
+assert.match(videoCardSource, /hasVisibleSignals[^]*?Object\.values\(visibleSignals\)\.some\(Boolean\)/, '没有有效分析结论时不得保留空 Tag 容器');
 assert.match(componentSource, /aria-label="内容标签"[^]*?video\.tags\.map/, '爆款 hashtag 必须集中展示在详情顶部');
 assert.match(componentSource, /startInspirationCreation[^]*?requestExactFullAnalysis/, '未完成详细分析的视频点击复刻时必须自动补齐分析');
 assert.match(componentSource, /detailCreationReady =[^;]*exactQuality\.ready && !pending/, '详情复刻入口不能依赖可失败的交接状态读取');

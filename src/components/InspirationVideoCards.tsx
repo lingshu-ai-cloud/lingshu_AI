@@ -22,12 +22,25 @@ interface VideoCardProps {
   createDisabledReason?: string;
 }
 
+const HIDDEN_DISCOVERY_TAGS = new Set(['来源待归类', '相关性待确认', '趋势未知', '迁移性待确认']);
+
+function visibleDiscoverySignals(video: TrendVideo) {
+  const dimensions = candidateDimensionLabels(video);
+  const visible = (label: string) => HIDDEN_DISCOVERY_TAGS.has(label) ? '' : label;
+  return {
+    supply: visible(discoverySupplyLabel(video)),
+    relevance: visible(dimensions.relevance),
+    momentum: visible(dimensions.momentum),
+    transferability: visible(dimensions.transferability),
+  };
+}
+
 export function VideoCard({ video, index, isSelected, onSelect, onCreate, onWatch, onFavoriteMaterial, favoritingMaterial, isFavoriteMaterial, createLabel, creating, createDisabled, createDisabledReason }: VideoCardProps) {
   const meta = getPlatformMeta(video.platform);
   const crawlRule = video.aiAnalysis?.crawlRule || '关键词检索';
   const inspirationScores = inspirationScoresForVideo(video);
   const serverScore = video.aiAnalysis?.discoveryScore;
-  const candidateDimensions = candidateDimensionLabels(video);
+  const visibleSignals = visibleDiscoverySignals(video);
   const isImagePost = video.contentFormat === 'image';
   const [mediaReady, setMediaReady] = useState(false);
   useEffect(() => setMediaReady(false), [video.id, video.thumbnail, video.videoUrl]);
@@ -52,6 +65,7 @@ export function VideoCard({ video, index, isSelected, onSelect, onCreate, onWatc
     : analysisActive || (video.status === 'pending' && !analysisPaused)
       ? 'processing'
       : 'ready';
+  const hasVisibleSignals = Boolean(serverScore || video.aiAnalysis?.discoveryBusinessModel || Object.values(visibleSignals).some(Boolean));
 
   return (
     <article
@@ -125,10 +139,14 @@ export function VideoCard({ video, index, isSelected, onSelect, onCreate, onWatc
           <span className={`ls-type-label-medium ${trendColor}`}>{trendLabel}</span>
           <span className="flex items-center gap-1 ls-type-body-small tabular-nums text-text-muted">{isImagePost ? <Images size={12} /> : <Clock size={12} />}{isImagePost ? `${video.aiAnalysis?.imageCount || video.aiAnalysis?.imageUrls?.length || 1} 张` : `${video.views} 次播放`}</span>
         </div>
-        {!video.id.startsWith('material-') && <div className="flex max-h-14 flex-wrap gap-1 overflow-hidden ls-type-label-medium" title={serverScore ? serverScore.reasons.join('；') : `来源优先 ${inspirationScores.sourcePriority}；内容机会 ${inspirationScores.contentOpportunityScore}`}>
+        {!video.id.startsWith('material-') && hasVisibleSignals && <div className="flex max-h-14 flex-wrap gap-1 overflow-hidden ls-type-label-medium" title={serverScore ? serverScore.reasons.join('；') : `来源优先 ${inspirationScores.sourcePriority}；内容机会 ${inspirationScores.contentOpportunityScore}`}>
           {serverScore && <span className={`rounded-md px-2 py-1 ${serverScore.decision === 'accepted' ? 'bg-emerald-100 text-emerald-900' : serverScore.decision === 'review' ? 'bg-amber-100 text-amber-900' : 'bg-red-100 text-red-800'}`}>服务端 {serverScore.overall} 分 · {serverScore.decision === 'accepted' ? '入选' : serverScore.decision === 'review' ? '复核' : '淘汰'}</span>}
           {video.aiAnalysis?.discoveryBusinessModel && <span className="rounded-md bg-slate-100 px-2 py-1 text-slate-700">{video.aiAnalysis.discoveryBusinessModel.toUpperCase()}</span>}
-          <Tag title={discoveryOriginTitle(video)}>{discoverySupplyLabel(video)}</Tag><span className="rounded-md bg-cyan-50 px-2 py-1 text-cyan-900">{candidateDimensions.relevance}</span><span className="rounded-md bg-amber-50 px-2 py-1 text-amber-900">{candidateDimensions.momentum}</span><span className="rounded-md bg-emerald-50 px-2 py-1 text-emerald-800">{candidateDimensions.transferability}</span></div>}
+          {visibleSignals.supply && <Tag title={discoveryOriginTitle(video)}>{visibleSignals.supply}</Tag>}
+          {visibleSignals.relevance && <span className="rounded-md bg-cyan-50 px-2 py-1 text-cyan-900">{visibleSignals.relevance}</span>}
+          {visibleSignals.momentum && <span className="rounded-md bg-amber-50 px-2 py-1 text-amber-900">{visibleSignals.momentum}</span>}
+          {visibleSignals.transferability && <span className="rounded-md bg-emerald-50 px-2 py-1 text-emerald-800">{visibleSignals.transferability}</span>}
+        </div>}
         <div className="mt-auto border-t border-border pt-3">
           <div className="ls-media-card-actions">
             <Button onClick={onSelect} icon={<Eye size={14} />}>查看详情</Button>
@@ -162,7 +180,8 @@ export function VideoListItem({ video, isSelected, onSelect, onCreate, onWatch, 
   const isImagePost = video.contentFormat === 'image';
   const inspirationScores = inspirationScoresForVideo(video);
   const serverScore = video.aiAnalysis?.discoveryScore;
-  const candidateDimensions = candidateDimensionLabels(video);
+  const visibleSignals = visibleDiscoverySignals(video);
+  const hasVisibleSignals = Boolean(serverScore || visibleSignals.relevance || visibleSignals.momentum || visibleSignals.transferability);
   return (
     <div className={`flex flex-wrap items-center gap-3 px-4 py-3 transition-colors duration-[var(--ls-motion-fast)] ease-[var(--ls-ease-standard)] group sm:flex-nowrap ${isSelected ? 'bg-accent-glow' : 'hover:bg-surface-2'}`}>
       <button type="button" onClick={e => { e.stopPropagation(); onWatch(); }}
@@ -186,9 +205,12 @@ export function VideoListItem({ video, isSelected, onSelect, onCreate, onWatch, 
       <span className="hidden xl:inline-flex flex-shrink-0 px-2 py-1 rounded-md ls-type-label-medium bg-surface-2 border border-border text-text-muted">
         {crawlRule}
       </span>
-      {!video.id.startsWith('material-') && <span className="hidden 2xl:inline-flex shrink-0 gap-1 ls-type-label-medium" title={serverScore ? serverScore.reasons.join('；') : `来源优先 ${inspirationScores.sourcePriority}；内容机会 ${inspirationScores.contentOpportunityScore}`}>
+      {!video.id.startsWith('material-') && hasVisibleSignals && <span className="hidden 2xl:inline-flex shrink-0 gap-1 ls-type-label-medium" title={serverScore ? serverScore.reasons.join('；') : `来源优先 ${inspirationScores.sourcePriority}；内容机会 ${inspirationScores.contentOpportunityScore}`}>
         {serverScore && <span className={`rounded px-1.5 py-1 ${serverScore.decision === 'accepted' ? 'bg-emerald-100 text-emerald-900' : serverScore.decision === 'review' ? 'bg-amber-100 text-amber-900' : 'bg-red-100 text-red-800'}`}>{serverScore.overall} 分</span>}
-        <span className="rounded bg-cyan-50 px-1.5 py-1 text-cyan-900">{candidateDimensions.relevance}</span><span className="rounded bg-amber-50 px-1.5 py-1 text-amber-900">{candidateDimensions.momentum}</span><span className="rounded bg-emerald-50 px-1.5 py-1 text-emerald-800">{candidateDimensions.transferability}</span></span>}
+        {visibleSignals.relevance && <span className="rounded bg-cyan-50 px-1.5 py-1 text-cyan-900">{visibleSignals.relevance}</span>}
+        {visibleSignals.momentum && <span className="rounded bg-amber-50 px-1.5 py-1 text-amber-900">{visibleSignals.momentum}</span>}
+        {visibleSignals.transferability && <span className="rounded bg-emerald-50 px-1.5 py-1 text-emerald-800">{visibleSignals.transferability}</span>}
+      </span>}
       <div className="flex-shrink-0 text-right min-w-[52px]">
         <p className="ls-type-body-small tabular-nums text-text-secondary">{isImagePost ? '图文' : `${Math.floor(video.duration / 60)}:${String(video.duration % 60).padStart(2, '0')}`}</p>
         <p className="ls-type-body-small tabular-nums text-text-muted">{video.views}</p>

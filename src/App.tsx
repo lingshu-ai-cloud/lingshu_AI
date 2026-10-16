@@ -16,6 +16,7 @@ import { isSocialTaskContextPage } from './lib/socialTaskContext';
 import {
   SOCIAL_CONTENT_NAVIGATION_EVENT,
   attachSocialContentNavigationState,
+  readSocialContentNavigationQueryTaskId,
   readSocialContentNavigationTaskId,
   setActiveSocialContentTaskId,
   type SocialContentNavigationEventDetail,
@@ -37,10 +38,8 @@ const loadPlatformAdsPage = () => import('./components/PlatformAdsPage');
 const loadStrategyPage = () => import('./components/StrategyPage');
 const loadTrafficPage = () => import('./components/TrafficPage');
 const loadConversionPage = () => import('./components/ConversionPage');
-const loadOrderManagementPage = () => import('./components/OrderManagementPage');
 const loadEnterprisePage = () => import('./components/EnterprisePage');
 const loadIntegrationsPage = () => import('./components/IntegrationsPage');
-const loadScheduledPage = () => import('./components/ScheduledPage');
 const loadAdminDashboard = () => import('./components/AdminDashboard');
 const loadAdminDeliveryPage = () => import('./components/AdminDeliveryPage');
 const loadGlobalAssistant = () => import('./components/GlobalAssistant');
@@ -56,10 +55,8 @@ const PlatformAdsPage = lazy(loadPlatformAdsPage);
 const StrategyPage = lazy(loadStrategyPage);
 const TrafficPage = lazy(loadTrafficPage);
 const ConversionPage = lazy(loadConversionPage);
-const OrderManagementPage = lazy(loadOrderManagementPage);
 const EnterprisePage = lazy(loadEnterprisePage);
 const IntegrationsPage = lazy(loadIntegrationsPage);
-const ScheduledPage = lazy(loadScheduledPage);
 const AdminDashboard = lazy(loadAdminDashboard);
 const AdminDeliveryPage = lazy(loadAdminDeliveryPage);
 const GlobalAssistant = lazy(loadGlobalAssistant);
@@ -76,7 +73,6 @@ const StarterWorkflowContextBar = lazy(loadStarterWorkflowContextBar);
 const DesignPrototype = import.meta.env.DEV ? lazy(() => import('./dev/DesignPrototype')) : null;
 const SocialContentPreview = import.meta.env.DEV ? lazy(() => import('./dev/SocialContentPreview')) : null;
 const SmartBusinessPreview = import.meta.env.DEV ? lazy(() => import('./dev/SmartBusinessPreview')) : null;
-const StartupHubPage = lazy(() => import('./components/StartupHubPage'));
 
 type PageModuleLoader = () => Promise<unknown>;
 const ADS_PAGES: Page[] = [...PLATFORM_ADS_PAGE_IDS];
@@ -96,14 +92,12 @@ const PAGE_MODULE_LOADERS: Partial<Record<Page, PageModuleLoader[]>> = {
   adsCreatives: [loadPlatformAdsPage],
   adsManaged: [loadPlatformAdsPage],
   conversion: [loadConversionPage],
-  orders: [loadOrderManagementPage],
   enterprise: [loadEnterprisePage],
   agentMemory: [loadWorkspaceManagementPages],
   organizationPermissions: [loadWorkspaceManagementPages],
   plugins: [loadIntegrationsPage],
   channels: [loadIntegrationsPage],
   youtube: [loadIntegrationsPage],
-  scheduled: [loadScheduledPage],
   admin: [loadAdminDashboard],
   adminDelivery: [loadAdminDeliveryPage],
 };
@@ -155,13 +149,6 @@ export type { AgentAction, AgentType, Conversation, ConversationContext, Kickoff
 export default function App() {
   const publicPath = window.location.pathname.replace(/\/+$/, '') || '/';
   const localForeignTradeMock = isLocalForeignTradeMockEnabled();
-  if (publicPath === '/startup-hub-preview') {
-    return (
-      <Suspense fallback={<PageLoading />}>
-        <StartupHubPage preview />
-      </Suspense>
-    );
-  }
   if (import.meta.env.DEV && DesignPrototype && publicPath === '/design-prototype') {
     return (
       <Suspense fallback={<PageLoading />}>
@@ -234,7 +221,8 @@ export default function App() {
   } | null>(() => {
     const initialPage = loadPage();
     if (!isSocialTaskContextPage(initialPage)) return null;
-    const taskId = canRestoreProductionHistoryState(window.history.state) ? readSocialContentNavigationTaskId(initialPage, window.history.state) : null;
+    const taskId = (canRestoreProductionHistoryState(window.history.state) ? readSocialContentNavigationTaskId(initialPage, window.history.state) : null)
+      || readSocialContentNavigationQueryTaskId(initialPage, window.location.search);
     return taskId ? { page: initialPage, taskId } : null;
   });
   useEffect(() => {
@@ -310,6 +298,7 @@ export default function App() {
     const detail = canRestoreProductionHistoryState(window.history.state) ? window.history.state?.productionDetail : null;
     return Boolean(
       readSocialContentNavigationTaskId('smartAssets', window.history.state)
+      || readSocialContentNavigationQueryTaskId('smartAssets', window.location.search)
       || window.__agentProductionTarget?.link.page === 'smartAssets'
       || detail?.workflowTaskId
       || detail?.businessRef?.entityId,
@@ -339,8 +328,16 @@ export default function App() {
   });
   const [smartAssetsStudioOpen, setSmartAssetsStudioOpen] = useState(() => {
     const detail = canRestoreProductionHistoryState(window.history.state) ? window.history.state?.productionDetail : null;
-    return Boolean(new URLSearchParams(window.location.search).get('project') || detail?.directStudio);
+    return Boolean(new URLSearchParams(window.location.search).get('project')
+      || readSocialContentNavigationQueryTaskId('smartAssets', window.location.search)
+      || detail?.directStudio);
   });
+
+  useEffect(() => {
+    const taskId = readSocialContentNavigationQueryTaskId(pageRef.current, window.location.search);
+    if (!taskId || !isSocialTaskContextPage(pageRef.current)) return;
+    attachSocialContentNavigationState(taskId, pageRef.current);
+  }, []);
 
   useEffect(() => {
     if (page === 'smartAssets' && (
@@ -390,7 +387,8 @@ export default function App() {
         setAuthLoading(false);
       },
       onRetry: () => {
-        setSessionRefreshError('本地服务正在启动，正在恢复预览会话。');
+        setSessionRefreshError('服务暂时不可用，正在自动重新连接。');
+        if (getToken()) setAuthLoading(false);
       },
       onFailure: () => {
         setSessionRefreshError('暂时无法连接服务，登录状态未被清除。');
@@ -915,7 +913,7 @@ export default function App() {
               ? <AssistantWeeklyProductionView key={`${session.tenant?.id || session.user.tenantId}:${session.user.id}`} target={readAssistantWeeklyNavigation(window.location.search)!} />
               : starterMode
               ? <StarterWorkspacePage onNavigate={handleNavigate} onNavigateWithTask={handleSocialContentNavigate} />
-              : <DigitalEmployeePage weeklyPlanNavigation={weeklyPlanNavigation?.identity === productionNavigationIdentity() ? weeklyPlanNavigation : null} onViewResults={() => handleNavigate('strategy')} onNavigate={handleNavigate} onOpenMonitor={() => handleNavigate('agentMonitor')} />}
+              : <DigitalEmployeePage active={page === 'digitalEmployees'} weeklyPlanNavigation={weeklyPlanNavigation?.identity === productionNavigationIdentity() ? weeklyPlanNavigation : null} onViewResults={() => handleNavigate('strategy')} onNavigate={handleNavigate} onOpenMonitor={() => handleNavigate('agentMonitor')} />}
           </Activity>
           {(page === 'agentMonitor' || mountedPages.has('agentMonitor')) && <Activity key={`monitor-${pagePreferenceScope(session)}`} mode={page === 'agentMonitor' ? 'visible' : 'hidden'}><AgentMonitorPage onBack={requestProductionBack} /></Activity>}
           {(page === 'strategy' || mountedPages.has('strategy')) && (
@@ -941,6 +939,7 @@ export default function App() {
             <Activity mode={page === 'traffic' ? 'visible' : 'hidden'}>
             <TrafficPage
               key="legacy-traffic"
+              sourcePage="traffic"
               onEnterConversation={enterConversation}
               onLeaveConversation={leaveConversation}
               isInConversation={conversation?.agent === 'traffic'}
@@ -964,6 +963,7 @@ export default function App() {
             <Activity mode={page === 'socialInspiration' ? 'visible' : 'hidden'}>
             <TrafficPage
               key="social-inspiration"
+              sourcePage="socialInspiration"
               onEnterConversation={enterConversation}
               onLeaveConversation={leaveConversation}
               isInConversation={false}
@@ -991,6 +991,7 @@ export default function App() {
               ) : (
                 <TrafficPage
                   key={`smart-assets-${smartAssetsInstanceKey}`}
+                  sourcePage="smartAssets"
                   onEnterConversation={enterConversation}
                   onLeaveConversation={leaveConversation}
                   isInConversation={false}
@@ -1017,6 +1018,7 @@ export default function App() {
             <Activity mode={page === 'socialMonitoring' ? 'visible' : 'hidden'}>
             <TrafficPage
               key="social-monitoring-accounts"
+              sourcePage="socialMonitoring"
               onEnterConversation={enterConversation}
               onLeaveConversation={leaveConversation}
               isInConversation={false}
@@ -1050,7 +1052,6 @@ export default function App() {
             />
             </Activity>
           )}
-          {(page === 'orders' || mountedPages.has('orders')) && <Activity mode={page === 'orders' ? 'visible' : 'hidden'}><OrderManagementPage /></Activity>}
           {(page === 'enterprise' || mountedPages.has('enterprise')) && <Activity mode={page === 'enterprise' ? 'visible' : 'hidden'}><EnterprisePage /></Activity>}
           {(page === 'agentMemory' || mountedPages.has('agentMemory')) && (
             <Activity mode={page === 'agentMemory' ? 'visible' : 'hidden'}>
@@ -1062,7 +1063,6 @@ export default function App() {
           )}
           {(INTEGRATION_PAGES.includes(page) || INTEGRATION_PAGES.some(item => mountedPages.has(item))) && <Activity mode={INTEGRATION_PAGES.includes(page) ? 'visible' : 'hidden'}><IntegrationsPage /></Activity>}
           {(page === 'organizationPermissions' || mountedPages.has('organizationPermissions')) && <Activity mode={page === 'organizationPermissions' ? 'visible' : 'hidden'}><OrganizationPermissionsPage /></Activity>}
-          {(page === 'scheduled' || mountedPages.has('scheduled')) && <Activity mode={page === 'scheduled' ? 'visible' : 'hidden'}><ScheduledPage onAction={startAgentTask} /></Activity>}
           {(page === 'admin' || mountedPages.has('admin')) && <Activity mode={page === 'admin' ? 'visible' : 'hidden'}><AdminDashboard onSupportSessionStarted={handleSupportSessionStarted} /></Activity>}
           {(page === 'adminDelivery' || mountedPages.has('adminDelivery')) && <Activity mode={page === 'adminDelivery' ? 'visible' : 'hidden'}><AdminDeliveryPage /></Activity>}
           </Suspense>

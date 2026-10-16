@@ -3,7 +3,9 @@ import { readFileSync } from 'node:fs';
 import test from 'node:test';
 
 const source = readFileSync(new URL('./AssistantDecisionCenter.tsx', import.meta.url), 'utf8');
+assert.doesNotMatch(source, /take_over:\s*UserRoundCheck/, 'Lingxiaoshu must not render a human-takeover action icon');
 const styles = readFileSync(new URL('./assistantDecisionCenter.css', import.meta.url), 'utf8');
+assert.match(styles, /\.assistant-decision-card__action\s*\{[^}]*white-space:\s*nowrap/, 'decision buttons must keep short action labels on one line');
 
 test('assistant is a one-card decision surface with chat only in the detail empty state', () => {
   assert.match(source, /feed\?\.items\[0\]/, 'only the first priority item is selected');
@@ -42,12 +44,12 @@ test('deep-link navigation explicitly notifies the owning shell before dispatch'
   assert.doesNotMatch(navigationBranch, /\.focus\(/, 'a closing navigation dialog must not steal focus back from the destination page');
 });
 
-test('digital-human recovery lands on the enterprise presenter assets instead of a generic facts page', () => {
+test('digital-human recovery opens the unified presenter onboarding step', () => {
   const dispatchSource = source.slice(source.indexOf('function dispatchDeepLink'), source.indexOf('function factTone'));
-  assert.match(dispatchSource, /link\.page === 'enterprise'[\s\S]*enterpriseView === 'presenters'/, 'the assistant recognizes the presenter recovery destination');
-  assert.match(dispatchSource, /localStorage\.setItem\('lingshu:enterprise:initial-view', 'presenters'\)/, 'a newly mounted enterprise page receives the presenter initial view');
-  assert.match(dispatchSource, /CustomEvent\([\s\S]*'lingshu:enterprise-view'[\s\S]*view: 'presenters'/, 'an already-mounted enterprise page is switched to presenter assets');
-  assert.match(dispatchSource, /requestAnimationFrame\?\.\(revealPresenters\)/, 'the presenter selection is repeated after the destination render commits');
+  assert.match(dispatchSource, /link\.page === 'digitalEmployees'[\s\S]*taskKey === 'presenter_setup_required'/, 'the assistant recognizes the shared presenter onboarding destination');
+  assert.match(dispatchSource, /sessionStorage\.setItem\('lingshu:open-digital-employee-guide', 'presenter'\)/, 'a newly mounted Digital Employee page receives the fourth-step entry');
+  assert.match(dispatchSource, /CustomEvent\([\s\S]*'lingshu:open-digital-employee-guide'[\s\S]*step: 'presenter'/, 'an already-mounted page opens the presenter step immediately');
+  assert.match(dispatchSource, /requestAnimationFrame\?\.\(openGuide\)/, 'the guide event is repeated after the destination render commits');
 });
 
 test('assistant uses shared Ant controls and the single branded primary action', () => {
@@ -80,11 +82,19 @@ test('refresh keeps the current card and late requests cannot replace newer stat
   assert.ok(antSelectorLines.length > 0 && antSelectorLines.every(line => line.includes('.ls-assistant-decision-dialog')), 'Ant internals may only be scoped below the owned external dialog class');
 });
 
+test('presenter changes immediately refresh the authoritative decision card', () => {
+  assert.match(source, /PRESENTER_ASSETS_UPDATED_EVENT/);
+  assert.match(source, /const refreshPresenterDecision[\s\S]{0,220}void load\(undefined, true\)/, 'the assistant re-reads backend state instead of editing the stale card locally');
+  assert.match(source, /addEventListener\(PRESENTER_ASSETS_UPDATED_EVENT/);
+  assert.match(source, /subscribeAssistantStateInvalidations\(\(\) => \{[\s\S]{0,160}void load\(undefined, true\)/, 'all domain mutations re-read the authoritative feed');
+  assert.match(source, /window\.setInterval\(refreshVisibleFeed, variant === 'summary' \? 15_000 : 5_000\)/, 'the open assistant must also reconcile asynchronous backend state');
+});
+
 test('weekly start feedback is receipt-backed and refreshes every mounted decision surface', () => {
   assert.match(source, /action\.id === 'approve_and_start'[\s\S]{0,180}!next\.execution \|\| next\.execution\.goalId !== first\.subject\.id/, 'a start result must match the selected goal');
   assert.match(source, /assistantDecisionExecutionFeedback\(next\.execution\)[\s\S]{0,260}notifyWeeklyWorkUpdated\(\{ source: 'assistant'/, 'verified execution drives feedback and the shared refresh event');
   assert.match(source, /onActionResult\?\.\(\{ action, card: first, response: next \}\)/, 'the shell receives one result callback from the completed command');
-  const refreshEffect = source.slice(source.indexOf('const refreshAfterWeeklyWorkChange'), source.indexOf("if (!active || variant !== 'summary')"));
+  const refreshEffect = source.slice(source.indexOf('const refreshAfterWeeklyWorkChange'), source.indexOf('const refreshPresenterDecision'));
   assert.match(refreshEffect, /void load\(\)/, 'page and assistant mutations refresh the authoritative pending feed');
   assert.match(source, /status === 'failed'[\s\S]{0,180}kind: 'error'/, 'a created but failed run is never shown as green success');
   assert.match(source, /status === 'cancelled'[\s\S]{0,180}kind: 'warning'/, 'a cancelled run remains distinct from success');
@@ -97,7 +107,15 @@ test('start uncertainty is reconciled without resubmitting the command', () => {
   assert.match(source, /window\.setInterval\(reconcileIfVisible, 15_000\)/, 'uncertain starts are checked at a restrained interval while visible');
   assert.match(source, /busyAction=\{busyAction \|\| \(\(loading \|\| startReconciliation\)/, 'an uncertain start keeps all decision actions disabled during reconciliation');
   const reconcileSource = source.slice(source.indexOf('const reconcileWeeklyStart'), source.indexOf('const act = useCallback'));
-  assert.doesNotMatch(reconcileSource, /client\.execute|approveGoal|approve_and_start/, 'reconciliation never repeats the start mutation');
+  assert.doesNotMatch(reconcileSource, /client\.execute|approveGoal/, 'reconciliation never repeats the start mutation');
+});
+
+test('task recovery timeout is treated as a queued command and reconciled read-only', () => {
+  assert.match(source, /\['approve_and_start', 'retry_task', 'replan_task'\]\.includes\(action\.id\)/, 'recovery commands enter bounded reconciliation after transport uncertainty');
+  assert.match(source, /pending\.action\.id !== 'approve_and_start'[\s\S]{0,240}client\.feed\(\{ page, goalId \}\)/, 'task recovery is reconciled by reading the authoritative feed');
+  assert.match(source, /item\.id === pending\.card\.id[\s\S]{0,100}item\.subject\.version === pending\.card\.subject\.version/, 'the original optimistic version remains pending until the command applies');
+  assert.match(source, /恢复指令已提交[\s\S]{0,120}请勿重复提交/, 'the UI explains that the safe command is queued instead of reporting a false failure');
+  assert.match(source, /type=\{startReconciliation \? 'warning' : 'error'\}/, 'uncertain commands use warning rather than error semantics');
 });
 
 test('only stale conflicts are replaced by a silent feed refresh', () => {

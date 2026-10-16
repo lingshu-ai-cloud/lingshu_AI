@@ -515,6 +515,8 @@ export async function createSocialDeliveryPackage(input: {
       return { deliveryPackage: socialDeliveryPackage(created), task: (await readSocialTaskDetail(input))! };
     },
   });
+  const {reconcileSocialContentOrderProjection}=await import('./socialContentOrderProjection.js');
+  await reconcileSocialContentOrderProjection(input);
   return mutation.value;
 }
 

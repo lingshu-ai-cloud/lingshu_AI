@@ -1,12 +1,14 @@
 import { authHeader } from './auth';
-import type { PresenterCapabilities, PresenterCreation, PresenterLook, PresenterPage, PresenterVoice } from './presenterAssets';
+import type { ArkPresenterPreparation, PresenterCapabilities, PresenterCreation, PresenterLook, PresenterPage, PresenterVoice } from './presenterAssets';
 import type { ProductionDefaults } from './shotProduction';
+import { notifyAssistantStateInvalidated } from './assistantStateInvalidation';
 const root = '/api/overseas/studio/production/presenters';
 async function request<T>(path: string, body?: unknown): Promise<T> {
   const response = await fetch(root + path, { method: body === undefined ? 'GET' : 'POST', headers: { ...authHeader(), 'Content-Type': 'application/json' }, ...(body === undefined ? {} : { body: JSON.stringify(body) }) });
   const data = await response.json().catch(() => null);
   if (!data) throw new Error(`人物服务暂时未返回有效响应 (${response.status})，请刷新后重试`);
   if (!response.ok) throw new Error(data.error || '人物服务请求失败');
+  if (body !== undefined) notifyAssistantStateInvalidated({ domain: 'presenter-assets', source: path });
   return data;
 }
 export const presenterApi = {
@@ -53,8 +55,9 @@ export const presenterApi = {
       xhr.send(file);
     });
   },
-  create: (body: { name: string; type: 'photo' | 'digital_twin'; voiceId?: string; uploadId: string; requestId: string; authorized: boolean; adultConfirmed: boolean; confirmed: boolean; reusePresenterId?: string; samePersonConfirmed?: boolean }) => request<PresenterCreation>('/creations', body),
+  create: (body: { name: string; type: 'photo' | 'digital_twin'; voiceId?: string; uploadId: string; requestId: string; authorized: boolean; adultConfirmed: boolean; confirmed: boolean; reusePresenterId?: string; samePersonConfirmed?: boolean; arkPreparation?: ArkPresenterPreparation }) => request<PresenterCreation>('/creations', body),
   refresh: (id: string) => request<PresenterCreation>(`/creations/${encodeURIComponent(id)}/refresh`, {}),
   consent: (id: string, requestId: string, uploadId?: string, rerouteUrl?: string) => request<PresenterCreation>(`/creations/${encodeURIComponent(id)}/consent`, { requestId, uploadId, rerouteUrl }),
   import: (body: { lookId?: string; creationId?: string; name?: string; voiceId?: string; reviewed: boolean; authorized?: boolean; makeDefault?: boolean }) => request<ProductionDefaults>('/import', body),
+  revoke: (presenterId: string) => request<ProductionDefaults>('/revoke', { presenterId }),
 };

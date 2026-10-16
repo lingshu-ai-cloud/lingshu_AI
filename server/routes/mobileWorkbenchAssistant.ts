@@ -11,6 +11,7 @@ import { buildChatGrounding } from '../assistantContext/chatGrounding.js';
 import { requestOrganizationRoleStrict } from '../lib/organizationRole.js';
 import { mobileWorkbenchActionCapabilityAllowed } from './mobileWorkbenchActions.js';
 import type { MobileWorkbenchActionInput } from './mobileWorkbenchActions.js';
+import { readLocalCustomerConversations, summarizeLocalCustomerConversations } from '../customerService/localConversations.js';
 
 export type MobileAssistantTopic = 'weekly_progress' | 'agent_status' | 'published_videos' | 'qualified_inquiries' | 'exposure';
 export interface MobileAssistantOptions {
@@ -105,6 +106,7 @@ export function createMobileWorkbenchAssistantRouter(store: DataStore, options: 
   router.post('/assistant/query', async (req, res) => {
     if (req.body && !req.body.clientMessageId && req.body.idempotencyKey) req.body.clientMessageId = req.body.idempotencyKey;
     const input = typeof req.body?.input === 'string' ? req.body.input.trim() : '';
+    const contextMode = req.body?.contextMode === 'customer_service' ? 'customer_service' : 'operator';
     if (input.length > 4000) { res.status(400).json({error:'assistant_input_too_long'}); return; }
     const topic = (req.body?.topic || (/Agent|智能体|在做什么/i.test(input) ? 'agent_status' : /询盘|客户/.test(input) ? 'qualified_inquiries' : /曝光|播放/.test(input) ? 'exposure' : /视频|发布/.test(input) ? 'published_videos' : /任务|进展|本周|这周/.test(input) ? 'weekly_progress' : '')) as MobileAssistantTopic;
     if (!input.trim() && !TOPICS.includes(topic)) {res.status(400).json({error:'assistant_input_required'});return;}
@@ -121,6 +123,11 @@ export function createMobileWorkbenchAssistantRouter(store: DataStore, options: 
       if(/决定|卡点|重试|重做|批准|处理|阻塞|返工|预算/.test(input)) {
         const actions=await mobileAssistantActionCandidates(store,identity,res.locals.assistantRole);
         answer={type:'query_result',text:actions.length?`找到 ${actions.length} 项可查看处理方案的事项。选择事项后先查看执行预览，确认前不会执行。`:'当前没有可核实且你有处理权限的审批或重试事项。',actions,links:actions.map(a=>({type:'matter',id:a.matterId,title:a.title})),performedAction:false};
+      } else if(contextMode === 'customer_service' && (/询盘|客户|回复|跟进|会话|消息/.test(input) || topic === 'qualified_inquiries')) {
+        const customers = summarizeLocalCustomerConversations(readLocalCustomerConversations(identity.tenantId));
+        const pending = customers.filter(item => item.hasUnread || item.pendingDraft);
+        const details = pending.slice(0, 8).map(item => `${item.name || item.id}：${item.hasUnread ? '有待回复消息' : '已有待确认草稿'}${item.latestMessage ? `；最近消息“${String(item.latestMessage).slice(0, 80)}”` : ''}`).join('\n');
+        answer={type:'query_result',text:customers.length ? `本地客服会话共 ${customers.length} 个，其中 ${pending.length} 个需要回复或确认。${details ? `\n${details}` : ''}` : '本地客服会话中暂时没有可读取的客户记录。',performedAction:false,evidence:[{source:'local_customer_conversations',route:'/customers'}],links:pending.map(item=>({type:'inquiry',id:item.id,title:String(item.name || item.id) }))};
       } else if(TOPICS.includes(topic)) answer=answerMobileAssistant(await buildMobileAssistantContext(store,identity.tenantId,options.now?.(),req.body?.weekStart),topic);
       else {
         if(!await consumeDemoQuota(req,res,'aiChat')) return;

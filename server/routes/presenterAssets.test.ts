@@ -36,7 +36,7 @@ test('presenter creation, consent, import, tenant isolation, pagination and unce
   const locks = new Map<string, Promise<unknown>>();
   const exclusive = async <T>(key: string, fn: () => Promise<T>): Promise<T> => { const next = (locks.get(key) || Promise.resolve()).catch(() => {}).then(fn); locks.set(key, next); return next; };
   const app = express(); app.use(express.json()); app.use((req, res, next) => { res.locals.tenantId = req.headers['x-tenant'] || 'A'; next(); });
-  app.use(createPresenterAssetsRouter(store, exclusive, { client, configured: () => true, enabled: () => true, directConsent: () => false, reserve: async () => { if (budgetBlocked) throw new Error('预算不足'); }, trimVideo: async (_bytes, seconds) => { trimCalls++; assert.equal(seconds, 7); return Buffer.from([0,0,0,0,102,116,121,112,1,2,3,4]); }, extractFrame: async (_bytes, seconds) => { frameCalls++; assert.equal(seconds, 1); return Buffer.from([255,216,255,224,0,16,74,70,73,70,0,1,255,217]); }, normalizeTrainingVideo: async bytes => bytes, inspectVideo: async () => ({ duration: 60, width: 1080, height: 1920, fps: 30, hasAudio: true }) }));
+  app.use(createPresenterAssetsRouter(store, exclusive, { client, configured: () => true, enabled: () => true, directConsent: () => false, reserve: async () => { if (budgetBlocked) throw new Error('预算不足'); }, trimVideo: async (_bytes, seconds) => { trimCalls++; assert.equal(seconds, 7); return Buffer.from([0,0,0,0,102,116,121,112,1,2,3,4]); }, extractFrame: async (_bytes, seconds) => { frameCalls++; assert.equal(seconds, 1); return Buffer.from([255,216,255,224,0,16,74,70,73,70,0,1,255,217]); }, normalizeTrainingVideo: async bytes => bytes, inspectVideo: async () => ({ duration: 60, width: 1080, height: 1920, fps: 30, hasAudio: true }), materialBelongs: (tenant, id, type) => tenant === 'A' && id === `ark-${type}` }));
   const server = app.listen(0, '127.0.0.1'); await new Promise<void>(r => server.once('listening', r));
   const root = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
   const request = (url: string, body?: any, tenant = 'A') => fetch(root + url, { method: body === undefined ? 'GET' : 'POST', headers: { 'Content-Type': 'application/json', 'x-tenant': tenant }, ...(body === undefined ? {} : { body: JSON.stringify(body) }) });
@@ -66,12 +66,18 @@ test('presenter creation, consent, import, tenant isolation, pagination and unce
     const assetsBeforeRepeat = calls.filter(c => c.url.endsWith('/assets')).length;
     assert.equal((await (await upload('upload1')).json()).id, asset.id); assert.equal(calls.filter(c => c.url.endsWith('/assets')).length, assetsBeforeRepeat);
     await store.create('studio_presenter_assets', { tenant_id: 'A', kind: 'creation', request_id: 'legacy-mock', payload: { mock: true, sourceDigest: rows.get(`studio_presenter_assets/${asset.id}`).payload.digest, status: 'completed' } });
-    const input = { name: 'Our presenter', type: 'photo', voiceId: 'voice1', uploadId: asset.id, requestId: 'creation1', authorized: true, adultConfirmed: true, confirmed: true };
+    const input = { name: 'Our presenter', type: 'photo', voiceId: 'voice1', uploadId: asset.id, requestId: 'creation1', authorized: true, adultConfirmed: true, confirmed: true,
+      arkPreparation: { photoMaterialId: 'ark-image', videoMaterialId: 'ark-video', processingAuthorized: true } };
     assert.equal((await request('/creations', { ...input, authorized: false })).status, 400);
     assert.equal((await request('/creations', { ...input, adultConfirmed: false })).status, 400);
     assert.equal((await request('/creations', input, 'B')).status, 400); assert.equal(creates(), 0);
     const pair = await Promise.all([request('/creations', input), request('/creations', input)]); const first = await pair[0].json();
     assert.equal((await pair[1].json()).id, first.id); assert.equal(creates(), 1); assert.equal(first.status, 'completed');
+    assert.deepEqual(first.arkPreparation, input.arkPreparation, 'one-time Ark preparation survives the HeyGen consent round trip');
+    const optionalArkInput = { ...input, requestId: 'creation-without-ark-consent', uploadId: asset.id,
+      arkPreparation: { ...input.arkPreparation, processingAuthorized: false } };
+    const optionalArk = await (await request('/creations', optionalArkInput)).json();
+    assert.equal(optionalArk.arkPreparation.processingAuthorized, false, 'saving reusable materials does not imply Ark processing consent');
     assert.equal(first.uploadId, undefined); assert.equal(first.fingerprint, undefined);
     assert.deepEqual(calls.find(c => c.url === 'https://api.heygen.com/v3/avatars')!.body.file, { type: 'asset_id', asset_id: 'uploaded1' });
     assert.equal((await request('/creations', { ...input, name: 'changed' })).status, 400);
@@ -154,6 +160,14 @@ test('presenter creation, consent, import, tenant isolation, pagination and unce
     assert.equal(calls.filter(c => c.url.endsWith('/created-group/consent')).at(-1)?.body.reroute_url, rerouteUrl);
     approved = true;
     assert.equal((await (await request(`/creations/${twin.id}/refresh`, {})).json()).status, 'completed');
+    assert.equal((await request('/revoke', { presenterId: saved.presenters[0].id }, 'B')).status, 400, 'another tenant cannot revoke the presenter');
+    const revoked = await (await request('/revoke', { presenterId: saved.presenters[0].id })).json();
+    assert.equal(revoked.presenters.some((item: any) => item.id === saved.presenters[0].id), false);
+    assert.notEqual(revoked.defaultPresenterId, saved.presenters[0].id);
+    const revocationAudit = [...rows.values()].find(row => row.kind === 'revocation' && row.tenant_id === 'A');
+    assert.equal(revocationAudit.payload.presenterId, saved.presenters[0].id);
+    assert.ok(revocationAudit.payload.revokedAt);
+    assert.deepEqual(await (await request('/revoke', { presenterId: saved.presenters[0].id })).json(), revoked, 'repeated cancellation is idempotent');
     assert.ok(calls.every(c => c.init.redirect === 'error'));
   } finally { await new Promise<void>(resolve => server.close(() => resolve())); }
 });

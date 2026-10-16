@@ -1,4 +1,6 @@
 import {WeeklyCancellationStatus} from './WeeklyCancellationStatus';
+import {readWeeklyContentNavigation,weeklyPublishingNavigationDetail} from '../../lib/weeklyContentNavigationApi';
+import {getToken} from '../../lib/auth';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { AlertTriangle, ArrowUpRight, CheckCircle2, Circle, Loader2, RefreshCcw, ShieldCheck } from 'lucide-react';
 import type {
@@ -49,7 +51,7 @@ const STEP_DETAIL: Record<WeeklyProductionStepKind, string> = {
   benchmark_collection: '按 TikTok 主阵地、中词主供给采集候选。',
   benchmark_scoring: '按 B2B 匹配、证据完整度和可迁移性筛选。',
   director_analysis: '输出对标账号、具体视频、结构、风格和迁移边界。',
-  business_schedule: '经营 Agent 把编导结论合并成数量、账号、日期和预算均明确的排期。',
+  business_schedule: '经营 Agent 根据当天编导结论，确定今日成片主题、账号与发布时间。',
   material_preparation: '在脚本启动前准备真实素材、产品事实与授权；提交和核验使用原素材任务，不提前启动制作。',
   material_readiness: '在分镜完成后复核原素材申请、实际来源版本与消费者核验；缺少必需输入时等待补齐。',
   script: '编导 Agent 对照爆款原脚本与企业已确认事实，生成可核对的适配脚本。',
@@ -58,7 +60,7 @@ const STEP_DETAIL: Record<WeeklyProductionStepKind, string> = {
   video_generation: '执行画面、数字人、配音、字幕、剪辑和渲染。',
   quality_check: '对每个镜头和整体成片进行独立质检。',
   rework: '只重做不合格镜头，保留已通过的结果。',
-  user_approval: '用统一决策卡确认成片，未确认不会真实发布。',
+  user_approval: '进入发布与渠道预览并验收真实成片，验收与发布许可分别操作。',
   publishing: '在授权范围内发布，保留平台回执。',
   customer_channel_readiness: '逐条发布核验 WhatsApp、Messenger、Instagram 的租户授权、真实账号和可用凭据。',
   customer_inquiry_handoff: '发布后承接真实私信询盘；绑定周客服运行、原会话身份和平台回执，未知结果保持待对账。',
@@ -255,14 +257,13 @@ export default function WeeklyOperatingWorkbench({ pkg, loading, error, selected
   };
   const approveTask = async (task: WeeklyExecutionTask): Promise<void> => {
     if (!pkg || planningBusy || task.programId !== pkg.programId || task.packageId !== pkg.packageId || task.packageVersion !== pkg.version) return;
-    const scope = pkg, identity = packageIdentity;
+    const scope = pkg, identity = packageIdentity,token=getToken();
     setPlanningBusy(true);
     setPlanningError('');
     try {
-      const tasks = await socialProgramApi.approveExecutionTask(scope.programId, scope.packageId, task.taskId);
-      if (packageIdentityRef.current !== identity) return;
-      setExecutionTasks(tasks);
-      onRefresh();
+      const binding=await readWeeklyContentNavigation({tenantId:task.tenantId,programId:scope.programId,packageId:scope.packageId,packageVersion:scope.version,executionTaskId:task.taskId});
+      if(packageIdentityRef.current!==identity||getToken()!==token)return;
+      window.dispatchEvent(new CustomEvent('lingshu:navigate',{detail:weeklyPublishingNavigationDetail(binding)}));
     } catch (cause) {
       if (packageIdentityRef.current === identity) setPlanningError(cause instanceof Error ? cause.message : '成片确认失败。');
     } finally {
@@ -284,7 +285,7 @@ export default function WeeklyOperatingWorkbench({ pkg, loading, error, selected
   return <section ref={materialSurface} aria-label="统一周工作台" className="space-y-4">
     {pkg && <section className="rounded-xl border border-border bg-white p-5">
       <h3 className="text-sm font-bold">本周复刻来源配额</h3>
-      <p className="mt-2 text-xs text-text-secondary">{pkg.referenceSourcePolicy ? `自有 ${pkg.referenceSourcePolicy.ownedPercent}% / 外部 ${pkg.referenceSourcePolicy.externalPercent}% · 按母版计数` : '尚未确认来源配额'}</p>
+      <p className="mt-2 text-xs text-text-secondary">{pkg.referenceSourcePolicy ? `自有 ${pkg.referenceSourcePolicy.ownedPercent}% / 外部 ${pkg.referenceSourcePolicy.externalPercent}% · 按独立视频计数` : '尚未确认来源配额'}</p>
       {planning && <p className="mt-1 text-xs text-text-muted">实际分配：自有 {planning.skeleton.slots.filter(slot => slot.referenceSource === 'owned').length} 条 / 外部 {planning.skeleton.slots.filter(slot => slot.referenceSource === 'external').length} 条；未标来源 {planning.skeleton.slots.filter(slot => !slot.referenceSource).length} 条。</p>}
       {planning?.directorAnalyses.filter(item => item.benchmarkAccountRefs.some(ref => ref.type === 'owned_social_account')).map(item => <p key={item.analysisId} className="mt-2 rounded-lg bg-surface-2 p-3 text-xs text-text-secondary">
         自有参考 {item.benchmarkVideoRefs.map(ref => ref.id).join('、')}：{item.historicalPerformance ? `播放 ${item.historicalPerformance.metrics.views ?? '未知'} · 赞 ${item.historicalPerformance.metrics.likes ?? '未知'} · 转 ${item.historicalPerformance.metrics.shares ?? '未知'} · 评 ${item.historicalPerformance.metrics.comments ?? '未知'}；采集 ${item.historicalPerformance.capturedAt}，来源 ${item.historicalPerformance.source}` : '尚无匹配的播放和赞转评快照'}
@@ -331,7 +332,7 @@ export default function WeeklyOperatingWorkbench({ pkg, loading, error, selected
 
     <section className="rounded-lg border border-border bg-white p-5 sm:p-6">
       <div className="flex flex-wrap items-start justify-between gap-4">
-        <div><p className="text-[11px] font-black uppercase tracking-[.14em] text-accent">Two-step planning</p><h3 className="mt-1 text-base font-bold text-text-primary">任务生成分两步，用户确认后才生产</h3><p className="mt-1 text-xs leading-5 text-text-muted">编导 Agent 分析爆款并负责原脚本拆解、企业适配脚本和分镜；经营 Agent 据此制定详细选题、账号、日期和预算排期；内容 Agent 只执行正式派单。</p></div>
+        <div><p className="text-[11px] font-black uppercase tracking-[.14em] text-accent">Daily planning loop</p><h3 className="mt-1 text-base font-bold text-text-primary">每天根据新增爆款确定当天主题</h3><p className="mt-1 text-xs leading-5 text-text-muted">编导 Agent 每天采集并分析新增爆款；经营 Agent 据此确定当天成片主题、账号和发布时间；内容 Agent 只执行当天正式派单。</p></div>
         {planningAction && <button type="button" disabled={planningBusy} onClick={() => void advancePlanning()} className="btn-primary inline-flex items-center gap-2 disabled:opacity-50">{planningBusy&&<Loader2 size={14} className="animate-spin"/>}{planningAction}<ArrowUpRight size={14}/></button>}
       </div>
       <div className="mt-4 grid gap-3 lg:grid-cols-2">
@@ -384,7 +385,7 @@ export default function WeeklyOperatingWorkbench({ pkg, loading, error, selected
             {item.execution&&<p className="mt-3 rounded-lg bg-white/80 px-3 py-2 text-xs text-text-secondary">真实作业 {item.execution.jobId} · 独立运行 {item.execution.runId}</p>}
             {repairErrors[item.caseId]&&<p role="alert" className="mt-3 rounded-lg bg-red-100 px-3 py-2 text-xs text-red-800">{repairErrors[item.caseId]}</p>}
           </article>})}</div>}
-        <ol className="mt-5 space-y-3">{selectedProductionTasks.map((task, index) => <li id={`weekly-execution-${task.taskId}`} tabIndex={-1} key={task.taskId} className={`relative rounded-xl border p-4 ${taskTone(task.status)} ${selectedTaskId === task.taskId ? 'ring-2 ring-accent/20' : ''}`}><div className="flex flex-wrap items-start justify-between gap-3"><div className="min-w-0"><div className="flex flex-wrap items-center gap-2"><span className="flex h-6 w-6 items-center justify-center rounded-full bg-white text-[10px] font-black text-text-secondary">{index + 1}</span><h4 className="text-sm font-bold text-text-primary">{STEP_LABEL[task.schedule.stepKind]}</h4><span className="rounded-full bg-white px-2 py-1 text-[10px] font-bold text-text-secondary">{ACTOR_LABEL[task.schedule.responsibleActor]}</span></div><p className="mt-2 text-xs leading-5 text-text-secondary">{STEP_DETAIL[task.schedule.stepKind]}</p></div><span className="rounded-full bg-white px-2.5 py-1 text-[10px] font-black text-text-secondary">{EXECUTION_STATUS_LABEL[task.status]}</span></div><div className="mt-3 flex flex-wrap gap-x-5 gap-y-1 border-t border-black/5 pt-3 text-[10px] text-text-muted"><span>预计耗时：<strong className="text-text-secondary">{durationLabel(task.schedule.estimatedDurationMinutes)}</strong></span><span>预计开始：<strong className="text-text-secondary">{timeLabel(task.schedule.estimatedStartAt)}</strong></span><span>预计完成：<strong className="text-text-secondary">{timeLabel(task.schedule.estimatedFinishAt)}</strong></span>{task.schedule.actualStartedAt&&<span>实际开始：<strong className="text-text-secondary">{timeLabel(task.schedule.actualStartedAt)}</strong></span>}{task.schedule.actualFinishedAt&&<span>实际完成：<strong className="text-text-secondary">{timeLabel(task.schedule.actualFinishedAt)}</strong></span>}</div>{(task.ownBlockingReasons.length>0||task.inheritedBlockingTaskIds.length>0)&&<p className="mt-3 rounded-lg bg-white/70 px-3 py-2 text-xs leading-5 text-red-700">卡点：{[...task.ownBlockingReasons, ...task.inheritedBlockingTaskIds.map(id => `等待上游 ${id}`)].join('；')}</p>}<TaskDeadlineNotice task={task}/>{task.productionProgress&&<p className="mt-2 rounded-lg bg-blue-50 px-3 py-2 text-xs leading-5 text-blue-800">当前制作：{task.productionProgress.step} · {task.productionProgress.activity} · 更新于 {timeLabel(task.productionProgress.updatedAt)}</p>}{task.status === 'blocked' && task.ownBlockingReasons.includes('weekly_required_materials_missing') && <button type="button" disabled={planningBusy} onClick={() => void recheckMaterials(task)} className="mt-3 rounded-lg border border-border bg-white px-3 py-2 text-xs font-semibold disabled:opacity-50">已补交素材，重新核验</button>}{task.lastError&&<p className="mt-2 text-xs text-red-700">{task.status === 'queued' ? '等待原因' : '处理原因'}：{task.lastError.message}（{task.lastError.retryable ? '系统会继续核对或分级重试' : '需要用户或人工处理'}）</p>}{task.schedule.stepKind==='user_approval'&&task.status==='queued'&&<button type="button" disabled={planningBusy} onClick={() => void approveTask(task)} className="btn-primary mt-3 inline-flex items-center gap-2 disabled:opacity-50">{planningBusy&&<Loader2 size={13} className="animate-spin"/>}确认这条成片</button>}</li>)}</ol>
+        <ol className="mt-5 space-y-3">{selectedProductionTasks.map((task, index) => <li id={`weekly-execution-${task.taskId}`} tabIndex={-1} key={task.taskId} className={`relative rounded-xl border p-4 ${taskTone(task.status)} ${selectedTaskId === task.taskId ? 'ring-2 ring-accent/20' : ''}`}><div className="flex flex-wrap items-start justify-between gap-3"><div className="min-w-0"><div className="flex flex-wrap items-center gap-2"><span className="flex h-6 w-6 items-center justify-center rounded-full bg-white text-[10px] font-black text-text-secondary">{index + 1}</span><h4 className="text-sm font-bold text-text-primary">{STEP_LABEL[task.schedule.stepKind]}</h4><span className="rounded-full bg-white px-2 py-1 text-[10px] font-bold text-text-secondary">{ACTOR_LABEL[task.schedule.responsibleActor]}</span></div><p className="mt-2 text-xs leading-5 text-text-secondary">{STEP_DETAIL[task.schedule.stepKind]}</p></div><span className="rounded-full bg-white px-2.5 py-1 text-[10px] font-black text-text-secondary">{EXECUTION_STATUS_LABEL[task.status]}</span></div><div className="mt-3 flex flex-wrap gap-x-5 gap-y-1 border-t border-black/5 pt-3 text-[10px] text-text-muted"><span>预计耗时：<strong className="text-text-secondary">{durationLabel(task.schedule.estimatedDurationMinutes)}</strong></span><span>预计开始：<strong className="text-text-secondary">{timeLabel(task.schedule.estimatedStartAt)}</strong></span><span>预计完成：<strong className="text-text-secondary">{timeLabel(task.schedule.estimatedFinishAt)}</strong></span>{task.schedule.actualStartedAt&&<span>实际开始：<strong className="text-text-secondary">{timeLabel(task.schedule.actualStartedAt)}</strong></span>}{task.schedule.actualFinishedAt&&<span>实际完成：<strong className="text-text-secondary">{timeLabel(task.schedule.actualFinishedAt)}</strong></span>}</div>{(task.ownBlockingReasons.length>0||task.inheritedBlockingTaskIds.length>0)&&<p className="mt-3 rounded-lg bg-white/70 px-3 py-2 text-xs leading-5 text-red-700">卡点：{[...task.ownBlockingReasons, ...task.inheritedBlockingTaskIds.map(id => `等待上游 ${id}`)].join('；')}</p>}<TaskDeadlineNotice task={task}/>{task.productionProgress&&<p className="mt-2 rounded-lg bg-blue-50 px-3 py-2 text-xs leading-5 text-blue-800">当前制作：{task.productionProgress.step} · {task.productionProgress.activity} · 更新于 {timeLabel(task.productionProgress.updatedAt)}</p>}{task.status === 'blocked' && task.ownBlockingReasons.includes('weekly_required_materials_missing') && <button type="button" disabled={planningBusy} onClick={() => void recheckMaterials(task)} className="mt-3 rounded-lg border border-border bg-white px-3 py-2 text-xs font-semibold disabled:opacity-50">已补交素材，重新核验</button>}{task.lastError&&<p className="mt-2 text-xs text-red-700">{task.status === 'queued' ? '等待原因' : '处理原因'}：{task.lastError.message}（{task.lastError.retryable ? '系统会继续核对或分级重试' : '需要用户或人工处理'}）</p>}{task.schedule.stepKind==='user_approval'&&task.status==='queued'&&<button type="button" disabled={planningBusy} onClick={() => void approveTask(task)} className="btn-primary mt-3 inline-flex items-center gap-2 disabled:opacity-50">{planningBusy&&<Loader2 size={13} className="animate-spin"/>}进入发布页验收</button>}</li>)}</ol>
         {!selectedProductionTasks.length&&<p className="mt-5 rounded-lg border border-dashed border-border px-4 py-8 text-center text-xs text-text-muted">这条内容的制作节点尚未物化，请先完成任务总纲。</p>}
       </>}
       {!!sharedExecutionTasks.length&&<details className="mt-5 rounded-lg border border-border bg-surface-2/40"><summary className="cursor-pointer px-4 py-3 text-xs font-bold text-text-primary">查看本周共同前置与收尾任务（{sharedExecutionTasks.length} 个后端节点）</summary><div className="grid gap-2 border-t border-border p-3 md:grid-cols-2">{sharedExecutionTasks.map(task => <article key={task.taskId} className={`rounded-lg border p-3 ${taskTone(task.status)}`}><div className="flex items-start justify-between gap-2"><div><p className="text-xs font-bold text-text-primary">{STEP_LABEL[task.schedule.stepKind]}</p><p className="mt-1 text-[10px] text-text-muted">{ACTOR_LABEL[task.schedule.responsibleActor]} · {durationLabel(task.schedule.estimatedDurationMinutes)} · {timeLabel(task.schedule.estimatedFinishAt)} 前</p></div><span className="shrink-0 text-[10px] font-bold text-text-secondary">{EXECUTION_STATUS_LABEL[task.status]}</span></div><TaskDeadlineNotice task={task}/>{task.ownBlockingReasons.length>0&&<p className="mt-2 text-[10px] leading-4 text-red-700">卡点：{task.ownBlockingReasons.join('；')}</p>}</article>)}</div></details>}

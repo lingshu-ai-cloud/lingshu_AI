@@ -38,7 +38,7 @@ const thread: AgentThreadState = {
       taskId: 'plan',
       title: '确认本周计划',
       conclusion: '等待确认',
-      details: ['5 条母版 https://files.example.test/detail.mp4?sig=detail-signature&safe=ok'],
+      details: ['5 条独立视频 https://files.example.test/detail.mp4?sig=detail-signature&safe=ok'],
       items: [{
         id: 'preview-1',
         title: '素材预览',

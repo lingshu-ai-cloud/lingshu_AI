@@ -18,6 +18,13 @@ test('schedule resolves real matters and keeps unscheduled tasks unknown',()=>{
  assert.match(view.agentScheduleItems[0].timeLabel,/未提供|未设置|待定/);
 });
 test('date-only plans do not fabricate appointment times',()=>{assert.doesNotMatch(schedule.timestamp('2026-10-10'),/08:00|00:00/)});
+test('orchestrator is merged into the business agent instead of showing as a separate Lingxiaoshu agent',()=>{
+ const view=schedule.project({availability:'available',items:[{taskId:'o',role:'orchestrator',title:'统筹任务'},{taskId:'b',role:'business',title:'经营任务'}]},[{role:'orchestrator'},{role:'business'}],[]);
+ assert.equal(view.agentScheduleGroups.length,1);
+ assert.equal(view.agentScheduleGroups[0].role,'business');
+ assert.equal(view.agentScheduleGroups[0].label,'经营 Agent');
+ assert.deepEqual(Array.from(view.agentScheduleGroups[0].items,item=>item.taskId),['o','b']);
+});
 test('ordinary scheduled task opens its authoritative workspace read-only',async()=>{
  let url; const p=page({request:async value=>{url=value;return {task:{status:'running',output:{stage:'整理资料'}},events:[]}}});
  p.data.agentScheduleItems=[{taskId:'t',runId:'r',title:'真实任务',role:'business',status:'running',stage:'当前节点'}];
@@ -39,7 +46,7 @@ test('workspace observation replaces stale blocker, state and next without inven
  const p=page({request:async()=>response});
  p.data.detail={id:'t',run_id:'r',status:'blocked',next:'旧操作',reason:'旧卡点',blocked_reason:'旧卡点',description:'旧说明',output:{stage:'旧阶段'}};
  await p.loadTaskEvents(p.data.detail);
- assert.equal(p.data.detail.statusLabel,'等待外部结果');
+ assert.equal(p.data.detail.statusLabel,'等待业务结果');
  assert.equal(p.data.detail.execution.blocker,'等待平台回写');
  assert.equal(p.data.detail.next,'核对平台回执');
  response={task:{status:'running'},events:[]};

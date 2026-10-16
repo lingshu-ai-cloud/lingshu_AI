@@ -1,4 +1,5 @@
 import {socialAssetSupplyPlanIdentityHash} from '../starter198/socialAssetSupplyPlanIdentity.js';
+import {weeklyProductionCanonicalScope} from './weeklyContentProductionIdentity.js';
 import {withSocialContentSubjectLease,assertSocialContentSubjectLease} from '../starter198/socialContentMutation.js';
 import type {DataStore,Record_} from '../storage/datastore.js';
 import type {Starter198Repository} from '../starter198/repository.js';
@@ -25,6 +26,7 @@ export function weeklyOwnedProductIdentityPlanHash(plan:NonNullable<SocialConten
  return socialAssetSupplyPlanIdentityHash({...plan,...(version===undefined?{}:{planVersion:String(version)})});
 }
 function currentRun(row:Record_){return typeof row.run_id==='string'&&row.run_id.length>0;}
+async function canonicalOwnedScope(store:DataStore,scope:WeeklyOwnedProductIdentityScope){const rows=await store.list<Record_>('starter_social_content_tasks',{where:{tenant_id:scope.tenantId,task_id:scope.contentTaskId},perPage:2});if(rows.totalItems===1&&String(rows.items[0]?.create_idempotency_key).startsWith('weekly-creative-repair:'))return scope;return {...scope,...await weeklyProductionCanonicalScope(store,scope)};}
 async function source(store:DataStore,scope:WeeklyOwnedProductIdentityScope,ports:WeeklyOwnedProductIdentityPorts){
  if(ports.repository.dataStore!==store)return fail('weekly_material_repository_authority_invalid');
  const rows=await store.list<Record_>('starter_social_content_tasks',{where:{tenant_id:scope.tenantId,task_id:scope.contentTaskId},perPage:2});const row=rows.items[0];
@@ -61,6 +63,7 @@ async function source(store:DataStore,scope:WeeklyOwnedProductIdentityScope,port
  return {row,detail,requirements,planSafe,preparationTask,consumerTaskId:found?.task.taskId??null,requirementHash:socialRequestHash(requirements)};
 }
 export async function assessWeeklyOwnedProductIdentity(store:DataStore,scope:WeeklyOwnedProductIdentityScope,ports:WeeklyOwnedProductIdentityPorts,frozenOverride?:FrozenWeeklyOwnedProductIdentityDemand):Promise<WeeklyOwnedProductIdentityAssessment>{
+ scope=await canonicalOwnedScope(store,scope);
  const current=await source(store,scope,ports),version=Number(current.detail.version);if(!Number.isSafeInteger(version)||version<1)return fail('weekly_owned_product_identity_version_invalid');
  const result:WeeklyOwnedProductIdentityAssessment={scope,required:current.requirements.length>0,status:current.requirements.length?'blocked':'not_required',contentTaskVersion:version,consumerTaskId:current.consumerTaskId,preparationTaskId:current.preparationTask?.taskId??null,preparationTask:current.preparationTask?{taskId:current.preparationTask.taskId,status:current.preparationTask.status,ownBlockingReasons:current.preparationTask.ownBlockingReasons,inheritedBlockingTaskIds:current.preparationTask.inheritedBlockingTaskIds,updatedAt:current.preparationTask.updatedAt}:null,requirementHash:current.requirementHash,requirements:current.requirements,bindings:[],materials:[],gaps:[]};if(!result.required)return result;if(!current.planSafe){result.gaps.push('weekly_owned_product_identity_plan_not_ready');return result;}
  const frozen=frozenOverride??obj(current.row.brief)?._weeklyOwnedProductIdentityDemand as FrozenWeeklyOwnedProductIdentityDemand|undefined;
@@ -85,6 +88,7 @@ export async function assessWeeklyOwnedProductIdentity(store:DataStore,scope:Wee
  if(!result.gaps.length&&result.materials.length)result.status='ready';return result;
 }
 export async function bindWeeklyOwnedProductIdentity(store:DataStore,scope:WeeklyOwnedProductIdentityScope,input:{actorUserId:string;expectedTaskVersion:number;expectedRequirementHash:string;bindings:WeeklyOwnedProductIdentityBinding[]},ports:WeeklyOwnedProductIdentityPorts){
+ scope=await canonicalOwnedScope(store,scope);
  return withExecutionPackageGate(store,{tenantId:scope.tenantId,programId:scope.programId,packageId:scope.packageId,packageVersion:scope.packageVersion},async assert=>withSocialContentSubjectLease({repository:ports.repository,tenantId:scope.tenantId,subjectId:scope.contentTaskId,action:async()=>{
  const scopedRows=await store.list<Record_>('starter_social_content_tasks',{where:{tenant_id:scope.tenantId,task_id:scope.contentTaskId},perPage:2}),scopedRow=scopedRows.items[0];
  const creative=scopedRows.totalItems===1&&scopedRows.items.length===1&&scopedRow?await resolveWeeklyCreativeRepairAuthority({store,tenantId:scope.tenantId,task:scopedRow}):null;
@@ -109,6 +113,7 @@ export async function bindWeeklyOwnedProductIdentity(store:DataStore,scope:Weekl
  * child is assessed independently, and bind performs the normal byte, rights,
  * fact, consumer and source checks again before persisting anything. */
 export async function inheritWeeklyOwnedProductIdentity(store:DataStore,input:{parentScope:WeeklyOwnedProductIdentityScope;childScope:WeeklyOwnedProductIdentityScope;actorUserId:string},ports:WeeklyOwnedProductIdentityPorts){
+ input={...input,parentScope:await canonicalOwnedScope(store,input.parentScope),childScope:await canonicalOwnedScope(store,input.childScope)};
  const {parentScope,childScope}=input;
  if(parentScope.tenantId!==childScope.tenantId||parentScope.programId!==childScope.programId||parentScope.packageId!==childScope.packageId||parentScope.packageVersion!==childScope.packageVersion||parentScope.publicationTaskId!==childScope.publicationTaskId)return fail('weekly_owned_product_identity_scope_invalid');
  const childRows=await store.list<Record_>('starter_social_content_tasks',{where:{tenant_id:childScope.tenantId,task_id:childScope.contentTaskId},perPage:2}),child=childRows.items[0];
@@ -137,6 +142,7 @@ export const readWeeklyOwnedProductIdentityAssessment=assessWeeklyOwnedProductId
 /** Explicit recheck resumes only the original owned-product prerequisite card;
  * it neither completes the card nor starts/enqueues production. */
 export async function resumeWeeklyOwnedProductIdentity(store:DataStore,scope:WeeklyOwnedProductIdentityScope,actorUserId:string,ports:WeeklyOwnedProductIdentityPorts){
+ scope=await canonicalOwnedScope(store,scope);
  return withExecutionPackageGate(store,{tenantId:scope.tenantId,programId:scope.programId,packageId:scope.packageId,packageVersion:scope.packageVersion},async assert=>{
   if(await executionPackageFrozen(store,{tenantId:scope.tenantId,programId:scope.programId,packageId:scope.packageId,packageVersion:scope.packageVersion}))return fail('weekly_execution_package_frozen');
   const actor=await store.getById<Record_>('users',actorUserId);if(!actor||actor.tenantId!==scope.tenantId||!['super_admin','admin','social_operator'].includes(organizationRoleOrNull(actor.role)??'')||actor.disabled===true||actor.active===false||['disabled','suspended'].includes(String(actor.status)))return fail('weekly_owned_product_identity_actor_invalid');

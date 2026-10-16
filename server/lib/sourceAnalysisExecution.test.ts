@@ -38,6 +38,11 @@ try {
   result=JSON.parse(row.aiAnalysis); assert.notEqual(result.analysisQuality,'video'); assert.equal(result.geminiStatus,'video_failed');
   assert.equal(fs.existsSync(path.join(dir,'video.mp4')),false);
   adapters.analyze=analyze;
+  reset(); process.env.CRAWLER_OPS_WORKER_ENABLED='1';
+  adapters.analyze=async()=>{throw Error('exact_analysis_retryable: 404 Model not exist.');};
+  await assert.rejects(run(),/Model not exist/);
+  result=JSON.parse(row.aiAnalysis);assert.equal(result.downloadStatus,'manual_required');assert.equal(result.geminiStatus,'video_failed');assert.equal(result.analysisQueueState,'failed');assert.equal(result.analysisRetryable,false);assert.notEqual(result.downloadStatus,'ops_queued');
+  adapters.analyze=analyze;process.env.CRAWLER_OPS_WORKER_ENABLED='0';
   reset(); failWrite=true;
   await assert.rejects(run(),/video_analysis_writeback_failed/);
   assert.notEqual(JSON.parse(row.aiAnalysis).analysisQuality,'video');

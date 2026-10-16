@@ -3,6 +3,7 @@ import { reviewTodoService } from './reviewTodos.js';
 import { store } from '../storage/index.js';
 import { normalizeDigitalEmployeeConfig, type DigitalEmployeeConfig } from './domain.js';
 import { beijingDate, latestDueReviewSlot, reviewScheduleFromCadence } from './runtimeSchedule.js';
+import { readTenantPublishingReadiness } from './publishingRuntimeReadiness.js';
 import { allocateReviewTodos, continueManagedOperatingCycle, generateScheduledRunReview, reconcileDigitalEmployeeRun } from '../routes/digitalEmployees.js';
 
 type StoredRecord = { id: string; [key: string]: unknown };
@@ -17,6 +18,15 @@ type RuntimeRun = StoredRecord & {
 type RuntimeGoal = StoredRecord & { tenant_id: string; starts_at: string; ends_at: string };
 type RuntimePlan = StoredRecord & { tenant_id: string; plan: unknown };
 type RuntimeConfig = StoredRecord & { tenant_id: string; config: unknown };
+type RuntimeTask = StoredRecord & {
+  tenant_id: string;
+  run_id: string;
+  task_key: string;
+  status: string;
+  output?: unknown;
+  blocked_reason?: string;
+};
+type RuntimeStudioProject = StoredRecord & { tenant_id: string; spec?: unknown; status?: string };
 
 const RECONCILABLE_STATUSES = new Set(['planning', 'running', 'waiting_external', 'waiting_approval']);
 const REVIEWABLE_STATUSES = new Set([...RECONCILABLE_STATUSES, 'waiting_human', 'succeeded', 'failed']);
@@ -41,6 +51,65 @@ function jsonValue<T>(value: unknown, fallback: T): T {
 function integerEnv(name: string, fallback: number, min: number, max: number): number {
   const value = Number(process.env[name]);
   return Number.isFinite(value) ? Math.max(min, Math.min(max, Math.round(value))) : fallback;
+}
+
+const RECOVERABLE_PUBLISHING_CHECKS = new Set([
+  'social_accounts',
+  'publishing_oauth_configuration',
+  'publishing_account_connections',
+]);
+const EXTERNAL_PROVIDER_ACCOUNT_PATTERN = /账户欠费|欠费|充值|鉴权失败|API Key|account is not in good standing|overdue[ -]?payment|arrearage|invalid api key|unauthori[sz]ed|forbidden/i;
+
+/** Only connection/authentication preflight waits may wake without a click. */
+export function isRecoverableExternalPublishingWait(task: Pick<RuntimeTask, 'task_key' | 'status' | 'output'>): boolean {
+  if (task.task_key !== 'content_release_approval' || task.status !== 'waiting_human') return false;
+  const output = jsonValue<Record<string, unknown>>(task.output, {});
+  if (output.dataStatus !== 'preflight_blocked') return false;
+  const preflight = jsonValue<{ checks?: Array<{ key?: string; ready?: boolean }> }>(output.preflight, {});
+  return (preflight.checks || []).some(check => check.ready === false && RECOVERABLE_PUBLISHING_CHECKS.has(String(check.key || '')));
+}
+
+/** Provider-account waits are retried after a bounded backoff, not blindly. */
+export function externalContentProjectRecoveryDue(
+  project: Pick<RuntimeStudioProject, 'spec' | 'status'>,
+  runId: string,
+  taskIds: Set<string>,
+  now = new Date(),
+): boolean {
+  if (['completed', 'cancelled', 'superseded'].includes(String(project.status || ''))) return false;
+  const spec = jsonValue<Record<string, unknown>>(project.spec, {});
+  if (String(spec.workflowRunId || '') !== runId || !taskIds.has(String(spec.workflowTaskId || ''))) return false;
+  const automation = jsonValue<Record<string, unknown>>(spec.automation, {});
+  if (String(automation.status || '') !== 'blocked' && String(automation.stage || '') !== 'blocked') return false;
+  const recoverable = automation.autoRecheckExternal === true
+    || EXTERNAL_PROVIDER_ACCOUNT_PATTERN.test(String(automation.blocker || ''));
+  if (!recoverable) return false;
+  const retryAt = Date.parse(String(automation.retryAfter || ''));
+  return !Number.isFinite(retryAt) || retryAt <= now.getTime();
+}
+
+async function waitingHumanExternalRecoveryDue(run: RuntimeRun, now: Date): Promise<boolean> {
+  if (run.status !== 'waiting_human') return false;
+  const taskResult = await store.list<RuntimeTask>('workflow_tasks', {
+    where: { tenant_id: run.tenant_id, run_id: run.id }, perPage: 200,
+  });
+  const waitingTasks = taskResult.items.filter(task => task.status === 'waiting_human');
+  const publishingTask = waitingTasks.find(isRecoverableExternalPublishingWait);
+  if (publishingTask) {
+    const config = await runConfig(run);
+    const targets = (config?.publishingTargets || []).filter(target => target.weeklyCount === undefined || Number(target.weeklyCount) > 0);
+    const targetPlatforms = [...new Set(targets.map(target => target.platform))];
+    if (targetPlatforms.length) {
+      const readiness = await readTenantPublishingReadiness(run.tenant_id, true, targetPlatforms);
+      if (readiness.snapshot.ready) return true;
+    }
+  }
+  const productionTaskIds = new Set(waitingTasks.filter(task => task.task_key === 'content_production').map(task => task.id));
+  if (!productionTaskIds.size) return false;
+  const projects = await store.list<RuntimeStudioProject>('studio_projects', {
+    where: { tenant_id: run.tenant_id }, sort: '-updated_at', perPage: 500,
+  });
+  return projects.items.some(project => externalContentProjectRecoveryDue(project, run.id, productionTaskIds, now));
 }
 
 async function listRuns(limit: number, now: Date): Promise<RuntimeRun[]> {
@@ -77,7 +146,8 @@ async function listRuns(limit: number, now: Date): Promise<RuntimeRun[]> {
         const schedule = config ? reviewScheduleFromCadence(config.reviewSchedule) : null;
         const slot = schedule ? latestDueReviewSlot(schedule, now) : null;
         const reviewCandidate = slot && slot.getTime() >= Date.parse(run.started_at || '') && reviewSlotIsInGoal(slot, goal);
-        if (!reopenCandidate && !reviewCandidate) continue;
+        const externalRecoveryCandidate = status === 'waiting_human' && await waitingHumanExternalRecoveryDue(run, now);
+        if (!reopenCandidate && !reviewCandidate && !externalRecoveryCandidate) continue;
         byId.set(run.id, run);
         if (byId.size >= limit) break;
       }
@@ -165,7 +235,8 @@ export async function runDigitalEmployeeRuntimeCycle(now = new Date()): Promise<
   for (const run of runs) {
     try {
       const canReopen = run.status === 'succeeded' && normalizeContinuationPolicy((await runConfig(run))?.continuationPolicy).newCustomers === 'reopen' && await (async () => { const goal = await tenantRecord<RuntimeGoal>('weekly_goals', run.goal_id, run.tenant_id); return goal ? reviewSlotIsInGoal(now, goal) : false; })();
-      if (RECONCILABLE_STATUSES.has(run.status) || canReopen) {
+      const canRecoverExternalWait = run.status === 'waiting_human' && await waitingHumanExternalRecoveryDue(run, now);
+      if (RECONCILABLE_STATUSES.has(run.status) || canReopen || canRecoverExternalWait) {
         await reconcileDigitalEmployeeRun(run.tenant_id, run.id);
         result.reconciled += 1;
       }

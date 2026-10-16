@@ -2,8 +2,14 @@ import { normalizeVideoPlan, type VideoCreationPlan, videoPlanErrors } from '../
 import type { DigitalEmployeeConfig, PublishingPlatform, WeeklyGoalInput } from './domain.js';
 import type { DirectorScriptContract } from '../../src/lib/directorScript.js';
 import { platformExecutionConstraints } from '../../shared/contracts/socialOperatingProfile.js';
-import { MATERIAL_TYPE_LABELS, SHOT_ROLE_LABELS } from '../../shared/benchmarkAnalysis.js';
+import { MATERIAL_TYPE_LABELS, SHOT_ROLE_LABELS, type BenchmarkAnalysis } from '../../shared/benchmarkAnalysis.js';
 import { productionReferenceAdmission, type ProductionReferenceAdmission } from '../../shared/productionReferenceAdmission.js';
+import { compileFixedYieldTimeline, type FixedYieldTimelineCompilation } from '../../shared/fixedYieldTimelineCompiler.js';
+import {
+  referenceContentIdentity,
+  sameReferenceContent,
+  type ReferenceContentIdentity,
+} from './referenceContentIdentity.js';
 
 export type ContentRoute = 'clone' | 'product' | 'material';
 
@@ -12,6 +18,11 @@ export interface ContentRoutingEvidence {
   exactAnalysisIds: string[];
   /** Server-rebuilt admission; completion IDs alone only prove analysis ran. */
   referenceAdmissions?: Record<string, ProductionReferenceAdmission>;
+  /** Server-normalized references used to freeze the exact physical timeline. */
+  referenceAnalyses?: Record<string, BenchmarkAnalysis>;
+  /** Server-derived physical identities. Record ids alone are not sufficient:
+   * downloads/reimports of the same video must still count as one weekly use. */
+  referenceIdentities?: Record<string, ReferenceContentIdentity>;
   materialIds: string[];
 }
 
@@ -26,6 +37,7 @@ export interface ContentOrder extends Partial<DirectorScriptContract> {
     accountId: string;
     accountLabel: string;
     plannedPublishDate: string;
+    plannedPublishAt?: string;
     adaptationMode: 'master' | 'platform_light';
     publication?: VideoCreationPlan['publication'];
   }>;
@@ -46,6 +58,10 @@ export interface ContentOrder extends Partial<DirectorScriptContract> {
   evidenceRefs: Array<{ type: 'exact_analysis' | 'enterprise_material'; id: string }>;
   /** Missing inputs for this master only; unrelated orders may still run. */
   readinessBlockers?: string[];
+  /** One-to-one reference timeline compiled on the server before production. */
+  fixedYieldTimeline?: FixedYieldTimelineCompilation;
+  /** Explicit executor gate; legacy projects are never silently interpreted as V2. */
+  productionContractVersion?: 'legacy.v1' | 'fixed-yield.v2-preflight';
   status: 'planned';
 }
 
@@ -128,6 +144,38 @@ function priorReviewConstraints(evidence?: PriorReviewRoutingEvidence): string[]
   return constraints;
 }
 
+function physicalReferenceIdentity(
+  evidence: ContentRoutingEvidence,
+  referenceId: string,
+): ReferenceContentIdentity {
+  const persisted = evidence.referenceIdentities?.[referenceId];
+  if (persisted) return persisted;
+  const analysis = evidence.referenceAnalyses?.[referenceId];
+  const transcript = analysis?.speechGroups.map(group => group.text).filter(Boolean).join(' ')
+    || analysis?.shots.map(shot => shot.dialogue).filter(Boolean).join(' ')
+    || '';
+  const duration = analysis?.shots.reduce((maximum, shot) => Math.max(maximum, shot.end || 0), 0) || undefined;
+  // Compatibility callers may not yet carry the persisted media identity. In
+  // that case keep same-id protection and conservatively use exact transcript
+  // plus duration when available; never assume two otherwise empty records are
+  // the same physical file.
+  return referenceContentIdentity({
+    id: referenceId,
+    duration,
+    aiAnalysis: transcript ? { gemini: { audioTranscript: { rawText: transcript } } } : undefined,
+  });
+}
+
+function uniquePhysicalReferenceIds(evidence: ContentRoutingEvidence, referenceIds: string[]): string[] {
+  const accepted: Array<{ id: string; identity: ReferenceContentIdentity }> = [];
+  for (const id of referenceIds) {
+    const identity = physicalReferenceIdentity(evidence, id);
+    if (accepted.some(item => sameReferenceContent(item.identity, identity))) continue;
+    accepted.push({ id, identity });
+  }
+  return accepted.map(item => item.id);
+}
+
 export function buildContentBatchPlan(input: {
   goalId: string;
   goal: WeeklyGoalInput;
@@ -139,17 +187,30 @@ export function buildContentBatchPlan(input: {
   const disabledRoutes: ContentBatchPlanDraft['disabledRoutes'] = [];
   const eligibleRoutes: ContentRoute[] = [];
   const enabled = new Set(input.config.enabledWorkflows);
-  const readyExactAnalysisIds = input.evidence.exactAnalysisIds.filter(id => !input.evidence.referenceAdmissions
-    || input.evidence.referenceAdmissions[id]?.ready === true);
+  const readyExactAnalysisIds = uniquePhysicalReferenceIds(input.evidence,
+    [...new Set(input.evidence.exactAnalysisIds.filter(id => !input.evidence.referenceAdmissions
+      || input.evidence.referenceAdmissions[id]?.ready === true))]);
   const productsWithMaterial = input.evidence.products.filter(product => product.materialIds.length > 0);
   const reviewConstraints = priorReviewConstraints(input.priorRoutingEvidence);
   if (input.goal.videoPlans?.length) {
     const orders: ContentOrder[] = [];
+    const firstIndependentUses: Array<{ index: number; referenceId: string; identity: ReferenceContentIdentity }> = [];
+    const duplicateIndependentUse = new Map<number, { index: number; referenceId: string }>();
+    input.goal.videoPlans.forEach((plan, index) => {
+      if (plan.productionRole === 'platform_adaptation' || plan.route !== 'clone' || !plan.referenceId) return;
+      const identity = physicalReferenceIdentity(input.evidence, plan.referenceId);
+      const first = firstIndependentUses.find(item => sameReferenceContent(item.identity, identity));
+      if (first) duplicateIndependentUse.set(index, first);
+      else firstIndependentUses.push({ index, referenceId: plan.referenceId, identity });
+    });
     input.goal.videoPlans.forEach((plan, index) => {
       if (plan.productionRole === 'platform_adaptation') return;
       const prefix = `第 ${index + 1} 条：`;
       const deferredMaterialErrors = /(?:请选择本条素材|数字人混剪需选择产品画面素材)/;
       const blockers = videoPlanErrors(plan).filter(error => !deferredMaterialErrors.test(error)).map(error => prefix + error);
+      if (plan.route !== 'clone') {
+        blockers.push(`${prefix}固定路径编译失败：固定恒产 V2 只把爆款参考 clone 作为独立视频计划；product/material 是参考时间线内的本地素材镜头类型，不能作为新的独立生产路线`);
+      }
       const workflowByRoute = { clone: 'viral_clone', product: 'product_content', material: 'material_content' } as const;
       if (!enabled.has(workflowByRoute[plan.route])) blockers.push(prefix + '指定内容路径未在 Agent 配置中开启');
       const explicitProductId = String(plan.productId || '').trim();
@@ -164,11 +225,28 @@ export function buildContentBatchPlan(input: {
       // Keep the order so other masters in the same week can still run; the
       // storyboard preflight below reports the exact missing shot requirement.
       if (plan.route === 'clone' && !input.evidence.exactAnalysisIds.includes(plan.referenceId)) blockers.push(prefix + '参考视频尚无有效精确分析');
+      const duplicateReference = duplicateIndependentUse.get(index);
+      if (plan.route === 'clone' && plan.referenceId && duplicateReference) {
+        blockers.push(`${prefix}同一周计划内每条物理爆款视频最多只能用于 1 条独立视频；${plan.referenceId} 与第 ${duplicateReference.index + 1} 条使用的 ${duplicateReference.referenceId} 是同一视频`);
+      }
       if (plan.route === 'clone') {
         const admission = input.evidence.referenceAdmissions
           ? input.evidence.referenceAdmissions[plan.referenceId] || productionReferenceAdmission(null)
           : plan.benchmarkAnalysis ? productionReferenceAdmission(plan.benchmarkAnalysis) : undefined;
         if (admission && !admission.ready) blockers.push(...admission.blockers.map(reason => `${prefix}制作前编导交接待复核：${reason}`));
+      }
+      const fixedYieldAnalysis = input.evidence.referenceAnalyses?.[plan.referenceId] || plan.benchmarkAnalysis;
+      const fixedYieldTimeline = plan.route === 'clone'
+        ? compileFixedYieldTimeline({
+          analysis: fixedYieldAnalysis,
+          productRef: product?.id || explicitProductId || null,
+        })
+        : undefined;
+      if (plan.route === 'clone' && !fixedYieldAnalysis) {
+        blockers.push(`${prefix}固定路径编译失败：参考视频完整精确分析事实尚未载入；分析补齐后请重新编译本计划`);
+      }
+      if (fixedYieldTimeline && !fixedYieldTimeline.ready) {
+        blockers.push(...fixedYieldTimeline.blockers.map(reason => `${prefix}固定路径编译失败：${reason}`));
       }
       const account = input.config.publishingTargets.find(target => target.platform === plan.platform && (!plan.matrix || target.accountId === plan.matrix.accountId));
       if (!input.goal.contentPlatforms.includes(plan.platform)) blockers.push(prefix + '制作平台不在本周目标范围中');
@@ -181,6 +259,7 @@ export function buildContentBatchPlan(input: {
           accountId: target?.accountId || variant.matrix?.accountId || '',
           accountLabel: target?.accountLabel || (enabled.has('content_publish') ? '发布前待绑定账号' : '仅内容生产，不分发'),
           plannedPublishDate: variant.plannedPublishDate || '',
+          plannedPublishAt: variant.plannedPublishAt || '',
           adaptationMode: variant.productionRole === 'platform_adaptation' ? 'platform_light' : 'master',
           ...(variant.publication ? { publication: variant.publication } : {}),
         };
@@ -200,7 +279,7 @@ export function buildContentBatchPlan(input: {
         route: plan.route, videoPlan: frozenVideoPlan, deliveryVariants, configurationSnapshot: input.versions, cta: plan.matrix?.cta || ctaFor(input.config.primaryGoal),
         constraints: [...new Set([...input.config.constraints, ...input.goal.constraints, ...reviewConstraints,
           ...familyVariants.flatMap(variant => platformExecutionConstraints(variant.platform).map(rule => `${variant.platform} 平台改编：${rule}`)),
-          `本订单只生产 1 条原创母版；${deliveryVariants.length} 个平台发布版本共用母版，不得重复提交完整 AIGC 生成`,
+          `本订单只生产 1 条独立制作视频；${deliveryVariants.length} 个平台发布版本共用独立视频，不得重复提交完整 AIGC 生成`,
           ...(plan.buyerProblem ? [`必须回答的买家问题：${plan.buyerProblem}`] : []),
           ...(plan.evidenceRequirement ? [`必须呈现并核验的证据：${plan.evidenceRequirement}`] : []),
           ...(plan.matrix?.objective ? [`账号本周目标：${plan.matrix.objective}`] : []),
@@ -209,7 +288,9 @@ export function buildContentBatchPlan(input: {
           ...(benchmarkStructureConstraints.length ? ['素材调用必须严格按以下规范化结构顺序逐段匹配，不得合并或改写素材类别', ...benchmarkStructureConstraints] : []),
           ...(plan.reviewRequirements || []).map(r => `复盘分镜约束【${r.todoId}】：第1镜0–3秒；参考：${r.reference}；保留：${r.requirements}；素材：${r.materials}；验收：${r.acceptance}`)])],
         evidenceRefs: [...ids.map(id => ({ type: 'enterprise_material' as const, id })), ...(plan.route === 'clone' && plan.referenceId ? [{ type: 'exact_analysis' as const, id: plan.referenceId }] : [])],
-        readinessBlockers: [...new Set(blockers)], status: 'planned',
+        readinessBlockers: [...new Set(blockers)], ...(fixedYieldTimeline ? {
+          fixedYieldTimeline, productionContractVersion: 'fixed-yield.v2-preflight' as const,
+        } : { productionContractVersion: 'legacy.v1' as const }), status: 'planned',
         ...(frozenScript ? {
           contractVersion: 1 as const,
           scripts: { [frozenScript.language]: frozenScript },
@@ -226,7 +307,7 @@ export function buildContentBatchPlan(input: {
       coverage: contentPlanCoverage(input.config, input.goal, orders.length),
       status: orders.length ? 'planned' : 'blocked',
       orders,
-      blocker: orders.length ? '' : '周视频计划中没有可执行的原创母版',
+      blocker: orders.length ? '' : '周视频计划中没有可执行的独立制作视频',
       eligibleRoutes: [...new Set(orders.filter(order => !order.readinessBlockers?.length).map(order => order.route))],
       disabledRoutes: [...disabledRoutes, ...routeBlockers],
     };
@@ -234,27 +315,43 @@ export function buildContentBatchPlan(input: {
   const missingProducts = input.evidence.products.filter(product => !product.materialIds.length);
   if (missingProducts.length) return { status: 'blocked', orders: [], blocker: `重点产品缺少素材：${missingProducts.map(product => product.name).join('、')}。请补充素材或逐条确认制作计划，不能自动替换产品。`, eligibleRoutes, disabledRoutes };
 
-  if (enabled.has('viral_clone') && readyExactAnalysisIds.length && productsWithMaterial.length) eligibleRoutes.push('clone');
-  else if (enabled.has('viral_clone')) disabledRoutes.push({ route: 'clone', reason: '缺少全片精确分析或真实产品，请由编导 Agent 补齐对标分析后重试' });
-  if (enabled.has('product_content') && productsWithMaterial.length) eligibleRoutes.push('product');
-  if (enabled.has('material_content') && productsWithMaterial.length) eligibleRoutes.push('material');
+  // Fixed-yield V2 starts from one admitted reference timeline. Product and
+  // factory footage are shot-level local-material inputs inside that timeline,
+  // never alternative paid top-level routes for a newly allocated plan.
+  if (!enabled.has('viral_clone')) {
+    disabledRoutes.push({ route: 'clone', reason: '固定恒产计划需要启用爆款参考 clone 工作流' });
+  } else if (!readyExactAnalysisIds.length) {
+    disabledRoutes.push({ route: 'clone', reason: '固定恒产计划需要至少 1 条已完成全片精确分析且通过复核的参考视频；分析补齐后请重新生成计划' });
+  } else if (!productsWithMaterial.length) {
+    disabledRoutes.push({ route: 'clone', reason: '固定恒产计划缺少已绑定本地素材的真实产品' });
+  } else {
+    eligibleRoutes.push('clone');
+  }
 
   const connectedTargets = input.config.publishingTargets.filter(target => input.goal.contentPlatforms.includes(target.platform));
   const targets = input.goal.contentPlatforms.map(platform => connectedTargets.find(target => target.platform === platform) || { platform, accountId: '', accountLabel: enabled.has('content_publish') ? '发布前待绑定账号' : '仅内容生产，不分发' });
   if (!eligibleRoutes.length) return { status: 'blocked', orders: [], blocker: disabledRoutes.map(item => `${item.route}：${item.reason}`).join('；') || '没有可执行的内容路径', eligibleRoutes, disabledRoutes };
 
-  const count = requestedCount(input.config.socialCadence);
-  const allocations = Array.from({ length: count }, (_, index) => eligibleRoutes[index % eligibleRoutes.length]!);
+  // Under-coverage is an existing first-class plan state. Prefer a smaller,
+  // explicit batch over silently cycling the same physical reference.
+  const count = Math.min(requestedCount(input.config.socialCadence), readyExactAnalysisIds.length);
   const feedbackConstraints = (input.priorRoutingEvidence?.approvalFeedback || []).map(item => String(item.note || '').trim()).filter(Boolean).slice(0, 10).map(note => `审批反馈：${note}`);
   const orders: ContentOrder[] = Array.from({ length: count }, (_, index) => {
-    const route = allocations[index]!;
+    const route = 'clone' as const;
     const product = productsWithMaterial[index % productsWithMaterial.length];
     const target = targets[index % targets.length];
     const theme = themes[index % themes.length];
     const productMaterial = { type: 'enterprise_material' as const, id: product.materialIds[index % product.materialIds.length] };
-    const evidenceRefs: ContentOrder['evidenceRefs'] = route === 'clone'
-      ? [{ type: 'exact_analysis', id: readyExactAnalysisIds[index % readyExactAnalysisIds.length] }, productMaterial]
-      : [productMaterial];
+    const referenceId = readyExactAnalysisIds[index % readyExactAnalysisIds.length]!;
+    const evidenceRefs: ContentOrder['evidenceRefs'] = [{ type: 'exact_analysis', id: referenceId }, productMaterial];
+    const fixedYieldAnalysis = input.evidence.referenceAnalyses?.[referenceId];
+    const fixedYieldTimeline = compileFixedYieldTimeline({ analysis: fixedYieldAnalysis, productRef: product.id });
+    const readinessBlockers = [
+      ...(!fixedYieldAnalysis
+        ? [`固定路径编译失败：参考视频 ${referenceId} 的完整精确分析事实尚未载入；分析补齐后请重新编译本计划`]
+        : []),
+      ...fixedYieldTimeline.blockers.map(reason => `固定路径编译失败：${reason}`),
+    ];
     return {
       id: `content_order_${index + 1}`,
       languages: input.config.videoLanguages,
@@ -276,8 +373,19 @@ export function buildContentBatchPlan(input: {
         ...reviewConstraints,
       ])],
       evidenceRefs,
+      readinessBlockers: [...new Set(readinessBlockers)],
+      fixedYieldTimeline,
+      productionContractVersion: 'fixed-yield.v2-preflight',
       status: 'planned',
     };
   });
-  return { status: 'planned', orders, blocker: '', eligibleRoutes, disabledRoutes };
+  const routeBlockers = orders.flatMap(order => (order.readinessBlockers || []).map(reason => ({ route: order.route, reason })));
+  return {
+    coverage: contentPlanCoverage(input.config, input.goal, orders.length),
+    status: 'planned',
+    orders,
+    blocker: '',
+    eligibleRoutes: orders.some(order => !order.readinessBlockers?.length) ? ['clone'] : [],
+    disabledRoutes: [...disabledRoutes, ...routeBlockers],
+  };
 }

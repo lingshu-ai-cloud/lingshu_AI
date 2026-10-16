@@ -1,4 +1,5 @@
 import {observeWeeklyQueueResources,type WeeklyObservedQueueResource} from './weeklyObservedQueueResources.js';
+import {resolveWeeklyProductionRow,weeklyProductionCanonicalScope} from '../runtime/weeklyContentProductionIdentity.js';
 import {createHash} from 'node:crypto';
 import type {DataStore,Record_} from '../storage/datastore.js';
 import {getWeeklyExecutionTaskRow} from './executionTasks.js';
@@ -29,13 +30,13 @@ export function createWeeklyRunningResourceEvidenceService(store:DataStore,ports
  const task=(await getWeeklyExecutionTaskRow(store,scope.tenantId,scope.taskId)).payload;
  if(task.programId!==scope.programId||task.packageId!==scope.packageId||task.packageVersion!==scope.packageVersion||!task.publicationTaskId||task.workflowKind!=='content')return fail('weekly_resource_evidence_task_scope');
  const packages=await store.list<Record_>('social_weekly_operating_packages',{where:{tenant_id:scope.tenantId,program_id:scope.programId,package_id:scope.packageId,version:scope.packageVersion},perPage:2});if(packages.totalItems!==1||packages.items.length!==1)return fail('weekly_resource_evidence_package_missing');const actualPackage=socialObject(socialJson(packages.items[0]!.payload));if(actualPackage?.programId!==scope.programId||actualPackage.packageId!==scope.packageId||actualPackage.version!==scope.packageVersion)return fail('weekly_resource_evidence_package_scope');
- const key=`weekly-production:${scope.packageId}:${scope.packageVersion}:${task.publicationTaskId}`;
- const rows=await store.list<Record_>('starter_social_content_tasks',{where:{tenant_id:scope.tenantId,create_idempotency_key:key},perPage:2});if(rows.items.length!==1||rows.totalItems!==1)return fail('weekly_resource_evidence_content_binding');
- const content=rows.items[0]!,contentTaskId=String(content.task_id||''),runId=String(content.run_id||'');const brief=socialObject(socialJson(content.brief)),authority=socialObject(brief?._weeklyAuthority),pkg=socialObject(authority?.weeklyPackage);
+ const productionScope={tenantId:scope.tenantId,programId:scope.programId,packageId:scope.packageId,packageVersion:scope.packageVersion,publicationTaskId:task.publicationTaskId};
+ const canonical=await weeklyProductionCanonicalScope(store,productionScope),content=await resolveWeeklyProductionRow(store,productionScope);if(!content)return fail('weekly_resource_evidence_content_binding');
+ const contentTaskId=String(content.task_id||''),runId=String(content.run_id||'');const brief=socialObject(socialJson(content.brief)),authority=socialObject(brief?._weeklyAuthority),pkg=socialObject(authority?.weeklyPackage);
  if(!contentTaskId||!runId||pkg?.programId!==scope.programId||pkg.packageId!==scope.packageId||pkg.version!==scope.packageVersion)return fail('weekly_resource_evidence_content_authority');
  const run=await store.getById<Record_>('workflow_runs',runId);if(!run||run.tenant_id!==scope.tenantId)return fail('weekly_resource_evidence_run_scope');
  const job=await readContentExecutionJob(store,scope.tenantId,contentTaskId,runId);if(!job)return fail('weekly_resource_evidence_job_missing');
- const actualPublication=socialObject(actualPackage.socialContentPackage)?.publicationTasks;if(!Array.isArray(actualPublication)||actualPublication.filter(p=>socialObject(p)?.publicationTaskId===task.publicationTaskId&&socialObject(p)?.accountId===job.accountId).length!==1)return fail('weekly_resource_evidence_account_scope');
+ const actualPublication=socialObject(actualPackage.socialContentPackage)?.publicationTasks;if(!Array.isArray(actualPublication)||actualPublication.filter(p=>socialObject(p)?.publicationTaskId===canonical.publicationTaskId&&socialObject(p)?.accountId===job.accountId).length!==1)return fail('weekly_resource_evidence_account_scope');
  const leases=await store.list<Record_>(DURABLE_OPERATION_LEASE_COLLECTION,{where:{tenant_id:scope.tenantId,lease_scope:'content_execution_job',subject_id:job.id},perPage:2});if(leases.totalItems!==leases.items.length||leases.totalItems>1)return fail('weekly_resource_evidence_lease_duplicate');
  const now=ports.now?.()??new Date();if(!Number.isFinite(now.getTime()))return fail('weekly_resource_evidence_now');
  const lease=leases.items[0],expiry=lease&&typeof lease.expires_at==='string'?lease.expires_at:null;

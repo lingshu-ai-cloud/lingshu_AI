@@ -23,6 +23,12 @@ try {
     return Response.json({ data: { status: 'failed', failure_message: 'contract fixture failure' } });
   }) as typeof fetch;
   const input = { tenantId, projectId: 'project', avatarId: 'public-avatar', consent: true, voiceoverUrl: '/tts/voice.wav', script: 'A confirmed narration.', language: 'en' };
+  await assert.rejects(
+    ensureHeygenAutomationJob({ ...input, projectId: 'legacy-poll-only', providerPollOnly: true }),
+    /heygen_paid_submission_authorization_missing/,
+    'legacy workers may poll a frozen provider job but cannot create a new paid task',
+  );
+  assert.equal(submissions, 0);
   const [a, b] = await Promise.all([ensureHeygenAutomationJob(input), ensureHeygenAutomationJob(input)]);
   assert.equal(a.id, b.id, 'concurrent requests share one job');
   assert.equal(a.status, 'failed');

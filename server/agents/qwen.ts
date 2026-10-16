@@ -2,6 +2,7 @@ import {submitStudioVoicePaidRequest,studioVoicePaidContext} from '../lib/studio
 import {submitMaterialAnalysisPaidRequest,type MaterialAnalysisPaidCall} from '../digitalEmployees/materialAnalysisPaidOperation.js';
 import {directorG5AccountRuleRequirements} from '../../shared/contracts/socialDirectorG5AccountRules.js';
 import OpenAI from 'openai';
+import {exactQwenScope} from './exactQwenScope.js';
 import {createHash} from 'node:crypto';
 import { GoogleGenAI } from '@google/genai';
 import fs from 'node:fs';
@@ -10,13 +11,14 @@ import path from 'node:path';
 import type { VideoAiAnalysis } from '../types/index.js';
 import { normalizeVideoAnalysis } from './gemini.js';
 import { BENCHMARK_ANALYSIS_CONTRACT } from '../prompts/geminiVideoScriptDirector.js';
+import { exactVideoClassificationQualityError } from '../lib/videoAnalysisCodec.js';
 import { hasOnCameraSpeechEvidence } from '../lib/salesPresenterReview.js';
 import { untrustedPromptData } from '../lib/untrustedPromptData.js';
 import type { StoryboardQaPhase, StoryboardQaScene, StoryboardQaObservation } from '../lib/storyboardAigcQuality.js';
 
-const QWEN_VL_MODEL = () => (process.env.QWEN_VL_MODEL ?? 'qwen-vl-max').trim();
-const QWEN_EXACT_VL_MODEL = () => (process.env.QWEN_EXACT_VL_MODEL ?? 'qwen3-vl-flash').trim();
-const BASE_URL = () => (process.env.DASHSCOPE_BASE_URL ?? 'https://dashscope.aliyuncs.com/compatible-mode/v1').trim();
+const QWEN_VL_MODEL = (env: NodeJS.ProcessEnv = process.env) => (env.QWEN_VL_MODEL ?? 'qwen-vl-max').trim();
+const QWEN_EXACT_VL_MODEL = (env: NodeJS.ProcessEnv = process.env) => (exactQwenScope()?.model ?? env.QWEN_EXACT_VL_MODEL ?? 'qwen3-vl-flash').trim();
+const BASE_URL = (env: NodeJS.ProcessEnv = process.env) => (env.DASHSCOPE_BASE_URL ?? 'https://dashscope.aliyuncs.com/compatible-mode/v1').trim();
 
 /** Keep these evidence fields explicit in every per-shot Qwen schema. The
  * shared benchmark contract defines their semantics, while the concrete list
@@ -24,10 +26,10 @@ const BASE_URL = () => (process.env.DASHSCOPE_BASE_URL ?? 'https://dashscope.ali
 export const QWEN_SHOT_CLASSIFICATION_FIELDS = ['materialType', 'narrativeRole', 'classificationEvidence'] as const;
 const QWEN_SHOT_CLASSIFICATION_FIELD_TEXT = QWEN_SHOT_CLASSIFICATION_FIELDS.join('、');
 
-export function dashscopeApiKey(): string {
-  const envKey = process.env.DASHSCOPE_API_KEY?.trim();
+export function dashscopeApiKey(env: NodeJS.ProcessEnv = process.env): string {
+  const envKey = env.DASHSCOPE_API_KEY?.trim();
   if (envKey) return envKey;
-  const keyFile = (process.env.DASHSCOPE_API_KEY_FILE || path.join(os.homedir(), '.config/lingshu/dashscope.key')).trim();
+  const keyFile = (env.DASHSCOPE_API_KEY_FILE || path.join(os.homedir(), '.config/lingshu/dashscope.key')).trim();
   try {
     const fileKey = fs.readFileSync(keyFile, 'utf8').trim();
     if (fileKey) return fileKey;
@@ -36,18 +38,27 @@ export function dashscopeApiKey(): string {
 }
 
 /** Exact live SDK configuration for trusted account readers; never expose keys. */
-export function getQwenProviderBinding(){return {baseUrl:BASE_URL(),credentialSha256:createHash('sha256').update(dashscopeApiKey()).digest('hex'),
- materialModel:(process.env.QWEN_MATERIAL_VL_MODEL||QWEN_EXACT_VL_MODEL()).trim(),imageModel:QWEN_VL_MODEL()};}
+export function getQwenProviderBinding(env: NodeJS.ProcessEnv = process.env){return {baseUrl:BASE_URL(env),credentialSha256:createHash('sha256').update(dashscopeApiKey(env)).digest('hex'),
+ materialModel:(env.QWEN_MATERIAL_VL_MODEL||QWEN_EXACT_VL_MODEL(env)).trim(),imageModel:QWEN_VL_MODEL(env)};}
 function client(): OpenAI {
   const apiKey = dashscopeApiKey();
+  const scoped=exactQwenScope();
+  if(scoped && (scoped.endpoint!==BASE_URL()||scoped.credentialDigest!==createHash('sha256').update(apiKey).digest('hex')))throw Error('weekly_candidate_model_provider_binding_changed');
   return new OpenAI({
     apiKey,
     baseURL: BASE_URL(),
+    ...(scoped?.onProviderReceipt?{fetch:async(input:RequestInfo|URL,init?:RequestInit)=>{
+      const request=new Request(input,init),body=await request.clone().text();
+      const response=await fetch(request);
+      if(response.ok){const payload=await response.clone().json() as Record<string,unknown>;let requestModel:string|null=null;try{requestModel=String(JSON.parse(body).model??'')||null;}catch{}
+       await scoped.onProviderReceipt!({provider:'qwen',responseId:typeof payload.id==='string'?payload.id:null,model:typeof payload.model==='string'?payload.model:null,usage:payload.usage??null,httpStatus:response.status,requestModel,requestHash:createHash('sha256').update(body).digest('hex')});}
+      return response;
+    }}:{}),
     // Exact storyboard JSON is substantially larger than classification output.
     // Keep the transport timeout above the per-chunk deadline so our own abort
     // controller remains the single, observable timeout authority.
     timeout: Math.max(30_000, Number(process.env.QWEN_REQUEST_TIMEOUT_MS || 120_000)),
-    maxRetries: Math.max(0, Math.min(2, Number(process.env.QWEN_MAX_RETRIES || 0))),
+    maxRetries: exactQwenScope() ? 0 : Math.max(0, Math.min(2, Number(process.env.QWEN_MAX_RETRIES || 0))),
   });
 }
 
@@ -81,6 +92,98 @@ export interface ImagePostEvidenceAnalysis {
   copyEvidence: { hooks: Array<{ text: string; source: 'caption' | 'ocr'; evidence: string }>; sellingPoints: Array<{ text: string; source: 'caption' | 'ocr'; evidence: string }>; cta: string[] };
   reusableModules: Array<{ module: string; evidence: string; preserve: string; replace: string; confidence: number }>;
   uncertainties: string[];
+}
+
+export function storyboardQaProviderFallbackEligible(error: unknown, env: NodeJS.ProcessEnv = process.env): boolean {
+  if (!env.GEMINI_API_KEY?.trim()) return false;
+  const record = error && typeof error === 'object' ? error as Record<string, any> : {};
+  const code = String(record.code || record.type || record.error?.code || record.error?.type || '').trim();
+  const message = error instanceof Error ? error.message : String(error || '');
+  return ['Arrearage', 'InvalidApiKey', 'AccessDenied', 'Forbidden'].includes(code)
+    || /overdue-payment|account is in good standing|arrearage|free quota exhausted|use free tier only|invalid api key|access denied/i.test(message);
+}
+
+type ShotClassificationRepair = {
+  index: number;
+  materialType: NonNullable<NonNullable<VideoAiAnalysis['scriptDetails15s']>[number]['materialType']>;
+  narrativeRole: NonNullable<NonNullable<VideoAiAnalysis['scriptDetails15s']>[number]['narrativeRole']>;
+  classificationEvidence: string;
+  needsReview?: boolean;
+};
+
+/** Merge a classification-only repair without allowing the second model call
+ * to rewrite timecodes, observations, dialogue or any other source evidence. */
+export function mergeShotClassificationRepair(
+  analysis: VideoAiAnalysis,
+  repairs: ShotClassificationRepair[],
+): VideoAiAnalysis {
+  const byIndex = new Map(repairs.map(repair => [repair.index, repair]));
+  return {
+    ...analysis,
+    scriptDetails15s: (analysis.scriptDetails15s || []).map((detail, offset) => {
+      const repair = byIndex.get(offset + 1);
+      if (!repair) return detail;
+      const materialType = ['talking_head', 'factory', 'product', 'consumer_demo', 'general'].includes(repair.materialType)
+        ? repair.materialType : 'unknown';
+      const narrativeRole = ['hook', 'pain_point', 'capability_proof', 'product_intro', 'effect_proof', 'cta', 'transition'].includes(repair.narrativeRole)
+        ? repair.narrativeRole : 'unknown';
+      return {
+        ...detail,
+        materialType,
+        narrativeRole,
+        classificationEvidence: String(repair.classificationEvidence || '').trim(),
+        ...(typeof repair.needsReview === 'boolean' ? { needsReview: repair.needsReview } : {}),
+      };
+    }),
+  };
+}
+
+/** Repair only production classification fields from evidence already
+ * observed in the paid visual pass. This never extracts frames or rewrites the
+ * timeline, visual observations, dialogue or other source evidence. */
+export async function repairVideoShotClassificationsWithQwen(
+  analysis: VideoAiAnalysis,
+  signal?: AbortSignal,
+): Promise<VideoAiAnalysis> {
+  const evidenceRows = (analysis.scriptDetails15s || []).map((shot, index) => ({
+    index: index + 1,
+    time: shot.time,
+    visual: shot.visual,
+    observedFacts: shot.observedFacts,
+    purpose: shot.purpose,
+    dialogue: shot.dialogue,
+    onScreenText: shot.onScreenText,
+    materialType: shot.materialType,
+    narrativeRole: shot.narrativeRole,
+    classificationEvidence: shot.classificationEvidence,
+    needsReview: shot.needsReview,
+  }));
+  if (!evidenceRows.length) throw new Error('exact_classification_repair_missing_shots');
+  const evidence = untrustedPromptData('observed_shot_evidence', JSON.stringify(evidenceRows), 24_000);
+  const repairCompletion = await client().chat.completions.create({
+    model: QWEN_EXACT_VL_MODEL(),
+    messages: [{ role: 'user', content: `你是视频镜头生产交接校验器。只输出合法 JSON：{"shots":[{"index":1,"materialType":"product","narrativeRole":"hook","classificationEvidence":"画面可见产品瓶身特写","needsReview":false}]}。
+不得改写或补充观察事实，只能依据下方已经完成的逐镜证据分类；这不是再次分析视频。shots 必须按 index 完整返回 ${evidenceRows.length} 项。
+materialType 仅取 talking_head、factory、product、consumer_demo、general，不得返回 unknown；以镜头的主要可见主体为准。
+narrativeRole 仅取 hook、pain_point、capability_proof、product_intro、effect_proof、cta、transition，不得返回 unknown；第 1 镜必须为 hook，其余根据 purpose、字幕、台词和可见内容判断。
+classificationEvidence 必须引用本镜实际可见画面、已确认台词或用途，不得写空值、模板话术或新增事实。
+needsReview 只表示现有画面证据不足以安全用于剪辑或无法确定镜头用途；品牌拼写、ASR措辞等不影响画面剪辑的轻微不确定不得阻塞交接。画面、时间区间、主要主体和用途均清楚时必须为 false。
+${evidence}` }],
+    response_format: { type: 'json_object' },
+    max_tokens: Math.max(1200, Math.min(4200, evidenceRows.length * 360 + 600)),
+  } as any, { signal });
+  const repaired = parseJson<{ shots?: ShotClassificationRepair[] }>(repairCompletion.choices[0]?.message?.content || '', {});
+  const repairRows = Array.isArray(repaired.shots) ? repaired.shots : [];
+  const indexes = repairRows.map(row => Number(row.index));
+  if (repairRows.length !== evidenceRows.length
+    || new Set(indexes).size !== evidenceRows.length
+    || indexes.some(index => !Number.isInteger(index) || index < 1 || index > evidenceRows.length)) {
+    throw new Error(`exact_classification_repair_mismatch_${repairRows.length}_of_${evidenceRows.length}`);
+  }
+  const normalized = mergeShotClassificationRepair(analysis, repairRows);
+  const remainingError = exactVideoClassificationQualityError(normalized);
+  if (remainingError) throw new Error(`exact_classification_incomplete_${remainingError}`);
+  return normalized;
 }
 
 /**
@@ -271,6 +374,7 @@ export async function inspectStoryboardAigcFramesWithQwen(opts: {
   boundedPaidQa?: boolean;
   paidSubmission?: (request: Record<string, unknown>) => Promise<void>;
   onReceipt?: (receipt: unknown) => void;
+  onProvider?: (provider: 'qwen' | 'gemini', model: string) => void;
   phase: StoryboardQaPhase;
   sceneType: StoryboardQaScene;
   frames: Array<{ base64: string; mimeType: string; timeLabel: string }>;
@@ -308,9 +412,57 @@ export async function inspectStoryboardAigcFramesWithQwen(opts: {
     ] as any }], response_format: { type: 'json_object' }, max_tokens: opts.boundedPaidQa ? 4096 : 1800,
   } as any;
   await opts.paidSubmission?.(structuredClone(request));
-  const completion = await client().chat.completions.create(request, opts.boundedPaidQa ? { maxRetries: 0, timeout: 120000 } : undefined);
-  opts.onReceipt?.(completion);
-  const parsed = parseJson<Record<string, unknown>>(String(completion.choices[0]?.message?.content || ''), {});
+  let raw = '';
+  try {
+    const completion = await client().chat.completions.create(request, opts.boundedPaidQa ? { maxRetries: 0, timeout: 120000 } : undefined);
+    opts.onProvider?.('qwen', request.model);
+    opts.onReceipt?.(completion);
+    raw = String(completion.choices[0]?.message?.content || '');
+  } catch (error) {
+    // Bounded paid QA owns a separate provider ledger and must never switch
+    // providers outside that authorization. Interactive/runtime QA may fail
+    // over only when Qwen explicitly rejects the account before inference.
+    if (opts.boundedPaidQa || !storyboardQaProviderFallbackEligible(error)) throw error;
+    const geminiModel = (process.env.GEMINI_STORYBOARD_QA_MODEL || process.env.GEMINI_MODEL || 'gemini-2.5-flash').trim();
+    const instruction = String((request.messages[0]?.content as any[])?.[0]?.text || '');
+    const allowedCheckKeys = ['product_identity', 'person_identity', 'environment_fidelity', 'layout', 'contact',
+      'start_state', 'visual_integrity', 'layout_continuity', 'contact_continuity', 'seam_continuity', 'action_order', 'end_state'];
+    const parts: any[] = [{ text: instruction }];
+    for (const frame of images) {
+      parts.push({ text: `下一张图片的准确标签：${frame.timeLabel}；角色：${candidateLabels.includes(frame.timeLabel) ? '候选质检对象' : '对照参考，不是候选'}。` });
+      parts.push({ inlineData: { mimeType: frame.mimeType, data: frame.base64 } });
+    }
+    try {
+      const completion = await new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY!.trim() }).models.generateContent({
+        model: geminiModel,
+        contents: [{ role: 'user', parts }],
+        config: { responseMimeType: 'application/json', temperature: 0,
+          responseJsonSchema: {
+            type: 'object', required: ['observations'], properties: {
+              observations: { type: 'array', items: { type: 'object',
+                required: ['key', 'verdict', 'evidenceFrames', 'note', 'action'],
+                properties: {
+                  key: { type: 'string', enum: allowedCheckKeys },
+                  verdict: { type: 'string', enum: ['pass', 'fail', 'uncertain'] },
+                  evidenceFrames: { type: 'array', items: { type: 'string' } },
+                  note: { type: 'string' },
+                  action: { type: 'string', enum: ['retry_first_frame', 'retry_video', 'needs_assets', 'manual_review'] },
+                } },
+              },
+            },
+          } as any,
+          maxOutputTokens: 4096, abortSignal: AbortSignal.timeout(120_000) },
+      });
+      opts.onProvider?.('gemini', geminiModel);
+      opts.onReceipt?.({ provider: 'gemini', model: geminiModel, usageMetadata: completion.usageMetadata || {} });
+      raw = String(completion.text || '');
+    } catch (fallbackError) {
+      throw Object.assign(new Error('视觉质检主服务账户不可用，备用服务也未完成质检；已保留原图等待自动恢复'), {
+        code: 'STORYBOARD_QA_ALL_PROVIDERS_UNAVAILABLE', cause: fallbackError,
+      });
+    }
+  }
+  const parsed = parseJson<Record<string, unknown>>(raw, {});
   return Array.isArray(parsed.observations) ? parsed.observations as StoryboardQaObservation[] : [];
 }
 
@@ -469,8 +621,12 @@ export async function analyzeVideoTimelineDetailsWithQwen(opts: {
   // a few server-owned windows at a time and preserve every physical cut.
   if (boundaries.length > 4) {
     const parts: VideoAiAnalysis[] = [];
-    for (let offset = 0; offset < boundaries.length; offset += 4) {
-      const batch = boundaries.slice(offset, offset + 4);
+    const batches = Array.from({ length: Math.ceil(boundaries.length / 4) }, (_, index) => ({
+      offset: index * 4,
+      boundaries: boundaries.slice(index * 4, index * 4 + 4),
+    }));
+    const detailConcurrency = Math.max(1, Math.min(2, Number(process.env.VIDEO_EXACT_DETAIL_CONCURRENCY || 2)));
+    const analyzeBatch = async ({ offset, boundaries: batch }: (typeof batches)[number]) => {
       const frames = batch.flatMap(boundary => {
         const middle = (boundary.start + boundary.end) / 2;
         const within = opts.frames.filter(frame => {
@@ -481,11 +637,14 @@ export async function analyzeVideoTimelineDetailsWithQwen(opts: {
         // from the preceding or following product leaking into this window.
         return within.slice(0, boundary.end - boundary.start <= 2.5 ? 1 : 3);
       }).sort((left, right) => Number.parseFloat(left.timeLabel) - Number.parseFloat(right.timeLabel));
-      parts.push(await analyzeVideoTimelineDetailsWithQwen({
+      return analyzeVideoTimelineDetailsWithQwen({
         ...opts,
         frames: frames.length ? frames : opts.frames,
         timeline: { ...opts.timeline, boundaries: opts.timeline.boundaries.slice(offset, offset + 4) },
-      }));
+      });
+    };
+    for (let offset = 0; offset < batches.length; offset += detailConcurrency) {
+      parts.push(...await Promise.all(batches.slice(offset, offset + detailConcurrency).map(analyzeBatch)));
     }
     return { ...parts[0]!, scriptDetails15s: parts.flatMap(part => part.scriptDetails15s || []) };
   }
@@ -525,12 +684,15 @@ observedFacts仅写真实可见内容；推断只写inferredIntent；缺失因�
     const shot = hasExactIds ? byId.get(boundary.id)! : returnedShots[index];
     return { ...shot, boundaryId: boundary.id, time: `${boundary.start.toFixed(2)}-${boundary.end.toFixed(2)}s` };
   });
-  return normalizeVideoAnalysis({
+  let normalized = normalizeVideoAnalysis({
     ...opts.timeline,
     ...(parsed.summary || {}),
     scriptDetails15s,
     recommendedScriptType: parsed.summary?.recommendedScriptType || opts.timeline.recommendedScriptType,
   });
+  const classificationError = exactVideoClassificationQualityError(normalized);
+  if (classificationError) normalized = await repairVideoShotClassificationsWithQwen(normalized, opts.signal);
+  return normalized;
 }
 
 export async function analyzeImagePostEvidenceWithQwen(opts: {

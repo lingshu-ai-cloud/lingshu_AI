@@ -442,7 +442,7 @@ export function buildSocialProductionPlan(input: {
   /** Exact per-scene outputs from the reviewed asset-supply execution. These
    * bind generated media to its frozen scene; they are not a visual-quality
    * pass and every resulting scene remains marked for independent review. */
-  routedSceneAssets?: Array<{ sceneId: string; assetId: string }>;
+  routedSceneAssets?: Array<{ sceneId: string; assetId: string; durationSeconds?: number }>;
 }): SocialProductionPlan {
   const materialPolicy = socialContentMaterialPolicy(input.themeId ?? input.baseline.themeId ?? null);
   const fullReplication = input.baseline.source === 'inspiration_script';
@@ -487,9 +487,11 @@ export function buildSocialProductionPlan(input: {
     const routedSourceCursors = new Map<string, number>();
     const scenes = input.baseline.scenes.flatMap((scene, sceneIndex) => {
       const assetId = routed.get(scene.sceneId), asset = assetId ? assetsById.get(assetId) : null;
-      const frozenDuration=Math.max(0.001,Number(scene.referenceStructure?.sourceTiming.durationSeconds)
-        ||(Number(scene.referenceStructure?.sourceTiming.endSeconds)-Number(scene.referenceStructure?.sourceTiming.startSeconds))||0);
+      const frozenDuration=Number(scene.referenceStructure?.sourceTiming.durationSeconds)
+        ||(Number(scene.referenceStructure?.sourceTiming.endSeconds)-Number(scene.referenceStructure?.sourceTiming.startSeconds))
+        ||input.routedSceneAssets!.find(item=>item.sceneId===scene.sceneId)?.durationSeconds||0;
       if (!asset || asset.type !== 'video' || !asset.localPath || !asset.contentHash
+        ||!Number.isFinite(frozenDuration)||frozenDuration<=0
         || !Number.isFinite(asset.duration) || asset.duration+0.02<frozenDuration || !asset.visualObservations.length) return [];
       // A routed asset may cover several consecutive micro-shots. Preserve
       // continuity by consuming the source in frozen-timeline order instead
@@ -512,7 +514,7 @@ export function buildSocialProductionPlan(input: {
       // Routed sources are trimmed into the frozen scene windows. Summing the
       // full source-file durations multiplies reused clips and can turn a
       // 38-second timeline into several minutes.
-      maxDuration:referenceDuration,sourceClipSeconds,averageConfidence:1,notes:['供应回执只证明生成结果与场景身份绑定，不代表G4/G5质量检查通过。']};
+      maxDuration:referenceDuration||sourceClipSeconds,sourceClipSeconds,averageConfidence:1,notes:['供应回执只证明生成结果与场景身份绑定，不代表G4/G5质量检查通过。']};
   }
   const taskAssociatedAssetCount = uniqueAssets.filter(hasTaskUploadAssociation).length;
   const associationSafe = isAssociationSafeBaseline(input.baseline)

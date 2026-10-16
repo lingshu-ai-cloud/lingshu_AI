@@ -20,6 +20,19 @@ import { assertSocialContentReleaseQuality } from './socialContentReleaseQuality
 import { socialTaskSummary } from './socialContentRecords.js';
 
 type Detail = NonNullable<Awaited<ReturnType<typeof readSocialTaskDetail>>>;
+
+/**
+ * Version the correction execution policy in one place.  The same identity is
+ * consumed by graph execution and by the post-crash completion reconciler; a
+ * drift between the two would leave an otherwise completed single-shot repair
+ * permanently unable to cross the completion boundary.
+ */
+export const SOCIAL_CONTENT_CORRECTION_POLICY_VERSION = 'bound-voice-strict-approved-intro.v4';
+
+export function socialContentCorrectionRuntimeHash(grantHash: string): string {
+  if (!/^[a-f0-9]{64}$/.test(grantHash)) throw new Error('content_graph_correction_identity_invalid');
+  return socialRequestHash({ grantHash, policyVersion: SOCIAL_CONTENT_CORRECTION_POLICY_VERSION });
+}
 /** Compare business authority, excluding only identifiers derived from task projection versions. */
 function graphAuthority(workflow: NonNullable<Detail['agentWorkflow']>) {
   const director = structuredClone(workflow.directorBrief) as unknown as Record<string, unknown>;
@@ -119,7 +132,13 @@ export async function readSocialProductionGraphDetail(input: { repository: Start
 
 export function createSocialProductionExecutorCheckpoint(detail: Detail, env: NodeJS.ProcessEnv = process.env, revisionPlanHash?: string) {
   if (revisionPlanHash && !/^[a-f0-9]{64}$/.test(revisionPlanHash)) throw new Error('user_input_required:graph_revision_plan_changed');
-  const graphEnabled = env.SOCIAL_CONTENT_EXECUTOR === 'langgraph' && detail.brief.productionApproach !== 'shooting_plan';
+  // A confirmed weekly package is the formal production path. Its execution
+  // contract must not change with a process-local feature flag: every new
+  // weekly run is frozen into the durable queue + LangGraph bridge. The flag
+  // remains available for instant/manual tasks while shooting plans continue
+  // to be non-producing instructions.
+  const graphEnabled = detail.brief.productionApproach !== 'shooting_plan'
+    && ((detail.mode ?? 'weekly') === 'weekly' || env.SOCIAL_CONTENT_EXECUTOR === 'langgraph');
   const identity = graphEnabled ? socialProductionGraphInput(detail, revisionPlanHash ? { ...detail, revisionPlanHash } : undefined) : { planVersion: 'legacy', inputHash: 'legacy' };
   const approvedContext: SocialGraphApprovedContext | null = graphEnabled ? structuredClone({
     version: detail.version, agentWorkflow: detail.agentWorkflow, assetSupplyPlan: detail.assetSupplyPlan, ...(revisionPlanHash ? { revisionPlanHash } : {}) }) : null;
@@ -257,7 +276,7 @@ export async function executeSocialProductionGraph(input: { repository: Starter1
   if(corrected&&matchesAuthorizedCorrectionContext(job,corrected,String(binding?.inputHash||''),graphCorrection?.recordHash)&&!matchesAuthorizedCorrectionContext(job,corrected,String(binding?.inputHash||''),graphCorrection?.recordHash,current.inputHash))throw Error('user_input_required:graph_corrected_context_changed');
   if (!matchesAuthorizedCorrectionContext(job,approvedContext,String(binding?.inputHash||''),graphCorrection?.recordHash,current.inputHash)&&(binding?.inputHash !== current.inputHash || binding?.planVersion !== current.planVersion))
     throw new Error('user_input_required:graph_production_plan_changed:executor_binding');
-  const correctionRuntimeHash=graphCorrection?socialRequestHash({grantHash:graphCorrection.recordHash,policyVersion:'bound-voice-strict-approved-intro.v4'}):null;
+  const correctionRuntimeHash=graphCorrection?socialContentCorrectionRuntimeHash(graphCorrection.recordHash):null;
   const identity = { tenantId: job.tenantId, taskId: job.taskId, runId: job.runId, jobId: job.id,
     ...current,...(graphCorrection?{inputHash:socialRequestHash({originalInputHash:current.inputHash,correctionHash:correctionRuntimeHash})}:{}), graphVersion: 'content-production.v1' as const };
   const refreshedJob = async () => {

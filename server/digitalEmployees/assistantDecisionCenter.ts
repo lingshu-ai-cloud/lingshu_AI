@@ -12,6 +12,7 @@ import {
   type WorkflowTask,
 } from '../../src/lib/digitalEmployees.js';
 import type { WeeklyPackage } from '../../src/lib/weeklyPackage.js';
+import { repairCollapsedWeeklyVideoProduction } from './weeklyPackage.js';
 import type {
   ApprovalRecord,
   GoalRecord,
@@ -20,6 +21,8 @@ import type {
   TaskRecord,
 } from '../routes/digitalEmployeeRecords.js';
 import { customerApprovalRequestHash } from './customerTaskApprovalNavigation.js';
+import type { ManagedReplicationPresenterReadiness } from './replicationContentProduction.js';
+import { taskNeedsAttention } from '../../src/lib/taskExecutionState.js';
 
 type DecisionCenterSource = {
   page: AssistantDecisionPage;
@@ -76,6 +79,8 @@ export function validateAssistantDecisionCommand(
 export type AssistantDecisionCommandHandlers = {
   approveAndStart(card: AssistantDecisionCard): Promise<void>;
   decideApproval(card: AssistantDecisionCard, decision: 'approved' | 'rejected', note: string): Promise<void>;
+  retryTask(card: AssistantDecisionCard): Promise<void>;
+  replanTask(card: AssistantDecisionCard): Promise<void>;
   takeOver(card: AssistantDecisionCard): Promise<void>;
   decideStarter(card: AssistantDecisionCard, decision: 'approved' | 'rejected', note: string): Promise<void>;
 };
@@ -100,6 +105,14 @@ export async function executeAssistantDecisionCommand(input: {
   }
   if (input.card.subject.type === 'approval_request' && ['approve', 'reject'].includes(input.actionId)) {
     await input.handlers.decideApproval(input.card, input.actionId === 'approve' ? 'approved' : 'rejected', note);
+    return 'completed';
+  }
+  if (input.card.subject.type === 'workflow_task' && input.actionId === 'retry_task') {
+    await input.handlers.retryTask(input.card);
+    return 'completed';
+  }
+  if (input.card.subject.type === 'workflow_task' && input.actionId === 'replan_task') {
+    await input.handlers.replanTask(input.card);
     return 'completed';
   }
   if ((input.card.subject.type === 'workflow_task' || input.card.subject.type === 'approval_request')
@@ -132,7 +145,7 @@ function planBody(plan: PlanRecord | null): Record<string, unknown> {
 
 function packageForPlan(plan: PlanRecord | null): WeeklyPackage | null {
   const pack = planBody(plan).businessPackage;
-  return pack && typeof pack === 'object' ? pack as WeeklyPackage : null;
+  return pack && typeof pack === 'object' ? repairCollapsedWeeklyVideoProduction(pack as WeeklyPackage) : null;
 }
 
 export function weeklyPlanDecisionVersion(goal: GoalRecord, plan: PlanRecord): string {
@@ -149,8 +162,35 @@ export function workflowTaskDecisionVersion(task: TaskRecord): string {
 }
 
 export function workflowTaskNeedsEnterprisePresenter(task: TaskRecord): boolean {
-  const evidence = `${text(task.blocked_reason, 2_000)} ${JSON.stringify(parseJson(task.output, {})).slice(0, 12_000)}`;
+  const output = parseJson<Record<string, unknown>>(task.output, {});
+  const assistantInput = parseJson<Record<string, unknown>>(output.assistantInput, {});
+  const assistantCode = text(assistantInput.code, 100);
+  if (assistantCode === 'presenter_ready') return false;
+  if (['presenter_authorization_required', 'presenter_setup_required'].includes(assistantCode)) return true;
+  const evidence = `${text(task.blocked_reason, 2_000)} ${JSON.stringify(output).slice(0, 12_000)}`;
   return /avatar_required|presenter_authorization_required|尚未录入可用企业数字人|请先添加(?:并授权)?企业数字人|缺少(?:已授权)?企业数字人/i.test(evidence);
+}
+
+type AssistantPresenterInputCode = 'avatar_required' | 'presenter_authorization_required'
+  | 'presenter_setup_required' | 'presenter_ready';
+
+function workflowTaskPresenterInput(task: TaskRecord): {
+  code: AssistantPresenterInputCode | '';
+  message: string;
+  presenterId: string;
+  presenterName: string;
+} {
+  const output = parseJson<Record<string, unknown>>(task.output, {});
+  const assistantInput = parseJson<Record<string, unknown>>(output.assistantInput, {});
+  const code = text(assistantInput.code, 100);
+  return {
+    code: ['avatar_required', 'presenter_authorization_required', 'presenter_setup_required', 'presenter_ready'].includes(code)
+      ? code as AssistantPresenterInputCode
+      : '',
+    message: text(assistantInput.message, 500),
+    presenterId: text(assistantInput.presenterId, 200),
+    presenterName: text(assistantInput.presenterName, 100),
+  };
 }
 
 type AssistantStudioProject = { id: string; spec?: unknown; status?: unknown };
@@ -189,6 +229,9 @@ function projectNeedsEnterprisePresenter(project: AssistantStudioProject): boole
 export function taskWithAssistantProductionInput(
   task: TaskRecord,
   projects: AssistantStudioProject[],
+  presenterReadiness: ManagedReplicationPresenterReadiness = {
+    state: 'missing', presenterCount: 0, presenterId: '', presenterName: '',
+  },
 ): TaskRecord {
   if (task.task_key !== 'content_production') return task;
   const referencedIds = productionProjectIds(task);
@@ -197,26 +240,33 @@ export function taskWithAssistantProductionInput(
     .map(project => project.id);
   if (!blockedProjectIds.length) return task;
   const output = parseJson<Record<string, unknown>>(task.output, {});
+  const input = presenterReadiness.state === 'ready'
+    ? { code: 'presenter_ready', message: '已检测到可用于当前逐镜制作的企业数字人', presenterId: presenterReadiness.presenterId, presenterName: presenterReadiness.presenterName }
+    : presenterReadiness.state === 'production_setup_required'
+      ? { code: 'presenter_setup_required', message: `${presenterReadiness.presenterName ? `${presenterReadiness.presenterName} 已添加，但` : '企业数字人已添加，但'}当前逐镜复刻还需要绑定人物参考图、人物替换授权和 Active 方舟图片资产`, presenterId: presenterReadiness.presenterId, presenterName: presenterReadiness.presenterName }
+      : presenterReadiness.state === 'authorization_required'
+        ? { code: 'presenter_authorization_required', message: '企业数字人已添加，但本人授权或企业使用授权尚未完成', presenterId: presenterReadiness.presenterId, presenterName: presenterReadiness.presenterName }
+        : { code: 'avatar_required', message: '人物镜头缺少可用且已授权的企业数字人形象', presenterId: '', presenterName: '' };
   return {
     ...task,
     output: {
       ...output,
       assistantInput: {
-        code: 'avatar_required',
-        message: '人物镜头缺少可用且已授权的企业数字人形象',
+        ...input,
+        presenterCount: presenterReadiness.presenterCount,
         projectCount: blockedProjectIds.length,
       },
     },
   };
 }
 
-function enterprisePresenterDeepLink(task: TaskRecord, runId: string): DigitalEmployeeDeepLink {
+function presenterOnboardingDeepLink(task: TaskRecord, runId: string, presenterId = ''): DigitalEmployeeDeepLink {
   const existing = workflowDeepLink(task, runId);
   const { view: _view, studioPanel: _studioPanel, ...base } = existing;
   return {
     ...base,
-    page: 'enterprise',
-    businessRef: { ...existing.businessRef, enterpriseView: 'presenters', reason: 'avatar_required' },
+    page: 'digitalEmployees',
+    businessRef: { ...existing.businessRef, taskKey: 'presenter_setup_required', ...(presenterId ? { entityId: presenterId } : {}) },
   };
 }
 
@@ -227,6 +277,12 @@ function workflowDeepLink(task: TaskRecord, runId: string) {
     output: parseJson(task.output, {}),
     business_refs: parseJson(task.business_refs, []),
   } as WorkflowTask, undefined, runId);
+}
+
+function publishingAccountDeepLink(task: TaskRecord, runId: string): DigitalEmployeeDeepLink {
+  const existing = workflowDeepLink(task, runId);
+  const { view: _view, studioPanel: _studioPanel, ...base } = existing;
+  return { ...base, page: 'accountManagement', businessRef: { ...existing.businessRef, taskKey: 'publishing_account_setup' } };
 }
 
 function planFacts(goal: GoalRecord, plan: PlanRecord): AssistantDecisionCard['facts'] {
@@ -319,7 +375,6 @@ function approvalCard(approval: ApprovalRecord, task: TaskRecord, run: RunRecord
     actions: [
       { id: 'approve', label: '批准并继续', mode: 'command', emphasis: PRIMARY },
       { id: 'reject', label: '退回修改', mode: 'command', emphasis: DEFAULT, requiresNote: true },
-      { id: 'take_over', label: '人工接管', mode: 'command', emphasis: DEFAULT },
       { id: 'open_workspace', label: '查看详情', mode: 'navigate', emphasis: DEFAULT },
     ],
     deepLink: workflowDeepLink(task, run.id),
@@ -329,49 +384,95 @@ function approvalCard(approval: ApprovalRecord, task: TaskRecord, run: RunRecord
 
 function attentionCard(task: TaskRecord, run: RunRecord, now: string): AssistantDecisionCard {
   const failed = task.status === 'failed';
+  const output = parseJson<Record<string, unknown>>(task.output, {});
+  const inventory = parseJson<Record<string, unknown>>(output.inventoryPreflight, {});
+  const sourceCollection = task.task_key === 'scheduled_source_collection';
+  const viralAnalysis = task.task_key === 'viral_analysis';
+  const proof = parseJson<Record<string, unknown>>(output.proof, {});
+  const completedAnalyses = Math.max(0, Number(proof.value || 0));
+  const requiredAnalyses = Math.max(0, Number(proof.requiredValue || 0));
+  const inventorySummary = text(output.inventorySummary, 500);
+  const sourceCollectionSummary = sourceCollection
+    ? `${inventorySummary || '系统已先检查现有爆款库。'}${failed ? ` 本次缺口采集没有完成：${text(task.blocked_reason) || '采集步骤执行失败'}。` : ''} 你可以从当前节点重试，或重新规划本周任务；已经完成的结果会保留。`
+    : '';
+  const presenterInput = workflowTaskPresenterInput(task);
   const presenterRequired = workflowTaskNeedsEnterprisePresenter(task);
+  const presenterReady = presenterInput.code === 'presenter_ready';
+  const presenterSetupRequired = presenterInput.code === 'presenter_setup_required';
+  const presenterAuthorizationRequired = presenterInput.code === 'presenter_authorization_required';
+  const publishingAccountRequired = task.task_key === 'content_release_approval'
+    && /发布账号|授权服务尚未配置|平台应用与回调地址/.test(text(task.blocked_reason, 1_000));
+  const presenterTitle = presenterReady
+    ? '数字人已就绪，请继续生产'
+    : presenterSetupRequired
+      ? '请补齐数字人的制作条件'
+      : presenterAuthorizationRequired
+        ? '请完成数字人授权'
+        : '请添加企业数字人形象';
+  const presenterSummary = presenterReady
+    ? `${presenterInput.presenterName ? `${presenterInput.presenterName} 已就绪。` : '企业数字人已就绪。'}旧任务仍停在数字人节点；继续生产后会复用已完成镜头和回执。`
+    : presenterInput.message || '人物镜头已停在数字人生成前；其他已完成镜头和生产回执会保留。补齐后可从当前节点继续。';
+  const viralAnalysisSummary = `${text(task.blocked_reason) || `视频分析尚未完成：当前 ${completedAnalyses}/${requiredAnalyses || '—'} 条已通过。`} 系统只会在真实视频级分析通过后进入内容生产，不会把“已排队”当作“已完成”。`;
+  const retryableBlockedTask = failed || ['blocked', 'waiting_external'].includes(task.status);
   return {
     id: `task:${task.id}`,
-    kind: 'input_required',
-    priority: failed ? 650 : 600,
+    kind: presenterReady ? 'next_step' : 'input_required',
+    priority: presenterReady ? 550 : failed ? 650 : 600,
     status: 'pending',
-    title: presenterRequired ? '请添加企业数字人形象' : text(task.title) || '需要你处理',
-    summary: presenterRequired
-      ? '人物镜头已停在数字人生成前；其他已完成镜头和生产回执会保留。添加并授权后，可从当前节点继续。'
-      : text(task.blocked_reason) || (failed ? '任务失败，需要你选择处理方式。' : '任务正在等待必要资料或人工决定。'),
+    title: presenterRequired || presenterReady ? presenterTitle : publishingAccountRequired ? '配置并连接发布账号' : text(task.title) || '需要你处理',
+    summary: presenterRequired || presenterReady
+      ? presenterSummary
+      : viralAnalysis ? viralAnalysisSummary
+        : sourceCollectionSummary || text(task.blocked_reason) || (failed ? '任务失败，需要你选择处理方式。' : '任务正在等待必要资料或人工决定。'),
     facts: [
-      { label: '当前状态', value: presenterRequired ? '待补充数字人' : failed ? '失败' : '等待用户', tone: presenterRequired ? 'warning' : failed ? 'danger' : 'warning' },
-      ...(task.destination ? [{ label: '处理位置', value: text(task.destination) }] : []),
+      { label: '当前状态', value: presenterReady ? '数字人已就绪' : presenterSetupRequired ? '待补制作条件' : presenterAuthorizationRequired ? '待完成授权' : presenterRequired ? '待补充数字人' : viralAnalysis ? failed ? '分析失败' : '分析未完成' : failed ? '失败' : '等待用户', tone: presenterReady ? 'info' : presenterRequired || viralAnalysis && !failed ? 'warning' : failed ? 'danger' : 'warning' },
+      ...(viralAnalysis && requiredAnalyses > 0 ? [{ label: '分析进度', value: `${completedAnalyses}/${requiredAnalyses} 条通过`, tone: completedAnalyses >= requiredAnalyses ? 'info' as const : 'warning' as const }] : []),
+      ...(sourceCollection && Number(inventory.requiredCount || 0) > 0 ? [{ label: '爆款库存', value: `可用 ${Number(inventory.reusableCount || 0)}/${Number(inventory.requiredCount || 0)} 条${Number(inventory.missingCount || 0) ? `，缺 ${Number(inventory.missingCount)} 条` : ''}`, tone: Number(inventory.missingCount || 0) ? 'warning' as const : 'info' as const }] : []),
+      ...(publishingAccountRequired ? [{ label: '处理位置', value: 'accountManagement' }] : task.destination ? [{ label: '处理位置', value: text(task.destination) }] : []),
     ],
-    subject: { type: 'workflow_task', id: task.id, version: workflowTaskDecisionVersion(task) },
-    actions: presenterRequired ? [
-      { id: 'open_workspace', label: '添加数字人形象', mode: 'navigate', emphasis: PRIMARY },
-      ...(!['handed_off', 'cancelled', 'succeeded', 'skipped'].includes(task.status)
-        ? [{ id: 'take_over', label: '人工接管当前任务', mode: 'command', emphasis: DEFAULT } as const]
-        : []),
+    subject: { type: 'workflow_task', id: task.id, version: presenterInput.code
+      ? `${workflowTaskDecisionVersion(task)}|presenter:${presenterInput.code}`
+      : workflowTaskDecisionVersion(task) },
+    actions: presenterReady ? [
+      { id: 'open_workspace', label: '查看并继续生产', mode: 'navigate', emphasis: PRIMARY },
+    ] : presenterRequired ? [
+      { id: 'open_workspace', label: presenterSetupRequired ? '补齐制作条件' : presenterAuthorizationRequired ? '完成数字人授权' : '添加数字人形象', mode: 'navigate', emphasis: PRIMARY },
+    ] : viralAnalysis ? [
+      ...(failed ? [{ id: 'retry_task', label: '重试失败分析', mode: 'command', emphasis: PRIMARY } as const] : []),
+      { id: 'open_workspace', label: '查看分析进度', mode: 'navigate', emphasis: failed ? DEFAULT : PRIMARY } as const,
     ] : [
-      ...(!['handed_off', 'cancelled', 'succeeded', 'skipped'].includes(task.status)
-        ? [{ id: 'take_over', label: '人工接管', mode: 'command', emphasis: PRIMARY } as const]
-        : []),
-      { id: 'open_workspace', label: '前往处理', mode: 'navigate', emphasis: DEFAULT },
+      ...(!['handed_off', 'cancelled', 'succeeded', 'skipped'].includes(task.status) && sourceCollection
+        ? [
+          { id: 'retry_task', label: '从当前节点重试', mode: 'command', emphasis: PRIMARY } as const,
+          { id: 'replan_task', label: '重新规划本周任务', mode: 'command', emphasis: DEFAULT } as const,
+        ]
+        : retryableBlockedTask
+          ? [{ id: 'retry_task', label: '重试当前节点', mode: 'command', emphasis: PRIMARY } as const]
+          : []),
+      { id: 'open_workspace', label: publishingAccountRequired ? '配置发布账号' : '前往处理', mode: 'navigate', emphasis: sourceCollection || retryableBlockedTask ? DEFAULT : PRIMARY },
     ],
-    deepLink: presenterRequired ? enterprisePresenterDeepLink(task, run.id) : workflowDeepLink(task, run.id),
+    deepLink: presenterRequired ? presenterOnboardingDeepLink(task, run.id, presenterInput.presenterId)
+      : publishingAccountRequired ? publishingAccountDeepLink(task, run.id)
+        : workflowDeepLink(task, run.id),
     createdAt: text(task.updated_at || task.created_at) || now,
   };
 }
 
 function nextStepCard(task: TaskRecord, run: RunRecord, now: string): AssistantDecisionCard {
   const deepLink = workflowDeepLink(task, run.id);
+  const running = task.status === 'running';
   return {
     id: `next:${task.id}`,
     kind: 'next_step',
     priority: 500,
     status: 'pending',
     title: text(task.title) || '继续当前工作',
-    summary: '当前页面最相关的下一步已经准备好。',
-    facts: [{ label: '状态', value: task.status === 'running' ? '正在进行' : '可以继续', tone: 'info' }],
+    summary: running
+      ? '任务正在执行；完成真实结果核验前不会进入下一生产节点。'
+      : '任务已排队，系统正在核验上游数据；完成真实结果核验前不会进入下一生产节点。',
+    facts: [{ label: '状态', value: running ? '正在进行' : '已排队', tone: 'info' }],
     subject: { type: 'workflow_task', id: task.id, version: workflowTaskDecisionVersion(task) },
-    actions: [{ id: 'open_workspace', label: '继续处理', mode: 'navigate', emphasis: PRIMARY }],
+    actions: [{ id: 'open_workspace', label: '查看真实进度', mode: 'navigate', emphasis: PRIMARY }],
     deepLink,
     createdAt: text(task.updated_at || task.created_at) || now,
   };
@@ -407,11 +508,21 @@ export function buildAssistantDecisionFeed(source: DecisionCenterSource): Assist
 
     const pendingApprovalTaskIds = new Set(source.approvals.filter(item => item.status === 'pending').map(item => item.task_id));
     source.tasks
-      .filter(task => ['waiting_external', 'failed'].includes(task.status) && !pendingApprovalTaskIds.has(task.id))
+      .filter(task => ['waiting_external', 'waiting_human', 'failed'].includes(task.status)
+        && !pendingApprovalTaskIds.has(task.id)
+        && taskNeedsAttention({
+          status: task.status,
+          blocked_reason: task.blocked_reason,
+          output: parseJson<Record<string, unknown>>(task.output, {}),
+        }))
       .forEach(task => cards.push(attentionCard(task, source.run!, now)));
 
     if (!cards.some(card => card.priority >= 600)) {
-      const next = source.tasks.find(task => ['running', 'pending'].includes(task.status)
+      const completedTaskKeys = new Set(source.tasks
+        .filter(task => ['succeeded', 'skipped'].includes(task.status))
+        .map(task => task.task_key));
+      const next = source.tasks.find(task => (task.status === 'running'
+        || task.status === 'pending' && parseJson<string[]>(task.depends_on, []).every(key => completedTaskKeys.has(key)))
         && pageMatches(workflowDeepLink(task, source.run!.id), source.page));
       if (next) cards.push(nextStepCard(next, source.run, now));
     }

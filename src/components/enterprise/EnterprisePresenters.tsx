@@ -1,118 +1,298 @@
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { Alert, Button, Modal, Tag } from 'antd';
+import { CheckCircle2, ShieldCheck, UserRound } from 'lucide-react';
 import { productionApi } from '../../lib/productionApi';
-import { EMPTY_DEFAULTS, presenterCapabilities, type ProductionDefaults, type PresenterAsset } from '../../lib/shotProduction';
+import { EMPTY_DEFAULTS, type ProductionDefaults, type PresenterAsset } from '../../lib/shotProduction';
 import { fetchMaterialLibrary, type Material } from '../../lib/studioApi';
-import PresenterVoiceBinding from '../studio/PresenterVoiceBinding';
-import PresenterManager from './PresenterManager';
 import { presenterApi } from '../../lib/presenterApi';
-import type { PresenterCreation } from '../../lib/presenterAssets';
+import { notifyPresenterAssetsUpdated } from '../../lib/presenterAssetsUpdated';
+import type { ArkPresenterPreparation } from '../../lib/presenterAssets';
+import { LsBrandAction, LsLoadingState } from '../ui/LsExperiencePrimitives';
+import ArkPresenterEnrollmentPanel from '../studio/ArkPresenterEnrollmentPanel';
+import PresenterManager, { type PresenterSaveContext } from './PresenterManager';
 
-type RightsEvidence=NonNullable<PresenterAsset['rightsEvidence']>;
-function toggleDashscopeUse(current:RightsEvidence|undefined,use:'quality_inspection'|'person_replacement',enabled:boolean):RightsEvidence{
-  const existing=current||{authorizationRef:'',consentRef:'',grantedAt:new Date().toISOString(),subjectAdultConfirmed:false,permittedProviders:['volcengine_ark'],permittedUses:['digital_presenter','person_replacement']};
-  const other=(existing.providerScopes||[]).filter(scope=>scope.provider!=='dashscope');const currentUses=existing.providerScopes?.find(scope=>scope.provider==='dashscope')?.uses||[];const nextUses=enabled?[...new Set([...currentUses,use])]:currentUses.filter(item=>item!==use);const providerScopes=nextUses.length?[...other,{provider:'dashscope' as const,uses:nextUses}]:other;
-  return{...existing,permittedProviders:nextUses.length?[...new Set([...existing.permittedProviders,'dashscope' as const])]:existing.permittedProviders.filter(item=>item!=='dashscope'),permittedUses:[...new Set([...existing.permittedUses,...nextUses])],providerScopes};
+function heyGenReady(presenter?: PresenterAsset): boolean {
+  return Boolean(presenter?.authorized && (presenter.toolMappings?.heygen?.avatarId || presenter.avatarId)
+    && (presenter.toolMappings?.heygen?.voiceId || presenter.voiceId));
 }
 
-export default function EnterprisePresenters({ contentProduction = false, initialConfiguration = false, onInitialSelection }: { contentProduction?: boolean; initialConfiguration?: boolean; onInitialSelection?: () => void } = {}) {
+function arkReady(presenter?: PresenterAsset): boolean {
+  return Boolean(presenter?.authorized && presenter.arkCertification?.status === 'active'
+    && presenter.arkCertification.assetType === 'image' && presenter.arkCertification.assetUri);
+}
+
+function openDigitalHumanOnboarding(): void {
+  try { window.sessionStorage.setItem('lingshu:open-digital-employee-guide', 'presenter'); } catch { /* optional */ }
+  // DigitalEmployeePage is retained in a hidden React Activity. Its effects
+  // reconnect after navigation and consume this persisted request. Opening an
+  // Ant modal from the hidden page crashes rc-dialog while it restores focus.
+  window.dispatchEvent(new CustomEvent('lingshu:navigate', { detail: { page: 'digitalEmployees' } }));
+}
+
+export default function EnterprisePresenters({
+  contentProduction = false,
+  initialConfiguration = false,
+  onInitialSelection,
+}: {
+  contentProduction?: boolean;
+  initialConfiguration?: boolean;
+  onInitialSelection?: () => void;
+} = {}) {
   const [value, setValue] = useState<ProductionDefaults>(EMPTY_DEFAULTS);
-  const [draft, setDraft] = useState<PresenterAsset>({ id: '', name: '', avatarId: '', voiceId: '', authorized: false, supportsAlpha: false });
+  const [materials, setMaterials] = useState<Material[]>([]);
+  const [loaded, setLoaded] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [message, setMessage] = useState('');
+  const [error, setError] = useState('');
+  const [showArkSetup, setShowArkSetup] = useState(false);
+  const [showHeyGenManager, setShowHeyGenManager] = useState(false);
+  const [showVoiceRecorder, setShowVoiceRecorder] = useState(false);
+  const [preparedArk, setPreparedArk] = useState<(ArkPresenterPreparation & { presenterId: string })>();
+  const [creationPreparations, setCreationPreparations] = useState<Record<string, ArkPresenterPreparation>>({});
+  const [certifyingPresenterId, setCertifyingPresenterId] = useState('');
   const [editingId, setEditingId] = useState('');
-  const [voiceEditingId, setVoiceEditingId] = useState('');
-  const [materials, setMaterials] = useState<Material[]>([]); const [materialStatus, setMaterialStatus] = useState('正在读取人物素材…');
-  const [loaded, setLoaded] = useState(false); const [busy, setBusy] = useState(false); const [message, setMessage] = useState('');
-  const [portraitPreview, setPortraitPreview] = useState('');
-  const [showHeyGenManager, setShowHeyGenManager] = useState(() => typeof window !== 'undefined' && new URLSearchParams(window.location.search).has('presenterConsentReturn'));
-  const [creationJobs, setCreationJobs] = useState<PresenterCreation[]>([]);
-  useEffect(() => { let live = true; void productionApi.defaults().then(result => { if (live) { setValue(result); setLoaded(true); } }).catch(error => { if (live) setMessage(String(error)); }); return () => { live = false; }; }, []);
-  useEffect(() => { let live = true; void fetchMaterialLibrary().then(result => { if (!live) return; setMaterials(result.items.filter(item => item.type === 'image' || item.type === 'video')); setMaterialStatus(result.status === 'ready' ? '' : '部分素材源暂不可用，仅显示当前可用素材'); }).catch(() => { if (live) setMaterialStatus(contentProduction ? '人物素材暂不可用，请返回当前分镜的上传区重试' : '人物素材库暂不可用，请先到素材库上传并稍后重试'); }); return () => { live = false; }; }, [contentProduction]);
-  useEffect(() => { if (contentProduction) return; let live = true; void presenterApi.creations().then(items => { if (live) setCreationJobs(items); }).catch(() => {}); return () => { live = false; }; }, [contentProduction]);
-  const save = async (next: ProductionDefaults) => { if (!loaded || busy) return false; setBusy(true); setMessage(''); try { setValue(await productionApi.saveDefaults(next)); setMessage(initialConfiguration ? '已保存为企业默认人物，后续真人口播会继承' : '已保存到企业，新的创作草稿会继承'); if(initialConfiguration && next.defaultPresenterId)onInitialSelection?.(); return true; } catch (error) { setMessage(String(error)); return false; } finally { setBusy(false); } };
-  return <section className={`${initialConfiguration ? 'mt-4' : ''} rounded-xl border border-border bg-white p-5`}>
-    <h3 className="text-sm font-bold">{initialConfiguration ? '企业默认人物' : '数字人社媒 · 企业出镜设置'}</h3>{!initialConfiguration && <p className="mt-1 text-xs text-text-muted">管理企业人物、音色与默认出镜方式。</p>}
-    {!contentProduction && !initialConfiguration && creationJobs.length > 0 && <details className="mt-3 rounded-lg border p-3 text-xs"><summary className="cursor-pointer font-bold">内容制作同步的人物任务 · {creationJobs.length}</summary><ul className="mt-2 space-y-1">{creationJobs.map(job => <li key={job.id}>{job.name} · {{ submitting: '提交中', processing: '处理中', pending_consent: '等待本人验证', completed: '可预览并导入', failed: '处理失败', uncertain: '原任务待核对' }[job.status]}</li>)}</ul><p className="mt-2 text-text-muted">创建、本人验证和导入请在内容制作页的原分镜完成；这里保留同步记录供管理。</p></details>}
-    {(contentProduction || initialConfiguration) && <button type="button" onClick={() => setShowHeyGenManager(true)} className="mt-3 rounded-lg bg-gradient-to-r from-blue-600 to-violet-600 px-4 py-2.5 text-sm font-bold text-white">选择或创建人物</button>}
-    <fieldset disabled={!loaded || busy} className="mt-3 space-y-3 disabled:opacity-50">
-      {!initialConfiguration && <>
-      <label className="block text-xs">默认出镜偏好<select value={value.preference} onChange={event => void save({ ...value, preference: event.target.value as ProductionDefaults['preference'] })} className="mt-1 w-full rounded-lg border p-2"><option value="auto">AI推荐</option><option value="avatar">优先数字人</option><option value="real">优先真人实拍</option><option value="none">不出镜</option></select></label>
-      <div className="grid gap-3 sm:grid-cols-2">
-        <label className="block text-xs">新分镜默认声音<select value={value.defaultSound} onChange={event => void save({ ...value, defaultSound: event.target.value as ProductionDefaults['defaultSound'] })} className="mt-1 w-full rounded-lg border p-2"><option value="voiceover">连续旁白</option><option value="source">人物说话／镜头原声</option><option value="silent">无声</option></select></label>
-        <label className="block text-xs">新分镜默认布局<select value={value.defaultLayout} onChange={event => void save({ ...value, defaultLayout: event.target.value as ProductionDefaults['defaultLayout'] })} className="mt-1 w-full rounded-lg border p-2"><option value="full">全屏人物</option><option value="split">人物与产品分屏</option><option value="pip">产品主画面＋人物小窗</option></select></label>
-      </div>
-      </>}
-      {value.presenters.map(presenter => initialConfiguration ? <div key={presenter.id} className={`flex items-center justify-between gap-3 rounded-lg border p-3 text-sm ${value.defaultPresenterId === presenter.id ? 'border-accent bg-accent/5' : 'border-border'}`}><span className="font-bold">{presenter.name}<span className="ml-2 text-xs font-normal text-text-muted">{presenter.authorized ? '已授权' : '待授权'}</span></span><button type="button" disabled={!presenter.authorized} onClick={() => void save({ ...value, defaultPresenterId: presenter.id })}>{value.defaultPresenterId === presenter.id ? '默认口播人物' : presenter.authorized ? '设为默认' : '请先完成授权'}</button></div> : <div key={presenter.id} className="flex flex-wrap items-center justify-between gap-2 rounded-lg border p-3 text-xs"><span>{presenter.name} · V{presenter.assetVersion || 1} · {presenter.authorized ? "已确认使用授权" : "演示占位 / 使用授权待确认"}</span>
-        <span>{presenterCapabilities(presenter).map(item => ({ talking: '人物口播', reference_image: '参考图制作', reference_video: '参考视频制作', person_replacement: '人物替换' }[item])).join(' / ') || '资料待补充'}</span>
-        <span className="basis-full text-text-muted">人物资产：{(presenter.referenceMaterialIds || []).map(id => materials.find(material => material.id === id)?.name || `不可见资产 ${id}`).join('、') || '未绑定'}</span>
-        <span className={`basis-full ${presenter.arkCertification?.status === 'active' ? 'text-green-700' : 'text-amber-700'}`}>方舟认证：{{ profile_incomplete: '资料待完善', authorization_pending: '授权待确认', ark_pending: '待前往方舟认证', processing: '方舟审核中', active: 'Active，可复用', failed: '认证失败', disabled: '已停用' }[presenter.arkCertification?.status || (presenter.rightsEvidence ? 'ark_pending' : 'authorization_pending')]}</span>
-        <label>人工核验原生画幅<select aria-label={`${presenter.name}原生画幅`} value={presenter.nativeOrientation || 'unknown'} onChange={event => void save({ ...value, presenters: value.presenters.map(item => item.id === presenter.id ? { ...item, nativeOrientation: event.target.value as PresenterAsset['nativeOrientation'] } : item) })}><option value="unknown">未核验</option><option value="portrait">竖屏</option><option value="landscape">横屏</option><option value="square">方形</option></select></label>
-        <button type="button" onClick={() => { setEditingId(presenter.id); setDraft(structuredClone(presenter)); }}>编辑人物资产</button>
-        <button type="button" onClick={() => setVoiceEditingId(current => current === presenter.id ? '' : presenter.id)}>{voiceEditingId === presenter.id ? '收起音色' : '管理音色'}</button>
-        {voiceEditingId === presenter.id && <div className="basis-full"><PresenterVoiceBinding presenterId={presenter.id} currentVoiceId={presenter.voiceId} onBound={async () => { const next = await productionApi.defaults(); setValue(next); if (editingId === presenter.id) setDraft(next.presenters.find(item => item.id === presenter.id) || draft); setMessage('音色已绑定到企业人物资产'); }} /></div>}
-        <button type="button" onClick={() => void save({ ...value, defaultPresenterId: presenter.id })}>{value.defaultPresenterId === presenter.id ? '默认人物' : '设为默认'}</button></div>)}
-      {(!initialConfiguration && (!contentProduction || editingId)) && <details open={Boolean(editingId)}><summary className="cursor-pointer text-xs font-bold">{editingId ? '编辑授权人物' : '添加授权人物'}</summary><div className="mt-2 grid gap-2 sm:grid-cols-2">{(['name', 'avatarId'] as const).map(field => contentProduction && field === 'avatarId' ? <p key={field} className="rounded-lg border p-2 text-xs text-text-muted">HeyGen 形象由已导入资产绑定：{draft.avatarId || '无'}</p> : <input key={field} aria-label={field} value={draft[field]} placeholder={{ name: '人物名称', avatarId: 'HeyGen人物/Look ID' }[field]} onChange={event => setDraft(current => ({ ...current, [field]: event.target.value }))} className="rounded-lg border p-2 text-xs" />)}</div>
-        <fieldset className="mt-3 rounded-lg border border-border p-3"><legend className="px-1 text-xs font-bold">企业人物参考资产</legend>
-          <p className="text-xs text-text-muted">选择已取得授权的清晰正脸图片或人物视频。Runway、SD 等参考人物技术共用这些资产，生成时仍按具体工具能力选择。</p>
-          {materialStatus && <p role="status" className="mt-2 text-xs text-amber-700">{materialStatus}</p>}
-          {materials.length ? <div className="mt-2 grid max-h-64 gap-2 overflow-y-auto sm:grid-cols-2 lg:grid-cols-3">{materials.map(material => {
-            const selected = draft.referenceMaterialIds?.includes(material.id) || false;
-            return <label key={material.id} className={`flex cursor-pointer items-center gap-2 rounded-lg border p-2 text-xs ${selected ? 'border-accent bg-accent/5' : 'border-border'}`}>
-              <input type="checkbox" checked={selected} onChange={event => setDraft(current => ({ ...current, referenceMaterialIds: event.target.checked
-                ? [...new Set([...(current.referenceMaterialIds || []), material.id])]
-                : (current.referenceMaterialIds || []).filter(id => id !== material.id) }))} />
-              <span className="min-w-0"><strong className="block truncate">{material.name}</strong><span className="text-text-muted">{material.type === 'image' ? '人物图片' : '人物视频'} · {material.scope === 'shared' ? '企业共享' : '本企业'}</span></span>
-            </label>;
-          })}</div> : !materialStatus && <p className="mt-2 text-xs text-text-muted">{contentProduction ? '当前还没有图片或视频，可返回分镜直接上传。' : '素材库中还没有图片或视频，请先上传人物资产。'}</p>}
-          {(draft.referenceMaterialIds || []).some(id => !materials.some(material => material.id === id)) && <p className="mt-2 text-xs text-amber-700">已有绑定中包含当前素材库不可见的历史资产；保存前请重新选择，避免后续生成失败。</p>}
-          {editingId && (draft.referenceMaterialIds || []).some(id => materials.some(item => item.id === id && item.type === 'video')) &&
-            <button type="button" className="mt-2 rounded-lg border px-3 py-2 text-xs" onClick={async () => { try {
-              const video = (draft.referenceMaterialIds || []).find(id => materials.some(item => item.id === id && item.type === 'video'));
-              if (!video) return;
-              setBusy(true);
-              const result = await productionApi.portraitFromVideo(editingId, video);
-              setPortraitPreview(result.previewUrl);
-              const library = await fetchMaterialLibrary();
-              setMaterials(library.items.filter(item => item.type === 'image' || item.type === 'video'));
-              setDraft(current => ({ ...current, referenceMaterialIds: [...new Set([...(current.referenceMaterialIds || []), result.materialId])] }));
-              setMessage(`已从人物视频 ${result.atSeconds.toFixed(2)} 秒提取候选图片并入库；请检查下方预览是否为清晰正面人像，保存人物后可用于首帧参考。方舟 Active 认证仍需单独核验。`);
-            } catch (error) { setMessage(String(error)); } finally { setBusy(false); } }}>从已选人物视频提取清晰图片</button>}
-          {portraitPreview && <img src={portraitPreview} alt="从人物视频提取的候选人像，请人工检查" className="mt-2 max-h-48 rounded-lg border object-contain" />}
-        </fieldset>
-        <fieldset className="mt-3 rounded-lg border border-border p-3"><legend className="px-1 text-xs font-bold">主体授权证据</legend>
-          <p className="text-xs text-text-muted">本地上传、主体授权和方舟认证分别记录。只有三项都完成，人物图片才可外发。</p>
-          <div className="mt-2 grid gap-2 sm:grid-cols-2"><input aria-label="授权凭证编号" value={draft.rightsEvidence?.authorizationRef || ''} placeholder="授权凭证编号" onChange={event => setDraft(current => ({ ...current, rightsEvidence: { authorizationRef:event.target.value, consentRef:current.rightsEvidence?.consentRef || '', grantedAt:current.rightsEvidence?.grantedAt || new Date().toISOString(), subjectAdultConfirmed:current.rightsEvidence?.subjectAdultConfirmed || false, permittedProviders:current.rightsEvidence?.permittedProviders || ['volcengine_ark'], permittedUses:current.rightsEvidence?.permittedUses || ['digital_presenter','person_replacement'] } }))} className="rounded-lg border p-2 text-xs" />
-          <input aria-label="本人同意凭证编号" value={draft.rightsEvidence?.consentRef || ''} placeholder="本人同意凭证编号" onChange={event => setDraft(current => ({ ...current, rightsEvidence: { authorizationRef:current.rightsEvidence?.authorizationRef || '', consentRef:event.target.value, grantedAt:current.rightsEvidence?.grantedAt || new Date().toISOString(), subjectAdultConfirmed:current.rightsEvidence?.subjectAdultConfirmed || false, permittedProviders:current.rightsEvidence?.permittedProviders || ['volcengine_ark'], permittedUses:current.rightsEvidence?.permittedUses || ['digital_presenter','person_replacement'] } }))} className="rounded-lg border p-2 text-xs" /></div>
-          <label className="mt-2 flex gap-2 text-xs"><input type="checkbox" checked={draft.rightsEvidence?.subjectAdultConfirmed || false} onChange={event => setDraft(current => ({ ...current, rightsEvidence: { authorizationRef:current.rightsEvidence?.authorizationRef || '', consentRef:current.rightsEvidence?.consentRef || '', grantedAt:current.rightsEvidence?.grantedAt || new Date().toISOString(), subjectAdultConfirmed:event.target.checked, permittedProviders:current.rightsEvidence?.permittedProviders || ['volcengine_ark'], permittedUses:current.rightsEvidence?.permittedUses || ['digital_presenter','person_replacement'] } }))} />已核验主体为成年人并同意本用途</label>
-          <label className="mt-2 flex gap-2 text-xs"><input type="checkbox" checked={draft.rightsEvidence?.providerScopes?.some(scope=>scope.provider==='dashscope'&&scope.uses.includes('quality_inspection')) || false} onChange={event => setDraft(current => ({...current,rightsEvidence:toggleDashscopeUse(current.rightsEvidence,'quality_inspection',event.target.checked)}))} />允许阿里云百炼接收人物图和候选采样帧，用于独立身份与产品画面质检</label>
-          <label className="mt-2 flex gap-2 text-xs"><input type="checkbox" checked={draft.rightsEvidence?.providerScopes?.some(scope=>scope.provider==='dashscope'&&scope.uses.includes('person_replacement')) || false} onChange={event => setDraft(current => ({...current,rightsEvidence:toggleDashscopeUse(current.rightsEvidence,'person_replacement',event.target.checked)}))} />允许阿里云百炼使用授权人物图生成构图草稿（产生生图费用）</label>
-          <p className="mt-1 text-[10px] text-text-muted">未勾选时不会向百炼外发人物图；身份、产品／品牌／文字项目保留为人工验收。</p>
-        </fieldset>
-        <fieldset className="mt-3 rounded-lg border border-border p-3"><legend className="px-1 text-xs font-bold">方舟图片资产认证</legend>
-          <p className="text-xs text-text-muted">本人在方舟完成一次认证后，回填该人物的图片资产。认证按人物复用，后续镜头无需重复操作；填写 Asset ID 不会立即生成视频。</p>
-          <a href="https://console.volcengine.com/ark/region:ark+cn-beijing/overview" target="_blank" rel="noreferrer" className="mt-1 inline-block text-xs font-bold text-accent underline">打开方舟控制台（新窗口）</a>
-          <div className="mt-2 grid gap-2 sm:grid-cols-4"><input aria-label="方舟项目" value={draft.arkCertification?.projectName || 'default'} placeholder="方舟项目（默认 default）" onChange={event => setDraft(current => ({ ...current, arkCertification:{ projectName:event.target.value, groupId:current.arkCertification?.groupId || '', assetUri:current.arkCertification?.assetUri || '', assetType:current.arkCertification?.assetType || '', status:'ark_pending', materialId:current.arkCertification?.materialId || '', manualConfirmation:undefined } }))} className="rounded-lg border p-2 text-xs" />
-          <input aria-label="方舟人物资产组" value={draft.arkCertification?.groupId || ''} placeholder="group-..." onChange={event => setDraft(current => ({ ...current, arkCertification:{ projectName:current.arkCertification?.projectName || 'default', groupId:event.target.value, assetUri:current.arkCertification?.assetUri || '', assetType:current.arkCertification?.assetType || '', status:'ark_pending', materialId:current.arkCertification?.materialId || '', manualConfirmation:undefined } }))} className="rounded-lg border p-2 text-xs" />
-          <input aria-label="方舟图片Asset ID" value={draft.arkCertification?.assetUri || ''} placeholder="asset://asset-..." onChange={event => setDraft(current => ({ ...current, arkCertification:{ projectName:current.arkCertification?.projectName || 'default', groupId:current.arkCertification?.groupId || '', assetUri:event.target.value, assetType:'image', status:'ark_pending', materialId:current.arkCertification?.materialId || '', manualConfirmation:undefined } }))} className="rounded-lg border p-2 text-xs" />
-          <select aria-label="认证对应人物图片" value={draft.arkCertification?.materialId || ''} onChange={event => setDraft(current => ({ ...current, arkCertification:{ projectName:current.arkCertification?.projectName || 'default', groupId:current.arkCertification?.groupId || '', assetUri:current.arkCertification?.assetUri || '', assetType:'image', status:'ark_pending', materialId:event.target.value, manualConfirmation:undefined } }))} className="rounded-lg border p-2 text-xs"><option value="">选择对应人物图片</option>{materials.filter(item => item.type === 'image' && draft.referenceMaterialIds?.includes(item.id)).map(item => <option key={item.id} value={item.id}>{item.name}</option>)}</select></div>
-          <div className="mt-2 space-y-1 rounded-lg bg-slate-50 p-2 text-xs" aria-label="方舟控制台人工核验">
-            {([['imageTypeConfirmed','控制台显示该 Asset 是图片，不是视频'],['activeConfirmed','控制台显示状态为 Active'],['samePersonConfirmed','该资产与上方选中的本地照片属于同一位授权人物']] as const).map(([key,label]) => <label key={key} className="flex gap-2"><input type="checkbox" checked={draft.arkCertification?.manualConfirmation?.[key] === true} onChange={event => setDraft(current => ({ ...current, arkCertification:{ projectName:current.arkCertification?.projectName || 'default', groupId:current.arkCertification?.groupId || '', assetUri:current.arkCertification?.assetUri || '', assetType:'image', status:'ark_pending', materialId:current.arkCertification?.materialId || '', manualConfirmation:{imageTypeConfirmed:current.arkCertification?.manualConfirmation?.imageTypeConfirmed || false,activeConfirmed:current.arkCertification?.manualConfirmation?.activeConfirmed || false,samePersonConfirmed:current.arkCertification?.manualConfirmation?.samePersonConfirmed || false,confirmedAt:'',[key]:event.target.checked} } }))} />{label}</label>)}
+  const [editingName, setEditingName] = useState('');
+  const [loadError, setLoadError] = useState('');
+  const initialReadyNotified = useRef(false);
+
+  const load = useCallback(async () => {
+    const [next, creations] = await Promise.all([
+      productionApi.defaults(),
+      presenterApi.creations().catch(() => []),
+    ]);
+    setValue({ ...EMPTY_DEFAULTS, ...next, presenterRoutes: next.presenterRoutes || [] });
+    setCreationPreparations(Object.fromEntries(creations.flatMap(item => item.arkPreparation ? [[item.id, item.arkPreparation]] : [])));
+    setLoadError('');
+    setLoaded(true);
+    return next;
+  }, []);
+
+  useEffect(() => {
+    let live = true;
+    void load().catch(cause => { if (live) setLoadError(cause instanceof Error ? cause.message : String(cause)); });
+    return () => { live = false; };
+  }, [load]);
+
+  useEffect(() => {
+    let live = true;
+    void fetchMaterialLibrary().then(result => {
+      if (live) setMaterials(result.items.filter(item => item.type === 'image' || item.type === 'video'));
+    }).catch(() => { if (live) setError('人物素材暂时无法读取，请稍后重试。'); });
+    return () => { live = false; };
+  }, []);
+
+  const selectedPresenter = useMemo(() => value.presenters.find(item => item.id === value.defaultPresenterId)
+    || value.presenters[0], [value.defaultPresenterId, value.presenters]);
+  const selectedHeyGenReady = heyGenReady(selectedPresenter);
+  const selectedArkReady = arkReady(selectedPresenter);
+  const selectedReferenceMaterials = useMemo(() => [...(selectedPresenter?.referenceMaterialIds || [])]
+    .reverse()
+    .map(id => materials.find(item => item.id === id))
+    .filter((item): item is Material => Boolean(item)), [materials, selectedPresenter]);
+  const selectedCreationId = selectedPresenter?.rightsEvidence?.authorizationRef
+    ?.match(/^document:\/\/studio_presenter_assets\/([^/]+)\//)?.[1];
+  const selectedPreparedArk = (preparedArk?.presenterId === selectedPresenter?.id ? preparedArk : undefined)
+    || (selectedCreationId ? creationPreparations[selectedCreationId] : undefined);
+  const reusablePhotoMaterialId = selectedPreparedArk?.photoMaterialId
+    || selectedReferenceMaterials.find(item => item.type === 'image')?.id;
+  const reusableVideoMaterialId = selectedPreparedArk?.videoMaterialId
+    || selectedReferenceMaterials.find(item => item.type === 'video')?.id;
+
+  useEffect(() => {
+    if (initialConfiguration && loaded && selectedHeyGenReady && !initialReadyNotified.current) {
+      initialReadyNotified.current = true;
+      onInitialSelection?.();
+    }
+  }, [initialConfiguration, loaded, onInitialSelection, selectedHeyGenReady]);
+
+  const openPresenterManager = () => {
+    setShowArkSetup(false);
+    setShowVoiceRecorder(false);
+    setShowHeyGenManager(true);
+  };
+
+  const openVoiceRecorder = () => {
+    setShowArkSetup(false);
+    setShowHeyGenManager(false);
+    setShowVoiceRecorder(true);
+  };
+
+  const refresh = async (successMessage?: string) => {
+    const next = await load();
+    notifyPresenterAssetsUpdated();
+    if (successMessage) setMessage(successMessage);
+    return next;
+  };
+
+  const startArkEnrollment = async (input: {
+    name: string;
+    photo?: File;
+    video?: File;
+    photoMaterialId?: string;
+    videoMaterialId?: string;
+    requestId: string;
+  }, targetPresenterId?: string) => {
+    const current = await productionApi.defaults();
+    const presenter = (targetPresenterId ? current.presenters.find(item => item.id === targetPresenterId) : undefined)
+      || current.presenters.find(item => item.id === current.defaultPresenterId) || current.presenters[0];
+    if (!presenter || !heyGenReady(presenter)) throw new Error('请先在左侧完成 HeyGen 人物和声音接入。');
+    const photoMaterialId = input.photo
+      ? (await productionApi.uploadArkMaterial(input.photo, 'image')).id
+      : String(input.photoMaterialId || '');
+    const videoMaterialId = input.video
+      ? (await productionApi.uploadArkMaterial(input.video, 'video')).id
+      : String(input.videoMaterialId || '');
+    if (!photoMaterialId || !videoMaterialId) throw new Error('请同时提供清晰正面照片和本人视频。');
+    const referenceMaterialIds = [...new Set([...(presenter.referenceMaterialIds || []), photoMaterialId, videoMaterialId])];
+    const saved = await productionApi.saveDefaults({
+      ...current,
+      defaultPresenterId: presenter.id,
+      presenters: current.presenters.map(item => item.id === presenter.id ? { ...item, referenceMaterialIds } : item),
+    });
+    setValue(saved);
+    return productionApi.startArkEnrollment({
+      requestId: input.requestId,
+      presenterId: presenter.id,
+      photoMaterialId,
+      videoMaterialId,
+      subjectAdultConfirmed: true,
+      arkProcessingAuthorized: true,
+    });
+  };
+
+  const finishUnifiedPresenterSetup = async (next: ProductionDefaults, context?: PresenterSaveContext) => {
+    setValue(next); notifyPresenterAssetsUpdated(); setShowHeyGenManager(false); setShowVoiceRecorder(false); setError('');
+    const preparation = context?.arkPreparation;
+    if (preparation) {
+      const presenter = next.presenters.find(item => item.id === next.defaultPresenterId) || next.presenters[0];
+      if (presenter) {
+        const referenceMaterialIds = [...new Set([...(presenter.referenceMaterialIds || []), preparation.photoMaterialId, preparation.videoMaterialId])];
+        const saved = await productionApi.saveDefaults({
+          ...next,
+          defaultPresenterId: presenter.id,
+          presenters: next.presenters.map(item => item.id === presenter.id ? { ...item, referenceMaterialIds } : item),
+        });
+        setValue(saved);
+        notifyPresenterAssetsUpdated();
+      }
+      if (presenter) setPreparedArk({ ...preparation, presenterId: presenter.id });
+    }
+    setShowArkSetup(false);
+    setMessage(preparation
+      ? '口播人物与声音已保存，现在即可使用。照片和视频也已保留；需要高级人物替换时，再点击“完善人物替换认证”单独授权。'
+      : '口播人物与声音已保存，现在即可使用。高级人物替换为可选功能，可稍后在企业知识库补充认证。');
+    onInitialSelection?.();
+  };
+
+  const saveName = async () => {
+    const name = editingName.trim();
+    if (!editingId || !name) return;
+    setBusy(true); setError(''); setMessage('');
+    try {
+      const next = await productionApi.saveDefaults({
+        ...value,
+        presenters: value.presenters.map(item => item.id === editingId ? { ...item, name } : item),
+      });
+      setValue(next); setEditingId(''); setEditingName('');
+      notifyPresenterAssetsUpdated(); setMessage('人物名称已更新。');
+    } catch (cause) { setError(cause instanceof Error ? cause.message : String(cause)); }
+    finally { setBusy(false); }
+  };
+
+  const revoke = (presenter: PresenterAsset) => {
+    Modal.confirm({
+      title: `取消“${presenter.name}”的使用授权？`,
+      content: '取消后，灵枢会立即停止在新任务中使用该人物；供应商账户中的原始资产不会被删除。',
+      okText: '取消授权',
+      cancelText: '保留授权',
+      okButtonProps: { danger: true },
+      onOk: async () => {
+        setBusy(true); setError(''); setMessage('');
+        try {
+          const next = await presenterApi.revoke(presenter.id);
+          setValue(next); notifyPresenterAssetsUpdated(); setMessage('人物授权已取消，后续任务不会再使用该人物。');
+        } catch (cause) { setError(cause instanceof Error ? cause.message : String(cause)); throw cause; }
+        finally { setBusy(false); }
+      },
+    });
+  };
+
+  if (initialConfiguration) return <section className="space-y-4" aria-label="数字人统一接入">
+    <div>
+      <h3 className="text-base font-semibold text-text-primary">数字人接入</h3>
+      <p className="mt-1 text-xs leading-5 text-text-muted">选择 HeyGen 已有人物，或上传本人资料创建；保存前可选择已有声音，也可直接录入本人声音。人物替换认证是可选能力，不影响 HeyGen 口播。</p>
+    </div>
+    {!loaded ? loadError
+      ? <Alert
+        type="error"
+        showIcon
+        title="数字人配置读取失败"
+        description={loadError}
+        action={<Button className="min-h-11 text-xs" onClick={() => { setLoadError(''); void load().catch(cause => setLoadError(cause instanceof Error ? cause.message : String(cause))); }}>重新读取</Button>}
+      />
+      : <LsLoadingState loading label="正在读取数字人配置"><span /></LsLoadingState>
+    : <>
+      {error && <Alert type="error" showIcon title={error} />}
+      {message && <Alert type="success" showIcon title={message} />}
+      <section className={`rounded-lg border p-4 ${selectedHeyGenReady && selectedArkReady ? 'border-green/30 bg-green/5' : 'border-border bg-surface'}`} aria-label="统一人物接入状态">
+        <div className="flex flex-wrap items-start justify-between gap-4"><div><p className="text-sm font-semibold text-text-primary">人物、声音与本人认证</p>{selectedPresenter && <p className="mt-2 text-xs text-text-secondary">当前人物：<strong>{selectedPresenter.name}</strong></p>}<div className="mt-3 flex flex-wrap gap-2"><Tag color={selectedHeyGenReady ? 'success' : 'default'}>口播人物与声音 {selectedHeyGenReady ? '已完成' : '待配置'}</Tag><Tag color={selectedArkReady ? 'success' : 'default'}>人物替换认证 {selectedArkReady ? '已完成' : selectedHeyGenReady ? '可选' : '等待人物'}</Tag></div></div>
+          <div className="flex flex-wrap gap-2">
+            {selectedHeyGenReady ? <><Button className="min-h-11 text-xs" onClick={openPresenterManager}>更换数字人</Button><Button className="min-h-11 text-xs" onClick={openVoiceRecorder}>录入本人声音</Button></> : <LsBrandAction className="min-h-11 text-xs" onClick={openPresenterManager}>设置人物与声音</LsBrandAction>}
+            {selectedHeyGenReady && !selectedArkReady && <LsBrandAction className="min-h-11 text-xs" onClick={() => setShowArkSetup(current => !current)}>{showArkSetup ? '收起人物替换认证' : '完善人物替换认证'}</LsBrandAction>}
           </div>
-          <div className="mt-2 flex flex-wrap gap-2"><button type="button" onClick={async () => { try { const current=draft.arkCertification; if(!current || !editingId) return; const result=await productionApi.verifyArkAsset({projectName:current.projectName || 'default',groupId:current.groupId || '',assetUri:current.assetUri}); const next={...draft,arkCertification:{...current,...result}}; if(await save({...value,presenters:value.presenters.map(item=>item.id===editingId?next:item)})){setDraft(next);setMessage(result.status==='active'?'方舟图片已同步并绑定，可用于人物替换':`方舟状态：${result.status}`);} } catch(error){ setMessage(String(error)); } }} className="rounded-lg border px-3 py-2 text-xs">同步方舟认证状态</button>
-          <button type="button" disabled={!editingId || !/^asset:\/\/asset-[a-z0-9-]+$/i.test(draft.arkCertification?.assetUri || '') || !draft.arkCertification?.materialId || !draft.arkCertification.manualConfirmation?.imageTypeConfirmed || !draft.arkCertification.manualConfirmation?.activeConfirmed || !draft.arkCertification.manualConfirmation?.samePersonConfirmed} onClick={async()=>{try{const current=draft.arkCertification;if(!current||!editingId)return;const now=new Date().toISOString();const next={...draft,arkCertification:{...current,assetType:'image' as const,status:'active' as const,syncedAt:now,verificationSource:'manual_console' as const,manualConfirmation:{...current.manualConfirmation!,confirmedAt:now}}};if(await save({...value,presenters:value.presenters.map(item=>item.id===editingId?next:item)})){setDraft(next);setMessage('该人物图片认证已保存。返回分镜继续预检，生成仍需单独确认。');}}catch(error){setMessage(String(error));}}} className="rounded-lg border border-amber-300 bg-amber-50 px-3 py-2 text-xs text-amber-800 disabled:opacity-40">保存人工核验结果</button>
+        </div>
+      </section>
+      {showArkSetup && selectedPresenter && <ArkPresenterEnrollmentPanel
+        presenterId={selectedPresenter.id}
+        photos={materials.filter(item => item.type === 'image').map(item => ({ id: item.id, name: item.name }))}
+        videos={materials.filter(item => item.type === 'video').map(item => ({ id: item.id, name: item.name }))}
+        initialPhotoMaterialId={reusablePhotoMaterialId}
+        initialVideoMaterialId={reusableVideoMaterialId}
+        authorizationConfirmed={selectedPreparedArk?.processingAuthorized === true}
+        onStart={startArkEnrollment}
+        onReady={async () => { await refresh('方舟人物认证已完成，当前人物可以用于人物替换。'); onInitialSelection?.(); }}
+      />}
+      {selectedHeyGenReady && selectedArkReady && <div className="flex items-center gap-2 rounded-lg bg-green/10 px-4 py-3 text-xs font-semibold text-green"><CheckCircle2 size={16} />数字人口播与人物替换条件均已准备完成。</div>}
+      {showHeyGenManager && <PresenterManager initialConfiguration onClose={() => setShowHeyGenManager(false)} onSynced={next => { setValue(next); notifyPresenterAssetsUpdated(); }} onSaved={(next, context) => finishUnifiedPresenterSetup(next, context)} />}
+      {showVoiceRecorder && selectedPresenter && <PresenterManager initialConfiguration voiceOnlyPresenter={selectedPresenter} onClose={() => setShowVoiceRecorder(false)} onSaved={next => finishUnifiedPresenterSetup(next)} />}
+    </>}
+  </section>;
+
+  return <section className="rounded-lg border border-border bg-white p-5" aria-label={contentProduction ? '内容制作人物管理' : '人物与出镜'}>
+    <div className="flex flex-wrap items-start justify-between gap-3">
+      <div><h3 className="text-base font-semibold text-text-primary">人物与出镜</h3><p className="mt-1 text-xs text-text-muted">这里可以修改已接入人物、补充可选的人物替换认证，或取消授权。</p></div>
+      {contentProduction && <Button onClick={openDigitalHumanOnboarding}>打开数字人接入</Button>}
+    </div>
+    {error && <Alert className="mt-4" type="error" showIcon title={error} />}
+    {message && <Alert className="mt-4" type="success" showIcon title={message} />}
+    {!loaded ? <p role="status" className="mt-5 text-sm text-text-muted">正在读取已授权人物…</p> : !value.presenters.length ? <div className="mt-5 rounded-lg border border-dashed border-border p-8 text-center"><UserRound className="mx-auto text-text-muted" /><p className="mt-3 text-sm font-semibold">暂无已授权人物</p><p className="mt-1 text-xs text-text-muted">请前往数字员工新手引导完成首次接入。</p><Button className="mt-4" onClick={openDigitalHumanOnboarding}>打开数字人接入</Button></div> : <div className="mt-5 divide-y divide-border rounded-lg border border-border">
+      {value.presenters.map(presenter => {
+        const referenceIds = presenter.referenceMaterialIds || [];
+        const initialPhotoMaterialId = materials.find(item => item.type === 'image' && referenceIds.includes(item.id))?.id;
+        const initialVideoMaterialId = materials.find(item => item.type === 'video' && referenceIds.includes(item.id))?.id;
+        const certificationOpen = certifyingPresenterId === presenter.id;
+        return <article key={presenter.id} className="p-4">
+        <div className="flex flex-wrap items-center justify-between gap-4">
+          <div className="flex min-w-0 items-center gap-3">
+            <span className="relative flex h-12 w-12 shrink-0 items-center justify-center overflow-hidden rounded-lg bg-surface-2 text-sm font-semibold text-text-secondary">{presenter.name.slice(0, 1)}{presenter.imageUrl && <img src={presenter.imageUrl} alt="" className="absolute inset-0 h-full w-full object-cover" />}</span>
+            <div className="min-w-0"><p className="truncate text-sm font-semibold text-text-primary">{presenter.name}</p><div className="mt-1 flex flex-wrap gap-1.5"><Tag color={heyGenReady(presenter) ? 'success' : 'default'}>HeyGen {heyGenReady(presenter) ? '已接入' : '未接入'}</Tag><Tag color={arkReady(presenter) ? 'success' : 'default'}>方舟 {arkReady(presenter) ? '已认证' : '未认证'}</Tag>{value.defaultPresenterId === presenter.id && <Tag color="blue">当前默认</Tag>}</div></div>
           </div>
-          <p className="mt-2 text-xs text-text-muted">人工确认只用于当前没有 Assets API 权限的 Entry 流程；保存时仍会校验图片型 asset://、对应人物图、授权编号、本人同意凭证和成年人确认。</p>
-        </fieldset>
-        <label className="mt-2 flex gap-2 text-xs"><input type="checkbox" checked={draft.authorized} onChange={event => setDraft(current => ({ ...current, authorized: event.target.checked }))} />已取得人物和声音使用授权</label>
-        <label className="mt-2 flex gap-2 text-xs"><input type="checkbox" checked={draft.supportsAlpha} onChange={event => setDraft(current => ({ ...current, supportsAlpha: event.target.checked }))} />已验证透明人物视频支持</label>
-        <label className="mt-2 block text-xs">人物原生画幅（查看供应商预览后人工核验）<select aria-label="人物原生画幅" value={draft.nativeOrientation || 'unknown'} onChange={event => setDraft(current => ({ ...current, nativeOrientation: event.target.value as PresenterAsset['nativeOrientation'] }))}><option value="unknown">未核验</option><option value="portrait">竖屏</option><option value="landscape">横屏</option><option value="square">方形</option></select></label>
-        <div className="mt-2 flex gap-2"><button type="button" disabled={!draft.authorized || !draft.name || ((!draft.avatarId || !draft.voiceId) && !draft.referenceMaterialIds?.length)} onClick={async () => {
-          const item = { ...draft, id: editingId || crypto.randomUUID(), assetVersion: draft.assetVersion || 1 };
-          const presenters = editingId ? value.presenters.map(current => current.id === editingId ? item : current) : [...value.presenters, item];
-          if (await save({ ...value, presenters, defaultPresenterId: value.defaultPresenterId || item.id })) { setDraft({ id: '', name: '', avatarId: '', voiceId: '', authorized: false, supportsAlpha: false }); setEditingId(''); }
-        }} className="rounded-lg border px-3 py-2 text-xs disabled:opacity-40">{editingId ? '保存人物新版本' : '保存人物'}</button>
-        {editingId && <button type="button" onClick={() => { setEditingId(''); setDraft({ id: '', name: '', avatarId: '', voiceId: '', authorized: false, supportsAlpha: false }); }} className="rounded-lg border px-3 py-2 text-xs">取消编辑</button>}</div>
-      </details>}
-    </fieldset>
-    {message && <p role="status" className="mt-3 text-xs text-text-secondary">{message}</p>}
-    {showHeyGenManager && <PresenterManager reusePresenterId={initialConfiguration ? value.defaultPresenterId || undefined : undefined} initialConfiguration={initialConfiguration} onClose={() => setShowHeyGenManager(false)} onSynced={next => setValue(next)} onSaved={next => { setValue(next); setShowHeyGenManager(false); setMessage(initialConfiguration ? '人物授权已确认，已设为后续真人口播的默认人物与声音' : '人物已同步到企业资产');if(initialConfiguration&&next.defaultPresenterId)onInitialSelection?.(); }} />}
+          <div className="flex flex-wrap gap-2"><Button disabled={busy} onClick={() => { setEditingId(presenter.id); setEditingName(presenter.name); }}>修改人物</Button>{heyGenReady(presenter) && !arkReady(presenter) && <Button disabled={busy} onClick={() => setCertifyingPresenterId(current => current === presenter.id ? '' : presenter.id)}>{certificationOpen ? '收起认证' : '人物替换认证'}</Button>}<Button danger disabled={busy} onClick={() => revoke(presenter)}>取消授权</Button></div>
+        </div>
+        {editingId === presenter.id && <div className="mt-4 flex flex-wrap items-end gap-2 rounded-lg bg-surface-2 p-3"><label className="min-w-56 flex-1 text-xs font-semibold text-text-secondary">人物显示名称<input autoFocus value={editingName} maxLength={100} onChange={event => setEditingName(event.target.value)} className="mt-1 w-full rounded-lg border border-border bg-white px-3 py-2 text-sm text-text-primary" /></label><LsBrandAction loading={busy} disabled={!editingName.trim()} onClick={() => void saveName()}>保存修改</LsBrandAction><Button disabled={busy} onClick={() => { setEditingId(''); setEditingName(''); }}>取消</Button></div>}
+        {certificationOpen && <div className="mt-4"><ArkPresenterEnrollmentPanel
+          presenterId={presenter.id}
+          photos={materials.filter(item => item.type === 'image').map(item => ({ id: item.id, name: item.name }))}
+          videos={materials.filter(item => item.type === 'video').map(item => ({ id: item.id, name: item.name }))}
+          initialPhotoMaterialId={initialPhotoMaterialId}
+          initialVideoMaterialId={initialVideoMaterialId}
+          authorizationConfirmed={false}
+          onStart={input => startArkEnrollment(input, presenter.id)}
+          onReady={async () => { await refresh('方舟人物认证已完成，当前人物可以用于人物替换。'); setCertifyingPresenterId(''); }}
+        /></div>}
+      </article>;
+      })}
+    </div>}
+    {contentProduction && <p className="mt-3 flex items-center gap-2 rounded-lg bg-surface-2 px-3 py-2 text-xs text-text-muted"><ShieldCheck size={14} />制作页面不再重复承载人物供应商配置。</p>}
   </section>;
 }

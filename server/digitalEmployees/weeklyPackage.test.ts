@@ -2,7 +2,7 @@ import { assessMaturity, normalizeAssessment, assessmentQuestions, type Operatin
 import { planConfigForDisplay, type DigitalEmployeeConfig as ClientConfig } from '../../src/lib/digitalEmployees.js';
 import assert from 'node:assert/strict';
 import './contentPlanRecommendation.test.js';
-import { recommendPackage, compilePackage, normalizePackage, validatePackage, validatePackageForStart, grantCovers, packageConfig, criticalBusinessConfigChanges } from './weeklyPackage.js';
+import { recommendPackage, compilePackage, normalizePackage, repairCollapsedWeeklyVideoProduction, validatePackage, validatePackageForStart, grantCovers, packageConfig, criticalBusinessConfigChanges } from './weeklyPackage.js';
 import { normalizeDigitalEmployeeConfig, normalizeWeeklyGoal } from './domain.js';
 const config = normalizeDigitalEmployeeConfig({ companyName: 'Test', industry: 'Tools', focusProducts: 'A', operatingMaturity: 'starting', publishingTargets: [{ platform: 'youtube', accountId: 'account-a', accountLabel: 'A' }] });
 const goal = normalizeWeeklyGoal({ objective: '跑通首条发布', startsAt: '2026-09-06', endsAt: '2026-09-12', contentPlatforms: ['youtube'] }, config);
@@ -30,12 +30,72 @@ const twoAccounts = recommendPackage(goal, normalizeDigitalEmployeeConfig({
   ],
 }));
 assert.equal(twoAccounts.authorization.maxPublishItems, twoAccounts.matrixPlan?.reduce((sum, row) => sum + row.weeklyCount, 0), 'the default bound covers actual account publish assignments');
+const twoPlatformQuotaConfig = normalizeDigitalEmployeeConfig({
+  ...config,
+  socialCadence: '每周生成 2 条发布草稿；发布平台：facebook、tiktok；各平台条数：facebook=1,tiktok=1',
+  publishingTargets: [
+    { platform: 'facebook', accountId: 'facebook-one', accountLabel: 'Facebook', weeklyCount: 1 },
+    { platform: 'tiktok', accountId: 'tiktok-one', accountLabel: 'TikTok', weeklyCount: 1 },
+  ],
+});
+const twoPlatformQuotaGoal = normalizeWeeklyGoal({ ...goal, contentPlatforms: ['facebook', 'tiktok'] }, twoPlatformQuotaConfig);
+const twoPlatformQuotaPackage = recommendPackage(twoPlatformQuotaGoal, twoPlatformQuotaConfig);
+const twoPlatformQuotaPlans = twoPlatformQuotaPackage.tasks.find(task => task.templateId === 'production')?.videoPlans || [];
+assert.equal(twoPlatformQuotaPlans.length, 2, 'the server package must keep the two-item Agent quota');
+assert.deepEqual(twoPlatformQuotaPlans.map(plan => plan.productionRole), ['master', 'master'], 'both requested videos must be independently produced');
+assert.equal(new Set(twoPlatformQuotaPlans.map(plan => plan.contentFamilyId)).size, 2, 'the two requested videos must keep separate production identities');
+assert.equal(twoPlatformQuotaPackage.directorPlan?.originalTarget, 2, 'the director target must equal the actual planned video count');
+assert.equal(twoPlatformQuotaPackage.directorPlan?.platformVersionTarget, 2, 'the Agent delivery target must equal the actual planned video count');
+assert.ok((twoPlatformQuotaPackage.directorPlan?.productionBudgetMin || 0) >= 20, 'the displayed budget must cover both actual video productions');
+assert.equal(twoPlatformQuotaPackage.authorization.maxPublishItems, 2, 'publish authorization must use the same two-item quota');
+assert.deepEqual(twoPlatformQuotaPackage.operatingContext?.accounts.map(account => [account.platform, account.contentCount]), [['facebook', 1], ['tiktok', 1]]);
+const collapsedHistoricPackage = structuredClone(twoPlatformQuotaPackage);
+const collapsedPlans = collapsedHistoricPackage.tasks.find(task => task.templateId === 'production')!.videoPlans!;
+collapsedPlans[1] = {
+  ...collapsedPlans[1],
+  contentFamilyId: collapsedPlans[0].contentFamilyId,
+  productionRole: 'platform_adaptation',
+  masterContentId: collapsedPlans[0].contentId,
+  adaptationMode: 'platform_light',
+};
+collapsedHistoricPackage.directorPlan = {
+  ...collapsedHistoricPackage.directorPlan!,
+  productionBudgetMin: 10,
+  productionBudget: 12.5,
+  productionBudgetMax: 15,
+};
+const repairedHistoricPackage = normalizePackage(collapsedHistoricPackage);
+const repairedHistoricPlans = repairedHistoricPackage.tasks.find(task => task.templateId === 'production')!.videoPlans!;
+assert.deepEqual(repairedHistoricPlans.map(plan => plan.productionRole), ['master', 'master'], 'normalization must repair the historic cross-platform slot collapse before production');
+assert.equal(new Set(repairedHistoricPlans.map(plan => plan.contentFamilyId)).size, 2, 'historic repair must restore one production identity per planned video');
+assert.equal(repairedHistoricPlans.reduce((sum, plan) => sum + Number(plan.estimatedCost || 0), 0), 25, 'historic repair must restore one full production estimate per video');
+assert.ok((repairedHistoricPackage.directorPlan?.productionBudgetMin || 0) >= 20, 'historic repair must show the full cost range before confirmation');
+const repairedHistoricProjection = repairCollapsedWeeklyVideoProduction(collapsedHistoricPackage);
+assert.equal(repairedHistoricProjection.operatingContext?.budget.productionCny, 30, 'the pending-plan summary must expose the approved protected ceiling for two videos');
+assert.equal(repairedHistoricProjection.operatingContext?.budget.totalMinCny, 20, 'the pending-plan summary must expose the two-video minimum estimate');
+assert.equal(repairedHistoricProjection.operatingContext?.outputs.originalCount, 2, 'the pending-plan summary must report two actual productions');
+assert.equal(repairedHistoricProjection.operatingContext?.accounts.reduce((sum, account) => sum + (account.budgetCny || 0), 0), 30, 'account allocations must add up to the approved protected production ceiling');
+const staleCostPackage = structuredClone(twoPlatformQuotaPackage);
+const staleCostPlans = staleCostPackage.tasks.find(task => task.templateId === 'production')!.videoPlans!;
+staleCostPlans[1] = { ...staleCostPlans[1], estimatedCost: 0, estimatedCostRange: { minCny: 0, maxCny: 0, basis: 'included_platform_adaptation' } };
+staleCostPackage.directorPlan = { ...staleCostPackage.directorPlan!, productionBudgetMin: 10, productionBudget: 12.5, productionBudgetMax: 15 };
+staleCostPackage.operatingContext = {
+  ...staleCostPackage.operatingContext!,
+  budget: { ...staleCostPackage.operatingContext!.budget, productionMinCny: 10, productionCny: 12.5, productionMaxCny: 15, totalMinCny: 10, totalCny: 12.5, totalMaxCny: 15 },
+};
+const repairedStaleCostPackage = repairCollapsedWeeklyVideoProduction(staleCostPackage);
+assert.equal(repairedStaleCostPackage.tasks.find(task => task.templateId === 'production')!.videoPlans!.reduce((sum, plan) => sum + Number(plan.estimatedCost || 0), 0), 25, 'already independent videos must not keep a stale one-video estimate');
+assert.equal(repairedStaleCostPackage.operatingContext?.budget.totalMaxCny, 30, 'the dashboard cost range must cover every independently produced video');
 assert.deepEqual(criticalBusinessConfigChanges(config, config), []);
 assert.deepEqual(criticalBusinessConfigChanges(config, {
   ...config,
   focusProducts: 'B', targetMarkets: 'EU', customerProfile: 'distributors', videoLanguages: ['ar'],
   publishingTargets: [{ platform: 'facebook', accountId: 'account-b', accountLabel: 'B' }], allowRealPublishing: true,
 }), ['products', 'markets', 'audience', 'languages', 'platforms', 'accounts', 'realPublishingPermission']);
+assert.deepEqual(criticalBusinessConfigChanges(twoPlatformQuotaConfig, {
+  ...twoPlatformQuotaConfig,
+  publishingTargets: twoPlatformQuotaConfig.publishingTargets.map(target => ({ ...target, weeklyCount: (target.weeklyCount || 0) + 1 })),
+}), ['weeklyPublishingQuota'], 'changing only the frozen weekly quota must invalidate the existing plan without duplicating an account-scope change');
 assert.deepEqual(pack.tasks.map(t => t.templateId), ['readiness', 'director', 'production', 'publishing', 'customers', 'followup', 'review']);
 assert.ok(pack.directorPlan, 'recommended packages include a director plan');
 assert.equal(pack.directorPlan?.originalTarget, pack.tasks.find(task => task.templateId === 'production')?.videoPlans?.length);

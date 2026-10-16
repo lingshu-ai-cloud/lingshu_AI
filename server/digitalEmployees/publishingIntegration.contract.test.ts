@@ -10,7 +10,10 @@ const page = fs.readFileSync(new URL('../../src/components/DigitalEmployeePage.t
 
 assert.match(route, /get\('\/publishing-accounts'[\s\S]*listConnectedPublishingAccounts\(tenantId\)/, 'account choices must come from tenant-scoped connected records');
 assert.match(route, /bindPublishingTargets\(tenantId, submittedConfig\.publishingTargets\)/, 'onboarding must not trust browser-provided account metadata');
-assert.match(route, /key: 'selected_publishing_accounts'[\s\S]*packageAccountIds.every\(accountId => connectedIds.has\(accountId\)\)/, 'runtime publishing preflight must reject missing or disconnected selected accounts without preventing independent tasks from starting');
+assert.match(route, /packageAccountsValid = packageAccountIds\.length > 0 && packageAccountIds\.every\(accountId => connectedIds\.has\(accountId\)\)/, 'runtime publishing preflight must validate every frozen account against current tenant connections');
+assert.match(route, /key: 'selected_publishing_accounts',[\s\S]{0,160}ready: packageAccountsValid/, 'runtime publishing preflight must expose disconnected selected accounts without preventing independent tasks from starting');
+assert.match(route, /migrateLegacyPublishingBindingsForRun\(tenantId, run, plan, taskResult\.items\)/, 'a waiting run must safely rebind legacy local placeholders after real accounts connect');
+assert.match(route, /packageGrantWasInvalidatedAfterApproval\(body\)/, 'a migrated account binding must never inherit automatic publishing authority');
 assert.match(route, /publishing_approval_package/, 'content approval must carry its itemized immutable package');
 assert.match(route, /assistantPublicationTargets = [\s\S]*?task\.business_refs[\s\S]*?assistant_publication_intent/, 'selected assistant publication scope must come from the stored task, not the request body');
 assert.match(route, /contentAcceptanceHash\([\s\S]*?assistantPublicationTarget\.contentHash/, 'selected source must retain its exact accepted version');

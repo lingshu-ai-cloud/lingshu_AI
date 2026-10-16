@@ -236,7 +236,7 @@ export function createMockCustomers(scope = ''): CustomerProfile[] {
     },
     {
       id: 'mock-free-sandbox',
-      name: '空白模拟客户', avatar: '+', countryName: '待填写', language: '中文', languageLocked: false,
+      name: '空白客户', avatar: '+', countryName: '待填写', language: '中文', languageLocked: false,
       source: 'whatsapp', product: '待填写', outboundProduct: '待填写', estimatedValue: '待评估', stage: 'lead', intentScore: 50,
       intentSignals: ['自由模拟'], handlingMode: 'ai_draft', handlingReason: '等待测试人员填写资料并发送第一条模拟消息',
       priority: 50, inboxReason: 'reply', lastActive: '尚未开始', lastActiveAt: 0, localTime: '实时', timeZone: 'Asia/Shanghai',
@@ -245,7 +245,7 @@ export function createMockCustomers(scope = ''): CustomerProfile[] {
       simulation: {
         checkpoint: '自由沙盘 · 从零开始测试',
         goal: '由测试人员自定义客户画像和需求，再观察 AI 如何接待与记忆。',
-        expectedBehavior: '保存客户资料后，从“模拟客户输入”发送消息；所有操作都只留在当前演示账号。',
+        expectedBehavior: '保存客户资料后，从“客户消息输入”添加消息；所有操作都只留在当前账号。',
         editable: true,
       },
       timeline: [],

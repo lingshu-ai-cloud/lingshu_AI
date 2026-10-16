@@ -41,6 +41,14 @@ import {
 } from './socialContentTaskRefresh';
 
 const BASE_PATH = '/api/overseas/starter-198/social-content';
+export type SocialAssistantAction = {
+  id: string; label: string; taskId: string; expectedVersion: string;
+  status: string; operation: 'start' | 'open' | 'revise'; href: string; disabledReason?: string; artifactId?: string;
+};
+export type SocialAssistantReceipt = {
+  task: SocialContentTaskDetail;
+  receipt: { taskId: string; runId?: string | null; status: string; href: string; weeklyTaskId?: string; calendarTarget?: { productionTaskId: string }; started?: boolean; blockedReason?: string };
+};
 const JSON_REQUEST_TIMEOUT_MS = 30_000;
 const FILE_UPLOAD_TIMEOUT_MS = 10 * 60_000;
 const MEDIA_DOWNLOAD_TIMEOUT_MS = 5 * 60_000;
@@ -268,7 +276,7 @@ async function responseJson<T>(response: Response, kind: 'read' | 'write' | 'upl
   }
 }
 
-async function requestJson<T>(path: string, options?: RequestInit, operationKey?: string): Promise<T> {
+export async function requestSocialContentJson<T>(path: string, options?: RequestInit, operationKey?: string): Promise<T> {
   const method = String(options?.method || 'GET').toUpperCase();
   const readOnly = method === 'GET' || method === 'HEAD';
   const init: RequestInit = {
@@ -297,6 +305,8 @@ async function requestJson<T>(path: string, options?: RequestInit, operationKey?
   }
   return result;
 }
+
+const requestJson = requestSocialContentJson;
 
 async function uploadContentFile(taskId: string, file: Blob, name: string, usage: SocialContentFile['usage'], operationKey?: string): Promise<SocialContentUploadResult> {
   const query = new URLSearchParams({ usage, name });
@@ -417,6 +427,10 @@ async function fetchDeliveryPackage(href: string): Promise<{ blob: Blob; filenam
 }
 
 export const socialContentApi = {
+  getAssistantActions: (taskId: string): Promise<{ items: SocialAssistantAction[] }> => requestJson(`/assistant-actions?taskId=${encodeURIComponent(taskId)}`),
+  reviseAssistantAction: (taskId: string, artifactId: string, expectedVersion: string, note: string, operationKey: string): Promise<SocialAssistantReceipt> => requestJson(`/assistant-actions/${encodeURIComponent(taskId)}/revise`, { method: 'POST', body: JSON.stringify({ artifactId, expectedVersion, note }) }, operationKey),
+  startAssistantAction: (taskId: string, expectedVersion: string, operationKey: string): Promise<SocialAssistantReceipt> => requestJson(`/assistant-actions/${encodeURIComponent(taskId)}/start`, { method: 'POST', body: JSON.stringify({ expectedVersion }) }, operationKey),
+  createAssistantAction: (input: CreateSocialContentTaskInput, operationKey: string): Promise<SocialAssistantReceipt> => requestJson('/assistant-actions/create', { method: 'POST', body: JSON.stringify(input) }, operationKey),
   getWorkspace: async (): Promise<SocialContentWorkspace> => socialWorkspaceResponse(await requestJson<unknown>('')),
   listTasks: async (page = 1, perPage = 50): Promise<SocialContentTaskPage> => {
     if (!Number.isSafeInteger(page) || page < 1 || !Number.isSafeInteger(perPage) || perPage < 1 || perPage > 100) {

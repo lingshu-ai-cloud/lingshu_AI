@@ -63,6 +63,21 @@ test('spend without conversion goals does not create an advertising performance 
   assert.match(result.dimensions[3].criteria[1].current, /USD 500 · CNY 100/);
 });
 
+test('verified ad conversions and confirmed targets produce a bounded advertising score', () => {
+  const result = buildBusinessHealthModel(overview({ ads: {
+    status: 'available', source: 'provider', note: '', latestReportedAt: '2026-10-10',
+    spendByCurrency: [{ currency: 'CNY', amount: 1_680, rows: 14 }],
+    performance: {
+      impressions: metric(284_000), clicks: metric(6_840), conversions: metric(38), attributedRevenue: metric(10_560),
+      targetConversions: 32, targetCpa: 50, targetRoas: 4,
+    },
+  } }), sources);
+  const advertising = result.dimensions.find(item => item.key === 'advertising')!;
+  assert.equal(advertising.score, 100);
+  assert.deepEqual(advertising.criteria.map(item => item.score), [100, 100]);
+  assert.match(advertising.criteria[1].current, /CPA 44\.21 · ROAS 6\.29x/);
+});
+
 test('a configured publishing target is not treated as a connected account', () => {
   const data = overview();
   data.config = { publishingTargets: [{ accountId: 'local-plan', accountLabel: 'Plan only', platform: 'tiktok' }], customerProfile: '采购商', focusProducts: '面霜' } as DigitalEmployeeOverview['config'];

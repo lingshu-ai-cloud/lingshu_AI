@@ -11,8 +11,9 @@ function fixture(extra) {
     calls.push({ path, method, body })
     if (extra) { const value = await extra(path, method, body); if (value !== undefined) return value }
     if (path.endsWith('/context')) return { quickQuestions: [{ id: 'risk', text: '哪些任务需要我介入？' }] }
-    if (path.endsWith('/sessions')) return { sessions: [{ id: 'session-1' }] }
+    if (path.includes('/sessions?contextMode=')) return { sessions: [{ id: 'session-1' }] }
     if (path.endsWith('/commands')) return { ok: true }
+    if (path.endsWith('/archive')) return { session: { id: 'session-1', archivedAt: '2026-10-16T10:00:00Z' } }
     if (path.endsWith('/messages')) return { messages: [{ id: 'server-message', role: 'assistant', content: '真实会话' }] }
     if (path.endsWith('/query')) return { text: '建议重试', evidence: [{ id: 'task-1' }], links: [{ kind: 'retry_task' }] }
     if (path.endsWith('/preview')) return { previewId: 'preview-1', confirmation: { body: { kind: 'retry_task', targetId: 'task-1', expectedVersion: '7', payload: {} } } }
@@ -52,6 +53,67 @@ test('voice is editable draft and failure preserves draft without sending', asyn
   controller.voiceFailure(new Error('麦克风未授权'))
   assert.equal(controller.getState().input, '帮我查看进度')
   assert.equal(calls.length, 0)
+})
+test('assistant sessions are edition scoped and can be archived and inspected', async () => {
+  const { controller, calls } = fixture(path => path.includes('archived=all') ? { sessions: [{ id: 'history-1', archivedAt: '2026-10-16T10:00:00Z' }] } : undefined)
+  await controller.restore('tenant:user:operator')
+  assert.match(calls.find(call => call.path.includes('/sessions?'))?.path || '', /contextMode=operator/)
+  assert.equal((await controller.listSessions())[0].id, 'history-1')
+  await controller.archive()
+  assert.equal(calls.some(call => call.path.endsWith('/session-1/archive')), true)
+})
+test('assistant pages use mutually exclusive text and hold-to-talk modes without redundant avatar or sync button', () => {
+  const workbench = fs.readFileSync(__dirname + '/pages/workbench/index.wxml', 'utf8')
+  const assistant = fs.readFileSync(__dirname + '/packages/operator/assistant/index.wxml', 'utf8')
+  for (const markup of [workbench, assistant]) {
+    assert.match(markup, /bindtap="switch(?:Input|Composer)Mode"/)
+    assert.match(markup, /bindtouchstart="holdVoiceStart"/)
+    assert.match(markup, /bindtouchmove="holdVoiceMove"/)
+    assert.match(markup, /bindtouchend="holdVoiceEnd"/)
+    assert.match(markup, /按住说话|长按问灵小枢/)
+    assert.doesNotMatch(markup, /assistant-avatar|class="avatar">枢|同步对话/)
+  }
+})
+test('operator assistant keeps suggested questions collapsed on the empty conversation', () => {
+  const markup = fs.readFileSync(__dirname + '/packages/operator/assistant/index.wxml', 'utf8')
+  const script = fs.readFileSync(__dirname + '/packages/operator/assistant/index.js', 'utf8')
+  const styles = fs.readFileSync(__dirname + '/packages/operator/assistant/index.wxss', 'utf8')
+  assert.match(markup, /wx:if="{{showSuggestions}}" class="suggestions"/)
+  assert.match(markup, /bindtap="toggleSuggestions"/)
+  assert.match(script, /showSuggestions: false/)
+  assert.match(styles, /\.voice-prompt\{[^}]*box-shadow:/)
+})
+
+test('operator assistant opens in voice mode with the dispatch prompt above two-tab navigation', () => {
+  const markup = fs.readFileSync(__dirname + '/packages/operator/assistant/index.wxml', 'utf8')
+  const script = fs.readFileSync(__dirname + '/packages/operator/assistant/index.js', 'utf8')
+  assert.match(script, /inputMode: 'voice'/)
+  assert.match(markup, /长按问灵小枢/)
+  assert.match(markup, /可按住提问或者派活/)
+  assert.match(markup, /我的会话/)
+  assert.match(script, /duration:20000/)
+  assert.doesNotMatch(script, /controller\?\.send\(text\)/)
+})
+test('operator assistant recovers denied microphone permission without leaving a page-level error', async () => {
+  let definition, modal, opened = 0
+  const wx = {
+    getSetting: options => options.success({ authSetting: { 'scope.record': false } }),
+    showModal: options => { modal = options },
+    openSetting: options => { opened++; options.success({ authSetting: { 'scope.record': true } }) }
+  }
+  vm.runInNewContext(fs.readFileSync(__dirname + '/packages/operator/assistant/index.js', 'utf8'), {
+    Page: value => { definition = value },
+    require: id => id.endsWith('/api') ? {} : { createAssistantController() {} },
+    wx
+  })
+  const page = { ...definition, data: { ...definition.data, error: '未获得麦克风权限' }, setData(patch) { Object.assign(this.data, patch) } }
+  const pending = page.ensureRecordPermission()
+  await new Promise(resolve => setImmediate(resolve))
+  assert.equal(opened, 0)
+  modal.success({ confirm: true })
+  assert.equal(await pending, true)
+  assert.equal(opened, 1)
+  assert.equal(page.data.error, '')
 })
 test('late response cannot contaminate a new account', async () => {
   let finish

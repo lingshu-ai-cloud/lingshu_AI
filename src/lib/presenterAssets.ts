@@ -10,6 +10,12 @@ export interface PresenterLook {
 }
 export interface PresenterVoice { id: string; name: string; language: string; previewUrl?: string }
 export interface PresenterPage<T> { items: T[]; nextToken: string }
+export interface ArkPresenterPreparation {
+  photoMaterialId: string;
+  videoMaterialId: string;
+  /** True only after the user separately consents to Ark processing. */
+  processingAuthorized: boolean;
+}
 export interface PresenterCreation {
   id: string; name: string; type: 'photo' | 'digital_twin'; voiceId?: string;
   status: 'submitting' | 'processing' | 'pending_consent' | 'completed' | 'failed' | 'uncertain';
@@ -17,6 +23,7 @@ export interface PresenterCreation {
   failureCategory?: 'capacity' | 'material';
   consentStatus?: string;
   consentRequestedAt?: string;
+  arkPreparation?: ArkPresenterPreparation;
   createdAt: string; updatedAt: string;
 }
 export interface PresenterCapabilities {

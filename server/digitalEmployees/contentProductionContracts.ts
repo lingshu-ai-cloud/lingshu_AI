@@ -1,8 +1,13 @@
 import type { MaterialScriptAnalysis } from '../../shared/materialScriptAnalysis.js';
 import type { VideoCreationPlan } from '../../shared/contracts/videoCreationPlan.js';
 import type { DirectorScriptContract } from '../../src/lib/directorScript.js';
+import type { FixedYieldTimelineCompilation } from '../../shared/fixedYieldTimelineCompiler.js';
 
 export type ContentProductionRoute = 'clone' | 'product' | 'material';
+/** `fixed-yield.v2-preflight` means the reference timeline passed the new
+ * zero-cost compiler, but execution still uses the proven legacy stage runner.
+ * It must never be presented as the unified V2 operation executor. */
+export type ContentProductionContractVersion = 'legacy.v1' | 'fixed-yield.v2-preflight';
 export type ProductionStage = 'script' | 'material_match' | 'voice_subtitles' | 'heygen' | 'render' | 'quality' | 'completed' | 'blocked';
 export type StoredRecord = { id: string; [key: string]: unknown };
 
@@ -11,6 +16,16 @@ export type AssetCandidate = {
   objectKey?: string; cloudRecordId?: string; duration: number; observations: string[];
   productId?: string; productName?: string; visualObservations: string[];
   segments?: Array<Record<string, unknown>>; scriptAnalysis?: MaterialScriptAnalysis;
+  /** Authoritative, persisted material-rights facts. These fields must never
+   * be inferred from tenant ownership, visibility or completed analysis. */
+  rightsEvidenceRefs?: string[];
+  commercialUseApproved?: boolean;
+  commercialUseApprovalEvidenceRefs?: string[];
+  modelInputAllowed?: boolean;
+  derivativeUseAllowed?: boolean;
+  sourceRevision?: string;
+  currentSourceRevision?: string;
+  segmentProfiles?: unknown[];
   authorization: { status: 'owned' | 'licensed' | 'unknown'; scope: 'tenant' | 'shared'; evidence: string };
   synthetic: boolean; aspectRatio?: string; width?: number; height?: number; focusX?: number; focusY?: number;
   tags: string[]; source: 'enterprise_product' | 'tenant_material' | 'licensed_shared_material';
@@ -34,6 +49,8 @@ export interface ContentProductionOrderInput extends Partial<DirectorScriptContr
   theme?: { key: string; label: string }; cta?: string; constraints?: string[];
   /** Frozen, order-local preparation gaps. They block only this content item. */
   readinessBlockers?: string[];
+  fixedYieldTimeline?: FixedYieldTimelineCompilation;
+  productionContractVersion?: ContentProductionContractVersion;
   sourceContentOrderId?: string; masterContentOrderId?: string; masterLanguage?: string;
 }
 

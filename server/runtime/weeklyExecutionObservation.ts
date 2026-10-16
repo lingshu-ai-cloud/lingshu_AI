@@ -1,4 +1,4 @@
-export interface WeeklyScanCounts {claimed:number;succeeded:number;pending:number;blocked:number;failed:number}
+export interface WeeklyScanCounts {claimed:number;succeeded:number;pending:number;blocked:number;failed:number;projectionFailed?:number}
 export interface WeeklyExecutionObservation {
  configuredEnabled:boolean;started:boolean;state:'not_started'|'disabled'|'waiting'|'scanning'|'idle'|'failed';
  workerId:string|null;startedAt:string|null;lastScanStartedAt:string|null;lastScanFinishedAt:string|null;

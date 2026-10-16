@@ -64,6 +64,11 @@ export function summarizeHealthCriteria(criteria: HealthCriterion[]) {
 }
 
 const ratio = (numerator: number | null, denominator: number | null) => numerator !== null && denominator !== null && denominator > 0 && numerator <= denominator ? Math.round(numerator / denominator * 100) : null;
+const targetScore = (value: number | null, target: number | null, lowerIsBetter = false) => {
+  if (value === null || target === null || value < 0 || target <= 0) return null;
+  const progress = lowerIsBetter ? target / Math.max(value, Number.EPSILON) : value / target;
+  return Math.max(0, Math.min(100, Math.round(progress * 100)));
+};
 const count = (value: number | null) => value === null ? '—' : value.toLocaleString('zh-CN');
 
 export function businessHealthAccounts(data: DigitalEmployeeOverview): AccountHealthAccount[] {
@@ -152,15 +157,25 @@ export function buildBusinessHealthModel(data: DigitalEmployeeOverview, sources:
   ];
   const ads = snapshot?.ads;
   const spend = ads?.status === 'available' && !selectedAccountId ? ads.spendByCurrency.map(item => `${item.currency} ${item.amount.toLocaleString('zh-CN', { maximumFractionDigits: 2 })}`).join(' · ') : '';
+  const singleCurrencySpend = ads?.status === 'available' && !selectedAccountId && ads.spendByCurrency.length === 1 ? ads.spendByCurrency[0].amount : null;
+  const conversions = selectedAccountId ? null : availableMetric(ads?.performance?.conversions);
+  const attributedRevenue = selectedAccountId ? null : availableMetric(ads?.performance?.attributedRevenue);
+  const conversionScore = targetScore(conversions, ads?.performance?.targetConversions ?? null);
+  const cpa = conversions !== null && conversions > 0 && singleCurrencySpend !== null ? singleCurrencySpend / conversions : null;
+  const roas = singleCurrencySpend !== null && singleCurrencySpend > 0 && attributedRevenue !== null ? attributedRevenue / singleCurrencySpend : null;
+  const efficiencyScore = meanKnownScores([
+    targetScore(cpa, ads?.performance?.targetCpa ?? null, true),
+    targetScore(roas, ads?.performance?.targetRoas ?? null),
+  ]);
   const adCriteria: HealthCriterion[] = [
-    { label: '转化目标达成', score: null, current: '待接入转化回执与目标', basis: '花费不代表效果。需要可归因转化和用户确认目标后，才能计算投流经营分。' },
-    { label: '成本效率', score: null, current: spend ? `已核验花费 ${spend}` : '待同步投流花费', basis: '需同币种花费、归因转化及 CPA / ROAS 目标；不同币种不直接相加。' },
+    { label: '转化目标达成', score: conversionScore, current: conversions === null ? '待接入转化回执与目标' : `${count(conversions)} / ${count(ads?.performance?.targetConversions ?? null)} 条归因转化`, basis: '广告归因转化 ÷ 当前周期确认目标；超过目标按满分计。花费本身不代表效果。' },
+    { label: '成本效率', score: efficiencyScore, current: cpa === null || roas === null ? spend ? `已核验花费 ${spend}` : '待同步投流花费' : `CPA ${cpa.toLocaleString('zh-CN', { maximumFractionDigits: 2 })} · ROAS ${roas.toLocaleString('zh-CN', { maximumFractionDigits: 2 })}x`, basis: '同币种花费、归因转化与收入分别对照用户确认的 CPA / ROAS 目标；不同币种不直接相加。' },
   ];
   const dimensions: BusinessHealthDimension[] = [
     { key: 'accounts', label: '账号健康度', score: meanKnownScores(accountHealth.map(account => account.currentScore)), criteria: accountCriteria, action: '完善账号资料与渠道连接', page: 'socialAccounts' },
     { key: 'inquiries', label: '询盘健康度', score: meanKnownScores(inquiryCriteria.map(item => item.score)), criteria: inquiryCriteria, action: selectedAccountId ? '补齐账号级询盘归因' : '核对客户来源与待跟进事项', page: 'conversion' },
     { key: 'content', label: '内容经营分', score: meanKnownScores(contentCriteria.map(item => item.score)), criteria: contentCriteria, action: '完成成片验收并核对发布结果', page: 'smartAssets' },
-    { key: 'advertising', label: '投流经营分', score: null, criteria: adCriteria, action: '接入投流数据并配置转化目标', page: 'adsOverview' },
+    { key: 'advertising', label: '投流经营分', score: meanKnownScores(adCriteria.map(item => item.score)), criteria: adCriteria, action: '核对投流回执与转化目标', page: 'adsOverview' },
   ];
   const scoreCoverage = dimensions.filter(dimension => dimension.score !== null).length;
   return { startsAt, endsAt, accounts, accountHealth, dimensions, scoreCoverage, totalScore: meanKnownScores(dimensions.map(dimension => dimension.score)), generatedAt: snapshot?.generatedAt || '', selectedAccountId };

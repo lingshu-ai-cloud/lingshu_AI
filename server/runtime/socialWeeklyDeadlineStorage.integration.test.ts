@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import {writeLocalAccountRecords} from '../lib/localAccountStore.js';
 import type { WeeklyExecutionTask } from '../../shared/contracts/socialProgram.js';
 
 // Exercise the application's file-backed store, isolated from existing tenants.
@@ -10,6 +11,10 @@ const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'weekly-deadline-accepta
 process.env.LOCAL_STORE_DIR = directory;
 process.env.ENABLE_LOCAL_DEV_FALLBACK = 'true';
 process.env.NODE_ENV = 'test';
+// Local authority must use a real isolated local membership registry, not the
+// formal users fixture. This also exercises the production identity boundary.
+process.env.LOCAL_AUTH_ACCOUNTS_FILE=path.join(directory,'accounts.json');
+writeLocalAccountRecords(process.env.LOCAL_AUTH_ACCOUNTS_FILE,[{userId:'owner',tenantId:'t',email:'test@example.test',name:'Test operator',accountType:'admin',role:'social_operator',salt:'unused-test',passwordHash:'unused-test',createdAt:'2026-10-01T00:00:00Z'}]);
 const [{ pbStore: store }, { runWithDataAuthority }, { runSocialWeeklyExecutionScan }, { getWeeklyExecutionTaskRow }, { projectExecutionCalendar }, { runWeeklyDeadlineRecoveryScan, WEEKLY_DEADLINE_ASSESSMENTS }] = await Promise.all([
   import('../storage/pbStore.js'), import('../storage/dataAuthority.js'),
   import('./socialWeeklyExecutionRuntime.js'), import('../socialPrograms/executionTasks.js'),

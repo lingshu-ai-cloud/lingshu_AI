@@ -13,7 +13,32 @@ export interface WeeklyContentProgressStage {
   evidence: string[];
 }
 /** A read-only subset of StudioProject; importing the API here would make this model impure. */
-export interface WeeklyContentProgressProject { id: string; status?: string; spec: unknown; updatedAt?: string }
+export interface WeeklyContentProgressExecution {
+  id: string;
+  projectId?: string;
+  planId?: string;
+  assemblyId?: string;
+  shotId?: string;
+  fingerprint?: string;
+  state?: string;
+  submissionOutcome?: string;
+  externalTaskId?: string | null;
+  materialId?: string | null;
+  candidateOutput?: unknown;
+  adoption?: unknown;
+  quality?: unknown;
+  error?: string;
+  updatedAt?: string;
+}
+export interface WeeklyContentProgressProject {
+  id: string;
+  status?: string;
+  spec: unknown;
+  updatedAt?: string;
+  /** Read-only provider receipts loaded separately from the editable project. */
+  executions?: WeeklyContentProgressExecution[];
+  executionsStatus?: 'available' | 'unavailable';
+}
 export interface WeeklyContentShotReceipt {
   id: string;
   projectId: string;
@@ -399,6 +424,174 @@ function mergeStages(results: WeeklyContentProgressStage[][]): WeeklyContentProg
   });
 }
 
+function directSocialProjectInScope(project: WeeklyContentProgressProject, item: ContentQueueItem): boolean {
+  const spec = object(project.spec);
+  return item.projectIds.includes(project.id) && text(spec.socialContentTaskId) === item.socialContentTaskId;
+}
+
+function directRenderReceipt(spec: Record<string, unknown>): { path: string; evidence: string[] } | null {
+  const automation = object(spec.automation);
+  const output = object(spec.socialProductionOutput);
+  const archived = output.type === 'social_production_artifact' && text(output.fileRef) && text(output.fileSha256);
+  if (archived) return { path: text(spec.renderOutputPath) || text(output.previewUrl) || text(output.fileRef), evidence: ['真实成片归档回执'] };
+  const languageOutputs = Object.values(object(spec.languageRenderOutputs)).map(object);
+  const completed = languageOutputs.find(item => item.status === 'done' && text(item.path));
+  if (completed) return { path: text(completed.path), evidence: ['语言版本成片输出回执'] };
+  // A project can retain renderOutputPath when a new attempt rewinds to an
+  // earlier stage. Only the terminal stage binds that coarse path to the
+  // current attempt; otherwise it is historical output, not current progress.
+  const directPath = text(spec.renderOutputPath) || text(automation.renderOutputPath);
+  return directPath && automation.stage === 'completed'
+    ? { path: directPath, evidence: ['合成视频输出回执'] }
+    : null;
+}
+
+function latestDirectExecutions(project: WeeklyContentProgressProject): WeeklyContentProgressExecution[] {
+  const latest = new Map<string, WeeklyContentProgressExecution>();
+  for (const execution of project.executions || []) {
+    const scopeKey = [text(execution.assemblyId), text(execution.shotId)].filter(Boolean).join(':');
+    const key = scopeKey || execution.id;
+    const current = latest.get(key);
+    const timestamp = Date.parse(text(execution.updatedAt));
+    const currentTimestamp = Date.parse(text(current?.updatedAt));
+    if (!current || (Number.isFinite(timestamp) && (!Number.isFinite(currentTimestamp) || timestamp > currentTimestamp))) latest.set(key, execution);
+  }
+  return [...latest.values()];
+}
+
+interface DirectExecutionBinding {
+  planId: string;
+  assemblyId: string;
+  shotId: string;
+  fingerprint: string;
+}
+
+function agentPlanExecutionBindings(spec: Record<string, unknown>, plans: Record<string, unknown>[]): DirectExecutionBinding[] {
+  const activeAssemblyId = text(spec.activeAssemblyId);
+  const slots = array(spec.shootingSlots).map(object);
+  return plans.map((plan, index) => {
+    const requestedShotId = text(plan.shotId);
+    const rawShotIndex = typeof plan.shotIndex === 'number' ? plan.shotIndex : Number.NaN;
+    const slot = slots.find(item => text(item.slotId) === requestedShotId)
+      || (Number.isInteger(rawShotIndex) && rawShotIndex >= 0 ? slots[rawShotIndex] : undefined)
+      || slots[index];
+    return {
+      planId: text(plan.planId),
+      assemblyId: text(plan.assemblyId) || activeAssemblyId,
+      shotId: text(plan.executionShotId) || text(slot?.id),
+      fingerprint: text(plan.fingerprint),
+    };
+  }).filter(binding => Boolean(binding.planId || binding.assemblyId && binding.shotId));
+}
+
+function executionMatchesBinding(execution: WeeklyContentProgressExecution, binding: DirectExecutionBinding): boolean {
+  if (binding.planId) return text(execution.planId) === binding.planId;
+  if (text(execution.assemblyId) !== binding.assemblyId || text(execution.shotId) !== binding.shotId) return false;
+  return !binding.fingerprint || text(execution.fingerprint) === binding.fingerprint;
+}
+
+/** Direct/manual content has a coarse queue step named `video`. Never fan that
+ * one state out to voice, presenter and render. These stages require their own
+ * project artifact or provider receipt. */
+function directSocialProjectStages(project: WeeklyContentProgressProject): WeeklyContentProgressStage[] {
+  const result = definitions.map(([key]) => stage(key));
+  const put = (value: WeeklyContentProgressStage) => { result[result.findIndex(item => item.key === value.key)] = value; };
+  const spec = object(project.spec);
+  const automation = object(spec.automation);
+  const render = directRenderReceipt(spec);
+
+  const voiceMode = text(spec.voiceoverMode);
+  const audios = Object.values(object(spec.voiceoverAudios)).map(object);
+  const directAudio: Array<Record<string, unknown>> = text(spec.voiceoverUrl) && Number(spec.voiceoverDur) > 0
+    ? [{ url: text(spec.voiceoverUrl), duration: Number(spec.voiceoverDur), alignmentSource: text(spec.subtitleAlignmentSource) }]
+    : [];
+  const audioReceipts = [...audios, ...directAudio].filter(item => text(item.url) && Number(item.duration) > 0);
+  const archivedAudio = audioReceipts.some(item => text(item.fileRef) && text(item.sha256));
+  const alignedAudio = audioReceipts.some(item => array(item.cues).length > 0
+    || ['audio_ai', 'minimax_native', 'synthesized_sentence_audio', 'qwen_asr', 'measured'].includes(text(item.alignmentSource)));
+  const alignedCues = Object.values(object(spec.alignedCuesByLang)).some(value => array(value).length > 0);
+  const trustedOutput = object(spec.socialProductionOutput).type === 'social_production_artifact'
+    && automation.managedBy === 'social_content_output' && automation.stage === 'saved_actual_output';
+  if (voiceMode === 'none' && spec.subtitlesOn === false) {
+    put(stage('voice', 'not_applicable', '此制作版本明确不使用口播或字幕。'));
+  } else if (audioReceipts.length && (alignedAudio || alignedCues || archivedAudio && trustedOutput)) {
+    put(stage('voice', 'completed', '已取得口播音频与字幕/对齐的实际制作回执。', ['口播音频回执', alignedAudio || alignedCues ? '字幕对齐回执' : '真实成片归档清单']));
+  } else if (audioReceipts.length) {
+    put(stage('voice', 'waiting', '已取得口播音频，但字幕或音画对齐回执尚未同步；不能视为本阶段完成。', ['口播音频回执']));
+  }
+
+  const productions = Object.entries(object(spec.shotProductions)).map(([shotKey, value]) => ({ shotKey, production: object(value) }));
+  const agentPlans = array(spec.socialDigitalHumanPlans).map(object);
+  const presenterShots = productions.filter(({ production }) => production.source === 'avatar' || production.contentType === 'enterprise_presenter' || Object.keys(object(production.digitalHuman)).length > 0);
+  const presenterRequired = ['avatar', 'heygen'].includes(text(spec.presentationMode)) || spec.presenterMode === 'digital'
+    || presenterShots.length > 0 || agentPlans.length > 0;
+  const presenterExplicitlySkipped = spec.presentationMode === 'material' && !presenterRequired;
+  const rawExecutions = project.executions || [];
+  const presenterScopeKeys = new Set(presenterShots.map(item => item.shotKey).filter(key => key.includes(':')));
+  const presenterUnscopedShotIds = new Set(presenterShots.map(item => item.shotKey).filter(key => !key.includes(':')));
+  const scopedExecutions = presenterShots.length
+    ? rawExecutions.filter(item => {
+        const shotId = text(item.shotId);
+        const scopeKey = [text(item.assemblyId), shotId].filter(Boolean).join(':');
+        return Boolean(shotId) && (presenterScopeKeys.has(scopeKey) || presenterUnscopedShotIds.has(shotId));
+      })
+    : agentPlans.length
+      ? (() => {
+          const bindings = agentPlanExecutionBindings(spec, agentPlans);
+          return rawExecutions.filter(execution => bindings.some(binding => executionMatchesBinding(execution, binding)));
+        })()
+      : rawExecutions;
+  const executions = latestDirectExecutions({ ...project, executions: scopedExecutions });
+  const requiredCount = Math.max(1, presenterShots.length, agentPlans.length);
+  const completedExecutions = executions.filter(item => item.state === 'completed'
+    && (text(item.materialId) || text(object(item.candidateOutput).contentSha256)));
+  const activeExecutions = executions.filter(item => ['submitting', 'pending'].includes(text(item.state)));
+  const uncertainExecutions = executions.filter(item => item.state === 'uncertain');
+  const failedExecutions = executions.filter(item => ['failed', 'cancelled'].includes(text(item.state)));
+  if (presenterExplicitlySkipped) {
+    put(stage('presenter', 'not_applicable', '当前项目明确采用纯素材画面，不生成数字人。'));
+  } else if (!presenterRequired) {
+    put(stage('presenter', 'unavailable', '当前项目没有明确记录是否需要数字人，不能用成片任务状态代替人物制作结论。'));
+  } else if (completedExecutions.length >= requiredCount) {
+    put(stage('presenter', 'completed', `${requiredCount}/${requiredCount} 个人物制作单元已有真实视频产物回执。`, unique(completedExecutions.flatMap(item => [text(item.externalTaskId) ? `供应商任务：${text(item.externalTaskId)}` : '', text(item.materialId) ? `人物视频：${text(item.materialId)}` : '']))));
+  } else if (activeExecutions.length || uncertainExecutions.length) {
+    const accepted = activeExecutions.filter(item => text(item.externalTaskId) && item.submissionOutcome === 'created').length;
+    put({ ...stage('presenter', 'waiting', `${completedExecutions.length}/${requiredCount} 个人物制作单元已取得视频产物；${accepted ? `${accepted} 个供应商任务已受理，` : ''}${uncertainExecutions.length ? `${uncertainExecutions.length} 个提交状态待核验，` : ''}其余仍在等待真实产物。`, unique([...completedExecutions, ...activeExecutions, ...uncertainExecutions].map(item => text(item.externalTaskId) ? `供应商任务：${text(item.externalTaskId)}` : text(item.id) ? `执行记录：${text(item.id)}` : ''))), statusLabel: accepted ? '供应商处理中' : uncertainExecutions.length ? '状态待核验' : '等待供应商' });
+  } else if (failedExecutions.length) {
+    put(stage('presenter', 'blocked', failedExecutions.map(item => text(item.error)).filter(Boolean).join('；') || '数字人供应商任务失败或已取消，未取得可用人物视频。', failedExecutions.map(item => text(item.externalTaskId) ? `供应商任务：${text(item.externalTaskId)}` : `执行记录：${text(item.id)}`)));
+  } else if (project.executionsStatus === 'unavailable') {
+    put(stage('presenter', 'unavailable', '数字人执行回执暂不可用；不会根据总任务状态推断已提交或已完成。'));
+  } else {
+    put(stage('presenter', 'pending', '项目需要数字人，但尚未取得独立的供应商受理或视频产物回执。'));
+  }
+
+  const languageOutputs = Object.values(object(spec.languageRenderOutputs)).map(object);
+  if (render) {
+    put(stage('render', 'completed', '已取得实际合成视频输出回执。', render.evidence));
+  } else if (languageOutputs.some(item => item.status === 'rendering') || ['rendering', 'render'].includes(text(automation.stage)) && ['running', 'processing'].includes(text(automation.status))) {
+    put(stage('render', 'running', '项目记录显示正在合成，尚未取得可播放成片输出。'));
+  } else if (languageOutputs.some(item => item.status === 'failed') || automation.stage === 'requires_revision') {
+    put(stage('render', 'blocked', languageOutputs.map(item => text(item.error)).filter(Boolean).join('；') || '成片需要修订，已保留现有产物。'));
+  }
+
+  const qualityRecords = array(spec.projectQualityRecords).map(object);
+  const activeQualityId = text(spec.activeProjectQualityRecordId);
+  const quality = qualityRecords.find(item => text(item.id) === activeQualityId && item.publishable === true && item.qualityStatus === 'passed'
+    && render && text(item.renderPath) === render.path);
+  const automationQuality = object(automation.quality);
+  const automationRenderPaths = unique([text(automation.renderOutputPath), text(spec.renderOutputPath)]);
+  const currentAutomationQuality = render && automation.stage === 'completed' && automationQuality.passed === true
+    && automationRenderPaths.includes(render.path);
+  if (quality || currentAutomationQuality) {
+    put(stage('quality', 'completed', '已取得与当前成片对应的质量检查通过回执；不代表用户已验收或发布。', ['当前成片质检回执']));
+  } else if (render && (automationQuality.passed === false || automation.stage === 'requires_revision')) {
+    put(stage('quality', 'blocked', '当前成片质检未通过或需要修订，已有成片仍保留。', ['成片质检失败回执']));
+  } else if (render) {
+    put(stage('quality', 'pending', '成片已经生成，但尚无与当前文件绑定的独立质检通过回执。'));
+  }
+  return result;
+}
+
 function taskWait(task: WorkflowTask): string {
   return text(task.blocked_reason) || text(object(object(task.output).waitState).message);
 }
@@ -415,24 +608,46 @@ export function buildWeeklyContentProgress(data: DigitalEmployeeOverview, conten
       const values = directSocial.steps.filter(item => keys.includes(item.key));
       const state: StageStatus = values.some(item => item.state === 'active') ? 'running'
         : values.length && values.every(item => item.state === 'done') ? 'completed'
-          : directSocial.status === 'blocked' ? 'blocked' : 'pending';
+          : 'pending';
       const key = keys[0] === 'brief' ? 'benchmark' : keys.includes('storyboard') ? 'script'
         : keys.includes('assets') ? 'materials' : keys.includes('video') ? 'render' : 'quality';
       return stage(key, state, values.length ? values.map(item => `${item.label}：${item.state === 'done' ? '已有任务回执' : item.state === 'active' ? '当前执行阶段' : '等待前置阶段'}`).join('；') : '当前任务未定义此阶段。', values.filter(item => item.state === 'done').map(item => item.label));
     };
     const script = queueState(['script', 'storyboard']);
-    const render = queueState(['video']);
-    const quality = queueState(['quality', 'approval']);
+    const scopedProjects = [...new Map((options.projects || []).filter(project => directSocialProjectInScope(project, directSocial)).map(project => [project.id, project])).values()];
+    const missingProjects = directSocial.projectIds.filter(id => !scopedProjects.some(project => project.id === id)).length;
+    const projectResults = scopedProjects.map(directSocialProjectStages);
+    for (let missing = 0; missing < missingProjects; missing += 1) {
+      projectResults.push(definitions.map(([key]) => ['voice', 'presenter', 'render', 'quality'].includes(key)
+        ? stage(key, options.projectsStatus === 'unavailable' ? 'unavailable' : 'pending', options.projectsStatus === 'unavailable'
+          ? '制作项目或供应商回执暂不可用；不会根据总任务状态推断完成。'
+          : '正在等待制作项目与独立产物回执同步。')
+        : stage(key)));
+    }
+    const evidenceStages = projectResults.length ? mergeStages(projectResults) : definitions.map(([key]) => stage(key,
+      directSocial.projectIds.length && options.projectsStatus === 'unavailable' && ['voice', 'presenter', 'render', 'quality'].includes(key) ? 'unavailable' : 'pending',
+      directSocial.projectIds.length ? options.projectsStatus === 'unavailable'
+        ? '制作项目回执暂不可用；不会根据总任务状态推断完成。'
+        : '正在等待制作项目与独立产物回执同步。'
+        : '尚未取得本阶段的独立制作项目或产物回执。'));
+    const evidence = (key: WeeklyContentProgressStageKey) => evidenceStages.find(item => item.key === key)!;
     const stages: WeeklyContentProgressStage[] = [
       queueState(['brief']), script, queueState(['assets']),
-      {...render, key:'voice', label:'口播与字幕'},
-      {...render, key:'presenter', label:'数字人生成'},
-      render, quality,
+      evidence('voice'), evidence('presenter'), evidence('render'), evidence('quality'),
     ];
-    const status: StageStatus = directSocial.status === 'completed' ? 'completed'
+    const renderVerified = evidence('render').status === 'completed';
+    const qualityVerified = evidence('quality').status === 'completed';
+    const claimedCompleteWithoutReceipts = ['completed', 'waiting_review'].includes(directSocial.status) && (!renderVerified || !qualityVerified);
+    const status: StageStatus = directSocial.status === 'completed' && renderVerified && qualityVerified ? 'completed'
       : directSocial.status === 'blocked' ? 'blocked'
-        : directSocial.status === 'waiting_review' ? 'waiting'
+        : directSocial.status === 'waiting_review' && renderVerified ? 'waiting'
+          : claimedCompleteWithoutReceipts ? 'unavailable'
           : directSocial.status === 'producing' ? 'running' : 'pending';
+    const summary = claimedCompleteWithoutReceipts
+      ? '任务状态已经推进，但当前尚未同步到与这条内容绑定的完整成片和质检回执；未将其显示为制作完成。'
+      : directSocial.status === 'waiting_review' && renderVerified
+        ? '已取得真实成片输出，等待内容验收；质检结果以独立回执为准。'
+        : directSocial.stage || '已读取真实单条内容任务。';
     return {
       contentId,
       masterContentId: contentId,
@@ -442,8 +657,8 @@ export function buildWeeklyContentProgress(data: DigitalEmployeeOverview, conten
       taskId: directSocial.socialContentTaskId || contentId,
       projectIds: directSocial.projectIds,
       status,
-      statusLabel: directSocial.status === 'waiting_review' ? '待验收' : labels[status],
-      summary: directSocial.stage || (status === 'waiting' ? '真实成片已经生成，等待内容验收。' : '已读取真实单条内容任务。'),
+      statusLabel: status === 'unavailable' ? '回执待同步' : directSocial.status === 'waiting_review' && renderVerified ? '待验收' : labels[status],
+      summary,
       stages,
       shots: [],
       blockingReasons: directSocial.reason ? [directSocial.reason] : [],
@@ -457,13 +672,13 @@ export function buildWeeklyContentProgress(data: DigitalEmployeeOverview, conten
   const base: WeeklyContentProgress = {
     contentId, masterContentId: master?.contentId || '', isAdaptation, sharedMaster: isAdaptation && Boolean(master),
     queueItemId: null, taskId: null, projectIds: [], status: 'pending', statusLabel: '未开始',
-    summary: '尚未启动此内容的生产。', stages: master ? preparation(master) : definitions.map(([key]) => stage(key, 'unavailable', '当前计划中缺少可核验的内容或母版关联。')),
+    summary: '尚未启动此内容的生产。', stages: master ? preparation(master) : definitions.map(([key]) => stage(key, 'unavailable', '当前计划中缺少可核验的视频关联。')),
     shots: [], blockingReasons: [], nextAction: null,
   };
   const finish = (status: StageStatus, summary: string, statusLabel = labels[status]) => ({ ...base, status, statusLabel, summary });
   if (!selected || !master || !data.goal || !data.plan) {
     base.nextAction = { kind: 'refresh', label: '同步当前计划' };
-    return finish('unavailable', '内容或母版关联不完整，无法显示其他内容的生产状态。');
+    return finish('unavailable', '视频关联不完整，无法显示其他内容的生产状态。');
   }
   const scopedItems = (data.contentQueue?.items || []).filter(item => item.origin === 'weekly_plan' && item.lineage.goalId === data.goal!.id && item.lineage.planId === data.plan!.id && item.contentId === master.contentId);
   const item = scopedItems.length === 1 ? scopedItems[0] : undefined;
@@ -568,6 +783,6 @@ export function buildWeeklyContentProgress(data: DigitalEmployeeOverview, conten
   }
   if (task.status === 'succeeded' || run.status === 'succeeded') return finish('unavailable', '任务已结束，但此内容的成片与质检回执尚不完整；暂不标记制作完成。');
   if (queue?.status === 'waiting_review' || queue?.status === 'completed') return finish('waiting', '队列报告成片待验收或已验收；详细产物回执尚未同步。', '同步产物中');
-  if (task.status === 'running' || queue?.status === 'producing') return finish('running', isAdaptation ? '此平台版本复用对应母版的生产进度；平台交付不等于已发布。' : '生产任务已启动，以下阶段按实际产物与执行回执更新。', '生产中');
+  if (task.status === 'running' || queue?.status === 'producing') return finish('running', isAdaptation ? '此发布版本沿用已验收视频的生产进度；平台交付不等于已发布。' : '生产任务已启动，以下阶段按实际产物与执行回执更新。', '生产中');
   return finish('ready', '周任务已创建，此内容等待执行；尚未开始的阶段不会标记完成。', '已排队');
 }

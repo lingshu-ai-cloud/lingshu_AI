@@ -1,7 +1,9 @@
 import { useEffect, useRef, useState } from 'react';
+import { CheckCircle2, UserRoundPlus, UsersRound } from 'lucide-react';
 import { presenterApi } from '../../lib/presenterApi';
-import type { PresenterCapabilities, PresenterCreation, PresenterLook, PresenterVoice } from '../../lib/presenterAssets';
-import type { ProductionDefaults } from '../../lib/shotProduction';
+import { productionApi } from '../../lib/productionApi';
+import type { ArkPresenterPreparation, PresenterCapabilities, PresenterCreation, PresenterLook, PresenterVoice } from '../../lib/presenterAssets';
+import type { PresenterAsset, ProductionDefaults } from '../../lib/shotProduction';
 
 const statusText = (job: PresenterCreation) => job.status === 'pending_consent'
   ? job.consentRequestedAt ? '授权入口已生成 · 待 HeyGen 确认' : '待发起本人授权'
@@ -23,16 +25,37 @@ export const groupPresenterLooks = (looks: PresenterLook[]): PresenterLookGroup[
     return { id, name: commonName, representative, looks: groupLooks };
   });
 };
-export default function PresenterManager({ onClose, onSaved, onSynced, reusePresenterId, initialConfiguration = false }: { onClose: () => void; onSaved: (value: ProductionDefaults) => void | Promise<void>; onSynced?: (value: ProductionDefaults) => void | Promise<void>; /** @deprecated 素材类型现在由上传文件自动识别。 */ initialMode?: 'quick' | 'expert'; /** @deprecated 创建流程已统一。 */ fixedMode?: boolean; reusePresenterId?: string; initialConfiguration?: boolean }) {
+export type PresenterSaveContext = { creationId?: string; arkPreparation?: ArkPresenterPreparation };
+type VoiceCloneJob = { id: string; status: string; voiceId: string };
+const storedVoiceCloneJob = (lookId: string): VoiceCloneJob | undefined => {
+  if (!lookId || typeof window === 'undefined') return undefined;
+  try {
+    const saved = JSON.parse(sessionStorage.getItem(`presenter-voice-job:${lookId}`) || 'null');
+    return saved && typeof saved.id === 'string' && ['processing', 'submitting', 'completed', 'failed', 'uncertain'].includes(saved.status)
+      ? saved as VoiceCloneJob
+      : undefined;
+  } catch { return undefined; }
+};
+export default function PresenterManager({ onClose, onSaved, onSynced, reusePresenterId, initialConfiguration = false, voiceOnlyPresenter }: { onClose: () => void; onSaved: (value: ProductionDefaults, context?: PresenterSaveContext) => void | Promise<void>; onSynced?: (value: ProductionDefaults) => void | Promise<void>; /** @deprecated 素材类型现在由上传文件自动识别。 */ initialMode?: 'quick' | 'expert'; /** @deprecated 创建流程已统一。 */ fixedMode?: boolean; reusePresenterId?: string; initialConfiguration?: boolean; voiceOnlyPresenter?: PresenterAsset }) {
+  const voiceOnlyAvatarId = voiceOnlyPresenter?.toolMappings?.heygen?.avatarId || voiceOnlyPresenter?.avatarId || '';
+  const voiceOnlyLook: PresenterLook | undefined = voiceOnlyPresenter && voiceOnlyAvatarId ? {
+    id: voiceOnlyAvatarId,
+    name: voiceOnlyPresenter.name,
+    voiceId: voiceOnlyPresenter.toolMappings?.heygen?.voiceId || voiceOnlyPresenter.voiceId,
+    imageUrl: voiceOnlyPresenter.imageUrl,
+    videoUrl: voiceOnlyPresenter.videoUrl,
+    orientation: voiceOnlyPresenter.nativeOrientation || 'unknown',
+    status: 'completed',
+  } : undefined;
   const dialog = useRef<HTMLDialogElement>(null);
-  const [tab, setTab] = useState<'create' | 'import'>(initialConfiguration ? 'import' : 'create');
-  const [wizardStep, setWizardStep] = useState<1 | 2 | 3>(1);
+  const [tab, setTab] = useState<'choose' | 'create' | 'import'>(voiceOnlyLook ? 'import' : initialConfiguration ? 'choose' : 'create');
+  const [wizardStep, setWizardStep] = useState<1 | 2 | 3>(voiceOnlyLook ? 3 : 1);
   const [cap, setCap] = useState<PresenterCapabilities>();
   const [jobs, setJobs] = useState<PresenterCreation[]>([]);
   const [looks, setLooks] = useState<PresenterLook[]>([]); const [lookToken, setLookToken] = useState('');
   const [voices, setVoices] = useState<PresenterVoice[]>([]); const [voiceToken, setVoiceToken] = useState('');
   const [voiceScope, setVoiceScope] = useState<'public' | 'private'>('public');
-  const [voiceEntry, setVoiceEntry] = useState<'existing' | 'own'>('existing');
+  const [voiceEntry, setVoiceEntry] = useState<'existing' | 'own'>(voiceOnlyLook ? 'own' : 'existing');
   const [voiceName, setVoiceName] = useState('');
   const [voiceLanguage, setVoiceLanguage] = useState('zh-CN');
   const [voiceFile, setVoiceFile] = useState<File>();
@@ -46,25 +69,46 @@ export default function PresenterManager({ onClose, onSaved, onSynced, reusePres
   const recordingUrlRef = useRef('');
   const submitRecordingOnStop = useRef(false);
   const [voiceConsent, setVoiceConsent] = useState(false);
-  const [voiceCloneJob, setVoiceCloneJob] = useState<{ id: string; status: string; voiceId: string }>();
+  const [voiceCloneJob, setVoiceCloneJob] = useState<VoiceCloneJob | undefined>(() => storedVoiceCloneJob(voiceOnlyLook?.id || ''));
   const voiceAttempt = useRef<{ signature: string; requestId: string } | undefined>(undefined);
   const voicePollInFlight = useRef(false);
   const resumeSaveAfterVoice = useRef(false);
+  const filePickerActive = useRef(false);
+  const filePickerReleaseTimer = useRef<number | undefined>(undefined);
+  const filePickerFocusRelease = useRef<(() => void) | undefined>(undefined);
   const [name, setName] = useState('');
-  const [file, setFile] = useState<File>(); const [voiceId, setVoiceId] = useState('');
-  const videoMaterial = Boolean(file && (file.type.startsWith('video/') || /\.(mp4|mov|webm)$/i.test(file.name)));
-  const selectedCreationEnabled = (videoMaterial ? cap?.digitalTwinCreationEnabled : cap?.photoCreationEnabled) ?? cap?.creationEnabled;
-  const selectedCreationReason = videoMaterial ? cap?.digitalTwinCreationReason : cap?.photoCreationReason;
-  const selectedReservationCny = (videoMaterial ? cap?.digitalTwinReservationCny : cap?.photoReservationCny) ?? cap?.reservationCny;
+  const [file, setFile] = useState<File>();
+  const [photoFile, setPhotoFile] = useState<File>();
+  const [videoFile, setVideoFile] = useState<File>();
+  const heyGenSource = initialConfiguration ? videoFile || photoFile : file;
+  // Unified onboarding always creates a Digital Twin from the required video.
+  // Before a file is selected, treating the empty source as a photo makes the
+  // whole fieldset inherit photo-creation availability and can deadlock the
+  // form when only Digital Twin creation is enabled.
+  const heyGenVideoSource = initialConfiguration || Boolean(heyGenSource && (heyGenSource.type.startsWith('video/') || /\.(mp4|mov|webm)$/i.test(heyGenSource.name)));
+  const selectedCreationEnabled = (heyGenVideoSource ? cap?.digitalTwinCreationEnabled : cap?.photoCreationEnabled) ?? cap?.creationEnabled;
+  const selectedCreationReason = heyGenVideoSource ? cap?.digitalTwinCreationReason : cap?.photoCreationReason;
+  const selectedReservationCny = (heyGenVideoSource ? cap?.digitalTwinReservationCny : cap?.photoReservationCny) ?? cap?.reservationCny;
+  const [voiceId, setVoiceId] = useState('');
   const [authorized, setAuthorized] = useState(false); const [adultConfirmed, setAdultConfirmed] = useState(false); const [confirmed, setConfirmed] = useState(false);
   const [reuseGroup, setReuseGroup] = useState(true);
   const [samePersonConfirmed, setSamePersonConfirmed] = useState(false);
-  const [selected, setSelected] = useState<{ look: PresenterLook; creationId?: string }>();
+  const [selected, setSelected] = useState<{ look: PresenterLook; creationId?: string } | undefined>(() => voiceOnlyLook ? { look: voiceOnlyLook } : undefined);
   const [busy, setBusy] = useState(false); const [error, setError] = useState(''); const [notice, setNotice] = useState('');
   const [actionError, setActionError] = useState('');
   const [submitStage, setSubmitStage] = useState<'idle' | 'voice' | 'voice_processing' | 'upload' | 'create' | 'authorization'>('idle');
   const [uploadPercent, setUploadPercent] = useState(0);
   const [uploadStage, setUploadStage] = useState('');
+  const clearVoiceCloneJob = () => {
+    const lookId = selected?.look.id || voiceOnlyLook?.id || '';
+    setVoiceCloneJob(undefined);
+    voiceAttempt.current = undefined;
+    resumeSaveAfterVoice.current = false;
+    setSubmitStage('idle');
+    setActionError('');
+    if (!lookId || typeof window === 'undefined') return;
+    try { window.sessionStorage.removeItem(`presenter-voice-job:${lookId}`); } catch { /* Server task remains authoritative. */ }
+  };
   useEffect(() => {
     if (!busy || submitStage !== 'upload' || !attempt.current) return;
     let live = true; let checking = false;
@@ -84,7 +128,7 @@ export default function PresenterManager({ onClose, onSaved, onSynced, reusePres
   const [catalogScope, setCatalogScope] = useState<'public' | 'private'>('public');
   const [favoritesSynced, setFavoritesSynced] = useState(false);
   const favoriteSyncStarted = useRef(false);
-  const attempt = useRef<{ requestId: string; uploadRequestId: string; uploadId?: string; signature?: string } | undefined>(undefined);
+  const attempt = useRef<{ requestId: string; uploadRequestId: string; uploadId?: string; arkPhotoMaterialId?: string; arkVideoMaterialId?: string; signature?: string } | undefined>(undefined);
   const inFlight = useRef(false);
   const updateJob = (job: PresenterCreation) => setJobs(current => [job, ...current.filter(item => item.id !== job.id)]);
   const run = async (operation: () => Promise<void>, onError?: (message: string) => void) => {
@@ -113,10 +157,12 @@ export default function PresenterManager({ onClose, onSaved, onSynced, reusePres
   useEffect(() => { recordingUrlRef.current = recordingUrl; }, [recordingUrl]);
   useEffect(() => () => {
     if (recordingTimer.current) window.clearInterval(recordingTimer.current);
+    if (filePickerReleaseTimer.current) window.clearTimeout(filePickerReleaseTimer.current);
+    if (filePickerFocusRelease.current) window.removeEventListener('focus', filePickerFocusRelease.current);
     if (recordingUrlRef.current) URL.revokeObjectURL(recordingUrlRef.current);
     recordingStream.current?.getTracks().forEach(track => track.stop());
   }, []);
-  useEffect(() => { if (initialConfiguration && !looks.length && !inFlight.current && !new URLSearchParams(window.location.search).has('presenterConsentReturn')) void loadCatalog(); }, [initialConfiguration]);
+  useEffect(() => { if (initialConfiguration && !voiceOnlyPresenter && tab === 'import' && !looks.length && !inFlight.current && !new URLSearchParams(window.location.search).has('presenterConsentReturn')) void loadCatalog(); }, [initialConfiguration, tab, voiceOnlyPresenter]);
   useEffect(() => {
     const pending = jobs.filter(j => ['processing', 'pending_consent', 'uncertain'].includes(j.status));
     if (!pending.length) return;
@@ -128,7 +174,11 @@ export default function PresenterManager({ onClose, onSaved, onSynced, reusePres
       const updated = results.flatMap(result => result.status === 'fulfilled' ? [result.value] : []);
       setJobs(current => current.map(job => updated.find(item => item.id === job.id) || job));
       if (results.some(r => r.status === 'rejected')) setError('人物状态刷新暂时失败，可点击“刷新状态”重试');
-      else if (updated.length) { setError(''); setActionError(''); }
+      else if (updated.length) {
+        setError(''); setActionError('');
+        const completed = initialConfiguration ? updated.find(item => item.status === 'completed' && item.look) : undefined;
+        if (completed?.look) { setTab('import'); choose(completed.look, completed); }
+      }
     }, 15000);
     return () => { live = false; window.clearTimeout(timer); };
   }, [jobs]);
@@ -153,14 +203,10 @@ export default function PresenterManager({ onClose, onSaved, onSynced, reusePres
     void syncFavorites();
   }, []);
   const choose = (look: PresenterLook, job?: PresenterCreation) => {
-    setVoiceCloneJob(undefined); voiceAttempt.current = undefined;
-    try {
-      const saved = JSON.parse(sessionStorage.getItem(`presenter-voice-job:${look.id}`) || 'null');
-      if (saved && typeof saved.id === 'string' && ['processing', 'submitting', 'completed', 'failed', 'uncertain'].includes(saved.status)) setVoiceCloneJob(saved);
-    } catch { /* Ignore unavailable or stale browser storage. */ }
+    setVoiceCloneJob(storedVoiceCloneJob(look.id)); voiceAttempt.current = undefined;
     setSelected({ look, creationId: job?.id }); setVoiceId(job?.voiceId || look.voiceId || ''); setAuthorized(false); if (initialConfiguration) setWizardStep(3);
   };
-  const beginOfficialConsent = (job: PresenterCreation) => run(async () => {
+  const requestOfficialConsent = async (job: PresenterCreation) => {
     const returnUrl = new URL(window.location.href);
     returnUrl.searchParams.set('presenterConsentReturn', job.id);
     const updated = await presenterApi.consent(job.id, crypto.randomUUID(), undefined, returnUrl.href);
@@ -168,8 +214,10 @@ export default function PresenterManager({ onClose, onSaved, onSynced, reusePres
     if (updated.status === 'completed' && updated.look) { choose(updated.look, updated); return; }
     if (!updated.consentUrl) throw new Error('HeyGen 未返回可用的本人授权页面');
     window.location.assign(updated.consentUrl);
-  });
+  };
+  const beginOfficialConsent = (job: PresenterCreation) => run(async () => requestOfficialConsent(job));
   useEffect(() => {
+    if (voiceOnlyPresenter) return;
     const jobId = new URLSearchParams(window.location.search).get('presenterConsentReturn');
     if (!jobId) return;
     const clean = new URL(window.location.href); clean.searchParams.delete('presenterConsentReturn');
@@ -181,11 +229,16 @@ export default function PresenterManager({ onClose, onSaved, onSynced, reusePres
         setWizardStep(2); setNotice('已返回灵枢，HeyGen 正在确认本人授权；页面会自动刷新状态。'); return;
       }
       choose(updated.look, updated);
-      setNotice(updated.type === 'photo' ? '照片人物已创建。请选择声音后保存为默认人物。' : 'HeyGen 本人授权已通过，人物已绑定回灵枢。请选择声音后保存为默认人物。');
+      setNotice(updated.type === 'photo'
+        ? '照片人物已创建。请选择已有声音或录入本人声音，再保存为默认人物。'
+        : updated.voiceId
+          ? 'HeyGen 本人授权已通过，人物原配声音已预选。你也可以切换到“录入本人声音”，确认后再保存。'
+          : 'HeyGen 本人授权已通过，人物已绑定回灵枢。请选择已有声音或录入本人声音，再保存为默认人物。');
     });
   }, []);
   const submitOwnVoiceRaw = async (recordedFile?: File): Promise<string> => {
     if (voiceCloneJob?.status === 'failed') throw new Error('上次声音录入失败，请点击重新提交录音');
+    if (voiceCloneJob?.status === 'uncertain') throw new Error('上次声音任务结果尚未确认，请先点击“核对原声音任务”，系统不会重复提交录音');
     if (voiceCloneJob) return voiceCloneJob.status === 'completed' ? (voiceCloneJob.voiceId || voiceId) : '';
     const sourceFile = recordedFile || voiceFile;
     if (!sourceFile) throw new Error('请先完成录音或上传本人录音');
@@ -209,31 +262,42 @@ export default function PresenterManager({ onClose, onSaved, onSynced, reusePres
   };
   const create = () => run(async () => {
     setActionError('');
-    if (!file) throw new Error('请先选择人物素材');
-    const videoSource = file.type.startsWith('video/') || /\.(mp4|mov|webm)$/i.test(file.name);
+    if (!heyGenSource) throw new Error('请先选择人物素材');
+    if (initialConfiguration && (!photoFile || !videoFile)) throw new Error('请同时上传清晰正面照片和本人视频，两路人物服务会复用这套资料');
+    const videoSource = heyGenVideoSource;
     const sourceType = videoSource ? 'digital_twin' : 'photo';
     const reuseId = cap?.privateCatalog && reuseGroup ? reusePresenterId : undefined;
-    const signature = `${sourceType}:${name.trim()}:${file.name}:${file.size}:${file.lastModified}:${reuseId || ''}`;
+    const signature = `${sourceType}:${name.trim()}:${heyGenSource.name}:${heyGenSource.size}:${heyGenSource.lastModified}:${photoFile?.name || ''}:${photoFile?.size || 0}:${videoFile?.name || ''}:${videoFile?.size || 0}:${reuseId || ''}`;
     if (attempt.current?.signature && attempt.current.signature !== signature) throw new Error('上次提交结果尚未核实，请先刷新任务列表');
     attempt.current ||= { requestId: crypto.randomUUID(), uploadRequestId: crypto.randomUUID(), signature };
+    if (initialConfiguration && photoFile && videoFile) {
+      setSubmitStage('upload');
+      try {
+        attempt.current.arkPhotoMaterialId ||= (await productionApi.uploadArkMaterial(photoFile, 'image')).id;
+        attempt.current.arkVideoMaterialId ||= (await productionApi.uploadArkMaterial(videoFile, 'video')).id;
+      } catch (e) { attempt.current = undefined; throw e; }
+    }
     if (!attempt.current.uploadId) {
       setSubmitStage('upload'); setUploadPercent(0); setUploadStage('');
-      try { attempt.current.uploadId = (await presenterApi.upload(file, attempt.current.uploadRequestId, undefined, undefined, videoSource, setUploadPercent)).id; }
+      try { attempt.current.uploadId = (await presenterApi.upload(heyGenSource, attempt.current.uploadRequestId, undefined, undefined, videoSource, setUploadPercent)).id; }
       catch (e) { if (!(e instanceof Error && /超时|连接中断|未返回有效结果/.test(e.message))) attempt.current = undefined; throw e; }
     }
     setSubmitStage('create');
-    const job = await presenterApi.create({ name: name.trim(), type: videoSource ? 'digital_twin' : 'photo', uploadId: attempt.current.uploadId, requestId: attempt.current.requestId, authorized, adultConfirmed, confirmed, ...(reuseId ? { reusePresenterId: reuseId, samePersonConfirmed } : {}) });
+    const arkPreparation = attempt.current.arkPhotoMaterialId && attempt.current.arkVideoMaterialId
+      ? { photoMaterialId: attempt.current.arkPhotoMaterialId, videoMaterialId: attempt.current.arkVideoMaterialId, processingAuthorized: false }
+      : undefined;
+    const job = await presenterApi.create({ name: name.trim(), type: videoSource ? 'digital_twin' : 'photo', uploadId: attempt.current.uploadId, requestId: attempt.current.requestId, authorized: initialConfiguration || authorized, adultConfirmed: initialConfiguration || adultConfirmed, confirmed: initialConfiguration || confirmed, arkPreparation, ...(reuseId ? { reusePresenterId: reuseId, samePersonConfirmed } : {}) });
     updateJob(job); attempt.current = undefined;
     if (job.status === 'uncertain' || job.status === 'failed') {
       setActionError(job.error || '人物任务结果尚未确认，请在下方刷新原任务，勿重复提交。');
-      if (initialConfiguration) setWizardStep(2);
-      window.requestAnimationFrame(() => authorizationSection.current?.scrollIntoView({ behavior: 'smooth', block: 'start' }));
+      if (initialConfiguration) setWizardStep(1);
+      else window.requestAnimationFrame(() => authorizationSection.current?.scrollIntoView({ behavior: 'smooth', block: 'start' }));
       return;
     }
-    setFile(undefined); setConfirmed(false); setAuthorized(false); setAdultConfirmed(false); setSamePersonConfirmed(false);
+    setFile(undefined); setPhotoFile(undefined); setVideoFile(undefined); setConfirmed(false); setAuthorized(false); setAdultConfirmed(false); setSamePersonConfirmed(false);
     if (job.status === 'completed' && job.look) choose(job.look, job);
-    else if (initialConfiguration) { setWizardStep(2); setSubmitStage('authorization'); }
-    setNotice(videoSource ? '人物素材已提交。请在下方前往 HeyGen 完成本人授权。' : '照片人物已提交；照片人物由灵枢保留本人授权记录，无需重复进入 HeyGen 授权页。');
+    else if (initialConfiguration) { setWizardStep(2); setSubmitStage('authorization'); await requestOfficialConsent(job); return; }
+    setNotice(videoSource ? '人物资料已提交。HeyGen 授权完成后即可用于普通口播；照片和视频已保留，需要高级人物替换时再单独进行方舟认证。' : '照片人物已提交；灵枢已保留本人授权记录。');
     window.requestAnimationFrame(() => authorizationSection.current?.scrollIntoView({ behavior: 'smooth', block: 'start' }));
   }, message => {
     setSubmitStage('idle');
@@ -255,6 +319,7 @@ export default function PresenterManager({ onClose, onSaved, onSynced, reusePres
     voicePollInFlight.current = true;
     try {
       const result = await presenterApi.cloneStatus(voiceCloneJob.id);
+      setActionError('');
       setVoiceCloneJob(current => current ? { ...current, status: result.status, voiceId: result.voice?.id || current.voiceId } : current);
       if (result.status === 'failed') {
         resumeSaveAfterVoice.current = false;
@@ -275,6 +340,7 @@ export default function PresenterManager({ onClose, onSaved, onSynced, reusePres
       }
     } catch (caught) {
       setActionError(caught instanceof Error ? caught.message : '本人声音状态刷新失败，请稍后重试');
+      setVoiceCloneJob(current => current ? { ...current } : current);
     } finally {
       voicePollInFlight.current = false;
     }
@@ -303,6 +369,7 @@ export default function PresenterManager({ onClose, onSaved, onSynced, reusePres
       const stream = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true } });
       const mimeType = ['audio/webm;codecs=opus', 'audio/webm', 'audio/ogg;codecs=opus'].find(type => MediaRecorder.isTypeSupported(type));
       const recorder = new MediaRecorder(stream, mimeType ? { mimeType } : undefined);
+      clearVoiceCloneJob();
       if (recordingUrl) { URL.revokeObjectURL(recordingUrl); setRecordingUrl(''); }
       setVoiceFile(undefined); setRecordingSeconds(0); recordingChunks.current = [];
       recordingStream.current = stream; mediaRecorder.current = recorder;
@@ -340,6 +407,7 @@ export default function PresenterManager({ onClose, onSaved, onSynced, reusePres
   };
   const resetRecording = () => {
     submitRecordingOnStop.current = false;
+    clearVoiceCloneJob();
     if (recordingUrl) URL.revokeObjectURL(recordingUrl);
     setRecordingUrl(''); setVoiceFile(undefined); setRecordingSeconds(0); setRecordingState('idle');
   };
@@ -366,10 +434,17 @@ export default function PresenterManager({ onClose, onSaved, onSynced, reusePres
       }
     }
     if (!selectedVoiceId) throw new Error('请选择或录入人物声音');
-    const value = await presenterApi.import({ lookId: selected.look.id, creationId: selected.creationId, voiceId: selectedVoiceId, reviewed: true, authorized, makeDefault: initialConfiguration });
-    await onSaved(value);
+    if (voiceOnlyPresenter) {
+      const result = await presenterApi.bindVoice(voiceOnlyPresenter.id, selectedVoiceId);
+      await onSaved(result.defaults);
+    } else {
+      const value = await presenterApi.import({ lookId: selected.look.id, creationId: selected.creationId, voiceId: selectedVoiceId, reviewed: true, authorized, makeDefault: initialConfiguration });
+      const creation = selected.creationId ? jobs.find(job => job.id === selected.creationId) : undefined;
+      await onSaved(value, { creationId: selected.creationId, arkPreparation: creation?.arkPreparation });
+    }
     setSubmitStage('idle');
-    setNotice(initialConfiguration ? '已保存为默认口播人物。' : '人物已添加到企业资产。');
+    clearVoiceCloneJob();
+    setNotice(voiceOnlyPresenter ? '本人声音已绑定到当前数字人。' : initialConfiguration ? '已保存为默认口播人物。' : '人物已添加到企业资产。');
     setSelected(undefined);
   }, message => {
     setSubmitStage('idle');
@@ -381,42 +456,60 @@ export default function PresenterManager({ onClose, onSaved, onSynced, reusePres
     || group.name.toLowerCase().includes(normalizedSearch)
     || group.looks.some(look => look.name.toLowerCase().includes(normalizedSearch)));
   const recordingScript = '大家好，我是您的专属口播伙伴。欢迎使用灵枢 AI，灵枢可以帮助企业理解产品、策划内容，并高效生成真实自然的口播视频。现在，邀请您创建属于自己的口播角色，让每一次表达都更有温度，也让更多客户认识并信任您的品牌。';
+  const settleFilePickerGuard = () => {
+    if (filePickerReleaseTimer.current) window.clearTimeout(filePickerReleaseTimer.current);
+    filePickerReleaseTimer.current = window.setTimeout(() => { filePickerActive.current = false; }, 750);
+  };
+  const armFilePickerGuard = () => {
+    filePickerActive.current = true;
+    if (filePickerFocusRelease.current) window.removeEventListener('focus', filePickerFocusRelease.current);
+    const release = () => settleFilePickerGuard();
+    filePickerFocusRelease.current = release;
+    window.addEventListener('focus', release, { once: true });
+  };
+  const openEnterpriseArkCertification = () => {
+    try { localStorage.setItem('lingshu:enterprise:initial-view', 'presenters'); } catch { /* optional storage */ }
+    onClose();
+    window.dispatchEvent(new CustomEvent('lingshu:navigate', { detail: { page: 'enterprise' } }));
+    window.requestAnimationFrame(() => window.dispatchEvent(new CustomEvent('lingshu:enterprise-view', { detail: { view: 'presenters' } })));
+  };
   const ownVoiceRecorder = <div className="space-y-3 rounded-xl border border-border p-3">
     <div className="grid gap-3 sm:grid-cols-2"><label className="text-sm">声音名称<input aria-label="声音名称" className={field} value={voiceName} maxLength={100} onChange={event => setVoiceName(event.target.value)} placeholder="例如：我的中文声音" /></label><label className="text-sm">录音语言<select aria-label="录音语言" className={field} value={voiceLanguage} onChange={event => setVoiceLanguage(event.target.value)}><option value="zh-CN">中文</option><option value="en-US">English</option><option value="es-ES">Español</option><option value="fr-FR">Français</option><option value="de-DE">Deutsch</option></select></label></div>
     <section aria-label="网页录音" className="space-y-3 rounded-xl bg-surface-2 p-4"><div><p className="text-sm font-bold">直接录音（推荐）</p><p className="mt-1 text-xs text-text-muted">在安静环境中照读下方文案，建议录制 15–60 秒；完成后也可直接提交较短的有效录音。</p></div><blockquote className="rounded-lg border border-border bg-white p-3 text-sm leading-7 text-text-secondary">{recordingScript}</blockquote><div className="flex flex-wrap items-center gap-2">{recordingState === 'idle' && <button type="button" className={`${button} bg-gradient-to-r from-blue-600 to-violet-600 text-white`} onClick={() => void startRecording()}>开始录音</button>}{(recordingState === 'recording' || recordingState === 'paused') && <><button type="button" className={button} onClick={pauseOrResumeRecording}>{recordingState === 'paused' ? '继续录音' : '暂停录音'}</button><button type="button" className={`${button} border-red-200 text-red-700`} onClick={finishRecording}>完成录音</button><span role="status" className="text-sm font-semibold text-red-600">● {recordingState === 'paused' ? '已暂停，可完成并提交' : '录音中'} {Math.floor(recordingSeconds / 60)}:{String(recordingSeconds % 60).padStart(2, '0')}</span></>}{recordingState === 'ready' && <><span className="text-sm font-semibold text-emerald-700">录音已完成 · {recordingSeconds} 秒</span><button type="button" className={button} onClick={resetRecording}>重新录音</button></>}</div>{recordingUrl && <audio aria-label="本人录音试听" controls src={recordingUrl} className="h-10 w-full" />}</section>
     <label className="block text-sm">或上传本人录音<input aria-label="本人录音" type="file" accept=".wav,.mp3,.m4a,.ogg,.webm,audio/wav,audio/mpeg,audio/mp4,audio/ogg,audio/webm" className={field} onChange={event => { resetRecording(); setVoiceFile(event.target.files?.[0]); }} /><span className="mt-1 block text-xs text-text-muted">支持 WAV、MP3、M4A、OGG、WebM，最大 10MB。</span></label>
-    <label className="flex items-start gap-2 text-sm"><input type="checkbox" checked={voiceConsent} onChange={event => setVoiceConsent(event.target.checked)} />我确认这是本人声音，并授权用于声音克隆及企业商业口播</label>{voiceCloneJob ? <div className={`rounded-lg p-3 text-sm ${voiceCloneJob.status === 'completed' ? 'bg-emerald-50 text-emerald-800' : voiceCloneJob.status === 'failed' ? 'bg-red-50 text-red-700' : 'bg-amber-50 text-amber-900'}`}><div className="flex flex-wrap items-center gap-2"><strong>声音处理状态：{voiceCloneJob.status === 'completed' ? '已完成并选中' : voiceCloneJob.status === 'failed' ? '失败' : '处理中'}</strong>{voiceCloneJob.status !== 'completed' && <button type="button" className={button} disabled={busy} onClick={() => void refreshVoiceClone()}>刷新声音状态</button>}</div>{voiceCloneJob.status === 'failed' && <button type="button" className={button} disabled={busy} onClick={() => { setVoiceCloneJob(undefined); voiceAttempt.current = undefined; setActionError(''); setSubmitStage('idle'); }}>重新提交录音</button>}{voiceCloneJob.status === 'completed' && <p className="mt-1">声音“{voiceName.trim()}”已可用。</p>}</div> : <p className="rounded-lg bg-sky-50 p-3 text-xs text-sky-900">人像授权通过后，可在保存人物时一并录入本人声音。</p>}
+    <label className="flex items-start gap-2 text-sm"><input type="checkbox" checked={voiceConsent} onChange={event => setVoiceConsent(event.target.checked)} />我确认这是本人声音，并授权用于声音克隆及企业商业口播</label>{voiceCloneJob ? <div className={`rounded-lg p-3 text-sm ${voiceCloneJob.status === 'completed' ? 'bg-emerald-50 text-emerald-800' : voiceCloneJob.status === 'failed' ? 'bg-red-50 text-red-700' : 'bg-amber-50 text-amber-900'}`}><div className="flex flex-wrap items-center gap-2"><strong>声音处理状态：{voiceCloneJob.status === 'completed' ? '已完成，可继续绑定' : voiceCloneJob.status === 'failed' ? '失败' : voiceCloneJob.status === 'uncertain' ? '待核对' : '处理中'}</strong>{voiceCloneJob.status !== 'completed' && <button type="button" className={button} disabled={busy} onClick={() => void refreshVoiceClone()}>{voiceCloneJob.status === 'uncertain' ? '核对原声音任务' : '刷新声音状态'}</button>}</div>{['failed', 'completed'].includes(voiceCloneJob.status) && <button type="button" className={button} disabled={busy} onClick={() => { clearVoiceCloneJob(); resetRecording(); setActionError(''); }}>重新录入声音</button>}{voiceCloneJob.status === 'completed' && <p className="mt-1">上次录入的本人声音已可用；可直接绑定，也可重新录入。</p>}</div> : <p className="rounded-lg bg-sky-50 p-3 text-xs text-sky-900">人像授权通过后，可在保存人物时一并录入本人声音。</p>}
   </div>;
   const voicePicker = <div className="space-y-3"><div className="grid grid-cols-2 gap-2 rounded-xl bg-surface-2 p-1" aria-label="人物声音录入方式"><button type="button" className={`rounded-lg px-3 py-2 text-sm ${voiceEntry === 'existing' ? 'bg-white font-bold shadow-sm' : ''}`} onClick={() => setVoiceEntry('existing')}>选择已有声音</button><button type="button" className={`rounded-lg px-3 py-2 text-sm ${voiceEntry === 'own' ? 'bg-white font-bold shadow-sm' : ''}`} onClick={() => { setVoiceEntry('own'); setVoiceId(''); }}>录入本人声音</button></div>{voiceEntry === 'existing' ? <>{cap?.privateCatalog && <label className="block text-sm">声音来源<select aria-label="声音来源" className={field} value={voiceScope} onChange={e => { const scope = e.target.value as 'public' | 'private'; setVoiceScope(scope); void presenterApi.voices('', '', scope).then(page => { setVoices(page.items); setVoiceToken(page.nextToken); }).catch(error => setError(String(error))); }}><option value="public">公共音色</option><option value="private">本企业已录入音色</option></select></label>}<label className="block text-sm">人物声音<select aria-label="人物声音" className={field} value={voiceId} onChange={e => setVoiceId(e.target.value)}>
     <option value="">请选择声音</option>{voiceId && !voices.some(v => v.id === voiceId) && <option value={voiceId}>人物原配声音</option>}
     {voices.map(v => <option key={v.id} value={v.id}>{v.name} · {v.language}</option>)}
   </select></label>{voice && !voice.previewUrl && <p className="text-xs text-text-muted">此声音暂未提供试听样本</p>}{voice?.previewUrl && <audio aria-label="声音试听" controls src={voice.previewUrl} className="h-10 w-full" />}
     {voiceToken && <button className={button} type="button" disabled={busy} onClick={() => void run(async () => { const result = await presenterApi.voices(voiceToken, '', voiceScope); setVoices(current => [...new Map([...current, ...result.items].map(v => [v.id, v])).values()]); setVoiceToken(result.nextToken); })}>加载更多声音</button>}</> : ownVoiceRecorder}</div>;
-  const ownVoiceReady = Boolean(voiceCloneJob || (voiceName.trim() && voiceConsent && (voiceFile || recordingState === 'recording' || recordingState === 'paused')));
+  const ownVoiceReady = Boolean((voiceCloneJob && ['submitting', 'processing', 'completed'].includes(voiceCloneJob.status))
+    || (voiceName.trim() && voiceConsent && (voiceFile || recordingState === 'recording' || recordingState === 'paused')));
   const enrollmentVoiceReady = voiceEntry === 'existing' ? Boolean(voiceId) : ownVoiceReady;
-  return <dialog ref={dialog} onCancel={event => { if (busy) event.preventDefault(); else onClose(); }} aria-labelledby="presenter-manager-title" className="m-auto max-h-[90vh] w-[min(900px,94vw)] overflow-y-auto rounded-2xl border border-border bg-white p-0 text-text-primary shadow-xl backdrop:bg-black/35">
-    <header className="sticky top-0 z-10 flex items-center justify-between border-b border-border bg-white p-5"><div><h2 id="presenter-manager-title" className="font-bold">{initialConfiguration ? '选择人物与声音' : '企业人物资产'}</h2></div><button type="button" disabled={busy} onClick={onClose} className={button} aria-label="关闭人物管理">关闭</button></header>
+  return <dialog ref={dialog}
+    onClickCapture={event => { const target = event.target; if (target instanceof HTMLInputElement && target.type === 'file') armFilePickerGuard(); }}
+    onChangeCapture={event => { const target = event.target; if (target instanceof HTMLInputElement && target.type === 'file') settleFilePickerGuard(); }}
+    onCancel={event => { event.preventDefault(); if (busy || filePickerActive.current) { settleFilePickerGuard(); return; } onClose(); }}
+    aria-labelledby="presenter-manager-title" className="m-auto max-h-[90vh] w-[min(900px,94vw)] overflow-y-auto rounded-2xl border border-border bg-white p-0 text-text-primary shadow-xl backdrop:bg-black/35">
+    <header className="sticky top-0 z-10 flex items-center justify-between border-b border-border bg-white p-5"><div><h2 id="presenter-manager-title" className="font-bold">{voiceOnlyPresenter ? '录入本人声音' : initialConfiguration ? '接入数字人物与声音' : '企业人物资产'}</h2></div><button type="button" disabled={busy} onClick={onClose} className={button} aria-label="关闭人物管理">关闭</button></header>
     <div className="space-y-5 p-5">
       {cap?.reason && <p className="rounded-lg bg-amber-50 p-3 text-sm">{cap.reason}</p>}
       {cap && !selectedCreationEnabled && selectedCreationReason && selectedCreationReason !== cap.reason && tab === 'create' && <p role="status" className="rounded-lg bg-amber-50 p-3 text-sm">当前创建方式暂不可用：{selectedCreationReason}</p>}
       {error && <p role="alert" className="rounded-lg bg-red-50 p-3 text-sm text-red-700">{error}</p>}
       {notice && <p role="status" className="rounded-lg bg-green-50 p-3 text-sm">{notice}</p>}
-      {initialConfiguration && <ol className="grid grid-cols-3 gap-2" aria-label="人物配置步骤">{['录入人物资产','官方本人授权','配置声音并保存'].map((label, index) => <li key={label} className={`rounded-lg border px-2 py-2 text-center text-xs ${wizardStep === index + 1 ? 'border-accent bg-accent/5 font-bold text-text-primary' : wizardStep > index + 1 ? 'border-border text-text-secondary' : 'border-border text-text-muted'}`}>{index + 1}. {label}</li>)}</ol>}
-      {(!initialConfiguration || wizardStep === 1) && <div className="grid grid-cols-2 gap-2"><button className={`${button} ${tab === 'import' ? 'border-accent bg-accent/5 font-bold text-text-primary' : ''}`} disabled={busy} onClick={() => { setTab('import'); if (!looks.length) void loadCatalog(); if (!initialConfiguration && !favoritesSynced) void syncFavorites(); }}>选择已授权人物</button><button className={`${button} ${tab === 'create' ? 'border-accent bg-accent/5 font-bold text-text-primary' : ''}`} disabled={busy} onClick={() => { setTab('create'); setSelected(undefined); setAuthorized(false); }}>录入新人物</button></div>}
-      {tab === 'create' && (!initialConfiguration || wizardStep === 1) && <fieldset disabled={busy || !cap?.creationEnabled} className="space-y-4 disabled:opacity-60">
-        <label className="block text-sm">人物名称<input aria-label="人物名称" className={field} value={name} maxLength={100} onChange={e => setName(e.target.value)} placeholder="例如：品牌主理人、销售顾问" /></label>
-        <label className="block text-sm">人物素材<input key={file ? 'selected' : 'empty'} aria-label="人物素材" type="file" accept=".jpg,.jpeg,.png,.mp4,.mov,.webm,image/jpeg,image/png,video/mp4,video/quicktime,video/webm" onChange={e => setFile(e.target.files?.[0])} className={field} /><span className="mt-1 block text-xs text-text-muted">{file ? `已选择：${file.name}。${file.type.startsWith('video/') || /\.(mp4|mov|webm)$/i.test(file.name) ? '视频将创建 Digital Twin，并进入 HeyGen 官方本人授权。' : '照片将创建照片人物，由灵枢保存本人授权记录。'}` : '照片支持 JPG/PNG；Digital Twin 视频须为 30 秒至 5 分钟、至少 720p/24fps并包含清晰人声。'}</span></label>
-        <p className="rounded-lg bg-sky-50 p-3 text-sm text-sky-900">先按 HeyGen 官方顺序创建人物并完成人像授权。授权通过后，再选择或录入用于口播的声音。</p>
-        <label className="flex gap-2 text-sm"><input type="checkbox" checked={authorized} onChange={e => setAuthorized(e.target.checked)} />我已取得此人物的肖像及素材使用授权，同意将素材提交给 HeyGen 处理</label>
-        <label className="flex gap-2 text-sm"><input type="checkbox" checked={adultConfirmed} onChange={e => setAdultConfirmed(e.target.checked)} />我已核验画面主体为成年人</label>
-        {cap?.privateCatalog && reusePresenterId && <div className="space-y-2 rounded-lg border border-emerald-200 p-3 text-sm"><label className="flex gap-2"><input type="checkbox" checked={reuseGroup} onChange={e => { setReuseGroup(e.target.checked); setSamePersonConfirmed(false); }} />沿用当前人物的 HeyGen 人物组授权</label>{reuseGroup && <label className="flex gap-2"><input type="checkbox" checked={samePersonConfirmed} onChange={e => setSamePersonConfirmed(e.target.checked)} />确认新增素材与当前已授权人物为同一人</label>}<p className="text-xs text-text-muted">若是另一位人物，取消沿用后创建独立人物组，由本人完成所需验证。</p></div>}
-        <label className="flex gap-2 text-sm"><input type="checkbox" checked={confirmed} onChange={e => setConfirmed(e.target.checked)} />确认创建人物{Number(selectedReservationCny) > 0 ? `并接受供应商计费（本次预算预留 ¥${selectedReservationCny}）` : ''}</label>
-        <div className="flex gap-2"><button type="button" disabled={busy || !name.trim() || !selectedCreationEnabled || !file || !authorized || !adultConfirmed || !confirmed || Boolean(cap?.privateCatalog && reusePresenterId && reuseGroup && !samePersonConfirmed)} onClick={() => void create()} className={`${button} bg-gradient-to-r from-blue-600 to-violet-600 text-white`}>{busy ? (submitStage === 'upload' ? '正在上传人物素材…' : '正在创建人物任务…') : '提交人物并继续官方授权'}</button></div>
+      {(!initialConfiguration || wizardStep === 1) && <section className="space-y-3" aria-label="选择数字人接入方式"><p className="text-sm font-semibold text-text-primary">先选择数字人来源</p><div className="grid gap-3 sm:grid-cols-2"><button type="button" className={`group flex min-h-36 flex-col items-start justify-between gap-5 rounded-xl border bg-white p-5 text-left transition-[border-color,box-shadow,transform] duration-200 hover:-translate-y-0.5 hover:border-accent hover:shadow-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-60 ${tab === 'create' ? 'border-accent shadow-sm' : 'border-border'}`} disabled={busy} onClick={() => { setTab('create'); setSelected(undefined); setAuthorized(false); }}><span className={`flex h-11 w-11 items-center justify-center rounded-xl ${tab === 'create' ? 'bg-gradient-to-br from-blue-600 to-violet-600 text-white' : 'bg-blue-50 text-blue-600'}`}><UserRoundPlus size={22} aria-hidden="true" /></span><span><span className="flex items-center gap-2 font-bold text-text-primary">使用本人素材 <span className="rounded-full bg-blue-50 px-2 py-0.5 text-xs font-semibold text-blue-700">推荐</span></span><span className="mt-1 block text-xs leading-5 text-text-muted">上传本人图片和视频，创建专属数字人</span></span></button><button type="button" className={`group flex min-h-36 flex-col items-start justify-between gap-5 rounded-xl border bg-white p-5 text-left transition-[border-color,box-shadow,transform] duration-200 hover:-translate-y-0.5 hover:border-accent hover:shadow-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-60 ${tab === 'import' ? 'border-accent shadow-sm' : 'border-border'}`} disabled={busy} onClick={() => { setTab('import'); if (!looks.length) void loadCatalog(); if (!initialConfiguration && !favoritesSynced) void syncFavorites(); }}><span className={`flex h-11 w-11 items-center justify-center rounded-xl ${tab === 'import' ? 'bg-gradient-to-br from-blue-600 to-violet-600 text-white' : 'bg-violet-50 text-violet-600'}`}><UsersRound size={22} aria-hidden="true" /></span><span><span className="font-bold text-text-primary">选择 HeyGen 已有人物</span><span className="mt-1 block text-xs leading-5 text-text-muted">从已授权人物库中直接选择并使用</span></span></button></div></section>}
+      {initialConfiguration && tab === 'create' && wizardStep === 1 && <section className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-border bg-white p-3"><div><p className="text-sm font-semibold text-text-primary">需要人物替换等高级生成功能？</p><p className="mt-1 text-xs text-text-muted">方舟认证为可选功能，不影响普通口播。可完成 HeyGen 后继续，也可稍后在企业知识库认证。</p></div><button type="button" className={button} disabled={busy} onClick={openEnterpriseArkCertification}>前往企业知识库认证</button></section>}
+      {tab === 'create' && (!initialConfiguration || wizardStep === 1) && <fieldset disabled={busy || !selectedCreationEnabled} className="space-y-4 disabled:opacity-60">
+        <label className="block text-sm"><span className="flex items-center justify-between gap-2"><span>人物名称</span>{initialConfiguration && name.trim() && <span className="inline-flex items-center gap-1 text-xs font-semibold text-emerald-700"><CheckCircle2 size={15} />已完成</span>}</span><input aria-label="人物名称" className={field} value={name} maxLength={100} onChange={e => setName(e.target.value)} placeholder="例如：品牌主理人、销售顾问" /></label>
+        {initialConfiguration ? <section className="space-y-3 rounded-lg border border-border p-4" aria-label="统一人物资料"><div><p className="text-sm font-semibold">上传本人资料</p><p className="mt-1 text-xs text-text-muted">图片用于确认人物形象，视频用于创建 HeyGen 数字人。</p></div><div className="grid gap-3 sm:grid-cols-2"><label className="block rounded-lg border border-border bg-surface-2 p-3 text-sm"><span className="flex items-center justify-between gap-2"><span className="font-semibold">本人图片</span>{photoFile && <span className="inline-flex items-center gap-1 text-xs font-semibold text-emerald-700"><CheckCircle2 size={15} />已完成</span>}</span><input aria-label="统一人物正面照片" type="file" accept=".jpg,.jpeg,.png,image/jpeg,image/png" onChange={event => setPhotoFile(event.target.files?.[0])} className={`${field} mt-2 bg-white`} /><span className="mt-1 block text-xs text-text-muted">JPG 或 PNG，正脸清晰、无遮挡。</span></label><label className="block rounded-lg border border-border bg-surface-2 p-3 text-sm"><span className="flex items-center justify-between gap-2"><span className="font-semibold">本人视频</span>{videoFile && <span className="inline-flex items-center gap-1 text-xs font-semibold text-emerald-700"><CheckCircle2 size={15} />已完成</span>}</span><input aria-label="统一人物本人视频" type="file" accept=".mp4,.mov,.webm,video/mp4,video/quicktime,video/webm" onChange={event => setVideoFile(event.target.files?.[0])} className={`${field} mt-2 bg-white`} /><span className="mt-1 block text-xs text-text-muted">30 秒至 5 分钟、至少 720p/24fps，并包含本人清晰说话音频。</span></label></div></section> : <label className="block text-sm">人物素材<input key={file ? 'selected' : 'empty'} aria-label="人物素材" type="file" accept=".jpg,.jpeg,.png,.mp4,.mov,.webm,image/jpeg,image/png,video/mp4,video/quicktime,video/webm" onChange={e => setFile(e.target.files?.[0])} className={field} /><span className="mt-1 block text-xs text-text-muted">{file ? `已选择：${file.name}。${file.type.startsWith('video/') || /\.(mp4|mov|webm)$/i.test(file.name) ? '视频将创建 Digital Twin，并进入 HeyGen 官方本人授权。' : '照片将创建照片人物，由灵枢保存本人授权记录。'}` : '照片支持 JPG/PNG；Digital Twin 视频须为 30 秒至 5 分钟、至少 720p/24fps并包含清晰人声。'}</span></label>}
+        {!initialConfiguration && <><p className="rounded-lg bg-sky-50 p-3 text-sm text-sky-900">提交后需要在 HeyGen 官方页面完成本人授权，再返回灵枢配置声音。</p><label className="flex gap-2 text-sm"><input type="checkbox" checked={authorized} onChange={e => setAuthorized(e.target.checked)} />我已取得此人物的肖像及素材使用授权，同意将素材提交给 HeyGen，并由灵枢安全保存</label><label className="flex gap-2 text-sm"><input type="checkbox" checked={adultConfirmed} onChange={e => setAdultConfirmed(e.target.checked)} />我已核验画面主体为成年人</label>{cap?.privateCatalog && reusePresenterId && <div className="space-y-2 rounded-lg border border-emerald-200 p-3 text-sm"><label className="flex gap-2"><input type="checkbox" checked={reuseGroup} onChange={e => { setReuseGroup(e.target.checked); setSamePersonConfirmed(false); }} />沿用当前人物的 HeyGen 人物组授权</label>{reuseGroup && <label className="flex gap-2"><input type="checkbox" checked={samePersonConfirmed} onChange={e => setSamePersonConfirmed(e.target.checked)} />确认新增素材与当前已授权人物为同一人</label>}<p className="text-xs text-text-muted">若是另一位人物，取消沿用后创建独立人物组，由本人完成所需验证。</p></div>}<label className="flex gap-2 text-sm"><input type="checkbox" checked={confirmed} onChange={e => setConfirmed(e.target.checked)} />确认创建人物{Number(selectedReservationCny) > 0 ? `并接受供应商计费（本次安全预留上限 ¥${selectedReservationCny}，以实际账单为准）` : ''}</label></>}
+        <div className="flex gap-2"><button type="button" disabled={busy || !name.trim() || !selectedCreationEnabled || (initialConfiguration ? !photoFile || !videoFile : !file) || (!initialConfiguration && (!authorized || !adultConfirmed || !confirmed || Boolean(cap?.privateCatalog && reusePresenterId && reuseGroup && !samePersonConfirmed)))} onClick={() => void create()} className={`${button} bg-gradient-to-r from-blue-600 to-violet-600 text-white`}>{busy ? (submitStage === 'upload' ? '正在安全入库并复用人物资料…' : '正在创建人物任务…') : initialConfiguration ? '完成' : '提交资料并继续本人授权'}</button></div>
         <div ref={actionFeedback} tabIndex={-1} className="outline-none">
           {busy && <p role="status" className="rounded-lg bg-sky-50 p-3 text-sm text-sky-900">{submitStage === 'upload' ? (uploadPercent < 100 ? `第 1 步：上传至本地服务 ${uploadPercent}%` : (uploadStage === 'confirming_upload' ? '正在确认 HeyGen 素材登记，完成后创建人物。' : uploadStage === 'uploading_to_provider' ? '正在上传至 HeyGen；尚未提交人物创建，请等待结果。' : '素材已传到本地服务，正在检查并处理视频。')) : '第 2 步：正在创建人物；完成后将进入官方本人授权。'}</p>}
           {actionError && <div role="alert" className="space-y-2 rounded-lg bg-red-50 p-3 text-sm text-red-700"><strong className="block">本次提交未完成</strong><p>{actionError}</p><p className="text-xs">已填写内容会保留。请按提示处理后，在这里继续。</p></div>}
         </div>
-        {(!name.trim() || !file || !authorized || !adultConfirmed || !confirmed) && <p role="status" className="rounded-lg bg-surface-2 p-3 text-xs text-text-secondary">还需完成：{[!name.trim() && '填写人物名称', !file && '上传人物素材', !authorized && '确认肖像及素材授权', !adultConfirmed && '确认人物已成年', !confirmed && '确认创建人物'].filter(Boolean).join('、')}。</p>}
+        {!initialConfiguration && (!name.trim() || !file || !authorized || !adultConfirmed || !confirmed) && <p role="status" className="rounded-lg bg-surface-2 p-3 text-xs text-text-secondary">还需完成：{[!name.trim() && '填写人物名称', !file && '上传人物素材', !authorized && '确认肖像及素材授权', !adultConfirmed && '确认人物已成年', !confirmed && '确认创建人物'].filter(Boolean).join('、')}。</p>}
         {attempt.current && <p className="text-xs">如提交未返回结果，保持名称和文件不变后重试，将继续核对同一请求。</p>}
       </fieldset>}
       {tab === 'import' && (!initialConfiguration || wizardStep === 1) && <div className="space-y-3">
@@ -440,7 +533,7 @@ export default function PresenterManager({ onClose, onSaved, onSynced, reusePres
         })}</div>
         <button className={button} type="button" disabled={busy} onClick={() => void loadCatalog()}>{lookToken ? '加载更多人物' : '刷新人物列表'}</button>
       </div>}
-      {(!initialConfiguration || tab === 'create') && <section ref={authorizationSection} className="scroll-mt-24 space-y-3 border-t border-border pt-4"><div className="flex items-center justify-between"><div><h3 className="font-bold">人物授权状态</h3><p className="mt-1 text-xs text-text-muted">照片人物保留本页的本人授权声明；视频数字分身还需由本人在 HeyGen 官方页面完成验证。验证通过后才能保存为企业默认人物。</p></div><button disabled={busy} className={button} onClick={() => void run(async () => { setJobs(await presenterApi.creations()); setActionError(''); })}>刷新状态</button></div>
+      {!initialConfiguration && <section ref={authorizationSection} className="scroll-mt-24 space-y-3 border-t border-border pt-4"><div className="flex items-center justify-between"><div><h3 className="font-bold">人物授权状态</h3><p className="mt-1 text-xs text-text-muted">照片人物保留本页的本人授权声明；视频数字分身还需由本人在 HeyGen 官方页面完成验证。验证通过后才能保存为企业默认人物。</p></div><button disabled={busy} className={button} onClick={() => void run(async () => { setJobs(await presenterApi.creations()); setActionError(''); })}>刷新状态</button></div>
         {!jobs.length && <p className="text-sm text-text-muted">暂无创建任务。提交后进度会保存在这里，关闭页面也不会丢失。</p>}
         {jobs.map(job => <div key={job.id} className="space-y-2 rounded-lg border border-border p-3"><div className="flex flex-wrap items-center gap-3"><span className="relative flex h-14 w-14 items-center justify-center overflow-hidden rounded bg-surface-2 font-bold text-text-secondary">{job.name.slice(0, 1)}{job.look?.imageUrl && <img alt={job.name} src={job.look.imageUrl} className="absolute inset-0 h-full w-full object-cover" onError={event => { event.currentTarget.style.display = 'none'; }} />}</span><strong className="text-sm">{job.name}</strong><span className="text-xs">{statusText(job)}</span>
           <button disabled={busy} className={button} onClick={() => void run(async () => updateJob(await presenterApi.refresh(job.id)))}>刷新状态</button>
@@ -457,9 +550,9 @@ export default function PresenterManager({ onClose, onSaved, onSynced, reusePres
           {job.consentUrl && <div className="rounded-lg bg-amber-50 p-3 text-sm"><a className="font-bold text-emerald-700 underline" href={job.consentUrl} target="_blank" rel="noopener noreferrer">前往 HeyGen 完成本人授权</a><span className="ml-2 text-xs text-amber-900">请由人物本人在 HeyGen 页面完成验证；完成后返回此处点击“刷新状态”。</span></div>}
         </div>)}
       </section>}
-      {selected && tab === 'import' && (!initialConfiguration || wizardStep === 3) && <fieldset disabled={busy} className="space-y-3 rounded-xl border border-border bg-white p-4"><h3 className="font-bold">配置声音并保存 · {selected.look.name}</h3>
+      {selected && tab === 'import' && (!initialConfiguration || wizardStep === 3) && <fieldset disabled={busy} className="space-y-3 rounded-xl border border-border bg-white p-4"><h3 className="font-bold">{voiceOnlyPresenter ? `为 ${selected.look.name} 录入本人声音` : `配置声音并保存 · ${selected.look.name}`}</h3>
         {selected.look.videoUrl ? <video aria-label="人物预览" controls src={selected.look.videoUrl} poster={selected.look.imageUrl} className="max-h-64 w-full rounded" /> : selected.look.imageUrl ? <img src={selected.look.imageUrl} alt={selected.look.name} className="max-h-64 w-full object-contain" /> : <p className="text-sm">供应商暂未提供预览，请稍后刷新。</p>}
-        {selected.creationId && <p className="rounded-lg bg-emerald-50 p-3 text-sm text-emerald-800">{jobs.find(job => job.id === selected.creationId)?.type === 'photo' ? '照片人物已创建，本人使用授权声明已留档。现在配置声音。' : '人物官方授权已通过。现在配置声音，不会影响或重复提交人像任务。'}</p>}{voicePicker}<label className="flex items-start gap-2 text-sm"><input type="checkbox" checked={authorized} onChange={event => setAuthorized(event.target.checked)} />我已预览人物与声音，并确认将其用于企业真人口播</label>{initialConfiguration && <p className="text-xs text-text-muted">保存后，所有后续真人口播都会默认使用此人物；首帧背景将从当前对标分镜素材中合成。</p>}<div ref={actionFeedback} tabIndex={-1} className="space-y-2 outline-none">{(busy || submitStage === 'voice_processing') && <p role="status" className="rounded-lg bg-sky-50 p-3 text-sm text-sky-900">{submitStage === 'voice_processing' ? '本人声音正在 HeyGen 处理中，完成后会自动保存。' : submitStage === 'voice' ? '正在录入本人声音…' : '正在保存默认人物…'}</p>}{actionError && <div role="alert" className="rounded-lg bg-red-50 p-3 text-sm text-red-700"><strong className="block">声音配置未完成</strong><p>{actionError}</p></div>}</div><div className="flex gap-2"><button className={button} onClick={() => { setSelected(undefined); if (initialConfiguration) setWizardStep(1); }}>上一步</button><button type="button" disabled={!authorized || !enrollmentVoiceReady || !(selected.look.imageUrl || selected.look.videoUrl) || submitStage === 'voice_processing'} className={`${button} bg-gradient-to-r from-blue-600 to-violet-600 text-white`} onClick={() => { if (recordingState === 'recording' || recordingState === 'paused') { submitRecordingOnStop.current = true; finishRecording(); } else void saveSelected(); }}>{submitStage === 'voice_processing' ? '声音处理中，将自动保存…' : initialConfiguration ? '保存为默认口播人物' : '添加到企业'}</button></div>
+        {selected.creationId && <p className="rounded-lg bg-emerald-50 p-3 text-sm text-emerald-800">{jobs.find(job => job.id === selected.creationId)?.type === 'photo' ? '照片人物已创建，本人使用授权声明已留档。现在配置声音。' : '人物官方授权已通过。现在配置声音，不会影响或重复提交人像任务。'}</p>}{voiceOnlyPresenter ? ownVoiceRecorder : voicePicker}<label className="flex items-start gap-2 text-sm"><input type="checkbox" checked={authorized} onChange={event => setAuthorized(event.target.checked)} />{voiceOnlyPresenter ? '我已试听本人录音，并确认绑定到当前数字人用于企业真人口播' : '我已预览人物与声音，并确认将其用于企业真人口播'}</label>{initialConfiguration && <p className="text-xs text-text-muted">{voiceOnlyPresenter ? '保存后，这次录入会成为当前数字人的默认声音；已单独配置渠道音色的渠道继续沿用原设置。' : '保存后，所有后续真人口播都会默认使用此人物；首帧背景将从当前对标分镜素材中合成。'}</p>}<div ref={actionFeedback} tabIndex={-1} className="space-y-2 outline-none">{(busy || submitStage === 'voice_processing') && <p role="status" className="rounded-lg bg-sky-50 p-3 text-sm text-sky-900">{submitStage === 'voice_processing' ? '本人声音正在 HeyGen 处理中，完成后会自动保存。' : submitStage === 'voice' ? '正在录入本人声音…' : voiceOnlyPresenter ? '正在绑定本人声音…' : '正在保存默认人物…'}</p>}{actionError && <div role="alert" className="rounded-lg bg-red-50 p-3 text-sm text-red-700"><strong className="block">声音配置未完成</strong><p>{actionError}</p></div>}</div><div className="flex gap-2"><button className={button} onClick={() => { if (voiceOnlyPresenter) { onClose(); return; } setSelected(undefined); if (initialConfiguration) { setWizardStep(1); setTab('choose'); } }}>{voiceOnlyPresenter ? '取消' : '上一步'}</button><button type="button" disabled={!authorized || !enrollmentVoiceReady || (!voiceOnlyPresenter && !(selected.look.imageUrl || selected.look.videoUrl)) || submitStage === 'voice_processing'} className={`${button} bg-gradient-to-r from-blue-600 to-violet-600 text-white`} onClick={() => { if (recordingState === 'recording' || recordingState === 'paused') { submitRecordingOnStop.current = true; finishRecording(); } else void saveSelected(); }}>{submitStage === 'voice_processing' ? '声音处理中，将自动保存…' : voiceOnlyPresenter ? '保存本人声音' : initialConfiguration ? '保存为默认口播人物' : '添加到企业'}</button></div>
       </fieldset>}
     </div>
   </dialog>;

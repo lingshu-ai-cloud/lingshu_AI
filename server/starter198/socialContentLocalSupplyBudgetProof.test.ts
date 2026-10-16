@@ -25,6 +25,8 @@ test('canonical tenant video selection produces readonly executor-bound proof; s
     const requirement = {key:'scene:S01:customer_real_asset',stage:'local_supply_selection',shotId:'S01',sourceRef:null,durationSeconds:3,text:null,frameCount:null,inputContractHash:'a'.repeat(64)};
     const read = createSocialContentLocalSupplyBudgetProofReader(input as never);
     const proof = await read(requirement); assert.ok(proof); assert.equal(proof.sourceSha256,sha); assert.equal(proof.scopeHash,paidProductionHash(scope)); assert.match(proof.receiptRef,/^local_selection:/); assert.equal(LOCAL_SUPPLY_EXECUTOR,'existing_customer_asset.v1'); assert.equal(assertions,2);
+    assert.ok(await createSocialContentLocalSupplyBudgetProofReader({...input,assets:[{...asset,duration:3.9999967}]} as never)(requirement),'container time-base rounding must not reject the exact selected cut');
+    assert.equal(await createSocialContentLocalSupplyBudgetProofReader({...input,assets:[{...asset,duration:3.998}]} as never)(requirement),null,'a materially short source must still fail closed');
     record.tenantId='other'; assert.equal(await read(requirement),null); record.tenantId='tenant';
     record.scriptAnalysis={...analysis,status:'missing'}; assert.equal(await read(requirement),null); record.scriptAnalysis=analysis;
     for (const patch of [{sourceStrategy:'customer_product_image_animation'},{selectedMaterialSegment:{...shot.selectedMaterialSegment,endSeconds:7}},{materialRouting:{...shot.materialRouting,localMatch:{...shot.materialRouting.localMatch,evidenceRef:null}}}]) {

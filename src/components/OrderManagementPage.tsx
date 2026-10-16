@@ -281,7 +281,6 @@ export default function OrderManagementPage() {
   return <div className="h-full overflow-y-auto bg-surface-2" data-lingshu-guide="orders-workbench">
     <div className="mx-auto max-w-[1440px] space-y-5 px-4 py-6 sm:px-6">
       <header className="flex flex-wrap justify-end gap-2"><h1 className="sr-only">{PAGE_REGISTRY.orders.canonicalTitle}</h1><Button icon={<Download size={15}/>} onClick={exportCsv}>导出 CSV</Button><Button type="primary" icon={<Plus size={15}/>} onClick={() => setCreateOpen(true)}>新增订单</Button></header>
-      {isLocalForeignTradeMockEnabled() && <Alert type="info" showIcon title="本地参考订单" description="当前展示真实订单与外贸工厂参考订单；明细持续标记来源，含参考预览的指标仅用于界面确认。"/>}
       {loadError && <Alert type="error" showIcon title={loadError} description="已保留当前记录；刷新页面重新读取。"/>}
       {feedback && <Alert type="info" showIcon title={feedback} closable onClose={() => setFeedback('')}/>}
       <div className="grid rounded-lg border border-border bg-white sm:grid-cols-2 xl:grid-cols-4">{[

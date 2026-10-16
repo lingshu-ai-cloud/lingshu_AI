@@ -114,7 +114,7 @@ const startInput = buildGuidedStartInput(draft, limits);
 assert.match(startInput, /开始制作/);
 assert.match(startInput, /积雪草屏障修护精华/);
 assert.match(startInput, /TikTok 的“澄光美研有限公司”计划每周 5 条/);
-assert.match(startInput, /5 条母版并形成 18 条平台版本/);
+assert.match(startInput, /5 条独立视频并安排 18 条平台发布/);
 assert.match(startInput, /¥50–75/);
 assert.match(startInput, /账号连接、外部服务和素材权利必须在执行前按真实状态核验/);
 assert.deepEqual(guidedSetupMissingFacts(draft, limits), []);

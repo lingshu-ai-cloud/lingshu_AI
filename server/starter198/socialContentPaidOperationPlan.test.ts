@@ -14,6 +14,14 @@ test('enterprise authored first frame reserves image, image QA, provider duratio
     assert.equal((await f.planner.plan(scope)).plan, null);
 });
 import { createSocialContentPaidOperationPlanner, paidProductionApprovalHash, paidProductionRecordHash, paidProductionHash, presenterGroupContractHash, type FrozenPaidProduction, type PaidOperationPlannerPorts } from './socialContentPaidOperationPlan.js';
+test('whole-film planner adopts fifteen without granting a separate per-stage or retry allowance', async () => {
+    const f=fixture(); f.input.authorization.maximumCny=15; f.seal();
+    const result=await f.planner.plan(scope);
+    assert.equal(result.plan!.maximumCny,15);
+    assert.equal(result.plan!.paidOperations.length,6);
+    f.input.authorization.maximumCny=100; f.seal();
+    assert.equal((await f.planner.plan(scope)).plan!.maximumCny,15);
+});
 const scope = { tenantId: 'tenant', taskId: 'task', runId: 'run', planHash: 'a'.repeat(64) };
 function fixture() { const input: FrozenPaidProduction = { scope, baselineHash: 'b'.repeat(64), recordHash: '', approval: { approved: true, reviewRef: 'approved-review', sourceHash: '', planHash: scope.planHash }, authorization: { ref: 'owner-task-budget', maximumCny: 10 }, maximumRetries: 1, directedRetryShotIds:['S01'], scenes: [{ shotId: 'S01', durationSeconds: 3, spokenText: '' }], shots: [{ shotId: 'S01', sourceStrategy: 'aigc_product_scene_replication', fallbackSourceStrategy: null, sourceRefs: ['owned-material'], materialRouting: { generation: { method: 'reference_first_frame_product_replacement_i2v' } } as any }], assets: [], voice: { mode: 'none', lines: [], requiresClone: false, allowFallback: false, requiresAsr: false, reuseReceiptRef: null }, finalReview: 'local' }; const seal = () => { input.approval.sourceHash = paidProductionApprovalHash(input); input.recordHash = paidProductionRecordHash(input); }; seal(); const ports: PaidOperationPlannerPorts = { readFrozenProduction: async () => structuredClone(input), assertCurrent: async () => { }, readVerifiedLocalExecution: async (r) => ({ kind: r.stage === 'material_analysis_cache' ? 'analysis_cache' : r.stage.includes('audio_reuse') ? 'existing_audio' : 'existing_media', scopeHash: paidProductionHash(scope), inputContractHash: r.inputContractHash, receiptRef: r.stage === 'render_audio_reuse' ? r.sourceRef! : r.stage === 'material_analysis_cache' ? 'hash-bound-material-checkpoint' : 'real-local-check-receipt', sourceSha256: r.stage === 'material_analysis_cache' ? r.sourceRef! : 'f'.repeat(64), sourceRef: 'owned-material' }), readProductFrameBounds: async (r) => ({ inputContractHash: r.inputContractHash, evidenceRef: 'actual-bounded-frame-extraction-contract', firstFrameMaximumFrames: 4, videoMaximumFrames: 5 }), resolveBoundRoute: async (r) => ({ provider: 'actual-provider', model: 'actual-model', accountRef: 'verified-account', routeEvidenceRef: 'server-selected-runtime-route', usageBoundRef: 'enforced-provider-request-limits', maximumAttempts: 1, maximumUnits: { inputTokens: 10000, outputTokens: 2000, ...(r.durationSeconds ? { providerSeconds: r.durationSeconds } : {}), ...(r.frameCount ? { frames: r.frameCount } : {}), ...(r.text ? { characters: [...r.text].length } : {}) } }) }; return { input, seal, ports, planner: createSocialContentPaidOperationPlanner(ports) }; }
 test('new product route reserves one directed video retry without repaying first frame and keeps the task cap', async () => { const f = fixture(); const result = await f.planner.plan(scope); assert.deepEqual(result.gaps, []); assert.deepEqual(result.plan!.paidOperations.map(o => o.stage), ['first_frame', 'first_frame_qa', 'video', 'video', 'video_qa', 'video_qa']); assert.equal(result.plan!.paidOperations.filter(o=>o.stage==='first_frame').length,1); assert.equal(new Set(result.plan!.paidOperations.map(o=>o.operationId)).size,6); assert.ok(result.plan!.paidOperations.every(o => /^[a-f0-9]{64}$/.test(o.inputContractHash))); assert.equal(result.plan!.maximumCny, 10); assert.equal(result.plan!.scope.runId,scope.runId); assert.equal(result.plan!.scope.taskId,scope.taskId); assert.deepEqual((await f.planner.plan(scope)).plan, result.plan); });
@@ -157,6 +165,20 @@ test('whole-track presenter continuation shots inherit frozen mother speech with
     f.input.presenterGroups[0]!.spokenText = ' ';
     f.input.scenes[0]!.spokenText = '';
     f.input.voice.lines = [];
+    f.seal();
+    assert.ok((await f.planner.plan(scope)).gaps.includes('presenter_group_contract_invalid'));
+});
+test('motion-only presenter freezes its own Seedream, Seedance and actual dynamic QA without buying speech', async () => {
+    const f=fixture();
+    f.input.maximumRetries=0;f.input.directedRetryShotIds=[];
+    f.input.shots[0]={shotId:'S01',sourceStrategy:'authorized_digital_presenter',fallbackSourceStrategy:null,sourceRefs:['presenter-1'],digitalHumanPlan:{presenterAssetIds:['presenter-1'],method:'reenact',silentMotion:true} as any};
+    const group={groupId:'presenter-motion:S01',shotIds:['S01'],durationSeconds:3,spokenText:'',presenterAssetId:'presenter-1',executionKind:'seedance_motion' as const,contractHash:''};
+    group.contractHash=presenterGroupContractHash(group);f.input.presenterGroups=[group];f.seal();
+    const result=await f.planner.plan(scope);
+    assert.deepEqual(result.gaps,[]);
+    assert.deepEqual(result.plan!.paidOperations.map(intent=>intent.stage),['first_frame','first_frame_qa','presenter_video','video_qa']);
+    assert.equal(result.requirements.find(r=>r.stage==='video_qa')?.frameCount,4);
+    (f.input.shots[0]!.digitalHumanPlan as any).silentMotion=false;
     f.seal();
     assert.ok((await f.planner.plan(scope)).gaps.includes('presenter_group_contract_invalid'));
 });

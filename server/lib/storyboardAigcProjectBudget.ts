@@ -71,7 +71,12 @@ export class StoryboardAigcProjectBudget {
     });
   }
   async reserve(input: { tenantId: string; projectId: string; shotId: string;
-    stage: StoryboardAigcStage; operationId: string; estimatedCostCny: number; inputFingerprint?: string; limitCny?: number }) {
+    stage: StoryboardAigcStage; operationId: string; estimatedCostCny: number; inputFingerprint?: string; limitCny?: number;
+    /** A managed order whose exact maximum was approved before production may
+     * consume that frozen ceiling. Start/reforecast validates any explicit
+     * installation ceiling before recording the approval, so the ledger must
+     * not re-apply its historical ¥30 fallback halfway through production. */
+    approvedFrozenLimit?: boolean }) {
     if (!input.tenantId || !input.projectId || !input.shotId || !/^[A-Za-z0-9_:.-]{1,180}$/.test(input.operationId))
       throw new Error('分镜 AIGC 预算请求标识无效，未调用供应商');
     return this.lock(input.tenantId, input.projectId, async () => {
@@ -97,7 +102,7 @@ export class StoryboardAigcProjectBudget {
       const configuredLimit = this.limitCny();
       const requestedLimit = input.limitCny === undefined ? configuredLimit : Number(input.limitCny);
       if (!Number.isFinite(requestedLimit) || requestedLimit <= 0) throw new Error('冻结制作额度无效，未调用供应商');
-      const limitMicros = micros(Math.min(configuredLimit, requestedLimit));
+      const limitMicros = micros(input.approvedFrozenLimit ? requestedLimit : Math.min(configuredLimit, requestedLimit));
       const usedMicros = Object.values(ledger.entries).reduce((sum, entry) => sum + entry.amountMicros, 0);
       const amountMicros = micros(input.estimatedCostCny);
       if (!Number.isSafeInteger(usedMicros) || usedMicros + amountMicros > limitMicros)
@@ -146,6 +151,40 @@ export class StoryboardAigcProjectBudget {
         delete ledger.entries[operationId];
         this.write(ledger);
       }
+    });
+  }
+  /**
+   * Recover a reservation left before any supplier acknowledgement was saved.
+   *
+   * A process can stop after local admission but before the provider request is
+   * accepted (for example during a local hot restart).  Such an empty
+   * reservation must not look "in progress" forever.  We only release it after
+   * a conservative timeout and only when there is no provider/task/request or
+   * partial-call receipt whatsoever.  The caller then replays the exact same
+   * operation and provider idempotency key; accepted or uncertain spend is
+   * never released here.
+   */
+  async releaseExpiredUnacceptedReservation(tenantId: string, projectId: string, operationId: string,
+    input: { now?: Date; minimumAgeMs?: number } = {}): Promise<boolean> {
+    const now = input.now || new Date();
+    const minimumAgeMs = input.minimumAgeMs ?? 10 * 60_000;
+    if (!Number.isFinite(now.getTime()) || !Number.isFinite(minimumAgeMs) || minimumAgeMs < 60_000)
+      throw new Error('分镜 AIGC 空预留恢复窗口无效');
+    return this.lock(tenantId, projectId, async () => {
+      const ledger = this.read(tenantId, projectId);
+      const entry = ledger.entries[operationId];
+      if (!entry || entry.status !== 'reserved') return false;
+      const acceptedAt = Date.parse(entry.at);
+      if (!Number.isFinite(acceptedAt) || now.getTime() - acceptedAt < minimumAgeMs) return false;
+      const output = entry.output || {};
+      const hasReceipt = ['providerTaskId', 'providerRequestId', 'uncertainProviderRequestId']
+        .some(key => Boolean(String(output[key] || '').trim()))
+        || ['seedreamReceipts', 'acceptedTaskIds', 'segmentTaskIds']
+          .some(key => Array.isArray(output[key]) && (output[key] as unknown[]).length > 0);
+      if (hasReceipt) return false;
+      delete ledger.entries[operationId];
+      this.write(ledger);
+      return true;
     });
   }
   /** After a partially accepted multi-segment attempt, charge only segments

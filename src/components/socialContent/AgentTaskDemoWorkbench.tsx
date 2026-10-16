@@ -18,6 +18,9 @@ export default function AgentTaskDemoWorkbench({
   audioUrl,
   outputVideoUrl,
   onStepChange,
+  onTitleChange,
+  onTitleCommit,
+  titleStatus = 'idle',
   onEdit,
 }: {
   activeStep: number;
@@ -27,15 +30,23 @@ export default function AgentTaskDemoWorkbench({
   audioUrl?: string;
   outputVideoUrl?: string;
   onStepChange: (step: number) => void;
+  onTitleChange?: (title: string) => void;
+  onTitleCommit?: () => void;
+  titleStatus?: 'idle' | 'saving' | 'saved' | 'error';
   onEdit: () => void;
 }) {
   const visibleStep = Math.max(0, Math.min(activeStep, 2));
   const sourceVideo = outputVideoUrl || referenceVideoUrl;
+  const stageLabels = ['口播确认', '分镜制作', '成片交付'] as const;
   return <div className="flex h-full min-h-0 flex-col bg-slate-50" data-testid="agent-task-demo-workbench">
     <ReplicationWorkbenchHeader
       activeStep={visibleStep}
       title={title}
       onStepChange={onStepChange}
+      editableTitle={Boolean(onTitleChange)}
+      onTitleChange={onTitleChange}
+      onTitleCommit={onTitleCommit}
+      titleStatus={titleStatus}
       actions={<div className="flex items-center gap-2">
         <label className="text-xs font-semibold text-text-secondary" htmlFor="agent-task-view-mode">查看方式</label>
         <select id="agent-task-view-mode" aria-label="任务查看模式" value="demo" onChange={event => { if (event.target.value === 'edit') onEdit(); }} className="h-9 rounded-lg border border-emerald-200 bg-emerald-50 px-3 text-xs font-bold text-emerald-800">
@@ -45,7 +56,7 @@ export default function AgentTaskDemoWorkbench({
       </div>}
     />
     <div className="border-b border-blue-100 bg-blue-50 px-5 py-2 text-xs text-blue-800">
-      演示模式会读取这条 Agent 任务已经生成的真实口播、分镜、音频与成片，不会修改生产数据。
+      演示模式会读取这条 Agent 任务已经生成的真实口播、分镜、音频与成片；除草稿名称外，不会修改生产数据。
     </div>
 
     {visibleStep === 0 && <div className="grid min-h-0 flex-1 grid-cols-1 lg:grid-cols-[minmax(0,1.15fr)_minmax(320px,0.85fr)_minmax(260px,0.7fr)]">
@@ -79,5 +90,12 @@ export default function AgentTaskDemoWorkbench({
       <section className="flex min-h-0 items-center justify-center rounded-xl bg-slate-950 p-4">{sourceVideo ? <video src={sourceVideo} controls playsInline className="max-h-full max-w-full rounded-lg"/> : <p className="text-sm text-slate-300">任务已有生产记录，但当前没有可播放的成片文件。</p>}</section>
       <aside className="rounded-xl border border-border bg-white p-5"><h2 className="font-semibold">交付版本</h2><p className="mt-3 text-xs leading-6 text-text-secondary">当前展示 Agent 已生成的版本。进入编辑模式修改后，使用“确认修改并生成新版本”保留原版本并创建新的交付成片。</p>{audioUrl && <audio src={audioUrl} controls preload="metadata" className="mt-5 w-full"/>}<button type="button" onClick={onEdit} className="mt-5 w-full rounded-lg bg-emerald-700 px-4 py-2.5 text-sm font-bold text-white">切换到编辑模式</button></aside>
     </div>}
+    <footer className="flex min-h-16 shrink-0 items-center justify-between gap-4 border-t border-border bg-white px-5 py-2.5">
+      <p className="text-xs font-medium text-text-secondary" aria-live="polite">当前：{stageLabels[visibleStep]}</p>
+      <div className="flex items-center gap-2">
+        <button type="button" disabled={visibleStep === 0} onClick={() => onStepChange(visibleStep - 1)} className="min-h-11 rounded-lg border border-border bg-white px-4 text-xs font-semibold text-text-secondary disabled:cursor-not-allowed disabled:opacity-40">上一步</button>
+        <button type="button" disabled={visibleStep === 2} onClick={() => onStepChange(visibleStep + 1)} className="min-h-11 rounded-lg bg-accent px-4 text-xs font-semibold text-white disabled:cursor-not-allowed disabled:bg-slate-300">下一步</button>
+      </div>
+    </footer>
   </div>;
 }

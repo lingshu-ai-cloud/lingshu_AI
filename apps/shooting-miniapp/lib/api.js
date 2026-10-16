@@ -4,12 +4,20 @@ const TOKEN_KEY = 'overseas_token'
 
 function base() {
   const value = String(apiBase || '').replace(/\/$/, '')
-  if (!/^https:\/\//.test(value)) throw new Error('请先配置现有服务的 HTTPS 地址')
+  const secure = /^https:\/\//.test(value)
+  const loopback = /^http:\/\/(?:127\.0\.0\.1|localhost)(?::\d+)?$/.test(value)
+  const privateLan = /^http:\/\/(?:10(?:\.\d{1,3}){3}|192\.168(?:\.\d{1,3}){2}|172\.(?:1[6-9]|2\d|3[01])(?:\.\d{1,3}){2})(?::\d+)?$/.test(value)
+  if (!secure && !loopback && !privateLan) throw new Error('请配置 HTTPS 服务地址；本地联调仅允许回环或私有局域网地址')
   return value
 }
 
 function token() { return wx.getStorageSync(TOKEN_KEY) || '' }
 function clearToken() { wx.removeStorageSync(TOKEN_KEY) }
+function assetUrl(value) {
+  const url = String(value || '')
+  if (/^https:\/\//.test(url)) return url
+  return url.startsWith('/') ? base() + url : url
+}
 
 function request(path, method = 'GET', data, authorized = true) {
   const requestToken = authorized ? token() : ''
@@ -28,6 +36,21 @@ function request(path, method = 'GET', data, authorized = true) {
       fail(err) { reject(new Error(err.errMsg || '网络连接失败')) }
     })
   })
+}
+
+function download(path, filename) {
+  return new Promise((resolve, reject) => wx.request({
+    url: base() + '/api/overseas/' + path,
+    method: 'GET', responseType: 'arraybuffer',
+    header: { Authorization: 'Bearer ' + token() },
+    success(res) {
+      if (res.statusCode === 401) clearToken()
+      if (res.statusCode < 200 || res.statusCode >= 300) return reject(new Error('报价卡片生成失败（HTTP ' + res.statusCode + '）'))
+      const filePath = wx.env.USER_DATA_PATH + '/' + filename
+      wx.getFileSystemManager().writeFile({ filePath, data: res.data, success: () => resolve(filePath), fail: err => reject(new Error(err.errMsg || '报价卡片保存失败')) })
+    },
+    fail(err) { reject(new Error(err.errMsg || '报价卡片下载失败')) }
+  }))
 }
 
 async function login(email, password) {
@@ -84,7 +107,7 @@ function uploadVideo(file, onProgress) {
 }
 
 module.exports = {
-  token, clearToken, login, uploadVideo,
+  token, clearToken, login, uploadVideo, assetUrl,
   me: () => request('auth/me'),
   products: async () => {
     const profile = await request('enterprise/profile')
@@ -95,6 +118,7 @@ module.exports = {
   },
   createTask: data => request('studio/shooting-tasks', 'POST', data),
   tasks: () => request('studio/shooting-tasks'),
+  studioProject: id => request('studio/projects/' + encodeURIComponent(id)),
   attach: (id, materialId) => request('studio/shooting-tasks/' + encodeURIComponent(id) + '/uploads', 'POST', { uploadedMaterialIds: [materialId] })
 }
 
@@ -106,3 +130,33 @@ module.exports.chat = messages => new Promise((resolve, reject) => {
 })
 
 module.exports.command = body => request('starter-198/commands', 'POST', body);
+module.exports.customers = () => request('customers')
+module.exports.sendCustomerMessage = (customerId, body, requestId) => request('customers/' + encodeURIComponent(customerId) + '/outbox', 'POST', { body, requestId })
+module.exports.quoteAvailability = () => request('quote-skill/availability')
+module.exports.quoteCatalog = () => request('quote-skill/catalog')
+module.exports.latestCustomerQuote = customerId => request('quote-skill/customers/' + encodeURIComponent(customerId) + '/latest')
+module.exports.createCustomerQuote = (customer, clonePrevious) => request('quote-skill/drafts', 'POST', {
+  customerId: customer.id,
+  customerLanguage: customer.language || '',
+  customerWhatsAppName: customer.whatsappProfileName || customer.name || '',
+  productHint: customer.product || customer.outboundProduct || customer.productHint || '',
+  messages: (customer.timeline || []).filter(item => !item.actor || item.actor === 'buyer').map(item => String(item.body || item.text || item.content || '').trim()).filter(Boolean).slice(-12),
+  clonePrevious: Boolean(clonePrevious)
+})
+module.exports.updateCustomerQuote = (id, expectedRevision, patch) => request('quote-skill/drafts/' + encodeURIComponent(id), 'PATCH', { ...patch, expectedRevision })
+module.exports.confirmCustomerQuote = (id, expectedRevision) => request('quote-skill/drafts/' + encodeURIComponent(id) + '/confirm', 'POST', { expectedRevision })
+module.exports.customerQuoteReply = id => request('quote-skill/drafts/' + encodeURIComponent(id) + '/reply', 'POST')
+module.exports.customerQuoteCard = id => download('quote-skill/drafts/' + encodeURIComponent(id) + '/card', 'quote-' + id + '.png')
+module.exports.sendCustomerQuoteCard = id => request('quote-skill/drafts/' + encodeURIComponent(id) + '/send-card', 'POST')
+module.exports.translateText = (text, source, target) => request('plugins/translate/run', 'POST', { text, source, target })
+module.exports.translateCustomerReply = (text, target) => module.exports.translateText(text, '简体中文', target)
+module.exports.recommendCustomerReply = (customer, instruction) => request('agents/conversion/draft', 'POST', {
+  customerId: customer.id,
+  language: customer.language || 'English',
+  stage: customer.stage || '',
+  timeline: customer.timeline || [],
+  message: customer.preview || '',
+  intent: 'reply',
+  instruction: instruction || '',
+  manualRequest: true
+})

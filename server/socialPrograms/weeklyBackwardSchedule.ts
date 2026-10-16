@@ -47,7 +47,7 @@ export function planWeeklyBackwardSchedule(input: WeeklyBackwardScheduleInput): 
   const operationalDeadlines=new Map<string,number>(),crossWeekOperationalTaskIds:string[]=[];
   for(const [id,deadline] of Object.entries(input.operationalDeadlines??{})) {
     const task=tasks.get(id),week=input.frozenOperationalWeek;
-    if(!task||!['performance_monitoring','weekly_review','template_extraction','template_performance_validation'].includes(task.schedule.stepKind))throw Error('Operational deadline requires an actual monitoring or review task');
+    if(!task||!['business_schedule','performance_monitoring','weekly_review','template_extraction','template_performance_validation'].includes(task.schedule.stepKind))throw Error('Operational deadline requires an actual monitoring, planning or review task');
     if(!week||!/^\d{4}-\d{2}-\d{2}$/.test(week.weekStart)||!/^\d{4}-\d{2}-\d{2}$/.test(week.weekEnd)||publicationInstant(`${week.weekStart}T00:00:00Z`)===null||publicationInstant(`${week.weekEnd}T00:00:00Z`)===null||week.weekStart>week.weekEnd)throw Error('Frozen operational week evidence required');
     const parsed=instant(deadline),localDate=deadline.slice(0,10);
     if(localDate<week.weekStart)throw Error('Operational deadline precedes frozen week in its explicit timezone');
@@ -71,7 +71,7 @@ export function planWeeklyBackwardSchedule(input: WeeklyBackwardScheduleInput): 
   // the fastest possible completion of its prerequisite chain. This lower
   // bound is conservative; resource collisions are still checked below.
   const earliestFinishMemo=new Map<string,number>();
-  const earliestPossibleFinish=(id:string):number=>{const cached=earliestFinishMemo.get(id);if(cached!==undefined)return cached;const task=tasks.get(id)!,constraint=input.constraints[id];let start=Math.max(now,constraint?instant(constraint.availableAt):now,...task.dependsOnTaskIds.map(earliestPossibleFinish));if(task.schedule.stepKind==='weekly_review'&&input.frozenOperationalWeek)start=Math.max(start,instant(weeklyReviewWindowBounds(input.frozenOperationalWeek).endsAt));const duration=constraint?(constraint.remainingMinutes+constraint.bufferMinutes)*60000:task.schedule.estimatedDurationMinutes*60000;const finish=start+duration;earliestFinishMemo.set(id,finish);return finish;};
+  const earliestPossibleFinish=(id:string):number=>{const cached=earliestFinishMemo.get(id);if(cached!==undefined)return cached;const task=tasks.get(id)!,constraint=input.constraints[id];let start=Math.max(now,constraint?instant(constraint.availableAt):now,...task.dependsOnTaskIds.map(earliestPossibleFinish));if(task.inputSnapshot?.rollingCadence==='daily_incremental')start=Math.max(start,instant(task.schedule.estimatedStartAt));if(task.schedule.stepKind==='weekly_review'&&input.frozenOperationalWeek)start=Math.max(start,instant(weeklyReviewWindowBounds(input.frozenOperationalWeek).endsAt));const duration=constraint?(constraint.remainingMinutes+constraint.bufferMinutes)*60000:task.schedule.estimatedDurationMinutes*60000;const finish=start+duration;earliestFinishMemo.set(id,finish);return finish;};
   input.tasks.forEach(task=>earliestPossibleFinish(task.taskId));
   const publishing = input.tasks.filter(task => task.schedule.stepKind === 'publishing' && task.publicationTaskId);
   if (new Set(publishing.map(task => task.publicationTaskId)).size !== publishing.length) throw new Error('Duplicate backward scheduling publication');

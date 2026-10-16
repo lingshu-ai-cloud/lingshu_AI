@@ -53,7 +53,7 @@ const prepare=async({task:t}:any)=>{
  const c=t.task_key;
  if(c==='scheduled_source_collection')records.scheduled_tasks=[{id:'mock-schedule',tenant_id:tenant,enabled:true,task_id:'mock-schedule',task_type:'social_discovery_collection',config:{discoveryScopeId:'mock-discovery-scope',workflowRefs:JSON.stringify([{workflowRunId:run.id,workflowTaskId:t.id}]),synthetic:true}}];
  if(c==='scheduled_source_collection'&&permitCollection)records.social_discovery_runs=[{id:'mock-discovery-run',tenant_id:tenant,discoveryScopeId:'mock-discovery-scope',status:'completed',modeStats:{momentum:{accepted:1}},finishedAt:new Date().toISOString(),synthetic:true}];
- if(c==='viral_analysis'&&permitAnalysis)records.trend_videos=[{id:'mock-reference',tenantId:tenant,...scope(c),aiAnalysis:{analysisMode:'exact',analysisQuality:'video',gemini:{synthetic:true,scriptDetails15s:[{time:'0-3s',visual:'MOCK shirt product close-up'}]}}}];
+ if(c==='viral_analysis'&&permitAnalysis)records.trend_videos=[{id:'mock-reference',tenantId:tenant,duration:3,updatedAt:'2026-09-01T00:00:00.000Z',...scope(c),aiAnalysis:{analysisMode:'exact',analysisQuality:'video',geminiStatus:'analyzed',gemini:{synthetic:true,scriptDetails15s:[{time:'0-3s',visual:'MOCK shirt product close-up',materialType:'product',narrativeRole:'hook',classificationEvidence:'画面明确展示 MOCK cotton shirt',analysisGranularity:'shot'}]}}}];
  if(c==='content_production')records.studio_projects=[{id:'mock-project',tenant_id:tenant,...scope(c),status:'ready_for_approval',spec:{caption:'MOCK content - simulation only',automation:{managedBy:'digital_employee',stage:'completed',renderOutputPath:fixtureVideo,quality:{passed:permitQuality,ruleVersion:9,synthetic:true}}}}];
  if(c==='content_quality_gate'&&permitQuality)records.studio_projects[0].spec.automation.quality.passed=true;
  if(c==='platform_publish'&&permitPublish){for(const post of records.posts||[]){post.platform_post_id='MOCK-platform-receipt';post.stats={...post.stats,status:'published',publishResults:{'mock-account':{accountId:'mock-account',platform:'facebook',status:'published',platformPostId:'MOCK-platform-receipt'}},synthetic:true};customer.sourcePostId=post.id;}}
@@ -82,6 +82,8 @@ try {
   assert.equal(task('scheduled_source_collection').status,'succeeded');
   assert.equal(task('viral_analysis').status,'waiting_external');assert.notEqual(task('content_release_approval').status,'succeeded');
   permitAnalysis=true;await reconcileDigitalEmployeeRun(tenant,run.id);saveStep('quality_failed');
+  assert.equal(task('viral_analysis').status,'succeeded','production-admissible exact analysis releases the director handoff');
+  assert.equal(task('content_mode_routing').status,'succeeded','the frozen content batch is created before production starts');
   assert.equal(task('content_production').status,'waiting_external');assert.equal(task('content_release_approval').status,'pending');
   permitQuality=true;await reconcileDigitalEmployeeRun(tenant,run.id);saveStep('publishing_approval');
   assert.equal(task('content_release_approval').status,'waiting_approval');assert.equal(task('platform_publish').status,'pending');assert.equal((records.posts||[]).length,0);

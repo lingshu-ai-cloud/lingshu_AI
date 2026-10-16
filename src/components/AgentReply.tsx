@@ -1,18 +1,22 @@
 import { useState, type ReactNode } from 'react';
-import { Check, Copy, Zap } from 'lucide-react';
+import { ArrowRight, Check, Copy } from 'lucide-react';
+import { Collapse } from 'antd';
 import {
   Bar, BarChart, CartesianGrid, Line, LineChart, ResponsiveContainer, Tooltip, XAxis, YAxis,
 } from 'recharts';
 import type { AgentType } from '../App';
 import { CHART_CURSOR_STYLE, CHART_TOOLTIP_STYLE } from '../lib/uiStyles';
 import { chartPalette } from './ui/LsDataChart';
+import { readableAssistantReply, splitAssistantReply } from '../../shared/assistantReadableReply';
+import { extractAssistantFiles } from '../../shared/assistantFileIntent';
+import AssistantFileCard from './assistant/AssistantFileCard';
 
 /* 渲染灵小枢回复的轻量 Markdown：
    ## / ### 分级加粗标题，**加粗**强调结论，- / 1. 列表，[文字](链接) 可点跳转。
    支持 Markdown 表格、引用/话术块、代码块复制。
-   兼容旧回复中的内部能力触发格式，但只展示统一的灵小枢推进入口。 */
+   旧回复的派发文本只作建议展示；执行入口由真实任务组件提供。 */
 
-// 锚定行首：只把独立成行的触发指令识别成按钮，避免把"如果需要，我建议触发…"整句吞成按钮、丢掉前半句
+// 兼容历史派发建议，不把模型文本变成执行授权。
 const ACTION_RE = /^建议触发\s*[【[]?\s*(流量专家|我的社媒|转化专家|留存专家|我的客户|策略专家|首页)\s*[】\]]?\s*执行[:：]\s*(.+)/;
 // 引用块里的"提示/说明/备注"类内容：是说给用户听的话，不是可复制话术
 const NOTE_QUOTE_RE = /^(?:💡|⚠️?|📌|ℹ️?|❗|✅|🔔|🧭|🔍|📣|🚨|注意|提示|提醒|说明|备注|注[:：]|小贴士|温馨提示|总结|小结|TL;?DR|Tips?\b)/i;
@@ -173,16 +177,36 @@ function CopyBlock({ text, title, tone = 'neutral' }: { text: string; title?: st
   );
 }
 
-export default function AgentReply({ content, sources, onAction, onSuggest }: {
+export default function AgentReply({ content, sources, onSuggest, detailExpanded = false, allowDetails = true }: {
   content: string;
   sources?: { title: string; uri: string }[];
   onAction?: (agent: AgentType, task: string) => void;
   onSuggest?: (text: string) => void;
+  detailExpanded?: boolean;
+  allowDetails?: boolean;
 }) {
   setTrustedLinkHosts(sources);
-  const lines = content.split('\n');
+  const files = extractAssistantFiles(content);
+  const presentation = allowDetails ? splitAssistantReply(files.text) : { summary: files.text, details: [] };
+  const lines = readableAssistantReply(presentation.summary).split('\n');
   const blocks: ReactNode[] = [];
   let list: { type: 'ul' | 'ol'; items: string[] } | null = null;
+
+  const quickReplyCards = (items: string[], key: string) => (
+    <div key={key} className="my-2 grid gap-2" role="group" aria-label="快捷回复">
+      {items.map((item, index) => (
+        <button
+          key={`${key}_${index}`}
+          type="button"
+          onClick={() => onSuggest?.(item)}
+          className="group flex w-full items-center justify-between gap-3 rounded-md border border-border bg-surface px-3 py-2.5 text-left text-sm leading-5 text-text-primary hover:bg-surface-2 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent"
+        >
+          <span>{cleanLooseMarkdown(item)}</span>
+          <ArrowRight size={14} className="shrink-0 text-accent transition-transform group-hover:translate-x-0.5" />
+        </button>
+      ))}
+    </div>
+  );
 
   const flush = () => {
     if (!list) return;
@@ -197,16 +221,11 @@ export default function AgentReply({ content, sources, onAction, onSuggest }: {
 
   const actionButton = (line: string, key: string) => {
     const cleaned = line.replace(/^\s*(?:[-*•·]|\d+[.、)])\s*/, '').replace(/\*\*/g, '').trim();
-    const act = onAction ? cleaned.match(ACTION_RE) : null;
+    const act = cleaned.match(ACTION_RE);
     if (!act) return null;
     const task = act[2].trim();
     return (
-      <button key={key} onClick={() => onAction!('strategy', task)}
-        className="inline-flex items-start gap-1.5 my-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold text-white text-left transition-all active:scale-[0.98]"
-        style={{ background: 'var(--color-accent)' }}>
-        <Zap size={13} className="flex-shrink-0 mt-0.5" />
-        <span>交给灵小枢推进 · {task.length > 22 ? `${task.slice(0, 22)}…` : task}</span>
-      </button>
+      <p key={key} className="leading-relaxed my-1">可在对应工作区处理：{inline(task, key)}</p>
     );
   };
 
@@ -230,18 +249,9 @@ export default function AgentReply({ content, sources, onAction, onSuggest }: {
       if (lang === 'chart') {
         blocks.push(<MiniChart key={`chart_${i}`} raw={body.join('\n').trim()} />);
       } else if (lang === 'next') {
-        const items = body.map(l => l.replace(/^\s*(?:[-*•·]|\d+[.、)])\s*/, '').trim()).filter(Boolean).slice(0, 4);
+        const items = body.map(l => l.replace(/^\s*(?:[-*•·]|\d+[.、)])\s*/, '').trim()).filter(Boolean).slice(0, 2);
         if (onSuggest && items.length) {
-          blocks.push(
-            <div key={`next_${i}`} className="my-2 flex flex-wrap gap-1.5">
-              {items.map((item, idx) => (
-                <button key={idx} type="button" onClick={() => onSuggest(item)}
-                  className="rounded-full border border-accent/30 bg-accent-glow px-3 py-1.5 text-xs font-semibold text-accent transition-colors hover:border-accent/60 active:scale-[0.98]">
-                  {item}
-                </button>
-              ))}
-            </div>,
-          );
+          blocks.push(quickReplyCards(items, `next_${i}`));
         }
       } else {
         // 语言标记缺失或是 text/markdown 这类"无信息"标记时，用中文兜底标题，不把 "text" 当标题展示
@@ -310,7 +320,7 @@ export default function AgentReply({ content, sources, onAction, onSuggest }: {
       continue;
     }
 
-    // 兼容旧回复格式；内部能力身份不暴露为用户可直接指挥的并列 Agent。
+    // 历史派发文本降级为普通工作区建议，不生成执行按钮。
     const action = actionButton(line, `act_${i}`);
     if (action) {
       flush();
@@ -335,13 +345,19 @@ export default function AgentReply({ content, sources, onAction, onSuggest }: {
     if (ul) { if (list?.type !== 'ul') { flush(); list = { type: 'ul', items: [] }; } list.items.push(cleanLooseMarkdown(ul[1])); continue; }
     flush();
     const cleanedLine = cleanLooseMarkdown(line);
-    if (cleanedLine) blocks.push(<p key={i} className="leading-relaxed my-1 whitespace-pre-wrap">{inline(cleanedLine, `p_${i}`)}</p>);
+    if (cleanedLine) {
+      blocks.push(<p key={i} className="leading-relaxed my-1 whitespace-pre-wrap">{inline(cleanedLine, `p_${i}`)}</p>);
+    }
   }
   flush();
 
   return (
     <div className="text-sm text-text-primary [&>*:first-child]:mt-0">
       {blocks}
+      {presentation.details.some(value => value.trim()) && <Collapse ghost size="small" defaultActiveKey={detailExpanded || !presentation.summary.trim() ? ['analysis'] : []} items={[{
+        key: 'analysis', label: '详细分析', children: <AgentReply content={presentation.details.join('\n\n')} allowDetails={false} />,
+      }]} />}
+      {files.ids.map(id => <AssistantFileCard key={id} id={id} />)}
       {sources && sources.length > 0 && (
         <div className="mt-2.5 pt-2 border-t border-border">
           <p className="text-[10px] font-semibold text-text-muted mb-1">参考来源</p>
