@@ -5,6 +5,10 @@ export interface ShootingSlot {
   detail: string;
   requirements: string;
   duration: number;
+  observedPresenterRole?: import('./contracts/presenterShotRecognition.js').ObservedPresenterRole;
+  personContinuityId?: string;
+  salesPresenterConfirmed?: boolean;
+  needsReview?: boolean;
 }
 
 /** Rebuild the editable storyboard timeline from durable production shots.

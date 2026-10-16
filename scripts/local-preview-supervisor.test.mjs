@@ -32,5 +32,7 @@ assert.doesNotMatch(source, /(?:log|console\.[a-z]+)\([^\n]*providerConfiguratio
 assert.doesNotMatch(source, /'0\.0\.0\.0'/, '受监督的本地预览不能监听局域网接口');
 assert.match(source, /'--host',\s*'127\.0\.0\.1'/, '受监督的本地预览必须只绑定 IPv4 回环地址');
 assert.match(viteSource, /optimizeDeps:\s*\{[^}]*exclude:\s*\['xlsx'\]/s, '本地预览不能给 vendored xlsx 生成会失效的优化哈希');
+assert.match(viteSource, /'\/cloud-files':\s*\{[^}]*target:\s*devApiTarget/s, '本地预览必须转发历史云素材播放路由');
+assert.match(viteSource, /'\/studio-media':\s*\{[^}]*target:\s*devApiTarget/s, '本地预览必须转发当前素材播放路由');
 
 console.log('local preview supervisor contract passed');

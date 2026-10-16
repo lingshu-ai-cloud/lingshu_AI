@@ -7,6 +7,25 @@ import type { WeeklyScheduleCapacityInput, WeeklyScheduleProposal } from '../../
 export const WEEKLY_ACTION_LABELS: Record<WeeklyAssistantAction, string> = {
   create: '新建一条内容', revise: '修改已有内容', publish: '发布指定成片',
 };
+export const STANDALONE_CONTENT_PACKAGE_KEY = '__standalone_content__';
+const STANDALONE_PLATFORM_OPTIONS = [
+  { value: 'tiktok', label: 'TikTok' },
+  { value: 'youtube', label: 'YouTube' },
+  { value: 'instagram', label: 'Instagram' },
+  { value: 'facebook', label: 'Facebook' },
+];
+export function standaloneContentNavigation(input: { requestId: number; product: { id: string; name: string }; goal: string; platform: string }) {
+  const goal = input.goal.trim();
+  return {
+    page: 'smartAssets', view: 'create', studioEntry: true,
+    contentCreationRequest: {
+      requestId: input.requestId, themeId: 'product_value', mode: 'instant', creationPath: 'material_processing', materialInput: 'none', managedMode: 'one_click_managed',
+      prefill: { title: `${input.product.name}内容`, topic: goal, productId: input.product.id, productName: input.product.name, platforms: [input.platform] },
+      identityMappings: { selectedProductIds: [input.product.id], selectedProductNames: [input.product.name], products: [{ sourceTerm: input.product.name, productId: input.product.id, productName: input.product.name }] },
+      specialRequirements: goal,
+    },
+  };
+}
 export function weeklyCapacityLimitLabel(reason: string): string {
   const labels: Record<string, string> = { materials: '可用素材不足', deadline: '剩余制作时间不足', accounts: '账号发布容量不足', interaction: '互动承接容量不足', sales: '销售承接容量不足', budget: '可用预算不足' };
   return labels[reason] || '存在容量限制，请查看周任务说明';
@@ -66,15 +85,20 @@ export default function AssistantWeeklyActions({ page, scopeKey, disabled, onRec
       if (fence.current !== generation) return;
       setContext(loaded);
       if (loaded.packages.length === 1) setAnswers(current => ({ ...current, packageKey: loaded.packages[0].packageId }));
+      else if (next === 'create' && loaded.packages.length === 0) setAnswers(current => ({ ...current, packageKey: STANDALONE_CONTENT_PACKAGE_KEY }));
     } catch (e) { if (fence.current === generation) setError(e instanceof Error ? e.message : '无法读取周任务。'); }
     finally { if (fence.current === generation) { setBusy(false); locked.current = false; onBusyChange?.(false); } }
   };
   const update = <K extends keyof Answers>(key: K, value: Answers[K]) => { setAnswers(current => ({ ...current, [key]: value })); setError(''); };
   const selectedPackage = context?.packages.find(item => item.packageId === answers.packageKey);
+  const standaloneCreate = action === 'create' && answers.packageKey === STANDALONE_CONTENT_PACKAGE_KEY;
   const legacyCreate = selectedPackage?.model === 'legacy';
+  const usesPlatformSelection = standaloneCreate || legacyCreate;
   const configuredPlatforms = selectedPackage?.platforms;
   const legacyPlatforms = Array.isArray(configuredPlatforms) ? configuredPlatforms.filter((value): value is string => typeof value === 'string') : [];
-  const selectableProducts = context?.products.filter(item => !selectedPackage?.allowedProductIds || selectedPackage.allowedProductIds.includes(item.id)) ?? [];
+  const selectableProducts = selectedPackage
+    ? context?.products.filter(item => !selectedPackage.allowedProductIds || selectedPackage.allowedProductIds.includes(item.id)) ?? []
+    : context?.products ?? [];
   const accounts = selectedPackage ? context?.accounts.filter(item => item.programId === selectedPackage.programId && (!item.packageIds || item.packageIds.includes(selectedPackage.packageId))) ?? [] : [];
   const selectedAccount = accounts.find(item => item.id === answers.accountId);
   const targets = (action === 'revise' ? context?.revisionTargets : context?.publishTargets) ?? [];
@@ -84,24 +108,24 @@ export default function AssistantWeeklyActions({ page, scopeKey, disabled, onRec
   const publishingAccount = publishingAccounts.find(account => account.accountId === answers.publishingAccountId);
   const steps = action === 'create' ? ['package', 'product', 'goal', 'account', 'deadline', 'confirm'] : action === 'revise' && target?.model !== 'legacy' ? ['target', 'note', 'confirm'] : needsPublishingConfiguration ? ['target', 'publishing-account', 'publishing-time', 'confirm'] : ['target', 'confirm'];
   const current = steps[step];
-  const question = current === 'package' ? '这条内容要加入哪一个周任务包？'
+  const question = current === 'package' ? '这条内容是否加入现有周任务包？'
     : current === 'product' ? '要为企业知识库中的哪个产品制作？'
-    : current === 'goal' ? '这条内容主要想表达什么、达成什么目标？'
-    : current === 'account' ? legacyCreate ? '准备制作哪个平台的内容？' : '准备给哪个账号制作？'
-    : current === 'deadline' ? legacyCreate ? '希望这条内容什么时候交付？（北京时间）' : '计划什么时候发布？内容需要在此前完成。（北京时间）'
+    : current === 'goal' ? '你想要在口播中增加什么卖点/表达？'
+    : current === 'account' ? usesPlatformSelection ? '准备制作哪个平台的内容？' : '准备给哪个账号制作？'
+    : current === 'deadline' ? usesPlatformSelection ? '希望这条内容什么时候交付？（北京时间）' : '计划什么时候发布？内容需要在此前完成。（北京时间）'
     : current === 'note' ? '这条内容具体要改哪里？'
     : current === 'publishing-account' ? '请选择这条成片要发布的已连接账号。'
     : current === 'publishing-time' ? '计划在什么时候发布？（北京时间）'
     : current === 'target' ? action === 'revise' ? '请选择要修改的原内容和版本。' : '请选择要进入发布流程的成片。'
-    : '确认这些信息后，再提交到周任务。';
+    : standaloneCreate ? '确认这些信息后，新建一条自由内容任务。' : '确认这些信息后，再提交到周任务。';
   const next = () => {
-    const valid = current === 'package' ? Boolean(selectedPackage) : current === 'product' ? selectableProducts.some(item => item.id === answers.productId)
-      : current === 'goal' ? Boolean(answers.goal.trim()) : current === 'account' ? legacyCreate ? legacyPlatforms.includes(answers.platform) : Boolean(selectedAccount)
+    const valid = current === 'package' ? standaloneCreate || Boolean(selectedPackage) : current === 'product' ? selectableProducts.some(item => item.id === answers.productId)
+      : current === 'goal' ? Boolean(answers.goal.trim()) : current === 'account' ? standaloneCreate ? STANDALONE_PLATFORM_OPTIONS.some(item => item.value === answers.platform) : legacyCreate ? legacyPlatforms.includes(answers.platform) : Boolean(selectedAccount)
       : current === 'deadline' ? Number.isFinite(Date.parse(`${answers.dueAt}+08:00`)) && Date.parse(`${answers.dueAt}+08:00`) > Date.now()
       : current === 'note' ? Boolean(answers.note.trim()) : Boolean(target);
     if (current === 'publishing-account' && !publishingAccount) { setError('请选择与成片平台一致的已连接账号。'); return; }
     if (current === 'publishing-time' && (!Number.isFinite(Date.parse(`${answers.publishAt}+08:00`)) || Date.parse(`${answers.publishAt}+08:00`) <= Date.now())) { setError('请选择未来的明确发布时间。'); return; }
-    if (!valid) { setError(current === 'deadline' ? legacyCreate ? '请选择未来的期望交付时间。' : '请选择未来的计划发布时间。' : '请先回答这一项。'); return; }
+    if (!valid) { setError(current === 'deadline' ? usesPlatformSelection ? '请选择未来的期望交付时间。' : '请选择未来的计划发布时间。' : '请先回答这一项。'); return; }
     setError(''); setStep(value => value + 1);
   };
   const submit = async () => {
@@ -109,6 +133,13 @@ export default function AssistantWeeklyActions({ page, scopeKey, disabled, onRec
     const generation = fence.current;
     let input: Record<string, unknown>;
     if (action === 'create') {
+      if (standaloneCreate) {
+        const product = selectableProducts.find(item => item.id === answers.productId);
+        if (!product || !STANDALONE_PLATFORM_OPTIONS.some(item => item.value === answers.platform)) return;
+        window.dispatchEvent(new CustomEvent('lingshu:navigate', { detail: standaloneContentNavigation({ requestId: Date.now(), product, goal: answers.goal, platform: answers.platform }) }));
+        setExpanded(false); setAction(null); setContext(null); setAnswers(emptyAnswers()); setStep(0);
+        return;
+      }
       if (!selectedPackage || (!legacyCreate && !selectedAccount) || !selectableProducts.some(p => p.id === answers.productId)) return;
       if (legacyCreate && (!legacyBudgetText.trim() || !Number.isFinite(Number(legacyBudgetText)) || Number(legacyBudgetText) < 0 || Number(legacyBudgetText) > 10000)) { setError('请填写费用上限（0–10000 元）；创建任务不会启动付费生成。'); return; }
       input = { ...weeklyActionScopeTokens(selectedPackage), requestId, programId: selectedPackage.programId, packageId: selectedPackage.packageId, expectedVersion: selectedPackage.packageVersion,
@@ -192,23 +223,22 @@ export default function AssistantWeeklyActions({ page, scopeKey, disabled, onRec
             </>}
             <Button type="primary" loading={busy} disabled={disabled || !capacityProposal.canAdd || Boolean(scheduleProposal && !scheduleProposal.plan.fullGraphConditionallyReachable)} onClick={() => void continueCreate()}>{!scheduleInput ? '确认容量与费用上限' : !scheduleProposal ? '确认资源并计算排期' : '确认加入本周排期'}</Button>
           </> : context && <>
-            {context.packages.length === 0 && <Alert type="warning" title="当前账号尚未建立可执行周任务包" description="尚不能创建、修订或发布周任务；这里不会用历史看板或示例计划替代。" />}
             <p id="weekly-action-question">{question}</p>
-            {current === 'package' && <Select className="w-full" aria-labelledby="weekly-action-question" value={answers.packageKey || undefined} options={context.packages.map(p => ({ value: p.packageId, label: p.title }))} onChange={value => { update('packageKey', value); update('accountId', ''); update('productId', ''); update('platform', ''); setLegacyBudgetText(''); }} notFoundContent="当前账号尚未建立可执行周任务包" />}
-            {current === 'product' && <><Select className="w-full" showSearch optionFilterProp="label" aria-labelledby="weekly-action-question" value={answers.productId || undefined} options={selectableProducts.map(p => ({ value: p.id, label: p.name }))} onChange={value => update('productId', value)} notFoundContent="当前周计划暂无可选的知识库产品" /><Button type="link" onClick={() => window.dispatchEvent(new CustomEvent('lingshu:navigate', { detail: { page: 'enterprise' } }))}>到企业知识库新建产品</Button></>}
+            {current === 'package' && <Select className="w-full" aria-labelledby="weekly-action-question" value={answers.packageKey || undefined} options={[{ value: STANDALONE_CONTENT_PACKAGE_KEY, label: '不加入周任务包（自由任务）' }, ...context.packages.map(p => ({ value: p.packageId, label: p.title }))]} onChange={value => { update('packageKey', value); update('accountId', ''); update('productId', ''); update('platform', ''); setLegacyBudgetText(''); }} />}
+            {current === 'product' && <><Select className="w-full" showSearch optionFilterProp="label" aria-labelledby="weekly-action-question" value={answers.productId || undefined} options={selectableProducts.map(p => ({ value: p.id, label: p.name }))} onChange={value => update('productId', value)} notFoundContent="企业知识库暂无可选产品" /><Button type="link" onClick={() => window.dispatchEvent(new CustomEvent('lingshu:navigate', { detail: { page: 'enterprise' } }))}>到企业知识库新建产品</Button></>}
             {(current === 'goal' || current === 'note') && <Input.TextArea autoFocus aria-labelledby="weekly-action-question" rows={3} maxLength={current === 'goal' ? 1000 : 2000} value={current === 'goal' ? answers.goal : answers.note} onChange={event => update(current === 'goal' ? 'goal' : 'note', event.target.value)} />}
-            {current === 'account' && (legacyCreate ? <Select className="w-full" aria-labelledby="weekly-action-question" value={answers.platform || undefined} options={legacyPlatforms.map(platform => ({ value: platform, label: platform }))} onChange={value => update('platform', value)} notFoundContent="当前周计划没有已确认的内容平台" /> : <Select className="w-full" aria-labelledby="weekly-action-question" value={answers.accountId || undefined} options={accounts.map(p => ({ value: p.id, label: `${p.name} · ${p.platform}` }))} onChange={value => update('accountId', value)} notFoundContent="本周暂无可用账号，请先配置账号排期。" />)}
+            {current === 'account' && (usesPlatformSelection ? <Select className="w-full" aria-labelledby="weekly-action-question" value={answers.platform || undefined} options={standaloneCreate ? STANDALONE_PLATFORM_OPTIONS : legacyPlatforms.map(platform => ({ value: platform, label: platform }))} onChange={value => update('platform', value)} notFoundContent="当前周计划没有已确认的内容平台" /> : <Select className="w-full" aria-labelledby="weekly-action-question" value={answers.accountId || undefined} options={accounts.map(p => ({ value: p.id, label: `${p.name} · ${p.platform}` }))} onChange={value => update('accountId', value)} notFoundContent="本周暂无可用账号，请先配置账号排期。" />)}
             {current === 'deadline' && <Input type="datetime-local" aria-labelledby="weekly-action-question" value={answers.dueAt} onChange={event => update('dueAt', event.target.value)} />}
             {current === 'target' && <Select className="w-full" showSearch optionFilterProp="label" aria-labelledby="weekly-action-question" value={answers.targetId || undefined} options={targets.map(p => ({ value: p.id, label: p.name }))} onChange={value => { update('targetId', value); update('publishingAccountId', ''); update('publishAt', ''); }} notFoundContent={action === 'revise' ? '暂无符合条件的原内容。' : '暂无可进入发布流程的成片，请先完成成片验收。'} />}
             {current === 'publishing-account' && <><Select className="w-full" aria-labelledby="weekly-action-question" value={answers.publishingAccountId || undefined} options={publishingAccounts.map(account => ({ value: account.accountId, label: `${account.accountLabel} · ${account.platform}` }))} onChange={value => update('publishingAccountId', value)} notFoundContent="该平台暂无已连接账号" />{publishingAccounts.length === 0 && <Alert type="warning" title="请先在集成中心连接该平台账号，再重新读取本次操作。这里不会使用示例账号。" />}</>}
             {current === 'publishing-time' && <Input type="datetime-local" aria-labelledby="weekly-action-question" value={answers.publishAt} onChange={event => update('publishAt', event.target.value)} />}
             {current === 'confirm' && <div className="space-y-2 text-text-secondary">
-              {action === 'create' ? <><details className="rounded-lg border border-border p-3"><summary className="cursor-pointer">查看任务详情</summary><div className="space-y-2 pt-2"><p>{context.products.find(p => p.id === answers.productId)?.name} · {legacyCreate ? answers.platform : selectedAccount?.name}</p><p>{answers.goal}</p><p>{legacyCreate ? '期望交付' : '计划发布'}：{answers.dueAt.replace('T', ' ')}（北京时间）{legacyCreate ? '' : '；内容需在此前完成。'}</p></div></details>{legacyCreate && <><label htmlFor="legacy-weekly-action-budget">本条任务允许的额外费用上限（元）</label><Input id="legacy-weekly-action-budget" inputMode="decimal" value={legacyBudgetText} onChange={event => setLegacyBudgetText(event.target.value)} /></>}</> : <><p>{target?.name}</p>{action === 'revise' && target?.model !== 'legacy' && <p>{answers.note}</p>}</>}
+              {action === 'create' ? <><details className="rounded-lg border border-border p-3"><summary className="cursor-pointer">查看任务详情</summary><div className="space-y-2 pt-2"><p>{context.products.find(p => p.id === answers.productId)?.name} · {usesPlatformSelection ? answers.platform : selectedAccount?.name}</p><p>{answers.goal}</p><p>{usesPlatformSelection ? '期望交付' : '计划发布'}：{answers.dueAt.replace('T', ' ')}（北京时间）{usesPlatformSelection ? '' : '；内容需在此前完成。'}</p>{standaloneCreate && <p>本条内容作为自由任务创建，不依赖周任务包。</p>}</div></details>{legacyCreate && <><label htmlFor="legacy-weekly-action-budget">本条任务允许的额外费用上限（元）</label><Input id="legacy-weekly-action-budget" inputMode="decimal" value={legacyBudgetText} onChange={event => setLegacyBudgetText(event.target.value)} /></>}</> : <><p>{target?.name}</p>{action === 'revise' && target?.model !== 'legacy' && <p>{answers.note}</p>}</>}
               {action === 'publish' && <p>加入原成片的发布流程，仍须通过真实授权和发布审批；本操作不会跳过审批直接发送。</p>}
               {action === 'revise' && target?.model === 'legacy' && <p>继续使用原周任务。下一步进入已有制作页面确认具体修改项；此时尚不会修改作品或启动付费生产。</p>}
               {needsPublishingConfiguration && <><p>发布账号：{publishingAccount?.accountLabel} · {publishingAccount?.platform}</p><p>发布时间：{answers.publishAt.replace('T', ' ')}（北京时间）</p><p>我确认将此条“仅制作”内容转为发布待审批配置；原有授权需要重新核验，本次不会直接发送。</p></>}
             </div>}
-            <Space><Button disabled={busy || step === 0} onClick={() => { setStep(value => value - 1); setError(''); }}>上一步</Button><Button type="primary" loading={busy} disabled={disabled || context.packages.length === 0} onClick={() => current === 'confirm' ? void submit() : next()}>{current === 'confirm' ? action === 'revise' && target?.model === 'legacy' ? '进入原制作页面修改' : needsPublishingConfiguration ? '确认账号与发布时间' : action === 'publish' ? '确认进入发布流程' : '确认提交周任务' : '下一步'}</Button></Space>
+            <Space><Button disabled={busy || step === 0} onClick={() => { setStep(value => value - 1); setError(''); }}>上一步</Button><Button type="primary" loading={busy} disabled={disabled} onClick={() => current === 'confirm' ? void submit() : next()}>{current === 'confirm' ? standaloneCreate ? '新建自由任务' : action === 'revise' && target?.model === 'legacy' ? '进入原制作页面修改' : needsPublishingConfiguration ? '确认账号与发布时间' : action === 'publish' ? '确认进入发布流程' : '确认提交周任务' : '下一步'}</Button></Space>
           </>}
           {error && <Alert type="error" title={error} action={!context ? <Button disabled={busy} onClick={() => void begin(action)}>重新读取</Button> : undefined} />}
         </>}

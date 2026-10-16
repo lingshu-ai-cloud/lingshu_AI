@@ -61,6 +61,11 @@ import {
   type ProductScenePreparationSlotView,
 } from './material-library/ProductMaterialGroup';
 import { PRODUCT_SCENE_KINDS, type ProductSceneKind } from '../../shared/contracts/productScenePreparation';
+import {
+  STUDIO_MATERIAL_FILE_ACCEPT,
+  STUDIO_MATERIAL_VIDEO_ACCEPT,
+  studioMaterialFileKind,
+} from '../lib/studioMaterialFile';
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 type ScriptType = 'voiceover' | 'storyboard';
@@ -1432,11 +1437,21 @@ export function AuthenticatedVideo({ apiUrl, poster, className, controls = false
   const generationRef = useRef(0);
   const mediaRetryRef = useRef(0);
   const mediaReadyTimerRef = useRef<number | null>(null);
+  const readyReportedRef = useRef(false);
 
   const clearMediaReadyTimer = () => {
     if (mediaReadyTimerRef.current === null) return;
     window.clearTimeout(mediaReadyTimerRef.current);
     mediaReadyTimerRef.current = null;
+  };
+
+  const reportMediaReady = () => {
+    clearMediaReadyTimer();
+    mediaRetryRef.current = 0;
+    onLoadingChange?.(false);
+    if (readyReportedRef.current) return;
+    readyReportedRef.current = true;
+    onReady?.();
   };
 
   const load = async (force = false) => {
@@ -1486,6 +1501,7 @@ export function AuthenticatedVideo({ apiUrl, poster, className, controls = false
     controllerRef.current = null;
     requestRef.current = null;
     mediaRetryRef.current = 0;
+    readyReportedRef.current = false;
     clearMediaReadyTimer();
     setPlaybackUrl('');
     onLoadingChange?.(false);
@@ -1503,13 +1519,18 @@ export function AuthenticatedVideo({ apiUrl, poster, className, controls = false
     onLoadedMetadata={() => {
       const video = videoRef.current;
       if (video) onMetadata?.({ width: video.videoWidth, height: video.videoHeight, duration: video.duration });
+      // Safari can paint a playable frame while delaying loadeddata/canplay.
+      // A controls-based preview is already useful once metadata is available,
+      // so do not leave the loading state over visible media.
+      if (controls) reportMediaReady();
       if (!previewFrame || !video || !Number.isFinite(video.duration) || video.duration <= 0) return;
       // A tiny seek paints a reliable first frame for uploaded MP4s whose frame
       // at 0s is transparent/black and which do not yet have a poster asset.
       video.currentTime = Math.min(0.12, Math.max(0.01, video.duration / 20));
     }}
-    onLoadedData={() => { clearMediaReadyTimer(); mediaRetryRef.current = 0; if (previewFrame) videoRef.current?.pause(); onLoadingChange?.(false); onReady?.(); }}
-    onCanPlay={() => { clearMediaReadyTimer(); onLoadingChange?.(false); onReady?.(); }}
+    onLoadedData={() => { if (previewFrame) videoRef.current?.pause(); reportMediaReady(); }}
+    onCanPlay={reportMediaReady}
+    onPlaying={reportMediaReady}
     onError={() => {
       if (!playbackUrl) return;
       clearMediaReadyTimer();
@@ -4394,7 +4415,10 @@ export default function InspirationDashboard({ onScriptPanelOpen, onScriptPanelC
       const uploadedVideos: Material[] = [];
       const uploadedIds: string[] = [];
       for (const file of Array.from(files)) {
-        const type = file.type.startsWith('video') ? 'video' : file.type.startsWith('audio') ? 'audio' : 'image';
+        const type = studioMaterialFileKind(file);
+        if (!type) {
+          throw new Error(`「${file.name}」的文件格式无法识别，请使用受支持的视频、图片或音频格式`);
+        }
         if (uploadProductSceneKind && type !== 'video') {
           throw new Error('预制场景仅支持上传视频');
         }
@@ -4405,22 +4429,18 @@ export default function InspirationDashboard({ onScriptPanelOpen, onScriptPanelC
           ...(uploadProductSceneKind ? { productId: uploadProductId, productSceneType: uploadProductSceneKind } : {}),
         });
         if (!result.ok || !result.material?.id) throw new Error(result.error || `「${file.name}」上传失败，请检查素材服务后重试`);
-        const sceneIndex = uploadProductSceneKind ? PRODUCT_SCENE_KINDS.indexOf(uploadProductSceneKind) : -1;
-        const sceneLabel = sceneIndex >= 0 ? neutralProductSceneLabel(sceneIndex) : '';
+        uploadedIds.push(result.material.id);
+        if (type === 'video') uploadedVideos.push(result.material);
+        // Product-scene uploads are verified and bound to the selected product
+        // and slot by the upload endpoint itself. Do not turn that successful
+        // atomic write into a reported failure with a second PATCH request.
+        if (uploadProductSceneKind) continue;
         const linked = await studioApi.updateMaterial(result.material.id, {
-          name: sceneLabel
-            ? `${materialProducts.find(item => item.id === uploadProductId)?.name || '产品'} · ${sceneLabel}`
-            : result.material.name || file.name,
-          tags: materialOwnershipTags([
-            result.material.tags,
-            sceneLabel ? '产品预制场景' : '',
-            sceneLabel,
-          ].filter(Boolean).join(', '), uploadProductId),
-          ...(!uploadProductSceneKind ? { productId: uploadProductId } : {}),
+          name: result.material.name || file.name,
+          tags: materialOwnershipTags(result.material.tags, uploadProductId),
+          productId: uploadProductId,
         });
         if (!linked.ok) throw new Error(`「${file.name}」已上传，但产品归属保存失败，请在素材卡片中编辑后重试`);
-        uploadedIds.push(result.material.id);
-        if (type === 'video' && result.material?.id) uploadedVideos.push(result.material);
       }
       setMaterialMessage(uploadedVideos.length ? `已上传，正在分析 ${uploadedVideos.length} 个视频的可用片段…` : `已上传 ${files.length} 个素材到社媒素材库`);
       await refreshMaterials();
@@ -5299,7 +5319,7 @@ export default function InspirationDashboard({ onScriptPanelOpen, onScriptPanelC
                 ref={uploadInputRef}
                 type="file"
                 multiple={!uploadProductSceneKind}
-                accept={uploadProductSceneKind ? 'video/*' : 'video/*,image/*,audio/*'}
+                accept={uploadProductSceneKind ? STUDIO_MATERIAL_VIDEO_ACCEPT : STUDIO_MATERIAL_FILE_ACCEPT}
                 className="hidden"
                 onChange={e => void handleUploadMaterials(e.currentTarget.files)}
               />

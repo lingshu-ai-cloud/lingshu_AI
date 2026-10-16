@@ -18,7 +18,7 @@ import { createStudioAvatarProductionRouter } from '../lib/studioAvatarProductio
 import { refreshStudioProjectAssetUrls, studioProjectSpecForStorage } from '../lib/studioProjectAssets.js';
 import { freeCreationCompletionIssues, normalizeFreeCreationProjectSpec } from '../../shared/contracts/freeCreationProject.js';
 import { STUDIO_MANUAL_HANDOFF_ACTIONS, isManualStudioProject, studioProjectRenderPaths } from '../../shared/contracts/studioManualHandoff.js';
-import { studioProjectRevisionConflict } from '../lib/studioProjectRevision.js';
+import { compareAndSwapStudioProject, studioProjectRevisionConflict } from '../lib/studioProjectRevision.js';
 export { refreshStudioProjectAssetUrls, studioProjectSpecForStorage } from '../lib/studioProjectAssets.js';
 import { matchedReferenceIndustryLeaks } from '../lib/referenceIndustryLeak.js';
 export { matchedReferenceIndustryLeaks } from '../lib/referenceIndustryLeak.js';
@@ -6049,7 +6049,13 @@ async function runPersistentStudioRender(jobId: string, tenantId: string, origin
         manualRenderJob: { id: jobId, status: 'completed', outputKey: current.output_key,
           inputSignature: current.input_signature, outputPath, previewUrl, updatedAt: finishedAt },
         staleReason: '' };
-      await store.update('studio_projects', current.project_id, { spec: nextSpec, updated_at: finishedAt });
+      const savedProject = await compareAndSwapStudioProject(store, project, { spec: nextSpec }, finishedAt);
+      if (!savedProject.ok) {
+        await store.update('studio_render_jobs', jobId, {
+          error: '渲染完成，但草稿在渲染期间已更新；系统未覆盖新版本，请刷新后重新关联成片。',
+          updated_at: new Date().toISOString(),
+        });
+      }
     }
   } catch (error) {
     await store.update('studio_render_jobs', jobId, { status: 'failed', progress: 0,
@@ -10582,10 +10588,37 @@ studioRouter.post('/projects', async (req, res) => {
       const changed = JSON.stringify(existing.spec || {}) !== JSON.stringify(spec || {})
         || String(existing.title || '') !== String(title ?? existing.title ?? '')
         || String(existing.status || '') !== String(status || '');
-      const updated = await store.update('studio_projects', String(id), { title: title ?? existing.title, status, spec, thumb_seed: thumbSeed || '', updated_at: now });
-      if (!updated) { res.status(503).json({ ok: false, code: 'studio_project_storage_unavailable', error: '草稿未能写入存储，请重试；当前编辑仍保留在页面中。' }); return; }
+      let write: Awaited<ReturnType<typeof compareAndSwapStudioProject>>;
+      try {
+        write = await compareAndSwapStudioProject(store, existing, {
+          title: title ?? existing.title,
+          status,
+          spec,
+          thumb_seed: thumbSeed || '',
+        }, now);
+      } catch (error) {
+        if (error instanceof Error && error.message === 'STUDIO_PROJECT_ATOMIC_STORE_REQUIRED') {
+          res.status(503).json({ ok: false, code: 'studio_project_atomic_storage_required', error: '当前存储暂不支持安全保存，页面修改尚未覆盖服务端项目。请稍后重试。' });
+          return;
+        }
+        throw error;
+      }
+      if (!write.ok) {
+        const latest = await store.getById<any>('studio_projects', String(id));
+        if (latest?.tenant_id === tenantId) {
+          res.status(409).json({
+            ok: false,
+            code: 'studio_project_version_conflict',
+            error: '保存期间后台生产结果已更新。系统未覆盖新结果，请重新载入最新版本后继续。',
+            project: projectFromRecord(latest, tenantId),
+          });
+        } else {
+          res.status(503).json({ ok: false, code: 'studio_project_storage_unavailable', error: '草稿未能写入存储，请重试；当前编辑仍保留在页面中。' });
+        }
+        return;
+      }
       if (changed) await invalidatePublishingApprovalForProject(tenantId, String(id));
-      res.json({ ok: true, project: projectFromRecord({ ...existing, title: title ?? existing.title, status, spec, thumb_seed: thumbSeed, updated_at: now }, tenantId) });
+      res.json({ ok: true, project: projectFromRecord({ ...existing, title: title ?? existing.title, status, spec, thumb_seed: thumbSeed, updated_at: write.updatedAt }, tenantId) });
       return;
     }
   }
@@ -10679,9 +10712,18 @@ studioRouter.post('/projects/:id/requality', async (req, res) => {
   };
   const records = Array.isArray(spec.projectQualityRecords) ? spec.projectQualityRecords : [];
   const nextSpec = { ...spec, projectQualityRecords: [...records, record].slice(-50), activeProjectQualityRecordId: record.id };
-  const updated = await store.update('studio_projects', req.params.id, { spec: nextSpec, updated_at: now });
-  if (!updated) { res.status(503).json({ ok: false, code: 'studio_project_quality_storage_unavailable', error: '质检签发记录保存失败，请重试' }); return; }
-  res.status(201).json({ ok: true, replayed: false, record, project: projectFromRecord({ ...project, spec: nextSpec, updated_at: now }, tenantId) });
+  const updated = await compareAndSwapStudioProject(store, project, { spec: nextSpec }, now);
+  if (!updated.ok) {
+    const latest = await store.getById<any>('studio_projects', req.params.id);
+    res.status(409).json({
+      ok: false,
+      code: 'studio_project_version_conflict',
+      error: '质检期间草稿已更新，签发记录未覆盖最新内容。请刷新后重新质检。',
+      ...(latest?.tenant_id === tenantId ? { project: projectFromRecord(latest, tenantId) } : {}),
+    });
+    return;
+  }
+  res.status(201).json({ ok: true, replayed: false, record, project: projectFromRecord({ ...project, spec: nextSpec, updated_at: updated.updatedAt }, tenantId) });
 });
 
 // These records are created only by an explicit user action after reviewing a
@@ -11040,5 +11082,3 @@ async function resolveReferenceImages(materialIds: unknown, tenantId: string): P
   }
   return refs;
 }
-
-import { createProjectRevisionGuard, projectRevisionMatches } from '../lib/projectRevision.js';

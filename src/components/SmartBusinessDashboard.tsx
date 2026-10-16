@@ -49,7 +49,7 @@ import { LsCalendar, calendarDayKey, type LsCalendarEvent } from "./ui/LsCalenda
 import { calendarWeekday, thumbnailUrlWithSourceFallback } from "../lib/calendarModel";
 import WeeklyContentProgressPanel from "./smartBusiness/WeeklyContentProgressPanel";
 import WeeklyProductionStudioEntry from "./smartBusiness/WeeklyProductionStudioEntry";
-import { isSmartBusinessShowcaseEnabled, smartBusinessShowcaseAds, smartBusinessShowcaseWeeklyVideos, SMART_BUSINESS_SHOWCASE_WEEKLY_TOTALS } from "../dev/smartBusinessShowcaseData";
+import { applySmartBusinessShowcaseData, isSmartBusinessOverviewPreviewEnabled, isSmartBusinessShowcaseEnabled, isSmartBusinessWeeklyPlanPreviewEnabled, smartBusinessShowcaseAds, smartBusinessShowcaseNextRoundRecommendations, smartBusinessShowcaseWeeklyVideos, SMART_BUSINESS_SHOWCASE_WEEKLY_TOTALS } from "../dev/smartBusinessShowcaseData";
 
 export type SmartBusinessView = "home" | "matrix" | "production" | "review";
 
@@ -388,7 +388,7 @@ export function WeeklyCommandCenter({
   const contentQueue = data.contentQueue?.items || [];
   const operatingContext = data.plan?.businessPackage?.operatingContext;
   const packageBudget = weeklyVideoBudget(data);
-  const useShowcaseBudget = isSmartBusinessShowcaseEnabled() && display.contents.length === SMART_BUSINESS_SHOWCASE_WEEKLY_TOTALS.plannedVideoCount;
+  const useShowcaseBudget = (isSmartBusinessShowcaseEnabled() || isSmartBusinessWeeklyPlanPreviewEnabled()) && display.contents.length === SMART_BUSINESS_SHOWCASE_WEEKLY_TOTALS.plannedVideoCount;
   const weeklyQueue = contentQueue.filter(item => item.origin === "weekly_plan");
   const dashboardMockScale = display.totals.versionCount === 2 && packageBudget.estimated === 210;
   const plannedOutputCount = dashboardMockScale ? 16 : display.totals.versionCount;
@@ -398,10 +398,20 @@ export function WeeklyCommandCenter({
     packageBudget.estimated,
   );
   const settledContentCost = weeklyQueue.reduce((sum, item) => sum + Number(item.settledCostCny || 0), 0);
-  const budgetMin = useShowcaseBudget ? display.totals.budgetMinCny : Math.max(operatingContext?.budget.totalMinCny || 0, packageBudget.min,
-    weeklyQueue.length && estimatedContentCost > 0 ? estimatedContentCost * 0.8 : 0);
-  const budgetMax = useShowcaseBudget ? display.totals.budgetMaxCny : Math.max(operatingContext?.budget.totalMaxCny || 0, packageBudget.max,
-    weeklyQueue.length && estimatedContentCost > 0 ? estimatedContentCost * 1.25 : 0);
+  const hasExplicitProductionRange = Boolean(
+    Number(operatingContext?.budget.productionMinCny || packageBudget.min) > 0
+    || Number(operatingContext?.budget.productionMaxCny || packageBudget.max) > 0,
+  );
+  const budgetMin = useShowcaseBudget ? display.totals.budgetMinCny : Math.max(
+    operatingContext?.budget.productionMinCny || 0,
+    packageBudget.min,
+    !hasExplicitProductionRange && weeklyQueue.length && estimatedContentCost > 0 ? estimatedContentCost * 0.8 : 0,
+  );
+  const budgetMax = useShowcaseBudget ? display.totals.budgetMaxCny : Math.max(
+    operatingContext?.budget.productionMaxCny || 0,
+    packageBudget.max,
+    !hasExplicitProductionRange && weeklyQueue.length && estimatedContentCost > 0 ? estimatedContentCost * 1.25 : 0,
+  );
 
   return <section className={`flex flex-col overflow-hidden bg-white ${className}`.trim()} aria-label="本周任务驾驶舱">
     <div className="flex flex-wrap items-start justify-between gap-3 px-6 pb-4 pt-5 text-text-primary xl:min-h-[112px]">
@@ -457,7 +467,7 @@ export function WeeklyPlanDetailsDrawer({
   const productionPlans = data.plan?.businessPackage?.tasks.find(task => task.templateId === "production")?.videoPlans
     || data.goal?.videoPlans
     || [];
-  const useShowcasePlanRows = isSmartBusinessShowcaseEnabled();
+  const useShowcasePlanRows = isSmartBusinessShowcaseEnabled() || isSmartBusinessWeeklyPlanPreviewEnabled();
   const planByContentId = new Map(productionPlans.flatMap(plan => plan.contentId ? [[plan.contentId, plan] as const] : []));
   const productionBudget = { min: display.totals.budgetMinCny, max: display.totals.budgetMaxCny };
   const trafficTasks = (data.plan?.tasks || []).filter(isPaidMediaPlanTask);
@@ -700,7 +710,7 @@ export function BusinessInterpretation({ data, onViewReview }: { data: DigitalEm
   const display = buildSmartBusinessDisplayModel(data);
   const weeklyItems = (data.contentQueue?.items || []).filter(item => item.origin === 'weekly_plan');
   const packageBudget = weeklyVideoBudget(data);
-  const useShowcaseBudget = isSmartBusinessShowcaseEnabled() && display.contents.length === SMART_BUSINESS_SHOWCASE_WEEKLY_TOTALS.plannedVideoCount;
+  const useShowcaseBudget = (isSmartBusinessShowcaseEnabled() || isSmartBusinessWeeklyPlanPreviewEnabled()) && display.contents.length === SMART_BUSINESS_SHOWCASE_WEEKLY_TOTALS.plannedVideoCount;
   const estimatedCost = useShowcaseBudget ? display.totals.budgetMidCny : Math.max(
     weeklyItems.reduce((sum, item) => sum + Number(item.estimatedCostCny || 0), 0),
     packageBudget.estimated,
@@ -851,7 +861,9 @@ function contentThumbnailUrl(plan: VideoCreationPlan, queueItem: ContentQueueIte
 }
 
 function buildSmartBusinessDisplayModel(data: DigitalEmployeeOverview, selectedAccountId = ""): SmartBusinessDisplayModel {
-  const showcaseTotals = isSmartBusinessShowcaseEnabled() ? SMART_BUSINESS_SHOWCASE_WEEKLY_TOTALS : null;
+  const showcaseTotals = isSmartBusinessShowcaseEnabled() || isSmartBusinessWeeklyPlanPreviewEnabled()
+    ? SMART_BUSINESS_SHOWCASE_WEEKLY_TOTALS
+    : null;
   const showcaseWeeklyVideos = showcaseTotals ? smartBusinessShowcaseWeeklyVideos(data, true) : null;
   // Older model responses sometimes persisted a structured title or its accidental
   // string coercion. Only named text fields are displayable; never stringify facts.
@@ -958,7 +970,9 @@ function buildSmartBusinessDisplayModel(data: DigitalEmployeeOverview, selectedA
       productionRole: plan.productionRole === "platform_adaptation" ? "platform_adaptation" : "master",
       status: queueItem?.status || "planned",
       queueItem,
-      estimatedCostCny: Number(plan.estimatedCost || queueItem?.estimatedCostCny || 0) || null,
+      estimatedCostCny: plan.productionRole === "platform_adaptation"
+        ? 0
+        : Number(plan.estimatedCost || queueItem?.estimatedCostCny || 0) || null,
       estimatedCostRange: plan.estimatedCostRange ? {
         minCny: Number(plan.estimatedCostRange.minCny || 0),
         maxCny: Number(plan.estimatedCostRange.maxCny || 0),
@@ -1066,11 +1080,11 @@ function buildSmartBusinessDisplayModel(data: DigitalEmployeeOverview, selectedA
   const itemBudgetMin = masters.reduce((sum, item) => sum + Number(item.estimatedCostRange?.minCny || 0), 0);
   const itemBudgetMax = masters.reduce((sum, item) => sum + Number(item.estimatedCostRange?.maxCny || 0), 0);
   const itemBudgetPoint = masters.reduce((sum, item) => sum + Number(item.estimatedCostCny || 0), 0);
-  const budgetMinCny = showcaseContents.length ? itemBudgetMin : operatingContext?.budget.totalMinCny
+  const budgetMinCny = showcaseContents.length ? itemBudgetMin : operatingContext?.budget.productionMinCny
     ?? itemBudgetMin;
-  const budgetMaxCny = showcaseContents.length ? itemBudgetMax : operatingContext?.budget.totalMaxCny
+  const budgetMaxCny = showcaseContents.length ? itemBudgetMax : operatingContext?.budget.productionMaxCny
     ?? itemBudgetMax;
-  const fallbackBudget = showcaseContents.length ? itemBudgetPoint : operatingContext?.budget.totalCny
+  const fallbackBudget = showcaseContents.length ? itemBudgetPoint : operatingContext?.budget.productionCny
     ?? itemBudgetPoint;
   const normalizedMin = budgetMinCny || fallbackBudget;
   const normalizedMax = budgetMaxCny || fallbackBudget;
@@ -1143,9 +1157,12 @@ function PlanDataSourceBadge({ source }: { source: DisplayMetricSource }) {
 }
 
 function HomeView({ data, onNavigate, selectedAccountId = "", overviewRangeBusy = false, onOverviewRangeChange }: { data: DigitalEmployeeOverview; onNavigate?: (page: Page) => void; selectedAccountId?: string; overviewRangeBusy?: boolean; onOverviewRangeChange?: (range: BusinessHealthOverviewRange) => void }) {
+  const useOverviewPreview = isSmartBusinessOverviewPreviewEnabled();
+  const overviewData = useOverviewPreview ? applySmartBusinessShowcaseData(data, true) : data;
+  const previewRecommendations = smartBusinessShowcaseNextRoundRecommendations(overviewData, useOverviewPreview || isSmartBusinessShowcaseEnabled());
   return <div className="space-y-6">
-    <BusinessHealthOverview detailsOnly data={data} selectedAccountId={selectedAccountId} overviewRangeBusy={overviewRangeBusy} onOverviewRangeChange={onOverviewRangeChange} onNavigate={onNavigate}/>
-    <NextRoundRecommendationsSection summary={data.review?.status === "generated" ? data.review.summary : undefined} industryTrends={data.industryTrends} onOpen={page => onNavigate?.(page as Page)}/>
+    <BusinessHealthOverview detailsOnly data={overviewData} selectedAccountId={selectedAccountId} overviewRangeBusy={overviewRangeBusy} onOverviewRangeChange={onOverviewRangeChange} onNavigate={onNavigate}/>
+    <NextRoundRecommendationsSection summary={overviewData.review?.status === "generated" ? overviewData.review.summary : undefined} recommendations={previewRecommendations || undefined} industryTrends={previewRecommendations?.industryTrends || overviewData.industryTrends} onOpen={page => onNavigate?.(page as Page)}/>
   </div>;
 }
 

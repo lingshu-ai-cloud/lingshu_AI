@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { candidateToolsFor, cueFirstFrameTime, digitalHumanPipelineFor, digitalHumanRouteSteps, newDigitalHumanRequirements, planDigitalHumanShot, referenceCues, referenceModelInputAuthorization, routeStepsForExecution, usesDirectReferenceVideo, type DigitalHumanRequirements } from './digitalHumanPlan';
+import { candidateToolsFor, cueFirstFrameTime, digitalHumanPipelineFor, digitalHumanRouteSteps, newDigitalHumanRequirements, planDigitalHumanShot, referenceCues, referenceCuesForConfirmedPresenter, referenceModelInputAuthorization, routeStepsForExecution, usesDirectReferenceVideo, type DigitalHumanRequirements } from './digitalHumanPlan';
 import { initialDigitalHumanQuality, recordDigitalHumanMediaCheck, reviewDigitalHumanQuality } from './digitalHumanQuality';
 import { newShotProduction, patchShot, shotFingerprint } from './shotProduction';
 
@@ -76,6 +76,25 @@ test('candidate tools reflect the visual operation instead of the shared digital
   assert.deepEqual(candidateToolsFor({ ...reference, method: 'replace', preferredProvider: 'runway' }), []);
   assert.deepEqual(candidateToolsFor({ ...reference, method: 'replace', preferredProvider: 'self_hosted' }), ['local_head_pipeline']);
 });
+test('explicit video twin mode overrides stale reenactment analysis and stays on HeyGen talking', () => {
+  const staleTwin: DigitalHumanRequirements = {
+    ...reference,
+    presenterMode: 'video_twin',
+    workflow: 'viral_replication',
+    method: 'reenact',
+    preferredProvider: 'sd',
+    presenterSelected: true,
+    contentConfirmed: true,
+  };
+  assert.equal(digitalHumanPipelineFor(staleTwin), 'pipeline_1');
+  assert.deepEqual(candidateToolsFor(staleTwin), ['heygen']);
+  assert.equal(usesDirectReferenceVideo(staleTwin), false);
+  assert.equal(referenceModelInputAuthorization(staleTwin, '2026-10-16T00:00:00.000Z'), null);
+  const plan = planDigitalHumanShot({ ...base, requirements: staleTwin, presenterCapabilities: ['talking'] });
+  assert.equal(plan.state, 'ready');
+  assert.equal(plan.executable, true);
+  assert.equal(plan.provider, 'heygen');
+});
 test('reference validation rejects incomplete evidence, invalid time ranges and unlicensed replacement', () => {
   for (const patch of [{ videoUrl: '' }, { start: -1 }, { end: 1 }, { end: NaN }, { originalText: '' }, { derivativeAuthorized: false }, { derivativeAuthorizationEvidence: '' }]) {
     const result = planDigitalHumanShot({ ...base, requirements: { ...reference, reference: { ...reference.reference!, ...patch } } });
@@ -93,6 +112,34 @@ test('reference cues preserve many-to-many sentence and shot mappings while lega
   assert.equal(planDigitalHumanShot({ ...base, requirements: mapped, presenterCapabilities: ['talking'] }).state, 'needs_input');
   const invalid = { ...mapped, reference: { ...mapped.reference, cues: [{ ...mapped.reference.cues[0], end: 0 }] } };
   assert.equal(planDigitalHumanShot({ ...base, requirements: invalid }).state, 'needs_input');
+});
+test('manual whole-slot presenter confirmation narrowly recovers missing or stale person cues', () => {
+  const emptyReference: DigitalHumanRequirements = { ...reference, presenterMode: 'photo_talking', method: 'reenact', reference: {
+    ...reference.reference!, cues: [],
+  } };
+  const confirmed = { shotId: 'shot-1', slotId: 'slot-1', duration: 3, narration: '确认后的销售口播',
+    salesPresenterConfirmed: true, observedPresenterRole: 'sales_presenter', personContinuityId: 'main-sales' };
+  const recovered = referenceCuesForConfirmedPresenter(emptyReference, confirmed);
+  assert.equal(recovered.length, 1);
+  assert.equal(recovered[0]?.personShot, true);
+  assert.equal(recovered[0]?.classificationSource, 'manual');
+  assert.equal(recovered[0]?.targetText, '确认后的销售口播');
+  const unconfirmed = referenceCuesForConfirmedPresenter(emptyReference, { ...confirmed, salesPresenterConfirmed: false });
+  assert.equal(unconfirmed[0]?.personShot, undefined, 'unconfirmed legacy analysis must not become person evidence');
+
+  const staleFalse = { ...emptyReference, reference: { ...emptyReference.reference!, cues: [{
+    id: 'only-cue', start: 1, end: 4, originalText: '原句', targetText: '', shotIds: ['slot-1'], personShot: false,
+  }] } };
+  assert.equal(referenceCuesForConfirmedPresenter(staleFalse, confirmed)[0]?.personShot, true,
+    'a manual whole-slot confirmation outranks one stale negative classifier result');
+  assert.equal(referenceCuesForConfirmedPresenter(staleFalse, { ...confirmed, observedPresenterRole: 'background' })[0]?.personShot, false,
+    'non-sales or unconfirmed slots must keep genuine non-person evidence');
+  assert.equal(referenceCuesForConfirmedPresenter(staleFalse, { ...confirmed, narration: '无' })[0]?.personShot, false,
+    'a slot without confirmed speech must not promote a non-person cue');
+  assert.equal(referenceCuesForConfirmedPresenter({ ...emptyReference, reference: { ...emptyReference.reference!, cues: [{
+    id: 'different-window', start: 0, end: 3, originalText: '另一段', targetText: '确认后的销售口播', shotIds: [], personShot: false,
+  }] } }, { ...confirmed, start: 10, end: 13 })[0]?.personShot, false,
+  'an equally long cue in another time window must not be promoted to the current presenter slot');
 });
 test('manually split physical shots require explicit classification and person speech', () => {
   const cue = { id: 'shot-1', start: 1, end: 2, originalText: '原句', targetText: '', shotIds: ['shot-a'], splitFromCueId: 'sentence-1' };

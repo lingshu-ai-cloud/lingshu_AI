@@ -3,7 +3,7 @@ import test from 'node:test';
 import React from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import fs from 'node:fs';
-import AssistantWeeklyActions, { weeklyActionsForPage, weeklyCapacityLimitLabel } from './AssistantWeeklyActions';
+import AssistantWeeklyActions, { standaloneContentNavigation, weeklyActionsForPage, weeklyCapacityLimitLabel } from './AssistantWeeklyActions';
 
 test('only the three approved closed loops are exposed on relevant pages', () => {
   assert.deepEqual(weeklyActionsForPage('digitalEmployees'), ['create', 'revise', 'publish']);
@@ -28,6 +28,19 @@ test('task panel can collapse without clearing intake; confirmation details star
   assert.doesNotMatch(source, /<details[^>]*\sopen(?:\s|=|>)/);
   assert.doesNotMatch(source, /新增任务使用独立的额外费用上限|新增排期会暂停本周尚未执行的发布授权|纳入周任务后，按实际资料/);
   assert.doesNotMatch(source, /我已知晓新增排期需重新确认原发布授权/);
+});
+test('standalone content creation does not require a weekly package and preserves the intake', () => {
+  const detail = standaloneContentNavigation({ requestId: 17, product: { id: 'product-1', name: '云朵面霜' }, goal: '突出舒缓与保湿', platform: 'tiktok' });
+  assert.equal(detail.page, 'smartAssets');
+  assert.equal(detail.contentCreationRequest.creationPath, 'material_processing');
+  assert.equal(detail.contentCreationRequest.prefill.productId, 'product-1');
+  assert.deepEqual(detail.contentCreationRequest.prefill.platforms, ['tiktok']);
+  assert.equal(detail.contentCreationRequest.specialRequirements, '突出舒缓与保湿');
+  const source = fs.readFileSync(new URL('./AssistantWeeklyActions.tsx', import.meta.url), 'utf8');
+  assert.match(source, /不加入周任务包（自由任务）/);
+  assert.match(source, /standaloneCreate \|\| Boolean\(selectedPackage\)/);
+  assert.doesNotMatch(source, /当前账号尚未建立可执行周任务包/);
+  assert.doesNotMatch(source, /disabled=\{disabled \|\| context\.packages\.length === 0\}/);
 });
 test('intake stays explicit, verifies products and does not delegate free chat to mutations', () => {
   const source = fs.readFileSync(new URL('./AssistantWeeklyActions.tsx', import.meta.url), 'utf8');

@@ -3,6 +3,15 @@ import { signAssetUrl } from './assetAccess.js';
 
 const PROJECT_PRIVATE_ASSET_PATH = /^\/api\/overseas\/studio\/private-assets\/(tts|voice-samples|covers|exports)\/([^/?#]+)$/;
 
+function decodedRenderFile(value: string): string {
+  try {
+    const decoded = decodeURIComponent(value);
+    return decoded === path.basename(decoded) && path.extname(decoded).toLowerCase() === '.mp4' ? decoded : '';
+  } catch {
+    return '';
+  }
+}
+
 function mapStudioProjectPrivateAssetUrls(
   value: unknown,
   mapUrl: (namespace: string, file: string) => string,
@@ -12,8 +21,9 @@ function mapStudioProjectPrivateAssetUrls(
   if (typeof value === 'string') {
     try {
       const parsed = new URL(value, 'http://local');
-      const renderMatch = parsed.pathname.match(/^\/api\/overseas\/(?:publishing\/local-videos|studio\/local-renders)\/([\w-]+\.mp4)$/);
-      if (renderMatch && value.startsWith('/')) return mapUrl('local-renders', renderMatch[1]!);
+      const renderMatch = parsed.pathname.match(/^\/api\/overseas\/(?:publishing\/local-videos|studio\/local-renders)\/([^/?#]+)$/);
+      const renderFile = renderMatch ? decodedRenderFile(renderMatch[1]!) : '';
+      if (renderFile && value.startsWith('/')) return mapUrl('local-renders', renderFile);
       const match = parsed.pathname.match(PROJECT_PRIVATE_ASSET_PATH);
       return match ? mapUrl(match[1]!, path.basename(match[2]!)) : value;
     } catch {

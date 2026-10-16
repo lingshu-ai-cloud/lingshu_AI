@@ -7,7 +7,7 @@ import StudioOperationalEvidencePanel from './socialContent/StudioOperationalEvi
 import { readCurrentStudioSocialTask } from '../lib/studioSocialTaskRead';
 import type { SocialContentTaskDetail } from '../../shared/contracts/socialContentWorkflow';
 import { localFlowRenderRecovery, localFlowRenderInputIdentity } from '../lib/localFlowRenderRecovery';
-import { App as AntApp, Button, Modal } from 'antd';
+import { App as AntApp, Button, Modal, Popconfirm } from 'antd';
 import { canOpenWorkbenchRenderSettings, workbenchExportBlockReason } from '../lib/replicationWorkbenchNavigation';
 import { digitalHumanQualityState } from '../lib/digitalHumanQuality';
 import StudioReviewIssueActions from './studio/StudioReviewIssueActions';
@@ -18,7 +18,7 @@ import { digitalHumanDecisionIssues, enterpriseMaterialIssue } from '../../share
 import ShotSourceDecisionPanel from './studio/ShotSourceDecisionPanel';
 import ShotMaterialLibraryDialog from './studio/ShotMaterialLibraryDialog';
 import StudioPreviewStage, { studioPreviewRatio } from './studio/StudioPreviewStage';
-import { recognizePresenterShot, isSalesPresenterLabel, salesPresenterRecognition, confirmedSalesPresenterRoute } from '../../shared/contracts/presenterShotRecognition';
+import { recognizePresenterShot, isSalesPresenterLabel, salesPresenterRecognition, confirmedSalesPresenterRoute, mergeAutomatedPresenterReviewEvidence } from '../../shared/contracts/presenterShotRecognition';
 import ReplicationWorkbenchHeader from './socialContent/ReplicationWorkbenchHeader';
 import AgentTaskDemoWorkbench from './socialContent/AgentTaskDemoWorkbench';
 import { referenceSpeechLines as groupReferenceSpeechLines } from './socialContent/referenceSpeechLines';
@@ -100,6 +100,7 @@ import { normalizeBenchmarkAnalysisSnapshot, type BenchmarkAnalysis } from '../.
 import { productionReferenceAdmission } from '../../shared/productionReferenceAdmission';
 import { reconcileStudioProductionSpec } from '../../shared/studioProductionContract';
 import { attachStudioSocialShotIdentities, normalizeStudioSocialShotId, resolveStudioSocialShot } from '../lib/studioSocialShotIdentity';
+import { effectiveDigitalHumanRequirements } from '../../shared/contracts/digitalHumanRequirements';
 export { StudioRequestTimeoutError, waitForStudioMediaReady, withStudioTimeout } from './studio/studioAuthenticatedMedia';
 // AI 生成内容工作台：创作设置 → 脚本与声音 → 成片制作。
 const STUDIO_ACCENT = 'var(--color-accent)';
@@ -110,6 +111,29 @@ const PUBLISH_RETURN_PREVIEW_KEY = 'ow_publish_return_to_preview';
 const STUDIO_OPEN_PROJECT_KEY = 'ow_studio_open_project';
 const PUBLISH_RETURN_PREVIEW_TTL = 2 * 60 * 60 * 1000;
 const sleep = (ms: number) => new Promise<void>(r => setTimeout(r, ms));
+
+function normalizeExplicitPresenterMode(shot: ShotProduction): ShotProduction {
+  const digitalHuman = effectiveDigitalHumanRequirements(shot.digitalHuman);
+  return digitalHuman === shot.digitalHuman ? shot : { ...shot, digitalHuman };
+}
+
+export function applyManagedPresenterProduction(
+  current: ShotProduction,
+  managed: ShotProduction,
+  input: { managedMode?: string; presenterConfirmed: boolean; sourceChoice?: string },
+): ShotProduction {
+  if (input.managedMode !== 'one_click_managed' || !input.presenterConfirmed
+    || input.sourceChoice === 'material' || input.sourceChoice === 'shoot') return normalizeExplicitPresenterMode(current);
+  const managedNarration = String(managed.narration || '').trim();
+  return normalizeExplicitPresenterMode({
+    ...current,
+    source: 'avatar',
+    sound: managed.digitalHuman?.presenterMode === 'video_twin' ? 'source' : managed.sound,
+    presenterId: managed.presenterId,
+    digitalHuman: managed.digitalHuman,
+    narration: managedNarration && managedNarration !== '无' ? managedNarration : current.narration,
+  });
+}
 
 export function loadedStudioProjectTitle(
   project: Pick<StudioProject, 'id' | 'title' | 'status'>,
@@ -1001,11 +1025,37 @@ function parseCueRange(value: string): { start: number; end: number } | null {
   return { start: Math.max(0, start), end: Math.max(start + 0.3, rawEnd) };
 }
 
+export function confirmedNarrationForTimeRange(
+  lines: ReadonlyArray<{ draft?: string; time?: string }> | undefined,
+  range: { start: number; end: number },
+): string {
+  if (!Array.isArray(lines) || !Number.isFinite(range.start) || !Number.isFinite(range.end) || range.end <= range.start) return '';
+  return lines.filter(line => {
+    const cue = parseCueRange(String(line.time || ''));
+    return cue && cue.start < range.end && cue.end > range.start;
+  }).map(line => String(line.draft || '').trim()).filter(Boolean).join('\n');
+}
+
 function inferPersonShot(value: string): boolean | undefined {
   const text=String(value||'').toLowerCase();
   if(/人物|真人|女性|男性|女人|男人|女士|男士|出镜|口播|讲解|主持|主播|模特|面部|半身|全身|woman|man|person|presenter|speaker|talking/.test(text)) return true;
   if(/产品|机器|设备|工厂|车间|包装|细节|特写|信息图|文字卡|场景空镜|b-?roll|product|factory|machine|diagram/.test(text)) return false;
   return undefined;
+}
+
+export function referencePersonShotForDetail(item: {
+  visual?: string;
+  environment?: string;
+  observedPresenterRole?: import('../../shared/contracts/presenterShotRecognition').ObservedPresenterRole;
+  personContinuityId?: string;
+  salesPresenterConfirmed?: boolean;
+  needsReview?: boolean;
+}): boolean | undefined {
+  const recognition = salesPresenterRecognition(item);
+  if (recognition === 'confirmed') return true;
+  if (item.observedPresenterRole === 'background' || item.observedPresenterRole === 'none') return false;
+  if (item.needsReview || item.salesPresenterConfirmed !== undefined || item.observedPresenterRole !== undefined) return undefined;
+  return inferPersonShot(`${item.visual || ''} ${item.environment || ''}`);
 }
 
 /** Voiceover belongs to the audio track; it does not turn a visual B-roll shot into an avatar shot. */
@@ -3202,6 +3252,7 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onLaunc
   const [heygenAvatars, setHeygenAvatars] = useState<HeyGenAvatarOption[]>([]);
   const [heygenAvatarOrientation, setHeygenAvatarOrientation] = useState<'unknown' | 'portrait' | 'landscape' | 'square'>('unknown');
   const [heygenAvatarBinding, setHeygenAvatarBinding] = useState(false);
+  const [heygenBindingConsent, setHeygenBindingConsent] = useState(false);
   const [digitalHumanLoading, setDigitalHumanLoading] = useState(false);
   const shootingSlotsRef = useRef<ShootingSlot[]>([]);
   const [shootingIdentityEpoch, setShootingIdentityEpoch] = useState(0);
@@ -3240,7 +3291,31 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onLaunc
   const [batchShotResults, setBatchShotResults] = useState<Array<{ shotId: string; slotId: string; state: 'submitted' | 'matched' | 'needs_material' | 'blocked'; jobId?: string; reason: string }>>([]);
   const batchShotRequestRef = useRef<{ signature: string; batchId: string } | null>(null);
   const productionRequestIds = useRef(new Map<string, string>());
-  const projectRevisionRef = useRef<unknown>(undefined);
+  const projectRevisionRef = useRef<string | undefined>(undefined);
+  const projectRevisionProjectIdRef = useRef<string | undefined>(undefined);
+  const projectSaveConflictRef = useRef<{ project: StudioProject; localSpec: Record<string, unknown> } | null>(null);
+  const adoptEditorProjectRevision = (project: StudioProject) => {
+    studioApi.adoptProjectRevision(project);
+    projectRevisionRef.current = project.updatedAt;
+    projectRevisionProjectIdRef.current = project.id;
+  };
+  const saveStudioProjectVersioned = async (input: Parameters<typeof studioApi.saveProject>[0]) => {
+    const targetProjectId = input.id;
+    const result = await studioApi.saveProject({
+      ...input,
+      ...(!input.baseUpdatedAt && targetProjectId
+        && projectRevisionProjectIdRef.current === targetProjectId && projectRevisionRef.current
+        ? { baseUpdatedAt: projectRevisionRef.current }
+        : {}),
+    });
+    if (result.ok && result.project?.id) {
+      projectRevisionRef.current = result.project.updatedAt;
+      projectRevisionProjectIdRef.current = result.project.id;
+    } else if (result.recovery === 'reload_required' && result.project?.id) {
+      showProjectSaveConflict(result.project, input.spec);
+    }
+    return result;
+  };
   const [productionError, setProductionError] = useState('');
   const [pendingPhotoSentenceJob, setPendingPhotoSentenceJob] = useState<{id:string;shotKey:string}|null>(null);
   const [productionCapability, setProductionCapability] = useState({ configured: false, reason: '正在读取数字人配置', costPerSecond: null as number | null, referenceBudgetLimitCny: null as number | null, maxAttemptsPerShot: 3,
@@ -3787,6 +3862,7 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onLaunc
   const [autosaveError, setAutosaveError] = useState('');
   const [lastAutosavedAt, setLastAutosavedAt] = useState<Date | null>(null);
   const autosaveInFlightRef = useRef(false);
+  const projectDeleteInFlightRef = useRef<string | null>(null);
   const autosavePendingRef = useRef(false);
   const autosaveSnapshotRef = useRef<() => Promise<void>>(async () => undefined);
   const [videoKickoff, setVideoKickoff] = useState<VideoKickoff | null>(null);
@@ -3842,10 +3918,18 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onLaunc
             || (target && source && Math.abs(source.start-target.start) < .03 && Math.abs(source.end-target.end) < .03);
         });
         if (!row) return detail;
-        const confirmed = row.observedPresenterRole === 'sales_presenter' && !row.needsReview;
-        if (detail.observedPresenterRole === row.observedPresenterRole && detail.personContinuityId === row.personContinuityId && detail.salesPresenterConfirmed === confirmed) return detail;
+        const reviewed = mergeAutomatedPresenterReviewEvidence(detail, {
+          observedPresenterRole: row.observedPresenterRole,
+          personContinuityId: row.personContinuityId,
+          needsReview: row.needsReview === true,
+        });
+        const reviewedPersonContinuityId = reviewed.personContinuityId || undefined;
+        if (detail.observedPresenterRole === reviewed.observedPresenterRole && detail.personContinuityId === reviewedPersonContinuityId
+          && detail.salesPresenterConfirmed === reviewed.salesPresenterConfirmed && detail.needsReview === reviewed.needsReview) return detail;
         changed = true;
-        return { ...detail, observedPresenterRole: row.observedPresenterRole, personContinuityId: row.personContinuityId, salesPresenterConfirmed: confirmed };
+        return { ...detail, observedPresenterRole: reviewed.observedPresenterRole,
+          personContinuityId: reviewedPersonContinuityId, salesPresenterConfirmed: reviewed.salesPresenterConfirmed,
+          needsReview: reviewed.needsReview };
       });
       return changed ? { ...current, referenceAnalysis: { ...current.referenceAnalysis!, details: updated } } : current;
     });
@@ -4068,17 +4152,29 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onLaunc
     return overlap[0]?.overlap && details.length === storyboardSlots.length ? overlap[0].detail : undefined;
   };
   const personContinuityBySlot = useMemo(() => Object.fromEntries(storyboardSlots.flatMap(slot => { const source = referencePresenterForSlot(slot); return source?.personContinuityId ? [[slot.id, source.personContinuityId]] : []; })), [storyboardSlots, videoKickoff]);
-  const presenterRoleBySlot = useMemo(() => Object.fromEntries(storyboardSlots.flatMap(slot => { const source = referencePresenterForSlot(slot); return source?.observedPresenterRole ? [[slot.id, source.needsReview && !source.salesPresenterConfirmed ? 'unknown' : source.observedPresenterRole]] : []; })), [storyboardSlots, videoKickoff]);
+  const presenterRoleBySlot = useMemo(() => Object.fromEntries(storyboardSlots.flatMap(slot => { const source = referencePresenterForSlot(slot); return source?.observedPresenterRole ? [[slot.id, source.observedPresenterRole]] : []; })), [storyboardSlots, videoKickoff]);
   const presenterConfirmationBySlot = useMemo(() => Object.fromEntries(storyboardSlots.flatMap(slot => { const source = referencePresenterForSlot(slot); return source ? [[slot.id, source.salesPresenterConfirmed]] : []; })), [storyboardSlots, videoKickoff]);
-  const presenterEvidenceFor = (slot: StoryboardSlot) => ({ ...slot, observedPresenterRole: presenterRoleBySlot[slot.id], personContinuityId: personContinuityBySlot[slot.id], salesPresenterConfirmed: presenterConfirmationBySlot[slot.id] });
+  const presenterNeedsReviewBySlot = useMemo(() => Object.fromEntries(storyboardSlots.flatMap(slot => { const source = referencePresenterForSlot(slot); return source ? [[slot.id, source.needsReview === true]] : []; })), [storyboardSlots, videoKickoff]);
+  const presenterEvidenceFor = (slot: StoryboardSlot) => {
+    const persisted = shootingSlotsRef.current.find(item => item.slotId === slot.id);
+    return { ...slot,
+      observedPresenterRole: presenterRoleBySlot[slot.id] ?? persisted?.observedPresenterRole,
+      personContinuityId: personContinuityBySlot[slot.id] ?? persisted?.personContinuityId,
+      salesPresenterConfirmed: presenterConfirmationBySlot[slot.id] ?? persisted?.salesPresenterConfirmed,
+      needsReview: presenterNeedsReviewBySlot[slot.id] ?? persisted?.needsReview };
+  };
   const shootingSlots = useMemo(() => {
     if(rawSceneTarget||boundProductionSnapshot?.projectId===projectId)return shootingSlotsRef.current;
     const slots = reconcileShootingSlots(shootingSlotsRef.current, storyboardSlots,
       slotId => JSON.stringify({ lang: activeVoiceLang || lang, ratio, productInfo, selectedProductIds,
         sound: shotProductions[`${activeAssemblyId}:${shootingSlotsRef.current.find(item => item.slotId === slotId)?.id}`]?.sound || 'voiceover' }), () => crypto.randomUUID());
     shootingSlotsRef.current = slots;
-    return slots.map(slot => ({ ...slot, observedPresenterRole: presenterRoleBySlot[slot.slotId], personContinuityId: personContinuityBySlot[slot.slotId], salesPresenterConfirmed: presenterConfirmationBySlot[slot.slotId] }));
-  }, [sceneTargetKey, boundProductionSnapshot, projectId, presenterConfirmationBySlot, presenterRoleBySlot, personContinuityBySlot, storyboardSlots, activeVoiceLang, lang, ratio, productInfo, selectedProductIds, shootingIdentityEpoch, shotProductions, activeAssemblyId]);
+    return slots.map(slot => ({ ...slot,
+      observedPresenterRole: presenterRoleBySlot[slot.slotId] ?? slot.observedPresenterRole,
+      personContinuityId: personContinuityBySlot[slot.slotId] ?? slot.personContinuityId,
+      salesPresenterConfirmed: presenterConfirmationBySlot[slot.slotId] ?? slot.salesPresenterConfirmed,
+      needsReview: presenterNeedsReviewBySlot[slot.slotId] ?? slot.needsReview }));
+  }, [sceneTargetKey, boundProductionSnapshot, projectId, presenterConfirmationBySlot, presenterNeedsReviewBySlot, presenterRoleBySlot, personContinuityBySlot, storyboardSlots, activeVoiceLang, lang, ratio, productInfo, selectedProductIds, shootingIdentityEpoch, shotProductions, activeAssemblyId]);
   const productionAudioUrl = (voiceoverMode === 'ai' ? voiceoverAudios[activeVoiceLang]?.url : voiceoverUrl) || '';
   const asrContextRef = useRef('');
   asrContextRef.current = JSON.stringify([projectId, productionAudioUrl, activeVoiceLang, voiceDrafts[activeVoiceLang], script]);
@@ -4116,7 +4212,8 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onLaunc
         || productionDefaults.presenters.find(item => item.authorized && item.name.trim() === '销售')
       : requestedPresenter;
     const salesPresenterId = preferredPresenter?.id;
-    const shot = newShotProduction(storyboardSlotScript(slot.detail).voice, salesPresenterId || productionDefaults.defaultPresenterId, productionDefaults);
+    const confirmedNarration = confirmedNarrationForTimeRange(studioCreateRequest?.confirmedSpeech, slot);
+    const shot = newShotProduction(confirmedNarration || storyboardSlotScript(slot.detail).voice, salesPresenterId || productionDefaults.defaultPresenterId, productionDefaults);
     if (mode === 'clone' && requestedPresenterId && !requestedPresenter) shot.presenterId = '';
     const requirements = newDigitalHumanRequirements();
     const agentPlan = socialDigitalHumanPlans.find(item =>
@@ -4174,9 +4271,7 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onLaunc
         derivativeAuthorized: false,
         cues: matching.map((item, index) => {
           const range = parseCueRange(item.time)!;
-          const personShot=item.salesPresenterConfirmed === true || item.observedPresenterRole === 'sales_presenter' || item.observedPresenterRole === 'presenter_action'
-            ? true : item.observedPresenterRole === 'none' || item.observedPresenterRole === 'background'
-              ? false : inferPersonShot(`${item.visual || ''} ${item.environment || ''}`);
+          const personShot = referencePersonShotForDetail(item);
           return { id: `${slot.id}:reference:${index}:${range.start}-${range.end}`, start: range.start, end: range.end,
             originalText: item.dialogue || '', targetText: '', shotIds: storyboardSlots.filter(candidate => range.start < candidate.end && range.end > candidate.start).map(candidate => candidate.id),
             ...(personShot===undefined?{}:{personShot,classificationSource:'analysis' as const}),
@@ -4200,13 +4295,14 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onLaunc
     return { ...shot, digitalHuman: requirements };
   };
   const productionFor = (slot: StoryboardSlot) => {
-    let shot = normalizeMaterialAudio(shotProductions[productionKey(slot.id)] || newProductionFor(slot));
+    let shot = normalizeExplicitPresenterMode(normalizeMaterialAudio(shotProductions[productionKey(slot.id)] || newProductionFor(slot)));
     const choice = storyboardSourcePlans[slot.id]?.userSource;
     const presenterConfirmed = salesPresenterRecognition(presenterEvidenceFor(slot)) === 'confirmed';
-    if (studioCreateRequest?.managedMode === 'one_click_managed' && presenterConfirmed && choice !== 'material' && choice !== 'shoot') {
-      const managed = newProductionFor(slot);
-      shot = { ...shot, source: 'avatar', presenterId: managed.presenterId, digitalHuman: managed.digitalHuman };
-    }
+    shot = applyManagedPresenterProduction(shot, newProductionFor(slot), {
+      managedMode: studioCreateRequest?.managedMode,
+      presenterConfirmed,
+      sourceChoice: choice,
+    });
     // Classification describes the reference person; the user's source choice controls production.
     return choice === 'material' || choice === 'shoot'
       ? { ...shot, source: choice, sound: shot.source === 'avatar' ? 'voiceover' as const : shot.sound }
@@ -4258,7 +4354,7 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onLaunc
     const avatar = heygenAvatars.find(item => item.id === heygenAvatarId);
     if (!avatar) { setDigitalHumanNotice('请选择一个 HeyGen 数字人资产。'); return; }
     if (!avatar.defaultVoiceId) { setDigitalHumanNotice('该 HeyGen 资产没有默认声音，请先在 HeyGen 中绑定声音后刷新。'); return; }
-    if (!digitalHumanConsent) { setDigitalHumanNotice('请先确认人物、声音和商业使用授权。'); return; }
+    if (!heygenBindingConsent) { setDigitalHumanNotice('请先确认人物为成年人，并授权本产品和 HeyGen 处理人物、声音及商业使用。'); return; }
     if (ratio === '9:16' && heygenAvatarOrientation !== 'portrait') {
       setDigitalHumanNotice('当前为竖屏成片，请先确认该数字人资产的原生画幅为竖屏，避免付费生成后出现大面积留白。'); return;
     }
@@ -4266,9 +4362,9 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onLaunc
     try {
       const existing = productionDefaults.presenters.find(item => (item.toolMappings?.heygen?.avatarId || item.avatarId) === avatar.id);
       const presenterId = existing?.id || crypto.randomUUID();
-      const now = new Date().toISOString();
+      const { rightsEvidence: _untrustedExistingRights, ...existingWithoutRights } = existing || {};
       const presenter: import('../lib/shotProduction').PresenterAsset = {
-        ...(existing || {}),
+        ...existingWithoutRights,
         id: presenterId,
         name: avatar.name,
         avatarId: avatar.id,
@@ -4277,14 +4373,10 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onLaunc
         supportsAlpha: existing?.supportsAlpha === true,
         nativeOrientation: heygenAvatarOrientation,
         commercialRightsStatus: 'cleared',
-        rightsEvidence: existing?.rightsEvidence || {
-          authorizationRef: `rights://heygen-account-asset/${encodeURIComponent(avatar.id)}`,
-          consentRef: `consent://studio-operator-confirmation/${encodeURIComponent(now)}`,
-          grantedAt: now,
+        authorizationConfirmation: {
+          ...(existing?.authorizationConfirmation || {}),
           subjectAdultConfirmed: true,
-          permittedProviders: ['heygen'],
-          permittedUses: ['digital_presenter', 'voice_synthesis'],
-          providerScopes: [{ provider: 'heygen', uses: ['digital_presenter', 'voice_synthesis'] }],
+          heygenProcessingAuthorized: true,
         },
         toolMappings: { ...(existing?.toolMappings || {}), heygen: { avatarId: avatar.id, voiceId: avatar.defaultVoiceId } },
       };
@@ -4679,7 +4771,7 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onLaunc
         const sourcePlans = { ...currentSpec.storyboardSourcePlans, [slot.id]: { ...plan, mode: plan.mode, shotTopic: storyboardTopicFor(slot), sceneType, productIds: chosenIds, characterMaterialId, environmentMaterialId, decided: true } };
         const spec = { ...currentSpec, storyboardSourcePlans: sourcePlans,
           storyboardAssemblies: currentSpec.storyboardAssemblies.map(item => item.id === activeAssemblyId ? { ...item, sourcePlans } : item) };
-        const saved = await studioApi.saveProject({ id: targetProjectId || undefined, title: projectTitle, status: 'draft', spec });
+        const saved = await saveStudioProjectVersioned({ id: targetProjectId || undefined, title: projectTitle, status: 'draft', spec });
         if (!saved.ok || !saved.project?.id) throw new Error('本片产品选择未保存，首帧任务没有提交');
         targetProjectId = saved.project.id;
         projectRevisionRef.current = saved.project.updatedAt;
@@ -4701,7 +4793,7 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onLaunc
         const sourcePlans = { ...currentSpec.storyboardSourcePlans, [slot.id]: { ...plan, mode: plan.mode, shotTopic: storyboardTopicFor(slot), sceneType, productIds: chosenIds, characterMaterialId, environmentMaterialId, decided: true } };
         const spec = { ...currentSpec, storyboardSourcePlans: sourcePlans,
           storyboardAssemblies: currentSpec.storyboardAssemblies.map(item => item.id === activeAssemblyId ? { ...item, sourcePlans } : item) };
-        const saved = await studioApi.saveProject({ id: targetProjectId, title: projectTitle, status: 'draft', spec });
+        const saved = await saveStudioProjectVersioned({ id: targetProjectId, title: projectTitle, status: 'draft', spec });
         if (!saved.ok || !saved.project?.id) throw new Error('当前分镜产品映射未保存，首帧任务没有提交');
         projectRevisionRef.current = saved.project.updatedAt;
         if (batchSpecOverride) {
@@ -4804,7 +4896,7 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onLaunc
         const spec = collectSpec();
         const updatedPlans = { ...spec.storyboardSourcePlans, [slot.id]: { ...plan, mode: plan.mode === 'hybrid' ? 'hybrid' : 'ai', decided: true } };
         const updatedSpec = { ...spec, storyboardSourcePlans: updatedPlans, storyboardAssemblies: spec.storyboardAssemblies.map(item => item.id === activeAssemblyId ? { ...item, sourcePlans: updatedPlans } : item) };
-        const saved = await studioApi.saveProject({ id: projectId, title: projectTitle, status: 'draft', spec: updatedSpec });
+        const saved = await saveStudioProjectVersioned({ id: projectId, title: projectTitle, status: 'draft', spec: updatedSpec });
         if (!saved.ok || !saved.project?.id) throw new Error('分镜生成规格未保存，视频任务尚未提交');
         projectRevisionRef.current = saved.project.updatedAt;
         if (!useSegmentedAction) {
@@ -9108,7 +9200,11 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onLaunc
     transcriptSourceHash: item.transcriptSourceHash,
   }));
   const collectSpec = () => {
-    let savedShotProductions = shotProductions;
+    let savedShotProductions = Object.fromEntries(Object.entries(shotProductions)
+      .map(([key, shot]) => [key, normalizeExplicitPresenterMode(shot)]));
+    for (const slot of storyboardSlots) {
+      savedShotProductions[productionKey(slot.id)] = productionFor(slot);
+    }
     for (const plan of socialDigitalHumanPlans) {
       const slot = resolveStudioSocialShot(storyboardSlots, plan);
       if (!slot) continue;
@@ -9220,7 +9316,8 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onLaunc
     setStoryboardQualityChecking({});
     shootingSlotsRef.current = Array.isArray(s.shootingSlots) ? s.shootingSlots as ShootingSlot[] : [];
     setShootingIdentityEpoch(current => current + 1);
-    setShotProductions(s.shotProductions && typeof s.shotProductions === 'object' ? Object.fromEntries(Object.entries(s.shotProductions as Record<string, ShotProduction>).map(([key, shot]) => [key, normalizeMaterialAudio(shot)])) : {});
+    setShotProductions(s.shotProductions && typeof s.shotProductions === 'object' ? Object.fromEntries(Object.entries(s.shotProductions as Record<string, ShotProduction>)
+      .map(([key, shot]) => [key, normalizeExplicitPresenterMode(normalizeMaterialAudio(shot))])) : {});
     setSocialDigitalHumanPlans(Array.isArray(s.socialDigitalHumanPlans) ? s.socialDigitalHumanPlans as StudioSocialTaskSeed['digitalHumanShotPlans'] : []);
     setSocialSourceShotIds(Array.isArray(s.socialSourceShotIds) ? s.socialSourceShotIds.map(String).filter(Boolean) : []);
     rememberSocialShotMaterialBindings(Array.isArray(s.socialShotMaterialBindings)
@@ -9506,11 +9603,56 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onLaunc
     }
   }, []);
 
+  const reloadLatestProjectAfterConflict = async () => {
+    const pending = projectSaveConflictRef.current;
+    if (!pending) return;
+    try {
+      const latest = await studioApi.getProject(pending.project.id);
+      adoptEditorProjectRevision(latest);
+      projectHydrationPendingRef.current = true;
+      applySpec(latest.spec);
+      currentProjectRef.current = latest.id;
+      setProjectId(latest.id);
+      setProjectTitle(latest.title);
+      setProjects(current => [latest, ...current.filter(item => item.id !== latest.id)]);
+      projectSaveConflictRef.current = null;
+      notification.destroy('studio-project-save-conflict');
+      setAutosaveError('');
+      setAutosaveStatus('saved');
+      setLastAutosavedAt(new Date());
+      setModeNotice('已按你的选择载入后台最新版本；冲突期间的本页修改没有自动覆盖生产结果。');
+      window.setTimeout(() => {
+        projectHydrationPendingRef.current = false;
+        setProjectHydrationRevision(value => value + 1);
+      }, 0);
+    } catch (error) {
+      setModeNotice(error instanceof Error ? `最新草稿载入失败：${error.message}` : '最新草稿载入失败，请稍后重试。');
+    }
+  };
+
+  const showProjectSaveConflict = (project: StudioProject, localSpec: Record<string, unknown>) => {
+    projectSaveConflictRef.current = { project, localSpec: structuredClone(localSpec) };
+    setAutosaveStatus('error');
+    setAutosaveError('后台项目已更新，当前修改尚未保存');
+    notification.warning({
+      key: 'studio-project-save-conflict',
+      message: '检测到后台生产结果更新',
+      description: '当前页面的编辑仍保留，自动保存已暂停，没有覆盖后台结果。确认后再载入最新版本。',
+      placement: 'top',
+      duration: 0,
+      btn: <Button size="small" type="primary" onClick={() => void reloadLatestProjectAfterConflict()}>载入最新版本</Button>,
+    });
+  };
+
   const saveProject = async (
     status: 'draft' | 'ready_for_approval' | 'published' | 'template' = 'draft',
     options: { silent?: boolean; allowDuringModeAction?: boolean; specOverrides?: Record<string, unknown> } = {},
   ) => {
     const silent = options.silent === true;
+    if (projectDeleteInFlightRef.current) {
+      if (!silent) setModeNotice('正在删除创作，请稍候。');
+      return false;
+    }
     if (frozenStudioSpecRef.current) {
       if (!silent) setModeNotice('当前是已冻结生产计划，请从原任务发起修订；浏览和刷新不会覆盖分镜或供应商记录。');
       return false;
@@ -9521,6 +9663,10 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onLaunc
     }
     if (managedProductionProjectRef.current) {
       if (!silent) setModeNotice('该内容由自动任务管理。内容制作页不承载任务详情或流程修订，请返回数字员工任务现场处理。');
+      return false;
+    }
+    if (projectSaveConflictRef.current) {
+      if (!silent) showProjectSaveConflict(projectSaveConflictRef.current.project, projectSaveConflictRef.current.localSpec);
       return false;
     }
     if (silent && (sourceDraftCheckPending || existingSourceDraftPrompt)) return false;
@@ -9576,16 +9722,35 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onLaunc
     }
     else setSavingProj(true);
     try {
-      const saved = await studioApi.saveProject({
-        id: status === 'template' ? undefined : currentProjectRef.current ?? projectId ?? undefined,
+      const targetProjectId = status === 'template' ? undefined : currentProjectRef.current ?? projectId ?? undefined;
+      const saved = await saveStudioProjectVersioned({
+        id: targetProjectId,
         title: projectTitle.trim() || '未命名草稿',
         status,
         spec: nextSpec,
         thumbSeed: cover,
+        ...(targetProjectId && projectRevisionProjectIdRef.current === targetProjectId && projectRevisionRef.current
+          ? { baseUpdatedAt: projectRevisionRef.current }
+          : {}),
       });
       const { project } = saved;
+      if (!saved.ok && saved.recovery === 'reload_required' && project?.id) {
+        showProjectSaveConflict(project, nextSpec);
+        return false;
+      }
       if (!saved.ok) throw new Error(saved.error || '草稿保存失败，请重试；当前编辑仍保留在页面中。');
       if (!project?.id) throw new Error('草稿保存失败，请重试；当前编辑仍保留在页面中。');
+      projectRevisionRef.current = project.updatedAt;
+      projectRevisionProjectIdRef.current = project.id;
+      if (saved.recoveredFromConflict) {
+        projectHydrationPendingRef.current = true;
+        applySpec(project.spec);
+        setModeNotice('后台最新生产结果已与本页修改安全合并，当前页面已更新。');
+        window.setTimeout(() => {
+          projectHydrationPendingRef.current = false;
+          setProjectHydrationRevision(value => value + 1);
+        }, 0);
+      }
       if (project?.id && status !== 'template') {
         currentProjectRef.current = project.id;
         setProjectId(project.id);
@@ -9657,7 +9822,7 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onLaunc
         runId: workflowContext.runId,
         taskId: workflowContext.taskId,
       } : undefined);
-      const saved = await studioApi.saveProject({
+      const saved = await saveStudioProjectVersioned({
         id: current.id,
         title: normalizedTitle,
         status: current.status,
@@ -9849,7 +10014,7 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onLaunc
     setProductionBusy(true); setProductionError(''); autosaveInFlightRef.current = true;
     try {
       const fingerprint = productionFingerprint(slot, shot);
-      const saved = await studioApi.saveProject({ id: projectId || undefined, title: projectTitle, status: 'draft', spec: collectSpec() });
+      const saved = await saveStudioProjectVersioned({ id: projectId || undefined, title: projectTitle, status: 'draft', spec: collectSpec() });
       if (!saved.ok || !saved.project?.id) throw new Error('草稿保存失败，未发起生成');
       projectRevisionRef.current = saved.project.updatedAt;
       setProjectId(saved.project.id);
@@ -9890,7 +10055,7 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onLaunc
     if (savingProj || autosaveInFlightRef.current || sourceDraftCheckPending || existingSourceDraftPrompt) { setProductionError('草稿仍在恢复或保存，请稍后重试'); return; }
     setProductionBusy(true); setProductionError(''); autosaveInFlightRef.current = true;
     try {
-      const saved = await studioApi.saveProject({ id: projectId || undefined, title: projectTitle, status: 'draft', spec: collectSpec() });
+      const saved = await saveStudioProjectVersioned({ id: projectId || undefined, title: projectTitle, status: 'draft', spec: collectSpec() });
       if (!saved.ok || !saved.project?.id) throw new Error('草稿保存失败，制作方案未保存');
       projectRevisionRef.current = saved.project.updatedAt; setProjectId(saved.project.id);
       const record = await productionApi.savePlan({ projectId: saved.project.id, assemblyId: activeAssemblyId, shotId: persistedShot.id, fingerprint: productionFingerprint(slot, shot) });
@@ -9906,7 +10071,7 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onLaunc
     if (!persistedShot) { setProductionError('当前分镜尚未建立制作时间段，请先保存分镜脚本'); return; }
     setProductionBusy(true); setProductionError(''); autosaveInFlightRef.current = true;
     try {
-      const saved = await studioApi.saveProject({ id: projectId || undefined, title: projectTitle, status: 'draft', spec: collectSpec() });
+      const saved = await saveStudioProjectVersioned({ id: projectId || undefined, title: projectTitle, status: 'draft', spec: collectSpec() });
       if (!saved.ok || !saved.project?.id) throw new Error('草稿保存失败，未提取逐句首帧');
       projectRevisionRef.current = saved.project.updatedAt; setProjectId(saved.project.id);
       const result = await productionApi.prepareSentenceFirstFrames({ projectId: saved.project.id, assemblyId: activeAssemblyId, shotId: persistedShot.id, fingerprint: productionFingerprint(slot, shot) });
@@ -9914,13 +10079,13 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onLaunc
       if (targetPhoto && shot.digitalHuman?.reference) {
         const preparedShot = {...shot, digitalHuman: {...shot.digitalHuman, targetFramesConfirmed:false, reference:{...shot.digitalHuman.reference,cues:result.cues}}, revision:shot.revision+1};
         const spec = collectSpec();
-        const persisted = await studioApi.saveProject({id:saved.project.id,title:projectTitle,status:'draft',spec:{...spec,shotProductions:{...spec.shotProductions,[productionKey(slot.id)]:preparedShot}}});
+        const persisted = await saveStudioProjectVersioned({id:saved.project.id,title:projectTitle,status:'draft',spec:{...spec,shotProductions:{...spec.shotProductions,[productionKey(slot.id)]:preparedShot}}});
         if (!persisted.ok) throw new Error('首帧配置保存失败');
         const target = await productionApi.preparePhotoTalkingFirstFrames({projectId:saved.project.id,assemblyId:activeAssemblyId,shotId:persistedShot.id,fingerprint:productionFingerprint(slot,preparedShot),confirmed:true,maxCostCny:Number(maxCostCny)});
         result.cues = target.cues;
         preparedTargetShot = {...preparedShot, digitalHuman:{...preparedShot.digitalHuman!, targetFramesConfirmed:true,
           reference:{...preparedShot.digitalHuman!.reference!,cues:target.cues}}, revision:preparedShot.revision+1};
-        const confirmed = await studioApi.saveProject({id:saved.project.id,title:projectTitle,status:'draft',spec:{...spec,shotProductions:{...spec.shotProductions,[productionKey(slot.id)]:preparedTargetShot}}});
+        const confirmed = await saveStudioProjectVersioned({id:saved.project.id,title:projectTitle,status:'draft',spec:{...spec,shotProductions:{...spec.shotProductions,[productionKey(slot.id)]:preparedTargetShot}}});
         if (!confirmed.ok) throw new Error('目标首帧已生成，但预览配置保存失败');
         projectRevisionRef.current = confirmed.project?.updatedAt || projectRevisionRef.current;
       }
@@ -9945,7 +10110,7 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onLaunc
     setProductionBusy(true); setProductionError(''); autosaveInFlightRef.current = true;
     try {
       const fingerprint = productionFingerprint(slot, shot);
-      const saved = await studioApi.saveProject({ id: projectId || undefined, title: projectTitle, status: 'draft', spec: collectSpec() });
+      const saved = await saveStudioProjectVersioned({ id: projectId || undefined, title: projectTitle, status: 'draft', spec: collectSpec() });
       if (!saved.ok || !saved.project?.id) throw new Error('草稿保存失败，未启动逐句生成');
       projectRevisionRef.current = saved.project.updatedAt; setProjectId(saved.project.id);
       const result = await productionApi.runSentenceReplication({ projectId: saved.project.id, assemblyId: activeAssemblyId, shotId: persistedShot.id,
@@ -10005,7 +10170,7 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onLaunc
     finally{setProductionBusy(false);}
   };
 
-  const generateProductionSentenceDrafts=async()=>{const slot=storyboardSlots.find(item=>item.id===productionEditorId);if(!slot||productionBusy)return;const shot=productionFor(slot);const persistedShot=shootingSlots.find(item=>item.slotId===slot.id);if(!persistedShot){setProductionError('当前分镜尚未建立制作时间段，请先保存分镜脚本');return;}setProductionBusy(true);setProductionError('');autosaveInFlightRef.current=true;try{const fingerprint=productionFingerprint(slot,shot);const saved=await studioApi.saveProject({id:projectId||undefined,title:projectTitle,status:'draft',spec:collectSpec()});if(!saved.ok||!saved.project?.id)throw new Error('草稿保存失败，未启动千问首帧草稿');projectRevisionRef.current=saved.project.updatedAt;setProjectId(saved.project.id);const result=await productionApi.generateSentenceFirstFrameDrafts({projectId:saved.project.id,assemblyId:activeAssemblyId,shotId:persistedShot.id,fingerprint,requestId:crypto.randomUUID(),confirmed:true});setShotProductions(current=>{const key=productionKey(slot.id);const currentShot=current[key]||shot;if(!currentShot.digitalHuman?.reference)return current;return{...current,[key]:{...currentShot,digitalHuman:{...currentShot.digitalHuman,contentConfirmed:false,reference:{...currentShot.digitalHuman.reference,cues:result.cues}},revision:currentShot.revision+1}};});await refreshMaterials();setDigitalHumanNotice(`已生成 ${result.operationIds.length} 张千问构图草稿，预计费用 ¥${result.estimatedCostCny.toFixed(2)}。草稿不会直接交给 Seedance。`);}catch(error){setProductionError(error instanceof Error?error.message:'千问首帧草稿生成失败');}finally{autosaveInFlightRef.current=false;setProductionBusy(false);}};
+  const generateProductionSentenceDrafts=async()=>{const slot=storyboardSlots.find(item=>item.id===productionEditorId);if(!slot||productionBusy)return;const shot=productionFor(slot);const persistedShot=shootingSlots.find(item=>item.slotId===slot.id);if(!persistedShot){setProductionError('当前分镜尚未建立制作时间段，请先保存分镜脚本');return;}setProductionBusy(true);setProductionError('');autosaveInFlightRef.current=true;try{const fingerprint=productionFingerprint(slot,shot);const saved=await saveStudioProjectVersioned({id:projectId||undefined,title:projectTitle,status:'draft',spec:collectSpec()});if(!saved.ok||!saved.project?.id)throw new Error('草稿保存失败，未启动千问首帧草稿');projectRevisionRef.current=saved.project.updatedAt;setProjectId(saved.project.id);const result=await productionApi.generateSentenceFirstFrameDrafts({projectId:saved.project.id,assemblyId:activeAssemblyId,shotId:persistedShot.id,fingerprint,requestId:crypto.randomUUID(),confirmed:true});setShotProductions(current=>{const key=productionKey(slot.id);const currentShot=current[key]||shot;if(!currentShot.digitalHuman?.reference)return current;return{...current,[key]:{...currentShot,digitalHuman:{...currentShot.digitalHuman,contentConfirmed:false,reference:{...currentShot.digitalHuman.reference,cues:result.cues}},revision:currentShot.revision+1}};});await refreshMaterials();setDigitalHumanNotice(`已生成 ${result.operationIds.length} 张千问构图草稿，预计费用 ¥${result.estimatedCostCny.toFixed(2)}。草稿不会直接交给 Seedance。`);}catch(error){setProductionError(error instanceof Error?error.message:'千问首帧草稿生成失败');}finally{autosaveInFlightRef.current=false;setProductionBusy(false);}};
 
   const reviewProductionSentenceCue = async (cueId:string, decisionsByKey:Record<string,boolean>, evidence:string) => {
     const slot=storyboardSlots.find(item=>item.id===productionEditorId); if(!slot||productionBusy)return; const shot=productionFor(slot); const persistedShot=shootingSlots.find(item=>item.slotId===slot.id); if(!persistedShot)return;
@@ -10065,7 +10230,7 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onLaunc
       if (!acceptedExecution || savingProj || autosaveInFlightRef.current) { setProductionError('草稿正在保存或执行记录尚未就绪，请稍后再采用'); return; }
       setProductionBusy(true); setProductionError(''); autosaveInFlightRef.current = true;
       try {
-        const saved = await studioApi.saveProject({ id: projectId || undefined, title: projectTitle, status: 'draft', spec: collectSpec() });
+        const saved = await saveStudioProjectVersioned({ id: projectId || undefined, title: projectTitle, status: 'draft', spec: collectSpec() });
         if (!saved.ok || !saved.project?.id) throw new Error('草稿保存失败，候选尚未填入分镜');
         projectRevisionRef.current = saved.project.updatedAt; setProjectId(saved.project.id);
         const adoptedExecution = await productionApi.adoptExecution(acceptedExecution.id, { candidateId, materialId: candidate.materialId });
@@ -10102,7 +10267,7 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onLaunc
       const baseSpec = collectSpec();
       const sourcePlans = { ...baseSpec.storyboardSourcePlans, [targetSlotId]: { ...sourcePlanFor(storyboardSlot), userSource: 'shoot', decided: true, confirmed: false } };
       const assignments = { ...baseSpec.storyboardAssignments }; delete assignments[targetSlotId];
-      const saved = await studioApi.saveProject({ id: projectId || undefined, title: projectTitle.trim() || '未命名草稿', status: 'draft', spec: { ...baseSpec, storyboardAssignments: assignments, storyboardSourcePlans: sourcePlans, storyboardAssemblies: baseSpec.storyboardAssemblies.map(item => item.id === activeAssemblyId ? { ...item, assignments, sourcePlans } : item) }, thumbSeed: cover });
+      const saved = await saveStudioProjectVersioned({ id: projectId || undefined, title: projectTitle.trim() || '未命名草稿', status: 'draft', spec: { ...baseSpec, storyboardAssignments: assignments, storyboardSourcePlans: sourcePlans, storyboardAssemblies: baseSpec.storyboardAssemblies.map(item => item.id === activeAssemblyId ? { ...item, assignments, sourcePlans } : item) }, thumbSeed: cover });
       if (!saved.ok || !saved.project?.id) throw new Error('草稿保存失败，未创建待拍任务。');
       projectRevisionRef.current = saved.project.updatedAt;
       setProjectId(saved.project.id);
@@ -10231,7 +10396,7 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onLaunc
       voiceDrafts: {}, voiceoverAudios: {}, alignedCuesByLang: {}, languageRenderOutputs: {}, clipEdits: {},
       bgm: '', cover: '', coverTitle: '', caption: '', posterJsonText: '', posterImageUrl: '',
     };
-    const saved = await studioApi.saveProject({ title: nextTitle, status: 'draft', spec: cleanSpec });
+    const saved = await saveStudioProjectVersioned({ title: nextTitle, status: 'draft', spec: cleanSpec });
     if (!saved.ok || !saved.project) return;
     applySpec(saved.project.spec);
     setScript(''); setVoiceoverLines(''); setVoiceDrafts({}); setModeScripts([]); setActiveModeScriptId('');
@@ -10251,7 +10416,11 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onLaunc
     setBoundProductionSnapshot(frozen ? { projectId: p.id, slots: frozen.slots } : null);
     localFlowTestRef.current = (p.spec as any)?.localFlowTest?.enabled === true ? (p.spec as any).localFlowTest : null;
     localFlowRecoveryRef.current = localFlowTestRef.current ? { spec: p.spec, projectId: p.id } : null;
-    if (p.status !== 'template') studioApi.adoptProjectRevision(p);
+    if (p.status !== 'template') {
+      adoptEditorProjectRevision(p);
+      projectSaveConflictRef.current = null;
+      notification.destroy('studio-project-save-conflict');
+    }
     projectHydrationPendingRef.current = true;
     applySpec(p.status === 'template' ? withoutStudioWorkflowContext(p.spec) : p.spec);
     setProjectId(p.status === 'template' ? null : p.id);
@@ -10398,7 +10567,7 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onLaunc
       const clonedSpec = withoutStudioWorkflowContext(
         JSON.parse(JSON.stringify(p.spec || {})) as Record<string, unknown>,
       );
-      const saved = await studioApi.saveProject({
+      const saved = await saveStudioProjectVersioned({
         title: nextTitle,
         status: 'draft',
         spec: clonedSpec,
@@ -10451,7 +10620,7 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onLaunc
         setProjects(list);
         const project = list.find(item => item.id === targetProjectId);
         if (project) {
-          studioApi.adoptProjectRevision(project);
+          adoptEditorProjectRevision(project);
           applySpec(project.spec);
           setProjectId(project.status === 'template' ? null : project.id);
           setProjectTitle(project.status === 'template' ? `${project.title} · 副本` : project.title);
@@ -10468,13 +10637,36 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onLaunc
   }, []);
 
   const removeProject = async (id: string) => {
-    await studioApi.deleteProject(id);
-    setProjects(await studioApi.listProjects());
-    if (projectId === id) {
-      frozenStudioSpecRef.current = null;
-      setBoundProductionSnapshot(null);
-      setProjectId(null);
-      setProjectWorkflowContext(null);
+    if (projectDeleteInFlightRef.current) return;
+    if (id === projectId && (savingProj || autosaveInFlightRef.current)) {
+      const reason = '当前创作正在保存，请保存完成后再删除。';
+      message.warning(reason);
+      throw new Error(reason);
+    }
+    projectDeleteInFlightRef.current = id;
+    try {
+      const result = await studioApi.deleteProject(id);
+      if (!result.ok) {
+        const reason = result.error || '删除失败，请稍后重试';
+        message.error(reason);
+        throw new Error(reason);
+      }
+      setProjects(items => items.filter(item => item.id !== id));
+      if (projectId === id) {
+        frozenStudioSpecRef.current = null;
+        currentProjectRef.current = null;
+        projectRevisionRef.current = undefined;
+        projectRevisionProjectIdRef.current = undefined;
+        projectSaveConflictRef.current = null;
+        setBoundProductionSnapshot(null);
+        setProjectId(null);
+        setProjectWorkflowContext(null);
+        setShowProjects(false);
+        openCreationHome(false);
+      }
+      message.success('创作已删除');
+    } finally {
+      projectDeleteInFlightRef.current = null;
     }
   };
 
@@ -11761,7 +11953,7 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onLaunc
 	                    </div>
 	                    <label className="mt-3 flex cursor-pointer items-start gap-2 text-[11px] leading-5 text-text-secondary">
 	                      <input type="checkbox" checked={digitalHumanConsent} onChange={event => setDigitalHumanConsent(event.target.checked)} className="mt-1 accent-[var(--color-accent)]" />
-	                      <span>我确认已取得该出镜人物的肖像、声音及商业使用授权，并对上传与生成内容负责。</span>
+	                      <span>我确认人物为成年人，已取得肖像、声音及商业使用授权，并同意本产品和 HeyGen 处理人物与声音。</span>
 	                    </label>
 	                    {digitalHumanCapabilities?.available === false && (
 	                      <p className="mt-2 text-[11px] font-semibold text-amber-600">{digitalHumanCapabilities.unavailableReason}</p>
@@ -14960,7 +15152,7 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onLaunc
       if (!result.ok || !result.record) throw new Error(result.issues?.join('；') || result.error || '重新质检未通过');
       setProjectQualityRecord(result.record);
       if (result.project) {
-        studioApi.adoptProjectRevision(result.project);
+        adoptEditorProjectRevision(result.project);
         setProjects(current => [result.project!, ...current.filter(item => item.id !== result.project!.id)]);
       }
       setProjectQualityNotice(result.replayed ? '当前版本已通过质检，签发记录仍然有效。' : '重新质检通过，已为当前输入签发新的生成记录。');
@@ -15356,7 +15548,7 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onLaunc
         if (!nextSelected.includes(clip.id)) nextSelected.push(clip.id);
       }
       const spec = collectSpec();
-      const saved = await studioApi.saveProject({ id: projectId || undefined, title: projectTitle, status: 'draft',
+      const saved = await saveStudioProjectVersioned({ id: projectId || undefined, title: projectTitle, status: 'draft',
         spec: { ...spec, storyboardSourcePlans: nextPlans, storyboardAssignments: nextAssignments,
           shotProductions: nextProductions, clipEdits: nextEdits, selected: nextSelected,
           storyboardAssemblies: spec.storyboardAssemblies.map(item => item.id === activeAssemblyId
@@ -15579,7 +15771,7 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onLaunc
       }
       batchSpec.storyboardAssemblies = batchSpec.storyboardAssemblies.map(item => item.id === activeAssemblyId
         ? { ...item, assignments: batchSpec.storyboardAssignments, sourcePlans: batchSpec.storyboardSourcePlans, selected: batchSpec.selected } : item);
-      const saved = await studioApi.saveProject({ id: projectId || undefined, title: projectTitle, status: 'draft', spec: batchSpec });
+      const saved = await saveStudioProjectVersioned({ id: projectId || undefined, title: projectTitle, status: 'draft', spec: batchSpec });
       if (!saved.ok || !saved.project?.id) throw new Error(saved.error || '草稿未能保存，未启动逐镜生成。');
       projectRevisionRef.current = saved.project.updatedAt;
       setProjectId(saved.project.id);
@@ -15626,7 +15818,7 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onLaunc
       if (affordableAigc.length) {
         batchSpec.storyboardAssemblies = batchSpec.storyboardAssemblies.map(item => item.id === activeAssemblyId
           ? { ...item, sourcePlans: batchSpec.storyboardSourcePlans } : item);
-        const persistedFrames = await studioApi.saveProject({ id: saved.project.id, title: projectTitle, status: 'draft', spec: batchSpec });
+        const persistedFrames = await saveStudioProjectVersioned({ id: saved.project.id, title: projectTitle, status: 'draft', spec: batchSpec });
         if (!persistedFrames.ok || !persistedFrames.project?.id) throw new Error('目标首帧生成后保存失败，请重试');
         projectRevisionRef.current = persistedFrames.project.updatedAt;
       }
@@ -16689,10 +16881,10 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onLaunc
             />}
             {step === 'material' && activeWorkbenchSlot && productionFor(activeWorkbenchSlot).source === 'avatar' && <details className="rounded-lg border border-border bg-white p-3">
               <summary className="cursor-pointer text-xs font-bold">HeyGen 账号资产</summary>
-              <label className="mt-2 block text-[10px] font-bold text-text-secondary">选择人物<select aria-label="HeyGen 账号人物" value={heygenAvatarId} onChange={event => { setHeygenAvatarId(event.target.value); setDigitalHumanConsent(false); }} className="mt-1 w-full rounded border border-border bg-white p-2"><option value="">请选择</option>{heygenAvatars.map(avatar => <option key={avatar.id} value={avatar.id}>{avatar.name}</option>)}</select></label>
-              <label className="mt-2 block text-[10px] font-bold text-text-secondary">素材原生画幅<select aria-label="HeyGen 人物画幅" value={heygenAvatarOrientation} onChange={event => setHeygenAvatarOrientation(event.target.value as 'unknown' | 'portrait' | 'landscape' | 'square')} className="mt-1 w-full rounded border border-border bg-white p-2"><option value="unknown">待确认</option><option value="portrait">竖屏</option><option value="landscape">横屏</option><option value="square">方形</option></select></label>
-              <label className="mt-2 flex gap-2 text-[10px] leading-4 text-text-secondary"><input type="checkbox" checked={digitalHumanConsent} onChange={event => setDigitalHumanConsent(event.target.checked)} />我确认人物、声音和商业使用授权</label>
-              <button type="button" disabled={heygenAvatarBinding || !heygenAvatarId || !digitalHumanConsent} onClick={() => void bindHeygenAvatarToShot(activeWorkbenchSlot)} className="mt-2 w-full rounded bg-blue-600 px-2 py-1.5 text-[10px] font-bold text-white disabled:opacity-50">{heygenAvatarBinding ? '绑定中…' : '绑定当前分镜'}</button>
+              <label className="mt-2 block text-[10px] font-bold text-text-secondary">选择人物<select aria-label="HeyGen 账号人物" value={heygenAvatarId} onChange={event => { setHeygenAvatarId(event.target.value); setHeygenBindingConsent(false); }} className="mt-1 w-full rounded border border-border bg-white p-2"><option value="">请选择</option>{heygenAvatars.map(avatar => <option key={avatar.id} value={avatar.id}>{avatar.name}</option>)}</select></label>
+              <label className="mt-2 block text-[10px] font-bold text-text-secondary">素材原生画幅<select aria-label="HeyGen 人物画幅" value={heygenAvatarOrientation} onChange={event => { setHeygenAvatarOrientation(event.target.value as 'unknown' | 'portrait' | 'landscape' | 'square'); setHeygenBindingConsent(false); }} className="mt-1 w-full rounded border border-border bg-white p-2"><option value="unknown">待确认</option><option value="portrait">竖屏</option><option value="landscape">横屏</option><option value="square">方形</option></select></label>
+              <label className="mt-2 flex gap-2 text-[10px] leading-4 text-text-secondary"><input type="checkbox" checked={heygenBindingConsent} onChange={event => setHeygenBindingConsent(event.target.checked)} />我确认人物为成年人，并已授权本产品和 HeyGen 处理人物、声音及商业使用</label>
+              <button type="button" disabled={heygenAvatarBinding || !heygenAvatarId || !heygenBindingConsent} onClick={() => void bindHeygenAvatarToShot(activeWorkbenchSlot)} className="mt-2 w-full rounded bg-blue-600 px-2 py-1.5 text-[10px] font-bold text-white disabled:opacity-50">{heygenAvatarBinding ? '绑定中…' : '绑定当前分镜'}</button>
             </details>}
       {!socialViralTask && <DigitalHumanProductionOverview
         shots={storyboardSlots.flatMap((slot, index) => {
@@ -17015,7 +17207,7 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onLaunc
           const missingProductImage = /缺少可读取的图片/.test(issue.detail || '');
           if (!missingProductImage && !(isDigital && ['这一镜还不能提交生成', '数字人方案待确认', '数字人素材待生成', '数字人任务已提交'].includes(issue.question))) return null;
           const saveSpec = async (spec: ReturnType<typeof collectSpec>) => {
-            const saved = await studioApi.saveProject({ id: projectId || undefined, title: projectTitle, status: 'draft', spec });
+            const saved = await saveStudioProjectVersioned({ id: projectId || undefined, title: projectTitle, status: 'draft', spec });
             if (!saved.ok || !saved.project?.id) throw new Error('草稿保存失败，请重试');
             projectRevisionRef.current = saved.project.updatedAt; setProjectId(saved.project.id);
           };
@@ -17087,7 +17279,7 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onLaunc
               const next = { ...storyboardSourcePlans, [slot.id]: { ...plan, userSource: 'shoot' as const, mode: 'auto' as const, decided: true, confirmed: false } };
               const assignments = { ...storyboardAssignments }; delete assignments[slot.id];
               const spec = collectSpec();
-              const saved = await studioApi.saveProject({ id: projectId || undefined, title: projectTitle, status: 'draft',
+              const saved = await saveStudioProjectVersioned({ id: projectId || undefined, title: projectTitle, status: 'draft',
                 spec: { ...spec, storyboardSourcePlans: next, storyboardAssignments: assignments,
                   storyboardAssemblies: spec.storyboardAssemblies.map(item => item.id === activeAssemblyId ? { ...item, sourcePlans: next, assignments } : item) } });
               if (!saved.ok || !saved.project?.id) throw new Error('草稿保存失败，未创建补拍任务');
@@ -17372,7 +17564,7 @@ function ProjectsOverlay({ projects, batches, materials, currentId, workflowCont
   emptyMessage?: string;
   onClose: () => void;
   onLoad: (p: StudioProject) => void;
-  onDelete: (id: string) => void;
+  onDelete: (id: string) => Promise<void>;
   onReview: (batchId: string, itemId: string, status: 'approved' | 'rejected') => void;
   onReuseProject: (p: StudioProject) => void | Promise<void>;
   onReuse: (batch: VariationBatch) => void;
@@ -17412,16 +17604,29 @@ function ProjectsOverlay({ projects, batches, materials, currentId, workflowCont
               <div className="p-2.5">
                 <p className="text-xs font-semibold text-text-primary truncate">{p.title}</p>
                 {productionSummary(p.spec || {}) && <p className="mt-1 text-[10px] text-amber-700">{productionSummary(p.spec || {})}</p>}
-                <p className="text-[10px] text-text-muted mt-0.5">{new Date(p.updatedAt).toLocaleString('zh-CN', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' })}</p>
+                <div className="mt-1 flex min-w-0 items-center justify-between gap-2">
+                  <p className="min-w-0 truncate text-xs text-text-muted">{new Date(p.updatedAt).toLocaleString('zh-CN', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' })}</p>
+                  <Popconfirm
+                    title="删除这条创作？"
+                    description={`“${p.title}”删除后无法恢复。`}
+                    okText="删除"
+                    cancelText="取消"
+                    okButtonProps={{ danger: true }}
+                    onConfirm={() => onDelete(p.id)}
+                  >
+                    <Button
+                      type="text"
+                      size="small"
+                      danger
+                      icon={<Trash2 size={13} />}
+                      aria-label={`删除创作：${p.title}`}
+                      onClick={event => event.stopPropagation()}
+                    >
+                      删除
+                    </Button>
+                  </Popconfirm>
+                </div>
               </div>
-              <button
-                type="button"
-                aria-label={`删除草稿：${p.title}`}
-                title="删除草稿"
-                onClick={e => { e.stopPropagation(); onDelete(p.id); }}
-                className="absolute top-1.5 right-1.5 w-6 h-6 rounded-lg bg-black/40 text-white flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity hover:bg-red">
-                <Trash2 size={12} />
-              </button>
             </div>
           ))}
         </div>

@@ -35,6 +35,8 @@ assert.match(source, /onClick=\{detailCreationReady \? onCreate : isImagePost \?
 assert.match(source, /const handoffReady = !pending && reviewHandoff\?\.status === 'production_ready' && reviewHandoff\.productionExecutionAllowed === true/, '开放任务起稿不能冒充成片制作已通过编导交接');
 assert.match(source, /review-handoff/, '编导分析抽屉必须读取服务端复核工作单');
 assert.match(source, /<AuthenticatedVideo[^]*?apiUrl=\{previewMaterial\.url\}[^]*?loadOnMount/, '素材弹窗必须走带超时和重试的统一视频播放器');
+assert.match(source, /onLoadedMetadata=\{\(\) => \{[^]*?if \(controls\) reportMediaReady\(\)/, '带控件的视频预览读取到元数据后必须移除准备中遮罩，避免 Safari 已显示画面仍阻塞');
+assert.match(source, /onPlaying=\{reportMediaReady\}/, '视频实际开始播放时必须兜底结束准备状态');
 assert.doesNotMatch(source, /<video src=\{`\$\{material\.url\}#t=0\.1`\}/, '素材卡片不能同时预加载整页视频并耗尽 Safari 媒体资源');
 
 console.log('InspirationDashboard exact-analysis response tests passed');

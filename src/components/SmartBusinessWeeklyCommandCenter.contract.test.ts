@@ -63,8 +63,12 @@ for (const label of ['计划视频', '爆款视频缩略图', '内容结构', '�
   assert.match(planDetails, new RegExp(label), `详细周计划必须用可视化卡片展示“${label}”`);
 }
 assert.match(planDetails, /display\.contents\.map\(\(item, index\)/, '详细周计划必须覆盖共享模型中的全部计划视频');
-assert.match(source, /const showcaseWeeklyVideos = showcaseTotals \? smartBusinessShowcaseWeeklyVideos\(data, true\) : null;[\s\S]*const allContents = showcaseContents\.length \? showcaseContents : mappedContents;[\s\S]*versionCount: contents\.length/, '本地展示的 26 条计划必须进入统一内容清单，计数不得与实际行数脱节');
+assert.match(source, /const showcaseWeeklyVideos = showcaseTotals \? smartBusinessShowcaseWeeklyVideos\(data, true\) : null;[\s\S]*const allContents = showcaseContents\.length \? showcaseContents : mappedContents;[\s\S]*versionCount: contents\.length/, '本地展示的 32 条计划必须进入统一内容清单，计数不得与实际行数脱节');
 assert.match(businessInterpretation, /useShowcaseBudget \? display\.totals\.budgetMidCny : Math\.max/, '经营解读必须与周计划清单使用同一份本地预算汇总，不能继续显示旧预算');
+assert.match(commandCenter, /operatingContext\?\.budget\.productionMinCny/, '制作成本范围必须读取制作预算，不得把投流预算混入');
+assert.match(commandCenter, /operatingContext\?\.budget\.productionMaxCny/, '制作成本上限必须与投流预算分开');
+assert.doesNotMatch(commandCenter, /operatingContext\?\.budget\.total(?:Min|Max)Cny/, '周计划制作成本卡不得显示包含投流费用的总预算');
+assert.match(commandCenter, /!hasExplicitProductionRange && weeklyQueue\.length/, '已有明确制作预算区间时不得再用预计成本比例放大区间');
 const planListStart = planDetails.indexOf('<section aria-label="计划视频清单">');
 const planListEnd = planDetails.indexOf('<section className="grid gap-4', planListStart);
 const planList = planDetails.slice(planListStart, planListEnd);
@@ -95,6 +99,8 @@ assert.doesNotMatch(planDetails, /发布账号尚未就绪|发布准备状态暂
 assert.doesNotMatch(commandCenter, /note:|item\.note|当前没有待验收成片|发布任务 ·|逐镜生成与重试费用待核算|按当前周计划与供应商报价估算|仅统计供应商对账回执/, '六项周计划指标不得保留解释性小字');
 assert.doesNotMatch(commandCenter, /已包含本周全部视频制作/, '费用未核算前不得承诺覆盖本周全部视频制作');
 assert.match(source, /durationSeconds: contents\.reduce\(\(sum, item\) => sum \+ item\.duration, 0\)/, '视频总时长必须按本周全部计划视频合计');
+assert.match(source, /operatingContext\?\.budget\.productionMinCny[\s\S]*operatingContext\?\.budget\.productionMaxCny[\s\S]*operatingContext\?\.budget\.productionCny/, '周计划统一展示模型必须只汇总制作预算');
+assert.match(source, /plan\.productionRole === "platform_adaptation"[\s\S]*\? 0[\s\S]*plan\.estimatedCost/, '平台发布版本的单条预算必须计入母版，不能重复累加制作成本');
 assert.doesNotMatch(commandCenter, /<LsCalendar|WeeklyContentProgressPanel|本周发布日历/, '顶部周经营计划不得重复渲染发布日历');
 assert.match(publishingCalendar, /<h3[^>]*>发布日历<\/h3>[\s\S]{0,160}<Tag>\{calendarEvents\.length\} 项发布<\/Tag>/, '发布视图必须使用与员工排期一致的工作台标题栏');
 assert.match(publishingCalendar, /initialView="timeGridWeek"[^>]*\bshowAllEvents\b[^>]*fixedHeight="auto"[^>]*workspaceMode="expanded"[^>]*firstDay=\{display\.startsAt \? calendarWeekday\(display\.startsAt\) : 1\}/, '发布日历必须按真实计划起始日展示明确小时排期');

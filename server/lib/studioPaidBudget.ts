@@ -29,10 +29,10 @@ export class StudioPaidBudget {
     if (!Number.isFinite(overrideCny) || overrideCny <= 0 || overrideCny > config.reserve[provider] / 1e6) throw new Error('单任务预占金额无效或超过管理员上限');
     return units(String(overrideCny));
   }
-  private exemptAmount(config: Config, provider: PaidProvider, overrideCny?: number): number {
-    if (overrideCny === undefined) return this.amount(config, provider);
+  private exemptReservation(overrideCny?: number): number | null {
+    if (overrideCny === undefined) return null;
     if (!Number.isFinite(overrideCny) || overrideCny <= 0) throw new Error('单任务预占金额无效');
-    return units(String(overrideCny));
+    return overrideCny;
   }
   private read(config: Config): Ledger {
     const file = path.join(this.root, 'ledger.json');
@@ -51,8 +51,7 @@ export class StudioPaidBudget {
   status(provider: PaidProvider, overrideCny?: number, tenantId?: string) {
     if (isInternalBudgetExemptTenant(tenantId)) {
       try {
-        const config = this.config();
-        return { allowed: true, remainingCny: null, reservationCny: this.exemptAmount(config, provider, overrideCny) / 1e6,
+        return { allowed: true, remainingCny: null, reservationCny: this.exemptReservation(overrideCny),
           reason: '', budgetExempt: true };
       } catch (error) {
         return { allowed: false, remainingCny: null, reservationCny: null,
@@ -68,7 +67,7 @@ export class StudioPaidBudget {
   }
   async reserve(provider: PaidProvider, operationId: string, overrideCny?: number, tenantId?: string) {
     if (isInternalBudgetExemptTenant(tenantId)) {
-      this.exemptAmount(this.config(), provider, overrideCny);
+      this.exemptReservation(overrideCny);
       return;
     }
     return withPaidOperationLock(path.join(this.root, '.locks'), 'budget', async () => {

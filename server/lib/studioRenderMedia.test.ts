@@ -12,8 +12,10 @@ test('local exports support range/HEAD, isolate tenants, and reject traversal/sy
   fs.mkdirSync(path.join(root, 'tenant_a'));
   fs.mkdirSync(path.join(root, 'tenant_b'));
   fs.writeFileSync(path.join(root, 'tenant_a', 'sample.mp4'), '0123456789');
+  fs.writeFileSync(path.join(root, 'tenant_a', '微信成片.mp4'), 'abcdefghij');
   fs.symlinkSync(path.join(root, 'tenant_a', 'sample.mp4'), path.join(root, 'tenant_b', 'linked.mp4'));
   assert.equal(safeStudioRenderOutputPath(root, 'tenant_a', path.join(root, 'tenant_a', 'sample.mp4')), fs.realpathSync(path.join(root, 'tenant_a', 'sample.mp4')));
+  assert.equal(safeStudioRenderOutputPath(root, 'tenant_a', path.join(root, 'tenant_a', '微信成片.mp4')), fs.realpathSync(path.join(root, 'tenant_a', '微信成片.mp4')));
   assert.equal(safeStudioRenderOutputPath(root, 'tenant_b', path.join(root, 'tenant_a', 'sample.mp4')), null);
   assert.equal(safeStudioRenderOutputPath(root, 'tenant_b', path.join(root, 'tenant_b', 'linked.mp4')), null);
   assert.equal(safeStudioRenderOutputPath(root, 'tenant_a', '/etc/hosts'), null);
@@ -32,6 +34,7 @@ test('local exports support range/HEAD, isolate tenants, and reject traversal/sy
     assert.equal(partial.headers.get('content-range'), 'bytes 2-5/10');
     assert.equal(await partial.text(), '2345');
     assert.equal((await get('sample.mp4', 'tenant_a', { method: 'HEAD' })).headers.get('content-length'), '10');
+    assert.equal(await (await get(encodeURIComponent('微信成片.mp4'), 'tenant_a')).text(), 'abcdefghij');
     assert.equal((await get('sample.mp4', 'tenant_b')).status, 404);
     assert.equal((await get('linked.mp4', 'tenant_b')).status, 404);
     assert.equal((await get('missing.mp4')).status, 404);

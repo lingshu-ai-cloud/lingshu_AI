@@ -6,7 +6,14 @@ import { shotFingerprint } from '../../src/lib/shotProduction.js';
 const shot = { source: 'material', sound: 'voiceover', layout: 'full', presenterId: '', productId: '', productMaterialId: '', backgroundMaterialId: '', backgroundMode: 'independent', transparent: false, narration: 'Enterprise script', locked: false, factsConfirmed: false, candidates: [], adoptedId: '', revision: 1 };
 function fixture() {
   let project: any = { id: 'project', tenant_id: 'tenant', status: 'draft', spec: { activeAssemblyId: 'video-1', automatedReplicationShots: [{ shotId: 'shot', slotId: 'slot', kind: 'nonperson', start: 0, end: 2, firstFrameRequest: { shotDescription: 'Closeup target product', sourceFirstFrameUrl: '/source.jpg' } }], shotProductions: { 'video-1:shot': shot } } };
-  const store: any = { getById: async (_: string, id: string) => id === 'project' ? structuredClone(project) : null, update: async (_: string, _id: string, patch: any) => { project = { ...project, ...structuredClone(patch) }; return true; } };
+  const store: any = { getById: async (_: string, id: string) => id === 'project' ? structuredClone(project) : null, update: async (_: string, _id: string, patch: any) => { project = { ...project, ...structuredClone(patch) }; return true; },
+    compareAndSwap: async (_: string, id: string, expected: any, patch: any) => {
+      if (id !== project.id) return false;
+      for (const [key, value] of Object.entries(expected)) {
+        try { assert.deepEqual(project[key], value); } catch { return false; }
+      }
+      project = { ...project, ...structuredClone(patch) }; return true;
+    } };
   return { store, project: () => project };
 }
 const router = Router();
@@ -15,6 +22,7 @@ assert.deepEqual(await invokeReplicationRoute(router, 'tenant', 'post', '/native
 const f = fixture(); let calls: string[] = []; const callBodies: any[] = []; let validations = 0;
 const deps: any = { validateAdoption: async () => [], materials: () => [{ id: 'video', tenantId: 'tenant', scope: 'own', type: 'video' }], validateVideo: async () => { validations++; }, call: async (_: string, _method: string, route: string, body: any) => { calls.push(route); callBodies.push(body); assert.equal(body.shotId || 'slot', 'slot'); if (route === '/storyboard-first-frame') return { status: 200, body: { ok: true, fingerprint: 'frame-fp', material: { id: 'frame' } } }; if (route === '/seedance-video') { assert.equal(body.duration, 4); assert.equal(body.firstFrameMaterialId, 'frame'); return { status: 200, body: { ok: true, material: { id: 'video' } } }; } return { status: 200, body: { quality: { passed: true } } }; } };
 for (let index = 0; index < 4; index++) { const result = await advanceAutomatedReplication({ tenantId: 'tenant', projectId: 'project', maxCostCny: 12.5, store: f.store }, deps); assert.equal(result.state, 'pending'); }
+assert.match(String(f.project().updated_at || ''), /^\d{4}-\d{2}-\d{2}T/, 'bridge production writes advance the Studio revision');
 assert.deepEqual(calls, ['/storyboard-first-frame', '/seedance-video', '/storyboard-quality-check']);
 assert.equal(callBodies[0].maxCostCny, 12.5); assert.equal(callBodies[1].maxCostCny, 12.5, 'both paid native steps receive the frozen project cap');
 assert.equal(f.project().spec.storyboardAssignments.slot, 'video');

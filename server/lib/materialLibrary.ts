@@ -3,7 +3,6 @@ import path from 'node:path';
 import { createHash } from 'node:crypto';
 import { readCloudMaterialLibrary, type MaterialSourceStatus } from './cloudMaterials.js';
 import { isSyntheticMaterial } from './materialTruthfulness.js';
-import { currentDataAuthority } from '../storage/dataAuthority.js';
 import type { DataStore } from '../storage/datastore.js';
 import { tenantCatalogImageFile } from './enterpriseMediaImage.js';
 import sharp from 'sharp';
@@ -218,9 +217,10 @@ export async function readMaterialLibrary(tenantId: string, adapters: {
   let localStatus: MaterialSourceStatus = { source: 'server', state: 'ready', message: '服务端素材目录可用' };
   try { local = (adapters.local || readLocalMaterials)(); }
   catch { localStatus = { source: 'server', state: 'unavailable', message: '服务端素材目录读取失败，请重试或联系管理员' }; }
-  const cloud = currentDataAuthority() === 'local' && !adapters.cloud
-    ? { items: [] as MaterialRecord[], source: { source: 'database', state: 'ready', message: '本地账号使用本地素材库' } as MaterialSourceStatus }
-    : await (adapters.cloud || readCloudMaterialLibrary)(tenantId, undefined, adapters.dataStore);
+  // readCloudMaterialLibrary follows the request's bound data authority. In a
+  // local-authenticated preview it reads the local DataStore, so uploaded
+  // object-backed materials remain visible without attempting PocketBase.
+  const cloud = await (adapters.cloud || readCloudMaterialLibrary)(tenantId, undefined, adapters.dataStore);
   const sources = [localStatus, cloud.source];
   let enterpriseProducts: MaterialRecord[] = [];
   try { enterpriseProducts = await enterpriseProductImageMaterials(tenantId, adapters.dataStore); }

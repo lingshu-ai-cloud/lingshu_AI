@@ -201,7 +201,7 @@ export default function RestoredAgentWorkCalendar({
   canOpenContentTask,
   hideCompleted = false,
 }: Props) {
-  const positionKey = JSON.stringify([agentCalendarAuthIdentity(),scopeKey,startsAt,demo,'milestones-monday-v2']);
+  const positionKey = JSON.stringify([agentCalendarAuthIdentity(),scopeKey,startsAt,demo,'milestones-monday-v3']);
   const stateKey = `restoredAgentCalendar:${positionKey}`;
   const saved = readAgentCalendarReturnContext();
   const previous = saved?.calendar.positionKey === positionKey ? saved.states[stateKey] as {date?: string; view?: LsCalendarView} | undefined : undefined;
@@ -401,13 +401,13 @@ export default function RestoredAgentWorkCalendar({
         taskBoard
         showAllEvents
         visualVariant="agent"
-        narrowView="dayGridDay"
+        narrowView="listWeek"
         detailsTitle="任务详情"
         onDetailsClose={()=>{entryController.current?.abort();setEntryState(null);}}
         onDatesSet={info => { const next = calendarDayKey(info.view.calendar.getDate(), timeZone); setCalendarDate(next); setCalendarView(info.view.type as LsCalendarView); }}
         firstDay={1}
         timeZone={timeZone}
-        timeGridHeight="clamp(680px, calc(100dvh - 120px), 800px)"
+        timeGridHeight={calendarView === 'listWeek' ? 'auto' : 'clamp(680px, calc(100dvh - 120px), 800px)'}
         collapseEmptyTimeRanges
         detailsLayout="custom"
         renderDetails={renderDetails}

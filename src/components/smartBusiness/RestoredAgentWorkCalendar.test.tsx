@@ -22,6 +22,9 @@ test('weekly board is Monday through Sunday and direct execution never substitut
  const connected=readFileSync(new URL('./ConnectedAgentCalendar.tsx',import.meta.url),'utf8');
  const bridge=readFileSync(new URL('../socialProgram/WeeklyCustomerCalendar.tsx',import.meta.url),'utf8');
  assert.match(source,/firstDay=\{1\}/);
+ assert.match(source,/narrowView="listWeek"/,'narrow employee schedules must show the whole week instead of opening on an apparently empty single day');
+ assert.doesNotMatch(source,/narrowView="dayGridDay"/);
+ assert.match(source,/timeGridHeight=\{calendarView === 'listWeek' \? 'auto'/,'the responsive list must fit its real tasks instead of leaving a large empty calendar surface');
  assert.match(source,/交付物与当前受阻原因/);assert.match(source,/executionBlockers/);assert.match(source,/executionResultRefs/);
  assert.match(source,/onEnterExecution\(source,controller.signal\)/);assert.match(source,/进入真实执行界面/);
  assert.match(bridge,/onEnterExecution=\{onEnterExecution\}/);assert.match(connected,/onEnterExecution=\{enterExecution\}/);

@@ -65,6 +65,8 @@ test('预制场景上传只限制视频类型，不把建议时长当作就绪�
   } as never), false, '没有可用文件地址不能误报已入库');
   const uploadFlowSource = dashboardSource.slice(dashboardSource.indexOf('const handleUploadMaterials'), dashboardSource.indexOf('const requestMaterialUpload'));
   assert.match(uploadFlowSource, /uploadProductSceneKind && type !== 'video'/, '预制场景仍应只接受视频');
+  assert.match(uploadFlowSource, /studioMaterialFileKind\(file\)/, '文件 MIME 为空时必须按后缀识别 MOV、MP4 与 WebM');
+  assert.match(uploadFlowSource, /if \(uploadProductSceneKind\) continue;[\s\S]*?studioApi\.updateMaterial/, '预制场景由上传接口原子绑定，不得因多余的二次保存误报上传失败');
   assert.doesNotMatch(uploadFlowSource, /probeShootingVideo|duration < 2|duration > 3|2–3 秒/, '预制场景上传不得再做时长探测或硬限制');
   assert.doesNotMatch(dashboardSource, /请选择 2–3 秒视频|仅支持上传 2–3 秒视频/, '上传弹窗与错误文案不得继续展示硬时长要求');
 });

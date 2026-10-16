@@ -417,6 +417,7 @@ export default function SocialCreationWorkbench({
       if (storedId) {
         const existing = (await studioApi.listProjects()).find(item => item.id === storedId && item.status === 'draft' && item.spec?.freeCreation);
         if (existing) {
+          studioApi.adoptProjectRevision(existing);
           const restored = normalizeFreeCreationState(existing.spec.freeCreation);
           setSelectedProductIds(restored.brief.productIds); setContentGoal(restored.brief.goal || '种草'); setTargetAudience(restored.brief.audience || '海外目标客户');
           setPlatform(restored.brief.platform || 'TikTok'); setContentLanguage(restored.brief.language || 'zh'); setSellingPoints(restored.brief.sellingPoints);

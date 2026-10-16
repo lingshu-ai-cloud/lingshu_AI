@@ -1,4 +1,5 @@
 import type { DataStore } from '../storage/datastore.js';
+import { compareAndSwapStudioProject } from './studioProjectRevision.js';
 
 /** Project progress is a projection, not the paid-call ledger. Only bind a real
  * provider receipt to the exact managed shot that owns this first frame. */
@@ -23,9 +24,9 @@ export async function projectStoryboardProviderReceipt(input: {
     throw new Error('供应商回执对应的首帧版本已变化');
   if (current.providerTaskId && current.providerTaskId !== input.providerTaskId)
     throw new Error('当前镜头已绑定另一个供应商作业');
-  if (!await input.store.update('studio_projects', project.id, { spec: { ...spec,
+  const saved = await compareAndSwapStudioProject(input.store, project, { spec: { ...spec,
     automatedReplicationProgress: { ...progress, [shot.shotId]: { ...current,
       providerTaskId: input.providerTaskId, providerModel: input.providerModel,
-      providerAcceptedAt: input.providerAcceptedAt, updatedAt: new Date().toISOString() } } } }))
-    throw new Error('供应商回执进度保存失败，原生账本已保留原任务');
+      providerAcceptedAt: input.providerAcceptedAt, updatedAt: new Date().toISOString() } } } });
+  if (!saved.ok) throw new Error('供应商回执保存期间草稿已更新，未覆盖最新内容；原生账本已保留原任务');
 }
