@@ -58,6 +58,16 @@ assert.match(demoWorkbenchSource, />下一步<\/button>/, '移除步骤条后必
 assert.match(demoWorkbenchSource, /onStepChange\(visibleStep [+-] 1\)/, '底栏导航必须切换当前任务的正文阶段');
 assert.match(demoWorkbenchSource, /<audio[^>]+controls/, '演示模式必须能播放已有音频');
 assert.match(demoWorkbenchSource, /<video[^>]+controls/, '演示模式必须能播放已有视频或成片');
+assert.doesNotMatch(demoWorkbenchSource, /aspect-video/, '演示模式不得再把竖版内容塞进横版 16:9 预览框');
+assert.equal((demoWorkbenchSource.match(/<StudioPreviewStage/g) || []).length, 3, '演示模式三个阶段必须共用稳定画幅预览');
+assert.match(demoWorkbenchSource, /ratio=\{aspectRatio\}/, '演示模式的每个预览必须沿用当前项目画幅');
+assert.match(studioSource, /<AgentTaskDemoWorkbench[\s\S]{0,1200}aspectRatio=\{ratio\}/, 'Agent 任务演示必须接收当前项目画幅');
+assert.match(
+  studioSource,
+  /freeThreeStep && step === 'mode'[\s\S]{0,1600}<StudioPreviewStage ratio=\{ratio\}/,
+  '自由创作入口的开场预览也必须沿用项目画幅',
+);
+assert.match(studioSource, /studioCreateRequest\.sourceContext\?\.aspectRatio[\s\S]{0,500}setRatio\(RATIOS\.reduce/, '新内容任务必须把已有参考画幅带入制作项目');
 
 assert.match(
   studioSource,

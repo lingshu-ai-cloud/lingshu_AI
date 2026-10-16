@@ -13,12 +13,25 @@ import { readSocialTaskDetail, requireSocialTask } from './socialContentRecords.
 import { parseStoredSocialScriptBaseline } from './socialContentScriptBaseline.js';
 import { admitContentExecutionJob } from '../contentExecution/durableQueue.js';
 import {createProductionBudgetRuntimeReaders} from './socialContentProductionBudgetRuntimeReaders.js';
-import { prepareSocialContentProductionBudget, productRetryReservationShotIds } from './socialContentProductionBudgetPreflight.js';
+import { formalPaidRouteExceedsInternalBudget, prepareSocialContentProductionBudget, productRetryReservationShotIds } from './socialContentProductionBudgetPreflight.js';
 import { paidProductionHash } from './socialContentPaidOperationPlan.js';
 
 test('product budget bounds are bound to the reviewed supply plan', () => {
   const source=fs.readFileSync(new URL('./socialContentProductionBudgetPreflight.ts',import.meta.url),'utf8');
   assert.match(source,/readProductReplacementRequestBounds[\s\S]*?frozenSupplyPlan:input\.supplyPlan![\s\S]*?planVersion:String\(input\.supplyPlan!\.planVersion\)[\s\S]*?planHash:socialRequestHash\(input\.supplyPlan\)/);
+});
+
+test('formal paid route amount admission is exempt only for the exact configured tenant', () => {
+  const configured = process.env.INTERNAL_BUDGET_EXEMPT_TENANT_IDS;
+  try {
+    process.env.INTERNAL_BUDGET_EXEMPT_TENANT_IDS = 'local_tenant_customer_aurelia_beauty';
+    assert.equal(formalPaidRouteExceedsInternalBudget('local_tenant_customer_aurelia_beauty', 12, 10), false);
+    assert.equal(formalPaidRouteExceedsInternalBudget('another-tenant', 12, 10), true);
+    assert.equal(formalPaidRouteExceedsInternalBudget('local_tenant_customer_aurelia_beauty-suffix', 12, 10), true);
+  } finally {
+    if (configured === undefined) delete process.env.INTERNAL_BUDGET_EXEMPT_TENANT_IDS;
+    else process.env.INTERNAL_BUDGET_EXEMPT_TENANT_IDS = configured;
+  }
 });
 
 test('whole-film preflight reserves one retry only for retry-enabled generated product shots', () => {

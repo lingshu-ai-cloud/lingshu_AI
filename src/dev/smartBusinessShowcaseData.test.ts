@@ -9,6 +9,7 @@ import {
   smartBusinessShowcaseAds,
   smartBusinessShowcaseChannels,
   smartBusinessShowcasePerformance,
+  smartBusinessShowcaseWeeklyVideos,
 } from './smartBusinessShowcaseData';
 
 function overview(): DigitalEmployeeOverview {
@@ -38,6 +39,12 @@ test('showcase data is fail-closed away from local preview and can be explicitly
 
 test('local weekly command center uses the requested showcase counts', () => {
   assert.deepEqual(SMART_BUSINESS_SHOWCASE_WEEKLY_TOTALS, { plannedVideoCount: 26, waitingReviewCount: 3 });
+  const videos = smartBusinessShowcaseWeeklyVideos(overview(), true)!;
+  assert.equal(videos.length, SMART_BUSINESS_SHOWCASE_WEEKLY_TOTALS.plannedVideoCount);
+  assert.equal(new Set(videos.map(item => item.id)).size, 26);
+  assert.equal(videos.filter(item => item.status === 'waiting_review').length, SMART_BUSINESS_SHOWCASE_WEEKLY_TOTALS.waitingReviewCount);
+  assert.equal(videos.every(item => item.thumbnailUrl.startsWith('/demo/') && existsSync(new URL(`../../public${item.thumbnailUrl}`, import.meta.url))), true);
+  assert.equal(videos.every(item => item.estimatedCostCny === 12.5 && item.budgetMinCny === 10 && item.budgetMaxCny === 15), true);
 });
 
 test('one local dataset fills every Smart Business domain with aligned account identities', () => {

@@ -33,7 +33,7 @@ import { socialEngagementRouter } from './routes/socialEngagement.js';
 import { socialDiscoveryRouter } from './routes/socialDiscovery.js';
 import { socialProgramsRouter } from './routes/socialPrograms.js';
 import { createCustomerRelationshipEvidenceRouter } from './routes/customerRelationshipEvidence.js';
-import { store as customerRelationshipStore } from './storage/index.js';
+import { auth, store as customerRelationshipStore } from './storage/index.js';
 import { socialChannelsRouter } from './socialChannels/router.js';
 import { platformIntegrationsRouter } from './routes/platformIntegrations.js';
 import { adminRouter } from './routes/admin.js';
@@ -169,7 +169,12 @@ app.get('/api/overseas/ready', async (_req, res) => {
   res.json(report);
 });
 
-app.use('/api', createRateLimiter(apiRateLimitConfig()));
+app.use('/api', createRateLimiter({
+  ...apiRateLimitConfig(),
+  // Exemptions are resolved only from a verified server-side identity. Client
+  // tenant/user headers are intentionally ignored by the limiter.
+  verifyIdentity: authorization => auth.verifyToken(authorization),
+}));
 
 // Skip compression for SSE and long TTS responses so intermediary buffering
 // cannot delay the first byte or strand a completed synthesis response.

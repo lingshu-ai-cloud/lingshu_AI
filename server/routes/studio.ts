@@ -27,7 +27,7 @@ import { productIdentity } from '../digitalEmployees/contentProduction.js';
 import { enterpriseAssetStableId } from '../digitalEmployees/contentBatchPlan.js';
 import { resolveMaterialProductAssociation } from '../digitalEmployees/materialProductionReadiness.js';
 import { requestMaterialAnalysis, waitForMaterialAnalysis, isMaterialAnalysisActive, saveMaterialSegmentsWithScriptAnalysis } from '../lib/materialLibraryAnalysis.js';
-import { readMaterialLibrary, readLocalMaterials, saveLocalMaterials, updateLocalMaterial } from '../lib/materialLibrary.js';
+import { hideLocalMaterialFromLibrary, materialVisibleForPurpose, readMaterialLibrary, readLocalMaterials, saveLocalMaterials, updateLocalMaterial } from '../lib/materialLibrary.js';
 import { filterMyGeneratedMaterials, projectGeneratedMaterial } from '../../src/lib/generatedMaterial.js';
 import { ASSET_GENERATION_KINDS } from '../../shared/contracts/generatedMaterial.js';
 import { reconcileStudioProductionSpec, studioProductionSnapshotIssues } from '../../shared/studioProductionContract.js';
@@ -102,6 +102,7 @@ import { applyStoryboardReplicationAutomation, automaticManagedFallbackFrameAdmi
 import { CONTROLLED_PRODUCT_FRAME_SOURCE } from '../lib/controlledProductImageAnimation.js';
 import { readTenantMaterialBytes } from '../lib/sentenceReplicationProduction.js';
 import { studioAigcBudgetConfigForSpec, studioAigcBudgetConfigFromEnv, studioAigcBudgetPreviewForSpec, type StudioAigcBudgetContext } from './studioAigcBatchBudget.js';
+import { isInternalBudgetExemptTenant } from '../lib/tenantBudgetExemption.js';
 import { validateReplicationVideo } from '../lib/automatedReplicationBridge.js';
 import { evaluateStoryboardFirstFrameQuality } from '../lib/storyboardFirstFrameQualityEvaluation.js';
 import { enterpriseAssetObjectKey, enterpriseAssetTenantKey } from '../storage/enterpriseAssets.js';
@@ -1688,7 +1689,7 @@ studioRouter.post('/free-creation-hook/first-frame', async (req, res) => {
     res.json({ ok: true, reused: true, material: await materialResponse(previous, tenantId), fingerprint, estimatedCostCny: previous.provenance?.estimatedCostCny }); return;
   }
   const configuredBudget = Number(process.env.FREE_CREATION_HOOK_MAX_COST_CNY || 6);
-  if (!Number.isFinite(configuredBudget) || configuredBudget < generator.estimatedCostCny) {
+  if (!isInternalBudgetExemptTenant(tenantId) && (!Number.isFinite(configuredBudget) || configuredBudget < generator.estimatedCostCny)) {
     res.status(429).json({ ok: false, code: 'FREE_HOOK_BUDGET_EXCEEDED', error: 'AI 钩子首帧预计费用超过本项目预算，未调用供应商' }); return;
   }
   if (!await consumeDemoQuota(req, res, 'generation')) return;
@@ -2286,7 +2287,7 @@ studioRouter.post('/storyboard-first-frame', async (req, res) => {
     tenantId, String(body.projectId), frameOperationId)) existingFrameOperation = undefined;
   if (await replyExistingFrame(existingFrameOperation)) return;
   const budgetPlan = studioAigcBudgetPreviewForSpec(firstFrameProject?.spec ?? {},
-    studioAigcBudgetConfigForSpec(firstFrameProject?.spec ?? {}, body.maxCostCny),
+    studioAigcBudgetConfigForSpec(firstFrameProject?.spec ?? {}, body.maxCostCny, tenantId),
     await studioAigcBudgetContext(tenantId, firstFrameProject));
   const planned = budgetPlan.shotPlans.find(item => item.shotId === firstFrameProjectShotId);
   if (!planned || planned.status !== 'ready') {
@@ -2863,7 +2864,7 @@ studioRouter.post('/storyboard-action-video', async (req, res) => {
     res.status(423).json({ ok: false, code: 'ACTION_VIDEO_PROVIDER_UNAVAILABLE', error: '当前分段视频生成或本地视频组件不可用' }); return;
   }
   const budgetPreview = studioAigcBudgetPreviewForSpec(project.spec ?? {},
-    studioAigcBudgetConfigForSpec(project.spec ?? {}, req.body?.maxCostCny),
+    studioAigcBudgetConfigForSpec(project.spec ?? {}, req.body?.maxCostCny, tenantId),
     await studioAigcBudgetContext(tenantId, project));
   const budgetShotId = String((Array.isArray(project.spec?.shootingSlots) ? project.spec.shootingSlots : [])
     .find((slot: any) => String(slot.slotId || slot.id || '') === shotId || String(slot.id || '') === shotId)?.id || shotId);
@@ -3239,7 +3240,7 @@ studioRouter.post('/seedance-video', async (req, res) => {
       if (!recoverable && await replyExistingVideo(existingStoryboardVideoOperation)) return;
     } else {
       const preview = studioAigcBudgetPreviewForSpec(project.spec ?? {},
-        studioAigcBudgetConfigForSpec(project.spec ?? {}, req.body?.maxCostCny),
+        studioAigcBudgetConfigForSpec(project.spec ?? {}, req.body?.maxCostCny, tenantId),
         await studioAigcBudgetContext(tenantId, project));
       storyboardBudgetLimitCny = preview.batchBudgetCny;
       const persistedShotId = String((Array.isArray(project.spec?.shootingSlots) ? project.spec.shootingSlots : [])
@@ -6251,6 +6252,7 @@ interface Material {
   analysisSourceRevision?: string;
   sourceRevision?: string;
   createdAt: string;
+  libraryRemovedAt?: string;
 }
 
 interface MaterialSegment {
@@ -6735,13 +6737,23 @@ function materialSignedUrlTtlSeconds(): number {
 }
 
 async function materialResponse(material: Material, tenantId: string): Promise<Material & { canManage: boolean }> {
+  // Some deterministic local renderers persist a tenant-scoped `file` before
+  // object-storage mirroring is available.  The record is still a valid media
+  // asset; expose its protected local route instead of returning an empty URL
+  // that leaves the shared media frame in a permanent error state.
+  const storedFileUrl = material.file
+    ? `/media/${material.scope === 'shared'
+      ? sharedAssetRelativePath(material.file)
+      : tenantAssetRelativePath(tenantId, material.file)}`
+    : '';
+  const sourceUrl = material.url || storedFileUrl;
   const url = material.objectKey
     ? privateStudioAssetUrl('materials', tenantId, path.basename(material.objectKey))
-    : /^\/(?:cloud-files|studio-media)\//.test(material.url)
+    : /^\/(?:cloud-files|studio-media)\//.test(sourceUrl)
       // Studio workflows often span script, material, music and render steps.
       // Keep the protected playback URL valid for the whole editing session.
-      ? signPathAssetUrl(material.url, tenantId, 24 * 60 * 60 * 1000)
-      : /^\/(?:media|api\/overseas\/studio\/materials\/pb)\//.test(material.url) ? signAssetUrl(material.url, tenantId) : material.url;
+      ? signPathAssetUrl(sourceUrl, tenantId, 24 * 60 * 60 * 1000)
+      : /^\/(?:media|api\/overseas\/studio\/materials\/pb)\//.test(sourceUrl) ? signAssetUrl(sourceUrl, tenantId) : sourceUrl;
   const poster = material.posterObjectKey
     ? privateStudioAssetUrl('materials', tenantId, path.basename(material.posterObjectKey))
     : material.poster && /^\/(?:cloud-files|studio-media)\//.test(material.poster)
@@ -6918,6 +6930,7 @@ studioRouter.get('/materials', async (req, res) => {
   });
   if (scope === 'shared') list = list.filter(canAppearInSharedLibrary);
   else if (scope === 'own') list = list.filter(m => (m.scope ?? 'own') === 'own');
+  list = list.filter(material => materialVisibleForPurpose(material, purpose));
   if (purpose === 'reference') list = list.filter(m => isReferenceOnlyMaterial(m) && !isWorkflowInternalMaterial(m));
   else if (purpose !== 'all') list = list.filter(m => !isReferenceOnlyMaterial(m) && !isWorkflowInternalMaterial(m));
   const origin = String(req.query.origin || '');
@@ -7482,8 +7495,16 @@ studioRouter.delete('/materials/:id', async (req, res) => {
     return visit(project.spec, 'spec');
   });
   if (referencedBy.length) {
-    res.status(409).json({ ok: false, error: '素材仍被制作项目引用，请先从相关分镜移除',
-      references: referencedBy.map(project => ({ projectId: project.id, title: project.title })) });
+    if (materialId.startsWith('pb-')) {
+      res.status(409).json({ ok: false, error: '云素材仍被制作项目引用，请先从相关分镜移除',
+        references: referencedBy.map(project => ({ projectId: project.id, title: project.title })) });
+      return;
+    }
+    const current = loadMaterials();
+    const hidden = hideLocalMaterialFromLibrary(current, materialId, tenantId, new Date().toISOString());
+    if (!hidden.material) { res.status(404).json({ ok: false, error: 'Material not found' }); return; }
+    persistMaterials(hidden.records as Material[]);
+    res.json({ ok: true, retainedForProjectReferences: true });
     return;
   }
   if (req.params.id.startsWith('pb-')) {

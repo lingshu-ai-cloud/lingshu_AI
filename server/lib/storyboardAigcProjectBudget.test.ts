@@ -90,5 +90,26 @@ try {
   assert.equal((await budget.status('partial', 'one')).usedCny, 3);
   assert.equal((await budget.reserve({ tenantId: 'partial', projectId: 'one', shotId: 'a', stage: 'video',
     operationId: 'segments', estimatedCostCny: 8 })).existing, true);
+  const previousExemptTenants = process.env.INTERNAL_BUDGET_EXEMPT_TENANT_IDS;
+  process.env.INTERNAL_BUDGET_EXEMPT_TENANT_IDS = 'storyboard-exempt';
+  try {
+    const exemptionBudget = new StoryboardAigcProjectBudget(root, () => 1, () => 0);
+    const exemptInput = { tenantId: 'storyboard-exempt', projectId: 'exempt-project', shotId: 'shot',
+      stage: 'video' as const, operationId: 'video-1', estimatedCostCny: 2, inputFingerprint: 'same-input' };
+    assert.equal((await exemptionBudget.reserve(exemptInput)).existing, false,
+      'the exact exempt tenant may exceed only the project monetary ceiling');
+    await assert.rejects(exemptionBudget.reserve({ ...exemptInput, projectId: 'explicit-cap', operationId: 'explicit-cap-op', limitCny: 1 }), /预算剩余/,
+      'the internal exemption must not override an explicit per-request or frozen authorization ceiling');
+    await assert.rejects(exemptionBudget.reserve({ ...exemptInput, tenantId: 'storyboard-exempt-child', projectId: 'ordinary-project' }), /预算剩余/,
+      'a tenant prefix must not inherit the exemption');
+    await assert.rejects(exemptionBudget.reserve({ ...exemptInput, operationId: 'video-2' }), /生成上限/,
+      'retry limits remain enforced for exempt tenants');
+    await assert.rejects(exemptionBudget.reserve({ ...exemptInput, projectId: 'invalid-operation', operationId: 'invalid operation' }), /请求标识无效/);
+    await assert.rejects(exemptionBudget.reserve({ ...exemptInput, projectId: 'invalid-limit', operationId: 'valid-op', limitCny: 0 }), /冻结制作额度无效/);
+    await assert.rejects(exemptionBudget.reserve({ ...exemptInput, projectId: 'invalid-estimate', operationId: 'valid-op', estimatedCostCny: 0 }), /预计费用无效/);
+  } finally {
+    if (previousExemptTenants === undefined) delete process.env.INTERNAL_BUDGET_EXEMPT_TENANT_IDS;
+    else process.env.INTERNAL_BUDGET_EXEMPT_TENANT_IDS = previousExemptTenants;
+  }
 } finally { fs.rmSync(root, { recursive: true, force: true }); }
 console.log('storyboardAigcProjectBudget tests passed');

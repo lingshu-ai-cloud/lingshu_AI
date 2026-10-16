@@ -1196,6 +1196,7 @@ export async function readSocialTaskDetail(input: {
     }) : { productionExecutionAllowed: false as const, versionHash: 'reference-record-unavailable' }
     : null;
   const agentWorkflow = buildSocialAgentWorkflow({
+    tenantId: input.tenantId,
     taskId: summary.taskId,
     taskVersion: summary.version,
     taskStatus: summary.status,

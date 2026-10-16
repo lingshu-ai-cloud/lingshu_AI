@@ -2,6 +2,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { createHash, randomUUID } from 'node:crypto';
 import { withPaidOperationLock } from './paidOperationLock.js';
+import { isInternalBudgetExemptTenant } from './tenantBudgetExemption.js';
 export interface SocialTaskBudgetScope {
     tenantId: string;
     taskId: string;
@@ -239,7 +240,7 @@ export class SocialContentTaskBudget {
                     fail('quote_missing_or_expired');
                 l.entries[id] = { ...o, runId: scope.runId, planHash: scope.planHash, quoteRef: q.quoteRef, reservedMicros: micros(q.upperBoundCny), status: 'reserved', receiptRef: null };
             }
-            if (used(l) > l.limitMicros)
+            if (!isInternalBudgetExemptTenant(scope.tenantId) && used(l) > l.limitMicros)
                 fail('exceeded');
             await this.ports.assertCurrent(scope);
             this.write(scope, l);

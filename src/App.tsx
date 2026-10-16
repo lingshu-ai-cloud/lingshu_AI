@@ -23,7 +23,7 @@ import {
 import { StarterWorkspaceRequestError, shouldBypassStarter198Probe, starterWorkspaceApi } from './lib/starterWorkspace';
 import { PAGE_REGISTRY, resolveNavigationPage, resolvePage, type LegacyTrafficView, type Page } from './pageRegistry';
 import { SocialProgramProvider } from './contexts/SocialProgramContext';
-import { PageErrorBoundary, PageLoading } from './components/AppPageBoundary';
+import { OptionalFeatureErrorBoundary, PageErrorBoundary, PageLoading } from './components/AppPageBoundary';
 import type { SocialContentCreateRequest } from './components/socialContent/SocialContentWorkspace';
 import RuntimeVersionBanner from './components/RuntimeVersionBanner';
 import { availableProductPage, PLATFORM_ADS_PAGE_IDS, PLATFORM_ADS_SURFACE_ENABLED } from './config/productSurfaceFlags';
@@ -39,7 +39,24 @@ const loadEnterprisePage = () => import('./components/EnterprisePage');
 const loadIntegrationsPage = () => import('./components/IntegrationsPage');
 const loadAdminDashboard = () => import('./components/AdminDashboard');
 const loadAdminDeliveryPage = () => import('./components/AdminDeliveryPage');
-const loadGlobalAssistant = () => import('./components/GlobalAssistant');
+async function retryDynamicModule<T>(loader: () => Promise<T>, retryLoader: () => Promise<T>): Promise<T> {
+  try {
+    return await loader();
+  } catch {
+    await new Promise(resolve => window.setTimeout(resolve, 250));
+    // Browsers keep a failed ES module URL in the module map. Retry through a
+    // statically bundled, distinct URL so a recovered Vite server is actually
+    // contacted instead of immediately returning the cached rejection.
+    return retryLoader();
+  }
+}
+const loadGlobalAssistant = () => retryDynamicModule(
+  () => import('./components/GlobalAssistant'),
+  // Vite treats this fixed query as a second statically bundled module URL;
+  // TypeScript's resolver does not model arbitrary Vite resource queries.
+  // @ts-expect-error Vite resource-query import used for cache-safe recovery.
+  () => import('./components/GlobalAssistant?recovery'),
+);
 const loadWorkspaceManagementPages = () => import('./components/WorkspaceManagementPages');
 const loadDigitalEmployeePage = () => import('./components/DigitalEmployeePage');
 const loadAgentMonitorPage = () => import('./components/AgentMonitorPage');
@@ -851,24 +868,29 @@ export default function App() {
       demoGuideActive={false}
       conversations={conversations} activeConvId={activeConvId} onOpenConversation={openConversation} onNewConversation={newConversation}
       suppressRightPanel={starterMode || scriptPanelOpen} onAction={startAgentTask}>
-      <Suspense fallback={null}>
-        <GlobalAssistant
-          primaryEntry
-          key={`assistant:${session.tenant?.id || session.user.tenantId}:${session.user.id}`}
-          page={page}
-          persistenceScope={{
-            tenantId: session.tenant?.id || session.user.tenantId,
-            userId: session.user.id,
-          }}
-          restore={restore}
-          kickoff={kickoff}
-          compactMode={starterMode || isAgentProductionSession()}
-          suppressForRightSidebar={page !== 'digitalEmployees' && (conversation !== null || page === 'agentMonitor')}
-          onKickoffConsumed={() => setKickoff(null)}
-          onAction={startAgentTask}
-          onSessionRefresh={() => void refreshSession()}
-        />
-      </Suspense>
+      <OptionalFeatureErrorBoundary
+        resetKey={`assistant:${session.tenant?.id || session.user.tenantId}:${session.user.id}`}
+        label="灵小枢"
+      >
+        <Suspense fallback={null}>
+          <GlobalAssistant
+            primaryEntry
+            key={`assistant:${session.tenant?.id || session.user.tenantId}:${session.user.id}`}
+            page={page}
+            persistenceScope={{
+              tenantId: session.tenant?.id || session.user.tenantId,
+              userId: session.user.id,
+            }}
+            restore={restore}
+            kickoff={kickoff}
+            compactMode={starterMode || isAgentProductionSession()}
+            suppressForRightSidebar={page !== 'digitalEmployees' && (conversation !== null || page === 'agentMonitor')}
+            onKickoffConsumed={() => setKickoff(null)}
+            onAction={startAgentTask}
+            onSessionRefresh={() => void refreshSession()}
+          />
+        </Suspense>
+      </OptionalFeatureErrorBoundary>
       <RuntimeVersionBanner />
       {sessionRefreshError && <div role="status" className="shrink-0 border-b border-amber-200 bg-amber-50 px-5 py-2 text-sm text-amber-900">{sessionRefreshError} <button type="button" className="ml-2 font-semibold underline" onClick={() => void refreshSession()}>立即重试</button></div>}
       {starterMode && isSocialTaskContextPage(page) && (

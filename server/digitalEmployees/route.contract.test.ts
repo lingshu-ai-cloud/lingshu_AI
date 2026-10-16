@@ -216,6 +216,7 @@ for (const suffix of ['retry', 'skip', 'complete']) {
 const productionBudgetRecovery = routeBlock("digitalEmployeesRouter.post('/tasks/:taskId/production-budget-reforecast'");
 assert.match(productionBudgetRecovery, /withDigitalEmployeeRunLock/, 'legacy budget recovery must serialize with the active production run');
 assert.match(productionBudgetRecovery, /verifiedStoryboardProviderCostRange/, 'legacy budget recovery must reprice the exact frozen storyboard');
+assert.match(productionBudgetRecovery, /!isInternalBudgetExemptTenant\(tenantId\)[\s\S]{0,220}explicitBatchCeiling/, 'the configured test tenant must not be blocked by the server internal storyboard batch ceiling');
 assert.match(productionBudgetRecovery, /productionBudgetMode:[\s\S]*maxAigcRetries:/, 'the reviewed protected or economy choice must freeze the runtime retry policy');
 assert.match(productionBudgetRecovery, /contentBatchPlans[\s\S]*studio_projects/, 'the plan, frozen handoff and existing projects must receive one consistent ceiling');
 assert.match(productionBudgetRecovery, /legacyRepairProjects/, 'the recovery route must refuse to rewrite unrelated production blockers');

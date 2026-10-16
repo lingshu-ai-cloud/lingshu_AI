@@ -3,7 +3,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import sharp from 'sharp';
-import { materialLibraryFile, readLocalMaterials, readMaterialLibrary, upsertSocialTaskMaterial } from './materialLibrary.js';
+import { hideLocalMaterialFromLibrary, materialLibraryFile, materialVisibleForPurpose, readLocalMaterials, readMaterialLibrary, upsertSocialTaskMaterial } from './materialLibrary.js';
 import { readCloudMaterialLibrary } from './cloudMaterials.js';
 const ready = { source: 'database' as const, state: 'ready' as const, message: 'ok' };
 const down = { source: 'database' as const, state: 'unavailable' as const, message: 'down' };
@@ -16,6 +16,12 @@ const failed = await readMaterialLibrary('a', {local: () => { throw Error('corru
 assert.equal(failed.status, 'unavailable');
 const empty = await readMaterialLibrary('a', {local: () => [], cloud: async () => ({ items: [], source: ready })});
 assert.equal(empty.status, 'ready'); assert.equal(empty.items.length, 0);
+const hiddenAt = '2026-10-16T08:00:00.000Z';
+const hidden = hideLocalMaterialFromLibrary([{ id: 'generated', tenantId: 'a', scope: 'own' }, { id: 'shared', scope: 'shared' }], 'generated', 'a', hiddenAt);
+assert.equal(hidden.material?.libraryRemovedAt, hiddenAt);
+assert.equal(materialVisibleForPurpose(hidden.records[0]!, 'library'), false, 'removed production assets leave the user-facing library');
+assert.equal(materialVisibleForPurpose(hidden.records[0]!, 'all'), true, 'project recovery can still resolve a referenced production asset');
+assert.equal(hideLocalMaterialFromLibrary(hidden.records, 'generated', 'b', hiddenAt).material, undefined, 'another tenant cannot hide the material');
 const catalogRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'enterprise-product-library-'));
 const previousMediaRoot = process.env.SOCIAL_CONTENT_MEDIA_ROOT;
 try {

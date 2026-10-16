@@ -19,11 +19,12 @@ function verifyGraph(tasks: typeof cold, prefix:'Z'|'H') {
   }
 }
 
-test('H calendar subtitle uses the selected mother-content allocation',()=>{
+test('demo calendar omits the duplicate profile header',()=>{
   for(const owned of [20,40] as const){
     const html=renderToStaticMarkup(<AgentWeeklyCalendar startsAt="2026-10-05" tasks={establishedProfilePreviewTasks(owned)} demo/>);
-    assert.match(html,new RegExp(`自有 ${owned}% / 外部 ${100-owned}% · 按播放与赞转评诊断`));
-    if(owned===20)assert(!html.includes('自有 40% / 外部 60%'));
+    assert.doesNotMatch(html,/增长周任务日历|首周任务日历/);
+    assert.doesNotMatch(html,new RegExp(`自有 ${owned}% / 外部 ${100-owned}% · 按播放与赞转评诊断`));
+    assert.match(html,/效果验收示例/);
   }
 });
 
@@ -56,7 +57,9 @@ test('Z/H fixture deadlines avoid same-agent simultaneous delivery commitments',
 test('calendar UI renders horizontal week, owner, overdue upload, channels, publishing and repair entries',()=>{
   for(const [tasks,profile] of [[cold,'B2B 零基础'],[established,'B2B 有基础']] as const){
     const html=renderToStaticMarkup(<AgentWeeklyCalendar startsAt="2026-10-05" tasks={[...tasks]} demo/>);
-    assert.match(html,new RegExp(profile));
+    assert.doesNotMatch(html,new RegExp(`${profile}[^<]*周任务日历`));
+    assert.match(html,/aria-label="上一周"/);
+    assert.match(html,/aria-label="下一周"/);
     for(const day of ['周一','周二','周三','周四','周五','周六','周日'])assert.match(html,new RegExp(`${day}任务`));
     for(const label of ['主负责','WhatsApp','Messenger','Instagram','上传已逾期','发布','创意返工','技术返工'])assert.match(html,new RegExp(label),`${profile} missing ${label}`);
     assert.match(html,/grid-cols-7/);

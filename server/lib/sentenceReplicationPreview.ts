@@ -6,7 +6,7 @@ import { photoTalkingBudget } from './photoTalkingBudget.js';
 import { planSeedanceReplication } from './seedanceReplicationPlan.js';
 
 export function sentenceReplicationPreview(shot: ShotProduction, presenter: PresenterAsset, language: string,
-  previous: SentenceReplicationResult[] = [], env: NodeJS.ProcessEnv = process.env) {
+  previous: SentenceReplicationResult[] = [], env: NodeJS.ProcessEnv = process.env, tenantId?: string) {
   const cues = referenceCues(shot.digitalHuman);
   const reuseCueMaterialIds: Record<string, string> = {};
   const reuseCueQuality = [] as NonNullable<SentenceReplicationResult['cueQuality']>;
@@ -32,7 +32,7 @@ export function sentenceReplicationPreview(shot: ShotProduction, presenter: Pres
   let estimatedCostCny: number | null = null; let estimateError = '';
   try {
     if (shot.digitalHuman?.presenterMode === 'photo_talking') {
-      estimatedCostCny = photoTalkingBudget({cues:cues.filter(cue=>!reuseCueMaterialIds[cue.id]),frameCount:pendingFrames.length,
+      estimatedCostCny = photoTalkingBudget({tenantId,cues:cues.filter(cue=>!reuseCueMaterialIds[cue.id]),frameCount:pendingFrames.length,
         fixedHeygenReserveCny:Number(env.STUDIO_HEYGEN_RESERVE_CNY),env}).totalCny;
     } else {
       const plan = planSeedanceReplication({cues,reuseCueMaterialIds,compositionClusterIds:pendingFrames.map(cluster=>cluster.id),

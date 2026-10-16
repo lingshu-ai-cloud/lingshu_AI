@@ -222,8 +222,8 @@ export function createStudioAvatarProductionRouter(store: DataStore) {
     saveLocalMaterials([...materials.filter(item => !(item.id === id && item.tenantId === tenantId)), material]);
     return objectKey && objectEtag ? { materialId: id, objectKey, contentSha256, objectEtag } : { materialId: id, localFile: relativeFile, contentSha256 };
   }, { adapters: [...(fastHead ? [fastHead] : []), ...(seedance ? [seedance] : []), ...(runway ? [runway] : [])], referenceBudgetLimitCny: Number.isFinite(Number(process.env.DIGITAL_HUMAN_REFERENCE_MAX_CNY_PER_SHOT)) ? Number(process.env.DIGITAL_HUMAN_REFERENCE_MAX_CNY_PER_SHOT) : undefined,
-    reserveReference: (tool, id, estimatedCostCny) => referencePaidBudget.reserve(tool, id, estimatedCostCny),
-    releaseReference: (tool, id) => referencePaidBudget.release(tool, id),
+    reserveReference: (tool, id, estimatedCostCny, tenantId) => referencePaidBudget.reserve(tool, id, estimatedCostCny, tenantId),
+    releaseReference: (tool, id, tenantId) => referencePaidBudget.release(tool, id, tenantId),
     verifyCandidateOutput: verifyStoredCandidateOutput,
     verifyReferenceInputs: verifyStoredReferenceInputs,
     resolveReferenceInputs: prepareRunwayReferenceInputs,

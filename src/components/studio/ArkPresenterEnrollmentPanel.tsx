@@ -56,8 +56,8 @@ export default function ArkPresenterEnrollmentPanel(props: {
     && props.initialPhotoMaterialId && props.initialVideoMaterialId
     && photoMaterialId === props.initialPhotoMaterialId && videoMaterialId === props.initialVideoMaterialId);
   if (!capability) return <section aria-label="人物认证与方舟图片入库" className="rounded-lg border border-border bg-white p-4">
-    <p className="text-sm font-semibold text-text-primary">人物替换认证（可选）</p>
-    <p role="status" className="mt-2 text-xs text-text-muted">正在检查人物替换能力…</p>
+    <p className="text-sm font-semibold text-text-primary">方舟人物认证（必需）</p>
+    <p role="status" className="mt-2 text-xs text-text-muted">正在检查方舟认证能力…</p>
   </section>;
   if (!capability.ready) {
     const missingLabels = capability.missing.map(item => ({
@@ -66,18 +66,18 @@ export default function ArkPresenterEnrollmentPanel(props: {
       verification_return_url: 'HTTPS 验证回跳地址',
     }[item]));
     return <section aria-label="人物认证与方舟图片入库" className="rounded-lg border border-border bg-white p-4">
-      <p className="text-sm font-semibold text-text-primary">人物替换认证（可选）</p>
+      <p className="text-sm font-semibold text-text-primary">方舟人物认证（必需）</p>
       <Alert
         className="mt-3"
         type="warning"
         showIcon
-        title="人物替换功能暂不可用"
-        description={<span>不影响当前 HeyGen 口播人物。{missingLabels.length ? `管理员还需配置：${missingLabels.join('、')}。` : '管理员完成方舟服务配置后即可启用。'}</span>}
+        title="方舟认证暂不可用"
+        description={<span>当前无法完成数字人生产准备。{missingLabels.length ? `管理员还需配置：${missingLabels.join('、')}。` : '管理员完成方舟服务配置后即可继续认证。'}</span>}
       />
     </section>;
   }
   return <section aria-label="人物认证与方舟图片入库" className="space-y-2 rounded-lg border border-border bg-white p-4 text-xs">
-    <p className="font-bold">人物替换认证 · {enrollment?.state === 'ready' ? '可用于 Seedance' : enrollment?.state === 'processing' ? '方舟审核中' : enrollment?.state === 'needs_verification' ? '等待本人验证' : '待提交'}</p>
+    <p className="font-bold">方舟人物认证 · {enrollment?.state === 'ready' ? '已完成' : enrollment?.state === 'processing' ? '方舟审核中' : enrollment?.state === 'needs_verification' ? '等待本人验证' : '待提交'}</p>
     <p>{reusedMaterials ? '已复用统一接入时上传的照片和本人视频，不需要再次录入。' : '仅旧人物缺少认证资料时需要在这里补充一次照片和本人视频。'}</p>
     {!enrollment || enrollment.state === 'failed' ? <div className="space-y-2">
       {!props.presenterId && <label className="block">人物名称<input aria-label="认证人物名称" value={name} onChange={event => setName(event.target.value)} className="mt-1 w-full rounded border p-2" /></label>}

@@ -20,6 +20,14 @@ assert.ok(html.includes('生成口播'));
 assert.ok(!html.includes('第 1 句新口播'), '生成前不应提前展示可编辑的替换结果');
 assert.ok(!html.includes('试听新口播'));
 assert.ok(!html.includes('确认新口播'));
+assert.ok(html.includes('data-preview-aspect-ratio="9:16"'), '未提供项目画幅时预览默认使用竖版 9:16');
+
+const landscapeHtml = renderToStaticMarkup(<SocialCreationWorkbench
+  mode="viral_replication"
+  seed={{ referenceTitle: '横版参考', aspectRatio: '16:9', referenceShots: [] }}
+  onOpenChooser={() => {}} onShowCreations={() => {}} onGenerate={() => {}}
+/>);
+assert.ok(landscapeHtml.includes('data-preview-aspect-ratio="16:9"'), '入口工作台沿用已有项目画幅');
 
 const sharedCueHtml = renderToStaticMarkup(<SocialCreationWorkbench
   mode="viral_replication"
@@ -49,6 +57,7 @@ assert.ok(freeHtml.includes('主推产品 · 多选'));
 const workbenchSource = fs.readFileSync(new URL('./SocialCreationWorkbench.tsx', import.meta.url), 'utf8');
 const planningSource = fs.readFileSync(new URL('./SocialContentPlanningPage.tsx', import.meta.url), 'utf8');
 assert.match(planningSource, /draftTitle:\s*request\.prefill\?\.title/);
+assert.match(planningSource, /aspectRatio:\s*request\.sourceContext\?\.aspectRatio/);
 assert.match(planningSource, /!initialCreateRequest \|\| initialCreateRequest\.replicationStep \|\| !projectId/,
   'an explicit workbench step must not be overwritten by the background resume lookup');
 assert.match(workbenchSource, /title:\s*draftTitle\.trim\(\)/);

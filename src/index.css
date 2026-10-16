@@ -1023,7 +1023,18 @@
 .replication-workbench .studio-workbench-panel-layout > main { background: #ffffff; }
 .replication-workbench .studio-workbench-panel-layout > main > header h2,
 .replication-workbench .studio-workbench-panel-layout > aside > header h2 { font-size: var(--ls-type-title-small-size); line-height: var(--ls-type-title-small-line); }
-.replication-workbench .studio-workbench-panel-layout > main > div { padding: 16px; }
+.studio-workbench-canvas-body,
+.studio-workbench-preview-shell { container-type: size; }
+.studio-workbench-preview-stage {
+  height: 100%;
+  max-height: 100%;
+  max-width: 100%;
+  flex: none;
+}
+@supports (width: 1cqh) {
+  .studio-workbench-preview-stage { height: auto; }
+}
+.replication-workbench-header-actions :where(button, .ant-btn, select) { min-height: 44px; }
 .replication-workbench > footer { min-height: 76px; padding-top: 12px; padding-bottom: 12px; }
 .replication-workbench > footer button { min-height: 44px; }
 @font-face { font-family: 'Source Han Sans SC'; src: url('../desktop/fonts/SourceHanSansSC-Regular.otf') format('opentype'); font-display: swap; }

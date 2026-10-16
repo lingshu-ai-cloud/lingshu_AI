@@ -11,6 +11,11 @@ import type {
   ConnectedSocialPerformance,
   ConnectedSocialPerformanceContent,
 } from '../lib/socialPerformance';
+import {
+  MASTER_VIDEO_COST_MAX_CNY,
+  MASTER_VIDEO_COST_MIN_CNY,
+  MASTER_VIDEO_COST_POINT_CNY,
+} from '../../shared/contracts/contentCostModel';
 
 const DAY_MS = 86_400_000;
 export const SMART_BUSINESS_SHOWCASE_WEEKLY_TOTALS = {
@@ -465,6 +470,61 @@ export function smartBusinessShowcasePerformance(
     content(youtube, 'youtube', 'yt-previous-2', '采购打样到量产的时间线', `${previousDates[1]}T18:00:00+08:00`, { views: 37_200, likes: 2_130, comments: 151, shares: 168 }),
   ];
   return { accounts, contents, unavailable: [], loadedAt: `${endsAt}T17:55:00+08:00` };
+}
+
+export type SmartBusinessShowcaseWeeklyVideo = {
+  id: string;
+  title: string;
+  productName: string;
+  thumbnailUrl: string;
+  platform: PublishingPlatform;
+  accountId: string;
+  accountLabel: string;
+  plannedPublishDate: string;
+  plannedPublishAt: string;
+  duration: number;
+  status: 'planned' | 'waiting_review';
+  estimatedCostCny: number;
+  budgetMinCny: number;
+  budgetMaxCny: number;
+};
+
+export function smartBusinessShowcaseWeeklyVideos(
+  data: DigitalEmployeeOverview,
+  enabled = isSmartBusinessShowcaseEnabled(),
+): SmartBusinessShowcaseWeeklyVideo[] | null {
+  if (!enabled) return null;
+  const { startsAt, endsAt, days } = currentRange(data);
+  const performance = smartBusinessShowcasePerformance(data, true)!;
+  const currentContents = performance.contents.filter(item => {
+    const date = item.publishedAt.slice(0, 10);
+    return date >= startsAt && date <= endsAt;
+  });
+  const sources = currentContents.length ? currentContents : performance.contents;
+  const angles = ['采购痛点', '产品实测', '工厂能力', '打样流程', '包装细节', '交付说明'];
+  const products = ['云朵泡沫卸妆蜜', '紫苏控油去黑头泥膜 2.0', 'OEM 护肤定制', '低 MOQ 包装打样'];
+  const publishHours = ['10:00', '14:00', '18:00', '20:00'];
+  return Array.from({ length: SMART_BUSINESS_SHOWCASE_WEEKLY_TOTALS.plannedVideoCount }, (_, index) => {
+    const source = sources[index % sources.length]!;
+    const angle = angles[index % angles.length]!;
+    const plannedPublishDate = days[index % days.length] || startsAt;
+    return {
+      id: `showcase-weekly-video-${String(index + 1).padStart(2, '0')}`,
+      title: index < sources.length ? source.title : `${source.title} · ${angle}`,
+      productName: products[index % products.length]!,
+      thumbnailUrl: source.thumbnailUrl || SHOWCASE_THUMBNAILS[showcaseAssetIndex(source.id, SHOWCASE_THUMBNAILS.length)]!,
+      platform: source.platform,
+      accountId: source.accountId,
+      accountLabel: source.accountTitle,
+      plannedPublishDate,
+      plannedPublishAt: `${plannedPublishDate}T${publishHours[index % publishHours.length]}:00+08:00`,
+      duration: [15, 20, 25, 30][index % 4]!,
+      status: index < SMART_BUSINESS_SHOWCASE_WEEKLY_TOTALS.waitingReviewCount ? 'waiting_review' : 'planned',
+      estimatedCostCny: MASTER_VIDEO_COST_POINT_CNY,
+      budgetMinCny: MASTER_VIDEO_COST_MIN_CNY,
+      budgetMaxCny: MASTER_VIDEO_COST_MAX_CNY,
+    };
+  });
 }
 
 export function smartBusinessShowcaseChannels(

@@ -31,6 +31,7 @@ function seedFromRequest(request?: SocialContentCreateRequest | null): SocialCre
     referenceThumbnail: request.sourceContext?.referenceThumbnail,
     referenceMediaUrl: request.sourceContext?.referenceMediaUrl,
     referenceContentType: request.sourceContext?.referenceContentType,
+    aspectRatio: request.sourceContext?.aspectRatio,
     referenceShots: request.sourceContext?.referenceShots,
     referenceLinks: request.prefill?.referenceLinks,
     productMappings: request.identityMappings?.products,

@@ -14,12 +14,14 @@ test('initial configuration presents one unified presenter onboarding instead of
   assert.match(html, /正在读取数字人配置/);
   assert.doesNotMatch(html, /待配置/);
   assert.match(source, /!loaded \? loadError[\s\S]{0,900}<LsLoadingState loading label="正在读取数字人配置"/);
-  assert.match(source, /人物、声音与本人认证/);
-  assert.match(source, /设置人物与声音/);
-  assert.match(source, />更换数字人</);
-  assert.match(source, />录入本人声音</);
+  assert.match(source, /数字人生产准备/);
+  assert.match(source, /1\. 选择数字人/);
+  assert.match(source, /2\. 录入声音/);
+  assert.match(source, /3\. 完成平台认证/);
+  assert.match(source, /selectedPresenterSelected \? '更换数字人' : '选择数字人'/);
+  assert.match(source, /录入本人声音/);
   assert.match(source, /voiceOnlyPresenter=\{selectedPresenter\}/);
-  assert.match(source, /完善人物替换认证/);
+  assert.match(source, /完成双平台认证/);
   assert.doesNotMatch(html, /HeyGen 口播接入/);
   assert.doesNotMatch(html, /方舟人物认证/);
   assert.match(source, /<ArkPresenterEnrollmentPanel/);
@@ -27,6 +29,7 @@ test('initial configuration presents one unified presenter onboarding instead of
   assert.match(source, /productionApi\.uploadArkMaterial/);
   assert.match(source, /finishUnifiedPresenterSetup/);
   assert.match(source, /selectedPresenter\?\.referenceMaterialIds/);
+  assert.match(source, /fetchMaterialLibrary\('all'\)/, '人物管理必须从私有完整库存恢复认证资料，不能依赖“我的素材”公开列表');
   assert.match(source, /preparedArk\?\.presenterId === selectedPresenter\?\.id/);
   assert.match(source, /presenterApi\.creations\(\)\.catch\(\(\) => \[\]\)/);
   assert.match(source, /document:\\\/\\\/studio_presenter_assets/);
@@ -39,13 +42,16 @@ test('initial configuration presents one unified presenter onboarding instead of
   assert.match(arkPanelSource, /已复用统一接入时上传的照片和本人视频，不需要再次录入/);
   assert.match(arkPanelSource, /!reusedMaterials &&/);
   assert.match(arkPanelSource, /reusedMaterials \? '开始人物认证' : '提交人物资料并开始认证'/);
-  assert.match(source, /需要高级人物替换时，再点击“完善人物替换认证”单独授权/);
+  assert.match(source, /三项全部完成后才能进入生产/);
+  assert.match(source, /selectedPresenterSetupReady/);
+  assert.doesNotMatch(source, /人物替换认证是可选能力|高级人物替换为可选功能/);
   assert.match(source, /className="min-h-11 text-xs"/);
   assert.match(source, /authorizationConfirmed=\{false\}/);
   assert.doesNotMatch(source, /arkCapability = await productionApi\.arkEnrollmentCapabilities/);
   assert.match(arkPanelSource, /if \(!capability\.ready\)/);
-  assert.match(arkPanelSource, /不影响当前 HeyGen 口播人物/);
+  assert.match(arkPanelSource, /当前无法完成数字人生产准备/);
   assert.match(arkPanelSource, /管理员还需配置/);
+  assert.doesNotMatch(arkPanelSource, /人物替换认证（可选）/);
 });
 
 test('enterprise presenter recovery persists its intent and lets the visible digital employee page open the dialog', () => {
@@ -54,17 +60,18 @@ test('enterprise presenter recovery persists its intent and lets the visible dig
   assert.doesNotMatch(source, /requestAnimationFrame|setTimeout/);
 });
 
-test('enterprise presenter page supports editing, optional certification and revoking existing people', () => {
+test('enterprise presenter page supports editing, required certification and revoking existing people', () => {
   const html = renderToStaticMarkup(<EnterprisePresenters />);
   assert.match(html, /人物与出镜/);
-  assert.match(html, /补充可选的人物替换认证/);
+  assert.match(html, /补全声音和方舟认证/);
   assert.match(source, />修改人物</);
-  assert.match(source, /certificationOpen \? '收起认证' : '人物替换认证'/);
+  assert.match(source, /certificationOpen \? '收起认证' : '完成方舟认证'/);
   assert.match(source, />取消授权</);
   assert.match(source, /presenterApi\.revoke/);
   assert.doesNotMatch(source, /默认出镜偏好|新分镜默认声音|新分镜默认布局|主体授权证据|方舟控制台人工核验|渠道与出镜策略/);
-  assert.match(enterprisePageSource, /enterpriseArea !== 'appearance' && <section[^>]+aria-label="企业资料完整度"/);
-  assert.match(enterprisePageSource, /enterpriseArea !== 'appearance' && <div className=\{`rounded-lg border p-4/);
+  assert.match(enterprisePageSource, /enterpriseArea === 'facts' && <section[^>]+aria-label="企业资料完整度"/);
+  assert.doesNotMatch(enterprisePageSource, /设置客服边界|打开灵小枢快速采集/);
+  assert.match(enterprisePageSource, /<Collapse[\s\S]{0,500}enterprise-advanced-collapse/);
   assert.doesNotMatch(enterprisePageSource, /<EnterprisePresenterRouting/);
 });
 

@@ -154,6 +154,7 @@ export async function createSocialContentArtifact(input: {
       const automaticReview = input.requireHumanReview
         ? { approved: false, reason: 'human_review_required' }
         : socialManagedArtifactReview({
+        tenantId: input.tenantId,
         brief: socialTaskSummary(task).brief,
         trustedAgentOrigin: input.trustedAgentOrigin,
         origin: input.value.origin,
@@ -282,7 +283,7 @@ export async function decideSocialContentArtifact(input: {
       }
       if (input.value.decision === 'approved') {
         await assertStudioSocialArtifactGeneration(input.tenantId, socialText(artifact.artifact_kind), artifact.content);
-        assertSocialContentReleaseQuality({ brief: socialTaskSummary(task).brief, content: socialJson(artifact.content), mode: 'human' });
+        assertSocialContentReleaseQuality({ tenantId: input.tenantId, brief: socialTaskSummary(task).brief, content: socialJson(artifact.content), mode: 'human' });
       }
       const timestamp = (input.now ?? new Date()).toISOString();
       const qualityFeedback = materialDecisionFeedback({
@@ -357,7 +358,7 @@ export async function decideSocialContentArtifactBatch(input: {
 
       if (input.value.decision === 'approved') {
         for (const record of records) assertSocialContentReleaseQuality({
-          brief: socialTaskSummary(task).brief, content: socialJson(record.content), mode: 'human',
+          tenantId: input.tenantId, brief: socialTaskSummary(task).brief, content: socialJson(record.content), mode: 'human',
         });
         await Promise.all(records.map(record => assertStudioSocialArtifactGeneration(
           input.tenantId,
@@ -464,7 +465,7 @@ export async function createSocialDeliveryPackage(input: {
         const artifact = socialArtifact(record);
         if (artifact.status !== 'approved') throw new SocialContentWorkflowError('social_delivery_artifact_not_approved', 409);
         await assertStudioSocialArtifactGeneration(input.tenantId, artifact.kind, artifact.content);
-        assertSocialContentReleaseQuality({ brief: socialTaskSummary(task).brief, content: artifact.content, mode: 'human' });
+        assertSocialContentReleaseQuality({ tenantId: input.tenantId, brief: socialTaskSummary(task).brief, content: artifact.content, mode: 'human' });
         const resolvedMedia = await resolveSocialArtifactMedia({
           repository: input.repository,
           tenantId: input.tenantId,

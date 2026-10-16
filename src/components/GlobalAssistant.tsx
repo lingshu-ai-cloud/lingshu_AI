@@ -1061,10 +1061,6 @@ export default function GlobalAssistant({
     const timer = window.setInterval(refresh, 15_000);
     return () => { window.removeEventListener(SOCIAL_CONTENT_TASK_REFRESH_EVENT, refresh); window.clearInterval(timer); };
   }, [mode, selectedProductionTaskId]);
-  const productionSuggestions = normalizedPage === 'digitalEmployees'
-    && pageContext.workflowStage === 'running'
-    ? activeContext.suggestions.slice(0, 3)
-    : [];
   const openWeeklyPlanFromAssistant = useCallback(() => {
     setWeeklyPlanPromptDismissed(true);
     setMode('breathing');
@@ -3129,29 +3125,6 @@ export default function GlobalAssistant({
                     >
                       <ArrowDown size={12} /> 回到最新消息
                     </button>
-                  </div>
-                )}
-
-                {productionSuggestions.length > 0 && (
-                  <div
-                    className="flex shrink-0 flex-wrap gap-2 bg-surface px-4 pt-3"
-                    role="group"
-                    aria-label="生产快捷问题"
-                    data-assistant-surface="production-suggestions"
-                  >
-                    {productionSuggestions.map(suggestion => (
-                      <button
-                        key={suggestion}
-                        type="button"
-                        disabled={loading}
-                        onClick={() => suggestion === '查看周计划'
-                          ? openWeeklyPlanFromAssistant()
-                          : void send(suggestion, currentPageAgent)}
-                        className="ls-type-label-medium min-h-9 rounded-full border border-border bg-surface-2 px-3 text-text-secondary transition-colors hover:border-accent/40 hover:bg-accent-glow hover:text-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent disabled:cursor-not-allowed disabled:opacity-50"
-                      >
-                        {suggestion}
-                      </button>
-                    ))}
                   </div>
                 )}
 

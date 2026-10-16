@@ -3,6 +3,7 @@ import fs from 'node:fs';
 
 const source = fs.readFileSync(new URL('./GlobalAssistant.tsx', import.meta.url), 'utf8');
 const appSource = fs.readFileSync(new URL('../App.tsx', import.meta.url), 'utf8');
+const appBoundarySource = fs.readFileSync(new URL('./AppPageBoundary.tsx', import.meta.url), 'utf8');
 const conversionPageSource = fs.readFileSync(new URL('./ConversionPage.tsx', import.meta.url), 'utf8');
 const trafficPageSource = fs.readFileSync(new URL('./TrafficPage.tsx', import.meta.url), 'utf8');
 const composerSource = fs.readFileSync(new URL('./assistant/AssistantComposer.tsx', import.meta.url), 'utf8');
@@ -62,6 +63,9 @@ assert.match(source, /appMain\?\.scrollTop[\s\S]{0,80}appMain\.scrollTop = 0/, '
 assert.match(layoutSource, /<main className="app-main[^\n]*overflow-clip"/, '应用主容器不得成为可被焦点程序滚动的隐藏滚动容器');
 assert.match(source, /setMode\('breathing'\);\s*window\.requestAnimationFrame\(\(\) => \{\s*if \(launcherRetracted\) edgeLauncherButtonRef\.current\?\.focus\(\);\s*else launcherButtonRef\.current\?\.focus\(\)/, '关闭弹窗后必须按用户偏好把焦点归还完整或贴边入口');
 assert.match(appSource, /<GlobalAssistant[\s\S]{0,650}compactMode=\{starterMode \|\| isAgentProductionSession\(\)\}/, '制作会话保留紧凑的灵小枢审批和聊天入口');
+assert.match(appSource, /const loadGlobalAssistant = \(\) => retryDynamicModule\([\s\S]{0,160}import\('\.\/components\/GlobalAssistant'\)[\s\S]{0,160}import\('\.\/components\/GlobalAssistant\?recovery'\)/, '灵小枢异步模块必须用不同模块 URL 自动重试一次，避免复用浏览器缓存的失败结果');
+assert.match(appSource, /<OptionalFeatureErrorBoundary[\s\S]{0,260}<Suspense fallback=\{null\}>[\s\S]{0,120}<GlobalAssistant/, '灵小枢必须有独立错误边界，加载失败不得拖垮主页面');
+assert.match(appBoundarySource, /class OptionalFeatureErrorBoundary[\s\S]*重新加载\{this\.props\.label\}/, '可选外壳能力失败时必须保留主页面并提供恢复入口');
 assert.match(source, /useState<AssistantPanelView>\('chat'\)/, '灵小枢默认页必须是单列对话');
 assert.match(source, /openAgent\(currentPageAgent, 'chat'\)/, '入口必须直接打开单列对话而不是强制进入审批详情');
 assert.doesNotMatch(source, /aria-label="灵小枢工作视图"/, '单列对话不得保留待办与聊天页签');
@@ -167,17 +171,14 @@ assert.match(source, /workflowStage === 'unplanned'/, '灵小枢必须识别尚�
 assert.match(source, /data-lingshu-weekly-plan-prompt="true"[\s\S]{0,900}先制定本周计划[\s\S]{0,500}制定周计划/, '关闭态灵小枢必须主动说明先预览计划再生产');
 assert.match(source, /data-assistant-bubble="weekly-plan-kickoff"[\s\S]{0,900}确认后，数字员工才会开始生产[\s\S]{0,500}制定周计划/, '打开灵小枢后必须提供同一条计划制定入口');
 assert.match(source, /openWeeklyPlanFromAssistant[\s\S]{0,300}lingshu:open-weekly-plan[\s\S]{0,120}source: 'assistant'/, '灵小枢计划按钮必须派发明确来源的页面动作');
-assert.match(source, /workflowStage === 'running'[\s\S]{0,160}activeContext\.suggestions\.slice\(0, 3\)/, '生产开始后必须从当前页面上下文提供三个推荐问题');
-assert.match(source, /data-assistant-surface="production-suggestions"[\s\S]{0,700}send\(suggestion, currentPageAgent\)/, '推荐问题必须能直接进入当前生产上下文对话');
-const productionSuggestionSource = sourceSection(
-  '{productionSuggestions.length > 0 && (',
+assert.doesNotMatch(source, /productionSuggestions|data-assistant-surface="production-suggestions"|aria-label="生产快捷问题"/, '不得在页面快捷入口上方重复渲染生产快捷问题');
+const pageQuickEntrySource = sourceSection(
+  '<AssistantQuickEntries',
   '<AssistantComposer',
-  '生产快捷问题',
+  '输入框上方的页面快捷入口',
 );
-assert.match(productionSuggestionSource, /role="group"[\s\S]{0,80}aria-label="生产快捷问题"/, '生产快捷问题应保留无障碍分组名称');
-assert.doesNotMatch(productionSuggestionSource, />推荐问题</, '生产快捷问题不应重复显示说明标题');
-assert.doesNotMatch(productionSuggestionSource, /border-t|<section/, '生产快捷问题不应使用硬边框分区');
-assert.match(productionSuggestionSource, /suggestion === '查看周计划'[\s\S]{0,100}openWeeklyPlanFromAssistant\(\)/, '点击查看周计划必须直接打开当前计划详情');
+assert.match(pageQuickEntrySource, /page=\{page\}/, '移除重复生产问题后仍须保留当前页面快捷入口');
+assert.match(pageQuickEntrySource, /onQuestion=\{entry => void send\(entry\.prompt, currentPageAgent\)\}/, '页面快捷问题仍须进入当前业务上下文');
 
 const decisionActionResultSource = sourceSection(
   'const handleDecisionActionResult',

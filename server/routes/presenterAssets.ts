@@ -15,6 +15,7 @@ import { EMPTY_DEFAULTS } from '../../src/lib/shotProduction.js';
 import { StudioPaidBudget } from '../lib/studioPaidBudget.js';
 import path from 'node:path';
 import { inspectPresenterVideo, presenterVideoFrame, trimPresenterVideo, type PresenterVideoInfo } from '../lib/presenterVideo.js';
+import { isInternalBudgetExemptTenant } from '../lib/tenantBudgetExemption.js';
 
 const COLLECTION = 'studio_presenter_assets';
 type Row = { id: string; tenant_id: string; request_id: string; kind: string; payload: any };
@@ -44,6 +45,7 @@ const curatedName = (names: Set<string>, value: string): string | undefined => {
 export function createPresenterAssetsRouter(store: DataStore, exclusive: Exclusive, options: {
   client?: HeyGenPresenterClient; configured?: () => boolean; enabled?: () => boolean; directConsent?: () => boolean;
   reserve?: (id: string) => Promise<void>;
+  budgetExempt?: (tenantId: string) => boolean;
   trimVideo?: (bytes: Buffer, seconds: number) => Promise<Buffer>;
   extractFrame?: (bytes: Buffer, seconds: number) => Promise<Buffer>;
   normalizeTrainingVideo?: (bytes: Buffer) => Promise<Buffer>;
@@ -55,6 +57,7 @@ export function createPresenterAssetsRouter(store: DataStore, exclusive: Exclusi
   const configured = () => options.configured?.() ?? Boolean(process.env.HEYGEN_API_KEY);
   const enabled = () => options.enabled?.() ?? (configured() && process.env.HEYGEN_GENERATION_ENABLED === 'true');
   const directConsent = () => options.directConsent?.() ?? process.env.HEYGEN_DIRECT_CONSENT_ENABLED === 'true';
+  const budgetExempt = (tenant: string) => options.budgetExempt?.(tenant) ?? isInternalBudgetExemptTenant(tenant);
   const privateCatalog = (tenant: string) => Boolean(tenant && process.env.HEYGEN_PRIVATE_ASSET_TENANT_ID === tenant);
   const canCreateFor = (tenant: string) => !process.env.HEYGEN_PRIVATE_ASSET_TENANT_ID || privateCatalog(tenant);
   const creationReservation = (type: 'photo' | 'digital_twin') => type === 'photo'
@@ -140,14 +143,16 @@ export function createPresenterAssetsRouter(store: DataStore, exclusive: Exclusi
     return write(row, { status, look, consentStatus: consentStatus(group.consent_status), authorized: status === 'completed', error: failed ? '人物处理失败，请检查素材或授权录制要求' : '', ...(status === 'completed' ? { consentUrl: undefined } : {}) });
   };
   router.get('/capabilities', (_req, res) => {
+    const tenant = res.locals.tenantId as string;
+    const tenantBudgetExempt = budgetExempt(tenant);
     const photoBudget = creationBudget('photo').status('heygen');
     const digitalTwinBudget = creationBudget('digital_twin').status('heygen');
-    const commonReason = !configured() ? '管理员尚未配置 HeyGen 服务密钥' : !canCreateFor(res.locals.tenantId) ? '当前企业尚未连接人物创建账号，可使用公共人物库' : !enabled() ? '人物创建尚未启用，可导入已有可用人物' : '';
-    const photoCreationReason = commonReason || (options.reserve ? '' : photoBudget.reason);
-    const digitalTwinCreationReason = commonReason || (options.reserve ? '' : digitalTwinBudget.reason);
+    const commonReason = !configured() ? '管理员尚未配置 HeyGen 服务密钥' : !canCreateFor(tenant) ? '当前企业尚未连接人物创建账号，可使用公共人物库' : !enabled() ? '人物创建尚未启用，可导入已有可用人物' : '';
+    const photoCreationReason = commonReason || (options.reserve || tenantBudgetExempt ? '' : photoBudget.reason);
+    const digitalTwinCreationReason = commonReason || (options.reserve || tenantBudgetExempt ? '' : digitalTwinBudget.reason);
     const photoCreationEnabled = !photoCreationReason;
     const digitalTwinCreationEnabled = !digitalTwinCreationReason;
-    res.json({ localPhotoUpload: currentDataAuthority() === 'local', configured: configured(), creationEnabled: photoCreationEnabled || digitalTwinCreationEnabled, photoCreationEnabled, digitalTwinCreationEnabled, photoCreationReason, digitalTwinCreationReason, directConsent: directConsent(), privateCatalog: privateCatalog(res.locals.tenantId), reservationCny: photoBudget.reservationCny,
+    res.json({ localPhotoUpload: currentDataAuthority() === 'local', configured: configured(), creationEnabled: photoCreationEnabled || digitalTwinCreationEnabled, photoCreationEnabled, digitalTwinCreationEnabled, photoCreationReason, digitalTwinCreationReason, directConsent: directConsent(), privateCatalog: privateCatalog(tenant), budgetExempt: tenantBudgetExempt, reservationCny: photoBudget.reservationCny,
       photoReservationCny: photoBudget.reservationCny, digitalTwinReservationCny: digitalTwinBudget.reservationCny,
       reason: commonReason || (!photoCreationEnabled && !digitalTwinCreationEnabled ? photoCreationReason || digitalTwinCreationReason : '') });
   });
@@ -488,7 +493,14 @@ export function createPresenterAssetsRouter(store: DataStore, exclusive: Exclusi
         const row = await store.create<Row>(COLLECTION, { tenant_id: tenant, kind: 'creation', request_id: b.requestId,
           payload: { name: b.name.trim(), type: b.type, voiceId: b.voiceId, uploadId: b.uploadId, sourceDigest: upload.payload.digest, fingerprint, authorizationDeclared: true, authorized: false, subjectAdultConfirmed: true, ...(arkPreparation ? { arkPreparation } : {}), ...(reusePresenterId ? { reusePresenterId } : {}), status: 'submitting', consentStatus: 'pending', createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() } });
         if (!row) throw new Error('人物任务登记失败，未创建人物');
-        try { await (options.reserve ? options.reserve(`presenter:${row.id}`) : creationBudget(b.type).reserve('heygen', `presenter:${row.id}`)); }
+        const tenantBudgetExempt = budgetExempt(tenant);
+        let internalBudgetReserved = false;
+        try {
+          if (!tenantBudgetExempt) {
+            await (options.reserve ? options.reserve(`presenter:${row.id}`) : creationBudget(b.type).reserve('heygen', `presenter:${row.id}`));
+            internalBudgetReserved = !options.reserve;
+          }
+        }
         catch (e) { await write(row, { status: 'failed', error: message(e) }); throw e; }
         try {
           const remote = await client().create(b.type, b.name.trim(), upload.payload.assetId, `presenter:${row.id}`, reuseGroupId || undefined);
@@ -499,7 +511,7 @@ export function createPresenterAssetsRouter(store: DataStore, exclusive: Exclusi
           await write(row, { groupId, look, status: 'processing' });
         } catch (e) {
           if (e instanceof HeyGenRequestError && e.definitive) {
-            if (!options.reserve) await creationBudget(b.type).releaseRejected('heygen', `presenter:${row.id}`);
+            if (internalBudgetReserved) await creationBudget(b.type).releaseRejected('heygen', `presenter:${row.id}`);
             const capacity = /limit.*(?:avatar|group)|avatar.*slots|slots.*limit/i.test(message(e));
             return write(row, { status: 'failed', failureCategory: capacity ? 'capacity' : 'material', error: capacity ? 'HeyGen 人物名额已满，当前账号不能新增视频人物。请先处理账号人物名额，或使用同一人的已有授权人物；本次未创建人物。' : `${message(e)}。人物任务未创建，请修改素材后重新提交` });
           }

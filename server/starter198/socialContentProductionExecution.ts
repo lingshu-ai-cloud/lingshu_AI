@@ -1,4 +1,5 @@
 import {assertMeasuredCaptionTiming} from './socialContentCaptionTiming.js';
+import {isInternalBudgetExemptTenant} from '../lib/tenantBudgetExemption.js';
 import { assertBoundPresenterAudio, readBoundPresenterVoice } from './socialContentBoundPresenterVoice.js';
 import { prepareSocialContentProductionBudget, type ProductionBudgetReadPorts } from './socialContentProductionBudgetPreflight.js';
 import type {PaidStageRequirement} from './socialContentPaidOperationPlan.js';
@@ -699,7 +700,7 @@ export async function runSocialContentAutoProduction(input: {
       }
     }
     const heygenBridge = input.repository.dataStore
-      ? createEnvironmentSocialHeyGenBridge(input.repository.dataStore)
+      ? createEnvironmentSocialHeyGenBridge(input.repository.dataStore, input.tenantId)
       : null;
     const wholeFilmPresenterConfigured=detail.brief.materialRoutingPolicyVersion==='type-aware.v1'
       && process.env.SOCIAL_CONTENT_HEYGEN_ENABLED==='true' && process.env.HEYGEN_GENERATION_ENABLED==='true'
@@ -950,6 +951,7 @@ export async function runSocialContentAutoProduction(input: {
 	    ? assetSupplyPlanWithExecutionSelections(detail.assetSupplyPlan, agentWorkflow)
 	    : null;
 	  let reviewedSupplyPlan = selectedSupplyPlan && detail.brief.materialRoutingPolicyVersion==='type-aware.v1'
+	    && !isInternalBudgetExemptTenant(input.tenantId)
 	    ? applyPresenterFirstBudgetDegradation({plan:selectedSupplyPlan,workflow:agentWorkflow,
 	      maximumCny:Math.min(10,Number(detail.brief.perItemBudgetCny)||10)})
 	    : selectedSupplyPlan;
@@ -1137,7 +1139,7 @@ export async function runSocialContentAutoProduction(input: {
                     if(!binding||binding.credentialSha256!==credentialSha256||binding.avatarId!==request.presenter.providerPresenterId||binding.voiceId!==request.presenter.providerVoiceId||binding.authorizationRef!==request.presenter.authorizationRef||binding.consentRef!==request.presenter.consentRef||binding.model!==route.model||binding.accountRef!==route.accountRef||route.routeEvidenceRef!==heyGenRuntimeRouteEvidence(binding))throw Error('whole_track_heygen_approved_person_changed');
                   },
                 }})}
-            : createEnvironmentSocialHeyGenBridge(input.repository.dataStore)
+            : createEnvironmentSocialHeyGenBridge(input.repository.dataStore, input.tenantId)
           : null;
         const existingAdapters = existingAssetSupplyAdapters().filter(adapter => (
           paidVisualProvidersAllowed

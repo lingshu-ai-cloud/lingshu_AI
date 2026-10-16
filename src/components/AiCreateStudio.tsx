@@ -3,7 +3,6 @@ import { parseScopedSceneTarget, validateScopedSceneTarget } from '../lib/scoped
 import { socialProgramApi } from '../lib/socialProgramApi';
 import { socialSceneReworkApi } from '../lib/socialSceneReworkApi';
 import { verifiedProductionSlots, verifyProductionSnapshotHash, type BoundProductionSlot } from '../lib/socialSceneReworkNavigation';
-import SocialMvpHandoffPanel from './socialContent/SocialMvpHandoffPanel';
 import StudioOperationalEvidencePanel from './socialContent/StudioOperationalEvidencePanel';
 import { readCurrentStudioSocialTask } from '../lib/studioSocialTaskRead';
 import type { SocialContentTaskDetail } from '../../shared/contracts/socialContentWorkflow';
@@ -18,6 +17,7 @@ import { presenterApi } from '../lib/presenterApi';
 import { digitalHumanDecisionIssues, enterpriseMaterialIssue } from '../../shared/contracts/smartStoryboardAdmission';
 import ShotSourceDecisionPanel from './studio/ShotSourceDecisionPanel';
 import ShotMaterialLibraryDialog from './studio/ShotMaterialLibraryDialog';
+import StudioPreviewStage, { studioPreviewRatio } from './studio/StudioPreviewStage';
 import { recognizePresenterShot, isSalesPresenterLabel, salesPresenterRecognition, confirmedSalesPresenterRoute } from '../../shared/contracts/presenterShotRecognition';
 import ReplicationWorkbenchHeader from './socialContent/ReplicationWorkbenchHeader';
 import AgentTaskDemoWorkbench from './socialContent/AgentTaskDemoWorkbench';
@@ -3886,6 +3886,10 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onLaunc
     if (prefill?.title?.trim()) setProjectTitle(prefill.title.trim());
     if (prefill?.productName?.trim()) setProductInfo(prefill.productName.trim());
     if (prefill?.platforms?.[0]) setPlatform(prefill.platforms[0]);
+    if (studioCreateRequest.sourceContext?.aspectRatio) {
+      const requestedRatio = studioPreviewRatio(studioCreateRequest.sourceContext.aspectRatio);
+      setRatio(RATIOS.reduce((closest, candidate) => Math.abs(ratioNumber(candidate) - requestedRatio) < Math.abs(ratioNumber(closest) - requestedRatio) ? candidate : closest, RATIOS[0]!));
+    }
     setCanvasView('creation');
   }, [socialContentTaskId, studioCreateRequest]);
   const [sourceDraftCheckPending, setSourceDraftCheckPending] = useState(true);
@@ -16132,6 +16136,7 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onLaunc
           originLabel: '灵感中心 · 爆款视频分析', referenceTitle: videoKickoff?.video?.title || projectTitle,
           referenceMediaUrl: videoKickoff?.video?.videoUrl || videoKickoff?.video?.aiAnalysis?.materialUrl,
           referenceThumbnail: videoKickoff?.video?.thumbnail, referenceContentType: 'video',
+          aspectRatio: ratio,
           referenceShots: (videoKickoff?.referenceAnalysis?.details || []).map(shot => ({ time: shot.time, dialogue: (shot.speechLines || []).map(line => line.referenceText).join(' '), visual: shot.visual })),
         },
       };
@@ -16193,6 +16198,7 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onLaunc
     referenceVideoUrl={videoKickoff?.video?.videoUrl}
     audioUrl={agentTaskProductionPreview?.audio.embeddedInDeliverable ? agentTaskProductionPreview.deliverableVideoUrl : (voiceoverAudios[activeVoiceLang]?.url || voiceoverUrl || undefined)}
     outputVideoUrl={agentTaskProductionPreview?.deliverableVideoUrl || workbenchFormalPreviewUrl || undefined}
+    aspectRatio={ratio}
     onStepChange={setAgentTaskDemoStep}
     onTitleChange={title => { setProjectTitle(title); setAutosaveStatus('idle'); }}
     onTitleCommit={() => { void commitProjectTitle(); }}
@@ -16220,7 +16226,12 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onLaunc
     />
     <div className="grid min-h-0 flex-1 grid-cols-1 lg:grid-cols-[minmax(0,1fr)_minmax(0,1.5fr)_minmax(0,1fr)]">
       <aside className="min-h-0 overflow-y-auto border-r border-border bg-white p-5"><h2 className="text-sm font-semibold text-text-primary">Gemini 逐句口播与分镜</h2><pre className="mt-4 whitespace-pre-wrap text-xs leading-6 text-text-secondary">{script}</pre></aside>
-      <main className="min-h-0 bg-slate-950 p-5"><p className="mb-3 text-xs font-bold text-white">指定开场钩子</p>{videoKickoff?.generatedVideo?.url ? <video src={videoKickoff.generatedVideo.url} controls playsInline className="h-[min(65vh,620px)] w-full object-contain" /> : <p className="text-xs text-white">开场视频暂不可预览</p>}</main>
+      <main className="flex min-h-0 flex-col bg-surface-2 p-4">
+        <p className="mb-3 shrink-0 text-xs font-bold text-text-primary">指定开场钩子</p>
+        <StudioPreviewStage ratio={ratio} className="min-h-0 flex-1" stageClassName="rounded-lg bg-slate-950" ariaLabel="开场钩子预览">
+          {videoKickoff?.generatedVideo?.url ? <video src={videoKickoff.generatedVideo.url} controls playsInline className="h-full w-full object-contain" /> : <p className="px-4 text-center text-xs text-slate-300">开场视频暂不可预览</p>}
+        </StudioPreviewStage>
+      </main>
       <aside className="border-l border-border bg-white p-5"><h2 className="text-sm font-semibold text-text-primary">本次创作</h2><p className="mt-3 text-xs text-text-secondary">企业产品：{activeProductLabel || videoKickoff?.productInfo || '待确认'}</p><p className="mt-2 text-xs text-text-secondary">开场钩子：{videoKickoff?.generatedVideo?.title || '已上传'}</p><p className="mt-4 text-xs leading-5 text-text-muted">口播由 Gemini 依据企业产品与钩子画面生成。请检查内容后进入逐镜制作。</p></aside>
     </div>
     <footer className="flex min-h-[76px] items-center justify-end border-t border-border bg-white px-5"><button type="button" onClick={() => { void saveProject('draft').then(saved => { if (saved) setStepIdx(activeSteps.findIndex(item => item.id === 'material')); }); }} className="rounded-lg bg-blue-600 px-5 py-3 text-sm font-semibold text-white">确认口播，进入分镜制作</button></footer>
@@ -16254,9 +16265,10 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onLaunc
         replicationWorkflow={threeStepWorkflow}
         replicationActiveStep={step === 'mode' ? 0 : step === 'preview' || step === 'bgm' || step === 'cover' ? 2 : 1}
         showPanelHeadings={!(threeStepWorkflow && step === 'preview')}
+        showObjectHeading={false}
+        showPropertyHeading={step !== 'material'}
         showHeaderSaveStatus={!(threeStepWorkflow && step === 'preview')}
         projectTitle={projectTitle}
-        projectSubtitle={`${contentMode === 'video' ? '视频' : '图文'} · ${platform} · ${ratio}`}
         headerActions={(
           <>
           {agentTaskDemoEntry && socialContentTaskId && <>
@@ -16327,10 +16339,10 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onLaunc
           )
         )}
         canvasTitle=""
-        canvasToolbar={mode === 'clone' && videoKickoff && step !== 'preview' ? (
-          <div className="flex rounded-lg border border-border bg-surface-2 p-0.5">
-            <button type="button" aria-pressed={canvasView === 'reference'} onClick={() => setCanvasView('reference')} className={`rounded-md px-2 py-1 text-[10px] font-bold ${canvasView === 'reference' ? 'bg-white text-text-primary shadow-none' : 'text-text-muted'}`}>爆款视频预览</button>
-            <button type="button" aria-pressed={canvasView === 'creation'} onClick={() => setCanvasView('creation')} className={`rounded-md px-2 py-1 text-[10px] font-bold ${canvasView === 'creation' ? 'bg-white text-text-primary shadow-none' : 'text-text-muted'}`}>新建视频预览</button>
+        objectToolbar={mode === 'clone' && videoKickoff && step !== 'preview' ? (
+          <div className="grid w-full grid-cols-2 rounded-lg border border-border bg-surface-2 p-0.5">
+            <button type="button" aria-pressed={canvasView === 'reference'} onClick={() => setCanvasView('reference')} className={`min-h-11 rounded-md px-3 py-2 text-xs font-bold ${canvasView === 'reference' ? 'bg-white text-text-primary shadow-none' : 'text-text-muted'}`}>爆款视频预览</button>
+            <button type="button" aria-pressed={canvasView === 'creation'} onClick={() => setCanvasView('creation')} className={`min-h-11 rounded-md px-3 py-2 text-xs font-bold ${canvasView === 'creation' ? 'bg-white text-text-primary shadow-none' : 'text-text-muted'}`}>新建视频预览</button>
           </div>
         ) : undefined}
         propertyTitle={threeStepWorkflow && step === 'preview' ? '成片渲染与导出' : workbenchPropertyTitle}
@@ -16339,8 +16351,6 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onLaunc
         propertyPanel={(
           <>
           {frozenStudioSpecRef.current?.resolvedStudioContract && <StudioOperationalEvidencePanel contract={{...(frozenStudioSpecRef.current.resolvedStudioContract as Parameters<typeof StudioOperationalEvidencePanel>[0]['contract']),operationalEvidence:frozenOperationalEvidence}} />}
-          {socialContentTaskId && <SocialMvpHandoffPanel value={sceneReworkTask?.taskId === socialContentTaskId ? sceneReworkTask.socialMvpHandoff : null}
-            expected={{ taskId: socialContentTaskId, runId: sceneReworkTask?.runId || '', version: sceneReworkTask?.version || '', projectId: projectId || '' }} />}
           {threeStepWorkflow && step === 'preview' ? (
             <section className="space-y-3" aria-label="成片操作">
               {subtitleSourceBlockReason && <div role="alert" className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-xs leading-5">
@@ -16419,7 +16429,7 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onLaunc
                 <div className={`grid gap-2 ${isPresenter ? 'grid-cols-2' : 'grid-cols-3'}`}>{options.map(option => <button key={option.id} type="button" aria-pressed={selectedMode === option.id} disabled={shot.locked} onClick={() => chooseReplicationShotMode(slot, option.id)} className={`min-w-0 rounded-lg border p-2 text-left disabled:opacity-50 ${selectedMode === option.id ? 'border-emerald-600 bg-white text-emerald-900 shadow-none' : 'border-border bg-white/70 text-text-secondary'}`}><span className="block text-[11px] font-semibold">{option.title}</span><span className="mt-1 block text-[9px] leading-4">{option.detail}</span></button>)}</div>
                 {!isPresenter && selectedMode === 'smart' && <p className="text-[10px] leading-4 text-text-secondary">{[storyboardAssignments[slot.id], plan.referenceClipId].some(id => { const clip = id ? materialById.get(id) : undefined; return clip && isAutomaticViralMaterialCandidate(clip, videoKickoff); }) ? '已关联本地素材，生成时自动作为参考。' : '暂无关联本地素材，生成时直接使用 AIGC。'}</p>}
                 {activeWorkbenchClip && <div className="rounded-lg border border-border bg-white p-2 text-[10px]"><p className="font-bold text-text-primary">当前素材：{activeWorkbenchClip.name}</p><p className="mt-1 text-text-muted">{editForSlot(activeWorkbenchClip, slot).trimStart.toFixed(1)}–{editForSlot(activeWorkbenchClip, slot).trimEnd.toFixed(1)}s · {plan.matchReason || activeMaterialAssessment?.reason || '手动选择'}</p><div className="mt-2 flex gap-2"><button type="button" onClick={() => { setCanvasView('creation'); setPreviewClip(activeWorkbenchClip); }} className="font-bold text-emerald-700">预览</button><button type="button" onClick={() => { setShotLibraryError(''); setShotLibrarySlotId(slot.id); }} className="font-bold text-emerald-700">更换</button><button type="button" onClick={() => clearWorkbenchMaterial(slot.id)} className="font-bold text-red-700">移除</button></div></div>}
-                {isPresenter ? <><button type="button" onClick={() => openProduction(slot)} className="w-full rounded-lg bg-blue-600 px-3 py-2 text-xs font-bold text-white">配置数字人分镜</button><div className="grid grid-cols-2 gap-2"><button type="button" onClick={() => { chooseReplicationShotMode(slot, 'local'); setShotLibraryError(''); setShotLibrarySlotId(slot.id); }} className="rounded-lg border border-border bg-white px-2 py-2 text-[10px] font-bold">改用企业素材</button><button type="button" onClick={() => { chooseReplicationShotMode(slot, 'shoot'); void createBoundShootingTask(storyboardSlotScript(slot.detail).visual || slot.title, slot.id); }} className="rounded-lg border border-border bg-white px-2 py-2 text-[10px] font-bold">列入待拍</button></div></>
+                {isPresenter ? <><button type="button" onClick={() => openProduction(slot)} className="w-full rounded-lg bg-blue-600 px-3 py-2 text-xs font-bold text-white">配置数字人分镜</button><button type="button" onClick={() => { chooseReplicationShotMode(slot, 'shoot'); void createBoundShootingTask(storyboardSlotScript(slot.detail).visual || slot.title, slot.id); }} className="w-full rounded-lg border border-border bg-white px-3 py-2 text-xs font-bold">列入待拍</button></>
                   : selectedMode === 'local' ? <div className="grid grid-cols-2 gap-2"><button type="button" onClick={() => { setShotLibraryError(''); setShotLibrarySlotId(slot.id); }} className="rounded-lg bg-blue-600 px-3 py-2 text-xs font-bold text-white">选择企业素材</button><button type="button" disabled={materialSelectLoading} onClick={() => void smartSelectMaterialsFast()} className="rounded-lg border border-emerald-300 bg-white px-3 py-2 text-xs font-bold text-emerald-800 disabled:opacity-50">一键分析匹配</button></div>
                   : selectedMode === 'shoot' ? <button type="button" disabled={shootingBusy} onClick={() => void createBoundShootingTask(storyboardSlotScript(slot.detail).visual || slot.title, slot.id)} className="w-full rounded-lg bg-blue-600 px-3 py-2 text-xs font-bold text-white disabled:opacity-50">创建待拍任务</button>
                   : <div className="space-y-2">
@@ -16857,12 +16867,19 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onLaunc
           icon: primarySubmitsSocialArtifact || step === 'preview' && workbenchHasFormalVideo && !primaryGeneratesVideo ? <Send size={15} /> : <ChevronRight size={15} />,
         }}
       >
-        <div className={`relative flex h-full min-h-0 w-full items-center justify-center overflow-hidden ${canvasView === 'reference' && mode === 'clone' && videoKickoff ? 'bg-black' : 'rounded-lg border border-border bg-zinc-100'}`}>
+        <div className="studio-workbench-preview-shell relative flex h-full min-h-0 w-full items-center justify-center overflow-hidden">
+        <div
+          className={`studio-workbench-preview-stage relative flex items-center justify-center overflow-hidden ${canvasView === 'reference' && mode === 'clone' && videoKickoff ? 'bg-black' : 'rounded-lg border border-border bg-zinc-100'}`}
+          style={{
+            aspectRatio: ratioNumber(ratio),
+            width: `min(100%, ${ratioNumber(ratio) * 100}cqh)`,
+          }}
+        >
           {canvasView !== 'reference' && step !== 'preview' && storyboardSlots.length > 0 && workbenchPlaybackError && <span role="alert" className="absolute right-4 top-4 z-30 max-w-56 rounded-md bg-rose-950/90 px-2 py-1 text-[10px] text-white">{workbenchPlaybackError}</span>}
           {canvasView === 'reference' && mode === 'clone' && videoKickoff && step !== 'preview' ? (
             <BenchmarkVideoPreview kickoff={videoKickoff} embedded seekRequest={referenceSeekRequest} onTimeUpdate={setReferenceTimelineTime} />
           ) : step === 'cover' && !coverTimelineCaptureMode ? (
-            <div className={`relative max-h-full overflow-hidden bg-black shadow-xl ${ratio === '16:9' ? 'aspect-video' : ratio === '1:1' ? 'aspect-square' : ratio === '4:5' ? 'aspect-[4/5]' : 'aspect-[9/16]'}`}>
+            <div className="relative h-full w-full overflow-hidden bg-black shadow-xl">
               <CoverFace
                 coverUrl={coverUrl}
                 frameUrl={coverFrameUrl}
@@ -16970,6 +16987,7 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onLaunc
               </div>
             </div>
           )}
+        </div>
         </div>
       </StudioWorkbenchFrame>
 

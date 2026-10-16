@@ -44,7 +44,7 @@ import { defaultMatrixPlan } from '../lib/weeklyMatrix';
 import DeliveryBoard from "./DeliveryBoard";
 import ProductionTaskScene from "./ProductionTaskScene";
 import AgentDecisionCard, { type AgentDecisionKind } from "./AgentDecisionCard";
-import SmartBusinessDashboard, { WeeklyCommandCenter, BusinessInterpretation } from "./SmartBusinessDashboard";
+import SmartBusinessDashboard, { WeeklyCommandCenter, WeeklyPlanDetailsDrawer, BusinessInterpretation } from "./SmartBusinessDashboard";
 import WeeklyProductionStudioEntry from "./smartBusiness/WeeklyProductionStudioEntry";
 import SmartOperationsAccountRail, { type SmartOperationsAccount } from "./SmartOperationsAccountRail";
 import PlanHistoryDialog from "./PlanHistoryDialog";
@@ -1583,7 +1583,7 @@ function OnboardingPanel({
   if (mode === "first" && profileConfirmed && productConfirmed && stageConfirmed) return (
     <OnboardingGuideFrame
       step={4}
-      title="最后，确认这轮视频怎么制作"
+      title="你想让谁出镜？"
       busy={stageSaving || busy}
       dismissible={dismissible}
       onClose={onClose}
@@ -1598,16 +1598,38 @@ function OnboardingPanel({
       onPrimary={() => void openRecommendedPlan()}
     >
       <Form className="space-y-5" layout="vertical" aria-label="生产开工资料">
-        <section className="space-y-3" aria-labelledby="onboarding-presenter-title">
-          <div><h3 id="onboarding-presenter-title" className="text-base font-semibold text-text-primary">本轮人物策略</h3><p className="mt-1 text-xs leading-5 text-text-muted">未完成数字人物和声音授权时，系统会在选择参考视频前排除真人口播路径，不会生产到一半再停下。</p></div>
+        <section className="space-y-3" aria-label="出镜方式">
           <AntRadio.Group
-            className="grid w-full gap-3 sm:grid-cols-2"
+            className="!grid w-full !gap-3 sm:!grid-cols-2"
             value={presenterPolicy}
             onChange={event => setPresenterPolicy(event.target.value as ProductionPresenterPolicy)}
-            aria-labelledby="onboarding-presenter-title"
+            aria-label="出镜方式"
           >
-            <AntRadio value="digital_presenter" className={`m-0 flex rounded-lg border p-4 ${presenterPolicy === "digital_presenter" ? "border-accent bg-accent-glow" : "border-border bg-surface"}`}><span><strong className="block text-sm text-text-primary">使用数字人口播</strong><span className="mt-1 block text-xs leading-5 text-text-muted">需要完成默认人物、声音与用途授权。</span></span></AntRadio>
-            <AntRadio value="local_video_only" className={`m-0 flex rounded-lg border p-4 ${presenterPolicy === "local_video_only" ? "border-accent bg-accent-glow" : "border-border bg-surface"}`}><span><strong className="block text-sm text-text-primary">本轮仅用本地实拍</strong><span className="mt-1 block text-xs leading-5 text-text-muted">自动排除含真人口播的参考，不临时改成其他生成方式。</span></span></AntRadio>
+            {([
+              { value: "digital_presenter", label: "使用数字人口播", description: "需要完成默认人物、声音与用途授权。" },
+              { value: "local_video_only", label: "本轮仅用本地实拍", description: "自动排除含真人口播的参考，不临时改成其他生成方式。" },
+            ] as const).map(option => {
+              const selected = presenterPolicy === option.value;
+              return (
+                <AntRadio.Button
+                  key={option.value}
+                  value={option.value}
+                  className={`!ms-0 !ml-0 !h-auto !w-full !rounded-lg !border !px-4 !py-3 !leading-normal before:!hidden ${selected
+                    ? "!border-accent !bg-accent-glow !text-text-primary !shadow-[0_0_0_1px_var(--color-accent)]"
+                    : "!border-border !bg-surface !text-text-primary hover:!border-accent/50"}`}
+                >
+                  <span className="flex min-w-0 items-start justify-between gap-3 text-left">
+                    <span className="min-w-0">
+                      <strong className="block text-sm font-semibold text-text-primary">{option.label}</strong>
+                      <span className="mt-1 block text-xs leading-5 text-text-muted">{option.description}</span>
+                    </span>
+                    <span aria-hidden="true" className={`mt-0.5 flex h-5 w-5 shrink-0 items-center justify-center rounded-full border ${selected ? "border-accent bg-accent text-white" : "border-border-bright bg-white"}`}>
+                      {selected && <Check size={13} strokeWidth={2.5} />}
+                    </span>
+                  </span>
+                </AntRadio.Button>
+              );
+            })}
           </AntRadio.Group>
           {presenterPolicy === "digital_presenter" && <EnterprisePresenters initialConfiguration onInitialSelection={() => setPresenterConfigured(true)} />}
         </section>
@@ -3946,6 +3968,7 @@ export default function DigitalEmployeePage({
   const [onboardingWelcomeOpen, setOnboardingWelcomeOpen] = useState(false);
   const [weeklyPlanOpen, setWeeklyPlanOpen] = useState(false);
   const [planHistoryOpen, setPlanHistoryOpen] = useState(false);
+  const [weeklyPlanDetailsOpen, setWeeklyPlanDetailsOpen] = useState(false);
   const goalPanelRef = useRef<HTMLDivElement>(null);
   const overviewRequestVersionRef = useRef(0);
   const enterpriseFactsRecoveryRef = useRef(new Map<string, Promise<void>>());
@@ -4021,7 +4044,7 @@ export default function DigitalEmployeePage({
     return () => window.removeEventListener(WEEKLY_WORK_UPDATED_EVENT, refreshFromAssistant);
   }, [viewGoalId, data?.goal?.id]);
 
-  useEffect(()=>{let authorization=authHeader().Authorization;const clear=()=>{const next=authHeader().Authorization;if(next===authorization)return;authorization=next;overviewRequestVersionRef.current+=1;initialLoadRef.current=null;setData(null);setWeeklyStartConflict(null);setSelectedTaskId('');setSelectedContentItemId('');setSelectedAccountId('');setWeeklyPlanOpen(false);setPlanHistoryOpen(false);setWorkspaceView('today');setBusinessLine('full_funnel');setContentPlatform('all');setViewGoalId('');productionRangeRef.current=undefined;setLoading(true);initialLoadRef.current=load('');};window.addEventListener(AUTH_TOKEN_CHANGED_EVENT,clear);window.addEventListener('storage',clear);return()=>{window.removeEventListener(AUTH_TOKEN_CHANGED_EVENT,clear);window.removeEventListener('storage',clear);};},[]);
+  useEffect(()=>{let authorization=authHeader().Authorization;const clear=()=>{const next=authHeader().Authorization;if(next===authorization)return;authorization=next;overviewRequestVersionRef.current+=1;initialLoadRef.current=null;setData(null);setWeeklyStartConflict(null);setSelectedTaskId('');setSelectedContentItemId('');setSelectedAccountId('');setWeeklyPlanOpen(false);setPlanHistoryOpen(false);setWeeklyPlanDetailsOpen(false);setWorkspaceView('today');setBusinessLine('full_funnel');setContentPlatform('all');setViewGoalId('');productionRangeRef.current=undefined;setLoading(true);initialLoadRef.current=load('');};window.addEventListener(AUTH_TOKEN_CHANGED_EVENT,clear);window.addEventListener('storage',clear);return()=>{window.removeEventListener(AUTH_TOKEN_CHANGED_EVENT,clear);window.removeEventListener('storage',clear);};},[]);
 
   useEffect(() => {
     const businessScope = consumeBusinessPageContext("production");
@@ -5016,13 +5039,7 @@ export default function DigitalEmployeePage({
     ) : undefined;
     const weeklyPlanControls = <>
       {activeRun && !viewGoalId
-        ? <Button onClick={() => {
-            setSelectedContentItemId("");
-            setWorkspaceView("matrix");
-            window.requestAnimationFrame(() => window.requestAnimationFrame(() => {
-              document.getElementById("agent-weekly-calendar")?.scrollIntoView({ behavior: getScrollBehavior(), block: "start" });
-            }));
-          }} icon={<CalendarRange size={15}/>}>查看周任务</Button>
+        ? <Button onClick={() => setWeeklyPlanDetailsOpen(true)} icon={<CalendarRange size={15}/>}>查看周任务</Button>
         : <Button onClick={()=>setPlanHistoryOpen(true)} icon={<History size={15}/>}>历史计划</Button>}
       <Button type="primary" loading={Boolean(busy)} onClick={()=>void controlWeeklyWork()} icon={!activeRun && (!goal || canCreateNextGoal) ? <CalendarRange size={15}/> : activeRun && !recoverableProductionTask && data.run?.status !== "paused" ? <Pause size={15}/> : <Play size={15}/>}>{weeklyControlLabel}</Button>
     </>;
@@ -5099,6 +5116,7 @@ export default function DigitalEmployeePage({
         </section>
       </div>}
       {planHistoryOpen&&<PlanHistoryDialog goals={data.goals} onClose={()=>setPlanHistoryOpen(false)}/>}
+      {weeklyPlanDetailsOpen&&<WeeklyPlanDetailsDrawer data={data} open onClose={()=>setWeeklyPlanDetailsOpen(false)}/>}
       {onboardingWelcomeOpen && <OnboardingWelcome onClose={()=>setOnboardingWelcomeOpen(false)} />}
       </>
     );

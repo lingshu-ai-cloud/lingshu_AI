@@ -19,6 +19,20 @@ test('accepted unchanged clips are reused and cost zero, changed narration regen
 test('pending quality and changed presenter version or language cannot reuse generated footage',()=>{
   for(const result of [sentenceReplicationPreview(shot,presenter,'en',[{...prior,cueQuality:[{...prior.cueQuality![0],state:'manual_review'}]}]),sentenceReplicationPreview(shot,{...presenter,assetVersion:2},'en',[prior]),sentenceReplicationPreview(shot,presenter,'fr',[prior])]) assert.deepEqual(result.reuseCueMaterialIds,{});
 });
+test('photo preview bypasses only the configured tenant internal per-task ceiling',()=>{
+  const previous=process.env.INTERNAL_BUDGET_EXEMPT_TENANT_IDS;
+  const photoShot={...shot,digitalHuman:{...shot.digitalHuman,presenterMode:'photo_talking' as const}};
+  const env={...process.env,STUDIO_HEYGEN_RESERVE_CNY:'1',HEYGEN_PHOTO_ESTIMATED_CNY_PER_SECOND:'1'};
+  process.env.INTERNAL_BUDGET_EXEMPT_TENANT_IDS='tenant-exact';
+  try {
+    const regular=sentenceReplicationPreview(photoShot,presenter,'en',[],env,'tenant-other');
+    assert.match(regular.estimateError,/管理员单任务上限/);
+    const exempt=sentenceReplicationPreview(photoShot,presenter,'en',[],env,'tenant-exact');
+    assert.equal(exempt.estimateError,'');assert.ok(exempt.estimatedCostCny!>1);
+  } finally {
+    if(previous===undefined)delete process.env.INTERNAL_BUDGET_EXEMPT_TENANT_IDS;else process.env.INTERNAL_BUDGET_EXEMPT_TENANT_IDS=previous;
+  }
+});
 test('text edits preserve reviewed frames; presenter and scene edits invalidate them',()=>{
   assert.equal(patchShot(shot,{narration:'New wording'}).digitalHuman?.targetFramesConfirmed,true);
   for(const changed of [patchShot(shot,{presenterId:'other'}),patchShot(shot,{digitalHuman:{...shot.digitalHuman,scene:'factory'}})]) {

@@ -82,6 +82,16 @@ const CalendarPlanner = lazy(() => import('./publishing/CalendarPlanner').then(m
 
 type ViewMode = TrafficViewMode;
 
+function contentCreationAspectRatio(aspectRatio?: number, width?: number, height?: number): '9:16' | '1:1' | '16:9' | undefined {
+  const measured = Number(aspectRatio) > 0
+    ? Number(aspectRatio)
+    : Number(width) > 0 && Number(height) > 0 ? Number(width) / Number(height) : 0;
+  if (!Number.isFinite(measured) || measured <= 0) return undefined;
+  if (measured > 1.12) return '16:9';
+  if (measured < 0.89) return '9:16';
+  return '1:1';
+}
+
 export type DigitalEmployeeWorkflowContext = {
   runId: string;
   taskId: string;
@@ -375,6 +385,9 @@ export default function TrafficPage({
           poster?: string;
           productId?: string;
           productName?: string;
+          aspectRatio?: number;
+          width?: number;
+          height?: number;
         };
       };
       video?: {
@@ -387,6 +400,9 @@ export default function TrafficPage({
         videoUrl?: string;
         contentFormat?: string;
         crawledAt?: string;
+        aspectRatio?: number;
+        width?: number;
+        height?: number;
       };
     };
     if (kickoff.source === 'material_library' && kickoff.generatedVideo?.material) {
@@ -417,6 +433,7 @@ export default function TrafficPage({
               referenceThumbnail: previewUrl || undefined,
               referenceMediaUrl: materialUrl || undefined,
               referenceContentType: material.type === 'video' ? 'video' : 'image',
+              aspectRatio: contentCreationAspectRatio(material.aspectRatio, material.width, material.height),
             },
           },
         },
@@ -468,6 +485,7 @@ export default function TrafficPage({
                 referenceThumbnail: kickoff.video?.thumbnail,
                 referenceMediaUrl: playbackUrl || undefined,
                 referenceContentType: 'video',
+                aspectRatio: contentCreationAspectRatio(kickoff.video?.aspectRatio, kickoff.video?.width, kickoff.video?.height),
               },
             },
           },

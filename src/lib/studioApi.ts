@@ -1,4 +1,4 @@
-import { formatDemoQuotaError } from './studioQuotaMessage';
+import { readStudioHttpError } from './studioQuotaMessage';
 import { failedAiGeneration } from './studioAiFailure';
 /* 混剪工作台 AI 接口封装 */
 import { authHeader } from './auth';
@@ -41,8 +41,7 @@ async function post<T>(path: string, body: unknown, fallback: T, signal?: AbortS
         signal,
       });
       if (r.status === 402 || r.status === 429) {
-        const j = await r.json().catch(() => ({}));
-        throw new Error(formatDemoQuotaError(j));
+        throw new Error(await readStudioHttpError(r));
       }
       if (!r.ok) {
         const payload = await r.json().catch(() => ({})) as Record<string, unknown> & { error?: string; source?: string; code?: string; retryable?: boolean };
@@ -181,8 +180,7 @@ async function postSeedanceVideo(body: unknown): Promise<SeedanceVideoResult> {
       body: JSON.stringify(body),
     });
     if (r.status === 402 || r.status === 429) {
-      const j = await r.json().catch(() => ({}));
-      throw new Error(j.error === 'demo_expired' ? '试用已到期，请联系服务顾问开通或延长试用。' : '今日试用额度已用完，请明天再试或联系服务顾问开通更多额度。');
+      throw new Error(await readStudioHttpError(r));
     }
     if (!r.ok) throw new Error(String(r.status));
     return (await r.json()) as SeedanceVideoResult;
@@ -710,8 +708,7 @@ export const studioApi = {
         body: JSON.stringify(spec),
       });
       if (r.status === 402 || r.status === 429) {
-        const j = await r.json().catch(() => ({}));
-        throw new Error(j.error === 'demo_expired' ? '试用已到期，请联系服务顾问开通或延长试用。' : '今日视频预览额度已用完，请明天再试或联系服务顾问开通更多额度。');
+        throw new Error(await readStudioHttpError(r));
       }
       if (!r.ok) throw new Error(String(r.status));
       return (await r.json()) as RenderAuthorization;
@@ -932,15 +929,15 @@ export const studioApi = {
       return { ok: false, error: '收藏状态保存失败' };
     }
   },
-  deleteMaterial: async (id: string): Promise<{ ok: boolean; error?: string }> => {
+  deleteMaterial: async (id: string): Promise<{ ok: boolean; error?: string; retainedForProjectReferences?: boolean }> => {
     try {
       const response = await fetch(`/api/overseas/studio/materials/${encodeURIComponent(id)}`, {
         method: 'DELETE',
         headers: authHeader(),
       });
-      const payload = await response.json().catch(() => ({})) as { ok?: boolean; error?: string };
+      const payload = await response.json().catch(() => ({})) as { ok?: boolean; error?: string; retainedForProjectReferences?: boolean };
       return response.ok && payload.ok
-        ? { ok: true }
+        ? { ok: true, retainedForProjectReferences: payload.retainedForProjectReferences === true }
         : { ok: false, error: payload.error || `素材删除失败（HTTP ${response.status}）` };
     } catch (error) {
       return { ok: false, error: error instanceof Error ? error.message : '素材删除失败' };
@@ -1082,6 +1079,7 @@ export interface Material {
   visualObservations?: string[];
   scriptAnalysis?: MaterialScriptAnalysis;
   createdAt: string;
+  libraryRemovedAt?: string;
 }
 
 export interface VideoGenerationVersion {

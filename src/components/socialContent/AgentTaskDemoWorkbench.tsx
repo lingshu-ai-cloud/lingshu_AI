@@ -1,4 +1,5 @@
 import { Film, Mic2, Music2, PlayCircle } from 'lucide-react';
+import StudioPreviewStage from '../studio/StudioPreviewStage';
 import ReplicationWorkbenchHeader from './ReplicationWorkbenchHeader';
 
 export type AgentTaskDemoShot = {
@@ -17,6 +18,7 @@ export default function AgentTaskDemoWorkbench({
   referenceVideoUrl,
   audioUrl,
   outputVideoUrl,
+  aspectRatio = '9:16',
   onStepChange,
   onTitleChange,
   onTitleCommit,
@@ -29,6 +31,7 @@ export default function AgentTaskDemoWorkbench({
   referenceVideoUrl?: string;
   audioUrl?: string;
   outputVideoUrl?: string;
+  aspectRatio?: string;
   onStepChange: (step: number) => void;
   onTitleChange?: (title: string) => void;
   onTitleCommit?: () => void;
@@ -67,9 +70,11 @@ export default function AgentTaskDemoWorkbench({
           <p className="mt-2 text-sm leading-6 text-text-primary">{shot.narration || '该分镜无口播'}</p>
         </article>)}</div>
       </section>
-      <section className="min-h-0 bg-slate-950 p-4 text-white">
-        <div className="mb-3 flex items-center gap-2 text-xs font-bold"><PlayCircle size={16}/>对标视频与画面</div>
-        {referenceVideoUrl ? <video src={referenceVideoUrl} controls playsInline className="max-h-[68vh] w-full rounded-xl object-contain"/> : <p className="rounded-xl border border-white/20 p-4 text-xs text-slate-300">该任务暂未保存可播放的对标视频。</p>}
+      <section className="flex min-h-0 flex-col bg-surface-2 p-4">
+        <div className="mb-3 flex shrink-0 items-center gap-2 text-xs font-bold text-text-primary"><PlayCircle size={16}/>对标视频与画面</div>
+        <StudioPreviewStage ratio={aspectRatio} className="h-full flex-1" stageClassName="rounded-lg bg-slate-950" ariaLabel="对标视频预览">
+          {referenceVideoUrl ? <video src={referenceVideoUrl} controls playsInline className="h-full w-full object-contain"/> : <p className="p-4 text-center text-xs text-slate-300">该任务暂未保存可播放的对标视频。</p>}
+        </StudioPreviewStage>
       </section>
       <aside className="min-h-0 overflow-y-auto bg-white p-4">
         <div className="mb-3 flex items-center gap-2"><Music2 size={16} className="text-emerald-700"/><h2 className="font-semibold">有效音频</h2></div>
@@ -81,13 +86,19 @@ export default function AgentTaskDemoWorkbench({
     {visibleStep === 1 && <div className="min-h-0 flex-1 overflow-y-auto p-5">
       <div className="mb-4 flex items-center gap-2"><Film size={17} className="text-emerald-700"/><h2 className="font-semibold">有效分镜 · {shots.length} 镜</h2></div>
       <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">{shots.map((shot, index) => <article key={shot.id} className="overflow-hidden rounded-xl border border-border bg-white shadow-sm">
-        <div className="aspect-video bg-slate-950">{shot.mediaUrl ? <video src={shot.mediaUrl} muted playsInline preload="metadata" className="h-full w-full object-contain"/> : referenceVideoUrl ? <video src={referenceVideoUrl} muted playsInline preload="metadata" className="h-full w-full object-cover"/> : <div className="flex h-full items-center justify-center text-xs text-slate-400">暂无镜头预览</div>}</div>
+        <StudioPreviewStage ratio={aspectRatio} className="h-[min(58vh,520px)] bg-surface-2 p-2" stageClassName="rounded-lg bg-slate-950" ariaLabel={`分镜 ${index + 1} 预览`}>
+          {shot.mediaUrl ? <video src={shot.mediaUrl} muted playsInline preload="metadata" className="h-full w-full object-contain"/> : referenceVideoUrl ? <video src={referenceVideoUrl} muted playsInline preload="metadata" className="h-full w-full object-contain"/> : <div className="flex h-full items-center justify-center px-4 text-center text-xs text-slate-400">暂无镜头预览</div>}
+        </StudioPreviewStage>
         <div className="p-3"><div className="flex justify-between text-xs font-bold"><span>分镜 {index + 1} · {shot.title}</span><span className="text-text-muted">{shot.time}</span></div><p className="mt-2 line-clamp-3 text-xs leading-5 text-text-secondary">{shot.visual}</p></div>
       </article>)}</div>
     </div>}
 
     {visibleStep === 2 && <div className="grid min-h-0 flex-1 grid-cols-1 gap-5 p-5 lg:grid-cols-[minmax(0,1fr)_340px]">
-      <section className="flex min-h-0 items-center justify-center rounded-xl bg-slate-950 p-4">{sourceVideo ? <video src={sourceVideo} controls playsInline className="max-h-full max-w-full rounded-lg"/> : <p className="text-sm text-slate-300">任务已有生产记录，但当前没有可播放的成片文件。</p>}</section>
+      <section className="flex min-h-0 items-center justify-center rounded-lg bg-surface-2 p-3">
+        <StudioPreviewStage ratio={aspectRatio} className="h-full" stageClassName="rounded-lg bg-slate-950" ariaLabel="交付成片预览">
+          {sourceVideo ? <video src={sourceVideo} controls playsInline className="h-full w-full object-contain"/> : <p className="px-4 text-center text-sm text-slate-300">任务已有生产记录，但当前没有可播放的成片文件。</p>}
+        </StudioPreviewStage>
+      </section>
       <aside className="rounded-xl border border-border bg-white p-5"><h2 className="font-semibold">交付版本</h2><p className="mt-3 text-xs leading-6 text-text-secondary">当前展示 Agent 已生成的版本。进入编辑模式修改后，使用“确认修改并生成新版本”保留原版本并创建新的交付成片。</p>{audioUrl && <audio src={audioUrl} controls preload="metadata" className="mt-5 w-full"/>}<button type="button" onClick={onEdit} className="mt-5 w-full rounded-lg bg-emerald-700 px-4 py-2.5 text-sm font-bold text-white">切换到编辑模式</button></aside>
     </div>}
     <footer className="flex min-h-16 shrink-0 items-center justify-between gap-4 border-t border-border bg-white px-5 py-2.5">

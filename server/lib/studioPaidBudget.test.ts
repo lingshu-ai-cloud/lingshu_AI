@@ -56,3 +56,30 @@ test('unconfigured budget fails closed without creating a ledger', async () => {
     assert.equal(fs.existsSync(path.join(root, 'ledger.json')), false);
   } finally { fs.rmSync(root, { recursive: true, force: true }); }
 });
+
+test('studio exemption is exact, bypasses monetary ceilings only, and never writes the shared ledger', async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'studio-budget-exempt-'));
+  const previous = process.env.INTERNAL_BUDGET_EXEMPT_TENANT_IDS;
+  process.env.INTERNAL_BUDGET_EXEMPT_TENANT_IDS = 'studio-exempt';
+  const config = { limit: 5_000_000, openingUsed: 5_000_000, reserve: { heygen: 1_000_000, qwen_asr: 1_000_000 } };
+  const budget = new StudioPaidBudget(root, () => config);
+  try {
+    assert.deepEqual(budget.status('heygen', 4, 'studio-exempt'), {
+      allowed: true, remainingCny: null, reservationCny: 4, reason: '', budgetExempt: true,
+    });
+    await budget.reserve('heygen', 'exempt-request', 4, 'studio-exempt');
+    assert.equal(fs.existsSync(path.join(root, 'ledger.json')), false,
+      'an exempt request must not create or consume the shared ledger');
+
+    assert.equal(budget.status('heygen', 1, 'studio-exempt-child').allowed, false,
+      'tenant prefixes must not inherit another tenant exemption');
+    await assert.rejects(budget.reserve('heygen', 'ordinary-request', 1, 'studio-exempt-child'), /余额不足/);
+
+    assert.equal(budget.status('heygen', 0, 'studio-exempt').allowed, false);
+    await assert.rejects(budget.reserve('heygen', 'invalid-estimate', 0, 'studio-exempt'), /预占金额无效/);
+  } finally {
+    if (previous === undefined) delete process.env.INTERNAL_BUDGET_EXEMPT_TENANT_IDS;
+    else process.env.INTERNAL_BUDGET_EXEMPT_TENANT_IDS = previous;
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});

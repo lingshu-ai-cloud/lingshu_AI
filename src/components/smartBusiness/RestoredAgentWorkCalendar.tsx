@@ -1,9 +1,9 @@
-import { calendarDurationLabel, hasCalendarProductionBinding, isCalendarTaskOverdue, calendarOverdueDuration, type AgentCalendarTask } from './AgentWeeklyCalendar';
+import { hasCalendarProductionBinding, isCalendarTaskOverdue, calendarOverdueDuration, type AgentCalendarTask } from './AgentWeeklyCalendar';
 import {agentCalendarAuthIdentity, captureAgentCalendarReturnContext, readAgentCalendarReturnContext, registerAgentCalendarReturnState, restoreAgentCalendarReturnContext} from '../../lib/agentCalendarReturnContext';
 import type {LsCalendarView} from '../ui/LsCalendar';
 import { flushSync } from 'react-dom';
 import { lazy, Suspense, useEffect, useMemo, useRef, useState } from 'react';
-import { Alert, Button, Steps, Switch, Tag } from 'antd';
+import { Alert, Button, Steps, Tag } from 'antd';
 import { UserRound } from 'lucide-react';
 import type { CrossWeekMaterialTarget } from '../socialProgram/crossWeekMaterialCalendar';
 import type { CustomerExecutionCalendarTarget } from '../socialProgram/customerExecutionCalendarNavigation';
@@ -180,6 +180,7 @@ type Props = {
   onBindAccount?: (task: AgentCalendarTask) => void;
   scopeKey?: string;
   canOpenContentTask?: (task: AgentCalendarTask) => boolean;
+  hideCompleted?: boolean;
 };
 
 export default function RestoredAgentWorkCalendar({
@@ -198,6 +199,7 @@ export default function RestoredAgentWorkCalendar({
   onBindAccount,
   scopeKey,
   canOpenContentTask,
+  hideCompleted = false,
 }: Props) {
   const positionKey = JSON.stringify([agentCalendarAuthIdentity(),scopeKey,startsAt,demo,'milestones-monday-v2']);
   const stateKey = `restoredAgentCalendar:${positionKey}`;
@@ -235,8 +237,6 @@ export default function RestoredAgentWorkCalendar({
     void refresh();const timer=window.setInterval(()=>{if(!document.hidden)void refresh();},30000);
     return()=>{controller.abort();window.clearInterval(timer);};
   },[demo,positionKey,runtimeScopeKey]);
-  const [activeFilter, setActiveFilter] = useState<'attention' | AgentCalendarTask['agent'] | 'all'>(agentRole || 'all');
-  const [hideCompleted, setHideCompleted] = useState(false);
   const [taskWorkspace,setTaskWorkspace]=useState<{task:AgentCalendarTask;item:WeeklyTaskWorkspace|null;error:string;loading:boolean}|null>(null);
   const workspaceReadGeneration=useRef(0);
   useEffect(()=>{workspaceReadGeneration.current++;setTaskWorkspace(null);},[positionKey]);
@@ -252,7 +252,6 @@ export default function RestoredAgentWorkCalendar({
       if(workspaceReadGeneration.current===generation)setTaskWorkspace(current=>current?.task.id===task.id?{task,item:null,error:cause instanceof Error?cause.message:'任务生产现场读取失败。',loading:false}:current);
     });
   };
-  useEffect(() => setActiveFilter(agentRole || 'all'), [agentRole]);
   useEffect(() => {
     const timer = window.setInterval(() => setNow(Date.now()), 10_000);
     return () => window.clearInterval(timer);
@@ -261,13 +260,10 @@ export default function RestoredAgentWorkCalendar({
   const deliverables = useMemo(() => projectDailyMilestones(projectDailyCustomerServiceCards(projectCalendarDeliverables(tasks, true), startsAt)), [tasks, startsAt]);
   const timeZone = tasks.find(task => task.calendarClock?.timeZone)?.calendarClock?.timeZone || 'Asia/Shanghai';
   const todayKey = calendarDayKey(new Date(now), timeZone);
-  const attentionIds = useMemo(() => new Set(deliverables.filter(task => task.date < todayKey && !terminalTaskStatuses.has(task.status)).map(task=>task.id)), [deliverables, todayKey]);
-  const attentionCount=attentionIds.size;
   const scopedDeliverables = useMemo(() => deliverables.filter(task => {
-    if (activeFilter === 'all') return true;
-    if (activeFilter === 'attention') return attentionIds.has(task.id);
-    return task.agent === activeFilter || task.agent === 'human' || task.dailyTaskGroup?.tasks.some(source=>source.agent==='human');
-  }), [deliverables, activeFilter, attentionIds]);
+    if (!agentRole) return true;
+    return task.agent === agentRole || task.agent === 'human' || task.dailyTaskGroup?.tasks.some(source=>source.agent==='human');
+  }), [deliverables, agentRole]);
   const independentTasks = useMemo(() => scopedDeliverables.filter(taskHasDeliverableOrWorkspace), [scopedDeliverables]);
   const events = useMemo<LsCalendarEvent[]>(() => {
     const orderedTasks = orderDailyCalendarTasks(independentTasks);
@@ -388,24 +384,6 @@ export default function RestoredAgentWorkCalendar({
   };
 
   return <section id="agent-weekly-calendar" key={scopeKey} data-agent-calendar-position-key={positionKey} className="scroll-mt-4 bg-white" aria-label={demo ? 'B2B 零基础首周任务日历' : 'Agent 周任务日历'}>
-    <div className="border-b border-border px-5 py-4">
-      <div className="flex flex-wrap items-center justify-between gap-3">
-        <h3 className="ls-type-title-large text-text-primary">{demo ? 'B2B 零基础 · 首周任务日历' : 'Agent 周任务日历'}</h3>
-        <div className="flex flex-wrap items-center gap-2" role="group" aria-label="按智能体筛选">
-          {([
-            ['attention', `需我处理 ${attentionCount}`],
-            ['business', '经营'],
-            ['director', '编导'],
-            ['content', '内容'],
-            ['customer', '客服'],
-            ['all', '全部'],
-          ] as const).map(([value, label]) => <Button key={value} size="small" type={activeFilter === value ? 'primary' : 'default'} aria-pressed={activeFilter === value} onClick={() => setActiveFilter(value)}>{label}</Button>)}
-          <span className="ml-1 inline-flex items-center gap-2 text-xs text-text-secondary"><Switch size="small" checked={hideCompleted} onChange={setHideCompleted}/>隐藏已完成</span>
-        </div>
-      </div>
-      <div className="mt-2 flex flex-wrap items-center justify-between gap-3"><p className="text-xs text-text-secondary">{`${independentTasks.length} 张任务卡 · ${calendarDurationLabel(independentTasks)}`}</p></div>
-      {startsAt&&<p className="mt-2 text-xs text-text-secondary">当前周视图：周一至周日 · 任务包有效期：{startsAt.slice(0,10)} 至 {new Date(Date.parse(`${startsAt.slice(0,10)}T12:00:00Z`)+6*86400000).toISOString().slice(0,10)} · 有效期外不补造任务</p>}
-    </div>
     {!demo && tasks.length === 0 && <Alert className="m-4" type="info" showIcon title="尚无 Agent 执行排期" description="发布计划不会自动视为制作任务；生成执行排期后将在此显示。"/>}
     {demo && <Alert className="m-4" type="warning" showIcon title="参考排期" description="任务、工时与执行状态为参考预览，异常副链路仅用于验收。"/>}
     <ul className="sr-only">{events.map(event => {

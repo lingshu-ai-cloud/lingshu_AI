@@ -2,7 +2,7 @@ import InspirationVideoAnalysisTabs from './inspiration/InspirationVideoAnalysis
 import VideoAnalysisProgressPanel, { analysisProgressIsActive } from './inspiration/VideoAnalysisProgressPanel';
 import { Alert, Button, Drawer, Input, Modal, Pagination, Segmented, Select, Tabs, Upload as AntUpload } from 'antd';
 import LsPageHeader from './ui/LsPageHeader';
-import { LsLoadingState, LsMasonryGallery, LsProgressiveMedia } from './ui/LsExperiencePrimitives';
+import { LsLoadingState, LsMasonryGallery, LsMediaStateFrame, LsProgressiveMedia } from './ui/LsExperiencePrimitives';
 import { canExplicitlySubmitReferenceAsr, referenceAsrAvailabilityLabel, canRefreshExistingReferenceAsr, existingReferenceAsrRefreshBody } from '../lib/referenceAsrSubmission';
 import { hasExactReferenceReview, parseExactReferenceReview, loadExactReferenceReview, exactReferenceReviewErrorMessage } from '../lib/exactReferenceReview';
 import BenchmarkAnalysisSections from './inspiration/BenchmarkAnalysisSections';
@@ -1235,7 +1235,7 @@ export function ThumbnailImage({
     if (!src || isDirectUrl) return;
     const controller = new AbortController();
     let createdUrl = '';
-    void fetch(src, { headers: authHeader(), signal: controller.signal })
+    void fetch(src, { headers: authHeader(), cache: 'no-store', signal: controller.signal })
       .then(response => {
         if (!response.ok) throw new Error(String(response.status));
         return response.blob();
@@ -1258,7 +1258,7 @@ export function ThumbnailImage({
   return blobUrl ? <img src={blobUrl} alt={`${title} · ${platform} 缩略图`} className={className} draggable={false} loading="lazy" decoding="async" onError={() => setFailed(true)} /> : null;
 }
 
-function AuthenticatedImage({ src, alt, className }: { src: string; alt: string; className: string }) {
+function AuthenticatedImage({ src, alt, className, onReady, onError }: { src: string; alt: string; className: string; onReady?: () => void; onError?: () => void }) {
   const isRemoteSignedUrl = /^https?:\/\//i.test(src);
   const [blobUrl, setBlobUrl] = useState('');
   useEffect(() => {
@@ -1268,7 +1268,7 @@ function AuthenticatedImage({ src, alt, className }: { src: string; alt: string;
     const controller = new AbortController();
     let createdUrl = '';
     setBlobUrl('');
-    void fetch(src, { headers: authHeader(), signal: controller.signal })
+    void fetch(src, { headers: authHeader(), cache: 'no-store', signal: controller.signal })
       .then(response => {
         if (!response.ok) throw new Error(String(response.status));
         return response.blob();
@@ -1278,16 +1278,16 @@ function AuthenticatedImage({ src, alt, className }: { src: string; alt: string;
         createdUrl = URL.createObjectURL(blob);
         setBlobUrl(createdUrl);
       })
-      .catch(() => undefined);
+      .catch(() => { if (!controller.signal.aborted) onError?.(); });
     return () => {
       controller.abort();
       if (createdUrl) URL.revokeObjectURL(createdUrl);
     };
   }, [src, isRemoteSignedUrl]);
-  if (isRemoteSignedUrl) return <img src={src} alt={alt} className={className} decoding="async" />;
+  if (isRemoteSignedUrl) return <LsProgressiveMedia src={src} alt={alt} className={className} decoding="async" preview={false} onLoad={onReady} onError={onError} />;
   return blobUrl
-    ? <img src={blobUrl} alt={alt} className={className} />
-    : <div className={`${className} animate-pulse bg-slate-200`} aria-label={alt} />;
+    ? <img src={blobUrl} alt={alt} className={className} decoding="async" onLoad={onReady} onError={onError} />
+    : <div className={`${className} bg-surface-2`} aria-label={alt} />;
 }
 
 export function AuthenticatedVideo({ apiUrl, poster, className, controls = false, autoPlay = false, loadOnMount = autoPlay, hoverPlay = false, previewFrame = false, preload = previewFrame ? 'auto' : 'metadata', onReady, onError, onLoadingChange }: { apiUrl: string; poster?: string; className: string; controls?: boolean; autoPlay?: boolean; loadOnMount?: boolean; hoverPlay?: boolean; previewFrame?: boolean; preload?: 'none' | 'metadata' | 'auto'; onReady?: () => void; onError?: (message?: string) => void; onLoadingChange?: (loading: boolean) => void }) {
@@ -1373,8 +1373,8 @@ export function AuthenticatedVideo({ apiUrl, poster, className, controls = false
       // at 0s is transparent/black and which do not yet have a poster asset.
       video.currentTime = Math.min(0.12, Math.max(0.01, video.duration / 20));
     }}
-    onLoadedData={() => { clearMediaReadyTimer(); mediaRetryRef.current = 0; if (previewFrame) videoRef.current?.pause(); onReady?.(); }}
-    onCanPlay={() => { clearMediaReadyTimer(); onReady?.(); }}
+    onLoadedData={() => { clearMediaReadyTimer(); mediaRetryRef.current = 0; if (previewFrame) videoRef.current?.pause(); onLoadingChange?.(false); onReady?.(); }}
+    onCanPlay={() => { clearMediaReadyTimer(); onLoadingChange?.(false); onReady?.(); }}
     onError={() => {
       if (!playbackUrl) return;
       clearMediaReadyTimer();
@@ -1388,6 +1388,50 @@ export function AuthenticatedVideo({ apiUrl, poster, className, controls = false
     }}
     onMouseEnter={async () => { if (!hoverPlay) return; await load(); setTimeout(() => void videoRef.current?.play().catch(() => {}), 0); }}
     onMouseLeave={() => { if (!hoverPlay || !videoRef.current) return; videoRef.current.pause(); videoRef.current.currentTime = 0; }} />;
+}
+
+export function materialPreviewImageSources(material: Pick<Material, 'type' | 'poster' | 'url' | 'segments'>): string[] {
+  const candidates = [material.poster, ...(material.segments || []).map(segment => segment.poster), material.type === 'image' ? material.url : ''];
+  return Array.from(new Set(candidates.map(value => String(value || '').trim()).filter(Boolean)));
+}
+
+function MaterialCardMedia({ material, onRefresh }: { material: Material; onRefresh?: () => Promise<unknown> }) {
+  const imageSources = materialPreviewImageSources(material);
+  const sourceIdentity = imageSources.join('|');
+  const [imageIndex, setImageIndex] = useState(0);
+  const [attempt, setAttempt] = useState(0);
+  const [state, setState] = useState<'loading' | 'ready' | 'error'>('loading');
+  const [refreshing, setRefreshing] = useState(false);
+  useEffect(() => {
+    setImageIndex(0);
+    setState(imageSources.length || (material.type === 'video' && material.url) ? 'loading' : 'error');
+  }, [material.id, material.type, material.url, sourceIdentity, attempt]); // eslint-disable-line react-hooks/exhaustive-deps
+  const imageSource = imageSources[imageIndex];
+  const videoFallback = material.type === 'video' && !imageSource && Boolean(material.url);
+  const failImage = () => {
+    if (imageIndex + 1 < imageSources.length) {
+      setImageIndex(index => index + 1);
+      setState('loading');
+    } else if (material.type === 'video' && material.url) {
+      setImageIndex(imageSources.length);
+      setState('loading');
+    } else setState('error');
+  };
+  return <div className="relative h-full w-full">
+    <LsMediaStateFrame state={state} label={state === 'error' ? '封面加载失败' : '正在加载封面'} className="h-full w-full bg-surface-2">
+      {imageSource ? <AuthenticatedImage key={`${imageSource}:${attempt}`} src={imageSource} alt={material.name} className="h-full w-full object-cover" onReady={() => setState('ready')} onError={failImage} />
+        : videoFallback ? <AuthenticatedVideo key={`${material.url}:${attempt}`} apiUrl={material.url} loadOnMount previewFrame preload="auto" className="pointer-events-none h-full w-full bg-slate-950 object-cover" onReady={() => setState('ready')} onError={() => setState('error')} onLoadingChange={loading => loading && setState('loading')} />
+          : null}
+    </LsMediaStateFrame>
+    {state === 'error' && <button type="button" disabled={refreshing} className="absolute bottom-3 left-1/2 z-20 inline-flex min-h-8 -translate-x-1/2 items-center gap-1.5 whitespace-nowrap rounded-md border border-border bg-white px-2.5 py-1.5 text-xs font-semibold text-text-secondary disabled:cursor-wait disabled:opacity-60" onClick={async event => {
+      event.stopPropagation();
+      setRefreshing(true);
+      try { await onRefresh?.(); }
+      finally { setAttempt(value => value + 1); setRefreshing(false); }
+    }}>
+      {refreshing && <Loader2 size={13} className="animate-spin" />}{refreshing ? '正在刷新' : '重新加载'}
+    </button>}
+  </div>;
 }
 
 type ImageInsightTab = 'overview' | 'visual' | 'copy' | 'iterate';
@@ -4184,6 +4228,7 @@ export default function InspirationDashboard({ onScriptPanelOpen, onScriptPanelC
             referenceThumbnail: video.thumbnail,
             referenceMediaUrl: video.videoUrl || undefined,
             referenceContentType: 'video',
+            aspectRatio: video.aiAnalysis?.gemini?.globalSettings?.aspectRatio,
             referenceShots: getAnalysis(video)?.scriptDetails15s.map(detail => ({ time: detail.time, dialogue: detail.dialogue, subtitle: detail.subtitle, visual: detail.visual, firstFrameRef: detail.materialEvidence?.firstFrameRef || undefined, firstFrameSeconds: detail.materialEvidence?.firstFrameSeconds })) || [],
           },
         },
@@ -4593,8 +4638,13 @@ export default function InspirationDashboard({ onScriptPanelOpen, onScriptPanelC
         const result = await studioApi.deleteMaterial(manageTarget.item.id);
         if (!result.ok) throw new Error(result.error || '删除失败');
         setLocalMaterials(items => items.filter(item => item.id !== manageTarget.item.id));
+        const nextTotal = Math.max(0, materialTotal - 1);
+        const nextPage = Math.max(1, Math.min(materialPage, Math.ceil(nextTotal / MATERIAL_LIBRARY_PAGE_SIZE) || 1));
+        setMaterialTotal(nextTotal);
+        await refreshMaterials(nextPage);
+        setMaterialMessage(result.retainedForProjectReferences ? '已从我的素材移除；制作项目中的既有引用仍保留' : '已删除');
       }
-      setMaterialMessage('已删除');
+      if (manageTarget.kind === 'video') setMaterialMessage('已删除');
       setManageTarget(null);
     } catch (error) {
       setMaterialMessage(error instanceof Error ? error.message : '删除失败');
@@ -4964,33 +5014,30 @@ export default function InspirationDashboard({ onScriptPanelOpen, onScriptPanelC
                       </div>
                       {material.type === 'video' ? (
                         <>
-                          {material.poster
-                            ? <AuthenticatedImage src={material.poster} alt={material.name} className="h-full w-full object-cover" />
-                            : material.url
-                              ? <AuthenticatedVideo apiUrl={material.url} loadOnMount previewFrame preload="auto" className="pointer-events-none h-full w-full bg-slate-950 object-cover" />
-                              : <div className="flex h-full flex-col items-center justify-center gap-2 bg-slate-950 text-white/65"><Film size={26} /><span className="text-[11px] font-semibold">预览待生成</span></div>}
+                          <MaterialCardMedia material={material} onRefresh={() => refreshMaterials(materialPage)} />
                           <button
                             type="button"
                             aria-label={`播放 ${material.name}`}
+                            disabled={!material.url}
                             onClick={event => { event.stopPropagation(); setPreviewMaterial(material); }}
-                            className="absolute left-1/2 top-1/2 z-20 flex h-11 w-11 -translate-x-1/2 -translate-y-1/2 items-center justify-center rounded-full bg-black/65 text-white shadow-lg transition hover:scale-105 focus:outline-none focus:ring-2 focus:ring-white"
+                            className="absolute left-1/2 top-1/2 z-20 flex h-11 w-11 -translate-x-1/2 -translate-y-1/2 items-center justify-center rounded-full bg-black/65 text-white shadow-lg transition hover:scale-105 focus:outline-none focus:ring-2 focus:ring-white disabled:hidden"
                           >
                             <Play size={19} fill="currentColor" />
                           </button>
                         </>
-                      ) : material.type === 'image' && (material.poster || material.url) ? (
-                        <img src={material.poster || material.url} alt={material.name} className="h-full w-full object-cover" />
+                      ) : material.type === 'image' ? (
+                        <MaterialCardMedia material={material} onRefresh={() => refreshMaterials(materialPage)} />
                       ) : material.type === 'audio' ? (
                         <div className="flex h-full flex-col items-center justify-center gap-2 bg-surface-2 text-text-muted"><Music2 size={28} /><span className="text-xs font-bold">音频素材</span></div>
                       ) : (
                         <div className="flex h-full items-center justify-center text-text-muted"><Film size={22} /></div>
                       )}
                     </div>
-                    <div className="flex min-h-52 flex-1 flex-col p-3">
+                    <div className="flex flex-1 flex-col p-3">
                       <p className="line-clamp-2 text-sm font-bold leading-snug text-text-primary">{material.name}</p>
                       <p className="mt-1 line-clamp-1 text-xs font-semibold leading-5 text-text-muted" title={materialSemanticLabel(material)}>{materialSemanticLabel(material)}</p>
                       {generatedMaterialOriginLabel(material) && <p className="mt-1 line-clamp-1 text-[11px] font-medium leading-5 text-text-muted" title={generatedMaterialOriginLabel(material)}>{generatedMaterialOriginLabel(material)}</p>}
-                      <div className="mt-3 grid grid-cols-2 gap-2">
+                      <div className="mt-auto grid grid-cols-2 gap-2 pt-3">
                         <button
                           type="button"
                           onClick={() => setDetailMaterial(material)}

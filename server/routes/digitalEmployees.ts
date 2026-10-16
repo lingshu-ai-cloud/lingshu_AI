@@ -69,6 +69,7 @@ import { listRunEventsAfter } from '../digitalEmployees/runEventReplay.js';
 import { enforceSupportSessionReadOnly, requireAuth, type AuthLocals } from '../middleware/auth.js';
 import { store } from '../storage/index.js';
 import { settledSeedanceUsageForTenant } from '../lib/seedanceBudget.js';
+import { isInternalBudgetExemptTenant } from '../lib/tenantBudgetExemption.js';
 import type { ExecutionStoreRecord } from './productionContracts.js';
 import { currentDataAuthority } from '../storage/dataAuthority.js';
 import { signAssetUrl } from '../lib/assetAccess.js';
@@ -5049,7 +5050,7 @@ export async function approveGoalForReview(tenantId: string, userId: string, goa
     }
     const installationCeiling = process.env.STORYBOARD_AIGC_BATCH_BUDGET_CNY === undefined
       ? null : Number(process.env.STORYBOARD_AIGC_BATCH_BUDGET_CNY);
-    if (installationCeiling !== null && (!Number.isFinite(installationCeiling) || installationCeiling <= 0
+    if (!isInternalBudgetExemptTenant(tenantId) && installationCeiling !== null && (!Number.isFinite(installationCeiling) || installationCeiling <= 0
       || selectedCaps.some(value => value > installationCeiling + 0.000001))) {
       return { status: 409, body: { error: 'production_budget_installation_ceiling', message: `系统单条制作上限不足以执行已选方案（当前上限 ¥${Number.isFinite(installationCeiling) ? installationCeiling.toFixed(2) : '0.00'}），请在开工前调整系统额度或选择精简预算。` } };
     }
@@ -6209,7 +6210,7 @@ digitalEmployeesRouter.post('/tasks/:taskId/production-budget-reforecast', async
         : item.estimatedCostRange?.maxCny || item.estimatedCost || 0);
       const explicitBatchCeiling = process.env.STORYBOARD_AIGC_BATCH_BUDGET_CNY === undefined
         ? null : Number(process.env.STORYBOARD_AIGC_BATCH_BUDGET_CNY);
-      if (explicitBatchCeiling !== null && (!Number.isFinite(explicitBatchCeiling) || explicitBatchCeiling <= 0
+      if (!isInternalBudgetExemptTenant(tenantId) && explicitBatchCeiling !== null && (!Number.isFinite(explicitBatchCeiling) || explicitBatchCeiling <= 0
         || masters.some(item => selectedContentCap(item) > explicitBatchCeiling + 0.000001))) {
         throw new Error('production_budget_environment_ceiling_too_low');
       }

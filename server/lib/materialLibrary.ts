@@ -9,6 +9,31 @@ import { tenantCatalogImageFile } from './enterpriseMediaImage.js';
 import sharp from 'sharp';
 export type MaterialRecord = Record<string, any> & { id: string };
 
+/**
+ * A referenced production asset may be removed from the user's library while
+ * its immutable bytes remain available to the project that already uses it.
+ * Production reads explicitly request purpose=all; every user-facing library
+ * purpose must hide the removed record.
+ */
+export function materialVisibleForPurpose(material: MaterialRecord, purpose: string): boolean {
+  return purpose === 'all' || !String(material.libraryRemovedAt || '').trim();
+}
+
+export function hideLocalMaterialFromLibrary(
+  records: MaterialRecord[],
+  materialId: string,
+  tenantId: string,
+  removedAt: string,
+): { records: MaterialRecord[]; material?: MaterialRecord } {
+  let hidden: MaterialRecord | undefined;
+  const next = records.map(record => {
+    if (record.id !== materialId || String(record.tenantId || record.tenant_id || '') !== tenantId || record.scope === 'shared') return record;
+    hidden = { ...record, libraryRemovedAt: removedAt };
+    return hidden;
+  });
+  return { records: next, material: hidden };
+}
+
 export interface SocialTaskMaterialRecordInput {
   id: string;
   tenantId: string;

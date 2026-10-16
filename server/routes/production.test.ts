@@ -492,6 +492,8 @@ test('batch preserves confirmed reconstruction and rejects inconsistent source-p
 test('photo talking first frame preparation is tenant scoped and never generates a video', async () => {
   const previousHeygenReserve = process.env.STUDIO_HEYGEN_RESERVE_CNY;
   const previousPhotoRate = process.env.HEYGEN_PHOTO_ESTIMATED_CNY_PER_SECOND;
+  const previousBudgetExemptTenants = process.env.INTERNAL_BUDGET_EXEMPT_TENANT_IDS;
+  delete process.env.INTERNAL_BUDGET_EXEMPT_TENANT_IDS;
   process.env.STUDIO_HEYGEN_RESERVE_CNY = '10';
   process.env.HEYGEN_PHOTO_ESTIMATED_CNY_PER_SECOND = '0.8';
   const rows = new Map<string, any>(); let seq = 0;
@@ -525,5 +527,9 @@ test('photo talking first frame preparation is tenant scoped and never generates
     const invalidSpeech=await request('tenant-a',true,shotFingerprint(unassigned,context,'shot-1'));assert.equal(invalidSpeech.status,400);assert.match(await invalidSpeech.text(),/填写本片对应语句/);assert.equal(frameCalls,0);
     rows.set('studio_projects/project-1',{...rows.get('studio_projects/project-1'),spec:{...rows.get('studio_projects/project-1').spec,shotProductions:{'assembly-1:shot-1':shot}}});
     const response=await request();assert.equal(response.status,200,await response.clone().text());const result=await response.json();assert.equal(result.cues[0].targetFirstFrame.state,'ready');assert.equal(frameCalls,1);assert.equal(videoCalls,0);
-  }finally{await new Promise<void>(resolve=>server.close(()=>resolve())); if (previousHeygenReserve === undefined) delete process.env.STUDIO_HEYGEN_RESERVE_CNY; else process.env.STUDIO_HEYGEN_RESERVE_CNY = previousHeygenReserve; if(previousPhotoRate===undefined)delete process.env.HEYGEN_PHOTO_ESTIMATED_CNY_PER_SECOND;else process.env.HEYGEN_PHOTO_ESTIMATED_CNY_PER_SECOND=previousPhotoRate;}
+    process.env.INTERNAL_BUDGET_EXEMPT_TENANT_IDS='tenant-a';
+    process.env.HEYGEN_PHOTO_ESTIMATED_CNY_PER_SECOND='20';
+    const exemptResponse=await request('tenant-a',true,shotFingerprint(shot,context,'shot-1'),200);
+    assert.equal(exemptResponse.status,200,await exemptResponse.clone().text());assert.equal(frameCalls,2);assert.equal(videoCalls,0);
+  }finally{await new Promise<void>(resolve=>server.close(()=>resolve())); if (previousHeygenReserve === undefined) delete process.env.STUDIO_HEYGEN_RESERVE_CNY; else process.env.STUDIO_HEYGEN_RESERVE_CNY = previousHeygenReserve; if(previousPhotoRate===undefined)delete process.env.HEYGEN_PHOTO_ESTIMATED_CNY_PER_SECOND;else process.env.HEYGEN_PHOTO_ESTIMATED_CNY_PER_SECOND=previousPhotoRate; if(previousBudgetExemptTenants===undefined)delete process.env.INTERNAL_BUDGET_EXEMPT_TENANT_IDS;else process.env.INTERNAL_BUDGET_EXEMPT_TENANT_IDS=previousBudgetExemptTenants;}
 });

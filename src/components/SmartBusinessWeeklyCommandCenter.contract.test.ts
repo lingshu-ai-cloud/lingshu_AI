@@ -10,16 +10,23 @@ const commandCenter = source.slice(start, end);
 const detailsStart = source.indexOf('export function WeeklyPlanDetailsDrawer');
 const detailsEnd = source.indexOf('\n\nexport function BusinessInterpretation', detailsStart);
 const planDetails = source.slice(detailsStart, detailsEnd);
+const interpretationStart = source.indexOf('export function BusinessInterpretation');
+const interpretationEnd = source.indexOf('\n\ntype DisplayMetricSource', interpretationStart);
+const businessInterpretation = source.slice(interpretationStart, interpretationEnd);
 const publishingStart = source.indexOf('function WeeklyPublishingCalendar');
 const publishingEnd = source.indexOf('const matrixRoleLabel', publishingStart);
 const publishingCalendar = source.slice(publishingStart, publishingEnd);
 const budgetStart = source.indexOf('const DEFAULT_VIDEO_COST_CNY');
 const budgetEnd = source.indexOf('\n\nfunction metricValue', budgetStart);
+const paidMediaHelperStart = source.indexOf('const PAID_MEDIA_CAPABILITY_TOKENS');
+const paidMediaHelperEnd = source.indexOf('\n\nexport function WeeklyCommandCenter', paidMediaHelperStart);
 
 assert.ok(start >= 0 && end > start, '周经营计划区必须存在');
 assert.ok(detailsStart >= 0 && detailsEnd > detailsStart, '详细周计划必须存在');
+assert.ok(interpretationStart >= 0 && interpretationEnd > interpretationStart, '经营解读必须存在');
 assert.ok(publishingStart >= 0 && publishingEnd > publishingStart, '数字员工发布日历视图必须存在');
 assert.ok(budgetStart >= 0 && budgetEnd > budgetStart, '周计划必须有统一的视频预算投影');
+assert.ok(paidMediaHelperStart >= 0 && paidMediaHelperEnd > paidMediaHelperStart, '投流任务必须有精确分类规则');
 const budgetContext: Record<string, unknown> = {
   MASTER_VIDEO_COST_MIN_CNY: 10,
   MASTER_VIDEO_COST_POINT_CNY: 12.5,
@@ -40,18 +47,50 @@ const repairedBudget = weeklyVideoBudget({
   } },
 });
 assert.deepEqual([repairedBudget.estimated, repairedBudget.min, repairedBudget.max], [25, 20, 30], '两条真实计划视频不得继续显示成一条视频的成本');
+const paidMediaContext: Record<string, unknown> = {};
+vm.createContext(paidMediaContext);
+vm.runInContext(ts.transpileModule(`${source.slice(paidMediaHelperStart, paidMediaHelperEnd)}\nglobalThis.isPaidMediaPlanTask = isPaidMediaPlanTask;`, {
+  compilerOptions: { target: ts.ScriptTarget.ES2022 },
+}).outputText, paidMediaContext);
+const isPaidMediaPlanTask = paidMediaContext.isPaidMediaPlanTask as (task: Record<string, unknown>) => boolean;
+assert.equal(isPaidMediaPlanTask({ capabilityKey: 'business_readiness', kind: 'readiness', statusSource: 'weekly_plan', title: '盘点企业、产品与授权边界' }), false, 'readiness 中的 ad 字母不得误判为广告任务');
+assert.equal(isPaidMediaPlanTask({ capabilityKey: 'platform_ads', kind: 'campaign', statusSource: 'weekly_plan', title: '创建平台计划' }), true, '明确 ads 能力必须识别为投流任务');
+assert.equal(isPaidMediaPlanTask({ capabilityKey: 'business', kind: 'planning', statusSource: 'weekly_plan', title: '制定 TikTok 投流预算' }), true, '明确投流标题必须识别为投流任务');
 for (const label of ['待验收成片', '本周计划视频', '本周视频总时长', '本周成本范围', '预计制作成本', '已结算成本']) {
   assert.match(commandCenter, new RegExp(label), `周经营计划必须展示“${label}”`);
 }
-for (const label of ['计划依据 · 爆款参考', '点击可回到爆款库查看原素材与分析', '用于：']) {
-  assert.match(planDetails, new RegExp(label), `详细周计划必须明确展示爆款依据：“${label}”`);
+for (const label of ['计划视频', '爆款视频缩略图', '内容结构', '数字人形象', '预计制作成本', '发布计划', '投流计划']) {
+  assert.match(planDetails, new RegExp(label), `详细周计划必须用可视化卡片展示“${label}”`);
 }
-assert.match(planDetails, /inspirationReferenceNavigationDetail\(reference, item\.contentId\)/, '每条周计划爆款依据必须能回到准确的参考素材');
-assert.match(planDetails, /aspect-video[\s\S]*<img[\s\S]*视频缩略图[\s\S]*查看原视频/, '爆款依据必须用真实视频缩略图卡片呈现，不能只显示一行标题');
-assert.match(planDetails, /thumbnailUrlWithSourceFallback\(reference\.thumbnailUrl, reference\.sourceUrl\)/, '冻结缩略图失效时必须保留既有来源恢复能力');
+assert.match(planDetails, /display\.contents\.map\(\(item, index\)/, '详细周计划必须覆盖共享模型中的全部计划视频');
+assert.match(source, /const showcaseWeeklyVideos = showcaseTotals \? smartBusinessShowcaseWeeklyVideos\(data, true\) : null;[\s\S]*const allContents = showcaseContents\.length \? showcaseContents : mappedContents;[\s\S]*versionCount: contents\.length/, '本地展示的 26 条计划必须进入统一内容清单，计数不得与实际行数脱节');
+assert.match(businessInterpretation, /useShowcaseBudget \? display\.totals\.budgetMidCny : Math\.max/, '经营解读必须与周计划清单使用同一份本地预算汇总，不能继续显示旧预算');
+const planListStart = planDetails.indexOf('<section aria-label="计划视频清单">');
+const planListEnd = planDetails.indexOf('<section className="grid gap-4', planListStart);
+const planList = planDetails.slice(planListStart, planListEnd);
+const detailDialogStart = planDetails.indexOf('<Modal', planListEnd);
+const detailDialog = planDetails.slice(detailDialogStart);
+assert.ok(planListStart >= 0 && planListEnd > planListStart, '计划视频摘要清单必须存在');
+assert.match(planList, /planRows\.map[\s\S]*爆款视频缩略图[\s\S]*status\.label[\s\S]*单条预算[\s\S]*setSelectedPlanId\(item\.id\)[\s\S]*查看详情/, '初始清单必须逐条展示预览、身份状态、预算和明确的详情入口');
+assert.doesNotMatch(planList, /内容结构|数字人形象|presenterLabel|presenterModeLabel|\.segments/, '内容结构和数字人详情不得在初始清单中提前展开');
+assert.doesNotMatch(planDetails, /<Collapse|defaultActiveKey|accordion/, '计划视频不得默认展开折叠内容');
+assert.match(detailDialog, /open=\{Boolean\(selectedPlan\)\}[\s\S]*内容结构[\s\S]*数字人形象与制作依据/, '内容结构和数字人必须在用户点击后打开的二级详情中展示');
+assert.equal((planDetails.match(/<Drawer\b/g) || []).length, 1, '周计划只允许一个主抽屉层级');
+assert.equal((planDetails.match(/<Modal\b/g) || []).length, 1, '单条详情只允许增加一个二级弹窗');
+assert.match(planDetails, /inspirationReferenceNavigationDetail\(selectedPlan\.reference!, selectedPlan\.item\.contentId\)/, '每条周计划爆款依据必须能回到准确的参考素材');
+assert.match(planDetails, /h-\[112px\][\s\S]*<img[\s\S]*爆款视频缩略图/, '爆款依据必须用接近竖屏比例的真实视频缩略图呈现，不能只显示一行标题');
+assert.match(planList, /src=\{item\.thumbnailUrl\}/, '计划摘要必须优先使用已有内容缩略图回退链路，不能只依赖爆款引用封面');
+assert.match(detailDialog, /src=\{selectedPlan\.item\.thumbnailUrl\}/, '详情弹窗必须沿用内容缩略图回退链路');
+assert.match(detailDialog, /查看爆款原片/, '二级详情必须保留查看准确爆款原片的入口');
 assert.doesNotMatch(commandCenter, /本周计划爆款依据|计划依据 · 爆款参考/, '经营首页不得展开爆款依据，避免挤占主视图');
 assert.match(planDetails, /title="本周计划"[\s\S]{0,160}aria-label="详细周计划"/, '详细周计划必须通过可随时关闭的抽屉查看');
-assert.match(planDetails, /内容与发布时间[\s\S]{0,1200}本周计划爆款依据/, '详细周计划必须同时展示内容排期和对应爆款依据');
+assert.match(planDetails, /编导结构尚未写入本周计划|内容结构待确认/, '内容结构缺失时必须使用明确的待确认降级状态');
+assert.match(planDetails, /数字人待绑定|形象方案待确认/, '数字人信息缺失时必须使用明确的待绑定或待确认状态');
+assert.match(planDetails, /hasPersistedPaidMediaPlan \|\| !useShowcasePlanRows[\s\S]*smartBusinessShowcaseAds\([\s\S]*true\)\?\.tasks[\s\S]*const paidMediaRows = hasPersistedPaidMediaPlan[\s\S]*trafficTasks\.map/, '投流展示必须优先读取已保存计划，且仅在本地展示模式补齐缺失状态');
+assert.match(planDetails, /预算草案[\s\S]*待经营确认后进入执行排期/, '没有真实投流计划时必须明确保持在待确认状态');
+assert.match(planDetails, /status: index === 0 \? '计划中' : '待执行'/, '预算草案只能使用计划中或待执行状态，不能沿用展示任务的已执行状态');
+assert.doesNotMatch(planDetails, /本周未配置投流预算或投流任务/, '没有投流数据时仍需提供可审核的完整规划视图');
+assert.doesNotMatch(planDetails, />[^<]*(?:模拟数据|示例数据|mock)[^<]*</i, '用户界面不得出现内部数据来源字样');
 assert.doesNotMatch(planDetails, /发布账号尚未就绪|发布准备状态暂时无法核验|配置发布账号/, '详细周计划不得重复展示发布账号准备警告');
 assert.doesNotMatch(commandCenter, /note:|item\.note|当前没有待验收成片|发布任务 ·|逐镜生成与重试费用待核算|按当前周计划与供应商报价估算|仅统计供应商对账回执/, '六项周计划指标不得保留解释性小字');
 assert.doesNotMatch(commandCenter, /已包含本周全部视频制作/, '费用未核算前不得承诺覆盖本周全部视频制作');

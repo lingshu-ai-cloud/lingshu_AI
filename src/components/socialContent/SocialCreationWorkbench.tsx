@@ -1,6 +1,7 @@
 import { getScrollBehavior } from "../../lib/usePrefersReducedMotion";
 import { StoryboardFirstFrame } from '../studio/StoryboardFirstFrame';
 export { StoryboardFirstFrame } from '../studio/StoryboardFirstFrame';
+import StudioPreviewStage from '../studio/StudioPreviewStage';
 import ReplicationWorkbenchHeader from './ReplicationWorkbenchHeader';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { App as AntApp, Button, Modal } from 'antd';
@@ -108,6 +109,7 @@ export interface SocialCreationWorkbenchSeed {
   referenceThumbnail?: string;
   referenceMediaUrl?: string;
   referenceContentType?: 'video' | 'image';
+  aspectRatio?: string;
   referenceShots?: Array<{ time: string; dialogue?: string; subtitle?: string; visual?: string; firstFrameRef?: string; firstFrameSeconds?: number; startSeconds?: number; endSeconds?: number }>;
   referenceLinks?: string[];
   productId?: string;
@@ -1035,7 +1037,12 @@ export default function SocialCreationWorkbench({
           <input ref={uploadRef} type="file" accept="video/*,image/*" className="hidden" onChange={event => { setFiles(Array.from(event.currentTarget.files || []).slice(0, 1)); setHookMode('upload'); setFreeScriptText(''); setFreeLines([]); setFreeGeneration(null); setFreeHookMaterial(null); }} />
           {!isReplication && hookMode === 'library' && <div className="max-h-36 overflow-y-auto border-b border-border p-3">{libraryLoading ? <p className="text-xs text-text-muted">正在读取素材库…</p> : libraryHooks.length ? <div className="grid grid-cols-2 gap-2">{libraryHooks.map(item => <button type="button" key={item.id} onClick={() => { setFreeHookMaterial(item); setFiles([]); }} className={`rounded-lg border p-2 text-left text-[10px] ${freeHookMaterial?.id === item.id ? 'border-blue-500 bg-blue-50' : 'border-border'}`}><span className="line-clamp-2 font-bold">{item.name}</span></button>)}</div> : <p className="text-xs text-text-muted">素材库暂无可用图片或视频，可改用上传或暂不指定。</p>}</div>}
           <div className="flex min-h-0 flex-1 items-center justify-center overflow-hidden p-4 sm:p-5">
-            <div className="relative flex h-full min-h-0 max-h-full w-full items-center justify-center overflow-hidden rounded-lg border border-[#dfe5e1] bg-[#eef0f3] ">
+            <StudioPreviewStage
+              ratio={seed?.aspectRatio || '9:16'}
+              className="h-full"
+              stageClassName="max-h-full rounded-lg border border-border bg-zinc-100"
+              ariaLabel={isReplication ? '爆款视频预览' : '开场素材预览'}
+            >
               {previewUrl && files[0]?.type.startsWith('video/') ? <video src={previewUrl} controls playsInline preload="metadata" className="h-full w-full object-contain" />
                 : previewUrl ? <img src={previewUrl} alt="用户上传素材预览" className="h-full w-full object-contain" />
                 : !isReplication && (aiHookCandidate?.url || freeHookMaterial?.url) && (aiHookCandidate || freeHookMaterial)?.type === 'video' ? <video src={(aiHookCandidate || freeHookMaterial)?.url} poster={(aiHookCandidate || freeHookMaterial)?.poster} controls playsInline className="h-full w-full object-contain" />
@@ -1046,7 +1053,7 @@ export default function SocialCreationWorkbench({
                     <span className="flex h-16 w-16 items-center justify-center rounded-full bg-white text-[#607b71] shadow-none"><Film size={27} /></span>
                     <div><p className="text-base font-semibold">{isReplication ? '等待爆款视频' : hookMode === 'ai' ? aiHookPhase === 'frame' ? '正在生成钩子首帧…' : aiHookPhase === 'video' ? '正在生成 4 秒钩子视频…' : '生成 AI 开场画面' : '尚未指定钩子素材'}</p>{(isReplication || hookMode === 'ai') && <p className="mt-2 text-xs leading-5 text-[#789087]">{isReplication ? '从灵感中心选择爆款后，会在这里显示原视频。' : '将按已选产品、内容目标和目标受众生成，预览满意后再采纳。'}</p>}</div>
                   </div>}
-            </div>
+            </StudioPreviewStage>
           </div>
           {!isReplication && hookMode === 'ai' && <div className="border-t border-black/5 px-5 py-3 text-[11px]">
             <div className="flex flex-wrap items-center justify-between gap-2"><span className="text-text-muted">预计费用：Seedream 首帧约 ¥0.30 + Seedance 4 秒 480p 约 ¥0.96；以服务端预算核算为准。</span>

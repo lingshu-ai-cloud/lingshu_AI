@@ -65,7 +65,9 @@ assert.doesNotMatch(componentSource, /本页近 3 日新入库|当前显示 <str
 assert.match(componentSource, /<LsMasonryGallery layout="grid"/, '带固定操作区的视频卡必须使用齐行网格，避免瀑布流产生空列');
 assert.ok([...componentSource.matchAll(/<LsMasonryGallery layout="grid"/g)].length >= 2, '爆款灵感和我的素材必须共用齐行媒体网格');
 assert.match(videoCardSource, /aspect-\[9\/16\][^]*?flex min-h-52 flex-1 flex-col/, '爆款卡必须使用 9:16 媒体和统一信息区高度');
-assert.match(componentSource, /filteredMaterials\.map[^]*?aspect-\[9\/16\][^]*?flex min-h-52 flex-1 flex-col/, '素材卡必须与爆款卡使用相同媒体比例和信息区高度');
+const materialGridSource = componentSource.slice(componentSource.indexOf('filteredMaterials.map'), componentSource.indexOf('aria-label="我的素材分页"'));
+assert.match(materialGridSource, /aspect-\[9\/16\][^]*?flex flex-1 flex-col p-3[^]*?mt-auto grid grid-cols-2 gap-2 pt-3/, '素材卡必须保持 9:16 媒体、等高操作区，并把按钮固定在信息区底部');
+assert.doesNotMatch(materialGridSource, /min-h-52/, '素材卡信息区不得以固定最小高度在按钮下方制造大片空白');
 assert.match(componentSource, /grid-cols-\[minmax\(240px,2fr\)_[^]*?<Input allowClear[^]*?aria-label="搜索爆款灵感"[^]*?<Select value=\{platform\}/, '搜索框必须位于灵感发现主筛选最左侧');
 const inspirationMoreFilters = componentSource.slice(componentSource.indexOf('id="inspiration-more-filters"'), componentSource.indexOf("innerView === 'inspiration' && videosError"));
 assert.doesNotMatch(inspirationMoreFilters, />发布平台<|aria-label="社媒平台"/, '发布平台不得重复出现在更多筛选');

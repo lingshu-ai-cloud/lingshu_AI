@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Alert, Button, Modal, Tag } from 'antd';
-import { CheckCircle2, ShieldCheck, UserRound } from 'lucide-react';
+import { CheckCircle2, Mic2, ShieldCheck, UserRound } from 'lucide-react';
 import { productionApi } from '../../lib/productionApi';
 import { EMPTY_DEFAULTS, type ProductionDefaults, type PresenterAsset } from '../../lib/shotProduction';
 import { fetchMaterialLibrary, type Material } from '../../lib/studioApi';
@@ -14,6 +14,18 @@ import PresenterManager, { type PresenterSaveContext } from './PresenterManager'
 function heyGenReady(presenter?: PresenterAsset): boolean {
   return Boolean(presenter?.authorized && (presenter.toolMappings?.heygen?.avatarId || presenter.avatarId)
     && (presenter.toolMappings?.heygen?.voiceId || presenter.voiceId));
+}
+
+function presenterSelected(presenter?: PresenterAsset): boolean {
+  return Boolean(presenter?.toolMappings?.heygen?.avatarId || presenter?.avatarId);
+}
+
+function presenterReady(presenter?: PresenterAsset): boolean {
+  return Boolean(presenter?.authorized && (presenter.toolMappings?.heygen?.avatarId || presenter.avatarId));
+}
+
+function voiceReady(presenter?: PresenterAsset): boolean {
+  return Boolean(presenter?.toolMappings?.heygen?.voiceId || presenter?.voiceId);
 }
 
 function arkReady(presenter?: PresenterAsset): boolean {
@@ -75,7 +87,10 @@ export default function EnterprisePresenters({
 
   useEffect(() => {
     let live = true;
-    void fetchMaterialLibrary().then(result => {
+    // Presenter enrollment inputs are intentionally absent from the public
+    // "My Materials" view.  This private manager resolves the bound evidence
+    // through purpose=all so existing certification and reuse remain intact.
+    void fetchMaterialLibrary('all').then(result => {
       if (live) setMaterials(result.items.filter(item => item.type === 'image' || item.type === 'video'));
     }).catch(() => { if (live) setError('人物素材暂时无法读取，请稍后重试。'); });
     return () => { live = false; };
@@ -83,8 +98,12 @@ export default function EnterprisePresenters({
 
   const selectedPresenter = useMemo(() => value.presenters.find(item => item.id === value.defaultPresenterId)
     || value.presenters[0], [value.defaultPresenterId, value.presenters]);
+  const selectedPresenterSelected = presenterSelected(selectedPresenter);
+  const selectedPresenterReady = presenterReady(selectedPresenter);
+  const selectedVoiceReady = voiceReady(selectedPresenter);
   const selectedHeyGenReady = heyGenReady(selectedPresenter);
   const selectedArkReady = arkReady(selectedPresenter);
+  const selectedPresenterSetupReady = selectedPresenterReady && selectedVoiceReady && selectedArkReady;
   const selectedReferenceMaterials = useMemo(() => [...(selectedPresenter?.referenceMaterialIds || [])]
     .reverse()
     .map(id => materials.find(item => item.id === id))
@@ -99,11 +118,11 @@ export default function EnterprisePresenters({
     || selectedReferenceMaterials.find(item => item.type === 'video')?.id;
 
   useEffect(() => {
-    if (initialConfiguration && loaded && selectedHeyGenReady && !initialReadyNotified.current) {
+    if (initialConfiguration && loaded && selectedPresenterSetupReady && !initialReadyNotified.current) {
       initialReadyNotified.current = true;
       onInitialSelection?.();
     }
-  }, [initialConfiguration, loaded, onInitialSelection, selectedHeyGenReady]);
+  }, [initialConfiguration, loaded, onInitialSelection, selectedPresenterSetupReady]);
 
   const openPresenterManager = () => {
     setShowArkSetup(false);
@@ -179,9 +198,8 @@ export default function EnterprisePresenters({
     }
     setShowArkSetup(false);
     setMessage(preparation
-      ? '口播人物与声音已保存，现在即可使用。照片和视频也已保留；需要高级人物替换时，再点击“完善人物替换认证”单独授权。'
-      : '口播人物与声音已保存，现在即可使用。高级人物替换为可选功能，可稍后在企业知识库补充认证。');
-    onInitialSelection?.();
+      ? '人物与声音已保存，认证资料也已保留。请继续完成 HeyGen 与方舟认证。'
+      : '人物与声音已保存。请继续完成 HeyGen 与方舟认证；三项全部完成后才能进入生产。');
   };
 
   const saveName = async () => {
@@ -220,7 +238,7 @@ export default function EnterprisePresenters({
   if (initialConfiguration) return <section className="space-y-4" aria-label="数字人统一接入">
     <div>
       <h3 className="text-base font-semibold text-text-primary">数字人接入</h3>
-      <p className="mt-1 text-xs leading-5 text-text-muted">选择 HeyGen 已有人物，或上传本人资料创建；保存前可选择已有声音，也可直接录入本人声音。人物替换认证是可选能力，不影响 HeyGen 口播。</p>
+      <p className="mt-1 text-xs leading-5 text-text-muted">选择数字人、录入声音、完成 HeyGen 与方舟认证可分别处理；三项都完成后，数字人才能进入生产。</p>
     </div>
     {!loaded ? loadError
       ? <Alert
@@ -234,13 +252,31 @@ export default function EnterprisePresenters({
     : <>
       {error && <Alert type="error" showIcon title={error} />}
       {message && <Alert type="success" showIcon title={message} />}
-      <section className={`rounded-lg border p-4 ${selectedHeyGenReady && selectedArkReady ? 'border-green/30 bg-green/5' : 'border-border bg-surface'}`} aria-label="统一人物接入状态">
-        <div className="flex flex-wrap items-start justify-between gap-4"><div><p className="text-sm font-semibold text-text-primary">人物、声音与本人认证</p>{selectedPresenter && <p className="mt-2 text-xs text-text-secondary">当前人物：<strong>{selectedPresenter.name}</strong></p>}<div className="mt-3 flex flex-wrap gap-2"><Tag color={selectedHeyGenReady ? 'success' : 'default'}>口播人物与声音 {selectedHeyGenReady ? '已完成' : '待配置'}</Tag><Tag color={selectedArkReady ? 'success' : 'default'}>人物替换认证 {selectedArkReady ? '已完成' : selectedHeyGenReady ? '可选' : '等待人物'}</Tag></div></div>
-          <div className="flex flex-wrap gap-2">
-            {selectedHeyGenReady ? <><Button className="min-h-11 text-xs" onClick={openPresenterManager}>更换数字人</Button><Button className="min-h-11 text-xs" onClick={openVoiceRecorder}>录入本人声音</Button></> : <LsBrandAction className="min-h-11 text-xs" onClick={openPresenterManager}>设置人物与声音</LsBrandAction>}
-            {selectedHeyGenReady && !selectedArkReady && <LsBrandAction className="min-h-11 text-xs" onClick={() => setShowArkSetup(current => !current)}>{showArkSetup ? '收起人物替换认证' : '完善人物替换认证'}</LsBrandAction>}
+      <section className="grid gap-3 md:grid-cols-3" aria-label="数字人生产准备">
+        <article className={`flex min-h-48 flex-col rounded-lg border p-4 ${selectedPresenterSelected ? 'border-accent/30 bg-accent-glow' : 'border-border bg-surface'}`}>
+          <div className="flex items-start justify-between gap-3">
+            <span className="flex h-9 w-9 items-center justify-center rounded-lg bg-white text-accent"><UserRound size={18} aria-hidden="true" /></span>
+            <span className={`inline-flex items-center gap-1 text-xs font-semibold ${selectedPresenterSelected ? 'text-green' : 'text-text-muted'}`}>{selectedPresenterSelected && <CheckCircle2 size={14} aria-hidden="true" />}{selectedPresenterSelected ? '已完成' : '待完成'}</span>
           </div>
-        </div>
+          <div className="mt-4 flex-1"><p className="text-sm font-semibold text-text-primary">1. 选择数字人</p><p className="mt-1 text-xs leading-5 text-text-muted">{selectedPresenterSelected ? `当前人物：${selectedPresenter?.name}` : '选择 HeyGen 已有人物，或上传本人素材创建。'}</p></div>
+          <Button block className="mt-4 min-h-10 text-xs" onClick={openPresenterManager}>{selectedPresenterSelected ? '更换数字人' : '选择数字人'}</Button>
+        </article>
+        <article className={`flex min-h-48 flex-col rounded-lg border p-4 ${selectedVoiceReady ? 'border-accent/30 bg-accent-glow' : 'border-border bg-surface'}`}>
+          <div className="flex items-start justify-between gap-3">
+            <span className="flex h-9 w-9 items-center justify-center rounded-lg bg-white text-accent"><Mic2 size={18} aria-hidden="true" /></span>
+            <span className={`inline-flex items-center gap-1 text-xs font-semibold ${selectedVoiceReady ? 'text-green' : 'text-text-muted'}`}>{selectedVoiceReady && <CheckCircle2 size={14} aria-hidden="true" />}{selectedVoiceReady ? '已完成' : '待完成'}</span>
+          </div>
+          <div className="mt-4 flex-1"><p className="text-sm font-semibold text-text-primary">2. 录入声音</p><p className="mt-1 text-xs leading-5 text-text-muted">{selectedVoiceReady ? '本人声音已绑定到当前数字人。' : selectedPresenterSelected ? '录制或上传本人声音，并完成使用授权。' : '选择数字人后即可录入本人声音。'}</p></div>
+          <Button block className="mt-4 min-h-10 text-xs" disabled={!selectedPresenterSelected} onClick={openVoiceRecorder}>{selectedVoiceReady ? '重新录入声音' : '录入本人声音'}</Button>
+        </article>
+        <article className={`flex min-h-48 flex-col rounded-lg border p-4 ${selectedPresenterReady && selectedArkReady ? 'border-accent/30 bg-accent-glow' : 'border-border bg-surface'}`}>
+          <div className="flex items-start justify-between gap-3">
+            <span className="flex h-9 w-9 items-center justify-center rounded-lg bg-white text-accent"><ShieldCheck size={18} aria-hidden="true" /></span>
+            <span className={`inline-flex items-center gap-1 text-xs font-semibold ${selectedPresenterReady && selectedArkReady ? 'text-green' : 'text-text-muted'}`}>{selectedPresenterReady && selectedArkReady && <CheckCircle2 size={14} aria-hidden="true" />}{selectedPresenterReady && selectedArkReady ? '已完成' : '待完成'}</span>
+          </div>
+          <div className="mt-4 flex-1"><p className="text-sm font-semibold text-text-primary">3. 完成平台认证</p><div className="mt-2 space-y-1 text-xs text-text-muted"><p className="flex items-center justify-between gap-2"><span>HeyGen 本人授权</span><strong className={selectedPresenterReady ? 'text-green' : 'text-text-secondary'}>{selectedPresenterReady ? '已完成' : '待完成'}</strong></p><p className="flex items-center justify-between gap-2"><span>方舟人物认证</span><strong className={selectedArkReady ? 'text-green' : 'text-text-secondary'}>{selectedArkReady ? '已完成' : '待完成'}</strong></p></div></div>
+          <Button block className="mt-4 min-h-10 text-xs" disabled={!selectedHeyGenReady || selectedArkReady} onClick={() => setShowArkSetup(current => !current)}>{selectedArkReady ? '双平台认证已完成' : showArkSetup ? '收起认证资料' : '完成双平台认证'}</Button>
+        </article>
       </section>
       {showArkSetup && selectedPresenter && <ArkPresenterEnrollmentPanel
         presenterId={selectedPresenter.id}
@@ -252,7 +288,7 @@ export default function EnterprisePresenters({
         onStart={startArkEnrollment}
         onReady={async () => { await refresh('方舟人物认证已完成，当前人物可以用于人物替换。'); onInitialSelection?.(); }}
       />}
-      {selectedHeyGenReady && selectedArkReady && <div className="flex items-center gap-2 rounded-lg bg-green/10 px-4 py-3 text-xs font-semibold text-green"><CheckCircle2 size={16} />数字人口播与人物替换条件均已准备完成。</div>}
+      {selectedPresenterSetupReady && <div className="flex items-center gap-2 rounded-lg bg-green/10 px-4 py-3 text-xs font-semibold text-green"><CheckCircle2 size={16} />数字人、声音和双平台认证均已完成，可以进入生产。</div>}
       {showHeyGenManager && <PresenterManager initialConfiguration onClose={() => setShowHeyGenManager(false)} onSynced={next => { setValue(next); notifyPresenterAssetsUpdated(); }} onSaved={(next, context) => finishUnifiedPresenterSetup(next, context)} />}
       {showVoiceRecorder && selectedPresenter && <PresenterManager initialConfiguration voiceOnlyPresenter={selectedPresenter} onClose={() => setShowVoiceRecorder(false)} onSaved={next => finishUnifiedPresenterSetup(next)} />}
     </>}
@@ -260,7 +296,7 @@ export default function EnterprisePresenters({
 
   return <section className="rounded-lg border border-border bg-white p-5" aria-label={contentProduction ? '内容制作人物管理' : '人物与出镜'}>
     <div className="flex flex-wrap items-start justify-between gap-3">
-      <div><h3 className="text-base font-semibold text-text-primary">人物与出镜</h3><p className="mt-1 text-xs text-text-muted">这里可以修改已接入人物、补充可选的人物替换认证，或取消授权。</p></div>
+      <div><h3 className="text-base font-semibold text-text-primary">人物与出镜</h3><p className="mt-1 text-xs text-text-muted">这里可以修改已接入人物、补全声音和方舟认证，或取消授权。</p></div>
       {contentProduction && <Button onClick={openDigitalHumanOnboarding}>打开数字人接入</Button>}
     </div>
     {error && <Alert className="mt-4" type="error" showIcon title={error} />}
@@ -277,7 +313,7 @@ export default function EnterprisePresenters({
             <span className="relative flex h-12 w-12 shrink-0 items-center justify-center overflow-hidden rounded-lg bg-surface-2 text-sm font-semibold text-text-secondary">{presenter.name.slice(0, 1)}{presenter.imageUrl && <img src={presenter.imageUrl} alt="" className="absolute inset-0 h-full w-full object-cover" />}</span>
             <div className="min-w-0"><p className="truncate text-sm font-semibold text-text-primary">{presenter.name}</p><div className="mt-1 flex flex-wrap gap-1.5"><Tag color={heyGenReady(presenter) ? 'success' : 'default'}>HeyGen {heyGenReady(presenter) ? '已接入' : '未接入'}</Tag><Tag color={arkReady(presenter) ? 'success' : 'default'}>方舟 {arkReady(presenter) ? '已认证' : '未认证'}</Tag>{value.defaultPresenterId === presenter.id && <Tag color="blue">当前默认</Tag>}</div></div>
           </div>
-          <div className="flex flex-wrap gap-2"><Button disabled={busy} onClick={() => { setEditingId(presenter.id); setEditingName(presenter.name); }}>修改人物</Button>{heyGenReady(presenter) && !arkReady(presenter) && <Button disabled={busy} onClick={() => setCertifyingPresenterId(current => current === presenter.id ? '' : presenter.id)}>{certificationOpen ? '收起认证' : '人物替换认证'}</Button>}<Button danger disabled={busy} onClick={() => revoke(presenter)}>取消授权</Button></div>
+          <div className="flex flex-wrap gap-2"><Button disabled={busy} onClick={() => { setEditingId(presenter.id); setEditingName(presenter.name); }}>修改人物</Button>{heyGenReady(presenter) && !arkReady(presenter) && <Button disabled={busy} onClick={() => setCertifyingPresenterId(current => current === presenter.id ? '' : presenter.id)}>{certificationOpen ? '收起认证' : '完成方舟认证'}</Button>}<Button danger disabled={busy} onClick={() => revoke(presenter)}>取消授权</Button></div>
         </div>
         {editingId === presenter.id && <div className="mt-4 flex flex-wrap items-end gap-2 rounded-lg bg-surface-2 p-3"><label className="min-w-56 flex-1 text-xs font-semibold text-text-secondary">人物显示名称<input autoFocus value={editingName} maxLength={100} onChange={event => setEditingName(event.target.value)} className="mt-1 w-full rounded-lg border border-border bg-white px-3 py-2 text-sm text-text-primary" /></label><LsBrandAction loading={busy} disabled={!editingName.trim()} onClick={() => void saveName()}>保存修改</LsBrandAction><Button disabled={busy} onClick={() => { setEditingId(''); setEditingName(''); }}>取消</Button></div>}
         {certificationOpen && <div className="mt-4"><ArkPresenterEnrollmentPanel

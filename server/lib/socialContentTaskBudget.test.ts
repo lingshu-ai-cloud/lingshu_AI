@@ -45,6 +45,24 @@ test('concurrent workers cannot collectively reserve over ceiling', async () => 
 finally {
     f.clean();
 } });
+test('only the exact internally exempt tenant may retain quotes above the nominal task ceiling', async () => {
+    const configured = process.env.INTERNAL_BUDGET_EXEMPT_TENANT_IDS;
+    process.env.INTERNAL_BUDGET_EXEMPT_TENANT_IDS = 'local_tenant_customer_aurelia_beauty';
+    const exempt = fixture(6), ordinary = fixture(6);
+    const exemptScope = { ...scope, tenantId: 'local_tenant_customer_aurelia_beauty' };
+    const ordinaryScope = { ...scope, tenantId: 'another-tenant' };
+    try {
+        const status = await exempt.budget.reserveBatch(exemptScope, [op('a'), op('b')]);
+        assert.equal(status.limitCny, 10);
+        assert.equal(status.retainedCny, 12);
+        await assert.rejects(ordinary.budget.reserveBatch(ordinaryScope, [op('a'), op('b')]), /exceeded/);
+        assert.equal(ordinary.budget.status(ordinaryScope), null);
+    } finally {
+        exempt.clean(); ordinary.clean();
+        if (configured === undefined) delete process.env.INTERNAL_BUDGET_EXEMPT_TENANT_IDS;
+        else process.env.INTERNAL_BUDGET_EXEMPT_TENANT_IDS = configured;
+    }
+});
 test('lower user ceiling persists and larger authorization never raises it', async () => { const f = fixture(2, 4); try {
     await f.budget.reserveBatch(scope, [op('a')]);
     f.ports.authorization = async () => ({ maximumCny: 100, authorizationRef: 'later-auth' });

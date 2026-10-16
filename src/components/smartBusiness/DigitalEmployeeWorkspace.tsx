@@ -1,6 +1,6 @@
 import InitialPreparationStatusPanel from '../InitialPreparationStatusPanel';
 import { useEffect, useState, type ReactNode } from 'react';
-import { Button, Segmented, Tag } from 'antd';
+import { Button, Segmented, Switch, Tag } from 'antd';
 import { LoaderCircle, Settings2 } from 'lucide-react';
 import type { DigitalEmployeeOverview } from '../../lib/digitalEmployees';
 import AgentRoleIcon, { AGENT_ROLE_PALETTE, type AgentVisualRole } from '../ui/AgentRoleIcon';
@@ -15,6 +15,7 @@ type DigitalEmployeeWorkspaceView = 'agents' | 'publishing';
 
 export default function DigitalEmployeeWorkspace({ data, calendarTasks, calendarDemo = false, onRefresh, onOpenContent, onOpenAgentSettings, publishingCalendar }: { data: DigitalEmployeeOverview; calendarTasks?: AgentCalendarTask[]; calendarDemo?: boolean; onRefresh?: () => void; onOpenContent?: (taskId?: string, socialContentTaskId?: string) => void; onOpenAgentSettings?: () => void; publishingCalendar?: ReactNode }) {
   const [selectedAgent, setSelectedAgent] = useState<AgentVisualRole | ''>('');
+  const [hideCompleted, setHideCompleted] = useState(false);
   const [workspaceView, setWorkspaceView] = useState<DigitalEmployeeWorkspaceView>('agents');
   const [publishingVisited, setPublishingVisited] = useState(false);
   const currentRunId = data.run?.id;
@@ -46,7 +47,7 @@ export default function DigitalEmployeeWorkspace({ data, calendarTasks, calendar
     </div>
     <div hidden={workspaceView !== 'agents'} aria-hidden={workspaceView !== 'agents'} className="space-y-4">
       <section aria-label="数字员工列表" className="rounded-lg border border-border bg-white p-4">
-        <div className="mb-3 flex flex-wrap items-center justify-between gap-3"><div><h2 className="text-base font-semibold text-text-primary">数字员工</h2><p className="mt-1 text-xs text-text-secondary">状态随当前周任务回执实时更新；点击 Agent 筛选排期，再次点击查看全部</p></div></div>
+        <div className="mb-3 flex min-h-11 flex-wrap items-center justify-between gap-3"><div><h2 className="text-base font-semibold text-text-primary">数字员工</h2><p className="mt-1 text-xs text-text-secondary">状态随当前周任务回执实时更新；点击 Agent 筛选排期，再次点击查看全部</p></div><label className="inline-flex min-h-11 cursor-pointer items-center gap-2 text-xs text-text-secondary"><Switch size="small" checked={hideCompleted} onChange={setHideCompleted} aria-label="隐藏已完成"/><span>隐藏已完成</span></label></div>
         <div className="flex gap-3 overflow-x-auto pb-1">{agents.map(agent => {
           const active = selectedAgent === agent.role;
           const working = agent.status === 'working';
@@ -61,8 +62,8 @@ export default function DigitalEmployeeWorkspace({ data, calendarTasks, calendar
       </section>
       <section aria-label="数字员工工作排期" className="overflow-hidden rounded-lg border border-border bg-white">
         {calendarTasks !== undefined || calendarDemo
-          ? <RestoredAgentWorkCalendar tasks={calendarTasks || []} startsAt={data.goal?.startsAt} demo={calendarDemo} agentRole={selectedAgent} onOpenProduction={onOpenContent ? task => onOpenContent(task.id, task.productionTaskId) : undefined}/>
-          : <ConnectedAgentCalendar startsAt={data.goal?.startsAt} agentRole={selectedAgent} accountBindingTasks={bindingTasks} currentRunId={currentRunId}/>}
+          ? <RestoredAgentWorkCalendar tasks={calendarTasks || []} startsAt={data.goal?.startsAt} demo={calendarDemo} agentRole={selectedAgent} hideCompleted={hideCompleted} onOpenProduction={onOpenContent ? task => onOpenContent(task.id, task.productionTaskId) : undefined}/>
+          : <ConnectedAgentCalendar startsAt={data.goal?.startsAt} agentRole={selectedAgent} hideCompleted={hideCompleted} accountBindingTasks={bindingTasks} currentRunId={currentRunId}/>}
       </section>
     </div>
     {publishingVisited && <div hidden={workspaceView !== 'publishing'} aria-hidden={workspaceView !== 'publishing'}>{publishingCalendar}</div>}

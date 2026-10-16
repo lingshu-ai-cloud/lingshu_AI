@@ -28,6 +28,7 @@ import { createSocialContentTaskBudgetAuthority, quoteSocialPaidOperationTariff,
 import { createSocialContentVerifiedTariffReader } from '../lib/socialContentVerifiedTariffs.js';
 import { SocialContentTaskBudget, type SocialTaskBudgetScope } from '../lib/socialContentTaskBudget.js';
 import {automaticallyConfirmPresenterFirstFrameApproval,readConfirmedPresenterFirstFrameApproval} from './socialContentPresenterFirstFrameApproval.js';
+import {isInternalBudgetExemptTenant} from '../lib/tenantBudgetExemption.js';
 export interface ProductionBudgetReadPorts {
     /** Trusted readonly runtime/account readers. Never task/body supplied manifests. */
     resolveBoundRoute?: PaidOperationPlannerPorts['resolveBoundRoute'];
@@ -65,6 +66,9 @@ export interface ProductionBudgetPreflightInput {
 const STAGE = 'social.whole_film_budget';
 const error = (gap: string): never => { throw Error(`user_input_required:whole_film_budget_preflight:${gap}`); };
 const sha = (value: string) => createHash('sha256').update(value).digest('hex');
+export function formalPaidRouteExceedsInternalBudget(tenantId: string, amountCny: number, maximumCny: number) {
+    return !isInternalBudgetExemptTenant(tenantId) && (amountCny > maximumCny || amountCny > 10);
+}
 async function readOrAutomaticallyConfirmPresenterFirstFrame(store:NonNullable<Starter198Repository['dataStore']>,scope:SocialTaskBudgetScope,group:FrozenPresenterGroup){const existing=await readConfirmedPresenterFirstFrameApproval(store,{scope,groupId:group.groupId,presenterGroupContractHash:group.contractHash,presenterAssetId:group.presenterAssetId});if(existing)return existing;const approvals=await store.list<any>('social_presenter_first_frame_approvals',{where:{tenant_id:scope.tenantId,task_id:scope.taskId,run_id:scope.runId,plan_hash:scope.planHash,group_id:group.groupId},perPage:2});if(approvals.totalItems!==1||approvals.items.length!==1)return null;const approval=approvals.items[0]?.payload;if(!approval?.qa?.passed||approval.presenterGroupContractHash!==group.contractHash||approval.presenter?.assetId!==group.presenterAssetId||approval.recordHash!==approvals.items[0]?.record_hash)return null;await automaticallyConfirmPresenterFirstFrameApproval(store,{scope,groupId:group.groupId,expectedRecordHash:approval.recordHash});return readConfirmedPresenterFirstFrameApproval(store,{scope,groupId:group.groupId,presenterGroupContractHash:group.contractHash,presenterAssetId:group.presenterAssetId});}
 const paidBaselineContractHash = (baseline: StoredSocialScriptBaseline) => socialRequestHash({
   language: baseline.language,
@@ -437,7 +441,7 @@ export async function prepareSocialContentProductionBudget(input: ProductionBudg
       upperBoundCny: preview.quotes.get(intent.operationId)?.upperBoundCny ?? 0,
     }));
     const previewUpperBoundCny = previewItems.reduce((sum, item) => sum + item.upperBoundCny, 0);
-    if (previewUpperBoundCny > planned.plan.maximumCny || previewUpperBoundCny > 10) {
+    if (formalPaidRouteExceedsInternalBudget(input.tenantId, previewUpperBoundCny, planned.plan.maximumCny)) {
       const stageTotals = Object.entries(previewItems.reduce<Record<string, number>>((totals, item) => {
         totals[item.stage] = (totals[item.stage] || 0) + item.upperBoundCny;
         return totals;
@@ -446,7 +450,7 @@ export async function prepareSocialContentProductionBudget(input: ProductionBudg
     }
     const reserved = await authority.prepareAndReserve(scope);
     const formalPaidRouteUpperBoundCny=Object.values(reserved.quotes).reduce((sum,quote)=>sum+quote.upperBoundCny,0);
-    if(formalPaidRouteUpperBoundCny>planned.plan.maximumCny||formalPaidRouteUpperBoundCny>10)
+    if(formalPaidRouteExceedsInternalBudget(input.tenantId, formalPaidRouteUpperBoundCny, planned.plan.maximumCny))
       return error(`formal_paid_route_budget_exceeded:${formalPaidRouteUpperBoundCny.toFixed(6)}`);
     await recordCurrentContentExecutionCheckpoint({ stage: STAGE, version: '1', inputHash: planHash, payload: { scopeHash: paidProductionHash(scope), baselineHash,
       paidBaselineContractHash: paidBaselineContractHash(input.baseline), presenterVoiceBinding:voice.presenterBinding || null, operationIds: reserved.operations.map(o => o.operationId), requirements: planned.requirements, routeBindings, quotes: reserved.quotes, formalPaidRouteUpperBoundCny, wholeTaskRetainedCny:reserved.status.retainedCny, plan: planned.plan } });

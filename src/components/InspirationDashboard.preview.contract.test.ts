@@ -15,5 +15,10 @@ assert.match(source, /<Tabs className="min-w-0 flex-1"[^]*?<AntUpload className=
 assert.match(cardsSource, /apiUrl=\{video\.videoUrl\}[^]*?loadOnMount[^]*?previewFrame[^]*?preload="auto"/, '爆款视频卡必须主动加载首帧，不能依赖悬停');
 assert.match(cardsSource, /analysisPaused[^]*?mediaState = !analysisPaused/, '暂停分析不得用状态遮罩盖住现有封面');
 assert.match(progressSource, /isInterrupted[^]*?>继续分析</, '暂停或取消后必须提供继续分析入口');
+assert.match(source, /function MaterialCardMedia[\s\S]*?<LsMediaStateFrame[\s\S]*?重新加载/, '素材卡必须使用统一媒体状态并提供失败重试');
+assert.match(source, /videoFallback[\s\S]*?<AuthenticatedVideo/, '素材封面不可用时必须主动回退到视频首帧');
+assert.match(source, /materialPreviewImageSources[\s\S]*?material\.segments[\s\S]*?material\.url/, '素材封面必须依次尝试主封面、片段封面和图片原文件');
+assert.match(source, /MaterialCardMedia[\s\S]*?onRefresh[\s\S]*?await onRefresh\?\.\(\)[\s\S]*?正在刷新/, '素材封面重试必须先刷新短期地址，再重载媒体');
+assert.match(source, /fetch\(src, \{ headers: authHeader\(\), cache: 'no-store'/, '受保护封面重试不得继续命中浏览器中的失败缓存');
 
 console.log('Inspiration preview stacking and fallback contract passed');

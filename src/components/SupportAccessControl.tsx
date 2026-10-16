@@ -45,7 +45,7 @@ export default function SupportAccessControl() {
   };
 
   return (
-    <section className="rounded-lg border border-border bg-surface-2/40 p-4">
+    <section className="py-5">
       <div className="flex items-start justify-between gap-5">
         <div className="flex min-w-0 gap-3">
           <span className="mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-emerald-50 text-emerald-700">

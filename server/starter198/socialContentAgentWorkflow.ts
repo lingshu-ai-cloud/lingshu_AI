@@ -55,6 +55,7 @@ import {
 } from '../../shared/sceneVisualContract.js';
 import type { SocialReferenceReviewHandoff } from './socialReferenceReviewHandoff.js';
 import { socialReferenceFidelityFailures } from './socialContentReferenceFidelity.js';
+import { isInternalBudgetExemptTenant } from '../lib/tenantBudgetExemption.js';
 
 import {
   buildBusinessContext,
@@ -536,6 +537,7 @@ function buildDirectorBrief(
 }
 
 function capabilityCandidates(input: {
+  tenantId?: string;
   taskId: string;
   taskVersion: string;
   sceneId: string;
@@ -546,7 +548,7 @@ function capabilityCandidates(input: {
   preferLocalProductAnimation?: boolean;
 }): SocialExecutionCandidate[] {
   const targetSeconds = input.scene.duration.targetSeconds;
-  const registrations = input.capabilityRuntime ?? socialContentEmbeddedRuntimeRegistrations(input.supply.materialRouting ? { wholeFilmBudget: true, productVideoProvider: input.supply.materialRouting.generation?.videoProvider } : {});
+  const registrations = input.capabilityRuntime ?? socialContentEmbeddedRuntimeRegistrations(input.supply.materialRouting ? { tenantId: input.tenantId, wholeFilmBudget: true, productVideoProvider: input.supply.materialRouting.generation?.videoProvider } : { tenantId: input.tenantId });
   const runtimeRegistration = new Map(registrations
     .map(item => [item.strategy, item]));
   const sourceRuntime = runtimeRegistration.get(input.supply.sourceStrategy);
@@ -760,6 +762,7 @@ function capabilityCandidates(input: {
 }
 
 function executionScene(input: {
+  tenantId?: string;
   taskId: string;
   taskVersion: string;
   scene: SocialDirectorBriefScene;
@@ -917,6 +920,7 @@ function buildExecutionPlan(input: BuildSocialAgentWorkflowInput, directorBrief:
     const productSceneOrdinal = supply?.sourceStrategy === 'aigc_product_scene_replication'
       ? ++paidProductSceneCount : 0;
     return supply ? [executionScene({
+      tenantId: input.tenantId,
       taskId: input.taskId,
       taskVersion: input.taskVersion,
       scene,
@@ -1050,12 +1054,13 @@ export function socialExecutionExternalCost(plan: SocialContentExecutionPlan, di
   }, 0).toFixed(2);
 }
 
-export function socialExecutionBudgetStatus(plan: SocialContentExecutionPlan, directorBrief: SocialDirectorBrief): {
+export function socialExecutionBudgetStatus(plan: SocialContentExecutionPlan, directorBrief: SocialDirectorBrief, tenantId?: string): {
   estimatedCostCny: number; budgetLimitCny: number | null; exceeded: boolean;
 } {
   const estimatedCostCny = socialExecutionExternalCost(plan, directorBrief);
   return { estimatedCostCny, budgetLimitCny: plan.budgetLimitCny,
-    exceeded: plan.budgetLimitCny !== null && estimatedCostCny > plan.budgetLimitCny };
+    exceeded: !isInternalBudgetExemptTenant(tenantId)
+      && plan.budgetLimitCny !== null && estimatedCostCny > plan.budgetLimitCny };
 }
 
 function reviewScene(input: {
@@ -1108,7 +1113,7 @@ function reviewScene(input: {
 }
 
 function buildReview(input: BuildSocialAgentWorkflowInput, directorBrief: SocialDirectorBrief, plan: SocialContentExecutionPlan): SocialExecutionPlanReview {
-  const budget = socialExecutionBudgetStatus(plan, directorBrief);
+  const budget = socialExecutionBudgetStatus(plan, directorBrief, input.tenantId);
   const estimatedCost = budget.estimatedCostCny;
   const budgetExceeded = budget.exceeded;
   const planByScene = new Map(plan.scenes.map(scene => [scene.sceneId, scene]));
@@ -1208,6 +1213,8 @@ function taskStage(input: BuildSocialAgentWorkflowInput, review: SocialExecution
 }
 
 export interface BuildSocialAgentWorkflowInput {
+  /** Exact tenant scope used for server-side internal budget policy. */
+  tenantId?: string;
   taskId: string;
   taskVersion: string;
   taskStatus: SocialContentTaskStatus;

@@ -97,7 +97,7 @@ export type QwenAsrRecord = { id: string; sourceSha256: string; model: string; s
 type RecordData = QwenAsrRecord;
 export class QwenAsrService {
   private locks = new Map<string, Promise<RecordData>>();
-  constructor(private root: string, private request: typeof fetch = fetch, private reserve: (id: string) => Promise<void> = id => studioPaidBudget.reserve('qwen_asr', id), private options: { automaticSubmission?: boolean; signal?: AbortSignal; onRecord?:(record:QwenAsrRecord)=>Promise<void> } = {}) {}
+  constructor(private root: string, private request: typeof fetch = fetch, private reserve: (id: string, tenant?: string) => Promise<void> = (id, tenant) => studioPaidBudget.reserve('qwen_asr', id, undefined, tenant), private options: { automaticSubmission?: boolean; signal?: AbortSignal; onRecord?:(record:QwenAsrRecord)=>Promise<void> } = {}) {}
   async run(tenant: string, bytes: Buffer, mimeType: string, confirmed = false): Promise<RecordData> {
     if (!/^[\w-]{1,128}$/.test(tenant)) throw new Error('企业身份无效');
     if (!bytes.length || bytes.length > 20 * 1024 * 1024) throw new Error('转写音频需小于20MB');
@@ -143,7 +143,7 @@ export class QwenAsrService {
     const headers = { Authorization: `Bearer ${apiKey}`, 'Content-Type': 'application/json' };
     if (!record.taskId) {
       if (!this.options.automaticSubmission && process.env.QWEN_ASR_GENERATION_ENABLED !== 'true') throw new Error('付费转写尚未启用；已有缓存仍可使用');
-      await this.reserve(`${tenant}:${hash}`);
+      await this.reserve(`${tenant}:${hash}`, tenant);
       record.status = 'submitting'; await save(); // Persist before any external operation; never auto-resubmit after crash.
       try {
         const { data: policy } = await json(`${endpoint}/uploads?action=getPolicy&model=${ASR_MODEL}`, { headers });

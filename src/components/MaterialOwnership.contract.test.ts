@@ -87,6 +87,8 @@ assert.doesNotMatch(inspirationSource, /任务中上传的图片、视频和音�
 assert.match(inspirationSource, /<span className="text-xs font-bold">音频素材<\/span>/, '音频素材必须用专属占位画面识别，不得继续误标为图片');
 assert.match(inspirationSource, /studioApi\.listMaterialLibrary\('library'/, '我的素材必须只读取用户可管理的正式素材，不得混入工作流中间产物');
 assert.doesNotMatch(inspirationSource, /studioApi\.listMaterialLibrary\('all'/, '我的素材不得绕过服务端的正式素材边界');
+assert.match(studioRouteSource, /purpose !== 'all'[\s\S]{0,300}!isWorkflowInternalMaterial/, '我的素材接口必须在分页和计数前排除人物认证原始资料与工作流中间产物');
+assert.match(studioRouteSource, /const storedFileUrl = material\.file[\s\S]{0,500}tenantAssetRelativePath\(tenantId, material\.file\)[\s\S]{0,300}const sourceUrl = material\.url \|\| storedFileUrl/, '本地已入库素材缺少显式 URL 时必须恢复为受保护媒体地址，不能显示封面加载失败');
 assert.doesNotMatch(inspirationSource, /enterMaterialSmartGeneration[\s\S]*?material\.usage === 'reference_only'/, '所有进入素材库的视觉素材都必须可以进入创作链路');
 assert.doesNotMatch(inspirationSource, /pinnedMaterialVideos/, '素材库内容不得反向混入爆款视频列表');
 assert.doesNotMatch(inspirationSource, /<MaterialAnalysisStatus material=\{material\}/, '我的素材卡片不得展示内部分析进度和区间标注');

@@ -2,6 +2,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { createHash, randomUUID } from 'node:crypto';
 import { withPaidOperationLock } from './paidOperationLock.js';
+import { isInternalBudgetExemptTenant } from './tenantBudgetExemption.js';
 
 export type StoryboardAigcStage = 'first_frame' | 'video';
 export interface StoryboardAigcSpendEntry {
@@ -90,6 +91,7 @@ export class StoryboardAigcProjectBudget {
           throw new Error('分镜 AIGC 请求标识对应的参考资产或镜头输入已变化，未调用供应商');
         return { existing: true, entry: existing };
       }
+      const budgetExempt = isInternalBudgetExemptTenant(input.tenantId);
       const maxRetries = this.maxRetries();
       if (!Number.isInteger(maxRetries) || maxRetries < 0 || maxRetries > 20) throw new Error('分镜 AIGC 重试上限配置无效');
       // Retries protect one exact supplier input.  A newly uploaded product
@@ -100,9 +102,11 @@ export class StoryboardAigcProjectBudget {
         && entry.stage === input.stage && entry.inputFingerprint === input.inputFingerprint).length;
       if (acceptedAttempts >= maxRetries + 1) throw new Error(`当前镜头${input.stage === 'first_frame' ? '首帧' : '视频'}已达到 ${maxRetries + 1} 次生成上限，未调用供应商`);
       const configuredLimit = this.limitCny();
-      const requestedLimit = input.limitCny === undefined ? configuredLimit : Number(input.limitCny);
+      const requestedLimit = input.limitCny === undefined
+        ? (budgetExempt ? 1_000_000_000 : configuredLimit)
+        : Number(input.limitCny);
       if (!Number.isFinite(requestedLimit) || requestedLimit <= 0) throw new Error('冻结制作额度无效，未调用供应商');
-      const limitMicros = micros(input.approvedFrozenLimit ? requestedLimit : Math.min(configuredLimit, requestedLimit));
+      const limitMicros = micros(input.approvedFrozenLimit || budgetExempt ? requestedLimit : Math.min(configuredLimit, requestedLimit));
       const usedMicros = Object.values(ledger.entries).reduce((sum, entry) => sum + entry.amountMicros, 0);
       const amountMicros = micros(input.estimatedCostCny);
       if (!Number.isSafeInteger(usedMicros) || usedMicros + amountMicros > limitMicros)
