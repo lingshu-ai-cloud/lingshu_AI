@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { Alert } from 'antd';
+import { Alert, Modal } from 'antd';
 import { productionApi } from '../../lib/productionApi';
 
 type Enrollment = Awaited<ReturnType<typeof productionApi.refreshArkEnrollment>>;
@@ -21,6 +21,7 @@ export default function ArkPresenterEnrollmentPanel(props: {
   const [name, setName] = useState('');
   const [capability, setCapability] = useState<ArkEnrollmentCapability>();
   const [error, setError] = useState(''); const [enrollment, setEnrollment] = useState<Enrollment>();
+  const [verifyConfirmOpen, setVerifyConfirmOpen] = useState(false);
   useEffect(() => { let live = true; productionApi.arkEnrollmentCapabilities().then(value => { if (live) setCapability(value); }).catch(cause => { if (live) setCapability({ ready: false, reason: cause instanceof Error ? cause.message : '认证服务暂时不可用', missing: [] }); }); return () => { live = false; }; }, []);
   useEffect(() => {
     let live = true;
@@ -88,7 +89,7 @@ export default function ArkPresenterEnrollmentPanel(props: {
       {props.authorizationConfirmed ? <p className="rounded bg-white p-2 text-emerald-800">成年人及人物处理授权已在统一接入时确认。</p> : <label className="flex gap-2"><input type="checkbox" checked={consent} onChange={event => setConsent(event.target.checked)} />我确认出镜人为成年人，已取得本人同意：由方舟进行真人验证、处理照片并用于数字人制作</label>}
       <button type="button" disabled={busy || !consent || (!props.presenterId && !name.trim()) || !(photo || photoMaterialId) || !(video || videoMaterialId)} onClick={() => void start()} className="rounded bg-accent px-3 py-2 font-bold text-white disabled:opacity-40">{busy ? '正在提交…' : reusedMaterials ? '开始人物认证' : '提交人物资料并开始认证'}</button>
     </div> : null}
-    {enrollment?.state === 'needs_verification' && <a href={enrollment.verificationUrl} target="_blank" rel="noreferrer" className="inline-block rounded bg-accent px-3 py-2 font-bold text-white">打开本人验证</a>}
+    {enrollment?.state === 'needs_verification' && <><button type="button" onClick={() => setVerifyConfirmOpen(true)} className="inline-block rounded bg-accent px-3 py-2 font-bold text-white">前往方舟本人验证</button><Modal open={verifyConfirmOpen} onCancel={() => setVerifyConfirmOpen(false)} title="确认前往方舟完成人物验证？" footer={<div className="flex justify-end gap-2"><button type="button" onClick={() => setVerifyConfirmOpen(false)} className="rounded border px-3 py-2">暂不跳转</button><a href={enrollment.verificationUrl} target="_blank" rel="noopener noreferrer" onClick={() => setVerifyConfirmOpen(false)} className="rounded bg-accent px-3 py-2 font-bold text-white">确认前往方舟</a></div>}><p>即将离开灵枢，前往方舟完成出镜本人验证。完成后请返回此页，系统会继续刷新认证状态。</p></Modal></>}
     {enrollment?.state === 'processing' && <p role="status">本人验证已完成，正在等待方舟图片审核；完成后会自动用于当前人物。</p>}
     {enrollment?.state === 'uncertain' && <div className="space-y-2"><p role="alert">方舟上传结果尚不明确。系统已暂停再次提交，请先核对原任务。</p><button type="button" onClick={() => void productionApi.refreshArkEnrollment(enrollment.id).then(next => { setEnrollment(next); if (next.state === 'ready') void props.onReady(); }).catch(cause => setError(cause instanceof Error ? cause.message : '原任务核对失败'))} className="rounded border bg-white px-3 py-2">核对原方舟任务</button></div>}
     {(enrollment?.error || error) && <p role="alert" className="text-red-700">{enrollment?.error || error}</p>}

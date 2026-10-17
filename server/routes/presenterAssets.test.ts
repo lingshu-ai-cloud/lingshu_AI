@@ -100,8 +100,14 @@ test('presenter creation, consent, import, tenant isolation, pagination and unce
     approved = true;
     const ready = await (await request(`/creations/${first.id}/refresh`, {})).json(); assert.equal(ready.status, 'completed'); assert.equal(ready.consentUrl, undefined); assert.equal(creates(), 1);
     const saved = await (await request('/import', bind)).json(); assert.equal(saved.presenters.length, 1); assert.equal(saved.presenters[0].nativeOrientation, 'portrait'); assert.equal(saved.presenters[0].supportsAlpha, false); assert.equal(saved.presenters[0].creationMode, 'quick');
+    assert.deepEqual(saved.presenters[0].referenceMaterialIds, ['ark-image', 'ark-video'], 'import binds the retained photo and video to the presenter for later Ark certification');
     assert.equal(validateHeyGenPresenterRecord(saved.presenters[0]).ok, true, 'verified import satisfies the existing generation gate');
     assert.equal((await (await request('/import', bind)).json()).presenters.length, 1);
+    const defaultsRow = [...rows.values()].find(row => row.payload?.presenters?.some((presenter: any) => presenter.id === saved.presenters[0].id));
+    if (!defaultsRow) throw new Error('missing presenter defaults row');
+    defaultsRow.payload.presenters[0].referenceMaterialIds = [];
+    const repaired = await (await request('/import', bind)).json();
+    assert.deepEqual(repaired.presenters[0].referenceMaterialIds, ['ark-image', 'ark-video'], 'retrying import repairs missing Ark material bindings');
     assert.equal((await request('/import', bind, 'B')).status, 400);
     assert.equal((await request('/import', { lookId: 'private-other', authorized: true, reviewed: true })).status, 400);
     const catalog = await (await request('/catalog')).json(); assert.equal(catalog.items[0].id, 'public1'); assert.equal(catalog.nextToken, 'page2');

@@ -1,4 +1,4 @@
-import { PresenterAudioPreparationError, normalizePresenterTrainingVideo } from '../lib/presenterVideo.js';
+import { PresenterAudioPreparationError, extractPresenterVoiceCandidate, normalizePresenterTrainingVideo } from '../lib/presenterVideo.js';
 import fs from 'node:fs';
 import { currentDataAuthority } from '../storage/dataAuthority.js';
 import { readLocalMaterials, saveLocalMaterials } from '../lib/materialLibrary.js';
@@ -249,6 +249,15 @@ export function createPresenterAssetsRouter(store: DataStore, exclusive: Exclusi
       res.json(page);
     }
     catch (e) { res.status(503).json({ error: message(e) }); }
+  });
+  router.post('/voices/candidate-from-video', raw({ type: 'application/octet-stream', limit: '200mb' }), async (req, res) => {
+    try {
+      const bytes = req.body as Buffer;
+      if (!Buffer.isBuffer(bytes) || bytes.length < 10_000 || bytes.length > 200 * 1024 * 1024) throw new Error('请选择 200MB 以内的有效本人视频');
+      const result = await extractPresenterVoiceCandidate(bytes);
+      res.setHeader('Cache-Control', 'no-store');
+      res.json({ audioBase64: result.audio.toString('base64'), durationSeconds: result.durationSeconds, nonSilentSeconds: result.nonSilentSeconds });
+    } catch (error) { res.status(400).json({ error: message(error) }); }
   });
   router.post('/voices/clones', raw({ type: ['audio/webm', 'audio/wav', 'audio/mpeg', 'audio/mp4', 'audio/ogg'], limit: '10mb' }), async (req, res) => {
     try {
@@ -573,10 +582,12 @@ export function createPresenterAssetsRouter(store: DataStore, exclusive: Exclusi
       let look: PresenterLook;
       let defaultVoice: string | undefined;
       let creationMode: PresenterAsset['creationMode'];
+      let arkPreparation: ArkPresenterPreparation | undefined;
       if (b.creationId) {
         const job = await refresh(await own(String(b.creationId), tenant, 'creation'));
         if (job.status !== 'completed' || !job.look) throw new Error('人物训练或本人授权尚未完成');
         look = job.look; defaultVoice = job.voiceId; creationMode = job.type === 'digital_twin' ? 'expert' : 'quick';
+        arkPreparation = job.arkPreparation;
       } else {
         const cached = publicLooks.get(`${tenant}:${String(b.lookId)}`);
         if (!cached || Date.now() - cached.at > 300000) throw new Error('请刷新可用人物列表后重新选择');
@@ -600,14 +611,20 @@ export function createPresenterAssetsRouter(store: DataStore, exclusive: Exclusi
         const previous = defaults.presenters.find(p => p.avatarId === look.id && p.voiceId === voiceId);
         if (previous) {
           if (!previous.authorized) throw new Error('该人物使用授权尚未确认，请重新完成授权');
-          if (b.makeDefault !== true || defaults.defaultPresenterId === previous.id) return defaults;
-          const payload = { ...defaults, defaultPresenterId: previous.id };
+          const preparedIds = arkPreparation ? [arkPreparation.photoMaterialId, arkPreparation.videoMaterialId] : [];
+          const referenceMaterialIds = [...new Set([...(previous.referenceMaterialIds || []), ...preparedIds])];
+          const needsMaterials = referenceMaterialIds.length !== (previous.referenceMaterialIds || []).length;
+          if (!needsMaterials && (b.makeDefault !== true || defaults.defaultPresenterId === previous.id)) return defaults;
+          const payload = { ...defaults,
+            presenters: needsMaterials ? defaults.presenters.map(p => p.id === previous.id ? { ...p, referenceMaterialIds } : p) : defaults.presenters,
+            defaultPresenterId: b.makeDefault === true ? previous.id : defaults.defaultPresenterId };
           if (!await store.update('studio_production_defaults', row!.id, { payload })) throw new Error('默认人物保存失败，请重试');
           return payload;
         }
         if (defaults.presenters.length >= 50) throw new Error('企业人物已达到 50 个上限');
         const createdByTenant = Boolean(b.creationId);
         const presenter: PresenterAsset = { id: `presenter-${hash(`${look.id}:${voiceId}`).slice(0, 24)}`, name: String(b.name || look.name).slice(0, 100), avatarId: look.id, voiceId, authorized: true,
+          ...(arkPreparation ? { referenceMaterialIds: [arkPreparation.photoMaterialId, arkPreparation.videoMaterialId] } : {}),
           supportsAlpha: false, nativeOrientation: look.orientation, imageUrl: look.imageUrl, videoUrl: look.videoUrl, creationMode, assetVersion: 1, capabilities: ['talking'], toolMappings: { heygen: { avatarId: look.id, voiceId } }, rightsEvidence: createdByTenant
             ? { authorizationRef: `document://studio_presenter_assets/${String(b.creationId)}/${look.id}`, consentRef: creationMode === 'quick' ? `consent://user-declaration/${String(b.creationId)}` : `consent://heygen/${look.groupId || look.id}`, grantedAt: new Date().toISOString(), subjectAdultConfirmed: true, permittedProviders: ['heygen'], permittedUses: ['digital_presenter', 'voice_synthesis'] }
             : { authorizationRef: `license://heygen/public-catalog/${look.id}`, consentRef: `license://heygen/public-catalog/${look.groupId || look.id}`, grantedAt: new Date().toISOString(), subjectAdultConfirmed: false, permittedProviders: ['heygen'], permittedUses: ['digital_presenter', 'voice_synthesis'] } };

@@ -12,6 +12,14 @@ async function request<T>(path: string, body?: unknown): Promise<T> {
   return data;
 }
 export const presenterApi = {
+  async voiceCandidateFromVideo(file: File): Promise<{ file: File; durationSeconds: number; nonSilentSeconds: number }> {
+    if (!file.size || file.size > 200 * 1024 * 1024) throw new Error('请选择 200MB 以内的本人视频');
+    const response = await fetch(`${root}/voices/candidate-from-video`, { method: 'POST', headers: { ...authHeader(), 'Content-Type': 'application/octet-stream' }, body: file });
+    const result = await response.json().catch(() => null);
+    if (!response.ok || !result?.audioBase64) throw new Error(result?.error || '视频口播提取失败，请上传录音或直接补录');
+    const bytes = Uint8Array.from(atob(result.audioBase64), character => character.charCodeAt(0));
+    return { file: new File([bytes], `${file.name.replace(/\.[^.]+$/, '')}-voice.mp3`, { type: 'audio/mpeg' }), durationSeconds: result.durationSeconds, nonSilentSeconds: result.nonSilentSeconds };
+  },
   capabilities: () => request<PresenterCapabilities>('/capabilities'),
   catalog: (token = '', scope: 'public' | 'private' = 'public') => request<PresenterPage<PresenterLook>>(`/catalog?token=${encodeURIComponent(token)}&scope=${scope}`),
   syncFavorites: () => request<{ defaults: ProductionDefaults; favoriteCount: number; importedCount: number; skippedWithoutVoice: number; capacityReached: boolean }>('/favorites/sync', {}),
