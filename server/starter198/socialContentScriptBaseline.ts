@@ -967,5 +967,8 @@ export function publicSocialScriptBaselineSummary(
     ...(baseline.match?.referenceSource
       ? { referenceSourceId: baseline.match.referenceSource.sourceId }
       : {}),
+    ...(baseline.match?.inspirationReference?.recordId
+      ? { referenceVideoId: baseline.match.inspirationReference.recordId }
+      : {}),
   };
 }

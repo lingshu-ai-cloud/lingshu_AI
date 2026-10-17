@@ -41,14 +41,14 @@ export default function DigitalEmployeeWorkspace({ data, calendarTasks, calendar
         aria-label="数字员工视图"
         size="large"
         value={workspaceView}
-        options={[{ label: '员工排期', value: 'agents' }, { label: '发布日历', value: 'publishing' }]}
+        options={[{ label: '视频生产', value: 'agents' }, { label: '发布日历', value: 'publishing' }]}
         onChange={changeWorkspaceView}
       />
       {workspaceView === 'agents' && onOpenAgentSettings && <Button icon={<Settings2 size={15}/>} onClick={onOpenAgentSettings}>Agent 设置</Button>}
     </div>
     <div hidden={workspaceView !== 'agents'} aria-hidden={workspaceView !== 'agents'} className="space-y-4">
       <section aria-label="数字员工列表" className="rounded-lg border border-border bg-white p-4">
-        <div className="mb-3 flex min-h-11 flex-wrap items-center justify-between gap-3"><div><h2 className="text-base font-semibold text-text-primary">数字员工</h2><p className="mt-1 text-xs text-text-secondary">状态随当前周任务回执实时更新；点击 Agent 筛选排期，再次点击查看全部</p></div><label className="inline-flex min-h-11 cursor-pointer items-center gap-2 text-xs text-text-secondary"><Switch size="small" checked={hideCompleted} onChange={setHideCompleted} aria-label="隐藏已完成"/><span>隐藏已完成</span></label></div>
+        <div className="mb-3 flex min-h-11 flex-wrap items-center justify-between gap-3"><div><h2 className="text-base font-semibold text-text-primary">数字员工</h2><p className="mt-1 text-xs text-text-secondary">状态随当前周任务回执实时更新；每条视频按固定生产路径推进，点击 Agent 筛选其负责步骤</p></div><label className="inline-flex min-h-11 cursor-pointer items-center gap-2 text-xs text-text-secondary"><Switch size="small" checked={hideCompleted} onChange={setHideCompleted} aria-label="隐藏已完成"/><span>隐藏已完成</span></label></div>
         <div className="flex gap-3 overflow-x-auto pb-1">{agents.map(agent => {
           const active = selectedAgent === agent.role;
           const working = agent.status === 'working';
@@ -61,7 +61,7 @@ export default function DigitalEmployeeWorkspace({ data, calendarTasks, calendar
           </button>;
         })}</div>
       </section>
-      <section aria-label="数字员工工作排期" className="overflow-hidden rounded-lg border border-border bg-white">
+      <section aria-label="数字员工视频生产轨道" className="overflow-hidden rounded-lg border border-border bg-white">
         {calendarTasks !== undefined || calendarDemo
           ? <RestoredAgentWorkCalendar tasks={calendarTasks || []} startsAt={data.goal?.startsAt} demo={calendarDemo} agentRole={selectedAgent} hideCompleted={hideCompleted} onOpenProduction={onOpenContent ? task => onOpenContent(task.id, task.productionTaskId) : undefined}/>
           : <ConnectedAgentCalendar startsAt={data.goal?.startsAt} agentRole={selectedAgent} hideCompleted={hideCompleted} accountBindingTasks={bindingTasks} currentRunId={currentRunId}/>}

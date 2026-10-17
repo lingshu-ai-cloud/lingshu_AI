@@ -1,8 +1,7 @@
 import { hasCalendarProductionBinding, isCalendarTaskOverdue, calendarOverdueDuration, type AgentCalendarTask } from './AgentWeeklyCalendar';
-import {agentCalendarAuthIdentity, captureAgentCalendarReturnContext, readAgentCalendarReturnContext, registerAgentCalendarReturnState, restoreAgentCalendarReturnContext} from '../../lib/agentCalendarReturnContext';
-import type {LsCalendarView} from '../ui/LsCalendar';
+import {agentCalendarAuthIdentity, captureAgentCalendarReturnContext} from '../../lib/agentCalendarReturnContext';
 import { flushSync } from 'react-dom';
-import { lazy, Suspense, useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { Alert, Button, Steps, Tag } from 'antd';
 import { UserRound } from 'lucide-react';
 import type { CrossWeekMaterialTarget } from '../socialProgram/crossWeekMaterialCalendar';
@@ -17,20 +16,15 @@ import { hasTemplateCalendarTarget, type TemplateCalendarTarget } from '../socia
 import { hasReviewCalendarTarget, type ReviewCalendarTarget } from '../socialProgram/reviewCalendarNavigation';
 import { hasPlanningCalendarTarget, type PlanningCalendarTarget } from '../socialProgram/planningCalendarNavigation';
 import { calendarDayKey, calendarInstant, type LsCalendarEvent } from '../../lib/calendarModel';
-import { hourCalendarCard } from './agentHourCalendarPolicy';
-import { projectCalendarDeliverables, projectDailyCustomerServiceCards, isAlwaysOnCalendarTask, orderDailyCalendarTasks, projectDailyMilestones, conciseCalendarTitle } from './calendarDeliverables';
+import { projectCalendarDeliverables, isAlwaysOnCalendarTask, orderDailyCalendarTasks, conciseCalendarTitle } from './calendarDeliverables';
 import AgentRoleIcon, { AGENT_ROLE_PALETTE, type AgentVisualRole } from '../ui/AgentRoleIcon';
 import {agentCalendarTaskType,taskHasDeliverableOrWorkspace} from './agentCalendarGroups';
 import {readOrRepairWeeklyTaskWorkspace} from '../../lib/weeklyTaskWorkspaceApi';
 import type {WeeklyTaskWorkspace} from '../../../shared/contracts/weeklyTaskWorkspace';
 import {socialProgramApi} from '../../lib/socialProgramApi';
 import WeeklyTaskQuickActions from '../socialProgram/WeeklyTaskQuickActions';
-
-const LsCalendar = typeof document === 'undefined'
-  ? function ServerCalendar({ events, label }: { events: LsCalendarEvent[]; label: string }) {
-      return <div aria-label={label}>{events.map(event => <span key={event.id}>{event.title} · {event.statusLabel}</span>)}</div>;
-    }
-  : lazy(() => import('../ui/LsCalendar').then(module => ({ default: module.LsCalendar })));
+import AgentVideoProductionBoard from './AgentVideoProductionBoard';
+import { productionStageContract } from './agentVideoProductionModel';
 
 const agentLabels: Record<AgentCalendarTask['agent'], string> = {
   human: '人工处理',
@@ -201,25 +195,7 @@ export default function RestoredAgentWorkCalendar({
   canOpenContentTask,
   hideCompleted = false,
 }: Props) {
-  const positionKey = JSON.stringify([agentCalendarAuthIdentity(),scopeKey,startsAt,demo,'milestones-monday-v3']);
-  const stateKey = `restoredAgentCalendar:${positionKey}`;
-  const saved = readAgentCalendarReturnContext();
-  const previous = saved?.calendar.positionKey === positionKey ? saved.states[stateKey] as {date?: string; view?: LsCalendarView} | undefined : undefined;
-  const [calendarDate, setCalendarDate] = useState(previous?.date || startsAt || tasks[0]?.date || calendarDayKey(new Date()));
-  const [calendarView, setCalendarView] = useState<LsCalendarView>('dayGridWeek');
-  const viewport = useRef({date:calendarDate,view:calendarView});
-  viewport.current = {date:calendarDate,view:calendarView};
-  useEffect(() => registerAgentCalendarReturnState(stateKey, {
-    read: () => viewport.current,
-    restore: value => { const state = value as typeof viewport.current; if(state?.date)setCalendarDate(state.date); if(state?.view)setCalendarView(state.view); },
-  }), [stateKey]);
-  useEffect(() => {
-    const context = readAgentCalendarReturnContext();
-    const state = context?.calendar.positionKey === positionKey ? context.states[stateKey] as typeof viewport.current | undefined : undefined;
-    setCalendarDate(state?.date || startsAt || tasks[0]?.date || calendarDayKey(new Date()));
-    setCalendarView('dayGridWeek');
-    if(context?.calendar.positionKey===positionKey)restoreAgentCalendarReturnContext(context);
-  }, [positionKey]);
+  const positionKey = JSON.stringify([agentCalendarAuthIdentity(),scopeKey,startsAt,demo,'video-production-board-v1']);
   const [now, setNow] = useState(() => Date.now());
   const [entryState,setEntryState]=useState<{id:string;busy:boolean;error:string}|null>(null);
   const entryController=useRef<AbortController|null>(null);
@@ -257,7 +233,7 @@ export default function RestoredAgentWorkCalendar({
     return () => window.clearInterval(timer);
   }, []);
 
-  const deliverables = useMemo(() => projectDailyMilestones(projectDailyCustomerServiceCards(projectCalendarDeliverables(tasks, true), startsAt)), [tasks, startsAt]);
+  const deliverables = useMemo(() => projectCalendarDeliverables(tasks, true), [tasks]);
   const timeZone = tasks.find(task => task.calendarClock?.timeZone)?.calendarClock?.timeZone || 'Asia/Shanghai';
   const todayKey = calendarDayKey(new Date(now), timeZone);
   const scopedDeliverables = useMemo(() => deliverables.filter(task => {
@@ -267,7 +243,7 @@ export default function RestoredAgentWorkCalendar({
   const independentTasks = useMemo(() => scopedDeliverables.filter(taskHasDeliverableOrWorkspace), [scopedDeliverables]);
   const events = useMemo<LsCalendarEvent[]>(() => {
     const orderedTasks = orderDailyCalendarTasks(independentTasks);
-    const currentTaskId = orderedTasks.find(task => task.date === todayKey && !isAlwaysOnCalendarTask(task) && hasActiveExecution(task))?.id;
+    const currentTaskId = orderedTasks.find(task => !isAlwaysOnCalendarTask(task) && hasActiveExecution(task))?.id;
     return orderedTasks
     .filter(task => !hideCompleted || !['completed', 'cancelled', 'no_data'].includes(task.status))
     .map(task => {
@@ -275,7 +251,6 @@ export default function RestoredAgentWorkCalendar({
     const allDay = true;
     const resident = isAlwaysOnCalendarTask(task);
     const start = task.date;
-    const card = hourCalendarCard(task, now);
     const presentation = calendarTaskPresentation(task, todayKey);
     return {
       id: task.id,
@@ -292,7 +267,7 @@ export default function RestoredAgentWorkCalendar({
       platform: task.platform,
       sourceId: task.productionTaskId || task.id,
       description: task.context,
-      cardLines: [card.lines[0], task.title, `${resident?'24小时值守':task.dailyTaskGroup?`${task.dailyTaskGroup.tasks.length} 项任务`:'按流程执行'} · ${presentation.statusLabel}`],
+      cardLines: [agentLabels[task.agent], task.title, `${resident?'24小时值守':'按固定生产路径执行'} · ${presentation.statusLabel}`],
       planPlaceholder: false,
       progress: task.id === currentTaskId ? taskProgressPercent(task) : undefined,
       muted: presentation.muted,
@@ -360,10 +335,12 @@ export default function RestoredAgentWorkCalendar({
 
     const channelLabel={whatsapp:'WhatsApp',messenger:'Messenger',instagram:'Instagram'} as const;
     const summary=task.customerServiceSummary;
+    const stageContract=productionStageContract(task);
 
     return <div className="space-y-5">
       {!demo&&<WeeklyTaskQuickActions sources={executionSources} onOpen={source=>enterSource(source)} onPlanning={onOpenPlanning?()=>open(onOpenPlanning):undefined}/>}
       <div><div className="flex flex-wrap items-center gap-2"><Tag color={event.status === 'failed' ? 'error' : event.status === 'needs_action' ? 'warning' : event.status === 'working' ? 'processing' : event.status === 'done' ? 'success' : 'default'}>{event.statusLabel || statusLabels[task.status]}</Tag>{task.minutes !== null && <span className="text-xs text-text-secondary">预计 {task.minutes} 分钟</span>}</div><h3 className="mt-2 ls-type-title-medium text-text-primary">{task.title}</h3></div>
+      {stageContract&&<section aria-label="固定生产路径约束" className="overflow-hidden rounded-lg border border-border bg-white"><div className="border-b border-border bg-surface-2 px-4 py-3"><p className="text-[10px] font-bold text-accent">固定生产路径 · {stageContract.title}</p><h4 className="mt-1 text-sm font-semibold text-text-primary">{stageContract.owner} 主导</h4></div><dl className="grid gap-px bg-border sm:grid-cols-2"><div className="bg-white p-4"><dt className="text-xs font-semibold text-text-secondary">如何调用</dt><dd className="mt-1 text-xs leading-5 text-text-primary">{stageContract.invocation}</dd></div><div className="bg-white p-4"><dt className="text-xs font-semibold text-text-secondary">承接输入</dt><dd className="mt-1 text-xs leading-5 text-text-primary">{stageContract.input}</dd></div><div className="bg-white p-4"><dt className="text-xs font-semibold text-text-secondary">交付下一步</dt><dd className="mt-1 text-xs leading-5 text-text-primary">{stageContract.handoff}</dd></div><div className="bg-white p-4"><dt className="text-xs font-semibold text-text-secondary">稳定性门槛</dt><dd className="mt-1 text-xs leading-5 text-text-primary">{stageContract.qualityGate}</dd></div></dl></section>}
       <section aria-label="负责 Agent" className="space-y-2"><div className="flex flex-wrap gap-2"><AgentIdentityCard role={task.agent} relation="主 Agent"/>{assistantRoles.map(role => <AgentIdentityCard key={role} role={role} relation="辅助 Agent"/>)}</div>{assistantRoles.length === 0 && <p className="text-xs text-text-secondary">当前没有记录辅助 Agent；流程只显示已分配的真实责任。</p>}</section>
       <dl className="grid gap-3 rounded-lg border border-border bg-white p-4 sm:grid-cols-3">
         <div className="min-w-0"><dt className="text-xs text-text-secondary">交付时间</dt><dd className="mt-1 break-words text-sm font-medium text-text-primary">{deliveryTime}</dd></div>
@@ -383,35 +360,14 @@ export default function RestoredAgentWorkCalendar({
     </div>;
   };
 
-  return <section id="agent-weekly-calendar" key={scopeKey} data-agent-calendar-position-key={positionKey} className="scroll-mt-4 bg-white" aria-label={demo ? 'B2B 零基础首周任务日历' : 'Agent 周任务日历'}>
-    {!demo && tasks.length === 0 && <Alert className="m-4" type="info" showIcon title="尚无 Agent 执行排期" description="发布计划不会自动视为制作任务；生成执行排期后将在此显示。"/>}
+  return <section id="agent-weekly-calendar" key={scopeKey} data-agent-calendar-position-key={positionKey} className="scroll-mt-4 bg-white" aria-label={demo ? 'B2B 零基础首周视频生产轨道' : 'Agent 视频生产轨道'}>
+    {!demo && tasks.length === 0 && <Alert className="m-4" type="info" showIcon title="尚无 Agent 视频任务" description="创建内容任务并生成执行节点后，每条视频会在此形成独立生产轨道。"/>}
     {demo && <Alert className="m-4" type="warning" showIcon title="参考排期" description="任务、工时与执行状态为参考预览，异常副链路仅用于验收。"/>}
     <ul className="sr-only">{events.map(event => {
       const task = event.data as AgentCalendarTask;
       return <li key={event.id}>{agentCalendarTaskType(task)} · {event.title} · {event.statusLabel}{task.affectedPublicationIds?.length ? ` · 受影响发布 ${task.affectedPublicationIds.join('、')}` : ''}</li>;
     })}</ul>
-    {<Suspense fallback={<p className="p-5 text-xs text-text-secondary">正在加载日历…</p>}><LsCalendar
-        key={positionKey}
-        label={demo ? 'B2B 零基础首周任务日历' : 'Agent 周任务日历'}
-        events={events}
-        initialDate={calendarDate}
-        view={calendarView}
-        initialView={calendarView}
-        dateOnly
-        taskBoard
-        showAllEvents
-        visualVariant="agent"
-        narrowView="listWeek"
-        detailsTitle="任务详情"
-        onDetailsClose={()=>{entryController.current?.abort();setEntryState(null);}}
-        onDatesSet={info => { const next = calendarDayKey(info.view.calendar.getDate(), timeZone); setCalendarDate(next); setCalendarView(info.view.type as LsCalendarView); }}
-        firstDay={1}
-        timeZone={timeZone}
-        timeGridHeight={calendarView === 'listWeek' ? 'auto' : 'clamp(680px, calc(100dvh - 120px), 800px)'}
-        collapseEmptyTimeRanges
-        detailsLayout="custom"
-        renderDetails={renderDetails}
-      /></Suspense>}
+    <AgentVideoProductionBoard events={events} demo={demo} renderDetails={renderDetails}/>
     {taskWorkspace&&<div className="fixed inset-0 z-[230] flex items-center justify-center bg-slate-950/35 p-4" onClick={()=>setTaskWorkspace(null)}><section role="dialog" aria-modal="true" aria-label="任务生产现场" className="max-h-[90vh] w-full max-w-2xl overflow-y-auto rounded-2xl bg-white p-6 shadow-xl" onClick={event=>event.stopPropagation()}><div className="flex items-center justify-between gap-3"><div><Tag color="blue">任务生产现场</Tag><h3 className="mt-2 ls-type-title-medium">{taskWorkspace.task.title}</h3></div><Button onClick={()=>setTaskWorkspace(null)}>关闭</Button></div>{taskWorkspace.loading&&<p role="status" className="mt-5 text-sm text-text-secondary">正在核验持久化生产现场…</p>}{taskWorkspace.error&&<Alert className="mt-5" type="error" showIcon title="生产现场无法读取" description={taskWorkspace.error}/>} {taskWorkspace.item&&<div className="mt-5 space-y-4"><dl className="grid gap-3 rounded-xl border p-4 sm:grid-cols-2"><div><dt className="text-xs text-text-secondary">现场身份</dt><dd className="break-all text-sm">{taskWorkspace.item.workspaceId}</dd></div><div><dt className="text-xs text-text-secondary">当前阶段</dt><dd className="text-sm font-semibold">{taskWorkspace.item.phase}</dd></div><div><dt className="text-xs text-text-secondary">执行任务</dt><dd className="break-all text-sm">{taskWorkspace.item.executionTaskId}</dd></div><div><dt className="text-xs text-text-secondary">负责角色</dt><dd className="text-sm">{taskWorkspace.item.responsibleActor}</dd></div></dl><section className="rounded-xl bg-surface-2 p-4"><h4 className="text-sm font-semibold">真实依赖与卡点</h4>{taskWorkspace.item.upstreamTaskIds.length?<p className="mt-2 break-all text-xs">上游：{taskWorkspace.item.upstreamTaskIds.join('、')}</p>:<p className="mt-2 text-xs">无上游依赖</p>}{taskWorkspace.item.blockingCodes.length?<ul className="mt-2 list-disc pl-5 text-sm text-amber-800">{taskWorkspace.item.blockingCodes.map(code=><li key={code}>{code}</li>)}</ul>:<p className="mt-2 text-sm text-emerald-700">当前没有后端阻塞记录</p>}</section><section className="rounded-xl border p-4"><h4 className="text-sm font-semibold">真实业务对象</h4><p className="mt-2 text-xs">内容任务：{taskWorkspace.item.contentTaskId||'尚未由上游创建'}</p><p className="mt-1 text-xs">运行：{taskWorkspace.item.runId||'尚未启动'}</p><p className="mt-1 text-xs">结果引用：{taskWorkspace.item.resultRefs.length?taskWorkspace.item.resultRefs.map(ref=>`${ref.type}:${ref.id}:v${ref.version}`).join('、'):'尚无权威结果'}</p></section>{(taskWorkspace.task.enterpriseFactExceptionId&&onOpenEnterpriseFacts||taskWorkspace.task.accountBindingTarget&&onBindAccount||taskWorkspace.task.customerExecutionTarget&&onOpenCustomerExecution||taskWorkspace.task.supplementTarget&&onOpenSupplement||hasTemplateCalendarTarget(taskWorkspace.task)&&onOpenTemplate||hasReviewCalendarTarget(taskWorkspace.task)&&onOpenReview||hasPlanningCalendarTarget(taskWorkspace.task)&&onOpenPlanning||(hasCalendarProductionBinding(taskWorkspace.task)||canOpenContentTask?.(taskWorkspace.task))&&onOpenProduction)&&<Button type="primary" onClick={()=>{const task=taskWorkspace.task;setTaskWorkspace(null);if(task.enterpriseFactExceptionId&&onOpenEnterpriseFacts)return onOpenEnterpriseFacts(task);if(task.accountBindingTarget&&onBindAccount)return onBindAccount(task);if(task.customerExecutionTarget&&onOpenCustomerExecution)return onOpenCustomerExecution(task);if(task.supplementTarget&&onOpenSupplement)return onOpenSupplement(task);if(hasTemplateCalendarTarget(task)&&onOpenTemplate)return onOpenTemplate(task);if(hasReviewCalendarTarget(task)&&onOpenReview)return onOpenReview(task);if(hasPlanningCalendarTarget(task)&&onOpenPlanning)return onOpenPlanning(task);if(onOpenProduction)return onOpenProduction(task);}}>进入对应业务执行页面</Button>}</div>}</section></div>}
   </section>;
 }

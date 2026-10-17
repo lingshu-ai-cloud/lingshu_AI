@@ -208,7 +208,7 @@ for (const label of ['爆款视频预览', '素材组合预览', '效果置信�
 assert.match(matrixScheduleSource, /Agent 任务看板/, 'the overview schedule section must retain only the Agent task board');
 assert.doesNotMatch(matrixScheduleSource, /<LsCalendar|发布日历/, 'the publishing calendar must not be duplicated inside the Agent task board');
 assert.doesNotMatch(weeklyCommandCenterSource, /<LsCalendar|WeeklyContentProgressPanel|本周发布日历/, 'the weekly-plan metrics must not duplicate the publishing calendar');
-assert.match(digitalEmployeeWorkspaceSource, /aria-label="数字员工视图"[\s\S]{0,300}员工排期[\s\S]{0,200}发布日历/, 'the Digital Employee tab must expose employee scheduling and publishing as two switchable views');
+assert.match(digitalEmployeeWorkspaceSource, /aria-label="数字员工视图"[\s\S]{0,300}视频生产[\s\S]{0,200}发布日历/, 'the Digital Employee tab must expose video production and publishing as two switchable views');
 assert.match(digitalEmployeeWorkspaceSource, /状态随当前周任务回执实时更新/, '员工卡必须说明状态来自当前周任务的实时回执');
 assert.match(digitalEmployeeWorkspaceSource, /data-agent-running=\{working \? 'true'/, '执行中的员工必须暴露稳定的运行态语义');
 assert.match(digitalEmployeeWorkspaceSource, /LoaderCircle[\s\S]{0,160}motion-safe:animate-spin/, '执行中的员工必须显示遵守减少动态偏好的旋转状态标识');
@@ -217,7 +217,8 @@ assert.match(digitalEmployeeWorkspaceSource, /\{workspaceView === 'agents' && on
 assert.match(matrixViewSource, /publishingCalendar=\{<WeeklyPublishingCalendar data=\{data\} onRefresh=\{onRefresh\}\/>\}/, 'the publishing calendar must be injected into the Digital Employee workspace');
 assert.match(matrixViewSource, /<DigitalEmployeeWorkspace[^>]*onOpenAgentSettings=\{onOpenAgentSettings\}/, 'the Digital Employee workspace must receive the settings action');
 assert.match(restoredAgentWorkCalendarSource, /identity: \{ kind: 'agent', role: task\.agent \}/, 'employee schedule cards must use the responsible Agent icon instead of a missing cover');
-assert.match(restoredAgentWorkCalendarSource, /detailsLayout="custom"/, 'Agent schedule details must remove the duplicated generic summary');
+assert.match(restoredAgentWorkCalendarSource, /<AgentVideoProductionBoard[^>]*renderDetails=\{renderDetails\}/, 'Agent video production must use the task-centric board with its custom detail drawer');
+assert.match(restoredAgentWorkCalendarSource, /productionStageContract/, 'task details must explain the deterministic production handoff contract');
 for (const label of ['主 Agent', '辅助 Agent', '交付时间', '交付内容', '交付形式', '当前进度']) {
   assert.match(restoredAgentWorkCalendarSource, new RegExp(label), `Agent schedule details must expose ${label}`);
 }

@@ -29,6 +29,13 @@ export type AgentCalendarTask = {
   summaryGroup?: AgentCalendarSummaryGroup;
   accountBindingTarget?: {platform:string;accountId:string|null;consumerIds:string[]};
   platform?: string;
+  /** Stable video/publication identity used by the task-centric production board. */
+  videoTaskId?: string;
+  videoTitle?: string;
+  previewThumbnailUrl?: string;
+  previewVideoUrl?: string;
+  accountId?: string;
+  publishWindow?: string;
   enterpriseFactExceptionId?:string;
   internalNodes?: AgentCalendarTask[];
   date: string;

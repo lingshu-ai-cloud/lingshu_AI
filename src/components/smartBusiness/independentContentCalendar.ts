@@ -6,7 +6,7 @@ export function projectIndependentContentCalendar(tasks:WorkflowTask[],runId:str
   if(!state.dueAt||!Number.isFinite(Date.parse(state.dueAt)))return[];
   const date=new Intl.DateTimeFormat('sv-SE',{timeZone:'Asia/Shanghai',year:'numeric',month:'2-digit',day:'2-digit'}).format(new Date(state.dueAt));
   const time=new Intl.DateTimeFormat('en-GB',{timeZone:'Asia/Shanghai',hour:'2-digit',minute:'2-digit',hour12:false}).format(new Date(state.dueAt));
-  return[{id:task.id,date,time,agent:'content' as const,title:task.title,context:task.description,output:task.output.delivery?'交付物已回收，等待验收':task.blocked_reason||'进入生产页面继续',minutes:null,status:task.status==='succeeded'?'completed' as const:task.status==='failed'?'failed' as const:'blocked' as const,dueAt:state.dueAt,calendarClock:{offsetMinutes:480,timeZone:'Asia/Shanghai',label:'北京时间',source:'frozen_iana' as const},productionExecutionTaskId:task.id,independentProjectId:projectId,independentRunId:runId}];
+  return[{id:task.id,date,time,agent:'content' as const,executionStep:'video_generation',videoTaskId:projectId||task.id,videoTitle:task.title,title:task.title,context:task.description,output:task.output.delivery?'交付物已回收，等待验收':task.blocked_reason||'进入生产页面继续',minutes:null,status:task.status==='succeeded'?'completed' as const:task.status==='failed'?'failed' as const:'blocked' as const,dueAt:state.dueAt,calendarClock:{offsetMinutes:480,timeZone:'Asia/Shanghai',label:'北京时间',source:'frozen_iana' as const},productionExecutionTaskId:task.id,independentProjectId:projectId,independentRunId:runId}];
  });
 }
 export function openIndependentContent(card:AgentCalendarTask):boolean{

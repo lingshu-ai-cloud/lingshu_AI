@@ -17,14 +17,13 @@ test('only unfinished work before today receives an overdue exclamation mark',()
  assert.equal(calendarExecutionMark({...base,date:'2026-10-14',status:'no_data'},today),undefined);
  assert.equal(calendarExecutionMark({...base,date:'2026-10-14',status:'cancelled'},today),undefined);
 });
-test('weekly board is Monday through Sunday and direct execution never substitutes a status workspace',()=>{
+test('video task board uses the fixed production path and direct execution never substitutes a status workspace',()=>{
  const source=readFileSync(new URL('./RestoredAgentWorkCalendar.tsx',import.meta.url),'utf8');
  const connected=readFileSync(new URL('./ConnectedAgentCalendar.tsx',import.meta.url),'utf8');
  const bridge=readFileSync(new URL('../socialProgram/WeeklyCustomerCalendar.tsx',import.meta.url),'utf8');
- assert.match(source,/firstDay=\{1\}/);
- assert.match(source,/narrowView="listWeek"/,'narrow employee schedules must show the whole week instead of opening on an apparently empty single day');
- assert.doesNotMatch(source,/narrowView="dayGridDay"/);
- assert.match(source,/timeGridHeight=\{calendarView === 'listWeek' \? 'auto'/,'the responsive list must fit its real tasks instead of leaving a large empty calendar surface');
+ assert.match(source,/AgentVideoProductionBoard/);
+ assert.match(source,/productionStageContract/);
+ assert.doesNotMatch(source,/<LsCalendar[\s/>]|firstDay=|narrowView=|timeGridHeight=/);
  assert.match(source,/交付物与当前受阻原因/);assert.match(source,/executionBlockers/);assert.match(source,/executionResultRefs/);
  assert.match(source,/onEnterExecution\(source,controller.signal\)/);assert.match(source,/进入真实执行界面/);
  assert.match(bridge,/onEnterExecution=\{onEnterExecution\}/);assert.match(connected,/onEnterExecution=\{enterExecution\}/);
@@ -83,9 +82,9 @@ test('weekly calendar receives the single completed-work filter from the Digital
   assert.doesNotMatch(connected, /经营项目：|请选择周任务包|查看周任务包版本/);
   assert.match(connected, /<WeeklyCustomerCalendar[^>]*hideCompleted=\{hideCompleted\}/);
   assert.match(bridge, /<AgentWeeklyCalendar[^>]*hideCompleted=\{hideCompleted\}/);
-  assert.match(source,/dateOnly[\s\S]*taskBoard[\s\S]*showAllEvents/);
+  assert.match(source,/<AgentVideoProductionBoard events=\{events\}/);
   assert.match(source,/const allDay = true/);
-  assert.match(source,/visualVariant="agent"/);
+  assert.doesNotMatch(source,/visualVariant="agent"|dateOnly|taskBoard/);
   assert.doesNotMatch(source,/06:00 起|T\$\{resident\?'00:00':'06:00'/);
 });
 
