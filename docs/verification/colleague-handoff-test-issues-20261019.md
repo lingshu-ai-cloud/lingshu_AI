@@ -4,51 +4,55 @@
 
 本文件只记录真实复现的失败。不得通过跳过测试、删除断言、扩大架构预算或放宽安全边界关闭条目。
 
-## OPEN-001 独立周规划只生成一条外部分析
+## RESOLVED-001 独立周规划只生成一条外部分析
 
 - 命令：`pnpm exec tsx --test server/socialPrograms/weeklyIndependentPlanning.test.ts`
 - 用例：`actual established program keeps owned gaps while external slots get explicit immutable partial dispatch`
 - 期望：`analyzed.directorAnalyses.length === 3`
 - 实际：`1`
 - 阶段：Director 分析，尚未进入执行图物化。
-- 初步归因：规划权威层对三个 external slot 的分析结果发生折叠或只选择了一个 slot；与 `weeklyExecutionGraph` 拆分无直接调用关系。
-- 状态：待修复。
+- 归因：测试要求三个 external slot 各自绑定独立证据，但 fixture 只持久化了 `video-1` 的候选证据和趋势记录；仅在跟踪账号元数据中列出 `video-2/3` 不能构成可用证据。规划权威层正确地只生成一条分析，没有复制同一来源冒充三个独立样本。
+- 修复：fixture 为三个外部视频分别写入完整候选证据和趋势记录，保留独立来源约束。
+- 状态：已修复；目标用例通过。
 
-## OPEN-002 社媒工作流候选集合出现空场景
+## RESOLVED-002 社媒工作流候选集合出现空场景
 
 - 命令：`pnpm exec tsx --test server/starter198/socialContentAgentWorkflow.test.ts`
 - 断言：所有执行场景都应有 `1..20` 个候选。
 - 实际：至少一个场景的 `candidates.length === 0`。
-- 初步归因：素材候选准入/产品兼容过滤与旧工作流 fixture 的契约不一致；需要先确定 fixture 是否缺少新 V2 权利或产品身份证据。
-- 状态：待修复。
+- 归因：fixture 使用 `type-aware.v1`，该版本的产品路线是本地素材优先且在没有本地视频时 fail-closed；测试却只提供产品身份图，并期望进入 V2 的受控产品生成预算路线。
+- 修复：将该明确验证受控产品生成的 fixture 升级为 `type-aware.v2`，保留注册能力、产品身份图和候选数量全部断言。
+- 状态：已修复；社媒 Agent 工作流 13 个用例通过。
 
-## OPEN-003 完整本地产品素材被错误降级
+## RESOLVED-003 完整本地产品素材被错误降级
 
 - 命令：`pnpm exec tsx --test server/starter198/socialContentTypeAwareAdmission.test.ts`
 - 用例：`normal unaltered product_value baseline admits complete local semantic evidence`
 - 期望：准入成功。
 - 实际：多个产品场景被标记为 `goal_degraded`，审核 `approved === false`，理由为“用户明确锁定的产品暂无对应参考素材”。
 - 现有证据：候选本身带有 `productRef: SKU-1`、本地视频区间和产品角色，但 `productId` 为空。
-- 初步归因：locked 产品匹配可能只接受稳定 `productId`，没有正确接受同一冻结 `productRef`；也可能是 fixture 应补充稳定产品 ID。必须依据当前产品身份契约判断，不能直接放宽匹配。
-- 状态：待修复。
+- 归因：locked 产品可用性只检查产品图片身份组，忽略了同一冻结 `productRef` 的已验证本地视频；同时产品引用比较没有统一去除 `product:` 命名空间前缀。
+- 修复：统一产品引用规范化；仅当本地视频具有 `semanticMatch=verified`、引用命中选中 source 且产品引用精确一致时，允许其满足 locked 产品素材要求。异品或未验证视频仍 fail-closed。
+- 状态：已修复；正常准入和 Outbox 恢复用例均通过。
 
-## OPEN-004 工作流错误码优先级变化
+## RESOLVED-004 工作流错误码优先级变化
 
 - 命令：`pnpm exec tsx --test server/starter198/socialContentWorkflow.test.ts`
 - 位置：约第 485 行。
 - 期望错误码：`social_content_execution_goal_degraded`
 - 实际错误码：`social_content_execution_director_review_required`
-- 初步归因：Director review 阻断现在早于 goal-degraded 语义错误返回；需核对当前 API 契约应该暴露哪个更具体的错误。
-- 状态：待修复。
+- 归因：该场景的执行审核结果没有任何镜头被判定为 `goal_degraded`，只是尚未通过 Director review；测试沿用了旧的宽泛错误码。相同文件的零输入准入以及当前审核状态机均要求返回 `social_content_execution_director_review_required`。生产实现会且只会在真实镜头可行性降级时返回 `goal_degraded`。
+- 修复：更新过期的 API 断言，继续断言 409、生产队列零调用以及后续旧持久化任务兼容链路，不放宽准入门禁。
+- 状态：已修复，待完整质量门禁复核。
 
-## OPEN-005 Outbox 恢复用例被相同准入回归阻断
+## RESOLVED-005 Outbox 恢复用例被相同准入回归阻断
 
 - 命令：`pnpm exec tsx --test --test-name-pattern="real outbox recovery" server/starter198/socialContentTypeAwareAdmission.test.ts`
 - 用例：`real outbox recovery reuses original queue/run after crash and never resubmits unknown supplier work`
 - 期望：先通过生产准入，再验证原 queue/run 被复用。
 - 实际：尚未进入恢复断言，即被 OPEN-003 的 `goal_degraded` 审核失败阻断。
 - 初步归因：当前是 OPEN-003 的下游失败，不应单独修改 Outbox 恢复逻辑。
-- 状态：被 OPEN-003 阻塞。
+- 状态：随 RESOLVED-003 修复；原 queue/run 复用且不重复提交供应商工作的用例通过。
 
 ## RESOLVED-006 工作流测试归档替身缺少参数类型
 
@@ -59,15 +63,16 @@
 - 修复：使用 `SocialContentAutoProductionRuntime['archiveGeneratedMedia']` 的首个参数类型，未使用宽泛 `any` 放过输入契约。
 - 状态：已修复，待完整质量门禁复核。
 
-## OPEN-007 CTA 证据门禁被供应适配器错误抢先阻断
+## RESOLVED-007 CTA 证据门禁被供应适配器错误抢先阻断
 
 - 命令：`pnpm exec tsx --test server/starter198/socialContentAssetSupplyExecution.test.ts`
 - 位置：约第 244 行的拒绝断言。
 - 期望错误：`weekly_production_cta_evidence_required`。
 - 实际错误：`asset_supply_provider_exhausted:scene-person:motion_graphics:adapter_not_registered`。
-- 初步归因：测试场景在到达 CTA 周生产证据门禁前，先进入了未注册的 `motion_graphics` 供应路由；需判断是执行检查顺序回归，还是 fixture 未随供应路由契约更新。
+- 归因：fixture 的计划已明确把不可靠的人货接触降级为 `motion_graphics`，但用于模拟 CTA 硬拒绝的两个 adapter 仍错误注册在旧的 `authorized_digital_presenter` 策略，因此从未被调用。
 - 关联性：生成素材归档候选与持久化测试均已通过；当前失败发生在供应适配器选择阶段，与本次归档模块搬移无直接调用关系。
-- 状态：待修复。
+- 修复：测试 adapter 注册到实际冻结的 `motion_graphics` 策略；硬拒绝仍立即抛出，后续 fallback 调用次数保持为零。
+- 状态：已修复；供应执行回归测试通过。
 
 ## RESOLVED-008 仪表盘源码契约测试未跟随模块拆分
 
@@ -110,6 +115,30 @@
 - 状态：已修复，待复跑确认。
 
 ## 已验证通过的相关范围
+
+## RESOLVED-023 V2 新任务过早暴露逐镜强制素材需求
+
+- 命令：`pnpm exec tsx --test server/starter198/socialContentWorkflow.test.ts`。
+- 实际：任务刚创建、尚未完成采集和 Director review 时，详情就根据系统默认脚本暴露四条 `required: true` 的逐镜素材需求。
+- 归因：读取投影无条件把临时 supply plan 转成用户素材需求；这会把开发过程中才知道的具体素材卡点提前伪装成已确认政策。
+- 修复：`type-aware.v2` 不再从预采集系统基线投影用户素材请求；真实缺口仍由执行审核和任务详情卡点如实返回。旧任务/旧策略的既有投影保持可读。
+- 状态：已修复；任务创建、补素材、同主题更新和启动链路通过。
+
+## RESOLVED-022 安全动态图形时长短于冻结 Director 镜头
+
+- 命令：`pnpm exec tsx --test server/starter198/socialContentWorkflow.test.ts`，零输入受控生产段。
+- 实际：本地安全动态图形按旧基线输出 2.8 秒，而 Director 冻结镜头为 3 秒；逐镜绑定正确报 `material_analysis_required`。
+- 归因：内置 adapter 的最低输出时长仍是旧的 2.8 秒图片惯例，无法覆盖当前三秒镜头窗口。
+- 修复：本地安全动态图形视频最低生成 3 秒；短镜头仍可在冻结窗口内裁切，不放宽逐镜字节、哈希、时长或场景绑定检查。
+- 状态：已修复；完整工作流 HTTP 测试通过。
+
+## RESOLVED-021 Agent 忽略已审核的本地安全供给策略
+
+- 命令：`pnpm exec tsx --test server/starter198/socialContentWorkflow.test.ts`。
+- 实际：旧任务兼容 fixture 已由 supply plan 明确选择 `verified_fact_card` / `motion_graphics`，Agent 却因视觉主题为产品介绍只查找产品生成能力，返回 `capability_mismatch`。
+- 归因：候选选择按主题覆盖了已经冻结的本地安全策略。
+- 修复：当供给计划明确选择 `verified_fact_card` 或 `motion_graphics` 时，优先匹配同策略已注册的本地能力；仍不允许借此切换到数字人、产品生成或客户证据路线。
+- 状态：已修复；完整工作流 HTTP 测试通过。
 
 ## RESOLVED-020 发布延期恢复计划缺少 PocketBase 集合
 
