@@ -30,6 +30,7 @@ import { SocialContentTaskBudget, type SocialTaskBudgetScope } from '../lib/soci
 import {resolveSocialContentCostLineage} from './socialContentCostLineage.js';
 import {automaticallyConfirmPresenterFirstFrameApproval,readConfirmedPresenterFirstFrameApproval} from './socialContentPresenterFirstFrameApproval.js';
 import {currentPresenterFirstFrameAssetProvenanceHash} from './socialContentPresenterFirstFrameRuntime.js';
+import {carryForwardWeeklyCandidateExactProductionCost} from '../runtime/weeklyCandidateExactProductionEscrowPorts.js';
 export interface ProductionBudgetReadPorts {
     /** Trusted readonly runtime/account readers. Never task/body supplied manifests. */
     resolveBoundRoute?: PaidOperationPlannerPorts['resolveBoundRoute'];
@@ -48,6 +49,7 @@ export interface ProductionBudgetReadPorts {
      * reservation exists. Dynamic presenter video remains confirmation-gated. */
     preparePresenterFirstFrameReviews?: (input:{scope:SocialTaskBudgetScope;groups:FrozenPresenterGroup[];requirements:PaidStageRequirement[];intents:SocialApprovedBudgetPlan['paidOperations'];paidPermit:ReturnType<typeof createSocialContentPaidOperationPermit>})=>Promise<void>;
     ledgerRoot?: string;
+    carryForwardWeeklyExactCost?: typeof carryForwardWeeklyCandidateExactProductionCost;
     /** Authoritative weekly claim recheck immediately before any new paid POST claim. */
     assertNewSubmit?: () => Promise<void>;
 }
@@ -230,7 +232,7 @@ export async function prepareSocialContentProductionBudget(input: ProductionBudg
     // The ledger is the durable financial authority. If an interrupted worker
     // wrote a newer planning checkpoint through a different working directory,
     // keep the single already-funded scope for this same run.
-    const ledgerProbe = new SocialContentTaskBudget(input.ports?.ledgerRoot, {
+    let ledgerProbe = new SocialContentTaskBudget(input.ports?.ledgerRoot, {
       authorization: async()=>{throw Error('budget_probe_read_only');}, quote:async()=>{throw Error('budget_probe_read_only');},
       assertCurrent:async()=>{},verifyRejection:async()=>false,
     }).status({tenantId:input.tenantId,taskId:input.taskId,...inheritedBudgetScope,runId:input.runId,planHash:calculatedPlanHash});
@@ -256,6 +258,15 @@ export async function prepareSocialContentProductionBudget(input: ProductionBudg
         if (!active || active.id !== job.id || ['cancelled', 'failed'].includes(active.status))
             return error('job_authority_changed');
     };
+    const exactCostWeeklyAuthority=socialObject(brief?._weeklyAuthority);
+    if(exactCostWeeklyAuthority&&costLineage.kind==='original'){
+      const preproductionBudget=new SocialContentTaskBudget(input.ports?.ledgerRoot,{
+        authorization:async()=>({maximumCny:Number(brief?.perItemBudgetCny),authorizationRef:`weekly-production:${socialRequestHash(exactCostWeeklyAuthority)}`}),
+        quote:async()=>{throw Error('weekly_preproduction_carry_never_quotes');},assertCurrent,verifyRejection:async()=>false,
+      });
+      await (input.ports?.carryForwardWeeklyExactCost??carryForwardWeeklyCandidateExactProductionCost)({store,escrowRoot:process.env.WEEKLY_CANDIDATE_EXACT_LEDGER_ROOT||'',scope,taskRow:row,budget:preproductionBudget,mode:input.quoteOnly?'read':'carry'});
+      ledgerProbe=preproductionBudget.status(scope);
+    }
     // Once this run has a frozen whole-film reservation, every later execution
     // is recovery. Re-planning could append newly priced operations after local
     // code or routing changes and spend beyond the user's original cap.
