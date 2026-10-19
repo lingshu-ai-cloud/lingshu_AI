@@ -50,6 +50,8 @@ pb_data/
 # Runtime analysis, render, upload, and cache state
 /data/analysis-locks/
 /data/analysis-output/
+/work/
+/video/**/out/
 /data/analysis-temp/
 /data/content-execution-render/
 /data/digital-human-worker/
