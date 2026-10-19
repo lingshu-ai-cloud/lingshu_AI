@@ -8,6 +8,7 @@ import type { DataStore, ListQuery, ListResult, Record_, CompareExpected } from 
 export class LangGraphTestStore implements DataStore {
   constructor(readonly filename: string) { mkdirSync(path.dirname(filename), { recursive: true }); }
   supportsAtomicOperationLease() { return true; }
+  supportsAtomicCompareAndSwap() { return true; }
   private read(): Record<string, Record_[]> { return existsSync(this.filename) ? JSON.parse(readFileSync(this.filename, 'utf8')) : {}; }
   private write(rows: Record<string, Record_[]>) {
     const temp = `${this.filename}.${process.pid}.tmp`;

@@ -3,20 +3,32 @@ import { readFileSync } from 'node:fs';
 import { test } from 'node:test';
 
 const workspace = readFileSync(new URL('./DigitalEmployeeWorkspace.tsx', import.meta.url), 'utf8');
+const productionBoard = readFileSync(new URL('./AgentVideoProductionBoard.tsx', import.meta.url), 'utf8');
 const pointsDrawer = readFileSync(new URL('../PointsManagementDrawer.tsx', import.meta.url), 'utf8');
 const pointsPolicy = readFileSync(new URL('../../../shared/pointsPolicy.ts', import.meta.url), 'utf8');
 
 test('digital employees use one monitoring surface instead of first-level schedule pages', () => {
-  assert.match(workspace, /数字员工运营监控台/);
-  assert.match(workspace, /一屏查看内容生产、发布投流、客服承接和异常/);
+  assert.match(workspace, /数字员工生产指挥舱/);
+  assert.match(workspace, /多 Agent 协同引擎在线/);
   assert.match(workspace, /数字员工本周运营指标/);
-  assert.match(workspace, /数字员工实时状态/);
-  assert.match(workspace, /数字员工视频生产监控/);
+  assert.match(workspace, /四位数字员工正在如何协作/);
+  assert.match(workspace, /数字员工内容工程监控/);
   assert.match(workspace, /发布与投流/);
   assert.match(workspace, /客服承接/);
-  assert.match(workspace, /异常与待处理/);
+  assert.doesNotMatch(workspace, /异常与待处理/);
   assert.match(workspace, /展开发布日历/);
   assert.doesNotMatch(workspace, /\bSegmented\b/);
+});
+
+test('content projects expose Agent collaboration and one per-video point result', () => {
+  assert.match(productionBoard, /本周内容工程协作/);
+  assert.match(productionBoard, /Agent 协作链/);
+  for (const role of ['经营 Agent', '编导 Agent', '内容 Agent', '客服 Agent']) {
+    assert.match(productionBoard, new RegExp(role));
+  }
+  assert.match(productionBoard, /本条视频积分/);
+  assert.match(productionBoard, /待制作方案冻结/);
+  assert.doesNotMatch(productionBoard, /ProductionRecipe|视频生产构成|数字人 \+ 背景|统一音色|suffix="\/ 秒"/);
 });
 
 test('user points are grouped by product function and never priced from provider calls', () => {

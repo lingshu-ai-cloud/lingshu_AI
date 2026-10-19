@@ -290,6 +290,7 @@ async function enterpriseProductImageMaterials(tenantId: string, ownedRecords: M
         contentSha256, contentHash: contentSha256, sourceRevision: contentSha256,
         width: metadata.width, height: metadata.height,
         rightsStatus: 'authorized', rightsEvidenceRef: licenseEvidence, licenseEvidence, commercialUseApproved: true,
+        derivativesApproved: true, rawLibraryUseApproved: true,
         createdAt: String(row.updatedAt || new Date(0).toISOString()),
     } satisfies MaterialRecord;
   });

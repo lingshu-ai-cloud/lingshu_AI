@@ -11,6 +11,7 @@ import { buildMaterialScriptAnalysis, reusableMaterialScriptAnalysis, type Mater
 import { materialThemeTagsOf } from '../../shared/materialTaxonomy.js';
 import { materialAssetV2FromRecord } from '../../shared/contracts/materialAssetV2.js';
 import { inferMaterialAssetV2, materialDirectorSummary } from '../../shared/imageCreativePlanning.js';
+import { buildMaterialCapabilityManifest } from '../../shared/contracts/materialCapabilityManifest.js';
 const jobs = new KeyedWorkQueue(2);
 export const isMaterialAnalysisActive = (tenantId: string, id: string) => jobs.has(`${tenantId}:${id}`);
 export function localMaterialMediaPath(record: MaterialRecord, mediaRoot = path.resolve(process.cwd(), 'data/media')): string {
@@ -64,6 +65,12 @@ export function libraryCandidate(record: MaterialRecord): AssetCandidate {
     visualObservations: Array.isArray(record.visualObservations) ? record.visualObservations : [],
     segments: Array.isArray(record.segments) ? record.segments : [],
     scriptAnalysis: scriptAnalysisForRecord(record, analysisFileRevision(record)) || undefined,
+    capabilityManifest: buildMaterialCapabilityManifest(record),
+    materialV2: materialAssetV2FromRecord(record),
+    rightsEvidenceRefs: [record.rightsEvidenceRef, record.licenseEvidence].map(String).filter(Boolean),
+    commercialUseApproved: record.commercialUseApproved === true,
+    modelInputAllowed: record.modelInputAllowed === true || record.rawLibraryUseApproved === true,
+    derivativeUseAllowed: record.derivativeUseAllowed === true || record.derivativesApproved === true,
     tags: String(record.tags || '').split(/[,，]/).map(value => value.trim()).filter(Boolean), synthetic: false,
     authorization: { status: record.scope === 'shared' ? 'licensed' : 'owned', scope: record.scope === 'shared' ? 'shared' : 'tenant', evidence: String(record.licenseEvidence || record.sourceUrl || '租户上传素材') },
     source: record.scope === 'shared' ? 'licensed_shared_material' : 'tenant_material',
@@ -110,18 +117,23 @@ export async function requestMaterialAnalysis(tenantId: string, id: string, retr
   const record = await ownedMaterial(tenantId, id);
   const revision = analysisFileRevision(record);
   if (!retry && record.segmentAnalysisStatus === 'completed' && record.analysisSourceRevision === revision) {
-    if (!reusableMaterialScriptAnalysis(record.scriptAnalysis, revision)) {
-      await patch(tenantId, id, {
-        scriptAnalysis: buildMaterialScriptAnalysis({
+    const reusable = reusableMaterialScriptAnalysis(record.scriptAnalysis, revision);
+    const scriptAnalysis = reusable || buildMaterialScriptAnalysis({
           materialId: id,
           name: String(record.name || ''),
           sourceRevision: revision,
           duration: Number(record.duration || 0),
           segments: Array.isArray(record.segments) ? record.segments : [],
           visualObservations: Array.isArray(record.visualObservations) ? record.visualObservations : [],
-        }),
-      });
-    }
+        });
+    const capabilityManifest = buildMaterialCapabilityManifest({
+      ...record, scriptAnalysis, analysisSourceRevision: revision, segmentAnalysisStatus: 'completed',
+    });
+    const storedManifest = record.provenance?.materialCapabilityManifest;
+    if (!reusable || JSON.stringify(storedManifest || null) !== JSON.stringify(capabilityManifest)) await patch(tenantId, id, {
+      scriptAnalysis,
+      provenance: { ...(record.provenance || {}), materialCapabilityManifest: capabilityManifest },
+    });
     return { status: 'completed', reused: true };
   }
   // Check again after the awaited ownership lookup, before reserving this job.
@@ -157,11 +169,26 @@ export async function requestMaterialAnalysis(tenantId: string, id: string, retr
         tags: String(current.tags || record.tags || ''),
         productId: String(current.productId || ''),
         productName: String(current.productName || ''),
+        identityAuthority: /^ai(?:_|-)|generated/i.test(String(current.sourceType || '')) ? 'derived' : 'source',
         enterpriseCommon: current.enterpriseCommon === true,
         visualObservations: result.observations,
         sourceRevision: revision,
       });
       const directorAnalysis = materialDirectorSummary(materialV2, String(current.productName || ''));
+      const analyzedAt = new Date().toISOString();
+      const capabilityManifest = buildMaterialCapabilityManifest({
+        ...current,
+        ...(automaticVisual ? { contentSha256: automaticVisual.sha256 } : {}),
+        duration: result.duration,
+        segments: result.segments,
+        visualObservations: result.observations,
+        scriptAnalysis,
+        materialV2,
+        themeTags,
+        segmentAnalysisStatus: 'completed',
+        analysisSourceRevision: revision,
+        provenance: { ...currentProvenance, materialAssetV2: materialV2 },
+      });
       await patch(tenantId, id, { ...(automaticVisual?{contentSha256:automaticVisual.sha256}:{}),provenance:{
         ...currentProvenance,
         weeklyAutomaticMaterialEvidence:automaticEvidence,
@@ -169,10 +196,11 @@ export async function requestMaterialAnalysis(tenantId: string, id: string, retr
         materialAssetV2Source: userMetadata ? 'user' : 'director_model',
         materialDirectorAnalysis: {
           schemaVersion: 'material-director.v1',
-          analyzedAt: new Date().toISOString(),
+          analyzedAt,
           sourceRevision: revision,
           ...directorAnalysis,
         },
+        materialCapabilityManifest: capabilityManifest,
       },duration: result.duration, segments: result.segments, visualObservations: result.observations, scriptAnalysis,
         themeTags, primaryTheme: themeTags[0] || '', classificationStatus: themeTags.length ? 'completed' : 'review_required',
         classificationSource: 'model', classificationEvidence: result.observations.slice(0, 8),
@@ -197,7 +225,13 @@ export async function saveMaterialSegmentsWithScriptAnalysis(
     segments,
     visualObservations: Array.isArray(record.visualObservations) ? record.visualObservations : [],
   });
-  await patch(tenantId, record.id, { segments, scriptAnalysis, analysisSourceRevision: revision });
+  const capabilityManifest = buildMaterialCapabilityManifest({
+    ...record, segments, scriptAnalysis, analysisSourceRevision: revision, segmentAnalysisStatus: 'completed',
+  });
+  await patch(tenantId, record.id, {
+    segments, scriptAnalysis, analysisSourceRevision: revision,
+    provenance: { ...(record.provenance || {}), materialCapabilityManifest: capabilityManifest },
+  });
   return scriptAnalysis;
 }
 export async function waitForMaterialAnalysis(tenantId: string, id: string) {

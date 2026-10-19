@@ -4,6 +4,32 @@ import {
   type MaterialAssetRoleV2,
   type MaterialContentRoleV2,
 } from './contracts/materialAssetV2.js';
+import type { MaterialCapabilityManifest } from './contracts/materialCapabilityManifest.js';
+
+export const IMAGE_DELIVERABLES = [
+  'product_hero',
+  'social_poster',
+  'carousel_cover',
+  'scenario_visual',
+  'product_infographic',
+] as const;
+export type ImageDeliverable = typeof IMAGE_DELIVERABLES[number];
+
+export const IMAGE_PRODUCTION_STRATEGIES = [
+  'reuse_existing',
+  'compose_assets',
+  'reference_generate',
+  'generate_supporting',
+] as const;
+export type ImageProductionStrategy = typeof IMAGE_PRODUCTION_STRATEGIES[number];
+
+export const IMAGE_DELIVERABLE_LABELS: Record<ImageDeliverable, string> = {
+  product_hero: '产品主视觉',
+  social_poster: '社媒海报',
+  carousel_cover: '轮播首图',
+  scenario_visual: '产品场景图',
+  product_infographic: '产品信息图',
+};
 
 export const MATERIAL_ASSET_ROLE_LABELS: Record<MaterialAssetRoleV2, string> = {
   exact_product: '精准产品素材',
@@ -38,6 +64,9 @@ export type MaterialDirectorInput = {
   tags?: string;
   productId?: string;
   productName?: string;
+  /** Generated derivatives may be product-related, but they are never the
+   * source-of-truth pixels for exact product identity. */
+  identityAuthority?: 'source' | 'derived';
   enterpriseCommon?: boolean;
   visualObservations?: string[];
   sourceRevision?: string;
@@ -66,6 +95,7 @@ export function inferMaterialAssetV2(input: MaterialDirectorInput): MaterialAsse
     .filter(Boolean).join(' ').toLowerCase();
   const productId = String(input.productId || '').trim();
   const hasProduct = Boolean(productId);
+  const hasExactProductIdentity = hasProduct && input.identityAuthority !== 'derived';
   const sceneType = directorSceneType(text);
   const isEvidence = includesAny(text, [
     /certificate|certification|test report|inspection report|coa\b|msds\b/,
@@ -93,8 +123,8 @@ export function inferMaterialAssetV2(input: MaterialDirectorInput): MaterialAsse
   if (isAuthorization) assetRole = 'person_authorization';
   else if (isEvidence) assetRole = 'fact_evidence';
   else if (isTemplate) assetRole = 'reusable_template';
-  else if (hasProduct) assetRole = 'exact_product';
-  else if (sceneType) assetRole = 'generic_scene_plate';
+  else if (hasExactProductIdentity) assetRole = 'exact_product';
+  else if (sceneType && !hasProduct) assetRole = 'generic_scene_plate';
 
   const productIdentityLevel = assetRole === 'exact_product' ? 'exact' : hasProduct ? 'category' : 'none';
   const hasPerson = /person|people|hand|face|model|presenter|人物|人像|手部|模特|口播/.test(text);
@@ -174,6 +204,7 @@ export type ImageReferenceCandidate = {
   usage?: 'editable' | 'reference_only';
   segmentAnalysisStatus?: string;
   materialV2?: MaterialAssetV2Metadata | null;
+  capabilityManifest?: MaterialCapabilityManifest | null;
 };
 
 export type ImageReferencePlan = {
@@ -189,6 +220,8 @@ function imageReferenceScore(candidate: ImageReferenceCandidate, targetProductId
   let score = 0;
   if (candidate.type === 'image') score += 30;
   if (candidate.segmentAnalysisStatus === 'completed') score += 12;
+  if (candidate.capabilityManifest?.status === 'ready') score += 18;
+  if (candidate.capabilityManifest?.capabilities.includes('image_generation_reference')) score += 35;
   if (metadata) {
     score += metadata.reuseScore * 20;
     if (metadata.assetRole === 'exact_product') score += 80;
@@ -217,9 +250,11 @@ export function planImageReferences(
   const limit = Math.max(1, Math.min(3, options.limit || 3));
   const targetProductIds = new Set((options.productIds || []).filter(Boolean));
   const images = candidates.filter(item => item.type === 'image');
-  const style = images.filter(item => item.folder === 'hot' || item.usage === 'reference_only');
+  const style = images.filter(item => (item.folder === 'hot' || item.usage === 'reference_only')
+    && (!item.capabilityManifest || item.capabilityManifest.capabilities.includes('image_generation_reference')));
   const production = images.filter(item => {
     if (style.includes(item)) return false;
+    if (item.capabilityManifest && !item.capabilityManifest.capabilities.includes('image_generation_reference')) return false;
     if (!targetProductIds.size || !item.productId) return true;
     return targetProductIds.has(item.productId);
   }).sort((a, b) => imageReferenceScore(b, targetProductIds) - imageReferenceScore(a, targetProductIds));
@@ -234,7 +269,8 @@ export function planImageReferences(
     usedContentRoles.add(role);
   }
   if (options.includeStyleReference && selected.length < limit && style[0]) selected.push(style[0]);
-  const exactProductIds = selected.filter(item => item.materialV2?.assetRole === 'exact_product').map(item => item.id);
+  const exactProductIds = selected.filter(item => item.materialV2?.assetRole === 'exact_product'
+    || item.capabilityManifest?.capabilities.includes('exact_product_reference')).map(item => item.id);
   const styleReferenceIds = selected.filter(item => style.includes(item)).map(item => item.id);
   const reasons = Object.fromEntries(selected.map(item => {
     const metadata = item.materialV2;
@@ -249,4 +285,56 @@ export function planImageReferences(
   if (targetProductIds.size && !exactProductIds.length) blockers.push('缺少与当前产品绑定的精准产品图，不能保证包装、标签和外观一致');
   if (!selected.length) blockers.push('没有可用于图片生成的图片素材');
   return { selectedIds: selected.map(item => item.id), exactProductIds, styleReferenceIds, reasons, blockers };
+}
+
+export type ImageProductionPlan = ImageReferencePlan & {
+  deliverable: ImageDeliverable;
+  strategy: ImageProductionStrategy;
+  strategyReason: string;
+  inputRoles: Array<{ materialId: string; role: 'exact_product' | 'style' | 'supporting' }>;
+};
+
+/** Users choose the finished image; the Agent chooses the safest production method. */
+export function planImageProduction(
+  candidates: ImageReferenceCandidate[],
+  options: { deliverable: ImageDeliverable; productIds?: string[]; includeStyleReference?: boolean; limit?: number },
+): ImageProductionPlan {
+  const referencePlan = planImageReferences(candidates, options);
+  const selected = referencePlan.selectedIds
+    .map(id => candidates.find(candidate => candidate.id === id))
+    .filter((item): item is ImageReferenceCandidate => Boolean(item));
+  const supporting = selected.filter(item => !referencePlan.exactProductIds.includes(item.id)
+    && !referencePlan.styleReferenceIds.includes(item.id));
+  let strategy: ImageProductionStrategy = 'generate_supporting';
+  let strategyReason = '没有可直接复用的完整成图，生成不承担产品身份的辅助画面';
+  if (referencePlan.exactProductIds.length && referencePlan.styleReferenceIds.length) {
+    strategy = 'reference_generate';
+    strategyReason = '锁定企业产品外观，只借鉴参考图的构图和节奏重新生成';
+  } else if (referencePlan.exactProductIds.length && supporting.length) {
+    strategy = 'compose_assets';
+    strategyReason = '以精准产品图为身份锚点，与已授权场景或证明素材合成';
+  } else if (referencePlan.exactProductIds.length) {
+    strategy = 'reference_generate';
+    strategyReason = '以精准产品图为身份锚点，自动补齐中性背景和版式';
+  } else if (selected.some(item => item.capabilityManifest?.capabilities.includes('template_reuse'))) {
+    strategy = 'reuse_existing';
+    strategyReason = '现有模板已通过复用准入，只替换已核实内容';
+  }
+  const blockers = [...referencePlan.blockers];
+  if ((options.productIds || []).length && !referencePlan.exactProductIds.length
+    && !blockers.some(message => message.includes('精准产品图'))) {
+    blockers.push('缺少与当前产品绑定的精准产品图，不能保证包装、标签和外观一致');
+  }
+  return {
+    ...referencePlan,
+    blockers,
+    deliverable: options.deliverable,
+    strategy,
+    strategyReason,
+    inputRoles: selected.map(item => ({
+      materialId: item.id,
+      role: referencePlan.exactProductIds.includes(item.id) ? 'exact_product'
+        : referencePlan.styleReferenceIds.includes(item.id) ? 'style' : 'supporting',
+    })),
+  };
 }

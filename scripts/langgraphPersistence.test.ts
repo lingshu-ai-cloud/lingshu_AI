@@ -33,7 +33,9 @@ test('actual graph checkpoints and provider receipt survive process termination 
   const repeated = launch('continue'); assert.equal(repeated.status, 0, repeated.stderr);
   assert.equal(JSON.parse(repeated.stdout).status, 'completed');
   const calls = (await readFile(log, 'utf8')).trim().split('\n');
-  for (const phase of ['provider-submit', 'assets', 'render', 'quality', 'delivery']) assert.equal(calls.filter(value => value === phase).length, 1, phase);
+  for (const phase of ['provider-submit', 'assets', 'voice', 'trim', 'effects', 'render', 'technical_quality', 'creative_quality', 'delivery']) {
+    assert.equal(calls.filter(value => value === phase).length, 1, phase);
+  }
 });
 
 test('persisted scope/version changes and pause/cancel fail before new phase effects', async t => {
@@ -45,7 +47,9 @@ test('persisted scope/version changes and pause/cancel fail before new phase eff
   let effects = 0;
   const phase = async () => { effects++; return { artifactRefs: ['artifact:1'], inputHash: identity.inputHash }; };
   const input: LangGraphProductionInput = { identity, dataStore: store, assertActive: assertCurrentContentExecutionActive,
-    phases: { assets: phase, render: phase, quality: phase, delivery: phase }, review: { loadApproval: async () => null, verifyResume: async () => false } };
+    phases: { assets: phase, voice: phase, trim: phase, effects: phase, render: phase,
+      technical_quality: phase, creative_quality: phase, delivery: phase },
+    review: { loadApproval: async () => null, verifyResume: async () => false } };
   const execute = async (override: Partial<LangGraphProductionInput> = {}) => {
     const job = await store.getById<Record<string, unknown>>('content_execution_jobs', identity.jobId);
     return runWithContentExecutionContext({ dataStore: store, jobId: identity.jobId, checkpoints: job?.checkpoints, action: () => runLangGraphProduction({ ...input, ...override }) });
@@ -56,8 +60,8 @@ test('persisted scope/version changes and pause/cancel fail before new phase eff
     await assert.rejects(execute(), /content_execution_stopped/); assert.equal(effects, 0);
   }
   await store.update('content_execution_jobs', identity.jobId, { status: 'running' });
-  assert.equal((await execute()).status, 'waiting_review'); assert.equal(effects, 3);
-  await assert.rejects(execute({ identity: { ...identity, planVersion: '2' } }), /checkpoint_version_changed/); assert.equal(effects, 3);
-  await assert.rejects(execute({ identity: { ...identity, inputHash: 'new-plan-hash' } }), /checkpoint_version_changed/); assert.equal(effects, 3);
-  await assert.rejects(execute({ resume: { approved: true } }), /resume_not_authorized/); assert.equal(effects, 3);
+  assert.equal((await execute()).status, 'waiting_review'); assert.equal(effects, 7);
+  await assert.rejects(execute({ identity: { ...identity, planVersion: '2' } }), /checkpoint_version_changed/); assert.equal(effects, 7);
+  await assert.rejects(execute({ identity: { ...identity, inputHash: 'new-plan-hash' } }), /checkpoint_version_changed/); assert.equal(effects, 7);
+  await assert.rejects(execute({ resume: { approved: true } }), /resume_not_authorized/); assert.equal(effects, 7);
 });

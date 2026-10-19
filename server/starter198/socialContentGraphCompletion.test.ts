@@ -31,7 +31,7 @@ async function fixture(terminal=true){
   const content={productionWorkspaceSource:{runId:'run-a'},sourceKey:'local-render'};
   const approval={approved:true,receiptRef:'receipt-a',subjectVersion:'2',contentHash:socialRequestHash(content)};
   const checkpoints={
-    'social.executor':{version:'1',inputHash,updatedAt:now,payload:{executor:'langgraph',inputHash,planVersion:'1'}},
+    'social.executor':{version:'1',inputHash,updatedAt:now,payload:{executor:'langgraph',inputHash,planVersion:'1',graphVersion:CONTENT_GRAPH_VERSION}},
     'social.graph_review':{version:'1',inputHash,updatedAt:now,payload:{artifactId:'artifact-a',version:'1',contentHash:approval.contentHash,runId:'run-a'}},
   };
   const job=await admitContentExecutionJob({dataStore:store,tenantId:'tenant-a',userId:'user-a',taskId:'task-a',runId:'run-a',taskType:'social-production',initialCheckpoints:checkpoints});
@@ -42,11 +42,12 @@ async function fixture(terminal=true){
   await store.create(STARTER_COLLECTIONS.socialContentOperations,{id:'operation-row',tenant_id:'tenant-a',operation_id:'receipt-a',idempotency_key:'receipt-a',target_id:'task-a',operation:'decide_social_content_artifact',status:'succeeded'});
   const manifest={taskId:'task-a',packageId:'package-a',artifactIds:['artifact-a']};
   await store.create(STARTER_COLLECTIONS.socialDeliveryPackages,{id:'package-row',tenant_id:'tenant-a',task_id:'task-a',package_id:'package-a',status:'ready',manifest,package_hash:socialRequestHash(manifest),artifact_ids:['artifact-a']});
-  const identity={tenantId:'tenant-a',taskId:'task-a',runId:'run-a',jobId:job.id,planVersion:'1',inputHash,graphVersion:CONTENT_GRAPH_VERSION};
+  const identity={tenantId:'tenant-a',taskId:'task-a',runId:'run-a',jobId:job.id,planVersion:'1',inputHash,graphVersion:CONTENT_GRAPH_VERSION} as const;
   if(terminal){
     const phase=async()=>({artifactRefs:['artifact-a'],inputHash});
     await runWithContentExecutionContext({dataStore:store,jobId:job.id,checkpoints,action:()=>runLangGraphProduction({identity,dataStore:store,assertActive:async()=>undefined,
-      phases:{assets:phase,render:phase,quality:phase,delivery:async()=>({artifactRefs:['artifact-a','package-a'],inputHash})},review:{loadApproval:async()=>approval,verifyResume:async()=>false}})});
+      phases:{assets:phase,voice:phase,trim:phase,effects:phase,render:phase,technical_quality:phase,creative_quality:phase,
+        delivery:async()=>({artifactRefs:['artifact-a','package-a'],inputHash})},review:{loadApproval:async()=>approval,verifyResume:async()=>false}})});
   }
   const row=await store.getById<Record<string,unknown>>('content_execution_jobs',job.id);
   await store.update('content_execution_jobs',job.id,{status:'succeeded',checkpoints:{...(row!.checkpoints as object),'social.graph_completion':{version:'1',inputHash,updatedAt:now,payload:{...identity,approval,artifactIds:['artifact-a'],packageIds:['package-a'],externalPublishPerformed:false}}}});

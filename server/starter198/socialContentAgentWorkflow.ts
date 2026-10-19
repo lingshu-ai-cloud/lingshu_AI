@@ -56,6 +56,7 @@ import {
 import type { SocialReferenceReviewHandoff } from './socialReferenceReviewHandoff.js';
 import { socialReferenceFidelityFailures } from './socialContentReferenceFidelity.js';
 import type { MaterialAssetV2Metadata } from '../../shared/contracts/materialAssetV2.js';
+import type { MaterialCapabilityManifest } from '../../shared/contracts/materialCapabilityManifest.js';
 import { isInternalBudgetExemptTenant } from '../lib/tenantBudgetExemption.js';
 
 import {
@@ -94,6 +95,8 @@ export interface SocialWorkflowMaterialCandidate {
   segmentCandidateId?: string;
   sourceRevision?: string;
   materialV2?: MaterialAssetV2Metadata | null;
+  /** Unified Director handoff; downstream agents must not reinterpret raw rows. */
+  capabilityManifest?: MaterialCapabilityManifest;
 }
 export type {
   SocialContentCapabilityRuntime,

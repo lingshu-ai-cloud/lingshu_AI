@@ -2,7 +2,10 @@ import { createHash } from 'node:crypto';
 import type { DataStore } from '../storage/datastore.js';
 import { CONTENT_EXECUTION_JOB_COLLECTION } from './context.js';
 
-export const CONTENT_GRAPH_VERSION = 'content-production.v1';
+export const LEGACY_CONTENT_GRAPH_VERSION = 'content-production.v1';
+export const CONTENT_GRAPH_VERSION = 'content-production.v2';
+export const SUPPORTED_CONTENT_GRAPH_VERSIONS = [LEGACY_CONTENT_GRAPH_VERSION, CONTENT_GRAPH_VERSION] as const;
+export type ContentGraphVersion = typeof SUPPORTED_CONTENT_GRAPH_VERSIONS[number];
 export interface ProductionGraphIdentity {
   tenantId: string;
   taskId: string;
@@ -10,7 +13,7 @@ export interface ProductionGraphIdentity {
   jobId: string;
   planVersion: string;
   inputHash: string;
-  graphVersion: string;
+  graphVersion: ContentGraphVersion;
 }
 export function graphIdentityHash(identity: ProductionGraphIdentity): string {
   for (const value of [identity.tenantId, identity.taskId, identity.runId, identity.jobId, identity.planVersion, identity.inputHash, identity.graphVersion]) {
@@ -18,7 +21,7 @@ export function graphIdentityHash(identity: ProductionGraphIdentity): string {
       throw new Error('content_graph_identity_invalid');
     }
   }
-  if (identity.graphVersion !== CONTENT_GRAPH_VERSION) throw new Error('content_graph_version_unsupported');
+  if (!SUPPORTED_CONTENT_GRAPH_VERSIONS.includes(identity.graphVersion)) throw new Error('content_graph_version_unsupported');
   return createHash('sha256').update(JSON.stringify([
     identity.tenantId, identity.taskId, identity.runId, identity.jobId,
     identity.planVersion, identity.inputHash, identity.graphVersion,

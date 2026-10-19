@@ -34,7 +34,12 @@ export type AgentCalendarTask = {
   videoTitle?: string;
   previewThumbnailUrl?: string;
   previewVideoUrl?: string;
-  /** Per-video provider cost evidence. It is converted to points only for display. */
+  /** Frozen customer-facing generation plan used for the per-video point projection. */
+  targetDurationSeconds?: number | null;
+  productionApproach?: 'material_cut' | 'material_polish' | 'ai_enhanced' | 'shooting_plan';
+  estimatedPoints?: number | null;
+  settledPoints?: number | null;
+  /** Legacy provider cost evidence. Internal-only; never converted into customer-facing points. */
   estimatedCostCny?: number | null;
   settledCostCny?: number | null;
   costStatus?: 'estimated' | 'awaiting_settlement' | 'settled' | 'unavailable';

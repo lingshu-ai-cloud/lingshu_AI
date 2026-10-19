@@ -116,7 +116,11 @@ import { productionReferenceAdmission } from '../../shared/productionReferenceAd
 import { reconcileStudioProductionSpec } from '../../shared/studioProductionContract';
 import { attachStudioSocialShotIdentities, normalizeStudioSocialShotId, resolveStudioSocialShot } from '../lib/studioSocialShotIdentity';
 import { studioAutosaveFingerprint, studioDraftChanged } from '../lib/studioAutosave';
-import { planImageReferences } from '../../shared/imageCreativePlanning';
+import {
+  IMAGE_DELIVERABLE_LABELS,
+  planImageProduction,
+  type ImageDeliverable,
+} from '../../shared/imageCreativePlanning';
 import { effectiveDigitalHumanRequirements } from '../../shared/contracts/digitalHumanRequirements';
 export { StudioRequestTimeoutError, waitForStudioMediaReady, withStudioTimeout } from './studio/studioAuthenticatedMedia';
 // AI 生成内容工作台：创作设置 → 脚本与声音 → 成片制作。
@@ -246,7 +250,7 @@ const materialToClip = (m: Material): Clip => ({
   id: m.id, name: m.name, folder: m.folder, type: m.type, duration: m.duration, width: m.width, height: m.height, aspectRatio: m.aspectRatio, size: m.size, url: m.url, poster: m.poster, scope: m.scope ?? 'own',
   usage: m.usage, sourceType: m.sourceType, providerTaskId: m.providerTaskId, contentSha256: m.contentSha256, industry: m.industry, shotFunction: m.shotFunction, applicability: m.applicability, tags: m.tags,
   generation: m.generation, lineage: m.lineage, quality: m.quality, reuse: m.reuse, rightsScope: m.rightsScope, provenance: m.provenance,
-  materialV2: m.materialV2,
+  materialV2: m.materialV2, capabilityManifest: m.capabilityManifest,
   productId: m.productId, productName: m.productName,
   transcript: m.transcript, transcriptCues: m.transcriptCues, transcriptCuesProvenance: m.transcriptCuesProvenance,
   transcriptSourceHash: m.transcriptSourceHash,
@@ -406,6 +410,7 @@ export interface Clip {
   rightsScope?: string;
   provenance?: Record<string, unknown>;
   materialV2?: Material['materialV2'];
+  capabilityManifest?: Material['capabilityManifest'];
   providerTaskId?: string;
   contentSha256?: string;
   industry?: string;
@@ -1534,11 +1539,13 @@ const ACCOUNTS: SocialAccount[] = [
 ];
 
 type ModeCard = { id: 'material' | 'clone' | 'product'; icon: typeof Film; title: string; desc: string };
-const POSTER_MODES: ModeCard[] = [
-  { id: 'material', icon: Film,    title: '使用素材', desc: '编辑素材库中的图片内容' },
-  { id: 'clone',    icon: Wand2,   title: '参考爆款', desc: '参考版式，用企业内容重制' },
-  { id: 'product',  icon: Sparkles,title: '使用产品生成', desc: '从产品资料自动开始创作' },
-] as const;
+const IMAGE_DELIVERABLE_OPTIONS: Array<{ id: ImageDeliverable; title: string; desc: string }> = [
+  { id: 'product_hero', title: IMAGE_DELIVERABLE_LABELS.product_hero, desc: '突出产品外观，适合官网、目录和主图' },
+  { id: 'social_poster', title: IMAGE_DELIVERABLE_LABELS.social_poster, desc: '产品、卖点与行动号召合成一张海报' },
+  { id: 'carousel_cover', title: IMAGE_DELIVERABLE_LABELS.carousel_cover, desc: '为多图内容生成第一张注意力封面' },
+  { id: 'scenario_visual', title: IMAGE_DELIVERABLE_LABELS.scenario_visual, desc: '把精准产品放入可信使用或陈列场景' },
+  { id: 'product_infographic', title: IMAGE_DELIVERABLE_LABELS.product_infographic, desc: '用结构化信息说明产品与已核实卖点' },
+];
 const POSTER_STYLES = [
   { id: 'oem-factory', label: 'B2B 产品说明风' },
   { id: 'promo', label: '促销招商风' },
@@ -1877,6 +1884,8 @@ function normalizeClipSnapshot(value: unknown): Clip | null {
     tags: item.tags,
     productId: item.productId,
     productName: item.productName,
+    materialV2: item.materialV2,
+    capabilityManifest: item.capabilityManifest,
     segmentAnalysisStatus: item.segmentAnalysisStatus,
     segments: item.segments,
     transcript: item.transcript,
@@ -3106,6 +3115,7 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onLaunc
   const stageIdx = Math.max(0, activeStages.findIndex(stage => stage.steps.includes(step)));
   const [showAdvancedSetup, setShowAdvancedSetup] = useState(false);
   const [posterStyle, setPosterStyle] = useState<(typeof POSTER_STYLES)[number]['id']>('oem-factory');
+  const [imageDeliverable, setImageDeliverable] = useState<ImageDeliverable>('social_poster');
   const [platform, setPlatform] = useState('tiktok');
   const [ratio, setRatio] = useState('9:16');
   const [duration, setDuration] = useState(20);
@@ -3268,6 +3278,7 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onLaunc
   const [materials, setMaterials] = useState<Clip[]>([]);
   const [previewClip, setPreviewClip] = useState<Clip | null>(null);
   const [uploading, setUploading] = useState(false);
+  const [materialRightsConfirmed, setMaterialRightsConfirmed] = useState(false);
   const [heygenAvatarId, setHeygenAvatarId] = useState('');
   const [heygenAvatars, setHeygenAvatars] = useState<HeyGenAvatarOption[]>([]);
   const [heygenAvatarOrientation, setHeygenAvatarOrientation] = useState<'unknown' | 'portrait' | 'landscape' | 'square'>('unknown');
@@ -3579,7 +3590,10 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onLaunc
   const [leadContentPackage, setLeadContentPackage] = useState<LeadContentPackageResult | null>(null);
   const [posterJsonText, setPosterJsonText] = useState('');
   const [posterImageUrl, setPosterImageUrl] = useState('');
-  const posterGenerationIsVerified = Boolean(
+  const [posterImageMaterialId, setPosterImageMaterialId] = useState('');
+  const [posterImageReviewStatus, setPosterImageReviewStatus] = useState<'none' | 'needs_review' | 'accepted'>('none');
+  const [posterImageReviewing, setPosterImageReviewing] = useState(false);
+  const posterBriefIsVerified = Boolean(
     posterDraft?.ok
     && posterDraft.source === 'ai'
     && posterDraft.provenance === 'ai'
@@ -3587,9 +3601,14 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onLaunc
     && posterDraft.publishable === true
     && !posterDraft.fieldsToConfirm?.length,
   );
+  const posterGenerationIsVerified = posterBriefIsVerified
+    && Boolean(posterImageUrl)
+    && posterImageReviewStatus === 'accepted';
   const markPosterJsonAsManualDraft = (value: string) => {
     setPosterJsonText(value);
     setPosterImageUrl('');
+    setPosterImageMaterialId('');
+    setPosterImageReviewStatus('none');
     setLeadContentPackage(null);
     setPosterDraft(current => ({
       ...(current || {
@@ -3603,6 +3622,24 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onLaunc
       fieldsToConfirm: [...new Set([...(current?.fieldsToConfirm || []), '手动修改后的图文内容'])],
     }));
     setModeNotice('图文 JSON 已手动修改，原图片已失效。当前内容仅为待复核草稿，需按企业中心资料重新生成并通过校验后才能提交。');
+  };
+  const confirmPosterImage = async () => {
+    if (!posterImageMaterialId) {
+      setModeNotice('当前图片缺少可追溯的素材记录，请重新生成后再确认。');
+      return;
+    }
+    setPosterImageReviewing(true);
+    try {
+      const result = await studioApi.reviewGeneratedImage(posterImageMaterialId);
+      if (!result.ok) throw new Error(result.error || '图片复核结果保存失败');
+      setPosterImageReviewStatus('accepted');
+      setModeNotice('图片人工复核已写入统一素材记录，可以作为当前成品继续交付。');
+      await refreshMaterials();
+    } catch (error) {
+      setModeNotice(error instanceof Error ? error.message : '图片复核结果保存失败');
+    } finally {
+      setPosterImageReviewing(false);
+    }
   };
 
   const storyboardWorkActive = Object.values(storyboardGenerating).some(Boolean)
@@ -8224,12 +8261,23 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onLaunc
       setModeNotice('生成商业图文前必须先选择企业中心已确认的产品资料；缺少资料时不会创建本地营销话术。');
       return;
     }
-    if (mode === 'clone' && !isEvidenceLedPackage && !selectedClips.some(item => item.folder === 'hot')) {
-      setModeNotice('对标图文套用需要先选择一条公开图文参考，用于提取可见布局、信息模块和表达方式。');
+    const includeStyleReference = selectedClips.some(item => item.folder === 'hot' || item.usage === 'reference_only');
+    const imagePlan = planImageProduction(materials, {
+      deliverable: imageDeliverable,
+      productIds: selectedProductIds,
+      includeStyleReference,
+      limit: 3,
+    });
+    if (imagePlan.blockers.length) {
+      setModeNotice(`图片制作还不能开始：${imagePlan.blockers.join('；')}。请先在素材库完成产品绑定、编导分析和使用授权。`);
       return;
     }
+    const plannedClips = imagePlan.selectedIds
+      .map(id => materialById.get(id))
+      .filter((item): item is Clip => Boolean(item));
+    setSelected(current => [...new Set([...current.filter(id => materialById.get(id)?.type !== 'image'), ...imagePlan.selectedIds])]);
     setPosterLoading(true);
-    setModeNotice('');
+    setModeNotice(`内容 Agent 已选择“${imagePlan.strategyReason}”，正在制作${IMAGE_DELIVERABLE_LABELS[imageDeliverable]}…`);
     try {
       if (isEvidenceLedPackage) {
         const result = await studioApi.leadContentPackage({
@@ -8280,11 +8328,12 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onLaunc
         const tags = first.hashtags.map(tag => `#${String(tag).replace(/^#/, '')}`).join(' ');
         setCaption([first.caption, tags].filter(Boolean).join(' '));
         setPosterImageUrl('');
+        setPosterImageMaterialId('');
+        setPosterImageReviewStatus('none');
 
-        const ownReferenceIds = selectedClips
-          .filter(item => item.folder !== 'hot' && item.type !== 'audio')
-          .slice(0, 3)
-          .map(item => item.id);
+        const ownReferenceIds = imagePlan.inputRoles
+          .filter(item => item.role !== 'style')
+          .map(item => item.materialId);
         if (ownReferenceIds.length > 0) {
           setModeNotice('三组内容方案已生成，正在用企业素材生成第 1 组首图预览…');
           try {
@@ -8299,14 +8348,20 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onLaunc
               ].filter(Boolean).join('\n'),
               ratio,
               materialIds: ownReferenceIds,
+              productIds: selectedProductIds,
+              deliverableType: imageDeliverable,
+              productionStrategy: imagePlan.strategy,
+              referencePlan: imagePlan.inputRoles,
             });
             if (!rendered.ok || !rendered.url) throw new Error(rendered.error || '首图生成失败');
             setPosterImageUrl(rendered.url);
+            setPosterImageMaterialId(rendered.material?.id || '');
+            setPosterImageReviewStatus('needs_review');
             if (rendered.material?.id) setSelected(prev => [...new Set([...prev, rendered.material!.id])]);
             await refreshMaterials();
             setModeNotice(result.fieldsToConfirm.length
-              ? `已生成三组获客内容和第 1 组首图；发布前请确认：${result.fieldsToConfirm.join('、')}`
-              : '已生成三组连续获客内容和第 1 组首图预览。');
+              ? `已生成三组获客内容和第 1 组首图；还需确认图片和这些字段：${result.fieldsToConfirm.join('、')}`
+              : '已生成三组连续获客内容和第 1 组首图，请核对产品外观与文字后确认图片。');
           } catch (imageErr: any) {
             setModeNotice(`三组获客内容已生成，但首图生成失败：${imageErr?.message || '请稍后重试'}`);
           }
@@ -8318,14 +8373,14 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onLaunc
         return;
       }
       setLeadContentPackage(null);
-      const selectedMaterials = selectedClips.slice(0, 8).map(item => ({
+      const selectedMaterials = plannedClips.slice(0, 8).map(item => ({
         id: item.id,
         name: item.name,
         type: item.type,
         folder: item.folder,
         role: materialRoleLabel(item),
       }));
-      const hotPosterRefs = selectedClips
+      const hotPosterRefs = plannedClips
         .filter(item => item.folder === 'hot')
         .map(item => [
           `爆款图文参考：${item.name}`,
@@ -8335,7 +8390,8 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onLaunc
         ].join('。'))
         .join('\n');
       const result = await studioApi.fbPoster({
-        mode,
+        deliverableType: imageDeliverable,
+        productionStrategy: imagePlan.strategy,
         productInfo: activeProductInfo,
         platform,
         ratio,
@@ -8343,9 +8399,7 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onLaunc
         language: lang,
         provider,
         materials: selectedMaterials,
-        referenceNotes: mode === 'clone'
-          ? [hotPosterRefs, videoKickoff ? cloneReferenceAnalysisText(videoKickoff) : ''].filter(Boolean).join('\n\n')
-          : '',
+        referenceNotes: [hotPosterRefs, videoKickoff ? cloneReferenceAnalysisText(videoKickoff) : ''].filter(Boolean).join('\n\n'),
       });
       if (!result.ok || result.source !== 'ai' || !result.poster?.headline) throw new Error(result.error || '海报文案生成失败');
       const generatedPoster = result.poster;
@@ -8360,17 +8414,25 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onLaunc
           caption: result.caption,
           imagePrompt: result.imagePrompt,
           ratio,
-          materialIds: selectedClips.filter(item => item.type === 'image').slice(0, 3).map(item => item.id),
+          materialIds: imagePlan.selectedIds,
+          productIds: selectedProductIds,
+          deliverableType: imageDeliverable,
+          productionStrategy: imagePlan.strategy,
+          referencePlan: imagePlan.inputRoles,
         });
         if (!rendered.ok || !rendered.url) throw new Error(rendered.error || '图片生成失败');
         setPosterImageUrl(rendered.url);
+        setPosterImageMaterialId(rendered.material?.id || '');
+        setPosterImageReviewStatus('needs_review');
         if (rendered.material?.id) setSelected(prev => [...new Set([...prev, rendered.material!.id])]);
         await refreshMaterials();
         setModeNotice(result.fieldsToConfirm?.length
-          ? `已一次生成海报图和文案；请确认：${result.fieldsToConfirm.join('、')}`
-          : '已一次生成海报图、海报文案 JSON 和发布配文。');
+          ? `已生成图片和文案；还需确认图片和这些字段：${result.fieldsToConfirm.join('、')}`
+          : `已按“${imagePlan.strategyReason}”生成图片和文案，请核对产品外观与文字后确认图片。`);
       } catch (imageErr: any) {
         setPosterImageUrl('');
+        setPosterImageMaterialId('');
+        setPosterImageReviewStatus('none');
         setModeNotice(result.fieldsToConfirm?.length
           ? `已生成海报文案 JSON，但图片生成失败：${imageErr?.message || '请检查图像模型 Key 或稍后重试'}；请确认：${result.fieldsToConfirm.join('、')}`
           : `已生成海报文案 JSON，但图片生成失败：${imageErr?.message || '请检查图像模型 Key 或稍后重试'}`);
@@ -8527,6 +8589,10 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onLaunc
 
   const handleUpload = async (files: FileList | null) => {
     if (!files?.length) return;
+    if (contentMode === 'poster' && !materialRightsConfirmed) {
+      setModeNotice('请先确认你拥有这些素材的商业使用、改编和 AI 处理授权，再上传用于生图。');
+      return;
+    }
     setUploading(true);
     const uploadedIds: string[] = [];
     const uploadErrors: string[] = [];
@@ -8540,6 +8606,10 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onLaunc
           duration: media.duration,
           width: media.width,
           height: media.height,
+          rightsConfirmed: contentMode === 'poster' && materialRightsConfirmed,
+          productId: contentMode === 'poster'
+            && ['product', 'packaging'].includes(targetFolder)
+            && selectedProductIds.length === 1 ? selectedProductIds[0] : undefined,
         });
         if (!ok || !material?.id) throw new Error(error || `「${f.name}」上传失败`);
         if (material?.id) uploadedIds.push(material.id);
@@ -9225,6 +9295,8 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onLaunc
     tags: item.tags,
     productId: item.productId,
     productName: item.productName,
+    materialV2: item.materialV2,
+    capabilityManifest: item.capabilityManifest,
     segmentAnalysisStatus: item.segmentAnalysisStatus,
     segments: item.segments,
     transcript: item.transcript,
@@ -9272,7 +9344,7 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onLaunc
     };
     const currentSpec = ({
     ...(localFlowTestRef.current ? { localFlowTest: localFlowTestRef.current } : {}),
-    mode, contentMode, posterStyle, platform, ratio, duration, lang, provider,
+    mode, contentMode, posterStyle, imageDeliverable, platform, ratio, duration, lang, provider,
     workflowRunId: projectWorkflowContext?.runId || '', workflowTaskId: projectWorkflowContext?.taskId || '', workflowTaskKey: projectWorkflowContext?.taskKey || '',
     replicationSpeechDraft, replicationSpeechSpeed, activeStepId: step, activeStoryboardSlotId, canvasView, scriptStageTab,
     videoKickoff, creationPath: mode === 'clone' && contentMode === 'video' ? 'viral_replication' : 'free_creation',
@@ -9303,7 +9375,7 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onLaunc
     shootingSlots, shotProductions: savedShotProductions, shotProductionContext, socialDigitalHumanPlans,
     socialSourceShotIds, socialShotMaterialBindings,
     analysisResults,
-    posterDraft, leadContentPackage, posterJsonText, posterImageUrl,
+    posterDraft, leadContentPackage, posterJsonText, posterImageUrl, posterImageMaterialId, posterImageReviewStatus,
     });
     return reconcileStudioProductionSpec(frozenStudioSpecRef.current
       ? { ...currentSpec, ...structuredClone(frozenStudioSpecRef.current) }
@@ -9444,6 +9516,9 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onLaunc
     setLastGeneratedSetupSignature(typeof s.lastGeneratedSetupSignature === 'string' ? s.lastGeneratedSetupSignature : '');
     if (typeof s.posterStyle === 'string' && POSTER_STYLES.some(item => item.id === s.posterStyle)) {
       setPosterStyle(s.posterStyle as typeof posterStyle);
+    }
+    if (typeof s.imageDeliverable === 'string' && IMAGE_DELIVERABLE_OPTIONS.some(item => item.id === s.imageDeliverable)) {
+      setImageDeliverable(s.imageDeliverable as ImageDeliverable);
     }
     if (s.platform) setPlatform(s.platform as string);
     if (s.ratio) setRatio(s.ratio as string);
@@ -9586,6 +9661,9 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onLaunc
     setLeadContentPackage(s.leadContentPackage && typeof s.leadContentPackage === 'object' ? s.leadContentPackage as LeadContentPackageResult : null);
     setPosterJsonText(typeof s.posterJsonText === 'string' ? s.posterJsonText : '');
     setPosterImageUrl(typeof s.posterImageUrl === 'string' ? s.posterImageUrl : '');
+    setPosterImageMaterialId(typeof s.posterImageMaterialId === 'string' ? s.posterImageMaterialId : '');
+    setPosterImageReviewStatus(s.posterImageReviewStatus === 'accepted'
+      ? 'accepted' : typeof s.posterImageUrl === 'string' && s.posterImageUrl ? 'needs_review' : 'none');
     if (typeof s.subtitlesOn === 'boolean') setSubtitlesOn(s.subtitlesOn);
     if (s.subMode === 'target' || s.subMode === 'bilingual') setSubMode(s.subMode);
     if (s.subtitleStyle && typeof s.subtitleStyle === 'object') setSubtitleStyle(current => ({ ...current, ...(s.subtitleStyle as Partial<typeof current>) }));
@@ -10436,7 +10514,7 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onLaunc
     setSelected([]); setScriptRecommendedMaterialIds([]); setStoryboardAssignments({}); setStoryboardSourcePlans({});
     setVoiceoverUrl(null); setVoiceoverAudios({}); setAlignedCuesByLang({}); setLanguageRenderOutputs({});
     setBgm(''); setCover(''); setCoverUrl(null); setCapturedCoverFrameUrl(''); setCoverTimelineCaptureMode(false); setCaption(''); setClipEdits({}); setRendered(false); setPreviewIdx(null);
-    setPosterDraft(null); setLeadContentPackage(null); setPosterJsonText(''); setPosterImageUrl('');
+    setPosterDraft(null); setLeadContentPackage(null); setPosterJsonText(''); setPosterImageUrl(''); setPosterImageMaterialId(''); setPosterImageReviewStatus('none');
     setProjectId(saved.project.id); setProjectTitle(nextTitle); setProjects(current => [saved.project, ...current.filter(item => item.id !== saved.project.id)]);
     setStepIdx(0); setShowProjects(false); setSavedTick(true); window.setTimeout(() => setSavedTick(false), 1800);
   };
@@ -11231,6 +11309,27 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onLaunc
             <SectionTitle title="生成图文" />
             <div className="grid gap-4">
               <div className="rounded-lg border border-border bg-surface p-4">
+                <p className="text-sm font-bold text-text-primary">选择要交付的图片</p>
+                <div className="mt-3 grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
+                  {IMAGE_DELIVERABLE_OPTIONS.map(option => (
+                    <button
+                      key={option.id}
+                      type="button"
+                      onClick={() => setImageDeliverable(option.id)}
+                      className={`rounded-lg border p-3 text-left transition ${imageDeliverable === option.id
+                        ? 'border-accent bg-accent-glow'
+                        : 'border-border bg-white hover:bg-surface-2'}`}
+                    >
+                      <span className="block text-xs font-bold text-text-primary">{option.title}</span>
+                      <span className="mt-1 block text-[11px] leading-relaxed text-text-muted">{option.desc}</span>
+                    </button>
+                  ))}
+                </div>
+                <p className="mt-3 text-xs leading-relaxed text-text-secondary">
+                  你只选成品类型；内容 Agent 会根据统一素材分析，自动决定直接复用、素材合成、参考重制或补充生成。
+                </p>
+              </div>
+              <div className="rounded-lg border border-border bg-surface p-4">
                 <div className="flex items-center justify-between gap-3">
                   <p className="text-sm font-bold text-text-primary">图文内容</p>
                   <span className={`rounded-full px-2.5 py-1 text-[10px] font-semibold ${posterLoading ? 'bg-amber-50 text-amber-700' : posterGenerationIsVerified ? 'bg-emerald-50 text-emerald-700' : posterJsonText ? 'bg-amber-50 text-amber-800' : 'bg-surface-2 text-text-muted'}`}>
@@ -11254,6 +11353,19 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onLaunc
                   </div>
                 )}
                 {leadContentPackage && <LeadContentPackagePreview value={leadContentPackage} imageUrl={posterImageUrl} />}
+                {posterImageUrl && posterImageReviewStatus === 'needs_review' && (
+                  <div className="mt-3 flex flex-wrap items-center justify-between gap-3 rounded-lg border border-amber-200 bg-amber-50 px-4 py-3">
+                    <p className="text-xs leading-relaxed text-amber-800">请核对产品外观、包装文字和版式；确认结果会写入统一素材记录，确认前图片不会成为可交付成品或后续 Agent 输入。</p>
+                    <button
+                      type="button"
+                      onClick={() => void confirmPosterImage()}
+                      disabled={posterImageReviewing || !posterImageMaterialId}
+                      className="rounded-lg bg-accent px-3 py-1.5 text-xs font-bold text-white disabled:opacity-50"
+                    >
+                      {posterImageReviewing ? '正在保存…' : '确认图片正确'}
+                    </button>
+                  </div>
+                )}
                 {posterDraft && !leadContentPackage && (
                   <div className="mt-3 grid gap-3 md:grid-cols-2">
                     {posterImageUrl && (
@@ -11261,7 +11373,7 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onLaunc
                         <img src={posterImageUrl} alt="AI 图文海报" className="max-h-[520px] w-full object-contain bg-white" />
                       </div>
                     )}
-                    {mode === 'clone' && posterDraft.layoutModules?.length ? (
+                    {posterDraft.layoutModules?.length ? (
                       <div className="md:col-span-2 rounded-lg border border-border bg-surface-2 p-3">
                         <p className="text-xs font-bold text-text-primary">爆款模块拆解与本地素材替换</p>
                         <div className="mt-2 grid gap-2 md:grid-cols-2">
@@ -11305,7 +11417,8 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onLaunc
                     <p>平台：{platform === 'instagram' ? 'Instagram' : 'Facebook'}</p>
                     <p>比例：{ratio}</p>
                     <p>风格：{POSTER_STYLES.find(item => item.id === posterStyle)?.label}</p>
-                    <p>模式：{POSTER_MODES.find(item => item.id === mode)?.title}</p>
+                    <p>图片成品：{IMAGE_DELIVERABLE_LABELS[imageDeliverable]}</p>
+                    <p>制作方法：内容 Agent 自动决策</p>
                     <p>参考素材：{selectedClips.filter(item => item.type !== 'audio').length} 个</p>
                   </div>
                 </div>
@@ -11374,18 +11487,17 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onLaunc
           const clipsForFolders = (folders: readonly string[]) =>
             selectedPosterClips.filter(clip => folders.includes(clip.folder));
           const smartSelectPosterMaterials = () => {
-            const plan = planImageReferences(posterMaterials, {
+            const plan = planImageProduction(posterMaterials, {
+              deliverable: imageDeliverable,
               productIds: selectedProductIds,
-              includeStyleReference: mode === 'clone',
+              includeStyleReference: selectedPosterClips.some(item => item.folder === 'hot' || item.usage === 'reference_only'),
               limit: 3,
             });
             setSelected(plan.selectedIds);
             setActiveFolder('recommend');
             setModeNotice(plan.blockers.length
               ? `已完成素材推荐，但还不能保证产品一致：${plan.blockers.join('；')}`
-              : mode === 'clone'
-                ? '已推荐 2 张企业素材和 1 张版式参考；竞品图只指导结构，不会作为产品身份图。'
-                : '已根据编导分析推荐最多 3 张参考图：优先精准产品图，再补充场景或证明素材。');
+              : `已自动选择参考图，并决定“${plan.strategyReason}”。`);
           };
 
           return (
@@ -11416,24 +11528,29 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onLaunc
                 <div className="flex items-center gap-3 px-5 py-3 border-b border-border flex-shrink-0">
                   <div className="min-w-0">
                     <p className="text-sm font-semibold text-text-primary">{posterFolderName(posterActiveFolder)}</p>
-                    <p className="mt-0.5 text-[11px] text-text-muted">
-                      {mode === 'clone'
-                        ? '爆款图文参考用于拆解画风、画面和图文构成，本地素材用于生成最终海报。'
-                        : '上传产品、工厂、包装、证书、场景和品牌视觉素材，AI 会按海报文案智能推荐。'}
-                    </p>
+                    <p className="mt-0.5 text-[11px] text-text-muted">素材分析会统一交付产品身份、画面内容、授权状态和可用方式，内容 Agent 据此自动选图。</p>
                   </div>
                   <input ref={fileInputRef} type="file" multiple accept="image/*" className="hidden"
                     onChange={e => { void handleUpload(e.target.files); e.target.value = ''; }} />
+                  <label className="ml-auto inline-flex max-w-[260px] items-start gap-2 text-[10px] leading-relaxed text-text-secondary">
+                    <input
+                      type="checkbox"
+                      checked={materialRightsConfirmed}
+                      onChange={event => setMaterialRightsConfirmed(event.target.checked)}
+                      className="mt-0.5 h-3.5 w-3.5 rounded border-border accent-[var(--color-accent)]"
+                    />
+                    我确认拥有上传素材的商业使用、改编和 AI 处理授权
+                  </label>
                   <button
                     type="button"
                     onClick={smartSelectPosterMaterials}
                     disabled={posterMaterials.length === 0}
-                    className="ml-auto inline-flex items-center gap-1.5 rounded-lg border border-border bg-white px-3 py-1.5 text-xs font-bold text-text-secondary transition hover:bg-surface-2 disabled:opacity-50"
+                    className="inline-flex items-center gap-1.5 rounded-lg border border-border bg-white px-3 py-1.5 text-xs font-bold text-text-secondary transition hover:bg-surface-2 disabled:opacity-50"
                   >
                     <Sparkles size={12} />
                     智能推荐参考图
                   </button>
-                  <button onClick={() => fileInputRef.current?.click()} disabled={uploading}
+                  <button onClick={() => fileInputRef.current?.click()} disabled={uploading || !materialRightsConfirmed}
                     className="btn-ghost !px-3 !py-1.5 !text-xs flex items-center gap-1.5 disabled:opacity-60">
                     {uploading ? <Loader2 size={12} className="animate-spin" /> : <Upload size={12} />}
                     {uploading ? '上传中…' : '上传图片'}
@@ -11456,10 +11573,10 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onLaunc
                 <div className="flex-1 overflow-y-auto p-5">
                   <div className={`mb-4 rounded-lg border px-4 py-3 text-xs leading-relaxed ${activeProductLabel ? 'border-accent/20 bg-accent-glow text-text-secondary' : 'border-amber-200 bg-amber-50 text-amber-800'}`}>
                     <span className="font-bold text-text-primary">当前产品：</span>
-                    {activeProductLabel || '尚未选择。产品信息生成模式需要先在第一步选择企业中心产品，再补充/选择图文素材。'}
-                    {activeProductLabel && mode === 'product' ? '。请继续选择产品图、工厂图、包装图、证书图或场景图作为海报参考。' : ''}
+                    {activeProductLabel || '尚未选择。请先在第一步选择企业中心产品，再补充或选择图文素材。'}
+                    {activeProductLabel ? '。请继续选择产品图、工厂图、包装图、证书图或场景图；系统会自动决定制作方法。' : ''}
                   </div>
-                  {mode === 'clone' && (
+                  {selectedPosterClips.some(item => item.folder === 'hot' || item.usage === 'reference_only') && (
                     <div className="mb-4 rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-xs leading-relaxed text-amber-800">
                       参考爆款创作需要先从「灵感中心 - 拍摄任务 - 图文」选择已采集的图文素材。系统会把对标图文拆成标题区、产品主视觉、背景氛围、信息栏、认证徽章、流程图、CTA 等模块，再用本地素材逐模块替换。
                     </div>
@@ -11519,7 +11636,7 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onLaunc
                     <div>
                       <p className="text-[10px] font-semibold uppercase tracking-wider text-text-muted">海报参考素材</p>
                       <p className="mt-0.5 text-sm font-semibold text-text-primary">
-                        {mode === 'clone' ? '爆款拆解 + 本地素材回填' : '按文案推荐素材'}
+                        统一分析后自动选材
                       </p>
                     </div>
                     <button type="button" onClick={() => setSelected([])}
@@ -11539,7 +11656,6 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onLaunc
                 <div className="min-h-0 flex-1 overflow-y-auto p-3 space-y-3">
                   {POSTER_MATERIAL_GROUPS.map(group => {
                     const groupClips = clipsForFolders(group.folders);
-                    if (group.id === 'hot' && mode !== 'clone') return null;
                     return (
                       <div key={group.id} className={`rounded-lg border p-3 ${groupClips.length ? 'border-green-200 bg-green-50/60' : 'border-dashed border-border bg-white'}`}>
                         <div className="mb-2 flex items-start justify-between gap-2">
@@ -11561,6 +11677,11 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onLaunc
                                 <div className="min-w-0 flex-1">
                                   <p className="truncate text-[11px] font-bold text-text-primary">{clip.name}</p>
                                   <p className="mt-0.5 text-[10px] text-text-muted">{posterFolderName(clip.folder)} · {clip.size}</p>
+                                  <p className={`mt-0.5 text-[10px] font-semibold ${clip.capabilityManifest?.capabilities.includes('image_generation_reference') ? 'text-emerald-700' : 'text-amber-700'}`}>
+                                    {clip.capabilityManifest?.capabilities.includes('image_generation_reference')
+                                      ? '已分析 · 可用于生图'
+                                      : clip.capabilityManifest?.blockers[0]?.message || '待完成统一分析与授权'}
+                                  </p>
                                 </div>
                                 <button type="button" onClick={() => setSelected(list => list.filter(id => id !== clip.id))}
                                   className="rounded-md p-1 text-text-muted hover:bg-surface-2 hover:text-red">
@@ -14612,6 +14733,7 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onLaunc
   const setupSignature = useMemo(() => JSON.stringify({
     mode,
     contentMode,
+    imageDeliverable,
     platform,
     ratio,
     duration,
@@ -14629,7 +14751,7 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onLaunc
     selectedMaterialIds: selectedVisualClips.map(item => item.id).sort(),
     hookMaterialId,
     referenceId: videoKickoff?.generatedVideo?.id || videoKickoff?.video?.videoUrl || videoKickoff?.video?.sourceUrl || '',
-  }), [mode, contentMode, platform, ratio, duration, selectedProductIds, activeProductInfo, audience, effectivePrimaryCta, effectiveContentGoal, cooperationRoute, sellingPoints, tone, videoThemeId, themePainPoint, themeConversionGoal, selectedVisualClips, hookMaterialId, videoKickoff]);
+  }), [mode, contentMode, imageDeliverable, platform, ratio, duration, selectedProductIds, activeProductInfo, audience, effectivePrimaryCta, effectiveContentGoal, cooperationRoute, sellingPoints, tone, videoThemeId, themePainPoint, themeConversionGoal, selectedVisualClips, hookMaterialId, videoKickoff]);
   useEffect(() => {
     if (hasTimestampScript && !lastGeneratedSetupSignature) setLastGeneratedSetupSignature(setupSignature);
   }, [hasTimestampScript, lastGeneratedSetupSignature, setupSignature]);

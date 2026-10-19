@@ -26,8 +26,12 @@ try {
           await recordCurrentContentProviderReceipt({ provider: 'controlled-local', requestId: 'shot-a', state: 'completed', providerTaskId: 'provider-task-a', metadata: { materialId: 'material-a' } });
           appendFileSync(log!, 'assets\n'); return { artifactRefs: ['material:material-a'], inputHash: identity.inputHash };
         },
+        voice: async () => { appendFileSync(log!, 'voice\n'); return { artifactRefs: ['voice:audio-a'], inputHash: identity.inputHash }; },
+        trim: async () => { appendFileSync(log!, 'trim\n'); return { artifactRefs: ['trim:timeline-a'], inputHash: identity.inputHash }; },
+        effects: async () => { appendFileSync(log!, 'effects\n'); return { artifactRefs: ['effects:plan-a'], inputHash: identity.inputHash }; },
         render: async () => { appendFileSync(log!, 'render\n'); return { artifactRefs: ['render:video-a'], inputHash: identity.inputHash }; },
-        quality: async () => { appendFileSync(log!, 'quality\n'); return { artifactRefs: ['artifact:artifact-a'], inputHash: identity.inputHash }; },
+        technical_quality: async () => { appendFileSync(log!, 'technical_quality\n'); return { artifactRefs: ['quality:technical-a'], inputHash: identity.inputHash }; },
+        creative_quality: async () => { appendFileSync(log!, 'creative_quality\n'); return { artifactRefs: ['artifact:artifact-a'], inputHash: identity.inputHash }; },
         delivery: async () => { appendFileSync(log!, 'delivery\n'); return { artifactRefs: ['delivery:package-a'], inputHash: identity.inputHash }; },
       },
       review: {

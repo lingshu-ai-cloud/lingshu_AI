@@ -8,8 +8,9 @@ import { socialRequestHash } from './socialContentValidation.js';
 import type { SocialDirectorContentHandoff } from './socialContentDirectorPlan.js';
 import type { ProductionAsset } from './socialContentProductionMaterials.js';
 import {readSocialRenderFrameContract,type SocialRenderFrameContract} from './socialRenderFrameContract.js';
+import type { VideoProductionGraphPhase } from '../../shared/contracts/videoProductionSupervisor.js';
 
-export type SocialProductionGraphPhase = 'assets' | 'render' | 'quality';
+export type SocialProductionGraphPhase = Exclude<VideoProductionGraphPhase, 'delivery'>;
 type RenderPort = NonNullable<SocialContentAutoProductionRuntime['renderComposite']>;
 async function mediaHash(filePath: string): Promise<string> {
   const hash = createHash('sha256');

@@ -115,6 +115,7 @@ import {
   type SocialSceneVisualContract,
 } from '../../shared/sceneVisualContract.js';
 import { materialAssetV2FromRecord } from '../../shared/contracts/materialAssetV2.js';
+import { buildMaterialCapabilityManifest } from '../../shared/contracts/materialCapabilityManifest.js';
 
 type StoredPresenter = Record<string, unknown> & {
   id?: string; authorized?: boolean; avatarId?: string; voiceId?: string;
@@ -826,6 +827,7 @@ export function buildSocialWorkflowMaterialCandidates(input: {
       const identity = materialProductIdentity(record, input.selectedProductRef);
       const enterpriseCommon = materialIsEnterpriseCommon(record);
       const materialV2 = materialAssetV2FromRecord(record);
+      const capabilityManifest = buildMaterialCapabilityManifest(record);
       const sourceRevision = socialText(record.analysisSourceRevision || record.sourceRevision
         || socialObject(record.scriptAnalysis)?.sourceRevision || record.updatedAt)
         || `material:${assetId}`;
@@ -862,6 +864,7 @@ export function buildSocialWorkflowMaterialCandidates(input: {
           enterpriseCommon,
           materialRoles,
           materialV2,
+          capabilityManifest,
           sourceRevision,
           segmentProfile: profileAssessment.profile,
           segmentProfileRejectionReasons: profileAssessment.rejectionReasons,
@@ -964,6 +967,7 @@ export function buildSocialWorkflowMaterialCandidates(input: {
       segmentCandidateId: `${item.assetId}:${item.sourceRevision}:${item.shot.segmentId}`,
       sourceRevision: item.sourceRevision,
       materialV2: item.materialV2,
+      capabilityManifest: item.capabilityManifest,
       segmentProfile: item.segmentProfile,
       segmentProfileRejectionReasons: item.segmentProfileRejectionReasons,
     }];

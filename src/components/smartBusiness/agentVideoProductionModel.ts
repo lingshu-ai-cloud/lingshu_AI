@@ -94,7 +94,6 @@ export type VideoProductionLane = {
   status: AgentCalendarTask['status'];
   completed: number;
   total: number;
-  cost: { status: 'settled' | 'estimated' | 'unavailable'; cny: number | null };
 };
 
 export type VideoProductionDisplayStatus = AgentCalendarTask['status'] | 'waiting_upstream' | 'not_created';
@@ -180,14 +179,6 @@ function laneStatus(projections: VideoProductionStageProjection[]): AgentCalenda
   return 'planned';
 }
 
-function laneCost(tasks: AgentCalendarTask[]): VideoProductionLane['cost'] {
-  const settled = tasks.map(task => task.settledCostCny).find(value => Number.isFinite(value) && Number(value) >= 0);
-  if (settled !== undefined) return { status: 'settled', cny: Number(settled) };
-  const estimated = tasks.map(task => task.estimatedCostCny).find(value => Number.isFinite(value) && Number(value) >= 0);
-  if (estimated !== undefined) return { status: 'estimated', cny: Number(estimated) };
-  return { status: 'unavailable', cny: null };
-}
-
 function emptyStages(): Record<VideoProductionStageKey, AgentCalendarTask[]> {
   return {
     planning: [], directing: [], materials: [], production: [], quality: [], distribution: [], learning: [],
@@ -228,7 +219,6 @@ export function buildVideoProductionLanes(tasks: AgentCalendarTask[]): { lanes: 
       tasks: ordered, stages, stageProjections, status: laneStatus(stageProjections),
       completed: stageProjections.filter(stage => stage.fulfilled).length,
       total: VIDEO_PRODUCTION_STAGES.length,
-      cost: laneCost(ordered),
     };
   }).sort((left, right) => {
     const severity = (lane: VideoProductionLane) => lane.status === 'failed' ? 0 : lane.status === 'blocked' ? 1 : lane.status === 'active' ? 2 : lane.status === 'planned' ? 3 : 4;

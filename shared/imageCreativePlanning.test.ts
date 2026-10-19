@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { inferMaterialAssetV2, planImageReferences } from './imageCreativePlanning.js';
+import { inferMaterialAssetV2, planImageProduction, planImageReferences } from './imageCreativePlanning.js';
 
 test('Director only marks a product-bound image as exact product identity', () => {
   const exact = inferMaterialAssetV2({
@@ -21,6 +21,14 @@ test('Director only marks a product-bound image as exact product identity', () =
   });
   assert.notEqual(publicReference.assetRole, 'exact_product');
   assert.equal(publicReference.productIdentityLevel, 'none');
+});
+
+test('Director never promotes an AI-generated derivative to exact product identity', () => {
+  const generated = inferMaterialAssetV2({
+    type: 'image', name: 'generated product scene.png', productId: 'sku-1', identityAuthority: 'derived',
+  });
+  assert.equal(generated.productIdentityLevel, 'category');
+  assert.notEqual(generated.assetRole, 'exact_product');
 });
 
 test('Director recognizes reusable enterprise scenes and evidence', () => {
@@ -57,4 +65,18 @@ test('image reference plan blocks product generation without an exact product im
     { id: 'style', type: 'image', folder: 'hot', usage: 'reference_only' },
   ], { productIds: ['sku-1'], includeStyleReference: true });
   assert.match(plan.blockers.join(' '), /精准产品图/);
+});
+
+test('image production selects a method from the deliverable and material roles', () => {
+  const exact = inferMaterialAssetV2({ type: 'image', name: 'SKU 正面产品图', productId: 'sku-1' });
+  const plan = planImageProduction([
+    { id: 'product', type: 'image', folder: 'product', productId: 'sku-1', materialV2: exact },
+    { id: 'style', type: 'image', folder: 'hot', usage: 'reference_only' },
+  ], { deliverable: 'social_poster', productIds: ['sku-1'], includeStyleReference: true });
+  assert.equal(plan.strategy, 'reference_generate');
+  assert.deepEqual(plan.inputRoles, [
+    { materialId: 'product', role: 'exact_product' },
+    { materialId: 'style', role: 'style' },
+  ]);
+  assert.deepEqual(plan.blockers, []);
 });

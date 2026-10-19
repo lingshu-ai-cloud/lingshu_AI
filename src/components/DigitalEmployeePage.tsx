@@ -246,13 +246,12 @@ function synchronizeThemeContentWorkflows(
 }
 
 const agentRoleGroups: Array<{
-  id: "orchestrator" | "business" | "director" | "content" | "customer";
+  id: "business" | "director" | "content" | "customer";
   label: string;
   responsibility: string;
   outputs: string;
   workflows: DigitalEmployeeWorkflow[];
 }> = [
-  { id: "orchestrator", label: "灵小枢 · 统筹 Agent", responsibility: "读取企业上下文、拆解本周目标，协调四个专业 Agent 并跟踪任务状态", outputs: "执行上下文、周目标、任务编排与异常提醒", workflows: [] },
   { id: "business", label: "经营 Agent", responsibility: "负责发布审批、发布日历、平台回执和周度经营复盘", outputs: "发布计划、真实回执、经营结果与复盘报告", workflows: ["content_publish"] },
   { id: "director", label: "编导 Agent", responsibility: "逐镜分析爆款参考，重点拆解前三秒钩子，锁定可复刻的脚本、口播、字幕、分镜、音乐节奏和验收规则", outputs: "参考视频分析、逐镜复刻脚本、素材映射、替代方案与验收规则", workflows: ["scheduled_social", "viral_clone"] },
   { id: "content", label: "内容 Agent", responsibility: "执行已锁定的导演方案，按镜头选择真实素材、数字人、授权素材和生成模型，完成配音、字幕、剪辑、混音、封面和技术质检", outputs: "可播放成片、字幕与音轨、封面、平台版本和质检报告", workflows: [] },
@@ -1667,8 +1666,8 @@ function OnboardingPanel({
           </div>
           <span className="rounded-full bg-emerald-50 px-3 py-1.5 text-[10px] font-semibold text-emerald-700">推荐设置已就绪</span>
         </div>
-        <div className="mt-5 grid gap-3 sm:grid-cols-2 xl:grid-cols-5">
-          {agentRoleGroups.filter(agent => agent.id !== "orchestrator").map(agent => {
+        <div className="mt-5 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+          {agentRoleGroups.map(agent => {
             const Icon = agent.id === "business" ? BarChart3 : agent.id === "director" ? Search : agent.id === "content" ? Sparkles : MessageSquare;
             const detail = agent.id === "business" ? "统筹发布、数据与复盘" : agent.id === "director" ? "采集灵感并完成编导方案" : agent.id === "content" ? "按方案制作并检查成片" : "整理客户并生成跟进草稿";
             return <div key={agent.id} className="rounded-lg border border-slate-200 bg-slate-50/70 p-4"><span className="flex h-9 w-9 items-center justify-center rounded-lg bg-white text-emerald-700"><Icon size={17} /></span><p className="mt-3 text-sm font-semibold text-slate-900">{agent.label}</p><p className="mt-1 text-[11px] leading-5 text-slate-500">{detail}</p></div>;

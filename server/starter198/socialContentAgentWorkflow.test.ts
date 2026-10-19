@@ -106,7 +106,7 @@ const supply = createSocialAssetSupplyPlan({
 
 const workflowSupply = createSocialAssetSupplyPlan({
   creationMode: 'viral_replication', planVersion: '12', confirmedFactRefs: ['knowledge:product-1'],
-  productionApproach: 'ai_enhanced', materialRoutingPolicyVersion: 'type-aware.v1',
+  productionApproach: 'ai_enhanced', materialRoutingPolicyVersion: 'type-aware.v2',
   inventory: { productIdentityGroups: [{ productRef: 'product:verified-1', imageIds: ['product-image-1'] }] },
   shots: [
     { shotId: 'scene-hook', function: 'hook', materialType: 'product', productRef: 'product:verified-1', plannedDurationSeconds: 3, referenceShotId: 'reference-hook', requestedDescription: '三秒内呈现产品主体' },

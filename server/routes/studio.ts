@@ -12,6 +12,14 @@ import { createShootingTasksRouter } from './shootingTasks.js';
 import { createProductionCostQuotesRouter, createProductionInputRequestsRouter } from './productionGovernance.js';
 import { autoFulfillProductionInputRequestsForMaterial } from '../production/productionInputRequests.js';
 import { materialAssetV2FromRecord, normalizeMaterialAssetV2, type MaterialAssetV2Metadata } from '../../shared/contracts/materialAssetV2.js';
+import { buildMaterialCapabilityManifest, type MaterialCapabilityManifest } from '../../shared/contracts/materialCapabilityManifest.js';
+import {
+  IMAGE_DELIVERABLES,
+  IMAGE_DELIVERABLE_LABELS,
+  IMAGE_PRODUCTION_STRATEGIES,
+  type ImageDeliverable,
+  type ImageProductionStrategy,
+} from '../../shared/imageCreativePlanning.js';
 import { auditShotEvidence } from '../lib/shotEvidenceAudit.js';
 import { validateSpeechCues } from '../../src/lib/narrationAlignment.js';
 import { safeStudioRenderOutputPath, studioRenderMediaRouter } from '../lib/studioRenderMedia.js';
@@ -399,6 +407,10 @@ async function createGeneratedImageMaterial(input: {
   mimeType: string;
   source?: string;
   tenantId: string;
+  sourceType?: string;
+  productId?: string;
+  productName?: string;
+  provenance?: Record<string, unknown>;
 }): Promise<Material> {
   const outputDir = tenantAssetDir(MEDIA_DIR, input.tenantId);
   fs.mkdirSync(outputDir, { recursive: true });
@@ -407,6 +419,9 @@ async function createGeneratedImageMaterial(input: {
   const filename = `${id}.${ext}`;
   const filePath = path.join(outputDir, filename);
   fs.writeFileSync(filePath, input.bytes);
+  const contentSha256 = createHash('sha256').update(input.bytes).digest('hex');
+  const metadata = await sharp(input.bytes).metadata().catch(() => null);
+  const rightsEvidenceRef = `generated:${input.source || 'image-model'}:${contentSha256}`;
   const material: Material = {
     id,
     name: input.title || 'AI 图文海报',
@@ -419,6 +434,26 @@ async function createGeneratedImageMaterial(input: {
     poster: generatedMediaUrl(input.tenantId, filename),
     scope: 'own',
     tenantId: input.tenantId,
+    sourceType: input.sourceType || 'ai_generated_image',
+    sourceProvider: input.source || 'image-model',
+    contentSha256,
+    width: metadata?.width,
+    height: metadata?.height,
+    ...(metadata?.width && metadata.height ? { aspectRatio: metadata.width / metadata.height } : {}),
+    ...(input.productId ? { productId: input.productId } : {}),
+    ...(input.productName ? { productName: input.productName } : {}),
+    rightsStatus: 'authorized',
+    rightsEvidenceRef,
+    licenseEvidence: rightsEvidenceRef,
+    commercialUseApproved: true,
+    derivativesApproved: true,
+    rawLibraryUseApproved: true,
+    provenance: {
+      schemaVersion: 'generated-image-lineage.v1',
+      generatedAt: new Date().toISOString(),
+      provider: input.source || 'image-model',
+      ...(input.provenance || {}),
+    },
     createdAt: new Date().toISOString(),
   };
   if (objectStorageEnabled()) {
@@ -4898,11 +4933,12 @@ Return ONLY a JSON array of 3 strings. No other text.`;
 });
 
 /* ── ⑦ 发布文案 + 话题标签 ─────────────────────────────────────────────── */
-// POST /studio/fb-poster  Body: { mode, productInfo, platform, ratio, posterStyle, language, materials? }
+// POST /studio/fb-poster  Body: { deliverableType, productionStrategy, productInfo, ... }
 studioRouter.post('/fb-poster', async (req, res) => {
   if (!await consumeDemoQuota(req, res, 'generation')) return;
   const {
-    mode = 'product',
+    deliverableType: rawDeliverableType = 'social_poster',
+    productionStrategy: rawProductionStrategy = 'reference_generate',
     productInfo = '',
     platform = 'facebook',
     ratio = '1:1',
@@ -4912,6 +4948,10 @@ studioRouter.post('/fb-poster', async (req, res) => {
     materials = [],
     referenceNotes = '',
   } = req.body ?? {};
+  const deliverableType: ImageDeliverable = IMAGE_DELIVERABLES.includes(rawDeliverableType)
+    ? rawDeliverableType : 'social_poster';
+  const productionStrategy: ImageProductionStrategy = IMAGE_PRODUCTION_STRATEGIES.includes(rawProductionStrategy)
+    ? rawProductionStrategy : 'reference_generate';
   const providerOpt: 'qwen' = 'qwen';
   const lang = langName(language);
   const enterprise = await enterpriseCtx();
@@ -4944,21 +4984,19 @@ studioRouter.post('/fb-poster', async (req, res) => {
   const materialLines = Array.isArray(materials)
     ? materials.slice(0, 8).map((item: any, index: number) => `${index + 1}. ${String(item?.name || item || '').slice(0, 120)}${item?.role ? ` (${item.role})` : ''}`).join('\n')
     : '';
-  const modeGuide = mode === 'clone'
-    ? [
-        'First modularly deconstruct the reference poster into reusable layout modules: headline zone, product hero, background atmosphere, evidence strip, badges, process row, category cards, CTA/bottom bar, and caption framework.',
-        'Then map each reusable module to verified local/enterprise assets: replace competitor product with our product photo, reuse only generic background/composition style, omit any evidence module that has no matching verified asset, and rebuild copy from verified enterprise/product info.',
-        'Do not copy competitor brand, logo, certifications, price, MOQ, lead time, export country, factory qualification, or any unverified commercial promise.',
-      ].join(' ')
-    : mode === 'material'
-      ? 'Use selected materials only for directly visible product appearance and composition. Material names or folders do not prove factory ownership, certification, export, delivery, pricing, MOQ, or customization capability.'
-      : 'Use enterprise profile and product info as the primary source.';
+  const strategyGuide: Record<ImageProductionStrategy, string> = {
+    reuse_existing: 'Reuse only a production-admitted template or finished asset; replace text and product content with verified enterprise facts.',
+    compose_assets: 'Keep the exact product reference unchanged as the identity anchor, then compose it with admitted supporting scene or evidence assets.',
+    reference_generate: 'Lock product appearance to the exact enterprise product reference. Style references may guide layout and rhythm only; rebuild all brand, product and text content.',
+    generate_supporting: 'Generate only neutral supporting visuals that do not carry product identity, certification or commercial proof.',
+  };
 
   const prompt = `You are a senior B2B social media creative director. Never assume that the company is a factory, exporter, OEM/ODM supplier, private-label provider, or certified business unless the authenticated enterprise profile explicitly says so.
 Create a structured poster brief and ${platform} caption in ${lang}.
 
-Generation channel: ${mode}
-Channel rule: ${modeGuide}
+Requested finished image: ${IMAGE_DELIVERABLE_LABELS[deliverableType]} (${deliverableType})
+Agent-selected production strategy: ${productionStrategy}
+Strategy rule: ${strategyGuide[productionStrategy]}
 Poster style: ${posterStyle === 'oem-factory' ? 'structured B2B product-information layout (the legacy id is visual only; it does not authorize any OEM or factory claim)' : posterStyle}
 Canvas ratio: ${ratio}
 Selected product context (selection only; authenticated enterprise profile remains the sole source of commercial facts):
@@ -4976,7 +5014,8 @@ ${String(referenceNotes || '').slice(0, 1500) || '(none)'}
 Hard rules:
 - AI may optimize expression, but must not invent commercial promises.
 - MOQ, certifications, lead time, price, export countries, factory qualifications must come from product / enterprise info or be placed in fieldsToConfirm.
-- If Generation channel is clone, output a module-level deconstruction and local asset matching plan. The final poster must be a new composition using our product/materials, not a copy of the competitor poster.
+- If inspiration notes exist, output a module-level deconstruction and local asset matching plan. The final image must be a new composition using our product/materials, not a copy of the reference.
+- Shape the composition for the requested finished image (${deliverableType}); do not silently change it into another asset type.
 - Poster text should be concise enough for a dense B2B product-information poster.
 - Use exact English text for poster fields when language is English.
 - Return ONLY valid JSON. No markdown.
@@ -5180,7 +5219,7 @@ Schema:
   });
 });
 
-// POST /studio/fb-poster/render  Body: { poster, caption, imagePrompt, ratio, materialIds? }
+// POST /studio/fb-poster/render  Body: { poster, imagePrompt, ratio, materialIds, productIds, deliverableType, productionStrategy }
 studioRouter.post('/fb-poster/render', async (req, res) => {
   const { tenantId } = res.locals as AuthLocals;
   if (!await consumeDemoQuota(req, res, 'generation')) return;
@@ -5189,7 +5228,15 @@ studioRouter.post('/fb-poster/render', async (req, res) => {
     imagePrompt = '',
     ratio = '1:1',
     materialIds = [],
+    productIds = [],
+    deliverableType: rawDeliverableType = 'social_poster',
+    productionStrategy: rawProductionStrategy = 'reference_generate',
+    referencePlan = [],
   } = req.body ?? {};
+  const deliverableType: ImageDeliverable = IMAGE_DELIVERABLES.includes(rawDeliverableType)
+    ? rawDeliverableType : 'social_poster';
+  const productionStrategy: ImageProductionStrategy = IMAGE_PRODUCTION_STRATEGIES.includes(rawProductionStrategy)
+    ? rawProductionStrategy : 'reference_generate';
   const enterprise = await enterpriseCtx();
   if (!hasConfirmedEnterpriseFacts(enterprise)) {
     res.status(422).json({
@@ -5210,12 +5257,34 @@ studioRouter.post('/fb-poster/render', async (req, res) => {
     return;
   }
   const headline = normalizedPoster.headline || 'AI 图文海报';
-  const references = await resolveReferenceImages(materialIds, tenantId);
+  const referenceResolution = await resolveReferenceImages(materialIds, tenantId, referencePlan);
+  const requestedProductIds = Array.isArray(productIds) ? productIds.map(String).filter(Boolean) : [];
+  const exactProductIds = new Set(referenceResolution.descriptors
+    .filter(item => item.role === 'exact_product').map(item => item.productId).filter(Boolean));
+  const missingProductIds = requestedProductIds.filter(id => !exactProductIds.has(id));
+  const referenceBlockers = [
+    ...referenceResolution.blockers,
+    ...(missingProductIds.length ? [`缺少当前产品的精准身份图片：${missingProductIds.join('、')}`] : []),
+  ];
+  if (referenceBlockers.length) {
+    res.status(422).json({
+      ok: false, code: 'IMAGE_REFERENCE_ADMISSION_FAILED', publishable: false, qualityStatus: 'rejected',
+      error: `图片参考素材未通过生产准入：${referenceBlockers.join('；')}`,
+    });
+    return;
+  }
+  const references = referenceResolution.images;
+  const referenceRoleText = referenceResolution.descriptors.map((item, index) => (
+    `Reference ${index + 1}: ${item.role}; material=${item.materialId}; product=${item.productId || 'none'}`
+  )).join('\n');
   const prompt = [
     String(imagePrompt || '').trim(),
-    'Generate one finished high-end B2B social media product poster. Do not imply OEM/ODM, export, factory, certification, pricing, MOQ, lead-time, delivery, or customization capabilities unless they appear verbatim in the verified JSON.',
+    `Generate one finished ${IMAGE_DELIVERABLE_LABELS[deliverableType]} (${deliverableType}). Production strategy: ${productionStrategy}.`,
+    'Do not imply OEM/ODM, export, factory, certification, pricing, MOQ, lead-time, delivery, or customization capabilities unless they appear verbatim in the verified JSON.',
     `Use this exact poster JSON as the content source:\n${JSON.stringify(normalizedPoster, null, 2)}`,
     `Aspect ratio: ${ratio}.`,
+    referenceRoleText,
+    'An exact_product reference is the only product identity authority. A style reference may influence composition and visual rhythm only, never product, logo, packaging, text or commercial facts.',
     'Use only the sections that contain verified JSON content. Empty badge, proof, process, category, or CTA sections must stay absent rather than being filled with generic marketing claims.',
     'All visible text must match the JSON exactly. Avoid extra fake certifications, fake numbers, fake flags, watermarks, or unreadable tiny claims.',
     references.length
@@ -5231,6 +5300,20 @@ studioRouter.post('/fb-poster/render', async (req, res) => {
       mimeType: generated.mimeType,
       source: generated.source,
       tenantId,
+      sourceType: 'ai_generated_marketing_image',
+      productId: requestedProductIds.length === 1 ? requestedProductIds[0] : undefined,
+      provenance: {
+        deliverableType,
+        productionStrategy,
+        inputMaterialIds: referenceResolution.descriptors.map(item => item.materialId),
+        inputRoles: referenceResolution.descriptors,
+        promptSha256: createHash('sha256').update(prompt).digest('hex'),
+        model: generated.model,
+        qualityStatus: 'needs_review',
+      },
+    });
+    void requestMaterialAnalysis(tenantId, material.id).catch(error => {
+      console.warn('[studio] generated poster material analysis could not start', error instanceof Error ? error.message : error);
     });
     const responseMaterial = await materialResponse(material, tenantId);
     res.json({
@@ -5240,6 +5323,10 @@ studioRouter.post('/fb-poster/render', async (req, res) => {
       url: responseMaterial.url,
       material: responseMaterial,
       references: references.length,
+      deliverableType,
+      productionStrategy,
+      qualityStatus: 'needs_review',
+      publishable: false,
     });
   } catch (err: any) {
     res.status(502).json(upstreamGenerationFailure(err, '海报图片'));
@@ -6250,9 +6337,12 @@ interface Material {
   sourceType?: string;
   sourceName?: string;
   sourceProvider?: string;
+  contentSha256?: string;
   sourceCreator?: string;
   sourceUrl?: string;
   licenseEvidence?: string;
+  rightsStatus?: string;
+  rightsEvidenceRef?: string;
   licenseName?: string;
   licenseUrl?: string;
   attributionText?: string;
@@ -6266,6 +6356,7 @@ interface Material {
   rawLibraryUseApproved?: boolean;
   provenance?: Record<string, unknown>;
   materialV2?: MaterialAssetV2Metadata | null;
+  capabilityManifest?: MaterialCapabilityManifest;
   enterpriseCommon?: boolean;
   pinned?: boolean;
   industry?: string;
@@ -6775,6 +6866,11 @@ interface ProductSceneUploadIntent {
   kind: ProductSceneKind;
 }
 
+interface MaterialUploadProductBinding {
+  productId: string;
+  productName: string;
+}
+
 class ProductSceneUploadContextError extends Error {
   readonly status: number;
 
@@ -6804,6 +6900,18 @@ async function resolveProductSceneUploadIntent(input: {
   const product = (profile.products.items || []).find((item, index) => productIdentity(item, index) === productId);
   if (!product) throw new ProductSceneUploadContextError(400, '关联产品不在当前企业资料中');
   return { productId, productName: String(product.name || product.sku || '').trim(), kind };
+}
+
+async function resolveMaterialUploadProductBinding(
+  tenantId: string,
+  productIdValue: unknown,
+): Promise<MaterialUploadProductBinding | undefined> {
+  const productId = String(productIdValue || '').trim();
+  if (!productId) return undefined;
+  const profile = await readTenantEnterpriseProfile(tenantId);
+  const product = (profile.products.items || []).find((item, index) => productIdentity(item, index) === productId);
+  if (!product) throw new ProductSceneUploadContextError(400, '关联产品不在当前企业资料中');
+  return { productId, productName: String(product.name || product.sku || productId).trim() };
 }
 
 async function verifyProductSceneUpload(
@@ -7184,8 +7292,11 @@ async function materialResponse(material: Material, tenantId: string): Promise<M
     })
     : undefined);
   const materialV2 = materialAssetV2FromRecord(material as unknown as Record<string, unknown>);
+  const capabilityManifest = buildMaterialCapabilityManifest({
+    ...material, scriptAnalysis, materialV2,
+  } as unknown as Record<string, unknown>);
   const productSceneType = productSceneMaterialProvenanceOf(material as unknown as Record<string, unknown>)?.kind;
-  return { ...material, url: url || material.url, poster, segments, scriptAnalysis, materialV2, enterpriseCommon: materialV2?.enterpriseCommon ?? material.enterpriseCommon ?? false, ...(productSceneType ? { productSceneType } : {}), canManage: material.sourceType !== 'enterprise_product_table' && material.scope !== 'shared' && material.tenantId === tenantId, objectKey: undefined, posterObjectKey: undefined };
+  return { ...material, url: url || material.url, poster, segments, scriptAnalysis, materialV2, capabilityManifest, enterpriseCommon: materialV2?.enterpriseCommon ?? material.enterpriseCommon ?? false, ...(productSceneType ? { productSceneType } : {}), canManage: material.sourceType !== 'enterprise_product_table' && material.scope !== 'shared' && material.tenantId === tenantId, objectKey: undefined, posterObjectKey: undefined };
 }
 
 function enterpriseProductMaterials(tenantId: string, profile: Awaited<ReturnType<typeof readTenantEnterpriseProfile>>): Material[] {
@@ -7215,6 +7326,12 @@ function enterpriseProductMaterials(tenantId: string, profile: Awaited<ReturnTyp
         usage: 'editable' as const,
         sourceType: 'enterprise_product_table',
         sourceName: '企业中心产品表',
+        rightsStatus: 'authorized',
+        rightsEvidenceRef: `enterprise_profile:product:${productId}`,
+        licenseEvidence: `enterprise_profile:product:${productId}`,
+        commercialUseApproved: true,
+        derivativesApproved: true,
+        rawLibraryUseApproved: true,
         productId,
         productName,
         tags: `产品素材,${productName}`,
@@ -7517,6 +7634,8 @@ async function saveMaterialUploadToDatabase(input: {
   sha256: string;
   tempDirectory: string;
   productScene?: VerifiedProductSceneUpload;
+  productBinding?: MaterialUploadProductBinding;
+  rightsConfirmed?: boolean;
 }): Promise<Material> {
   const requestedUsage: MaterialUsage = 'editable';
   if (input.productScene && input.productScene.contentSha256 !== input.sha256.toLowerCase()) {
@@ -7527,6 +7646,11 @@ async function saveMaterialUploadToDatabase(input: {
     throw new Error('product_scene_upload_verification_invalid');
   }
   const sourceType = input.productScene ? PRODUCT_SCENE_UPLOAD_SOURCE : input.sourceType || 'tenant_upload';
+  const productBinding = input.productScene || input.productBinding;
+  const rightsEvidence = input.productScene
+    ? productSceneReuse.licenseEvidence
+    : input.rightsConfirmed ? `tenant-upload-confirmation:${input.tenantId}:${input.sha256}` : undefined;
+  const rightsConfirmed = Boolean(input.productScene || input.rightsConfirmed);
   const duration = input.productScene?.durationSeconds ?? (Number.isFinite(input.duration) ? Math.max(0, input.duration) : 0);
   const width = input.productScene?.width ?? input.width;
   const height = input.productScene?.height ?? input.height;
@@ -7536,6 +7660,14 @@ async function saveMaterialUploadToDatabase(input: {
     originalName: input.name || input.mediaName,
     mimeType: input.mimeType,
     receivedAt: new Date().toISOString(),
+    ...(rightsConfirmed ? {
+      rightsConfirmation: {
+        schemaVersion: 'tenant-material-rights-confirmation.v1',
+        confirmedAt: new Date().toISOString(),
+        scope: ['commercial_use', 'derivative_use', 'model_input'],
+        evidenceRef: rightsEvidence,
+      },
+    } : {}),
     ...(productSceneReuse.authorizationScopes ? { authorizationScopes: productSceneReuse.authorizationScopes } : {}),
   };
   const productSceneChanges = input.productScene
@@ -7586,34 +7718,34 @@ async function saveMaterialUploadToDatabase(input: {
     sourceName: input.name || input.mediaName,
     sourceProvider: 'tenant',
     sourceUrl: input.sourceUrl || undefined,
-    productId: input.productScene?.productId,
-    productName: input.productScene?.productName,
+    productId: productBinding?.productId,
+    productName: productBinding?.productName,
     tags: typeof productSceneChanges.tags === 'string' ? productSceneChanges.tags : undefined,
     shotFunction: typeof productSceneChanges.shotFunction === 'string' ? productSceneChanges.shotFunction : undefined,
-    licenseEvidence: productSceneReuse.licenseEvidence,
-    commercialUseApproved: productSceneReuse.commercialUseApproved,
-    derivativesApproved: productSceneReuse.derivativesApproved,
-    rawLibraryUseApproved: productSceneReuse.rawLibraryUseApproved,
+    licenseEvidence: rightsEvidence,
+    commercialUseApproved: rightsConfirmed,
+    derivativesApproved: rightsConfirmed,
+    rawLibraryUseApproved: rightsConfirmed,
     provenance: recordObject(productSceneChanges.provenance || baseProvenance),
     sourceEntry: 'studio_workspace',
-    ...(input.productScene ? {
+    ...((input.productScene || input.productBinding || rightsConfirmed) ? {
       verifiedDeduplicatedUpdate: {
         title: input.name || input.mediaName,
         folder: input.folder,
-        type: 'video' as const,
+        type: input.type,
         duration,
         width: width > 0 ? Math.round(width) : 0,
         height: height > 0 ? Math.round(height) : 0,
         sourceType,
         sourceName: input.name || input.mediaName,
-        productId: input.productScene.productId,
-        productName: input.productScene.productName,
+        productId: productBinding?.productId,
+        productName: productBinding?.productName,
         tags: typeof productSceneChanges.tags === 'string' ? productSceneChanges.tags : undefined,
         shotFunction: typeof productSceneChanges.shotFunction === 'string' ? productSceneChanges.shotFunction : undefined,
-        licenseEvidence: productSceneReuse.licenseEvidence,
-        commercialUseApproved: productSceneReuse.commercialUseApproved,
-        derivativesApproved: productSceneReuse.derivativesApproved,
-        rawLibraryUseApproved: productSceneReuse.rawLibraryUseApproved,
+        licenseEvidence: rightsEvidence,
+        commercialUseApproved: rightsConfirmed,
+        derivativesApproved: rightsConfirmed,
+        rawLibraryUseApproved: rightsConfirmed,
       },
     } : {}),
     media: { key: objectKey, etag: storedMedia.head.etag, contentType: input.mimeType },
@@ -7638,11 +7770,13 @@ studioRouter.post('/materials/file', async (req, res) => {
   const usage = String(req.query.usage || '');
   const sourceType = String(req.query.sourceType || '');
   const sourceUrl = String(req.query.sourceUrl || '');
+  const rightsConfirmed = String(req.query.rightsConfirmed || '') === '1';
   if (!['video', 'image', 'audio'].includes(type)) {
     res.status(400).json({ ok: false, error: 'invalid type' });
     return;
   }
   let productSceneIntent: ProductSceneUploadIntent | undefined;
+  let productBinding: MaterialUploadProductBinding | undefined;
   try {
     productSceneIntent = await resolveProductSceneUploadIntent({
       tenantId,
@@ -7651,6 +7785,7 @@ studioRouter.post('/materials/file', async (req, res) => {
       productId: req.query.productId,
       productSceneType: req.query.productSceneType,
     });
+    productBinding = productSceneIntent ? undefined : await resolveMaterialUploadProductBinding(tenantId, req.query.productId);
   } catch (error) {
     const response = productSceneUploadErrorResponse(error);
     res.status(response?.status || 503).json({ ok: false, error: response?.message || '产品资料暂不可读取，请稍后重试' });
@@ -7719,7 +7854,7 @@ studioRouter.post('/materials/file', async (req, res) => {
     const material = await saveMaterialUploadToDatabase({
       tenantId, name, folder, type: type as Material['type'], duration, width, height,
       usage, sourceType, sourceUrl, mimeType: contentType, mediaName: file,
-      mediaPath: storedPath, sizeBytes: bytes, sha256, tempDirectory: tempDir, productScene,
+      mediaPath: storedPath, sizeBytes: bytes, sha256, tempDirectory: tempDir, productScene, productBinding, rightsConfirmed,
     });
     if (['video', 'image'].includes(material.type)) {
       void requestMaterialAnalysis(tenantId, material.id).catch(() => {});
@@ -7736,10 +7871,11 @@ studioRouter.post('/materials/file', async (req, res) => {
 // POST /studio/materials  Body: { name, folder?, type, duration?, dataBase64, mimeType?, scope? } → 上传单个文件
 studioRouter.post('/materials', async (req, res) => {
   const { tenantId } = res.locals as AuthLocals;
-  const { name, folder = 'upload', type, duration = 0, width = 0, height = 0, dataBase64, mimeType, usage, sourceType, sourceUrl, productId, productSceneType } = req.body ?? {};
+  const { name, folder = 'upload', type, duration = 0, width = 0, height = 0, dataBase64, mimeType, usage, sourceType, sourceUrl, productId, productSceneType, rightsConfirmed = false } = req.body ?? {};
   if (!dataBase64 || !type) { res.status(400).json({ ok: false, error: 'dataBase64 and type required' }); return; }
   if (!['video', 'image', 'audio'].includes(type)) { res.status(400).json({ ok: false, error: 'invalid type' }); return; }
   let productSceneIntent: ProductSceneUploadIntent | undefined;
+  let productBinding: MaterialUploadProductBinding | undefined;
   try {
     productSceneIntent = await resolveProductSceneUploadIntent({
       tenantId,
@@ -7748,6 +7884,7 @@ studioRouter.post('/materials', async (req, res) => {
       productId,
       productSceneType,
     });
+    productBinding = productSceneIntent ? undefined : await resolveMaterialUploadProductBinding(tenantId, productId);
   } catch (error) {
     const response = productSceneUploadErrorResponse(error);
     res.status(response?.status || 503).json({ ok: false, error: response?.message || '产品资料暂不可读取，请稍后重试' });
@@ -7779,7 +7916,7 @@ studioRouter.post('/materials', async (req, res) => {
       duration: Number(duration) || 0, width: Number(width) || 0, height: Number(height) || 0,
       usage: String(usage || ''), sourceType: String(sourceType || ''), sourceUrl: String(sourceUrl || ''),
       mimeType: contentType, mediaName: file, mediaPath: tempFile, sizeBytes: buf.length,
-      sha256, tempDirectory: tempDir, productScene,
+      sha256, tempDirectory: tempDir, productScene, productBinding, rightsConfirmed: rightsConfirmed === true,
     });
     if (['video', 'image'].includes(material.type)) {
       void requestMaterialAnalysis(tenantId, material.id).catch(() => {});
@@ -7984,6 +8121,38 @@ studioRouter.get('/material-products', async (_req, res) => {
     const profile = await readTenantEnterpriseProfile(tenantId);
     res.json({items: (profile.products.items || []).map((item,index) => ({id:productIdentity(item,index),name:item.name})).filter(item => item.name)});
   } catch { res.status(503).json({error:'产品资料暂不可读取，请稍后重试'}); }
+});
+
+studioRouter.patch('/materials/:id/generated-image-review', async (req, res) => {
+  const { tenantId } = res.locals as AuthLocals;
+  const inventory = await readMaterialLibrary(tenantId);
+  const material = inventory.items.find(item => item.id === req.params.id && item.tenantId === tenantId && item.scope !== 'shared');
+  if (!material) { res.status(404).json({ ok: false, error: '生成图片不存在或不可编辑' }); return; }
+  if (material.type !== 'image' || material.sourceType !== 'ai_generated_marketing_image') {
+    res.status(409).json({ ok: false, error: '只有当前工作流生成的营销图片可以在这里确认' }); return;
+  }
+  if (req.body?.accepted !== true) { res.status(400).json({ ok: false, error: '请明确确认图片已通过人工复核' }); return; }
+  const changes = {
+    provenance: {
+      ...recordObject(material.provenance),
+      qualityStatus: 'accepted',
+      confirmed: true,
+      confirmationSource: 'user',
+      generatedImageReview: {
+        schemaVersion: 'generated-image-review.v1',
+        status: 'accepted',
+        reviewedAt: new Date().toISOString(),
+      },
+    },
+  };
+  const saved = material.id.startsWith('pb-')
+    ? Boolean(await getOwnedCloudMaterialRecord(material.id.slice(3), tenantId))
+      && await updateCloudMaterial(material.id.slice(3), changes)
+    : updateLocalMaterial(material.id, tenantId, changes);
+  if (!saved) { res.status(500).json({ ok: false, error: '图片复核结果保存失败' }); return; }
+  const nextMaterial = { ...(material as unknown as Material), ...changes } as Material;
+  void requestMaterialAnalysis(tenantId, material.id).catch(() => {});
+  res.json({ ok: true, material: await materialResponse(nextMaterial, tenantId) });
 });
 
 studioRouter.patch('/materials/:id', async (req, res) => {
@@ -11115,37 +11284,71 @@ function materialLocalFile(material: Material): string | null {
   return path.join(MEDIA_DIR, raw);
 }
 
-async function resolveReferenceImages(materialIds: unknown, tenantId: string): Promise<ReferenceImage[]> {
-  const ids = new Set(Array.isArray(materialIds) ? materialIds.map(String) : []);
-  if (!ids.size) return [];
-  const refs: ReferenceImage[] = [];
-  for (const material of loadMaterials()) {
-    if (!ids.has(material.id)) continue;
-    if (material.scope !== 'shared' && material.tenantId !== tenantId) continue;
-    if (material.objectKey) {
-      try {
-        const key = material.type === 'image' ? material.objectKey : material.posterObjectKey;
-        if (!key) continue;
-        const downloaded = await objectStorageDownload(key);
-        if (!downloaded?.buf.length) continue;
-        refs.push({ mimeType: downloaded.contentType, base64: downloaded.buf.toString('base64') });
-      } catch {
-        continue;
-      }
-      if (refs.length >= 4) break;
+type PosterReferenceRole = 'exact_product' | 'style' | 'supporting';
+type PosterReferenceDescriptor = { materialId: string; role: PosterReferenceRole; productId: string | null };
+
+async function posterReferenceBytes(material: Record<string, unknown>, tenantId: string): Promise<ReferenceImage | null> {
+  const objectKey = String(material.objectKey || '').trim();
+  if (objectKey) {
+    const downloaded = await objectStorageDownload(objectKey).catch(() => null);
+    if (downloaded?.buf.length) return { mimeType: downloaded.contentType, base64: downloaded.buf.toString('base64') };
+  }
+  const id = String(material.id || '');
+  if (id.startsWith('pb-')) {
+    const response = await fetchCloudMaterial(id.slice(3), 'videoFile', undefined, tenantId).catch(() => null);
+    if (response?.ok) {
+      const bytes = Buffer.from(await response.arrayBuffer());
+      if (bytes.length) return { mimeType: response.headers.get('content-type') || 'image/png', base64: bytes.toString('base64') };
+    }
+  }
+  const local = materialLocalFile(material as unknown as Material);
+  if (local && fs.existsSync(local)) return { mimeType: mimeFromFile(local), base64: fs.readFileSync(local).toString('base64') };
+  const url = String(material.url || '').trim();
+  return url ? storyboardEnterpriseImage(url, tenantId) : null;
+}
+
+async function resolveReferenceImages(
+  materialIds: unknown,
+  tenantId: string,
+  rawReferencePlan: unknown = [],
+): Promise<{ images: ReferenceImage[]; descriptors: PosterReferenceDescriptor[]; blockers: string[] }> {
+  const orderedIds = Array.isArray(materialIds) ? [...new Set(materialIds.map(String).filter(Boolean))].slice(0, 3) : [];
+  if (!orderedIds.length) return { images: [], descriptors: [], blockers: ['没有选择可用于图片生成的参考素材'] };
+  const roles = new Map<string, PosterReferenceRole>();
+  if (Array.isArray(rawReferencePlan)) {
+    for (const raw of rawReferencePlan) {
+      const row = raw && typeof raw === 'object' ? raw as Record<string, unknown> : {};
+      const role = String(row.role || '');
+      if (['exact_product', 'style', 'supporting'].includes(role)) roles.set(String(row.materialId || ''), role as PosterReferenceRole);
+    }
+  }
+  const inventory = await readMaterialLibrary(tenantId);
+  const byId = new Map(inventory.items.map(item => [String(item.id), item]));
+  const images: ReferenceImage[] = [];
+  const descriptors: PosterReferenceDescriptor[] = [];
+  const blockers: string[] = [];
+  for (const materialId of orderedIds) {
+    const material = byId.get(materialId);
+    if (!material) { blockers.push(`素材 ${materialId} 不存在或已失去访问权限`); continue; }
+    if (material.type !== 'image') { blockers.push(`素材 ${materialId} 不是图片`); continue; }
+    const manifest = buildMaterialCapabilityManifest(material);
+    if (!manifest.capabilities.includes('image_generation_reference')) {
+      const reason = manifest.blockers.map(item => item.message).join('、') || '未通过图片模型输入准入';
+      blockers.push(`${material.name || materialId}：${reason}`);
       continue;
     }
-    const filePath = materialLocalFile(material);
-    if (!filePath || !fs.existsSync(filePath)) continue;
-    try {
-      refs.push({
-        mimeType: mimeFromFile(filePath),
-        base64: fs.readFileSync(filePath).toString('base64'),
-      });
-    } catch {
-      // Skip unreadable references; generation can still proceed with remaining assets.
+    const inferredRole: PosterReferenceRole = manifest.capabilities.includes('exact_product_reference')
+      ? 'exact_product'
+      : material.usage === 'reference_only' || material.folder === 'hot' ? 'style' : 'supporting';
+    const role = roles.get(materialId) || inferredRole;
+    if (role === 'exact_product' && !manifest.capabilities.includes('exact_product_reference')) {
+      blockers.push(`${material.name || materialId} 没有明确产品绑定，不能作为产品身份图`);
+      continue;
     }
-    if (refs.length >= 4) break;
+    const bytes = await posterReferenceBytes(material, tenantId).catch(() => null);
+    if (!bytes) { blockers.push(`${material.name || materialId} 的原始图片不可读取`); continue; }
+    images.push(bytes);
+    descriptors.push({ materialId, role, productId: manifest.identity.productId });
   }
-  return refs;
+  return { images, descriptors, blockers };
 }

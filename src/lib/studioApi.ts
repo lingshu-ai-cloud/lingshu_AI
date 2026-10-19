@@ -499,6 +499,11 @@ export interface FbPosterRenderResult {
   url?: string;
   material?: Material;
   references?: number;
+  deliverableType?: import('../../shared/imageCreativePlanning').ImageDeliverable;
+  productionStrategy?: import('../../shared/imageCreativePlanning').ImageProductionStrategy;
+  qualityStatus?: 'needs_review' | 'passed' | 'rejected';
+  publishable?: boolean;
+  code?: string;
   error?: string;
 }
 
@@ -579,7 +584,10 @@ export const studioApi = {
     post<{ ok: boolean; source?: 'ai' | 'ai_rejected' | 'ai_failed'; provenance?: StudioGenerationProvenance | string; publishable?: boolean; caption: string; hashtags: string[]; fieldsToConfirm?: string[]; error?: string }>('caption', b, { ok: false, caption: '', hashtags: [] }),
 
   fbPoster: (b: {
-    mode: 'material' | 'clone' | 'product';
+    /** Legacy callers may still send mode; current UI selects a deliverable instead. */
+    mode?: 'material' | 'clone' | 'product';
+    deliverableType?: import('../../shared/imageCreativePlanning').ImageDeliverable;
+    productionStrategy?: import('../../shared/imageCreativePlanning').ImageProductionStrategy;
     productInfo?: string;
     platform: string;
     ratio: string;
@@ -600,6 +608,10 @@ export const studioApi = {
     imagePrompt?: string;
     ratio: string;
     materialIds?: string[];
+    productIds?: string[];
+    deliverableType?: import('../../shared/imageCreativePlanning').ImageDeliverable;
+    productionStrategy?: import('../../shared/imageCreativePlanning').ImageProductionStrategy;
+    referencePlan?: Array<{ materialId: string; role: 'exact_product' | 'style' | 'supporting' }>;
   }) =>
     post<FbPosterRenderResult>('fb-poster/render', b, { ok: false }),
 
@@ -992,7 +1004,7 @@ export const studioApi = {
   // 素材库
   listMaterialLibrary: fetchMaterialLibrary,
   listMaterials: async (purpose: MaterialLibraryPurpose = 'library'): Promise<Material[]> => (await fetchMaterialLibrary(purpose)).items,
-  uploadMaterial: (b: { name: string; folder?: string; type: 'video' | 'image' | 'audio'; duration?: number; width?: number; height?: number; dataBase64: string; mimeType?: string; sourceType?: string; productId?: string; productSceneType?: ProductSceneKind }) =>
+  uploadMaterial: (b: { name: string; folder?: string; type: 'video' | 'image' | 'audio'; duration?: number; width?: number; height?: number; dataBase64: string; mimeType?: string; sourceType?: string; productId?: string; productSceneType?: ProductSceneKind; rightsConfirmed?: boolean }) =>
     post<{ ok: boolean; material: Material }>('materials', b, { ok: false, material: null as unknown as Material }),
   uploadMaterialFile: async (
     file: File,
@@ -1005,6 +1017,7 @@ export const studioApi = {
       sourceType?: string;
       productId?: string;
       productSceneType?: ProductSceneKind;
+      rightsConfirmed?: boolean;
     },
   ): Promise<{ ok: boolean; material: Material; error?: string }> => {
     const maxBytes = 100 * 1024 * 1024;
@@ -1028,6 +1041,7 @@ export const studioApi = {
     });
     if (metadata.productId) query.set('productId', metadata.productId);
     if (metadata.productSceneType) query.set('productSceneType', metadata.productSceneType);
+    if (metadata.rightsConfirmed) query.set('rightsConfirmed', '1');
     try {
       const response = await fetch(`/api/overseas/studio/materials/file?${query.toString()}`, {
         method: 'POST',
@@ -1061,6 +1075,14 @@ export const studioApi = {
     } catch { return { ok: false, error: '片段更新失败' }; }
   },
   materialProducts: () => get<{items:Array<{id:string;name:string}>}>('material-products', {items:[]}),
+  reviewGeneratedImage: async (id: string): Promise<{ ok: boolean; material?: Material; error?: string }> => {
+    try {
+      const response = await fetch(`/api/overseas/studio/materials/${encodeURIComponent(id)}/generated-image-review`, {
+        method: 'PATCH', headers: { 'Content-Type': 'application/json', ...authHeader() }, body: JSON.stringify({ accepted: true }),
+      });
+      return await response.json();
+    } catch { return { ok: false, error: '图片复核结果保存失败' }; }
+  },
   updateMaterial: async (id: string, changes: { name?: string; tags?: string; productId?: string; productSceneType?: ProductSceneKind; enterpriseCommon?: boolean; materialV2?: Partial<import('../../shared/contracts/materialAssetV2').MaterialAssetV2Metadata>; primaryTheme?: import('../../shared/materialTaxonomy').MaterialTheme }): Promise<{ ok: boolean; material?: Material; error?: string }> => {
     try {
       const response = await fetch(`/api/overseas/studio/materials/${id}`, {
@@ -1211,6 +1233,8 @@ export interface Material {
   sourceCreator?: string;
   sourceUrl?: string;
   licenseEvidence?: string;
+  rightsStatus?: string;
+  rightsEvidenceRef?: string;
   licenseName?: string;
   licenseUrl?: string;
   attributionText?: string;
@@ -1224,6 +1248,7 @@ export interface Material {
   rawLibraryUseApproved?: boolean;
   provenance?: Record<string, unknown>;
   materialV2?: import('../../shared/contracts/materialAssetV2').MaterialAssetV2Metadata | null;
+  capabilityManifest?: import('../../shared/contracts/materialCapabilityManifest').MaterialCapabilityManifest;
   enterpriseCommon?: boolean;
   pinned?: boolean;
   industry?: string;

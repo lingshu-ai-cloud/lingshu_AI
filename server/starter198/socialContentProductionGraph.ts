@@ -6,6 +6,13 @@ import type { ContentExecutionJob } from '../contentExecution/durableQueue.js';
 import { controlContentExecutionJob } from '../contentExecution/durableQueue.js';
 import { assertCurrentContentExecutionActive, recordCurrentContentExecutionCheckpoint } from '../contentExecution/context.js';
 import { runLangGraphProduction } from '../contentExecution/langgraphEngine.js';
+import {
+  CONTENT_GRAPH_VERSION,
+  LEGACY_CONTENT_GRAPH_VERSION,
+  SUPPORTED_CONTENT_GRAPH_VERSIONS,
+  type ContentGraphVersion,
+} from '../contentExecution/langgraphIdentity.js';
+import type { SocialProductionGraphPhase } from './socialContentProductionStages.js';
 import { runSocialContentAutoProduction, type SocialContentAutoProductionRuntime, type SocialGraphApprovedContext } from './socialContentProductionExecution.js';
 import type { SocialAssetSupplyProviderAdapter } from './socialContentAssetSupplyExecution.js';
 import { readSocialTaskDetail, requireSocialTask } from './socialContentRecords.js';
@@ -158,7 +165,9 @@ export function createSocialProductionExecutorCheckpoint(detail: Detail, env: No
     approvedContext.agentWorkflow.replicationEvaluation = null;
   }
   return { version: '1', inputHash: identity.inputHash, updatedAt: new Date().toISOString(),
-    payload: { executor: graphEnabled ? 'langgraph' : 'legacy', ...identity, ...(approvedContext ? { approvedContext } : {}) } };
+    payload: { executor: graphEnabled ? 'langgraph' : 'legacy', ...identity,
+      ...(graphEnabled ? { graphVersion: CONTENT_GRAPH_VERSION } : {}),
+      ...(approvedContext ? { approvedContext } : {}) } };
 }
 
 export function socialProductionExecutor(job: ContentExecutionJob, rawCheckpoints?: unknown): 'legacy' | 'langgraph' {
@@ -172,6 +181,8 @@ export function socialProductionExecutor(job: ContentExecutionJob, rawCheckpoint
   const payload = socialObject(binding.payload);
   if (binding.version !== '1' || !payload || !['legacy', 'langgraph'].includes(String(payload.executor))
     || !socialText(payload.planVersion) || binding.inputHash !== payload.inputHash
+    || payload.executor === 'langgraph' && payload.graphVersion !== undefined
+      && !SUPPORTED_CONTENT_GRAPH_VERSIONS.includes(payload.graphVersion as ContentGraphVersion)
     || payload.executor === 'langgraph' && !/^[a-f0-9]{64}$/.test(String(payload.inputHash))) throw new Error('user_input_required:production_executor_binding_invalid');
   return payload.executor as 'legacy' | 'langgraph';
 }
@@ -314,8 +325,10 @@ export async function executeSocialProductionGraph(input: { repository: Starter1
   if (!matchesAuthorizedCorrectionContext(job,approvedContext,String(binding?.inputHash||''),graphCorrection?.recordHash,current.inputHash)&&(binding?.inputHash !== current.inputHash || binding?.planVersion !== current.planVersion))
     throw new Error('user_input_required:graph_production_plan_changed:executor_binding');
   const correctionRuntimeHash=graphCorrection?socialContentCorrectionRuntimeHash(graphCorrection.recordHash):null;
+  const graphVersion = (SUPPORTED_CONTENT_GRAPH_VERSIONS.includes(binding?.graphVersion as ContentGraphVersion)
+    ? binding?.graphVersion : LEGACY_CONTENT_GRAPH_VERSION) as ContentGraphVersion;
   const identity = { tenantId: job.tenantId, taskId: job.taskId, runId: job.runId, jobId: job.id,
-    ...current,...(graphCorrection?{inputHash:socialRequestHash({originalInputHash:current.inputHash,correctionHash:correctionRuntimeHash})}:{}), graphVersion: 'content-production.v1' as const };
+    ...current,...(graphCorrection?{inputHash:socialRequestHash({originalInputHash:current.inputHash,correctionHash:correctionRuntimeHash})}:{}), graphVersion };
   const refreshedJob = async () => {
     const { readContentExecutionJob } = await import('../contentExecution/durableQueue.js');
     const actual = await readContentExecutionJob(dataStore, job.tenantId, job.taskId, job.runId);
@@ -325,7 +338,7 @@ export async function executeSocialProductionGraph(input: { repository: Starter1
   const approval = () => refreshedJob().then(actual => loadSocialProductionGraphApproval(repository, actual));
   const newCorrectionGraph=graphCorrection&&!job.checkpoints[`lg.fix.${correctionRuntimeHash}.v1`];
   const resume = !newCorrectionGraph&&job.checkpoints['social.graph_review'] ? await approval() : null;
-  const phase = async (graphPhase: 'assets' | 'render' | 'quality') => {
+  const phase = async (graphPhase: SocialProductionGraphPhase) => {
     await assertCurrentContentExecutionActive();
     let latest: Detail | null;
     try {
@@ -337,7 +350,7 @@ export async function executeSocialProductionGraph(input: { repository: Starter1
     await runSocialContentAutoProduction({ repository, tenantId: job.tenantId, userId: job.userId,
       taskId: job.taskId, runId: job.runId, graphPhase, runtime: input.runtime,
       assetSupplyAdapters: input.assetSupplyAdapters, assetSupplyRecoveryOnly: input.assetSupplyRecoveryOnly, materialEvidencePorts: input.materialEvidencePorts, graphApprovedContext: approvedContext,...(graphCorrection?{graphCorrectionHash:correctionRuntimeHash!}:{}) });
-    if (graphPhase === 'quality') {
+    if (graphPhase === 'quality' || graphPhase === 'creative_quality') {
       const artifact = await productionArtifact(repository, job);
       assertGraphArtifactQuality(artifact, job);
       const evidence = artifactEvidence(artifact);
@@ -347,12 +360,24 @@ export async function executeSocialProductionGraph(input: { repository: Starter1
         metadata: { contentHash: evidence.contentHash, ...(evidence.outputSha256 ? { outputSha256: evidence.outputSha256 } : {}) } };
     }
     const actual = await refreshedJob();
-    const checkpoint = actual.checkpoints[graphPhase === 'assets' ? 'social.asset_supply' : 'social.graph_render'];
+    const checkpointStage: Record<Exclude<SocialProductionGraphPhase, 'quality' | 'creative_quality'>, string> = {
+      assets: 'social.asset_supply', voice: 'social.graph_voice', trim: 'social.graph_trim',
+      effects: 'social.graph_effects', render: 'social.graph_render', technical_quality: 'social.graph_technical_quality',
+    };
+    const stage = checkpointStage[graphPhase];
+    const checkpoint = actual.checkpoints[stage];
     return { artifactRefs: [], inputHash: checkpoint?.inputHash || current.inputHash,
-      metadata: { checkpointStage: graphPhase === 'assets' ? 'social.asset_supply' : 'social.graph_render' } };
+      metadata: { checkpointStage: stage, ...(socialObject(checkpoint?.payload)?.outputSha256
+        ? { outputSha256: socialObject(checkpoint?.payload)!.outputSha256 } : {}) } };
   };
+  const phases = graphVersion === LEGACY_CONTENT_GRAPH_VERSION
+    ? { assets: () => phase('assets'), render: () => phase('render'), quality: () => phase('quality') }
+    : {
+      assets: () => phase('assets'), voice: () => phase('voice'), trim: () => phase('trim'), effects: () => phase('effects'),
+      render: () => phase('render'), technical_quality: () => phase('technical_quality'), creative_quality: () => phase('creative_quality'),
+    };
   const result = await runLangGraphProduction({ identity, dataStore,...(graphCorrection?{correctionHash:correctionRuntimeHash!}:{}), assertActive: assertCurrentContentExecutionActive,
-    phases: { assets: () => phase('assets'), render: () => phase('render'), quality: () => phase('quality'),
+    phases: { ...phases,
       delivery: async () => {
         const accepted = await approval();
         if (!accepted) throw new Error('user_input_required:graph_delivery_review_required');

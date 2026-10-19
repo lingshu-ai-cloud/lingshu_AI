@@ -2,6 +2,8 @@ import type { MaterialScriptAnalysis } from '../../shared/materialScriptAnalysis
 import type { VideoCreationPlan } from '../../shared/contracts/videoCreationPlan.js';
 import type { DirectorScriptContract } from '../../src/lib/directorScript.js';
 import type { FixedYieldTimelineCompilation } from '../../shared/fixedYieldTimelineCompiler.js';
+import type { MaterialCapabilityManifest } from '../../shared/contracts/materialCapabilityManifest.js';
+import type { MaterialAssetV2Metadata } from '../../shared/contracts/materialAssetV2.js';
 
 export type ContentProductionRoute = 'clone' | 'product' | 'material';
 /** `fixed-yield.v2-preflight` means the reference timeline passed the new
@@ -16,6 +18,9 @@ export type AssetCandidate = {
   objectKey?: string; cloudRecordId?: string; duration: number; observations: string[];
   productId?: string; productName?: string; visualObservations: string[];
   segments?: Array<Record<string, unknown>>; scriptAnalysis?: MaterialScriptAnalysis;
+  /** Canonical handoff shared by legacy and current Content Agents. */
+  capabilityManifest?: MaterialCapabilityManifest;
+  materialV2?: MaterialAssetV2Metadata | null;
   /** Authoritative, persisted material-rights facts. These fields must never
    * be inferred from tenant ownership, visibility or completed analysis. */
   rightsEvidenceRefs?: string[];

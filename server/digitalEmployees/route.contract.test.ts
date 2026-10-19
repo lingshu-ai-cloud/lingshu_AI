@@ -19,13 +19,13 @@ function routeBlock(start: string): string {
 assert.match(source, /digitalEmployeesRouter\.use\(requireAuth\)/, 'every Digital Employee endpoint must require an authenticated tenant');
 assert.match(source, /buildBusinessSnapshot/, 'overview must aggregate the real content and customer business snapshot');
 assert.match(source, /businessSnapshot/, 'overview must expose businessSnapshot as a top-level field');
-assert.match(source, /VISIBLE_DIGITAL_EMPLOYEE_AGENT_ROLES as VISIBLE_AGENT_ROLES/, 'overview must use the canonical five-role read model');
-assert.match(source, /agents:\s*projectDirectorAnalysisStatus\(publicAgentStatuses\(normalizedTasks\)/, 'overview must return a fixed five-role Agent summary enriched with Director analysis');
-assert.match(source, /agents:\s*projectDirectorAnalysisStatus\(publicAgentStatuses\(\[\]\)/, 'overview without a goal must still return five idle roles enriched with Director analysis');
+assert.match(source, /VISIBLE_DIGITAL_EMPLOYEE_AGENT_ROLES as VISIBLE_AGENT_ROLES/, 'overview must use the canonical four-expert read model');
+assert.match(source, /agents:\s*projectDirectorAnalysisStatus\(publicAgentStatuses\(normalizedTasks\)/, 'overview must return a fixed four-expert Agent summary enriched with Director analysis');
+assert.match(source, /agents:\s*projectDirectorAnalysisStatus\(publicAgentStatuses\(\[\]\)/, 'overview without a goal must still return four idle expert roles enriched with Director analysis');
 assert.match(source, /agent_role: visibleAgentRole\(task\.agent_role, task\.task_key\)/, 'persisted workflow tasks must be normalized at the read boundary');
 assert.match(source, /agentRole: visibleAgentRole\(String\(task\.agentRole/, 'persisted plan tasks must be normalized at the read boundary');
 assert.match(source, /requested_by_agent: visibleAgentRole/, 'legacy approval ownership must be normalized at the read boundary');
-assert.match(source, /team: \[\.\.\.VISIBLE_AGENT_ROLES\]/, 'legacy plan snapshots must expose the fixed five-role team');
+assert.match(source, /team: \[\.\.\.VISIBLE_AGENT_ROLES\]/, 'legacy plan snapshots must expose the fixed four-expert team');
 assert.match(source, /committedDigitalEmployeeOperatingGoals\(tenantId, goalResult\.items\)/, 'overview must exclude non-operating and uncommitted rebuild lineage records before selecting the current weekly goal');
 assert.match(source, /isDigitalEmployeeOperatingGoal\(goal\)/, 'direct overview links must reject non-operating lineage records');
 assert.match(source, /updateTenantEnterpriseProfile/, 'onboarding must synchronize missing company basics into the tenant enterprise profile');

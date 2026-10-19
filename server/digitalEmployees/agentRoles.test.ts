@@ -4,7 +4,8 @@ import {
   visibleDigitalEmployeeAgentRole,
 } from './agentRoles.js';
 
-assert.deepEqual(VISIBLE_DIGITAL_EMPLOYEE_AGENT_ROLES, ['orchestrator', 'business', 'director', 'content', 'customer']);
+assert.deepEqual(VISIBLE_DIGITAL_EMPLOYEE_AGENT_ROLES, ['business', 'director', 'content', 'customer']);
+assert.equal(visibleDigitalEmployeeAgentRole('orchestrator', 'context_readiness'), 'business', 'Supervisor Runtime is not exposed as a fifth expert Agent');
 assert.equal(visibleDigitalEmployeeAgentRole('industry'), 'director', 'legacy industry is read-compatible only as director');
 assert.equal(visibleDigitalEmployeeAgentRole('industry', 'scheduled_source_collection'), 'director');
 assert.equal(visibleDigitalEmployeeAgentRole('content', 'platform_publish'), 'business', 'task ownership wins over stale role data');

@@ -209,8 +209,9 @@ assert.match(matrixScheduleSource, /Agent 任务看板/, 'the overview schedule 
 assert.doesNotMatch(matrixScheduleSource, /<LsCalendar|发布日历/, 'the publishing calendar must not be duplicated inside the Agent task board');
 assert.doesNotMatch(weeklyCommandCenterSource, /<LsCalendar|WeeklyContentProgressPanel|本周发布日历/, 'the weekly-plan metrics must not duplicate the publishing calendar');
 assert.doesNotMatch(digitalEmployeeWorkspaceSource, /aria-label="数字员工视图"|<Segmented/, 'the Digital Employee monitor must not split production and publishing into first-level pages');
-assert.match(digitalEmployeeWorkspaceSource, /数字员工运营监控台[\s\S]{0,5000}发布与投流[\s\S]{0,2500}客服承接[\s\S]{0,2500}异常与待处理/, 'the Digital Employee monitor must show production, traffic, customer service and exceptions in one view');
-assert.match(digitalEmployeeWorkspaceSource, /状态随当前周任务回执实时更新/, '员工卡必须说明状态来自当前周任务的实时回执');
+assert.match(digitalEmployeeWorkspaceSource, /数字员工生产指挥舱[\s\S]{0,12000}发布与投流[\s\S]{0,2500}客服承接/, 'the Digital Employee monitor must show content projects, traffic and customer service in one view');
+assert.doesNotMatch(digitalEmployeeWorkspaceSource, /异常与待处理/, '异常不得成为脱离内容工程的独立固定模块');
+assert.match(digitalEmployeeWorkspaceSource, /状态来自真实任务回执/, '员工卡必须说明状态来自当前周任务的真实回执');
 assert.match(digitalEmployeeWorkspaceSource, /data-agent-running=\{working \? 'true'/, '执行中的员工必须暴露稳定的运行态语义');
 assert.match(digitalEmployeeWorkspaceSource, /LoaderCircle[\s\S]{0,160}motion-safe:animate-spin/, '执行中的员工必须显示遵守减少动态偏好的旋转状态标识');
 assert.match(pageSource, /!\["live", "matrix"\]\.includes\(workspaceView\)[\s\S]{0,700}setInterval\(reconcile, 15_000\)/, '任务执行与员工排期都必须用实时流加低频权威回读校准状态');
@@ -449,9 +450,10 @@ for (const removedReviewCopy of ['全部账号', '暂无内容播放量', '热�
 }
 assert.match(inspirationSource, /对标账号/, 'Inspiration Center must expose benchmark accounts as its own page');
 assert.match(competitorAccountsSource, /embedded/, 'benchmark accounts must support an embedded standalone page instead of only a modal');
-for (const role of ['orchestrator', 'business', 'director', 'content', 'customer']) {
+for (const role of ['business', 'director', 'content', 'customer']) {
   assert.match(pageSource, new RegExp(`id: ["']${role}["']`), `settings must expose the ${role} role card`);
 }
+assert.doesNotMatch(pageSource, /id: ["']orchestrator["'][\s\S]{0,120}统筹 Agent/, 'Supervisor Runtime must not be exposed as a fifth expert Agent card');
 assert.doesNotMatch(pageSource, /\{ id: ["']industry["']/, 'legacy industry must not remain a public role card');
 assert.match(pageSource, /id: "business"[\s\S]{0,400}workflows: \["content_publish"\]/, 'content publishing belongs to the business Agent');
 assert.match(pageSource, /id: "content"[\s\S]{0,400}workflows: \[\]/, 'the content Agent renders and quality-checks without owning publishing');
@@ -510,7 +512,7 @@ assert.match(pageSource, /xlsx\?\|csv\|pdf\|docx\|txt[\s\S]{0,300}请选择 Exce
 assert.match(pageSource, /file\.size > 50 \* 1024 \* 1024[\s\S]{0,220}文件不能超过 50MB/, 'product onboarding must validate the documented file-size limit');
 assert.match(pageSource, /parseProductDocument\(file\)/, 'product onboarding must parse PDF and DOCX through the document importer');
 assert.match(pageSource, /unassignedImages = documentResult\.unassignedImages[\s\S]*uploadProductEvidence\(image\.file\)/, 'document images must be retained in the existing enterprise asset library instead of silently discarded');
-assert.match(pageSource, /需在产品档案核对绑定后才能用于指定产品镜头/, 'unverified document pages must not be silently bound as product images');
+assert.match(pageSource, /未能确认产品归属的图片已存入企业素材库，需在产品档案核对绑定/, 'unverified document pages must not be silently bound as product images');
 assert.match(pageSource, /productsFromLabeledText\(await readProductDiscoveryFile\(file\)\)/, 'product onboarding must parse labeled TXT product fields');
 assert.doesNotMatch(productTableOnboardingSource, /确认重点产品|按资料完整度推荐产品|本期暂无产品，先继续|快速添加产品|Agent 设置/, 'product-table onboarding must only accept an imported or existing table, without focus-product or Agent setup');
 assert.match(pageSource, /primaryLabel=\{allowInitialPlan \? "生成推荐计划" : "完成引导并保存"\}/, 'the fourth onboarding step must lead into the recommended initial operating plan');

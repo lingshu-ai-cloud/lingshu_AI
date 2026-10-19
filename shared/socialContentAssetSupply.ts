@@ -786,6 +786,10 @@ function planShot(
     && selected.productSceneReplication.productIdentity.groups.length === 0) || (
     normalizedVisualContract.product.policy === 'locked'
       && Boolean(requestedProductRef)
+      // A verified local video segment already bound to the locked SKU is a
+      // complete production source. Product-image identity groups are needed
+      // only when the route must generate a new product scene.
+      && selected.refs.length === 0
       && !inventory.productIdentityGroups.some(group => (
         group.productRef.normalize('NFKC').trim().toLocaleLowerCase() === requestedProductRef
         && group.imageIds.length > 0

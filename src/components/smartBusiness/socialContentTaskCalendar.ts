@@ -69,7 +69,7 @@ export function projectSocialContentTaskCalendar(tasks: SocialContentTaskSummary
         id: `${task.taskId}:business`, date: createdPoint.date, time: createdPoint.time,
         agent: 'business', executionStep: 'business_schedule', title: '经营任务与交付目标', output: task.brief.objective,
         context: `真实内容任务 ${task.taskId}`, minutes: null, status: 'completed',
-        productionTaskId: task.taskId, videoTaskId: task.taskId, videoTitle: task.brief.title, timeSemantics: 'finish',
+        productionTaskId: task.taskId, videoTaskId: task.taskId, videoTitle: task.brief.title, targetDurationSeconds: task.brief.targetDurationSeconds, productionApproach: task.brief.productionApproach, timeSemantics: 'finish',
       },
       {
         id: `${task.taskId}:director`, date: updatedPoint.date, time: updatedPoint.time,
@@ -77,7 +77,7 @@ export function projectSocialContentTaskCalendar(tasks: SocialContentTaskSummary
         output: task.directorPlan?.scriptSummary || (directorReady ? '编导指令已写入当前内容任务' : '等待编导 Agent 生成并锁定制作指令'),
         context: task.directorPlan ? `编导计划 v${task.directorPlan.version} · ${task.directorPlan.sceneCount} 个分镜` : '编导计划尚未生成', minutes: null,
         status: directorReady ? 'completed' : status === 'blocked' ? 'blocked' : 'planned',
-        reason: directorReady ? undefined : directorReason, productionTaskId: task.taskId, videoTaskId: task.taskId, videoTitle: task.brief.title, previewThumbnailUrl, previewVideoUrl, timeSemantics: 'finish',
+        reason: directorReady ? undefined : directorReason, productionTaskId: task.taskId, videoTaskId: task.taskId, videoTitle: task.brief.title, targetDurationSeconds: task.brief.targetDurationSeconds, productionApproach: task.brief.productionApproach, previewThumbnailUrl, previewVideoUrl, timeSemantics: 'finish',
       },
       {
         id: `${task.taskId}:content`, date: updatedPoint.date, time: updatedPoint.time,
@@ -85,7 +85,7 @@ export function projectSocialContentTaskCalendar(tasks: SocialContentTaskSummary
         output: productionReady ? `已生成 ${task.artifactCount} 项真实产物` : '等待内容 Agent 生成真实成片',
         context: task.directorPlan ? `${task.directorPlan.sceneCount} 个真实分镜` : '制作方案尚未生成',
         minutes: null, status: productionReady ? 'completed' : status,
-        reason: productionReady ? undefined : directorReady ? reason : '等待编导成稿完成并通过交接后启动生产', productionTaskId: task.taskId, videoTaskId: task.taskId, videoTitle: task.brief.title, previewThumbnailUrl, previewVideoUrl, timeSemantics: 'finish',
+        reason: productionReady ? undefined : directorReady ? reason : '等待编导成稿完成并通过交接后启动生产', productionTaskId: task.taskId, videoTaskId: task.taskId, videoTitle: task.brief.title, targetDurationSeconds: task.brief.targetDurationSeconds, productionApproach: task.brief.productionApproach, previewThumbnailUrl, previewVideoUrl, timeSemantics: 'finish',
       },
       {
         id: `${task.taskId}:quality`, date: updatedPoint.date, time: updatedPoint.time,
@@ -93,7 +93,7 @@ export function projectSocialContentTaskCalendar(tasks: SocialContentTaskSummary
         output: qualityPassed ? `${task.approvedArtifactCount} 项真实产物已审核通过` : productionReady ? '真实成片等待审核通过' : '等待成片后执行真实审核',
         context: productionReady ? `核验当前任务的 ${task.artifactCount} 项真实产物` : '尚无生产结果',
         minutes: null, status: qualityPassed ? 'completed' : productionReady ? 'active' : 'planned',
-        reason: qualityPassed ? undefined : productionReady ? reason : '等待候选成片生成后执行技术质检与创意复刻审核', productionTaskId: task.taskId, videoTaskId: task.taskId, videoTitle: task.brief.title, previewThumbnailUrl, previewVideoUrl, timeSemantics: 'finish',
+        reason: qualityPassed ? undefined : productionReady ? reason : '等待候选成片生成后执行技术质检与创意复刻审核', productionTaskId: task.taskId, videoTaskId: task.taskId, videoTitle: task.brief.title, targetDurationSeconds: task.brief.targetDurationSeconds, productionApproach: task.brief.productionApproach, previewThumbnailUrl, previewVideoUrl, timeSemantics: 'finish',
       },
     ];
     return {
@@ -113,6 +113,8 @@ export function projectSocialContentTaskCalendar(tasks: SocialContentTaskSummary
       productionTaskId: task.taskId,
       videoTaskId: task.taskId,
       videoTitle: task.brief.title,
+      targetDurationSeconds: task.brief.targetDurationSeconds,
+      productionApproach: task.brief.productionApproach,
       previewThumbnailUrl,
       previewVideoUrl,
       internalNodes: nodes,

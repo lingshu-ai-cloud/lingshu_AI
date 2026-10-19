@@ -1,6 +1,6 @@
 import InspirationVideoAnalysisTabs from './inspiration/InspirationVideoAnalysisTabs';
 import VideoAnalysisProgressPanel, { analysisProgressIsActive } from './inspiration/VideoAnalysisProgressPanel';
-import { Alert, Button, Drawer, Input, Modal, Pagination, Segmented, Select, Tabs, Upload as AntUpload } from 'antd';
+import { Alert, Button, Drawer, Form, Input, Modal, Pagination, Segmented, Select, Tabs, Upload as AntUpload } from 'antd';
 import LsPageHeader from './ui/LsPageHeader';
 import { LsLoadingState, LsMasonryGallery, LsMediaStateFrame, LsProgressiveMedia } from './ui/LsExperiencePrimitives';
 import { canExplicitlySubmitReferenceAsr, referenceAsrAvailabilityLabel, canRefreshExistingReferenceAsr, existingReferenceAsrRefreshBody } from '../lib/referenceAsrSubmission';
@@ -46,6 +46,7 @@ import { resolveInspirationPlaybackUrl } from '../lib/inspirationVideoPlayback';
 import type { AccountSpecialRecommendation, ContentFormat, FirstTenSecondInsight, FrameMaterialMatch, GeminiVideoAnalysis, Platform, ScriptAnalysis, ScriptDetail15s, ScriptResultProvenance, ScriptSummary15s, ShootingNeed, StructureStep, TrendVideo, VideoAnalysisPayload } from '../lib/inspirationTypes';
 import { socialDiscoveryApi } from '../lib/socialDiscoveryApi';
 import { openScriptLibrary } from '../lib/contentActionNavigation';
+import { crawlInspirationImages, type InspirationImageCrawlPlatform } from '../lib/inspirationImageCrawl';
 import type { SocialBusinessModel, SocialDiscoveryScoreDecision, SocialDiscoverySupplyItem } from '../../shared/contracts/socialContentWorkflow';
 import { MATERIAL_SOURCE_LABELS, MATERIAL_THEME_LABELS, materialPrimaryThemeOf, materialSourceCategoryOf, materialThemeTagsOf } from '../../shared/materialTaxonomy';
 import { MATERIAL_ASSET_ROLE_LABELS, MATERIAL_CONTENT_ROLE_LABELS, materialDirectorSummary } from '../../shared/imageCreativePlanning';
@@ -3602,6 +3603,12 @@ export default function InspirationDashboard({ onScriptPanelOpen, onScriptPanelC
   const [videosLoaded, setVideosLoaded] = useState(false);
   const [videosError, setVideosError] = useState('');
   const [lastCrawlVideoIds, setLastCrawlVideoIds] = useState<string[]>([]);
+  const [imageCrawlOpen, setImageCrawlOpen] = useState(false);
+  const [imageCrawlPlatform, setImageCrawlPlatform] = useState<InspirationImageCrawlPlatform>('instagram');
+  const [imageCrawlKeyword, setImageCrawlKeyword] = useState('');
+  const [imageCrawlLimit, setImageCrawlLimit] = useState(12);
+  const [imageCrawlBusy, setImageCrawlBusy] = useState(false);
+  const [imageCrawlError, setImageCrawlError] = useState('');
   const [analyzingVideoIds, setAnalyzingVideoIds] = useState<string[]>([]);
   const [favoritingMaterialIds, setFavoritingMaterialIds] = useState<string[]>([]);
   const [favoritedVideoIds, setFavoritedVideoIds] = useState<string[]>([]);
@@ -3983,10 +3990,10 @@ export default function InspirationDashboard({ onScriptPanelOpen, onScriptPanelC
     return () => { productSummaryRequestRef.current += 1; };
   }, [innerView, materialProductIdsKey, productSummaryRefreshVersion]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  const refreshInventory = async () => {
+  const refreshInventory = async (requestedFormat: ContentFormat = contentFormat) => {
     const requestId = ++inventoryRequestRef.current;
     try {
-      const response = await fetch(`/api/overseas/videos/inventory-summary?contentFormat=${contentFormat}`, { headers: authHeader() });
+      const response = await fetch(`/api/overseas/videos/inventory-summary?contentFormat=${requestedFormat}`, { headers: authHeader() });
       const data = await response.json().catch(() => ({})) as { totalItems?: number; visibleItems?: number };
       if (!response.ok) throw new Error('库存统计加载失败');
       if (requestId === inventoryRequestRef.current) setTenantVideoTotalItems(Math.max(0, Number(data.visibleItems ?? data.totalItems ?? 0)));
@@ -3996,17 +4003,25 @@ export default function InspirationDashboard({ onScriptPanelOpen, onScriptPanelC
     }
   };
 
-  const refreshVideos = async (nextPage = 1, quiet = false) => {
+  const refreshVideos = async (nextPage = 1, quiet = false, requestedFilters?: {
+    contentFormat?: ContentFormat;
+    crawlTimeRange?: CrawlTimeRange;
+    platform?: Platform;
+    search?: string;
+  }) => {
     const requestId = ++videoRequestRef.current;
     if (!quiet) {
       setVideosLoading(true);
       setVideosError('');
     }
     try {
-      const keyword = searchRef.current.trim();
-      const query = `page=${nextPage}&perPage=${INSPIRATION_PAGE_SIZE}&contentFormat=${contentFormat}`
-        + `&crawlRange=${crawlTimeRange}`
-        + (platform !== 'all' ? `&platform=${platform}` : '')
+      const requestedContentFormat = requestedFilters?.contentFormat ?? contentFormat;
+      const requestedCrawlTimeRange = requestedFilters?.crawlTimeRange ?? crawlTimeRange;
+      const requestedPlatform = requestedFilters?.platform ?? platform;
+      const keyword = (requestedFilters?.search ?? searchRef.current).trim();
+      const query = `page=${nextPage}&perPage=${INSPIRATION_PAGE_SIZE}&contentFormat=${requestedContentFormat}`
+        + `&crawlRange=${requestedCrawlTimeRange}`
+        + (requestedPlatform !== 'all' ? `&platform=${requestedPlatform}` : '')
         + (keyword ? `&search=${encodeURIComponent(keyword)}` : '');
       const r = await fetch(`/api/overseas/videos?${query}`, { headers: authHeader() });
       let data = await r.json().catch(() => ({})) as {
@@ -4021,7 +4036,7 @@ export default function InspirationDashboard({ onScriptPanelOpen, onScriptPanelC
         if (requestId !== videoRequestRef.current) return;
         setVideosError('');
         const videos = recordsToVideos(result.items || []);
-        if (!keyword && platform === 'all' && crawlTimeRange === 'all') setTenantVideoTotalItems(Math.max(0, Number(result.totalItems ?? 0)));
+        if (!keyword && requestedPlatform === 'all' && requestedCrawlTimeRange === 'all') setTenantVideoTotalItems(Math.max(0, Number(result.totalItems ?? 0)));
         setVideoPage(Number(result.page || nextPage));
         setVideoTotalPages(Math.max(1, Number(result.totalPages || nextPage)));
         setCrawledVideos(prev => {
@@ -4055,6 +4070,53 @@ export default function InspirationDashboard({ onScriptPanelOpen, onScriptPanelC
       }
     } finally {
       if (requestId === videoRequestRef.current && !quiet) setVideosLoading(false);
+    }
+  };
+
+  const openImageCrawl = () => {
+    setImageCrawlPlatform(platform === 'all' ? 'instagram' : platform);
+    setImageCrawlKeyword(search.trim());
+    setImageCrawlError('');
+    setImageCrawlOpen(true);
+  };
+
+  const runImageCrawl = async () => {
+    if (imageCrawlBusy) return;
+    setImageCrawlBusy(true);
+    setImageCrawlError('');
+    try {
+      const result = await crawlInspirationImages({
+        platform: imageCrawlPlatform,
+        keyword: imageCrawlKeyword,
+        limit: imageCrawlLimit,
+      }, { headers: authHeader() });
+      if (!result.items.length) {
+        setImageCrawlError(result.message || '未找到可入库图片，请换一个关键词或平台');
+        return;
+      }
+      const crawled = recordsToVideos(result.items as CrawlerRecord[]);
+      setContentFormat('image');
+      setPlatform(imageCrawlPlatform);
+      setCrawlTimeRange('all');
+      setSearch('');
+      searchRef.current = '';
+      setSortMode('crawlTime');
+      setLastCrawlVideoIds(crawled.map(item => item.id));
+      setImageCrawlOpen(false);
+      setMaterialMessage(result.message || `图片采集完成，共返回 ${result.items.length} 条`);
+      await Promise.all([
+        refreshInventory('image'),
+        refreshVideos(1, false, {
+          contentFormat: 'image',
+          crawlTimeRange: 'all',
+          platform: imageCrawlPlatform,
+          search: '',
+        }),
+      ]);
+    } catch (error) {
+      setImageCrawlError(error instanceof Error ? error.message : '图片采集失败');
+    } finally {
+      setImageCrawlBusy(false);
     }
   };
 
@@ -5227,14 +5289,54 @@ export default function InspirationDashboard({ onScriptPanelOpen, onScriptPanelC
                 { key: 'accounts', label: `对标账号 · ${competitorAccountCount ?? '…'}`, icon: <Users size={16} /> },
                 { key: 'shooting', label: `生产缺口 · ${shootingNeeds.length + scriptGapTasks.length}`, icon: <Lightbulb size={16} /> },
               ]} />
-            {innerView === 'inspiration' && <AntUpload className="shrink-0 pt-1" accept="video/mp4,.mp4" showUploadList={false} disabled={importingReference} beforeUpload={file => { void importReferenceVideo(file); return false; }}>
-              <Button type="primary" loading={importingReference} icon={<Upload size={15} />}>导入 MP4 并分析</Button>
-            </AntUpload>}
+            {innerView === 'inspiration' && <div className="flex shrink-0 items-center gap-2 pt-1">
+              <Button icon={<Images size={15} />} onClick={openImageCrawl}>采集图片</Button>
+              <AntUpload accept="video/mp4,.mp4" showUploadList={false} disabled={importingReference} beforeUpload={file => { void importReferenceVideo(file); return false; }}>
+                <Button type="primary" loading={importingReference} icon={<Upload size={15} />}>导入 MP4 并分析</Button>
+              </AntUpload>
+            </div>}
             {innerView === 'library' && <div className="flex shrink-0 items-center gap-2">
               <Button loading={uploadingMaterial} icon={<Upload size={15} />} onClick={() => { setUploadProductSceneKind(null); setMaterialUploadDialogOpen(true); }}>上传素材</Button>
               <Button type="primary" icon={<Images size={15} />} onClick={startImageCreation}>生成图片</Button>
             </div>}
           </div>
+
+          <Modal
+            title="采集图片内容"
+            open={imageCrawlOpen}
+            footer={null}
+            width={560}
+            closable={!imageCrawlBusy}
+            mask={{ closable: false }}
+            onCancel={() => { if (!imageCrawlBusy) setImageCrawlOpen(false); }}
+            destroyOnHidden
+          >
+            <Form layout="vertical" onFinish={() => void runImageCrawl()} requiredMark={false}>
+              <Form.Item label="平台">
+                <Select value={imageCrawlPlatform} onChange={value => setImageCrawlPlatform(value as InspirationImageCrawlPlatform)} options={[
+                  { value: 'instagram', label: 'Instagram' },
+                  { value: 'facebook', label: 'Facebook' },
+                  { value: 'tiktok', label: 'TikTok' },
+                  { value: 'youtube', label: 'YouTube 社区' },
+                ]} />
+              </Form.Item>
+              <Form.Item label="关键词" validateStatus={imageCrawlError ? 'error' : undefined} help={imageCrawlError || undefined}>
+                <Input autoFocus allowClear value={imageCrawlKeyword} onChange={event => { setImageCrawlKeyword(event.target.value); setImageCrawlError(''); }} placeholder="例如：cosmetic packaging design" />
+              </Form.Item>
+              <Form.Item label="采集数量">
+                <Select value={imageCrawlLimit} onChange={setImageCrawlLimit} options={[
+                  { value: 6, label: '6 条' },
+                  { value: 12, label: '12 条' },
+                  { value: 20, label: '20 条' },
+                  { value: 30, label: '30 条' },
+                ]} />
+              </Form.Item>
+              <div className="flex justify-end gap-2 border-t border-border pt-4">
+                <Button disabled={imageCrawlBusy} onClick={() => setImageCrawlOpen(false)}>取消</Button>
+                <Button type="primary" htmlType="submit" loading={imageCrawlBusy}>开始采集</Button>
+              </div>
+            </Form>
+          </Modal>
 
 
             {materialMessage && (

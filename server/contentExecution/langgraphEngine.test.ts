@@ -4,7 +4,7 @@ import type { DataStore } from '../storage/datastore.js';
 import { runWithContentExecutionContext } from './context.js';
 import { runLangGraphProduction, type GraphApproval, type LangGraphProductionInput } from './langgraphEngine.js';
 import type { ContentGraphCheckpointDocument } from './langgraphCheckpoint.js';
-import { CONTENT_GRAPH_VERSION, type ProductionGraphIdentity } from './langgraphIdentity.js';
+import { CONTENT_GRAPH_VERSION, LEGACY_CONTENT_GRAPH_VERSION, type ProductionGraphIdentity } from './langgraphIdentity.js';
 
 const identity: ProductionGraphIdentity = {tenantId:'tenant-a',taskId:'task-a',runId:'run-a',jobId:'job-a',planVersion:'1',inputHash:'input-a',graphVersion:CONTENT_GRAPH_VERSION};
 function fixture() {
@@ -15,13 +15,14 @@ function fixture() {
     update: async (_collection:string,id:string,patch:Record<string,unknown>) => {if(id!==job.id)return false;Object.assign(job,structuredClone(patch));return true;},
   } as unknown as DataStore;
   const assertActive = async()=>{if(!active)throw Error('lease_lost');};
-  const counts = {assets:0,render:0,quality:0,delivery:0};
+  const counts = {assets:0,voice:0,trim:0,effects:0,render:0,technical_quality:0,creative_quality:0,delivery:0};
   let approval:GraphApproval|null=null;
   const makePhase = (name: keyof typeof counts) => async () => {
     counts[name]++;
     return {artifactRefs:[`phase:${name}`],inputHash:'input-a'};
   };
-  const phases = { assets:makePhase('assets'),render:makePhase('render'),quality:makePhase('quality'),delivery:makePhase('delivery') };
+  const phases = { assets:makePhase('assets'),voice:makePhase('voice'),trim:makePhase('trim'),effects:makePhase('effects'),
+    render:makePhase('render'),technical_quality:makePhase('technical_quality'),creative_quality:makePhase('creative_quality'),delivery:makePhase('delivery') };
   const input:LangGraphProductionInput={identity,dataStore,assertActive,phases,review:{loadApproval:async()=>approval,verifyResume:async token=>token==='canonical-receipt'&&approval?.approved===true}};
   const run = (resume?:unknown)=>runWithContentExecutionContext({dataStore,jobId:'job-a',checkpoints:job.checkpoints,providerReceipts:job.provider_receipts,expectedWorkerId:'worker-a',expectedAttempt:1,executionStillOwned:()=>active,action:()=>runLangGraphProduction({...input,...(resume===undefined?{}:{resume})})});
   return {job,dataStore,counts,input,run,setApproval:()=>{approval={approved:true,receiptRef:'canonical-receipt',subjectVersion:'1',contentHash:'artifact-hash'};},loseLease:()=>{active=false;}};
@@ -30,18 +31,19 @@ test('actual graph persists interrupt and resumes with a new saver without rerun
   const f=fixture();
   const waiting=await f.run();
   assert.equal(waiting.status,'waiting_review');assert.ok(waiting.interrupts.length);assert.equal(waiting.state.completed,false);
-  assert.deepEqual(f.counts,{assets:1,render:1,quality:1,delivery:0});
+  assert.deepEqual(f.counts,{assets:1,voice:1,trim:1,effects:1,render:1,technical_quality:1,creative_quality:1,delivery:0});
   await assert.rejects(f.run({approved:true}),/resume_not_authorized/);
   f.setApproval();
   const done=await f.run('canonical-receipt');
-  assert.equal(done.status,'completed');assert.deepEqual(f.counts,{assets:1,render:1,quality:1,delivery:1});
+  assert.equal(done.status,'completed');assert.deepEqual(f.counts,{assets:1,voice:1,trim:1,effects:1,render:1,technical_quality:1,creative_quality:1,delivery:1});
   await f.run();await f.run('canonical-receipt');assert.equal(f.counts.delivery,1,'completed invocation reuses stored terminal state');
 });
 test('failure keeps completed stage writes and resumes only failed work',async()=>{
   const f=fixture();let fail=true;
-  const original=f.input.phases.render;
+  const original=f.input.phases.render!;
   f.input.phases.render=async state=>{if(fail)throw Error('controlled-render-failure');return original(state);};
-  await assert.rejects(f.run(),/controlled-render-failure/);assert.equal(f.counts.assets,1);
+  await assert.rejects(f.run(),/controlled-render-failure/);
+  assert.deepEqual({...f.counts,delivery:0},{assets:1,voice:1,trim:1,effects:1,render:0,technical_quality:0,creative_quality:0,delivery:0});
   const failed=(f.job.checkpoints as any)['langgraph.node.render'];
   assert.equal(failed.version,'1');assert.equal(failed.payload.status,'failed');assert.equal(failed.payload.attempt,1);
   assert.equal(failed.payload.failureCode,'controlled-render-failure');assert.equal(failed.payload.failureReason,'controlled-render-failure');
@@ -81,6 +83,16 @@ test('missing durable context never silently becomes an in-memory production sav
   const f=fixture();await assert.rejects(runLangGraphProduction(f.input),/content_graph_job_context_required/);assert.equal(f.counts.assets,0);
 });
 
+test('in-flight v1 jobs retain their original four-node topology after the v2 rollout',async()=>{
+  const f=fixture();let quality=0;
+  f.input.identity={...f.input.identity,graphVersion:LEGACY_CONTENT_GRAPH_VERSION};
+  f.input.phases.quality=async()=>{quality++;return{artifactRefs:['legacy-quality'],inputHash:'input-a'};};
+  const waiting=await f.run();
+  assert.equal(waiting.status,'waiting_review');
+  assert.equal(quality,1);
+  assert.deepEqual(f.counts,{assets:1,voice:0,trim:0,effects:0,render:1,technical_quality:0,creative_quality:0,delivery:0});
+});
+
 test('sync durability stops before next phase when checkpoint persistence fails',async()=>{
   for (const failAfterAssets of [false,true]) {
     const f=fixture();let stored:ContentGraphCheckpointDocument|null=null;
@@ -90,7 +102,7 @@ test('sync durability stops before next phase when checkpoint persistence fails'
         stored=structuredClone(document);
       }};
     await assert.rejects(runLangGraphProduction({...f.input,checkpointPort}),/controlled-checkpoint-write-failure/);
-    assert.equal(f.counts.assets,failAfterAssets?1:0);assert.equal(f.counts.render,0);
+    assert.equal(f.counts.assets,failAfterAssets?1:0);assert.equal(f.counts.voice,0);assert.equal(f.counts.render,0);
   }
 });
 test('corrupt stored checkpoint is rejected instead of silently starting paid work again',async()=>{
@@ -104,9 +116,9 @@ test('authorized correction has an independent graph and preserves the old revie
  const correctedInput={...f.input,identity:{...f.input.identity,inputHash:'corrected-input-a'},correctionHash};
  const corrected=()=>runWithContentExecutionContext({dataStore:f.dataStore,jobId:'job-a',checkpoints:f.job.checkpoints,providerReceipts:f.job.provider_receipts,expectedWorkerId:'worker-a',expectedAttempt:1,executionStillOwned:()=>true,action:()=>runLangGraphProduction(correctedInput)});
  assert.equal((await corrected()).status,'waiting_review');
- assert.deepEqual(f.counts,{assets:2,render:2,quality:2,delivery:0});
+ assert.deepEqual(f.counts,{assets:2,voice:2,trim:2,effects:2,render:2,technical_quality:2,creative_quality:2,delivery:0});
  assert.equal(JSON.stringify((f.job.checkpoints as Record<string,any>)['langgraph.v1']),original);
  assert.ok((f.job.checkpoints as Record<string,any>)[`lg.fix.${correctionHash}.v1`]);
  assert.ok((f.job.checkpoints as Record<string,any>)[`lg.fix.${correctionHash}.assets`]);
- await corrected();assert.deepEqual(f.counts,{assets:2,render:2,quality:2,delivery:0});
+ await corrected();assert.deepEqual(f.counts,{assets:2,voice:2,trim:2,effects:2,render:2,technical_quality:2,creative_quality:2,delivery:0});
 });
