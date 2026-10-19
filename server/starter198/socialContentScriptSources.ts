@@ -35,7 +35,7 @@ import { validateVerifiedSpeechLines } from '../lib/verifiedReferenceSpeech.js';
 import { approximateSpeechLines } from '../lib/referenceApproxSpeech.js';
 import { hasCompletedExactVideoEvidence, parseAnalysisTimeRange } from '../lib/videoAnalysisCodec.js';
 import { referenceFrameActionPrompt } from './referenceFrameActionPrompt.js';
-import { presenterTemporalObservationsFromExactAnalysis, splitPresenterTemporalShots } from './presenterTemporalShotSplit.js';
+import { applyExactPresenterTemporalSplit } from './presenterTemporalShotSplit.js';
 import { buildReferenceShotProductionRouting, type ReferenceShotProductionRouting,
   type ReferencePresenterContinuityEvidence } from '../../shared/referenceShotProductionRouting.js';
 
@@ -1159,8 +1159,6 @@ export function buildSocialTaskReferencePackage(input: {
     captionText: referenceCaptions[index],
     productRef: input.identityReplacements?.productName || input.verifiedContext.productName,
   }));
-  // The default hook is the first substantive opening shot. A poster flash or
-  // transition cannot become the hook merely because it occupies frame zero.
   const openingShot = (row: ExactReferenceDetail) => row.timing.startSeconds < 3
     && row.timing.endSeconds > 0 && row.timing.durationSeconds >= 0.2;
   const defaultHookIndex = exact.details.findIndex(openingShot);
@@ -1312,24 +1310,7 @@ export function buildSocialTaskReferencePackage(input: {
     originalityDifferenceSummary: '不做事实改写；画面按当前技术栈重制，音乐、音效、字幕动效和视觉包装使用全新版本。',
     createdAt,
   };
-  const dense = recordObject(exact.analysis.presenterDenseSampling);
-  const denseRanges = Array.isArray(dense.ranges) ? dense.ranges.map(recordObject).flatMap(item => {
-    const startSeconds = Number(item.startSeconds), endSeconds = Number(item.endSeconds);
-    return Number.isFinite(startSeconds) && endSeconds > startSeconds ? [{ startSeconds, endSeconds }] : [];
-  }) : [];
-  const observationsByShotId = presenterTemporalObservationsFromExactAnalysis({
-    script: replicationScript,
-    denseSampling: denseRanges.length ? { intervalSeconds: Number(dense.intervalSeconds), ranges: denseRanges } : null,
-    details: exact.details.map((row, index) => {
-      const evidence = recordObject(row.detail.materialEvidence);
-      return { referenceShotId: shots[index]!.shotId, startSeconds: row.timing.startSeconds,
-        endSeconds: row.timing.endSeconds, detail: row.detail, clipRef: socialText(evidence.clipRef) || null };
-    }),
-  });
-  if (Object.keys(observationsByShotId).length) {
-    replicationScript = splitPresenterTemporalShots({ script: replicationScript, observationsByShotId }).script;
-    scriptShots = replicationScript.shots;
-  }
+  replicationScript = applyExactPresenterTemporalSplit({ script: replicationScript, presenterDenseSampling: exact.analysis.presenterDenseSampling, details: exact.details, referenceShotIds: shots.map(shot => shot.shotId) });
   return {
     match: {
       recordId,

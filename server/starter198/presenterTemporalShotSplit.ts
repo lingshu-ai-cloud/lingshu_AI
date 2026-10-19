@@ -43,6 +43,34 @@ export function presenterTemporalObservationsFromExactAnalysis(input: {
   return {};
 }
 
+export function applyExactPresenterTemporalSplit(input: {
+  script: SocialReplicationScriptVersion;
+  presenterDenseSampling: unknown;
+  details: Array<{ timing: { startSeconds: number; endSeconds: number }; detail: Record<string, unknown> }>;
+  referenceShotIds: string[];
+}): SocialReplicationScriptVersion {
+  const object = (value: unknown): Record<string, unknown> => value && typeof value === 'object' && !Array.isArray(value)
+    ? value as Record<string, unknown> : {};
+  const dense = object(input.presenterDenseSampling);
+  const denseRanges = Array.isArray(dense.ranges) ? dense.ranges.map(object).flatMap(item => {
+    const startSeconds = Number(item.startSeconds), endSeconds = Number(item.endSeconds);
+    return Number.isFinite(startSeconds) && endSeconds > startSeconds ? [{ startSeconds, endSeconds }] : [];
+  }) : [];
+  const observationsByShotId = presenterTemporalObservationsFromExactAnalysis({
+    script: input.script,
+    denseSampling: denseRanges.length ? { intervalSeconds: Number(dense.intervalSeconds), ranges: denseRanges } : null,
+    details: input.details.map((row, index) => {
+      const evidence = object(row.detail.materialEvidence);
+      return { referenceShotId: input.referenceShotIds[index]!, startSeconds: row.timing.startSeconds,
+        endSeconds: row.timing.endSeconds, detail: row.detail,
+        clipRef: typeof evidence.clipRef === 'string' && evidence.clipRef.trim() ? evidence.clipRef.trim() : null };
+    }),
+  });
+  return Object.keys(observationsByShotId).length
+    ? splitPresenterTemporalShots({ script: input.script, observationsByShotId }).script
+    : input.script;
+}
+
 const ACTIVE_PRODUCT_ACTIONS = new Set<PresenterProductAction>([
   'pick_up', 'put_down', 'rotate', 'move_toward_camera', 'detail_display', 'holding_still',
 ]);
