@@ -109,9 +109,8 @@ import {
 import { readSocialProductionState } from './socialContentProductionHandoff.js';
 import { refreshSocialTaskReferenceOutputs } from './socialContentTaskSupport.js';
 import { createSocialArtifactReevaluationService } from './socialContentArtifactReevaluation.js';
-import { socialContentAssistantAction, socialContentAssistantReceipt } from './socialContentAssistantActions.js';
-import { socialContentReviewAdmissionAllowed } from './socialContentTestBypass.js';
-import { adaptSocialReplicationProductOnly, confirmSocialReplicationScript, readSocialReplicationScriptReviewContext } from './socialContentReplicationScriptReview.js';
+import { createSocialContentAssistantActionsRouter } from './socialContentAssistantActionsRouter.js';
+import { createSocialContentReplicationScriptRouter } from './socialContentReplicationScriptRouter.js';
 
 type AccessLevel = 'read' | 'write' | 'start';
 
@@ -213,6 +212,9 @@ router.use('/tasks/:taskId/runs/:runId/artifacts/:artifactId/g6-reviews',createS
       handler(req, res).catch(error => sendFailure(res, error));
     };
   }
+  router.use(createSocialContentReplicationScriptRouter({ repository, authorize, asyncRoute, now }));
+  router.use(createSocialContentAssistantActionsRouter({ repository,
+    orchestratorQueue: dependencies.orchestratorQueue, weeklyRepairCases, authorize, asyncRoute, now }));
 
   async function requirePlatformAdmin(req: Request): Promise<{ userId: string }> {
     const admin = await platformAdmin(req);
@@ -354,122 +356,6 @@ router.use('/tasks/:taskId/runs/:runId/artifacts/:artifactId/g6-reviews',createS
       page: integerQuery(req.query.page, 1, 10_000),
       perPage: integerQuery(req.query.perPage, 50, 100),
     }));
-  }));
-
-  router.get('/assistant-actions', asyncRoute(async (req, res) => {
-    const identity = await authorize(req, res, 'read');
-    const taskId = socialText(req.query.taskId);
-    if (!taskId) { res.json({ items: [] }); return; }
-    const task = await readSocialTaskDetail({ repository, tenantId: identity.tenantId, taskId: requireSocialId(taskId) });
-    if (!task) throw new SocialContentWorkflowError('social_content_task_not_found', 404);
-    const artifactId = socialText(req.query.artifactId);
-    const candidates = task.artifacts.filter(item => item.status === 'review_required' && (!artifactId || item.artifactId === artifactId));
-    const artifact = candidates.length === 1 ? candidates[0] : undefined;
-    const revision = artifact && dependencies.orchestratorQueue && ['asset_review', 'attention', 'paused'].includes(task.status)
-      ? [{ id: `content:${task.taskId}:revise:${artifact.artifactId}`, label: `修改「${task.brief.title}」`,
-        taskId: task.taskId, artifactId: artifact.artifactId, expectedVersion: artifact.version,
-        status: task.status, operation: 'revise', href: socialContentAssistantReceipt(task).href }] : [];
-    const action = socialContentAssistantAction(task, Boolean(dependencies.orchestratorQueue));
-    const review = task.agentWorkflow?.executionPlanReview;
-    const admittedAction = action.operation === 'start' && review && !socialContentReviewAdmissionAllowed(review)
-      ? {...action,operation:'open' as const,label:`处理「${task.brief.title}」生产条件`,disabledReason:'生产方案尚未满足执行条件。'} : action;
-    res.json({ items: [admittedAction, ...revision] });
-  }));
-
-  async function assistantReceipt(tenantId: string, task: Parameters<typeof socialContentAssistantReceipt>[0], blockedReason?: string) {
-    const row = await requireSocialTask({repository,tenantId,taskId:task.taskId});
-    return socialContentAssistantReceipt(task, blockedReason, Boolean(socialObject(socialJson(row.brief))?._weeklyAuthority));
-  }
-
-  router.post('/assistant-actions/:taskId/start', asyncRoute(async (req, res) => {
-    const identity = await authorize(req, res, 'start');
-    bodyWithinLimit(req);
-    const source = socialObject(req.body);
-    if (!source || Object.keys(source).some(key => key !== 'expectedVersion') || !socialText(source.expectedVersion)) {
-      throw new SocialContentWorkflowError('social_content_start_invalid', 400);
-    }
-    const taskId = requireSocialId(req.params.taskId);
-    const idempotencyKey = requireIdempotencyKey(req.headers['idempotency-key']);
-    const current = await readSocialTaskDetail({ repository, tenantId: identity.tenantId, taskId });
-    if (!current) throw new SocialContentWorkflowError('social_content_task_not_found', 404);
-    // A stale click on an already admitted run reports that same run. It cannot
-    // create another production job, even when the client generated a new key.
-    if (current.runId) {
-      res.json({ task: current, receipt: await assistantReceipt(identity.tenantId,current) }); return;
-    }
-    if (!dependencies.orchestratorQueue) throw new SocialContentWorkflowError('social_content_orchestrator_not_configured', 503);
-    try {
-      const task = await startSocialContentTask({ repository, ...identity, taskId,
-        expectedVersion: socialText(source.expectedVersion), idempotencyKey,
-        orchestratorQueue: dependencies.orchestratorQueue, now: now() });
-      res.status(task.runId ? 202 : 200).json({ task, receipt: await assistantReceipt(identity.tenantId,task,
-        task.runId ? undefined : 'social_content_task_waiting_for_input') });
-    } catch (error) {
-      // Subject leases serialize racing starts. The loser reports the admitted
-      // run rather than implying the production was duplicated or lost.
-      const latest = await readSocialTaskDetail({ repository, tenantId: identity.tenantId, taskId });
-      if (error instanceof SocialContentWorkflowError && latest?.runId
-        && ['social_content_task_version_conflict', 'social_content_task_not_startable'].includes(error.code)) {
-        res.json({ task: latest, receipt: await assistantReceipt(identity.tenantId,latest) }); return;
-      }
-      throw error;
-    }
-  }));
-
-  router.post('/assistant-actions/:taskId/revise', asyncRoute(async (req, res) => {
-    const identity = await authorize(req, res, 'start');
-    bodyWithinLimit(req);
-    const source = socialObject(req.body);
-    if (!source || Object.keys(source).some(key => !['artifactId', 'expectedVersion', 'note'].includes(key)) || !socialText(source.note)) {
-      throw new SocialContentWorkflowError('social_content_revision_note_required', 400);
-    }
-    const result = await decideSocialContentArtifact({ repository, ...identity,
-      orchestratorQueue: dependencies.orchestratorQueue,
-      taskId: requireSocialId(req.params.taskId), artifactId: requireSocialId(source.artifactId, 'social_artifact_id_invalid'),
-      idempotencyKey: requireIdempotencyKey(req.headers['idempotency-key']),
-      value: parseArtifactDecision({expectedVersion: source.expectedVersion, note: source.note, decision: 'changes_requested'}),
-      ...(weeklyRepairCases ? { weeklyRevisionBridge: {
-        handles: ({tenantId,taskId,artifactId}:{tenantId:string;taskId:string;artifactId:string}) => weeklyRepairCases.handlesCreativeDecision(tenantId,taskId,artifactId),
-        persist: (value:{tenantId:string;actorUserId:string;taskId:string;artifactId:string;operationId:string;operationRequestHash:string;note:string}) => weeklyRepairCases.createCreativeFromDecision(value),
-      } } : {}), now: now(),
-    });
-    const receipt = await assistantReceipt(identity.tenantId,result.task);
-    // A weekly repair bridge creates a governed repair case. Its scope and
-    // budget review still precede child execution, so parent run activity is
-    // not evidence that this revision has started.
-    const governed = weeklyRepairCases && await weeklyRepairCases.handlesCreativeDecision(identity.tenantId,result.task.taskId,result.artifact.artifactId);
-    res.json({...result,receipt: {...receipt, operation:'revision',
-      ...(governed ? {started:false,blockedReason:'weekly_revision_scope_confirmation_required'} : {})}});
-  }));
-
-  router.post('/assistant-actions/create', asyncRoute(async (req, res) => {
-    const identity = await authorize(req, res, 'start');
-    bodyWithinLimit(req);
-    const idempotencyKey = requireIdempotencyKey(req.headers['idempotency-key']);
-    const parsed = parseCreateSocialTask(req.body);
-    if (!parsed.dueAt) throw new SocialContentWorkflowError('social_content_due_at_required', 400);
-    // dueAt is a delivery deadline. Starting this action executes immediately;
-    // it does not claim a future scheduler slot or modify a frozen weekly pack.
-    const value = { ...parsed, mode: 'weekly' as const };
-    const task = await createSocialContentTask({ repository, ...identity,
-      idempotencyKey, value, entry:'assistant', now: now() });
-    let current = task;
-    if (current.runId) { res.json({ task: current, receipt: await assistantReceipt(identity.tenantId,current) }); return; }
-    let blockedReason: string | undefined;
-    if (!dependencies.orchestratorQueue) blockedReason = 'social_content_orchestrator_not_configured';
-    else if (!current.readiness.complete) blockedReason = 'social_content_task_inputs_incomplete';
-    else {
-      try {
-        current = await startSocialContentTask({ repository, ...identity, taskId: current.taskId,
-          expectedVersion: current.version, idempotencyKey: `assistant-start:${task.taskId}`,
-          orchestratorQueue: dependencies.orchestratorQueue, now: now() });
-        if (!current.runId) blockedReason = 'social_content_task_waiting_for_input';
-      } catch (error) {
-        blockedReason = error instanceof SocialContentWorkflowError ? error.code : 'social_content_orchestrator_unavailable';
-        current = (await readSocialTaskDetail({ repository, tenantId: identity.tenantId, taskId: current.taskId }))!;
-      }
-    }
-    res.status(current.runId ? 202 : 201).json({ task: current, receipt: await assistantReceipt(identity.tenantId,current, blockedReason) });
   }));
 
   router.post('/tasks', asyncRoute(async (req, res) => {
@@ -710,46 +596,6 @@ router.use('/tasks/:taskId/runs/:runId/artifacts/:artifactId/g6-reviews',createS
       idempotencyKey: requireIdempotencyKey(req.headers['idempotency-key']),
       value: parsePackageSelection(req.body),
       now: now(),
-    });
-    res.json({ task });
-  }));
-
-  router.get('/tasks/:taskId/replication-script/review-context', asyncRoute(async (req, res) => {
-    const identity = await authorize(req, res, 'read');
-    res.json(await readSocialReplicationScriptReviewContext({ repository, tenantId: identity.tenantId,
-      taskId: requireSocialId(req.params.taskId) }));
-  }));
-
-  router.post('/tasks/:taskId/replication-script/confirm', asyncRoute(async (req, res) => {
-    const identity = await authorize(req, res, 'write');
-    bodyWithinLimit(req);
-    const source = socialObject(req.body);
-    if (!source || Object.keys(source).some(key => ![
-      'expectedVersion', 'analysisId', 'analysisHash', 'scriptHash', 'sceneDecisions', 'reviewEvidence',
-    ].includes(key))) {
-      throw new SocialContentWorkflowError('social_replication_script_review_invalid', 400);
-    }
-    const task = await confirmSocialReplicationScript({
-      repository, ...identity, taskId: requireSocialId(req.params.taskId),
-      idempotencyKey: requireIdempotencyKey(req.headers['idempotency-key']),
-      value: source as unknown as Parameters<typeof confirmSocialReplicationScript>[0]['value'], now: now(),
-    });
-    res.json({ task });
-  }));
-
-  router.post('/tasks/:taskId/replication-script/adapt-product-only', asyncRoute(async (req, res) => {
-    const identity = await authorize(req, res, 'write');
-    bodyWithinLimit(req);
-    const source = socialObject(req.body);
-    if (!source || Object.keys(source).some(key => ![
-      'expectedVersion', 'scriptHash', 'materialSourceId', 'materialSourceVersion',
-    ].includes(key))) {
-      throw new SocialContentWorkflowError('social_replication_product_adaptation_invalid', 400);
-    }
-    const task = await adaptSocialReplicationProductOnly({
-      repository, ...identity, taskId: requireSocialId(req.params.taskId),
-      idempotencyKey: requireIdempotencyKey(req.headers['idempotency-key']),
-      value: source as unknown as Parameters<typeof adaptSocialReplicationProductOnly>[0]['value'], now: now(),
     });
     res.json({ task });
   }));
