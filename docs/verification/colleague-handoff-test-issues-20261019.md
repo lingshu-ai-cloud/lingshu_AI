@@ -111,6 +111,14 @@
 
 ## 已验证通过的相关范围
 
+## RESOLVED-016 队列准入校验搬移后主模块缺少显式导入
+
+- 命令：`pnpm exec tsc --noEmit`
+- 实际：`durableQueue.ts` 在 staging 路径继续调用 `hasCompleteFootageRevisionProductionAdmission`，辅助模块拆分后首轮类型检查报 `TS2304`。
+- 归因：本次模块边界调整遗漏导入；并非准入逻辑或安全边界变化。
+- 修复：从 `durableQueueRecords.ts` 显式导入并继续从原公共入口重导出该校验函数。
+- 状态：已修复，待复跑确认。
+
 ## RESOLVED-015 灵小枢源码契约未跟随运行时辅助模块拆分
 
 - 命令：`pnpm exec tsx src/components/GlobalAssistant.contract.test.ts`

@@ -6,7 +6,7 @@
   "defaultMaxLines": 800,
   "excludeNameFragments": [".test.", ".d.ts"],
   "oversizedFileBudgets": {
-    "server/contentExecution/durableQueue.ts": 985,
+    "server/contentExecution/durableQueue.ts": 946,
     "server/digitalEmployees/contentProduction.ts": 2108,
     "server/digitalEmployees/followupDispatchWorker.ts": 901,
     "server/integrations/social.ts": 802,

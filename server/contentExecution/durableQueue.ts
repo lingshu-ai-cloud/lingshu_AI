@@ -1,7 +1,7 @@
 import { createHash, randomUUID } from 'node:crypto';
 import os from 'node:os';
 import { currentDataAuthority, runWithDataAuthority, type DataAuthority } from '../storage/dataAuthority.js';
-import type { DataStore, ListQuery } from '../storage/datastore.js';
+import type { DataStore } from '../storage/datastore.js';
 import {
   acquireDurableOperationLease,
   releaseDurableOperationLease,
@@ -11,221 +11,45 @@ import {
 import {
   CONTENT_EXECUTION_JOB_COLLECTION,
   parseContentExecutionCheckpoints,
-  parseContentProviderReceipts,
   runWithContentExecutionContext,
   type ContentExecutionCheckpoints,
-  type ContentProviderReceipt,
 } from './context.js';
 import { classifyContentExecutionFailure, type ContentExecutionRetryDecision } from './retryPolicy.js';
+import {
+  ACTIVE_STATUSES,
+  CLAIMABLE_STATUSES,
+  dateText,
+  footageRevisionNeedsAdmission,
+  hasCompleteFootageRevisionProductionAdmission,
+  integer,
+  jobFromRow,
+  limitFromRow,
+  listAll,
+  requiredIdentity,
+  stableId,
+  text,
+  type ContentExecutionJob,
+  type ContentExecutionJobStatus,
+  type ContentExecutionLimit,
+  type ContentExecutionLimitScope,
+  type JobRow,
+  type LimitRow,
+} from './durableQueueRecords.js';
+
+export {
+  hasCompleteFootageRevisionProductionAdmission,
+  type ContentExecutionJob,
+  type ContentExecutionJobStatus,
+  type ContentExecutionLimit,
+  type ContentExecutionLimitScope,
+} from './durableQueueRecords.js';
+export {
+  bindPristineContentExecutionCheckpoint,
+  bindPristineContentExecutionCheckpoints,
+  refreshUnspentContentExecutionCheckpoint,
+} from './durableQueueCheckpoints.js';
 
 export const CONTENT_EXECUTION_LIMIT_COLLECTION = 'content_execution_limits';
-
-export type ContentExecutionJobStatus =
-  | 'queued'
-  | 'running'
-  | 'retry_wait'
-  | 'reconciling'
-  | 'blocked'
-  | 'paused'
-  | 'succeeded'
-  | 'cancelled'
-  | 'dead_letter';
-
-export type ContentExecutionLimitScope = 'tenant' | 'account' | 'task_type';
-
-export interface ContentExecutionJob {
-  id: string;
-  tenantId: string;
-  jobKey: string;
-  taskId: string;
-  runId: string;
-  userId: string;
-  accountId: string;
-  taskType: string;
-  status: ContentExecutionJobStatus;
-  attempt: number;
-  reconciliationAttempt: number;
-  nextAttemptAt: string | null;
-  workerId: string | null;
-  leaseExpiresAt: string | null;
-  retryClass: string | null;
-  lastError: string | null;
-  providerState: string;
-  providerReceipts: ContentProviderReceipt[];
-  checkpoints: ContentExecutionCheckpoints;
-  createdAt: string;
-  updatedAt: string;
-  lastStartedAt: string | null;
-  completedAt: string | null;
-}
-
-export interface ContentExecutionLimit {
-  id: string;
-  tenantId: string;
-  scope: ContentExecutionLimitScope;
-  scopeKey: string;
-  maxRunning: number;
-  updatedBy: string;
-  createdAt: string;
-  updatedAt: string;
-}
-
-type JobRow = Record<string, unknown> & { id: string };
-type LimitRow = Record<string, unknown> & { id: string };
-
-const ACTIVE_STATUSES = new Set<ContentExecutionJobStatus>(['running']);
-const CLAIMABLE_STATUSES = ['queued', 'retry_wait', 'reconciling'] as const;
-const SAFE_IDENTITY = /^[a-zA-Z0-9._:@-]{1,240}$/;
-
-function text(value: unknown, max = 1000): string {
-  return typeof value === 'string' ? value.trim().slice(0, max) : '';
-}
-
-function integer(value: unknown, fallback = 0): number {
-  const parsed = Number(value);
-  return Number.isFinite(parsed) ? Math.max(0, Math.floor(parsed)) : fallback;
-}
-
-function dateText(value: unknown): string | null {
-  const raw = text(value, 80);
-  return raw && Number.isFinite(Date.parse(raw)) ? new Date(raw).toISOString() : null;
-}
-
-function requiredIdentity(value: unknown, field: string): string {
-  const normalized = text(value, 240);
-  if (!SAFE_IDENTITY.test(normalized)) throw new Error(`content_execution_${field}_invalid`);
-  return normalized;
-}
-
-function stableId(...parts: string[]): string {
-  return createHash('sha256').update(parts.join('\0')).digest('hex').slice(0, 15);
-}
-
-/** Generic admission/retry is never the authority for a frozen same-task
- * footage revision. The revision admission must first bind current-window
- * evidence, new approval and the original-ledger paid plan before the existing
- * production worker may claim that run. */
-async function footageRevisionNeedsAdmission(dataStore: DataStore, tenantId: string,
-  taskId: string, runId: string, job?: ContentExecutionJob): Promise<boolean> {
-  const rows = await dataStore.list<Record<string, unknown>>('starter_social_content_tasks', {
-    where: { tenant_id: tenantId, task_id: taskId }, perPage: 2,
-  });
-  if (rows.totalItems > 1 || rows.items.length > 1) throw new Error('content_execution_order_identity_ambiguous');
-  const raw = rows.items[0]?.brief;
-  let brief: unknown = raw;
-  if (typeof brief === 'string') {
-    try { brief = JSON.parse(brief); } catch { throw new Error('content_execution_revision_identity_invalid'); }
-  }
-  if (!brief || typeof brief !== 'object' || Array.isArray(brief)) return false;
-  const marker = (brief as Record<string, unknown>)._productFootageRevision;
-  if (!marker) return false;
-  if (typeof marker !== 'object' || Array.isArray(marker)) throw new Error('content_execution_revision_identity_invalid');
-  return runId !== (marker as Record<string, unknown>).sourceRunId
-    && (!job || !hasCompleteFootageRevisionProductionAdmission(job, marker as Record<string, unknown>));
-}
-
-/** The revision exception is deliberately data-only so the generic durable
- * queue can verify it without depending on the Starter198 production module.
- * It is not a second worker lane: a complete checkpoint merely admits the
- * frozen revision run back into the existing content-production worker. */
-export function hasCompleteFootageRevisionProductionAdmission(
-  job: ContentExecutionJob,
-  marker: Record<string, unknown>,
-): boolean {
-  const checkpoint = job.checkpoints['social.footage_revision_worker_admission'];
-  const payload = checkpoint?.payload;
-  if (!payload || typeof payload !== 'object' || Array.isArray(payload)) return false;
-  const admission = payload as Record<string, unknown>;
-  const recordHash = text(admission.recordHash, 64);
-  const sha256 = (value: unknown) => typeof value === 'string' && /^[a-f0-9]{64}$/.test(value);
-  const approvalBindings = admission.approvalBindings;
-  const revision = marker.revision && typeof marker.revision === 'object' && !Array.isArray(marker.revision)
-    ? marker.revision as Record<string, unknown> : null;
-  const revisedPlanHash = marker.revisedPlanHash ?? revision?.revisedPlanHash;
-  if (!/^[a-f0-9]{64}$/.test(recordHash) || checkpoint.version !== '1'
-    || checkpoint.inputHash !== recordHash
-    || admission.schemaVersion !== 'social-product-footage-revision-worker-admission.v1'
-    || admission.tenantId !== job.tenantId || admission.taskId !== job.taskId
-    || admission.runId !== job.runId
-    || admission.workerLane !== 'social_content_production'
-    || admission.planHash !== revisedPlanHash
-    || !sha256(admission.guardHash) || !sha256(admission.paidPlanFreezeHash)
-    || !sha256(admission.canonicalPlanHash) || !sha256(admission.planHash)
-    || !Array.isArray(approvalBindings) || !approvalBindings.length
-    || approvalBindings.some(binding => !binding || typeof binding !== 'object' || Array.isArray(binding)
-      || !text((binding as Record<string, unknown>).groupId)
-      || !sha256((binding as Record<string, unknown>).approvalRecordHash)
-      || !sha256((binding as Record<string, unknown>).decisionRecordHash)
-      || !sha256((binding as Record<string, unknown>).assetProvenanceHash))
-    || typeof admission.admittedAt !== 'string' || !Number.isFinite(Date.parse(admission.admittedAt))) return false;
-  const { recordHash: _recordHash, ...body } = admission;
-  const canonical = (value: unknown): unknown => Array.isArray(value) ? value.map(canonical)
-    : value && typeof value === 'object'
-      ? Object.fromEntries(Object.keys(value as Record<string, unknown>).sort()
-        .map(key => [key, canonical((value as Record<string, unknown>)[key])]))
-      : value;
-  return createHash('sha256').update(JSON.stringify(canonical(body))).digest('hex') === recordHash;
-}
-
-function jobFromRow(row: JobRow): ContentExecutionJob {
-  const status = text(row.status, 40) as ContentExecutionJobStatus;
-  if (!row.id || !['queued', 'running', 'retry_wait', 'reconciling', 'blocked', 'paused', 'succeeded', 'cancelled', 'dead_letter'].includes(status)) {
-    throw new Error('content_execution_job_record_invalid');
-  }
-  return {
-    id: row.id,
-    tenantId: requiredIdentity(row.tenant_id, 'tenant'),
-    jobKey: requiredIdentity(row.job_key, 'job_key'),
-    taskId: requiredIdentity(row.task_id, 'task'),
-    runId: requiredIdentity(row.run_id, 'run'),
-    userId: requiredIdentity(row.user_id, 'user'),
-    accountId: requiredIdentity(row.account_id, 'account'),
-    taskType: requiredIdentity(row.task_type, 'task_type'),
-    status,
-    attempt: integer(row.attempt),
-    reconciliationAttempt: integer(row.reconciliation_attempt),
-    nextAttemptAt: dateText(row.next_attempt_at),
-    workerId: text(row.worker_id, 240) || null,
-    leaseExpiresAt: dateText(row.lease_expires_at),
-    retryClass: text(row.retry_class, 80) || null,
-    lastError: text(row.last_error, 2000) || null,
-    providerState: text(row.provider_state, 40) || 'none',
-    providerReceipts: parseContentProviderReceipts(row.provider_receipts),
-    checkpoints: parseContentExecutionCheckpoints(row.checkpoints),
-    createdAt: dateText(row.created_at) ?? new Date(0).toISOString(),
-    updatedAt: dateText(row.updated_at) ?? new Date(0).toISOString(),
-    lastStartedAt: dateText(row.last_started_at),
-    completedAt: dateText(row.completed_at),
-  };
-}
-
-function limitFromRow(row: LimitRow): ContentExecutionLimit {
-  const scope = text(row.limit_scope, 40) as ContentExecutionLimitScope;
-  if (!row.id || !['tenant', 'account', 'task_type'].includes(scope)) throw new Error('content_execution_limit_record_invalid');
-  const maxRunning = integer(row.max_running);
-  if (maxRunning < 1 || maxRunning > 100) throw new Error('content_execution_limit_record_invalid');
-  return {
-    id: row.id,
-    tenantId: requiredIdentity(row.tenant_id, 'tenant'),
-    scope,
-    scopeKey: row.scope_key === '*' ? '*' : requiredIdentity(row.scope_key, 'scope_key'),
-    maxRunning,
-    updatedBy: text(row.updated_by, 240),
-    createdAt: dateText(row.created_at) ?? new Date(0).toISOString(),
-    updatedAt: dateText(row.updated_at) ?? new Date(0).toISOString(),
-  };
-}
-
-async function listAll<T extends { id: string }>(dataStore: DataStore, collection: string, query: ListQuery = {}): Promise<T[]> {
-  const rows: T[] = [];
-  for (let page = 1; page <= 100; page += 1) {
-    const result = await dataStore.list<T>(collection, { ...query, page, perPage: 500 });
-    rows.push(...result.items);
-    if (page >= Math.max(1, result.totalPages)) break;
-    if (page === 100) throw new Error(`content_execution_${collection}_scan_limit_exceeded`);
-  }
-  return rows;
-}
 
 export function contentExecutionDefaults(env: NodeJS.ProcessEnv = process.env) {
   const bounded = (value: unknown, fallback: number) => Math.min(Math.max(integer(value, fallback), 1), 100);
@@ -1120,125 +944,3 @@ export async function resumeContentExecutionJobsForRun(input: {
  * durable proof that execution has never crossed a provider or checkpoint
  * boundary. This is intentionally narrower than normal checkpoint writes:
  * it cannot migrate a partially executed job. */
-export async function bindPristineContentExecutionCheckpoint(input: {
-  dataStore: DataStore;
-  tenantId: string;
-  jobId: string;
-  runId: string;
-  checkpointKey: string;
-  checkpoint: ContentExecutionCheckpoints[string];
-}): Promise<ContentExecutionJob> {
-  return bindPristineContentExecutionCheckpoints({ ...input, checkpoints: { [input.checkpointKey]: input.checkpoint } });
-}
-
-/** Atomically binds a complete executor identity to a historical pristine job.
- * Multiple identity checkpoints must be written together so a crash cannot
- * leave a half-upgraded job that is neither safely legacy nor executable by
- * the selected graph. */
-export async function bindPristineContentExecutionCheckpoints(input: {
-  dataStore: DataStore;
-  tenantId: string;
-  jobId: string;
-  runId: string;
-  checkpoints: ContentExecutionCheckpoints;
-}): Promise<ContentExecutionJob> {
-  const tenantId = requiredIdentity(input.tenantId, 'tenant');
-  const jobId = requiredIdentity(input.jobId, 'job');
-  const runId = requiredIdentity(input.runId, 'run');
-  const entries = Object.entries(input.checkpoints);
-  if (!entries.length) throw new Error('content_execution_pristine_binding_required');
-  for (const [key, checkpoint] of entries) {
-    requiredIdentity(key, 'checkpoint');
-    if (!checkpoint?.inputHash) throw new Error('content_execution_pristine_binding_invalid');
-  }
-  const lease = await acquireDurableOperationLease({ dataStore: input.dataStore, tenantId,
-    subjectId: jobId, scope: 'content_execution_control', ownerId: `content-binding:${randomUUID()}`, leaseDurationMs: 30_000 });
-  if (!lease) throw new Error('content_execution_job_control_busy');
-  try {
-    const row = await input.dataStore.getById<JobRow>(CONTENT_EXECUTION_JOB_COLLECTION, jobId);
-    if (!row) throw new Error('content_execution_job_not_found');
-    const current = jobFromRow(row);
-    if (current.tenantId !== tenantId || current.runId !== runId) throw new Error('content_execution_job_not_found');
-    if (entries.every(([key, checkpoint]) => current.checkpoints[key]?.inputHash === checkpoint.inputHash)) return current;
-    if (Object.keys(current.checkpoints).length || current.providerState !== 'none' || current.providerReceipts.length || current.completedAt)
-      throw new Error('content_execution_pristine_binding_not_allowed');
-    const updatedAt = new Date().toISOString();
-    if (!await input.dataStore.update(CONTENT_EXECUTION_JOB_COLLECTION, current.id, {
-      checkpoints: input.checkpoints, updated_at: updatedAt,
-    })) throw new Error('content_execution_pristine_binding_failed');
-    const saved = await input.dataStore.getById<JobRow>(CONTENT_EXECUTION_JOB_COLLECTION, current.id);
-    if (!saved) throw new Error('content_execution_pristine_binding_readback_failed');
-    const bound = jobFromRow(saved);
-    if (entries.some(([key, checkpoint]) => bound.checkpoints[key]?.inputHash !== checkpoint.inputHash))
-      throw new Error('content_execution_pristine_binding_readback_failed');
-    return bound;
-  } finally {
-    await releaseDurableOperationLease({ dataStore: input.dataStore, lease }).catch(() => undefined);
-  }
-}
-
-function zeroOrNull(value: unknown): boolean {
-  return value === null || value === undefined || value === 0;
-}
-
-/** A failed graph node is removable only when its durable evidence proves that
- * it stopped before provider submission. Missing/partial evidence is treated as
- * unknown and therefore remains immutable. */
-function isFailedPreProviderGraphNode(checkpoint: ContentExecutionCheckpoints[string]): boolean {
-  const payload = checkpoint?.payload;
-  if (!payload || typeof payload !== 'object' || Array.isArray(payload)) return false;
-  const row = payload as Record<string, unknown>;
-  return row.status === 'failed'
-    && row.outputSha256 === null
-    && Array.isArray(row.providerReceiptRefs) && row.providerReceiptRefs.length === 0
-    && zeroOrNull(row.reservedCny) && zeroOrNull(row.actualCostCny);
-}
-
-function removablePreProviderGraphKeys(checkpoints: ContentExecutionCheckpoints, checkpointKey: string): Set<string> | null {
-  const extra = Object.keys(checkpoints).filter(key => key !== checkpointKey && key !== 'runtime.retry');
-  if (!extra.length) return new Set();
-  const nodeKeys = extra.filter(key => /^langgraph\.node\.(?:assets|render|quality|delivery)$/.test(key));
-  if (!extra.includes('langgraph.v1') || nodeKeys.length === 0
-    || extra.some(key => key !== 'langgraph.v1' && !nodeKeys.includes(key))
-    || nodeKeys.some(key => !isFailedPreProviderGraphNode(checkpoints[key]!))) return null;
-  const graph = checkpoints['langgraph.v1'];
-  const document = graph?.payload as Record<string, unknown> | undefined;
-  if (graph?.version !== 'langgraph-checkpoints.v1' || !document
-    || document.format !== 'langgraph-checkpoints.v1' || typeof document.identityHash !== 'string'
-    || !Array.isArray(document.checkpoints) || !document.writes || typeof document.writes !== 'object') return null;
-  return new Set(extra);
-}
-
-/** Replace an executor binding after a pre-provider admission failure. Failed
- * graph attempts may also be discarded when every durable node proves that no
- * provider request, cost, or output exists. The retry marker is preserved. */
-export async function refreshUnspentContentExecutionCheckpoint(input: {
-  dataStore: DataStore; tenantId: string; jobId: string; runId: string;
-  checkpointKey: string; checkpoint: ContentExecutionCheckpoints[string];
-}): Promise<ContentExecutionJob> {
-  const tenantId = requiredIdentity(input.tenantId, 'tenant'), jobId = requiredIdentity(input.jobId, 'job');
-  const runId = requiredIdentity(input.runId, 'run'), checkpointKey = requiredIdentity(input.checkpointKey, 'checkpoint');
-  const lease = await acquireDurableOperationLease({ dataStore: input.dataStore, tenantId, subjectId: jobId,
-    scope: 'content_execution_control', ownerId: `content-binding-refresh:${randomUUID()}`, leaseDurationMs: 30_000 });
-  if (!lease) throw new Error('content_execution_job_control_busy');
-  try {
-    const row = await input.dataStore.getById<JobRow>(CONTENT_EXECUTION_JOB_COLLECTION, jobId);
-    if (!row) throw new Error('content_execution_job_not_found');
-    const current = jobFromRow(row);
-    if (current.tenantId !== tenantId || current.runId !== runId) throw new Error('content_execution_job_not_found');
-    const removable = removablePreProviderGraphKeys(current.checkpoints, checkpointKey);
-    if (current.status !== 'blocked' || current.providerState !== 'none' || current.providerReceipts.length || current.completedAt
-      || removable === null)
-      throw new Error('content_execution_unspent_binding_refresh_not_allowed');
-    const checkpoints = Object.fromEntries(Object.entries(current.checkpoints).filter(([key]) => !removable.has(key)));
-    checkpoints[checkpointKey] = input.checkpoint;
-    if (!await input.dataStore.update(CONTENT_EXECUTION_JOB_COLLECTION, current.id, { checkpoints, updated_at: new Date().toISOString() }))
-      throw new Error('content_execution_unspent_binding_refresh_failed');
-    const saved = await input.dataStore.getById<JobRow>(CONTENT_EXECUTION_JOB_COLLECTION, current.id);
-    if (!saved) throw new Error('content_execution_unspent_binding_refresh_readback_failed');
-    const refreshed = jobFromRow(saved);
-    if (refreshed.checkpoints[checkpointKey]?.inputHash !== input.checkpoint.inputHash)
-      throw new Error('content_execution_unspent_binding_refresh_readback_failed');
-    return refreshed;
-  } finally { await releaseDurableOperationLease({ dataStore: input.dataStore, lease }).catch(() => undefined); }
-}
