@@ -24,10 +24,10 @@ test('production adapter admission and controlled reconciliation never submit or
       INSTAGRAM_APP_ID: 'controlled', INSTAGRAM_APP_SECRET: 'controlled', INSTAGRAM_CONTENT_PUBLISH_ENABLED: 'true',
       TIKTOK_CLIENT_KEY: 'controlled', TIKTOK_CLIENT_SECRET: 'controlled', TIKTOK_DIRECT_POST_RELEASE_MODE: 'approved',
     };
-    const configured = evaluateWeeklyProductionEnvironment(controlledEnv, true);
+    const configured = evaluateWeeklyProductionEnvironment(controlledEnv, true, true);
     assert.equal(configured.ready, true);
-    assert.equal(evaluateWeeklyProductionEnvironment({ ...controlledEnv, ENABLE_LOCAL_DEV_FALLBACK: 'true' }, true).ready, false);
-    assert.equal(evaluateWeeklyProductionEnvironment({ ...controlledEnv, TIKTOK_DIRECT_POST_RELEASE_MODE: 'pending' }, true).ready, false);
+    assert.equal(evaluateWeeklyProductionEnvironment({ ...controlledEnv, ENABLE_LOCAL_DEV_FALLBACK: 'true' }, true, true).ready, false);
+    assert.equal(evaluateWeeklyProductionEnvironment({ ...controlledEnv, TIKTOK_DIRECT_POST_RELEASE_MODE: 'pending' }, true, true).ready, false);
     const requests: Array<{ provider: string; method: string; path: string }> = [];
     let runwayState = 'RUNNING';
     let seedanceState = 'running';
@@ -72,7 +72,7 @@ test('production adapter admission and controlled reconciliation never submit or
     const report = {
       kind: 'production_adapter_controlled_dry_run', ready: false, paidOperationsAllowed: false,
       productionPolicyParsed: controlledEnv.NODE_ENV === 'production', controlledConfigurationReady: configured.ready,
-      realEnvironmentConfigurationReady: evaluateWeeklyProductionEnvironment(process.env, false).ready,
+      realEnvironmentConfigurationReady: evaluateWeeklyProductionEnvironment(process.env, false, false).ready,
       adaptersConstructed: [runway.id, seedance.id], admissionPassed: true, preservationAndBudgetRejectionsPassed: true,
       controlledStatusAndCostCalls: requests, controlledUnknownStatusRejected: true, controlledDependencyFaultsRejected: true,
       submitCalls, fetchAttempts, socketAttempts,

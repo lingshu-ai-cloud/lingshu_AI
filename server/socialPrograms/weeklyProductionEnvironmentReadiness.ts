@@ -21,6 +21,7 @@ const enabled = (env: NodeJS.ProcessEnv, key: string) => String(env[key] ?? '').
 export function evaluateWeeklyProductionEnvironment(
   env: NodeJS.ProcessEnv,
   atomicPublicationStore: boolean,
+  atomicContentOrderStore = false,
 ): WeeklyProductionEnvironmentReadiness {
   const checks: WeeklyProductionEnvironmentCheck[] = [
     {
@@ -32,6 +33,11 @@ export function evaluateWeeklyProductionEnvironment(
       key: 'atomic_publication_lease',
       ready: atomicPublicationStore,
       reason: atomicPublicationStore ? null : 'publication_atomic_store_unavailable',
+    },
+    {
+      key: 'content_order_atomic_store',
+      ready: atomicContentOrderStore,
+      reason: atomicContentOrderStore ? null : 'content_order_atomic_store_unavailable',
     },
     {
       key: 'durable_worker_queue',

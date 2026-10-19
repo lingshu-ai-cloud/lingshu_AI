@@ -4,6 +4,7 @@ import type { DataStore } from '../storage/datastore.js';
 import { store } from '../storage/index.js';
 import type { ProcessRole } from './processRole.js';
 import { runtimeBuildInfo } from './buildInfo.js';
+import { completeWeeklyProductionRuntimeProbes } from '../socialPrograms/weeklyProductionRuntimeProbe.js';
 
 export const SOCIAL_OPERATING_WORKER_HEARTBEATS = 'social_operating_worker_heartbeats';
 
@@ -65,7 +66,10 @@ export async function writeWorkerHeartbeat(
     },
   };
   if (heartbeatRecordId) {
-    if (await dataStore.update(SOCIAL_OPERATING_WORKER_HEARTBEATS, heartbeatRecordId, payload)) return;
+    if (await dataStore.update(SOCIAL_OPERATING_WORKER_HEARTBEATS, heartbeatRecordId, payload)) {
+      if (runtimeState.state === 'ready') await completeWeeklyProductionRuntimeProbes({ dataStore, workerBuildSha: runtimeBuildInfo().commitSha, now });
+      return;
+    }
     heartbeatRecordId = '';
   }
   const existing = await dataStore.list<{ id: string }>(SOCIAL_OPERATING_WORKER_HEARTBEATS, {
@@ -73,11 +77,15 @@ export async function writeWorkerHeartbeat(
   });
   if (existing.items[0]?.id) {
     heartbeatRecordId = existing.items[0].id;
-    if (await dataStore.update(SOCIAL_OPERATING_WORKER_HEARTBEATS, heartbeatRecordId, payload)) return;
+    if (await dataStore.update(SOCIAL_OPERATING_WORKER_HEARTBEATS, heartbeatRecordId, payload)) {
+      if (runtimeState.state === 'ready') await completeWeeklyProductionRuntimeProbes({ dataStore, workerBuildSha: runtimeBuildInfo().commitSha, now });
+      return;
+    }
   }
   const created = await dataStore.create<{ id: string }>(SOCIAL_OPERATING_WORKER_HEARTBEATS, payload);
   if (!created?.id) throw new Error('worker_heartbeat_storage_unavailable');
   heartbeatRecordId = created.id;
+  if (runtimeState.state === 'ready') await completeWeeklyProductionRuntimeProbes({ dataStore, workerBuildSha: runtimeBuildInfo().commitSha, now });
 }
 
 export async function startWorkerHeartbeat(role: ProcessRole, dataStore: DataStore = store): Promise<void> {

@@ -14,16 +14,17 @@ const configured = {
 };
 
 test('production environment readiness requires durable storage, queue and provider release gates', () => {
-  const ready = evaluateWeeklyProductionEnvironment(configured, true);
+  const ready = evaluateWeeklyProductionEnvironment(configured, true, true);
   assert.equal(ready.ready, true);
   assert.equal(ready.checks.every(check => check.ready), true);
   assert.ok(ready.runtimeEvidenceRequired.includes('tenant_authenticated_scope'));
 
-  const blocked = evaluateWeeklyProductionEnvironment({ ...configured, DATABASE_URL: '', ENABLE_LOCAL_DEV_FALLBACK: 'true' }, false);
+  const blocked = evaluateWeeklyProductionEnvironment({ ...configured, DATABASE_URL: '', ENABLE_LOCAL_DEV_FALLBACK: 'true' }, false, false);
   assert.equal(blocked.ready, false);
   assert.deepEqual(blocked.checks.filter(check => !check.ready).map(check => check.reason), [
     'postgres_business_store_not_configured',
     'publication_atomic_store_unavailable',
+    'content_order_atomic_store_unavailable',
     'production_auth_fallback_enabled',
   ]);
 });
@@ -33,7 +34,7 @@ test('provider credentials without explicit platform release remain blocked', ()
     ...configured,
     INSTAGRAM_CONTENT_PUBLISH_ENABLED: 'false',
     TIKTOK_DIRECT_POST_RELEASE_MODE: 'review',
-  }, true);
+  }, true, true);
   assert.deepEqual(report.checks.filter(check => !check.ready).map(check => check.reason), [
     'instagram_publication_disabled',
     'tiktok_direct_post_not_approved',

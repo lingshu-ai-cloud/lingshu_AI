@@ -5,15 +5,15 @@ import { instagramLoginOAuthScopes } from '../server/lib/socialOAuthScopes.js';
 import { refreshPlatformCapabilityEvidence } from '../server/publishing/platformCapabilities.js';
 import type { DataStore } from '../server/storage/datastore.js';
 
-test('offline absent configuration retains nine blockers and six unobserved evidence requirements', async () => {
+test('offline absent configuration retains fail-closed blockers and six unobserved tenant evidence requirements', async () => {
   const report = await probeWeeklyProductionEnvironment({env:{}, atomicStore:()=>false, queue:async()=>{throw Error('offline');}});
   assert.equal(report.ready,false);
-  assert.equal(report.checks.filter(c=>!c.ready).length,9);
+  assert.equal(report.checks.filter(c=>!c.ready).length,13);
   assert.equal(report.runtimeEvidenceRequired.length,6);
 });
 
-test('configured admission with simulated infrastructure does not verify the six tenant effects', async () => {
-  const report = await probeWeeklyProductionEnvironment({env:{DATA_BACKEND:'postgres',DATABASE_URL:'fixture',QUEUE_BACKEND:'bullmq',REDIS_URL:'fixture',DISABLE_LOCAL_AUTH_FALLBACK:'true',META_SOCIAL_APP_ID:'fixture',META_SOCIAL_APP_SECRET:'fixture',INSTAGRAM_APP_ID:'fixture',INSTAGRAM_APP_SECRET:'fixture',INSTAGRAM_CONTENT_PUBLISH_ENABLED:'true',TIKTOK_CLIENT_KEY:'fixture',TIKTOK_CLIENT_SECRET:'fixture',TIKTOK_DIRECT_POST_RELEASE_MODE:'approved'},atomicStore:()=>true,queue:async()=>{}});
+test('configured admission with explicit simulated runtime probes does not verify the six tenant effects', async () => {
+  const report = await probeWeeklyProductionEnvironment({env:{DATA_BACKEND:'postgres',DATABASE_URL:'fixture',QUEUE_BACKEND:'bullmq',REDIS_URL:'fixture',DISABLE_LOCAL_AUTH_FALLBACK:'true',META_SOCIAL_APP_ID:'fixture',META_SOCIAL_APP_SECRET:'fixture',INSTAGRAM_APP_ID:'fixture',INSTAGRAM_APP_SECRET:'fixture',INSTAGRAM_CONTENT_PUBLISH_ENABLED:'true',TIKTOK_CLIENT_KEY:'fixture',TIKTOK_CLIENT_SECRET:'fixture',TIKTOK_DIRECT_POST_RELEASE_MODE:'approved'},atomicStore:()=>true,contentOrderAtomicStore:()=>true,queue:async()=>{},langgraphCheckpointStore:async()=>true,contentWorkerHeartbeat:async()=>true,webToWorkerJobClaim:async()=>true});
   assert.equal(report.ready,true);
   assert.equal(report.runtimeEvidenceRequired.length,6);
 });
