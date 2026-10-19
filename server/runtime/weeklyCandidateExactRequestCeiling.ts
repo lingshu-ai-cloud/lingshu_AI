@@ -55,6 +55,8 @@ const measurementPolicyHash=sha(JSON.stringify({version:WEEKLY_EXACT_REQUEST_CEI
  maxDimension:MAX_DIMENSION,maxAspectRatio:MAX_ASPECT_RATIO,maxDecodePixels:MAX_DECODE_PIXELS,maxOutputTokens:MAX_OUTPUT_TOKENS,
  visualTokenFormula:'resized_height*resized_width/(32*32)+2',textTokenCeiling:'utf8_byte_per_token',
  sourceUrl:'https://docs.modelstudio.console.alibabacloud.com/en/model-studio/vision'}));
+/** Stable identity only; possession of this hash grants no pricing capability. */
+export const weeklyCandidateExactMeasurementPolicyHash=()=>measurementPolicyHash;
 const record=(value:unknown):value is Record<string,unknown>=>Boolean(value)&&typeof value==='object'&&!Array.isArray(value);
 const exactKeys=(value:Record<string,unknown>,allowed:readonly string[])=>Object.keys(value).every(key=>allowed.includes(key));
 function parseCanonicalImage(value:string):ParsedImage|null{

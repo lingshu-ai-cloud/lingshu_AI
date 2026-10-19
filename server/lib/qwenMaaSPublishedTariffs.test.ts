@@ -56,6 +56,16 @@ test('MaaS pricing policy binds source, account, provider binding and validity',
  assert.equal(verify(tariff.publicPricingEvidence,{baseUrl:'https://dashscope.aliyuncs.com/compatible-mode/v1'}),null);
  assert.equal(verify(tariff.publicPricingEvidence,{credentialSha256:'c'.repeat(64)}),null);
 });
+test('MaaS pricing policy identity is stable across capability rebuilds',async()=>{
+ const tariff=await reader().read(intent);assert.ok(tariff);
+ const original=Date.now;try{
+  Date.now=()=>Date.parse('2026-10-19T12:00:00.000Z');
+  const first=verifyQwenMaaSPublishedPricingEvidence(tariff.publicPricingEvidence,{baseUrl,credentialSha256});assert.ok(first);
+  Date.now=()=>Date.parse('2026-10-19T12:00:01.000Z');
+  const restarted=verifyQwenMaaSPublishedPricingEvidence(structuredClone(tariff.publicPricingEvidence),{baseUrl,credentialSha256});assert.ok(restarted);
+  assert.notEqual(first.verifiedAt,restarted.verifiedAt);assert.equal(first.verificationHash,restarted.verificationHash);
+ }finally{Date.now=original;}
+});
 test('verified pricing capability expires against the module clock and cannot be re-minted with caller time',async()=>{
  const tariff=await reader().read(intent);assert.ok(tariff);const policy=verifyQwenMaaSPublishedPricingEvidence(tariff.publicPricingEvidence,{baseUrl,credentialSha256});assert.ok(policy);
  const original=Date.now;try{

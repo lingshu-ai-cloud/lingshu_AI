@@ -47,6 +47,8 @@ export interface VerifiedQwenMaaSPricingPolicy{
 }
 const VERIFIED_QWEN_MAAS_POLICIES=new WeakSet<object>();
 export const qwenMaaSPublishedTiers=():ReadonlyArray<QwenMaaSPublishedTier>=>QWEN_MAAS_TIERS_INTERNAL.map(tier=>({...tier}));
+const qwenMaaSPricingPolicyIdentity=(schema:VerifiedQwenMaaSPricingPolicy['schema'],evidence:MaaSPublishedPricingEvidence,validUntilMs:number)=>
+ sha(JSON.stringify({schema,evidence,validUntilMs}));
 
 /** Select only from the reviewed, immutable MaaS catalogue embedded in the
  * supplied evidence. Callers must never recreate these brackets locally. */
@@ -55,7 +57,7 @@ export function selectQwenMaaSPublishedTier(
 ):QwenMaaSPublishedTier|null{
  if(!Number.isSafeInteger(inputTokens)||inputTokens<0||!VERIFIED_QWEN_MAAS_POLICIES.has(policy)||policy.schema!=='verified-qwen-maas-pricing-policy.v1'||
   Date.now()<Date.parse(policy.evidence.checkedAt)||Date.now()>=policy.validUntilMs||
-  policy.verificationHash!==sha(JSON.stringify({schema:policy.schema,evidence:policy.evidence,verifiedAt:policy.verifiedAt,validUntilMs:policy.validUntilMs})))return null;
+  policy.verificationHash!==qwenMaaSPricingPolicyIdentity(policy.schema,policy.evidence,policy.validUntilMs))return null;
  return QWEN_MAAS_TIERS_INTERNAL.find(tier=>inputTokens<=tier.maximumInputTokens)||null;
 }
 const maaSCatalogEntry=()=>JSON.stringify({catalogVersion:QWEN_MAAS_TARIFF_CATALOG_VERSION,sourceUrl:QWEN_MAAS_SOURCE_URL,sourceCheckedAt:QWEN_MAAS_CATALOG_CHECKED_AT,model:'qwen3-vl-plus',basis:'standard_online_undiscounted',tiers:QWEN_MAAS_TIERS_INTERNAL});
@@ -78,7 +80,11 @@ export function verifyQwenMaaSPublishedPricingEvidence(evidence:MaaSPublishedPri
   Object.freeze(frozenEvidence.providerBinding);for(const tier of frozenEvidence.tiers)Object.freeze(tier);Object.freeze(frozenEvidence.tiers);Object.freeze(frozenEvidence);
   const schema='verified-qwen-maas-pricing-policy.v1' as const,verifiedAt=new Date(now).toISOString(),validUntilMs=validUntil;
   const policy=Object.freeze({schema,evidence:frozenEvidence,verifiedAt,validUntilMs,
-   verificationHash:sha(JSON.stringify({schema,evidence:frozenEvidence,verifiedAt,validUntilMs}))});
+   // This is a durable policy identity, not an observation timestamp. A
+   // restart must rebuild the same identity from the same frozen evidence,
+   // while the capability itself is still short-lived and checked against
+   // the module clock on every tier selection.
+   verificationHash:qwenMaaSPricingPolicyIdentity(schema,frozenEvidence,validUntilMs)});
   VERIFIED_QWEN_MAAS_POLICIES.add(policy);return policy;
  }catch{return null;}
 }

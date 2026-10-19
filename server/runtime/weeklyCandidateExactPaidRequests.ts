@@ -1,11 +1,13 @@
 import fs from 'node:fs';
 import path from 'node:path';
-import {createHash,randomUUID} from 'node:crypto';
+import {createHash,createHmac,randomUUID,timingSafeEqual} from 'node:crypto';
 import {withPaidOperationLock} from '../lib/paidOperationLock.js';
 import {withExactQwenScope,type ExactQwenProviderReceipt} from '../agents/exactQwenScope.js';
 import {inspectWeeklyExactSupplierEnvelopes,type WeeklyExactSupplierEnvelopeInput} from './weeklyCandidateExactProviderEnvelope.js';
 import {classifyQwenCompatibleEndpoint} from '../lib/qwenCompatibleEndpoint.js';
 import {qwenVisionInputLimit} from '../lib/qwenVisionInputLimit.js';
+import {verifyQwenMaaSPublishedPricingEvidence,type MaaSPublishedPricingEvidence} from '../lib/socialContentPublishedTariffs.js';
+import {measureWeeklyCandidateExactRequestCeiling,weeklyCandidateExactMeasurementPolicyHash,type WeeklyExactRequestCeiling} from './weeklyCandidateExactRequestCeiling.js';
 
 const sha=(value:string)=>createHash('sha256').update(value).digest('hex');
 const hash=/^[a-f0-9]{64}$/;
@@ -32,7 +34,7 @@ function read(file:string,authorizationHash:string,planHash:string):Ledger{
  for(const [key,entry] of Object.entries(ledger.entries))if(!hash.test(key)||!entry||!['unknown','completed'].includes(entry.state)||entry.response&&entry.response.requestHash!==key)fail('ledger_corrupt');
  return ledger;
 }
-function write(file:string,ledger:Ledger|DynamicLedger){
+function write(file:string,ledger:Ledger|DynamicLedger|DynamicLedgerV2){
  const dir=path.dirname(file);fs.mkdirSync(dir,{recursive:true,mode:0o700});const tmp=`${file}.${randomUUID()}.tmp`,fd=fs.openSync(tmp,'wx',0o600);
  try{fs.writeFileSync(fd,JSON.stringify(ledger));fs.fsyncSync(fd);}finally{fs.closeSync(fd);}
  fs.renameSync(tmp,file);const dirfd=fs.openSync(dir,'r');try{fs.fsyncSync(dirfd);}finally{fs.closeSync(dirfd);}
@@ -200,4 +202,208 @@ export async function withWeeklyCandidateDynamicExactPaidScope<T>(input:{root:st
  const result=await withExactQwenScope({model:input.plan.model,configurationHash:input.configurationHash,endpoint:input.plan.endpoint,
   credentialDigest:input.plan.credentialSha256,paidGuardRequired:true,beforeProviderRequest:guard.beforeProviderRequest,onProviderReceipt:guard.onProviderReceipt},input.run);
  return {result,diagnostic:await guard.readDiagnostic()};
+}
+
+// Phase 2 foundation only. No production composition imports this v2 API.
+// Its ten-yuan ceiling is the same mother's total content authorization, not
+// an additional analysis allowance; later production must carry every held
+// micro-yuan into that same mother ledger before spending the remainder.
+export interface WeeklyCandidateDynamicExactPlanV2{
+ schema:'weekly-candidate-dynamic-exact-plan.v2';operationId:string;candidateId:string;mediaSha256:string;
+ endpoint:string;credentialSha256:string;model:'qwen3-vl-plus';pricingEvidence:MaaSPublishedPricingEvidence;
+ pricingEvidenceHash:string;pricingPolicyHash:string;measurementPolicyHash:string;
+ protocolMaximumRequests:number;candidateMaximumMicros:number;
+}
+export type WeeklyCandidateDynamicExactEntryV2=WeeklyExactRequestCeiling&{
+ sequence:number;state:'unknown'|'response_recorded';response?:ExactQwenProviderReceipt;integrityMac:string;
+};
+type DynamicLedgerV2={
+ schema:'weekly-candidate-dynamic-exact-paid.v2';authorizationHash:string;planHash:string;
+ pricingEvidenceHash:string;pricingPolicyHash:string;measurementPolicyHash:string;
+ candidateMaximumMicros:number;protocolMaximumRequests:number;generation:number;previousHeadHash:string|null;
+ entries:WeeklyCandidateDynamicExactEntryV2[];integrityMac:string;
+};
+export interface WeeklyCandidateDynamicExactHeadV2{
+ schema:'weekly-candidate-dynamic-exact-head.v2';operationId:string;authorizationHash:string;planHash:string;generation:number;ledgerHash:string;
+}
+export interface WeeklyCandidateDynamicExactHeadAnchorV2{
+ /** This port is a separate durable authority, not a second file beside the
+  * ledger. It MUST retain the genesis row, serialize CAS, and never return an
+  * older generation after acknowledging a newer one. */
+ read:()=>Promise<WeeklyCandidateDynamicExactHeadV2|null>;
+ compareAndSwap:(expected:WeeklyCandidateDynamicExactHeadV2,next:WeeklyCandidateDynamicExactHeadV2)=>Promise<boolean>;
+}
+const v2PlanHash=(plan:WeeklyCandidateDynamicExactPlanV2)=>sha(JSON.stringify(plan));
+export const weeklyCandidateDynamicExactV2LedgerPath=(root:string,authorizationHash:string,plan:WeeklyCandidateDynamicExactPlanV2)=>
+ path.join(path.resolve(root),sha(JSON.stringify(['weekly-candidate-dynamic-exact-paid.v2',plan.operationId,authorizationHash]))+'.json');
+function checkedDynamicPlanV2(plan:WeeklyCandidateDynamicExactPlanV2,authorizationHash:string){
+ if(plan.schema!=='weekly-candidate-dynamic-exact-plan.v2'||!hash.test(authorizationHash)||!plan.operationId||!plan.candidateId||
+  !hash.test(plan.mediaSha256)||!hash.test(plan.credentialSha256)||classifyQwenCompatibleEndpoint(plan.endpoint)!=='qianwen-maas'||
+  plan.model!=='qwen3-vl-plus'||!hash.test(plan.pricingEvidenceHash)||plan.pricingEvidenceHash!==sha(JSON.stringify(plan.pricingEvidence))||
+  !hash.test(plan.pricingPolicyHash)||plan.measurementPolicyHash!==weeklyCandidateExactMeasurementPolicyHash()||
+  !Number.isSafeInteger(plan.protocolMaximumRequests)||plan.protocolMaximumRequests<1||plan.protocolMaximumRequests>128||
+  !Number.isSafeInteger(plan.candidateMaximumMicros)||plan.candidateMaximumMicros<1||plan.candidateMaximumMicros>10_000_000||
+  plan.pricingEvidence.providerBinding.baseUrl.replace(/\/+$/,'')!==plan.endpoint.replace(/\/+$/,'')||
+  plan.pricingEvidence.providerBinding.credentialSha256!==plan.credentialSha256)fail('dynamic_v2_plan_invalid');
+}
+function rebuildPricingPolicyV2(plan:WeeklyCandidateDynamicExactPlanV2){
+ const policy=verifyQwenMaaSPublishedPricingEvidence(plan.pricingEvidence,{baseUrl:plan.endpoint,credentialSha256:plan.credentialSha256});
+ if(!policy)fail('dynamic_v2_pricing_policy_unverified');
+ if(policy!.verificationHash!==plan.pricingPolicyHash)fail('dynamic_v2_pricing_policy_unverified');
+ return policy!;
+}
+function v2LedgerMac(ledger:Omit<DynamicLedgerV2,'integrityMac'>,integrityKey:string){
+ return createHmac('sha256',integrityKey).update(JSON.stringify(ledger)).digest('hex');
+}
+function emptyDynamicV2(authorizationHash:string,planHash:string,plan:WeeklyCandidateDynamicExactPlanV2,integrityKey:string):DynamicLedgerV2{
+ const body:Omit<DynamicLedgerV2,'integrityMac'>={schema:'weekly-candidate-dynamic-exact-paid.v2',authorizationHash,planHash,pricingEvidenceHash:plan.pricingEvidenceHash,
+  pricingPolicyHash:plan.pricingPolicyHash,measurementPolicyHash:plan.measurementPolicyHash,
+  candidateMaximumMicros:plan.candidateMaximumMicros,protocolMaximumRequests:plan.protocolMaximumRequests,generation:0,previousHeadHash:null,entries:[]};
+ return {...body,integrityMac:v2LedgerMac(body,integrityKey)};
+}
+export function weeklyCandidateDynamicExactInitialHeadV2(authorizationHash:string,plan:WeeklyCandidateDynamicExactPlanV2,integrityKey:string):WeeklyCandidateDynamicExactHeadV2{
+ const planHash=v2PlanHash(plan),ledger=emptyDynamicV2(authorizationHash,planHash,plan,integrityKey);
+ return {schema:'weekly-candidate-dynamic-exact-head.v2',operationId:plan.operationId,authorizationHash,planHash,generation:0,ledgerHash:sha(JSON.stringify(ledger))};
+}
+function validV2Receipt(entry:WeeklyCandidateDynamicExactEntryV2,response:ExactQwenProviderReceipt,prior:WeeklyCandidateDynamicExactEntryV2[]){
+ const usage=response.usage as {prompt_tokens?:unknown;completion_tokens?:unknown;total_tokens?:unknown}|null|undefined;
+ const prompt=usage?.prompt_tokens,completion=usage?.completion_tokens,total=usage?.total_tokens;
+ return response.provider==='qwen'&&response.requestHash===entry.requestBodySha256&&response.requestModel==='qwen3-vl-plus'&&
+  response.model==='qwen3-vl-plus'&&response.httpStatus===200&&typeof response.responseId==='string'&&response.responseId.length>0&&
+  !prior.some(item=>item.response?.responseId===response.responseId)&&Number.isSafeInteger(prompt)&&Number(prompt)>=0&&
+  Number(prompt)<=entry.inputTokenCeiling&&Number.isSafeInteger(completion)&&Number(completion)>=0&&
+  Number(completion)<=entry.outputTokenCeiling&&Number.isSafeInteger(total)&&Number(total)===Number(prompt)+Number(completion);
+}
+function v2EntryMac(entry:Omit<WeeklyCandidateDynamicExactEntryV2,'integrityMac'>,integrityKey:string){
+ return createHmac('sha256',integrityKey).update(JSON.stringify(entry)).digest('hex');
+}
+function validV2EntryMac(entry:WeeklyCandidateDynamicExactEntryV2,integrityKey:string){
+ const {integrityMac,...body}=entry,expected=v2EntryMac(body,integrityKey);
+ return hash.test(integrityMac)&&timingSafeEqual(Buffer.from(integrityMac,'hex'),Buffer.from(expected,'hex'));
+}
+function validV2Ceiling(entry:WeeklyCandidateDynamicExactEntryV2,plan:WeeklyCandidateDynamicExactPlanV2){
+ const tier=plan.pricingEvidence.tiers.find(item=>entry.inputTokenCeiling<=item.maximumInputTokens);
+ const computedInput=entry.nonImageUtf8ByteCeiling+entry.visualTokenCeiling+entry.protocolReserveTokens;
+ const fallbackReasons=['image_url_unsupported','image_data_invalid','image_mime_mismatch','image_dimensions_invalid','image_limit_exceeded'];
+ const fallback=entry.fallbackReason!==null;
+ const expectedMicros=tier?Math.ceil(entry.inputTokenCeiling*tier.inputPriceCnyPerMillion+
+  entry.outputTokenCeiling*tier.outputPriceCnyPerMillion):NaN;
+ return Boolean(tier)&&JSON.stringify(entry.selectedTier)===JSON.stringify(tier)&&entry.inputPriceCnyPerMillion===tier!.inputPriceCnyPerMillion&&
+  entry.outputPriceCnyPerMillion===tier!.outputPriceCnyPerMillion&&entry.protocolReserveTokens===8192&&
+  Number.isSafeInteger(entry.nonImageUtf8ByteCeiling)&&entry.nonImageUtf8ByteCeiling>=0&&
+  Number.isSafeInteger(entry.visualTokenCeiling)&&entry.visualTokenCeiling>=0&&Number.isSafeInteger(entry.imageCount)&&entry.imageCount>=0&&
+  (fallback?(fallbackReasons.includes(String(entry.fallbackReason))&&entry.inputTokenCeiling===260096&&entry.nonImageUtf8ByteCeiling===0&&entry.visualTokenCeiling===0&&entry.imageCount===0):
+   entry.inputTokenCeiling===computedInput)&&entry.reservedMicros===expectedMicros;
+}
+function readDynamicV2(file:string,authorizationHash:string,planHash:string,plan:WeeklyCandidateDynamicExactPlanV2,integrityKey:string):DynamicLedgerV2{
+ if(!fs.existsSync(file))return emptyDynamicV2(authorizationHash,planHash,plan,integrityKey);
+ let ledger:DynamicLedgerV2;try{ledger=JSON.parse(fs.readFileSync(file,'utf8'));}catch{return fail('dynamic_v2_ledger_corrupt');}
+ const {integrityMac,...ledgerBody}=ledger,expectedLedgerMac=v2LedgerMac(ledgerBody,integrityKey);
+ if(ledger.schema!=='weekly-candidate-dynamic-exact-paid.v2'||ledger.authorizationHash!==authorizationHash||ledger.planHash!==planHash||
+  ledger.pricingEvidenceHash!==plan.pricingEvidenceHash||ledger.pricingPolicyHash!==plan.pricingPolicyHash||
+  ledger.measurementPolicyHash!==plan.measurementPolicyHash||ledger.candidateMaximumMicros!==plan.candidateMaximumMicros||
+  ledger.protocolMaximumRequests!==plan.protocolMaximumRequests)fail('dynamic_v2_ledger_changed');
+ if(!Number.isSafeInteger(ledger.generation)||ledger.generation<0||
+  (ledger.generation===0?ledger.previousHeadHash!==null:!hash.test(String(ledger.previousHeadHash)))||!hash.test(String(integrityMac))||
+  !timingSafeEqual(Buffer.from(String(integrityMac),'hex'),Buffer.from(expectedLedgerMac,'hex'))||
+  !Array.isArray(ledger.entries)||ledger.entries.length>plan.protocolMaximumRequests)
+  fail('dynamic_v2_ledger_corrupt');
+ const requests=new Set<string>(),responses=new Set<string>();let held=0;
+ for(const [index,entry] of ledger.entries.entries()){
+  if(!validV2EntryMac(entry,integrityKey)||entry.sequence!==index||entry.schema!=='weekly-candidate-exact-request-ceiling.v1'||!hash.test(entry.requestBodySha256)||
+   requests.has(entry.requestBodySha256)||entry.pricingPolicyHash!==plan.pricingPolicyHash||entry.measurementPolicyHash!==plan.measurementPolicyHash||
+   !Number.isSafeInteger(entry.inputTokenCeiling)||entry.inputTokenCeiling<1||!Number.isSafeInteger(entry.outputTokenCeiling)||entry.outputTokenCeiling<1||
+   !Number.isSafeInteger(entry.reservedMicros)||entry.reservedMicros<1||!['unknown','response_recorded'].includes(entry.state)||
+   entry.response!==undefined&&entry.response.requestHash!==entry.requestBodySha256||entry.state==='response_recorded'&&!entry.response||!validV2Ceiling(entry,plan))
+   fail('dynamic_v2_ledger_corrupt');
+  requests.add(entry.requestBodySha256);held+=entry.reservedMicros;
+  if(!Number.isSafeInteger(held)||held>plan.candidateMaximumMicros)fail('dynamic_v2_ledger_corrupt');
+  if(entry.state==='response_recorded'){
+   const response=entry.response!,responseId=response.responseId;
+   if(!validV2Receipt(entry,response,ledger.entries.slice(0,index))||typeof responseId!=='string'||responses.has(responseId))fail('dynamic_v2_ledger_corrupt');
+   responses.add(responseId!);
+  }
+ }
+ return ledger;
+}
+
+/** Dormant v2 journal. Tests call this directly; no production scope wrapper
+ * is exported until Phase 3 installs audited settlement and carry-forward. */
+export function createWeeklyCandidateDynamicExactPaidRequestsV2(input:{
+ root:string;authorizationHash:string;plan:WeeklyCandidateDynamicExactPlanV2;integrityKey:string;
+ assertAuthorizedPlan:(plan:WeeklyCandidateDynamicExactPlanV2,authorizationHash:string)=>Promise<void>;
+ headAnchor:WeeklyCandidateDynamicExactHeadAnchorV2;
+}){
+ checkedDynamicPlanV2(input.plan,input.authorizationHash);
+ if(!input.integrityKey||sha(input.integrityKey)!==input.plan.credentialSha256)fail('dynamic_v2_integrity_key_invalid');
+ const planHash=v2PlanHash(input.plan),file=weeklyCandidateDynamicExactV2LedgerPath(input.root,input.authorizationHash,input.plan);
+ const exclusive=<T>(body:()=>Promise<T>)=>withPaidOperationLock(path.join(path.resolve(input.root),'.locks'),
+  `weekly-exact-dynamic-v2:${input.plan.operationId}:${input.authorizationHash}`,body);
+ const readAnchored=async():Promise<{ledger:DynamicLedgerV2;head:WeeklyCandidateDynamicExactHeadV2}>=>{
+  const head=await input.headAnchor.read(),exists=fs.existsSync(file);
+  const initial=weeklyCandidateDynamicExactInitialHeadV2(input.authorizationHash,input.plan,input.integrityKey);
+  if(!head)return fail('dynamic_v2_anchor_missing');const currentHead=head;
+  if(!exists){if(JSON.stringify(currentHead)!==JSON.stringify(initial))fail('dynamic_v2_anchor_changed');return{ledger:emptyDynamicV2(input.authorizationHash,planHash,input.plan,input.integrityKey),head:currentHead};}
+  const ledger=readDynamicV2(file,input.authorizationHash,planHash,input.plan,input.integrityKey);
+  const ledgerHash=sha(JSON.stringify(ledger));
+  if(currentHead.schema!=='weekly-candidate-dynamic-exact-head.v2'||currentHead.operationId!==input.plan.operationId||
+   currentHead.authorizationHash!==input.authorizationHash||currentHead.planHash!==planHash)fail('dynamic_v2_anchor_changed');
+  if(currentHead.generation===ledger.generation&&currentHead.ledgerHash===ledgerHash)return{ledger,head:currentHead};
+  // The file is fsynced before CAS. Exactly one authenticated generation ahead
+  // is an interrupted commit: finish its monotonic head update, but never
+  // re-authorize the unknown request or accept an older/multi-step snapshot.
+  if(ledger.generation===currentHead.generation+1&&ledger.previousHeadHash===sha(JSON.stringify(currentHead))){
+   const recovered:WeeklyCandidateDynamicExactHeadV2={schema:'weekly-candidate-dynamic-exact-head.v2',operationId:input.plan.operationId,
+    authorizationHash:input.authorizationHash,planHash,generation:ledger.generation,ledgerHash};
+   if(await input.headAnchor.compareAndSwap(currentHead,recovered))return{ledger,head:recovered};
+  }
+  return fail('dynamic_v2_anchor_changed');
+ };
+ const persist=async(ledger:DynamicLedgerV2,head:WeeklyCandidateDynamicExactHeadV2)=>{
+  ledger.generation=head.generation+1;ledger.previousHeadHash=sha(JSON.stringify(head));
+  const {integrityMac:_,...ledgerBody}=ledger;ledger.integrityMac=v2LedgerMac(ledgerBody,input.integrityKey);write(file,ledger);
+  const next:WeeklyCandidateDynamicExactHeadV2={schema:'weekly-candidate-dynamic-exact-head.v2',operationId:input.plan.operationId,
+   authorizationHash:input.authorizationHash,planHash,generation:ledger.generation,ledgerHash:sha(JSON.stringify(ledger))};
+  if(!await input.headAnchor.compareAndSwap(head,next))fail('dynamic_v2_anchor_commit_unknown');
+ };
+ return {
+  ledgerPath:file,
+  async beforeProviderRequest(requestBody:string){
+   await input.assertAuthorizedPlan(input.plan,input.authorizationHash);
+   const policy=rebuildPricingPolicyV2(input.plan);
+   const ceiling=await measureWeeklyCandidateExactRequestCeiling({requestBody,pricingPolicy:policy});
+   if(ceiling.pricingPolicyHash!==input.plan.pricingPolicyHash||ceiling.measurementPolicyHash!==input.plan.measurementPolicyHash)
+    fail('dynamic_v2_measurement_changed');
+   await exclusive(async()=>{
+    await input.assertAuthorizedPlan(input.plan,input.authorizationHash);rebuildPricingPolicyV2(input.plan);
+    const anchored=await readAnchored(),ledger=anchored.ledger;
+    if(ledger.entries.some(entry=>entry.requestBodySha256===ceiling.requestBodySha256))fail('original_request_recovery_required');
+    if(ledger.entries.some(entry=>entry.state!=='response_recorded'))fail('earlier_request_unsettled');
+    if(ledger.entries.length>=input.plan.protocolMaximumRequests)fail('dynamic_v2_request_count_exceeded');
+    const held=ledger.entries.reduce((sum,entry)=>sum+entry.reservedMicros,0);
+    if(!Number.isSafeInteger(held+ceiling.reservedMicros)||held+ceiling.reservedMicros>input.plan.candidateMaximumMicros)
+     fail('dynamic_v2_cny_ceiling_exceeded');
+    const body={...ceiling,sequence:ledger.entries.length,state:'unknown' as const};
+    ledger.entries.push({...body,integrityMac:v2EntryMac(body,input.integrityKey)});await persist(ledger,anchored.head);
+   });
+  },
+  async onProviderReceipt(response:ExactQwenProviderReceipt){
+   await exclusive(async()=>{
+    const anchored=await readAnchored(),ledger=anchored.ledger,entry=ledger.entries.at(-1);
+    if(!entry||entry.requestBodySha256!==response.requestHash||entry.response)fail('dynamic_v2_receipt_without_original_claim');
+    const current=entry!;current.response=response;
+    if(validV2Receipt(current,response,ledger.entries.slice(0,-1)))current.state='response_recorded';
+    const {integrityMac:_,...body}=current;current.integrityMac=v2EntryMac(body,input.integrityKey);
+    await persist(ledger,anchored.head);
+   });
+  },
+  async readDiagnostic(){return exclusive(async()=>{
+   const ledger=(await readAnchored()).ledger;
+   return {planHash,authorizationHash:input.authorizationHash,ledgerHash:sha(JSON.stringify(ledger)),requestCount:ledger.entries.length,
+    reservedMicros:ledger.entries.reduce((sum,entry)=>sum+entry.reservedMicros,0),
+    allResponsesRecorded:ledger.entries.length>0&&ledger.entries.every(entry=>entry.state==='response_recorded')};
+  });},
+  async readRecordedChildren(){return exclusive(async()=>structuredClone((await readAnchored()).ledger));},
+  async readClaim(requestHash:string){return exclusive(async()=>(await readAnchored()).ledger.entries.find(entry=>entry.requestBodySha256===requestHash)??null);},
+ };
 }

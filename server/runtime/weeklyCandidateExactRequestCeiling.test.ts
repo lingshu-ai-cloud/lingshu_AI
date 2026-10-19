@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import {createHash} from 'node:crypto';
 import sharp from 'sharp';
 import {createQwenMaaSPublishedTariffReader,verifyQwenMaaSPublishedPricingEvidence,type VerifiedQwenMaaSPricingPolicy} from '../lib/socialContentPublishedTariffs.js';
-import {measureWeeklyCandidateExactRequestCeiling,WEEKLY_EXACT_PROTOCOL_TOKEN_RESERVE} from './weeklyCandidateExactRequestCeiling.js';
+import {measureWeeklyCandidateExactRequestCeiling,weeklyCandidateExactMeasurementPolicyHash,WEEKLY_EXACT_PROTOCOL_TOKEN_RESERVE} from './weeklyCandidateExactRequestCeiling.js';
 
 const baseUrl='https://maas.qianwenaiapi.com/compatible-mode/v1',credentialSha256='a'.repeat(64);
 const accountRef=`qwen:${createHash('sha256').update(JSON.stringify({baseUrl,credentialSha256})).digest('hex')}`;
@@ -50,6 +50,7 @@ test('request hash is deterministic and binds every frozen request field',async(
  const changed=await measureWeeklyCandidateExactRequestCeiling({pricingPolicy,requestBody:request('same!',180)});
  assert.deepEqual(first,again);assert.notEqual(first.requestBodySha256,changed.requestBodySha256);
  assert.notEqual(first.inputTokenCeiling,changed.inputTokenCeiling);assert.match(first.pricingPolicyHash,/^[a-f0-9]{64}$/);assert.match(first.measurementPolicyHash,/^[a-f0-9]{64}$/);
+ assert.equal(first.measurementPolicyHash,weeklyCandidateExactMeasurementPolicyHash());
 });
 
 test('computed request ceilings select exact published tier boundaries',async()=>{
