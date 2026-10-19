@@ -70,8 +70,9 @@ const noAccount=buildContentBatchPlan({...input,config:publishConfig,goal:{...in
 assert.equal(noAccount.status,'planned');
 assert.equal(noAccount.orders[0].accountId,'');
 const automatic=buildContentBatchPlan({...input,config:publishConfig,goal:{...input.goal,videoPlans:undefined}});
-assert.equal(automatic.status,'planned');
-assert.ok(automatic.orders.every(order=>order.accountId===''));
+assert.equal(automatic.status,'blocked','fixed-yield automatic planning must not invent a product route when clone workflow is disabled');
+assert.deepEqual(automatic.orders,[]);
+assert.match(automatic.blocker,/clone 工作流/);
 console.log('Content production without publishing credentials passed');
 
 assert.equal(publishingPlatformsCovered(['youtube','tiktok'],[{platform:'youtube',accountIds:['a']}]),false);
