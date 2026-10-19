@@ -267,6 +267,14 @@
 - 修复：继续断言客户显示名去除“模拟客户”字样，同时要求模拟会话展示不外发标签、真实客户展示真实通道状态。
 - 状态：已修复，待 Storyboard 与完整总测试复核。
 
+## RESOLVED-032 自动内容计划旧断言绕过固定恒产 clone 准入
+
+- 命令：`pnpm test`，失败阶段 `server/digitalEmployees/executionDiagnostics.test.ts`。
+- 实际：显式 product 计划在无发布账号时仍可创建；但无 `videoPlans` 的自动计划会按固定恒产策略要求 clone，而 fixture 又关闭了 clone 工作流，当前实现正确返回 `blocked`。
+- 归因：测试把“生产不依赖发布凭据”扩大成“可以在未启用 clone 时自动臆造 product 路线”，与当前固定恒产契约冲突。
+- 修复：保留显式 product 无账号仍为 `planned` 的断言；自动计划改为要求 fail-closed、零订单并给出 clone 工作流阻断原因。
+- 状态：已修复，待数字员工与完整总测试复核。
+
 ## RESOLVED-030 模拟客户会话缺少不外发提示
 
 - 命令：`pnpm run test:external-customer-service-demo`。
