@@ -31,14 +31,14 @@ const APPROVED_COMPATIBILITY_REPAIRS: Record<string, { from: string; to: string 
   },
 };
 
-// A manifest typo shipped in the same commit that first introduced this
-// migration. The migration blob has always had `to`; no blob with `from`
-// exists in the reviewed repository history. Unlike a compatibility repair,
-// this exception is accepted only when Git proves the exact introduction
-// commit added the immutable migration bytes together with the erroneous
-// manifest entry, and its parent contained neither entry. This keeps the
-// exception tied to one historical defect instead of creating a general way
-// to bless rewritten migrations.
+// A manifest entry copied from an archived worktree variant shipped in the
+// commit that introduced this migration to the main lineage. That side-branch
+// variant differs only by trailing whitespace, while the introduction commit
+// already contains `to`. Unlike a compatibility repair, this exception is
+// accepted only when Git proves the exact introduction commit added the
+// immutable migration bytes together with the stale manifest entry, and its
+// parent contained neither entry. This keeps the exception tied to one
+// historical defect instead of creating a general rewrite bypass.
 const REVIEWED_MANIFEST_DEFECT_CORRECTIONS: Record<string, {
   from: string;
   to: string;
