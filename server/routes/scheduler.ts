@@ -27,6 +27,8 @@ import { localFallbacksEnabled } from '../lib/localFallbackPolicy.js';
 import { runWithDataAuthority } from '../storage/dataAuthority.js';
 import { schedulerBootstrapAuthority } from './schedulerBootstrapAuthority.js';
 import { reconcileWeeklyDiscoveryScopeMigrations } from '../socialPrograms/weeklyDiscoveryScopeMigration.js';
+import { discoveryScopeUpgradeRequest } from './schedulerDiscoveryScopeUpgrade.js';
+import { latestMissedRun } from './schedulerMissedRun.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PDF_SCRIPT = path.join(__dirname, '../../scripts/render-task-report-pdf.py');
@@ -1255,43 +1257,14 @@ export async function reconcileSocialDiscoveryCollectionTasks(): Promise<number>
       const payload = scope.payload && typeof scope.payload === 'object' ? scope.payload as Record<string, any> : {};
       const approval = payload.approval && typeof payload.approval === 'object' ? payload.approval as Record<string, any> : {};
       if (!tenantId || !scope.id || !version || approval.status !== 'approved' || Number(approval.scopeVersion || 0) !== version) continue;
-      if (payload.productFactBinding?.version !== WEEKLY_DISCOVERY_PRODUCT_BINDING_VERSION) {
-        const brief = payload.discoveryBrief && typeof payload.discoveryBrief === 'object' ? payload.discoveryBrief as Record<string, any> : {};
-        const authorization = payload.authorizationSource && typeof payload.authorizationSource === 'object' ? payload.authorizationSource as Record<string, any> : {};
-        const productRef = String(brief.productRef || payload.keywordSet?.scope?.productRef || '').trim();
-        const workflowRunId = String(authorization.workflowRunId || '').trim();
-        const workflowTaskId = String(authorization.workflowTaskId || '').trim();
-        const approvedBy = String(authorization.approvedBy || scope.created_by || '').trim();
-        const platforms = Array.isArray(brief.platforms) ? brief.platforms.map((value: unknown) => String(value).trim()).filter(Boolean) : [];
-        if (productRef && workflowRunId && workflowTaskId && approvedBy && platforms.length) {
-          try {
-            await ensureDigitalEmployeeSocialCollectionTask({
-              tenantId,
-              workflowRunId,
-              workflowTaskId,
-              keywords: productRef,
-              platforms,
-              limit: Number(brief.resultLimit || 10),
-              dateWindowDays: Number(brief.lookbackDays || 7),
-              confirmedWeeklyBoundary: {
-                businessGoal: String(payload.businessGoal || '为已确认周计划采集可复刻的爆款内容证据'),
-                products: [productRef],
-                market: String(brief.market || payload.market || '').trim(),
-                language: String(payload.language || 'en').trim(),
-                audience: String(brief.audience || payload.keywordSet?.scope?.audienceRole || '').trim(),
-                platforms,
-                lookbackDays: Number(brief.lookbackDays || 7),
-                resultLimit: Number(brief.resultLimit || 10),
-                approvedBy,
-                workflowRunId,
-                workflowTaskId,
-              },
-            });
-            reconciled += 1;
-            continue;
-          } catch (error) {
-            console.warn('[scheduler] product-bound discovery scope migration deferred:', error instanceof Error ? error.message : error);
-          }
+      const upgrade = discoveryScopeUpgradeRequest(scope, tenantId);
+      if (upgrade) {
+        try {
+          await ensureDigitalEmployeeSocialCollectionTask(upgrade);
+          reconciled += 1;
+          continue;
+        } catch (error) {
+          console.warn('[scheduler] product-bound discovery scope migration deferred:', error instanceof Error ? error.message : error);
         }
       }
       ensureSocialDiscoveryCollectionTask({ tenantId, discoveryScopeId: String(scope.id), discoveryScopeVersion: version });
@@ -1345,36 +1318,6 @@ export async function runScheduledTaskNow(input: {
     result: refreshed?.lastResult || result,
     lastRun: refreshed?.lastRun,
   };
-}
-
-function latestMissedRun(task: ScheduledTask, now = new Date()): Date | null {
-  const parts = task.cronExpr.trim().split(/\s+/);
-  if (parts.length !== 5 || parts[2] !== '*' || parts[3] !== '*') return null;
-  const minute = Number(parts[0]);
-  const hour = Number(parts[1]);
-  if (!Number.isInteger(minute) || minute < 0 || minute > 59 || !Number.isInteger(hour) || hour < 0 || hour > 23) return null;
-  const weekdays = parts[4] === '*'
-    ? null
-    : new Set(parts[4].split(',').map(Number).filter(day => Number.isInteger(day) && day >= 0 && day <= 7).map(day => day === 7 ? 0 : day));
-  if (parts[4] !== '*' && !weekdays?.size) return null;
-
-  const beijingNow = new Date(now.getTime() + 8 * 60 * 60 * 1000);
-  const year = beijingNow.getUTCFullYear();
-  const month = beijingNow.getUTCMonth();
-  const day = beijingNow.getUTCDate();
-  for (let offset = 0; offset <= 7; offset += 1) {
-    const calendarDay = new Date(Date.UTC(year, month, day - offset));
-    if (weekdays && !weekdays.has(calendarDay.getUTCDay())) continue;
-    const scheduledAt = new Date(Date.UTC(
-      calendarDay.getUTCFullYear(), calendarDay.getUTCMonth(), calendarDay.getUTCDate(), hour - 8, minute,
-    ));
-    if (scheduledAt.getTime() > now.getTime()) continue;
-    const previousRun = task.lastRun ? Date.parse(task.lastRun) : 0;
-    const createdAt = Date.parse(task.createdAt) || 0;
-    if (scheduledAt.getTime() > previousRun && scheduledAt.getTime() >= createdAt) return scheduledAt;
-    return null;
-  }
-  return null;
 }
 
 export function scheduleTask(task: ScheduledTask) {
