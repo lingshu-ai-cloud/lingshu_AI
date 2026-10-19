@@ -49,6 +49,8 @@ import { openScriptLibrary } from '../lib/contentActionNavigation';
 import type { SocialBusinessModel, SocialDiscoveryScoreDecision, SocialDiscoverySupplyItem } from '../../shared/contracts/socialContentWorkflow';
 import { MATERIAL_SOURCE_LABELS, MATERIAL_THEME_LABELS, materialPrimaryThemeOf, materialSourceCategoryOf, materialThemeTagsOf } from '../../shared/materialTaxonomy';
 import MaterialTaxonomyFilters, { type MaterialSourceFilter, type MaterialThemeFilter } from './material-library/MaterialTaxonomyFilters';
+import { generatedMaterialOriginLabel, materialAssetTabOf, type MaterialAssetTab } from '../lib/materialAssetOwnership';
+export { generatedMaterialOriginLabel, materialAssetTabOf, type MaterialAssetTab } from '../lib/materialAssetOwnership';
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 type ScriptType = 'voiceover' | 'storyboard';
@@ -60,8 +62,6 @@ type MaterialApplicabilityFilter = 'all' | 'universal' | 'cross_industry' | 'ind
 type MaterialOrientationFilter = 'all' | 'vertical' | 'horizontal';
 type MaterialTypeFilter = 'all' | 'video' | 'image' | 'audio';
 type FavoriteFilter = 'all' | 'favorite';
-type MaterialAssetGroup = 'enterprise' | 'ai' | 'cloud';
-export type MaterialAssetTab = 'all' | MaterialAssetGroup;
 type DiscoveryDecisionFilter = 'all' | SocialDiscoveryScoreDecision;
 type BusinessModelFilter = 'all' | SocialBusinessModel;
 
@@ -265,25 +265,6 @@ const MATERIAL_FUNCTION_LABELS: Record<string, string> = {
 const MATERIAL_APPLICABILITY_LABELS: Record<string, string> = {
   all: '全部适用范围', universal: '通用素材', cross_industry: '跨行业素材', industry_specific: '行业专属',
 };
-/** Product-facing ownership groups. Upload entry only affects traceability, never ownership. */
-export function materialAssetTabOf(material: Pick<Material, 'sourceType' | 'folder' | 'scope'>): MaterialAssetGroup {
-  const source = String(material.sourceType || '').toLowerCase();
-  if (material.scope === 'shared' || material.folder === 'hot' || /official|viral|licensed[-_ ]?stock|cloud/.test(source)) return 'cloud';
-  if (/seedance|seedream|gemini|qwen|ai[-_ ]?generated|aigc|^ai[-_]/.test(source)) return 'ai';
-  return 'enterprise';
-}
-
-export function generatedMaterialOriginLabel(material: Pick<Material, 'sourceType' | 'provenance'>): string {
-  const source = String(material.sourceType || '').toLowerCase();
-  if (!/seedance|seedream|gemini|qwen|ai[-_]?generated|aigc|^ai[-_]/.test(source)) return '';
-  const provenance = material.provenance || {};
-  const rawShotId = String(provenance.shotId || '').trim();
-  const shotLabel = rawShotId.replace(/^slot[-_]?/i, '').trim();
-  if (provenance.storyboardAigc === true) return `内容制作 · ${shotLabel ? `分镜 ${shotLabel}` : '分镜生成'}`;
-  if (provenance.freeCreationHook === true) return '内容制作 · 自由创作';
-  return source.includes('seedance') ? '内容制作 · Seedance 生成' : '内容制作 · AI 生成';
-}
-
 export function materialAssetBadge(material: Pick<Material, 'sourceType' | 'folder' | 'scope'>): { label: string; className: string } {
   const category = materialSourceCategoryOf(material);
   if (category === 'official_import') return { label: '官方导入', className: 'bg-orange-50 text-orange-700' };
