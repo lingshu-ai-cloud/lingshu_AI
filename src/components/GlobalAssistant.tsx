@@ -2466,11 +2466,9 @@ export default function GlobalAssistant({
   return (
     <div
       data-global-assistant="root"
-      className={`fixed right-4 z-[75] md:right-5 ${page === 'conversion'
-        ? 'bottom-[calc(env(safe-area-inset-bottom)+8rem)]'
-        : page === 'smartAssets' || page === 'digitalEmployees'
-          ? 'bottom-[calc(env(safe-area-inset-bottom)+5.5rem)]'
-          : 'bottom-[calc(env(safe-area-inset-bottom)+1rem)] md:bottom-5'}`}
+      className={`fixed right-4 z-[75] md:right-5 ${page === 'smartAssets' || page === 'digitalEmployees'
+        ? 'bottom-[calc(env(safe-area-inset-bottom)+5.5rem)]'
+        : 'bottom-[calc(env(safe-area-inset-bottom)+1rem)] md:bottom-5'}`}
     >
       <AnimatePresence>
         {mode === 'breathing' && performance && shouldNotifyAssistant(performance.reason) && !performanceHidden && (

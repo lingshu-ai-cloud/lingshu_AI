@@ -51,7 +51,7 @@ const assistantRootTag = assistantUi.match(/data-global-assistant="root"[\s\S]{0
 for (const className of ['fixed', 'right-4', 'z-[75]', 'bottom-[calc(env(safe-area-inset-bottom)+1rem)]']) {
   assert.ok(assistantRootTag.includes(className), `the assistant launcher root must retain ${className}`);
 }
-assert.match(assistantUi, /page === 'conversion'\s*\? 'bottom-\[calc\(env\(safe-area-inset-bottom\)\+8rem\)\]'/, 'the mobile conversation launcher must clear the message composer');
+assert.doesNotMatch(assistantUi, /page === 'conversion'[\s\S]{0,180}bottom-\[calc\(env\(safe-area-inset-bottom\)\+8rem\)\]/, 'the conversation page must not move the global launcher away from its shared safe-area position');
 assert.match(assistantUi, /const handleLauncherClick[\s\S]{0,500}openCurrentPageAgent\(\)/, 'the assistant launcher must open the current-page panel directly');
 assert.match(assistantUi, /openAgent\(currentPageAgent, 'chat'\)/, 'the confirmed unified assistant opens the current-page conversation without an agent selector');
 assert.match(assistantUi, /<AssistantDecisionCenter[\s\S]{0,300}page=\{page\}/, 'the assistant decision feed must be scoped to the current page');
