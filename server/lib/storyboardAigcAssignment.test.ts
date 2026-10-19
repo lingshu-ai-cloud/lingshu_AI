@@ -52,7 +52,7 @@ const autoFrame = { ...firstFrame, provenance: { ...firstFrame.provenance, confi
 const autoVideo = { ...video, provenance: { ...video.provenance, storyboardQualityReport: autoVideoQa, shotSpec: autoShotSpec } };
 const autoInput = { ...input, materials: [autoFrame, autoVideo] };
 assert.equal(storyboardAigcAssignmentIssues(autoInput).length, 1, 'missing product observations cannot prove automatic admission');
-const provenObservations = ['product_identity', 'layout', 'layout_continuity', 'visual_integrity'].map(key => ({ key, verdict: 'pass', evidenceFrames: ['候选0s', '候选4s'] }));
+const provenObservations = ['product_identity', 'packaging_visibility', 'subject_visibility', 'layout', 'layout_continuity', 'visual_integrity'].map(key => ({ key, verdict: 'pass', evidenceFrames: ['候选0s', '候选4s'] }));
 const provenInput = { ...input, materials: [{ ...autoFrame, provenance: { ...autoFrame.provenance, firstFrameQuality: buildStoryboardQaReport({ ...qaBase, phase: 'first_frame', observations: provenObservations }) } }, { ...autoVideo, provenance: { ...autoVideo.provenance, storyboardQualityReport: buildStoryboardQaReport({ ...qaBase, phase: 'video', observations: provenObservations }) } }] };
 assert.deepEqual(storyboardAigcAssignmentIssues(provenInput), [], 'complete QA evidence admits automatic replication without a forged human review');
 const hardProduct = buildStoryboardQaReport({ ...qaBase, phase: 'video', observations: [{ key: 'product_identity', verdict: 'fail', evidenceFrames: ['候选0s'], note: '包装错误', action: 'retry_video' }] });

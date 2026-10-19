@@ -3104,6 +3104,14 @@ studioRouter.post('/seedance-video', async (req, res) => {
   // reading the original frame bytes. Those bytes are required only for a new
   // supplier submission; a retry must not become blocked after local media was
   // archived or moved.
+  if (firstFrame && existingStoryboardVideoOperation?.status === 'uncertain'
+    && existingStoryboardVideoOperation.output?.providerTaskId
+    && (!isSeedanceVideoEnabled() || !config.apiKey)) {
+    res.status(202).json({ ok: false, code: 'STORYBOARD_VIDEO_IN_PROGRESS',
+      error: '原视频任务已有供应商回执；当前无法查询供应商状态，已保留原任务且未重复提交',
+      providerTaskId: existingStoryboardVideoOperation.output.providerTaskId,
+      providerModel: config.model, providerAcceptedAt: existingStoryboardVideoOperation.output?.providerAcceptedAt }); return;
+  }
   frozenFrameObject = firstFrame?.objectKey ? await objectStorageDownload(firstFrame.objectKey) : null;
   frozenFrameBytes = frozenFrameObject?.buf?.length ? frozenFrameObject.buf : firstFrame?.file && fs.existsSync(path.join(MEDIA_DIR, firstFrame.file)) ? fs.readFileSync(path.join(MEDIA_DIR, firstFrame.file)) : null;
   if (firstFrame && !frozenFrameBytes) { res.status(409).json({ ok: false, code: 'STORYBOARD_FIRST_FRAME_BYTES_UNAVAILABLE', error: '确认首帧字节不可读取，无法冻结真实供应商输入；未调用供应商' }); return; }

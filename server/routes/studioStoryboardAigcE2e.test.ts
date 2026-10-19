@@ -100,16 +100,17 @@ globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
   if (url === 'https://mock.storyboard/candidate.png') return new Response(image, { headers: { 'content-type': 'image/png' } });
   if (url === 'https://mock.storyboard/compatible-mode/v1/chat/completions') {
     const payload = JSON.parse(String(init?.body || '{}'));
-    const prompt = String(payload.messages?.[0]?.content?.[0]?.text || '');
+    const prompt = (Array.isArray(payload.messages?.[0]?.content) ? payload.messages[0].content : [])
+      .map((item: any) => String(item?.text || '')).join('\n');
     const firstFrame = prompt.includes('质检阶段：first_frame');
     const label = firstFrame ? '候选首帧' : '0s';
     const keys = firstFrame
-      ? ['product_identity', 'person_identity', 'environment_fidelity', 'layout', 'contact', 'start_state', 'visual_integrity']
-      : ['product_identity', 'person_identity', 'environment_fidelity', 'layout_continuity', 'contact_continuity', 'action_order', 'end_state', 'visual_integrity'];
+      ? ['product_identity', 'packaging_visibility', 'subject_visibility', 'person_identity', 'environment_fidelity', 'layout', 'contact', 'start_state', 'visual_integrity']
+      : ['product_identity', 'packaging_visibility', 'subject_visibility', 'person_identity', 'environment_fidelity', 'layout_continuity', 'contact_continuity', 'action_order', 'end_state', 'visual_integrity'];
     if (prompt.includes('企业工厂环境参考'))
       assert.ok(payload.messages?.[0]?.content?.some((item: any) => item.type === 'image_url'), 'factory reference enters visual QA');
     return json({ choices: [{ message: { content: JSON.stringify({ observations: keys.map(key => ({ key, verdict: 'pass',
-      evidenceFrames: !firstFrame && ['product_identity', 'layout_continuity', 'environment_fidelity'].includes(key)
+      evidenceFrames: !firstFrame && ['product_identity', 'packaging_visibility', 'subject_visibility', 'layout_continuity', 'environment_fidelity'].includes(key)
         ? ['0s', '0.5s'] : [label], note: '模拟模型返回通过，仅检验工作流接线' })) }) } }] });
   }
   if (url === 'https://mock.seedance/contents/generations/tasks' && init?.method === 'POST') {
@@ -288,6 +289,7 @@ try {
     const first = await post('/storyboard-first-frame', frameRequest);
     assert.equal(first.status, 200, `${shot.id} first frame: ${JSON.stringify(first.body)}`);
     const automaticReplication = shot.mode === 'clone' && !('characterMaterialId' in frameRequest);
+    assert.ok(first.body.firstFrameQuality, `${shot.id} first-frame QA: ${JSON.stringify(first.body)}`);
     assert.equal(first.body.firstFrameQuality.status, automaticReplication ? 'passed' : 'needs_review');
     if (automaticReplication) {
       assert.equal(first.body.material.provenance.confirmationSource, 'automatic_policy');

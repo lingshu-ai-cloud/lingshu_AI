@@ -112,14 +112,15 @@ try {
     shotId: slotId, requestId: singleRequestId, ratio: '9:16', duration: 4, resolution: '480p' };
   const single = await post('/seedance-video', singleBody);
   assert.equal(single.status, 202, JSON.stringify(single.body));
-  assert.equal(single.body.providerTaskId, 'original-single-project');
+  assert.equal(single.body.providerTaskId, 'original-single-project', JSON.stringify(single.body));
   assert.equal(single.body.code, 'STORYBOARD_VIDEO_IN_PROGRESS');
   const changed = await post('/seedance-video', { ...singleBody, duration: 5 });
   assert.equal(changed.body.code, 'STORYBOARD_OPERATION_INPUT_CONFLICT');
   await storyboardAigcProjectBudget.mark(tenantId, 'single-project', singleOperationId, 'uncertain');
   const uncertain = await post('/seedance-video', singleBody);
-  assert.equal(uncertain.status, 409);
-  assert.equal(uncertain.body.providerTaskId, 'original-single-project');
+  assert.equal(uncertain.status, 202, JSON.stringify(uncertain.body));
+  assert.equal(uncertain.body.code, 'STORYBOARD_VIDEO_IN_PROGRESS');
+  assert.equal(uncertain.body.providerTaskId, 'original-single-project', JSON.stringify(uncertain.body));
   await storyboardAigcProjectBudget.mark(tenantId, 'single-project', singleOperationId, 'completed', { materialId: 'missing-output' });
   const missing = await post('/seedance-video', singleBody);
   assert.equal(missing.body.code, 'STORYBOARD_VIDEO_RECONCILIATION_REQUIRED');

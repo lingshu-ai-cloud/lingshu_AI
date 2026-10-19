@@ -8,7 +8,6 @@ test('all storyboard routes recover old native receipts before any new budget or
   for (const [name, marker, fallback] of [
     ['/storyboard-first-frame', 'if (await replyExistingFrame(existingFrameOperation)) return;', 'await replyExistingFrame(admission.entry); return;'],
     ['/storyboard-action-video', 'if (await replyExistingAction(existingActionOperation)) return;', 'await replyExistingAction(reserved.entry); return;'],
-    ['/seedance-video', 'if (await replyExistingVideo(existingVideoOperation)) return;', 'await replyExistingVideo(reserved.entry); return;'],
   ]) {
     const body = route(name);
     assert.ok(body.indexOf(marker) > 0, name);
@@ -18,8 +17,15 @@ test('all storyboard routes recover old native receipts before any new budget or
   }
   assert.ok(route('/storyboard-action-video').indexOf('replyExistingAction(existingActionOperation)')
     < route('/storyboard-action-video').indexOf('!isSeedanceVideoEnabled()'));
-  assert.ok(route('/seedance-video').indexOf('replyExistingVideo(existingVideoOperation)')
-    < route('/seedance-video').indexOf('!isSeedanceVideoEnabled()'));
+  const seedance = route('/seedance-video');
+  const existing = 'if (existingStoryboardVideoOperation) {';
+  assert.ok(seedance.indexOf(existing) > 0);
+  assert.ok(seedance.indexOf(existing) < seedance.indexOf('studioAigcBudgetPreviewForSpec('), 'seedance: receipt state must be read before remaining-budget planning');
+  assert.ok(seedance.indexOf(existing) < seedance.indexOf('consumeDemoQuota('), 'seedance: a receipt query must not consume a new-call quota');
+  assert.ok(seedance.includes('await replyExistingVideo(existingStoryboardVideoOperation)'), 'seedance: completed and non-recoverable receipts use durable replay');
+  assert.ok(seedance.includes('if (replyExistingVideo) { await replyExistingVideo(reserved.entry); return; }'), 'seedance: reserve-time races use the same replay validation');
+  assert.ok(seedance.indexOf("existingStoryboardVideoOperation?.status === 'uncertain'")
+    < seedance.indexOf('frozenFrameObject = firstFrame'), 'seedance: an uncertain paid receipt is retained even if local input bytes are unavailable');
 });
 test('saved output recovery checks current bindings and bytes, with legacy source-plan image support', () => {
   const helper = source.split('async function storyboardReplayVideoResponse(')[1]!.split('// POST /studio/storyboard-first-frame')[0]!;

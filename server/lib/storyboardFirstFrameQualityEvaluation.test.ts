@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { evaluateStoryboardFirstFrameQuality } from './storyboardFirstFrameQualityEvaluation.js';
 
-const observations = () => ['product_identity', 'layout', 'visual_integrity'].map(key => ({
+const observations = () => ['product_identity', 'packaging_visibility', 'subject_visibility', 'layout', 'visual_integrity'].map(key => ({
   key, verdict: 'pass', evidenceFrames: ['候选首帧'], note: '候选中可见证据',
 }));
 const base = () => ({ sceneType: 'product' as const, hasProduct: true, hasNamedPerson: false,

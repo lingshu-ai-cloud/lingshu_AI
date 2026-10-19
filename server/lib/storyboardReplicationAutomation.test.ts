@@ -23,7 +23,7 @@ assert.equal(automaticStoryboardFrameAdmission({...p,firstFrameQuality:undefined
 assert.equal(automated.reviewedBy,undefined);assert.equal(automated.reviewDecision,undefined);
 
 const fallbackPass = buildStoryboardQaReport({ ...base, hasEnvironmentReference: false, hasContact: false,
-  observations: ['product_identity', 'layout', 'visual_integrity'].map(key => ({ key, verdict: 'pass', evidenceFrames: ['候选首帧'], note: '真实抽帧通过' })) });
+  observations: ['product_identity', 'packaging_visibility', 'subject_visibility', 'layout', 'visual_integrity'].map(key => ({ key, verdict: 'pass', evidenceFrames: ['候选首帧'], note: '真实抽帧通过' })) });
 const fallbackProvenance = { mode: 'free_creation', firstFrameQualityState: 'evaluated',
   shotSpec: { mode: 'free_creation', constraints: ['product_identity'] }, firstFrameQuality: fallbackPass };
 assert.equal(automaticManagedFallbackFrameAdmission(fallbackProvenance,
@@ -37,7 +37,7 @@ assert.equal(automaticManagedFallbackFrameAdmission({ ...fallbackProvenance,
 
 const fallbackVideoPass = buildStoryboardQaReport({ ...base, phase: 'video', hasEnvironmentReference: false, hasContact: false,
   evidenceFrameLabels: ['0s', '3.5s'],
-  observations: ['product_identity', 'layout_continuity', 'visual_integrity'].map(key => ({ key, verdict: 'pass', evidenceFrames: ['0s', '3.5s'], note: '真实视频抽帧通过' })) });
+  observations: ['product_identity', 'packaging_visibility', 'subject_visibility', 'layout_continuity', 'visual_integrity'].map(key => ({ key, verdict: 'pass', evidenceFrames: ['0s', '3.5s'], note: '真实视频抽帧通过' })) });
 const fallbackVideoProvenance = { shotSpec: { mode: 'free_creation', constraints: ['product_identity'] },
   storyboardQualityReport: fallbackVideoPass };
 assert.equal(automaticManagedFallbackVideoAdmission(fallbackVideoProvenance,
