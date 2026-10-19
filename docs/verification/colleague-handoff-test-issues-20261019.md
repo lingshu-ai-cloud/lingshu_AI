@@ -111,6 +111,14 @@
 
 ## 已验证通过的相关范围
 
+## RESOLVED-020 发布延期恢复计划缺少 PocketBase 集合
+
+- 命令：`pnpm run quality`，失败阶段 `scripts/social-operating-release.integration.ts`。
+- 实际：`social_weekly_publication_recovery_schedules` 读取返回 PocketBase 404 `Missing collection context`，使周运营包创建接口返回 500（期望 201）。
+- 归因：服务端已持久化并读取发布延期恢复计划，但仓库没有创建该集合的 migration；这是 schema 缺口，不是路由拆分回归。
+- 修复：新增前向 migration `1792195220_create_weekly_publication_recovery_schedules.js`，包含租户/周包/发布任务/修订唯一约束和 latest 查询索引；不修改锁定历史 migration。
+- 状态：已修复，待迁移 checksum、迁移门禁与发布集成复跑确认。
+
 ## RESOLVED-019 数字员工路由契约未跟随生产预算恢复路由拆分
 
 - 命令：`pnpm exec tsx --test server/digitalEmployees/route.contract.test.ts`
