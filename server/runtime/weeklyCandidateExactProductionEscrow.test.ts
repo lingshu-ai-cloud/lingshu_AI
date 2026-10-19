@@ -26,7 +26,7 @@ async function v2Input(t:test.TestContext){
  const candidates=Array.from({length:5},(_,index)=>({candidateId:`candidate-v2-${index}`,mediaSha256:String(index).repeat(64),operationId:`operation-v2-${index}`}));
  const endpoint='https://maas.qianwenaiapi.com/compatible-mode/v1',integrityKey='isolated-v2-escrow-ledger-key',providerKey='isolated-v2-escrow-provider-key',credentialSha256=sha(providerKey),ledgerIntegrityKeySha256=sha(integrityKey),accountRef=`qwen:${sha(JSON.stringify({baseUrl:endpoint,credentialSha256}))}`;
  const tariff=await createQwenMaaSPublishedTariffReader({now:()=>new Date('2026-10-19T12:00:00.000Z'),readProviderBinding:async()=>({provider:'qwen',model:'qwen3-vl-plus',baseUrl:endpoint,credentialSha256})}).read({provider:'qwen',model:'qwen3-vl-plus',accountRef,stage:'candidate_exact_analysis',shotId:null,operationId:'v2-escrow-tariff',inputContractHash:'f'.repeat(64),maximumUnits:{inputTokens:260096,outputTokens:16384}});assert.ok(tariff);
- const provider={endpoint,credentialSha256,model:'qwen3-vl-plus' as const,pricingEvidence:tariff.publicPricingEvidence};
+ const provider={endpoint,credentialSha256,auditApiKeyId:'official-audit-key',model:'qwen3-vl-plus' as const,pricingEvidence:tariff.publicPricingEvidence};
  return {f,root,job,run,candidates,provider,integrityKey,providerKey,input:{store:f.store,job,run,root,provider,ledgerIntegrityKeySha256,candidates}};
 }
 
@@ -122,4 +122,31 @@ test('v2 journal authority requires the exact reserved mother and rejects invent
   assert.equal(fs.existsSync(journal.ledgerPath),false);
  }
  await assert.rejects(handle.reserve('candidate-v2-5','5'.repeat(64),'operation-v2-5'),/candidate_changed/);
+});
+
+test('v2 settlement authority freezes audit identity and survives pricing expiry while every new claim remains blocked',async t=>{
+ const f=await v2Input(t),handle=await prepareWeeklyCandidateExactProductionEscrowV2(f.input),candidate=f.candidates[0]!,grant=await handle.reserve(candidate.candidateId,candidate.mediaSha256,candidate.operationId);
+ assert.equal(handle.escrow.auditApiKeyId,'official-audit-key');
+ const plan:WeeklyCandidateDynamicExactPlanV2={schema:'weekly-candidate-dynamic-exact-plan.v2',operationId:candidate.operationId,candidateId:candidate.candidateId,
+  mediaSha256:candidate.mediaSha256,endpoint:f.provider.endpoint,credentialSha256:f.provider.credentialSha256,
+  ledgerIntegrityKeySha256:grant.ledgerIntegrityKeySha256,model:'qwen3-vl-plus',pricingEvidence:grant.pricingEvidence,
+  pricingEvidenceHash:grant.pricingEvidenceHash,pricingPolicyHash:grant.pricingPolicyHash,measurementPolicyHash:grant.measurementPolicyHash,
+  protocolMaximumRequests:grant.protocolMaximumRequests,candidateMaximumMicros:grant.candidateMaximumMicros};
+ const original=Date.now;try{Date.now=()=>Date.parse(f.provider.pricingEvidence.validUntil)+1;
+  assert.deepEqual(await handle.assertReservedPlanForSettlement(plan,grant.authorizationHash),{
+   authorizationId:handle.escrow.escrowId,authorizationHash:handle.escrow.recordHash,auditApiKeyId:'official-audit-key'});
+  await assert.rejects(handle.assertReservedPlan(plan,grant.authorizationHash),/pricing_evidence_unverified/);
+  await assert.rejects(handle.reserve(f.candidates[1]!.candidateId,f.candidates[1]!.mediaSha256,f.candidates[1]!.operationId),/pricing_evidence_unverified/);
+ }finally{Date.now=original;}
+});
+
+test('v2 source marker is exact-idempotent and tampering fails closed',async t=>{
+ const f=await v2Input(t),handle=await prepareWeeklyCandidateExactProductionEscrowV2(f.input),candidate=f.candidates[0]!;
+ await handle.reserve(candidate.candidateId,candidate.mediaSha256,candidate.operationId);
+ const marker={candidateId:candidate.candidateId,mediaSha256:candidate.mediaSha256,operationId:candidate.operationId,motherContentId:'mother-v2',
+  contentLedgerRef:`social-task-budget:${'a'.repeat(64)}`,settlementRecordHash:'b'.repeat(64),retainedOccupationMicros:12345};
+ const first=await handle.markCarriedForward(marker);assert.deepEqual(await handle.markCarriedForward(marker),first);
+ await assert.rejects(handle.markCarriedForward({...marker,settlementRecordHash:'c'.repeat(64)}),/carry_forward_changed/);
+ const raw=JSON.parse(fs.readFileSync(handle.ledgerPath,'utf8'));raw.entries[candidate.operationId].retainedOccupationMicros=0;
+ fs.writeFileSync(handle.ledgerPath,JSON.stringify(raw));assert.throws(()=>handle.readOnlyStatus(),/ledger_corrupt/);
 });
