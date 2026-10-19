@@ -465,7 +465,7 @@ test('batch preserves confirmed reconstruction and rejects inconsistent source-p
     shootingSlots: [{ id: 'shot', slotId: 'slot', detail: '画面：销售正面说话 口播：Hello', observedPresenterRole: 'sales_presenter', personContinuityId: 'source-person' }],
     shotProductions: { 'assembly:shot': shot } as Record<string, unknown> } };
   rows.set('studio_projects/project', project);
-  rows.set('studio_production_defaults/defaults', { tenant_id: 'tenant-a', payload: { presenters: [{ id: 'person-1', name: '销售', authorized: true }] } });
+  rows.set('studio_production_defaults/defaults', { tenant_id: 'tenant-a', payload: { defaultPresenterId: 'person-1', presenters: [{ id: 'person-1', name: '销售', avatarId: 'avatar-1', voiceId: 'voice-1', authorized: true }] } });
   const app = express(); app.use(express.json()); app.use((_req, res, next) => { res.locals.tenantId = 'tenant-a'; next(); });
   app.use(createProductionRouter(store, async () => 'unused'));
   const server = app.listen(0, '127.0.0.1'); await new Promise<void>(resolve => server.once('listening', resolve));

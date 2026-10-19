@@ -68,6 +68,55 @@ export interface ProductionDefaults {
   defaultLayout: ShotLayout;
   presenterRoutes: PresenterRoute[];
 }
+export type PresenterProductionGateReason = 'ready' | 'selection_required' | 'authorization_required' | 'appearance_required';
+export interface PresenterProductionGate {
+  ready: boolean;
+  reason: PresenterProductionGateReason;
+  presenter?: PresenterAsset;
+  message: string;
+}
+
+/**
+ * A production presenter is an explicit, authorized identity with a real
+ * appearance asset.  This gate deliberately does not accept a preference or
+ * another visual route as a substitute for the selected person.
+ */
+export function presenterHasAppearance(asset?: PresenterAsset): boolean {
+  if (!asset) return false;
+  return Boolean(
+    asset.toolMappings?.heygen?.avatarId
+    || asset.avatarId
+    || asset.imageUrl
+    || asset.videoUrl
+    || asset.referenceMaterialIds?.some(Boolean)
+    || asset.toolMappings?.runway?.referenceMaterialIds?.some(Boolean)
+    || asset.toolMappings?.seedance?.referenceMaterialIds?.some(Boolean)
+    || asset.toolMappings?.sd?.referenceMaterialIds?.some(Boolean)
+  );
+}
+
+export function presenterProductionGate(defaults?: Partial<ProductionDefaults> | null, presenterId?: string): PresenterProductionGate {
+  const selectedId = String(presenterId || defaults?.defaultPresenterId || '').trim();
+  if (!selectedId) return {
+    ready: false,
+    reason: 'selection_required',
+    message: '请选择或录入一个数字人形象；没有形象不能开始生产，也不会改用素材匹配或其他路线。',
+  };
+  const presenter = defaults?.presenters?.find(item => item.id === selectedId);
+  if (!presenter?.authorized) return {
+    ready: false,
+    reason: 'authorization_required',
+    presenter,
+    message: '当前数字人形象不存在或未取得授权，请重新选择已授权形象后再生产。',
+  };
+  if (!presenterHasAppearance(presenter)) return {
+    ready: false,
+    reason: 'appearance_required',
+    presenter,
+    message: '当前人物还没有可用形象，请上传照片、视频或选择已有数字人形象后再生产。',
+  };
+  return { ready: true, reason: 'ready', presenter, message: `已选择数字人形象“${presenter.name}”。` };
+}
 export interface ShotCandidate { id: string; materialId: string; fingerprint: string; createdAt: string; source: ShotSource; jobId?: string }
 export interface ShotProduction {
   materialSourceAudioEnabled?: boolean;

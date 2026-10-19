@@ -509,12 +509,13 @@ export function buildSocialProductionPlan(input: {
     });
     if(scenes.length!==input.baseline.scenes.length)return {ok:false,reasonCode:'material_analysis_required',message:'逐镜供应结果缺少可验证的视频字节、哈希、时长或场景绑定。',scenes:[],pendingScenes:pendingScenes(scenes.map(scene=>scene.baselineSceneIndex)),selectedAssetIds:[],unusedAssets,narrationChanged:false,maxDuration:0,sourceClipSeconds:0,averageConfidence:0,notes:['不能用原始产品图或系统说明图代替已承诺的生成镜头。']};
     const selectedAssetIds=[...new Set(scenes.map(scene=>scene.clip.assetId))],sourceClipSeconds=scenes.reduce((sum,scene)=>sum+scene.clip.sourceDuration,0),referenceDuration=Math.max(0,...input.baseline.scenes.map(scene=>Number(scene.referenceStructure?.sourceTiming.endSeconds)||0));
+    const frozenTimelineDuration = referenceDuration > 0 ? referenceDuration : sourceClipSeconds;
     for(const asset of input.assets.filter(asset=>!selectedAssetIds.includes(asset.id)))unusedAssets.push({assetId:asset.id,assetName:asset.name,reason:'该逐镜供应结果未绑定当前冻结场景，未进入剪辑'});
     return {ok:true,reasonCode:'ready',message:'已按审核后的逐镜供应回执绑定生成视频；最终画面质量仍需独立验收。',scenes,selectedAssetIds,unusedAssets,narrationChanged:false,
       // Routed sources are trimmed into the frozen scene windows. Summing the
       // full source-file durations multiplies reused clips and can turn a
       // 38-second timeline into several minutes.
-      maxDuration:referenceDuration||sourceClipSeconds,sourceClipSeconds,averageConfidence:1,notes:['供应回执只证明生成结果与场景身份绑定，不代表G4/G5质量检查通过。']};
+      maxDuration:frozenTimelineDuration,sourceClipSeconds,averageConfidence:1,notes:['供应回执只证明生成结果与场景身份绑定，不代表G4/G5质量检查通过。']};
   }
   const taskAssociatedAssetCount = uniqueAssets.filter(hasTaskUploadAssociation).length;
   const associationSafe = isAssociationSafeBaseline(input.baseline)

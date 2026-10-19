@@ -42,16 +42,43 @@ const asset = (value: Partial<AssetCandidate> & Pick<AssetCandidate, 'id' | 'nam
   ...value,
 });
 
-const imageOnly = assessStoryboardMaterialReadiness({ analysis, presenter: 'material', assets: [asset({ id: 'image', name: '产品正面', type: 'image' })] });
+const imageOnly = assessStoryboardMaterialReadiness({ analysis, presenter: 'material', assets: [asset({ id: 'image', name: '产品正面', type: 'image', productId: 'product-cleanser', productName: '云朵泡沫卸妆蜜' })] });
 assert.equal(imageOnly.decisions[0]?.assetId, 'image', 'a static product shot can start from a product image');
-assert.match(imageOnly.blockers.join('；'), /真实动态产品视频/);
-assert.match(imageOnly.blockers.join('；'), /真实工厂/);
-assert.equal(imageOnly.decisions[1]?.assetId, '', 'a static image must not satisfy a dynamic product shot');
+assert.equal(imageOnly.blockers.length, 2, 'unwired system fallback plans must remain explicit production inputs');
+assert.equal(imageOnly.decisions[1]?.assetId, 'image', 'the exact identity image remains visible while the user chooses an executable route');
+assert.equal(imageOnly.decisions[1]?.resolution, 'needs_input');
+assert.equal(imageOnly.decisions[1]?.productionRoute, 'confirm_identity_motion_route_or_bind_dynamic_asset');
+assert.match(imageOnly.decisions[1]?.blocker || '', /不会默认创建实拍任务/);
 assert.equal(imageOnly.decisions[2]?.assetId, '', 'a static image must not satisfy a factory process shot');
+assert.equal(imageOnly.decisions[2]?.resolution, 'needs_input');
+assert.equal(imageOnly.decisions[2]?.productionRoute, 'confirm_factory_rewrite_or_bind_authorized_asset');
+assert.match(imageOnly.decisions[2]?.blocker || '', /事实卡片|流程说明/);
+
+const noIdentityAsset = assessStoryboardMaterialReadiness({ analysis, presenter: 'material', assets: [] });
+assert.equal(noIdentityAsset.decisions[1]?.resolution, 'needs_input');
+assert.match(noIdentityAsset.blockers.join('；'), /清晰正面图/);
+assert.doesNotMatch(noIdentityAsset.blockers.join('；'), /真实动态产品视频|真实工厂/);
+assert.match(noIdentityAsset.blockers.join('；'), /不会默认创建实拍任务/);
+assert.equal(noIdentityAsset.decisions[2]?.resolution, 'needs_input', 'an unconsumed factory fallback must not be advertised as executable');
+assert.match(noIdentityAsset.decisions[2]?.blocker || '', /不会默认创建实拍任务/);
+
+const genericVideoOnly = assessStoryboardMaterialReadiness({ analysis, presenter: 'material', assets: [asset({
+  id: 'generic-demo', name: '通用人物动作', type: 'video', tags: ['动作'],
+})] });
+assert.equal(genericVideoOnly.decisions[0]?.resolution, 'needs_input', 'a generic image/video must not be mistaken for exact product identity');
+assert.equal(genericVideoOnly.decisions[1]?.resolution, 'needs_input', 'a generic action video must not satisfy a product demo identity requirement');
+assert.match(genericVideoOnly.blockers.join('；'), /清晰正面图|主体身份/);
+
+const licensedFactory = assessStoryboardMaterialReadiness({ analysis, presenter: 'material', assets: [asset({
+  id: 'licensed-factory', name: '共享工厂灌装线', type: 'video', tags: ['工厂'], source: 'licensed_shared_material',
+  authorization: { status: 'licensed', scope: 'shared', evidence: 'licensed stock' },
+})] });
+assert.equal(licensedFactory.decisions[2]?.resolution, 'needs_input', 'shared factory footage may explain a process but cannot silently become customer factory evidence');
+assert.match(licensedFactory.decisions[2]?.productionNote || '', /流程说明|已授权工厂素材/);
 
 const ready = assessStoryboardMaterialReadiness({ analysis, presenter: 'material', assets: [
-  asset({ id: 'image', name: '产品正面', type: 'image' }),
-  asset({ id: 'demo', name: '产品使用演示', type: 'video' }),
+  asset({ id: 'image', name: '产品正面', type: 'image', productId: 'product-cleanser', productName: '云朵泡沫卸妆蜜' }),
+  asset({ id: 'demo', name: '产品使用演示', type: 'video', productId: 'product-cleanser', productName: '云朵泡沫卸妆蜜' }),
   asset({ id: 'factory', name: '工厂灌装线', type: 'video', tags: ['工厂', '灌装'] }),
 ] });
 assert.deepEqual(ready.blockers, []);

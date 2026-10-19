@@ -77,6 +77,7 @@ import {
   type SocialProductionAsset,
   type SocialProductionPlan,
 } from './socialContentProductionPlan.js';
+import { summarizeSelectedProviderCosts } from './socialContentProductionCost.js';
 import { evaluateSocialReplicationResult } from './replicationEvaluationAdapter.js';
 import { socialReplicationHardQualityFailures } from './socialContentGraphQualityGate.js';
 import {
@@ -2006,11 +2007,7 @@ export async function runSocialContentAutoProduction(input: {
     .map(shot => [shot.assetId, shot.archivedMaterial!.materialId]));
   const finalInputMaterialIds = [...selectedAssetIds]
     .map(assetId => archivedMaterialIdByAssetId.get(assetId) || assetId);
-  const recordedProviderEstimatedCostCny = +assets
-    .filter(asset => selectedAssetIds.has(asset.id))
-    .flatMap(asset => asset.segments ?? [])
-    .reduce((sum, segment) => sum + Math.max(0, Number(segment.estimatedCostCny || 0)), 0)
-    .toFixed(2);
+  const providerCostSummary = summarizeSelectedProviderCosts({ assets, selectedAssetIds });
   const deliverableStatus = productionMode === 'concept_preview'
     ? 'concept_preview'
     : !technicalApproved || creativeReviewFailures.length > 0 || replicationHardFailures.length > 0
@@ -2165,10 +2162,17 @@ export async function runSocialContentAutoProduction(input: {
         costSummary: {
           currency: 'CNY',
           estimatedBeforeGenerationCny: plannedCostCny,
-          recordedProviderCostCny: null,
-          recordedProviderEstimatedCostCny,
-          settlementStatus: 'recorded',
-          note: '实际费用只统计本次已记录的媒体供应商调用；存储、带宽和人工审核未计入。',
+          // Compatibility total: actual charges plus estimates whose provider
+          // bill is still pending. The split fields and status prevent this
+          // number from being mistaken for a fully settled amount.
+          recordedProviderCostCny: providerCostSummary.recordedCostCny,
+          actualProviderCostCny: providerCostSummary.actualCostCny,
+          estimatedUnsettledProviderCostCny: providerCostSummary.estimatedUnsettledCostCny,
+          providerSegmentCount: providerCostSummary.providerSegmentCount,
+          settlementStatus: providerCostSummary.settlementStatus,
+          note: providerCostSummary.settlementStatus === 'settled'
+            ? '实际费用只统计本次已记录的媒体供应商调用；存储、带宽和人工审核未计入。'
+            : '部分供应商费用仍为预计或未知，不能视为最终结算；存储、带宽和人工审核未计入。',
         },
         delivery: {
           status: deliverableStatus,

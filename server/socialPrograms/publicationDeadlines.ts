@@ -21,6 +21,13 @@ export function publicationPreparationDeadline(window: string | null | undefined
   return instant === null ? null : new Date(instant - 30 * 60_000).toISOString();
 }
 
+/** Freeze production authority on the preceding day; this is deliberately
+ * stricter than the rolling acceptance buffer used by execution scheduling. */
+export function publicationProductionDeadline(window: string | null | undefined): string | null {
+  const instant = publicationInstant(window);
+  return instant === null ? null : new Date(instant - 86_400_000).toISOString();
+}
+
 /** Attach latest feasible deadlines without disguising forward-plan capacity or elapsed time. */
 export function applyPublicationDeadlines(tasks: WeeklyExecutionTask[], publications: SocialWeeklyPublicationTask[]): WeeklyExecutionTask[] {
   const latestFinish = new Map<string, number>();

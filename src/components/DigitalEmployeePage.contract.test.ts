@@ -334,7 +334,7 @@ assert.match(controlWeeklyWorkSource, /if \(recoverableProductionTask\)[^]*?digi
 assert.match(pageSource, /controlWeeklyWork[\s\S]{0,900}pauseRun[\s\S]{0,400}resumeRun|controlWeeklyWork[\s\S]{0,900}resumeRun[\s\S]{0,400}pauseRun/, 'the merged weekly control must pause and resume the persisted run');
 assert.match(weeklyPlanControlsSource, /controlWeeklyWork[\s\S]{0,900}weeklyControlLabel/, 'the weekly-plan header must own the merged start and pause control');
 assert.doesNotMatch(currentPlanSource, /查看内容队列|查看完整周计划|新手引导/, 'the current-plan card must not keep duplicate queue, full-plan, or guide buttons');
-assert.match(controlWeeklyWorkSource, /if\s*\(!goal\s*\|\|\s*canCreateNextGoal\)\s*\{[\s\S]{0,320}setNewGoal\(true\)[\s\S]{0,160}setWeeklyPlanOpen\(true\)[\s\S]{0,120}return;[\s\S]{0,220}setWeeklyPlanOpen\(false\)[\s\S]{0,100}await confirmWeeklyPlan\(\)/, 'the primary weekly control must open the planner when no plan exists and start only an existing reviewed plan');
+assert.match(controlWeeklyWorkSource, /if\s*\(!goal\s*\|\|\s*canCreateNextGoal\)\s*\{[\s\S]{0,320}setNewGoal\(true\)[\s\S]{0,160}setWeeklyPlanOpen\(true\)[\s\S]{0,120}return;[\s\S]{0,220}setWeeklyPlanOpen\(false\)[\s\S]{0,140}await openWeeklyStartConfirmation\(\)/, 'the primary weekly control must open the planner when no plan exists and require the presenter confirmation for an existing reviewed plan');
 assert.doesNotMatch(controlWeeklyWorkSource, /setNewGoal\(false\)[\s\S]{0,160}setWeeklyPlanOpen\(true\)/, 'an existing plan must never enter the removed confirmation page before starting');
 for (const removedCopy of ['本周计划详情', '确认本周视频计划', '返回智能经营']) {
   assert.doesNotMatch(pageSource, new RegExp(removedCopy), `the removed weekly-plan detail flow must not retain: ${removedCopy}`);
@@ -528,7 +528,7 @@ assert.match(agentWeeklyCalendarSource, /selected\.accountBindingTarget[\s\S]{0,
 assert.match(agentWeeklyCalendarSource, /task.date === key\(day\)/, '保留本地日历按原任务日期展示绑定工作');
 assert.match(connectedAgentCalendarSource, /mainTasks=\{\[\.\.\.accountBindingTasks,/, 'account-binding exceptions must be shown alongside persisted weekly tasks');
 assert.match(matrixScheduleSource, /projectAccountBindingCalendar\(visibleTasks, accountConnections\)/, 'account selection must scope projected binding work to visible tasks');
-assert.doesNotMatch(pageSource, /productionApi\.defaults\(\)/, 'the optional presenter step must not block initial-plan generation');
+assert.doesNotMatch(initialPlanSaveSource, /productionApi\.defaults\(\)/, 'skipping presenter setup may still save the initial plan; the hard gate belongs immediately before production start');
 
 for (const label of ['\u8fd0\u884c\u4e2d', '\u9700\u8981\u6211\u51b3\u5b9a', '\u4eca\u65e5\u5b8c\u6210', '\u672a\u6765 24 \u5c0f\u65f6', '\u6570\u636e\u7f3a\u53e3']) {
   assert.match(pageSource, new RegExp(label), `Today Overview must include ${label}`);
@@ -862,6 +862,11 @@ try {
   if (originalLocalStorage) Object.defineProperty(globalThis, 'localStorage', originalLocalStorage);
   else delete (globalThis as { localStorage?: Storage }).localStorage;
 }
+
+assert.match(pageSource, /title="确认开始本周生产"/, 'weekly production must show a final confirmation before starting');
+assert.match(pageSource, /okButtonProps=\{\{ disabled: weeklyPresenterLoading \|\| !weeklyPresenterGate\.ready \}\}/, 'weekly production must stay blocked until a presenter appearance is ready');
+assert.match(pageSource, /没有形象，无法进入生产/, 'the weekly confirmation must explain the hard presenter gate');
+assert.match(pageSource, /不会降级为素材匹配或其他制作路线/, 'onboarding must state that presenter production has no material fallback');
 
 console.log('DigitalEmployeePage contract tests passed');
 

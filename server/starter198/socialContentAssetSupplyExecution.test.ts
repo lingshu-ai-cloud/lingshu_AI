@@ -174,8 +174,9 @@ assert.equal(alignedCasePlan.shots[0]?.sourceStrategy, 'customer_real_asset');
 assert.deepEqual(alignedCasePlan.shots[0]?.sourceRefs, ['case-video-1']);
 assert.equal(alignedCasePlan.shots[0]?.truthBoundary.subject, 'customer_case');
 
-// A presenter shot with an explicit null fallback must remain unavailable when
-// no digital-human adapter exists. Motion graphics must never be called.
+// Physical product contact is outside the talking-presenter capability. The
+// plan must choose the explicit functional equivalent before execution rather
+// than failing late in a missing digital-human adapter.
 const presenterLock = {
   socialAccountId: 'account-1', presenterProfileId: 'profile-1', presenterProfileVersion: '1',
   presenterAssetId: 'presenter-1', avatarId: 'avatar-1', voiceProfileId: 'voice-1',
@@ -189,18 +190,31 @@ const presenterPlan = createSocialAssetSupplyPlan({
   accountPresenterLock: presenterLock,
   shots: [{ shotId: 'scene-person', function: 'hook', requestedDescription: '人物将产品涂抹上脸' }],
 });
-assert.equal(presenterPlan.shots[0]?.sourceStrategy, 'authorized_digital_presenter');
+assert.equal(presenterPlan.shots[0]?.sourceStrategy, 'motion_graphics');
 assert.equal(presenterPlan.shots[0]?.fallbackSourceStrategy, null);
+assert.equal(presenterPlan.shots[0]?.functionalEquivalentReplacement.required, true);
 let motionGraphicsCalls = 0;
 const motionGraphics: SocialAssetSupplyProviderAdapter = {
   adapterId: 'test-motion-graphics',
   sourceStrategies: ['motion_graphics'],
-  async execute() {
+  async execute(context) {
     motionGraphicsCalls += 1;
-    throw new Error('motion_graphics_must_not_run');
+    return {
+      asset: {
+        id: 'safe-contact-explanation', name: '安全功能替代', type: 'image', sourceId: 'system',
+        url: '/tmp/safe-contact-explanation.png', duration: 3, visualObservations: ['动作说明'], segments: [],
+      },
+      sourceStrategy: 'motion_graphics',
+      providerId: 'local',
+      sourceRef: context.shot.shotId,
+      synthetic: true,
+      representation: 'non_evidentiary_visual',
+      authorizationRef: null,
+      disclosure: '示意画面，不代表完整人货接触已经生成',
+    };
   },
 };
-await assert.rejects(() => executeSocialAssetSupplyPlan({
+const presenterSupply = await executeSocialAssetSupplyPlan({
   tenantId: 'tenant-1',
   taskId: 'task-presenter',
   outputDirectory: '/tmp',
@@ -211,8 +225,10 @@ await assert.rejects(() => executeSocialAssetSupplyPlan({
   }),
   availableAssets: [],
   adapters: [motionGraphics],
-}), /asset_supply_provider_exhausted:scene-person:authorized_digital_presenter:adapter_not_registered/);
-assert.equal(motionGraphicsCalls, 0, '数字人缺少适配器时不得静默执行 motion graphics');
+});
+assert.equal(motionGraphicsCalls, 1);
+assert.equal(presenterSupply.execution.shots[0]?.sourceStrategy, 'motion_graphics');
+assert.equal(presenterSupply.execution.shots[0]?.functionalEquivalentReplacement.required, true);
 
 let forbiddenFallbackCalls = 0;
 const ctaBlockedAdapter: SocialAssetSupplyProviderAdapter = {

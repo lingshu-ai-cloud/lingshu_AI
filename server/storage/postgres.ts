@@ -127,6 +127,12 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_lingshu_social_presenter_job_request
 CREATE UNIQUE INDEX IF NOT EXISTS idx_lingshu_materials_owned_hash
   ON lingshu_records ((data ->> 'tenantId'), (data ->> 'scope'), (data ->> 'sha256'))
   WHERE collection = 'materials' AND (data ->> 'scope') = 'own' AND COALESCE(data ->> 'sha256', '') <> '';
+CREATE UNIQUE INDEX IF NOT EXISTS idx_lingshu_production_input_request_dedupe
+  ON lingshu_records ((data ->> 'tenant_id'), (data ->> 'dedupe_key'))
+  WHERE collection = 'production_input_requests' AND COALESCE(data ->> 'dedupe_key', '') <> '';
+CREATE UNIQUE INDEX IF NOT EXISTS idx_lingshu_production_cost_quote_key
+  ON lingshu_records ((data ->> 'tenant_id'), (data ->> 'quote_key'))
+  WHERE collection = 'production_cost_quotes' AND COALESCE(data ->> 'quote_key', '') <> '';
 CREATE TABLE IF NOT EXISTS lingshu_migration_runs (
   id text PRIMARY KEY,
   source text NOT NULL,

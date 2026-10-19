@@ -91,6 +91,9 @@ assert.equal(isStarter198BoundaryExemptPath('/api/overseas/auth/me'), true);
 assert.equal(isStarter198BoundaryExemptPath('/api/overseas/auth/employees/member-a/role'), true);
 assert.equal(isStarter198BoundaryExemptPath('/api/overseas/assistant-threads/business/actions'), true,
   'the authenticated Lingxiaoshu entry must reach its deterministic starter command adapter');
+assert.equal(isStarter198BoundaryExemptPath('/api/overseas/studio/production-input-requests'), true);
+assert.equal(isStarter198BoundaryExemptPath('/api/overseas/studio/product-asset-requests/request-1'), true);
+assert.equal(isStarter198BoundaryExemptPath('/api/overseas/studio/production-cost-quotes/quote-1'), true);
 assert.equal(isStarter198BoundaryExemptPath('/api/overseas/auth/future-dangerous-endpoint'), false,
   'new auth endpoints must not become starter_198 exceptions implicitly');
 

@@ -261,7 +261,7 @@ export function normalizeSceneVisualContract(value: unknown): SocialSceneVisualC
     schemaVersion: 'social-scene-visual-contract.v1',
     subjects,
     interaction: {
-      kind: enumValue(interactionRow.kind, SOCIAL_INTERACTION_KINDS, inferredInteraction),
+      kind: enumValue(interactionRow.kind ?? source.interaction, SOCIAL_INTERACTION_KINDS, inferredInteraction),
       description: interactionDescription || actionPath,
       actorSubjectId: text(interactionRow.actorSubjectId, 120) || null,
       objectSubjectId: text(interactionRow.objectSubjectId, 120) || null,
@@ -273,7 +273,7 @@ export function normalizeSceneVisualContract(value: unknown): SocialSceneVisualC
       details: list(environmentRow.details),
     },
     productUsage: {
-      kind: enumValue(usageRow.kind, SOCIAL_PRODUCT_USAGE_KINDS, inferredUsage),
+      kind: enumValue(usageRow.kind ?? source.productUsage, SOCIAL_PRODUCT_USAGE_KINDS, inferredUsage),
       description: usageDescription || (inferredUsage === 'none' ? '' : actionPath),
       productId: text(usageRow.productId ?? requestedProductId, 240) || null,
       productRef: text(usageRow.productRef ?? requestedProductRef, 240) || null,
@@ -423,21 +423,30 @@ export function scoreSceneVisualCompatibility(
 export function buildSceneCapabilitySignature(value: SocialSceneVisualContract | unknown): SocialSceneCapabilitySignature {
   const contract = normalizeSceneVisualContract(value);
   const kinds = new Set(contract.subjects.map(subject => subject.kind));
-  const requiresPersonProductContact = ['person_holding_product', 'person_using_product', 'apply_product_to_face'].includes(contract.interaction.kind);
+  const requiresPersonProductContact = ['person_holding_product', 'person_using_product', 'apply_product_to_face']
+    .includes(contract.interaction.kind) || ['hold', 'open_close', 'dispense', 'apply_to_face', 'apply_to_hand']
+      .includes(contract.productUsage.kind);
+  const requiresEnvironmentInteraction = contract.interaction.kind === 'person_factory_interaction';
+  const requiresPerson = kinds.has('person') || contract.interaction.kind.startsWith('person_')
+    || contract.interaction.kind === 'apply_product_to_face' || requiresPersonProductContact
+    || requiresEnvironmentInteraction;
+  const requiresProductIdentity = kinds.has('product') || contract.productUsage.kind !== 'none'
+    || ['person_holding_product', 'person_using_product', 'apply_product_to_face', 'product_only_display', 'product_motion']
+      .includes(contract.interaction.kind);
   const requiredCapabilities = [
-    ...(kinds.has('person') ? ['digital_human'] : []),
-    ...(kinds.has('product') || contract.productUsage.kind !== 'none' ? ['product_identity_reference'] : []),
+    ...(requiresPerson ? ['digital_human'] : []),
+    ...(requiresProductIdentity ? ['product_identity_reference'] : []),
     ...(requiresPersonProductContact ? ['person_product_interaction_control'] : []),
     ...(contract.interaction.kind === 'apply_product_to_face' ? ['face_contact_control'] : []),
-    ...(contract.interaction.kind === 'person_factory_interaction' ? ['environment_interaction_control'] : []),
+    ...(requiresEnvironmentInteraction ? ['environment_interaction_control'] : []),
     ...(contract.camera.movement ? ['camera_trajectory_control'] : []),
   ];
   return {
     contractVersion: contract.schemaVersion,
-    requiresPerson: kinds.has('person'),
-    requiresProductIdentity: kinds.has('product') || contract.productUsage.kind !== 'none',
+    requiresPerson,
+    requiresProductIdentity,
     requiresPersonProductContact,
-    requiresEnvironmentInteraction: contract.interaction.kind === 'person_factory_interaction',
+    requiresEnvironmentInteraction,
     interaction: contract.interaction.kind,
     productUsage: contract.productUsage.kind,
     requiredCapabilities: [...new Set(requiredCapabilities)],

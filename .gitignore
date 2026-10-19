@@ -1,102 +1,122 @@
+# Dependencies and builds
 node_modules/
-node_modules
 dist/
-.DS_Store
+dist-account-hub/
+output/
+tmp/
+work/
+__pycache__/
+*.pyc
 lingshu_docx_render_*/
+
+# Local operating-system and editor state
+.DS_Store
+.codex-backups/
+.*.stdout.log
+.*.stderr.log
+
+# Secrets and local environment overrides
 .env
 .env.*
 !.env.example
 !.env.*.example
 .env.local
+
+# Backups and local database state
+*.bak
+*.bak-*
 *.bak.*
+backups/
+restore/
+data.pre-migrate-*/
+data.repo-template/
 pb_data/
 .local-bin/
 .venv-video-downloader/
 
-# Encrypted production backups and decrypted restore rehearsals are operational
-# state. Keeping both roots ignored also prevents deploy/update.sh's dirty-tree
-# guard from blocking the next update after a documented backup/restore run.
-/backups/
-/restore/
+# Independent local Sites workspaces are separate repositories.
+/sites/
 
-# 运行时生成的本地数据（素材上传 / 草稿作品 / BGM 曲库）
-data/media/
-data/materials.json
-data/studio-projects.json
-data/demo-usage.json
-data/oauth-config.json
-data/account-hub/
-data/startup-hub/
-data/startup-hub-files/
-data/product-api.json
-data/bgm/
-data/bgm.json
-data/tts/
-data/covers/
-data/analysis-temp/
-data/qwen-reanalysis-original.json
-data/studio-variation-batches.json
-data/studio-video-versions.json
-data/digital-human-jobs.json
-data/digital-human-worker/
-data/generated/
-data/publishing-uploads/
-data/social-content-sources/
-# Legacy social-content render/upload directories. New code uses OS temp space
-# and backend file fields; keep any pre-migration residue out of source control.
-data/social-content-renders/
-data/content-execution-render/
-data/social-content-scene-cache/
-data/social-content-upload-temp/
-data/crawler-ops-queue.json
-data/apify-video-usage.json
-data/seedance-budget-usage.json
-data/video-admin-alerts.json
-data/backups/
-data/migration-tenant-id-map.json
-data/*backup*/
-data/*.backup-*.json
-# Customer and operational data must never be versioned. Keep only seed templates in Git.
-data/demo-account-registry.json
-data/demo-account-registry.backup.json
-data/demo-password-rotations.json
-data/local-auth-accounts.json
-data/local-auth-tenants.json
-data/local-store/
-data/support-access.json
-data/support-access-settings.json
-data/enterprise.json
-data/enterprise-assets/
-data/whatsapp-customers.json
-data/whatsapp-interactions.json
-data/whatsapp-*.json.bak
-data/orders.json
-data/tenant-orders/
-data/channels.json
-data/plugins.json
-data/tasks.json
-data/trend-videos.json
-data/daily-briefing-queue.json
-# Local acceptance evidence may contain customer records, provider responses,
-# absolute media paths, and generated files. It must never be committed.
+# Generated screenshots, video renders, and acceptance artifacts. Existing
+# tracked evidence remains tracked; new local output must stay out of Git.
+/artifacts/
 /data/acceptance/
-logs/
-output/
-dist-account-hub/
-tmp/
-__pycache__/
-*.pyc
-
-# 本地开发服务日志
-.*.stdout.log
-.*.stderr.log
-# Local digital-human QA artifacts (large/generated media)
+/data/acceptance-materials/
 /data/final-qa/
 /data/product-replace-test/
+/data/qa-reports/
 /data/test-build/
 /数字人0901_*.mp4
-# Downloaded licensed footage and local verification artifacts; provenance lives in docs.
-/data/acceptance-materials/
+
+# Runtime analysis, render, upload, and cache state
+/data/analysis-locks/
+/data/analysis-output/
+/data/analysis-temp/
+/data/content-execution-render/
+/data/digital-human-worker/
+/data/generated/
+/data/imports/
+/data/migrations/
+/data/publishing-uploads/
+/data/social-content-renders/
+/data/social-content-scene-cache/
+/data/social-content-sources/
+/data/social-content-upload-temp/
+
+# Local media and product runtime state
+/data/media/
+/data/bgm/
+/data/tts/
+/data/covers/
+/data/account-hub/
+/data/startup-hub/
+/data/startup-hub-files/
+/data/enterprise-assets/
+/data/tenant-orders/
+
+# Runtime files containing customer, account, billing, or operational data
+/data/apify-video-usage.json
+/data/bgm.json
+/data/channels.json
+/data/crawler-ops-queue.json
+/data/daily-briefing-queue.json
+/data/demo-account-registry.backup.json
+/data/demo-account-registry.json
+/data/demo-password-rotations.json
+/data/demo-usage.json
+/data/enterprise.json
+/data/local-auth-accounts.json
+/data/local-auth-tenants.json
+/data/local-store/
+/data/materials.json
+/data/messenger-customers.json
+/data/messenger-customers.json.*.tmp
+/data/migration-tenant-id-map.json
+/data/oauth-config.json
+/data/orders.json
+/data/plugins.json
+/data/product-api.json
+/data/qwen-reanalysis-original.json
+/data/seedance-budget-usage.json
+/data/social-publish-records.json
+/data/studio-projects.json
+/data/studio-variation-batches.json
+/data/studio-video-versions.json
+/data/support-access-settings.json
+/data/support-access.json
+/data/tasks.json
+/data/trend-videos.json
+/data/video-admin-alerts.json
+/data/whatsapp-customers.json
+/data/whatsapp-interactions.json
+/data/whatsapp-*.json.bak
+/data/*backup*/
+/data/*.backup-*.json
+
+# Local logs
+logs/
+
+# Customer-smoke credentials and persistent sessions
 /artifacts/customer-smoke/credentials.json
 /artifacts/customer-smoke/session.json
 /artifacts/customer-smoke/persistent-runtime/
@@ -171,3 +191,5 @@ logs/
 output/
 tmp/
 dist-weekly-task-card/
+/video/
+/work/

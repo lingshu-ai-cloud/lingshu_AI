@@ -59,6 +59,11 @@ import AssistantDecisionCenter, {
 } from './assistant/AssistantDecisionCenter';
 import type { AssistantDecisionDeepLink, AssistantDecisionFeed } from '../../shared/contracts/assistantDecisionCenter';
 import { assistantDecisionApi } from '../lib/assistantDecisionApi';
+import {
+  ASSISTANT_PRODUCTION_CONTEXT_EVENT,
+  type AssistantProductionContext,
+  type AssistantProductionContextEventDetail,
+} from '../lib/assistantProductionDecision';
 import { WEEKLY_WORK_UPDATED_EVENT } from '../lib/weeklyWorkEvents';
 import KnowledgeIntakePanel, { type AppliedProfile } from './enterprise/KnowledgeIntakePanel';
 import { studioApi } from '../lib/studioApi';
@@ -914,6 +919,7 @@ export default function GlobalAssistant({
   const [decisionDialog, setDecisionDialog] = useState<AssistantDecisionDialog>(null);
   const [decisionFeedRevision, setDecisionFeedRevision] = useState(0);
   const [decisionTotal, setDecisionTotal] = useState<number | null>(null);
+  const [productionDecisionContext, setProductionDecisionContext] = useState<AssistantProductionContext | null>(null);
   const activeAgent = PRIMARY_ASSISTANT_THREAD;
   const [assistantTool, setAssistantTool] = useState<AssistantTool | null>(null);
   const [liveContext, setLiveContext] = useState<AssistantContext | null>(null);
@@ -2587,6 +2593,21 @@ export default function GlobalAssistant({
   }, [currentPageAgent, openAgent, pageContext, send]);
 
   useEffect(() => {
+    const handler = (event: Event) => {
+      const detail = (event as CustomEvent<AssistantProductionContextEventDetail>).detail;
+      if (detail?.context?.view.source === 'canonical_task' && detail.context.view.project.version) {
+        setProductionDecisionContext(detail.context);
+        return;
+      }
+      if (detail?.clearProjectId) {
+        setProductionDecisionContext(current => current?.view.project.id === detail.clearProjectId ? null : current);
+      }
+    };
+    window.addEventListener(ASSISTANT_PRODUCTION_CONTEXT_EVENT, handler);
+    return () => window.removeEventListener(ASSISTANT_PRODUCTION_CONTEXT_EVENT, handler);
+  }, []);
+
+  useEffect(() => {
     if (!kickoff || handledKickoffs.current.has(kickoff.key)) return;
     handledKickoffs.current.add(kickoff.key);
     void send(kickoff.text, orbitIdForAgent(kickoff.agent, currentPageAgent));
@@ -3049,6 +3070,7 @@ export default function GlobalAssistant({
                       <AssistantDecisionCenter
                         page={page}
                         goalId={pageContext.goalId}
+                        productionContext={productionDecisionContext}
                         key={`${persistenceScopeKey}:${page}:${pageContext.goalId || 'latest'}:summary:${decisionFeedRevision}`}
                         active={mode === 'chat' && panelView === 'chat'}
                         onOpenChat={returnToConversation}
@@ -3268,6 +3290,7 @@ export default function GlobalAssistant({
             <AssistantDecisionCenter
               page={page}
               goalId={pageContext.goalId}
+              productionContext={productionDecisionContext}
               key={`${persistenceScopeKey}:${page}:${pageContext.goalId || 'latest'}:dialog`}
               active
               onOpenChat={closeDecisionDialog}

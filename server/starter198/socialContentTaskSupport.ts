@@ -1,4 +1,4 @@
-import {publicationPreparationDeadline} from '../socialPrograms/publicationDeadlines.js';
+import {publicationProductionDeadline} from '../socialPrograms/publicationDeadlines.js';
 import { planNewSocialMaterialRoutes } from './socialContentMaterialRoutePlanning.js';
 import type {
   AddSocialTaskSourceInput,
@@ -104,7 +104,7 @@ export function buildAuthoritativeSocialContentWorkflow(input: Omit<BuildSocialA
       languages: [...input.businessGoal.languages],
       platforms: [input.publicationTask.platform],
       callToAction: input.publicationTask.cta,
-      dueAt: publicationPreparationDeadline(input.publicationTask.publishWindow),
+      dueAt: publicationProductionDeadline(input.publicationTask.publishWindow),
       weeklyBudgetCny: input.weeklyPackage.socialContentPackage.weeklyBudgetCny,
       perItemBudgetCny: Math.min(input.brief.materialRoutingPolicyVersion === 'type-aware.v2' ? 15 : 10,
         input.brief.perItemBudgetCny ?? (input.brief.materialRoutingPolicyVersion === 'type-aware.v2' ? 15 : 10),

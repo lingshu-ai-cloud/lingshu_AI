@@ -360,20 +360,31 @@ export async function failExecution(input: {
     && artifact.kind === 'short_video'
     && !['superseded', 'changes_requested'].includes(artifact.status));
   const rawMessage = String(input.error instanceof Error ? input.error.message : input.error || '自动成片失败').slice(0, 800);
-  const graphQualityFailed = rawMessage.startsWith('social_graph_quality_failed:');
+  // Durable queue callbacks prefix blocked errors with
+  // "<failure-class>:<public reason>:". Inspect the preserved root cause so
+  // an input blocker does not lose its semantics at the reporting boundary.
+  const classifiedBlock = rawMessage.match(/^(provider_reconciliation|insufficient_balance|content_rejected|input_required|network_timeout|system_fault):([^:]{1,300}):(.*)$/s);
+  const failureClass = classifiedBlock?.[1] ?? '';
+  const publicReason = classifiedBlock?.[2]?.trim() ?? '';
+  const rootMessage = (classifiedBlock?.[3] ?? rawMessage).trim();
+  const graphQualityFailed = rootMessage.startsWith('social_graph_quality_failed:');
   // A failed QA candidate is intentionally saved for repair, but is not a
   // completed reviewable artifact. Other completed artifacts retain the old
   // protection against late worker failures rewriting their state.
   if (completedArtifact && !pendingRevision && !graphQualityFailed) return;
-  const needsMaterial = rawMessage.startsWith('production_input_required:');
-  const needsUserInput = rawMessage.startsWith('user_input_required:');
-  const directorRevisionFailed = rawMessage.startsWith('director_revision_required:');
-  const message = rawMessage.replace(/^(?:production_input_required|user_input_required|director_revision_required):/, '').trim();
+  const needsMaterial = rootMessage.startsWith('production_input_required:');
+  const needsUserInput = rootMessage.startsWith('user_input_required:');
+  const directorRevisionFailed = rootMessage.startsWith('director_revision_required:');
+  const needsAttention = Boolean(failureClass) || needsMaterial || needsUserInput || directorRevisionFailed;
+  const failureDetail = rootMessage.replace(/^(?:production_input_required|user_input_required|director_revision_required):/, '').trim();
+  const message = publicReason && !failureDetail.startsWith(publicReason)
+    ? `${publicReason}：${failureDetail}`
+    : failureDetail || publicReason || '任务需要处理后才能继续';
   await writeExecutionStage({
     ...input,
-    stage: needsUserInput ? 'waiting_for_user_input' : 'automatic_recovery_exhausted',
+    stage: needsAttention ? 'waiting_for_user_input' : 'automatic_recovery_exhausted',
     status: 'waiting_external',
-    message: needsUserInput
+    message: needsAttention
       ? message
       : `系统已保留导演方案和现有结果，稍后可继续自动处理：${message}`,
     extra: {
@@ -383,16 +394,20 @@ export async function failExecution(input: {
           ? 'social_content_system_material_fallback_exhausted'
         : directorRevisionFailed
           ? 'social_content_director_revision_retryable'
+          : failureClass
+            ? `social_content_${failureClass}`
           : 'social_content_auto_production_failed',
+      ...(failureClass ? { failureClass } : {}),
     },
   }).catch(() => undefined);
   const record = await requireSocialTask(input).catch(() => null);
   if (record && (socialText(record.status) === 'producing'
     || graphQualityFailed && socialText(record.status) === 'asset_review')) {
     await input.repository.update(STARTER_COLLECTIONS.socialContentTasks, input.tenantId, record.id, {
-      // Missing personalization data is handled by the library/system fallback.
-      // Only an explicit governed user-input requirement may surface attention.
-      status: needsUserInput ? 'attention' : 'paused',
+      // Both governed user decisions and exhausted production-input fallbacks
+      // are durable blockers. Reporting either as an automatically resumable
+      // pause leaves the queue blocked while the UI promises future progress.
+      status: needsAttention ? 'attention' : 'paused',
       version: safeNextVersion(record),
       updated_by: input.userId,
       updated_at: new Date().toISOString(),

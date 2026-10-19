@@ -53,6 +53,7 @@ assert.match(source, /const retractLauncher[\s\S]{0,260}edgeLauncherButtonRef\.c
 assert.match(source, /const restoreLauncher[\s\S]{0,260}launcherButtonRef\.current\?\.focus\(\)/, '恢复后焦点必须交回完整入口');
 assert.match(source, /\{!launcherRetracted && mode === 'breathing' && performance[\s\S]*\{!launcherRetracted && mode === 'breathing'[\s\S]*speechBubble[\s\S]*\{!launcherRetracted && mode === 'breathing'[\s\S]*weeklyPlanKickoffAvailable[\s\S]*\{!launcherRetracted && mode === 'breathing'[\s\S]*featureGuide/, '收起态不得显示任何横向提示气泡');
 assert.doesNotMatch(source, /handlePointerDown|ASSISTANT_POSITION_KEY/, '右下角入口不得恢复拖动、旧坐标或自动缩边交互');
+assert.match(launcherMarkup, /!bg-white[\s\S]*active:!bg-white[\s\S]*focus-visible:!bg-white/, '灵小枢入口在点击和聚焦时必须保持不透明白底');
 assert.doesNotMatch(globalStylesSource, /data-lingshu-assistant-clearance="bottom-navigation"/, '灵小枢入口不得依赖已经失效的旧底部导航标记');
 assert.match(source, /id="global-assistant-panel"[\s\S]{0,720}bottom-14 right-0/, '灵小枢弹窗必须锚定在右下角入口上方');
 assert.match(source, /max-h-\[calc\(100dvh-env\(safe-area-inset-bottom\)-96px\)\]/, '灵小枢弹窗高度必须避让移动设备底部安全区');

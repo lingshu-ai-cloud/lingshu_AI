@@ -11,5 +11,9 @@ assert.match(source, /else setSmartAssetsWorkflowContext\(null\)/,
   'restoring a generic Studio entry must clear stale run/task context');
 assert.doesNotMatch(source, /返回上一页（保留查看位置）/,
   'the global Back control must not promise state retention for pages that unmount');
+assert.match(source, /if \(nextPage === 'enterprise'\) setEnterpriseProductsDeepLink\(normalizeEnterpriseProductsDeepLink\(detail\)\)/,
+  'enterprise product navigation must consume its deep-link context');
+assert.match(source, /<EnterprisePage productsDeepLink=\{enterpriseProductsDeepLink\}/,
+  'the enterprise page must receive the selected product and material context');
 
 console.log('application history task-context reset contract passed');

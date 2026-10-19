@@ -4,14 +4,15 @@
 
 ## 结论
 
-该文件不存在可达 Git 历史上的字节漂移。最初 checksum mismatch 是引入迁移的同一提交内，manifest entry 与 migration blob 已经不一致；不是工作区改写迁移引起。仓库已有修复提交 `fd03ac17a395adcb792eb7f8c854f0e9302faf5e`，其只改 checksum entry 并增加强 Git 历史证明门禁，未改迁移文件。
+主线引入提交内的 manifest entry 与 migration blob 已经不一致；不是主线后续工作区改写迁移引起。后续完整 refs 复核发现，旧 worktree 快照 `d90789a706ce19827f3003a7a7da58fb92eaf667` 含有 manifest 原值对应的字节版本；它与主线版本仅相差文件末尾空白行。仓库修复提交 `fd03ac17a395adcb792eb7f8c854f0e9302faf5e` 只把 manifest 对齐主线引入字节并增加固定历史证明，未改 migration 文件。
 
 本次没有重新审定或 bless 任何值；仅证明已有审定修复与不可变 Git blob 对应。因此根代理不需要新增主功能修复。
 
 | 对象 | 权威历史/指纹 |
 | --- | --- |
 | 文件 | `pb_migrations/1791072008_create_content_execution_queue.js` |
-| 唯一可达文件引入提交 | `1f36cf356d5c2f95a2f3494f81a3d35b263bd48d` |
+| 主线文件引入提交 | `1f36cf356d5c2f95a2f3494f81a3d35b263bd48d` |
+| 旧 worktree 独立引入 | `d90789a706ce19827f3003a7a7da58fb92eaf667`；仅多一个末尾空白行，SHA256 为原 manifest entry |
 | 引入提交父级 | `0537f0ea47df2c04edbe40b83820c1cce8c2f6e5`：无此文件且 manifest 无此 entry |
 | 原始 manifest entry | `17082ecdb5a6228182507d1d2a01f55c6aac48922cd376c489fecce8c8fb2f07` |
 | 引入文件 SHA256 | `2aed450a4c83a5f6133817f47eef9c1f08ecde5e65f22427aa7480c2c96f67f8` |
@@ -20,7 +21,7 @@
 | HEAD 与工作区文件 SHA256 | 均为 `2aed450a4c83a5f6133817f47eef9c1f08ecde5e65f22427aa7480c2c96f67f8` |
 | HEAD 与工作区 manifest 对应 entry | 均为上述文件 SHA256 |
 
-`git log --all -- <migration>` 仅返回引入提交。此结论只覆盖本地可达 Git 历史，不能证明远端不可达对象或实际已部署数据库状态。当前 manifest 脏 diff 是新增 `1791586800_create_assistant_decision_memories.js` entry，未改变本次调查的 entry；本次保留该脏文件。
+`git log --all -- <migration>` 当前返回上述两个独立引入提交。测试固定两种已审查 SHA，并要求规范化末尾空白后的内容完全一致；出现第三种字节版本即失败。此结论只覆盖本地可达 Git 历史，不能证明远端不可达对象或实际已部署数据库状态。
 
 ## 已存在的门禁修复是否会一般性绕过审定值
 
@@ -31,7 +32,7 @@
 ## 修复路径与旧 schema 兼容
 
 - 若其它 checkout 的 migration 本体被改写：恢复已有审定的不可变 blob `1f36cf...:pb_migrations/1791072008_create_content_execution_queue.js`；不要改 checksum 去适配新的文件。当前 checkout 已是该 blob，无需恢复。
-- 若 checkout 保留原错误 entry：应取得已有修复提交及其完整历史证明；不要自行重算、更新、扩大白名单。原错误 SHA 的 migration bytes 在本地可达历史不存在，不能据它虚构“已审旧文件”。
+- 若 checkout 保留旧 worktree entry：应取得已有修复提交及其完整历史证明；不要自行重算、更新、扩大白名单。旧 SHA 只对应多一个末尾空白行的旁支版本，不能据它允许任何 schema 字节变化。
 - 若业务需要变更 schema：保留 1791072008 文件及审定 entry，用独立新的 forward-only migration。仓库已有 `1791072050_allow_initial_content_queue_zero_state.js`，将 attempt/reconciliation_attempt/provider_receipts、max_running、visual_control 的 required 改为 false，允许合法初始零值/空证据；它不改原迁移。该文件 rollback 明确拒绝恢复 required，避免已有合法零值/空值受到重新验证影响。
 - 1791072008 定义 jobs/limits/presenter ledger 的字段与唯一/容量索引。manifest 修复本身不改变这些 schema bytes，也不会再次应用已记录 migration。旧数据库是否已执行、是否存在预先创建的 presenter collection、迁移版本及数据是否兼容，仓库哈希无法确定。正式运行前必须针对目标真实 PocketBase 版本，用准确目标 schema 的备份分别演练升级与新安装；本次没有进行此演练，也没有授权迁移。
 

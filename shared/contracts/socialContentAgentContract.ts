@@ -396,10 +396,18 @@ export interface SocialExecutionCandidate {
   materialRoles?: SocialMaterialRole[];
   /** Segment-level candidates let Content Agent trim one asset by exact cue. */
   materialSegments?: Array<{
+    /** First-class, revision-bound identity for caching and deterministic reuse. */
+    candidateId?: string;
     segmentId: string;
     footageEvidence?: SocialProductFootageEvidenceBinding;
+    sourceRevision?: string;
     startSeconds: number;
     endSeconds: number;
+    assetRole?: import('./materialAssetV2.js').MaterialAssetRoleV2;
+    contentRole?: import('./materialAssetV2.js').MaterialContentRoleV2;
+    productIdentityLevel?: import('./materialAssetV2.js').MaterialProductIdentityLevelV2;
+    templateEligible?: boolean;
+    reuseScore?: number;
     visualContract: SocialSceneVisualContract;
     materialRoles: SocialMaterialRole[];
     matchedVoiceoverCueIds: string[];

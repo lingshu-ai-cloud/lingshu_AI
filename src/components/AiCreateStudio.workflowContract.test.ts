@@ -350,7 +350,9 @@ assert.match(studioSource, /schemaVersion:\s*'studio-analysis\.v1'/, 'storyboard
 for (const persistedField of ['reference', 'storyboard', 'voiceover', 'shots']) {
   assert.match(studioSource, new RegExp(`analysisResults[\\s\\S]{0,900}${persistedField}`), `${persistedField} analysis must be persisted with the project`);
 }
-assert.match(studioSource, /Analysis output is expensive[\s\S]{0,700}setTimeout[\s\S]{0,160}autosaveSnapshotRef\.current/, 'analysis changes must be saved without waiting for the ten-second checkpoint');
+assert.match(studioSource, /const autosaveSnapshotFingerprint = studioAutosaveFingerprint[\s\S]{0,900}setTimeout[\s\S]{0,180}autosaveSnapshotRef\.current/, 'changed Studio snapshots must be saved through one debounced path');
+assert.match(studioSource, /studioDraftChanged\(lastSavedAutosaveFingerprintRef\.current, snapshotFingerprint\)/, 'unchanged snapshots must not produce another autosave request');
+assert.doesNotMatch(studioSource, /setInterval\(\(\) => \{\s*void autosaveSnapshotRef\.current\(\)/, 'Studio must not save forever on a timer');
 assert.match(studioSource, /const s = restoreStudioSpec\(savedSpec\)/, 'hydration must use the tested frozen-aware recovery helper');
 const recoveredLegacy = restoreStudioSpec({ analysisResults: { storyboard: { script: 'recovered legacy script', assignments: { legacy: 'material' } }, voiceover: { text: 'recovered voice' }, shots: { shootingSlots: [{ id: 'legacy' }] } } });
 assert.equal(recoveredLegacy.script, 'recovered legacy script');

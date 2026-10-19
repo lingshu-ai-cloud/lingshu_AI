@@ -30,6 +30,36 @@ export function LsBrandAction({ className = '', ...props }: ButtonProps) {
   return <Button type="primary" {...props} className={`ls-brand-action ${className}`.trim()} />;
 }
 
+export type LsMetricStripItem = {
+  key: string;
+  label: string;
+  value: ReactNode;
+  description?: ReactNode;
+};
+
+/** Shared continuous KPI strip. Business pages should not rebuild metric-card walls. */
+export function LsMetricStrip({
+  items,
+  ariaLabel = '关键指标',
+  className = '',
+}: {
+  items: LsMetricStripItem[];
+  ariaLabel?: string;
+  className?: string;
+}) {
+  return (
+    <dl aria-label={ariaLabel} className={`ls-metric-strip ${className}`.trim()}>
+      {items.map(item => (
+        <div key={item.key}>
+          <dt className="ls-type-body-small text-text-muted">{item.label}</dt>
+          <dd className="mt-1 text-sm font-bold text-text-primary">{item.value}</dd>
+          {item.description ? <dd className="mt-1 ls-type-body-small text-text-muted">{item.description}</dd> : null}
+        </div>
+      ))}
+    </dl>
+  );
+}
+
 export function LsGradientProgress({
   percent,
   className = '',

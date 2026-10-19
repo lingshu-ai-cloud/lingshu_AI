@@ -30,7 +30,17 @@ import {
 import { digitalEmployeeApi } from '../../lib/digitalEmployeeApi';
 import { PRESENTER_ASSETS_UPDATED_EVENT } from '../../lib/presenterAssetsUpdated';
 import { subscribeAssistantStateInvalidations } from '../../lib/assistantStateInvalidation';
+import {
+  productionDecisionFromReadView,
+  type AssistantProductionCommand,
+  type AssistantProductionContext,
+} from '../../lib/assistantProductionDecision';
 import { normalizeAssistantDecisionExecutionReceipt } from '../../../shared/contracts/assistantDecisionCenter';
+import type { ProductionAllowedCommand } from '../../../shared/contracts/productionReadModel';
+import {
+  ProductionDecisionCard,
+  ProductionDecisionSummary,
+} from './AssistantProductionDecisionCards';
 import { LsBrandAction } from '../ui/LsExperiencePrimitives';
 import './assistantDecisionCenter.css';
 import { fieldValue } from '../../../shared/action-form.mjs';
@@ -85,6 +95,14 @@ export type AssistantDecisionCenterProps = {
   hideWhenEmpty?: boolean;
   className?: string;
   client?: AssistantDecisionClient;
+  productionContext?: AssistantProductionContext | null;
+  onProductionCommand?: (input: {
+    allowedCommand: ProductionAllowedCommand;
+    expectedVersion: string;
+    idempotencyKey: string;
+    projectId: string;
+    shotId: string | null;
+  }) => Promise<void>;
 };
 
 const STALE_DECISION_CODES = new Set([
@@ -358,6 +376,8 @@ export default function AssistantDecisionCenter({
   hideWhenEmpty = false,
   className = '',
   client = assistantDecisionApi,
+  productionContext = null,
+  onProductionCommand,
 }: AssistantDecisionCenterProps) {
   const { message } = App.useApp();
   const [feed, setFeed] = useState<AssistantDecisionFeed | null>(null);
@@ -365,6 +385,7 @@ export default function AssistantDecisionCenter({
   const [error, setError] = useState('');
   const [note, setNote] = useState('');
   const [busyAction, setBusyAction] = useState<AssistantDecisionActionId | null>(null);
+  const [busyProductionCommand, setBusyProductionCommand] = useState<ProductionAllowedCommand | null>(null);
   const [startReconciliation, setStartReconciliation] = useState<StartReconciliation | null>(null);
   const cardRegion = useRef<HTMLDivElement>(null);
   const requestSequence = useRef(0);
@@ -374,7 +395,14 @@ export default function AssistantDecisionCenter({
   const reconciliationAttempts = useRef(0);
   const mounted = useRef(true);
   const feedRef = useRef<AssistantDecisionFeed | null>(null);
-  const first = useMemo(() => selectPrimaryDecision(feed), [feed]);
+  const serverFirst = useMemo(() => selectPrimaryDecision(feed), [feed]);
+  const productionDecision = useMemo(
+    () => productionContext ? productionDecisionFromReadView(productionContext.view) : null,
+    [productionContext],
+  );
+  const productionFirst = Boolean(productionDecision && (!serverFirst || productionDecision.priority > serverFirst.priority));
+  const first = productionFirst ? null : serverFirst;
+  const total = (feed?.total || 0) + (productionDecision ? 1 : 0);
 
   const load = useCallback(async (signal?: AbortSignal, preserveError = false) => {
     const sequence = ++requestSequence.current;
@@ -458,11 +486,32 @@ export default function AssistantDecisionCenter({
     };
   }, [active, load, variant]);
 
-  useEffect(() => { setNote(''); }, [first?.id]);
+  useEffect(() => { setNote(''); }, [first?.id, productionDecision?.id]);
   useEffect(() => { feedRef.current = feed; }, [feed]);
   useEffect(() => {
-    if (feed) onFeedChange?.(feed);
-  }, [feed, onFeedChange]);
+    if (feed) onFeedChange?.(productionDecision ? { ...feed, total } : feed);
+  }, [feed, onFeedChange, productionDecision, total]);
+
+  const actOnProduction = useCallback(async (action: AssistantProductionCommand) => {
+    if (!productionContext || !productionDecision || !onProductionCommand || busyProductionCommand) return;
+    if (!productionDecision.commands.some(item => item.command === action.command && item.shotId === action.shotId)) return;
+    setError('');
+    setBusyProductionCommand(action.command);
+    try {
+      await onProductionCommand({
+        allowedCommand: action.command,
+        expectedVersion: productionDecision.subjectVersion,
+        idempotencyKey: `assistant:${productionContext.view.project.id}:${productionDecision.subjectVersion}:${action.command}:${action.shotId || 'project'}`,
+        projectId: productionContext.view.project.id,
+        shotId: action.shotId,
+      });
+      void message.success('已提交，等待最新生产状态');
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : '操作失败，请打开任务处理');
+    } finally {
+      setBusyProductionCommand(null);
+    }
+  }, [busyProductionCommand, message, onProductionCommand, productionContext, productionDecision]);
 
   const reconcileWeeklyStart = useCallback(async (pending: StartReconciliation) => {
     if (reconciliationInFlight.current || Date.now() >= pending.deadline || reconciliationAttempts.current >= 8) {
@@ -683,7 +732,7 @@ export default function AssistantDecisionCenter({
   if (hideWhenEmpty && feed && !first && !loading && !error) return null;
 
   if (variant === 'summary') {
-    if (!first && !error) return null;
+    if (!first && !productionDecision && !error) return null;
     return (
       <section
         className={`assistant-decision-center assistant-decision-center--summary ${className}`.trim()}
@@ -698,8 +747,10 @@ export default function AssistantDecisionCenter({
             message={error}
             action={<Button disabled={loading} onClick={() => void load()} icon={<RefreshCw size={14} />}>重新加载</Button>}
           />
+        ) : productionFirst && productionDecision ? (
+          <ProductionDecisionSummary decision={productionDecision} total={total || 1} onOpenDetail={onOpenDetail} />
         ) : first ? (
-          <DecisionSummary card={first} total={feed?.total || 1} onOpenDetail={onOpenDetail} />
+          <DecisionSummary card={first} total={total || 1} onOpenDetail={onOpenDetail} />
         ) : null}
       </section>
     );
@@ -715,7 +766,7 @@ export default function AssistantDecisionCenter({
       {showHeading ? (
         <div className="assistant-decision-center__title-row">
           <h2 id="assistant-decision-center-title">待你决定</h2>
-          {feed?.total ? <span aria-label={`共有 ${feed.total} 项待办`}>{feed.total}</span> : null}
+          {total ? <span aria-label={`共有 ${total} 项待办`}>{total}</span> : null}
         </div>
       ) : null}
 
@@ -731,17 +782,26 @@ export default function AssistantDecisionCenter({
 
       <div ref={cardRegion} tabIndex={-1} className="assistant-decision-center__card-region" aria-live="polite">
         {loading && !feed ? <Skeleton active paragraph={{ rows: 5 }} /> : null}
-        {first ? (
+        {!loading && productionFirst && productionDecision && productionContext ? (
+          <ProductionDecisionCard
+            decision={productionDecision}
+            total={total || 1}
+            deepLink={productionContext.deepLink}
+            busyCommand={busyProductionCommand}
+            onCommand={onProductionCommand ? action => void actOnProduction(action) : undefined}
+          />
+        ) : null}
+        {!productionFirst && first ? (
           <DecisionCard
             card={first}
-            total={feed?.total || 1}
+            total={total || 1}
             busyAction={busyAction || ((loading || startReconciliation) ? first.actions[0].id : null)}
             note={note}
             onNoteChange={setNote}
             onAction={action => void act(action)}
           />
         ) : null}
-        {!loading && !first && !error ? (
+        {!loading && !first && !productionDecision && !error ? (
           <div className="assistant-decision-center__empty">
             <CheckCircle2 size={24} aria-hidden="true" />
             <h3>当前没有需要审批的事项</h3>

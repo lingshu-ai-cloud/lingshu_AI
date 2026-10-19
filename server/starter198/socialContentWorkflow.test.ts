@@ -417,15 +417,52 @@ try {
     tenantId: tenant,
     type: 'video',
     url: '/media/durable-source.mp4',
-    duration: 8,
+    duration: 12,
     productRef: completeBrief.productRef,
     productName: completeBrief.productRef,
     productRefs: [completeBrief.productRef],
-    segments: [{
-      id: 'durable-hook', start: 0, end: 3, confidence: 0.95,
-      observedFacts: ['产品椅子特写', '产品介绍', '开场钩子', '展示产品价值'],
-      subject: ['产品椅子'], action: '展示产品', shot: '产品特写', recommendedFunctions: ['hook'],
-    }],
+    segments: [
+      {
+        id: 'durable-hook', start: 0, end: 3, confidence: 0.95,
+        observedFacts: ['开场吸引', '通用产品观察', '整体印象'],
+        action: '开场吸引 · 通用产品观察 · 从整体印象开始',
+        interaction: { kind: 'product_only_display', description: '开场吸引 · 通用产品观察 · 从整体印象开始' },
+        productUsage: { kind: 'other', description: '开场吸引 · 通用产品观察 · 从整体印象开始', productRef: completeBrief.productRef },
+        shot: '根据主体信息密度选择明确景别', angle: '保持主体关系清楚的稳定机位',
+        camera: '运镜服务于信息揭示，不做无目的运动', composition: '主体、证据和字幕安全区互不遮挡',
+        recommendedFunctions: ['hook'],
+      },
+      {
+        id: 'durable-detail', start: 3, end: 6, confidence: 0.95,
+        observedFacts: ['细节观察', '产品可见细节', '操作方式'],
+        action: '细节观察 · 产品可见细节与操作方式 · 分步骤观察产品细节',
+        interaction: { kind: 'person_using_product', description: '细节观察 · 产品可见细节与操作方式 · 分步骤观察产品细节' },
+        productUsage: { kind: 'other', description: '细节观察 · 产品可见细节与操作方式 · 分步骤观察产品细节', productRef: completeBrief.productRef },
+        shot: '根据主体信息密度选择明确景别', angle: '保持主体关系清楚的稳定机位',
+        camera: '运镜服务于信息揭示，不做无目的运动', composition: '主体、证据和字幕安全区互不遮挡',
+        recommendedFunctions: ['value'],
+      },
+      {
+        id: 'durable-context', start: 6, end: 9, confidence: 0.95,
+        observedFacts: ['场景说明', '消费者使用产品', '产品使用场景'],
+        action: '场景说明 · 消费者使用产品的适用场景 · 展示产品使用场景，说明选择思路',
+        interaction: { kind: 'person_using_product', description: '场景说明 · 消费者使用产品的适用场景 · 展示产品使用场景，说明选择思路' },
+        productUsage: { kind: 'display', description: '场景说明 · 消费者使用产品的适用场景 · 展示产品使用场景，说明选择思路', productRef: completeBrief.productRef },
+        shot: '根据主体信息密度选择明确景别', angle: '保持主体关系清楚的稳定机位',
+        camera: '运镜服务于信息揭示，不做无目的运动', composition: '主体、证据和字幕安全区互不遮挡',
+        recommendedFunctions: ['value'],
+      },
+      {
+        id: 'durable-cta', start: 9, end: 12, confidence: 0.95,
+        observedFacts: ['信息收束', '正式产品资料', '进一步核对'],
+        action: '信息收束 · 正式产品资料 · 提醒进一步核对',
+        interaction: { kind: 'product_only_display', description: '信息收束 · 正式产品资料 · 提醒进一步核对' },
+        productUsage: { kind: 'other', description: '信息收束 · 正式产品资料 · 提醒进一步核对', productRef: completeBrief.productRef },
+        shot: '根据主体信息密度选择明确景别', angle: '保持主体关系清楚的稳定机位',
+        camera: '运镜服务于信息揭示，不做无目的运动', composition: '主体、证据和字幕安全区互不遮挡',
+        recommendedFunctions: ['call_to_action'],
+      },
+    ],
     visualObservations: ['产品椅子特写', '产品介绍', '开场钩子', '展示产品价值'],
     tags: 'product,hook,产品,开场',
   };
@@ -445,7 +482,7 @@ try {
     body: { expectedVersion: durableMaterial.body.task.version },
   });
   assert.equal(typedDurableRejected.status, 409, typedDurableRejected.raw);
-  assert.equal(typedDurableRejected.body.error, 'social_content_execution_director_review_required');
+  assert.equal(typedDurableRejected.body.error, 'social_content_execution_goal_degraded');
   assert.equal(productionQueueInputs.length, 0, 'missing typed scene evidence cannot dispatch production');
   // This fixture represents a persisted task created before the type-aware policy.
   // Its scheduling/idempotency contract remains supported, independently of new-task admission.
@@ -832,7 +869,13 @@ try {
     body: { expectedTaskVersion: started.body.task.version, artifactIds: [] },
   });
   assert.equal(noArtifactPackage.status, 400);
-  assert.equal((await request(`/api/overseas/starter-198/social-content/tasks/${taskId}`)).body.task.status, 'producing');
+  const producingTask = (await request(`/api/overseas/starter-198/social-content/tasks/${taskId}`)).body.task;
+  assert.equal(producingTask.status, 'producing');
+  assert.equal(producingTask.production.schemaVersion, 'production-read-model.v1');
+  assert.equal(producingTask.production.authority, 'canonical_task');
+  assert.equal(producingTask.production.project.id, taskId);
+  assert.ok(Array.isArray(producingTask.production.shots));
+  assert.ok(Array.isArray(producingTask.production.aggregate.allowedCommands));
 
   const artifactCreated = await request(`/api/overseas/starter-198/social-content/tasks/${taskId}/artifacts`, {
     idempotencyKey: 'social-artifact-001',
@@ -1379,7 +1422,16 @@ try {
         evidenceFrames: [],
       }),
       inspectScenes: async input => ({ passed: true, issues: [], checkedScenes: input.scenes.length }),
-      runFfmpeg: async () => ({ ok: true, stdout: Buffer.alloc(0), stderr: '' }),
+      runFfmpeg: async args => {
+        if (!args.some(value => value.includes('volumedetect'))) {
+          return { ok: true, stdout: Buffer.alloc(0), stderr: '' };
+        }
+        const normalized = args.some(value => value.includes('loudnorm='));
+        const source = args.includes('test-authorized-bgm.mp3');
+        const mean = normalized ? -32.5 : source ? -47.9 : -19.1;
+        const max = normalized ? -20.6 : source ? -36 : -3.1;
+        return { ok: true, stdout: Buffer.alloc(0), stderr: `mean_volume: ${mean} dB\nmax_volume: ${max} dB` };
+      },
       createCover: async input => {
         const coverPath = path.join(input.outputDirectory, 'cover.jpg');
         fs.writeFileSync(coverPath, Buffer.from([0xff, 0xd8, 0xff, 0xd9]));
@@ -1392,7 +1444,7 @@ try {
   const zeroInputCompleted = await request(`/api/overseas/starter-198/social-content/tasks/${zeroInputTaskId}`);
   assert.equal(zeroInputCompleted.status, 200, zeroInputCompleted.raw);
   assert.equal(zeroInputCompleted.body.task.status, 'delivered',
-    'managed production automatically accepts verified media and builds the delivery package');
+    `managed production automatically accepts verified media and builds the delivery package\n${zeroInputCompleted.raw}`);
   assert.equal(zeroInputCompleted.body.task.deliveryPackages.length, 1);
   assert.equal(zeroInputCompleted.body.task.publications.length, 0, 'creation does not imply external publishing authorization');
   const zeroArtifact = zeroInputCompleted.body.task.artifacts.find((artifact: any) => artifact.origin === 'agent');
@@ -1621,10 +1673,26 @@ try {
   assert.doesNotMatch(instantTask.raw, /custom\.product-proof|formulaId|formulaReference|formula_reference/,
     'customer task responses never disclose formula identity or version');
   const instantTaskId = instantTask.body.task.taskId as string;
-  const instantUpload = await request(`/api/overseas/starter-198/social-content/tasks/${instantTaskId}/files?usage=source&name=hero-proof.txt`, {
-    idempotencyKey: 'social-instant-file-001', rawBody: Buffer.from('instant-theme-proof-material'), contentType: 'text/plain',
+  const instantUpload = await request(`/api/overseas/starter-198/social-content/tasks/${instantTaskId}/files?usage=source&name=hero-proof.mp4`, {
+    idempotencyKey: 'social-instant-file-001',
+    rawBody: Buffer.concat([Buffer.from([0, 0, 0, 24]), Buffer.from('ftypisom'), Buffer.alloc(64, 1)]),
+    contentType: 'video/mp4',
   });
   assert.equal(instantUpload.status, 201, instantUpload.raw);
+  fs.mkdirSync(path.join(temporaryRoot, 'data'), { recursive: true });
+  fs.writeFileSync(path.join(temporaryRoot, 'data', 'materials.json'), JSON.stringify([{
+    ...instantUpload.body.material,
+    tenantId: tenant,
+    type: 'video',
+    url: '/media/hero-proof.mp4',
+    duration: 12,
+    productRef: completeBrief.productRef,
+    productName: completeBrief.productRef,
+    productRefs: [completeBrief.productRef],
+    segments: structuredClone(durablePlannerMaterial.segments),
+    visualObservations: structuredClone(durablePlannerMaterial.visualObservations),
+    tags: 'product,hook,产品,开场',
+  }]));
   const instantMaterial = await request(`/api/overseas/starter-198/social-content/tasks/${instantTaskId}/sources`, {
     idempotencyKey: 'social-instant-material-001',
     body: {

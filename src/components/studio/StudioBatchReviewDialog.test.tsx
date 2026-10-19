@@ -8,7 +8,7 @@ const props: StudioBatchReviewDialogProps = {
   totalShots: 17, readyShots: 13, pendingShots: 3,
   issues: [{ id: 'product-2', shotNumber: 2, title: '产品展示', question: '这一镜对应哪款产品？', options: [{ id: 'a', label: '产品 A' }, { id: 'b', label: '产品 B' }] }],
   frames: [{ id: 'frame-3', shotNumber: 3, title: '工厂画面', imageUrl: '/frame.jpg' }],
-  estimatedCostCny: 12.5, canSubmit: false,
+  estimatedCostCny: 12.5, upperBoundCostCny: 18, canSubmit: false,
   onSelectIssueOption: () => {}, onSubmit: () => {}, onClose: () => {},
 };
 const html = renderToStaticMarkup(<StudioBatchReviewContent {...props} />);
@@ -19,6 +19,7 @@ assert.match(html, /这一镜对应哪款产品？/);
 assert.match(html, /分镜 3 目标首帧/);
 const footer = renderToStaticMarkup(<StudioBatchReviewFooter {...props} />);
 assert.match(footer, /本批预计费用 ¥12\.50/);
+assert.match(footer, /最高 ¥18\.00/);
 assert.match(footer, /确认首帧并生成视频/);
 assert.match(footer, /<button[^>]*disabled=""/);
 const selectedOnly = renderToStaticMarkup(<StudioBatchReviewFooter {...props} canSubmit

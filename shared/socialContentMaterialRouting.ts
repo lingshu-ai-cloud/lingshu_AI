@@ -97,7 +97,7 @@ const {shot,inventory,materialType,referenceVisualContract,presenterRefs}=input;
           }
         }
       }
-      if (materialType === 'talking_head') return {strategy:'authorized_digital_presenter',refs:presenterRefs,materialRouting,
+      if (materialType === 'talking_head') return {strategy:'authorized_digital_presenter',refs:presenterRefs,materialRouting,blocked:!presenterRefs.length,
         instruction:'真人口播使用当前账号授权数字人视频，锁定人物、声音与明确口播文案；能力缺失时停止，不用库存人物或图文替代。'};
       if (refs.length) return {strategy:'customer_real_asset',refs,materialRouting,
         instruction:'按当前镜头语义采用已匹配的本地真实视频；保持原主体及产品事实，不调用画面生成，匹配失败必须停止并保留缺口。'};

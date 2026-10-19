@@ -118,9 +118,13 @@ const userMaterials = planStudioBatchShotRoutes({ activeAssemblyId: 'a',
   shotProductions: { 'a:s': { source: 'avatar' } as never },
   storyboardSourcePlans: { display: { userSource: 'material', confirmed: true } },
   storyboardAssignments: { display: 'enterprise' }, materialSnapshots: [{ id: 'enterprise', url: '/enterprise.mp4', type: 'video', duration: 10 }],
-}, { talkingExecutorReady: false, actionExecutorReady: false, authorizedPresenterIds: [] });
+}, { talkingExecutorReady: false, actionExecutorReady: false, authorizedPresenterIds: [], materialIdentityEvidence: {
+  enterprise: { productId: 'product-a', productIdentityLevel: 'exact' },
+} });
 assert.equal(userMaterials[0]?.route, 'local_material');
 assert.equal(userMaterials[0]?.status, 'matched', '全企业素材不要求任何数字人配置');
+assert.equal(userMaterials[0]?.matchedProductId, 'product-a');
+assert.equal(userMaterials[0]?.matchedProductIdentityLevel, 'exact');
 
 const identityConflict = planStudioBatchShotRoutes({ activeAssemblyId: 'assembly',
   shootingSlots: ['one','two'].map(id => ({ id, slotId: id, observedPresenterRole: 'sales_presenter' as const, personContinuityId: 'main' })),

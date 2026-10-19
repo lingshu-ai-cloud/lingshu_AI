@@ -102,6 +102,15 @@ export type StudioInputSummaryProps = {
 
 export type StudioStoryboardStatus = 'idle' | 'ready' | 'working' | 'warning' | 'error';
 
+export type StudioStoryboardProductionSummary = {
+  routeLabel: string;
+  identityLabel?: string;
+  expectedCostCny?: number | null;
+  upperBoundCostCny?: number | null;
+  missingInputs?: string[];
+  blockers?: string[];
+};
+
 export type StudioStoryboardItem = {
   id: string;
   index: number;
@@ -119,6 +128,7 @@ export type StudioStoryboardItem = {
   firstFrameRef?: string;
   frameTime?: number;
   frameLabel?: string;
+  production?: StudioStoryboardProductionSummary;
 };
 
 export type StudioStoryboardListProps = {
@@ -151,13 +161,13 @@ function SaveStatusView({ status, compact = false }: { status: StudioSaveStatus;
       {status.state === 'saved' && <Check size={compact ? 13 : 14} aria-hidden="true" />}
       {status.state === 'error' && <AlertCircle size={compact ? 13 : 14} aria-hidden="true" />}
       {status.state === 'idle' && <Save size={compact ? 13 : 14} aria-hidden="true" />}
-      <span>{label}</span>
+      <span className="truncate" title={label}>{label}</span>
     </>
   );
 
   const className = joinClassNames(
-    'inline-flex items-center gap-1.5 font-medium',
-    compact ? 'text-[11px]' : 'text-xs',
+    'inline-flex shrink-0 items-center justify-end gap-1.5 whitespace-nowrap font-medium tabular-nums',
+    compact ? 'w-36 text-[11px]' : 'w-40 text-xs',
     status.state === 'error' ? 'text-red-600' : status.state === 'saved' ? 'text-emerald-700' : 'text-text-muted',
   );
 
@@ -168,7 +178,7 @@ function SaveStatusView({ status, compact = false }: { status: StudioSaveStatus;
       </button>
     );
   }
-  return <span className={className}>{content}</span>;
+  return <span className={className} role="status" aria-live="polite" aria-atomic="true">{content}</span>;
 }
 
 function MobilePanelTabs({ active, onChange }: { active: MobilePanel; onChange: (panel: MobilePanel) => void }) {
@@ -396,6 +406,35 @@ function StoryboardStatus({ status = 'idle', label }: { status?: StudioStoryboar
   return <span className={joinClassNames('rounded-full px-2 py-0.5 text-[9px] font-bold', styles[status])}>{label || fallback[status]}</span>;
 }
 
+function storyboardCostLabel(production: StudioStoryboardProductionSummary): string {
+  const expected = production.expectedCostCny;
+  const upperBound = production.upperBoundCostCny;
+  if (expected == null && upperBound == null) return '待核算';
+  if (expected != null && upperBound != null && upperBound > expected) {
+    return `预计 ¥${expected.toFixed(2)} · 上限 ¥${upperBound.toFixed(2)}`;
+  }
+  const amount = expected ?? upperBound;
+  return `${expected != null ? '预计' : '上限'} ¥${amount!.toFixed(2)}`;
+}
+
+function StoryboardProductionSummary({ item }: { item: StudioStoryboardItem }) {
+  const production = item.production;
+  if (!production) return null;
+  const missingInputs = production.missingInputs?.filter(Boolean) || [];
+  const blockers = production.blockers?.filter(Boolean) || [];
+  return (
+    <div className="mt-2 border-t border-border-secondary pt-2 text-[11px] leading-[18px]" aria-label={`分镜 ${item.index} 生产信息`}>
+      <dl className="grid min-w-0 grid-cols-1 gap-x-2 sm:grid-cols-2">
+        <div className="flex min-w-0 gap-1"><dt className="shrink-0 text-text-muted">路线</dt><dd className="min-w-0 break-words font-semibold text-text-primary">{production.routeLabel}</dd></div>
+        <div className="flex min-w-0 gap-1"><dt className="shrink-0 text-text-muted">成本</dt><dd className="min-w-0 break-words font-semibold text-text-primary">{storyboardCostLabel(production)}</dd></div>
+        {production.identityLabel ? <div className="flex min-w-0 gap-1 sm:col-span-2"><dt className="shrink-0 text-text-muted">产品精度</dt><dd className="min-w-0 break-words font-semibold text-text-primary">{production.identityLabel}</dd></div> : null}
+      </dl>
+      {missingInputs.length ? <p className="mt-1 break-words text-amber-700"><span className="font-semibold">缺少：</span>{missingInputs.join('；')}</p> : null}
+      {blockers.length ? <p className="mt-1 break-words text-red-700"><span className="font-semibold">阻塞：</span>{blockers.join('；')}</p> : null}
+    </div>
+  );
+}
+
 export function StudioStoryboardList({ items, selectedId, onSelect, onMore, onPresenterDecision, emptyState, previewOnly = false }: StudioStoryboardListProps) {
   if (!items.length) {
     return emptyState || (
@@ -441,6 +480,7 @@ export function StudioStoryboardList({ items, selectedId, onSelect, onMore, onPr
                   {!previewOnly && <span className="mt-1 inline-flex"><StoryboardStatus status={item.status} label={item.statusLabel} /></span>}
                 </span>
               </button>
+              {!previewOnly && <StoryboardProductionSummary item={item} />}
               {!previewOnly && onPresenterDecision && (item.livePresenter || item.presenterCandidate || item.presenterDecision === false) && <label className="mt-2 flex items-center gap-2 border-t border-border pt-2 text-[10px] text-text-muted">人物识别<select aria-label={`分镜 ${item.index} 人物识别`} value={item.presenterDecision === undefined ? 'auto' : item.presenterDecision ? 'sales' : 'other'} onChange={event => onPresenterDecision(item.id, event.target.value === 'auto' ? undefined : event.target.value === 'sales')} className="min-w-0 flex-1 rounded border border-border bg-white p-1">
                 <option value="auto">按分析证据识别</option><option value="sales">确认：固定销售主讲人物</option><option value="other">排除：路人／其他人物</option>
               </select></label>}

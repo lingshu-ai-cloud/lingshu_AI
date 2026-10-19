@@ -26,6 +26,7 @@ import { PAGE_REGISTRY, resolveNavigationPage, resolvePage, type LegacyTrafficVi
 import { SocialProgramProvider } from './contexts/SocialProgramContext';
 import { PageErrorBoundary, PageLoading } from './components/AppPageBoundary';
 import type { SocialContentCreateRequest } from './components/socialContent/SocialContentWorkspace';
+import type { EnterpriseProductsDeepLink } from './components/EnterprisePage';
 import RuntimeVersionBanner from './components/RuntimeVersionBanner';
 import { availableProductPage, PLATFORM_ADS_PAGE_IDS, PLATFORM_ADS_SURFACE_ENABLED } from './config/productSurfaceFlags';
 import { AGENT_PAGES, ROLE_PAGE_ACCESS, customerUnifiedAgent, firstUserText, isAdminSession, isExternalCustomerServiceDemoSession, isLocalCustomerReplyLab, loadConvs, loadPage, pagePreferenceScope, type AgentAction, type AgentType, type Conversation, type ConversationContext, type KickoffSignal, type Message, type RestoreSignal, type StarterAccessState } from './appSession';
@@ -108,6 +109,20 @@ function prefetchPageModule(page: Page) {
 
 const isLocalPreviewHost = () => window.location.hostname === '127.0.0.1' || window.location.hostname === 'localhost';
 
+export function normalizeEnterpriseProductsDeepLink(detail: unknown): EnterpriseProductsDeepLink | null {
+  if (!detail || typeof detail !== 'object') return null;
+  const candidate = detail as Record<string, unknown>;
+  if (candidate.page !== 'enterprise' || candidate.view !== 'products') return null;
+  const materialIds = Array.isArray(candidate.materialIds)
+    ? [...new Set(candidate.materialIds.map(value => String(value || '').trim()).filter(Boolean))].slice(0, 30)
+    : [];
+  return {
+    productName: String(candidate.productName || '').trim().slice(0, 180),
+    materialIds,
+    contentItemId: String(candidate.contentItemId || '').trim().slice(0, 160),
+  };
+}
+
 function scheduleLocalPreviewPreload(preferredPage: Page) {
   if (!isLocalPreviewHost()) return () => {};
   // Compile only the visible page. Other workspaces are warmed on navigation
@@ -177,6 +192,11 @@ export default function App() {
   const [weeklyPlanNavigation, setWeeklyPlanNavigation] = useState<{
     goalId: string; planId: string; requestId: number; identity: string;
   } | null>(null);
+  const [enterpriseProductsDeepLink, setEnterpriseProductsDeepLink] = useState<EnterpriseProductsDeepLink | null>(() => (
+    loadPage() === 'enterprise'
+      ? normalizeEnterpriseProductsDeepLink(window.history.state?.productionDetail)
+      : null
+  ));
   const pageRef = useRef(page);
   pageRef.current = page;
   const [mountedPages, setMountedPages] = useState<Set<Page>>(() => new Set<Page>(['digitalEmployees', loadPage()]));
@@ -207,6 +227,9 @@ export default function App() {
   }, [page]);
   useEffect(() => {
     if (!PLATFORM_ADS_SURFACE_ENABLED && ADS_PAGES.includes(page)) setPage('digitalEmployees');
+  }, [page]);
+  useEffect(() => {
+    if (page !== 'enterprise') setEnterpriseProductsDeepLink(null);
   }, [page]);
   useEffect(() => scheduleLocalPreviewPreload(pageRef.current), []);
   const [socialContentNavigation, setSocialContentNavigation] = useState<{
@@ -569,7 +592,10 @@ export default function App() {
         restoreHistory?: boolean;
         navigationIdentity?: string;
         page?: Page;
-        view?: LegacyTrafficView;
+        view?: LegacyTrafficView | 'products';
+        productName?: string;
+        materialIds?: string[];
+        contentItemId?: string;
         studioPanel?: 'projects';
         workflowRunId?: string;
         workflowTaskId?: string;
@@ -625,6 +651,7 @@ export default function App() {
           attachSocialContentNavigationState(socialTaskId, nextPage, detail.weeklyContentTarget);
         }
       }
+      if (nextPage === 'enterprise') setEnterpriseProductsDeepLink(normalizeEnterpriseProductsDeepLink(detail));
       if (nextPage === 'smartAssets') {
         setSmartAssetsView(detail.view === 'publish' ? 'publish' : 'create');
         setSmartAssetsCreateRequest(detail.contentCreationRequest || null);
@@ -1044,7 +1071,7 @@ export default function App() {
             />
             </Activity>
           )}
-          {(page === 'enterprise' || mountedPages.has('enterprise')) && <Activity mode={page === 'enterprise' ? 'visible' : 'hidden'}><EnterprisePage /></Activity>}
+          {(page === 'enterprise' || mountedPages.has('enterprise')) && <Activity mode={page === 'enterprise' ? 'visible' : 'hidden'}><EnterprisePage productsDeepLink={enterpriseProductsDeepLink} /></Activity>}
           {(page === 'agentMemory' || mountedPages.has('agentMemory')) && (
             <Activity mode={page === 'agentMemory' ? 'visible' : 'hidden'}>
             <AgentMemoryPage

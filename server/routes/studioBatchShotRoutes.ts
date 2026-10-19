@@ -47,6 +47,9 @@ export interface StudioBatchShotRoute {
   route: 'digital_human' | 'local_material' | 'seedance_action' | 'aigc_first_frame' | 'unresolved';
   status: 'matched' | 'needs_material' | 'needs_plan' | 'blocked';
   matchedMaterialId: string | null;
+  /** Server-verified persistent identity metadata for the matched material. */
+  matchedProductId: string | null;
+  matchedProductIdentityLevel: 'exact' | 'category' | 'none' | null;
   matchedSegmentId: string | null;
   trimStart: number | null;
   trimEnd: number | null;
@@ -128,6 +131,7 @@ export function planStudioBatchShotRoutes(spec: BatchShotSpec, options: {
   authorizedPresenterIds: string[];
   defaultSalesPresenterId?: string | null;
   verifiedAdoptionContext?: StudioVerifiedAdoptionContext;
+  materialIdentityEvidence?: Record<string, { productId: string; productIdentityLevel: 'exact' | 'category' | 'none' }>;
 }): StudioBatchShotRoute[] {
   const slots = Array.isArray(spec.shootingSlots) ? spec.shootingSlots : [];
   const production = spec.shotProductions ?? {};
@@ -156,11 +160,14 @@ export function planStudioBatchShotRoutes(spec: BatchShotSpec, options: {
           : explicitScene === 'product' || /产品|包装|瓶身|质地|粉底液|product/i.test(description) ? 'product' : 'other';
     const assignedId = String(assignments[slotId] || '').trim();
     const assigned = assignedId && snapshots.has(assignedId) && snapshots.get(assignedId)?.usage !== 'reference_only' ? assignedId : null;
+    const identityEvidence = assigned ? options.materialIdentityEvidence?.[assigned] : undefined;
     const edit = assigned ? spec.clipEdits?.[`${slotId}:${assigned}`] : undefined;
     const trimStart = Number(edit?.trimStart);
     const trimEnd = Number(edit?.trimEnd);
     const base = { shotId, slotId, order: index + 1, visualTopic, expressionPurpose: purpose,
       matchedMaterialId: assigned, matchedSegmentId: assigned ? String(edit?.segmentId || '') || null : null,
+      matchedProductId: identityEvidence?.productId || null,
+      matchedProductIdentityLevel: identityEvidence?.productIdentityLevel || null,
       trimStart: assigned && Number.isFinite(trimStart) ? trimStart : null,
       trimEnd: assigned && Number.isFinite(trimEnd) && trimEnd > trimStart ? trimEnd : null,
       generated: false as const };

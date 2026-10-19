@@ -143,6 +143,7 @@ assert.equal(exhaustedPlan.platforms.length, 0, 'zero platform quota must not si
 assert.equal(exhaustedPlan.weeklyVariantCount, 0);
 assert.deepEqual(exhaustedPlan.estimatedCostCny, { min: 0, max: 0 });
 assert.equal(guidedSetupSubmissionReady({ ...draft, industry: '' }, limits), false);
+assert.equal(guidedSetupSubmissionReady({ ...draft, presenter: 'none' as never }, limits), false, 'legacy no-presenter choices cannot start a new production plan');
 assert.throws(
   () => buildInitialSetupPayload({ ...draft, industry: '' }, limits),
   /guided_setup_not_ready/,
@@ -168,6 +169,7 @@ assert.match(guidedSetupSource, />调整计划<\/button>/);
 assert.match(guidedSetupSource, /确认计划并开始制作/);
 assert.match(guidedSetupSource, /还不能开始制作，请先补齐或恢复/, '缺失事实必须明确提示，不能静默禁用');
 assert.doesNotMatch(guidedSetupSource, /<Bot\b/, '首次配置不得渲染一个假的 Bot 入口');
+assert.doesNotMatch(guidedSetupSource, /本轮不用数字人口播/, '生产引导不得提供跳过数字人并改走素材路线的选项');
 
 const actionSource = fs.readFileSync(new URL('./WorkspaceActionButtons.tsx', import.meta.url), 'utf8');
 assert.match(actionSource, /setupStartAction/);

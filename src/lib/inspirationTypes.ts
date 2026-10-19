@@ -229,10 +229,10 @@ export interface FrameMaterialMatch {
     score: number;
     localCoverage: number;
     aiFeasibility: 'high' | 'medium' | 'low';
-    recommendedExecution: 'local' | 'local_plus_ai' | 'local_plus_reshoot' | 'ai' | 'reshoot' | 'drop';
+    recommendedExecution: 'local' | 'local_plus_ai' | 'ai' | 'system_route' | 'drop';
     blockers: string[];
   };
-  decision: 'copy_now' | 'prioritize_reshoot' | 'ai_generate' | 'supporting_only' | 'drop';
+  decision: 'copy_now' | 'route_required' | 'ai_generate' | 'supporting_only' | 'drop';
 }
 
 export interface ShootingNeed {

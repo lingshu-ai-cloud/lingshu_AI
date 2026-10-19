@@ -129,6 +129,7 @@ import {
   type SocialWorkflowResponsibilityBoundary,
   type SocialContentAgentWorkflow,
 } from './socialContentWorkflow.js';
+import type { ProductionReadModelV1 } from './productionReadModel.js';
 
 export const SOCIAL_ARTIFACT_STATUSES = ['draft', 'review_required', 'approved', 'changes_requested', 'superseded'] as const;
 export type SocialArtifactStatus = typeof SOCIAL_ARTIFACT_STATUSES[number];
@@ -482,6 +483,12 @@ export interface SocialContentTaskDetail extends SocialContentTaskSummary {
     waitingForScheduledAssets?: boolean;
     updatedAt: string;
   } | null;
+  /**
+   * Canonical, provider-neutral production projection. Optional only for
+   * historic servers during rolling upgrades; clients must not reconstruct it
+   * from localStorage or provider-specific payloads.
+   */
+  production?: ProductionReadModelV1;
 }
 
 export interface SocialWeeklyPlanItemInput {

@@ -23,6 +23,7 @@ import {
 } from './socialContentValidation.js';
 import { deriveNarrationStyleProfile, type NarrationStyleProfile } from '../digitalEmployees/narrationStyle.js';
 import {
+  buildSceneCapabilitySignature,
   normalizeSceneVisualContract,
   type SocialSceneCapabilitySignature,
   type SocialSceneProductionAdmission,
@@ -733,7 +734,12 @@ function productionStrategyFor(
   visualContract?: SocialSceneVisualContract | null,
 ): SocialShotSourceStrategy {
   if (boundary.subject === 'customer_factory' || boundary.subject === 'customer_case') return 'customer_real_asset';
-  const signature = visualContract ? capabilitySignature(visualContract) : null;
+  const signature = visualContract ? buildSceneCapabilitySignature(visualContract) : null;
+  // The current presenter stack can produce talking heads, but it cannot
+  // preserve an exact SKU through hand contact, application or an operating
+  // interaction with factory equipment. Keep those requests on an explicit
+  // functional-equivalent route until a verified interaction stack exists.
+  if (signature?.requiresPersonProductContact || signature?.requiresEnvironmentInteraction) return 'motion_graphics';
   if (boundary.subject === 'product_effect' || signature?.requiresPerson) return 'authorized_digital_presenter';
   if (signature?.requiresProductIdentity) return 'aigc_product_scene_replication';
   return 'customer_real_asset';
@@ -813,38 +819,27 @@ function sceneContractForReference(input: {
   });
 }
 
-function capabilitySignature(contract: SocialSceneVisualContract): SocialSceneCapabilitySignature {
-  const subjectKinds = new Set(contract.subjects.map(subject => subject.kind));
-  const requiresPerson = subjectKinds.has('person') || contract.interaction.kind.startsWith('person_')
-    || contract.interaction.kind === 'apply_product_to_face';
-  const requiresProductIdentity = subjectKinds.has('product') || contract.productUsage.kind !== 'none'
-    || ['person_holding_product', 'person_using_product', 'apply_product_to_face', 'product_only_display', 'product_motion']
-      .includes(contract.interaction.kind);
-  const requiresPersonProductContact = ['person_holding_product', 'person_using_product', 'apply_product_to_face']
-    .includes(contract.interaction.kind) || ['hold', 'open_close', 'dispense', 'apply_to_face', 'apply_to_hand']
-      .includes(contract.productUsage.kind);
-  const requiresEnvironmentInteraction = contract.interaction.kind === 'person_factory_interaction';
-  const requiredCapabilities = [
-    ...(requiresPerson ? ['digital_human'] : []),
-    ...(requiresProductIdentity ? ['product_identity_control'] : []),
-    ...(requiresPersonProductContact ? ['person_product_interaction'] : []),
-    ...(requiresEnvironmentInteraction ? ['environment_interaction'] : []),
-    ...(!requiresPerson && requiresProductIdentity ? ['product_aigc'] : []),
-    ...(!requiresPerson && !requiresProductIdentity ? ['material_edit'] : []),
-  ];
-  return {
-    contractVersion: contract.schemaVersion,
-    requiresPerson,
-    requiresProductIdentity,
-    requiresPersonProductContact,
-    requiresEnvironmentInteraction,
-    interaction: contract.interaction.kind,
-    productUsage: contract.productUsage.kind,
-    requiredCapabilities: [...new Set(requiredCapabilities)],
-  };
-}
-
 function currentStackAdmission(signature: SocialSceneCapabilitySignature): SocialSceneProductionAdmission {
+  const unsupportedRequirements = [
+    ...(signature.requiresPersonProductContact
+      ? signature.requiredCapabilities.filter(capability => capability === 'person_product_interaction_control'
+        || capability === 'face_contact_control')
+      : []),
+    ...(signature.requiresEnvironmentInteraction ? ['environment_interaction_control'] : []),
+  ];
+  if (unsupportedRequirements.length > 0) {
+    return {
+      status: 'fallback_only',
+      route: 'material_edit',
+      executable: true,
+      confidence: 0.9,
+      requiredCapabilities: [...signature.requiredCapabilities],
+      unsupportedRequirements: [...new Set(unsupportedRequirements)],
+      // Shooting is an explicit user-selected production mode, not an
+      // automatic fallback for a missing system capability.
+      fallbackRoutes: [],
+    };
+  }
   const route = signature.requiresPerson
     ? 'digital_human' as const
     : signature.requiresProductIdentity
@@ -854,14 +849,14 @@ function currentStackAdmission(signature: SocialSceneCapabilitySignature): Socia
     status: 'admitted',
     route,
     executable: true,
-    confidence: signature.requiresPersonProductContact || signature.requiresEnvironmentInteraction ? 0.78 : 0.92,
+    confidence: 0.92,
     requiredCapabilities: [...signature.requiredCapabilities],
     unsupportedRequirements: [],
     fallbackRoutes: route === 'digital_human'
-      ? ['material_edit', 'shooting_plan']
+      ? ['material_edit']
       : route === 'product_aigc'
-        ? ['material_edit', 'shooting_plan']
-        : ['shooting_plan'],
+        ? ['material_edit']
+        : [],
   };
 }
 
@@ -987,7 +982,7 @@ function hookOption(input: {
   narrationStyle?: NarrationStyleProfile | null;
 }): SocialThreeSecondHook {
   const truthBoundary = truthBoundaryFor({ purpose: 'hook', subject: input.firstShot.visualDescription });
-  const signature = capabilitySignature(input.firstShot.visualContract
+  const signature = buildSceneCapabilitySignature(input.firstShot.visualContract
     ?? normalizeSceneVisualContract({ subjects: input.firstShot.tags.subjects, interaction: input.firstShot.action?.path, precision: 'hook_high' }));
   const alternatives = [
     {

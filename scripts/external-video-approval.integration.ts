@@ -18,6 +18,7 @@ const adminEmail = 'external-approval-harness@example.invalid';
 const adminPassword = 'external-approval-harness-password-2026';
 let pb: ChildProcess | null = null;
 let api: ReturnType<typeof express.application.listen> | null = null;
+let restoreTikTokHttp: (() => void) | null = null;
 const originalCwd = process.cwd();
 
 async function freePort(): Promise<number> {
@@ -52,15 +53,31 @@ try {
   process.env.PB_ADMIN_EMAIL = adminEmail;
   process.env.PB_ADMIN_PASSWORD = adminPassword;
   process.env.NODE_ENV = 'test';
+  process.env.TENANT_PLATFORM_APP_KEY = 'external-approval-harness-platform-key';
+  process.env.TIKTOK_DIRECT_POST_RELEASE_MODE = 'approved';
   process.chdir(root);
 
-  const [{ publishingRouter }, { store, auth }, { bindDataAuthority, dataAuthorityRequestScope }, { runScheduledPublishingCycle }, { finalizeTrackedPost }] = await Promise.all([
+  const [{ publishingRouter }, { store, auth }, { bindDataAuthority, dataAuthorityRequestScope }, { runScheduledPublishingCycle }, { finalizeTrackedPost }, { sealAccountCredential }, { tikTokCreatorConsentHash }, { default: axios }] = await Promise.all([
     import('../server/routes/publishing.js'),
     import('../server/storage/index.js'),
     import('../server/storage/dataAuthority.js'),
     import('../server/publishing/scheduledPublisher.js'),
     import('../server/publishing/waLink.js'),
+    import('../server/lib/accountCredentials.js'),
+    import('../server/publishing/tiktokCreatorConsent.js'),
+    import('axios'),
   ]);
+  const tikTokAccessToken = 'external-approval-controlled-token';
+  const tikTokProviderAccountId = 'external-approval-native-creator';
+  const tikTokCreator = {
+    creator_username: 'controlled_creator', creator_nickname: 'Controlled creator',
+    privacy_level_options: ['SELF_ONLY'], comment_disabled: false, duet_disabled: true,
+    stitch_disabled: true, max_video_post_duration_sec: 60,
+  };
+  const originalAxiosGet = axios.get, originalAxiosPost = axios.post;
+  axios.get = (async () => ({ data: { error: { code: 'ok' }, data: { user: { open_id: tikTokProviderAccountId } } } })) as typeof axios.get;
+  axios.post = (async () => ({ data: { error: { code: 'ok' }, data: tikTokCreator } })) as typeof axios.post;
+  restoreTikTokHttp = () => { axios.get = originalAxiosGet; axios.post = originalAxiosPost; };
   auth.verifyToken = (async (header?: string) => {
     const tenantId = String(header || '').replace(/^Bearer\s+/, '');
     if (!['tenant-a', 'tenant-b'].includes(tenantId)) return null;
@@ -72,6 +89,11 @@ try {
   for (const platform of ['facebook', 'instagram', 'tiktok'] as const) {
     accounts[platform] = (await store.create<any>('social_accounts', {
       tenantId: 'tenant-a', platform, title: `${platform} harness`, status: 'connected',
+      ...(platform === 'tiktok' ? {
+        providerAccountId: tikTokProviderAccountId,
+        scope: 'video.publish',
+        accessToken: sealAccountCredential(tikTokAccessToken),
+      } : {}),
     }))!;
   }
   for (const platform of ['youtube', 'facebook', 'instagram', 'tiktok'] as const) {
@@ -105,10 +127,27 @@ try {
   assert.equal(createHash('sha256').update(fs.readFileSync(videoPath)).digest('hex'), createHash('sha256').update(videoBytes).digest('hex'),
     'the controlled upload must preserve the exact source video bytes');
   const schedule = new Date(Date.now() + 15 * 60_000).toISOString();
-  const create = async (title: string, platform: 'youtube' | 'facebook' | 'instagram' | 'tiktok' = 'youtube') => request('tenant-a', '/external-video-approvals', 'POST', {
+  const tikTokPostOptions = {
+    privacyLevel: 'SELF_ONLY', allowComment: false, allowDuet: false, allowStitch: false,
+    commercial: { ownBrand: false, brandedContent: false }, isAigc: false,
+    musicUsageConfirmed: true, userConsent: true,
+  };
+  const tikTokCreatorReceiptHash = tikTokCreatorConsentHash({
+    tenantId: 'tenant-a', accountId: accounts.tiktok.id, providerAccountId: tikTokProviderAccountId,
+    accessToken: tikTokAccessToken, creator: tikTokCreator,
+  });
+  const createBody = (title: string, platform: 'youtube' | 'facebook' | 'instagram' | 'tiktok') => ({
     videoPath, title, description: 'Authorized test', platform,
     targetAccountIds: [accounts[platform].id], scheduledAt: schedule,
+    ...(platform === 'tiktok' ? { tiktokPostOptions: tikTokPostOptions, tiktokCreatorReceiptHash: tikTokCreatorReceiptHash } : {}),
   });
+  const create = async (title: string, platform: 'youtube' | 'facebook' | 'instagram' | 'tiktok' = 'youtube') => request('tenant-a', '/external-video-approvals', 'POST', createBody(title, platform));
+
+  const missingTikTokConsent = await request('tenant-a', '/external-video-approvals', 'POST', {
+    ...createBody('TikTok missing explicit consent', 'tiktok'), tiktokPostOptions: undefined,
+  });
+  assert.equal(missingTikTokConsent.status, 409);
+  assert.equal(missingTikTokConsent.body.error, 'tiktok_explicit_post_consent_required');
 
   const pendingByPlatform = {} as Record<'youtube' | 'facebook' | 'instagram' | 'tiktok', any>;
   for (const platform of ['youtube', 'facebook', 'instagram', 'tiktok'] as const) {
@@ -207,15 +246,21 @@ try {
   assert.equal(raceUpload.status, 201);
   videoPath = ((await raceUpload.json()) as { video: { videoPath: string } }).video.videoPath;
   const racedCreates = await Promise.all([create('Concurrent A'), create('Concurrent B')]);
-  assert.deepEqual(racedCreates.map(result => result.status).sort(), [201, 409],
-    'database lease plus scan must allow only one active approval for the same account and video hash');
+  assert.equal(racedCreates.filter(result => result.status === 201).length, 1,
+    'database lease plus scan must allow exactly one active approval for the same account and video hash');
+  const rejectedCreate = racedCreates.find(result => result.status !== 201)!;
+  assert.ok([409, 503].includes(rejectedCreate.status), JSON.stringify(rejectedCreate));
+  assert.match(String(rejectedCreate.body.error), /^external_video_approval_(busy|duplicate|lock_unavailable)$/,
+    'the losing create must fail closed before persisting another approval');
   const raceApproval = racedCreates.find(result => result.status === 201)!.body.approval;
   const racedDecisions = await Promise.all([
     request('tenant-a', `/external-video-approvals/${raceApproval.id}/approve`, 'POST', { contentHash: raceApproval.contentHash }),
     request('tenant-a', `/external-video-approvals/${raceApproval.id}/approve`, 'POST', { contentHash: raceApproval.contentHash }),
   ]);
-  assert.deepEqual(racedDecisions.map(result => result.status).sort(), [200, 409],
+  assert.equal(racedDecisions.filter(result => result.status === 200).length, 1,
     'concurrent approval of the same durable post must schedule it once');
+  const rejectedDecision = racedDecisions.find(result => result.status !== 200)!;
+  assert.ok([409, 503].includes(rejectedDecision.status), JSON.stringify(rejectedDecision));
   await runScheduledPublishingCycle(cycleAt, dependencies as any);
   assert.equal(providerCalls, 6, 'double create/approve must yield one provider call');
   await runScheduledPublishingCycle(cycleAt, dependencies as any);
@@ -236,6 +281,7 @@ try {
 
   console.log('external video approval real PocketBase + HTTP + Worker integration passed');
 } finally {
+  restoreTikTokHttp?.();
   if (api) {
     api.closeAllConnections();
     await new Promise<void>(resolve => api!.close(() => resolve()));

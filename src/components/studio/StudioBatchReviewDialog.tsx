@@ -29,6 +29,7 @@ export type StudioBatchReviewDialogProps = {
   generatingShots?: number;
   pendingShots?: number;
   estimatedCostCny?: number;
+  upperBoundCostCny?: number;
   busy?: boolean;
   error?: string;
   canSubmit: boolean;
@@ -39,10 +40,10 @@ export type StudioBatchReviewDialogProps = {
   onClose: () => void;
 };
 
-export function StudioBatchReviewFooter({ issues, pendingShots = 0, estimatedCostCny, error, busy = false, canSubmit, submitLabel = '确认首帧并生成视频', onSubmit }: StudioBatchReviewDialogProps) {
+export function StudioBatchReviewFooter({ issues, pendingShots = 0, estimatedCostCny, upperBoundCostCny, error, busy = false, canSubmit, submitLabel = '确认首帧并生成视频', onSubmit }: StudioBatchReviewDialogProps) {
   const pendingCount = issues.filter(issue => !issue.resolved).length;
   return <div className="flex flex-wrap items-end justify-between gap-3 text-left">
-    <div className="min-w-0 flex-1 text-xs text-text-muted">{estimatedCostCny !== undefined && <p>本批预计费用 ¥{estimatedCostCny.toFixed(2)}</p>}{pendingCount > 0 && <p className="mt-1 text-amber-700">请完成全部 {pendingCount} 项后进入下一步</p>}{pendingShots > 0 && <p className="mt-1">其余 {pendingShots} 镜可返回步骤二继续制作。</p>}{error && <p role="alert" className="mt-1 text-red-700">{error}</p>}</div>
+    <div className="min-w-0 flex-1 text-xs text-text-muted">{estimatedCostCny !== undefined ? <p>本批预计费用 ¥{estimatedCostCny.toFixed(2)}{upperBoundCostCny !== undefined && upperBoundCostCny > estimatedCostCny ? ` · 最高 ¥${upperBoundCostCny.toFixed(2)}` : ''}</p> : upperBoundCostCny !== undefined ? <p>本批最高费用 ¥{upperBoundCostCny.toFixed(2)}</p> : null}{pendingCount > 0 && <p className="mt-1 text-amber-700">请完成全部 {pendingCount} 项后进入下一步</p>}{pendingShots > 0 && <p className="mt-1">其余 {pendingShots} 镜可返回步骤二继续制作。</p>}{error && <p role="alert" className="mt-1 text-red-700">{error}</p>}</div>
     <Button type="primary" onClick={onSubmit} loading={busy} disabled={busy || !canSubmit || pendingCount > 0}>{submitLabel}</Button>
   </div>;
 }

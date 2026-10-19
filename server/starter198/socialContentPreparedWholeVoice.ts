@@ -7,8 +7,11 @@ import { createHash, randomUUID } from 'node:crypto';
 import { withPaidOperationLock } from '../lib/paidOperationLock.js';
 import { nativeStudioVoiceReceiptPath, createNativeStudioVoicePaidContext } from '../lib/studioNativeVoicePaidContext.js';
 import { paidProductionHash } from './socialContentPaidOperationPlan.js';
-import { alignStudioVoiceForAutomation, resolveStudioVoiceExecutionPlan } from '../routes/studio.js';
-import { synthesizeStudioVoiceForAutomation } from '../lib/socialContentLegacyPorts.js';
+import {
+  alignStudioVoiceForAutomation,
+  resolveStudioVoiceExecutionPlan,
+  synthesizeStudioVoiceForAutomation,
+} from '../lib/socialContentLegacyPorts.js';
 import { measuredWholeTrackSceneRanges } from './socialContentWholeTrackPresenterAudio.js';
 import { verifiedAudioCues } from '../integrations/qwenAlignment.js';
 import { ttsPostProcessingSpeed } from '../lib/studioVoiceSelection.js';

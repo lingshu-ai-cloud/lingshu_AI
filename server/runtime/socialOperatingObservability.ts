@@ -16,6 +16,12 @@ export const SOCIAL_OPERATING_REQUIRED_COLLECTIONS = [
   'social_reference_selections',
   'social_discovery_gap_tasks',
   'social_weekly_review_snapshots',
+  'social_weekly_production_repair_cases',
+  'social_weekly_creative_repair_configurations',
+  'social_weekly_creative_repair_capacity_reservations',
+  'social_weekly_creative_repair_child_executions',
+  'social_weekly_creative_repair_stage_evidence',
+  'social_weekly_creative_repair_audits',
   SOCIAL_OPERATING_WORKER_HEARTBEATS,
 ] as const;
 

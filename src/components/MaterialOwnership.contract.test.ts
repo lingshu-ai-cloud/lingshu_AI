@@ -62,8 +62,7 @@ assert.doesNotMatch(enterpriseSource, /accept=['"](?:image|video)\/\*/, '企业�
 
 const inspirationSource = readFileSync(fileURLToPath(new URL('./InspirationDashboard.tsx', import.meta.url)), 'utf8');
 const studioRouteSource = readFileSync(fileURLToPath(new URL('../../server/routes/studio.ts', import.meta.url)), 'utf8');
-assert.match(inspirationSource, /本次上传必须关联产品/, '上传必须关联具体产品');
-assert.match(inspirationSource, /选择关联产品（必选）/, '产品素材上传必须明确强绑定要求');
+assert.doesNotMatch(inspirationSource, /本次上传必须关联产品|选择关联产品（必选）/, '企业通用素材上传不得被具体产品强绑定阻塞');
 assert.match(inspirationSource, /aria-label="本次上传素材归属"/, '紧凑上传入口仍必须有清晰的无障碍名称');
 assert.match(inspirationSource, /innerView === 'library' && <Button[\s\S]{0,400}>上传素材<\/Button>/, '我的素材上传按钮必须位于页签工具栏右侧');
 assert.doesNotMatch(inspirationSource, /id="material-upload-product"/, '我的素材主页面不得继续展示独立的上传产品选择行');
@@ -74,9 +73,11 @@ assert.match(materialMainFilters, /aria-label="素材分类"[^]*?\{value:"all",l
 assert.doesNotMatch(materialMainFilters, /aria-label="素材收藏状态"/, '收藏状态不得继续占用我的素材主筛选位');
 assert.match(inspirationSource, /id="material-more-filters"[^]*?aria-label="素材收藏状态"/, '收藏状态必须收进更多筛选');
 assert.match(inspirationSource, /updateMaterial\(result\.material\.id,[^]*?productId: uploadProductId/, '前端 P0 上传后必须保存产品归属');
+assert.match(inspirationSource, /productId: uploadProductId,[^]*?enterpriseCommon: !uploadProductId/, '通用素材归属必须同步写入 Material V2 元数据');
 assert.match(inspirationSource, /material\.productId === filter\.productId/, '产品 ID 存在时必须按 ID 精确筛选');
 assert.doesNotMatch(inspirationSource, /manageTarget\.kind === 'material' && manageProductId === null/, '旧素材未关联产品不得成为保存卡点');
-assert.match(inspirationSource, /请先选择素材对应的产品；产品素材必须与产品表中的产品一一绑定。/, '未选择产品时必须阻止产生无法追溯的产品素材');
+assert.match(inspirationSource, /企业通用素材（不绑定产品）/, '通用场景、人物和环境素材必须允许不绑定具体产品');
+assert.doesNotMatch(inspirationSource, /请先选择素材对应的产品；产品素材必须与产品表中的产品一一绑定。/, '未选择产品不得成为通用素材上传卡点');
 const taxonomySource = readFileSync(new URL('./material-library/MaterialTaxonomyFilters.tsx', import.meta.url), 'utf8');
 assert.match(inspirationSource, /<MaterialTaxonomyFilters/, 'material library must use the current source/theme taxonomy');
 assert.match(taxonomySource, /MATERIAL_SOURCE_LABELS/, 'source categories must come from the shared contract');

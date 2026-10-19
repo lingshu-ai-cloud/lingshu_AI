@@ -17,7 +17,7 @@ const baselineConfig = {
   defaultMaxLines: 4,
   excludeNameFragments: ['.test.', '.d.ts'],
   oversizedFileBudgets: {
-    'src/legacy.ts': 7,
+    'src/legacy.ts': 6,
   },
 };
 
@@ -101,8 +101,8 @@ try {
   }, /defaultMaxLines increased from 4 to 5/);
 
   await expectRejected(baselineCommit, 'an expanded legacy-debt budget', config => {
-    config.oversizedFileBudgets['src/legacy.ts'] = 8;
-  }, /src\/legacy\.ts: budget increased from 7 to 8/);
+    config.oversizedFileBudgets['src/legacy.ts'] = 7;
+  }, /src\/legacy\.ts: budget increased from 6 to 7/);
 
   await expectRejected(baselineCommit, 'a new exclusion fragment', config => {
     config.excludeNameFragments.push('.spec.');
@@ -116,8 +116,21 @@ try {
     config.extensions = config.extensions.filter(extension => extension !== '.tsx');
   }, /source extension removed from architecture guard: \.tsx/);
 
+  await writeFile(path.join(fixtureRoot, 'src/legacy.ts'), [
+    'export const legacy = {',
+    '  one: 1,',
+    '  two: 2,',
+    '  three: 3,',
+    '};',
+    '',
+  ].join('\n'), 'utf8');
+  await writeConfig(cloneBaseline());
+  const staleBudget = runGuard(baselineCommit);
+  assert.notEqual(staleBudget.status, 0, 'a stale budget must fail after the file shrinks');
+  assert.match(output(staleBudget), /budget 6 exceeds its current 5 lines/);
+
   const reducedBudget = cloneBaseline();
-  reducedBudget.oversizedFileBudgets['src/legacy.ts'] = 6;
+  reducedBudget.oversizedFileBudgets['src/legacy.ts'] = 5;
   await writeConfig(reducedBudget);
   const reduced = runGuard(baselineCommit);
   assert.equal(reduced.status, 0, `a budget reduced to the file's current size must pass:\n${output(reduced)}`);

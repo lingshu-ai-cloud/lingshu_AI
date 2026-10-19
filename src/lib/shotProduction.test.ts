@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { applyDefaultsToUnlockedAvatarShots, newShotProduction, patchShot, presenterAssetFingerprint, presenterCapabilities, shotFingerprint, shotBlockers, recommendShot } from './shotProduction.js';
+import { applyDefaultsToUnlockedAvatarShots, newShotProduction, patchShot, presenterAssetFingerprint, presenterCapabilities, presenterProductionGate, shotFingerprint, shotBlockers, recommendShot } from './shotProduction.js';
 import { transcriptMatches } from './shootingWorkflow.js';
 import { automaticAvatarRefreshes, avatarCandidateReady, type AvatarJob } from './shotProduction.js';
 test('review failures stop automatic polling and stale or unverified candidates cannot be adopted', () => {
@@ -68,6 +68,17 @@ test('tool-specific presenter mappings expose talking, reenactment and replaceme
   assert.deepEqual(presenterCapabilities({ id: 'p', name: 'P', avatarId: '', voiceId: '', authorized: true, supportsAlpha: false,
     toolMappings: { heygen: { avatarId: 'avatar', voiceId: 'voice' }, runway: { referenceMaterialIds: ['portrait'] } } }),
   ['talking', 'reference_image', 'reference_video', 'person_replacement']);
+});
+
+test('production presenter gate requires an explicit authorized appearance and never accepts route preferences as a fallback', () => {
+  const presenter = { id: 'person', name: 'Alice', avatarId: 'avatar', voiceId: 'voice', authorized: true, supportsAlpha: false };
+  assert.equal(presenterProductionGate({ preference: 'avatar', presenters: [presenter], defaultPresenterId: '' }).reason, 'selection_required');
+  assert.equal(presenterProductionGate({ preference: 'real', presenters: [], defaultPresenterId: '' }).ready, false);
+  assert.equal(presenterProductionGate({ preference: 'avatar', presenters: [{ ...presenter, authorized: false }], defaultPresenterId: 'person' }).reason, 'authorization_required');
+  assert.equal(presenterProductionGate({ preference: 'avatar', presenters: [{ ...presenter, avatarId: '' }], defaultPresenterId: 'person' }).reason, 'appearance_required');
+  const ready = presenterProductionGate({ preference: 'none', presenters: [presenter], defaultPresenterId: 'person' });
+  assert.equal(ready.ready, true);
+  assert.equal(ready.presenter?.id, 'person');
 });
 
 test('presenter asset fingerprint changes only when generation inputs change', () => {

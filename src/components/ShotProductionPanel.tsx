@@ -49,6 +49,8 @@ export default function ShotProductionPanel(props: {
   projectId?: string; assemblyId?: string; language?: string; shot: ShotProduction; shotId?: string; scriptNarration?: string; keyframeCues?: ShotKeyframeCue[]; shotDuration?: number; context: string; title: string; defaults: ProductionDefaults; materials: Asset[]; products: { id: string; label: string }[];
   jobs: AvatarJob[]; refreshingJobIds?: string[]; preview?: Asset; reason: string; error: string; busy: boolean; configured: boolean; capabilityReason?: string; costPerSecond: number | null;
   maxAttemptsPerShot?: number;
+  /** Must be granted by the server-owned production projection. */
+  allowShooting?: boolean;
   seedanceSentenceAvailable?: boolean;
   viralReplication?: boolean; salesConfiguration?: boolean; applyToSales?: boolean; onApplyToSalesChange?: (value: boolean) => void;
   toolCapabilities?: Array<{ id: string; label: string; execution: boolean; cancellation?: boolean; costReconciliation?: boolean; reason: string; executionProfile?: { maxDurationSeconds?: number; preserves: string[]; qualityInspection: boolean; estimatedCostCnyPerSecond?: number } }>;
@@ -78,6 +80,12 @@ export default function ShotProductionPanel(props: {
     hasMaterial: Boolean(props.preview || props.materials.some(item => item.type !== 'audio')),
     recommendation: props.reason,
   });
+  const presentedRoutingDecision = props.allowShooting
+    ? routingDecision
+    : { ...routingDecision, alternatives: routingDecision.alternatives.filter(item => item.source !== 'shoot') };
+  const productionRoutingDecision = isEnterprisePresenter
+    ? { ...presentedRoutingDecision, recommendedSource: 'avatar' as const, alternatives: [] }
+    : presentedRoutingDecision;
   const plan = planDigitalHumanShot({ requirements: shot.digitalHuman, narration: shot.narration,
     hasAuthorizedPresenter: Boolean(selectedPresenter?.authorized), talkingAvailable: props.configured,
     seedanceSentenceAvailable: props.seedanceSentenceAvailable,
@@ -279,11 +287,12 @@ export default function ShotProductionPanel(props: {
             <option value="broll">产品 B-roll／手部操作</option>
             <option value="information">图文／字幕／转场</option>
           </select></label>
-          <label className="mt-2 block text-xs">制作方式<select aria-label="制作方式" value={shot.source} onChange={e => props.onChange({ source: e.target.value as ShotProduction['source'] })} className="mt-1 w-full rounded-lg border p-2">
-            {isEnterprisePresenter && <><option value="avatar">企业人物生成</option><option value="material">使用已有企业人物视频</option><option value="shoot">安排真人拍摄</option></>}
-            {isUgc && <><option value="ai">AI 行业角色</option><option value="material">已授权达人／泛素材</option><option value="shoot">安排重新实拍</option></>}
-            {!isPeopleShot && <><option value="material">企业素材／可用参考片段</option><option value="ai">AI 补镜</option><option value="shoot">安排真人拍摄</option></>}
+          <label className="mt-2 block text-xs">制作方式<select aria-label="制作方式" value={isEnterprisePresenter ? 'avatar' : shot.source} onChange={e => props.onChange({ source: e.target.value as ShotProduction['source'] })} className="mt-1 w-full rounded-lg border p-2">
+            {isEnterprisePresenter && <option value="avatar">已选数字人形象生成</option>}
+            {isUgc && <><option value="ai">AI 行业角色</option><option value="material">已授权达人／泛素材</option>{props.allowShooting ? <option value="shoot">安排重新实拍</option> : null}</>}
+            {!isPeopleShot && <><option value="material">企业素材／可用参考片段</option><option value="ai">AI 补镜</option>{props.allowShooting ? <option value="shoot">安排真人拍摄</option> : null}</>}
           </select></label>
+          {isEnterprisePresenter && <p className="mt-2 text-[10px] font-semibold text-amber-700">数字人口播必须使用已选择的企业人物形象；缺失时停止生产，不会降级为素材匹配、实拍或其他路线。</p>}
           {isUgc && <div className="mt-3 space-y-2 rounded-lg bg-surface-2 p-2" aria-label="行业角色要求">
             <p className="text-xs font-bold">AI 行业角色</p>
             <p className="text-[10px] text-text-muted">参考视频只用于提取镜头节奏、动作和叙事结构；不会复刻其中素人的脸、声音或身份。</p>
@@ -294,7 +303,7 @@ export default function ShotProductionPanel(props: {
           {!isPeopleShot && <p className="mt-2 text-[10px] text-text-muted">本镜头不需要人物出镜。优先使用企业素材、可用参考片段或 AI 补镜，不展示企业人物或数字人设置。</p>}
         </section>
         {shot.source === 'avatar' && shot.digitalHuman?.workflow === 'viral_replication' && shot.digitalHuman.method === 'reenact' && !usesDirectReferenceVideo(shot.digitalHuman) && <SentenceReplicationImpactPanel projectId={props.projectId} assemblyId={props.assemblyId} shotId={props.shotId} language={props.language} shot={shot} />}
-        <ShotRoutingRecommendation decision={routingDecision} onSelect={source => props.onChange({ source })} />
+        <ShotRoutingRecommendation decision={productionRoutingDecision} onSelect={source => props.onChange({ source: isEnterprisePresenter ? 'avatar' : source })} />
         {isEnterprisePresenter && shot.source === 'avatar' && <DigitalHumanRequirementsEditor value={shot.digitalHuman || { ...newDigitalHumanRequirements(), contentConfirmed: true }} plan={plan} toolCapabilities={props.toolCapabilities} referenceMaterials={props.materials.filter(item => item.type === 'video').map(item => ({ id: item.id, name: item.name, url: item.url }))} onChange={digitalHuman => props.onChange({ digitalHuman })} />}
         {isEnterprisePresenter && shot.source === 'avatar' && shot.digitalHuman?.workflow === 'viral_replication' && shot.digitalHuman.method === 'reenact' && (shot.digitalHuman.replicationMode || 'sentence_first_frame') === 'sentence_first_frame' && <button type="button" disabled={props.busy || !shot.digitalHuman.reference?.materialId} onClick={props.onPrepareSentenceFrames} className="rounded-lg border border-violet-300 bg-violet-50 px-4 py-2 text-xs font-bold text-violet-800 disabled:opacity-40">{props.busy ? '正在提取…' : '提取逐句首帧'}</button>}
         {shot.digitalHuman?.workflow === 'viral_replication' && <label className="block text-xs">首帧与口播合计费用上限（元）<input aria-label="照片口播费用上限" type="number" min="0.01" step="0.01" value={photoCostLimit} onChange={event=>setPhotoCostLimit(event.target.value)} className="mt-1 w-full rounded border p-2" /></label>}
@@ -343,7 +352,8 @@ export default function ShotProductionPanel(props: {
         <label className="block text-xs">背景性质<select value={shot.backgroundMode} onChange={e => props.onChange({ backgroundMode: e.target.value as ShotProduction['backgroundMode'] })} className="mt-1 w-full rounded-lg border p-2"><option value="independent">独立背景：只重新合成</option><option value="baked">已在视频中：换背景需重生成</option></select></label>
         {shot.backgroundMode === 'baked' && <p className="text-xs text-amber-700">不能直接擦除原片背景。改背景将使旧候选过期；首版请使用透明人物层或替换整条素材。</p>}
         {shot.source === 'material' && <button type="button" onClick={props.onMaterial} className="rounded-lg border px-4 py-2 text-xs">打开素材库选画面</button>}
-        {shot.source === 'shoot' && <button type="button" onClick={props.onShoot} className="rounded-lg border px-4 py-2 text-xs">创建待拍任务</button>}
+        {shot.source === 'shoot' && props.allowShooting && <button type="button" onClick={props.onShoot} className="rounded-lg border px-4 py-2 text-xs">创建待拍任务</button>}
+        {shot.source === 'shoot' && !props.allowShooting && <p role="status" className="text-xs text-amber-700">当前实拍选择等待服务端重新确认；不会创建新的拍摄任务。</p>}
         {shot.source === 'ai' && <button type="button" onClick={props.onAi} className="rounded-lg border px-4 py-2 text-xs">生成这一镜（使用现有Seedance计费）</button>}
         {isEnterprisePresenter && shot.source === 'avatar' && <div className="space-y-2 rounded-xl bg-surface-2 p-3">
           {props.sourcePlan && <div className="rounded-lg border border-violet-200 bg-violet-50 p-2 text-xs">
@@ -424,12 +434,13 @@ export default function ShotProductionPanel(props: {
         </div>; })}
       </div>}
       <details className="mt-5 rounded-xl border bg-white p-3"><summary className="cursor-pointer text-xs font-bold">全片数字人默认设置</summary>
-        <select aria-label="企业默认出镜偏好" value={defaults.preference} onChange={async e => { try { await props.onDefaults({ ...defaults, preference: e.target.value as ProductionDefaults['preference'] }); } catch (error) { setDefaultsError(String(error)); } }} className="my-2 w-full rounded-lg border p-2 text-xs"><option value="auto">AI推荐</option><option value="avatar">优先数字人</option><option value="real">优先真人实拍</option><option value="none">不出镜</option></select>
+        <select aria-label="企业默认出镜偏好" value={!props.allowShooting && defaults.preference === 'real' ? 'auto' : defaults.preference} onChange={async e => { try { await props.onDefaults({ ...defaults, preference: e.target.value as ProductionDefaults['preference'] }); } catch (error) { setDefaultsError(String(error)); } }} className="my-2 w-full rounded-lg border p-2 text-xs"><option value="auto">AI推荐</option><option value="avatar">优先数字人</option>{props.allowShooting ? <option value="real">优先真人实拍</option> : null}<option value="none">不出镜</option></select>
+        {!props.allowShooting && defaults.preference === 'real' ? <p role="status" className="mb-2 text-xs text-amber-700">原真人实拍偏好等待服务端重新确认，当前不会应用到新分镜。</p> : null}
         <div className="grid grid-cols-2 gap-2">
           <label className="text-xs">默认声音<select aria-label="新分镜默认声音" value={defaults.defaultSound} onChange={async e => { try { await props.onDefaults({ ...defaults, defaultSound: e.target.value as ProductionDefaults['defaultSound'] }); } catch (error) { setDefaultsError(String(error)); } }} className="mt-1 w-full rounded-lg border p-2"><option value="voiceover">连续旁白</option><option value="source">人物说话</option><option value="silent">无声</option></select></label>
           <label className="text-xs">默认布局<select aria-label="新分镜默认布局" value={defaults.defaultLayout} onChange={async e => { try { await props.onDefaults({ ...defaults, defaultLayout: e.target.value as ProductionDefaults['defaultLayout'] }); } catch (error) { setDefaultsError(String(error)); } }} className="mt-1 w-full rounded-lg border p-2"><option value="full">全屏人物</option><option value="split">人物与产品分屏</option><option value="pip">人物小窗</option></select></label>
         </div>
-        <button type="button" onClick={props.onApplyDefaultsToUnlocked} className="rounded-lg border px-3 py-2 text-xs">应用到当前视频全部未锁定数字人分镜</button>
+        <button type="button" disabled={!props.allowShooting && defaults.preference === 'real'} onClick={props.onApplyDefaultsToUnlocked} className="rounded-lg border px-3 py-2 text-xs disabled:opacity-50">应用到当前视频全部未锁定数字人分镜</button>
         {defaults.presenters.map(item => <div key={item.id} className="my-2 flex justify-between text-xs"><span>{item.name}</span><button type="button" onClick={async () => { try { await props.onDefaults({ ...defaults, defaultPresenterId: item.id }); } catch (error) { setDefaultsError(String(error)); } }}>{defaults.defaultPresenterId === item.id ? '默认人物' : '设为默认'}</button></div>)}
         <p className="my-2 text-xs text-text-muted">人物授权、供应商映射和参考资产可在当前内容制作页完成；保存后同步到企业人物资产，企业知识库可继续集中管理。</p>
         {defaultsError && <p role="alert" className="mt-2 text-xs text-red-600">{defaultsError}</p>}

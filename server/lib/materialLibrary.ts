@@ -1,7 +1,8 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { createHash } from 'node:crypto';
-import { readCloudMaterialLibrary, type MaterialSourceStatus } from './cloudMaterials.js';
+import { assertExactMaterialProductBindingImmutable, readCloudMaterialLibrary, type MaterialSourceStatus } from './cloudMaterials.js';
+import { materialAssetV2FromRecord } from '../../shared/contracts/materialAssetV2.js';
 import { isSyntheticMaterial } from './materialTruthfulness.js';
 import { currentDataAuthority } from '../storage/dataAuthority.js';
 import type { DataStore } from '../storage/datastore.js';
@@ -84,6 +85,11 @@ export function upsertSocialTaskMaterial(input: SocialTaskMaterialRecordInput): 
       sourceRevision: input.record.sourceRevision,
       provenance: input.record.provenance,
     } : {};
+    assertExactMaterialProductBindingImmutable(
+      current,
+      productId || current.productId || current.product_id,
+      materialAssetV2FromRecord(input.record) || materialAssetV2FromRecord(current),
+    );
     const next: MaterialRecord = {
       ...current,
       ...enterpriseMetadata,

@@ -122,7 +122,10 @@ assert.equal(lockedById.requestedProductRef, '精华 B');
 assert.deepEqual([...new Set(lockedById.candidates.map(candidate => candidate.assetId))], ['product-b']);
 
 const open = buildSocialWorkflowMaterialCandidates({
-  records: [analyzedRecord({ id: 'enterprise-common', type: 'video', enterpriseCommon: true })],
+  records: [{
+    ...analyzedRecord({ id: 'enterprise-common', type: 'video' }),
+    provenance: { materialAssetV2: { schemaVersion: 'material-asset.v2', assetRole: 'generic_scene_plate', contentRole: 'scene_plate', productIdentityLevel: 'none', enterpriseCommon: true, sceneType: 'warehouse', personProductContact: 'none', occlusion: 'none', cleanPlate: true, cameraMotion: 'locked', labelReadability: 'none', templateEligible: true, reuseScore: 0.9, segmentCandidates: [] } },
+  }],
   tenantId: 'tenant-a',
   voiceoverRows: [{ cueId: 'line-general', text: '企业环境' }],
 });
@@ -130,6 +133,8 @@ assert.equal(open.productPolicy, 'open');
 assert.equal(open.requestedProductRef, null);
 assert.equal(open.candidates[0]?.enterpriseCommon, true);
 assert.equal(open.candidates[0]?.visualContract.product.source, 'inventory_open');
+assert.match(open.candidates[0]?.segmentCandidateId || '', /^enterprise-common:revision:enterprise-common:/);
+assert.equal(open.candidates[0]?.materialV2?.templateEligible, true);
 
 console.log('social content record material candidate tests passed');
 
