@@ -315,12 +315,19 @@ async function request(pathname: string, options: {
 }
 
 /** Explicit persisted pre-policy fixture; only compatibility cases opt into it. */
-function usePersistedLegacyRouting(taskId: string) {
-  const row = dataStore.rows.get(STARTER_COLLECTIONS.socialContentTasks)!.find(item => item.task_id === taskId)!;
+async function usePersistedLegacyRouting(taskId: string) {
+  const row = dataStore.rows.get(STARTER_COLLECTIONS.socialContentTasks)!
+    .find(item => item.tenant_id === tenant && item.task_id === taskId)!;
   const brief = typeof row.brief === 'string' ? JSON.parse(row.brief) : structuredClone(row.brief);
   delete brief.materialRoutingPolicyVersion;
-  row.brief = brief;
-  delete row.content_order;
+  brief.productionApproach = 'material_polish';
+  await repository.update(STARTER_COLLECTIONS.socialContentTasks, tenant, row.id, {
+    brief,
+    content_order: null,
+  });
+  const persisted = await repository.get(STARTER_COLLECTIONS.socialContentTasks, tenant, row.id);
+  assert.equal((persisted?.brief as Record<string, unknown>)?.materialRoutingPolicyVersion, undefined,
+    'legacy compatibility fixture must persist removal of the type-aware policy marker');
 }
 
 const completeBrief = {
@@ -483,16 +490,17 @@ try {
     body: { expectedVersion: durableMaterial.body.task.version },
   });
   assert.equal(typedDurableRejected.status, 409, typedDurableRejected.raw);
-  assert.equal(typedDurableRejected.body.error, 'social_content_execution_goal_degraded');
+  assert.equal(typedDurableRejected.body.error, 'social_content_execution_director_review_required');
   assert.equal(productionQueueInputs.length, 0, 'missing typed scene evidence cannot dispatch production');
   // This fixture represents a persisted task created before the type-aware policy.
   // Its scheduling/idempotency contract remains supported, independently of new-task admission.
-  usePersistedLegacyRouting(durableTaskId);
+  await usePersistedLegacyRouting(durableTaskId);
   const durableStarted = await request(`/api/default-social-content/tasks/${durableTaskId}/start`, {
     idempotencyKey: 'social-durable-start',
     body: { expectedVersion: durableMaterial.body.task.version },
   });
-  assert.equal(durableStarted.status, 202, `${durableStarted.raw}\n${JSON.stringify(durableMaterial.body.task.agentWorkflow?.executionPlanReview)}`);
+  const durableAfterStart = await request(`/api/default-social-content/tasks/${durableTaskId}`);
+  assert.equal(durableStarted.status, 202, `${durableStarted.raw}\n${JSON.stringify(durableAfterStart.body.task?.agentWorkflow?.executionPlan)}\n${JSON.stringify(durableAfterStart.body.task?.agentWorkflow?.executionPlanReview)}\n${JSON.stringify(durableAfterStart.body.task?.brief)}`);
   assert.equal(durableStarted.body.task.status, 'producing');
   assert.match(durableStarted.body.task.runId, /^[a-f0-9]{15}$/,
     'automatic production receives a durable, recoverable run identity');
@@ -573,7 +581,7 @@ try {
       sourceVersion: scheduleRaceUpload.body.file.sha256, label: '并发真实素材',
     },
   });
-  usePersistedLegacyRouting(scheduleRaceTaskId);
+  await usePersistedLegacyRouting(scheduleRaceTaskId);
   const racedStarts = await Promise.all(['a', 'b'].map(suffix => request(
     `/api/default-social-content/tasks/${scheduleRaceTaskId}/start`,
     {
@@ -846,7 +854,7 @@ try {
   });
   assert.equal(fakeFile.status, 404);
 
-  usePersistedLegacyRouting(taskId);
+  await usePersistedLegacyRouting(taskId);
   const started = await request(`/api/overseas/starter-198/social-content/tasks/${taskId}/start`, {
     idempotencyKey: 'social-start-0001', body: { expectedVersion: restoredKnowledge.body.task.version },
   });
@@ -1118,7 +1126,7 @@ try {
     decision: 'changes_requested',
     note: '请缩短口播和字幕，开头更直接一些',
   };
-  usePersistedLegacyRouting(bypassTaskId);
+  await usePersistedLegacyRouting(bypassTaskId);
   const revisionDecision = await request(
     `/api/overseas/starter-198/social-content/tasks/${bypassTaskId}/artifacts/${revisionArtifact.body.artifact.artifactId}/decision`,
     { idempotencyKey: 'social-revision-decision', body: revisionDecisionInput },
@@ -1349,7 +1357,7 @@ try {
   assert.equal(zeroInputRejected.status, 409, zeroInputRejected.raw);
   assert.equal(zeroInputRejected.body.error, 'social_content_execution_director_review_required');
   assert.equal(orchestratorInputs.length, zeroInputQueuedBefore, 'new task with missing scene evidence never reaches a production or paid provider executor');
-  usePersistedLegacyRouting(zeroInputTask.body.task.taskId);
+  await usePersistedLegacyRouting(zeroInputTask.body.task.taskId);
   const zeroInputStarted = await request(`/api/overseas/starter-198/social-content/tasks/${zeroInputTask.body.task.taskId}/start`, {
     idempotencyKey: 'social-zero-input-start-001',
     body: { expectedVersion: zeroInputTask.body.task.version },
@@ -1641,7 +1649,7 @@ try {
   assert.equal(conceptPreviewTask.status, 201, conceptPreviewTask.raw);
   assert.equal(conceptPreviewTask.body.task.readiness.complete, true,
     'an explicit non-publishable concept preview may retain the historic graphic fallback');
-  usePersistedLegacyRouting(conceptPreviewTask.body.task.taskId);
+  await usePersistedLegacyRouting(conceptPreviewTask.body.task.taskId);
   const conceptPreviewStarted = await request(`/api/overseas/starter-198/social-content/tasks/${conceptPreviewTask.body.task.taskId}/start`, {
     idempotencyKey: 'social-zero-input-preview-start-001',
     body: { expectedVersion: conceptPreviewTask.body.task.version },
@@ -1659,7 +1667,7 @@ try {
     'new tasks use inspiration analysis or a governed knowledge/system fallback');
   assert.equal(instantTask.body.task.scriptBaseline.version, '1');
   assert.equal(instantTask.body.task.materialRequirements.length, 0,
-    'new tasks do not inherit formula-owned shot requirements');
+    `new tasks do not inherit formula-owned shot requirements: ${JSON.stringify(instantTask.body.task.materialRequirements)}`);
   const instantStoredTask = dataStore.rows.get(STARTER_COLLECTIONS.socialContentTasks)!.find(row => row.task_id === instantTask.body.task.taskId)!;
   assert.equal(instantStoredTask.formula_reference, '');
   const instantStoredBaseline = instantStoredTask.script_baseline as {
@@ -1720,7 +1728,7 @@ try {
   assert.equal(sameThemeUpdate.status, 200, sameThemeUpdate.raw);
   assert.deepEqual(sameThemeUpdate.body.task.materialRequirements, [],
     'submitting an unchanged theme must not reintroduce formula-owned material suggestions');
-  usePersistedLegacyRouting(instantTaskId);
+  await usePersistedLegacyRouting(instantTaskId);
   const instantStarted = await request(`/api/overseas/starter-198/social-content/tasks/${instantTaskId}/start`, {
     idempotencyKey: 'social-instant-start-001', body: { expectedVersion: sameThemeUpdate.body.task.version },
   });

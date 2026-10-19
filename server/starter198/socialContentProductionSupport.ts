@@ -467,7 +467,7 @@ export function existingAssetSupplyAdapters(): SocialAssetSupplyProviderAdapter[
       </svg>`;
       await sharp(Buffer.from(svg)).png().toFile(localPath);
       const referenceTiming = context.baselineScene.referenceStructure?.sourceTiming;
-      const duration = Math.max(1.2, Math.min(12,
+      const duration = Math.max(3, Math.min(12,
         Number(referenceTiming?.endSeconds || 0) - Number(referenceTiming?.startSeconds || 0) || 2.8));
       const videoPath = localPath.replace(/\.png$/i, '.mp4');
       const rendered = await runVisualFfmpeg([

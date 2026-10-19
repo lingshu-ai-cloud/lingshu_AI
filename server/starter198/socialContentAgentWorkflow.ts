@@ -550,7 +550,6 @@ function eligibleProductBudgetCandidate(supply:SocialAssetSupplyShotPlan,policyV
    &&spec!.productIdentity.groups.every(group=>group.referenceImageIds.length>0
      &&group.referenceImageIds.every(ref=>generation.productImageRefs.includes(ref)));
 }
-
 function capabilityCandidates(input: {
   policyVersion?:string;
   taskId: string;
@@ -828,7 +827,8 @@ function executionScene(input: {
       : primaryHook ? 'hook_fidelity'
         : matchingAsset || functionalAsset ? 'reuse_material'
           : topic?.kind === 'product_introduction' ? 'product_scene' : 'needs_capability';
-  const ordinaryCapability = topic?.kind === 'factory_footage'
+  const ordinaryCapability = ['motion_graphics', 'verified_fact_card'].includes(input.supply.sourceStrategy) ? capability(input.supply.sourceStrategy)
+    : topic?.kind === 'factory_footage'
     ? (input.supply.truthBoundary.customerEvidenceRequired ? undefined : capability('licensed_stock_asset'))
     : input.supply.function === 'call_to_action'
       ? capability('verified_fact_card') ?? capability('motion_graphics')

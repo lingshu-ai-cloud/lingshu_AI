@@ -1253,15 +1253,15 @@ export async function readSocialTaskDetail(input: {
   })();
   const storedRequirements = summary.theme
     ? publicMaterialRequirements(parseStoredMaterialRequirements(task.material_requirements)) : [];
-  const shotRequirements = projectShotMaterialRequirements({
+  // V2 discovers material gaps during review; its provisional baseline is not a user-confirmed request.
+  const shotRequirements = summary.brief.materialRoutingPolicyVersion === 'type-aware.v2' ? [] : projectShotMaterialRequirements({
     plan: assetSupplyPlan,
     shotMaterialMap,
     themeId: summary.theme?.themeId,
     aspectRatio: summary.brief.aspectRatio,
     recalculatedAt: summary.updatedAt,
   });
-  // Once a concrete shot plan exists it is the authoritative material demand.
-  // The old theme/formula column remains readable only for tasks without shots.
+  // A concrete shot plan is authoritative; the old theme/formula column is only for tasks without shots.
   const effectiveMaterialRequirements = shotRequirements.length ? shotRequirements : storedRequirements;
   return {
     ...summary,
