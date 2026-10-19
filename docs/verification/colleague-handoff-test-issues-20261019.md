@@ -225,3 +225,20 @@
 - 内容订单准入、投影、产品选择：17 个用例通过。
 - TypeScript：`pnpm exec tsc --noEmit` 通过（截至提交 `79f26bf6`）。
 - 架构棘轮：通过；完整架构检查仍有历史大文件超限，另行持续拆分。
+# 2026-10-19 剩余交接测试问题（续）
+
+## RESOLVED-026 Storyboard QA 测试证据未覆盖新增可见性检查
+
+- 命令：`pnpm test`，失败阶段 `test:storyboard-aigc`。
+- 实际：生产 QA 已要求产品镜头同时检查 `packaging_visibility` 和 `subject_visibility`，但首帧、自动复刻、分配与 E2E fixture 仍只返回旧的产品身份/布局/完整性三项，因而被 fail-closed 判为 `invalid_response`。
+- 归因：本地 checkpoint 强化了产品遮挡安全检查，却未同步完整测试入口中的证据 fixture；属于测试契约过期，不能删除新增检查。
+- 处理：补齐真实候选帧证据项，保留缺项即拒绝的安全边界。
+- 状态：已修复；定向 QA、自动复刻、分配和 mocked E2E 通过，待完整总测试复核。
+
+## RESOLVED-027 Storyboard 旧供应商回执恢复测试失败
+
+- 命令：`pnpm test`，失败阶段 `studioStoryboardReplay.contract.test.ts` / `studioStoryboardReplay.test.ts`。
+- 实际：源码契约仍寻找旧的无条件回执分支；隔离路由用例未返回既有供应商任务 ID。
+- 归因：两部分问题并存：源码契约仍绑定旧分支形态；实现会在供应商开关关闭时于恢复不确定回执前返回，丢失已有任务 ID。
+- 修复：不确定的已付费任务在无法查询供应商时返回原任务 ID 和处理中状态，不读取缺失媒体、不消耗新配额、不重复调用；契约改为验证当前分支顺序和 reserve-race 恢复。
+- 状态：已修复；隔离路由和源码契约均通过，供应商调用计数为 0，待完整总测试复核。
