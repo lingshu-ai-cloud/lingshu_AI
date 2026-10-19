@@ -10,6 +10,7 @@ const provisioning = source('../starter198/provisioningCompatibility.ts');
 const sourceOptions = source('../starter198/socialContentSourceOptions.ts');
 const observability = source('../runtime/socialOperatingObservability.ts');
 const readiness = source('../runtime/readiness.ts');
+const selectedStore = source('./index.ts');
 
 for (const [name, value] of [
   ['starter repository', repository],
@@ -31,5 +32,27 @@ assert.doesNotMatch(
   /if \(backend === 'postgres'\)[^;]+pbListStrict\('starter_198_access'/s,
   'PostgreSQL readiness must not validate migrated business collections through PocketBase',
 );
+
+assert.match(
+  selectedStore,
+  /supportsAtomicCompareAndSwap:\s*\(\)\s*=>\s*postgresStore\.supportsAtomicCompareAndSwap\?\.\(\)\s*\?\?\s*false/,
+  'PostgreSQL cutover must expose the selected PostgreSQL CAS capability',
+);
+assert.doesNotMatch(
+  selectedStore,
+  /supportsAtomicCompareAndSwap:\s*\(\)\s*=>\s*(?:true|Boolean\(postgresStore\.compareAndSwap\))/,
+  'PostgreSQL cutover must fail closed instead of inferring CAS support from a method reference',
+);
+
+const previousBackend = process.env.DATA_BACKEND;
+process.env.DATA_BACKEND = 'postgres';
+try {
+  const selected = await import('./index.js');
+  assert.equal(selected.dataBackend, 'postgres');
+  assert.equal(await selected.store.supportsAtomicCompareAndSwap?.(), true);
+} finally {
+  if (previousBackend === undefined) delete process.env.DATA_BACKEND;
+  else process.env.DATA_BACKEND = previousBackend;
+}
 
 console.log('PostgreSQL cutover routing contract passed');

@@ -205,6 +205,10 @@ function sortSql(sort?: string): string {
 }
 
 export class PostgresStore implements DataStore {
+  supportsAtomicCompareAndSwap(): boolean {
+    return true;
+  }
+
   async supportsAtomicOperationLease(): Promise<boolean> {
     try {
       const result = await this.db().query<{valid:boolean;key1:string;key2:string;key3:string;predicate:string}>(`

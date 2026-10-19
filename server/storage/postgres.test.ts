@@ -16,6 +16,7 @@ const executor: SqlExecutor = {
 };
 
 const store = new PostgresStore(executor);
+assert.equal(store.supportsAtomicCompareAndSwap(), true);
 const page = await store.list('workflow_runs', { where: { tenantId: 'tenant-a', status: 'ready' }, sort: '-updated', page: 1, perPage: 20 });
 assert.equal(page.totalItems, 1);
 assert.deepEqual(page.items[0], { id: 'r1', tenantId: 'tenant-a', status: 'ready' });
