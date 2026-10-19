@@ -56,7 +56,7 @@ assert.match(assistantUi, /const handleLauncherClick[\s\S]{0,500}openCurrentPage
 assert.match(assistantUi, /openAgent\(currentPageAgent, 'chat'\)/, 'the confirmed unified assistant opens the current-page conversation without an agent selector');
 assert.match(assistantUi, /<AssistantDecisionCenter[\s\S]{0,300}page=\{page\}/, 'the assistant decision feed must be scoped to the current page');
 assert.match(assistantUi, /data-global-assistant="launcher"[\s\S]{0,300}aria-label=\{mode === 'chat' \? '收起灵小枢对话' : '询问灵小枢'\}/, 'the launcher must expose its direct open/close conversation behavior');
-assert.doesNotMatch(assistantUi, /ASSISTANT_AUTO_RETRACT_MS|assistantPosition|launcherRetracted|data-global-assistant="edge-launcher"/, 'the assistant must not restore the obsolete draggable or auto-retract launcher');
+assert.doesNotMatch(assistantUi, /ASSISTANT_AUTO_RETRACT_MS|ASSISTANT_POSITION_KEY|assistantPosition|handlePointerDown/, 'the assistant must not restore the obsolete draggable or timer-driven auto-retract launcher');
 assert.match(assistantUi, /lingshu-assistant-performance/, 'content generation must be able to wake the assistant for a waiting-time performance');
 const enterpriseUi = read('src/components/EnterprisePage.tsx');
 assert.match(enterpriseUi, /function OptionSelector[\s\S]*?<Select[\s\S]*?mode=\{multiple \? 'multiple' : undefined\}[\s\S]*?allowClear[\s\S]*?options=/, 'enterprise selectable fields must use the shared accessible Ant single-select or multi-select control');
