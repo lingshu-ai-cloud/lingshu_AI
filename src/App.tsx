@@ -30,9 +30,8 @@ import type { EnterpriseProductsDeepLink } from './components/EnterprisePage';
 import RuntimeVersionBanner from './components/RuntimeVersionBanner';
 import { availableProductPage, PLATFORM_ADS_PAGE_IDS, PLATFORM_ADS_SURFACE_ENABLED } from './config/productSurfaceFlags';
 import { AGENT_PAGES, ROLE_PAGE_ACCESS, customerUnifiedAgent, firstUserText, isAdminSession, isExternalCustomerServiceDemoSession, isLocalCustomerReplyLab, loadConvs, loadPage, pagePreferenceScope, type AgentAction, type AgentType, type Conversation, type ConversationContext, type KickoffSignal, type Message, type RestoreSignal, type StarterAccessState } from './appSession';
+import { useSocialContentQueryNavigation } from './lib/useSocialContentQueryNavigation';
 
-// 页面仍然拆包，但本地预览会在浏览器空闲时逐个预热这些模块。显式 loader
-// 既供 React.lazy 使用，也让预加载和真正进入页面共享同一份浏览器模块缓存。
 const loadPlatformAdsPage = () => import('./components/PlatformAdsPage');
 const loadStrategyPage = () => import('./components/StrategyPage');
 const loadTrafficPage = () => import('./components/TrafficPage');
@@ -73,8 +72,7 @@ const SocialContentPreview = import.meta.env.DEV ? lazy(() => import('./dev/Soci
 const SmartBusinessPreview = import.meta.env.DEV ? lazy(() => import('./dev/SmartBusinessPreview')) : null;
 
 type PageModuleLoader = () => Promise<unknown>;
-const ADS_PAGES: Page[] = [...PLATFORM_ADS_PAGE_IDS];
-const INTEGRATION_PAGES: Page[] = ['plugins', 'channels', 'youtube'];
+const ADS_PAGES: Page[] = [...PLATFORM_ADS_PAGE_IDS], INTEGRATION_PAGES: Page[] = ['plugins', 'channels', 'youtube'];
 
 const PAGE_MODULE_LOADERS: Partial<Record<Page, PageModuleLoader[]>> = {
   digitalEmployees: [loadDigitalEmployeePage],
@@ -348,11 +346,7 @@ export default function App() {
       || detail?.directStudio);
   });
 
-  useEffect(() => {
-    const taskId = readSocialContentNavigationQueryTaskId(pageRef.current, window.location.search);
-    if (!taskId || !isSocialTaskContextPage(pageRef.current)) return;
-    attachSocialContentNavigationState(taskId, pageRef.current);
-  }, []);
+  useSocialContentQueryNavigation(pageRef.current);
 
   useEffect(() => {
     if (page === 'smartAssets' && (
