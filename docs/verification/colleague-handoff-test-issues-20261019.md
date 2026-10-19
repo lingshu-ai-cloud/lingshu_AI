@@ -111,6 +111,14 @@
 
 ## 已验证通过的相关范围
 
+## RESOLVED-015 灵小枢源码契约未跟随运行时辅助模块拆分
+
+- 命令：`pnpm exec tsx src/components/GlobalAssistant.contract.test.ts`
+- 实际：主线程常量、内部页面路由、冲突合并规则、气泡顺序样式、请求错误本地化和实时接入事实读取迁入 `assistant/globalAssistantRuntime.ts` 后，契约仍只扫描 `GlobalAssistant.tsx`，先后误报上述规则缺失。
+- 归因：持久化、路由和事实核验行为未改变，测试对旧单文件位置形成了无业务意义的耦合。
+- 修复：契约显式读取运行时职责模块，并继续验证主线程固定、错误提示优先级和实时事实边界。
+- 状态：已修复，待复跑确认。
+
 ## RESOLVED-014 应用外壳契约未跟随企业页签头结构
 
 - 命令：`pnpm exec tsx src/components/AppShell.contract.test.ts`

@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 
 const source = fs.readFileSync(new URL('./GlobalAssistant.tsx', import.meta.url), 'utf8');
+const runtimeSource = fs.readFileSync(new URL('./assistant/globalAssistantRuntime.ts', import.meta.url), 'utf8');
 const appSource = fs.readFileSync(new URL('../App.tsx', import.meta.url), 'utf8');
 const conversionPageSource = fs.readFileSync(new URL('./ConversionPage.tsx', import.meta.url), 'utf8');
 const trafficPageSource = fs.readFileSync(new URL('./TrafficPage.tsx', import.meta.url), 'utf8');
@@ -12,11 +13,11 @@ const assistantGuidesSource = fs.readFileSync(new URL('../lib/assistantGuides.ts
 const globalStylesSource = fs.readFileSync(new URL('../index.css', import.meta.url), 'utf8');
 const layoutSource = fs.readFileSync(new URL('./Layout.tsx', import.meta.url), 'utf8');
 
-function sourceSection(startMarker: string, endMarker: string, label: string) {
-  const start = source.indexOf(startMarker);
-  const end = source.indexOf(endMarker, start + startMarker.length);
+function sourceSection(startMarker: string, endMarker: string, label: string, target = source) {
+  const start = target.indexOf(startMarker);
+  const end = endMarker ? target.indexOf(endMarker, start + startMarker.length) : target.length;
   assert.ok(start >= 0 && end > start, `无法定位 ${label}`);
-  return source.slice(start, end);
+  return target.slice(start, end);
 }
 
 for (const surface of ['floating-reminder', 'conversation', 'decision']) {
@@ -192,13 +193,13 @@ assert.match(decisionActionResultSource, /assistantDecisionExecutionFeedback\(ex
 assert.match(decisionActionResultSource, /setMessages\(PRIMARY_ASSISTANT_THREAD,[\s\S]{0,240}role: 'assistant'/, '已核验结果只追加一次普通助手气泡');
 assert.match(decisionActionResultSource, /closeDecisionDialog\(\)[\s\S]{0,120}persistThread\(PRIMARY_ASSISTANT_THREAD\)/, '结果到达后关闭已处理详情并保存对话状态');
 
-assert.match(source, /const PRIMARY_ASSISTANT_THREAD:\s*OrbitAgentId\s*=\s*'business'/, '所有对话必须聚合到 business 主线程');
+assert.match(runtimeSource, /const PRIMARY_ASSISTANT_THREAD:\s*OrbitAgentId\s*=\s*'business'/, '所有对话必须聚合到 business 主线程');
 const persistThreadSource = sourceSection('const persistThread = useCallback', 'const openAgent', '助手线程持久化队列');
 assert.match(persistThreadSource, /if \(queue\.running\) return/, '同一线程保存必须串行执行，不能并发全量覆盖');
 assert.match(persistThreadSource, /expectedVersion/, '每次线程保存必须携带服务端版本前置条件');
 assert.match(persistThreadSource, /response\.status === 409/, '版本冲突必须进入显式合并流程');
 assert.match(persistThreadSource, /mergeAssistantThread\(remote, latestLocal\)/, '冲突恢复必须合并服务端状态与最新本地输入');
-assert.match(source, /messages:\s*local\.messages\.slice\(-MAX_PERSISTED_MESSAGES\)/, '版本冲突只能保留当前会话消息，不得把远端旧历史追加到最新回复后');
+assert.match(runtimeSource, /messages:\s*local\.messages\.slice\(-MAX_PERSISTED_MESSAGES\)/, '版本冲突只能保留当前会话消息，不得把远端旧历史追加到最新回复后');
 assert.match(persistThreadSource, /queue\.pending = cloneAssistantThread\(merged\)/, '合并后的最新状态必须重新排队保存');
 assert.match(persistThreadSource, /assistantPersistenceRetryDelay\(queue\.retryAttempt\)/, '临时失败必须使用有界指数退避重新保存');
 assert.match(persistThreadSource, /queue\.pending = cloneAssistantThread\(useAssistantStore\.getState\(\)\.threads\[agentId\]\)/, '失败重试必须始终携带最新本地快照');
@@ -214,9 +215,9 @@ assert.match(source, /document\.addEventListener\('visibilitychange', handleVisi
 assert.match(source, /window\.addEventListener\('pagehide', flushPendingThreads\)/, '页面离开前必须触发生命周期安全保存');
 const openAgentSource = sourceSection('const openAgent = useCallback', 'const openCurrentPageAgent', '打开灵小枢会话');
 assert.match(openAgentSource, /const agentId = PRIMARY_ASSISTANT_THREAD/, '从任一页面打开灵小枢都必须读取 business 主线程');
-assert.match(source, /if \(page === 'socialInspiration' \|\| page === 'scriptLibrary'\) return 'director'/, '页面仍需保留内部业务路由');
-assert.match(source, /if \(page === 'smartAssets'\) return 'content'/, '内容制作页仍需路由到内部内容能力');
-assert.match(source, /if \(page === 'conversion'[^\n]+return 'customer'/, '客户相关页面仍需路由到内部客户能力');
+assert.match(runtimeSource, /if \(page === 'socialInspiration' \|\| page === 'scriptLibrary'\) return 'director'/, '页面仍需保留内部业务路由');
+assert.match(runtimeSource, /if \(page === 'smartAssets'\) return 'content'/, '内容制作页仍需路由到内部内容能力');
+assert.match(runtimeSource, /if \(page === 'conversion'[^\n]+return 'customer'/, '客户相关页面仍需路由到内部客户能力');
 
 assert.match(source, /scroller\.scrollHeight - scroller\.scrollTop - scroller\.clientHeight <= 24/, '必须识别用户是否仍在跟随最新消息');
 assert.match(source, /!activeThread\.isFollowingLatest/, '用户浏览历史时不得强制滚动到底部');
@@ -242,7 +243,7 @@ assert.match(welcomeBubbleSource, /ls-assistant-bubble-enter/, '欢迎语必须�
 assert.match(source, /welcomeBubbleVisible && !activeThread\.messages\.length/, '线程恢复出任意消息后必须立即隐藏欢迎语');
 assert.doesNotMatch(welcomeBubbleSource, /\b(?:sticky|fixed|absolute)\b/, '欢迎语不得置顶、固定或脱离消息滚动流');
 
-assert.match(source, /function assistantBubbleStyle\(index: number\)[\s\S]*Math\.min\(Math\.max\(0, index\), 6\)[\s\S]*--assistant-bubble-delay': `\$\{boundedIndex \* 15\}ms`/, '气泡进入顺序必须使用 15ms 间隔并在第 6 项封顶');
+assert.match(runtimeSource, /function assistantBubbleStyle\(index: number\)[\s\S]*Math\.min\(Math\.max\(0, index\), 6\)[\s\S]*--assistant-bubble-delay': `\$\{boundedIndex \* 15\}ms`/, '气泡进入顺序必须使用 15ms 间隔并在第 6 项封顶');
 for (const bubble of ['welcome', 'loading', 'task-summary', 'weekly-plan-kickoff', 'decision-summary']) {
   assert.match(source, new RegExp(`data-assistant-bubble=["']${bubble}["']`), `${bubble} 必须具有稳定的气泡语义标记`);
 }
@@ -301,7 +302,7 @@ assert.match(sendSource, /weeklyPlanKickoffAvailable && isWeeklyPlanKickoffReque
 assert.doesNotMatch(source, /AssistantDecisionMemoryPanel|AssistantDecisionSaveButton|useAssistantDecisionMemory/, '对话记忆由后台维护，灵小枢首屏不得暴露记忆管理工具');
 assert.match(conversationContextSource, /较早用户原话/, '历史用户约束必须保留原文且不得升级为已核验事实');
 
-const responseErrorSource = sourceSection('async function responseErrorMessage', '\n}\n\nfunction todoToneClass', '助手请求错误提示');
+const responseErrorSource = sourceSection('async function responseErrorMessage', '', '助手请求错误提示', runtimeSource);
 const localizedMessageIndex = responseErrorSource.indexOf("if (typeof data?.message === 'string'");
 const rawErrorIndex = responseErrorSource.indexOf('if (data?.error) return data.error;');
 assert.ok(localizedMessageIndex >= 0 && rawErrorIndex > localizedMessageIndex, '额度错误特殊处理后必须优先展示服务端本地化 message，而不是原始错误码');
@@ -328,7 +329,7 @@ assert.match(
   '通用对话规范必须禁止模型声称写操作成功',
 );
 
-const integrationFactsSource = sourceSection('async function loadLiveIntegrationFacts', 'function mergeConsecutiveAssistant', '实时接入事实');
+const integrationFactsSource = sourceSection('async function loadLiveIntegrationFacts', 'function mergeConsecutiveAssistant', '实时接入事实', runtimeSource);
 assert.match(integrationFactsSource, /\(socialAccounts \?\? \[\]\)\.filter\([^\n]+=== 'connected'\)/, '社媒账号只可统计 connected 状态');
 assert.match(integrationFactsSource, /\(youtubeAccounts \?\? \[\]\)\.filter\([^\n]+=== 'connected'\)/, 'YouTube 账号只可统计 connected 状态');
 assert.match(integrationFactsSource, /\[\.\.\.connectedSocialAccounts, \.\.\.connectedYoutubeAccounts\]\.reduce/, '曝光汇总只能使用已接通账号');
@@ -433,7 +434,7 @@ assert.match(presentResponseSource, /if \(!shouldNotifyAssistant\(notificationRe
 assert.match(presentResponseSource, /WORKFLOW_MUTATION_ACTIONS\.has\(response\.actionId\)[\s\S]*actionId: 'view_status'/, '任一成功 workflow mutation 后必须读取一次最新权威状态，不能依赖响应是否携带下一对象动作');
 assert.match(presentResponseSource, /threads\[agentId\] !== threadAfterMutation/, '跨对象状态回读必须避免覆盖用户后续操作');
 assert.match(presentResponseSource, /actionCardToTaskCard\(statusResponse\.card, statusResponse, CURRENT_STATUS_TASK_ID\)/, '新对象状态必须放入独立权威状态卡');
-const mutationActionsSource = sourceSection('const WORKFLOW_MUTATION_ACTIONS', ']);', '工作流 mutation 动作集合');
+const mutationActionsSource = sourceSection('const WORKFLOW_MUTATION_ACTIONS', ']);', '工作流 mutation 动作集合', runtimeSource);
 assert.doesNotMatch(mutationActionsSource, /'view_status'/, 'view_status 不得被归类为 workflow mutation，避免状态回读递归');
 assert.doesNotMatch(presentResponseSource, /actionCardToTaskCard\(statusResponse\.card, statusResponse, stableTaskId\)/, '新对象状态绝不能回填原 mutation 卡');
 
