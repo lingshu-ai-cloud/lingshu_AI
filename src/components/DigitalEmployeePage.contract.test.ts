@@ -15,6 +15,7 @@ import { DigitalEmployeeApiError } from '../lib/digitalEmployeeApi.js';
 import { nodeDeepLink } from './WeeklyExecutionNodes.js';
 
 const pageSource = fs.readFileSync('src/components/DigitalEmployeePage.tsx', 'utf8');
+const weeklyPlanConfirmationSource = fs.readFileSync('src/components/WeeklyPlanConfirmationCard.tsx', 'utf8');
 const smartBusinessSource = fs.readFileSync('src/components/SmartBusinessDashboard.tsx', 'utf8');
 const taskPreviewCardsSource = fs.readFileSync('src/components/smartBusiness/TaskPreviewCards.tsx', 'utf8');
 const smartBusinessFeatureSource = smartBusinessSource + taskPreviewCardsSource;
@@ -395,9 +396,9 @@ assert.match(weeklyPlanCalendarSource, /publication\?\.title/, 'weekly calendar 
 assert.match(weeklyPlanCalendarSource, /planningEvidence\?\.referenceThumbnailUrl/, 'weekly calendar cards must render persisted viral thumbnails');
 assert.doesNotMatch(pageSource, /const updateWeeklyPlanProduct|const refreshWeeklyViralPlan/, 'removed plan-detail editing actions must not survive as unreachable page code');
 assert.match(weeklyPlanCalendarSource, /补齐 \{missingReferences\} 条爆款/, 'a weekly plan with missing references must expose an actionable repair instead of a dead-end warning');
-assert.match(pageSource, /预计成本/, 'the compact weekly-plan summary must retain its cost estimate');
+assert.match(weeklyPlanConfirmationSource, /预计成本/, 'the compact weekly-plan summary must retain its cost estimate');
 assert.doesNotMatch(pageSource, /aria-label="Agent To Do List"/, 'the removed weekly-plan detail page must not retain its embedded Agent task list');
-assert.match(pageSource, /<WeeklyGoalScheduleCards plans=\{form.videoPlans/, 'the weekly proposal must retain the latest shared schedule and its matrix editing entry');
+assert.match(weeklyPlanConfirmationSource, /<WeeklyGoalScheduleCards plans=\{plans\}/, 'the weekly proposal must retain the latest shared schedule and its matrix editing entry');
 assert.doesNotMatch(pageSource, /<SmartOperationsAccountRail/, 'the digital employee calendar must retain the latest layout without an account selector');
 assert.match(weeklyPlanCalendarSource, /plans\.length[\s\S]{0,300}条内容/, 'the weekly calendar must expose the conserved total publishing count');
 assert.match(weeklyPlanCalendarSource, /plans\.map[\s\S]{0,650}plan\.plannedPublishDate/, 'the weekly calendar must adapt every publishing version with its real planned date');
@@ -410,7 +411,7 @@ assert.match(confirmWeeklyPlanSource, /approveGoal\(goal\.id, data\.plan\.busine
 assert.match(digitalEmployeeApiSource, /approveGoal:[\s\S]{0,900}AbortSignal\.timeout\(12_000\)/, 'weekly launch must stop indefinite loading and hand unknown results to read-only reconciliation');
 assert.match(inspirationSource, /receiveReference[\s\S]{0,5000}setSelectedVideo\(match\)/, 'Inspiration Center must open the exact requested viral-video detail');
 assert.match(inspirationSource, /weekly-plan-snapshot[\s\S]{0,600}setSelectedVideo\(snapshot\)/, 'deleted references must still open the frozen weekly-plan analysis snapshot');
-assert.match(pageSource, /具体缺少/, 'weekly-plan validation must name the missing business fields instead of showing a generic warning');
+assert.match(weeklyPlanConfirmationSource, /具体缺少/, 'weekly-plan validation must name the missing business fields instead of showing a generic warning');
 assert.match(pageSource, /page === "socialPlanning"[\s\S]{0,160}void controlWeeklyWork\(\)/, 'the account-matrix next step must share the direct-start/new-goal control instead of reopening the removed detail page');
 assert.match(weeklyPlanControlsSource, /查看周任务/, 'an active weekly plan must expose a direct task-calendar action');
 assert.match(weeklyPlanControlsSource, /setWorkspaceView\("matrix"\)[\s\S]{0,500}getElementById\("agent-weekly-calendar"\)/, 'viewing weekly tasks must open and focus the Agent weekly calendar instead of an earlier duplicate schedule label');
@@ -470,9 +471,9 @@ assert.match(pageSource, /<VideoPlanEditor[^>]{0,300}themeWorkflow/, 'Digital Em
 for (const persona of ['B2B 从零起步', 'B2B 已有基础', '品牌影响', 'DTC 直接销售']) {
   assert.match(taskPackagePresetSource, new RegExp(persona), `weekly task packages must include ${persona}`);
 }
-assert.match(pageSource, /确认周计划/);
-assert.match(pageSource, /灵小枢已生成本周默认方案/, 'weekly planning should start from a default proposal');
-assert.match(pageSource, /调整本周设置/);
+assert.match(weeklyPlanConfirmationSource, /确认周计划/);
+assert.match(weeklyPlanConfirmationSource, /灵小枢已生成本周默认方案/, 'weekly planning should start from a default proposal');
+assert.match(weeklyPlanConfirmationSource, /调整本周设置/);
 assert.match(pageSource, /系统生成的目标设置（需要时可修改）/);
 assert.doesNotMatch(pageSource, /更多目标设置（可选）/);
 assert.match(pageSource, /本周最想解决什么/);
