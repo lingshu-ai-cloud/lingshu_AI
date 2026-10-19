@@ -1,5 +1,4 @@
 import {INITIAL_CAPACITY_SCHEDULE_REQUIRED} from './weeklyInitialScheduleGate.js';
-import {canonicalWeeklyProductionPublication} from '../runtime/weeklyContentProductionIdentity.js';
 import {normalizeCustomerTaskDependencies} from './customerTaskDependencies.js';
 import {createWeeklyExecutionContinuationService} from './weeklyExecutionContinuations.js';
 import {withExecutionPackageGate,assertExecutionPackageGate,executionPackageFrozen} from './weeklyExecutionGate.js';
@@ -36,6 +35,7 @@ import { decideSocialContentArtifact } from '../starter198/socialContentOutputs.
 import { weeklyReviewWindowBounds } from '../socialReview/weeklyReviewTiming.js';
 import {ensureWeeklyTaskWorkspaces} from './weeklyTaskWorkspaces.js';
 import {WEEKLY_AUTOMATION_TEMPLATE} from '../../shared/weeklyAutomationTemplate.js';
+import { applySharedMaterialPreparation, dailyRollingStart, preproductionLocalDate, publicationLocalDate, rollingDayForItems, shareOriginalProductionGraph } from './weeklyExecutionGraph.js';
 import {
   acquireDurableOperationLease,
   releaseDurableOperationLease,
@@ -289,61 +289,6 @@ function publicationBlockers(item: SocialWeeklyPublicationTask): string[] {
     !item.metricTargets.length ? 'metric_targets_required' : null,
     !item.publishWindow ? 'publish_window_required' : null,
   ].filter((value): value is string => Boolean(value));
-}
-
-const publicationLocalDate = (item: SocialWeeklyPublicationTask): string => (
-  publicationInstant(item.publishWindow) === null || !item.publishWindow ? '' : item.publishWindow.slice(0, 10)
-);
-
-/** Stable preproduction identity only; this never fills publishWindow. */
-const preproductionLocalDate = (item: SocialWeeklyPublicationTask, pkg: WeeklyOperatingPackage): string => (
-  publicationLocalDate(item) || pkg.weekStart
-);
-
-/**
- * A weekly package freezes capacity and delivery targets, but discovery is a
- * daily input. Keep the calendar date carried by the zoned publication window
- * so that a later day's script cannot silently consume a Monday-only crawl.
- */
-const rollingDayForItems = (items: SocialWeeklyPublicationTask[], pkg: WeeklyOperatingPackage): string => (
-  items.map(item => preproductionLocalDate(item,pkg)).sort()[0] ?? pkg.weekStart
-);
-
-const DAILY_ROLLING_LEAD_MS = 9.5 * 60 * 60_000;
-const dailyRollingStart = (items: SocialWeeklyPublicationTask[]): number | null => {
-  const instants = items.map(item => publicationInstant(item.publishWindow)).filter((value): value is number => value !== null);
-  return instants.length ? Math.min(...instants) - DAILY_ROLLING_LEAD_MS : null;
-};
-
-/** A repeated immutable request id is the only authority for treating material
- * as shared. Descriptions are deliberately ignored: similar prose does not
- * prove that the bytes, rights or review request are the same. Each consumer
- * keeps its executable binding task; the earliest consumer's preparation is
- * the single barrier that waits for every binding and gates every script. */
-function applySharedMaterialPreparation(tasks:WeeklyExecutionTask[],publications:SocialWeeklyPublicationTask[]):void{
- const byRequest=new Map<string,SocialWeeklyPublicationTask[]>();
- for(const publication of publications)for(const requestId of publication.materialRequirement?.requestIds??[])byRequest.set(requestId,[...(byRequest.get(requestId)??[]),publication]);
- for(const [requestId,rawConsumers] of byRequest){const consumers=[...new Map(rawConsumers.map(p=>[p.publicationTaskId,p])).values()];if(consumers.length<2)continue;
-  const ordered=consumers.sort((a,b)=>(publicationInstant(a.publishWindow)??Infinity)-(publicationInstant(b.publishWindow)??Infinity)||a.publicationTaskId.localeCompare(b.publicationTaskId));
-  const preparationByPublication=new Map(ordered.map(publication=>{const rows=tasks.filter(task=>task.publicationTaskId===publication.publicationTaskId&&task.schedule.stepKind==='material_preparation');if(rows.length!==1)throw new SocialProgramError('weekly_shared_material_preparation_ambiguous',409,'共享素材缺少唯一可执行准备任务。');return[publication.publicationTaskId,rows[0]!] as const;}));
-  const canonical=preparationByPublication.get(ordered[0]!.publicationTaskId)!;
-  const preparationIds=[...preparationByPublication.values()].map(task=>task.taskId);
-  canonical.dependsOnTaskIds=[...new Set([...canonical.dependsOnTaskIds,...preparationIds.filter(id=>id!==canonical.taskId)])];
-  const barrier={requestId,consumerPublicationTaskIds:ordered.map(p=>p.publicationTaskId),preparationTaskIds:preparationIds};const prior=Array.isArray(canonical.inputSnapshot.sharedMaterialBarriers)?canonical.inputSnapshot.sharedMaterialBarriers:[];canonical.inputSnapshot={...canonical.inputSnapshot,sharedMaterialBarrier:canonical.inputSnapshot.sharedMaterialBarrier??barrier,sharedMaterialBarriers:[...prior,barrier]};
-  for(const publication of ordered){const scripts=tasks.filter(task=>task.publicationTaskId===publication.publicationTaskId&&task.schedule.stepKind==='script');if(scripts.length!==1)throw new SocialProgramError('weekly_shared_material_script_ambiguous',409,'共享素材消费者缺少唯一脚本任务。');scripts[0]!.dependsOnTaskIds=[...new Set([...scripts[0]!.dependsOnTaskIds,canonical.taskId])];}
- }
-}
-
-function shareOriginalProductionGraph(pkg:WeeklyOperatingPackage,tasks:WeeklyExecutionTask[]){
- if(pkg.socialContentPackage.productionIdentityVersion!=='shared-original.v1')return tasks;
- const productionSteps=new Set(['material_preparation','material_readiness','script','storyboard','asset_generation','video_generation','quality_check','rework','template_extraction','template_performance_validation']);
- const replacements=new Map<string,string>(),removed=new Set<string>(),conflicts=new Set<string>();
- for(const pub of pkg.socialContentPackage.publicationTasks.filter(p=>!p.inventoryReuseRef)){
-   const roots=pkg.socialContentPackage.publicationTasks.filter(p=>!p.inventoryReuseRef&&p.motherContentId===pub.motherContentId&&!p.adaptationOfPublicationTaskId);if(roots.length!==1)throw new SocialProgramError('weekly_content_original_identity_ambiguous',409,'同一原创内容必须有唯一生产身份。');const root=roots[0]!;if(root.publicationTaskId===pub.publicationTaskId)continue;
-   try{canonicalWeeklyProductionPublication(pkg,pub.publicationTaskId);}catch(error){if(error instanceof Error&&error.message==='weekly_content_original_contract_conflict')conflicts.add(pub.publicationTaskId);else throw error;}
-   for(const task of tasks.filter(t=>t.publicationTaskId===pub.publicationTaskId&&productionSteps.has(t.schedule.stepKind))){const canonical=tasks.filter(t=>t.publicationTaskId===root.publicationTaskId&&t.schedule.stepKind===task.schedule.stepKind);if(canonical.length!==1)throw new SocialProgramError('weekly_content_original_stage_ambiguous',409,'共享原创缺少唯一生产节点。');replacements.set(task.taskId,canonical[0]!.taskId);removed.add(task.taskId);}
- }
- return tasks.filter(t=>!removed.has(t.taskId)).map(task=>({...task,...(task.schedule.stepKind==='user_approval'&&pkg.socialContentPackage.publicationTasks.some(p=>p.publicationTaskId===task.publicationTaskId&&p.adaptationOfPublicationTaskId)?{scope:'adaptation' as const}:{}),dependsOnTaskIds:[...new Set(task.dependsOnTaskIds.map(id=>replacements.get(id)??id))].filter(id=>id!==task.taskId),...(conflicts.has(task.publicationTaskId??'')&&task.schedule.stepKind==='user_approval'?{ownBlockingReasons:[...task.ownBlockingReasons,'weekly_content_original_contract_conflict']}:{}),inputSnapshot:{...task.inputSnapshot,...(typeof task.inputSnapshot.sourceTaskId==='string'?{sourceTaskId:replacements.get(task.inputSnapshot.sourceTaskId)??task.inputSnapshot.sourceTaskId}:{})}}));
 }
 
 /** Convert the seven package summaries into independently durable units. */
