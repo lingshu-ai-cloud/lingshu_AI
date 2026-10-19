@@ -636,7 +636,9 @@ export default function App() {
           delete nextHistoryState.weeklyContentTarget;
         }
         if (nextPage === 'smartAssets' && detail.contentCreationRequest
-          && (!detail.socialContentTaskId || (detail.contentCreationRequest.creationPath === 'viral_replication' && detail.directStudio === false))) {
+          && (!detail.contentCreationRequest.continueProjectId
+            || !detail.socialContentTaskId
+            || (detail.contentCreationRequest.creationPath === 'viral_replication' && detail.directStudio === false))) {
           try { localStorage.removeItem('ow_studio_open_project'); } catch { /* ignore */ }
           const freshUrl = new URL(window.location.href);
           freshUrl.searchParams.delete('project');

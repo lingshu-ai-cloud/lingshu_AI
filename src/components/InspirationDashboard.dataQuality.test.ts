@@ -110,5 +110,7 @@ assert.match(videoCardSource, /hasVisibleSignals[^]*?Object\.values\(visibleSign
 assert.match(componentSource, /aria-label="内容标签"[^]*?video\.tags\.map/, '爆款 hashtag 必须集中展示在详情顶部');
 assert.match(componentSource, /startInspirationCreation[^]*?requestExactFullAnalysis/, '未完成详细分析的视频点击复刻时必须自动补齐分析');
 assert.match(componentSource, /detailCreationReady =[^;]*exactQuality\.ready && !pending/, '详情复刻入口不能依赖可失败的交接状态读取');
+assert.match(componentSource, /const openTask = \(taskId: string\)[^]*?directStudio: true[^]*?continueTaskId: taskId/, '爆款复刻任务创建后必须直接进入生产工作台');
+assert.doesNotMatch(componentSource, /title: `\$\{video\.title \|\| '灵感视频'\} · 爆款裂变`/, '生产任务标题不得继续使用旧的“爆款裂变”名称');
 
 console.log('InspirationDashboard data-quality tests passed');

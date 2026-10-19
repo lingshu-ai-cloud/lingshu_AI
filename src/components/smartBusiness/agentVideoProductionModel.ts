@@ -90,12 +90,26 @@ export type VideoProductionLane = {
   previewVideoUrl: string | null;
   tasks: AgentCalendarTask[];
   stages: Record<VideoProductionStageKey, AgentCalendarTask[]>;
+  stageProjections: VideoProductionStageProjection[];
   status: AgentCalendarTask['status'];
   completed: number;
   total: number;
+  cost: { status: 'settled' | 'estimated' | 'unavailable'; cny: number | null };
 };
 
-const terminal = new Set<AgentCalendarTask['status']>(['completed', 'cancelled', 'no_data']);
+export type VideoProductionDisplayStatus = AgentCalendarTask['status'] | 'waiting_upstream' | 'not_created';
+
+export type VideoProductionStageProjection = {
+  stage: VideoProductionStage;
+  tasks: AgentCalendarTask[];
+  primaryTask: AgentCalendarTask | null;
+  actualStatus: AgentCalendarTask['status'] | null;
+  displayStatus: VideoProductionDisplayStatus;
+  fulfilled: boolean;
+  upstreamReady: boolean;
+};
+
+const fulfilledTerminal = new Set<AgentCalendarTask['status']>(['completed', 'no_data']);
 
 export function productionStageForTask(task: AgentCalendarTask): VideoProductionStage | null {
   return VIDEO_PRODUCTION_STAGES.find(stage => stage.steps.includes(task.executionStep || '')) ?? null;
@@ -129,12 +143,49 @@ function cleanVideoTitle(task: AgentCalendarTask): string | null {
   return candidate && !/待编导明确|待确认/.test(candidate) ? candidate : null;
 }
 
-function laneStatus(tasks: AgentCalendarTask[]): AgentCalendarTask['status'] {
+function stageActualStatus(tasks: AgentCalendarTask[]): AgentCalendarTask['status'] | null {
+  if (!tasks.length) return null;
   if (tasks.some(task => task.status === 'failed')) return 'failed';
   if (tasks.some(task => task.status === 'blocked')) return 'blocked';
   if (tasks.some(task => task.status === 'active')) return 'active';
-  if (tasks.length && tasks.every(task => terminal.has(task.status))) return 'completed';
+  if (tasks.some(task => task.status === 'planned')) return 'planned';
+  if (tasks.every(task => fulfilledTerminal.has(task.status))) return tasks.every(task => task.status === 'no_data') ? 'no_data' : 'completed';
+  if (tasks.every(task => task.status === 'cancelled')) return 'cancelled';
   return 'planned';
+}
+
+export function projectVideoProductionStages(stages: Record<VideoProductionStageKey, AgentCalendarTask[]>): VideoProductionStageProjection[] {
+  let upstreamReady = true;
+  return VIDEO_PRODUCTION_STAGES.map(stage => {
+    const tasks = stages[stage.key];
+    const actualStatus = stageActualStatus(tasks);
+    const primaryTask = tasks.find(item => ['failed', 'blocked', 'active'].includes(item.status)) ?? tasks.at(-1) ?? null;
+    const fulfilled = upstreamReady && tasks.length > 0 && tasks.every(task => fulfilledTerminal.has(task.status));
+    const displayStatus: VideoProductionDisplayStatus = !tasks.length
+      ? 'not_created'
+      : !upstreamReady && !['failed', 'blocked'].includes(actualStatus || '')
+        ? 'waiting_upstream'
+        : actualStatus || 'planned';
+    const projection = { stage, tasks, primaryTask, actualStatus, displayStatus, fulfilled, upstreamReady };
+    upstreamReady = fulfilled;
+    return projection;
+  });
+}
+
+function laneStatus(projections: VideoProductionStageProjection[]): AgentCalendarTask['status'] {
+  if (projections.some(stage => stage.displayStatus === 'failed')) return 'failed';
+  if (projections.some(stage => stage.displayStatus === 'blocked')) return 'blocked';
+  if (projections.some(stage => stage.displayStatus === 'active')) return 'active';
+  if (projections.length && projections.every(stage => stage.fulfilled)) return 'completed';
+  return 'planned';
+}
+
+function laneCost(tasks: AgentCalendarTask[]): VideoProductionLane['cost'] {
+  const settled = tasks.map(task => task.settledCostCny).find(value => Number.isFinite(value) && Number(value) >= 0);
+  if (settled !== undefined) return { status: 'settled', cny: Number(settled) };
+  const estimated = tasks.map(task => task.estimatedCostCny).find(value => Number.isFinite(value) && Number(value) >= 0);
+  if (estimated !== undefined) return { status: 'estimated', cny: Number(estimated) };
+  return { status: 'unavailable', cny: null };
 }
 
 function emptyStages(): Record<VideoProductionStageKey, AgentCalendarTask[]> {
@@ -162,6 +213,7 @@ export function buildVideoProductionLanes(tasks: AgentCalendarTask[]): { lanes: 
       const stage = productionStageForTask(task);
       if (stage) stages[stage.key].push(task);
     }
+    const stageProjections = projectVideoProductionStages(stages);
     const explicitVideoTaskId = ordered.find(task => task.videoTaskId)?.videoTaskId;
     const videoTaskId = explicitVideoTaskId || (id.startsWith('publication:') ? id.slice('publication:'.length) : null);
     const title = ordered.map(cleanVideoTitle).find(Boolean) || `视频任务 ${index + 1}`;
@@ -173,9 +225,10 @@ export function buildVideoProductionLanes(tasks: AgentCalendarTask[]): { lanes: 
       publishWindow: ordered.find(task => task.publishWindow)?.publishWindow ?? null,
       previewThumbnailUrl: ordered.find(task => task.previewThumbnailUrl)?.previewThumbnailUrl ?? null,
       previewVideoUrl: ordered.find(task => task.previewVideoUrl)?.previewVideoUrl ?? null,
-      tasks: ordered, stages, status: laneStatus(ordered),
-      completed: ordered.filter(task => terminal.has(task.status)).length,
-      total: ordered.length,
+      tasks: ordered, stages, stageProjections, status: laneStatus(stageProjections),
+      completed: stageProjections.filter(stage => stage.fulfilled).length,
+      total: VIDEO_PRODUCTION_STAGES.length,
+      cost: laneCost(ordered),
     };
   }).sort((left, right) => {
     const severity = (lane: VideoProductionLane) => lane.status === 'failed' ? 0 : lane.status === 'blocked' ? 1 : lane.status === 'active' ? 2 : lane.status === 'planned' ? 3 : 4;

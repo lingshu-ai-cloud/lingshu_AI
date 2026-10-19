@@ -34,6 +34,10 @@ export type AgentCalendarTask = {
   videoTitle?: string;
   previewThumbnailUrl?: string;
   previewVideoUrl?: string;
+  /** Per-video provider cost evidence. It is converted to points only for display. */
+  estimatedCostCny?: number | null;
+  settledCostCny?: number | null;
+  costStatus?: 'estimated' | 'awaiting_settlement' | 'settled' | 'unavailable';
   accountId?: string;
   publishWindow?: string;
   enterpriseFactExceptionId?:string;

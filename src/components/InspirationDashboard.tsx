@@ -4607,7 +4607,7 @@ export default function InspirationDashboard({ onScriptPanelOpen, onScriptPanelC
     const openTask = (taskId: string) => {
       window.dispatchEvent(new CustomEvent('lingshu:navigate', { detail: {
         page: 'smartAssets', view: 'create',
-        directStudio: false,
+        directStudio: true,
         socialContentTaskId: taskId,
         socialContentPage: 'smartAssets',
         contentCreationRequest: {
@@ -4619,7 +4619,7 @@ export default function InspirationDashboard({ onScriptPanelOpen, onScriptPanelC
           managedMode: 'one_click_managed',
           continueTaskId: taskId,
           prefill: {
-            title: `${video.title || '灵感视频'} · 爆款裂变`,
+            title: `${video.title || '灵感视频'} · 爆款复刻`,
             topic: video.title || '',
             referenceLinks: [video.sourceUrl || video.videoUrl || ''].filter(Boolean),
             platforms: video.platform ? [video.platform] : undefined,

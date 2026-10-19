@@ -11,5 +11,7 @@ assert.match(source, /else setSmartAssetsWorkflowContext\(null\)/,
   'restoring a generic Studio entry must clear stale run/task context');
 assert.doesNotMatch(source, /返回上一页（保留查看位置）/,
   'the global Back control must not promise state retention for pages that unmount');
+assert.match(source, /!detail\.contentCreationRequest\.continueProjectId[\s\S]{0,500}localStorage\.removeItem\('ow_studio_open_project'\)[\s\S]{0,300}searchParams\.delete\('project'\)/,
+  'a fresh direct-studio request must clear stale project state before opening production');
 
 console.log('application history task-context reset contract passed');

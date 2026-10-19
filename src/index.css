@@ -1037,6 +1037,45 @@
 .replication-workbench-header-actions :where(button, .ant-btn, select) { min-height: 44px; }
 .replication-workbench > footer { min-height: 76px; padding-top: 12px; padding-bottom: 12px; }
 .replication-workbench > footer button { min-height: 44px; }
+
+/* Digital-human recording guide: keep the subject framed for a stable avatar. */
+[aria-label="统一人物资料"] .aspect-video:not(:has(video[controls])) {
+  position: relative;
+}
+[aria-label="统一人物资料"] .aspect-video:not(:has(video[controls]))::before {
+  position: absolute;
+  z-index: 2;
+  top: 12%;
+  bottom: 16%;
+  left: 50%;
+  width: clamp(160px, 34%, 260px);
+  transform: translateX(-50%);
+  border: 2px dashed rgb(255 255 255 / 78%);
+  border-radius: 48% 48% 24% 24%;
+  box-shadow: 0 0 0 999px rgb(0 0 0 / 8%);
+  content: "";
+  pointer-events: none;
+}
+[aria-label="统一人物资料"] .aspect-video:not(:has(video[controls]))::after {
+  position: absolute;
+  z-index: 3;
+  right: 16px;
+  bottom: 16px;
+  left: 16px;
+  width: fit-content;
+  max-width: calc(100% - 32px);
+  margin: auto;
+  padding: 8px 16px;
+  border-radius: 999px;
+  background: rgb(0 0 0 / 68%);
+  color: white;
+  content: "建议露出上半身和手部，保持自然微笑与适度手势";
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 20px;
+  text-align: center;
+  pointer-events: none;
+}
 @font-face { font-family: 'Source Han Sans SC'; src: url('../desktop/fonts/SourceHanSansSC-Regular.otf') format('opentype'); font-display: swap; }
 @font-face { font-family: 'ZCOOL QingKe HuangYou'; src: url('../desktop/fonts/ZCOOLQingKeHuangYou-Regular.ttf') format('truetype'); font-display: swap; }
 @font-face { font-family: 'Smiley Sans Oblique'; src: url('../desktop/fonts/SmileySans-Oblique.ttf') format('truetype'); font-display: swap; }

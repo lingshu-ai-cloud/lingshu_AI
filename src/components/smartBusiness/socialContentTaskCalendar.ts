@@ -85,6 +85,7 @@ export function projectSocialContentTaskCalendar(tasks: SocialContentTaskSummary
         output: productionReady ? `已生成 ${task.artifactCount} 项真实产物` : '等待内容 Agent 生成真实成片',
         context: task.directorPlan ? `${task.directorPlan.sceneCount} 个真实分镜` : '制作方案尚未生成',
         minutes: null, status: productionReady ? 'completed' : status,
+        estimatedCostCny: task.estimatedCostCny, settledCostCny: task.settledCostCny, costStatus: task.costStatus,
         reason: productionReady ? undefined : directorReady ? reason : '等待编导成稿完成并通过交接后启动生产', productionTaskId: task.taskId, videoTaskId: task.taskId, videoTitle: task.brief.title, previewThumbnailUrl, previewVideoUrl, timeSemantics: 'finish',
       },
       {
@@ -115,6 +116,9 @@ export function projectSocialContentTaskCalendar(tasks: SocialContentTaskSummary
       videoTitle: task.brief.title,
       previewThumbnailUrl,
       previewVideoUrl,
+      estimatedCostCny: task.estimatedCostCny,
+      settledCostCny: task.settledCostCny,
+      costStatus: task.costStatus,
       internalNodes: nodes,
       timeSemantics: 'finish',
     };

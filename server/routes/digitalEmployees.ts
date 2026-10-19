@@ -163,6 +163,7 @@ import {
 
 export const digitalEmployeesRouter = Router();
 import { DIGITAL_EMPLOYEE_COLLECTION as COLLECTION, jsonObject, withLocalQueue, type ApprovalRecord, type ConfigRecord, type ContentBatchPlanRecord, type CorrectionRecord, type EventRecord, type GoalRecord, type HandoffRecord, type PlanRecord, type RunRecord, type StoredRecord, type TaskRecord } from './digitalEmployeeRecords.js';
+import { pointsFromCny } from '../../shared/pointsPolicy.js';
 digitalEmployeesRouter.use(requireAuth);
 digitalEmployeesRouter.use(enforceSupportSessionReadOnly);
 
@@ -196,7 +197,7 @@ digitalEmployeesRouter.get('/agent-usage-costs', async (_req, res) => {
     roles: {
       business: null,
       director: null,
-      content: contentCount ? { settledCny: Number(contentSettled.toFixed(4)), entryCount: contentCount, updatedAt: contentUpdatedAt, source: '账号真实供应商结算账本' } : null,
+      content: contentCount ? { settledCny: Number(contentSettled.toFixed(4)), settledPoints: pointsFromCny(contentSettled), entryCount: contentCount, updatedAt: contentUpdatedAt, source: '账号真实供应商结算账本' } : null,
       customer: null,
     },
   });

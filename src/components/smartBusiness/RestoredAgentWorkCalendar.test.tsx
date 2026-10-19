@@ -67,7 +67,7 @@ test('calendar renders only independent task events and keeps task details in th
   assert.doesNotMatch(source,/交付已逾期[^\n]*description=/);
 });
 
-test('weekly calendar receives the single completed-work filter from the Digital Employee title row',()=>{
+test('weekly calendar receives the single completed-work filter from the monitoring Agent status row',()=>{
   const source=readFileSync(new URL('./RestoredAgentWorkCalendar.tsx',import.meta.url),'utf8');
   const workspace=readFileSync(new URL('./DigitalEmployeeWorkspace.tsx',import.meta.url),'utf8');
   const connected=readFileSync(new URL('./ConnectedAgentCalendar.tsx',import.meta.url),'utf8');
@@ -75,7 +75,7 @@ test('weekly calendar receives the single completed-work filter from the Digital
   assert.match(source,/hideCompleted = false/);
   assert.match(source,/filter\(task => !hideCompleted \|\| !\['completed', 'cancelled', 'no_data'\]\.includes\(task\.status\)\)/);
   assert.doesNotMatch(source,/aria-label="按智能体筛选"|需我处理|隐藏已完成|张任务卡|calendarDurationLabel/);
-  assert.match(workspace, /<h2[^>]*>数字员工<\/h2>[\s\S]{0,700}<Switch[^>]*checked=\{hideCompleted\}[^>]*aria-label="隐藏已完成"/);
+  assert.match(workspace, /<h2[^>]*>数字员工实时状态<\/h2>[\s\S]{0,700}<Switch[^>]*checked=\{hideCompleted\}[^>]*aria-label="隐藏已完成"/);
   assert.match(workspace, /<label className="[^"]*min-h-11[^"]*"[\s\S]{0,180}<Switch/, 'the completed-work switch must keep a 44px click target');
   assert.match(workspace, /<RestoredAgentWorkCalendar[^>]*hideCompleted=\{hideCompleted\}/);
   assert.match(workspace, /<ConnectedAgentCalendar[^>]*hideCompleted=\{hideCompleted\}/);

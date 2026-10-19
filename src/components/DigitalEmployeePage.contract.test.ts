@@ -208,12 +208,14 @@ for (const label of ['爆款视频预览', '素材组合预览', '效果置信�
 assert.match(matrixScheduleSource, /Agent 任务看板/, 'the overview schedule section must retain only the Agent task board');
 assert.doesNotMatch(matrixScheduleSource, /<LsCalendar|发布日历/, 'the publishing calendar must not be duplicated inside the Agent task board');
 assert.doesNotMatch(weeklyCommandCenterSource, /<LsCalendar|WeeklyContentProgressPanel|本周发布日历/, 'the weekly-plan metrics must not duplicate the publishing calendar');
-assert.match(digitalEmployeeWorkspaceSource, /aria-label="数字员工视图"[\s\S]{0,300}视频生产[\s\S]{0,200}发布日历/, 'the Digital Employee tab must expose video production and publishing as two switchable views');
+assert.doesNotMatch(digitalEmployeeWorkspaceSource, /aria-label="数字员工视图"|<Segmented/, 'the Digital Employee monitor must not split production and publishing into first-level pages');
+assert.match(digitalEmployeeWorkspaceSource, /数字员工运营监控台[\s\S]{0,5000}发布与投流[\s\S]{0,2500}客服承接[\s\S]{0,2500}异常与待处理/, 'the Digital Employee monitor must show production, traffic, customer service and exceptions in one view');
 assert.match(digitalEmployeeWorkspaceSource, /状态随当前周任务回执实时更新/, '员工卡必须说明状态来自当前周任务的实时回执');
 assert.match(digitalEmployeeWorkspaceSource, /data-agent-running=\{working \? 'true'/, '执行中的员工必须暴露稳定的运行态语义');
 assert.match(digitalEmployeeWorkspaceSource, /LoaderCircle[\s\S]{0,160}motion-safe:animate-spin/, '执行中的员工必须显示遵守减少动态偏好的旋转状态标识');
 assert.match(pageSource, /!\["live", "matrix"\]\.includes\(workspaceView\)[\s\S]{0,700}setInterval\(reconcile, 15_000\)/, '任务执行与员工排期都必须用实时流加低频权威回读校准状态');
-assert.match(digitalEmployeeWorkspaceSource, /\{workspaceView === 'agents' && onOpenAgentSettings && <Button[\s\S]{0,180}onClick=\{onOpenAgentSettings\}>Agent 设置<\/Button>\}/, 'Agent settings must live at the upper right of the employee-schedule view only');
+assert.match(digitalEmployeeWorkspaceSource, /onOpenAgentSettings && <Button[\s\S]{0,180}onClick=\{onOpenAgentSettings\}>Agent 设置<\/Button>/, 'Agent settings must remain at the upper right of the monitoring view');
+assert.match(digitalEmployeeWorkspaceSource, /publishingExpanded[\s\S]{0,800}展开发布日历[\s\S]{0,10000}完整发布日历/, 'the full publishing calendar must expand inline instead of opening another first-level page');
 assert.match(matrixViewSource, /publishingCalendar=\{<WeeklyPublishingCalendar data=\{data\} onRefresh=\{onRefresh\}\/>\}/, 'the publishing calendar must be injected into the Digital Employee workspace');
 assert.match(matrixViewSource, /<DigitalEmployeeWorkspace[^>]*onOpenAgentSettings=\{onOpenAgentSettings\}/, 'the Digital Employee workspace must receive the settings action');
 assert.match(restoredAgentWorkCalendarSource, /identity: \{ kind: 'agent', role: task\.agent \}/, 'employee schedule cards must use the responsible Agent icon instead of a missing cover');

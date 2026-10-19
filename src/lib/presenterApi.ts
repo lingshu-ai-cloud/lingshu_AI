@@ -1,5 +1,5 @@
 import { authHeader } from './auth';
-import type { ArkPresenterPreparation, PresenterCapabilities, PresenterCreation, PresenterLook, PresenterPage, PresenterVoice } from './presenterAssets';
+import type { ArkPresenterPreparation, PresenterCapabilities, PresenterCreation, PresenterLook, PresenterPage, PresenterVoice, PresenterVoiceCandidate } from './presenterAssets';
 import type { ProductionDefaults } from './shotProduction';
 import { notifyAssistantStateInvalidated } from './assistantStateInvalidation';
 const root = '/api/overseas/studio/production/presenters';
@@ -24,7 +24,7 @@ export const presenterApi = {
   catalog: (token = '', scope: 'public' | 'private' = 'public') => request<PresenterPage<PresenterLook>>(`/catalog?token=${encodeURIComponent(token)}&scope=${scope}`),
   syncFavorites: () => request<{ defaults: ProductionDefaults; favoriteCount: number; importedCount: number; skippedWithoutVoice: number; capacityReached: boolean }>('/favorites/sync', {}),
   voices: (token = '', language = '', scope: 'public' | 'private' = 'public') => request<PresenterPage<PresenterVoice>>(`/voices?token=${encodeURIComponent(token)}&language=${encodeURIComponent(language)}&scope=${scope}`),
-  async cloneVoice(file: File | Blob, name: string, language: string, requestId: string): Promise<{ id: string; status: string; voiceId: string }> {
+  async cloneVoice(file: File | Blob, name: string, language: string, requestId: string): Promise<{ id: string; status: string; voiceId: string; candidates?: PresenterVoiceCandidate[]; arkVoice?: { speakerId?: string; status: string } }> {
     const response = await fetch(`${root}/voices/clones?name=${encodeURIComponent(name)}&language=${encodeURIComponent(language)}&requestId=${encodeURIComponent(requestId)}&consent=true`, {
       method: 'POST', headers: { ...authHeader(), 'Content-Type': file.type || 'audio/webm' }, body: file,
     });
@@ -32,10 +32,11 @@ export const presenterApi = {
     if (!response.ok) throw new Error(result.error || '音色克隆提交失败');
     return result;
   },
-  cloneStatus: (id: string) => request<{ id: string; status: string; error?: string; voice?: PresenterVoice }>(`/voices/clones/${encodeURIComponent(id)}`),
+  cloneStatus: (id: string) => request<{ id: string; status: string; error?: string; voice?: PresenterVoice; candidates?: PresenterVoiceCandidate[]; arkVoice?: { speakerId?: string; status: string; error?: string } }>(`/voices/clones/${encodeURIComponent(id)}`),
   cloneJobs: () => request<Array<{ id: string; name: string; status: string; voiceId: string; createdAt: string }>>('/voices/clones'),
   bindVoice: (presenterId: string, voiceId: string) => request<{ defaults: ProductionDefaults; voice: PresenterVoice }>('/voices/bind', { presenterId, voiceId, voiceAuthorized: true }),
   creations: () => request<PresenterCreation[]>('/creations'),
+  discardCreation: (id: string) => request<{ ok: true; id: string }>(`/creations/${encodeURIComponent(id)}/discard`, {}),
   async uploadPhotoMaterial(file: File, name: string): Promise<{ok: boolean; material?: {id: string}; error?: string}> {
     if (!['image/jpeg','image/png'].includes(file.type) || !file.size || file.size > 32 * 1024 * 1024) throw new Error('请选择32MB以内的 JPG 或 PNG 人物照片');
     const response = await fetch(`${root}/photo-materials?mime=${encodeURIComponent(file.type)}&name=${encodeURIComponent(name)}`, {method:'POST', headers:{...authHeader(),'Content-Type':'application/octet-stream'},body:file});
@@ -43,8 +44,9 @@ export const presenterApi = {
   },
   uploadStatus: (requestId: string) => request<{ id?: string; status: string; stage: string; error?: string }>(`/uploads/status?requestId=${encodeURIComponent(requestId)}`),
   async upload(file: File, requestId: string, trimSeconds?: 7, frameAtSeconds?: number, trainingVideo = false, onProgress?: (percent: number) => void): Promise<{ id: string; processedDurationSeconds?: number; extractedFrame?: boolean; trainingInfo?: { duration: number; width: number; height: number; fps: number; hasAudio: boolean } }> {
-    if (!['image/jpeg', 'image/png', 'video/mp4', 'video/quicktime', 'video/webm'].includes(file.type) || !file.size || file.size > 200 * 1024 * 1024) throw new Error('请选择 200MB 以内的 JPG、PNG、MP4、MOV 或 WebM 文件');
-    const url = `${root}/uploads?mime=${encodeURIComponent(file.type)}&requestId=${encodeURIComponent(requestId)}${trimSeconds ? `&trimSeconds=${trimSeconds}` : ''}${frameAtSeconds != null ? `&frameAtSeconds=${frameAtSeconds}` : ''}${trainingVideo ? '&trainingVideo=true' : ''}`;
+    const mime = file.type.split(';')[0].trim().toLowerCase();
+    if (!['image/jpeg', 'image/png', 'video/mp4', 'video/quicktime', 'video/webm'].includes(mime) || !file.size || file.size > 200 * 1024 * 1024) throw new Error('请选择 200MB 以内的 JPG、PNG、MP4、MOV 或 WebM 文件');
+    const url = `${root}/uploads?mime=${encodeURIComponent(mime)}&requestId=${encodeURIComponent(requestId)}${trimSeconds ? `&trimSeconds=${trimSeconds}` : ''}${frameAtSeconds != null ? `&frameAtSeconds=${frameAtSeconds}` : ''}${trainingVideo ? '&trainingVideo=true' : ''}`;
     return new Promise((resolve, reject) => {
       const xhr = new XMLHttpRequest();
       xhr.open('POST', url);
