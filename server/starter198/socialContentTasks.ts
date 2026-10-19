@@ -693,6 +693,18 @@ export async function startSocialContentTask(input: {
   weeklyOwnedProductIdentity?:Omit<WeeklyOwnedProductIdentityPorts,'repository'>;
   now?: Date;
 }): Promise<SocialContentTaskDetail> {
+  // A prepared image fallback is not an ordinary start. The source run is
+  // retained for audit, while normal start would either reuse that old run
+  // (weekly guard) or reserve another original order with a freshly computed
+  // supply plan. Only a dedicated cost-preserving asset-revision adapter may
+  // turn this marker into a new execution identity.
+  const startRow = await requireSocialTask(input);
+  if (socialObject(socialObject(socialJson(startRow.brief))?._productAssetFallback)) {
+    throw new SocialContentWorkflowError('product_asset_fallback_start_adapter_required', 409);
+  }
+  if (socialObject(socialObject(socialJson(startRow.brief))?._productFootageRevision)) {
+    throw new SocialContentWorkflowError('product_footage_revision_start_adapter_required', 409);
+  }
   return withWeeklyProductionStartGuard(input, async () => startSocialContentTaskUnderGuard(input));
 }
 

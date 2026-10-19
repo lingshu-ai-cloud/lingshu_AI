@@ -371,6 +371,14 @@ export function buildSocialProductSceneReplicationSpec(input: {
         scale: groups.length === 1 ? 1 : 0.82,
       })),
     },
+    compositionSafety: {
+      contentModulePolicy: 'benchmark_locked',
+      reservedSafeZoneSource: reference ? 'reference_content_modules' : 'system_template',
+      subjectPlacement: 'outside_content_module_safe_zone',
+      visualCenterBias: 'lower_when_upper_modules',
+      minimumClearanceRatio: 0.02,
+      repairOrder: ['lower_visual_center', 'rescale_subject', 'regenerate_composition', 'adjust_content_module'],
+    },
     cameraLock: {
       shotSize: reference?.shotLanguage?.shotSize || '产品中近景',
       cameraAngle: reference?.shotLanguage?.cameraAngle || '轻微俯视',
@@ -388,7 +396,7 @@ export function buildSocialProductSceneReplicationSpec(input: {
       cameraPathDeviationRatio: 0.1,
     },
     validation: {
-      requiredChecks: ['product_identity', 'label_ocr', 'scene_topology', 'product_slot_layout', 'camera_trajectory'],
+      requiredChecks: ['product_identity', 'packaging_visibility', 'subject_visibility', 'label_ocr', 'scene_topology', 'product_slot_layout', 'camera_trajectory'],
       singleShotRetryOnFailure: true,
     },
   };
@@ -687,7 +695,7 @@ function fallbackFor(strategy: SocialShotSourceStrategy, productionApproach: Soc
 function digitalHumanMethod(creationMode: SocialContentCreationMode, description: string | null | undefined): 'talking' | 'replace' | 'reenact' {
   if (creationMode !== 'viral_replication') return 'talking';
   const text = String(description || '');
-  if (/重新演绎|reenact|re-?perform/i.test(text)) return 'reenact';
+  if (/动态真人口播|真人时序分段：动态|重新演绎|reenact|re-?perform/i.test(text)) return 'reenact';
   if (/换脸|替换(?:原)?人物|人物复刻|复刻参考片|face\s*swap|person\s*replacement/i.test(text)) return 'replace';
   return 'talking';
 }

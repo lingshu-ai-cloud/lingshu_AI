@@ -5,6 +5,9 @@ import type { ExecutionStoreRecord } from '../routes/productionContracts.js';
 import type { ContentQueueItem, ContentQueueProjection, ContentQueueStep, PublishingPlatform, WorkflowTask } from '../../src/lib/digitalEmployees.js';
 import type { WeeklyPackage } from '../../src/lib/weeklyPackage.js';
 import type { VideoCreationPlan } from '../../shared/contracts/videoCreationPlan.js';
+import { readContentExecutionJob } from '../contentExecution/durableQueue.js';
+import { assertSocialContentGraphQuality } from '../starter198/socialContentGraphQualityGate.js';
+import { socialJson, socialRequestHash } from '../starter198/socialContentValidation.js';
 
 type Stored = { id: string; [key: string]: unknown };
 const object = <T extends Record<string, any> = Record<string, any>>(value: unknown): T => {
@@ -35,7 +38,7 @@ const productionStepTemplates: ProductionStepTemplate[] = [
   { key: 'video_generation', label: '剪辑、合成与成片渲染', responsibleAgent: '内容 Agent', estimatedMinutes: 90, stageIndex: 4 },
   { key: 'quality_check', label: '事实、画面、音频与版权质检', responsibleAgent: '内容 Agent · 质检能力', estimatedMinutes: 25, stageIndex: 5 },
   { key: 'rework', label: '按质检结果局部返工', responsibleAgent: '内容 Agent', estimatedMinutes: 30, stageIndex: 5 },
-  { key: 'user_approval', label: '用户确认成片', responsibleAgent: '用户', estimatedMinutes: 10, stageIndex: 6, approval: true },
+  { key: 'user_approval', label: '用户验收成片', responsibleAgent: '用户', estimatedMinutes: 10, stageIndex: 6, approval: true },
 ];
 
 function productionSteps(input: {
@@ -204,22 +207,21 @@ function queueState(projects: Stored[], task?: WorkflowTask): Pick<ContentQueueI
   }
   const blockedProject = projects.find(projectBlocked);
   const complete = projects.every(project => projectStage(project) === 'completed' && object(object(object(project.spec).automation).quality).passed === true);
-  const approved = complete && projects.every(project => contentAccepted(object(project.spec)));
+  const accepted = complete && projects.every(project => contentAccepted(object(project.spec)));
   const indexes = projects.map(project => Math.max(0, stageOrder.indexOf(projectStage(project) as typeof stageOrder[number])));
   const currentIndex = Math.min(...indexes);
-  // A rendered/quality-passed file still needs the explicit user acceptance
-  // step. Reserve 100% for an accepted deliverable so a blocked or
-  // waiting-review item can never display a contradictory full completion.
+  // The accepted weekly package authorizes unattended production, but the
+  // completed film still requires final user acceptance before publishing.
   const stageProgress = Math.round(Math.max(0, currentIndex) / (stageOrder.length - 1) * 100);
-  const progress = approved ? 100 : complete ? 90 : Math.min(90, stageProgress);
+  const progress = accepted ? 100 : complete ? 90 : Math.min(90, stageProgress);
   const currentStage = complete ? 'completed' : stageOrder[currentIndex] || 'script';
   return {
-    status: blockedProject ? 'blocked' : approved ? 'completed' : complete ? 'waiting_review' : 'producing',
-    stage: blockedProject ? '制作受阻' : approved ? '已验收完成' : complete ? '成片待验收' : `${stageLabels[currentStage]}${projects.length > 1 ? ` · ${projects.length} 个语言版本` : ''}`,
+    status: blockedProject ? 'blocked' : accepted ? 'completed' : complete ? 'waiting_review' : 'producing',
+    stage: blockedProject ? '制作受阻' : accepted ? '已验收完成' : complete ? '成片待验收' : `${stageLabels[currentStage]}${projects.length > 1 ? ` · ${projects.length} 个语言版本` : ''}`,
     progress,
     reason: blockedProject ? text(object(object(blockedProject.spec).automation).blocker) : '',
     updatedAt: projects.map(project => text(project.updated_at || project.updated)).filter(Boolean).sort().at(-1) || task?.updated_at || '',
-    steps: productionSteps({ hasProjects: true, taskPresent: Boolean(task), currentIndex, complete, approved }),
+    steps: productionSteps({ hasProjects: true, taskPresent: Boolean(task), currentIndex, complete, approved: accepted }),
   };
 }
 
@@ -295,8 +297,58 @@ function manualState(record: Stored, missingInputs: string[]): Pick<ContentQueue
   };
 }
 
+/** `asset_review` is written when the film is archived, before graph QA.
+ * Only the current v3 graph interrupt can make that state user-reviewable. */
+export async function currentGraphReviewState(record: Stored): Promise<'legacy' | 'producing' | 'blocked' | 'waiting_review'> {
+  if (record.status !== 'asset_review') return 'legacy';
+  const tenantId = text(record.tenant_id), taskId = text(record.task_id), runId = text(record.run_id);
+  const rows = await store.list<Stored>('starter_social_content_artifacts', {
+    where: { tenant_id: tenantId, task_id: taskId }, perPage: 500,
+  });
+  const artifacts = rows.items.filter(row => object(row.content).workflowSchema === 'social-content.auto-production.v3');
+  if (!artifacts.length) return object(object(record.brief)._weeklyAuthority).weeklyPackage ? 'producing' : 'legacy';
+  const candidates = artifacts.filter(row => object(object(row.content).productionWorkspaceSource).runId === runId
+    && row.origin === 'agent' && row.artifact_kind === 'short_video'
+    && !['superseded', 'changes_requested', 'rejected'].includes(text(row.status)));
+  if (rows.totalItems !== rows.items.length || !runId || candidates.length !== 1) return 'blocked';
+  const artifact = candidates[0]!;
+  const content = object(artifact.content), source = object(content.productionWorkspaceSource);
+  const media = object(object(content.mediaStorage).video);
+  if (artifact.status === 'approved') return 'producing';
+  if (artifact.status !== 'review_required' || source.runId !== runId || artifact.task_id !== taskId
+    || artifact.content_hash !== socialRequestHash({ resourceRef: artifact.resource_ref, content: socialJson(artifact.content) })
+    || !/^[a-f0-9]{64}$/i.test(text(media.sha256)) || media.sha256 !== source.outputSha256)
+    return 'blocked';
+  try { assertSocialContentGraphQuality(content); }
+  catch { return 'blocked'; }
+  const job = await readContentExecutionJob(store, tenantId, taskId, runId);
+  if (!job) return 'producing';
+  const checkpoint = job.checkpoints['social.graph_review'];
+  const subject = object(checkpoint?.payload);
+  if (checkpoint?.version !== '1' || subject.waitingReview !== true) {
+    return ['blocked', 'dead_letter', 'cancelled'].includes(job.status) ? 'blocked' : 'producing';
+  }
+  const run = await store.getById<Stored>('workflow_runs', runId);
+  if (job.status !== 'paused' || run?.tenant_id !== tenantId || run.status !== 'waiting_human'
+    || run.pause_reason !== 'langgraph_artifact_review_required'
+    || subject.runId !== runId || subject.artifactId !== artifact.artifact_id
+    || Number(subject.version) !== Number(String(artifact.version).replace(/^v/, ''))
+    || subject.contentHash !== socialRequestHash(socialJson(artifact.content))
+    || subject.outputSha256 !== media.sha256) return 'blocked';
+  const fileRows = await store.list<Stored>('starter_social_content_files', {
+    where: { tenant_id: tenantId, file_id: text(media.fileId) }, perPage: 2,
+  });
+  const file = fileRows.items[0];
+  if (fileRows.totalItems !== 1 || fileRows.items.length !== 1 || file?.task_id !== taskId
+    || file.content_sha256 !== media.sha256 || !(Number(file.byte_size) > 0)
+    || artifact.resource_ref !== `socialfile:${media.fileId}`)
+    return 'blocked';
+  return 'waiting_review';
+}
+
 function manualTaskItem(input: {
   record: Stored;
+  reviewState?: 'legacy' | 'producing' | 'blocked' | 'waiting_review';
   projects: Stored[];
   executions: ExecutionStoreRecord[];
   accountLabels: Map<string, string>;
@@ -338,6 +390,15 @@ function manualTaskItem(input: {
     !plannedPublishDate ? '交付时间' : '',
   ].filter(Boolean);
   const state = manualState(input.record, missingInputs);
+  if (input.reviewState === 'producing') {
+    state.status = 'producing'; state.stage = '成片质检中'; state.progress = Math.min(state.progress, 80);
+    state.reason = '图质量回执尚未完成，成片不能进入用户验收。';
+    state.steps = state.steps.map(step => step.key === 'approval' ? { ...step, state: 'pending' } : step);
+  } else if (input.reviewState === 'blocked') {
+    state.status = 'blocked'; state.stage = '成片质检受阻'; state.progress = Math.min(state.progress, 80);
+    state.reason = '成片与图质量或原运行回执不一致，不能进入用户验收。';
+    state.steps = state.steps.map(step => step.key === 'approval' ? { ...step, state: 'pending' } : step);
+  }
   const planSource = text(brief.productRef) && text(targetAccount.id) && languages.length && text(brief.dueAt) ? 'confirmed' as const : 'system_default' as const;
   const estimatedMinutes = manualStepTemplates.reduce((sum, step) => sum + step.estimatedMinutes, 0);
   return {
@@ -519,9 +580,10 @@ export async function buildContentQueueProjection(input: {
       ...costState(relatedProjects, executionResult.items, estimated && estimated > 0 ? estimated : null),
     };
   });
-  const manualItems = manualTaskResult.items
-    .map(record => manualTaskItem({
+  const manualItems = (await Promise.all(manualTaskResult.items
+    .map(async record => manualTaskItem({
       record,
+      reviewState: await currentGraphReviewState(record).catch(() => 'blocked' as const),
       projects: projectResult.items,
       executions: executionResult.items,
       accountLabels,
@@ -529,7 +591,7 @@ export async function buildContentQueueProjection(input: {
       defaultProductName: input.defaultProductName || productionPlans.find(plan => plan.productionRole !== 'platform_adaptation')?.productName || '',
       defaultPublishDate: input.goal?.endsAt || '',
       defaultLanguages: input.defaultLanguages || [],
-    }))
+    }))))
     .filter((item): item is ContentQueueItem => Boolean(item));
   const items = [...manualItems, ...weeklyItems]
     .sort((left, right) => Date.parse(right.updatedAt || '1970-01-01') - Date.parse(left.updatedAt || '1970-01-01'));

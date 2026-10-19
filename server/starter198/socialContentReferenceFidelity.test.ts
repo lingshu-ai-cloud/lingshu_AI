@@ -29,15 +29,27 @@ test('forbids budget semantic origin even when every slot identity and time is r
   input.replicationScript.shots[0]!.scriptOrigin = 'budget_semantic_revision';
   assert.deepEqual(socialReferenceFidelityFailures(input), ['reference_fidelity:semantic_compression_forbidden:0']);
 });
-test('blocks reordered, repeated, foreign and missing reference slot bindings', () => {
+test('blocks reordered, mistimed duplicate, foreign and missing reference slot bindings', () => {
   for (const mutation of ['order', 'duplicate', 'foreign', 'missing'] as const) {
     const input = fixture();
     if (mutation === 'order') [input.replicationScript.shots[0], input.replicationScript.shots[1]] = [input.replicationScript.shots[1]!, input.replicationScript.shots[0]!];
     if (mutation === 'duplicate') input.replicationScript.shots[1]!.referenceShotId = 'ref-0';
     if (mutation === 'foreign') input.replicationScript.shots[1]!.referenceShotId = 'foreign';
     if (mutation === 'missing') input.replicationScript.shots[1]!.referenceShotId = null;
-    assert.ok(socialReferenceFidelityFailures(input).some(row => row.includes('slot_identity_or_order_mismatch')), mutation);
+    const failures = socialReferenceFidelityFailures(input);
+    assert.ok(mutation === 'duplicate'
+      ? failures.some(row => row.includes('slot_timing_mismatch'))
+      : failures.some(row => row.includes('slot_identity_or_order_mismatch')), mutation);
   }
+});
+test('allows contiguous temporal children to retain one reference slot identity', () => {
+  const input = fixture();
+  const parent = input.replicationScript.shots[0]!;
+  const midpoint = (parent.startSeconds + parent.endSeconds) / 2;
+  input.replicationScript.shots.splice(0, 1,
+    { ...parent, shotId: `${parent.shotId}__part-01`, endSeconds: midpoint },
+    { ...parent, shotId: `${parent.shotId}__part-02`, startSeconds: midpoint });
+  assert.deepEqual(socialReferenceFidelityFailures(input), []);
 });
 test('blocks 18-second retiming even with 37 intact identities and 10.923-second truncation', () => {
   const input = fixture();

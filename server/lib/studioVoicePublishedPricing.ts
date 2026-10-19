@@ -1,7 +1,7 @@
 import {createHash} from 'node:crypto';
 import type {SocialPaidOperationIntent,SocialVerifiedAccountTariff} from './socialContentTaskBudgetAuthority.js';
 import {productionBillingAccountRef} from '../starter198/socialContentProductionBudgetRoutes.js';
-import {getQwenProviderBinding} from '../agents/qwen.js';
+import {getQwenAsrProviderBinding,getQwenProviderBinding} from '../agents/qwen.js';
 const sourceUrl='https://help.aliyun.com/zh/model-studio/model-pricing';
 const sha=(s:string)=>createHash('sha256').update(s).digest('hex');
 const plain=(s:string)=>s.replace(/<[^>]*>/g,'').replace(/&nbsp;|&#160;/g,' ').replace(/\s+/g,'');
@@ -45,7 +45,7 @@ function bindingFor(intent:SocialPaidOperationIntent) {
   try{const b=getQwenProviderBinding(),base=(process.env.DASHSCOPE_ASR_BASE_URL||'https://dashscope.aliyuncs.com/api/v1').replace(/\/$/,'');if(base!=='https://dashscope.aliyuncs.com/api/v1')return null;return {baseUrl:base+'/services/audio/asr/transcription',credentialSha256:b.credentialSha256};}catch{return null;}
  }
  if(intent.stage==='voice_asr'&&intent.model==='qwen3-asr-flash') {
-  try {const b=getQwenProviderBinding();if(b.baseUrl!=='https://dashscope.aliyuncs.com/compatible-mode/v1'||(process.env.QWEN_ASR_MODEL||'qwen3-asr-flash')!==intent.model)return null;return {baseUrl:b.baseUrl,credentialSha256:b.credentialSha256};}catch{return null;}
+  try {const b=getQwenAsrProviderBinding();if(b.baseUrl!=='https://dashscope.aliyuncs.com/compatible-mode/v1'||(process.env.QWEN_ASR_MODEL||'qwen3-asr-flash')!==intent.model)return null;return b;}catch{return null;}
  }
  return null;
 }

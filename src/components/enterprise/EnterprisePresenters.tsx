@@ -67,6 +67,7 @@ export default function EnterprisePresenters({
   const [editingName, setEditingName] = useState('');
   const [loadError, setLoadError] = useState('');
   const initialReadyNotified = useRef(false);
+  const arkReturnHandled = useRef(false);
 
   const load = useCallback(async () => {
     const [next, creations] = await Promise.all([
@@ -86,6 +87,25 @@ export default function EnterprisePresenters({
     void load().catch(cause => { if (live) setLoadError(cause instanceof Error ? cause.message : String(cause)); });
     return () => { live = false; };
   }, [load]);
+
+  useEffect(() => {
+    if (!loaded || initialConfiguration || arkReturnHandled.current) return;
+    const returnedPresenterId = new URLSearchParams(window.location.search).get('arkPresenterId') || '';
+    let requestedPresenterId = returnedPresenterId;
+    try {
+      requestedPresenterId ||= window.sessionStorage.getItem('lingshu:enterprise:ark-presenter-id') || '';
+    } catch { /* URL return still works when browser storage is disabled. */ }
+    if (!requestedPresenterId || !value.presenters.some(item => item.id === requestedPresenterId)) return;
+    arkReturnHandled.current = true;
+    setCertifyingPresenterId(requestedPresenterId);
+    try { window.sessionStorage.removeItem('lingshu:enterprise:ark-presenter-id'); } catch { /* optional */ }
+    if (returnedPresenterId) {
+      const url = new URL(window.location.href);
+      url.searchParams.delete('arkPresenterId');
+      url.searchParams.delete('arkVerification');
+      window.history.replaceState(window.history.state, '', url);
+    }
+  }, [loaded, initialConfiguration, value.presenters]);
 
   useEffect(() => {
     let live = true;

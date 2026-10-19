@@ -28,9 +28,9 @@ test('Ark enrollment keeps consent, liveness, image approval and tenant binding 
   const previousCwd = process.cwd(), previousBase = process.env.PUBLIC_BASE_URL, previousDriver = process.env.OBJECT_STORAGE_DRIVER;
   const root = mkdtempSync(path.join(os.tmpdir(), 'lingshu-ark-enrollment-'));
   process.chdir(root); process.env.PUBLIC_BASE_URL = 'https://app.example.test'; process.env.OBJECT_STORAGE_DRIVER = 'local';
-  let createSessions = 0, createImages = 0, validated = false, assetActive = false, lostCreateResponse = false, recoveredAssetId = '';
+  let createSessions = 0, createImages = 0, validated = false, assetActive = false, lostCreateResponse = false, recoveredAssetId = '', verificationReturnUrl = '';
   const ark = { configured: () => true,
-    createValidationSession: async () => { createSessions++; return { BytedToken: 'token-1', H5Link: 'https://ark.example.test/validate' }; },
+    createValidationSession: async (_projectName: string, returnUrl: string) => { createSessions++; verificationReturnUrl = returnUrl; return { BytedToken: 'token-1', H5Link: 'https://ark.example.test/validate' }; },
     validationResult: async () => ({ GroupId: validated ? 'group-person-1' : '' }),
     createImage: async () => { createImages++; if (lostCreateResponse) throw new Error('provider response lost'); return 'asset-image-1'; },
     getAsset: async () => ({ Id: recoveredAssetId || 'asset-image-1', GroupId: 'group-person-1', AssetType: 'Image', Status: assetActive ? 'Active' : 'Processing' }),
@@ -68,6 +68,8 @@ test('Ark enrollment keeps consent, liveness, image approval and tenant binding 
     assert.equal((await post({ ...body, arkProcessingAuthorized: false })).status, 400);
     assert.equal((await post(body, 'tenant-b')).status, 400);
     const started = await (await post(body)).json(); assert.equal(started.state, 'needs_verification'); assert.equal(createSessions, 1);
+    assert.equal(new URL(verificationReturnUrl).searchParams.get('page'), 'enterprise');
+    assert.equal(new URL(verificationReturnUrl).searchParams.get('arkPresenterId'), 'person-1');
     const repeated = await (await post(body)).json(); assert.equal(repeated.id, started.id); assert.equal(createSessions, 1);
     const refresh = () => fetch(`${base}/ark-enrollments/${started.id}/refresh`, { method: 'POST' });
     assert.equal((await (await refresh()).json()).state, 'needs_verification'); assert.equal(createImages, 0);

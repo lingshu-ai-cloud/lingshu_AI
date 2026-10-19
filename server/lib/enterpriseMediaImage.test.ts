@@ -11,6 +11,8 @@ test('catalog images are scoped to the tenant, including encoded traversal and s
   const own=path.join(root,'tenants/a/catalog/product.png');
   assert.equal(tenantCatalogImageFile('/media/tenants/a/catalog/product.png','a',root),fs.realpathSync(own));
   assert.equal(tenantCatalogImageFile('/media/tenants/b/catalog/product.png','a',root),null);
+  assert.equal(tenantCatalogImageFile('https://attacker.test/media/tenants/a/catalog/product.png','a',root),null);
+  assert.equal(tenantCatalogImageFile('/media/tenants/a/catalog/product.png?rewrite=1','a',root),null);
   assert.equal(tenantCatalogImageFile('/media/tenants/a/%2e%2e%2fb/catalog/product.png','a',root),null);
   fs.symlinkSync(path.join(root,'tenants/b/catalog/product.png'),path.join(root,'tenants/a/catalog/link.png'));
   assert.equal(tenantCatalogImageFile('/media/tenants/a/catalog/link.png','a',root),null);

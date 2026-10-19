@@ -61,6 +61,8 @@ export interface SocialTaskBudgetPorts {
     verifyRejection(scope: SocialTaskBudgetScope, operation: SocialTaskBudgetOperation, receiptRef: string): Promise<boolean>;
 }
 export interface SocialTaskBudgetEntry extends SocialTaskBudgetOperation {
+    /** Frozen with the original entry write; absent on historical ledgers. */
+    authorizationRef?: string;
     executionTaskId?: string;
     runId: string;
     planHash: string;
@@ -68,6 +70,30 @@ export interface SocialTaskBudgetEntry extends SocialTaskBudgetOperation {
     reservedMicros: number;
     status: 'reserved' | 'accepted' | 'unknown' | 'completed' | 'rejected';
     receiptRef: string | null;
+    capacityBinding?: {
+        capacityOperation: SocialTaskBudgetOperation;
+        capacityQuoteRef: string;
+        capacityReservedMicros: number;
+        exactOperation: SocialTaskBudgetOperation;
+        exactQuoteRef: string;
+        recordHash: string;
+    };
+    preproductionBinding?: SocialTaskPreproductionBudgetBinding;
+}
+export interface SocialTaskPreproductionBudgetBinding {
+    schema: 'social-task-preproduction-budget-binding.v1';
+    source: 'weekly_candidate_exact_analysis';
+    tenantId: string;
+    packageId: string;
+    packageVersion: number;
+    motherContentId: string;
+    candidateId: string;
+    sourceOperationId: string;
+    sourceAuthorizationHash: string;
+    sourceLedgerOutcomeHash: string;
+    sourceReceiptHash: string;
+    retainedUpperBoundCny: number;
+    recordHash: string;
 }
 interface Ledger {
     schemaVersion: 1;
@@ -139,8 +165,27 @@ export class SocialContentTaskBudget {
         for (const [id, e] of Object.entries(l.entries)) {
             operationCheck(e);
             if(e.executionTaskId!==undefined&&!text(e.executionTaskId))fail('ledger_corrupt');
-            if (id !== hash(e.operationId) || !text(e.runId) || !/^[a-f0-9]{64}$/.test(e.planHash) || !text(e.quoteRef) || !Number.isSafeInteger(e.reservedMicros) || e.reservedMicros <= 0 || !['reserved', 'accepted', 'unknown', 'completed', 'rejected'].includes(e.status) || (e.receiptRef !== null && !text(e.receiptRef)))
+            if (id !== hash(e.operationId) || !text(e.runId) || !/^[a-f0-9]{64}$/.test(e.planHash) || !text(e.quoteRef) || !Number.isSafeInteger(e.reservedMicros) || e.reservedMicros <= 0 || !['reserved', 'accepted', 'unknown', 'completed', 'rejected'].includes(e.status) || (e.receiptRef !== null && !text(e.receiptRef)) || (e.authorizationRef !== undefined && !text(e.authorizationRef)))
                 fail('ledger_corrupt');
+            if(e.capacityBinding){
+                const binding=e.capacityBinding,{recordHash,...body}=binding;
+                operationCheck(binding.capacityOperation);operationCheck(binding.exactOperation);
+                if(binding.capacityOperation.stage!=='director_review_capacity'||binding.exactOperation.stage!=='director_review'
+                    ||!text(binding.capacityQuoteRef)||!text(binding.exactQuoteRef)
+                    ||binding.capacityReservedMicros!==e.reservedMicros||binding.capacityQuoteRef!==e.quoteRef
+                    ||(['operationId','fingerprint','provider','model','accountRef','stage','shotId'] as const).some(key=>e[key]!==binding.exactOperation[key])
+                    ||recordHash!==hash(JSON.stringify(body)))fail('ledger_corrupt');
+            }
+            if(e.preproductionBinding){
+                const binding=e.preproductionBinding,{recordHash,...body}=binding;
+                if(binding.schema!=='social-task-preproduction-budget-binding.v1'||binding.source!=='weekly_candidate_exact_analysis'
+                    ||binding.tenantId!==l.tenantId||binding.sourceOperationId!==e.operationId
+                    ||![binding.packageId,binding.motherContentId,binding.candidateId].every(text)
+                    ||!Number.isSafeInteger(binding.packageVersion)||binding.packageVersion<=0
+                    ||![binding.sourceAuthorizationHash,binding.sourceLedgerOutcomeHash,binding.sourceReceiptHash].every(value=>/^[a-f0-9]{64}$/.test(value))
+                    ||micros(binding.retainedUpperBoundCny)!==e.reservedMicros||recordHash!==hash(JSON.stringify(body))
+                    ||e.status!=='completed'||e.receiptRef!==`weekly-exact:${binding.sourceReceiptHash}`)fail('ledger_corrupt');
+            }
         }
         used(l);
         if(l.executionLimitMicros&&Object.entries(l.executionLimitMicros).some(([id,limit])=>!text(id)||!Number.isSafeInteger(limit)||limit<0))fail('ledger_corrupt');
@@ -168,7 +213,29 @@ export class SocialContentTaskBudget {
         if (fs.existsSync(temp))
             fs.unlinkSync(temp);
     } }
-    status(scope: SocialTaskBudgetScope) { scopeCheck(scope); const l = this.read(scope); if (!l) return null; const retainedMicros=used(l), correction=l.correctionAuthorization, correctionMatches=correction?.runId===scope.runId&&correction.planHash===scope.planHash; const limitMicros=correctionMatches?l.limitMicros:Math.min(l.limitMicros,correction?10e6:15e6); return { limitCny: limitMicros / 1e6, retainedCny: retainedMicros / 1e6, remainingCny: Math.max(0, limitMicros - retainedMicros) / 1e6, correctionAuthorization: correctionMatches ? structuredClone(correction) : null, entries: structuredClone(Object.values(l.entries)) }; }
+    status(scope: SocialTaskBudgetScope) { scopeCheck(scope); const l = this.read(scope); if (!l) return null; const retainedMicros=used(l), correction=l.correctionAuthorization, correctionMatches=correction?.runId===scope.runId&&correction.planHash===scope.planHash; const limitMicros=correctionMatches?l.limitMicros:Math.min(l.limitMicros,correction?10e6:15e6); return { limitCny: limitMicros / 1e6, authorizedLimitCny:l.limitMicros / 1e6, hasCorrectionAuthorization:Boolean(correction), retainedCny: retainedMicros / 1e6, remainingCny: Math.max(0, limitMicros - retainedMicros) / 1e6, correctionAuthorization: correctionMatches ? structuredClone(correction) : null, entries: structuredClone(Object.values(l.entries)) }; }
+    /** Read-only identity for a fully checkpointed original reservation. The
+     * ledger alone cannot reconstruct a crashed, uncheckpointed paid plan. */
+    attestOriginalReservation(scope: SocialTaskBudgetScope, authorizationRef: string, operations: SocialTaskBudgetOperation[]): string | null {
+        scopeCheck(scope);
+        if (scope.budgetTaskId !== undefined || !text(authorizationRef) || !operations.length
+            || new Set(operations.map(o => o.operationId)).size !== operations.length) return null;
+        operations.forEach(operationCheck);
+        const l = this.read(scope);
+        if (!l || l.limitMicros !== 10e6 || l.correctionAuthorization
+            || !l.authorizationRefs.includes(authorizationRef)) return null;
+        const matching = Object.values(l.entries).filter(e => (e.executionTaskId ?? l.taskId) === scope.taskId
+            && e.runId === scope.runId);
+        if (matching.length !== operations.length || matching.some(e => e.planHash !== scope.planHash)) return null;
+        for (const operation of operations) {
+            const entry = matching.find(e => e.operationId === operation.operationId);
+            if (!entry || entry.authorizationRef !== authorizationRef
+                || (['fingerprint', 'provider', 'model', 'accountRef', 'stage', 'shotId'] as const)
+                .some(key => entry[key] !== operation[key])) return null;
+        }
+        return 'ledger:' + hash(JSON.stringify([scope.tenantId, scope.taskId, scope.runId,
+            scope.planHash, authorizationRef]));
+    }
     /** Applies a server-authored, scope-bound correction grant. This is not
      * exposed as a client budget setter: it may only extend an existing ¥10
      * ledger for the exact run and plan that incurred the defective spend. */
@@ -255,7 +322,7 @@ export class SocialContentTaskBudget {
                 const q = await this.ports.quote(scope, o);
                 if (!text(q.quoteRef) || !Number.isFinite(Date.parse(q.validUntil)) || Date.parse(q.validUntil) <= Date.now())
                     fail('quote_missing_or_expired');
-                l.entries[id] = { ...o, executionTaskId:scope.taskId, runId: scope.runId, planHash: scope.planHash, quoteRef: q.quoteRef, reservedMicros: micros(q.upperBoundCny), status: 'reserved', receiptRef: null };
+                l.entries[id] = { ...o, executionTaskId:scope.taskId, authorizationRef:a.authorizationRef, runId: scope.runId, planHash: scope.planHash, quoteRef: q.quoteRef, reservedMicros: micros(q.upperBoundCny), status: 'reserved', receiptRef: null };
             }
             if (!isInternalBudgetExemptTenant(scope.tenantId) && used(l) > l.limitMicros)
                 fail('exceeded');
@@ -263,6 +330,95 @@ export class SocialContentTaskBudget {
             if(executionLimit!==undefined&&Object.values(l.entries).filter(e=>(e.executionTaskId??l.taskId)===scope.taskId&&e.status!=='rejected').reduce((sum,e)=>sum+e.reservedMicros,0)>executionLimit)fail('execution_allowance_exceeded');
             await this.ports.assertCurrent(scope);
             this.write(scope, l);
+            return this.status(scope)!;
+        });
+    }
+    /** Adopt a settled pre-production charge into the original film ledger.
+     * The caller must independently verify the immutable source receipt and
+     * mother/candidate mapping. Replays are idempotent; they never quote or
+     * authorize a second operation. */
+    async carryForwardPreproduction(scope: SocialTaskBudgetScope, operation: SocialTaskBudgetOperation,
+        binding: Omit<SocialTaskPreproductionBudgetBinding, 'recordHash'>,
+        verify: (scope: SocialTaskBudgetScope, operation: SocialTaskBudgetOperation, binding: Omit<SocialTaskPreproductionBudgetBinding, 'recordHash'>) => Promise<boolean>) {
+        scopeCheck(scope); operationCheck(operation);
+        if (scope.budgetTaskId !== undefined || binding.schema !== 'social-task-preproduction-budget-binding.v1'
+            || binding.source !== 'weekly_candidate_exact_analysis' || binding.tenantId !== scope.tenantId
+            || binding.sourceOperationId !== operation.operationId || ![binding.packageId,binding.motherContentId,binding.candidateId].every(text)
+            || !Number.isSafeInteger(binding.packageVersion) || binding.packageVersion <= 0
+            || ![binding.sourceAuthorizationHash,binding.sourceLedgerOutcomeHash,binding.sourceReceiptHash].every(value=>/^[a-f0-9]{64}$/.test(value))) fail('preproduction_binding_invalid');
+        const retainedMicros=micros(binding.retainedUpperBoundCny);
+        return withPaidOperationLock(path.join(this.root, '.locks'), JSON.stringify([scope.tenantId, scope.taskId]), async () => {
+            await this.ports.assertCurrent(scope);
+            const authorization=await this.ports.authorization(scope);
+            if(!text(authorization.authorizationRef)||micros(authorization.maximumCny)!==10_000_000)fail('preproduction_authorization_invalid');
+            if(!await verify(scope,operation,binding))fail('preproduction_evidence_invalid');
+            const ledger=this.read(scope)||{schemaVersion:1 as const,tenantId:scope.tenantId,taskId:scope.taskId,limitMicros:10_000_000,authorizationRefs:[],entries:{}};
+            if(ledger.taskId!==scope.taskId||ledger.limitMicros!==10_000_000||ledger.correctionAuthorization)fail('preproduction_original_budget_required');
+            const id=hash(operation.operationId),sealed={...binding,recordHash:hash(JSON.stringify(binding))},prior=ledger.entries[id];
+            const contentLedgerRef=`social-task-budget:${hash(JSON.stringify({scope,operation,binding:sealed}))}`;
+            if(prior){
+                if(prior.executionTaskId!==scope.taskId||prior.runId!==scope.runId||prior.planHash!==scope.planHash
+                    ||(['operationId','fingerprint','provider','model','accountRef','stage','shotId'] as const).some(key=>prior[key]!==operation[key])
+                    ||JSON.stringify(prior.preproductionBinding)!==JSON.stringify(sealed))fail('preproduction_operation_changed');
+                return {status:this.status(scope)!,contentLedgerRef};
+            }
+            ledger.entries[id]={...operation,executionTaskId:scope.taskId,authorizationRef:authorization.authorizationRef,
+                runId:scope.runId,planHash:scope.planHash,quoteRef:`weekly-exact:${binding.sourceReceiptHash}`,
+                reservedMicros:retainedMicros,status:'completed',receiptRef:`weekly-exact:${binding.sourceReceiptHash}`,
+                preproductionBinding:sealed};
+            if(!ledger.authorizationRefs.includes(authorization.authorizationRef))ledger.authorizationRefs.push(authorization.authorizationRef);
+            if(used(ledger)>ledger.limitMicros)fail('exceeded');
+            await this.ports.assertCurrent(scope);this.write(scope,ledger);return {status:this.status(scope)!,contentLedgerRef};
+        });
+    }
+    /** Convert an unsubmitted, pre-priced final-review capacity entry into the
+     * exact post-render request. The original amount stays occupied: a smaller
+     * exact quote never releases capacity that an unknown provider charge might
+     * still consume. This is a same-operation CAS, not a second reservation. */
+    async bindDirectorReviewCapacity(scope: SocialTaskBudgetScope, input: {
+        capacityOperation: SocialTaskBudgetOperation;
+        exactOperation: SocialTaskBudgetOperation;
+        exactQuote: SocialTaskBudgetQuote;
+    }) {
+        scopeCheck(scope);
+        operationCheck(input.capacityOperation);
+        operationCheck(input.exactOperation);
+        if (input.capacityOperation.stage !== 'director_review_capacity'
+            || input.exactOperation.stage !== 'director_review'
+            || input.capacityOperation.operationId !== input.exactOperation.operationId
+            || input.capacityOperation.shotId !== null || input.exactOperation.shotId !== null
+            || (['provider', 'model', 'accountRef'] as const).some(key => input.capacityOperation[key] !== input.exactOperation[key]))
+            fail('director_review_capacity_binding_invalid');
+        return withPaidOperationLock(path.join(this.root, '.locks'), JSON.stringify([scope.tenantId, scope.budgetTaskId??scope.taskId]), async () => {
+            await this.ports.assertCurrent(scope);
+            const ledger = this.read(scope), entry = ledger?.entries[hash(input.exactOperation.operationId)];
+            if (!ledger || !entry || (entry.executionTaskId??ledger.taskId) !== scope.taskId
+                || entry.runId !== scope.runId || entry.planHash !== scope.planHash)
+                fail('director_review_capacity_missing');
+            const same = (operation: SocialTaskBudgetOperation) =>
+                (['operationId', 'fingerprint', 'provider', 'model', 'accountRef', 'stage', 'shotId'] as const)
+                    .every(key => entry[key] === operation[key]);
+            if (same(input.exactOperation)) {
+                if (entry.status === 'rejected'||!entry.capacityBinding
+                    ||entry.capacityBinding.capacityOperation.fingerprint!==input.capacityOperation.fingerprint)
+                    fail('director_review_capacity_changed');
+                return this.status(scope)!;
+            }
+            if (!same(input.capacityOperation) || entry.status !== 'reserved' || entry.receiptRef !== null)
+                fail('director_review_capacity_changed');
+            if (!text(input.exactQuote.quoteRef)
+                || !Number.isFinite(Date.parse(input.exactQuote.validUntil))
+                || Date.parse(input.exactQuote.validUntil) <= Date.now()
+                || micros(input.exactQuote.upperBoundCny) > entry.reservedMicros)
+                fail('director_review_capacity_insufficient');
+            const claim=path.join(this.root,'.permits',hash(JSON.stringify([scope.tenantId,scope.taskId,scope.runId,scope.planHash,input.exactOperation.operationId]))+'.json');
+            if(fs.existsSync(claim))fail('director_review_capacity_claim_exists');
+            const bindingBody={capacityOperation:structuredClone(input.capacityOperation),capacityQuoteRef:entry.quoteRef,
+                capacityReservedMicros:entry.reservedMicros,exactOperation:structuredClone(input.exactOperation),exactQuoteRef:input.exactQuote.quoteRef};
+            entry.capacityBinding={...bindingBody,recordHash:hash(JSON.stringify(bindingBody))};
+            Object.assign(entry, input.exactOperation);
+            await this.ports.assertCurrent(scope);
+            this.write(scope, ledger);
             return this.status(scope)!;
         });
     }

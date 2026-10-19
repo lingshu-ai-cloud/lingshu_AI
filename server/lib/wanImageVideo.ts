@@ -1,5 +1,5 @@
 import {createHash} from 'node:crypto';
-import {dashscopeApiKey,getQwenProviderBinding} from '../agents/qwen.js';
+import {dashscopeApiKey} from '../agents/qwen.js';
 export type WanImageVideoModel='wan2.6-i2v-flash'|'wan2.2-i2v-flash';
 export interface WanImageVideoRequest {model:WanImageVideoModel;firstFrame:Buffer;mimeType:'image/jpeg'|'image/png';prompt:string;durationSeconds:number;firstFrameSha256:string;inputContractHash:string;}
 export interface WanImageVideoCheckpoint {schemaVersion:1;requestSha256:string;accountRef:string;inputContractHash:string;status:'unknown'|'accepted'|'completed'|'failed';providerTaskId:string|null;providerReceipt?:unknown;mediaSha256?:string;}
@@ -14,7 +14,7 @@ export interface WanImageVideoPorts {
  credentials?:()=>{apiKey:string;baseUrl:string;credentialSha256:string};
 }
 const sha=(v:Buffer|string)=>createHash('sha256').update(v).digest('hex');
-function credentials(){const binding=getQwenProviderBinding();return {...binding,apiKey:dashscopeApiKey()};}
+function credentials(){const apiKey=dashscopeApiKey();return {baseUrl:'https://dashscope.aliyuncs.com/compatible-mode/v1',credentialSha256:sha(apiKey),apiKey};}
 function binding(ports:WanImageVideoPorts){const config=ports.credentials?.()||credentials();const url=new URL(config.baseUrl);if(url.protocol!=='https:'||url.hostname!=='dashscope.aliyuncs.com'||url.pathname.replace(/\/+$/,'')!=='/compatible-mode/v1'||url.username||url.password||url.search||url.hash||sha(config.apiKey)!==config.credentialSha256)throw Error('wan_official_account_binding_invalid');return{...config,accountRef:'wan:'+sha(JSON.stringify({baseUrl:'https://dashscope.aliyuncs.com/api/v1',credentialSha256:config.credentialSha256}))};}
 export function prepareWanImageVideoRequest(input:WanImageVideoRequest){
  if(!['wan2.6-i2v-flash','wan2.2-i2v-flash'].includes(input.model)||!input.firstFrame.length||input.firstFrame.length>(input.model==='wan2.6-i2v-flash'?20:10)*1024*1024||sha(input.firstFrame)!==input.firstFrameSha256||!/^[a-f0-9]{64}$/.test(input.inputContractHash)||!Number.isInteger(input.durationSeconds)||input.durationSeconds<2||input.durationSeconds>15||!input.prompt.trim()||input.prompt.length>(input.model==='wan2.6-i2v-flash'?1500:800))throw Error('wan_i2v_input_contract_invalid');

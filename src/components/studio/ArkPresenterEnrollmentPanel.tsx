@@ -81,7 +81,12 @@ export default function ArkPresenterEnrollmentPanel(props: {
     </section>;
   }
   return <section aria-label="人物认证与方舟图片入库" className="space-y-2 rounded-lg border border-border bg-white p-4 text-xs">
-    <p className="font-bold">方舟人物认证（可选增强） · {enrollment?.state === 'ready' ? '已完成' : enrollment?.state === 'processing' ? '方舟审核中' : enrollment?.state === 'needs_verification' ? '等待本人验证' : '待提交'}</p>
+    <p className="font-bold">人物替换认证 · {enrollment?.state === 'ready' ? '可用于 Seedance' : enrollment?.state === 'processing' ? '方舟图片审核中' : enrollment?.state === 'needs_verification' ? '等待本人验证' : enrollment?.state === 'uncertain' ? '提交结果待核对' : enrollment?.state === 'failed' ? '认证未完成' : '待提交'}</p>
+    <ol className="list-inside list-decimal space-y-1 text-text-secondary" aria-label="方舟人物认证步骤">
+      <li>上传或复用当前人物的正面照片和本人视频，并确认成年人及人物处理授权。</li>
+      <li>打开方舟页面，由出镜本人完成真人验证；此步需要离开灵枢。</li>
+      <li>返回企业知识库，等待系统查询验证结果、提交照片并核验方舟图片资产达到 Active。</li>
+    </ol>
     <p>{reusedMaterials ? '已复用统一接入时上传的照片和本人视频，不需要再次录入。' : '仅旧人物缺少认证资料时需要在这里补充一次照片和本人视频。'}</p>
     {!enrollment || enrollment.state === 'failed' ? <div className="space-y-2">
       {!props.presenterId && <label className="block">人物名称<input aria-label="认证人物名称" value={name} onChange={event => setName(event.target.value)} className="mt-1 w-full rounded border p-2" /></label>}

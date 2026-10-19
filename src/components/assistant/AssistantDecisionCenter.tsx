@@ -82,6 +82,9 @@ export type AssistantDecisionCenterProps = {
   page: string;
   active?: boolean;
   goalId?: string;
+  /** Read one authoritative decision in its owning workbench. */
+  decisionId?: string;
+  expectedVersion?: string;
   onOpenChat: () => void;
   onOpenDetail?: (trigger?: HTMLButtonElement | null) => void;
   onNavigate?: (link?: AssistantDecisionDeepLink) => void;
@@ -89,6 +92,7 @@ export type AssistantDecisionCenterProps = {
   onActionResult?: (result: AssistantDecisionActionResult) => void;
   variant?: AssistantDecisionCenterVariant;
   showHeading?: boolean;
+  hideWhenEmpty?: boolean;
   className?: string;
   client?: AssistantDecisionClient;
   productionContext?: AssistantProductionContext | null;
@@ -148,6 +152,8 @@ function dispatchDeepLink(link?: AssistantDecisionDeepLink): void {
   if (!link || typeof window === 'undefined') return;
   const opensPresenterOnboarding = link.page === 'digitalEmployees'
     && link.businessRef?.taskKey === 'presenter_setup_required';
+  const opensArkCertification = link.page === 'enterprise'
+    && link.businessRef?.taskKey === 'ark_presenter_setup_required';
   if (opensPresenterOnboarding) {
     try {
       window.sessionStorage.setItem('lingshu:open-digital-employee-guide', 'presenter');
@@ -155,12 +161,27 @@ function dispatchDeepLink(link?: AssistantDecisionDeepLink): void {
       /* The live event below still handles browsers with storage disabled. */
     }
   }
+  if (opensArkCertification) {
+    try {
+      window.localStorage.setItem('lingshu:enterprise:initial-view', 'presenters');
+      if (typeof link.businessRef?.entityId === 'string') window.sessionStorage.setItem('lingshu:enterprise:ark-presenter-id', link.businessRef.entityId);
+    } catch { /* The live event below still selects the knowledge-base view. */ }
+  }
   const detail = {
     ...link,
     ...(link.runId ? { workflowRunId: link.runId } : {}),
     ...(link.taskId ? { workflowTaskId: link.taskId } : {}),
+    ...(typeof link.businessRef?.contentId === 'string' ? {
+      socialContentTaskId: link.businessRef.contentId,
+      socialContentPage: link.page,
+    } : {}),
   };
   window.dispatchEvent(new CustomEvent('lingshu:navigate', { detail }));
+  if (opensArkCertification) {
+    const openPresenters = () => window.dispatchEvent(new CustomEvent('lingshu:enterprise-view', { detail: { view: 'presenters' } }));
+    openPresenters();
+    window.requestAnimationFrame?.(openPresenters);
+  }
   if (opensPresenterOnboarding) {
     const openGuide = () => window.dispatchEvent(new CustomEvent(
       'lingshu:open-digital-employee-guide',
@@ -343,6 +364,8 @@ export default function AssistantDecisionCenter({
   page,
   active = true,
   goalId,
+  decisionId,
+  expectedVersion,
   onOpenChat,
   onOpenDetail,
   onNavigate,
@@ -350,6 +373,7 @@ export default function AssistantDecisionCenter({
   onActionResult,
   variant = 'detail',
   showHeading = true,
+  hideWhenEmpty = false,
   className = '',
   client = assistantDecisionApi,
   productionContext = null,
@@ -385,7 +409,7 @@ export default function AssistantDecisionCenter({
     setLoading(true);
     if (!preserveError) setError('');
     try {
-      const next = await client.feed({ page, goalId, signal });
+      const next = await client.feed({ page, goalId, decisionId, expectedVersion, signal });
       if (signal?.aborted || sequence !== requestSequence.current) return;
       setFeed(next);
     } catch (reason) {
@@ -394,7 +418,7 @@ export default function AssistantDecisionCenter({
     } finally {
       if (!signal?.aborted && sequence === requestSequence.current) setLoading(false);
     }
-  }, [client, goalId, page]);
+  }, [client, decisionId, expectedVersion, goalId, page]);
 
   useEffect(() => {
     mounted.current = true;
@@ -501,7 +525,9 @@ export default function AssistantDecisionCenter({
     reconciliationAttempts.current += 1;
     try {
       if (pending.action.id !== 'approve_and_start') {
-        const latestFeed = await client.feed({ page, goalId });
+        const latestFeed = await (decisionId
+          ? client.feed({ page, goalId, decisionId, expectedVersion })
+          : client.feed({ page, goalId }));
         if (!mounted.current) return;
         const originalStillPending = latestFeed.items.some(item => (
           item.id === pending.card.id
@@ -538,7 +564,9 @@ export default function AssistantDecisionCenter({
       }
       let latestFeed: AssistantDecisionFeed;
       try {
-        latestFeed = await client.feed({ page, goalId });
+        latestFeed = await (decisionId
+          ? client.feed({ page, goalId, decisionId, expectedVersion })
+          : client.feed({ page, goalId }));
       } catch {
         const current = feedRef.current;
         latestFeed = current ? {
@@ -580,7 +608,7 @@ export default function AssistantDecisionCenter({
     } finally {
       reconciliationInFlight.current = false;
     }
-  }, [client, goalId, load, message, onActionResult, page]);
+  }, [client, decisionId, expectedVersion, goalId, load, message, onActionResult, page]);
 
   useEffect(() => {
     if (!active || !startReconciliation) return;
@@ -700,6 +728,8 @@ export default function AssistantDecisionCenter({
       if (!controller.signal.aborted) setBusyAction(null);
     }
   }, [client, first, goalId, load, message, note, onActionResult, onNavigate, page, startReconciliation]);
+
+  if (hideWhenEmpty && feed && !first && !loading && !error) return null;
 
   if (variant === 'summary') {
     if (!first && !productionDecision && !error) return null;

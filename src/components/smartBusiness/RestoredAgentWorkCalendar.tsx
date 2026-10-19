@@ -16,12 +16,14 @@ import { hasTemplateCalendarTarget, type TemplateCalendarTarget } from '../socia
 import { hasReviewCalendarTarget, type ReviewCalendarTarget } from '../socialProgram/reviewCalendarNavigation';
 import { hasPlanningCalendarTarget, type PlanningCalendarTarget } from '../socialProgram/planningCalendarNavigation';
 import { calendarDayKey, calendarInstant, type LsCalendarEvent } from '../../lib/calendarModel';
-import { projectCalendarDeliverables, isAlwaysOnCalendarTask, orderDailyCalendarTasks, conciseCalendarTitle } from './calendarDeliverables';
+import { hourCalendarCard } from './agentHourCalendarPolicy';
+import { projectCalendarDeliverables, projectDailyCustomerServiceCards, isAlwaysOnCalendarTask, orderDailyCalendarTasks, projectDailyMilestones, conciseCalendarTitle } from './calendarDeliverables';
 import AgentRoleIcon, { AGENT_ROLE_PALETTE, type AgentVisualRole } from '../ui/AgentRoleIcon';
 import {agentCalendarTaskType,taskHasDeliverableOrWorkspace} from './agentCalendarGroups';
 import {readOrRepairWeeklyTaskWorkspace} from '../../lib/weeklyTaskWorkspaceApi';
 import type {WeeklyTaskWorkspace} from '../../../shared/contracts/weeklyTaskWorkspace';
 import {socialProgramApi} from '../../lib/socialProgramApi';
+import { authHeader, getToken } from '../../lib/auth';
 import WeeklyTaskQuickActions from '../socialProgram/WeeklyTaskQuickActions';
 import AgentVideoProductionBoard from './AgentVideoProductionBoard';
 import { productionStageContract } from './agentVideoProductionModel';
@@ -95,6 +97,9 @@ function taskIsAllDay(task: AgentCalendarTask): boolean {
 }
 
 const terminalTaskStatuses = new Set<AgentCalendarTask['status']>(['completed', 'cancelled', 'no_data']);
+export function hasCtaContactGap(ctaContactStatus?: 'missing' | 'recorded' | 'unavailable'): boolean {
+  return ctaContactStatus === 'missing' || ctaContactStatus === 'recorded' || ctaContactStatus === 'unavailable';
+}
 export function calendarExecutionMark(task:AgentCalendarTask,today:string):LsCalendarEvent['executionMark']{
  const sources=task.dailyTaskGroup?.tasks??task.customerServiceSummary?.sourceTasks??[task];
  if(sources.length&&sources.every(source=>source.status==='completed'))return 'complete';
@@ -103,8 +108,9 @@ export function calendarExecutionMark(task:AgentCalendarTask,today:string):LsCal
  return undefined;
 }
 
-export function calendarTaskPresentation(task: AgentCalendarTask, today: string): Pick<LsCalendarEvent, 'status' | 'statusLabel' | 'muted'> {
+export function calendarTaskPresentation(task: AgentCalendarTask, today: string, ctaContactStatus?: 'missing' | 'recorded' | 'unavailable'): Pick<LsCalendarEvent, 'status' | 'statusLabel' | 'muted'> {
   const terminal = terminalTaskStatuses.has(task.status);
+  if (!terminal && hasCtaContactGap(ctaContactStatus)) return { status: 'needs_action', statusLabel: ctaContactStatus === 'missing' ? '受阻 · 联系待填' : ctaContactStatus === 'recorded' ? '受阻 · 样品待证' : '受阻 · 联系记录待恢复', muted: false };
   if (task.date < today) return {
     status: terminal ? 'done' : 'needs_action',
     statusLabel: terminal ? statusLabels[task.status] : '结果未完成',
@@ -235,7 +241,33 @@ export default function RestoredAgentWorkCalendar({
     return () => window.clearInterval(timer);
   }, []);
 
-  const deliverables = useMemo(() => projectCalendarDeliverables(tasks, true), [tasks]);
+  const deliverables = useMemo(() => projectDailyMilestones(projectDailyCustomerServiceCards(projectCalendarDeliverables(tasks, true), startsAt)), [tasks, startsAt]);
+  const [ctaAuditStatuses, setCtaAuditStatuses] = useState<Record<string, 'missing' | 'recorded' | 'unavailable'>>({});
+  const ctaAuditScopes = useMemo(() => [...new Map(tasks.flatMap(task => {
+    const sources = task.dailyTaskGroup?.tasks ?? task.customerServiceSummary?.sourceTasks ?? task.internalNodes ?? [task];
+    return sources.flatMap(source => source.workspaceTarget ? [[`${source.workspaceTarget.programId}:${source.workspaceTarget.packageId}:${source.workspaceTarget.packageVersion}`, source.workspaceTarget] as const] : []);
+  })).values()], [tasks]);
+  const ctaAuditScopeKey = JSON.stringify(ctaAuditScopes.map(scope => [scope.programId, scope.packageId, scope.packageVersion]));
+  useEffect(() => {
+    let live = true;
+    const token = getToken();
+    const read = async () => {
+      const next: Record<string, 'missing' | 'recorded' | 'unavailable'> = {};
+      await Promise.all(ctaAuditScopes.map(async scope => {
+        try {
+          const response = await fetch(`/api/overseas/social-programs/${encodeURIComponent(scope.programId)}/operating-packages/${encodeURIComponent(scope.packageId)}/execution-pipeline/task-audit?version=${scope.packageVersion}`, { headers: authHeader() });
+          if (!response.ok) return;
+          const body = await response.json() as { item?: { items?: Array<{ taskId:string; ctaContactStatus?:'missing'|'recorded'|'unavailable'; requiredActions?:Array<{action:string;code?:string}> }> } };
+          for (const item of body.item?.items ?? []) if (item.ctaContactStatus && item.requiredActions?.some(action => action.action === 'cta_contact' || action.action === 'sample_policy' || action.code === 'weekly_cta_contact_read_failed')) next[item.taskId] = item.ctaContactStatus;
+        } catch { /* Keep the conservative CTA intervention label until a read succeeds. */ }
+      }));
+      if (live && getToken() === token) setCtaAuditStatuses(next);
+    };
+    void read();
+    const changed = (event: Event) => { const detail = (event as CustomEvent<{programId:string;packageId:string;packageVersion:number}>).detail; if (ctaAuditScopes.some(scope => scope.programId === detail?.programId && scope.packageId === detail?.packageId && scope.packageVersion === detail?.packageVersion)) void read(); };
+    window.addEventListener('lingshu:weekly-cta-contact-updated', changed);
+    return () => { live = false; window.removeEventListener('lingshu:weekly-cta-contact-updated', changed); };
+  }, [ctaAuditScopeKey]);
   const timeZone = tasks.find(task => task.calendarClock?.timeZone)?.calendarClock?.timeZone || 'Asia/Shanghai';
   const todayKey = calendarDayKey(new Date(now), timeZone);
   const scopedDeliverables = useMemo(() => deliverables.filter(task => {
@@ -245,7 +277,7 @@ export default function RestoredAgentWorkCalendar({
   const independentTasks = useMemo(() => scopedDeliverables.filter(taskHasDeliverableOrWorkspace), [scopedDeliverables]);
   const events = useMemo<LsCalendarEvent[]>(() => {
     const orderedTasks = orderDailyCalendarTasks(independentTasks);
-    const currentTaskId = orderedTasks.find(task => !isAlwaysOnCalendarTask(task) && hasActiveExecution(task))?.id;
+    const currentTaskId = orderedTasks.find(task => task.date === todayKey && !isAlwaysOnCalendarTask(task) && hasActiveExecution(task))?.id;
     return orderedTasks
     .filter(task => !hideCompleted || !['completed', 'cancelled', 'no_data'].includes(task.status))
     .map(task => {
@@ -253,7 +285,9 @@ export default function RestoredAgentWorkCalendar({
     const allDay = true;
     const resident = isAlwaysOnCalendarTask(task);
     const start = task.date;
-    const presentation = calendarTaskPresentation(task, todayKey);
+    const card = hourCalendarCard(task, now);
+    const related = task.dailyTaskGroup?.tasks ?? task.customerServiceSummary?.sourceTasks ?? task.internalNodes ?? [];
+    const presentation = calendarTaskPresentation(task, todayKey, ctaAuditStatuses[task.id] ?? related.map(source=>ctaAuditStatuses[source.id]).find(Boolean));
     return {
       id: task.id,
       title: task.title,
@@ -269,7 +303,7 @@ export default function RestoredAgentWorkCalendar({
       platform: task.platform,
       sourceId: task.productionTaskId || task.id,
       description: task.context,
-      cardLines: [agentLabels[task.agent], task.title, `${resident?'24小时值守':'按固定生产路径执行'} · ${presentation.statusLabel}`],
+      cardLines: [card.lines[0], task.title, `${resident?'24小时值守':task.dailyTaskGroup?`${task.dailyTaskGroup.tasks.length} 项任务`:'按流程执行'} · ${presentation.statusLabel}`],
       planPlaceholder: false,
       progress: task.id === currentTaskId ? taskProgressPercent(task) : undefined,
       muted: presentation.muted,
@@ -277,7 +311,7 @@ export default function RestoredAgentWorkCalendar({
       data: task,
     };
     });
-  }, [independentTasks, demo, now, timeZone, hideCompleted, todayKey]);
+  }, [independentTasks, demo, now, timeZone, hideCompleted, todayKey, ctaAuditStatuses]);
 
   const renderDetails = (event: LsCalendarEvent, closeDetails: () => void) => {
     const task = event.data as AgentCalendarTask;
@@ -338,10 +372,11 @@ export default function RestoredAgentWorkCalendar({
     const channelLabel={whatsapp:'WhatsApp',messenger:'Messenger',instagram:'Instagram'} as const;
     const summary=task.customerServiceSummary;
     const stageContract=productionStageContract(task);
+    const ctaContactStatus=ctaAuditStatuses[task.id] ?? executionSources.map(source=>ctaAuditStatuses[source.id]).find(Boolean);
 
     return <div className="space-y-5">
       {!demo&&<WeeklyTaskQuickActions sources={executionSources} onOpen={source=>enterSource(source)} onPlanning={onOpenPlanning?()=>open(onOpenPlanning):undefined}/>}
-      <div><div className="flex flex-wrap items-center gap-2"><Tag color={event.status === 'failed' ? 'error' : event.status === 'needs_action' ? 'warning' : event.status === 'working' ? 'processing' : event.status === 'done' ? 'success' : 'default'}>{event.statusLabel || statusLabels[task.status]}</Tag>{task.minutes !== null && <span className="text-xs text-text-secondary">预计 {task.minutes} 分钟</span>}</div><h3 className="mt-2 ls-type-title-medium text-text-primary">{task.title}</h3></div>
+      <div><div className="flex flex-wrap items-center gap-2"><Tag color={event.status === 'failed' ? 'error' : event.status === 'needs_action' ? 'warning' : event.status === 'working' ? 'processing' : event.status === 'done' ? 'success' : 'default'}>{event.statusLabel || statusLabels[task.status]}</Tag>{hasCtaContactGap(ctaContactStatus)&&task.status==='planned'&&<span className="text-xs text-text-secondary">{ctaContactStatus==='unavailable'?'原任务尚待激活；联系记录读取失败，待系统恢复后重试':'原任务尚待激活；请查看 CTA 联系与样品证据缺项'}</span>}{task.minutes !== null && <span className="text-xs text-text-secondary">预计 {task.minutes} 分钟</span>}</div><h3 className="mt-2 ls-type-title-medium text-text-primary">{task.title}</h3></div>
       {stageContract&&<section aria-label="固定生产路径约束" className="overflow-hidden rounded-lg border border-border bg-white"><div className="border-b border-border bg-surface-2 px-4 py-3"><p className="text-[10px] font-bold text-accent">固定生产路径 · {stageContract.title}</p><h4 className="mt-1 text-sm font-semibold text-text-primary">{stageContract.owner} 主导</h4></div><dl className="grid gap-px bg-border sm:grid-cols-2"><div className="bg-white p-4"><dt className="text-xs font-semibold text-text-secondary">如何调用</dt><dd className="mt-1 text-xs leading-5 text-text-primary">{stageContract.invocation}</dd></div><div className="bg-white p-4"><dt className="text-xs font-semibold text-text-secondary">承接输入</dt><dd className="mt-1 text-xs leading-5 text-text-primary">{stageContract.input}</dd></div><div className="bg-white p-4"><dt className="text-xs font-semibold text-text-secondary">交付下一步</dt><dd className="mt-1 text-xs leading-5 text-text-primary">{stageContract.handoff}</dd></div><div className="bg-white p-4"><dt className="text-xs font-semibold text-text-secondary">稳定性门槛</dt><dd className="mt-1 text-xs leading-5 text-text-primary">{stageContract.qualityGate}</dd></div></dl>{stageContract.key==='materials'&&<div className="flex flex-wrap items-center justify-between gap-2 border-t border-border px-4 py-3"><span className="text-xs text-text-secondary">产品、工厂和场景视频优先复用素材库</span><PointsValue value={productPointRate('material-library-reuse').points} suffix="/ 秒" className="text-xs font-semibold"/></div>}{stageContract.key==='production'&&<div className="border-t border-border px-4 py-3"><p className="text-xs font-semibold text-text-primary">产品功能按成功交付量结算</p><div className="mt-2 flex flex-wrap gap-x-5 gap-y-2 text-xs"><span className="inline-flex items-center gap-1.5">数字人 <PointsValue value={productPointRate('digital-human-video').points} suffix="/ 秒"/></span><span className="inline-flex items-center gap-1.5">AI 补镜 <PointsValue value={productPointRate('aigc-video-generation').points} estimated suffix="/ 秒"/></span><span className="inline-flex items-center gap-1.5">统一音色 <PointsValue value={productPointRate('voice-consistency').points} suffix="/ 秒"/></span></div></div>}</section>}
       <section aria-label="负责 Agent" className="space-y-2"><div className="flex flex-wrap gap-2"><AgentIdentityCard role={task.agent} relation="主 Agent"/>{assistantRoles.map(role => <AgentIdentityCard key={role} role={role} relation="辅助 Agent"/>)}</div>{assistantRoles.length === 0 && <p className="text-xs text-text-secondary">当前没有记录辅助 Agent；流程只显示已分配的真实责任。</p>}</section>
       <dl className="grid gap-3 rounded-lg border border-border bg-white p-4 sm:grid-cols-3">

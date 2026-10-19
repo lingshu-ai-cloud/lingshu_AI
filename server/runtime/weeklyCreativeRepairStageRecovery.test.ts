@@ -4,7 +4,18 @@ import type {WeeklyExecutionTask} from '../../shared/contracts/socialProgram.js'
 import type {Record_} from '../storage/datastore.js';
 import {socialRequestHash} from '../starter198/socialContentValidation.js';
 import {prepareWeeklyQualityRecoveryFixture} from '../socialPrograms/weeklyContentQualityRecovery.fixture.js';
-import {persistWeeklyCreativeRepairStageEvidence,validateWeeklyCreativeRepairStageEvidence,WEEKLY_CREATIVE_REPAIR_STAGE_EVIDENCE} from './weeklyCreativeRepairExecutionAdapter.js';
+import {persistWeeklyCreativeRepairStageEvidence,validateWeeklyCreativeRepairStageEvidence,weeklyCreativeRepairAssetJobDisposition,WEEKLY_CREATIVE_REPAIR_STAGE_EVIDENCE} from './weeklyCreativeRepairExecutionAdapter.js';
+
+test('creative repair asset stage blocks stopped producer jobs and only polls live or unknown jobs',()=>{
+ for(const status of ['blocked','paused','cancelled','dead_letter'] as const){
+  const result=weeklyCreativeRepairAssetJobDisposition({status,retryClass:'asset_supplier_denied',lastError:'supplier denied'});
+  assert.deepEqual(result,{status:'blocked',code:'asset_supplier_denied',message:'supplier denied'});
+ }
+ assert.deepEqual(weeklyCreativeRepairAssetJobDisposition({status:'dead_letter',retryClass:null,lastError:null}),{status:'blocked',code:'content_execution_dead_letter',message:'创意返工后台生产已停止，需要核验原作业后继续。'});
+ for(const status of ['queued','running','retry_wait'] as const)assert.equal(weeklyCreativeRepairAssetJobDisposition({status,retryClass:null,lastError:null})?.status,'pending');
+ assert.deepEqual(weeklyCreativeRepairAssetJobDisposition({status:'reconciling',retryClass:null,lastError:null}),{status:'pending',code:'provider_reconciliation',message:'供应商结果未知，等待原作业对账；不得重新付费提交。',retryDelayMs:1000});
+ assert.equal(weeklyCreativeRepairAssetJobDisposition({status:'succeeded',retryClass:null,lastError:null}),null);
+});
 
 function task(base:WeeklyExecutionTask,id:string,step:'material_preparation'|'script',predecessor?:string):WeeklyExecutionTask{
  const body={schemaVersion:'weekly-creative-repair-execution-lineage.v1',caseId:'repair-case',caseRequestHash:socialRequestHash('case'),configurationHash:socialRequestHash('configuration'),authorityHash:socialRequestHash('authority'),childTaskId:'repair-child',childBindingKey:'repair-child-binding',originalPublicationTaskId:'original-publication'};

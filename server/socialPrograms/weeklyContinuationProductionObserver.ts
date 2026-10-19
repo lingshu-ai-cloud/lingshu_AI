@@ -1,12 +1,13 @@
 import type {DataStore,Record_} from '../storage/datastore.js';
 import {resolveWeeklyProductionRow} from '../runtime/weeklyContentProductionIdentity.js';
-import type {WeeklyExecutionTask,VersionedSocialRef} from '../../shared/contracts/socialProgram.js';
+import type {WeeklyAgentPlanningState,WeeklyExecutionTask,WeeklyOperatingPackage,VersionedSocialRef} from '../../shared/contracts/socialProgram.js';
 import {publicationInstant} from './publicationDeadlines.js';
 import {socialJson,socialObject} from '../starter198/socialContentValidation.js';
 import {weeklyScriptEvidence} from '../runtime/socialWeeklyScriptEvidence.js';
 import {weeklyStoryboardEvidence} from '../runtime/socialWeeklyStoryboardEvidence.js';
 import {readVerifiedNoSharedMaterialDemand} from '../runtime/socialWeeklyOriginalRunMaterialDemand.js';
 import {readContentExecutionJob} from '../contentExecution/durableQueue.js';
+import {readWeeklyOriginalRunSettlementProof} from '../runtime/weeklyOriginalRunSettlementProof.js';
 export interface ContinuationProductionObservation {status:'ready'|'pending'|'blocked';resultRefs:VersionedSocialRef[];observedCompletedAt?:string;code:string;}
 /** Reads original persisted production only. No provider, starter, lease or mutation API is available here. */
 export async function observeWeeklyContinuationProduction(store:DataStore,task:WeeklyExecutionTask,now:string,validate:(task:WeeklyExecutionTask,refs:VersionedSocialRef[],at:string)=>Promise<void>):Promise<ContinuationProductionObservation>{
@@ -17,6 +18,30 @@ export async function observeWeeklyContinuationProduction(store:DataStore,task:W
  if(!row)return out('blocked','weekly_continuation_original_production_missing');
  const brief=socialObject(socialJson(row.brief)),authority=socialObject(brief?._weeklyAuthority),pkg=socialObject(authority?.weeklyPackage);
  if(socialObject(brief?.programRef)?.id!==task.programId||pkg?.packageId!==task.packageId||pkg.version!==task.packageVersion||pkg.programId!==task.programId||row.task_id!==task.productionProgress?.contentTaskId||row.run_id!==task.productionProgress?.runId||!row.run_id)return out('blocked','weekly_continuation_original_production_identity_invalid');
+ // After the original natural week, quality/rework may only observe the
+ // already-started original run. A paused graph-review job is expected at
+ // waiting_review; it is not permission to restart production in a new week.
+ if(['quality_check','rework'].includes(task.schedule.stepKind)){
+  const packages=await store.list<Record_>('social_weekly_operating_packages',{where:{tenant_id:task.tenantId,program_id:task.programId,package_id:task.packageId,version:task.packageVersion},perPage:2});
+  if(packages.totalItems!==1||packages.items.length!==1)return out('blocked','weekly_continuation_original_package_missing');
+  const original=packages.items[0]!.payload as WeeklyOperatingPackage;
+  if(packages.items[0]!.tenant_id!==task.tenantId||packages.items[0]!.program_id!==task.programId||packages.items[0]!.package_id!==task.packageId||packages.items[0]!.version!==task.packageVersion||original.packageId!==task.packageId||original.programId!==task.programId||original.version!==task.packageVersion||!original.weekEnd)return out('blocked','weekly_continuation_original_package_invalid');
+  const weekEnd=Date.parse(`${original.weekEnd}T23:59:59.999+08:00`);
+  if(!Number.isFinite(weekEnd))return out('blocked','weekly_continuation_original_package_invalid');
+  if(Date.parse(now)>weekEnd){
+   const plans=await store.list<Record_>('social_weekly_agent_planning',{where:{tenant_id:task.tenantId,program_id:task.programId,package_id:task.packageId,package_version:task.packageVersion},sort:'-planning_version',perPage:2});
+   if(!plans.items.length||plans.items.length>1&&plans.items[0]!.planning_version===plans.items[1]!.planning_version)return out('blocked','weekly_continuation_original_planning_ambiguous');
+   const planning=plans.items[0]!.payload as WeeklyAgentPlanningState;
+   if(plans.items[0]!.tenant_id!==task.tenantId||plans.items[0]!.program_id!==task.programId||plans.items[0]!.package_id!==task.packageId||plans.items[0]!.package_version!==task.packageVersion||plans.items[0]!.planning_version!==planning.version||planning.programId!==task.programId||planning.packageId!==task.packageId||planning.packageVersion!==task.packageVersion)return out('blocked','weekly_continuation_original_planning_invalid');
+   const proof=await readWeeklyOriginalRunSettlementProof({store,task,pkg:original,planning,now});
+   if(!proof||proof.contentTaskId!==row.task_id||proof.runId!==row.run_id)return out('blocked','weekly_continuation_original_settlement_unverified');
+   // The settlement reader proves the original graph/quality chain; the
+   // task-level validator additionally checks canonical shared-result and
+   // continuation constraints before this observer may return a result ref.
+   try{await validate(task,[proof.artifactRef],now);}catch{return out('blocked','weekly_continuation_original_step_unverified');}
+   return {status:'ready',code:'weekly_continuation_original_run_settled',resultRefs:[proof.artifactRef],observedCompletedAt:proof.artifactCompletedAt};
+  }
+ }
  const run=await store.getById<Record_>('workflow_runs',String(row.run_id));
  if(!run||run.tenant_id!==task.tenantId)return out('blocked','weekly_continuation_original_run_missing');
  if(['cancelled','failed','dead_letter'].includes(String(run.status))||['cancelled','attention','needs_input','paused'].includes(String(row.status)))return out('blocked','weekly_continuation_original_production_requires_action');

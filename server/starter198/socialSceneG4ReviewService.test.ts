@@ -1,7 +1,7 @@
 import test from 'node:test';import assert from 'node:assert/strict';
 import {prepared} from './socialContentSceneReworkService.fixture.js';
 import {createStarter198Repository} from './repository.js';
-import {createSocialSceneG4ReviewService,SOCIAL_SCENE_G4_REVIEWS} from './socialSceneG4ReviewService.js';
+import {createSocialSceneG4ReviewService,inspectActualSocialSceneG4HardFailure,SOCIAL_SCENE_G4_REVIEWS} from './socialSceneG4ReviewService.js';
 import {SCENE_G4_CHECK_CODES} from '../../shared/contracts/socialSceneG4Review.js';
 const scope={tenantId:'t',taskId:'content',runId:'run',artifactId:'artifact'};
 async function setup(){const f=await prepared();await f.service.saveCache(f.context);f.tables.starter_social_content_tasks![0]!.created_by='owner';return {...f,review:createSocialSceneG4ReviewService(createStarter198Repository(f.store))};}
@@ -12,9 +12,68 @@ import {authorizeSceneFixture} from './socialContentSceneReworkService.fixture.j
 import {inventoryFixture} from '../socialPrograms/weeklyInventoryReuse.fixture.js';
 import {createWeeklyInventoryReuseService} from '../socialPrograms/weeklyInventoryReuse.js';
 import {sealSocialSceneMediaCache} from './socialContentSceneRework.js';
+import {initialSceneG4Evidence,type InitialSceneQualityReport} from './socialContentInitialSceneCache.js';
+import {buildSocialProductionReceipt,persistSocialProductionReceipt} from './socialContentProductionHandoff.js';
 test('actual human G4 is consumed by original scene rework admission with remaining failed scene',async()=>{const f=await setup();try{const ctx=(await f.review.context(scope,'owner'))[0]!;await f.review.submit(scope,'owner',{requestId:'human-rework-request-0001',sceneId:ctx.sceneId,expectedContextHash:ctx.contextHash,checks:SCENE_G4_CHECK_CODES.map(code=>({code,outcome:'passed',observation:`人工检查并确认 ${code}`}))});const actual=await f.service.readCache({...scope,parentArtifactId:'artifact'});authorizeSceneFixture(f,actual);const admitted=await f.service.createIntent({...scope,parentArtifactId:'artifact',actorUserId:'owner',executionRunId:'rework-run',affectedSceneIds:[actual.cache.scenes[1]!.sceneId],changeKind:'visual_asset'});assert.equal(admitted.intent.sourceRunId,'run');assert.equal(admitted.job.runId,'rework-run');assert.equal(f.tables.content_execution_jobs!.length,1);}finally{await f.cleanup();}});
 test('actual human seven-check receipts consumed by inventory source qualification; audit deletion refuses',async()=>{const f=await inventoryFixture();try{f.tables.starter_social_content_tasks![0]!.created_by='owner';const artifact=f.tables.starter_social_content_artifacts![0]!;const scenes=f.context.cache.scenes.map(scene=>({...scene,technicalReceiptId:f.tables.starter_social_production_receipts!.filter(r=>r.scene_id===scene.productionSceneId&&r.attempt===2)[0]!.receipt_id as string,status:'passed' as const}));const {recordHash:oldHash,...originalCache}=f.context.cache;await f.service.saveCache({...f.context,cache:sealSocialSceneMediaCache({...originalCache,parentArtifactHash:String(artifact.content_hash),scenes})});const review=createSocialSceneG4ReviewService(createStarter198Repository(f.store));for(const ctx of await review.context(scope,'owner'))await review.submit(scope,'owner',{requestId:`human-inventory-${ctx.sceneId}-0001`,sceneId:ctx.sceneId,expectedContextHash:ctx.contextHash,checks:SCENE_G4_CHECK_CODES.map(code=>({code,outcome:'passed',observation:`逐镜核验 ${code}`}))});const authority={tenantId:'t',programId:'p',packageId:'week2',packageVersion:1,actorUserId:'owner'};const result=await createWeeklyInventoryReuseService(f.store).candidates(authority);assert.equal(result.items.length,1);assert.equal(result.items[0]!.source.g4ReceiptIds.length,2);f.tables[SOCIAL_SCENE_G4_REVIEWS]=[];const refused=await createWeeklyInventoryReuseService(f.store).candidates(authority);assert.equal(refused.items.length,0);assert(refused.gaps.some(g=>g==='scene_g4_human_evidence_missing'||g==='inventory_human_g4_evidence_missing'));}finally{await f.cleanup();}});
-import {writeFile} from 'node:fs/promises';
+import {readFile,writeFile} from 'node:fs/promises';
+import {createHash} from 'node:crypto';
 test('saved human approval cannot survive actual owned media byte drift',async()=>{const f=await setup();try{const ctx=(await f.review.context(scope,'owner'))[0]!;await f.review.submit(scope,'owner',{requestId:'human-byte-drift-0001',sceneId:ctx.sceneId,expectedContextHash:ctx.contextHash,checks:SCENE_G4_CHECK_CODES.map(code=>({code,outcome:'passed',observation:`已核实实际 ${code}`}))});await writeFile(f.local,'actual changed bytes');await assert.rejects(f.review.get(scope,'owner','human-byte-drift-0001'),/bytes|hash|file/);assert.equal(f.tables.content_execution_jobs?.length??0,0);}finally{await f.cleanup();}});
 import {socialRequestHash} from './socialContentValidation.js';
-test('original frozen detector hard failure cannot be converted to passed by human checkbox',async()=>{const f=await prepared();try{f.tables.starter_social_content_tasks![0]!.created_by='owner';const artifact=f.tables.starter_social_content_artifacts![0]!,content=artifact.content as Record<string,unknown>;content.technicalQualityReport={schemaVersion:'initial-scene-quality.v1',visual:{passed:false,failures:['真实抽帧发现黑屏']},scenes:{passed:false,issues:[{sceneIndex:0,start:0,end:4,code:'black_scene',reason:'实际抽帧黑屏'}],checkedScenes:2},audio:{ok:true,error:null}};artifact.content_hash=socialRequestHash({resourceRef:artifact.resource_ref,content});const {recordHash,...old}=f.context.cache;await f.service.saveCache({...f.context,cache:sealSocialSceneMediaCache({...old,parentArtifactHash:String(artifact.content_hash)})});const review=createSocialSceneG4ReviewService(createStarter198Repository(f.store)),ctx=(await review.context(scope,'owner'))[0]!;await assert.rejects(review.submit(scope,'owner',{requestId:'human-hard-failure-0001',sceneId:ctx.sceneId,expectedContextHash:ctx.contextHash,checks:SCENE_G4_CHECK_CODES.map(code=>({code,outcome:'passed',observation:'真人声称通过'}))}),/hard_failure_requires_actual_repair/);assert.equal(f.tables[SOCIAL_SCENE_G4_REVIEWS]?.length??0,0);assert.equal(f.tables.content_execution_jobs?.length??0,0);}finally{await f.cleanup();}});
+test('original frozen detector hard failure cannot be converted to passed by human checkbox',async()=>{const f=await prepared();try{f.tables.starter_social_content_tasks![0]!.created_by='owner';const artifact=f.tables.starter_social_content_artifacts![0]!,content=artifact.content as Record<string,unknown>;const report:InitialSceneQualityReport={schemaVersion:'initial-scene-quality.v1',visual:{passed:false,failures:['真实抽帧发现黑屏'],metrics:{sampleCount:1,contentFrameCount:0,nonBackgroundFrameRatio:0,meanBrightness:0,meanLumaDeviation:0,meanEdgeRatio:0,meanFrameDifference:0,maxFrameDifference:0,motionDetected:false,estimatedDistinctFrames:1,nearDuplicateFrameRatio:0,sharpFrameRatio:0},evidenceFrames:[]},scenes:{passed:false,issues:[{sceneIndex:0,start:0,end:4,code:'black_scene',reason:'实际抽帧黑屏'}],checkedScenes:2},audio:{ok:true,error:null}};content.technicalQualityReport=report;artifact.content_hash=socialRequestHash({resourceRef:artifact.resource_ref,content});const scenes=[];for(const [index,scene]of f.context.cache.scenes.entries()){const evidence=initialSceneG4Evidence(report,index,f.context.cache.scenes.length,scene.sha256);const receipt=buildSocialProductionReceipt({handoff:f.handoff,productionResult:f.result,gate:'G4',sceneId:scene.productionSceneId,attempt:2,status:evidence.status,actor:'content_agent',artifactRefs:[f.result.artifactResourceRef],evidenceRefs:['frozen-real-detector-report'],checks:evidence.checks});await persistSocialProductionReceipt(createStarter198Repository(f.store),'t',receipt);scenes.push({...scene,technicalReceiptId:receipt.receiptId,status:evidence.status});}const {recordHash,...old}=f.context.cache;await f.service.saveCache({...f.context,cache:sealSocialSceneMediaCache({...old,parentArtifactHash:String(artifact.content_hash),scenes})});const review=createSocialSceneG4ReviewService(createStarter198Repository(f.store)),ctx=(await review.context(scope,'owner'))[0]!;await assert.rejects(review.submit(scope,'owner',{requestId:'human-hard-failure-0001',sceneId:ctx.sceneId,expectedContextHash:ctx.contextHash,checks:SCENE_G4_CHECK_CODES.map(code=>({code,outcome:'passed',observation:'真人声称通过'}))}),/hard_failure_requires_actual_repair/);assert.equal(f.tables[SOCIAL_SCENE_G4_REVIEWS]?.length??0,0);assert.equal(f.tables.content_execution_jobs?.length??0,0);}finally{await f.cleanup();}});
+test('human G4 hard-failure guard includes high-confidence sensitive speech and current-scene screen hits',()=>{
+ const base={schemaVersion:'initial-scene-quality.v1',visual:{passed:true},audio:{ok:true},scenes:{issues:[]},mediaHardProbe:{version:'scene-media-hard-probe.v1',formatPassed:true,container:'mp4',videoCodec:'h264',audioCodec:'aac',sensitiveFrozenSpeechEvidence:{status:'not_observed'},scenes:[{sensitiveScreenEvidence:{status:'not_observed'}},{sensitiveScreenEvidence:{status:'not_observed'}}]}};
+ assert.equal(inspectActualSocialSceneG4HardFailure({technicalQualityReport:base},0),false);
+ assert.equal(inspectActualSocialSceneG4HardFailure({technicalQualityReport:{...base,mediaHardProbe:{...base.mediaHardProbe,sensitiveFrozenSpeechEvidence:{status:'hit'}}}},0),true);
+ assert.equal(inspectActualSocialSceneG4HardFailure({technicalQualityReport:{...base,mediaHardProbe:{...base.mediaHardProbe,captionMaskAudit:{status:'unknown',plainCueBinding:{status:'mismatch',reason:'wrong ASS cue'}}}}},0),true,'measured render subtitle source mismatch cannot be manually approved');
+ assert.equal(inspectActualSocialSceneG4HardFailure({technicalQualityReport:{...base,mediaHardProbe:{...base.mediaHardProbe,captionMaskAudit:{status:'unknown',plainCueBinding:{status:'unknown',reason:'complex ASS'}}}}},0),false,'unsupported complex captions remain pending rather than measured mismatch');
+ assert.equal(inspectActualSocialSceneG4HardFailure({technicalQualityReport:{...base,mediaHardProbe:{...base.mediaHardProbe,fullFrozenAudioIdentity:{status:'failed',failedWindowIndexes:[1]}}}},0),true,'full-track waveform mismatch cannot be approved by human checkbox');
+ assert.equal(inspectActualSocialSceneG4HardFailure({technicalQualityReport:{...base,mediaHardProbe:{...base.mediaHardProbe,mediaSha256:'a'.repeat(64),finalSensitiveFrameAudit:{schemaVersion:'final-sensitive-frame-audit.v1',status:'hit',mediaSha256:'a'.repeat(64)}}}},0),true,'transient full-frame sensitive hit cannot be approved by checkbox');
+ const screen={...base,mediaHardProbe:{...base.mediaHardProbe,scenes:[{sensitiveScreenEvidence:{status:'hit'}},{sensitiveScreenEvidence:{status:'not_observed'}}]}};
+ assert.equal(inspectActualSocialSceneG4HardFailure({technicalQualityReport:screen},0),true);
+ assert.equal(inspectActualSocialSceneG4HardFailure({technicalQualityReport:screen},1),false);
+ const media={...base,mediaHardProbe:{...base.mediaHardProbe,finalPrivacyCoverage:{schemaVersion:'final-privacy-coverage.v1',status:'unknown',failureCode:'frame_count_mismatch'}}};
+ assert.equal(inspectActualSocialSceneG4HardFailure({technicalQualityReport:media},0),true,'measured final-film frame mismatch cannot be overridden by seven manual passes');
+ assert.equal(inspectActualSocialSceneG4HardFailure({technicalQualityReport:{...base,mediaHardProbe:{...base.mediaHardProbe,finalPrivacyCoverage:{schemaVersion:'final-privacy-coverage.v1',status:'unknown'}}}},0),false,'missing independent frame proof remains pending, not a measured defect');
+});
+test('real G4 submission rejects sensitive detector hits; another scene is not falsely blocked by screen-only hit',async()=>{
+ for(const finding of ['speech','screen'] as const){
+  const f=await prepared();
+  try{
+   f.tables.starter_social_content_tasks![0]!.created_by='owner';
+   const artifact=f.tables.starter_social_content_artifacts![0]!,content=artifact.content as Record<string,unknown>;
+   const timeline=f.context.cache.renderInput.sourceManifest.timeline as Array<{sceneId:string;targetStart?:number;targetEnd?:number}>;
+   const mediaSha256=createHash('sha256').update(await readFile(f.local)).digest('hex');
+   const report={schemaVersion:'initial-scene-quality.v1',visual:{passed:true},audio:{ok:true},scenes:{passed:true,issues:[],checkedScenes:timeline.length},mediaHardProbe:{version:'scene-media-hard-probe.v1',mediaSha256,timelineHash:socialRequestHash(timeline),formatPassed:true,formatReason:'fixture format',container:'mp4',videoCodec:'h264',audioCodec:'aac',sensitiveFrozenSpeechEvidence:{status:finding==='speech'?'hit':'not_observed',reason:'fixture high-confidence frozen speech'},scenes:timeline.map((scene,index)=>({sceneId:scene.sceneId,startSeconds:scene.targetStart,endSeconds:scene.targetEnd,durationPassed:true,reason:'fixture duration',audioWindowDecoded:true,sensitiveScreenEvidence:{status:finding==='screen'&&index===0?'hit':'not_observed',reason:'fixture high-confidence screen'}}))}} as unknown as InitialSceneQualityReport;
+   content.technicalQualityReport=report;artifact.content_hash=socialRequestHash({resourceRef:artifact.resource_ref,content});
+   const scenes=[];
+   for(const [index,scene] of f.context.cache.scenes.entries()){
+    const evidence=initialSceneG4Evidence(report,index,f.context.cache.scenes.length,scene.sha256);
+    const receipt=buildSocialProductionReceipt({handoff:f.handoff,productionResult:f.result,gate:'G4',sceneId:scene.productionSceneId,attempt:2,status:evidence.status,actor:'content_agent',artifactRefs:[f.result.artifactResourceRef],evidenceRefs:['frozen-sensitive-detector-report'],checks:evidence.checks});
+    await persistSocialProductionReceipt(createStarter198Repository(f.store),'t',receipt);
+    scenes.push({...scene,technicalReceiptId:receipt.receiptId,status:evidence.status});
+   }
+   const {recordHash,...cache}=f.context.cache;
+   await f.service.saveCache({...f.context,cache:sealSocialSceneMediaCache({...cache,parentArtifactHash:String(artifact.content_hash),scenes})});
+   const review=createSocialSceneG4ReviewService(createStarter198Repository(f.store));
+   const context=await review.context(scope,'owner');
+   const submit=(index:number)=>review.submit(scope,'owner',{requestId:`sensitive-${finding}-${index}-review-0001`,sceneId:context[index]!.sceneId,expectedContextHash:context[index]!.contextHash,checks:SCENE_G4_CHECK_CODES.map(code=>({code,outcome:'passed' as const,observation:`已人工观察 ${code}`}))});
+   await assert.rejects(submit(0),/hard_failure_requires_actual_repair/);
+   if(finding==='screen'){
+    const accepted=await submit(1);
+    assert.equal(accepted.item?.status,'passed');
+    assert.equal((await review.get(scope,'owner',`sensitive-${finding}-1-review-0001`)).projectionStatus,'applied');
+   }
+  }finally{await f.cleanup();}
+ }
+});
+test('re-reading an accepted human receipt refuses a later sensitive detector change on the same artifact',async()=>{
+ const f=await setup();
+ try{
+  const ctx=(await f.review.context(scope,'owner'))[0]!,requestId='human-sensitive-reread-0001';
+  assert.equal((await f.review.submit(scope,'owner',{requestId,sceneId:ctx.sceneId,expectedContextHash:ctx.contextHash,checks:SCENE_G4_CHECK_CODES.map(code=>({code,outcome:'passed' as const,observation:`已观察 ${code}`}))})).item?.status,'passed');
+  const artifact=f.tables.starter_social_content_artifacts![0]!,content=artifact.content as Record<string,unknown>;
+  content.technicalQualityReport={schemaVersion:'initial-scene-quality.v1',mediaHardProbe:{version:'scene-media-hard-probe.v1',sensitiveFrozenSpeechEvidence:{status:'hit'}}};
+  await assert.rejects(f.review.get(scope,'owner',requestId),/source_artifact_invalid|parent_hash|artifact_changed|source_changed/);
+ }finally{await f.cleanup();}
+});

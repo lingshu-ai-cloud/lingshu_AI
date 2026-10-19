@@ -87,6 +87,24 @@ export async function assessWeeklyOwnedProductIdentity(store:DataStore,scope:Wee
  }
  if(!result.gaps.length&&result.materials.length)result.status='ready';return result;
 }
+/** Refine the existing material consumer after the final content plan is known.
+ * This never promotes an earlier generic verification to the new exact terms. */
+export async function refineWeeklyOwnedProductIdentityConsumer(store:DataStore,scope:WeeklyOwnedProductIdentityScope,input:{actorUserId:string;requestId:string;expectedRequestUpdatedAt:string;expectedConsumerRequirement:string;expectedTaskVersion:number;expectedRequirementHash:string},ports:WeeklyOwnedProductIdentityPorts){
+ scope=await canonicalOwnedScope(store,scope);
+ return withExecutionPackageGate(store,{tenantId:scope.tenantId,programId:scope.programId,packageId:scope.packageId,packageVersion:scope.packageVersion},async assert=>{
+  if(await executionPackageFrozen(store,{tenantId:scope.tenantId,programId:scope.programId,packageId:scope.packageId,packageVersion:scope.packageVersion}))return fail('weekly_execution_package_frozen');
+  const actor=await store.getById<Record_>('users',input.actorUserId);
+  if(!actor||actor.tenantId!==scope.tenantId||!['super_admin','admin','social_operator'].includes(organizationRoleOrNull(actor.role)??'')||actor.disabled===true||actor.active===false||['disabled','suspended'].includes(String(actor.status)))return fail('weekly_owned_product_identity_actor_invalid');
+  const versions=await store.list<Record_>('social_weekly_operating_packages',{where:{tenant_id:scope.tenantId,program_id:scope.programId,package_id:scope.packageId},perPage:500});
+  if(versions.totalItems!==versions.items.length||versions.items.some(row=>Number(row.version)>scope.packageVersion))return fail('weekly_owned_product_identity_scope_invalid');
+  const current=await source(store,scope,ports);
+  if(current.detail.runId||!['draft','needs_input','plan_review'].includes(current.detail.status)||Number(current.detail.version)!==input.expectedTaskVersion||current.requirementHash!==input.expectedRequirementHash||!current.consumerTaskId||!current.requirements.length)return fail('weekly_owned_product_identity_binding_changed');
+  const requestService=createWeeklyMaterialRequestService(store,ports.materialPorts);
+  const requirement=current.requirements.map(item=>`${item.requirementId}：${item.description}`).join('\n');
+  await assert();
+  return requestService.reviseConsumerRequirement({tenantId:scope.tenantId,programId:scope.programId,requestId:input.requestId,actorUserId:input.actorUserId,consumerTaskId:current.consumerTaskId,packageId:scope.packageId,packageVersion:scope.packageVersion,expectedUpdatedAt:input.expectedRequestUpdatedAt,expectedRequirement:input.expectedConsumerRequirement,nextRequirement:requirement,reason:'正式内容分镜冻结后，复核当前图片字节与逐镜产品身份要求'});
+ });
+}
 export async function bindWeeklyOwnedProductIdentity(store:DataStore,scope:WeeklyOwnedProductIdentityScope,input:{actorUserId:string;expectedTaskVersion:number;expectedRequirementHash:string;bindings:WeeklyOwnedProductIdentityBinding[]},ports:WeeklyOwnedProductIdentityPorts){
  scope=await canonicalOwnedScope(store,scope);
  return withExecutionPackageGate(store,{tenantId:scope.tenantId,programId:scope.programId,packageId:scope.packageId,packageVersion:scope.packageVersion},async assert=>withSocialContentSubjectLease({repository:ports.repository,tenantId:scope.tenantId,subjectId:scope.contentTaskId,action:async()=>{

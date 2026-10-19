@@ -14,45 +14,60 @@ test('selected enterprise product image URL binds its hashed material when legac
   assert.deepEqual(ownedProductReferenceImageIds({records: [legacy], tenantId: 'tenant', productId: 'GUIANFA-RS-001',
     productRef: 'product:GUIANFA-RS-001', enterpriseProductImageUrls: ['/api/overseas/enterprise/assets/rs001.png']}), ['actual-KB-image']);
 });
+test('a matching enterprise URL cannot launder an image explicitly assigned to a different product', () => {
+  const sourceUrl = '/api/overseas/enterprise/assets/rs001.png';
+  const selected = {records: [{...image, sourceUrl}], tenantId: 'tenant', productId: 'SKU',
+    productRef: 'product:SKU', enterpriseProductImageUrls: [sourceUrl]};
+  assert.deepEqual(ownedProductReferenceImageIds(selected), ['actual-KB-image']);
+  assert.deepEqual(ownedProductReferenceImageIds({...selected, records: [{...image, productId: 'OTHER', sourceUrl}]}), []);
+  assert.deepEqual(ownedProductReferenceImageIds({...selected, records: [{...image, productRef: 'product:OTHER', sourceUrl}]}), []);
+  assert.deepEqual(ownedProductReferenceImageIds({...selected, records: [{...image, productRefs: ['product:SKU', 'product:OTHER'], sourceUrl}]}), []);
+});
 test('wrong identity, shared ownership, generated package and missing byte hash cannot become actual KB references', () => {
   for (const change of [{productId: 'OTHER'}, {tenantId: 'other'}, {scope: 'shared'}, {type: 'video'},
     {sourceType: 'ai-generated'}, {synthetic: true}, {contentSha256: ''}]) assert.deepEqual(ids({...image, ...change}), []);
 });
-test('selected enterprise image becomes the exact product identity group and product-shot source',()=>{
+test('selected enterprise image is retained as inventory evidence, not executable product-shot video',()=>{
  const record={...image,productId:'GUIANFA-RS-001',productRef:'product:GUIANFA-RS-001',sourceType:'enterprise_product_table',width:160,height:288,licenseEvidence:'enterprise_profile:p:product:GUIANFA-RS-001',commercialUseApproved:true};
  const imageIds=ownedProductReferenceImageIds({records:[record],tenantId:'tenant',productId:'GUIANFA-RS-001',productRef:'product:GUIANFA-RS-001'});
  const plan=createSocialAssetSupplyPlan({creationMode:'viral_replication',productionApproach:'ai_enhanced',materialRoutingPolicyVersion:'type-aware.v1',inventory:{productImageIds:imageIds,productIdentityGroups:[{productRef:'product:GUIANFA-RS-001',imageIds}]},shots:[{shotId:'product-shot',function:'value',materialType:'product',productRef:'product:GUIANFA-RS-001',productPolicy:'locked',requestedDescription:'GUIANFA-RS-001 product close-up'}]});
- assert.deepEqual(plan.shots[0]!.sourceRefs,['actual-KB-image']);assert.equal(plan.shots[0]!.productSceneReplication?.productIdentity.groups[0]?.productRef,'product:GUIANFA-RS-001');assert.deepEqual(plan.shots[0]!.materialRouting?.generation?.productImageRefs,['actual-KB-image']);
+ const shot=plan.shots[0]!;
+ assert.deepEqual(imageIds,['actual-KB-image']);
+ assert.deepEqual(shot.sourceRefs,[]);
+ assert.equal(shot.sourceStrategy,'customer_real_asset');
+ assert.equal(shot.materialRouting?.policy,'local_only');
+ assert.equal(shot.materialRouting?.localMatch.state,'missing');
+ assert.equal(shot.materialRouting?.generation,undefined);
+ assert.equal(shot.productSceneReplication,undefined);
+ assert.equal(shot.feasibility,'goal_degraded');
 });
-test('new routing fills a prior empty product contract from current exact-SKU inventory without changing its scene timing',()=>{
+test('new routing admits a verified same-product local video segment',()=>{
  const request={shotId:'product-shot',function:'value' as const,materialType:'product' as const,productRef:'product:GUIANFA-RS-001',productPolicy:'locked' as const,plannedDurationSeconds:1.4,requestedDescription:'GUIANFA-RS-001 product close-up'};
  const before=createSocialAssetSupplyPlan({creationMode:'viral_replication',productionApproach:'ai_enhanced',materialRoutingPolicyVersion:'type-aware.v1',inventory:{productImageIds:[],productIdentityGroups:[]},shots:[request]}).shots[0]!;
- assert.deepEqual(before.productSceneReplication?.productIdentity.groups,[]);
+ assert.deepEqual(before.sourceRefs,[]);
+ assert.equal(before.feasibility,'goal_degraded');
  const imageIds=['actual-KB-image'];
- const refreshed=createSocialAssetSupplyPlan({creationMode:'viral_replication',productionApproach:'ai_enhanced',materialRoutingPolicyVersion:'type-aware.v1',inventory:{productImageIds:imageIds,productIdentityGroups:[{productRef:'product:GUIANFA-RS-001',imageIds}]},shots:[{...request,productSceneReplication:before.productSceneReplication,materialRouting:before.materialRouting}]}).shots[0]!;
- assert.deepEqual(refreshed.sourceRefs,imageIds);assert.deepEqual(refreshed.materialRouting?.generation?.productImageRefs,imageIds);
- assert.deepEqual(refreshed.productSceneReplication?.productIdentity.groups[0]?.referenceImageIds,imageIds);
- assert.equal(refreshed.productSceneReplication?.sceneLock.productSlots[0]?.productRef,'product:GUIANFA-RS-001');
- assert.equal(refreshed.productSceneReplication?.cameraLock.durationSeconds,1.4);
+ const segment={sourceRef:'same-product-video',segmentId:'verified-window',startSeconds:2,endSeconds:3.4};
+ const refreshed=createSocialAssetSupplyPlan({creationMode:'viral_replication',productionApproach:'ai_enhanced',materialRoutingPolicyVersion:'type-aware.v1',inventory:{customerVideoIds:['same-product-video'],productImageIds:imageIds,productIdentityGroups:[{productRef:'product:GUIANFA-RS-001',imageIds}]},shots:[{...request,localVideoMatch:{sourceRefs:['same-product-video'],semanticMatch:'verified',evidenceRef:'verified:product-close-up',productRef:'product:GUIANFA-RS-001'},selectedMaterialSegment:segment}]}).shots[0]!;
+ assert.deepEqual(refreshed.sourceRefs,['same-product-video']);
+ assert.deepEqual(refreshed.selectedMaterialSegment,segment);
+ assert.equal(refreshed.materialRouting?.localMatch.state,'matched');
+ assert.equal(refreshed.materialRouting?.generation,undefined);
+ assert.equal(refreshed.productSceneReplication,undefined);
+ assert.equal(refreshed.feasibility,'full_fidelity');
 });
-test('current task SKU fills a frozen empty reference contract even when the reference retained a different product label',()=>{
+test('current task SKU rejects a different product video despite matching image inventory',()=>{
  const request={shotId:'product-shot',function:'value' as const,materialType:'product' as const,
   productRef:'GUIANFA-RS-001',productPolicy:'locked' as const,plannedDurationSeconds:1.4,
-  requestedDescription:'current product close-up',visualContract:normalizeSceneVisualContract({product:{requestedProductRef:'reference-video-product'}})};
- const before=createSocialAssetSupplyPlan({creationMode:'viral_replication',productionApproach:'ai_enhanced',
-  materialRoutingPolicyVersion:'type-aware.v1',inventory:{productImageIds:[],productIdentityGroups:[]},shots:[request]}).shots[0]!;
- const frozen=structuredClone(before.productSceneReplication!);
- const camera=structuredClone(frozen.cameraLock),scene={...structuredClone(frozen.sceneLock),productSlots:[]};
- const refreshed=createSocialAssetSupplyPlan({creationMode:'viral_replication',productionApproach:'ai_enhanced',
-  materialRoutingPolicyVersion:'type-aware.v1',inventory:{productImageIds:['actual-KB-image'],productIdentityGroups:[{
+  requestedDescription:'current product close-up',visualContract:normalizeSceneVisualContract({product:{requestedProductRef:'GUIANFA-RS-001'}})};
+ const attempted=createSocialAssetSupplyPlan({creationMode:'viral_replication',productionApproach:'ai_enhanced',
+  materialRoutingPolicyVersion:'type-aware.v1',inventory:{customerVideoIds:['other-product-video'],productImageIds:['actual-KB-image'],productIdentityGroups:[{
     productRef:'product:GUIANFA-RS-001',imageIds:['actual-KB-image']}]},shots:[{...request,
-      productSceneReplication:frozen,materialRouting:before.materialRouting}]}).shots[0]!;
- assert.deepEqual(refreshed.productSceneReplication?.productIdentity.groups,[{
-  productRef:'product:GUIANFA-RS-001',referenceImageIds:['actual-KB-image'],
-  requiredVisibleElements:['产品轮廓','材质与颜色','Logo','包装标签与可读文字'],
-  forbiddenChanges:['shape','material','color','logo','label_text','packaging_structure']}]);
- assert.deepEqual(refreshed.sourceRefs,['actual-KB-image']);
- assert.deepEqual(refreshed.materialRouting?.generation?.productImageRefs,['actual-KB-image']);
- assert.deepEqual(refreshed.productSceneReplication?.cameraLock,camera);
- assert.deepEqual({...refreshed.productSceneReplication?.sceneLock,productSlots:[]},scene);
+      localVideoMatch:{sourceRefs:['other-product-video'],semanticMatch:'verified',evidenceRef:'verified:other-product',productRef:'reference-video-product'},
+      selectedMaterialSegment:{sourceRef:'other-product-video',segmentId:'wrong-sku',startSeconds:2,endSeconds:3.4}}]}).shots[0]!;
+ assert.deepEqual(attempted.sourceRefs,[]);
+ assert.equal(attempted.materialRouting?.localMatch.state,'missing');
+ assert.equal(attempted.materialRouting?.generation,undefined);
+ assert.equal(attempted.productSceneReplication,undefined);
+ assert.equal(attempted.feasibility,'goal_degraded');
 });

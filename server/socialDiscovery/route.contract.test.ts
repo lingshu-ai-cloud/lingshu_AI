@@ -29,7 +29,8 @@ assert.match(dashboard, /socialDiscoveryApi\.getSummary\(\)/, '大屏必须展�
 assert.match(dashboard, /socialDiscoveryApi\.listRuns\(1, 5\)/, '大屏必须展示可追溯运行记录');
 assert.match(dashboard, /modePolicies:\s*strategy\.discoveryBrief\.modePolicies/, '前端保存不得丢失三类独立采集策略');
 assert.match(dashboard, /'facebook'/, '发现范围必须可配置 Facebook');
-assert.match(service, /discoveryContext:\s*\{ runId, scopeId: scope\.id, scopeVersion: scope\.version, mode, queryRef: target\.ref \}/, '采集必须向素材写入运行溯源');
+assert.match(service, /discoveryContext:\s*\{ runId, scopeId: scope\.id, scopeVersion: scope\.version, mode, queryRef: target\.ref,/, '采集必须向素材写入运行溯源');
+assert.match(service, /weeklyOriginalAccountCollection:[\s\S]*?actorInputSha256:/, '黄金五条原运行必须锁定同 run 下载输入身份');
 assert.match(videos, /discoveryOrigins:\s*discoveryOrigins\(existingAnalysis\.discoveryOrigins/, '去重素材也必须追加发现溯源');
 assert.match(inspirationDashboard, /import \{ VideoCard, VideoListItem \} from ['"]\.\/InspirationVideoCards['"]/, '灵感大屏必须组合独立的视频供给卡片');
 assert.match(inspirationVideoCards, /discoverySupplyLabel\(video\)/, '素材卡必须向用户解释三类供给来源');

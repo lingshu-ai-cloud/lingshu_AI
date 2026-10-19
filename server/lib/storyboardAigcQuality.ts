@@ -44,8 +44,8 @@ export interface StoryboardQaReport {
 }
 
 const checksByPhase = {
-  first_frame: ['product_identity', 'person_identity', 'environment_fidelity', 'layout', 'contact', 'start_state', 'visual_integrity'],
-  video: ['product_identity', 'person_identity', 'environment_fidelity', 'layout_continuity', 'contact_continuity', 'seam_continuity', 'action_order', 'end_state', 'visual_integrity'],
+  first_frame: ['product_identity', 'packaging_visibility', 'subject_visibility', 'person_identity', 'environment_fidelity', 'layout', 'contact', 'start_state', 'visual_integrity'],
+  video: ['product_identity', 'packaging_visibility', 'subject_visibility', 'person_identity', 'environment_fidelity', 'layout_continuity', 'contact_continuity', 'seam_continuity', 'action_order', 'end_state', 'visual_integrity'],
 } as const;
 
 export function storyboardQaRequiredChecks(input: {
@@ -54,7 +54,11 @@ export function storyboardQaRequiredChecks(input: {
   hasSeam?: boolean;
 }): string[] {
   const out = new Set<string>();
-  if (input.hasProduct || input.sceneType === 'usage') out.add('product_identity');
+  if (input.hasProduct || input.sceneType === 'usage') {
+    out.add('product_identity');
+    out.add('packaging_visibility');
+    out.add('subject_visibility');
+  }
   if (input.hasNamedPerson) out.add('person_identity');
   if (input.hasEnvironmentReference) out.add('environment_fidelity');
   out.add(input.phase === 'first_frame' ? 'layout' : 'layout_continuity');
@@ -128,7 +132,7 @@ function hasSufficientTemporalEvidence(phase: StoryboardQaPhase, key: string, la
   const unique = [...new Set(cited)];
   if (key === 'seam_continuity') return unique.includes('上一段合格末帧') && unique.some(label => label !== '上一段合格末帧');
   // A single still cannot establish a changing state or identity continuity.
-  if (['product_identity', 'person_identity', 'environment_fidelity', 'layout_continuity', 'contact_continuity', 'action_order'].includes(key))
+  if (['product_identity', 'packaging_visibility', 'subject_visibility', 'person_identity', 'environment_fidelity', 'layout_continuity', 'contact_continuity', 'action_order'].includes(key))
     return unique.length >= 2;
   // The final state must be visible near the end, not inferred from a middle frame.
   if (key === 'end_state') return unique.some(label => labels.indexOf(label) >= Math.floor(labels.length * .75));

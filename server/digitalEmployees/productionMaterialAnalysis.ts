@@ -161,7 +161,7 @@ export async function analyzeProductionMaterial(asset: AssetCandidate, tenantId:
       const batches = materialFrameBatches(frames, resolved.duration);
       const reviewedSegments: Array<Record<string, unknown>> = [];
       for (const [batchIndex,batch] of batches.entries()) {
-        const model=(process.env.QWEN_MATERIAL_VL_MODEL||(process.env.QWEN_EXACT_VL_MODEL??'qwen3-vl-flash')).trim();
+        const model=(process.env.QWEN_MATERIAL_VL_MODEL||(process.env.QWEN_EXACT_VL_MODEL??'qwen3-vl-plus')).trim();
         const draftRaw = await analyzeMaterialFramesWithQwen({ frames: batch.frames, duration: resolved.duration,
           windowStart: batch.start, windowEnd: batch.end,paidOperation:await paid('material_video_analysis',batchIndex,model) });
         const draft = boundMaterialAnalysisToWindow(draftRaw, batch.start, batch.end);

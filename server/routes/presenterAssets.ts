@@ -368,12 +368,29 @@ export function createPresenterAssetsRouter(store: DataStore, exclusive: Exclusi
         const defaults = row?.payload as ProductionDefaults | undefined;
         const presenter = defaults?.presenters.find(item => item.id === presenterId && item.authorized);
         if (!defaults || !presenter) throw new Error('当前企业人物不存在或未授权');
+        const avatarId = presenter.toolMappings?.heygen?.avatarId || presenter.avatarId || '';
+        if (!avatarId || !presenter.rightsEvidence?.authorizationRef) throw new Error('人物原始授权未登记，不能绑定声音');
+        const requestId = hash(`${tenant}:${presenterId}:${avatarId}:${voiceId}`);
+        let evidence = await find(tenant, 'voice_binding_authorization', requestId);
+        if (!evidence) {
+          const created = await store.create<Row>(COLLECTION, { tenant_id: tenant, kind: 'voice_binding_authorization', request_id: requestId,
+            payload: { presenterId, avatarId, voiceId, authorizationDeclared: true, providerVoiceConfirmed: true, recordedAt: new Date().toISOString() } });
+          if (!created) throw new Error('声音授权留档失败，未修改默认声音');
+          evidence = created;
+        }
+        if (evidence.tenant_id !== tenant || evidence.kind !== 'voice_binding_authorization' || evidence.request_id !== requestId
+          || evidence.payload?.presenterId !== presenterId || evidence.payload?.avatarId !== avatarId || evidence.payload?.voiceId !== voiceId
+          || evidence.payload?.authorizationDeclared !== true || evidence.payload?.providerVoiceConfirmed !== true
+          || evidence.payload?.revokedAt) {
+          throw new Error('声音授权原始记录不一致，不能修改默认声音');
+        }
         const clone = await cloneByHeygenVoice(tenant, voiceId);
         const arkVoice = clone?.payload?.arkVoice;
         const arkMapping = clone?.payload?.referenceAudioMaterialId ? { referenceAudioMaterialId: String(clone.payload.referenceAudioMaterialId), ...(arkVoice?.speakerId && arkVoice.status !== 'failed' ? { speakerId: String(arkVoice.speakerId) } : {}) } : undefined;
         const presenters = defaults.presenters.map(item => item.id === presenterId ? {
           ...item, voiceId, assetVersion: Math.max(1, item.assetVersion || 1) + (item.voiceId === voiceId ? 0 : 1),
-          voiceAuthorization: { voiceId, recordedAt: new Date().toISOString(), source: 'user_confirmation' as const },
+          voiceAuthorization: { voiceId, recordedAt: evidence.payload.recordedAt, source: 'user_confirmation' as const,
+            authorizationRef: `document://studio_presenter_assets/${evidence.id}/${voiceId}` },
           toolMappings: { ...item.toolMappings, heygen: { avatarId: item.avatarId || item.toolMappings?.heygen?.avatarId || '', voiceId }, ...(arkMapping ? { volcengineArk: arkMapping } : {}) },
           rightsEvidence: arkMapping && item.rightsEvidence ? { ...item.rightsEvidence,
             permittedProviders: [...new Set([...item.rightsEvidence.permittedProviders, 'volcengine_ark' as const])],
@@ -650,6 +667,8 @@ export function createPresenterAssetsRouter(store: DataStore, exclusive: Exclusi
       let defaultVoice: string | undefined;
       let creationMode: PresenterAsset['creationMode'];
       let arkPreparation: ArkPresenterPreparation | undefined;
+      let privateLook = false;
+      let privateGroupConsent = false;
       if (b.creationId) {
         const job = await refresh(await own(String(b.creationId), tenant, 'creation'));
         if (job.status !== 'completed' || !job.look) throw new Error('人物训练或本人授权尚未完成');
@@ -658,12 +677,16 @@ export function createPresenterAssetsRouter(store: DataStore, exclusive: Exclusi
       } else {
         const cached = publicLooks.get(`${tenant}:${String(b.lookId)}`);
         if (!cached || Date.now() - cached.at > 300000) throw new Error('请刷新可用人物列表后重新选择');
-        if (cached.private) await checkPrivateAccount(tenant);
+        privateLook = cached.private;
+        if (privateLook) await checkPrivateAccount(tenant);
         look = await client().look(cached.look.id);
-        if (cached.private) {
+        if (privateLook) {
           if (!look.groupId) throw new Error('人物缺少可核验的授权记录');
           const group = await client().group(look.groupId);
           if (group.status !== 'completed' || (group.consent_status && !consentAccepted(group.consent_status))) throw new Error('人物训练或本人授权尚未完成');
+          privateGroupConsent = consentAccepted(group.consent_status);
+          if (!privateGroupConsent && look.avatarType !== 'photo_avatar') throw new Error('当前人物缺少可核验的本人授权');
+          if (b.authorized !== true || b.adultConfirmed !== true) throw new Error('请确认当前企业拥有此人物及声音的使用授权，且人物为成年人');
         }
       }
       if (look.status !== 'completed') throw new Error('人物尚不可用');
@@ -682,15 +705,54 @@ export function createPresenterAssetsRouter(store: DataStore, exclusive: Exclusi
         const row = (await store.list<Row>('studio_production_defaults', { where: { tenant_id: tenant }, perPage: 1 })).items[0];
         const defaults: ProductionDefaults = row?.payload || EMPTY_DEFAULTS;
         const previous = defaults.presenters.find(p => p.avatarId === look.id && p.voiceId === voiceId);
+        const privateRights = async (allowCreate = true): Promise<NonNullable<PresenterAsset['rightsEvidence']>> => {
+          const requestId = hash(`${tenant}:${look.id}:${voiceId}:${look.groupId}`);
+          let evidence = await find(tenant, 'import_authorization', requestId);
+          if (!evidence && !allowCreate) throw new Error('人物授权原始记录不存在，不能重新选为默认人物');
+          if (!evidence) {
+            const created = await store.create<Row>(COLLECTION, { tenant_id: tenant, kind: 'import_authorization', request_id: requestId,
+              payload: { lookId: look.id, voiceId, groupId: look.groupId, avatarType: look.avatarType,
+                authorizationDeclared: true, adultConfirmed: true, reviewed: true, providerConsentAccepted: privateGroupConsent,
+                createdAt: new Date().toISOString() } });
+            if (!created) throw new Error('人物授权留档失败，未导入企业资产');
+            evidence = created;
+          }
+          if (evidence.tenant_id !== tenant || evidence.kind !== 'import_authorization'
+            || evidence.request_id !== requestId || evidence.payload?.lookId !== look.id
+            || evidence.payload?.voiceId !== voiceId || evidence.payload?.groupId !== look.groupId
+            || evidence.payload?.authorizationDeclared !== true || evidence.payload?.adultConfirmed !== true
+            || evidence.payload?.reviewed !== true || evidence.payload?.providerConsentAccepted !== privateGroupConsent
+            || evidence.payload?.revokedAt) {
+            throw new Error('人物授权原始记录不一致，不能导入企业资产');
+          }
+          return { authorizationRef: `document://studio_presenter_assets/${evidence.id}/${look.id}`,
+            consentRef: privateGroupConsent ? `consent://heygen/${look.groupId}` : `consent://user-declaration/${evidence.id}`,
+            grantedAt: evidence.payload.createdAt, subjectAdultConfirmed: true,
+            permittedProviders: ['heygen'], permittedUses: ['digital_presenter', 'voice_synthesis'] };
+        };
         if (previous) {
           if (!previous.authorized) throw new Error('该人物使用授权尚未确认，请重新完成授权');
+          let upgradedRightsEvidence = previous.rightsEvidence;
+          let rightsEvidenceChanged = false;
+          if (privateLook && String(previous.rightsEvidence?.authorizationRef || '').startsWith('document://studio_presenter_assets/')) {
+            const retained = await privateRights(false);
+            if (previous.rightsEvidence?.authorizationRef !== retained.authorizationRef
+              || previous.rightsEvidence?.consentRef !== retained.consentRef) {
+              throw new Error('人物授权原始记录不一致，不能重新选为默认人物');
+            }
+          } else if (privateLook) {
+            upgradedRightsEvidence = await privateRights();
+            rightsEvidenceChanged = true;
+          }
           const preparedIds = arkPreparation ? [arkPreparation.photoMaterialId, arkPreparation.videoMaterialId] : [];
           const referenceMaterialIds = [...new Set([...(previous.referenceMaterialIds || []), ...preparedIds])];
           const needsMaterials = referenceMaterialIds.length !== (previous.referenceMaterialIds || []).length;
           const needsArkVoice = Boolean(arkVoiceMapping && JSON.stringify(previous.toolMappings?.volcengineArk || null) !== JSON.stringify(arkVoiceMapping));
-          if (!needsMaterials && !needsArkVoice && (b.makeDefault !== true || defaults.defaultPresenterId === previous.id)) return defaults;
+          if (!needsMaterials && !needsArkVoice && !rightsEvidenceChanged && (b.makeDefault !== true || defaults.defaultPresenterId === previous.id)) return defaults;
           const payload = { ...defaults,
-            presenters: defaults.presenters.map(p => p.id === previous.id ? { ...p, ...(needsMaterials ? { referenceMaterialIds } : {}),
+            presenters: defaults.presenters.map(p => p.id === previous.id ? { ...p,
+              ...(rightsEvidenceChanged ? { rightsEvidence: upgradedRightsEvidence, assetVersion: Math.max(1, Number(p.assetVersion) || 1) + 1 } : {}),
+              ...(needsMaterials ? { referenceMaterialIds } : {}),
               ...(arkVoiceMapping ? { toolMappings: { ...p.toolMappings, volcengineArk: arkVoiceMapping } } : {}) } : p),
             defaultPresenterId: b.makeDefault === true ? previous.id : defaults.defaultPresenterId };
           if (!await store.update('studio_production_defaults', row!.id, { payload })) throw new Error('默认人物保存失败，请重试');
@@ -698,11 +760,21 @@ export function createPresenterAssetsRouter(store: DataStore, exclusive: Exclusi
         }
         if (defaults.presenters.length >= 50) throw new Error('企业人物已达到 50 个上限');
         const createdByTenant = Boolean(b.creationId);
+        const baseRightsEvidence: NonNullable<PresenterAsset['rightsEvidence']> = createdByTenant
+          ? { authorizationRef: `document://studio_presenter_assets/${String(b.creationId)}/${look.id}`, consentRef: creationMode === 'quick' ? `consent://user-declaration/${String(b.creationId)}` : `consent://heygen/${look.groupId || look.id}`, grantedAt: new Date().toISOString(), subjectAdultConfirmed: true, permittedProviders: arkVoiceMapping ? ['heygen', 'volcengine_ark'] : ['heygen'], permittedUses: ['digital_presenter', 'voice_synthesis'], ...(arkVoiceMapping ? { providerScopes: [{ provider: 'heygen' as const, uses: ['digital_presenter' as const, 'voice_synthesis' as const] }, { provider: 'volcengine_ark' as const, uses: ['voice_synthesis' as const] }] } : {}) }
+          : privateLook
+            ? await privateRights()
+            : { authorizationRef: `license://heygen/public-catalog/${look.id}`, consentRef: `license://heygen/public-catalog/${look.groupId || look.id}`, grantedAt: new Date().toISOString(), subjectAdultConfirmed: false, permittedProviders: ['heygen'], permittedUses: ['digital_presenter', 'voice_synthesis'] };
+        const rightsEvidence = arkVoiceMapping && privateLook
+          ? { ...baseRightsEvidence,
+              permittedProviders: [...new Set([...baseRightsEvidence.permittedProviders, 'volcengine_ark' as const])],
+              permittedUses: [...new Set([...baseRightsEvidence.permittedUses, 'voice_synthesis' as const])],
+              providerScopes: [...(baseRightsEvidence.providerScopes || []).filter(scope => scope.provider !== 'volcengine_ark'), { provider: 'volcengine_ark' as const, uses: ['voice_synthesis' as const] }],
+            }
+          : baseRightsEvidence;
         const presenter: PresenterAsset = { id: `presenter-${hash(`${look.id}:${voiceId}`).slice(0, 24)}`, name: String(b.name || look.name).slice(0, 100), avatarId: look.id, voiceId, authorized: true,
           ...(arkPreparation ? { referenceMaterialIds: [arkPreparation.photoMaterialId, arkPreparation.videoMaterialId] } : {}),
-          supportsAlpha: false, nativeOrientation: look.orientation, imageUrl: look.imageUrl, videoUrl: look.videoUrl, creationMode, assetVersion: 1, capabilities: ['talking'], toolMappings: { heygen: { avatarId: look.id, voiceId }, ...(arkVoiceMapping ? { volcengineArk: arkVoiceMapping } : {}) }, rightsEvidence: createdByTenant
-            ? { authorizationRef: `document://studio_presenter_assets/${String(b.creationId)}/${look.id}`, consentRef: creationMode === 'quick' ? `consent://user-declaration/${String(b.creationId)}` : `consent://heygen/${look.groupId || look.id}`, grantedAt: new Date().toISOString(), subjectAdultConfirmed: true, permittedProviders: arkVoiceMapping ? ['heygen', 'volcengine_ark'] : ['heygen'], permittedUses: ['digital_presenter', 'voice_synthesis'], ...(arkVoiceMapping ? { providerScopes: [{ provider: 'heygen' as const, uses: ['digital_presenter' as const, 'voice_synthesis' as const] }, { provider: 'volcengine_ark' as const, uses: ['voice_synthesis' as const] }] } : {}) }
-            : { authorizationRef: `license://heygen/public-catalog/${look.id}`, consentRef: `license://heygen/public-catalog/${look.groupId || look.id}`, grantedAt: new Date().toISOString(), subjectAdultConfirmed: false, permittedProviders: ['heygen'], permittedUses: ['digital_presenter', 'voice_synthesis'] } };
+          supportsAlpha: false, nativeOrientation: look.orientation, imageUrl: look.imageUrl, videoUrl: look.videoUrl, creationMode, assetVersion: 1, capabilities: ['talking'], toolMappings: { heygen: { avatarId: look.id, voiceId }, ...(arkVoiceMapping ? { volcengineArk: arkVoiceMapping } : {}) }, rightsEvidence };
         const payload = { ...defaults, presenters: [...defaults.presenters, presenter], defaultPresenterId: b.makeDefault === true ? presenter.id : defaults.defaultPresenterId || presenter.id };
         const saved = row ? await store.update('studio_production_defaults', row.id, { payload }) : await store.create('studio_production_defaults', { tenant_id: tenant, payload });
         if (!saved) throw new Error('企业人物保存失败，请重试导入');

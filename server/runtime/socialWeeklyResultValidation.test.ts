@@ -3,7 +3,8 @@ import { classifyMaterialEvidence } from '../socialPrograms/materialEvidenceClas
 import assert from 'node:assert/strict';
 import type { DataStore, Record_ } from '../storage/datastore.js';
 import type { WeeklyExecutionTask } from '../../shared/contracts/socialProgram.js';
-import { validateWeeklyExecutionResults } from './socialWeeklyResultValidation.js';
+import { validateContentArtifact, validateWeeklyExecutionResults } from './socialWeeklyResultValidation.js';
+import { socialRequestHash } from '../starter198/socialContentValidation.js';
 const task = (workflowKind = 'engagement', stepKind = 'performance_monitoring') => ({ tenantId: 'tenant-a', taskId: 'task-a', programId: 'program-a', packageId: 'package-a', packageVersion: 1, accountId: 'account-a', publicationTaskId: 'pub-a', workflowKind, schedule: { stepKind } }) as WeeklyExecutionTask;
 function store(rows: Record<string, Record_[]>): DataStore {
   return {
@@ -59,10 +60,48 @@ test('all automatic content steps require actual persisted media, identity and s
   const rows = { social_weekly_operating_packages: [{ id: 'frozen-week', tenant_id: 'tenant-a', program_id: 'program-a', package_id: 'package-a', version: 1, payload: { programId: 'program-a', packageId: 'package-a', version: 1, socialContentPackage: { publicationTasks: [{ publicationTaskId: 'pub-a' }] } } }], workflow_runs: [{ id: 'run', tenant_id: 'tenant-a', status: 'succeeded' }], starter_social_content_artifacts: [artifact], starter_social_content_tasks: [source], starter_social_content_files: [file] };
   try {
     for (const step of ['script', 'storyboard', 'asset_generation', 'video_generation', 'quality_check', 'rework']) await validateWeeklyExecutionResults(store(rows), task('content', step), ref);
+    await assert.rejects(validateWeeklyExecutionResults(store({ ...rows, starter_social_content_artifacts: [{ ...artifact, content: { ...content, productionWorkspaceSource: { runId: 'another-run' } } }] }), task('content', 'video_generation'), ref), { code: 'weekly_production_artifact_run_changed' });
+    await validateWeeklyExecutionResults(store({ ...rows, starter_social_content_artifacts: [{ ...artifact, content: { ...content, productionWorkspaceSource: { runId: 'run' } } }] }), task('content', 'video_generation'), ref);
     for (const changes of [{ tenant_id: 'tenant-b' }, { version: '2' }, { status: 'superseded' }, { task_id: 'another-source' }]) await assert.rejects(validateWeeklyExecutionResults(store({ ...rows, starter_social_content_artifacts: [{ ...artifact, ...changes }] }), task('content', 'video_generation'), ref));
     await assert.rejects(validateWeeklyExecutionResults(store({ ...rows, starter_social_content_artifacts: [{ ...artifact, content: { ...content, productionResult: { technicalReview: { approved: false }, creativeReview: { approved: true } } } }] }), task('content', 'quality_check'), ref));
     await fs.unlink(local);
     await assert.rejects(validateWeeklyExecutionResults(store(rows), task('content', 'video_generation'), ref));
+  } finally { await fs.rm(folder, { recursive: true, force: true }); }
+});
+
+test('current weekly quality cannot finish between artifact archival and graph human-review interrupt', async () => {
+  const fs = await import('node:fs/promises');
+  const path = await import('node:path');
+  const { createHash, randomUUID } = await import('node:crypto');
+  const bytes = Buffer.from('independent local graph review fixture');
+  const sha = createHash('sha256').update(bytes).digest('hex');
+  const folder = path.resolve('data/social-content-sources', `weekly-review-${randomUUID()}`);
+  const local = path.join(folder, `${sha}.mp4`);
+  await fs.mkdir(folder, { recursive: true });
+  await fs.writeFile(local, bytes);
+  const content = {
+    workflowSchema: 'social-content.auto-production.v3', productionWorkspaceSource: { type: 'actual_social_render', creationMode: 'material_processing', runId: 'run', outputSha256: sha },
+    mediaStorage: { video: { fileId: 'file', url: '/video', sha256: sha } },
+    productionResult: { technicalReview: { approved: true, failures: [] }, creativeReview: { approved: true, failedCriteria: [] } },
+    technicalQualityReport: { schemaVersion: 'initial-scene-quality.v1', visual: { passed: true, failures: [] }, scenes: { passed: true, issues: [], checkedScenes: 1 }, audio: { ok: true, error: null } },
+    render: { completed: true, qualityPassed: true, audioDecoded: true, selectedAssetIds: ['asset'] },
+    review: { automatedChecksPassed: true, technicalChecksPassed: true, creativeChecksPassed: true, state: 'requires_user_approval' }, delivery: { status: 'publish_candidate' },
+  };
+  const artifact = { id: 'artifact-row', tenant_id: 'tenant-a', task_id: 'source', artifact_id: 'artifact', artifact_kind: 'short_video', origin: 'agent', resource_ref: 'socialfile:file', version: '1', status: 'review_required', content, content_hash: socialRequestHash({ resourceRef: 'socialfile:file', content }) };
+  const source = { id: 'source-row', tenant_id: 'tenant-a', task_id: 'source', status: 'asset_review', run_id: 'run', create_idempotency_key: 'weekly-production:package-a:1:pub-a', brief: { programRef: { id: 'program-a' } } };
+  const run: { id: string; tenant_id: string; status: string; pause_reason: string | null } = { id: 'run', tenant_id: 'tenant-a', status: 'running', pause_reason: null };
+  const job = { id: 'job', tenant_id: 'tenant-a', task_id: 'source', run_id: 'run', job_key: 'job', user_id: 'owner', account_id: 'account-a', task_type: 'social_content', status: 'running', checkpoints: {} as Record<string, unknown> };
+  const rows = { social_weekly_operating_packages: [{ id: 'frozen-week', tenant_id: 'tenant-a', program_id: 'program-a', package_id: 'package-a', version: 1, payload: { programId: 'program-a', packageId: 'package-a', version: 1, socialContentPackage: { publicationTasks: [{ publicationTaskId: 'pub-a' }] } } }], workflow_runs: [run], content_execution_jobs: [job], starter_social_content_artifacts: [artifact], starter_social_content_tasks: [source], starter_social_content_files: [{ id: 'file-row', tenant_id: 'tenant-a', file_id: 'file', task_id: 'source', usage: 'artifact_media', name: 'video.mp4', mime_type: 'video/mp4', byte_size: bytes.length, content_sha256: sha, storage_kind: 'local', storage_key: path.relative(path.resolve('data/social-content-sources'), local) }] };
+  const scope = task('content', 'quality_check'), ref = { type: 'starter_social_content_artifact', id: 'artifact', version: 1 };
+  try {
+    await assert.rejects(validateContentArtifact(store(rows), scope, ref), { code: 'weekly_production_graph_review_unverified' });
+    job.checkpoints['social.graph_review'] = { version: '1', inputHash: sha, updatedAt: new Date().toISOString(), payload: { artifactId: 'artifact', version: '1', contentHash: socialRequestHash(content), outputSha256: sha, runId: 'run', waitingReview: true } };
+    await assert.rejects(validateContentArtifact(store(rows), scope, ref), { code: 'weekly_production_graph_review_unverified' });
+    job.status = 'paused'; run.status = 'waiting_human'; run.pause_reason = 'langgraph_artifact_review_required';
+    await assert.rejects(validateContentArtifact(store(rows), scope, ref), /scene_rework_cache_missing|scene_cache/);
+    await assert.rejects(validateContentArtifact(store(rows), task('content', 'rework'), ref), /scene_rework_cache_missing|scene_cache/);
+    content.mediaStorage.video.sha256 = 'f'.repeat(64);
+    await assert.rejects(validateContentArtifact(store(rows), scope, ref), { code: 'weekly_production_graph_review_unverified' });
   } finally { await fs.rm(folder, { recursive: true, force: true }); }
 });
 

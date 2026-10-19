@@ -13,6 +13,7 @@
     "dev:preview:keepalive": "node scripts/local-preview-supervisor.mjs",
     "dev:account-hub": "node scripts/sync-mobile-shared.mjs --check && vite --config apps/account-hub/vite.config.ts",
     "dev:server": "NODE_USE_ENV_PROXY=1 tsx watch --exclude data server/index.ts",
+    "dev:weekly-cta-only": "tsx server/runtime/startWeeklyCtaOnlyLocal.ts",
     "dev:digital-human": "tsx watch --exclude data scripts/digital-human-local-worker.ts",
     "build": "node scripts/sync-mobile-shared.mjs --check && vite build",
     "build:account-hub": "node scripts/sync-mobile-shared.mjs --check && vite build --config apps/account-hub/vite.config.ts",

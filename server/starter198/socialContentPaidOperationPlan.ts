@@ -58,7 +58,7 @@ export interface FrozenPaidProduction {
         requiresAlignment?: boolean;
         reuseReceiptRef: string | null;
     };
-    finalReview: 'local' | 'paid';
+    finalReview: 'local' | 'paid' | 'paid_capacity';
 }
 export interface PaidStageRequirement {
     key: string;
@@ -177,7 +177,7 @@ export function createSocialContentPaidOperationPlanner(ports: PaidOperationPlan
                 if (!gaps.includes(s))
                     gaps.push(s);
             };
-            if (!input || !Array.isArray(input.scenes) || !Array.isArray(input.shots) || !Array.isArray(input.assets) || (input.presenterGroups!==undefined&&(!Array.isArray(input.presenterGroups)||input.presenterGroups.some(group=>!group||typeof group!=='object'||!Array.isArray(group.shotIds)))) || !input.voice || !Array.isArray(input.voice.lines) || input.scenes.some(s => typeof s.spokenText !== 'string') || !['local', 'paid'].includes(input.finalReview) || paidProductionHash(input.scope) !== paidProductionHash(scope) || !hash(input.baselineHash) || input.recordHash !== paidProductionRecordHash(input) || input.approval?.approved !== true || !text(input.approval.reviewRef) || input.approval.planHash !== scope.planHash || input.approval.sourceHash !== paidProductionApprovalHash(input) || !text(input.authorization?.ref) || !Number.isFinite(input.authorization?.maximumCny) || input.authorization.maximumCny <= 0 || !Number.isInteger(input.maximumRetries) || input.maximumRetries < 0 || input.maximumRetries > 3 || (input.directedRetryShotIds !== undefined && (!Array.isArray(input.directedRetryShotIds) || input.directedRetryShotIds.some(id => !text(id)) || new Set(input.directedRetryShotIds).size !== input.directedRetryShotIds.length)))
+            if (!input || !Array.isArray(input.scenes) || !Array.isArray(input.shots) || !Array.isArray(input.assets) || (input.presenterGroups!==undefined&&(!Array.isArray(input.presenterGroups)||input.presenterGroups.some(group=>!group||typeof group!=='object'||!Array.isArray(group.shotIds)))) || !input.voice || !Array.isArray(input.voice.lines) || input.scenes.some(s => typeof s.spokenText !== 'string') || !['local', 'paid', 'paid_capacity'].includes(input.finalReview) || paidProductionHash(input.scope) !== paidProductionHash(scope) || !hash(input.baselineHash) || input.recordHash !== paidProductionRecordHash(input) || input.approval?.approved !== true || !text(input.approval.reviewRef) || input.approval.planHash !== scope.planHash || input.approval.sourceHash !== paidProductionApprovalHash(input) || !text(input.authorization?.ref) || !Number.isFinite(input.authorization?.maximumCny) || input.authorization.maximumCny <= 0 || !Number.isInteger(input.maximumRetries) || input.maximumRetries < 0 || input.maximumRetries > 3 || (input.directedRetryShotIds !== undefined && (!Array.isArray(input.directedRetryShotIds) || input.directedRetryShotIds.some(id => !text(id)) || new Set(input.directedRetryShotIds).size !== input.directedRetryShotIds.length)))
                 return { plan: null, requirements, gaps: ['frozen_approved_production_unverified'] };
             // Financial planning may select another executor, but may never
             // drop a locked scene or substitute another scene with the same count.
@@ -338,6 +338,8 @@ export function createSocialContentPaidOperationPlanner(ports: PaidOperationPlan
                 add('voice:asr', 'voice_asr', null, voice.reuseReceiptRef, null, spoken, null);
             if (input.finalReview === 'paid')
                 add('final:director-review', 'director_review', null, null, null, null, null);
+            if (input.finalReview === 'paid_capacity')
+                add('final:director-review-capacity', 'director_review_capacity', null, null, null, null, input.scenes.length * 3);
             const operations: SocialPaidOperationIntent[] = [];
             for (const requirement of requirements) {
                 const route = await ports.resolveBoundRoute(requirement);
@@ -359,7 +361,9 @@ export function createSocialContentPaidOperationPlanner(ports: PaidOperationPlan
                     ? Math.min(2, input.maximumRetries + 1)
                     : route.maximumAttempts;
                 for (let attempt = 0; attempt < plannedAttempts; attempt++)
-                    operations.push({ operationId: `paid-plan:${paidProductionHash({ scope, key: requirement.key, attempt })}`, provider: route.provider, model: route.model, accountRef: route.accountRef, stage: requirement.stage, shotId: requirement.shotId, inputContractHash: paidProductionHash({ requirement, route, attempt }), maximumUnits: { ...route.maximumUnits } });
+                    operations.push({ operationId: requirement.stage==='director_review_capacity'
+                        ? `director-g5-${paidProductionHash({scope,key:requirement.key,attempt})}`
+                        : `paid-plan:${paidProductionHash({ scope, key: requirement.key, attempt })}`, provider: route.provider, model: route.model, accountRef: route.accountRef, stage: requirement.stage, shotId: requirement.shotId, inputContractHash: paidProductionHash({ requirement, route, attempt }), maximumUnits: { ...route.maximumUnits } });
             }
             await ports.assertCurrent(scope);
             const current = await ports.readFrozenProduction(scope);

@@ -45,13 +45,15 @@ export function selectTypeAwareSocialMaterial(input:{policyVersion?:'type-aware.
 const {shot,inventory,materialType,referenceVisualContract,presenterRefs}=input;
       const visible = new Set([...inventory.customerVideoIds,...inventory.factoryEvidenceAssetIds,...inventory.customerCaseEvidenceAssetIds,...inventory.productEffectEvidenceAssetIds]);
       const visual=normalizeSceneVisualContract(shot.visualContract??referenceVisualContract??{productPolicy:shot.productPolicy,productRef:shot.productRef});
-      const match = shot.localVideoMatch, requestedProduct = String(visual.product.requestedProductRef || visual.productUsage.productRef || shot.productRef || '').normalize('NFKC').trim().toLocaleLowerCase();
+      // The current task's selected product is authoritative. A frozen reference
+      // visual contract may still describe the benchmark's different package.
+      const match = shot.localVideoMatch, requestedProduct = String(shot.productRef || visual.product.requestedProductRef || visual.productUsage.productRef || '').normalize('NFKC').trim().toLocaleLowerCase();
       const verified = match?.semanticMatch === 'verified' && Boolean(match.evidenceRef?.trim())
         && match.sourceRefs.length > 0 && match.sourceRefs.every(ref=>visible.has(ref))
         && !(input.policyVersion==='type-aware.v2'&&materialType==='product'&&match.sourceTier&&!['product_high_fidelity_local','product_local'].includes(match.sourceTier))
         && !(input.policyVersion==='type-aware.v2'&&materialType==='factory'&&match.sourceTier&&match.sourceTier!=='factory_local')
         && !(input.policyVersion==='type-aware.v2'&&materialType==='consumer_demo'&&match.sourceTier&&match.sourceTier!=='other_local')
-        && (materialType !== 'product' || !requestedProduct || input.policyVersion!=='type-aware.v2'&&['product_local','factory_local','other_local'].includes(String(match.sourceTier||''))
+        && (materialType !== 'product' || !requestedProduct
           || String(match.productRef||'').normalize('NFKC').trim().toLocaleLowerCase() === requestedProduct);
       const refs = verified ? [...new Set(match.sourceRefs)] : [];
       const segment=shot.selectedMaterialSegment;

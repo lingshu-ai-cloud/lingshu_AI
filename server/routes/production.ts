@@ -920,7 +920,8 @@ export function createProductionRouter(store: DataStore, importVideo: (url: stri
           throw new Error('方舟 Active 状态必须来自只读接口或控制台人工核验');
         }
         const normalized: PresenterAsset = { id: String(item.id).slice(0, 100), name: String(item.name).slice(0, 100), avatarId, voiceId,
-          ...(item.voiceAuthorization?.voiceId === voiceId && Number.isFinite(Date.parse(String(item.voiceAuthorization.recordedAt || ''))) ? { voiceAuthorization: { voiceId, recordedAt: item.voiceAuthorization.recordedAt, source: 'user_confirmation' as const } } : {}),
+          ...(item.voiceAuthorization?.voiceId === voiceId && Number.isFinite(Date.parse(String(item.voiceAuthorization.recordedAt || ''))) ? { voiceAuthorization: { voiceId, recordedAt: item.voiceAuthorization.recordedAt, source: 'user_confirmation' as const,
+            ...(typeof item.voiceAuthorization.authorizationRef === 'string' ? { authorizationRef: item.voiceAuthorization.authorizationRef } : {}) } } : {}),
           authorized: item.authorized === true, supportsAlpha: item.supportsAlpha === true,
           nativeOrientation: ['portrait', 'landscape', 'square'].includes(item.nativeOrientation || '') ? item.nativeOrientation : 'unknown',
           assetVersion: 1, capabilities, referenceMaterialIds,

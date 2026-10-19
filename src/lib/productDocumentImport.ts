@@ -22,6 +22,7 @@ export interface ProductDocumentParseResult {
   sourceLabel: string;
   products: DocumentProductDraft[];
   unassignedImages: Array<{ name: string; url: string; file: File }>;
+  assignedImages: Array<{ productIndex: number; name: string; url: string; file: File }>;
   needsReview: true;
 }
 
@@ -70,6 +71,36 @@ export function productsFromLabeledText(text: string): DocumentProductDraft[] {
     imageUrl: field(block, '图片URL|主图URL|图片链接|image\s*url'),
     highlights: field(block, '卖点|亮点|产品描述|描述|highlights?|description'),
   })).filter(item => item.name || item.sku);
+}
+
+/** Some supplier catalogs use a numbered product heading instead of field labels.
+ * Only explicit headings and a readable Chinese product name are accepted; a
+ * missing name is left for review rather than inferred from translation text. */
+function numberedCatalogEntries(text: string): Array<{ number: number; product?: DocumentProductDraft }> {
+  const heading = /^\s*#\s*(\d{1,4})\s+([A-Za-z][A-Za-z0-9-]{2,30})\s*$/gm;
+  const matches = [...text.matchAll(heading)];
+  return matches.map((match, index) => {
+    const section = text.slice((match.index || 0) + match[0].length, matches[index + 1]?.index ?? text.length);
+    const brand = match[2];
+    const headerText = section.split(/净含量|建议零售价|零售价|特色亮点/)[0];
+    const firstLines = headerText.split(/\r?\n/).map(line => line.trim()).filter(Boolean).slice(0, 8);
+    const name = firstLines.map(line => {
+      const brandPosition = line.toUpperCase().lastIndexOf(brand.toUpperCase());
+      return normalizeLocalOcrProductText(brandPosition >= 0 ? line.slice(brandPosition + brand.length).trim() : line);
+    })
+      .find(line => (line.match(/[\u3400-\u9fff]/g)?.length || 0) >= 3
+        && !/[\uac00-\ud7a3\u0400-\u04ff]/.test(line)
+        && !/^(?:[•·●-]|韩文|英文|第\d+页)/.test(line)
+        && line.length <= 80);
+    if (!name) return { number: Number(match[1]) };
+    const price = /(?:建议零售价|零售价)[\s\S]{0,100}?¥\s*([\d,]+(?:\.\d{1,2})?)/.exec(section)?.[1]?.replace(/,/g, '');
+    return { number: Number(match[1]), product: { name, brand, ...(price ? { retailPrice: price } : {}), needsFieldReview: true } };
+  });
+}
+
+export function productsFromNumberedCatalogText(text: string): DocumentProductDraft[] {
+  const entries = numberedCatalogEntries(text);
+  return entries.length < 2 ? [] : entries.flatMap(entry => entry.product ? [entry.product] : []);
 }
 
 export function normalizeLocalOcrProductText(text: string): string {
@@ -146,7 +177,7 @@ async function renderPdfVisualPages(file: File): Promise<Array<{ name: string; u
     const pdf = await task.promise;
     const imageOps = new Set([pdfjs.OPS.paintImageXObject, pdfjs.OPS.paintInlineImageXObject, pdfjs.OPS.paintImageMaskXObject]);
     if (pdf.numPages > 100) throw new Error('请上传不超过100页的产品资料');
-    for (let pageNumber = 1; pageNumber <= Math.min(pdf.numPages, 20); pageNumber += 1) {
+    for (let pageNumber = 1; pageNumber <= pdf.numPages; pageNumber += 1) {
       const page = await pdf.getPage(pageNumber);
       const operators = await page.getOperatorList();
       if (!operators.fnArray.some(operator => imageOps.has(operator))) continue;
@@ -169,6 +200,83 @@ async function renderPdfVisualPages(file: File): Promise<Array<{ name: string; u
     await task.destroy();
   }
   return results;
+}
+
+export function matchPdfPageImages(
+  headings: Array<{ number: number; name?: string }>,
+  imageCount: number,
+  products: DocumentProductDraft[],
+): Array<number | null> {
+  if (!headings.length || headings.length !== imageCount) return Array(imageCount).fill(null);
+  const used = new Set<number>();
+  return headings.map(heading => {
+    if (!heading.name) return null;
+    const matches = products.flatMap((product, index) => product.name === heading.name ? [index] : []);
+    if (matches.length !== 1 || used.has(matches[0])) return null;
+    used.add(matches[0]);
+    return matches[0];
+  });
+}
+
+/** Extract the PDF's actual image objects. A full-page render is only an OCR
+ * input, never a product photograph. Numbered catalog pages bind only when
+ * image and heading order form an unambiguous one-to-one mapping. */
+async function extractPdfProductImages(file: File, products: DocumentProductDraft[]) {
+  const unassignedImages: ProductDocumentParseResult['unassignedImages'] = [];
+  const assignedImages: ProductDocumentParseResult['assignedImages'] = [];
+  if (typeof document === 'undefined') return { unassignedImages, assignedImages };
+  const pdfjs = await import('pdfjs-dist');
+  pdfjs.GlobalWorkerOptions.workerSrc = new URL('pdfjs-dist/build/pdf.worker.min.mjs', import.meta.url).href;
+  const task = pdfjs.getDocument({ data: new Uint8Array(await file.arrayBuffer()), isEvalSupported: false });
+  try {
+    const pdf = await task.promise;
+    if (pdf.numPages > 100) throw new Error('请上传不超过100页的产品资料');
+    for (let pageNumber = 1; pageNumber <= pdf.numPages; pageNumber += 1) {
+      const page = await pdf.getPage(pageNumber);
+      const operators = await page.getOperatorList();
+      const names = operators.fnArray.flatMap((operator, index) => operator === pdfjs.OPS.paintImageXObject ? [String(operators.argsArray[index][0])] : []);
+      if (!names.length) continue;
+      const content = await page.getTextContent();
+      const pageText = content.items.map(item => 'str' in item ? `${item.str}${item.hasEOL ? '\n' : ' '}` : '').join('');
+      const headings = numberedCatalogEntries(pageText).map(entry => ({ number: entry.number, name: entry.product?.name }));
+      const labeled = headings.length ? [] : productsFromLabeledText(pageText);
+      const labeledMatch = labeled.length === 1 && names.length === 1
+        ? products.flatMap((product, index) => product.name === labeled[0].name ? [index] : [])
+        : [];
+      const matches = headings.length
+        ? matchPdfPageImages(headings, names.length, products)
+        : labeledMatch.length === 1 ? [labeledMatch[0]]
+          : names.length === 1 && products.length === 1 ? [0] : Array(names.length).fill(null) as Array<number | null>;
+      for (const [index, name] of names.entries()) {
+        const source = page.objs.get(name) as { width?: number; height?: number; kind?: number; data?: Uint8ClampedArray | Uint8Array; bitmap?: ImageBitmap } | undefined;
+        if (!source?.width || !source.height || (!source.data && !source.bitmap) || source.width < 80 || source.height < 80) continue;
+        if (source.width * source.height > 16_000_000) continue;
+        const canvas = document.createElement('canvas');
+        canvas.width = source.width; canvas.height = source.height;
+        const context = canvas.getContext('2d');
+        if (!context) throw new Error('浏览器无法提取 PDF 产品图片');
+        if (source.bitmap) context.drawImage(source.bitmap, 0, 0);
+        else if (source.data) {
+          const pixels = context.createImageData(source.width, source.height);
+          if (source.kind === pdfjs.ImageKind.RGB_24BPP) {
+            for (let offset = 0, pixel = 0; offset < source.data.length; offset += 3, pixel += 4) {
+              pixels.data[pixel] = source.data[offset]; pixels.data[pixel + 1] = source.data[offset + 1]; pixels.data[pixel + 2] = source.data[offset + 2]; pixels.data[pixel + 3] = 255;
+            }
+          } else if (source.kind === pdfjs.ImageKind.RGBA_32BPP) pixels.data.set(source.data);
+          else continue;
+          context.putImageData(pixels, 0, 0);
+        }
+        const blob = await new Promise<Blob>((resolve, reject) => canvas.toBlob(value => value ? resolve(value) : reject(new Error('PDF 产品图片生成失败')), 'image/png'));
+        const imageName = `${file.name.replace(/\.pdf$/i, '')}-第${pageNumber}页-图片${index + 1}.png`;
+        const imageFile = new File([blob], imageName, { type: 'image/png', lastModified: file.lastModified });
+        const image = { name: imageName, file: imageFile, url: URL.createObjectURL(imageFile) };
+        const productIndex = matches[index];
+        if (productIndex === null || productIndex === undefined) unassignedImages.push(image);
+        else assignedImages.push({ ...image, productIndex });
+      }
+    }
+  } finally { await task.destroy(); }
+  return { unassignedImages, assignedImages };
 }
 
 async function fileBase64(file: File): Promise<string> {
@@ -199,12 +307,15 @@ export async function parseProductDocument(file: File): Promise<ProductDocumentP
       if (!/没有可读取的文字/.test(error instanceof Error ? error.message : '')) throw error;
       extractionSource = 'local_ocr';
     }
-    const unassignedImages = await renderPdfVisualPages(file);
-    if (extractionSource === 'local_ocr') text = normalizeLocalOcrProductText(await recognizePdfPagesLocally(unassignedImages));
-    const products = productsFromLabeledText(text).map(product => ({ ...product, extractionSource,
+    const ocrPages = extractionSource === 'local_ocr' ? await renderPdfVisualPages(file) : [];
+    if (extractionSource === 'local_ocr') text = normalizeLocalOcrProductText(await recognizePdfPagesLocally(ocrPages));
+    const labeledProducts = productsFromLabeledText(text);
+    const products = (labeledProducts.length ? labeledProducts : productsFromNumberedCatalogText(text)).map(product => ({ ...product, extractionSource,
       needsFieldReview: extractionSource === 'local_ocr' }));
     if (!products.length) throw new Error('PDF 中未识别到带名称或 SKU 的产品，请确认文档使用“产品名称：…”等清晰字段');
-    return { sourceLabel: extractionSource === 'local_ocr' ? 'PDF 本地 OCR（中英文，需逐项复核）' : 'PDF 文本与含图页面提取', products, unassignedImages, needsReview: true };
+    const { unassignedImages, assignedImages } = await extractPdfProductImages(file, products);
+    ocrPages.forEach(page => URL.revokeObjectURL(page.url));
+    return { sourceLabel: extractionSource === 'local_ocr' ? 'PDF 本地 OCR（中英文，需逐项复核）' : 'PDF 文本与嵌入图片提取', products, unassignedImages, assignedImages, needsReview: true };
   }
   if (!/\.docx$/i.test(file.name)) throw new Error('文档导入仅支持 PDF 和 DOCX');
   const bytes = new Uint8Array(await file.arrayBuffer());
@@ -224,5 +335,5 @@ export async function parseProductDocument(file: File): Promise<ProductDocumentP
     const imageFile = new File([image], name, { type: mime, lastModified: file.lastModified });
     unassignedImages.push({ name, file: imageFile, url: URL.createObjectURL(imageFile) });
   }
-  return { sourceLabel: tableProducts.length ? 'DOCX 表格提取' : 'DOCX 文本提取', products, unassignedImages, needsReview: true };
+  return { sourceLabel: tableProducts.length ? 'DOCX 表格提取' : 'DOCX 文本提取', products, unassignedImages, assignedImages: [], needsReview: true };
 }

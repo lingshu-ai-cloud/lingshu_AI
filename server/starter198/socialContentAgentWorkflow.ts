@@ -83,6 +83,7 @@ export interface SocialWorkflowMaterialCandidate {
   matchedVoiceoverCueIds: string[];
   matchScore: number;
   segmentId?: string;
+  footageEvidence?: import('../../shared/contracts/socialContentReplication.js').SocialProductFootageEvidenceBinding;
   productId?: string | null;
   productRef?: string | null;
   enterpriseCommon?: boolean;
@@ -659,6 +660,7 @@ function capabilityCandidates(input: {
         candidateId: material.segmentCandidateId,
         segmentId: material.segmentId,
         sourceRevision: material.sourceRevision,
+        ...(material.footageEvidence ? { footageEvidence: structuredClone(material.footageEvidence) } : {}),
         startSeconds: material.timeRange.startSeconds,
         endSeconds: material.timeRange.endSeconds,
         assetRole: material.materialV2?.assetRole,

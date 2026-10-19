@@ -4,6 +4,10 @@ import { fileURLToPath } from 'node:url';
 import { store } from '../storage/index.js';
 
 const DATA = path.join(path.dirname(fileURLToPath(import.meta.url)), '../../data/tasks.json');
+// Isolated API regression runs must never rewrite the developer's scheduler
+// registry. Production and ordinary development retain the canonical path.
+const scheduledTasksFile = () => process.env.NODE_ENV === 'test' && process.env.SCHEDULER_TASKS_FILE
+  ? path.resolve(process.env.SCHEDULER_TASKS_FILE) : DATA;
 
 export interface ScheduledTask {
   id: string; name: string; category: 'daily' | 'monitor' | 'report' | 'automation';
@@ -26,7 +30,7 @@ export function canonicalScheduledTasks(tasks: ScheduledTask[]): ScheduledTask[]
 }
 
 export function loadScheduledTasks(): ScheduledTask[] {
-  try { return canonicalScheduledTasks(JSON.parse(fs.readFileSync(DATA, 'utf8'))); } catch { return []; }
+  try { return canonicalScheduledTasks(JSON.parse(fs.readFileSync(scheduledTasksFile(), 'utf8'))); } catch { return []; }
 }
 function taskPayload(task: ScheduledTask): Record<string, unknown> {
   return { task_id: task.id, tenant_id: task.tenantId || '', name: task.name, category: task.category,
@@ -73,14 +77,17 @@ async function mirrorTasks(tasks: ScheduledTask[]): Promise<void> {
 }
 export function saveScheduledTasks(tasks: ScheduledTask[]): void {
   const canonical = canonicalScheduledTasks(tasks);
-  fs.mkdirSync(path.dirname(DATA), { recursive: true }); fs.writeFileSync(DATA, JSON.stringify(canonical, null, 2));
-  void mirrorTasks(canonical).catch(error => console.error('[scheduler] PocketBase task mirror failed:', error instanceof Error ? error.message : error));
+  const file = scheduledTasksFile();
+  fs.mkdirSync(path.dirname(file), { recursive: true }); fs.writeFileSync(file, JSON.stringify(canonical, null, 2));
+  if (process.env.NODE_ENV !== 'test' || process.env.SCHEDULER_TASKS_MIRROR_DISABLED !== 'true')
+    void mirrorTasks(canonical).catch(error => console.error('[scheduler] PocketBase task mirror failed:', error instanceof Error ? error.message : error));
 }
 export async function hydrateScheduledTasks(): Promise<ScheduledTask[]> {
   try {
     const remote = canonicalScheduledTasks((await allRemoteTasks()).map(taskFromRecord).filter((task): task is ScheduledTask => Boolean(task)));
     if (!remote.length) return loadScheduledTasks();
-    fs.mkdirSync(path.dirname(DATA), { recursive: true }); fs.writeFileSync(DATA, JSON.stringify(remote, null, 2)); return remote;
+    const file = scheduledTasksFile();
+    fs.mkdirSync(path.dirname(file), { recursive: true }); fs.writeFileSync(file, JSON.stringify(remote, null, 2)); return remote;
   } catch (error) {
     console.warn('[scheduler] using local task snapshot:', error instanceof Error ? error.message : error); return loadScheduledTasks();
   }

@@ -1,16 +1,41 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import {createHash} from 'node:crypto';
 import {prepareWeeklyEnterpriseFactFixture} from '../runtime/weeklyEnterpriseFactSupplement.fixture.js';
 import {adoptWeeklyAutomationTemplate,readWeeklyAutomationTemplate,WEEKLY_TEMPLATE_ADOPTIONS} from './weeklyAutomationTemplate.js';
 test('template adoption is scoped, idempotent, auditable and never an outbound approval',async t=>{
  const {store,task}=await prepareWeeklyEnterpriseFactFixture(t),scope={tenantId:task.tenantId,programId:task.programId,packageId:task.packageId,packageVersion:task.packageVersion};
  assert.equal(await readWeeklyAutomationTemplate(store,scope),null);
  const a=await adoptWeeklyAutomationTemplate(store,scope,'owner'),b=await adoptWeeklyAutomationTemplate(store,scope,'owner');
- assert.equal(a.adoptedAt,b.adoptedAt);assert.equal(a.template.perFinishedVideoMaxCny,15);assert.equal(a.template.dailyCollectionLimit,10);assert.equal(a.template.outboundAuthorization,false);
+ assert.equal(a.adoptedAt,b.adoptedAt);assert.equal(a.template.perFinishedVideoMaxCny,10);assert.equal(a.template.dailyCollectionLimit,10);assert.equal(a.template.outboundAuthorization,false);
  assert.equal(a.template.productionConcurrency,3);assert.equal(a.template.originalVideosPerWeek,5);assert.equal(a.template.ordinaryTaskStart,'06:00');assert.equal(a.template.residentEnd,'next_day_00:00');assert.equal(a.userApproval,null);
  assert.equal((await store.list(WEEKLY_TEMPLATE_ADOPTIONS)).totalItems,1);
  assert.equal(await readWeeklyAutomationTemplate(store,{...scope,packageVersion:2}),null);
  const row=(await store.list<{id:string}>(WEEKLY_TEMPLATE_ADOPTIONS)).items[0]!;
+ assert.match(row.id,/^[a-f0-9]{15}$/,'new template receipts use PocketBase-compatible IDs');
  await store.update(WEEKLY_TEMPLATE_ADOPTIONS,row.id,{payload:{...a,template:{...a.template,outboundAuthorization:true}}});
+ await assert.rejects(readWeeklyAutomationTemplate(store,scope),{code:'weekly_template_adoption_invalid'});
+});
+test('a previously persisted 64-character local adoption remains readable without rewrite',async t=>{
+ const {store,task}=await prepareWeeklyEnterpriseFactFixture(t),scope={tenantId:task.tenantId,programId:task.programId,packageId:task.packageId,packageVersion:task.packageVersion};
+ const adopted=await adoptWeeklyAutomationTemplate(store,scope,'owner');
+ const row=(await store.list<{id:string}>(WEEKLY_TEMPLATE_ADOPTIONS)).items[0]!;
+ const oldId=createHash('sha256').update(JSON.stringify([scope.tenantId,scope.programId,scope.packageId,scope.packageVersion,adopted.template.version])).digest('hex');
+ await store.delete(WEEKLY_TEMPLATE_ADOPTIONS,row.id);
+ await store.create(WEEKLY_TEMPLATE_ADOPTIONS,{id:oldId,tenant_id:scope.tenantId,program_id:scope.programId,package_id:scope.packageId,package_version:scope.packageVersion,payload:adopted});
+ assert.deepEqual(await readWeeklyAutomationTemplate(store,scope),adopted);
+ await adoptWeeklyAutomationTemplate(store,scope,'owner');
+ const rows=await store.list<{id:string}>(WEEKLY_TEMPLATE_ADOPTIONS);
+ assert.equal(rows.totalItems,1);
+ assert.equal(rows.items[0]?.id,oldId);
+});
+test('accepted CTA cannot be changed in place or hidden behind a second adoption for the same package version',async t=>{
+ const {store,task}=await prepareWeeklyEnterpriseFactFixture(t),scope={tenantId:task.tenantId,programId:task.programId,packageId:task.packageId,packageVersion:task.packageVersion};
+ const accepted=await adoptWeeklyAutomationTemplate(store,scope,'owner');
+ const row=(await store.list<{id:string}>(WEEKLY_TEMPLATE_ADOPTIONS)).items[0]!;
+ await store.create(WEEKLY_TEMPLATE_ADOPTIONS,{id:'competing-adoption',tenant_id:scope.tenantId,program_id:scope.programId,package_id:scope.packageId,package_version:scope.packageVersion,payload:{...accepted,template:{...accepted.template,callToAction:'A different promise'}}});
+ await assert.rejects(readWeeklyAutomationTemplate(store,scope),{code:'weekly_template_adoption_invalid'});
+ await store.delete(WEEKLY_TEMPLATE_ADOPTIONS,'competing-adoption');
+ await store.update(WEEKLY_TEMPLATE_ADOPTIONS,row.id,{payload:{...accepted,template:{...accepted.template,callToAction:'A different promise'}}});
  await assert.rejects(readWeeklyAutomationTemplate(store,scope),{code:'weekly_template_adoption_invalid'});
 });

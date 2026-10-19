@@ -101,6 +101,72 @@ function stableId(...parts: string[]): string {
   return createHash('sha256').update(parts.join('\0')).digest('hex').slice(0, 15);
 }
 
+/** Generic admission/retry is never the authority for a frozen same-task
+ * footage revision. The revision admission must first bind current-window
+ * evidence, new approval and the original-ledger paid plan before the existing
+ * production worker may claim that run. */
+async function footageRevisionNeedsAdmission(dataStore: DataStore, tenantId: string,
+  taskId: string, runId: string, job?: ContentExecutionJob): Promise<boolean> {
+  const rows = await dataStore.list<Record<string, unknown>>('starter_social_content_tasks', {
+    where: { tenant_id: tenantId, task_id: taskId }, perPage: 2,
+  });
+  if (rows.totalItems > 1 || rows.items.length > 1) throw new Error('content_execution_order_identity_ambiguous');
+  const raw = rows.items[0]?.brief;
+  let brief: unknown = raw;
+  if (typeof brief === 'string') {
+    try { brief = JSON.parse(brief); } catch { throw new Error('content_execution_revision_identity_invalid'); }
+  }
+  if (!brief || typeof brief !== 'object' || Array.isArray(brief)) return false;
+  const marker = (brief as Record<string, unknown>)._productFootageRevision;
+  if (!marker) return false;
+  if (typeof marker !== 'object' || Array.isArray(marker)) throw new Error('content_execution_revision_identity_invalid');
+  return runId !== (marker as Record<string, unknown>).sourceRunId
+    && (!job || !hasCompleteFootageRevisionProductionAdmission(job, marker as Record<string, unknown>));
+}
+
+/** The revision exception is deliberately data-only so the generic durable
+ * queue can verify it without depending on the Starter198 production module.
+ * It is not a second worker lane: a complete checkpoint merely admits the
+ * frozen revision run back into the existing content-production worker. */
+export function hasCompleteFootageRevisionProductionAdmission(
+  job: ContentExecutionJob,
+  marker: Record<string, unknown>,
+): boolean {
+  const checkpoint = job.checkpoints['social.footage_revision_worker_admission'];
+  const payload = checkpoint?.payload;
+  if (!payload || typeof payload !== 'object' || Array.isArray(payload)) return false;
+  const admission = payload as Record<string, unknown>;
+  const recordHash = text(admission.recordHash, 64);
+  const sha256 = (value: unknown) => typeof value === 'string' && /^[a-f0-9]{64}$/.test(value);
+  const approvalBindings = admission.approvalBindings;
+  const revision = marker.revision && typeof marker.revision === 'object' && !Array.isArray(marker.revision)
+    ? marker.revision as Record<string, unknown> : null;
+  const revisedPlanHash = marker.revisedPlanHash ?? revision?.revisedPlanHash;
+  if (!/^[a-f0-9]{64}$/.test(recordHash) || checkpoint.version !== '1'
+    || checkpoint.inputHash !== recordHash
+    || admission.schemaVersion !== 'social-product-footage-revision-worker-admission.v1'
+    || admission.tenantId !== job.tenantId || admission.taskId !== job.taskId
+    || admission.runId !== job.runId
+    || admission.workerLane !== 'social_content_production'
+    || admission.planHash !== revisedPlanHash
+    || !sha256(admission.guardHash) || !sha256(admission.paidPlanFreezeHash)
+    || !sha256(admission.canonicalPlanHash) || !sha256(admission.planHash)
+    || !Array.isArray(approvalBindings) || !approvalBindings.length
+    || approvalBindings.some(binding => !binding || typeof binding !== 'object' || Array.isArray(binding)
+      || !text((binding as Record<string, unknown>).groupId)
+      || !sha256((binding as Record<string, unknown>).approvalRecordHash)
+      || !sha256((binding as Record<string, unknown>).decisionRecordHash)
+      || !sha256((binding as Record<string, unknown>).assetProvenanceHash))
+    || typeof admission.admittedAt !== 'string' || !Number.isFinite(Date.parse(admission.admittedAt))) return false;
+  const { recordHash: _recordHash, ...body } = admission;
+  const canonical = (value: unknown): unknown => Array.isArray(value) ? value.map(canonical)
+    : value && typeof value === 'object'
+      ? Object.fromEntries(Object.keys(value as Record<string, unknown>).sort()
+        .map(key => [key, canonical((value as Record<string, unknown>)[key])]))
+      : value;
+  return createHash('sha256').update(JSON.stringify(canonical(body))).digest('hex') === recordHash;
+}
+
 function jobFromRow(row: JobRow): ContentExecutionJob {
   const status = text(row.status, 40) as ContentExecutionJobStatus;
   if (!row.id || !['queued', 'running', 'retry_wait', 'reconciling', 'blocked', 'paused', 'succeeded', 'cancelled', 'dead_letter'].includes(status)) {
@@ -259,6 +325,8 @@ export async function admitContentExecutionJob(input: {
   const runId = requiredIdentity(input.runId, 'run');
   const accountId = requiredIdentity(input.accountId || '_unassigned', 'account');
   const taskType = requiredIdentity(input.taskType, 'task_type');
+  if (await footageRevisionNeedsAdmission(input.dataStore, tenantId, taskId, runId))
+    throw new Error('content_execution_footage_revision_admission_required');
   const jobKey = createHash('sha256').update([tenantId, taskId, runId, taskType].join('\0')).digest('hex');
   const id = stableId('content-job', jobKey);
   const existing = await input.dataStore.getById<JobRow>(CONTENT_EXECUTION_JOB_COLLECTION, id);
@@ -284,6 +352,66 @@ export async function admitContentExecutionJob(input: {
     throw new Error('content_execution_job_create_failed');
   }
   return jobFromRow(created);
+}
+
+/** Stage an independently verified same-task revision in the existing queue
+ * identity, but leave it unclaimable. A later, separate first-frame/paid
+ * admission must change its state; generic retry/resume remains fenced. */
+export async function stageBlockedFootageRevisionJob(input: {
+  dataStore: DataStore; tenantId: string; taskId: string; runId: string;
+  userId: string; accountId?: string | null; taskType: string;
+  checkpoints: ContentExecutionCheckpoints; assertAuthority: () => Promise<void>;
+  now?: Date;
+}): Promise<ContentExecutionJob> {
+  const tenantId = requiredIdentity(input.tenantId, 'tenant');
+  const taskId = requiredIdentity(input.taskId, 'task');
+  const runId = requiredIdentity(input.runId, 'run');
+  const userId = requiredIdentity(input.userId, 'user');
+  const accountId = requiredIdentity(input.accountId || '_unassigned', 'account');
+  const taskType = requiredIdentity(input.taskType, 'task_type');
+  if (!await footageRevisionNeedsAdmission(input.dataStore, tenantId, taskId, runId))
+    throw new Error('content_execution_footage_revision_identity_missing');
+  const checkpoints = parseContentExecutionCheckpoints(input.checkpoints);
+  const identity = (value: ContentExecutionCheckpoints) => JSON.stringify(Object.entries(value)
+    .map(([key, checkpoint]) => [key, checkpoint.version, checkpoint.inputHash, checkpoint.payload])
+    .sort(([left], [right]) => String(left).localeCompare(String(right))));
+  if ((checkpoints['social.executor']?.payload as { executor?: unknown } | undefined)?.executor !== 'langgraph'
+    || !checkpoints['social.executor']?.inputHash || !checkpoints['content.production_bridge'])
+    throw new Error('content_execution_footage_revision_checkpoint_invalid');
+  await input.assertAuthority();
+  const jobKey = createHash('sha256').update([tenantId, taskId, runId, taskType].join('\0')).digest('hex');
+  const id = stableId('content-job', jobKey);
+  const now = (input.now ?? new Date()).toISOString();
+  const existing = await input.dataStore.getById<JobRow>(CONTENT_EXECUTION_JOB_COLLECTION, id);
+  if (existing) {
+    const parsed = jobFromRow(existing);
+    if (parsed.jobKey !== jobKey || parsed.tenantId !== tenantId || parsed.taskId !== taskId
+      || parsed.runId !== runId || parsed.status !== 'blocked'
+      || parsed.providerState !== 'none' || parsed.providerReceipts.length
+      || identity(parsed.checkpoints) !== identity(checkpoints))
+      throw new Error('content_execution_footage_revision_stage_conflict');
+    await input.assertAuthority();
+    return parsed;
+  }
+  const created = await input.dataStore.create<JobRow>(CONTENT_EXECUTION_JOB_COLLECTION, {
+    id, tenant_id: tenantId, job_key: jobKey, task_id: taskId, run_id: runId, user_id: userId,
+    account_id: accountId, task_type: taskType, status: 'blocked', attempt: 0,
+    reconciliation_attempt: 0, next_attempt_at: '', worker_id: '', lease_expires_at: '',
+    retry_class: '', last_error: 'product_footage_revision_new_first_frame_approval_required',
+    provider_state: 'none', provider_receipts: [], checkpoints,
+    created_at: now, updated_at: now, last_started_at: '', completed_at: '',
+  }).catch(async error => {
+    const raced = await input.dataStore.getById<JobRow>(CONTENT_EXECUTION_JOB_COLLECTION, id);
+    if (raced) return raced;
+    throw error;
+  });
+  if (!created) throw new Error('content_execution_footage_revision_stage_failed');
+  const staged = jobFromRow(created);
+  if (staged.status !== 'blocked' || staged.jobKey !== jobKey
+    || identity(staged.checkpoints) !== identity(checkpoints))
+    throw new Error('content_execution_footage_revision_stage_conflict');
+  await input.assertAuthority();
+  return staged;
 }
 
 async function readSchedulerJobs(dataStore: DataStore): Promise<ContentExecutionJob[]> {
@@ -317,6 +445,15 @@ async function contentOrderCancelled(dataStore: DataStore, job: ContentExecution
     return raw && typeof raw === 'object' && !Array.isArray(raw) ? raw as Record<string, unknown> : null;
   };
   const binding = parse(task?.content_order);
+  // A same-task footage revision has a new run pointer but its paid plan is
+  // only frozen, not admitted to a worker. Never claim a generic queued/retry
+  // job for that run (including after a restart or manual retry).
+  const brief = parse(task?.brief);
+  const rawFootageRevision = brief?._productFootageRevision;
+  const footageRevision = parse(rawFootageRevision);
+  if (rawFootageRevision && !footageRevision) throw new Error('content_execution_revision_identity_invalid');
+  if (footageRevision && job.runId !== footageRevision.sourceRunId
+    && !hasCompleteFootageRevisionProductionAdmission(job, footageRevision)) return true;
   const stopped = (row: Record<string, unknown> | undefined, order: Record<string, unknown> | null) =>
     Boolean(order?.cancellation || order?.replacedByContentId || order?.supersededByContentId
       || ['cancelled', 'cancelling'].includes(String(row?.status)));
@@ -708,6 +845,29 @@ export async function readContentExecutionJob(
 }
 
 export type ContentExecutionControlAction = 'pause' | 'cancel' | 'resume' | 'retry';
+
+/** A later rights/visual review cannot add evidence to an already frozen plan.
+ * Keep this deliberately narrow: older jobs without a readable frozen plan
+ * retain their existing recovery path, while an explicitly unbound footage
+ * segment needs a formal task/run revision rather than a same-run retry. */
+function frozenProductFootageRevisionRequired(job: ContentExecutionJob): boolean {
+  if (!job.lastError?.includes('product_footage_shot_review_required')) return false;
+  const payload = job.checkpoints['social.executor']?.payload;
+  if (!payload || typeof payload !== 'object' || Array.isArray(payload)) return false;
+  const binding = payload as Record<string, unknown>;
+  const object = (value: unknown): Record<string, unknown> | null =>
+    value && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : null;
+  const frozen = object(binding.frozenPlan);
+  const approved = object(binding.approvedContext);
+  const supply = object(approved?.assetSupplyPlan);
+  const shots = Array.isArray(supply?.shots) ? supply.shots : [];
+  const segments = [frozen?.selectedMaterialSegment, ...shots.map(shot => object(shot)?.selectedMaterialSegment)];
+  return segments.some(segment => {
+    const selected = object(segment);
+    return selected && typeof selected.sourceRef === 'string' && selected.sourceRef.length > 0
+      && !object(selected.footageEvidence);
+  });
+}
 export type ContentExecutionPauseOrigin =
   | 'manual'
   | 'workflow_review'
@@ -743,6 +903,8 @@ async function applyContentExecutionControl(input: {
   const current = jobFromRow(row);
   if (current.tenantId !== tenantId) throw new Error('content_execution_job_not_found');
   if (input.action === 'resume' || input.action === 'retry') {
+    if (await footageRevisionNeedsAdmission(input.dataStore, tenantId, current.taskId, current.runId, current))
+      throw new Error('content_execution_footage_revision_admission_required');
     const tasks = await input.dataStore.list<Record<string, unknown>>('starter_social_content_tasks', {
       where: { tenant_id: tenantId, task_id: current.taskId }, perPage: 2,
     });
@@ -818,6 +980,8 @@ async function applyContentExecutionControl(input: {
   } else {
     if (['queued', 'running', 'retry_wait', 'reconciling'].includes(current.status)) return current;
     if (!['blocked', 'dead_letter'].includes(current.status)) throw new Error('content_execution_job_not_retryable');
+    if (!hasProviderWork(current) && frozenProductFootageRevisionRequired(current))
+      throw new Error('content_execution_frozen_footage_revision_required');
     const reconcile = hasProviderWork(current);
     patch = {
       status: reconcile ? 'reconciling' : 'queued',

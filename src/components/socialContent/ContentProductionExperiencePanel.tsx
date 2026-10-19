@@ -1,5 +1,5 @@
 import { Tabs } from 'antd';
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import {
   AlertTriangle,
   CheckCircle2,
@@ -36,6 +36,7 @@ interface ContentProductionExperiencePanelProps {
   onViewChange: (view: ContentProductionView) => void;
   onOpenWorkbench: () => void;
   onRetry: () => void;
+  focusedShotId?: string | null;
 }
 
 const SHOT_LABELS: Record<ContentShotProgressState, string> = {
@@ -104,13 +105,20 @@ function TaskOverview({ task }: { task: SocialContentTaskDetail }) {
   );
 }
 
-function ShotProgressView({ task, onOpenWorkbench }: Pick<ContentProductionExperiencePanelProps, 'task' | 'onOpenWorkbench'>) {
+function ShotProgressView({ task, onOpenWorkbench, focusedShotId }: Pick<ContentProductionExperiencePanelProps, 'task' | 'onOpenWorkbench' | 'focusedShotId'>) {
   const shots = contentShotProgress(task);
   const [filter, setFilter] = useState<'all' | ContentShotProgressState>('all');
   const counts = useMemo(() => Object.fromEntries(Object.keys(SHOT_LABELS).map(state => [state, shots.filter(shot => shot.state === state).length])) as Record<ContentShotProgressState, number>, [shots]);
   const visibleShots = filter === 'all' ? shots : shots.filter(shot => shot.state === filter);
   const estimatedCost = task.agentWorkflow?.executionPlan.estimatedTotalCostCny;
   const remaining = task.productionProgress?.estimatedRemainingSeconds ?? null;
+  useEffect(() => {
+    if (!focusedShotId) return;
+    const target = document.getElementById(`content-shot-${focusedShotId}`);
+    if (!target) return;
+    target.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    target.focus({ preventScroll: true });
+  }, [focusedShotId]);
 
   if (!shots.length) {
     return (
@@ -138,15 +146,22 @@ function ShotProgressView({ task, onOpenWorkbench }: Pick<ContentProductionExper
       </div>
       <div className="mt-3 grid gap-3 xl:grid-cols-2">
         {visibleShots.map(shot => (
-          <article key={shot.sceneId} className="rounded-lg border border-slate-200 bg-white p-4" data-shot-status={shot.state}>
+          <article id={`content-shot-${shot.sceneId}`} tabIndex={-1} key={shot.sceneId} className={`rounded-lg border bg-white p-4 outline-none focus-visible:ring-2 focus-visible:ring-blue-500 ${focusedShotId === shot.sceneId ? 'border-amber-400 ring-2 ring-amber-100' : 'border-slate-200'}`} data-shot-id={shot.sceneId} data-shot-status={shot.state}>
             <div className="flex items-start justify-between gap-3">
               <div className="min-w-0"><p className="text-[10px] font-semibold text-slate-500">镜头 {shot.order} · {shot.timeRange}</p><h4 className="mt-1 line-clamp-2 text-sm font-semibold text-slate-950">{shot.title}</h4></div>
               <span className={`inline-flex shrink-0 items-center gap-1.5 rounded-full border px-2.5 py-1 text-[10px] font-semibold ${SHOT_TONES[shot.state]}`}><ShotStateIcon state={shot.state} />{SHOT_LABELS[shot.state]}</span>
             </div>
-            <div className="mt-3 rounded-lg bg-slate-50 px-3 py-2.5"><p className="text-[9px] font-semibold text-slate-500">制作方式</p><p className="mt-1 text-[11px] font-bold text-slate-800">{shot.sourceLabel}</p></div>
+            <dl className="mt-3 grid gap-px overflow-hidden rounded-lg bg-slate-200 sm:grid-cols-2">
+              <div className="bg-slate-50 px-3 py-2.5"><dt className="text-[9px] font-semibold text-slate-500">口播</dt><dd className="mt-1 line-clamp-2 text-[11px] font-bold text-slate-800">{shot.speech}</dd></div>
+              <div className="bg-slate-50 px-3 py-2.5"><dt className="text-[9px] font-semibold text-slate-500">画面类型</dt><dd className="mt-1 text-[11px] font-bold text-slate-800">{shot.visualType}</dd></div>
+              <div className="bg-slate-50 px-3 py-2.5"><dt className="text-[9px] font-semibold text-slate-500">素材</dt><dd className="mt-1 line-clamp-2 text-[11px] font-bold text-slate-800">{shot.materialLabel}</dd><span className="mt-0.5 block text-[9px] text-slate-500">{shot.sourceLabel}</span></div>
+              <div className="bg-slate-50 px-3 py-2.5"><dt className="text-[9px] font-semibold text-slate-500">生产管线</dt><dd className="mt-1 text-[11px] font-bold text-slate-800">{shot.pipelineLabel}</dd></div>
+            </dl>
             <p className={`mt-3 text-xs leading-5 ${shot.state === 'failed' || shot.state === 'rework' ? 'text-amber-800' : 'text-slate-600'}`}>{shot.detail}</p>
+            {shot.previewUrl && shot.previewMediaType === 'video' && <video controls preload="metadata" src={shot.previewUrl} className="mt-3 max-h-48 w-full rounded-lg bg-black" aria-label={`镜头 ${shot.order} 素材预览`} />}
+            {shot.previewUrl && shot.previewMediaType === 'image' && <img src={shot.previewUrl} alt={`镜头 ${shot.order} 素材预览`} className="mt-3 max-h-48 w-full rounded-lg bg-slate-50 object-contain" />}
             {shot.qualityIssues.length > 0 && <ul className="mt-2 space-y-1">{shot.qualityIssues.map(issue => <li key={issue} className="flex items-start gap-1.5 text-[10px] leading-4 text-rose-700"><XCircle size={11} className="mt-0.5 shrink-0" />{issue}</li>)}</ul>}
-            <div className="mt-3 flex flex-wrap items-center justify-between gap-2 border-t border-slate-100 pt-3 text-[10px] text-slate-500"><span>预计 {formatContentDuration(shot.estimatedSeconds)}</span><span>预计 ¥{shot.estimatedCostCny.toFixed(2)}</span></div>
+            <div className="mt-3 flex flex-wrap items-center justify-between gap-2 border-t border-slate-100 pt-3 text-[10px] text-slate-500"><span>{shot.previewLabel}</span><span>预计 {formatContentDuration(shot.estimatedSeconds)} · ¥{shot.estimatedCostCny.toFixed(2)}</span></div>
             {(shot.state === 'failed' || shot.state === 'rework') && <button type="button" onClick={onOpenWorkbench} className="mt-3 inline-flex items-center gap-1 text-[10px] font-semibold text-amber-800">查看本镜头处理要求<ChevronRight size={12} /></button>}
           </article>
         ))}
@@ -220,7 +235,7 @@ function AchievementCard({ task }: { task: SocialContentTaskDetail }) {
   );
 }
 
-export default function ContentProductionExperiencePanel({ task, busy, view, onViewChange, onOpenWorkbench, onRetry }: ContentProductionExperiencePanelProps) {
+export default function ContentProductionExperiencePanel({ task, busy, view, onViewChange, onOpenWorkbench, onRetry, focusedShotId }: ContentProductionExperiencePanelProps) {
   const shotCount = contentShotProgress(task).length;
   const exceptionCount = contentProductionExceptions(task).length;
   const tabs: Array<{ id: ContentProductionView; label: string; count?: number }> = [
@@ -240,7 +255,7 @@ export default function ContentProductionExperiencePanel({ task, busy, view, onV
 
         <div className="p-4 sm:p-5" role="tabpanel">
           {view === 'overview' && <TaskOverview task={task} />}
-          {view === 'shots' && <ShotProgressView task={task} onOpenWorkbench={onOpenWorkbench} />}
+          {view === 'shots' && <ShotProgressView task={task} onOpenWorkbench={onOpenWorkbench} focusedShotId={focusedShotId} />}
           {view === 'exceptions' && <ExceptionView task={task} busy={busy} onOpenWorkbench={onOpenWorkbench} onRetry={onRetry} />}
         </div>
       </section>

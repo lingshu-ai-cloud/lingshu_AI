@@ -22,6 +22,7 @@ import { applyWorkflowEvent } from './workflowState.js';
 import { createSocialOperatingRepository } from '../socialOperating/repository.js';
 import type { CapacityPlan } from '../socialOperating/capacityPlanner.js';
 import type { AutomationPolicyResolution } from '../socialOperating/automationPolicyResolver.js';
+import {evaluateProductionOutlineReadiness} from '../socialOperating/productionReadiness.js';
 import {
   activateWeeklyExecutionTasks,
   applyBusinessDispatchToExecutionTasks,
@@ -183,13 +184,14 @@ export function createWeeklyOperatingPackageService(dataStore: DataStore) {
       status: policyDecision.output.status === 'blocked' ? 'blocked' : 'ready',
       blockers: policyDecision.blockers.map(item => item.code),
     };
+    const productionOnly=snapshot.status==='degraded'&&goal.status==='blocked'&&evaluateProductionOutlineReadiness(goal).ready&&capacity.status==='ready'&&policy.status==='ready';
     return {
       ...input,
       // These allocation fields are projections of the persisted resolver
       // output. Never let same-request values shadow the authority snapshot.
-      accountPlans: undefined,
-      originalContentTarget: undefined,
-      weeklyBudgetCny: undefined,
+      accountPlans: productionOnly?input.accountPlans:undefined,
+      originalContentTarget: productionOnly?input.originalContentTarget:undefined,
+      weeklyBudgetCny: productionOnly?input.weeklyBudgetCny:undefined,
       enterpriseProfileRef: snapshot.enterprise.ref,
       businessContentGoalRef: goalRef,
       capacityPlanRef: snapshot.capacityPlanRef,
@@ -323,7 +325,7 @@ export function createWeeklyOperatingPackageService(dataStore: DataStore) {
         resolvedWithQuota.publicationTasks=current.payload.socialContentPackage.publicationTasks.map(p=>{if(p.inventoryReuseRef)return p;const {motherContentId:oldMother,adaptationOfPublicationTaskId:oldParent,...freshGrouping}=p;return freshGrouping;});
       }
       const item = packageFromInput({
-        input: resolvedWithQuota, programId, userId, accounts, program: {...program.payload,route:current.payload.referenceSourcePolicy?.profile==='b2b_established'?'account_repair':program.payload.route},
+        input: resolvedWithQuota, programId, userId, accounts, program: program.payload,
         packageId, contentPackageId: current.payload.socialContentPackage.contentPackageId,
         version: current.payload.version + 1, previousVersion: current.payload.version,
         previousPackage: projectedCurrent,
@@ -522,6 +524,16 @@ export function createWeeklyOperatingPackageService(dataStore: DataStore) {
           throw new SocialProgramError('weekly_package_version_conflict', 409, '周任务包已更新，请从后端刷新后重试；已有计划已保留。');
         }
         return agentPlanning.runDirectorAnalysis({ tenantId, programId, packageId, packageVersion: row.payload.version, expectedPlanningVersion: versions.expectedPlanningVersion, selectedSlotIds: versions.selectedSlotIds, actor: 'director_agent' });
+      });
+    },
+
+    async pinAgentReference(tenantId:string,userId:string,programId:string,packageId:string,input:{expectedPackageVersion:number;expectedPlanningVersion:number;candidateId:string;expectedAccountUrl:string;discoveryAuthority:{rootJobId:string;currentJobId:string;runId:string}}){
+      return serializeWorkflowMutation(`${tenantId}:${programId}:${packageId}`,async()=>{
+        const row=await latestPackageRow(dataStore,tenantId,programId,packageId);
+        if(!row)throw new SocialProgramError('weekly_operating_package_not_found',404,'周任务包不存在。');
+        if(!Number.isSafeInteger(input.expectedPackageVersion)||input.expectedPackageVersion<1)throw new SocialProgramError('weekly_package_version_required',400,'请提供有效的周任务包版本。');
+        if(row.payload.version!==input.expectedPackageVersion)throw new SocialProgramError('weekly_package_version_conflict',409,'周任务包已更新，请刷新后重试。');
+        return agentPlanning.pinDirectorReference({tenantId,programId,packageId,packageVersion:row.payload.version,expectedPlanningVersion:input.expectedPlanningVersion,candidateId:input.candidateId,expectedAccountUrl:input.expectedAccountUrl,discoveryAuthority:input.discoveryAuthority,selectedBy:userId});
       });
     },
 

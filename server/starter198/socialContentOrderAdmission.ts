@@ -4,7 +4,8 @@ import {STARTER_COLLECTIONS} from './repository.js';
 import {socialJson,socialObject,socialText,SocialContentWorkflowError} from './socialContentValidation.js';
 import {socialRequestHash} from './socialContentValidation.js';
 import type {Starter198OrchestratorQueuePort} from './runtimePorts.js';
-import {bindSocialContentRevisionOrder} from './socialContentCostLineage.js';
+import {bindSocialContentRevisionOrder,resolvePreparedProductAssetCostLineage} from './socialContentCostLineage.js';
+import {readPreparedSocialProductAssetFallback} from './socialContentProductAssetRevisionPrepare.js';
 import {verifySharedOriginalProductionAdmission} from '../runtime/weeklyContentProductionIdentity.js';
 import {withSocialContentSubjectLease} from './socialContentMutation.js';
 import {requireSocialTask} from './socialContentRecords.js';
@@ -24,6 +25,77 @@ export const initialSocialContentOrder=(taskId:string,entry:QuotaEntry='workspac
  schemaVersion:'social-content-order.v1',contentId:taskId,budgetTaskId:taskId,entry,programId:null,originWeek:null,
 });
 const fail=(code:string):never=>{throw new SocialContentWorkflowError(code,409);};
+
+/** Quota-side admission only. A separate execution adapter must recover and
+ * acknowledge the frozen outbox before it may enqueue the revised plan. */
+export async function registerPreparedProductAssetRevisionDispatch(input:{
+ repository:Starter198Repository;tenantId:string;userId:string;taskId:string;commandId:string;
+ dispatch:SocialContentDispatchEnvelope;now?:Date;
+ prepared:Parameters<typeof readPreparedSocialProductAssetFallback>[0];
+}){
+ return withSocialContentSubjectLease({repository:input.repository,tenantId:input.tenantId,subjectId:input.taskId,action:async()=>{
+  if(input.prepared.repository!==input.repository||input.prepared.tenantId!==input.tenantId
+   ||input.prepared.taskId!==input.taskId)return fail('social_content_asset_revision_scope_invalid');
+  const store=input.repository.dataStore;
+  if(!store?.compareAndSwap||!await store.supportsAtomicCompareAndSwap?.())return fail('social_content_order_atomic_store_required');
+  const lineage=await resolvePreparedProductAssetCostLineage(input.prepared);
+  const {requestHash,...dispatchBody}=input.dispatch,queue=input.dispatch.queueRequest;
+  if(input.dispatch.schemaVersion!=='social-content-dispatch.v1'||requestHash!==socialRequestHash(dispatchBody)
+   ||input.dispatch.commandId!==input.commandId||input.dispatch.userId!==input.userId
+   ||queue.commandId!==input.commandId||queue.userId!==input.userId||queue.tenantId!==input.tenantId
+   ||queue.workflowScope!=='social_content'||queue.subject?.id!==input.taskId
+   ||queue.subject.admissionVersion!==lineage.preparedVersion||queue.subject.version!==lineage.preparedVersion)
+   return fail('social_content_asset_revision_dispatch_invalid');
+  let task=await requireSocialTask(input),binding=socialObject(socialJson(task.content_order));
+  if(!binding||binding.contentId!==lineage.contentId||binding.budgetTaskId!==lineage.budgetTaskId
+   ||binding.programId!==lineage.programId||binding.originWeek!==lineage.originWeek
+   ||binding.cancellation||binding.replacedByContentId||binding.supersededByContentId
+   ||socialText(task.version)!==lineage.preparedVersion)return fail('social_content_asset_revision_binding_changed');
+  const frozenEntry=binding.entry;
+  const scope:QuotaScope={tenantId:input.tenantId,programId:lineage.programId,weekStart:lineage.originWeek};
+  const quota=createContentCreationQuotaService({store,
+   assertAtomicStore:async()=>{if(!await store.supportsAtomicCompareAndSwap?.())return fail('social_content_order_atomic_store_required');},
+   now:()=>input.now??new Date(),readReleaseSafety:async()=>({leaseActive:true,inFlight:true,paid:true,unknown:true}),
+   verifyDelivery:async()=>false,
+   verifyRevisionDispatch:async(order,actualScope,value)=>{
+    const current=await resolvePreparedProductAssetCostLineage(input.prepared);
+    return order.contentId===current.contentId&&order.entry===frozenEntry
+     &&actualScope.programId===current.programId&&actualScope.weekStart===current.originWeek
+     &&value.executionTaskId===current.executionTaskId&&value.lineageHash===current.lineageHash;
+   }});
+  const pool=await quota.read(scope),order=pool?.orders?.[lineage.contentId];
+  if(!pool||!order||!['reserved','running','delivered'].includes(order.state)||order.contentId!==lineage.contentId
+   ||order.slotId!==pool.slots.find(slot=>slot.contentId===lineage.contentId)?.slotId
+   ||!pool.outbox.some(item=>item.kind==='dispatch'&&item.contentId===lineage.contentId
+    &&item.commandId===lineage.sourceDispatchCommandId&&(item.executionTaskId??item.contentId)===lineage.contentId))
+   return fail('social_content_asset_revision_original_order_required');
+  if(order.revisions?.some(item=>item.executionTaskId===lineage.executionTaskId
+   &&item.lineageHash===lineage.lineageHash&&item.commandId!==input.commandId))
+   return fail('social_content_asset_revision_already_registered');
+  const existing=socialObject(binding.dispatch);
+  if(existing?.commandId===input.commandId){if(socialRequestHash(existing)!==socialRequestHash(input.dispatch))
+    return fail('social_content_asset_revision_dispatch_changed');}
+  else{
+   if(Array.isArray(binding.dispatchHistory)&&binding.dispatchHistory.some((item:unknown)=>socialObject(item)?.commandId===input.commandId))
+    return fail('social_content_asset_revision_dispatch_changed');
+   const next={...binding,dispatch:structuredClone(input.dispatch),
+    dispatchHistory:[...(Array.isArray(binding.dispatchHistory)?binding.dispatchHistory:[]),...(existing?[structuredClone(existing)]:[])]};
+   if(!await store.compareAndSwap(STARTER_COLLECTIONS.socialContentTasks,task.id,
+    {tenant_id:input.tenantId,version:task.version,run_id:task.run_id,content_order:task.content_order},
+    {content_order:next}))return fail('social_content_asset_revision_binding_conflict');
+   task=await requireSocialTask(input);binding=socialObject(socialJson(task.content_order));
+  }
+  const result=await quota.registerRevisionDispatch(scope,
+   {commandId:input.commandId,actorId:input.userId,reason:'verified_product_asset_revision'},
+   {contentId:lineage.contentId,executionTaskId:lineage.executionTaskId,lineageHash:lineage.lineageHash});
+  const revision=result.order?.revisions?.find(item=>item.executionTaskId===lineage.executionTaskId
+   &&item.lineageHash===lineage.lineageHash&&item.commandId===input.commandId);
+  const outbox=result.pool.outbox.find(item=>item.kind==='dispatch'&&item.contentId===lineage.contentId
+   &&item.executionTaskId===lineage.executionTaskId&&item.commandId===input.commandId);
+  if(!revision||!outbox)return fail('social_content_asset_revision_dispatch_missing');
+  return {scope,lineage,dispatchCommandId:input.commandId,outboxState:outbox.state,authorizesProvider:false as const};
+ }});
+}
 
 /** Draft creation is free of quota effects. First start freezes the original
  * week on the task with a database CAS before reserving the stable weekly pool.

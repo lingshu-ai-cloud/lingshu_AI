@@ -13,6 +13,7 @@ import {
   prepareSheet,
 } from '../lib/productImport';
 import { parseProductDocument } from '../lib/productDocumentImport';
+import {importProductEvidenceUrl,uploadProductEvidence} from '../lib/enterpriseProductAssetUpload';
 import SupportAccessControl from './SupportAccessControl';
 import EnterpriseProductImportCard, { type ProductApiStatus } from './EnterpriseProductImportCard';
 import type { AppliedProfile } from './enterprise/KnowledgeIntakePanel';
@@ -87,6 +88,7 @@ interface PendingProductImport {
   skippedRows: number;
   sourceLabel: string;
   unassignedImages: Array<{ name: string; url: string; file: File; status?: 'pending' | 'uploading' | 'uploaded' | 'failed'; error?: string }>;
+  assignedImages: Array<{ productIndex: number; name: string; url: string; file: File; uploadedUrl?: string }>;
   remoteImageTransfers: Record<number, { status: 'pending' | 'uploading' | 'uploaded' | 'failed'; error?: string; originalUrl: string }>;
 }
 
@@ -255,6 +257,7 @@ type EnterpriseArea = 'facts' | 'social' | 'appearance' | 'service';
 
 function advisorInitialEnterpriseView(): KnowledgeView {
   try {
+    if (new URLSearchParams(window.location.search).get('arkVerification') === 'complete') return 'presenters';
     const value = localStorage.getItem('lingshu:enterprise:initial-view') as KnowledgeView | null;
     if (value === 'materials') return 'products';
     if (value === 'presenterRouting') return 'presenters';
@@ -653,37 +656,6 @@ function formatSize(size: number): string {
   if (size >= 1024 * 1024) return `${(size / 1024 / 1024).toFixed(1)}MB`;
   if (size >= 1024) return `${Math.round(size / 1024)}KB`;
   return `${size}B`;
-}
-
-function fileToDataUrl(file: File): Promise<string> {
-  return new Promise((resolve, reject) => {
-    const reader = new FileReader();
-    reader.onload = () => resolve(String(reader.result || ''));
-    reader.onerror = () => reject(reader.error);
-    reader.readAsDataURL(file);
-  });
-}
-
-async function uploadProductEvidence(file: File): Promise<ProductAsset> {
-  const dataUrl = await fileToDataUrl(file);
-  const response = await fetch('/api/overseas/enterprise/assets', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json', ...authHeader() },
-    body: JSON.stringify({ name: file.name, type: file.type, dataUrl }),
-  });
-  if (!response.ok) throw new Error('asset upload failed');
-  return response.json();
-}
-
-async function importProductEvidenceUrl(url: string, name: string): Promise<ProductAsset> {
-  const response = await fetch('/api/overseas/enterprise/assets/import-url', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json', ...authHeader() },
-    body: JSON.stringify({ url, name }),
-  });
-  const result = await response.json().catch(() => ({})) as Partial<ProductAsset> & { error?: string; message?: string };
-  if (!response.ok || !result.url) throw new Error(result.message || result.error || '外链图片转存失败');
-  return result as ProductAsset;
 }
 
 export default function EnterprisePage({ productsDeepLink = null }: { productsDeepLink?: EnterpriseProductsDeepLink | null }) {
@@ -1440,7 +1412,7 @@ export default function EnterprisePage({ productsDeepLink = null }: { productsDe
           videos: [],
           documents: [],
         }));
-        setPendingProductImport({ fileName: file.name, sheetName: '文档正文', products: incoming, totalRows: incoming.length, skippedRows: 0, sourceLabel: parsed.sourceLabel, unassignedImages: parsed.unassignedImages, remoteImageTransfers: Object.fromEntries(incoming.map((item, index) => item.imageUrl && !item.imageUrl.startsWith('/api/overseas/enterprise/assets/') ? [index, { status: 'pending', originalUrl: item.imageUrl }] : null).filter(Boolean) as Array<[number, { status: 'pending'; originalUrl: string }]>) });
+        setPendingProductImport({ fileName: file.name, sheetName: '文档正文', products: incoming, totalRows: incoming.length, skippedRows: 0, sourceLabel: parsed.sourceLabel, unassignedImages: parsed.unassignedImages, assignedImages: parsed.assignedImages, remoteImageTransfers: Object.fromEntries(incoming.map((item, index) => item.imageUrl && !item.imageUrl.startsWith('/api/overseas/enterprise/assets/') ? [index, { status: 'pending', originalUrl: item.imageUrl }] : null).filter(Boolean) as Array<[number, { status: 'pending'; originalUrl: string }]>) });
         setProductImportMessage(`已从文档识别 ${incoming.length} 个产品，请确认字段与图片归属后导入`);
         return;
       }
@@ -1479,7 +1451,7 @@ export default function EnterprisePage({ productsDeepLink = null }: { productsDe
         totalRows: prepared.dataRows.length,
         skippedRows: skipped,
         sourceLabel: '表格字段映射',
-        unassignedImages: [],
+        unassignedImages: [], assignedImages: [],
         remoteImageTransfers: Object.fromEntries(incoming.map((item, index) => item.imageUrl && !item.imageUrl.startsWith('/api/overseas/enterprise/assets/') ? [index, { status: 'pending', originalUrl: item.imageUrl }] : null).filter(Boolean) as Array<[number, { status: 'pending'; originalUrl: string }]>),
       });
       setProductImportMessage(`已解析 ${incoming.length} 个产品，请确认产品与图片对应关系后导入`);
@@ -1494,6 +1466,24 @@ export default function EnterprisePage({ productsDeepLink = null }: { productsDe
     if (!pendingProductImport || productImportConfirming) return;
     setProductImportConfirming(true);
     const transferredProducts = pendingProductImport.products.map(product => ({ ...product, images: [...(product.images || [])] }));
+    const assignedImages = [...pendingProductImport.assignedImages];
+    try {
+      for (const [imageIndex, image] of assignedImages.entries()) {
+        const product = transferredProducts[image.productIndex];
+        if (!product) continue;
+        const asset = image.uploadedUrl ? { name: image.name, type: image.file.type, size: image.file.size, updatedAt: new Date().toISOString(), url: image.uploadedUrl } : await uploadProductEvidence(image.file);
+        if (!asset.url) throw new Error('PDF 产品图片上传后缺少可用地址');
+        assignedImages[imageIndex] = { ...image, uploadedUrl: asset.url };
+        setPendingProductImport(current => current ? { ...current, assignedImages: [...assignedImages] } : null);
+        product.images = [...product.images, asset];
+        if (!product.imageUrl) product.imageUrl = asset.url;
+      }
+    } catch (error) {
+      setPendingProductImport(current => current ? { ...current, assignedImages } : null);
+      setProductImportMessage(error instanceof Error ? error.message : 'PDF 产品图片上传失败');
+      setProductImportConfirming(false);
+      return;
+    }
     const transferStates = { ...pendingProductImport.remoteImageTransfers };
     setPendingProductImport(current => current ? { ...current, remoteImageTransfers: Object.fromEntries(Object.entries(current.remoteImageTransfers).map(([index, transfer]) => [index, transfer.status === 'uploaded' ? transfer : { ...transfer, status: 'uploading', error: undefined }])) } : null);
     await Promise.all(Object.entries(transferStates).map(async ([indexText, transfer]) => {
@@ -1553,6 +1543,7 @@ export default function EnterprisePage({ productsDeepLink = null }: { productsDe
       });
     setProductImportMessage(`已导入 ${incoming.length} 个产品${pendingProductImport.skippedRows > 0 ? `，跳过 ${pendingProductImport.skippedRows} 行` : ''}，点击右上角保存后生效`);
     pendingProductImport.unassignedImages.forEach(image => URL.revokeObjectURL(image.url));
+    pendingProductImport.assignedImages.forEach(image => URL.revokeObjectURL(image.url));
     setPendingProductImport(null);
     setProductImportConfirming(false);
   };
@@ -1560,6 +1551,7 @@ export default function EnterprisePage({ productsDeepLink = null }: { productsDe
   const closeProductImport = () => {
     if (productImportConfirming) return;
     pendingProductImport?.unassignedImages.forEach(image => URL.revokeObjectURL(image.url));
+    pendingProductImport?.assignedImages.forEach(image => URL.revokeObjectURL(image.url));
     setPendingProductImport(null);
   };
 
@@ -2477,16 +2469,17 @@ export default function EnterprisePage({ productsDeepLink = null }: { productsDe
                       <thead className="bg-surface-2 text-text-muted"><tr><th className="px-3 py-2">图片</th><th className="px-3 py-2">产品名称</th><th className="px-3 py-2">SKU</th><th className="px-3 py-2">品牌 / 规格</th><th className="px-3 py-2">识别卖点</th><th className="w-16 px-3 py-2">操作</th></tr></thead>
                       <tbody className="divide-y divide-border">
                         {pendingProductImport.products.map((product, index) => { const transfer = pendingProductImport.remoteImageTransfers[index]; return <tr key={`${product.sku || product.name}-${index}`}>
-                          <td className="px-3 py-2"><div className="relative w-fit">{product.imageUrl ? <img src={product.imageUrl} alt="" className="h-12 w-12 rounded-lg border border-border object-cover" onError={event => { event.currentTarget.style.display = 'none'; }} /> : <span className="inline-flex h-12 w-12 items-center justify-center rounded-lg bg-surface-2 text-[10px] text-text-muted">无图片</span>}{transfer && <span title={transfer.error || transfer.originalUrl} className={`absolute -bottom-1 -right-2 rounded px-1 py-0.5 text-[8px] font-semibold text-white ${transfer.status === 'uploaded' ? 'bg-emerald-600' : transfer.status === 'failed' ? 'bg-red-600' : transfer.status === 'uploading' ? 'bg-slate-800' : 'bg-amber-600'}`}>{transfer.status === 'uploaded' ? '已转存' : transfer.status === 'failed' ? '转存失败' : transfer.status === 'uploading' ? '转存中' : '待转存'}</span>}</div>{transfer?.error && <p className="mt-2 max-w-32 text-[9px] leading-4 text-red-600">{transfer.error}</p>}</td>
+                          <td className="px-3 py-2"><div className="relative w-fit">{(pendingProductImport.assignedImages.find(image => image.productIndex === index)?.url || product.imageUrl) ? <img src={pendingProductImport.assignedImages.find(image => image.productIndex === index)?.url || product.imageUrl} alt="" className="h-12 w-12 rounded-lg border border-border object-cover" onError={event => { event.currentTarget.style.display = 'none'; }} /> : <span className="inline-flex h-12 w-12 items-center justify-center rounded-lg bg-surface-2 text-[10px] text-text-muted">无图片</span>}{transfer && <span title={transfer.error || transfer.originalUrl} className={`absolute -bottom-1 -right-2 rounded px-1 py-0.5 text-[8px] font-semibold text-white ${transfer.status === 'uploaded' ? 'bg-emerald-600' : transfer.status === 'failed' ? 'bg-red-600' : transfer.status === 'uploading' ? 'bg-slate-800' : 'bg-amber-600'}`}>{transfer.status === 'uploaded' ? '已转存' : transfer.status === 'failed' ? '转存失败' : transfer.status === 'uploading' ? '转存中' : '待转存'}</span>}</div>{transfer?.error && <p className="mt-2 max-w-32 text-[9px] leading-4 text-red-600">{transfer.error}</p>}</td>
                           <td className="px-3 py-2 font-bold text-text-primary">{product.name}</td>
                           <td className="px-3 py-2 text-text-secondary">{product.sku || '—'}</td>
                           <td className="px-3 py-2 text-text-secondary">{[product.brand, product.color, product.size].filter(Boolean).join(' · ') || '—'}</td>
                           <td className="max-w-56 px-3 py-2 text-text-secondary"><span className="line-clamp-2">{product.highlights || '—'}</span></td>
-                          <td className="px-3 py-2"><button type="button" onClick={() => setPendingProductImport(current => { if (!current) return null; const remoteImageTransfers = Object.fromEntries(Object.entries(current.remoteImageTransfers).flatMap(([key, value]) => { const itemIndex = Number(key); return itemIndex === index ? [] : [[itemIndex > index ? itemIndex - 1 : itemIndex, value]]; })); return { ...current, products: current.products.filter((_, itemIndex) => itemIndex !== index), remoteImageTransfers }; })} className="text-[11px] font-bold text-red-600 hover:text-red-800">移除</button></td>
+                          <td className="px-3 py-2"><button type="button" onClick={() => setPendingProductImport(current => { if (!current) return null; const remoteImageTransfers = Object.fromEntries(Object.entries(current.remoteImageTransfers).flatMap(([key, value]) => { const itemIndex = Number(key); return itemIndex === index ? [] : [[itemIndex > index ? itemIndex - 1 : itemIndex, value]]; })); const assignedImages = current.assignedImages.flatMap(image => image.productIndex === index ? [] : [{ ...image, productIndex: image.productIndex > index ? image.productIndex - 1 : image.productIndex }]); return { ...current, products: current.products.filter((_, itemIndex) => itemIndex !== index), remoteImageTransfers, assignedImages }; })} className="text-[11px] font-bold text-red-600 hover:text-red-800">移除</button></td>
                         </tr>;})}
                       </tbody>
                     </table>
                   </div>
+                  {pendingProductImport.assignedImages.length > 0 && <p className="mt-3 text-xs text-emerald-700">已识别并待绑定 {pendingProductImport.assignedImages.length} 张 PDF 产品照片，请核对商品名称后确认导入。</p>}
                   {pendingProductImport.unassignedImages.length > 0 && <div className="mt-4 rounded-lg border border-sky-200 bg-sky-50 p-3"><p className="text-xs font-semibold text-sky-900">未归属图片（{pendingProductImport.unassignedImages.length}）</p><p className="mt-1 text-[11px] leading-5 text-sky-800">文档没有提供可验证的图片与产品对应关系，因此不会静默绑定。确认导入时会把这些图片持久化到“企业上传素材”，随后可手动关联产品。</p><div className="mt-3 flex flex-wrap gap-2">{pendingProductImport.unassignedImages.map(image => <figure key={image.name} className="w-24"><div className="relative"><img src={image.url} alt={image.name} className="h-20 w-24 rounded-lg border border-sky-200 bg-white object-cover"/>{image.status && image.status !== 'pending' && <span className={`absolute bottom-1 right-1 rounded px-1.5 py-0.5 text-[9px] font-semibold ${image.status === 'uploaded' ? 'bg-emerald-600 text-white' : image.status === 'failed' ? 'bg-red-600 text-white' : 'bg-slate-900 text-white'}`}>{image.status === 'uploaded' ? '已保存' : image.status === 'failed' ? '失败' : '上传中'}</span>}</div><figcaption className="mt-1 truncate text-[9px] text-sky-800" title={image.error || image.name}>{image.error || image.name}</figcaption></figure>)}</div></div>}
                 </div>
             </Modal>

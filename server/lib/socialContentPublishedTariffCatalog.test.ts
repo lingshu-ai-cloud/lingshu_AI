@@ -8,7 +8,7 @@ import type {SocialPaidOperationIntent} from './socialContentTaskBudgetAuthority
 
 const sha=(value:string)=>createHash('sha256').update(value).digest('hex');
 const model='qwen3-vl-flash';
-const baseUrl='https://dashscope.aliyuncs.com/compatible-mode/v1';
+const baseUrl='https://maas.qianwenaiapi.com/compatible-mode/v1';
 const credentialSha256='1'.repeat(64);
 const accountRef=`qwen:${sha(JSON.stringify({baseUrl,credentialSha256}))}`;
 const intent:SocialPaidOperationIntent={operationId:'analysis',provider:'qwen',model,accountRef,stage:'material_video_analysis',shotId:null,inputContractHash:'a'.repeat(64),maximumUnits:{inputTokens:10000,outputTokens:2000}};

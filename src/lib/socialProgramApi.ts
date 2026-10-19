@@ -7,6 +7,41 @@ import type {SceneReworkAdmissionPreview} from '../../server/starter198/socialCo
 import type {WeeklyCreativeRepairCapacityPreview} from '../../shared/contracts/weeklyCreativeRepairExecution';
 import type {CreativeRepairConfiguration} from '../../server/socialPrograms/weeklyCreativeRepairConfiguration';
 export interface WeeklyTechnicalRepairCapacityPreview{caseRecordHash:string;preview:SceneReworkAdmissionPreview;maximumCaseCostCny:number|null;deadlineAt:string|null;estimatedDurationMinutes:number|null;admission:WeeklyProductionRepairCase['admission']}
+export interface WeeklyCtaContact {
+  status: 'missing' | 'recorded';
+  frozenCta: string;
+  selectedProduct: { productId: string; name: string } | null;
+  productSelectionStatus?: 'pending' | 'selected' | 'multiple' | 'unavailable';
+  contextHash: string;
+  contactChannel?: 'whatsapp';
+  contactValue?: string;
+  samplePromiseConfirmed?: boolean;
+  receiptId: string | null;
+}
+export interface WeeklyPublicationProductChoices {
+  packageVersion: number;
+  contextHash: string;
+  selectionState: 'consistent' | 'incomplete_group' | 'pending_operation';
+  products: Array<{ id: string; name: string; sku: string | null }>;
+  publications: Array<{ publicationTaskId: string; motherContentId: string; selectedProductId: string | null; receiptId: string | null; pendingOperation?: boolean; pendingProductId?: string | null }>;
+}
+export interface WeeklySamplePolicyTerms {
+  sampleFeeCny: 0;
+  shippingFeePayer: 'seller' | 'buyer';
+  customsDutyPayer: 'seller' | 'buyer';
+  maximumFreeQuantity: number;
+  eligibleMarkets: string[];
+  eligibleCustomerTypes: string[];
+  validFrom: string;
+  validUntil: string;
+}
+export interface WeeklySamplePolicyCandidates {
+  contextHash: string;
+  selection: { productId: string; productName: string; productSku: string | null };
+  frozenCta: string;
+  candidates: Array<{ candidateId: string; sourceSha256: string; terms: WeeklySamplePolicyTerms; submittedAt: string; reviewStatus: 'pending_independent_verification' }>;
+  policyStatus: 'candidate_only';
+}
 import type { WeeklyRecoveryInput, WeeklyRecoveryAssessment } from '../../server/socialPrograms/weeklyRecoveryAssessment';
 import type { WeeklyBackwardSchedule, WeeklyBackwardScheduleInput } from '../../server/socialPrograms/weeklyBackwardSchedule';
 import type { WeeklyCustomerStep, WeeklyCustomerStepEvidence, readWeeklyCustomerCalendar } from '../../server/runtime/socialWeeklyCustomerBridge';
@@ -198,6 +233,12 @@ export const socialProgramApi = {
   },
   async readExecutionPipeline(programId:string,packageId:string,version:number):Promise<WeeklyPipelineStatus>{return (await request<{item:WeeklyPipelineStatus}>(`/${encodeURIComponent(programId)}/operating-packages/${encodeURIComponent(packageId)}/execution-pipeline?version=${version}`)).item;},
   async readWeeklyTemplate(programId:string,packageId:string,version:number):Promise<{adoptedAt:string}|null>{return (await request<{item:{adoptedAt:string}|null}>(`/${encodeURIComponent(programId)}/operating-packages/${encodeURIComponent(packageId)}/execution-pipeline/template?version=${version}`)).item;},
+  async readWeeklyCtaContact(programId:string,packageId:string,version:number):Promise<WeeklyCtaContact>{return (await request<{item:WeeklyCtaContact}>(`/${encodeURIComponent(programId)}/operating-packages/${encodeURIComponent(packageId)}/cta-contact?version=${version}`)).item;},
+  async recordWeeklyCtaContact(programId:string,packageId:string,version:number,input:{contactChannel:'whatsapp';contactValue:string;expectedContextHash:string;expectedReceiptId:string|null}):Promise<WeeklyCtaContact>{return (await request<{item:WeeklyCtaContact}>(`/${encodeURIComponent(programId)}/operating-packages/${encodeURIComponent(packageId)}/cta-contact?version=${version}`,{method:'POST',...json({expectedPackageVersion:version,...input})})).item;},
+  async readWeeklyPublicationProductChoices(programId:string,packageId:string,version:number):Promise<WeeklyPublicationProductChoices>{return (await request<{item:WeeklyPublicationProductChoices}>(`/${encodeURIComponent(programId)}/operating-packages/${encodeURIComponent(packageId)}/product-selection?version=${version}`)).item;},
+  async selectWeeklyPublicationProduct(programId:string,packageId:string,version:number,input:{expectedContextHash:string;productId:string;publicationTaskIds:string[]}):Promise<WeeklyPublicationProductChoices>{return (await request<{item:WeeklyPublicationProductChoices}>(`/${encodeURIComponent(programId)}/operating-packages/${encodeURIComponent(packageId)}/product-selection?version=${version}`,{method:'POST',...json({expectedPackageVersion:version,...input})})).item;},
+  async readWeeklySamplePolicyCandidates(programId:string,packageId:string,version:number,publicationTaskId:string):Promise<WeeklySamplePolicyCandidates>{return (await request<{item:WeeklySamplePolicyCandidates}>(`/${encodeURIComponent(programId)}/operating-packages/${encodeURIComponent(packageId)}/sample-policy-candidates?version=${version}&publicationTaskId=${encodeURIComponent(publicationTaskId)}`)).item;},
+  async submitWeeklySamplePolicyCandidate(programId:string,packageId:string,version:number,input:{publicationTaskId:string;expectedContextHash:string;terms:WeeklySamplePolicyTerms;pdfDataUrl:string}):Promise<unknown>{return (await request<{item:unknown}>(`/${encodeURIComponent(programId)}/operating-packages/${encodeURIComponent(packageId)}/sample-policy-candidates`,{method:'POST',...json({expectedPackageVersion:version,...input})})).item;},
   async authorizeWeeklyPublishing(programId:string,packageId:string,version:number):Promise<void>{await request(`/${encodeURIComponent(programId)}/operating-packages/${encodeURIComponent(packageId)}/execution-pipeline/publishing-authorization`,{method:'POST',...json({expectedPackageVersion:version,authorizePublishing:true})});},
   async adoptWeeklyTemplate(programId:string,packageId:string,version:number):Promise<{adoptedAt:string}>{return (await request<{item:{adoptedAt:string}}>(`/${encodeURIComponent(programId)}/operating-packages/${encodeURIComponent(packageId)}/execution-pipeline/template`,{method:'POST',...json({expectedPackageVersion:version})})).item;},
   async connectLocalWeeklyConsumer(programId:string,packageId:string,version:number):Promise<void>{await request(`/${encodeURIComponent(programId)}/operating-packages/${encodeURIComponent(packageId)}/execution-pipeline/connect-local-consumer`,{method:'POST',...json({expectedPackageVersion:version})});},

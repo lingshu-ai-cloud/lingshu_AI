@@ -17,7 +17,7 @@ test('private voices can be listed, cloned and bound only for the owning tenant'
     async delete(collection, id) { return rows.delete(`${collection}/${id}`); },
     async list<T>(collection: string, query: ListQuery = {}) { const items = [...rows.entries()].filter(([key,value]) => key.startsWith(`${collection}/`) && Object.entries(query.where || {}).every(([field,expected]) => value[field] === expected)).map(([,value]) => value as T); return { items, totalItems: items.length, totalPages: 1, page: 1, perPage: 500 }; },
   };
-  await store.create('studio_production_defaults', { tenant_id:'tenant-a', payload:{ preference:'avatar', presenters:[{ id:'person-1', name:'销售', authorized:true, avatarId:'', voiceId:'', referenceMaterialIds:['photo-1'], assetVersion:1 }], defaultPresenterId:'person-1' } });
+  await store.create('studio_production_defaults', { tenant_id:'tenant-a', payload:{ preference:'avatar', presenters:[{ id:'person-1', name:'销售', authorized:true, avatarId:'avatar-1', voiceId:'old-voice', assetVersion:1, rightsEvidence:{ authorizationRef:'document://studio_presenter_assets/original/avatar-1' }, toolMappings:{heygen:{avatarId:'avatar-1',voiceId:'old-voice'}} }], defaultPresenterId:'person-1' } });
   const client = new HeyGenPresenterClient('test');
   client.voices = async (_token, _language, scope) => ({ items: scope === 'private' ? [{ id:'old-voice', name:'已有音色', language:'Chinese' }, ...(clones ? [{ id:'cloned-voice', name:'新音色', language:'Chinese' }] : [])] : [], nextToken:'' });
   client.voice = async id => ({ id, name:id === 'cloned-voice' ? '新音色' : '已有音色', language:'Chinese', status:'complete', type:'private' });
@@ -39,6 +39,15 @@ test('private voices can be listed, cloned and bound only for the owning tenant'
     const otherStatus = await fetch(`${base}/voices/clones/${job.id}`,{headers:{'x-tenant':'tenant-b'}}); assert.equal(otherStatus.status,400);
     const bound = await fetch(`${base}/voices/bind`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({presenterId:'person-1',voiceId:'cloned-voice',voiceAuthorized:true})});
     assert.equal(bound.status,200,await bound.clone().text()); const boundPresenter=(await bound.json()).defaults.presenters[0]; assert.equal(boundPresenter.voiceId,'cloned-voice'); assert.equal(boundPresenter.voiceAuthorization.voiceId,'cloned-voice');
+    assert.match(boundPresenter.voiceAuthorization.authorizationRef,/^document:\/\/studio_presenter_assets\//);
+    assert.equal([...rows.values()].filter(row=>row.kind==='voice_binding_authorization').length,1);
+    const repeated = await fetch(`${base}/voices/bind`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({presenterId:'person-1',voiceId:'cloned-voice',voiceAuthorized:true})});
+    assert.equal(repeated.status,200); assert.equal([...rows.values()].filter(row=>row.kind==='voice_binding_authorization').length,1);
+    const binding = [...rows.values()].find(row=>row.kind==='voice_binding_authorization');
+    binding.payload.revokedAt='2026-10-19T00:00:00Z';
+    const revoked = await fetch(`${base}/voices/bind`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({presenterId:'person-1',voiceId:'cloned-voice',voiceAuthorized:true})});
+    assert.equal(revoked.status,400,'revoked voice consent cannot be reused to report a successful rebind');
+    delete binding.payload.revokedAt;
     const rejected = await fetch(`${base}/voices/bind`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({presenterId:'person-1',voiceId:'public-voice',voiceAuthorized:true})}); assert.equal(rejected.status,400);
   } finally { await new Promise<void>(resolve => server.close(()=>resolve())); if (original === undefined) delete process.env.HEYGEN_PRIVATE_ASSET_TENANT_ID; else process.env.HEYGEN_PRIVATE_ASSET_TENANT_ID=original; }
 });

@@ -1,5 +1,6 @@
 import { GoogleGenAI } from '@google/genai';
 import OpenAI from 'openai';
+import {qwenCompatibleBaseUrl} from '../lib/qwenCompatibleEndpoint.js';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -269,7 +270,7 @@ function createQwenClient(): OpenAI {
 
   return new OpenAI({
     apiKey,
-    baseURL: process.env.DASHSCOPE_BASE_URL ?? 'https://dashscope.aliyuncs.com/compatible-mode/v1',
+    baseURL: qwenCompatibleBaseUrl(),
     timeout: Math.max(1_000, Number(process.env.QWEN_TEXT_REQUEST_TIMEOUT_MS || process.env.LLM_REQUEST_TIMEOUT_MS || 90_000)),
     // Retrying at this layer hides latency from callers. Routes decide whether
     // and when to fall back to another provider within their own total budget.

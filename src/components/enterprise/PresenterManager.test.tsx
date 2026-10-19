@@ -14,6 +14,8 @@ test('presenter onboarding keeps the existing single-source editor and adds unif
   assert.match(html, /Digital Twin 视频须为 30 秒至 5 分钟/);
   assert.match(html, /提交资料并继续本人授权/);
   assert.match(source, /选择已有声音/);
+  assert.match(source, /我已取得此人物肖像及对应声音用于本企业商业口播的授权/);
+  assert.match(source, /catalogScope === 'private' && !selected\.creationId && !adultConfirmed/);
   assert.match(source, /录入本人声音/);
   assert.match(source, /直接录音（推荐）/);
   assert.match(source, /开始录音/);

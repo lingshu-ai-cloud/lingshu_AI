@@ -44,6 +44,8 @@ import { normalizeTenantMedia } from '../lib/tenantMediaNormalization.js';
 import os from 'node:os';
 import { downloadAndNormalizeExternalImage, ExternalImageImportError } from '../lib/externalProductImageImport.js';
 import { readLocalMaterials, saveLocalMaterials } from '../lib/materialLibrary.js';
+import { productFootageCandidateEvidence } from './enterpriseProductFootageCandidate.js';
+import { createEnterpriseProductFootageImportRouter } from './enterpriseProductFootageImport.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const DATA_FILE = path.join(__dirname, '../../data/enterprise.json');
@@ -51,10 +53,10 @@ const DATA_DIR = path.join(__dirname, '../../data');
 const ASSETS_DIR = path.join(DATA_DIR, 'enterprise-assets');
 const TENANT_ORDERS_DIR = path.join(DATA_DIR, 'tenant-orders');
 
-function upsertLocalEnterpriseMaterial(input: {
+export function upsertLocalEnterpriseMaterial(input: {
   tenantId: string; title: string; type: 'image' | 'video' | 'audio'; sizeBytes: number;
   duration?: number; width?: number; height?: number; sha256: string; sourceUrl: string;
-  sourceName: string; productId?: string; provenance: Record<string, unknown>;
+  sourceName: string; productId?: string; objectKey?: string; provenance: Record<string, unknown>;
 }): Record<string, unknown> {
   const records = readLocalMaterials();
   const index = records.findIndex(item => String(item.tenantId || item.tenant_id || '') === input.tenantId
@@ -63,6 +65,15 @@ function upsertLocalEnterpriseMaterial(input: {
   const sourceEntries = ['enterprise_knowledge'];
   if (index >= 0) {
     const current = records[index]!;
+    if (input.productId) {
+      // A content hash identifies bytes, not a product. Never reassign an
+      // existing material's product ownership during a repeat PDF import.
+      if (String(current.productId || '') !== input.productId) {
+        throw new Error('enterprise_product_image_hash_product_conflict');
+      }
+      return current;
+    }
+    if (String(current.productId || '')) return current;
     const currentProvenance = current.provenance && typeof current.provenance === 'object' ? current.provenance : {};
     records[index] = {
       ...current,
@@ -80,7 +91,8 @@ function upsertLocalEnterpriseMaterial(input: {
     width: input.width, height: input.height, sizeBytes: input.sizeBytes, size: `${input.sizeBytes} B`,
     contentSha256: input.sha256, sha256: input.sha256, scope: 'own', usage: 'editable',
     sourceType: 'enterprise_upload', sourceName: input.sourceName, sourceProvider: 'tenant',
-    sourceUrl: input.sourceUrl, url: input.sourceUrl, ...(input.productId ? { productId: input.productId } : {}),
+    sourceUrl: input.sourceUrl, url: input.sourceUrl, ...(input.objectKey ? { objectKey: input.objectKey } : {}),
+    ...(input.productId ? { productId: input.productId } : {}),
     sourceEntry: 'enterprise_knowledge', ownership: 'enterprise', visibility: 'tenant', knowledgeEligible: true,
     provenance: { ...input.provenance, sourceEntry: 'enterprise_knowledge', sourceEntries },
     createdAt: now, updatedAt: now,
@@ -1766,6 +1778,7 @@ function allPackPreviews(profile: EnterpriseProfile) {
 
 export const enterpriseRouter = Router();
 enterpriseRouter.use(requireAuth);
+enterpriseRouter.use('/product-footage', createEnterpriseProductFootageImportRouter(store));
 
 async function customerServiceRuntimeStatus(tenantId: string, profile: EnterpriseProfile) {
   const status = customerServiceStatus(profile);
@@ -2356,8 +2369,15 @@ enterpriseRouter.get('/product-api/status', async (_req, res) => {
 });
 
 enterpriseRouter.post('/assets', async (req, res) => {
-  const { tenantId } = res.locals as AuthLocals;
+  const { tenantId, userId } = res.locals as AuthLocals;
   const { name, type, dataUrl } = req.body as { name?: string; type?: string; dataUrl?: string };
+  const productId = String(req.body?.productId || '').trim();
+  if (productId) {
+    const profile = await readTenantProfile(tenantId);
+    if (!(profile.products.items || []).some(item => item.id === productId)) {
+      res.status(422).json({ error: 'enterprise_product_image_product_not_found' }); return;
+    }
+  }
   const match = String(dataUrl || '').match(/^data:([^;]+);base64,(.+)$/);
   if (!name || !match) {
     res.status(400).json({ error: 'invalid asset payload' });
@@ -2366,6 +2386,14 @@ enterpriseRouter.post('/assets', async (req, res) => {
   let storedName = safeStoredName(name);
   let buffer = Buffer.from(match[2], 'base64');
   let contentType = enterpriseAssetContentType(name, type || match[1]);
+  const footageEvidence = productId && contentType.startsWith('video/')
+    ? productFootageCandidateEvidence({ productId, mediaType: contentType,
+      identityEvidenceRef: req.body?.productIdentityEvidenceRef,
+      rightsEvidenceRef: req.body?.rightsEvidenceRef }) : null;
+  if (productId && !contentType.startsWith('image/') && !footageEvidence) {
+    res.status(422).json({ error: contentType.startsWith('video/')
+      ? 'enterprise_product_footage_evidence_required' : 'enterprise_product_image_or_video_required' }); return;
+  }
   if (!enterpriseAssetTypeAllowed(contentType)) {
     res.status(415).json({ error: 'only image, video and PDF enterprise assets are supported' });
     return;
@@ -2388,6 +2416,17 @@ enterpriseRouter.post('/assets', async (req, res) => {
       buffer = normalized.buffer;
       storedName = safeStoredName(normalized.filename);
       contentType = normalized.mimeType;
+    }
+    if (productId && (contentType.startsWith('image/') || contentType.startsWith('video/')) && currentDataAuthority() === 'local') {
+      const prior = readLocalMaterials().find(item => String(item.tenantId || item.tenant_id || '') === tenantId
+        && String(item.contentSha256 || item.sha256 || '').toLowerCase() === (normalized?.sha256 || createHash('sha256').update(buffer).digest('hex')).toLowerCase());
+      if (prior) {
+        if (String(prior.productId || '') !== productId) {
+          res.status(409).json({ error: 'enterprise_product_image_hash_product_conflict' }); return;
+        }
+        res.json({ name, type: contentType, size: buffer.length, updatedAt: prior.updatedAt,
+          url: prior.sourceUrl || prior.url, material: prior, reused: true }); return;
+      }
     }
     if (objectStorageEnabled()) {
       await objectStorageUpload({
@@ -2416,6 +2455,7 @@ enterpriseRouter.post('/assets', async (req, res) => {
         usage: 'editable',
         sourceType: 'enterprise_upload',
         sourceName: name,
+        ...(productId ? { productId } : {}),
         sourceProvider: 'tenant',
         sourceUrl: `/api/overseas/enterprise/assets/${storedName}`,
         sourceEntry: 'enterprise_knowledge',
@@ -2425,8 +2465,15 @@ enterpriseRouter.post('/assets', async (req, res) => {
           originalName: name,
           mimeType: contentType,
           receivedAt: new Date().toISOString(),
+          uploadedByUserId: userId,
           knowledgeEligible: true,
           normalization: normalized?.normalization,
+          ...(footageEvidence ? { footageCandidate: {
+            productId: footageEvidence.productId,
+            identityEvidenceRef: footageEvidence.identityEvidenceRef,
+            rightsEvidenceRef: footageEvidence.rightsEvidenceRef,
+            status: 'pending_independent_review',
+          } } : {}),
         },
         media: { name: storedName, buf: buffer, contentType },
         ...(normalized?.poster ? { poster: { name: normalized.poster.filename, buf: normalized.poster.buffer, contentType: normalized.poster.mimeType } } : {}),
@@ -2436,11 +2483,13 @@ enterpriseRouter.post('/assets', async (req, res) => {
           tenantId, title: name, type: materialInput.type, sizeBytes: buffer.length,
           duration: normalized?.duration, width: normalized?.width, height: normalized?.height,
           sha256: materialInput.sha256, sourceUrl: String(materialInput.sourceUrl || ''), sourceName: name,
+          objectKey: footageEvidence ? enterpriseAssetObjectKey(tenantId, storedName) : undefined,
+          productId: productId || undefined,
           provenance: materialInput.provenance || {},
         })
         : await upsertTenantUploadCloudMaterial(materialInput);
       const materialId = String(material.id || '');
-      if (materialId) void import('../lib/materialLibraryAnalysis.js')
+      if (materialId && !footageEvidence) void import('../lib/materialLibraryAnalysis.js')
         .then(module => module.requestMaterialAnalysis(tenantId, materialId))
         .catch(error => console.warn('[enterprise-assets] material analysis start failed', error instanceof Error ? error.message : error));
     }

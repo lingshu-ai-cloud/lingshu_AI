@@ -1,10 +1,10 @@
 import {createHash} from 'node:crypto';
 import type {SocialPaidOperationIntent} from '../lib/socialContentTaskBudgetAuthority.js';
-import type {createSocialContentPaidOperationPermit} from '../lib/socialContentPaidOperationPermit.js';
+import type {PaidOperationSubmission} from '../lib/socialContentPaidOperationPermit.js';
 export interface MaterialAnalysisPaidCall {
  requirementKey:string;
  intent:SocialPaidOperationIntent;
- permit:ReturnType<typeof createSocialContentPaidOperationPermit>;
+ permit:{assertRecovery?:(operationId:string)=>Promise<unknown>;isProvenUnsubmitted?:(operationId:string)=>Promise<boolean>;beforeSubmit(request:PaidOperationSubmission):Promise<unknown>;markOutcome(operationId:string,status:'accepted'|'unknown'|'completed',receiptRef:string):Promise<unknown>};
  /** Trusted model-aware measurement/upper bound of this exact multimodal body.
   * No model-specific image token formula is guessed in the consumer. */
  measureInputTokens(body:Record<string,unknown>):Promise<number>;

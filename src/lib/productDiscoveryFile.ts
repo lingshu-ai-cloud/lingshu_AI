@@ -17,7 +17,7 @@ export async function readProductDiscoveryFile(file: File): Promise<string> {
       for (let i = 1; i <= pdf.numPages; i++) {
         const page = await pdf.getPage(i);
         const content = await page.getTextContent();
-        text += `\n第${i}页\n` + content.items.map(item => 'str' in item ? item.str : '').join(' ');
+        text += `\n第${i}页\n` + content.items.map(item => 'str' in item ? `${item.str}${item.hasEOL ? '\n' : ' '}` : '').join('');
         if (text.length > MAX_TEXT) throw new Error('资料文字过多，请按产品方向拆分后上传');
       }
     } finally { await task.destroy(); }

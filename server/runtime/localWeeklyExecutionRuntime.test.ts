@@ -9,6 +9,28 @@ import {prepareWeeklyEnterpriseFactFixture} from './weeklyEnterpriseFactSuppleme
 import {createLocalWeeklyExecutionRuntime,LOCAL_WEEKLY_CONSUMERS} from './localWeeklyExecutionRuntime.js';
 import type {WeeklyScanScope} from './weeklyScanScope.js';
 import {createWeeklySupplementRequestService} from '../socialPrograms/weeklySupplementRequests.js';
+import type {WeeklyTrustedPreproductionPorts} from './socialWeeklyExecutionRuntime.js';
+
+test('trusted exact-analysis ports are opt-in and retained by the scoped restart tick',async t=>{
+ const f=await prepareWeeklyEnterpriseFactFixture(t),dir=await mkdtemp(path.join(os.tmpdir(),'local-weekly-exact-port-'));
+ const prior={NODE_ENV:process.env.NODE_ENV,LOCAL_AUTH_ACCOUNTS_FILE:process.env.LOCAL_AUTH_ACCOUNTS_FILE};
+ process.env.NODE_ENV='test';process.env.LOCAL_AUTH_ACCOUNTS_FILE=path.join(dir,'accounts.json');
+ writeLocalAccountRecords(process.env.LOCAL_AUTH_ACCOUNTS_FILE,[{userId:'owner',tenantId:'tenant-a',email:'exact@example.test',name:'Exact operator',accountType:'admin',role:'social_operator',salt:'unused',passwordHash:'unused',createdAt:'2026-10-01T00:00:00Z'}]);
+ t.after(async()=>{for(const [k,v] of Object.entries(prior))if(v===undefined)delete process.env[k];else process.env[k]=v;await rm(dir,{recursive:true,force:true});});
+ const scope={tenantId:'tenant-a',programId:f.task.programId,packageId:f.task.packageId,packageVersion:1,actorUserId:'owner'};
+ const resolve=async()=>null,configured={candidatePorts:{exactAnalysisPortsForRun:resolve}},seen:unknown[]=[];
+ const scan=async(_scope:WeeklyScanScope,ports?:WeeklyTrustedPreproductionPorts)=>{seen.push(ports?.candidatePorts?.exactAnalysisPortsForRun);
+  return {claimed:0,succeeded:0,pending:0,blocked:0,failed:0};};
+ const first=createLocalWeeklyExecutionRuntime(f.store,{enabled:()=>true,scan});t.after(()=>first.stop());
+ first.configureTrustedPreproductionPorts(configured);
+ await runWithDataAuthority('local',()=>first.connect(scope));first.stop();
+ assert.deepEqual(seen,[resolve]);
+ assert.throws(()=>first.configureTrustedPreproductionPorts({candidatePorts:{exactAnalysisPortsForRun:async()=>null}}),/already_started/);
+ const restarted=createLocalWeeklyExecutionRuntime(f.store,{enabled:()=>true,scan,preproductionPorts:configured});t.after(()=>restarted.stop());
+ await restarted.start();assert.deepEqual(seen,[resolve,resolve]);
+ const absent=createLocalWeeklyExecutionRuntime(f.store,{enabled:()=>true,scan});t.after(()=>absent.stop());
+ await absent.start();assert.equal(seen.at(-1),undefined,'registration alone cannot create an exact-analysis authority');
+});
 
 test('local consumer persists exact scope, re-enters local authority on restart, fails closed after revision',async t=>{
  const f=await prepareWeeklyEnterpriseFactFixture(t),dir=await mkdtemp(path.join(os.tmpdir(),'local-weekly-consumer-'));
@@ -37,6 +59,8 @@ test('local consumer persists exact scope, re-enters local authority on restart,
  await lockRuntime.start();assert.equal(lockRuntime.health().state,'failed');assert.equal(lockRuntime.health().failedScopes,1);assert.equal(lockRuntime.health().lastErrorCode,'local_store_atomic_lock_busy_reconciliation_required');
  assert.equal(lockRuntime.read(scope).lastErrorCode,'local_store_atomic_lock_busy_reconciliation_required');
  blocked=false;await lockRuntime.tick();assert.equal(lockRuntime.health().state,'watching');assert.equal(lockRuntime.health().failedScopes,0);assert.equal(lockRuntime.health().lastErrorCode,null);lockRuntime.stop();
+ const gateBackoff=createLocalWeeklyExecutionRuntime(f.store,{enabled:()=>true,scan:async()=>{throw Object.assign(Error('busy'),{code:'weekly_execution_package_gate_busy'});}});t.after(()=>gateBackoff.stop());
+ await gateBackoff.start();assert.equal(gateBackoff.read(scope).state,'waiting');assert.equal(gateBackoff.health().state,'watching');assert.equal(gateBackoff.health().failedScopes,0);assert.equal(gateBackoff.health().lastErrorCode,null);gateBackoff.stop();
  let release!:()=>void;const barrier=new Promise<void>(resolve=>{release=resolve;});
  const slow=createLocalWeeklyExecutionRuntime(f.store,{enabled:()=>true,scan:async a=>{await barrier;return scan(a);}});t.after(()=>slow.stop());
  const startup=slow.start();await new Promise<void>(resolve=>setImmediate(resolve));
@@ -60,4 +84,43 @@ test('startup restore failure is observable; disabled preview never scans or reg
  runtime.stop();f.store.list=list;await runtime.start();assert.equal(runtime.read(scope).lastErrorCode,null);assert.equal(scans,0);
  assert.equal(runtime.health().state,'watching');assert.equal(runtime.health().lastErrorCode,null);
  assert.equal((await f.store.list(LOCAL_WEEKLY_CONSUMERS)).totalItems,0,'recovery cannot invent registrations');
+});
+
+test('restart scans only the newest registered week per project while preserving older registrations',async t=>{
+ const f=await prepareWeeklyEnterpriseFactFixture(t),dir=await mkdtemp(path.join(os.tmpdir(),'local-weekly-current-window-'));
+ const prior={NODE_ENV:process.env.NODE_ENV,LOCAL_AUTH_ACCOUNTS_FILE:process.env.LOCAL_AUTH_ACCOUNTS_FILE};
+ process.env.NODE_ENV='test';process.env.LOCAL_AUTH_ACCOUNTS_FILE=path.join(dir,'accounts.json');
+ writeLocalAccountRecords(process.env.LOCAL_AUTH_ACCOUNTS_FILE,[{userId:'owner',tenantId:'tenant-a',email:'current@example.test',name:'Current test operator',accountType:'admin',role:'social_operator',salt:'unused',passwordHash:'unused',createdAt:'2026-10-01T00:00:00Z'}]);
+ t.after(async()=>{for(const [k,v] of Object.entries(prior))if(v===undefined)delete process.env[k];else process.env[k]=v;await rm(dir,{recursive:true,force:true});});
+ const old={tenantId:'tenant-a',programId:f.task.programId,packageId:f.task.packageId,packageVersion:1,actorUserId:'owner'};
+ const newer={...old,packageId:'week-new'};
+ await f.store.create('social_weekly_operating_packages',{tenant_id:'tenant-a',program_id:f.task.programId,package_id:newer.packageId,version:1,payload:{...f.pkg,packageId:newer.packageId,weekStart:'2026-10-20',version:1}});
+ const seen:string[]=[],runtime=createLocalWeeklyExecutionRuntime(f.store,{enabled:()=>true,scan:async scope=>{seen.push(scope.packageId);return{claimed:0,succeeded:0,pending:0,blocked:0,failed:0};}});t.after(()=>runtime.stop());
+ await runWithDataAuthority('local',()=>runtime.connect(old));
+ await runWithDataAuthority('local',()=>runtime.connect(newer));
+ runtime.stop();seen.length=0;await runtime.tick();
+ assert.deepEqual(seen,[newer.packageId]);
+ assert.equal(runtime.read(old).state,'superseded');
+ assert.equal((await f.store.list(LOCAL_WEEKLY_CONSUMERS)).totalItems,2,'older opt-in remains immutable audit evidence');
+});
+
+test('explicit scoped activation never starts a global restore scan before its target scan',async t=>{
+ const f=await prepareWeeklyEnterpriseFactFixture(t),dir=await mkdtemp(path.join(os.tmpdir(),'local-weekly-scoped-'));
+ const prior={NODE_ENV:process.env.NODE_ENV,LOCAL_AUTH_ACCOUNTS_FILE:process.env.LOCAL_AUTH_ACCOUNTS_FILE};
+ process.env.NODE_ENV='test';process.env.LOCAL_AUTH_ACCOUNTS_FILE=path.join(dir,'accounts.json');
+ writeLocalAccountRecords(process.env.LOCAL_AUTH_ACCOUNTS_FILE,[{userId:'owner',tenantId:'tenant-a',email:'scoped@example.test',name:'Scoped operator',accountType:'admin',role:'social_operator',salt:'unused',passwordHash:'unused',createdAt:'2026-10-01T00:00:00Z'}]);
+ t.after(async()=>{for(const [k,v] of Object.entries(prior))if(v===undefined)delete process.env[k];else process.env[k]=v;await rm(dir,{recursive:true,force:true});});
+ const old={tenantId:'tenant-a',programId:f.task.programId,packageId:f.task.packageId,packageVersion:1,actorUserId:'owner'};
+ const target={...old,packageId:'scoped-target'};
+ await f.store.create('social_weekly_operating_packages',{tenant_id:target.tenantId,program_id:target.programId,package_id:target.packageId,version:1,status:'draft',payload:{...f.pkg,packageId:target.packageId,status:'draft'}});
+ const seen:string[]=[],runtime=createLocalWeeklyExecutionRuntime(f.store,{enabled:()=>true,scan:async scope=>{seen.push(scope.packageId);return{claimed:0,succeeded:0,pending:0,blocked:0,failed:0};}});t.after(()=>runtime.stop());
+ await runWithDataAuthority('local',()=>runtime.connectScoped(old));
+ assert.deepEqual(seen,[]);
+ await runWithDataAuthority('local',()=>runtime.connectScoped(target));
+ assert.deepEqual(seen,[],'registration alone does not scan the existing consumer');
+ assert.equal(runtime.read(target).started,true);
+ await runWithDataAuthority('local',()=>runtime.scanScoped(target));
+ assert.deepEqual(seen,[target.packageId]);
+ assert.equal(runtime.health().started,false,'scoped activation did not start the background global timer');
+ assert.equal((await f.store.list(LOCAL_WEEKLY_CONSUMERS)).totalItems,2);
 });

@@ -9,6 +9,7 @@ import type { StoredSocialScriptBaseline } from './socialContentScriptBaseline.j
 import {
   alignSocialAssetSupplyPlanToBaseline,
   executeSocialAssetSupplyPlan,
+  socialExecutedSceneMediaArtifact,
   type SocialAssetSupplyProviderAdapter,
 } from './socialContentAssetSupplyExecution.js';
 import { assetSupplyPlanWithExecutionSelections } from './socialContentProductionExecution.js';
@@ -228,5 +229,36 @@ const presenterSupply = await executeSocialAssetSupplyPlan({
 assert.equal(motionGraphicsCalls, 1);
 assert.equal(presenterSupply.execution.shots[0]?.sourceStrategy, 'motion_graphics');
 assert.equal(presenterSupply.execution.shots[0]?.functionalEquivalentReplacement.required, true);
+
+let forbiddenFallbackCalls = 0;
+const ctaBlockedAdapter: SocialAssetSupplyProviderAdapter = {
+  adapterId: 'test-weekly-cta-boundary',
+  sourceStrategies: ['authorized_digital_presenter'],
+  async execute() { throw new Error('weekly_production_cta_evidence_required'); },
+};
+const forbiddenFallbackAdapter: SocialAssetSupplyProviderAdapter = {
+  adapterId: 'test-forbidden-fallback',
+  sourceStrategies: ['authorized_digital_presenter'],
+  async execute() { forbiddenFallbackCalls += 1; return null; },
+};
+await assert.rejects(() => executeSocialAssetSupplyPlan({
+  tenantId: 'tenant-1', taskId: 'task-presenter', outputDirectory: '/tmp',
+  plan: presenterPlan,
+  baseline: baseline({ sceneId: 'scene-person', shotFunction: 'hook', subject: '人物与产品', action: '将产品涂抹上脸', voiceover: '看清楚这个动作。' }),
+  availableAssets: [], adapters: [ctaBlockedAdapter, forbiddenFallbackAdapter],
+}), /weekly_production_cta_evidence_required/);
+assert.equal(forbiddenFallbackCalls, 0, '冻结 CTA 拒绝不得被素材候选回退吞没');
+
+const executedMedia = socialExecutedSceneMediaArtifact({
+  sceneId: 'scene-output',
+  execution: {
+    schemaVersion: 'social-content.asset-supply-execution.v1', planVersion: 'plan-v3', creationMode: 'viral_replication',
+    productionRoute: 'product_anchored_generation', managementMode: 'one_click_managed', executedAt: '2026-10-17T00:00:00.000Z',
+    shots: [{ shotId: 'shot-output', sceneId: 'scene-output', function: 'hook', requestedSourceStrategy: 'authorized_digital_presenter', sourceStrategy: 'authorized_digital_presenter', fallbackApplied: false, providerId: 'heygen', assetId: 'generated-output', sourceRef: 'provider:task', truthBoundary: { subject: 'none', syntheticVisualAllowed: true, customerEvidenceRequired: false, customerEvidenceRefs: [], confirmedFactRefs: [], mustNotImplyCustomerReality: true, prohibitedRepresentations: [] }, functionalEquivalentReplacement: { required: false, preservesFunction: 'hook', replacesSubject: null, description: null, reason: null }, provenance: { synthetic: true, representation: 'non_evidentiary_visual', authorizationRef: 'presenter-auth', disclosure: 'AI' }, attempts: [] }],
+  },
+  assets: [{ id: 'generated-output', name: '执行结果', type: 'video', sourceId: 'provider:task', url: '/media/tenants/t/generated-output.mp4', contentHash: 'a'.repeat(64), duration: 3.2, visualObservations: [], segments: [] }],
+});
+assert.deepEqual(executedMedia, { assetId: 'generated-output', mediaType: 'video', resourceRef: '/media/tenants/t/generated-output.mp4', contentHash: 'a'.repeat(64), durationSeconds: 3.2, providerId: 'heygen', supplyPlanVersion: 'plan-v3', role: 'scene_render_input' });
+assert.equal(socialExecutedSceneMediaArtifact({ sceneId: 'scene-output', execution: null, assets: [] }), undefined, '未执行的候选不得冒充逐镜产物');
 
 console.log('social content asset supply execution regression tests passed');

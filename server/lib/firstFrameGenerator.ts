@@ -41,7 +41,10 @@ export interface FirstFrameGenerator {
 }
 
 export class FirstFrameProviderError extends Error {
-  constructor(message: string, public readonly status: 'rejected' | 'uncertain', public readonly providerRequestId = '') {
+  constructor(message: string, public readonly status: 'rejected' | 'uncertain', public readonly providerRequestId = '',
+    /** Only a failure proven to precede the transport submission may release
+     * the original operation. An HTTP error is already past that boundary. */
+    public readonly submissionBoundary: 'before_submit' | 'submitted_or_unknown' = 'submitted_or_unknown') {
     super(message);
   }
 }
@@ -65,8 +68,10 @@ export function validateFirstFrameRequest(input: FirstFrameRequest, options: { r
     if (input.references.length !== 1 || roles[0] !== 'source_composition') {
       throw new Error('环境空景首帧必须且只能包含一张原构图');
     }
-  } else if (input.references.length !== 2 || roles.filter(role => role === 'source_composition').length !== 1 || roles.filter(role => role === 'authorized_presenter').length !== 1) {
-    throw new Error('人物首帧必须且只能包含一张原构图和一张已授权人物参考图');
+  } else {
+    const products=roles.filter(role=>role==='product_identity').length;
+    if(roles.filter(role => role === 'source_composition').length !== 1 || roles.filter(role => role === 'authorized_presenter').length !== 1
+      || products>9 || input.references.length!==2+products)throw new Error('人物首帧必须包含一张原构图、一张已授权人物参考图，并可附带一至九张同产品参考图');
   }
   for (const reference of input.references) {
     if (!reference.bytes.length || !/^[a-f0-9]{64}$/i.test(reference.sha256)) throw new Error(`首帧参考图无效:${reference.role}`);

@@ -9,6 +9,7 @@ export function presenterLook(value: any): PresenterLook {
   const w = Number(value.image_width), h = Number(value.image_height);
   const tags = Array.isArray(value.tags) ? value.tags.map((tag: unknown) => String(tag).trim()).filter(Boolean).slice(0, 30) : [];
   return { id: value.id, name: String(value.name || '企业人物'), groupId: value.group_id || undefined,
+    avatarType: ['digital_twin', 'photo_avatar', 'studio_avatar'].includes(value.avatar_type) ? value.avatar_type : undefined,
     voiceId: value.default_voice_id || undefined, imageUrl: mediaUrl(value.preview_image_url), videoUrl: mediaUrl(value.preview_video_url),
     gender: String(value.gender || '').trim().toLowerCase() || undefined,
     ethnicity: String(value.ethnicity || value.race || value.appearance || '').trim().toLowerCase() || undefined,

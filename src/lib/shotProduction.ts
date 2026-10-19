@@ -35,7 +35,7 @@ export interface PresenterAsset {
   id: string; name: string;
   /** Legacy aliases retained while existing HeyGen records migrate to toolMappings. */
   avatarId: string; voiceId: string;
-  voiceAuthorization?: { voiceId: string; recordedAt: string; source: 'user_confirmation' };
+  voiceAuthorization?: { voiceId: string; recordedAt: string; source: 'user_confirmation'; authorizationRef?: string };
   imageUrl?: string; videoUrl?: string; creationMode?: 'quick' | 'expert';
   authorized: boolean; supportsAlpha: boolean; nativeOrientation?: 'unknown' | 'portrait' | 'landscape' | 'square';
   assetVersion?: number;

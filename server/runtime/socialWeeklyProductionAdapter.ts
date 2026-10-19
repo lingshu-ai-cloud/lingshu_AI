@@ -23,6 +23,8 @@ import { socialJson, socialObject, socialRequestHash } from '../starter198/socia
 import { readContentExecutionJob } from '../contentExecution/durableQueue.js';
 import { createSocialOperatingRepository } from '../socialOperating/repository.js';
 import { createWeeklyPlanningAuthority } from '../socialPrograms/planningAuthority.js';
+import { readWeeklyAutomaticProductionIntent, readWeeklyAutomaticProductionCapacity } from '../socialPrograms/weeklyAutomaticProductionPlanning.js';
+import { weeklyPlanningExecutionActor } from '../socialPrograms/weeklyPlanningTemplateAdoption.js';
 import { PACKAGES, type PackageRow } from '../socialPrograms/weeklyOperatingPackageSupport.js';
 import type { SocialWeeklyExecutionAdapter, WeeklyExecutionAdapterResult } from './socialWeeklyExecutionAdapter.js';
 import { weeklyScriptEvidence } from './socialWeeklyScriptEvidence.js';
@@ -31,9 +33,12 @@ import { socialContentSourceOptions, type SocialContentSourceOptionsPort } from 
 import { getOwnedCloudMaterialRecord } from '../lib/cloudMaterials.js';
 import { buildNoSharedMaterialDemand, verifiedNoSharedMaterialDemand } from './socialWeeklyMaterialDemand.js';
 import { createHash } from 'node:crypto';
-import { weeklyStoryboardEvidence } from './socialWeeklyStoryboardEvidence.js';
+import { weeklyStoryboardStageEvidence } from './socialWeeklyStoryboardEvidence.js';
 import {resolveWeeklyProductionRow,canonicalWeeklyProductionPublication,weeklyProductionEvidenceTask,persistWeeklySharedProductionBindings,currentSharedWeeklyArtifactRef,assertWeeklySharedProductionGroupUnsplit} from './weeklyContentProductionIdentity.js';
 import {registerSocialContentWeeklyPlan} from '../starter198/socialContentOrderPlanning.js';
+import {requireWeeklyPublicationProductSelection,type WeeklyPublicationProductSelection} from '../socialPrograms/weeklyPublicationProductSelection.js';
+import {readWeeklySamplePolicyEvidence} from '../socialPrograms/weeklySamplePolicyEvidence.js';
+import {readWeeklyOriginalRunSettlementProof} from './weeklyOriginalRunSettlementProof.js';
 
 export const WEEKLY_PRODUCTION_STEPS = ['material_preparation', 'material_readiness', 'script', 'storyboard', 'asset_generation', 'video_generation', 'quality_check', 'rework'] as const;
 export function weeklyProductionBindingKey(task: Pick<WeeklyExecutionTask, 'packageId' | 'packageVersion' | 'publicationTaskId'>): string {
@@ -112,6 +117,29 @@ export function createSocialWeeklyProductionAdapter(dataStore: DataStore, ports:
   const now = ports.now ?? (() => new Date());
   return { async execute(task: WeeklyExecutionTask): Promise<WeeklyExecutionAdapterResult> {
     if(task.inputSnapshot?.weeklyContinuationPending||task.inputSnapshot?.weeklyContinuationRef)return blocked('weekly_execution_continuation_observation_required','该任务承接已有真实运行，只能由承接适配器观察及结算，禁止新启动生产。');
+    // An original quality task may finish graph QA after its natural week.
+    // Observe the already-finished run before any admission guard, task/source
+    // mutation or queue recovery. This is not a new-week production grant.
+    if(['quality_check','rework'].includes(task.schedule.stepKind)){
+      const observedAt=now().toISOString();
+      const packages=await dataStore.list<PackageRow>(PACKAGES,{where:{tenant_id:task.tenantId,program_id:task.programId,package_id:task.packageId,version:task.packageVersion},perPage:2});
+      if(packages.totalItems===1&&packages.items.length===1){
+        const original=packages.items[0]!.payload;
+        const weekEnd=Date.parse(`${original.weekEnd}T23:59:59.999+08:00`);
+        if(Number.isFinite(weekEnd)&&Date.parse(observedAt)>weekEnd){
+          const planning=await createWeeklyPlanningAuthority(dataStore).get(task.tenantId,task.programId,task.packageId,task.packageVersion).catch(()=>null);
+          if(original.socialContentPackage?.productionIdentityVersion==='shared-original.v1'&&planning?.automaticTemplateAdoption){
+          const proof=planning?await readWeeklyOriginalRunSettlementProof({store:dataStore,task,pkg:original,planning,now:observedAt}).catch(()=>null):null;
+          if(!proof)return blocked('weekly_original_run_settlement_unverified','原周内容运行、成片与独立质量回执尚不能同源核验；周外禁止新建、重提或重预算。');
+          try{
+            const {validateWeeklyExecutionResults}=await import('./socialWeeklyResultValidation.js');
+            await validateWeeklyExecutionResults(dataStore,task,[proof.artifactRef],new Date(observedAt));
+          }catch{return blocked('weekly_original_run_step_unverified','原周成片不满足当前周任务的冻结结果约束；周外不会重新生产。');}
+          return success(proof.artifactRef);
+          }
+        }
+      }
+    }
     try {
       return await withWeeklyProductionAdmissionGuard({ dataStore, tenantId: task.tenantId, packageId: task.packageId, packageVersion: task.packageVersion, action: async (assertAdmission) => {
     if (!task.publicationTaskId || !WEEKLY_PRODUCTION_STEPS.includes(task.schedule.stepKind as typeof WEEKLY_PRODUCTION_STEPS[number])) {
@@ -132,7 +160,12 @@ export function createSocialWeeklyProductionAdapter(dataStore: DataStore, ports:
     const dispatch = planning?.dispatch;
     const item = dispatch?.scheduleItems.find(item => item.publicationTaskId === task.publicationTaskId);
     const publication = pkg.socialContentPackage.publicationTasks.find(item => item.publicationTaskId === task.publicationTaskId);
-    if (!['draft', 'active'].includes(pkg.status) || planning?.status !== 'dispatched' || !planning.userConfirmation?.confirmedBy
+    const executionActor = planning ? weeklyPlanningExecutionActor(planning) : null;
+    const automatic = planning?.automaticTemplateAdoption && planning.status === 'dispatched' && task.publicationTaskId
+      ? await readWeeklyAutomaticProductionIntent(dataStore, { tenantId: task.tenantId, programId: task.programId, packageId: task.packageId, packageVersion: task.packageVersion }, pkg, task.publicationTaskId)
+      : null;
+    if (!['draft', 'active'].includes(pkg.status) || planning?.status !== 'dispatched' || !executionActor
+      || (planning.automaticTemplateAdoption && !automatic)
       || !dispatch || dispatch.packageId !== pkg.packageId || dispatch.packageVersion !== pkg.version || !item || !publication) {
       return blocked('business_dispatch_required', '内容生产需要用户确认后正式派单的冻结排期。');
     }
@@ -149,8 +182,41 @@ export function createSocialWeeklyProductionAdapter(dataStore: DataStore, ports:
       await persistWeeklySharedProductionBindings(dataStore,task.tenantId,pkg,production);
       return {status:'succeeded',resultRefs:await Promise.all(canonicalTask.resultRefs.map(ref=>currentSharedWeeklyArtifactRef(dataStore,{tenantId:task.tenantId,programId:task.programId,packageId:task.packageId,packageVersion:task.packageVersion,publicationTaskId:publication.publicationTaskId},ref)))};
     }
+    if(automatic){
+      const capacity=await readWeeklyAutomaticProductionCapacity(dataStore,{intent:automatic.intent,pkg,planning,task,now:now().toISOString()});
+      if(!capacity)return blocked('weekly_automatic_production_capacity_required','自动周生产的冻结容量、当前任务图或队列并发已失效，不能创建内容任务或开始付费执行。');
+      if(!capacity.eligible)return pending('weekly_automatic_production_not_yet_eligible','已冻结生产容量，但当前节点尚未进入其计划执行时间。');
+    }
+    let automaticProductSelection:WeeklyPublicationProductSelection|null=null;
+    const readAutomaticProductSelection=()=>requireWeeklyPublicationProductSelection({store:dataStore,tenantId:task.tenantId,programId:task.programId,packageId:task.packageId,packageVersion:task.packageVersion,publication,goal:automatic!.authority.goal});
+    const assertProductionAdmission=async()=>{
+      await assertAdmission();
+      if(!automatic)return;
+      const capacity=await readWeeklyAutomaticProductionCapacity(dataStore,{intent:automatic.intent,pkg,planning,task,now:now().toISOString()});
+      if(!capacity?.eligible)throw Error(capacity?'weekly_automatic_production_not_yet_eligible':'weekly_automatic_production_capacity_required');
+      const selected=await readAutomaticProductSelection();
+      if(!automaticProductSelection||socialRequestHash(selected)!==socialRequestHash(automaticProductSelection))throw Error('weekly_production_product_selection_required');
+    };
     const adopted=await readWeeklyAutomationTemplate(dataStore,task);
     const callToAction=adopted?.template.callToAction??publication.cta;
+    // The accepted template includes a WhatsApp/free-sample promise. A
+    // production-only proof defers outbound readiness; it does not establish
+    // that this on-screen claim has a real destination or an offered sample.
+    const frozenCtaNeedsClaimProof = Boolean(automatic
+      && /whats\s*app|free\s+samples?|免费样品/i.test(callToAction??''));
+    if (automatic?.authority.proof.deferredOutboundBlockers.includes('conversion_route_required') || frozenCtaNeedsClaimProof) {
+      const proof = frozenCtaNeedsClaimProof ? await readWeeklySamplePolicyEvidence({store:dataStore,
+        scope:{tenantId:task.tenantId,programId:task.programId,packageId:task.packageId,
+          packageVersion:task.packageVersion,publicationTaskId:task.publicationTaskId!},now:now()}).catch(()=>null) : null;
+      if(!proof)return blocked('weekly_production_cta_evidence_required', '冻结行动引导中的 WhatsApp 渠道或免费样品承诺缺少独立核验的归属、可达与选中产品政策证据；普通转化入口不能代替。');
+    }
+    if(automatic){
+      try{automaticProductSelection=await readAutomaticProductSelection();}
+      catch(error){
+        if(error instanceof Error&&error.message==='weekly_production_product_selection_required')return blocked('weekly_production_product_selection_required','当前发布任务尚无同周包版本、可复核的唯一选中产品回执；不会把企业货盘首项或采集选品当作发布选品。');
+        return blocked('weekly_production_product_selection_unavailable','当前发布任务的选品回执或企业产品事实无法核验；未创建内容任务或启动付费生产。');
+      }
+    }
     const perItemBudgetCny=adopted?Math.min(Number.isFinite(pkg.socialContentPackage.perItemBudgetCny)&&pkg.socialContentPackage.perItemBudgetCny!==null?pkg.socialContentPackage.perItemBudgetCny:adopted.template.perFinishedVideoMaxCny,adopted.template.perFinishedVideoMaxCny):pkg.socialContentPackage.perItemBudgetCny;
     if (!publication.businessProposition || !callToAction || !publication.factRefs.length || !item.topic) {
       return blocked('weekly_production_inputs_required', '经营主张、事实凭据、行动指引及排期主题必须完整。');
@@ -158,7 +224,7 @@ export function createSocialWeeklyProductionAdapter(dataStore: DataStore, ports:
     if (perItemBudgetCny === null || !Number.isFinite(perItemBudgetCny) || perItemBudgetCny < 0) {
       return blocked('weekly_production_budget_required', '生产预算尚未明确，不能开始供应商生成。');
     }
-    const classification = await checkWeeklyMaterialClassification({store:dataStore,tenantId:task.tenantId,programId:task.programId,packageId:pkg.packageId,packageVersion:pkg.version,item,analysis:planning.directorAnalyses?.find(analysis=>analysis.analysisId===item.directorAnalysisRef?.id)});
+    const classification = await checkWeeklyMaterialClassification({store:dataStore,tenantId:task.tenantId,programId:task.programId,packageId:pkg.packageId,packageVersion:pkg.version,item,analysis:planning.directorAnalyses?.find(analysis=>analysis.analysisId===item.directorAnalysisRef?.id),requireReferenceBinding:Boolean(automatic)&&(pkg.executionGraphVersion??1)>=2});
     if(!classification.ready)return blocked(classification.code,'真实素材需求尚未明确分类或其来源版本与冻结排期不一致；请修订分析和排期后再生产。');
     if(publication.contentTemplateBindingRef){try{const structure=await readWeeklyTemplateStructure(dataStore,{tenantId:task.tenantId,programId:task.programId,packageId:task.packageId,packageVersion:task.packageVersion,publicationTaskId:task.publicationTaskId!},publication.contentTemplateBindingRef);if(!item.contentTemplateStructure||JSON.stringify(item.contentTemplateStructure)!==JSON.stringify(structure))return blocked('content_template_dispatch_mismatch','实际模板结构与冻结编导派单不一致，未进入生产。');}catch{return blocked('content_template_admission_failed','确认模板缺少实际来源或下一周绑定证据，未进入生产。');}}
     const binding = weeklyProductionBindingKey(task);
@@ -167,7 +233,7 @@ export function createSocialWeeklyProductionAdapter(dataStore: DataStore, ports:
     if (existing.totalItems > 1) return blocked('weekly_production_binding_ambiguous', '内容生产任务绑定不唯一。');
     let detail: SocialContentTaskDetail | null = existing.items[0]
       ? await read({ repository, tenantId: task.tenantId, taskId: String(existing.items[0].task_id) }) : null;
-    if(adopted&&detail&&Number(detail.brief.perItemBudgetCny)>adopted.template.perFinishedVideoMaxCny)return blocked('weekly_existing_production_budget_exceeds_template','原生产任务预算高于15元，需在真实生产页面核对原费用后继续，不会重建任务掩盖费用。');
+    if(adopted&&detail&&Number(detail.brief.perItemBudgetCny)>adopted.template.perFinishedVideoMaxCny)return blocked('weekly_existing_production_budget_exceeds_template',`原生产任务预算高于${adopted.template.perFinishedVideoMaxCny}元，需在真实生产页面选择增加预算或采用降级方案；不会重建任务掩盖费用。`);
     let scriptEvidence: VersionedSocialRef | null = null;
     let storyboardEvidence: VersionedSocialRef | null = null;
     let automaticMaterialEvidence:VersionedSocialRef|null=null;
@@ -178,9 +244,14 @@ export function createSocialWeeklyProductionAdapter(dataStore: DataStore, ports:
         const goal = goalRef ? await createSocialOperatingRepository(dataStore).getGoal(task.tenantId, task.programId, goalRef.id, goalRef.version) : null;
         const programRows = await dataStore.list<any>('social_programs', { where: { tenant_id: task.tenantId, program_id: task.programId }, perPage: 2 });
         const accountRows = await dataStore.list<any>('social_owned_accounts', { where: { tenant_id: task.tenantId, program_id: task.programId, account_id: publication.accountId }, perPage: 2 });
-        if (!goal || goal.status !== 'ready' || programRows.totalItems !== 1 || accountRows.totalItems !== 1) return blocked('weekly_production_authority_required', '经营目标、计划身份或账号身份缺少有效依据。');
+        const conditionalGoal = automatic?.authority.goal;
+        const goalAuthorized = goal?.status === 'ready' || Boolean(conditionalGoal && goal && pkg.businessContentGoalRef
+          && automatic?.authority.proof.goalRef.id === pkg.businessContentGoalRef.id
+          && automatic.authority.proof.goalRef.version === pkg.businessContentGoalRef.version
+          && socialRequestHash(conditionalGoal) === socialRequestHash(goal));
+        if (!goal || !goalAuthorized || programRows.totalItems !== 1 || accountRows.totalItems !== 1) return blocked('weekly_production_authority_required', '经营目标、计划身份或账号身份缺少有效依据。');
         const value: CreateSocialContentTaskInput = {
-          title: item.topic, objective: goal.objective, productRef: goal.products[0], audience: goal.audiences[0], markets: goal.markets, customTopic: item.topic,
+          title: item.topic, objective: goal.status === 'ready' ? goal.objective : pkg.objective, productRef: automatic ? automaticProductSelection!.productName : goal.products[0], audience: goal.audiences[0], markets: goal.markets, customTopic: item.topic,
           callToAction, platforms: [publication.platform], languages: goal.languages,
           formats: ['short_video'], requestedOutputCount: 1, dueAt: publicationPreparationDeadline(publication.publishWindow),
           weeklyPlanId: pkg.packageId, mode: 'weekly', creationMode:'viral_replication', themeId:'product_value', managementMode: 'one_click_managed', productionApproach: 'ai_enhanced', productionMode: 'social_ready',
@@ -190,8 +261,8 @@ export function createSocialWeeklyProductionAdapter(dataStore: DataStore, ports:
           targetAccountRef: { objectType: 'social_owned_account', id: publication.accountId, version: String(accountRows.items[0].payload.version) },
           specialRequirements: [item.topic, ...item.materialRequirements, `事实凭据：${publication.factRefs.map(ref => `${ref.type}:${ref.id}@${ref.version}`).join('，')}`].join('\n'),
         };
-        await assertAdmission();
-        detail = await create({ repository, tenantId: task.tenantId, userId: planning.userConfirmation.confirmedBy, idempotencyKey: binding, value });
+        await assertProductionAdmission();
+        detail = await create({ repository, tenantId: task.tenantId, userId: executionActor, idempotencyKey: binding, value });
       }
       const boundRows = await repository.list(STARTER_COLLECTIONS.socialContentTasks, task.tenantId, { where: { task_id: detail.taskId }, perPage: 2 });
       const boundRow = boundRows.items[0];
@@ -201,11 +272,14 @@ export function createSocialWeeklyProductionAdapter(dataStore: DataStore, ports:
         scriptEvidence=null;
         if(boundRow.run_id){const {readWeeklyReplicationAuthority}=await import('../starter198/socialWeeklyReplicationAuthority.js');const proof=await readWeeklyReplicationAuthority(repository,boundRow);const {freezeSocialAccountProductionConstraints}=await import('../starter198/socialAccountProductionConstraints.js');const baseline=socialObject(socialJson(boundRow.script_baseline));const expected=proof?freezeSocialAccountProductionConstraints(proof.context,detail.brief.callToAction):undefined;if(expected&&socialRequestHash(baseline?.accountPlaybookConstraints)===socialRequestHash(expected))scriptEvidence=weeklyScriptEvidence(boundRow,(item.benchmarkVideoRefs??[]).map(ref=>ref.id));}
       }
-      if (task.schedule.stepKind === 'storyboard') storyboardEvidence = weeklyStoryboardEvidence(boundRow, (item.benchmarkVideoRefs ?? []).map(ref => ref.id));
-      if(task.schedule.stepKind==='storyboard'&&(pkg.executionGraphVersion??1)>=2&&boundRow.run_id){
+      if(task.schedule.stepKind==='storyboard'){
+        let handoff:null|import('../starter198/socialWeeklyPreSupplyHandoff.js').WeeklyPreSupplyHandoff=null;
+        if((pkg.executionGraphVersion??1)>=2&&boundRow.run_id){
         const {readWeeklyPreSupplyHandoff}=await import('../starter198/socialWeeklyPreSupplyHandoff.js');
-        const handoff=await readWeeklyPreSupplyHandoff(repository,task.tenantId,detail.taskId);
-        if(handoff&&handoff.programId===task.programId&&handoff.packageId===task.packageId&&handoff.packageVersion===task.packageVersion&&handoff.publicationTaskId===task.publicationTaskId)storyboardEvidence={type:'starter_weekly_pre_supply_handoff',id:handoff.runId,version:1};
+        handoff=await readWeeklyPreSupplyHandoff(repository,task.tenantId,detail.taskId);
+        if(handoff&&(handoff.programId!==task.programId||handoff.packageId!==task.packageId||handoff.packageVersion!==task.packageVersion||handoff.publicationTaskId!==task.publicationTaskId))handoff=null;
+        }
+        storyboardEvidence=weeklyStoryboardStageEvidence(boundRow,(item.benchmarkVideoRefs??[]).map(ref=>ref.id),pkg.executionGraphVersion??1,handoff);
       }
       if(publication.contentTemplateBindingRef){const baseline=socialObject(socialJson(boundRow.script_baseline));if(JSON.stringify(baseline?.contentTemplateStructure)!==JSON.stringify(item.contentTemplateStructure)){scriptEvidence=null;storyboardEvidence=null;}}
       const brief = socialObject(socialJson(boundRow.brief))!;
@@ -244,7 +318,11 @@ export function createSocialWeeklyProductionAdapter(dataStore: DataStore, ports:
         if(requiresPinnedQualityArtifact&&!completed)return blocked('weekly_production_pinned_artifact_missing','上游已核验成片已失效或版本不一致，不能回选其他产物或重新发起生产。');
         if(completed){
           const v=version(completed.version);if(!v)return blocked('weekly_production_version_invalid','内容产物版本无效。');
-          const ref={type:'starter_social_content_artifact',id:completed.artifactId,version:v};
+          const ref={type:'starter_social_content_artifact' as const,id:completed.artifactId,version:v};
+          if(automatic&&task.schedule.stepKind==='quality_check'&&completed.content?.workflowSchema==='social-content.auto-production.v3'){
+            try{const {advanceWeeklyAutomaticG5}=await import('./weeklyG5AutomaticAuthority.js');await advanceWeeklyAutomaticG5(dataStore,task,ref,executionActor);}
+            catch(error){return blocked('weekly_production_quality_review_required',error instanceof Error?error.message:'自动编导质量审核缺少当前可信证据。');}
+          }
           const {validateContentArtifact}=await import('./socialWeeklyResultValidation.js');
           await validateContentArtifact(dataStore,task,ref);
           const {resolveSceneCacheSourceRun}=await import('../starter198/socialContentSceneCacheSource.js');
@@ -258,7 +336,7 @@ export function createSocialWeeklyProductionAdapter(dataStore: DataStore, ports:
       const references=await readWeeklyReferenceSources(dataStore,task.tenantId,authority,planning.directorAnalyses.find(analysis=>analysis.analysisId===item.directorAnalysisRef?.id)!);
       if(!detail.sources.some(source=>source.kind==='reference_link'&&source.status==='active')) {
         if(detail.runId)return blocked('weekly_reference_binding_revision_required','原运行未冻结参考来源，请修订生产任务后再启动；不能修改已启动运行的来源。');
-        for(const reference of references){await assertAdmission();const legacyKey=`weekly-reference:${reference.sourceVersion}`;const idempotencyKey=await weeklySourceBindingIdempotencyKey({repository,tenantId:task.tenantId,taskId:detail.taskId,legacyKey});const attached=await addSource({repository,tenantId:task.tenantId,userId:planning.userConfirmation.confirmedBy,taskId:detail.taskId,idempotencyKey,referenceResolver:weeklyReferenceResolver(references),value:{kind:'reference_link',sourceRef:reference.sourceRef,sourceVersion:reference.sourceVersion,label:reference.label,purpose:'冻结排期已确认参考；保留原来源与权利'}});detail=attached.task;}
+        for(const reference of references){await assertAdmission();const legacyKey=`weekly-reference:${reference.sourceVersion}`;const idempotencyKey=await weeklySourceBindingIdempotencyKey({repository,tenantId:task.tenantId,taskId:detail.taskId,legacyKey});const attached=await addSource({repository,tenantId:task.tenantId,userId:executionActor,taskId:detail.taskId,idempotencyKey,referenceResolver:weeklyReferenceResolver(references),value:{kind:'reference_link',sourceRef:reference.sourceRef,sourceVersion:reference.sourceVersion,label:reference.label,purpose:'冻结排期已确认参考；保留原来源与权利'}});detail=attached.task;}
       }
       assertWeeklyReferenceBindings(detail,references);
       if(['material_preparation','material_readiness'].includes(task.schedule.stepKind)&&!detail.runId){
@@ -330,7 +408,7 @@ export function createSocialWeeklyProductionAdapter(dataStore: DataStore, ports:
           const sourceKey=createHash('sha256').update(JSON.stringify([binding,material.recordId,option.sourceVersion])).digest('hex');
           const legacyKey=`weekly-material:${sourceKey}`;
           const idempotencyKey=await weeklySourceBindingIdempotencyKey({repository,tenantId:task.tenantId,taskId:detail.taskId,legacyKey});
-          const added=await addSource({repository,tenantId:task.tenantId,userId:planning.userConfirmation.confirmedBy,taskId:detail.taskId,idempotencyKey,sourceOptions,value:{kind:'material',sourceRef,sourceVersion:option.sourceVersion,label:option.label,purpose:'冻结周排期必需素材；逐视频事实、权利与镜头已核验'}});
+          const added=await addSource({repository,tenantId:task.tenantId,userId:executionActor,taskId:detail.taskId,idempotencyKey,sourceOptions,value:{kind:'material',sourceRef,sourceVersion:option.sourceVersion,label:option.label,purpose:'冻结周排期必需素材；逐视频事实、权利与镜头已核验'}});
           detail=added.task;
           if(!(detail.sources??[]).some(source=>source.kind==='material'&&source.sourceRef===sourceRef&&source.sourceVersion===option.sourceVersion&&source.status==='active'))return blocked('weekly_material_source_binding_missing','真实素材来源绑定尚未持久保存。');
         }
@@ -355,14 +433,14 @@ export function createSocialWeeklyProductionAdapter(dataStore: DataStore, ports:
       if (!detail.runId && ['draft', 'needs_input', 'plan_review'].includes(detail.status)) {
         if (!detail.readiness.complete) return { status: 'blocked', code: 'weekly_production_inputs_required', message: `内容输入待补全：${detail.readiness.missing.join('、')}`,
           progress: { contentTaskId: detail.taskId, runId: null, step: 'material_readiness', activity: '等待内容输入补齐', updatedAt: new Date().toISOString() } };
-        await assertAdmission();
+        await assertProductionAdmission();
         const attempt=await readWeeklyProductionStartAttempt({repository,tenantId:task.tenantId,taskId:detail.taskId,binding,version:detail.version});
         startedHere=true;
         detail = await start({ repository, orchestratorQueue, tenantId: task.tenantId,
-          userId: planning.userConfirmation.confirmedBy, taskId: detail.taskId,
+          userId: executionActor, taskId: detail.taskId,
           expectedVersion: attempt.expectedVersion, referenceResolver:weeklyReferenceResolver(references), idempotencyKey: attempt.idempotencyKey });
       }
-      if(detail.runId&&!startedHere&&['asset_generation','video_generation','quality_check','rework'].includes(task.schedule.stepKind)&&!await readContentExecutionJob(dataStore,task.tenantId,detail.taskId,detail.runId)){await assertAdmission();await ensureOriginalSocialContentProductionQueued({repository,tenantId:task.tenantId,userId:planning.userConfirmation.confirmedBy,taskId:detail.taskId,runId:detail.runId});}
+      if(detail.runId&&!startedHere&&['asset_generation','video_generation','quality_check','rework'].includes(task.schedule.stepKind)&&!await readContentExecutionJob(dataStore,task.tenantId,detail.taskId,detail.runId)){await assertProductionAdmission();await ensureOriginalSocialContentProductionQueued({repository,tenantId:task.tenantId,userId:executionActor,taskId:detail.taskId,runId:detail.runId});}
     } catch (error) {
       const code = error instanceof Error && /^reference_[a-z_]+(?::|$)/.test(error.message) ? error.message.split(':', 1)[0]! : error instanceof Error && /^weekly_/.test(error.message) ? error.message : error && typeof error === 'object' && 'code' in error ? String(error.code) : 'weekly_production_admission_failed';
       return blocked(code, weeklyProductionAdmissionMessage(code, detail, error instanceof Error ? error.message : '内容生产准入失败。'));
@@ -370,7 +448,7 @@ export function createSocialWeeklyProductionAdapter(dataStore: DataStore, ports:
     if (!detail.runId) return blocked('weekly_production_confirmation_required', '内容任务已保留，等待既有生产准入确认。');
     let job = await readContentExecutionJob(dataStore, task.tenantId, detail.taskId, detail.runId);
     if(task.schedule.stepKind==='asset_generation'&&job?.status==='paused'&&job.retryClass==='weekly_production_waiting_asset_claim'){
-      try{const {resumeWeeklyProductionAssetStage}=await import('../starter198/socialWeeklyProductionStageResume.js');await resumeWeeklyProductionAssetStage({repository,assetTask:task,now:now(),assertAdmission,validationPorts:{ownedProductIdentity:ports.ownedProductIdentity?{...ports.ownedProductIdentity,repository}:undefined}});job=await readContentExecutionJob(dataStore,task.tenantId,detail.taskId,detail.runId);}
+      try{const {resumeWeeklyProductionAssetStage}=await import('../starter198/socialWeeklyProductionStageResume.js');await resumeWeeklyProductionAssetStage({repository,assetTask:task,now:now(),assertAdmission:assertProductionAdmission,validationPorts:{ownedProductIdentity:ports.ownedProductIdentity?{...ports.ownedProductIdentity,repository}:undefined}});job=await readContentExecutionJob(dataStore,task.tenantId,detail.taskId,detail.runId);}
       catch(error){return blocked(error instanceof Error?error.message:'weekly_production_stage_resume_unverified','原生产任务尚不能进入资产阶段，请核验本周前置任务及原运行凭据。');}
     }
     if(task.schedule.stepKind==='asset_generation'){
@@ -385,7 +463,7 @@ export function createSocialWeeklyProductionAdapter(dataStore: DataStore, ports:
         const taskId=String(candidate.task_id??''),runId=String(candidate.run_id??'');if(!taskId||!runId)continue;
         const creativeJob=await readContentExecutionJob(dataStore,task.tenantId,taskId,runId);if(creativeJob?.status!=='paused'||creativeJob.retryClass!=='weekly_production_waiting_asset_claim')continue;
         const handoff=await readWeeklyPreSupplyHandoff(repository,task.tenantId,taskId);if(!handoff)return blocked('weekly_creative_repair_handoff_missing','创意返工任务缺少已冻结的生产交接凭证。');
-        try{await resumeWeeklyProductionAssetStage({repository,assetTask:task,contentTaskId:taskId,now:now(),assertAdmission,validationPorts:{ownedProductIdentity:ports.ownedProductIdentity?{...ports.ownedProductIdentity,repository}:undefined}});}
+        try{await resumeWeeklyProductionAssetStage({repository,assetTask:task,contentTaskId:taskId,now:now(),assertAdmission:assertProductionAdmission,validationPorts:{ownedProductIdentity:ports.ownedProductIdentity?{...ports.ownedProductIdentity,repository}:undefined}});}
         catch(error){return blocked(error instanceof Error?error.message:'weekly_creative_repair_stage_resume_unverified','创意返工任务尚不能恢复资产生产，请核验真实前置产物。');}
       }
     }
@@ -418,7 +496,7 @@ export function createSocialWeeklyProductionAdapter(dataStore: DataStore, ports:
         : content.productionResult?.technicalReview?.approved === true && content.productionResult?.creativeReview?.approved === true;
       const v = version(artifact.version);
       if (!v) return blocked('weekly_production_version_invalid', '内容产物版本无效。');
-      if (!evidence) {
+      if (!evidence || (['quality_check', 'rework'].includes(step) && content.workflowSchema === 'social-content.auto-production.v3')) {
         if (!['quality_check', 'rework'].includes(step)) return blocked('weekly_production_quality_review_required', '产物已保留，但该生产节点缺少通过验收的真实证据。');
         // Immutable pending-review flags may be superseded only by independently verified,
         // same-output G4 and G5 receipts; the artifact and final user approval stay separate.

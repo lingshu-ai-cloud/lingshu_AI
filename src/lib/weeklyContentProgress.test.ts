@@ -97,6 +97,7 @@ const build = (data = overview(), projects: WeeklyContentProgressProject[] = [])
   const withRender = buildWeeklyContentProgress(data, 'socialtask-real', { projects: [renderProject], projectsStatus: 'available' });
   assert.equal(get(withRender, 'render').status, 'completed', 'a real render output receipt completes only render');
   assert.equal(get(withRender, 'quality').status, 'pending', 'render output does not prove quality passed');
+  assert.equal(withRender.statusLabel, '回执待同步', 'a queue waiting_review claim needs quality as well as render evidence');
   const retainedOldRender = buildWeeklyContentProgress(data, 'socialtask-real', { projects: [{
     ...voiceAndMaterialProject,
     spec: {

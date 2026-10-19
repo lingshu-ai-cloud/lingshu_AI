@@ -19,13 +19,14 @@ import type { Platform } from '../types/index.js';
 import { requireAuth, type AuthLocals } from '../middleware/auth.js';
 import { resolveCrawlKeywords, resolveCrawlStrategy } from '../lib/crawlKeywords.js';
 import { normalizeKeywordInput, type KeywordPlatform } from '../../src/lib/keywordInput.js';
-import { buildConfirmedWeeklyDiscoveryScopeWithKeywords, type ConfirmedWeeklyDiscoveryBoundary } from '../digitalEmployees/weeklyDiscoveryScope.js';
+import { buildConfirmedWeeklyDiscoveryScopeWithKeywords, WEEKLY_DISCOVERY_PRODUCT_BINDING_VERSION, type ConfirmedWeeklyDiscoveryBoundary } from '../digitalEmployees/weeklyDiscoveryScope.js';
 import { normalizeModePolicies } from '../socialDiscovery/domain.js';
 import { formatScheduledDiscoveryResult } from '../socialDiscovery/scheduledResult.js';
 import { discoveryTriggerForScheduler, type SchedulerExecutionTrigger } from '../socialDiscovery/scheduledTrigger.js';
 import { localFallbacksEnabled } from '../lib/localFallbackPolicy.js';
 import { runWithDataAuthority } from '../storage/dataAuthority.js';
 import { schedulerBootstrapAuthority } from './schedulerBootstrapAuthority.js';
+import { reconcileWeeklyDiscoveryScopeMigrations } from '../socialPrograms/weeklyDiscoveryScopeMigration.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PDF_SCRIPT = path.join(__dirname, '../../scripts/render-task-report-pdf.py');
@@ -1254,12 +1255,54 @@ export async function reconcileSocialDiscoveryCollectionTasks(): Promise<number>
       const payload = scope.payload && typeof scope.payload === 'object' ? scope.payload as Record<string, any> : {};
       const approval = payload.approval && typeof payload.approval === 'object' ? payload.approval as Record<string, any> : {};
       if (!tenantId || !scope.id || !version || approval.status !== 'approved' || Number(approval.scopeVersion || 0) !== version) continue;
+      if (payload.productFactBinding?.version !== WEEKLY_DISCOVERY_PRODUCT_BINDING_VERSION) {
+        const brief = payload.discoveryBrief && typeof payload.discoveryBrief === 'object' ? payload.discoveryBrief as Record<string, any> : {};
+        const authorization = payload.authorizationSource && typeof payload.authorizationSource === 'object' ? payload.authorizationSource as Record<string, any> : {};
+        const productRef = String(brief.productRef || payload.keywordSet?.scope?.productRef || '').trim();
+        const workflowRunId = String(authorization.workflowRunId || '').trim();
+        const workflowTaskId = String(authorization.workflowTaskId || '').trim();
+        const approvedBy = String(authorization.approvedBy || scope.created_by || '').trim();
+        const platforms = Array.isArray(brief.platforms) ? brief.platforms.map((value: unknown) => String(value).trim()).filter(Boolean) : [];
+        if (productRef && workflowRunId && workflowTaskId && approvedBy && platforms.length) {
+          try {
+            await ensureDigitalEmployeeSocialCollectionTask({
+              tenantId,
+              workflowRunId,
+              workflowTaskId,
+              keywords: productRef,
+              platforms,
+              limit: Number(brief.resultLimit || 10),
+              dateWindowDays: Number(brief.lookbackDays || 7),
+              confirmedWeeklyBoundary: {
+                businessGoal: String(payload.businessGoal || '为已确认周计划采集可复刻的爆款内容证据'),
+                products: [productRef],
+                market: String(brief.market || payload.market || '').trim(),
+                language: String(payload.language || 'en').trim(),
+                audience: String(brief.audience || payload.keywordSet?.scope?.audienceRole || '').trim(),
+                platforms,
+                lookbackDays: Number(brief.lookbackDays || 7),
+                resultLimit: Number(brief.resultLimit || 10),
+                approvedBy,
+                workflowRunId,
+                workflowTaskId,
+              },
+            });
+            reconciled += 1;
+            continue;
+          } catch (error) {
+            console.warn('[scheduler] product-bound discovery scope migration deferred:', error instanceof Error ? error.message : error);
+          }
+        }
+      }
       ensureSocialDiscoveryCollectionTask({ tenantId, discoveryScopeId: String(scope.id), discoveryScopeVersion: version });
       reconciled += 1;
     }
     if (page >= result.totalPages || result.items.length < 100) break;
     page += 1;
   }
+  // An approved scope replacement cannot mutate immutable preproduction jobs.
+  // Reconcile opted-in weekly packages through their existing revision path.
+  await reconcileWeeklyDiscoveryScopeMigrations(store);
   return reconciled;
 }
 
@@ -1334,8 +1377,12 @@ function latestMissedRun(task: ScheduledTask, now = new Date()): Date | null {
   return null;
 }
 
-function scheduleTask(task: ScheduledTask) {
+export function scheduleTask(task: ScheduledTask) {
   if (activeJobs.has(task.id)) { activeJobs.get(task.id)!.stop(); activeJobs.delete(task.id); }
+  // The global opt-out applies to tasks created by authenticated routes too,
+  // not only to the bootstrap restore in initScheduler(). The task record may
+  // still be saved for a later, explicitly enabled scheduler process.
+  if (process.env.SCHEDULER_ENABLED === 'false') return;
   if (!task.enabled) return;
   if (!cron.validate(task.cronExpr)) return;
 
@@ -1343,6 +1390,10 @@ function scheduleTask(task: ScheduledTask) {
     await executeAndPersistTask(task, 'cron');
   }, { timezone: 'Asia/Shanghai' });
   activeJobs.set(task.id, job);
+}
+
+export function isSchedulerTaskRegistered(taskId: string): boolean {
+  return activeJobs.has(taskId);
 }
 
 /** Bind the director workflow to the one approved discovery collector. Never create a second keyword crawl. */
@@ -1379,6 +1430,7 @@ export async function ensureDigitalEmployeeSocialCollectionTask(input: {
   });
   const scopeNeedsDirectorKeywords = Boolean(scope?.id && input.confirmedWeeklyBoundary && (
     !scope.payload?.keywordRecommendation ||
+    scope.payload?.productFactBinding?.version !== WEEKLY_DISCOVERY_PRODUCT_BINDING_VERSION ||
     hasLegacyProductTitleQueries(scope.payload?.keywordSet?.graph?.discoverySeeds || [])
   ));
   if ((!scope?.id || scopeNeedsDirectorKeywords) && input.confirmedWeeklyBoundary) {

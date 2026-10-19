@@ -3,6 +3,8 @@ import {STARTER_COLLECTIONS} from './repository.js';
 import {socialJson,socialObject,socialRequestHash,socialText,SocialContentWorkflowError} from './socialContentValidation.js';
 import {resolveWeeklyCreativeRepairAuthority} from '../runtime/weeklyCreativeRepairAuthority.js';
 import {shanghaiNaturalWeek} from '../socialPrograms/contentCreationQuota.js';
+import {readPreparedSocialProductAssetFallback} from './socialContentProductAssetRevisionPrepare.js';
+import {socialContentQueueItemId} from './socialContentScheduler.js';
 
 export interface SocialContentCostLineage {
  schemaVersion:'social-content-cost-lineage.v1';executionTaskId:string;contentId:string;budgetTaskId:string;
@@ -11,6 +13,57 @@ export interface SocialContentCostLineage {
  originalMaximumCny:number|null;maximumAdditionalCostCny:number|null;
 }
 const fail=(code:string):never=>{throw new SocialContentWorkflowError(`social_content_cost_lineage_${code}`,409);};
+/** A prepared backup image is a revision of the existing task and ledger, not
+ * an original-content order. No provider or queue authority is returned. */
+export async function resolvePreparedProductAssetCostLineage(input:Parameters<typeof readPreparedSocialProductAssetFallback>[0]){
+ const prepared=await readPreparedSocialProductAssetFallback(input);
+ const store=input.repository.dataStore;
+ if(!store)return fail('store_required');
+ const rows=await input.repository.list(STARTER_COLLECTIONS.socialContentTasks,input.tenantId,{where:{task_id:input.taskId},perPage:2});
+ if(rows.totalItems!==1||rows.items.length!==1)return fail('task_missing_or_ambiguous');
+ const task=rows.items[0],brief=socialObject(socialJson(task.brief)),binding=socialObject(socialJson(task.content_order));
+ if(brief?._weeklyCreativeRepairProof||brief?._productionRevision||binding?.schemaVersion!=='social-content-order.v1'
+  ||binding.contentId!==input.taskId||binding.budgetTaskId!==input.taskId||!socialText(binding.programId)
+  ||!socialText(binding.originWeek)||binding.cancellation||binding.replacedByContentId||binding.supersededByContentId
+  ||['cancelled','cancelling'].includes(socialText(task.status)))return fail('original_binding_invalid');
+ const sourceDispatches=[binding.dispatch,...(Array.isArray(binding.dispatchHistory)?binding.dispatchHistory:[])]
+  .map(socialObject).filter((item):item is Record<string,unknown>=>Boolean(item))
+  .filter(item=>socialContentQueueItemId(socialObject(item.queueRequest) as any)===socialText(task.orchestrator_item_id));
+ if(sourceDispatches.length!==1)return fail('original_dispatch_invalid');
+ const dispatch=sourceDispatches[0],queue=socialObject(dispatch.queueRequest);
+ if(!dispatch||!queue||dispatch.schemaVersion!=='social-content-dispatch.v1'
+  ||socialRequestHash((({requestHash,...body})=>body)(dispatch))!==dispatch.requestHash
+  ||queue.tenantId!==input.tenantId||queue.commandId!==dispatch.commandId
+  ||socialObject(queue.subject)?.id!==input.taskId||queue.workflowScope!=='social_content')return fail('original_dispatch_invalid');
+ const operations=await input.repository.list(STARTER_COLLECTIONS.socialContentOperations,input.tenantId,
+  {where:{operation_id:String(dispatch.commandId)},perPage:2});
+ const operation=operations.items[0];
+ if(operations.totalItems!==1||operations.items.length!==1||operation.operation!=='start_social_content_task'
+  ||operation.target_id!==input.taskId||operation.created_by!==dispatch.userId
+  ||operation.idempotency_key!==dispatch.idempotencyKey
+  ||operation.request_hash!==socialRequestHash({expectedVersion:dispatch.expectedVersion})
+  ||!['processing','succeeded'].includes(socialText(operation.status)))
+  return fail('original_operation_invalid');
+ const run=await input.repository.get(STARTER_COLLECTIONS.runs,input.tenantId,input.sourceRunId);
+ const context=socialObject(socialJson(run?.starter_context));
+ if(!run||run.tenant_id!==input.tenantId||!['failed','cancelled','completed','succeeded'].includes(socialText(run.status))
+  ||context?.schemaVersion!=='starter-social-content.auto-execution.v1'||context.socialTaskId!==input.taskId
+  ||socialText(task.run_id)!==input.sourceRunId)return fail('source_run_invalid');
+ const jobs=await store.list<any>('content_execution_jobs',{where:{tenant_id:input.tenantId,task_id:input.taskId},perPage:500});
+ if(jobs.totalItems!==jobs.items.length||jobs.items.some(job=>
+  ['running','queued','retry_wait','reconciling','paused'].includes(socialText(job.status))
+  ||Boolean(job.worker_id)||Boolean(job.lease_expires_at)))return fail('source_execution_active');
+ const marker=socialObject(brief?._productAssetFallback);
+ if(marker?.sourceRunId!==input.sourceRunId||marker?.budgetLedgerRef!==input.budgetLedgerRef
+  ||marker?.sourceTaskVersion===input.expectedPreparedVersion||marker?.revisedPlanHash!==prepared.revisedPlanHash)
+  return fail('prepared_identity_invalid');
+ const body={schemaVersion:'social-content-asset-revision-lineage.v1' as const,executionTaskId:input.taskId,
+  contentId:input.taskId,budgetTaskId:input.taskId,programId:String(binding.programId),originWeek:String(binding.originWeek),
+  sourceRunId:input.sourceRunId,sourceDispatchCommandId:String(dispatch.commandId),
+  sourceTaskVersion:String(marker.sourceTaskVersion),preparedVersion:input.expectedPreparedVersion,
+  revisionId:String(marker.revisionId),revisedPlanHash:prepared.revisedPlanHash,budgetLedgerRef:input.budgetLedgerRef};
+ return {...body,lineageHash:socialRequestHash(body)};
+}
 /** No parent ID supplied by a request is authoritative. Every creative-repair
  * edge is revalidated against its durable case, artifact and approval command.
  * Same-task revisions naturally keep the original ledger and original slot. */

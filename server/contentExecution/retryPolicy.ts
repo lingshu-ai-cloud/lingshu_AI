@@ -57,7 +57,10 @@ export function classifyContentExecutionFailure(error: unknown, input: {
       maxAttempts: 1, publicReason: '内容被模型拒绝，需要修改后恢复',
     };
   }
-  if (/user_input_required|production_input_required|素材.*(?:缺失|不足)|input_required|director_revision_required|product_scene_|quality.*failed|质量.*失败/i.test(lower)) {
+  // A product-footage finding is bound to the frozen shot plan and exact
+  // material bytes. Retrying the same run cannot manufacture a missing signed
+  // window or restore revoked rights; a changed plan requires a new revision.
+  if (/user_input_required|production_input_required|素材.*(?:缺失|不足)|input_required|director_revision_required|product_scene_|product_footage_|quality.*failed|质量.*失败/i.test(lower)) {
     return {
       failureClass: 'input_required', disposition: 'block', retryDelayMs: null,
       maxAttempts: 1, publicReason: '需要补充素材或人工修改',

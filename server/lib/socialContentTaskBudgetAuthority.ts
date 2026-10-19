@@ -2,7 +2,7 @@ import {verifyHeyGenPublishedTariff,type HeyGenPublishedPricingEvidence} from '.
 import {verifySeedreamPublishedTariff,type SeedreamPublishedPricingEvidence} from './seedreamPublishedPricing.js';
 import {verifyNativeVoicePublishedTariff} from './studioVoicePublishedPricing.js';
 import {verifyWanPublishedTariff,type WanPublishedPricingEvidence} from './wanPublishedPricing.js';
-import {isVerifiedPublishedTariff,type LocalPublishedPricingEvidence,type PublishedPricingEvidence} from './socialContentPublishedTariffs.js';
+import {isVerifiedPublishedTariff,type LocalPublishedPricingEvidence,type MaaSPublishedPricingEvidence,type PublishedPricingEvidence} from './socialContentPublishedTariffs.js';
 import { createHash } from 'node:crypto';
 import { SocialContentTaskBudget, type SocialTaskBudgetScope, type SocialTaskBudgetOperation, type SocialTaskBudgetQuote } from './socialContentTaskBudget.js';
 import { isInternalBudgetExemptTenant } from './tenantBudgetExemption.js';
@@ -44,7 +44,7 @@ export interface SocialVerifiedAccountTariff {
     currency: 'CNY';
     verifiedAccountPrice: boolean;
     pricingBasis?:'negotiated_verified_account'|'published_undiscounted_ceiling'|'published_fx_estimate';
-    publicPricingEvidence?:PublishedPricingEvidence|LocalPublishedPricingEvidence|SeedreamPublishedPricingEvidence|WanPublishedPricingEvidence|HeyGenPublishedPricingEvidence;
+    publicPricingEvidence?:PublishedPricingEvidence|LocalPublishedPricingEvidence|MaaSPublishedPricingEvidence|SeedreamPublishedPricingEvidence|WanPublishedPricingEvidence|HeyGenPublishedPricingEvidence;
     evidenceRef: string;
     checkedAt: string;
     validUntil: string;
@@ -80,6 +80,12 @@ function price(intent: SocialPaidOperationIntent, tariff: SocialVerifiedAccountT
     const now = Date.now();
     if (!tariff || !((tariff.verifiedAccountPrice===true&&(!tariff.pricingBasis||tariff.pricingBasis==='negotiated_verified_account'))||isVerifiedPublishedTariff(tariff)||verifyNativeVoicePublishedTariff(tariff)||verifyWanPublishedTariff(tariff)||verifySeedreamPublishedTariff(tariff)||verifyHeyGenPublishedTariff(tariff)) || tariff.currency !== 'CNY' || !nonempty(tariff.evidenceRef) || ['provider', 'model', 'accountRef', 'stage'].some(k => tariff[k as 'provider'] !== intent[k as 'provider']) || !Number.isFinite(Date.parse(tariff.checkedAt)) || Date.parse(tariff.checkedAt) > now || !Number.isFinite(Date.parse(tariff.validUntil)) || Date.parse(tariff.validUntil) <= now)
         fail('account_tariff_missing_or_expired');
+    // A durable MaaS tariff must not be reused outside its published pricing
+    // bands even if it was originally imported for a smaller operation.
+    if (tariff.publicPricingEvidence?.schemaVersion === 3 &&
+        (!Number.isSafeInteger(intent.maximumUnits.inputTokens) || intent.maximumUnits.inputTokens < 0 || intent.maximumUnits.inputTokens > tariff.publicPricingEvidence.maximumInputTokens ||
+         !Number.isSafeInteger(intent.maximumUnits.outputTokens) || intent.maximumUnits.outputTokens < 0 || intent.maximumUnits.outputTokens > 32768))
+        fail('account_tariff_input_range_unverified');
     const keys = Object.keys(intent.maximumUnits).sort(), meters = Object.keys(tariff.meters || {}).sort();
     if (JSON.stringify(keys) !== JSON.stringify(meters))
         fail('usage_envelope_incomplete');

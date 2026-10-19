@@ -3,6 +3,8 @@ import { freezeSocialScriptBaseline, parseStoredSocialScriptBaseline } from './s
 import { buildSocialTaskReferencePackage, normalizeReferenceTimelineBoundaries, referencePreparationForRecord } from './socialContentScriptSources.js';
 import { reviewShotMaterialRefs } from '../lib/referenceShotReview.js';
 import { buildReferenceShotProductionRouting } from '../../shared/referenceShotProductionRouting.js';
+import { createSocialAssetSupplyPlan } from '../../shared/socialContentAssetSupply.js';
+import { buildSocialAgentWorkflow } from './socialContentAgentWorkflow.js';
 
 const source = {
   sourceId: 'source-reference-1',
@@ -352,6 +354,86 @@ const defaultFirstHook = buildSocialTaskReferencePackage({
 });
 assert.equal(defaultFirstHook?.referenceVideoAnalysis.hookAnalysis?.referencePoints[0], 'reference-shot-1',
   '未识别到更具体的钩子时选择第一段非闪帧开场素材，不要求至少两秒');
+
+const temporalSourceSha = 'd'.repeat(64);
+const temporalPresenterRecord = { ...record, id: 'reference-temporal-presenter', duration: 5, aiAnalysis: JSON.stringify({
+  analysisMode: 'exact', analysisQuality: 'video', analysisRunId: 'dense-presenter-run', contentSha256: temporalSourceSha,
+  presenterDenseSampling: { intervalSeconds: .5, ranges: [{ startSeconds: 0, endSeconds: 4 }] },
+  gemini: { audioTranscript: { segments: [{ start: 0, end: 4, text: '这是唯一一次播放的完整口播。', timingPrecision: 'phrase', provenance: 'verified-asr' }] },
+    scriptDetails15s: [{ time: '0-4s', materialType: 'talking_head', narrativeRole: 'hook', purpose: '真人口播钩子',
+      visual: '销售人物先拿取并展示产品，放下后稳定站播', shot: '中景', camera: '跟拍后固定', motionClass: '走播',
+      observedPresenterRole: 'sales_presenter', personContinuityId: 'sales-1', confidence: .99,
+      criticalShot: { classification: 'non_critical' },
+      presenterContinuityEvidence: { time: '0-4s', personPresence: 'person', observedPresenterRole: 'sales_presenter',
+        personContinuityId: 'sales-1', confidence: .99, evidence: ['高密抽帧中的同一销售人物'], frameSeconds: [.1, 3.9],
+        model: 'controlled-vl', provenance: 'source-frame-observation', sourceSha256: temporalSourceSha },
+      beats: [{ time: '0-1s', action: '人物拿起产品并向前走动' }, { time: '1-2s', action: '人物手持产品对镜展示' },
+        { time: '2-3s', action: '人物放下产品' }, { time: '3-4s', action: '人物站立保持稳定，固定镜头' }],
+      materialEvidence: { sourceVideoRef: '/api/overseas/videos/reference-temporal-presenter/media',
+        clipRef: '/media/tenants/tenant/reference-evidence/reference-temporal-presenter/shot.mp4',
+        firstFrameRef: '/media/tenants/tenant/reference-evidence/reference-temporal-presenter/frame.jpg',
+        firstFrameSeconds: .04, extractionStatus: 'ready' } },
+    { time: '4-5s', materialType: 'product', narrativeRole: 'proof', purpose: '产品特写',
+      visual: '产品静置特写', shot: '近景', camera: '固定镜头', confidence: .99,
+      criticalShot: { classification: 'non_critical' },
+      materialEvidence: { sourceVideoRef: '/api/overseas/videos/reference-temporal-presenter/media',
+        clipRef: '/media/tenants/tenant/reference-evidence/reference-temporal-presenter/product-shot.mp4',
+        firstFrameRef: '/media/tenants/tenant/reference-evidence/reference-temporal-presenter/product-frame.jpg',
+        firstFrameSeconds: 4.04, extractionStatus: 'ready' } }] },
+}) };
+const temporalPresenter = buildSocialTaskReferencePackage({ record: temporalPresenterRecord, source, themeId: 'product_value',
+  verifiedContext: { productName: '新产品', facts: [], source: 'enterprise_product', confidence: 1 } });
+assert.ok(temporalPresenter);
+assert.equal(temporalPresenter.replicationScript.shots.length, 2,
+  '只有文本 beats 和 clipRef#t 伪帧时不得把旧参考镜头拆成已证明的动态/稳定两镜');
+const temporalPresenterChildren = temporalPresenter.replicationScript.shots.filter(shot => shot.referenceShotId === 'reference-shot-1');
+assert.deepEqual(temporalPresenterChildren.map(shot => [shot.startSeconds, shot.endSeconds]), [[0, 4]]);
+assert.equal(temporalPresenter.replicationScript.narrationLines?.[0]?.narrationOwnerShotId,
+  temporalPresenterChildren[0]!.shotId);
+assert.deepEqual(temporalPresenter.replicationScript.narrationLines?.[0]?.visualShotIds,
+  temporalPresenterChildren.map(shot => shot.shotId));
+assert.equal(temporalPresenterChildren.filter(shot => shot.spokenText).length, 1,
+  '跨动态/稳定切点的同一句口播只能由一个子镜拥有');
+const temporalSupply = createSocialAssetSupplyPlan({
+  creationMode: 'viral_replication', productionApproach: 'ai_enhanced', materialRoutingPolicyVersion: 'type-aware.v2',
+  confirmedFactRefs: [], presenterSelectionConfirmed: true,
+  inventory: { presenterAssetIds: ['presenter-enterprise-1'], referenceVideoIds: [source.sourceId] },
+  accountPresenterLock: { socialAccountId: 'account-1', presenterProfileId: 'profile-1', presenterProfileVersion: '1',
+    presenterAssetId: 'presenter-enterprise-1', avatarId: 'avatar-1', voiceProfileId: 'voice-1', consentRef: 'consent-1',
+    commercialRightsStatus: 'cleared', status: 'published', consistencyKey: 'account-1:profile-1:1' },
+  referenceShots: temporalPresenter.referenceVideoAnalysis.shots,
+  shots: temporalPresenter.replicationScript.shots.map(shot => ({
+    shotId: shot.shotId, function: shot.purpose,
+    referenceShotId: shot.referenceShotId, plannedDurationSeconds: shot.endSeconds - shot.startSeconds,
+    requestedDescription: shot.visualInstruction,
+  })),
+});
+const temporalSupplyChildren = temporalSupply.shots.filter(shot => temporalPresenterChildren.some(child => child.shotId === shot.shotId));
+assert.equal(temporalSupplyChildren.length, 1, '素材计划不得接收由文本伪造的真人子镜');
+const temporalWorkflow = buildSocialAgentWorkflow({
+  taskId: 'task-temporal-presenter', taskVersion: '1', taskStatus: 'plan_review', mode: 'instant', weeklyPlanId: null,
+  brief: { title: '真人时序复刻', objective: '验证动态转稳定链路', productRef: '新产品', audience: '采购商', markets: ['US'],
+    languages: ['zh'], platforms: ['tiktok'], formats: ['short_video'], aspectRatio: '9:16', cadence: null,
+    requestedOutputCount: 1, weeklyBudgetCny: 100, perItemBudgetCny: 20, retryReserveCny: 10,
+    planningMode: 'auto_adjust', shootingWindowMinutes: 0, specialRequirements: null, dueAt: null,
+    brandNotes: null, restrictions: [], callToAction: null, creationMode: 'viral_replication', assetAvailability: 'ready',
+    managementMode: 'one_click_managed', productionMode: 'social_ready', materialRoutingPolicyVersion: 'type-aware.v2' },
+  sources: [], factSourceRefs: [], assetSupplyPlan: temporalSupply,
+  referenceAnalysis: temporalPresenter.referenceVideoAnalysis, replicationScript: temporalPresenter.replicationScript,
+  referenceReviewHandoff: { productionExecutionAllowed: true, versionHash: 'temporal-reference-v1' },
+  enterprisePresenterAssetRef: 'presenter-enterprise-1',
+});
+assert.deepEqual(temporalWorkflow.executionPlan.scenes.map(scene => scene.sceneId),
+  temporalPresenter.replicationScript.shots.map(shot => shot.shotId),
+  '未获逐帧视觉证据时，执行计划不得凭文本临时切镜');
+
+const temporalFactory = structuredClone(temporalPresenterRecord);
+const temporalFactoryAnalysis = JSON.parse(String(temporalFactory.aiAnalysis));
+temporalFactoryAnalysis.gemini.scriptDetails15s[0].materialType = 'factory';
+temporalFactory.aiAnalysis = JSON.stringify(temporalFactoryAnalysis);
+const unaffectedFactory = buildSocialTaskReferencePackage({ record: temporalFactory, source, themeId: 'supplier_capability',
+  verifiedContext: { productName: '新产品', facts: [], source: 'enterprise_product', confidence: 1 } });
+assert.equal(unaffectedFactory?.replicationScript.shots.length, 2, '非真人素材不得进入真人高密拆镜');
 
 const flashLeadRecord = { ...record, id: 'reference-with-cover-flash', duration: 6, aiAnalysis: JSON.stringify({
   analysisMode: 'exact', analysisQuality: 'video', gemini: { scriptDetails15s: [

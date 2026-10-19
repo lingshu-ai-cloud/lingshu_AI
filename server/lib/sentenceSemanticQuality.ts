@@ -5,6 +5,7 @@ import path from 'node:path';
 import { promisify } from 'node:util';
 import ffmpegStatic from 'ffmpeg-static';
 import OpenAI from 'openai';
+import {qwenCompatibleBaseUrl} from './qwenCompatibleEndpoint.js';
 
 const run = promisify(execFile);
 const allowedFrameRefs = new Set(['presenter', ...['source', 'candidate'].flatMap(prefix => ['start', 'quarter', 'middle', 'three_quarters', 'end'].map(position => `${prefix}_${position}`))]);
@@ -77,11 +78,11 @@ export async function inspectSentenceSemanticQuality(input: {
 }): Promise<SentenceSemanticQualityReport> {
   const apiKey = key();
   if (!apiKey) throw new Error('未配置 DASHSCOPE_API_KEY 或 DASHSCOPE_API_KEY_FILE');
-  const model = String(process.env.QWEN_DIGITAL_HUMAN_QA_MODEL || 'qwen3-vl-flash').trim();
+  const model = String(process.env.QWEN_DIGITAL_HUMAN_QA_MODEL || 'qwen3-vl-plus').trim();
   const [source, candidate] = await Promise.all([sampleSemanticVideoFrames(input.sourceVideoPath, 'source'), sampleSemanticVideoFrames(input.candidateVideoPath, 'candidate')]);
   const images = [{ label: 'presenter', bytes: input.presenterBytes, mimeType: input.presenterMimeType },
     ...source.map(frame => ({ ...frame, mimeType: 'image/jpeg' })), ...candidate.map(frame => ({ ...frame, mimeType: 'image/jpeg' }))];
-  const client = new OpenAI({ apiKey, baseURL: String(process.env.DASHSCOPE_BASE_URL || 'https://dashscope.aliyuncs.com/compatible-mode/v1').trim(),
+  const client = new OpenAI({ apiKey, baseURL: qwenCompatibleBaseUrl(),
     timeout: Math.max(30_000, Number(process.env.QWEN_REQUEST_TIMEOUT_MS || 120_000)), maxRetries: 0 });
   const completion = await client.chat.completions.create({ model, messages: [
     { role: 'system', content: `你是独立的视频候选质检员，不是生成模型。只依据提供的采样帧判断，不推断看不见的事实。presenter 是已授权人物照片；source_* 是参考镜头；candidate_* 是候选镜头。identity 比较 presenter 与 candidate_* 是否为同一人物且跨帧稳定，pass/fail 必须引用 presenter 和至少两幅 candidate_* 帧。actionMotion 比较 source_* 与 candidate_* 中实际可见的姿势、手势、物品交互与动作顺序是否保持，pass/fail 必须各引用至少两幅不同时间的 source_* 和 candidate_* 帧；静态采样无法证明时必须 unknown。productBrandText 比较 source_* 与 candidate_* 中实际可见的产品外形、品牌标识和文字是否保持；源片未出现可识别产品/品牌/文字时必须 unknown。不得用脸部相似度判断授权，不得声称检查了音频或口型。只输出 JSON：{"version":1,"identity":{"status":"pass|fail|unknown","confidence":0.0,"evidence":"具体可见观察","frameRefs":["presenter","candidate_start","candidate_end"]},"actionMotion":{"status":"pass|fail|unknown","confidence":0.0,"evidence":"具体可见的动作比较","frameRefs":["source_start","source_end","candidate_start","candidate_end"]},"productBrandText":{"status":"pass|fail|unknown","confidence":0.0,"evidence":"具体可见观察","frameRefs":["source_middle","candidate_middle"]},"limitations":["限制"]}。pass/fail 必须引用实际标签；遮挡、模糊、采样不足时用 unknown。` },

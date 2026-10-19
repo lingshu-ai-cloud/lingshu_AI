@@ -10,10 +10,10 @@
       <cover-view class="preview-top">关注　　推荐</cover-view>
     <cover-view class="preview-actions social-rail social-rail-tiktok" aria-label="TikTok 互动栏预览">
       <cover-view class="social-action social-profile" aria-label="创作者头像"><cover-view class="preview-avatar"><cover-view class="profile-head"></cover-view><cover-view class="profile-body"></cover-view></cover-view><cover-view class="profile-follow">＋</cover-view></cover-view>
-      <cover-view class="social-action" aria-label="点赞"><cover-view class="social-icon icon-heart">♥</cover-view><cover-view class="social-action-label">赞</cover-view></cover-view>
-      <cover-view class="social-action" aria-label="评论"><cover-view class="social-icon icon-comment"><cover-view class="comment-tail"></cover-view></cover-view><cover-view class="social-action-label">评</cover-view></cover-view>
-      <cover-view class="social-action" aria-label="收藏"><cover-view class="social-icon icon-bookmark">◆</cover-view><cover-view class="social-action-label">藏</cover-view></cover-view>
-      <cover-view class="social-action" aria-label="分享"><cover-view class="social-icon icon-share">➤</cover-view><cover-view class="social-action-label">转</cover-view></cover-view>
+      <cover-view class="social-action" aria-label="点赞"><cover-image class="social-icon-image" src="/assets/ui-icons/tiktok-heart.svg"></cover-image><cover-view class="social-action-label">赞</cover-view></cover-view>
+      <cover-view class="social-action" aria-label="评论"><cover-image class="social-icon-image" src="/assets/ui-icons/comment-dots.svg"></cover-image><cover-view class="social-action-label">评</cover-view></cover-view>
+      <cover-view class="social-action" aria-label="收藏"><cover-image class="social-icon-image" src="/assets/ui-icons/bookmark.svg"></cover-image><cover-view class="social-action-label">藏</cover-view></cover-view>
+      <cover-view class="social-action" aria-label="分享"><cover-image class="social-icon-image social-icon-share" src="/assets/ui-icons/share-turn.svg"></cover-image><cover-view class="social-action-label">转</cover-view></cover-view>
     </cover-view>
     <cover-view class="preview-copy">
       <cover-view class="preview-account">@ 账号</cover-view>
@@ -26,9 +26,10 @@
   <cover-view wx:else class="publish-preview publish-preview-facebook">
     <cover-view class="preview-top preview-top-facebook">Reels　　　　　　　　　相机</cover-view>
     <cover-view class="preview-actions preview-actions-facebook social-rail social-rail-facebook" aria-label="Facebook Reels 互动栏预览">
-      <cover-view class="social-action" aria-label="点赞"><cover-view class="social-icon icon-facebook-like">♥</cover-view><cover-view class="social-action-label">赞</cover-view></cover-view>
-      <cover-view class="social-action" aria-label="评论"><cover-view class="social-icon icon-comment"><cover-view class="comment-tail"></cover-view></cover-view><cover-view class="social-action-label">评</cover-view></cover-view>
-      <cover-view class="social-action" aria-label="分享"><cover-view class="social-icon icon-facebook-share">➤</cover-view><cover-view class="social-action-label">转</cover-view></cover-view>
+      <cover-view class="social-action" aria-label="点赞"><cover-image class="social-icon-image" src="/assets/ui-icons/facebook-like.svg"></cover-image><cover-view class="social-action-label">赞</cover-view></cover-view>
+      <cover-view class="social-action" aria-label="评论"><cover-image class="social-icon-image" src="/assets/ui-icons/comment-outline.svg"></cover-image><cover-view class="social-action-label">评</cover-view></cover-view>
+      <cover-view class="social-action" aria-label="分享"><cover-image class="social-icon-image social-icon-share" src="/assets/ui-icons/share-turn.svg"></cover-image><cover-view class="social-action-label">转</cover-view></cover-view>
+      <cover-view class="social-action" aria-label="收藏"><cover-image class="social-icon-image" src="/assets/ui-icons/bookmark.svg"></cover-image><cover-view class="social-action-label">藏</cover-view></cover-view>
       <cover-view class="social-action social-more" aria-label="更多操作"><cover-view class="more-dot"></cover-view><cover-view class="more-dot"></cover-view><cover-view class="more-dot"></cover-view></cover-view>
     </cover-view>
     <cover-view class="preview-copy preview-copy-facebook">

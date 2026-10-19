@@ -1,5 +1,6 @@
 import { storyboardGeometryObservationPrompt, type StoryboardGeometryInference,
   type StoryboardGeometryObservation } from './storyboardGeometryPlanner.js';
+import {qwenCompatibleBaseUrl} from './qwenCompatibleEndpoint.js';
 
 export interface StoryboardGeometryQwenOptions {
   apiKey?: string;
@@ -15,8 +16,7 @@ export function createStoryboardGeometryQwenObserver(options: StoryboardGeometry
   return async request => {
     const apiKey = String(options.apiKey ?? process.env.DASHSCOPE_API_KEY ?? '').trim();
     if (!apiKey) throw new Error('DASHSCOPE_API_KEY is not configured');
-    const baseUrl = String(options.baseUrl ?? process.env.DASHSCOPE_BASE_URL
-      ?? 'https://dashscope.aliyuncs.com/compatible-mode/v1').trim().replace(/\/+$/, '');
+    const baseUrl = String(options.baseUrl ?? qwenCompatibleBaseUrl()).trim().replace(/\/+$/, '');
     if (!/^https:\/\/[^/?#]+(?:\/[^?#]*)?$/i.test(baseUrl)) throw new Error('Qwen geometry endpoint must be HTTPS');
     const model = String(options.model ?? process.env.QWEN_VL_MODEL ?? 'qwen-vl-max').trim();
     if (!model) throw new Error('Qwen geometry model is not configured');

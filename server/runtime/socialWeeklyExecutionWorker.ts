@@ -101,7 +101,7 @@ export function createSocialWeeklyExecutionWorker(dataStore: DataStore,validatio
         if(!weeklyScopeMatches(input.scope,task))continue;
         if (input.kinds?.length && !input.kinds.includes(task.workflowKind)) continue;
         if (task.schedule?.responsibleActor === 'user') continue;
-        if (task.status === 'queued' && Date.parse(task.schedule?.estimatedStartAt || '') > now.getTime() && !await mayReconcileExistingWeeklyPlanning(dataStore,task,now)) continue;
+        if (task.status === 'queued' && Date.parse(task.schedule?.estimatedStartAt || '') > now.getTime() && !await mayReconcileExistingWeeklyPlanning(dataStore,task,now,validationPorts)) continue;
         if (task.status === 'queued' && task.nextAttemptAt && Date.parse(task.nextAttemptAt) > now.getTime()) continue;
         if (task.status === 'leased' && task.lease && Date.parse(task.lease.expiresAt) > now.getTime()) continue;
         const lease = await acquireDurableOperationLease({
@@ -122,7 +122,7 @@ export function createSocialWeeklyExecutionWorker(dataStore: DataStore,validatio
             if (!['queued', 'leased'].includes(latest.payload.status)) return null;
             if (latest.payload.schedule.responsibleActor === 'user' || latest.payload.ownBlockingReasons.length || latest.payload.inheritedBlockingTaskIds.length) return null;
             if (latest.payload.status === 'queued' && Date.parse(latest.payload.nextAttemptAt || '') > now.getTime()) return null;
-            if (latest.payload.status === 'queued' && Date.parse(latest.payload.schedule.estimatedStartAt || '') > now.getTime() && !await mayReconcileExistingWeeklyPlanning(dataStore,latest.payload,now)) return null;
+            if (latest.payload.status === 'queued' && Date.parse(latest.payload.schedule.estimatedStartAt || '') > now.getTime() && !await mayReconcileExistingWeeklyPlanning(dataStore,latest.payload,now,validationPorts)) return null;
             for (const dependencyId of latest.payload.dependsOnTaskIds) {
               let dependency: WeeklyExecutionTask;
               try { dependency = (await getWeeklyExecutionTaskRow(dataStore, input.tenantId, dependencyId)).payload; }

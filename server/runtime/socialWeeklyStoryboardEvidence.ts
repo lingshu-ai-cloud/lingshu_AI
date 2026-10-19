@@ -2,6 +2,7 @@ import type { VersionedSocialRef } from '../../shared/contracts/socialProgram.js
 import { parseStoredSocialDirectorPlan } from '../starter198/socialContentDirectorPlan.js';
 import { weeklyScriptEvidence } from './socialWeeklyScriptEvidence.js';
 import { parseStoredSocialScriptBaseline } from '../starter198/socialContentScriptBaseline.js';
+import type {WeeklyPreSupplyHandoff} from '../starter198/socialWeeklyPreSupplyHandoff.js';
 
 /** A locked, integrity-checked handoff can finish before the rendered video exists. */
 export function weeklyStoryboardEvidence(row: Record<string, unknown>, candidateIds: string[]): VersionedSocialRef | null {
@@ -20,4 +21,13 @@ export function weeklyStoryboardEvidence(row: Record<string, unknown>, candidate
   const version = Number(plan.version);
   return Number.isSafeInteger(version) && version > 0
     ? { type: 'starter_social_content_director_plan', id: script.id, version } : null;
+}
+
+/** V2+ storyboards are frozen before asset supply in the original content run.
+ * A legacy post-supply Director plan can never settle that graph node. The
+ * caller must first obtain preSupply from readWeeklyPreSupplyHandoff. */
+export function weeklyStoryboardStageEvidence(row: Record<string,unknown>,candidateIds:string[],graphVersion:number,preSupply:WeeklyPreSupplyHandoff|null):VersionedSocialRef|null{
+ if(graphVersion<2)return weeklyStoryboardEvidence(row,candidateIds);
+ if(!preSupply||typeof row.run_id!=='string'||!row.run_id||preSupply.runId!==row.run_id||preSupply.taskId!==row.task_id)return null;
+ return {type:'starter_weekly_pre_supply_handoff',id:preSupply.runId,version:1};
 }

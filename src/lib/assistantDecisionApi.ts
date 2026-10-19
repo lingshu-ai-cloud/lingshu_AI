@@ -117,6 +117,9 @@ function normalizeDeepLink(value: unknown): AssistantDecisionDeepLink | undefine
     ['statusSource', text(rawBusinessRef.statusSource, 120)],
     ['contentId', text(rawBusinessRef.contentId, 200)],
     ['referenceId', text(rawBusinessRef.referenceId, 200)],
+    ['shotId', text(rawBusinessRef.shotId, 200)],
+    ['decisionId', text(rawBusinessRef.decisionId, 200)],
+    ['decisionVersion', text(rawBusinessRef.decisionVersion, 300)],
     ['enterpriseView', rawBusinessRef.enterpriseView === 'presenters' ? 'presenters' : ''],
     ['taskVersion', Number.isFinite(Number(rawBusinessRef.taskVersion)) ? Number(rawBusinessRef.taskVersion) : ''],
     ['correctionVersion', Number.isFinite(Number(rawBusinessRef.correctionVersion)) ? Number(rawBusinessRef.correctionVersion) : ''],
@@ -232,10 +235,14 @@ async function request<T>(url: string, init?: RequestInit): Promise<T> {
 export async function fetchAssistantDecisionFeed(input: {
   page: string;
   goalId?: string;
+  decisionId?: string;
+  expectedVersion?: string;
   signal?: AbortSignal;
 }): Promise<AssistantDecisionFeed> {
   const params = new URLSearchParams({ page: normalizeAssistantDecisionPage(input.page) });
   if (input.goalId?.trim()) params.set('goalId', input.goalId.trim());
+  if (input.decisionId?.trim()) params.set('decisionId', input.decisionId.trim());
+  if (input.expectedVersion?.trim()) params.set('expectedVersion', input.expectedVersion.trim());
   const body = await request<unknown>(`${BASE}?${params.toString()}`, { signal: input.signal });
   if (!body || typeof body !== 'object' || !Array.isArray((body as Record<string, unknown>).items)) {
     throw new AssistantDecisionApiError('待办接口未返回有效数据，请重新加载', 502, 'invalid_decision_response');

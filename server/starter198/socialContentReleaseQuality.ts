@@ -13,8 +13,8 @@ export interface SocialContentReleaseQualityInput {
   mode: 'human' | 'managed';
 }
 
-/** Human review can resolve unknown evidence, but cannot waive a hard failure
- * or replace the independent reference and budget evidence required for fidelity. */
+/** Human review may judge subjective fidelity, never missing identity, rights,
+ * enterprise-fact, timeline, technical or budget evidence. */
 export function inspectSocialContentReleaseQuality(input: SocialContentReleaseQualityInput): {
   approved: boolean; applicable: boolean; failures: string[];
 } {
@@ -30,15 +30,18 @@ export function inspectSocialContentReleaseQuality(input: SocialContentReleaseQu
   if (nonempty(creative.failedCriteria)) failures.push('creative_failed');
   if (!Object.keys(technical).length || !Object.keys(creative).length) failures.push('quality_evidence_missing');
   const replication = object(content.replicationEvaluation);
-  const fidelity = object(replication.viralFactorFidelity);
   if (!['passed', 'review_required'].includes(String(replication.status))
-    || fidelity.status !== 'passed') failures.push('reference_fidelity_evidence_missing_or_failed');
+    || !['passed', 'review_required'].includes(String(object(replication.viralFactorFidelity).status)))
+    failures.push('reference_fidelity_evidence_missing_or_failed');
   const timeline = object(replication.referenceTimelineAudit);
   if (timeline.fullCoverageValidated !== true || !Number.isInteger(timeline.referenceShotCount)
     || Number(timeline.referenceShotCount) < 1 || timeline.outputShotCount !== timeline.referenceShotCount
     || !amount(timeline.referenceDurationSeconds) || timeline.referenceDurationSeconds <= 0) failures.push('reference_timeline_incomplete');
   const dimensions = ['viralFactorFidelity', 'identityReplacement', 'originalityDifference', 'unauthorizedReuseRisk', 'accountAndFactFit'];
   if (!['passed', 'not_applicable'].includes(String(object(replication.identityReplacement).status))) failures.push('identity_evidence_incomplete');
+  if (['originalityDifference', 'unauthorizedReuseRisk', 'accountAndFactFit']
+    .some(key => !['passed', 'not_applicable'].includes(String(object(replication[key]).status))))
+    failures.push('rights_or_enterprise_fact_evidence_incomplete');
   if (dimensions.some(key => !['passed', 'not_applicable', 'review_required', 'failed'].includes(String(object(replication[key]).status)))) failures.push('replication_evidence_missing');
   if (dimensions.some(key => object(replication[key]).status === 'failed')
     || object(replication.directorDecision).status === 'changes_required'

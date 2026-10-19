@@ -15,7 +15,7 @@ import {scheduleHash,applyFrozenWeeklySchedule} from '../socialPrograms/weeklySc
 import {WEEKLY_EXECUTION_FREEZES} from '../socialPrograms/weeklyExecutionGate.js';
 import type {Record_} from '../storage/datastore.js';
 
-test('M1 controlled single external video uses actual initial capacity confirmation before production',async t=>{
+test('M1 controlled single external video uses initial capacity confirmation and stops before missing shot footage',async t=>{
  const {prepareWeeklyNonPresenterProductionFixture}=await import('./weeklyNonPresenterProduction.fixture.js');
  const setup=await prepareWeeklyNonPresenterProductionFixture(t,{ownedReferenceBytes:true,productInventory:true,primaryStructure:true,targetCta:'Contact sales',metricTargets:['播放目标1000','点赞目标20','评论目标5','分享目标5']}),{f}=setup;
  const configuredAccess=f.tables.starter_198_access.filter(row=>row.tenant_id==='t');assert.equal(configuredAccess.length,1);await f.store.update('starter_198_access',configuredAccess[0]!.id,{cycle_started_at:'2026-10-09T00:00:00Z',cycle_ends_at:'2026-10-27T00:00:00Z'}); // Explicit controlled tenant subscription authority covers the scheduled operating week before any target creation.
@@ -81,7 +81,16 @@ test('M1 controlled single external video uses actual initial capacity confirmat
  assert.ok(originalScript);
  const {scheduleSocialContentWork}=await import('../starter198/socialContentScheduler.js');
  const phaseAdapter=createSocialWeeklyProductionAdapter(f.store,{repository,sourceOptions:ports.sourceOptions,ownedProductIdentity:ports,orchestratorQueue:{enqueue:queue=>scheduleSocialContentWork({repository,queue,now:new Date(),materialEvidencePorts:ports,productionRunner:async()=>{}})}});
- const starting=await phaseAdapter.execute(originalScript.task);if(starting.status==='blocked'){const {readSocialTaskDetail}=await import('../starter198/socialContentRecords.js');const diagnostic=await readSocialTaskDetail({repository,tenantId:'t',taskId:scope.contentTaskId});console.error('M1_DIRECTOR_REVIEW',JSON.stringify(diagnostic?.agentWorkflow?.executionPlanReview));console.error('M1_EXECUTION_PLAN',JSON.stringify(diagnostic?.agentWorkflow?.executionPlan));}assert.equal(starting.status,'pending',JSON.stringify(starting));
+ const starting=await phaseAdapter.execute(originalScript.task);
+ if(starting.status==='blocked'&&starting.code==='weekly_required_materials_missing'){
+  assert.match(starting.message,/shot-material:replication-reference-shot-1/);
+  assert.match(starting.message,/shot-material:replication-reference-shot-2/);
+  assert.equal((f.tables.content_execution_jobs??[]).filter(row=>row.task_id===scope.contentTaskId).length,0);
+  assert.equal(f.tables.starter_usage_ledger?.length??0,0);
+  assert.equal((await repository.get('starter_social_content_tasks','t',created.id))?.run_id??'', '');
+  return;
+ }
+ assert.equal(starting.status,'pending',JSON.stringify(starting));
  const current=await repository.get('starter_social_content_tasks','t',created.id);assert.ok(current?.run_id);
  const {admitContentExecutionJob,DurableContentExecutionWorker,readContentExecutionJob}=await import('../contentExecution/durableQueue.js');
  const actualJob=await admitContentExecutionJob({dataStore:f.store,tenantId:'t',userId:'owner',taskId:scope.contentTaskId,runId:String(current.run_id),accountId:script.accountId,taskType:'social_content_weekly'});

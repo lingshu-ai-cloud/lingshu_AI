@@ -1,3 +1,4 @@
+import type { SocialProductFootageEvidenceBinding } from './socialContentReplication.js';
 import {
   SOCIAL_CONTENT_TASK_STATUSES,
   SOCIAL_WORK_PACKAGE_KINDS,
@@ -399,6 +400,7 @@ export interface SocialExecutionCandidate {
     candidateId?: string;
     segmentId: string;
     sourceRevision?: string;
+    footageEvidence?: SocialProductFootageEvidenceBinding;
     startSeconds: number;
     endSeconds: number;
     assetRole?: import('./materialAssetV2.js').MaterialAssetRoleV2;
@@ -572,6 +574,19 @@ export interface SocialProductionResult {
     sourceStrategy: SocialShotSourceStrategy;
     feasibility: SocialProductionFeasibility;
     provenanceCandidateIds: string[];
+    /** Exact media selected by the existing supply execution for this scene.
+     * This is the render input for the shot, not a synthetic preview and not
+     * the final whole-film artifact. Historic results may omit it. */
+    mediaArtifact?: {
+      assetId: string;
+      mediaType: 'video' | 'image';
+      resourceRef: string;
+      contentHash: string;
+      durationSeconds: number;
+      providerId: string;
+      supplyPlanVersion: string;
+      role: 'scene_render_input';
+    };
   }>;
   technicalReview: { approved: boolean; checkedScenes: number; failures: string[] };
   creativeReview: { approved: boolean; failedCriteria: string[]; reviewedBy: 'director_agent' };

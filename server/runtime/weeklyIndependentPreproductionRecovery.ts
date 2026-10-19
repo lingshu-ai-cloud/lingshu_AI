@@ -2,7 +2,7 @@ import type { DataStore, Record_ } from '../storage/datastore.js';
 import type { WeeklyExecutionTask } from '../../shared/contracts/socialProgram.js';
 import { readIndependentAdmission } from '../socialPrograms/weeklyIndependentAdmission.js';
 import { readWeeklyAutomaticPreproductionAdmission } from '../socialPrograms/weeklyAutomaticSchedule.js';
-import { readWeeklyPreproductionExecutionGate } from './weeklyPreproductionProducer.js';
+import { readWeeklyPreproductionExecutionGate,type WeeklyExactSettlementPortsForRun } from './weeklyPreproductionProducer.js';
 import { supplementConsumerHash } from '../socialPrograms/weeklySupplementRequests.js';
 import { socialRequestHash } from '../starter198/socialContentValidation.js';
 import { withWeeklyExecutionTaskMutation, writeWeeklyExecutionTask, recomputePackageExecution, WEEKLY_EXECUTION_TASKS, type WeeklyExecutionTaskRow } from '../socialPrograms/executionTasks.js';
@@ -13,7 +13,7 @@ export const READONLY_PLANNING_GATES = new Set(['business_goal_unavailable', 'ca
 
 /** Only reconciles already-produced, validated prerequisites. This cannot grant
  * factual, provider, financial, publication or customer-message authority. */
-export async function runWeeklyIndependentPreproductionRecovery(input: { store: DataStore; now?: Date; scope?: WeeklyScanScope }) {
+export async function runWeeklyIndependentPreproductionRecovery(input: { store: DataStore; now?: Date; scope?: WeeklyScanScope; exactAnalysisPortsForRun?:WeeklyExactSettlementPortsForRun }) {
   const report = { recovered: 0, skipped: 0, failed: 0, failures: [] as Array<{ taskId: string; code: string }> };
   const rows: WeeklyExecutionTaskRow[] = [];
   const where: Record<string,string|number> = input.scope ? {tenant_id:input.scope.tenantId,program_id:input.scope.programId,package_id:input.scope.packageId,package_version:input.scope.packageVersion} : {};
@@ -35,7 +35,7 @@ export async function runWeeklyIndependentPreproductionRecovery(input: { store: 
         const now = (input.now ?? new Date()).toISOString();
         const independent = await readIndependentAdmission(input.store, task);
         const automatic = await readWeeklyAutomaticPreproductionAdmission(input.store, task, now);
-        const produced = await readWeeklyPreproductionExecutionGate(input.store, task);
+        const produced = await readWeeklyPreproductionExecutionGate(input.store, task, input.exactAnalysisPortsForRun);
         if (!independent || !automatic?.eligible || !produced.ready || !produced.resultRefs.length) return false;
         const removed = task.ownBlockingReasons.filter(code => READONLY_PLANNING_GATES.has(code));
         if (!removed.length) return false;

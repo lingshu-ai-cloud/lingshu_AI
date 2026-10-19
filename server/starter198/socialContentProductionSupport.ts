@@ -12,6 +12,9 @@ import type {
 } from '../../shared/contracts/socialContentWorkflow.js';
 import { inspectRenderedScenes, inspectRenderedVisuals, runVisualFfmpeg } from '../lib/renderVisualQuality.js';
 import { readMaterialLibrary, updateAccessibleLocalMaterial, type MaterialRecord } from '../lib/materialLibrary.js';
+import type { DataStore } from '../storage/datastore.js';
+import type { SocialAssetSupplyShotPlan } from '../../shared/contracts/socialContentWorkflow.js';
+import { readProductionProductFootageSegment } from './socialProductFootageAdmission.js';
 import { resolveSourceDurations } from '../lib/videoSourcePlan.js';
 import {
   automationBgmAudio,
@@ -20,7 +23,7 @@ import {
   synthesizeStudioVoiceForAutomation,
 } from '../lib/socialContentLegacyPorts.js';
 import { analyzeProductionMaterial } from '../digitalEmployees/productionMaterialAnalysis.js';
-import { objectStorageEnabled, objectStorageSignedGetUrl } from '../storage/objectStorage.js';
+import { objectStorageDownload, objectStorageEnabled, objectStorageSignedGetUrl } from '../storage/objectStorage.js';
 import { createSocialContentArtifact } from './socialContentOutputs.js';
 import {
   inspectTransientSocialContentFile,
@@ -112,10 +115,45 @@ export async function taskProductionAssets(input: {
   /** The planner already scanned the complete library. Execution materializes
    * only the immutable ids selected by the reviewed shot plan. */
   requiredMaterialIds?: string[];
+  selectedMaterialSegments?: Array<NonNullable<SocialAssetSupplyShotPlan['selectedMaterialSegment']>>;
+  productFootageStore?: DataStore;
 }): Promise<ProductionAsset[]> {
   const inventory = await (input.materialLibrary ?? readMaterialLibrary)(input.tenantId);
   if (inventory.status === 'unavailable') throw new Error('素材库暂时不可用，请稍后重试');
   const byId = new Map(inventory.items.map(item => [socialText(item.id), item]));
+  const reviewedFootage = new Map<string, MaterialRecord>();
+  for (const id of input.requiredMaterialIds ?? []) {
+    const material = byId.get(socialText(id));
+    if (!material?.provenance?.footageCandidate) continue;
+    const frozen = input.selectedMaterialSegments?.filter(segment => segment.sourceRef === id) ?? [];
+    if (!input.productFootageStore || !frozen.length || frozen.some(segment => !segment.footageEvidence))
+      throw new Error('product_footage_shot_review_required');
+    const admittedIds = new Set<string>();
+    let admittedOverlay: MaterialRecord | null = null;
+    for (const segment of frozen) {
+      const evidence = segment.footageEvidence!;
+      const admitted = await readProductionProductFootageSegment({
+        store: input.productFootageStore, readMaterials: input.materialLibrary ?? readMaterialLibrary,
+        tenantId: input.tenantId, productId: evidence.productId, materialId: id,
+        sceneFunction: evidence.sceneFunction, segmentId: segment.segmentId,
+        startSeconds: segment.startSeconds, endSeconds: segment.endSeconds,
+        expectedContentSha256: evidence.contentSha256,
+        expectedApprovalId: evidence.approvalId, expectedVisualFindingId: evidence.visualFindingId,
+      }).catch(() => null);
+      if (!admitted) throw new Error('product_footage_shot_review_required');
+      admittedIds.add(segment.segmentId);
+      admittedOverlay = admitted.material;
+    }
+    // A signed visual finding authorizes one bounded use, not every window in
+    // the source file. Keep only the windows selected by this frozen shot plan
+    // in the production inventory handed to the Content Agent and renderer.
+    const selectedShots = admittedOverlay?.scriptAnalysis?.shots.filter((shot: { segmentId: string }) => admittedIds.has(shot.segmentId)) ?? [];
+    if (!admittedOverlay || selectedShots.length !== admittedIds.size)
+      throw new Error('product_footage_shot_review_required');
+    reviewedFootage.set(id, { ...admittedOverlay, scriptAnalysis: {
+      ...admittedOverlay.scriptAnalysis, shots: selectedShots,
+    } });
+  }
   const linkedSources = input.sources.filter(item => item.status === 'active' && item.kind === 'material');
   const linkedCandidates = linkedSources.flatMap(source => {
     const id = decodeMaterialRef(source.sourceRef);
@@ -133,10 +171,10 @@ export async function taskProductionAssets(input: {
   const libraryCandidates = inventory.items
     .filter(record => !linkedIds.has(socialText(record.id))
       && (!requiredIds || requiredIds.has(socialText(record.id)))
-      && automaticSocialMaterialEligible(record, input.tenantId)
+      && (reviewedFootage.has(socialText(record.id)) || automaticSocialMaterialEligible(record, input.tenantId))
       && (input.allowAuthorizedSharedLibrary !== false || materialTenantId(record) === input.tenantId))
     .map(record => ({
-      record,
+      record: reviewedFootage.get(socialText(record.id)) ?? record,
       sourceId: `library_material_${socialRequestHash({ id: socialText(record.id) }).slice(0, 24)}`,
       label: socialText(record.name || record.title) || '素材库素材',
       origin: materialTenantId(record) === input.tenantId ? 'tenant_library' as const : 'shared_library' as const,
@@ -160,20 +198,36 @@ export async function taskProductionAssets(input: {
     const type = socialText(record.type) as ProductionAsset['type'];
     let location: Awaited<ReturnType<typeof resolveTaskProductionMaterialLocation>>;
     try {
-      location = await resolveTaskProductionMaterialLocation({
-        tenantId: input.tenantId,
-        record,
-        type,
-        outputDirectory: input.outputDirectory,
-        index,
-        cloudMaterialPort: input.cloudMaterialPort,
-      });
+      if (reviewedFootage.has(socialText(record.id))) {
+        // Render the very bytes admitted above. A short-lived signed URL could
+        // otherwise be replaced after review but before ffmpeg fetches it.
+        const object = await objectStorageDownload(socialText(record.objectKey));
+        const expected = socialText(record.contentSha256).toLowerCase();
+        if (!object || object.contentType !== 'video/mp4' || !/^[a-f0-9]{64}$/.test(expected)
+          || createHash('sha256').update(object.buf).digest('hex') !== expected)
+          throw Error('product_footage_bytes_changed');
+        await fsp.mkdir(input.outputDirectory, { recursive: true, mode: 0o700 });
+        const localPath = path.join(input.outputDirectory,
+          `reviewed-product-footage-${socialRequestHash([input.tenantId, record.id, expected]).slice(0, 24)}.mp4`);
+        await fsp.writeFile(localPath, object.buf, { mode: 0o600 });
+        location = { url: localPath, localPath, sha256: expected };
+      } else {
+        location = await resolveTaskProductionMaterialLocation({
+          tenantId: input.tenantId, record, type,
+          outputDirectory: input.outputDirectory, index,
+          cloudMaterialPort: input.cloudMaterialPort,
+        });
+      }
     } catch {
+      if (reviewedFootage.has(socialText(record.id))) throw new Error('product_footage_material_unreadable');
       // One stale library item must not abort the whole first-content run.
       // Identity and authorization checks still fail closed for that item.
       continue;
     }
-    if (!location.url) continue;
+    if (!location.url) {
+      if (reviewedFootage.has(socialText(record.id))) throw new Error('product_footage_material_unreadable');
+      continue;
+    }
     const explicitlyAssociated = hasExactTaskProductAssociation(record, input.productRef);
     assets.push({
       id: socialText(record.id),
@@ -187,7 +241,8 @@ export async function taskProductionAssets(input: {
       ...(socialText(record.contentSha256 || record.sha256 || location.sha256)
         ? { contentHash: socialText(record.contentSha256 || record.sha256 || location.sha256) }
         : {}),
-      authorizationRef: 'material_library_default',
+      authorizationRef: reviewedFootage.has(socialText(record.id))
+        ? socialText(record.rightsEvidenceRef) : 'material_library_default',
       duration: Math.max(0, Number(record.duration || 0)),
       visualObservations: [record.visualObservations, record.observations]
         .flatMap(value => Array.isArray(value) ? value : [])

@@ -53,6 +53,14 @@ test('digital-human recovery opens the unified presenter onboarding step', () =>
   assert.match(dispatchSource, /requestAnimationFrame\?\.\(openGuide\)/, 'the guide event is repeated after the destination render commits');
 });
 
+test('Ark-specific recovery opens the enterprise presenter certification view', () => {
+  const dispatchSource = source.slice(source.indexOf('function dispatchDeepLink'), source.indexOf('function factTone'));
+  assert.match(dispatchSource, /link\.page === 'enterprise'[\s\S]*taskKey === 'ark_presenter_setup_required'/);
+  assert.match(dispatchSource, /localStorage\.setItem\('lingshu:enterprise:initial-view', 'presenters'\)/);
+  assert.match(dispatchSource, /sessionStorage\.setItem\('lingshu:enterprise:ark-presenter-id'/);
+  assert.match(dispatchSource, /CustomEvent\('lingshu:enterprise-view'/);
+});
+
 test('assistant uses shared Ant controls and the single branded primary action', () => {
   assert.match(source, /from 'antd'/);
   assert.match(source, /<LsBrandAction/);

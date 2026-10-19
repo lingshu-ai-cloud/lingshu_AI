@@ -4,6 +4,9 @@ import { runWeeklyMetricCollectionRecoveryScan } from './weeklyPublicationMetric
 import type { WeeklyMaterialPorts } from '../socialPrograms/weeklyMaterialRequests.js';
 import { checkWeeklyEnterpriseFactSupplement, WEEKLY_ENTERPRISE_FACT_STEPS } from './weeklyEnterpriseFactSupplement.js';
 import { runWeeklyHumanMaterialRecoveryScan } from './weeklyHumanMaterialRecoveryScan.js';
+import { runWeeklyProductionSelectionRecoveryScan } from './weeklyProductionSelectionRecoveryScan.js';
+import { runWeeklyCtaEvidenceRecoveryScan } from './weeklyCtaEvidenceRecoveryScan.js';
+import { runWeeklyPresenterVoiceRecoveryScan } from './weeklyPresenterVoiceRecoveryScan.js';
 import { materializeWeeklyCustomerChannelAuthorizationException, runWeeklyCustomerChannelAuthorizationExceptionScan } from './weeklyCustomerChannelAuthorizationExceptions.js';
 import { materializeWeeklySupplementException, runWeeklySupplementExceptionScan } from './weeklySupplementExceptionMaterializer.js';
 import {weeklyExecutionObservation} from './weeklyExecutionObservation.js';
@@ -13,9 +16,10 @@ import { randomUUID } from 'node:crypto';
 import { SocialProgramError } from '../socialPrograms/service.js';
 import { SocialContentWorkflowError } from '../starter198/socialContentValidation.js';
 import { assertWeeklyPlanningCoverage } from '../socialPrograms/weeklyPlanningCoverage.js';
+import {weeklyPlanningExecutionActor,weeklyPlanningExecutionSelection} from '../socialPrograms/weeklyPlanningTemplateAdoption.js';
 import type { DataStore } from '../storage/datastore.js';
 import { store } from '../storage/index.js';
-import type { WeeklyAgentPlanningState, WeeklyExecutionTask, WeeklyProductionStepKind } from '../../shared/contracts/socialProgram.js';
+import type { WeeklyAgentPlanningState, WeeklyExecutionTask, WeeklyOperatingWorkflowKind, WeeklyProductionStepKind } from '../../shared/contracts/socialProgram.js';
 import { PACKAGES, type PackageRow } from '../socialPrograms/weeklyOperatingPackageSupport.js';
 import { WEEKLY_AGENT_PLANNING } from '../socialPrograms/planningAuthority.js';
 import { ownedDiagnosisReady } from '../socialPrograms/ownedReferenceDiagnosis.js';
@@ -29,15 +33,16 @@ import {readIndependentAdmission} from '../socialPrograms/weeklyIndependentAdmis
 import {runWeeklyIndependentPreproductionRecovery} from './weeklyIndependentPreproductionRecovery.js';
 
 export const WEEKLY_PREPRODUCTION_STEPS: WeeklyProductionStepKind[] = ['business_outline', 'benchmark_collection', 'benchmark_scoring', 'director_analysis', 'business_schedule'];
+export type WeeklyTrustedPreproductionPorts=Omit<Parameters<typeof runWeeklyPreproductionProducerScan>[0], 'store' | 'now'>;
 
 /** Reconcile work already performed before formal dispatch against its frozen authority. */
-export function createSocialWeeklyPlanningAdapter(dataStore: DataStore): SocialWeeklyExecutionAdapter {
+export function createSocialWeeklyPlanningAdapter(dataStore: DataStore,exactAnalysisPortsForRun?:import('./weeklyPreproductionProducer.js').WeeklyExactSettlementPortsForRun): SocialWeeklyExecutionAdapter {
   return { async execute(task) {
     const packages = await dataStore.list<PackageRow>(PACKAGES, { where: { tenant_id: task.tenantId, program_id: task.programId, package_id: task.packageId, version: task.packageVersion }, page: 1, perPage: 1 });
     const pkg = packages.items[0]?.payload;
     if (!pkg || !['draft', 'active'].includes(pkg.status) || pkg.packageId !== task.packageId || pkg.version !== task.packageVersion) return { status: 'blocked', code: 'weekly_package_not_executable', message: '本周任务包已被替代、停用或不存在。' };
     if(['business_outline','benchmark_collection'].includes(task.schedule.stepKind)){
-      const producer=await readWeeklyPreproductionExecutionGate(dataStore,task);
+      const producer=await readWeeklyPreproductionExecutionGate(dataStore,task,exactAnalysisPortsForRun);
       if(producer.ready)return {status:'succeeded',resultRefs:producer.resultRefs};
     }
     if(task.schedule.stepKind==='business_outline'&&pkg.socialContentPackage?.publicationTasks?.length&&pkg.socialContentPackage.publicationTasks.every(p=>p.inventoryReuseRef)){
@@ -51,7 +56,7 @@ export function createSocialWeeklyPlanningAdapter(dataStore: DataStore): SocialW
     const plan = rows.items[0]?.payload;
     const blocked = (code: string, message: string): WeeklyExecutionAdapterResult => ({ status: 'blocked', code, message });
     if (!plan || plan.packageId !== task.packageId || plan.packageVersion !== task.packageVersion
-      || plan.status !== 'dispatched' || !plan.userConfirmation || !plan.dispatch || !plan.detailedSchedule
+      || plan.status !== 'dispatched' || !weeklyPlanningExecutionActor(plan) || !plan.dispatch || !plan.detailedSchedule
       || plan.dispatch.packageVersion !== task.packageVersion
       || plan.dispatch.detailedScheduleRef.id !== plan.detailedSchedule.ref.id
       || plan.dispatch.detailedScheduleRef.version !== plan.detailedSchedule.ref.version) {
@@ -61,7 +66,7 @@ export function createSocialWeeklyPlanningAdapter(dataStore: DataStore): SocialW
     if (!WEEKLY_PREPRODUCTION_STEPS.includes(step)) return blocked('weekly_step_adapter_unavailable', '该步骤没有可用执行适配器。');
     const coverage = plan.dispatch.coverage;
     if (coverage) {
-      try { assertWeeklyPlanningCoverage(plan, coverage, plan.userConfirmation.selectedSlotIds); }
+      try { assertWeeklyPlanningCoverage(plan, coverage, weeklyPlanningExecutionSelection(plan)??[]); }
       catch (error) { if (error instanceof SocialProgramError) return blocked(error.code, error.message); throw error; }
       if (JSON.stringify(plan.detailedSchedule.coverage) !== JSON.stringify(coverage)) return blocked('weekly_partial_coverage_changed', '实际派单与确认排期的视频范围不一致。');
       if (task.publicationTaskId && (!plan.skeleton.slots.some(slot => coverage.selectedSlotIds.includes(slot.slotId) && slot.publicationTaskIds.includes(task.publicationTaskId!)) || !plan.dispatch.scheduleItems.some(item => item.publicationTaskId === task.publicationTaskId))) return blocked('weekly_slot_not_dispatched', '此条目尚未确认派单，保留原来源配额等待补齐。');
@@ -100,20 +105,37 @@ export async function runSocialWeeklyExecutionScan(input: {
   scope?:WeeklyScanScope;
   readRecoveryEvidence?: DeadlineRecoveryEvidenceReader;
   humanMaterialPorts?: WeeklyMaterialPorts;
-  preproductionPorts?: Omit<Parameters<typeof runWeeklyPreproductionProducerScan>[0], 'store' | 'now'>;
+  preproductionPorts?: WeeklyTrustedPreproductionPorts;
   metricRecoveryPorts?: Omit<Parameters<typeof runWeeklyMetricCollectionRecoveryScan>[0], 'store' | 'now'>;
 }) {
   const dataStore = input.dataStore ?? store;
+  const trace=(phase:string)=>{if(process.env.LINGSHU_WEEKLY_SCAN_TRACE==='1')console.log('[weekly-scan-trace]',phase);};
+  trace('preproduction:start');
   const preproduction = await runWeeklyPreproductionProducerScan({ ...input.preproductionPorts, store: dataStore, now: input.now,scope:input.scope });
-  const preproductionRecovery = await runWeeklyIndependentPreproductionRecovery({ store: dataStore, now: input.now, scope: input.scope });
+  trace('preproduction:finish');
+  const exactAnalysisPortsForRun=input.preproductionPorts?.candidatePorts?.exactAnalysisPortsForRun;
+  const preproductionRecovery = await runWeeklyIndependentPreproductionRecovery({ store: dataStore, now: input.now, scope: input.scope, exactAnalysisPortsForRun });
+  trace('preproduction-recovery:finish');
   const metricRecovery = await runWeeklyMetricCollectionRecoveryScan({ ...input.metricRecoveryPorts, store: dataStore, now: input.now,scope:input.scope });
+  trace('metric-recovery:finish');
   const templateRecovery = await runWeeklyTemplateExtractionRecoveryScan({ store: dataStore, now: input.now,scope:input.scope });
+  trace('template-recovery:finish');
   const deadlineRecovery = await runWeeklyDeadlineRecoveryScan({ dataStore, now: input.now, readEvidence: input.readRecoveryEvidence,scope:input.scope });
+  trace('deadline-recovery:finish');
   const supplementRecovery = await runWeeklySupplementExceptionScan({ store: dataStore, now: input.now,scope:input.scope });
+  trace('supplement-recovery:finish');
   const customerAuthorizationRecovery = await runWeeklyCustomerChannelAuthorizationExceptionScan({ store: dataStore, now: input.now,scope:input.scope });
+  trace('customer-recovery:finish');
   const humanMaterialRecovery = await runWeeklyHumanMaterialRecoveryScan({ store: dataStore, now: input.now, materialPorts: input.humanMaterialPorts,scope:input.scope });
-  const worker = createSocialWeeklyExecutionWorker(dataStore);
-  const planningAuthority = createSocialWeeklyPlanningAdapter(dataStore);
+  trace('human-material-recovery:finish');
+  const productionSelectionRecovery = await runWeeklyProductionSelectionRecoveryScan({store:dataStore,scope:input.scope});
+  trace('production-selection-recovery:finish');
+  const ctaEvidenceRecovery = await runWeeklyCtaEvidenceRecoveryScan({store:dataStore,scope:input.scope});
+  trace('cta-evidence-recovery:finish');
+  const presenterVoiceRecovery = await runWeeklyPresenterVoiceRecoveryScan({store:dataStore,scope:input.scope});
+  trace('presenter-voice-recovery:finish');
+  const worker = createSocialWeeklyExecutionWorker(dataStore,{exactAnalysisPortsForRun});
+  const planningAuthority = createSocialWeeklyPlanningAdapter(dataStore,exactAnalysisPortsForRun);
   const workerId = input.workerId ?? `weekly-execution-${process.pid}-${randomUUID()}`;
   const tenants = new Set<string>();
   // Pagination matters: one large tenant must not starve later tenants.
@@ -125,12 +147,18 @@ export async function runSocialWeeklyExecutionScan(input: {
     }
   }
   const report = { claimed: 0, succeeded: 0, pending: 0, blocked: 0, failed: 0, projectionFailed:0 };
+  let scopedKinds:WeeklyOperatingWorkflowKind[]|undefined;
+  if(input.scope){
+    const packages=await dataStore.list<PackageRow>(PACKAGES,{where:{tenant_id:input.scope.tenantId,program_id:input.scope.programId,package_id:input.scope.packageId,version:input.scope.packageVersion},perPage:2});
+    const pkg=packages.items[0]?.payload;
+    if(packages.totalItems===1&&pkg?.status==='draft'&&await readIndependentAdmission(dataStore,input.scope))scopedKinds=['readiness','discovery','directing','content'];
+  }
   for (const tenantId of tenants) {
     for (let count = 0; count < (input.maxTasksPerTenant ?? 25); count++) {
       // Local JSON reads resolve synchronously; a long chain of resolved
       // promises otherwise starves HTTP/health timers while scanning a week.
       await new Promise<void>(resolve=>setImmediate(resolve));
-      let claim = await worker.claimNext({ tenantId, workerId, now: input.now, leaseDurationMs: input.leaseDurationMs ?? 120_000,scope:input.scope });
+      let claim = await worker.claimNext({ tenantId, workerId, now: input.now, leaseDurationMs: input.leaseDurationMs ?? 120_000,scope:input.scope,kinds:scopedKinds });
       if (!claim) break;
       report.claimed++;
       let lostLease: unknown;
@@ -150,14 +178,17 @@ export async function runSocialWeeklyExecutionScan(input: {
           if(['customer_channel_readiness','customer_inquiry_handoff'].includes(claim.task.schedule.stepKind)){
             const rows=await dataStore.list<PackageRow>(PACKAGES,{where:{tenant_id:claim.task.tenantId,program_id:claim.task.programId,package_id:claim.task.packageId,version:claim.task.packageVersion},perPage:2});
             const pkg=rows.items[0]?.payload;
-            const independent=pkg?.status==='draft'&&await readIndependentAdmission(dataStore,claim.task);
-            dispatchGate=rows.totalItems===1&&(pkg?.status==='active'||independent)?{status:'succeeded',resultRefs:[]}:{status:'blocked',code:'weekly_package_not_executable',message:'客服任务所属周包尚未启用或已停用。'};
+            // Independent preproduction admissions are deliberately typed with
+            // authorizeMessaging:false. Customer work remains dormant until
+            // the package is formally active; a draft cannot borrow the
+            // production opt-in as customer-message authority.
+            dispatchGate=rows.totalItems===1&&pkg?.status==='active'?{status:'succeeded',resultRefs:[]}:{status:'blocked',code:'weekly_package_not_executable',message:'客服任务所属周包尚未启用或未取得消息权限。'};
           }else{
             const {readWeeklyInventoryExecutionGate}=await import('./weeklyInventoryOutlineEvidence.js');const inventoryGate=await readWeeklyInventoryExecutionGate(dataStore,claim.task);inventoryGateReady=Boolean(inventoryGate);dispatchGate=inventoryGate?{status:'succeeded',resultRefs:inventoryGate.resultRefs}:await planningAuthority.execute({ ...claim.task, accountId: null, inputSnapshot: {}, schedule: { ...claim.task.schedule, stepKind: 'business_outline' } });
             // Bound, verified preproduction is necessarily before formal
             // dispatch. Do not make collection wait for its own downstream.
             if(!inventoryGateReady&&['business_outline','benchmark_collection'].includes(claim.task.schedule.stepKind)){
-              const producer=await readWeeklyPreproductionExecutionGate(dataStore,claim.task);
+              const producer=await readWeeklyPreproductionExecutionGate(dataStore,claim.task,exactAnalysisPortsForRun);
               if(producer.ready)dispatchGate={status:'succeeded',resultRefs:producer.resultRefs};
             }
           }
@@ -168,7 +199,7 @@ export async function runSocialWeeklyExecutionScan(input: {
           if (facts.applicable && !facts.ready) dispatchGate = { status: 'blocked', code: facts.code, message: facts.reason };
         }
         if (dispatchGate.status === 'succeeded' && !inventoryGateReady && ['business_outline', 'benchmark_collection'].includes(claim.task.schedule.stepKind)) {
-          const preproductionGate = await readWeeklyPreproductionExecutionGate(dataStore, claim.task);
+          const preproductionGate = await readWeeklyPreproductionExecutionGate(dataStore, claim.task,exactAnalysisPortsForRun);
           if (!preproductionGate.ready) dispatchGate = { status: 'blocked', code: preproductionGate.code ?? 'weekly_preproduction_evidence_required', message: '前置经营或采集尚缺绑定原任务的正式执行证据。' };
         }
         const continuationPending = claim.task.inputSnapshot.weeklyContinuationPending;
@@ -216,19 +247,19 @@ export async function runSocialWeeklyExecutionScan(input: {
     }
   }
   const humanMaterialAfterExecution = await runWeeklyHumanMaterialRecoveryScan({ store: dataStore, now: input.now, materialPorts: input.humanMaterialPorts,scope:input.scope });
-  return { ...report, preproduction, preproductionRecovery, metricRecovery, templateRecovery, deadlineRecovery, supplementRecovery, customerAuthorizationRecovery, humanMaterialRecovery, humanMaterialAfterExecution };
+  return { ...report, preproduction, preproductionRecovery, metricRecovery, templateRecovery, deadlineRecovery, supplementRecovery, customerAuthorizationRecovery, humanMaterialRecovery, productionSelectionRecovery, ctaEvidenceRecovery, presenterVoiceRecovery, humanMaterialAfterExecution };
 }
 
 let timer: ReturnType<typeof setInterval> | null = null;
 let running = false;
-export function initSocialWeeklyExecutionRuntime(adapters: Partial<Record<WeeklyProductionStepKind, SocialWeeklyExecutionAdapter>>, options: { readRecoveryEvidence?: DeadlineRecoveryEvidenceReader } = {}): void {
+export function initSocialWeeklyExecutionRuntime(adapters: Partial<Record<WeeklyProductionStepKind, SocialWeeklyExecutionAdapter>>, options: { readRecoveryEvidence?: DeadlineRecoveryEvidenceReader; preproductionPorts?:WeeklyTrustedPreproductionPorts } = {}): void {
   if(timer)return;
   if(process.env.SOCIAL_WEEKLY_EXECUTION_WORKER_ENABLED!=='true'){weeklyExecutionObservation.initialize(false);return;}
   const workerId = `weekly-execution-${process.pid}-${randomUUID()}`;
   const tick = () => {
     if (running) return;
     running = true;
-    void weeklyExecutionObservation.scan(()=>runSocialWeeklyExecutionScan({ adapters, workerId, readRecoveryEvidence: options.readRecoveryEvidence })).catch(error => console.error('[social-weekly-execution] scan unavailable:', error instanceof Error ? error.message : String(error))).finally(() => { running = false; });
+    void weeklyExecutionObservation.scan(()=>runSocialWeeklyExecutionScan({ adapters, workerId, readRecoveryEvidence: options.readRecoveryEvidence,preproductionPorts:options.preproductionPorts })).catch(error => console.error('[social-weekly-execution] scan unavailable:', error instanceof Error ? error.message : String(error))).finally(() => { running = false; });
   };
   timer = setInterval(tick, Math.max(1_000, Number(process.env.SOCIAL_WEEKLY_EXECUTION_INTERVAL_MS) || 15_000));
   timer.unref?.();

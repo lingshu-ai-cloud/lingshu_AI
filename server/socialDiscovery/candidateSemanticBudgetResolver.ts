@@ -20,10 +20,14 @@ export interface CandidateSemanticBudgetResolverPorts {
 
 const sha=(value:string)=>createHash('sha256').update(value).digest('hex');
 const fail=(code:string):never=>{throw Error(`candidate_semantic_budget_${code}`);};
+/** Qwen3-VL-Plus publishes 260,096 maximum input tokens; 262,144 is the
+ * combined context, not an executable input allowance. Keep output headroom. */
+export const QWEN3_VL_SEMANTIC_MAX_INPUT_TOKENS=260096;
+const QWEN3_VL_SEMANTIC_MAX_REQUEST_BYTES=240000;
 
-/** Text-only Qwen requests have no image-token ambiguity. We reserve the
- * documented full input context instead of estimating tokens from characters;
- * the supplier request is therefore always bounded by the quoted reservation. */
+/** Text-only Qwen requests have no image-token ambiguity. Reserve the
+ * documented maximum input (not the larger combined context) and keep the
+ * serialized request below it with framing headroom. */
 export async function measureCandidateSemanticInputUpperBound(body:Record<string,unknown>){
   if(!Array.isArray(body.messages))throw Error('candidate_semantic_budget_request_shape_unsupported');
   const messages = body.messages;
@@ -32,8 +36,8 @@ export async function measureCandidateSemanticInputUpperBound(body:Record<string
     ||Object.keys(body).some(key=>!['model','messages','temperature','response_format','max_tokens'].includes(key)))fail('request_shape_unsupported');
   const message=messages[0] as Record<string,unknown>;
   if(!message||message.role!=='user'||typeof message.content!=='string'||Object.keys(message).some(key=>!['role','content'].includes(key)))fail('request_shape_unsupported');
-  const ceiling=String(body.model).startsWith('qwen-vl-max')?129024:262144;
-  if(Buffer.byteLength(JSON.stringify(body),'utf8')>ceiling)fail('request_exceeds_context');
+  const ceiling=String(body.model).startsWith('qwen-vl-max')?129024:QWEN3_VL_SEMANTIC_MAX_INPUT_TOKENS;
+  if(Buffer.byteLength(JSON.stringify(body),'utf8')>Math.min(ceiling,QWEN3_VL_SEMANTIC_MAX_REQUEST_BYTES))fail('request_exceeds_context');
   return ceiling;
 }
 
@@ -59,7 +63,7 @@ export async function resolveCandidateSemanticPaidCall(input:{store:DataStore;te
   const accountRef=`qwen:${sha(JSON.stringify({baseUrl:binding.baseUrl.replace(/\/+$/,''),credentialSha256:binding.credentialSha256}))}`;
   const operationId=`candidate-semantic:${context.assessmentId}`;
   const scope={tenantId,taskId,runId:`candidate-context:${taskId}`,planHash:socialRequestHash({taskId,contextHash:context.recordHash,operationId})};
-  const intent:SocialPaidOperationIntent={operationId,provider:'qwen',model:binding.materialModel,accountRef,stage:'candidate_context_semantic',shotId:null,inputContractHash:context.recordHash,maximumUnits:{inputTokens:binding.materialModel.startsWith('qwen-vl-max')?129024:262144,outputTokens:1600}};
+  const intent:SocialPaidOperationIntent={operationId,provider:'qwen',model:binding.materialModel,accountRef,stage:'candidate_context_semantic',shotId:null,inputContractHash:context.recordHash,maximumUnits:{inputTokens:binding.materialModel.startsWith('qwen-vl-max')?129024:QWEN3_VL_SEMANTIC_MAX_INPUT_TOKENS,outputTokens:1600}};
   const plan={scope,authorizationRef:`task-budget:${initial.authorityHash}`,maximumCny:initial.amount,paidOperations:[intent]};
   const assertCurrent=async()=>{const current=await readTask();if(current.authorityHash!==initial.authorityHash||current.amount!==initial.amount)fail('task_authority_changed');};
   const durable=createSocialContentVerifiedTariffReader(store,tenantId),published=createSocialContentLocalPublishedTariffReader({readProviderBinding:async candidate=>candidate.operationId===operationId?{provider:'qwen',model:binding.materialModel,baseUrl:binding.baseUrl,credentialSha256:binding.credentialSha256}:null});

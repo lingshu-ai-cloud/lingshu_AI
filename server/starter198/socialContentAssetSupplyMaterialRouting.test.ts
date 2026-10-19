@@ -9,6 +9,13 @@ import { parseSocialTaskBrief } from './socialContentRecords.js';
 import { materialRoutingRequests } from './socialContentMaterialRoutingRequests.js';
 import { normalizeSceneVisualContract } from '../../shared/sceneVisualContract.js';
 import { buildLocalMaterialSegmentProfile, inferLocalMaterialSegmentType } from '../../shared/contracts/localMaterialSegmentProfile.js';
+import { mkdtemp, readFile, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import path from 'node:path';
+import { createHash } from 'node:crypto';
+import { execFile } from 'node:child_process';
+import { promisify } from 'node:util';
+import ffmpeg from 'ffmpeg-static';
 const baseline = {schemaVersion:'social-content-script-baseline.v1',version:'route-fixture',source:'knowledge_fallback',formulaReference:null,themeId:null,language:'en',lockedAt:'2026-10-11T00:00:00Z',createdBeforeMaterialAdaptation:true,scenes:[{sceneId:'S01',formulaNodeId:null,shotFunction:'value',subject:'product',action:'demonstrate',voiceover:'Meet the product.',narration:'Meet the product.'}]} as StoredSocialScriptBaseline;
 function plan(type:'factory'|'product'|'consumer_demo',state:'matched'|'missing'='matched') {
  const result=createSocialAssetSupplyPlan({creationMode:'viral_replication',productionApproach:'ai_enhanced',inventory:{productImageIds:['actual-product-image']},shots:[{shotId:'S01',function:'value',requestedDescription:'Product scene'}]});
@@ -61,6 +68,26 @@ test('actual versioned planner and existing library adapter preserve reviewed pr
  const asset={id:'real-video',sourceId:'real-video',name:'owned product video',type:'video',url:'local',localPath:'local',duration:10,visualObservations:['real product demonstration'],segments:[{id:'unrelated-segment',start:0,end:2},{id:'reviewed-segment',start:4,end:7}]} as any;
  const result=await executeSocialAssetSupplyPlan({tenantId:'tenant',taskId:'task',outputDirectory:'/tmp/local-no-paid',plan:p,baseline,availableAssets:[asset],adapters:existingAssetSupplyAdapters()});
  assert.equal(result.plan.materialRoutingPolicyVersion,'type-aware.v1');assert.equal(result.execution.shots[0]!.sourceStrategy,'customer_real_asset');assert.deepEqual(result.assets[0]!.segments,[{id:'reviewed-segment',start:4,end:7}]);assert.equal(result.execution.shots[0]!.attempts.length,1);
+});
+test('same-product authorized local MP4 bytes satisfy the product route without generation',async t=>{
+ assert.ok(ffmpeg);
+ const directory=await mkdtemp(path.join(tmpdir(),'weekly-local-product-'));
+ t.after(()=>rm(directory,{recursive:true,force:true}));
+ const video=path.join(directory,'owned-product.mp4');
+ await promisify(execFile)(ffmpeg,['-hide_banner','-loglevel','error','-f','lavfi','-i','color=c=blue:s=160x284:r=12','-t','3','-c:v','libx264','-pix_fmt','yuv420p','-y',video]);
+ const sha=createHash('sha256').update(await readFile(video)).digest('hex');
+ const p=plan('product');
+ const shot=p.shots[0]!;
+ shot.sourceRefs=['real-video'];
+ shot.materialRouting!.localMatch={state:'matched',sourceRefs:['real-video'],evidenceRef:`isolated-reviewed-same-product:${sha}`,productRef:'product'};
+ const asset={id:'real-video',sourceId:'real-video',name:'isolated same-product local bytes',type:'video' as const,url:video,localPath:video,contentHash:sha,authorizationRef:'isolated-owner-commercial-rights',duration:3,visualObservations:['isolated product fixture'],segments:[{id:'same-product',start:0,end:3}],explicitProductAssociation:{productRef:'product',basis:'tenant_task_upload' as const,exactTaskProductMatch:true as const}};
+ const {existingAssetSupplyAdapters}=await import('./socialContentProductionSupport.js');
+ let generated=0;
+ const result=await executeSocialAssetSupplyPlan({tenantId:'tenant',taskId:'task',outputDirectory:directory,plan:p,baseline,availableAssets:[asset],adapters:[...existingAssetSupplyAdapters(),{adapterId:'forbid-product-generation',sourceStrategies:['aigc_product_scene_replication'],async execute(){generated++;throw Error('nonlocal generation forbidden');}}]});
+ assert.equal(result.execution.shots[0]?.sourceStrategy,'customer_real_asset');
+ assert.equal(result.assets[0]?.contentHash,sha);
+ assert.equal(result.assets[0]?.authorizationRef,asset.authorizationRef);
+ assert.equal(generated,0);
 });
 test('mismatched generation duration stops before any paid adapter',async()=>{
  const p=plan('product','missing');p.shots[0]!.productSceneReplication!.cameraLock.durationSeconds=4;let paid=0;

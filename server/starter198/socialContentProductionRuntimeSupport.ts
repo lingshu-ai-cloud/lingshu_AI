@@ -359,7 +359,6 @@ export async function failExecution(input: {
   const completedArtifact = detail?.artifacts.some(artifact => artifact.origin === 'agent'
     && artifact.kind === 'short_video'
     && !['superseded', 'changes_requested'].includes(artifact.status));
-  if (completedArtifact && !pendingRevision) return;
   const rawMessage = String(input.error instanceof Error ? input.error.message : input.error || '自动成片失败').slice(0, 800);
   // Durable queue callbacks prefix blocked errors with
   // "<failure-class>:<public reason>:". Inspect the preserved root cause so
@@ -368,11 +367,16 @@ export async function failExecution(input: {
   const failureClass = classifiedBlock?.[1] ?? '';
   const publicReason = classifiedBlock?.[2]?.trim() ?? '';
   const rootMessage = (classifiedBlock?.[3] ?? rawMessage).trim();
+  const graphQualityFailed = rootMessage.startsWith('social_graph_quality_failed:');
+  // A failed QA candidate is intentionally saved for repair, but is not a
+  // completed reviewable artifact. Other completed artifacts retain the old
+  // protection against late worker failures rewriting their state.
+  if (completedArtifact && !pendingRevision && !graphQualityFailed) return;
   const needsMaterial = rootMessage.startsWith('production_input_required:');
   const needsUserInput = rootMessage.startsWith('user_input_required:');
   const directorRevisionFailed = rootMessage.startsWith('director_revision_required:');
   const needsAttention = Boolean(failureClass) || needsMaterial || needsUserInput || directorRevisionFailed;
-  const failureDetail = rootMessage.replace(/^(?:production_input_required|user_input_required|director_revision_required):/, '').trim();
+  const failureDetail = rootMessage.replace(/^(?:production_input_required|user_input_required|director_revision_required|social_graph_quality_failed):/, '').trim();
   const message = publicReason && !failureDetail.startsWith(publicReason)
     ? `${publicReason}：${failureDetail}`
     : failureDetail || publicReason || '任务需要处理后才能继续';
@@ -397,7 +401,8 @@ export async function failExecution(input: {
     },
   }).catch(() => undefined);
   const record = await requireSocialTask(input).catch(() => null);
-  if (record && socialText(record.status) === 'producing') {
+  if (record && (socialText(record.status) === 'producing'
+    || graphQualityFailed && socialText(record.status) === 'asset_review')) {
     await input.repository.update(STARTER_COLLECTIONS.socialContentTasks, input.tenantId, record.id, {
       // Both governed user decisions and exhausted production-input fallbacks
       // are durable blockers. Reporting either as an automatically resumable

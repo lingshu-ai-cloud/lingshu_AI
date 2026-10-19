@@ -4,10 +4,11 @@ import type { DataStore, ListQuery, ListResult, Record_ } from '../storage/datas
 import { DURABLE_OPERATION_LEASE_COLLECTION } from '../runtime/durableLease.js';
 import { createSocialWeeklyExecutionWorker } from '../runtime/socialWeeklyExecutionWorker.js';
 import { createSocialProgramService } from './service.js';
-import { planWeeklyExecutionTasks, applyBusinessDispatchToExecutionTasks, createWeeklyExecutionTaskService, WEEKLY_EXECUTION_TASKS, getWeeklyExecutionTaskRow, writeWeeklyExecutionTask, recomputePackageExecution } from './executionTasks.js';
+import { planWeeklyExecutionTasks, applyBusinessDispatchToExecutionTasks, createWeeklyExecutionTaskService, WEEKLY_EXECUTION_TASKS, getWeeklyExecutionTaskRow, writeWeeklyExecutionTask, recomputePackageExecution, summarizeWeeklyExecutionTasks, listWeeklyExecutionTasks } from './executionTasks.js';
 import { createWeeklyOperatingPackageService } from './weeklyOperatingPackages.js';
 import { createSocialOperatingRepository } from '../socialOperating/repository.js';
 import { planWeeklyBackwardSchedule } from './weeklyBackwardSchedule.js';
+import { prepareWeeklyBudgetPolicyMigration } from './weeklyBudgetPolicyMigration.js';
 
 function memoryStore(): DataStore {
   const rows = new Map<string, Record_[]>();
@@ -67,6 +68,30 @@ async function seedCompleted(dataStore: DataStore, task: import('../../shared/co
   await writeWeeklyExecutionTask(dataStore, row, { ...row.payload, status: 'succeeded', lease: null, updatedAt: now.toISOString() });
   await recomputePackageExecution(dataStore, task.tenantId, task.programId, task.packageId, task.packageVersion, now.toISOString(), true);
 }
+
+test('one blocked publication does not project independently runnable weekly siblings as a blocked workflow', () => {
+  const base = {
+    workflowKind: 'content', ownBlockingReasons: [], inheritedBlockingTaskIds: [],
+  } as unknown as import('../../shared/contracts/socialProgram.js').WeeklyExecutionTask;
+  const blocked = { ...base, taskId: 'content-a', publicationTaskId: 'publication-a', status: 'blocked', ownBlockingReasons: ['weekly_item_no_viable_plan_within_budget'] } as typeof base;
+  const sibling = { ...base, taskId: 'content-b', publicationTaskId: 'publication-b', status: 'queued' } as typeof base;
+  const summary = summarizeWeeklyExecutionTasks([blocked, sibling], '2026-10-17T00:00:00.000Z');
+  assert.equal(summary.byStatus.blocked, 1);
+  assert.equal(summary.byStatus.queued, 1);
+  assert.equal(summary.byWorkflow.content, 'in_progress');
+});
+
+test('a weekly workflow becomes blocked only when no sibling item remains runnable', () => {
+  const base = {
+    workflowKind: 'content', ownBlockingReasons: [], inheritedBlockingTaskIds: [],
+  } as unknown as import('../../shared/contracts/socialProgram.js').WeeklyExecutionTask;
+  const tasks = [
+    { ...base, taskId: 'content-a', publicationTaskId: 'publication-a', status: 'blocked', ownBlockingReasons: ['weekly_item_no_viable_plan_within_budget'] },
+    { ...base, taskId: 'content-b', publicationTaskId: 'publication-b', status: 'blocked', ownBlockingReasons: ['asset_unavailable'] },
+  ] as typeof base[];
+  assert.equal(summarizeWeeklyExecutionTasks(tasks).byWorkflow.content, 'blocked');
+  assert.equal(summarizeWeeklyExecutionTasks([tasks[0]!, { ...base, taskId: 'content-b', publicationTaskId: 'publication-b', status: 'succeeded' } as typeof base]).byWorkflow.content, 'blocked');
+});
 
 async function fixture(sharedFourPlatforms=false,independentOriginals=false) {
   const dataStore = memoryStore();
@@ -141,6 +166,61 @@ test('preparation can precede the operating week and publication follows its zon
   assert(Date.parse(approval.schedule.estimatedFinishAt) <= Date.parse(approval.schedule.latestFinishAt!));
   const late = planWeeklyExecutionTasks('tenant-a', draft, '2026-10-05T03:00:00Z');
   assert(late.find(task => task.taskId === publishing.taskId)!.schedule.planningRisks!.includes('publication_deadline_at_risk'));
+});
+
+test('weekly production task budgets respect ten yuan per film despite a 240 yuan weekly ceiling',async()=>{
+ const {draft}=await fixture(true);
+ const four=structuredClone(draft.socialContentPackage.publicationTasks);
+ draft.socialContentPackage.publicationTasks=Array.from({length:4},(_,group)=>four.map(publication=>({...structuredClone(publication),publicationTaskId:`${publication.publicationTaskId}-${group}`,motherContentId:`mother-${group}`,adaptationOfPublicationTaskId:publication.adaptationOfPublicationTaskId?`${publication.adaptationOfPublicationTaskId}-${group}`:null}))).flat();
+ draft.socialContentPackage.originalContentTarget=4;
+ draft.socialContentPackage.adaptationVersionTarget=12;
+ draft.socialContentPackage.publicationTaskTarget=16;
+ draft.socialContentPackage.weeklyBudgetCny=240;
+ draft.socialContentPackage.perItemBudgetCny=10;
+ const tasks=planWeeklyExecutionTasks('tenant-a',draft,'2026-10-01T00:00:00Z');
+ assert.equal(draft.socialContentPackage.publicationTasks.length,16);
+ assert.equal(draft.socialContentPackage.weeklyBudgetCny,240);
+ const paid=tasks.filter(task=>task.budget.category==='production');
+ assert(paid.length>0);
+ assert(paid.every(task=>task.budget.limitCny!==null&&task.budget.limitCny<=10));
+ assert(paid.some(task=>task.budget.limitCny===10));
+});
+
+test('full frozen weekly graph migrates legacy 15-yuan production nodes into a fresh 10-yuan graph without activating a consumer',async()=>{
+ const {dataStore,draft,program}=await fixture(true);
+ const four=structuredClone(draft.socialContentPackage.publicationTasks);
+ const pubs=Array.from({length:4},(_,group)=>four.map(publication=>({...structuredClone(publication),publicationTaskId:`${publication.publicationTaskId}-${group}`,motherContentId:`mother-${group}`,adaptationOfPublicationTaskId:publication.adaptationOfPublicationTaskId?`${publication.adaptationOfPublicationTaskId}-${group}`:null}))).flat();
+ const source={...draft,status:'draft' as const,socialContentPackage:{...draft.socialContentPackage,publicationTasks:pubs,originalContentTarget:4,adaptationVersionTarget:12,publicationTaskTarget:16,weeklyBudgetCny:240,perItemBudgetCny:10,authorization:{...draft.socialContentPackage.authorization,allowRealPublishing:false}}};
+ const packageRow=(await dataStore.list<Record_>('social_weekly_operating_packages',{where:{tenant_id:'tenant-a',program_id:program.programId,package_id:draft.packageId,version:1},perPage:2})).items[0]!;
+ await dataStore.update('social_weekly_operating_packages',packageRow.id,{payload:source,status:'draft'});
+ const oldRows=(await dataStore.list<Record_>(WEEKLY_EXECUTION_TASKS,{where:{tenant_id:'tenant-a',program_id:program.programId,package_id:draft.packageId,package_version:1},perPage:500})).items;
+ for(const row of oldRows)await dataStore.delete(WEEKLY_EXECUTION_TASKS,row.id);
+ const oldTasks=planWeeklyExecutionTasks('tenant-a',source,'2026-10-01T00:00:00Z');
+ assert(oldTasks.length>=200,'test must exercise a complete multi-publication weekly graph, not three isolated task stubs');
+ const paidKinds=new Set(['script','asset_generation','video_generation']);
+ for(const task of oldTasks){
+  const legacy={...task,status:'pending_activation' as const,ownBlockingReasons:[],inheritedBlockingTaskIds:[],budget:paidKinds.has(task.schedule.stepKind)?{category:'production' as const,limitCny:15}:task.budget};
+  await dataStore.create(WEEKLY_EXECUTION_TASKS,{tenant_id:task.tenantId,program_id:task.programId,package_id:task.packageId,package_version:task.packageVersion,task_id:task.taskId,idempotency_key:task.idempotencyKey,payload:legacy});
+ }
+ const receipt=await prepareWeeklyBudgetPolicyMigration(dataStore,{tenantId:'tenant-a',actorUserId:'owner',programId:program.programId,packageId:draft.packageId,packageVersion:1},{
+  revise:async(_scope,marker)=>{
+   const next={...structuredClone(source),version:2,previousVersion:1,changeReason:marker};
+   await dataStore.create('social_weekly_operating_packages',{tenant_id:'tenant-a',program_id:program.programId,package_id:draft.packageId,version:2,status:'draft',payload:next});
+   for(const task of planWeeklyExecutionTasks('tenant-a',next,'2026-10-01T00:00:00Z'))await dataStore.create(WEEKLY_EXECUTION_TASKS,{tenant_id:task.tenantId,program_id:task.programId,package_id:task.packageId,package_version:task.packageVersion,task_id:task.taskId,idempotency_key:task.idempotencyKey,payload:task});
+   return 2;
+  },
+  schedule:async()=>({status:'blocked',targetVersion:null}),
+ });
+ assert.equal(receipt.state,'schedule_blocked');assert.equal(receipt.revisedVersion,2);
+ const fresh=await listWeeklyExecutionTasks(dataStore,'tenant-a',program.programId,draft.packageId,2);
+ assert.equal(fresh.length,oldTasks.length,'migration preserves the complete graph shape');
+ const production=fresh.filter(task=>paidKinds.has(task.schedule.stepKind));
+ assert.equal(production.length,12);
+ assert(production.every(task=>task.budget.category==='production'&&task.budget.limitCny!==null&&task.budget.limitCny<=10));
+ assert(fresh.every(task=>task.status==='pending_activation'||task.status==='blocked'));
+ assert.equal((await dataStore.list('social_local_weekly_consumers',{where:{tenant_id:'tenant-a',package_id:draft.packageId,package_version:2}})).totalItems,0);
+ const preserved=await listWeeklyExecutionTasks(dataStore,'tenant-a',program.programId,draft.packageId,1);
+ assert.equal(preserved.filter(task=>paidKinds.has(task.schedule.stepKind)&&task.budget.limitCny===15).length,12);
 });
 
 test('weekly execution tasks freeze the full worker contract and aggregate real state', async () => {
@@ -255,6 +335,10 @@ test('cold-start Z and established H generate distinct executable chain identiti
   const scoring=historical.filter(task=>task.schedule.stepKind==='benchmark_scoring');
   assert.equal(scoring.filter(task=>task.inputSnapshot.referenceSource==='owned').length,2);
   assert.equal(scoring.filter(task=>task.inputSnapshot.referenceSource==='external').length,3);
+  const externalCollections=historical.filter(task=>task.schedule.stepKind==='benchmark_collection');
+  assert.equal(externalCollections.length,3,'owned-only days cannot create orphan paid collection');
+  assert.deepEqual(externalCollections.map(task=>task.inputSnapshot.rollingDate).sort(),['2026-10-08','2026-10-09','2026-10-10']);
+  assert.ok(externalCollections.every(task=>scoring.some(child=>child.dependsOnTaskIds.includes(task.taskId))));
   const readiness=historical.find(task=>task.schedule.stepKind==='business_outline')!;
   assert.ok(scoring.filter(task=>task.inputSnapshot.referenceSource==='owned').every(task=>task.dependsOnTaskIds.length===1&&task.dependsOnTaskIds[0]===readiness.taskId));
   assert.ok(scoring.filter(task=>task.inputSnapshot.referenceSource==='external').every(task=>task.dependsOnTaskIds.some(id=>historical.find(candidate=>candidate.taskId===id)?.schedule.stepKind==='benchmark_collection')));
@@ -300,6 +384,28 @@ test('each publication day receives fresh incremental discovery and its own feed
   const feedback=tasks.filter(task=>task.schedule.stepKind==='performance_monitoring');
   assert.equal(feedback.length,draft.socialContentPackage.publicationTasks.length);
   assert.ok(feedback.every(task=>task.publicationTaskId&&task.inputSnapshot.rollingCadence==='daily_feedback'&&task.inputSnapshot.feedsNextDailyCollection===true));
+});
+
+test('accepted weekly template can collect benchmarks before publish windows exist without inventing outbound authority',async()=>{
+  const {draft}=await fixture();
+  for(const publication of draft.socialContentPackage.publicationTasks) publication.publishWindow=null;
+  const first=planWeeklyExecutionTasks('tenant-a',draft,'2026-10-01T00:00:00Z');
+  const repeated=planWeeklyExecutionTasks('tenant-a',draft,'2026-10-01T00:00:00Z');
+  const discovery=first.filter(task=>task.schedule.stepKind==='benchmark_collection');
+  const scoring=first.filter(task=>task.schedule.stepKind==='benchmark_scoring');
+  assert.equal(discovery.length,1,'one account receives one stable planning-day collection');
+  assert.equal(discovery[0]!.inputSnapshot.rollingDate,draft.weekStart);
+  assert.ok(scoring.every(task=>task.inputSnapshot.rollingDate===draft.weekStart));
+  assert.ok(scoring.every(task=>task.dependsOnTaskIds.includes(discovery[0]!.taskId)));
+  assert.deepEqual(first.map(task=>task.taskId),repeated.map(task=>task.taskId),'planning identities are deterministic');
+  assert.ok(draft.socialContentPackage.publicationTasks.every(publication=>publication.publishWindow===null));
+  assert.ok(first.filter(task=>task.schedule.stepKind==='publishing').every(task=>task.ownBlockingReasons.includes('publish_window_required')));
+  const customer=first.filter(task=>['customer_channel_readiness','customer_inquiry_handoff'].includes(task.schedule.stepKind));
+  assert.equal(customer.length,draft.socialContentPackage.publicationTasks.length*6);
+  assert.ok(customer.every(task=>task.inputSnapshot.calendarAssignmentDate===draft.weekStart));
+  assert.ok(customer.every(task=>task.schedule.latestFinishAt!==null));
+  assert.ok(customer.filter(task=>task.schedule.stepKind==='customer_inquiry_handoff').every(task=>task.schedule.latestFinishAt===`${draft.weekStart}T16:00:00.000Z`));
+  assert.ok(first.filter(task=>task.schedule.stepKind==='publishing').every(task=>task.schedule.latestFinishAt===null));
 });
 
 test('worker leases, retries, dead letters and explicit recovery are durable', async () => {
@@ -398,7 +504,7 @@ test('expired leases are reclaimed with fencing and local blocks do not stop sib
   assert.equal(tasks.find(task => task.taskId === publications[0]!.taskId)!.status, 'blocked');
   assert.equal(tasks.find(task => task.taskId === publications[1]!.taskId)!.status, 'queued');
   const packageView = await packages.get('tenant-a', program.programId, draft.packageId);
-  assert.equal(packageView.executionSummary!.byWorkflow.publishing, 'blocked');
+  assert.equal(packageView.executionSummary!.byWorkflow.publishing, 'in_progress');
   assert.ok(packageView.workflows.find(item => item.kind === 'publishing')!.blockingReasons.includes('account_review_required'));
 });
 

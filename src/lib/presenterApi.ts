@@ -68,6 +68,6 @@ export const presenterApi = {
   create: (body: { name: string; type: 'photo' | 'digital_twin'; voiceId?: string; uploadId: string; requestId: string; authorized: boolean; adultConfirmed: boolean; confirmed: boolean; reusePresenterId?: string; samePersonConfirmed?: boolean; arkPreparation?: ArkPresenterPreparation }) => request<PresenterCreation>('/creations', body),
   refresh: (id: string) => request<PresenterCreation>(`/creations/${encodeURIComponent(id)}/refresh`, {}),
   consent: (id: string, requestId: string, uploadId?: string, rerouteUrl?: string) => request<PresenterCreation>(`/creations/${encodeURIComponent(id)}/consent`, { requestId, uploadId, rerouteUrl }),
-  import: (body: { lookId?: string; creationId?: string; name?: string; voiceId?: string; reviewed: boolean; authorized?: boolean; makeDefault?: boolean }) => request<ProductionDefaults>('/import', body),
+  import: (body: { lookId?: string; creationId?: string; name?: string; voiceId?: string; reviewed: boolean; authorized?: boolean; adultConfirmed?: boolean; makeDefault?: boolean }) => request<ProductionDefaults>('/import', body),
   revoke: (presenterId: string) => request<ProductionDefaults>('/revoke', { presenterId }),
 };

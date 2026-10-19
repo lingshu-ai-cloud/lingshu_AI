@@ -27,6 +27,7 @@ import {
 import { classifyContentExecutionFailure } from './retryPolicy.js';
 import { generateSeedanceConceptVideo } from '../lib/generativeVideoGateway.js';
 import { buildContentExecutionRuntime } from '../digitalEmployees/contentExecutionRuntime.js';
+import { socialRequestHash } from '../starter198/socialContentValidation.js';
 
 class MemoryStore implements DataStore {
   rows = new Map<string, Map<string, Record<string, unknown> & { id: string }>>();
@@ -187,9 +188,71 @@ test('retry policy separates balance, rejection, network, system and provider re
   assert.equal(network.failureClass, 'network_timeout');
   assert.equal(network.disposition, 'retry');
   assert.equal(classifyContentExecutionFailure(new Error('unexpected local crash'), { attempt: 1, env }).failureClass, 'system_fault');
+  for (const reason of ['product_footage_shot_review_required', 'product_footage_bytes_changed',
+    'product_footage_material_unreadable']) {
+    const decision = classifyContentExecutionFailure(new Error(reason), { attempt: 1, env });
+    assert.equal(decision.failureClass, 'input_required');
+    assert.equal(decision.disposition, 'block');
+    assert.equal(decision.maxAttempts, 1);
+  }
   assert.equal(classifyContentExecutionFailure(new Error('socket closed'), {
     attempt: 1, hasUnsettledProviderReceipt: true, env,
   }).failureClass, 'provider_reconciliation');
+});
+
+test('missing signed product-footage window blocks the original durable run without blind retries or plan edits', async () => {
+  const store = new MemoryStore();
+  const job = await admitContentExecutionJob({ dataStore: store, tenantId: 'tenant-footage',
+    userId: 'owner', taskId: 'original-content', runId: 'original-run', accountId: 'account',
+    taskType: 'social_content_weekly' });
+  const frozenPlan = { selectedMaterialSegment: { sourceRef: 'actual-product-video',
+    segmentId: 'frozen-shot', startSeconds: 1, endSeconds: 3,
+    footageEvidence: null } };
+  await store.update(CONTENT_EXECUTION_JOB_COLLECTION, job.id, { checkpoints: {
+    'social.executor': { version: '1', inputHash: 'a'.repeat(64),
+      payload: { frozenPlan }, updatedAt: new Date().toISOString() },
+  } });
+  let attempts = 0;
+  const worker = new DurableContentExecutionWorker({ dataStore: store, env,
+    async execute() { attempts++; throw Error('product_footage_shot_review_required'); } });
+  await worker.drain();
+  for (let wait = 0; wait < 30 && worker.isLocallyActive('tenant-footage', 'original-content'); wait++)
+    await new Promise<void>(resolve => setImmediate(resolve));
+  await worker.drain();
+  worker.stop();
+  const stored = await readContentExecutionJob(store, 'tenant-footage', 'original-content', 'original-run');
+  assert.equal(stored?.id, job.id);
+  assert.equal(stored?.status, 'blocked');
+  assert.equal(stored?.retryClass, 'input_required');
+  assert.equal(stored?.attempt, 1);
+  assert.equal(attempts, 1);
+  assert.deepEqual(stored?.checkpoints['social.executor']?.payload, { frozenPlan });
+  assert.equal((await store.list(CONTENT_EXECUTION_JOB_COLLECTION)).totalItems, 1);
+  await assert.rejects(controlContentExecutionJob({ dataStore: store, tenantId: job.tenantId,
+    jobId: job.id, action: 'retry' }), /content_execution_frozen_footage_revision_required/);
+  const after = await readContentExecutionJob(store, job.tenantId, job.taskId, job.runId);
+  assert.equal(after?.status, 'blocked');
+  assert.equal(after?.attempt, 1);
+  assert.deepEqual(after?.checkpoints['social.executor']?.payload, { frozenPlan });
+});
+
+test('frozen footage review failure with an already bound finding retains explicit retry', async () => {
+  const store = new MemoryStore();
+  const job = await admitContentExecutionJob({ dataStore: store, tenantId: 'tenant-footage-bound',
+    userId: 'owner', taskId: 'content', runId: 'run', taskType: 'social_content_weekly',
+    initialCheckpoints: { 'social.executor': { version: '1', inputHash: 'a'.repeat(64),
+      updatedAt: new Date().toISOString(), payload: { approvedContext: { assetSupplyPlan: { shots: [{
+        selectedMaterialSegment: { sourceRef: 'material', footageEvidence: {
+          approvalId: 'approved', visualFindingId: 'finding', contentSha256: 'b'.repeat(64),
+        } },
+      }] } } } } },
+  });
+  await store.update(CONTENT_EXECUTION_JOB_COLLECTION, job.id, { status: 'blocked',
+    last_error: 'product_footage_shot_review_required', retry_class: 'input_required' });
+  const retried = await controlContentExecutionJob({ dataStore: store,
+    tenantId: job.tenantId, jobId: job.id, action: 'retry' });
+  assert.equal(retried.status, 'queued');
+  assert.equal(retried.runId, job.runId);
 });
 
 test('durable admission is idempotent and provider receipts survive execution context loss', async () => {
@@ -838,4 +901,36 @@ test('trusted job scope excludes unrelated queued jobs and abandoned recovery, a
   await empty.drain(); empty.stop();
   assert.equal((await store.getById<Record<string,unknown>>(CONTENT_EXECUTION_JOB_COLLECTION,abandoned.id))?.status,'running');
   assert.throws(()=>new DurableContentExecutionWorker({dataStore:store,allowedJobIds:[' '],async execute(){}}),/invalid_content_execution_allowed_job_ids/);
+});
+
+test('the existing worker claims a revision only through the complete production admission checkpoint', async () => {
+  const store = new MemoryStore();
+  const marker = { sourceRunId: 'source-run', revisedPlanHash: '1'.repeat(64) };
+  const job = await admitContentExecutionJob({ dataStore: store, tenantId: 'tenant-r', userId: 'user-r',
+    taskId: 'revision-task', runId: 'revision-run', accountId: 'account-r', taskType: 'social_content_weekly' });
+  await store.create('starter_social_content_tasks', { id: 'revision-task-row', tenant_id: 'tenant-r',
+    task_id: 'revision-task', brief: { _productFootageRevision: marker } });
+  let executions = 0;
+  const worker = new DurableContentExecutionWorker({ dataStore: store, env, allowedJobIds: [job.id],
+    async execute() { executions++; } });
+  await worker.drain();
+  assert.equal(executions, 0);
+  const body = { schemaVersion: 'social-product-footage-revision-worker-admission.v1',
+    tenantId: job.tenantId, taskId: job.taskId, runId: job.runId,
+    guardHash: '2'.repeat(64), paidPlanFreezeHash: '3'.repeat(64), canonicalPlanHash: '4'.repeat(64),
+    planHash: marker.revisedPlanHash, approvalBindings: [{ groupId: 'presenter-1',
+      approvalRecordHash: '5'.repeat(64), decisionRecordHash: '6'.repeat(64),
+      assetProvenanceHash: '7'.repeat(64) }], workerLane: 'social_content_production',
+    admittedAt: '2026-10-19T00:00:00.000Z' };
+  const recordHash = socialRequestHash(body);
+  await store.update(CONTENT_EXECUTION_JOB_COLLECTION, job.id, { checkpoints: {
+    'social.footage_revision_worker_admission': { version: '1', inputHash: recordHash,
+      payload: { ...body, recordHash }, updatedAt: body.admittedAt },
+  } });
+  await worker.drain();
+  for (let attempt = 0; attempt < 30 && worker.isLocallyActive(job.tenantId, job.taskId); attempt++)
+    await new Promise<void>(resolve => setImmediate(resolve));
+  worker.stop();
+  assert.equal(executions, 1);
+  assert.equal((await readContentExecutionJob(store, job.tenantId, job.taskId, job.runId))?.status, 'succeeded');
 });

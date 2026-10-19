@@ -14,6 +14,7 @@ import {inspectWeeklyCreativeRepairAuthority,issueWeeklyCreativeRepairAuthority}
 import {readWeeklyReferenceSources,weeklyReferenceResolver} from './socialWeeklyReferenceSource.js';
 import type {WeeklyOwnedProductIdentityPorts} from './weeklyOwnedProductIdentityDemand.js';
 import type {WeeklyCreativeRepairProductionPort} from '../socialPrograms/weeklyCreativeRepairExecution.js';
+import {assertWeeklyCreativeRepairCtaAdmission} from './weeklyCreativeRepairCtaAdmission.js';
 
 export const WEEKLY_CREATIVE_REPAIR_CAPACITY_RESERVATIONS='social_weekly_creative_repair_capacity_reservations';
 
@@ -77,6 +78,7 @@ export function createWeeklyCreativeRepairProductionPort(store:DataStore,clock:(
    const capacity=await readReservation(input.case.tenantId,input.case.caseId);if(!capacity||capacity.reservationId!==input.mapping.capacityReservationId||capacity.previewHash!==input.mapping.previewHash||capacity.authorityHash!==input.mapping.authorityHash||capacity.configurationHash!==input.configuration.recordHash||capacity.authorizedMaximumCostCny!==input.mapping.authorizedMaximumCostCny||capacity.startIdempotencyKey!==input.mapping.startIdempotencyKey)return fail('capacity_invalid');if(clock().getTime()>Date.parse(capacity.expiresAt))fail('capacity_expired');
    const taskId=childId(input.case.tenantId,input.case.caseId),issued=await issueWeeklyCreativeRepairAuthority({store,tenantId:input.case.tenantId,caseId:input.case.caseId,childTaskId:taskId,expectedCaseHash:input.case.recordHash,expectedConfigurationHash:input.configuration.recordHash,now:clock()});if(issued.proof.originalAuthorityHash!==input.mapping.authorityHash)fail('authority_changed');
    const parent=await readSocialTaskDetail({repository,tenantId:input.case.tenantId,taskId:input.case.parent.taskId});if(!parent)return fail('parent_missing',503);
+   await assertWeeklyCreativeRepairCtaAdmission({store,tenantId:input.case.tenantId,programId:input.case.programId,packageId:input.case.packageId,packageVersion:input.case.packageVersion,publicationTaskId:input.case.publicationTaskId,inheritedCallToAction:parent.brief.callToAction});
    const planningRows=await store.list<Record_>('social_weekly_agent_planning',{where:{tenant_id:input.case.tenantId,package_id:input.case.packageId,package_version:input.case.packageVersion},perPage:100});
    if(planningRows.totalItems!==planningRows.items.length)return fail('planning_ambiguous',503);
    const dispatched=planningRows.items.map(row=>socialObject(socialJson(row.payload)) as unknown as WeeklyAgentPlanningState|null).filter((value):value is WeeklyAgentPlanningState=>value?.status==='dispatched'&&value.packageId===input.case.packageId&&value.packageVersion===input.case.packageVersion);

@@ -143,10 +143,12 @@ test('API sends page context and optimistic version without leaking extra payloa
     return new Response(JSON.stringify(response), { status: 200, headers: { 'Content-Type': 'application/json' } });
   }) as typeof fetch;
   try {
-    const feed = await fetchAssistantDecisionFeed({ page: 'digitalEmployees', goalId: 'goal 1' });
+    const feed = await fetchAssistantDecisionFeed({ page: 'digitalEmployees', goalId: 'goal 1', decisionId: 'task:content-1', expectedVersion: 'task:7|status:waiting_human' });
     assert.equal(feed.items[0].id, 'approval:one');
     assert.match(calls[0].url, /page=digitalEmployees/);
     assert.match(calls[0].url, /goalId=goal\+1/);
+    assert.match(calls[0].url, /decisionId=task%3Acontent-1/);
+    assert.match(calls[0].url, /expectedVersion=task%3A7%7Cstatus%3Awaiting_human/);
     assert.equal((calls[0].init?.headers as Record<string, string>).Authorization, 'Bearer test-token');
 
     await executeAssistantDecision({

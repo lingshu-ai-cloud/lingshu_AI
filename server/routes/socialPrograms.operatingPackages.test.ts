@@ -143,9 +143,26 @@ test('social program routes expose the weekly operating package lifecycle', asyn
   assert.equal(executionResponse.status, 200);
   const executionItems = (await executionResponse.json()).items;
   assert.equal(executionItems.length, created.executionSummary.total, 'summary matches the actual persisted task graph');
+  const originals = created.socialContentPackage.publicationTasks.filter((publication: any) => !publication.inventoryReuseRef && !publication.adaptationOfPublicationTaskId);
+  assert.equal(executionItems.filter((task: any) => task.schedule.stepKind === 'video_generation').length, originals.length,
+    'one original production graph serves each mother content across publication adaptations');
   for (const publication of created.socialContentPackage.publicationTasks) {
     const selected = (kind: string) => executionItems.filter((task: any) => task.publicationTaskId === publication.publicationTaskId && task.schedule.stepKind === kind);
     const generation = selected('video_generation'); const extraction = selected('template_extraction'); const validation = selected('template_performance_validation');
+    const approval = selected('user_approval');
+    assert.equal(approval.length, 1, 'each publication retains its own final acceptance');
+    if (publication.adaptationOfPublicationTaskId) {
+      assert.equal(generation.length, 0, 'adaptations do not create a second original video');
+      assert.equal(extraction.length, 0, 'adaptations do not extract a second original template');
+      assert.equal(validation.length, 0, 'adaptations do not validate a second original template');
+      const original = originals.find((candidate: any) => candidate.motherContentId === publication.motherContentId);
+      assert.ok(original, 'adaptation has one original mother content');
+      const originalQuality = executionItems.find((task: any) => task.publicationTaskId === original.publicationTaskId && task.schedule.stepKind === 'quality_check');
+      const originalRework = executionItems.find((task: any) => task.publicationTaskId === original.publicationTaskId && task.schedule.stepKind === 'rework');
+      const originalApprovalDependency = originalRework ?? originalQuality;
+      assert.ok(originalApprovalDependency && approval[0].dependsOnTaskIds.includes(originalApprovalDependency.taskId), 'adaptation acceptance waits for the shared original');
+      continue;
+    }
     assert.equal(generation.length, 1); assert.equal(extraction.length, 1); assert.equal(validation.length, 1);
     assert.ok(extraction[0].dependsOnTaskIds.includes(generation[0].taskId));
     assert.ok(extraction[0].dependsOnTaskIds.some((id: string) => executionItems.some((task: any) => task.taskId === id && task.schedule.stepKind === 'weekly_review')));
@@ -233,11 +250,11 @@ test('social program routes expose the weekly operating package lifecycle', asyn
     assert.equal(state.status, 'director_analyzing');
     assert.equal(state.version, 2);
     globalThis.fetch = (input, init) => originalFetch(new URL(String(input), origin), init);
-    state = await advanceWeeklyPlanning(program.programId, created.packageId, created.version, state, next => { state = next; });
-    assert.equal(state.status, 'awaiting_confirmation');
-    assert.equal(state.version, 3);
-    assert.equal(state.packageVersion, 1, 'package version must not advance with Agent analysis');
-    const merged = state;
+    await assert.rejects(advanceWeeklyPlanning(program.programId, created.packageId, created.version, state, next => { state = next; }),
+      (error: unknown) => error instanceof SocialProgramRequestError && error.status === 409 && error.code === 'director_analysis_incomplete',
+      'one historical candidate cannot satisfy five distinct mother-content analysis slots');
+    assert.deepEqual(await socialProgramApi.getAgentPlanning(program.programId, created.packageId, 1), state,
+      'failed merge preserves the partial analysis for later collection');
     for (const action of ['director-analysis', 'merge', 'confirm', 'dispatch']) {
       const stale = await fetch(`${path}/${action}`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ expectedPackageVersion: 1, expectedPlanningVersion: outline.version }) });
       assert.equal(stale.status, 409);
@@ -245,38 +262,8 @@ test('social program routes expose the weekly operating package lifecycle', asyn
     }
     await assert.rejects(socialProgramApi.confirmAgentSchedule(program.programId, created.packageId, { expectedPackageVersion: 2, expectedPlanningVersion: state.version }),
       (error: unknown) => error instanceof SocialProgramRequestError && error.status === 409 && error.code === 'weekly_package_version_conflict');
-    assert.deepEqual(await socialProgramApi.getAgentPlanning(program.programId, created.packageId, 1), merged, 'rejected mutations preserve the plan');
-    state = await advanceWeeklyPlanning(program.programId, created.packageId, 1, state, () => {});
-    assert.equal(state.status, 'confirmed');
-    assert.equal(state.userConfirmation?.confirmedBy, 'owner');
-    const assertFrozenOverHttp = async (frozen: WeeklyAgentPlanningState) => {
-      const before = await dataStore.list('social_weekly_agent_planning', { where: { tenant_id: 'tenant-a', package_id: created.packageId } });
-      for (const action of ['director-analysis', 'merge']) {
-        const response = await fetch(`${path}/${action}`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ expectedPackageVersion: 1, expectedPlanningVersion: frozen.version }) });
-        assert.equal(response.status, 409);
-        const error = await response.json();
-        assert.equal(error.error, 'weekly_agent_plan_already_confirmed');
-        assert.match(error.message, /修订.*重新确认/);
-      }
-      const repeated = await socialProgramApi.confirmAgentSchedule(program.programId, created.packageId, { expectedPackageVersion: 1, expectedPlanningVersion: frozen.version });
-      assert.deepEqual(repeated, frozen);
-      assert.deepEqual(await socialProgramApi.getAgentPlanning(program.programId, created.packageId, 1), frozen);
-      const after = await dataStore.list('social_weekly_agent_planning', { where: { tenant_id: 'tenant-a', package_id: created.packageId } });
-      assert.equal(after.totalItems, before.totalItems, 'frozen reentry does not append history');
-    };
-    await assertFrozenOverHttp(state);
-    state = await advanceWeeklyPlanning(program.programId, created.packageId, 1, state, () => {});
-    assert.equal(state.status, 'dispatched');
-    assert.equal(state.version, 5);
-    assert.equal(state.dispatch?.scheduleItems.length, 26);
-    assert.equal(state.dispatch?.assignedTo, 'content_agent');
-    const tasks = await socialProgramApi.listExecutionTasks(program.programId, created.packageId, 1);
-    assert.ok(tasks.some(item => (item.inputSnapshot.dispatchRef as { id?: string } | undefined)?.id === state.dispatch?.dispatchId));
-    assert.ok(tasks.every(item => item.status !== 'succeeded'), 'dispatch is not completed production');
-    await assertFrozenOverHttp(state);
-    assert.deepEqual(await socialProgramApi.listExecutionTasks(program.programId, created.packageId, 1), tasks, 'frozen reentry preserves dispatch task snapshots');
 
-    // A real package revision gets its own planning identity and fresh confirmation.
+    // Package revisions remain possible while a partial director analysis is blocked.
     const oldPlanning = state;
     const revised = await socialProgramApi.reviseOperatingPackage(program.programId, created.packageId, {
       expectedVersion: 1, objective: '修订后的周经营目标', changeReason: '用户修改已确认排期',
@@ -288,16 +275,10 @@ test('social program routes expose the weekly operating package lifecycle', asyn
     assert.equal(revised.agentPlanning?.userConfirmation, null);
     assert.equal(revised.agentPlanning?.dispatch, null);
     assert.notEqual(revised.agentPlanning?.planningId, oldPlanning.planningId);
-    let revisionPlanning = await advanceWeeklyPlanning(program.programId, created.packageId, revised.version, revised.agentPlanning!, () => {});
-    await assert.rejects(socialProgramApi.dispatchAgentSchedule(program.programId, created.packageId, { expectedPackageVersion: 2, expectedPlanningVersion: revisionPlanning.version }),
+    await assert.rejects(socialProgramApi.dispatchAgentSchedule(program.programId, created.packageId, { expectedPackageVersion: 2, expectedPlanningVersion: revised.agentPlanning!.version }),
       (error: unknown) => error instanceof SocialProgramRequestError && error.code === 'confirmed_detailed_schedule_required');
-    revisionPlanning = await advanceWeeklyPlanning(program.programId, created.packageId, 2, revisionPlanning, () => {});
-    assert.equal(revisionPlanning.status, 'confirmed');
-    revisionPlanning = await advanceWeeklyPlanning(program.programId, created.packageId, 2, revisionPlanning, () => {});
-    assert.equal(revisionPlanning.status, 'dispatched');
-    assert.notEqual(revisionPlanning.dispatch?.dispatchId, oldPlanning.dispatch?.dispatchId);
     assert.deepEqual(await socialProgramApi.getAgentPlanning(program.programId, created.packageId, 1), oldPlanning);
-    assert.deepEqual(await socialProgramApi.listExecutionTasks(program.programId, created.packageId, 1), tasks, 'new revision preserves old dispatched task history');
+    assert.deepEqual(await socialProgramApi.listExecutionTasks(program.programId, created.packageId, 1), executionItems, 'new revision preserves old undisbursed task history');
   } finally {
     globalThis.fetch = originalFetch;
     Object.defineProperty(globalThis, 'localStorage', { configurable: true, value: previousStorage });

@@ -5,7 +5,7 @@ import type {SocialReplicationJobContext} from '../../shared/contracts/socialCon
 import {socialObject,socialJson,socialRequestHash,SocialContentWorkflowError} from './socialContentValidation.js';
 import {verifyWeeklyTargetAccountPlaybook} from '../socialPrograms/weeklyTargetAccountPlaybook.js';
 import {readWeeklyReferenceSources} from '../runtime/socialWeeklyReferenceSource.js';
-import {listSocialDiscoverySupply} from '../socialDiscovery/supply.js';
+import {listCompleteSocialDiscoverySupply} from '../socialDiscovery/supply.js';
 import {resolveWeeklyCreativeRepairAuthority} from '../runtime/weeklyCreativeRepairAuthority.js';
 const obj=(v:unknown)=>socialObject(socialJson(v));
 function fail():never{throw new SocialContentWorkflowError('weekly_replication_context_changed',409);}
@@ -43,7 +43,7 @@ export async function readWeeklyReplicationContext(input:{store:DataStore;tenant
   const account=obj(owned.items[0]?.payload);
   if(owned.totalItems!==1||owned.items.length!==1||account?.accountId!==accountRef.id||account.programId!==pkg.programId||account.version!==accountRef.version)return fail();
  }else if(accountRef.type==='social_benchmark_account'){
-  const supply=await listSocialDiscoverySupply({tenantId:input.tenantId,dataStore:input.store,filters:{candidateType:'account',decision:'accepted',businessModel:'b2b',sort:'score',perPage:100}});
+  const supply=await listCompleteSocialDiscoverySupply({tenantId:input.tenantId,dataStore:input.store,filters:{candidateType:'account',decision:'accepted',businessModel:'b2b',sort:'score'}});
   if(supply.items.filter(value=>value.candidateId===accountRef.id&&value.evidenceVersion===accountRef.version).length!==1)return fail();
  }else return fail();
  const programRef=obj(authority.programRef),programs=await input.store.list<Record_>('social_programs',{where:{tenant_id:input.tenantId,program_id:pkg.programId},perPage:2});

@@ -125,7 +125,11 @@ export function createPresenterArkEnrollmentRouter(store: DataStore, exclusive: 
         const now = new Date().toISOString();
         const base = String(process.env.PUBLIC_BASE_URL || process.env.PUBLIC_APP_URL || '').replace(/\/+$/, '');
         if (!groupId && !/^https:\/\/[^/]+/.test(base)) throw new Error('真人认证回跳地址未配置为公网 HTTPS');
-        const session = groupId ? null : await ark.createValidationSession(projectName, `${base}/?arkVerification=complete`);
+        const returnUrl = groupId ? null : new URL(base);
+        returnUrl?.searchParams.set('page', 'enterprise');
+        returnUrl?.searchParams.set('arkVerification', 'complete');
+        returnUrl?.searchParams.set('arkPresenterId', presenterId);
+        const session = groupId ? null : await ark.createValidationSession(projectName, returnUrl!.toString());
         const payload: Enrollment = { presenterId, photoMaterialId, videoMaterialId, photoObjectEtag: objectVersions.image, videoObjectEtag: objectVersions.video, projectName, groupId, assetId: '', bytedToken: session?.BytedToken || '',
           verificationUrl: session?.H5Link || '', state: groupId ? 'processing' : 'needs_verification', error: '', createdAt: now, updatedAt: now };
         const row = await store.create<Row>(collection, { tenant_id: tenantId, kind: 'ark_enrollment', request_id: requestId, payload });

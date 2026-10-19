@@ -20,12 +20,13 @@ const tariff=async(intent:any)=>({...intent,currency:'CNY' as const,verifiedAcco
 test('task-bound semantic resolver reserves against the same <=15 CNY task ledger',async t=>{
   const root=await fs.mkdtemp(path.join(os.tmpdir(),'candidate-semantic-budget-'));t.after(()=>fs.rm(root,{recursive:true,force:true}));
   const call=await resolveCandidateSemanticPaidCall({store:store(task()),tenantId:'tenant',taskId:'task',candidateId:'candidate',context,ports:{binding:()=>binding,readTariff:tariff,ledgerRoot:path.join(root,'ledger'),permitRoot:path.join(root,'permits')}});
-  assert.equal(call.intent.stage,'candidate_context_semantic');assert.equal(call.intent.inputContractHash,context.recordHash);assert.equal(call.intent.maximumUnits.inputTokens,262144);
+  assert.equal(call.intent.stage,'candidate_context_semantic');assert.equal(call.intent.inputContractHash,context.recordHash);assert.equal(call.intent.maximumUnits.inputTokens,260096);
   const files=(await fs.readdir(path.join(root,'ledger'))).filter(file=>file.endsWith('.json'));assert.equal(files.length,1);
   const ledger=JSON.parse(await fs.readFile(path.join(root,'ledger',files[0]!),'utf8'));assert.equal(ledger.limitMicros,15_000_000);assert.equal(Object.keys(ledger.entries).length,1);const entry=Object.values(ledger.entries)[0] as any;assert.equal(entry.operationId,call.intent.operationId);assert.ok(entry.reservedMicros>0);
   const productionScope={tenantId:'tenant',taskId:'task',runId:'production-run',planHash:'d'.repeat(64)},production=new SocialContentTaskBudget(path.join(root,'ledger'),{assertCurrent:async()=>{},authorization:async()=>({maximumCny:15,authorizationRef:'same-task-production'}),quote:async()=>({upperBoundCny:14.8,quoteRef:'production-price',validUntil:'2099-01-01T00:00:00Z'}),verifyRejection:async()=>false});
   await assert.rejects(production.reserveBatch(productionScope,[{operationId:'production',fingerprint:'e'.repeat(64),provider:'wan',model:'video',accountRef:'account',stage:'video',shotId:'S01'}]),/budget_exceeded/);
-  assert.equal(await measureCandidateSemanticInputUpperBound({model:'qwen3-vl-flash',messages:[{role:'user',content:'evidence'}],temperature:0,response_format:{type:'json_object'},max_tokens:1600}),262144);
+  assert.equal(await measureCandidateSemanticInputUpperBound({model:'qwen3-vl-flash',messages:[{role:'user',content:'evidence'}],temperature:0,response_format:{type:'json_object'},max_tokens:1600}),260096);
+  await assert.rejects(measureCandidateSemanticInputUpperBound({model:'qwen3-vl-plus',messages:[{role:'user',content:'x'.repeat(240000)}],max_tokens:1600}),/request_exceeds_context/);
 });
 
 test('unbound task reference fails before creating any task ledger',async t=>{

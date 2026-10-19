@@ -48,7 +48,16 @@ export async function readWeeklyAutomaticPreproductionAdmission(store:DataStore,
   if(!projected||!constraint||weeklyContinuationInputHash(projected)!==weeklyContinuationInputHash(task))continue;
   const limits=await listContentExecutionLimits(store,task.tenantId);
   if(!limits.some(l=>l.scope==='tenant'&&l.scopeKey==='*'&&l.maxRunning<=template.productionConcurrency)||!limits.some(l=>l.scope==='task_type'&&l.scopeKey==='social_content_weekly'&&l.maxRunning<=template.productionConcurrency))return null;
-  const availableAt=constraint.availableAt;
+  // Proposals created before the per-task prelaunch fix already contain the
+  // signed prelaunch resource window, but their benchmark constraints still
+  // point at the following week's calendar slot.  Interpret that existing
+  // authority consistently instead of rewriting the immutable proposal or
+  // requiring the user to accept the same template again.
+  const resource=proposal.capacity.resources?.[constraint.resourceKey];
+  const activePrelaunch=resource?.workingWindows.find(window=>Date.parse(window.startAt)<=Date.parse(now)&&Date.parse(now)<Date.parse(window.finishAt));
+  const availableAt=Date.parse(constraint.availableAt)>Date.parse(now)&&activePrelaunch
+   ?activePrelaunch.startAt
+   :constraint.availableAt;
   return {source:'automatic_template' as const,templateVersion:template.version,proposalId:proposal.proposalId,availableAt,eligible:Date.parse(now)>=Date.parse(availableAt),authority:'independent_preproduction_window_only' as const,userApproval:null,outboundAuthorization:false as const};
  }
  return null;
@@ -66,6 +75,11 @@ export function automaticWeeklyCapacity(pkg:WeeklyOperatingPackage,tasks:WeeklyE
  // verified_continuation; this merely permits forecasting the other branches.
  if(tasks.some(task=>hasWeeklyInitialExecution(task)&&!blockedPreproductionForecast(task)&&!(['business_outline','benchmark_collection'].includes(task.schedule.stepKind)&&task.status==='succeeded'&&task.budget.category!=='production'&&verifiedCompletedPreproductionIds.has(task.taskId))))fail('weekly_template_existing_work_requires_reconciliation');
  const windows:Array<{startAt:string;finishAt:string}>=[],resident:Array<{startAt:string;finishAt:string}>=[];
+ const weekStartsAt=Date.parse(`${pkg.weekStart}T00:00:00+08:00`);
+ // A next-week package is intentionally prepared as soon as its recommended
+ // template is accepted. This window authorizes draft production only; it does
+ // not move publication times or grant any outbound permission.
+ if(Date.parse(now)<weekStartsAt)windows.push({startAt:now,finishAt:new Date(weekStartsAt).toISOString()});
  for(let date=pkg.weekStart;date<=pkg.weekEnd;date=plusDay(date,1)){
   const finishAt=`${plusDay(date,1)}T00:00:00+08:00`;
   if(Date.parse(finishAt)<=Date.parse(now))continue;
@@ -95,8 +109,20 @@ export function automaticWeeklyCapacity(pkg:WeeklyOperatingPackage,tasks:WeeklyE
    if(!productionRoots.has(root!)){reserve=template.perFinishedVideoMaxCny;productionRoots.add(root!);}
   }
   const publication=pkg.socialContentPackage.publicationTasks.find(p=>p.publicationTaskId===task.publicationTaskId);
-  const localDay=typeof task.inputSnapshot.rollingDate==='string'?task.inputSnapshot.rollingDate:(publication?.motherContentId?rootDays.get(publication.motherContentId):null)??pkg.weekStart;
-  const eligible=Date.parse(`${localDay??pkg.weekStart}T${actor==='customer_agent'?'00':'06'}:00:00+08:00`);
+  const rollingDay=typeof task.inputSnapshot.rollingDate==='string'&&/^\d{4}-\d{2}-\d{2}$/.test(task.inputSnapshot.rollingDate)
+   ?task.inputSnapshot.rollingDate
+   :null;
+  const localDay=rollingDay??(publication?.motherContentId?rootDays.get(publication.motherContentId):null)??pkg.weekStart;
+  const normalEligible=Date.parse(`${localDay??pkg.weekStart}T${actor==='customer_agent'?'00':'06'}:00:00+08:00`);
+  // Accepting the recommended template opens only the two independent
+  // preproduction stages immediately.  Keeping their per-day calendar date
+  // here made the prelaunch window above unreachable for benchmark tasks, so
+  // the product appeared to accept the template and then silently waited for
+  // the following week.  Production, review and every outbound stage retain
+  // their normal calendar eligibility.
+  const eligible=Date.parse(now)<weekStartsAt&&['business_outline','benchmark_collection'].includes(task.schedule.stepKind)
+   ?Date.parse(now)
+   :normalEligible;
   constraints[task.taskId]={resourceKey:key,remainingMinutes:task.schedule.estimatedDurationMinutes,remainingCostCny:reserve,bufferMinutes:0,availableAt:new Date(Math.max(Date.parse(now),eligible)).toISOString()};
   if(['business_schedule','performance_monitoring','weekly_review','template_extraction','template_performance_validation'].includes(task.schedule.stepKind)){
    const today=new Date(Date.parse(now)+8*3600000).toISOString().slice(0,10);
@@ -114,6 +140,8 @@ export function automaticWeeklyCapacity(pkg:WeeklyOperatingPackage,tasks:WeeklyE
 export function createWeeklyAutomaticScheduleService(store:DataStore,ports:{now?:()=>string}={}){
  return {async apply(a:Scope){
   await assertWeeklyScheduleActor(store,a);
+  const recovered=await recoverCommittedAutomaticWeeklySchedule(store,a);
+  if(recovered)return recovered;
   const now=ports.now?.()??new Date().toISOString();
   let id='';
   const prepared=await withExecutionPackageGate(store,a,async()=>{
@@ -154,9 +182,51 @@ export function createWeeklyAutomaticScheduleService(store:DataStore,ports:{now?
   const blockers=proposal.plan.assignments.filter(r=>!r.startAt||r.reasons.some(reason=>reason!=='human_completion_not_verified')).map(r=>({taskId:r.taskId,reasons:r.reasons}));
   const feasible=proposal.plan.publicationGap===0&&blockers.length===0;
   const confirmation=feasible?await scheduling.confirm(a,{proposalId:proposal.proposalId,expectedVersion:a.packageVersion,inputEvidenceHash:proposal.inputEvidenceHash,confirmedTemplateCarryoverPlanHashes:(proposal.templateCarryovers??[]).map(p=>p.planHash)}):null;
-  const payload={scope:{tenantId:a.tenantId,programId:a.programId,packageId:a.packageId,packageVersion:a.packageVersion},...automaticAdoption,proposalId:proposal.proposalId,status:confirmation?'scheduled':'blocked',targetVersion:confirmation?.item.version??null,blockers,acceptance:{originalVideos:5,platforms:template.sharedPublicationPlatforms,perFilmIncludingRevisionsMaxCny:15,requiresRealArtifact:true,requiresProductionPageAcceptance:true},activated:false,outboundAuthorization:false};
+  const payload={scope:{tenantId:a.tenantId,programId:a.programId,packageId:a.packageId,packageVersion:a.packageVersion},...automaticAdoption,proposalId:proposal.proposalId,status:confirmation?'scheduled':'blocked',targetVersion:confirmation?.item.version??null,blockers,acceptance:{originalVideos:5,platforms:template.sharedPublicationPlatforms,perFilmIncludingRevisionsMaxCny:10,requiresRealArtifact:true,requiresProductionPageAcceptance:true},activated:false,outboundAuthorization:false};
   const saved=await store.create(AUTOMATIC_WEEKLY_SCHEDULES,{id,tenant_id:a.tenantId,program_id:a.programId,package_id:a.packageId,package_version:a.packageVersion,payload,content_hash:socialRequestHash(payload)});
   if(!saved)fail('weekly_template_schedule_receipt_write_failed');
   return payload;
  }};
+}
+
+/** Repair only the crash window after an immutable automatic schedule
+ * confirmation created its target version but before apply wrote its receipt.
+ * The proposal and the confirmed snapshot are re-read; no new approval or
+ * schedule confirmation is inferred from the target version alone. */
+export async function recoverCommittedAutomaticWeeklySchedule(store:DataStore,a:Scope,ports:{readConfirmation?:(scope:Scope,proposalId:string)=>ReturnType<ReturnType<typeof createWeeklyScheduleRevisionService>['readConfirmation']>}={}){
+ const latest=await latestPackageRow(store,a.tenantId,a.programId,a.packageId);
+ if(!latest||latest.payload.version===a.packageVersion)return null;
+ if(latest.payload.version!==a.packageVersion+1||latest.payload.status!=='draft')fail('weekly_template_schedule_version_conflict');
+ const proposals=await store.list<Record_>(SCHEDULE_PROPOSALS,{where:{tenant_id:a.tenantId,program_id:a.programId,package_id:a.packageId,package_version:a.packageVersion},page:1,perPage:500});
+ if(proposals.totalItems!==proposals.items.length)fail('weekly_template_schedule_recovery_scan_incomplete');
+ const scheduling=createWeeklyScheduleRevisionService(store);
+ const committed:Array<{proposal:WeeklyScheduleProposal;targetVersion:number}>=[];
+ for(const row of proposals.items){
+  const proposal=row.payload as WeeklyScheduleProposal;
+  if(row.content_hash!==scheduleHash(proposal))fail('weekly_template_schedule_proposal_invalid');
+  if(proposal.inputAuthority!=='target_graph_with_automatic_template_capacity'||proposal.automaticAdoption?.source!=='automatic_template'||proposal.automaticAdoption.templateVersion!==template.version||proposal.automaticAdoption.userApproval!==null)continue;
+  if(proposal.tenantId!==a.tenantId||proposal.programId!==a.programId||proposal.packageId!==a.packageId||proposal.packageVersion!==a.packageVersion||proposal.createdBy!==a.actorUserId||row.proposal_id!==proposal.proposalId)fail('weekly_template_schedule_proposal_invalid');
+  const receipt=await (ports.readConfirmation??scheduling.readConfirmation)(a,proposal.proposalId);
+  if(receipt.status==='committed'){
+   if(receipt.targetVersion!==latest.payload.version||receipt.item.scheduleRevisionRef?.id!==receipt.snapshot.snapshotId||receipt.item.packageId!==a.packageId||receipt.item.previousVersion!==a.packageVersion||receipt.snapshot.confirmedBy!==a.actorUserId||receipt.snapshot.automaticAdoption?.source!=='automatic_template'||receipt.snapshot.automaticAdoption.templateVersion!==template.version||receipt.snapshot.automaticAdoption.userApproval!==null)fail('weekly_template_schedule_recovery_target_invalid');
+   committed.push({proposal,targetVersion:receipt.targetVersion});
+  }
+ }
+ if(committed.length!==1)fail('weekly_template_schedule_recovery_ambiguous');
+ const {proposal,targetVersion}=committed[0]!;
+ const old=await store.list<Record_>(AUTOMATIC_WEEKLY_SCHEDULES,{where:{tenant_id:a.tenantId,program_id:a.programId,package_id:a.packageId,package_version:a.packageVersion},page:1,perPage:500});
+ if(old.totalItems!==old.items.length)fail('weekly_template_schedule_recovery_scan_incomplete');
+ const matching=old.items.filter(row=>(row.payload as {proposalId?:string}).proposalId===proposal.proposalId);
+ if(matching.length>1)fail('weekly_template_schedule_recovery_ambiguous');
+ if(old.items.length!==matching.length)fail('weekly_template_schedule_recovery_ambiguous');
+ if(matching.length){const row=matching[0]!,payload=row.payload as Record<string,unknown>;if(row.content_hash!==socialRequestHash(payload)||payload.status!=='scheduled'||payload.targetVersion!==targetVersion||payload.userApproval!==null||payload.source!=='automatic_template'||payload.templateVersion!==template.version)fail('weekly_template_schedule_receipt_invalid');return payload;}
+ const blockers=proposal.plan.assignments.filter(r=>!r.startAt||r.reasons.some(reason=>reason!=='human_completion_not_verified')).map(r=>({taskId:r.taskId,reasons:r.reasons}));
+ if(proposal.plan.publicationGap!==0||blockers.length)fail('weekly_template_schedule_recovery_proposal_not_feasible');
+ const payload={scope:{tenantId:a.tenantId,programId:a.programId,packageId:a.packageId,packageVersion:a.packageVersion},source:'automatic_template' as const,templateVersion:template.version,adoptedAt:proposal.automaticAdoption!.adoptedAt,userApproval:null,proposalId:proposal.proposalId,status:'scheduled' as const,targetVersion,blockers,acceptance:{originalVideos:5,platforms:template.sharedPublicationPlatforms,perFilmIncludingRevisionsMaxCny:10,requiresRealArtifact:true,requiresProductionPageAcceptance:true},activated:false,outboundAuthorization:false};
+ const stillLatest=await latestPackageRow(store,a.tenantId,a.programId,a.packageId);
+ if(stillLatest?.payload.version!==targetVersion||(stillLatest.payload as WeeklyOperatingPackage&{scheduleRevisionRef?:{id:string}}).scheduleRevisionRef?.id!==(latest.payload as WeeklyOperatingPackage&{scheduleRevisionRef?:{id:string}}).scheduleRevisionRef?.id)fail('weekly_template_schedule_recovery_target_changed');
+ const id=createHash('sha256').update(socialRequestHash([a.tenantId,a.programId,a.packageId,a.packageVersion,template.version,proposal.proposalId,'committed-recovery'])).digest('hex');
+ const created=await store.create(AUTOMATIC_WEEKLY_SCHEDULES,{id,tenant_id:a.tenantId,program_id:a.programId,package_id:a.packageId,package_version:a.packageVersion,payload,content_hash:socialRequestHash(payload)});
+ if(!created){const raced=await store.getById<Record_>(AUTOMATIC_WEEKLY_SCHEDULES,id);if(!raced||raced.content_hash!==socialRequestHash(payload))fail('weekly_template_schedule_receipt_write_failed');}
+ return payload;
 }

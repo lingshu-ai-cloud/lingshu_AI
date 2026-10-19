@@ -18,3 +18,14 @@ test('running/unknown, existing results and mixed timeout failures never become 
  assert.deepEqual(planTerminalDiscoverySourceRetry(timeout).eligibleSources,[]);
  assert.equal(planTerminalDiscoverySourceRetry({...run,failureDetails:[run.failureDetails![0]!]}).wholeRunRetryEligible,true);
 });
+test('a pre-provider daily limit stop can use explicit quota authorization without pretending a provider rejection',()=>{
+ const limited={...run,status:'stopped',stopReason:'daily_collection_limit_reached',failureDetails:[],queryBasis:{momentum:['skincare products']},scopeSnapshot:{modePolicies:{momentum:{platforms:['tiktok','instagram']}}}} as unknown as SocialInspirationCollectionRun;
+ const plan=planTerminalDiscoverySourceRetry(limited);
+ assert.deepEqual(plan.blockingCodes,[]);
+ assert.deepEqual(plan.eligibleSources,[
+  {mode:'momentum',platform:'tiktok',queryRef:'skincare products'},
+  {mode:'momentum',platform:'instagram',queryRef:'skincare products'},
+ ]);
+ assert.equal(plan.authorizesExecution,false);assert.equal(plan.grantsAdditionalDailyQuota,false);
+ assert.deepEqual(planTerminalDiscoverySourceRetry({...limited,failureDetails:[{mode:'momentum',platform:'tiktok',queryRef:'skincare products',error:'unknown'}]}).eligibleSources,[]);
+});

@@ -5,18 +5,20 @@ import {assertWeeklyPlanningCoverage,selectWeeklyPlanningCoverage} from '../soci
 import {scheduleHash} from '../socialPrograms/weeklyScheduleSnapshots.js';
 import {SocialProgramError} from '../socialPrograms/service.js';
 import {socialJson,socialObject} from '../starter198/socialContentValidation.js';
+import {verifiedWeeklyPlanningTemplateAdoption,weeklyPlanningExecutionActor,weeklyPlanningExecutionSelection} from '../socialPrograms/weeklyPlanningTemplateAdoption.js';
 const fail=(code:string):never=>{throw new SocialProgramError(code,409,'实际确认范围、待补范围或原来源配额不一致，不能开始该内容生产。');};
 /** Never interpret an item alone as confirmation of partial dispatch. */
 export function assertWeeklyProductionCoverage(pkg:WeeklyOperatingPackage,plan:WeeklyAgentPlanningState,publicationTaskId:string):void {
- const detailed=plan.detailedSchedule,dispatch=plan.dispatch,confirmation=plan.userConfirmation;
- if(plan.status!=='dispatched'||!dispatch||!confirmation?.confirmedBy||dispatch.packageId!==pkg.packageId||dispatch.packageVersion!==pkg.version)return fail('weekly_production_dispatch_unconfirmed');
- const hasCoverage=!!(detailed?.coverage||dispatch.coverage||confirmation.selectedSlotIds );
+ const detailed=plan.detailedSchedule,dispatch=plan.dispatch,confirmation=plan.userConfirmation,adoption=verifiedWeeklyPlanningTemplateAdoption(plan);
+ const actor=weeklyPlanningExecutionActor(plan),confirmedSlots=weeklyPlanningExecutionSelection(plan),confirmedAt=confirmation?.confirmedAt??adoption?.adoptedAt;
+ if(plan.status!=='dispatched'||!dispatch||!actor||dispatch.packageId!==pkg.packageId||dispatch.packageVersion!==pkg.version)return fail('weekly_production_dispatch_unconfirmed');
+ const hasCoverage=!!(detailed?.coverage||dispatch.coverage||confirmedSlots);
  // Historical full dispatch must prove every original slot; it cannot masquerade as partial approval.
- if(!plan.skeleton||!detailed||!confirmation.confirmedAt||(hasCoverage&&(!detailed.coverage||!dispatch.coverage||!confirmation.selectedSlotIds)))return fail('weekly_production_coverage_required');
- const coverage=detailed.coverage??selectWeeklyPlanningCoverage(plan);const dispatchCoverage=dispatch.coverage??coverage;const confirmedSlots=confirmation.selectedSlotIds??coverage.selectedSlotIds;
+ if(!plan.skeleton||!detailed||!confirmedAt||(hasCoverage&&(!detailed.coverage||!dispatch.coverage||!confirmedSlots)))return fail('weekly_production_coverage_required');
+ const coverage=detailed.coverage??selectWeeklyPlanningCoverage(plan);const dispatchCoverage=dispatch.coverage??coverage;const selectedSlots=confirmedSlots??coverage.selectedSlotIds;
  if(plan.programId!==pkg.programId||plan.packageId!==pkg.packageId||plan.packageVersion!==pkg.version||plan.skeleton.packageId!==pkg.packageId||plan.skeleton.packageVersion!==pkg.version)return fail('weekly_production_coverage_scope_changed');
- assertWeeklyPlanningCoverage(plan,coverage,confirmedSlots);
- if(scheduleHash(coverage)!==scheduleHash(dispatchCoverage)||scheduleHash(coverage.referenceSourcePolicy)!==scheduleHash(pkg.referenceSourcePolicy??null)||scheduleHash(plan.referenceSourcePolicy??null)!==scheduleHash(pkg.referenceSourcePolicy??null)||scheduleHash(confirmedSlots)!==scheduleHash(coverage.selectedSlotIds))return fail('weekly_production_coverage_changed');
+ assertWeeklyPlanningCoverage(plan,coverage,selectedSlots);
+ if(scheduleHash(coverage)!==scheduleHash(dispatchCoverage)||scheduleHash(coverage.referenceSourcePolicy)!==scheduleHash(pkg.referenceSourcePolicy??null)||scheduleHash(plan.referenceSourcePolicy??null)!==scheduleHash(pkg.referenceSourcePolicy??null)||scheduleHash(selectedSlots)!==scheduleHash(coverage.selectedSlotIds))return fail('weekly_production_coverage_changed');
  const publications=pkg.socialContentPackage.publicationTasks,allPublicationIds=plan.skeleton.slots.flatMap(slot=>slot.publicationTaskIds);if(new Set(allPublicationIds).size!==allPublicationIds.length||scheduleHash([...allPublicationIds].sort())!==scheduleHash(publications.map(pub=>pub.publicationTaskId).sort()))return fail('weekly_production_skeleton_range_changed');if(pkg.referenceSourcePolicy){const allocation=allocateWeeklyReferenceSources(publications,pkg.referenceSourcePolicy);for(const slot of plan.skeleton.slots){if(!slot.motherContentId||slot.referenceSource!==allocation.get(slot.motherContentId)||slot.publicationTaskIds.some(id=>publications.find(pub=>pub.publicationTaskId===id)?.motherContentId!==slot.motherContentId))return fail('weekly_production_source_allocation_changed');}}
  const selected=plan.skeleton.slots.filter(slot=>coverage.selectedSlotIds.includes(slot.slotId));
  const expected=selected.flatMap(slot=>slot.publicationTaskIds.map(pub=>({slotId:slot.slotId,publicationTaskId:pub})));

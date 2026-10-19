@@ -33,7 +33,7 @@ export interface WeeklyMaterialRequest {
   preparation?:WeeklyMaterialPreparationAssessment;
   status:'missing'|'pending_verification'|'accepted'|'rejected'|'cancelled';
   consumers:MaterialConsumer[];submissions:MaterialSubmission[];
-  history:Array<{at:string;actor:string;action:string;previousDueAt?:string;previousVerificationDueAt?:string|null;reason?:string;verification?:MaterialSubmission['verification']}>;
+  history:Array<{at:string;actor:string;action:string;previousDueAt?:string;previousVerificationDueAt?:string|null;reason?:string;verification?:MaterialSubmission['verification'];consumerTaskId?:string;previousRequirement?:string;nextRequirement?:string}>;
   createdAt:string;updatedAt:string;
 }
 export interface WeeklyMaterialPorts {
@@ -140,6 +140,33 @@ export function createWeeklyMaterialRequestService(store:DataStore,ports:WeeklyM
         }
   };
   return {
+    /** Internal, CAS-guarded refinement of an existing consumer. The old signed
+     * submission stays in history; exact new terms require a fresh decision. */
+    async reviseConsumerRequirement(input:{tenantId:string;programId:string;requestId:string;actorUserId:string;consumerTaskId:string;packageId:string;packageVersion:number;expectedUpdatedAt:string;expectedRequirement:string;nextRequirement:string;reason:string}){
+      return locked(input.tenantId,input.requestId,async guard=>{
+        const request=await read(input.tenantId,input.programId,input.requestId);
+        await assertUser(input.tenantId,input.actorUserId);
+        const issuer=request.history.find(item=>item.action==='created')?.actor;
+        if(![request.assigneeUserId,request.reviewerUserId,issuer].includes(input.actorUserId))fail('weekly_material_revision_forbidden','仅原发起人、指定提交人或核验人可以提交调整。',403);
+        if(request.status==='cancelled')fail('weekly_material_revision_closed','已取消任务不能静默恢复。');
+        if(request.updatedAt!==input.expectedUpdatedAt)fail('weekly_material_revision_version_conflict','素材任务已变化，请重新读取。');
+        const matches=request.consumers.filter(c=>c.taskId===input.consumerTaskId&&c.packageId===input.packageId&&c.packageVersion===input.packageVersion);
+        if(matches.length!==1||matches[0]!.requirement!==input.expectedRequirement)fail('weekly_material_consumer_identity_invalid','仅能修订当前准确版本的原消费者。');
+        const next=text(input.nextRequirement,'当前镜头精确需求'),reason=text(input.reason,'调整原因');
+        if(next===input.expectedRequirement)return request;
+        const prior=matches[0]!.requirement;
+        matches[0]!.requirement=next;
+        await consumers(input.tenantId,input.programId,request.consumers);
+        if(request.submissions.length){
+          const last=request.submissions.at(-1)!;
+          for(const item of last.materials)await material(input.tenantId,item.recordId,item.sha256,request.consumers.every(c=>Boolean(c.assetRequirement)));
+          request.submissions.push({version:last.version+1,submittedAt:now(),submittedBy:last.submittedBy,materials:structuredClone(last.materials),verification:null});
+          request.status='pending_verification';
+        }
+        request.history.push({at:now(),actor:input.actorUserId,action:'consumer_requirement_refined',reason,consumerTaskId:input.consumerTaskId,previousRequirement:prior,nextRequirement:next});
+        return save(request,guard);
+      });
+    },
     async get(tenantId:string,programId:string,id:string,actorUserId:string){await assertUser(tenantId,actorUserId);return read(tenantId,programId,id);},
     async list(tenantId:string,programId:string,actorUserId:string){
       await assertUser(tenantId,actorUserId);const result:WeeklyMaterialRequest[]=[];
