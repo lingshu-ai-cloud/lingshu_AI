@@ -42,6 +42,11 @@ test('product budget bounds are bound to the reviewed supply plan', () => {
   assert.ok(carry>0&&carry<recovery&&recovery<productionReserve,'settled exact cost is recovered before the original production reservation');
   assert.match(source,/const carryMode=input\.quoteOnly\?'read':'carry'/,'quote-only uses the pure read adapter mode');
   assert.doesNotMatch(source,/carryForwardWeeklyCandidateExactProductionCostV2/,'the dormant v2 implementation is not imported or installed by default');
+  const v2Branch=source.indexOf('if(input.ports?.carryForwardWeeklyExactCostV2)');
+  const v1Else=source.indexOf('}else{',v2Branch);
+  const legacyRoot=source.indexOf('WEEKLY_CANDIDATE_EXACT_LEDGER_ROOT',v2Branch);
+  const v1Call=source.indexOf('carryForwardWeeklyExactCost??carryForwardWeeklyCandidateExactProductionCost',v2Branch);
+  assert.ok(v2Branch>0&&v1Else>v2Branch&&legacyRoot>v1Else&&v1Call>legacyRoot,'legacy env/root is read only inside the v1 fallback branch');
 });
 
 test('whole-film preflight reserves one retry only for retry-enabled generated product shots', () => {

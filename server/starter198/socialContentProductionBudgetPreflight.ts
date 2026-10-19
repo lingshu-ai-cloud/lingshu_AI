@@ -274,11 +274,11 @@ export async function prepareSocialContentProductionBudget(input: ProductionBudg
         authorization:async()=>({maximumCny:Number(brief?.perItemBudgetCny),authorizationRef:`weekly-production:${socialRequestHash(exactCostWeeklyAuthority)}`}),
         quote:async()=>{throw Error('weekly_preproduction_carry_never_quotes');},assertCurrent,verifyRejection:async()=>false,
       });
-      const exactEscrowRoot=process.env.WEEKLY_CANDIDATE_EXACT_LEDGER_ROOT?.trim()||process.env.SOCIAL_CONTENT_TASK_BUDGET_DIR?.trim()||'';
       const carryMode=input.quoteOnly?'read':'carry';
       if(input.ports?.carryForwardWeeklyExactCostV2){
         await input.ports.carryForwardWeeklyExactCostV2({store,scope,taskRow:row,budget:preproductionBudget,mode:carryMode});
       }else{
+        const exactEscrowRoot=process.env.WEEKLY_CANDIDATE_EXACT_LEDGER_ROOT?.trim()||process.env.SOCIAL_CONTENT_TASK_BUDGET_DIR?.trim()||'';
         await (input.ports?.carryForwardWeeklyExactCost??carryForwardWeeklyCandidateExactProductionCost)({store,escrowRoot:exactEscrowRoot,scope,taskRow:row,budget:preproductionBudget,mode:carryMode});
       }
       ledgerProbe=preproductionBudget.status(scope);
