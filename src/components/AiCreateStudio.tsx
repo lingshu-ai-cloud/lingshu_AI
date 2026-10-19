@@ -120,6 +120,7 @@ import { productionReferenceAdmission } from '../../shared/productionReferenceAd
 import { reconcileStudioProductionSpec } from '../../shared/studioProductionContract';
 import { attachStudioSocialShotIdentities, normalizeStudioSocialShotId, resolveStudioSocialShot } from '../lib/studioSocialShotIdentity';
 import { studioAutosaveFingerprint, studioDraftChanged } from '../lib/studioAutosave';
+import { planImageReferences } from '../../shared/imageCreativePlanning';
 export { StudioRequestTimeoutError, waitForStudioMediaReady, withStudioTimeout } from './studio/studioAuthenticatedMedia';
 // AI 生成内容工作台：创作设置 → 脚本与声音 → 成片制作。
 const STUDIO_ACCENT = 'var(--color-accent)';
@@ -186,6 +187,7 @@ const materialToClip = (m: Material): Clip => ({
   id: m.id, name: m.name, folder: m.folder, type: m.type, duration: m.duration, width: m.width, height: m.height, aspectRatio: m.aspectRatio, size: m.size, url: m.url, poster: m.poster, scope: m.scope ?? 'own',
   usage: m.usage, sourceType: m.sourceType, providerTaskId: m.providerTaskId, contentSha256: m.contentSha256, industry: m.industry, shotFunction: m.shotFunction, applicability: m.applicability, tags: m.tags,
   generation: m.generation, lineage: m.lineage, quality: m.quality, reuse: m.reuse, rightsScope: m.rightsScope, provenance: m.provenance,
+  materialV2: m.materialV2,
   productId: m.productId, productName: m.productName,
   transcript: m.transcript, transcriptCues: m.transcriptCues, transcriptCuesProvenance: m.transcriptCuesProvenance,
   transcriptSourceHash: m.transcriptSourceHash,
@@ -344,6 +346,7 @@ export interface Clip {
   reuse?: Material['reuse'];
   rightsScope?: string;
   provenance?: Record<string, unknown>;
+  materialV2?: Material['materialV2'];
   providerTaskId?: string;
   contentSha256?: string;
   industry?: string;
@@ -1703,6 +1706,7 @@ function kickoffSourceTokens(kickoff: VideoKickoff | null): string[] {
   const values = [
     kickoff.generatedVideo?.id,
     kickoff.generatedVideo?.material?.id,
+    kickoff.video?.id,
     kickoff.video?.sourceUrl,
     kickoff.video?.videoUrl,
     kickoff.video?.aiAnalysis?.materialUrl,
@@ -5249,14 +5253,17 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onLaunc
       }).catch(() => setSourceDraftCheckPending(false));
       if (kickoff.video?.duration && kickoff.video.duration > 0) setDuration(+kickoff.video.duration.toFixed(1));
       const fromInspiration = kickoff.source === 'inspiration_analysis';
-      const fromImagePost = kickoff.source === 'inspiration_image_post' || (kickoff.source !== 'material_library' && kickoff.video?.contentFormat === 'image');
+      const fromMaterialImage = kickoff.source === 'material_library' && kickoff.video?.contentFormat === 'image';
+      const fromImagePost = kickoff.source === 'inspiration_image_post' || fromMaterialImage || (kickoff.source !== 'material_library' && kickoff.video?.contentFormat === 'image');
       if (fromImagePost) {
         setContentMode('poster');
-        setMode('clone');
+        setMode(fromMaterialImage ? 'material' : 'clone');
         setPlatform(kickoff.video?.platform === 'instagram' ? 'instagram' : 'facebook');
         setRatio('4:5');
-        setActiveFolder('hot');
-        setProjectTitle(kickoff.video?.title ? `竞品图文获客内容包 · ${kickoff.video.title}` : '竞品图文获客内容包');
+        setActiveFolder(fromMaterialImage ? 'recommend' : 'hot');
+        setProjectTitle(fromMaterialImage
+          ? (kickoff.video?.title ? `图片制作 · ${kickoff.video.title}` : '新图片内容')
+          : (kickoff.video?.title ? `竞品图文获客内容包 · ${kickoff.video.title}` : '竞品图文获客内容包'));
         const kickoffOption = kickoff.productInfo ? productOptionFromInfo(kickoff.productInfo) : null;
         if (kickoffOption) {
           setProductOptions(current => current.some(item => item.id === kickoffOption.id)
@@ -5265,9 +5272,13 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onLaunc
           setSelectedProductIds([kickoffOption.id]);
         }
         if (kickoff.productInfo) setProductInfo(kickoff.productInfo);
-        setModeNotice(kickoff.video?.aiAnalysis?.imageEvidence?.observedFacts?.length
-          ? '已带入完整轮播证据。系统将只保留可观察的布局、信息层级和表达方式，用企业中心产品与真实能力生成三组连续获客内容。'
-          : '这条图文还没有完整轮播证据，请返回灵感中心点击“重新分析完整轮播”后再生成。');
+        setModeNotice(fromMaterialImage
+          ? (kickoff.generatedVideo?.material
+            ? '已带入素材库图片。请确认产品和用途，系统会优先使用已绑定的精准产品图，再补充场景或证明素材。'
+            : '已从素材库进入图片制作。先选择企业产品，再由系统推荐最多 3 张产品、场景和证明参考图。')
+          : kickoff.video?.aiAnalysis?.imageEvidence?.observedFacts?.length
+            ? '已带入完整轮播证据。系统将只保留可观察的布局、信息层级和表达方式，用企业中心产品与真实能力生成三组连续获客内容。'
+            : '这条图文还没有完整轮播证据，请返回灵感中心点击“重新分析完整轮播”后再生成。');
         setStepIdx(1);
         autoGen.current = true;
         return;
@@ -8062,11 +8073,11 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onLaunc
   const generatePosterBrief = async () => {
     const imageEvidence = videoKickoff?.video?.aiAnalysis?.imageEvidence;
     const isEvidenceLedPackage = Boolean(
-      (videoKickoff?.source === 'inspiration_image_post' || videoKickoff?.video?.contentFormat === 'image')
+      videoKickoff?.source === 'inspiration_image_post'
       && imageEvidence?.observedFacts?.length,
     );
     const isImageReferenceWithoutEvidence = Boolean(
-      (videoKickoff?.source === 'inspiration_image_post' || videoKickoff?.video?.contentFormat === 'image')
+      videoKickoff?.source === 'inspiration_image_post'
       && !imageEvidence?.observedFacts?.length,
     );
     if (isImageReferenceWithoutEvidence) {
@@ -8136,7 +8147,7 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onLaunc
 
         const ownReferenceIds = selectedClips
           .filter(item => item.folder !== 'hot' && item.type !== 'audio')
-          .slice(0, 4)
+          .slice(0, 3)
           .map(item => item.id);
         if (ownReferenceIds.length > 0) {
           setModeNotice('三组内容方案已生成，正在用企业素材生成第 1 组首图预览…');
@@ -8213,7 +8224,7 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onLaunc
           caption: result.caption,
           imagePrompt: result.imagePrompt,
           ratio,
-          materialIds: selectedClips.filter(item => item.type !== 'audio').slice(0, 4).map(item => item.id),
+          materialIds: selectedClips.filter(item => item.type === 'image').slice(0, 3).map(item => item.id),
         });
         if (!rendered.ok || !rendered.url) throw new Error(rendered.error || '图片生成失败');
         setPosterImageUrl(rendered.url);
@@ -10411,7 +10422,7 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onLaunc
               <div className="grid grid-cols-2 rounded-lg bg-surface-2 p-1">
                 {([
                   ['video', '视频模式'],
-                  ['poster', '图文模式'],
+                  ['poster', '图片制作'],
                 ] as const).map(([value, label]) => (
                   <button
                     key={value}
@@ -11064,22 +11075,18 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onLaunc
           const clipsForFolders = (folders: readonly string[]) =>
             selectedPosterClips.filter(clip => folders.includes(clip.folder));
           const smartSelectPosterMaterials = () => {
-            const byFolder = (folders: string[], limit = 1) => posterMaterials
-              .filter(clip => folders.includes(clip.folder))
-              .slice(0, limit)
-              .map(clip => clip.id);
-            const picked = [
-              ...byFolder(['product'], 4),
-              ...byFolder(['factory'], 2),
-              ...byFolder(['packaging', 'certificate'], 2),
-              ...byFolder(['scene', 'brand'], 2),
-              ...(mode === 'clone' ? byFolder(['hot'], 1) : []),
-            ];
-            setSelected([...new Set(picked.length ? picked : posterMaterials.slice(0, 6).map(clip => clip.id))]);
+            const plan = planImageReferences(posterMaterials, {
+              productIds: selectedProductIds,
+              includeStyleReference: mode === 'clone',
+              limit: 3,
+            });
+            setSelected(plan.selectedIds);
             setActiveFolder('recommend');
-            setModeNotice(mode === 'clone'
-              ? '已按爆款图文复刻逻辑推荐素材：先拆解爆款参考，再匹配产品、工厂、包装证书和场景图。'
-              : '已按海报文案需要推荐素材：产品图优先，补充工厂背书、包装证书和使用场景。');
+            setModeNotice(plan.blockers.length
+              ? `已完成素材推荐，但还不能保证产品一致：${plan.blockers.join('；')}`
+              : mode === 'clone'
+                ? '已推荐 2 张企业素材和 1 张版式参考；竞品图只指导结构，不会作为产品身份图。'
+                : '已根据编导分析推荐最多 3 张参考图：优先精准产品图，再补充场景或证明素材。');
           };
 
           return (

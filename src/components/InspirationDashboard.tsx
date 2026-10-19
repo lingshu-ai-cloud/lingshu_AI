@@ -48,6 +48,7 @@ import { socialDiscoveryApi } from '../lib/socialDiscoveryApi';
 import { openScriptLibrary } from '../lib/contentActionNavigation';
 import type { SocialBusinessModel, SocialDiscoveryScoreDecision, SocialDiscoverySupplyItem } from '../../shared/contracts/socialContentWorkflow';
 import { MATERIAL_SOURCE_LABELS, MATERIAL_THEME_LABELS, materialPrimaryThemeOf, materialSourceCategoryOf, materialThemeTagsOf } from '../../shared/materialTaxonomy';
+import { MATERIAL_ASSET_ROLE_LABELS, MATERIAL_CONTENT_ROLE_LABELS, materialDirectorSummary } from '../../shared/imageCreativePlanning';
 import MaterialTaxonomyFilters, { type MaterialSourceFilter, type MaterialThemeFilter } from './material-library/MaterialTaxonomyFilters';
 
 // ── Types ─────────────────────────────────────────────────────────────────────
@@ -235,6 +236,26 @@ export function materialSemanticLabel(material: MaterialSemanticSource): string 
   ].map(compactMaterialKeyword).filter(Boolean);
   const keywords = [...new Set(manualKeywords.length ? manualKeywords : analyzedKeywords)].slice(0, 3);
   return keywords.length ? `内容：${keywords.join(' · ')}` : '内容：待补充说明';
+}
+
+function materialDirectorUi(material: Pick<Material, 'materialV2' | 'productName' | 'segmentAnalysisStatus' | 'segmentAnalysisError'>) {
+  const metadata = material.materialV2;
+  if (!metadata) return {
+    status: material.segmentAnalysisStatus === 'failed' ? '分析失败'
+      : material.segmentAnalysisStatus === 'pending' || material.segmentAnalysisStatus === 'analyzing' ? '编导分析中' : '等待编导分析',
+    role: '角色待识别',
+    content: '内容待识别',
+    uses: [] as string[],
+    cautions: material.segmentAnalysisError ? [material.segmentAnalysisError] : [] as string[],
+  };
+  const summary = materialDirectorSummary(metadata, material.productName || '');
+  return {
+    status: '编导分析完成',
+    role: MATERIAL_ASSET_ROLE_LABELS[metadata.assetRole],
+    content: MATERIAL_CONTENT_ROLE_LABELS[metadata.contentRole],
+    uses: summary.usableFor,
+    cautions: summary.cautions,
+  };
 }
 
 export function materialMatchesProductFilter(
@@ -3845,6 +3866,27 @@ export default function InspirationDashboard({ onScriptPanelOpen, onScriptPanelC
     });
     showActionSuccess('已带入自由创作', `正在打开“${material.name}”的制作页面。`);
   };
+
+  const startImageCreation = () => {
+    const now = new Date().toISOString();
+    onEnterWorkflow?.({
+      source: 'material_library',
+      video: {
+        id: `material-image-create-${Date.now()}`,
+        platform: 'facebook',
+        title: '新图片内容',
+        thumbnail: '',
+        duration: 1,
+        tags: ['素材库图片制作'],
+        views: '素材库',
+        trend: 'stable',
+        status: 'analyzed',
+        crawledAt: now,
+        contentFormat: 'image',
+      },
+    });
+    showActionSuccess('已打开图片制作', '先选择产品，系统会根据编导分析推荐可用素材。');
+  };
   // 爆款页只展示灵感采集结果；已入库素材统一留在“我的素材”，
   // 避免把本地片段伪装成爆款视频并混用两套交互。
   const serverDiscoveryFilterActive = discoveryDecision !== 'all'
@@ -3961,7 +4003,7 @@ export default function InspirationDashboard({ onScriptPanelOpen, onScriptPanelC
     setUploadingMaterial(true);
     setMaterialMessage('');
     try {
-      const uploadedVideos: Material[] = [];
+      const uploadedAnalyzable: Material[] = [];
       const uploadedIds: string[] = [];
       for (const file of Array.from(files)) {
         const type = file.type.startsWith('video') ? 'video' : file.type.startsWith('audio') ? 'audio' : 'image';
@@ -3980,15 +4022,15 @@ export default function InspirationDashboard({ onScriptPanelOpen, onScriptPanelC
         });
         if (!linked.ok) throw new Error(`「${file.name}」已上传，但素材归属保存失败，请在素材卡片中编辑后重试`);
         uploadedIds.push(result.material.id);
-        if (type === 'video' && result.material?.id) uploadedVideos.push(result.material);
+        if ((type === 'video' || type === 'image') && result.material?.id) uploadedAnalyzable.push(result.material);
       }
       const ownershipLabel = uploadProductId ? '指定产品素材' : '企业通用素材';
-      setMaterialMessage(uploadedVideos.length ? `已作为${ownershipLabel}上传，正在分析 ${uploadedVideos.length} 个视频的可用片段…` : `已上传 ${files.length} 个${ownershipLabel}`);
+      setMaterialMessage(uploadedAnalyzable.length ? `已作为${ownershipLabel}上传，编导 Agent 正在识别 ${uploadedAnalyzable.length} 个图片/视频素材…` : `已上传 ${files.length} 个${ownershipLabel}`);
       await refreshMaterials();
       window.dispatchEvent(new Event('lingshu:materials-updated'));
       if (uploadingScriptGapId && uploadedIds.length) await updateScriptGapTask(uploadingScriptGapId, { uploadedMaterialIds: uploadedIds });
-      setMaterialMessage(uploadedVideos.length
-        ? `已上传 ${files.length} 个${ownershipLabel}，视频已进入分析队列，可在素材卡片查看进度`
+      setMaterialMessage(uploadedAnalyzable.length
+        ? `已上传 ${files.length} 个${ownershipLabel}，图片/视频已进入编导分析队列，可在素材详情查看用途`
         : `已上传 ${files.length} 个${ownershipLabel}`);
       setTimeout(() => setMaterialMessage(''), 2800);
     } catch (e) {
@@ -4714,7 +4756,10 @@ export default function InspirationDashboard({ onScriptPanelOpen, onScriptPanelC
             {innerView === 'inspiration' && <AntUpload className="shrink-0 pt-1" accept="video/mp4,.mp4" showUploadList={false} disabled={importingReference} beforeUpload={file => { void importReferenceVideo(file); return false; }}>
               <Button type="primary" loading={importingReference} icon={<Upload size={15} />}>导入 MP4 并分析</Button>
             </AntUpload>}
-            {innerView === 'library' && <Button className="shrink-0" type="primary" loading={uploadingMaterial} icon={<Upload size={15} />} onClick={() => setMaterialUploadDialogOpen(true)}>上传素材</Button>}
+            {innerView === 'library' && <div className="flex shrink-0 items-center gap-2">
+              <Button loading={uploadingMaterial} icon={<Upload size={15} />} onClick={() => setMaterialUploadDialogOpen(true)}>上传素材</Button>
+              <Button type="primary" icon={<Images size={15} />} onClick={startImageCreation}>生成图片</Button>
+            </div>}
           </div>
 
 
@@ -4976,7 +5021,7 @@ export default function InspirationDashboard({ onScriptPanelOpen, onScriptPanelC
                           title={material.type === 'audio' ? '音频素材不能单独进入画面创作' : material.type === 'video' && !canProcessVideo({ contentFormat: 'video', duration: material.duration }) ? '视频时长尚未识别完成' : '带入内容制作的自由创作'}
                           className="inline-flex h-9 min-w-0 flex-nowrap items-center justify-center gap-0.5 rounded-lg bg-accent px-1.5 text-[11px] font-bold text-white transition hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-45"
                         >
-                          <Sparkles size={12} className="shrink-0" /><span className="whitespace-nowrap">自由创作</span>
+                          <Sparkles size={12} className="shrink-0" /><span className="whitespace-nowrap">{material.type === 'image' ? '用此图创作' : '自由创作'}</span>
                         </button>
                       </div>
                     </div>
@@ -5036,6 +5081,18 @@ export default function InspirationDashboard({ onScriptPanelOpen, onScriptPanelC
                       : <div className="flex min-h-44 flex-col items-center justify-center gap-4 bg-surface-2 p-6"><Music2 size={28} className="text-text-muted" /><audio src={detailMaterial.url} controls className="w-full" /></div>}
                   </div>
                   <div className="space-y-3 text-xs">
+                    {(() => {
+                      const director = materialDirectorUi(detailMaterial);
+                      return <div className="rounded-xl border border-accent/20 bg-accent-glow px-3 py-3">
+                        <div className="flex items-center justify-between gap-2">
+                          <p className="font-bold text-text-primary">编导 Agent 识别</p>
+                          <span className="text-[10px] font-bold text-accent">{director.status}</span>
+                        </div>
+                        <p className="mt-2 font-semibold text-text-primary">{director.role} · {director.content}</p>
+                        {director.uses.length > 0 && <p className="mt-1 leading-5 text-text-secondary">可用于：{director.uses.join('、')}</p>}
+                        {director.cautions.length > 0 && <p className="mt-1 leading-5 text-text-muted">注意：{director.cautions.join('；')}</p>}
+                      </div>;
+                    })()}
                     <div className="rounded-xl border border-border bg-surface px-3 py-2.5"><p className="text-[10px] font-bold text-text-muted">主题标签</p><div className="mt-2 flex flex-wrap gap-1.5">{Object.entries(MATERIAL_THEME_LABELS).map(([id,label]) => <button type="button" key={id} disabled={updatingMaterialTheme} onClick={() => void updateDetailMaterialTheme(id as keyof typeof MATERIAL_THEME_LABELS)} className={`rounded-full px-2.5 py-1 text-[11px] font-bold disabled:opacity-50 ${materialPrimaryThemeOf(detailMaterial) === id ? 'bg-accent text-white' : 'bg-surface-2 text-text-secondary'}`}>{label}</button>)}</div></div>
                     {[
                       ['素材类型', detailMaterial.type === 'video' ? '视频' : detailMaterial.type === 'image' ? '图片' : '音频'],
@@ -5045,7 +5102,7 @@ export default function InspirationDashboard({ onScriptPanelOpen, onScriptPanelC
                       ['时长', detailMaterial.type === 'video' || detailMaterial.type === 'audio' ? displayDuration(detailMaterial.duration) : '—'],
                       ['入库时间', detailMaterial.createdAt ? new Date(detailMaterial.createdAt).toLocaleString('zh-CN') : '—'],
                     ].map(([label, value]) => <div key={label} className="rounded-lg border border-border bg-surface px-3 py-2.5"><p className="text-[10px] font-bold text-text-muted">{label}</p><p className="mt-1 break-words font-bold leading-5 text-text-primary">{value}</p></div>)}
-                    <Button type="primary" block onClick={() => { const material = detailMaterial; setDetailMaterial(null); enterMaterialSmartGeneration(material); }} disabled={detailMaterial.type === 'audio' || (detailMaterial.type === 'video' && !canProcessVideo({ contentFormat: 'video', duration: detailMaterial.duration })) || !String(detailMaterial.url || detailMaterial.poster || '').trim()}>自由创作</Button>
+                    <Button type="primary" block onClick={() => { const material = detailMaterial; setDetailMaterial(null); enterMaterialSmartGeneration(material); }} disabled={detailMaterial.type === 'audio' || (detailMaterial.type === 'video' && !canProcessVideo({ contentFormat: 'video', duration: detailMaterial.duration })) || !String(detailMaterial.url || detailMaterial.poster || '').trim()}>{detailMaterial.type === 'image' ? '用此图制作图片' : '自由创作'}</Button>
                   </div>
                 </div>
             </Drawer>

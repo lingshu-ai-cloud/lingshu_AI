@@ -9,6 +9,8 @@ import { analyzeProductionMaterial } from '../digitalEmployees/productionMateria
 import type { AssetCandidate } from '../digitalEmployees/contentProduction.js';
 import { buildMaterialScriptAnalysis, reusableMaterialScriptAnalysis, type MaterialScriptAnalysis } from '../../shared/materialScriptAnalysis.js';
 import { materialThemeTagsOf } from '../../shared/materialTaxonomy.js';
+import { materialAssetV2FromRecord } from '../../shared/contracts/materialAssetV2.js';
+import { inferMaterialAssetV2, materialDirectorSummary } from '../../shared/imageCreativePlanning.js';
 const jobs = new KeyedWorkQueue(2);
 export const isMaterialAnalysisActive = (tenantId: string, id: string) => jobs.has(`${tenantId}:${id}`);
 export function localMaterialMediaPath(record: MaterialRecord, mediaRoot = path.resolve(process.cwd(), 'data/media')): string {
@@ -144,7 +146,34 @@ export async function requestMaterialAnalysis(tenantId: string, id: string, retr
       if(automaticVisual&&current.contentSha256&&current.contentSha256!==automaticVisual.sha256)throw Error('素材字节版本与实际分析不一致');
       const automaticEvidence=automaticVisual?uploadAutomaticMaterialEvidence({...automaticVisual,commercialUseApproved:current.commercialUseApproved===true,rightsEvidenceRef:String(current.licenseEvidence||''),authorizationScopes:Array.isArray(current.provenance?.authorizationScopes)?current.provenance.authorizationScopes:current.commercialUseApproved===true&&current.derivativesApproved===true?['enterprise-video']:[]}):[];
       const themeTags = materialThemeTagsOf({ name: record.name, segments: result.segments, visualObservations: result.observations, scriptAnalysis });
-      await patch(tenantId, id, { ...(automaticVisual?{contentSha256:automaticVisual.sha256}:{}),provenance:{...(current.provenance&&typeof current.provenance==='object'?current.provenance:{}),weeklyAutomaticMaterialEvidence:automaticEvidence},duration: result.duration, segments: result.segments, visualObservations: result.observations, scriptAnalysis,
+      const currentProvenance = current.provenance && typeof current.provenance === 'object' ? current.provenance : {};
+      const userMetadata = currentProvenance.materialAssetV2Source === 'user'
+        ? materialAssetV2FromRecord(current as Record<string, unknown>)
+        : null;
+      const materialV2 = userMetadata || inferMaterialAssetV2({
+        type: String(current.type || record.type || ''),
+        name: String(current.name || record.name || ''),
+        folder: String(current.folder || record.folder || ''),
+        tags: String(current.tags || record.tags || ''),
+        productId: String(current.productId || ''),
+        productName: String(current.productName || ''),
+        enterpriseCommon: current.enterpriseCommon === true,
+        visualObservations: result.observations,
+        sourceRevision: revision,
+      });
+      const directorAnalysis = materialDirectorSummary(materialV2, String(current.productName || ''));
+      await patch(tenantId, id, { ...(automaticVisual?{contentSha256:automaticVisual.sha256}:{}),provenance:{
+        ...currentProvenance,
+        weeklyAutomaticMaterialEvidence:automaticEvidence,
+        materialAssetV2: materialV2,
+        materialAssetV2Source: userMetadata ? 'user' : 'director_model',
+        materialDirectorAnalysis: {
+          schemaVersion: 'material-director.v1',
+          analyzedAt: new Date().toISOString(),
+          sourceRevision: revision,
+          ...directorAnalysis,
+        },
+      },duration: result.duration, segments: result.segments, visualObservations: result.observations, scriptAnalysis,
         themeTags, primaryTheme: themeTags[0] || '', classificationStatus: themeTags.length ? 'completed' : 'review_required',
         classificationSource: 'model', classificationEvidence: result.observations.slice(0, 8),
         segmentAnalysisStatus: 'completed', segmentAnalysisError: '', analysisSourceRevision: revision });

@@ -388,6 +388,19 @@ export default function TrafficPage({
         crawledAt?: string;
       };
     };
+    if (kickoff.source === 'material_library'
+      && kickoff.video?.contentFormat === 'image'
+      && !kickoff.generatedVideo?.material) {
+      window.dispatchEvent(new CustomEvent('lingshu:navigate', {
+        detail: {
+          page: 'smartAssets',
+          view: 'create',
+          studioEntry: true,
+          directStudio: true,
+        },
+      }));
+      return;
+    }
     if (kickoff.source === 'material_library' && kickoff.generatedVideo?.material) {
       const material = kickoff.generatedVideo.material;
       const materialUrl = String(material.url || kickoff.generatedVideo.url || '').trim();

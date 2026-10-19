@@ -7381,7 +7381,11 @@ studioRouter.patch('/materials/:id', async (req, res) => {
         ...(req.body?.materialV2 && typeof req.body.materialV2 === 'object' && !Array.isArray(req.body.materialV2) ? req.body.materialV2 : {}),
         ...('enterpriseCommon' in (req.body || {}) ? { enterpriseCommon: req.body.enterpriseCommon === true } : {}),
       });
-      changes.provenance = { ...(material.provenance || {}), materialAssetV2: metadata };
+      changes.provenance = {
+        ...(material.provenance || {}),
+        materialAssetV2: metadata,
+        ...('materialV2' in (req.body || {}) ? { materialAssetV2Source: 'user' } : {}),
+      };
     }
     const effectiveMetadata = materialAssetV2FromRecord({
       ...(material as unknown as Record<string, unknown>),
