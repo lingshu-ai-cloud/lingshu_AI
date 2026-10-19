@@ -85,6 +85,30 @@
 - 修复：VM 明确注入“showcase 关闭”的生产等价上下文，不改变展示模型断言。
 - 状态：已修复，待复跑确认。
 
+## RESOLVED-010 媒体探测模块边界误收窄可选 URL
+
+- 命令：`pnpm exec tsc --noEmit`
+- 实际：`Clip` 不能传给新模块的画幅探测函数，因为真实 `Clip.url` 可选，而抽取后的结构类型误声明为必填。
+- 归因：本次辅助模块拆分的类型边界回归；原实现已对空 URL 返回零尺寸。
+- 修复：将探测端口的 `url` 保持为可选，继续由既有空源分支安全返回，不使用非空断言。
+- 状态：已修复，待复跑确认。
+
+## RESOLVED-011 Studio 标题续接源码断言落后于实现
+
+- 命令：`pnpm exec tsx --test src/components/AiCreateStudio.workflowContract.test.ts`
+- 实际：测试要求出现一行式 `setProjectTitle(loadedStudioProjectTitle(...))`，实现已先计算 `restoredTitle`，再将其同时写入 autosave 指纹和界面标题。
+- 归因：源码形态断言过期；现有两步数据流仍正确保留用户最新续接标题，且比旧写法多覆盖 autosave 一致性。
+- 修复：断言 `loadedStudioProjectTitle` 的结果最终传入 `setProjectTitle`，不再绑定无业务意义的一行式代码形态。
+- 状态：已修复，待复跑确认。
+
+## RESOLVED-012 客户页暴露 fixture 身份标签
+
+- 命令：`pnpm exec tsx --test src/components/AiCreateStudio.workflowContract.test.ts`
+- 实际：`ConversionPage` 仍按 `customer.isMock` 向产品界面展示“模拟客户/真实客户”。
+- 归因：内部 fixture 状态泄漏到用户界面；客户名称虽已去除“模拟”字样，但旁边标签重新暴露了该实现细节。
+- 修复：移除列表和会话头部的 fixture 身份标签；非 fixture 客户的通道连接/未连接状态仍由独立标签如实展示。
+- 状态：已修复，待复跑确认。
+
 ## 已验证通过的相关范围
 
 - 周执行图核心：24 个用例通过。
