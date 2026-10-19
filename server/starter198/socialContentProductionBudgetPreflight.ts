@@ -50,6 +50,16 @@ export interface ProductionBudgetReadPorts {
     preparePresenterFirstFrameReviews?: (input:{scope:SocialTaskBudgetScope;groups:FrozenPresenterGroup[];requirements:PaidStageRequirement[];intents:SocialApprovedBudgetPlan['paidOperations'];paidPermit:ReturnType<typeof createSocialContentPaidOperationPermit>})=>Promise<void>;
     ledgerRoot?: string;
     carryForwardWeeklyExactCost?: typeof carryForwardWeeklyCandidateExactProductionCost;
+    /** Pre-bound server-only v2 carry seam. The composition layer must close
+     * over integrity/audit/head dependencies; task and request data can never
+     * supply them through this narrow business-context port. */
+    carryForwardWeeklyExactCostV2?: (input:{
+        store: NonNullable<Starter198Repository['dataStore']>;
+        scope: SocialTaskBudgetScope;
+        taskRow: Awaited<ReturnType<typeof requireSocialTask>>;
+        budget: SocialContentTaskBudget;
+        mode: 'read'|'carry';
+    })=>Promise<unknown>;
     /** Authoritative weekly claim recheck immediately before any new paid POST claim. */
     assertNewSubmit?: () => Promise<void>;
 }
@@ -264,8 +274,13 @@ export async function prepareSocialContentProductionBudget(input: ProductionBudg
         authorization:async()=>({maximumCny:Number(brief?.perItemBudgetCny),authorizationRef:`weekly-production:${socialRequestHash(exactCostWeeklyAuthority)}`}),
         quote:async()=>{throw Error('weekly_preproduction_carry_never_quotes');},assertCurrent,verifyRejection:async()=>false,
       });
-      const exactEscrowRoot=process.env.WEEKLY_CANDIDATE_EXACT_LEDGER_ROOT?.trim()||process.env.SOCIAL_CONTENT_TASK_BUDGET_DIR?.trim()||'';
-      await (input.ports?.carryForwardWeeklyExactCost??carryForwardWeeklyCandidateExactProductionCost)({store,escrowRoot:exactEscrowRoot,scope,taskRow:row,budget:preproductionBudget,mode:input.quoteOnly?'read':'carry'});
+      const carryMode=input.quoteOnly?'read':'carry';
+      if(input.ports?.carryForwardWeeklyExactCostV2){
+        await input.ports.carryForwardWeeklyExactCostV2({store,scope,taskRow:row,budget:preproductionBudget,mode:carryMode});
+      }else{
+        const exactEscrowRoot=process.env.WEEKLY_CANDIDATE_EXACT_LEDGER_ROOT?.trim()||process.env.SOCIAL_CONTENT_TASK_BUDGET_DIR?.trim()||'';
+        await (input.ports?.carryForwardWeeklyExactCost??carryForwardWeeklyCandidateExactProductionCost)({store,escrowRoot:exactEscrowRoot,scope,taskRow:row,budget:preproductionBudget,mode:carryMode});
+      }
       ledgerProbe=preproductionBudget.status(scope);
     }
     // Once this run has a frozen whole-film reservation, every later execution
