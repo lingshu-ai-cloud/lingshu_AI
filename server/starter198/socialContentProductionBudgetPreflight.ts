@@ -264,7 +264,8 @@ export async function prepareSocialContentProductionBudget(input: ProductionBudg
         authorization:async()=>({maximumCny:Number(brief?.perItemBudgetCny),authorizationRef:`weekly-production:${socialRequestHash(exactCostWeeklyAuthority)}`}),
         quote:async()=>{throw Error('weekly_preproduction_carry_never_quotes');},assertCurrent,verifyRejection:async()=>false,
       });
-      await (input.ports?.carryForwardWeeklyExactCost??carryForwardWeeklyCandidateExactProductionCost)({store,escrowRoot:process.env.WEEKLY_CANDIDATE_EXACT_LEDGER_ROOT||'',scope,taskRow:row,budget:preproductionBudget,mode:input.quoteOnly?'read':'carry'});
+      const exactEscrowRoot=process.env.WEEKLY_CANDIDATE_EXACT_LEDGER_ROOT?.trim()||process.env.SOCIAL_CONTENT_TASK_BUDGET_DIR?.trim()||'';
+      await (input.ports?.carryForwardWeeklyExactCost??carryForwardWeeklyCandidateExactProductionCost)({store,escrowRoot:exactEscrowRoot,scope,taskRow:row,budget:preproductionBudget,mode:input.quoteOnly?'read':'carry'});
       ledgerProbe=preproductionBudget.status(scope);
     }
     // Once this run has a frozen whole-film reservation, every later execution
