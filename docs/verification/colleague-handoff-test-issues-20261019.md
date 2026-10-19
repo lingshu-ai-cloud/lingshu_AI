@@ -111,6 +111,22 @@
 
 ## 已验证通过的相关范围
 
+## RESOLVED-014 应用外壳契约未跟随企业页签头结构
+
+- 命令：`pnpm exec tsx src/components/AppShell.contract.test.ts`
+- 实际：契约强制要求 `EnterprisePage.tsx` 使用 `LsPageHeader`，但当前页签式企业工作区已在页签头中使用 `<h1 className="sr-only">企业知识库</h1>`，因此误报共享页头缺失。
+- 归因：实现仍提供唯一、可访问的一级标题；过期的是对具体组件形态的要求，而不是可访问性行为。
+- 修复：企业页断言改为验证页签工作区的隐藏 H1；定时任务页仍继续强制使用共享页头。
+- 状态：已修复，待复跑确认。
+
+## RESOLVED-013 数字员工总契约仍只扫描旧仪表盘文件
+
+- 命令：`pnpm exec tsx src/components/DigitalEmployeePage.contract.test.ts`
+- 实际：内容任务卡预览文案和灵感引用构造已归属 `smartBusiness/TaskPreviewCards.tsx`，角色/工作流策略已归属 `digitalEmployeePresentationPolicy.ts`；总契约仍只读取旧入口文件，先后误报预览、可追踪灵感引用和角色卡缺失。
+- 归因：与 RESOLVED-008 相同的源码定位契约过期；任务卡的真实引用、素材组合、效果置信度和阻断提示仍在职责模块中。
+- 修复：总契约组合读取仪表盘入口与任务预览模块；数字员工展示策略断言也显式读取新策略模块，不删除或放宽业务断言。
+- 状态：已修复，待复跑确认。
+
 - 周执行图核心：24 个用例通过。
 - 内容订单准入、投影、产品选择：17 个用例通过。
 - TypeScript：`pnpm exec tsc --noEmit` 通过（截至提交 `79f26bf6`）。

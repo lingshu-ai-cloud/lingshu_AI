@@ -16,6 +16,9 @@ import { nodeDeepLink } from './WeeklyExecutionNodes.js';
 
 const pageSource = fs.readFileSync('src/components/DigitalEmployeePage.tsx', 'utf8');
 const smartBusinessSource = fs.readFileSync('src/components/SmartBusinessDashboard.tsx', 'utf8');
+const taskPreviewCardsSource = fs.readFileSync('src/components/smartBusiness/TaskPreviewCards.tsx', 'utf8');
+const smartBusinessFeatureSource = smartBusinessSource + taskPreviewCardsSource;
+const presentationPolicySource = fs.readFileSync('src/lib/digitalEmployeePresentationPolicy.ts', 'utf8');
 const digitalEmployeeWorkspaceSource = fs.readFileSync('src/components/smartBusiness/DigitalEmployeeWorkspace.tsx', 'utf8');
 const matrixScheduleSource = fs.readFileSync('src/components/smartBusiness/MatrixWorkSchedule.tsx', 'utf8');
 const agentWeeklyCalendarSource = fs.readFileSync('src/components/smartBusiness/AgentWeeklyCalendar.tsx', 'utf8');
@@ -203,7 +206,7 @@ assert.match(accountRailSource, /overflow-x-auto/, 'the account selector must st
 assert.doesNotMatch(accountRailSource, /lg:sticky|lg:grid-cols-\[220px/, 'the account selector must not reserve a fixed desktop sidebar');
 assert.doesNotMatch(pageSource, /workspaceView === "matrix" \? "lg:grid-cols-\[220px/, 'the matrix workspace must keep the schedule at full width');
 for (const label of ['爆款视频预览', '素材组合预览', '效果置信度', '任务不能开始']) {
-  assert.match(smartBusinessSource, new RegExp(label), `content task cards must expose ${label}`);
+  assert.match(smartBusinessFeatureSource, new RegExp(label), `content task cards must expose ${label}`);
 }
 assert.match(matrixScheduleSource, /Agent 任务看板/, 'the overview schedule section must retain only the Agent task board');
 assert.doesNotMatch(matrixScheduleSource, /<LsCalendar|发布日历/, 'the publishing calendar must not be duplicated inside the Agent task board');
@@ -397,7 +400,7 @@ assert.doesNotMatch(pageSource, /<SmartOperationsAccountRail/, 'the digital empl
 assert.match(weeklyPlanCalendarSource, /plans\.length[\s\S]{0,300}条内容/, 'the weekly calendar must expose the conserved total publishing count');
 assert.match(weeklyPlanCalendarSource, /plans\.map[\s\S]{0,650}plan\.plannedPublishDate/, 'the weekly calendar must adapt every publishing version with its real planned date');
 assert.match(weeklyPlanCalendarSource, /<LsCalendar/, 'the weekly calendar must use FullCalendar for all views');
-assert.match(smartBusinessSource, /function inspirationReferenceForPlan[\s\S]{0,700}referenceId[\s\S]{0,260}sourceUrl[\s\S]{0,260}title:/, 'weekly content cards must preserve a traceable reference for Inspiration Center after the detail page is removed');
+assert.match(smartBusinessFeatureSource, /function inspirationReferenceForPlan[\s\S]{0,700}referenceId[\s\S]{0,260}sourceUrl[\s\S]{0,260}title:/, 'weekly content cards must preserve a traceable reference for Inspiration Center after the detail page is removed');
 assert.match(publishingCalendarSource, /detailsTitle="内容制作进度"[\s\S]{0,600}WeeklyContentProgressPanel/, 'the Digital Employee publishing calendar must open read-only content progress in the shared drawer');
 assert.match(publishingCalendarSource, /onOpenReference[\s\S]{0,350}inspirationReferenceNavigationDetail/, 'the drawer must retain the exact persisted inspiration reference as a secondary action');
 assert.doesNotMatch(confirmWeeklyPlanSource, /approvalBlocked|missingProducts|missingReferences|generatePackageDetails|readiness\.canStart/, 'launch must not duplicate production preparation or publishing readiness gates in the UI');
@@ -446,11 +449,11 @@ for (const removedReviewCopy of ['全部账号', '暂无内容播放量', '热�
 assert.match(inspirationSource, /对标账号/, 'Inspiration Center must expose benchmark accounts as its own page');
 assert.match(competitorAccountsSource, /embedded/, 'benchmark accounts must support an embedded standalone page instead of only a modal');
 for (const role of ['orchestrator', 'business', 'director', 'content', 'customer']) {
-  assert.match(pageSource, new RegExp(`id: ["']${role}["']`), `settings must expose the ${role} role card`);
+  assert.match(pageSource + presentationPolicySource, new RegExp(`id: ["']${role}["']`), `settings must expose the ${role} role card`);
 }
-assert.doesNotMatch(pageSource, /\{ id: ["']industry["']/, 'legacy industry must not remain a public role card');
-assert.match(pageSource, /id: "business"[\s\S]{0,400}workflows: \["content_publish"\]/, 'content publishing belongs to the business Agent');
-assert.match(pageSource, /id: "content"[\s\S]{0,400}workflows: \[\]/, 'the content Agent renders and quality-checks without owning publishing');
+assert.doesNotMatch(pageSource + presentationPolicySource, /\{ id: ["']industry["']/, 'legacy industry must not remain a public role card');
+assert.match(presentationPolicySource, /id: ['"]business['"][\s\S]{0,400}workflows: \[['"]content_publish['"]\]/, 'content publishing belongs to the business Agent');
+assert.match(presentationPolicySource, /id: ['"]content['"][\s\S]{0,400}workflows: \[\]/, 'the content Agent renders and quality-checks without owning publishing');
 assert.match(pageSource, /activeRuleAgent === "business"[\s\S]{0,2200}周草稿、发布平台与具体账号/, 'publishing controls belong to the business Agent panel');
 for (const label of ['经营 Agent', '编导 Agent', '内容 Agent', '客服 Agent', '当前动作', '查看详情']) {
   assert.match(executionStatusSource, new RegExp(label), `live Agent status must expose ${label}`);
@@ -460,7 +463,7 @@ for (const color of ['#7c3aed', '#2563eb', '#0f9f82', '#d97706']) {
 }
 assert.match(executionStatusSource, /agent-live-card--running/, 'running Agent cards must expose an animation hook');
 assert.match(executionStatusSource, /tasks\.filter\(task => \['succeeded', 'completed'\]\.includes\(task\.status\)\)\.length/, 'Agent progress must come from persisted task completion rather than fabricated percentages');
-assert.match(pageSource, /synchronizeThemeContentWorkflows[\s\S]{0,500}contentCreationWorkflows/, 'saving the unified switch must retain the legacy workflow ids');
+assert.match(pageSource + presentationPolicySource, /synchronizeThemeContentWorkflows[\s\S]{0,500}contentCreationWorkflows/, 'saving the unified switch must retain the legacy workflow ids');
 assert.match(pageSource, /<VideoPlanEditor[^>]{0,300}themeWorkflow/, 'Digital Employee weekly planning must enable the theme workflow explicitly');
 for (const persona of ['B2B 从零起步', 'B2B 已有基础', '品牌影响', 'DTC 直接销售']) {
   assert.match(taskPackagePresetSource, new RegExp(persona), `weekly task packages must include ${persona}`);

@@ -41,9 +41,10 @@ for (const [page, source] of Object.entries(canonicalPageSources)) {
 }
 assert.match(sharedHeader, /Typography.Title level=\{1\} className="sr-only"/,
   'shared action-only headers must retain an accessible H1 without a visible page title');
-for (const [file, title] of [['EnterprisePage.tsx', '企业知识库'], ['ScheduledPage.tsx', '定时任务']]) {
-  const source = readFileSync(new URL(`./${file}`, import.meta.url), 'utf8');
-  assert.ok(source.includes(`<LsPageHeader title="${title}"`), `${file} must use its accessible shared header`);
-}
+const enterprise = readFileSync(new URL('./EnterprisePage.tsx', import.meta.url), 'utf8');
+assert.match(enterprise, /<h1 className="sr-only">企业知识库<\/h1>/,
+  'the tab-led enterprise workspace must retain an accessible page title');
+const scheduled = readFileSync(new URL('./ScheduledPage.tsx', import.meta.url), 'utf8');
+assert.ok(scheduled.includes('<LsPageHeader title="定时任务"'), 'ScheduledPage.tsx must use its accessible shared header');
 
 console.log('Application shell contract tests passed');
