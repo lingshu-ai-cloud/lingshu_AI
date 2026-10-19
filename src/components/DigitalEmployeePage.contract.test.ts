@@ -50,6 +50,8 @@ const weeklyWorkEventsSource = fs.readFileSync('src/lib/weeklyWorkEvents.ts', 'u
 const appSource = fs.readFileSync('src/App.tsx', 'utf8');
 const layoutSource = fs.readFileSync('src/components/Layout.tsx', 'utf8');
 const assistantSource = fs.readFileSync('src/components/GlobalAssistant.tsx', 'utf8');
+const assistantRuntimeSource = fs.readFileSync('src/components/assistant/globalAssistantRuntime.ts', 'utf8');
+const assistantRoutingSource = assistantSource + assistantRuntimeSource;
 const assistantStoreSource = fs.readFileSync('src/stores/assistantStore.ts', 'utf8');
 const revisionSource = fs.readFileSync('src/components/ProductionRevisionPanel.tsx', 'utf8');
 const videoPlanEditorSource = fs.readFileSync('src/components/VideoPlanEditor.tsx', 'utf8');
@@ -235,7 +237,7 @@ assert.match(matrixScheduleSource, /<AgentWorkMonitor/, 'the Agent task board mu
 assert.doesNotMatch(smartBusinessSource, /数字员工协作状态|四位数字员工协作状态/, 'the dashboard must not create a separate Digital Employee section');
 assert.doesNotMatch(pageSource, /aria-label="开启或关闭智能经营"|智能经营已开启|已停止新计划/, 'the redundant Smart Operations switch must not remain beside the weekly task control');
 
-assert.match(assistantSource, /const PRIMARY_ASSISTANT_THREAD: OrbitAgentId = 'business'/, '灵小枢必须保持一个统一的主对话线程');
+assert.match(assistantRuntimeSource, /(?:export )?const PRIMARY_ASSISTANT_THREAD: OrbitAgentId = 'business'/, '灵小枢必须保持一个统一的主对话线程');
 assert.match(assistantSource, /const activeAgentLabel = '灵小枢'/, '唯一主入口必须使用灵小枢身份');
 assert.match(assistantSource, /const threadAgent = PRIMARY_ASSISTANT_THREAD/, '页面专业 Agent 只能作为内部路由上下文，不能拆成多个对话入口');
 assert.doesNotMatch(assistantSource, /const SKILL_AGENTS|策略助手|唤醒助手|统筹 Agent/, '灵小枢不应恢复旧助手、放射式 Agent 入口或重复的统筹 Agent');
@@ -250,9 +252,9 @@ assert.match(pageSource, /weeklyPlanNavigation\?: \{ goalId: string; planId: str
 assert.match(pageSource, /next\.goal\?\.id !== target\.goalId \|\| next\.plan\?\.id !== target\.planId/, '打开编辑器前必须同时核对目标与计划编号');
 assert.match(pageSource, /目标周计划已更新或不再是当前计划/, '计划不匹配必须明确提示，不能回退打开别的计划');
 assert.match(pageSource, /setViewGoalId\(""\);[\s\S]{0,300}setWeeklyPlanOpen\(false\)[\s\S]{0,220}请先核对平台、产量、预算和排期/, '准确定位后必须回到当前经营页并要求先核对计划，不得复用已删除的详情页');
-assert.match(assistantSource, /page === 'smartAssets'\) return 'content'/, '内容制作页应高亮内容 Agent');
-assert.match(assistantSource, /page === 'socialInspiration'[\s\S]{0,160}return 'director'/, '灵感与脚本页面应高亮编导 Agent');
-assert.match(assistantSource, /page === 'conversion'[\s\S]{0,220}return 'customer'/, '客户页面应高亮客服 Agent');
+assert.match(assistantRoutingSource, /page === 'smartAssets'\) return 'content'/, '内容制作页应高亮内容 Agent');
+assert.match(assistantRoutingSource, /page === 'socialInspiration'[\s\S]{0,160}return 'director'/, '灵感与脚本页面应高亮编导 Agent');
+assert.match(assistantRoutingSource, /page === 'conversion'[\s\S]{0,220}return 'customer'/, '客户页面应高亮客服 Agent');
 assert.match(assistantSource, /const openAgent[\s\S]{0,160}const agentId = PRIMARY_ASSISTANT_THREAD/, '所有页面入口保持统一主线程');
 assert.match(assistantSource, /send\(kickoff\.text, orbitIdForAgent\(kickoff\.agent, currentPageAgent\)\)/, '专业工作流启动仍应进入对应 Agent');
 assert.match(assistantSource, /strategyRequest \? '' : await loadLiveIntegrationFacts\(\)/, '经营回答不能重新注入客户端账号事实');
