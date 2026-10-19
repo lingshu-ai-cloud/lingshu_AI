@@ -3,6 +3,7 @@ import { readFileSync } from 'node:fs';
 import test from 'node:test';
 
 const source = readFileSync(new URL('./AssistantDecisionCenter.tsx', import.meta.url), 'utf8');
+const productionSource = readFileSync(new URL('./AssistantProductionDecisionCards.tsx', import.meta.url), 'utf8');
 const styles = readFileSync(new URL('./assistantDecisionCenter.css', import.meta.url), 'utf8');
 
 test('assistant is a one-card decision surface with chat only in the detail empty state', () => {
@@ -14,11 +15,11 @@ test('assistant is a one-card decision surface with chat only in the detail empt
 test('summary variant is a real-feed bubble that delegates opening to the external detail modal', () => {
   assert.match(source, /AssistantDecisionCenterVariant = 'summary' \| 'detail'/);
   assert.match(source, /variant\?: AssistantDecisionCenterVariant/);
-  assert.equal(source.match(/onOpenDetail\?: \(trigger\?: HTMLButtonElement \| null\) => void/g)?.length, 3, 'the shell callback and both summary variants must receive the trigger for focus restoration');
+  assert.equal(`${source}\n${productionSource}`.match(/onOpenDetail\?: \(trigger\?: HTMLButtonElement \| null\) => void/g)?.length, 3, 'the shell callback and both summary variants must receive the trigger for focus restoration');
   assert.match(source, /if \(variant === 'summary'\)[\s\S]*if \(!first && !productionDecision && !error\) return null/, 'an empty feed must not reserve summary space');
   assert.match(source, /card\.kind === 'plan_start' \|\| card\.kind === 'plan_adjustment'[\s\S]*请确认本周的内容计划/, 'weekly plan summaries use the requested plain-language title');
   assert.match(source, /<DecisionSummary card=\{first\} total=\{total \|\| 1\} onOpenDetail=\{onOpenDetail\}/, 'the real first feed card drives the summary bubble');
-  const summarySource = source.slice(source.indexOf('function DecisionSummary'), source.indexOf('const productionKindMeta'));
+  const summarySource = source.slice(source.indexOf('function DecisionSummary'), source.indexOf('function DecisionCard'));
   assert.match(summarySource, /className="assistant-decision-summary"[\s\S]*onClick=\{event => onOpenDetail\?\.\(event\.currentTarget\)\}/, 'summary click delegates the trigger to the external dialog');
   assert.doesNotMatch(summarySource, /onAction|execute/, 'summary click only opens detail and never executes an action');
   assert.match(styles, /\.assistant-decision-summary[\s\S]*min-height: 44px/);
@@ -81,18 +82,18 @@ test('refresh keeps the current card and late requests cannot replace newer stat
 });
 
 test('canonical production cards stay one-card, deep-link first, and command-gated', () => {
-  for (const label of ['需补资料', '预算确认', '质量验收', '降级路线', '异常恢复']) assert.match(source, new RegExp(label));
-  assert.match(source, /const executableCommands = onCommand \? decision\.commands : \[\]/,
+  for (const label of ['需补资料', '预算确认', '质量验收', '降级路线', '异常恢复']) assert.match(productionSource, new RegExp(label));
+  assert.match(productionSource, /const executableCommands = onCommand \? decision\.commands : \[\]/,
     'without an existing command handler the card must expose navigation only');
-  assert.match(source, /const navigationCommands = onCommand \? \[\] : decision\.commands/,
+  assert.match(productionSource, /const navigationCommands = onCommand \? \[\] : decision\.commands/,
     'allowlisted input actions become safe deep links when mutation wiring is unavailable');
-  assert.match(source, /dispatchDeepLink\(linkFor\(primaryNavigation\)\)/,
+  assert.match(productionSource, /dispatchDeepLink\(linkFor\(primaryNavigation\)\)/,
     'a navigation fallback must not pretend that a production mutation executed');
-  assert.match(source, /!onCommand \? <Alert[\s\S]*请前往对应页面处理[\s\S]*ASSISTANT_PRODUCTION_NAVIGATION_NOTICE/,
+  assert.match(productionSource, /!onCommand \? <Alert[\s\S]*请前往对应页面处理[\s\S]*ASSISTANT_PRODUCTION_NAVIGATION_NOTICE/,
     'navigation-only mode must explain that the card does not execute the production action');
-  assert.match(source, /assistantProductionCommandLabel\(primaryNavigation, false, true\)/,
+  assert.match(productionSource, /assistantProductionCommandLabel\(primaryNavigation, false, true\)/,
     'navigation-only primary actions must use navigation copy instead of the mutation label');
-  assert.match(source, /assistantProductionCommandLabel\(primary, true, true\)/,
+  assert.match(productionSource, /assistantProductionCommandLabel\(primary, true, true\)/,
     'a wired command handler may retain the real execution label');
   assert.match(source, /expectedVersion: productionDecision\.subjectVersion/,
     'production mutations must carry the canonical optimistic version');
