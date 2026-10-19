@@ -44,6 +44,7 @@ import {
 import { LsBrandAction } from '../ui/LsExperiencePrimitives';
 import './assistantDecisionCenter.css';
 import { fieldValue } from '../../../shared/action-form.mjs';
+import { dispatchAssistantDecisionDeepLink } from './assistantDecisionNavigation';
 
 const kindMeta: Record<AssistantDecisionKind, {
   label: string;
@@ -146,50 +147,6 @@ export function assistantDecisionExecutionFeedback(
     return { kind: 'info', title: '本周任务已启动，正在排队准备', detail: `已创建${taskLabel}，数字员工会按计划进入生产。` };
   }
   return { kind: 'success', title: '本周任务已启动', detail: `${taskLabel}正在运行，可在智能经营查看真实进度。` };
-}
-
-function dispatchDeepLink(link?: AssistantDecisionDeepLink): void {
-  if (!link || typeof window === 'undefined') return;
-  const opensPresenterOnboarding = link.page === 'digitalEmployees'
-    && link.businessRef?.taskKey === 'presenter_setup_required';
-  const opensArkCertification = link.page === 'enterprise'
-    && link.businessRef?.taskKey === 'ark_presenter_setup_required';
-  if (opensPresenterOnboarding) {
-    try {
-      window.sessionStorage.setItem('lingshu:open-digital-employee-guide', 'presenter');
-    } catch {
-      /* The live event below still handles browsers with storage disabled. */
-    }
-  }
-  if (opensArkCertification) {
-    try {
-      window.localStorage.setItem('lingshu:enterprise:initial-view', 'presenters');
-      if (typeof link.businessRef?.entityId === 'string') window.sessionStorage.setItem('lingshu:enterprise:ark-presenter-id', link.businessRef.entityId);
-    } catch { /* The live event below still selects the knowledge-base view. */ }
-  }
-  const detail = {
-    ...link,
-    ...(link.runId ? { workflowRunId: link.runId } : {}),
-    ...(link.taskId ? { workflowTaskId: link.taskId } : {}),
-    ...(typeof link.businessRef?.contentId === 'string' ? {
-      socialContentTaskId: link.businessRef.contentId,
-      socialContentPage: link.page,
-    } : {}),
-  };
-  window.dispatchEvent(new CustomEvent('lingshu:navigate', { detail }));
-  if (opensArkCertification) {
-    const openPresenters = () => window.dispatchEvent(new CustomEvent('lingshu:enterprise-view', { detail: { view: 'presenters' } }));
-    openPresenters();
-    window.requestAnimationFrame?.(openPresenters);
-  }
-  if (opensPresenterOnboarding) {
-    const openGuide = () => window.dispatchEvent(new CustomEvent(
-      'lingshu:open-digital-employee-guide',
-      { detail: { step: 'presenter' } },
-    ));
-    openGuide();
-    window.requestAnimationFrame?.(openGuide);
-  }
 }
 
 function factTone(tone: AssistantDecisionCard['facts'][number]['tone']): string {
@@ -669,7 +626,7 @@ export default function AssistantDecisionCenter({
       setNote('');
       if (action.mode === 'navigate' || next.outcome === 'navigation_required') {
         onNavigate?.(first.deepLink);
-        dispatchDeepLink(first.deepLink);
+        dispatchAssistantDecisionDeepLink(first.deepLink);
       } else {
         if (action.id === 'approve_and_start' && next.execution) {
           const feedback = assistantDecisionExecutionFeedback(next.execution);

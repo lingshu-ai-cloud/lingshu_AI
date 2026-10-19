@@ -3,6 +3,7 @@ import { readFileSync } from 'node:fs';
 import test from 'node:test';
 
 const source = readFileSync(new URL('./AssistantDecisionCenter.tsx', import.meta.url), 'utf8');
+const navigationSource = readFileSync(new URL('./assistantDecisionNavigation.ts', import.meta.url), 'utf8');
 assert.doesNotMatch(source, /take_over:\s*UserRoundCheck/, 'Lingxiaoshu must not render a human-takeover action icon');
 const productionSource = readFileSync(new URL('./AssistantProductionDecisionCards.tsx', import.meta.url), 'utf8');
 const styles = readFileSync(new URL('./assistantDecisionCenter.css', import.meta.url), 'utf8');
@@ -40,13 +41,13 @@ test('deep-link navigation explicitly notifies the owning shell before dispatch'
   const navigationStart = actionSource.indexOf("if (action.mode === 'navigate' || next.outcome === 'navigation_required')");
   const navigationEnd = actionSource.indexOf('} else {', navigationStart);
   const navigationBranch = actionSource.slice(navigationStart, navigationEnd);
-  assert.ok(navigationStart >= 0 && navigationBranch.indexOf('onNavigate?.(first.deepLink)') < navigationBranch.indexOf('dispatchDeepLink(first.deepLink)'), 'the shell closes before app navigation is dispatched');
+  assert.ok(navigationStart >= 0 && navigationBranch.indexOf('onNavigate?.(first.deepLink)') < navigationBranch.indexOf('dispatchAssistantDecisionDeepLink(first.deepLink)'), 'the shell closes before app navigation is dispatched');
   assert.match(actionSource.slice(navigationEnd, actionSource.indexOf('} catch', navigationEnd)), /requestAnimationFrame/, 'non-navigation completion restores focus inside the decision surface');
   assert.doesNotMatch(navigationBranch, /\.focus\(/, 'a closing navigation dialog must not steal focus back from the destination page');
 });
 
 test('digital-human recovery opens the unified presenter onboarding step', () => {
-  const dispatchSource = source.slice(source.indexOf('function dispatchDeepLink'), source.indexOf('function factTone'));
+  const dispatchSource = navigationSource;
   assert.match(dispatchSource, /link\.page === 'digitalEmployees'[\s\S]*taskKey === 'presenter_setup_required'/, 'the assistant recognizes the shared presenter onboarding destination');
   assert.match(dispatchSource, /sessionStorage\.setItem\('lingshu:open-digital-employee-guide', 'presenter'\)/, 'a newly mounted Digital Employee page receives the fourth-step entry');
   assert.match(dispatchSource, /CustomEvent\([\s\S]*'lingshu:open-digital-employee-guide'[\s\S]*step: 'presenter'/, 'an already-mounted page opens the presenter step immediately');
@@ -54,11 +55,11 @@ test('digital-human recovery opens the unified presenter onboarding step', () =>
 });
 
 test('Ark-specific recovery opens the enterprise presenter certification view', () => {
-  const dispatchSource = source.slice(source.indexOf('function dispatchDeepLink'), source.indexOf('function factTone'));
+  const dispatchSource = navigationSource;
   assert.match(dispatchSource, /link\.page === 'enterprise'[\s\S]*taskKey === 'ark_presenter_setup_required'/);
   assert.match(dispatchSource, /localStorage\.setItem\('lingshu:enterprise:initial-view', 'presenters'\)/);
   assert.match(dispatchSource, /sessionStorage\.setItem\('lingshu:enterprise:ark-presenter-id'/);
-  assert.match(dispatchSource, /CustomEvent\('lingshu:enterprise-view'/);
+  assert.match(dispatchSource, /CustomEvent\(\s*'lingshu:enterprise-view'/);
 });
 
 test('assistant uses shared Ant controls and the single branded primary action', () => {
