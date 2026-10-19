@@ -16258,10 +16258,7 @@ export default function AiCreateStudio({ onNavigate, onOpenCreationHome, onLaunc
     <div className="flex flex-1 flex-col items-center justify-center gap-4 p-6 text-center">
       <p role={replicationConfirmationError || replicationPreparationError ? 'alert' : 'status'} className="max-w-xl text-sm text-text-secondary">{replicationConfirmationError || replicationPreparationError || referenceSpeechPlan.error || modeActionStatus || (studioCreateRequest?.confirmedSpeech?.length ? '正在载入已确认的口播并建立分镜…' : '请在第一页完成口播替换、手动修改与确认。')}</p>
       {replicationPreparationError && <button type="button" disabled={modeActionLoading} onClick={() => void generateSetupScriptAndContinue(replicationConfirmedLinesRef.current)} className="rounded-lg bg-accent px-4 py-2 text-sm font-bold text-white disabled:opacity-50">重试口播与分镜准备</button>}
-      {socialContentTaskId && <button type="button" onClick={() => window.dispatchEvent(new CustomEvent('lingshu:navigate', { detail: {
-        page: 'smartAssets', view: 'create', directStudio: false,
-        socialContentTaskId, socialContentPage: 'smartAssets',
-      } }))} className="rounded-lg bg-blue-600 px-4 py-2 text-sm font-bold text-white">打开任务验收与交付</button>}
+      {socialContentTaskId && <button type="button" onClick={() => onNavigate?.('smartAssets')} className="rounded-lg bg-blue-600 px-4 py-2 text-sm font-bold text-white">打开任务验收与交付</button>}
       <button type="button" onClick={() => void navigateReplicationStep(0)} className="rounded-lg border border-emerald-300 bg-white px-4 py-2 text-sm font-bold text-emerald-800">返回口播替换与确认</button>
       {socialContentTaskId && <div className="w-full max-w-2xl text-left"><SocialContentOrderOperations taskId={socialContentTaskId} /></div>}
     </div>
