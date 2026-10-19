@@ -580,7 +580,6 @@ function CompactCustomerList({
                 <p dir="auto" className="mt-0.5 line-clamp-2 text-left text-xs leading-[18px] text-text-muted" title={lastMessagePreview}>{lastMessagePreview}</p>
                 <div className="mt-1 flex flex-wrap items-center gap-1.5">
                   {customer.isHistorical && <Tag className="!m-0 !text-[9px]">历史会话</Tag>}
-                  {!customer.isHistorical && <Tag className="!m-0 !text-[9px]">{customer.isMock ? '模拟客户' : '真实客户'}</Tag>}
                   {customer.simulation?.warning && <span className="rounded bg-red-600 px-1.5 py-0.5 text-[9px] font-semibold text-white">大单预警</span>}
                   <SourceIcon source={customer.source} size={11} />
                 </div>
@@ -860,7 +859,7 @@ function ChatThread({
           <div className="min-w-0">
           <div className="flex min-w-0 items-center gap-2">
             <p className="truncate text-base font-semibold text-text-primary">{customerDisplayName(customer)}</p>
-            <Tag className="!m-0 !text-[10px]">{customer.isHistorical ? '历史会话 · 只读' : customer.isMock ? '模拟客户 · 不对外发送' : channelReady ? '真实客户 · 通道已连接' : '真实客户 · 通道未连接'}</Tag>
+            {customer.isHistorical ? <Tag className="!m-0 !text-[10px]">历史会话 · 只读</Tag> : !customer.isMock && <Tag className="!m-0 !text-[10px]">{channelReady ? '通道已连接' : '通道未连接'}</Tag>}
           </div>
           <div className="mt-0.5 flex items-center gap-1.5 text-[11px] text-text-muted">
             <span>{STAGE_LABEL[customer.stage]}</span>
