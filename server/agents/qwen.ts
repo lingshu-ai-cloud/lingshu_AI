@@ -59,7 +59,10 @@ function client(baseURL=BASE_URL()): OpenAI {
     apiKey,
     baseURL,
     ...(scoped?{fetch:async(input:RequestInfo|URL,init?:RequestInit)=>{
-      const request=new Request(input,init),body=await request.clone().text();
+      // A 307/308 can otherwise replay the paid POST (including credentials
+      // and body) after only one durable claim. Exact requests never follow a
+      // redirect: the original claim remains unknown for read-only recovery.
+      const request=new Request(input,{...init,redirect:'error'}),body=await request.clone().text();
       await authorizeExactQwenProviderRequest(body);
       const response=await fetch(request);
       await recordExactQwenProviderResponse(response,body);

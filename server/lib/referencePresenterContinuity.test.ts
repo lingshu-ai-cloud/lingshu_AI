@@ -1,13 +1,15 @@
 import test from 'node:test';
 import { createHash } from 'node:crypto';
+import { createServer } from 'node:http';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { execFileSync } from 'node:child_process';
 import ffmpeg from 'ffmpeg-static';
-import { producePresenterContinuity, validatePresenterContinuity } from './referencePresenterContinuity.js';
+import { producePresenterContinuity, recognizePresenterContinuity, validatePresenterContinuity } from './referencePresenterContinuity.js';
 import { CRITICAL_SHOT_FRAME_POLICY } from './referenceCriticalShotProduction.js';
+import { withExactQwenScope } from '../agents/exactQwenScope.js';
 import type { VideoAiAnalysis } from '../types/index.js';
 const analysis:VideoAiAnalysis={theme:'',hooks:[],sellingPoints:[],mood:'',structure:'',recommendedScriptType:'storyboard',
   scriptDetails15s:[{time:'0–1s',criticalShot:{classification:'non_critical'} as any}]};
@@ -28,6 +30,17 @@ test('no-face is not no-person, and fabricated identities or frames fail',()=>{
     assert.throws(()=>validatePresenterContinuity(input,{shots:[{...row,...mutation}]},'qwen'),/presenter_continuity_invalid/);
   const result=validatePresenterContinuity(input,{shots:[{...row,visibility:'hands_only',personContinuityId:''}]},'qwen');
   assert.equal(result[0].presenterContinuityEvidence.personPresence,'hands_only');
+});
+test('presenter-continuity paid POST rejects 307 and 308 without following the Location target',async t=>{
+ let status=307,originalCalls=0,targetCalls=0,claims=0,receipts=0;
+ const server=createServer((request,response)=>{if(request.url==='/redirect-target'){targetCalls++;response.writeHead(200);response.end('{}');return;}originalCalls++;response.writeHead(status,{location:'/redirect-target'});response.end();});
+ await new Promise<void>(resolve=>server.listen(0,'127.0.0.1',resolve));
+ t.after(()=>new Promise<void>(resolve=>server.close(()=>resolve())));
+ const address=server.address();assert.ok(address&&typeof address==='object');const endpoint=`http://127.0.0.1:${address.port}/v1`;
+ const scope={model:'qwen3-vl-plus',configurationHash:'frozen',endpoint,credentialDigest:createHash('sha256').update('redirect-key').digest('hex'),paidGuardRequired:true,
+  beforeProviderRequest:async()=>{claims++;},onProviderReceipt:async()=>{receipts++;}};
+ for(const redirect of [307,308]){status=redirect;await assert.rejects(withExactQwenScope(scope,()=>recognizePresenterContinuity({analysis,frames,sourceSha256:'hash',videoId:'test'},{apiKey:'redirect-key'})));}
+ assert.equal(originalCalls,2);assert.equal(targetCalls,0);assert.equal(claims,2);assert.equal(receipts,0);
 });
 test('real source-frame supplier response caches identity evidence without overwriting later criticality or speech',async()=>{
   const dir=fs.mkdtempSync(path.join(os.tmpdir(),'presenter-evidence-')),filePath=path.join(dir,'source.mp4');

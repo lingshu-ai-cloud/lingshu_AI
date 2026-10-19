@@ -157,7 +157,7 @@ syncPoints只输出wordIds、eventIndex、reason，不要生成syncTime。仅引
   if(exactQwenScope())await authorizeExactQwenProviderRequest(requestBody);
   const response = await (options.fetcher || fetch)(`${base}/chat/completions`, { method: 'POST',
     headers: { Authorization: `Bearer ${options.apiKey || (provider === 'gemini' ? process.env.GEMINI_API_KEY?.trim() : dashscopeApiKey())}`, 'Content-Type': 'application/json' },
-    body: requestBody, signal: AbortSignal.timeout(120_000) });
+    body: requestBody, signal: AbortSignal.timeout(120_000), redirect: 'error' });
   if(exactQwenScope())await recordExactQwenProviderResponse(response,requestBody);
   if (!response.ok) throw new Error(`reference_critical_qwen_http_${response.status}`);
   const payload = recordOf(await response.json());

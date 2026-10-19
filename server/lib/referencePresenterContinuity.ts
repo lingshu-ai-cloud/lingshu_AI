@@ -77,7 +77,7 @@ export async function recognizePresenterContinuity(input: Input, options: { fetc
   if(exactQwenScope())await authorizeExactQwenProviderRequest(requestBody);
   const response = await (options.fetcher || fetch)((exactQwenScope()?.endpoint || process.env.DASHSCOPE_BASE_URL || QWEN_COMPATIBLE_BASE_URL).replace(/\/+$/,'')+'/chat/completions', {
     method:'POST',headers:{Authorization:`Bearer ${options.apiKey || dashscopeApiKey()}`,'Content-Type':'application/json'},
-    body:requestBody,signal:AbortSignal.timeout(120000) });
+    body:requestBody,signal:AbortSignal.timeout(120000),redirect:'error' });
   if(exactQwenScope())await recordExactQwenProviderResponse(response,requestBody);
   if(!response.ok) throw new Error(`presenter_continuity_http_${response.status}`);
   const payload=recordOf(await response.json()), choice=recordOf(Array.isArray(payload.choices)?payload.choices[0]:undefined);
